@@ -23,7 +23,8 @@ program
   .option("--include <globs...>", "Additional file patterns to include")
   .option("--exclude <globs...>", "Additional file patterns to exclude")
   .option("--max-files <n>", "Maximum number of files to analyze", parseInt)
-  .option("--pretty", "Pretty-print JSON output", false)
+  .option("--pretty", "Pretty-print JSON output", true)
+  .option("--no-pretty", "Output compact JSON (no formatting)")
   .option("--verbose", "Show progress and debug info", false)
   .option("--dry-run", "List files that would be analyzed without analyzing", false)
   .action(async (path: string, options) => {

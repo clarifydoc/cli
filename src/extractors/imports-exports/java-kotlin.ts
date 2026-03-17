@@ -1,6 +1,7 @@
 import type { Node } from "web-tree-sitter";
 import { ImportExportExtractor } from "./base.js";
 import type { ImportInfo, ExportInfo, Language } from "./base.js";
+import { getNameFromNode } from "../node-helpers.js";
 
 export class JavaKotlinImportExportExtractor extends ImportExportExtractor {
   readonly languages: Language[] = ["java", "kotlin"];
@@ -9,23 +10,9 @@ export class JavaKotlinImportExportExtractor extends ImportExportExtractor {
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i)!;
 
+      // Java: import_declaration
       if (child.type === "import_declaration") {
-        // Java: import foo.bar.Baz;
-        const text = child.text
-          .replace(/^import\s+/, "")
-          .replace(/;$/, "")
-          .replace(/^static\s+/, "")
-          .trim();
-        const parts = text.split(".");
-        const lastPart = parts[parts.length - 1];
-
-        imports.push({
-          source: text,
-          specifiers: lastPart === "*" ? [] : [lastPart],
-          isDefault: false,
-          isNamespace: lastPart === "*",
-          line: child.startPosition.row + 1,
-        });
+        imports.push(this.parseJavaImport(child));
       }
 
       // Kotlin: import_list > import_header
@@ -33,22 +20,107 @@ export class JavaKotlinImportExportExtractor extends ImportExportExtractor {
         for (let j = 0; j < child.childCount; j++) {
           const header = child.child(j)!;
           if (header.type === "import_header") {
-            const text = header.text.replace(/^import\s+/, "").trim();
-            const isWildcard = text.endsWith(".*") || header.text.includes("*");
-            const parts = text.replace(/\.\*$/, "").split(".");
-            const lastPart = parts[parts.length - 1];
-
-            imports.push({
-              source: text.replace(/\.\*$/, ""),
-              specifiers: isWildcard ? [] : [lastPart],
-              isDefault: false,
-              isNamespace: isWildcard,
-              line: header.startPosition.row + 1,
-            });
+            imports.push(this.parseKotlinImport(header));
           }
         }
       }
     }
+  }
+
+  /** Parse Java `import foo.bar.Baz;` or `import static foo.bar.Baz.method;` */
+  private parseJavaImport(node: Node): ImportInfo {
+    let isStatic = false;
+    let importPath = "";
+
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i)!;
+      // "static" keyword
+      if (child.text === "static") {
+        isStatic = true;
+        continue;
+      }
+      // The actual path: scoped_identifier or identifier
+      if (
+        child.type === "scoped_identifier" ||
+        child.type === "identifier"
+      ) {
+        importPath = child.text;
+        continue;
+      }
+      // Wildcard: import foo.bar.*
+      if (child.type === "asterisk") {
+        importPath = importPath ? importPath + ".*" : "*";
+      }
+    }
+
+    // Fallback if AST traversal didn't find the path
+    if (!importPath) {
+      importPath = node.text
+        .replace(/^import\s+/, "")
+        .replace(/^static\s+/, "")
+        .replace(/;$/, "")
+        .trim();
+    }
+
+    const parts = importPath.split(".");
+    const lastPart = parts[parts.length - 1];
+    const isWildcard = lastPart === "*";
+
+    return {
+      source: isWildcard ? parts.slice(0, -1).join(".") : importPath,
+      specifiers: isWildcard ? [] : [lastPart],
+      isDefault: false,
+      isNamespace: isWildcard,
+      isType: !isStatic && false, // Java doesn't have type-only imports
+      line: node.startPosition.row + 1,
+    };
+  }
+
+  /** Parse Kotlin `import foo.bar.Baz` or `import foo.bar.*` via AST */
+  private parseKotlinImport(node: Node): ImportInfo {
+    // Kotlin import_header children: "import" keyword, identifier/dot_qualified_expression
+    let importPath = "";
+    let isWildcard = false;
+
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i)!;
+
+      // The import path is a dot_qualified_expression or identifier
+      if (
+        child.type === "dot_qualified_expression" ||
+        child.type === "identifier" ||
+        child.type === "simple_identifier"
+      ) {
+        importPath = child.text;
+        continue;
+      }
+      // Wildcard: import foo.bar.*
+      if (child.type === "multi_import" || child.text === "*") {
+        isWildcard = true;
+      }
+    }
+
+    // Fallback to text parsing
+    if (!importPath) {
+      importPath = node.text.replace(/^import\s+/, "").trim();
+    }
+
+    if (importPath.endsWith(".*")) {
+      isWildcard = true;
+      importPath = importPath.slice(0, -2);
+    }
+
+    const parts = importPath.split(".");
+    const lastPart = parts[parts.length - 1];
+
+    return {
+      source: importPath,
+      specifiers: isWildcard ? [] : [lastPart],
+      isDefault: false,
+      isNamespace: isWildcard,
+      isType: false,
+      line: node.startPosition.row + 1,
+    };
   }
 
   protected collectExports(node: Node, exports: ExportInfo[]): void {
@@ -76,7 +148,6 @@ export class JavaKotlinImportExportExtractor extends ImportExportExtractor {
         const name = this.getName(child);
         exports.push({ name, kind: "class", line: child.startPosition.row + 1 });
       } else if (child.type === "function_declaration") {
-        // Kotlin top-level functions
         const name = this.getName(child);
         exports.push({ name, kind: "function", line: child.startPosition.row + 1 });
       }
@@ -89,21 +160,10 @@ export class JavaKotlinImportExportExtractor extends ImportExportExtractor {
   }
 
   private getName(node: Node): string {
-    const fieldName = node.childForFieldName("name");
-    if (fieldName) return fieldName.text;
-
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
-      if (child.type === "type_identifier" || child.type === "simple_identifier") {
-        return child.text;
-      }
-    }
-    return "anonymous";
+    return getNameFromNode(node) ?? "anonymous";
   }
 
   private isPublic(node: Node): boolean {
-    // Kotlin: public by default, check for private/internal
-    // Java: check for public modifier, default to exported
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i)!;
       if (child.type === "modifiers" || child.type === "visibility_modifier") {

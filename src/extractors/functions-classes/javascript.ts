@@ -1,6 +1,7 @@
 import type { Node } from "web-tree-sitter";
 import { FunctionClassExtractor } from "./base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from "./base.js";
+import { getVisibility, extractJsDecorators } from "../node-helpers.js";
 
 export class JavaScriptExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
@@ -78,9 +79,28 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     node: Node,
     isExported: boolean,
   ): FunctionInfo {
-    const params = this.extractJsParams(node.childForFieldName("parameters"));
-    const returnType = node.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? null;
-    const isAsync = node.text.startsWith("async ");
+    // Handle type assertions wrapping the arrow function: `const f = ((): T => {}) as const`
+    let funcNode = node;
+    if (
+      funcNode.type === "as_expression" ||
+      funcNode.type === "satisfies_expression" ||
+      funcNode.type === "type_assertion"
+    ) {
+      const inner = funcNode.child(0);
+      if (inner && (inner.type === "arrow_function" || inner.type === "function_expression")) {
+        funcNode = inner;
+      }
+    }
+
+    const params = this.extractJsParams(funcNode.childForFieldName("parameters"));
+    const returnType = funcNode.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? null;
+    const isAsync = funcNode.text.startsWith("async ");
+
+    // Extract decorators from the parent declaration if present
+    const declarator = funcNode.parent;
+    const declaration = declarator?.parent;
+    const decorators =
+      declaration ? this.extractDecorators(declaration) : [];
 
     return {
       name,
@@ -88,9 +108,9 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       returnType,
       isAsync,
       isExported,
-      decorators: [],
-      line: node.startPosition.row + 1,
-      endLine: node.endPosition.row + 1,
+      decorators,
+      line: funcNode.startPosition.row + 1,
+      endLine: funcNode.endPosition.row + 1,
     };
   }
 
@@ -225,28 +245,12 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
   }
 
   private extractDecorators(node: Node): string[] {
-    const decorators: string[] = [];
-    const parent = node.parent;
-    if (!parent) return decorators;
-
-    for (let i = 0; i < parent.childCount; i++) {
-      const sibling = parent.child(i)!;
-      if (sibling === node) break;
-      if (sibling.type === "decorator") {
-        const expr = sibling.child(1);
-        decorators.push(expr?.text ?? sibling.text.replace(/^@/, ""));
-      }
-    }
-    return decorators;
+    return extractJsDecorators(node);
   }
 
   private getVisibility(
     node: Node,
   ): "public" | "private" | "protected" | null {
-    const text = node.text;
-    if (text.includes("private ")) return "private";
-    if (text.includes("protected ")) return "protected";
-    if (text.includes("public ")) return "public";
-    return null;
+    return getVisibility(node);
   }
 }

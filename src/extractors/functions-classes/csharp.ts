@@ -1,6 +1,11 @@
 import type { Node } from "web-tree-sitter";
 import { FunctionClassExtractor } from "./base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from "./base.js";
+import {
+  getVisibility,
+  hasModifier as sharedHasModifier,
+  extractCsharpAttributes,
+} from "../node-helpers.js";
 
 export class CSharpExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["csharp"];
@@ -49,18 +54,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
       }
     }
 
-    const decorators: string[] = [];
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
-      if (child.type === "attribute_list") {
-        for (let j = 0; j < child.childCount; j++) {
-          const attr = child.child(j)!;
-          if (attr.type === "attribute") {
-            decorators.push(attr.childForFieldName("name")?.text ?? attr.text);
-          }
-        }
-      }
-    }
+    const decorators = extractCsharpAttributes(node);
 
     const body = node.childForFieldName("body");
     const methods: FunctionInfo[] = [];
@@ -118,19 +112,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
 
     const returnType = node.childForFieldName("type")?.text ?? null;
     const isAsync = this.hasModifier(node, "async");
-    const decorators: string[] = [];
-
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
-      if (child.type === "attribute_list") {
-        for (let j = 0; j < child.childCount; j++) {
-          const attr = child.child(j)!;
-          if (attr.type === "attribute") {
-            decorators.push(attr.childForFieldName("name")?.text ?? attr.text);
-          }
-        }
-      }
-    }
+    const decorators = extractCsharpAttributes(node);
 
     return {
       name,
@@ -147,22 +129,10 @@ export class CSharpExtractor extends FunctionClassExtractor {
   private getCsharpVisibility(
     node: Node,
   ): "public" | "private" | "protected" | null {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
-      if (child.type === "modifier") {
-        if (child.text === "public") return "public";
-        if (child.text === "private") return "private";
-        if (child.text === "protected") return "protected";
-      }
-    }
-    return null;
+    return getVisibility(node);
   }
 
   private hasModifier(node: Node, modifier: string): boolean {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
-      if (child.type === "modifier" && child.text === modifier) return true;
-    }
-    return false;
+    return sharedHasModifier(node, modifier);
   }
 }

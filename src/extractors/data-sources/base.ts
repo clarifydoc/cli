@@ -1,5 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { DataSourceInfo, Language } from "../../types/analysis.js";
+import { getCallName } from "../node-helpers.js";
 
 /**
  * Abstract base for language-specific data-source extractors.
@@ -35,11 +36,6 @@ export abstract class DataSourceExtractor {
   /** Extract a function name from an identifier or member_expression node */
   protected getFunctionName(node: Node | null): string | null {
     if (!node) return null;
-    if (node.type === "identifier") return node.text;
-    if (node.type === "member_expression") {
-      const prop = node.childForFieldName("property");
-      return prop?.text ?? node.text;
-    }
-    return null;
+    return getCallName(node) ?? (node.type === "identifier" ? node.text : null);
   }
 }

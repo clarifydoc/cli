@@ -6,6 +6,7 @@ import type {
   PropertyInfo,
   Language,
 } from "../../types/analysis.js";
+import { findChildByType as sharedFindChildByType } from "../node-helpers.js";
 
 /**
  * Abstract base for language-specific function/class extractors.
@@ -37,11 +38,7 @@ export abstract class FunctionClassExtractor {
 
   /** Find the first child of a given type */
   protected findChildByType(node: Node, type: string): Node | null {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
-      if (child.type === type) return child;
-    }
-    return null;
+    return sharedFindChildByType(node, type);
   }
 }
 

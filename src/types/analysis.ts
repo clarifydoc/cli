@@ -23,6 +23,7 @@ export interface ImportInfo {
   specifiers: string[];
   isDefault: boolean;
   isNamespace: boolean;
+  isType: boolean;
   line: number;
 }
 

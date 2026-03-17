@@ -1,6 +1,11 @@
 import type { Node } from "web-tree-sitter";
 import { FunctionClassExtractor } from "./base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from "./base.js";
+import {
+  getVisibility as sharedGetVisibility,
+  extractAnnotations as sharedExtractAnnotations,
+  getNameFromNode,
+} from "../node-helpers.js";
 
 export class JavaKotlinExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["java", "kotlin"];
@@ -183,52 +188,17 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
   }
 
   private getJkName(node: Node): string {
-    const fieldName = node.childForFieldName("name");
-    if (fieldName) return fieldName.text;
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
-      if (child.type === "type_identifier" || child.type === "simple_identifier") {
-        return child.text;
-      }
-    }
-    return "anonymous";
+    return getNameFromNode(node) ?? "anonymous";
   }
 
   private extractAnnotations(node: Node): string[] {
-    const annotations: string[] = [];
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
-      if (
-        child.type === "annotation" ||
-        child.type === "marker_annotation" ||
-        child.type === "single_element_annotation"
-      ) {
-        annotations.push(child.text.replace(/^@/, ""));
-      }
-      if (child.type === "modifiers") {
-        for (let j = 0; j < child.childCount; j++) {
-          const mod = child.child(j)!;
-          if (
-            mod.type === "annotation" ||
-            mod.type === "marker_annotation" ||
-            mod.type === "single_element_annotation"
-          ) {
-            annotations.push(mod.text.replace(/^@/, ""));
-          }
-        }
-      }
-    }
-    return annotations;
+    return sharedExtractAnnotations(node);
   }
 
   private getVisibility(
     node: Node,
   ): "public" | "private" | "protected" | null {
-    const text = node.text;
-    if (text.includes("private ")) return "private";
-    if (text.includes("protected ")) return "protected";
-    if (text.includes("public ")) return "public";
-    return null;
+    return sharedGetVisibility(node);
   }
 
   /** Heuristic: if the node tree has Kotlin-specific constructs, it's Kotlin */

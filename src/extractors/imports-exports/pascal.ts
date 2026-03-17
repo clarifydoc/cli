@@ -28,6 +28,7 @@ export class PascalImportExportExtractor extends ImportExportExtractor {
               specifiers: [name],
               isDefault: false,
               isNamespace: true,
+              isType: false,
               line: mod.startPosition.row + 1,
             });
           }

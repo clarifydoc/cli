@@ -9,16 +9,71 @@ export class CSharpImportExportExtractor extends ImportExportExtractor {
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i)!;
       if (child.type === "using_directive") {
-        const name = child.childForFieldName("name")?.text ?? child.text;
-        imports.push({
-          source: name.replace(/^using\s+/, "").replace(/;$/, "").trim(),
-          specifiers: [],
-          isDefault: false,
-          isNamespace: true,
-          line: child.startPosition.row + 1,
-        });
+        imports.push(this.parseUsingDirective(child));
       }
     }
+  }
+
+  /** Parse `using System.Linq;`, `using static System.Math;`, `using Foo = Bar.Baz;` */
+  private parseUsingDirective(node: Node): ImportInfo {
+    let isStatic = false;
+    let source = "";
+    let alias: string | null = null;
+
+    // Walk children to extract the namespace via AST rather than text regex
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i)!;
+
+      // "static" keyword
+      if (child.text === "static") {
+        isStatic = true;
+        continue;
+      }
+
+      // The namespace/type name: qualified_name, identifier, or name_equals (for alias)
+      if (child.type === "qualified_name" || child.type === "identifier_name") {
+        source = child.text;
+        continue;
+      }
+      if (child.type === "identifier" && !source) {
+        source = child.text;
+        continue;
+      }
+
+      // Alias: `using Alias = Namespace.Type`
+      if (child.type === "name_equals") {
+        alias = child.childForFieldName("name")?.text ?? null;
+        continue;
+      }
+    }
+
+    // Fallback to the `name` field
+    if (!source) {
+      const nameNode = node.childForFieldName("name");
+      if (nameNode) {
+        source = nameNode.text;
+      }
+    }
+
+    // Last resort: strip keywords from text
+    if (!source) {
+      source = node.text
+        .replace(/^using\s+/, "")
+        .replace(/^static\s+/, "")
+        .replace(/;$/, "")
+        .trim();
+    }
+
+    const specifiers = alias ? [alias] : [];
+
+    return {
+      source,
+      specifiers,
+      isDefault: false,
+      isNamespace: !isStatic && !alias,
+      isType: false,
+      line: node.startPosition.row + 1,
+    };
   }
 
   protected collectExports(node: Node, exports: ExportInfo[]): void {
