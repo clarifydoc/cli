@@ -1,0 +1,47 @@
+import type { Tree } from "web-tree-sitter";
+import type { DataSourceInfo, Language } from "../../types/analysis.js";
+import type { DataSourceExtractor } from "./base.js";
+import { JavaScriptDataSourceExtractor } from "./javascript.js";
+import { PythonDataSourceExtractor } from "./python.js";
+import { JavaKotlinDataSourceExtractor } from "./java-kotlin.js";
+import { PascalDataSourceExtractor } from "./pascal.js";
+
+/** All registered language extractors */
+const extractors: DataSourceExtractor[] = [
+  new JavaScriptDataSourceExtractor(),
+  new PythonDataSourceExtractor(),
+  new JavaKotlinDataSourceExtractor(),
+  new PascalDataSourceExtractor(),
+];
+
+/** Language → extractor lookup (built once at import time) */
+const extractorMap = new Map<Language, DataSourceExtractor>();
+for (const ext of extractors) {
+  for (const lang of ext.languages) {
+    extractorMap.set(lang, ext);
+  }
+}
+
+/**
+ * Extract data sources from an AST.
+ * Identifies: API calls, state hooks, context usage, store reads, env vars.
+ */
+export function extractDataSources(
+  tree: Tree,
+  sourceText: string,
+  language: Language,
+): DataSourceInfo[] {
+  const extractor = extractorMap.get(language);
+  if (!extractor) return [];
+  return extractor.extract(tree, sourceText);
+}
+
+/** Register a custom extractor at runtime */
+export function registerDataSourceExtractor(extractor: DataSourceExtractor): void {
+  extractors.push(extractor);
+  for (const lang of extractor.languages) {
+    extractorMap.set(lang, extractor);
+  }
+}
+
+export { DataSourceExtractor } from "./base.js";

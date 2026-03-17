@@ -1,0 +1,47 @@
+import type { Tree } from "web-tree-sitter";
+import type { DataMutationInfo, Language } from "../../types/analysis.js";
+import type { DataMutationExtractor } from "./base.js";
+import { JavaScriptMutationExtractor } from "./javascript.js";
+import { PythonMutationExtractor } from "./python.js";
+import { JavaKotlinMutationExtractor } from "./java-kotlin.js";
+import { PascalMutationExtractor } from "./pascal.js";
+
+/** All registered language extractors */
+const extractors: DataMutationExtractor[] = [
+  new JavaScriptMutationExtractor(),
+  new PythonMutationExtractor(),
+  new JavaKotlinMutationExtractor(),
+  new PascalMutationExtractor(),
+];
+
+/** Language → extractor lookup (built once at import time) */
+const extractorMap = new Map<Language, DataMutationExtractor>();
+for (const ext of extractors) {
+  for (const lang of ext.languages) {
+    extractorMap.set(lang, ext);
+  }
+}
+
+/**
+ * Extract data mutation points from an AST.
+ * Identifies: setState calls, dispatch calls, direct assignments to state.
+ */
+export function extractDataMutations(
+  tree: Tree,
+  sourceText: string,
+  language: Language,
+): DataMutationInfo[] {
+  const extractor = extractorMap.get(language);
+  if (!extractor) return [];
+  return extractor.extract(tree, sourceText);
+}
+
+/** Register a custom extractor at runtime */
+export function registerMutationExtractor(extractor: DataMutationExtractor): void {
+  extractors.push(extractor);
+  for (const lang of extractor.languages) {
+    extractorMap.set(lang, extractor);
+  }
+}
+
+export { DataMutationExtractor } from "./base.js";
