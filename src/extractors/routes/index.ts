@@ -1,13 +1,13 @@
 import type { Tree } from "web-tree-sitter";
 import type { RouteInfo, Language } from "../../types/analysis.js";
-import { extractExpressRoutes } from "./express.js";
-import { extractReactRouterRoutes } from "./react-router.js";
-import { extractNestjsRoutes } from "./nestjs.js";
-import { extractVueRouterRoutes } from "./vue-router.js";
-import { extractPythonRoutes } from "./python.js";
-import { extractAspnetRoutes } from "./aspnet.js";
-import { extractSpringRoutes } from "./spring.js";
-import { extractPascalRoutes } from "./pascal.js";
+import { extractExpressRoutes } from "../plugins/javascript/routes/express.js";
+import { extractReactRouterRoutes } from "../plugins/javascript/routes/react-router.js";
+import { extractNestjsRoutes } from "../plugins/javascript/routes/nestjs.js";
+import { extractVueRouterRoutes } from "../plugins/javascript/routes/vue-router.js";
+import { extractPythonRoutes } from "../plugins/python/routes.js";
+import { extractAspnetRoutes } from "../plugins/csharp/routes/aspnet.js";
+import { extractSpringRoutes } from "../plugins/java-kotlin/routes/spring.js";
+import { extractPascalRoutes } from "../plugins/pascal/routes.js";
 
 /**
  * Extract routes and API endpoints from an AST.

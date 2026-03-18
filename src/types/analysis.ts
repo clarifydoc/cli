@@ -54,6 +54,7 @@ export interface FunctionInfo {
   isAsync: boolean;
   isExported: boolean;
   decorators: string[];
+  calls: string[];
   line: number;
   endLine: number;
 }

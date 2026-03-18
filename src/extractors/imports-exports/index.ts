@@ -1,11 +1,11 @@
 import type { Tree } from "web-tree-sitter";
 import type { ImportInfo, ExportInfo, Language } from "../../types/analysis.js";
 import type { ImportExportExtractor } from "./base.js";
-import { JavaScriptImportExportExtractor } from "./javascript.js";
-import { PythonImportExportExtractor } from "./python.js";
-import { CSharpImportExportExtractor } from "./csharp.js";
-import { PascalImportExportExtractor } from "./pascal.js";
-import { JavaKotlinImportExportExtractor } from "./java-kotlin.js";
+import { JavaScriptImportExportExtractor } from "../plugins/javascript/imports-exports.js";
+import { PythonImportExportExtractor } from "../plugins/python/imports-exports.js";
+import { CSharpImportExportExtractor } from "../plugins/csharp/imports-exports.js";
+import { PascalImportExportExtractor } from "../plugins/pascal/imports-exports.js";
+import { JavaKotlinImportExportExtractor } from "../plugins/java-kotlin/imports-exports.js";
 
 /** All registered language extractors */
 const extractors: ImportExportExtractor[] = [

@@ -1,6 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { DataSourceInfo, Language } from "../../types/analysis.js";
-import { getCallName } from "../node-helpers.js";
+import { getCallName } from "../shared/node-helpers.js";
 
 /**
  * Abstract base for language-specific data-source extractors.

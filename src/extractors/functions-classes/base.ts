@@ -6,7 +6,7 @@ import type {
   PropertyInfo,
   Language,
 } from "../../types/analysis.js";
-import { findChildByType as sharedFindChildByType } from "../node-helpers.js";
+import { findChildByType as sharedFindChildByType } from "../shared/node-helpers.js";
 
 /**
  * Abstract base for language-specific function/class extractors.

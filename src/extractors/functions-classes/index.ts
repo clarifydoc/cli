@@ -1,11 +1,11 @@
 import type { Tree } from "web-tree-sitter";
 import type { FunctionInfo, ClassInfo, Language } from "../../types/analysis.js";
 import type { FunctionClassExtractor } from "./base.js";
-import { JavaScriptExtractor } from "./javascript.js";
-import { PythonExtractor } from "./python.js";
-import { CSharpExtractor } from "./csharp.js";
-import { PascalExtractor } from "./pascal.js";
-import { JavaKotlinExtractor } from "./java-kotlin.js";
+import { JavaScriptExtractor } from "../plugins/javascript/functions-classes.js";
+import { PythonExtractor } from "../plugins/python/functions-classes.js";
+import { CSharpExtractor } from "../plugins/csharp/functions-classes.js";
+import { PascalExtractor } from "../plugins/pascal/functions-classes.js";
+import { JavaKotlinExtractor } from "../plugins/java-kotlin/functions-classes.js";
 
 /** All registered language extractors */
 const extractors: FunctionClassExtractor[] = [

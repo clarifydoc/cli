@@ -14,7 +14,7 @@ import { parseVueSfc } from "../parsers/vue-sfc.js";
 import { parseDfm } from "../parsers/dfm-parser.js";
 import { extractImports, extractExports } from "../extractors/imports-exports/index.js";
 import { extractFunctions, extractClasses } from "../extractors/functions-classes/index.js";
-import { extractSubComponents } from "../extractors/sub-components.js";
+import { extractSubComponents } from "../extractors/shared/sub-components.js";
 import { extractRoutes } from "../extractors/routes/index.js";
 import { extractDataSources } from "../extractors/data-sources/index.js";
 import { extractDataMutations } from "../extractors/data-mutations/index.js";

@@ -1,10 +1,10 @@
 import type { Tree } from "web-tree-sitter";
 import type { DataSourceInfo, Language } from "../../types/analysis.js";
 import type { DataSourceExtractor } from "./base.js";
-import { JavaScriptDataSourceExtractor } from "./javascript.js";
-import { PythonDataSourceExtractor } from "./python.js";
-import { JavaKotlinDataSourceExtractor } from "./java-kotlin.js";
-import { PascalDataSourceExtractor } from "./pascal.js";
+import { JavaScriptDataSourceExtractor } from "../plugins/javascript/data-sources.js";
+import { PythonDataSourceExtractor } from "../plugins/python/data-sources.js";
+import { JavaKotlinDataSourceExtractor } from "../plugins/java-kotlin/data-sources.js";
+import { PascalDataSourceExtractor } from "../plugins/pascal/data-sources.js";
 
 /** All registered language extractors */
 const extractors: DataSourceExtractor[] = [

@@ -1,10 +1,10 @@
 import type { Tree } from "web-tree-sitter";
 import type { DataMutationInfo, Language } from "../../types/analysis.js";
 import type { DataMutationExtractor } from "./base.js";
-import { JavaScriptMutationExtractor } from "./javascript.js";
-import { PythonMutationExtractor } from "./python.js";
-import { JavaKotlinMutationExtractor } from "./java-kotlin.js";
-import { PascalMutationExtractor } from "./pascal.js";
+import { JavaScriptMutationExtractor } from "../plugins/javascript/data-mutations.js";
+import { PythonMutationExtractor } from "../plugins/python/data-mutations.js";
+import { JavaKotlinMutationExtractor } from "../plugins/java-kotlin/data-mutations.js";
+import { PascalMutationExtractor } from "../plugins/pascal/data-mutations.js";
 
 /** All registered language extractors */
 const extractors: DataMutationExtractor[] = [

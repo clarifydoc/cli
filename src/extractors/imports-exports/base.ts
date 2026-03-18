@@ -3,7 +3,7 @@ import type { ImportInfo, ExportInfo, Language } from "../../types/analysis.js";
 import type { TreeSitterLanguage } from "../../parsers/parser-manager.js";
 import { runQuery } from "../../parsers/parser-manager.js";
 import type { CaptureResult } from "../../types/plugin.js";
-import { stripQuotes as sharedStripQuotes, hasChildType as sharedHasChildType } from "../node-helpers.js";
+import { stripQuotes as sharedStripQuotes, hasChildType as sharedHasChildType } from "../shared/node-helpers.js";
 
 /**
  * Abstract base for language-specific import/export extractors.
