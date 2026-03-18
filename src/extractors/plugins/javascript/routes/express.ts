@@ -1,5 +1,5 @@
 import type { Node } from "web-tree-sitter";
-import type { RouteInfo } from "../../../../types/analysis.js";
+import type { RouteInfo, CallInfo } from "../../../../types/analysis.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
 import { HTTP_METHODS, collectCallNames } from "../../../routes/base.js";
 
@@ -32,7 +32,7 @@ function walkForRoutes(node: Node, routes: RouteInfo[]) {
               }
             }
 
-            let calls: string[] = [];
+            let calls: CallInfo[] = [];
             const lastArg = args.child(args.childCount - 2);
             if (
               lastArg &&

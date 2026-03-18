@@ -1,6 +1,7 @@
 import type { Node } from "web-tree-sitter";
-import type { DataSourceInfo, Language } from "../../../types/analysis.js";
+import type { DataSourceInfo, CallInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
+import { extractCalls } from "../../shared/call-graph.js";
 
 /** Known fetch/HTTP call patterns */
 const API_CALL_NAMES = new Set([
@@ -196,39 +197,14 @@ function isApiCall(name: string): boolean {
   return API_CALL_NAMES.has(lower) || lower.includes("fetch") || lower.includes("http");
 }
 
-/** Scan a callback node for meaningful function calls */
-function collectCallbackCalls(callbackNode: Node): string[] {
-  const calls: string[] = [];
-  function walk(n: Node) {
-    if (n.type === "call_expression") {
-      const callee = n.childForFieldName("function");
-      if (callee) {
-        if (callee.type === "identifier") {
-          calls.push(callee.text);
-        } else if (callee.type === "member_expression") {
-          const method = callee.childForFieldName("property")?.text;
-          if (method && !NOISE_METHODS.has(method)) {
-            calls.push(callee.text);
-          }
-        }
-      }
-    }
-    for (let i = 0; i < n.childCount; i++) {
-      walk(n.child(i)!);
-    }
-  }
-  walk(callbackNode);
-  return [...new Set(calls)];
-}
-
 /** Extract calls from the first callback argument of a call_expression node */
-function getCallbackCalls(callNode: Node): string[] {
+function getCallbackCalls(callNode: Node): CallInfo[] {
   const args = callNode.childForFieldName("arguments");
   if (!args) return [];
   for (let i = 0; i < args.childCount; i++) {
     const arg = args.child(i)!;
     if (arg.type === "arrow_function" || arg.type === "function_expression" || arg.type === "function") {
-      return collectCallbackCalls(arg);
+      return extractCalls(arg, "typescript");
     }
   }
   return [];

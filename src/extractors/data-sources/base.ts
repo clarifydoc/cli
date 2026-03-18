@@ -1,5 +1,5 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { DataSourceInfo, Language } from "../../types/analysis.js";
+import type { DataSourceInfo, CallInfo, Language } from "../../types/analysis.js";
 import { getCallName } from "../shared/node-helpers.js";
 
 /**
@@ -29,7 +29,7 @@ export abstract class DataSourceExtractor {
   protected abstract visitNode(node: Node, sources: DataSourceInfo[]): void;
 
   /** Create a DataSourceInfo with default calls: [] */
-  protected ds(info: Omit<DataSourceInfo, "calls"> & { calls?: string[] }): DataSourceInfo {
+  protected ds(info: Omit<DataSourceInfo, "calls"> & { calls?: CallInfo[] }): DataSourceInfo {
     return { ...info, calls: info.calls ?? [] };
   }
 

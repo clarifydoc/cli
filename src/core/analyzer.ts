@@ -18,6 +18,9 @@ import { extractSubComponents } from "../extractors/shared/sub-components.js";
 import { extractRoutes } from "../extractors/routes/index.js";
 import { extractDataSources } from "../extractors/data-sources/index.js";
 import { extractDataMutations } from "../extractors/data-mutations/index.js";
+import { classifyCalls } from "../extractors/shared/call-graph.js";
+import { extractInteractiveElements, extractVueInteractiveElements } from "../extractors/shared/interactive-elements.js";
+import { buildLinkGraph } from "../extractors/shared/link-scoring.js";
 import {
   createEmptyAnalysis,
   type FileAnalysis,
@@ -142,12 +145,33 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
         analysis.imports,
       );
 
+      // Classify calls using import context and language patterns
+      for (const fn of analysis.functions) {
+        fn.calls = classifyCalls(fn.calls, analysis.imports, language);
+      }
+      for (const cls of analysis.classes) {
+        for (const method of cls.methods) {
+          method.calls = classifyCalls(method.calls, analysis.imports, language);
+        }
+      }
+      for (const route of analysis.routes) {
+        route.calls = classifyCalls(route.calls, analysis.imports, language);
+      }
+
+      // Extract interactive elements (buttons, inputs, forms with event bindings)
+      analysis.interactiveElements = extractInteractiveElements(tree, sourceText, language);
+
       // Infer frameworks for this specific file based on its imports
       analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
 
-      // For .vue files, also add template components
+      // For .vue files, also add template components and interactive elements
       if (isVue) {
         const sfc = parseVueSfc(rawSource);
+        if (sfc.template) {
+          analysis.interactiveElements.push(
+            ...extractVueInteractiveElements(sfc.template, rawSource),
+          );
+        }
         for (const comp of sfc.templateComponents) {
           const importSource =
             analysis.imports.find((imp) =>
@@ -188,13 +212,19 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Step 4: Write project summary
   if (verbose) console.log("Writing project summary...");
   const componentGraph = buildComponentGraph(allAnalyses);
+  const linkGraph = buildLinkGraph(allAnalyses);
   const allRoutes = allAnalyses.flatMap((a) => a.routes);
+  const allInteractiveElements = allAnalyses.flatMap((a) =>
+    a.interactiveElements.map((el) => ({ ...el, filePath: a.filePath })),
+  );
 
   const summary: ProjectAnalysis = {
     projectRoot,
     detectedFrameworks: frameworks,
     files: allAnalyses.map((a) => a.filePath),
     componentGraph,
+    linkGraph,
+    interactiveElements: allInteractiveElements,
     routeMap: allRoutes,
     analyzedAt: new Date().toISOString(),
   };

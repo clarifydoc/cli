@@ -1,5 +1,6 @@
 import type { Node } from "web-tree-sitter";
-import type { Language } from "../../types/analysis.js";
+import type { Language, CallInfo, ImportInfo } from "../../types/analysis.js";
+import { isApiCall, isDatabaseCall } from "./call-patterns.js";
 
 /**
  * Call expression node types per language.
@@ -12,7 +13,7 @@ const CALL_TYPES: Record<string, Set<string>> = {
   java: new Set(["method_invocation", "object_creation_expression"]),
   kotlin: new Set(["call_expression"]),
   csharp: new Set(["invocation_expression", "object_creation_expression"]),
-  pascal: new Set(["call"]),
+  pascal: new Set(["exprCall"]),
 };
 
 /**
@@ -57,21 +58,28 @@ const NOISE_CALLS = new Set([
   "stringify", "parse",
 ]);
 
+/** Vue 3 <script setup> compiler macros — auto-imported, not in imports array */
+const VUE_COMPILER_MACROS = new Set([
+  "defineProps", "defineEmits", "defineExpose", "defineOptions",
+  "defineModel", "defineSlots", "withDefaults", "emit",
+]);
+
 /**
  * Extract all function/method calls from within a function body node.
  *
- * Returns the call names as they appear in source — simple names for direct calls
- * (e.g. `"createUser"`) and qualified names for member calls (e.g. `"userService.findAll"`).
+ * Returns CallInfo[] with name, line, and initial kind="internal".
+ * Use `classifyCalls()` afterward to categorize using import context.
  *
  * Does NOT descend into nested function definitions, arrow functions, or lambdas.
  */
-export function extractCalls(bodyNode: Node | null, language: Language): string[] {
+export function extractCalls(bodyNode: Node | null, language: Language): CallInfo[] {
   if (!bodyNode) return [];
 
   const callTypes = CALL_TYPES[language];
   if (!callTypes) return [];
 
-  const names: string[] = [];
+  const results: CallInfo[] = [];
+  const seen = new Set<string>();
   const visited = new Set<number>();
 
   function walk(node: Node, isRoot: boolean) {
@@ -83,8 +91,14 @@ export function extractCalls(bodyNode: Node | null, language: Language): string[
 
     if (callTypes.has(node.type)) {
       const name = resolveCallName(node, language);
-      if (name && !isNoise(name)) {
-        names.push(name);
+      if (name && !isNoise(name) && !seen.has(name)) {
+        seen.add(name);
+        results.push({
+          name,
+          kind: "internal",
+          target: null,
+          line: node.startPosition.row + 1,
+        });
       }
     }
 
@@ -94,7 +108,87 @@ export function extractCalls(bodyNode: Node | null, language: Language): string[
   }
 
   walk(bodyNode, true);
-  return [...new Set(names)];
+  return results;
+}
+
+/**
+ * Classify raw calls using import context and language-specific patterns.
+ * Mutates and returns the calls array with updated `kind` and `target`.
+ */
+export function classifyCalls(
+  calls: CallInfo[],
+  imports: ImportInfo[],
+  language: Language,
+): CallInfo[] {
+  // Build import lookup: specifier name → import source
+  const importMap = new Map<string, string>();
+  const defaultImports = new Map<string, string>();
+
+  for (const imp of imports) {
+    if (imp.isType) continue; // skip type-only imports
+
+    for (const spec of imp.specifiers) {
+      importMap.set(spec, imp.source);
+    }
+
+    if (imp.isDefault && imp.specifiers.length > 0) {
+      defaultImports.set(imp.specifiers[0]!, imp.source);
+    }
+
+    if (imp.isNamespace && imp.specifiers.length > 0) {
+      defaultImports.set(imp.specifiers[0]!, imp.source);
+    }
+  }
+
+  for (const call of calls) {
+    // 0. Vue compiler macros (auto-imported, not in imports array)
+    if (VUE_COMPILER_MACROS.has(call.name)) {
+      call.kind = "cross-file";
+      call.target = "vue";
+      continue;
+    }
+
+    // 1. Check cross-file: exact match on import specifier
+    const directMatch = importMap.get(call.name);
+    if (directMatch) {
+      call.kind = "cross-file";
+      call.target = directMatch;
+      continue;
+    }
+
+    // 2. Check cross-file: qualified call like `importedModule.method`
+    const root = call.name.split(".")[0]!;
+    const defaultSource = defaultImports.get(root);
+    if (defaultSource) {
+      call.kind = "cross-file";
+      call.target = defaultSource;
+      continue;
+    }
+
+    // Also check named imports used as root of qualified call
+    const namedSource = importMap.get(root);
+    if (namedSource && call.name.includes(".")) {
+      call.kind = "cross-file";
+      call.target = namedSource;
+      continue;
+    }
+
+    // 3. Check API call patterns
+    if (isApiCall(call.name, language)) {
+      call.kind = "api-call";
+      continue;
+    }
+
+    // 4. Check database patterns
+    if (isDatabaseCall(call.name, language)) {
+      call.kind = "database";
+      continue;
+    }
+
+    // 5. Default: internal
+  }
+
+  return calls;
 }
 
 /**
@@ -102,7 +196,6 @@ export function extractCalls(bodyNode: Node | null, language: Language): string[
  * Returns qualified names for member calls: "obj.method" instead of just "method".
  */
 function resolveCallName(node: Node, language: Language): string | null {
-  // JS/TS: call_expression has "function" field; new_expression has "constructor"
   let callee =
     node.childForFieldName("function") ??
     node.childForFieldName("constructor") ??
@@ -111,18 +204,15 @@ function resolveCallName(node: Node, language: Language): string | null {
 
   if (!callee) return null;
 
-  // Python: call node — first child is the function being called
   if (language === "python" && node.type === "call") {
     callee = node.childForFieldName("function") ?? node.child(0);
     if (!callee) return null;
   }
 
-  // Simple identifier: foo()
   if (callee.type === "identifier" || callee.type === "simple_identifier") {
     return callee.text;
   }
 
-  // Member/attribute calls: obj.method() — return full qualified "obj.method"
   if (
     callee.type === "member_expression" ||
     callee.type === "attribute" ||
@@ -133,7 +223,6 @@ function resolveCallName(node: Node, language: Language): string | null {
     return callee.text;
   }
 
-  // Scoped calls: Namespace::method() or Package.Class
   if (
     callee.type === "scoped_identifier" ||
     callee.type === "qualified_name" ||
@@ -142,7 +231,6 @@ function resolveCallName(node: Node, language: Language): string | null {
     return callee.text;
   }
 
-  // Java: method_invocation where "name" field is the method
   if (language === "java" || language === "kotlin") {
     const nameNode = node.childForFieldName("name");
     const obj = node.childForFieldName("object");
@@ -151,13 +239,18 @@ function resolveCallName(node: Node, language: Language): string | null {
     }
   }
 
-  // C#: invocation_expression — first child is the expression being invoked
   if (language === "csharp") {
     if (callee.type === "identifier_name") return callee.text;
     if (callee.type === "member_access_expression") return callee.text;
   }
 
-  // new_expression: "new Foo()" → "Foo"
+  // Pascal: exprCall with exprDot or identifier as first child
+  if (language === "pascal" && node.type === "exprCall") {
+    if (callee.type === "exprDot") return callee.text;
+    if (callee.type === "identifier") return callee.text;
+    if (callee.type === "inherited") return callee.text;
+  }
+
   if (node.type === "new_expression" || node.type === "object_creation_expression") {
     const typeNode =
       node.childForFieldName("type") ??
@@ -170,7 +263,6 @@ function resolveCallName(node: Node, language: Language): string | null {
 
 /** Check if a call name is noise (chaining, logging, etc.) */
 function isNoise(name: string): boolean {
-  // For qualified calls like "console.log", check the last segment
   const lastDot = name.lastIndexOf(".");
   const shortName = lastDot >= 0 ? name.slice(lastDot + 1) : name;
   return NOISE_CALLS.has(shortName);

@@ -1,5 +1,5 @@
 import type { Node } from "web-tree-sitter";
-import type { RouteInfo } from "../../types/analysis.js";
+import type { RouteInfo, CallInfo } from "../../types/analysis.js";
 import { extractCalls } from "../shared/call-graph.js";
 
 export const HTTP_METHODS = new Set([
@@ -14,14 +14,14 @@ export const HTTP_METHODS = new Set([
   "options",
 ]);
 
-/** Collect function call names from within a function body.
+/** Collect function calls from within a function body.
  *  Delegates to the shared call-graph extractor for JS/TS. */
-export function collectCallNames(fnNode: Node): string[] {
+export function collectCallNames(fnNode: Node): CallInfo[] {
   return extractCalls(fnNode, "typescript");
 }
 
 /** Create a RouteInfo with defaults for calls/middleware. */
-export function route(info: Omit<RouteInfo, "calls" | "middleware"> & { calls?: string[]; middleware?: string[] }): RouteInfo {
+export function route(info: Omit<RouteInfo, "calls" | "middleware"> & { calls?: CallInfo[]; middleware?: string[] }): RouteInfo {
   return {
     ...info,
     calls: info.calls ?? [],

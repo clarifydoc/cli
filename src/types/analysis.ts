@@ -16,6 +16,7 @@ export interface FileAnalysis {
   dataSources: DataSourceInfo[];
   dataMutations: DataMutationInfo[];
   subComponents: SubComponentInfo[];
+  interactiveElements: InteractiveElementInfo[];
 }
 
 export interface ImportInfo {
@@ -47,6 +48,13 @@ export interface ParamInfo {
   defaultValue: string | null;
 }
 
+export interface CallInfo {
+  name: string;
+  kind: "cross-file" | "database" | "api-call" | "internal";
+  target: string | null;
+  line: number;
+}
+
 export interface FunctionInfo {
   name: string;
   params: ParamInfo[];
@@ -54,7 +62,7 @@ export interface FunctionInfo {
   isAsync: boolean;
   isExported: boolean;
   decorators: string[];
-  calls: string[];
+  calls: CallInfo[];
   line: number;
   endLine: number;
 }
@@ -84,7 +92,7 @@ export interface RouteInfo {
   httpMethod: string | null;
   kind: "frontend" | "api";
   handler: string | null;
-  calls: string[];
+  calls: CallInfo[];
   middleware: string[];
   line: number;
 }
@@ -101,7 +109,7 @@ export interface DataSourceInfo {
     | "env";
   name: string;
   target: string | null;
-  calls: string[];
+  calls: CallInfo[];
   line: number;
 }
 
@@ -119,12 +127,31 @@ export interface SubComponentInfo {
   line: number;
 }
 
+export interface InteractiveElementInfo {
+  element: "button" | "input" | "form" | "link" | "select" | "textarea" | "custom";
+  event: string;
+  handler: string | null;
+  line: number;
+}
+
+export type LinkProximity = 1 | 2 | 3;
+
+export interface LinkInfo {
+  source: string;
+  target: string;
+  proximity: LinkProximity;
+  reason: string;
+  calls: string[];
+}
+
 /** Project-level summary */
 export interface ProjectAnalysis {
   projectRoot: string;
   detectedFrameworks: FrameworkDetection[];
   files: string[];
   componentGraph: Record<string, string[]>;
+  linkGraph: LinkInfo[];
+  interactiveElements: (InteractiveElementInfo & { filePath: string })[];
   routeMap: RouteInfo[];
   analyzedAt: string;
 }
@@ -154,5 +181,6 @@ export function createEmptyAnalysis(
     dataSources: [],
     dataMutations: [],
     subComponents: [],
+    interactiveElements: [],
   };
 }

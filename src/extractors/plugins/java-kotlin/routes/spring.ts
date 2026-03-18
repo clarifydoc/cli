@@ -1,6 +1,7 @@
 import type { Node } from "web-tree-sitter";
-import type { RouteInfo } from "../../../../types/analysis.js";
+import type { RouteInfo, CallInfo } from "../../../../types/analysis.js";
 import { stripQuotes, findChildByType } from "../../../shared/node-helpers.js";
+import { extractCalls } from "../../../shared/call-graph.js";
 
 /** Spring Boot mapping annotations */
 const SPRING_MAPPING_ANNOTATIONS: Record<string, string | null> = {
@@ -23,6 +24,10 @@ function walkForJavaKotlinRoutes(node: Node, routes: RouteInfo[]) {
     node.type === "function_declaration"
   ) {
     const methodName = node.childForFieldName("name")?.text ?? null;
+    const body = node.childForFieldName("body");
+    // Guess language from context: Kotlin uses function_declaration, Java uses method_declaration
+    const lang = node.type === "function_declaration" ? "kotlin" as const : "java" as const;
+    const bodyCalls = extractCalls(body, lang);
 
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i)!;
@@ -31,7 +36,7 @@ function walkForJavaKotlinRoutes(node: Node, routes: RouteInfo[]) {
         child.type === "marker_annotation" ||
         child.type === "single_element_annotation"
       ) {
-        const route = parseSpringAnnotation(child, methodName);
+        const route = parseSpringAnnotation(child, methodName, bodyCalls);
         if (route) routes.push(route);
       }
       if (child.type === "modifiers") {
@@ -42,7 +47,7 @@ function walkForJavaKotlinRoutes(node: Node, routes: RouteInfo[]) {
             mod.type === "marker_annotation" ||
             mod.type === "single_element_annotation"
           ) {
-            const route = parseSpringAnnotation(mod, methodName);
+            const route = parseSpringAnnotation(mod, methodName, bodyCalls);
             if (route) routes.push(route);
           }
         }
@@ -58,6 +63,7 @@ function walkForJavaKotlinRoutes(node: Node, routes: RouteInfo[]) {
 function parseSpringAnnotation(
   node: Node,
   handler: string | null,
+  calls: CallInfo[],
 ): RouteInfo | null {
   let annotationName: string | null = null;
   const nameNode = node.childForFieldName("name");
@@ -121,7 +127,7 @@ function parseSpringAnnotation(
     httpMethod: resolvedMethod,
     kind: "api",
     handler,
-    calls: [],
+    calls,
     middleware: [],
     line: node.startPosition.row + 1,
   };

@@ -6,12 +6,57 @@ import { extractCalls } from "../../shared/call-graph.js";
 export class PascalExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["pascal"];
 
+  /** Map of "ClassName.MethodName" → CallInfo[] built from implementation section */
+  private methodCallsMap = new Map<string, import("../../../types/analysis.js").CallInfo[]>();
+
   protected collectFunctions(node: Node, functions: FunctionInfo[]): void {
+    // First pass: collect calls from all method implementations
+    this.buildMethodCallsMap(node);
     this.extractPascalFunctions(node, functions);
   }
 
   protected collectClasses(node: Node, classes: ClassInfo[]): void {
     this.extractPascalClasses(node, classes);
+  }
+
+  /** Walk the implementation section to collect calls from method bodies */
+  private buildMethodCallsMap(node: Node): void {
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i)!;
+      if (child.type === "defProc") {
+        const declProc = this.findChildByType(child, "declProc");
+        if (declProc && this.isPascalMethodDef(declProc)) {
+          const key = this.getMethodKey(declProc);
+          const block = this.findChildByType(child, "block");
+          if (key && block) {
+            this.methodCallsMap.set(key, extractCalls(block, "pascal"));
+          }
+        }
+      }
+      if (
+        child.type === "unit" || child.type === "program" ||
+        child.type === "library" || child.type === "implementation" ||
+        child.type === "root"
+      ) {
+        this.buildMethodCallsMap(child);
+      }
+    }
+  }
+
+  /** Get "ClassName.MethodName" key from a method declProc's genericDot */
+  private getMethodKey(declProc: Node): string | null {
+    for (let i = 0; i < declProc.childCount; i++) {
+      const child = declProc.child(i)!;
+      if (child.type === "genericDot") {
+        const parts: string[] = [];
+        for (let j = 0; j < child.childCount; j++) {
+          const part = child.child(j)!;
+          if (part.type === "identifier") parts.push(part.text);
+        }
+        if (parts.length >= 2) return parts.join(".");
+      }
+    }
+    return null;
   }
 
   private extractPascalFunctions(node: Node, functions: FunctionInfo[]): void {
@@ -203,6 +248,9 @@ export class PascalExtractor extends FunctionClassExtractor {
           if (member.type === "declProc") {
             const fn = this.parsePascalProc(member);
             fn.isExported = visibility === "public" || visibility === null;
+            // Look up calls from implementation section
+            const implCalls = this.methodCallsMap.get(`${name}.${fn.name}`);
+            if (implCalls) fn.calls = implCalls;
             methods.push(fn);
           } else if (member.type === "declField") {
             properties.push(this.parsePascalField(member, visibility));
@@ -213,7 +261,10 @@ export class PascalExtractor extends FunctionClassExtractor {
       }
 
       if (child.type === "declProc") {
-        methods.push(this.parsePascalProc(child));
+        const fn = this.parsePascalProc(child);
+        const implCalls = this.methodCallsMap.get(`${name}.${fn.name}`);
+        if (implCalls) fn.calls = implCalls;
+        methods.push(fn);
       } else if (child.type === "declField") {
         properties.push(this.parsePascalField(child, null));
       } else if (child.type === "declProp") {
