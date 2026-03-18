@@ -27,6 +27,7 @@ program
   .option("--no-pretty", "Output compact JSON (no formatting)")
   .option("--verbose", "Show progress and debug info", false)
   .option("--dry-run", "List files that would be analyzed without analyzing", false)
+  .option("--html", "Generate an HTML report after analysis", false)
   .action(async (path: string, options) => {
     const projectRoot = resolve(path);
     const projectName = projectRoot.replace(/\\/g, "/").split("/").pop()!;
@@ -55,10 +56,42 @@ program
           console.log(`  ${f}`);
         }
       } else {
-        console.log(
-          `Done. Analyzed ${result.fileCount} files. Output: ${outputDir}`,
-        );
+        console.log("Done. Analysis complete.");
+        console.log(`  Files:       ${String(result.fileCount).padStart(4)}`);
+        console.log(`  Elements:    ${String(result.interactiveElementCount).padStart(4)} interactive`);
+        console.log(`  Routes:      ${String(result.routeCount).padStart(4)}`);
+        console.log(`  Links:       ${String(result.linkCount).padStart(4)}`);
+        console.log(`  Output: ${outputDir}`);
+
+        if (options.html) {
+          const { generateHtmlReport } = await import("./core/html-report.js");
+          const reportPath = await generateHtmlReport({
+            analysisDir: outputDir,
+            openBrowser: true,
+          });
+          console.log(`  Report: ${reportPath}`);
+        }
       }
+    } catch (err) {
+      console.error("Error:", (err as Error).message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("report")
+  .description("Generate an HTML report from an existing analysis")
+  .argument("<analysis-dir>", "Path to analysis output directory (contains project-summary.json)")
+  .option("--no-open", "Don't auto-open the report in the browser")
+  .action(async (analysisDir: string, options) => {
+    const dir = resolve(analysisDir);
+    try {
+      const { generateHtmlReport } = await import("./core/html-report.js");
+      const reportPath = await generateHtmlReport({
+        analysisDir: dir,
+        openBrowser: options.open !== false,
+      });
+      console.log(`Report generated: ${reportPath}`);
     } catch (err) {
       console.error("Error:", (err as Error).message);
       process.exit(1);
@@ -111,6 +144,7 @@ program
             "dataSources",
             "dataMutations",
             "subComponents",
+            "interactiveElements",
           ],
         },
         null,

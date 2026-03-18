@@ -42,6 +42,9 @@ export interface AnalyzeResult {
   fileCount: number;
   files: string[];
   outputDir: string;
+  interactiveElementCount: number;
+  routeCount: number;
+  linkCount: number;
 }
 
 /**
@@ -71,6 +74,9 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       fileCount: files.length,
       files: files.map((f) => f.relativePath),
       outputDir,
+      interactiveElementCount: 0,
+      routeCount: 0,
+      linkCount: 0,
     };
   }
 
@@ -94,8 +100,13 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const outputOpts: OutputOptions = { outputDir, pretty: options.pretty };
   const allAnalyses: FileAnalysis[] = [];
 
-  for (const file of files) {
-    if (verbose) console.log(`  Analyzing: ${file.relativePath}`);
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i]!;
+    if (verbose) {
+      console.log(`  Analyzing: ${file.relativePath}`);
+    } else {
+      process.stdout.write(`\rAnalyzing [${i + 1}/${files.length}] ${file.relativePath}`.padEnd(80));
+    }
 
     try {
       const rawSource = await readFile(file.absolutePath, "utf-8");
@@ -209,6 +220,9 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     }
   }
 
+  // Clear progress line
+  if (!verbose) process.stdout.write("\r" + " ".repeat(80) + "\r");
+
   // Step 4: Write project summary
   if (verbose) console.log("Writing project summary...");
   const componentGraph = buildComponentGraph(allAnalyses);
@@ -235,6 +249,9 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     fileCount: allAnalyses.length,
     files: allAnalyses.map((a) => a.filePath),
     outputDir,
+    interactiveElementCount: allInteractiveElements.length,
+    routeCount: allRoutes.length,
+    linkCount: linkGraph.length,
   };
 }
 

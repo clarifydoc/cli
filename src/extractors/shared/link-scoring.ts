@@ -1,4 +1,5 @@
 import type { FileAnalysis, LinkInfo, LinkProximity } from "../../types/analysis.js";
+import { posix } from "path";
 
 /** Lifecycle hooks — calls here run on mount/create → tight (1) */
 const LIFECYCLE_HOOKS = new Set([
@@ -37,95 +38,91 @@ const UPDATE_METHODS = new Set([
  * Each link has a proximity score: 1 (tight), 2 (medium), 3 (loose).
  */
 export function buildLinkGraph(analyses: FileAnalysis[]): LinkInfo[] {
-  // Collect all cross-file call contexts per file
-  const fileCalls: Map<string, CallContext[]> = new Map();
+  const filePathMap = buildFilePathMap(analyses);
+  const linkMap = new Map<string, { proximity: LinkProximity; reasons: Set<string>; calls: Set<string> }>();
+
+  function addLink(sourceFile: string, target: string, callName: string, proximity: LinkProximity, reason: string) {
+    const targetFile = resolveTarget(target, sourceFile, filePathMap);
+    if (!targetFile || targetFile === sourceFile) return;
+
+    const key = `${sourceFile}\u2192${targetFile}`;
+    const existing = linkMap.get(key);
+    if (existing) {
+      if (proximity < existing.proximity) existing.proximity = proximity;
+      existing.reasons.add(reason);
+      existing.calls.add(callName);
+    } else {
+      linkMap.set(key, {
+        proximity,
+        reasons: new Set([reason]),
+        calls: new Set([callName]),
+      });
+    }
+  }
 
   for (const a of analyses) {
-    const contexts: CallContext[] = [];
-
-    // 1. Calls inside dataSources (lifecycle hooks, watchers)
-    for (const ds of a.dataSources) {
-      for (const call of ds.calls) {
-        if (call.kind === "cross-file" && call.target) {
-          const prox = getHookProximity(ds.name);
-          contexts.push({ callName: call.name, target: call.target, proximity: prox, reason: `${ds.name} callback` });
-        }
+    // 1. ALL imports create links (primary link source)
+    for (const imp of a.imports) {
+      if (imp.isType) continue;
+      const proximity = getImportProximity(imp.specifiers, a);
+      for (const spec of imp.specifiers) {
+        addLink(a.filePath, imp.source, spec, proximity, `imports ${spec}`);
       }
     }
 
-    // 2. Calls inside functions
+    // 2. Cross-file calls inside functions (may refine proximity)
     for (const fn of a.functions) {
       for (const call of fn.calls) {
         if (call.kind === "cross-file" && call.target) {
           const prox = getFunctionProximity(fn.name, a);
-          contexts.push({ callName: call.name, target: call.target, proximity: prox, reason: `function ${fn.name}` });
+          addLink(a.filePath, call.target, call.name, prox, `function ${fn.name}`);
         }
       }
     }
 
-    // 3. Calls inside class methods
+    // 3. Cross-file calls inside class methods
     for (const cls of a.classes) {
       for (const method of cls.methods) {
         for (const call of method.calls) {
           if (call.kind === "cross-file" && call.target) {
             const prox = getMethodProximity(method.name);
-            contexts.push({ callName: call.name, target: call.target, proximity: prox, reason: `${cls.name}.${method.name}` });
+            addLink(a.filePath, call.target, call.name, prox, `${cls.name}.${method.name}`);
           }
         }
       }
     }
 
-    // 4. Calls inside routes (API handler = user-triggered → loose)
-    for (const route of a.routes) {
-      for (const call of route.calls) {
+    // 4. Cross-file calls inside dataSources (lifecycle hooks, watchers)
+    for (const ds of a.dataSources) {
+      for (const call of ds.calls) {
         if (call.kind === "cross-file" && call.target) {
-          contexts.push({ callName: call.name, target: call.target, proximity: 3, reason: `route ${route.httpMethod ?? "USE"} ${route.path}` });
+          const prox = getHookProximity(ds.name);
+          addLink(a.filePath, call.target, call.name, prox, `${ds.name} callback`);
         }
       }
     }
 
-    // 5. Sub-components (rendered on mount → tight)
+    // 5. Route handler calls
+    for (const route of a.routes) {
+      for (const call of route.calls) {
+        if (call.kind === "cross-file" && call.target) {
+          addLink(a.filePath, call.target, call.name, 3, `route ${route.httpMethod ?? "USE"} ${route.path}`);
+        }
+      }
+    }
+
+    // 6. Sub-components (rendered on mount → tight)
     for (const comp of a.subComponents) {
       if (comp.importSource) {
-        contexts.push({ callName: comp.name, target: comp.importSource, proximity: 1, reason: `renders <${comp.name}>` });
+        addLink(a.filePath, comp.importSource, comp.name, 1, `renders <${comp.name}>`);
       }
-    }
-
-    if (contexts.length > 0) {
-      fileCalls.set(a.filePath, contexts);
     }
   }
 
-  // Resolve import source strings to actual file paths
-  const filePathMap = buildFilePathMap(analyses);
-
-  // Aggregate into LinkInfo[]
+  // Convert to LinkInfo[]
   const links: LinkInfo[] = [];
-  const linkMap = new Map<string, { proximity: LinkProximity; reasons: Set<string>; calls: Set<string> }>();
-
-  for (const [sourceFile, contexts] of fileCalls) {
-    for (const ctx of contexts) {
-      const targetFile = resolveTarget(ctx.target, filePathMap);
-      if (!targetFile) continue;
-
-      const key = `${sourceFile}→${targetFile}`;
-      const existing = linkMap.get(key);
-      if (existing) {
-        if (ctx.proximity < existing.proximity) existing.proximity = ctx.proximity;
-        existing.reasons.add(ctx.reason);
-        existing.calls.add(ctx.callName);
-      } else {
-        linkMap.set(key, {
-          proximity: ctx.proximity,
-          reasons: new Set([ctx.reason]),
-          calls: new Set([ctx.callName]),
-        });
-      }
-    }
-  }
-
   for (const [key, data] of linkMap) {
-    const [source, target] = key.split("→");
+    const [source, target] = key.split("\u2192");
     links.push({
       source: source!,
       target: target!,
@@ -138,13 +135,6 @@ export function buildLinkGraph(analyses: FileAnalysis[]): LinkInfo[] {
   return links;
 }
 
-interface CallContext {
-  callName: string;
-  target: string;
-  proximity: LinkProximity;
-  reason: string;
-}
-
 /** Determine proximity based on the lifecycle hook name */
 function getHookProximity(hookName: string): LinkProximity {
   if (LIFECYCLE_HOOKS.has(hookName)) return 1;
@@ -154,18 +144,11 @@ function getHookProximity(hookName: string): LinkProximity {
 
 /** Determine proximity based on function name and whether it's an event handler */
 function getFunctionProximity(fnName: string, analysis: FileAnalysis): LinkProximity {
-  // Check if this function is referenced by an interactive element
   const isEventHandler = analysis.interactiveElements.some(el => el.handler === fnName);
   if (isEventHandler) return 3;
-
-  // Class lifecycle methods
   if (LIFECYCLE_METHODS.has(fnName)) return 1;
   if (UPDATE_METHODS.has(fnName)) return 2;
-
-  // Naming convention: handleXxx, onXxx → event handler → loose
   if (/^handle[A-Z]/.test(fnName) || /^on[A-Z]/.test(fnName)) return 3;
-
-  // Default: loose (can't determine context)
   return 3;
 }
 
@@ -177,31 +160,132 @@ function getMethodProximity(methodName: string): LinkProximity {
   return 3;
 }
 
+/**
+ * Determine import proximity based on how the imported symbols are used.
+ */
+function getImportProximity(specifiers: string[], analysis: FileAnalysis): LinkProximity {
+  let best: LinkProximity = 3;
+
+  // Sub-component rendered on mount = tight
+  for (const spec of specifiers) {
+    if (analysis.subComponents.some(c => c.name === spec)) return 1;
+  }
+
+  // Check if specifier is called inside a lifecycle hook
+  for (const ds of analysis.dataSources) {
+    const hookProx = getHookProximity(ds.name);
+    for (const call of ds.calls) {
+      if (specifiers.includes(call.name) && hookProx < best) {
+        best = hookProx;
+      }
+    }
+  }
+
+  return best;
+}
+
 /** Build a map for resolving import sources to file paths */
 function buildFilePathMap(analyses: FileAnalysis[]): Map<string, string> {
   const map = new Map<string, string>();
   for (const a of analyses) {
-    // Store with and without extension for flexible matching
     map.set(a.filePath, a.filePath);
     const base = a.filePath.replace(/\.(ts|tsx|js|jsx|mjs|cjs|vue|py|java|kt|cs|pas)$/, "");
     map.set(base, a.filePath);
-    // Also store without /index suffix
     const noIndex = base.replace(/\/index$/, "");
     if (noIndex !== base) map.set(noIndex, a.filePath);
   }
   return map;
 }
 
-/** Resolve an import source (e.g. "./db/users") to an actual file path */
-function resolveTarget(importSource: string, filePathMap: Map<string, string>): string | null {
-  if (!importSource.startsWith(".")) return null; // skip external packages
-
-  // Try direct match
-  const cleaned = importSource.replace(/^\.\//, "");
-  for (const [key, filePath] of filePathMap) {
-    if (key === cleaned || key.endsWith("/" + cleaned) || key.endsWith(cleaned)) {
-      return filePath;
-    }
+/**
+ * Resolve an import source to an actual file path.
+ * Handles:
+ *  - Relative: "../hooks/useUsers" → resolved against importer's dir
+ *  - Bare unit: "UserModel" → matched against file basenames (Delphi, Pascal)
+ *  - Dotted module: "models.user", "services.user_service" → converted to path (Python)
+ *  - Package: "com.example.api.service.UserService" → last segment matched (Java/Kotlin)
+ */
+function resolveTarget(importSource: string, sourceFile: string, filePathMap: Map<string, string>): string | null {
+  // 1. Relative imports (JS/TS/Python relative)
+  if (importSource.startsWith(".")) {
+    const sourceDir = posix.dirname(sourceFile);
+    const resolved = posix.normalize(posix.join(sourceDir, importSource));
+    const match = tryMatch(resolved, filePathMap);
+    if (match) return match;
+    return null;
   }
+
+  // 2. Skip well-known external packages/standard libraries
+  if (isExternalPackage(importSource)) return null;
+
+  // 3. Bare unit name: "UserModel" → try matching against file basenames
+  const bareMatch = tryMatch(importSource, filePathMap);
+  if (bareMatch) return bareMatch;
+
+  // 4. Dotted module path: "models.user" → "models/user", "services.user_service" → "services/user_service"
+  if (importSource.includes(".")) {
+    const asPath = importSource.replace(/\./g, "/");
+    const dotMatch = tryMatch(asPath, filePathMap);
+    if (dotMatch) return dotMatch;
+
+    // Try last segment only: "com.example.api.service.UserService" → "UserService"
+    const lastSegment = importSource.split(".").pop()!;
+    const segMatch = tryMatch(lastSegment, filePathMap);
+    if (segMatch) return segMatch;
+  }
+
   return null;
+}
+
+/** Try to match a candidate path against the file path map (with extension/index fallbacks) */
+function tryMatch(candidate: string, filePathMap: Map<string, string>): string | null {
+  // Direct match
+  const direct = filePathMap.get(candidate);
+  if (direct) return direct;
+
+  // With common extensions
+  for (const ext of [".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".java", ".kt", ".cs", ".pas"]) {
+    const withExt = filePathMap.get(candidate + ext);
+    if (withExt) return withExt;
+  }
+
+  // /index variants
+  const withIndex = filePathMap.get(candidate + "/index");
+  if (withIndex) return withIndex;
+
+  // Basename match: "UserModel" → find any file whose basename matches
+  for (const [key, filePath] of filePathMap) {
+    const keyBase = key.split("/").pop()!;
+    if (keyBase === candidate) return filePath;
+  }
+
+  return null;
+}
+
+/** Known external package prefixes to skip — not project files */
+const EXTERNAL_PREFIXES = [
+  // Delphi/Pascal standard libraries
+  "System.", "Vcl.", "Fmx.", "Data.", "Datasnap.", "EMS.", "Winapi.", "Posix.",
+  "IdHTTP", "IdTCP", "IdSSL",
+  // Java standard libraries
+  "java.", "javax.", "jakarta.",
+  "org.springframework.", "org.apache.", "org.hibernate.", "org.junit.",
+  "io.ktor.", "io.netty.",
+  "com.google.", "com.fasterxml.", "com.amazonaws.",
+  // Python standard libraries
+  "os", "sys", "json", "re", "math", "datetime", "typing", "enum",
+  "collections", "itertools", "functools", "pathlib", "hashlib",
+  "asyncio", "logging", "unittest", "abc",
+  // Python common packages
+  "fastapi", "flask", "django", "pydantic", "sqlalchemy",
+  "requests", "httpx", "aiohttp", "pytest",
+  "numpy", "pandas", "scipy",
+  // C# standard
+  "System", "Microsoft.", "Newtonsoft.",
+];
+
+function isExternalPackage(source: string): boolean {
+  return EXTERNAL_PREFIXES.some(prefix =>
+    source === prefix || source.startsWith(prefix + ".") || source.startsWith(prefix + "/")
+  );
 }

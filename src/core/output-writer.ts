@@ -44,3 +44,11 @@ export async function writeProjectSummary(
   await writeFile(outPath, json, "utf-8");
   return outPath;
 }
+
+/** Write an HTML report. Creates: <outputDir>/report.html */
+export async function writeHtmlReport(html: string, options: OutputOptions): Promise<string> {
+  const htmlPath = join(resolve(options.outputDir), "report.html");
+  await mkdir(dirname(htmlPath), { recursive: true });
+  await writeFile(htmlPath, html, "utf-8");
+  return htmlPath;
+}
