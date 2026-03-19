@@ -4,8 +4,34 @@ import type {
   ExportInfo,
   PropertyInfo,
   ClassInfo,
+  InteractiveElementInfo,
 } from "../types/analysis.js";
 import { createEmptyAnalysis } from "../types/analysis.js";
+
+/** Map Delphi VCL/FMX component types to interactive element categories */
+const DFM_ELEMENT_MAP: Record<string, InteractiveElementInfo["element"]> = {
+  tbutton: "button",
+  tbitbtn: "button",
+  tspeedbutton: "button",
+  tedit: "input",
+  tlabelededit: "input",
+  tmaskedit: "input",
+  tnumberbox: "input",
+  tspinedit: "input",
+  tcombobox: "select",
+  tcomboboxex: "select",
+  tcolorbox: "select",
+  tmemo: "textarea",
+  trichedit: "textarea",
+};
+
+function resolveDfmElementType(
+  componentType: string,
+  isRoot: boolean,
+): InteractiveElementInfo["element"] {
+  if (isRoot) return "form";
+  return DFM_ELEMENT_MAP[componentType.toLowerCase()] ?? "custom";
+}
 
 /**
  * Parse a Delphi .dfm (form definition) file.
@@ -161,6 +187,12 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
         value: ev.handler,
         line: ev.line,
       });
+      analysis.interactiveElements.push({
+        element: resolveDfmElementType(obj.type, false),
+        event: ev.event,
+        handler: ev.handler,
+        line: ev.line,
+      });
     }
 
     // Data linkages → dataSources
@@ -182,6 +214,12 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
         kind: "assignment",
         target: `${rootObject.name}.${ev.event}`,
         value: ev.handler,
+        line: ev.line,
+      });
+      analysis.interactiveElements.push({
+        element: resolveDfmElementType(rootObject.type, true),
+        event: ev.event,
+        handler: ev.handler,
         line: ev.line,
       });
     }
