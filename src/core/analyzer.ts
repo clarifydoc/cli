@@ -45,6 +45,7 @@ export interface AnalyzeResult {
   interactiveElementCount: number;
   routeCount: number;
   linkCount: number;
+  screenCount: number;
 }
 
 /**
@@ -77,6 +78,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       interactiveElementCount: 0,
       routeCount: 0,
       linkCount: 0,
+      screenCount: 0,
     };
   }
 
@@ -231,6 +233,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const allInteractiveElements = allAnalyses.flatMap((a) =>
     a.interactiveElements.map((el) => ({ ...el, filePath: a.filePath })),
   );
+  const allScreens = allAnalyses.flatMap((a) => a.screens ?? []);
 
   const summary: ProjectAnalysis = {
     projectRoot,
@@ -240,6 +243,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     linkGraph,
     interactiveElements: allInteractiveElements,
     routeMap: allRoutes,
+    screens: allScreens,
     analyzedAt: new Date().toISOString(),
   };
 
@@ -252,6 +256,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     interactiveElementCount: allInteractiveElements.length,
     routeCount: allRoutes.length,
     linkCount: linkGraph.length,
+    screenCount: allScreens.length,
   };
 }
 
