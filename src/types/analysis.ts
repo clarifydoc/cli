@@ -17,6 +17,7 @@ export interface FileAnalysis {
   dataMutations: DataMutationInfo[];
   subComponents: SubComponentInfo[];
   interactiveElements: InteractiveElementInfo[];
+  screens: ScreenInfo[];
 }
 
 export interface ImportInfo {
@@ -134,6 +135,39 @@ export interface InteractiveElementInfo {
   line: number;
 }
 
+// ─── Screen / Form types ─────────────────────────────────────────────────
+
+export type ScreenComponentCategory =
+  | "container"
+  | "input"
+  | "display"
+  | "data"
+  | "action"
+  | "navigation";
+
+export interface ScreenComponentInfo {
+  name: string;
+  componentType: string;
+  category: ScreenComponentCategory;
+  caption: string | null;
+  position: { left: number; top: number; width: number; height: number } | null;
+  align: string | null;
+  visible: boolean;
+  children: ScreenComponentInfo[];
+  events: string[];
+  dataBindings: string[];
+  line: number;
+}
+
+export interface ScreenInfo {
+  name: string;
+  formType: string;
+  caption: string | null;
+  dimensions: { width: number; height: number } | null;
+  components: ScreenComponentInfo[];
+  filePath: string;
+}
+
 export type LinkProximity = 1 | 2 | 3;
 
 export interface LinkInfo {
@@ -153,6 +187,7 @@ export interface ProjectAnalysis {
   linkGraph: LinkInfo[];
   interactiveElements: (InteractiveElementInfo & { filePath: string })[];
   routeMap: RouteInfo[];
+  screens: ScreenInfo[];
   analyzedAt: string;
 }
 
@@ -182,5 +217,6 @@ export function createEmptyAnalysis(
     dataMutations: [],
     subComponents: [],
     interactiveElements: [],
+    screens: [],
   };
 }

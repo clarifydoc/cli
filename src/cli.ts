@@ -59,6 +59,7 @@ program
         console.log("Done. Analysis complete.");
         console.log(`  Files:       ${String(result.fileCount).padStart(4)}`);
         console.log(`  Elements:    ${String(result.interactiveElementCount).padStart(4)} interactive`);
+        console.log(`  Screens:     ${String(result.screenCount).padStart(4)}`);
         console.log(`  Routes:      ${String(result.routeCount).padStart(4)}`);
         console.log(`  Links:       ${String(result.linkCount).padStart(4)}`);
         console.log(`  Output: ${outputDir}`);
