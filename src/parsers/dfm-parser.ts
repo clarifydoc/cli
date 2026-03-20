@@ -381,5 +381,7 @@ function buildScreenInfo(
     dimensions: !isNaN(cw) && !isNaN(ch) ? { width: cw, height: ch } : null,
     components: topLevelChildren,
     filePath,
+    routePath: null,
+    navigatesTo: [],
   };
 }

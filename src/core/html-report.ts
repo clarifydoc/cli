@@ -431,6 +431,72 @@ function findHandler(compName, eventName, filePath) {
   return match ? match.handler : null;
 }
 
+function renderNavFlow(screen, screenIdx) {
+  if (!screen.navigatesTo || screen.navigatesTo.length === 0) return '';
+
+  // Build a simple flow diagram: this screen → target screens
+  const targets = screen.navigatesTo;
+  const boxW = 140, boxH = 36, gap = 30;
+  const totalH = Math.max(targets.length * (boxH + gap), boxH + gap);
+  const svgW = 380, svgH = totalH + 40;
+  const centerY = svgH / 2;
+
+  let svg = '<svg class="wireframe" viewBox="0 0 ' + svgW + ' ' + svgH + '" width="' + svgW + '" height="' + svgH + '">';
+
+  // This screen box (left side)
+  const srcX = 10, srcY = centerY - boxH / 2;
+  svg += '<rect x="' + srcX + '" y="' + srcY + '" width="' + boxW + '" height="' + boxH +
+    '" fill="#1f6feb22" stroke="#58a6ff" stroke-width="1.5" rx="6"/>';
+  const srcLabel = screen.caption || screen.name;
+  svg += '<text x="' + (srcX + boxW/2) + '" y="' + (srcY + boxH/2 + 4) +
+    '" fill="#58a6ff" font-size="11" font-family="sans-serif" text-anchor="middle" font-weight="600">' + esc(srcLabel) + '</text>';
+  if (screen.routePath) {
+    svg += '<text x="' + (srcX + boxW/2) + '" y="' + (srcY - 6) +
+      '" fill="#484f58" font-size="9" font-family="monospace" text-anchor="middle">' + esc(screen.routePath) + '</text>';
+  }
+
+  // Target boxes (right side)
+  const tgtX = svgW - boxW - 10;
+  const startY = (svgH - targets.length * boxH - (targets.length - 1) * gap) / 2;
+
+  targets.forEach((target, i) => {
+    const tgtY = startY + i * (boxH + gap);
+
+    // Find matching screen for this target
+    const targetScreen = DATA.screens.find(s => s.routePath === target);
+    const tgtLabel = targetScreen ? (targetScreen.caption || targetScreen.name) : target;
+    const tgtIdx = targetScreen ? DATA.screens.indexOf(targetScreen) : -1;
+
+    // Arrow line
+    const arrowStartX = srcX + boxW;
+    const arrowStartY = srcY + boxH / 2;
+    const arrowEndX = tgtX;
+    const arrowEndY = tgtY + boxH / 2;
+    const midX = (arrowStartX + arrowEndX) / 2;
+
+    svg += '<path d="M' + arrowStartX + ',' + arrowStartY + ' C' + midX + ',' + arrowStartY + ' ' + midX + ',' + arrowEndY + ' ' + arrowEndX + ',' + arrowEndY + '" fill="none" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrow)"/>';
+
+    // Route label on arrow
+    svg += '<text x="' + midX + '" y="' + ((arrowStartY + arrowEndY) / 2 - 6) +
+      '" fill="#484f58" font-size="8" font-family="monospace" text-anchor="middle">' + esc(target) + '</text>';
+
+    // Target box
+    const boxFill = tgtIdx >= 0 ? '#23863622' : '#21262d';
+    const boxStroke = tgtIdx >= 0 ? '#3fb950' : '#484f58';
+    const textFill = tgtIdx >= 0 ? '#3fb950' : '#8b949e';
+    svg += '<rect x="' + tgtX + '" y="' + tgtY + '" width="' + boxW + '" height="' + boxH +
+      '" fill="' + boxFill + '" stroke="' + boxStroke + '" stroke-width="1" rx="6" class="nav-target" data-target-screen="' + tgtIdx + '" style="cursor:' + (tgtIdx >= 0 ? 'pointer' : 'default') + '"/>';
+    svg += '<text x="' + (tgtX + boxW/2) + '" y="' + (tgtY + boxH/2 + 4) +
+      '" fill="' + textFill + '" font-size="10" font-family="sans-serif" text-anchor="middle" style="pointer-events:none">' + esc(tgtLabel) + '</text>';
+  });
+
+  // Arrow marker
+  svg += '<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#30363d"/></marker></defs>';
+
+  svg += '</svg>';
+  return svg;
+}
+
 function renderWireframe(screen, screenIdx) {
   if (!screen.dimensions) return '';
   const w = screen.dimensions.width;
@@ -574,23 +640,34 @@ function renderScreens() {
   grid.innerHTML = DATA.screens.map((screen, idx) => {
     const allComps = flattenComponents(screen.components);
     const interactiveCount = allComps.filter(c => c.events && c.events.length > 0).length;
+    const isEntry = screen.routePath === '/' || screen.routePath === '/login' || screen.routePath === '/LoginPage';
+    const hasRoute = !!screen.routePath;
 
-    let html = '<div class="screen-card" data-screen-card="' + idx + '">';
+    let html = '<div class="screen-card" data-screen-card="' + idx + '" id="screen-' + idx + '">';
     html += '<div class="screen-header">';
+    if (isEntry) html += '<span class="pill" style="background:#d2992233;color:#d29922;border:1px solid #d2992244;font-size:11px;margin-right:4px">\\u2B50 Entry</span>';
     html += '<span class="screen-title">' + esc(screen.caption || screen.name) + '</span>';
     html += '<span class="screen-type">' + esc(screen.formType) + '</span>';
-    if (screen.caption) html += '<span style="color:#484f58;font-size:12px">' + esc(screen.name) + '</span>';
+    if (screen.caption && screen.caption !== screen.name) html += '<span style="color:#484f58;font-size:12px">' + esc(screen.name) + '</span>';
+    if (hasRoute) html += '<span class="pill" style="background:#1f6feb22;color:#58a6ff;border:1px solid #1f6feb44;font-size:11px;margin-left:4px">' + esc(screen.routePath) + '</span>';
     html += '<div style="flex:1"></div>';
     if (screen.dimensions) html += '<span class="screen-dims">' + screen.dimensions.width + ' \\u00D7 ' + screen.dimensions.height + '</span>';
     html += '<span style="font-size:11px;color:#8b949e;margin-left:8px">' + allComps.length + ' components, ' + interactiveCount + ' interactive</span>';
+    if (screen.navigatesTo && screen.navigatesTo.length > 0) {
+      html += '<span style="font-size:11px;color:#3fb950;margin-left:8px">\\u2192 ' + screen.navigatesTo.length + ' screens</span>';
+    }
     html += '</div>';
 
     html += '<div class="screen-body">';
     html += '<div class="screen-tree-pane">' + renderComponentTree(screen.components, 0, idx) + '</div>';
 
+    // Use wireframe for Delphi (has dimensions), navigation flow for web
     const wireframe = renderWireframe(screen, idx);
+    const navFlow = renderNavFlow(screen, idx);
     if (wireframe) {
       html += '<div class="screen-wireframe-pane">' + wireframe + '</div>';
+    } else if (navFlow) {
+      html += '<div class="screen-wireframe-pane">' + navFlow + '</div>';
     }
 
     html += '</div>';
@@ -625,6 +702,17 @@ function wireUpScreenInteractions() {
       const compName = node.dataset.comp;
       const screenIdx = node.dataset.screen;
       selectComponent(compName, screenIdx, 'tree');
+    });
+  });
+
+  // Click nav flow target → scroll to that screen
+  document.querySelectorAll('.nav-target').forEach(el => {
+    el.addEventListener('click', () => {
+      const targetIdx = el.dataset.targetScreen;
+      if (targetIdx && targetIdx !== '-1') {
+        const targetCard = document.getElementById('screen-' + targetIdx);
+        if (targetCard) targetCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
     });
   });
 

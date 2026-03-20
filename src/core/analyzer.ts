@@ -25,6 +25,9 @@ import {
   createEmptyAnalysis,
   type FileAnalysis,
   type ProjectAnalysis,
+  type ScreenInfo,
+  type ScreenComponentInfo,
+  type ScreenComponentCategory,
 } from "../types/analysis.js";
 
 export interface AnalyzeOptions {
@@ -101,6 +104,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Step 3: Analyze each file
   const outputOpts: OutputOptions = { outputDir, pretty: options.pretty };
   const allAnalyses: FileAnalysis[] = [];
+  const rawSources = new Map<string, string>(); // filePath → raw source for screen building
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i]!;
@@ -210,6 +214,11 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       // Detect React directives: 'use client' / 'use server'
       detectDirectives(sourceText, analysis);
 
+      // Store raw source for page files (needed to build screens later)
+      if (analysis.routes.some((r) => r.kind === "frontend")) {
+        rawSources.set(file.relativePath, rawSource);
+      }
+
       allAnalyses.push(analysis);
       await writeFileAnalysis(analysis, outputOpts);
     } catch (err) {
@@ -233,7 +242,10 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const allInteractiveElements = allAnalyses.flatMap((a) =>
     a.interactiveElements.map((el) => ({ ...el, filePath: a.filePath })),
   );
-  const allScreens = allAnalyses.flatMap((a) => a.screens ?? []);
+  // Build screens: DFM screens + web screens from routes
+  const dfmScreens = allAnalyses.flatMap((a) => a.screens ?? []);
+  const webScreens = buildScreensFromRoutes(allAnalyses, rawSources);
+  const allScreens = [...dfmScreens, ...webScreens];
 
   const summary: ProjectAnalysis = {
     projectRoot,
@@ -258,6 +270,159 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     linkCount: linkGraph.length,
     screenCount: allScreens.length,
   };
+}
+
+// ─── Build screens from frontend routes ──────────────────────────────────
+
+const WEB_ELEMENT_CATEGORY: Record<string, ScreenComponentCategory> = {
+  button: "action",
+  input: "input",
+  form: "container",
+  link: "navigation",
+  select: "input",
+  textarea: "input",
+  custom: "custom",
+};
+
+/** Extract page title from JSX/Vue source via <h1> tag */
+function extractPageTitle(source: string): string | null {
+  // JSX: <h1>Login</h1> or <h1>Users</h1>
+  const jsxMatch = source.match(/<h1[^>]*>([^<{]+)<\/h1>/);
+  if (jsxMatch) return jsxMatch[1].trim();
+  // Vue: <h1>{{ title }}</h1> — shows the binding name
+  const vueMatch = source.match(/<h1[^>]*>\{\{\s*(\w+)\s*\}\}<\/h1>/);
+  if (vueMatch) return `{{ ${vueMatch[1]} }}`;
+  return null;
+}
+
+/** Extract navigation targets from source (navigate(), router.push(), Link, href) */
+function extractNavigationTargets(source: string): string[] {
+  const targets = new Set<string>();
+  const patterns = [
+    /navigate\(\s*['"`]([^'"`\s]+)['"`]/g,
+    /router\.push\(\s*['"`]([^'"`\s]+)['"`]/g,
+    /<Link\s+[^>]*to\s*=\s*['"`]([^'"`]+)['"`]/g,
+  ];
+  for (const re of patterns) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(source)) !== null) {
+      const path = m[1];
+      if (path && path.startsWith("/")) targets.add(path);
+    }
+  }
+  return [...targets];
+}
+
+/**
+ * Build ScreenInfo[] from files that define frontend routes.
+ * Assembles subComponents + interactiveElements into a screen tree.
+ */
+function buildScreensFromRoutes(
+  allAnalyses: FileAnalysis[],
+  rawSources: Map<string, string>,
+): ScreenInfo[] {
+  const screens: ScreenInfo[] = [];
+
+  // Find files with frontend routes
+  for (const analysis of allAnalyses) {
+    const frontendRoutes = analysis.routes.filter((r) => r.kind === "frontend");
+    if (frontendRoutes.length === 0) continue;
+
+    const routePath = frontendRoutes[0].path;
+    const rawSource = rawSources.get(analysis.filePath) ?? "";
+
+    // Determine screen name: prefer named function/class, then filename
+    const namedExport = analysis.exports.find((e) => e.name !== "default" && (e.kind === "function" || e.kind === "class"));
+    const defaultFn = analysis.functions.find((f) => f.isExported && f.name !== "default");
+    const fileBaseName = analysis.filePath.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "");
+    const screenName = namedExport?.name ?? defaultFn?.name ?? fileBaseName;
+
+    // Determine form type
+    const isVue = analysis.filePath.endsWith(".vue");
+    const formType = isVue ? "VuePage" : "ReactPage";
+
+    // Extract caption from <h1>
+    const caption = extractPageTitle(rawSource);
+
+    // Build component list
+    const components: ScreenComponentInfo[] = [];
+
+    // Track which interactiveElements belong to subComponents
+    const usedInteractiveIndices = new Set<number>();
+
+    // Add sub-components (UserTable, UserForm, StatsPanel, etc.)
+    for (const sub of analysis.subComponents) {
+      // Find interactive elements that match this sub-component
+      const compEvents: string[] = [];
+      analysis.interactiveElements.forEach((el, idx) => {
+        if (el.element === "custom") {
+          // Check if the interactive element's props overlap with this subComponent
+          // Custom elements at similar line range are likely the same component
+          const propMatch = sub.props.some((p) =>
+            el.event.toLowerCase().includes(p.toLowerCase()) ||
+            p.toLowerCase().includes(el.event.replace(/^@|^on/, "").toLowerCase()),
+          );
+          if (propMatch || (el.handler && el.handler.toLowerCase().includes(sub.name.toLowerCase()))) {
+            compEvents.push(el.event + (el.handler ? ` → ${el.handler}` : ""));
+            usedInteractiveIndices.add(idx);
+          }
+        }
+      });
+
+      components.push({
+        name: sub.name,
+        componentType: sub.importSource ?? sub.name,
+        category: "custom",
+        caption: null,
+        position: null,
+        align: null,
+        visible: true,
+        children: [],
+        events: compEvents,
+        dataBindings: sub.props.filter((p) => !p.startsWith("on") && !p.startsWith("@")),
+        line: sub.line,
+      });
+    }
+
+    // Add HTML interactive elements (buttons, inputs, forms, links)
+    const elementCounts: Record<string, number> = {};
+    analysis.interactiveElements.forEach((el, idx) => {
+      if (usedInteractiveIndices.has(idx)) return;
+
+      const count = (elementCounts[el.element] = (elementCounts[el.element] ?? 0) + 1);
+      const name = el.handler ?? `${el.element}-${count}`;
+
+      components.push({
+        name,
+        componentType: el.element,
+        category: WEB_ELEMENT_CATEGORY[el.element] ?? "display",
+        caption: null,
+        position: null,
+        align: null,
+        visible: true,
+        children: [],
+        events: [el.event + (el.handler ? ` → ${el.handler}` : "")],
+        dataBindings: [],
+        line: el.line,
+      });
+    });
+
+    // Extract navigation targets
+    const navigatesTo = extractNavigationTargets(rawSource);
+
+    screens.push({
+      name: screenName,
+      formType,
+      caption,
+      dimensions: null,
+      components,
+      filePath: analysis.filePath,
+      routePath,
+      navigatesTo,
+    });
+  }
+
+  return screens;
 }
 
 /** Build a graph of file -> files it imports */

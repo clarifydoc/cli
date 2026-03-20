@@ -166,6 +166,8 @@ export interface ScreenInfo {
   dimensions: { width: number; height: number } | null;
   components: ScreenComponentInfo[];
   filePath: string;
+  routePath: string | null;
+  navigatesTo: string[];
 }
 
 export type LinkProximity = 1 | 2 | 3;
