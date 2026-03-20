@@ -143,7 +143,8 @@ export type ScreenComponentCategory =
   | "display"
   | "data"
   | "action"
-  | "navigation";
+  | "navigation"
+  | "custom";
 
 export interface ScreenComponentInfo {
   name: string;
