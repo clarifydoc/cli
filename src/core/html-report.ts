@@ -169,20 +169,34 @@ a{color:#58a6ff;text-decoration:none}
 .empty{color:#484f58;font-style:italic;padding:40px;text-align:center}
 
 /* ─── Screens ──────────────────────────────────────────────────────────── */
-.screen-card{background:#161b22;border:1px solid #30363d;border-radius:8px;margin-bottom:16px;overflow:hidden}
+.screen-card{background:#161b22;border:1px solid #30363d;border-radius:8px;margin-bottom:20px;overflow:hidden}
 .screen-header{padding:12px 16px;background:#1c2128;border-bottom:1px solid #30363d;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.screen-title{font-size:15px;font-weight:600;color:#f0f6fc}
+.screen-title{font-size:16px;font-weight:600;color:#f0f6fc}
 .screen-type{font-size:12px;color:#8b949e;font-family:monospace}
-.screen-caption{font-size:13px;color:#d2a8ff;font-style:italic}
+.screen-caption{font-size:13px;color:#d2a8ff}
 .screen-dims{font-size:11px;color:#484f58;margin-left:auto}
 
 .screen-body{display:flex;gap:0;min-height:200px}
-.screen-tree-pane{flex:1;padding:12px 0;overflow-x:auto;min-width:0}
-.screen-wireframe-pane{width:380px;flex-shrink:0;border-left:1px solid #30363d;padding:12px;display:flex;align-items:flex-start;justify-content:center;background:#0d1117}
+.screen-tree-pane{flex:1;padding:8px 0;overflow-x:auto;min-width:0}
+.screen-wireframe-pane{width:420px;flex-shrink:0;border-left:1px solid #30363d;padding:16px;display:flex;align-items:flex-start;justify-content:center;background:#0d1117}
+
+/* Detail panel shown when clicking a component */
+.screen-detail{border-top:1px solid #30363d;padding:12px 16px;background:#0d1117;display:none}
+.screen-detail.active{display:block}
+.detail-title{font-size:14px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
+.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+.detail-item{font-size:12px}
+.detail-label{color:#8b949e;font-size:10px;text-transform:uppercase;letter-spacing:0.5px}
+.detail-value{color:#e6edf3;font-family:monospace;font-size:12px}
+.detail-handler{display:flex;align-items:center;gap:6px;padding:4px 8px;background:#161b22;border:1px solid #30363d;border-radius:4px;margin-top:4px;font-size:12px}
+.detail-handler .ev{color:#d29922;font-family:monospace}
+.detail-handler .fn{color:#79c0ff;font-family:monospace}
+.detail-handler .arrow{color:#484f58}
 
 /* Tree nodes */
-.tree-node{display:flex;align-items:center;gap:8px;padding:4px 14px;font-size:13px;cursor:default;border-left:2px solid transparent}
-.tree-node:hover{background:#1c212844;border-left-color:#30363d}
+.tree-node{display:flex;align-items:center;gap:8px;padding:5px 14px;font-size:13px;cursor:pointer;border-left:3px solid transparent;transition:background 0.1s,border-color 0.1s}
+.tree-node:hover{background:#1c212866}
+.tree-node.selected{background:#1f6feb22;border-left-color:#58a6ff}
 .tree-node.hidden{display:none}
 .tree-toggle{width:16px;text-align:center;cursor:pointer;color:#484f58;font-size:11px;flex-shrink:0;user-select:none}
 .tree-toggle:hover{color:#e6edf3}
@@ -200,16 +214,20 @@ a{color:#58a6ff;text-decoration:none}
 
 .comp-name{font-family:monospace;color:#e6edf3;font-weight:500}
 .comp-type{font-size:11px;color:#484f58;font-family:monospace}
-.comp-caption{font-size:12px;color:#d2a8ff;margin-left:4px}
+.comp-caption{font-size:12px;color:#d2a8ff;margin-left:2px}
 .comp-align{font-size:10px;color:#484f58;font-family:monospace}
 
 /* Pills */
-.pill{display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-family:monospace;margin-left:4px}
+.pill{display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-family:monospace;margin-left:3px}
 .event-pill{background:#d2992222;color:#d29922;border:1px solid #d2992244}
 .binding-pill{background:#a371f722;color:#a371f7;border:1px solid #a371f744}
+.handler-pill{background:#1f6feb22;color:#79c0ff;border:1px solid #1f6feb44}
 
 /* Wireframe SVG */
-.wireframe{width:100%;height:auto;max-height:400px}
+.wireframe{width:100%;height:auto;max-height:450px;cursor:pointer}
+.wf-component{cursor:pointer;transition:opacity 0.15s}
+.wf-component:hover{opacity:0.85}
+.wf-highlight{stroke-width:2 !important;filter:brightness(1.5)}
 </style>`;
 }
 
@@ -328,71 +346,175 @@ document.querySelectorAll('.nav button').forEach(btn => {
 
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
+// ─── Build handler lookup from interactiveElements ────────────────────
+// key: "filePath::componentName" → [{event, handler}]
+const handlersByComponent = {};
+DATA.interactiveElements.forEach(el => {
+  // handler name often starts with componentName (e.g. btnAddClick for btnAdd.OnClick)
+  const key = el.filePath + '::' + el.event + '::' + el.line;
+  handlersByComponent[key] = { event: el.event, handler: el.handler, element: el.element };
+});
+
 // ─── Screens ──────────────────────────────────────────────────────────
 const CAT_BADGE = {
-  container:  { cls: 'cat-container',  letter: 'C' },
-  input:      { cls: 'cat-input',      letter: 'I' },
-  display:    { cls: 'cat-display',    letter: 'D' },
-  data:       { cls: 'cat-data',       letter: 'A' },
-  action:     { cls: 'cat-action',     letter: 'B' },
-  navigation: { cls: 'cat-navigation', letter: 'N' },
+  container:  { cls: 'cat-container',  letter: 'C', label: 'Container' },
+  input:      { cls: 'cat-input',      letter: 'I', label: 'Input' },
+  display:    { cls: 'cat-display',    letter: 'D', label: 'Display' },
+  data:       { cls: 'cat-data',       letter: 'A', label: 'Data' },
+  action:     { cls: 'cat-action',     letter: 'B', label: 'Action' },
+  navigation: { cls: 'cat-navigation', letter: 'N', label: 'Navigation' },
 };
 const CAT_COLORS = {
   container: '#58a6ff', input: '#3fb950', display: '#8b949e',
   data: '#a371f7', action: '#d29922', navigation: '#56d364',
 };
 
-function renderComponentTree(components, depth) {
+// Flatten all components in a screen for lookup
+function flattenComponents(components, result) {
+  result = result || [];
+  components.forEach(c => {
+    result.push(c);
+    if (c.children) flattenComponents(c.children, result);
+  });
+  return result;
+}
+
+function renderComponentTree(components, depth, screenIdx) {
   if (!components || !components.length) return '';
   return components.map(c => {
     const cat = CAT_BADGE[c.category] || CAT_BADGE.display;
     const hasKids = c.children && c.children.length > 0;
-    const indent = depth * 20;
+    const indent = depth * 22;
+    const hasEvents = c.events && c.events.length > 0;
+    const hasBindings = c.dataBindings && c.dataBindings.length > 0;
 
-    let html = '<div class="tree-node" style="padding-left:' + (14 + indent) + 'px" data-cat="' + c.category + '" data-search="' + esc((c.name + ' ' + c.componentType + ' ' + (c.caption || '')).toLowerCase()) + '">';
+    let html = '<div class="tree-node" style="padding-left:' + (14 + indent) + 'px" '
+      + 'data-cat="' + c.category + '" '
+      + 'data-comp="' + esc(c.name) + '" '
+      + 'data-screen="' + screenIdx + '" '
+      + 'data-search="' + esc((c.name + ' ' + c.componentType + ' ' + (c.caption || '')).toLowerCase()) + '">';
     html += '<span class="tree-toggle">' + (hasKids ? '\\u25BC' : '\\u00B7') + '</span>';
     html += '<span class="cat-badge ' + cat.cls + '">' + cat.letter + '</span>';
     html += '<span class="comp-name">' + esc(c.name) + '</span>';
     html += '<span class="comp-type">' + esc(c.componentType) + '</span>';
-    if (c.caption) html += '<span class="comp-caption">"' + esc(c.caption) + '"</span>';
+    if (c.caption) html += '<span class="comp-caption">\\u201C' + esc(c.caption) + '\\u201D</span>';
     if (c.align) html += '<span class="comp-align">[' + esc(c.align) + ']</span>';
-    if (c.events && c.events.length) html += c.events.map(e => '<span class="pill event-pill">' + esc(e) + '</span>').join('');
-    if (c.dataBindings && c.dataBindings.length) html += c.dataBindings.map(d => '<span class="pill binding-pill">' + esc(d) + '</span>').join('');
+
+    // Show event handlers inline with function name
+    if (hasEvents) {
+      html += c.events.map(e => {
+        // Find matching handler from interactiveElements
+        const handlerInfo = findHandler(c.name, e, DATA.screens[screenIdx].filePath);
+        if (handlerInfo) {
+          return '<span class="pill handler-pill">' + esc(e) + ' \\u2192 ' + esc(handlerInfo) + '</span>';
+        }
+        return '<span class="pill event-pill">' + esc(e) + '</span>';
+      }).join('');
+    }
+    if (hasBindings) html += c.dataBindings.map(d => '<span class="pill binding-pill">' + esc(d) + '</span>').join('');
     if (!c.visible) html += '<span class="pill" style="background:#f8514922;color:#f85149;border:1px solid #f8514944">hidden</span>';
     html += '</div>';
 
     if (hasKids) {
-      html += '<div class="tree-children">' + renderComponentTree(c.children, depth + 1) + '</div>';
+      html += '<div class="tree-children">' + renderComponentTree(c.children, depth + 1, screenIdx) + '</div>';
     }
     return html;
   }).join('');
 }
 
-function renderWireframe(screen) {
+// Find the handler function name for a component event
+function findHandler(compName, eventName, filePath) {
+  const match = DATA.interactiveElements.find(el =>
+    el.filePath === filePath && el.event === eventName && el.handler &&
+    el.handler.toLowerCase().includes(compName.toLowerCase())
+  );
+  return match ? match.handler : null;
+}
+
+function renderWireframe(screen, screenIdx) {
   if (!screen.dimensions) return '';
   const w = screen.dimensions.width;
   const h = screen.dimensions.height;
-  const scale = Math.min(350 / w, 380 / h, 1);
+  const scale = Math.min(380 / w, 420 / h, 1);
+  const sw = Math.round(w * scale);
+  const sh = Math.round(h * scale);
 
-  let svg = '<svg class="wireframe" viewBox="0 0 ' + w + ' ' + h + '" width="' + Math.round(w * scale) + '" height="' + Math.round(h * scale) + '">';
+  let svg = '<svg class="wireframe" viewBox="0 0 ' + w + ' ' + h + '" width="' + sw + '" height="' + sh + '" data-screen="' + screenIdx + '">';
+
+  // Background = form
   svg += '<rect x="0" y="0" width="' + w + '" height="' + h + '" fill="#161b22" stroke="#30363d" stroke-width="2" rx="4"/>';
+
+  // Title bar
+  if (screen.caption) {
+    svg += '<rect x="0" y="0" width="' + w + '" height="24" fill="#1c2128" rx="4"/>';
+    svg += '<rect x="0" y="12" width="' + w + '" height="12" fill="#1c2128"/>';
+    svg += '<text x="8" y="16" fill="#8b949e" font-size="11" font-family="sans-serif">' + esc(screen.caption) + '</text>';
+  }
 
   function drawComponents(comps) {
     comps.forEach(c => {
-      if (c.position && c.visible !== false) {
-        const color = CAT_COLORS[c.category] || '#8b949e';
-        const p = c.position;
-        svg += '<rect x="' + p.left + '" y="' + p.top + '" width="' + p.width + '" height="' + p.height +
-          '" fill="' + color + '18" stroke="' + color + '88" stroke-width="1" rx="2"/>';
+      if (!c.position || c.visible === false) {
+        if (c.children) drawComponents(c.children);
+        return;
+      }
+      const color = CAT_COLORS[c.category] || '#8b949e';
+      const p = c.position;
+      const label = c.caption || c.name;
+      const cat = c.category;
 
-        // Label: show caption or name, clipped to component bounds
-        const label = c.caption || c.name;
-        const fontSize = Math.min(11, Math.max(8, p.height - 6));
-        if (p.width > 20 && p.height > 10) {
-          svg += '<text x="' + (p.left + 4) + '" y="' + (p.top + fontSize + 2) +
-            '" fill="' + color + '" font-size="' + fontSize + '" font-family="sans-serif" clip-path="url(#clip-' + c.name + ')">' + esc(label) + '</text>';
+      svg += '<g class="wf-component" data-comp="' + esc(c.name) + '" data-screen="' + screenIdx + '">';
+
+      // Draw based on category for more realistic look
+      if (cat === 'action') {
+        // Buttons: rounded rect with centered text
+        svg += '<rect x="' + p.left + '" y="' + p.top + '" width="' + p.width + '" height="' + p.height +
+          '" fill="' + color + '30" stroke="' + color + '" stroke-width="1" rx="4"/>';
+        if (p.width > 20) {
+          svg += '<text x="' + (p.left + p.width/2) + '" y="' + (p.top + p.height/2 + 4) +
+            '" fill="' + color + '" font-size="10" font-family="sans-serif" text-anchor="middle">' + esc(label) + '</text>';
+        }
+      } else if (cat === 'input') {
+        // Inputs: rect with left-aligned placeholder
+        svg += '<rect x="' + p.left + '" y="' + p.top + '" width="' + p.width + '" height="' + p.height +
+          '" fill="#0d1117" stroke="#30363d" stroke-width="1" rx="3"/>';
+        if (p.width > 30 && c.caption) {
+          svg += '<text x="' + (p.left + 6) + '" y="' + (p.top + p.height/2 + 3) +
+            '" fill="#484f58" font-size="9" font-family="sans-serif" font-style="italic">' + esc(c.caption) + '</text>';
+        }
+      } else if (cat === 'container') {
+        // Containers: subtle border
+        svg += '<rect x="' + p.left + '" y="' + p.top + '" width="' + p.width + '" height="' + p.height +
+          '" fill="' + color + '08" stroke="' + color + '44" stroke-width="1" stroke-dasharray="4,2" rx="2"/>';
+      } else if (cat === 'data') {
+        // Data grids: horizontal lines to suggest rows
+        svg += '<rect x="' + p.left + '" y="' + p.top + '" width="' + p.width + '" height="' + p.height +
+          '" fill="#0d1117" stroke="' + color + '66" stroke-width="1" rx="2"/>';
+        // Header row
+        svg += '<rect x="' + p.left + '" y="' + p.top + '" width="' + p.width + '" height="18" fill="' + color + '22" rx="2"/>';
+        svg += '<rect x="' + p.left + '" y="' + (p.top + 14) + '" width="' + p.width + '" height="4" fill="' + color + '22"/>';
+        // Grid lines
+        for (let row = 1; row < Math.min(Math.floor(p.height / 20), 15); row++) {
+          const y = p.top + 18 + row * 20;
+          if (y < p.top + p.height) {
+            svg += '<line x1="' + p.left + '" y1="' + y + '" x2="' + (p.left + p.width) + '" y2="' + y +
+              '" stroke="' + color + '22" stroke-width="1"/>';
+          }
+        }
+        if (p.width > 40) {
+          svg += '<text x="' + (p.left + 6) + '" y="' + (p.top + 13) +
+            '" fill="' + color + '" font-size="9" font-family="sans-serif" font-weight="bold">' + esc(c.name) + '</text>';
+        }
+      } else {
+        // Default: simple rect
+        svg += '<rect x="' + p.left + '" y="' + p.top + '" width="' + p.width + '" height="' + p.height +
+          '" fill="' + color + '12" stroke="' + color + '44" stroke-width="1" rx="2"/>';
+        if (p.width > 30 && p.height > 12) {
+          svg += '<text x="' + (p.left + 4) + '" y="' + (p.top + 11) +
+            '" fill="' + color + '88" font-size="8" font-family="sans-serif">' + esc(label) + '</text>';
         }
       }
+
+      svg += '</g>';
       if (c.children) drawComponents(c.children);
     });
   }
@@ -402,9 +524,46 @@ function renderWireframe(screen) {
   return svg;
 }
 
+function renderScreenDetail(c, screenIdx) {
+  const cat = CAT_BADGE[c.category] || CAT_BADGE.display;
+  let html = '<div class="detail-title"><span class="cat-badge ' + cat.cls + '" style="display:inline-flex;margin-right:6px">' + cat.letter + '</span>' +
+    esc(c.name) + ' <span style="color:#484f58;font-weight:400">' + esc(c.componentType) + '</span></div>';
+
+  html += '<div class="detail-grid">';
+  html += '<div class="detail-item"><div class="detail-label">Category</div><div class="detail-value">' + (cat.label || c.category) + '</div></div>';
+  if (c.caption) html += '<div class="detail-item"><div class="detail-label">Caption / Text</div><div class="detail-value">' + esc(c.caption) + '</div></div>';
+  if (c.position) html += '<div class="detail-item"><div class="detail-label">Position</div><div class="detail-value">' +
+    c.position.left + ', ' + c.position.top + ' \\u2014 ' + c.position.width + '\\u00D7' + c.position.height + '</div></div>';
+  if (c.align) html += '<div class="detail-item"><div class="detail-label">Align</div><div class="detail-value">' + esc(c.align) + '</div></div>';
+  html += '<div class="detail-item"><div class="detail-label">Visible</div><div class="detail-value">' + (c.visible ? 'Yes' : 'No') + '</div></div>';
+  html += '<div class="detail-item"><div class="detail-label">Line</div><div class="detail-value">:' + c.line + '</div></div>';
+  html += '</div>';
+
+  // Event handlers with function names
+  const filePath = DATA.screens[screenIdx].filePath;
+  if (c.events && c.events.length) {
+    html += '<div style="margin-top:8px"><div class="detail-label" style="margin-bottom:4px">Event Handlers</div>';
+    c.events.forEach(e => {
+      const handler = findHandler(c.name, e, filePath);
+      html += '<div class="detail-handler"><span class="ev">' + esc(e) + '</span><span class="arrow">\\u2192</span><span class="fn">' +
+        (handler ? esc(handler) + '()' : '<i style="color:#484f58">unknown</i>') + '</span></div>';
+    });
+    html += '</div>';
+  }
+
+  // Data bindings
+  if (c.dataBindings && c.dataBindings.length) {
+    html += '<div style="margin-top:8px"><div class="detail-label" style="margin-bottom:4px">Data Bindings</div>';
+    c.dataBindings.forEach(d => {
+      html += '<div class="detail-handler"><span class="ev" style="color:#a371f7">' + esc(d) + '</span></div>';
+    });
+    html += '</div>';
+  }
+
+  return html;
+}
+
 function renderScreens() {
-  const catF = document.getElementById('screen-filter-cat').value;
-  const searchF = document.getElementById('screen-filter-search').value.toLowerCase();
   const grid = document.getElementById('screen-grid');
 
   if (!DATA.screens || DATA.screens.length === 0) {
@@ -412,33 +571,46 @@ function renderScreens() {
     return;
   }
 
-  grid.innerHTML = DATA.screens.map(screen => {
-    let html = '<div class="screen-card">';
+  grid.innerHTML = DATA.screens.map((screen, idx) => {
+    const allComps = flattenComponents(screen.components);
+    const interactiveCount = allComps.filter(c => c.events && c.events.length > 0).length;
+
+    let html = '<div class="screen-card" data-screen-card="' + idx + '">';
     html += '<div class="screen-header">';
-    html += '<span class="screen-title">' + esc(screen.name) + '</span>';
+    html += '<span class="screen-title">' + esc(screen.caption || screen.name) + '</span>';
     html += '<span class="screen-type">' + esc(screen.formType) + '</span>';
-    if (screen.caption) html += '<span class="screen-caption">"' + esc(screen.caption) + '"</span>';
+    if (screen.caption) html += '<span style="color:#484f58;font-size:12px">' + esc(screen.name) + '</span>';
+    html += '<div style="flex:1"></div>';
     if (screen.dimensions) html += '<span class="screen-dims">' + screen.dimensions.width + ' \\u00D7 ' + screen.dimensions.height + '</span>';
+    html += '<span style="font-size:11px;color:#8b949e;margin-left:8px">' + allComps.length + ' components, ' + interactiveCount + ' interactive</span>';
     html += '</div>';
 
     html += '<div class="screen-body">';
-    html += '<div class="screen-tree-pane">' + renderComponentTree(screen.components, 0) + '</div>';
+    html += '<div class="screen-tree-pane">' + renderComponentTree(screen.components, 0, idx) + '</div>';
 
-    const wireframe = renderWireframe(screen);
+    const wireframe = renderWireframe(screen, idx);
     if (wireframe) {
       html += '<div class="screen-wireframe-pane">' + wireframe + '</div>';
     }
 
-    html += '</div></div>';
+    html += '</div>';
+
+    // Detail panel (shows when clicking a component)
+    html += '<div class="screen-detail" id="detail-' + idx + '"></div>';
+
+    html += '</div>';
     return html;
   }).join('');
 
-  // Apply filters
-  applyScreenFilters(catF, searchF);
+  // Wire up interactions
+  wireUpScreenInteractions();
+}
 
-  // Wire up tree toggles
+function wireUpScreenInteractions() {
+  // Tree toggles
   document.querySelectorAll('.tree-toggle').forEach(tog => {
-    tog.addEventListener('click', () => {
+    tog.addEventListener('click', (e) => {
+      e.stopPropagation();
       const childrenDiv = tog.closest('.tree-node').nextElementSibling;
       if (childrenDiv && childrenDiv.classList.contains('tree-children')) {
         childrenDiv.classList.toggle('collapsed');
@@ -446,9 +618,62 @@ function renderScreens() {
       }
     });
   });
+
+  // Click tree node → highlight in wireframe + show detail
+  document.querySelectorAll('.tree-node').forEach(node => {
+    node.addEventListener('click', () => {
+      const compName = node.dataset.comp;
+      const screenIdx = node.dataset.screen;
+      selectComponent(compName, screenIdx, 'tree');
+    });
+  });
+
+  // Click wireframe component → highlight in tree + show detail
+  document.querySelectorAll('.wf-component').forEach(el => {
+    el.addEventListener('click', () => {
+      const compName = el.dataset.comp;
+      const screenIdx = el.dataset.screen;
+      selectComponent(compName, screenIdx, 'wireframe');
+    });
+  });
 }
 
-function applyScreenFilters(catF, searchF) {
+function selectComponent(compName, screenIdx, source) {
+  const card = document.querySelector('[data-screen-card="' + screenIdx + '"]');
+  if (!card) return;
+
+  // Clear previous selections in this screen
+  card.querySelectorAll('.tree-node.selected').forEach(n => n.classList.remove('selected'));
+  card.querySelectorAll('.wf-highlight').forEach(n => n.classList.remove('wf-highlight'));
+
+  // Highlight tree node
+  const treeNode = card.querySelector('.tree-node[data-comp="' + compName + '"]');
+  if (treeNode) {
+    treeNode.classList.add('selected');
+    if (source === 'wireframe') treeNode.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  // Highlight wireframe component
+  const wfComp = card.querySelector('.wf-component[data-comp="' + compName + '"]');
+  if (wfComp) {
+    wfComp.querySelectorAll('rect,line').forEach(r => r.classList.add('wf-highlight'));
+  }
+
+  // Show detail panel
+  const screen = DATA.screens[screenIdx];
+  const allComps = flattenComponents(screen.components);
+  const comp = allComps.find(c => c.name === compName);
+  if (comp) {
+    const detail = document.getElementById('detail-' + screenIdx);
+    detail.innerHTML = renderScreenDetail(comp, parseInt(screenIdx));
+    detail.classList.add('active');
+  }
+}
+
+// Filters
+function applyScreenFilters() {
+  const catF = document.getElementById('screen-filter-cat').value;
+  const searchF = document.getElementById('screen-filter-search').value.toLowerCase();
   document.querySelectorAll('.tree-node').forEach(node => {
     let show = true;
     if (catF && node.dataset.cat !== catF) show = false;
@@ -457,16 +682,8 @@ function applyScreenFilters(catF, searchF) {
   });
 }
 
-document.getElementById('screen-filter-cat').addEventListener('change', () => {
-  const catF = document.getElementById('screen-filter-cat').value;
-  const searchF = document.getElementById('screen-filter-search').value.toLowerCase();
-  applyScreenFilters(catF, searchF);
-});
-document.getElementById('screen-filter-search').addEventListener('input', () => {
-  const catF = document.getElementById('screen-filter-cat').value;
-  const searchF = document.getElementById('screen-filter-search').value.toLowerCase();
-  applyScreenFilters(catF, searchF);
-});
+document.getElementById('screen-filter-cat').addEventListener('change', applyScreenFilters);
+document.getElementById('screen-filter-search').addEventListener('input', applyScreenFilters);
 
 renderScreens();
 
@@ -602,7 +819,6 @@ function initLinkGraph() {
 
   // Simple force simulation
   function tick() {
-    // Repulsion
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
         let dx = nodes[j].x - nodes[i].x;
@@ -615,7 +831,6 @@ function initLinkGraph() {
         nodes[j].vy += dy / d * f;
       }
     }
-    // Attraction along edges
     edges.forEach(e => {
       let dx = nodes[e.target].x - nodes[e.source].x;
       let dy = nodes[e.target].y - nodes[e.source].y;
@@ -626,7 +841,6 @@ function initLinkGraph() {
       nodes[e.target].vx -= dx / d * f;
       nodes[e.target].vy -= dy / d * f;
     });
-    // Center gravity
     nodes.forEach(n => {
       n.vx += (canvas.width / 2 - n.x) * 0.001;
       n.vy += (canvas.height / 2 - n.y) * 0.001;
@@ -639,7 +853,6 @@ function initLinkGraph() {
 
   function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    // Edges
     edges.forEach(e => {
       const s = nodes[e.source], t = nodes[e.target];
       ctx.beginPath();
@@ -651,7 +864,6 @@ function initLinkGraph() {
       ctx.lineWidth = e.proximity === 1 ? 2.5 : e.proximity === 2 ? 1.5 : 1;
       ctx.stroke();
     });
-    // Nodes
     nodes.forEach(n => {
       ctx.beginPath();
       ctx.arc(n.x, n.y, 6, 0, Math.PI * 2);
@@ -665,7 +877,6 @@ function initLinkGraph() {
     });
   }
 
-  // Animate
   let frame = 0;
   function animate() {
     tick();
@@ -675,7 +886,6 @@ function initLinkGraph() {
   }
   animate();
 
-  // Click to show details
   canvas.addEventListener('click', (evt) => {
     const r = canvas.getBoundingClientRect();
     const mx = evt.clientX - r.left, my = evt.clientY - r.top;
