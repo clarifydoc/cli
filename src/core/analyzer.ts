@@ -20,6 +20,7 @@ import { extractDataSources } from "../extractors/data-sources/index.js";
 import { extractDataMutations } from "../extractors/data-mutations/index.js";
 import { classifyCalls } from "../extractors/shared/call-graph.js";
 import { extractInteractiveElements, extractVueInteractiveElements } from "../extractors/shared/interactive-elements.js";
+import { extractEvents } from "../extractors/shared/events.js";
 import { buildLinkGraph } from "../extractors/shared/link-scoring.js";
 import {
   createEmptyAnalysis,
@@ -155,6 +156,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       analysis.routes = extractRoutes(tree, sourceText, language);
       analysis.dataSources = extractDataSources(tree, sourceText, language);
       analysis.dataMutations = extractDataMutations(tree, sourceText, language);
+      analysis.events = extractEvents(sourceText, language);
       analysis.subComponents = extractSubComponents(
         tree,
         sourceText,
@@ -242,6 +244,9 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const allInteractiveElements = allAnalyses.flatMap((a) =>
     a.interactiveElements.map((el) => ({ ...el, filePath: a.filePath })),
   );
+  const allEvents = allAnalyses.flatMap((a) =>
+    a.events.map((ev) => ({ ...ev, filePath: a.filePath })),
+  );
   // Build screens: DFM screens + web screens from routes
   const dfmScreens = allAnalyses.flatMap((a) => a.screens ?? []);
   const webScreens = buildScreensFromRoutes(allAnalyses, rawSources);
@@ -254,6 +259,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     componentGraph,
     linkGraph,
     interactiveElements: allInteractiveElements,
+    events: allEvents,
     routeMap: allRoutes,
     screens: allScreens,
     analyzedAt: new Date().toISOString(),

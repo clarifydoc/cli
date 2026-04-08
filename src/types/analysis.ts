@@ -17,6 +17,7 @@ export interface FileAnalysis {
   dataMutations: DataMutationInfo[];
   subComponents: SubComponentInfo[];
   interactiveElements: InteractiveElementInfo[];
+  events: EventInfo[];
   screens: ScreenInfo[];
 }
 
@@ -135,6 +136,12 @@ export interface InteractiveElementInfo {
   line: number;
 }
 
+export interface EventInfo {
+  name: string;
+  params: ParamInfo[];
+  line: number;
+}
+
 // ─── Screen / Form types ─────────────────────────────────────────────────
 
 export type ScreenComponentCategory =
@@ -189,6 +196,7 @@ export interface ProjectAnalysis {
   componentGraph: Record<string, string[]>;
   linkGraph: LinkInfo[];
   interactiveElements: (InteractiveElementInfo & { filePath: string })[];
+  events: (EventInfo & { filePath: string })[];
   routeMap: RouteInfo[];
   screens: ScreenInfo[];
   analyzedAt: string;
@@ -220,6 +228,7 @@ export function createEmptyAnalysis(
     dataMutations: [],
     subComponents: [],
     interactiveElements: [],
+    events: [],
     screens: [],
   };
 }
