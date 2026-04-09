@@ -879,14 +879,54 @@ function renderElements() {
     return;
   }
 
+  // Build a lookup of handler names → symbol keys for trace linking
+  function findHandlerSymbolKey(handlerName, filePath) {
+    if (!handlerName || !DATA.symbolLinks) return null;
+    // Strip function call syntax: "handleDeleteUser(user.id)" → "handleDeleteUser"
+    const clean = handlerName.replace(/\\(.*$/, '').trim();
+    if (!clean) return null;
+
+    // Build candidate file paths: exact match + companion files
+    // (Delphi: .dfm events reference .pas handlers)
+    const candidateFiles = [filePath];
+    if (filePath.endsWith('.dfm')) candidateFiles.push(filePath.replace(/\\.dfm$/, '.pas'));
+    if (filePath.endsWith('.pas')) candidateFiles.push(filePath.replace(/\\.pas$/, '.dfm'));
+
+    function matchesSymbol(sym) {
+      return sym === clean || sym.endsWith('.' + clean);
+    }
+
+    // Find a symbol link where the source/target symbol matches the handler name
+    for (const fp of candidateFiles) {
+      const match = DATA.symbolLinks.find(l =>
+        l.sourceFile === fp && matchesSymbol(l.sourceSymbol)
+      ) || DATA.symbolLinks.find(l =>
+        l.targetFile === fp && matchesSymbol(l.targetSymbol)
+      );
+      if (match) {
+        if (matchesSymbol(match.sourceSymbol)) {
+          return match.sourceFile + '::' + match.sourceSymbol;
+        }
+        return match.targetFile + '::' + match.targetSymbol;
+      }
+    }
+    return null;
+  }
+
   grid.innerHTML = Object.entries(byFile).map(([file, items]) => {
     const rows = items.map(e => {
       const b = BADGE_MAP[e.element] || BADGE_MAP.custom;
+      const symKey = e.handler ? findHandlerSymbolKey(e.handler, file) : null;
+      const handlerHtml = e.handler
+        ? (symKey
+          ? '<span class="trace-link" data-sym-key="' + esc(symKey) + '" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted">' + esc(e.handler) + '</span> <span style="font-size:10px;color:#58a6ff" title="View call traces">\\u2197</span>'
+          : esc(e.handler))
+        : '<span style="color:#484f58">inline</span>';
       return '<div class="el-row">' +
         '<div class="el-badge ' + b.cls + '">' + b.letter + '</div>' +
         '<div class="el-type">' + e.element + '</div>' +
         '<div class="el-event">' + esc(e.event) + '</div>' +
-        '<div class="el-handler">' + (e.handler ? esc(e.handler) : '<span style="color:#484f58">inline</span>') + '</div>' +
+        '<div class="el-handler">' + handlerHtml + '</div>' +
         '<div class="el-line">:' + e.line + '</div>' +
       '</div>';
     }).join('');
@@ -894,6 +934,21 @@ function renderElements() {
       '<div class="file-card-header"><span>' + esc(file) + '</span><span class="file-card-count">' + items.length + ' elements</span></div>' +
       rows + '</div>';
   }).join('');
+
+  // Wire up handler → traces navigation
+  grid.querySelectorAll('.trace-link').forEach(el => {
+    el.addEventListener('click', (evt) => {
+      evt.stopPropagation();
+      const key = el.dataset.symKey;
+      document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      document.querySelector('.nav button[data-view="traces"]').classList.add('active');
+      document.getElementById('view-traces').classList.add('active');
+      if (window.selectSymbol) window.selectSymbol(key);
+      const listItem = document.querySelector('.trace-sym-item[data-sym-key="' + CSS.escape(key) + '"]');
+      if (listItem) listItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  });
 }
 
 document.getElementById('filter-type').addEventListener('change', renderElements);
