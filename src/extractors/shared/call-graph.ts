@@ -173,6 +173,56 @@ export function classifyCalls(
       continue;
     }
 
+    // 2b. Instance variable → imported type matching for qualified calls
+    // Java/Kotlin: @Autowired UserService userService → userService.method, import is UserService
+    // Python: user_service = UserService() → user_service.method, import is UserService
+    if (call.name.includes(".")) {
+      // Try capitalizing first letter (Java: userService → UserService)
+      if (language === "java" || language === "kotlin") {
+        const rootUpper = root.charAt(0).toUpperCase() + root.slice(1);
+        const upperSource = importMap.get(rootUpper);
+        if (upperSource) {
+          call.kind = "cross-file";
+          call.target = upperSource;
+          continue;
+        }
+      }
+
+      // Try snake_case → PascalCase (Python: user_service → UserService)
+      if (language === "python" && root.includes("_")) {
+        const pascal = root.split("_").map(s => s.charAt(0).toUpperCase() + s.slice(1)).join("");
+        const pascalSource = importMap.get(pascal);
+        if (pascalSource) {
+          call.kind = "cross-file";
+          call.target = pascalSource;
+          continue;
+        }
+      }
+
+      // Delphi/Pascal: fields prefixed with F → strip F to match unit name
+      // e.g., FUserService.Save → strip F → UserService matches import "UserService"
+      if (language === "pascal" && root.startsWith("F") && root.length > 1) {
+        const stripped = root.slice(1);
+        const strippedSource = importMap.get(stripped);
+        if (strippedSource) {
+          call.kind = "cross-file";
+          call.target = strippedSource;
+          continue;
+        }
+      }
+
+      // Try matching root against import source module names
+      // Python: user_service matches last segment of "services.user_service"
+      const moduleMatch = imports.find(imp =>
+        !imp.isType && imp.source.split(".").pop() === root
+      );
+      if (moduleMatch) {
+        call.kind = "cross-file";
+        call.target = moduleMatch.source;
+        continue;
+      }
+    }
+
     // 3. Check API call patterns
     if (isApiCall(call.name, language)) {
       call.kind = "api-call";
@@ -196,6 +246,19 @@ export function classifyCalls(
  * Returns qualified names for member calls: "obj.method" instead of just "method".
  */
 function resolveCallName(node: Node, language: Language): string | null {
+  // Java/Kotlin method_invocation: has "object" and "name" fields — handle first
+  // to avoid losing the qualifier (e.g., "userService.searchUsers" → not just "searchUsers")
+  if (
+    (language === "java" || language === "kotlin") &&
+    (node.type === "method_invocation" || node.type === "call_expression")
+  ) {
+    const nameNode = node.childForFieldName("name");
+    const obj = node.childForFieldName("object");
+    if (nameNode) {
+      return obj ? `${obj.text}.${nameNode.text}` : nameNode.text;
+    }
+  }
+
   let callee =
     node.childForFieldName("function") ??
     node.childForFieldName("constructor") ??

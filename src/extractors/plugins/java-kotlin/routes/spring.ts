@@ -15,10 +15,20 @@ const SPRING_MAPPING_ANNOTATIONS: Record<string, string | null> = {
 
 /** Java / Kotlin: Spring Boot @GetMapping, @PostMapping, @RequestMapping */
 export function extractSpringRoutes(root: Node, routes: RouteInfo[]): void {
-  walkForJavaKotlinRoutes(root, routes);
+  walkForJavaKotlinRoutes(root, routes, "");
 }
 
-function walkForJavaKotlinRoutes(node: Node, routes: RouteInfo[]) {
+function walkForJavaKotlinRoutes(node: Node, routes: RouteInfo[], classPrefix: string) {
+  // Check for class-level @RequestMapping to capture prefix
+  if (node.type === "class_declaration" || node.type === "class_definition") {
+    const prefix = extractClassRequestMappingPath(node);
+    // Recurse into the class body with the prefix
+    for (let i = 0; i < node.childCount; i++) {
+      walkForJavaKotlinRoutes(node.child(i)!, routes, prefix || classPrefix);
+    }
+    return;
+  }
+
   if (
     node.type === "method_declaration" ||
     node.type === "function_declaration"
@@ -36,7 +46,7 @@ function walkForJavaKotlinRoutes(node: Node, routes: RouteInfo[]) {
         child.type === "marker_annotation" ||
         child.type === "single_element_annotation"
       ) {
-        const route = parseSpringAnnotation(child, methodName, bodyCalls);
+        const route = parseSpringAnnotation(child, methodName, bodyCalls, classPrefix);
         if (route) routes.push(route);
       }
       if (child.type === "modifiers") {
@@ -47,7 +57,7 @@ function walkForJavaKotlinRoutes(node: Node, routes: RouteInfo[]) {
             mod.type === "marker_annotation" ||
             mod.type === "single_element_annotation"
           ) {
-            const route = parseSpringAnnotation(mod, methodName, bodyCalls);
+            const route = parseSpringAnnotation(mod, methodName, bodyCalls, classPrefix);
             if (route) routes.push(route);
           }
         }
@@ -56,14 +66,88 @@ function walkForJavaKotlinRoutes(node: Node, routes: RouteInfo[]) {
   }
 
   for (let i = 0; i < node.childCount; i++) {
-    walkForJavaKotlinRoutes(node.child(i)!, routes);
+    walkForJavaKotlinRoutes(node.child(i)!, routes, classPrefix);
   }
+}
+
+/**
+ * Extract the path from a class-level @RequestMapping annotation.
+ * Looks through class modifiers for @RequestMapping("/api/users") etc.
+ */
+function extractClassRequestMappingPath(classNode: Node): string | null {
+  for (let i = 0; i < classNode.childCount; i++) {
+    const child = classNode.child(i)!;
+
+    // Direct annotation on the class
+    const path = extractRequestMappingPath(child);
+    if (path) return path;
+
+    // Annotations inside a modifiers node
+    if (child.type === "modifiers") {
+      for (let j = 0; j < child.childCount; j++) {
+        const mod = child.child(j)!;
+        const modPath = extractRequestMappingPath(mod);
+        if (modPath) return modPath;
+      }
+    }
+  }
+  return null;
+}
+
+/** Extract path from a @RequestMapping annotation node, or null if not a RequestMapping */
+function extractRequestMappingPath(node: Node): string | null {
+  if (
+    node.type !== "annotation" &&
+    node.type !== "marker_annotation" &&
+    node.type !== "single_element_annotation"
+  ) {
+    return null;
+  }
+
+  let annotationName: string | null = null;
+  const nameNode = node.childForFieldName("name");
+  if (nameNode) {
+    annotationName = nameNode.text;
+  } else {
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i)!;
+      if (child.type === "identifier" || child.type === "scoped_identifier") {
+        annotationName = child.text;
+        break;
+      }
+    }
+  }
+
+  if (annotationName !== "RequestMapping") return null;
+
+  const argsNode =
+    node.childForFieldName("arguments") ??
+    findChildByType(node, "annotation_argument_list");
+
+  if (argsNode) {
+    for (let i = 0; i < argsNode.childCount; i++) {
+      const arg = argsNode.child(i)!;
+      if (arg.type === "string" || arg.type === "string_literal") {
+        return stripQuotes(arg.text);
+      }
+      if (arg.type === "element_value_pair" || arg.type === "assignment_expression") {
+        const key = arg.childForFieldName("key") ?? arg.child(0);
+        const value = arg.childForFieldName("value") ?? arg.child(2);
+        if (key && (key.text === "value" || key.text === "path") && value) {
+          return stripQuotes(value.text);
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 function parseSpringAnnotation(
   node: Node,
   handler: string | null,
   calls: CallInfo[],
+  classPrefix: string,
 ): RouteInfo | null {
   let annotationName: string | null = null;
   const nameNode = node.childForFieldName("name");
@@ -102,6 +186,17 @@ function parseSpringAnnotation(
           path = stripQuotes(value.text);
         }
       }
+    }
+  }
+
+  // Merge class-level prefix with method-level path
+  if (classPrefix) {
+    const prefix = classPrefix.endsWith("/") ? classPrefix.slice(0, -1) : classPrefix;
+    if (path === "/") {
+      path = prefix;
+    } else {
+      const suffix = path.startsWith("/") ? path : "/" + path;
+      path = prefix + suffix;
     }
   }
 

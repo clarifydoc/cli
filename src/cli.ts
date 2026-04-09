@@ -62,6 +62,7 @@ program
         console.log(`  Screens:     ${String(result.screenCount).padStart(4)}`);
         console.log(`  Routes:      ${String(result.routeCount).padStart(4)}`);
         console.log(`  Links:       ${String(result.linkCount).padStart(4)}`);
+        console.log(`  Traces:      ${String(result.symbolLinkCount).padStart(4)}`);
         console.log(`  Output: ${outputDir}`);
 
         if (options.html) {

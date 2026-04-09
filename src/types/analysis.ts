@@ -188,6 +188,16 @@ export interface LinkInfo {
   calls: string[];
 }
 
+export interface SymbolLink {
+  sourceFile: string;
+  sourceSymbol: string;
+  sourceLine: number;
+  callName: string;
+  targetFile: string;
+  targetSymbol: string;
+  targetLine: number;
+}
+
 /** Project-level summary */
 export interface ProjectAnalysis {
   projectRoot: string;
@@ -199,6 +209,7 @@ export interface ProjectAnalysis {
   events: (EventInfo & { filePath: string })[];
   routeMap: RouteInfo[];
   screens: ScreenInfo[];
+  symbolLinks: SymbolLink[];
   analyzedAt: string;
 }
 
