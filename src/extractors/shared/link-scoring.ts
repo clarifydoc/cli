@@ -185,7 +185,7 @@ function getImportProximity(specifiers: string[], analysis: FileAnalysis): LinkP
 }
 
 /** Build a map for resolving import sources to file paths */
-function buildFilePathMap(analyses: FileAnalysis[]): Map<string, string> {
+export function buildFilePathMap(analyses: FileAnalysis[]): Map<string, string> {
   const map = new Map<string, string>();
   for (const a of analyses) {
     map.set(a.filePath, a.filePath);
@@ -205,7 +205,7 @@ function buildFilePathMap(analyses: FileAnalysis[]): Map<string, string> {
  *  - Dotted module: "models.user", "services.user_service" → converted to path (Python)
  *  - Package: "com.example.api.service.UserService" → last segment matched (Java/Kotlin)
  */
-function resolveTarget(importSource: string, sourceFile: string, filePathMap: Map<string, string>): string | null {
+export function resolveTarget(importSource: string, sourceFile: string, filePathMap: Map<string, string>): string | null {
   // 1. Relative imports (JS/TS/Python relative)
   if (importSource.startsWith(".")) {
     const sourceDir = posix.dirname(sourceFile);
@@ -284,7 +284,7 @@ const EXTERNAL_PREFIXES = [
   "System", "Microsoft.", "Newtonsoft.",
 ];
 
-function isExternalPackage(source: string): boolean {
+export function isExternalPackage(source: string): boolean {
   return EXTERNAL_PREFIXES.some(prefix =>
     source === prefix || source.startsWith(prefix + ".") || source.startsWith(prefix + "/")
   );

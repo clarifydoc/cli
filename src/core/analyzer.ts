@@ -1,5 +1,5 @@
 import { readFile } from "fs/promises";
-import { discoverFiles, type DiscoveryOptions } from "./file-discovery.js";
+import { discoverFiles, type DiscoveryOptions, type DiscoveredFile } from "./file-discovery.js";
 import {
   gatherProjectInfo,
   detectFrameworks,
@@ -22,9 +22,11 @@ import { classifyCalls } from "../extractors/shared/call-graph.js";
 import { extractInteractiveElements, extractVueInteractiveElements } from "../extractors/shared/interactive-elements.js";
 import { extractEvents } from "../extractors/shared/events.js";
 import { buildLinkGraph } from "../extractors/shared/link-scoring.js";
+import { buildSymbolLinks } from "./symbol-linker.js";
 import {
   createEmptyAnalysis,
   type FileAnalysis,
+  type Language,
   type ProjectAnalysis,
   type ScreenInfo,
   type ScreenComponentInfo,
@@ -50,14 +52,187 @@ export interface AnalyzeResult {
   routeCount: number;
   linkCount: number;
   screenCount: number;
+  symbolLinkCount: number;
 }
+
+// ─── Per-file analysis task / result ─────────────────────────────────────
+
+interface FileTask {
+  file: DiscoveredFile;
+  frameworkIds: string[];
+  outputOpts: OutputOptions;
+  verbose: boolean;
+}
+
+interface FileResult {
+  analysis: FileAnalysis;
+  rawSource: string | null; // non-null only for frontend route files
+}
+
+// ─── Concurrency pool ────────────────────────────────────────────────────
+
+/**
+ * Run async tasks with a bounded concurrency limit.
+ * Returns results in original item order.
+ */
+async function runWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+  onComplete?: (index: number) => void,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const i = nextIndex++;
+      results[i] = await fn(items[i]!, i);
+      onComplete?.(i);
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    () => worker(),
+  );
+  await Promise.all(workers);
+  return results;
+}
+
+// ─── Single-file analysis ────────────────────────────────────────────────
+
+/**
+ * Analyze a single file: read, parse, extract, write JSON.
+ * Returns null on error (error is logged internally).
+ */
+async function analyzeFile(task: FileTask): Promise<FileResult | null> {
+  const { file, frameworkIds, outputOpts, verbose } = task;
+
+  try {
+    const rawSource = await readFile(file.absolutePath, "utf-8");
+
+    // .dfm files use a dedicated parser (no tree-sitter)
+    if (file.language === "dfm") {
+      const analysis = parseDfm(rawSource, file.relativePath);
+      analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
+      await writeFileAnalysis(analysis, outputOpts);
+      return { analysis, rawSource: null };
+    }
+
+    const isVue = file.relativePath.endsWith(".vue");
+
+    // For .vue files, extract the <script> block and parse that
+    let sourceText: string;
+    let language: Language = file.language;
+    if (isVue) {
+      const sfc = parseVueSfc(rawSource);
+      if (!sfc.script) {
+        if (verbose) console.log(`    Skipping ${file.relativePath}: no <script> block`);
+        return null;
+      }
+      sourceText = sfc.script;
+      language = sfc.scriptLang;
+    } else {
+      sourceText = rawSource;
+    }
+
+    const tree = await parseSource(sourceText, language, file.relativePath);
+
+    const analysis = createEmptyAnalysis(file.relativePath, language);
+
+    // Run all extractors
+    analysis.imports = extractImports(tree, sourceText, language);
+    analysis.exports = extractExports(tree, sourceText, language);
+    analysis.functions = extractFunctions(tree, sourceText, language);
+    analysis.classes = extractClasses(tree, sourceText, language);
+    analysis.routes = extractRoutes(tree, sourceText, language);
+    analysis.dataSources = extractDataSources(tree, sourceText, language);
+    analysis.dataMutations = extractDataMutations(tree, sourceText, language);
+    analysis.events = extractEvents(sourceText, language);
+    analysis.subComponents = extractSubComponents(
+      tree,
+      sourceText,
+      language,
+      analysis.imports,
+    );
+
+    // Classify calls using import context and language patterns
+    for (const fn of analysis.functions) {
+      fn.calls = classifyCalls(fn.calls, analysis.imports, language);
+    }
+    for (const cls of analysis.classes) {
+      for (const method of cls.methods) {
+        method.calls = classifyCalls(method.calls, analysis.imports, language);
+      }
+    }
+    for (const route of analysis.routes) {
+      route.calls = classifyCalls(route.calls, analysis.imports, language);
+    }
+
+    // Extract interactive elements (buttons, inputs, forms with event bindings)
+    analysis.interactiveElements = extractInteractiveElements(tree, sourceText, language);
+
+    // Infer frameworks for this specific file based on its imports
+    analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
+
+    // For .vue files, also add template components and interactive elements
+    if (isVue) {
+      const sfc = parseVueSfc(rawSource);
+      if (sfc.template) {
+        analysis.interactiveElements.push(
+          ...extractVueInteractiveElements(sfc.template, rawSource),
+        );
+      }
+      for (const comp of sfc.templateComponents) {
+        const importSource =
+          analysis.imports.find((imp) =>
+            imp.specifiers.includes(comp.name),
+          )?.source ?? null;
+        if (!analysis.subComponents.some((sc) => sc.name === comp.name)) {
+          analysis.subComponents.push({
+            name: comp.name,
+            importSource,
+            props: comp.props,
+            line: comp.line,
+          });
+        }
+      }
+    }
+
+    // Next.js / Nuxt file-based routing: infer route from file path
+    const fileRoute = inferFileBasedRoute(file.relativePath, frameworkIds);
+    if (fileRoute) {
+      analysis.routes.push(fileRoute);
+    }
+
+    // Detect React directives: 'use client' / 'use server'
+    detectDirectives(sourceText, analysis);
+
+    await writeFileAnalysis(analysis, outputOpts);
+
+    // Return raw source for frontend route files (needed for screen building)
+    const hasFrontendRoute = analysis.routes.some((r) => r.kind === "frontend");
+    return { analysis, rawSource: hasFrontendRoute ? rawSource : null };
+  } catch (err) {
+    console.error(
+      `  Error analyzing ${file.relativePath}: ${(err as Error).message}`,
+    );
+    if (verbose) {
+      console.error((err as Error).stack);
+    }
+    return null;
+  }
+}
+
+// ─── Main pipeline ───────────────────────────────────────────────────────
 
 /**
  * Main analysis pipeline:
  * 1. Discover files
  * 2. Detect frameworks
- * 3. Parse each file and run extractors
- * 4. Write per-file JSON output
+ * 3. Parse each file and run extractors (parallel)
+ * 4. Post-analysis: build symbol links
  * 5. Write project summary
  */
 export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
@@ -83,6 +258,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       routeCount: 0,
       linkCount: 0,
       screenCount: 0,
+      symbolLinkCount: 0,
     };
   }
 
@@ -102,133 +278,38 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     }
   }
 
-  // Step 3: Analyze each file
+  // Step 3: Analyze each file (parallel with concurrency limit)
   const outputOpts: OutputOptions = { outputDir, pretty: options.pretty };
-  const allAnalyses: FileAnalysis[] = [];
-  const rawSources = new Map<string, string>(); // filePath → raw source for screen building
+  let completedCount = 0;
 
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i]!;
-    if (verbose) {
-      console.log(`  Analyzing: ${file.relativePath}`);
-    } else {
-      process.stdout.write(`\rAnalyzing [${i + 1}/${files.length}] ${file.relativePath}`.padEnd(80));
-    }
-
-    try {
-      const rawSource = await readFile(file.absolutePath, "utf-8");
-
-      // .dfm files use a dedicated parser (no tree-sitter)
-      if (file.language === "dfm") {
-        const analysis = parseDfm(rawSource, file.relativePath);
-        analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
-        allAnalyses.push(analysis);
-        await writeFileAnalysis(analysis, outputOpts);
-        continue;
-      }
-
-      const isVue = file.relativePath.endsWith(".vue");
-
-      // For .vue files, extract the <script> block and parse that
-      let sourceText: string;
-      let language = file.language;
-      if (isVue) {
-        const sfc = parseVueSfc(rawSource);
-        if (!sfc.script) {
-          if (verbose) console.log(`    Skipping ${file.relativePath}: no <script> block`);
-          continue;
-        }
-        sourceText = sfc.script;
-        language = sfc.scriptLang;
-      } else {
-        sourceText = rawSource;
-      }
-
-      const tree = await parseSource(sourceText, language, file.relativePath);
-
-      const analysis = createEmptyAnalysis(file.relativePath, language);
-
-      // Run all extractors
-      analysis.imports = extractImports(tree, sourceText, language);
-      analysis.exports = extractExports(tree, sourceText, language);
-      analysis.functions = extractFunctions(tree, sourceText, language);
-      analysis.classes = extractClasses(tree, sourceText, language);
-      analysis.routes = extractRoutes(tree, sourceText, language);
-      analysis.dataSources = extractDataSources(tree, sourceText, language);
-      analysis.dataMutations = extractDataMutations(tree, sourceText, language);
-      analysis.events = extractEvents(sourceText, language);
-      analysis.subComponents = extractSubComponents(
-        tree,
-        sourceText,
-        language,
-        analysis.imports,
-      );
-
-      // Classify calls using import context and language patterns
-      for (const fn of analysis.functions) {
-        fn.calls = classifyCalls(fn.calls, analysis.imports, language);
-      }
-      for (const cls of analysis.classes) {
-        for (const method of cls.methods) {
-          method.calls = classifyCalls(method.calls, analysis.imports, language);
-        }
-      }
-      for (const route of analysis.routes) {
-        route.calls = classifyCalls(route.calls, analysis.imports, language);
-      }
-
-      // Extract interactive elements (buttons, inputs, forms with event bindings)
-      analysis.interactiveElements = extractInteractiveElements(tree, sourceText, language);
-
-      // Infer frameworks for this specific file based on its imports
-      analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
-
-      // For .vue files, also add template components and interactive elements
-      if (isVue) {
-        const sfc = parseVueSfc(rawSource);
-        if (sfc.template) {
-          analysis.interactiveElements.push(
-            ...extractVueInteractiveElements(sfc.template, rawSource),
-          );
-        }
-        for (const comp of sfc.templateComponents) {
-          const importSource =
-            analysis.imports.find((imp) =>
-              imp.specifiers.includes(comp.name),
-            )?.source ?? null;
-          if (!analysis.subComponents.some((sc) => sc.name === comp.name)) {
-            analysis.subComponents.push({
-              name: comp.name,
-              importSource,
-              props: comp.props,
-              line: comp.line,
-            });
-          }
-        }
-      }
-
-      // Next.js / Nuxt file-based routing: infer route from file path
-      const fileRoute = inferFileBasedRoute(file.relativePath, frameworkIds);
-      if (fileRoute) {
-        analysis.routes.push(fileRoute);
-      }
-
-      // Detect React directives: 'use client' / 'use server'
-      detectDirectives(sourceText, analysis);
-
-      // Store raw source for page files (needed to build screens later)
-      if (analysis.routes.some((r) => r.kind === "frontend")) {
-        rawSources.set(file.relativePath, rawSource);
-      }
-
-      allAnalyses.push(analysis);
-      await writeFileAnalysis(analysis, outputOpts);
-    } catch (err) {
-      console.error(
-        `  Error analyzing ${file.relativePath}: ${(err as Error).message}`,
-      );
+  const results = await runWithConcurrency(
+    files,
+    8,
+    async (file, _i) => {
       if (verbose) {
-        console.error((err as Error).stack);
+        console.log(`  Analyzing: ${file.relativePath}`);
+      }
+      return analyzeFile({ file, frameworkIds, outputOpts, verbose: !!verbose });
+    },
+    () => {
+      completedCount++;
+      if (!verbose) {
+        process.stdout.write(
+          `\rAnalyzing [${completedCount}/${files.length}]`.padEnd(80),
+        );
+      }
+    },
+  );
+
+  // Collect successful results
+  const allAnalyses: FileAnalysis[] = [];
+  const rawSources = new Map<string, string>();
+
+  for (const result of results) {
+    if (result) {
+      allAnalyses.push(result.analysis);
+      if (result.rawSource) {
+        rawSources.set(result.analysis.filePath, result.rawSource);
       }
     }
   }
@@ -236,11 +317,14 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Clear progress line
   if (!verbose) process.stdout.write("\r" + " ".repeat(80) + "\r");
 
-  // Step 4: Write project summary
-  if (verbose) console.log("Writing project summary...");
+  // Step 4: Post-analysis
+  if (verbose) console.log("Building project summary...");
   const componentGraph = buildComponentGraph(allAnalyses);
   const linkGraph = buildLinkGraph(allAnalyses);
-  const allRoutes = allAnalyses.flatMap((a) => a.routes);
+  const symbolLinks = buildSymbolLinks(allAnalyses);
+  const allRoutes = allAnalyses.flatMap((a) =>
+    a.routes.map((r) => ({ ...r, filePath: a.filePath })),
+  );
   const allInteractiveElements = allAnalyses.flatMap((a) =>
     a.interactiveElements.map((el) => ({ ...el, filePath: a.filePath })),
   );
@@ -252,6 +336,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const webScreens = buildScreensFromRoutes(allAnalyses, rawSources);
   const allScreens = [...dfmScreens, ...webScreens];
 
+  // Step 5: Write project summary
   const summary: ProjectAnalysis = {
     projectRoot,
     detectedFrameworks: frameworks,
@@ -262,6 +347,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     events: allEvents,
     routeMap: allRoutes,
     screens: allScreens,
+    symbolLinks,
     analyzedAt: new Date().toISOString(),
   };
 
@@ -275,6 +361,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     routeCount: allRoutes.length,
     linkCount: linkGraph.length,
     screenCount: allScreens.length,
+    symbolLinkCount: symbolLinks.length,
   };
 }
 

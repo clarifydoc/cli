@@ -50,9 +50,10 @@ function renderReport(summary: ProjectAnalysis): string {
     interactiveElements: (summary as any).interactiveElements ?? [],
     linkGraph: (summary as any).linkGraph ?? [],
     screens: (summary as any).screens ?? [],
-    routeMap: summary.routeMap.map(r => ({
+    symbolLinks: (summary as any).symbolLinks ?? [],
+    routeMap: summary.routeMap.map((r: any) => ({
       path: r.path, httpMethod: r.httpMethod, kind: r.kind,
-      handler: r.handler, line: r.line,
+      handler: r.handler, line: r.line, filePath: r.filePath ?? null,
     })),
   };
 
@@ -69,6 +70,7 @@ ${renderHeader(payload)}
 ${renderNav()}
 ${renderScreensView()}
 ${renderInteractiveView()}
+${renderTracesView()}
 ${renderLinksView()}
 ${renderRoutesView()}
 ${renderSummaryView()}
@@ -139,6 +141,44 @@ a{color:#58a6ff;text-decoration:none}
 .el-event{color:#d2a8ff;font-family:monospace;font-size:12px;width:120px}
 .el-handler{color:#79c0ff;font-family:monospace;font-size:12px;flex:1}
 .el-line{color:#8b949e;font-size:11px;min-width:50px;text-align:right}
+
+/* Traces — call map layout */
+.trace-layout{display:flex;gap:0;min-height:600px;border:1px solid #30363d;border-radius:8px;overflow:hidden;background:#0d1117}
+.trace-list-pane{width:320px;flex-shrink:0;border-right:1px solid #30363d;background:#161b22;display:flex;flex-direction:column;overflow:hidden}
+.trace-map-pane{flex:1;overflow-y:auto;padding:16px}
+#trace-symbol-list{overflow-y:auto;flex:1}
+
+/* Symbol list items */
+.trace-sym-group{border-bottom:1px solid #21262d}
+.trace-sym-group-header{padding:8px 12px;font-size:11px;color:#8b949e;background:#1c2128;font-family:monospace;cursor:pointer;display:flex;justify-content:space-between;align-items:center}
+.trace-sym-group-header:hover{background:#21262d}
+.trace-sym-item{padding:6px 12px 6px 20px;font-size:13px;font-family:monospace;cursor:pointer;border-left:3px solid transparent;color:#e6edf3;display:flex;align-items:center;gap:6px}
+.trace-sym-item:hover{background:#1c212866}
+.trace-sym-item.selected{background:#1f6feb22;border-left-color:#58a6ff;color:#58a6ff}
+.trace-sym-item .sym-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.trace-sym-item .sym-counts{font-size:10px;color:#484f58;flex-shrink:0;display:flex;gap:4px}
+.trace-sym-item .sym-in{color:#58a6ff}
+.trace-sym-item .sym-out{color:#3fb950}
+
+/* Call map detail */
+.trace-section{margin-bottom:20px}
+.trace-section-header{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;padding:6px 0;margin-bottom:8px;border-bottom:1px solid #30363d;display:flex;align-items:center;gap:8px}
+.trace-section-header .section-count{font-weight:400;color:#484f58}
+.trace-section-header.inbound{color:#58a6ff}
+.trace-section-header.outbound{color:#3fb950}
+.trace-selected-title{font-size:18px;font-weight:600;color:#f0f6fc;margin-bottom:4px;font-family:monospace}
+.trace-selected-file{font-size:12px;color:#8b949e;margin-bottom:16px;font-family:monospace}
+
+.trace-chain-row{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid #21262d;border-radius:6px;margin-bottom:6px;font-family:monospace;font-size:13px;cursor:pointer;transition:all 0.1s}
+.trace-chain-row:hover{background:#1c2128;border-color:#30363d}
+.trace-chain-row .chain-arrow{color:#484f58;font-size:14px;flex-shrink:0}
+.trace-chain-row .chain-symbol{color:#e6edf3;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trace-chain-row .chain-file{color:#8b949e;font-size:11px;flex-shrink:0}
+.trace-chain-row .chain-line{color:#484f58;font-size:11px;flex-shrink:0}
+.trace-chain-row .chain-call{color:#d29922;font-size:10px;padding:1px 5px;background:#d2992218;border-radius:3px;flex-shrink:0}
+.trace-chain-row.inbound{border-left:3px solid #1f6feb44}
+.trace-chain-row.outbound{border-left:3px solid #23863644}
+.trace-no-links{color:#484f58;font-style:italic;font-size:13px;padding:8px 0}
 
 /* Link graph */
 #link-canvas{width:100%;height:500px;background:#0d1117;border:1px solid #30363d;border-radius:8px}
@@ -240,6 +280,7 @@ function renderHeader(payload: any): string {
     { num: payload.interactiveElements.length, lbl: "Elements" },
     { num: payload.routeMap.length, lbl: "Routes" },
     { num: payload.linkGraph.length, lbl: "Links" },
+    { num: payload.symbolLinks.length, lbl: "Traces" },
   ];
   return `<div class="header">
   <h1>reverseDoc <span class="project">\u2014 ${esc(payload.projectName)}</span></h1>
@@ -255,6 +296,7 @@ function renderNav(): string {
   return `<nav class="nav">
   <button class="active" data-view="screens">Screens</button>
   <button data-view="interactive">Interactive Elements</button>
+  <button data-view="traces">Call Traces</button>
   <button data-view="links">File Links</button>
   <button data-view="routes">Routes</button>
   <button data-view="summary">Overview</button>
@@ -296,6 +338,29 @@ function renderInteractiveView(): string {
     <input id="filter-search" type="search" placeholder="Search handlers or files..." />
   </div>
   <div id="element-grid"></div>
+</section>`;
+}
+
+// ─── Traces View ────────────────────────────────────────────────────────
+
+function renderTracesView(): string {
+  return `<section id="view-traces" class="view">
+  <div class="trace-layout">
+    <div class="trace-list-pane">
+      <div class="filter-bar" style="padding:8px;margin-bottom:0">
+        <select id="trace-filter-file" style="width:100%"><option value="">All files</option></select>
+      </div>
+      <div class="filter-bar" style="padding:0 8px 8px;margin-bottom:0">
+        <input id="trace-filter-search" type="search" placeholder="Search symbols..." style="width:100%" />
+      </div>
+      <div id="trace-symbol-list"></div>
+    </div>
+    <div class="trace-map-pane">
+      <div id="trace-map-content">
+        <div class="empty">Select a symbol to see its call map</div>
+      </div>
+    </div>
+  </div>
 </section>`;
 }
 
@@ -841,16 +906,46 @@ const tbody = document.getElementById('route-tbody');
 if (DATA.routeMap.length === 0) {
   tbody.innerHTML = '<tr><td colspan="5" class="empty">No routes found</td></tr>';
 } else {
+  // Build a helper to find the symbol key for a route
+  function routeSymbolKey(r) {
+    if (!r.filePath) return null;
+    const sym = 'route:' + (r.httpMethod || 'USE') + ' ' + r.path;
+    const key = r.filePath + '::' + sym;
+    // Check if this key exists in symbolLinks
+    return DATA.symbolLinks.some(l => l.sourceFile === r.filePath && l.sourceSymbol === sym) ? key : null;
+  }
+
   tbody.innerHTML = DATA.routeMap.map(r => {
     const m = r.httpMethod || 'USE';
-    return '<tr>' +
+    const symKey = routeSymbolKey(r);
+    const clickable = symKey ? ' class="trace-link" data-sym-key="' + esc(symKey) + '" style="cursor:pointer"' : '';
+    const traceIcon = symKey ? ' <span style="font-size:10px;color:#58a6ff;cursor:pointer" title="View call traces">\\u2197</span>' : '';
+    return '<tr' + clickable + '>' +
       '<td><span class="method-badge method-' + m + '">' + m + '</span></td>' +
       '<td style="font-family:monospace;color:#79c0ff">' + esc(r.path) + '</td>' +
       '<td><span class="kind-badge kind-' + r.kind + '">' + r.kind + '</span></td>' +
-      '<td style="color:#8b949e">' + (r.handler ? esc(r.handler) : '\u2014') + '</td>' +
+      '<td style="color:#8b949e">' + (r.handler ? esc(r.handler) : '\\u2014') + traceIcon + '</td>' +
       '<td style="color:#484f58">:' + r.line + '</td>' +
     '</tr>';
   }).join('');
+
+  // Wire up route → traces navigation
+  document.querySelectorAll('.trace-link').forEach(el => {
+    el.addEventListener('click', () => {
+      const key = el.dataset.symKey;
+      // Switch to traces tab
+      document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      const tracesBtn = document.querySelector('.nav button[data-view="traces"]');
+      tracesBtn.classList.add('active');
+      document.getElementById('view-traces').classList.add('active');
+      // Select the symbol
+      if (window.selectSymbol) window.selectSymbol(key);
+      // Scroll list item into view
+      const listItem = document.querySelector('.trace-sym-item[data-sym-key="' + CSS.escape(key) + '"]');
+      if (listItem) listItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  });
 }
 
 // ─── Summary ───────────────────────────────────────────────────────────
@@ -860,6 +955,7 @@ const statCards = [
   { num: DATA.interactiveElements.length, lbl: 'Interactive Elements' },
   { num: DATA.routeMap.length, lbl: 'Routes' },
   { num: DATA.linkGraph.length, lbl: 'File Links' },
+  { num: DATA.symbolLinks.length, lbl: 'Call Traces' },
   { num: DATA.frameworks.length, lbl: 'Frameworks' },
 ];
 document.getElementById('summary-stats').innerHTML = statCards.map(s =>
@@ -868,6 +964,165 @@ document.getElementById('summary-stats').innerHTML = statCards.map(s =>
 document.getElementById('summary-files').innerHTML = DATA.files.map(f =>
   '<div>' + esc(f) + '</div>'
 ).join('');
+
+// ─── Call Traces — Complete Call Map ──────────────────────────────────
+{
+  // Build bidirectional index: callers (inbound) and callees (outbound)
+  const callerMap = {};  // key: "file::symbol" → [{sourceFile, sourceSymbol, sourceLine, callName}]
+  const calleeMap = {};  // key: "file::symbol" → [{targetFile, targetSymbol, targetLine, callName}]
+  const allSymbols = {}; // key: "file::symbol" → {file, symbol, inCount, outCount}
+
+  DATA.symbolLinks.forEach(l => {
+    const srcKey = l.sourceFile + '::' + l.sourceSymbol;
+    const tgtKey = l.targetFile + '::' + l.targetSymbol;
+
+    // Register symbols
+    if (!allSymbols[srcKey]) allSymbols[srcKey] = { file: l.sourceFile, symbol: l.sourceSymbol, inCount: 0, outCount: 0 };
+    if (!allSymbols[tgtKey]) allSymbols[tgtKey] = { file: l.targetFile, symbol: l.targetSymbol, inCount: 0, outCount: 0 };
+
+    // Callees (outbound from source)
+    if (!calleeMap[srcKey]) calleeMap[srcKey] = [];
+    calleeMap[srcKey].push({ targetFile: l.targetFile, targetSymbol: l.targetSymbol, targetLine: l.targetLine, callName: l.callName });
+    allSymbols[srcKey].outCount++;
+
+    // Callers (inbound to target)
+    if (!callerMap[tgtKey]) callerMap[tgtKey] = [];
+    callerMap[tgtKey].push({ sourceFile: l.sourceFile, sourceSymbol: l.sourceSymbol, sourceLine: l.sourceLine, callName: l.callName });
+    allSymbols[tgtKey].inCount++;
+  });
+
+  // Populate file filter
+  const traceFiles = [...new Set(Object.values(allSymbols).map(s => s.file))].sort();
+  const traceFileSel = document.getElementById('trace-filter-file');
+  traceFiles.forEach(f => { const o = document.createElement('option'); o.value = f; o.textContent = f; traceFileSel.appendChild(o); });
+
+  let selectedKey = null;
+
+  function renderSymbolList() {
+    const fileF = traceFileSel.value;
+    const searchF = document.getElementById('trace-filter-search').value.toLowerCase();
+
+    // Filter symbols
+    let entries = Object.entries(allSymbols);
+    if (fileF) entries = entries.filter(([k, s]) => s.file === fileF);
+    if (searchF) entries = entries.filter(([k, s]) =>
+      s.symbol.toLowerCase().includes(searchF) || s.file.toLowerCase().includes(searchF)
+    );
+
+    // Group by file
+    const byFile = {};
+    entries.forEach(([key, s]) => { (byFile[s.file] = byFile[s.file] || []).push({ key, ...s }); });
+
+    const list = document.getElementById('trace-symbol-list');
+    if (entries.length === 0) {
+      list.innerHTML = '<div class="empty" style="padding:20px">No symbols found</div>';
+      return;
+    }
+
+    list.innerHTML = Object.entries(byFile).sort((a,b) => a[0].localeCompare(b[0])).map(([file, syms]) => {
+      const items = syms.sort((a,b) => a.symbol.localeCompare(b.symbol)).map(s => {
+        const sel = s.key === selectedKey ? ' selected' : '';
+        return '<div class="trace-sym-item' + sel + '" data-sym-key="' + esc(s.key) + '">' +
+          '<span class="sym-name">' + esc(s.symbol) + '</span>' +
+          '<span class="sym-counts">' +
+            (s.inCount > 0 ? '<span class="sym-in">\\u2190' + s.inCount + '</span>' : '') +
+            (s.outCount > 0 ? '<span class="sym-out">\\u2192' + s.outCount + '</span>' : '') +
+          '</span>' +
+        '</div>';
+      }).join('');
+      return '<div class="trace-sym-group">' +
+        '<div class="trace-sym-group-header"><span>' + esc(file) + '</span><span>' + syms.length + '</span></div>' +
+        items + '</div>';
+    }).join('');
+
+    // Wire up clicks
+    list.querySelectorAll('.trace-sym-item').forEach(el => {
+      el.addEventListener('click', () => selectSymbol(el.dataset.symKey));
+    });
+  }
+
+  window.selectSymbol = selectSymbol;
+  function selectSymbol(key) {
+    selectedKey = key;
+    const sym = allSymbols[key];
+    if (!sym) return;
+
+    // Highlight in list
+    document.querySelectorAll('.trace-sym-item').forEach(el => {
+      el.classList.toggle('selected', el.dataset.symKey === key);
+    });
+
+    const callers = callerMap[key] || [];
+    const callees = calleeMap[key] || [];
+    const mapDiv = document.getElementById('trace-map-content');
+
+    let html = '<div class="trace-selected-title">' + esc(sym.symbol) + '</div>';
+    html += '<div class="trace-selected-file">' + esc(sym.file) + '</div>';
+
+    // Callers section (inbound)
+    html += '<div class="trace-section">';
+    html += '<div class="trace-section-header inbound">\\u2190 Called by <span class="section-count">(' + callers.length + ')</span></div>';
+    if (callers.length === 0) {
+      html += '<div class="trace-no-links">No callers found \\u2014 this may be an entry point</div>';
+    } else {
+      html += callers.map(c => {
+        const cKey = c.sourceFile + '::' + c.sourceSymbol;
+        return '<div class="trace-chain-row inbound" data-sym-key="' + esc(cKey) + '">' +
+          '<span class="chain-symbol">' + esc(c.sourceSymbol) + '</span>' +
+          '<span class="chain-call">' + esc(c.callName) + '</span>' +
+          '<span class="chain-arrow">\\u2192</span>' +
+          '<span style="color:#58a6ff">this</span>' +
+          '<span class="chain-line">:' + c.sourceLine + '</span>' +
+          '<span class="chain-file">' + esc(c.sourceFile) + '</span>' +
+        '</div>';
+      }).join('');
+    }
+    html += '</div>';
+
+    // Callees section (outbound)
+    html += '<div class="trace-section">';
+    html += '<div class="trace-section-header outbound">\\u2192 Calls <span class="section-count">(' + callees.length + ')</span></div>';
+    if (callees.length === 0) {
+      html += '<div class="trace-no-links">No outgoing calls found \\u2014 this is a leaf function</div>';
+    } else {
+      html += callees.map(c => {
+        const cKey = c.targetFile + '::' + c.targetSymbol;
+        return '<div class="trace-chain-row outbound" data-sym-key="' + esc(cKey) + '">' +
+          '<span style="color:#3fb950">this</span>' +
+          '<span class="chain-arrow">\\u2192</span>' +
+          '<span class="chain-symbol">' + esc(c.targetSymbol) + '</span>' +
+          '<span class="chain-call">' + esc(c.callName) + '</span>' +
+          '<span class="chain-line">:' + c.targetLine + '</span>' +
+          '<span class="chain-file">' + esc(c.targetFile) + '</span>' +
+        '</div>';
+      }).join('');
+    }
+    html += '</div>';
+
+    mapDiv.innerHTML = html;
+
+    // Wire up chain row clicks → navigate to that symbol
+    mapDiv.querySelectorAll('.trace-chain-row').forEach(el => {
+      el.addEventListener('click', () => {
+        const targetKey = el.dataset.symKey;
+        if (allSymbols[targetKey]) {
+          selectSymbol(targetKey);
+          // Scroll the symbol into view in the list
+          const listItem = document.querySelector('.trace-sym-item[data-sym-key="' + CSS.escape(targetKey) + '"]');
+          if (listItem) listItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+      });
+    });
+  }
+
+  traceFileSel.addEventListener('change', renderSymbolList);
+  document.getElementById('trace-filter-search').addEventListener('input', renderSymbolList);
+  renderSymbolList();
+
+  // Auto-select first symbol if available
+  const firstKey = Object.keys(allSymbols)[0];
+  if (firstKey) selectSymbol(firstKey);
+}
 
 // ─── Link Graph (Canvas) ──────────────────────────────────────────────
 let graphInitialized = false;
