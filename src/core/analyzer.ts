@@ -18,7 +18,7 @@ import { extractSubComponents } from "../extractors/shared/sub-components.js";
 import { extractRoutes } from "../extractors/routes/index.js";
 import { extractDataSources } from "../extractors/data-sources/index.js";
 import { extractDataMutations } from "../extractors/data-mutations/index.js";
-import { classifyCalls } from "../extractors/shared/call-graph.js";
+import { classifyCalls, extractTopLevelCalls, extractVariableAliases } from "../extractors/shared/call-graph.js";
 import { extractInteractiveElements, extractVueInteractiveElements } from "../extractors/shared/interactive-elements.js";
 import { extractEvents } from "../extractors/shared/events.js";
 import { buildLinkGraph } from "../extractors/shared/link-scoring.js";
@@ -157,17 +157,43 @@ async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       analysis.imports,
     );
 
-    // Classify calls using import context and language patterns
+    // Extract top-level calls (Vue <script setup>, module-level hooks)
+    // and variable aliases (const userStore = useUserStore())
+    const topLevelCalls = extractTopLevelCalls(tree, language);
+    const variableAliases = extractVariableAliases(tree, analysis.imports, language);
+
+    if (topLevelCalls.length > 0) {
+      const setupFn = {
+        name: "<setup>",
+        params: [],
+        returnType: null,
+        isAsync: false,
+        isExported: false,
+        decorators: [],
+        calls: topLevelCalls,
+        line: 1,
+        endLine: 1,
+      };
+      analysis.functions.unshift(setupFn);
+    }
+
+    // Classify calls using import context, language patterns, and variable aliases
     for (const fn of analysis.functions) {
-      fn.calls = classifyCalls(fn.calls, analysis.imports, language);
+      fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases);
     }
     for (const cls of analysis.classes) {
       for (const method of cls.methods) {
-        method.calls = classifyCalls(method.calls, analysis.imports, language);
+        method.calls = classifyCalls(method.calls, analysis.imports, language, variableAliases);
       }
     }
     for (const route of analysis.routes) {
-      route.calls = classifyCalls(route.calls, analysis.imports, language);
+      route.calls = classifyCalls(route.calls, analysis.imports, language, variableAliases);
+    }
+    // Also classify calls inside data source callbacks (lifecycle hooks, watchers)
+    for (const ds of analysis.dataSources) {
+      if (ds.calls.length > 0) {
+        ds.calls = classifyCalls(ds.calls, analysis.imports, language, variableAliases);
+      }
     }
 
     // Extract interactive elements (buttons, inputs, forms with event bindings)

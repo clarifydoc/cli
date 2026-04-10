@@ -112,6 +112,49 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
 }
 
 /**
+ * Extract top-level (module-scope) calls — calls not inside any function or class body.
+ * Used for Vue <script setup> where hooks like useUserStore() are at module scope.
+ */
+export function extractTopLevelCalls(tree: { rootNode: Node }, language: Language): CallInfo[] {
+  const callTypes = CALL_TYPES[language];
+  if (!callTypes) return [];
+
+  const results: CallInfo[] = [];
+  const seen = new Set<string>();
+
+  function walk(node: Node) {
+    // Stop at function/class boundaries — those are handled by extractCalls
+    if (NESTED_SCOPE_TYPES.has(node.type)) return;
+    // Also stop at named function declarations and class declarations
+    if (
+      node.type === "function_declaration" ||
+      node.type === "class_declaration" ||
+      node.type === "method_definition"
+    ) return;
+
+    if (callTypes.has(node.type)) {
+      const name = resolveCallName(node, language);
+      if (name && !isNoise(name) && !seen.has(name)) {
+        seen.add(name);
+        results.push({
+          name,
+          kind: "internal",
+          target: null,
+          line: node.startPosition.row + 1,
+        });
+      }
+    }
+
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!);
+    }
+  }
+
+  walk(tree.rootNode);
+  return results;
+}
+
+/**
  * Classify raw calls using import context and language-specific patterns.
  * Mutates and returns the calls array with updated `kind` and `target`.
  */
@@ -119,6 +162,7 @@ export function classifyCalls(
   calls: CallInfo[],
   imports: ImportInfo[],
   language: Language,
+  variableAliases?: Map<string, string>,
 ): CallInfo[] {
   // Build import lookup: specifier name → import source
   const importMap = new Map<string, string>();
@@ -173,7 +217,17 @@ export function classifyCalls(
       continue;
     }
 
-    // 2b. Instance variable → imported type matching for qualified calls
+    // 2b. Variable alias resolution: const userStore = useUserStore() → userStore.x resolves to useUserStore's source
+    if (variableAliases && call.name.includes(".")) {
+      const aliasSource = variableAliases.get(root);
+      if (aliasSource) {
+        call.kind = "cross-file";
+        call.target = aliasSource;
+        continue;
+      }
+    }
+
+    // 2c. Instance variable → imported type matching for qualified calls
     // Java/Kotlin: @Autowired UserService userService → userService.method, import is UserService
     // Python: user_service = UserService() → user_service.method, import is UserService
     if (call.name.includes(".")) {
@@ -322,6 +376,60 @@ function resolveCallName(node: Node, language: Language): string | null {
   }
 
   return null;
+}
+
+/**
+ * Extract variable-to-call assignments from module-level code.
+ * Returns a map: variable name → import source (resolved through imports).
+ * E.g., `const userStore = useUserStore()` → { "userStore": "../stores/users" }
+ */
+export function extractVariableAliases(
+  tree: { rootNode: Node },
+  imports: ImportInfo[],
+  language: Language,
+): Map<string, string> {
+  const aliases = new Map<string, string>();
+
+  // Build import lookup
+  const importMap = new Map<string, string>();
+  for (const imp of imports) {
+    if (imp.isType) continue;
+    for (const spec of imp.specifiers) {
+      importMap.set(spec, imp.source);
+    }
+  }
+
+  function walk(node: Node) {
+    // Stop at function/class boundaries
+    if (NESTED_SCOPE_TYPES.has(node.type) ||
+        node.type === "function_declaration" ||
+        node.type === "class_declaration") return;
+
+    // Match: const/let/var name = importedFn()
+    if (node.type === "lexical_declaration" || node.type === "variable_declaration") {
+      for (let i = 0; i < node.childCount; i++) {
+        const decl = node.child(i)!;
+        if (decl.type === "variable_declarator") {
+          const nameNode = decl.childForFieldName("name");
+          const valueNode = decl.childForFieldName("value");
+          if (nameNode && valueNode && valueNode.type === "call_expression") {
+            const fnNode = valueNode.childForFieldName("function");
+            const fnName = fnNode?.text;
+            if (fnName && importMap.has(fnName)) {
+              aliases.set(nameNode.text, importMap.get(fnName)!);
+            }
+          }
+        }
+      }
+    }
+
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i)!);
+    }
+  }
+
+  walk(tree.rootNode);
+  return aliases;
 }
 
 /** Check if a call name is noise (chaining, logging, etc.) */
