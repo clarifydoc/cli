@@ -55,6 +55,7 @@ export interface CallInfo {
   kind: "cross-file" | "database" | "api-call" | "internal";
   target: string | null;
   line: number;
+  column?: number;
 }
 
 export interface FunctionInfo {
@@ -196,6 +197,14 @@ export interface SymbolLink {
   targetFile: string;
   targetSymbol: string;
   targetLine: number;
+  resolvedBy?: "text" | "lsp";
+}
+
+export interface LspStats {
+  serversUsed: string[];
+  lspResolvedCount: number;
+  referenceLinksCount: number;
+  enhancementTimeMs: number;
 }
 
 /** Project-level summary */
@@ -210,6 +219,7 @@ export interface ProjectAnalysis {
   routeMap: RouteInfo[];
   screens: ScreenInfo[];
   symbolLinks: SymbolLink[];
+  lspStats?: LspStats;
   analyzedAt: string;
 }
 

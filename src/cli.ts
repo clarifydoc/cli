@@ -27,6 +27,8 @@ program
   .option("--no-pretty", "Output compact JSON (no formatting)")
   .option("--verbose", "Show progress and debug info", false)
   .option("--dry-run", "List files that would be analyzed without analyzing", false)
+  .option("--no-lsp", "Disable LSP-based symbol resolution")
+  .option("--lsp-timeout <ms>", "Timeout for LSP server startup in ms", parseInt)
   .option("--html", "Generate an HTML report after analysis", false)
   .action(async (path: string, options) => {
     const projectRoot = resolve(path);
@@ -48,6 +50,8 @@ program
         pretty: options.pretty,
         verbose: options.verbose,
         dryRun: options.dryRun,
+        lsp: options.lsp,
+        lspTimeout: options.lspTimeout,
       });
 
       if (options.dryRun) {

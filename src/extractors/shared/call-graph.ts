@@ -98,6 +98,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
           kind: "internal",
           target: null,
           line: node.startPosition.row + 1,
+          column: node.startPosition.column,
         });
       }
     }
@@ -141,6 +142,7 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
           kind: "internal",
           target: null,
           line: node.startPosition.row + 1,
+          column: node.startPosition.column,
         });
       }
     }

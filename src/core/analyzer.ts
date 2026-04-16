@@ -42,6 +42,8 @@ export interface AnalyzeOptions {
   pretty?: boolean;
   verbose?: boolean;
   dryRun?: boolean;
+  lsp?: boolean;
+  lspTimeout?: number;
 }
 
 export interface AnalyzeResult {
@@ -347,7 +349,36 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   if (verbose) console.log("Building project summary...");
   const componentGraph = buildComponentGraph(allAnalyses);
   const linkGraph = buildLinkGraph(allAnalyses);
-  const symbolLinks = buildSymbolLinks(allAnalyses);
+  let symbolLinks = buildSymbolLinks(allAnalyses);
+
+  // Step 4b: LSP enhancement (optional)
+  let lspStats: import("../types/analysis.js").LspStats | undefined;
+  if (options.lsp !== false) {
+    try {
+      const { enhanceWithLsp } = await import("../lsp/lsp-enhancer.js");
+      if (verbose) console.log("Running LSP enhancement...");
+      const lspResult = await enhanceWithLsp({
+        projectRoot,
+        analyses: allAnalyses,
+        existingLinks: symbolLinks,
+        files,
+        verbose: !!verbose,
+        timeout: options.lspTimeout,
+      });
+      symbolLinks = lspResult.enhancedLinks;
+      lspStats = {
+        serversUsed: lspResult.serversUsed,
+        lspResolvedCount: lspResult.lspResolvedCount,
+        referenceLinksCount: lspResult.referenceLinksCount,
+        enhancementTimeMs: lspResult.timeMs,
+      };
+      if (verbose && lspResult.serversUsed.length > 0) {
+        console.log(`  LSP enhancement: +${lspResult.lspResolvedCount} definitions, +${lspResult.referenceLinksCount} references (${lspResult.timeMs}ms)`);
+      }
+    } catch (err) {
+      if (verbose) console.log(`LSP enhancement skipped: ${(err as Error).message}`);
+    }
+  }
   const allRoutes = allAnalyses.flatMap((a) =>
     a.routes.map((r) => ({ ...r, filePath: a.filePath })),
   );
@@ -374,6 +405,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     routeMap: allRoutes,
     screens: allScreens,
     symbolLinks,
+    lspStats,
     analyzedAt: new Date().toISOString(),
   };
 
