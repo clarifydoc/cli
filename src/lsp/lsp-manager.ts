@@ -24,6 +24,10 @@ const LANGUAGE_ID_MAP: Record<string, string> = {
   java: "java",
   kotlin: "kotlin",
   csharp: "csharp",
+  go: "go",
+  rust: "rust",
+  ruby: "ruby",
+  php: "php",
 };
 
 /** Map file extension to LSP languageId */
@@ -32,10 +36,14 @@ function extensionToLanguageId(filePath: string): string {
   if (filePath.endsWith(".jsx")) return "javascriptreact";
   if (filePath.endsWith(".ts") || filePath.endsWith(".mts") || filePath.endsWith(".cts")) return "typescript";
   if (filePath.endsWith(".js") || filePath.endsWith(".mjs") || filePath.endsWith(".cjs")) return "javascript";
-  if (filePath.endsWith(".py")) return "python";
+  if (filePath.endsWith(".py") || filePath.endsWith(".pyw")) return "python";
   if (filePath.endsWith(".java")) return "java";
   if (filePath.endsWith(".kt") || filePath.endsWith(".kts")) return "kotlin";
   if (filePath.endsWith(".cs")) return "csharp";
+  if (filePath.endsWith(".go")) return "go";
+  if (filePath.endsWith(".rs")) return "rust";
+  if (filePath.endsWith(".rb")) return "ruby";
+  if (filePath.endsWith(".php")) return "php";
   return "plaintext";
 }
 

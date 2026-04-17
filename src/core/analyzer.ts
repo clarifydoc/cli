@@ -23,6 +23,14 @@ import { extractInteractiveElements, extractVueInteractiveElements } from "../ex
 import { extractEvents } from "../extractors/shared/events.js";
 import { buildLinkGraph } from "../extractors/shared/link-scoring.js";
 import { buildSymbolLinks } from "./symbol-linker.js";
+import { computeComplexity, aggregateComplexity } from "./complexity-analyzer.js";
+import { scanSecurity } from "./security-scanner.js";
+import { detectPatterns } from "./pattern-detector.js";
+import { detectDuplicates } from "./duplication-detector.js";
+import { classifyFileLayers, detectLayerViolations } from "./layer-analyzer.js";
+import { analyzeBlastRadius } from "./blast-radius.js";
+import { computeHealthScore } from "./health-scorer.js";
+import { generateSuggestions } from "./suggestions-engine.js";
 import {
   createEmptyAnalysis,
   type FileAnalysis,
@@ -31,6 +39,8 @@ import {
   type ScreenInfo,
   type ScreenComponentInfo,
   type ScreenComponentCategory,
+  type ComplexityInfo,
+  type SecurityIssue,
 } from "../types/analysis.js";
 
 export interface AnalyzeOptions {
@@ -55,6 +65,10 @@ export interface AnalyzeResult {
   linkCount: number;
   screenCount: number;
   symbolLinkCount: number;
+  healthGrade?: string;
+  patternCount?: number;
+  securityIssueCount?: number;
+  suggestionCount?: number;
 }
 
 // ─── Per-file analysis task / result ─────────────────────────────────────
@@ -69,6 +83,8 @@ interface FileTask {
 interface FileResult {
   analysis: FileAnalysis;
   rawSource: string | null; // non-null only for frontend route files
+  complexities: ComplexityInfo[];
+  securityIssues: SecurityIssue[];
 }
 
 // ─── Concurrency pool ────────────────────────────────────────────────────
@@ -119,7 +135,18 @@ async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       const analysis = parseDfm(rawSource, file.relativePath);
       analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
       await writeFileAnalysis(analysis, outputOpts);
-      return { analysis, rawSource: null };
+      return { analysis, rawSource: null, complexities: [], securityIssues: [] };
+    }
+
+    // Languages without tree-sitter grammars: use regex fallback
+    const REGEX_ONLY_LANGUAGES: Language[] = ["go", "rust", "ruby", "php", "swift", "lua", "scala"];
+    if (REGEX_ONLY_LANGUAGES.includes(file.language)) {
+      const { extractWithRegex } = await import("./regex-extractor.js");
+      const analysis = extractWithRegex(rawSource, file.relativePath, file.language);
+      analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
+      const fileSecurityIssues = scanSecurity(rawSource, file.relativePath, file.language);
+      await writeFileAnalysis(analysis, outputOpts);
+      return { analysis, rawSource: null, complexities: [], securityIssues: fileSecurityIssues };
     }
 
     const isVue = file.relativePath.endsWith(".vue");
@@ -127,19 +154,31 @@ async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // For .vue files, extract the <script> block and parse that
     let sourceText: string;
     let language: Language = file.language;
+    const vueSfc = isVue ? parseVueSfc(rawSource) : null;
     if (isVue) {
-      const sfc = parseVueSfc(rawSource);
-      if (!sfc.script) {
+      if (!vueSfc!.script) {
         if (verbose) console.log(`    Skipping ${file.relativePath}: no <script> block`);
         return null;
       }
-      sourceText = sfc.script;
-      language = sfc.scriptLang;
+      sourceText = vueSfc!.script;
+      language = vueSfc!.scriptLang;
     } else {
       sourceText = rawSource;
     }
 
-    const tree = await parseSource(sourceText, language, file.relativePath);
+    let tree;
+    try {
+      tree = await parseSource(sourceText, language as any, file.relativePath);
+    } catch (parseErr) {
+      // Tree-sitter parse failure: fall back to regex extraction
+      if (verbose) console.log(`    Parse failed for ${file.relativePath}, using regex fallback`);
+      const { extractWithRegex } = await import("./regex-extractor.js");
+      const analysis = extractWithRegex(rawSource, file.relativePath, file.language);
+      analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
+      const fileSecurityIssues = scanSecurity(rawSource, file.relativePath, file.language);
+      await writeFileAnalysis(analysis, outputOpts);
+      return { analysis, rawSource: null, complexities: [], securityIssues: fileSecurityIssues };
+    }
 
     const analysis = createEmptyAnalysis(file.relativePath, language);
 
@@ -205,14 +244,13 @@ async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
 
     // For .vue files, also add template components and interactive elements
-    if (isVue) {
-      const sfc = parseVueSfc(rawSource);
-      if (sfc.template) {
+    if (isVue && vueSfc) {
+      if (vueSfc.template) {
         analysis.interactiveElements.push(
-          ...extractVueInteractiveElements(sfc.template, rawSource),
+          ...extractVueInteractiveElements(vueSfc.template, rawSource),
         );
       }
-      for (const comp of sfc.templateComponents) {
+      for (const comp of vueSfc.templateComponents) {
         const importSource =
           analysis.imports.find((imp) =>
             imp.specifiers.includes(comp.name),
@@ -237,11 +275,20 @@ async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // Detect React directives: 'use client' / 'use server'
     detectDirectives(sourceText, analysis);
 
+    // Advanced per-file analysis: complexity and security
+    const fileComplexities = computeComplexity(tree, language, analysis.functions, analysis.classes);
+    const fileSecurityIssues = scanSecurity(sourceText, file.relativePath, language);
+
     await writeFileAnalysis(analysis, outputOpts);
 
     // Return raw source for frontend route files (needed for screen building)
     const hasFrontendRoute = analysis.routes.some((r) => r.kind === "frontend");
-    return { analysis, rawSource: hasFrontendRoute ? rawSource : null };
+    return {
+      analysis,
+      rawSource: hasFrontendRoute ? rawSource : null,
+      complexities: fileComplexities,
+      securityIssues: fileSecurityIssues,
+    };
   } catch (err) {
     console.error(
       `  Error analyzing ${file.relativePath}: ${(err as Error).message}`,
@@ -332,6 +379,8 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Collect successful results
   const allAnalyses: FileAnalysis[] = [];
   const rawSources = new Map<string, string>();
+  const perFileComplexity: { filePath: string; complexities: ComplexityInfo[] }[] = [];
+  const allSecurityIssues: SecurityIssue[] = [];
 
   for (const result of results) {
     if (result) {
@@ -339,6 +388,10 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       if (result.rawSource) {
         rawSources.set(result.analysis.filePath, result.rawSource);
       }
+      if (result.complexities.length > 0) {
+        perFileComplexity.push({ filePath: result.analysis.filePath, complexities: result.complexities });
+      }
+      allSecurityIssues.push(...result.securityIssues);
     }
   }
 
@@ -379,6 +432,15 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       if (verbose) console.log(`LSP enhancement skipped: ${(err as Error).message}`);
     }
   }
+  // Enrich component graph with edges from symbol links
+  // This catches cross-file dependencies that import resolution missed
+  // (e.g. Java package imports, Python absolute imports, C# usings)
+  enrichGraphFromSymbolLinks(componentGraph, symbolLinks);
+
+  // Enrich link graph from component graph edges that buildLinkGraph missed
+  // (e.g. Go package imports resolved via directory matching)
+  enrichLinkGraphFromComponentGraph(linkGraph, componentGraph);
+
   const allRoutes = allAnalyses.flatMap((a) =>
     a.routes.map((r) => ({ ...r, filePath: a.filePath })),
   );
@@ -392,6 +454,42 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const dfmScreens = allAnalyses.flatMap((a) => a.screens ?? []);
   const webScreens = buildScreensFromRoutes(allAnalyses, rawSources);
   const allScreens = [...dfmScreens, ...webScreens];
+
+  // Step 4c: Advanced analysis
+  if (verbose) console.log("Running advanced analysis...");
+
+  const complexity = aggregateComplexity(perFileComplexity);
+  const patterns = detectPatterns(allAnalyses, frameworks);
+  const duplicates = detectDuplicates(allAnalyses);
+  const fileLayerMap = classifyFileLayers(allAnalyses.map((a) => a.filePath));
+  const layerViolations = detectLayerViolations(allAnalyses, componentGraph, fileLayerMap);
+  const blastRadius = analyzeBlastRadius(componentGraph, symbolLinks, allAnalyses.length);
+  const healthScore = computeHealthScore({
+    analyses: allAnalyses,
+    componentGraph,
+    patterns,
+    securityIssues: allSecurityIssues,
+    duplicates,
+    complexity,
+    layerViolations,
+  });
+  const suggestions = generateSuggestions({
+    analyses: allAnalyses,
+    healthScore,
+    patterns,
+    securityIssues: allSecurityIssues,
+    duplicates,
+    complexity,
+    layerViolations,
+    blastRadius,
+    componentGraph,
+  });
+
+  if (verbose) {
+    console.log(`  Health: ${healthScore.grade} (${healthScore.score}/100)`);
+    console.log(`  Patterns: ${patterns.length}, Security: ${allSecurityIssues.length}, Duplicates: ${duplicates.length}`);
+    console.log(`  Suggestions: ${suggestions.length}`);
+  }
 
   // Step 5: Write project summary
   const summary: ProjectAnalysis = {
@@ -407,6 +505,15 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     symbolLinks,
     lspStats,
     analyzedAt: new Date().toISOString(),
+    complexity,
+    patterns,
+    securityIssues: allSecurityIssues,
+    duplicates,
+    layerViolations,
+    blastRadius,
+    healthScore,
+    suggestions,
+    fileLayerMap,
   };
 
   await writeProjectSummary(summary, outputOpts);
@@ -420,6 +527,10 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     linkCount: linkGraph.length,
     screenCount: allScreens.length,
     symbolLinkCount: symbolLinks.length,
+    healthGrade: healthScore.grade,
+    patternCount: patterns.length,
+    securityIssueCount: allSecurityIssues.length,
+    suggestionCount: suggestions.length,
   };
 }
 
@@ -590,47 +701,162 @@ function buildComponentGraph(
     }
   }
 
+  // Build a map of file base names (without extension) to file paths
+  const baseNameToFile = new Map<string, string>();
+  // Build a map of stripped paths to file paths for relative import resolution (O(1) lookup)
+  const strippedPathToFile = new Map<string, string>();
+  // Build a map of directory names → files in that directory (for Go/Rust package imports)
+  const dirToFiles = new Map<string, string[]>();
   for (const a of analyses) {
-    const refs: string[] = [];
+    const baseName = a.filePath.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "");
+    baseNameToFile.set(baseName, a.filePath);
+    const stripped = a.filePath
+      .replace(/\.(ts|tsx|js|jsx|mjs|cjs|vue|py|java|kt|cs|pas|go|rs|rb|php|swift|lua|scala)$/, "")
+      .replace(/\/index$/, "");
+    strippedPathToFile.set(stripped, a.filePath);
+
+    // Map directory name → files
+    const dir = a.filePath.replace(/\\/g, "/").replace(/\/[^/]+$/, "");
+    const dirName = dir.split("/").pop() ?? dir;
+    if (!dirToFiles.has(dirName)) dirToFiles.set(dirName, []);
+    dirToFiles.get(dirName)!.push(a.filePath);
+  }
+
+  for (const a of analyses) {
+    const refSet = new Set<string>();
 
     for (const imp of a.imports) {
-      // Try to resolve relative imports to actual files
+      // 1. Resolve relative imports (JS/TS/Vue) via pre-built path map
       if (imp.source.startsWith(".")) {
-        // Find matching file
-        const match = analyses.find((other) => {
-          const otherBase = other.filePath
-            .replace(/\.(ts|tsx|js|jsx|mjs|cjs)$/, "")
-            .replace(/\/index$/, "");
-          return imp.source.endsWith(otherBase) || otherBase.endsWith(imp.source.replace(/^\.\//, ""));
-        });
-        if (match) refs.push(match.filePath);
+        const candidate = imp.source.replace(/^\.\//, "");
+        // Try direct lookup in stripped path map
+        let match: string | undefined;
+        for (const [stripped, filePath] of strippedPathToFile) {
+          if (stripped.endsWith(candidate) || candidate.endsWith(stripped)) {
+            match = filePath;
+            break;
+          }
+        }
+        if (match && match !== a.filePath) refSet.add(match);
+        continue;
       }
-    }
 
-    // Also track sub-component references
-    for (const comp of a.subComponents) {
-      if (comp.importSource) {
-        const match = analyses.find((other) => {
-          const otherBase = other.filePath.replace(
-            /\.(ts|tsx|js|jsx)$/,
-            "",
-          );
-          return otherBase.endsWith(
-            comp.importSource!.replace(/^\.\//, ""),
-          );
-        });
-        if (match && !refs.includes(match.filePath)) {
-          refs.push(match.filePath);
+      // 2. Resolve non-relative imports via specifier names → exported names
+      // Works for Java (import com.example.api.service.UserService → specifier "UserService")
+      // Works for Python (from app.services import UserService → specifier "UserService")
+      // Works for C# (using MyApp.Services → specifier matching)
+      for (const spec of imp.specifiers) {
+        if (!spec) continue;
+        const target = exportToFile.get(spec);
+        if (target && target !== a.filePath) {
+          refSet.add(target);
+        }
+      }
+
+      // 3. Resolve by matching the last segment of the import source to a file name
+      // e.g. "com.example.api.service.UserService" → "UserService" → UserService.java
+      const lastSegment = imp.source.split(/[./\\]/).filter(Boolean).pop();
+      if (lastSegment) {
+        const target = baseNameToFile.get(lastSegment);
+        if (target && target !== a.filePath) {
+          refSet.add(target);
+        }
+      }
+
+      // 4. Resolve package/directory imports (Go, Ruby, Rust)
+      // e.g. "sample-go-api/handler" → all files in handler/ directory
+      if (lastSegment) {
+        const dirFiles = dirToFiles.get(lastSegment);
+        if (dirFiles) {
+          for (const target of dirFiles) {
+            if (target !== a.filePath) refSet.add(target);
+          }
         }
       }
     }
 
-    if (refs.length > 0) {
-      graph[a.filePath] = refs;
+    // Also track sub-component references via pre-built path map
+    for (const comp of a.subComponents) {
+      if (comp.importSource) {
+        const candidate = comp.importSource.replace(/^\.\//, "");
+        for (const [stripped, filePath] of strippedPathToFile) {
+          if (stripped.endsWith(candidate)) {
+            if (filePath !== a.filePath) refSet.add(filePath);
+            break;
+          }
+        }
+      }
+    }
+
+    if (refSet.size > 0) {
+      graph[a.filePath] = [...refSet];
     }
   }
 
   return graph;
+}
+
+/**
+ * Enrich the component graph with edges from symbolLinks.
+ * SymbolLinks represent resolved cross-file call traces — if file A calls
+ * a function defined in file B, that's a dependency edge even if the import
+ * resolution missed it.
+ */
+function enrichGraphFromSymbolLinks(
+  graph: Record<string, string[]>,
+  symbolLinks: import("../types/analysis.js").SymbolLink[],
+): void {
+  // Pre-build edge sets for O(1) duplicate checks
+  const edgeSets = new Map<string, Set<string>>();
+  for (const [src, targets] of Object.entries(graph)) {
+    edgeSets.set(src, new Set(targets));
+  }
+
+  for (const link of symbolLinks) {
+    if (link.sourceFile === link.targetFile) continue;
+
+    let edgeSet = edgeSets.get(link.sourceFile);
+    if (!edgeSet) {
+      edgeSet = new Set();
+      edgeSets.set(link.sourceFile, edgeSet);
+      graph[link.sourceFile] = [];
+    }
+    if (!edgeSet.has(link.targetFile)) {
+      edgeSet.add(link.targetFile);
+      graph[link.sourceFile].push(link.targetFile);
+    }
+  }
+}
+
+/**
+ * Enrich the link graph with edges from the component graph.
+ * For languages where buildLinkGraph can't resolve import sources (e.g. Go package imports),
+ * the component graph may have edges that the link graph doesn't.
+ */
+function enrichLinkGraphFromComponentGraph(
+  linkGraph: import("../types/analysis.js").LinkInfo[],
+  componentGraph: Record<string, string[]>,
+): void {
+  const existingEdges = new Set<string>();
+  for (const link of linkGraph) {
+    existingEdges.add(`${link.source}\u2192${link.target}`);
+  }
+
+  for (const [source, targets] of Object.entries(componentGraph)) {
+    for (const target of targets) {
+      const key = `${source}\u2192${target}`;
+      if (!existingEdges.has(key)) {
+        existingEdges.add(key);
+        linkGraph.push({
+          source,
+          target,
+          proximity: 3 as import("../types/analysis.js").LinkProximity,
+          reason: "import dependency",
+          calls: [],
+        });
+      }
+    }
+  }
 }
 
 /**

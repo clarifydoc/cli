@@ -80,6 +80,8 @@ export class CSharpExtractor extends FunctionClassExtractor {
       }
     }
 
+    // C#: default class visibility is internal, check for public
+    const classVis = this.getCsharpVisibility(node);
     return {
       name,
       extends: extendsName,
@@ -87,7 +89,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
       decorators,
       methods,
       properties,
-      isExported: true,
+      isExported: classVis === "public" || classVis === null,
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
@@ -116,12 +118,14 @@ export class CSharpExtractor extends FunctionClassExtractor {
     const decorators = extractCsharpAttributes(node);
     const body = node.childForFieldName("body");
 
+    // C#: methods default to private
+    const methodVis = this.getCsharpVisibility(node);
     return {
       name,
       params,
       returnType,
       isAsync,
-      isExported: true,
+      isExported: methodVis === "public",
       decorators,
       calls: extractCalls(body, "csharp"),
       line: node.startPosition.row + 1,

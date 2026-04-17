@@ -67,6 +67,18 @@ program
         console.log(`  Routes:      ${String(result.routeCount).padStart(4)}`);
         console.log(`  Links:       ${String(result.linkCount).padStart(4)}`);
         console.log(`  Traces:      ${String(result.symbolLinkCount).padStart(4)}`);
+        if (result.healthGrade) {
+          console.log(`  Health:      ${result.healthGrade.padStart(4)}`);
+        }
+        if (result.patternCount != null) {
+          console.log(`  Patterns:    ${String(result.patternCount).padStart(4)}`);
+        }
+        if (result.securityIssueCount != null) {
+          console.log(`  Security:    ${String(result.securityIssueCount).padStart(4)} issue(s)`);
+        }
+        if (result.suggestionCount != null) {
+          console.log(`  Suggestions: ${String(result.suggestionCount).padStart(4)}`);
+        }
         console.log(`  Output: ${outputDir}`);
 
         if (options.html) {

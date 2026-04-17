@@ -12,6 +12,7 @@ const EXTENSION_MAP: Record<string, Language> = {
   ".cjs": "javascript",
   ".cs": "csharp",
   ".py": "python",
+  ".pyw": "python",
   ".java": "java",
   ".kt": "kotlin",
   ".kts": "kotlin",
@@ -22,6 +23,13 @@ const EXTENSION_MAP: Record<string, Language> = {
   ".dpr": "pascal",
   ".dpk": "pascal",
   ".dfm": "dfm",
+  ".go": "go",
+  ".rs": "rust",
+  ".rb": "ruby",
+  ".php": "php",
+  ".swift": "swift",
+  ".lua": "lua",
+  ".scala": "scala",
 };
 
 const DEFAULT_IGNORE = [
@@ -35,6 +43,9 @@ const DEFAULT_IGNORE = [
   "**/__pycache__/**",
   "**/.venv/**",
   "**/venv/**",
+  "**/vendor/**",
+  "**/target/**",
+  "**/Pods/**",
   "**/*.min.js",
   "**/*.bundle.js",
   "**/*.d.ts",

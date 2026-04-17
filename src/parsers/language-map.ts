@@ -10,6 +10,7 @@ export const EXTENSION_TO_LANGUAGE: Record<string, Language> = {
   ".cjs": "javascript",
   ".cs": "csharp",
   ".py": "python",
+  ".pyw": "python",
   ".java": "java",
   ".kt": "kotlin",
   ".kts": "kotlin",
@@ -19,6 +20,13 @@ export const EXTENSION_TO_LANGUAGE: Record<string, Language> = {
   ".dpr": "pascal",
   ".dpk": "pascal",
   ".dfm": "dfm",
+  ".go": "go",
+  ".rs": "rust",
+  ".rb": "ruby",
+  ".php": "php",
+  ".swift": "swift",
+  ".lua": "lua",
+  ".scala": "scala",
 };
 
 /** Get language for a file path based on its extension */

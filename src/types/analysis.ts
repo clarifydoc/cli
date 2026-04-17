@@ -1,5 +1,7 @@
 /** Supported languages for analysis */
-export type Language = "typescript" | "javascript" | "csharp" | "python" | "java" | "kotlin" | "pascal" | "dfm";
+export type Language =
+  | "typescript" | "javascript" | "csharp" | "python" | "java" | "kotlin" | "pascal" | "dfm"
+  | "go" | "rust" | "ruby" | "php" | "swift" | "lua" | "scala";
 
 /** Per-file analysis result */
 export interface FileAnalysis {
@@ -207,6 +209,104 @@ export interface LspStats {
   enhancementTimeMs: number;
 }
 
+// ─── Advanced analysis types ────────────────────────────────────────────
+
+export interface ComplexityInfo {
+  functionName: string;
+  complexity: number;
+  line: number;
+  endLine: number;
+}
+
+export interface FileComplexityInfo {
+  filePath: string;
+  totalComplexity: number;
+  maxComplexity: number;
+  averageComplexity: number;
+  functions: ComplexityInfo[];
+}
+
+export type PatternKind =
+  | "singleton" | "factory" | "observer" | "custom-hook" | "hoc"
+  | "context-provider" | "dataclass" | "abc" | "middleware"
+  | "god-object" | "long-file";
+
+export interface PatternInfo {
+  kind: PatternKind;
+  name: string;
+  filePath: string;
+  line: number;
+  confidence: "high" | "medium" | "low";
+  detail: string;
+}
+
+export type SecuritySeverity = "critical" | "high" | "medium" | "low";
+export type SecurityCategory =
+  | "hardcoded-secret" | "sql-injection" | "xss" | "eval-exec"
+  | "command-injection" | "debug-statement" | "todo-fixme"
+  | "pickle" | "subprocess-shell" | "bare-except";
+
+export interface SecurityIssue {
+  category: SecurityCategory;
+  severity: SecuritySeverity;
+  message: string;
+  filePath: string;
+  line: number;
+  snippet: string;
+}
+
+export interface DuplicateGroup {
+  functionName: string;
+  occurrences: { filePath: string; line: number; similarity: number }[];
+  kind: "name-based" | "structural";
+}
+
+export type ArchLayer = "ui" | "components" | "services" | "data" | "utils" | "config" | "test" | "unknown";
+
+export interface LayerViolation {
+  sourceFile: string;
+  sourceLayer: ArchLayer;
+  targetFile: string;
+  targetLayer: ArchLayer;
+  importSpecifier: string;
+  line: number;
+}
+
+export interface BlastSymbolUsage {
+  name: string;
+  usedByCount: number;
+  callers: { file: string; line: number }[];
+}
+
+export interface BlastRadiusInfo {
+  filePath: string;
+  directDependents: number;
+  transitiveDependents: number;
+  impactScore: number;
+  centrality: number;
+  level: "critical" | "high" | "medium" | "low";
+  affectedFiles: string[];
+  transitiveFiles: string[];
+  dependsOn: string[];
+  exportedSymbols: BlastSymbolUsage[];
+  changeRisk: "safe" | "moderate" | "dangerous";
+  maxDepth: number;
+}
+
+export interface HealthScore {
+  score: number;
+  grade: "A" | "B" | "C" | "D" | "F";
+  penalties: { reason: string; points: number }[];
+}
+
+export interface Suggestion {
+  priority: "critical" | "high" | "medium" | "low";
+  category: string;
+  message: string;
+  filePath?: string;
+  actionable: string;
+}
+
 /** Project-level summary */
 export interface ProjectAnalysis {
   projectRoot: string;
@@ -221,6 +321,17 @@ export interface ProjectAnalysis {
   symbolLinks: SymbolLink[];
   lspStats?: LspStats;
   analyzedAt: string;
+
+  // Advanced analysis (optional)
+  complexity?: FileComplexityInfo[];
+  patterns?: PatternInfo[];
+  securityIssues?: SecurityIssue[];
+  duplicates?: DuplicateGroup[];
+  layerViolations?: LayerViolation[];
+  blastRadius?: BlastRadiusInfo[];
+  healthScore?: HealthScore;
+  suggestions?: Suggestion[];
+  fileLayerMap?: Record<string, ArchLayer>;
 }
 
 export interface FrameworkDetection {

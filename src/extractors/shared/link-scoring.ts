@@ -189,10 +189,17 @@ export function buildFilePathMap(analyses: FileAnalysis[]): Map<string, string> 
   const map = new Map<string, string>();
   for (const a of analyses) {
     map.set(a.filePath, a.filePath);
-    const base = a.filePath.replace(/\.(ts|tsx|js|jsx|mjs|cjs|vue|py|java|kt|cs|pas)$/, "");
+    const base = a.filePath.replace(/\.(ts|tsx|js|jsx|mjs|cjs|vue|py|pyw|java|kt|kts|cs|pas|pp|go|rs|rb|php|swift|lua|scala)$/, "");
     map.set(base, a.filePath);
     const noIndex = base.replace(/\/index$/, "");
     if (noIndex !== base) map.set(noIndex, a.filePath);
+
+    // Also map the file's basename (without extension) for package-qualified resolution
+    const baseName = base.split("/").pop()!;
+    // Only set if not already mapped (first file wins to avoid ambiguity)
+    if (!map.has(baseName)) {
+      map.set(baseName, a.filePath);
+    }
   }
   return map;
 }
@@ -244,7 +251,7 @@ function tryMatch(candidate: string, filePathMap: Map<string, string>): string |
   if (direct) return direct;
 
   // With common extensions
-  for (const ext of [".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".java", ".kt", ".cs", ".pas"]) {
+  for (const ext of [".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".java", ".kt", ".cs", ".pas", ".go", ".rs", ".rb", ".php", ".swift", ".lua", ".scala"]) {
     const withExt = filePathMap.get(candidate + ext);
     if (withExt) return withExt;
   }
@@ -282,6 +289,17 @@ const EXTERNAL_PREFIXES = [
   "numpy", "pandas", "scipy",
   // C# standard
   "System", "Microsoft.", "Newtonsoft.",
+  // Go standard library
+  "fmt", "net/", "os", "io", "context", "strings", "strconv", "errors", "encoding/",
+  "crypto/", "database/", "log", "sync", "time", "testing",
+  // Rust standard library + common crates
+  "std::", "core::", "alloc::", "serde", "tokio", "actix", "rocket",
+  "hyper", "reqwest", "diesel", "sqlx",
+  // Ruby standard library + common gems
+  "rails", "active_record", "active_support", "action_controller",
+  "rspec", "bundler", "rake",
+  // PHP standard library + common packages
+  "Illuminate\\", "Symfony\\", "Doctrine\\", "Laravel\\",
 ];
 
 export function isExternalPackage(source: string): boolean {

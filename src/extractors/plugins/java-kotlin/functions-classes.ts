@@ -120,6 +120,12 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       }
     }
 
+    // Java: default visibility is package-private (not public)
+    // Kotlin: default visibility is public
+    const vis = this.getVisibility(node);
+    const lang = this.guessLanguage(node);
+    const isExported = lang === "kotlin" ? vis !== "private" : vis === "public" || vis === null;
+
     return {
       name,
       extends: extendsName,
@@ -127,7 +133,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       decorators,
       methods,
       properties,
-      isExported: true,
+      isExported,
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
@@ -172,18 +178,25 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     const isAsync =
       text.includes("suspend ") ||
       text.includes("CompletableFuture") ||
-      text.includes("Mono<");
+      text.includes("Mono<") ||
+      text.includes("@Async");
 
     const decorators = this.extractAnnotations(node);
     const body = node.childForFieldName("body");
     const lang = _language === "kotlin" ? "kotlin" as const : "java" as const;
+
+    // Check visibility: Java defaults to package-private, Kotlin defaults to public
+    const vis = sharedGetVisibility(node);
+    const isExported = lang === "kotlin"
+      ? vis !== "private"
+      : vis === "public" || (node.type === "constructor_declaration");
 
     return {
       name,
       params,
       returnType,
       isAsync,
-      isExported: true,
+      isExported,
       decorators,
       calls: extractCalls(body, lang),
       line: node.startPosition.row + 1,

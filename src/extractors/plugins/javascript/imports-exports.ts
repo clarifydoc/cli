@@ -73,11 +73,14 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
             for (let l = 0; l < clause.childCount; l++) {
               const spec = clause.child(l)!;
               if (spec.type === "import_specifier") {
-                const name =
-                  spec.childForFieldName("alias")?.text ??
-                  spec.childForFieldName("name")?.text ??
-                  spec.text;
-                info.specifiers.push(name);
+                const originalName = spec.childForFieldName("name")?.text ?? spec.text;
+                const alias = spec.childForFieldName("alias")?.text;
+                // Store the alias (local name) for call classification
+                info.specifiers.push(alias ?? originalName);
+                // Also store original name if aliased, so symbol resolution can find it
+                if (alias && alias !== originalName) {
+                  info.specifiers.push(originalName);
+                }
               }
             }
           } else if (clause.type === "namespace_import") {

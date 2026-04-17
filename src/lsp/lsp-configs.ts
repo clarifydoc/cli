@@ -81,6 +81,48 @@ export const LSP_CONFIGS: LspDockerConfig[] = [
     fileExtensions: [".kt", ".kts"],
     readOnly: false, // kotlin-ls may need to build
   },
+  {
+    id: "go",
+    languageIds: ["go"],
+    dockerImage: "reversedoc-lsp-go",
+    dockerfilePath: resolve(projectDir, "docker/go"),
+    serverCommand: [],
+    mountPath: "/workspace",
+    fileExtensions: [".go"],
+    readOnly: true,
+    indexDelayMs: 5000, // gopls needs time to load module graph
+  },
+  {
+    id: "rust",
+    languageIds: ["rust"],
+    dockerImage: "reversedoc-lsp-rust",
+    dockerfilePath: resolve(projectDir, "docker/rust"),
+    serverCommand: [],
+    mountPath: "/workspace",
+    fileExtensions: [".rs"],
+    readOnly: false, // rust-analyzer needs to run cargo check
+    indexDelayMs: 15000, // rust-analyzer needs time to build and index
+  },
+  {
+    id: "ruby",
+    languageIds: ["ruby"],
+    dockerImage: "reversedoc-lsp-ruby",
+    dockerfilePath: resolve(projectDir, "docker/ruby"),
+    serverCommand: [],
+    mountPath: "/workspace",
+    fileExtensions: [".rb"],
+    readOnly: true,
+  },
+  {
+    id: "php",
+    languageIds: ["php"],
+    dockerImage: "reversedoc-lsp-php",
+    dockerfilePath: resolve(projectDir, "docker/php"),
+    serverCommand: [],
+    mountPath: "/workspace",
+    fileExtensions: [".php"],
+    readOnly: true,
+  },
 ];
 
 /**

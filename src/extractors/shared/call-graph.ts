@@ -14,6 +14,10 @@ const CALL_TYPES: Record<string, Set<string>> = {
   kotlin: new Set(["call_expression"]),
   csharp: new Set(["invocation_expression", "object_creation_expression"]),
   pascal: new Set(["exprCall"]),
+  go: new Set(["call_expression", "composite_literal"]),
+  rust: new Set(["call_expression", "macro_invocation"]),
+  ruby: new Set(["call", "method_call"]),
+  php: new Set(["function_call_expression", "member_call_expression", "object_creation_expression"]),
 };
 
 /**
@@ -82,6 +86,19 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   const seen = new Set<string>();
   const visited = new Set<number>();
 
+  function addResult(name: string, node: Node) {
+    if (name && !isNoise(name) && !seen.has(name)) {
+      seen.add(name);
+      results.push({
+        name,
+        kind: "internal",
+        target: null,
+        line: node.startPosition.row + 1,
+        column: node.startPosition.column,
+      });
+    }
+  }
+
   function walk(node: Node, isRoot: boolean) {
     if (visited.has(node.id)) return;
     visited.add(node.id);
@@ -89,17 +106,42 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // Don't descend into nested function/class definitions (except the root body itself)
     if (!isRoot && NESTED_SCOPE_TYPES.has(node.type)) return;
 
+    // Standard call expressions
     if (callTypes.has(node.type)) {
       const name = resolveCallName(node, language);
-      if (name && !isNoise(name) && !seen.has(name)) {
-        seen.add(name);
-        results.push({
-          name,
-          kind: "internal",
-          target: null,
-          line: node.startPosition.row + 1,
-          column: node.startPosition.column,
-        });
+      if (name) addResult(name, node);
+
+      // Detect callback arguments: fn(callback) — identifiers passed as args
+      if (node.type === "call_expression" || node.type === "method_invocation" || node.type === "call") {
+        const args = node.childForFieldName("arguments");
+        if (args) {
+          for (let j = 0; j < args.childCount; j++) {
+            const arg = args.child(j)!;
+            if (arg.type === "identifier" && /^[a-zA-Z_]/.test(arg.text) && !isNoise(arg.text)) {
+              addResult(arg.text, arg);
+            }
+          }
+        }
+      }
+    }
+
+    // JSX element references: <ComponentName ... /> counts as using ComponentName
+    if (
+      (language === "typescript" || language === "javascript") &&
+      (node.type === "jsx_opening_element" || node.type === "jsx_self_closing_element")
+    ) {
+      const nameNode = node.childForFieldName("name") ?? node.child(1);
+      if (nameNode && /^[A-Z]/.test(nameNode.text)) {
+        addResult(nameNode.text, nameNode);
+      }
+    }
+
+    // Python decorator references: @decorator counts as a call to decorator
+    if (language === "python" && node.type === "decorator") {
+      const expr = node.child(1); // after @
+      if (expr) {
+        const name = expr.type === "call" ? resolveCallName(expr, language) : expr.text;
+        if (name) addResult(name, expr);
       }
     }
 
@@ -156,6 +198,30 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
   return results;
 }
 
+/** Build import lookup maps from an imports array */
+function buildImportMaps(imports: ImportInfo[]): {
+  importMap: Map<string, string>;
+  defaultImports: Map<string, string>;
+} {
+  const importMap = new Map<string, string>();
+  const defaultImports = new Map<string, string>();
+
+  for (const imp of imports) {
+    if (imp.isType) continue;
+    for (const spec of imp.specifiers) {
+      importMap.set(spec, imp.source);
+    }
+    if (imp.isDefault && imp.specifiers.length > 0) {
+      defaultImports.set(imp.specifiers[0]!, imp.source);
+    }
+    if (imp.isNamespace && imp.specifiers.length > 0) {
+      defaultImports.set(imp.specifiers[0]!, imp.source);
+    }
+  }
+
+  return { importMap, defaultImports };
+}
+
 /**
  * Classify raw calls using import context and language-specific patterns.
  * Mutates and returns the calls array with updated `kind` and `target`.
@@ -166,25 +232,7 @@ export function classifyCalls(
   language: Language,
   variableAliases?: Map<string, string>,
 ): CallInfo[] {
-  // Build import lookup: specifier name → import source
-  const importMap = new Map<string, string>();
-  const defaultImports = new Map<string, string>();
-
-  for (const imp of imports) {
-    if (imp.isType) continue; // skip type-only imports
-
-    for (const spec of imp.specifiers) {
-      importMap.set(spec, imp.source);
-    }
-
-    if (imp.isDefault && imp.specifiers.length > 0) {
-      defaultImports.set(imp.specifiers[0]!, imp.source);
-    }
-
-    if (imp.isNamespace && imp.specifiers.length > 0) {
-      defaultImports.set(imp.specifiers[0]!, imp.source);
-    }
-  }
+  const { importMap, defaultImports } = buildImportMaps(imports);
 
   for (const call of calls) {
     // 0. Vue compiler macros (auto-imported, not in imports array)
@@ -391,15 +439,7 @@ export function extractVariableAliases(
   language: Language,
 ): Map<string, string> {
   const aliases = new Map<string, string>();
-
-  // Build import lookup
-  const importMap = new Map<string, string>();
-  for (const imp of imports) {
-    if (imp.isType) continue;
-    for (const spec of imp.specifiers) {
-      importMap.set(spec, imp.source);
-    }
-  }
+  const { importMap } = buildImportMaps(imports);
 
   function walk(node: Node) {
     // Stop at function/class boundaries

@@ -55,6 +55,18 @@ function renderReport(summary: ProjectAnalysis): string {
       path: r.path, httpMethod: r.httpMethod, kind: r.kind,
       handler: r.handler, line: r.line, filePath: r.filePath ?? null,
     })),
+    // Graph data for D3
+    componentGraph: summary.componentGraph ?? {},
+    fileLayerMap: summary.fileLayerMap ?? {},
+    // Advanced analysis data
+    healthScore: summary.healthScore ?? null,
+    patterns: summary.patterns ?? [],
+    securityIssues: summary.securityIssues ?? [],
+    complexity: summary.complexity ?? [],
+    suggestions: summary.suggestions ?? [],
+    duplicates: summary.duplicates ?? [],
+    layerViolations: summary.layerViolations ?? [],
+    blastRadius: summary.blastRadius ?? [],
   };
 
   return `<!DOCTYPE html>
@@ -63,6 +75,7 @@ function renderReport(summary: ProjectAnalysis): string {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>reverseDoc \u2014 ${esc(projectName)}</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 ${renderCss()}
 </head>
 <body>
@@ -73,6 +86,12 @@ ${renderInteractiveView()}
 ${renderTracesView()}
 ${renderLinksView()}
 ${renderRoutesView()}
+${renderHealthView()}
+${renderBlastRadiusView()}
+${renderPatternsView()}
+${renderSecurityView()}
+${renderComplexityView()}
+${renderSuggestionsView()}
 ${renderSummaryView()}
 <script>
 const DATA = ${JSON.stringify(payload)};
@@ -180,8 +199,23 @@ a{color:#58a6ff;text-decoration:none}
 .trace-chain-row.outbound{border-left:3px solid #23863644}
 .trace-no-links{color:#484f58;font-style:italic;font-size:13px;padding:8px 0}
 
-/* Link graph */
-#link-canvas{width:100%;height:500px;background:#0d1117;border:1px solid #30363d;border-radius:8px}
+/* D3 Architecture Graph */
+#d3-graph-container{width:100%;height:640px;background:#0d1117;border:1px solid #30363d;border-radius:8px;position:relative;overflow:hidden}
+#d3-graph-container svg{width:100%;height:100%;display:block}
+.d3-toolbar{display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap}
+.d3-toolbar-label{font-size:11px;color:#8b949e;margin-right:2px}
+.d3-toolbar-sep{width:1px;height:20px;background:#30363d;margin:0 6px}
+.d3-btn{padding:5px 12px;background:#161b22;border:1px solid #30363d;color:#8b949e;border-radius:6px;font-size:11px;font-family:inherit;cursor:pointer;transition:all 0.15s}
+.d3-btn:hover{background:#1c2128;color:#e6edf3;border-color:#58a6ff}
+.d3-btn.active{background:#1f6feb22;color:#58a6ff;border-color:#1f6feb}
+#d3-legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;font-size:11px;color:#8b949e}
+.legend-item{display:flex;align-items:center;gap:5px}
+.legend-dot{width:10px;height:10px;border-radius:3px;flex-shrink:0}
+#d3-detail-panel{margin-top:10px;font-size:13px;color:#8b949e;min-height:20px}
+.d3-tooltip{position:fixed;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px 14px;pointer-events:none;z-index:1000;max-width:280px;font-size:12px;box-shadow:0 8px 24px rgba(0,0,0,0.4)}
+.d3-tooltip .tt-name{font-weight:600;color:#f0f6fc;font-family:monospace;font-size:13px;margin-bottom:6px}
+.d3-tooltip .tt-row{display:flex;justify-content:space-between;gap:16px;padding:1px 0;color:#8b949e}
+.d3-tooltip .tt-val{color:#e6edf3;font-weight:500}
 
 /* Route table */
 .route-table{width:100%;border-collapse:collapse}
@@ -207,6 +241,81 @@ a{color:#58a6ff;text-decoration:none}
 .file-list div{padding:4px 0;font-size:13px;font-family:monospace;color:#8b949e}
 
 .empty{color:#484f58;font-style:italic;padding:40px;text-align:center}
+
+/* Health */
+.grade-badge{display:inline-flex;align-items:center;justify-content:center;width:64px;height:64px;border-radius:50%;font-size:32px;font-weight:700;border:3px solid}
+.grade-A{background:#23863622;color:#3fb950;border-color:#238636}
+.grade-B{background:#1f6feb22;color:#58a6ff;border-color:#1f6feb}
+.grade-C{background:#d2992222;color:#d29922;border-color:#d29922}
+.grade-D{background:#f8514922;color:#f85149;border-color:#f85149}
+.grade-F{background:#f8514944;color:#f85149;border-color:#da3633}
+.penalty-row{display:flex;justify-content:space-between;padding:8px 14px;border-bottom:1px solid #21262d;font-size:13px}
+.penalty-row:hover{background:#1c2128}
+.penalty-pts{color:#f85149;font-weight:600;font-family:monospace}
+
+/* Blast Radius */
+.blast-layout{display:flex;gap:0;min-height:600px;border:1px solid #30363d;border-radius:8px;overflow:hidden;background:#0d1117}
+.blast-list-pane{width:360px;flex-shrink:0;border-right:1px solid #30363d;background:#161b22;display:flex;flex-direction:column;overflow:hidden}
+.blast-detail-pane{flex:1;overflow-y:auto;padding:16px}
+#blast-file-list{overflow-y:auto;flex:1}
+.blast-file-item{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #21262d;cursor:pointer;font-size:12px;transition:background 0.1s}
+.blast-file-item:hover{background:#1c2128}
+.blast-file-item.selected{background:#1f6feb22;border-left:3px solid #58a6ff}
+.blast-file-name{flex:1;font-family:monospace;color:#e6edf3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.blast-file-badge{font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600}
+.risk-safe{background:#23863622;color:#3fb950}
+.risk-moderate{background:#d2992222;color:#d29922}
+.risk-dangerous{background:#f8514922;color:#f85149}
+.blast-metric{text-align:center;padding:12px;background:#161b22;border:1px solid #30363d;border-radius:8px}
+.blast-metric .num{font-size:28px;font-weight:700;color:#f0f6fc}
+.blast-metric .lbl{font-size:10px;color:#8b949e;text-transform:uppercase;margin-top:2px}
+.blast-dep-item{display:flex;align-items:center;gap:8px;padding:6px 12px;font-size:12px;font-family:monospace;color:#8b949e;border-bottom:1px solid #21262d;cursor:pointer}
+.blast-dep-item:hover{background:#1c2128;color:#58a6ff}
+.blast-dep-item .depth{font-size:10px;color:#484f58;min-width:20px}
+.blast-sym-row{padding:8px 12px;border-bottom:1px solid #21262d}
+.blast-sym-name{font-family:monospace;color:#79c0ff;font-size:13px;font-weight:500}
+.blast-sym-count{font-size:11px;color:#d29922;margin-left:8px}
+.blast-sym-callers{margin-top:4px;padding-left:12px}
+.blast-sym-caller{font-size:11px;color:#8b949e;font-family:monospace;padding:2px 0}
+
+/* Pattern cards */
+.pattern-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #3fb950}
+.pattern-card.anti{border-left-color:#f85149}
+.pattern-kind{font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:#8b949e}
+.pattern-name{font-size:14px;font-weight:600;color:#f0f6fc;margin-top:2px}
+.pattern-detail{font-size:12px;color:#8b949e;margin-top:4px}
+.pattern-file{font-size:11px;color:#58a6ff;font-family:monospace;margin-top:4px}
+
+/* Security */
+.sev-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
+.sev-critical{background:#da363322;color:#f85149}
+.sev-high{background:#f8514922;color:#f85149}
+.sev-medium{background:#d2992222;color:#d29922}
+.sev-low{background:#8b949e22;color:#8b949e}
+.sec-row{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px 14px;margin-bottom:8px;font-size:13px}
+.sec-snippet{font-family:monospace;font-size:11px;color:#d2a8ff;background:#0d1117;padding:4px 8px;border-radius:4px;margin-top:6px;overflow-x:auto;white-space:nowrap}
+
+/* Complexity bars */
+.cx-bar{height:18px;border-radius:3px;display:flex;align-items:center;padding:0 6px;font-size:10px;font-weight:600;color:#fff;min-width:30px}
+.cx-low{background:#238636}
+.cx-med{background:#d29922}
+.cx-high{background:#f85149}
+.cx-file{background:#161b22;border:1px solid #30363d;border-radius:8px;margin-bottom:10px;overflow:hidden}
+.cx-file-header{padding:10px 14px;background:#1c2128;border-bottom:1px solid #30363d;font-size:13px;font-weight:600;display:flex;justify-content:space-between}
+.cx-fn-row{display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:12px}
+.cx-fn-name{width:220px;font-family:monospace;color:#79c0ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Suggestions */
+.sug-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px;margin-bottom:10px;display:flex;gap:12px;align-items:flex-start}
+.sug-priority{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:6px}
+.sug-critical{background:#f85149}
+.sug-high{background:#d29922}
+.sug-medium{background:#58a6ff}
+.sug-low{background:#8b949e}
+.sug-cat{font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:#8b949e}
+.sug-msg{font-size:13px;color:#e6edf3;margin-top:2px}
+.sug-action{font-size:12px;color:#3fb950;margin-top:4px}
+.sug-file{font-size:11px;color:#58a6ff;font-family:monospace;margin-top:2px}
 
 /* ─── Screens ──────────────────────────────────────────────────────────── */
 .screen-card{background:#161b22;border:1px solid #30363d;border-radius:8px;margin-bottom:20px;overflow:hidden}
@@ -282,10 +391,14 @@ function renderHeader(payload: any): string {
     { num: payload.linkGraph.length, lbl: "Links" },
     { num: payload.symbolLinks.length, lbl: "Traces" },
   ];
+  const healthBadge = payload.healthScore
+    ? `<div class="stat"><div class="grade-badge grade-${payload.healthScore.grade}" style="width:36px;height:36px;font-size:18px;border-width:2px">${payload.healthScore.grade}</div><div class="lbl">Health</div></div>`
+    : "";
   return `<div class="header">
   <h1>reverseDoc <span class="project">\u2014 ${esc(payload.projectName)}</span></h1>
   ${payload.frameworks.map((f: any) => `<span class="badge badge-fw">${esc(f.name)}</span>`).join("")}
   <div style="flex:1"></div>
+  ${healthBadge}
   ${stats.map(s => `<div class="stat"><div class="num">${s.num}</div><div class="lbl">${s.lbl}</div></div>`).join("")}
 </div>`;
 }
@@ -297,8 +410,14 @@ function renderNav(): string {
   <button class="active" data-view="screens">Screens</button>
   <button data-view="interactive">Interactive Elements</button>
   <button data-view="traces">Call Traces</button>
-  <button data-view="links">File Links</button>
+  <button data-view="links">Architecture</button>
   <button data-view="routes">Routes</button>
+  <button data-view="health">Health</button>
+  <button data-view="blast">Blast Radius</button>
+  <button data-view="patterns">Patterns</button>
+  <button data-view="security">Security</button>
+  <button data-view="complexity">Complexity</button>
+  <button data-view="suggestions">Suggestions</button>
   <button data-view="summary">Overview</button>
 </nav>`;
 }
@@ -368,8 +487,18 @@ function renderTracesView(): string {
 
 function renderLinksView(): string {
   return `<section id="view-links" class="view">
-  <canvas id="link-canvas"></canvas>
-  <div id="link-details" style="margin-top:12px;font-size:13px;color:#8b949e"></div>
+  <div class="d3-toolbar">
+    <span class="d3-toolbar-label">Color by:</span>
+    <button class="d3-btn active" data-color="layer">Layer</button>
+    <button class="d3-btn" data-color="folder">Folder</button>
+    <button class="d3-btn" data-color="risk">Risk</button>
+    <span class="d3-toolbar-sep"></span>
+    <button class="d3-btn" id="d3-toggle-labels">Labels</button>
+    <button class="d3-btn" id="d3-zoom-fit">Fit</button>
+  </div>
+  <div id="d3-graph-container"></div>
+  <div id="d3-legend"></div>
+  <div id="d3-detail-panel"></div>
 </section>`;
 }
 
@@ -391,6 +520,89 @@ function renderSummaryView(): string {
   <div id="summary-stats" class="stats-grid"></div>
   <h3 style="color:#f0f6fc;margin-bottom:12px">Files</h3>
   <div id="summary-files" class="file-list"></div>
+</section>`;
+}
+
+// ─── Health View ────────────────────────────────────────────────────────
+
+function renderHealthView(): string {
+  return `<section id="view-health" class="view">
+  <div id="health-content"></div>
+</section>`;
+}
+
+// ─── Blast Radius View ──────────────────────────────────────────────────
+
+function renderBlastRadiusView(): string {
+  return `<section id="view-blast" class="view">
+  <div class="blast-layout">
+    <div class="blast-list-pane">
+      <div class="filter-bar" style="padding:8px;margin-bottom:0">
+        <select id="blast-filter-risk" style="width:50%">
+          <option value="">All risk</option>
+          <option value="dangerous">Dangerous</option>
+          <option value="moderate">Moderate</option>
+          <option value="safe">Safe</option>
+        </select>
+        <input id="blast-filter-search" type="search" placeholder="Search files..." style="flex:1" />
+      </div>
+      <div id="blast-file-list"></div>
+    </div>
+    <div class="blast-detail-pane">
+      <div id="blast-detail-content">
+        <div class="empty">Select a file to see its blast radius</div>
+      </div>
+    </div>
+  </div>
+</section>`;
+}
+
+// ─── Patterns View ──────────────────────────────────────────────────────
+
+function renderPatternsView(): string {
+  return `<section id="view-patterns" class="view">
+  <div class="filter-bar">
+    <select id="pattern-filter-kind"><option value="">All patterns</option></select>
+    <select id="pattern-filter-type"><option value="">All types</option><option value="good">Good Patterns</option><option value="anti">Anti-Patterns</option></select>
+  </div>
+  <div id="pattern-grid"></div>
+</section>`;
+}
+
+// ─── Security View ──────────────────────────────────────────────────────
+
+function renderSecurityView(): string {
+  return `<section id="view-security" class="view">
+  <div class="filter-bar">
+    <select id="sec-filter-severity"><option value="">All severities</option>
+      <option value="critical">Critical</option><option value="high">High</option>
+      <option value="medium">Medium</option><option value="low">Low</option>
+    </select>
+    <input id="sec-filter-search" type="search" placeholder="Search issues..." />
+  </div>
+  <div id="sec-grid"></div>
+</section>`;
+}
+
+// ─── Complexity View ────────────────────────────────────────────────────
+
+function renderComplexityView(): string {
+  return `<section id="view-complexity" class="view">
+  <div id="cx-grid"></div>
+</section>`;
+}
+
+// ─── Suggestions View ───────────────────────────────────────────────────
+
+function renderSuggestionsView(): string {
+  return `<section id="view-suggestions" class="view">
+  <div class="filter-bar">
+    <select id="sug-filter-priority"><option value="">All priorities</option>
+      <option value="critical">Critical</option><option value="high">High</option>
+      <option value="medium">Medium</option><option value="low">Low</option>
+    </select>
+  </div>
+  <div id="sug-grid"></div>
 </section>`;
 }
 
@@ -1179,124 +1391,590 @@ document.getElementById('summary-files').innerHTML = DATA.files.map(f =>
   if (firstKey) selectSymbol(firstKey);
 }
 
-// ─── Link Graph (Canvas) ──────────────────────────────────────────────
+// ─── D3 Architecture Graph ────────────────────────────────────────────
 let graphInitialized = false;
 function initLinkGraph() {
   if (graphInitialized) return;
   graphInitialized = true;
 
-  const canvas = document.getElementById('link-canvas');
-  const ctx = canvas.getContext('2d');
-  const rect = canvas.parentElement.getBoundingClientRect();
-  canvas.width = rect.width - 48;
-  canvas.height = 500;
+  var container = document.getElementById('d3-graph-container');
+  var w = container.clientWidth || 900;
+  var h = container.clientHeight || 640;
 
-  if (DATA.linkGraph.length === 0) {
-    ctx.fillStyle = '#484f58';
-    ctx.font = '14px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('No file links found', canvas.width / 2, 250);
+  // Layer color scheme
+  var LAYER_COLORS = {ui:'#58a6ff',components:'#22d3ee',services:'#a371f7',data:'#ff9f43',utils:'#3fb950',config:'#ec4899',test:'#f59e0b',unknown:'#8b949e'};
+  var FOLDER_COLORS = ['#58a6ff','#a371f7','#22d3ee','#3fb950','#ff9f43','#ec4899','#f85149','#84cc16'];
+  var RISK_COLORS = {dangerous:'#f85149',moderate:'#d29922',safe:'#3fb950'};
+  var PROX_COLORS = {1:'#58a6ff',2:'#d29922',3:'#484f58'};
+
+  // Build blast radius lookup
+  var blastMap = {};
+  (DATA.blastRadius || []).forEach(function(b){ blastMap[b.filePath] = b; });
+
+  // Build complexity lookup
+  var cxMap = {};
+  (DATA.complexity || []).forEach(function(c){ cxMap[c.filePath] = c; });
+
+  // Build nodes from files
+  var nodeSet = new Set();
+  DATA.linkGraph.forEach(function(l){ nodeSet.add(l.source); nodeSet.add(l.target); });
+  // Also include files from componentGraph
+  Object.keys(DATA.componentGraph).forEach(function(f){ nodeSet.add(f); });
+  Object.values(DATA.componentGraph).forEach(function(targets){ targets.forEach(function(t){ nodeSet.add(t); }); });
+  // Include any remaining files
+  DATA.files.forEach(function(f){ nodeSet.add(f); });
+
+  var nodes = Array.from(nodeSet).map(function(filePath){
+    var folder = filePath.indexOf('/') >= 0 ? filePath.substring(0, filePath.lastIndexOf('/')) : 'root';
+    var name = filePath.split('/').pop().replace(/\\.[^.]+$/, '');
+    var layer = (DATA.fileLayerMap || {})[filePath] || 'unknown';
+    var blast = blastMap[filePath];
+    var cx = cxMap[filePath];
+    var fnCount = 0;
+    // Estimate function count from complexity data or blast centrality
+    if (cx) fnCount = cx.functions.length;
+    else if (blast) fnCount = Math.max(1, Math.floor(blast.centrality / 2));
+    else fnCount = 1;
+    return {
+      id: filePath, name: name, folder: folder, layer: layer,
+      fnCount: fnCount,
+      risk: blast ? blast.changeRisk : 'safe',
+      directDeps: blast ? blast.directDependents : 0,
+      transitiveDeps: blast ? blast.transitiveDependents : 0,
+      impact: blast ? blast.impactScore : 0,
+      maxCx: cx ? cx.maxComplexity : 0
+    };
+  });
+
+  // Build unique edges from linkGraph (deduplicate, merge proximity)
+  var linkMap = {};
+  DATA.linkGraph.forEach(function(l){
+    if (l.source === l.target) return;
+    var key = l.source + '|' + l.target;
+    if (!linkMap[key] || l.proximity < linkMap[key].proximity) {
+      linkMap[key] = { source: l.source, target: l.target, proximity: l.proximity, reason: l.reason, calls: l.calls };
+    }
+  });
+  var links = Object.values(linkMap);
+
+  if (nodes.length === 0) {
+    container.innerHTML = '<div class="empty" style="padding-top:200px">No file dependencies to visualize</div>';
     return;
   }
 
-  // Build node set
-  const nodeSet = new Set();
-  DATA.linkGraph.forEach(l => { nodeSet.add(l.source); nodeSet.add(l.target); });
-  const nodes = [...nodeSet].map((name, i) => ({
-    name, x: canvas.width / 2 + (Math.random() - 0.5) * 300,
-    y: canvas.height / 2 + (Math.random() - 0.5) * 200,
-    vx: 0, vy: 0
-  }));
-  const nodeMap = {};
-  nodes.forEach((n, i) => nodeMap[n.name] = i);
+  // Folder list for clustering
+  var folders = Array.from(new Set(nodes.map(function(n){ return n.folder; }))).sort();
+  var folderColorMap = {};
+  folders.forEach(function(f, i){ folderColorMap[f] = FOLDER_COLORS[i % FOLDER_COLORS.length]; });
 
-  const edges = DATA.linkGraph.map(l => ({
-    source: nodeMap[l.source], target: nodeMap[l.target],
-    proximity: l.proximity, reason: l.reason
-  })).filter(e => e.source !== undefined && e.target !== undefined);
+  // Color mode
+  var colorMode = 'layer';
+  var showLabels = true;
 
-  // Simple force simulation
-  function tick() {
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        let dx = nodes[j].x - nodes[i].x;
-        let dy = nodes[j].y - nodes[i].y;
-        let d = Math.sqrt(dx * dx + dy * dy) || 1;
-        let f = 2000 / (d * d);
-        nodes[i].vx -= dx / d * f;
-        nodes[i].vy -= dy / d * f;
-        nodes[j].vx += dx / d * f;
-        nodes[j].vy += dy / d * f;
+  function getNodeColor(d) {
+    if (colorMode === 'layer') return LAYER_COLORS[d.layer] || LAYER_COLORS.unknown;
+    if (colorMode === 'folder') return folderColorMap[d.folder] || '#8b949e';
+    if (colorMode === 'risk') return RISK_COLORS[d.risk] || RISK_COLORS.safe;
+    return '#58a6ff';
+  }
+
+  function getNodeRadius(d) {
+    return Math.max(6, Math.min(22, 4 + d.fnCount * 1.2));
+  }
+
+  // Create SVG
+  var svg = d3.select(container).append('svg').attr('width', w).attr('height', h);
+  var defs = svg.append('defs');
+  defs.append('marker').attr('id','arrow').attr('viewBox','0 -5 10 10').attr('refX',16).attr('markerWidth',5).attr('markerHeight',5).attr('orient','auto')
+    .append('path').attr('d','M0,-4L10,0L0,4').attr('fill','#484f58');
+
+  var g = svg.append('g');
+
+  // Zoom
+  var zoom = d3.zoom().scaleExtent([0.15, 4]).on('zoom', function(e){ g.attr('transform', e.transform); });
+  svg.call(zoom);
+
+  // Layers: hulls, links, nodes
+  var hullLayer = g.append('g');
+  var linkLayer = g.append('g');
+  var nodeLayer = g.append('g');
+
+  // Tooltip element
+  var tooltip = d3.select('body').append('div').attr('class','d3-tooltip').style('display','none');
+
+  // Force simulation
+  var cols = Math.max(2, Math.ceil(Math.sqrt(folders.length)));
+  var cw = w / (cols + 1);
+  var ch = h / (Math.ceil(folders.length / cols) + 1);
+  var centers = {};
+  folders.forEach(function(f, i){ centers[f] = { x: (i % cols + 1) * cw, y: (Math.floor(i / cols) + 1) * ch }; });
+
+  var sim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(function(d){ return d.id; }).distance(80).strength(0.25))
+    .force('charge', d3.forceManyBody().strength(-250).distanceMax(400))
+    .force('collision', d3.forceCollide().radius(function(d){ return getNodeRadius(d) + 8; }))
+    .force('x', d3.forceX(function(d){ return centers[d.folder] ? centers[d.folder].x : w/2; }).strength(0.12))
+    .force('y', d3.forceY(function(d){ return centers[d.folder] ? centers[d.folder].y : h/2; }).strength(0.12))
+    .velocityDecay(0.6).alphaDecay(0.05);
+
+  // Draw links
+  var linkSel = linkLayer.selectAll('path').data(links).join('path')
+    .attr('fill','none')
+    .attr('stroke', function(d){ return PROX_COLORS[d.proximity] || '#484f58'; })
+    .attr('stroke-width', function(d){ return d.proximity === 1 ? 2 : d.proximity === 2 ? 1.3 : 0.8; })
+    .attr('stroke-opacity', function(d){ return d.proximity === 1 ? 0.7 : d.proximity === 2 ? 0.4 : 0.2; })
+    .attr('marker-end','url(#arrow)');
+
+  // Draw nodes
+  var nodeSel = nodeLayer.selectAll('g').data(nodes).join('g').style('cursor','pointer');
+
+  nodeSel.call(d3.drag()
+    .on('start', function(e,d){ if(!e.active) sim.alphaTarget(0.1).restart(); d.fx=d.x; d.fy=d.y; })
+    .on('drag', function(e,d){ d.fx=e.x; d.fy=e.y; })
+    .on('end', function(e,d){ if(!e.active) sim.alphaTarget(0); d.fx=null; d.fy=null; })
+  );
+
+  nodeSel.append('circle').attr('class','nc')
+    .attr('r', getNodeRadius)
+    .attr('fill', getNodeColor)
+    .attr('stroke', function(d){ return d3.color(getNodeColor(d)).brighter(0.4); })
+    .attr('stroke-width', 1.5);
+
+  var labelSel = nodeSel.append('text')
+    .attr('text-anchor','middle').attr('dy', -2)
+    .attr('fill','#e6edf3').attr('font-size', function(d){ return Math.max(7, Math.min(11, getNodeRadius(d)*0.55)) + 'px'; })
+    .attr('font-family','monospace').attr('font-weight','500').attr('pointer-events','none')
+    .text(function(d){ var maxLen = Math.max(4, Math.floor(getNodeRadius(d)/2.5)); return d.name.length > maxLen+1 ? d.name.slice(0,maxLen)+'\\u2026' : d.name; });
+
+  // Hover: tooltip
+  nodeSel.on('mouseenter', function(e, d){
+    var br = blastMap[d.id];
+    var html = '<div class="tt-name">' + esc(d.id) + '</div>';
+    html += '<div class="tt-row"><span>Layer</span><span class="tt-val">' + d.layer + '</span></div>';
+    html += '<div class="tt-row"><span>Functions</span><span class="tt-val">' + d.fnCount + '</span></div>';
+    if (d.maxCx > 0) html += '<div class="tt-row"><span>Max complexity</span><span class="tt-val">' + d.maxCx + '</span></div>';
+    if (br) {
+      html += '<div class="tt-row"><span>Risk</span><span class="tt-val" style="color:' + (RISK_COLORS[d.risk]||'#8b949e') + '">' + d.risk + '</span></div>';
+      html += '<div class="tt-row"><span>Dependents</span><span class="tt-val">' + d.directDeps + ' direct, ' + d.transitiveDeps + ' transitive</span></div>';
+      html += '<div class="tt-row"><span>Impact</span><span class="tt-val">' + d.impact + '</span></div>';
+    }
+    tooltip.html(html).style('display','block')
+      .style('left', (e.pageX + 14) + 'px').style('top', (e.pageY - 10) + 'px');
+  })
+  .on('mousemove', function(e){ tooltip.style('left',(e.pageX+14)+'px').style('top',(e.pageY-10)+'px'); })
+  .on('mouseleave', function(){ tooltip.style('display','none'); });
+
+  // Click: highlight blast radius
+  var selectedNode = null;
+  nodeSel.on('click', function(e, d){
+    e.stopPropagation();
+    selectedNode = selectedNode === d.id ? null : d.id;
+    highlightBlast(selectedNode);
+  });
+  svg.on('click', function(){ selectedNode = null; highlightBlast(null); });
+
+  function highlightBlast(fileId) {
+    if (!fileId) {
+      // Reset
+      nodeSel.selectAll('.nc').transition().duration(200).attr('opacity',1).attr('fill', getNodeColor);
+      linkSel.transition().duration(200)
+        .attr('stroke', function(d){ return PROX_COLORS[d.proximity] || '#484f58'; })
+        .attr('stroke-opacity', function(d){ return d.proximity===1?0.7:d.proximity===2?0.4:0.2; });
+      document.getElementById('d3-detail-panel').innerHTML = '';
+      return;
+    }
+    var br = blastMap[fileId];
+    var affected = br ? new Set(br.affectedFiles) : new Set();
+    var transitive = br ? new Set(br.transitiveFiles) : new Set();
+
+    nodeSel.selectAll('.nc').transition().duration(200)
+      .attr('opacity', function(n){ if(n.id===fileId) return 1; if(affected.has(n.id)) return 1; if(transitive.has(n.id)) return 0.8; return 0.15; })
+      .attr('fill', function(n){ if(n.id===fileId) return '#f85149'; if(affected.has(n.id)) return '#ff9f43'; if(transitive.has(n.id)) return '#d29922'; return getNodeColor(n); });
+
+    linkSel.transition().duration(200)
+      .attr('stroke-opacity', function(l){ var s=l.source.id||l.source, t=l.target.id||l.target; if(s===fileId||t===fileId) return 0.9; return 0.04; })
+      .attr('stroke', function(l){ var s=l.source.id||l.source, t=l.target.id||l.target; if(s===fileId||t===fileId) return '#58a6ff'; return '#484f58'; });
+
+    // Detail panel
+    var html = '<strong style="color:#f0f6fc">' + esc(fileId) + '</strong>';
+    if (br) {
+      html += ' <span style="color:' + (RISK_COLORS[br.changeRisk]||'#8b949e') + '">' + br.changeRisk + '</span>';
+      html += ' &mdash; <span style="color:#ff9f43">' + br.directDependents + ' direct</span>';
+      html += ', <span style="color:#d29922">' + br.transitiveDependents + ' transitive</span>';
+      html += ', impact ' + br.impactScore;
+      if (br.exportedSymbols && br.exportedSymbols.length) {
+        html += '<br>Exported: ' + br.exportedSymbols.map(function(s){ return '<span style="color:#79c0ff">' + esc(s.name) + '</span>(' + s.usedByCount + ')'; }).join(', ');
       }
     }
-    edges.forEach(e => {
-      let dx = nodes[e.target].x - nodes[e.source].x;
-      let dy = nodes[e.target].y - nodes[e.source].y;
-      let d = Math.sqrt(dx * dx + dy * dy) || 1;
-      let f = (d - 120) * 0.01;
-      nodes[e.source].vx += dx / d * f;
-      nodes[e.source].vy += dy / d * f;
-      nodes[e.target].vx -= dx / d * f;
-      nodes[e.target].vy -= dy / d * f;
-    });
-    nodes.forEach(n => {
-      n.vx += (canvas.width / 2 - n.x) * 0.001;
-      n.vy += (canvas.height / 2 - n.y) * 0.001;
-      n.vx *= 0.9; n.vy *= 0.9;
-      n.x += n.vx; n.y += n.vy;
-      n.x = Math.max(60, Math.min(canvas.width - 60, n.x));
-      n.y = Math.max(30, Math.min(canvas.height - 30, n.y));
+    document.getElementById('d3-detail-panel').innerHTML = html;
+  }
+
+  // Folder hulls
+  var nodesByFolder = {};
+  folders.forEach(function(f){ nodesByFolder[f] = nodes.filter(function(n){ return n.folder===f; }); });
+
+  function updateHulls() {
+    hullLayer.selectAll('*').remove();
+    folders.forEach(function(f) {
+      var fn = nodesByFolder[f];
+      if (!fn || fn.length < 1) return;
+      var pad = 28, pts = [];
+      fn.forEach(function(n){ if(n.x && n.y) pts.push([n.x-pad,n.y-pad],[n.x+pad,n.y-pad],[n.x-pad,n.y+pad],[n.x+pad,n.y+pad]); });
+      if (pts.length < 3) return;
+      var hull = d3.polygonHull(pts);
+      if (!hull) return;
+      var color = folderColorMap[f] || '#8b949e';
+      hullLayer.append('path').attr('d','M'+hull.join('L')+'Z')
+        .attr('fill',color).attr('fill-opacity',0.04)
+        .attr('stroke',color).attr('stroke-width',1.5).attr('stroke-opacity',0.2);
+      var cx = d3.mean(fn, function(n){return n.x;}), cy = d3.min(fn, function(n){return n.y;}) - pad - 6;
+      hullLayer.append('text').attr('x',cx).attr('y',cy)
+        .attr('text-anchor','middle').attr('fill',color)
+        .attr('font-size','10px').attr('font-family','monospace').attr('font-weight','600').attr('opacity',0.6)
+        .text(f || 'root');
     });
   }
 
-  function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    edges.forEach(e => {
-      const s = nodes[e.source], t = nodes[e.target];
-      ctx.beginPath();
-      ctx.moveTo(s.x, s.y);
-      ctx.lineTo(t.x, t.y);
-      const alpha = e.proximity === 1 ? 0.8 : e.proximity === 2 ? 0.5 : 0.25;
-      const color = e.proximity === 1 ? '88,166,255' : e.proximity === 2 ? '210,153,34' : '139,148,158';
-      ctx.strokeStyle = 'rgba(' + color + ',' + alpha + ')';
-      ctx.lineWidth = e.proximity === 1 ? 2.5 : e.proximity === 2 ? 1.5 : 1;
-      ctx.stroke();
+  // Tick
+  var tickCount = 0;
+  sim.on('tick', function(){
+    linkSel.attr('d', function(d){
+      var dx=d.target.x-d.source.x, dy=d.target.y-d.source.y, dr=Math.sqrt(dx*dx+dy*dy);
+      return 'M'+d.source.x+','+d.source.y+'A'+dr+','+dr+' 0 0,1 '+d.target.x+','+d.target.y;
     });
-    nodes.forEach(n => {
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, 6, 0, Math.PI * 2);
-      ctx.fillStyle = '#58a6ff';
-      ctx.fill();
-      ctx.fillStyle = '#e6edf3';
-      ctx.font = '11px monospace';
-      ctx.textAlign = 'center';
-      const label = n.name.split('/').pop();
-      ctx.fillText(label, n.x, n.y - 12);
-    });
-  }
-
-  let frame = 0;
-  function animate() {
-    tick();
-    draw();
-    frame++;
-    if (frame < 200) requestAnimationFrame(animate);
-  }
-  animate();
-
-  canvas.addEventListener('click', (evt) => {
-    const r = canvas.getBoundingClientRect();
-    const mx = evt.clientX - r.left, my = evt.clientY - r.top;
-    const hit = nodes.find(n => Math.hypot(n.x - mx, n.y - my) < 12);
-    if (hit) {
-      const links = DATA.linkGraph.filter(l => l.source === hit.name || l.target === hit.name);
-      document.getElementById('link-details').innerHTML =
-        '<strong>' + esc(hit.name) + '</strong><br>' +
-        links.map(l => esc(l.source) + ' \\u2192 ' + esc(l.target) +
-          ' <span style="color:#d29922">proximity=' + l.proximity + '</span> ' +
-          '<span style="color:#484f58">' + esc(l.reason) + '</span>').join('<br>');
-    }
+    nodeSel.attr('transform', function(d){ return 'translate('+d.x+','+d.y+')'; });
+    tickCount++;
+    if (tickCount % 3 === 0) updateHulls();
   });
+
+  // Legend
+  function renderLegend() {
+    var legendEl = document.getElementById('d3-legend');
+    var items = [];
+    if (colorMode === 'layer') {
+      Object.keys(LAYER_COLORS).forEach(function(k){ items.push('<span class="legend-item"><span class="legend-dot" style="background:'+LAYER_COLORS[k]+'"></span>'+k+'</span>'); });
+    } else if (colorMode === 'folder') {
+      folders.forEach(function(f){ items.push('<span class="legend-item"><span class="legend-dot" style="background:'+folderColorMap[f]+'"></span>'+(f||'root')+'</span>'); });
+    } else if (colorMode === 'risk') {
+      Object.keys(RISK_COLORS).forEach(function(k){ items.push('<span class="legend-item"><span class="legend-dot" style="background:'+RISK_COLORS[k]+'"></span>'+k+'</span>'); });
+    }
+    items.push('<span class="legend-item" style="margin-left:16px"><span class="legend-dot" style="background:#58a6ff"></span>tight (prox 1)</span>');
+    items.push('<span class="legend-item"><span class="legend-dot" style="background:#d29922"></span>medium (prox 2)</span>');
+    items.push('<span class="legend-item"><span class="legend-dot" style="background:#484f58"></span>loose (prox 3)</span>');
+    legendEl.innerHTML = items.join('');
+  }
+  renderLegend();
+
+  // Toolbar: color mode
+  document.querySelectorAll('.d3-btn[data-color]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      document.querySelectorAll('.d3-btn[data-color]').forEach(function(b){b.classList.remove('active');});
+      btn.classList.add('active');
+      colorMode = btn.dataset.color;
+      nodeSel.selectAll('.nc').transition().duration(300).attr('fill', getNodeColor).attr('stroke', function(d){ return d3.color(getNodeColor(d)).brighter(0.4); });
+      renderLegend();
+      if (selectedNode) highlightBlast(selectedNode);
+    });
+  });
+
+  // Toolbar: toggle labels
+  document.getElementById('d3-toggle-labels').addEventListener('click', function(){
+    showLabels = !showLabels;
+    this.classList.toggle('active', showLabels);
+    labelSel.transition().duration(200).attr('opacity', showLabels ? 1 : 0);
+  });
+  document.getElementById('d3-toggle-labels').classList.add('active');
+
+  // Toolbar: fit to view
+  document.getElementById('d3-zoom-fit').addEventListener('click', function(){
+    svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
+  });
+}
+
+// ─── Health View ──────────────────────────────────────────────────────
+{
+  const hc = document.getElementById('health-content');
+  const hs = DATA.healthScore;
+  if (!hs) {
+    hc.innerHTML = '<div class="empty">Health analysis not available</div>';
+  } else {
+    let html = '<div style="display:flex;gap:32px;align-items:center;margin-bottom:24px">';
+    html += '<div class="grade-badge grade-' + hs.grade + '">' + hs.grade + '</div>';
+    html += '<div><div style="font-size:32px;font-weight:700;color:#f0f6fc">' + hs.score + '<span style="font-size:16px;color:#8b949e">/100</span></div>';
+    html += '<div style="font-size:13px;color:#8b949e">Code Health Score</div></div></div>';
+    if (hs.penalties && hs.penalties.length > 0) {
+      html += '<div class="file-card"><div class="file-card-header">Penalty Breakdown</div>';
+      html += hs.penalties.map(function(p) {
+        return '<div class="penalty-row"><span>' + esc(p.reason) + '</span><span class="penalty-pts">-' + p.points + '</span></div>';
+      }).join('');
+      html += '</div>';
+    } else {
+      html += '<div style="color:#3fb950;font-size:14px;margin-top:12px">No penalties — clean bill of health!</div>';
+    }
+    // Blast radius summary with link to dedicated tab
+    if (DATA.blastRadius && DATA.blastRadius.length > 0) {
+      var dangerous = DATA.blastRadius.filter(function(b) { return b.changeRisk === 'dangerous'; });
+      var moderate = DATA.blastRadius.filter(function(b) { return b.changeRisk === 'moderate'; });
+      html += '<h3 style="color:#f0f6fc;margin:24px 0 12px">Blast Radius Summary</h3>';
+      html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px">';
+      html += '<div class="stat-card" style="padding:14px"><div class="num" style="color:#f85149;font-size:24px">' + dangerous.length + '</div><div class="lbl">Dangerous</div></div>';
+      html += '<div class="stat-card" style="padding:14px"><div class="num" style="color:#d29922;font-size:24px">' + moderate.length + '</div><div class="lbl">Moderate</div></div>';
+      html += '<div class="stat-card" style="padding:14px"><div class="num" style="color:#3fb950;font-size:24px">' + (DATA.blastRadius.length - dangerous.length - moderate.length) + '</div><div class="lbl">Safe</div></div>';
+      html += '</div>';
+      html += '<div class="file-card"><div class="file-card-header">Top 5 Highest Impact</div>';
+      DATA.blastRadius.slice(0, 5).forEach(function(b) {
+        var riskCls = 'risk-' + b.changeRisk;
+        html += '<div class="el-row" style="justify-content:space-between"><span style="font-family:monospace;color:#79c0ff">' + esc(b.filePath) + '</span>';
+        html += '<span style="display:flex;gap:8px;font-size:11px;align-items:center">';
+        html += '<span class="blast-file-badge ' + riskCls + '">' + b.changeRisk + '</span>';
+        html += '<span style="color:#8b949e">' + b.directDependents + ' direct, ' + b.transitiveDependents + ' transitive</span>';
+        html += '<span style="color:#d29922">impact ' + b.impactScore + '</span>';
+        html += '</span></div>';
+      });
+      html += '</div>';
+    }
+    hc.innerHTML = html;
+  }
+}
+
+// ─── Blast Radius View ────────────────────────────────────────────────
+{
+  var blastData = DATA.blastRadius || [];
+  var selectedBlast = null;
+
+  function renderBlastList() {
+    var riskF = document.getElementById('blast-filter-risk').value;
+    var searchF = document.getElementById('blast-filter-search').value.toLowerCase();
+    var filtered = blastData;
+    if (riskF) filtered = filtered.filter(function(b) { return b.changeRisk === riskF; });
+    if (searchF) filtered = filtered.filter(function(b) { return b.filePath.toLowerCase().includes(searchF); });
+
+    var list = document.getElementById('blast-file-list');
+    if (filtered.length === 0) {
+      list.innerHTML = '<div class="empty" style="padding:20px">No files match</div>';
+      return;
+    }
+    list.innerHTML = filtered.map(function(b) {
+      var sel = selectedBlast && selectedBlast.filePath === b.filePath ? ' selected' : '';
+      var riskCls = 'risk-' + b.changeRisk;
+      var levelColor = b.level === 'critical' ? '#f85149' : b.level === 'high' ? '#d29922' : b.level === 'medium' ? '#58a6ff' : '#8b949e';
+      return '<div class="blast-file-item' + sel + '" data-blast-file="' + esc(b.filePath) + '">' +
+        '<span class="blast-file-badge ' + riskCls + '">' + b.changeRisk + '</span>' +
+        '<span class="blast-file-name">' + esc(b.filePath) + '</span>' +
+        '<span style="color:' + levelColor + ';font-size:11px;font-weight:600">' + b.directDependents + '</span>' +
+      '</div>';
+    }).join('');
+
+    list.querySelectorAll('.blast-file-item').forEach(function(el) {
+      el.addEventListener('click', function() { selectBlastFile(el.dataset.blastFile); });
+    });
+  }
+
+  function selectBlastFile(filePath) {
+    selectedBlast = blastData.find(function(b) { return b.filePath === filePath; });
+    if (!selectedBlast) return;
+
+    document.querySelectorAll('.blast-file-item').forEach(function(el) {
+      el.classList.toggle('selected', el.dataset.blastFile === filePath);
+    });
+
+    var b = selectedBlast;
+    var detail = document.getElementById('blast-detail-content');
+    var riskCls = 'risk-' + b.changeRisk;
+    var levelColor = b.level === 'critical' ? '#f85149' : b.level === 'high' ? '#d29922' : b.level === 'medium' ? '#58a6ff' : '#8b949e';
+
+    var html = '<div style="margin-bottom:16px">';
+    html += '<div style="font-size:18px;font-weight:600;color:#f0f6fc;font-family:monospace">' + esc(b.filePath) + '</div>';
+    html += '<div style="margin-top:6px;display:flex;gap:8px;align-items:center">';
+    html += '<span class="blast-file-badge ' + riskCls + '" style="font-size:12px;padding:3px 10px">' + b.changeRisk + ' to change</span>';
+    html += '<span style="color:' + levelColor + ';font-weight:600;font-size:13px">' + b.level + ' impact</span>';
+    html += '</div></div>';
+
+    // Metrics grid
+    html += '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px">';
+    html += '<div class="blast-metric"><div class="num">' + b.directDependents + '</div><div class="lbl">Direct</div></div>';
+    html += '<div class="blast-metric"><div class="num">' + b.transitiveDependents + '</div><div class="lbl">Transitive</div></div>';
+    html += '<div class="blast-metric"><div class="num" style="color:#d29922">' + b.impactScore + '</div><div class="lbl">Impact</div></div>';
+    html += '<div class="blast-metric"><div class="num">' + b.dependsOn.length + '</div><div class="lbl">Depends On</div></div>';
+    html += '<div class="blast-metric"><div class="num">' + b.maxDepth + '</div><div class="lbl">Max Depth</div></div>';
+    html += '</div>';
+
+    // Exported symbols used externally
+    if (b.exportedSymbols && b.exportedSymbols.length > 0) {
+      html += '<div class="file-card"><div class="file-card-header"><span>Exported Symbols Used Externally</span><span class="file-card-count">' + b.exportedSymbols.length + '</span></div>';
+      b.exportedSymbols.forEach(function(sym) {
+        html += '<div class="blast-sym-row">';
+        html += '<span class="blast-sym-name">' + esc(sym.name) + '</span>';
+        html += '<span class="blast-sym-count">used by ' + sym.usedByCount + ' file(s)</span>';
+        if (sym.callers && sym.callers.length > 0) {
+          html += '<div class="blast-sym-callers">';
+          sym.callers.forEach(function(c) {
+            html += '<div class="blast-sym-caller">' + esc(c.file) + ':' + c.line + '</div>';
+          });
+          html += '</div>';
+        }
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    // Direct dependents
+    if (b.affectedFiles && b.affectedFiles.length > 0) {
+      html += '<div class="file-card" style="margin-top:12px"><div class="file-card-header"><span>Direct Dependents</span><span class="file-card-count">' + b.affectedFiles.length + '</span></div>';
+      b.affectedFiles.forEach(function(f) {
+        html += '<div class="blast-dep-item" data-blast-nav="' + esc(f) + '"><span style="color:#f85149">\\u2190</span> ' + esc(f) + '</div>';
+      });
+      html += '</div>';
+    }
+
+    // Transitive dependents
+    if (b.transitiveFiles && b.transitiveFiles.length > 0) {
+      html += '<div class="file-card" style="margin-top:12px"><div class="file-card-header"><span>Transitive Dependents</span><span class="file-card-count">' + b.transitiveFiles.length + '</span></div>';
+      b.transitiveFiles.forEach(function(f) {
+        html += '<div class="blast-dep-item" data-blast-nav="' + esc(f) + '"><span style="color:#d29922">\\u21E0</span> ' + esc(f) + '</div>';
+      });
+      html += '</div>';
+    }
+
+    // Dependencies (what this file depends on)
+    if (b.dependsOn && b.dependsOn.length > 0) {
+      html += '<div class="file-card" style="margin-top:12px"><div class="file-card-header"><span>Depends On (Fragility)</span><span class="file-card-count">' + b.dependsOn.length + '</span></div>';
+      b.dependsOn.forEach(function(f) {
+        html += '<div class="blast-dep-item" data-blast-nav="' + esc(f) + '"><span style="color:#58a6ff">\\u2192</span> ' + esc(f) + '</div>';
+      });
+      html += '</div>';
+    }
+
+    detail.innerHTML = html;
+
+    // Wire up navigation clicks — click a dependent to select it
+    detail.querySelectorAll('[data-blast-nav]').forEach(function(el) {
+      el.addEventListener('click', function() {
+        var target = el.dataset.blastNav;
+        if (blastData.some(function(b) { return b.filePath === target; })) {
+          selectBlastFile(target);
+          var listItem = document.querySelector('.blast-file-item[data-blast-file="' + CSS.escape(target) + '"]');
+          if (listItem) listItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+      });
+    });
+  }
+
+  document.getElementById('blast-filter-risk').addEventListener('change', renderBlastList);
+  document.getElementById('blast-filter-search').addEventListener('input', renderBlastList);
+  renderBlastList();
+
+  // Auto-select first dangerous or highest-impact file
+  var autoSelect = blastData.find(function(b) { return b.changeRisk === 'dangerous'; }) || blastData[0];
+  if (autoSelect) selectBlastFile(autoSelect.filePath);
+}
+
+// ─── Patterns View ────────────────────────────────────────────────────
+{
+  const ANTI_KINDS = new Set(['god-object', 'long-file']);
+  const kinds = [...new Set(DATA.patterns.map(function(p) { return p.kind; }))].sort();
+  const kindSel = document.getElementById('pattern-filter-kind');
+  kinds.forEach(function(k) { var o = document.createElement('option'); o.value = k; o.textContent = k; kindSel.appendChild(o); });
+
+  function renderPatterns() {
+    var kindF = kindSel.value;
+    var typeF = document.getElementById('pattern-filter-type').value;
+    var filtered = DATA.patterns;
+    if (kindF) filtered = filtered.filter(function(p) { return p.kind === kindF; });
+    if (typeF === 'good') filtered = filtered.filter(function(p) { return !ANTI_KINDS.has(p.kind); });
+    if (typeF === 'anti') filtered = filtered.filter(function(p) { return ANTI_KINDS.has(p.kind); });
+    var grid = document.getElementById('pattern-grid');
+    if (filtered.length === 0) { grid.innerHTML = '<div class="empty">No patterns found</div>'; return; }
+    grid.innerHTML = filtered.map(function(p) {
+      var isAnti = ANTI_KINDS.has(p.kind);
+      return '<div class="pattern-card' + (isAnti ? ' anti' : '') + '">' +
+        '<div class="pattern-kind">' + esc(p.kind) + ' <span class="sev-badge sev-' + p.confidence + '">' + p.confidence + '</span></div>' +
+        '<div class="pattern-name">' + esc(p.name) + '</div>' +
+        '<div class="pattern-detail">' + esc(p.detail) + '</div>' +
+        '<div class="pattern-file">' + esc(p.filePath) + ':' + p.line + '</div>' +
+      '</div>';
+    }).join('');
+  }
+  kindSel.addEventListener('change', renderPatterns);
+  document.getElementById('pattern-filter-type').addEventListener('change', renderPatterns);
+  renderPatterns();
+}
+
+// ─── Security View ────────────────────────────────────────────────────
+{
+  function renderSecurity() {
+    var sevF = document.getElementById('sec-filter-severity').value;
+    var searchF = document.getElementById('sec-filter-search').value.toLowerCase();
+    var filtered = DATA.securityIssues;
+    if (sevF) filtered = filtered.filter(function(s) { return s.severity === sevF; });
+    if (searchF) filtered = filtered.filter(function(s) {
+      return s.message.toLowerCase().includes(searchF) || s.filePath.toLowerCase().includes(searchF) || s.category.toLowerCase().includes(searchF);
+    });
+    var grid = document.getElementById('sec-grid');
+    if (filtered.length === 0) { grid.innerHTML = '<div class="empty">No security issues found</div>'; return; }
+    grid.innerHTML = filtered.map(function(s) {
+      return '<div class="sec-row">' +
+        '<span class="sev-badge sev-' + s.severity + '">' + s.severity + '</span> ' +
+        '<span style="color:#8b949e;font-size:11px;text-transform:uppercase">' + esc(s.category) + '</span>' +
+        '<div style="margin-top:4px;color:#e6edf3">' + esc(s.message) + '</div>' +
+        '<div style="margin-top:4px;font-size:11px;color:#58a6ff;font-family:monospace">' + esc(s.filePath) + ':' + s.line + '</div>' +
+        (s.snippet ? '<div class="sec-snippet">' + esc(s.snippet) + '</div>' : '') +
+      '</div>';
+    }).join('');
+  }
+  document.getElementById('sec-filter-severity').addEventListener('change', renderSecurity);
+  document.getElementById('sec-filter-search').addEventListener('input', renderSecurity);
+  renderSecurity();
+}
+
+// ─── Complexity View ──────────────────────────────────────────────────
+{
+  var cxGrid = document.getElementById('cx-grid');
+  if (DATA.complexity.length === 0) {
+    cxGrid.innerHTML = '<div class="empty">No complexity data available</div>';
+  } else {
+    var sorted = DATA.complexity.slice().sort(function(a, b) { return b.maxComplexity - a.maxComplexity; });
+    cxGrid.innerHTML = sorted.map(function(fc) {
+      var fns = fc.functions.slice().sort(function(a, b) { return b.complexity - a.complexity; });
+      var maxCx = Math.max(fc.maxComplexity, 1);
+      return '<div class="cx-file">' +
+        '<div class="cx-file-header"><span style="font-family:monospace;color:#79c0ff">' + esc(fc.filePath) + '</span>' +
+        '<span style="color:#8b949e;font-weight:400">avg: ' + fc.averageComplexity + ' | max: ' + fc.maxComplexity + '</span></div>' +
+        fns.slice(0, 15).map(function(fn) {
+          var pct = Math.min(100, Math.round(fn.complexity / Math.max(maxCx, 20) * 100));
+          var cls = fn.complexity <= 5 ? 'cx-low' : fn.complexity <= 10 ? 'cx-med' : 'cx-high';
+          return '<div class="cx-fn-row">' +
+            '<span class="cx-fn-name">' + esc(fn.functionName) + '</span>' +
+            '<div style="flex:1"><div class="cx-bar ' + cls + '" style="width:' + Math.max(pct, 8) + '%">' + fn.complexity + '</div></div>' +
+            '<span style="color:#484f58;font-size:11px;min-width:50px;text-align:right">:' + fn.line + '</span>' +
+          '</div>';
+        }).join('') +
+      '</div>';
+    }).join('');
+  }
+}
+
+// ─── Suggestions View ─────────────────────────────────────────────────
+{
+  function renderSuggestions() {
+    var prioF = document.getElementById('sug-filter-priority').value;
+    var filtered = DATA.suggestions;
+    if (prioF) filtered = filtered.filter(function(s) { return s.priority === prioF; });
+    var grid = document.getElementById('sug-grid');
+    if (filtered.length === 0) { grid.innerHTML = '<div class="empty">No suggestions</div>'; return; }
+    grid.innerHTML = filtered.map(function(s) {
+      return '<div class="sug-card">' +
+        '<div class="sug-priority sug-' + s.priority + '"></div>' +
+        '<div style="flex:1">' +
+          '<div class="sug-cat">' + esc(s.category) + ' <span class="sev-badge sev-' + s.priority + '">' + s.priority + '</span></div>' +
+          '<div class="sug-msg">' + esc(s.message) + '</div>' +
+          '<div class="sug-action">' + esc(s.actionable) + '</div>' +
+          (s.filePath ? '<div class="sug-file">' + esc(s.filePath) + '</div>' : '') +
+        '</div></div>';
+    }).join('');
+  }
+  document.getElementById('sug-filter-priority').addEventListener('change', renderSuggestions);
+  renderSuggestions();
 }
 `;
 }

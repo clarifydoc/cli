@@ -1,0 +1,152 @@
+import type { BlastRadiusInfo, BlastSymbolUsage, SymbolLink } from "../types/analysis.js";
+
+/**
+ * Analyze blast radius for each file using the component graph and symbol links.
+ * Determines:
+ * - Which files would be affected if a given file changes (direct + transitive)
+ * - Which exported symbols are consumed externally and by whom
+ * - The file's own fragility (what it depends on)
+ * - Change risk classification
+ */
+export function analyzeBlastRadius(
+  componentGraph: Record<string, string[]>,
+  symbolLinks: SymbolLink[],
+  totalFiles: number,
+): BlastRadiusInfo[] {
+  // ── Build reverse graph: file → files that depend on it ──
+  const reverseGraph = new Map<string, Set<string>>();
+
+  for (const [source, targets] of Object.entries(componentGraph)) {
+    for (const target of targets) {
+      if (!reverseGraph.has(target)) reverseGraph.set(target, new Set());
+      reverseGraph.get(target)!.add(source);
+    }
+  }
+
+  // ── Build per-symbol usage from symbolLinks ──
+  // targetFile::targetSymbol → [{sourceFile, sourceLine}]
+  const symbolCallers = new Map<string, { file: string; line: number }[]>();
+  // targetFile → Set<symbolName>
+  const fileExportedSymbols = new Map<string, Map<string, { file: string; line: number }[]>>();
+
+  for (const link of symbolLinks) {
+    if (link.sourceFile === link.targetFile) continue;
+
+    if (!fileExportedSymbols.has(link.targetFile)) {
+      fileExportedSymbols.set(link.targetFile, new Map());
+    }
+    const symMap = fileExportedSymbols.get(link.targetFile)!;
+    if (!symMap.has(link.targetSymbol)) {
+      symMap.set(link.targetSymbol, []);
+    }
+    symMap.get(link.targetSymbol)!.push({
+      file: link.sourceFile,
+      line: link.sourceLine,
+    });
+  }
+
+  // ── Collect all files that appear in the graph ──
+  const allFiles = new Set<string>();
+  for (const [source, targets] of Object.entries(componentGraph)) {
+    allFiles.add(source);
+    for (const t of targets) allFiles.add(t);
+  }
+
+  const results: BlastRadiusInfo[] = [];
+
+  for (const filePath of allFiles) {
+    // ── Direct dependents ──
+    const directDeps = reverseGraph.get(filePath) ?? new Set();
+    const affectedFiles = [...directDeps].sort();
+    const directCount = affectedFiles.length;
+
+    // ── Transitive dependents via BFS (max depth 8) ──
+    const visited = new Set<string>([filePath, ...directDeps]);
+    const queue: { file: string; depth: number }[] = [];
+    for (const dep of directDeps) {
+      queue.push({ file: dep, depth: 1 });
+    }
+
+    const transitiveFiles: string[] = [];
+    let impactScore = directCount;
+    let maxDepth = directCount > 0 ? 1 : 0;
+
+    let qi = 0;
+    while (qi < queue.length) {
+      const { file, depth } = queue[qi++];
+      if (depth > maxDepth) maxDepth = depth;
+
+      if (depth >= 8) continue;
+
+      const nextDeps = reverseGraph.get(file) ?? new Set();
+      for (const next of nextDeps) {
+        if (!visited.has(next)) {
+          visited.add(next);
+          transitiveFiles.push(next);
+          impactScore += 1 / (depth + 1); // decay with depth
+          queue.push({ file: next, depth: depth + 1 });
+        }
+      }
+    }
+    transitiveFiles.sort();
+
+    // ── Own dependencies (fragility) ──
+    const dependsOn = (componentGraph[filePath] ?? []).slice().sort();
+
+    // ── Per-symbol usage ──
+    const symMap = fileExportedSymbols.get(filePath);
+    const exportedSymbols: BlastSymbolUsage[] = [];
+    if (symMap) {
+      for (const [name, callers] of symMap) {
+        exportedSymbols.push({
+          name,
+          usedByCount: callers.length,
+          callers: callers.sort((a, b) => a.file.localeCompare(b.file)),
+        });
+      }
+      exportedSymbols.sort((a, b) => b.usedByCount - a.usedByCount);
+    }
+
+    // ── Centrality ──
+    const symbolsUsed = exportedSymbols.reduce((s, sym) => s + sym.usedByCount, 0);
+    const centrality = directCount + dependsOn.length + symbolsUsed;
+
+    // ── Level classification ──
+    let level: BlastRadiusInfo["level"] = "low";
+    if (directCount >= 8 || exportedSymbols.length >= 5) level = "critical";
+    else if (directCount >= 4 || exportedSymbols.length >= 3) level = "high";
+    else if (directCount >= 2 || exportedSymbols.length >= 1) level = "medium";
+
+    // ── Change risk: accounts for both inbound (dependents) and outbound (dependencies) ──
+    // A file that is both heavily depended upon AND depends on many things is most dangerous
+    const inboundWeight = directCount + transitiveFiles.length * 0.3;
+    const outboundWeight = dependsOn.length;
+    const riskScore = inboundWeight * 2 + outboundWeight;
+    let changeRisk: BlastRadiusInfo["changeRisk"] = "safe";
+    if (riskScore >= 15 || (directCount >= 6 && dependsOn.length >= 3)) {
+      changeRisk = "dangerous";
+    } else if (riskScore >= 5 || directCount >= 3) {
+      changeRisk = "moderate";
+    }
+
+    results.push({
+      filePath,
+      directDependents: directCount,
+      transitiveDependents: transitiveFiles.length,
+      impactScore: Math.round(impactScore * 10) / 10,
+      centrality,
+      level,
+      affectedFiles,
+      transitiveFiles,
+      dependsOn,
+      exportedSymbols,
+      changeRisk,
+      maxDepth,
+    });
+  }
+
+  // Sort by impact score descending
+  results.sort((a, b) => b.impactScore - a.impactScore);
+
+  return results;
+}
