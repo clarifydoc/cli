@@ -52,12 +52,38 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
 
       // Link route → its handler method (e.g., route:GET /api/users → getAllUsers)
       if (route.handler) {
+        // Extract the method name from qualified handlers like "h.ListUsers" or "UsersController#index"
+        const handlerName = route.handler.includes("#")
+          ? route.handler.split("#").pop()!
+          : route.handler.includes(".")
+            ? route.handler.split(".").pop()!
+            : route.handler;
+
         const handlerLink = resolveCallToDefinition(
           sourceFile, sourceSymbol,
           { name: route.handler, kind: "internal", target: null, line: route.line },
           analysis, filePathMap, symbolIndex, inheritanceMap, injectionMap,
         );
-        if (handlerLink) links.push(handlerLink);
+        if (handlerLink) {
+          links.push(handlerLink);
+        } else {
+          // Fallback: search all files for the handler name
+          for (const [filePath, syms] of symbolIndex) {
+            const def = syms.get(handlerName);
+            if (def) {
+              links.push({
+                sourceFile,
+                sourceSymbol,
+                sourceLine: route.line,
+                callName: route.handler,
+                targetFile: filePath,
+                targetSymbol: def.name,
+                targetLine: def.line,
+              });
+              break;
+            }
+          }
+        }
       }
 
       // Link route → functions it calls

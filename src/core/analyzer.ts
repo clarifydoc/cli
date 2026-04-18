@@ -300,6 +300,64 @@ async function analyzeFile(task: FileTask): Promise<FileResult | null> {
   }
 }
 
+// ─── Progress reporter ──────────────────────────────────────────────────
+
+/**
+ * Reports progress to the CLI. In non-verbose mode, shows a single updating
+ * status line. In verbose mode, writes each step on its own line.
+ */
+class ProgressReporter {
+  private verbose: boolean;
+  private active = false;
+  private lastLine = "";
+
+  constructor(verbose: boolean) {
+    this.verbose = verbose;
+  }
+
+  /** Show a top-level pipeline step (e.g. "Discovering files"). */
+  step(message: string): void {
+    if (this.verbose) {
+      console.log(message);
+    } else {
+      this.writeStatus(message);
+    }
+  }
+
+  /** Update the current status line (non-verbose only). */
+  status(message: string): void {
+    if (!this.verbose) this.writeStatus(message);
+  }
+
+  /** Log a detail line (only shown in verbose mode). */
+  detail(message: string): void {
+    if (this.verbose) console.log(message);
+  }
+
+  /** Print a final line that stays visible. */
+  finalize(message: string): void {
+    this.clear();
+    console.log(message);
+  }
+
+  /** Clear the in-place status line (non-verbose only). */
+  clear(): void {
+    if (!this.verbose && this.active) {
+      process.stdout.write("\r" + " ".repeat(this.lastLine.length) + "\r");
+      this.active = false;
+      this.lastLine = "";
+    }
+  }
+
+  private writeStatus(message: string): void {
+    const line = message.length > 79 ? message.slice(0, 76) + "..." : message;
+    const padding = Math.max(0, this.lastLine.length - line.length);
+    process.stdout.write("\r" + line + " ".repeat(padding));
+    this.active = true;
+    this.lastLine = line;
+  }
+}
+
 // ─── Main pipeline ───────────────────────────────────────────────────────
 
 /**
@@ -312,9 +370,10 @@ async function analyzeFile(task: FileTask): Promise<FileResult | null> {
  */
 export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const { projectRoot, outputDir, verbose, dryRun } = options;
+  const progress = new ProgressReporter(!!verbose);
 
   // Step 1: Discover files
-  if (verbose) console.log("Discovering files...");
+  progress.step("Discovering files...");
   const discoveryOpts: DiscoveryOptions = {
     include: options.include,
     exclude: options.exclude,
@@ -322,7 +381,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   };
   const files = await discoverFiles(projectRoot, discoveryOpts);
 
-  if (verbose) console.log(`Found ${files.length} source files`);
+  progress.detail(`Found ${files.length} source files`);
 
   if (dryRun) {
     return {
@@ -338,22 +397,19 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   }
 
   // Step 2: Detect frameworks
-  if (verbose) console.log("Detecting frameworks...");
+  progress.step("Detecting frameworks...");
   const projectInfo = await gatherProjectInfo(projectRoot);
   const frameworks = detectFrameworks(projectInfo);
   const frameworkIds = frameworks.map((f) => f.id);
 
-  if (verbose) {
-    if (frameworks.length > 0) {
-      console.log(
-        `Detected: ${frameworks.map((f) => f.name).join(", ")}`,
-      );
-    } else {
-      console.log("No frameworks detected");
-    }
-  }
+  progress.detail(
+    frameworks.length > 0
+      ? `Detected: ${frameworks.map((f) => f.name).join(", ")}`
+      : "No frameworks detected",
+  );
 
   // Step 3: Analyze each file (parallel with concurrency limit)
+  progress.step(`Analyzing ${files.length} files...`);
   const outputOpts: OutputOptions = { outputDir, pretty: options.pretty };
   let completedCount = 0;
 
@@ -361,18 +417,12 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     files,
     8,
     async (file, _i) => {
-      if (verbose) {
-        console.log(`  Analyzing: ${file.relativePath}`);
-      }
+      progress.detail(`  Analyzing: ${file.relativePath}`);
+      progress.status(`Analyzing [${completedCount}/${files.length}] ${file.relativePath}`);
       return analyzeFile({ file, frameworkIds, outputOpts, verbose: !!verbose });
     },
     () => {
       completedCount++;
-      if (!verbose) {
-        process.stdout.write(
-          `\rAnalyzing [${completedCount}/${files.length}]`.padEnd(80),
-        );
-      }
     },
   );
 
@@ -395,13 +445,12 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     }
   }
 
-  // Clear progress line
-  if (!verbose) process.stdout.write("\r" + " ".repeat(80) + "\r");
-
   // Step 4: Post-analysis
-  if (verbose) console.log("Building project summary...");
+  progress.step("Building dependency graph...");
   const componentGraph = buildComponentGraph(allAnalyses);
+  progress.status("Building link graph...");
   const linkGraph = buildLinkGraph(allAnalyses);
+  progress.status("Resolving cross-file symbols...");
   let symbolLinks = buildSymbolLinks(allAnalyses);
 
   // Step 4b: LSP enhancement (optional)
@@ -409,7 +458,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   if (options.lsp !== false) {
     try {
       const { enhanceWithLsp } = await import("../lsp/lsp-enhancer.js");
-      if (verbose) console.log("Running LSP enhancement...");
+      progress.step("Running LSP enhancement...");
       const lspResult = await enhanceWithLsp({
         projectRoot,
         analyses: allAnalyses,
@@ -425,11 +474,11 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
         referenceLinksCount: lspResult.referenceLinksCount,
         enhancementTimeMs: lspResult.timeMs,
       };
-      if (verbose && lspResult.serversUsed.length > 0) {
-        console.log(`  LSP enhancement: +${lspResult.lspResolvedCount} definitions, +${lspResult.referenceLinksCount} references (${lspResult.timeMs}ms)`);
+      if (lspResult.serversUsed.length > 0) {
+        progress.detail(`  LSP enhancement: +${lspResult.lspResolvedCount} definitions, +${lspResult.referenceLinksCount} references (${lspResult.timeMs}ms)`);
       }
     } catch (err) {
-      if (verbose) console.log(`LSP enhancement skipped: ${(err as Error).message}`);
+      progress.detail(`LSP enhancement skipped: ${(err as Error).message}`);
     }
   }
   // Enrich component graph with edges from symbol links
@@ -456,13 +505,14 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const allScreens = [...dfmScreens, ...webScreens];
 
   // Step 4c: Advanced analysis
-  if (verbose) console.log("Running advanced analysis...");
-
+  progress.step("Analyzing complexity and patterns...");
   const complexity = aggregateComplexity(perFileComplexity);
   const patterns = detectPatterns(allAnalyses, frameworks);
+  progress.status("Detecting duplicates and layer violations...");
   const duplicates = detectDuplicates(allAnalyses);
   const fileLayerMap = classifyFileLayers(allAnalyses.map((a) => a.filePath));
   const layerViolations = detectLayerViolations(allAnalyses, componentGraph, fileLayerMap);
+  progress.status("Computing blast radius and health score...");
   const blastRadius = analyzeBlastRadius(componentGraph, symbolLinks, allAnalyses.length);
   const healthScore = computeHealthScore({
     analyses: allAnalyses,
@@ -473,6 +523,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     complexity,
     layerViolations,
   });
+  progress.status("Generating suggestions...");
   const suggestions = generateSuggestions({
     analyses: allAnalyses,
     healthScore,
@@ -485,11 +536,9 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     componentGraph,
   });
 
-  if (verbose) {
-    console.log(`  Health: ${healthScore.grade} (${healthScore.score}/100)`);
-    console.log(`  Patterns: ${patterns.length}, Security: ${allSecurityIssues.length}, Duplicates: ${duplicates.length}`);
-    console.log(`  Suggestions: ${suggestions.length}`);
-  }
+  progress.detail(`  Health: ${healthScore.grade} (${healthScore.score}/100)`);
+  progress.detail(`  Patterns: ${patterns.length}, Security: ${allSecurityIssues.length}, Duplicates: ${duplicates.length}`);
+  progress.detail(`  Suggestions: ${suggestions.length}`);
 
   // Step 5: Write project summary
   const summary: ProjectAnalysis = {
@@ -516,7 +565,9 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     fileLayerMap,
   };
 
+  progress.step("Writing project summary...");
   await writeProjectSummary(summary, outputOpts);
+  progress.clear();
 
   return {
     fileCount: allAnalyses.length,

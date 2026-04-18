@@ -1,0 +1,61 @@
+# src/core — Analysis pipeline & analyzers
+
+The analysis pipeline orchestrator and all cross-file analyzers live here. Pure functions in / out — no tree-sitter parsing happens at this layer (that's delegated to extractors).
+
+## Entry point
+
+[analyzer.ts](analyzer.ts) exports `analyze(options)` — the full pipeline. It runs:
+
+1. File discovery + framework detection
+2. Parallel per-file analysis (tree-sitter + extractors, or regex fallback)
+3. Post-analysis: component graph, link graph, symbol links
+4. Optional LSP enhancement
+5. Advanced analysis (complexity, patterns, duplicates, layer violations, blast radius, health, suggestions)
+6. Write project summary + optional HTML report
+
+Each step is gated behind the `ProgressReporter` — both verbose and non-verbose modes.
+
+## Analyzers (post-analysis passes)
+
+All take `FileAnalysis[]` and/or `componentGraph` and return typed results.
+
+| File | Output | Depends on |
+|------|--------|-----------|
+| [symbol-linker.ts](symbol-linker.ts) | `SymbolLink[]` | inheritance map, injection map — 4-strategy fallback resolution |
+| [blast-radius.ts](blast-radius.ts) | `BlastRadiusInfo[]` | reverse graph from componentGraph |
+| [complexity-analyzer.ts](complexity-analyzer.ts) | `FileComplexityInfo[]` | tree-sitter AST (per-file) |
+| [pattern-detector.ts](pattern-detector.ts) | `PatternInfo[]` | classes, functions, imports |
+| [security-scanner.ts](security-scanner.ts) | `SecurityIssue[]` | raw source text (regex-based) |
+| [duplication-detector.ts](duplication-detector.ts) | `DuplicateGroup[]` | structural fingerprinting |
+| [layer-analyzer.ts](layer-analyzer.ts) | `ArchLayer` map + violations | file paths + componentGraph |
+| [health-scorer.ts](health-scorer.ts) | `HealthScore` | all other analyzers + Tarjan SCC for cycles |
+| [suggestions-engine.ts](suggestions-engine.ts) | `Suggestion[]` | all other analyzers |
+
+**Dependency order matters.** Health and suggestions depend on everything else. `findCircularDeps` is exported from `health-scorer.ts` and reused by suggestions-engine to avoid duplicate work.
+
+## Discovery & IO
+
+- [file-discovery.ts](file-discovery.ts) — fast-glob by extension. The `EXTENSION_MAP` is the source of truth for which extensions are analyzed.
+- [framework-detector.ts](framework-detector.ts) — reads package.json, pom.xml, build.gradle, etc. Produces `FrameworkDetection[]`.
+- [output-writer.ts](output-writer.ts) — writes per-file JSONs + `project-summary.json`.
+- [regex-extractor.ts](regex-extractor.ts) — thin dispatcher for regex-only languages. Real logic lives in `src/extractors/plugins/<lang>/`.
+
+## Report
+
+[html-report.ts](html-report.ts) is a single large file that generates a self-contained HTML report with D3-based architecture graph, 11+ tabs (screens, traces, architecture, routes, health, patterns, security, complexity, suggestions, blast radius, overview). The CSS, HTML template, and client JS are all string concatenation — intentional to keep the report single-file and portable.
+
+## Adding a new analyzer
+
+1. Create `src/core/my-analyzer.ts` exporting a pure function `analyzeMyThing(input): MyResult[]`
+2. Add the return type to [../types/analysis.ts](../types/analysis.ts) and add an optional field to `ProjectAnalysis`
+3. Wire into `analyzer.ts` post-analysis section (step 4c)
+4. Pass data to `suggestions-engine.ts` if it should drive suggestions
+5. Add view to `html-report.ts` — new tab, new render function, new client JS handler
+6. Add exports to [../index.ts](../index.ts) if public API
+
+## Conventions
+
+- **Pure functions** — no file IO except `output-writer.ts` and `html-report.ts`. Input is `FileAnalysis[]`, output is typed results.
+- **Optional fields** — new fields on `ProjectAnalysis` should be optional so old `project-summary.json` files still load.
+- **Progress reporting** — use the `ProgressReporter` class in `analyzer.ts`, not `console.log` directly.
+- **BFS with index pointer** — never use `Array.shift()` for BFS queues (it's O(n)); use `let qi = 0; while (qi < queue.length) { ... queue[qi++]; ... }`.
