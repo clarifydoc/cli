@@ -1,9 +1,19 @@
 import { readFile } from "fs/promises";
+import { resolve as pathResolve } from "path";
 import { discoverFiles, type DiscoveryOptions, type DiscoveredFile } from "./file-discovery.js";
+import {
+  EXTRACTOR_VERSION,
+  loadManifest,
+  saveManifest,
+  classifyFile as classifyFileForCache,
+  normalizeManifestKey,
+  type Manifest,
+} from "./manifest.js";
 import {
   gatherProjectInfo,
   detectFrameworks,
 } from "./framework-detector.js";
+import { detectSubProjects, assignProjectId } from "./project-detector.js";
 import {
   writeFileAnalysis,
   writeProjectSummary,
@@ -19,6 +29,7 @@ import { extractRoutes } from "../extractors/routes/index.js";
 import { extractDataSources } from "../extractors/data-sources/index.js";
 import { extractDataMutations } from "../extractors/data-mutations/index.js";
 import { classifyCalls, extractTopLevelCalls, extractVariableAliases } from "../extractors/shared/call-graph.js";
+import { loadTsconfigAliases, applyAliases } from "../extractors/shared/tsconfig-aliases.js";
 import { extractInteractiveElements, extractVueInteractiveElements } from "../extractors/shared/interactive-elements.js";
 import { extractEvents } from "../extractors/shared/events.js";
 import { buildLinkGraph } from "../extractors/shared/link-scoring.js";
@@ -31,6 +42,12 @@ import { classifyFileLayers, detectLayerViolations } from "./layer-analyzer.js";
 import { analyzeBlastRadius } from "./blast-radius.js";
 import { computeHealthScore } from "./health-scorer.js";
 import { generateSuggestions } from "./suggestions-engine.js";
+import { detectCommunities } from "./community-detector.js";
+import { findGodNodes, findSurprisingConnections, suggestQuestions } from "./topology-analyzer.js";
+import { dedupSymbolLinks } from "./symbol-dedup.js";
+import { extractTypeReferences } from "./type-reference-extractor.js";
+import { extractTypeReferencesFromAst } from "../extractors/shared/type-references-ast.js";
+import { aggregateTypeBlast, buildClassGraph } from "./data-model-blast.js";
 import {
   createEmptyAnalysis,
   type FileAnalysis,
@@ -54,6 +71,12 @@ export interface AnalyzeOptions {
   dryRun?: boolean;
   lsp?: boolean;
   lspTimeout?: number;
+  /**
+   * When true, files whose mtime + SHA-256 match the on-disk manifest are not
+   * re-parsed — their cached FileAnalysis JSON is loaded from disk and reused.
+   * Post-analysis (linkGraph, symbolLinks, etc.) always runs on the full set.
+   */
+  incremental?: boolean;
 }
 
 export interface AnalyzeResult {
@@ -76,8 +99,12 @@ export interface AnalyzeResult {
 interface FileTask {
   file: DiscoveredFile;
   frameworkIds: string[];
+  projectId: string;
   outputOpts: OutputOptions;
   verbose: boolean;
+  projectRoot: string;
+  /** tsconfig.json paths-style aliases for the project (may be empty). */
+  tsconfigAliases: Map<string, string>;
 }
 
 interface FileResult {
@@ -125,7 +152,14 @@ async function runWithConcurrency<T, R>(
  * Returns null on error (error is logged internally).
  */
 async function analyzeFile(task: FileTask): Promise<FileResult | null> {
-  const { file, frameworkIds, outputOpts, verbose } = task;
+  const { file, frameworkIds, projectId, outputOpts, verbose, projectRoot, tsconfigAliases } = task;
+
+  const applyTsconfigAliasesToImports = (a: FileAnalysis): void => {
+    if (tsconfigAliases.size === 0) return;
+    for (const imp of a.imports) {
+      imp.source = applyAliases(imp.source, tsconfigAliases, projectRoot);
+    }
+  };
 
   try {
     const rawSource = await readFile(file.absolutePath, "utf-8");
@@ -134,17 +168,26 @@ async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     if (file.language === "dfm") {
       const analysis = parseDfm(rawSource, file.relativePath);
       analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
+      analysis.projectId = projectId;
+      applyTsconfigAliasesToImports(analysis);
+      const dfmTypeRefs = extractTypeReferences(analysis, file.language);
+      if (dfmTypeRefs.length > 0) analysis.typeReferences = dfmTypeRefs;
       await writeFileAnalysis(analysis, outputOpts);
       return { analysis, rawSource: null, complexities: [], securityIssues: [] };
     }
 
     // Languages without tree-sitter grammars: use regex fallback
-    const REGEX_ONLY_LANGUAGES: Language[] = ["go", "rust", "ruby", "php", "swift", "lua", "scala"];
+    const REGEX_ONLY_LANGUAGES: Language[] = ["go", "rust", "ruby", "php", "swift", "lua", "scala", "perl", "vb"];
     if (REGEX_ONLY_LANGUAGES.includes(file.language)) {
       const { extractWithRegex } = await import("./regex-extractor.js");
       const analysis = extractWithRegex(rawSource, file.relativePath, file.language);
       analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
+      analysis.projectId = projectId;
+      applyTsconfigAliasesToImports(analysis);
       const fileSecurityIssues = scanSecurity(rawSource, file.relativePath, file.language);
+      if (fileSecurityIssues.length > 0) analysis.securityIssues = fileSecurityIssues;
+      const regexTypeRefs = extractTypeReferences(analysis, file.language);
+      if (regexTypeRefs.length > 0) analysis.typeReferences = regexTypeRefs;
       await writeFileAnalysis(analysis, outputOpts);
       return { analysis, rawSource: null, complexities: [], securityIssues: fileSecurityIssues };
     }
@@ -175,15 +218,24 @@ async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       const { extractWithRegex } = await import("./regex-extractor.js");
       const analysis = extractWithRegex(rawSource, file.relativePath, file.language);
       analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
+      analysis.projectId = projectId;
+      applyTsconfigAliasesToImports(analysis);
       const fileSecurityIssues = scanSecurity(rawSource, file.relativePath, file.language);
+      if (fileSecurityIssues.length > 0) analysis.securityIssues = fileSecurityIssues;
+      const fallbackTypeRefs = extractTypeReferences(analysis, file.language);
+      if (fallbackTypeRefs.length > 0) analysis.typeReferences = fallbackTypeRefs;
       await writeFileAnalysis(analysis, outputOpts);
       return { analysis, rawSource: null, complexities: [], securityIssues: fileSecurityIssues };
     }
 
     const analysis = createEmptyAnalysis(file.relativePath, language);
+    analysis.projectId = projectId;
 
     // Run all extractors
     analysis.imports = extractImports(tree, sourceText, language);
+    // Rewrite tsconfig path aliases (e.g. "@/utils/foo" → "src/utils/foo")
+    // BEFORE classifyCalls so the importMap it builds uses resolved paths.
+    applyTsconfigAliasesToImports(analysis);
     analysis.exports = extractExports(tree, sourceText, language);
     analysis.functions = extractFunctions(tree, sourceText, language);
     analysis.classes = extractClasses(tree, sourceText, language);
@@ -279,6 +331,20 @@ async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     const fileComplexities = computeComplexity(tree, language, analysis.functions, analysis.classes);
     const fileSecurityIssues = scanSecurity(sourceText, file.relativePath, language);
 
+    // Attach to the analysis itself so an incremental run can read both back
+    // from disk and reconstruct the project-level aggregates without re-parsing.
+    if (fileComplexities.length > 0) analysis.complexities = fileComplexities;
+    if (fileSecurityIssues.length > 0) analysis.securityIssues = fileSecurityIssues;
+
+    // Type-position references — combine FileAnalysis-level refs (classes,
+    // named functions) with AST-level refs (arrow functions, variable type
+    // annotations, casts, new-expressions). Dedup on
+    // (typeName, kind, sourceFile, sourceLine, sourceSymbol).
+    const fileLevelTypeRefs = extractTypeReferences(analysis, language);
+    const astLevelTypeRefs = extractTypeReferencesFromAst(tree, language, file.relativePath);
+    const combinedTypeRefs = mergeTypeRefs(fileLevelTypeRefs, astLevelTypeRefs);
+    if (combinedTypeRefs.length > 0) analysis.typeReferences = combinedTypeRefs;
+
     await writeFileAnalysis(analysis, outputOpts);
 
     // Return raw source for frontend route files (needed for screen building)
@@ -298,6 +364,67 @@ async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     }
     return null;
   }
+}
+
+/**
+ * Read a previously-written FileAnalysis JSON from disk and rebuild a FileResult
+ * matching what `analyzeFile` would produce. Returns null when the cache file is
+ * missing/corrupted so the caller can fall back to a fresh parse.
+ *
+ * The raw source is re-read only for frontend route files — they're a small
+ * subset and the source is needed downstream for screen building.
+ */
+async function loadCachedFileResult(
+  file: DiscoveredFile,
+  outputDir: string,
+): Promise<FileResult | null> {
+  const cachedPath = pathResolve(outputDir, `${file.relativePath}.json`);
+  let analysis: FileAnalysis;
+  try {
+    const raw = await readFile(cachedPath, "utf-8");
+    analysis = JSON.parse(raw) as FileAnalysis;
+  } catch {
+    return null;
+  }
+  if (!analysis || !analysis.filePath) return null;
+
+  // Pull per-file complexity/security out of the cached analysis so the
+  // project-level aggregators see the same data they would from a fresh parse.
+  const complexities = analysis.complexities ?? [];
+  const securityIssues = analysis.securityIssues ?? [];
+
+  const hasFrontendRoute = (analysis.routes ?? []).some((r) => r.kind === "frontend");
+  let rawSource: string | null = null;
+  if (hasFrontendRoute) {
+    try {
+      rawSource = await readFile(file.absolutePath, "utf-8");
+    } catch {
+      rawSource = null;
+    }
+  }
+
+  return { analysis, rawSource, complexities, securityIssues };
+}
+
+/**
+ * Merge two TypeReference lists, dropping exact duplicates. The keys include
+ * source position so legitimately distinct refs at different sites survive,
+ * while the same `(typeName, kind, file, line, symbol)` from two extractors
+ * (e.g. FileAnalysis classes + AST walker) collapses to one entry.
+ */
+function mergeTypeRefs(
+  fileLevel: import("../types/analysis.js").TypeReference[],
+  astLevel: import("../types/analysis.js").TypeReference[],
+): import("../types/analysis.js").TypeReference[] {
+  const seen = new Set<string>();
+  const out: import("../types/analysis.js").TypeReference[] = [];
+  for (const r of [...fileLevel, ...astLevel]) {
+    const key = `${r.typeName}::${r.usageKind}::${r.sourceFile}::${r.sourceLine}::${r.sourceSymbol}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(r);
+  }
+  return out;
 }
 
 // ─── Progress reporter ──────────────────────────────────────────────────
@@ -379,9 +506,14 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     exclude: options.exclude,
     maxFiles: options.maxFiles,
   };
-  const files = await discoverFiles(projectRoot, discoveryOpts);
+  const discovery = await discoverFiles(projectRoot, discoveryOpts);
+  const files = discovery.files;
+  const skippedSensitive = discovery.skippedSensitive;
 
   progress.detail(`Found ${files.length} source files`);
+  if (skippedSensitive.length > 0) {
+    progress.detail(`Skipped ${skippedSensitive.length} sensitive file(s)`);
+  }
 
   if (dryRun) {
     return {
@@ -408,10 +540,35 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       : "No frameworks detected",
   );
 
-  // Step 3: Analyze each file (parallel with concurrency limit)
+  // Step 2b: Detect sub-projects (monorepo packages, multi-language repos)
+  progress.step("Detecting sub-projects...");
+  const subProjects = await detectSubProjects(projectRoot);
+  const fileProjects: Record<string, string> = {};
+  for (const f of files) {
+    fileProjects[f.relativePath] = assignProjectId(f.relativePath, subProjects);
+  }
+  const realProjectCount = subProjects.filter((p) => p.id !== "root").length;
+  progress.detail(
+    realProjectCount > 0
+      ? `Detected ${realProjectCount} sub-project${realProjectCount === 1 ? "" : "s"}`
+      : "No sub-projects detected (single project)",
+  );
+
+  // Step 3: Analyze each file (parallel with concurrency limit).
+  // When `incremental` is on, classify each file against the manifest first;
+  // unchanged files skip parsing and reuse their on-disk FileAnalysis JSON.
   progress.step(`Analyzing ${files.length} files...`);
   const outputOpts: OutputOptions = { outputDir, pretty: options.pretty };
+  const tsconfigAliases = loadTsconfigAliases(projectRoot);
+  if (tsconfigAliases.size > 0 && verbose) {
+    progress.detail(`  tsconfig aliases: ${[...tsconfigAliases.keys()].join(", ")}`);
+  }
   let completedCount = 0;
+
+  const prevManifest = options.incremental ? await loadManifest(outputDir) : null;
+  const newManifestEntries: Record<string, { mtime: number; sha256: string }> = {};
+  let unchangedCount = 0;
+  let reparsedCount = 0;
 
   const results = await runWithConcurrency(
     files,
@@ -419,12 +576,46 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     async (file, _i) => {
       progress.detail(`  Analyzing: ${file.relativePath}`);
       progress.status(`Analyzing [${completedCount}/${files.length}] ${file.relativePath}`);
-      return analyzeFile({ file, frameworkIds, outputOpts, verbose: !!verbose });
+      const projectId = fileProjects[file.relativePath] ?? "root";
+      const manifestKey = normalizeManifestKey(file.relativePath);
+
+      if (options.incremental && prevManifest) {
+        const prev = prevManifest.entries[manifestKey];
+        const classification = await classifyFileForCache(file.absolutePath, prev);
+        newManifestEntries[manifestKey] = { mtime: classification.mtime, sha256: classification.sha256 };
+        if (classification.state === "unchanged") {
+          const cached = await loadCachedFileResult(file, outputDir);
+          if (cached) {
+            unchangedCount++;
+            return cached;
+          }
+          // Cache file missing — fall through to fresh parse.
+        }
+      }
+
+      const result = await analyzeFile({
+        file, frameworkIds, projectId, outputOpts, verbose: !!verbose,
+        projectRoot, tsconfigAliases,
+      });
+      if (options.incremental && !prevManifest) {
+        // First-time incremental run: compute hash for manifest seed.
+        const classification = await classifyFileForCache(file.absolutePath, undefined);
+        newManifestEntries[manifestKey] = { mtime: classification.mtime, sha256: classification.sha256 };
+      } else if (options.incremental && prevManifest && !newManifestEntries[manifestKey]) {
+        const classification = await classifyFileForCache(file.absolutePath, undefined);
+        newManifestEntries[manifestKey] = { mtime: classification.mtime, sha256: classification.sha256 };
+      }
+      if (result) reparsedCount++;
+      return result;
     },
     () => {
       completedCount++;
     },
   );
+
+  if (options.incremental) {
+    progress.detail(`  Incremental: ${unchangedCount} unchanged, ${reparsedCount} reparsed`);
+  }
 
   // Collect successful results
   const allAnalyses: FileAnalysis[] = [];
@@ -433,15 +624,20 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const allSecurityIssues: SecurityIssue[] = [];
 
   for (const result of results) {
-    if (result) {
-      allAnalyses.push(result.analysis);
-      if (result.rawSource) {
-        rawSources.set(result.analysis.filePath, result.rawSource);
-      }
-      if (result.complexities.length > 0) {
-        perFileComplexity.push({ filePath: result.analysis.filePath, complexities: result.complexities });
-      }
-      allSecurityIssues.push(...result.securityIssues);
+    if (!result) continue;
+    allAnalyses.push(result.analysis);
+    if (result.rawSource) {
+      rawSources.set(result.analysis.filePath, result.rawSource);
+    }
+    // Prefer per-file fields stored on the analysis (works for both fresh and
+    // cached paths); fall back to the FileResult fields for the fresh path.
+    const complexities = result.analysis.complexities ?? result.complexities;
+    if (complexities.length > 0) {
+      perFileComplexity.push({ filePath: result.analysis.filePath, complexities });
+    }
+    const securityIssues = result.analysis.securityIssues ?? result.securityIssues;
+    if (securityIssues.length > 0) {
+      allSecurityIssues.push(...securityIssues);
     }
   }
 
@@ -451,7 +647,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   progress.status("Building link graph...");
   const linkGraph = buildLinkGraph(allAnalyses);
   progress.status("Resolving cross-file symbols...");
-  let symbolLinks = buildSymbolLinks(allAnalyses);
+  let symbolLinks = dedupSymbolLinks(buildSymbolLinks(allAnalyses));
 
   // Step 4b: LSP enhancement (optional)
   let lspStats: import("../types/analysis.js").LspStats | undefined;
@@ -467,7 +663,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
         verbose: !!verbose,
         timeout: options.lspTimeout,
       });
-      symbolLinks = lspResult.enhancedLinks;
+      symbolLinks = dedupSymbolLinks(lspResult.enhancedLinks);
       lspStats = {
         serversUsed: lspResult.serversUsed,
         lspResolvedCount: lspResult.lspResolvedCount,
@@ -499,6 +695,12 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const allEvents = allAnalyses.flatMap((a) =>
     a.events.map((ev) => ({ ...ev, filePath: a.filePath })),
   );
+  // Aggregate outbound API calls (kind=api-call data sources)
+  const allApiCalls = allAnalyses.flatMap((a) =>
+    a.dataSources
+      .filter((ds) => ds.kind === "api-call")
+      .map((ds) => ({ ...ds, filePath: a.filePath })),
+  );
   // Build screens: DFM screens + web screens from routes
   const dfmScreens = allAnalyses.flatMap((a) => a.screens ?? []);
   const webScreens = buildScreensFromRoutes(allAnalyses, rawSources);
@@ -512,8 +714,31 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const duplicates = detectDuplicates(allAnalyses);
   const fileLayerMap = classifyFileLayers(allAnalyses.map((a) => a.filePath));
   const layerViolations = detectLayerViolations(allAnalyses, componentGraph, fileLayerMap);
+  progress.status("Detecting communities...");
+  const fileList = allAnalyses.map((a) => a.filePath);
+  const { communities, cohesion } = detectCommunities(linkGraph, fileList);
+
+  progress.status("Computing topology insights...");
+  const godNodes = findGodNodes(componentGraph, fileList, 10);
+  const surprisingConnections = findSurprisingConnections(linkGraph, communities, componentGraph, 5);
+  const suggestedQuestions = suggestQuestions(linkGraph, communities, cohesion, componentGraph, fileList, 7);
+
   progress.status("Computing blast radius and health score...");
   const blastRadius = analyzeBlastRadius(componentGraph, symbolLinks, allAnalyses.length);
+
+  // Per-class type-usage blast — attach to the BlastRadiusInfo for the file
+  // that defines each class. Empty entries are dropped to keep the JSON lean.
+  const typeBlastMap = aggregateTypeBlast(allAnalyses);
+  for (const info of blastRadius) {
+    const summaries = typeBlastMap.get(info.filePath);
+    if (summaries && summaries.length > 0) {
+      info.typeUsages = summaries;
+    }
+  }
+
+  // Class-level dependency graph for the Architecture tab's Data Models view.
+  const classGraph = buildClassGraph(allAnalyses);
+
   const healthScore = computeHealthScore({
     analyses: allAnalyses,
     componentGraph,
@@ -540,16 +765,27 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   progress.detail(`  Patterns: ${patterns.length}, Security: ${allSecurityIssues.length}, Duplicates: ${duplicates.length}`);
   progress.detail(`  Suggestions: ${suggestions.length}`);
 
+  // Aggregate confidence counts across symbolLinks — quick quality snapshot for the report.
+  const confidenceCounts = { extracted: 0, inferred: 0, ambiguous: 0 };
+  for (const link of symbolLinks) {
+    if (link.confidence === "EXTRACTED") confidenceCounts.extracted++;
+    else if (link.confidence === "INFERRED") confidenceCounts.inferred++;
+    else if (link.confidence === "AMBIGUOUS") confidenceCounts.ambiguous++;
+  }
+
   // Step 5: Write project summary
   const summary: ProjectAnalysis = {
     projectRoot,
     detectedFrameworks: frameworks,
+    subProjects,
+    fileProjects,
     files: allAnalyses.map((a) => a.filePath),
     componentGraph,
     linkGraph,
     interactiveElements: allInteractiveElements,
     events: allEvents,
     routeMap: allRoutes,
+    apiCalls: allApiCalls,
     screens: allScreens,
     symbolLinks,
     lspStats,
@@ -563,10 +799,30 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     healthScore,
     suggestions,
     fileLayerMap,
+    confidenceCounts,
+    skippedSensitive: skippedSensitive.length > 0 ? skippedSensitive : undefined,
+    communities: Object.keys(communities).length > 0 ? communities : undefined,
+    cohesion: Object.keys(cohesion).length > 0 ? cohesion : undefined,
+    godNodes: godNodes.length > 0 ? godNodes : undefined,
+    surprisingConnections: surprisingConnections.length > 0 ? surprisingConnections : undefined,
+    suggestedQuestions: suggestedQuestions.length > 0 ? suggestedQuestions : undefined,
+    classGraph: classGraph.nodes.length > 0 ? classGraph : undefined,
   };
 
   progress.step("Writing project summary...");
   await writeProjectSummary(summary, outputOpts);
+
+  // Save the manifest only after the rest of the pipeline succeeds so a crash
+  // mid-run leaves the previous manifest intact.
+  if (options.incremental) {
+    const manifest: Manifest = {
+      version: 1,
+      extractorVersion: EXTRACTOR_VERSION,
+      entries: newManifestEntries,
+    };
+    await saveManifest(outputDir, manifest);
+  }
+
   progress.clear();
 
   return {
@@ -762,7 +1018,7 @@ function buildComponentGraph(
     const baseName = a.filePath.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "");
     baseNameToFile.set(baseName, a.filePath);
     const stripped = a.filePath
-      .replace(/\.(ts|tsx|js|jsx|mjs|cjs|vue|py|java|kt|cs|pas|go|rs|rb|php|swift|lua|scala)$/, "")
+      .replace(/\.(ts|tsx|js|jsx|mjs|cjs|vue|py|java|kt|cs|pas|go|rs|rb|php|swift|lua|scala|pl|pm|vb|bas|cls|frm)$/, "")
       .replace(/\/index$/, "");
     strippedPathToFile.set(stripped, a.filePath);
 
@@ -816,7 +1072,10 @@ function buildComponentGraph(
 
       // 4. Resolve package/directory imports (Go, Ruby, Rust)
       // e.g. "sample-go-api/handler" → all files in handler/ directory
-      if (lastSegment) {
+      // Skip if the import is from a well-known external framework (avoids
+      // e.g. VB `Imports System.Windows.Forms` matching a local Forms/ dir).
+      const isExternal = /^(System|Microsoft|java|javax|jakarta|org|com|io)\b/.test(imp.source);
+      if (lastSegment && !isExternal) {
         const dirFiles = dirToFiles.get(lastSegment);
         if (dirFiles) {
           for (const target of dirFiles) {
@@ -853,7 +1112,7 @@ function buildComponentGraph(
  * a function defined in file B, that's a dependency edge even if the import
  * resolution missed it.
  */
-function enrichGraphFromSymbolLinks(
+export function enrichGraphFromSymbolLinks(
   graph: Record<string, string[]>,
   symbolLinks: import("../types/analysis.js").SymbolLink[],
 ): void {
@@ -884,7 +1143,7 @@ function enrichGraphFromSymbolLinks(
  * For languages where buildLinkGraph can't resolve import sources (e.g. Go package imports),
  * the component graph may have edges that the link graph doesn't.
  */
-function enrichLinkGraphFromComponentGraph(
+export function enrichLinkGraphFromComponentGraph(
   linkGraph: import("../types/analysis.js").LinkInfo[],
   componentGraph: Record<string, string[]>,
 ): void {

@@ -239,6 +239,7 @@ export function classifyCalls(
     if (VUE_COMPILER_MACROS.has(call.name)) {
       call.kind = "cross-file";
       call.target = "vue";
+      call.confidence = "EXTRACTED";
       continue;
     }
 
@@ -247,6 +248,7 @@ export function classifyCalls(
     if (directMatch) {
       call.kind = "cross-file";
       call.target = directMatch;
+      call.confidence = "EXTRACTED";
       continue;
     }
 
@@ -256,6 +258,7 @@ export function classifyCalls(
     if (defaultSource) {
       call.kind = "cross-file";
       call.target = defaultSource;
+      call.confidence = "EXTRACTED";
       continue;
     }
 
@@ -264,6 +267,7 @@ export function classifyCalls(
     if (namedSource && call.name.includes(".")) {
       call.kind = "cross-file";
       call.target = namedSource;
+      call.confidence = "EXTRACTED";
       continue;
     }
 
@@ -273,6 +277,8 @@ export function classifyCalls(
       if (aliasSource) {
         call.kind = "cross-file";
         call.target = aliasSource;
+        // Tracked through a const = importedFn() assignment — one indirection from source
+        call.confidence = "INFERRED";
         continue;
       }
     }
@@ -288,6 +294,7 @@ export function classifyCalls(
         if (upperSource) {
           call.kind = "cross-file";
           call.target = upperSource;
+          call.confidence = "INFERRED";
           continue;
         }
       }
@@ -299,6 +306,7 @@ export function classifyCalls(
         if (pascalSource) {
           call.kind = "cross-file";
           call.target = pascalSource;
+          call.confidence = "INFERRED";
           continue;
         }
       }
@@ -311,18 +319,21 @@ export function classifyCalls(
         if (strippedSource) {
           call.kind = "cross-file";
           call.target = strippedSource;
+          call.confidence = "INFERRED";
           continue;
         }
       }
 
       // Try matching root against import source module names
       // Python: user_service matches last segment of "services.user_service"
+      // Most fuzzy of the heuristics — just the last segment.
       const moduleMatch = imports.find(imp =>
         !imp.isType && imp.source.split(".").pop() === root
       );
       if (moduleMatch) {
         call.kind = "cross-file";
         call.target = moduleMatch.source;
+        call.confidence = "AMBIGUOUS";
         continue;
       }
     }
@@ -330,16 +341,19 @@ export function classifyCalls(
     // 3. Check API call patterns
     if (isApiCall(call.name, language)) {
       call.kind = "api-call";
+      call.confidence = "EXTRACTED";
       continue;
     }
 
     // 4. Check database patterns
     if (isDatabaseCall(call.name, language)) {
       call.kind = "database";
+      call.confidence = "EXTRACTED";
       continue;
     }
 
-    // 5. Default: internal
+    // 5. Default: internal — confidence left unset; unresolved internal calls
+    // carry no provenance signal.
   }
 
   return calls;

@@ -27,9 +27,15 @@ interface LspLocationLink {
   targetSelectionRange: LspRange;
 }
 
+interface WorkspaceFolder {
+  uri: string;
+  name: string;
+}
+
 interface InitializeParams {
   processId: number | null;
   rootUri: string;
+  workspaceFolders: WorkspaceFolder[] | null;
   capabilities: Record<string, unknown>;
   initializationOptions?: Record<string, unknown>;
 }
@@ -132,6 +138,7 @@ export class LspClient {
     const params: InitializeParams = {
       processId: null,
       rootUri,
+      workspaceFolders: [{ uri: rootUri, name: "workspace" }],
       capabilities: {
         textDocument: {
           definition: { dynamicRegistration: false },
@@ -170,6 +177,21 @@ export class LspClient {
         text,
       },
     });
+  }
+
+  /**
+   * Send an arbitrary LSP notification. Used for server-specific extensions
+   * (e.g., Roslyn's `project/open`, `solution/open`).
+   */
+  notify(method: string, params: unknown): void {
+    this.sendNotification(method, params);
+  }
+
+  /**
+   * Convert a relative or absolute host path to the container URI (public for post-init hooks).
+   */
+  toUri(filePath: string): string {
+    return this.toContainerUri(filePath);
   }
 
   /**

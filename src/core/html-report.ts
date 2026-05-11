@@ -1,7 +1,7 @@
 import { readFile } from "fs/promises";
 import { join, resolve, basename } from "path";
 import { exec } from "child_process";
-import type { ProjectAnalysis } from "../types/analysis.js";
+import type { ProjectAnalysis, BlastRadiusInfo } from "../types/analysis.js";
 import { writeFile, mkdir } from "fs/promises";
 import { dirname } from "path";
 
@@ -27,7 +27,47 @@ export async function generateHtmlReport(options: ReportOptions): Promise<string
 
 async function loadProjectSummary(dir: string): Promise<ProjectAnalysis> {
   const raw = await readFile(join(dir, "project-summary.json"), "utf-8");
-  return JSON.parse(raw);
+  const summary = JSON.parse(raw) as ProjectAnalysis;
+
+  // If an LSP enhancement delta was written separately (by `lsp-update`),
+  // merge its fields onto the base summary before rendering.
+  try {
+    const lspRaw = await readFile(join(dir, "lsp-enhancement.json"), "utf-8");
+    const lsp = JSON.parse(lspRaw) as {
+      symbolLinks?: unknown[];
+      componentGraph?: Record<string, string[]>;
+      linkGraph?: unknown[];
+      blastRadius?: unknown[];
+      lspStats?: unknown;
+    };
+    if (lsp.symbolLinks) summary.symbolLinks = lsp.symbolLinks as ProjectAnalysis["symbolLinks"];
+    if (lsp.componentGraph) summary.componentGraph = lsp.componentGraph;
+    if (lsp.linkGraph) summary.linkGraph = lsp.linkGraph as ProjectAnalysis["linkGraph"];
+    if (lsp.blastRadius) {
+      // LSP enhancement replaces blastRadius wholesale, but it doesn't know
+      // about additive type-usage data (Phase A). Preserve typeUsages from
+      // the base summary by matching on filePath so the Data Models view
+      // doesn't go blank whenever an LSP run is present.
+      const typeUsagesByFile = new Map<string, BlastRadiusInfo["typeUsages"]>();
+      const baseBlast = (summary.blastRadius ?? []) as BlastRadiusInfo[];
+      for (const info of baseBlast) {
+        if (info.typeUsages && info.typeUsages.length > 0) {
+          typeUsagesByFile.set(info.filePath, info.typeUsages);
+        }
+      }
+      const lspBlast = lsp.blastRadius as BlastRadiusInfo[];
+      for (const info of lspBlast) {
+        const tu = typeUsagesByFile.get(info.filePath);
+        if (tu) info.typeUsages = tu;
+      }
+      summary.blastRadius = lspBlast;
+    }
+    if (lsp.lspStats) summary.lspStats = lsp.lspStats as ProjectAnalysis["lspStats"];
+  } catch {
+    // No lsp-enhancement.json — base summary stands alone.
+  }
+
+  return summary;
 }
 
 function openInBrowser(filePath: string): void {
@@ -51,9 +91,18 @@ function renderReport(summary: ProjectAnalysis): string {
     linkGraph: (summary as any).linkGraph ?? [],
     screens: (summary as any).screens ?? [],
     symbolLinks: (summary as any).symbolLinks ?? [],
+    subProjects: (summary as any).subProjects ?? [{ id: "root", name: "(root)", root: "", kind: "root", markers: [] }],
+    fileProjects: (summary as any).fileProjects ?? {},
     routeMap: summary.routeMap.map((r: any) => ({
       path: r.path, httpMethod: r.httpMethod, kind: r.kind,
       handler: r.handler, line: r.line, filePath: r.filePath ?? null,
+    })),
+    /** Outbound HTTP calls — surfaced alongside routes in the Routes tab. */
+    apiCalls: (summary.apiCalls ?? []).map((c: any) => ({
+      name: c.name,
+      target: c.target,
+      filePath: c.filePath,
+      line: c.line,
     })),
     // Graph data for D3
     componentGraph: summary.componentGraph ?? {},
@@ -67,6 +116,15 @@ function renderReport(summary: ProjectAnalysis): string {
     duplicates: summary.duplicates ?? [],
     layerViolations: summary.layerViolations ?? [],
     blastRadius: summary.blastRadius ?? [],
+    // Graph topology insights + confidence summary (ported from graphify-7)
+    godNodes: summary.godNodes ?? [],
+    surprisingConnections: summary.surprisingConnections ?? [],
+    suggestedQuestions: summary.suggestedQuestions ?? [],
+    confidenceCounts: summary.confidenceCounts ?? null,
+    communities: summary.communities ?? {},
+    cohesion: summary.cohesion ?? {},
+    skippedSensitive: summary.skippedSensitive ?? [],
+    classGraph: summary.classGraph ?? null,
   };
 
   return `<!DOCTYPE html>
@@ -80,7 +138,8 @@ ${renderCss()}
 </head>
 <body>
 ${renderHeader(payload)}
-${renderNav()}
+${renderGlobalFilterBar()}
+${renderNav(payload)}
 ${renderScreensView()}
 ${renderInteractiveView()}
 ${renderTracesView()}
@@ -92,6 +151,7 @@ ${renderPatternsView()}
 ${renderSecurityView()}
 ${renderComplexityView()}
 ${renderSuggestionsView()}
+${renderInsightsView()}
 ${renderSummaryView()}
 <script>
 const DATA = ${JSON.stringify(payload)};
@@ -137,6 +197,17 @@ a{color:#58a6ff;text-decoration:none}
 .filter-bar{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
 .filter-bar select,.filter-bar input{background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:6px 10px;border-radius:6px;font-size:13px}
 .filter-bar input{flex:1;min-width:200px}
+
+/* Global filter bar (cross-tab) */
+.global-filter-bar{background:#0d1117;border-bottom:1px solid #30363d;padding:8px 24px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px}
+.global-filter-bar .gf-label{color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin-right:2px}
+.global-filter-bar select{background:#161b22;border:1px solid #30363d;color:#e6edf3;padding:5px 8px;border-radius:6px;font-size:12px;min-width:140px;cursor:pointer}
+.global-filter-bar select:hover{border-color:#58a6ff}
+.global-filter-bar select.active{border-color:#58a6ff;background:#1f6feb22}
+.global-filter-bar .gf-clear{background:none;border:none;color:#8b949e;padding:4px 8px;border-radius:4px;font-size:11px;cursor:pointer}
+.global-filter-bar .gf-clear:hover{background:#1c2128;color:#e6edf3}
+.global-filter-bar .gf-status{color:#8b949e;font-size:11px;margin-left:auto}
+.global-filter-bar .gf-status .gf-count{color:#58a6ff;font-weight:600}
 
 /* File cards */
 .file-card{background:#161b22;border:1px solid #30363d;border-radius:8px;margin-bottom:12px;overflow:hidden}
@@ -216,6 +287,31 @@ a{color:#58a6ff;text-decoration:none}
 .d3-tooltip .tt-name{font-weight:600;color:#f0f6fc;font-family:monospace;font-size:13px;margin-bottom:6px}
 .d3-tooltip .tt-row{display:flex;justify-content:space-between;gap:16px;padding:1px 0;color:#8b949e}
 .d3-tooltip .tt-val{color:#e6edf3;font-weight:500}
+.arch-hidden{display:none !important}
+
+/* Type Graph legend + detail panel (Architecture tab Data Models mode) */
+.d3-legend-row{display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+.d3-legend-title{font-size:12px;color:#e6edf3;font-weight:600}
+.d3-legend-item{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#8b949e}
+.d3-legend-item i{width:14px;height:14px;border-radius:3px;flex-shrink:0;display:inline-block}
+.type-detail-head{margin-bottom:8px}
+.type-detail-name{font-size:18px;font-weight:600;color:#f0f6fc;font-family:monospace}
+.type-detail-sub{display:flex;gap:8px;align-items:center;margin-top:4px;font-size:12px}
+.type-detail-sub code{font-family:monospace;color:#58a6ff;font-size:11px}
+.type-detail-counts{font-size:11px;color:#8b949e;margin:6px 0 12px}
+.type-edge-section{margin-top:10px;border-top:1px solid #21262d;padding-top:8px}
+.type-edge-section h4{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px;font-weight:600}
+.type-edge-row{display:grid;grid-template-columns:18px minmax(80px,1fr) minmax(180px,2fr) 40px minmax(120px,2fr);gap:8px;padding:4px 6px;font-size:11px;color:#8b949e;border-bottom:1px solid #1a1f26;align-items:center}
+.type-edge-row:last-child{border-bottom:none}
+.type-edge-arrow{font-weight:700;font-size:14px}
+.type-cat-inheritance{color:#f85149}
+.type-cat-data{color:#a78bfa}
+.type-cat-function{color:#58a6ff}
+.type-edge-name{font-family:monospace;color:#79c0ff;font-size:12px;font-weight:600}
+.type-edge-file{font-family:monospace;font-size:10px;color:#58a6ff;background:rgba(88,166,255,0.06);padding:2px 6px;border-radius:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.type-edge-external{color:#484f58;background:transparent}
+.type-edge-count{text-align:right;color:#d29922;font-weight:600;font-family:monospace}
+.type-edge-kinds{font-family:monospace;font-size:10px;color:#8b949e}
 
 /* Route table */
 .route-table{width:100%;border-collapse:collapse}
@@ -278,6 +374,58 @@ a{color:#58a6ff;text-decoration:none}
 .blast-sym-callers{margin-top:4px;padding-left:12px}
 .blast-sym-caller{font-size:11px;color:#8b949e;font-family:monospace;padding:2px 0}
 
+/* Data-model type usages — per-class blast row inside Blast Radius detail */
+.type-usage-row{padding:12px;border-bottom:1px solid #21262d}
+.type-usage-row:last-child{border-bottom:none}
+.type-usage-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.type-usage-name{font-family:monospace;color:#79c0ff;font-size:14px;font-weight:600}
+.type-iface-tag{font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 6px;border-radius:3px;background:#1f2937;color:#8b949e}
+.type-usage-level{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.3px}
+.type-usage-defline{font-size:11px;color:#8b949e}
+.type-usage-total{font-size:11px;color:#d29922;margin-left:auto;font-weight:600}
+.type-usage-files{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+
+/* Kind pills row + per-kind colour vocabulary used by both pills and table */
+.type-kind-pills{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px}
+.kind-pill{font-size:10px;padding:2px 8px;border-radius:10px;font-family:monospace}
+.kind-extends{color:#f85149;background:rgba(248,81,73,0.10)}
+.kind-implements{color:#ff9e64;background:rgba(255,158,100,0.10)}
+.kind-parameter{color:#58a6ff;background:rgba(88,166,255,0.10)}
+.kind-return{color:#3fb950;background:rgba(63,185,80,0.10)}
+.kind-field{color:#a78bfa;background:rgba(167,139,250,0.10)}
+.kind-variable{color:#56d4dd;background:rgba(86,212,221,0.10)}
+.kind-generic-arg{color:#8b949e;background:rgba(139,148,158,0.10)}
+.kind-cast{color:#79c0ff;background:rgba(121,192,255,0.10)}
+.kind-instantiation{color:#d29922;background:rgba(210,153,34,0.10)}
+
+/* Per-file × per-kind table */
+.type-usage-table{width:100%;border-collapse:collapse;font-size:11px;margin-top:4px;table-layout:auto}
+.type-usage-table th{text-align:left;padding:4px 6px;color:#8b949e;font-weight:600;font-size:9px;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid #30363d;white-space:nowrap}
+.type-usage-table th.num,.type-usage-table td.num{text-align:right}
+.type-usage-table th.kind-h{font-size:9px;padding:4px 4px}
+.type-usage-table td{padding:4px 6px;border-bottom:1px solid #1a1f26;font-family:monospace;color:#8b949e}
+.type-usage-table tr:last-child td{border-bottom:none}
+.type-usage-table .type-usage-fr:hover{background:rgba(88,166,255,0.04)}
+.type-file-cell{cursor:pointer}
+.type-file-cell code{color:#58a6ff;font-size:10px}
+.type-file-cell:hover code{text-decoration:underline}
+.type-usage-self{font-size:8px;padding:1px 5px;border-radius:3px;background:#1f2937;color:#8b949e;text-transform:uppercase;letter-spacing:0.3px;font-family:'Segoe UI',sans-serif}
+.type-usage-table td.kind-extends,
+.type-usage-table td.kind-implements,
+.type-usage-table td.kind-parameter,
+.type-usage-table td.kind-return,
+.type-usage-table td.kind-field,
+.type-usage-table td.kind-variable,
+.type-usage-table td.kind-generic-arg,
+.type-usage-table td.kind-cast,
+.type-usage-table td.kind-instantiation{font-size:11px}
+.type-usage-table td.num{color:#e6edf3}
+.type-usage-table td.num strong{color:#d29922}
+.type-usage-sites-row td{border-bottom:1px solid #1a1f26;padding:0 6px 4px 6px}
+.type-usage-sites{display:flex;flex-wrap:wrap;gap:4px;padding-left:14px;margin-top:-2px}
+.type-site{font-size:10px;font-family:monospace;padding:1px 6px;border-radius:3px}
+.type-usage-more{font-size:10px;color:#484f58;font-style:italic;padding:1px 4px}
+
 /* Pattern cards */
 .pattern-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #3fb950}
 .pattern-card.anti{border-left-color:#f85149}
@@ -292,6 +440,9 @@ a{color:#58a6ff;text-decoration:none}
 .sev-high{background:#f8514922;color:#f85149}
 .sev-medium{background:#d2992222;color:#d29922}
 .sev-low{background:#8b949e22;color:#8b949e}
+.sev-extracted{background:#23863622;color:#3fb950}
+.sev-inferred{background:#d2992222;color:#d29922}
+.sev-ambiguous{background:#f8514922;color:#f85149}
 .sec-row{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px 14px;margin-bottom:8px;font-size:13px}
 .sec-snippet{font-family:monospace;font-size:11px;color:#d2a8ff;background:#0d1117;padding:4px 8px;border-radius:4px;margin-top:6px;overflow-x:auto;white-space:nowrap}
 
@@ -316,6 +467,32 @@ a{color:#58a6ff;text-decoration:none}
 .sug-msg{font-size:13px;color:#e6edf3;margin-top:2px}
 .sug-action{font-size:12px;color:#3fb950;margin-top:4px}
 .sug-file{font-size:11px;color:#58a6ff;font-family:monospace;margin-top:2px}
+
+/* Insights — god nodes, surprising connections, suggested questions */
+.insight-section{margin-bottom:28px}
+.insight-section h3{font-size:14px;color:#f0f6fc;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #30363d}
+.insight-section h3 .hint{font-size:11px;font-weight:400;color:#8b949e;margin-left:6px}
+.insight-table{width:100%;border-collapse:collapse;font-size:12px}
+.insight-table th{text-align:left;padding:6px 10px;color:#8b949e;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #30363d}
+.insight-table td{padding:6px 10px;border-bottom:1px solid #21262d}
+.insight-table code{font-family:monospace;color:#79c0ff;font-size:11px}
+.insight-questions{list-style:none;padding:0}
+.insight-questions li{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px 14px;margin-bottom:8px}
+.q-type{display:inline-block;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;padding:2px 6px;border-radius:3px;background:#1f2937;color:#8b949e;margin-bottom:6px}
+.q-ambiguous-edge{color:#f85149}
+.q-bridge-node{color:#d29922}
+.q-isolated-node{color:#8b949e}
+.q-low-cohesion{color:#a78bfa}
+.q-text{font-size:13px;color:#e6edf3;margin:4px 0 2px}
+.q-why{font-size:11px;color:#8b949e}
+.conf-bar{display:flex;height:14px;border-radius:3px;overflow:hidden;background:#0d1117;border:1px solid #30363d;font-size:10px;color:#fff;font-weight:600}
+.conf-bar span{display:flex;align-items:center;justify-content:center;min-width:0}
+.conf-ext{background:#238636}
+.conf-inf{background:#d29922}
+.conf-amb{background:#f85149}
+.conf-legend{margin-top:6px;font-size:11px;color:#8b949e}
+.conf-legend span{margin-right:14px}
+.conf-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;vertical-align:middle}
 
 /* ─── Screens ──────────────────────────────────────────────────────────── */
 .screen-card{background:#161b22;border:1px solid #30363d;border-radius:8px;margin-bottom:20px;overflow:hidden}
@@ -403,29 +580,62 @@ function renderHeader(payload: any): string {
 </div>`;
 }
 
+// ─── Global filter bar (project / folder / file type, cross-tab) ────────
+
+function renderGlobalFilterBar(): string {
+  return `<div class="global-filter-bar">
+  <span class="gf-label">Filter:</span>
+  <select id="gf-project" title="Filter by sub-project"><option value="">All projects</option></select>
+  <select id="gf-folder" title="Filter by folder"><option value="">All folders</option></select>
+  <select id="gf-ext" title="Filter by file extension"><option value="">All file types</option></select>
+  <button class="gf-clear" id="gf-clear">Clear</button>
+  <span class="gf-status"><span class="gf-count" id="gf-count">0</span> of <span id="gf-total">0</span> files visible</span>
+</div>`;
+}
+
 // ─── Nav ─────────────────────────────────────────────────────────────────
 
-function renderNav(): string {
-  return `<nav class="nav">
-  <button class="active" data-view="screens">Screens</button>
-  <button data-view="interactive">Interactive Elements</button>
-  <button data-view="traces">Call Traces</button>
-  <button data-view="links">Architecture</button>
-  <button data-view="routes">Routes</button>
-  <button data-view="health">Health</button>
-  <button data-view="blast">Blast Radius</button>
-  <button data-view="patterns">Patterns</button>
-  <button data-view="security">Security</button>
-  <button data-view="complexity">Complexity</button>
-  <button data-view="suggestions">Suggestions</button>
-  <button data-view="summary">Overview</button>
-</nav>`;
+/**
+ * Nav renders only tabs whose backing data is non-empty. The first visible
+ * tab is marked `.active` so the initial render never lands on a blank view.
+ * "Overview" is always shown — it aggregates counts and works even when
+ * every other section is empty.
+ */
+function renderNav(payload: Record<string, unknown>): string {
+  const tabs: { view: string; label: string; hasData: boolean }[] = [
+    { view: "screens",     label: "Screens",              hasData: nonEmptyArray(payload.screens) },
+    { view: "interactive", label: "Interactive Elements", hasData: nonEmptyArray(payload.interactiveElements) },
+    { view: "traces",      label: "Call Traces",          hasData: nonEmptyArray(payload.symbolLinks) },
+    { view: "links",       label: "Architecture",         hasData: nonEmptyObject(payload.componentGraph) || nonEmptyArray(payload.linkGraph) },
+    { view: "routes",      label: "Routes",               hasData: nonEmptyArray(payload.routeMap) || nonEmptyArray(payload.apiCalls) },
+    { view: "health",      label: "Health",               hasData: payload.healthScore != null },
+    { view: "blast",       label: "Blast Radius",         hasData: nonEmptyArray(payload.blastRadius) },
+    { view: "patterns",    label: "Patterns",             hasData: nonEmptyArray(payload.patterns) },
+    { view: "security",    label: "Security",             hasData: nonEmptyArray(payload.securityIssues) },
+    { view: "complexity",  label: "Complexity",           hasData: nonEmptyArray(payload.complexity) },
+    { view: "suggestions", label: "Suggestions",          hasData: nonEmptyArray(payload.suggestions) },
+    { view: "insights",    label: "Insights",             hasData: nonEmptyArray(payload.godNodes) || nonEmptyArray(payload.surprisingConnections) || nonEmptyArray(payload.suggestedQuestions) },
+    { view: "summary",     label: "Overview",             hasData: true },
+  ];
+  const visible = tabs.filter(t => t.hasData);
+  const firstView = visible[0]?.view ?? "summary";
+  const buttons = visible
+    .map(t => `  <button${t.view === firstView ? ' class="active"' : ""} data-view="${t.view}">${t.label}</button>`)
+    .join("\n");
+  return `<nav class="nav" data-default-view="${firstView}">\n${buttons}\n</nav>`;
+}
+
+function nonEmptyArray(v: unknown): boolean {
+  return Array.isArray(v) && v.length > 0;
+}
+function nonEmptyObject(v: unknown): boolean {
+  return !!v && typeof v === "object" && !Array.isArray(v) && Object.keys(v as object).length > 0;
 }
 
 // ─── Screens View ────────────────────────────────────────────────────────
 
 function renderScreensView(): string {
-  return `<section id="view-screens" class="view active">
+  return `<section id="view-screens" class="view">
   <div class="filter-bar">
     <select id="screen-filter-cat">
       <option value="">All categories</option>
@@ -488,7 +698,11 @@ function renderTracesView(): string {
 function renderLinksView(): string {
   return `<section id="view-links" class="view">
   <div class="d3-toolbar">
-    <span class="d3-toolbar-label">Color by:</span>
+    <span class="d3-toolbar-label">View:</span>
+    <button class="d3-btn active" data-arch-mode="files">Files</button>
+    <button class="d3-btn" data-arch-mode="types">Data Models</button>
+    <span class="d3-toolbar-sep"></span>
+    <span class="d3-toolbar-label" id="d3-colour-label">Color by:</span>
     <button class="d3-btn active" data-color="layer">Layer</button>
     <button class="d3-btn" data-color="folder">Folder</button>
     <button class="d3-btn" data-color="risk">Risk</button>
@@ -506,9 +720,15 @@ function renderLinksView(): string {
 
 function renderRoutesView(): string {
   return `<section id="view-routes" class="view">
+  <h3 style="color:#f0f6fc;margin:0 0 8px">Inbound routes <span style="color:#8b949e;font-weight:400;font-size:12px">(endpoints this project exposes)</span></h3>
   <table class="route-table">
-    <thead><tr><th>Method</th><th>Path</th><th>Kind</th><th>Handler</th><th>Line</th></tr></thead>
+    <thead><tr><th>Method</th><th>Path</th><th>Kind</th><th>Handler</th><th>File</th><th>Line</th></tr></thead>
     <tbody id="route-tbody"></tbody>
+  </table>
+  <h3 style="color:#f0f6fc;margin:24px 0 8px">Outbound API calls <span style="color:#8b949e;font-weight:400;font-size:12px">(endpoints this project consumes)</span></h3>
+  <table class="route-table">
+    <thead><tr><th>Name</th><th>Target</th><th>File</th><th>Line</th></tr></thead>
+    <tbody id="apicall-tbody"></tbody>
   </table>
 </section>`;
 }
@@ -606,10 +826,32 @@ function renderSuggestionsView(): string {
 </section>`;
 }
 
+// ─── Insights View ───────────────────────────────────────────────────────
+// Graph-topology-derived signals: god nodes (degree centrality), surprising
+// connections (cross-community / low-confidence / peripheral→hub), and
+// suggested questions (drawn from AMBIGUOUS edges, bridges, isolates,
+// low-cohesion communities). Populated client-side from DATA.
+
+function renderInsightsView(): string {
+  return `<section id="view-insights" class="view">
+  <div id="insights-content"></div>
+</section>`;
+}
+
 // ─── Client-Side JavaScript ──────────────────────────────────────────────
 
 function renderClientJs(): string {
   return `
+// Activate the first visible tab chosen server-side. Sections are emitted
+// without any .active class so that an empty "screens" view never flashes
+// before a more relevant tab takes over.
+(function activateDefaultView() {
+  const nav = document.querySelector('.nav');
+  const defaultView = nav?.dataset.defaultView || 'summary';
+  const targetSection = document.getElementById('view-' + defaultView);
+  if (targetSection) targetSection.classList.add('active');
+})();
+
 // Tab switching
 document.querySelectorAll('.nav button').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -617,11 +859,178 @@ document.querySelectorAll('.nav button').forEach(btn => {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('view-' + btn.dataset.view).classList.add('active');
-    if (btn.dataset.view === 'links') initLinkGraph();
+    if (btn.dataset.view === 'links') rebuildLinkGraph();
   });
 });
 
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ─── Global cross-tab filter state ───────────────────────────────────────
+// Every render function below consults these helpers so that filtering
+// by project / folder / file-type propagates across every tab uniformly.
+const gf = { project: '', folder: '', ext: '' };
+
+function fileExt(fp) {
+  if (!fp) return '';
+  const dot = fp.lastIndexOf('.');
+  return dot >= 0 ? fp.slice(dot) : '';
+}
+function fileFolder(fp) {
+  if (!fp) return '';
+  const norm = fp.replace(/\\\\/g, '/');
+  const idx = norm.indexOf('/');
+  return idx >= 0 ? norm.slice(0, idx) : '';
+}
+function fileProject(fp) {
+  return (DATA.fileProjects && DATA.fileProjects[fp]) || 'root';
+}
+
+/** True if the file passes all active global filters. */
+function isFileVisible(fp) {
+  if (!fp) return true;
+  if (gf.project && fileProject(fp) !== gf.project) return false;
+  if (gf.folder && !fp.replace(/\\\\/g, '/').startsWith(gf.folder + '/') && fp !== gf.folder) return false;
+  if (gf.ext && fileExt(fp) !== gf.ext) return false;
+  return true;
+}
+
+/** True if BOTH endpoints of an edge pass the filter. */
+function isEdgeVisible(a, b) {
+  return isFileVisible(a) && isFileVisible(b);
+}
+
+/** Filter an array of items by their .filePath. */
+function byFilePath(arr) {
+  return (arr || []).filter(x => isFileVisible(x.filePath));
+}
+
+// ─── Populate filter dropdowns ───────────────────────────────────────────
+(function initGlobalFilters() {
+  const projectSel = document.getElementById('gf-project');
+  const folderSel = document.getElementById('gf-folder');
+  const extSel = document.getElementById('gf-ext');
+
+  // Projects: all detected sub-projects (skip "root" fallback if only one real project exists)
+  const subs = (DATA.subProjects || []).slice().sort((a, b) => a.root.localeCompare(b.root));
+  subs.forEach(sp => {
+    const label = sp.root ? sp.root + '  (' + sp.kind + ')' : '(root)  (' + sp.kind + ')';
+    const opt = document.createElement('option');
+    opt.value = sp.id;
+    opt.textContent = label;
+    projectSel.appendChild(opt);
+  });
+  // Hide the project dropdown entirely when there's only the synthetic "root" project
+  const realProjectCount = subs.filter(s => s.id !== 'root').length;
+  if (realProjectCount === 0) projectSel.style.display = 'none';
+
+  // Top-level folders present in analyzed files
+  const folders = [...new Set(DATA.files.map(f => fileFolder(f)).filter(Boolean))].sort();
+  folders.forEach(f => {
+    const opt = document.createElement('option');
+    opt.value = f;
+    opt.textContent = f + '/';
+    folderSel.appendChild(opt);
+  });
+
+  // File extensions present
+  const exts = [...new Set(DATA.files.map(f => fileExt(f)).filter(Boolean))].sort();
+  exts.forEach(e => {
+    const opt = document.createElement('option');
+    opt.value = e;
+    opt.textContent = e;
+    extSel.appendChild(opt);
+  });
+
+  document.getElementById('gf-total').textContent = DATA.files.length;
+  updateFilterCount();
+
+  function onChange() {
+    gf.project = projectSel.value;
+    gf.folder = folderSel.value;
+    gf.ext = extSel.value;
+    projectSel.classList.toggle('active', !!gf.project);
+    folderSel.classList.toggle('active', !!gf.folder);
+    extSel.classList.toggle('active', !!gf.ext);
+    updateFilterCount();
+    refreshAllViews();
+  }
+
+  projectSel.addEventListener('change', onChange);
+  folderSel.addEventListener('change', onChange);
+  extSel.addEventListener('change', onChange);
+
+  document.getElementById('gf-clear').addEventListener('click', () => {
+    projectSel.value = '';
+    folderSel.value = '';
+    extSel.value = '';
+    onChange();
+  });
+})();
+
+function updateFilterCount() {
+  const count = DATA.files.filter(isFileVisible).length;
+  document.getElementById('gf-count').textContent = count;
+}
+
+/** Re-invoke every tab's renderer so filters propagate. */
+function refreshAllViews() {
+  // Each converted render is registered here; missing renderers are silently skipped.
+  try { renderScreens(); } catch (e) { console.warn('renderScreens failed', e); }
+  try { renderElements(); } catch (e) { console.warn('renderElements failed', e); }
+  try { renderRoutes(); } catch (e) { console.warn('renderRoutes failed', e); }
+  try { renderSummary(); } catch (e) { console.warn('renderSummary failed', e); }
+  try { renderTraces(); } catch (e) { console.warn('renderTraces failed', e); }
+  try { renderHealth(); } catch (e) { console.warn('renderHealth failed', e); }
+  try { renderBlast(); } catch (e) { console.warn('renderBlast failed', e); }
+  try { renderPatterns(); } catch (e) { console.warn('renderPatterns failed', e); }
+  try { renderSecurity(); } catch (e) { console.warn('renderSecurity failed', e); }
+  try { renderComplexity(); } catch (e) { console.warn('renderComplexity failed', e); }
+  try { renderSuggestions(); } catch (e) { console.warn('renderSuggestions failed', e); }
+  try { renderInsights(); } catch (e) { console.warn('renderInsights failed', e); }
+  // If the links tab is currently active, rebuild the graph
+  const linksView = document.getElementById('view-links');
+  if (linksView && linksView.classList.contains('active')) rebuildLinkGraph();
+}
+
+let archMode = 'files'; // 'files' or 'types'
+function rebuildLinkGraph() {
+  const container = document.getElementById('d3-graph-container');
+  if (!container) return;
+  container.innerHTML = '';
+  graphInitialized = false;
+  // Also reset legend/detail panels
+  const legend = document.getElementById('d3-legend');
+  const detail = document.getElementById('d3-detail-panel');
+  if (legend) legend.innerHTML = '';
+  if (detail) detail.innerHTML = '';
+  if (archMode === 'types') {
+    initTypeGraph();
+  } else {
+    initLinkGraph();
+  }
+}
+
+// Wire up the Files / Data Models view-mode toggle. Re-renders the D3
+// surface, swaps the colour-by control set (which doesn't apply in Type View),
+// and clears any stale selection.
+(function wireArchModeToggle() {
+  document.querySelectorAll('.nav button').forEach(() => {});
+  document.addEventListener('click', function(e) {
+    const t = e.target;
+    if (!(t instanceof HTMLElement)) return;
+    if (!t.dataset || !t.dataset.archMode) return;
+    document.querySelectorAll('[data-arch-mode]').forEach((b) => b.classList.remove('active'));
+    t.classList.add('active');
+    archMode = t.dataset.archMode || 'files';
+    // Hide the file-only color-by buttons when in Types mode — they don't apply.
+    const colourLabel = document.getElementById('d3-colour-label');
+    document.querySelectorAll('[data-color]').forEach((b) => {
+      b.classList.toggle('arch-hidden', archMode === 'types');
+    });
+    if (colourLabel) colourLabel.classList.toggle('arch-hidden', archMode === 'types');
+    rebuildLinkGraph();
+  });
+})();
 
 // ─── Build handler lookup from interactiveElements ────────────────────
 // key: "filePath::componentName" → [{event, handler}]
@@ -908,13 +1317,22 @@ function renderScreenDetail(c, screenIdx) {
 
 function renderScreens() {
   const grid = document.getElementById('screen-grid');
+  if (!grid) return;
 
   if (!DATA.screens || DATA.screens.length === 0) {
     grid.innerHTML = '<div class="empty">No screens / forms found</div>';
     return;
   }
 
+  const visibleCount = DATA.screens.filter(s => isFileVisible(s.filePath)).length;
+  if (visibleCount === 0) {
+    grid.innerHTML = '<div class="empty">No screens match the active filters</div>';
+    return;
+  }
+
+  // Keep original indices so selectComponent() / DATA.screens[idx] lookups still work.
   grid.innerHTML = DATA.screens.map((screen, idx) => {
+    if (!isFileVisible(screen.filePath)) return '';
     const allComps = flattenComponents(screen.components);
     const interactiveCount = allComps.filter(c => c.events && c.events.length > 0).length;
     const isEntry = screen.routePath === '/' || screen.routePath === '/login' || screen.routePath === '/LoginPage';
@@ -1073,7 +1491,7 @@ function renderElements() {
   const eventF = document.getElementById('filter-event').value;
   const searchF = document.getElementById('filter-search').value.toLowerCase();
 
-  let els = DATA.interactiveElements;
+  let els = DATA.interactiveElements.filter(e => isFileVisible(e.filePath));
   if (typeF) els = els.filter(e => e.element === typeF);
   if (eventF) els = els.filter(e => e.event === eventF);
   if (searchF) els = els.filter(e =>
@@ -1169,77 +1587,127 @@ document.getElementById('filter-search').addEventListener('input', renderElement
 renderElements();
 
 // ─── Routes ────────────────────────────────────────────────────────────
-const tbody = document.getElementById('route-tbody');
-if (DATA.routeMap.length === 0) {
-  tbody.innerHTML = '<tr><td colspan="5" class="empty">No routes found</td></tr>';
-} else {
-  // Build a helper to find the symbol key for a route
-  function routeSymbolKey(r) {
-    if (!r.filePath) return null;
-    const sym = 'route:' + (r.httpMethod || 'USE') + ' ' + r.path;
-    const key = r.filePath + '::' + sym;
-    // Check if this key exists in symbolLinks
-    return DATA.symbolLinks.some(l => l.sourceFile === r.filePath && l.sourceSymbol === sym) ? key : null;
-  }
-
-  tbody.innerHTML = DATA.routeMap.map(r => {
-    const m = r.httpMethod || 'USE';
-    const symKey = routeSymbolKey(r);
-    const clickable = symKey ? ' class="trace-link" data-sym-key="' + esc(symKey) + '" style="cursor:pointer"' : '';
-    const traceIcon = symKey ? ' <span style="font-size:10px;color:#58a6ff;cursor:pointer" title="View call traces">\\u2197</span>' : '';
-    return '<tr' + clickable + '>' +
-      '<td><span class="method-badge method-' + m + '">' + m + '</span></td>' +
-      '<td style="font-family:monospace;color:#79c0ff">' + esc(r.path) + '</td>' +
-      '<td><span class="kind-badge kind-' + r.kind + '">' + r.kind + '</span></td>' +
-      '<td style="color:#8b949e">' + (r.handler ? esc(r.handler) : '\\u2014') + traceIcon + '</td>' +
-      '<td style="color:#484f58">:' + r.line + '</td>' +
-    '</tr>';
-  }).join('');
-
-  // Wire up route → traces navigation
-  document.querySelectorAll('.trace-link').forEach(el => {
-    el.addEventListener('click', () => {
-      const key = el.dataset.symKey;
-      // Switch to traces tab
-      document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-      const tracesBtn = document.querySelector('.nav button[data-view="traces"]');
-      tracesBtn.classList.add('active');
-      document.getElementById('view-traces').classList.add('active');
-      // Select the symbol
-      if (window.selectSymbol) window.selectSymbol(key);
-      // Scroll list item into view
-      const listItem = document.querySelector('.trace-sym-item[data-sym-key="' + CSS.escape(key) + '"]');
-      if (listItem) listItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    });
-  });
+function routeSymbolKey(r) {
+  if (!r.filePath) return null;
+  const sym = 'route:' + (r.httpMethod || 'USE') + ' ' + r.path;
+  const key = r.filePath + '::' + sym;
+  return DATA.symbolLinks.some(l => l.sourceFile === r.filePath && l.sourceSymbol === sym) ? key : null;
 }
 
+function renderRoutes() {
+  const tbody = document.getElementById('route-tbody');
+  const apiTbody = document.getElementById('apicall-tbody');
+  if (!tbody || !apiTbody) return;
+
+  const routes = (DATA.routeMap || []).filter(r => isFileVisible(r.filePath));
+  if (routes.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">' +
+      (DATA.routeMap.length ? 'No routes match the active filters' : 'No routes found') + '</td></tr>';
+  } else {
+    tbody.innerHTML = routes.map(r => {
+      const m = r.httpMethod || 'USE';
+      const symKey = routeSymbolKey(r);
+      const clickable = symKey ? ' class="trace-link" data-sym-key="' + esc(symKey) + '" style="cursor:pointer"' : '';
+      const traceIcon = symKey ? ' <span style="font-size:10px;color:#58a6ff;cursor:pointer" title="View call traces">\\u2197</span>' : '';
+      return '<tr' + clickable + '>' +
+        '<td><span class="method-badge method-' + m + '">' + m + '</span></td>' +
+        '<td style="font-family:monospace;color:#79c0ff">' + esc(r.path) + '</td>' +
+        '<td><span class="kind-badge kind-' + r.kind + '">' + r.kind + '</span></td>' +
+        '<td style="color:#8b949e">' + (r.handler ? esc(r.handler) : '\\u2014') + traceIcon + '</td>' +
+        '<td style="color:#484f58;font-family:monospace;font-size:11px">' + (r.filePath ? esc(r.filePath) : '') + '</td>' +
+        '<td style="color:#484f58">:' + r.line + '</td>' +
+      '</tr>';
+    }).join('');
+
+    tbody.querySelectorAll('.trace-link').forEach(el => {
+      el.addEventListener('click', () => {
+        const key = el.dataset.symKey;
+        document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+        const tracesBtn = document.querySelector('.nav button[data-view="traces"]');
+        if (tracesBtn) tracesBtn.classList.add('active');
+        document.getElementById('view-traces').classList.add('active');
+        if (window.selectSymbol) window.selectSymbol(key);
+        const listItem = document.querySelector('.trace-sym-item[data-sym-key="' + CSS.escape(key) + '"]');
+        if (listItem) listItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      });
+    });
+  }
+
+  const calls = (DATA.apiCalls || []).filter(c => isFileVisible(c.filePath));
+  if (calls.length === 0) {
+    apiTbody.innerHTML = '<tr><td colspan="4" class="empty">' +
+      ((DATA.apiCalls && DATA.apiCalls.length) ? 'No outbound calls match the active filters' : 'No outbound API calls detected') + '</td></tr>';
+  } else {
+    const routePaths = new Map();
+    for (const r of routes) routePaths.set(r.path, r);
+    apiTbody.innerHTML = calls.map(c => {
+      const matched = routePaths.get(c.target);
+      const matchBadge = matched
+        ? ' <span style="font-size:9px;background:#238636;color:#0d1117;padding:1px 5px;border-radius:3px" title="Matches inbound route">matches route</span>'
+        : '';
+      const verbMatch = (c.name || '').match(/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\\s/i);
+      const verb = verbMatch ? verbMatch[1].toUpperCase() : null;
+      const verbCell = verb ? '<span class="method-badge method-' + verb + '">' + verb + '</span> ' : '';
+      return '<tr>' +
+        '<td>' + verbCell + '<span style="color:#8b949e">' + esc(c.name || '') + '</span></td>' +
+        '<td style="font-family:monospace;color:#79c0ff">' + esc(c.target || '') + matchBadge + '</td>' +
+        '<td style="color:#484f58;font-family:monospace;font-size:11px">' + esc(c.filePath) + '</td>' +
+        '<td style="color:#484f58">:' + c.line + '</td>' +
+      '</tr>';
+    }).join('');
+  }
+}
+renderRoutes();
+
 // ─── Summary ───────────────────────────────────────────────────────────
-const statCards = [
-  { num: DATA.files.length, lbl: 'Files Analyzed' },
-  { num: DATA.screens.length, lbl: 'Screens' },
-  { num: DATA.interactiveElements.length, lbl: 'Interactive Elements' },
-  { num: DATA.routeMap.length, lbl: 'Routes' },
-  { num: DATA.linkGraph.length, lbl: 'File Links' },
-  { num: DATA.symbolLinks.length, lbl: 'Call Traces' },
-  { num: DATA.frameworks.length, lbl: 'Frameworks' },
-];
-document.getElementById('summary-stats').innerHTML = statCards.map(s =>
-  '<div class="stat-card"><div class="num">' + s.num + '</div><div class="lbl">' + s.lbl + '</div></div>'
-).join('');
-document.getElementById('summary-files').innerHTML = DATA.files.map(f =>
-  '<div>' + esc(f) + '</div>'
-).join('');
+function renderSummary() {
+  const statsEl = document.getElementById('summary-stats');
+  const filesEl = document.getElementById('summary-files');
+  if (!statsEl || !filesEl) return;
+
+  const files = DATA.files.filter(isFileVisible);
+  const screens = (DATA.screens || []).filter(s => isFileVisible(s.filePath));
+  const interactive = (DATA.interactiveElements || []).filter(e => isFileVisible(e.filePath));
+  const routes = (DATA.routeMap || []).filter(r => isFileVisible(r.filePath));
+  const links = (DATA.linkGraph || []).filter(l => isEdgeVisible(l.source, l.target));
+  const traces = (DATA.symbolLinks || []).filter(l => isEdgeVisible(l.sourceFile, l.targetFile));
+
+  const statCards = [
+    { num: files.length, lbl: 'Files Visible' },
+    { num: screens.length, lbl: 'Screens' },
+    { num: interactive.length, lbl: 'Interactive Elements' },
+    { num: routes.length, lbl: 'Routes' },
+    { num: links.length, lbl: 'File Links' },
+    { num: traces.length, lbl: 'Call Traces' },
+    { num: DATA.frameworks.length, lbl: 'Frameworks' },
+  ];
+  statsEl.innerHTML = statCards.map(s =>
+    '<div class="stat-card"><div class="num">' + s.num + '</div><div class="lbl">' + s.lbl + '</div></div>'
+  ).join('');
+
+  filesEl.innerHTML = files.length === 0
+    ? '<div class="empty">No files match the active filters</div>'
+    : files.map(f => '<div>' + esc(f) + '</div>').join('');
+}
+renderSummary();
 
 // ─── Call Traces — Complete Call Map ──────────────────────────────────
-{
-  // Build bidirectional index: callers (inbound) and callees (outbound)
-  const callerMap = {};  // key: "file::symbol" → [{sourceFile, sourceSymbol, sourceLine, callName}]
-  const calleeMap = {};  // key: "file::symbol" → [{targetFile, targetSymbol, targetLine, callName}]
-  const allSymbols = {}; // key: "file::symbol" → {file, symbol, inCount, outCount}
+function renderTraces() {
+  const traceFileSel = document.getElementById('trace-filter-file');
+  const traceSearch = document.getElementById('trace-filter-search');
+  const listEl = document.getElementById('trace-symbol-list');
+  if (!traceFileSel || !traceSearch || !listEl) return;
 
-  DATA.symbolLinks.forEach(l => {
+  // Only include links where BOTH ends are visible under global filters
+  const visibleLinks = (DATA.symbolLinks || []).filter(l => isEdgeVisible(l.sourceFile, l.targetFile));
+
+  // Build bidirectional index: callers (inbound) and callees (outbound)
+  const callerMap = {};
+  const calleeMap = {};
+  const allSymbols = {};
+
+  visibleLinks.forEach(l => {
     const srcKey = l.sourceFile + '::' + l.sourceSymbol;
     const tgtKey = l.targetFile + '::' + l.targetSymbol;
 
@@ -1258,16 +1726,18 @@ document.getElementById('summary-files').innerHTML = DATA.files.map(f =>
     allSymbols[tgtKey].inCount++;
   });
 
-  // Populate file filter
+  // Repopulate the trace-specific file filter (scoped to visible symbols only)
   const traceFiles = [...new Set(Object.values(allSymbols).map(s => s.file))].sort();
-  const traceFileSel = document.getElementById('trace-filter-file');
+  const prevFileValue = traceFileSel.value;
+  traceFileSel.innerHTML = '<option value="">All files</option>';
   traceFiles.forEach(f => { const o = document.createElement('option'); o.value = f; o.textContent = f; traceFileSel.appendChild(o); });
+  if (traceFiles.includes(prevFileValue)) traceFileSel.value = prevFileValue;
 
   let selectedKey = null;
 
   function renderSymbolList() {
     const fileF = traceFileSel.value;
-    const searchF = document.getElementById('trace-filter-search').value.toLowerCase();
+    const searchF = traceSearch.value.toLowerCase();
 
     // Filter symbols
     let entries = Object.entries(allSymbols);
@@ -1382,17 +1852,20 @@ document.getElementById('summary-files').innerHTML = DATA.files.map(f =>
     });
   }
 
-  traceFileSel.addEventListener('change', renderSymbolList);
-  document.getElementById('trace-filter-search').addEventListener('input', renderSymbolList);
+  // Use .onchange/.oninput to replace prior handlers (avoids accumulation across re-renders)
+  traceFileSel.onchange = renderSymbolList;
+  traceSearch.oninput = renderSymbolList;
   renderSymbolList();
 
   // Auto-select first symbol if available
   const firstKey = Object.keys(allSymbols)[0];
   if (firstKey) selectSymbol(firstKey);
+  else document.getElementById('trace-map-content').innerHTML = '<div class="empty">No symbols to display</div>';
 }
+renderTraces();
 
 // ─── D3 Architecture Graph ────────────────────────────────────────────
-let graphInitialized = false;
+var graphInitialized = false;
 function initLinkGraph() {
   if (graphInitialized) return;
   graphInitialized = true;
@@ -1415,14 +1888,18 @@ function initLinkGraph() {
   var cxMap = {};
   (DATA.complexity || []).forEach(function(c){ cxMap[c.filePath] = c; });
 
-  // Build nodes from files
+  // Build nodes from files (honor global file filter)
   var nodeSet = new Set();
-  DATA.linkGraph.forEach(function(l){ nodeSet.add(l.source); nodeSet.add(l.target); });
-  // Also include files from componentGraph
-  Object.keys(DATA.componentGraph).forEach(function(f){ nodeSet.add(f); });
-  Object.values(DATA.componentGraph).forEach(function(targets){ targets.forEach(function(t){ nodeSet.add(t); }); });
-  // Include any remaining files
-  DATA.files.forEach(function(f){ nodeSet.add(f); });
+  DATA.linkGraph.forEach(function(l){
+    if (isEdgeVisible(l.source, l.target)) { nodeSet.add(l.source); nodeSet.add(l.target); }
+  });
+  Object.keys(DATA.componentGraph).forEach(function(f){ if (isFileVisible(f)) nodeSet.add(f); });
+  Object.entries(DATA.componentGraph).forEach(function(entry){
+    var src = entry[0]; var targets = entry[1];
+    if (!isFileVisible(src)) return;
+    targets.forEach(function(t){ if (isFileVisible(t)) nodeSet.add(t); });
+  });
+  DATA.files.forEach(function(f){ if (isFileVisible(f)) nodeSet.add(f); });
 
   var nodes = Array.from(nodeSet).map(function(filePath){
     var folder = filePath.indexOf('/') >= 0 ? filePath.substring(0, filePath.lastIndexOf('/')) : 'root';
@@ -1446,10 +1923,11 @@ function initLinkGraph() {
     };
   });
 
-  // Build unique edges from linkGraph (deduplicate, merge proximity)
+  // Build unique edges from linkGraph (deduplicate, merge proximity; honor filters)
   var linkMap = {};
   DATA.linkGraph.forEach(function(l){
     if (l.source === l.target) return;
+    if (!isEdgeVisible(l.source, l.target)) return;
     var key = l.source + '|' + l.target;
     if (!linkMap[key] || l.proximity < linkMap[key].proximity) {
       linkMap[key] = { source: l.source, target: l.target, proximity: l.proximity, reason: l.reason, calls: l.calls };
@@ -1665,86 +2143,430 @@ function initLinkGraph() {
   }
   renderLegend();
 
-  // Toolbar: color mode
+  // Toolbar: color mode (use .onclick so rebuilds don't stack handlers)
   document.querySelectorAll('.d3-btn[data-color]').forEach(function(btn){
-    btn.addEventListener('click', function(){
+    btn.onclick = function(){
       document.querySelectorAll('.d3-btn[data-color]').forEach(function(b){b.classList.remove('active');});
       btn.classList.add('active');
       colorMode = btn.dataset.color;
       nodeSel.selectAll('.nc').transition().duration(300).attr('fill', getNodeColor).attr('stroke', function(d){ return d3.color(getNodeColor(d)).brighter(0.4); });
       renderLegend();
       if (selectedNode) highlightBlast(selectedNode);
-    });
+    };
   });
 
   // Toolbar: toggle labels
-  document.getElementById('d3-toggle-labels').addEventListener('click', function(){
+  var toggleBtn = document.getElementById('d3-toggle-labels');
+  toggleBtn.onclick = function(){
     showLabels = !showLabels;
     this.classList.toggle('active', showLabels);
     labelSel.transition().duration(200).attr('opacity', showLabels ? 1 : 0);
-  });
-  document.getElementById('d3-toggle-labels').classList.add('active');
+  };
+  toggleBtn.classList.add('active');
 
   // Toolbar: fit to view
-  document.getElementById('d3-zoom-fit').addEventListener('click', function(){
+  document.getElementById('d3-zoom-fit').onclick = function(){
     svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
-  });
+  };
 }
 
-// ─── Health View ──────────────────────────────────────────────────────
-{
-  const hc = document.getElementById('health-content');
-  const hs = DATA.healthScore;
-  if (!hs) {
-    hc.innerHTML = '<div class="empty">Health analysis not available</div>';
-  } else {
-    let html = '<div style="display:flex;gap:32px;align-items:center;margin-bottom:24px">';
-    html += '<div class="grade-badge grade-' + hs.grade + '">' + hs.grade + '</div>';
-    html += '<div><div style="font-size:32px;font-weight:700;color:#f0f6fc">' + hs.score + '<span style="font-size:16px;color:#8b949e">/100</span></div>';
-    html += '<div style="font-size:13px;color:#8b949e">Code Health Score</div></div></div>';
-    if (hs.penalties && hs.penalties.length > 0) {
-      html += '<div class="file-card"><div class="file-card-header">Penalty Breakdown</div>';
-      html += hs.penalties.map(function(p) {
-        return '<div class="penalty-row"><span>' + esc(p.reason) + '</span><span class="penalty-pts">-' + p.points + '</span></div>';
-      }).join('');
-      html += '</div>';
+// ─── Type Graph (Architecture tab Data Models mode) ─────────────────────
+// Renders class/interface nodes with edges colored by category:
+//   - inheritance (extends/implements) → red
+//   - data (field/variable/generic-arg) → purple
+//   - function (parameter/return/cast/instantiation) → blue
+// Click a node to highlight its incident edges and dim everything else.
+function initTypeGraph() {
+  if (graphInitialized) return;
+  graphInitialized = true;
+
+  const container = document.getElementById('d3-graph-container');
+  if (!container) return;
+  const w = container.clientWidth || 900;
+  const h = container.clientHeight || 640;
+
+  const cg = DATA.classGraph;
+  if (!cg || !cg.nodes || cg.nodes.length === 0) {
+    container.innerHTML = '<div class="empty" style="padding-top:200px">No data-model graph for this project — extract a fixture with classes/interfaces first.</div>';
+    return;
+  }
+
+  // Apply the global file filter so the type graph respects project/folder
+  // narrowing the user already set elsewhere.
+  const visibleClasses = new Set();
+  for (const n of cg.nodes) {
+    if (n.isExternal) { visibleClasses.add(n.id); continue; }
+    if (!n.filePath || isFileVisible(n.filePath)) visibleClasses.add(n.id);
+  }
+  const filteredEdges = cg.edges.filter(function(e){ return visibleClasses.has(e.source) && visibleClasses.has(e.target); });
+  const referencedNodes = new Set();
+  filteredEdges.forEach(function(e){ referencedNodes.add(e.source); referencedNodes.add(e.target); });
+  // Keep nodes that are either explicitly visible AND have at least one edge,
+  // OR are non-external visible nodes (so the user sees their own isolated classes).
+  const filteredNodes = cg.nodes.filter(function(n){
+    return visibleClasses.has(n.id) && (referencedNodes.has(n.id) || !n.isExternal);
+  });
+
+  if (filteredNodes.length === 0) {
+    container.innerHTML = '<div class="empty" style="padding-top:200px">No data models match the current filters.</div>';
+    return;
+  }
+
+  // Category palette
+  const CAT_COLORS = { inheritance: '#f85149', data: '#a78bfa', function: '#58a6ff' };
+  const CAT_LABELS = { inheritance: 'Inheritance (extends/implements)', data: 'Data (field/variable/generic)', function: 'Function (parameter/return/cast/new)' };
+
+  function edgeColor(d) { return CAT_COLORS[d.category] || '#8b949e'; }
+  function edgeWidth(d) { return Math.min(6, 1 + Math.log2(Math.max(1, d.total))); }
+  function edgeOpacity(d) { return Math.min(0.9, 0.35 + d.total * 0.05); }
+
+  // Node visual:
+  //   class     = solid blue ring
+  //   interface = purple ring with gradient fill
+  //   external  = dashed grey ring
+  //   file      = solid square in muted teal — signals "this isn't a class,
+  //               it's a file emitting refs from top-level / functional code"
+  function nodeFill(d) {
+    if (d.isFile) return '#162a2d';
+    if (d.isExternal) return '#1a1f26';
+    if (d.isInterface) return '#3d2f5c';
+    return '#1f2937';
+  }
+  function nodeStroke(d) {
+    if (d.isFile) return '#56d4dd';
+    if (d.isExternal) return '#484f58';
+    if (d.isInterface) return '#a78bfa';
+    return '#79c0ff';
+  }
+  function nodeRadius(d) {
+    return Math.max(8, Math.min(28, 6 + Math.log2(Math.max(1, d.inboundCount + d.outboundCount + 1)) * 4));
+  }
+
+  // D3 setup
+  const svg = d3.select(container).append('svg').attr('width', w).attr('height', h);
+  const defs = svg.append('defs');
+  ['inheritance', 'data', 'function'].forEach(function(cat) {
+    defs.append('marker')
+      .attr('id', 'arrow-' + cat).attr('viewBox', '0 -5 10 10').attr('refX', 18)
+      .attr('markerWidth', 5).attr('markerHeight', 5).attr('orient', 'auto')
+      .append('path').attr('d', 'M0,-4L10,0L0,4').attr('fill', CAT_COLORS[cat]);
+  });
+
+  const g = svg.append('g');
+  const zoom = d3.zoom().scaleExtent([0.15, 4]).on('zoom', function(e){ g.attr('transform', e.transform); });
+  svg.call(zoom);
+
+  const linkLayer = g.append('g');
+  const nodeLayer = g.append('g');
+  const labelLayer = g.append('g');
+
+  const tooltip = d3.select('body').append('div').attr('class', 'd3-tooltip').style('display', 'none');
+
+  // Make a working copy so d3 force-sim can mutate x/y without polluting DATA.
+  const nodes = filteredNodes.map(function(n) { return Object.assign({}, n); });
+  const links = filteredEdges.map(function(e) { return Object.assign({}, e); });
+
+  const sim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(function(d){ return d.id; }).distance(function(d){
+      // Stronger pull for inheritance edges (parent/child should sit close).
+      return d.category === 'inheritance' ? 50 : (d.category === 'data' ? 80 : 100);
+    }).strength(0.4))
+    .force('charge', d3.forceManyBody().strength(-280).distanceMax(450))
+    .force('collision', d3.forceCollide().radius(function(d){ return nodeRadius(d) + 10; }))
+    .force('center', d3.forceCenter(w / 2, h / 2))
+    .velocityDecay(0.55)
+    .alphaDecay(0.04);
+
+  // Draw edges as curved paths so multiple between the same pair don't overlap.
+  const linkSel = linkLayer.selectAll('path').data(links).join('path')
+    .attr('fill', 'none')
+    .attr('stroke', edgeColor)
+    .attr('stroke-width', edgeWidth)
+    .attr('stroke-opacity', edgeOpacity)
+    .attr('marker-end', function(d){ return 'url(#arrow-' + d.category + ')'; });
+
+  // Draw nodes — files get rounded squares (signalling "container of refs",
+  // not a class itself), classes/interfaces/external get circles.
+  const nodeSel = nodeLayer.selectAll('g').data(nodes).join('g').style('cursor', 'pointer');
+  nodeSel.each(function(d) {
+    const r = nodeRadius(d);
+    const sel = d3.select(this);
+    if (d.isFile) {
+      const side = r * 1.8;
+      sel.append('rect')
+        .attr('x', -side / 2).attr('y', -side / 2)
+        .attr('width', side).attr('height', side)
+        .attr('rx', 4).attr('ry', 4)
+        .attr('fill', nodeFill(d))
+        .attr('stroke', nodeStroke(d))
+        .attr('stroke-width', 2);
     } else {
-      html += '<div style="color:#3fb950;font-size:14px;margin-top:12px">No penalties — clean bill of health!</div>';
+      sel.append('circle')
+        .attr('r', r)
+        .attr('fill', nodeFill(d))
+        .attr('stroke', nodeStroke(d))
+        .attr('stroke-width', d.isInterface ? 2.5 : 2)
+        .attr('stroke-dasharray', d.isExternal ? '3,3' : null);
     }
-    // Blast radius summary with link to dedicated tab
-    if (DATA.blastRadius && DATA.blastRadius.length > 0) {
-      var dangerous = DATA.blastRadius.filter(function(b) { return b.changeRisk === 'dangerous'; });
-      var moderate = DATA.blastRadius.filter(function(b) { return b.changeRisk === 'moderate'; });
-      html += '<h3 style="color:#f0f6fc;margin:24px 0 12px">Blast Radius Summary</h3>';
-      html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px">';
-      html += '<div class="stat-card" style="padding:14px"><div class="num" style="color:#f85149;font-size:24px">' + dangerous.length + '</div><div class="lbl">Dangerous</div></div>';
-      html += '<div class="stat-card" style="padding:14px"><div class="num" style="color:#d29922;font-size:24px">' + moderate.length + '</div><div class="lbl">Moderate</div></div>';
-      html += '<div class="stat-card" style="padding:14px"><div class="num" style="color:#3fb950;font-size:24px">' + (DATA.blastRadius.length - dangerous.length - moderate.length) + '</div><div class="lbl">Safe</div></div>';
-      html += '</div>';
-      html += '<div class="file-card"><div class="file-card-header">Top 5 Highest Impact</div>';
-      DATA.blastRadius.slice(0, 5).forEach(function(b) {
-        var riskCls = 'risk-' + b.changeRisk;
-        html += '<div class="el-row" style="justify-content:space-between"><span style="font-family:monospace;color:#79c0ff">' + esc(b.filePath) + '</span>';
-        html += '<span style="display:flex;gap:8px;font-size:11px;align-items:center">';
-        html += '<span class="blast-file-badge ' + riskCls + '">' + b.changeRisk + '</span>';
-        html += '<span style="color:#8b949e">' + b.directDependents + ' direct, ' + b.transitiveDependents + ' transitive</span>';
-        html += '<span style="color:#d29922">impact ' + b.impactScore + '</span>';
-        html += '</span></div>';
-      });
+  });
+
+  const labelSel = labelLayer.selectAll('text').data(nodes).join('text')
+    .text(function(d){ return d.name; })
+    .attr('font-size', 11)
+    .attr('font-family', 'monospace')
+    .attr('fill', '#e6edf3')
+    .attr('text-anchor', 'middle')
+    .attr('dy', function(d){ return -nodeRadius(d) - 4; })
+    .attr('pointer-events', 'none')
+    .attr('paint-order', 'stroke fill')
+    .attr('stroke', '#0d1117')
+    .attr('stroke-width', 2.5)
+    .attr('stroke-opacity', 0.85);
+
+  // Selection / highlight
+  let selectedId = null;
+  function highlight(id) {
+    selectedId = id;
+    const incidentNodeIds = new Set([id]);
+    links.forEach(function(l){
+      const sId = (l.source && l.source.id) || l.source;
+      const tId = (l.target && l.target.id) || l.target;
+      if (sId === id || tId === id) {
+        incidentNodeIds.add(sId);
+        incidentNodeIds.add(tId);
+      }
+    });
+    linkSel.attr('stroke-opacity', function(l){
+      const sId = (l.source && l.source.id) || l.source;
+      const tId = (l.target && l.target.id) || l.target;
+      return (sId === id || tId === id) ? Math.max(0.9, edgeOpacity(l)) : 0.08;
+    }).attr('stroke-width', function(l){
+      const sId = (l.source && l.source.id) || l.source;
+      const tId = (l.target && l.target.id) || l.target;
+      return (sId === id || tId === id) ? edgeWidth(l) * 1.6 : edgeWidth(l);
+    });
+    nodeSel.attr('opacity', function(n){ return incidentNodeIds.has(n.id) ? 1 : 0.18; });
+    labelSel.attr('opacity', function(n){ return incidentNodeIds.has(n.id) ? 1 : 0.15; });
+    showTypeDetail(id);
+  }
+  function clearHighlight() {
+    selectedId = null;
+    linkSel.attr('stroke-opacity', edgeOpacity).attr('stroke-width', edgeWidth);
+    nodeSel.attr('opacity', 1);
+    labelSel.attr('opacity', 1);
+    const dp = document.getElementById('d3-detail-panel');
+    if (dp) dp.innerHTML = '';
+  }
+
+  function showTypeDetail(id) {
+    const dp = document.getElementById('d3-detail-panel');
+    if (!dp) return;
+    const node = nodes.find(function(n){ return n.id === id; });
+    if (!node) { dp.innerHTML = ''; return; }
+    // Inbound and outbound buckets
+    const inbound = [];
+    const outbound = [];
+    links.forEach(function(l){
+      const sId = (l.source && l.source.id) || l.source;
+      const tId = (l.target && l.target.id) || l.target;
+      if (tId === id) inbound.push({ other: sId, edge: l });
+      else if (sId === id) outbound.push({ other: tId, edge: l });
+    });
+    function shortName(nid) {
+      const n = nodes.find(function(nn){ return nn.id === nid; });
+      return n ? n.name : nid.split('::').pop();
+    }
+    function fileOf(nid) {
+      const n = nodes.find(function(nn){ return nn.id === nid; });
+      return n ? n.filePath : '';
+    }
+    function kindStr(byKind) {
+      return Object.keys(byKind).map(function(k){ return byKind[k] + ' ' + k; }).join(' · ');
+    }
+    function row(side, item) {
+      const other = shortName(item.other);
+      const otherFile = fileOf(item.other);
+      const cat = item.edge.category;
+      return '<div class="type-edge-row">' +
+        '<span class="type-edge-arrow type-cat-' + cat + '">' + (side === 'in' ? '←' : '→') + '</span>' +
+        '<span class="type-edge-name">' + esc(other) + '</span>' +
+        (otherFile ? '<span class="type-edge-file">' + esc(otherFile) + '</span>' : '<span class="type-edge-file type-edge-external">external</span>') +
+        '<span class="type-edge-count">' + item.edge.total + '</span>' +
+        '<span class="type-edge-kinds">' + esc(kindStr(item.edge.byKind)) + '</span>' +
+      '</div>';
+    }
+    let html = '<div class="type-detail-head">';
+    html += '<div class="type-detail-name">' + esc(node.name) + '</div>';
+    html += '<div class="type-detail-sub">';
+    if (node.isInterface) html += '<span class="type-iface-tag">interface</span> ';
+    if (node.isExternal) html += '<span class="type-iface-tag" style="background:#1a1f26;color:#484f58">external</span> ';
+    html += '<code>' + esc(node.filePath || '(external)') + '</code>';
+    html += '</div></div>';
+    html += '<div class="type-detail-counts">';
+    html += '<span class="type-edge-arrow type-cat-data">←</span> ' + node.inboundCount + ' inbound &nbsp;&nbsp;';
+    html += '<span class="type-edge-arrow type-cat-function">→</span> ' + node.outboundCount + ' outbound';
+    html += '</div>';
+
+    if (inbound.length > 0) {
+      html += '<div class="type-edge-section"><h4>Inbound (' + inbound.length + ' classes reference this)</h4>';
+      inbound.sort(function(a,b){ return b.edge.total - a.edge.total; });
+      inbound.forEach(function(item) { html += row('in', item); });
       html += '</div>';
     }
-    hc.innerHTML = html;
+    if (outbound.length > 0) {
+      html += '<div class="type-edge-section"><h4>Outbound (' + outbound.length + ' classes this references)</h4>';
+      outbound.sort(function(a,b){ return b.edge.total - a.edge.total; });
+      outbound.forEach(function(item) { html += row('out', item); });
+      html += '</div>';
+    }
+    if (inbound.length === 0 && outbound.length === 0) {
+      html += '<div class="empty" style="padding:8px">No incident edges.</div>';
+    }
+    dp.innerHTML = html;
+  }
+
+  nodeSel.on('click', function(event, d){
+    event.stopPropagation();
+    if (selectedId === d.id) clearHighlight();
+    else highlight(d.id);
+  });
+  svg.on('click', clearHighlight);
+
+  nodeSel.on('mouseover', function(event, d){
+    tooltip.style('display', 'block')
+      .html('<strong>' + d.name + '</strong>' + (d.isInterface ? ' <em>(interface)</em>' : '') +
+            '<br/>' + (d.filePath || '<em>external</em>') +
+            '<br/>' + d.inboundCount + ' inbound · ' + d.outboundCount + ' outbound');
+  }).on('mousemove', function(event){
+    tooltip.style('left', (event.pageX + 12) + 'px').style('top', (event.pageY + 12) + 'px');
+  }).on('mouseout', function(){
+    tooltip.style('display', 'none');
+  });
+
+  nodeSel.call(d3.drag()
+    .on('start', function(event, d){ if (!event.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+    .on('drag', function(event, d){ d.fx = event.x; d.fy = event.y; })
+    .on('end', function(event, d){ if (!event.active) sim.alphaTarget(0); d.fx = null; d.fy = null; })
+  );
+
+  sim.on('tick', function(){
+    linkSel.attr('d', function(d){
+      const sx = d.source.x, sy = d.source.y, tx = d.target.x, ty = d.target.y;
+      // Slight curve to disambiguate parallel edges.
+      const dx = tx - sx, dy = ty - sy;
+      const dr = Math.sqrt(dx*dx + dy*dy) * 1.4;
+      return 'M' + sx + ',' + sy + 'A' + dr + ',' + dr + ' 0 0,1 ' + tx + ',' + ty;
+    });
+    nodeSel.attr('transform', function(d){ return 'translate(' + d.x + ',' + d.y + ')'; });
+    labelSel.attr('x', function(d){ return d.x; }).attr('y', function(d){ return d.y; });
+  });
+
+  // Legend
+  const legend = document.getElementById('d3-legend');
+  if (legend) {
+    const classCount = nodes.filter(function(n){ return !n.isFile && !n.isExternal; }).length;
+    const fileCount = nodes.filter(function(n){ return n.isFile; }).length;
+    const externalCount = nodes.filter(function(n){ return n.isExternal; }).length;
+    const summary = [
+      classCount ? classCount + ' classes' : '',
+      fileCount ? fileCount + ' files' : '',
+      externalCount ? externalCount + ' external' : '',
+    ].filter(Boolean).join(' · ') + ' · ' + links.length + ' edges';
+    legend.innerHTML =
+      '<div class="d3-legend-row">' +
+        '<span class="d3-legend-title">' + summary + '</span>' +
+        '<span class="d3-legend-item"><i style="background:' + CAT_COLORS.inheritance + '"></i>' + CAT_LABELS.inheritance + '</span>' +
+        '<span class="d3-legend-item"><i style="background:' + CAT_COLORS.data + '"></i>' + CAT_LABELS.data + '</span>' +
+        '<span class="d3-legend-item"><i style="background:' + CAT_COLORS.function + '"></i>' + CAT_LABELS.function + '</span>' +
+        '<span class="d3-legend-item"><i style="background:#3d2f5c;border:1.5px solid #a78bfa"></i>Interface</span>' +
+        '<span class="d3-legend-item"><i style="background:#162a2d;border:1.5px solid #56d4dd;border-radius:2px"></i>File (non-class refs)</span>' +
+        '<span class="d3-legend-item"><i style="background:#1a1f26;border:1.5px dashed #484f58"></i>External type</span>' +
+      '</div>';
+  }
+
+  // Toolbar: labels toggle (reused — shared id with file view)
+  const toggleBtn = document.getElementById('d3-toggle-labels');
+  if (toggleBtn) {
+    toggleBtn.onclick = function() {
+      const visible = labelSel.attr('opacity') !== '0';
+      this.classList.toggle('active', !visible);
+      labelSel.transition().duration(200).attr('opacity', visible ? 0 : 1);
+    };
+    toggleBtn.classList.add('active');
+  }
+  const fitBtn = document.getElementById('d3-zoom-fit');
+  if (fitBtn) {
+    fitBtn.onclick = function(){ svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity); };
   }
 }
 
+// ─── Health View ──────────────────────────────────────────────────────
+function renderHealth() {
+  const hc = document.getElementById('health-content');
+  if (!hc) return;
+  const hs = DATA.healthScore;
+  if (!hs) {
+    hc.innerHTML = '<div class="empty">Health analysis not available</div>';
+    return;
+  }
+  let html = '<div style="display:flex;gap:32px;align-items:center;margin-bottom:24px">';
+  html += '<div class="grade-badge grade-' + hs.grade + '">' + hs.grade + '</div>';
+  html += '<div><div style="font-size:32px;font-weight:700;color:#f0f6fc">' + hs.score + '<span style="font-size:16px;color:#8b949e">/100</span></div>';
+  html += '<div style="font-size:13px;color:#8b949e">Code Health Score</div></div></div>';
+  if (hs.penalties && hs.penalties.length > 0) {
+    html += '<div class="file-card"><div class="file-card-header">Penalty Breakdown</div>';
+    html += hs.penalties.map(function(p) {
+      return '<div class="penalty-row"><span>' + esc(p.reason) + '</span><span class="penalty-pts">-' + p.points + '</span></div>';
+    }).join('');
+    html += '</div>';
+  } else {
+    html += '<div style="color:#3fb950;font-size:14px;margin-top:12px">No penalties — clean bill of health!</div>';
+  }
+  // Blast radius summary (scoped to visible files)
+  const blastVisible = (DATA.blastRadius || []).filter(b => isFileVisible(b.filePath));
+  if (blastVisible.length > 0) {
+    var dangerous = blastVisible.filter(function(b) { return b.changeRisk === 'dangerous'; });
+    var moderate = blastVisible.filter(function(b) { return b.changeRisk === 'moderate'; });
+    html += '<h3 style="color:#f0f6fc;margin:24px 0 12px">Blast Radius Summary</h3>';
+    html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px">';
+    html += '<div class="stat-card" style="padding:14px"><div class="num" style="color:#f85149;font-size:24px">' + dangerous.length + '</div><div class="lbl">Dangerous</div></div>';
+    html += '<div class="stat-card" style="padding:14px"><div class="num" style="color:#d29922;font-size:24px">' + moderate.length + '</div><div class="lbl">Moderate</div></div>';
+    html += '<div class="stat-card" style="padding:14px"><div class="num" style="color:#3fb950;font-size:24px">' + (blastVisible.length - dangerous.length - moderate.length) + '</div><div class="lbl">Safe</div></div>';
+    html += '</div>';
+    html += '<div class="file-card"><div class="file-card-header">Top 5 Highest Impact</div>';
+    blastVisible.slice(0, 5).forEach(function(b) {
+      var riskCls = 'risk-' + b.changeRisk;
+      html += '<div class="el-row" style="justify-content:space-between"><span style="font-family:monospace;color:#79c0ff">' + esc(b.filePath) + '</span>';
+      html += '<span style="display:flex;gap:8px;font-size:11px;align-items:center">';
+      html += '<span class="blast-file-badge ' + riskCls + '">' + b.changeRisk + '</span>';
+      html += '<span style="color:#8b949e">' + b.directDependents + ' direct, ' + b.transitiveDependents + ' transitive</span>';
+      html += '<span style="color:#d29922">impact ' + b.impactScore + '</span>';
+      html += '</span></div>';
+    });
+    html += '</div>';
+  }
+  hc.innerHTML = html;
+}
+renderHealth();
+
 // ─── Blast Radius View ────────────────────────────────────────────────
-{
-  var blastData = DATA.blastRadius || [];
-  var selectedBlast = null;
+let _blastSelected = null;
+function renderBlast() {
+  const riskSel = document.getElementById('blast-filter-risk');
+  const searchEl = document.getElementById('blast-filter-search');
+  const listEl = document.getElementById('blast-file-list');
+  const detailEl = document.getElementById('blast-detail-content');
+  if (!riskSel || !searchEl || !listEl || !detailEl) return;
+
+  const blastData = (DATA.blastRadius || []).filter(b => isFileVisible(b.filePath));
+  if (_blastSelected && !blastData.some(b => b.filePath === _blastSelected.filePath)) {
+    _blastSelected = null;
+    detailEl.innerHTML = '<div class="empty">Select a file to see its blast radius</div>';
+  }
 
   function renderBlastList() {
-    var riskF = document.getElementById('blast-filter-risk').value;
-    var searchF = document.getElementById('blast-filter-search').value.toLowerCase();
+    var riskF = riskSel.value;
+    var searchF = searchEl.value.toLowerCase();
     var filtered = blastData;
     if (riskF) filtered = filtered.filter(function(b) { return b.changeRisk === riskF; });
     if (searchF) filtered = filtered.filter(function(b) { return b.filePath.toLowerCase().includes(searchF); });
@@ -1755,7 +2577,7 @@ function initLinkGraph() {
       return;
     }
     list.innerHTML = filtered.map(function(b) {
-      var sel = selectedBlast && selectedBlast.filePath === b.filePath ? ' selected' : '';
+      var sel = _blastSelected && _blastSelected.filePath === b.filePath ? ' selected' : '';
       var riskCls = 'risk-' + b.changeRisk;
       var levelColor = b.level === 'critical' ? '#f85149' : b.level === 'high' ? '#d29922' : b.level === 'medium' ? '#58a6ff' : '#8b949e';
       return '<div class="blast-file-item' + sel + '" data-blast-file="' + esc(b.filePath) + '">' +
@@ -1771,14 +2593,14 @@ function initLinkGraph() {
   }
 
   function selectBlastFile(filePath) {
-    selectedBlast = blastData.find(function(b) { return b.filePath === filePath; });
-    if (!selectedBlast) return;
+    _blastSelected = blastData.find(function(b) { return b.filePath === filePath; });
+    if (!_blastSelected) return;
 
     document.querySelectorAll('.blast-file-item').forEach(function(el) {
       el.classList.toggle('selected', el.dataset.blastFile === filePath);
     });
 
-    var b = selectedBlast;
+    var b = _blastSelected;
     var detail = document.getElementById('blast-detail-content');
     var riskCls = 'risk-' + b.changeRisk;
     var levelColor = b.level === 'critical' ? '#f85149' : b.level === 'high' ? '#d29922' : b.level === 'medium' ? '#58a6ff' : '#8b949e';
@@ -1812,6 +2634,80 @@ function initLinkGraph() {
             html += '<div class="blast-sym-caller">' + esc(c.file) + ':' + c.line + '</div>';
           });
           html += '</div>';
+        }
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    // Data models defined here — per-class type-usage breakdown.
+    // Renders only when the type extractor + aggregator found referencing sites
+    // for at least one class/interface declared in this file.
+    if (b.typeUsages && b.typeUsages.length > 0) {
+      html += '<div class="file-card" style="margin-top:12px"><div class="file-card-header"><span>Data Models Defined Here</span><span class="file-card-count">' + b.typeUsages.length + '</span></div>';
+      b.typeUsages.forEach(function(tu) {
+        var riskCls = 'risk-' + tu.changeRisk;
+        var levelColor = tu.level === 'critical' ? '#f85149' : tu.level === 'high' ? '#d29922' : tu.level === 'medium' ? '#58a6ff' : '#8b949e';
+        var ifaceTag = tu.definedAt && tu.definedAt.isInterface ? '<span class="type-iface-tag">interface</span>' : '';
+        html += '<div class="type-usage-row">';
+        // Header — name, badges, line
+        html += '<div class="type-usage-head">';
+        html += '<span class="type-usage-name">' + esc(tu.typeName) + '</span>';
+        html += ifaceTag;
+        html += '<span class="blast-file-badge ' + riskCls + '">' + tu.changeRisk + '</span>';
+        html += '<span class="type-usage-level" style="color:' + levelColor + '">' + tu.level + '</span>';
+        if (tu.definedAt && tu.definedAt.line) {
+          html += '<span class="type-usage-defline">line ' + tu.definedAt.line + '</span>';
+        }
+        html += '<span class="type-usage-total">' + tu.totalUsages + ' ref' + (tu.totalUsages === 1 ? '' : 's') + '</span>';
+        html += '</div>';
+
+        // Aggregate-by-kind summary (pill row).
+        var allKinds = Object.keys(tu.usageByKind || {});
+        if (allKinds.length > 0) {
+          html += '<div class="type-kind-pills">';
+          allKinds.forEach(function(k) {
+            html += '<span class="kind-pill kind-' + k + '">' + tu.usageByKind[k] + ' ' + esc(k) + '</span>';
+          });
+          html += '</div>';
+        }
+
+        // Per-file × per-kind table — answers "where is X used as return type?"
+        var byFile = tu.usagesByFile || [];
+        if (byFile.length > 0) {
+          html += '<table class="type-usage-table"><thead><tr><th>File</th><th class="num">refs</th>';
+          // Use a stable, project-wide kind order so columns line up across
+          // multiple types in the same view.
+          var KIND_ORDER = ['extends','implements','parameter','return','field','variable','generic-arg','cast','instantiation'];
+          KIND_ORDER.forEach(function(k) {
+            html += '<th class="num kind-h kind-' + k + '">' + k + '</th>';
+          });
+          html += '</tr></thead><tbody>';
+          byFile.forEach(function(entry) {
+            var selfMark = entry.filePath === b.filePath ? ' <span class="type-usage-self">self</span>' : '';
+            html += '<tr class="type-usage-fr">';
+            html += '<td class="type-file-cell" data-blast-nav="' + esc(entry.filePath) + '"><code>' + esc(entry.filePath) + '</code>' + selfMark + '</td>';
+            html += '<td class="num"><strong>' + entry.count + '</strong></td>';
+            KIND_ORDER.forEach(function(k) {
+              var n = (entry.byKind && entry.byKind[k]) || 0;
+              html += '<td class="num kind-' + k + '">' + (n > 0 ? n : '·') + '</td>';
+            });
+            html += '</tr>';
+            // Site detail row (collapsed by default) — line numbers for jumping.
+            if (entry.sites && entry.sites.length > 0) {
+              html += '<tr class="type-usage-sites-row"><td colspan="' + (KIND_ORDER.length + 2) + '" class="type-usage-sites">';
+              entry.sites.slice(0, 12).forEach(function(s) {
+                html += '<span class="type-site kind-' + s.kind + '" title="' + esc(s.kind) + '">' + esc(s.symbol) + ':' + s.line + '</span>';
+              });
+              if (entry.sites.length > 12) {
+                html += '<span class="type-usage-more">+' + (entry.sites.length - 12) + ' more</span>';
+              }
+              html += '</td></tr>';
+            }
+          });
+          html += '</tbody></table>';
+        } else {
+          html += '<div class="type-usage-files" style="color:#484f58;font-style:italic">No usages found.</div>';
         }
         html += '</div>';
       });
@@ -1860,121 +2756,221 @@ function initLinkGraph() {
     });
   }
 
-  document.getElementById('blast-filter-risk').addEventListener('change', renderBlastList);
-  document.getElementById('blast-filter-search').addEventListener('input', renderBlastList);
+  riskSel.onchange = renderBlastList;
+  searchEl.oninput = renderBlastList;
   renderBlastList();
 
-  // Auto-select first dangerous or highest-impact file
-  var autoSelect = blastData.find(function(b) { return b.changeRisk === 'dangerous'; }) || blastData[0];
-  if (autoSelect) selectBlastFile(autoSelect.filePath);
+  // Auto-select first dangerous or highest-impact file (only if nothing is selected yet)
+  if (!_blastSelected) {
+    var autoSelect = blastData.find(function(b) { return b.changeRisk === 'dangerous'; }) || blastData[0];
+    if (autoSelect) selectBlastFile(autoSelect.filePath);
+  }
 }
+renderBlast();
 
 // ─── Patterns View ────────────────────────────────────────────────────
-{
-  const ANTI_KINDS = new Set(['god-object', 'long-file']);
-  const kinds = [...new Set(DATA.patterns.map(function(p) { return p.kind; }))].sort();
+const PATTERN_ANTI_KINDS = new Set(['god-object', 'long-file']);
+let _patternKindsPopulated = false;
+function renderPatterns() {
   const kindSel = document.getElementById('pattern-filter-kind');
-  kinds.forEach(function(k) { var o = document.createElement('option'); o.value = k; o.textContent = k; kindSel.appendChild(o); });
+  const typeSel = document.getElementById('pattern-filter-type');
+  const grid = document.getElementById('pattern-grid');
+  if (!kindSel || !typeSel || !grid) return;
 
-  function renderPatterns() {
-    var kindF = kindSel.value;
-    var typeF = document.getElementById('pattern-filter-type').value;
-    var filtered = DATA.patterns;
-    if (kindF) filtered = filtered.filter(function(p) { return p.kind === kindF; });
-    if (typeF === 'good') filtered = filtered.filter(function(p) { return !ANTI_KINDS.has(p.kind); });
-    if (typeF === 'anti') filtered = filtered.filter(function(p) { return ANTI_KINDS.has(p.kind); });
-    var grid = document.getElementById('pattern-grid');
-    if (filtered.length === 0) { grid.innerHTML = '<div class="empty">No patterns found</div>'; return; }
-    grid.innerHTML = filtered.map(function(p) {
-      var isAnti = ANTI_KINDS.has(p.kind);
-      return '<div class="pattern-card' + (isAnti ? ' anti' : '') + '">' +
-        '<div class="pattern-kind">' + esc(p.kind) + ' <span class="sev-badge sev-' + p.confidence + '">' + p.confidence + '</span></div>' +
-        '<div class="pattern-name">' + esc(p.name) + '</div>' +
-        '<div class="pattern-detail">' + esc(p.detail) + '</div>' +
-        '<div class="pattern-file">' + esc(p.filePath) + ':' + p.line + '</div>' +
-      '</div>';
-    }).join('');
+  if (!_patternKindsPopulated) {
+    const kinds = [...new Set((DATA.patterns || []).map(p => p.kind))].sort();
+    kinds.forEach(k => { const o = document.createElement('option'); o.value = k; o.textContent = k; kindSel.appendChild(o); });
+    kindSel.onchange = renderPatterns;
+    typeSel.onchange = renderPatterns;
+    _patternKindsPopulated = true;
   }
-  kindSel.addEventListener('change', renderPatterns);
-  document.getElementById('pattern-filter-type').addEventListener('change', renderPatterns);
-  renderPatterns();
+
+  const kindF = kindSel.value;
+  const typeF = typeSel.value;
+  let filtered = (DATA.patterns || []).filter(p => isFileVisible(p.filePath));
+  if (kindF) filtered = filtered.filter(p => p.kind === kindF);
+  if (typeF === 'good') filtered = filtered.filter(p => !PATTERN_ANTI_KINDS.has(p.kind));
+  if (typeF === 'anti') filtered = filtered.filter(p => PATTERN_ANTI_KINDS.has(p.kind));
+
+  if (filtered.length === 0) { grid.innerHTML = '<div class="empty">No patterns found</div>'; return; }
+  grid.innerHTML = filtered.map(p => {
+    const isAnti = PATTERN_ANTI_KINDS.has(p.kind);
+    return '<div class="pattern-card' + (isAnti ? ' anti' : '') + '">' +
+      '<div class="pattern-kind">' + esc(p.kind) + ' <span class="sev-badge sev-' + p.confidence + '">' + p.confidence + '</span></div>' +
+      '<div class="pattern-name">' + esc(p.name) + '</div>' +
+      '<div class="pattern-detail">' + esc(p.detail) + '</div>' +
+      '<div class="pattern-file">' + esc(p.filePath) + ':' + p.line + '</div>' +
+    '</div>';
+  }).join('');
 }
+renderPatterns();
 
 // ─── Security View ────────────────────────────────────────────────────
-{
-  function renderSecurity() {
-    var sevF = document.getElementById('sec-filter-severity').value;
-    var searchF = document.getElementById('sec-filter-search').value.toLowerCase();
-    var filtered = DATA.securityIssues;
-    if (sevF) filtered = filtered.filter(function(s) { return s.severity === sevF; });
-    if (searchF) filtered = filtered.filter(function(s) {
-      return s.message.toLowerCase().includes(searchF) || s.filePath.toLowerCase().includes(searchF) || s.category.toLowerCase().includes(searchF);
-    });
-    var grid = document.getElementById('sec-grid');
-    if (filtered.length === 0) { grid.innerHTML = '<div class="empty">No security issues found</div>'; return; }
-    grid.innerHTML = filtered.map(function(s) {
-      return '<div class="sec-row">' +
-        '<span class="sev-badge sev-' + s.severity + '">' + s.severity + '</span> ' +
-        '<span style="color:#8b949e;font-size:11px;text-transform:uppercase">' + esc(s.category) + '</span>' +
-        '<div style="margin-top:4px;color:#e6edf3">' + esc(s.message) + '</div>' +
-        '<div style="margin-top:4px;font-size:11px;color:#58a6ff;font-family:monospace">' + esc(s.filePath) + ':' + s.line + '</div>' +
-        (s.snippet ? '<div class="sec-snippet">' + esc(s.snippet) + '</div>' : '') +
-      '</div>';
-    }).join('');
-  }
-  document.getElementById('sec-filter-severity').addEventListener('change', renderSecurity);
-  document.getElementById('sec-filter-search').addEventListener('input', renderSecurity);
-  renderSecurity();
+function renderSecurity() {
+  const sevSel = document.getElementById('sec-filter-severity');
+  const searchEl = document.getElementById('sec-filter-search');
+  const grid = document.getElementById('sec-grid');
+  if (!sevSel || !searchEl || !grid) return;
+
+  sevSel.onchange = renderSecurity;
+  searchEl.oninput = renderSecurity;
+
+  const sevF = sevSel.value;
+  const searchF = searchEl.value.toLowerCase();
+  let filtered = (DATA.securityIssues || []).filter(s => isFileVisible(s.filePath));
+  if (sevF) filtered = filtered.filter(s => s.severity === sevF);
+  if (searchF) filtered = filtered.filter(s =>
+    s.message.toLowerCase().includes(searchF) || s.filePath.toLowerCase().includes(searchF) || s.category.toLowerCase().includes(searchF)
+  );
+  if (filtered.length === 0) { grid.innerHTML = '<div class="empty">No security issues found</div>'; return; }
+  grid.innerHTML = filtered.map(s =>
+    '<div class="sec-row">' +
+      '<span class="sev-badge sev-' + s.severity + '">' + s.severity + '</span> ' +
+      '<span style="color:#8b949e;font-size:11px;text-transform:uppercase">' + esc(s.category) + '</span>' +
+      '<div style="margin-top:4px;color:#e6edf3">' + esc(s.message) + '</div>' +
+      '<div style="margin-top:4px;font-size:11px;color:#58a6ff;font-family:monospace">' + esc(s.filePath) + ':' + s.line + '</div>' +
+      (s.snippet ? '<div class="sec-snippet">' + esc(s.snippet) + '</div>' : '') +
+    '</div>'
+  ).join('');
 }
+renderSecurity();
 
 // ─── Complexity View ──────────────────────────────────────────────────
-{
-  var cxGrid = document.getElementById('cx-grid');
-  if (DATA.complexity.length === 0) {
-    cxGrid.innerHTML = '<div class="empty">No complexity data available</div>';
-  } else {
-    var sorted = DATA.complexity.slice().sort(function(a, b) { return b.maxComplexity - a.maxComplexity; });
-    cxGrid.innerHTML = sorted.map(function(fc) {
-      var fns = fc.functions.slice().sort(function(a, b) { return b.complexity - a.complexity; });
-      var maxCx = Math.max(fc.maxComplexity, 1);
-      return '<div class="cx-file">' +
-        '<div class="cx-file-header"><span style="font-family:monospace;color:#79c0ff">' + esc(fc.filePath) + '</span>' +
-        '<span style="color:#8b949e;font-weight:400">avg: ' + fc.averageComplexity + ' | max: ' + fc.maxComplexity + '</span></div>' +
-        fns.slice(0, 15).map(function(fn) {
-          var pct = Math.min(100, Math.round(fn.complexity / Math.max(maxCx, 20) * 100));
-          var cls = fn.complexity <= 5 ? 'cx-low' : fn.complexity <= 10 ? 'cx-med' : 'cx-high';
-          return '<div class="cx-fn-row">' +
-            '<span class="cx-fn-name">' + esc(fn.functionName) + '</span>' +
-            '<div style="flex:1"><div class="cx-bar ' + cls + '" style="width:' + Math.max(pct, 8) + '%">' + fn.complexity + '</div></div>' +
-            '<span style="color:#484f58;font-size:11px;min-width:50px;text-align:right">:' + fn.line + '</span>' +
-          '</div>';
-        }).join('') +
-      '</div>';
-    }).join('');
+function renderComplexity() {
+  const cxGrid = document.getElementById('cx-grid');
+  if (!cxGrid) return;
+  const data = (DATA.complexity || []).filter(fc => isFileVisible(fc.filePath));
+  if (data.length === 0) {
+    cxGrid.innerHTML = '<div class="empty">' +
+      ((DATA.complexity || []).length ? 'No complexity data matches the active filters' : 'No complexity data available') + '</div>';
+    return;
   }
+  const sorted = data.slice().sort((a, b) => b.maxComplexity - a.maxComplexity);
+  cxGrid.innerHTML = sorted.map(fc => {
+    const fns = fc.functions.slice().sort((a, b) => b.complexity - a.complexity);
+    const maxCx = Math.max(fc.maxComplexity, 1);
+    return '<div class="cx-file">' +
+      '<div class="cx-file-header"><span style="font-family:monospace;color:#79c0ff">' + esc(fc.filePath) + '</span>' +
+      '<span style="color:#8b949e;font-weight:400">avg: ' + fc.averageComplexity + ' | max: ' + fc.maxComplexity + '</span></div>' +
+      fns.slice(0, 15).map(fn => {
+        const pct = Math.min(100, Math.round(fn.complexity / Math.max(maxCx, 20) * 100));
+        const cls = fn.complexity <= 5 ? 'cx-low' : fn.complexity <= 10 ? 'cx-med' : 'cx-high';
+        return '<div class="cx-fn-row">' +
+          '<span class="cx-fn-name">' + esc(fn.functionName) + '</span>' +
+          '<div style="flex:1"><div class="cx-bar ' + cls + '" style="width:' + Math.max(pct, 8) + '%">' + fn.complexity + '</div></div>' +
+          '<span style="color:#484f58;font-size:11px;min-width:50px;text-align:right">:' + fn.line + '</span>' +
+        '</div>';
+      }).join('') +
+    '</div>';
+  }).join('');
 }
+renderComplexity();
 
 // ─── Suggestions View ─────────────────────────────────────────────────
-{
-  function renderSuggestions() {
-    var prioF = document.getElementById('sug-filter-priority').value;
-    var filtered = DATA.suggestions;
-    if (prioF) filtered = filtered.filter(function(s) { return s.priority === prioF; });
-    var grid = document.getElementById('sug-grid');
-    if (filtered.length === 0) { grid.innerHTML = '<div class="empty">No suggestions</div>'; return; }
-    grid.innerHTML = filtered.map(function(s) {
-      return '<div class="sug-card">' +
-        '<div class="sug-priority sug-' + s.priority + '"></div>' +
-        '<div style="flex:1">' +
-          '<div class="sug-cat">' + esc(s.category) + ' <span class="sev-badge sev-' + s.priority + '">' + s.priority + '</span></div>' +
-          '<div class="sug-msg">' + esc(s.message) + '</div>' +
-          '<div class="sug-action">' + esc(s.actionable) + '</div>' +
-          (s.filePath ? '<div class="sug-file">' + esc(s.filePath) + '</div>' : '') +
-        '</div></div>';
-    }).join('');
-  }
-  document.getElementById('sug-filter-priority').addEventListener('change', renderSuggestions);
-  renderSuggestions();
+function renderSuggestions() {
+  const prioSel = document.getElementById('sug-filter-priority');
+  const grid = document.getElementById('sug-grid');
+  if (!prioSel || !grid) return;
+  prioSel.onchange = renderSuggestions;
+  const prioF = prioSel.value;
+  // Suggestions may not have a filePath (project-level ones); keep those regardless
+  let filtered = (DATA.suggestions || []).filter(s => !s.filePath || isFileVisible(s.filePath));
+  if (prioF) filtered = filtered.filter(s => s.priority === prioF);
+  if (filtered.length === 0) { grid.innerHTML = '<div class="empty">No suggestions</div>'; return; }
+  grid.innerHTML = filtered.map(s =>
+    '<div class="sug-card">' +
+      '<div class="sug-priority sug-' + s.priority + '"></div>' +
+      '<div style="flex:1">' +
+        '<div class="sug-cat">' + esc(s.category) + ' <span class="sev-badge sev-' + s.priority + '">' + s.priority + '</span></div>' +
+        '<div class="sug-msg">' + esc(s.message) + '</div>' +
+        '<div class="sug-action">' + esc(s.actionable) + '</div>' +
+        (s.filePath ? '<div class="sug-file">' + esc(s.filePath) + '</div>' : '') +
+      '</div></div>'
+  ).join('');
 }
+renderSuggestions();
+
+// ─── Insights View renderer ──────────────────────────────────────────────
+// Renders god nodes, surprising connections, and suggested questions in a
+// single scrolling page. Each section is hidden when its source array is
+// empty so the page never shows a section header above nothing.
+function renderInsights() {
+  const root = document.getElementById('insights-content');
+  if (!root) return;
+
+  const visibleFile = (fp) => !fp || isFileVisible(fp);
+  const godNodes = (DATA.godNodes || []).filter(n => visibleFile(n.file));
+  const surprises = (DATA.surprisingConnections || []).filter(s =>
+    visibleFile(s.source) && visibleFile(s.target)
+  );
+  const questions = DATA.suggestedQuestions || [];
+  const confCounts = DATA.confidenceCounts;
+
+  const parts = [];
+
+  if (confCounts && (confCounts.extracted + confCounts.inferred + confCounts.ambiguous) > 0) {
+    const total = confCounts.extracted + confCounts.inferred + confCounts.ambiguous;
+    const pct = (n) => Math.round((n / total) * 100);
+    parts.push(
+      '<div class="insight-section"><h3>Confidence Distribution</h3>' +
+      '<div class="conf-bar">' +
+        '<span class="conf-ext" style="width:' + pct(confCounts.extracted) + '%" title="Extracted: ' + confCounts.extracted + '">' + pct(confCounts.extracted) + '%</span>' +
+        '<span class="conf-inf" style="width:' + pct(confCounts.inferred) + '%" title="Inferred: ' + confCounts.inferred + '">' + pct(confCounts.inferred) + '%</span>' +
+        '<span class="conf-amb" style="width:' + pct(confCounts.ambiguous) + '%" title="Ambiguous: ' + confCounts.ambiguous + '">' + pct(confCounts.ambiguous) + '%</span>' +
+      '</div>' +
+      '<div class="conf-legend">' +
+        '<span><i class="conf-dot conf-ext"></i>Extracted (' + confCounts.extracted + ')</span> ' +
+        '<span><i class="conf-dot conf-inf"></i>Inferred (' + confCounts.inferred + ')</span> ' +
+        '<span><i class="conf-dot conf-amb"></i>Ambiguous (' + confCounts.ambiguous + ')</span>' +
+      '</div></div>'
+    );
+  }
+
+  if (godNodes.length > 0) {
+    parts.push(
+      '<div class="insight-section"><h3>God Nodes <span class="hint">(most-connected files — the core abstractions)</span></h3>' +
+      '<table class="insight-table"><thead><tr><th>File</th><th>Degree</th></tr></thead><tbody>' +
+      godNodes.map(n =>
+        '<tr><td><code>' + esc(n.file) + '</code></td><td>' + n.degree + '</td></tr>'
+      ).join('') +
+      '</tbody></table></div>'
+    );
+  }
+
+  if (surprises.length > 0) {
+    parts.push(
+      '<div class="insight-section"><h3>Surprising Connections <span class="hint">(cross-community / low-confidence / peripheral→hub)</span></h3>' +
+      '<table class="insight-table"><thead><tr><th>Source</th><th>Target</th><th>Confidence</th><th>Why</th></tr></thead><tbody>' +
+      surprises.map(s =>
+        '<tr>' +
+          '<td><code>' + esc(s.source) + '</code></td>' +
+          '<td><code>' + esc(s.target) + '</code></td>' +
+          '<td>' + (s.confidence ? '<span class="sev-badge sev-' + s.confidence.toLowerCase() + '">' + s.confidence + '</span>' : '—') + '</td>' +
+          '<td>' + esc(s.reason || '') + '</td>' +
+        '</tr>'
+      ).join('') +
+      '</tbody></table></div>'
+    );
+  }
+
+  if (questions.length > 0) {
+    parts.push(
+      '<div class="insight-section"><h3>Suggested Questions <span class="hint">(what this graph is uniquely positioned to answer)</span></h3>' +
+      '<ul class="insight-questions">' +
+      questions.map(q =>
+        '<li><span class="q-type q-' + q.type + '">' + q.type + '</span>' +
+          '<div class="q-text">' + esc(q.question) + '</div>' +
+          '<div class="q-why">' + esc(q.why) + '</div>' +
+        '</li>'
+      ).join('') +
+      '</ul></div>'
+    );
+  }
+
+  root.innerHTML = parts.length > 0
+    ? parts.join('')
+    : '<div class="empty">No topology insights for this corpus.</div>';
+}
+renderInsights();
 `;
 }

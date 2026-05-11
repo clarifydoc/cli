@@ -28,6 +28,8 @@ const LANGUAGE_ID_MAP: Record<string, string> = {
   rust: "rust",
   ruby: "ruby",
   php: "php",
+  vb: "vb",
+  pascal: "pascal",
 };
 
 /** Map file extension to LSP languageId */
@@ -44,6 +46,15 @@ function extensionToLanguageId(filePath: string): string {
   if (filePath.endsWith(".rs")) return "rust";
   if (filePath.endsWith(".rb")) return "ruby";
   if (filePath.endsWith(".php")) return "php";
+  if (filePath.endsWith(".vb")) return "vb";
+  if (
+    filePath.endsWith(".pas") ||
+    filePath.endsWith(".pp") ||
+    filePath.endsWith(".dpr") ||
+    filePath.endsWith(".dpk") ||
+    filePath.endsWith(".lpr") ||
+    filePath.endsWith(".inc")
+  ) return "pascal";
   return "plaintext";
 }
 
@@ -179,16 +190,37 @@ export class LspManager {
       initializationOptions: config.initializationOptions,
     });
 
-    // Initialize with timeout
-    await Promise.race([
-      client.initialize(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`LSP initialize timed out after ${this.timeout}ms`)), this.timeout),
-      ),
-    ]);
+    // Initialize with timeout. The timer MUST be cleared on success — otherwise
+    // it keeps the Node event loop alive for the full timeout duration after
+    // analysis completes, blocking process exit.
+    let initTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        client.initialize(),
+        new Promise<never>((_, reject) => {
+          initTimer = setTimeout(
+            () => reject(new Error(`LSP initialize timed out after ${this.timeout}ms`)),
+            this.timeout,
+          );
+        }),
+      ]);
+    } finally {
+      if (initTimer) clearTimeout(initTimer);
+    }
 
     if (this.verbose) {
       console.log(`  LSP server ${config.id}: definition=${client.supportsDefinition}, references=${client.supportsReferences}`);
+    }
+
+    // Server-specific workspace setup (e.g., Roslyn's `project/open`)
+    if (config.postInitialize) {
+      try {
+        config.postInitialize(client, this.projectRoot);
+      } catch (err) {
+        if (this.verbose) {
+          console.warn(`  LSP ${config.id} postInitialize failed: ${(err as Error).message}`);
+        }
+      }
     }
 
     this.servers.set(config.id, { config, container, client });

@@ -1,6 +1,25 @@
 import fg from "fast-glob";
 import { resolve } from "path";
 import type { Language } from "../types/analysis.js";
+import { loadIgnorePatterns, isIgnored } from "./reversedoc-ignore.js";
+
+/**
+ * Files that may contain secrets — skipped silently and reported separately.
+ * Ported from graphify-7 (detect.py:38-46): basename-targeted regexes so a key
+ * file deep in the tree is still excluded.
+ */
+const SENSITIVE_PATTERNS: ReadonlyArray<RegExp> = [
+  /(^|[\\/])\.(env|envrc)(\.|$)/i,
+  /\.(pem|key|p12|pfx|cert|crt|der|p8)$/i,
+  /\b(credential|secret|passwd|password|token|private_key)s?\b/i,
+  /(id_rsa|id_dsa|id_ecdsa|id_ed25519)(\.pub)?$/,
+  /(\.netrc|\.pgpass|\.htpasswd)$/i,
+  /(aws_credentials|gcloud_credentials|service.account)/i,
+];
+
+function isSensitive(relativePath: string): boolean {
+  return SENSITIVE_PATTERNS.some((p) => p.test(relativePath));
+}
 
 /** Map file extensions to languages */
 const EXTENSION_MAP: Record<string, Language> = {
@@ -30,6 +49,12 @@ const EXTENSION_MAP: Record<string, Language> = {
   ".swift": "swift",
   ".lua": "lua",
   ".scala": "scala",
+  ".pl": "perl",
+  ".pm": "perl",
+  ".vb": "vb",
+  ".bas": "vb",
+  ".cls": "vb",
+  ".frm": "vb",
 };
 
 const DEFAULT_IGNORE = [
@@ -57,6 +82,12 @@ export interface DiscoveredFile {
   language: Language;
 }
 
+export interface DiscoveryResult {
+  files: DiscoveredFile[];
+  /** Files matching a sensitive-name pattern (.env, *.pem, id_rsa, ...). Skipped silently. */
+  skippedSensitive: string[];
+}
+
 export interface DiscoveryOptions {
   include?: string[];
   exclude?: string[];
@@ -65,11 +96,15 @@ export interface DiscoveryOptions {
 
 /**
  * Discover all analyzable source files in a project directory.
+ *
+ * Applies (in order): fast-glob with DEFAULT_IGNORE → sensitive-file filter →
+ * .reverseDocignore gitignore semantics. Sensitive files are surfaced separately
+ * rather than dropped silently so users can see what was excluded.
  */
 export async function discoverFiles(
   projectRoot: string,
   options: DiscoveryOptions = {},
-): Promise<DiscoveredFile[]> {
+): Promise<DiscoveryResult> {
   const root = resolve(projectRoot);
 
   const sourcePatterns = Object.keys(EXTENSION_MAP).map(
@@ -85,15 +120,26 @@ export async function discoverFiles(
     dot: false,
   });
 
+  const ignorePatterns = loadIgnorePatterns(root);
+
   let results: DiscoveredFile[] = [];
+  const skippedSensitive: string[] = [];
 
   for (const relativePath of files) {
     const ext = getExtension(relativePath);
     const language = EXTENSION_MAP[ext];
     if (!language) continue;
 
+    if (isSensitive(relativePath)) {
+      skippedSensitive.push(relativePath);
+      continue;
+    }
+
+    const absolutePath = resolve(root, relativePath);
+    if (isIgnored(absolutePath, root, ignorePatterns)) continue;
+
     results.push({
-      absolutePath: resolve(root, relativePath),
+      absolutePath,
       relativePath,
       language,
     });
@@ -101,12 +147,13 @@ export async function discoverFiles(
 
   // Sort for deterministic output
   results.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+  skippedSensitive.sort();
 
   if (options.maxFiles && results.length > options.maxFiles) {
     results = results.slice(0, options.maxFiles);
   }
 
-  return results;
+  return { files: results, skippedSensitive };
 }
 
 function getExtension(filePath: string): string {

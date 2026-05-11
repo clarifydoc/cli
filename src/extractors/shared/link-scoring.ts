@@ -1,5 +1,6 @@
-import type { FileAnalysis, LinkInfo, LinkProximity } from "../../types/analysis.js";
+import type { FileAnalysis, LinkInfo, LinkProximity, Confidence } from "../../types/analysis.js";
 import { posix } from "path";
+import { bestConfidence } from "./confidence.js";
 
 /** Lifecycle hooks — calls here run on mount/create → tight (1) */
 const LIFECYCLE_HOOKS = new Set([
@@ -39,9 +40,21 @@ const UPDATE_METHODS = new Set([
  */
 export function buildLinkGraph(analyses: FileAnalysis[]): LinkInfo[] {
   const filePathMap = buildFilePathMap(analyses);
-  const linkMap = new Map<string, { proximity: LinkProximity; reasons: Set<string>; calls: Set<string> }>();
+  const linkMap = new Map<string, {
+    proximity: LinkProximity;
+    reasons: Set<string>;
+    calls: Set<string>;
+    confidence?: Confidence;
+  }>();
 
-  function addLink(sourceFile: string, target: string, callName: string, proximity: LinkProximity, reason: string) {
+  function addLink(
+    sourceFile: string,
+    target: string,
+    callName: string,
+    proximity: LinkProximity,
+    reason: string,
+    confidence: Confidence,
+  ) {
     const targetFile = resolveTarget(target, sourceFile, filePathMap);
     if (!targetFile || targetFile === sourceFile) return;
 
@@ -51,22 +64,24 @@ export function buildLinkGraph(analyses: FileAnalysis[]): LinkInfo[] {
       if (proximity < existing.proximity) existing.proximity = proximity;
       existing.reasons.add(reason);
       existing.calls.add(callName);
+      existing.confidence = bestConfidence(existing.confidence, confidence);
     } else {
       linkMap.set(key, {
         proximity,
         reasons: new Set([reason]),
         calls: new Set([callName]),
+        confidence,
       });
     }
   }
 
   for (const a of analyses) {
-    // 1. ALL imports create links (primary link source)
+    // 1. ALL imports create links — explicit in source.
     for (const imp of a.imports) {
       if (imp.isType) continue;
       const proximity = getImportProximity(imp.specifiers, a);
       for (const spec of imp.specifiers) {
-        addLink(a.filePath, imp.source, spec, proximity, `imports ${spec}`);
+        addLink(a.filePath, imp.source, spec, proximity, `imports ${spec}`, "EXTRACTED");
       }
     }
 
@@ -75,7 +90,8 @@ export function buildLinkGraph(analyses: FileAnalysis[]): LinkInfo[] {
       for (const call of fn.calls) {
         if (call.kind === "cross-file" && call.target) {
           const prox = getFunctionProximity(fn.name, a);
-          addLink(a.filePath, call.target, call.name, prox, `function ${fn.name}`);
+          addLink(a.filePath, call.target, call.name, prox, `function ${fn.name}`,
+            call.confidence ?? "INFERRED");
         }
       }
     }
@@ -86,7 +102,8 @@ export function buildLinkGraph(analyses: FileAnalysis[]): LinkInfo[] {
         for (const call of method.calls) {
           if (call.kind === "cross-file" && call.target) {
             const prox = getMethodProximity(method.name);
-            addLink(a.filePath, call.target, call.name, prox, `${cls.name}.${method.name}`);
+            addLink(a.filePath, call.target, call.name, prox, `${cls.name}.${method.name}`,
+              call.confidence ?? "INFERRED");
           }
         }
       }
@@ -97,7 +114,8 @@ export function buildLinkGraph(analyses: FileAnalysis[]): LinkInfo[] {
       for (const call of ds.calls) {
         if (call.kind === "cross-file" && call.target) {
           const prox = getHookProximity(ds.name);
-          addLink(a.filePath, call.target, call.name, prox, `${ds.name} callback`);
+          addLink(a.filePath, call.target, call.name, prox, `${ds.name} callback`,
+            call.confidence ?? "INFERRED");
         }
       }
     }
@@ -106,7 +124,8 @@ export function buildLinkGraph(analyses: FileAnalysis[]): LinkInfo[] {
     for (const route of a.routes) {
       for (const call of route.calls) {
         if (call.kind === "cross-file" && call.target) {
-          addLink(a.filePath, call.target, call.name, 3, `route ${route.httpMethod ?? "USE"} ${route.path}`);
+          addLink(a.filePath, call.target, call.name, 3, `route ${route.httpMethod ?? "USE"} ${route.path}`,
+            call.confidence ?? "INFERRED");
         }
       }
     }
@@ -114,7 +133,7 @@ export function buildLinkGraph(analyses: FileAnalysis[]): LinkInfo[] {
     // 6. Sub-components (rendered on mount → tight)
     for (const comp of a.subComponents) {
       if (comp.importSource) {
-        addLink(a.filePath, comp.importSource, comp.name, 1, `renders <${comp.name}>`);
+        addLink(a.filePath, comp.importSource, comp.name, 1, `renders <${comp.name}>`, "EXTRACTED");
       }
     }
   }
@@ -123,13 +142,15 @@ export function buildLinkGraph(analyses: FileAnalysis[]): LinkInfo[] {
   const links: LinkInfo[] = [];
   for (const [key, data] of linkMap) {
     const [source, target] = key.split("\u2192");
-    links.push({
+    const link: LinkInfo = {
       source: source!,
       target: target!,
       proximity: data.proximity,
       reason: [...data.reasons].join("; "),
       calls: [...data.calls],
-    });
+    };
+    if (data.confidence) link.confidence = data.confidence;
+    links.push(link);
   }
 
   return links;
@@ -189,7 +210,7 @@ export function buildFilePathMap(analyses: FileAnalysis[]): Map<string, string> 
   const map = new Map<string, string>();
   for (const a of analyses) {
     map.set(a.filePath, a.filePath);
-    const base = a.filePath.replace(/\.(ts|tsx|js|jsx|mjs|cjs|vue|py|pyw|java|kt|kts|cs|pas|pp|go|rs|rb|php|swift|lua|scala)$/, "");
+    const base = a.filePath.replace(/\.(ts|tsx|js|jsx|mjs|cjs|vue|py|pyw|java|kt|kts|cs|pas|pp|go|rs|rb|php|swift|lua|scala|pl|pm|vb|bas|cls|frm)$/, "");
     map.set(base, a.filePath);
     const noIndex = base.replace(/\/index$/, "");
     if (noIndex !== base) map.set(noIndex, a.filePath);
@@ -251,7 +272,7 @@ function tryMatch(candidate: string, filePathMap: Map<string, string>): string |
   if (direct) return direct;
 
   // With common extensions
-  for (const ext of [".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".java", ".kt", ".cs", ".pas", ".go", ".rs", ".rb", ".php", ".swift", ".lua", ".scala"]) {
+  for (const ext of [".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".java", ".kt", ".cs", ".pas", ".go", ".rs", ".rb", ".php", ".swift", ".lua", ".scala", ".pl", ".pm", ".vb", ".bas"]) {
     const withExt = filePathMap.get(candidate + ext);
     if (withExt) return withExt;
   }

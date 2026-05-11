@@ -61,7 +61,7 @@ async function ensureInit(): Promise<void> {
 }
 
 /** Languages that have tree-sitter grammars (excludes non-parseable and regex-only formats) */
-export type TreeSitterLanguage = Exclude<Language, "dfm" | "swift" | "lua" | "scala" | "go" | "rust" | "ruby" | "php">;
+export type TreeSitterLanguage = Exclude<Language, "dfm" | "swift" | "lua" | "scala" | "go" | "rust" | "ruby" | "php" | "perl" | "vb">;
 
 /** Resolve the grammar key, using tsx for .tsx/.jsx files */
 function resolveGrammarKey(language: TreeSitterLanguage, filePath?: string): GrammarKey {

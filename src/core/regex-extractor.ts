@@ -13,6 +13,8 @@ import { phpSpec } from "../extractors/plugins/php/index.js";
 import { swiftSpec } from "../extractors/plugins/swift/index.js";
 import { luaSpec } from "../extractors/plugins/lua/index.js";
 import { scalaSpec } from "../extractors/plugins/scala/index.js";
+import { perlSpec } from "../extractors/plugins/perl/index.js";
+import { vbSpec } from "../extractors/plugins/vb/index.js";
 
 /** Registry of language specs keyed by Language. */
 const SPECS: Partial<Record<Language, RegexLangSpec>> = {
@@ -23,6 +25,8 @@ const SPECS: Partial<Record<Language, RegexLangSpec>> = {
   swift: swiftSpec,
   lua: luaSpec,
   scala: scalaSpec,
+  perl: perlSpec,
+  vb: vbSpec,
 };
 
 /**
@@ -41,10 +45,23 @@ export function extractWithRegex(
   const lines = sourceText.split("\n");
 
   analysis.functions = extractFunctionsWithSpec(lines, spec);
-  analysis.classes = extractClassesWithSpec(lines, spec);
+  analysis.classes = spec.extractClasses
+    ? spec.extractClasses(lines, analysis.functions)
+    : extractClassesWithSpec(lines, spec);
+  // When classes have methods (e.g. Perl file-scoped packages), remove those methods
+  // from the top-level functions list to avoid double-counting.
+  if (spec.extractClasses) {
+    const methodLines = new Set<number>();
+    for (const cls of analysis.classes) {
+      for (const m of cls.methods) methodLines.add(m.line);
+    }
+    analysis.functions = analysis.functions.filter((fn) => !methodLines.has(fn.line));
+  }
   analysis.imports = extractImportsWithSpec(lines, spec);
   analysis.exports = deriveExportsFromFnClasses(analysis.functions, analysis.classes);
   analysis.routes = spec.extractRoutes?.(lines, analysis.classes) ?? [];
+  analysis.screens = spec.extractScreens?.(lines, filePath, analysis.classes) ?? [];
+  analysis.dataSources = spec.extractDataSources?.(lines, analysis.classes) ?? [];
 
   return analysis;
 }

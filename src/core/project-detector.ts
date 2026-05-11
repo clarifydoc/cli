@@ -1,0 +1,173 @@
+import fg from "fast-glob";
+import { resolve } from "path";
+import type { SubProject, SubProjectKind } from "../types/analysis.js";
+
+/**
+ * Sub-project detection.
+ *
+ * A repository may contain multiple independent projects (monorepo packages,
+ * a Delphi client next to a .NET service, etc.). We detect them by looking
+ * for well-known marker files (package.json, *.csproj, *.dpr, pom.xml, ...).
+ *
+ * A file is assigned to the INNERMOST enclosing project — so a file inside
+ * `packages/api/src` belongs to `packages/api`, not the outer repo root.
+ * Files with no enclosing marker fall back to the synthetic "root" project.
+ */
+
+const MARKER_GLOBS: { pattern: string; kind: SubProjectKind }[] = [
+  { pattern: "**/package.json", kind: "node" },
+  { pattern: "**/*.csproj", kind: "dotnet" },
+  { pattern: "**/*.vbproj", kind: "dotnet" },
+  { pattern: "**/*.fsproj", kind: "dotnet" },
+  { pattern: "**/*.sln", kind: "dotnet" },
+  { pattern: "**/*.dpr", kind: "delphi" },
+  { pattern: "**/*.dpk", kind: "delphi" },
+  { pattern: "**/*.dproj", kind: "delphi" },
+  { pattern: "**/*.lpi", kind: "lazarus" },
+  { pattern: "**/*.lpr", kind: "lazarus" },
+  { pattern: "**/pom.xml", kind: "java-maven" },
+  { pattern: "**/build.gradle", kind: "java-gradle" },
+  { pattern: "**/build.gradle.kts", kind: "java-gradle" },
+  { pattern: "**/Cargo.toml", kind: "rust" },
+  { pattern: "**/go.mod", kind: "go" },
+  { pattern: "**/pyproject.toml", kind: "python" },
+  { pattern: "**/setup.py", kind: "python" },
+  { pattern: "**/requirements.txt", kind: "python" },
+  { pattern: "**/composer.json", kind: "php" },
+  { pattern: "**/Gemfile", kind: "ruby" },
+  { pattern: "**/Package.swift", kind: "swift" },
+];
+
+const MARKER_IGNORE = [
+  "**/node_modules/**",
+  "**/dist/**",
+  "**/build/**",
+  "**/out/**",
+  "**/.git/**",
+  "**/bin/**",
+  "**/obj/**",
+  "**/__pycache__/**",
+  "**/.venv/**",
+  "**/venv/**",
+  "**/vendor/**",
+  "**/target/**",
+  "**/Pods/**",
+];
+
+/**
+ * Primary-kind priority: when a directory contains multiple marker kinds
+ * (e.g. a .NET project with a `package.json` for frontend tooling), pick
+ * the more specific one. `node` is last so repo-root `package.json` only
+ * wins when nothing else applies.
+ */
+const KIND_PRIORITY: SubProjectKind[] = [
+  "delphi",
+  "lazarus",
+  "dotnet",
+  "java-maven",
+  "java-gradle",
+  "rust",
+  "go",
+  "python",
+  "php",
+  "ruby",
+  "swift",
+  "node",
+];
+
+/** Detect all sub-projects under `projectRoot` by scanning for marker files. */
+export async function detectSubProjects(
+  projectRoot: string,
+): Promise<SubProject[]> {
+  const root = resolve(projectRoot);
+
+  const byDir = new Map<
+    string,
+    { kinds: Set<SubProjectKind>; markers: Set<string> }
+  >();
+
+  for (const { pattern, kind } of MARKER_GLOBS) {
+    const matches = await fg(pattern, {
+      cwd: root,
+      ignore: MARKER_IGNORE,
+      absolute: false,
+      dot: false,
+    });
+    for (const match of matches) {
+      const norm = match.replace(/\\/g, "/");
+      const lastSlash = norm.lastIndexOf("/");
+      const dir = lastSlash >= 0 ? norm.slice(0, lastSlash) : "";
+      let entry = byDir.get(dir);
+      if (!entry) {
+        entry = { kinds: new Set(), markers: new Set() };
+        byDir.set(dir, entry);
+      }
+      entry.kinds.add(kind);
+      entry.markers.add(norm);
+    }
+  }
+
+  const subProjects: SubProject[] = [];
+  for (const [dir, info] of byDir) {
+    const primaryKind = pickPrimaryKind(info.kinds);
+    const name = dir === "" ? "(root)" : dir.split("/").pop()!;
+    subProjects.push({
+      id: dir === "" ? "root" : slugify(dir),
+      name,
+      root: dir,
+      kind: primaryKind,
+      markers: [...info.markers].sort(),
+    });
+  }
+
+  // Always provide a "root" fallback so files without any enclosing marker
+  // have somewhere to live. If the repo root already has a marker, the
+  // fallback is not needed — assignProjectId will find the real project.
+  if (!subProjects.some((p) => p.id === "root")) {
+    subProjects.push({
+      id: "root",
+      name: "(root)",
+      root: "",
+      kind: "root",
+      markers: [],
+    });
+  }
+
+  subProjects.sort((a, b) => a.root.localeCompare(b.root));
+  return subProjects;
+}
+
+function pickPrimaryKind(kinds: Set<SubProjectKind>): SubProjectKind {
+  for (const k of KIND_PRIORITY) if (kinds.has(k)) return k;
+  return "root";
+}
+
+function slugify(p: string): string {
+  const slug = p
+    .replace(/\\/g, "/")
+    .replace(/[^A-Za-z0-9/_-]/g, "-")
+    .replace(/\/+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return slug || "root";
+}
+
+/**
+ * Return the id of the innermost sub-project whose root is an ancestor of
+ * `filePath`. Falls back to "root" if no project encloses the file.
+ */
+export function assignProjectId(
+  filePath: string,
+  subProjects: SubProject[],
+): string {
+  const normalized = filePath.replace(/\\/g, "/");
+  let best: SubProject | null = null;
+  for (const sp of subProjects) {
+    if (sp.root === "") continue;
+    const prefix = sp.root.endsWith("/") ? sp.root : sp.root + "/";
+    if (normalized === sp.root || normalized.startsWith(prefix)) {
+      if (!best || sp.root.length > best.root.length) best = sp;
+    }
+  }
+  return best ? best.id : "root";
+}

@@ -27,6 +27,12 @@ export const EXTENSION_TO_LANGUAGE: Record<string, Language> = {
   ".swift": "swift",
   ".lua": "lua",
   ".scala": "scala",
+  ".pl": "perl",
+  ".pm": "perl",
+  ".vb": "vb",
+  ".bas": "vb",
+  ".cls": "vb",
+  ".frm": "vb",
 };
 
 /** Get language for a file path based on its extension */

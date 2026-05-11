@@ -1,5 +1,6 @@
-import type { RouteInfo, ClassInfo } from "../../../types/analysis.js";
+import type { RouteInfo, ClassInfo, FunctionInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
+import { extractClassesWithSpec } from "../shared/regex-base.js";
 
 /** Rails RESTful action → HTTP method + URL shape */
 const RAILS_ACTION_MAP: Record<string, { method: string; suffix: string }> = {
@@ -24,6 +25,18 @@ export const rubySpec: RegexLangSpec = {
     },
   ],
 
+  // Ruby: `self.service.method()` and `ClassName.method()`
+  callPatterns: [
+    {
+      pattern: /self\.(\w+)\.(\w+)\s*\(/,
+      buildName: (m) => ({ name: `self.${m[1]}.${m[2]}`, leafName: m[2] }),
+    },
+    {
+      pattern: /\b([A-Z]\w+)\.(\w+)\s*\(/,
+      buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2] }),
+    },
+  ],
+
   classPatterns: [
     {
       pattern: /^\s*class\s+([A-Z]\w*)/,
@@ -34,6 +47,41 @@ export const rubySpec: RegexLangSpec = {
     },
     { pattern: /^\s*module\s+([A-Z]\w*)/, getExtends: () => null },
   ],
+
+  /**
+   * Wrap the generic class extractor to attach module mixins
+   * (`include`/`extend`/`prepend`) as `implements` edges. Ruby's mixin model
+   * is closer to interface-implementation than inheritance, so this maps
+   * naturally onto the existing field.
+   */
+  extractClasses: (lines: string[], fns: FunctionInfo[]) => {
+    const classes = extractClassesWithSpec(lines, rubySpec);
+    if (classes.length === 0) return classes;
+
+    for (const cls of classes) {
+      // Scan the class body for include/extend/prepend statements.
+      // Each one names a module that ought to count as a relationship for
+      // the data-model graph. Lines outside the class's body range are
+      // ignored, so module mixins from sibling classes don't bleed.
+      const seen = new Set<string>(cls.implements ?? []);
+      for (let i = cls.line; i < cls.endLine && i < lines.length; i++) {
+        const line = lines[i] ?? "";
+        // include Foo, Bar    /   extend Foo    /   prepend Foo
+        const mixinMatch = line.match(/^\s*(include|extend|prepend)\s+([A-Z][\w:]*(?:\s*,\s*[A-Z][\w:]*)*)/);
+        if (!mixinMatch) continue;
+        for (const name of mixinMatch[2]!.split(",").map((s) => s.trim()).filter(Boolean)) {
+          if (!seen.has(name)) {
+            seen.add(name);
+            cls.implements.push(name);
+          }
+        }
+      }
+    }
+    // Suppress the now-duplicated methods from the top-level functions list,
+    // mirroring what regex-extractor.ts does for any spec providing
+    // extractClasses.
+    return classes;
+  },
 
   importPatterns: [
     {

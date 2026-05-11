@@ -5,6 +5,7 @@ import type {
   Language,
   LspStats,
 } from "../types/analysis.js";
+import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
 import type { DiscoveredFile } from "../core/file-discovery.js";
 import { LspManager } from "./lsp-manager.js";
 
@@ -216,6 +217,7 @@ async function resolveUnresolvedCalls(
             targetSymbol: item.call.name,
             targetLine: def.line + 1, // Convert back to 1-based
             resolvedBy: "lsp",
+            confidence: "INFERRED",
           });
           resolvedCount++;
         }
@@ -333,6 +335,7 @@ async function findReferences(
             targetSymbol: sym.name,
             targetLine: sym.line,
             resolvedBy: "lsp",
+            confidence: "INFERRED",
           });
         }
       } catch {
@@ -366,14 +369,22 @@ function shouldSkipCall(
 }
 
 function deduplicateLinks(links: SymbolLink[]): SymbolLink[] {
-  const seen = new Set<string>();
+  // Keep the highest-confidence entry per key so an AST-EXTRACTED link is never
+  // silently overwritten by an LSP-INFERRED duplicate that happened to arrive later.
+  const seen = new Map<string, number>();
   const deduped: SymbolLink[] = [];
 
   for (const link of links) {
     const key = `${link.sourceFile}::${link.sourceSymbol}::${link.targetFile}::${link.targetSymbol}::${link.callName}`;
-    if (!seen.has(key)) {
-      seen.add(key);
+    const existingIdx = seen.get(key);
+    if (existingIdx === undefined) {
+      seen.set(key, deduped.length);
       deduped.push(link);
+    } else {
+      const existing = deduped[existingIdx]!;
+      const existingRank = existing.confidence ? CONFIDENCE_RANK[existing.confidence] : 0;
+      const newRank = link.confidence ? CONFIDENCE_RANK[link.confidence] : 0;
+      if (newRank > existingRank) deduped[existingIdx] = link;
     }
   }
 

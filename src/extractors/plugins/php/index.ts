@@ -24,6 +24,41 @@ export const phpSpec: RegexLangSpec = {
     },
   ],
 
+  // PHP: `$this->service->method()` and `ClassName::method()` patterns
+  callPatterns: [
+    {
+      pattern: /\$this->(\w+)->(\w+)\s*\(/,
+      buildName: (m) => ({ name: `this.${m[1]}.${m[2]}`, leafName: m[2] }),
+    },
+    {
+      pattern: /\b([A-Z]\w+)::(\w+)\s*\(/,
+      buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2] }),
+    },
+  ],
+
+  // PHP: `private Type $name;` and `public Type $name;`
+  propertyPatterns: [
+    {
+      pattern: /\b(public|private|protected)\s+(\w+)\s+\$(\w+)/,
+      build: (m, line) => ({
+        name: m[3],
+        type: m[2],
+        visibility: m[1] as "public" | "private" | "protected",
+        isStatic: line.includes("static"),
+        isReadonly: line.includes("readonly"),
+      }),
+    },
+  ],
+
+  // PHP: `Type $name` or `$name` parameters
+  parseParam: (p) => {
+    const trimmed = p.trim();
+    if (!trimmed) return null;
+    const m = trimmed.match(/(?:(\w+)\s+)?\$(\w+)/);
+    if (!m) return null;
+    return { name: m[2], type: m[1] ?? null, defaultValue: null };
+  },
+
   classPatterns: [
     {
       pattern: /(?:abstract\s+)?class\s+([A-Z]\w*)/,

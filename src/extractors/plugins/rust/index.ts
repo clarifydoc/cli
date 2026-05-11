@@ -1,4 +1,26 @@
+import type { ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
+import { stripTypeModifiers } from "../../shared/type-parser.js";
+
+/** Bare the Rust type identifier — `&'a mut User` / `*const User` → `User`. */
+function stripRustTypeModifiers(raw: string): string {
+  return stripTypeModifiers(raw, "rust");
+}
+
+function parseRustParam(paramText: string): ParamInfo | null {
+  const trimmed = paramText.trim();
+  if (!trimmed) return null;
+  if (trimmed === "self" || trimmed === "&self" || trimmed === "&mut self") return null;
+  const m = trimmed.match(/^(?:mut\s+)?([a-zA-Z_]\w*)\s*:\s*(.+)$/);
+  if (!m) return null;
+  return { name: m[1]!, type: stripRustTypeModifiers(m[2]!), defaultValue: null };
+}
+
+function parseRustReturnType(line: string): string | null {
+  const m = line.match(/->\s*([^{]+?)(?:\s+where\s|\s*\{|\s*;|\s*$)/);
+  if (!m || !m[1]) return null;
+  return stripRustTypeModifiers(m[1].trim());
+}
 
 export const rustSpec: RegexLangSpec = {
   language: "rust",
@@ -10,6 +32,32 @@ export const rustSpec: RegexLangSpec = {
       pattern: /(?:pub\s+)?(?:async\s+)?fn\s+([a-zA-Z_]\w*)\s*[<(]/,
       isExported: (line) => line.trimStart().startsWith("pub"),
       isAsync: (line) => line.includes("async "),
+    },
+  ],
+
+  parseParam: parseRustParam,
+  parseReturnType: parseRustReturnType,
+
+  /**
+   * Struct fields: `pub name: Type,` or `name: Type,`. Trailing comma
+   * optional but rust-fmt always emits it.
+   */
+  propertyPatterns: [
+    {
+      pattern: /^\s+(?:pub(?:\([^)]+\))?\s+)?([a-zA-Z_]\w*)\s*:\s*([^,\n]+?),?\s*$/,
+      build: (m): PropertyInfo | null => {
+        const name = m[1]!;
+        const rawType = m[2]!.trim();
+        if (!rawType) return null;
+        if (/[{(]/.test(rawType)) return null;
+        return {
+          name,
+          type: stripRustTypeModifiers(rawType),
+          visibility: "public",
+          isStatic: false,
+          isReadonly: false,
+        };
+      },
     },
   ],
 

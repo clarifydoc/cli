@@ -1,5 +1,6 @@
-import type { FileAnalysis, SymbolLink, CallInfo } from "../types/analysis.js";
+import type { FileAnalysis, SymbolLink, CallInfo, Confidence } from "../types/analysis.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
+import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
 
 interface SymbolDef {
   name: string;
@@ -67,7 +68,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
         if (handlerLink) {
           links.push(handlerLink);
         } else {
-          // Fallback: search all files for the handler name
+          // Fallback: search all files for the handler name — best-effort, no import proof.
           for (const [filePath, syms] of symbolIndex) {
             const def = syms.get(handlerName);
             if (def) {
@@ -79,6 +80,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
                 targetFile: filePath,
                 targetSymbol: def.name,
                 targetLine: def.line,
+                confidence: "AMBIGUOUS",
               });
               break;
             }
@@ -110,14 +112,22 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
   const reverseLinks = buildReverseReferenceLinks(analyses, filePathMap, symbolIndex);
   links.push(...reverseLinks);
 
-  // Deduplicate links (same source→target with same call can appear from handler + calls)
-  const seen = new Set<string>();
+  // Deduplicate links (same source→target with same call can appear from handler + calls).
+  // Keep the highest-confidence entry per key — a directly-extracted match should win
+  // over a fallback heuristic that happened to fire first.
+  const seen = new Map<string, number>();
   const deduped: SymbolLink[] = [];
   for (const link of links) {
     const key = `${link.sourceFile}::${link.sourceSymbol}::${link.targetFile}::${link.targetSymbol}::${link.callName}`;
-    if (!seen.has(key)) {
-      seen.add(key);
+    const existingIdx = seen.get(key);
+    if (existingIdx === undefined) {
+      seen.set(key, deduped.length);
       deduped.push(link);
+    } else {
+      const existing = deduped[existingIdx]!;
+      const existingRank = existing.confidence ? CONFIDENCE_RANK[existing.confidence] : 0;
+      const newRank = link.confidence ? CONFIDENCE_RANK[link.confidence] : 0;
+      if (newRank > existingRank) deduped[existingIdx] = link;
     }
   }
 
@@ -236,8 +246,11 @@ function buildInjectionMap(
   const map = new Map<string, { typeName: string; typeFile: string }>();
   for (const a of analyses) {
     for (const cls of a.classes) {
-      // Check constructor params for typed dependencies
-      const ctor = cls.methods.find((m) => m.name === "constructor" || m.name === "__init__" || m.name === "__construct");
+      // Check constructor params for typed dependencies (various language conventions)
+      const ctor = cls.methods.find((m) =>
+        m.name === "constructor" || m.name === "__init__" ||
+        m.name === "__construct" || m.name === "New" || m.name === "new",
+      );
       if (ctor) {
         for (const param of ctor.params) {
           if (param.type) {
@@ -305,15 +318,23 @@ function resolveCallToDefinition(
   if (!fileSymbols) return null;
 
   // Extract leaf name: "userStore.fetchUsers" → "fetchUsers"
-  const leafName = call.name.includes(".")
-    ? call.name.split(".").pop()!
-    : call.name;
+  const isQualified = call.name.includes(".");
+  const leafName = isQualified ? call.name.split(".").pop()! : call.name;
 
-  // Try exact call name first, then leaf name
-  let def = fileSymbols.get(call.name) ?? fileSymbols.get(leafName);
+  // Try exact call name first. For unqualified calls, fall back to the leaf name —
+  // this resolves cases like route handlers that reference a method by bare name.
+  // For qualified calls, we deliberately DON'T fall back to leaf-name lookup here:
+  // a qualified call like `_http.PostAsync` should only resolve when the prefix
+  // is known (via injection tracking, inheritance, or ClassName.method patterns).
+  // Same-file leaf matching for qualified calls causes false self-links.
+  let def = fileSymbols.get(call.name);
+  if (!def && !isQualified) {
+    def = fileSymbols.get(leafName);
+  }
 
   // ── Strategy 1: Inheritance resolution ──
-  // If not found in current file and call is internal, walk up the class hierarchy
+  // If not found in current file and call is internal, walk up the class hierarchy.
+  // Inherited methods are not explicitly named at the call site — INFERRED.
   if (!def && call.kind === "internal") {
     const currentClasses = analysis.classes;
     for (const cls of currentClasses) {
@@ -334,6 +355,7 @@ function resolveCallToDefinition(
               targetFile: parentInfo.parentFile,
               targetSymbol: parentDef.name,
               targetLine: parentDef.line,
+              confidence: "INFERRED",
             };
           }
         }
@@ -344,7 +366,8 @@ function resolveCallToDefinition(
   }
 
   // ── Strategy 2: Dependency injection resolution ──
-  // For qualified calls like "this.authService.authenticate" or "authService.authenticate"
+  // For qualified calls like "this.authService.authenticate" — resolved via the
+  // declared parameter/property type, not via an explicit import of the method.
   if (!def && call.name.includes(".")) {
     const parts = call.name.split(".");
     // Try various prefixes: "this.authService", "authService", "self.service"
@@ -368,6 +391,7 @@ function resolveCallToDefinition(
               targetFile: injection.typeFile,
               targetSymbol: injDef.name,
               targetLine: injDef.line,
+              confidence: "INFERRED",
             };
           }
         }
@@ -394,7 +418,8 @@ function resolveCallToDefinition(
   }
 
   // ── Strategy 4: ClassName.method resolution for static/class methods ──
-  // For calls like "UserService.find_by_id" or "User.find" — resolve class to its file
+  // For calls like "UserService.find_by_id" — searches all files for the class.
+  // Without an explicit import this is at best INFERRED.
   if (!def && call.name.includes(".")) {
     const parts = call.name.split(".");
     const className = parts[0];
@@ -413,6 +438,7 @@ function resolveCallToDefinition(
             targetFile: filePath,
             targetSymbol: classDef.name,
             targetLine: classDef.line,
+            confidence: "INFERRED",
           };
         }
       }
@@ -421,7 +447,15 @@ function resolveCallToDefinition(
 
   if (!def) return null;
 
-  return {
+  // Default path: a definition matched by exact name in the resolved target file.
+  // For cross-file calls the confidence inherits from the call's import-side classification;
+  // for same-file internal calls the symbol is directly visible — EXTRACTED.
+  const linkConfidence: Confidence | undefined =
+    call.kind === "cross-file"
+      ? call.confidence
+      : (call.kind === "internal" ? "EXTRACTED" : undefined);
+
+  const link: SymbolLink = {
     sourceFile,
     sourceSymbol,
     sourceLine: call.line,
@@ -430,6 +464,8 @@ function resolveCallToDefinition(
     targetSymbol: def.name,
     targetLine: def.line,
   };
+  if (linkConfidence) link.confidence = linkConfidence;
+  return link;
 }
 
 /**
@@ -457,6 +493,7 @@ function buildReverseReferenceLinks(
       for (const spec of imp.specifiers) {
         const def = targetSymbols.get(spec);
         if (def) {
+          // Reference reverse-link: an explicit import with matching named specifier.
           links.push({
             sourceFile: analysis.filePath,
             sourceSymbol: "(reference)",
@@ -465,6 +502,7 @@ function buildReverseReferenceLinks(
             targetFile,
             targetSymbol: def.name,
             targetLine: def.line,
+            confidence: "EXTRACTED",
           });
         }
       }

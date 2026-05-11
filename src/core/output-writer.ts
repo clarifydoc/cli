@@ -1,6 +1,34 @@
 import { writeFile, mkdir } from "fs/promises";
 import { resolve, dirname, join } from "path";
-import type { FileAnalysis, ProjectAnalysis } from "../types/analysis.js";
+import type {
+  FileAnalysis,
+  ProjectAnalysis,
+  LspStats,
+  SymbolLink,
+  BlastRadiusInfo,
+  LinkInfo,
+} from "../types/analysis.js";
+import { validateFileAnalysis } from "./fileanalysis-validator.js";
+
+/**
+ * LSP enhancement delta — written as a SEPARATE file from the base summary
+ * so that `analyze --no-lsp` and `lsp-update` can run independently in parallel.
+ * When an HTML report is generated, it merges this delta onto the base summary.
+ */
+export interface LspEnhancement {
+  /** Merged symbolLinks (text + LSP) — full replacement of base summary's field. */
+  symbolLinks: SymbolLink[];
+  /** Enriched componentGraph (base edges + edges derived from new symbolLinks). */
+  componentGraph: Record<string, string[]>;
+  /** Enriched linkGraph matching componentGraph. */
+  linkGraph: LinkInfo[];
+  /** Recomputed blast radius (depends on enriched graph + symbolLinks). */
+  blastRadius: BlastRadiusInfo[];
+  /** Stats describing LSP servers used and counts. */
+  lspStats: LspStats;
+  /** ISO timestamp of when the enhancement was produced. */
+  enhancedAt: string;
+}
 
 export interface OutputOptions {
   outputDir: string;
@@ -17,6 +45,14 @@ export async function writeFileAnalysis(
 ): Promise<string> {
   const outPath = resolve(options.outputDir, `${analysis.filePath}.json`);
   await mkdir(dirname(outPath), { recursive: true });
+
+  // Run schema validation once per file. Warnings are collected, not thrown —
+  // an extractor producing malformed output should still produce visible output
+  // with the issue flagged inline.
+  const warnings = validateFileAnalysis(analysis);
+  if (warnings.length > 0) {
+    analysis.extractorWarnings = warnings;
+  }
 
   const json = options.pretty
     ? JSON.stringify(analysis, null, 2)
@@ -40,6 +76,25 @@ export async function writeProjectSummary(
   const json = options.pretty
     ? JSON.stringify(summary, null, 2)
     : JSON.stringify(summary);
+
+  await writeFile(outPath, json, "utf-8");
+  return outPath;
+}
+
+/**
+ * Write the LSP enhancement delta.
+ * Creates: <outputDir>/lsp-enhancement.json
+ */
+export async function writeLspEnhancement(
+  enhancement: LspEnhancement,
+  options: OutputOptions,
+): Promise<string> {
+  const outPath = join(resolve(options.outputDir), "lsp-enhancement.json");
+  await mkdir(dirname(outPath), { recursive: true });
+
+  const json = options.pretty
+    ? JSON.stringify(enhancement, null, 2)
+    : JSON.stringify(enhancement);
 
   await writeFile(outPath, json, "utf-8");
   return outPath;

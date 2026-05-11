@@ -24,7 +24,7 @@ Docker containers are tagged `reversedoc-lsp-<lang>`. Images are cached between 
 
 ## Supported languages
 
-See [lsp-configs.ts](lsp-configs.ts). Currently: TypeScript (tsserver), Python (Pyright), Java (jdtls), C# (OmniSharp), Kotlin (kotlin-language-server), Go (gopls), Rust (rust-analyzer), Ruby (Solargraph), PHP (Intelephense).
+See [lsp-configs.ts](lsp-configs.ts). Currently: TypeScript (tsserver), Python (Pyright), Java (jdtls), .NET C#/VB (Roslyn `Microsoft.CodeAnalysis.LanguageServer` — `misterkiem/roslyn-plusvb` fork that patches VB libs into the upstream server; single container serves both `.cs` and `.vb`), Kotlin (kotlin-language-server), Go (gopls), Rust (rust-analyzer), Ruby (Solargraph), PHP (Intelephense), Pascal/Delphi (`genericptr/pascal-language-server` — FPC-based `pasls`, built from source against Lazarus trunk CodeTools; handles `.pas/.pp/.dpr/.dpk/.lpr/.inc` in Delphi mode, but RTL-only: Delphi-exclusive namespaces like `VCL.*`/`FMX.*` won't fully resolve).
 
 Each language has a Dockerfile in `../../docker/<lang>/`.
 

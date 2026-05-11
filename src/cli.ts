@@ -30,6 +30,7 @@ program
   .option("--no-lsp", "Disable LSP-based symbol resolution")
   .option("--lsp-timeout <ms>", "Timeout for LSP server startup in ms", parseInt)
   .option("--html", "Generate an HTML report after analysis", false)
+  .option("--incremental", "Reuse cached per-file analysis for unchanged files (mtime + SHA-256)", false)
   .action(async (path: string, options) => {
     const projectRoot = resolve(path);
     const projectName = projectRoot.replace(/\\/g, "/").split("/").pop()!;
@@ -52,6 +53,7 @@ program
         dryRun: options.dryRun,
         lsp: options.lsp,
         lspTimeout: options.lspTimeout,
+        incremental: options.incremental,
       });
 
       if (options.dryRun) {
@@ -90,6 +92,39 @@ program
           console.log(`  Report: ${reportPath}`);
         }
       }
+    } catch (err) {
+      console.error("Error:", (err as Error).message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("lsp-update")
+  .description("Run LSP enhancement on an existing analysis. Writes lsp-enhancement.json alongside project-summary.json.")
+  .argument("<analysis-dir>", "Path to analysis output directory (contains project-summary.json)")
+  .option("--pretty", "Pretty-print JSON output", true)
+  .option("--no-pretty", "Output compact JSON (no formatting)")
+  .option("--verbose", "Show progress and debug info", false)
+  .option("--lsp-timeout <ms>", "Timeout for LSP server startup in ms", parseInt)
+  .option("--project-root <path>", "Override projectRoot (otherwise read from summary)")
+  .action(async (analysisDir: string, options) => {
+    try {
+      const { updateLsp } = await import("./core/lsp-updater.js");
+      const dir = resolve(analysisDir);
+      if (options.verbose) console.log(`LSP update: ${dir}`);
+      const result = await updateLsp({
+        analysisDir: dir,
+        projectRoot: options.projectRoot ? resolve(options.projectRoot) : undefined,
+        pretty: options.pretty,
+        verbose: options.verbose,
+        lspTimeout: options.lspTimeout,
+      });
+      console.log(`Done. LSP enhancement written.`);
+      console.log(`  Servers: ${result.serversUsed.join(", ") || "(none)"}`);
+      console.log(`  +Defs:   ${result.lspResolvedCount}`);
+      console.log(`  +Refs:   ${result.referenceLinksCount}`);
+      console.log(`  Time:    ${(result.elapsedMs / 1000).toFixed(1)}s`);
+      console.log(`  Output:  ${result.outputPath}`);
     } catch (err) {
       console.error("Error:", (err as Error).message);
       process.exit(1);

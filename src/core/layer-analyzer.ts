@@ -1,15 +1,19 @@
 import type { FileAnalysis, ArchLayer, LayerViolation } from "../types/analysis.js";
 
-/** Layer assignment patterns: regex → layer */
+/**
+ * Layer assignment patterns: regex → layer.
+ * Match the directory name whether it appears at the start of the path
+ * or between separators.
+ */
 const LAYER_PATTERNS: [RegExp, ArchLayer][] = [
-  [/[/\\](pages|views|screens|app)[/\\]/i, "ui"],
-  [/[/\\](components|widgets)[/\\]/i, "components"],
-  [/[/\\](services|api|clients|hooks|controllers?|endpoints?|routers?)[/\\]/i, "services"],
-  [/[/\\](middleware|handlers?|signals?)[/\\]/i, "services"],
-  [/[/\\](models?|entities|repositories|stores?|data|schemas?|serializers?|migrations?)[/\\]/i, "data"],
-  [/[/\\](utils?|helpers?|lib|shared|common)[/\\]/i, "utils"],
-  [/[/\\](config|settings|constants|env)[/\\]/i, "config"],
-  [/[/\\](tests?|__tests__|spec|__mocks__|fixtures)[/\\]/i, "test"],
+  [/(?:^|[/\\])(pages|views|screens|forms|app)[/\\]/i, "ui"],
+  [/(?:^|[/\\])(components|widgets)[/\\]/i, "components"],
+  [/(?:^|[/\\])(services|api|clients|hooks|controllers?|endpoints?|routers?)[/\\]/i, "services"],
+  [/(?:^|[/\\])(middleware|handlers?|signals?)[/\\]/i, "services"],
+  [/(?:^|[/\\])(models?|entities|repositories|stores?|data|schemas?|serializers?|migrations?)[/\\]/i, "data"],
+  [/(?:^|[/\\])(utils?|helpers?|lib|shared|common)[/\\]/i, "utils"],
+  [/(?:^|[/\\])(config|settings|constants|env)[/\\]/i, "config"],
+  [/(?:^|[/\\])(tests?|__tests__|spec|__mocks__|fixtures)[/\\]/i, "test"],
 ];
 
 /** Layer hierarchy — lower number = lower layer */
