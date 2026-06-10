@@ -2,6 +2,7 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
 
 export const luaSpec: RegexLangSpec = {
   language: "lua",
+  extensions: [".lua"],
   indentBased: true,
   lineCommentPrefixes: ["--"],
 

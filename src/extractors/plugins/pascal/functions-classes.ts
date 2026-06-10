@@ -21,8 +21,7 @@ export class PascalExtractor extends FunctionClassExtractor {
 
   /** Walk the implementation section to collect calls from method bodies */
   private buildMethodCallsMap(node: Node): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
       if (child.type === "defProc") {
         const declProc = this.findChildByType(child, "declProc");
         if (declProc && this.isPascalMethodDef(declProc)) {
@@ -45,12 +44,10 @@ export class PascalExtractor extends FunctionClassExtractor {
 
   /** Get "ClassName.MethodName" key from a method declProc's genericDot */
   private getMethodKey(declProc: Node): string | null {
-    for (let i = 0; i < declProc.childCount; i++) {
-      const child = declProc.child(i)!;
+    for (const child of declProc.children) {
       if (child.type === "genericDot") {
         const parts: string[] = [];
-        for (let j = 0; j < child.childCount; j++) {
-          const part = child.child(j)!;
+        for (const part of child.children) {
           if (part.type === "identifier") parts.push(part.text);
         }
         if (parts.length >= 2) return parts.join(".");
@@ -60,8 +57,7 @@ export class PascalExtractor extends FunctionClassExtractor {
   }
 
   private extractPascalFunctions(node: Node, functions: FunctionInfo[]): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       if (child.type === "defProc") {
         const declProc = this.findChildByType(child, "declProc");
@@ -83,8 +79,8 @@ export class PascalExtractor extends FunctionClassExtractor {
   }
 
   private isPascalMethodDef(declProc: Node): boolean {
-    for (let i = 0; i < declProc.childCount; i++) {
-      if (declProc.child(i)!.type === "genericDot") return true;
+    for (const child of declProc.children) {
+      if (child.type === "genericDot") return true;
     }
     return false;
   }
@@ -95,14 +91,12 @@ export class PascalExtractor extends FunctionClassExtractor {
     let isDestructor = false;
     let isFunction = false;
 
-    for (let i = 0; i < declProc.childCount; i++) {
-      const child = declProc.child(i)!;
+    for (const child of declProc.children) {
       if (child.type === "identifier") {
         name = child.text;
       } else if (child.type === "genericDot") {
         const parts: string[] = [];
-        for (let j = 0; j < child.childCount; j++) {
-          const part = child.child(j)!;
+        for (const part of child.children) {
           if (part.type === "identifier") parts.push(part.text);
         }
         name = parts[parts.length - 1] ?? "anonymous";
@@ -119,9 +113,10 @@ export class PascalExtractor extends FunctionClassExtractor {
 
     let returnType: string | null = null;
     if (isFunction) {
-      for (let i = 0; i < declProc.childCount; i++) {
-        const child = declProc.child(i)!;
-        if (child.type === "typeref" || (child.type === "type" && declProc.child(i - 1)?.type !== "declArg")) {
+      const kids = declProc.children;
+      for (let i = 0; i < kids.length; i++) {
+        const child = kids[i]!;
+        if (child.type === "typeref" || (child.type === "type" && kids[i - 1]?.type !== "declArg")) {
           returnType = child.text;
           break;
         }
@@ -146,11 +141,9 @@ export class PascalExtractor extends FunctionClassExtractor {
 
   private extractPascalParams(declProc: Node): ParamInfo[] {
     const params: ParamInfo[] = [];
-    for (let i = 0; i < declProc.childCount; i++) {
-      const child = declProc.child(i)!;
+    for (const child of declProc.children) {
       if (child.type === "declArgs") {
-        for (let j = 0; j < child.childCount; j++) {
-          const arg = child.child(j)!;
+        for (const arg of child.children) {
           if (arg.type === "declArg") {
             const argParams = this.parsePascalArg(arg);
             params.push(...argParams);
@@ -167,8 +160,7 @@ export class PascalExtractor extends FunctionClassExtractor {
     let hasDefault = false;
     let defaultValue: string | null = null;
 
-    for (let i = 0; i < arg.childCount; i++) {
-      const child = arg.child(i)!;
+    for (const child of arg.children) {
       if (child.type === "identifier") {
         names.push(child.text);
       } else if (child.type === "type") {
@@ -191,13 +183,11 @@ export class PascalExtractor extends FunctionClassExtractor {
   }
 
   private extractPascalClasses(node: Node, classes: ClassInfo[]): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       if (child.type === "declType") {
         const typeName = this.getPascalDeclTypeName(child);
-        for (let j = 0; j < child.childCount; j++) {
-          const inner = child.child(j)!;
+        for (const inner of child.children) {
           if (inner.type === "declClass") {
             classes.push(this.parsePascalClass(inner, typeName, child));
           } else if (inner.type === "declIntf") {
@@ -221,8 +211,7 @@ export class PascalExtractor extends FunctionClassExtractor {
   }
 
   private getPascalDeclTypeName(declType: Node): string {
-    for (let i = 0; i < declType.childCount; i++) {
-      const child = declType.child(i)!;
+    for (const child of declType.children) {
       if (child.type === "identifier") return child.text;
     }
     return "anonymous";
@@ -234,8 +223,7 @@ export class PascalExtractor extends FunctionClassExtractor {
     const methods: FunctionInfo[] = [];
     const properties: PropertyInfo[] = [];
 
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       if (child.type === "typeref" && !extendsName) {
         extendsName = child.text;
@@ -243,8 +231,7 @@ export class PascalExtractor extends FunctionClassExtractor {
 
       if (child.type === "declSection") {
         const visibility = this.getPascalSectionVisibility(child);
-        for (let j = 0; j < child.childCount; j++) {
-          const member = child.child(j)!;
+        for (const member of child.children) {
           if (member.type === "declProc") {
             const fn = this.parsePascalProc(member);
             fn.isExported = visibility === "public" || visibility === null;
@@ -288,8 +275,7 @@ export class PascalExtractor extends FunctionClassExtractor {
   private parsePascalInterface(node: Node, name: string, declTypeNode: Node): ClassInfo {
     const methods: FunctionInfo[] = [];
 
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
       if (child.type === "declProc") {
         methods.push(this.parsePascalProc(child));
       }
@@ -311,14 +297,15 @@ export class PascalExtractor extends FunctionClassExtractor {
   private getPascalSectionVisibility(
     section: Node,
   ): "public" | "private" | "protected" | null {
-    for (let i = 0; i < section.childCount; i++) {
-      const child = section.child(i)!;
+    const kids = section.children;
+    for (let i = 0; i < kids.length; i++) {
+      const child = kids[i]!;
       if (child.type === "kPrivate") return "private";
       if (child.type === "kPublic") return "public";
       if (child.type === "kProtected") return "protected";
       if (child.type === "kPublished") return "public";
       if (child.type === "kStrict") {
-        const next = section.child(i + 1);
+        const next = kids[i + 1];
         if (next?.type === "kPrivate") return "private";
         if (next?.type === "kProtected") return "protected";
       }
@@ -333,8 +320,7 @@ export class PascalExtractor extends FunctionClassExtractor {
     let name = "unknown";
     let type: string | null = null;
 
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
       if (child.type === "identifier") name = child.text;
       if (child.type === "type") type = child.text;
     }
@@ -356,8 +342,7 @@ export class PascalExtractor extends FunctionClassExtractor {
     let type: string | null = null;
     let hasWrite = false;
 
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
       if (child.type === "identifier" && name === "unknown") name = child.text;
       if (child.type === "type") type = child.text;
       if (child.type === "kWrite") hasWrite = true;

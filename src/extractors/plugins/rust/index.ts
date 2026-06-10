@@ -24,6 +24,7 @@ function parseRustReturnType(line: string): string | null {
 
 export const rustSpec: RegexLangSpec = {
   language: "rust",
+  extensions: [".rs"],
   indentBased: false,
   lineCommentPrefixes: ["//"],
 
@@ -37,6 +38,24 @@ export const rustSpec: RegexLangSpec = {
 
   parseParam: parseRustParam,
   parseReturnType: parseRustReturnType,
+
+  /**
+   * Rust qualified-call syntax — `Config::from_args()`, `<Type>::method()`.
+   * The baseline `name(` matcher only sees the leaf, so cross-file calls like
+   * `Config::from_args` would never link back to their definition. Capture the
+   * type prefix as a dotted name so the symbol linker's Class.method strategy
+   * can find it.
+   */
+  callPatterns: [
+    {
+      pattern: /\b([A-Z]\w*)::([a-zA-Z_]\w*)\s*\(/g,
+      buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2]! }),
+    },
+    {
+      pattern: /\bSelf::([a-zA-Z_]\w*)\s*\(/g,
+      buildName: (m) => ({ name: `Self.${m[1]}`, leafName: m[1]! }),
+    },
+  ],
 
   /**
    * Struct fields: `pub name: Type,` or `name: Type,`. Trailing comma

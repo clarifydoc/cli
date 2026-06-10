@@ -23,8 +23,8 @@ function walkForJavaKotlinRoutes(node: Node, routes: RouteInfo[], classPrefix: s
   if (node.type === "class_declaration" || node.type === "class_definition") {
     const prefix = extractClassRequestMappingPath(node);
     // Recurse into the class body with the prefix
-    for (let i = 0; i < node.childCount; i++) {
-      walkForJavaKotlinRoutes(node.child(i)!, routes, prefix || classPrefix);
+    for (const child of node.children) {
+      walkForJavaKotlinRoutes(child, routes, prefix || classPrefix);
     }
     return;
   }
@@ -39,8 +39,7 @@ function walkForJavaKotlinRoutes(node: Node, routes: RouteInfo[], classPrefix: s
     const lang = node.type === "function_declaration" ? "kotlin" as const : "java" as const;
     const bodyCalls = extractCalls(body, lang);
 
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
       if (
         child.type === "annotation" ||
         child.type === "marker_annotation" ||
@@ -50,8 +49,7 @@ function walkForJavaKotlinRoutes(node: Node, routes: RouteInfo[], classPrefix: s
         if (route) routes.push(route);
       }
       if (child.type === "modifiers") {
-        for (let j = 0; j < child.childCount; j++) {
-          const mod = child.child(j)!;
+        for (const mod of child.children) {
           if (
             mod.type === "annotation" ||
             mod.type === "marker_annotation" ||
@@ -65,8 +63,8 @@ function walkForJavaKotlinRoutes(node: Node, routes: RouteInfo[], classPrefix: s
     }
   }
 
-  for (let i = 0; i < node.childCount; i++) {
-    walkForJavaKotlinRoutes(node.child(i)!, routes, classPrefix);
+  for (const child of node.children) {
+    walkForJavaKotlinRoutes(child, routes, classPrefix);
   }
 }
 
@@ -75,8 +73,7 @@ function walkForJavaKotlinRoutes(node: Node, routes: RouteInfo[], classPrefix: s
  * Looks through class modifiers for @RequestMapping("/api/users") etc.
  */
 function extractClassRequestMappingPath(classNode: Node): string | null {
-  for (let i = 0; i < classNode.childCount; i++) {
-    const child = classNode.child(i)!;
+  for (const child of classNode.children) {
 
     // Direct annotation on the class
     const path = extractRequestMappingPath(child);
@@ -84,8 +81,7 @@ function extractClassRequestMappingPath(classNode: Node): string | null {
 
     // Annotations inside a modifiers node
     if (child.type === "modifiers") {
-      for (let j = 0; j < child.childCount; j++) {
-        const mod = child.child(j)!;
+      for (const mod of child.children) {
         const modPath = extractRequestMappingPath(mod);
         if (modPath) return modPath;
       }
@@ -109,8 +105,7 @@ function extractRequestMappingPath(node: Node): string | null {
   if (nameNode) {
     annotationName = nameNode.text;
   } else {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
       if (child.type === "identifier" || child.type === "scoped_identifier") {
         annotationName = child.text;
         break;
@@ -125,8 +120,7 @@ function extractRequestMappingPath(node: Node): string | null {
     findChildByType(node, "annotation_argument_list");
 
   if (argsNode) {
-    for (let i = 0; i < argsNode.childCount; i++) {
-      const arg = argsNode.child(i)!;
+    for (const arg of argsNode.children) {
       if (arg.type === "string" || arg.type === "string_literal") {
         return stripQuotes(arg.text);
       }
@@ -154,8 +148,7 @@ function parseSpringAnnotation(
   if (nameNode) {
     annotationName = nameNode.text;
   } else {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
       if (child.type === "identifier" || child.type === "scoped_identifier") {
         annotationName = child.text;
         break;
@@ -173,8 +166,7 @@ function parseSpringAnnotation(
     findChildByType(node, "annotation_argument_list");
 
   if (argsNode) {
-    for (let i = 0; i < argsNode.childCount; i++) {
-      const arg = argsNode.child(i)!;
+    for (const arg of argsNode.children) {
       if (arg.type === "string" || arg.type === "string_literal") {
         path = stripQuotes(arg.text);
         break;
@@ -203,8 +195,7 @@ function parseSpringAnnotation(
   let resolvedMethod = httpMethod;
   if (httpMethod === null) {
     if (argsNode) {
-      for (let i = 0; i < argsNode.childCount; i++) {
-        const arg = argsNode.child(i)!;
+      for (const arg of argsNode.children) {
         if (arg.type === "element_value_pair" || arg.type === "assignment_expression") {
           const key = arg.childForFieldName("key") ?? arg.child(0);
           const value = arg.childForFieldName("value") ?? arg.child(2);

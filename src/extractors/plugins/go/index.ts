@@ -41,6 +41,7 @@ function parseGoReturnType(line: string): string | null {
 
 export const goSpec: RegexLangSpec = {
   language: "go",
+  extensions: [".go"],
   indentBased: false,
   lineCommentPrefixes: ["//"],
 

@@ -14,6 +14,7 @@ const PHP_ACTION_MAP: Record<string, { method: string; suffix: string }> = {
 
 export const phpSpec: RegexLangSpec = {
   language: "php",
+  extensions: [".php"],
   indentBased: false,
   lineCommentPrefixes: ["//", "#"],
 

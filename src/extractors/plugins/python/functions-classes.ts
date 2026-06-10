@@ -15,14 +15,12 @@ export class PythonExtractor extends FunctionClassExtractor {
   }
 
   private extractPythonFunctions(node: Node, functions: FunctionInfo[]): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       if (child.type === "decorated_definition") {
         const decorators: string[] = [];
         let funcDef: Node | null = null;
-        for (let j = 0; j < child.childCount; j++) {
-          const part = child.child(j)!;
+        for (const part of child.children) {
           if (part.type === "decorator") {
             decorators.push(part.text.replace(/^@/, ""));
           } else if (part.type === "function_definition") {
@@ -46,8 +44,7 @@ export class PythonExtractor extends FunctionClassExtractor {
     const params: ParamInfo[] = [];
 
     if (paramsNode) {
-      for (let i = 0; i < paramsNode.childCount; i++) {
-        const p = paramsNode.child(i)!;
+      for (const p of paramsNode.children) {
         if (p.type === "identifier" || p.type === "typed_parameter" || p.type === "default_parameter") {
           const pName = p.childForFieldName("name")?.text ?? p.text;
           if (pName === "self" || pName === "cls") continue;
@@ -78,14 +75,12 @@ export class PythonExtractor extends FunctionClassExtractor {
   }
 
   private extractPythonClasses(node: Node, classes: ClassInfo[]): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       if (child.type === "decorated_definition") {
         const decorators: string[] = [];
         let classDef: Node | null = null;
-        for (let j = 0; j < child.childCount; j++) {
-          const part = child.child(j)!;
+        for (const part of child.children) {
           if (part.type === "decorator") {
             decorators.push(part.text.replace(/^@/, ""));
           } else if (part.type === "class_definition") {

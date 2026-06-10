@@ -1,6 +1,7 @@
 import fg from "fast-glob";
 import { resolve } from "path";
 import type { Language } from "../types/analysis.js";
+import { EXTENSION_TO_LANGUAGE } from "../parsers/language-map.js";
 import { loadIgnorePatterns, isIgnored } from "./reversedoc-ignore.js";
 
 /**
@@ -21,41 +22,6 @@ function isSensitive(relativePath: string): boolean {
   return SENSITIVE_PATTERNS.some((p) => p.test(relativePath));
 }
 
-/** Map file extensions to languages */
-const EXTENSION_MAP: Record<string, Language> = {
-  ".ts": "typescript",
-  ".tsx": "typescript",
-  ".js": "javascript",
-  ".jsx": "javascript",
-  ".mjs": "javascript",
-  ".cjs": "javascript",
-  ".cs": "csharp",
-  ".py": "python",
-  ".pyw": "python",
-  ".java": "java",
-  ".kt": "kotlin",
-  ".kts": "kotlin",
-  ".vue": "typescript", // Vue SFCs are parsed by extracting <script> then treating as TS/JS
-  ".pas": "pascal",
-  ".pp": "pascal",
-  ".lpr": "pascal",
-  ".dpr": "pascal",
-  ".dpk": "pascal",
-  ".dfm": "dfm",
-  ".go": "go",
-  ".rs": "rust",
-  ".rb": "ruby",
-  ".php": "php",
-  ".swift": "swift",
-  ".lua": "lua",
-  ".scala": "scala",
-  ".pl": "perl",
-  ".pm": "perl",
-  ".vb": "vb",
-  ".bas": "vb",
-  ".cls": "vb",
-  ".frm": "vb",
-};
 
 const DEFAULT_IGNORE = [
   "**/node_modules/**",
@@ -107,7 +73,7 @@ export async function discoverFiles(
 ): Promise<DiscoveryResult> {
   const root = resolve(projectRoot);
 
-  const sourcePatterns = Object.keys(EXTENSION_MAP).map(
+  const sourcePatterns = Object.keys(EXTENSION_TO_LANGUAGE).map(
     (ext) => `**/*${ext}`,
   );
   const patterns = options.include?.length ? options.include : sourcePatterns;
@@ -127,7 +93,7 @@ export async function discoverFiles(
 
   for (const relativePath of files) {
     const ext = getExtension(relativePath);
-    const language = EXTENSION_MAP[ext];
+    const language = EXTENSION_TO_LANGUAGE[ext];
     if (!language) continue;
 
     if (isSensitive(relativePath)) {

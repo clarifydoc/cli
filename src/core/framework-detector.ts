@@ -77,6 +77,212 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     detectedVia: ".csproj file",
   },
 
+  // ─── ORM frameworks ─────────────────────────────────────────────────────
+  // JavaScript/TypeScript ORMs
+  {
+    id: "prisma",
+    name: "Prisma",
+    check: (info) => hasDep(info, "prisma") || hasDep(info, "@prisma/client"),
+    detectedVia: "package.json dependency",
+  },
+  {
+    id: "typeorm",
+    name: "TypeORM",
+    check: (info) => hasDep(info, "typeorm"),
+    detectedVia: "package.json dependency",
+  },
+  {
+    id: "sequelize",
+    name: "Sequelize",
+    check: (info) => hasDep(info, "sequelize") || hasDep(info, "sequelize-typescript"),
+    detectedVia: "package.json dependency",
+  },
+  {
+    id: "drizzle",
+    name: "Drizzle ORM",
+    check: (info) => hasDep(info, "drizzle-orm"),
+    detectedVia: "package.json dependency",
+  },
+  {
+    id: "mikro-orm",
+    name: "MikroORM",
+    check: (info) => hasDep(info, "@mikro-orm/core"),
+    detectedVia: "package.json dependency",
+  },
+  {
+    id: "mongoose",
+    name: "Mongoose",
+    check: (info) => hasDep(info, "mongoose"),
+    detectedVia: "package.json dependency",
+  },
+  {
+    id: "knex",
+    name: "Knex",
+    check: (info) => hasDep(info, "knex"),
+    detectedVia: "package.json dependency",
+  },
+  {
+    id: "objection",
+    name: "Objection.js",
+    check: (info) => hasDep(info, "objection"),
+    detectedVia: "package.json dependency",
+  },
+  // C# ORMs (PackageReference scanning of .csproj text)
+  {
+    id: "ef-core",
+    name: "Entity Framework Core",
+    check: (info) => hasCsprojPackage(info, "Microsoft.EntityFrameworkCore"),
+    detectedVia: ".csproj PackageReference",
+  },
+  {
+    id: "ef6",
+    name: "Entity Framework 6",
+    check: (info) =>
+      hasCsprojPackage(info, "EntityFramework") &&
+      !hasCsprojPackage(info, "Microsoft.EntityFrameworkCore"),
+    detectedVia: ".csproj PackageReference",
+  },
+  {
+    id: "dapper",
+    name: "Dapper",
+    check: (info) => hasCsprojPackage(info, "Dapper"),
+    detectedVia: ".csproj PackageReference",
+  },
+  {
+    id: "nhibernate",
+    name: "NHibernate",
+    check: (info) => hasCsprojPackage(info, "NHibernate"),
+    detectedVia: ".csproj PackageReference",
+  },
+  // Python ORMs
+  {
+    id: "sqlalchemy",
+    name: "SQLAlchemy",
+    check: (info) => hasPythonDep(info, "sqlalchemy"),
+    detectedVia: "Python manifest",
+  },
+  {
+    id: "django-orm",
+    name: "Django ORM",
+    check: (info) => hasPythonDep(info, "django"),
+    detectedVia: "Python manifest",
+  },
+  {
+    id: "tortoise-orm",
+    name: "Tortoise ORM",
+    check: (info) => hasPythonDep(info, "tortoise"),
+    detectedVia: "Python manifest",
+  },
+  {
+    id: "peewee",
+    name: "Peewee",
+    check: (info) => hasPythonDep(info, "peewee"),
+    detectedVia: "Python manifest",
+  },
+  // Java/Kotlin ORMs
+  {
+    id: "hibernate",
+    name: "Hibernate",
+    check: (info) => hasGradleDep(info, "hibernate") || hasMavenDep(info, "hibernate"),
+    detectedVia: "build file dependency",
+  },
+  {
+    id: "spring-data-jpa",
+    name: "Spring Data JPA",
+    check: (info) => hasGradleDep(info, "spring-data-jpa") || hasMavenDep(info, "spring-data-jpa") ||
+                     hasGradleDep(info, "spring-boot-starter-data-jpa") || hasMavenDep(info, "spring-boot-starter-data-jpa"),
+    detectedVia: "build file dependency",
+  },
+  {
+    id: "mybatis",
+    name: "MyBatis",
+    check: (info) => hasGradleDep(info, "mybatis") || hasMavenDep(info, "mybatis"),
+    detectedVia: "build file dependency",
+  },
+  {
+    id: "jooq",
+    name: "jOOQ",
+    check: (info) => hasGradleDep(info, "jooq") || hasMavenDep(info, "jooq"),
+    detectedVia: "build file dependency",
+  },
+  {
+    id: "exposed",
+    name: "Exposed",
+    check: (info) => hasGradleDep(info, "org.jetbrains.exposed"),
+    detectedVia: "build file dependency",
+  },
+  // Ruby ORMs
+  {
+    id: "active-record",
+    name: "Active Record",
+    check: (info) => hasGemfileDep(info, "activerecord") || hasGemfileDep(info, "rails"),
+    detectedVia: "Gemfile dependency",
+  },
+  {
+    id: "sequel",
+    name: "Sequel",
+    check: (info) => hasGemfileDep(info, "sequel"),
+    detectedVia: "Gemfile dependency",
+  },
+  // PHP ORMs
+  {
+    id: "doctrine",
+    name: "Doctrine ORM",
+    check: (info) => hasComposerDep(info, "doctrine/orm") || hasComposerDep(info, "doctrine/dbal"),
+    detectedVia: "composer.json dependency",
+  },
+  {
+    id: "eloquent",
+    name: "Eloquent",
+    check: (info) => hasComposerDep(info, "illuminate/database") || hasComposerDep(info, "laravel/framework"),
+    detectedVia: "composer.json dependency",
+  },
+  // Go ORMs
+  {
+    id: "gorm",
+    name: "GORM",
+    check: (info) => hasGoMod(info, "gorm.io/gorm"),
+    detectedVia: "go.mod dependency",
+  },
+  {
+    id: "sqlx",
+    name: "sqlx",
+    check: (info) => hasGoMod(info, "github.com/jmoiron/sqlx"),
+    detectedVia: "go.mod dependency",
+  },
+  {
+    id: "ent",
+    name: "Ent",
+    check: (info) => hasGoMod(info, "entgo.io/ent"),
+    detectedVia: "go.mod dependency",
+  },
+  // Rust ORMs
+  {
+    id: "diesel",
+    name: "Diesel",
+    check: (info) => hasCargoDep(info, "diesel"),
+    detectedVia: "Cargo.toml dependency",
+  },
+  {
+    id: "sea-orm",
+    name: "SeaORM",
+    check: (info) => hasCargoDep(info, "sea-orm"),
+    detectedVia: "Cargo.toml dependency",
+  },
+  {
+    id: "rust-sqlx",
+    name: "SQLx (Rust)",
+    check: (info) => hasCargoDep(info, "sqlx") && !hasCargoDep(info, "sea-orm"),
+    detectedVia: "Cargo.toml dependency",
+  },
+  // Raw SQL — surfaced when *.sql / *.ddl files exist
+  {
+    id: "sql",
+    name: "SQL",
+    check: (info) => info.sqlFiles.length > 0,
+    detectedVia: ".sql / .ddl files",
+  },
+
   // Python frameworks
   {
     id: "fastapi",
@@ -194,6 +400,41 @@ function hasMavenDep(info: ProjectInfo, name: string): boolean {
   return info.pomXml.includes(name);
 }
 
+function hasCsprojPackage(info: ProjectInfo, name: string): boolean {
+  if (!info.csprojText) return false;
+  // `<PackageReference Include="Microsoft.EntityFrameworkCore" ...>`
+  const re = new RegExp(`PackageReference[^>]*Include\\s*=\\s*"${escapeRegex(name)}`, "i");
+  return re.test(info.csprojText);
+}
+
+function hasGoMod(info: ProjectInfo, name: string): boolean {
+  if (!info.goMod) return false;
+  return info.goMod.includes(name);
+}
+
+function hasCargoDep(info: ProjectInfo, name: string): boolean {
+  if (!info.cargoToml) return false;
+  // Match `name = ...` or `name = { ... }` at line start
+  const re = new RegExp(`^\\s*${escapeRegex(name)}\\s*=`, "m");
+  return re.test(info.cargoToml);
+}
+
+function hasComposerDep(info: ProjectInfo, name: string): boolean {
+  if (!info.composerJson) return false;
+  return info.composerJson.includes(`"${name}"`);
+}
+
+function hasGemfileDep(info: ProjectInfo, name: string): boolean {
+  if (!info.gemfile) return false;
+  // `gem "name"` or `gem 'name'`
+  const re = new RegExp(`gem\\s+['"]${escapeRegex(name)}['"]`, "m");
+  return re.test(info.gemfile);
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /** Gather project info from manifest files */
 export async function gatherProjectInfo(
   projectRoot: string,
@@ -216,6 +457,16 @@ export async function gatherProjectInfo(
     absolute: false,
     deep: 3,
   });
+
+  // Concatenate .csproj contents for PackageReference scanning.
+  let csprojText = "";
+  for (const f of csprojFiles.slice(0, 20)) {
+    try {
+      csprojText += "\n" + (await readFile(join(root, f), "utf-8"));
+    } catch {
+      // Skip unreadable file
+    }
+  }
 
   // Read Python manifest (pyproject.toml as JSON-compatible or requirements.txt)
   let pythonManifest: Record<string, unknown> | null = null;
@@ -329,10 +580,32 @@ export async function gatherProjectInfo(
     }
   }
 
+  // Read go.mod, Cargo.toml, composer.json, Gemfile — for cross-language ORM detection.
+  let goMod: string | null = null;
+  try { goMod = await readFile(join(root, "go.mod"), "utf-8"); } catch { /* no go.mod */ }
+
+  let cargoToml: string | null = null;
+  try { cargoToml = await readFile(join(root, "Cargo.toml"), "utf-8"); } catch { /* no Cargo.toml */ }
+
+  let composerJson: string | null = null;
+  try { composerJson = await readFile(join(root, "composer.json"), "utf-8"); } catch { /* no composer.json */ }
+
+  let gemfile: string | null = null;
+  try { gemfile = await readFile(join(root, "Gemfile"), "utf-8"); } catch { /* no Gemfile */ }
+
+  // Find .sql / .ddl files for raw-SQL framework detection
+  const sqlFiles = await fg("**/*.{sql,ddl,dml,psql,tsql,plsql,mysql}", {
+    cwd: root,
+    ignore: ["**/node_modules/**", "**/dist/**", "**/.git/**", "**/bin/**", "**/obj/**"],
+    absolute: false,
+    deep: 5,
+  });
+
   return {
     root,
     packageJson,
     csprojFiles,
+    csprojText,
     pythonManifest,
     gradleFile,
     pomXml,
@@ -340,6 +613,11 @@ export async function gatherProjectInfo(
     dprojFiles,
     lpiFiles,
     delphiUses,
+    goMod,
+    cargoToml,
+    composerJson,
+    gemfile,
+    sqlFiles,
   };
 }
 

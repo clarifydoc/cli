@@ -3,6 +3,7 @@ import {
   Language as TSLanguage,
   Tree as TSTree,
   Query,
+  Node as TSNodeClass,
   type Node as TSNode,
 } from "web-tree-sitter";
 import { readFile } from "fs/promises";
@@ -18,7 +19,7 @@ export type { TSTree, TSNode, TSLanguage };
 const require = createRequire(import.meta.url);
 
 /** Languages that have tree-sitter grammars available */
-type TreeSitterParseable = "typescript" | "javascript" | "csharp" | "python" | "java" | "kotlin" | "pascal";
+type TreeSitterParseable = "typescript" | "javascript" | "csharp" | "python" | "java" | "kotlin" | "pascal" | "php";
 
 /** Grammar variant for sub-language selection (e.g., tsx vs ts) */
 type GrammarKey = TreeSitterParseable | "tsx";
@@ -35,6 +36,7 @@ const GRAMMAR_PACKAGES: Record<GrammarKey, { pkg: string; wasm: string; viaPkgJs
   java: { pkg: "tree-sitter-java", wasm: "tree-sitter-java.wasm" },
   kotlin: { pkg: "tree-sitter-kotlin", wasm: "tree-sitter-kotlin.wasm", viaPkgJson: true },
   pascal: { pkg: "tree-sitter-pascal", wasm: "tree-sitter-pascal.wasm", viaPkgJson: true },
+  php: { pkg: "tree-sitter-php", wasm: "tree-sitter-php.wasm", viaPkgJson: true },
 };
 
 let initialized = false;
@@ -48,6 +50,26 @@ function resolvePackageFile(pkg: string, file: string): string {
   return join(dirname(pkgMain), file);
 }
 
+/**
+ * Make `Node.type` cache its result on the node instance. The stock getter
+ * marshals the node and crosses into WASM on every access, and extractors
+ * read `.type` many times per node (long if/else chains, repeat visits via
+ * the shared `children` arrays). Trees are parsed once and never edited
+ * here, so a node's type is immutable and safe to cache.
+ */
+function installNodeTypeCache(): void {
+  const proto = TSNodeClass.prototype as any;
+  const desc = Object.getOwnPropertyDescriptor(proto, "type");
+  if (!desc?.get) return;
+  const origGet = desc.get;
+  Object.defineProperty(proto, "type", {
+    configurable: true,
+    get(this: { _cachedType?: string }) {
+      return (this._cachedType ??= origGet.call(this));
+    },
+  });
+}
+
 /** Ensure tree-sitter WASM runtime is initialized */
 async function ensureInit(): Promise<void> {
   if (initialized) return;
@@ -57,11 +79,12 @@ async function ensureInit(): Promise<void> {
   await Parser.init({
     locateFile: () => wasmPath,
   });
+  installNodeTypeCache();
   initialized = true;
 }
 
 /** Languages that have tree-sitter grammars (excludes non-parseable and regex-only formats) */
-export type TreeSitterLanguage = Exclude<Language, "dfm" | "swift" | "lua" | "scala" | "go" | "rust" | "ruby" | "php" | "perl" | "vb">;
+export type TreeSitterLanguage = Exclude<Language, "dfm" | "swift" | "lua" | "scala" | "go" | "rust" | "ruby" | "perl" | "vb" | "sql" | "c" | "cpp">;
 
 /** Resolve the grammar key, using tsx for .tsx/.jsx files */
 function resolveGrammarKey(language: TreeSitterLanguage, filePath?: string): GrammarKey {
@@ -129,6 +152,11 @@ export async function parseSource(
   const parser = await getParserForKey(key);
   const tree = parser.parse(sourceText);
   if (!tree) throw new Error(`Failed to parse source as ${language}`);
+  // The default rootNode getter unmarshals a fresh Node (and thus a fresh
+  // subtree) on every access, so each extractor re-creates every node it
+  // visits. Pin one shared root so the per-node `children` caches are
+  // reused across all extractors that walk this tree.
+  Object.defineProperty(tree, "rootNode", { value: tree.rootNode, configurable: true });
   return tree;
 }
 

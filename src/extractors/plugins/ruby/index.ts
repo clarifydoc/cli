@@ -15,6 +15,7 @@ const RAILS_ACTION_MAP: Record<string, { method: string; suffix: string }> = {
 
 export const rubySpec: RegexLangSpec = {
   language: "ruby",
+  extensions: [".rb"],
   indentBased: true,
   lineCommentPrefixes: ["#"],
 

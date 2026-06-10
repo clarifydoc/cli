@@ -21,12 +21,11 @@ function walkForPascalRoutes(node: Node, routes: RouteInfo[]) {
 
     let className = "";
     let methodName = "";
-    for (let i = 0; i < declProc.childCount; i++) {
-      const child = declProc.child(i)!;
+    for (const child of declProc.children) {
       if (child.type === "genericDot") {
         const parts: string[] = [];
-        for (let j = 0; j < child.childCount; j++) {
-          if (child.child(j)!.type === "identifier") parts.push(child.child(j)!.text);
+        for (const part of child.children) {
+          if (part.type === "identifier") parts.push(part.text);
         }
         if (parts.length >= 2) {
           className = parts[0];
@@ -59,7 +58,7 @@ function walkForPascalRoutes(node: Node, routes: RouteInfo[]) {
 }
 
 function recurse(node: Node, routes: RouteInfo[]) {
-  for (let i = 0; i < node.childCount; i++) {
-    walkForPascalRoutes(node.child(i)!, routes);
+  for (const child of node.children) {
+    walkForPascalRoutes(child, routes);
   }
 }

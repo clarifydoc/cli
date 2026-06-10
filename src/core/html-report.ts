@@ -125,6 +125,7 @@ function renderReport(summary: ProjectAnalysis): string {
     cohesion: summary.cohesion ?? {},
     skippedSensitive: summary.skippedSensitive ?? [],
     classGraph: summary.classGraph ?? null,
+    dataAccessGraph: summary.dataAccessGraph ?? null,
   };
 
   return `<!DOCTYPE html>
@@ -701,6 +702,7 @@ function renderLinksView(): string {
     <span class="d3-toolbar-label">View:</span>
     <button class="d3-btn active" data-arch-mode="files">Files</button>
     <button class="d3-btn" data-arch-mode="types">Data Models</button>
+    <button class="d3-btn" data-arch-mode="data-access">Data Access</button>
     <span class="d3-toolbar-sep"></span>
     <span class="d3-toolbar-label" id="d3-colour-label">Color by:</span>
     <button class="d3-btn active" data-color="layer">Layer</button>
@@ -992,7 +994,7 @@ function refreshAllViews() {
   if (linksView && linksView.classList.contains('active')) rebuildLinkGraph();
 }
 
-let archMode = 'files'; // 'files' or 'types'
+let archMode = 'files'; // 'files' | 'types' | 'data-access'
 function rebuildLinkGraph() {
   const container = document.getElementById('d3-graph-container');
   if (!container) return;
@@ -1005,6 +1007,8 @@ function rebuildLinkGraph() {
   if (detail) detail.innerHTML = '';
   if (archMode === 'types') {
     initTypeGraph();
+  } else if (archMode === 'data-access') {
+    initDataAccessGraph();
   } else {
     initLinkGraph();
   }
@@ -1024,10 +1028,11 @@ function rebuildLinkGraph() {
     archMode = t.dataset.archMode || 'files';
     // Hide the file-only color-by buttons when in Types mode — they don't apply.
     const colourLabel = document.getElementById('d3-colour-label');
+    const inFileMode = archMode === 'files';
     document.querySelectorAll('[data-color]').forEach((b) => {
-      b.classList.toggle('arch-hidden', archMode === 'types');
+      b.classList.toggle('arch-hidden', !inFileMode);
     });
-    if (colourLabel) colourLabel.classList.toggle('arch-hidden', archMode === 'types');
+    if (colourLabel) colourLabel.classList.toggle('arch-hidden', !inFileMode);
     rebuildLinkGraph();
   });
 })();
@@ -2485,6 +2490,304 @@ function initTypeGraph() {
   }
 
   // Toolbar: labels toggle (reused — shared id with file view)
+  const toggleBtn = document.getElementById('d3-toggle-labels');
+  if (toggleBtn) {
+    toggleBtn.onclick = function() {
+      const visible = labelSel.attr('opacity') !== '0';
+      this.classList.toggle('active', !visible);
+      labelSel.transition().duration(200).attr('opacity', visible ? 0 : 1);
+    };
+    toggleBtn.classList.add('active');
+  }
+  const fitBtn = document.getElementById('d3-zoom-fit');
+  if (fitBtn) {
+    fitBtn.onclick = function(){ svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity); };
+  }
+}
+
+// ─── Data Access Graph (Architecture tab Data Access mode) ─────────────
+// Renders file→datastore edges built from each file's database-kind
+// dataSources. Datastores are synthetic nodes — one per unique import
+// source (e.g. '@prisma/client', 'Microsoft.EntityFrameworkCore'). Click
+// a node to see the actual call sites that produced each edge.
+function initDataAccessGraph() {
+  if (graphInitialized) return;
+  graphInitialized = true;
+
+  const container = document.getElementById('d3-graph-container');
+  if (!container) return;
+  const w = container.clientWidth || 900;
+  const h = container.clientHeight || 640;
+
+  const dag = DATA.dataAccessGraph;
+  if (!dag || !dag.nodes || dag.nodes.length === 0) {
+    container.innerHTML = '<div class="empty" style="padding-top:200px">No database data sources detected — the project has no DB-shaped calls (Prisma, EF Core, Mongoose, etc.) the analyzer recognises.</div>';
+    return;
+  }
+
+  // Respect the global file filter for "file" nodes; datastores always
+  // show as long as at least one connected file is visible.
+  const visibleFiles = new Set();
+  for (const n of dag.nodes) {
+    if (n.kind === 'file' && (!n.filePath || isFileVisible(n.filePath))) visibleFiles.add(n.id);
+  }
+  const filteredEdges = dag.edges.filter(function(e){ return visibleFiles.has(e.source); });
+  const reachedDb = new Set();
+  filteredEdges.forEach(function(e){ reachedDb.add(e.target); });
+  const filteredNodes = dag.nodes.filter(function(n){
+    return n.kind === 'file' ? visibleFiles.has(n.id) && reachedDb.size > 0 && filteredEdges.some(function(e){ return e.source === n.id; })
+                              : reachedDb.has(n.id);
+  });
+
+  if (filteredNodes.length === 0) {
+    container.innerHTML = '<div class="empty" style="padding-top:200px">No data accesses match the current filters.</div>';
+    return;
+  }
+
+  const DB_COLOR = '#f0883e';      // orange — pops against the blue/purple type view palette
+  const FILE_COLOR = '#56d4dd';    // matches the file-node teal from the type view
+  const EDGE_COLOR = '#f0883e';
+
+  function edgeWidth(d) { return Math.min(6, 1 + Math.log2(Math.max(1, d.total))); }
+  function edgeOpacity(d) { return Math.min(0.9, 0.4 + d.total * 0.06); }
+  function nodeRadius(d) {
+    const deg = d.kind === 'datastore' ? d.inboundCount : d.outboundCount;
+    return Math.max(d.kind === 'datastore' ? 14 : 9, Math.min(36, 8 + Math.log2(Math.max(1, deg + 1)) * 5));
+  }
+
+  const svg = d3.select(container).append('svg').attr('width', w).attr('height', h);
+  const defs = svg.append('defs');
+  defs.append('marker')
+    .attr('id', 'arrow-dataaccess').attr('viewBox', '0 -5 10 10').attr('refX', 22)
+    .attr('markerWidth', 5).attr('markerHeight', 5).attr('orient', 'auto')
+    .append('path').attr('d', 'M0,-4L10,0L0,4').attr('fill', EDGE_COLOR);
+
+  const g = svg.append('g');
+  const zoom = d3.zoom().scaleExtent([0.15, 4]).on('zoom', function(e){ g.attr('transform', e.transform); });
+  svg.call(zoom);
+
+  const linkLayer = g.append('g');
+  const nodeLayer = g.append('g');
+  const labelLayer = g.append('g');
+
+  const tooltip = d3.select('body').append('div').attr('class', 'd3-tooltip').style('display', 'none');
+
+  const nodes = filteredNodes.map(function(n){ return Object.assign({}, n); });
+  const links = filteredEdges.map(function(e){ return Object.assign({}, e); });
+
+  const sim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(function(d){ return d.id; }).distance(120).strength(0.5))
+    .force('charge', d3.forceManyBody().strength(-340).distanceMax(500))
+    .force('collision', d3.forceCollide().radius(function(d){ return nodeRadius(d) + 12; }))
+    .force('center', d3.forceCenter(w / 2, h / 2))
+    .velocityDecay(0.55)
+    .alphaDecay(0.04);
+
+  const linkSel = linkLayer.selectAll('path').data(links).join('path')
+    .attr('fill', 'none')
+    .attr('stroke', EDGE_COLOR)
+    .attr('stroke-width', edgeWidth)
+    .attr('stroke-opacity', edgeOpacity)
+    .attr('marker-end', 'url(#arrow-dataaccess)');
+
+  // Datastores: cylinder glyph (ellipse top + sides + ellipse bottom).
+  // Files: rounded square (matches the file-node style from Data Models).
+  const nodeSel = nodeLayer.selectAll('g').data(nodes).join('g').style('cursor', 'pointer');
+  nodeSel.each(function(d){
+    const r = nodeRadius(d);
+    const sel = d3.select(this);
+    if (d.kind === 'datastore') {
+      const rx = r, ry = r * 0.45, body = r * 1.1;
+      // Body sides
+      sel.append('path')
+        .attr('d', 'M' + (-rx) + ',' + (-body/2) + ' L' + (-rx) + ',' + (body/2) +
+                  ' A' + rx + ',' + ry + ' 0 0,0 ' + rx + ',' + (body/2) +
+                  ' L' + rx + ',' + (-body/2) +
+                  ' A' + rx + ',' + ry + ' 0 0,1 ' + (-rx) + ',' + (-body/2) + ' Z')
+        .attr('fill', '#3a1f0a')
+        .attr('stroke', DB_COLOR)
+        .attr('stroke-width', 2);
+      // Top ellipse highlight
+      sel.append('ellipse')
+        .attr('cx', 0).attr('cy', -body/2)
+        .attr('rx', rx).attr('ry', ry)
+        .attr('fill', '#5a2f12')
+        .attr('stroke', DB_COLOR)
+        .attr('stroke-width', 2);
+    } else {
+      const side = r * 1.8;
+      sel.append('rect')
+        .attr('x', -side / 2).attr('y', -side / 2)
+        .attr('width', side).attr('height', side)
+        .attr('rx', 4).attr('ry', 4)
+        .attr('fill', '#162a2d')
+        .attr('stroke', FILE_COLOR)
+        .attr('stroke-width', 2);
+    }
+  });
+
+  const labelSel = labelLayer.selectAll('text').data(nodes).join('text')
+    .text(function(d){ return d.name; })
+    .attr('font-size', function(d){ return d.kind === 'datastore' ? 12 : 11; })
+    .attr('font-family', 'monospace')
+    .attr('fill', '#e6edf3')
+    .attr('text-anchor', 'middle')
+    .attr('dy', function(d){ return -nodeRadius(d) - 6; })
+    .attr('pointer-events', 'none')
+    .attr('paint-order', 'stroke fill')
+    .attr('stroke', '#0d1117')
+    .attr('stroke-width', 2.5)
+    .attr('stroke-opacity', 0.85);
+
+  function highlight(id) {
+    const incident = new Set([id]);
+    links.forEach(function(l){
+      const sId = (l.source && l.source.id) || l.source;
+      const tId = (l.target && l.target.id) || l.target;
+      if (sId === id || tId === id) { incident.add(sId); incident.add(tId); }
+    });
+    linkSel.attr('stroke-opacity', function(l){
+      const sId = (l.source && l.source.id) || l.source;
+      const tId = (l.target && l.target.id) || l.target;
+      return (sId === id || tId === id) ? Math.max(0.9, edgeOpacity(l)) : 0.08;
+    });
+    nodeSel.attr('opacity', function(n){ return incident.has(n.id) ? 1 : 0.18; });
+    labelSel.attr('opacity', function(n){ return incident.has(n.id) ? 1 : 0.15; });
+    showDataAccessDetail(id);
+  }
+  function clearHighlight() {
+    linkSel.attr('stroke-opacity', edgeOpacity);
+    nodeSel.attr('opacity', 1);
+    labelSel.attr('opacity', 1);
+    const dp = document.getElementById('d3-detail-panel');
+    if (dp) dp.innerHTML = '';
+  }
+
+  function showDataAccessDetail(id) {
+    const dp = document.getElementById('d3-detail-panel');
+    if (!dp) return;
+    const node = nodes.find(function(n){ return n.id === id; });
+    if (!node) { dp.innerHTML = ''; return; }
+    const inbound = [], outbound = [];
+    links.forEach(function(l){
+      const sId = (l.source && l.source.id) || l.source;
+      const tId = (l.target && l.target.id) || l.target;
+      if (tId === id) inbound.push(l);
+      else if (sId === id) outbound.push(l);
+    });
+    function nameOf(nid) {
+      const n = nodes.find(function(nn){ return nn.id === nid; });
+      return n ? n.name : nid.split('::').pop();
+    }
+    function fileOf(nid) {
+      const n = nodes.find(function(nn){ return nn.id === nid; });
+      return n ? n.filePath : '';
+    }
+    function callList(edge) {
+      // Cap the displayed list — DB-heavy files can have 50+ call sites.
+      const max = 12;
+      const shown = edge.calls.slice(0, max);
+      let out = '';
+      shown.forEach(function(c){
+        out += '<div class="type-edge-row"><span class="type-edge-name" style="font-family:monospace">' + esc(c.name) + '</span>' +
+               '<span class="type-edge-file">line ' + c.line + '</span></div>';
+      });
+      if (edge.calls.length > max) {
+        out += '<div class="type-edge-row" style="color:#8b949e">… ' + (edge.calls.length - max) + ' more</div>';
+      }
+      return out;
+    }
+    let html = '<div class="type-detail-head">';
+    html += '<div class="type-detail-name">' + esc(node.name) + '</div>';
+    html += '<div class="type-detail-sub">';
+    html += '<span class="type-iface-tag" style="background:' + (node.kind === 'datastore' ? '#3a1f0a' : '#162a2d') + ';color:' + (node.kind === 'datastore' ? DB_COLOR : FILE_COLOR) + '">' + node.kind + '</span> ';
+    html += '<code>' + esc(node.filePath || node.name) + '</code>';
+    html += '</div></div>';
+    html += '<div class="type-detail-counts">';
+    html += '<span class="type-edge-arrow" style="color:' + EDGE_COLOR + '">←</span> ' + node.inboundCount + ' inbound &nbsp;&nbsp;';
+    html += '<span class="type-edge-arrow" style="color:' + EDGE_COLOR + '">→</span> ' + node.outboundCount + ' outbound';
+    html += '</div>';
+
+    if (inbound.length > 0) {
+      html += '<div class="type-edge-section"><h4>Callers (' + inbound.length + ')</h4>';
+      inbound.sort(function(a,b){ return b.total - a.total; });
+      inbound.forEach(function(l){
+        const sId = (l.source && l.source.id) || l.source;
+        html += '<div style="margin-bottom:8px">';
+        html += '<div class="type-edge-row"><span class="type-edge-arrow" style="color:' + EDGE_COLOR + '">←</span>' +
+                '<span class="type-edge-name">' + esc(nameOf(sId)) + '</span>' +
+                '<span class="type-edge-file">' + esc(fileOf(sId)) + '</span>' +
+                '<span class="type-edge-count">' + l.total + '</span></div>';
+        html += callList(l);
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+    if (outbound.length > 0) {
+      html += '<div class="type-edge-section"><h4>Datastores accessed (' + outbound.length + ')</h4>';
+      outbound.sort(function(a,b){ return b.total - a.total; });
+      outbound.forEach(function(l){
+        const tId = (l.target && l.target.id) || l.target;
+        html += '<div style="margin-bottom:8px">';
+        html += '<div class="type-edge-row"><span class="type-edge-arrow" style="color:' + EDGE_COLOR + '">→</span>' +
+                '<span class="type-edge-name">' + esc(nameOf(tId)) + '</span>' +
+                '<span class="type-edge-count">' + l.total + '</span></div>';
+        html += callList(l);
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+    dp.innerHTML = html;
+  }
+
+  nodeSel.on('click', function(event, d){ event.stopPropagation(); highlight(d.id); });
+  svg.on('click', clearHighlight);
+
+  nodeSel.on('mouseover', function(event, d){
+    const role = d.kind === 'datastore' ? 'datastore' : 'file';
+    const counts = d.kind === 'datastore'
+      ? d.inboundCount + ' inbound call' + (d.inboundCount === 1 ? '' : 's')
+      : d.outboundCount + ' outbound call' + (d.outboundCount === 1 ? '' : 's');
+    tooltip.style('display', 'block')
+      .html('<strong>' + esc(d.name) + '</strong> <em>(' + role + ')</em><br/>' +
+            (d.filePath ? esc(d.filePath) + '<br/>' : '') + counts);
+  }).on('mousemove', function(event){
+    tooltip.style('left', (event.pageX + 12) + 'px').style('top', (event.pageY + 12) + 'px');
+  }).on('mouseout', function(){
+    tooltip.style('display', 'none');
+  });
+
+  nodeSel.call(d3.drag()
+    .on('start', function(event, d){ if (!event.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+    .on('drag', function(event, d){ d.fx = event.x; d.fy = event.y; })
+    .on('end', function(event, d){ if (!event.active) sim.alphaTarget(0); d.fx = null; d.fy = null; })
+  );
+
+  sim.on('tick', function(){
+    linkSel.attr('d', function(d){
+      const sx = d.source.x, sy = d.source.y, tx = d.target.x, ty = d.target.y;
+      const dx = tx - sx, dy = ty - sy;
+      const dr = Math.sqrt(dx*dx + dy*dy) * 1.4;
+      return 'M' + sx + ',' + sy + 'A' + dr + ',' + dr + ' 0 0,1 ' + tx + ',' + ty;
+    });
+    nodeSel.attr('transform', function(d){ return 'translate(' + d.x + ',' + d.y + ')'; });
+    labelSel.attr('x', function(d){ return d.x; }).attr('y', function(d){ return d.y; });
+  });
+
+  const legend = document.getElementById('d3-legend');
+  if (legend) {
+    const fileCount = nodes.filter(function(n){ return n.kind === 'file'; }).length;
+    const dbCount = nodes.filter(function(n){ return n.kind === 'datastore'; }).length;
+    const callCount = links.reduce(function(s,l){ return s + l.total; }, 0);
+    legend.innerHTML =
+      '<div class="d3-legend-row">' +
+        '<span class="d3-legend-title">' + fileCount + ' files · ' + dbCount + ' datastores · ' + callCount + ' calls</span>' +
+        '<span class="d3-legend-item"><i style="background:#3a1f0a;border:1.5px solid ' + DB_COLOR + ';border-radius:50%"></i>Datastore (import target)</span>' +
+        '<span class="d3-legend-item"><i style="background:#162a2d;border:1.5px solid ' + FILE_COLOR + ';border-radius:2px"></i>File (caller)</span>' +
+        '<span class="d3-legend-item"><i style="background:' + EDGE_COLOR + ';height:3px"></i>DB call</span>' +
+      '</div>';
+  }
+
   const toggleBtn = document.getElementById('d3-toggle-labels');
   if (toggleBtn) {
     toggleBtn.onclick = function() {

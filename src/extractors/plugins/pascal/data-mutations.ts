@@ -18,10 +18,11 @@ export class PascalMutationExtractor extends DataMutationExtractor {
         ) {
           // Find the right-hand side value
           let value: string | null = null;
-          for (let i = 0; i < node.childCount; i++) {
-            const child = node.child(i)!;
+          const kids = node.children;
+          for (let i = 0; i < kids.length; i++) {
+            const child = kids[i]!;
             if (child.type === "kAssign") {
-              const next = node.child(i + 1);
+              const next = kids[i + 1];
               if (next) value = this.truncate(next.text, 80);
               break;
             }

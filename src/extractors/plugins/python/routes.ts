@@ -10,8 +10,7 @@ export function extractPythonRoutes(root: Node, routes: RouteInfo[]): void {
 
 function walkForPythonRoutes(node: Node, routes: RouteInfo[]) {
   if (node.type === "decorated_definition") {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
       if (child.type === "decorator") {
         const call = child.child(1);
         if (call?.type === "call") {
@@ -27,8 +26,7 @@ function walkForPythonRoutes(node: Node, routes: RouteInfo[]) {
               }
 
               let handler: string | null = null;
-              for (let j = 0; j < node.childCount; j++) {
-                const def = node.child(j)!;
+              for (const def of node.children) {
                 if (def.type === "function_definition") {
                   handler = def.childForFieldName("name")?.text ?? null;
                 }
@@ -50,7 +48,7 @@ function walkForPythonRoutes(node: Node, routes: RouteInfo[]) {
     }
   }
 
-  for (let i = 0; i < node.childCount; i++) {
-    walkForPythonRoutes(node.child(i)!, routes);
+  for (const child of node.children) {
+    walkForPythonRoutes(child, routes);
   }
 }

@@ -2,7 +2,7 @@
 export type Language =
   | "typescript" | "javascript" | "csharp" | "python" | "java" | "kotlin" | "pascal" | "dfm"
   | "go" | "rust" | "ruby" | "php" | "swift" | "lua" | "scala"
-  | "perl" | "vb";
+  | "perl" | "vb" | "sql" | "c" | "cpp";
 
 export interface ExtractorWarning {
   /** Dotted-path location, e.g. "functions[3].endLine" or "routes[0].kind". */
@@ -137,6 +137,49 @@ export interface ClassGraph {
   edges: ClassGraphEdge[];
 }
 
+/**
+ * Project-wide data-access graph. One synthetic "datastore" node per unique
+ * data-source target (e.g. `@prisma/client`, `Microsoft.EntityFrameworkCore`,
+ * `../lib/prisma`), plus one node per file that performs DB calls. Edges
+ * carry the actual call sites so the UI can render per-edge detail.
+ */
+export interface DataAccessNode {
+  /** Unique id. For files: `file::<path>`. For datastores: `db::<target>`. */
+  id: string;
+  /** Display name (file basename or datastore target). */
+  name: string;
+  /** "file" for caller files; "datastore" for synthetic DB sinks. */
+  kind: "file" | "datastore";
+  /** File path for "file" nodes. Empty for datastore nodes. */
+  filePath: string;
+  /** Number of incoming edges (only meaningful for datastore nodes). */
+  inboundCount: number;
+  /** Number of outgoing edges (only meaningful for file nodes). */
+  outboundCount: number;
+}
+
+export interface DataAccessEdgeCall {
+  /** Call expression as captured (e.g. `prisma.user.findMany`). */
+  name: string;
+  line: number;
+}
+
+export interface DataAccessEdge {
+  /** Source file node id. */
+  source: string;
+  /** Target datastore node id. */
+  target: string;
+  /** Individual call sites that produced this edge. */
+  calls: DataAccessEdgeCall[];
+  /** Sum of `calls.length`. Surfaced for fast edge-weight sorting. */
+  total: number;
+}
+
+export interface DataAccessGraph {
+  nodes: DataAccessNode[];
+  edges: DataAccessEdge[];
+}
+
 /** Per-file analysis result */
 export interface FileAnalysis {
   filePath: string;
@@ -252,6 +295,8 @@ export interface ClassInfo {
   isExported: boolean;
   line: number;
   endLine: number;
+  /** "interface" marks abstract types so the linker can route calls to concrete implementations. */
+  kind?: "class" | "interface";
 }
 
 export interface RouteInfo {
@@ -560,6 +605,7 @@ export interface ProjectAnalysis {
   }>;
   /** Class-level dependency graph for the Architecture tab's Data Models mode. */
   classGraph?: ClassGraph;
+  dataAccessGraph?: DataAccessGraph;
 }
 
 export interface FrameworkDetection {

@@ -17,7 +17,12 @@ const CALL_TYPES: Record<string, Set<string>> = {
   go: new Set(["call_expression", "composite_literal"]),
   rust: new Set(["call_expression", "macro_invocation"]),
   ruby: new Set(["call", "method_call"]),
-  php: new Set(["function_call_expression", "member_call_expression", "object_creation_expression"]),
+  php: new Set([
+    "function_call_expression",
+    "member_call_expression",
+    "scoped_call_expression",
+    "object_creation_expression",
+  ]),
 };
 
 /**
@@ -45,6 +50,14 @@ const NESTED_SCOPE_TYPES = new Set([
   "local_function_statement",
   "anonymous_method_expression",
   "lambda_expression",
+  // PHP
+  "method_declaration",
+  "function_definition",
+  "class_declaration",
+  "interface_declaration",
+  "trait_declaration",
+  "anonymous_function_creation_expression",
+  "arrow_function",
 ]);
 
 /** Methods that are noise — chaining, logging, promise utilities, etc. */
@@ -115,8 +128,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
       if (node.type === "call_expression" || node.type === "method_invocation" || node.type === "call") {
         const args = node.childForFieldName("arguments");
         if (args) {
-          for (let j = 0; j < args.childCount; j++) {
-            const arg = args.child(j)!;
+          for (const arg of args.children) {
             if (arg.type === "identifier" && /^[a-zA-Z_]/.test(arg.text) && !isNoise(arg.text)) {
               addResult(arg.text, arg);
             }
@@ -145,8 +157,8 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
       }
     }
 
-    for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i)!, false);
+    for (const child of node.children) {
+      walk(child, false);
     }
   }
 
@@ -189,8 +201,8 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
       }
     }
 
-    for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i)!);
+    for (const child of node.children) {
+      walk(child);
     }
   }
 
@@ -363,6 +375,12 @@ export function classifyCalls(
  * Resolve the full call name from a call expression node.
  * Returns qualified names for member calls: "obj.method" instead of just "method".
  */
+/** Strip PHP's `$` sigil and convert `->` chain separators to `.` so qualified
+ *  names look like `this.repo.find` instead of `$this->repo->find`. */
+function normalizePhpReceiver(text: string): string {
+  return text.replace(/\$/g, "").replace(/->/g, ".");
+}
+
 function resolveCallName(node: Node, language: Language): string | null {
   // Java/Kotlin method_invocation: has "object" and "name" fields — handle first
   // to avoid losing the qualifier (e.g., "userService.searchUsers" → not just "searchUsers")
@@ -432,6 +450,26 @@ function resolveCallName(node: Node, language: Language): string | null {
     if (callee.type === "inherited") return callee.text;
   }
 
+  // PHP call shapes. We normalize PHP's `$this->prop->method` chain into the
+  // dotted form `this.prop.method` so the symbol-linker's injection/property
+  // tracking (which keys on `this.<name>`) can match it.
+  if (language === "php") {
+    if (node.type === "member_call_expression") {
+      const obj = node.childForFieldName("object");
+      const name = node.childForFieldName("name");
+      if (name) {
+        return obj ? `${normalizePhpReceiver(obj.text)}.${name.text}` : name.text;
+      }
+    }
+    if (node.type === "scoped_call_expression") {
+      const scope = node.childForFieldName("scope");
+      const name = node.childForFieldName("name");
+      if (name) {
+        return scope ? `${scope.text.replace(/\\/g, "")}.${name.text}` : name.text;
+      }
+    }
+  }
+
   if (node.type === "new_expression" || node.type === "object_creation_expression") {
     const typeNode =
       node.childForFieldName("type") ??
@@ -463,8 +501,7 @@ export function extractVariableAliases(
 
     // Match: const/let/var name = importedFn()
     if (node.type === "lexical_declaration" || node.type === "variable_declaration") {
-      for (let i = 0; i < node.childCount; i++) {
-        const decl = node.child(i)!;
+      for (const decl of node.children) {
         if (decl.type === "variable_declarator") {
           const nameNode = decl.childForFieldName("name");
           const valueNode = decl.childForFieldName("value");
@@ -479,8 +516,8 @@ export function extractVariableAliases(
       }
     }
 
-    for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i)!);
+    for (const child of node.children) {
+      walk(child);
     }
   }
 

@@ -36,8 +36,7 @@ function walkForDecoratorRoutes(node: Node, routes: RouteInfo[]) {
         const parent = node.parent;
         let handler: string | null = null;
         if (parent) {
-          for (let i = 0; i < parent.childCount; i++) {
-            const sibling = parent.child(i)!;
+          for (const sibling of parent.children) {
             if (sibling.type === "method_definition") {
               handler = sibling.childForFieldName("name")?.text ?? null;
               break;
@@ -58,7 +57,7 @@ function walkForDecoratorRoutes(node: Node, routes: RouteInfo[]) {
     }
   }
 
-  for (let i = 0; i < node.childCount; i++) {
-    walkForDecoratorRoutes(node.child(i)!, routes);
+  for (const child of node.children) {
+    walkForDecoratorRoutes(child, routes);
   }
 }

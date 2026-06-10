@@ -7,8 +7,7 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
 
   protected collectImports(node: Node, imports: ImportInfo[]): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       // Static: import ... from "module"
       if (child.type === "import_statement") {
@@ -39,11 +38,12 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
 
     // Detect type-only imports: `import type { Foo } from ...`
     let isType = false;
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    const kids = node.children;
+    for (let i = 0; i < kids.length; i++) {
+      const child = kids[i]!;
       if (child.type === "type" || child.text === "type") {
         // Check if "type" keyword appears before the import clause
-        const next = node.child(i + 1);
+        const next = kids[i + 1];
         if (next && (next.type === "import_clause" || next.type === "named_imports")) {
           isType = true;
         }
@@ -60,18 +60,15 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
       line: node.startPosition.row + 1,
     };
 
-    for (let j = 0; j < node.childCount; j++) {
-      const part = node.child(j)!;
+    for (const part of node.children) {
 
       if (part.type === "import_clause") {
-        for (let k = 0; k < part.childCount; k++) {
-          const clause = part.child(k)!;
+        for (const clause of part.children) {
           if (clause.type === "identifier") {
             info.isDefault = true;
             info.specifiers.push(clause.text);
           } else if (clause.type === "named_imports") {
-            for (let l = 0; l < clause.childCount; l++) {
-              const spec = clause.child(l)!;
+            for (const spec of clause.children) {
               if (spec.type === "import_specifier") {
                 const originalName = spec.childForFieldName("name")?.text ?? spec.text;
                 const alias = spec.childForFieldName("alias")?.text;
@@ -85,7 +82,16 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
             }
           } else if (clause.type === "namespace_import") {
             info.isNamespace = true;
-            const alias = clause.childForFieldName("alias") ?? clause.child(1);
+            // Children are: `*`, `as`, identifier. Pick the trailing
+            // identifier — `child(1)` returns the `as` keyword.
+            let alias: Node | null = clause.childForFieldName("alias");
+            if (!alias) {
+              const kids = clause.children;
+              for (let m = kids.length - 1; m >= 0; m--) {
+                const c = kids[m]!;
+                if (c.type === "identifier") { alias = c; break; }
+              }
+            }
             if (alias) info.specifiers.push(alias.text);
           }
         }
@@ -98,8 +104,7 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
 
   /** Extract require("module") from variable declarations */
   private extractRequireCalls(declNode: Node, imports: ImportInfo[]): void {
-    for (let i = 0; i < declNode.childCount; i++) {
-      const decl = declNode.child(i)!;
+    for (const decl of declNode.children) {
       if (decl.type !== "variable_declarator") continue;
 
       const name = decl.childForFieldName("name");
@@ -127,8 +132,7 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
           isDefault = true;
         } else if (name.type === "object_pattern") {
           // const { a, b } = require("bar") — destructured
-          for (let j = 0; j < name.childCount; j++) {
-            const prop = name.child(j)!;
+          for (const prop of name.children) {
             if (prop.type === "shorthand_property_identifier_pattern" || prop.type === "identifier") {
               specifiers.push(prop.text);
             } else if (prop.type === "pair_pattern") {
@@ -177,8 +181,7 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
   }
 
   protected collectExports(node: Node, exports: ExportInfo[]): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       if (child.type === "export_statement") {
         const declaration = child.childForFieldName("declaration");
@@ -197,11 +200,9 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
         }
 
         // Named re-exports: export { x } from './y'
-        for (let j = 0; j < child.childCount; j++) {
-          const part = child.child(j)!;
+        for (const part of child.children) {
           if (part.type === "export_clause") {
-            for (let k = 0; k < part.childCount; k++) {
-              const spec = part.child(k)!;
+            for (const spec of part.children) {
               if (spec.type === "export_specifier") {
                 const name =
                   spec.childForFieldName("alias")?.text ??

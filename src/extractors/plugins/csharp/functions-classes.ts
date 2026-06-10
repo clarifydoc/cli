@@ -20,8 +20,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
   }
 
   private extractCsharpClasses(node: Node, classes: ClassInfo[]): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       if (
         child.type === "namespace_declaration" ||
@@ -31,20 +30,22 @@ export class CSharpExtractor extends FunctionClassExtractor {
         if (body) this.extractCsharpClasses(body, classes);
         this.extractCsharpClasses(child, classes);
       } else if (child.type === "class_declaration") {
-        classes.push(this.parseCsharpClass(child));
+        classes.push(this.parseCsharpClass(child, "class"));
+      } else if (child.type === "interface_declaration") {
+        classes.push(this.parseCsharpClass(child, "interface"));
       }
     }
   }
 
-  private parseCsharpClass(node: Node): ClassInfo {
+  private parseCsharpClass(node: Node, kind: "class" | "interface"): ClassInfo {
     const name = node.childForFieldName("name")?.text ?? "anonymous";
-    const bases = node.childForFieldName("bases");
+    const bases = node.childForFieldName("bases")
+      ?? this.findChildByType(node, "base_list");
     let extendsName: string | null = null;
     const implementsList: string[] = [];
 
     if (bases) {
-      for (let i = 0; i < bases.childCount; i++) {
-        const base = bases.child(i)!;
+      for (const base of bases.children) {
         if (base.type !== "," && base.type !== ":") {
           if (!extendsName) {
             extendsName = base.text;
@@ -62,8 +63,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
     const properties: PropertyInfo[] = [];
 
     if (body) {
-      for (let i = 0; i < body.childCount; i++) {
-        const member = body.child(i)!;
+      for (const member of body.children) {
         if (member.type === "method_declaration") {
           methods.push(this.parseCsharpMethod(member));
         } else if (member.type === "property_declaration") {
@@ -76,6 +76,28 @@ export class CSharpExtractor extends FunctionClassExtractor {
             isStatic: this.hasModifier(member, "static"),
             isReadonly: this.hasModifier(member, "readonly"),
           });
+        } else if (member.type === "field_declaration") {
+          // private readonly Foo _bar; — the tree-sitter shape is
+          // field_declaration → variable_declaration { type, variable_declarator { name } }
+          const typeText = member.childForFieldName("type")?.text
+            ?? this.findChildByType(member, "variable_declaration")
+              ?.childForFieldName("type")?.text
+            ?? null;
+          const varDecl = this.findChildByType(member, "variable_declaration");
+          if (varDecl) {
+            for (const decl of varDecl.children) {
+              if (decl.type === "variable_declarator") {
+                const fieldName = decl.childForFieldName("name")?.text ?? decl.text;
+                properties.push({
+                  name: fieldName,
+                  type: typeText,
+                  visibility: this.getCsharpVisibility(member),
+                  isStatic: this.hasModifier(member, "static"),
+                  isReadonly: this.hasModifier(member, "readonly"),
+                });
+              }
+            }
+          }
         }
       }
     }
@@ -92,6 +114,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
       isExported: classVis === "public" || classVis === null,
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
+      kind,
     };
   }
 
@@ -101,8 +124,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
     const params: ParamInfo[] = [];
 
     if (paramsNode) {
-      for (let i = 0; i < paramsNode.childCount; i++) {
-        const p = paramsNode.child(i)!;
+      for (const p of paramsNode.children) {
         if (p.type === "parameter") {
           params.push({
             name: p.childForFieldName("name")?.text ?? p.text,
@@ -142,4 +164,5 @@ export class CSharpExtractor extends FunctionClassExtractor {
   private hasModifier(node: Node, modifier: string): boolean {
     return sharedHasModifier(node, modifier);
   }
+
 }

@@ -19,6 +19,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
   const symbolIndex = buildSymbolIndex(analyses);
   const inheritanceMap = buildInheritanceMap(analyses);
   const injectionMap = buildInjectionMap(analyses);
+  const interfaceImplMap = buildInterfaceImplMap(analyses);
   const links: SymbolLink[] = [];
 
   for (const analysis of analyses) {
@@ -28,7 +29,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
     for (const fn of analysis.functions) {
       for (const call of fn.calls) {
         const link = resolveCallToDefinition(
-          sourceFile, fn.name, call, analysis, filePathMap, symbolIndex, inheritanceMap, injectionMap,
+          sourceFile, fn.name, call, analysis, filePathMap, symbolIndex, inheritanceMap, injectionMap, interfaceImplMap,
         );
         if (link) links.push(link);
       }
@@ -40,7 +41,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
         const sourceSymbol = `${cls.name}.${method.name}`;
         for (const call of method.calls) {
           const link = resolveCallToDefinition(
-            sourceFile, sourceSymbol, call, analysis, filePathMap, symbolIndex, inheritanceMap, injectionMap,
+            sourceFile, sourceSymbol, call, analysis, filePathMap, symbolIndex, inheritanceMap, injectionMap, interfaceImplMap,
           );
           if (link) links.push(link);
         }
@@ -63,7 +64,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
         const handlerLink = resolveCallToDefinition(
           sourceFile, sourceSymbol,
           { name: route.handler, kind: "internal", target: null, line: route.line },
-          analysis, filePathMap, symbolIndex, inheritanceMap, injectionMap,
+          analysis, filePathMap, symbolIndex, inheritanceMap, injectionMap, interfaceImplMap,
         );
         if (handlerLink) {
           links.push(handlerLink);
@@ -91,7 +92,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
       // Link route → functions it calls
       for (const call of route.calls) {
         const link = resolveCallToDefinition(
-          sourceFile, sourceSymbol, call, analysis, filePathMap, symbolIndex, inheritanceMap, injectionMap,
+          sourceFile, sourceSymbol, call, analysis, filePathMap, symbolIndex, inheritanceMap, injectionMap, interfaceImplMap,
         );
         if (link) links.push(link);
       }
@@ -101,9 +102,34 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
     for (const ds of analysis.dataSources) {
       for (const call of ds.calls) {
         const link = resolveCallToDefinition(
-          sourceFile, ds.name, call, analysis, filePathMap, symbolIndex, inheritanceMap, injectionMap,
+          sourceFile, ds.name, call, analysis, filePathMap, symbolIndex, inheritanceMap, injectionMap, interfaceImplMap,
         );
         if (link) links.push(link);
+      }
+    }
+  }
+
+  // Fan-out: for interfaces with >1 implementations, emit a link from each
+  // interface method to every implementation's matching method so the trace
+  // tab can navigate from interface → all impls. (Single-impl interfaces are
+  // already redirected directly at the call site in resolveCallToDefinition.)
+  for (const [, info] of interfaceImplMap) {
+    if (info.impls.length < 2) continue;
+    for (const ifaceMethod of info.methods) {
+      const ifaceSymbol = `${info.interfaceName}.${ifaceMethod.name}`;
+      for (const impl of info.impls) {
+        const implMethod = impl.methods.get(ifaceMethod.name);
+        if (!implMethod) continue;
+        links.push({
+          sourceFile: info.interfaceFile,
+          sourceSymbol: ifaceSymbol,
+          sourceLine: ifaceMethod.line,
+          callName: ifaceMethod.name,
+          targetFile: impl.classFile,
+          targetSymbol: `${impl.className}.${ifaceMethod.name}`,
+          targetLine: implMethod.line,
+          confidence: "INFERRED",
+        });
       }
     }
   }
@@ -284,9 +310,72 @@ function buildInjectionMap(
 }
 
 /**
+ * Build an interface→implementations map keyed by interface name.
+ * Used to route calls made through an interface-typed dependency to the
+ * concrete implementing class (when there's a single one) or to fan out
+ * trace edges from the interface to all implementations (when there are many).
+ */
+export function buildInterfaceImplMap(
+  analyses: FileAnalysis[],
+): Map<string, InterfaceImplInfo> {
+  const map = new Map<string, InterfaceImplInfo>();
+
+  // Seed entries for every interface we know about.
+  for (const a of analyses) {
+    for (const cls of a.classes) {
+      if (cls.kind === "interface") {
+        map.set(cls.name, {
+          interfaceName: cls.name,
+          interfaceFile: a.filePath,
+          methods: cls.methods.map((m) => ({ name: m.name, line: m.line })),
+          impls: [],
+        });
+      }
+    }
+  }
+
+  // Attach implementing classes. Inspect both `implements` and `extends`:
+  // some languages (notably C#) can't syntactically distinguish a class base
+  // from an interface base, so an interface may appear as `extends` here.
+  for (const a of analyses) {
+    for (const cls of a.classes) {
+      if (cls.kind === "interface") continue;
+      const candidates = [...cls.implements];
+      if (cls.extends) candidates.push(cls.extends);
+      for (const ifaceName of candidates) {
+        const entry = map.get(ifaceName);
+        if (!entry) continue;
+        const methods = new Map<string, { name: string; line: number }>();
+        for (const m of cls.methods) {
+          methods.set(m.name, { name: m.name, line: m.line });
+        }
+        entry.impls.push({
+          className: cls.name,
+          classFile: a.filePath,
+          methods,
+        });
+      }
+    }
+  }
+
+  return map;
+}
+
+/**
  * Try to resolve a single call to its definition site.
  * Returns a SymbolLink if resolution succeeds, null otherwise.
  */
+export interface InterfaceImplInfo {
+  interfaceName: string;
+  interfaceFile: string;
+  methods: { name: string; line: number }[];
+  impls: {
+    className: string;
+    classFile: string;
+    methods: Map<string, { name: string; line: number }>;
+  }[];
+}
+
 function resolveCallToDefinition(
   sourceFile: string,
   sourceSymbol: string,
@@ -296,6 +385,7 @@ function resolveCallToDefinition(
   symbolIndex: Map<string, Map<string, SymbolDef>>,
   inheritanceMap: Map<string, { parentClass: string; parentFile: string }>,
   injectionMap: Map<string, { typeName: string; typeFile: string }>,
+  interfaceImplMap: Map<string, InterfaceImplInfo>,
 ): SymbolLink | null {
   // Skip API and database calls — they don't resolve to project symbols
   if (call.kind === "api-call" || call.kind === "database") return null;
@@ -330,6 +420,15 @@ function resolveCallToDefinition(
   let def = fileSymbols.get(call.name);
   if (!def && !isQualified) {
     def = fileSymbols.get(leafName);
+  }
+  // `self.foo` / `Self.foo` / `this.foo` — strip the receiver and look up the
+  // leaf in the current file. Safe for internal calls because the receiver is
+  // unambiguous; for cross-file calls we rely on injection tracking.
+  if (!def && isQualified && call.kind === "internal" && targetFile === sourceFile) {
+    const head = call.name.split(".")[0]!;
+    if (head === "self" || head === "Self" || head === "this") {
+      def = fileSymbols.get(leafName);
+    }
   }
 
   // ── Strategy 1: Inheritance resolution ──
@@ -377,6 +476,27 @@ function resolveCallToDefinition(
       const injKey = `${sourceFile}::${prefix}`;
       const injection = injectionMap.get(injKey);
       if (injection) {
+        // If the declared type is an interface with exactly one implementation,
+        // skip the interface and link straight to the implementation's method.
+        const iface = interfaceImplMap.get(injection.typeName);
+        if (iface && iface.impls.length === 1) {
+          const impl = iface.impls[0]!;
+          const implMethod = impl.methods.get(methodName)
+            ?? impl.methods.get(parts[parts.length - 1]);
+          if (implMethod) {
+            return {
+              sourceFile,
+              sourceSymbol,
+              sourceLine: call.line,
+              callName: call.name,
+              targetFile: impl.classFile,
+              targetSymbol: `${impl.className}.${implMethod.name}`,
+              targetLine: implMethod.line,
+              confidence: "INFERRED",
+            };
+          }
+        }
+
         const typeSymbols = symbolIndex.get(injection.typeFile);
         if (typeSymbols) {
           const injDef = typeSymbols.get(methodName)

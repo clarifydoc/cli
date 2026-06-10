@@ -6,6 +6,7 @@ import { PythonExtractor } from "../plugins/python/functions-classes.js";
 import { CSharpExtractor } from "../plugins/csharp/functions-classes.js";
 import { PascalExtractor } from "../plugins/pascal/functions-classes.js";
 import { JavaKotlinExtractor } from "../plugins/java-kotlin/functions-classes.js";
+import { PhpExtractor } from "../plugins/php/functions-classes.js";
 
 /** All registered language extractors */
 const extractors: FunctionClassExtractor[] = [
@@ -14,6 +15,7 @@ const extractors: FunctionClassExtractor[] = [
   new CSharpExtractor(),
   new PascalExtractor(),
   new JavaKotlinExtractor(),
+  new PhpExtractor(),
 ];
 
 /** Language → extractor lookup (built once at import time) */

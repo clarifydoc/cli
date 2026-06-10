@@ -23,8 +23,9 @@ function walkForRoutes(node: Node, routes: RouteInfo[]) {
             const path = stripQuotes(firstArg.text);
             let handler: string | null = null;
             const middleware: string[] = [];
-            for (let i = 2; i < args.childCount - 1; i++) {
-              const arg = args.child(i)!;
+            const kids = args.children;
+            for (let i = 2; i < kids.length - 1; i++) {
+              const arg = kids[i]!;
               if (arg.type === "," || arg.type === "(") continue;
               if (arg.type === "identifier" || arg.type === "member_expression") {
                 if (handler) middleware.push(handler);
@@ -58,7 +59,7 @@ function walkForRoutes(node: Node, routes: RouteInfo[]) {
     }
   }
 
-  for (let i = 0; i < node.childCount; i++) {
-    walkForRoutes(node.child(i)!, routes);
+  for (const child of node.children) {
+    walkForRoutes(child, routes);
   }
 }

@@ -2,6 +2,7 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
 
 export const swiftSpec: RegexLangSpec = {
   language: "swift",
+  extensions: [".swift"],
   indentBased: false,
   lineCommentPrefixes: ["//"],
 

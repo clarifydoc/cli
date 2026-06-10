@@ -226,6 +226,15 @@ export function buildFilePathMap(analyses: FileAnalysis[]): Map<string, string> 
 }
 
 /**
+ * Memoized resolutions per filePathMap. Resolution is a pure function of
+ * (importSource, importer's directory, map contents) and the map is never
+ * mutated after buildFilePathMap, so results can be cached for the map's
+ * lifetime. The same import string ("react", "./utils") recurs across many
+ * files and call sites — caching avoids re-running the fallback chain.
+ */
+const resolveCache = new WeakMap<Map<string, string>, Map<string, string | null>>();
+
+/**
  * Resolve an import source to an actual file path.
  * Handles:
  *  - Relative: "../hooks/useUsers" → resolved against importer's dir
@@ -234,6 +243,25 @@ export function buildFilePathMap(analyses: FileAnalysis[]): Map<string, string> 
  *  - Package: "com.example.api.service.UserService" → last segment matched (Java/Kotlin)
  */
 export function resolveTarget(importSource: string, sourceFile: string, filePathMap: Map<string, string>): string | null {
+  let cache = resolveCache.get(filePathMap);
+  if (!cache) {
+    cache = new Map();
+    resolveCache.set(filePathMap, cache);
+  }
+  // Relative imports resolve against the importer's directory, so the cache
+  // key must include it; non-relative resolution is importer-independent.
+  const cacheKey = importSource.startsWith(".")
+    ? `${posix.dirname(sourceFile)}\u0000${importSource}`
+    : importSource;
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const result = resolveTargetUncached(importSource, sourceFile, filePathMap);
+  cache.set(cacheKey, result);
+  return result;
+}
+
+function resolveTargetUncached(importSource: string, sourceFile: string, filePathMap: Map<string, string>): string | null {
   // 1. Relative imports (JS/TS/Python relative)
   if (importSource.startsWith(".")) {
     const sourceDir = posix.dirname(sourceFile);
@@ -265,6 +293,29 @@ export function resolveTarget(importSource: string, sourceFile: string, filePath
   return null;
 }
 
+const MATCH_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".java", ".kt", ".cs", ".pas", ".go", ".rs", ".rb", ".php", ".swift", ".lua", ".scala", ".pl", ".pm", ".vb", ".bas"];
+
+/**
+ * Lazily-built index per filePathMap: basename of each map key → first map key
+ * with that basename (insertion order, matching what a linear scan over the
+ * map would return). Keyed on the map instance; the map is never mutated
+ * after buildFilePathMap.
+ */
+const baseNameIndexCache = new WeakMap<Map<string, string>, Map<string, string>>();
+
+function getBaseNameIndex(filePathMap: Map<string, string>): Map<string, string> {
+  let idx = baseNameIndexCache.get(filePathMap);
+  if (!idx) {
+    idx = new Map();
+    for (const key of filePathMap.keys()) {
+      const keyBase = key.slice(key.lastIndexOf("/") + 1);
+      if (!idx.has(keyBase)) idx.set(keyBase, key);
+    }
+    baseNameIndexCache.set(filePathMap, idx);
+  }
+  return idx;
+}
+
 /** Try to match a candidate path against the file path map (with extension/index fallbacks) */
 function tryMatch(candidate: string, filePathMap: Map<string, string>): string | null {
   // Direct match
@@ -272,7 +323,7 @@ function tryMatch(candidate: string, filePathMap: Map<string, string>): string |
   if (direct) return direct;
 
   // With common extensions
-  for (const ext of [".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".java", ".kt", ".cs", ".pas", ".go", ".rs", ".rb", ".php", ".swift", ".lua", ".scala", ".pl", ".pm", ".vb", ".bas"]) {
+  for (const ext of MATCH_EXTENSIONS) {
     const withExt = filePathMap.get(candidate + ext);
     if (withExt) return withExt;
   }
@@ -282,9 +333,10 @@ function tryMatch(candidate: string, filePathMap: Map<string, string>): string |
   if (withIndex) return withIndex;
 
   // Basename match: "UserModel" → find any file whose basename matches
-  for (const [key, filePath] of filePathMap) {
-    const keyBase = key.split("/").pop()!;
-    if (keyBase === candidate) return filePath;
+  const baseKey = getBaseNameIndex(filePathMap).get(candidate);
+  if (baseKey !== undefined) {
+    const byBase = filePathMap.get(baseKey);
+    if (byBase) return byBase;
   }
 
   return null;

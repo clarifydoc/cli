@@ -6,8 +6,7 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
   readonly languages: Language[] = ["python"];
 
   protected collectImports(node: Node, imports: ImportInfo[]): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       if (child.type === "import_statement") {
         this.parseImportStatement(child, imports);
@@ -20,8 +19,7 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
   /** `import foo`, `import foo.bar`, `import foo as f, bar as b` */
   private parseImportStatement(node: Node, imports: ImportInfo[]): void {
     const names: string[] = [];
-    for (let j = 0; j < node.childCount; j++) {
-      const part = node.child(j)!;
+    for (const part of node.children) {
       if (part.type === "dotted_name") {
         names.push(part.text);
       } else if (part.type === "aliased_import") {
@@ -52,8 +50,7 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
     let isNamespace = false;
     let pastImportKeyword = false;
 
-    for (let j = 0; j < node.childCount; j++) {
-      const part = node.child(j)!;
+    for (const part of node.children) {
 
       // Track when we pass the "import" keyword — specifiers come after it
       if (part.text === "import" && part.type !== "dotted_name") {
@@ -80,8 +77,7 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
 
       // Named specifiers inside import_list: from foo import bar, baz
       if (part.type === "import_list" || part.type === "import_from_statement_body") {
-        for (let k = 0; k < part.childCount; k++) {
-          const spec = part.child(k)!;
+        for (const spec of part.children) {
           if (spec.type === "dotted_name" || spec.type === "identifier") {
             specifiers.push(spec.text);
           } else if (spec.type === "aliased_import") {
@@ -113,8 +109,7 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
 
   protected collectExports(node: Node, exports: ExportInfo[]): void {
     // In Python, top-level functions and classes are "exports"
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       if (child.type === "function_definition") {
         const name = child.childForFieldName("name")?.text ?? "anonymous";
@@ -128,8 +123,7 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
         }
       } else if (child.type === "decorated_definition") {
         // Decorated functions/classes are also exports
-        for (let j = 0; j < child.childCount; j++) {
-          const inner = child.child(j)!;
+        for (const inner of child.children) {
           if (inner.type === "function_definition") {
             const name = inner.childForFieldName("name")?.text ?? "anonymous";
             if (!name.startsWith("_")) {

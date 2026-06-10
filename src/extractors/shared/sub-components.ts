@@ -52,15 +52,14 @@ function walkForJsx(
     }
   }
 
-  for (let i = 0; i < node.childCount; i++) {
-    walkForJsx(node.child(i)!, components, seen, importMap);
+  for (const child of node.children) {
+    walkForJsx(child, components, seen, importMap);
   }
 }
 
 function extractJsxProps(node: Node): string[] {
   const props: string[] = [];
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i)!;
+  for (const child of node.children) {
     if (child.type === "jsx_attribute") {
       const name = child.childForFieldName("name")?.text ?? child.child(0)?.text;
       if (name) props.push(name);

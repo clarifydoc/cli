@@ -29,6 +29,7 @@ function parseMooseHas(line: string): PropertyInfo | null {
 
 export const perlSpec: RegexLangSpec = {
   language: "perl",
+  extensions: [".pl", ".pm"],
   indentBased: false,
   lineCommentPrefixes: ["#"],
 

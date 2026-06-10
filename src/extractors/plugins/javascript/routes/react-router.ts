@@ -17,8 +17,7 @@ function walkForJsxRoutes(node: Node, routes: RouteInfo[]) {
       let path: string | null = null;
       let handler: string | null = null;
 
-      for (let i = 0; i < node.childCount; i++) {
-        const attr = node.child(i)!;
+      for (const attr of node.children) {
         if (attr.type === "jsx_attribute") {
           const attrName = attr.childForFieldName("name")?.text ?? attr.child(0)?.text;
           const attrValue = attr.child(2);
@@ -47,7 +46,7 @@ function walkForJsxRoutes(node: Node, routes: RouteInfo[]) {
     }
   }
 
-  for (let i = 0; i < node.childCount; i++) {
-    walkForJsxRoutes(node.child(i)!, routes);
+  for (const child of node.children) {
+    walkForJsxRoutes(child, routes);
   }
 }

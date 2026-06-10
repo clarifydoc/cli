@@ -49,8 +49,8 @@ function walkForInteractive(node: Node, elements: InteractiveElementInfo[]) {
     }
   }
 
-  for (let i = 0; i < node.childCount; i++) {
-    walkForInteractive(node.child(i)!, elements);
+  for (const child of node.children) {
+    walkForInteractive(child, elements);
   }
 }
 
@@ -58,8 +58,7 @@ function walkForInteractive(node: Node, elements: InteractiveElementInfo[]) {
 function extractEventProps(node: Node): { event: string; handler: string | null }[] {
   const events: { event: string; handler: string | null }[] = [];
 
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i)!;
+  for (const child of node.children) {
     if (child.type === "jsx_attribute") {
       const attrName = child.childForFieldName("name")?.text ?? child.child(0)?.text;
       if (attrName && isEventProp(attrName)) {
@@ -84,8 +83,7 @@ function extractHandlerName(attrNode: Node): string | null {
 
   // {handleClick} → jsx_expression containing identifier
   // {() => handleClick()} → jsx_expression containing arrow_function
-  for (let i = 0; i < valueNode.childCount; i++) {
-    const child = valueNode.child(i)!;
+  for (const child of valueNode.children) {
 
     // Direct reference: onClick={handleClick}
     if (child.type === "identifier") return child.text;
@@ -126,8 +124,8 @@ function findFirstCall(node: Node): string | null {
   if (node.type === "call_expression") {
     return getCalleeIdentifier(node);
   }
-  for (let i = 0; i < node.childCount; i++) {
-    const result = findFirstCall(node.child(i)!);
+  for (const child of node.children) {
+    const result = findFirstCall(child);
     if (result) return result;
   }
   return null;

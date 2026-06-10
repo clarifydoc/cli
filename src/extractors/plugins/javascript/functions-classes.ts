@@ -20,8 +20,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     functions: FunctionInfo[],
     isExported: boolean,
   ): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       if (child.type === "export_statement") {
         this.extractJsFunctions(child, functions, true);
@@ -37,8 +36,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         child.type === "lexical_declaration" ||
         child.type === "variable_declaration"
       ) {
-        for (let j = 0; j < child.childCount; j++) {
-          const decl = child.child(j)!;
+        for (const decl of child.children) {
           if (decl.type === "variable_declarator") {
             const name = decl.childForFieldName("name")?.text;
             const value = decl.childForFieldName("value");
@@ -123,8 +121,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     if (!paramsNode) return [];
     const params: ParamInfo[] = [];
 
-    for (let i = 0; i < paramsNode.childCount; i++) {
-      const child = paramsNode.child(i)!;
+    for (const child of paramsNode.children) {
       if (
         child.type === "required_parameter" ||
         child.type === "optional_parameter" ||
@@ -149,14 +146,12 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
   }
 
   private extractJsClasses(node: Node, classes: ClassInfo[]): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
       let isExported = false;
 
       if (child.type === "export_statement") {
         isExported = true;
-        for (let j = 0; j < child.childCount; j++) {
-          const inner = child.child(j)!;
+        for (const inner of child.children) {
           if (inner.type === "class_declaration") {
             classes.push(this.parseJsClass(inner, true));
           }
@@ -177,14 +172,14 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const implementsList: string[] = [];
 
     if (heritage) {
-      for (let i = 0; i < heritage.childCount; i++) {
-        const clause = heritage.child(i)!;
+      for (const clause of heritage.children) {
         if (clause.type === "extends_clause") {
           extendsName = clause.child(1)?.text ?? null;
         }
         if (clause.type === "implements_clause") {
-          for (let j = 1; j < clause.childCount; j++) {
-            const impl = clause.child(j)!;
+          const kids = clause.children;
+          for (let j = 1; j < kids.length; j++) {
+            const impl = kids[j]!;
             if (impl.type !== ",") implementsList.push(impl.text);
           }
         }
@@ -197,8 +192,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const properties: PropertyInfo[] = [];
 
     if (body) {
-      for (let i = 0; i < body.childCount; i++) {
-        const member = body.child(i)!;
+      for (const member of body.children) {
         if (
           member.type === "method_definition" ||
           member.type === "public_field_definition"

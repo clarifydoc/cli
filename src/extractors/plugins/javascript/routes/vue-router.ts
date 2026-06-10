@@ -12,8 +12,7 @@ function walkForVueRouterConfig(node: Node, routes: RouteInfo[]) {
     let path: string | null = null;
     let handler: string | null = null;
 
-    for (let i = 0; i < node.childCount; i++) {
-      const prop = node.child(i)!;
+    for (const prop of node.children) {
       if (prop.type === "pair" || prop.type === "property_assignment") {
         const key = prop.childForFieldName("key");
         const value = prop.childForFieldName("value");
@@ -43,7 +42,7 @@ function walkForVueRouterConfig(node: Node, routes: RouteInfo[]) {
     }
   }
 
-  for (let i = 0; i < node.childCount; i++) {
-    walkForVueRouterConfig(node.child(i)!, routes);
+  for (const child of node.children) {
+    walkForVueRouterConfig(child, routes);
   }
 }

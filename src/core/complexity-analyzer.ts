@@ -81,8 +81,8 @@ function countBranches(node: TSNode, language: string): number {
         count++;
       }
     }
-    for (let i = 0; i < n.childCount; i++) {
-      walk(n.child(i)!);
+    for (const child of n.children) {
+      walk(child);
     }
   }
 
@@ -105,8 +105,7 @@ function findBodyNode(root: TSNode, startLine: number, endLine: number): TSNode 
       }
     }
 
-    for (let i = 0; i < n.childCount; i++) {
-      const child = n.child(i)!;
+    for (const child of n.children) {
       const cStart = child.startPosition.row + 1;
       const cEnd = child.endPosition.row + 1;
       // Only recurse if child overlaps the target range

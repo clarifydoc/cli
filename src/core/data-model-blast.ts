@@ -10,6 +10,7 @@ import type {
   ClassGraphEdge,
 } from "../types/analysis.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
+import { buildImportIndex } from "./import-index.js";
 
 /**
  * Aggregate per-class type-blast records from per-file TypeReferences.
@@ -77,7 +78,9 @@ export function aggregateTypeBlast(
   }
 
   // Step 2: resolve every TypeReference to a defining file. If a name has
-  // multiple candidates, mark the resolved reference AMBIGUOUS.
+  // multiple candidates, consult the importing file's import table to pick
+  // the right one; otherwise mark AMBIGUOUS.
+  const importIndex = buildImportIndex(analyses);
   type ResolvedRef = TypeReference & { resolvedTargetFile: string };
   const resolved: ResolvedRef[] = [];
 
@@ -92,10 +95,13 @@ export function aggregateTypeBlast(
       if (candidates.length === 1) {
         targetFile = candidates[0]!;
       } else {
-        // Prefer same-file resolution (a class referencing another class in
-        // the same file is unambiguous).
+        // Prefer import-resolved candidate (the source file explicitly
+        // imported this name from a known defining file).
+        const importedFrom = importIndex.localFor(ref.sourceFile, ref.typeName);
         const sameFile = candidates.find((c) => c === ref.sourceFile);
-        if (sameFile) {
+        if (importedFrom && candidates.includes(importedFrom)) {
+          targetFile = importedFrom;
+        } else if (sameFile) {
           targetFile = sameFile;
         } else {
           // Fall back to first candidate but mark AMBIGUOUS so the report
@@ -313,6 +319,7 @@ export function buildClassGraph(analyses: FileAnalysis[]): ClassGraph {
   // from its source (class OR file, when not inside a class) to the type
   // it references. Functional codebases (no classes) only form file→class
   // edges, which is exactly the signal a user wants for Vue/React/express.
+  const importIndex = buildImportIndex(analyses);
   const edgeMap = new Map<string /* "src→tgt" */, ClassGraphEdge>();
   for (const a of analyses) {
     for (const ref of a.typeReferences ?? []) {
@@ -327,8 +334,11 @@ export function buildClassGraph(analyses: FileAnalysis[]): ClassGraph {
       } else if (candidates.length === 1) {
         targetId = candidates[0]!;
       } else {
+        const importedFrom = importIndex.localFor(ref.sourceFile, ref.typeName);
+        const importedId = importedFrom ? `${importedFrom}::${ref.typeName}` : null;
+        const fromImport = importedId && candidates.includes(importedId) ? importedId : null;
         const sameFile = candidates.find((c) => c.startsWith(`${a.filePath}::`));
-        targetId = sameFile ?? candidates[0]!;
+        targetId = fromImport ?? sameFile ?? candidates[0]!;
       }
 
       // Pick the source node — either the containing class, or (when the

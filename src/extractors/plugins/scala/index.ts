@@ -2,6 +2,7 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
 
 export const scalaSpec: RegexLangSpec = {
   language: "scala",
+  extensions: [".scala"],
   indentBased: false,
   lineCommentPrefixes: ["//"],
 

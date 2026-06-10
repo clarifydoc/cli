@@ -19,8 +19,8 @@ export abstract class DataMutationExtractor {
   /** Recursively walk the AST; override `visitNode` to collect mutations */
   protected walk(node: Node, mutations: DataMutationInfo[]): void {
     this.visitNode(node, mutations);
-    for (let i = 0; i < node.childCount; i++) {
-      this.walk(node.child(i)!, mutations);
+    for (const child of node.children) {
+      this.walk(child, mutations);
     }
   }
 

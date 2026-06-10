@@ -12,6 +12,7 @@ const VB_END_RE = /^\s*End\s+(Sub|Function|Property|Class|Module|Structure|Inter
 
 const vbBase: RegexLangSpec = {
   language: "vb",
+  extensions: [".vb", ".bas", ".cls", ".frm"],
   blockStyle: "keyword-end",
   keywordEnd: { openRe: VB_OPEN_RE, endRe: VB_END_RE },
   // VB line comments: ' (tick) or REM keyword

@@ -15,27 +15,15 @@ import {
 } from "./framework-detector.js";
 import { detectSubProjects, assignProjectId } from "./project-detector.js";
 import {
-  writeFileAnalysis,
   writeProjectSummary,
   type OutputOptions,
 } from "./output-writer.js";
-import { parseSource } from "../parsers/parser-manager.js";
-import { parseVueSfc } from "../parsers/vue-sfc.js";
-import { parseDfm } from "../parsers/dfm-parser.js";
-import { extractImports, extractExports } from "../extractors/imports-exports/index.js";
-import { extractFunctions, extractClasses } from "../extractors/functions-classes/index.js";
-import { extractSubComponents } from "../extractors/shared/sub-components.js";
-import { extractRoutes } from "../extractors/routes/index.js";
-import { extractDataSources } from "../extractors/data-sources/index.js";
-import { extractDataMutations } from "../extractors/data-mutations/index.js";
-import { classifyCalls, extractTopLevelCalls, extractVariableAliases } from "../extractors/shared/call-graph.js";
-import { loadTsconfigAliases, applyAliases } from "../extractors/shared/tsconfig-aliases.js";
-import { extractInteractiveElements, extractVueInteractiveElements } from "../extractors/shared/interactive-elements.js";
-import { extractEvents } from "../extractors/shared/events.js";
+import { analyzeFile, type FileTask, type FileResult } from "./file-analyzer.js";
+import { AnalysisWorkerPool } from "./worker-pool.js";
+import { loadTsconfigAliases } from "../extractors/shared/tsconfig-aliases.js";
 import { buildLinkGraph } from "../extractors/shared/link-scoring.js";
 import { buildSymbolLinks } from "./symbol-linker.js";
-import { computeComplexity, aggregateComplexity } from "./complexity-analyzer.js";
-import { scanSecurity } from "./security-scanner.js";
+import { aggregateComplexity } from "./complexity-analyzer.js";
 import { detectPatterns } from "./pattern-detector.js";
 import { detectDuplicates } from "./duplication-detector.js";
 import { classifyFileLayers, detectLayerViolations } from "./layer-analyzer.js";
@@ -45,13 +33,10 @@ import { generateSuggestions } from "./suggestions-engine.js";
 import { detectCommunities } from "./community-detector.js";
 import { findGodNodes, findSurprisingConnections, suggestQuestions } from "./topology-analyzer.js";
 import { dedupSymbolLinks } from "./symbol-dedup.js";
-import { extractTypeReferences } from "./type-reference-extractor.js";
-import { extractTypeReferencesFromAst } from "../extractors/shared/type-references-ast.js";
 import { aggregateTypeBlast, buildClassGraph } from "./data-model-blast.js";
+import { buildDataAccessGraph } from "./data-access-graph.js";
 import {
-  createEmptyAnalysis,
   type FileAnalysis,
-  type Language,
   type ProjectAnalysis,
   type ScreenInfo,
   type ScreenComponentInfo,
@@ -94,26 +79,6 @@ export interface AnalyzeResult {
   suggestionCount?: number;
 }
 
-// ─── Per-file analysis task / result ─────────────────────────────────────
-
-interface FileTask {
-  file: DiscoveredFile;
-  frameworkIds: string[];
-  projectId: string;
-  outputOpts: OutputOptions;
-  verbose: boolean;
-  projectRoot: string;
-  /** tsconfig.json paths-style aliases for the project (may be empty). */
-  tsconfigAliases: Map<string, string>;
-}
-
-interface FileResult {
-  analysis: FileAnalysis;
-  rawSource: string | null; // non-null only for frontend route files
-  complexities: ComplexityInfo[];
-  securityIssues: SecurityIssue[];
-}
-
 // ─── Concurrency pool ────────────────────────────────────────────────────
 
 /**
@@ -143,227 +108,6 @@ async function runWithConcurrency<T, R>(
   );
   await Promise.all(workers);
   return results;
-}
-
-// ─── Single-file analysis ────────────────────────────────────────────────
-
-/**
- * Analyze a single file: read, parse, extract, write JSON.
- * Returns null on error (error is logged internally).
- */
-async function analyzeFile(task: FileTask): Promise<FileResult | null> {
-  const { file, frameworkIds, projectId, outputOpts, verbose, projectRoot, tsconfigAliases } = task;
-
-  const applyTsconfigAliasesToImports = (a: FileAnalysis): void => {
-    if (tsconfigAliases.size === 0) return;
-    for (const imp of a.imports) {
-      imp.source = applyAliases(imp.source, tsconfigAliases, projectRoot);
-    }
-  };
-
-  try {
-    const rawSource = await readFile(file.absolutePath, "utf-8");
-
-    // .dfm files use a dedicated parser (no tree-sitter)
-    if (file.language === "dfm") {
-      const analysis = parseDfm(rawSource, file.relativePath);
-      analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
-      analysis.projectId = projectId;
-      applyTsconfigAliasesToImports(analysis);
-      const dfmTypeRefs = extractTypeReferences(analysis, file.language);
-      if (dfmTypeRefs.length > 0) analysis.typeReferences = dfmTypeRefs;
-      await writeFileAnalysis(analysis, outputOpts);
-      return { analysis, rawSource: null, complexities: [], securityIssues: [] };
-    }
-
-    // Languages without tree-sitter grammars: use regex fallback
-    const REGEX_ONLY_LANGUAGES: Language[] = ["go", "rust", "ruby", "php", "swift", "lua", "scala", "perl", "vb"];
-    if (REGEX_ONLY_LANGUAGES.includes(file.language)) {
-      const { extractWithRegex } = await import("./regex-extractor.js");
-      const analysis = extractWithRegex(rawSource, file.relativePath, file.language);
-      analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
-      analysis.projectId = projectId;
-      applyTsconfigAliasesToImports(analysis);
-      const fileSecurityIssues = scanSecurity(rawSource, file.relativePath, file.language);
-      if (fileSecurityIssues.length > 0) analysis.securityIssues = fileSecurityIssues;
-      const regexTypeRefs = extractTypeReferences(analysis, file.language);
-      if (regexTypeRefs.length > 0) analysis.typeReferences = regexTypeRefs;
-      await writeFileAnalysis(analysis, outputOpts);
-      return { analysis, rawSource: null, complexities: [], securityIssues: fileSecurityIssues };
-    }
-
-    const isVue = file.relativePath.endsWith(".vue");
-
-    // For .vue files, extract the <script> block and parse that
-    let sourceText: string;
-    let language: Language = file.language;
-    const vueSfc = isVue ? parseVueSfc(rawSource) : null;
-    if (isVue) {
-      if (!vueSfc!.script) {
-        if (verbose) console.log(`    Skipping ${file.relativePath}: no <script> block`);
-        return null;
-      }
-      sourceText = vueSfc!.script;
-      language = vueSfc!.scriptLang;
-    } else {
-      sourceText = rawSource;
-    }
-
-    let tree;
-    try {
-      tree = await parseSource(sourceText, language as any, file.relativePath);
-    } catch (parseErr) {
-      // Tree-sitter parse failure: fall back to regex extraction
-      if (verbose) console.log(`    Parse failed for ${file.relativePath}, using regex fallback`);
-      const { extractWithRegex } = await import("./regex-extractor.js");
-      const analysis = extractWithRegex(rawSource, file.relativePath, file.language);
-      analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
-      analysis.projectId = projectId;
-      applyTsconfigAliasesToImports(analysis);
-      const fileSecurityIssues = scanSecurity(rawSource, file.relativePath, file.language);
-      if (fileSecurityIssues.length > 0) analysis.securityIssues = fileSecurityIssues;
-      const fallbackTypeRefs = extractTypeReferences(analysis, file.language);
-      if (fallbackTypeRefs.length > 0) analysis.typeReferences = fallbackTypeRefs;
-      await writeFileAnalysis(analysis, outputOpts);
-      return { analysis, rawSource: null, complexities: [], securityIssues: fileSecurityIssues };
-    }
-
-    const analysis = createEmptyAnalysis(file.relativePath, language);
-    analysis.projectId = projectId;
-
-    // Run all extractors
-    analysis.imports = extractImports(tree, sourceText, language);
-    // Rewrite tsconfig path aliases (e.g. "@/utils/foo" → "src/utils/foo")
-    // BEFORE classifyCalls so the importMap it builds uses resolved paths.
-    applyTsconfigAliasesToImports(analysis);
-    analysis.exports = extractExports(tree, sourceText, language);
-    analysis.functions = extractFunctions(tree, sourceText, language);
-    analysis.classes = extractClasses(tree, sourceText, language);
-    analysis.routes = extractRoutes(tree, sourceText, language);
-    analysis.dataSources = extractDataSources(tree, sourceText, language);
-    analysis.dataMutations = extractDataMutations(tree, sourceText, language);
-    analysis.events = extractEvents(sourceText, language);
-    analysis.subComponents = extractSubComponents(
-      tree,
-      sourceText,
-      language,
-      analysis.imports,
-    );
-
-    // Extract top-level calls (Vue <script setup>, module-level hooks)
-    // and variable aliases (const userStore = useUserStore())
-    const topLevelCalls = extractTopLevelCalls(tree, language);
-    const variableAliases = extractVariableAliases(tree, analysis.imports, language);
-
-    if (topLevelCalls.length > 0) {
-      const setupFn = {
-        name: "<setup>",
-        params: [],
-        returnType: null,
-        isAsync: false,
-        isExported: false,
-        decorators: [],
-        calls: topLevelCalls,
-        line: 1,
-        endLine: 1,
-      };
-      analysis.functions.unshift(setupFn);
-    }
-
-    // Classify calls using import context, language patterns, and variable aliases
-    for (const fn of analysis.functions) {
-      fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases);
-    }
-    for (const cls of analysis.classes) {
-      for (const method of cls.methods) {
-        method.calls = classifyCalls(method.calls, analysis.imports, language, variableAliases);
-      }
-    }
-    for (const route of analysis.routes) {
-      route.calls = classifyCalls(route.calls, analysis.imports, language, variableAliases);
-    }
-    // Also classify calls inside data source callbacks (lifecycle hooks, watchers)
-    for (const ds of analysis.dataSources) {
-      if (ds.calls.length > 0) {
-        ds.calls = classifyCalls(ds.calls, analysis.imports, language, variableAliases);
-      }
-    }
-
-    // Extract interactive elements (buttons, inputs, forms with event bindings)
-    analysis.interactiveElements = extractInteractiveElements(tree, sourceText, language);
-
-    // Infer frameworks for this specific file based on its imports
-    analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
-
-    // For .vue files, also add template components and interactive elements
-    if (isVue && vueSfc) {
-      if (vueSfc.template) {
-        analysis.interactiveElements.push(
-          ...extractVueInteractiveElements(vueSfc.template, rawSource),
-        );
-      }
-      for (const comp of vueSfc.templateComponents) {
-        const importSource =
-          analysis.imports.find((imp) =>
-            imp.specifiers.includes(comp.name),
-          )?.source ?? null;
-        if (!analysis.subComponents.some((sc) => sc.name === comp.name)) {
-          analysis.subComponents.push({
-            name: comp.name,
-            importSource,
-            props: comp.props,
-            line: comp.line,
-          });
-        }
-      }
-    }
-
-    // Next.js / Nuxt file-based routing: infer route from file path
-    const fileRoute = inferFileBasedRoute(file.relativePath, frameworkIds);
-    if (fileRoute) {
-      analysis.routes.push(fileRoute);
-    }
-
-    // Detect React directives: 'use client' / 'use server'
-    detectDirectives(sourceText, analysis);
-
-    // Advanced per-file analysis: complexity and security
-    const fileComplexities = computeComplexity(tree, language, analysis.functions, analysis.classes);
-    const fileSecurityIssues = scanSecurity(sourceText, file.relativePath, language);
-
-    // Attach to the analysis itself so an incremental run can read both back
-    // from disk and reconstruct the project-level aggregates without re-parsing.
-    if (fileComplexities.length > 0) analysis.complexities = fileComplexities;
-    if (fileSecurityIssues.length > 0) analysis.securityIssues = fileSecurityIssues;
-
-    // Type-position references — combine FileAnalysis-level refs (classes,
-    // named functions) with AST-level refs (arrow functions, variable type
-    // annotations, casts, new-expressions). Dedup on
-    // (typeName, kind, sourceFile, sourceLine, sourceSymbol).
-    const fileLevelTypeRefs = extractTypeReferences(analysis, language);
-    const astLevelTypeRefs = extractTypeReferencesFromAst(tree, language, file.relativePath);
-    const combinedTypeRefs = mergeTypeRefs(fileLevelTypeRefs, astLevelTypeRefs);
-    if (combinedTypeRefs.length > 0) analysis.typeReferences = combinedTypeRefs;
-
-    await writeFileAnalysis(analysis, outputOpts);
-
-    // Return raw source for frontend route files (needed for screen building)
-    const hasFrontendRoute = analysis.routes.some((r) => r.kind === "frontend");
-    return {
-      analysis,
-      rawSource: hasFrontendRoute ? rawSource : null,
-      complexities: fileComplexities,
-      securityIssues: fileSecurityIssues,
-    };
-  } catch (err) {
-    console.error(
-      `  Error analyzing ${file.relativePath}: ${(err as Error).message}`,
-    );
-    if (verbose) {
-      console.error((err as Error).stack);
-    }
-    return null;
-  }
 }
 
 /**
@@ -404,27 +148,6 @@ async function loadCachedFileResult(
   }
 
   return { analysis, rawSource, complexities, securityIssues };
-}
-
-/**
- * Merge two TypeReference lists, dropping exact duplicates. The keys include
- * source position so legitimately distinct refs at different sites survive,
- * while the same `(typeName, kind, file, line, symbol)` from two extractors
- * (e.g. FileAnalysis classes + AST walker) collapses to one entry.
- */
-function mergeTypeRefs(
-  fileLevel: import("../types/analysis.js").TypeReference[],
-  astLevel: import("../types/analysis.js").TypeReference[],
-): import("../types/analysis.js").TypeReference[] {
-  const seen = new Set<string>();
-  const out: import("../types/analysis.js").TypeReference[] = [];
-  for (const r of [...fileLevel, ...astLevel]) {
-    const key = `${r.typeName}::${r.usageKind}::${r.sourceFile}::${r.sourceLine}::${r.sourceSymbol}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(r);
-  }
-  return out;
 }
 
 // ─── Progress reporter ──────────────────────────────────────────────────
@@ -570,48 +293,65 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   let unchangedCount = 0;
   let reparsedCount = 0;
 
-  const results = await runWithConcurrency(
-    files,
-    8,
-    async (file, _i) => {
-      progress.detail(`  Analyzing: ${file.relativePath}`);
-      progress.status(`Analyzing [${completedCount}/${files.length}] ${file.relativePath}`);
-      const projectId = fileProjects[file.relativePath] ?? "root";
-      const manifestKey = normalizeManifestKey(file.relativePath);
+  // Per-file analysis is CPU-bound (tree-sitter + extractors), so spread it
+  // across worker threads when the project is big enough to amortize worker
+  // startup. Falls back to in-process analysis when workers are unavailable
+  // (e.g. running from source, REVERSEDOC_WORKERS=0, or tiny projects).
+  const poolSize = AnalysisWorkerPool.defaultSize(files.length);
+  const pool = poolSize > 0 ? AnalysisWorkerPool.create(poolSize, analyzeFile) : null;
+  const runTask = (task: FileTask): Promise<FileResult | null> =>
+    pool ? pool.run(task) : analyzeFile(task);
+  // With a pool, keep a couple of extra slots so the main thread can overlap
+  // manifest classification / cache reads while every worker stays busy.
+  const fileConcurrency = pool ? poolSize + 2 : 8;
 
-      if (options.incremental && prevManifest) {
-        const prev = prevManifest.entries[manifestKey];
-        const classification = await classifyFileForCache(file.absolutePath, prev);
-        newManifestEntries[manifestKey] = { mtime: classification.mtime, sha256: classification.sha256 };
-        if (classification.state === "unchanged") {
-          const cached = await loadCachedFileResult(file, outputDir);
-          if (cached) {
-            unchangedCount++;
-            return cached;
+  let results: (FileResult | null)[];
+  try {
+    results = await runWithConcurrency(
+      files,
+      fileConcurrency,
+      async (file, _i) => {
+        progress.detail(`  Analyzing: ${file.relativePath}`);
+        progress.status(`Analyzing [${completedCount}/${files.length}] ${file.relativePath}`);
+        const projectId = fileProjects[file.relativePath] ?? "root";
+        const manifestKey = normalizeManifestKey(file.relativePath);
+
+        if (options.incremental && prevManifest) {
+          const prev = prevManifest.entries[manifestKey];
+          const classification = await classifyFileForCache(file.absolutePath, prev);
+          newManifestEntries[manifestKey] = { mtime: classification.mtime, sha256: classification.sha256 };
+          if (classification.state === "unchanged") {
+            const cached = await loadCachedFileResult(file, outputDir);
+            if (cached) {
+              unchangedCount++;
+              return cached;
+            }
+            // Cache file missing — fall through to fresh parse.
           }
-          // Cache file missing — fall through to fresh parse.
         }
-      }
 
-      const result = await analyzeFile({
-        file, frameworkIds, projectId, outputOpts, verbose: !!verbose,
-        projectRoot, tsconfigAliases,
-      });
-      if (options.incremental && !prevManifest) {
-        // First-time incremental run: compute hash for manifest seed.
-        const classification = await classifyFileForCache(file.absolutePath, undefined);
-        newManifestEntries[manifestKey] = { mtime: classification.mtime, sha256: classification.sha256 };
-      } else if (options.incremental && prevManifest && !newManifestEntries[manifestKey]) {
-        const classification = await classifyFileForCache(file.absolutePath, undefined);
-        newManifestEntries[manifestKey] = { mtime: classification.mtime, sha256: classification.sha256 };
-      }
-      if (result) reparsedCount++;
-      return result;
-    },
-    () => {
-      completedCount++;
-    },
-  );
+        const result = await runTask({
+          file, frameworkIds, projectId, outputOpts, verbose: !!verbose,
+          projectRoot, tsconfigAliases,
+        });
+        if (options.incremental && !prevManifest) {
+          // First-time incremental run: compute hash for manifest seed.
+          const classification = await classifyFileForCache(file.absolutePath, undefined);
+          newManifestEntries[manifestKey] = { mtime: classification.mtime, sha256: classification.sha256 };
+        } else if (options.incremental && prevManifest && !newManifestEntries[manifestKey]) {
+          const classification = await classifyFileForCache(file.absolutePath, undefined);
+          newManifestEntries[manifestKey] = { mtime: classification.mtime, sha256: classification.sha256 };
+        }
+        if (result) reparsedCount++;
+        return result;
+      },
+      () => {
+        completedCount++;
+      },
+    );
+  } finally {
+    await pool?.destroy();
+  }
 
   if (options.incremental) {
     progress.detail(`  Incremental: ${unchangedCount} unchanged, ${reparsedCount} reparsed`);
@@ -739,6 +479,9 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Class-level dependency graph for the Architecture tab's Data Models view.
   const classGraph = buildClassGraph(allAnalyses);
 
+  // File→datastore graph for the Architecture tab's Data Access view.
+  const dataAccessGraph = buildDataAccessGraph(allAnalyses);
+
   const healthScore = computeHealthScore({
     analyses: allAnalyses,
     componentGraph,
@@ -807,6 +550,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     surprisingConnections: surprisingConnections.length > 0 ? surprisingConnections : undefined,
     suggestedQuestions: suggestedQuestions.length > 0 ? suggestedQuestions : undefined,
     classGraph: classGraph.nodes.length > 0 ? classGraph : undefined,
+    dataAccessGraph: dataAccessGraph.nodes.length > 0 ? dataAccessGraph : undefined,
   };
 
   progress.step("Writing project summary...");
@@ -1018,7 +762,7 @@ function buildComponentGraph(
     const baseName = a.filePath.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "");
     baseNameToFile.set(baseName, a.filePath);
     const stripped = a.filePath
-      .replace(/\.(ts|tsx|js|jsx|mjs|cjs|vue|py|java|kt|cs|pas|go|rs|rb|php|swift|lua|scala|pl|pm|vb|bas|cls|frm)$/, "")
+      .replace(/\.(ts|tsx|js|jsx|mjs|cjs|vue|py|java|kt|cs|pas|go|rs|rb|php|swift|lua|scala|pl|pm|vb|bas|cls|frm|sql|ddl|dml|psql|mysql|tsql|plsql|c|h|cpp|cc|cxx|hpp|hxx|hh)$/, "")
       .replace(/\/index$/, "");
     strippedPathToFile.set(stripped, a.filePath);
 
@@ -1029,6 +773,36 @@ function buildComponentGraph(
     dirToFiles.get(dirName)!.push(a.filePath);
   }
 
+  // The scans below depend only on the candidate string, and the same
+  // candidate recurs across files (e.g. many files import "./types"), so
+  // memoize per candidate. `undefined` (no match) is cached too.
+  const importScanCache = new Map<string, string | undefined>();
+  const scanForImport = (candidate: string): string | undefined => {
+    if (importScanCache.has(candidate)) return importScanCache.get(candidate);
+    let match: string | undefined;
+    for (const [stripped, filePath] of strippedPathToFile) {
+      if (stripped.endsWith(candidate) || candidate.endsWith(stripped)) {
+        match = filePath;
+        break;
+      }
+    }
+    importScanCache.set(candidate, match);
+    return match;
+  };
+  const subComponentScanCache = new Map<string, string | undefined>();
+  const scanForSubComponent = (candidate: string): string | undefined => {
+    if (subComponentScanCache.has(candidate)) return subComponentScanCache.get(candidate);
+    let match: string | undefined;
+    for (const [stripped, filePath] of strippedPathToFile) {
+      if (stripped.endsWith(candidate)) {
+        match = filePath;
+        break;
+      }
+    }
+    subComponentScanCache.set(candidate, match);
+    return match;
+  };
+
   for (const a of analyses) {
     const refSet = new Set<string>();
 
@@ -1036,14 +810,7 @@ function buildComponentGraph(
       // 1. Resolve relative imports (JS/TS/Vue) via pre-built path map
       if (imp.source.startsWith(".")) {
         const candidate = imp.source.replace(/^\.\//, "");
-        // Try direct lookup in stripped path map
-        let match: string | undefined;
-        for (const [stripped, filePath] of strippedPathToFile) {
-          if (stripped.endsWith(candidate) || candidate.endsWith(stripped)) {
-            match = filePath;
-            break;
-          }
-        }
+        const match = scanForImport(candidate);
         if (match && match !== a.filePath) refSet.add(match);
         continue;
       }
@@ -1089,12 +856,8 @@ function buildComponentGraph(
     for (const comp of a.subComponents) {
       if (comp.importSource) {
         const candidate = comp.importSource.replace(/^\.\//, "");
-        for (const [stripped, filePath] of strippedPathToFile) {
-          if (stripped.endsWith(candidate)) {
-            if (filePath !== a.filePath) refSet.add(filePath);
-            break;
-          }
-        }
+        const match = scanForSubComponent(candidate);
+        if (match && match !== a.filePath) refSet.add(match);
       }
     }
 
@@ -1283,6 +1046,42 @@ const IMPORT_FRAMEWORK_MAP: Record<string, string> = {
   "@tanstack/react-query": "react-query",
   "io.ktor.server.routing": "ktor",
   "org.springframework.web.bind.annotation": "spring-web",
+  // ORM imports
+  "@prisma/client": "prisma",
+  "prisma": "prisma",
+  "typeorm": "typeorm",
+  "sequelize": "sequelize",
+  "sequelize-typescript": "sequelize",
+  "drizzle-orm": "drizzle",
+  "@mikro-orm/core": "mikro-orm",
+  "mongoose": "mongoose",
+  "knex": "knex",
+  "objection": "objection",
+  "sqlalchemy": "sqlalchemy",
+  "django.db.models": "django-orm",
+  "tortoise": "tortoise-orm",
+  "peewee": "peewee",
+  "Microsoft.EntityFrameworkCore": "ef-core",
+  "System.Data.Entity": "ef6",
+  "Dapper": "dapper",
+  "NHibernate": "nhibernate",
+  "org.hibernate": "hibernate",
+  "javax.persistence": "hibernate",
+  "jakarta.persistence": "hibernate",
+  "org.springframework.data.jpa": "spring-data-jpa",
+  "org.mybatis": "mybatis",
+  "org.jooq": "jooq",
+  "org.jetbrains.exposed": "exposed",
+  "active_record": "active-record",
+  "sequel": "sequel",
+  "Doctrine\\ORM": "doctrine",
+  "Illuminate\\Database": "eloquent",
+  "gorm.io/gorm": "gorm",
+  "github.com/jmoiron/sqlx": "sqlx",
+  "entgo.io/ent": "ent",
+  "diesel": "diesel",
+  "sea_orm": "sea-orm",
+  "sqlx": "rust-sqlx",
 };
 
 /**

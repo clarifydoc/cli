@@ -17,8 +17,7 @@ export function getVisibility(
   node: Node,
 ): "public" | "private" | "protected" | null {
   // C#: explicit modifier child nodes
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i)!;
+  for (const child of node.children) {
     if (child.type === "modifier") {
       if (child.text === "public") return "public";
       if (child.text === "private") return "private";
@@ -35,8 +34,7 @@ export function getVisibility(
 
 /** Check whether a node has a direct child with type `modifier` and the given text. */
 export function hasModifier(node: Node, modifier: string): boolean {
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i)!;
+  for (const child of node.children) {
     if (child.type === "modifier" && child.text === modifier) return true;
   }
   return false;
@@ -52,8 +50,7 @@ export function getNameFromNode(node: Node): string | null {
   if (nameNode) return nameNode.text;
 
   // Fallback: scan children for identifier-like types
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i)!;
+  for (const child of node.children) {
     if (
       child.type === "identifier" ||
       child.type === "type_identifier" ||
@@ -126,8 +123,7 @@ export function extractJsDecorators(node: Node): string[] {
   const parent = node.parent;
   if (!parent) return decorators;
 
-  for (let i = 0; i < parent.childCount; i++) {
-    const sibling = parent.child(i)!;
+  for (const sibling of parent.children) {
     if (sibling === node) break;
     if (sibling.type === "decorator") {
       const expr = sibling.child(1);
@@ -140,8 +136,7 @@ export function extractJsDecorators(node: Node): string[] {
 /** Extract Java/Kotlin annotations from a node's children and modifiers block. */
 export function extractAnnotations(node: Node): string[] {
   const annotations: string[] = [];
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i)!;
+  for (const child of node.children) {
     if (
       child.type === "annotation" ||
       child.type === "marker_annotation" ||
@@ -150,8 +145,7 @@ export function extractAnnotations(node: Node): string[] {
       annotations.push(child.text.replace(/^@/, ""));
     }
     if (child.type === "modifiers") {
-      for (let j = 0; j < child.childCount; j++) {
-        const mod = child.child(j)!;
+      for (const mod of child.children) {
         if (
           mod.type === "annotation" ||
           mod.type === "marker_annotation" ||
@@ -168,11 +162,9 @@ export function extractAnnotations(node: Node): string[] {
 /** Extract C# attributes from a node's attribute_list children. */
 export function extractCsharpAttributes(node: Node): string[] {
   const decorators: string[] = [];
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i)!;
+  for (const child of node.children) {
     if (child.type === "attribute_list") {
-      for (let j = 0; j < child.childCount; j++) {
-        const attr = child.child(j)!;
+      for (const attr of child.children) {
         if (attr.type === "attribute") {
           decorators.push(attr.childForFieldName("name")?.text ?? attr.text);
         }
@@ -185,8 +177,7 @@ export function extractCsharpAttributes(node: Node): string[] {
 /** Extract Python decorators from a decorated_definition's children. */
 export function extractPythonDecorators(node: Node): string[] {
   const decorators: string[] = [];
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i)!;
+  for (const child of node.children) {
     if (child.type === "decorator") {
       decorators.push(child.text.replace(/^@/, ""));
     }
@@ -196,8 +187,7 @@ export function extractPythonDecorators(node: Node): string[] {
 
 /** Find the first child node of a given type. */
 export function findChildByType(node: Node, type: string): Node | null {
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i)!;
+  for (const child of node.children) {
     if (child.type === type) return child;
   }
   return null;
@@ -205,8 +195,8 @@ export function findChildByType(node: Node, type: string): Node | null {
 
 /** Check if a node has a child of the given type. */
 export function hasChildType(node: Node, type: string): boolean {
-  for (let i = 0; i < node.childCount; i++) {
-    if (node.child(i)!.type === type) return true;
+  for (const child of node.children) {
+    if (child.type === type) return true;
   }
   return false;
 }

@@ -12,7 +12,7 @@ import type {
 const VALID_LANGUAGES: ReadonlySet<Language> = new Set<Language>([
   "typescript", "javascript", "csharp", "python", "java", "kotlin",
   "pascal", "dfm", "go", "rust", "ruby", "php", "swift", "lua",
-  "scala", "perl", "vb",
+  "scala", "perl", "vb", "sql",
 ]);
 
 const VALID_CALL_KINDS: ReadonlySet<CallInfo["kind"]> = new Set([

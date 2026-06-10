@@ -21,11 +21,9 @@ function walkForCsharpRoutes(node: Node, routes: RouteInfo[]) {
   if (node.type === "method_declaration") {
     const methodName = node.childForFieldName("name")?.text ?? null;
 
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
       if (child.type === "attribute_list") {
-        for (let j = 0; j < child.childCount; j++) {
-          const attr = child.child(j)!;
+        for (const attr of child.children) {
           if (attr.type === "attribute") {
             const attrName = attr.childForFieldName("name")?.text ?? "";
             if (CSHARP_HTTP_ATTRIBUTES.has(attrName)) {
@@ -52,7 +50,7 @@ function walkForCsharpRoutes(node: Node, routes: RouteInfo[]) {
     }
   }
 
-  for (let i = 0; i < node.childCount; i++) {
-    walkForCsharpRoutes(node.child(i)!, routes);
+  for (const child of node.children) {
+    walkForCsharpRoutes(child, routes);
   }
 }

@@ -7,8 +7,7 @@ export class JavaKotlinImportExportExtractor extends ImportExportExtractor {
   readonly languages: Language[] = ["java", "kotlin"];
 
   protected collectImports(node: Node, imports: ImportInfo[]): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       // Java: import_declaration
       if (child.type === "import_declaration") {
@@ -17,8 +16,7 @@ export class JavaKotlinImportExportExtractor extends ImportExportExtractor {
 
       // Kotlin: import_list > import_header
       if (child.type === "import_list") {
-        for (let j = 0; j < child.childCount; j++) {
-          const header = child.child(j)!;
+        for (const header of child.children) {
           if (header.type === "import_header") {
             imports.push(this.parseKotlinImport(header));
           }
@@ -32,8 +30,7 @@ export class JavaKotlinImportExportExtractor extends ImportExportExtractor {
     let isStatic = false;
     let importPath = "";
 
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
       // "static" keyword
       if (child.text === "static") {
         isStatic = true;
@@ -82,8 +79,7 @@ export class JavaKotlinImportExportExtractor extends ImportExportExtractor {
     let importPath = "";
     let isWildcard = false;
 
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       // The import path is a dot_qualified_expression or identifier
       if (
@@ -128,8 +124,7 @@ export class JavaKotlinImportExportExtractor extends ImportExportExtractor {
   }
 
   private walkExports(node: Node, exports: ExportInfo[]): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       if (child.type === "class_declaration") {
         const name = this.getName(child);
@@ -164,8 +159,7 @@ export class JavaKotlinImportExportExtractor extends ImportExportExtractor {
   }
 
   private isPublic(node: Node): boolean {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
       if (child.type === "modifiers" || child.type === "visibility_modifier") {
         if (child.text.includes("private") || child.text.includes("internal")) {
           return false;

@@ -33,6 +33,12 @@ All take `FileAnalysis[]` and/or `componentGraph` and return typed results.
 
 **Dependency order matters.** Health and suggestions depend on everything else. `findCircularDeps` is exported from `health-scorer.ts` and reused by suggestions-engine to avoid duplicate work.
 
+## Per-file analysis & workers
+
+- [file-analyzer.ts](file-analyzer.ts) — `analyzeFile(task)`: read + parse + run all extractors + write the per-file JSON. Pure per-file logic with no pipeline state, so it can run on any thread.
+- [analyze-worker.ts](analyze-worker.ts) — worker_threads entry that wraps `analyzeFile`. Built as its own tsup entry (`dist/analyze-worker.js`).
+- [worker-pool.ts](worker-pool.ts) — `AnalysisWorkerPool`: spreads per-file analysis across cores for projects ≥200 files (override with `REVERSEDOC_WORKERS=<n>`, `0` disables). Falls back to in-process analysis when workers can't start, and re-runs a crashed worker's task in-process.
+
 ## Discovery & IO
 
 - [file-discovery.ts](file-discovery.ts) — fast-glob by extension. The `EXTENSION_MAP` is the source of truth for which extensions are analyzed.

@@ -14,13 +14,11 @@ export class PascalImportExportExtractor extends ImportExportExtractor {
   }
 
   private walkImports(node: Node, imports: ImportInfo[]): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       if (child.type === "declUses") {
         // uses SysUtils, Classes, System.Generics.Collections;
-        for (let j = 0; j < child.childCount; j++) {
-          const mod = child.child(j)!;
+        for (const mod of child.children) {
           if (mod.type === "moduleName") {
             const name = mod.text;
             imports.push({
@@ -51,8 +49,7 @@ export class PascalImportExportExtractor extends ImportExportExtractor {
 
   private walkExports(node: Node, exports: ExportInfo[]): void {
     // In Pascal, exports are: interface-level procedures/functions and type declarations
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       // Only export things from the interface section
       if (child.type === "interface") {
@@ -72,8 +69,7 @@ export class PascalImportExportExtractor extends ImportExportExtractor {
   }
 
   private walkInterfaceExports(node: Node, exports: ExportInfo[]): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       if (child.type === "declProc") {
         const name = this.getProcName(child);
@@ -85,13 +81,11 @@ export class PascalImportExportExtractor extends ImportExportExtractor {
       }
 
       if (child.type === "declTypes") {
-        for (let j = 0; j < child.childCount; j++) {
-          const typeDecl = child.child(j)!;
+        for (const typeDecl of child.children) {
           if (typeDecl.type === "declType") {
             let name = "anonymous";
             let kind: ExportInfo["kind"] = "type";
-            for (let k = 0; k < typeDecl.childCount; k++) {
-              const part = typeDecl.child(k)!;
+            for (const part of typeDecl.children) {
               if (part.type === "identifier") name = part.text;
               if (part.type === "declClass") kind = "class";
               if (part.type === "declIntf") kind = "interface";
@@ -109,8 +103,7 @@ export class PascalImportExportExtractor extends ImportExportExtractor {
   }
 
   private getProcName(declProc: Node): string {
-    for (let i = 0; i < declProc.childCount; i++) {
-      const child = declProc.child(i)!;
+    for (const child of declProc.children) {
       if (child.type === "identifier") return child.text;
     }
     return "anonymous";

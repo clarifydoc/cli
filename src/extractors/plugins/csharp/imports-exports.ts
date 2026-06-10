@@ -6,8 +6,7 @@ export class CSharpImportExportExtractor extends ImportExportExtractor {
   readonly languages: Language[] = ["csharp"];
 
   protected collectImports(node: Node, imports: ImportInfo[]): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
       if (child.type === "using_directive") {
         imports.push(this.parseUsingDirective(child));
       }
@@ -21,8 +20,7 @@ export class CSharpImportExportExtractor extends ImportExportExtractor {
     let alias: string | null = null;
 
     // Walk children to extract the namespace via AST rather than text regex
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       // "static" keyword
       if (child.text === "static") {
@@ -81,8 +79,7 @@ export class CSharpImportExportExtractor extends ImportExportExtractor {
   }
 
   private walkCsharpNode(node: Node, exports: ExportInfo[]): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       if (
         child.type === "namespace_declaration" ||
@@ -111,8 +108,7 @@ export class CSharpImportExportExtractor extends ImportExportExtractor {
   }
 
   private isPublic(node: Node): boolean {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
       if (child.type === "modifier" && child.text === "public") return true;
     }
     return true; // Default to treating as exported

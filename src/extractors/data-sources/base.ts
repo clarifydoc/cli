@@ -20,8 +20,8 @@ export abstract class DataSourceExtractor {
   /** Recursively walk the AST; calls `visitNode` on each node */
   protected walk(node: Node, sources: DataSourceInfo[]): void {
     this.visitNode(node, sources);
-    for (let i = 0; i < node.childCount; i++) {
-      this.walk(node.child(i)!, sources);
+    for (const child of node.children) {
+      this.walk(child, sources);
     }
   }
 

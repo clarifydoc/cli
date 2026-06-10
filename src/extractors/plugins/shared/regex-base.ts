@@ -51,6 +51,8 @@ export type ParamParser = (paramText: string) => ParamInfo | null;
 
 export interface RegexLangSpec {
   language: Language;
+  /** File extensions (with leading dot) this spec claims, e.g. [".go"]. */
+  extensions: string[];
   functionPatterns: FnPattern[];
   classPatterns: ClsPattern[];
   importPatterns: ImpPattern[];

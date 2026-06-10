@@ -5,6 +5,8 @@ import { JavaScriptDataSourceExtractor } from "../plugins/javascript/data-source
 import { PythonDataSourceExtractor } from "../plugins/python/data-sources.js";
 import { JavaKotlinDataSourceExtractor } from "../plugins/java-kotlin/data-sources.js";
 import { PascalDataSourceExtractor } from "../plugins/pascal/data-sources.js";
+import { CSharpDataSourceExtractor } from "../plugins/csharp/data-sources.js";
+import { PhpDataSourceExtractor } from "../plugins/php/data-sources.js";
 
 /** All registered language extractors */
 const extractors: DataSourceExtractor[] = [
@@ -12,6 +14,8 @@ const extractors: DataSourceExtractor[] = [
   new PythonDataSourceExtractor(),
   new JavaKotlinDataSourceExtractor(),
   new PascalDataSourceExtractor(),
+  new CSharpDataSourceExtractor(),
+  new PhpDataSourceExtractor(),
 ];
 
 /** Language → extractor lookup (built once at import time) */

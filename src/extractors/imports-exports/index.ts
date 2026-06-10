@@ -6,6 +6,7 @@ import { PythonImportExportExtractor } from "../plugins/python/imports-exports.j
 import { CSharpImportExportExtractor } from "../plugins/csharp/imports-exports.js";
 import { PascalImportExportExtractor } from "../plugins/pascal/imports-exports.js";
 import { JavaKotlinImportExportExtractor } from "../plugins/java-kotlin/imports-exports.js";
+import { PhpImportExportExtractor } from "../plugins/php/imports-exports.js";
 
 /** All registered language extractors */
 const extractors: ImportExportExtractor[] = [
@@ -14,6 +15,7 @@ const extractors: ImportExportExtractor[] = [
   new CSharpImportExportExtractor(),
   new PascalImportExportExtractor(),
   new JavaKotlinImportExportExtractor(),
+  new PhpImportExportExtractor(),
 ];
 
 /** Language → extractor lookup (built once at import time) */

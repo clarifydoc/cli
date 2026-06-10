@@ -13,8 +13,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
 
   protected collectFunctions(node: Node, functions: FunctionInfo[]): void {
     // Only Kotlin has top-level functions; Java doesn't
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
       if (child.type === "function_declaration") {
         functions.push(this.parseMethod(child, "kotlin"));
       }
@@ -26,8 +25,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
   }
 
   private walkClasses(node: Node, classes: ClassInfo[]): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
 
       if (
         child.type === "class_declaration" ||
@@ -56,8 +54,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
 
     const interfaces = node.childForFieldName("interfaces");
     if (interfaces) {
-      for (let i = 0; i < interfaces.childCount; i++) {
-        const iface = interfaces.child(i)!;
+      for (const iface of interfaces.children) {
         if (iface.type !== "," && iface.type !== "implements") {
           implementsList.push(iface.text);
         }
@@ -65,11 +62,9 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     }
 
     // Kotlin: delegation_specifiers (extends/implements combined)
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
       if (child.type === "delegation_specifiers" || child.type === "super_interfaces") {
-        for (let j = 0; j < child.childCount; j++) {
-          const spec = child.child(j)!;
+        for (const spec of child.children) {
           if (spec.type !== "," && spec.type !== ":") {
             const specText = spec.text.replace(/\(.*\)$/, "").trim();
             if (!extendsName) {
@@ -89,8 +84,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     const body = node.childForFieldName("body");
 
     if (body) {
-      for (let i = 0; i < body.childCount; i++) {
-        const member = body.child(i)!;
+      for (const member of body.children) {
         if (
           member.type === "method_declaration" ||
           member.type === "function_declaration" ||
@@ -151,8 +145,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     const params: ParamInfo[] = [];
 
     if (paramsNode) {
-      for (let i = 0; i < paramsNode.childCount; i++) {
-        const p = paramsNode.child(i)!;
+      for (const p of paramsNode.children) {
         if (
           p.type === "formal_parameter" ||
           p.type === "parameter" ||
@@ -220,8 +213,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
 
   /** Heuristic: if the node tree has Kotlin-specific constructs, it's Kotlin */
   private guessLanguage(node: Node): string {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
+    for (const child of node.children) {
       if (child.type === "delegation_specifiers" || child.type === "type_parameters") {
         return "kotlin";
       }

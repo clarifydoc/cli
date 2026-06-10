@@ -108,8 +108,7 @@ function walkTsLike(
     }
   }
 
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
+  for (const child of node.children) {
     if (child) walkTsLike(child, language, filePath, here, hereClass, out);
   }
 }
@@ -125,8 +124,7 @@ function extractTsFnTypes(
   const params = fnNode.childForFieldName("parameters")
     ?? findChildByType(fnNode, "formal_parameters");
   if (params) {
-    for (let i = 0; i < params.childCount; i++) {
-      const p = params.child(i);
+    for (const p of params.children) {
       if (!p) continue;
       if (p.type !== "required_parameter" && p.type !== "optional_parameter"
           && p.type !== "rest_pattern" && p.type !== "parameter") continue;
@@ -189,8 +187,7 @@ function walkJavaLike(
   if (t === "lambda_expression") {
     const params = node.childForFieldName("parameters");
     if (params) {
-      for (let i = 0; i < params.childCount; i++) {
-        const p = params.child(i);
+      for (const p of params.children) {
         if (!p) continue;
         if (p.type === "formal_parameter" || p.type === "inferred_parameters") {
           const typeNode = p.childForFieldName("type");
@@ -202,8 +199,7 @@ function walkJavaLike(
     }
   }
 
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
+  for (const child of node.children) {
     if (child) walkJavaLike(child, language, filePath, here, hereClass, out);
   }
 }
@@ -257,8 +253,7 @@ function walkCsharp(
   if (t === "lambda_expression") {
     const params = node.childForFieldName("parameters");
     if (params) {
-      for (let i = 0; i < params.childCount; i++) {
-        const p = params.child(i);
+      for (const p of params.children) {
         if (!p) continue;
         const typeNode = p.childForFieldName?.("type");
         if (typeNode) {
@@ -268,8 +263,7 @@ function walkCsharp(
     }
   }
 
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
+  for (const child of node.children) {
     if (child) walkCsharp(child, filePath, here, hereClass, out);
   }
 }
@@ -305,8 +299,7 @@ function walkPython(
     }
   }
 
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
+  for (const child of node.children) {
     if (child) walkPython(child, filePath, here, hereClass, out);
   }
 }
@@ -335,8 +328,7 @@ function emitParsed(
 }
 
 function findChildByType(node: Node, type: string): Node | null {
-  for (let i = 0; i < node.childCount; i++) {
-    const c = node.child(i);
+  for (const c of node.children) {
     if (c && c.type === type) return c;
   }
   return null;

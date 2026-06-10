@@ -5,6 +5,7 @@ import { JavaScriptMutationExtractor } from "../plugins/javascript/data-mutation
 import { PythonMutationExtractor } from "../plugins/python/data-mutations.js";
 import { JavaKotlinMutationExtractor } from "../plugins/java-kotlin/data-mutations.js";
 import { PascalMutationExtractor } from "../plugins/pascal/data-mutations.js";
+import { PhpMutationExtractor } from "../plugins/php/data-mutations.js";
 
 /** All registered language extractors */
 const extractors: DataMutationExtractor[] = [
@@ -12,6 +13,7 @@ const extractors: DataMutationExtractor[] = [
   new PythonMutationExtractor(),
   new JavaKotlinMutationExtractor(),
   new PascalMutationExtractor(),
+  new PhpMutationExtractor(),
 ];
 
 /** Language → extractor lookup (built once at import time) */
