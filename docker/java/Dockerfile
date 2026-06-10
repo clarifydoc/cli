@@ -1,10 +1,14 @@
 FROM eclipse-temurin:21-alpine
+ARG JDTLS_VERSION=1.58.0
+ARG JDTLS_TIMESTAMP=202604151538
 RUN apk add --no-cache python3 curl unzip && \
     mkdir -p /opt/jdtls && \
-    curl -fSL "https://download.eclipse.org/jdtls/milestones/1.40.0/jdt-language-server-1.40.0-202409261450.tar.gz" \
+    curl -fSL "https://download.eclipse.org/jdtls/milestones/${JDTLS_VERSION}/jdt-language-server-${JDTLS_VERSION}-${JDTLS_TIMESTAMP}.tar.gz" \
       -o /tmp/jdtls.tar.gz && \
     tar xzf /tmp/jdtls.tar.gz -C /opt/jdtls && \
-    rm /tmp/jdtls.tar.gz
+    rm /tmp/jdtls.tar.gz && \
+    # Stable symlink so the entrypoint doesn't depend on the (per-release) launcher version.
+    ln -s "$(ls /opt/jdtls/plugins/org.eclipse.equinox.launcher_*.jar | head -n1)" /opt/jdtls/launcher.jar
 ENV JDTLS_HOME=/opt/jdtls
 WORKDIR /workspace
 ENTRYPOINT ["java", \
@@ -22,6 +26,6 @@ ENTRYPOINT ["java", \
   "--add-modules=ALL-SYSTEM", \
   "--add-opens", "java.base/java.util=ALL-UNNAMED", \
   "--add-opens", "java.base/java.lang=ALL-UNNAMED", \
-  "-jar", "/opt/jdtls/plugins/org.eclipse.equinox.launcher_1.6.900.v20240613-2009.jar", \
+  "-jar", "/opt/jdtls/launcher.jar", \
   "-configuration", "/opt/jdtls/config_linux", \
   "-data", "/tmp/jdtls-workspace"]
