@@ -1,39 +1,47 @@
 import type { Tree } from "web-tree-sitter";
 import type { RouteInfo, Language } from "../../types/analysis.js";
-import { extractExpressRoutes } from "../plugins/javascript/routes/express.js";
-import { extractReactRouterRoutes } from "../plugins/javascript/routes/react-router.js";
-import { extractNestjsRoutes } from "../plugins/javascript/routes/nestjs.js";
-import { extractVueRouterRoutes } from "../plugins/javascript/routes/vue-router.js";
-import { extractPythonRoutes } from "../plugins/python/routes.js";
-import { extractAspnetRoutes } from "../plugins/csharp/routes/aspnet.js";
-import { extractSpringRoutes } from "../plugins/java-kotlin/routes/spring.js";
-import { extractPascalRoutes } from "../plugins/pascal/routes.js";
+import type { RouteExtractor } from "./base.js";
+import { javascriptRouteExtractor } from "../plugins/javascript/routes/index.js";
+import { pythonRouteExtractor } from "../plugins/python/routes.js";
+import { csharpRouteExtractor } from "../plugins/csharp/routes/aspnet.js";
+import { javaKotlinRouteExtractor } from "../plugins/java-kotlin/routes/spring.js";
+import { pascalRouteExtractor } from "../plugins/pascal/routes.js";
+
+/** All registered route extractors */
+const extractors: RouteExtractor[] = [
+  javascriptRouteExtractor,
+  pythonRouteExtractor,
+  csharpRouteExtractor,
+  javaKotlinRouteExtractor,
+  pascalRouteExtractor,
+];
+
+/** Language → extractor lookup (built once at import time) */
+const extractorMap = new Map<Language, RouteExtractor>();
+for (const ext of extractors) {
+  for (const lang of ext.languages) {
+    extractorMap.set(lang, ext);
+  }
+}
 
 /**
  * Extract routes and API endpoints from an AST.
- * Delegates to framework-specific extractors based on language.
+ * Delegates to the language plugin's route extractor.
  */
 export function extractRoutes(
   tree: Tree,
   sourceText: string,
   language: Language,
 ): RouteInfo[] {
-  const routes: RouteInfo[] = [];
+  const extractor = extractorMap.get(language);
+  if (!extractor) return [];
+  return extractor.extractRoutes(tree, sourceText);
+}
 
-  if (language === "typescript" || language === "javascript") {
-    extractExpressRoutes(tree.rootNode, routes);
-    extractReactRouterRoutes(tree.rootNode, routes);
-    extractNestjsRoutes(tree.rootNode, routes);
-    extractVueRouterRoutes(tree.rootNode, routes);
-  } else if (language === "python") {
-    extractPythonRoutes(tree.rootNode, routes);
-  } else if (language === "csharp") {
-    extractAspnetRoutes(tree.rootNode, routes);
-  } else if (language === "java" || language === "kotlin") {
-    extractSpringRoutes(tree.rootNode, routes);
-  } else if (language === "pascal") {
-    extractPascalRoutes(tree.rootNode, routes);
+/** Register a custom route extractor at runtime */
+export function registerRouteExtractor(extractor: RouteExtractor): void {
+  extractors.push(extractor);
+  for (const lang of extractor.languages) {
+    extractorMap.set(lang, extractor);
   }
-
-  return routes;
 }

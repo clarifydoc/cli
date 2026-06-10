@@ -22,6 +22,7 @@ import { analyzeFile, type FileTask, type FileResult } from "./file-analyzer.js"
 import { AnalysisWorkerPool } from "./worker-pool.js";
 import { loadTsconfigAliases } from "../extractors/shared/tsconfig-aliases.js";
 import { buildLinkGraph } from "../extractors/shared/link-scoring.js";
+import { STRIP_SOURCE_EXTENSION_RE, EXTERNAL_NAMESPACE_ROOT_RE } from "../extractors/registry.js";
 import { buildSymbolLinks } from "./symbol-linker.js";
 import { aggregateComplexity } from "./complexity-analyzer.js";
 import { detectPatterns } from "./pattern-detector.js";
@@ -762,7 +763,7 @@ function buildComponentGraph(
     const baseName = a.filePath.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "");
     baseNameToFile.set(baseName, a.filePath);
     const stripped = a.filePath
-      .replace(/\.(ts|tsx|js|jsx|mjs|cjs|vue|py|java|kt|cs|pas|go|rs|rb|php|swift|lua|scala|pl|pm|vb|bas|cls|frm|sql|ddl|dml|psql|mysql|tsql|plsql|c|h|cpp|cc|cxx|hpp|hxx|hh)$/, "")
+      .replace(STRIP_SOURCE_EXTENSION_RE, "")
       .replace(/\/index$/, "");
     strippedPathToFile.set(stripped, a.filePath);
 
@@ -841,7 +842,7 @@ function buildComponentGraph(
       // e.g. "sample-go-api/handler" → all files in handler/ directory
       // Skip if the import is from a well-known external framework (avoids
       // e.g. VB `Imports System.Windows.Forms` matching a local Forms/ dir).
-      const isExternal = /^(System|Microsoft|java|javax|jakarta|org|com|io)\b/.test(imp.source);
+      const isExternal = EXTERNAL_NAMESPACE_ROOT_RE.test(imp.source);
       if (lastSegment && !isExternal) {
         const dirFiles = dirToFiles.get(lastSegment);
         if (dirFiles) {

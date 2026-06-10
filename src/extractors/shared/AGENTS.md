@@ -7,13 +7,17 @@ Utilities used by multiple language plugins. If something's only used by one lan
 | File | Key exports | Used by |
 |------|-------------|---------|
 | [call-graph.ts](call-graph.ts) | `extractCalls`, `extractTopLevelCalls`, `classifyCalls`, `extractVariableAliases` | all tree-sitter plugins |
-| [call-patterns.ts](call-patterns.ts) | `isApiCall`, `isDatabaseCall` | `classifyCalls` only |
+| [call-patterns.ts](call-patterns.ts) | `isApiCall`, `isDatabaseCall` (per-language roots pushed in by the registry from plugin metas) | `classifyCalls`, `plugins/javascript/data-sources` |
 | [link-scoring.ts](link-scoring.ts) | `buildLinkGraph`, `resolveTarget`, `buildFilePathMap` | `core/analyzer.ts`, `core/symbol-linker.ts` |
 | [node-helpers.ts](node-helpers.ts) | `getVisibility`, `getNameFromNode`, `getCallName`, `stripQuotes`, decorator extractors | all tree-sitter plugins |
-| [python-tokenizer.ts](python-tokenizer.ts) | `stripPythonNonCode` | `core/security-scanner.ts` |
-| [interactive-elements.ts](interactive-elements.ts) | `extractInteractiveElements`, `extractVueInteractiveElements` | `core/analyzer.ts` |
-| [sub-components.ts](sub-components.ts) | `extractSubComponents` | `core/analyzer.ts` |
-| [events.ts](events.ts) | `extractEvents` | `core/analyzer.ts` |
+| [builtin-types.ts](builtin-types.ts) | `isBuiltinType` (per-language sets pushed in by the registry from plugin metas), `COMMON_PRIMITIVES` | `type-parser`, `core/type-reference-extractor.ts` |
+| [type-ref-helpers.ts](type-ref-helpers.ts) | `emitParsed`, `findChildByType`, `lineOf` | `plugins/<lang>/type-references.ts` walkers |
+
+Formerly-shared but language-specific extractors now live in their plugins and
+are wired via each meta's `ast` hooks: `interactive-elements.ts`,
+`sub-components.ts`, `events.ts` (→ `plugins/javascript/`),
+`python-tokenizer.ts` (→ `plugins/python/`), and the type-reference walkers
+(→ `plugins/<lang>/type-references.ts`).
 
 ## call-graph.ts — the core of call extraction
 
@@ -41,7 +45,7 @@ Three concepts:
 - Package-qualified imports (`com.example.api.service.UserService`)
 - Dotted module paths (`services.user_service`)
 - Last-segment file basename matching
-- Skips known external packages (see `EXTERNAL_PREFIXES`)
+- Skips known external packages (prefixes contributed by plugin metas via `registry.ts`)
 
 ## node-helpers.ts — tree-sitter AST utilities
 

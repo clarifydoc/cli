@@ -2,6 +2,7 @@ import type { Node } from "web-tree-sitter";
 import type { RouteInfo, CallInfo } from "../../../../types/analysis.js";
 import { stripQuotes, findChildByType } from "../../../shared/node-helpers.js";
 import { extractCalls } from "../../../shared/call-graph.js";
+import type { RouteExtractor } from "../../../routes/base.js";
 
 /** Spring Boot mapping annotations */
 const SPRING_MAPPING_ANNOTATIONS: Record<string, string | null> = {
@@ -218,3 +219,13 @@ function parseSpringAnnotation(
     line: node.startPosition.row + 1,
   };
 }
+
+/** Route-registry adapter for this plugin (see routes/base.ts). */
+export const javaKotlinRouteExtractor: RouteExtractor = {
+  languages: ["java", "kotlin"],
+  extractRoutes(tree, _sourceText) {
+    const routes: RouteInfo[] = [];
+    extractSpringRoutes(tree.rootNode, routes);
+    return routes;
+  },
+};

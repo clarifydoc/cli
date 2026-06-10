@@ -15,3 +15,4 @@ export { computeHealthScore } from "./core/health-scorer.js";
 export { generateSuggestions } from "./core/suggestions-engine.js";
 export type * from "./types/analysis.js";
 export type * from "./types/plugin.js";
+export type * from "./types/language-plugin.js";

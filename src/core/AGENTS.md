@@ -2,6 +2,12 @@
 
 The analysis pipeline orchestrator and all cross-file analyzers live here. Pure functions in / out — no tree-sitter parsing happens at this layer (that's delegated to extractors).
 
+**Core is language-agnostic.** Anything per-language — extensions, parse
+strategy, builtin types, complexity tables, security rules, framework hints,
+external-package prefixes, AST hooks — comes from the plugin registry
+([../extractors/registry.ts](../extractors/registry.ts)), which aggregates each
+plugin's `meta.ts`. Don't hardcode language names here; ask the registry.
+
 ## Entry point
 
 [analyzer.ts](analyzer.ts) exports `analyze(options)` — the full pipeline. It runs:

@@ -3,7 +3,7 @@ import type {
   SubComponentInfo,
   ImportInfo,
   Language,
-} from "../../types/analysis.js";
+} from "../../../types/analysis.js";
 
 /**
  * Extract sub-component usage from JSX/TSX files.

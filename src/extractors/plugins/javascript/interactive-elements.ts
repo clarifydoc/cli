@@ -1,5 +1,5 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { InteractiveElementInfo, Language } from "../../types/analysis.js";
+import type { InteractiveElementInfo, Language } from "../../../types/analysis.js";
 
 /** HTML tags that map to interactive element types */
 const INTERACTIVE_TAGS: Record<string, InteractiveElementInfo["element"]> = {

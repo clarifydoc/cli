@@ -1,6 +1,7 @@
 import type { Node } from "web-tree-sitter";
 import type { RouteInfo } from "../../../../types/analysis.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
+import type { RouteExtractor } from "../../../routes/base.js";
 
 const CSHARP_HTTP_ATTRIBUTES = new Set([
   "HttpGet",
@@ -54,3 +55,13 @@ function walkForCsharpRoutes(node: Node, routes: RouteInfo[]) {
     walkForCsharpRoutes(child, routes);
   }
 }
+
+/** Route-registry adapter for this plugin (see routes/base.ts). */
+export const csharpRouteExtractor: RouteExtractor = {
+  languages: ["csharp"],
+  extractRoutes(tree, _sourceText) {
+    const routes: RouteInfo[] = [];
+    extractAspnetRoutes(tree.rootNode, routes);
+    return routes;
+  },
+};

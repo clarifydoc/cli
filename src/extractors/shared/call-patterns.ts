@@ -1,54 +1,32 @@
 import type { Language } from "../../types/analysis.js";
 
 /**
- * Known HTTP/API client function & object names per language.
- * If a call name starts with or equals any of these, it's an API call.
+ * Call-classification patterns. The per-language root lists (API clients,
+ * DB/ORM objects) live in each plugin's meta (`apiCallRoots` / `dbCallRoots`)
+ * and are pushed in here by `extractors/registry.ts` at load time; the
+ * method-name sets below are cross-language. This module stays a leaf — it
+ * is imported from plugin code (e.g. javascript/data-sources), so it must
+ * not import the registry or any plugin itself.
  */
-const API_ROOTS: Record<string, string[]> = {
-  typescript: ["fetch", "axios", "http", "request", "ajax", "$http", "ky", "got", "superagent", "ofetch"],
-  javascript: ["fetch", "axios", "http", "request", "ajax", "$http", "ky", "got", "superagent", "ofetch"],
-  python: ["requests", "httpx", "aiohttp", "urllib", "http.client"],
-  java: ["RestTemplate", "WebClient", "HttpClient", "OkHttp", "Retrofit"],
-  kotlin: ["RestTemplate", "WebClient", "HttpClient", "OkHttp", "Retrofit", "ktor"],
-  csharp: ["HttpClient", "WebClient", "RestClient"],
-  pascal: ["THTTPClient", "TRESTClient", "TIdHTTP"],
-};
+
+const API_ROOTS = new Map<Language, readonly string[]>();
+const DB_ROOTS = new Map<Language, readonly string[]>();
+
+/** Called by the registry while aggregating plugin metas. */
+export function registerCallPatterns(
+  language: Language,
+  apiRoots: readonly string[] | undefined,
+  dbRoots: readonly string[] | undefined,
+): void {
+  if (apiRoots) API_ROOTS.set(language, apiRoots);
+  if (dbRoots) DB_ROOTS.set(language, dbRoots);
+}
 
 /** Method names that indicate an API/HTTP call */
 const API_METHODS = new Set([
   "exchange", "getForObject", "getForEntity", "postForObject", "postForEntity",
   "execute", "send", "request",
 ]);
-
-/**
- * Known database/ORM object & method patterns per language.
- * If a call name starts with or contains any of these, it's a database call.
- */
-const DB_ROOTS: Record<string, string[]> = {
-  typescript: [
-    "prisma", "mongoose", "sequelize", "knex", "typeorm", "drizzle",
-    "db", "pool", "connection", "pgClient", "redis",
-  ],
-  javascript: [
-    "prisma", "mongoose", "sequelize", "knex", "typeorm", "drizzle",
-    "db", "pool", "connection", "pgClient", "redis",
-  ],
-  python: [
-    "cursor", "session", "engine", "db", "connection", "pool",
-  ],
-  java: [
-    "JdbcTemplate", "entityManager", "session", "repository",
-  ],
-  kotlin: [
-    "JdbcTemplate", "entityManager", "session", "repository",
-  ],
-  csharp: [
-    "DbContext", "DbSet", "SqlCommand", "SqlConnection",
-  ],
-  pascal: [
-    "Query", "Connection", "DataSet", "SQLQuery",
-  ],
-};
 
 /** Method names that indicate database operations */
 const DB_METHODS = new Set([
@@ -76,7 +54,7 @@ const DB_METHODS = new Set([
  * Check if a call name matches an API/HTTP pattern for the given language.
  */
 export function isApiCall(name: string, language: Language): boolean {
-  const roots = API_ROOTS[language];
+  const roots = API_ROOTS.get(language);
   if (!roots) return false;
 
   // Check if the root object is a known API client
@@ -96,7 +74,7 @@ export function isApiCall(name: string, language: Language): boolean {
  * Check if a call name matches a database/ORM pattern for the given language.
  */
 export function isDatabaseCall(name: string, language: Language): boolean {
-  const roots = DB_ROOTS[language];
+  const roots = DB_ROOTS.get(language);
   if (!roots) return false;
 
   // Check if the root object is a known DB client/ORM

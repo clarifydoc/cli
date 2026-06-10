@@ -1,22 +1,21 @@
-import type { SecurityIssue, SecurityCategory, SecuritySeverity, Language } from "../types/analysis.js";
-import { stripPythonNonCode } from "../extractors/shared/python-tokenizer.js";
+import type { SecurityIssue, Language } from "../types/analysis.js";
+import type { SecurityRule } from "../types/language-plugin.js";
+import { pluginFor, securityRulesFor } from "../extractors/registry.js";
 
-interface Rule {
-  category: SecurityCategory;
-  severity: SecuritySeverity;
-  pattern: RegExp;
-  message: string;
-  languages?: string[];  // restrict to specific languages, or all if omitted
-  excludeTest?: boolean;
-}
-
-const RULES: Rule[] = [
+/**
+ * Generic rules that apply to every language. Language-specific rules live
+ * in each plugin's meta (`securityRules`); rule `priority` interleaves the
+ * two sets deterministically (lower runs first), which also fixes the order
+ * issues are reported in.
+ */
+const GENERIC_RULES: SecurityRule[] = [
   // Hardcoded secrets
   {
     category: "hardcoded-secret",
     severity: "high",
     pattern: /(?:password|passwd|pwd|secret|api_key|apikey|token|auth_token|private_key)\s*[=:]\s*['"][^'"]{4,}['"]/i,
     message: "Hardcoded secret detected. Use environment variables or a secrets manager.",
+    priority: 10,
     excludeTest: true,
   },
   // SQL injection
@@ -25,27 +24,14 @@ const RULES: Rule[] = [
     severity: "high",
     pattern: /(?:query|execute)\s*\(\s*['"`][^'"`]*\s*\+/,
     message: "Possible SQL injection via string concatenation. Use parameterized queries.",
+    priority: 11,
   },
   {
     category: "sql-injection",
     severity: "high",
     pattern: /\$\{[^}]*\}[^`]*(?:SELECT|INSERT|UPDATE|DELETE)/i,
     message: "Possible SQL injection via template literal. Use parameterized queries.",
-  },
-  // XSS
-  {
-    category: "xss",
-    severity: "high",
-    pattern: /innerHTML\s*=/,
-    message: "Direct innerHTML assignment can lead to XSS. Sanitize user input.",
-    languages: ["typescript", "javascript"],
-  },
-  {
-    category: "xss",
-    severity: "high",
-    pattern: /dangerouslySetInnerHTML/,
-    message: "dangerouslySetInnerHTML can lead to XSS attacks. Sanitize input.",
-    languages: ["typescript", "javascript"],
+    priority: 12,
   },
   // eval/exec
   {
@@ -53,67 +39,21 @@ const RULES: Rule[] = [
     severity: "medium",
     pattern: /\beval\s*\(/,
     message: "eval() executes arbitrary code. Avoid or validate input strictly.",
-  },
-  {
-    category: "eval-exec",
-    severity: "medium",
-    pattern: /new\s+Function\s*\(/,
-    message: "Function constructor is similar to eval(). Consider alternatives.",
-    languages: ["typescript", "javascript"],
-  },
-  // Command injection
-  {
-    category: "command-injection",
-    severity: "medium",
-    pattern: /child_process/,
-    message: "Shell command execution detected. Ensure input is sanitized.",
-    languages: ["typescript", "javascript"],
-  },
-  {
-    category: "command-injection",
-    severity: "high",
-    pattern: /\bos\.system\s*\(/,
-    message: "os.system() is vulnerable to command injection. Use subprocess with shell=False.",
-    languages: ["python"],
-  },
-  // Python-specific
-  {
-    category: "pickle",
-    severity: "high",
-    pattern: /pickle\.load/,
-    message: "pickle.load() can execute arbitrary code. Use JSON or safe alternatives.",
-    languages: ["python"],
-  },
-  {
-    category: "subprocess-shell",
-    severity: "high",
-    pattern: /subprocess\.\w+\([^)]*shell\s*=\s*True/,
-    message: "subprocess with shell=True is vulnerable to command injection.",
-    languages: ["python"],
-  },
-  {
-    category: "bare-except",
-    severity: "medium",
-    pattern: /\bexcept\s*:/,
-    message: "Bare except catches all exceptions including SystemExit. Specify exception type.",
-    languages: ["python"],
-  },
-  {
-    category: "eval-exec",
-    severity: "high",
-    pattern: /\bexec\s*\(/,
-    message: "exec() executes arbitrary Python code. This is almost always a security risk.",
-    languages: ["python"],
-  },
-  // Debug statements (only flag if excessive — handled separately)
-  {
-    category: "debug-statement",
-    severity: "low",
-    pattern: /\bdebugger\b/,
-    message: "debugger statement found. Remove before production.",
-    languages: ["typescript", "javascript"],
+    priority: 30,
   },
 ];
+
+/** Merged generic + plugin rules per language, sorted by priority (cached). */
+const mergedRulesCache = new Map<Language, readonly SecurityRule[]>();
+
+function rulesFor(language: Language): readonly SecurityRule[] {
+  let rules = mergedRulesCache.get(language);
+  if (!rules) {
+    rules = [...GENERIC_RULES, ...securityRulesFor(language)].sort((a, b) => a.priority - b.priority);
+    mergedRulesCache.set(language, rules);
+  }
+  return rules;
+}
 
 /** Check if a file path looks like a test file */
 function isTestFile(filePath: string): boolean {
@@ -133,18 +73,20 @@ export function scanSecurity(
   filePath: string,
   language: Language,
 ): SecurityIssue[] {
-  if (language === "dfm") return [];
+  const plugin = pluginFor(language);
+  if (plugin?.skipSecurityScan) return [];
 
   const issues: SecurityIssue[] = [];
-  // For Python, strip strings and comments to avoid false positives
-  const effectiveSource = language === "python" ? stripPythonNonCode(sourceText) : sourceText;
+  // Plugin pre-filter (e.g. Python strips strings/comments to avoid false positives)
+  const effectiveSource = plugin?.securityPreprocess
+    ? plugin.securityPreprocess(sourceText)
+    : sourceText;
   const lines = effectiveSource.split("\n");
   const originalLines = sourceText.split("\n"); // for snippets
   const isTest = isTestFile(filePath);
 
   // Apply regex rules
-  for (const rule of RULES) {
-    if (rule.languages && !rule.languages.includes(language)) continue;
+  for (const rule of rulesFor(language)) {
     if (rule.excludeTest && isTest) continue;
 
     for (let i = 0; i < lines.length; i++) {
@@ -174,19 +116,9 @@ export function scanSecurity(
     }
   }
 
-  // Check for excessive console.log (>3 instances)
-  if (language === "typescript" || language === "javascript") {
-    const consoleLogs = lines.filter((l) => /console\.(log|debug|info)\(/.test(l));
-    if (consoleLogs.length > 3) {
-      issues.push({
-        category: "debug-statement",
-        severity: "low",
-        message: `${consoleLogs.length} console statements found. Remove before production.`,
-        filePath,
-        line: lines.findIndex((l) => /console\.(log|debug|info)\(/.test(l)) + 1,
-        snippet: "",
-      });
-    }
+  // Plugin whole-file checks (e.g. excessive console.log for JS/TS)
+  if (plugin?.securityPostScan) {
+    issues.push(...plugin.securityPostScan(lines, filePath));
   }
 
   // Check for TODO/FIXME/HACK

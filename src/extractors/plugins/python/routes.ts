@@ -2,6 +2,7 @@ import type { Node } from "web-tree-sitter";
 import type { RouteInfo } from "../../../types/analysis.js";
 import { stripQuotes } from "../../shared/node-helpers.js";
 import { HTTP_METHODS } from "../../routes/base.js";
+import type { RouteExtractor } from "../../routes/base.js";
 
 /** Python: @app.get("/path") — FastAPI, Flask, Django decorators */
 export function extractPythonRoutes(root: Node, routes: RouteInfo[]): void {
@@ -52,3 +53,13 @@ function walkForPythonRoutes(node: Node, routes: RouteInfo[]) {
     walkForPythonRoutes(child, routes);
   }
 }
+
+/** Route-registry adapter for this plugin (see routes/base.ts). */
+export const pythonRouteExtractor: RouteExtractor = {
+  languages: ["python"],
+  extractRoutes(tree, _sourceText) {
+    const routes: RouteInfo[] = [];
+    extractPythonRoutes(tree.rootNode, routes);
+    return routes;
+  },
+};

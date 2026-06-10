@@ -1,6 +1,7 @@
 import type { Node } from "web-tree-sitter";
 import type { RouteInfo } from "../../../types/analysis.js";
 import { findChildByType } from "../../shared/node-helpers.js";
+import type { RouteExtractor } from "../../routes/base.js";
 
 /** Delphi DataSnap/RAD Server method prefixes that map to HTTP methods */
 const DELPHI_METHOD_PREFIXES: Record<string, string> = {
@@ -62,3 +63,13 @@ function recurse(node: Node, routes: RouteInfo[]) {
     walkForPascalRoutes(child, routes);
   }
 }
+
+/** Route-registry adapter for this plugin (see routes/base.ts). */
+export const pascalRouteExtractor: RouteExtractor = {
+  languages: ["pascal"],
+  extractRoutes(tree, _sourceText) {
+    const routes: RouteInfo[] = [];
+    extractPascalRoutes(tree.rootNode, routes);
+    return routes;
+  },
+};

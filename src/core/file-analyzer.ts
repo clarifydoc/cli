@@ -3,21 +3,17 @@ import type { DiscoveredFile } from "./file-discovery.js";
 import { writeFileAnalysis, type OutputOptions } from "./output-writer.js";
 import { parseSource } from "../parsers/parser-manager.js";
 import { parseVueSfc } from "../parsers/vue-sfc.js";
-import { parseDfm } from "../parsers/dfm-parser.js";
 import { extractImports, extractExports } from "../extractors/imports-exports/index.js";
 import { extractFunctions, extractClasses } from "../extractors/functions-classes/index.js";
-import { extractSubComponents } from "../extractors/shared/sub-components.js";
 import { extractRoutes } from "../extractors/routes/index.js";
 import { extractDataSources } from "../extractors/data-sources/index.js";
 import { extractDataMutations } from "../extractors/data-mutations/index.js";
 import { classifyCalls, extractTopLevelCalls, extractVariableAliases } from "../extractors/shared/call-graph.js";
 import { applyAliases } from "../extractors/shared/tsconfig-aliases.js";
-import { extractInteractiveElements, extractVueInteractiveElements } from "../extractors/shared/interactive-elements.js";
-import { extractEvents } from "../extractors/shared/events.js";
+import { pluginFor, astHooksFor, inferFileFrameworks } from "../extractors/registry.js";
 import { computeComplexity } from "./complexity-analyzer.js";
 import { scanSecurity } from "./security-scanner.js";
 import { extractTypeReferences } from "./type-reference-extractor.js";
-import { extractTypeReferencesFromAst } from "../extractors/shared/type-references-ast.js";
 import { enrichFileDataSources } from "./import-index.js";
 import {
   createEmptyAnalysis,
@@ -25,7 +21,6 @@ import {
   type Language,
   type ComplexityInfo,
   type SecurityIssue,
-  type ImportInfo,
   type RouteInfo,
 } from "../types/analysis.js";
 
@@ -67,25 +62,25 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
 
   try {
     const rawSource = await readFile(file.absolutePath, "utf-8");
+    const filePlugin = pluginFor(file.language);
 
-    // .dfm files use a dedicated parser (no tree-sitter)
-    if (file.language === "dfm") {
-      const analysis = parseDfm(rawSource, file.relativePath);
-      analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
+    // Formats with their own dedicated parser (e.g. Delphi .dfm — no tree-sitter)
+    if (filePlugin?.customParse) {
+      const analysis = filePlugin.customParse(rawSource, file.relativePath);
+      analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
       analysis.projectId = projectId;
       applyTsconfigAliasesToImports(analysis);
-      const dfmTypeRefs = extractTypeReferences(analysis, file.language);
-      if (dfmTypeRefs.length > 0) analysis.typeReferences = dfmTypeRefs;
+      const customTypeRefs = extractTypeReferences(analysis, file.language);
+      if (customTypeRefs.length > 0) analysis.typeReferences = customTypeRefs;
       await writeFileAnalysis(analysis, outputOpts);
       return { analysis, rawSource: null, complexities: [], securityIssues: [] };
     }
 
-    // Languages without tree-sitter grammars: use regex fallback
-    const REGEX_ONLY_LANGUAGES: Language[] = ["go", "rust", "ruby", "swift", "lua", "scala", "perl", "vb", "sql", "c", "cpp"];
-    if (REGEX_ONLY_LANGUAGES.includes(file.language)) {
+    // Languages without tree-sitter grammars: use regex extraction
+    if (filePlugin?.parsing === "regex") {
       const { extractWithRegex } = await import("./regex-extractor.js");
       const analysis = extractWithRegex(rawSource, file.relativePath, file.language);
-      analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
+      analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
       analysis.projectId = projectId;
       applyTsconfigAliasesToImports(analysis);
       const fileSecurityIssues = scanSecurity(rawSource, file.relativePath, file.language);
@@ -121,7 +116,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       if (verbose) console.log(`    Parse failed for ${file.relativePath}, using regex fallback`);
       const { extractWithRegex } = await import("./regex-extractor.js");
       const analysis = extractWithRegex(rawSource, file.relativePath, file.language);
-      analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
+      analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
       analysis.projectId = projectId;
       applyTsconfigAliasesToImports(analysis);
       const fileSecurityIssues = scanSecurity(rawSource, file.relativePath, file.language);
@@ -134,6 +129,10 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
 
     const analysis = createEmptyAnalysis(file.relativePath, language);
     analysis.projectId = projectId;
+
+    // Language-specific AST hooks (looked up for the effective language —
+    // for .vue files that's the <script> block's language).
+    const hooks = astHooksFor(language);
 
     // Run all extractors
     analysis.imports = extractImports(tree, sourceText, language);
@@ -150,13 +149,8 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // aliases, and global/wildcard namespaces).
     enrichFileDataSources(analysis);
     analysis.dataMutations = extractDataMutations(tree, sourceText, language);
-    analysis.events = extractEvents(sourceText, language);
-    analysis.subComponents = extractSubComponents(
-      tree,
-      sourceText,
-      language,
-      analysis.imports,
-    );
+    analysis.events = hooks?.events?.(sourceText) ?? [];
+    analysis.subComponents = hooks?.subComponents?.(tree, sourceText, analysis.imports) ?? [];
 
     // Extract top-level calls (Vue <script setup>, module-level hooks)
     // and variable aliases (const userStore = useUserStore())
@@ -198,16 +192,16 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     }
 
     // Extract interactive elements (buttons, inputs, forms with event bindings)
-    analysis.interactiveElements = extractInteractiveElements(tree, sourceText, language);
+    analysis.interactiveElements = hooks?.interactiveElements?.(tree, sourceText) ?? [];
 
     // Infer frameworks for this specific file based on its imports
-    analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath, frameworkIds);
+    analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
 
     // For .vue files, also add template components and interactive elements
     if (isVue && vueSfc) {
       if (vueSfc.template) {
         analysis.interactiveElements.push(
-          ...extractVueInteractiveElements(vueSfc.template, rawSource),
+          ...(hooks?.templateInteractiveElements?.(vueSfc.template, rawSource) ?? []),
         );
       }
       for (const comp of vueSfc.templateComponents) {
@@ -249,7 +243,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // annotations, casts, new-expressions). Dedup on
     // (typeName, kind, sourceFile, sourceLine, sourceSymbol).
     const fileLevelTypeRefs = extractTypeReferences(analysis, language);
-    const astLevelTypeRefs = extractTypeReferencesFromAst(tree, language, file.relativePath);
+    const astLevelTypeRefs = hooks?.typeReferences?.(tree, file.relativePath) ?? [];
     const combinedTypeRefs = mergeTypeRefs(fileLevelTypeRefs, astLevelTypeRefs);
     if (combinedTypeRefs.length > 0) analysis.typeReferences = combinedTypeRefs;
 
@@ -380,103 +374,6 @@ function filePathToRoute(filePath: string): string {
       .replace(/\[\.\.\.(\w+)\]/g, "*") // [...slug] -> *
       .replace(/\[(\w+)\]/g, ":$1") // [id] -> :id
   );
-}
-
-/** Import source patterns → framework id */
-const IMPORT_FRAMEWORK_MAP: Record<string, string> = {
-  "react": "react",
-  "react-dom": "react",
-  "react-router": "react-router",
-  "react-router-dom": "react-router",
-  "next": "nextjs",
-  "next/router": "nextjs",
-  "next/navigation": "nextjs",
-  "vue": "vue",
-  "vue-router": "vue-router",
-  "nuxt": "nuxt",
-  "pinia": "pinia",
-  "vuex": "vuex",
-  "express": "express",
-  "@nestjs/common": "nestjs",
-  "@nestjs/core": "nestjs",
-  "fastify": "fastify",
-  "@angular/core": "angular",
-  "@angular/router": "angular",
-  "react-redux": "react-redux",
-  "@reduxjs/toolkit": "redux",
-  "@tanstack/react-query": "react-query",
-  "io.ktor.server.routing": "ktor",
-  "org.springframework.web.bind.annotation": "spring-web",
-  // ORM imports
-  "@prisma/client": "prisma",
-  "prisma": "prisma",
-  "typeorm": "typeorm",
-  "sequelize": "sequelize",
-  "sequelize-typescript": "sequelize",
-  "drizzle-orm": "drizzle",
-  "@mikro-orm/core": "mikro-orm",
-  "mongoose": "mongoose",
-  "knex": "knex",
-  "objection": "objection",
-  "sqlalchemy": "sqlalchemy",
-  "django.db.models": "django-orm",
-  "tortoise": "tortoise-orm",
-  "peewee": "peewee",
-  "Microsoft.EntityFrameworkCore": "ef-core",
-  "System.Data.Entity": "ef6",
-  "Dapper": "dapper",
-  "NHibernate": "nhibernate",
-  "org.hibernate": "hibernate",
-  "javax.persistence": "hibernate",
-  "jakarta.persistence": "hibernate",
-  "org.springframework.data.jpa": "spring-data-jpa",
-  "org.mybatis": "mybatis",
-  "org.jooq": "jooq",
-  "org.jetbrains.exposed": "exposed",
-  "active_record": "active-record",
-  "sequel": "sequel",
-  "Doctrine\\ORM": "doctrine",
-  "Illuminate\\Database": "eloquent",
-  "gorm.io/gorm": "gorm",
-  "github.com/jmoiron/sqlx": "sqlx",
-  "entgo.io/ent": "ent",
-  "diesel": "diesel",
-  "sea_orm": "sea-orm",
-  "sqlx": "rust-sqlx",
-};
-
-/**
- * Infer which frameworks a specific file uses, based on its imports.
- * Only includes project-level frameworks that the file actually references.
- */
-export function inferFileFrameworks(
-  imports: ImportInfo[],
-  filePath: string,
-  projectFrameworkIds: string[],
-): string[] {
-  const fileFrameworks = new Set<string>();
-
-  for (const imp of imports) {
-    // Check exact match
-    const exact = IMPORT_FRAMEWORK_MAP[imp.source];
-    if (exact) {
-      fileFrameworks.add(exact);
-      continue;
-    }
-    // Check prefix match (e.g., "react-router-dom/..." or "org.springframework.web.bind.annotation.*")
-    for (const [pattern, fwId] of Object.entries(IMPORT_FRAMEWORK_MAP)) {
-      if (imp.source.startsWith(pattern + "/") || imp.source.startsWith(pattern + ".")) {
-        fileFrameworks.add(fwId);
-      }
-    }
-  }
-
-  // .vue files are implicitly Vue
-  if (filePath.endsWith(".vue")) {
-    fileFrameworks.add("vue");
-  }
-
-  return [...fileFrameworks];
 }
 
 /** Detect 'use client' / 'use server' directives (React Server Components) */

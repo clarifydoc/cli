@@ -6,20 +6,47 @@ Everything that walks an AST or regex-scans source text to pull out structured d
 
 ```
 extractors/
+├── registry.ts            THE language plugin registry — aggregates every plugin's meta.ts
 ├── imports-exports/       plugin interface + dispatcher
 ├── functions-classes/     plugin interface + dispatcher
 ├── data-sources/          plugin interface + dispatcher (API calls, state hooks, ORM queries)
 ├── data-mutations/        plugin interface + dispatcher (setState, dispatch, assignments)
-├── routes/                framework-specific route extractors (no plugin base — per-framework files)
+├── routes/                plugin interface + dispatcher (one RouteExtractor per language family)
 ├── plugins/               per-language implementations (see plugins/AGENTS.md)
-└── shared/                cross-plugin utilities (call graph, link scoring, helpers)
+└── shared/                language-agnostic utilities (call graph, link scoring, helpers)
 ```
 
-Each of `imports-exports`, `functions-classes`, `data-sources`, `data-mutations` has:
-- `base.ts` — abstract class defining the plugin interface
+Each of `imports-exports`, `functions-classes`, `data-sources`, `data-mutations`, `routes` has:
+- `base.ts` — abstract class / interface defining the plugin contract
 - `index.ts` — language-keyed dispatcher + `register*Extractor()` runtime registration
 
-## The plugin pattern
+## The registry (registry.ts)
+
+Each plugin directory exports a `LanguagePluginMeta` from `meta.ts` (see
+[../types/language-plugin.ts](../types/language-plugin.ts)) carrying everything
+language-specific that isn't one of the five domain extractors:
+
+- `extensions` + `parsing` ("tree-sitter" | "regex" | "custom") + `customParse` — drives discovery and `file-analyzer`'s parse strategy
+- `builtinTypes`, `externalModulePrefixes`, `externalNamespaceRoots` — import/type-resolution data
+- `complexity` (branch nodes / logical ops), `securityRules` (+ `securityPreprocess`/`securityPostScan`/`skipSecurityScan`)
+- `frameworkImportHints`, `apiCallRoots`, `dbCallRoots`
+- `ast` hooks: `typeReferences`, `interactiveElements`, `templateInteractiveElements`, `subComponents`, `events`
+
+`registry.ts` aggregates the metas into the lookups core consumes
+(`EXTENSION_TO_LANGUAGE`, `STRIP_SOURCE_EXTENSION_RE`, `ALL_EXTERNAL_MODULE_PREFIXES`,
+`EXTERNAL_NAMESPACE_ROOT_RE`, `inferFileFrameworks`, `securityRulesFor`,
+`complexityFor`, `pluginFor`, `astHooksFor`) and pushes data into the leaf
+modules plugin code itself imports (`shared/builtin-types.ts`,
+`shared/call-patterns.ts`).
+
+**Adding a language**: create `plugins/<lang>/` with the domain extractors you
+support, a `meta.ts`, and add the meta to `ALL_METAS` in `registry.ts`.
+
+**Layering rule**: metas are leaf modules — they import types, their own plugin
+code, and leaf shared helpers, never core or the registry. Core never names a
+language; it asks the registry.
+
+## The plugin pattern (domain extractors)
 
 ```ts
 // base.ts — abstract contract
@@ -45,18 +72,24 @@ export function extractFunctions(tree, sourceText, language): FunctionInfo[] {
 | File | Purpose |
 |------|---------|
 | [call-graph.ts](shared/call-graph.ts) | `extractCalls(body, language)` — main function-call walker. `classifyCalls(calls, imports, lang)` — sets `kind` to `cross-file`/`internal`/`api-call`/`database`. `extractVariableAliases` — `const s = useStore()` → maps `s` to import source |
-| [call-patterns.ts](shared/call-patterns.ts) | `isApiCall(name)`, `isDatabaseCall(name)` — pattern matchers used by `classifyCalls` |
-| [link-scoring.ts](shared/link-scoring.ts) | `buildLinkGraph(analyses)` — file → file edges with proximity (1=tight, 2=medium, 3=loose). `resolveTarget(importSource, sourceFile, filePathMap)` — turns `"./foo"` or `"com.example.Foo"` into a file path. `buildFilePathMap` — index for fast resolution. |
+| [call-patterns.ts](shared/call-patterns.ts) | `isApiCall(name)`, `isDatabaseCall(name)` — pattern matchers used by `classifyCalls`. Per-language root lists come from plugin metas via the registry. |
+| [link-scoring.ts](shared/link-scoring.ts) | `buildLinkGraph(analyses)` — file → file edges with proximity (1=tight, 2=medium, 3=loose). `resolveTarget(importSource, sourceFile, filePathMap)` — turns `"./foo"` or `"com.example.Foo"` into a file path. `buildFilePathMap` — index for fast resolution. External-package prefixes come from plugin metas via the registry. |
 | [node-helpers.ts](shared/node-helpers.ts) | Tree-sitter AST utilities: `getVisibility`, `getNameFromNode`, `getCallName`, `extractJsDecorators`, `extractAnnotations`, `extractCsharpAttributes`, `extractPythonDecorators` |
-| [python-tokenizer.ts](shared/python-tokenizer.ts) | `stripPythonNonCode(content)` — blanks out strings, docstrings, comments while preserving line positions. Used to eliminate false positives in regex scanning. |
-| [interactive-elements.ts](shared/interactive-elements.ts) | JSX/Vue/Svelte button/input/form/link extraction |
-| [sub-components.ts](shared/sub-components.ts) | React/Vue child component references |
-| [events.ts](shared/events.ts) | Vue emit / Svelte dispatch extraction |
+| [builtin-types.ts](shared/builtin-types.ts) | `isBuiltinType(name, language)` — per-language deny sets come from plugin metas via the registry; exports `COMMON_PRIMITIVES` as the base for plugin sets. |
+| [type-ref-helpers.ts](shared/type-ref-helpers.ts) | Shared helpers for the per-plugin `type-references.ts` walkers (`emitParsed`, `findChildByType`, `lineOf`) |
+
+Language-specific extractors that used to live here moved into their plugins:
+`interactive-elements.ts`, `sub-components.ts`, `events.ts` →
+`plugins/javascript/`; `python-tokenizer.ts` → `plugins/python/`;
+the per-language type-reference walkers → `plugins/<lang>/type-references.ts`.
+They're wired into the pipeline through each meta's `ast` hooks.
 
 ## routes/
 
-No plugin base class — each framework has its own file:
-- `javascript/routes/express.ts`, `react-router.ts`, `nestjs.ts`, `vue-router.ts`
+Same registry pattern as the other domains: `routes/base.ts` defines
+`RouteExtractor` (`languages` + `extractRoutes(tree, sourceText)`), and each
+language family exports one:
+- `javascript/routes/index.ts` — runs Express, React Router, NestJS, Vue Router in order
 - `python/routes.ts` (Flask, FastAPI, Django)
 - `csharp/routes/aspnet.ts`
 - `java-kotlin/routes/spring.ts`

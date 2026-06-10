@@ -1,6 +1,7 @@
 import type { FileAnalysis, LinkInfo, LinkProximity, Confidence } from "../../types/analysis.js";
 import { posix } from "path";
 import { bestConfidence } from "./confidence.js";
+import { ALL_EXTERNAL_MODULE_PREFIXES, STRIP_SOURCE_EXTENSION_RE } from "../registry.js";
 
 /** Lifecycle hooks — calls here run on mount/create → tight (1) */
 const LIFECYCLE_HOOKS = new Set([
@@ -210,7 +211,7 @@ export function buildFilePathMap(analyses: FileAnalysis[]): Map<string, string> 
   const map = new Map<string, string>();
   for (const a of analyses) {
     map.set(a.filePath, a.filePath);
-    const base = a.filePath.replace(/\.(ts|tsx|js|jsx|mjs|cjs|vue|py|pyw|java|kt|kts|cs|pas|pp|go|rs|rb|php|swift|lua|scala|pl|pm|vb|bas|cls|frm)$/, "");
+    const base = a.filePath.replace(STRIP_SOURCE_EXTENSION_RE, "");
     map.set(base, a.filePath);
     const noIndex = base.replace(/\/index$/, "");
     if (noIndex !== base) map.set(noIndex, a.filePath);
@@ -342,41 +343,8 @@ function tryMatch(candidate: string, filePathMap: Map<string, string>): string |
   return null;
 }
 
-/** Known external package prefixes to skip — not project files */
-const EXTERNAL_PREFIXES = [
-  // Delphi/Pascal standard libraries
-  "System.", "Vcl.", "Fmx.", "Data.", "Datasnap.", "EMS.", "Winapi.", "Posix.",
-  "IdHTTP", "IdTCP", "IdSSL",
-  // Java standard libraries
-  "java.", "javax.", "jakarta.",
-  "org.springframework.", "org.apache.", "org.hibernate.", "org.junit.",
-  "io.ktor.", "io.netty.",
-  "com.google.", "com.fasterxml.", "com.amazonaws.",
-  // Python standard libraries
-  "os", "sys", "json", "re", "math", "datetime", "typing", "enum",
-  "collections", "itertools", "functools", "pathlib", "hashlib",
-  "asyncio", "logging", "unittest", "abc",
-  // Python common packages
-  "fastapi", "flask", "django", "pydantic", "sqlalchemy",
-  "requests", "httpx", "aiohttp", "pytest",
-  "numpy", "pandas", "scipy",
-  // C# standard
-  "System", "Microsoft.", "Newtonsoft.",
-  // Go standard library
-  "fmt", "net/", "os", "io", "context", "strings", "strconv", "errors", "encoding/",
-  "crypto/", "database/", "log", "sync", "time", "testing",
-  // Rust standard library + common crates
-  "std::", "core::", "alloc::", "serde", "tokio", "actix", "rocket",
-  "hyper", "reqwest", "diesel", "sqlx",
-  // Ruby standard library + common gems
-  "rails", "active_record", "active_support", "action_controller",
-  "rspec", "bundler", "rake",
-  // PHP standard library + common packages
-  "Illuminate\\", "Symfony\\", "Doctrine\\", "Laravel\\",
-];
-
 export function isExternalPackage(source: string): boolean {
-  return EXTERNAL_PREFIXES.some(prefix =>
+  return ALL_EXTERNAL_MODULE_PREFIXES.some(prefix =>
     source === prefix || source.startsWith(prefix + ".") || source.startsWith(prefix + "/")
   );
 }

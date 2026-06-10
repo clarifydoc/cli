@@ -1,4 +1,4 @@
-import type { EventInfo, ParamInfo, Language } from "../../types/analysis.js";
+import type { EventInfo, ParamInfo, Language } from "../../../types/analysis.js";
 
 /**
  * Extract component events from Vue defineEmits declarations and emit() calls.

@@ -1,6 +1,20 @@
-import type { Node } from "web-tree-sitter";
-import type { RouteInfo, CallInfo } from "../../types/analysis.js";
+import type { Node, Tree } from "web-tree-sitter";
+import type { RouteInfo, CallInfo, Language } from "../../types/analysis.js";
 import { extractCalls } from "../shared/call-graph.js";
+
+/**
+ * A language plugin's route extractor. One per language family; a plugin
+ * that supports several frameworks (e.g. JS: Express, React Router, NestJS,
+ * Vue Router) runs them all inside its `extractRoutes` — the order it runs
+ * them in is the order routes appear in the output.
+ */
+export interface RouteExtractor {
+  /** Languages this extractor handles */
+  readonly languages: Language[];
+
+  /** Extract all routes/endpoints from the AST. */
+  extractRoutes(tree: Tree, sourceText: string): RouteInfo[];
+}
 
 export const HTTP_METHODS = new Set([
   "get",
