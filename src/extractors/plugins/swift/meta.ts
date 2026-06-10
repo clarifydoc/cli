@@ -18,5 +18,6 @@ export const swiftMeta: LanguagePluginMeta = {
   language: "swift",
   parsing: "regex",
   extensions: swiftSpec.extensions,
+  regexSpec: swiftSpec,
   builtinTypes: SWIFT_BUILTINS,
 };

@@ -14,5 +14,6 @@ export const cMeta: LanguagePluginMeta = {
   language: "c",
   parsing: "regex",
   extensions: cSpec.extensions,
+  regexSpec: cSpec,
   builtinTypes: C_BUILTINS,
 };

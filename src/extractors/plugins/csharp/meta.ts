@@ -22,6 +22,9 @@ export const csharpMeta: LanguagePluginMeta = {
   language: "csharp",
   parsing: "tree-sitter",
   extensions: [".cs"],
+  grammar: {
+    variants: { csharp: { pkg: "tree-sitter-c-sharp", wasm: "tree-sitter-c_sharp.wasm" } },
+  },
   builtinTypes: CSHARP_BUILTINS,
   externalModulePrefixes: ["System", "Microsoft.", "Newtonsoft."],
   externalNamespaceRoots: ["System", "Microsoft"],

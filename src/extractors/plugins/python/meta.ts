@@ -59,6 +59,9 @@ export const pythonMeta: LanguagePluginMeta = {
   language: "python",
   parsing: "tree-sitter",
   extensions: [".py", ".pyw"],
+  grammar: {
+    variants: { python: { pkg: "tree-sitter-python", wasm: "tree-sitter-python.wasm" } },
+  },
   builtinTypes: PYTHON_BUILTINS,
   externalModulePrefixes: [
     // Standard library

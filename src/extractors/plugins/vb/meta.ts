@@ -16,6 +16,7 @@ export const vbMeta: LanguagePluginMeta = {
   language: "vb",
   parsing: "regex",
   extensions: vbSpec.extensions,
+  regexSpec: vbSpec,
   builtinTypes: VB_BUILTINS,
   // `Imports System.Windows.Forms` must not match a local Forms/ directory.
   externalNamespaceRoots: ["System", "Microsoft"],

@@ -2,7 +2,6 @@ import { readFile } from "fs/promises";
 import type { DiscoveredFile } from "./file-discovery.js";
 import { writeFileAnalysis, type OutputOptions } from "./output-writer.js";
 import { parseSource } from "../parsers/parser-manager.js";
-import { parseVueSfc } from "../parsers/vue-sfc.js";
 import { extractImports, extractExports } from "../extractors/imports-exports/index.js";
 import { extractFunctions, extractClasses } from "../extractors/functions-classes/index.js";
 import { extractRoutes } from "../extractors/routes/index.js";
@@ -91,21 +90,19 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       return { analysis, rawSource: null, complexities: [], securityIssues: fileSecurityIssues };
     }
 
-    const isVue = file.relativePath.endsWith(".vue");
-
-    // For .vue files, extract the <script> block and parse that
-    let sourceText: string;
+    // Container-format preprocessing (e.g. Vue SFC → its <script> block)
+    let sourceText: string = rawSource;
     let language: Language = file.language;
-    const vueSfc = isVue ? parseVueSfc(rawSource) : null;
-    if (isVue) {
-      if (!vueSfc!.script) {
-        if (verbose) console.log(`    Skipping ${file.relativePath}: no <script> block`);
+    let postExtract: ((analysis: FileAnalysis, raw: string) => void) | undefined;
+    const pre = filePlugin?.preprocess?.(rawSource, file.relativePath);
+    if (pre) {
+      if ("skip" in pre) {
+        if (verbose) console.log(`    Skipping ${file.relativePath}: ${pre.skip}`);
         return null;
       }
-      sourceText = vueSfc!.script;
-      language = vueSfc!.scriptLang;
-    } else {
-      sourceText = rawSource;
+      sourceText = pre.sourceText;
+      language = pre.language;
+      postExtract = pre.postExtract;
     }
 
     let tree;
@@ -197,28 +194,8 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // Infer frameworks for this specific file based on its imports
     analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
 
-    // For .vue files, also add template components and interactive elements
-    if (isVue && vueSfc) {
-      if (vueSfc.template) {
-        analysis.interactiveElements.push(
-          ...(hooks?.templateInteractiveElements?.(vueSfc.template, rawSource) ?? []),
-        );
-      }
-      for (const comp of vueSfc.templateComponents) {
-        const importSource =
-          analysis.imports.find((imp) =>
-            imp.specifiers.includes(comp.name),
-          )?.source ?? null;
-        if (!analysis.subComponents.some((sc) => sc.name === comp.name)) {
-          analysis.subComponents.push({
-            name: comp.name,
-            importSource,
-            props: comp.props,
-            line: comp.line,
-          });
-        }
-      }
-    }
+    // Merge container-format data back in (e.g. Vue template elements/components)
+    postExtract?.(analysis, rawSource);
 
     // Next.js / Nuxt file-based routing: infer route from file path
     const fileRoute = inferFileBasedRoute(file.relativePath, frameworkIds);

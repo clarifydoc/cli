@@ -6,6 +6,7 @@ export const rubyMeta: LanguagePluginMeta = {
   language: "ruby",
   parsing: "regex",
   extensions: rubySpec.extensions,
+  regexSpec: rubySpec,
   builtinTypes: new Set(COMMON_PRIMITIVES),
   externalModulePrefixes: [
     "rails", "active_record", "active_support", "action_controller",

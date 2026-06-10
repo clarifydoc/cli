@@ -80,6 +80,8 @@ export interface RegexLangSpec {
   extractScreens?: (lines: string[], filePath: string, classes: ClassInfo[]) => ScreenInfo[];
   /** Detect API call sites — HTTP client calls, fetch patterns, etc. */
   extractDataSources?: (lines: string[], classes: ClassInfo[]) => DataSourceInfo[];
+  /** Post-process extracted functions (e.g. SQL BEGIN/END-aware end-line patching). */
+  postProcessFunctions?: (lines: string[], fns: FunctionInfo[]) => FunctionInfo[];
 }
 
 /** Common call names to filter out as noise */

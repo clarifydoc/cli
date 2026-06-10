@@ -16,6 +16,7 @@ export const goMeta: LanguagePluginMeta = {
   language: "go",
   parsing: "regex",
   extensions: goSpec.extensions,
+  regexSpec: goSpec,
   builtinTypes: GO_BUILTINS,
   externalModulePrefixes: [
     "fmt", "net/", "os", "io", "context", "strings", "strconv", "errors", "encoding/",

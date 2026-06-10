@@ -1,10 +1,10 @@
 import type { FunctionInfo, ClassInfo, ComplexityInfo, FileComplexityInfo, Language } from "../types/analysis.js";
 import type { TSTree, TSNode } from "../parsers/parser-manager.js";
-import { complexityFor } from "../extractors/registry.js";
+import { complexityFor, DEFAULT_COMPLEXITY, pluginFor } from "../extractors/registry.js";
 
 /** Count branch nodes in a subtree */
 function countBranches(node: TSNode, language: string): number {
-  const spec = complexityFor(language) ?? complexityFor("typescript")!;
+  const spec = complexityFor(language) ?? DEFAULT_COMPLEXITY;
   const branchSet = spec.branchNodes;
   const logicalOps = spec.logicalOps;
   let count = 0;
@@ -68,7 +68,8 @@ export function computeComplexity(
   functions: FunctionInfo[],
   classes: ClassInfo[],
 ): ComplexityInfo[] {
-  if (language === "dfm") return [];
+  // Custom-parsed resource formats (e.g. .dfm) have no code complexity.
+  if (pluginFor(language)?.parsing === "custom") return [];
 
   const results: ComplexityInfo[] = [];
   const root = tree.rootNode;

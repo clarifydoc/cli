@@ -2,11 +2,12 @@ import type { Language, SecurityIssue } from "../../../types/analysis.js";
 import type { LanguagePluginMeta, SecurityRule, AstExtractorHooks } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { extractTsTypeReferences } from "./type-references.js";
-import { extractInteractiveElements, extractVueInteractiveElements } from "./interactive-elements.js";
+import { extractInteractiveElements } from "./interactive-elements.js";
 import { extractSubComponents } from "./sub-components.js";
 import { extractEvents } from "./events.js";
 import { javascriptCallHooks } from "./call-hooks.js";
 import { extractJsVariableAliases } from "./variable-aliases.js";
+import { vuePreprocess } from "./vue-hooks.js";
 
 const TS_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -134,7 +135,6 @@ function astHooks(language: Language): AstExtractorHooks {
   return {
     typeReferences: (tree, filePath) => extractTsTypeReferences(tree, language, filePath),
     interactiveElements: (tree, sourceText) => extractInteractiveElements(tree, sourceText, language),
-    templateInteractiveElements: extractVueInteractiveElements,
     subComponents: (tree, sourceText, imports) => extractSubComponents(tree, sourceText, language, imports),
     events: (sourceText) => extractEvents(sourceText, language),
     variableAliases: extractJsVariableAliases,
@@ -145,6 +145,16 @@ export const typescriptMeta: LanguagePluginMeta = {
   language: "typescript",
   parsing: "tree-sitter",
   extensions: [".ts", ".tsx", ".vue"],
+  grammar: {
+    variants: {
+      typescript: { pkg: "tree-sitter-typescript", wasm: "tree-sitter-typescript.wasm" },
+      tsx: { pkg: "tree-sitter-typescript", wasm: "tree-sitter-tsx.wasm" },
+    },
+    keyForFile: (filePath) =>
+      filePath.endsWith(".tsx") || filePath.endsWith(".jsx") ? "tsx" : "typescript",
+  },
+  // .vue files map to typescript; the SFC preprocess swaps in the <script> block.
+  preprocess: vuePreprocess,
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
   securityRules: SECURITY_RULES,
@@ -160,6 +170,11 @@ export const javascriptMeta: LanguagePluginMeta = {
   language: "javascript",
   parsing: "tree-sitter",
   extensions: [".js", ".jsx", ".mjs", ".cjs"],
+  grammar: {
+    variants: {
+      javascript: { pkg: "tree-sitter-javascript", wasm: "tree-sitter-javascript.wasm" },
+    },
+  },
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
   securityRules: SECURITY_RULES,

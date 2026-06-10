@@ -25,6 +25,9 @@ export const pascalMeta: LanguagePluginMeta = {
   language: "pascal",
   parsing: "tree-sitter",
   extensions: [".pas", ".pp", ".lpr", ".dpr", ".dpk"],
+  grammar: {
+    variants: { pascal: { pkg: "tree-sitter-pascal", wasm: "tree-sitter-pascal.wasm" } },
+  },
   builtinTypes: PASCAL_BUILTINS,
   externalModulePrefixes: DELPHI_EXTERNAL_PREFIXES,
   complexity: {

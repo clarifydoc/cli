@@ -12,32 +12,33 @@ import { fileURLToPath } from "url";
 import { createRequire } from "module";
 import type { Language } from "../types/analysis.js";
 import type { CaptureResult } from "../types/plugin.js";
+import type { GrammarSpec, GrammarVariant } from "../types/language-plugin.js";
 
 // Re-export tree-sitter types under our own names for use in extractors
 export type { TSTree, TSNode, TSLanguage };
 
 const require = createRequire(import.meta.url);
 
-/** Languages that have tree-sitter grammars available */
-type TreeSitterParseable = "typescript" | "javascript" | "csharp" | "python" | "java" | "kotlin" | "pascal" | "php";
+/** Grammar variant key, e.g. "typescript" or "tsx". Usually the language id. */
+type GrammarKey = string;
 
-/** Grammar variant for sub-language selection (e.g., tsx vs ts) */
-type GrammarKey = TreeSitterParseable | "tsx";
+/**
+ * Grammar registry. Each plugin's meta declares its grammar variants
+ * (`meta.grammar`); the plugin registry pushes them in here at load time.
+ * Push pattern — this module is imported from plugin base classes
+ * (runQuery), so it can't import the registry itself.
+ */
+const grammarVariants = new Map<GrammarKey, GrammarVariant>();
+const languageGrammars = new Map<Language, GrammarSpec>();
 
-/** Maps grammar keys to the npm package + WASM filename */
-/** Maps grammar keys to the npm package + WASM filename.
- *  `pkgJson` means resolve via package.json (for packages without a main entry). */
-const GRAMMAR_PACKAGES: Record<GrammarKey, { pkg: string; wasm: string; viaPkgJson?: boolean }> = {
-  typescript: { pkg: "tree-sitter-typescript", wasm: "tree-sitter-typescript.wasm" },
-  tsx: { pkg: "tree-sitter-typescript", wasm: "tree-sitter-tsx.wasm" },
-  javascript: { pkg: "tree-sitter-javascript", wasm: "tree-sitter-javascript.wasm" },
-  csharp: { pkg: "tree-sitter-c-sharp", wasm: "tree-sitter-c_sharp.wasm" },
-  python: { pkg: "tree-sitter-python", wasm: "tree-sitter-python.wasm" },
-  java: { pkg: "tree-sitter-java", wasm: "tree-sitter-java.wasm" },
-  kotlin: { pkg: "tree-sitter-kotlin", wasm: "tree-sitter-kotlin.wasm", viaPkgJson: true },
-  pascal: { pkg: "tree-sitter-pascal", wasm: "tree-sitter-pascal.wasm", viaPkgJson: true },
-  php: { pkg: "tree-sitter-php", wasm: "tree-sitter-php.wasm", viaPkgJson: true },
-};
+/** Called by the registry while aggregating plugin metas. */
+export function registerGrammar(language: Language, spec: GrammarSpec | undefined): void {
+  if (!spec) return;
+  languageGrammars.set(language, spec);
+  for (const [key, variant] of Object.entries(spec.variants)) {
+    grammarVariants.set(key, variant);
+  }
+}
 
 let initialized = false;
 const parserCache = new Map<GrammarKey, Parser>();
@@ -86,23 +87,23 @@ async function ensureInit(): Promise<void> {
 /** Languages that have tree-sitter grammars (excludes non-parseable and regex-only formats) */
 export type TreeSitterLanguage = Exclude<Language, "dfm" | "swift" | "lua" | "scala" | "go" | "rust" | "ruby" | "perl" | "vb" | "sql" | "c" | "cpp">;
 
-/** Resolve the grammar key, using tsx for .tsx/.jsx files */
+/** Resolve the grammar key for a file (e.g. .tsx files use the "tsx" variant) */
 function resolveGrammarKey(language: TreeSitterLanguage, filePath?: string): GrammarKey {
-  if (filePath && (filePath.endsWith(".tsx") || filePath.endsWith(".jsx"))) {
-    return language === "typescript" ? "tsx" : language;
+  const spec = languageGrammars.get(language);
+  if (filePath && spec?.keyForFile) {
+    return spec.keyForFile(filePath);
   }
   return language;
 }
 
 /** Find the grammar WASM file path */
 function getGrammarPath(key: GrammarKey): string {
-  const { pkg, wasm, viaPkgJson } = GRAMMAR_PACKAGES[key];
-  if (viaPkgJson) {
-    const pkgJsonPath = require.resolve(`${pkg}/package.json`);
-    return join(dirname(pkgJsonPath), wasm);
+  const variant = grammarVariants.get(key);
+  if (!variant) {
+    throw new Error(`No tree-sitter grammar registered for "${key}"`);
   }
-  const pkgJsonPath = require.resolve(`${pkg}/package.json`);
-  return join(dirname(pkgJsonPath), wasm);
+  const pkgJsonPath = require.resolve(`${variant.pkg}/package.json`);
+  return join(dirname(pkgJsonPath), variant.wasm);
 }
 
 /** Get or create a parser for the given grammar key */

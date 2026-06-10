@@ -26,11 +26,13 @@ Each plugin directory exports a `LanguagePluginMeta` from `meta.ts` (see
 [../types/language-plugin.ts](../types/language-plugin.ts)) carrying everything
 language-specific that isn't one of the five domain extractors:
 
-- `extensions` + `parsing` ("tree-sitter" | "regex" | "custom") + `customParse` — drives discovery and `file-analyzer`'s parse strategy
+- `extensions` + `parsing` ("tree-sitter" | "regex" | "custom") — drives discovery and `file-analyzer`'s parse strategy
+- `grammar` (tree-sitter wasm location + per-file variant selection), `regexSpec` (RegexLangSpec), `customParse` (dedicated parsers like .dfm), `preprocess` (container formats like Vue SFC)
 - `builtinTypes`, `externalModulePrefixes`, `externalNamespaceRoots` — import/type-resolution data
 - `complexity` (branch nodes / logical ops), `securityRules` (+ `securityPreprocess`/`securityPostScan`/`skipSecurityScan`)
 - `frameworkImportHints`, `apiCallRoots`, `dbCallRoots`
-- `ast` hooks: `typeReferences`, `interactiveElements`, `templateInteractiveElements`, `subComponents`, `events`
+- `ast` hooks: `typeReferences`, `interactiveElements`, `subComponents`, `events`, `variableAliases`
+- `calls` hooks: `callNodeTypes`, scope/callback node types, name resolution, auto-imported classification
 
 `registry.ts` aggregates the metas into the lookups core consumes
 (`EXTENSION_TO_LANGUAGE`, `STRIP_SOURCE_EXTENSION_RE`, `ALL_EXTERNAL_MODULE_PREFIXES`,

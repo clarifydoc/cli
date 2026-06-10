@@ -62,11 +62,13 @@ function jvmMeta(language: Language, opts: {
   branchNodes: string[];
   apiCallRoots: string[];
   calls: CallExtractionHooks;
+  grammar: LanguagePluginMeta["grammar"];
 }): LanguagePluginMeta {
   return {
     language,
     parsing: "tree-sitter",
     extensions: opts.extensions,
+    grammar: opts.grammar,
     builtinTypes: opts.builtinTypes,
     externalModulePrefixes: JVM_EXTERNAL_PREFIXES,
     externalNamespaceRoots: JVM_NAMESPACE_ROOTS,
@@ -93,6 +95,7 @@ export const javaMeta: LanguagePluginMeta = jvmMeta("java", {
   ],
   apiCallRoots: ["RestTemplate", "WebClient", "HttpClient", "OkHttp", "Retrofit"],
   calls: javaCallHooks,
+  grammar: { variants: { java: { pkg: "tree-sitter-java", wasm: "tree-sitter-java.wasm" } } },
 });
 
 export const kotlinMeta: LanguagePluginMeta = jvmMeta("kotlin", {
@@ -104,4 +107,5 @@ export const kotlinMeta: LanguagePluginMeta = jvmMeta("kotlin", {
   ],
   apiCallRoots: ["RestTemplate", "WebClient", "HttpClient", "OkHttp", "Retrofit", "ktor"],
   calls: kotlinCallHooks,
+  grammar: { variants: { kotlin: { pkg: "tree-sitter-kotlin", wasm: "tree-sitter-kotlin.wasm" } } },
 });

@@ -6,5 +6,6 @@ export const sqlMeta: LanguagePluginMeta = {
   language: "sql",
   parsing: "regex",
   extensions: sqlSpec.extensions,
+  regexSpec: sqlSpec,
   builtinTypes: new Set(COMMON_PRIMITIVES),
 };

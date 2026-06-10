@@ -49,8 +49,6 @@ export interface AstExtractorHooks {
   typeReferences?(tree: Tree, filePath: string): TypeReference[];
   /** Interactive UI elements (buttons, inputs with handlers) from the AST. */
   interactiveElements?(tree: Tree, sourceText: string): InteractiveElementInfo[];
-  /** Interactive elements from a template block (Vue SFC <template>). */
-  templateInteractiveElements?(template: string, rawSource: string): InteractiveElementInfo[];
   /** Rendered sub-components (e.g. JSX <UserTable />). */
   subComponents?(tree: Tree, sourceText: string, imports: ImportInfo[]): SubComponentInfo[];
   /** Component events (e.g. Vue defineEmits / emit calls). */
@@ -60,6 +58,34 @@ export interface AstExtractorHooks {
    * (`const store = useUserStore()` → store resolves to useUserStore's source).
    */
   variableAliases?(tree: Tree, imports: ImportInfo[]): Map<string, string>;
+}
+
+/** Location of a tree-sitter grammar WASM inside an npm package. */
+export interface GrammarVariant {
+  pkg: string;
+  wasm: string;
+}
+
+/**
+ * Tree-sitter grammar declaration for a language. Registered into
+ * `parsers/parser-manager.ts` by the registry (push pattern — parser-manager
+ * is imported from plugin base classes, so it can't import the registry).
+ */
+export interface GrammarSpec {
+  /** Grammar variants: key → wasm location. Most languages have exactly one, keyed by the language id. */
+  variants: Readonly<Record<string, GrammarVariant>>;
+  /** Pick the variant key for a file (e.g. .tsx → "tsx"). Defaults to the language id. */
+  keyForFile?(filePath: string): string;
+}
+
+/** Result of a container-format preprocess (e.g. Vue SFC → its <script> block). */
+export interface PreprocessOutcome {
+  /** The source text to parse (e.g. the <script> block). */
+  sourceText: string;
+  /** The effective language of that source. */
+  language: Language;
+  /** Run after extraction to merge container data back in (e.g. Vue template elements). */
+  postExtract?(analysis: FileAnalysis, rawSource: string): void;
 }
 
 /**
@@ -132,6 +158,16 @@ export interface LanguagePluginMeta {
   importTarget?: boolean;
   /** Parser for `parsing: "custom"` formats (e.g. .dfm). */
   customParse?(rawSource: string, relativePath: string): FileAnalysis;
+  /** Tree-sitter grammar location(s) for `parsing: "tree-sitter"` languages. */
+  grammar?: GrammarSpec;
+  /** Regex extraction spec for `parsing: "regex"` languages (and tree-sitter parse-failure fallback). */
+  regexSpec?: import("../extractors/plugins/shared/regex-base.js").RegexLangSpec;
+  /**
+   * Container-format preprocessing (e.g. Vue SFC): swap in the embedded
+   * source/language before parsing, or skip the file entirely.
+   * Return null to proceed with the file as-is.
+   */
+  preprocess?(rawSource: string, relativePath: string): PreprocessOutcome | { skip: string } | null;
 
   /** Builtin/stdlib type names — never tracked as project type references. */
   builtinTypes?: ReadonlySet<string>;

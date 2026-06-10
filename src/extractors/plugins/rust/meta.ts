@@ -19,6 +19,7 @@ export const rustMeta: LanguagePluginMeta = {
   language: "rust",
   parsing: "regex",
   extensions: rustSpec.extensions,
+  regexSpec: rustSpec,
   builtinTypes: RUST_BUILTINS,
   externalModulePrefixes: [
     "std::", "core::", "alloc::", "serde", "tokio", "actix", "rocket",

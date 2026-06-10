@@ -16,6 +16,9 @@ export const phpMeta: LanguagePluginMeta = {
   language: "php",
   parsing: "tree-sitter",
   extensions: [".php"],
+  grammar: {
+    variants: { php: { pkg: "tree-sitter-php", wasm: "tree-sitter-php.wasm" } },
+  },
   builtinTypes: PHP_BUILTINS,
   externalModulePrefixes: ["Illuminate\\", "Symfony\\", "Doctrine\\", "Laravel\\"],
   complexity: {

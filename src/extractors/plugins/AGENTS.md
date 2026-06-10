@@ -55,17 +55,22 @@ Specs are loaded by [../../core/regex-extractor.ts](../../core/regex-extractor.t
 
 1. `npm install tree-sitter-<lang>` (or verify WASM is in a deps package)
 2. Add to `Language` type in [../../types/analysis.ts](../../types/analysis.ts)
-3. Add grammar package entry to `GRAMMAR_PACKAGES` in [../../parsers/parser-manager.ts](../../parsers/parser-manager.ts)
-4. Create `src/extractors/plugins/<lang>/` with per-category extractors
-5. Register each extractor in `src/extractors/<category>/index.ts`
-6. Create `meta.ts` (`parsing: "tree-sitter"`, extensions, builtins, complexity tables, security rules, framework hints, ast hooks, and `calls` — at minimum `callNodeTypes`, plus name-resolution/scope hooks as needed; see `call-hooks.ts` in existing plugins) and add it to `ALL_METAS` in [../registry.ts](../registry.ts) — extensions, discovery, complexity, call extraction, and the rest flow from there
+3. Create `src/extractors/plugins/<lang>/` with per-category extractors
+4. Register each extractor in `src/extractors/<category>/index.ts`
+5. Create `meta.ts` (`parsing: "tree-sitter"`, extensions, `grammar` — package + wasm location, with optional per-file variant selection like tsx — builtins, complexity tables, security rules, framework hints, ast hooks, and `calls` — at minimum `callNodeTypes`, plus name-resolution/scope hooks as needed; see `call-hooks.ts` in existing plugins) and add it to `ALL_METAS` in [../registry.ts](../registry.ts) — extensions, discovery, grammar loading, complexity, call extraction, and the rest flow from there
 
 ### Regex path (languages without reliable grammar)
 
 1. Add to `Language` type in [../../types/analysis.ts](../../types/analysis.ts)
 2. Create `src/extractors/plugins/<lang>/index.ts` exporting a `RegexLangSpec`
-3. Register the spec in `SPECS` object in [../../core/regex-extractor.ts](../../core/regex-extractor.ts)
-4. Create `meta.ts` (`parsing: "regex"`, `extensions: <spec>.extensions`, builtins) and add it to `ALL_METAS` in [../registry.ts](../registry.ts)
+3. Create `meta.ts` (`parsing: "regex"`, `extensions: <spec>.extensions`, `regexSpec: <spec>`, builtins) and add it to `ALL_METAS` in [../registry.ts](../registry.ts)
+
+### Container formats (e.g. Vue SFC, Delphi .dfm)
+
+- A format that embeds another language (Vue) declares `preprocess` on the host
+  language's meta — swap in the embedded source/language before parsing, and
+  optionally merge container data back via `postExtract`.
+- A format with its own parser (.dfm) declares `parsing: "custom"` + `customParse`.
 
 ## Conventions
 

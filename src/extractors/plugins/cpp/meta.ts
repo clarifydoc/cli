@@ -19,5 +19,6 @@ export const cppMeta: LanguagePluginMeta = {
   language: "cpp",
   parsing: "regex",
   extensions: cppSpec.extensions,
+  regexSpec: cppSpec,
   builtinTypes: CPP_BUILTINS,
 };

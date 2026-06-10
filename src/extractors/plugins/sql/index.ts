@@ -438,6 +438,10 @@ export const sqlSpec: RegexLangSpec = {
   extractDataSources: (lines, _classes) => extractDmlStatements(lines),
 
   extractRoutes: (_lines, _classes): RouteInfo[] => [],
+
+  // SQL routines (PROCEDURE/FUNCTION/TRIGGER) need BEGIN/END-aware end-line
+  // patching so blast-radius and complexity see the right body range.
+  postProcessFunctions: (lines, fns) => fixSqlFunctionEndLines(lines, fns),
 };
 
 /**

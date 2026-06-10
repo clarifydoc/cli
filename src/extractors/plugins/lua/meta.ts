@@ -6,5 +6,6 @@ export const luaMeta: LanguagePluginMeta = {
   language: "lua",
   parsing: "regex",
   extensions: luaSpec.extensions,
+  regexSpec: luaSpec,
   builtinTypes: new Set(COMMON_PRIMITIVES),
 };

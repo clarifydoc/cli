@@ -6,5 +6,6 @@ export const perlMeta: LanguagePluginMeta = {
   language: "perl",
   parsing: "regex",
   extensions: perlSpec.extensions,
+  regexSpec: perlSpec,
   builtinTypes: new Set(COMMON_PRIMITIVES),
 };

@@ -1,8 +1,10 @@
 import type { Language } from "../types/analysis.js";
 import type { LanguagePluginMeta, LanguageComplexitySpec, SecurityRule, AstExtractorHooks } from "../types/language-plugin.js";
+import type { RegexLangSpec } from "./plugins/shared/regex-base.js";
 import { registerBuiltinTypes } from "./shared/builtin-types.js";
 import { registerCallPatterns } from "./shared/call-patterns.js";
 import { registerCallExtraction } from "./shared/call-graph.js";
+import { registerGrammar } from "../parsers/parser-manager.js";
 
 import { typescriptMeta, javascriptMeta } from "./plugins/javascript/meta.js";
 import { csharpMeta } from "./plugins/csharp/meta.js";
@@ -43,6 +45,7 @@ for (const meta of ALL_METAS) {
   if (meta.builtinTypes) registerBuiltinTypes(meta.language, meta.builtinTypes);
   registerCallPatterns(meta.language, meta.apiCallRoots, meta.dbCallRoots);
   registerCallExtraction(meta.language, meta.calls);
+  registerGrammar(meta.language, meta.grammar);
 }
 
 /** Meta for a language, or undefined for unregistered languages. */
@@ -58,6 +61,21 @@ export function astHooksFor(language: Language): AstExtractorHooks | undefined {
 /** Complexity tables for a language (undefined when the plugin has none). */
 export function complexityFor(language: string): LanguageComplexitySpec | undefined {
   return BY_LANGUAGE.get(language as Language)?.complexity;
+}
+
+/**
+ * Default complexity tables for languages that haven't declared their own —
+ * C-family branch/operator names, which most grammars share.
+ */
+export const DEFAULT_COMPLEXITY: LanguageComplexitySpec = (() => {
+  const spec = BY_LANGUAGE.get("typescript")?.complexity;
+  if (!spec) throw new Error("typescript plugin must declare complexity tables (used as the default)");
+  return spec;
+})();
+
+/** Regex extraction spec for a language (undefined when the plugin has none). */
+export function regexSpecFor(language: Language): RegexLangSpec | undefined {
+  return BY_LANGUAGE.get(language)?.regexSpec;
 }
 
 // ─── Extensions ──────────────────────────────────────────────────────────

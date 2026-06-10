@@ -1,34 +1,16 @@
 import { createEmptyAnalysis, type FileAnalysis, type Language } from "../types/analysis.js";
 import {
-  type RegexLangSpec,
   extractFunctionsWithSpec,
   extractClassesWithSpec,
   extractImportsWithSpec,
   deriveExportsFromFnClasses,
 } from "../extractors/plugins/shared/regex-base.js";
-import { goSpec } from "../extractors/plugins/go/index.js";
-import { rustSpec } from "../extractors/plugins/rust/index.js";
-import { rubySpec } from "../extractors/plugins/ruby/index.js";
-// PHP is parsed via tree-sitter; phpSpec is still imported by language-map for
-// the `.php` extension registration and acts as the regex fallback path.
-import { swiftSpec } from "../extractors/plugins/swift/index.js";
-import { luaSpec } from "../extractors/plugins/lua/index.js";
-import { scalaSpec } from "../extractors/plugins/scala/index.js";
-import { perlSpec } from "../extractors/plugins/perl/index.js";
-import { vbSpec } from "../extractors/plugins/vb/index.js";
-import { sqlSpec, fixSqlFunctionEndLines } from "../extractors/plugins/sql/index.js";
-import { cSpec } from "../extractors/plugins/c/index.js";
-import { cppSpec } from "../extractors/plugins/cpp/index.js";
-
-/** Registry of language specs keyed by Language. */
-const SPECS: Partial<Record<Language, RegexLangSpec>> = Object.fromEntries(
-  [goSpec, rustSpec, rubySpec, swiftSpec, luaSpec, scalaSpec, perlSpec, vbSpec, sqlSpec, cSpec, cppSpec]
-    .map((s) => [s.language, s]),
-);
+import { regexSpecFor } from "../extractors/registry.js";
 
 /**
  * Regex-based file analysis for languages without tree-sitter support,
- * or as a fallback when tree-sitter parsing fails.
+ * or as a fallback when tree-sitter parsing fails. The per-language
+ * `RegexLangSpec` comes from the plugin registry (`meta.regexSpec`).
  */
 export function extractWithRegex(
   sourceText: string,
@@ -36,7 +18,7 @@ export function extractWithRegex(
   language: Language,
 ): FileAnalysis {
   const analysis = createEmptyAnalysis(filePath, language);
-  const spec = SPECS[language];
+  const spec = regexSpecFor(language);
   if (!spec) return analysis;
 
   const lines = sourceText.split("\n");
@@ -60,10 +42,8 @@ export function extractWithRegex(
   analysis.screens = spec.extractScreens?.(lines, filePath, analysis.classes) ?? [];
   analysis.dataSources = spec.extractDataSources?.(lines, analysis.classes) ?? [];
 
-  // SQL routines (PROCEDURE/FUNCTION/TRIGGER) need BEGIN/END-aware end-line patching
-  // so blast-radius and complexity see the right body range.
-  if (language === "sql") {
-    analysis.functions = fixSqlFunctionEndLines(lines, analysis.functions);
+  if (spec.postProcessFunctions) {
+    analysis.functions = spec.postProcessFunctions(lines, analysis.functions);
   }
 
   return analysis;

@@ -15,5 +15,6 @@ export const scalaMeta: LanguagePluginMeta = {
   language: "scala",
   parsing: "regex",
   extensions: scalaSpec.extensions,
+  regexSpec: scalaSpec,
   builtinTypes: SCALA_BUILTINS,
 };
