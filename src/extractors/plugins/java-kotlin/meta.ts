@@ -1,7 +1,8 @@
 import type { Language } from "../../../types/analysis.js";
-import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
+import type { LanguagePluginMeta, CallExtractionHooks } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { extractJavaKotlinTypeReferences } from "./type-references.js";
+import { javaCallHooks, kotlinCallHooks } from "./call-hooks.js";
 
 const JAVA_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -60,6 +61,7 @@ function jvmMeta(language: Language, opts: {
   builtinTypes: ReadonlySet<string>;
   branchNodes: string[];
   apiCallRoots: string[];
+  calls: CallExtractionHooks;
 }): LanguagePluginMeta {
   return {
     language,
@@ -78,6 +80,7 @@ function jvmMeta(language: Language, opts: {
     ast: {
       typeReferences: (tree, filePath) => extractJavaKotlinTypeReferences(tree, language, filePath),
     },
+    calls: opts.calls,
   };
 }
 
@@ -89,6 +92,7 @@ export const javaMeta: LanguagePluginMeta = jvmMeta("java", {
     "catch_clause", "ternary_expression", "switch_block_statement_group",
   ],
   apiCallRoots: ["RestTemplate", "WebClient", "HttpClient", "OkHttp", "Retrofit"],
+  calls: javaCallHooks,
 });
 
 export const kotlinMeta: LanguagePluginMeta = jvmMeta("kotlin", {
@@ -99,4 +103,5 @@ export const kotlinMeta: LanguagePluginMeta = jvmMeta("kotlin", {
     "catch_block", "when_entry",
   ],
   apiCallRoots: ["RestTemplate", "WebClient", "HttpClient", "OkHttp", "Retrofit", "ktor"],
+  calls: kotlinCallHooks,
 });

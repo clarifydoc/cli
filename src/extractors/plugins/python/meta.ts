@@ -2,6 +2,7 @@ import type { LanguagePluginMeta, SecurityRule } from "../../../types/language-p
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { stripPythonNonCode } from "./python-tokenizer.js";
 import { extractPythonTypeReferences } from "./type-references.js";
+import { pythonCallHooks } from "./call-hooks.js";
 
 const PYTHON_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -90,4 +91,5 @@ export const pythonMeta: LanguagePluginMeta = {
   ast: {
     typeReferences: extractPythonTypeReferences,
   },
+  calls: pythonCallHooks,
 };

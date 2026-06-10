@@ -1,64 +1,42 @@
 import type { Node } from "web-tree-sitter";
 import type { Language, CallInfo, ImportInfo } from "../../types/analysis.js";
+import type { CallExtractionHooks } from "../../types/language-plugin.js";
 import { isApiCall, isDatabaseCall } from "./call-patterns.js";
 
 /**
- * Call expression node types per language.
- * These are the AST node types that represent function/method calls.
+ * Generic call extraction & classification. Everything language-specific —
+ * call node types, scope boundaries, name resolution quirks, auto-imported
+ * globals, qualified-root heuristics — comes from each plugin's
+ * `meta.calls` hooks, pushed in by `extractors/registry.ts` at load time.
+ * This module stays a leaf: it is imported from plugin code
+ * (functions-classes extractors, routes), so it must not import the
+ * registry or any plugin itself.
  */
-const CALL_TYPES: Record<string, Set<string>> = {
-  typescript: new Set(["call_expression", "new_expression"]),
-  javascript: new Set(["call_expression", "new_expression"]),
-  python: new Set(["call"]),
-  java: new Set(["method_invocation", "object_creation_expression"]),
-  kotlin: new Set(["call_expression"]),
-  csharp: new Set(["invocation_expression", "object_creation_expression"]),
-  pascal: new Set(["exprCall"]),
-  go: new Set(["call_expression", "composite_literal"]),
-  rust: new Set(["call_expression", "macro_invocation"]),
-  ruby: new Set(["call", "method_call"]),
-  php: new Set([
-    "function_call_expression",
-    "member_call_expression",
-    "scoped_call_expression",
-    "object_creation_expression",
-  ]),
-};
+
+const callHooksByLanguage = new Map<Language, CallExtractionHooks>();
 
 /**
- * AST node types that define nested functions/classes — don't descend into these
- * when collecting calls for the current function scope.
+ * Node types that define nested functions/classes — `extractCalls` doesn't
+ * descend into these when collecting calls for the current function scope.
+ * Union across all registered plugins (see CallExtractionHooks.nestedScopeTypes).
  */
-const NESTED_SCOPE_TYPES = new Set([
-  // JS/TS
-  "arrow_function",
-  "function_expression",
-  "function_declaration",
-  "generator_function_declaration",
-  "class_declaration",
-  "class",
-  // Python
-  "function_definition",
-  "class_definition",
-  "lambda",
-  // Java/Kotlin
-  "method_declaration",
-  "constructor_declaration",
-  "lambda_expression",
-  "anonymous_class_body",
-  // C#
-  "local_function_statement",
-  "anonymous_method_expression",
-  "lambda_expression",
-  // PHP
-  "method_declaration",
-  "function_definition",
-  "class_declaration",
-  "interface_declaration",
-  "trait_declaration",
-  "anonymous_function_creation_expression",
-  "arrow_function",
-]);
+const NESTED_SCOPE_TYPES = new Set<string>();
+
+/** Call node types whose arguments are scanned for callback identifiers (union). */
+const CALLBACK_ARG_NODE_TYPES = new Set<string>();
+
+/** Called by the registry while aggregating plugin metas. */
+export function registerCallExtraction(language: Language, hooks: CallExtractionHooks | undefined): void {
+  if (!hooks) return;
+  callHooksByLanguage.set(language, hooks);
+  for (const t of hooks.nestedScopeTypes ?? []) NESTED_SCOPE_TYPES.add(t);
+  for (const t of hooks.callbackArgNodeTypes ?? []) CALLBACK_ARG_NODE_TYPES.add(t);
+}
+
+/** True if the node type opens a nested function/class scope (cross-plugin union). */
+export function isNestedScopeType(nodeType: string): boolean {
+  return NESTED_SCOPE_TYPES.has(nodeType);
+}
 
 /** Methods that are noise — chaining, logging, promise utilities, etc. */
 const NOISE_CALLS = new Set([
@@ -75,12 +53,6 @@ const NOISE_CALLS = new Set([
   "stringify", "parse",
 ]);
 
-/** Vue 3 <script setup> compiler macros — auto-imported, not in imports array */
-const VUE_COMPILER_MACROS = new Set([
-  "defineProps", "defineEmits", "defineExpose", "defineOptions",
-  "defineModel", "defineSlots", "withDefaults", "emit",
-]);
-
 /**
  * Extract all function/method calls from within a function body node.
  *
@@ -92,12 +64,14 @@ const VUE_COMPILER_MACROS = new Set([
 export function extractCalls(bodyNode: Node | null, language: Language): CallInfo[] {
   if (!bodyNode) return [];
 
-  const callTypes = CALL_TYPES[language];
-  if (!callTypes) return [];
+  const hooks = callHooksByLanguage.get(language);
+  if (!hooks) return [];
+  const callTypes = hooks.callNodeTypes;
 
   const results: CallInfo[] = [];
   const seen = new Set<string>();
   const visited = new Set<number>();
+  const resolve = (n: Node) => resolveCallName(n, language);
 
   function addResult(name: string, node: Node) {
     if (name && !isNoise(name) && !seen.has(name)) {
@@ -121,11 +95,11 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
 
     // Standard call expressions
     if (callTypes.has(node.type)) {
-      const name = resolveCallName(node, language);
+      const name = resolve(node);
       if (name) addResult(name, node);
 
       // Detect callback arguments: fn(callback) — identifiers passed as args
-      if (node.type === "call_expression" || node.type === "method_invocation" || node.type === "call") {
+      if (CALLBACK_ARG_NODE_TYPES.has(node.type)) {
         const args = node.childForFieldName("arguments");
         if (args) {
           for (const arg of args.children) {
@@ -137,25 +111,8 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
       }
     }
 
-    // JSX element references: <ComponentName ... /> counts as using ComponentName
-    if (
-      (language === "typescript" || language === "javascript") &&
-      (node.type === "jsx_opening_element" || node.type === "jsx_self_closing_element")
-    ) {
-      const nameNode = node.childForFieldName("name") ?? node.child(1);
-      if (nameNode && /^[A-Z]/.test(nameNode.text)) {
-        addResult(nameNode.text, nameNode);
-      }
-    }
-
-    // Python decorator references: @decorator counts as a call to decorator
-    if (language === "python" && node.type === "decorator") {
-      const expr = node.child(1); // after @
-      if (expr) {
-        const name = expr.type === "call" ? resolveCallName(expr, language) : expr.text;
-        if (name) addResult(name, expr);
-      }
-    }
+    // Language extras: JSX component references, Python decorators, etc.
+    hooks?.collectExtraCalls?.(node, addResult, resolve);
 
     for (const child of node.children) {
       walk(child, false);
@@ -171,8 +128,9 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
  * Used for Vue <script setup> where hooks like useUserStore() are at module scope.
  */
 export function extractTopLevelCalls(tree: { rootNode: Node }, language: Language): CallInfo[] {
-  const callTypes = CALL_TYPES[language];
-  if (!callTypes) return [];
+  const hooks = callHooksByLanguage.get(language);
+  if (!hooks) return [];
+  const callTypes = hooks.callNodeTypes;
 
   const results: CallInfo[] = [];
   const seen = new Set<string>();
@@ -211,7 +169,7 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
 }
 
 /** Build import lookup maps from an imports array */
-function buildImportMaps(imports: ImportInfo[]): {
+export function buildImportMaps(imports: ImportInfo[]): {
   importMap: Map<string, string>;
   defaultImports: Map<string, string>;
 } {
@@ -235,7 +193,7 @@ function buildImportMaps(imports: ImportInfo[]): {
 }
 
 /**
- * Classify raw calls using import context and language-specific patterns.
+ * Classify raw calls using import context and language plugin hooks.
  * Mutates and returns the calls array with updated `kind` and `target`.
  */
 export function classifyCalls(
@@ -245,12 +203,15 @@ export function classifyCalls(
   variableAliases?: Map<string, string>,
 ): CallInfo[] {
   const { importMap, defaultImports } = buildImportMaps(imports);
+  const hooks = callHooksByLanguage.get(language);
 
+  outer:
   for (const call of calls) {
-    // 0. Vue compiler macros (auto-imported, not in imports array)
-    if (VUE_COMPILER_MACROS.has(call.name)) {
+    // 0. Auto-imported globals (e.g. Vue <script setup> compiler macros)
+    const auto = hooks?.classifyAutoImported?.(call.name);
+    if (auto) {
       call.kind = "cross-file";
-      call.target = "vue";
+      call.target = auto.target;
       call.confidence = "EXTRACTED";
       continue;
     }
@@ -295,44 +256,18 @@ export function classifyCalls(
       }
     }
 
-    // 2c. Instance variable → imported type matching for qualified calls
-    // Java/Kotlin: @Autowired UserService userService → userService.method, import is UserService
-    // Python: user_service = UserService() → user_service.method, import is UserService
+    // 2c. Instance variable → imported type matching for qualified calls.
+    // The root-name transforms are language conventions supplied by the
+    // plugin (Java userService→UserService, Python user_service→UserService,
+    // Delphi FUserService→UserService).
     if (call.name.includes(".")) {
-      // Try capitalizing first letter (Java: userService → UserService)
-      if (language === "java" || language === "kotlin") {
-        const rootUpper = root.charAt(0).toUpperCase() + root.slice(1);
-        const upperSource = importMap.get(rootUpper);
-        if (upperSource) {
+      for (const candidate of hooks?.qualifiedRootCandidates?.(root) ?? []) {
+        const candidateSource = importMap.get(candidate);
+        if (candidateSource) {
           call.kind = "cross-file";
-          call.target = upperSource;
+          call.target = candidateSource;
           call.confidence = "INFERRED";
-          continue;
-        }
-      }
-
-      // Try snake_case → PascalCase (Python: user_service → UserService)
-      if (language === "python" && root.includes("_")) {
-        const pascal = root.split("_").map(s => s.charAt(0).toUpperCase() + s.slice(1)).join("");
-        const pascalSource = importMap.get(pascal);
-        if (pascalSource) {
-          call.kind = "cross-file";
-          call.target = pascalSource;
-          call.confidence = "INFERRED";
-          continue;
-        }
-      }
-
-      // Delphi/Pascal: fields prefixed with F → strip F to match unit name
-      // e.g., FUserService.Save → strip F → UserService matches import "UserService"
-      if (language === "pascal" && root.startsWith("F") && root.length > 1) {
-        const stripped = root.slice(1);
-        const strippedSource = importMap.get(stripped);
-        if (strippedSource) {
-          call.kind = "cross-file";
-          call.target = strippedSource;
-          call.confidence = "INFERRED";
-          continue;
+          continue outer;
         }
       }
 
@@ -371,42 +306,38 @@ export function classifyCalls(
   return calls;
 }
 
-/**
- * Resolve the full call name from a call expression node.
- * Returns qualified names for member calls: "obj.method" instead of just "method".
- */
-/** Strip PHP's `$` sigil and convert `->` chain separators to `.` so qualified
- *  names look like `this.repo.find` instead of `$this->repo->find`. */
-function normalizePhpReceiver(text: string): string {
-  return text.replace(/\$/g, "").replace(/->/g, ".");
+// ─── Call-name resolution ────────────────────────────────────────────────
+
+/** Options for `genericResolveCallName` — plugin hooks use these to splice
+ *  language quirks into the generic resolution order. */
+export interface GenericResolveOptions {
+  /**
+   * Replace the generic callee computation (function ?? constructor ?? name
+   * ?? child(0)). A null override returns null, matching a failed lookup.
+   */
+  calleeOverride?: Node | null;
+  /**
+   * Extra callee-shape handling, tried after the generic identifier /
+   * member / scoped checks and before new-expression handling.
+   */
+  extraCallee?(callee: Node, node: Node): string | null;
 }
 
-function resolveCallName(node: Node, language: Language): string | null {
-  // Java/Kotlin method_invocation: has "object" and "name" fields — handle first
-  // to avoid losing the qualifier (e.g., "userService.searchUsers" → not just "searchUsers")
-  if (
-    (language === "java" || language === "kotlin") &&
-    (node.type === "method_invocation" || node.type === "call_expression")
-  ) {
-    const nameNode = node.childForFieldName("name");
-    const obj = node.childForFieldName("object");
-    if (nameNode) {
-      return obj ? `${obj.text}.${nameNode.text}` : nameNode.text;
-    }
-  }
-
-  let callee =
-    node.childForFieldName("function") ??
-    node.childForFieldName("constructor") ??
-    node.childForFieldName("name") ??
-    node.child(0);
+/**
+ * Generic call-name resolution: identifier, member/attribute chains, scoped
+ * names, and `new X(...)`. Returns qualified names for member calls
+ * ("obj.method" instead of just "method"). Language plugins layer their
+ * grammar quirks on top via GenericResolveOptions.
+ */
+export function genericResolveCallName(node: Node, opts?: GenericResolveOptions): string | null {
+  const callee = opts && "calleeOverride" in opts
+    ? opts.calleeOverride
+    : node.childForFieldName("function") ??
+      node.childForFieldName("constructor") ??
+      node.childForFieldName("name") ??
+      node.child(0);
 
   if (!callee) return null;
-
-  if (language === "python" && node.type === "call") {
-    callee = node.childForFieldName("function") ?? node.child(0);
-    if (!callee) return null;
-  }
 
   if (callee.type === "identifier" || callee.type === "simple_identifier") {
     return callee.text;
@@ -430,44 +361,9 @@ function resolveCallName(node: Node, language: Language): string | null {
     return callee.text;
   }
 
-  if (language === "java" || language === "kotlin") {
-    const nameNode = node.childForFieldName("name");
-    const obj = node.childForFieldName("object");
-    if (nameNode) {
-      return obj ? `${obj.text}.${nameNode.text}` : nameNode.text;
-    }
-  }
-
-  if (language === "csharp") {
-    if (callee.type === "identifier_name") return callee.text;
-    if (callee.type === "member_access_expression") return callee.text;
-  }
-
-  // Pascal: exprCall with exprDot or identifier as first child
-  if (language === "pascal" && node.type === "exprCall") {
-    if (callee.type === "exprDot") return callee.text;
-    if (callee.type === "identifier") return callee.text;
-    if (callee.type === "inherited") return callee.text;
-  }
-
-  // PHP call shapes. We normalize PHP's `$this->prop->method` chain into the
-  // dotted form `this.prop.method` so the symbol-linker's injection/property
-  // tracking (which keys on `this.<name>`) can match it.
-  if (language === "php") {
-    if (node.type === "member_call_expression") {
-      const obj = node.childForFieldName("object");
-      const name = node.childForFieldName("name");
-      if (name) {
-        return obj ? `${normalizePhpReceiver(obj.text)}.${name.text}` : name.text;
-      }
-    }
-    if (node.type === "scoped_call_expression") {
-      const scope = node.childForFieldName("scope");
-      const name = node.childForFieldName("name");
-      if (name) {
-        return scope ? `${scope.text.replace(/\\/g, "")}.${name.text}` : name.text;
-      }
-    }
+  if (opts?.extraCallee) {
+    const extra = opts.extraCallee(callee, node);
+    if (extra != null) return extra;
   }
 
   if (node.type === "new_expression" || node.type === "object_creation_expression") {
@@ -481,48 +377,13 @@ function resolveCallName(node: Node, language: Language): string | null {
 }
 
 /**
- * Extract variable-to-call assignments from module-level code.
- * Returns a map: variable name → import source (resolved through imports).
- * E.g., `const userStore = useUserStore()` → { "userStore": "../stores/users" }
+ * Resolve the full call name from a call expression node, using the
+ * language plugin's resolver when it has one.
  */
-export function extractVariableAliases(
-  tree: { rootNode: Node },
-  imports: ImportInfo[],
-  language: Language,
-): Map<string, string> {
-  const aliases = new Map<string, string>();
-  const { importMap } = buildImportMaps(imports);
-
-  function walk(node: Node) {
-    // Stop at function/class boundaries
-    if (NESTED_SCOPE_TYPES.has(node.type) ||
-        node.type === "function_declaration" ||
-        node.type === "class_declaration") return;
-
-    // Match: const/let/var name = importedFn()
-    if (node.type === "lexical_declaration" || node.type === "variable_declaration") {
-      for (const decl of node.children) {
-        if (decl.type === "variable_declarator") {
-          const nameNode = decl.childForFieldName("name");
-          const valueNode = decl.childForFieldName("value");
-          if (nameNode && valueNode && valueNode.type === "call_expression") {
-            const fnNode = valueNode.childForFieldName("function");
-            const fnName = fnNode?.text;
-            if (fnName && importMap.has(fnName)) {
-              aliases.set(nameNode.text, importMap.get(fnName)!);
-            }
-          }
-        }
-      }
-    }
-
-    for (const child of node.children) {
-      walk(child);
-    }
-  }
-
-  walk(tree.rootNode);
-  return aliases;
+function resolveCallName(node: Node, language: Language): string | null {
+  const hook = callHooksByLanguage.get(language)?.resolveCallName;
+  if (hook) return hook(node);
+  return genericResolveCallName(node);
 }
 
 /** Check if a call name is noise (chaining, logging, etc.) */

@@ -1,6 +1,7 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { extractCsharpTypeReferences } from "./type-references.js";
+import { csharpCallHooks } from "./call-hooks.js";
 
 const CSHARP_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -42,4 +43,5 @@ export const csharpMeta: LanguagePluginMeta = {
   ast: {
     typeReferences: extractCsharpTypeReferences,
   },
+  calls: csharpCallHooks,
 };

@@ -22,4 +22,6 @@ export const rubyMeta: LanguagePluginMeta = {
     "active_record": "active-record",
     "sequel": "sequel",
   },
+  // Call node types for when a tree-sitter grammar is wired up.
+  calls: { callNodeTypes: new Set(["call", "method_call"]) },
 };

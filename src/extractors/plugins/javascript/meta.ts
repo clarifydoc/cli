@@ -5,6 +5,8 @@ import { extractTsTypeReferences } from "./type-references.js";
 import { extractInteractiveElements, extractVueInteractiveElements } from "./interactive-elements.js";
 import { extractSubComponents } from "./sub-components.js";
 import { extractEvents } from "./events.js";
+import { javascriptCallHooks } from "./call-hooks.js";
+import { extractJsVariableAliases } from "./variable-aliases.js";
 
 const TS_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -135,6 +137,7 @@ function astHooks(language: Language): AstExtractorHooks {
     templateInteractiveElements: extractVueInteractiveElements,
     subComponents: (tree, sourceText, imports) => extractSubComponents(tree, sourceText, language, imports),
     events: (sourceText) => extractEvents(sourceText, language),
+    variableAliases: extractJsVariableAliases,
   };
 }
 
@@ -150,6 +153,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   apiCallRoots: API_CALL_ROOTS,
   dbCallRoots: DB_CALL_ROOTS,
   ast: astHooks("typescript"),
+  calls: javascriptCallHooks,
 };
 
 export const javascriptMeta: LanguagePluginMeta = {
@@ -164,4 +168,5 @@ export const javascriptMeta: LanguagePluginMeta = {
   apiCallRoots: API_CALL_ROOTS,
   dbCallRoots: DB_CALL_ROOTS,
   ast: astHooks("javascript"),
+  calls: javascriptCallHooks,
 };

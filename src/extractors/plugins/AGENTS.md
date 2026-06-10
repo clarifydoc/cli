@@ -58,8 +58,7 @@ Specs are loaded by [../../core/regex-extractor.ts](../../core/regex-extractor.t
 3. Add grammar package entry to `GRAMMAR_PACKAGES` in [../../parsers/parser-manager.ts](../../parsers/parser-manager.ts)
 4. Create `src/extractors/plugins/<lang>/` with per-category extractors
 5. Register each extractor in `src/extractors/<category>/index.ts`
-6. Add CALL_TYPES entry in [../shared/call-graph.ts](../shared/call-graph.ts)
-7. Create `meta.ts` (`parsing: "tree-sitter"`, extensions, builtins, complexity tables, security rules, framework hints, ast hooks) and add it to `ALL_METAS` in [../registry.ts](../registry.ts) — extensions, discovery, complexity, and the rest flow from there
+6. Create `meta.ts` (`parsing: "tree-sitter"`, extensions, builtins, complexity tables, security rules, framework hints, ast hooks, and `calls` — at minimum `callNodeTypes`, plus name-resolution/scope hooks as needed; see `call-hooks.ts` in existing plugins) and add it to `ALL_METAS` in [../registry.ts](../registry.ts) — extensions, discovery, complexity, call extraction, and the rest flow from there
 
 ### Regex path (languages without reliable grammar)
 

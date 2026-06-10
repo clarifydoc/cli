@@ -33,4 +33,6 @@ export const goMeta: LanguagePluginMeta = {
     "github.com/jmoiron/sqlx": "sqlx",
     "entgo.io/ent": "ent",
   },
+  // Call node types for when a tree-sitter grammar is wired up.
+  calls: { callNodeTypes: new Set(["call_expression", "composite_literal"]) },
 };

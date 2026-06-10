@@ -21,16 +21,22 @@ are wired via each meta's `ast` hooks: `interactive-elements.ts`,
 
 ## call-graph.ts — the core of call extraction
 
-Three concepts:
-1. **`CALL_TYPES`** — per-language set of AST node types that represent function calls. Add new languages here.
-2. **`NESTED_SCOPE_TYPES`** — AST node types that start a new scope. `extractCalls` stops recursing when it hits one (so inner function bodies aren't mixed into outer function call lists).
-3. **`NOISE_CALLS`** — method names to skip (`.then`, `.map`, `console.log`, etc.). Centralize noise here, not per-plugin.
+The walkers and the classification pipeline are generic; everything
+language-specific comes from each plugin's `meta.calls`
+(`CallExtractionHooks`), pushed in by the registry:
+1. **`callNodeTypes`** — AST node types that represent function calls (per plugin).
+2. **`nestedScopeTypes`** — node types that start a new scope; `extractCalls` stops recursing at one. Unioned across plugins (grammar node names rarely collide).
+3. **`resolveCallName`** — full name resolution for the language; plugins compose `genericResolveCallName(node, { calleeOverride?, extraCallee? })`.
+4. **`collectExtraCalls`** — extra call shapes (JSX component refs, Python decorators).
+5. **`classifyAutoImported`** / **`qualifiedRootCandidates`** — classification hooks (Vue macros; Java `userService`→`UserService`, Python snake→Pascal, Pascal `F`-strip).
+6. **`NOISE_CALLS`** — method names to skip (`.then`, `.map`, `console.log`, etc.). Cross-language, stays here — centralize noise here, not per-plugin.
 
 `classifyCalls(calls, imports, language, variableAliases?)` runs **after** extraction. It mutates `CallInfo.kind` from `"internal"` to `"cross-file"`/`"api-call"`/`"database"` based on:
+- Auto-imported globals from the plugin hook (e.g. Vue compiler macros) → `cross-file`
 - Import specifier match → `cross-file`
 - Qualified name root matches import/default/namespace → `cross-file`
-- Variable alias lookup (`const s = useStore()` then `s.x.y`) → `cross-file`
-- Language-specific resolution: Java instance variables (`userService` → `UserService`), Python snake_case → PascalCase, Pascal `F`-prefix
+- Variable alias lookup (`const s = useStore()` then `s.x.y`) → `cross-file` (the alias walker is a JS plugin `ast.variableAliases` hook)
+- Plugin `qualifiedRootCandidates` transforms → `cross-file` (INFERRED)
 - Pattern match on `isApiCall` / `isDatabaseCall` → `api-call` / `database`
 
 ## link-scoring.ts — file dependency graph

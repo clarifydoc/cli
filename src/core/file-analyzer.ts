@@ -8,7 +8,7 @@ import { extractFunctions, extractClasses } from "../extractors/functions-classe
 import { extractRoutes } from "../extractors/routes/index.js";
 import { extractDataSources } from "../extractors/data-sources/index.js";
 import { extractDataMutations } from "../extractors/data-mutations/index.js";
-import { classifyCalls, extractTopLevelCalls, extractVariableAliases } from "../extractors/shared/call-graph.js";
+import { classifyCalls, extractTopLevelCalls } from "../extractors/shared/call-graph.js";
 import { applyAliases } from "../extractors/shared/tsconfig-aliases.js";
 import { pluginFor, astHooksFor, inferFileFrameworks } from "../extractors/registry.js";
 import { computeComplexity } from "./complexity-analyzer.js";
@@ -155,7 +155,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // Extract top-level calls (Vue <script setup>, module-level hooks)
     // and variable aliases (const userStore = useUserStore())
     const topLevelCalls = extractTopLevelCalls(tree, language);
-    const variableAliases = extractVariableAliases(tree, analysis.imports, language);
+    const variableAliases = hooks?.variableAliases?.(tree, analysis.imports) ?? new Map<string, string>();
 
     if (topLevelCalls.length > 0) {
       const setupFn = {

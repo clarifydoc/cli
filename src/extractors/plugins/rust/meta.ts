@@ -36,4 +36,6 @@ export const rustMeta: LanguagePluginMeta = {
     "sea_orm": "sea-orm",
     "sqlx": "rust-sqlx",
   },
+  // Call node types for when a tree-sitter grammar is wired up.
+  calls: { callNodeTypes: new Set(["call_expression", "macro_invocation"]) },
 };

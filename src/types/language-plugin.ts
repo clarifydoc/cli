@@ -1,4 +1,4 @@
-import type { Tree } from "web-tree-sitter";
+import type { Node, Tree } from "web-tree-sitter";
 import type {
   Language,
   SecurityCategory,
@@ -55,6 +55,56 @@ export interface AstExtractorHooks {
   subComponents?(tree: Tree, sourceText: string, imports: ImportInfo[]): SubComponentInfo[];
   /** Component events (e.g. Vue defineEmits / emit calls). */
   events?(sourceText: string): EventInfo[];
+  /**
+   * Module-level variable → import-source aliases
+   * (`const store = useUserStore()` → store resolves to useUserStore's source).
+   */
+  variableAliases?(tree: Tree, imports: ImportInfo[]): Map<string, string>;
+}
+
+/**
+ * Call-extraction hooks: everything language-specific about finding and
+ * classifying calls. Registered into `shared/call-graph.ts` by the registry
+ * (push pattern — call-graph is imported from plugin code, so it can't
+ * import the registry itself).
+ */
+export interface CallExtractionHooks {
+  /** AST node types that represent function/method calls in this language. */
+  callNodeTypes: ReadonlySet<string>;
+  /**
+   * Node types that open a nested function/class scope. NOTE: unioned across
+   * all plugins — `extractCalls` stops at any registered scope type
+   * regardless of language (grammar node names rarely collide, so this
+   * matches per-language behavior in practice).
+   */
+  nestedScopeTypes?: readonly string[];
+  /** Call node types whose arguments are scanned for callback identifiers (also unioned). */
+  callbackArgNodeTypes?: readonly string[];
+  /**
+   * Full call-name resolution for this language. Implementations typically
+   * delegate to `genericResolveCallName` from shared/call-graph.ts with
+   * language-specific options.
+   */
+  resolveCallName?(node: Node): string | null;
+  /**
+   * Extra call collection beyond plain call expressions (JSX component
+   * references, Python decorators). `resolve` is this language's resolver.
+   */
+  collectExtraCalls?(
+    node: Node,
+    addResult: (name: string, node: Node) => void,
+    resolve: (node: Node) => string | null,
+  ): void;
+  /**
+   * Classify auto-imported globals before import lookup (e.g. Vue compiler
+   * macros). Return the cross-file target, or null to fall through.
+   */
+  classifyAutoImported?(callName: string): { target: string } | null;
+  /**
+   * Alternate import-map keys to try for a qualified call's root, in order
+   * (e.g. Java `userService` → `UserService`). Matches classify as INFERRED.
+   */
+  qualifiedRootCandidates?(root: string): readonly string[];
 }
 
 /**
@@ -116,4 +166,6 @@ export interface LanguagePluginMeta {
 
   /** AST/source-level extractor hooks. */
   ast?: AstExtractorHooks;
+  /** Call extraction/classification hooks (see shared/call-graph.ts). */
+  calls?: CallExtractionHooks;
 }

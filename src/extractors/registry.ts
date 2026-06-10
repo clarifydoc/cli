@@ -2,6 +2,7 @@ import type { Language } from "../types/analysis.js";
 import type { LanguagePluginMeta, LanguageComplexitySpec, SecurityRule, AstExtractorHooks } from "../types/language-plugin.js";
 import { registerBuiltinTypes } from "./shared/builtin-types.js";
 import { registerCallPatterns } from "./shared/call-patterns.js";
+import { registerCallExtraction } from "./shared/call-graph.js";
 
 import { typescriptMeta, javascriptMeta } from "./plugins/javascript/meta.js";
 import { csharpMeta } from "./plugins/csharp/meta.js";
@@ -41,6 +42,7 @@ for (const meta of ALL_METAS) {
   BY_LANGUAGE.set(meta.language, meta);
   if (meta.builtinTypes) registerBuiltinTypes(meta.language, meta.builtinTypes);
   registerCallPatterns(meta.language, meta.apiCallRoots, meta.dbCallRoots);
+  registerCallExtraction(meta.language, meta.calls);
 }
 
 /** Meta for a language, or undefined for unregistered languages. */

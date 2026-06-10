@@ -1,5 +1,6 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { parseDfm } from "../../../parsers/dfm-parser.js";
+import { pascalCallHooks } from "./call-hooks.js";
 
 const PASCAL_BUILTINS: ReadonlySet<string> = new Set<string>([
   "Integer", "Cardinal", "Word", "Byte", "ShortInt", "SmallInt", "LongInt",
@@ -35,6 +36,7 @@ export const pascalMeta: LanguagePluginMeta = {
   },
   apiCallRoots: ["THTTPClient", "TRESTClient", "TIdHTTP"],
   dbCallRoots: ["Query", "Connection", "DataSet", "SQLQuery"],
+  calls: pascalCallHooks,
 };
 
 /**
