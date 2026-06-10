@@ -6,4 +6,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     chmod +x /usr/local/bin/rust-analyzer && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace
-ENTRYPOINT ["rust-analyzer"]
+# Use absolute path: the rust:slim image puts rustup proxies first on PATH,
+# and the proxy fails because the toolchain doesn't ship rust-analyzer here.
+ENTRYPOINT ["/usr/local/bin/rust-analyzer"]
