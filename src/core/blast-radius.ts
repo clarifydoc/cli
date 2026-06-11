@@ -24,11 +24,15 @@ export function analyzeBlastRadius(
   }
 
   // ── Build per-symbol usage from symbolLinks ──
-  // targetFile::targetSymbol → [{sourceFile, sourceLine}]
-  const symbolCallers = new Map<string, { file: string; line: number }[]>();
-  // targetFile → Set<symbolName>
+  // targetFile → (symbolName → caller sites)
   const fileExportedSymbols = new Map<string, Map<string, { file: string; line: number }[]>>();
 
+  // Per-symbol caller sites, deduped by (file, line). Multiple SymbolLinks can
+  // share the same call site — e.g. one emitted by the text-linker scoped to the
+  // enclosing function, and one emitted by LSP findReferences with a generic
+  // "(reference)" sourceSymbol. They're correctly distinct at the graph layer
+  // (symbol-dedup keeps both), but the caller list only cares about unique sites.
+  const callerSeen = new Map<string, Set<string>>();
   for (const link of symbolLinks) {
     if (link.sourceFile === link.targetFile) continue;
 
@@ -39,6 +43,14 @@ export function analyzeBlastRadius(
     if (!symMap.has(link.targetSymbol)) {
       symMap.set(link.targetSymbol, []);
     }
+
+    const symKey = `${link.targetFile}::${link.targetSymbol}`;
+    if (!callerSeen.has(symKey)) callerSeen.set(symKey, new Set());
+    const seen = callerSeen.get(symKey)!;
+    const siteKey = `${link.sourceFile}::${link.sourceLine}`;
+    if (seen.has(siteKey)) continue;
+    seen.add(siteKey);
+
     symMap.get(link.targetSymbol)!.push({
       file: link.sourceFile,
       line: link.sourceLine,
