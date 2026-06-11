@@ -418,6 +418,35 @@ export interface LspStats {
   enhancementTimeMs: number;
 }
 
+/**
+ * One textDocument/definition query and its raw answer, recorded so the
+ * text-based linker can be measured against what LSP resolved.
+ * `target: null` means LSP was queried but returned no definition —
+ * the text linker shouldn't be expected to resolve those either.
+ */
+export interface LspDefinitionRecord {
+  sourceFile: string;
+  sourceSymbol: string;
+  line: number;
+  column: number;
+  callName: string;
+  callKind: string;
+  language: Language;
+  /** Raw LSP answer (file + 1-based line), before interface redirection. */
+  target: { file: string; line: number } | null;
+  /** Where the link was re-aimed when interface→implementation redirection changed the target. */
+  redirectedTarget?: { file: string; symbol: string; line: number };
+}
+
+/** One textDocument/references query: the exported symbol and every non-self reference LSP found. */
+export interface LspReferenceRecord {
+  symbolFile: string;
+  symbolName: string;
+  symbolLine: number;
+  language: Language;
+  references: { file: string; line: number }[];
+}
+
 // ─── Advanced analysis types ────────────────────────────────────────────
 
 export interface ComplexityInfo {

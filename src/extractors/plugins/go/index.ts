@@ -59,10 +59,12 @@ export const goSpec: RegexLangSpec = {
   /**
    * Struct fields: `Name Type` or `Name Type \`tag\``. The pattern keeps it
    * tight to one-line declarations to avoid catching method signatures.
+   * Lowercase (unexported) fields matter too — `svc *service.UserService`
+   * is what lets the symbol linker resolve `h.svc.ListUsers()` cross-package.
    */
   propertyPatterns: [
     {
-      pattern: /^\s+([A-Z]\w*)\s+([^`\n]+?)(?:\s+`[^`]*`)?\s*$/,
+      pattern: /^\s+([A-Za-z_]\w*)\s+([^`\n]+?)(?:\s+`[^`]*`)?\s*$/,
       build: (m): PropertyInfo | null => {
         const name = m[1]!;
         const rawType = m[2]!.trim();
@@ -70,7 +72,7 @@ export const goSpec: RegexLangSpec = {
         return {
           name,
           type: stripGoTypeModifiers(rawType),
-          visibility: "public",
+          visibility: /^[A-Z]/.test(name) ? "public" : "private",
           isStatic: false,
           isReadonly: false,
         };

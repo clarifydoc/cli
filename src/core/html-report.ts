@@ -276,6 +276,10 @@ a{color:#58a6ff;text-decoration:none}
 #d3-graph-container svg{width:100%;height:100%;display:block}
 .d3-toolbar{display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap}
 .d3-toolbar-label{font-size:11px;color:#8b949e;margin-right:2px}
+.d3-check{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#8b949e;cursor:pointer;user-select:none}
+.d3-check input{accent-color:#58a6ff;cursor:pointer;margin:0}
+.list-more-btn{display:block;width:100%;padding:8px;margin-top:4px;background:#161b22;border:1px dashed #30363d;color:#58a6ff;border-radius:6px;font-size:11px;font-family:inherit;cursor:pointer}
+.list-more-btn:hover{background:#1f2630}
 .d3-toolbar-sep{width:1px;height:20px;background:#30363d;margin:0 6px}
 .d3-btn{padding:5px 12px;background:#161b22;border:1px solid #30363d;color:#8b949e;border-radius:6px;font-size:11px;font-family:inherit;cursor:pointer;transition:all 0.15s}
 .d3-btn:hover{background:#1c2128;color:#e6edf3;border-color:#58a6ff}
@@ -709,6 +713,8 @@ function renderLinksView(): string {
     <button class="d3-btn" data-color="folder">Folder</button>
     <button class="d3-btn" data-color="risk">Risk</button>
     <span class="d3-toolbar-sep"></span>
+    <label class="d3-check" id="d3-hide-unlinked-wrap"><input type="checkbox" id="d3-hide-unlinked" checked> Hide unlinked</label>
+    <span class="d3-toolbar-sep"></span>
     <button class="d3-btn" id="d3-toggle-labels">Labels</button>
     <button class="d3-btn" id="d3-zoom-fit">Fit</button>
   </div>
@@ -855,15 +861,57 @@ function renderClientJs(): string {
 })();
 
 // Tab switching
+// ─── Lazy tab rendering ──────────────────────────────────────────────────
+// Heavy list tabs (traces, blast radius) are NOT rebuilt at page load or on
+// global-filter changes while hidden — they're marked dirty and the expensive
+// DOM build runs when the tab is actually opened.
+const lazyRenderers = {};
+const dirtyViews = new Set();
+function requestRender(view) {
+  const el = document.getElementById('view-' + view);
+  if (el && el.classList.contains('active')) {
+    lazyRenderers[view]();
+  } else {
+    dirtyViews.add(view);
+  }
+}
+
+function activateTab(view) {
+  document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  const btn = document.querySelector('.nav button[data-view="' + view + '"]');
+  if (btn) btn.classList.add('active');
+  const viewEl = document.getElementById('view-' + view);
+  if (viewEl) viewEl.classList.add('active');
+  if (dirtyViews.has(view) && lazyRenderers[view]) {
+    dirtyViews.delete(view);
+    lazyRenderers[view]();
+  }
+  if (view === 'links') rebuildLinkGraph();
+}
+
 document.querySelectorAll('.nav button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById('view-' + btn.dataset.view).classList.add('active');
-    if (btn.dataset.view === 'links') rebuildLinkGraph();
-  });
+  btn.addEventListener('click', () => activateTab(btn.dataset.view));
 });
+
+// Chunked list rendering shared by the traces and blast-radius lists: build a
+// few hundred rows at a time behind a "Show more" button — one giant innerHTML
+// for thousands of rows freezes the tab. nextChunk() returns
+// { html, remaining, unit }; returns the append function for re-invoking.
+function chunkedAppend(list, nextChunk) {
+  function append() {
+    const oldBtn = list.querySelector('.list-more-btn');
+    if (oldBtn) oldBtn.remove();
+    const chunk = nextChunk();
+    list.insertAdjacentHTML('beforeend', chunk.html);
+    if (chunk.remaining > 0) {
+      list.insertAdjacentHTML('beforeend',
+        '<button class="list-more-btn">Show more (' + chunk.remaining + ' ' + chunk.unit + ' remaining)</button>');
+    }
+  }
+  append();
+  return append;
+}
 
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
@@ -981,9 +1029,9 @@ function refreshAllViews() {
   try { renderElements(); } catch (e) { console.warn('renderElements failed', e); }
   try { renderRoutes(); } catch (e) { console.warn('renderRoutes failed', e); }
   try { renderSummary(); } catch (e) { console.warn('renderSummary failed', e); }
-  try { renderTraces(); } catch (e) { console.warn('renderTraces failed', e); }
+  try { requestRender('traces'); } catch (e) { console.warn('renderTraces failed', e); }
   try { renderHealth(); } catch (e) { console.warn('renderHealth failed', e); }
-  try { renderBlast(); } catch (e) { console.warn('renderBlast failed', e); }
+  try { requestRender('blast'); } catch (e) { console.warn('renderBlast failed', e); }
   try { renderPatterns(); } catch (e) { console.warn('renderPatterns failed', e); }
   try { renderSecurity(); } catch (e) { console.warn('renderSecurity failed', e); }
   try { renderComplexity(); } catch (e) { console.warn('renderComplexity failed', e); }
@@ -1033,8 +1081,15 @@ function rebuildLinkGraph() {
       b.classList.toggle('arch-hidden', !inFileMode);
     });
     if (colourLabel) colourLabel.classList.toggle('arch-hidden', !inFileMode);
+    const hideUnlinkedWrap = document.getElementById('d3-hide-unlinked-wrap');
+    if (hideUnlinkedWrap) hideUnlinkedWrap.classList.toggle('arch-hidden', !inFileMode);
     rebuildLinkGraph();
   });
+
+  // Hide-unlinked checkbox: the checkbox itself is the state (checked in the
+  // static HTML = default on); wired once here, read by initLinkGraph.
+  const hideUnlinkedCb = document.getElementById('d3-hide-unlinked');
+  if (hideUnlinkedCb) hideUnlinkedCb.onchange = () => rebuildLinkGraph();
 })();
 
 // ─── Build handler lookup from interactiveElements ────────────────────
@@ -1575,10 +1630,7 @@ function renderElements() {
     el.addEventListener('click', (evt) => {
       evt.stopPropagation();
       const key = el.dataset.symKey;
-      document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-      document.querySelector('.nav button[data-view="traces"]').classList.add('active');
-      document.getElementById('view-traces').classList.add('active');
+      activateTab('traces');
       if (window.selectSymbol) window.selectSymbol(key);
       const listItem = document.querySelector('.trace-sym-item[data-sym-key="' + CSS.escape(key) + '"]');
       if (listItem) listItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -1627,11 +1679,7 @@ function renderRoutes() {
     tbody.querySelectorAll('.trace-link').forEach(el => {
       el.addEventListener('click', () => {
         const key = el.dataset.symKey;
-        document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-        const tracesBtn = document.querySelector('.nav button[data-view="traces"]');
-        if (tracesBtn) tracesBtn.classList.add('active');
-        document.getElementById('view-traces').classList.add('active');
+        activateTab('traces');
         if (window.selectSymbol) window.selectSymbol(key);
         const listItem = document.querySelector('.trace-sym-item[data-sym-key="' + CSS.escape(key) + '"]');
         if (listItem) listItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -1761,33 +1809,62 @@ function renderTraces() {
       return;
     }
 
-    list.innerHTML = Object.entries(byFile).sort((a,b) => a[0].localeCompare(b[0])).map(([file, syms]) => {
-      const items = syms.sort((a,b) => a.symbol.localeCompare(b.symbol)).map(s => {
-        const sel = s.key === selectedKey ? ' selected' : '';
-        return '<div class="trace-sym-item' + sel + '" data-sym-key="' + esc(s.key) + '">' +
-          '<span class="sym-name">' + esc(s.symbol) + '</span>' +
-          '<span class="sym-counts">' +
-            (s.inCount > 0 ? '<span class="sym-in">\\u2190' + s.inCount + '</span>' : '') +
-            (s.outCount > 0 ? '<span class="sym-out">\\u2192' + s.outCount + '</span>' : '') +
-          '</span>' +
-        '</div>';
-      }).join('');
-      return '<div class="trace-sym-group">' +
-        '<div class="trace-sym-group-header"><span>' + esc(file) + '</span><span>' + syms.length + '</span></div>' +
-        items + '</div>';
-    }).join('');
+    const groups = Object.entries(byFile).sort((a,b) => a[0].localeCompare(b[0]));
+    const CHUNK = 300;
+    let gi = 0;
+    list.innerHTML = '';
 
-    // Wire up clicks
-    list.querySelectorAll('.trace-sym-item').forEach(el => {
-      el.addEventListener('click', () => selectSymbol(el.dataset.symKey));
+    const appendChunk = chunkedAppend(list, function() {
+      let html = '';
+      let added = 0;
+      while (gi < groups.length && added < CHUNK) {
+        const file = groups[gi][0];
+        const syms = groups[gi][1];
+        gi++;
+        added += syms.length;
+        const items = syms.sort((a,b) => a.symbol.localeCompare(b.symbol)).map(s => {
+          const sel = s.key === selectedKey ? ' selected' : '';
+          return '<div class="trace-sym-item' + sel + '" data-sym-key="' + esc(s.key) + '">' +
+            '<span class="sym-name">' + esc(s.symbol) + '</span>' +
+            '<span class="sym-counts">' +
+              (s.inCount > 0 ? '<span class="sym-in">\\u2190' + s.inCount + '</span>' : '') +
+              (s.outCount > 0 ? '<span class="sym-out">\\u2192' + s.outCount + '</span>' : '') +
+            '</span>' +
+          '</div>';
+        }).join('');
+        html += '<div class="trace-sym-group">' +
+          '<div class="trace-sym-group-header"><span>' + esc(file) + '</span><span>' + syms.length + '</span></div>' +
+          items + '</div>';
+      }
+      let remaining = 0;
+      for (let i = gi; i < groups.length; i++) remaining += groups[i][1].length;
+      return { html: html, remaining: remaining, unit: 'symbols' };
     });
+
+    // Delegated clicks: one listener for all rows + the show-more button
+    // (per-row addEventListener over thousands of rows is itself a freeze).
+    list.onclick = function(e) {
+      if (e.target.closest('.list-more-btn')) { appendChunk(); return; }
+      const item = e.target.closest('.trace-sym-item');
+      if (item) selectSymbol(item.dataset.symKey);
+    };
   }
 
   window.selectSymbol = selectSymbol;
-  function selectSymbol(key) {
+  function selectSymbol(key, showAll) {
     selectedKey = key;
     const sym = allSymbols[key];
     if (!sym) return;
+    const DETAIL_CAP = 400;
+    // Cap long sections behind a "Show all" expander (re-renders with showAll).
+    function cappedRows(items, renderRow, allLabel) {
+      const shown = showAll ? items : items.slice(0, DETAIL_CAP);
+      let out = shown.map(renderRow).join('');
+      if (items.length > shown.length) {
+        out += '<button class="list-more-btn" data-chain-all="1">Show all ' + items.length + ' ' + allLabel + '</button>';
+      }
+      return out;
+    }
 
     // Highlight in list
     document.querySelectorAll('.trace-sym-item').forEach(el => {
@@ -1807,7 +1884,7 @@ function renderTraces() {
     if (callers.length === 0) {
       html += '<div class="trace-no-links">No callers found \\u2014 this may be an entry point</div>';
     } else {
-      html += callers.map(c => {
+      html += cappedRows(callers, c => {
         const cKey = c.sourceFile + '::' + c.sourceSymbol;
         return '<div class="trace-chain-row inbound" data-sym-key="' + esc(cKey) + '">' +
           '<span class="chain-symbol">' + esc(c.sourceSymbol) + '</span>' +
@@ -1817,7 +1894,7 @@ function renderTraces() {
           '<span class="chain-line">:' + c.sourceLine + '</span>' +
           '<span class="chain-file">' + esc(c.sourceFile) + '</span>' +
         '</div>';
-      }).join('');
+      }, 'callers');
     }
     html += '</div>';
 
@@ -1827,7 +1904,7 @@ function renderTraces() {
     if (callees.length === 0) {
       html += '<div class="trace-no-links">No outgoing calls found \\u2014 this is a leaf function</div>';
     } else {
-      html += callees.map(c => {
+      html += cappedRows(callees, c => {
         const cKey = c.targetFile + '::' + c.targetSymbol;
         return '<div class="trace-chain-row outbound" data-sym-key="' + esc(cKey) + '">' +
           '<span style="color:#3fb950">this</span>' +
@@ -1837,24 +1914,25 @@ function renderTraces() {
           '<span class="chain-line">:' + c.targetLine + '</span>' +
           '<span class="chain-file">' + esc(c.targetFile) + '</span>' +
         '</div>';
-      }).join('');
+      }, 'calls');
     }
     html += '</div>';
 
     mapDiv.innerHTML = html;
 
-    // Wire up chain row clicks → navigate to that symbol
-    mapDiv.querySelectorAll('.trace-chain-row').forEach(el => {
-      el.addEventListener('click', () => {
-        const targetKey = el.dataset.symKey;
-        if (allSymbols[targetKey]) {
-          selectSymbol(targetKey);
-          // Scroll the symbol into view in the list
-          const listItem = document.querySelector('.trace-sym-item[data-sym-key="' + CSS.escape(targetKey) + '"]');
-          if (listItem) listItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        }
-      });
-    });
+    // Delegated clicks: chain rows navigate, the cap button expands in full
+    mapDiv.onclick = function(e) {
+      if (e.target.closest('[data-chain-all]')) { selectSymbol(key, true); return; }
+      const row = e.target.closest('.trace-chain-row');
+      if (!row) return;
+      const targetKey = row.dataset.symKey;
+      if (allSymbols[targetKey]) {
+        selectSymbol(targetKey);
+        // Scroll the symbol into view in the list
+        const listItem = document.querySelector('.trace-sym-item[data-sym-key="' + CSS.escape(targetKey) + '"]');
+        if (listItem) listItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    };
   }
 
   // Use .onchange/.oninput to replace prior handlers (avoids accumulation across re-renders)
@@ -1867,7 +1945,8 @@ function renderTraces() {
   if (firstKey) selectSymbol(firstKey);
   else document.getElementById('trace-map-content').innerHTML = '<div class="empty">No symbols to display</div>';
 }
-renderTraces();
+lazyRenderers.traces = renderTraces;
+requestRender('traces');
 
 // ─── D3 Architecture Graph ────────────────────────────────────────────
 var graphInitialized = false;
@@ -1893,6 +1972,19 @@ function initLinkGraph() {
   var cxMap = {};
   (DATA.complexity || []).forEach(function(c){ cxMap[c.filePath] = c; });
 
+  // Build unique edges from linkGraph first (deduplicate, merge proximity;
+  // honor filters) — node visibility in "hide unlinked" mode depends on them.
+  var linkMap = {};
+  DATA.linkGraph.forEach(function(l){
+    if (l.source === l.target) return;
+    if (!isEdgeVisible(l.source, l.target)) return;
+    var key = l.source + '|' + l.target;
+    if (!linkMap[key] || l.proximity < linkMap[key].proximity) {
+      linkMap[key] = { source: l.source, target: l.target, proximity: l.proximity, reason: l.reason, calls: l.calls };
+    }
+  });
+  var links = Object.values(linkMap);
+
   // Build nodes from files (honor global file filter)
   var nodeSet = new Set();
   DATA.linkGraph.forEach(function(l){
@@ -1905,6 +1997,16 @@ function initLinkGraph() {
     targets.forEach(function(t){ if (isFileVisible(t)) nodeSet.add(t); });
   });
   DATA.files.forEach(function(f){ if (isFileVisible(f)) nodeSet.add(f); });
+
+  // Hide unlinked: keep only nodes that participate in a drawn edge.
+  // The checkbox is the state; it's wired once next to the arch-mode toggle.
+  var hideCb = document.getElementById('d3-hide-unlinked');
+  var hideUnlinked = !hideCb || hideCb.checked;
+  if (hideUnlinked) {
+    var linkedSet = new Set();
+    links.forEach(function(l){ linkedSet.add(l.source); linkedSet.add(l.target); });
+    nodeSet = new Set(Array.from(nodeSet).filter(function(f){ return linkedSet.has(f); }));
+  }
 
   var nodes = Array.from(nodeSet).map(function(filePath){
     var folder = filePath.indexOf('/') >= 0 ? filePath.substring(0, filePath.lastIndexOf('/')) : 'root';
@@ -1928,20 +2030,10 @@ function initLinkGraph() {
     };
   });
 
-  // Build unique edges from linkGraph (deduplicate, merge proximity; honor filters)
-  var linkMap = {};
-  DATA.linkGraph.forEach(function(l){
-    if (l.source === l.target) return;
-    if (!isEdgeVisible(l.source, l.target)) return;
-    var key = l.source + '|' + l.target;
-    if (!linkMap[key] || l.proximity < linkMap[key].proximity) {
-      linkMap[key] = { source: l.source, target: l.target, proximity: l.proximity, reason: l.reason, calls: l.calls };
-    }
-  });
-  var links = Object.values(linkMap);
-
   if (nodes.length === 0) {
-    container.innerHTML = '<div class="empty" style="padding-top:200px">No file dependencies to visualize</div>';
+    container.innerHTML = '<div class="empty" style="padding-top:200px">' +
+      (hideUnlinked ? 'No linked files to visualize \\u2014 untick \\u201cHide unlinked\\u201d to show all files' : 'No file dependencies to visualize') +
+      '</div>';
     return;
   }
 
@@ -2879,25 +2971,47 @@ function renderBlast() {
       list.innerHTML = '<div class="empty" style="padding:20px">No files match</div>';
       return;
     }
-    list.innerHTML = filtered.map(function(b) {
-      var sel = _blastSelected && _blastSelected.filePath === b.filePath ? ' selected' : '';
-      var riskCls = 'risk-' + b.changeRisk;
-      var levelColor = b.level === 'critical' ? '#f85149' : b.level === 'high' ? '#d29922' : b.level === 'medium' ? '#58a6ff' : '#8b949e';
-      return '<div class="blast-file-item' + sel + '" data-blast-file="' + esc(b.filePath) + '">' +
-        '<span class="blast-file-badge ' + riskCls + '">' + b.changeRisk + '</span>' +
-        '<span class="blast-file-name">' + esc(b.filePath) + '</span>' +
-        '<span style="color:' + levelColor + ';font-size:11px;font-weight:600">' + b.directDependents + '</span>' +
-      '</div>';
-    }).join('');
 
-    list.querySelectorAll('.blast-file-item').forEach(function(el) {
-      el.addEventListener('click', function() { selectBlastFile(el.dataset.blastFile); });
+    var CHUNK = 300;
+    var idx = 0;
+    list.innerHTML = '';
+
+    var appendChunk = chunkedAppend(list, function() {
+      var html = filtered.slice(idx, idx + CHUNK).map(function(b) {
+        var sel = _blastSelected && _blastSelected.filePath === b.filePath ? ' selected' : '';
+        var riskCls = 'risk-' + b.changeRisk;
+        var levelColor = b.level === 'critical' ? '#f85149' : b.level === 'high' ? '#d29922' : b.level === 'medium' ? '#58a6ff' : '#8b949e';
+        return '<div class="blast-file-item' + sel + '" data-blast-file="' + esc(b.filePath) + '">' +
+          '<span class="blast-file-badge ' + riskCls + '">' + b.changeRisk + '</span>' +
+          '<span class="blast-file-name">' + esc(b.filePath) + '</span>' +
+          '<span style="color:' + levelColor + ';font-size:11px;font-weight:600">' + b.directDependents + '</span>' +
+        '</div>';
+      }).join('');
+      idx = Math.min(idx + CHUNK, filtered.length);
+      return { html: html, remaining: filtered.length - idx, unit: 'files' };
     });
+
+    list.onclick = function(e) {
+      if (e.target.closest('.list-more-btn')) { appendChunk(); return; }
+      var item = e.target.closest('.blast-file-item');
+      if (item) selectBlastFile(item.dataset.blastFile);
+    };
   }
 
-  function selectBlastFile(filePath) {
+  function selectBlastFile(filePath, showAll) {
     _blastSelected = blastData.find(function(b) { return b.filePath === filePath; });
     if (!_blastSelected) return;
+    var DETAIL_CAP = 300;
+    function depList(files, color, arrow) {
+      var shown = showAll ? files : files.slice(0, DETAIL_CAP);
+      var out = shown.map(function(f) {
+        return '<div class="blast-dep-item" data-blast-nav="' + esc(f) + '"><span style="color:' + color + '">' + arrow + '</span> ' + esc(f) + '</div>';
+      }).join('');
+      if (files.length > shown.length) {
+        out += '<button class="list-more-btn" data-blast-all="1">Show all ' + files.length + '</button>';
+      }
+      return out;
+    }
 
     document.querySelectorAll('.blast-file-item').forEach(function(el) {
       el.classList.toggle('selected', el.dataset.blastFile === filePath);
@@ -3020,43 +3134,38 @@ function renderBlast() {
     // Direct dependents
     if (b.affectedFiles && b.affectedFiles.length > 0) {
       html += '<div class="file-card" style="margin-top:12px"><div class="file-card-header"><span>Direct Dependents</span><span class="file-card-count">' + b.affectedFiles.length + '</span></div>';
-      b.affectedFiles.forEach(function(f) {
-        html += '<div class="blast-dep-item" data-blast-nav="' + esc(f) + '"><span style="color:#f85149">\\u2190</span> ' + esc(f) + '</div>';
-      });
+      html += depList(b.affectedFiles, '#f85149', '\\u2190');
       html += '</div>';
     }
 
     // Transitive dependents
     if (b.transitiveFiles && b.transitiveFiles.length > 0) {
       html += '<div class="file-card" style="margin-top:12px"><div class="file-card-header"><span>Transitive Dependents</span><span class="file-card-count">' + b.transitiveFiles.length + '</span></div>';
-      b.transitiveFiles.forEach(function(f) {
-        html += '<div class="blast-dep-item" data-blast-nav="' + esc(f) + '"><span style="color:#d29922">\\u21E0</span> ' + esc(f) + '</div>';
-      });
+      html += depList(b.transitiveFiles, '#d29922', '\\u21E0');
       html += '</div>';
     }
 
     // Dependencies (what this file depends on)
     if (b.dependsOn && b.dependsOn.length > 0) {
       html += '<div class="file-card" style="margin-top:12px"><div class="file-card-header"><span>Depends On (Fragility)</span><span class="file-card-count">' + b.dependsOn.length + '</span></div>';
-      b.dependsOn.forEach(function(f) {
-        html += '<div class="blast-dep-item" data-blast-nav="' + esc(f) + '"><span style="color:#58a6ff">\\u2192</span> ' + esc(f) + '</div>';
-      });
+      html += depList(b.dependsOn, '#58a6ff', '\\u2192');
       html += '</div>';
     }
 
     detail.innerHTML = html;
 
-    // Wire up navigation clicks — click a dependent to select it
-    detail.querySelectorAll('[data-blast-nav]').forEach(function(el) {
-      el.addEventListener('click', function() {
-        var target = el.dataset.blastNav;
-        if (blastData.some(function(b) { return b.filePath === target; })) {
-          selectBlastFile(target);
-          var listItem = document.querySelector('.blast-file-item[data-blast-file="' + CSS.escape(target) + '"]');
-          if (listItem) listItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        }
-      });
-    });
+    // Delegated clicks: dependents navigate, the cap button expands in full
+    detail.onclick = function(e) {
+      if (e.target.closest('[data-blast-all]')) { selectBlastFile(filePath, true); return; }
+      var el = e.target.closest('[data-blast-nav]');
+      if (!el) return;
+      var target = el.dataset.blastNav;
+      if (blastData.some(function(b) { return b.filePath === target; })) {
+        selectBlastFile(target);
+        var listItem = document.querySelector('.blast-file-item[data-blast-file="' + CSS.escape(target) + '"]');
+        if (listItem) listItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    };
   }
 
   riskSel.onchange = renderBlastList;
@@ -3069,7 +3178,8 @@ function renderBlast() {
     if (autoSelect) selectBlastFile(autoSelect.filePath);
   }
 }
-renderBlast();
+lazyRenderers.blast = renderBlast;
+requestRender('blast');
 
 // ─── Patterns View ────────────────────────────────────────────────────
 const PATTERN_ANTI_KINDS = new Set(['god-object', 'long-file']);

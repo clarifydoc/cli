@@ -16,6 +16,7 @@ import {
 import { detectSubProjects, assignProjectId } from "./project-detector.js";
 import {
   writeProjectSummary,
+  writeLspGroundTruth,
   type OutputOptions,
 } from "./output-writer.js";
 import { analyzeFile, type FileTask, type FileResult } from "./file-analyzer.js";
@@ -413,6 +414,10 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       };
       if (lspResult.serversUsed.length > 0) {
         progress.detail(`  LSP enhancement: +${lspResult.lspResolvedCount} definitions, +${lspResult.referenceLinksCount} references (${lspResult.timeMs}ms)`);
+        // Export the raw query/answer log so the text linker can be optimized
+        // against what LSP resolved (compare with scripts/lsp-compare.mjs).
+        const groundTruthPath = await writeLspGroundTruth(projectRoot, lspResult, outputOpts);
+        progress.detail(`  LSP ground truth: ${groundTruthPath}`);
       }
     } catch (err) {
       progress.detail(`LSP enhancement skipped: ${(err as Error).message}`);

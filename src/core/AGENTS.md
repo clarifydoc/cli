@@ -27,7 +27,7 @@ All take `FileAnalysis[]` and/or `componentGraph` and return typed results.
 
 | File | Output | Depends on |
 |------|--------|-----------|
-| [symbol-linker.ts](symbol-linker.ts) | `SymbolLink[]` | inheritance map, injection map — 4-strategy fallback resolution |
+| [symbol-linker.ts](symbol-linker.ts) | `SymbolLink[]` | inheritance, injection (ctor params + properties + enclosing-method params), deep-qualified, ClassName.method, constructor (`new X`/bare class), package-qualified import head, unique-global-leaf — 7-strategy fallback resolution. Heuristic tiers are guarded: same sub-project only, never into test-fixture paths, registry `builtinMembers` stoplist (`set.add`, `s.strip`) |
 | [blast-radius.ts](blast-radius.ts) | `BlastRadiusInfo[]` | reverse graph from componentGraph |
 | [complexity-analyzer.ts](complexity-analyzer.ts) | `FileComplexityInfo[]` | tree-sitter AST (per-file) |
 | [pattern-detector.ts](pattern-detector.ts) | `PatternInfo[]` | classes, functions, imports |
@@ -49,7 +49,7 @@ All take `FileAnalysis[]` and/or `componentGraph` and return typed results.
 
 - [file-discovery.ts](file-discovery.ts) — fast-glob by extension. The `EXTENSION_MAP` is the source of truth for which extensions are analyzed.
 - [framework-detector.ts](framework-detector.ts) — reads package.json, pom.xml, build.gradle, etc. Produces `FrameworkDetection[]`.
-- [output-writer.ts](output-writer.ts) — writes per-file JSONs + `project-summary.json`.
+- [output-writer.ts](output-writer.ts) — writes per-file JSONs + `project-summary.json` (+ `lsp-enhancement.json` / `lsp-ground-truth.json` when LSP runs).
 - [regex-extractor.ts](regex-extractor.ts) — thin dispatcher for regex-only languages. Real logic lives in `src/extractors/plugins/<lang>/`.
 
 ## Report

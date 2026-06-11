@@ -126,6 +126,19 @@ export const ALL_EXTERNAL_MODULE_PREFIXES: readonly string[] = (() => {
 })();
 
 /**
+ * Union of every plugin's builtin member names (`set.add`, `str.toUpperCase`).
+ * Calls with these leaves never resolve to project symbols via name-uniqueness
+ * heuristics in the symbol linker.
+ */
+export const ALL_BUILTIN_MEMBERS: ReadonlySet<string> = (() => {
+  const s = new Set<string>();
+  for (const meta of ALL_METAS) {
+    for (const member of meta.builtinMembers ?? []) s.add(member);
+  }
+  return s;
+})();
+
+/**
  * Matches import sources whose first segment is a well-known external
  * namespace root (e.g. "System.Windows.Forms", "com.example.app") — used to
  * skip directory-name matching for such imports.

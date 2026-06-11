@@ -1,9 +1,13 @@
+import { readFile } from "fs/promises";
+import { join } from "path";
 import type {
   FileAnalysis,
   SymbolLink,
   CallInfo,
   Language,
   LspStats,
+  LspDefinitionRecord,
+  LspReferenceRecord,
 } from "../types/analysis.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
 import type { DiscoveredFile } from "../core/file-discovery.js";
@@ -25,6 +29,10 @@ export interface LspEnhancementResult {
   lspResolvedCount: number;
   referenceLinksCount: number;
   timeMs: number;
+  /** Every definition query made and its raw answer — the ground truth the text linker can be optimized against. */
+  definitionRecords: LspDefinitionRecord[];
+  /** Every reference query made and the non-self references found. */
+  referenceRecords: LspReferenceRecord[];
 }
 
 /**
@@ -64,6 +72,96 @@ function makeTicker(total: number, label: string, verbose: boolean) {
 }
 
 /**
+ * Lazy per-file source line cache. Queries must target the *identifier* token
+ * (LSP answers "what is the symbol at this exact position"), and extractor
+ * columns point at the start of the call expression — so we re-read the source
+ * to locate the leaf token. Promise-cached so concurrent workers share reads.
+ */
+class SourceLineCache {
+  private cache = new Map<string, Promise<string[] | null>>();
+
+  constructor(private projectRoot: string) {}
+
+  getLine(relPath: string, line: number): Promise<string | null> {
+    let p = this.cache.get(relPath);
+    if (!p) {
+      p = readFile(join(this.projectRoot, relPath), "utf-8").then(
+        (text) => text.split(/\r?\n/),
+        () => null,
+      );
+      this.cache.set(relPath, p);
+    }
+    return p.then((lines) => (lines ? lines[line - 1] ?? null : null));
+  }
+}
+
+const IDENT_CHAR = /[A-Za-z0-9_$]/;
+
+/**
+ * The token the query should land on: the called member, not its receiver.
+ * "svc.ListUsers" → "ListUsers", "$this->save" → "save", "Config::load" →
+ * "load", "new AuthResponse" → "AuthResponse", "useThing" → "useThing".
+ */
+function leafToken(callName: string): string {
+  const segments = callName.split(/\.|->|::/);
+  let leaf = segments[segments.length - 1]!;
+  // `AddScoped<IUserService, UserService>` — the invoked token is the method
+  // name, not the generic argument list.
+  const generic = leaf.indexOf("<");
+  if (generic > 0) leaf = leaf.slice(0, generic);
+  const lastSpace = leaf.lastIndexOf(" ");
+  if (lastSpace >= 0) leaf = leaf.slice(lastSpace + 1);
+  return leaf;
+}
+
+/**
+ * Column of `token` as a whole identifier at/after `fromCol` in `text`,
+ * retrying from the line start when extractor columns are off; null if the
+ * token isn't on this line.
+ */
+function findTokenColumn(text: string, token: string, fromCol: number): number | null {
+  if (!token) return null;
+  const search = (start: number): number | null => {
+    let idx = text.indexOf(token, start);
+    while (idx !== -1) {
+      const before = idx > 0 ? text[idx - 1]! : "";
+      const after = text[idx + token.length] ?? "";
+      if (!IDENT_CHAR.test(before) && !IDENT_CHAR.test(after)) return idx;
+      idx = text.indexOf(token, idx + 1);
+    }
+    return null;
+  };
+  const clamped = Math.max(0, Math.min(fromCol, text.length));
+  const found = search(clamped);
+  if (found !== null) return found;
+  return clamped > 0 ? search(0) : null;
+}
+
+/**
+ * Locate the leaf identifier of a call, scanning a few lines below the call
+ * line to handle multi-line chains (`builder\n  .build()`). Falls back to the
+ * extractor-reported position when the token can't be found.
+ */
+async function findQueryPosition(
+  sourceLines: SourceLineCache,
+  filePath: string,
+  call: CallInfo,
+): Promise<{ line: number; column: number }> {
+  const fallback = { line: call.line, column: call.column ?? 0 };
+  const leaf = leafToken(call.name);
+  if (!leaf) return fallback;
+
+  const MULTILINE_WINDOW = 5;
+  for (let offset = 0; offset < MULTILINE_WINDOW; offset++) {
+    const text = await sourceLines.getLine(filePath, call.line + offset);
+    if (text === null) break;
+    const col = findTokenColumn(text, leaf, offset === 0 ? fallback.column : 0);
+    if (col !== null) return { line: call.line + offset, column: col };
+  }
+  return fallback;
+}
+
+/**
  * Enhance symbol links using LSP servers running in Docker containers.
  *
  * Phase A: Resolve unresolved calls via textDocument/definition
@@ -93,19 +191,47 @@ export async function enhanceWithLsp(options: LspEnhancerOptions): Promise<LspEn
         lspResolvedCount: 0,
         referenceLinksCount: 0,
         timeMs: Date.now() - startTime,
+        definitionRecords: [],
+        referenceRecords: [],
       };
     }
 
     console.log(`  LSP servers started: ${serversUsed.join(", ")}`);
 
-    // Phase A: Resolve unresolved calls
-    const { newLinks: definitionLinks, resolvedCount } = await resolveUnresolvedCalls(
-      analyses, existingLinks, manager, verbose,
+    const sourceLines = new SourceLineCache(projectRoot);
+
+    // Phase A: Resolve unresolved calls. Records keep every query + raw answer
+    // (including misses) so the run can be exported as ground truth.
+    const definitionRecords = await resolveUnresolvedCalls(
+      analyses, existingLinks, manager, sourceLines, verbose,
     );
 
+    // Derive links from the resolved records, keeping each link paired with
+    // its record so the interface redirect below can annotate the right one.
+    const resolved: { rec: LspDefinitionRecord; link: SymbolLink }[] = [];
+    for (const rec of definitionRecords) {
+      if (!rec.target) continue;
+      resolved.push({
+        rec,
+        link: {
+          sourceFile: rec.sourceFile,
+          sourceSymbol: rec.sourceSymbol,
+          sourceLine: rec.line,
+          callName: rec.callName,
+          targetFile: rec.target.file,
+          targetSymbol: rec.callName,
+          targetLine: rec.target.line,
+          resolvedBy: "lsp",
+          confidence: "INFERRED",
+        },
+      });
+    }
+    const definitionLinks = resolved.map((p) => p.link);
+    const resolvedCount = definitionLinks.length;
+
     // Phase B: Find references for exported symbols
-    const referenceLinks = await findReferences(
-      analyses, existingLinks, definitionLinks, manager, verbose,
+    const { referenceLinks, referenceRecords } = await findReferences(
+      analyses, existingLinks, definitionLinks, manager, sourceLines, verbose,
     );
 
     // Redirect LSP-resolved interface/field targets to the concrete implementation
@@ -114,9 +240,21 @@ export async function enhanceWithLsp(options: LspEnhancerOptions): Promise<LspEn
     // field declaration — neither of which is what a reader navigating a call graph
     // wants. We rewrite those to the implementing class's method.
     const ifaceMap = buildInterfaceImplMap(analyses);
-    const redirectedDefinitions = definitionLinks.map((l) =>
-      redirectThroughInterface(l, analyses, ifaceMap),
-    );
+    const redirectedDefinitions = resolved.map(({ rec, link }) => {
+      const redirected = redirectThroughInterface(link, analyses, ifaceMap);
+      if (
+        redirected.targetFile !== link.targetFile ||
+        redirected.targetSymbol !== link.targetSymbol ||
+        redirected.targetLine !== link.targetLine
+      ) {
+        rec.redirectedTarget = {
+          file: redirected.targetFile,
+          symbol: redirected.targetSymbol,
+          line: redirected.targetLine,
+        };
+      }
+      return redirected;
+    });
 
     // Merge all links
     const allLinks = [...existingLinks, ...redirectedDefinitions, ...referenceLinks];
@@ -133,6 +271,8 @@ export async function enhanceWithLsp(options: LspEnhancerOptions): Promise<LspEn
       lspResolvedCount: resolvedCount,
       referenceLinksCount: referenceLinks.length,
       timeMs: Date.now() - startTime,
+      definitionRecords,
+      referenceRecords,
     };
   } finally {
     await manager.shutdownAll();
@@ -152,8 +292,9 @@ async function resolveUnresolvedCalls(
   analyses: FileAnalysis[],
   existingLinks: SymbolLink[],
   manager: LspManager,
+  sourceLines: SourceLineCache,
   verbose: boolean,
-): Promise<{ newLinks: SymbolLink[]; resolvedCount: number }> {
+): Promise<LspDefinitionRecord[]> {
   // Build set of already-resolved calls
   const resolvedSet = new Set<string>();
   for (const link of existingLinks) {
@@ -225,9 +366,11 @@ async function resolveUnresolvedCalls(
 
   console.log(`  LSP: ${unresolved.length} unresolved calls to query`);
 
-  // Query LSP for each unresolved call (with concurrency limit)
-  const newLinks: SymbolLink[] = [];
-  let resolvedCount = 0;
+  // Query LSP for each unresolved call (with concurrency limit). Records are
+  // written by input index so the output order is deterministic regardless of
+  // worker completion order. Only queried calls get a record — calls for
+  // languages with no running server are skipped, not recorded as misses.
+  const records: (LspDefinitionRecord | undefined)[] = new Array(unresolved.length);
 
   const concurrency = 10;
   let nextIndex = 0;
@@ -243,34 +386,42 @@ async function resolveUnresolvedCalls(
         continue;
       }
 
-      try {
-        // LSP uses 0-based lines, our CallInfo uses 1-based
-        const lspLine = item.call.line - 1;
-        const lspCol = item.call.column ?? 0;
+      // Aim the query at the LEAF identifier (`svc.ListUsers` → `ListUsers`):
+      // at the expression's start column servers resolve the RECEIVER token and
+      // answer with its field/param/import declaration instead of the method.
+      const pos = await findQueryPosition(sourceLines, item.sourceFile, item.call);
 
+      const record: LspDefinitionRecord = {
+        sourceFile: item.sourceFile,
+        sourceSymbol: item.sourceSymbol,
+        line: item.call.line,
+        column: pos.column,
+        callName: item.call.name,
+        callKind: item.call.kind,
+        language: item.language,
+        target: null,
+      };
+      records[idx] = record;
+
+      try {
+        // LSP uses 0-based lines, our positions are 1-based
         const definitions = await client.getDefinition(
           item.sourceFile,
-          lspLine,
-          lspCol,
+          pos.line - 1,
+          pos.column,
         );
 
         if (definitions.length > 0) {
           const def = definitions[0]!;
-          newLinks.push({
-            sourceFile: item.sourceFile,
-            sourceSymbol: item.sourceSymbol,
-            sourceLine: item.call.line,
-            callName: item.call.name,
-            targetFile: def.uri,
-            targetSymbol: item.call.name,
-            targetLine: def.line + 1, // Convert back to 1-based
-            resolvedBy: "lsp",
-            confidence: "INFERRED",
-          });
-          resolvedCount++;
+          record.target = { file: def.uri, line: def.line + 1 }; // back to 1-based
+        } else if (process.env.REVERSEDOC_LSP_DEBUG) {
+          console.error(`  [lsp-debug] def EMPTY ${item.sourceFile}:${pos.line}:${pos.column} ${item.call.name}`);
         }
-      } catch {
-        // Individual request failed — skip silently
+      } catch (err) {
+        // Individual request failed — recorded as unresolved
+        if (process.env.REVERSEDOC_LSP_DEBUG) {
+          console.error(`  [lsp-debug] def FAIL ${item.sourceFile}:${pos.line}:${pos.column} ${item.call.name}: ${(err as Error).message}`);
+        }
       } finally {
         ticker.tick();
       }
@@ -284,7 +435,7 @@ async function resolveUnresolvedCalls(
   await Promise.all(workers);
   if (unresolved.length > 0) ticker.finalize();
 
-  return { newLinks, resolvedCount };
+  return records.filter((r): r is LspDefinitionRecord => r !== undefined);
 }
 
 // ─── Phase B: Find references ───────────────────────────────────────────
@@ -294,8 +445,9 @@ async function findReferences(
   existingLinks: SymbolLink[],
   definitionLinks: SymbolLink[],
   manager: LspManager,
+  sourceLines: SourceLineCache,
   verbose: boolean,
-): Promise<SymbolLink[]> {
+): Promise<{ referenceLinks: SymbolLink[]; referenceRecords: LspReferenceRecord[] }> {
   // Build set of all known link keys for dedup
   const knownKeys = new Set<string>();
   for (const link of [...existingLinks, ...definitionLinks]) {
@@ -350,6 +502,10 @@ async function findReferences(
   console.log(`  LSP: Finding references for ${symbols.length} exported symbols`);
 
   const referenceLinks: SymbolLink[] = [];
+  // Records by input index for deterministic output order (see resolveUnresolvedCalls).
+  // Unlike links, records keep ALL non-self references — even ones already known
+  // from text links — so the export reflects the full LSP answer.
+  const records: (LspReferenceRecord | undefined)[] = new Array(symbols.length);
   const concurrency = 10;
   let nextIndex = 0;
   const ticker = makeTicker(symbols.length, "LSP refs", verbose);
@@ -364,16 +520,38 @@ async function findReferences(
         continue;
       }
 
+      const record: LspReferenceRecord = {
+        symbolFile: sym.filePath,
+        symbolName: sym.name,
+        symbolLine: sym.line,
+        language: sym.language,
+        references: [],
+      };
+      records[idx] = record;
+
+      // Column 0 of a declaration line is a keyword (`func`, `export`,
+      // `public`) — most servers answer nothing there. Find the symbol's
+      // name token on its declaration line and query that position.
+      const leaf = leafToken(sym.name);
+      let refCol = 0;
+      const declText = await sourceLines.getLine(sym.filePath, sym.line);
+      if (declText) {
+        const col = findTokenColumn(declText, leaf, 0);
+        if (col !== null) refCol = col;
+      }
+
       try {
         const refs = await client.getReferences(
           sym.filePath,
           sym.line - 1, // 0-based
-          0,
+          refCol,
         );
 
         for (const ref of refs) {
           // Skip self-references
           if (ref.uri === sym.filePath && ref.line + 1 === sym.line) continue;
+
+          record.references.push({ file: ref.uri, line: ref.line + 1 });
 
           const key = `${sym.filePath}::${sym.name}::${ref.uri}::${sym.name}`;
           if (knownKeys.has(key)) continue;
@@ -406,7 +584,10 @@ async function findReferences(
   await Promise.all(workers);
   if (symbols.length > 0) ticker.finalize();
 
-  return referenceLinks;
+  return {
+    referenceLinks,
+    referenceRecords: records.filter((r): r is LspReferenceRecord => r !== undefined),
+  };
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────

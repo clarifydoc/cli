@@ -20,6 +20,18 @@ Optional enhancement that starts language servers in Docker containers and queri
 4. **Phase B**: for each exported symbol, query `textDocument/references` and create reference links
 5. `LspManager.shutdownAll()` — stops containers
 
+**Query positions matter.** LSP answers "the symbol at this exact position", so both phases re-read the source line to aim at the right token (`SourceLineCache` + `findTokenColumn` in [lsp-enhancer.ts](lsp-enhancer.ts)): definitions target the *leaf* identifier of the call (`svc.ListUsers` → `ListUsers`; at the expression's start column servers resolve the receiver and answer with its field/param/import declaration), references target the symbol's name on its declaration line (column 0 is a keyword like `func`/`public` — most servers return nothing there). Out-of-project answers (stdlib/framework) are dropped by `toHostPath`, so external calls record `target: null` in the ground truth. Set `REVERSEDOC_LSP_DEBUG=1` to log raw definition responses and per-query failures.
+
+## Ground truth export
+
+Every query and its raw answer is recorded (`LspDefinitionRecord` / `LspReferenceRecord` in `types/analysis.ts`) and written to `lsp-ground-truth.json` next to `project-summary.json` — by both `analyze` (LSP enabled) and `lsp-update`. Unlike `lsp-enhancement.json` (merged links), it keeps **unresolved queries** (`target: null`) and **pre-redirect targets** (`redirectedTarget` holds the rewrite), so the text linker can be measured against what LSP resolved without re-running Docker:
+
+```
+npm run update-lsp                  # once: saves ground truth per fixture
+<improve text linker>, update-fixtures
+node scripts/lsp-compare.mjs        # Matched / Conflict / Missed per fixture (--details lists calls)
+```
+
 Docker containers are tagged `reversedoc-lsp-<lang>`. Images are cached between runs. Cleanup handlers stop containers on SIGINT/SIGTERM.
 
 ## Supported languages

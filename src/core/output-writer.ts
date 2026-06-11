@@ -7,6 +7,8 @@ import type {
   SymbolLink,
   BlastRadiusInfo,
   LinkInfo,
+  LspDefinitionRecord,
+  LspReferenceRecord,
 } from "../types/analysis.js";
 import { validateFileAnalysis } from "./fileanalysis-validator.js";
 
@@ -28,6 +30,30 @@ export interface LspEnhancement {
   lspStats: LspStats;
   /** ISO timestamp of when the enhancement was produced. */
   enhancedAt: string;
+}
+
+/**
+ * Raw LSP query/answer log — written as a SEPARATE file from the merged links
+ * so the text-based linker can be optimized against it: re-run text analysis,
+ * then compare its links to these records (scripts/lsp-compare.mjs). Unlike
+ * `lsp-enhancement.json`, this keeps pre-redirect targets and unresolved
+ * queries, which the merged output loses.
+ */
+export interface LspGroundTruth {
+  schemaVersion: 1;
+  projectRoot: string;
+  serversUsed: string[];
+  stats: {
+    definitionQueries: number;
+    definitionsResolved: number;
+    definitionsUnresolved: number;
+    referenceQueries: number;
+    referencesFound: number;
+    enhancementTimeMs: number;
+  };
+  definitions: LspDefinitionRecord[];
+  references: LspReferenceRecord[];
+  generatedAt: string;
 }
 
 export interface OutputOptions {
@@ -62,6 +88,23 @@ export async function writeFileAnalysis(
   return outPath;
 }
 
+/** Write a fixed-name JSON artifact into the output dir. */
+async function writeJson(
+  fileName: string,
+  data: unknown,
+  options: OutputOptions,
+): Promise<string> {
+  const outPath = join(resolve(options.outputDir), fileName);
+  await mkdir(dirname(outPath), { recursive: true });
+
+  const json = options.pretty
+    ? JSON.stringify(data, null, 2)
+    : JSON.stringify(data);
+
+  await writeFile(outPath, json, "utf-8");
+  return outPath;
+}
+
 /**
  * Write the project-level summary.
  * Creates: <outputDir>/project-summary.json
@@ -70,15 +113,7 @@ export async function writeProjectSummary(
   summary: ProjectAnalysis,
   options: OutputOptions,
 ): Promise<string> {
-  const outPath = join(resolve(options.outputDir), "project-summary.json");
-  await mkdir(dirname(outPath), { recursive: true });
-
-  const json = options.pretty
-    ? JSON.stringify(summary, null, 2)
-    : JSON.stringify(summary);
-
-  await writeFile(outPath, json, "utf-8");
-  return outPath;
+  return writeJson("project-summary.json", summary, options);
 }
 
 /**
@@ -89,15 +124,44 @@ export async function writeLspEnhancement(
   enhancement: LspEnhancement,
   options: OutputOptions,
 ): Promise<string> {
-  const outPath = join(resolve(options.outputDir), "lsp-enhancement.json");
-  await mkdir(dirname(outPath), { recursive: true });
+  return writeJson("lsp-enhancement.json", enhancement, options);
+}
 
-  const json = options.pretty
-    ? JSON.stringify(enhancement, null, 2)
-    : JSON.stringify(enhancement);
+/** The slice of an LSP enhancement result the ground-truth export needs. */
+export interface LspGroundTruthInput {
+  serversUsed: string[];
+  timeMs: number;
+  definitionRecords: LspDefinitionRecord[];
+  referenceRecords: LspReferenceRecord[];
+}
 
-  await writeFile(outPath, json, "utf-8");
-  return outPath;
+/**
+ * Assemble and write the raw LSP query/answer log from an enhancement run.
+ * Creates: <outputDir>/lsp-ground-truth.json
+ */
+export async function writeLspGroundTruth(
+  projectRoot: string,
+  result: LspGroundTruthInput,
+  options: OutputOptions,
+): Promise<string> {
+  const resolved = result.definitionRecords.filter((r) => r.target !== null).length;
+  const groundTruth: LspGroundTruth = {
+    schemaVersion: 1,
+    projectRoot,
+    serversUsed: result.serversUsed,
+    stats: {
+      definitionQueries: result.definitionRecords.length,
+      definitionsResolved: resolved,
+      definitionsUnresolved: result.definitionRecords.length - resolved,
+      referenceQueries: result.referenceRecords.length,
+      referencesFound: result.referenceRecords.reduce((n, r) => n + r.references.length, 0),
+      enhancementTimeMs: result.timeMs,
+    },
+    definitions: result.definitionRecords,
+    references: result.referenceRecords,
+    generatedAt: new Date().toISOString(),
+  };
+  return writeJson("lsp-ground-truth.json", groundTruth, options);
 }
 
 /** Write an HTML report. Creates: <outputDir>/report.html */

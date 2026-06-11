@@ -91,6 +91,19 @@ export const pythonMeta: LanguagePluginMeta = {
   },
   apiCallRoots: ["requests", "httpx", "aiohttp", "urllib", "http.client"],
   dbCallRoots: ["cursor", "session", "engine", "db", "connection", "pool"],
+  // str/list/dict/set/file/stdlib-object methods — `server.login()`, `s.strip()`
+  // must never resolve to a project symbol by name coincidence.
+  builtinMembers: [
+    "append", "extend", "insert", "remove", "pop", "clear", "index", "count",
+    "sort", "reverse", "copy", "items", "keys", "values", "update", "setdefault",
+    "strip", "lstrip", "rstrip", "lower", "upper", "title", "capitalize",
+    "startswith", "endswith", "split", "rsplit", "splitlines", "join", "format",
+    "replace", "encode", "decode", "find", "rfind", "isdigit", "isalpha",
+    "read", "readline", "readlines", "write", "writelines", "close", "flush",
+    "seek", "tell", "open", "connect", "login", "sendmail", "quit", "send",
+    "recv", "bind", "listen", "accept", "get", "add", "discard", "union",
+    "intersection", "difference",
+  ],
   ast: {
     typeReferences: extractPythonTypeReferences,
   },

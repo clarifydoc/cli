@@ -8,6 +8,7 @@ import type {
 import type { DiscoveredFile } from "./file-discovery.js";
 import {
   writeLspEnhancement,
+  writeLspGroundTruth,
   type LspEnhancement,
   type OutputOptions,
 } from "./output-writer.js";
@@ -126,6 +127,12 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
 
   const outputOpts: OutputOptions = { outputDir: dir, pretty: options.pretty };
   const outputPath = await writeLspEnhancement(enhancement, outputOpts);
+
+  // 6. Export the raw query/answer log alongside the merged enhancement, so
+  // the text linker can be optimized against it (scripts/lsp-compare.mjs).
+  if (lspResult.serversUsed.length > 0) {
+    await writeLspGroundTruth(projectRoot, lspResult, outputOpts);
+  }
 
   return {
     outputPath,

@@ -39,7 +39,7 @@ export function isNestedScopeType(nodeType: string): boolean {
 }
 
 /** Methods that are noise — chaining, logging, promise utilities, etc. */
-const NOISE_CALLS = new Set([
+export const NOISE_CALLS = new Set([
   "then", "catch", "finally",
   "json", "text", "blob", "arrayBuffer", "formData",
   "send", "status", "end",

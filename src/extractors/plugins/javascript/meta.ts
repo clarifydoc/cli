@@ -1,6 +1,7 @@
 import type { Language, SecurityIssue } from "../../../types/analysis.js";
 import type { LanguagePluginMeta, SecurityRule, AstExtractorHooks } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
+import { NOISE_CALLS } from "../../shared/call-graph.js";
 import { extractTsTypeReferences } from "./type-references.js";
 import { extractInteractiveElements } from "./interactive-elements.js";
 import { extractSubComponents } from "./sub-components.js";
@@ -125,6 +126,38 @@ const NPM_FRAMEWORK_HINTS: Readonly<Record<string, string>> = {
   "objection": "objection",
 };
 
+/**
+ * Prototype members of core JS builtins (Array/Set/Map/String/Object/Promise/
+ * RegExp/Date/JSON). A call like `seen.add(x)` or `s.toUpperCase()` must never
+ * be linked to a project method that happens to share the name. Built on the
+ * shared NOISE_CALLS set (extraction-side noise filter) — both lists describe
+ * the same "ubiquitous JS member names" domain and must not drift apart.
+ */
+const JS_BUILTIN_MEMBERS = [...new Set([
+  ...NOISE_CALLS,
+  // Set/Map/collections
+  "add", "delete", "has", "get", "set", "clear",
+  // Array
+  "slice", "splice", "concat", "reduceRight", "findIndex", "findLast",
+  "findLastIndex", "includes", "indexOf", "lastIndexOf",
+  "flat", "flatMap", "fill", "sort", "reverse", "at", "copyWithin",
+  // String
+  "toUpperCase", "toLowerCase", "toLocaleUpperCase", "toLocaleLowerCase",
+  "charAt", "charCodeAt", "codePointAt", "normalize", "trim", "trimStart",
+  "trimEnd", "padStart", "padEnd", "startsWith", "endsWith",
+  "replaceAll", "match", "matchAll", "search", "substring",
+  "substr", "repeat", "localeCompare",
+  // Object/Function/general
+  "toLocaleString", "hasOwnProperty", "bind", "call", "apply", "assign", "freeze",
+  // Iterator
+  "next",
+  // RegExp/Date/Number
+  "test", "exec", "getTime", "toISOString", "toFixed", "toPrecision",
+  // React hooks (called as `React.useState` etc. — framework, not project code)
+  "useState", "useEffect", "useMemo", "useCallback", "useRef", "useContext",
+  "useReducer", "useLayoutEffect", "useId", "useTransition",
+])];
+
 const API_CALL_ROOTS = ["fetch", "axios", "http", "request", "ajax", "$http", "ky", "got", "superagent", "ofetch"];
 const DB_CALL_ROOTS = [
   "prisma", "mongoose", "sequelize", "knex", "typeorm", "drizzle",
@@ -162,6 +195,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   frameworkImportHints: NPM_FRAMEWORK_HINTS,
   apiCallRoots: API_CALL_ROOTS,
   dbCallRoots: DB_CALL_ROOTS,
+  builtinMembers: JS_BUILTIN_MEMBERS,
   ast: astHooks("typescript"),
   calls: javascriptCallHooks,
 };
@@ -182,6 +216,7 @@ export const javascriptMeta: LanguagePluginMeta = {
   frameworkImportHints: NPM_FRAMEWORK_HINTS,
   apiCallRoots: API_CALL_ROOTS,
   dbCallRoots: DB_CALL_ROOTS,
+  builtinMembers: JS_BUILTIN_MEMBERS,
   ast: astHooks("javascript"),
   calls: javascriptCallHooks,
 };

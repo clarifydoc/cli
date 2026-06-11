@@ -216,6 +216,9 @@ export class LspClient {
       position: { line, character },
     }, 5000);
 
+    if (process.env.REVERSEDOC_LSP_DEBUG) {
+      console.error(`  [lsp-debug] raw def ${filePath}:${line}:${character} → ${JSON.stringify(result)?.slice(0, 300)}`);
+    }
     return this.parseLocations(result);
   }
 

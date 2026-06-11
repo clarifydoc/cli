@@ -206,22 +206,41 @@ function getImportProximity(specifiers: string[], analysis: FileAnalysis): LinkP
   return best;
 }
 
+/**
+ * Priority of a file for extensionless-key collisions: lower = preferred.
+ * Follows MATCH_EXTENSIONS order, which mirrors module-resolution conventions —
+ * when `UserForm.tsx` and `UserForm.vue` both exist, an extensionless import
+ * `../components/UserForm` means the .tsx (the .vue is imported with its
+ * extension spelled out). Unknown extensions sort last.
+ */
+function extPriority(filePath: string): number {
+  const dot = filePath.lastIndexOf(".");
+  const ext = dot >= 0 ? filePath.slice(dot) : "";
+  const idx = MATCH_EXTENSIONS.indexOf(ext);
+  return idx === -1 ? MATCH_EXTENSIONS.length : idx;
+}
+
+/** Set key → filePath, resolving collisions by extension priority (ties keep the first). */
+function setPreferring(map: Map<string, string>, key: string, filePath: string): void {
+  const existing = map.get(key);
+  if (existing === undefined || extPriority(filePath) < extPriority(existing)) {
+    map.set(key, filePath);
+  }
+}
+
 /** Build a map for resolving import sources to file paths */
 export function buildFilePathMap(analyses: FileAnalysis[]): Map<string, string> {
   const map = new Map<string, string>();
   for (const a of analyses) {
     map.set(a.filePath, a.filePath);
     const base = a.filePath.replace(STRIP_SOURCE_EXTENSION_RE, "");
-    map.set(base, a.filePath);
+    setPreferring(map, base, a.filePath);
     const noIndex = base.replace(/\/index$/, "");
-    if (noIndex !== base) map.set(noIndex, a.filePath);
+    if (noIndex !== base) setPreferring(map, noIndex, a.filePath);
 
     // Also map the file's basename (without extension) for package-qualified resolution
     const baseName = base.split("/").pop()!;
-    // Only set if not already mapped (first file wins to avoid ambiguity)
-    if (!map.has(baseName)) {
-      map.set(baseName, a.filePath);
-    }
+    setPreferring(map, baseName, a.filePath);
   }
   return map;
 }

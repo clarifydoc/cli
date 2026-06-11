@@ -172,6 +172,12 @@ export interface LanguagePluginMeta {
   /** Builtin/stdlib type names — never tracked as project type references. */
   builtinTypes?: ReadonlySet<string>;
   /**
+   * Builtin member/method names (`set.add`, `str.toUpperCase`) — a call whose
+   * leaf is one of these never resolves to a project symbol by name-uniqueness
+   * heuristics (a project method merely sharing the name is a coincidence).
+   */
+  builtinMembers?: readonly string[];
+  /**
    * stdlib / well-known package prefixes: an import source equal to a prefix,
    * or starting with `<prefix>.` or `<prefix>/`, never resolves to a project file.
    */
