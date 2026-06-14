@@ -27,20 +27,19 @@ export interface TemplateComponent {
  * Parse a .vue SFC file and extract its blocks.
  */
 export function parseVueSfc(source: string): VueSfcBlocks {
-  const script = extractBlock(source, "script");
-  const template = extractBlock(source, "template");
+  // A SFC may carry BOTH a plain `<script>` (e.g. an `export default`/enum) and
+  // a `<script setup>` block — concatenate them so imports and logic from every
+  // block are analyzed (the setup block usually holds the imports).
+  const scripts = extractScriptBlocks(source);
+  const script = scripts.length ? scripts.map((s) => s.content).join("\n") : null;
+  const isSetup = scripts.some((s) => /\bsetup\b/.test(s.attrs));
+  const scriptLang: "typescript" | "javascript" = scripts.some((s) =>
+    /\blang\s*=\s*["'](ts|typescript)["']/i.test(s.attrs),
+  )
+    ? "typescript"
+    : "javascript";
 
-  // Determine if it's <script setup>
-  const scriptTagMatch = source.match(/<script\b([^>]*)>/i);
-  const isSetup = scriptTagMatch
-    ? /\bsetup\b/.test(scriptTagMatch[1])
-    : false;
-
-  // Determine script language
-  const langMatch = scriptTagMatch?.[1]?.match(/\blang\s*=\s*["'](\w+)["']/);
-  const lang = langMatch?.[1];
-  const scriptLang: "typescript" | "javascript" =
-    lang === "ts" || lang === "typescript" ? "typescript" : "javascript";
+  const template = extractTemplateBlock(source);
 
   // Extract component usage from template
   const templateComponents: TemplateComponent[] = [];
@@ -57,16 +56,25 @@ export function parseVueSfc(source: string): VueSfcBlocks {
   };
 }
 
+/** Extract every `<script>`/`<script setup>` block with its opening-tag attributes. */
+function extractScriptBlocks(source: string): { attrs: string; content: string }[] {
+  const blocks: { attrs: string; content: string }[] = [];
+  const regex = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(source)) !== null) {
+    blocks.push({ attrs: match[1] ?? "", content: match[2] ?? "" });
+  }
+  return blocks;
+}
+
 /**
- * Extract the content of a block (<script>, <template>, <style>) from a .vue file.
+ * Extract the root `<template>` content. A SFC has one root template, but it can
+ * contain nested slot `<template #slot>` blocks — match greedily from the first
+ * `<template>` to the LAST `</template>` so the whole template is captured (a
+ * non-greedy match would stop at the first nested slot's close).
  */
-function extractBlock(source: string, tag: string): string | null {
-  // Match opening tag (may have attributes) and closing tag
-  const regex = new RegExp(
-    `<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`,
-    "i",
-  );
-  const match = source.match(regex);
+function extractTemplateBlock(source: string): string | null {
+  const match = source.match(/<template\b[^>]*>([\s\S]*)<\/template>/i);
   return match ? match[1] : null;
 }
 

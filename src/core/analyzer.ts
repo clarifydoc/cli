@@ -22,7 +22,7 @@ import {
 import { analyzeFile, type FileTask, type FileResult } from "./file-analyzer.js";
 import { AnalysisWorkerPool } from "./worker-pool.js";
 import { loadTsconfigAliases } from "../extractors/shared/tsconfig-aliases.js";
-import { buildLinkGraph } from "../extractors/shared/link-scoring.js";
+import { buildLinkGraph, isExternalPackage } from "../extractors/shared/link-scoring.js";
 import { STRIP_SOURCE_EXTENSION_RE, EXTERNAL_NAMESPACE_ROOT_RE } from "../extractors/registry.js";
 import { buildSymbolLinks } from "./symbol-linker.js";
 import { aggregateComplexity } from "./complexity-analyzer.js";
@@ -37,8 +37,11 @@ import { findGodNodes, findSurprisingConnections, suggestQuestions } from "./top
 import { dedupSymbolLinks } from "./symbol-dedup.js";
 import { aggregateTypeBlast, buildClassGraph } from "./data-model-blast.js";
 import { buildDataAccessGraph } from "./data-access-graph.js";
+import { buildComponentLaunches } from "./component-launches.js";
+import { buildImportIndex, resolveImportSource } from "./import-index.js";
 import {
   type FileAnalysis,
+  type Language,
   type ProjectAnalysis,
   type ScreenInfo,
   type ScreenComponentInfo,
@@ -432,6 +435,10 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // (e.g. Go package imports resolved via directory matching)
   enrichLinkGraphFromComponentGraph(linkGraph, componentGraph);
 
+  // Dynamic-import "opens component" edges (dialogs, lazy components) derived
+  // from the finalized symbol links.
+  const componentLaunches = buildComponentLaunches(symbolLinks);
+
   const allRoutes = allAnalyses.flatMap((a) =>
     a.routes.map((r) => ({ ...r, filePath: a.filePath })),
   );
@@ -440,6 +447,9 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   );
   const allEvents = allAnalyses.flatMap((a) =>
     a.events.map((ev) => ({ ...ev, filePath: a.filePath })),
+  );
+  const allComponentUsage = allAnalyses.flatMap((a) =>
+    a.subComponents.map((c) => ({ ...c, filePath: a.filePath })),
   );
   // Aggregate outbound API calls (kind=api-call data sources)
   const allApiCalls = allAnalyses.flatMap((a) =>
@@ -532,11 +542,13 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     componentGraph,
     linkGraph,
     interactiveElements: allInteractiveElements,
+    componentUsage: allComponentUsage,
     events: allEvents,
     routeMap: allRoutes,
     apiCalls: allApiCalls,
     screens: allScreens,
     symbolLinks,
+    componentLaunches: componentLaunches.length ? componentLaunches : undefined,
     lspStats,
     analyzedAt: new Date().toISOString(),
     complexity,
@@ -640,109 +652,181 @@ function buildScreensFromRoutes(
   allAnalyses: FileAnalysis[],
   rawSources: Map<string, string>,
 ): ScreenInfo[] {
-  const screens: ScreenInfo[] = [];
+  const byPath = new Map(allAnalyses.map((a) => [a.filePath, a]));
+  const knownFiles = new Set(byPath.keys());
+  const importIndex = buildImportIndex(allAnalyses);
 
-  // Find files with frontend routes
+  // Follow a route's `component` to the concrete project file it renders.
+  // Relative/absolute specifiers (lazy `import("./pak.vue")` paths) resolve
+  // against the route-config file; a bare identifier (statically-imported
+  // component) is looked up through that file's own imports.
+  const resolveComponentFile = (configFile: string, route: RouteInfo): string | null => {
+    const spec = route.componentPath;
+    if (!spec) return null;
+    if (spec.startsWith(".") || spec.startsWith("/")) {
+      return resolveImportSource(configFile, spec, knownFiles);
+    }
+    return importIndex.localFor(configFile, spec);
+  };
+
+  // A page component reached by several routes (e.g. "/pak" and
+  // "/pak/:id/date/:date") is one screen, keyed by its file.
+  const byComponent = new Map<string, { analysis: FileAnalysis; routes: RouteInfo[] }>();
+  // Route-config files whose routes resolve to no project file: the routes are
+  // declared inline in a page (React-style), so the file itself is the screen.
+  const inline: Array<{ analysis: FileAnalysis; route: RouteInfo }> = [];
+
   for (const analysis of allAnalyses) {
     const frontendRoutes = analysis.routes.filter((r) => r.kind === "frontend");
     if (frontendRoutes.length === 0) continue;
 
-    const routePath = frontendRoutes[0].path;
-    const rawSource = rawSources.get(analysis.filePath) ?? "";
-
-    // Determine screen name: prefer named function/class, then filename
-    const namedExport = analysis.exports.find((e) => e.name !== "default" && (e.kind === "function" || e.kind === "class"));
-    const defaultFn = analysis.functions.find((f) => f.isExported && f.name !== "default");
-    const fileBaseName = analysis.filePath.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "");
-    const screenName = namedExport?.name ?? defaultFn?.name ?? fileBaseName;
-
-    // Determine form type
-    const isVue = analysis.filePath.endsWith(".vue");
-    const formType = isVue ? "VuePage" : "ReactPage";
-
-    // Extract caption from <h1>
-    const caption = extractPageTitle(rawSource);
-
-    // Build component list
-    const components: ScreenComponentInfo[] = [];
-
-    // Track which interactiveElements belong to subComponents
-    const usedInteractiveIndices = new Set<number>();
-
-    // Add sub-components (UserTable, UserForm, StatsPanel, etc.)
-    for (const sub of analysis.subComponents) {
-      // Find interactive elements that match this sub-component
-      const compEvents: string[] = [];
-      analysis.interactiveElements.forEach((el, idx) => {
-        if (el.element === "custom") {
-          // Check if the interactive element's props overlap with this subComponent
-          // Custom elements at similar line range are likely the same component
-          const propMatch = sub.props.some((p) =>
-            el.event.toLowerCase().includes(p.toLowerCase()) ||
-            p.toLowerCase().includes(el.event.replace(/^@|^on/, "").toLowerCase()),
-          );
-          if (propMatch || (el.handler && el.handler.toLowerCase().includes(sub.name.toLowerCase()))) {
-            compEvents.push(el.event + (el.handler ? ` → ${el.handler}` : ""));
-            usedInteractiveIndices.add(idx);
-          }
-        }
-      });
-
-      components.push({
-        name: sub.name,
-        componentType: sub.importSource ?? sub.name,
-        category: "custom",
-        caption: null,
-        position: null,
-        align: null,
-        visible: true,
-        children: [],
-        events: compEvents,
-        dataBindings: sub.props.filter((p) => !p.startsWith("on") && !p.startsWith("@")),
-        line: sub.line,
-      });
+    let resolvedAny = false;
+    for (const route of frontendRoutes) {
+      const targetFile = resolveComponentFile(analysis.filePath, route);
+      const target =
+        targetFile && targetFile !== analysis.filePath ? byPath.get(targetFile) : null;
+      if (!target) continue;
+      const entry = byComponent.get(target.filePath) ?? { analysis: target, routes: [] };
+      entry.routes.push(route);
+      byComponent.set(target.filePath, entry);
+      resolvedAny = true;
     }
+    if (!resolvedAny) inline.push({ analysis, route: frontendRoutes[0] });
+  }
 
-    // Add HTML interactive elements (buttons, inputs, forms, links)
-    const elementCounts: Record<string, number> = {};
-    analysis.interactiveElements.forEach((el, idx) => {
-      if (usedInteractiveIndices.has(idx)) return;
+  const screens: ScreenInfo[] = [];
 
-      const count = (elementCounts[el.element] = (elementCounts[el.element] ?? 0) + 1);
-      const name = el.handler ?? `${el.element}-${count}`;
+  for (const { analysis, routes } of byComponent.values()) {
+    // Canonical path = the shortest (least-parameterised) route to the page.
+    const primary = routes.slice().sort((a, b) => a.path.length - b.path.length)[0]!;
+    const screenName = primary.handler ?? screenNameFromFile(analysis);
+    screens.push(buildScreen(analysis, screenName, primary.path, rawSources));
+  }
 
-      components.push({
-        name,
-        componentType: el.element,
-        category: WEB_ELEMENT_CATEGORY[el.element] ?? "display",
-        caption: null,
-        position: null,
-        align: null,
-        visible: true,
-        children: [],
-        events: [el.event + (el.handler ? ` → ${el.handler}` : "")],
-        dataBindings: [],
-        line: el.line,
-      });
-    });
-
-    // Extract navigation targets
-    const navigatesTo = extractNavigationTargets(rawSource);
-
-    screens.push({
-      name: screenName,
-      formType,
-      caption,
-      dimensions: null,
-      components,
-      filePath: analysis.filePath,
-      routePath,
-      navigatesTo,
-    });
+  for (const { analysis, route } of inline) {
+    // Routes declared inline in the page file: name the screen after the file
+    // (unchanged from the original behaviour for React-style/single-file pages).
+    screens.push(buildScreen(analysis, screenNameFromFile(analysis), route.path, rawSources));
   }
 
   return screens;
 }
+
+/** Screen name fallback when a route carries no usable handler: prefer a named
+ *  function/class export, then an exported function, then the file's base name. */
+function screenNameFromFile(analysis: FileAnalysis): string {
+  const namedExport = analysis.exports.find(
+    (e) => e.name !== "default" && (e.kind === "function" || e.kind === "class"),
+  );
+  const defaultFn = analysis.functions.find((f) => f.isExported && f.name !== "default");
+  const fileBaseName = analysis.filePath.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "");
+  return namedExport?.name ?? defaultFn?.name ?? fileBaseName;
+}
+
+/**
+ * Assemble a ScreenInfo from the page component's own analysis — its
+ * sub-components (UserTable, dtpButtonDropdown, …) and interactive elements
+ * become the component tree, and its source supplies the caption and
+ * navigation targets. `routePath` and `name` come from the route that renders
+ * the page, which may live in a separate route-config file.
+ */
+function buildScreen(
+  analysis: FileAnalysis,
+  screenName: string,
+  routePath: string,
+  rawSources: Map<string, string>,
+): ScreenInfo {
+  const rawSource = rawSources.get(analysis.filePath) ?? "";
+  const isVue = analysis.filePath.endsWith(".vue");
+  const formType = isVue ? "VuePage" : "ReactPage";
+  const caption = extractPageTitle(rawSource);
+
+  const components: ScreenComponentInfo[] = [];
+
+  // Track which interactiveElements belong to subComponents
+  const usedInteractiveIndices = new Set<number>();
+
+  // Add sub-components (UserTable, UserForm, StatsPanel, etc.)
+  for (const sub of analysis.subComponents) {
+    // Attach the custom-element bindings (@event / v-model) that sit on THIS
+    // component's tag, matched by the tag's opening line — both extractors
+    // record an element at the line where its tag opens. The previous rule
+    // matched by prop/event NAME overlap, so every component declaring a
+    // `v-model` prop absorbed every `v-model` in the file (e.g. ISTDatePicker
+    // showed three, stealing other components' bindings).
+    const compEvents: string[] = [];
+    analysis.interactiveElements.forEach((el, idx) => {
+      if (el.element === "custom" && el.line === sub.line) {
+        compEvents.push(el.event + (el.handler ? ` → ${el.handler}` : ""));
+        usedInteractiveIndices.add(idx);
+      }
+    });
+
+    components.push({
+      name: sub.name,
+      componentType: sub.importSource ?? sub.name,
+      category: "custom",
+      caption: null,
+      position: null,
+      align: null,
+      visible: true,
+      children: [],
+      events: compEvents,
+      dataBindings: sub.props.filter((p) => !p.startsWith("on") && !p.startsWith("@")),
+      line: sub.line,
+    });
+  }
+
+  // Add HTML interactive elements (buttons, inputs, forms, links)
+  const elementCounts: Record<string, number> = {};
+  analysis.interactiveElements.forEach((el, idx) => {
+    if (usedInteractiveIndices.has(idx)) return;
+
+    const count = (elementCounts[el.element] = (elementCounts[el.element] ?? 0) + 1);
+    const name = el.handler ?? `${el.element}-${count}`;
+
+    components.push({
+      name,
+      componentType: el.element,
+      category: WEB_ELEMENT_CATEGORY[el.element] ?? "display",
+      caption: null,
+      position: null,
+      align: null,
+      visible: true,
+      children: [],
+      events: [el.event + (el.handler ? ` → ${el.handler}` : "")],
+      dataBindings: [],
+      line: el.line,
+    });
+  });
+
+  return {
+    name: screenName,
+    formType,
+    caption,
+    dimensions: null,
+    components,
+    filePath: analysis.filePath,
+    routePath,
+    navigatesTo: extractNavigationTargets(rawSource),
+  };
+}
+
+/**
+ * Languages where a bare import path denotes a package/directory of files, so
+ * resolving its last segment to every file in a same-named directory is correct
+ * (e.g. Go `import "myapp/handler"`, Rust modules, Ruby requires).
+ *
+ * For JS/TS/Vue and the rest, a non-relative specifier like "axios" is an npm
+ * package, not a local folder — fanning it out to every file in a coincidentally
+ * same-named directory produced ~O(N²) phantom edges (e.g. every generated API
+ * hook wired to all 227 files under a local `axios/` dir).
+ */
+const PACKAGE_DIR_IMPORT_LANGS: ReadonlySet<Language> = new Set([
+  "go",
+  "rust",
+  "ruby",
+]);
 
 /** Build a graph of file -> files it imports */
 function buildComponentGraph(
@@ -813,13 +897,27 @@ function buildComponentGraph(
     const refSet = new Set<string>();
 
     for (const imp of a.imports) {
-      // 1. Resolve relative imports (JS/TS/Vue) via pre-built path map
+      // 1. Resolve relative imports (JS/TS/Vue) via pre-built path map.
+      // Strip a trailing source extension so extension-bearing specifiers — as
+      // dynamic imports tend to be (`import("./main.vue")`) — match the
+      // extension-stripped keys in strippedPathToFile.
       if (imp.source.startsWith(".")) {
-        const candidate = imp.source.replace(/^\.\//, "");
+        const candidate = imp.source
+          .replace(/^\.\//, "")
+          .replace(STRIP_SOURCE_EXTENSION_RE, "");
         const match = scanForImport(candidate);
         if (match && match !== a.filePath) refSet.add(match);
         continue;
       }
+
+      // A non-relative specifier that resolves to a known external package
+      // (npm package, framework namespace root) never references local files —
+      // skip all the name-collision heuristics below. e.g. `import … from "axios"`
+      // must not match a local `axios/` directory, an `axios.ts` file, or any
+      // local export whose name happens to collide with an imported specifier.
+      const isExternal =
+        EXTERNAL_NAMESPACE_ROOT_RE.test(imp.source) || isExternalPackage(imp.source);
+      if (isExternal) continue;
 
       // 2. Resolve non-relative imports via specifier names → exported names
       // Works for Java (import com.example.api.service.UserService → specifier "UserService")
@@ -843,12 +941,11 @@ function buildComponentGraph(
         }
       }
 
-      // 4. Resolve package/directory imports (Go, Ruby, Rust)
-      // e.g. "sample-go-api/handler" → all files in handler/ directory
-      // Skip if the import is from a well-known external framework (avoids
-      // e.g. VB `Imports System.Windows.Forms` matching a local Forms/ dir).
-      const isExternal = EXTERNAL_NAMESPACE_ROOT_RE.test(imp.source);
-      if (lastSegment && !isExternal) {
+      // 4. Resolve package/directory imports — only for languages where a bare
+      // import path genuinely denotes a directory of files (Go, Rust, Ruby).
+      // e.g. "sample-go-api/handler" → all files in handler/ directory.
+      // For JS/TS/etc. this fan-out is pure name-collision noise, so it's gated.
+      if (lastSegment && PACKAGE_DIR_IMPORT_LANGS.has(a.language)) {
         const dirFiles = dirToFiles.get(lastSegment);
         if (dirFiles) {
           for (const target of dirFiles) {

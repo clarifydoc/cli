@@ -304,6 +304,15 @@ export interface RouteInfo {
   httpMethod: string | null;
   kind: "frontend" | "api";
   handler: string | null;
+  /**
+   * For frontend routes: the raw module specifier of the route's `component`
+   * (e.g. "./pak.vue" from `component: () => import("./pak.vue")`, or the
+   * identifier name for a statically-imported component). Lets the screen
+   * builder follow the route to the actual page file instead of treating the
+   * route-config file as the screen. Null for API routes or when no component
+   * could be identified.
+   */
+  componentPath?: string | null;
   calls: CallInfo[];
   middleware: string[];
   line: number;
@@ -386,6 +395,29 @@ export interface ScreenInfo {
   filePath: string;
   routePath: string | null;
   navigatesTo: string[];
+}
+
+/**
+ * A "this file opens that component" relationship, derived from a dynamic
+ * `import("./X.vue")`. Captured directly (a function in `sourceFile` imports the
+ * component) or transitively through a launcher function — e.g. a screen calls
+ * a dialog barrel's `DutyDialog()`, which itself `import()`s the dialog SFC.
+ * Powers the Screens & UI pane's "opens" / "opened by" cross-links for dialogs
+ * and other lazily-mounted components that never appear as template tags.
+ */
+export interface ComponentLaunch {
+  /** File that opens the component (a page/screen, or the launcher's own file). */
+  sourceFile: string;
+  /** Symbol in `sourceFile` that triggers the open (the calling function, or
+   *  the launcher function itself for a direct import). */
+  sourceSymbol: string;
+  /** The component file being opened (e.g. a dialog SFC). */
+  targetFile: string;
+  /** Launcher function the open routes through (e.g. "DutyDialog"); equals
+   *  `sourceSymbol` for a direct dynamic import in `sourceFile`. */
+  launcher: string;
+  /** Line of the call/import in `sourceFile`. */
+  line: number;
 }
 
 export type LinkProximity = 1 | 2 | 3;
@@ -593,7 +625,13 @@ export interface ProjectAnalysis {
    */
   apiCalls: (DataSourceInfo & { filePath: string })[];
   screens: ScreenInfo[];
+  /** Per-file child-component usages (JSX/Vue-template tags), with import source as `target`. */
+  componentUsage?: (SubComponentInfo & { filePath: string })[];
   symbolLinks: SymbolLink[];
+  /** Dynamic-import "opens component" relationships (dialogs, lazy components)
+   *  derived from symbolLinks. Drives the Screens & UI "opens" / "opened by"
+   *  cross-links. Omitted when empty. */
+  componentLaunches?: ComponentLaunch[];
   lspStats?: LspStats;
   analyzedAt: string;
 

@@ -70,6 +70,10 @@ export function enrichFileDataSources(a: FileAnalysis, index?: ImportIndex): voi
   const idx = index ?? buildImportIndex([a]);
   for (const ds of a.dataSources ?? []) {
     if (ds.target) continue;
+    // An api-call's target is an endpoint URL, never an import module — leave it
+    // null rather than backfilling the caller's import source (which produced
+    // bogus targets like "../store", "axios", "zod").
+    if (ds.kind === "api-call") continue;
     const root = rootIdentifier(ds.name);
 
     // 1) Direct name match — strongest signal.
@@ -143,13 +147,20 @@ export function buildImportIndex(analyses: FileAnalysis[]): ImportIndex {
   };
 }
 
-function resolveImportSource(importingFile: string, src: string, knownFiles: Set<string>): string | null {
+/**
+ * Resolve a relative/absolute module specifier (as written in source) to a
+ * concrete project file path, trying the common JS/TS/Vue extension and
+ * index-file conventions. Returns null for bare package specifiers or when no
+ * known file matches. Exported so consumers outside the import index (e.g. the
+ * screen builder following a route's lazy component) can reuse it.
+ */
+export function resolveImportSource(importingFile: string, src: string, knownFiles: Set<string>): string | null {
   if (!src || (!src.startsWith(".") && !src.startsWith("/"))) return null;
   const norm = importingFile.replace(/\\/g, "/");
   const dir = norm.includes("/") ? norm.slice(0, norm.lastIndexOf("/")) : "";
   const joined = normalizeJoin(dir, src);
-  const exts = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".d.ts",
-                "/index.ts", "/index.tsx", "/index.js", "/index.jsx"];
+  const exts = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".d.ts", ".vue",
+                "/index.ts", "/index.tsx", "/index.js", "/index.jsx", "/index.vue"];
   for (const ext of exts) {
     const candidate = joined + ext;
     if (knownFiles.has(candidate)) return candidate;

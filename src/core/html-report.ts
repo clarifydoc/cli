@@ -90,7 +90,14 @@ function renderReport(summary: ProjectAnalysis): string {
     interactiveElements: (summary as any).interactiveElements ?? [],
     linkGraph: (summary as any).linkGraph ?? [],
     screens: (summary as any).screens ?? [],
+    componentUsage: ((summary as any).componentUsage ?? []).map((c: any) => ({
+      name: c.name,
+      target: c.importSource ?? null,
+      filePath: c.filePath,
+      line: c.line,
+    })),
     symbolLinks: (summary as any).symbolLinks ?? [],
+    componentLaunches: (summary as any).componentLaunches ?? [],
     subProjects: (summary as any).subProjects ?? [{ id: "root", name: "(root)", root: "", kind: "root", markers: [] }],
     fileProjects: (summary as any).fileProjects ?? {},
     routeMap: summary.routeMap.map((r: any) => ({
@@ -141,8 +148,7 @@ ${renderCss()}
 ${renderHeader(payload)}
 ${renderGlobalFilterBar()}
 ${renderNav(payload)}
-${renderScreensView()}
-${renderInteractiveView()}
+${renderUiView()}
 ${renderTracesView()}
 ${renderLinksView()}
 ${renderRoutesView()}
@@ -212,8 +218,22 @@ a{color:#58a6ff;text-decoration:none}
 
 /* File cards */
 .file-card{background:#161b22;border:1px solid #30363d;border-radius:8px;margin-bottom:12px;overflow:hidden}
-.file-card-header{padding:10px 14px;background:#1c2128;border-bottom:1px solid #30363d;font-size:13px;font-weight:600;color:#e6edf3;display:flex;justify-content:space-between;align-items:center}
+.file-card-header{padding:10px 14px;background:#1c2128;border-bottom:1px solid #30363d;font-size:13px;font-weight:600;color:#e6edf3;display:flex;flex-direction:column;gap:6px}
+.file-card-head-main{display:flex;justify-content:space-between;align-items:center}
 .file-card-count{font-size:11px;color:#8b949e;font-weight:400}
+.el-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-weight:400;font-size:11px}
+.el-route{display:inline-flex;align-items:center;gap:3px;background:#1f6feb22;color:#58a6ff;border:1px solid #1f6feb44;border-radius:4px;padding:1px 7px;font-family:monospace;cursor:pointer}
+.el-route:hover{background:#1f6feb33}
+.el-comp-label{color:#8b949e}
+.el-comp,.el-comp-link{display:inline-block;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:1px 7px;font-family:monospace}
+.el-comp-link{color:#79c0ff;cursor:pointer;border-color:#30363d;text-decoration:none}
+.el-comp-link:hover{background:#1f6feb22;border-color:#1f6feb44}
+.el-group{margin-bottom:24px}
+.el-group-header{display:flex;align-items:baseline;gap:10px;padding:4px 2px 10px;border-bottom:1px solid #21262d;margin-bottom:14px}
+.el-group-title{font-size:14px;font-weight:700;color:#e6edf3}
+.el-group-sub{font-size:11px;color:#8b949e}
+.el-group-count{margin-left:auto;font-size:11px;color:#8b949e}
+.el-group-empty{font-size:12px;color:#484f58;padding:0 2px 4px}
 .el-row{display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid #21262d;font-size:13px}
 .el-row:last-child{border-bottom:none}
 .el-row:hover{background:#1c2128}
@@ -233,11 +253,41 @@ a{color:#58a6ff;text-decoration:none}
 .el-handler{color:#79c0ff;font-family:monospace;font-size:12px;flex:1}
 .el-line{color:#8b949e;font-size:11px;min-width:50px;text-align:right}
 
-/* Traces — call map layout */
-.trace-layout{display:flex;gap:0;min-height:600px;border:1px solid #30363d;border-radius:8px;overflow:hidden;background:#0d1117}
+/* Traces — call map layout. Height is viewport-bound so the two panes scroll
+   independently instead of growing the page with the symbol list. */
+.trace-layout{display:flex;gap:0;height:calc(100vh - 250px);min-height:420px;border:1px solid #30363d;border-radius:8px;overflow:hidden;background:#0d1117}
 .trace-list-pane{width:320px;flex-shrink:0;border-right:1px solid #30363d;background:#161b22;display:flex;flex-direction:column;overflow:hidden}
 .trace-map-pane{flex:1;overflow-y:auto;padding:16px}
 #trace-symbol-list{overflow-y:auto;flex:1}
+
+/* Traces — call map header + view toggle */
+.trace-map-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}
+.trace-view-toggle{display:flex;gap:4px;flex-shrink:0}
+
+/* Traces — double-tree call diagram */
+#trace-tree-host{position:relative;width:100%;height:calc(100vh - 360px);min-height:340px;background:#0d1117;border:1px solid #21262d;border-radius:6px;overflow:hidden}
+#trace-tree-host svg{width:100%;height:100%;display:block;cursor:grab}
+#trace-tree-host svg:active{cursor:grabbing}
+.ct-link{fill:none;stroke:#6e7681;stroke-width:1.5;stroke-opacity:0.65}
+.ct-node{cursor:pointer}
+.ct-node text{font-family:monospace;font-size:11px;pointer-events:none}
+.ct-node rect{rx:5;ry:5;stroke-width:1.5}
+/* internal nodes carry the side color (blue callers / orange callees); leaf
+   endpoints are light; the selected root is purple — mirrors the double-tree. */
+.ct-node.inbound rect{fill:#3b6fb0;stroke:#79b8ff}
+.ct-node.inbound text{fill:#fff}
+.ct-node.outbound rect{fill:#c4801f;stroke:#f0b860}
+.ct-node.outbound text{fill:#fff}
+.ct-node.leaf rect{fill:#e6edf3;stroke:#8b949e}
+.ct-node.leaf text{fill:#1c2128}
+.ct-node.center rect{fill:#a371f7;stroke:#d2b8ff;stroke-width:2}
+.ct-node.center text{fill:#fff;font-weight:600}
+.ct-node.more rect{fill:#161b22;stroke:#30363d;stroke-dasharray:3 2}
+.ct-node.more text{fill:#8b949e;font-style:italic}
+.ct-tree-empty{display:flex;align-items:center;justify-content:center;height:100%;color:#8b949e;font-size:13px}
+.ct-legend{position:absolute;left:10px;bottom:8px;font-size:11px;color:#8b949e;display:flex;gap:14px;pointer-events:none}
+.ct-legend span{display:inline-flex;align-items:center;gap:5px}
+.ct-legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
 
 /* Symbol list items */
 .trace-sym-group{border-bottom:1px solid #21262d}
@@ -288,6 +338,8 @@ a{color:#58a6ff;text-decoration:none}
 .legend-item{display:flex;align-items:center;gap:5px}
 .legend-dot{width:10px;height:10px;border-radius:3px;flex-shrink:0}
 #d3-detail-panel{margin-top:10px;font-size:13px;color:#8b949e;min-height:20px}
+.arch-trace-link{color:#79c0ff;font-family:monospace;cursor:pointer;border-bottom:1px dotted #79c0ff66;margin-right:2px}
+.arch-trace-link:hover{color:#a5d6ff;border-bottom-color:#a5d6ff}
 .d3-tooltip{position:fixed;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px 14px;pointer-events:none;z-index:1000;max-width:280px;font-size:12px;box-shadow:0 8px 24px rgba(0,0,0,0.4)}
 .d3-tooltip .tt-name{font-weight:600;color:#f0f6fc;font-family:monospace;font-size:13px;margin-bottom:6px}
 .d3-tooltip .tt-row{display:flex;justify-content:space-between;gap:16px;padding:1px 0;color:#8b949e}
@@ -353,6 +405,25 @@ a{color:#58a6ff;text-decoration:none}
 .penalty-row{display:flex;justify-content:space-between;padding:8px 14px;border-bottom:1px solid #21262d;font-size:13px}
 .penalty-row:hover{background:#1c2128}
 .penalty-pts{color:#f85149;font-weight:600;font-family:monospace}
+
+/* Screens & UI (master-detail) */
+.ui-layout{display:flex;gap:0;min-height:600px;border:1px solid #30363d;border-radius:8px;overflow:hidden;background:#0d1117}
+.ui-list-pane{width:320px;flex-shrink:0;border-right:1px solid #30363d;background:#161b22;display:flex;flex-direction:column;overflow:hidden}
+.ui-list-pane #ui-list{overflow-y:auto;flex:1}
+.ui-detail-pane{flex:1;overflow-y:auto;padding:16px;min-width:0}
+.ui-list-group{padding:8px 12px 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#8b949e;background:#0d1117;border-bottom:1px solid #21262d;position:sticky;top:0;z-index:1;display:flex;justify-content:space-between;align-items:center}
+.ui-list-group span{font-weight:400;color:#484f58}
+.ui-item{padding:8px 12px;border-bottom:1px solid #21262d;cursor:pointer;transition:background 0.1s}
+.ui-item:hover{background:#1c2128}
+.ui-item.selected{background:#1f6feb22;border-left:3px solid #58a6ff;padding-left:9px}
+.ui-item-title{font-size:13px;color:#e6edf3;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ui-item-sub{font-size:11px;color:#8b949e;margin-top:2px;display:flex;flex-wrap:wrap;gap:8px}
+.ui-detail-head{display:flex;flex-direction:column;gap:8px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #21262d}
+.ui-detail-title{font-size:18px;font-weight:700;color:#e6edf3}
+.ui-detail-pills{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:11px}
+.ui-file{font-family:monospace;color:#8b949e}
+.ui-section-label{font-size:12px;font-weight:700;color:#e6edf3;margin:18px 0 8px;padding-bottom:6px;border-bottom:1px solid #21262d}
+.ui-elements .el-row{border-bottom:1px solid #161b22}
 
 /* Blast Radius */
 .blast-layout{display:flex;gap:0;min-height:600px;border:1px solid #30363d;border-radius:8px;overflow:hidden;background:#0d1117}
@@ -608,8 +679,7 @@ function renderGlobalFilterBar(): string {
  */
 function renderNav(payload: Record<string, unknown>): string {
   const tabs: { view: string; label: string; hasData: boolean }[] = [
-    { view: "screens",     label: "Screens",              hasData: nonEmptyArray(payload.screens) },
-    { view: "interactive", label: "Interactive Elements", hasData: nonEmptyArray(payload.interactiveElements) },
+    { view: "ui",          label: "Screens & UI",         hasData: nonEmptyArray(payload.screens) || nonEmptyArray(payload.interactiveElements) },
     { view: "traces",      label: "Call Traces",          hasData: nonEmptyArray(payload.symbolLinks) },
     { view: "links",       label: "Architecture",         hasData: nonEmptyObject(payload.componentGraph) || nonEmptyArray(payload.linkGraph) },
     { view: "routes",      label: "Routes",               hasData: nonEmptyArray(payload.routeMap) || nonEmptyArray(payload.apiCalls) },
@@ -637,41 +707,30 @@ function nonEmptyObject(v: unknown): boolean {
   return !!v && typeof v === "object" && !Array.isArray(v) && Object.keys(v as object).length > 0;
 }
 
-// ─── Screens View ────────────────────────────────────────────────────────
+// ─── Screens & UI View ───────────────────────────────────────────────────
+// Master-detail combining the former "Screens" and "Interactive Elements"
+// tabs: a single left list (grouped Pages / Components) drives a right-hand
+// detail pane that shows the screen's component tree + wireframe and the
+// file's interactive elements together.
 
-function renderScreensView(): string {
-  return `<section id="view-screens" class="view">
-  <div class="filter-bar">
-    <select id="screen-filter-cat">
-      <option value="">All categories</option>
-      <option value="container">Container</option>
-      <option value="input">Input</option>
-      <option value="display">Display</option>
-      <option value="data">Data</option>
-      <option value="action">Action</option>
-      <option value="navigation">Navigation</option>
-    </select>
-    <input id="screen-filter-search" type="search" placeholder="Search components, types, captions..." />
+function renderUiView(): string {
+  return `<section id="view-ui" class="view">
+  <div class="ui-layout">
+    <div class="ui-list-pane">
+      <div class="filter-bar" style="padding:8px;margin-bottom:0">
+        <select id="ui-filter-group" style="width:42%">
+          <option value="">All</option>
+          <option value="page">Pages</option>
+          <option value="component">Components</option>
+        </select>
+        <input id="ui-filter-search" type="search" placeholder="Search pages, components, handlers..." style="flex:1" />
+      </div>
+      <div id="ui-list"></div>
+    </div>
+    <div class="ui-detail-pane">
+      <div id="ui-detail"><div class="empty">Select a page or component</div></div>
+    </div>
   </div>
-  <div id="screen-grid"></div>
-</section>`;
-}
-
-// ─── Interactive Elements View ───────────────────────────────────────────
-
-function renderInteractiveView(): string {
-  return `<section id="view-interactive" class="view">
-  <div class="filter-bar">
-    <select id="filter-type"><option value="">All types</option>
-      <option value="button">Button</option><option value="input">Input</option>
-      <option value="form">Form</option><option value="link">Link</option>
-      <option value="select">Select</option><option value="textarea">Textarea</option>
-      <option value="custom">Custom</option>
-    </select>
-    <select id="filter-event"><option value="">All events</option></select>
-    <input id="filter-search" type="search" placeholder="Search handlers or files..." />
-  </div>
-  <div id="element-grid"></div>
 </section>`;
 }
 
@@ -876,6 +935,10 @@ function requestRender(view) {
   }
 }
 
+// When true, activateTab() will NOT push to location.hash. Set while reacting
+// to a hashchange / load so reading the URL doesn't immediately re-write it.
+let suppressHashSync = false;
+
 function activateTab(view) {
   document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
@@ -888,6 +951,12 @@ function activateTab(view) {
     lazyRenderers[view]();
   }
   if (view === 'links') rebuildLinkGraph();
+  // Reflect the active tab in the URL so it's bookmarkable and Back/Forward
+  // work. Only push when the tab actually changed to avoid duplicate history
+  // entries from re-clicking the current tab.
+  if (!suppressHashSync && viewEl && location.hash.slice(1) !== view) {
+    history.pushState(null, '', '#' + view);
+  }
 }
 
 document.querySelectorAll('.nav button').forEach(btn => {
@@ -1025,8 +1094,7 @@ function updateFilterCount() {
 /** Re-invoke every tab's renderer so filters propagate. */
 function refreshAllViews() {
   // Each converted render is registered here; missing renderers are silently skipped.
-  try { renderScreens(); } catch (e) { console.warn('renderScreens failed', e); }
-  try { renderElements(); } catch (e) { console.warn('renderElements failed', e); }
+  try { renderUi(); } catch (e) { console.warn('renderUi failed', e); }
   try { renderRoutes(); } catch (e) { console.warn('renderRoutes failed', e); }
   try { renderSummary(); } catch (e) { console.warn('renderSummary failed', e); }
   try { requestRender('traces'); } catch (e) { console.warn('renderTraces failed', e); }
@@ -1043,6 +1111,7 @@ function refreshAllViews() {
 }
 
 let archMode = 'files'; // 'files' | 'types' | 'data-access'
+let traceViewMode = 'tree'; // Call Traces right pane: 'tree' (double-tree diagram) | 'list'
 function rebuildLinkGraph() {
   const container = document.getElementById('d3-graph-container');
   if (!container) return;
@@ -1375,67 +1444,29 @@ function renderScreenDetail(c, screenIdx) {
   return html;
 }
 
-function renderScreens() {
-  const grid = document.getElementById('screen-grid');
-  if (!grid) return;
+// Build the component-tree + wireframe/nav-flow body for a single screen.
+// Wrapped in .screen-card (keeping the original DATA.screens index) so
+// selectComponent() and the #detail-<idx> panel wiring keep working inside the
+// master-detail pane.
+function buildScreenBody(screen, idx) {
+  let html = '<div class="screen-card" data-screen-card="' + idx + '" id="screen-' + idx + '">';
+  html += '<div class="screen-body">';
+  html += '<div class="screen-tree-pane">' + renderComponentTree(screen.components, 0, idx) + '</div>';
 
-  if (!DATA.screens || DATA.screens.length === 0) {
-    grid.innerHTML = '<div class="empty">No screens / forms found</div>';
-    return;
+  // Use wireframe for Delphi (has dimensions), navigation flow for web
+  const wireframe = renderWireframe(screen, idx);
+  const navFlow = renderNavFlow(screen, idx);
+  if (wireframe) {
+    html += '<div class="screen-wireframe-pane">' + wireframe + '</div>';
+  } else if (navFlow) {
+    html += '<div class="screen-wireframe-pane">' + navFlow + '</div>';
   }
 
-  const visibleCount = DATA.screens.filter(s => isFileVisible(s.filePath)).length;
-  if (visibleCount === 0) {
-    grid.innerHTML = '<div class="empty">No screens match the active filters</div>';
-    return;
-  }
-
-  // Keep original indices so selectComponent() / DATA.screens[idx] lookups still work.
-  grid.innerHTML = DATA.screens.map((screen, idx) => {
-    if (!isFileVisible(screen.filePath)) return '';
-    const allComps = flattenComponents(screen.components);
-    const interactiveCount = allComps.filter(c => c.events && c.events.length > 0).length;
-    const isEntry = screen.routePath === '/' || screen.routePath === '/login' || screen.routePath === '/LoginPage';
-    const hasRoute = !!screen.routePath;
-
-    let html = '<div class="screen-card" data-screen-card="' + idx + '" id="screen-' + idx + '">';
-    html += '<div class="screen-header">';
-    if (isEntry) html += '<span class="pill" style="background:#d2992233;color:#d29922;border:1px solid #d2992244;font-size:11px;margin-right:4px">\\u2B50 Entry</span>';
-    html += '<span class="screen-title">' + esc(screen.caption || screen.name) + '</span>';
-    html += '<span class="screen-type">' + esc(screen.formType) + '</span>';
-    if (screen.caption && screen.caption !== screen.name) html += '<span style="color:#484f58;font-size:12px">' + esc(screen.name) + '</span>';
-    if (hasRoute) html += '<span class="pill" style="background:#1f6feb22;color:#58a6ff;border:1px solid #1f6feb44;font-size:11px;margin-left:4px">' + esc(screen.routePath) + '</span>';
-    html += '<div style="flex:1"></div>';
-    if (screen.dimensions) html += '<span class="screen-dims">' + screen.dimensions.width + ' \\u00D7 ' + screen.dimensions.height + '</span>';
-    html += '<span style="font-size:11px;color:#8b949e;margin-left:8px">' + allComps.length + ' components, ' + interactiveCount + ' interactive</span>';
-    if (screen.navigatesTo && screen.navigatesTo.length > 0) {
-      html += '<span style="font-size:11px;color:#3fb950;margin-left:8px">\\u2192 ' + screen.navigatesTo.length + ' screens</span>';
-    }
-    html += '</div>';
-
-    html += '<div class="screen-body">';
-    html += '<div class="screen-tree-pane">' + renderComponentTree(screen.components, 0, idx) + '</div>';
-
-    // Use wireframe for Delphi (has dimensions), navigation flow for web
-    const wireframe = renderWireframe(screen, idx);
-    const navFlow = renderNavFlow(screen, idx);
-    if (wireframe) {
-      html += '<div class="screen-wireframe-pane">' + wireframe + '</div>';
-    } else if (navFlow) {
-      html += '<div class="screen-wireframe-pane">' + navFlow + '</div>';
-    }
-
-    html += '</div>';
-
-    // Detail panel (shows when clicking a component)
-    html += '<div class="screen-detail" id="detail-' + idx + '"></div>';
-
-    html += '</div>';
-    return html;
-  }).join('');
-
-  // Wire up interactions
-  wireUpScreenInteractions();
+  html += '</div>';
+  // Detail panel (shows when clicking a component)
+  html += '<div class="screen-detail" id="detail-' + idx + '"></div>';
+  html += '</div>';
+  return html;
 }
 
 function wireUpScreenInteractions() {
@@ -1513,22 +1544,6 @@ function selectComponent(compName, screenIdx, source) {
   }
 }
 
-// Filters
-function applyScreenFilters() {
-  const catF = document.getElementById('screen-filter-cat').value;
-  const searchF = document.getElementById('screen-filter-search').value.toLowerCase();
-  document.querySelectorAll('.tree-node').forEach(node => {
-    let show = true;
-    if (catF && node.dataset.cat !== catF) show = false;
-    if (searchF && !node.dataset.search.includes(searchF)) show = false;
-    node.classList.toggle('hidden', !show);
-  });
-}
-
-document.getElementById('screen-filter-cat').addEventListener('change', applyScreenFilters);
-document.getElementById('screen-filter-search').addEventListener('input', applyScreenFilters);
-
-renderScreens();
 
 // ─── Interactive Elements ──────────────────────────────────────────────
 const BADGE_MAP = {
@@ -1541,107 +1556,328 @@ const BADGE_MAP = {
   custom: { cls: 'el-custom', letter: 'C' },
 };
 
-// Populate event filter
-const events = [...new Set(DATA.interactiveElements.map(e => e.event))].sort();
-const eventSel = document.getElementById('filter-event');
-events.forEach(ev => { const o = document.createElement('option'); o.value = ev; o.textContent = ev; eventSel.appendChild(o); });
+// ── Per-file route + component usage ────────────────────────────────────
+// Route comes from the screen model (the route that renders a file). Component
+// usage comes from per-file componentUsage (every analyzed file, not just
+// route-mapped screens), so module components like main.vue still list what
+// they mount.
+const elemRouteByFile = {};
+(DATA.screens || []).forEach(sc => {
+  if (sc.filePath && sc.routePath && !elemRouteByFile[sc.filePath]) {
+    elemRouteByFile[sc.filePath] = sc.routePath;
+  }
+});
 
-function renderElements() {
-  const typeF = document.getElementById('filter-type').value;
-  const eventF = document.getElementById('filter-event').value;
-  const searchF = document.getElementById('filter-search').value.toLowerCase();
+const elemComponentsByFile = {};
+(DATA.componentUsage || []).forEach(c => {
+  // Keep PascalCase components imported from a path; drop native elements and
+  // globally/library-registered tags (QTabs, ISTLayoutCard) that have no source.
+  const isLocalish = c.target && (c.target.startsWith('.') || c.target.includes('/'));
+  if (!/^[A-Z]/.test(c.name) || !isLocalish) return;
+  const list = (elemComponentsByFile[c.filePath] = elemComponentsByFile[c.filePath] || []);
+  if (!list.some(s => s.name === c.name)) list.push({ name: c.name, type: c.target });
+});
 
-  let els = DATA.interactiveElements.filter(e => isFileVisible(e.filePath));
-  if (typeF) els = els.filter(e => e.element === typeF);
-  if (eventF) els = els.filter(e => e.event === eventF);
-  if (searchF) els = els.filter(e =>
-    (e.handler || '').toLowerCase().includes(searchF) ||
-    (e.filePath || '').toLowerCase().includes(searchF)
+// Resolve a component import ("../components/UserCard", "@/components/X.vue") to
+// a project file — strips relative/alias prefixes and the file extension.
+const elemFilesStripped = (DATA.files || []).map(f => ({ f, s: f.replace(/\\.[^./]+$/, '') }));
+function resolveComponentFile(type) {
+  if (!type) return null;
+  const cand = type
+    .replace(/^(\\.\\.?\\/)+/, '')   // ./  ../
+    .replace(/^[@~][^/]*\\//, '')    // @/  ~/  @app/  path-alias roots
+    .replace(/\\.[^./]+$/, '');      // extension
+  if (!cand) return null;
+  const hit = elemFilesStripped.find(x => x.s === cand || x.s.endsWith('/' + cand) || x.s.endsWith(cand));
+  return hit ? hit.f : null;
+}
+
+// Reverse of elemComponentsByFile: a component's file → the files that mount it.
+// Lets the Components group show where each sub-component is consumed.
+const elemUsedByFile = {};
+Object.entries(elemComponentsByFile).forEach(([host, comps]) => {
+  comps.forEach(c => {
+    const cf = resolveComponentFile(c.type);
+    if (!cf || cf === host) return;
+    const list = (elemUsedByFile[cf] = elemUsedByFile[cf] || []);
+    if (!list.includes(host)) list.push(host);
+  });
+});
+
+// Dynamic-import "opens component" relationships (dialogs, lazy components).
+// opensByFile[file]   → components that file launches (directly or via a barrel)
+// openedByFile[comp]  → files that launch that component
+// These surface dialogs that never appear as template tags, so a screen links to
+// the dialog SFC it opens and the dialog lists the screens that open it.
+const opensByFile = {};
+const openedByFile = {};
+(DATA.componentLaunches || []).forEach(l => {
+  const opens = (opensByFile[l.sourceFile] = opensByFile[l.sourceFile] || []);
+  if (!opens.some(o => o.file === l.targetFile)) opens.push({ file: l.targetFile, via: l.launcher });
+  const opened = (openedByFile[l.targetFile] = openedByFile[l.targetFile] || []);
+  if (!opened.some(o => o.file === l.sourceFile)) opened.push({ file: l.sourceFile, via: l.launcher });
+});
+
+// Last path segment, for compact "used by" pills.
+function elemBaseName(fp) {
+  const norm = String(fp).replace(/\\\\/g, '/');
+  const i = norm.lastIndexOf('/');
+  return i >= 0 ? norm.slice(i + 1) : norm;
+}
+
+// Handler name → trace symbol key, for linking interactive handlers to traces.
+function findHandlerSymbolKey(handlerName, filePath) {
+  if (!handlerName || !DATA.symbolLinks) return null;
+  // Strip function call syntax: "handleDeleteUser(user.id)" → "handleDeleteUser"
+  const clean = handlerName.replace(/\\(.*$/, '').trim();
+  if (!clean) return null;
+  // Candidate files: exact + companions (Delphi .dfm events → .pas handlers).
+  const candidateFiles = [filePath];
+  if (filePath.endsWith('.dfm')) candidateFiles.push(filePath.replace(/\\.dfm$/, '.pas'));
+  if (filePath.endsWith('.pas')) candidateFiles.push(filePath.replace(/\\.pas$/, '.dfm'));
+  function matchesSymbol(sym) { return sym === clean || sym.endsWith('.' + clean); }
+  for (const fp of candidateFiles) {
+    const match = DATA.symbolLinks.find(l => l.sourceFile === fp && matchesSymbol(l.sourceSymbol))
+      || DATA.symbolLinks.find(l => l.targetFile === fp && matchesSymbol(l.targetSymbol));
+    if (match) {
+      if (matchesSymbol(match.sourceSymbol)) return match.sourceFile + '::' + match.sourceSymbol;
+      return match.targetFile + '::' + match.targetSymbol;
+    }
+  }
+  return null;
+}
+
+// Interactive-element rows for one file, reused inside the detail pane.
+function buildElementRows(file, items) {
+  return items.map(e => {
+    const b = BADGE_MAP[e.element] || BADGE_MAP.custom;
+    const symKey = e.handler ? findHandlerSymbolKey(e.handler, file) : null;
+    const handlerHtml = e.handler
+      ? (symKey
+        ? '<span class="trace-link" data-sym-key="' + esc(symKey) + '" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted">' + esc(e.handler) + '</span> <span style="font-size:10px;color:#58a6ff" title="View call traces">\\u2197</span>'
+        : esc(e.handler))
+      : '<span style="color:#484f58">inline</span>';
+    return '<div class="el-row">' +
+      '<div class="el-badge ' + b.cls + '">' + b.letter + '</div>' +
+      '<div class="el-type">' + e.element + '</div>' +
+      '<div class="el-event">' + esc(e.event) + '</div>' +
+      '<div class="el-handler">' + handlerHtml + '</div>' +
+      '<div class="el-line">:' + e.line + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+// ─── Combined Screens & UI (master-detail) ──────────────────────────────
+// One entry per file — a routed screen, a file with interactive elements, or a
+// file mounted as a sub-component. Entries are grouped Pages vs Components in
+// the left list; the right pane shows the screen body + interactive elements.
+let uiEntryMap = {};
+let uiSelectedFile = null;
+
+function buildUiEntries() {
+  const map = {};
+  function ensure(file) {
+    if (!map[file]) map[file] = { file: file, screen: null, screenIdx: -1, elements: [] };
+    return map[file];
+  }
+  (DATA.screens || []).forEach((s, idx) => {
+    if (!s.filePath) return;
+    const e = ensure(s.filePath);
+    if (!e.screen) { e.screen = s; e.screenIdx = idx; }
+  });
+  (DATA.interactiveElements || []).forEach(el => {
+    if (el.filePath) ensure(el.filePath).elements.push(el);
+  });
+  // Files mounted as sub-components but with no screen/elements of their own
+  // still get an entry so they're reachable from a "used by" link.
+  Object.keys(elemUsedByFile).forEach(f => ensure(f));
+  // Same for dialogs/lazy components reachable only via dynamic-import "opens"
+  // edges (they're never template tags), and the files that open them.
+  Object.keys(opensByFile).forEach(f => ensure(f));
+  Object.keys(openedByFile).forEach(f => ensure(f));
+  Object.values(map).forEach(e => {
+    e.route = (e.screen && e.screen.routePath) || elemRouteByFile[e.file] || '';
+    e.isPage = !!e.route;
+    e.title = (e.screen && (e.screen.caption || e.screen.name)) || elemBaseName(e.file);
+    e.comps = e.screen ? flattenComponents(e.screen.components) : [];
+    e.interactiveCount = e.elements.length ||
+      e.comps.filter(c => c.events && c.events.length > 0).length;
+  });
+  return map;
+}
+
+function uiItemHtml(e) {
+  const sub = [];
+  if (e.route) sub.push('<span style="color:#58a6ff;font-family:monospace">' + esc(e.route) + '</span>');
+  if (e.screen) sub.push(e.comps.length + ' comp');
+  if (e.interactiveCount) sub.push(e.interactiveCount + ' interactive');
+  const used = (elemUsedByFile[e.file] || []).length;
+  if (!e.screen && used) sub.push('used by ' + used);
+  const sel = e.file === uiSelectedFile ? ' selected' : '';
+  return '<div class="ui-item' + sel + '" data-file="' + esc(e.file) + '">' +
+    '<div class="ui-item-title" title="' + esc(e.file) + '">' + esc(e.title) + '</div>' +
+    '<div class="ui-item-sub">' + sub.join('') + '</div>' +
+  '</div>';
+}
+
+function renderUiList() {
+  const listEl = document.getElementById('ui-list');
+  if (!listEl) return;
+  const groupF = document.getElementById('ui-filter-group').value;
+  const searchF = document.getElementById('ui-filter-search').value.toLowerCase();
+
+  let entries = Object.values(uiEntryMap).filter(e => isFileVisible(e.file));
+  if (groupF === 'page') entries = entries.filter(e => e.isPage);
+  else if (groupF === 'component') entries = entries.filter(e => !e.isPage);
+  if (searchF) entries = entries.filter(e =>
+    e.file.toLowerCase().includes(searchF) ||
+    e.title.toLowerCase().includes(searchF) ||
+    e.elements.some(el => (el.handler || '').toLowerCase().includes(searchF))
   );
 
-  // Group by file
-  const byFile = {};
-  els.forEach(e => { (byFile[e.filePath] = byFile[e.filePath] || []).push(e); });
+  const pages = entries.filter(e => e.isPage).sort((a, b) => a.title.localeCompare(b.title));
+  const comps = entries.filter(e => !e.isPage).sort((a, b) => a.title.localeCompare(b.title));
 
-  const grid = document.getElementById('element-grid');
-  if (Object.keys(byFile).length === 0) {
-    grid.innerHTML = '<div class="empty">No interactive elements found</div>';
-    return;
+  function section(title, arr) {
+    if (!arr.length) return '';
+    return '<div class="ui-list-group">' + title + '<span>' + arr.length + '</span></div>' +
+      arr.map(uiItemHtml).join('');
   }
+  listEl.innerHTML = (section('Pages', pages) + section('Components', comps)) ||
+    '<div class="empty">No matches</div>';
 
-  // Build a lookup of handler names → symbol keys for trace linking
-  function findHandlerSymbolKey(handlerName, filePath) {
-    if (!handlerName || !DATA.symbolLinks) return null;
-    // Strip function call syntax: "handleDeleteUser(user.id)" → "handleDeleteUser"
-    const clean = handlerName.replace(/\\(.*$/, '').trim();
-    if (!clean) return null;
+  listEl.querySelectorAll('.ui-item').forEach(it => {
+    it.addEventListener('click', () => selectUiFile(it.dataset.file));
+  });
+}
 
-    // Build candidate file paths: exact match + companion files
-    // (Delphi: .dfm events reference .pas handlers)
-    const candidateFiles = [filePath];
-    if (filePath.endsWith('.dfm')) candidateFiles.push(filePath.replace(/\\.dfm$/, '.pas'));
-    if (filePath.endsWith('.pas')) candidateFiles.push(filePath.replace(/\\.pas$/, '.dfm'));
-
-    function matchesSymbol(sym) {
-      return sym === clean || sym.endsWith('.' + clean);
-    }
-
-    // Find a symbol link where the source/target symbol matches the handler name
-    for (const fp of candidateFiles) {
-      const match = DATA.symbolLinks.find(l =>
-        l.sourceFile === fp && matchesSymbol(l.sourceSymbol)
-      ) || DATA.symbolLinks.find(l =>
-        l.targetFile === fp && matchesSymbol(l.targetSymbol)
-      );
-      if (match) {
-        if (matchesSymbol(match.sourceSymbol)) {
-          return match.sourceFile + '::' + match.sourceSymbol;
-        }
-        return match.targetFile + '::' + match.targetSymbol;
-      }
-    }
-    return null;
-  }
-
-  grid.innerHTML = Object.entries(byFile).map(([file, items]) => {
-    const rows = items.map(e => {
-      const b = BADGE_MAP[e.element] || BADGE_MAP.custom;
-      const symKey = e.handler ? findHandlerSymbolKey(e.handler, file) : null;
-      const handlerHtml = e.handler
-        ? (symKey
-          ? '<span class="trace-link" data-sym-key="' + esc(symKey) + '" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted">' + esc(e.handler) + '</span> <span style="font-size:10px;color:#58a6ff" title="View call traces">\\u2197</span>'
-          : esc(e.handler))
-        : '<span style="color:#484f58">inline</span>';
-      return '<div class="el-row">' +
-        '<div class="el-badge ' + b.cls + '">' + b.letter + '</div>' +
-        '<div class="el-type">' + e.element + '</div>' +
-        '<div class="el-event">' + esc(e.event) + '</div>' +
-        '<div class="el-handler">' + handlerHtml + '</div>' +
-        '<div class="el-line">:' + e.line + '</div>' +
-      '</div>';
-    }).join('');
-    return '<div class="file-card">' +
-      '<div class="file-card-header"><span>' + esc(file) + '</span><span class="file-card-count">' + items.length + ' elements</span></div>' +
-      rows + '</div>';
-  }).join('');
-
-  // Wire up handler → traces navigation
-  grid.querySelectorAll('.trace-link').forEach(el => {
+function wireUpUiLinks(scope) {
+  scope.querySelectorAll('.el-route').forEach(el => {
+    el.addEventListener('click', () => activateTab('routes'));
+  });
+  scope.querySelectorAll('.el-comp-link').forEach(el => {
+    el.addEventListener('click', () => {
+      if (uiEntryMap[el.dataset.file]) selectUiFile(el.dataset.file);
+    });
+  });
+  scope.querySelectorAll('.trace-link').forEach(el => {
     el.addEventListener('click', (evt) => {
       evt.stopPropagation();
       const key = el.dataset.symKey;
       activateTab('traces');
       if (window.selectSymbol) window.selectSymbol(key);
-      const listItem = document.querySelector('.trace-sym-item[data-sym-key="' + CSS.escape(key) + '"]');
-      if (listItem) listItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      const li = document.querySelector('.trace-sym-item[data-sym-key="' + CSS.escape(key) + '"]');
+      if (li) li.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  });
+  // Nav-flow targets select that screen's entry instead of scrolling.
+  scope.querySelectorAll('.nav-target').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = el.dataset.targetScreen;
+      const s = (idx != null && idx !== '-1') ? DATA.screens[idx] : null;
+      if (s && s.filePath && uiEntryMap[s.filePath]) selectUiFile(s.filePath);
     });
   });
 }
 
-document.getElementById('filter-type').addEventListener('change', renderElements);
-document.getElementById('filter-event').addEventListener('change', renderElements);
-document.getElementById('filter-search').addEventListener('input', renderElements);
-renderElements();
+function renderUiDetail(file) {
+  const detail = document.getElementById('ui-detail');
+  if (!detail) return;
+  const e = uiEntryMap[file];
+  if (!e) { detail.innerHTML = '<div class="empty">Select a page or component</div>'; return; }
+
+  const pills = [];
+  if (e.route) pills.push('<span class="el-route" title="Go to route">\\u2197 ' + esc(e.route) + '</span>');
+  if (e.screen && e.screen.formType) pills.push('<span class="screen-type">' + esc(e.screen.formType) + '</span>');
+  if (e.screen) pills.push('<span>' + e.comps.length + ' components</span>');
+  if (e.interactiveCount) pills.push('<span>' + e.interactiveCount + ' interactive</span>');
+  pills.push('<span class="ui-file">' + esc(e.file) + '</span>');
+
+  // uses / used-by component relationships
+  const meta = [];
+  const comps = elemComponentsByFile[e.file] || [];
+  if (comps.length) {
+    meta.push('<span class="el-comp-label">uses:</span> ' + comps.map(c => {
+      const cf = resolveComponentFile(c.type);
+      return cf
+        ? '<span class="el-comp-link" data-file="' + esc(cf) + '" title="' + esc(cf) + '">' + esc(c.name) + '</span>'
+        : '<span class="el-comp" title="' + esc(c.type) + '">' + esc(c.name) + '</span>';
+    }).join(' '));
+  }
+  const usedBy = elemUsedByFile[e.file] || [];
+  if (usedBy.length) {
+    meta.push('<span class="el-comp-label">used by:</span> ' + usedBy.map(uf =>
+      '<span class="el-comp-link" data-file="' + esc(uf) + '" title="' + esc(uf) + '">' + esc(elemBaseName(uf)) + '</span>'
+    ).join(' '));
+  }
+  // Dialogs / lazy components launched via dynamic import (never template tags).
+  const opens = opensByFile[e.file] || [];
+  if (opens.length) {
+    meta.push('<span class="el-comp-label">opens:</span> ' + opens.map(o =>
+      '<span class="el-comp-link" data-file="' + esc(o.file) + '" title="' + esc(o.file) + (o.via && o.via !== 'default' ? ' (via ' + esc(o.via) + ')' : '') + '">' + esc(elemBaseName(o.file)) + '</span>'
+    ).join(' '));
+  }
+  const openedBy = openedByFile[e.file] || [];
+  if (openedBy.length) {
+    meta.push('<span class="el-comp-label">opened by:</span> ' + openedBy.map(o =>
+      '<span class="el-comp-link" data-file="' + esc(o.file) + '" title="' + esc(o.file) + (o.via && o.via !== 'default' ? ' (via ' + esc(o.via) + ')' : '') + '">' + esc(elemBaseName(o.file)) + '</span>'
+    ).join(' '));
+  }
+
+  let html = '<div class="ui-detail-head">' +
+    '<div class="ui-detail-title">' + esc(e.title) + '</div>' +
+    '<div class="ui-detail-pills">' + pills.join('') + '</div>' +
+    (meta.length ? '<div class="el-meta">' + meta.join('') + '</div>' : '') +
+  '</div>';
+
+  if (e.screen) html += buildScreenBody(e.screen, e.screenIdx);
+
+  if (e.elements.length) {
+    html += '<div class="ui-section-label">Interactive elements (' + e.elements.length + ')</div>' +
+      '<div class="ui-elements">' + buildElementRows(e.file, e.elements) + '</div>';
+  } else if (!e.screen) {
+    html += '<div class="empty">No interactive elements recorded for this file.</div>';
+  }
+
+  detail.innerHTML = html;
+  // Re-wire screen interactions (tree toggles, component selection) for the
+  // freshly-rendered body, then the element/component cross-links.
+  wireUpScreenInteractions();
+  wireUpUiLinks(detail);
+}
+
+function selectUiFile(file) {
+  if (!uiEntryMap[file]) return;
+  uiSelectedFile = file;
+  document.querySelectorAll('#ui-list .ui-item').forEach(it => {
+    it.classList.toggle('selected', it.dataset.file === file);
+  });
+  const item = document.querySelector('#ui-list .ui-item[data-file="' + (window.CSS ? CSS.escape(file) : file) + '"]');
+  if (item) item.scrollIntoView({ block: 'nearest' });
+  renderUiDetail(file);
+}
+
+function renderUi() {
+  uiEntryMap = buildUiEntries();
+  renderUiList();
+  // Keep the current selection if still visible, else select the first item so
+  // the detail pane is never blank when data exists.
+  const first = document.querySelector('#ui-list .ui-item');
+  if (uiSelectedFile && uiEntryMap[uiSelectedFile] && isFileVisible(uiSelectedFile)) {
+    renderUiDetail(uiSelectedFile);
+  } else if (first) {
+    selectUiFile(first.dataset.file);
+  } else {
+    uiSelectedFile = null;
+    const detail = document.getElementById('ui-detail');
+    if (detail) detail.innerHTML = '<div class="empty">No screens or interactive elements match the active filters</div>';
+  }
+}
+
+// In-pane filters only re-list (cheap); the global filter bar calls renderUi().
+document.getElementById('ui-filter-group').addEventListener('change', renderUiList);
+document.getElementById('ui-filter-search').addEventListener('input', renderUiList);
+renderUi();
 
 // ─── Routes ────────────────────────────────────────────────────────────
 function routeSymbolKey(r) {
@@ -1852,6 +2088,9 @@ function renderTraces() {
 
   window.selectSymbol = selectSymbol;
   function selectSymbol(key, showAll) {
+    // Scroll the detail pane back to the top for a NEW selection — but stay
+    // put when re-rendering the same symbol (the "Show all" expander).
+    const isNewSelection = selectedKey !== key;
     selectedKey = key;
     const sym = allSymbols[key];
     if (!sym) return;
@@ -1875,53 +2114,74 @@ function renderTraces() {
     const callees = calleeMap[key] || [];
     const mapDiv = document.getElementById('trace-map-content');
 
-    let html = '<div class="trace-selected-title">' + esc(sym.symbol) + '</div>';
-    html += '<div class="trace-selected-file">' + esc(sym.file) + '</div>';
+    // Header: symbol + file, plus the Diagram/List view toggle.
+    let html = '<div class="trace-map-head">';
+    html += '<div><div class="trace-selected-title">' + esc(sym.symbol) + '</div>';
+    html += '<div class="trace-selected-file">' + esc(sym.file) + '</div></div>';
+    html += '<div class="trace-view-toggle">' +
+      '<button class="d3-btn' + (traceViewMode === 'tree' ? ' active' : '') + '" data-trace-view="tree">Diagram</button>' +
+      '<button class="d3-btn' + (traceViewMode === 'list' ? ' active' : '') + '" data-trace-view="list">List</button>' +
+      '</div></div>';
 
-    // Callers section (inbound)
-    html += '<div class="trace-section">';
-    html += '<div class="trace-section-header inbound">\\u2190 Called by <span class="section-count">(' + callers.length + ')</span></div>';
-    if (callers.length === 0) {
-      html += '<div class="trace-no-links">No callers found \\u2014 this may be an entry point</div>';
+    if (traceViewMode === 'tree') {
+      // Double-tree diagram: callers branch left, callees branch right (4 levels).
+      html += '<div id="trace-tree-host"></div>';
     } else {
-      html += cappedRows(callers, c => {
-        const cKey = c.sourceFile + '::' + c.sourceSymbol;
-        return '<div class="trace-chain-row inbound" data-sym-key="' + esc(cKey) + '">' +
-          '<span class="chain-symbol">' + esc(c.sourceSymbol) + '</span>' +
-          '<span class="chain-call">' + esc(c.callName) + '</span>' +
-          '<span class="chain-arrow">\\u2192</span>' +
-          '<span style="color:#58a6ff">this</span>' +
-          '<span class="chain-line">:' + c.sourceLine + '</span>' +
-          '<span class="chain-file">' + esc(c.sourceFile) + '</span>' +
-        '</div>';
-      }, 'callers');
-    }
-    html += '</div>';
+      // Callers section (inbound)
+      html += '<div class="trace-section">';
+      html += '<div class="trace-section-header inbound">\\u2190 Called by <span class="section-count">(' + callers.length + ')</span></div>';
+      if (callers.length === 0) {
+        html += '<div class="trace-no-links">No callers found \\u2014 this may be an entry point</div>';
+      } else {
+        html += cappedRows(callers, c => {
+          const cKey = c.sourceFile + '::' + c.sourceSymbol;
+          return '<div class="trace-chain-row inbound" data-sym-key="' + esc(cKey) + '">' +
+            '<span class="chain-symbol">' + esc(c.sourceSymbol) + '</span>' +
+            '<span class="chain-call">' + esc(c.callName) + '</span>' +
+            '<span class="chain-arrow">\\u2192</span>' +
+            '<span style="color:#58a6ff">this</span>' +
+            '<span class="chain-line">:' + c.sourceLine + '</span>' +
+            '<span class="chain-file">' + esc(c.sourceFile) + '</span>' +
+          '</div>';
+        }, 'callers');
+      }
+      html += '</div>';
 
-    // Callees section (outbound)
-    html += '<div class="trace-section">';
-    html += '<div class="trace-section-header outbound">\\u2192 Calls <span class="section-count">(' + callees.length + ')</span></div>';
-    if (callees.length === 0) {
-      html += '<div class="trace-no-links">No outgoing calls found \\u2014 this is a leaf function</div>';
-    } else {
-      html += cappedRows(callees, c => {
-        const cKey = c.targetFile + '::' + c.targetSymbol;
-        return '<div class="trace-chain-row outbound" data-sym-key="' + esc(cKey) + '">' +
-          '<span style="color:#3fb950">this</span>' +
-          '<span class="chain-arrow">\\u2192</span>' +
-          '<span class="chain-symbol">' + esc(c.targetSymbol) + '</span>' +
-          '<span class="chain-call">' + esc(c.callName) + '</span>' +
-          '<span class="chain-line">:' + c.targetLine + '</span>' +
-          '<span class="chain-file">' + esc(c.targetFile) + '</span>' +
-        '</div>';
-      }, 'calls');
+      // Callees section (outbound)
+      html += '<div class="trace-section">';
+      html += '<div class="trace-section-header outbound">\\u2192 Calls <span class="section-count">(' + callees.length + ')</span></div>';
+      if (callees.length === 0) {
+        html += '<div class="trace-no-links">No outgoing calls found \\u2014 this is a leaf function</div>';
+      } else {
+        html += cappedRows(callees, c => {
+          const cKey = c.targetFile + '::' + c.targetSymbol;
+          return '<div class="trace-chain-row outbound" data-sym-key="' + esc(cKey) + '">' +
+            '<span style="color:#3fb950">this</span>' +
+            '<span class="chain-arrow">\\u2192</span>' +
+            '<span class="chain-symbol">' + esc(c.targetSymbol) + '</span>' +
+            '<span class="chain-call">' + esc(c.callName) + '</span>' +
+            '<span class="chain-line">:' + c.targetLine + '</span>' +
+            '<span class="chain-file">' + esc(c.targetFile) + '</span>' +
+          '</div>';
+        }, 'calls');
+      }
+      html += '</div>';
     }
-    html += '</div>';
 
     mapDiv.innerHTML = html;
+    if (isNewSelection) {
+      const pane = mapDiv.closest('.trace-map-pane');
+      if (pane) pane.scrollTop = 0;
+    }
 
-    // Delegated clicks: chain rows navigate, the cap button expands in full
+    if (traceViewMode === 'tree') {
+      renderCallTree(key, document.getElementById('trace-tree-host'));
+    }
+
+    // Delegated clicks: view toggle, chain rows navigate, cap button expands.
     mapDiv.onclick = function(e) {
+      const viewBtn = e.target.closest('[data-trace-view]');
+      if (viewBtn) { traceViewMode = viewBtn.dataset.traceView; selectSymbol(key); return; }
       if (e.target.closest('[data-chain-all]')) { selectSymbol(key, true); return; }
       const row = e.target.closest('.trace-chain-row');
       if (!row) return;
@@ -1933,6 +2193,129 @@ function renderTraces() {
         if (listItem) listItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       }
     };
+  }
+
+  // Double-tree call diagram (callers left, callees right, up to 4 levels each)
+  // rendered into the host element. Children per node and total per side are
+  // capped so the layout stays readable and fast; cycles are cut along each path.
+  function renderCallTree(rootKey, host) {
+    if (!host) return;
+    var MAXD = 4, CHILD_CAP = 6, TOTAL_CAP = 160;
+    var NODE_W = 134, NODE_H = 22, V_GAP = 14, H_GAP = 172;
+
+    function labelOf(k){ var s = allSymbols[k]; return s ? s.symbol : k.split('::').pop(); }
+    function truncate(t, n){ return t.length > n ? t.slice(0, n - 1) + '\\u2026' : t; }
+
+    // BFS one direction into a {name, key, children} tree, capped and acyclic.
+    function buildSide(dir) {
+      var edgeMap = dir === 'caller' ? callerMap : calleeMap;
+      function nkey(e){ return dir === 'caller' ? (e.sourceFile + '::' + e.sourceSymbol) : (e.targetFile + '::' + e.targetSymbol); }
+      var root = { key: rootKey, name: labelOf(rootKey), children: [], depth: 0 };
+      var total = 0;
+      var queue = [{ node: root, seen: { } }];
+      queue[0].seen[rootKey] = 1;
+      var qi = 0;
+      while (qi < queue.length) {
+        var cur = queue[qi++];
+        if (cur.node.depth >= MAXD) continue;
+        var edges = edgeMap[cur.node.key] || [];
+        var childSeen = {};
+        var added = 0, hidden = 0;
+        for (var i = 0; i < edges.length; i++) {
+          var k = nkey(edges[i]);
+          if (childSeen[k]) continue; childSeen[k] = 1;
+          if (cur.seen[k]) continue;                       // cycle along this path
+          if (added >= CHILD_CAP || total >= TOTAL_CAP) { hidden++; continue; }
+          var child = { key: k, name: labelOf(k), children: [], depth: cur.node.depth + 1 };
+          cur.node.children.push(child);
+          total++; added++;
+          var ns = Object.assign({}, cur.seen); ns[k] = 1;
+          queue.push({ node: child, seen: ns });
+        }
+        if (hidden > 0) cur.node.children.push({ key: null, name: '+' + hidden + ' more', more: true, children: [], depth: cur.node.depth + 1 });
+      }
+      return root;
+    }
+
+    var callerTree = buildSide('caller');
+    var calleeTree = buildSide('callee');
+
+    host.innerHTML = '';
+    if (!callerTree.children.length && !calleeTree.children.length) {
+      host.innerHTML = '<div class="ct-tree-empty">No callers or callees \\u2014 isolated symbol</div>';
+      return;
+    }
+
+    var layout = d3.tree().nodeSize([NODE_H + V_GAP, H_GAP]);
+    var callerRoot = d3.hierarchy(callerTree); layout(callerRoot);
+    var calleeRoot = d3.hierarchy(calleeTree); layout(calleeRoot);
+
+    // Center node drawn once; each side positioned relative to its own root so
+    // the shared root sits at the origin. d.y = depth*H_GAP, d.x = breadth.
+    var nodes = [{ x: 0, y: 0, name: labelOf(rootKey), cls: 'center', key: rootKey }];
+    var links = [];
+    function collect(rootH, sign, cls) {
+      rootH.descendants().forEach(function(d){
+        if (d.depth === 0) return;
+        var nx = sign * d.y, ny = d.x - rootH.x;
+        // Internal nodes (still have callers/callees) carry the side color;
+        // endpoints render as light leaf boxes, matching the double-tree look.
+        var nodeCls = d.data.more ? 'more' : ((d.children && d.children.length) ? cls : 'leaf');
+        nodes.push({ x: nx, y: ny, name: d.data.name, cls: nodeCls, key: d.data.key });
+        var p = d.parent;
+        var px = p.depth === 0 ? 0 : sign * p.y;
+        var py = p.depth === 0 ? 0 : (p.x - rootH.x);
+        links.push({ sx: px, sy: py, tx: nx, ty: ny, cls: cls });
+      });
+    }
+    collect(callerRoot, -1, 'inbound');
+    collect(calleeRoot, 1, 'outbound');
+
+    var w = host.clientWidth || 800, h = host.clientHeight || 400;
+    var svg = d3.select(host).append('svg');
+    var g = svg.append('g');
+    var zoom = d3.zoom().scaleExtent([0.2, 3]).on('zoom', function(e){ g.attr('transform', e.transform); });
+    svg.call(zoom);
+
+    function linkPath(l){
+      var mx = (l.sx + l.tx) / 2;
+      return 'M' + l.sx + ',' + l.sy + 'C' + mx + ',' + l.sy + ' ' + mx + ',' + l.ty + ' ' + l.tx + ',' + l.ty;
+    }
+    g.append('g').selectAll('path').data(links).join('path')
+      .attr('class', function(d){ return 'ct-link ' + d.cls; })
+      .attr('d', linkPath);
+
+    var ns = g.append('g').selectAll('g').data(nodes).join('g')
+      .attr('class', function(d){ return 'ct-node ' + d.cls; })
+      .attr('transform', function(d){ return 'translate(' + d.x + ',' + d.y + ')'; });
+    ns.append('rect').attr('x', -NODE_W / 2).attr('y', -NODE_H / 2).attr('width', NODE_W).attr('height', NODE_H);
+    ns.append('text').attr('text-anchor', 'middle').attr('dy', '0.32em').text(function(d){ return truncate(d.name, 18); });
+    ns.append('title').text(function(d){
+      if (!d.key) return d.name;
+      var s = allSymbols[d.key];
+      return s ? s.symbol + '  (' + s.file + ')' : d.name;
+    });
+    // Click a non-center, real node to recenter the diagram on it.
+    ns.filter(function(d){ return d.key && d.cls !== 'center'; }).style('cursor', 'pointer')
+      .on('click', function(e, d){
+        e.stopPropagation();
+        selectSymbol(d.key);
+        var li = document.querySelector('.trace-sym-item[data-sym-key="' + CSS.escape(d.key) + '"]');
+        if (li) li.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      });
+
+    // Fit the whole diagram into the host on first paint.
+    var xs = nodes.map(function(n){ return n.x; }), ys = nodes.map(function(n){ return n.y; });
+    var minX = Math.min.apply(null, xs) - NODE_W, maxX = Math.max.apply(null, xs) + NODE_W;
+    var minY = Math.min.apply(null, ys) - NODE_H, maxY = Math.max.apply(null, ys) + NODE_H;
+    var scale = Math.min(w / (maxX - minX), h / (maxY - minY), 1.3);
+    var tx = (w - scale * (minX + maxX)) / 2, ty = (h - scale * (minY + maxY)) / 2;
+    svg.call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+
+    var legend = document.createElement('div');
+    legend.className = 'ct-legend';
+    legend.innerHTML = '<span><i style="background:#3b6fb0"></i>callers</span><span><i style="background:#c4801f"></i>callees</span><span><i style="background:#a371f7"></i>selected</span>';
+    host.appendChild(legend);
   }
 
   // Use .onchange/.oninput to replace prior handlers (avoids accumulation across re-renders)
@@ -1971,6 +2354,23 @@ function initLinkGraph() {
   // Build complexity lookup
   var cxMap = {};
   (DATA.complexity || []).forEach(function(c){ cxMap[c.filePath] = c; });
+
+  // Per-file symbols that appear in Call Traces (derived from the same links,
+  // honoring the same edge visibility), so a clicked node can deep-link there.
+  // A file "owns" a symbol when it's the call target, or the calling symbol
+  // (skip the synthetic "(reference)" rows). Keys match the trace list:
+  // "<file>::<symbol>".
+  var traceSymbolsByFile = {};
+  (DATA.symbolLinks || []).forEach(function(l){
+    if (!isEdgeVisible(l.sourceFile, l.targetFile)) return;
+    function own(file, symbol){
+      if (!symbol || symbol === '(reference)') return;
+      var arr = traceSymbolsByFile[file] || (traceSymbolsByFile[file] = []);
+      if (arr.indexOf(symbol) === -1) arr.push(symbol);
+    }
+    own(l.targetFile, l.targetSymbol);
+    own(l.sourceFile, l.sourceSymbol);
+  });
 
   // Build unique edges from linkGraph first (deduplicate, merge proximity;
   // honor filters) — node visibility in "hide unlinked" mode depends on them.
@@ -2181,7 +2581,32 @@ function initLinkGraph() {
         html += '<br>Exported: ' + br.exportedSymbols.map(function(s){ return '<span style="color:#79c0ff">' + esc(s.name) + '</span>(' + s.usedByCount + ')'; }).join(', ');
       }
     }
-    document.getElementById('d3-detail-panel').innerHTML = html;
+    // Single deep-link to Call Traces, scoped (filtered) to this file.
+    var traceSyms = traceSymbolsByFile[fileId];
+    if (traceSyms && traceSyms.length) {
+      html += '<br><span class="arch-trace-link" data-trace-file="' + esc(fileId) + '">' +
+        'View ' + traceSyms.length + ' symbol' + (traceSyms.length === 1 ? '' : 's') + ' in call traces \\u2192</span>';
+    }
+    var panel = document.getElementById('d3-detail-panel');
+    panel.innerHTML = html;
+    var traceLink = panel.querySelector('.arch-trace-link');
+    if (traceLink) {
+      traceLink.addEventListener('click', function(){
+        var file = traceLink.dataset.traceFile;
+        activateTab('traces');
+        // Scope the trace list to this file via its existing file filter.
+        var sel = document.getElementById('trace-filter-file');
+        if (sel) { sel.value = file; sel.dispatchEvent(new Event('change')); }
+        // Land on the file's first symbol so the right pane is relevant.
+        var syms = (traceSymbolsByFile[file] || []).slice().sort();
+        var firstKey = syms.length ? file + '::' + syms[0] : null;
+        if (firstKey && window.selectSymbol) window.selectSymbol(firstKey);
+        if (firstKey) {
+          var listItem = document.querySelector('.trace-sym-item[data-sym-key="' + CSS.escape(firstKey) + '"]');
+          if (listItem) listItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+      });
+    }
   }
 
   // Folder hulls
@@ -3385,5 +3810,27 @@ function renderInsights() {
     : '<div class="empty">No topology insights for this corpus.</div>';
 }
 renderInsights();
+
+// ─── URL hash navigation ─────────────────────────────────────────────────
+// Keep the active tab in location.hash so tabs are bookmarkable / shareable
+// and the browser Back/Forward buttons move between them. activateTab() writes
+// the hash on click (above); here we read it on load and on every hashchange.
+function tabFromHash() {
+  let view = '';
+  try { view = decodeURIComponent(location.hash.slice(1)); } catch (e) { return null; }
+  return view && document.getElementById('view-' + view) ? view : null;
+}
+function syncTabFromHash() {
+  const view = tabFromHash();
+  if (!view) return;
+  const current = document.querySelector('.view.active');
+  if (current && current.id === 'view-' + view) return; // already showing it
+  suppressHashSync = true;        // don't re-push while reacting to the URL
+  activateTab(view);
+  suppressHashSync = false;
+}
+window.addEventListener('hashchange', syncTabFromHash);
+// On initial load a hash in the URL overrides the server-chosen default tab.
+syncTabFromHash();
 `;
 }

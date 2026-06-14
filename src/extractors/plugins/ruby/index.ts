@@ -13,6 +13,29 @@ const RAILS_ACTION_MAP: Record<string, { method: string; suffix: string }> = {
   destroy: { method: "DELETE", suffix: "/:id" },
 };
 
+/**
+ * Controllers provided by Rails / its engines, not the application. Routes that
+ * point at these (e.g. `get "/rails/mailers" => "rails/mailers#index"`, the
+ * dev-only mailer preview) have no project source, so we drop them rather than
+ * surface a handler-less "no code" route.
+ */
+const FRAMEWORK_CONTROLLER_RE = /^(rails|active_admin|action_cable|action_mailbox|active_storage)\b/;
+
+/** `supervision_time_schedules` / `reports/positions` → `SupervisionTimeSchedules` / `Positions` */
+function railsCamelize(token: string): string {
+  return token
+    .split(/[_/]/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join("");
+}
+
+/** A `controller` token (last segment) → its Rails class name, e.g. `session` → `SessionController`. */
+function railsControllerClass(controllerToken: string): string {
+  const last = controllerToken.split("/").pop() ?? controllerToken;
+  return railsCamelize(last) + "Controller";
+}
+
 export const rubySpec: RegexLangSpec = {
   language: "ruby",
   extensions: [".rb"],
@@ -157,33 +180,103 @@ export const rubySpec: RegexLangSpec = {
       }
     }
 
-    // config/routes.rb: resources :users, get "/path" => ...
+    // config/routes.rb: resolve paths through namespace/scope nesting, extract
+    // the `controller#action` handler so routes link to their controller code,
+    // and expand multi-resource / multi-line `resources` declarations.
+    //
+    // `blockStack` carries one entry per `end`-terminated block (namespace/scope
+    // contribute a path prefix; every other block — `if`, `do`, nested
+    // `resources do` — contributes ""), so `end` always pops exactly one frame.
+    const blockStack: string[] = [];
+    const currentPrefix = () => blockStack.join("");
+
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const resourcesMatch = line.match(/^\s*resources?\s+:(\w+)/);
-      if (resourcesMatch) {
-        routes.push({
-          path: "/" + resourcesMatch[1],
-          httpMethod: null,
-          kind: "api",
-          handler: null,
-          calls: [],
-          middleware: [],
-          line: i + 1,
-        });
+      const line = lines[i].trim();
+      if (!line || line.startsWith("#")) continue;
+
+      // `end` closes the most recent block.
+      if (/^end\b/.test(line)) {
+        blockStack.pop();
+        continue;
       }
-      const verbMatch = line.match(/^\s*(get|post|put|patch|delete)\s+['"]([^'"]+)['"]/);
+
+      const opensDoBlock = /\bdo\b(\s*\|[^|]*\|)?$/.test(line);
+
+      // namespace :x do / scope '/x' do — open a block that prefixes child paths.
+      const nsMatch = line.match(/^namespace\s+:(\w+)/);
+      if (nsMatch && opensDoBlock) {
+        blockStack.push("/" + nsMatch[1]);
+        continue;
+      }
+      const scopeMatch = line.match(/^scope\s+['"]([^'"]+)['"]/);
+      if (scopeMatch && opensDoBlock) {
+        const p = scopeMatch[1].replace(/^\/?/, "/");
+        blockStack.push(p === "/" ? "" : p);
+        continue;
+      }
+
+      // resources :a, :b, :only => [...] — may span multiple lines (trailing comma).
+      const resourcesMatch = line.match(/^(resources?)\b/);
+      if (resourcesMatch) {
+        let stmt = line;
+        while (/,\s*$/.test(stmt) && i + 1 < lines.length) {
+          stmt += " " + lines[++i].trim();
+        }
+        // Take the leading :symbol list, before any option (only:/except:/=>).
+        const beforeOpts = stmt.slice(resourcesMatch[1].length).split(/\b(?:only|except)\b|=>/)[0];
+        for (const m of beforeOpts.matchAll(/:(\w+)/g)) {
+          routes.push({
+            path: currentPrefix() + "/" + m[1],
+            httpMethod: null,
+            kind: "api",
+            handler: railsControllerClass(m[1]),
+            calls: [],
+            middleware: [],
+            line: i + 1,
+          });
+        }
+        if (opensDoBlock) blockStack.push(""); // `resources :x do` opens a nested block
+        continue;
+      }
+
+      // get/post/put/patch/delete 'path' [=> 'ctrl#action' | to: 'ctrl#action']
+      const verbMatch = line.match(/^(get|post|put|patch|delete)\s+['"]([^'"]+)['"]/);
       if (verbMatch) {
+        const rawPath = verbMatch[2];
+        const target = line.match(/(?:=>|to:)\s*['"]([^'"#]+)#(\w+)['"]/);
+        let controller: string | null = null;
+        let action: string | null = null;
+        if (target) {
+          controller = target[1];
+          action = target[2];
+        } else if (rawPath.includes("/")) {
+          // Implicit `controller/action` convention (e.g. `get 'absences/vacation_days'`).
+          const segs = rawPath.split("/").filter((s) => s && !s.startsWith(":") && !s.startsWith("*"));
+          if (segs.length >= 2) {
+            action = segs[segs.length - 1];
+            controller = segs.slice(0, -1).join("/");
+          }
+        }
+
+        // Framework-internal controllers have no project code — skip the route.
+        if (controller && FRAMEWORK_CONTROLLER_RE.test(controller)) continue;
+
         routes.push({
-          path: verbMatch[2],
+          path: currentPrefix() + (rawPath.startsWith("/") ? rawPath : "/" + rawPath),
           httpMethod: verbMatch[1].toUpperCase(),
           kind: "api",
-          handler: null,
+          handler: controller && action ? `${railsControllerClass(controller)}#${action}` : null,
           calls: [],
           middleware: [],
           line: i + 1,
         });
+        continue;
       }
+
+      // Any other `end`-terminated block (if/unless/case/do/...) — track depth
+      // so a later `end` doesn't pop a namespace/scope prefix prematurely.
+      const opensIfBlock = /^(if|unless|case|begin|while|until|module|class|def)\b/.test(line);
+      if (opensDoBlock || opensIfBlock) blockStack.push("");
     }
 
     return routes;

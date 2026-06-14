@@ -2,12 +2,17 @@ import type { Node } from "web-tree-sitter";
 import type { DataSourceInfo, CallInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { extractCalls } from "../../shared/call-graph.js";
+import { stripQuotes } from "../../shared/node-helpers.js";
 
-/** Known fetch/HTTP call patterns */
-const API_CALL_NAMES = new Set([
-  "fetch", "axios", "http", "request", "ajax",
-  "get", "post", "put", "patch", "delete",
-]);
+/** Named HTTP clients — trusted as API calls without a URL-shape check. */
+const HTTP_ROOTS = new Set(["fetch", "axios", "http", "request", "ajax"]);
+
+/**
+ * HTTP "verb" methods. These collide with non-HTTP APIs (`Map.get`,
+ * `URLSearchParams.get`, `array.includes`), so a verb call is only an API call
+ * when its argument is URL-shaped — see `looksLikeUrl`.
+ */
+const HTTP_VERBS = new Set(["get", "post", "put", "patch", "delete"]);
 
 /** React hook patterns that indicate data sources */
 const STATE_HOOKS = new Set([
@@ -82,33 +87,48 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
     if (node.type === "call_expression") {
-      const fn = node.childForFieldName("function");
-      // For member_expression callees (`prisma.user.findMany`) we need the
-      // full dotted chain — the shared getCallName only returns the leaf,
-      // which collapses `x.findMany` and bare `findMany()` together and
-      // blinds the ORM heuristic to the root identifier.
-      const fnName = fn && fn.type === "member_expression" ? fn.text : this.getFunctionName(fn);
+      let fn = node.childForFieldName("function");
+      // `await foo<T>(args)` mis-nests as call(function: await_expression(await,
+      // foo), type_arguments, arguments) — the generic forces the await to bind
+      // to `foo` alone. Unwrap so the callee resolves to `foo`, not the await.
+      if (fn && fn.type === "await_expression") {
+        fn = fn.namedChild(fn.namedChildCount - 1) ?? fn;
+      }
+      // Leaf/callee name drives detection. For `apiClient.post(...)` the leaf is
+      // `post`, not the object — using the full member-chain text would let any
+      // substring (`Sec-Fetch-User`, `events/fetchEventTypes`) spuriously match.
+      // Keep the dotted chain only for the ORM root check (`prisma.user.findMany`).
+      const fnName = calleeLeaf(fn);
+      const ormChain = fn && fn.type === "member_expression" ? fn.text : fnName;
 
       if (fnName) {
-        // fetch() or axios.get() etc
-        if (isApiCall(fnName)) {
+        // HTTP call: fetch("/api/x"), axios.get("/api/x"), apiClient.post("/x").
+        // Object-config calls (axios({url}), Kubb request({url})) are captured by
+        // the request-descriptor `object` branch below.
+        const isRoot = isHttpRoot(fnName);
+        const isVerb = HTTP_VERBS.has(fnName.toLowerCase());
+        // `app.get("/x", handler)` / `router.post(...)` are inbound route
+        // definitions (already captured as routes), not outbound calls — exclude.
+        if ((isRoot || isVerb) && fn && !isServerRouteDef(fn, node)) {
           const args = node.childForFieldName("arguments");
-          let target: string | null = null;
-          if (args && args.childCount > 1) {
-            const firstArg = args.child(1);
-            if (
-              firstArg &&
-              (firstArg.type === "string" || firstArg.type === "template_string")
-            ) {
-              target = firstArg.text.replace(/^['"`]|['"`]$/g, "");
+          const firstArg = args && args.childCount > 1 ? args.child(1) : null;
+          if (
+            firstArg &&
+            (firstArg.type === "string" || firstArg.type === "template_string")
+          ) {
+            const url = stripQuotes(firstArg.text);
+            // Bare HTTP verbs (`get`/`post`/...) collide with `Map.get`,
+            // `searchParams.get`, etc., so require a URL-shaped argument; named
+            // clients (fetch/axios/http/request) are trusted without it.
+            if (isRoot || looksLikeUrl(url)) {
+              sources.push(this.ds({
+                kind: "api-call",
+                name: fnName,
+                target: url,
+                line: node.startPosition.row + 1,
+              }));
             }
           }
-          sources.push(this.ds({
-            kind: "api-call",
-            name: fnName,
-            target,
-            line: node.startPosition.row + 1,
-          }));
         }
 
         // React state hooks
@@ -199,14 +219,38 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         }
 
         // ORM calls — prisma.user.findMany(), userRepo.save(user), Model.findOne()
-        if (isOrmCall(fnName)) {
+        // Record the full receiver chain (`prisma.user.findUnique`) as the name so
+        // the model/table (`user`) is visible and the import-index enrichment can
+        // resolve `target` from the root identifier (`prisma` → its db module).
+        if (ormChain && isOrmCall(ormChain)) {
           sources.push(this.ds({
             kind: "database",
-            name: fnName,
+            name: ormChain,
             target: null,
             line: node.startPosition.row + 1,
           }));
         }
+      }
+    }
+
+    // HTTP request-descriptor object literal: { method: "GET", url: "/api/x" }.
+    // Covers axios-config calls and code-generated clients (e.g. Kubb) where the
+    // endpoint literal lives in a `url` property rather than a string argument —
+    // including the URL-builder helper `{ method, url: `/api/x` }` whose value is
+    // referenced indirectly at the call site.
+    if (node.type === "object") {
+      const url = literalString(objectPropValue(node, "url"));
+      const method = literalString(objectPropValue(node, "method"));
+      // Require a `method` sibling: that's what distinguishes a real request
+      // descriptor (`{ method, url }`) from query/mutation cache keys and other
+      // metadata objects that merely carry a `url` (`[{ url }] as const`).
+      if (url && method) {
+        sources.push(this.ds({
+          kind: "api-call",
+          name: method.toLowerCase(),
+          target: url,
+          line: node.startPosition.row + 1,
+        }));
       }
     }
 
@@ -226,9 +270,91 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   }
 }
 
-function isApiCall(name: string): boolean {
+/**
+ * String/template literal text of a value node, unwrapping TS expression
+ * wrappers (`url: `/api/x` as const`, `(...)`, `...!`). Returns null when the
+ * value isn't a literal (e.g. `url: getXUrl().url.toString()`).
+ */
+function literalString(node: Node | null): string | null {
+  let n = node;
+  while (
+    n &&
+    (n.type === "as_expression" ||
+      n.type === "satisfies_expression" ||
+      n.type === "parenthesized_expression" ||
+      n.type === "non_null_expression")
+  ) {
+    n = n.namedChild(0);
+  }
+  if (n && (n.type === "string" || n.type === "template_string")) {
+    return stripQuotes(n.text);
+  }
+  return null;
+}
+
+/** Value node of `obj`'s property named `key` (handles bare and quoted keys). */
+function objectPropValue(obj: Node, key: string): Node | null {
+  for (const pair of obj.children) {
+    if (pair.type !== "pair") continue;
+    const k = pair.childForFieldName("key");
+    if (!k) continue;
+    const keyText = k.type === "string" ? stripQuotes(k.text) : k.text;
+    if (keyText === key) return pair.childForFieldName("value");
+  }
+  return null;
+}
+
+/** Leaf/callee name of a call's function node: `apiClient.post` → "post", `fetch` → "fetch". */
+function calleeLeaf(fn: Node | null): string | null {
+  if (!fn) return null;
+  if (fn.type === "identifier") return fn.text;
+  if (fn.type === "member_expression") {
+    return fn.childForFieldName("property")?.text ?? null;
+  }
+  return null;
+}
+
+/** Object names that denote a server router, not an HTTP client. */
+const SERVER_ROUTER_OBJECTS = new Set(["app", "router", "route", "server", "Router"]);
+
+/**
+ * Whether a verb call is a server-side route/middleware registration
+ * (`app.get("/x", handler)`, `router.post(...)`) rather than an outbound call.
+ * Signals: the receiver is a known router object, or a handler function is
+ * passed as an argument (route handler / middleware).
+ */
+function isServerRouteDef(fn: Node, callNode: Node): boolean {
+  if (fn.type !== "member_expression") return false;
+  const objRoot = (fn.childForFieldName("object")?.text ?? "").split(/[.[]/)[0];
+  if (SERVER_ROUTER_OBJECTS.has(objRoot)) return true;
+  const args = callNode.childForFieldName("arguments");
+  if (args) {
+    for (const a of args.namedChildren) {
+      if (
+        a.type === "arrow_function" ||
+        a.type === "function_expression" ||
+        a.type === "function"
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** A named HTTP client: fetch, axios, http(Client), request, ajax, or a fetchX/httpX helper. */
+function isHttpRoot(name: string): boolean {
   const lower = name.toLowerCase();
-  return API_CALL_NAMES.has(lower) || lower.includes("fetch") || lower.includes("http");
+  return HTTP_ROOTS.has(lower) || lower.includes("fetch") || lower.includes("http");
+}
+
+/**
+ * Whether a string argument looks like a request URL/path. Requires a slash (or
+ * http scheme) so verb calls on non-clients are excluded — `Map.get("key")`,
+ * `set.delete(`approve-${id}`)`, `params.get("tag")` have no path separator.
+ */
+function looksLikeUrl(s: string): boolean {
+  return s.includes("/") || /^https?:/i.test(s);
 }
 
 /**
@@ -239,9 +365,13 @@ function isApiCall(name: string): boolean {
 function isOrmCall(name: string): boolean {
   if (!name.includes(".")) return false;
   const parts = name.split(".");
+  const root = parts[0]!;
+  // Express/Koa route registrations (`router.get`, `app.delete`, `router.post`)
+  // share verb names with ORM methods (Drizzle `get`, Prisma `delete`) but are
+  // never DB ops — exclude by receiver before the leaf-method check.
+  if (SERVER_ROUTER_OBJECTS.has(root)) return false;
   const leaf = parts[parts.length - 1]!;
   if (ORM_METHODS.has(leaf)) return true;
-  const root = parts[0]!;
   if (ORM_ROOTS.has(root) || /Repository$/.test(root)) return true;
   return false;
 }
