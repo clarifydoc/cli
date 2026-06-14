@@ -24,12 +24,41 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
         continue;
       }
 
-      // expression_statement can contain require() or dynamic import()
+      // expression_statement can contain a bare require()
       if (child.type === "expression_statement") {
         const expr = child.child(0);
         if (expr) this.extractCallImports(expr, imports, child.startPosition.row + 1);
       }
     }
+
+    // Dynamic import("…") can appear anywhere, not just as a top-level
+    // statement — most commonly a lazy-loaded route component
+    // (`{ component: () => import("./main.vue") }`), `await import(...)`, or a
+    // conditional import. Walk the whole subtree so these still register as
+    // import edges to the lazily-loaded module.
+    this.collectDynamicImports(node, imports);
+  }
+
+  /** Recursively collect every dynamic `import("module")` call in the subtree. */
+  private collectDynamicImports(node: Node, imports: ImportInfo[]): void {
+    if (node.type === "call_expression") {
+      const callee = node.childForFieldName("function");
+      if (callee && callee.type === "import") {
+        const args = node.childForFieldName("arguments");
+        const firstArg = args?.child(1);
+        if (firstArg && firstArg.type === "string") {
+          imports.push({
+            source: stripQuotes(firstArg.text),
+            specifiers: [],
+            isDefault: false,
+            isNamespace: false,
+            isType: false,
+            line: node.startPosition.row + 1,
+          });
+        }
+      }
+    }
+    for (const child of node.children) this.collectDynamicImports(child, imports);
   }
 
   private parseImportStatement(node: Node): ImportInfo {
@@ -154,15 +183,16 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
     }
   }
 
-  /** Extract dynamic import() or bare require() from expressions */
+  /** Extract a bare top-level require("module") expression statement. */
   private extractCallImports(node: Node, imports: ImportInfo[], line: number): void {
     if (node.type !== "call_expression") return;
 
     const callee = node.childForFieldName("function");
     if (!callee) return;
 
-    // Dynamic import("module") or require("module") as standalone expression
-    if (callee.type === "import" || callee.text === "require") {
+    // Dynamic import() is handled separately by collectDynamicImports (it can be
+    // nested arbitrarily); here we only catch a standalone require("module").
+    if (callee.text === "require") {
       const args = node.childForFieldName("arguments");
       if (!args || args.childCount < 2) return;
 

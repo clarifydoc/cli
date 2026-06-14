@@ -20,6 +20,14 @@ export function vuePreprocess(
     sourceText: sfc.script,
     language: sfc.scriptLang,
     postExtract(analysis, raw) {
+      // A `<script setup>` SFC has no literal `export default`, but the file IS
+      // a component with an implicit default export. Record it so dynamic
+      // imports of the component (`import("./dlg.vue")`) and default imports
+      // resolve to a real symbol in the symbol index.
+      if (!analysis.exports.some((e) => e.name === "default")) {
+        analysis.exports.push({ name: "default", kind: "default", line: 1 });
+      }
+
       if (sfc.template) {
         analysis.interactiveElements.push(
           ...extractVueInteractiveElements(sfc.template, raw),

@@ -1,8 +1,68 @@
 import type { Node } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from "../../functions-classes/base.js";
-import { getVisibility, extractJsDecorators } from "../../shared/node-helpers.js";
+import type { CallInfo } from "../../../types/analysis.js";
+import { getVisibility, extractJsDecorators, stripQuotes } from "../../shared/node-helpers.js";
 import { extractCalls } from "../../shared/call-graph.js";
+
+/**
+ * Dynamic `import("./x.vue")` calls inside a function body, surfaced as
+ * cross-file call edges so lazy-loaded modules — route targets and components
+ * launched via `useDialog().open({ component: import("./dlg.vue") })` — stay
+ * reachable in the call/trace graph instead of dead-ending at the loader.
+ *
+ * Launchers usually wrap the import in a callback (`new Promise((res) => …)`),
+ * which `extractCalls` skips as a nested scope, so this descends through
+ * anonymous arrows/function-expressions but stops at nested *named* functions
+ * and classes (those are linked as their own units). The target resolves to the
+ * imported module's default export — for a `.vue` that's the component itself.
+ */
+function collectDynamicImportCalls(body: Node | null): CallInfo[] {
+  if (!body) return [];
+  const out: CallInfo[] = [];
+  const seen = new Set<string>();
+
+  const walk = (node: Node, isRoot: boolean): void => {
+    if (
+      !isRoot &&
+      (node.type === "function_declaration" ||
+        node.type === "generator_function_declaration" ||
+        node.type === "class_declaration" ||
+        node.type === "class")
+    ) {
+      return;
+    }
+
+    if (node.type === "call_expression") {
+      const callee = node.childForFieldName("function");
+      if (callee && callee.type === "import") {
+        const arg = node.childForFieldName("arguments")?.child(1);
+        if (arg && arg.type === "string") {
+          const source = stripQuotes(arg.text);
+          // Project-local specifiers only (relative or path-alias) — a bare
+          // package import isn't a project file. Unresolvable ones simply
+          // produce no link downstream.
+          const local = /^[./]/.test(source) || /^[@~]/.test(source);
+          if (local && !seen.has(source)) {
+            seen.add(source);
+            out.push({
+              name: "default",
+              kind: "cross-file",
+              target: source,
+              line: node.startPosition.row + 1,
+              confidence: "EXTRACTED",
+            });
+          }
+        }
+      }
+    }
+
+    for (const child of node.children) walk(child, false);
+  };
+
+  walk(body, true);
+  return out;
+}
 
 export class JavaScriptExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
@@ -69,7 +129,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       isAsync,
       isExported,
       decorators,
-      calls: extractCalls(body, "typescript"),
+      calls: [...extractCalls(body, "typescript"), ...collectDynamicImportCalls(body)],
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
@@ -111,7 +171,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       isAsync,
       isExported,
       decorators,
-      calls: extractCalls(body, "typescript"),
+      calls: [...extractCalls(body, "typescript"), ...collectDynamicImportCalls(body)],
       line: funcNode.startPosition.row + 1,
       endLine: funcNode.endPosition.row + 1,
     };
@@ -213,7 +273,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
               isAsync,
               isExported: false,
               decorators: this.extractDecorators(member),
-              calls: extractCalls(methodBody, "typescript"),
+              calls: [...extractCalls(methodBody, "typescript"), ...collectDynamicImportCalls(methodBody)],
               line: member.startPosition.row + 1,
               endLine: member.endPosition.row + 1,
             });
