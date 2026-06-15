@@ -51,6 +51,12 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     detectedVia: "package.json dependency",
   },
   {
+    id: "svelte",
+    name: "Svelte",
+    check: (info) => hasDep(info, "svelte") || hasDep(info, "@sveltejs/kit"),
+    detectedVia: "package.json dependency",
+  },
+  {
     id: "express",
     name: "Express",
     check: (info) => hasDep(info, "express"),

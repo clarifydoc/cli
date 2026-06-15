@@ -57,7 +57,7 @@ function walkForJsx(
   }
 }
 
-function extractJsxProps(node: Node): string[] {
+export function extractJsxProps(node: Node): string[] {
   const props: string[] = [];
   for (const child of node.children) {
     if (child.type === "jsx_attribute") {

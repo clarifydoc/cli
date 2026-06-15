@@ -2,7 +2,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { InteractiveElementInfo, Language } from "../../../types/analysis.js";
 
 /** HTML tags that map to interactive element types */
-const INTERACTIVE_TAGS: Record<string, InteractiveElementInfo["element"]> = {
+export const INTERACTIVE_TAGS: Record<string, InteractiveElementInfo["element"]> = {
   button: "button",
   input: "input",
   form: "form",
@@ -72,7 +72,7 @@ function extractEventProps(node: Node): { event: string; handler: string | null 
 }
 
 /** Check if a JSX prop name is an event handler (starts with on + uppercase) */
-function isEventProp(name: string): boolean {
+export function isEventProp(name: string): boolean {
   return /^on[A-Z]/.test(name);
 }
 
@@ -215,6 +215,11 @@ export function extractVueInteractiveElements(
 function resolveVueElementType(tagName: string): InteractiveElementInfo["element"] {
   const lower = tagName.toLowerCase();
   if (INTERACTIVE_TAGS[lower]) return INTERACTIVE_TAGS[lower]!;
-  if (/^[A-Z]/.test(tagName) || tagName.includes("-")) return "custom";
+  // PascalCase, kebab-case, or camelCase (dtpBtn) tags are components. The
+  // camelCase case was previously misread as a raw <button>, so its @click
+  // never matched the component in the screen tree.
+  if (/^[A-Z]/.test(tagName) || tagName.includes("-") || /[a-z][A-Z]/.test(tagName)) {
+    return "custom";
+  }
   return "button";
 }

@@ -198,6 +198,13 @@ export interface FileAnalysis {
   dataMutations: DataMutationInfo[];
   subComponents: SubComponentInfo[];
   interactiveElements: InteractiveElementInfo[];
+  /**
+   * Nested component tree mirroring the frontend template's element nesting
+   * (with `repeated` set on looped nodes). Populated for frontend files
+   * (Vue/React/Svelte/Angular); empty/absent otherwise. `buildScreen` consumes
+   * it to reproduce real nesting instead of the flat sub-component fallback.
+   */
+  templateTree?: TemplateComponentNode[];
   events: EventInfo[];
   screens: ScreenInfo[];
   /** Schema-validation warnings produced by validateFileAnalysis(). Omitted when empty. */
@@ -348,6 +355,30 @@ export interface SubComponentInfo {
   line: number;
 }
 
+/** A component usage from a frontend template, flat & de-duped. */
+export interface TemplateComponent {
+  name: string;
+  props: string[];
+  line: number;
+}
+
+/**
+ * Framework-neutral nested component tree node. Produced per-frontend (Vue SFC
+ * template, React JSX AST, Svelte/Angular templates) and consumed uniformly by
+ * `treeToComponents` to build the screen's `ScreenComponentInfo` tree.
+ */
+export interface TemplateComponentNode extends TemplateComponent {
+  /** True when this node is rendered in a loop — it carries the framework's
+   *  loop construct (Vue `v-for`, Angular `*ngFor`, Svelte `{#each}`,
+   *  React `.map()`), or an enclosing element/scope does. */
+  repeated: boolean;
+  /** For an interactive HTML element promoted into the tree (`<button>` with a
+   *  handler, bound `<input>`, …) — its element kind. Undefined for components. */
+  element?: "button" | "input" | "form" | "link" | "select" | "textarea";
+  /** Child nodes (components or interactive elements) nested under this one. */
+  children: TemplateComponentNode[];
+}
+
 export interface InteractiveElementInfo {
   element: "button" | "input" | "form" | "link" | "select" | "textarea" | "custom";
   event: string;
@@ -383,6 +414,9 @@ export interface ScreenComponentInfo {
   children: ScreenComponentInfo[];
   events: string[];
   dataBindings: string[];
+  /** True for a component rendered in a loop (Vue `v-for`, or an enclosing
+   *  `v-for`). Drives the loop badge in the screen's component tree. */
+  repeated?: boolean;
   line: number;
 }
 
@@ -645,6 +679,10 @@ export interface ProjectAnalysis {
   healthScore?: HealthScore;
   suggestions?: Suggestion[];
   fileLayerMap?: Record<string, ArchLayer>;
+  /** Auto-detected generated/library barrel roots (e.g. kubb output dirs). */
+  generatedRoots?: string[];
+  /** Files under a generated root that nothing outside that tree imports (dead code). */
+  unusedFiles?: string[];
   /** Aggregate provenance counts across symbolLinks for at-a-glance quality assessment. */
   confidenceCounts?: { extracted: number; inferred: number; ambiguous: number };
   /** Paths the discovery layer silently skipped because their names look like credentials. */
@@ -702,6 +740,7 @@ export function createEmptyAnalysis(
     dataMutations: [],
     subComponents: [],
     interactiveElements: [],
+    templateTree: [],
     events: [],
     screens: [],
   };

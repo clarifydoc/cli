@@ -36,6 +36,24 @@ function railsControllerClass(controllerToken: string): string {
   return railsCamelize(last) + "Controller";
 }
 
+/** `UserRole` / `Admin::BaseController` → `user_role` / `base_controller` — the
+ *  Rails autoload file basename for a constant. Only the last `::` segment
+ *  matters because autoloading maps each constant to its own file. */
+function railsUnderscore(name: string): string {
+  const last = name.split("::").pop() ?? name;
+  return last
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .toLowerCase();
+}
+
+/** Naive Rails inflector: `user_role` → `user_roles`, `category` → `categories`. */
+function railsPluralize(token: string): string {
+  if (/[^aeiou]y$/.test(token)) return token.replace(/y$/, "ies");
+  if (/(s|x|z|ch|sh)$/.test(token)) return token + "es";
+  return token + "s";
+}
+
 export const rubySpec: RegexLangSpec = {
   language: "ruby",
   extensions: [".rb"],
@@ -113,10 +131,76 @@ export const rubySpec: RegexLangSpec = {
       getSource: (m) => m[1],
       getSpecifiers: (m) => { const parts = m[1].split("/"); return [parts[parts.length - 1]]; },
     },
+    {
+      // Rails autoload: `ActiveAdmin.register UserRole` administers (and thus
+      // depends on) the `UserRole` model — there's no `require`, the constant
+      // reference autoloads app/models/user_role.rb. Surfacing it as an import
+      // lets the dependency graph link the admin file to its model.
+      pattern: /^\s*ActiveAdmin\.register\s+([A-Z][\w:]*)/,
+      getSource: (m) => railsUnderscore(m[1]),
+      getSpecifiers: (m) => [m[1].split("::").pop() ?? m[1]],
+    },
+    {
+      // Rails autoload via inheritance: `class Foo < Bar` loads Bar's file
+      // (e.g. a controller's ApplicationController, a model's IdaModel). The
+      // superclass is already captured as an `extends` edge for the data-model
+      // graph; emitting it as an import additionally wires the file-level
+      // dependency graph the same way `require` would.
+      pattern: /^\s*class\s+[A-Z]\w*\s+<\s+([A-Z][\w:]*)/,
+      getSource: (m) => railsUnderscore(m[1]),
+      getSpecifiers: (m) => [m[1].split("::").pop() ?? m[1]],
+    },
   ],
 
   extractRoutes: (lines, classes: ClassInfo[]) => {
     const routes: RouteInfo[] = [];
+
+    // ActiveAdmin DSL. `ActiveAdmin.register Model do … end` mounts the standard
+    // admin CRUD routes under `/admin/<pluralized_resource>`; the generated
+    // controller is `Admin::<Model>sController`, but its customisations live in
+    // THIS file, so the routes are attributed here. `register_page "Title"`
+    // mounts a single GET page.
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      const reg = line.match(/^ActiveAdmin\.register\s+([A-Z][\w:]*)/);
+      if (reg) {
+        const model = reg[1].split("::").pop() ?? reg[1];
+        const resource = railsPluralize(railsUnderscore(model));
+        const basePath = "/admin/" + resource;
+        // The generated controller is `Admin::<Plural>Controller`. We carry it
+        // as the handler for display, but WITHOUT an `#action` suffix: the
+        // symbol linker resolves handlers by their leaf name, and the REST
+        // action leaves (`index`, `show`, …) collide with every real
+        // controller's methods, producing bogus cross-file edges. The bare
+        // class name matches no project symbol, so no false link is emitted.
+        const controllerClass = "Admin::" + railsCamelize(resource) + "Controller";
+        for (const [action, info] of Object.entries(RAILS_ACTION_MAP)) {
+          void action;
+          routes.push({
+            path: basePath + info.suffix,
+            httpMethod: info.method,
+            kind: "api",
+            handler: controllerClass,
+            calls: [],
+            middleware: [],
+            line: i + 1,
+          });
+        }
+        continue;
+      }
+      const page = line.match(/^ActiveAdmin\.register_page\s+['"]([^'"]+)['"]/);
+      if (page) {
+        routes.push({
+          path: "/admin/" + railsUnderscore(page[1].replace(/\s+/g, "_")),
+          httpMethod: "GET",
+          kind: "api",
+          handler: null,
+          calls: [],
+          middleware: [],
+          line: i + 1,
+        });
+      }
+    }
 
     // Scan for `private` keyword to mark lines below it as private
     const privateMethodLines = new Set<number>();

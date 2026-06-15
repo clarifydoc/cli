@@ -30,6 +30,7 @@ import { detectPatterns } from "./pattern-detector.js";
 import { detectDuplicates } from "./duplication-detector.js";
 import { classifyFileLayers, detectLayerViolations } from "./layer-analyzer.js";
 import { analyzeBlastRadius } from "./blast-radius.js";
+import { analyzeUnusedCode } from "./dead-code.js";
 import { computeHealthScore } from "./health-scorer.js";
 import { generateSuggestions } from "./suggestions-engine.js";
 import { detectCommunities } from "./community-detector.js";
@@ -48,6 +49,7 @@ import {
   type ScreenComponentCategory,
   type ComplexityInfo,
   type SecurityIssue,
+  type TemplateComponentNode,
 } from "../types/analysis.js";
 
 export interface AnalyzeOptions {
@@ -142,9 +144,18 @@ async function loadCachedFileResult(
   const complexities = analysis.complexities ?? [];
   const securityIssues = analysis.securityIssues ?? [];
 
+  // Keep the raw source for files that can back a screen: route-config files
+  // (caption/nav) AND the UI component files routes resolve to (Vue/JSX/TSX, or
+  // anything with template components / interactive elements). buildScreen
+  // re-parses the .vue template from this to recover its nesting + v-for.
   const hasFrontendRoute = (analysis.routes ?? []).some((r) => r.kind === "frontend");
+  const isUiSource =
+    hasFrontendRoute ||
+    /\.(vue|svelte|jsx|tsx)$/.test(analysis.filePath) ||
+    (analysis.subComponents?.length ?? 0) > 0 ||
+    (analysis.interactiveElements?.length ?? 0) > 0;
   let rawSource: string | null = null;
-  if (hasFrontendRoute) {
+  if (isUiSource) {
     try {
       rawSource = await readFile(file.absolutePath, "utf-8");
     } catch {
@@ -457,10 +468,13 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       .filter((ds) => ds.kind === "api-call")
       .map((ds) => ({ ...ds, filePath: a.filePath })),
   );
-  // Build screens: DFM screens + web screens from routes
+  // Build screens: DFM screens + web screens from routes + routeless UI
+  // component files (so their component tree shows in the "Components" group).
   const dfmScreens = allAnalyses.flatMap((a) => a.screens ?? []);
   const webScreens = buildScreensFromRoutes(allAnalyses, rawSources);
-  const allScreens = [...dfmScreens, ...webScreens];
+  const screenedFiles = new Set(webScreens.map((s) => s.filePath));
+  const componentScreens = buildScreensFromComponents(allAnalyses, rawSources, screenedFiles);
+  const allScreens = [...dfmScreens, ...webScreens, ...componentScreens];
 
   // Step 4c: Advanced analysis
   progress.step("Analyzing complexity and patterns...");
@@ -492,6 +506,13 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     }
   }
 
+  // Auto-detect generated/library barrel trees and the unused files within
+  // them (e.g. kubb output where only a handful of endpoints are imported).
+  const { generatedRoots, unusedFiles } = analyzeUnusedCode(allAnalyses, componentGraph);
+  if (unusedFiles.length > 0) {
+    progress.detail(`  Unused (generated): ${unusedFiles.length} file(s) under ${generatedRoots.join(", ")}`);
+  }
+
   // Class-level dependency graph for the Architecture tab's Data Models view.
   const classGraph = buildClassGraph(allAnalyses);
 
@@ -518,6 +539,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     layerViolations,
     blastRadius,
     componentGraph,
+    unusedFiles,
   });
 
   progress.detail(`  Health: ${healthScore.grade} (${healthScore.score}/100)`);
@@ -569,6 +591,8 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     suggestedQuestions: suggestedQuestions.length > 0 ? suggestedQuestions : undefined,
     classGraph: classGraph.nodes.length > 0 ? classGraph : undefined,
     dataAccessGraph: dataAccessGraph.nodes.length > 0 ? dataAccessGraph : undefined,
+    generatedRoots: generatedRoots.length > 0 ? generatedRoots : undefined,
+    unusedFiles: unusedFiles.length > 0 ? unusedFiles : undefined,
   };
 
   progress.step("Writing project summary...");
@@ -712,6 +736,41 @@ function buildScreensFromRoutes(
   return screens;
 }
 
+/**
+ * Build screens for reusable UI component files (EmploymentOverview.vue, …) that
+ * aren't reached by any route, so the Screens & UI tab can show their component
+ * tree too — not just routed pages. Each becomes a routeless screen (so it lands
+ * in the "Components" group). Only files that actually yield a component tree are
+ * kept; logic-only modules and components with no template/sub-components are
+ * skipped. `alreadyScreened` excludes files already covered by route screens.
+ */
+function buildScreensFromComponents(
+  allAnalyses: FileAnalysis[],
+  rawSources: Map<string, string>,
+  alreadyScreened: Set<string>,
+): ScreenInfo[] {
+  const screens: ScreenInfo[] = [];
+  for (const analysis of allAnalyses) {
+    if (alreadyScreened.has(analysis.filePath)) continue;
+    // Frontend SFC/JSX files, OR any file that yielded a component tree (e.g. an
+    // Angular `.ts` component with an inline `@Component` template).
+    const hasTree = (analysis.templateTree?.length ?? 0) > 0;
+    if (!hasTree && !/\.(vue|svelte|jsx|tsx)$/.test(analysis.filePath)) continue;
+    const screen = buildScreen(
+      analysis,
+      screenNameFromFile(analysis),
+      "",
+      rawSources,
+      /* isComponent */ true,
+    );
+    // Skip files that produced nothing to show (no template nesting, no
+    // sub-components, no interactive elements) — they'd render an empty tree.
+    if (screen.components.length === 0) continue;
+    screens.push(screen);
+  }
+  return screens;
+}
+
 /** Screen name fallback when a route carries no usable handler: prefer a named
  *  function/class export, then an exported function, then the file's base name. */
 function screenNameFromFile(analysis: FileAnalysis): string {
@@ -721,6 +780,27 @@ function screenNameFromFile(analysis: FileAnalysis): string {
   const defaultFn = analysis.functions.find((f) => f.isExported && f.name !== "default");
   const fileBaseName = analysis.filePath.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "");
   return namedExport?.name ?? defaultFn?.name ?? fileBaseName;
+}
+
+/**
+ * The screen's `formType` ("VuePage", "ReactComponent", …): a framework label
+ * (by file extension, then framework hints) suffixed with Page/Component.
+ */
+function screenFormType(analysis: FileAnalysis, isComponent: boolean): string {
+  const path = analysis.filePath;
+  const fw = analysis.frameworks;
+  const label = path.endsWith(".vue")
+    ? "Vue"
+    : path.endsWith(".svelte")
+      ? "Svelte"
+      : fw.includes("angular")
+        ? "Angular"
+        : fw.includes("svelte")
+          ? "Svelte"
+          : fw.includes("vue") || fw.includes("vue-router")
+            ? "Vue"
+            : "React";
+  return `${label}${isComponent ? "Component" : "Page"}`;
 }
 
 /**
@@ -735,10 +815,10 @@ function buildScreen(
   screenName: string,
   routePath: string,
   rawSources: Map<string, string>,
+  isComponent = false,
 ): ScreenInfo {
   const rawSource = rawSources.get(analysis.filePath) ?? "";
-  const isVue = analysis.filePath.endsWith(".vue");
-  const formType = isVue ? "VuePage" : "ReactPage";
+  const formType = screenFormType(analysis, isComponent);
   const caption = extractPageTitle(rawSource);
 
   const components: ScreenComponentInfo[] = [];
@@ -746,35 +826,43 @@ function buildScreen(
   // Track which interactiveElements belong to subComponents
   const usedInteractiveIndices = new Set<number>();
 
-  // Add sub-components (UserTable, UserForm, StatsPanel, etc.)
-  for (const sub of analysis.subComponents) {
-    // Attach the custom-element bindings (@event / v-model) that sit on THIS
-    // component's tag, matched by the tag's opening line — both extractors
-    // record an element at the line where its tag opens. The previous rule
-    // matched by prop/event NAME overlap, so every component declaring a
-    // `v-model` prop absorbed every `v-model` in the file (e.g. ISTDatePicker
-    // showed three, stealing other components' bindings).
-    const compEvents: string[] = [];
-    analysis.interactiveElements.forEach((el, idx) => {
-      if (el.element === "custom" && el.line === sub.line) {
-        compEvents.push(el.event + (el.handler ? ` → ${el.handler}` : ""));
-        usedInteractiveIndices.add(idx);
-      }
-    });
+  // Reproduce the template's real nesting (with looped nodes marked) from the
+  // framework-neutral tree built during per-file analysis (Vue SFC, React JSX,
+  // Svelte, Angular). Files with no such tree fall back to the flat
+  // sub-component list below.
+  const templateTree = analysis.templateTree ?? [];
+  if (templateTree.length > 0) {
+    components.push(...treeToComponents(templateTree, analysis, usedInteractiveIndices));
+  } else {
+    // Flat fallback: one entry per distinct sub-component.
+    for (const sub of analysis.subComponents) {
+      // Attach the custom-element bindings (@event / v-model) on THIS
+      // component's tag, matched by the tag's opening line — both extractors
+      // record an element at the line where its tag opens. Matching by
+      // prop/event NAME instead made every component with a `v-model` prop
+      // absorb every `v-model` in the file.
+      const compEvents: string[] = [];
+      analysis.interactiveElements.forEach((el, idx) => {
+        if (el.element === "custom" && el.line === sub.line) {
+          compEvents.push(el.event + (el.handler ? ` → ${el.handler}` : ""));
+          usedInteractiveIndices.add(idx);
+        }
+      });
 
-    components.push({
-      name: sub.name,
-      componentType: sub.importSource ?? sub.name,
-      category: "custom",
-      caption: null,
-      position: null,
-      align: null,
-      visible: true,
-      children: [],
-      events: compEvents,
-      dataBindings: sub.props.filter((p) => !p.startsWith("on") && !p.startsWith("@")),
-      line: sub.line,
-    });
+      components.push({
+        name: sub.name,
+        componentType: sub.importSource ?? sub.name,
+        category: "custom",
+        caption: null,
+        position: null,
+        align: null,
+        visible: true,
+        children: [],
+        events: compEvents,
+        dataBindings: cleanBindings(sub.props, compEvents, false),
+        line: sub.line,
+      });
+    }
   }
 
   // Add HTML interactive elements (buttons, inputs, forms, links)
@@ -810,6 +898,77 @@ function buildScreen(
     routePath,
     navigatesTo: extractNavigationTargets(rawSource),
   };
+}
+
+/**
+ * Drop data-bindings that are already represented elsewhere on the node, so the
+ * tree reads cleanly:
+ *   - `on*` / `@*` props (events, shown as event pills).
+ *   - `key` when the node is in a `v-for` — it's loop bookkeeping next to the
+ *     loop badge.
+ *   - any prop that mirrors an `@event` (e.g. `click` ↔ `@click`, `v-model`) —
+ *     the attribute parser surfaces these as both a prop and an event.
+ */
+function cleanBindings(props: string[], events: string[], repeated: boolean): string[] {
+  const eventNames = new Set(
+    events.map((e) => e.split(" ")[0]!.replace(/^@/, "").toLowerCase()),
+  );
+  return props.filter((p) => {
+    if (p.startsWith("on") || p.startsWith("@")) return false;
+    if (repeated && p.toLowerCase() === "key") return false;
+    if (eventNames.has(p.toLowerCase())) return false;
+    return true;
+  });
+}
+
+/**
+ * Convert a frontend template component tree into ScreenComponentInfo nodes,
+ * preserving nesting and the `repeated` (loop) flag. Each node's event /
+ * binding entries are matched by tag line, and `componentType` resolves to the
+ * component's import source when one exists. Framework-neutral: the tree is
+ * produced per-frontend (Vue SFC, React JSX, Svelte, Angular) and consumed here
+ * uniformly.
+ */
+function treeToComponents(
+  nodes: TemplateComponentNode[],
+  analysis: FileAnalysis,
+  usedInteractiveIndices: Set<number>,
+): ScreenComponentInfo[] {
+  return nodes.map((n) => {
+    // Match this node's bindings by line. A component matches "custom"
+    // interactive elements; an HTML control matches its own element kind.
+    const events: string[] = [];
+    let firstHandler: string | null = null;
+    analysis.interactiveElements.forEach((el, idx) => {
+      if (el.line !== n.line) return;
+      const matches = n.element ? el.element === n.element : el.element === "custom";
+      if (!matches) return;
+      events.push(el.event + (el.handler ? ` → ${el.handler}` : ""));
+      if (!firstHandler && el.handler) firstHandler = el.handler;
+      usedInteractiveIndices.add(idx);
+    });
+
+    const importSource = n.element
+      ? null
+      : analysis.imports.find((imp) => imp.specifiers.includes(n.name))?.source ?? null;
+
+    return {
+      // For an HTML control, label it by its handler when there is one (e.g.
+      // "datepickerDec") so the tree reads usefully, falling back to the tag.
+      name: n.element ? (firstHandler ?? n.name) : n.name,
+      componentType: n.element ?? importSource ?? n.name,
+      category: n.element ? WEB_ELEMENT_CATEGORY[n.element] ?? "display" : "custom",
+      caption: null,
+      position: null,
+      align: null,
+      visible: true,
+      repeated: n.repeated,
+      children: treeToComponents(n.children, analysis, usedInteractiveIndices),
+      events,
+      dataBindings: cleanBindings(n.props, events, n.repeated),
+      line: n.line,
+    };
+  });
 }
 
 /**
