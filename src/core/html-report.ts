@@ -114,6 +114,8 @@ function renderReport(summary: ProjectAnalysis): string {
     // Graph data for D3
     componentGraph: summary.componentGraph ?? {},
     fileLayerMap: summary.fileLayerMap ?? {},
+    generatedRoots: summary.generatedRoots ?? [],
+    unusedFiles: summary.unusedFiles ?? [],
     // Advanced analysis data
     healthScore: summary.healthScore ?? null,
     patterns: summary.patterns ?? [],
@@ -334,6 +336,8 @@ a{color:#58a6ff;text-decoration:none}
 .d3-btn{padding:5px 12px;background:#161b22;border:1px solid #30363d;color:#8b949e;border-radius:6px;font-size:11px;font-family:inherit;cursor:pointer;transition:all 0.15s}
 .d3-btn:hover{background:#1c2128;color:#e6edf3;border-color:#58a6ff}
 .d3-btn.active{background:#1f6feb22;color:#58a6ff;border-color:#1f6feb}
+.d3-btn.trace-blast-link{color:#ff9f43;border-color:#ff9f4344;margin-right:8px}
+.d3-btn.trace-blast-link:hover{background:#ff9f4322;color:#ffb86b;border-color:#ff9f43}
 #d3-legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;font-size:11px;color:#8b949e}
 .legend-item{display:flex;align-items:center;gap:5px}
 .legend-dot{width:10px;height:10px;border-radius:3px;flex-shrink:0}
@@ -595,6 +599,11 @@ a{color:#58a6ff;text-decoration:none}
 .detail-handler .fn{color:#79c0ff;font-family:monospace}
 .detail-handler .arrow{color:#484f58}
 
+/* Floating component detail popup, anchored next to the clicked node */
+.comp-popup{position:fixed;z-index:1000;display:none;min-width:240px;max-width:380px;max-height:70vh;overflow:auto;background:#161b22;border:1px solid #30363d;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.5);padding:12px 14px}
+.comp-popup-close{position:absolute;top:6px;right:8px;width:20px;height:20px;background:none;border:none;color:#8b949e;font-size:16px;line-height:1;cursor:pointer}
+.comp-popup-close:hover{color:#e6edf3}
+
 /* Tree nodes */
 .tree-node{display:flex;align-items:center;gap:8px;padding:5px 14px;font-size:13px;cursor:pointer;border-left:3px solid transparent;transition:background 0.1s,border-color 0.1s}
 .tree-node:hover{background:#1c212866}
@@ -617,6 +626,7 @@ a{color:#58a6ff;text-decoration:none}
 .comp-name{font-family:monospace;color:#e6edf3;font-weight:500}
 .comp-type{font-size:11px;color:#484f58;font-family:monospace}
 .comp-caption{font-size:12px;color:#d2a8ff;margin-left:2px}
+.loop-badge{font-size:10px;font-family:monospace;color:#d29922;background:#d2992222;border:1px solid #d2992244;border-radius:3px;padding:0 5px;margin-left:2px;white-space:nowrap}
 .comp-align{font-size:10px;color:#484f58;font-family:monospace}
 
 /* Pills */
@@ -770,9 +780,15 @@ function renderLinksView(): string {
     <span class="d3-toolbar-label" id="d3-colour-label">Color by:</span>
     <button class="d3-btn active" data-color="layer">Layer</button>
     <button class="d3-btn" data-color="folder">Folder</button>
+    <button class="d3-btn arch-proj-only" data-color="project">Project</button>
     <button class="d3-btn" data-color="risk">Risk</button>
+    <span class="d3-toolbar-sep arch-files-only arch-proj-only"></span>
+    <span class="d3-toolbar-label arch-files-only arch-proj-only">Group:</span>
+    <button class="d3-btn arch-files-only arch-proj-only" data-arch-group="folder">Folder</button>
+    <button class="d3-btn arch-files-only arch-proj-only" data-arch-group="project">Project</button>
     <span class="d3-toolbar-sep"></span>
     <label class="d3-check" id="d3-hide-unlinked-wrap"><input type="checkbox" id="d3-hide-unlinked" checked> Hide unlinked</label>
+    <label class="d3-check arch-files-only" id="d3-hide-unused-wrap" style="display:none"><input type="checkbox" id="d3-hide-unused" checked> Hide unused <span id="d3-hide-unused-count" style="color:#8b949e"></span></label>
     <span class="d3-toolbar-sep"></span>
     <button class="d3-btn" id="d3-toggle-labels">Labels</button>
     <button class="d3-btn" id="d3-zoom-fit">Fit</button>
@@ -940,6 +956,7 @@ function requestRender(view) {
 let suppressHashSync = false;
 
 function activateTab(view) {
+  hideCompPopup();
   document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   const btn = document.querySelector('.nav button[data-view="' + view + '"]');
@@ -962,6 +979,18 @@ function activateTab(view) {
 document.querySelectorAll('.nav button').forEach(btn => {
   btn.addEventListener('click', () => activateTab(btn.dataset.view));
 });
+
+// Cross-view jump: switch to the Blast Radius tab and select a file. Activating
+// the tab runs its lazy renderer (which (re)binds window.selectBlastFile), so
+// the helper is available by the time we call it. No-op if the file has no
+// blast-radius entry (e.g. a file with no graph edges).
+function gotoBlast(filePath) {
+  activateTab('blast');
+  if (window.selectBlastFile) window.selectBlastFile(filePath);
+  const li = document.querySelector('.blast-file-item[data-blast-file="' + CSS.escape(filePath) + '"]');
+  if (li) li.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+window.gotoBlast = gotoBlast;
 
 // Chunked list rendering shared by the traces and blast-radius lists: build a
 // few hundred rows at a time behind a "Show more" button — one giant innerHTML
@@ -1112,6 +1141,9 @@ function refreshAllViews() {
 
 let archMode = 'files'; // 'files' | 'types' | 'data-access'
 let traceViewMode = 'tree'; // Call Traces right pane: 'tree' (double-tree diagram) | 'list'
+// Architecture Files graph clustering: 'auto' (project when 2+ sub-projects, else
+// folder), or an explicit 'folder' / 'project' chosen via the Group toggle.
+let archGroupMode = 'auto';
 function rebuildLinkGraph() {
   const container = document.getElementById('d3-graph-container');
   if (!container) return;
@@ -1152,6 +1184,19 @@ function rebuildLinkGraph() {
     if (colourLabel) colourLabel.classList.toggle('arch-hidden', !inFileMode);
     const hideUnlinkedWrap = document.getElementById('d3-hide-unlinked-wrap');
     if (hideUnlinkedWrap) hideUnlinkedWrap.classList.toggle('arch-hidden', !inFileMode);
+    // Group toggle (+ its label/sep) only applies to the Files graph.
+    document.querySelectorAll('.arch-files-only').forEach((b) => {
+      b.classList.toggle('arch-hidden', !inFileMode);
+    });
+    rebuildLinkGraph();
+  });
+
+  // Group-by toggle (Folder / Project): switches how the Files graph clusters
+  // and re-runs the layout so each cluster settles into its own region.
+  document.addEventListener('click', function(e) {
+    const t = e.target;
+    if (!(t instanceof HTMLElement) || !t.dataset || !t.dataset.archGroup) return;
+    archGroupMode = t.dataset.archGroup; // 'folder' | 'project' (buttons carry one of these)
     rebuildLinkGraph();
   });
 
@@ -1159,6 +1204,20 @@ function rebuildLinkGraph() {
   // static HTML = default on); wired once here, read by initLinkGraph.
   const hideUnlinkedCb = document.getElementById('d3-hide-unlinked');
   if (hideUnlinkedCb) hideUnlinkedCb.onchange = () => rebuildLinkGraph();
+
+  // Hide-unused checkbox (generated/library dead code). Only meaningful when the
+  // analyzer detected unused generated files; revealed + counted here once.
+  const unusedCount = (DATA.unusedFiles || []).length;
+  const hideUnusedWrap = document.getElementById('d3-hide-unused-wrap');
+  if (hideUnusedWrap && unusedCount > 0) {
+    hideUnusedWrap.style.display = '';
+    const countEl = document.getElementById('d3-hide-unused-count');
+    if (countEl) countEl.textContent = '(' + unusedCount + ')';
+    hideUnusedWrap.title = 'Hide ' + unusedCount + ' generated file(s) nothing outside their tree imports'
+      + ((DATA.generatedRoots || []).length ? ' — ' + DATA.generatedRoots.join(', ') : '');
+  }
+  const hideUnusedCb = document.getElementById('d3-hide-unused');
+  if (hideUnusedCb) hideUnusedCb.onchange = () => rebuildLinkGraph();
 })();
 
 // ─── Build handler lookup from interactiveElements ────────────────────
@@ -1194,9 +1253,14 @@ function flattenComponents(components, result) {
   return result;
 }
 
-function renderComponentTree(components, depth, screenIdx) {
+function renderComponentTree(components, depth, screenIdx, ctr) {
   if (!components || !components.length) return '';
+  // Per-screen pre-order counter — same traversal as flattenComponents(), so a
+  // node's id is its index there. Identifies each node uniquely (repeated names
+  // like "Column" would otherwise all resolve to the first match on click).
+  ctr = ctr || { i: 0 };
   return components.map(c => {
+    const nodeId = ctr.i++;
     const cat = CAT_BADGE[c.category] || CAT_BADGE.display;
     const hasKids = c.children && c.children.length > 0;
     const indent = depth * 22;
@@ -1206,12 +1270,16 @@ function renderComponentTree(components, depth, screenIdx) {
     let html = '<div class="tree-node" style="padding-left:' + (14 + indent) + 'px" '
       + 'data-cat="' + c.category + '" '
       + 'data-comp="' + esc(c.name) + '" '
+      + 'data-node-id="' + nodeId + '" '
       + 'data-screen="' + screenIdx + '" '
       + 'data-search="' + esc((c.name + ' ' + c.componentType + ' ' + (c.caption || '')).toLowerCase()) + '">';
     html += '<span class="tree-toggle">' + (hasKids ? '\\u25BC' : '\\u00B7') + '</span>';
     html += '<span class="cat-badge ' + cat.cls + '">' + cat.letter + '</span>';
     html += '<span class="comp-name">' + esc(c.name) + '</span>';
-    html += '<span class="comp-type">' + esc(c.componentType) + '</span>';
+    // Only show the type when it adds information (an import path / element kind);
+    // suppress the common case where it just repeats the name (e.g. "QLayout QLayout").
+    if (c.componentType && c.componentType !== c.name) html += '<span class="comp-type">' + esc(c.componentType) + '</span>';
+    if (c.repeated) html += '<span class="loop-badge" title="v-for \\u2014 rendered for each item">\\u27F3 v-for</span>';
     if (c.caption) html += '<span class="comp-caption">\\u201C' + esc(c.caption) + '\\u201D</span>';
     if (c.align) html += '<span class="comp-align">[' + esc(c.align) + ']</span>';
 
@@ -1231,7 +1299,7 @@ function renderComponentTree(components, depth, screenIdx) {
     html += '</div>';
 
     if (hasKids) {
-      html += '<div class="tree-children">' + renderComponentTree(c.children, depth + 1, screenIdx) + '</div>';
+      html += '<div class="tree-children">' + renderComponentTree(c.children, depth + 1, screenIdx, ctr) + '</div>';
     }
     return html;
   }).join('');
@@ -1332,8 +1400,13 @@ function renderWireframe(screen, screenIdx) {
     svg += '<text x="8" y="16" fill="#8b949e" font-size="11" font-family="sans-serif">' + esc(screen.caption) + '</text>';
   }
 
+  // Pre-order counter mirroring renderComponentTree/flattenComponents so a
+  // wireframe shape and its tree row share the same node id (must advance even
+  // for skipped nodes to stay aligned).
+  const ctr = { i: 0 };
   function drawComponents(comps) {
     comps.forEach(c => {
+      const nodeId = ctr.i++;
       if (!c.position || c.visible === false) {
         if (c.children) drawComponents(c.children);
         return;
@@ -1343,7 +1416,7 @@ function renderWireframe(screen, screenIdx) {
       const label = c.caption || c.name;
       const cat = c.category;
 
-      svg += '<g class="wf-component" data-comp="' + esc(c.name) + '" data-screen="' + screenIdx + '">';
+      svg += '<g class="wf-component" data-comp="' + esc(c.name) + '" data-node-id="' + nodeId + '" data-screen="' + screenIdx + '">';
 
       // Draw based on category for more realistic look
       if (cat === 'action') {
@@ -1407,8 +1480,10 @@ function renderWireframe(screen, screenIdx) {
 
 function renderScreenDetail(c, screenIdx) {
   const cat = CAT_BADGE[c.category] || CAT_BADGE.display;
+  const typeSuffix = (c.componentType && c.componentType !== c.name)
+    ? ' <span style="color:#484f58;font-weight:400">' + esc(c.componentType) + '</span>' : '';
   let html = '<div class="detail-title"><span class="cat-badge ' + cat.cls + '" style="display:inline-flex;margin-right:6px">' + cat.letter + '</span>' +
-    esc(c.name) + ' <span style="color:#484f58;font-weight:400">' + esc(c.componentType) + '</span></div>';
+    esc(c.name) + typeSuffix + '</div>';
 
   html += '<div class="detail-grid">';
   html += '<div class="detail-item"><div class="detail-label">Category</div><div class="detail-value">' + (cat.label || c.category) + '</div></div>';
@@ -1425,9 +1500,31 @@ function renderScreenDetail(c, screenIdx) {
   if (c.events && c.events.length) {
     html += '<div style="margin-top:8px"><div class="detail-label" style="margin-bottom:4px">Event Handlers</div>';
     c.events.forEach(e => {
-      const handler = findHandler(c.name, e, filePath);
-      html += '<div class="detail-handler"><span class="ev">' + esc(e) + '</span><span class="arrow">\\u2192</span><span class="fn">' +
-        (handler ? esc(handler) + '()' : '<i style="color:#484f58">unknown</i>') + '</span></div>';
+      // The handler may be matched from interactive elements, or already embedded
+      // inline in the event string ("@click \\u2192 newEmployment") — prefer the
+      // match, fall back to the inline part after the arrow.
+      let eventLabel = e;
+      let handler = findHandler(c.name, e, filePath);
+      if (!handler) {
+        const arrow = e.indexOf('\\u2192');
+        if (arrow >= 0) {
+          eventLabel = e.slice(0, arrow).trim();
+          handler = e.slice(arrow + 1).trim();
+        }
+      }
+      let fnHtml;
+      if (handler) {
+        // Link to the handler's call trace when it resolves to a known symbol
+        // (same affordance as the interactive-elements rows). Inline expressions
+        // that don't resolve just render as plain text.
+        const symKey = findHandlerSymbolKey(handler, filePath);
+        fnHtml = symKey
+          ? '<span class="trace-link" data-sym-key="' + esc(symKey) + '" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted">' + esc(handler) + '()</span> <span style="font-size:10px;color:#58a6ff" title="View call traces">\\u2197</span>'
+          : esc(handler);
+      } else {
+        fnHtml = '<i style="color:#484f58">unknown</i>';
+      }
+      html += '<div class="detail-handler"><span class="ev">' + esc(eventLabel) + '</span><span class="arrow">\\u2192</span><span class="fn">' + fnHtml + '</span></div>';
     });
     html += '</div>';
   }
@@ -1485,9 +1582,7 @@ function wireUpScreenInteractions() {
   // Click tree node → highlight in wireframe + show detail
   document.querySelectorAll('.tree-node').forEach(node => {
     node.addEventListener('click', () => {
-      const compName = node.dataset.comp;
-      const screenIdx = node.dataset.screen;
-      selectComponent(compName, screenIdx, 'tree');
+      selectComponent(node.dataset.screen, node.dataset.nodeId, 'tree');
     });
   });
 
@@ -1505,43 +1600,101 @@ function wireUpScreenInteractions() {
   // Click wireframe component → highlight in tree + show detail
   document.querySelectorAll('.wf-component').forEach(el => {
     el.addEventListener('click', () => {
-      const compName = el.dataset.comp;
-      const screenIdx = el.dataset.screen;
-      selectComponent(compName, screenIdx, 'wireframe');
+      selectComponent(el.dataset.screen, el.dataset.nodeId, 'wireframe');
     });
   });
 }
 
-function selectComponent(compName, screenIdx, source) {
+// Select a single tree/wireframe node by its unique per-screen node id (its
+// index in flattenComponents) — NOT by name, so repeated names like "Column"
+// each select the exact node clicked.
+function selectComponent(screenIdx, nodeId, source) {
   const card = document.querySelector('[data-screen-card="' + screenIdx + '"]');
-  if (!card) return;
+  if (!card || nodeId == null) return;
+  const sel = '[data-node-id="' + nodeId + '"]';
 
   // Clear previous selections in this screen
   card.querySelectorAll('.tree-node.selected').forEach(n => n.classList.remove('selected'));
   card.querySelectorAll('.wf-highlight').forEach(n => n.classList.remove('wf-highlight'));
 
   // Highlight tree node
-  const treeNode = card.querySelector('.tree-node[data-comp="' + compName + '"]');
+  const treeNode = card.querySelector('.tree-node' + sel);
   if (treeNode) {
     treeNode.classList.add('selected');
     if (source === 'wireframe') treeNode.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
   // Highlight wireframe component
-  const wfComp = card.querySelector('.wf-component[data-comp="' + compName + '"]');
+  const wfComp = card.querySelector('.wf-component' + sel);
   if (wfComp) {
     wfComp.querySelectorAll('rect,line').forEach(r => r.classList.add('wf-highlight'));
   }
 
-  // Show detail panel
+  // Show detail as a floating popup anchored next to the clicked node, rather
+  // than in a fixed pane far from where the user is looking.
   const screen = DATA.screens[screenIdx];
-  const allComps = flattenComponents(screen.components);
-  const comp = allComps.find(c => c.name === compName);
+  const comp = flattenComponents(screen.components)[Number(nodeId)];
   if (comp) {
-    const detail = document.getElementById('detail-' + screenIdx);
-    detail.innerHTML = renderScreenDetail(comp, parseInt(screenIdx));
-    detail.classList.add('active');
+    const anchor = (source === 'wireframe' ? wfComp : treeNode) || treeNode || wfComp;
+    showCompPopup(renderScreenDetail(comp, parseInt(screenIdx)), anchor);
   }
+}
+
+// Lazily-created singleton popup, dismissed on outside-click / Escape / scroll.
+function getCompPopup() {
+  let p = document.getElementById('comp-popup');
+  if (!p) {
+    p = document.createElement('div');
+    p.id = 'comp-popup';
+    p.className = 'comp-popup';
+    document.body.appendChild(p);
+    document.addEventListener('mousedown', (e) => {
+      if (p.style.display !== 'block') return;
+      if (p.contains(e.target) || (e.target.closest && e.target.closest('.tree-node,.wf-component'))) return;
+      hideCompPopup();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideCompPopup(); });
+    // The popup is pinned to the anchor's viewport position, so hide it once
+    // that position can shift instead of letting it drift.
+    window.addEventListener('scroll', hideCompPopup, true);
+    window.addEventListener('resize', hideCompPopup);
+  }
+  return p;
+}
+
+function hideCompPopup() {
+  const p = document.getElementById('comp-popup');
+  if (p) p.style.display = 'none';
+}
+
+function showCompPopup(html, anchor) {
+  const p = getCompPopup();
+  p.innerHTML = '<button class="comp-popup-close" aria-label="Close">\\u00D7</button>' + html;
+  p.querySelector('.comp-popup-close').addEventListener('click', hideCompPopup);
+  // Handler trace-links jump to the Traces tab; dismiss the popup first since
+  // it's a fixed overlay that would otherwise float over the other view.
+  p.querySelectorAll('.trace-link').forEach(el => {
+    el.addEventListener('click', (evt) => {
+      evt.stopPropagation();
+      hideCompPopup();
+      navigateToTrace(el.dataset.symKey);
+    });
+  });
+  p.style.display = 'block';
+  if (!anchor) return;
+
+  // Prefer the right of the node; flip left when it would overflow, and clamp
+  // vertically into the viewport.
+  const r = anchor.getBoundingClientRect();
+  const gap = 8;
+  const pw = p.offsetWidth, ph = p.offsetHeight;
+  let left = r.right + gap;
+  if (left + pw > window.innerWidth - gap) left = r.left - pw - gap;
+  if (left < gap) left = Math.max(gap, window.innerWidth - pw - gap);
+  let top = r.top;
+  if (top + ph > window.innerHeight - gap) top = Math.max(gap, window.innerHeight - ph - gap);
+  p.style.left = left + 'px';
+  p.style.top = top + 'px';
 }
 
 
@@ -1751,6 +1904,16 @@ function renderUiList() {
   });
 }
 
+// Jump to a symbol's call traces (shared by the interactive-element rows and
+// the component-detail popup).
+function navigateToTrace(key) {
+  if (!key) return;
+  activateTab('traces');
+  if (window.selectSymbol) window.selectSymbol(key);
+  const li = document.querySelector('.trace-sym-item[data-sym-key="' + CSS.escape(key) + '"]');
+  if (li) li.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
 function wireUpUiLinks(scope) {
   scope.querySelectorAll('.el-route').forEach(el => {
     el.addEventListener('click', () => activateTab('routes'));
@@ -1763,11 +1926,7 @@ function wireUpUiLinks(scope) {
   scope.querySelectorAll('.trace-link').forEach(el => {
     el.addEventListener('click', (evt) => {
       evt.stopPropagation();
-      const key = el.dataset.symKey;
-      activateTab('traces');
-      if (window.selectSymbol) window.selectSymbol(key);
-      const li = document.querySelector('.trace-sym-item[data-sym-key="' + CSS.escape(key) + '"]');
-      if (li) li.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      navigateToTrace(el.dataset.symKey);
     });
   });
   // Nav-flow targets select that screen's entry instead of scrolling.
@@ -1783,6 +1942,7 @@ function wireUpUiLinks(scope) {
 function renderUiDetail(file) {
   const detail = document.getElementById('ui-detail');
   if (!detail) return;
+  hideCompPopup(); // any open popup is anchored to the tree about to be rebuilt
   const e = uiEntryMap[file];
   if (!e) { detail.innerHTML = '<div class="empty">Select a page or component</div>'; return; }
 
@@ -1832,11 +1992,16 @@ function renderUiDetail(file) {
 
   if (e.screen) html += buildScreenBody(e.screen, e.screenIdx);
 
-  if (e.elements.length) {
-    html += '<div class="ui-section-label">Interactive elements (' + e.elements.length + ')</div>' +
-      '<div class="ui-elements">' + buildElementRows(e.file, e.elements) + '</div>';
-  } else if (!e.screen) {
-    html += '<div class="empty">No interactive elements recorded for this file.</div>';
+  // The component tree already folds the file's interactive elements in (their
+  // handlers show inline on each node), so only fall back to the flat
+  // "Interactive elements" list when there's no tree.
+  if (!e.screen) {
+    if (e.elements.length) {
+      html += '<div class="ui-section-label">Interactive elements (' + e.elements.length + ')</div>' +
+        '<div class="ui-elements">' + buildElementRows(e.file, e.elements) + '</div>';
+    } else {
+      html += '<div class="empty">No interactive elements recorded for this file.</div>';
+    }
   }
 
   detail.innerHTML = html;
@@ -2114,11 +2279,15 @@ function renderTraces() {
     const callees = calleeMap[key] || [];
     const mapDiv = document.getElementById('trace-map-content');
 
-    // Header: symbol + file, plus the Diagram/List view toggle.
+    // Header: symbol + file, plus the Diagram/List view toggle. When the file
+    // has a blast-radius entry, offer a jump to it — completing the
+    // Screens → Call Traces → Blast Radius navigation chain.
+    const hasBlast = (DATA.blastRadius || []).some(b => b.filePath === sym.file);
     let html = '<div class="trace-map-head">';
     html += '<div><div class="trace-selected-title">' + esc(sym.symbol) + '</div>';
     html += '<div class="trace-selected-file">' + esc(sym.file) + '</div></div>';
     html += '<div class="trace-view-toggle">' +
+      (hasBlast ? '<button class="d3-btn trace-blast-link" data-blast-file="' + esc(sym.file) + '" title="View this file\\u2019s blast radius">Blast radius \\u2197</button>' : '') +
       '<button class="d3-btn' + (traceViewMode === 'tree' ? ' active' : '') + '" data-trace-view="tree">Diagram</button>' +
       '<button class="d3-btn' + (traceViewMode === 'list' ? ' active' : '') + '" data-trace-view="list">List</button>' +
       '</div></div>';
@@ -2180,6 +2349,8 @@ function renderTraces() {
 
     // Delegated clicks: view toggle, chain rows navigate, cap button expands.
     mapDiv.onclick = function(e) {
+      const blastBtn = e.target.closest('.trace-blast-link');
+      if (blastBtn) { gotoBlast(blastBtn.dataset.blastFile); return; }
       const viewBtn = e.target.closest('[data-trace-view]');
       if (viewBtn) { traceViewMode = viewBtn.dataset.traceView; selectSymbol(key); return; }
       if (e.target.closest('[data-chain-all]')) { selectSymbol(key, true); return; }
@@ -2344,8 +2515,26 @@ function initLinkGraph() {
   // Layer color scheme
   var LAYER_COLORS = {ui:'#58a6ff',components:'#22d3ee',services:'#a371f7',data:'#ff9f43',utils:'#3fb950',config:'#ec4899',test:'#f59e0b',unknown:'#8b949e'};
   var FOLDER_COLORS = ['#58a6ff','#a371f7','#22d3ee','#3fb950','#ff9f43','#ec4899','#f85149','#84cc16'];
+  var PROJECT_PALETTE = ['#58a6ff','#a371f7','#3fb950','#ff9f43','#ec4899','#22d3ee','#f85149','#84cc16','#d29922','#56d364'];
   var RISK_COLORS = {dangerous:'#f85149',moderate:'#d29922',safe:'#3fb950'};
   var PROX_COLORS = {1:'#58a6ff',2:'#d29922',3:'#484f58'};
+
+  // Sub-project metadata: id -> { name, color }. Drives the "Project" colour mode
+  // and the per-project clustering that isolates each sub-project in its own
+  // region of the canvas. "root" (the catch-all) stays neutral grey.
+  var subProjectList = (DATA.subProjects || []).slice().sort(function(a,b){ return (a.root||'').localeCompare(b.root||''); });
+  var realProjects = subProjectList.filter(function(s){ return s.id !== 'root'; });
+  var projectMeta = {};
+  var realIdx = 0;
+  subProjectList.forEach(function(sp){
+    var disp = sp.name || (sp.root ? sp.root.split('/').pop() : '(root)') || '(root)';
+    var color = sp.id === 'root' ? '#8b949e' : PROJECT_PALETTE[(realIdx++) % PROJECT_PALETTE.length];
+    projectMeta[sp.id] = { name: disp, color: color };
+  });
+  function projectMetaOf(id){ return projectMeta[id] || { name: id || 'root', color: '#8b949e' }; }
+  // Effective clustering: explicit choice wins; otherwise cluster by project as
+  // soon as there are at least two real sub-projects to keep apart.
+  var effGroup = (archGroupMode === 'project' || (archGroupMode === 'auto' && realProjects.length >= 2)) ? 'project' : 'folder';
 
   // Build blast radius lookup
   var blastMap = {};
@@ -2372,12 +2561,20 @@ function initLinkGraph() {
     own(l.sourceFile, l.sourceSymbol);
   });
 
+  // "Hide unused": drop generated/library files nothing outside their tree
+  // imports (analyzer-computed). Combined with the global filter into local
+  // predicates so it scopes to this graph only, not other tabs.
+  var hideUnusedCb = document.getElementById('d3-hide-unused');
+  var unusedSet = new Set((hideUnusedCb && hideUnusedCb.checked) ? (DATA.unusedFiles || []) : []);
+  function fileShown(f){ return isFileVisible(f) && !unusedSet.has(f); }
+  function edgeShown(a, b){ return fileShown(a) && fileShown(b); }
+
   // Build unique edges from linkGraph first (deduplicate, merge proximity;
   // honor filters) — node visibility in "hide unlinked" mode depends on them.
   var linkMap = {};
   DATA.linkGraph.forEach(function(l){
     if (l.source === l.target) return;
-    if (!isEdgeVisible(l.source, l.target)) return;
+    if (!edgeShown(l.source, l.target)) return;
     var key = l.source + '|' + l.target;
     if (!linkMap[key] || l.proximity < linkMap[key].proximity) {
       linkMap[key] = { source: l.source, target: l.target, proximity: l.proximity, reason: l.reason, calls: l.calls };
@@ -2385,18 +2582,18 @@ function initLinkGraph() {
   });
   var links = Object.values(linkMap);
 
-  // Build nodes from files (honor global file filter)
+  // Build nodes from files (honor global file filter + hide-unused)
   var nodeSet = new Set();
   DATA.linkGraph.forEach(function(l){
-    if (isEdgeVisible(l.source, l.target)) { nodeSet.add(l.source); nodeSet.add(l.target); }
+    if (edgeShown(l.source, l.target)) { nodeSet.add(l.source); nodeSet.add(l.target); }
   });
-  Object.keys(DATA.componentGraph).forEach(function(f){ if (isFileVisible(f)) nodeSet.add(f); });
+  Object.keys(DATA.componentGraph).forEach(function(f){ if (fileShown(f)) nodeSet.add(f); });
   Object.entries(DATA.componentGraph).forEach(function(entry){
     var src = entry[0]; var targets = entry[1];
-    if (!isFileVisible(src)) return;
-    targets.forEach(function(t){ if (isFileVisible(t)) nodeSet.add(t); });
+    if (!fileShown(src)) return;
+    targets.forEach(function(t){ if (fileShown(t)) nodeSet.add(t); });
   });
-  DATA.files.forEach(function(f){ if (isFileVisible(f)) nodeSet.add(f); });
+  DATA.files.forEach(function(f){ if (fileShown(f)) nodeSet.add(f); });
 
   // Hide unlinked: keep only nodes that participate in a drawn edge.
   // The checkbox is the state; it's wired once next to the arch-mode toggle.
@@ -2419,8 +2616,13 @@ function initLinkGraph() {
     if (cx) fnCount = cx.functions.length;
     else if (blast) fnCount = Math.max(1, Math.floor(blast.centrality / 2));
     else fnCount = 1;
+    var project = fileProject(filePath);
     return {
       id: filePath, name: name, folder: folder, layer: layer,
+      project: project,
+      // Precomputed cluster key (constant per node for this render) so the
+      // d3 force accessors don't re-branch on effGroup every tick.
+      gkey: effGroup === 'project' ? project : folder,
       fnCount: fnCount,
       risk: blast ? blast.changeRisk : 'safe',
       directDeps: blast ? blast.directDependents : 0,
@@ -2437,10 +2639,18 @@ function initLinkGraph() {
     return;
   }
 
-  // Folder list for clustering
+  // Folder list (used for folder colouring + optional folder clustering)
   var folders = Array.from(new Set(nodes.map(function(n){ return n.folder; }))).sort();
   var folderColorMap = {};
   folders.forEach(function(f, i){ folderColorMap[f] = FOLDER_COLORS[i % FOLDER_COLORS.length]; });
+
+  // Cluster grouping: a stable key per node + a display label + a colour, all
+  // switched by the active Group mode. Project grouping isolates sub-projects;
+  // folder grouping keeps the original behaviour.
+  function groupKeyOf(n){ return n.gkey; }
+  function groupLabelOf(key){ return effGroup === 'project' ? projectMetaOf(key).name : (key || 'root'); }
+  function groupColorOf(key){ return effGroup === 'project' ? projectMetaOf(key).color : (folderColorMap[key] || '#8b949e'); }
+  var groups = Array.from(new Set(nodes.map(groupKeyOf))).sort();
 
   // Color mode
   var colorMode = 'layer';
@@ -2449,6 +2659,7 @@ function initLinkGraph() {
   function getNodeColor(d) {
     if (colorMode === 'layer') return LAYER_COLORS[d.layer] || LAYER_COLORS.unknown;
     if (colorMode === 'folder') return folderColorMap[d.folder] || '#8b949e';
+    if (colorMode === 'project') return projectMetaOf(d.project).color;
     if (colorMode === 'risk') return RISK_COLORS[d.risk] || RISK_COLORS.safe;
     return '#58a6ff';
   }
@@ -2477,19 +2688,22 @@ function initLinkGraph() {
   // Tooltip element
   var tooltip = d3.select('body').append('div').attr('class','d3-tooltip').style('display','none');
 
-  // Force simulation
-  var cols = Math.max(2, Math.ceil(Math.sqrt(folders.length)));
+  // Force simulation: lay one cell out per cluster (project or folder).
+  var cols = Math.max(2, Math.ceil(Math.sqrt(groups.length)));
   var cw = w / (cols + 1);
-  var ch = h / (Math.ceil(folders.length / cols) + 1);
+  var ch = h / (Math.ceil(groups.length / cols) + 1);
   var centers = {};
-  folders.forEach(function(f, i){ centers[f] = { x: (i % cols + 1) * cw, y: (Math.floor(i / cols) + 1) * ch }; });
+  groups.forEach(function(g, i){ centers[g] = { x: (i % cols + 1) * cw, y: (Math.floor(i / cols) + 1) * ch }; });
 
+  // Pull harder toward cluster centres when isolating projects so the regions
+  // separate cleanly rather than bleeding into one another.
+  var clusterStrength = effGroup === 'project' ? 0.2 : 0.12;
   var sim = d3.forceSimulation(nodes)
     .force('link', d3.forceLink(links).id(function(d){ return d.id; }).distance(80).strength(0.25))
     .force('charge', d3.forceManyBody().strength(-250).distanceMax(400))
     .force('collision', d3.forceCollide().radius(function(d){ return getNodeRadius(d) + 8; }))
-    .force('x', d3.forceX(function(d){ return centers[d.folder] ? centers[d.folder].x : w/2; }).strength(0.12))
-    .force('y', d3.forceY(function(d){ return centers[d.folder] ? centers[d.folder].y : h/2; }).strength(0.12))
+    .force('x', d3.forceX(function(d){ var c = centers[d.gkey]; return c ? c.x : w/2; }).strength(clusterStrength))
+    .force('y', d3.forceY(function(d){ var c = centers[d.gkey]; return c ? c.y : h/2; }).strength(clusterStrength))
     .velocityDecay(0.6).alphaDecay(0.05);
 
   // Draw links
@@ -2609,29 +2823,36 @@ function initLinkGraph() {
     }
   }
 
-  // Folder hulls
-  var nodesByFolder = {};
-  folders.forEach(function(f){ nodesByFolder[f] = nodes.filter(function(n){ return n.folder===f; }); });
+  // Cluster hulls — one boundary per group (project or folder). Project hulls
+  // are drawn with extra padding and a stronger outline so each sub-project
+  // reads as an isolated region.
+  var isProjGroup = effGroup === 'project';
+  var hullPad = isProjGroup ? 42 : 28;
+  var nodesByGroup = {};
+  nodes.forEach(function(n){ (nodesByGroup[n.gkey] || (nodesByGroup[n.gkey] = [])).push(n); });
 
   function updateHulls() {
     hullLayer.selectAll('*').remove();
-    folders.forEach(function(f) {
-      var fn = nodesByFolder[f];
+    groups.forEach(function(g) {
+      var fn = nodesByGroup[g];
       if (!fn || fn.length < 1) return;
-      var pad = 28, pts = [];
+      var pad = hullPad, pts = [];
       fn.forEach(function(n){ if(n.x && n.y) pts.push([n.x-pad,n.y-pad],[n.x+pad,n.y-pad],[n.x-pad,n.y+pad],[n.x+pad,n.y+pad]); });
       if (pts.length < 3) return;
       var hull = d3.polygonHull(pts);
       if (!hull) return;
-      var color = folderColorMap[f] || '#8b949e';
+      var color = groupColorOf(g);
       hullLayer.append('path').attr('d','M'+hull.join('L')+'Z')
-        .attr('fill',color).attr('fill-opacity',0.04)
-        .attr('stroke',color).attr('stroke-width',1.5).attr('stroke-opacity',0.2);
+        .attr('fill',color).attr('fill-opacity', isProjGroup ? 0.07 : 0.04)
+        .attr('stroke',color).attr('stroke-width', isProjGroup ? 2 : 1.5)
+        .attr('stroke-opacity', isProjGroup ? 0.45 : 0.2)
+        .attr('stroke-dasharray', isProjGroup ? '6 4' : null);
       var cx = d3.mean(fn, function(n){return n.x;}), cy = d3.min(fn, function(n){return n.y;}) - pad - 6;
       hullLayer.append('text').attr('x',cx).attr('y',cy)
         .attr('text-anchor','middle').attr('fill',color)
-        .attr('font-size','10px').attr('font-family','monospace').attr('font-weight','600').attr('opacity',0.6)
-        .text(f || 'root');
+        .attr('font-size', isProjGroup ? '12px' : '10px').attr('font-family','monospace')
+        .attr('font-weight', isProjGroup ? '700' : '600').attr('opacity', isProjGroup ? 0.85 : 0.6)
+        .text(groupLabelOf(g));
     });
   }
 
@@ -2655,6 +2876,11 @@ function initLinkGraph() {
       Object.keys(LAYER_COLORS).forEach(function(k){ items.push('<span class="legend-item"><span class="legend-dot" style="background:'+LAYER_COLORS[k]+'"></span>'+k+'</span>'); });
     } else if (colorMode === 'folder') {
       folders.forEach(function(f){ items.push('<span class="legend-item"><span class="legend-dot" style="background:'+folderColorMap[f]+'"></span>'+(f||'root')+'</span>'); });
+    } else if (colorMode === 'project') {
+      Array.from(new Set(nodes.map(function(n){ return n.project; }))).sort().forEach(function(id){
+        var m = projectMetaOf(id);
+        items.push('<span class="legend-item"><span class="legend-dot" style="background:'+m.color+'"></span>'+esc(m.name)+'</span>');
+      });
     } else if (colorMode === 'risk') {
       Object.keys(RISK_COLORS).forEach(function(k){ items.push('<span class="legend-item"><span class="legend-dot" style="background:'+RISK_COLORS[k]+'"></span>'+k+'</span>'); });
     }
@@ -2690,6 +2916,13 @@ function initLinkGraph() {
   document.getElementById('d3-zoom-fit').onclick = function(){
     svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
   };
+
+  // Project-specific controls (Color by Project, Group toggle) only make sense
+  // when there's more than one sub-project to separate.
+  var showProj = realProjects.length >= 2;
+  document.querySelectorAll('.arch-proj-only').forEach(function(el){ el.style.display = showProj ? '' : 'none'; });
+  // Reflect the active clustering on the Group buttons.
+  document.querySelectorAll('.d3-btn[data-arch-group]').forEach(function(b){ b.classList.toggle('active', b.dataset.archGroup === effGroup); });
 }
 
 // ─── Type Graph (Architecture tab Data Models mode) ─────────────────────
@@ -3463,6 +3696,23 @@ function renderBlast() {
     html += '<div class="blast-metric"><div class="num">' + b.maxDepth + '</div><div class="lbl">Max Depth</div></div>';
     html += '</div>';
 
+    // Routes this file exposes — controller actions, Rails routes, ActiveAdmin
+    // resources. Answers "what endpoints does changing this file affect?" in the
+    // same pane as its dependents (who uses it) and dependencies (what it uses).
+    var fileRoutes = (DATA.routeMap || []).filter(function(r){ return r.filePath === b.filePath; });
+    if (fileRoutes.length > 0) {
+      html += '<div class="file-card"><div class="file-card-header"><span>Routes Exposed</span><span class="file-card-count">' + fileRoutes.length + '</span></div>';
+      fileRoutes.forEach(function(r){
+        var m = r.httpMethod || 'USE';
+        html += '<div class="blast-sym-row">';
+        html += '<span class="method-badge method-' + m + '" style="margin-right:8px">' + m + '</span>';
+        html += '<span style="font-family:monospace;color:#79c0ff">' + esc(r.path) + '</span>';
+        if (r.handler) html += '<span style="color:#8b949e;margin-left:10px">' + esc(r.handler) + '</span>';
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
     // Exported symbols used externally
     if (b.exportedSymbols && b.exportedSymbols.length > 0) {
       html += '<div class="file-card"><div class="file-card-header"><span>Exported Symbols Used Externally</span><span class="file-card-count">' + b.exportedSymbols.length + '</span></div>';
@@ -3596,6 +3846,10 @@ function renderBlast() {
   riskSel.onchange = renderBlastList;
   searchEl.oninput = renderBlastList;
   renderBlastList();
+
+  // Expose for cross-view navigation (e.g. Call Traces → Blast Radius). Rebound
+  // on each render so the closure always points at the current blastData.
+  window.selectBlastFile = selectBlastFile;
 
   // Auto-select first dangerous or highest-impact file (only if nothing is selected yet)
   if (!_blastSelected) {

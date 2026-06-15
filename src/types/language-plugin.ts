@@ -51,6 +51,13 @@ export interface AstExtractorHooks {
   interactiveElements?(tree: Tree, sourceText: string): InteractiveElementInfo[];
   /** Rendered sub-components (e.g. JSX <UserTable />). */
   subComponents?(tree: Tree, sourceText: string, imports: ImportInfo[]): SubComponentInfo[];
+  /**
+   * Nested component tree mirroring the UI's element nesting (React JSX AST,
+   * Angular inline templates). Stored on `FileAnalysis.templateTree` and
+   * consumed by the screen builder. Vue/Svelte populate this from their SFC
+   * preprocess instead.
+   */
+  componentTree?(tree: Tree, sourceText: string, imports: ImportInfo[]): import("./analysis.js").TemplateComponentNode[];
   /** Component events (e.g. Vue defineEmits / emit calls). */
   events?(sourceText: string): EventInfo[];
   /**

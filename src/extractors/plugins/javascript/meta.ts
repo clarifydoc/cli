@@ -5,10 +5,16 @@ import { NOISE_CALLS } from "../../shared/call-graph.js";
 import { extractTsTypeReferences } from "./type-references.js";
 import { extractInteractiveElements } from "./interactive-elements.js";
 import { extractSubComponents } from "./sub-components.js";
+import { extractJsxComponentTree } from "./component-tree.js";
+import {
+  extractAngularComponentTree,
+  extractAngularInteractiveElements,
+} from "./angular-template.js";
 import { extractEvents } from "./events.js";
 import { javascriptCallHooks } from "./call-hooks.js";
 import { extractJsVariableAliases } from "./variable-aliases.js";
 import { vuePreprocess } from "./vue-hooks.js";
+import { sveltePreprocess } from "./svelte-hooks.js";
 
 const TS_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -102,6 +108,8 @@ const NPM_FRAMEWORK_HINTS: Readonly<Record<string, string>> = {
   "vue": "vue",
   "vue-router": "vue-router",
   "nuxt": "nuxt",
+  "svelte": "svelte",
+  "@sveltejs/kit": "sveltekit",
   "pinia": "pinia",
   "vuex": "vuex",
   "express": "express",
@@ -167,8 +175,16 @@ const DB_CALL_ROOTS = [
 function astHooks(language: Language): AstExtractorHooks {
   return {
     typeReferences: (tree, filePath) => extractTsTypeReferences(tree, language, filePath),
-    interactiveElements: (tree, sourceText) => extractInteractiveElements(tree, sourceText, language),
+    interactiveElements: (tree, sourceText) => [
+      ...extractInteractiveElements(tree, sourceText, language),
+      ...extractAngularInteractiveElements(sourceText),
+    ],
     subComponents: (tree, sourceText, imports) => extractSubComponents(tree, sourceText, language, imports),
+    // JSX nesting (React) or, failing that, an Angular @Component inline template.
+    componentTree: (tree, sourceText, imports) => {
+      const jsx = extractJsxComponentTree(tree, language, imports);
+      return jsx.length > 0 ? jsx : extractAngularComponentTree(sourceText);
+    },
     events: (sourceText) => extractEvents(sourceText, language),
     variableAliases: extractJsVariableAliases,
   };
@@ -177,7 +193,7 @@ function astHooks(language: Language): AstExtractorHooks {
 export const typescriptMeta: LanguagePluginMeta = {
   language: "typescript",
   parsing: "tree-sitter",
-  extensions: [".ts", ".tsx", ".vue"],
+  extensions: [".ts", ".tsx", ".vue", ".svelte"],
   grammar: {
     variants: {
       typescript: { pkg: "tree-sitter-typescript", wasm: "tree-sitter-typescript.wasm" },
@@ -186,8 +202,9 @@ export const typescriptMeta: LanguagePluginMeta = {
     keyForFile: (filePath) =>
       filePath.endsWith(".tsx") || filePath.endsWith(".jsx") ? "tsx" : "typescript",
   },
-  // .vue files map to typescript; the SFC preprocess swaps in the <script> block.
-  preprocess: vuePreprocess,
+  // .vue/.svelte files map to typescript; the SFC preprocess swaps in the
+  // <script> block (dispatched by extension).
+  preprocess: (raw, path) => vuePreprocess(raw, path) ?? sveltePreprocess(raw, path),
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
   securityRules: SECURITY_RULES,

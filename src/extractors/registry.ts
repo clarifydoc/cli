@@ -193,9 +193,12 @@ export function inferFileFrameworks(
     }
   }
 
-  // .vue files are implicitly Vue
+  // .vue / .svelte files are implicitly Vue / Svelte
   if (filePath.endsWith(".vue")) {
     fileFrameworks.add("vue");
+  }
+  if (filePath.endsWith(".svelte")) {
+    fileFrameworks.add("svelte");
   }
 
   return [...fileFrameworks];

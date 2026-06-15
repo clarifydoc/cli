@@ -19,6 +19,8 @@ interface SuggestionInput {
   layerViolations: LayerViolation[];
   blastRadius: BlastRadiusInfo[];
   componentGraph: Record<string, string[]>;
+  /** Files under a generated/library tree that nothing outside imports (dead code). */
+  unusedFiles?: string[];
 }
 
 /**
@@ -173,6 +175,29 @@ export function generateSuggestions(input: SuggestionInput): Suggestion[] {
         }
       }
     }
+  }
+
+  // ── Medium: Unused generated code ──
+  // Files in a generated/library tree (kubb, codegen, …) that nothing outside
+  // the tree imports — safe to prune or exclude from the build.
+  const unused = input.unusedFiles ?? [];
+  if (unused.length > 0) {
+    // Track the single most-populated directory in one pass for the "e.g." hint.
+    const byDir = new Map<string, number>();
+    let topDir = "";
+    let topCount = 0;
+    for (const f of unused) {
+      const dir = f.replace(/\\/g, "/").replace(/\/[^/]+$/, "");
+      const n = (byDir.get(dir) ?? 0) + 1;
+      byDir.set(dir, n);
+      if (n > topCount) { topCount = n; topDir = dir; }
+    }
+    suggestions.push({
+      priority: "medium",
+      category: "Dead Code",
+      message: `${unused.length} generated file(s) appear unused — nothing outside their tree imports them (e.g. ${topCount} under ${topDir})`,
+      actionable: "Prune unused generated output, or narrow your generator config to only the endpoints you consume. Use the Architecture tab's “Hide unused” toggle to focus the graph.",
+    });
   }
 
   // ── Low: Debug statements ──

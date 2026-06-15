@@ -28,6 +28,11 @@ export function vuePreprocess(
         analysis.exports.push({ name: "default", kind: "default", line: 1 });
       }
 
+      // Reproduce the template's real nesting (with looped nodes marked) for
+      // the screen builder — consumed uniformly across frameworks via
+      // `analysis.templateTree`.
+      analysis.templateTree = sfc.templateTree;
+
       if (sfc.template) {
         analysis.interactiveElements.push(
           ...extractVueInteractiveElements(sfc.template, raw),

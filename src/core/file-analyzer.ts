@@ -191,6 +191,11 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // Extract interactive elements (buttons, inputs, forms with event bindings)
     analysis.interactiveElements = hooks?.interactiveElements?.(tree, sourceText) ?? [];
 
+    // Nested component tree from the AST (React JSX, Angular inline templates).
+    // Vue/Svelte SFCs populate this from their preprocess postExtract instead,
+    // which runs below and overrides this (their <script> AST has no JSX).
+    analysis.templateTree = hooks?.componentTree?.(tree, sourceText, analysis.imports) ?? [];
+
     // Infer frameworks for this specific file based on its imports
     analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
 
@@ -226,11 +231,19 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
 
     await writeFileAnalysis(analysis, outputOpts);
 
-    // Return raw source for frontend route files (needed for screen building)
+    // Keep raw source for files that can back a screen: route-config files
+    // (caption/nav) AND the UI component files routes resolve to (Vue/JSX/TSX,
+    // or anything with template components / interactive elements). buildScreen
+    // re-parses the .vue template from this to recover nesting + v-for.
     const hasFrontendRoute = analysis.routes.some((r) => r.kind === "frontend");
+    const isUiSource =
+      hasFrontendRoute ||
+      /\.(vue|svelte|jsx|tsx)$/.test(analysis.filePath) ||
+      analysis.subComponents.length > 0 ||
+      analysis.interactiveElements.length > 0;
     return {
       analysis,
-      rawSource: hasFrontendRoute ? rawSource : null,
+      rawSource: isUiSource ? rawSource : null,
       complexities: fileComplexities,
       securityIssues: fileSecurityIssues,
     };
