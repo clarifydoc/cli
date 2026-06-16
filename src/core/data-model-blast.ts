@@ -10,7 +10,7 @@ import type {
   ClassGraphEdge,
 } from "../types/analysis.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
-import { buildImportIndex } from "./import-index.js";
+import { buildImportIndex, type ImportIndex } from "./import-index.js";
 import { ormOf } from "./entity-graph.js";
 
 /**
@@ -42,6 +42,7 @@ const KIND_WEIGHT: Record<TypeUsageKind, number> = {
 
 export function aggregateTypeBlast(
   analyses: FileAnalysis[],
+  importIndex: ImportIndex = buildImportIndex(analyses),
 ): Map<string /* filePath */, TypeUsageSummary[]> {
   // Step 1: build a name → [file] index. We pull from both ClassInfo and
   // type-shaped exports so TypeScript interfaces (kind: "interface") and
@@ -80,8 +81,8 @@ export function aggregateTypeBlast(
 
   // Step 2: resolve every TypeReference to a defining file. If a name has
   // multiple candidates, consult the importing file's import table to pick
-  // the right one; otherwise mark AMBIGUOUS.
-  const importIndex = buildImportIndex(analyses);
+  // the right one; otherwise mark AMBIGUOUS. (importIndex is shared from the
+  // caller — see the default param above.)
   type ResolvedRef = TypeReference & { resolvedTargetFile: string };
   const resolved: ResolvedRef[] = [];
 
@@ -267,7 +268,10 @@ function dominantCategory(byKind: Partial<Record<TypeUsageKind, number>>): Class
  * from top-level functions are skipped — they have no class container so
  * they don't form class→class edges. They still feed file-level blast.
  */
-export function buildClassGraph(analyses: FileAnalysis[]): ClassGraph {
+export function buildClassGraph(
+  analyses: FileAnalysis[],
+  importIndex: ImportIndex = buildImportIndex(analyses),
+): ClassGraph {
   // Index every class node we know about. Externally-referenced types
   // (no defining ClassInfo or interface export) become "external" nodes so
   // edges to them don't dangle.
@@ -329,7 +333,7 @@ export function buildClassGraph(analyses: FileAnalysis[]): ClassGraph {
   // from its source (class OR file, when not inside a class) to the type
   // it references. Functional codebases (no classes) only form file→class
   // edges, which is exactly the signal a user wants for Vue/React/express.
-  const importIndex = buildImportIndex(analyses);
+  // (importIndex is shared from the caller — see the default param above.)
   const edgeMap = new Map<string /* "src→tgt" */, ClassGraphEdge>();
   for (const a of analyses) {
     for (const ref of a.typeReferences ?? []) {

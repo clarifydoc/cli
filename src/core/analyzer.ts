@@ -39,9 +39,10 @@ import { dedupSymbolLinks } from "./symbol-dedup.js";
 import { aggregateTypeBlast, buildClassGraph } from "./data-model-blast.js";
 import { buildDataAccessGraph, attributeDataAccessToSymbols } from "./data-access-graph.js";
 import { buildEntityGraph, reconcileEntityInheritance, linkEntityModels } from "./entity-graph.js";
+import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
 import { buildComponentLaunches } from "./component-launches.js";
-import { buildImportIndex, resolveImportSource } from "./import-index.js";
+import { buildImportIndex, resolveImportSource, type ImportIndex } from "./import-index.js";
 import {
   type FileAnalysis,
   type Language,
@@ -52,6 +53,8 @@ import {
   type ComplexityInfo,
   type SecurityIssue,
   type TemplateComponentNode,
+  type EntityGraph,
+  type DataAccessGraph,
 } from "../types/analysis.js";
 
 export interface AnalyzeOptions {
@@ -473,7 +476,11 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Build screens: DFM screens + web screens from routes + routeless UI
   // component files (so their component tree shows in the "Components" group).
   const dfmScreens = allAnalyses.flatMap((a) => a.screens ?? []);
-  const webScreens = buildScreensFromRoutes(allAnalyses, rawSources);
+  // One project-wide import index, shared across every serial builder that
+  // resolves cross-file references (screens, type blast, class graph). Building
+  // it once instead of per-builder avoids re-iterating all files' imports 3-4x.
+  const importIndex = buildImportIndex(allAnalyses);
+  const webScreens = buildScreensFromRoutes(allAnalyses, rawSources, importIndex);
   const screenedFiles = new Set(webScreens.map((s) => s.filePath));
   const componentScreens = buildScreensFromComponents(allAnalyses, rawSources, screenedFiles);
   const allScreens = [...dfmScreens, ...webScreens, ...componentScreens];
@@ -500,7 +507,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
 
   // Per-class type-usage blast — attach to the BlastRadiusInfo for the file
   // that defines each class. Empty entries are dropped to keep the JSON lean.
-  const typeBlastMap = aggregateTypeBlast(allAnalyses);
+  const typeBlastMap = aggregateTypeBlast(allAnalyses, importIndex);
   for (const info of blastRadius) {
     const summaries = typeBlastMap.get(info.filePath);
     if (summaries && summaries.length > 0) {
@@ -516,25 +523,53 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   }
 
   // Class-level dependency graph for the Architecture tab's Data Models view.
-  const classGraph = buildClassGraph(allAnalyses);
+  const classGraph = buildClassGraph(allAnalyses, importIndex);
+
+  // Entity/data-access aggregation only produces output when the project has
+  // ORM entities or DB calls. On pure-frontend codebases these markers are
+  // absent, so skip ~6 full passes + a 50-iteration inheritance fixpoint — the
+  // builders would only return empty graphs anyway, so output is identical.
+  // `.some()` short-circuits, so this is near-free on projects that do have them.
+  const hasEntities = allAnalyses.some((a) =>
+    a.classes?.some((c) => {
+      const d = c.decorators;
+      return !!d && (d.includes("entity") || d.includes("table") || d.includes("enum"));
+    }),
+  );
+  const hasDbAccess = allAnalyses.some((a) =>
+    a.dataSources?.some((ds) => ds.kind === "database"),
+  );
 
   // File→datastore graph for the Architecture tab's Data Access view.
-  const dataAccessGraph = buildDataAccessGraph(allAnalyses);
+  const dataAccessGraph: DataAccessGraph = hasDbAccess
+    ? buildDataAccessGraph(allAnalyses)
+    : { nodes: [], edges: [] };
 
-  // Resolve cross-file inheritance (custom base classes, STI chains) so models
-  // that subclass a project base in another file are recognized as entities.
-  reconcileEntityInheritance(allAnalyses);
+  if (hasEntities) {
+    // Resolve cross-file inheritance (custom base classes, STI chains) so models
+    // that subclass a project base in another file are recognized as entities.
+    reconcileEntityInheritance(allAnalyses);
+    // Language-specific cross-file entity reconciliation (e.g. Rails joining
+    // `db/schema.rb` columns onto its models). Each plugin's entity extractor
+    // contributes its own pass; core stays language-agnostic.
+    reconcileProjectEntities(allAnalyses);
+  }
   // Entity-relationship graph for the "Data Model" (ER diagram) view.
-  const entityGraph = buildEntityGraph(allAnalyses);
+  const entityGraph: EntityGraph = hasEntities
+    ? buildEntityGraph(allAnalyses)
+    : { nodes: [], edges: [] };
   // Cross-link: attach to each entity the data/view models that reference it in
   // type position, derived from the already-resolved ClassGraph edges. (The
   // ClassGraph nodes are themselves tagged isEntity/orm inside buildClassGraph.)
-  linkEntityModels(entityGraph, classGraph);
+  if (hasEntities) linkEntityModels(entityGraph, classGraph);
 
   // Bridge Call Traces ↔ Data Model: attribute each DB access to its containing
   // function and match the touched entity to an ER node. Drives the entity
-  // badges on traces and the "Accessed by" list on entities.
-  const symbolDataAccess = attributeDataAccessToSymbols(allAnalyses, entityGraph);
+  // badges on traces and the "Accessed by" list on entities. Only DB calls
+  // produce entries, so skipping when none is output-identical.
+  const symbolDataAccess = hasDbAccess
+    ? attributeDataAccessToSymbols(allAnalyses, entityGraph)
+    : [];
 
   // ORM/DB migrations across known ecosystems (path-convention based).
   const migrations = detectMigrations(allAnalyses.map((a) => a.filePath));
@@ -701,10 +736,10 @@ function extractNavigationTargets(source: string): string[] {
 function buildScreensFromRoutes(
   allAnalyses: FileAnalysis[],
   rawSources: Map<string, string>,
+  importIndex: ImportIndex = buildImportIndex(allAnalyses),
 ): ScreenInfo[] {
   const byPath = new Map(allAnalyses.map((a) => [a.filePath, a]));
   const knownFiles = new Set(byPath.keys());
-  const importIndex = buildImportIndex(allAnalyses);
 
   // Follow a route's `component` to the concrete project file it renders.
   // Relative/absolute specifiers (lazy `import("./pak.vue")` paths) resolve

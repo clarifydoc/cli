@@ -152,6 +152,9 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     const entityResult = extractEntities(analysis, sourceText, language);
     mergeEntities(analysis, entityResult);
     if (entityResult.relations.length > 0) analysis.entityRelations = entityResult.relations;
+    if (entityResult.schemaTables && entityResult.schemaTables.length > 0) {
+      analysis.railsSchemaTables = entityResult.schemaTables;
+    }
     analysis.dataMutations = extractDataMutations(tree, sourceText, language);
     analysis.events = hooks?.events?.(sourceText) ?? [];
     analysis.subComponents = hooks?.subComponents?.(tree, sourceText, analysis.imports) ?? [];

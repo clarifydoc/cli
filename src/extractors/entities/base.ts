@@ -4,6 +4,7 @@ import type {
   FileAnalysis,
   Language,
   PropertyInfo,
+  RailsSchemaTable,
 } from "../../types/analysis.js";
 
 /**
@@ -29,6 +30,12 @@ export interface EntityExtractResult {
   entities: ClassInfo[];
   /** Relations between entities defined in this file. */
   relations: EntityRelation[];
+  /**
+   * Tables parsed from a Rails `db/schema.rb`, when this file IS the schema
+   * dump. Carried through to `FileAnalysis.railsSchemaTables` so the
+   * project-level join can attach columns to model entities defined elsewhere.
+   */
+  schemaTables?: RailsSchemaTable[];
 }
 
 /**
@@ -43,6 +50,14 @@ export abstract class EntityExtractor {
 
   /** Extract entities + relations from a single file. */
   abstract extract(ctx: EntityExtractContext): EntityExtractResult;
+
+  /**
+   * Project-level reconciliation across ALL analyzed files, run once after
+   * per-file extraction. Default no-op; override for cross-file joins a
+   * per-file pass cannot do — e.g. attaching Rails `db/schema.rb` columns to
+   * model entities defined in other files. Mutates the analyses in place.
+   */
+  reconcileProject(_analyses: FileAnalysis[]): void {}
 
   /** Build an entity ClassInfo with the standard decorator convention. */
   protected entity(opts: {

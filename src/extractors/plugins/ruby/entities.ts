@@ -1,5 +1,6 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
-import type { ClassInfo, EntityRelation, Language, PropertyInfo } from "../../../types/analysis.js";
+import type { ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
+import { isRailsSchemaFile, joinSchemaColumns, parseRailsSchema } from "./schema.js";
 
 /**
  * Extracts ActiveRecord (Rails) and Sequel::Model entities + their
@@ -44,6 +45,18 @@ export class RubyEntityExtractor extends EntityExtractor {
     const entities: ClassInfo[] = [];
     const relations: EntityRelation[] = [];
 
+    // The schema dump has no model classes — only `create_table` blocks. Parse
+    // its columns so the project-level join can attach them to the models.
+    if (isRailsSchemaFile(ctx.sourceText)) {
+      let schemaTables;
+      try {
+        schemaTables = parseRailsSchema(ctx.lines);
+      } catch {
+        schemaTables = undefined;
+      }
+      return { entities, relations, schemaTables };
+    }
+
     // Pass 1: classify every class as an ORM entity or not. We need this map up
     // front so single-table-inheritance subclasses (`class Admin < User`) can be
     // recognized as entities once `User` is known to be one. We iterate to a
@@ -87,6 +100,11 @@ export class RubyEntityExtractor extends EntityExtractor {
         }
       }
 
+      // An explicit `self.table_name = "x"` overrides the pluralization
+      // convention; carry it as a `table:<name>` decorator so the project-level
+      // schema join keys on the real table instead of guessing.
+      const tableName = this.tableNameOverride(body);
+
       entities.push(
         this.entity({
           name: cls.name,
@@ -96,11 +114,21 @@ export class RubyEntityExtractor extends EntityExtractor {
           extends: cls.extends ?? null,
           line: cls.line,
           endLine: cls.endLine,
+          extraDecorators: tableName ? [`table:${tableName}`] : undefined,
         }),
       );
     }
 
     return { entities, relations };
+  }
+
+  /**
+   * Project-level pass: join `db/schema.rb` columns onto the model entities
+   * (whose class bodies declare none). Per-file extraction can't do this — the
+   * schema lives in a different file from the models.
+   */
+  override reconcileProject(analyses: FileAnalysis[]): void {
+    joinSchemaColumns(analyses);
   }
 
   /**
@@ -205,6 +233,20 @@ export class RubyEntityExtractor extends EntityExtractor {
     // (`ApplicationRecord` under any namespace, or a project `*Record` base).
     const bare = this.bareSuperclassName(superclass);
     if (bare && (/Record$/.test(bare) || bare === "ApplicationRecord")) return "active-record";
+    return null;
+  }
+
+  /**
+   * Read an explicit `self.table_name = "..."` / `:symbol` assignment from a
+   * class body, or null. Sequel's `set_dataset :name` form is handled too.
+   */
+  private tableNameOverride(body: string[]): string | null {
+    for (const raw of body) {
+      const m =
+        /^\s*self\.table_name\s*=\s*(?:"([^"]+)"|'([^']+)'|:([A-Za-z_]\w*))/.exec(raw) ??
+        /^\s*set_dataset\s+(?::([A-Za-z_]\w*)|"([^"]+)"|'([^']+)')/.exec(raw);
+      if (m) return (m[1] ?? m[2] ?? m[3] ?? m[4])!;
+    }
     return null;
   }
 

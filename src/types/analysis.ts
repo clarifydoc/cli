@@ -309,6 +309,12 @@ export interface FileAnalysis {
    * extractor. Omitted when empty. Persisted for the incremental cache.
    */
   entityRelations?: EntityRelation[];
+  /**
+   * Tables parsed from a Rails `db/schema.rb`. Only set on the schema file
+   * itself; a project-level join attaches these columns to the model entities
+   * (whose own class bodies declare no columns). Omitted for non-schema files.
+   */
+  railsSchemaTables?: RailsSchemaTable[];
 }
 
 export interface ImportInfo {
@@ -458,6 +464,20 @@ export interface EntityRelation {
   orm?: string;
   /** EXTRACTED for explicit schema/decorators, INFERRED for name heuristics. */
   confidence?: Confidence;
+}
+
+/**
+ * One `create_table` block parsed from a Rails `db/schema.rb` (the consolidated
+ * schema dump). ActiveRecord/Sequel models declare no columns in the model
+ * class — they live in the schema — so this carries the column list that a
+ * project-level join (`applyRailsSchemaColumns`) attaches to the matching model
+ * entity by table-name convention. Emitted on the schema file's FileAnalysis.
+ */
+export interface RailsSchemaTable {
+  /** Physical table name as written in `create_table "..."` (e.g. "absences"). */
+  table: string;
+  /** Columns in declaration order; the implicit `id` primary key is prepended. */
+  columns: PropertyInfo[];
 }
 
 /**

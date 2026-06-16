@@ -27,6 +27,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
     classCatalog: buildClassCatalog(analyses),
     leafCatalog: buildLeafCatalog(symbolIndex, projectOf),
     dirTailIndex: buildDirTailIndex(symbolIndex),
+    classNameIndex: buildClassNameIndex(symbolIndex),
   };
   const interfaceImplMap = ctx.interfaceImplMap;
   const links: SymbolLink[] = [];
@@ -385,6 +386,30 @@ interface LinkContext {
   classCatalog: Map<string, ClassCatalogEntry>;
   leafCatalog: Map<string, LeafCatalogEntry>;
   dirTailIndex: Map<string, string[]>;
+  /** Top-level symbol name → files that define it (in symbolIndex order). Lets
+   *  Strategy 4 find the class file by O(1) lookup instead of scanning all files. */
+  classNameIndex: Map<string, string[]>;
+}
+
+/**
+ * Index every top-level (dot-free) symbol name to the files that define it, in
+ * symbolIndex iteration order. Strategy 4 (ClassName.method) uses this to locate
+ * the defining file without scanning the whole symbolIndex per call — the order
+ * is preserved so the same first-match file wins as the old linear scan.
+ */
+function buildClassNameIndex(
+  symbolIndex: Map<string, Map<string, SymbolDef>>,
+): Map<string, string[]> {
+  const idx = new Map<string, string[]>();
+  for (const [filePath, syms] of symbolIndex) {
+    for (const name of syms.keys()) {
+      if (name.includes(".")) continue; // qualified members aren't class names
+      const arr = idx.get(name);
+      if (arr) arr.push(filePath);
+      else idx.set(name, [filePath]);
+    }
+  }
+  return idx;
 }
 
 /**
@@ -547,7 +572,7 @@ function resolveCallToDefinition(
   analysis: FileAnalysis,
   ctx: LinkContext,
 ): SymbolLink | null {
-  const { filePathMap, symbolIndex, inheritanceMap, injectionMap, interfaceImplMap, classCatalog, leafCatalog } = ctx;
+  const { filePathMap, symbolIndex, inheritanceMap, injectionMap, interfaceImplMap, classCatalog, leafCatalog, classNameIndex } = ctx;
 
   // Skip API and database calls — they don't resolve to project symbols
   if (call.kind === "api-call" || call.kind === "database") return null;
@@ -713,9 +738,13 @@ function resolveCallToDefinition(
     const className = parts[0]!;
     const methodName = parts.slice(1).join(".");
 
-    // Find which file defines this class
-    for (const [filePath, syms] of symbolIndex) {
-      if (syms.has(className)) {
+    // Find which file defines this class — files are pre-indexed by the class
+    // name in symbolIndex order, so the first match here is identical to the
+    // old full scan but without iterating every file.
+    const candidateFiles = classNameIndex.get(className);
+    if (candidateFiles) {
+      for (const filePath of candidateFiles) {
+        const syms = symbolIndex.get(filePath)!;
         const classDef = syms.get(`${className}.${methodName}`) ?? syms.get(methodName);
         if (classDef) {
           return mkLink(filePath, classDef.name, classDef.line, "INFERRED");

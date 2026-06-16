@@ -6,7 +6,12 @@ The analysis pipeline orchestrator and all cross-file analyzers live here. Pure 
 strategy, builtin types, complexity tables, security rules, framework hints,
 external-package prefixes, AST hooks — comes from the plugin registry
 ([../extractors/registry.ts](../extractors/registry.ts)), which aggregates each
-plugin's `meta.ts`. Don't hardcode language names here; ask the registry.
+plugin's `meta.ts`. Don't hardcode language names, ORMs, frameworks, or file
+conventions here; ask the registry. Even a **cross-file** join that needs
+language knowledge stays in the plugin: core calls a generic hook (e.g.
+`reconcileProjectEntities` → each entity extractor's `reconcileProject`), it
+never names the language. A `schema.rb` parser or a pluralization rule in
+`src/core/` is a layering bug.
 
 ## Entry point
 

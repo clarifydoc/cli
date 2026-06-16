@@ -56,6 +56,9 @@ export function extractWithRegex(
   mergeEntities(analysis, entityResult);
   const relations = [...specRelations, ...entityResult.relations];
   if (relations.length > 0) analysis.entityRelations = relations;
+  if (entityResult.schemaTables && entityResult.schemaTables.length > 0) {
+    analysis.railsSchemaTables = entityResult.schemaTables;
+  }
 
   return analysis;
 }
