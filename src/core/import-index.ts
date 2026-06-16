@@ -108,6 +108,9 @@ export function enrichFileDataSources(a: FileAnalysis, index?: ImportIndex): voi
   }
 }
 
+/** First generic type argument in a call/receiver string, e.g. `Set<AccountOwner>()`. */
+const GENERIC_ARG_RE = /<\s*([A-Za-z_][\w.]*)\s*>/;
+
 /**
  * Extract the entity from a generic type argument, e.g. `Set<AccountOwner>()` →
  * "AccountOwner", `DbSet<Order>` → "Order". Takes the first `<…>` argument,
@@ -116,7 +119,7 @@ export function enrichFileDataSources(a: FileAnalysis, index?: ImportIndex): voi
  */
 function entityFromGeneric(s: string | null | undefined): string | null {
   if (!s) return null;
-  const m = s.match(/<\s*([A-Za-z_][\w.]*)\s*>/);
+  const m = s.match(GENERIC_ARG_RE);
   if (!m) return null;
   const last = m[1]!.split(".").pop()!;
   return /^[A-Z]/.test(last) && isIdentifier(last) ? last : null;

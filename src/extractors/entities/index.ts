@@ -26,10 +26,43 @@ for (const ex of extractors) {
   for (const lang of ex.languages) extractorMap.set(lang, ex);
 }
 
+const EMPTY_RESULT: EntityExtractResult = { entities: [], relations: [] };
+
+/**
+ * Cheap per-language pre-scan: a file produces ORM entities only if its source
+ * contains one of these markers. When none match we skip the (relatively
+ * expensive) logical-line splitting + per-ORM regex passes entirely — a big win
+ * on non-ORM codebases (most frontend files). Each pattern is a SUPERSET of what
+ * the corresponding extractor can detect, so gating on it is output-preserving;
+ * a missed marker would silently drop entities, so the regenerated fixtures (which
+ * exercise every ORM) are the completeness check.
+ */
+const JS_MARKERS =
+  /@(?:Entity|Embeddable|Column|Property|PrimaryGeneratedColumn|PrimaryColumn|ObjectIdColumn|CreateDateColumn|UpdateDateColumn|DeleteDateColumn|VersionColumn|OneToMany|ManyToOne|OneToOne|ManyToMany|JoinColumn|JoinTable|Enum|Embedded|RelationId)\b|\bsequelize\b|\bDataTypes\b|\bmongoose\b|\bnew\s+(?:[\w$]+\.)?Schema\s*\(/;
+const JAVA_MARKERS =
+  /@(?:Entity|Table|MappedSuperclass|Column|Id|ManyToOne|OneToMany|OneToOne|ManyToMany|JoinColumn|JoinTable|Embeddable|Embedded|ElementCollection|Inheritance|DiscriminatorColumn|DiscriminatorValue|MappedCollection)\b|\bTableImpl\b|\bcreateField\s*\(|\bcreateForeignKey\b/;
+const LANGUAGE_MARKERS: Partial<Record<Language, RegExp>> = {
+  typescript: JS_MARKERS,
+  javascript: JS_MARKERS,
+  java: JAVA_MARKERS,
+  kotlin: JAVA_MARKERS,
+  python:
+    /\bmodels\.(?:Model|[A-Z]\w*Field|ForeignKey|OneToOneField|ManyToManyField)|__tablename__|\bmapped_column\b|\bMapped\s*\[|\brelationship\s*\(|\bColumn\s*\(|\bdb\.Entity\b|\bForeignKeyField\b|\bDeclarativeBase\b|\bDeferredForeignKey\b|\bfields\.(?:ForeignKeyField|OneToOneField|ManyToManyField)|\bPrimaryKey\s*\(|\bRequired\s*\(|\bDeclarative_base\b|\bdeclarative_base\b/,
+  csharp:
+    /\bDbSet\s*<|\[\s*(?:Table|Column|Key|ForeignKey|Class)\b|\bmodelBuilder\b|\.HasOne\s*\(|\.HasMany\s*\(|\.WithMany\s*\(/,
+  go: /\bgorm\b|gorm:"|\bent\.Schema\b|\bRegisterModel\s*\(|orm:"/,
+  rust: /\btable!\s*\{|\bdiesel\b|\bQueryable\b|\bInsertable\b|\bDeriveEntityModel\b|\bsea_orm\b/,
+  php:
+    /\bextends\s+(?:Model|Authenticatable|Pivot)\b|@ORM\\|#\[\s*ORM\\|->\s*(?:hasMany|belongsTo|hasOne|belongsToMany|morph\w*|hasManyThrough|hasOneThrough)\s*\(|\b(?:hasMany|belongsTo|hasOne|belongsToMany)\s*\(/,
+  ruby:
+    /<\s*(?:ApplicationRecord|ActiveRecord::Base)\b|\bhas_many\b|\bbelongs_to\b|\bhas_one\b|\bhas_and_belongs_to_many\b|self\.table_name|ActiveRecord::Schema\b/,
+};
+
 /**
  * Extract ORM entities + relations from a file. Returns empty for languages
  * with no entity extractor (Prisma is handled separately via its regex spec's
- * `extractClasses`/`extractEntityRelations` hooks).
+ * `extractClasses`/`extractEntityRelations` hooks), and for files that contain
+ * none of their language's ORM markers (the common case — skipped cheaply).
  */
 export function extractEntities(
   analysis: FileAnalysis,
@@ -37,9 +70,22 @@ export function extractEntities(
   language: Language,
 ): EntityExtractResult {
   const ex = extractorMap.get(language);
-  if (!ex) return { entities: [], relations: [] };
+  if (!ex) return EMPTY_RESULT;
+  const markers = LANGUAGE_MARKERS[language];
+  if (markers && !markers.test(sourceText)) return EMPTY_RESULT;
   const lines = sourceText.split("\n");
   return ex.extract({ analysis, sourceText, lines });
+}
+
+/**
+ * Run every entity extractor's project-level reconciliation pass over the full
+ * file set. Lets a language plugin perform cross-file joins it cannot do
+ * per-file (e.g. Rails attaching `db/schema.rb` columns to its models). Each
+ * extractor runs once; non-overriding extractors are no-ops. Core calls this —
+ * it never reaches into a language-specific reconciler itself.
+ */
+export function reconcileProjectEntities(analyses: FileAnalysis[]): void {
+  for (const ex of extractors) ex.reconcileProject(analyses);
 }
 
 /**

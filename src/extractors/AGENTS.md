@@ -1,6 +1,8 @@
 # src/extractors — Per-language extraction
 
-Everything that walks an AST or regex-scans source text to pull out structured data. No cross-file analysis happens here — that's `src/core/`.
+Everything that walks an AST or regex-scans source text to pull out structured data. Cross-file analysis is `src/core/`'s job — with one deliberate exception: a plugin may contribute a **project-level reconciliation** pass (`EntityExtractor.reconcileProject`) for a join that needs both language knowledge AND the whole file set (e.g. Rails joining `db/schema.rb` columns onto its models). Core invokes these generically — language-specific cross-file logic still belongs in the plugin, never in core.
+
+**All language-, ORM-, and framework-specific code lives under `plugins/`.** Core never names a language; it asks the registry or calls a generic hook. A `.rb` path check, a pluralization rule, or a `schema.rb` parser in `src/core/` is a layering bug.
 
 ## Structure
 
@@ -12,6 +14,7 @@ extractors/
 ├── data-sources/          plugin interface + dispatcher (API calls, state hooks, ORM queries)
 ├── data-mutations/        plugin interface + dispatcher (setState, dispatch, assignments)
 ├── routes/                plugin interface + dispatcher (one RouteExtractor per language family)
+├── entities/              ORM entity + relation extraction (per-file extract + project-level reconcile)
 ├── plugins/               per-language implementations (see plugins/AGENTS.md)
 └── shared/                language-agnostic utilities (call graph, link scoring, helpers)
 ```
@@ -98,6 +101,23 @@ language family exports one:
 - `pascal/routes.ts`
 
 Regex-path languages (Go, Ruby, PHP) extract routes inside their `plugins/<lang>/index.ts` via `RegexLangSpec.extractRoutes`.
+
+## entities/ (ORM entities + relations)
+
+`entities/base.ts` defines `EntityExtractor`; each plugin subclasses it in
+`plugins/<lang>/entities.ts` and registers in `entities/index.ts`. Two surfaces:
+
+- **`extract(ctx)`** — per file: emit entity `ClassInfo`s (merged into
+  `analysis.classes` by name) + `EntityRelation`s. This is where the bulk of
+  ORM detection lives.
+- **`reconcileProject(analyses)`** — optional project-level pass run once over
+  the whole file set (core calls `reconcileProjectEntities`, which invokes every
+  extractor's pass). Use it for a join that genuinely needs both language
+  knowledge and all files at once — e.g. the Ruby plugin parses `db/schema.rb`
+  during `extract` (stashing tables on `FileAnalysis.railsSchemaTables`) and
+  then, in `reconcileProject`, attaches those columns to the model entities that
+  live in other files. Keep the language-specific logic here in the plugin;
+  core only knows the generic hook.
 
 ## Conventions
 
