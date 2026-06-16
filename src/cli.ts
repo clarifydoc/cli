@@ -188,7 +188,6 @@ program
             "filePath",
             "language",
             "frameworks",
-            "analyzedAt",
             "imports",
             "exports",
             "functions",

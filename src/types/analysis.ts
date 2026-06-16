@@ -266,7 +266,6 @@ export interface FileAnalysis {
   frameworks: string[];
   /** ID of the sub-project this file belongs to (see SubProject). "root" if none. */
   projectId: string;
-  analyzedAt: string;
 
   imports: ImportInfo[];
   exports: ExportInfo[];
@@ -925,7 +924,6 @@ export function createEmptyAnalysis(
     language,
     frameworks: [],
     projectId: "root",
-    analyzedAt: new Date().toISOString(),
     imports: [],
     exports: [],
     functions: [],
