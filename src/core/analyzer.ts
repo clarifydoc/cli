@@ -43,6 +43,7 @@ import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
 import { buildComponentLaunches } from "./component-launches.js";
 import { buildImportIndex, resolveImportSource, type ImportIndex } from "./import-index.js";
+import { denormalizeFileAnalysis } from "./element-registry.js";
 import {
   type FileAnalysis,
   type Language,
@@ -138,7 +139,8 @@ async function loadCachedFileResult(
   let analysis: FileAnalysis;
   try {
     const raw = await readFile(cachedPath, "utf-8");
-    analysis = JSON.parse(raw) as FileAnalysis;
+    // denormalizeFileAnalysis no-ops on old-format (pre-registry) artifacts.
+    analysis = denormalizeFileAnalysis(JSON.parse(raw));
   } catch {
     return null;
   }

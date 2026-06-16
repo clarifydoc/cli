@@ -17,6 +17,7 @@ import {
   enrichLinkGraphFromComponentGraph,
 } from "./analyzer.js";
 import { analyzeBlastRadius } from "./blast-radius.js";
+import { denormalizeProject, denormalizeFileAnalysis } from "./element-registry.js";
 
 export interface UpdateLspOptions {
   /** Path to the existing analysis output directory (contains project-summary.json). */
@@ -55,7 +56,8 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
 
   // 1. Load the base summary and per-file analyses
   const summaryPath = join(dir, "project-summary.json");
-  const summary = JSON.parse(await readFile(summaryPath, "utf-8")) as ProjectAnalysis;
+  // denormalizeProject no-ops on old-format artifacts; reconstructs symbolLinks/etc. on new ones.
+  const summary = denormalizeProject(JSON.parse(await readFile(summaryPath, "utf-8")));
 
   const projectRoot = options.projectRoot ?? summary.projectRoot;
   if (!projectRoot) {
@@ -67,7 +69,8 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
     const fileJsonPath = join(dir, `${relPath}.json`);
     try {
       const raw = await readFile(fileJsonPath, "utf-8");
-      perFileAnalyses.push(JSON.parse(raw) as FileAnalysis);
+      // denormalizeFileAnalysis no-ops today (Phase 0 identity); future-proofs Phase 4.
+      perFileAnalyses.push(denormalizeFileAnalysis(JSON.parse(raw)));
     } catch (err) {
       if (verbose) {
         console.warn(`  Skipping ${relPath}: ${(err as Error).message}`);

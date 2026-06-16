@@ -4,6 +4,7 @@ import { exec } from "child_process";
 import type { ProjectAnalysis, BlastRadiusInfo } from "../types/analysis.js";
 import { writeFile, mkdir } from "fs/promises";
 import { dirname } from "path";
+import { denormalizeProject } from "./element-registry.js";
 
 export interface ReportOptions {
   analysisDir: string;
@@ -27,7 +28,8 @@ export async function generateHtmlReport(options: ReportOptions): Promise<string
 
 async function loadProjectSummary(dir: string): Promise<ProjectAnalysis> {
   const raw = await readFile(join(dir, "project-summary.json"), "utf-8");
-  const summary = JSON.parse(raw) as ProjectAnalysis;
+  // denormalizeProject no-ops on old-format (pre-registry) artifacts.
+  const summary = denormalizeProject(JSON.parse(raw));
 
   // If an LSP enhancement delta was written separately (by `lsp-update`),
   // merge its fields onto the base summary before rendering.
@@ -1122,6 +1124,26 @@ function chunkedAppend(list, nextChunk) {
 }
 
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ─── Cross-view element selection bus ────────────────────────────────────
+// Click a code element in one view → highlight the same element across the
+// others. Each view registers a highlighter (single slot per view, overwritten
+// on re-init so rebuilt D3 graphs don't pile up stale closures) and emits on
+// click. Canonical element ids mirror the on-disk registry: file = "<path>::",
+// declared symbol = "<path>::Symbol", external = "::Name". A highlighter MUST
+// no-op when the id isn't present in its view.
+const elementHighlighters = {};
+let selectedElementId = null;
+function registerHighlighter(view, fn) { elementHighlighters[view] = fn; }
+function selectElement(id, fromView) {
+  selectedElementId = id;
+  for (const v in elementHighlighters) {
+    if (v === fromView) continue;
+    try { elementHighlighters[v](id); } catch (e) { /* a view's highlighter must never break selection */ }
+  }
+}
+// Bare file path from a canonical element id (everything before the first "::").
+function canonBarePath(id) { const i = String(id).indexOf('::'); return i < 0 ? id : String(id).slice(0, i); }
 
 // ─── Global cross-tab filter state ───────────────────────────────────────
 // Every render function below consults these helpers so that filtering
@@ -2434,11 +2456,13 @@ function renderTraces() {
     list.onclick = function(e) {
       if (e.target.closest('.list-more-btn')) { appendChunk(); return; }
       const item = e.target.closest('.trace-sym-item');
-      if (item) selectSymbol(item.dataset.symKey);
+      if (item) { selectSymbol(item.dataset.symKey); selectElement(item.dataset.symKey, 'traces'); }
     };
   }
 
   window.selectSymbol = selectSymbol;
+  // Trace symbol keys are already "<file>::<symbol>" = canonical element ids.
+  registerHighlighter('traces', function(id){ if (allSymbols[id]) selectSymbol(id); });
   function selectSymbol(key, showAll) {
     // Scroll the detail pane back to the top for a NEW selection — but stay
     // put when re-rendering the same symbol (the "Show all" expander).
@@ -3493,10 +3517,21 @@ function initTypeGraph() {
     dp.innerHTML = html;
   }
 
+  // Map this view's node id <-> canonical element id. Declared/external nodes
+  // already use the canonical "<path>::Symbol" / "::Name" form; file-container
+  // nodes use "file::<path>" which canonicalizes to "<path>::".
+  function canonOfType(d){ return d.id.indexOf('file::') === 0 ? d.id.slice(6) + '::' : d.id; }
+  function typeIdOfCanon(c){ return String(c).slice(-2) === '::' ? 'file::' + String(c).slice(0, -2) : c; }
+  registerHighlighter('types', function(c){
+    var gid = typeIdOfCanon(c);
+    if (nodes.some(function(n){ return n.id === gid; })) highlight(gid);
+  });
+
   nodeSel.on('click', function(event, d){
     event.stopPropagation();
     if (selectedId === d.id) clearHighlight();
     else highlight(d.id);
+    selectElement(canonOfType(d), 'types');
   });
   // Background click: restore the full graph when focused on a group, else just
   // clear the single-node highlight.
@@ -4123,7 +4158,16 @@ function initDataAccessGraph() {
     dp.innerHTML = html;
   }
 
-  nodeSel.on('click', function(event, d){ event.stopPropagation(); highlight(d.id); });
+  // File nodes ("file::<path>") canonicalize to "<path>::"; datastore/entity
+  // nodes ("db::t" / "entity::t::e") have no cross-view identity (view-local).
+  function canonOfDA(d){ return d.kind === 'file' ? d.id.slice(6) + '::' : d.id; }
+  function daIdOfCanon(c){ return String(c).slice(-2) === '::' ? 'file::' + String(c).slice(0, -2) : c; }
+  registerHighlighter('data-access', function(c){
+    var gid = daIdOfCanon(c);
+    if (nodes.some(function(n){ return n.id === gid; })) highlight(gid);
+  });
+
+  nodeSel.on('click', function(event, d){ event.stopPropagation(); highlight(d.id); selectElement(canonOfDA(d), 'data-access'); });
   svg.on('click', clearHighlight);
 
   nodeSel.on('mouseover', function(event, d){
@@ -4556,7 +4600,7 @@ function renderBlast() {
     list.onclick = function(e) {
       if (e.target.closest('.list-more-btn')) { appendChunk(); return; }
       var item = e.target.closest('.blast-file-item');
-      if (item) selectBlastFile(item.dataset.blastFile);
+      if (item) { selectBlastFile(item.dataset.blastFile); selectElement(item.dataset.blastFile + '::', 'blast'); }
     };
   }
 
@@ -4754,6 +4798,8 @@ function renderBlast() {
   // Expose for cross-view navigation (e.g. Call Traces → Blast Radius). Rebound
   // on each render so the closure always points at the current blastData.
   window.selectBlastFile = selectBlastFile;
+  // Cross-view highlight: a canonical id's file part maps to a blast row.
+  registerHighlighter('blast', function(id){ window.selectBlastFile(canonBarePath(id)); });
 
   // Auto-select first dangerous or highest-impact file (only if nothing is selected yet)
   if (!_blastSelected) {

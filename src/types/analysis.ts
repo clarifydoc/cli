@@ -94,7 +94,7 @@ export interface TypeUsageSummary {
  */
 export interface ClassGraphNode {
   /** Unique id. For classes: "filePath::className". For file sources:
-   *  "file::filePath". For external types: "external::typeName". */
+   *  "file::filePath". For external types: "::typeName" (empty owning file). */
   id: string;
   /** Human-readable name (class name, file basename, or external type name). */
   name: string;

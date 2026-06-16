@@ -11,6 +11,7 @@ import type {
   LspReferenceRecord,
 } from "../types/analysis.js";
 import { validateFileAnalysis } from "./fileanalysis-validator.js";
+import { normalizeProject } from "./element-registry.js";
 
 /**
  * LSP enhancement delta — written as a SEPARATE file from the base summary
@@ -113,7 +114,7 @@ export async function writeProjectSummary(
   summary: ProjectAnalysis,
   options: OutputOptions,
 ): Promise<string> {
-  return writeJson("project-summary.json", summary, options);
+  return writeJson("project-summary.json", normalizeProject(summary), options);
 }
 
 /**
