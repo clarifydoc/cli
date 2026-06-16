@@ -31,6 +31,10 @@ export const phpMeta: LanguagePluginMeta = {
   frameworkImportHints: {
     "Doctrine\\ORM": "doctrine",
     "Illuminate\\Database": "eloquent",
+    "Illuminate\\Database\\Eloquent": "eloquent",
+    "Propel": "propel",
+    "Propel\\Runtime": "propel",
+    "Envms\\FluentPDO": "fluentpdo",
   },
   calls: phpCallHooks,
 };

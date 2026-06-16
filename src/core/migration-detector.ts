@@ -1,0 +1,99 @@
+import type { MigrationInfo } from "../types/analysis.js";
+
+/**
+ * Detect ORM/DB migration files from a list of (relative) project file paths,
+ * purely by path/name convention — migrations are directory conventions and
+ * don't benefit from AST parsing. Each file is classified into at most one
+ * ecosystem; the more specific patterns are tried first.
+ *
+ * Only files already discovered by the analyzer are considered, so XML/YAML
+ * changelogs (Liquibase) only surface when they carry an analyzed extension.
+ */
+export function detectMigrations(filePaths: string[]): MigrationInfo[] {
+  const out: MigrationInfo[] = [];
+  for (const raw of filePaths) {
+    const p = raw.replace(/\\/g, "/");
+    const info = classify(p);
+    if (info) out.push(info);
+  }
+  // Chronological within ecosystem, then by ecosystem name for stable output.
+  out.sort(
+    (a, b) =>
+      a.ecosystem.localeCompare(b.ecosystem) ||
+      a.order.localeCompare(b.order) ||
+      a.filePath.localeCompare(b.filePath),
+  );
+  return out;
+}
+
+/** Leading digit run of a name (timestamp / version), else the whole name. */
+function orderKey(name: string): string {
+  const m = name.match(/^(\d+)/);
+  return m ? m[1]! : name;
+}
+
+function baseName(p: string): string {
+  const slash = p.lastIndexOf("/");
+  return slash >= 0 ? p.slice(slash + 1) : p;
+}
+
+function stripExt(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(0, dot) : name;
+}
+
+function mk(filePath: string, ecosystem: MigrationInfo["ecosystem"], name: string): MigrationInfo {
+  return { filePath, ecosystem, name, order: orderKey(name) };
+}
+
+function classify(p: string): MigrationInfo | null {
+  let m: RegExpMatchArray | null;
+
+  // Prisma: prisma/migrations/<timestamp>_<slug>/migration.sql
+  m = p.match(/(?:^|\/)prisma\/migrations\/([^/]+)\/migration\.sql$/i);
+  if (m) return mk(p, "prisma", m[1]!);
+
+  // Diesel: migrations/<timestamp>_<name>/up.sql (down.sql ignored to dedup)
+  m = p.match(/(?:^|\/)migrations\/([^/]+)\/up\.sql$/i);
+  if (m) return mk(p, "diesel", m[1]!);
+
+  // Flyway: V<version>__<name>.sql (also repeatable R__name.sql)
+  m = baseName(p).match(/^(V[\d._]+__.+|R__.+)\.sql$/);
+  if (m) return mk(p, "flyway", stripExt(baseName(p)));
+
+  // Rails: db/migrate/<version>_<name>.rb
+  m = p.match(/(?:^|\/)db\/migrate\/(\d+_[^/]+)\.rb$/);
+  if (m) return mk(p, "rails", m[1]!);
+
+  // Alembic: alembic/versions/<rev>_<name>.py  OR  versions/<rev>_<name>.py
+  m = p.match(/(?:^|\/)(?:alembic\/)?versions\/([0-9a-f]{6,}_[^/]+)\.py$/i);
+  if (m) return mk(p, "alembic", m[1]!);
+
+  // Django: <app>/migrations/<NNNN>_<name>.py (skip __init__.py)
+  m = p.match(/(?:^|\/)migrations\/(\d{3,}_[^/]+)\.py$/);
+  if (m) return mk(p, "django", m[1]!);
+
+  // EF Core: Migrations/*.cs (timestamped designer files + ModelSnapshot)
+  m = p.match(/(?:^|\/)Migrations\/([^/]+)\.cs$/);
+  if (m) return mk(p, "ef-core", m[1]!);
+
+  // Doctrine: Migrations/Version*.php
+  m = p.match(/(?:^|\/)[Mm]igrations\/(Version\w+)\.php$/);
+  if (m) return mk(p, "doctrine", m[1]!);
+
+  // GORM: migrations/*.go
+  m = p.match(/(?:^|\/)migrations\/([^/]+)\.go$/);
+  if (m) return mk(p, "gorm", m[1]!);
+
+  // TypeORM (13-digit ms timestamp) vs Sequelize (14-digit datetime), .ts/.js
+  m = baseName(p).match(/^(\d{6,})[-_](.+)\.(ts|js)$/);
+  if (m && /(?:^|\/)migrations?\//i.test(p)) {
+    const digits = m[1]!;
+    const ext = m[3]!;
+    const ecosystem: MigrationInfo["ecosystem"] =
+      digits.length >= 14 || ext === "js" ? "sequelize" : "typeorm";
+    return mk(p, ecosystem, stripExt(baseName(p)));
+  }
+
+  return null;
+}

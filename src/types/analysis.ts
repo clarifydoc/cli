@@ -2,7 +2,7 @@
 export type Language =
   | "typescript" | "javascript" | "csharp" | "python" | "java" | "kotlin" | "pascal" | "dfm"
   | "go" | "rust" | "ruby" | "php" | "swift" | "lua" | "scala"
-  | "perl" | "vb" | "sql" | "c" | "cpp";
+  | "perl" | "vb" | "sql" | "c" | "cpp" | "prisma";
 
 export interface ExtractorWarning {
   /** Dotted-path location, e.g. "functions[3].endLine" or "routes[0].kind". */
@@ -107,6 +107,12 @@ export interface ClassGraphNode {
   /** True when the node is a file that emits class-targeting references
    *  from non-class code (top-level functions, Vue setup blocks, etc.). */
   isFile: boolean;
+  /** True when this class carries an `["entity", <orm>]` decorator — i.e. it
+   *  is an ORM entity that also appears as a node in the ER diagram. Lets the
+   *  Data Models view distinguish DB-backed entities from plain models/DTOs. */
+  isEntity?: boolean;
+  /** ORM tag for entity nodes ("prisma" | "typeorm" | …); null/undefined otherwise. */
+  orm?: string | null;
   /** Total inbound references to this entity (degree-in). */
   inboundCount: number;
   /** Total outbound references from this entity (degree-out). */
@@ -138,19 +144,90 @@ export interface ClassGraph {
 }
 
 /**
+ * Entity-relationship graph for the report's "Data Model" (ER diagram) view.
+ * Nodes are ORM entities / SQL tables / enums (from entity-decorated
+ * `ClassInfo`); edges are derived from `entityRelations`, with mirror pairs
+ * merged into one relationship carrying crow's-foot multiplicity at each end.
+ */
+export interface EntityGraphColumn {
+  name: string;
+  type: string | null;
+  isPrimaryKey?: boolean;
+  isForeignKey?: boolean;
+}
+
+/**
+ * A data/view model (class, interface, DTO) that references an entity in type
+ * position (field/variable/generic-arg). Derived by joining the ClassGraph
+ * onto the EntityGraph by name — see `linkEntityModels` in entity-graph.ts.
+ */
+export interface EntityModelRef {
+  /** ClassGraph node id of the referencing model (`${filePath}::${name}`). */
+  id: string;
+  name: string;
+  filePath: string;
+  /** Heuristic interface-vs-class hint carried over from the ClassGraph node. */
+  isInterface: boolean;
+  /** Data-position usage kinds backing the link (field, variable, generic-arg). */
+  kinds: TypeUsageKind[];
+  /** Total data-position references from this model to the entity. */
+  count: number;
+}
+
+export interface EntityGraphNode {
+  /** `${filePath}::${name}` — unique even when two files define the same name. */
+  id: string;
+  name: string;
+  /** Originating ORM / source, e.g. "prisma" | "typeorm" | "sql". */
+  orm: string | null;
+  kind: "entity" | "enum";
+  filePath: string;
+  columns: EntityGraphColumn[];
+  line: number;
+  /** Data/view models that hold this entity in type position. Omitted when none. */
+  referencingModels?: EntityModelRef[];
+}
+
+export interface EntityGraphEdge {
+  /** Source/target node ids, in canonical (sorted) orientation. */
+  source: string;
+  target: string;
+  /** Multiplicity at each end ("one" or "many") — drives crow's-foot notation. */
+  sourceCardinality: "one" | "many";
+  targetCardinality: "one" | "many";
+  /** Navigation field name(s) backing the relationship. */
+  fields: string[];
+  /** Owning-side foreign-key column, when known. */
+  foreignKey?: string | null;
+  /** Join/through/pivot table for many-to-many relationships, when named. */
+  joinTable?: string | null;
+  orm?: string | null;
+  confidence?: Confidence;
+  /** True for a self-referential relationship (source === target). */
+  selfRef?: boolean;
+}
+
+export interface EntityGraph {
+  nodes: EntityGraphNode[];
+  edges: EntityGraphEdge[];
+}
+
+/**
  * Project-wide data-access graph. One synthetic "datastore" node per unique
  * data-source target (e.g. `@prisma/client`, `Microsoft.EntityFrameworkCore`,
  * `../lib/prisma`), plus one node per file that performs DB calls. Edges
  * carry the actual call sites so the UI can render per-edge detail.
  */
 export interface DataAccessNode {
-  /** Unique id. For files: `file::<path>`. For datastores: `db::<target>`. */
+  /** Unique id. For files: `file::<path>`. For datastores: `db::<target>`.
+   *  For entities: `entity::<target>::<entity>`. */
   id: string;
-  /** Display name (file basename or datastore target). */
+  /** Display name (file basename, datastore target, or entity/table name). */
   name: string;
-  /** "file" for caller files; "datastore" for synthetic DB sinks. */
-  kind: "file" | "datastore";
-  /** File path for "file" nodes. Empty for datastore nodes. */
+  /** "file" for caller files; "datastore" for synthetic DB sinks;
+   *  "entity" for a specific table/model under a datastore. */
+  kind: "file" | "datastore" | "entity";
+  /** File path for "file" nodes. Empty for datastore/entity nodes. */
   filePath: string;
   /** Number of incoming edges (only meaningful for datastore nodes). */
   inboundCount: number;
@@ -162,6 +239,8 @@ export interface DataAccessEdgeCall {
   /** Call expression as captured (e.g. `prisma.user.findMany`). */
   name: string;
   line: number;
+  /** Resolved entity/table this call touches (e.g. `user`), when derivable. */
+  entity?: string;
 }
 
 export interface DataAccessEdge {
@@ -224,6 +303,12 @@ export interface FileAnalysis {
    * radius. Persisted so the incremental cache works without re-parsing.
    */
   typeReferences?: TypeReference[];
+  /**
+   * ORM entity relations for entities defined in this file (associations /
+   * foreign keys with cardinality), emitted by the language `entities`
+   * extractor. Omitted when empty. Persisted for the incremental cache.
+   */
+  entityRelations?: EntityRelation[];
 }
 
 export interface ImportInfo {
@@ -339,6 +424,66 @@ export interface DataSourceInfo {
   target: string | null;
   calls: CallInfo[];
   line: number;
+  /**
+   * Resolved ORM entity/model/table this DB op touches, when derivable from
+   * the call chain (e.g. "user" from `prisma.user.findMany`) or the DML target
+   * (e.g. the table named in `knex("users")`). Only meaningful for
+   * `kind === "database"`. Populated by `enrichFileDataSources`.
+   */
+  entity?: string;
+}
+
+/**
+ * A relation between two ORM entities, richer than `ClassInfo.implements`
+ * (which only records the related name). Emitted per file alongside the
+ * entity `ClassInfo`s a file defines, by the language `entities` extractor.
+ */
+export interface EntityRelation {
+  /** Entity declaring the relation — matches a ClassInfo.name in this file. */
+  fromEntity: string;
+  /** Field/property on fromEntity holding the relation (e.g. "author", "posts"). */
+  fromField: string;
+  /** Target entity name — matches a ClassInfo.name somewhere in the project. */
+  toEntity: string;
+  cardinality: "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
+  /** Owning-side foreign-key column, when the ORM declares it (e.g. "authorId"). */
+  foreignKey?: string | null;
+  /** Inverse field on toEntity, when the ORM declares both sides. */
+  inverseField?: string | null;
+  /** Join/through/pivot table for many-to-many relations, when named. */
+  joinTable?: string | null;
+  /** Whether the relation is optional (nullable FK). */
+  optional?: boolean;
+  /** Originating ORM, e.g. "prisma" | "typeorm" | "gorm". */
+  orm?: string;
+  /** EXTRACTED for explicit schema/decorators, INFERRED for name heuristics. */
+  confidence?: Confidence;
+}
+
+/**
+ * A detected ORM/DB migration file or directory, surfaced at the project level
+ * so the report can show schema evolution chronologically.
+ */
+export interface MigrationInfo {
+  /** Migration file (or migration-dir's representative file), relative path. */
+  filePath: string;
+  ecosystem:
+    | "prisma"
+    | "typeorm"
+    | "sequelize"
+    | "rails"
+    | "django"
+    | "ef-core"
+    | "gorm"
+    | "diesel"
+    | "doctrine"
+    | "flyway"
+    | "liquibase"
+    | "alembic";
+  /** Migration name/identifier parsed from the path (timestamp + slug, version). */
+  name: string;
+  /** Sort key — timestamp or numeric version when parseable, else the name. */
+  order: string;
 }
 
 export interface DataMutationInfo {
@@ -475,6 +620,29 @@ export interface SymbolLink {
   targetLine: number;
   resolvedBy?: "text" | "lsp";
   confidence?: Confidence;
+}
+
+/**
+ * A database access attributed to the function/method that contains it — the
+ * bridge between the symbol-level Call Traces graph and the entity-level Data
+ * Model. One entry per (file, symbol, entity); `sites` lists the DB call lines.
+ * Built by `attributeDataAccessToSymbols` in data-access-graph.ts.
+ */
+export interface SymbolDataAccess {
+  /** Defining file of the containing function. */
+  file: string;
+  /** Containing symbol — "Class.method" | "functionName" (matches SymbolLink.sourceSymbol). */
+  symbol: string;
+  /** Containing function's start line. */
+  symbolLine: number;
+  /** Entity touched: the ER-diagram node name when matched, else the raw call segment. */
+  entity: string;
+  /** True when `entity` resolves to an EntityGraphNode name (drives the reverse ER view). */
+  entityMatched: boolean;
+  /** Datastore target, e.g. "@prisma/client" (null when unresolved). */
+  datastore: string | null;
+  /** Individual DB call sites inside the function, sorted by line. */
+  sites: Array<{ name: string; line: number }>;
 }
 
 export interface LspStats {
@@ -711,6 +879,13 @@ export interface ProjectAnalysis {
   /** Class-level dependency graph for the Architecture tab's Data Models mode. */
   classGraph?: ClassGraph;
   dataAccessGraph?: DataAccessGraph;
+  /** Entity-relationship graph for the "Data Model" (ER diagram) view. */
+  entityGraph?: EntityGraph;
+  /** DB accesses attributed to the function that contains them — bridges the
+   *  symbol-level Call Traces to the entity-level Data Model. Omitted when empty. */
+  symbolDataAccess?: SymbolDataAccess[];
+  /** Detected ORM/DB migrations across known ecosystems. Omitted when empty. */
+  migrations?: MigrationInfo[];
 }
 
 export interface FrameworkDetection {

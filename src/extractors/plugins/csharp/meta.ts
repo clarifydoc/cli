@@ -40,6 +40,8 @@ export const csharpMeta: LanguagePluginMeta = {
     "System.Data.Entity": "ef6",
     "Dapper": "dapper",
     "NHibernate": "nhibernate",
+    "RepoDb": "repodb",
+    "PetaPoco": "petapoco",
   },
   apiCallRoots: ["HttpClient", "WebClient", "RestClient"],
   dbCallRoots: ["DbContext", "DbSet", "SqlCommand", "SqlConnection"],

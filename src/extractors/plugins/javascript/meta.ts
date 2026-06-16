@@ -132,6 +132,7 @@ const NPM_FRAMEWORK_HINTS: Readonly<Record<string, string>> = {
   "mongoose": "mongoose",
   "knex": "knex",
   "objection": "objection",
+  "kysely": "kysely",
 };
 
 /**

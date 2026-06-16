@@ -3,6 +3,8 @@ import type {
   DataAccessGraph,
   DataAccessNode,
   DataAccessEdge,
+  EntityGraph,
+  SymbolDataAccess,
 } from "../types/analysis.js";
 
 /**
@@ -59,21 +61,51 @@ export function buildDataAccessGraph(analyses: FileAnalysis[]): DataAccessGraph 
     return id;
   }
 
+  function ensureEntity(target: string, entity: string): string {
+    const id = `entity::${target}::${entity}`;
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        id,
+        name: entity,
+        kind: "entity",
+        filePath: "",
+        inboundCount: 0,
+        outboundCount: 0,
+      });
+    }
+    return id;
+  }
+
+  function edgeFor(source: string, target: string): DataAccessEdge {
+    const key = `${source}→${target}`;
+    let edge = edges.get(key);
+    if (!edge) {
+      edge = { source, target, calls: [], total: 0 };
+      edges.set(key, edge);
+    }
+    return edge;
+  }
+
   for (const a of analyses) {
     for (const ds of a.dataSources ?? []) {
       if (ds.kind !== "database") continue;
       const target = ds.target && ds.target.trim() !== "" ? ds.target : UNKNOWN_TARGET;
       const srcId = ensureFile(a.filePath);
-      const tgtId = ensureDatastore(target);
+      const dsId = ensureDatastore(target);
 
-      const key = `${srcId}→${tgtId}`;
-      let edge = edges.get(key);
-      if (!edge) {
-        edge = { source: srcId, target: tgtId, calls: [], total: 0 };
-        edges.set(key, edge);
+      if (ds.entity && ds.entity.trim() !== "") {
+        // Three-tier: file → entity → datastore. The call sites live on the
+        // file→entity edge; the entity→datastore edge is a thin grouping link.
+        const entId = ensureEntity(target, ds.entity);
+        const fe = edgeFor(srcId, entId);
+        fe.calls.push({ name: ds.name, line: ds.line, entity: ds.entity });
+        fe.total += 1;
+        edgeFor(entId, dsId).total += 1;
+      } else {
+        const fd = edgeFor(srcId, dsId);
+        fd.calls.push({ name: ds.name, line: ds.line });
+        fd.total += 1;
       }
-      edge.calls.push({ name: ds.name, line: ds.line });
-      edge.total += 1;
     }
   }
 
@@ -95,4 +127,120 @@ export function buildDataAccessGraph(analyses: FileAnalysis[]): DataAccessGraph 
 function fileBasename(p: string): string {
   const slash = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
   return slash >= 0 ? p.slice(slash + 1) : p;
+}
+
+/** Match keys for an entity name: lowercased bare name + a de-pluralized form. */
+function entityMatchKeys(name: string): string[] {
+  const base = name.split("::").pop()!.toLowerCase();
+  const keys = [base];
+  if (base.endsWith("s") && base.length > 1) keys.push(base.slice(0, -1));
+  return keys;
+}
+
+/**
+ * Attribute each database access to the function/method that contains it,
+ * producing the symbol↔entity bridge between the Call Traces view and the
+ * Data Model. Direct attribution only — a function is recorded for an entity
+ * solely where the DB call literally occurs in its body (no transitive
+ * propagation to callers).
+ *
+ * The entity name (`ds.entity`, already resolved by the data-source enrichment
+ * pass) is matched case-insensitively — with a singular/plural fallback —
+ * against `entityGraph` node names so the reverse "Accessed by" view on an
+ * entity can key on the canonical name. Unmatched DB targets still surface as
+ * forward badges on the trace (they are real accesses), but carry
+ * `entityMatched: false`.
+ *
+ * Symbol names mirror the call-graph convention (`fn.name` for top-level
+ * functions, `Class.method` for methods) so the keys line up with
+ * `SymbolLink.sourceSymbol` and light up the existing trace index. DB calls
+ * outside any function (module top-level) are dropped — they have no trace
+ * symbol to attach to.
+ */
+export function attributeDataAccessToSymbols(
+  analyses: FileAnalysis[],
+  entityGraph: EntityGraph,
+): SymbolDataAccess[] {
+  // Canonical entity lookup: match key → ER node name.
+  const entityByKey = new Map<string, string>();
+  for (const n of entityGraph.nodes) {
+    for (const k of entityMatchKeys(n.name)) {
+      if (!entityByKey.has(k)) entityByKey.set(k, n.name);
+    }
+  }
+  const matchEntity = (raw: string): string | null => {
+    for (const k of entityMatchKeys(raw)) {
+      const hit = entityByKey.get(k);
+      if (hit) return hit;
+    }
+    return null;
+  };
+
+  // (file::symbol::entity) → merged record.
+  const merged = new Map<string, SymbolDataAccess>();
+
+  for (const a of analyses) {
+    // Index every function/method by line span. Methods are qualified
+    // `Class.method`; top-level functions keep their bare name.
+    const fns: Array<{ symbol: string; line: number; endLine: number }> = [];
+    for (const fn of a.functions ?? []) {
+      fns.push({ symbol: fn.name, line: fn.line, endLine: fn.endLine });
+    }
+    for (const cls of a.classes ?? []) {
+      for (const m of cls.methods ?? []) {
+        fns.push({ symbol: `${cls.name}.${m.name}`, line: m.line, endLine: m.endLine });
+      }
+    }
+    if (fns.length === 0) continue;
+
+    for (const ds of a.dataSources ?? []) {
+      if (ds.kind !== "database") continue;
+      // Innermost (smallest-span) function whose body contains the call line.
+      let best: { symbol: string; line: number } | null = null;
+      let bestSpan = Infinity;
+      for (const f of fns) {
+        if (ds.line >= f.line && ds.line <= f.endLine) {
+          const span = f.endLine - f.line;
+          if (span < bestSpan) {
+            bestSpan = span;
+            best = { symbol: f.symbol, line: f.line };
+          }
+        }
+      }
+      if (!best) continue;
+
+      const raw = (ds.entity ?? "").trim();
+      const matchedName = raw ? matchEntity(raw) : null;
+      const entity = matchedName ?? raw;
+      if (!entity) continue; // DB call with no resolvable target — nothing to link.
+
+      const datastore = ds.target && ds.target.trim() !== "" ? ds.target.trim() : null;
+      const key = `${a.filePath}::${best.symbol}::${entity}`;
+      let rec = merged.get(key);
+      if (!rec) {
+        rec = {
+          file: a.filePath,
+          symbol: best.symbol,
+          symbolLine: best.line,
+          entity,
+          entityMatched: matchedName !== null,
+          datastore,
+          sites: [],
+        };
+        merged.set(key, rec);
+      }
+      rec.sites.push({ name: ds.name, line: ds.line });
+      if (!rec.datastore && datastore) rec.datastore = datastore;
+    }
+  }
+
+  const out = [...merged.values()];
+  for (const r of out) r.sites.sort((x, y) => x.line - y.line);
+  out.sort(
+    (a, b) =>
+      a.file.localeCompare(b.file) ||
+      a.symbol.localeCompare(b.symbol) ||
+      a.entity.localeCompare(b.entity),
+  );
+  return out;
 }

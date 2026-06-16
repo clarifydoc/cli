@@ -11,6 +11,7 @@ import type {
 } from "../types/analysis.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
 import { buildImportIndex } from "./import-index.js";
+import { ormOf } from "./entity-graph.js";
 
 /**
  * Aggregate per-class type-blast records from per-file TypeReferences.
@@ -301,6 +302,15 @@ export function buildClassGraph(analyses: FileAnalysis[]): ClassGraph {
     for (const cls of a.classes ?? []) {
       const isInterface = (cls.methods?.length ?? 0) === 0 && (cls.properties?.length ?? 0) > 0;
       const id = ensureNode(cls.name, a.filePath, isInterface, false);
+      // Tag ORM entities so the Data Models view can distinguish DB-backed
+      // entities (also shown in the ER diagram) from plain models/DTOs.
+      if (cls.decorators?.includes("entity")) {
+        const node = nodeIndex.get(id);
+        if (node) {
+          node.isEntity = true;
+          node.orm = ormOf(cls.decorators);
+        }
+      }
       const arr = localByName.get(cls.name) ?? [];
       if (!arr.includes(id)) arr.push(id);
       localByName.set(cls.name, arr);

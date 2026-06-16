@@ -81,13 +81,16 @@ export const rubySpec: RegexLangSpec = {
 
   classPatterns: [
     {
-      pattern: /^\s*class\s+([A-Z]\w*)/,
+      // Capture the FULL (possibly namespaced) class name — `IstLoen::KmdIndberetning`,
+      // not just the first segment `IstLoen` (which collided with the IstLoen concern).
+      pattern: /^\s*class\s+([A-Z]\w*(?:::[A-Z]\w*)*)/,
       getExtends: (line) => {
-        const m = line.match(/<\s+(\w+)/);
+        // Superclass may be namespaced too (`< ActiveRecord::Base`, `< IstLoen::Base`).
+        const m = line.match(/<\s*([A-Z][\w:]*)/);
         return m?.[1] ?? null;
       },
     },
-    { pattern: /^\s*module\s+([A-Z]\w*)/, getExtends: () => null },
+    { pattern: /^\s*module\s+([A-Z]\w*(?:::[A-Z]\w*)*)/, getExtends: () => null },
   ],
 
   /**

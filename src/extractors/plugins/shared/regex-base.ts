@@ -1,4 +1,4 @@
-import type { FunctionInfo, ClassInfo, CallInfo, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, ScreenInfo, DataSourceInfo, Language } from "../../../types/analysis.js";
+import type { FunctionInfo, ClassInfo, CallInfo, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language } from "../../../types/analysis.js";
 
 /**
  * Shared regex-based extraction framework for languages without tree-sitter support.
@@ -80,6 +80,9 @@ export interface RegexLangSpec {
   extractScreens?: (lines: string[], filePath: string, classes: ClassInfo[]) => ScreenInfo[];
   /** Detect API call sites — HTTP client calls, fetch patterns, etc. */
   extractDataSources?: (lines: string[], classes: ClassInfo[]) => DataSourceInfo[];
+  /** Extract ORM entity relations (e.g. Prisma schema model relations). The
+   *  `classes` arg is the already-extracted entity classes for this file. */
+  extractEntityRelations?: (lines: string[], classes: ClassInfo[]) => EntityRelation[];
   /** Post-process extracted functions (e.g. SQL BEGIN/END-aware end-line patching). */
   postProcessFunctions?: (lines: string[], fns: FunctionInfo[]) => FunctionInfo[];
 }
