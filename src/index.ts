@@ -5,6 +5,14 @@ export { parseSource, parseFile, runQuery } from "./parsers/parser-manager.js";
 export { parseDfm } from "./parsers/dfm-parser.js";
 export type { TSTree, TSNode, TSLanguage } from "./parsers/parser-manager.js";
 export { generateHtmlReport, type ReportOptions } from "./core/html-report.js";
+export {
+  normalizeProject,
+  denormalizeProject,
+  isNormalized,
+  type ElementInfo,
+  type ElementId,
+  type NormalizedProjectAnalysis,
+} from "./core/element-registry.js";
 export { computeComplexity, aggregateComplexity } from "./core/complexity-analyzer.js";
 export { scanSecurity } from "./core/security-scanner.js";
 export { detectPatterns } from "./core/pattern-detector.js";
