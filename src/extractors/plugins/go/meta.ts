@@ -33,6 +33,9 @@ export const goMeta: LanguagePluginMeta = {
     "gorm.io/gorm": "gorm",
     "github.com/jmoiron/sqlx": "sqlx",
     "entgo.io/ent": "ent",
+    "github.com/beego/beego": "beego-orm",
+    "github.com/astaxie/beego": "beego-orm",
+    "github.com/Masterminds/squirrel": "squirrel",
   },
   // Call node types for when a tree-sitter grammar is wired up.
   calls: { callNodeTypes: new Set(["call_expression", "composite_literal"]) },

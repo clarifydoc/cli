@@ -135,6 +135,11 @@ function renderReport(summary: ProjectAnalysis): string {
     skippedSensitive: summary.skippedSensitive ?? [],
     classGraph: summary.classGraph ?? null,
     dataAccessGraph: summary.dataAccessGraph ?? null,
+    entityGraph: (summary as any).entityGraph ?? null,
+    // DB accesses attributed to their containing function — bridges Call Traces
+    // to the Data Model (entity badges on traces + "Accessed by" on entities).
+    symbolDataAccess: (summary as any).symbolDataAccess ?? [],
+    migrations: (summary as any).migrations ?? [],
   };
 
   return `<!DOCTYPE html>
@@ -153,6 +158,7 @@ ${renderNav(payload)}
 ${renderUiView()}
 ${renderTracesView()}
 ${renderLinksView()}
+${renderEntityView()}
 ${renderRoutesView()}
 ${renderHealthView()}
 ${renderBlastRadiusView()}
@@ -286,6 +292,9 @@ a{color:#58a6ff;text-decoration:none}
 .ct-node.center text{fill:#fff;font-weight:600}
 .ct-node.more rect{fill:#161b22;stroke:#30363d;stroke-dasharray:3 2}
 .ct-node.more text{fill:#8b949e;font-style:italic}
+.ct-node.entity rect{fill:#14301f;stroke:#3fb950;stroke-width:1.5}
+.ct-node.entity text{fill:#3fb950;font-weight:600}
+.ct-link.da{stroke:#3fb950;stroke-dasharray:4 3;stroke-opacity:0.85}
 .ct-tree-empty{display:flex;align-items:center;justify-content:center;height:100%;color:#8b949e;font-size:13px}
 .ct-legend{position:absolute;left:10px;bottom:8px;font-size:11px;color:#8b949e;display:flex;gap:14px;pointer-events:none}
 .ct-legend span{display:inline-flex;align-items:center;gap:5px}
@@ -302,6 +311,16 @@ a{color:#58a6ff;text-decoration:none}
 .trace-sym-item .sym-counts{font-size:10px;color:#484f58;flex-shrink:0;display:flex;gap:4px}
 .trace-sym-item .sym-in{color:#58a6ff}
 .trace-sym-item .sym-out{color:#3fb950}
+.trace-sym-item .sym-entities{flex-shrink:0;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:#3fb950;background:#14301f;border:1px solid #2ea04366;border-radius:8px;padding:0 6px;line-height:15px}
+/* Call Traces → Data Model: per-symbol DB access section in the detail pane */
+.trace-da-section{margin:10px 0;padding:8px 10px;background:#0d1117;border:1px solid #1f3a28;border-left:3px solid #3fb950;border-radius:6px}
+.trace-da-head{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#3fb950;font-weight:600;margin-bottom:6px}
+.trace-da-row{display:flex;gap:8px;align-items:baseline;font-size:11px;padding:3px 0;flex-wrap:wrap;border-bottom:1px solid #161b22}
+.trace-da-entity{font-family:monospace;color:#8b949e;background:#161b22;border-radius:4px;padding:1px 6px}
+.trace-da-entity.matched{color:#3fb950}
+.trace-da-store{font-size:10px;color:#6e7681;font-family:monospace}
+.trace-da-sites{font-size:10px;color:#6e7681;font-family:monospace}
+.ct-da-dot{fill:#3fb950;stroke:#0d1117;stroke-width:1}
 
 /* Call map detail */
 .trace-section{margin-bottom:20px}
@@ -324,7 +343,8 @@ a{color:#58a6ff;text-decoration:none}
 .trace-no-links{color:#484f58;font-style:italic;font-size:13px;padding:8px 0}
 
 /* D3 Architecture Graph */
-#d3-graph-container{width:100%;height:640px;background:#0d1117;border:1px solid #30363d;border-radius:8px;position:relative;overflow:hidden}
+.d3-arch-main{display:flex;gap:12px;align-items:stretch}
+#d3-graph-container{flex:1 1 auto;min-width:0;height:640px;background:#0d1117;border:1px solid #30363d;border-radius:8px;position:relative;overflow:hidden}
 #d3-graph-container svg{width:100%;height:100%;display:block}
 .d3-toolbar{display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap}
 .d3-toolbar-label{font-size:11px;color:#8b949e;margin-right:2px}
@@ -350,11 +370,69 @@ a{color:#58a6ff;text-decoration:none}
 .d3-tooltip .tt-val{color:#e6edf3;font-weight:500}
 .arch-hidden{display:none !important}
 
+/* Data Models grouped sidebar (Architecture tab → Data Models mode) */
+#d3-types-sidebar{width:300px;flex-shrink:0;height:640px;background:#0d1117;border:1px solid #30363d;border-radius:8px;display:flex;flex-direction:column;overflow:hidden;font-size:12px}
+.ts-head{display:flex;align-items:center;gap:8px;padding:8px;border-bottom:1px solid #21262d;flex-shrink:0}
+.ts-search{flex:1;min-width:0;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:5px;padding:4px 7px;font-size:12px;font-family:inherit}
+.ts-search:focus{outline:none;border-color:#1f6feb}
+.ts-count{color:#8b949e;font-size:11px;white-space:nowrap}
+.ts-tree{flex:1;overflow:auto;padding:4px}
+.ts-empty{color:#8b949e;padding:16px;text-align:center}
+.ts-proj-head,.ts-folder-head{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;border-radius:5px;padding:3px 5px}
+.ts-proj-head{color:#e6edf3;font-weight:600;margin-top:2px}
+.ts-folder-head{color:#79c0ff;font-family:monospace;font-size:11px;margin-left:10px}
+.ts-proj-head:hover,.ts-folder-head:hover{background:#161b22}
+.ts-proj-head.active,.ts-folder-head.active{background:#1f6feb22;color:#58a6ff}
+.ts-swatch{width:9px;height:9px;border-radius:2px;flex-shrink:0}
+.ts-proj-name,.ts-folder-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ts-caret{display:inline-block;width:10px;color:#8b949e;font-size:9px;transition:transform .12s;flex-shrink:0}
+.ts-proj.collapsed>.ts-proj-body,.ts-folder.collapsed>.ts-folder-body{display:none}
+.ts-proj.collapsed>.ts-proj-head>.ts-caret,.ts-folder.collapsed>.ts-folder-head>.ts-caret{transform:rotate(-90deg)}
+.ts-n{color:#8b949e;font-weight:400;font-size:10px;flex-shrink:0}
+.ts-item{display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 6px 2px 28px;border-radius:5px;color:#c9d1d9;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ts-item:hover{background:#161b22;color:#e6edf3}
+.ts-item.active{background:#1f6feb22;color:#58a6ff}
+.ts-item-name{overflow:hidden;text-overflow:ellipsis}
+.ts-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;background:#79c0ff}
+.ts-dot.iface{background:#a78bfa;border-radius:2px}
+.ts-hidden{display:none !important}
+
 /* Type Graph legend + detail panel (Architecture tab Data Models mode) */
 .d3-legend-row{display:flex;flex-wrap:wrap;gap:14px;align-items:center}
 .d3-legend-title{font-size:12px;color:#e6edf3;font-weight:600}
 .d3-legend-item{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#8b949e}
 .d3-legend-item i{width:14px;height:14px;border-radius:3px;flex-shrink:0;display:inline-block}
+.mig-panel{margin-top:12px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px}
+.mig-head{font-size:13px;font-weight:600;color:#e6edf3;margin-bottom:8px}
+.mig-group{margin-bottom:10px}
+.mig-eco{font-size:12px;font-weight:600;color:#7ee787;text-transform:capitalize;margin-bottom:4px}
+.mig-row{display:flex;justify-content:space-between;gap:12px;font-size:11px;padding:2px 0;border-bottom:1px solid #1c2128}
+.mig-name{color:#e6edf3}
+.mig-file{color:#8b949e;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%}
+/* ── Data Model (ER diagram) view ── */
+.er-layout{display:flex;gap:12px;align-items:stretch}
+#er-graph-container{flex:1;height:640px;background:#0d1117;border:1px solid #30363d;border-radius:8px;position:relative;overflow:hidden}
+#er-graph-container svg{width:100%;height:100%;display:block}
+#er-detail-panel{width:300px;flex-shrink:0;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px;overflow:auto;height:640px;font-size:12px}
+.er-detail-hint{color:#8b949e;font-size:12px;padding-top:8px}
+.er-select{background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:5px;padding:3px 6px;font-size:12px}
+#er-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:8px;font-size:11px;color:#8b949e;align-items:center}
+.er-node-title{font-family:monospace;font-weight:700;font-size:12px;fill:#f0f6fc}
+.er-node-orm{font-family:monospace;font-size:9px}
+.er-col{font-family:monospace;font-size:11px;fill:#c9d1d9}
+.er-col-pk{fill:#e3b341}
+.er-col-fk{fill:#7ee787}
+.er-edge-label{font-family:monospace;font-size:10px;fill:#8b949e;paint-order:stroke;stroke:#0d1117;stroke-width:3px;stroke-opacity:.9}
+.er-detail-title{font-size:16px;font-weight:700;color:#f0f6fc;font-family:monospace;word-break:break-all}
+.er-detail-badge{display:inline-block;font-size:10px;font-family:monospace;padding:1px 6px;border-radius:9px;margin-top:4px}
+.er-detail-section{margin-top:12px}
+.er-detail-section h4{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#8b949e}
+.er-detail-col{display:flex;justify-content:space-between;gap:8px;font-family:monospace;font-size:11px;padding:2px 0;border-bottom:1px solid #1c2128}
+.er-detail-col .k{color:#e6edf3}
+.er-detail-col .t{color:#8b949e}
+.er-detail-rel{font-size:11px;padding:4px 0;border-bottom:1px solid #1c2128}
+.er-detail-rel .card{color:#58a6ff;font-family:monospace}
+.er-detail-rel .meta{color:#8b949e;font-size:10px}
 .type-detail-head{margin-bottom:8px}
 .type-detail-name{font-size:18px;font-weight:600;color:#f0f6fc;font-family:monospace}
 .type-detail-sub{display:flex;gap:8px;align-items:center;margin-top:4px;font-size:12px}
@@ -690,8 +768,9 @@ function renderGlobalFilterBar(): string {
 function renderNav(payload: Record<string, unknown>): string {
   const tabs: { view: string; label: string; hasData: boolean }[] = [
     { view: "ui",          label: "Screens & UI",         hasData: nonEmptyArray(payload.screens) || nonEmptyArray(payload.interactiveElements) },
-    { view: "traces",      label: "Call Traces",          hasData: nonEmptyArray(payload.symbolLinks) },
+    { view: "traces",      label: "Call Traces",          hasData: nonEmptyArray(payload.symbolLinks) || nonEmptyArray(payload.symbolDataAccess) },
     { view: "links",       label: "Architecture",         hasData: nonEmptyObject(payload.componentGraph) || nonEmptyArray(payload.linkGraph) },
+    { view: "datamodel",   label: "Data Model",           hasData: nonEmptyArray((payload.entityGraph as { nodes?: unknown[] } | null)?.nodes) },
     { view: "routes",      label: "Routes",               hasData: nonEmptyArray(payload.routeMap) || nonEmptyArray(payload.apiCalls) },
     { view: "health",      label: "Health",               hasData: payload.healthScore != null },
     { view: "blast",       label: "Blast Radius",         hasData: nonEmptyArray(payload.blastRadius) },
@@ -786,6 +865,8 @@ function renderLinksView(): string {
     <span class="d3-toolbar-label arch-files-only arch-proj-only">Group:</span>
     <button class="d3-btn arch-files-only arch-proj-only" data-arch-group="folder">Folder</button>
     <button class="d3-btn arch-files-only arch-proj-only" data-arch-group="project">Project</button>
+    <label class="d3-check arch-types-only arch-hidden" id="d3-types-group-wrap" title="Colour the type nodes by sub-project and cluster each project into its own region"><input type="checkbox" id="d3-types-group-project"> Group by project</label>
+    <label class="d3-check arch-types-only arch-hidden" id="d3-types-hide-unlinked-wrap" title="Hide data models that have no relationships to other models"><input type="checkbox" id="d3-types-hide-unlinked" checked> Hide unlinked</label>
     <span class="d3-toolbar-sep"></span>
     <label class="d3-check" id="d3-hide-unlinked-wrap"><input type="checkbox" id="d3-hide-unlinked" checked> Hide unlinked</label>
     <label class="d3-check arch-files-only" id="d3-hide-unused-wrap" style="display:none"><input type="checkbox" id="d3-hide-unused" checked> Hide unused <span id="d3-hide-unused-count" style="color:#8b949e"></span></label>
@@ -793,9 +874,37 @@ function renderLinksView(): string {
     <button class="d3-btn" id="d3-toggle-labels">Labels</button>
     <button class="d3-btn" id="d3-zoom-fit">Fit</button>
   </div>
-  <div id="d3-graph-container"></div>
+  <div class="d3-arch-main">
+    <div id="d3-types-sidebar" class="arch-types-only arch-hidden"></div>
+    <div id="d3-graph-container"></div>
+  </div>
   <div id="d3-legend"></div>
+  <div id="d3-migrations-panel"></div>
   <div id="d3-detail-panel"></div>
+</section>`;
+}
+
+// ─── Data Model (ER diagram) View ────────────────────────────────────────
+// Entity tables + crow's-foot relationships built from `entityGraph`. Each
+// node is rendered as a table (header + column rows); edges carry crow's-foot
+// markers (one / many) plus FK / join-table labels. Click an entity for its
+// columns + relationships.
+
+function renderEntityView(): string {
+  return `<section id="view-datamodel" class="view">
+  <div class="d3-toolbar">
+    <span class="d3-toolbar-label">ORM:</span>
+    <select id="er-orm-filter" class="er-select"><option value="">All</option></select>
+    <span class="d3-toolbar-sep"></span>
+    <label class="d3-check"><input type="checkbox" id="er-hide-isolated" checked> Hide unrelated</label>
+    <span class="d3-toolbar-sep"></span>
+    <button class="d3-btn" id="er-zoom-fit">Fit</button>
+  </div>
+  <div class="er-layout">
+    <div id="er-graph-container"></div>
+    <div id="er-detail-panel"><div class="er-detail-hint">Click an entity to see its columns and relationships.</div></div>
+  </div>
+  <div id="er-legend"></div>
 </section>`;
 }
 
@@ -968,6 +1077,7 @@ function activateTab(view) {
     lazyRenderers[view]();
   }
   if (view === 'links') rebuildLinkGraph();
+  if (view === 'datamodel') initEntityGraph();
   // Reflect the active tab in the URL so it's bookmarkable and Back/Forward
   // work. Only push when the tab actually changed to avoid duplicate history
   // entries from re-clicking the current tab.
@@ -1137,6 +1247,9 @@ function refreshAllViews() {
   // If the links tab is currently active, rebuild the graph
   const linksView = document.getElementById('view-links');
   if (linksView && linksView.classList.contains('active')) rebuildLinkGraph();
+  // Same for the Data Model (ER) tab — re-init so the file filter is applied.
+  const dmView = document.getElementById('view-datamodel');
+  if (dmView && dmView.classList.contains('active')) { entityGraphInitialized = false; initEntityGraph(); }
 }
 
 let archMode = 'files'; // 'files' | 'types' | 'data-access'
@@ -1144,6 +1257,14 @@ let traceViewMode = 'tree'; // Call Traces right pane: 'tree' (double-tree diagr
 // Architecture Files graph clustering: 'auto' (project when 2+ sub-projects, else
 // folder), or an explicit 'folder' / 'project' chosen via the Group toggle.
 let archGroupMode = 'auto';
+// Data Models graph: cluster + colour the type nodes by sub-project. null = auto
+// (on the first time the visible types span 2+ projects); true/false thereafter
+// once the user toggles the "Group by project" checkbox.
+let typeGroupByProject = null;
+// Data Models graph focus: selecting a sidebar group REGENERATES the graph from
+// only that group's nodes (+ internal edges). null = full graph.
+let typeFocusGroup = null;     // { ids: string[], label: string, key: string } | null
+let typePendingFocusId = null; // node to highlight once the next full render is up
 function rebuildLinkGraph() {
   const container = document.getElementById('d3-graph-container');
   if (!container) return;
@@ -1152,15 +1273,46 @@ function rebuildLinkGraph() {
   // Also reset legend/detail panels
   const legend = document.getElementById('d3-legend');
   const detail = document.getElementById('d3-detail-panel');
+  const migPanel = document.getElementById('d3-migrations-panel');
+  const typesSidebar = document.getElementById('d3-types-sidebar');
   if (legend) legend.innerHTML = '';
   if (detail) detail.innerHTML = '';
+  if (migPanel) migPanel.innerHTML = '';
+  if (typesSidebar) typesSidebar.innerHTML = '';
   if (archMode === 'types') {
     initTypeGraph();
   } else if (archMode === 'data-access') {
     initDataAccessGraph();
+    renderMigrationsPanel();
   } else {
     initLinkGraph();
   }
+}
+
+// Render the detected ORM/DB migrations (schema evolution) beneath the Data
+// Access graph, grouped by ecosystem and ordered chronologically.
+function renderMigrationsPanel() {
+  const panel = document.getElementById('d3-migrations-panel');
+  if (!panel) return;
+  const migs = DATA.migrations || [];
+  if (migs.length === 0) { panel.innerHTML = ''; return; }
+  const byEco = {};
+  migs.forEach(function(m){ (byEco[m.ecosystem] = byEco[m.ecosystem] || []).push(m); });
+  let html = '<div class="mig-panel"><div class="mig-head">Migrations · ' + migs.length +
+    ' across ' + Object.keys(byEco).length + ' ecosystem(s)</div>';
+  Object.keys(byEco).sort().forEach(function(eco){
+    const list = byEco[eco].slice().sort(function(a,b){ return String(a.order).localeCompare(String(b.order)); });
+    const max = 15;
+    html += '<div class="mig-group"><div class="mig-eco">' + esc(eco) + ' <span style="color:#8b949e">(' + list.length + ')</span></div>';
+    list.slice(0, max).forEach(function(m){
+      html += '<div class="mig-row"><span class="mig-name" style="font-family:monospace">' + esc(m.name) +
+        '</span><span class="mig-file">' + esc(m.filePath) + '</span></div>';
+    });
+    if (list.length > max) html += '<div class="mig-row" style="color:#8b949e">… ' + (list.length - max) + ' more</div>';
+    html += '</div>';
+  });
+  html += '</div>';
+  panel.innerHTML = html;
 }
 
 // Wire up the Files / Data Models view-mode toggle. Re-renders the D3
@@ -1188,6 +1340,10 @@ function rebuildLinkGraph() {
     document.querySelectorAll('.arch-files-only').forEach((b) => {
       b.classList.toggle('arch-hidden', !inFileMode);
     });
+    // The grouped project/folder sidebar only applies to the Data Models graph.
+    document.querySelectorAll('.arch-types-only').forEach((b) => {
+      b.classList.toggle('arch-hidden', archMode !== 'types');
+    });
     rebuildLinkGraph();
   });
 
@@ -1204,6 +1360,14 @@ function rebuildLinkGraph() {
   // static HTML = default on); wired once here, read by initLinkGraph.
   const hideUnlinkedCb = document.getElementById('d3-hide-unlinked');
   if (hideUnlinkedCb) hideUnlinkedCb.onchange = () => rebuildLinkGraph();
+
+  // Data Models "Group by project": colour + cluster the type graph by sub-project.
+  const typesGroupCb = document.getElementById('d3-types-group-project');
+  if (typesGroupCb) typesGroupCb.onchange = function(){ typeGroupByProject = this.checked; rebuildLinkGraph(); };
+
+  // Data Models "Hide unlinked": drop type nodes with no relationships.
+  const typesHideUnlinkedCb = document.getElementById('d3-types-hide-unlinked');
+  if (typesHideUnlinkedCb) typesHideUnlinkedCb.onchange = () => rebuildLinkGraph();
 
   // Hide-unused checkbox (generated/library dead code). Only meaningful when the
   // analyzer detected unused generated files; revealed + counted here once.
@@ -2180,6 +2344,21 @@ function renderTraces() {
     allSymbols[tgtKey].inCount++;
   });
 
+  // DB accesses per symbol (key: file::symbol) — drives entity badges and the
+  // data-access section in the detail pane. Also inject any DB-touching symbol
+  // that has no call links so it still appears in the list (and the reverse
+  // "Accessed by" deep-link from an entity can select it).
+  const symAccess = {};
+  (DATA.symbolDataAccess || []).forEach(function(r) {
+    // Matched-only: a real Data Model link must resolve to an ER entity node.
+    // Drops noise from over-eager DB detection (Promise.all, Object.entries,
+    // Vue ref .value.get lookups), which never matches an entity.
+    if (!r.entityMatched || !isFileVisible(r.file)) return;
+    const k = r.file + '::' + r.symbol;
+    (symAccess[k] = symAccess[k] || []).push(r);
+    if (!allSymbols[k]) allSymbols[k] = { file: r.file, symbol: r.symbol, inCount: 0, outCount: 0 };
+  });
+
   // Repopulate the trace-specific file filter (scoped to visible symbols only)
   const traceFiles = [...new Set(Object.values(allSymbols).map(s => s.file))].sort();
   const prevFileValue = traceFileSel.value;
@@ -2225,8 +2404,16 @@ function renderTraces() {
         added += syms.length;
         const items = syms.sort((a,b) => a.symbol.localeCompare(b.symbol)).map(s => {
           const sel = s.key === selectedKey ? ' selected' : '';
+          const acc = symAccess[s.key];
+          let accBadge = '';
+          if (acc && acc.length) {
+            const names = acc.map(r => r.entity);
+            const shown = names.slice(0, 2).join(', ') + (names.length > 2 ? ' +' + (names.length - 2) : '');
+            accBadge = '<span class="sym-entities" title="Reads/writes: ' + esc(names.join(', ')) + '">' + esc(shown) + '</span>';
+          }
           return '<div class="trace-sym-item' + sel + '" data-sym-key="' + esc(s.key) + '">' +
             '<span class="sym-name">' + esc(s.symbol) + '</span>' +
+            accBadge +
             '<span class="sym-counts">' +
               (s.inCount > 0 ? '<span class="sym-in">\\u2190' + s.inCount + '</span>' : '') +
               (s.outCount > 0 ? '<span class="sym-out">\\u2192' + s.outCount + '</span>' : '') +
@@ -2291,6 +2478,21 @@ function renderTraces() {
       '<button class="d3-btn' + (traceViewMode === 'tree' ? ' active' : '') + '" data-trace-view="tree">Diagram</button>' +
       '<button class="d3-btn' + (traceViewMode === 'list' ? ' active' : '') + '" data-trace-view="list">List</button>' +
       '</div></div>';
+
+    // Data Model connection: entities this function directly reads/writes.
+    const access = symAccess[key] || [];
+    if (access.length > 0) {
+      html += '<div class="trace-da-section"><div class="trace-da-head">\\u25A4 Data access (' + access.length + ')</div>';
+      access.forEach(function(r) {
+        const sites = r.sites.slice(0, 5).map(function(s){ return esc(s.name) + ' :' + s.line; }).join(', ');
+        html += '<div class="trace-da-row">' +
+          '<span class="trace-da-entity' + (r.entityMatched ? ' matched' : '') + '">' + esc(r.entity) + '</span>' +
+          (r.datastore ? '<span class="trace-da-store">' + esc(r.datastore) + '</span>' : '') +
+          '<span class="trace-da-sites">' + sites + (r.sites.length > 5 ? ' +' + (r.sites.length - 5) : '') + '</span>' +
+        '</div>';
+      });
+      html += '</div>';
+    }
 
     if (traceViewMode === 'tree') {
       // Double-tree diagram: callers branch left, callees branch right (4 levels).
@@ -2403,6 +2605,20 @@ function renderTraces() {
           var ns = Object.assign({}, cur.seen); ns[k] = 1;
           queue.push({ node: child, seen: ns });
         }
+        // Append the entities this symbol directly touches as green sink leaves
+        // so the data-model connection is visible in the diagram itself. Only on
+        // the callee side — data flows rightward into the DB.
+        if (dir === 'callee') {
+          var acc = symAccess[cur.node.key];
+          if (acc && acc.length) {
+            var seenEnt = {};
+            for (var ei = 0; ei < acc.length; ei++) {
+              var ent = acc[ei].entity;
+              if (seenEnt[ent]) continue; seenEnt[ent] = 1;
+              cur.node.children.push({ key: 'da::' + cur.node.key + '::' + ent, name: ent, da: true, children: [], depth: cur.node.depth + 1 });
+            }
+          }
+        }
         if (hidden > 0) cur.node.children.push({ key: null, name: '+' + hidden + ' more', more: true, children: [], depth: cur.node.depth + 1 });
       }
       return root;
@@ -2431,12 +2647,12 @@ function renderTraces() {
         var nx = sign * d.y, ny = d.x - rootH.x;
         // Internal nodes (still have callers/callees) carry the side color;
         // endpoints render as light leaf boxes, matching the double-tree look.
-        var nodeCls = d.data.more ? 'more' : ((d.children && d.children.length) ? cls : 'leaf');
-        nodes.push({ x: nx, y: ny, name: d.data.name, cls: nodeCls, key: d.data.key });
+        var nodeCls = d.data.da ? 'entity' : (d.data.more ? 'more' : ((d.children && d.children.length) ? cls : 'leaf'));
+        nodes.push({ x: nx, y: ny, name: d.data.name, cls: nodeCls, key: d.data.key, da: !!d.data.da });
         var p = d.parent;
         var px = p.depth === 0 ? 0 : sign * p.y;
         var py = p.depth === 0 ? 0 : (p.x - rootH.x);
-        links.push({ sx: px, sy: py, tx: nx, ty: ny, cls: cls });
+        links.push({ sx: px, sy: py, tx: nx, ty: ny, cls: d.data.da ? 'da' : cls });
       });
     }
     collect(callerRoot, -1, 'inbound');
@@ -2462,12 +2678,18 @@ function renderTraces() {
     ns.append('rect').attr('x', -NODE_W / 2).attr('y', -NODE_H / 2).attr('width', NODE_W).attr('height', NODE_H);
     ns.append('text').attr('text-anchor', 'middle').attr('dy', '0.32em').text(function(d){ return truncate(d.name, 18); });
     ns.append('title').text(function(d){
-      if (!d.key) return d.name;
-      var s = allSymbols[d.key];
-      return s ? s.symbol + '  (' + s.file + ')' : d.name;
+      if (d.da) return 'Data model: ' + d.name;
+      var base = !d.key ? d.name : (allSymbols[d.key] ? allSymbols[d.key].symbol + '  (' + allSymbols[d.key].file + ')' : d.name);
+      var acc = d.key && symAccess[d.key];
+      if (acc && acc.length) base += '\\nDB: ' + acc.map(function(r){ return r.entity; }).join(', ');
+      return base;
     });
-    // Click a non-center, real node to recenter the diagram on it.
-    ns.filter(function(d){ return d.key && d.cls !== 'center'; }).style('cursor', 'pointer')
+    // Green dot on caller-side / center nodes that touch the data model (callee
+    // side already shows the entity as a green sink node).
+    ns.filter(function(d){ return d.key && !d.da && symAccess[d.key]; })
+      .append('circle').attr('class', 'ct-da-dot').attr('cx', NODE_W / 2 - 5).attr('cy', -NODE_H / 2 + 5).attr('r', 3);
+    // Click a non-center, real symbol node to recenter the diagram on it.
+    ns.filter(function(d){ return d.key && d.cls !== 'center' && !d.da; }).style('cursor', 'pointer')
       .on('click', function(e, d){
         e.stopPropagation();
         selectSymbol(d.key);
@@ -2485,7 +2707,7 @@ function renderTraces() {
 
     var legend = document.createElement('div');
     legend.className = 'ct-legend';
-    legend.innerHTML = '<span><i style="background:#3b6fb0"></i>callers</span><span><i style="background:#c4801f"></i>callees</span><span><i style="background:#a371f7"></i>selected</span>';
+    legend.innerHTML = '<span><i style="background:#3b6fb0"></i>callers</span><span><i style="background:#c4801f"></i>callees</span><span><i style="background:#a371f7"></i>selected</span><span><i style="background:#14301f;border:1px solid #3fb950"></i>data model</span>';
     host.appendChild(legend);
   }
 
@@ -2504,6 +2726,7 @@ requestRender('traces');
 
 // ─── D3 Architecture Graph ────────────────────────────────────────────
 var graphInitialized = false;
+var entityGraphInitialized = false;
 function initLinkGraph() {
   if (graphInitialized) return;
   graphInitialized = true;
@@ -2943,6 +3166,8 @@ function initTypeGraph() {
   const cg = DATA.classGraph;
   if (!cg || !cg.nodes || cg.nodes.length === 0) {
     container.innerHTML = '<div class="empty" style="padding-top:200px">No data-model graph for this project — extract a fixture with classes/interfaces first.</div>';
+    var sbEmpty0 = document.getElementById('d3-types-sidebar');
+    if (sbEmpty0) sbEmpty0.innerHTML = '<div class="ts-empty">No data models.</div>';
     return;
   }
 
@@ -2956,16 +3181,68 @@ function initTypeGraph() {
   const filteredEdges = cg.edges.filter(function(e){ return visibleClasses.has(e.source) && visibleClasses.has(e.target); });
   const referencedNodes = new Set();
   filteredEdges.forEach(function(e){ referencedNodes.add(e.source); referencedNodes.add(e.target); });
-  // Keep nodes that are either explicitly visible AND have at least one edge,
-  // OR are non-external visible nodes (so the user sees their own isolated classes).
+  // "Hide unlinked" (toolbar checkbox): when on, drop every node with no visible
+  // edge. When off, still keep the user's own isolated classes (external isolated
+  // nodes are always dropped — they only matter as reference targets).
+  var typesHideUnlinkedCb = document.getElementById('d3-types-hide-unlinked');
+  var hideUnlinked = typesHideUnlinkedCb ? typesHideUnlinkedCb.checked : false;
   const filteredNodes = cg.nodes.filter(function(n){
-    return visibleClasses.has(n.id) && (referencedNodes.has(n.id) || !n.isExternal);
+    if (!visibleClasses.has(n.id)) return false;
+    if (referencedNodes.has(n.id)) return true;
+    return !n.isExternal && !hideUnlinked;
   });
 
   if (filteredNodes.length === 0) {
     container.innerHTML = '<div class="empty" style="padding-top:200px">No data models match the current filters.</div>';
+    var sbEmpty1 = document.getElementById('d3-types-sidebar');
+    if (sbEmpty1) sbEmpty1.innerHTML = '<div class="ts-empty">No data models match the current filters.</div>';
     return;
   }
+
+  // ── Project grouping + colouring ──────────────────────────────────────
+  // Each declared type belongs to a sub-project. When enabled, nodes are
+  // coloured by project and pulled into per-project convex-hull regions
+  // (mirroring the Files graph). Auto-on the first time the visible types span
+  // 2+ projects; toggled thereafter via the "Group by project" checkbox.
+  var PROJECT_PALETTE = ['#58a6ff','#a371f7','#3fb950','#ff9f43','#ec4899','#22d3ee','#f85149','#84cc16','#d29922','#56d364'];
+  var subProjectList = (DATA.subProjects || []).slice().sort(function(a, b){ return (a.root || '').localeCompare(b.root || ''); });
+  var projectMeta = {};
+  var realIdx = 0;
+  subProjectList.forEach(function(sp){
+    var disp = sp.name || (sp.root ? sp.root.split('/').pop() : '(root)') || '(root)';
+    var color = sp.id === 'root' ? '#8b949e' : PROJECT_PALETTE[(realIdx++) % PROJECT_PALETTE.length];
+    projectMeta[sp.id] = { name: disp, color: color };
+  });
+  function projectMetaOf(id){ return projectMeta[id] || { name: id || '(root)', color: '#8b949e' }; }
+  function projectOf(n){ return (n.isExternal || !n.filePath) ? null : fileProject(n.filePath); }
+  var projectsPresent = Array.from(new Set(filteredNodes.map(projectOf).filter(Boolean)));
+  var canGroupByProject = projectsPresent.length >= 2;
+  if (typeGroupByProject === null) typeGroupByProject = canGroupByProject;
+  var groupByProject = canGroupByProject && typeGroupByProject;
+  // Group focus: when a sidebar group is selected we regenerate this graph from
+  // ONLY that group's nodes (+ the edges among them), so hidden nodes/edges (and
+  // their stray arrowheads) simply don't exist. The sidebar still lists every group.
+  var coreSet = typeFocusGroup ? new Set(typeFocusGroup.ids) : null;
+  var focused = !!coreSet;
+  // Reflect availability + state on the toolbar checkbox.
+  var grpWrap = document.getElementById('d3-types-group-wrap');
+  if (grpWrap) grpWrap.style.display = canGroupByProject ? '' : 'none';
+  var grpCb = document.getElementById('d3-types-group-project');
+  if (grpCb) grpCb.checked = groupByProject;
+
+  // The sidebar always lists the full (globally-filtered) model set; the GRAPH is
+  // narrowed to the focused group PLUS the nodes one link away ("+1"), with the
+  // edges among that set. Neighbours render dimmer so the group still stands out.
+  var renderSet = coreSet ? new Set(coreSet) : null;
+  if (coreSet) {
+    filteredEdges.forEach(function(e){
+      if (coreSet.has(e.source)) renderSet.add(e.target);
+      if (coreSet.has(e.target)) renderSet.add(e.source);
+    });
+  }
+  var renderNodes = renderSet ? filteredNodes.filter(function(n){ return renderSet.has(n.id); }) : filteredNodes;
+  var renderEdges = renderSet ? filteredEdges.filter(function(e){ return renderSet.has(e.source) && renderSet.has(e.target); }) : filteredEdges;
+  if (coreSet && renderNodes.length === 0) { typeFocusGroup = null; coreSet = null; renderSet = null; focused = false; renderNodes = filteredNodes; renderEdges = filteredEdges; }
 
   // Category palette
   const CAT_COLORS = { inheritance: '#f85149', data: '#a78bfa', function: '#58a6ff' };
@@ -2982,14 +3259,21 @@ function initTypeGraph() {
   //   file      = solid square in muted teal — signals "this isn't a class,
   //               it's a file emitting refs from top-level / functional code"
   function nodeFill(d) {
+    // In project mode keep a dark fill so the project-coloured ring reads clearly.
+    if (groupByProject && !d.isExternal) return '#0d1117';
     if (d.isFile) return '#162a2d';
     if (d.isExternal) return '#1a1f26';
+    if (d.isEntity) return '#14301f';
     if (d.isInterface) return '#3d2f5c';
     return '#1f2937';
   }
   function nodeStroke(d) {
+    // Project mode: the ring colour encodes the sub-project; shape still encodes
+    // kind (square = file, circle = class/interface). External stays neutral grey.
+    if (groupByProject && !d.isExternal) return projectMetaOf(projectOf(d)).color;
     if (d.isFile) return '#56d4dd';
     if (d.isExternal) return '#484f58';
+    if (d.isEntity) return '#3fb950';
     if (d.isInterface) return '#a78bfa';
     return '#79c0ff';
   }
@@ -3011,6 +3295,7 @@ function initTypeGraph() {
   const zoom = d3.zoom().scaleExtent([0.15, 4]).on('zoom', function(e){ g.attr('transform', e.transform); });
   svg.call(zoom);
 
+  const hullLayer = g.append('g');
   const linkLayer = g.append('g');
   const nodeLayer = g.append('g');
   const labelLayer = g.append('g');
@@ -3018,8 +3303,22 @@ function initTypeGraph() {
   const tooltip = d3.select('body').append('div').attr('class', 'd3-tooltip').style('display', 'none');
 
   // Make a working copy so d3 force-sim can mutate x/y without polluting DATA.
-  const nodes = filteredNodes.map(function(n) { return Object.assign({}, n); });
-  const links = filteredEdges.map(function(e) { return Object.assign({}, e); });
+  // _core marks the selected group; non-core nodes are the +1 linked neighbours.
+  const nodes = renderNodes.map(function(n) { var c = Object.assign({}, n); c._core = coreSet ? coreSet.has(n.id) : true; return c; });
+  const links = renderEdges.map(function(e) { return Object.assign({}, e); });
+
+  // Project clustering: lay one grid cell out per project and pull each node
+  // toward its cell so sub-projects separate into their own regions. Skipped when
+  // focused on a single group (it's centred on its own).
+  var clusterGroups = [], clusterCenters = {};
+  if (groupByProject && !focused) {
+    nodes.forEach(function(n){ n._pk = projectOf(n) || 'root'; });
+    clusterGroups = Array.from(new Set(nodes.map(function(n){ return n._pk; }))).sort();
+    var cols = Math.max(2, Math.ceil(Math.sqrt(clusterGroups.length)));
+    var cw = w / (cols + 1);
+    var ch = h / (Math.ceil(clusterGroups.length / cols) + 1);
+    clusterGroups.forEach(function(k, i){ clusterCenters[k] = { x: (i % cols + 1) * cw, y: (Math.floor(i / cols) + 1) * ch }; });
+  }
 
   const sim = d3.forceSimulation(nodes)
     .force('link', d3.forceLink(links).id(function(d){ return d.id; }).distance(function(d){
@@ -3028,9 +3327,14 @@ function initTypeGraph() {
     }).strength(0.4))
     .force('charge', d3.forceManyBody().strength(-280).distanceMax(450))
     .force('collision', d3.forceCollide().radius(function(d){ return nodeRadius(d) + 10; }))
-    .force('center', d3.forceCenter(w / 2, h / 2))
     .velocityDecay(0.55)
     .alphaDecay(0.04);
+  if (groupByProject && !focused) {
+    sim.force('x', d3.forceX(function(d){ var c = clusterCenters[d._pk]; return c ? c.x : w / 2; }).strength(0.22))
+       .force('y', d3.forceY(function(d){ var c = clusterCenters[d._pk]; return c ? c.y : h / 2; }).strength(0.22));
+  } else {
+    sim.force('center', d3.forceCenter(w / 2, h / 2));
+  }
 
   // Draw edges as curved paths so multiple between the same pair don't overlap.
   const linkSel = linkLayer.selectAll('path').data(links).join('path')
@@ -3060,7 +3364,7 @@ function initTypeGraph() {
         .attr('r', r)
         .attr('fill', nodeFill(d))
         .attr('stroke', nodeStroke(d))
-        .attr('stroke-width', d.isInterface ? 2.5 : 2)
+        .attr('stroke-width', (d.isInterface || d.isEntity) ? 2.5 : 2)
         .attr('stroke-dasharray', d.isExternal ? '3,3' : null);
     }
   });
@@ -3077,6 +3381,12 @@ function initTypeGraph() {
     .attr('stroke', '#0d1117')
     .attr('stroke-width', 2.5)
     .attr('stroke-opacity', 0.85);
+
+  // Resting opacity: in a focused (+1) view the linked neighbours are dimmer than
+  // the selected group; otherwise everything is full strength.
+  function baseNodeOpacity(d){ return (focused && !d._core) ? 0.5 : 1; }
+  nodeSel.attr('opacity', baseNodeOpacity);
+  labelSel.attr('opacity', baseNodeOpacity);
 
   // Selection / highlight
   let selectedId = null;
@@ -3103,14 +3413,16 @@ function initTypeGraph() {
     nodeSel.attr('opacity', function(n){ return incidentNodeIds.has(n.id) ? 1 : 0.18; });
     labelSel.attr('opacity', function(n){ return incidentNodeIds.has(n.id) ? 1 : 0.15; });
     showTypeDetail(id);
+    setActiveSidebarItem(id);
   }
   function clearHighlight() {
     selectedId = null;
     linkSel.attr('stroke-opacity', edgeOpacity).attr('stroke-width', edgeWidth);
-    nodeSel.attr('opacity', 1);
-    labelSel.attr('opacity', 1);
+    nodeSel.attr('opacity', baseNodeOpacity);
+    labelSel.attr('opacity', baseNodeOpacity);
     const dp = document.getElementById('d3-detail-panel');
     if (dp) dp.innerHTML = '';
+    clearSidebarActive();
   }
 
   function showTypeDetail(id) {
@@ -3153,6 +3465,7 @@ function initTypeGraph() {
     let html = '<div class="type-detail-head">';
     html += '<div class="type-detail-name">' + esc(node.name) + '</div>';
     html += '<div class="type-detail-sub">';
+    if (node.isEntity) html += '<span class="type-iface-tag" style="background:#14301f;color:#3fb950">entity' + (node.orm ? ' · ' + esc(node.orm) : '') + '</span> ';
     if (node.isInterface) html += '<span class="type-iface-tag">interface</span> ';
     if (node.isExternal) html += '<span class="type-iface-tag" style="background:#1a1f26;color:#484f58">external</span> ';
     html += '<code>' + esc(node.filePath || '(external)') + '</code>';
@@ -3185,7 +3498,12 @@ function initTypeGraph() {
     if (selectedId === d.id) clearHighlight();
     else highlight(d.id);
   });
-  svg.on('click', clearHighlight);
+  // Background click: restore the full graph when focused on a group, else just
+  // clear the single-node highlight.
+  svg.on('click', function(){
+    if (typeFocusGroup) { typeFocusGroup = null; rebuildLinkGraph(); }
+    else clearHighlight();
+  });
 
   nodeSel.on('mouseover', function(event, d){
     tooltip.style('display', 'block')
@@ -3204,6 +3522,33 @@ function initTypeGraph() {
     .on('end', function(event, d){ if (!event.active) sim.alphaTarget(0); d.fx = null; d.fy = null; })
   );
 
+  // Project hulls — one translucent boundary + label per project cluster.
+  var nodesByProject = {};
+  if (groupByProject && !focused) nodes.forEach(function(n){ (nodesByProject[n._pk] || (nodesByProject[n._pk] = [])).push(n); });
+  function updateHulls() {
+    hullLayer.selectAll('*').remove();
+    if (!groupByProject || focused) return;
+    clusterGroups.forEach(function(k){
+      var gn = nodesByProject[k];
+      if (!gn || gn.length < 1) return;
+      var pad = 40, pts = [];
+      gn.forEach(function(n){ if (n.x != null && n.y != null) pts.push([n.x - pad, n.y - pad], [n.x + pad, n.y - pad], [n.x - pad, n.y + pad], [n.x + pad, n.y + pad]); });
+      if (pts.length < 3) return;
+      var hull = d3.polygonHull(pts);
+      if (!hull) return;
+      var color = projectMetaOf(k).color;
+      hullLayer.append('path').attr('d', 'M' + hull.join('L') + 'Z')
+        .attr('fill', color).attr('fill-opacity', 0.06)
+        .attr('stroke', color).attr('stroke-width', 2).attr('stroke-opacity', 0.4).attr('stroke-dasharray', '6 4');
+      var cx = d3.mean(gn, function(n){ return n.x; }), cy = d3.min(gn, function(n){ return n.y; }) - pad - 6;
+      hullLayer.append('text').attr('x', cx).attr('y', cy)
+        .attr('text-anchor', 'middle').attr('fill', color).attr('font-size', '12px')
+        .attr('font-family', 'monospace').attr('font-weight', '700').attr('opacity', 0.85)
+        .text(projectMetaOf(k).name);
+    });
+  }
+
+  var tickCount = 0;
   sim.on('tick', function(){
     linkSel.attr('d', function(d){
       const sx = d.source.x, sy = d.source.y, tx = d.target.x, ty = d.target.y;
@@ -3214,6 +3559,7 @@ function initTypeGraph() {
     });
     nodeSel.attr('transform', function(d){ return 'translate(' + d.x + ',' + d.y + ')'; });
     labelSel.attr('x', function(d){ return d.x; }).attr('y', function(d){ return d.y; });
+    if (groupByProject && (++tickCount % 3 === 0)) updateHulls();
   });
 
   // Legend
@@ -3227,15 +3573,32 @@ function initTypeGraph() {
       fileCount ? fileCount + ' files' : '',
       externalCount ? externalCount + ' external' : '',
     ].filter(Boolean).join(' · ') + ' · ' + links.length + ' edges';
+    var edgeLegend =
+        '<span class="d3-legend-item"><i style="background:' + CAT_COLORS.inheritance + '"></i>' + CAT_LABELS.inheritance + '</span>' +
+        '<span class="d3-legend-item"><i style="background:' + CAT_COLORS.data + '"></i>' + CAT_LABELS.data + '</span>' +
+        '<span class="d3-legend-item"><i style="background:' + CAT_COLORS.function + '"></i>' + CAT_LABELS.function + '</span>';
+    var roleLegend;
+    if (groupByProject) {
+      // Project mode: ring colour = sub-project; shape still encodes kind.
+      var projectsInView = Array.from(new Set(nodes.map(projectOf).filter(Boolean)));
+      roleLegend = projectsInView.sort(function(a, b){
+        return projectMetaOf(a).name.localeCompare(projectMetaOf(b).name);
+      }).map(function(id){
+        var m = projectMetaOf(id);
+        return '<span class="d3-legend-item"><i style="background:#0d1117;border:2px solid ' + m.color + '"></i>' + esc(m.name) + '</span>';
+      }).join('') +
+        '<span class="d3-legend-item" style="border-left:1px solid #30363d;padding-left:10px">○ class · □ file · ◌ external</span>';
+    } else {
+      roleLegend =
+        '<span class="d3-legend-item"><i style="background:#14301f;border:1.5px solid #3fb950"></i>Entity (ORM)</span>' +
+        '<span class="d3-legend-item"><i style="background:#3d2f5c;border:1.5px solid #a78bfa"></i>Interface</span>' +
+        '<span class="d3-legend-item"><i style="background:#162a2d;border:1.5px solid #56d4dd;border-radius:2px"></i>File (non-class refs)</span>' +
+        '<span class="d3-legend-item"><i style="background:#1a1f26;border:1.5px dashed #484f58"></i>External type</span>';
+    }
     legend.innerHTML =
       '<div class="d3-legend-row">' +
         '<span class="d3-legend-title">' + summary + '</span>' +
-        '<span class="d3-legend-item"><i style="background:' + CAT_COLORS.inheritance + '"></i>' + CAT_LABELS.inheritance + '</span>' +
-        '<span class="d3-legend-item"><i style="background:' + CAT_COLORS.data + '"></i>' + CAT_LABELS.data + '</span>' +
-        '<span class="d3-legend-item"><i style="background:' + CAT_COLORS.function + '"></i>' + CAT_LABELS.function + '</span>' +
-        '<span class="d3-legend-item"><i style="background:#3d2f5c;border:1.5px solid #a78bfa"></i>Interface</span>' +
-        '<span class="d3-legend-item"><i style="background:#162a2d;border:1.5px solid #56d4dd;border-radius:2px"></i>File (non-class refs)</span>' +
-        '<span class="d3-legend-item"><i style="background:#1a1f26;border:1.5px dashed #484f58"></i>External type</span>' +
+        edgeLegend + roleLegend +
       '</div>';
   }
 
@@ -3253,6 +3616,242 @@ function initTypeGraph() {
   if (fitBtn) {
     fitBtn.onclick = function(){ svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity); };
   }
+
+  // ─── Grouped sidebar: divide the data models by project → folder ───────
+  // The graph stays flat; this companion panel lets you browse the same
+  // declared types (classes/interfaces) organised by sub-project then by the
+  // folder they live in. Clicking an item highlights + centres it in the graph;
+  // selecting a node in the graph reflects back here.
+
+  /** Folder a file lives in, relative to its project root (top is "(root)"). */
+  function dirOf(fp, root) {
+    var p = String(fp || '').replace(/\\\\/g, '/');
+    if (root) {
+      var r = String(root).replace(/\\\\/g, '/');
+      if (p === r) p = '';
+      else if (p.indexOf(r + '/') === 0) p = p.slice(r.length + 1);
+    }
+    var slash = p.lastIndexOf('/');
+    return slash >= 0 ? p.slice(0, slash) : '(root)';
+  }
+
+  /** Highlight a single node and centre the viewport on it. If we're focused on a
+   *  group that doesn't contain it, restore the full graph first, then highlight. */
+  function focusNode(id) {
+    if (typeFocusGroup && !nodes.some(function(n){ return n.id === id; })) {
+      typeFocusGroup = null;
+      typePendingFocusId = id;
+      rebuildLinkGraph();
+      return;
+    }
+    highlight(id);
+    var n = nodes.find(function(x){ return x.id === id; });
+    if (n && n.x != null && n.y != null) {
+      var scale = 1.5;
+      var t = d3.zoomIdentity.translate(w / 2 - n.x * scale, h / 2 - n.y * scale).scale(scale);
+      svg.transition().duration(450).call(zoom.transform, t);
+    }
+  }
+
+  /** Detail panel for the focused group: member list (clickable) + edge counts.
+   *  Counts use the FULL filtered edge set so crossings to hidden nodes still show. */
+  function showGroupDetail(ids, label) {
+    var dp = document.getElementById('d3-detail-panel');
+    if (!dp) return;
+    var idset = new Set(ids);
+    var members = filteredNodes.filter(function(n){ return idset.has(n.id); }).slice().sort(function(a, b){ return a.name.localeCompare(b.name); });
+    var internal = 0, linked = 0;
+    var neighborIds = new Set();
+    filteredEdges.forEach(function(e){
+      var si = idset.has(e.source), ti = idset.has(e.target);
+      if (si && ti) internal++;
+      else if (si || ti) { linked++; neighborIds.add(si ? e.target : e.source); }
+    });
+    var html = '<div class="type-detail-head"><div class="type-detail-name">' + esc(label) + '</div>' +
+      '<div class="type-detail-sub">' + members.length + ' model' + (members.length === 1 ? '' : 's') + ' + ' + neighborIds.size + ' linked (1 hop)</div></div>' +
+      '<div class="type-detail-counts">' + internal + ' internal · ' + linked + ' linked edges</div>' +
+      '<div class="type-edge-section"><h4>Models</h4>';
+    members.forEach(function(n){
+      html += '<div class="type-edge-row" style="grid-template-columns:1fr auto">' +
+        '<span class="type-edge-name" data-focus-id="' + esc(n.id) + '" style="cursor:pointer;color:#79c0ff">' + esc(n.name) + '</span>' +
+        '<span class="type-edge-count">' + (n.inboundCount + n.outboundCount) + '</span></div>';
+    });
+    html += '</div>';
+    dp.innerHTML = html;
+    dp.querySelectorAll('[data-focus-id]').forEach(function(el){
+      el.addEventListener('click', function(){ focusNode(el.getAttribute('data-focus-id')); });
+    });
+  }
+
+  /** Clear every active highlight (single item + group headers) in the sidebar. */
+  function clearSidebarActive() {
+    var sb = document.getElementById('d3-types-sidebar');
+    if (!sb) return;
+    sb.querySelectorAll('.ts-item.active, .ts-proj-head.active, .ts-folder-head.active').forEach(function(el){ el.classList.remove('active'); });
+  }
+
+  /** Mark the sidebar row for the given id active (and reveal it), clearing others. */
+  function setActiveSidebarItem(id) {
+    var sb = document.getElementById('d3-types-sidebar');
+    if (!sb) return;
+    clearSidebarActive();
+    if (id == null) return;
+    var target = null;
+    sb.querySelectorAll('.ts-item').forEach(function(it){
+      var on = it.getAttribute('data-id') === id;
+      it.classList.toggle('active', on);
+      if (on) target = it;
+    });
+    if (!target) return;
+    var anc = target.parentNode;
+    while (anc && anc !== sb) {
+      if (anc.classList && anc.classList.contains('collapsed')) anc.classList.remove('collapsed');
+      anc = anc.parentNode;
+    }
+    target.scrollIntoView({ block: 'nearest' });
+  }
+
+  function buildTypeSidebar() {
+    var sb = document.getElementById('d3-types-sidebar');
+    if (!sb) return;
+    // Declared data models only — exclude external types and file-ref containers.
+    var models = nodes.filter(function(n){ return !n.isExternal && !n.isFile && n.filePath; });
+    if (models.length === 0) {
+      sb.innerHTML = '<div class="ts-empty">No data models in the current view.</div>';
+      return;
+    }
+    var subs = DATA.subProjects || [];
+    var nameById = {}, rootById = {};
+    subs.forEach(function(s){ nameById[s.id] = s.name; rootById[s.id] = s.root || ''; });
+    var realProjects = subs.filter(function(s){ return s.id !== 'root'; });
+    var showProjects = realProjects.length >= 1;
+
+    // Group: projectId -> folder -> [model]
+    var tree = {};
+    models.forEach(function(n){
+      var pid = fileProject(n.filePath);
+      var folder = dirOf(n.filePath, rootById[pid]);
+      if (!tree[pid]) tree[pid] = {};
+      if (!tree[pid][folder]) tree[pid][folder] = [];
+      tree[pid][folder].push(n);
+    });
+
+    function renderFolders(folderMap) {
+      var html = '';
+      Object.keys(folderMap).sort().forEach(function(folder){
+        var items = folderMap[folder].slice().sort(function(a, b){ return a.name.localeCompare(b.name); });
+        html += '<div class="ts-folder">' +
+          '<div class="ts-folder-head" title="Click to select these models in the graph; caret to collapse"><span class="ts-caret">\\u25be</span>' +
+          '<span class="ts-folder-name">' + esc(folder) + '</span> <span class="ts-n">(' + items.length + ')</span></div>' +
+          '<div class="ts-folder-body">';
+        items.forEach(function(n){
+          html += '<div class="ts-item" data-id="' + esc(n.id) + '" data-name="' + esc(n.name.toLowerCase()) + '">' +
+            '<span class="ts-dot' + (n.isInterface ? ' iface' : '') + '"></span>' +
+            '<span class="ts-item-name">' + esc(n.name) + '</span></div>';
+        });
+        html += '</div></div>';
+      });
+      return html;
+    }
+
+    var html = '<div class="ts-head"><input class="ts-search" type="text" placeholder="Filter models\\u2026">' +
+      '<span class="ts-count">' + models.length + ' model' + (models.length === 1 ? '' : 's') + '</span></div>' +
+      '<div class="ts-tree">';
+
+    if (showProjects) {
+      Object.keys(tree).sort(function(a, b){
+        return String(nameById[a] || a).localeCompare(String(nameById[b] || b));
+      }).forEach(function(pid){
+        var folderMap = tree[pid];
+        var count = 0;
+        Object.keys(folderMap).forEach(function(f){ count += folderMap[f].length; });
+        var label = nameById[pid] || (pid === 'root' ? '(root)' : pid);
+        var pcolor = projectMetaOf(pid).color;
+        html += '<div class="ts-proj">' +
+          '<div class="ts-proj-head" title="Click to select this project in the graph; caret to collapse"><span class="ts-caret">\\u25be</span>' +
+          '<span class="ts-swatch" style="background:' + pcolor + '"></span>' +
+          '<span class="ts-proj-name">' + esc(label) + '</span> <span class="ts-n">(' + count + ')</span></div>' +
+          '<div class="ts-proj-body">' + renderFolders(folderMap) + '</div></div>';
+      });
+    } else {
+      // Single (root) project — drop the redundant project layer, show folders.
+      var merged = {};
+      Object.keys(tree).forEach(function(pid){
+        Object.keys(tree[pid]).forEach(function(f){
+          merged[f] = (merged[f] || []).concat(tree[pid][f]);
+        });
+      });
+      html += renderFolders(merged);
+    }
+    html += '</div>';
+    sb.innerHTML = html;
+
+    // Caret toggles collapse; clicking a group header SELECTS the group, which
+    // regenerates the graph to show that group + its directly-linked neighbours
+    // ("+1"); clicking it again restores the full graph. Clicking an item focuses
+    // that single node.
+    function groupIdsOf(head){
+      var ids = [];
+      head.parentNode.querySelectorAll('.ts-item').forEach(function(it){ ids.push(it.getAttribute('data-id')); });
+      return ids;
+    }
+    function selectGroupFromHead(head){
+      var ids = groupIdsOf(head);
+      if (!ids.length) return;
+      var key = ids.slice().sort().join('|');
+      if (typeFocusGroup && typeFocusGroup.key === key) { typeFocusGroup = null; rebuildLinkGraph(); return; }
+      var nameEl = head.querySelector('.ts-proj-name, .ts-folder-name');
+      typeFocusGroup = { ids: ids, label: nameEl ? nameEl.textContent : 'group', key: key };
+      rebuildLinkGraph();
+    }
+    var treeEl = sb.querySelector('.ts-tree');
+    if (treeEl) treeEl.onclick = function(ev){
+      if (ev.target.closest('.ts-caret')) {
+        var grp = ev.target.closest('.ts-proj, .ts-folder');
+        if (grp) grp.classList.toggle('collapsed');
+        return;
+      }
+      var head = ev.target.closest('.ts-proj-head, .ts-folder-head');
+      if (head) { selectGroupFromHead(head); return; }
+      var item = ev.target.closest('.ts-item');
+      if (item) focusNode(item.getAttribute('data-id'));
+    };
+
+    // Live name filter — hides non-matching items and any now-empty groups.
+    var search = sb.querySelector('.ts-search');
+    if (search) search.oninput = function(){
+      var q = this.value.trim().toLowerCase();
+      sb.querySelectorAll('.ts-item').forEach(function(it){
+        var match = !q || (it.getAttribute('data-name') || '').indexOf(q) >= 0;
+        it.classList.toggle('ts-hidden', !match);
+      });
+      sb.querySelectorAll('.ts-folder').forEach(function(fl){
+        var any = fl.querySelector('.ts-item:not(.ts-hidden)');
+        fl.classList.toggle('ts-hidden', !any);
+        if (q && any) fl.classList.remove('collapsed');
+      });
+      sb.querySelectorAll('.ts-proj').forEach(function(pr){
+        var any = pr.querySelector('.ts-item:not(.ts-hidden)');
+        pr.classList.toggle('ts-hidden', !any);
+        if (q && any) pr.classList.remove('collapsed');
+      });
+    };
+
+    setActiveSidebarItem(selectedId);
+
+    // Reflect the focused group on its header.
+    if (typeFocusGroup) {
+      sb.querySelectorAll('.ts-proj-head, .ts-folder-head').forEach(function(head){
+        if (groupIdsOf(head).slice().sort().join('|') === typeFocusGroup.key) head.classList.add('active');
+      });
+    }
+  }
+  buildTypeSidebar();
+
+  // When the graph is showing a focused group, surface that group's detail.
+  if (typeFocusGroup) showGroupDetail(typeFocusGroup.ids, typeFocusGroup.label);
+  // Apply a deferred single-node highlight requested before this re-render.
+  if (typePendingFocusId) { var _pf = typePendingFocusId; typePendingFocusId = null; focusNode(_pf); }
 }
 
 // ─── Data Access Graph (Architecture tab Data Access mode) ─────────────
@@ -3281,12 +3880,21 @@ function initDataAccessGraph() {
   for (const n of dag.nodes) {
     if (n.kind === 'file' && (!n.filePath || isFileVisible(n.filePath))) visibleFiles.add(n.id);
   }
-  const filteredEdges = dag.edges.filter(function(e){ return visibleFiles.has(e.source); });
-  const reachedDb = new Set();
-  filteredEdges.forEach(function(e){ reachedDb.add(e.target); });
+  // Reachability over up to two hops: file → entity → datastore (plus legacy
+  // file → datastore edges). Keep file-sourced edges first, then entity-sourced
+  // edges whose entity was reached from a visible file.
+  const reached = new Set();
+  const filteredEdges = [];
+  dag.edges.forEach(function(e){
+    if (visibleFiles.has(e.source)) { filteredEdges.push(e); reached.add(e.target); }
+  });
+  dag.edges.forEach(function(e){
+    if (!visibleFiles.has(e.source) && reached.has(e.source)) { filteredEdges.push(e); reached.add(e.target); }
+  });
   const filteredNodes = dag.nodes.filter(function(n){
-    return n.kind === 'file' ? visibleFiles.has(n.id) && reachedDb.size > 0 && filteredEdges.some(function(e){ return e.source === n.id; })
-                              : reachedDb.has(n.id);
+    return n.kind === 'file'
+      ? visibleFiles.has(n.id) && filteredEdges.some(function(e){ return e.source === n.id; })
+      : reached.has(n.id);
   });
 
   if (filteredNodes.length === 0) {
@@ -3296,14 +3904,23 @@ function initDataAccessGraph() {
 
   const DB_COLOR = '#f0883e';      // orange — pops against the blue/purple type view palette
   const FILE_COLOR = '#56d4dd';    // matches the file-node teal from the type view
+  const ENTITY_COLOR = '#7ee787';  // green — a specific table/model grouped under a datastore
   const EDGE_COLOR = '#f0883e';
 
   function edgeWidth(d) { return Math.min(6, 1 + Math.log2(Math.max(1, d.total))); }
   function edgeOpacity(d) { return Math.min(0.9, 0.4 + d.total * 0.06); }
   function nodeRadius(d) {
-    const deg = d.kind === 'datastore' ? d.inboundCount : d.outboundCount;
-    return Math.max(d.kind === 'datastore' ? 14 : 9, Math.min(36, 8 + Math.log2(Math.max(1, deg + 1)) * 5));
+    const deg = (d.kind === 'datastore' || d.kind === 'entity') ? d.inboundCount : d.outboundCount;
+    const floor = d.kind === 'datastore' ? 14 : d.kind === 'entity' ? 11 : 9;
+    return Math.max(floor, Math.min(36, 8 + Math.log2(Math.max(1, deg + 1)) * 5));
   }
+  function targetKindOf(l) {
+    const t = l.target;
+    if (t && t.kind) return t.kind;
+    const n = filteredNodes.find(function(nn){ return nn.id === t; });
+    return n ? n.kind : null;
+  }
+  function linkColor(l) { return targetKindOf(l) === 'entity' ? ENTITY_COLOR : EDGE_COLOR; }
 
   const svg = d3.select(container).append('svg').attr('width', w).attr('height', h);
   const defs = svg.append('defs');
@@ -3335,7 +3952,7 @@ function initDataAccessGraph() {
 
   const linkSel = linkLayer.selectAll('path').data(links).join('path')
     .attr('fill', 'none')
-    .attr('stroke', EDGE_COLOR)
+    .attr('stroke', linkColor)
     .attr('stroke-width', edgeWidth)
     .attr('stroke-opacity', edgeOpacity)
     .attr('marker-end', 'url(#arrow-dataaccess)');
@@ -3364,6 +3981,20 @@ function initDataAccessGraph() {
         .attr('fill', '#5a2f12')
         .attr('stroke', DB_COLOR)
         .attr('stroke-width', 2);
+    } else if (d.kind === 'entity') {
+      // Table glyph: rounded rect with a header divider line.
+      const wd = r * 2.0, ht = r * 1.5;
+      sel.append('rect')
+        .attr('x', -wd / 2).attr('y', -ht / 2)
+        .attr('width', wd).attr('height', ht)
+        .attr('rx', 3).attr('ry', 3)
+        .attr('fill', '#12261a')
+        .attr('stroke', ENTITY_COLOR)
+        .attr('stroke-width', 2);
+      sel.append('line')
+        .attr('x1', -wd / 2).attr('y1', -ht / 2 + ht * 0.32)
+        .attr('x2', wd / 2).attr('y2', -ht / 2 + ht * 0.32)
+        .attr('stroke', ENTITY_COLOR).attr('stroke-width', 1).attr('stroke-opacity', 0.6);
     } else {
       const side = r * 1.8;
       sel.append('rect')
@@ -3440,7 +4071,7 @@ function initDataAccessGraph() {
       let out = '';
       shown.forEach(function(c){
         out += '<div class="type-edge-row"><span class="type-edge-name" style="font-family:monospace">' + esc(c.name) + '</span>' +
-               '<span class="type-edge-file">line ' + c.line + '</span></div>';
+               '<span class="type-edge-file">' + (c.entity ? esc(c.entity) + ' · ' : '') + 'line ' + c.line + '</span></div>';
       });
       if (edge.calls.length > max) {
         out += '<div class="type-edge-row" style="color:#8b949e">… ' + (edge.calls.length - max) + ' more</div>';
@@ -3450,7 +4081,9 @@ function initDataAccessGraph() {
     let html = '<div class="type-detail-head">';
     html += '<div class="type-detail-name">' + esc(node.name) + '</div>';
     html += '<div class="type-detail-sub">';
-    html += '<span class="type-iface-tag" style="background:' + (node.kind === 'datastore' ? '#3a1f0a' : '#162a2d') + ';color:' + (node.kind === 'datastore' ? DB_COLOR : FILE_COLOR) + '">' + node.kind + '</span> ';
+    const tagBg = node.kind === 'datastore' ? '#3a1f0a' : node.kind === 'entity' ? '#12261a' : '#162a2d';
+    const tagFg = node.kind === 'datastore' ? DB_COLOR : node.kind === 'entity' ? ENTITY_COLOR : FILE_COLOR;
+    html += '<span class="type-iface-tag" style="background:' + tagBg + ';color:' + tagFg + '">' + node.kind + '</span> ';
     html += '<code>' + esc(node.filePath || node.name) + '</code>';
     html += '</div></div>';
     html += '<div class="type-detail-counts">';
@@ -3474,7 +4107,7 @@ function initDataAccessGraph() {
       html += '</div>';
     }
     if (outbound.length > 0) {
-      html += '<div class="type-edge-section"><h4>Datastores accessed (' + outbound.length + ')</h4>';
+      html += '<div class="type-edge-section"><h4>Accesses (' + outbound.length + ')</h4>';
       outbound.sort(function(a,b){ return b.total - a.total; });
       outbound.forEach(function(l){
         const tId = (l.target && l.target.id) || l.target;
@@ -3494,10 +4127,10 @@ function initDataAccessGraph() {
   svg.on('click', clearHighlight);
 
   nodeSel.on('mouseover', function(event, d){
-    const role = d.kind === 'datastore' ? 'datastore' : 'file';
-    const counts = d.kind === 'datastore'
-      ? d.inboundCount + ' inbound call' + (d.inboundCount === 1 ? '' : 's')
-      : d.outboundCount + ' outbound call' + (d.outboundCount === 1 ? '' : 's');
+    const role = d.kind;
+    const useInbound = d.kind === 'datastore' || d.kind === 'entity';
+    const cnt = useInbound ? d.inboundCount : d.outboundCount;
+    const counts = cnt + (useInbound ? ' inbound call' : ' outbound call') + (cnt === 1 ? '' : 's');
     tooltip.style('display', 'block')
       .html('<strong>' + esc(d.name) + '</strong> <em>(' + role + ')</em><br/>' +
             (d.filePath ? esc(d.filePath) + '<br/>' : '') + counts);
@@ -3527,12 +4160,19 @@ function initDataAccessGraph() {
   const legend = document.getElementById('d3-legend');
   if (legend) {
     const fileCount = nodes.filter(function(n){ return n.kind === 'file'; }).length;
+    const entityCount = nodes.filter(function(n){ return n.kind === 'entity'; }).length;
     const dbCount = nodes.filter(function(n){ return n.kind === 'datastore'; }).length;
-    const callCount = links.reduce(function(s,l){ return s + l.total; }, 0);
+    // Count actual call sites once — they live on file→entity / file→datastore
+    // edges; the entity→datastore grouping edges carry no call list.
+    const callCount = links.reduce(function(s,l){ return s + (l.calls ? l.calls.length : 0); }, 0);
+    const entityLegend = entityCount > 0
+      ? '<span class="d3-legend-item"><i style="background:#12261a;border:1.5px solid ' + ENTITY_COLOR + ';border-radius:2px"></i>Table / model</span>'
+      : '';
     legend.innerHTML =
       '<div class="d3-legend-row">' +
-        '<span class="d3-legend-title">' + fileCount + ' files · ' + dbCount + ' datastores · ' + callCount + ' calls</span>' +
+        '<span class="d3-legend-title">' + fileCount + ' files · ' + (entityCount > 0 ? entityCount + ' tables · ' : '') + dbCount + ' datastores · ' + callCount + ' calls</span>' +
         '<span class="d3-legend-item"><i style="background:#3a1f0a;border:1.5px solid ' + DB_COLOR + ';border-radius:50%"></i>Datastore (import target)</span>' +
+        entityLegend +
         '<span class="d3-legend-item"><i style="background:#162a2d;border:1.5px solid ' + FILE_COLOR + ';border-radius:2px"></i>File (caller)</span>' +
         '<span class="d3-legend-item"><i style="background:' + EDGE_COLOR + ';height:3px"></i>DB call</span>' +
       '</div>';
@@ -3551,6 +4191,270 @@ function initDataAccessGraph() {
   if (fitBtn) {
     fitBtn.onclick = function(){ svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity); };
   }
+}
+
+// ─── Data Model (ER diagram) ───────────────────────────────────────────
+// Renders entityGraph: entities as tables (header + column rows) and
+// relationships as lines clipped to table borders, annotated with crow's-foot
+// multiplicity (1 / ∞) and FK / join-table labels. Click an entity for detail.
+const ER_ORM_COLORS = {
+  prisma: '#5a9bd4', typeorm: '#e36049', 'mikro-orm': '#bc8cff', sequelize: '#52b0e7',
+  mongoose: '#80c050', jpa: '#e0a458', 'spring-data-jdbc': '#e0a458', 'ef-core': '#7a5cff',
+  nhibernate: '#9c6ade', gorm: '#00add8', ent: '#00add8', 'beego-orm': '#00add8',
+  diesel: '#d2991d', 'sea-orm': '#d2991d', eloquent: '#f4645f', doctrine: '#f4645f',
+  propel: '#f4645f', 'active-record': '#cc342d', sequel: '#cc342d',
+  django: '#0c4b33', sqlalchemy: '#bb0000', 'pony-orm': '#3572A5', peewee: '#3572A5',
+  'tortoise-orm': '#3572A5', sql: '#f0883e',
+};
+function erColor(orm) { return (orm && ER_ORM_COLORS[orm]) || '#56d4dd'; }
+
+function initEntityGraph() {
+  if (entityGraphInitialized) return;
+  entityGraphInitialized = true;
+
+  const container = document.getElementById('er-graph-container');
+  if (!container) return;
+  container.innerHTML = '';
+  const eg = DATA.entityGraph;
+  if (!eg || !eg.nodes || eg.nodes.length === 0) {
+    container.innerHTML = '<div class="empty" style="padding-top:200px">No ORM entities detected — define models with Prisma, TypeORM, JPA, EF Core, ActiveRecord, etc.</div>';
+    return;
+  }
+
+  // Controls: ORM filter (populate once) + hide-isolated + fit.
+  const ormSel = document.getElementById('er-orm-filter');
+  if (ormSel && ormSel.options.length <= 1) {
+    const orms = [...new Set(eg.nodes.map(function(n){ return n.orm; }).filter(Boolean))].sort();
+    for (const o of orms) { const opt = document.createElement('option'); opt.value = o; opt.textContent = o; ormSel.appendChild(opt); }
+  }
+  const ormFilter = ormSel ? ormSel.value : '';
+  const hideIsolated = (document.getElementById('er-hide-isolated') || {}).checked !== false;
+  const reinit = function(){ entityGraphInitialized = false; initEntityGraph(); };
+  if (ormSel) ormSel.onchange = reinit;
+  const hideChk = document.getElementById('er-hide-isolated');
+  if (hideChk) hideChk.onchange = reinit;
+
+  // Filter nodes by global file filter + ORM filter.
+  let nodes = eg.nodes.filter(function(n){
+    if (n.filePath && !isFileVisible(n.filePath)) return false;
+    if (ormFilter && n.orm !== ormFilter) return false;
+    return true;
+  });
+  const idset = new Set(nodes.map(function(n){ return n.id; }));
+  let edges = eg.edges.filter(function(e){ return idset.has(e.source) && idset.has(e.target); });
+  if (hideIsolated) {
+    const linked = new Set();
+    edges.forEach(function(e){ linked.add(e.source); linked.add(e.target); });
+    nodes = nodes.filter(function(n){ return linked.has(n.id); });
+    const ns = new Set(nodes.map(function(n){ return n.id; }));
+    edges = edges.filter(function(e){ return ns.has(e.source) && ns.has(e.target); });
+  }
+  if (nodes.length === 0) {
+    container.innerHTML = '<div class="empty" style="padding-top:200px">No entities match the current filters.</div>';
+    return;
+  }
+
+  const w = container.clientWidth || 900;
+  const h = container.clientHeight || 640;
+  const HEADER_H = 22, ROW_H = 15, MAX_ROWS = 10, CHAR_W = 6.6;
+
+  // Compute table geometry per node.
+  const N = nodes.map(function(n){
+    const shown = n.columns.slice(0, MAX_ROWS);
+    const overflow = n.columns.length - shown.length;
+    let maxLen = n.name.length + 4;
+    for (const c of shown) maxLen = Math.max(maxLen, (c.name + (c.type ? ' ' + c.type : '')).length + 2);
+    const nodeW = Math.max(130, Math.min(280, maxLen * CHAR_W + 20));
+    const nodeH = HEADER_H + Math.max(1, shown.length) * ROW_H + (overflow > 0 ? ROW_H : 0);
+    return Object.assign({}, n, { _w: nodeW, _h: nodeH, _shown: shown, _overflow: overflow });
+  });
+  const byId = new Map(N.map(function(n){ return [n.id, n]; }));
+  const L = edges.map(function(e){ return Object.assign({}, e); });
+
+  const svg = d3.select(container).append('svg').attr('width', w).attr('height', h);
+  const g = svg.append('g');
+  const zoom = d3.zoom().scaleExtent([0.1, 3]).on('zoom', function(ev){ g.attr('transform', ev.transform); });
+  svg.call(zoom);
+  const linkLayer = g.append('g');
+  const labelLayer = g.append('g');
+  const nodeLayer = g.append('g');
+
+  const sim = d3.forceSimulation(N)
+    .force('link', d3.forceLink(L).id(function(d){ return d.id; }).distance(function(l){
+      const s = (l.source._w + l.source._h + l.target._w + l.target._h) / 4; return 120 + s; }).strength(0.4))
+    .force('charge', d3.forceManyBody().strength(-1400).distanceMax(900))
+    .force('collide', d3.forceCollide().radius(function(d){ return Math.hypot(d._w, d._h) / 2 + 18; }))
+    .force('center', d3.forceCenter(w / 2, h / 2))
+    .velocityDecay(0.6).alphaDecay(0.045);
+
+  // Edges as straight lines (rebuilt each tick); end labels + mid label.
+  const linkSel = linkLayer.selectAll('line').data(L).join('line')
+    .attr('stroke', function(l){ return erColor(l.orm); })
+    .attr('stroke-width', 1.6)
+    .attr('stroke-opacity', 0.7)
+    .attr('stroke-dasharray', function(l){ return l.confidence === 'INFERRED' || l.confidence === 'AMBIGUOUS' ? '5,4' : null; });
+
+  const endLabel = labelLayer.selectAll('text.er-end').data(L.flatMap(function(l, i){
+    return [{ l: l, end: 's', i: i }, { l: l, end: 't', i: i }];
+  })).join('text').attr('class', 'er-end er-edge-label')
+    .text(function(d){ return (d.end === 's' ? d.l.sourceCardinality : d.l.targetCardinality) === 'many' ? '∞' : '1'; });
+
+  const midLabel = labelLayer.selectAll('text.er-mid').data(L).join('text')
+    .attr('class', 'er-mid er-edge-label')
+    .text(function(l){ return l.joinTable ? '⊕ ' + l.joinTable : (l.foreignKey || ''); });
+
+  // Entity table nodes.
+  const nodeSel = nodeLayer.selectAll('g').data(N).join('g').style('cursor', 'pointer');
+  nodeSel.each(function(d){
+    const sel = d3.select(this);
+    const col = erColor(d.orm);
+    const isEnum = d.kind === 'enum';
+    // Body
+    sel.append('rect').attr('width', d._w).attr('height', d._h).attr('rx', 5)
+      .attr('fill', '#0d1117').attr('stroke', col).attr('stroke-width', 1.5);
+    // Header bar
+    sel.append('rect').attr('width', d._w).attr('height', HEADER_H).attr('rx', 5)
+      .attr('fill', col).attr('fill-opacity', 0.18).attr('stroke', col).attr('stroke-width', 1.5);
+    sel.append('rect').attr('y', HEADER_H - 6).attr('width', d._w).attr('height', 6).attr('fill', '#0d1117');
+    sel.append('text').attr('class', 'er-node-title').attr('x', 8).attr('y', 15)
+      .text((isEnum ? '◈ ' : '') + d.name);
+    if (d.orm) sel.append('text').attr('class', 'er-node-orm').attr('x', d._w - 6).attr('y', 14)
+      .attr('text-anchor', 'end').attr('fill', col).text(d.orm);
+    // Column rows
+    d._shown.forEach(function(c, idx){
+      const cls = 'er-col' + (c.isPrimaryKey ? ' er-col-pk' : c.isForeignKey ? ' er-col-fk' : '');
+      const mark = c.isPrimaryKey ? '🔑 ' : c.isForeignKey ? '⧉ ' : '';
+      const label = mark + c.name + (c.type ? '  ' + String(c.type).replace(/\s+/g, ' ').slice(0, 24) : '');
+      sel.append('text').attr('class', cls).attr('x', 8).attr('y', HEADER_H + idx * ROW_H + 12)
+        .text(label.length > 40 ? label.slice(0, 39) + '…' : label);
+    });
+    if (d._overflow > 0) sel.append('text').attr('class', 'er-col').attr('x', 8)
+      .attr('y', HEADER_H + d._shown.length * ROW_H + 12).attr('fill', '#8b949e')
+      .text('… ' + d._overflow + ' more');
+  });
+
+  nodeSel.on('click', function(ev, d){ ev.stopPropagation(); showEntityDetail(d, L, byId); });
+  nodeSel.call(d3.drag()
+    .on('start', function(ev, d){ if (!ev.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+    .on('drag', function(ev, d){ d.fx = ev.x; d.fy = ev.y; })
+    .on('end', function(ev, d){ if (!ev.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }));
+
+  function clipRect(node, px, py) {
+    const dx = px - node.x, dy = py - node.y;
+    if (dx === 0 && dy === 0) return [node.x, node.y];
+    const sx = dx !== 0 ? (node._w / 2) / Math.abs(dx) : Infinity;
+    const sy = dy !== 0 ? (node._h / 2) / Math.abs(dy) : Infinity;
+    const s = Math.min(sx, sy);
+    return [node.x + dx * s, node.y + dy * s];
+  }
+
+  sim.on('tick', function(){
+    linkSel.each(function(l){
+      const a = clipRect(l.source, l.target.x, l.target.y);
+      const b = clipRect(l.target, l.source.x, l.source.y);
+      l._ax = a[0]; l._ay = a[1]; l._bx = b[0]; l._by = b[1];
+      d3.select(this).attr('x1', a[0]).attr('y1', a[1]).attr('x2', b[0]).attr('y2', b[1]);
+    });
+    endLabel.attr('x', function(d){
+      const l = d.l, px = d.end === 's' ? l._ax : l._bx, ox = d.end === 's' ? l._bx : l._ax;
+      return px + (ox > px ? 9 : -9);
+    }).attr('y', function(d){
+      const l = d.l, py = d.end === 's' ? l._ay : l._by, oy = d.end === 's' ? l._by : l._ay;
+      return py + (oy > py ? 11 : -5);
+    });
+    midLabel.attr('x', function(l){ return (l._ax + l._bx) / 2; }).attr('y', function(l){ return (l._ay + l._by) / 2 - 3; });
+    nodeSel.attr('transform', function(d){ return 'translate(' + (d.x - d._w / 2) + ',' + (d.y - d._h / 2) + ')'; });
+  });
+
+  svg.on('click', function(){
+    const dp = document.getElementById('er-detail-panel');
+    if (dp) dp.innerHTML = '<div class="er-detail-hint">Click an entity to see its columns and relationships.</div>';
+  });
+
+  // Legend.
+  const legend = document.getElementById('er-legend');
+  if (legend) {
+    const orms = [...new Set(N.map(function(n){ return n.orm; }).filter(Boolean))].sort();
+    legend.innerHTML =
+      '<span class="d3-legend-title">' + N.length + ' entities · ' + L.length + ' relationships</span>' +
+      '<span class="d3-legend-item"><span style="color:#e3b341">🔑</span> primary key</span>' +
+      '<span class="d3-legend-item"><span style="color:#7ee787">⧉</span> foreign key</span>' +
+      '<span class="d3-legend-item">1 = one&nbsp;·&nbsp;∞ = many</span>' +
+      '<span class="d3-legend-item" style="border-left:1px solid #30363d;padding-left:10px">dashed = inferred</span>' +
+      orms.map(function(o){ return '<span class="d3-legend-item"><i style="background:' + erColor(o) + '"></i>' + esc(o) + '</span>'; }).join('');
+  }
+
+  const fit = document.getElementById('er-zoom-fit');
+  if (fit) fit.onclick = function(){ svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity); };
+}
+
+function showEntityDetail(node, edges, byId) {
+  const dp = document.getElementById('er-detail-panel');
+  if (!dp) return;
+  const col = erColor(node.orm);
+  let html = '<div class="er-detail-title">' + (node.kind === 'enum' ? '◈ ' : '') + esc(node.name) + '</div>';
+  if (node.orm) html += '<div class="er-detail-badge" style="background:' + col + '22;color:' + col + '">' + esc(node.orm) + '</div>';
+  html += '<div class="er-detail-section"><h4>' + (node.kind === 'enum' ? 'Values' : 'Columns') + ' (' + node.columns.length + ')</h4>';
+  if (node.columns.length === 0) html += '<div class="er-detail-hint">No columns captured.</div>';
+  node.columns.forEach(function(c){
+    const mark = c.isPrimaryKey ? '🔑 ' : c.isForeignKey ? '⧉ ' : '';
+    html += '<div class="er-detail-col"><span class="k">' + mark + esc(c.name) + '</span><span class="t">' + esc(c.type || '') + '</span></div>';
+  });
+  html += '</div>';
+  const rels = edges.filter(function(e){ return e.source === node.id || e.target === node.id; });
+  if (rels.length > 0) {
+    html += '<div class="er-detail-section"><h4>Relationships (' + rels.length + ')</h4>';
+    rels.forEach(function(e){
+      const otherId = e.source === node.id ? e.target : e.source;
+      const other = byId.get(otherId);
+      const myCard = e.source === node.id ? e.sourceCardinality : e.targetCardinality;
+      const otherCard = e.source === node.id ? e.targetCardinality : e.sourceCardinality;
+      const sym = function(c){ return c === 'many' ? '∞' : '1'; };
+      html += '<div class="er-detail-rel"><span class="card">' + sym(myCard) + ' — ' + sym(otherCard) + '</span> ' +
+        esc(other ? other.name : otherId.split('::').pop()) +
+        (e.fields && e.fields.length ? '<div class="meta">via ' + esc(e.fields.join(', ')) + '</div>' : '') +
+        (e.foreignKey ? '<div class="meta">FK: ' + esc(e.foreignKey) + '</div>' : '') +
+        (e.joinTable ? '<div class="meta">join: ' + esc(e.joinTable) + '</div>' : '') +
+        '</div>';
+    });
+    html += '</div>';
+  }
+  // Data/view models that hold this entity in type position (field/variable/
+  // generic-arg), surfaced from the ClassGraph join in linkEntityModels.
+  const models = node.referencingModels || [];
+  if (models.length > 0) {
+    html += '<div class="er-detail-section"><h4>Referenced by models / DTOs (' + models.length + ')</h4>';
+    models.forEach(function(m){
+      html += '<div class="er-detail-rel"><span class="card">' + esc(m.name) + '</span>' +
+        (m.isInterface ? ' <span class="meta">interface</span>' : '') +
+        '<div class="meta">' + esc(m.filePath) + '</div>' +
+        ((m.kinds && m.kinds.length) ? '<div class="meta">' + esc(m.kinds.join(', ')) + (m.count ? ' · ' + m.count : '') + '</div>' : '') +
+        '</div>';
+    });
+    html += '</div>';
+  }
+  // Reverse Call Traces ↔ Data Model link: functions that directly read/write
+  // this entity (from symbolDataAccess). Each row deep-links into Call Traces.
+  const accessors = (DATA.symbolDataAccess || []).filter(function(r){ return r.entityMatched && r.entity === node.name; });
+  if (accessors.length > 0) {
+    html += '<div class="er-detail-section"><h4>Accessed by (' + accessors.length + ')</h4>';
+    accessors.forEach(function(r){
+      const k = r.file + '::' + r.symbol;
+      const siteLines = r.sites.map(function(s){ return s.line; }).join(', ');
+      html += '<div class="er-detail-rel trace-link" data-sym-key="' + esc(k) + '" style="cursor:pointer" title="View call traces">' +
+        '<span class="card">' + esc(r.symbol) + ' \\u2197</span>' +
+        '<div class="meta">' + esc(r.file) + ':' + r.symbolLine + '</div>' +
+        '<div class="meta">' + r.sites.length + ' call' + (r.sites.length !== 1 ? 's' : '') + ' @ ' + esc(siteLines) + '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+  }
+  html += '<div class="er-detail-section"><div class="meta er-detail-hint">' + esc(node.filePath) + '</div></div>';
+  dp.innerHTML = html;
+  // Wire the "Accessed by" rows to jump into the Call Traces tab.
+  dp.querySelectorAll('.trace-link[data-sym-key]').forEach(function(el){
+    el.addEventListener('click', function(){ navigateToTrace(el.getAttribute('data-sym-key')); });
+  });
 }
 
 // ─── Health View ──────────────────────────────────────────────────────

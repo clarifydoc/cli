@@ -86,8 +86,11 @@ export const pythonMeta: LanguagePluginMeta = {
   frameworkImportHints: {
     "sqlalchemy": "sqlalchemy",
     "django.db.models": "django-orm",
+    "django.db": "django-orm",
     "tortoise": "tortoise-orm",
     "peewee": "peewee",
+    "pony": "pony-orm",
+    "pony.orm": "pony-orm",
   },
   apiCallRoots: ["requests", "httpx", "aiohttp", "urllib", "http.client"],
   dbCallRoots: ["cursor", "session", "engine", "db", "connection", "pool"],

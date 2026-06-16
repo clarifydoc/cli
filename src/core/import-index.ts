@@ -92,6 +92,77 @@ export function enrichFileDataSources(a: FileAnalysis, index?: ImportIndex): voi
       if (match) ds.target = match;
     }
   }
+
+  // Resolve the specific entity/table each DB call touches, derived from the
+  // call chain (`prisma.user.findMany` → "user"). Runs independently of target
+  // resolution so it also fires when `target` was already set. SQL DML names are
+  // single-segment verbs (SELECT/INSERT/…) — `entitySegment` returns null for
+  // those, leaving the SQL flow (table already in `target`) untouched.
+  for (const ds of a.dataSources ?? []) {
+    if (ds.kind !== "database" || ds.entity) continue;
+    // Prefer the call-chain segment; fall back to a generic type argument, which
+    // is where EF Core / typed-ORM calls carry the entity (`_context.Set<User>()`,
+    // `DbSet<Order>`, `repository.Query<Account>()`).
+    const entity = entitySegment(ds.name) ?? entityFromGeneric(ds.target) ?? entityFromGeneric(ds.name);
+    if (entity) ds.entity = entity;
+  }
+}
+
+/**
+ * Extract the entity from a generic type argument, e.g. `Set<AccountOwner>()` →
+ * "AccountOwner", `DbSet<Order>` → "Order". Takes the first `<…>` argument,
+ * keeps its last dotted segment, and accepts it only when it reads like a type
+ * name (capitalised identifier) — so `Task<bool>` / `List<string>` are ignored.
+ */
+function entityFromGeneric(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const m = s.match(/<\s*([A-Za-z_][\w.]*)\s*>/);
+  if (!m) return null;
+  const last = m[1]!.split(".").pop()!;
+  return /^[A-Z]/.test(last) && isIdentifier(last) ? last : null;
+}
+
+/**
+ * Technical receiver roots that are never the entity itself — ORM clients,
+ * connections, DI-injected contexts/repositories, query builders, etc.
+ */
+const NON_ENTITY_ROOTS = new Set([
+  "prisma", "db", "client", "knex", "ctx", "context", "dbcontext", "_context",
+  "_db", "session", "em", "entitymanager", "repo", "repository", "conn",
+  "connection", "pool", "cursor", "engine", "datasource", "ds", "orm",
+  "sequelize", "mongoose", "models", "qb", "querybuilder", "this", "self",
+  "manager", "store",
+]);
+
+/**
+ * Derive the entity/model/table segment from a DB call chain.
+ *   `prisma.user.findMany`   → "user"   (segment before the ORM method)
+ *   `_context.Users.Find`    → "Users"
+ *   `User.findOne`           → "User"   (root is the entity when capitalised)
+ *   `repository.save`        → null     (root is a technical receiver)
+ *   `SELECT` / `EXEC`        → null     (single-segment SQL verb)
+ */
+function entitySegment(callName: string): string | null {
+  if (!callName) return null;
+  const chain = callName.split(/[([<]/)[0]!; // drop args/generics
+  const parts = chain.split(".").map((p) => p.trim()).filter(Boolean);
+  if (parts.length >= 3) {
+    const cand = parts[parts.length - 2]!; // segment before the method leaf
+    return isIdentifier(cand) ? cand : null;
+  }
+  if (parts.length === 2) {
+    const root = parts[0]!;
+    // `User.findOne` — the root is the model when it isn't a technical receiver
+    // and reads like a type name (Capitalised).
+    if (!NON_ENTITY_ROOTS.has(root.toLowerCase()) && /^[A-Z]/.test(root) && isIdentifier(root)) {
+      return root;
+    }
+  }
+  return null;
+}
+
+function isIdentifier(s: string): boolean {
+  return /^[A-Za-z_$][\w$]*$/.test(s) && !NON_ENTITY_ROOTS.has(s.toLowerCase());
 }
 
 function matchesDbNamespace(ns: string): boolean {

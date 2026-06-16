@@ -6,6 +6,7 @@ import {
   deriveExportsFromFnClasses,
 } from "../extractors/plugins/shared/regex-base.js";
 import { regexSpecFor } from "../extractors/registry.js";
+import { extractEntities, mergeEntities } from "../extractors/entities/index.js";
 
 /**
  * Regex-based file analysis for languages without tree-sitter support,
@@ -45,6 +46,16 @@ export function extractWithRegex(
   if (spec.postProcessFunctions) {
     analysis.functions = spec.postProcessFunctions(lines, analysis.functions);
   }
+
+  // ORM entities & relations. `extractEntityRelations` covers schema-file
+  // formats (Prisma); the `entities` domain covers code-embedded models
+  // (Go/Rust/Ruby). Both contribute to entityRelations; entities are merged
+  // into analysis.classes by name (enrich-or-add).
+  const specRelations = spec.extractEntityRelations?.(lines, analysis.classes) ?? [];
+  const entityResult = extractEntities(analysis, sourceText, language);
+  mergeEntities(analysis, entityResult);
+  const relations = [...specRelations, ...entityResult.relations];
+  if (relations.length > 0) analysis.entityRelations = relations;
 
   return analysis;
 }

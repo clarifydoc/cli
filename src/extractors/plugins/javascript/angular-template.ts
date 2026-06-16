@@ -44,6 +44,13 @@ export function extractAngularComponentTree(
   return roots;
 }
 
+/** Opening-tag matcher: captures (1) tag name, (2) the attribute blob. Mirrors
+ *  `SVELTE_TAG_RE` — quoted attr values are skipped so `>` inside them doesn't
+ *  end the tag early. */
+const ANGULAR_TAG_RE = /<([a-zA-Z][a-zA-Z0-9-]*)((?:"[^"]*"|'[^']*'|[^>'"])*?)\/?>/g;
+/** `(event)="handler"` output binding: captures (1) event name, (2) handler. */
+const ANGULAR_EVENT_RE = /\(([a-zA-Z][a-zA-Z0-9]*)\)\s*=\s*"([^"]*)"/g;
+
 export function extractAngularInteractiveElements(
   sourceText: string,
 ): InteractiveElementInfo[] {
@@ -104,12 +111,6 @@ function extractAngularProps(attrs: string): string[] {
     props.push(name);
   }
   return props;
-}
-
-function resolveElementType(tag: string): InteractiveElementInfo["element"] {
-  const lower = tag.toLowerCase();
-  if (INTERACTIVE_HTML[lower]) return INTERACTIVE_HTML[lower]!;
-  return isComponentTag(tag) ? "custom" : "button";
 }
 
 /** Normalize a handler expression to a short name (`onClick($event)` → `onClick`). */

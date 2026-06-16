@@ -37,7 +37,9 @@ import { detectCommunities } from "./community-detector.js";
 import { findGodNodes, findSurprisingConnections, suggestQuestions } from "./topology-analyzer.js";
 import { dedupSymbolLinks } from "./symbol-dedup.js";
 import { aggregateTypeBlast, buildClassGraph } from "./data-model-blast.js";
-import { buildDataAccessGraph } from "./data-access-graph.js";
+import { buildDataAccessGraph, attributeDataAccessToSymbols } from "./data-access-graph.js";
+import { buildEntityGraph, reconcileEntityInheritance, linkEntityModels } from "./entity-graph.js";
+import { detectMigrations } from "./migration-detector.js";
 import { buildComponentLaunches } from "./component-launches.js";
 import { buildImportIndex, resolveImportSource } from "./import-index.js";
 import {
@@ -519,6 +521,27 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // File→datastore graph for the Architecture tab's Data Access view.
   const dataAccessGraph = buildDataAccessGraph(allAnalyses);
 
+  // Resolve cross-file inheritance (custom base classes, STI chains) so models
+  // that subclass a project base in another file are recognized as entities.
+  reconcileEntityInheritance(allAnalyses);
+  // Entity-relationship graph for the "Data Model" (ER diagram) view.
+  const entityGraph = buildEntityGraph(allAnalyses);
+  // Cross-link: attach to each entity the data/view models that reference it in
+  // type position, derived from the already-resolved ClassGraph edges. (The
+  // ClassGraph nodes are themselves tagged isEntity/orm inside buildClassGraph.)
+  linkEntityModels(entityGraph, classGraph);
+
+  // Bridge Call Traces ↔ Data Model: attribute each DB access to its containing
+  // function and match the touched entity to an ER node. Drives the entity
+  // badges on traces and the "Accessed by" list on entities.
+  const symbolDataAccess = attributeDataAccessToSymbols(allAnalyses, entityGraph);
+
+  // ORM/DB migrations across known ecosystems (path-convention based).
+  const migrations = detectMigrations(allAnalyses.map((a) => a.filePath));
+  if (migrations.length > 0) {
+    progress.detail(`  Migrations: ${migrations.length} across ${new Set(migrations.map((mig) => mig.ecosystem)).size} ecosystem(s)`);
+  }
+
   const healthScore = computeHealthScore({
     analyses: allAnalyses,
     componentGraph,
@@ -591,6 +614,9 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     suggestedQuestions: suggestedQuestions.length > 0 ? suggestedQuestions : undefined,
     classGraph: classGraph.nodes.length > 0 ? classGraph : undefined,
     dataAccessGraph: dataAccessGraph.nodes.length > 0 ? dataAccessGraph : undefined,
+    entityGraph: entityGraph.nodes.length > 0 ? entityGraph : undefined,
+    symbolDataAccess: symbolDataAccess.length > 0 ? symbolDataAccess : undefined,
+    migrations: migrations.length > 0 ? migrations : undefined,
     generatedRoots: generatedRoots.length > 0 ? generatedRoots : undefined,
     unusedFiles: unusedFiles.length > 0 ? unusedFiles : undefined,
   };

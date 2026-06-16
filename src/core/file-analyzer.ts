@@ -6,6 +6,7 @@ import { extractImports, extractExports } from "../extractors/imports-exports/in
 import { extractFunctions, extractClasses } from "../extractors/functions-classes/index.js";
 import { extractRoutes } from "../extractors/routes/index.js";
 import { extractDataSources } from "../extractors/data-sources/index.js";
+import { extractEntities, mergeEntities } from "../extractors/entities/index.js";
 import { extractDataMutations } from "../extractors/data-mutations/index.js";
 import { classifyCalls, extractTopLevelCalls } from "../extractors/shared/call-graph.js";
 import { applyAliases } from "../extractors/shared/tsconfig-aliases.js";
@@ -145,6 +146,12 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // identifier through this file's imports (named imports, namespace
     // aliases, and global/wildcard namespaces).
     enrichFileDataSources(analysis);
+    // ORM entity & relationship extraction (TypeORM/Mongoose/Sequelize, JPA,
+    // EF Core, etc.). Entities are merged into analysis.classes by name so they
+    // flow into the class/data-model graph; relations are persisted separately.
+    const entityResult = extractEntities(analysis, sourceText, language);
+    mergeEntities(analysis, entityResult);
+    if (entityResult.relations.length > 0) analysis.entityRelations = entityResult.relations;
     analysis.dataMutations = extractDataMutations(tree, sourceText, language);
     analysis.events = hooks?.events?.(sourceText) ?? [];
     analysis.subComponents = hooks?.subComponents?.(tree, sourceText, analysis.imports) ?? [];
