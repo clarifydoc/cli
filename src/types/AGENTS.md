@@ -10,6 +10,8 @@ Single source of truth for all analysis types. If you're reading this to underst
 - **`FileAnalysis`** — per-file result. One JSON file produced per source file.
 - **`ProjectAnalysis`** — aggregated project-level summary. Written as `project-summary.json`.
 
+> **On-disk vs in-memory.** These types describe the **in-memory** shape (file paths as strings). On disk, `project-summary.json` is *normalized* by [../core/element-registry.ts](../core/element-registry.ts): symbol/graph nodes are interned into an `elements[]` registry, and remaining file references become `page_id` integers (an index into the top-level `files[]` array). `normalizeProject` encodes on write, `denormalizeProject` decodes on read — every consumer reads through the latter, so these types stay the single reference. A new path-bearing field is page-encoded by adding it to `rewritePageRefs`; a new symbol/graph field by extending the elements codec.
+
 ### Field groups
 
 | Group | Types |

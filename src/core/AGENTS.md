@@ -55,6 +55,7 @@ All take `FileAnalysis[]` and/or `componentGraph` and return typed results.
 - [file-discovery.ts](file-discovery.ts) — fast-glob by extension. The `EXTENSION_MAP` is the source of truth for which extensions are analyzed.
 - [framework-detector.ts](framework-detector.ts) — reads package.json, pom.xml, build.gradle, etc. Produces `FrameworkDetection[]`.
 - [output-writer.ts](output-writer.ts) — writes per-file JSONs + `project-summary.json` (+ `lsp-enhancement.json` / `lsp-ground-truth.json` when LSP runs).
+- [element-registry.ts](element-registry.ts) — the disk-I/O codec. `normalizeProject` (write) lifts repeated nodes into two registries — `elements[]` (symbol-level `file::symbol` ids) and `files[]` page_ids (a file's index, used everywhere a path was repeated); `denormalizeProject` (read) reverses it. In-memory shapes are untouched; all readers go through `denormalizeProject`. A round-trip test over every fixture is the regression gate — adding a path-bearing `ProjectAnalysis` field means adding it to `rewritePageRefs`.
 - [regex-extractor.ts](regex-extractor.ts) — thin dispatcher for regex-only languages. Real logic lives in `src/extractors/plugins/<lang>/`.
 
 ## Report

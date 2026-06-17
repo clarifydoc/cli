@@ -1,11 +1,19 @@
 /**
  * Element registry codec — normalizes/denormalizes the on-disk JSON artifacts.
  *
- * The codebase is a property graph whose node table (a code element identified
- * by file + symbol + kind + line) is inlined into every edge. This codec lifts
- * those nodes into a single `elements` registry keyed by a deterministic
- * `file::symbol` id, so references point at an id instead of re-spelling the
- * tuple.
+ * The codebase is a property graph whose nodes (code elements and files) are
+ * inlined into every edge. This codec lifts those nodes into two registries so a
+ * node is spelled exactly once and references point at an index:
+ *
+ *   1. `elements` registry — symbol-level nodes (file + symbol + kind + line),
+ *      keyed by a deterministic `file::symbol` id. Used by the symbol/graph
+ *      structures: symbolLinks, complexity, classGraph, entityGraph, blastRadius,
+ *      dataAccessGraph.
+ *   2. `files` registry — the top-level `files[]` array IS the file registry; a
+ *      file's `page_id` is its index in it. Every remaining section that used to
+ *      repeat a raw project-relative path (componentGraph, linkGraph, routeMap,
+ *      communities, godNodes, fileProjects/fileLayerMap keys, the analysis
+ *      lists, …) stores that integer page_id instead. See `rewritePageRefs`.
  *
  * CORE PRINCIPLE: the codec lives strictly at the disk I/O boundary. Every
  * in-memory shape (`FileAnalysis` / `ProjectAnalysis`) that the extractors,
@@ -13,27 +21,43 @@
  * serializing and `denormalize…()` just after parsing, so the rest of the
  * pipeline never sees the registry form.
  *
- * Phase 0: scaffold only — `normalize…` / `denormalize…` are identity
- * pass-throughs and no artifact format has changed yet. `denormalize…` is
- * format-detecting (see `isNormalized`) so that once later phases emit the
- * registry form, old-format artifacts still load untouched and a rollback is a
- * no-op for readers.
+ * `denormalize…` is format-detecting on two axes: `isNormalized` (presence of
+ * `schemaVersion`) gates the whole transform so pre-codec artifacts pass through
+ * untouched, and the page layer is per-value shape-detecting (a `number` is a
+ * page_id, a `string` is a legacy raw path) so artifacts written before page
+ * encoding existed — or by a rolled-back writer — still load.
  */
 
 import type {
+  ArchLayer,
   BlastRadiusInfo,
   BlastSymbolUsage,
   ClassGraphNode,
+  ComponentLaunch,
   Confidence,
   DataAccessEdge,
   DataAccessEdgeCall,
   DataAccessNode,
+  DataSourceInfo,
+  DuplicateGroup,
   EntityGraphColumn,
   EntityGraphEdge,
   EntityGraphNode,
   EntityModelRef,
+  EventInfo,
   FileAnalysis,
+  InteractiveElementInfo,
+  LayerViolation,
+  LinkInfo,
+  MigrationInfo,
+  PatternInfo,
   ProjectAnalysis,
+  RouteInfo,
+  ScreenInfo,
+  SecurityIssue,
+  SubComponentInfo,
+  Suggestion,
+  SymbolDataAccess,
   SymbolLink,
   TypeReference,
   TypeUsageByFile,
@@ -41,8 +65,14 @@ import type {
   TypeUsageSummary,
 } from "../types/analysis.js";
 
-/** On-disk format version. Present only on normalized artifacts. */
-export const SCHEMA_VERSION = 1;
+/**
+ * On-disk format version. Present only on normalized artifacts.
+ *   1 — `elements` registry only (file references still raw path strings).
+ *   2 — adds the `files[]` page_id layer (file references are integer page_ids).
+ * Bumped for documentation/provenance; readers shape-detect rather than gate on
+ * this value (see the page layer note in the file header).
+ */
+export const SCHEMA_VERSION = 2;
 
 /** A deterministic, readable element id — `"<relPath>::<symbol>"`, or `"::<name>"` for externals. */
 export type ElementId = string;
@@ -242,11 +272,42 @@ export interface NormDataAccessGraph {
   edges: NormDataAccessEdge[];
 }
 
+// ── page layer ──
+/** A reference into the top-level `files[]` registry: `files[pageId]` is the path. */
+export type PageId = number;
+
+type ApiCallEntry = DataSourceInfo & { filePath: string };
+type InteractiveEntry = InteractiveElementInfo & { filePath: string };
+type EventEntry = EventInfo & { filePath: string };
+type ComponentUsageEntry = SubComponentInfo & { filePath: string };
+type SurprisingConnection = NonNullable<ProjectAnalysis["surprisingConnections"]>[number];
+
+/** Page-id variants — each replaces a project-relative path with a `files[]` index. */
+type NormLinkInfo = Omit<LinkInfo, "source" | "target"> & { source: PageId; target: PageId };
+type NormSurprisingConnection = Omit<SurprisingConnection, "source" | "target"> & { source: PageId; target: PageId };
+type NormRouteInfo = RouteInfo & { filePath: PageId };
+type NormApiCall = Omit<ApiCallEntry, "filePath"> & { filePath: PageId };
+type NormInteractiveElement = Omit<InteractiveEntry, "filePath"> & { filePath: PageId };
+type NormEventEntry = Omit<EventEntry, "filePath"> & { filePath: PageId };
+type NormComponentUsage = Omit<ComponentUsageEntry, "filePath"> & { filePath: PageId };
+type NormScreenInfo = Omit<ScreenInfo, "filePath"> & { filePath: PageId };
+type NormComponentLaunch = Omit<ComponentLaunch, "sourceFile" | "targetFile"> & { sourceFile: PageId; targetFile: PageId };
+type NormPatternInfo = Omit<PatternInfo, "filePath"> & { filePath: PageId };
+type NormSecurityIssue = Omit<SecurityIssue, "filePath"> & { filePath: PageId };
+type NormSuggestion = Omit<Suggestion, "filePath"> & { filePath?: PageId };
+type NormDuplicateGroup = Omit<DuplicateGroup, "occurrences"> & {
+  occurrences: { filePath: PageId; line: number; similarity: number }[];
+};
+type NormLayerViolation = Omit<LayerViolation, "sourceFile" | "targetFile"> & { sourceFile: PageId; targetFile: PageId };
+type NormMigrationInfo = Omit<MigrationInfo, "filePath"> & { filePath: PageId };
+type NormSymbolDataAccess = Omit<SymbolDataAccess, "file"> & { file: PageId };
+
 /**
- * Normalized aggregate artifact. Ref-bearing fields normalized so far are typed
- * as their id-based variants; everything else is carried through unchanged.
+ * Elements-normalized but BEFORE the page-id layer (internal intermediate). The
+ * symbol/graph structures already carry element indices; file references are
+ * still raw path strings here. `rewritePageRefs` turns this into the final form.
  */
-export type NormalizedProjectAnalysis = Omit<
+type ElementNormalizedProject = Omit<
   ProjectAnalysis,
   "symbolLinks" | "complexity" | "classGraph" | "entityGraph" | "blastRadius" | "dataAccessGraph"
 > & {
@@ -258,6 +319,42 @@ export type NormalizedProjectAnalysis = Omit<
   entityGraph?: NormEntityGraph;
   blastRadius?: NormBlastRadiusInfo[];
   dataAccessGraph?: NormDataAccessGraph;
+};
+
+/**
+ * Final normalized aggregate artifact. Symbol/graph fields carry `elements`
+ * indices; all remaining file references carry `files[]` page_ids. `fileProjects`
+ * / `fileLayerMap` keep their `Record<string, …>` type — the keys are now
+ * page_id strings (e.g. `"5"`) rather than paths, but the TypeScript shape is
+ * identical, so no override is needed.
+ */
+export type NormalizedProjectAnalysis = Omit<
+  ElementNormalizedProject,
+  | "componentGraph" | "linkGraph" | "communities" | "godNodes" | "surprisingConnections"
+  | "routeMap" | "apiCalls" | "interactiveElements" | "events" | "componentUsage" | "screens"
+  | "componentLaunches" | "patterns" | "securityIssues" | "suggestions" | "duplicates"
+  | "layerViolations" | "migrations" | "symbolDataAccess" | "unusedFiles"
+> & {
+  componentGraph: Record<string, PageId[]>;
+  linkGraph: NormLinkInfo[];
+  communities?: Record<string, PageId[]>;
+  godNodes?: { file: PageId; degree: number }[];
+  surprisingConnections?: NormSurprisingConnection[];
+  routeMap: NormRouteInfo[];
+  apiCalls: NormApiCall[];
+  interactiveElements: NormInteractiveElement[];
+  events: NormEventEntry[];
+  componentUsage?: NormComponentUsage[];
+  screens: NormScreenInfo[];
+  componentLaunches?: NormComponentLaunch[];
+  patterns?: NormPatternInfo[];
+  securityIssues?: NormSecurityIssue[];
+  suggestions?: NormSuggestion[];
+  duplicates?: NormDuplicateGroup[];
+  layerViolations?: NormLayerViolation[];
+  migrations?: NormMigrationInfo[];
+  symbolDataAccess?: NormSymbolDataAccess[];
+  unusedFiles?: PageId[];
 };
 
 /** Normalized per-file artifact. See `NormalizedProjectAnalysis`. */
@@ -392,10 +489,115 @@ function internDataAccessIdString(reg: RegistryBuilder, id: string): number {
   return reg.intern("", id);
 }
 
+// ─── Page registry (files[] index) ─────────────────────────────────────────
+//
+// Only fields holding a CANONICAL project-relative path (a `files[]` member) are
+// rewritten. Import specifiers ("../services/auth"), datastore targets, route
+// paths, `navigatesTo`, free-text questions, the absolute `projectRoot`,
+// sub-project roots, `generatedRoots`, and `skippedSensitive` (skipped → not in
+// files[]) are NOT page references and stay verbatim.
+
+function buildPageIndex(files: string[]): Map<string, PageId> {
+  const m = new Map<string, PageId>();
+  files.forEach((f, i) => m.set(f, i));
+  return m;
+}
+
+/** Encode a path value → its page_id; a path absent from files[] is kept verbatim. */
+function toPage(idx: Map<string, PageId>, path: unknown): PageId | unknown {
+  if (typeof path !== "string") return path;
+  const p = idx.get(path);
+  return p === undefined ? path : p;
+}
+/** Decode a page_id → its path; a legacy raw-path string passes through unchanged. */
+function fromPage(files: string[], ref: unknown): string | unknown {
+  return typeof ref === "number" ? files[ref] ?? "" : ref;
+}
+/** Encode an object KEY (paths → decimal page_id strings; non-paths kept). */
+function keyToPage(idx: Map<string, PageId>, key: string): string {
+  const p = idx.get(key);
+  return p === undefined ? key : String(p);
+}
+/** Decode an object KEY (decimal page_id string → path; raw paths are never bare integers). */
+function keyFromPage(files: string[], key: string): string {
+  if (/^\d+$/.test(key)) {
+    const i = Number(key);
+    if (i < files.length) return files[i];
+  }
+  return key;
+}
+
+/**
+ * Rewrite every page reference in an aggregate artifact, parameterized by the
+ * per-value transform `ref` and per-key transform `key`. Used in BOTH directions
+ * (encode passes path→id fns, decode passes id→path fns) so the two stay in
+ * lockstep on exactly which locations are page references. Returns a fresh object
+ * with fresh objects/arrays for every rewritten field — the input (and any shape
+ * it shares with the caller's in-memory `ProjectAnalysis`) is never mutated.
+ */
+function rewritePageRefs<T extends object>(
+  src: T,
+  ref: (v: unknown) => unknown,
+  key: (k: string) => string,
+): T {
+  const o = { ...src } as Record<string, unknown>;
+
+  const arr = (name: string, fn: (e: Record<string, unknown>) => Record<string, unknown>): void => {
+    const v = o[name];
+    if (Array.isArray(v)) o[name] = v.map(fn);
+  };
+  // Remap a `Record<path, …>` map's keys; optionally transform its values too.
+  const remapKeys = (m: Record<string, unknown>, val?: (v: unknown) => unknown): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(m)) out[key(k)] = val ? val(v) : v;
+    return out;
+  };
+  // Remap an array's `.filePath` (when present), leaving every other field intact.
+  const filePathArr = (name: string): void =>
+    arr(name, (e) => (e.filePath === undefined ? e : { ...e, filePath: ref(e.filePath) }));
+
+  if (o.fileProjects) o.fileProjects = remapKeys(o.fileProjects as Record<string, unknown>);
+  if (o.fileLayerMap) o.fileLayerMap = remapKeys(o.fileLayerMap as Record<string, unknown>);
+  if (o.componentGraph) {
+    o.componentGraph = remapKeys(o.componentGraph as Record<string, unknown>, (deps) =>
+      (deps as unknown[]).map(ref),
+    );
+  }
+  if (o.communities) {
+    // Keys are community ids (NOT paths) → keep; values are member paths.
+    const c: Record<string, unknown> = {};
+    for (const [k, members] of Object.entries(o.communities as Record<string, unknown[]>)) {
+      c[k] = members.map(ref);
+    }
+    o.communities = c;
+  }
+
+  arr("linkGraph", (l) => ({ ...l, source: ref(l.source), target: ref(l.target) }));
+  arr("surprisingConnections", (s) => ({ ...s, source: ref(s.source), target: ref(s.target) }));
+  arr("godNodes", (n) => ({ ...n, file: ref(n.file) }));
+  arr("symbolDataAccess", (s) => ({ ...s, file: ref(s.file) }));
+  arr("componentLaunches", (c) => ({ ...c, sourceFile: ref(c.sourceFile), targetFile: ref(c.targetFile) }));
+  arr("layerViolations", (v) => ({ ...v, sourceFile: ref(v.sourceFile), targetFile: ref(v.targetFile) }));
+  arr("duplicates", (d) => ({
+    ...d,
+    occurrences: (d.occurrences as Record<string, unknown>[]).map((occ) => ({ ...occ, filePath: ref(occ.filePath) })),
+  }));
+  for (const name of [
+    "routeMap", "apiCalls", "interactiveElements", "events", "componentUsage",
+    "screens", "patterns", "securityIssues", "suggestions", "migrations",
+  ]) {
+    filePathArr(name);
+  }
+  if (Array.isArray(o.unusedFiles)) o.unusedFiles = o.unusedFiles.map(ref);
+
+  return o as T;
+}
+
 /**
  * Convert an in-memory `ProjectAnalysis` to its on-disk normalized form.
  * Two passes: intern every endpoint into the shared registry, then `finalize()`
  * (sort + remap), then build each structure with remapped integer indices.
+ * Finally `rewritePageRefs` replaces the remaining raw file paths with page_ids.
  */
 export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis {
   const reg = new RegistryBuilder();
@@ -522,7 +724,7 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
     dataAccessGraph: _da,
     ...restP
   } = p;
-  const out: NormalizedProjectAnalysis = { ...restP, schemaVersion: SCHEMA_VERSION, elements, symbolLinks };
+  const out: ElementNormalizedProject = { ...restP, schemaVersion: SCHEMA_VERSION, elements, symbolLinks };
 
   if (cxRaw) {
     out.complexity = cxRaw.map(({ fe, file, fns }) => ({
@@ -658,7 +860,13 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
     };
   }
 
-  return out;
+  // ── page-id pass ── replace remaining raw file paths with files[] indices.
+  const pageIndex = buildPageIndex(out.files ?? []);
+  return rewritePageRefs(
+    out,
+    (v) => toPage(pageIndex, v),
+    (k) => keyToPage(pageIndex, k),
+  ) as unknown as NormalizedProjectAnalysis;
 }
 
 /** Intern a classGraph node, returning the (pre-remap) element index. */
@@ -895,7 +1103,14 @@ export function denormalizeProject(obj: unknown): ProjectAnalysis {
     };
   }
 
-  return result;
+  // ── page-id pass ── recover raw file paths from files[] indices. Shape-detecting
+  // (number → page_id, string → legacy raw path), so pre-page artifacts also load.
+  const files = result.files ?? [];
+  return rewritePageRefs(
+    result,
+    (v) => fromPage(files, v),
+    (k) => keyFromPage(files, k),
+  );
 }
 
 /** Basename of a relative path (posix-style separators in these artifacts). */
