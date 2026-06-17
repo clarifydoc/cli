@@ -1,6 +1,7 @@
 import type { SecurityIssue, Language } from "../types/analysis.js";
 import type { SecurityRule } from "../types/language-plugin.js";
 import { pluginFor, securityRulesFor } from "../extractors/registry.js";
+import { isTestFile } from "./test-file-detector.js";
 
 /**
  * Generic rules that apply to every language. Language-specific rules live
@@ -55,16 +56,6 @@ function rulesFor(language: Language): readonly SecurityRule[] {
   return rules;
 }
 
-/** Check if a file path looks like a test file */
-function isTestFile(filePath: string): boolean {
-  return /\.(test|spec)\.[^.]+$/.test(filePath)
-    || filePath.includes("__tests__")
-    || filePath.includes("/test/")
-    || filePath.includes("/tests/")
-    || filePath.includes("_test.")
-    || filePath.includes("test_");
-}
-
 /**
  * Scan source text for security issues.
  */
@@ -83,7 +74,7 @@ export function scanSecurity(
     : sourceText;
   const lines = effectiveSource.split("\n");
   const originalLines = sourceText.split("\n"); // for snippets
-  const isTest = isTestFile(filePath);
+  const isTest = isTestFile(filePath, language);
 
   // Apply regex rules
   for (const rule of rulesFor(language)) {

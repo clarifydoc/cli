@@ -59,6 +59,8 @@ export const pythonMeta: LanguagePluginMeta = {
   language: "python",
   parsing: "tree-sitter",
   extensions: [".py", ".pyw"],
+  // pytest/unittest: `test_*.py`, `*_test.py`, and `conftest.py` fixtures.
+  testFilePatterns: [/(^|[\\/])test_[^\\/]*\.py$/, /_test\.py$/, /(^|[\\/])conftest\.py$/],
   grammar: {
     variants: { python: { pkg: "tree-sitter-python", wasm: "tree-sitter-python.wasm" } },
   },

@@ -163,6 +163,16 @@ export interface LanguagePluginMeta {
    * their code counterpart and are never imported by name. Default: true.
    */
   importTarget?: boolean;
+  /**
+   * Language-specific filename/path patterns that mark a file as a test
+   * (unit, integration, or e2e) — e.g. Go `_test.go`, JS `*_spec.js`/`*.cy.ts`,
+   * Python `test_*.py`. Matched against the project-relative path (both `/` and
+   * `\` separators). Cross-language conventions (`__tests__/`, `*.test.*`,
+   * `tests/`, `cypress/`) are handled generically in `core/test-file-detector`,
+   * so a plugin only declares what's idiomatic to its language. Test files are
+   * excluded from route extraction (see `extractRoutes` callers).
+   */
+  testFilePatterns?: readonly RegExp[];
   /** Parser for `parsing: "custom"` formats (e.g. .dfm). */
   customParse?(rawSource: string, relativePath: string): FileAnalysis;
   /** Tree-sitter grammar location(s) for `parsing: "tree-sitter"` languages. */

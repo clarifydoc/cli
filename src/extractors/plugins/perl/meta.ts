@@ -7,5 +7,7 @@ export const perlMeta: LanguagePluginMeta = {
   parsing: "regex",
   extensions: perlSpec.extensions,
   regexSpec: perlSpec,
+  // Perl test scripts use the `.t` extension (run by `prove`/Test::More).
+  testFilePatterns: [/\.t$/],
   builtinTypes: new Set(COMMON_PRIMITIVES),
 };

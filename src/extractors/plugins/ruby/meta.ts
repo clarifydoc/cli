@@ -7,6 +7,8 @@ export const rubyMeta: LanguagePluginMeta = {
   parsing: "regex",
   extensions: rubySpec.extensions,
   regexSpec: rubySpec,
+  // RSpec / Minitest: `foo_spec.rb`, `foo_test.rb`.
+  testFilePatterns: [/_(spec|test)\.rb$/],
   builtinTypes: new Set(COMMON_PRIMITIVES),
   externalModulePrefixes: [
     "rails", "active_record", "active_support", "action_controller",
