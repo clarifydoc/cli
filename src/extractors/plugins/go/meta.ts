@@ -17,6 +17,8 @@ export const goMeta: LanguagePluginMeta = {
   parsing: "regex",
   extensions: goSpec.extensions,
   regexSpec: goSpec,
+  // `go test` convention: every test file ends in `_test.go`.
+  testFilePatterns: [/_test\.go$/],
   builtinTypes: GO_BUILTINS,
   externalModulePrefixes: [
     "fmt", "net/", "os", "io", "context", "strings", "strconv", "errors", "encoding/",

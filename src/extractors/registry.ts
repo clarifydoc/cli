@@ -224,3 +224,20 @@ const SECURITY_RULES_BY_LANGUAGE: ReadonlyMap<Language, readonly SecurityRule[]>
 export function securityRulesFor(language: Language): readonly SecurityRule[] {
   return SECURITY_RULES_BY_LANGUAGE.get(language) ?? [];
 }
+
+// ─── Test-file patterns ──────────────────────────────────────────────────
+
+/** Language-specific test-file path patterns from every plugin, bucketed per language. */
+const TEST_FILE_PATTERNS_BY_LANGUAGE: ReadonlyMap<Language, readonly RegExp[]> = (() => {
+  const map = new Map<Language, readonly RegExp[]>();
+  for (const meta of ALL_METAS) {
+    if (meta.testFilePatterns && meta.testFilePatterns.length > 0) {
+      map.set(meta.language, meta.testFilePatterns);
+    }
+  }
+  return map;
+})();
+
+export function testFilePatternsFor(language: Language): readonly RegExp[] {
+  return TEST_FILE_PATTERNS_BY_LANGUAGE.get(language) ?? [];
+}

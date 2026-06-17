@@ -67,11 +67,13 @@ function jvmMeta(language: Language, opts: {
   apiCallRoots: string[];
   calls: CallExtractionHooks;
   grammar: LanguagePluginMeta["grammar"];
+  testFilePatterns: readonly RegExp[];
 }): LanguagePluginMeta {
   return {
     language,
     parsing: "tree-sitter",
     extensions: opts.extensions,
+    testFilePatterns: opts.testFilePatterns,
     grammar: opts.grammar,
     builtinTypes: opts.builtinTypes,
     externalModulePrefixes: JVM_EXTERNAL_PREFIXES,
@@ -100,6 +102,8 @@ export const javaMeta: LanguagePluginMeta = jvmMeta("java", {
   apiCallRoots: ["RestTemplate", "WebClient", "HttpClient", "OkHttp", "Retrofit"],
   calls: javaCallHooks,
   grammar: { variants: { java: { pkg: "tree-sitter-java", wasm: "tree-sitter-java.wasm" } } },
+  // JUnit/TestNG: `FooTest.java`, `FooTests.java`, and `FooIT`/`FooITCase` integration tests.
+  testFilePatterns: [/(Test|Tests|IT|ITCase)\.java$/],
 });
 
 export const kotlinMeta: LanguagePluginMeta = jvmMeta("kotlin", {
@@ -112,4 +116,6 @@ export const kotlinMeta: LanguagePluginMeta = jvmMeta("kotlin", {
   apiCallRoots: ["RestTemplate", "WebClient", "HttpClient", "OkHttp", "Retrofit", "ktor"],
   calls: kotlinCallHooks,
   grammar: { variants: { kotlin: { pkg: "tree-sitter-kotlin", wasm: "tree-sitter-kotlin.wasm" } } },
+  // JUnit/Kotest: `FooTest.kt`, `FooTests.kt`, and `FooIT`/`FooITCase` integration tests.
+  testFilePatterns: [/(Test|Tests|IT|ITCase)\.kt$/],
 });

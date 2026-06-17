@@ -22,6 +22,8 @@ export const csharpMeta: LanguagePluginMeta = {
   language: "csharp",
   parsing: "tree-sitter",
   extensions: [".cs"],
+  // xUnit/NUnit/MSTest: `FooTest.cs`, `FooTests.cs` (PascalCase, case-sensitive).
+  testFilePatterns: [/(Test|Tests)\.cs$/],
   grammar: {
     variants: { csharp: { pkg: "tree-sitter-c-sharp", wasm: "tree-sitter-c_sharp.wasm" } },
   },

@@ -15,6 +15,7 @@ import { computeComplexity } from "./complexity-analyzer.js";
 import { scanSecurity } from "./security-scanner.js";
 import { extractTypeReferences } from "./type-reference-extractor.js";
 import { enrichFileDataSources } from "./import-index.js";
+import { isTestFile } from "./test-file-detector.js";
 import {
   createEmptyAnalysis,
   type FileAnalysis,
@@ -140,7 +141,10 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     analysis.exports = extractExports(tree, sourceText, language);
     analysis.functions = extractFunctions(tree, sourceText, language);
     analysis.classes = extractClasses(tree, sourceText, language);
-    analysis.routes = extractRoutes(tree, sourceText, language);
+    // Test files (unit/integration/e2e specs) never expose real routes — a
+    // Cypress `cy.get('button')` or `request(app).get('/x')` is not an endpoint.
+    const isTest = isTestFile(file.relativePath, language);
+    analysis.routes = isTest ? [] : extractRoutes(tree, sourceText, language);
     analysis.dataSources = extractDataSources(tree, sourceText, language);
     // Backfill missing `target` on data sources by tracing each call's root
     // identifier through this file's imports (named imports, namespace
@@ -213,7 +217,8 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     postExtract?.(analysis, rawSource);
 
     // Next.js / Nuxt file-based routing: infer route from file path
-    const fileRoute = inferFileBasedRoute(file.relativePath, frameworkIds);
+    // (skipped for test files, same as AST-extracted routes).
+    const fileRoute = isTest ? null : inferFileBasedRoute(file.relativePath, frameworkIds);
     if (fileRoute) {
       analysis.routes.push(fileRoute);
     }

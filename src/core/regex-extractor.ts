@@ -7,6 +7,7 @@ import {
 } from "../extractors/plugins/shared/regex-base.js";
 import { regexSpecFor } from "../extractors/registry.js";
 import { extractEntities, mergeEntities } from "../extractors/entities/index.js";
+import { isTestFile } from "./test-file-detector.js";
 
 /**
  * Regex-based file analysis for languages without tree-sitter support,
@@ -39,7 +40,10 @@ export function extractWithRegex(
   }
   analysis.imports = extractImportsWithSpec(lines, spec);
   analysis.exports = deriveExportsFromFnClasses(analysis.functions, analysis.classes);
-  analysis.routes = spec.extractRoutes?.(lines, analysis.classes) ?? [];
+  // Test files (unit/integration/e2e specs) never expose real routes.
+  analysis.routes = isTestFile(filePath, language)
+    ? []
+    : spec.extractRoutes?.(lines, analysis.classes) ?? [];
   analysis.screens = spec.extractScreens?.(lines, filePath, analysis.classes) ?? [];
   analysis.dataSources = spec.extractDataSources?.(lines, analysis.classes) ?? [];
 

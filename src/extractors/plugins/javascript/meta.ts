@@ -167,6 +167,18 @@ const JS_BUILTIN_MEMBERS = [...new Set([
   "useReducer", "useLayoutEffect", "useId", "useTransition",
 ])];
 
+/**
+ * JS/TS test files beyond the generic `*.test.*` / `*.spec.*` / `__tests__/`
+ * conventions: `_spec.js`/`-spec.ts` (Cypress integration specs), `.cy.ts`
+ * (Cypress component tests), and `_test.js`. Extension class covers
+ * js/jsx/ts/tsx and the m/c (ESM/CJS) variants.
+ */
+const JS_TEST_PATTERNS: readonly RegExp[] = [
+  /[._-]spec\.[cm]?[jt]sx?$/i,
+  /[._-]test\.[cm]?[jt]sx?$/i,
+  /\.cy\.[cm]?[jt]sx?$/i,
+];
+
 const API_CALL_ROOTS = ["fetch", "axios", "http", "request", "ajax", "$http", "ky", "got", "superagent", "ofetch"];
 const DB_CALL_ROOTS = [
   "prisma", "mongoose", "sequelize", "knex", "typeorm", "drizzle",
@@ -195,6 +207,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   language: "typescript",
   parsing: "tree-sitter",
   extensions: [".ts", ".tsx", ".vue", ".svelte"],
+  testFilePatterns: JS_TEST_PATTERNS,
   grammar: {
     variants: {
       typescript: { pkg: "tree-sitter-typescript", wasm: "tree-sitter-typescript.wasm" },
@@ -222,6 +235,7 @@ export const javascriptMeta: LanguagePluginMeta = {
   language: "javascript",
   parsing: "tree-sitter",
   extensions: [".js", ".jsx", ".mjs", ".cjs"],
+  testFilePatterns: JS_TEST_PATTERNS,
   grammar: {
     variants: {
       javascript: { pkg: "tree-sitter-javascript", wasm: "tree-sitter-javascript.wasm" },
