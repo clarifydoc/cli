@@ -21,44 +21,80 @@ function normalize(s: string): string {
 
 /**
  * Drop reverse-reference links (`sourceSymbol === "(reference)"`) that are
- * actually same-name *definition collisions*, not real cross-file references.
+ * artifacts of polymorphism / name collisions rather than real dependencies.
+ * Both fool reference resolution into producing *wrong-direction* edges that
+ * fabricate circular dependencies and inflate coupling:
  *
- * When several files define a symbol with the identical qualified name —
- * e.g. three microservices each with `class InternalsController { Ping() }` —
- * an LSP `textDocument/references` (or a name-keyed text reverse-scan) can
- * report each replica's own definition as a "reference" to the others, wiring
- * the independent files into a fully-connected clique. That surfaces as a
- * bogus circular dependency (`InternalsController.cs → InternalsController.cs →
- * …`) and inflates coupling.
+ *   1. Same-name definition collision — several files define an identical
+ *      qualified symbol (three microservices each with
+ *      `class InternalsController { Ping() }`). LSP `references` (or a name-keyed
+ *      text scan) reports each replica's own definition as a "reference" to the
+ *      others → fully-connected clique → bogus cycle. Signature: the *source*
+ *      file already defines the exact qualified symbol the reference points at.
  *
- * Heuristic: if the *source* file already defines the exact qualified symbol the
- * reference points at, the edge is a name collision rather than a use — drop it.
- * Gated on the qualified `Class.method` (not the bare leaf) to stay precise, and
- * only applied to `(reference)` links so real call/definition edges are
- * untouched.
+ *   2. Base→derived virtual dispatch — a base class's virtual/abstract method
+ *      call resolves (via `references`) to every subclass override, so the base
+ *      "references" each subclass (`BaseConsumerBroker` → `RoleConsumerBroker`…).
+ *      A base does not depend on its subclasses. Signature: the *target*'s class
+ *      transitively extends a class defined in the *source* file.
+ *
+ * Both are gated on the qualified `Class.method` form and only applied to
+ * `(reference)` links, so real call/definition edges are untouched.
  */
 export function dropNameCollisionReferences(
   links: SymbolLink[],
   analyses: FileAnalysis[],
 ): SymbolLink[] {
   const definedByFile = new Map<string, Set<string>>();
+  const parentOf = new Map<string, string>(); // className → its base/parent class name
+  const filesDefiningClass = new Map<string, Set<string>>(); // className → files that declare it
   for (const a of analyses) {
     const names = new Set<string>();
     for (const fn of a.functions ?? []) names.add(fn.name);
     for (const cls of a.classes ?? []) {
       names.add(cls.name);
       for (const m of cls.methods ?? []) names.add(`${cls.name}.${m.name}`);
+      if (cls.extends) parentOf.set(cls.name, bareTypeName(cls.extends));
+      let set = filesDefiningClass.get(cls.name);
+      if (!set) filesDefiningClass.set(cls.name, (set = new Set()));
+      set.add(a.filePath);
     }
     definedByFile.set(a.filePath, names);
   }
 
+  /** Walk `className`'s ancestry; true if any ancestor class is declared in `file`. */
+  const ancestorDefinedIn = (className: string, file: string): boolean => {
+    const seen = new Set<string>();
+    let cur = parentOf.get(className);
+    while (cur && !seen.has(cur)) {
+      seen.add(cur);
+      if (filesDefiningClass.get(cur)?.has(file)) return true;
+      cur = parentOf.get(cur);
+    }
+    return false;
+  };
+
   return links.filter((l) => {
     if (l.sourceSymbol !== "(reference)" || l.sourceFile === l.targetFile) return true;
     const symbol = l.targetSymbol || l.callName;
-    // Only the qualified `Class.method` form is a strong collision signal.
+    // Only the qualified `Class.method` form is a strong artifact signal.
     if (!symbol.includes(".")) return true;
-    return !definedByFile.get(l.sourceFile)?.has(symbol);
+    // (1) source defines the exact same qualified symbol → name collision.
+    if (definedByFile.get(l.sourceFile)?.has(symbol)) return false;
+    // (2) target's class derives from a class in the source file → base→derived
+    //     virtual-dispatch back-edge.
+    const targetClass = symbol.slice(0, symbol.indexOf("."));
+    if (targetClass && ancestorDefinedIn(targetClass, l.sourceFile)) return false;
+    return true;
   });
+}
+
+/** Strip generics/namespace from a base-type reference (`Foo.Bar<T>` → `Bar`). */
+function bareTypeName(type: string): string {
+  let t = type.trim().replace(/<.*$/, "");
+  const dot = t.lastIndexOf(".");
+  if (dot >= 0) t = t.slice(dot + 1);
+  return t.trim();
 }
 
 export function dedupSymbolLinks(links: SymbolLink[]): SymbolLink[] {

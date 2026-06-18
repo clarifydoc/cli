@@ -671,6 +671,14 @@ export interface SymbolLink {
   targetLine: number;
   resolvedBy?: "text" | "lsp";
   confidence?: Confidence;
+  /**
+   * True for *navigational* edges that aid the trace view but are NOT real
+   * dependencies — specifically interface→implementation fan-out (an interface
+   * does not depend on its implementors). Excluded from the component dependency
+   * graph so they don't fabricate cycles across every sibling that shares an
+   * interface. In-memory only (not persisted in the normalized summary).
+   */
+  navigational?: boolean;
 }
 
 /**
