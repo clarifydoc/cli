@@ -35,7 +35,7 @@ import { computeHealthScore } from "./health-scorer.js";
 import { generateSuggestions } from "./suggestions-engine.js";
 import { detectCommunities } from "./community-detector.js";
 import { findGodNodes, findSurprisingConnections, suggestQuestions } from "./topology-analyzer.js";
-import { dedupSymbolLinks } from "./symbol-dedup.js";
+import { dedupSymbolLinks, dropNameCollisionReferences } from "./symbol-dedup.js";
 import { aggregateTypeBlast, buildClassGraph } from "./data-model-blast.js";
 import { buildDataAccessGraph, attributeDataAccessToSymbols } from "./data-access-graph.js";
 import { buildEntityGraph, reconcileEntityInheritance, linkEntityModels } from "./entity-graph.js";
@@ -457,6 +457,12 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       progress.detail(`LSP enhancement skipped: ${(err as Error).message}`);
     }
   }
+  // Drop same-name definition-collision "references" (e.g. three microservices
+  // each defining `InternalsController.Ping` get cross-linked by LSP/text
+  // reference resolution into a false clique → bogus circular dependency). Must
+  // run before graph enrichment so the false edges never reach the graph.
+  symbolLinks = dropNameCollisionReferences(symbolLinks, allAnalyses);
+
   // Enrich component graph with edges from symbol links
   // This catches cross-file dependencies that import resolution missed
   // (e.g. Java package imports, Python absolute imports, C# usings)
@@ -608,6 +614,8 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     duplicates,
     complexity,
     layerViolations,
+    // Exclude generated barrel trees (kubb, …) so the grade reflects authored code.
+    generatedRoots,
   });
   progress.status("Generating suggestions...");
   const suggestions = generateSuggestions({

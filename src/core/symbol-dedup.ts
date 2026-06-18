@@ -1,4 +1,4 @@
-import type { SymbolLink } from "../types/analysis.js";
+import type { FileAnalysis, SymbolLink } from "../types/analysis.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
 
 /**
@@ -17,6 +17,48 @@ import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js
 
 function normalize(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/**
+ * Drop reverse-reference links (`sourceSymbol === "(reference)"`) that are
+ * actually same-name *definition collisions*, not real cross-file references.
+ *
+ * When several files define a symbol with the identical qualified name —
+ * e.g. three microservices each with `class InternalsController { Ping() }` —
+ * an LSP `textDocument/references` (or a name-keyed text reverse-scan) can
+ * report each replica's own definition as a "reference" to the others, wiring
+ * the independent files into a fully-connected clique. That surfaces as a
+ * bogus circular dependency (`InternalsController.cs → InternalsController.cs →
+ * …`) and inflates coupling.
+ *
+ * Heuristic: if the *source* file already defines the exact qualified symbol the
+ * reference points at, the edge is a name collision rather than a use — drop it.
+ * Gated on the qualified `Class.method` (not the bare leaf) to stay precise, and
+ * only applied to `(reference)` links so real call/definition edges are
+ * untouched.
+ */
+export function dropNameCollisionReferences(
+  links: SymbolLink[],
+  analyses: FileAnalysis[],
+): SymbolLink[] {
+  const definedByFile = new Map<string, Set<string>>();
+  for (const a of analyses) {
+    const names = new Set<string>();
+    for (const fn of a.functions ?? []) names.add(fn.name);
+    for (const cls of a.classes ?? []) {
+      names.add(cls.name);
+      for (const m of cls.methods ?? []) names.add(`${cls.name}.${m.name}`);
+    }
+    definedByFile.set(a.filePath, names);
+  }
+
+  return links.filter((l) => {
+    if (l.sourceSymbol !== "(reference)" || l.sourceFile === l.targetFile) return true;
+    const symbol = l.targetSymbol || l.callName;
+    // Only the qualified `Class.method` form is a strong collision signal.
+    if (!symbol.includes(".")) return true;
+    return !definedByFile.get(l.sourceFile)?.has(symbol);
+  });
 }
 
 export function dedupSymbolLinks(links: SymbolLink[]): SymbolLink[] {

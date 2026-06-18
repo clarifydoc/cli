@@ -9,6 +9,31 @@ function fileName(p: string): string {
   return p.split("/").pop() ?? p;
 }
 
+/**
+ * Label each file in a cycle uniquely. Uses the basename, but when two members
+ * share one (common across replicated microservices, e.g. several
+ * `InternalsController.cs`), extends each colliding label leftward with parent
+ * directory segments until the labels are distinct — so the message names three
+ * real files rather than looking like a self-loop.
+ */
+export function distinctCycleLabels(paths: string[]): string[] {
+  const labels = paths.map(fileName);
+  const hasCollision = new Set(labels).size !== labels.length;
+  if (!hasCollision) return labels;
+  return paths.map((p) => {
+    const segs = p.split("/");
+    // Walk leftward until this label is unique among the cycle's paths.
+    for (let take = 2; take <= segs.length; take++) {
+      const label = segs.slice(-take).join("/");
+      const collides = paths.some(
+        (o) => o !== p && o.split("/").slice(-take).join("/") === label,
+      );
+      if (!collides) return label;
+    }
+    return p;
+  });
+}
+
 interface SuggestionInput {
   analyses: FileAnalysis[];
   healthScore: HealthScore;
@@ -44,7 +69,9 @@ export function generateSuggestions(input: SuggestionInput): Suggestion[] {
   // ── Critical: Circular dependencies (reuse Tarjan SCC from health-scorer) ──
   const cycles = findCircularDeps(input.componentGraph);
   for (const cycle of cycles.slice(0, 5)) {
-    const names = cycle.map(fileName);
+    // Disambiguate same-basename members (e.g. one `InternalsController.cs` per
+    // microservice) so the message doesn't read as a file depending on itself.
+    const names = distinctCycleLabels(cycle);
     suggestions.push({
       priority: "critical",
       category: "Architecture",

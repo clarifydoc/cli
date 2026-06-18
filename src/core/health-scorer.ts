@@ -11,6 +11,15 @@ interface HealthInput {
   duplicates: DuplicateGroup[];
   complexity: FileComplexityInfo[];
   layerViolations: LayerViolation[];
+  /**
+   * Generated/library barrel roots (posix dir paths, from `analyzeUnusedCode`).
+   * Files under these are code the team doesn't author or maintain (kubb /
+   * openapi-generator output, …), so they're excluded from the health grade —
+   * otherwise the repetitive, large, heavily-imported generated surface tanks
+   * the score for problems that aren't the team's to fix. Path-prefix only, so
+   * this stays language-agnostic.
+   */
+  generatedRoots?: string[];
 }
 
 /**
@@ -85,31 +94,49 @@ export function computeHealthScore(input: HealthInput): HealthScore {
     }
   }
 
-  // 1. Circular dependencies
-  const cycles = findCircularDeps(input.componentGraph);
+  // Generated code (kubb / openapi-generator barrels, …) is excluded from every
+  // metric below — the team neither authors nor maintains it, so its size,
+  // repetition, and heavy fan-in are not health problems to grade.
+  const genRoots = input.generatedRoots ?? [];
+  const isGenerated = (f: string): boolean => {
+    if (genRoots.length === 0) return false;
+    const p = f.replace(/\\/g, "/");
+    return genRoots.some((r) => p === r || p.startsWith(r + "/"));
+  };
+
+  // 1. Circular dependencies — over the graph with generated nodes pruned, so a
+  // generated tree's internal re-export cycles don't count against the app.
+  const appGraph: Record<string, string[]> = {};
+  for (const [src, targets] of Object.entries(input.componentGraph)) {
+    if (isGenerated(src)) continue;
+    appGraph[src] = targets.filter((t) => !isGenerated(t));
+  }
+  const cycles = findCircularDeps(appGraph);
   if (cycles.length > 0) {
     const pts = Math.min(20, cycles.length * 5);
     penalize(`${cycles.length} circular dependency cycle(s)`, pts);
   }
 
   // 2. God objects (15+ functions)
-  const godFiles = input.patterns.filter((p) => p.kind === "god-object");
+  const godFiles = input.patterns.filter((p) => p.kind === "god-object" && !isGenerated(p.filePath));
   if (godFiles.length > 0) {
     const pts = Math.min(15, godFiles.length * 3);
     penalize(`${godFiles.length} god object file(s)`, pts);
   }
 
   // 3. Long files
-  const longFiles = input.patterns.filter((p) => p.kind === "long-file");
+  const longFiles = input.patterns.filter((p) => p.kind === "long-file" && !isGenerated(p.filePath));
   if (longFiles.length > 0) {
     const pts = Math.min(10, longFiles.length * 2);
     penalize(`${longFiles.length} long file(s)`, pts);
   }
 
-  // 4. High coupling
+  // 4. High coupling — a generated file with many importers isn't a code-health
+  // problem, so don't count importers OF generated targets.
   const reverseGraph = new Map<string, number>();
   for (const targets of Object.values(input.componentGraph)) {
     for (const t of targets) {
+      if (isGenerated(t)) continue;
       reverseGraph.set(t, (reverseGraph.get(t) ?? 0) + 1);
     }
   }
@@ -133,21 +160,29 @@ export function computeHealthScore(input: HealthInput): HealthScore {
     penalize(`${medSecCount} medium security issue(s)`, Math.min(10, medSecCount));
   }
 
-  // 6. Code duplicates
-  if (input.duplicates.length > 0) {
-    const pts = Math.min(10, input.duplicates.length * 2);
-    penalize(`${input.duplicates.length} duplicate code group(s)`, pts);
+  // 6. Code duplicates — drop groups that live entirely in generated code
+  // (codegen output is repetitive by construction).
+  const duplicates = input.duplicates.filter(
+    (d) => !(d.occurrences ?? []).every((o) => isGenerated(o.filePath)),
+  );
+  if (duplicates.length > 0) {
+    const pts = Math.min(10, duplicates.length * 2);
+    penalize(`${duplicates.length} duplicate code group(s)`, pts);
   }
 
-  // 7. Layer violations
-  if (input.layerViolations.length > 0) {
-    const pts = Math.min(10, input.layerViolations.length * 2);
-    penalize(`${input.layerViolations.length} layer violation(s)`, pts);
+  // 7. Layer violations — ignore ones whose endpoints are generated.
+  const layerViolations = input.layerViolations.filter(
+    (v) => !isGenerated(v.sourceFile) && !isGenerated(v.targetFile),
+  );
+  if (layerViolations.length > 0) {
+    const pts = Math.min(10, layerViolations.length * 2);
+    penalize(`${layerViolations.length} layer violation(s)`, pts);
   }
 
-  // 8. High average complexity
-  if (input.complexity.length > 0) {
-    const avgComplexity = input.complexity.reduce((s, f) => s + f.averageComplexity, 0) / input.complexity.length;
+  // 8. High average complexity (authored files only)
+  const complexity = input.complexity.filter((f) => !isGenerated(f.filePath));
+  if (complexity.length > 0) {
+    const avgComplexity = complexity.reduce((s, f) => s + f.averageComplexity, 0) / complexity.length;
     if (avgComplexity > 20) {
       penalize(`High average complexity (${Math.round(avgComplexity)})`, 10);
     } else if (avgComplexity > 10) {
