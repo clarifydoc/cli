@@ -139,6 +139,9 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
           targetSymbol: `${impl.className}.${ifaceMethod.name}`,
           targetLine: implMethod.line,
           confidence: "INFERRED",
+          // Navigational only: an interface does not depend on its implementors.
+          // Kept for the trace view, excluded from the dependency/cycle graph.
+          navigational: true,
         });
       }
     }

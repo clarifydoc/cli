@@ -1148,6 +1148,27 @@ function buildComponentGraph(
   for (const a of analyses) {
     const refSet = new Set<string>();
 
+    // Symbols this file actually uses — type-position references plus called
+    // names. Gates the bare-namespace fallback (step 3) so a leftover
+    // `using TicketRights.Shared.ErrorOr;` that references nothing in that
+    // namespace doesn't fabricate a dependency edge to every file in it
+    // (which made ErrorOr.cs look like a 259-dependent "critical" hub when
+    // ~92% of those files never touch it).
+    const usedNames = new Set<string>();
+    for (const tr of a.typeReferences ?? []) {
+      if (tr.typeName) usedNames.add(tr.typeName);
+    }
+    const addCallLeaves = (calls?: { name: string }[]): void => {
+      for (const c of calls ?? []) {
+        const leaf = c.name.split(".").pop();
+        if (leaf) usedNames.add(leaf);
+      }
+    };
+    for (const fn of a.functions ?? []) addCallLeaves(fn.calls);
+    for (const cls of a.classes ?? []) {
+      for (const m of cls.methods ?? []) addCallLeaves(m.calls);
+    }
+
     for (const imp of a.imports) {
       // 1. Resolve relative imports (JS/TS/Vue) via pre-built path map.
       // Strip a trailing source extension so extension-bearing specifiers — as
@@ -1189,7 +1210,13 @@ function buildComponentGraph(
       if (lastSegment) {
         const target = baseNameToFile.get(lastSegment);
         if (target && target !== a.filePath) {
-          refSet.add(target);
+          // A bare namespace import (`using X.Y.Z;`, no named binding) only
+          // implies a dependency when the file actually uses a symbol named like
+          // the matched file. A named import (specifiers) is a direct reference,
+          // so keep it unconditionally.
+          if (imp.specifiers.length > 0 || usedNames.has(lastSegment)) {
+            refSet.add(target);
+          }
         }
       }
 
@@ -1242,6 +1269,9 @@ export function enrichGraphFromSymbolLinks(
 
   for (const link of symbolLinks) {
     if (link.sourceFile === link.targetFile) continue;
+    // Navigational fan-out (interface→impl) is not a real dependency — skip it
+    // so it doesn't fabricate cycles across every implementor of an interface.
+    if (link.navigational) continue;
 
     let edgeSet = edgeSets.get(link.sourceFile);
     if (!edgeSet) {
