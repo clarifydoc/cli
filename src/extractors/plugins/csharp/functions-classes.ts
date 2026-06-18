@@ -29,7 +29,16 @@ export class CSharpExtractor extends FunctionClassExtractor {
         const body = child.childForFieldName("body");
         if (body) this.extractCsharpClasses(body, classes);
         this.extractCsharpClasses(child, classes);
-      } else if (child.type === "class_declaration") {
+      } else if (
+        child.type === "class_declaration" ||
+        // Records (`record X(...)`, `record struct`, `record class`) and structs
+        // are named types referenced across files exactly like classes — the CQRS
+        // commands/queries in this codebase are ALL records, so without these the
+        // symbol linker can't resolve `new XQuery()` / `Error.Forbidden` to their
+        // definitions (it has no entry in the class catalog).
+        child.type === "record_declaration" ||
+        child.type === "struct_declaration"
+      ) {
         classes.push(this.parseCsharpClass(child, "class"));
       } else if (child.type === "interface_declaration") {
         classes.push(this.parseCsharpClass(child, "interface"));

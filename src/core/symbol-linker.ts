@@ -349,11 +349,17 @@ function isSafeHeuristicTarget(
   entry: { file: string; projectId: string; count: number },
   sourceFile: string,
   sourceProjectId: string,
+  opts: { allowCrossProject?: boolean } = {},
 ): boolean {
   return (
     entry.count === 1 &&
     entry.file !== sourceFile &&
-    entry.projectId === sourceProjectId &&
+    // Clean/layered architectures deliberately reference types across sub-projects
+    // (Api `new XCommand()` → Application, Application → Domain entities,
+    // everyone → Shared). `count === 1` (globally unique name) already guarantees
+    // the target is unambiguous, so cross-project resolution is safe to allow for
+    // callers that opt in; same-name collisions (count > 1) stay blocked.
+    (opts.allowCrossProject || entry.projectId === sourceProjectId) &&
     !(TEST_FIXTURE_PATH_RE.test(entry.file) && !TEST_FIXTURE_PATH_RE.test(sourceFile))
   );
 }
@@ -769,7 +775,10 @@ function resolveCallToDefinition(
         : null;
     if (className) {
       const entry = classCatalog.get(className);
-      if (entry && isSafeHeuristicTarget(entry, sourceFile, analysis.projectId)) {
+      // A constructor of a globally-unique type is unambiguous even across
+      // sub-projects (`new GetRoleHoldersQuery()` in Api → its record in
+      // Application), so allow cross-project resolution here.
+      if (entry && isSafeHeuristicTarget(entry, sourceFile, analysis.projectId, { allowCrossProject: true })) {
         return mkLink(
           entry.file,
           entry.ctorSymbol ?? className,
