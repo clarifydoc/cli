@@ -56,7 +56,11 @@ function walkForRoutes(node: Node, routes: RouteInfo[]) {
       const method = prop?.text?.toLowerCase();
       const receiver = receiverName(fn);
 
-      if (method && HTTP_METHODS.has(method) && !(receiver && NON_ROUTER_RECEIVERS.has(receiver))) {
+      // Outbound HTTP clients are excluded both by the denylist and by a
+      // `*Client` suffix (`accountApiClient`, `licenseApiClient`, …) that no
+      // fixed list could enumerate — these carry a body/config arg, not a handler.
+      const isClientReceiver = !!receiver && (NON_ROUTER_RECEIVERS.has(receiver) || /client$/.test(receiver));
+      if (method && HTTP_METHODS.has(method) && !isClientReceiver) {
         const args = node.childForFieldName("arguments");
         if (args) {
           const firstArg = args.child(1); // skip '('
@@ -80,24 +84,34 @@ function walkForRoutes(node: Node, routes: RouteInfo[]) {
 
             let calls: CallInfo[] = [];
             const lastArg = args.child(args.childCount - 2);
-            if (
-              lastArg &&
+            const lastArgIsFn =
+              !!lastArg &&
               (lastArg.type === "arrow_function" ||
                 lastArg.type === "function_expression" ||
-                lastArg.type === "function")
-            ) {
-              calls = collectCallNames(lastArg);
+                lastArg.type === "function");
+            if (lastArgIsFn) {
+              calls = collectCallNames(lastArg!);
             }
 
-            routes.push({
-              path,
-              httpMethod: method === "use" ? null : method.toUpperCase(),
-              kind: "api",
-              handler,
-              calls,
-              middleware,
-              line: node.startPosition.row + 1,
-            });
+            // A real Express/router registration always supplies a handler — a
+            // function (`app.get("/x", (req,res)=>…)`) or a middleware/handler
+            // identifier (`app.get("/x", getUsers)`). An outbound HTTP-client
+            // call (`apiClient.get("/x", { params })`) has only a URL + optional
+            // config object and NO handler, so the receiver denylist can't keep
+            // up with names like `accountApiClient`. Require a handler so those
+            // stay api-calls instead of inflating the route map (and colliding
+            // with the real backend route in the frontend→API join).
+            if (handler !== null || lastArgIsFn) {
+              routes.push({
+                path,
+                httpMethod: method === "use" ? null : method.toUpperCase(),
+                kind: "api",
+                handler,
+                calls,
+                middleware,
+                line: node.startPosition.row + 1,
+              });
+            }
           }
         }
       }
