@@ -415,6 +415,38 @@ export interface RouteInfo {
   line: number;
 }
 
+/**
+ * A resolved frontend→backend link: an outbound `api-call` (from client code)
+ * matched to the inbound `api` route that serves it, by HTTP method + a
+ * structurally-normalized path (case/separator-insensitive, with both
+ * `${param}` template literals and `{param}`/`:param` route params collapsed to
+ * a wildcard). This is the keystone of the "screen → API → DB" chain: it joins
+ * the two route halves the extractors produce independently. `source`/`target`
+ * are project-relative file paths in memory (page_ids on disk).
+ */
+export interface ApiRouteLink {
+  /** Frontend file containing the api-call. */
+  source: string;
+  sourceLine: number;
+  /** HTTP method of the call (GET/POST/…), uppercased; null if not derivable. */
+  method: string | null;
+  /** Raw outbound target as written in the client (e.g. `/access-report/roles/${roleId}/holders`). */
+  url: string;
+  /** Backend file declaring the matched route. */
+  target: string;
+  targetLine: number;
+  /** Matched route's handler/action name. */
+  handler: string | null;
+  /** Matched route's full path (e.g. `/AccessReport/roles/{roleId}/holders`). */
+  routePath: string;
+  /**
+   * EXTRACTED — method + path matched exactly (one route).
+   * INFERRED  — path matched but method differed/was unknown.
+   * AMBIGUOUS — more than one route matched; `target` is the first.
+   */
+  confidence: Confidence;
+}
+
 export interface DataSourceInfo {
   kind:
     | "api-call"
@@ -846,6 +878,12 @@ export interface ProjectAnalysis {
    */
   apiCalls: (DataSourceInfo & { filePath: string })[];
   screens: ScreenInfo[];
+  /**
+   * Resolved frontend→backend links: each outbound `api-call` matched to the
+   * inbound `api` route that serves it. Joins the two halves of the
+   * screen→API→DB chain. Omitted when empty (e.g. pure frontend/backend repos).
+   */
+  apiRouteLinks?: ApiRouteLink[];
   /** Per-file child-component usages (JSX/Vue-template tags), with import source as `target`. */
   componentUsage?: (SubComponentInfo & { filePath: string })[];
   symbolLinks: SymbolLink[];

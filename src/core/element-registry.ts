@@ -29,6 +29,7 @@
  */
 
 import type {
+  ApiRouteLink,
   ArchLayer,
   BlastRadiusInfo,
   BlastSymbolUsage,
@@ -286,6 +287,7 @@ type SurprisingConnection = NonNullable<ProjectAnalysis["surprisingConnections"]
 type NormLinkInfo = Omit<LinkInfo, "source" | "target"> & { source: PageId; target: PageId };
 type NormSurprisingConnection = Omit<SurprisingConnection, "source" | "target"> & { source: PageId; target: PageId };
 type NormRouteInfo = RouteInfo & { filePath: PageId };
+type NormApiRouteLink = Omit<ApiRouteLink, "source" | "target"> & { source: PageId; target: PageId };
 type NormApiCall = Omit<ApiCallEntry, "filePath"> & { filePath: PageId };
 type NormInteractiveElement = Omit<InteractiveEntry, "filePath"> & { filePath: PageId };
 type NormEventEntry = Omit<EventEntry, "filePath"> & { filePath: PageId };
@@ -331,7 +333,7 @@ type ElementNormalizedProject = Omit<
 export type NormalizedProjectAnalysis = Omit<
   ElementNormalizedProject,
   | "componentGraph" | "linkGraph" | "communities" | "godNodes" | "surprisingConnections"
-  | "routeMap" | "apiCalls" | "interactiveElements" | "events" | "componentUsage" | "screens"
+  | "routeMap" | "apiCalls" | "apiRouteLinks" | "interactiveElements" | "events" | "componentUsage" | "screens"
   | "componentLaunches" | "patterns" | "securityIssues" | "suggestions" | "duplicates"
   | "layerViolations" | "migrations" | "symbolDataAccess" | "unusedFiles"
 > & {
@@ -342,6 +344,7 @@ export type NormalizedProjectAnalysis = Omit<
   surprisingConnections?: NormSurprisingConnection[];
   routeMap: NormRouteInfo[];
   apiCalls: NormApiCall[];
+  apiRouteLinks?: NormApiRouteLink[];
   interactiveElements: NormInteractiveElement[];
   events: NormEventEntry[];
   componentUsage?: NormComponentUsage[];
@@ -573,6 +576,7 @@ function rewritePageRefs<T extends object>(
   }
 
   arr("linkGraph", (l) => ({ ...l, source: ref(l.source), target: ref(l.target) }));
+  arr("apiRouteLinks", (l) => ({ ...l, source: ref(l.source), target: ref(l.target) }));
   arr("surprisingConnections", (s) => ({ ...s, source: ref(s.source), target: ref(s.target) }));
   arr("godNodes", (n) => ({ ...n, file: ref(n.file) }));
   arr("symbolDataAccess", (s) => ({ ...s, file: ref(s.file) }));

@@ -86,6 +86,11 @@ function renderReport(summary: ProjectAnalysis): string {
   const projectName = basename(summary.projectRoot || "project");
   const payload = {
     projectName,
+    // Absolute root the analysis ran against — used client-side to build
+    // "open in editor" (vscode://file/...) links from the relative file paths
+    // stored on every symbol link. Overridable in the UI (localStorage) so a
+    // report opened on another machine can point at that machine's checkout.
+    projectRoot: (summary.projectRoot ?? "").replace(/\\/g, "/"),
     analyzedAt: summary.analyzedAt,
     frameworks: summary.detectedFrameworks.map(f => ({ name: f.name, confidence: f.confidence })),
     files: summary.files,
@@ -342,6 +347,17 @@ a{color:#58a6ff;text-decoration:none}
 .trace-chain-row .chain-call{color:#d29922;font-size:10px;padding:1px 5px;background:#d2992218;border-radius:3px;flex-shrink:0}
 .trace-chain-row.inbound{border-left:3px solid #1f6feb44}
 .trace-chain-row.outbound{border-left:3px solid #23863644}
+/* Open-in-editor (vscode://) link — on chain rows, the selected-symbol title, etc. */
+.src-open{color:#58a6ff;text-decoration:none;font-size:12px;padding:0 4px;border-radius:4px;flex-shrink:0;opacity:.55;cursor:pointer}
+.src-open:hover{opacity:1;background:#1f6feb22}
+.trace-chain-row .src-open{margin-left:auto}
+.trace-selected-title .src-open{opacity:.7;font-size:14px;margin-left:4px;vertical-align:middle}
+/* Editor-root control under the trace header */
+.trace-editor-root{display:flex;align-items:center;gap:8px;margin:-4px 0 14px;font-size:11px;color:#8b949e}
+.trace-editor-root .ter-label{flex-shrink:0;text-transform:uppercase;letter-spacing:.5px;cursor:help}
+.trace-editor-root input{flex:1;min-width:0;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:4px 8px;border-radius:6px;font-size:11px;font-family:monospace}
+.trace-editor-root input:focus{outline:none;border-color:#58a6ff}
+.trace-editor-root .ter-scheme{flex-shrink:0;font-family:monospace;color:#484f58}
 .trace-no-links{color:#484f58;font-style:italic;font-size:13px;padding:8px 0}
 
 /* D3 Architecture Graph */
@@ -1124,6 +1140,41 @@ function chunkedAppend(list, nextChunk) {
 }
 
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ─── Open-in-editor links ────────────────────────────────────────────────
+// Turn a repo-relative file path + line into a vscode://file/ deep link so the
+// Call Traces rows can jump straight to the calling (or called) source line in
+// the editor. Base root defaults to the analyzed projectRoot but can be
+// overridden per-viewer (localStorage) when the report is opened elsewhere.
+function editorRoot() {
+  try { var o = localStorage.getItem('rd-editor-root'); if (o != null) return o; } catch (e) {}
+  return DATA.projectRoot || '';
+}
+function setEditorRoot(v) {
+  try { localStorage.setItem('rd-editor-root', v || ''); } catch (e) {}
+}
+// vscode://file/<abs path>:<line>:<col>. encodeURI keeps drive colon and slashes
+// intact while escaping spaces; line/col are appended raw (vscode expects them
+// unescaped). Returns null when there's nothing usable to link to.
+function srcHref(file, line, col) {
+  if (!file) return null;
+  var root = editorRoot().replace(/\\\\/g, '/').replace(/\\/+$/, '');
+  var rel = String(file).replace(/\\\\/g, '/').replace(/^\\/+/, '');
+  var full = root ? root + '/' + rel : rel;
+  if (!full) return null;
+  var href = 'vscode://file/' + encodeURI(full);
+  if (line) { href += ':' + line; if (col) href += ':' + col; }
+  return href;
+}
+// Small ↗ anchor that opens the source location. stopPropagation keeps the
+// click from also triggering the row's in-report navigation. Returns '' when
+// no link can be built (e.g. no editor root configured).
+function openSrc(file, line, title) {
+  var href = srcHref(file, line);
+  if (!href) return '';
+  return '<a class="src-open" href="' + esc(href) + '" title="' + esc(title || 'Open in editor') +
+    '" onclick="event.stopPropagation()">\\u2197</a>';
+}
 
 // ─── Cross-view element selection bus ────────────────────────────────────
 // Click a code element in one view → highlight the same element across the
@@ -2351,9 +2402,12 @@ function renderTraces() {
     const srcKey = l.sourceFile + '::' + l.sourceSymbol;
     const tgtKey = l.targetFile + '::' + l.targetSymbol;
 
-    // Register symbols
-    if (!allSymbols[srcKey]) allSymbols[srcKey] = { file: l.sourceFile, symbol: l.sourceSymbol, inCount: 0, outCount: 0 };
-    if (!allSymbols[tgtKey]) allSymbols[tgtKey] = { file: l.targetFile, symbol: l.targetSymbol, inCount: 0, outCount: 0 };
+    // Register symbols. defLine is the symbol's own definition line: targetLine
+    // is exactly that (resolved definition), so prefer it; for a symbol only
+    // ever seen as a caller, fall back to its first call-site line (same file).
+    if (!allSymbols[srcKey]) allSymbols[srcKey] = { file: l.sourceFile, symbol: l.sourceSymbol, inCount: 0, outCount: 0, defLine: l.sourceLine };
+    if (!allSymbols[tgtKey]) allSymbols[tgtKey] = { file: l.targetFile, symbol: l.targetSymbol, inCount: 0, outCount: 0, defLine: l.targetLine };
+    else allSymbols[tgtKey].defLine = l.targetLine;
 
     // Callees (outbound from source)
     if (!calleeMap[srcKey]) calleeMap[srcKey] = [];
@@ -2378,7 +2432,7 @@ function renderTraces() {
     if (!r.entityMatched || !isFileVisible(r.file)) return;
     const k = r.file + '::' + r.symbol;
     (symAccess[k] = symAccess[k] || []).push(r);
-    if (!allSymbols[k]) allSymbols[k] = { file: r.file, symbol: r.symbol, inCount: 0, outCount: 0 };
+    if (!allSymbols[k]) allSymbols[k] = { file: r.file, symbol: r.symbol, inCount: 0, outCount: 0, defLine: (r.sites && r.sites[0] && r.sites[0].line) || 0 };
   });
 
   // Repopulate the trace-specific file filter (scoped to visible symbols only)
@@ -2495,13 +2549,22 @@ function renderTraces() {
     // Screens → Call Traces → Blast Radius navigation chain.
     const hasBlast = (DATA.blastRadius || []).some(b => b.filePath === sym.file);
     let html = '<div class="trace-map-head">';
-    html += '<div><div class="trace-selected-title">' + esc(sym.symbol) + '</div>';
+    html += '<div><div class="trace-selected-title">' + esc(sym.symbol) +
+      openSrc(sym.file, sym.defLine, 'Open ' + sym.symbol + ' in editor') + '</div>';
     html += '<div class="trace-selected-file">' + esc(sym.file) + '</div></div>';
     html += '<div class="trace-view-toggle">' +
       (hasBlast ? '<button class="d3-btn trace-blast-link" data-blast-file="' + esc(sym.file) + '" title="View this file\\u2019s blast radius">Blast radius \\u2197</button>' : '') +
       '<button class="d3-btn' + (traceViewMode === 'tree' ? ' active' : '') + '" data-trace-view="tree">Diagram</button>' +
       '<button class="d3-btn' + (traceViewMode === 'list' ? ' active' : '') + '" data-trace-view="list">List</button>' +
       '</div></div>';
+    // Editor-root control: the base path the \\u2197 links resolve against. Defaults
+    // to the analyzed projectRoot; edit it (persisted) when viewing the report on
+    // a machine whose checkout lives elsewhere. Empty disables the links.
+    html += '<div class="trace-editor-root">' +
+      '<span class="ter-label" title="Open-in-editor links resolve relative paths against this root">\\u2197 Editor root</span>' +
+      '<input id="trace-editor-root-input" type="text" spellcheck="false" value="' + esc(editorRoot()) + '" placeholder="(set a path to enable \\u2197 links)" />' +
+      '<span class="ter-scheme">vscode://</span>' +
+      '</div>';
 
     // Data Model connection: entities this function directly reads/writes.
     const access = symAccess[key] || [];
@@ -2537,6 +2600,7 @@ function renderTraces() {
             '<span style="color:#58a6ff">this</span>' +
             '<span class="chain-line">:' + c.sourceLine + '</span>' +
             '<span class="chain-file">' + esc(c.sourceFile) + '</span>' +
+            openSrc(c.sourceFile, c.sourceLine, 'Open call site \\u2014 ' + c.sourceFile + ':' + c.sourceLine) +
           '</div>';
         }, 'callers');
       }
@@ -2557,6 +2621,7 @@ function renderTraces() {
             '<span class="chain-call">' + esc(c.callName) + '</span>' +
             '<span class="chain-line">:' + c.targetLine + '</span>' +
             '<span class="chain-file">' + esc(c.targetFile) + '</span>' +
+            openSrc(c.targetFile, c.targetLine, 'Open definition \\u2014 ' + c.targetFile + ':' + c.targetLine) +
           '</div>';
         }, 'calls');
       }
@@ -2568,6 +2633,11 @@ function renderTraces() {
       const pane = mapDiv.closest('.trace-map-pane');
       if (pane) pane.scrollTop = 0;
     }
+
+    // Persist the editor root and re-render so every \\u2197 link picks up the new
+    // base (fires on blur/Enter, so focus has already left — re-render is safe).
+    const rootInput = mapDiv.querySelector('#trace-editor-root-input');
+    if (rootInput) rootInput.onchange = function() { setEditorRoot(this.value.trim()); selectSymbol(key); };
 
     if (traceViewMode === 'tree') {
       renderCallTree(key, document.getElementById('trace-tree-host'));
@@ -2706,20 +2776,34 @@ function renderTraces() {
       var base = !d.key ? d.name : (allSymbols[d.key] ? allSymbols[d.key].symbol + '  (' + allSymbols[d.key].file + ')' : d.name);
       var acc = d.key && symAccess[d.key];
       if (acc && acc.length) base += '\\nDB: ' + acc.map(function(r){ return r.entity; }).join(', ');
+      if (d.key && !d.da) base += '\\nClick to recenter \\u00b7 Ctrl/\\u2318-click to open in editor';
       return base;
     });
+    // Open a node's source in the editor (Ctrl/Cmd-click). Anchor-click triggers
+    // the vscode:// handler without navigating the report away.
+    function openNodeSrc(d){
+      var s = d.key && allSymbols[d.key];
+      var href = s && srcHref(s.file, s.defLine);
+      if (!href) return;
+      var a = document.createElement('a'); a.href = href; a.click();
+    }
     // Green dot on caller-side / center nodes that touch the data model (callee
     // side already shows the entity as a green sink node).
     ns.filter(function(d){ return d.key && !d.da && symAccess[d.key]; })
       .append('circle').attr('class', 'ct-da-dot').attr('cx', NODE_W / 2 - 5).attr('cy', -NODE_H / 2 + 5).attr('r', 3);
-    // Click a non-center, real symbol node to recenter the diagram on it.
+    // Click a non-center, real symbol node to recenter the diagram on it;
+    // Ctrl/Cmd-click opens its source instead.
     ns.filter(function(d){ return d.key && d.cls !== 'center' && !d.da; }).style('cursor', 'pointer')
       .on('click', function(e, d){
         e.stopPropagation();
+        if (e.ctrlKey || e.metaKey) { openNodeSrc(d); return; }
         selectSymbol(d.key);
         var li = document.querySelector('.trace-sym-item[data-sym-key="' + CSS.escape(d.key) + '"]');
         if (li) li.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       });
+    // The center (selected) node: Ctrl/Cmd-click opens its source too.
+    ns.filter(function(d){ return d.key && d.cls === 'center' && !d.da; }).style('cursor', 'pointer')
+      .on('click', function(e, d){ e.stopPropagation(); if (e.ctrlKey || e.metaKey) openNodeSrc(d); });
 
     // Fit the whole diagram into the host on first paint.
     var xs = nodes.map(function(n){ return n.x; }), ys = nodes.map(function(n){ return n.y; });
