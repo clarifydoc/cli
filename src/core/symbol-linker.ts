@@ -846,6 +846,30 @@ function resolveCallToDefinition(
     }
   }
 
+  // ── Strategy 8: Generic type-argument reference ──
+  // A call carrying a generic type argument references that type:
+  // `_context.Set<Entities.Account>()`, `modelBuilder.Entity<Entities.Account>()`,
+  // `mapper.Map<AccountDto>(…)`, `new BulkImportResult<ExternalKey>(…)`. The
+  // dependency is on the type argument's definition — exactly what LSP resolves
+  // these call sites to. The arg's namespace qualifier (`Entities.Account`)
+  // disambiguates same-named types (entity vs. EF-scaffold duplicate) by
+  // matching its segments against the candidate file's path.
+  if (!def) {
+    const tm = call.name.match(/<\s*([A-Za-z_][\w.]*)/);
+    if (tm) {
+      const arg = tm[1]!;
+      const typeName = arg.slice(arg.lastIndexOf(".") + 1);
+      const entry = classCatalog.get(typeName);
+      // `count === 1` (globally unique class) is the guard. When several files
+      // define the type (a Domain entity AND its EF-scaffold duplicate), the
+      // correct binding depends on real type resolution / which `using` is in
+      // scope — guessing produces false edges, so leave those to the LSP layer.
+      if (entry && isSafeHeuristicTarget(entry, sourceFile, analysis.projectId, { allowCrossProject: true })) {
+        return mkLink(entry.file, entry.ctorSymbol ?? typeName, entry.ctorLine ?? entry.classLine, "INFERRED");
+      }
+    }
+  }
+
   if (!def) return null;
 
   // Default path: a definition matched by exact name in the resolved target file.
