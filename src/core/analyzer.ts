@@ -41,6 +41,8 @@ import { buildDataAccessGraph, attributeDataAccessToSymbols } from "./data-acces
 import { buildEntityGraph, reconcileEntityInheritance, linkEntityModels } from "./entity-graph.js";
 import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
+import { linkApiCallsToRoutes } from "./route-linker.js";
+import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
 import { buildComponentLaunches } from "./component-launches.js";
 import { buildImportIndex, resolveImportSource, type ImportIndex } from "./import-index.js";
 import { denormalizeFileAnalysis } from "./element-registry.js";
@@ -412,6 +414,17 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   progress.status("Resolving cross-file symbols...");
   let symbolLinks = dedupSymbolLinks(buildSymbolLinks(allAnalyses));
 
+  // Resolve dispatch indirection (mediator / command-bus) the generic linker
+  // can't see: a controller's `Send(new XQuery())` has no call edge to the
+  // handler's Handle method. Language plugins contribute these links; core stays
+  // framework-agnostic. Added before LSP + graph enrichment so they flow into
+  // the component/link graphs and any LSP pass treats them as existing links.
+  const dispatchLinks = resolveProjectDispatch(allAnalyses);
+  if (dispatchLinks.length > 0) {
+    symbolLinks = dedupSymbolLinks([...symbolLinks, ...dispatchLinks]);
+    progress.detail(`  Dispatch links: ${dispatchLinks.length}`);
+  }
+
   // Step 4b: LSP enhancement (optional)
   let lspStats: import("../types/analysis.js").LspStats | undefined;
   if (options.lsp !== false) {
@@ -486,6 +499,14 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const screenedFiles = new Set(webScreens.map((s) => s.filePath));
   const componentScreens = buildScreensFromComponents(allAnalyses, rawSources, screenedFiles);
   const allScreens = [...dfmScreens, ...webScreens, ...componentScreens];
+
+  // Cross-tier join: match each outbound api-call to the inbound route serving
+  // it (by HTTP method + normalized path). Connects the two halves of the
+  // screen→API→DB chain that the extractors produce independently.
+  const apiRouteLinks = linkApiCallsToRoutes(allApiCalls, allRoutes);
+  if (apiRouteLinks.length > 0) {
+    progress.detail(`  API↔route links: ${apiRouteLinks.length}`);
+  }
 
   // Step 4c: Advanced analysis
   progress.step("Analyzing complexity and patterns...");
@@ -654,6 +675,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     entityGraph: entityGraph.nodes.length > 0 ? entityGraph : undefined,
     symbolDataAccess: symbolDataAccess.length > 0 ? symbolDataAccess : undefined,
     migrations: migrations.length > 0 ? migrations : undefined,
+    apiRouteLinks: apiRouteLinks.length > 0 ? apiRouteLinks : undefined,
     generatedRoots: generatedRoots.length > 0 ? generatedRoots : undefined,
     unusedFiles: unusedFiles.length > 0 ? unusedFiles : undefined,
   };

@@ -100,6 +100,10 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       // Keep the dotted chain only for the ORM root check (`prisma.user.findMany`).
       const fnName = calleeLeaf(fn);
       const ormChain = fn && fn.type === "member_expression" ? fn.text : fnName;
+      // A call emitted as an HTTP api-call below must not ALSO be emitted as a
+      // database op: `apiClient.get("/owners")` is HTTP, but its leaf `get`
+      // collides with Drizzle's `.get()` in ORM_METHODS.
+      let emittedApiCall = false;
 
       if (fnName) {
         // HTTP call: fetch("/api/x"), axios.get("/api/x"), apiClient.post("/x").
@@ -127,6 +131,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
                 target: url,
                 line: node.startPosition.row + 1,
               }));
+              emittedApiCall = true;
             }
           }
         }
@@ -222,7 +227,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         // Record the full receiver chain (`prisma.user.findUnique`) as the name so
         // the model/table (`user`) is visible and the import-index enrichment can
         // resolve `target` from the root identifier (`prisma` → its db module).
-        if (ormChain && isOrmCall(ormChain)) {
+        if (!emittedApiCall && ormChain && isOrmCall(ormChain)) {
           sources.push(this.ds({
             kind: "database",
             name: ormChain,
@@ -370,6 +375,9 @@ function isOrmCall(name: string): boolean {
   // share verb names with ORM methods (Drizzle `get`, Prisma `delete`) but are
   // never DB ops — exclude by receiver before the leaf-method check.
   if (SERVER_ROUTER_OBJECTS.has(root)) return false;
+  // An HTTP client receiver (`axios.create`, `http.get`, `fetchClient.delete`)
+  // is never an ORM — its verb/CRUD-shaped methods are HTTP, not DB.
+  if (isHttpRoot(root)) return false;
   const leaf = parts[parts.length - 1]!;
   if (ORM_METHODS.has(leaf)) return true;
   if (ORM_ROOTS.has(root) || /Repository$/.test(root)) return true;
