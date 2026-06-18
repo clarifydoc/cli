@@ -73,9 +73,16 @@ function classify(p: string): MigrationInfo | null {
   m = p.match(/(?:^|\/)migrations\/(\d{3,}_[^/]+)\.py$/);
   if (m) return mk(p, "django", m[1]!);
 
-  // EF Core: Migrations/*.cs (timestamped designer files + ModelSnapshot)
+  // EF Core: Migrations/<timestamp>_<Name>.cs. Each migration also ships a
+  // `<name>.Designer.cs` companion (same migration, generated metadata) and the
+  // project has one `<Context>ModelSnapshot.cs` (current model state, not a
+  // migration) — both are excluded so a migration is counted exactly once.
   m = p.match(/(?:^|\/)Migrations\/([^/]+)\.cs$/);
-  if (m) return mk(p, "ef-core", m[1]!);
+  if (m) {
+    const name = m[1]!;
+    if (/ModelSnapshot$/.test(name) || /\.Designer$/.test(name)) return null;
+    return mk(p, "ef-core", name);
+  }
 
   // Doctrine: Migrations/Version*.php
   m = p.match(/(?:^|\/)[Mm]igrations\/(Version\w+)\.php$/);
