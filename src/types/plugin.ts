@@ -26,6 +26,8 @@ export interface ProjectInfo {
   composerJson: string | null;
   /** Raw content of Gemfile if found (used for Ruby ORM detection). */
   gemfile: string | null;
+  /** Raw content of pubspec.yaml if found (used for Dart/Flutter detection). */
+  pubspecYaml: string | null;
   /** Any *.sql / *.ddl files discovered (used to detect raw-SQL usage in the project). */
   sqlFiles: string[];
 }

@@ -2,7 +2,7 @@
 export type Language =
   | "typescript" | "javascript" | "csharp" | "python" | "java" | "kotlin" | "pascal" | "dfm"
   | "go" | "rust" | "ruby" | "php" | "swift" | "lua" | "scala"
-  | "perl" | "vb" | "sql" | "c" | "cpp" | "prisma";
+  | "perl" | "vb" | "sql" | "c" | "cpp" | "prisma" | "dart";
 
 export interface ExtractorWarning {
   /** Dotted-path location, e.g. "functions[3].endLine" or "routes[0].kind". */
@@ -372,6 +372,14 @@ export interface FunctionInfo {
   calls: CallInfo[];
   line: number;
   endLine: number;
+  /**
+   * Local variables assigned a constructed instance in this body
+   * (`$x = new Foo()` → `{ name: "x", type: "Foo" }`). Lets the symbol linker
+   * resolve `x.method()` to `Foo.method` without LSP — the common "construct a
+   * client/connection locally, then call it" pattern. Optional; populated only
+   * by plugins that extract it.
+   */
+  localTypes?: Array<{ name: string; type: string }>;
 }
 
 export interface PropertyInfo {
@@ -856,6 +864,7 @@ export type SubProjectKind =
   | "php"
   | "ruby"
   | "swift"
+  | "dart"
   | "root";
 
 export interface SubProject {

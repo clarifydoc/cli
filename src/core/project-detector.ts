@@ -36,6 +36,7 @@ const MARKER_GLOBS: { pattern: string; kind: SubProjectKind }[] = [
   { pattern: "**/composer.json", kind: "php" },
   { pattern: "**/Gemfile", kind: "ruby" },
   { pattern: "**/Package.swift", kind: "swift" },
+  { pattern: "**/pubspec.yaml", kind: "dart" },
 ];
 
 const MARKER_IGNORE = [
@@ -64,6 +65,7 @@ const KIND_PRIORITY: SubProjectKind[] = [
   "delphi",
   "lazarus",
   "dotnet",
+  "dart",
   "java-maven",
   "java-gradle",
   "rust",

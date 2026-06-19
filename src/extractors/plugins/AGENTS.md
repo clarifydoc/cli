@@ -21,7 +21,7 @@ Each extractor class implements `abstract collectFunctions(node, results)` / `co
 
 ## Regex plugins (source text–based)
 
-Folders: `go/`, `rust/`, `ruby/`, `php/`, `swift/`, `lua/`, `scala/`
+Folders: `go/`, `rust/`, `ruby/`, `php/`, `swift/`, `lua/`, `scala/`, `dart/`
 
 Contents:
 ```

@@ -12,8 +12,13 @@ export interface RouteExtractor {
   /** Languages this extractor handles */
   readonly languages: Language[];
 
-  /** Extract all routes/endpoints from the AST. */
-  extractRoutes(tree: Tree, sourceText: string): RouteInfo[];
+  /**
+   * Extract all routes/endpoints from the AST. `filePath` is supplied for
+   * frameworks whose routing is path-derived (e.g. CodeIgniter maps a URL
+   * onto `controllers/<dir>/<file>.php`); extractors that don't need it ignore
+   * the argument.
+   */
+  extractRoutes(tree: Tree, sourceText: string, filePath?: string): RouteInfo[];
 }
 
 export const HTTP_METHODS = new Set([

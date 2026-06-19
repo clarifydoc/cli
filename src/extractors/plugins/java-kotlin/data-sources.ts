@@ -82,6 +82,19 @@ const HTTP_METHODS = new Set([
 /** A jOOQ-style table reference: an ALL-CAPS generated constant (`STUDENT`, `US2000JOB`). */
 const TABLE_CONST_RE = /^[A-Z][A-Z0-9_]*$/;
 
+/**
+ * A DAO/Repository-shaped receiver carries the entity in its NAME
+ * (`caseDAO` → Case, `reimbursementSupportActivityDAO` → …). The DAO layer
+ * hides the actual jOOQ behind a factory-built instance, so the data access has
+ * to be recognised at the CALL site (`caseDAO.get(id)`) — otherwise a service
+ * method's trace never reaches the table it touches through the DAO.
+ */
+const DAO_RECEIVER_RE = /^(.+?)(DAO|Dao|Repository|Repo)$/;
+
+/** Verb that begins a DAO/Repository data operation (`get`, `findBy…`, `save`, `deleteAll`, …). */
+const DAO_CRUD_RE =
+  /^(get|find|fetch|load|list|search|read|select|query|save|store|insert|create|add|update|merge|upsert|persist|delete|remove|count|exists|all)/i;
+
 export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["java", "kotlin"];
 
@@ -122,7 +135,9 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     const { method, receiver } = call;
     const line = node.startPosition.row + 1;
 
-    // 1) jOOQ — table lives in the first argument.
+    // 1) jOOQ — table lives in the first argument. Only CONSUME the call when a
+    // table is actually found; otherwise fall through, since a verb like
+    // `update` is also a DAO method (`documentDAO.update(doc)`) handled below.
     if (JOOQ_TABLE_VERBS.has(method)) {
       const table = resolveTableExpr(call.firstArg, this.tableAliases);
       if (table) {
@@ -133,29 +148,44 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
           entity: table,
           line,
         }));
+        return;
       }
+    }
+
+    // 2) DAO / Repository call — entity from the receiver name (`caseDAO.get` →
+    // Case). Dominant data path here: the DAO wraps jOOQ behind a factory, so
+    // this is where a service method's DB access is visible.
+    const daoEntity = daoReceiverEntity(receiver);
+    if (daoEntity && DAO_CRUD_RE.test(method)) {
+      sources.push(this.ds({
+        kind: "database",
+        name: `DAO: ${method}`,
+        target: daoEntity,
+        entity: daoEntity,
+        line,
+      }));
       return;
     }
 
-    // 2) Spring Data / JPA repository methods.
+    // 3) Spring Data / JPA repository methods.
     if (SPRING_DATA_EXACT.has(method) || SPRING_DATA_DERIVED.test(method)) {
       sources.push(this.ds({ kind: "database", name: method, target: null, line }));
       return;
     }
 
-    // 3) JdbcTemplate / EntityManager — generic names, gated on receiver.
+    // 4) JdbcTemplate / EntityManager — generic names, gated on receiver.
     if (JDBC_METHODS.has(method) && JDBC_RECEIVER_RE.test(receiver)) {
       sources.push(this.ds({ kind: "database", name: method, target: null, line }));
       return;
     }
 
-    // 4) HTTP client calls.
+    // 5) HTTP client calls.
     if (HTTP_METHODS.has(method) || HTTP_HINT_RE.test(node.text)) {
       sources.push(this.ds({ kind: "api-call", name: method, target: null, line }));
       return;
     }
 
-    // 5) Environment / config reads.
+    // 6) Environment / config reads.
     if (method === "getProperty" || method === "getenv") {
       sources.push(this.ds({ kind: "env", name: method, target: null, line }));
     }
@@ -255,6 +285,18 @@ function resolveTableExpr(arg: Node | null, aliases: Map<string, string>): strin
   const seg = arg.text.split(/[.]/).pop()?.trim() ?? "";
   if (aliases.has(seg)) return aliases.get(seg)!;
   return TABLE_CONST_RE.test(seg) && seg.length > 1 ? seg : null;
+}
+
+/**
+ * Entity behind a DAO/Repository receiver: the last receiver segment with a
+ * `DAO`/`Dao`/`Repository`/`Repo` suffix stripped (`this.caseDAO` → "case",
+ * `reimbursementDAO` → "reimbursement"). Null when the receiver isn't a DAO.
+ */
+function daoReceiverEntity(receiver: string): string | null {
+  const seg = receiver.split(".").pop()?.trim() ?? "";
+  const m = DAO_RECEIVER_RE.exec(seg);
+  const base = m?.[1];
+  return base && base.length > 1 ? base : null;
 }
 
 /** Receiver node of a `recv.method(...)` call (Java `object` field / Kotlin navigation). */
