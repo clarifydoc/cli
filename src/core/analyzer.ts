@@ -37,7 +37,7 @@ import { findGodNodes, findSurprisingConnections, suggestQuestions } from "./top
 import { dedupSymbolLinks, dropNameCollisionReferences } from "./symbol-dedup.js";
 import { aggregateTypeBlast, buildClassGraph } from "./data-model-blast.js";
 import { buildDataAccessGraph, attributeDataAccessToSymbols } from "./data-access-graph.js";
-import { buildEntityGraph, reconcileEntityInheritance, linkEntityModels } from "./entity-graph.js";
+import { buildEntityGraph, reconcileEntityInheritance, linkEntityModels, synthesizeReferencedTableEntities } from "./entity-graph.js";
 import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
 import { linkApiCallsToRoutes, dedupeRoutes } from "./route-linker.js";
@@ -601,6 +601,11 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // type position, derived from the already-resolved ClassGraph edges. (The
   // ClassGraph nodes are themselves tagged isEntity/orm inside buildClassGraph.)
   if (hasEntities) linkEntityModels(entityGraph, classGraph);
+  // Add ER nodes for tables that are queried but never modeled as an ORM entity
+  // (CodeIgniter/knex/raw-SQL — the table is a bare string in `$this->db->get('x')`).
+  // Deduped against the real entities above, so ORM projects are unchanged; this
+  // populates the Data Model tab and lets the DB accesses below match (green).
+  if (hasDbAccess) synthesizeReferencedTableEntities(allAnalyses, entityGraph);
 
   // Bridge Call Traces ↔ Data Model: attribute each DB access to its containing
   // function and match the touched entity to an ER node. Drives the entity
