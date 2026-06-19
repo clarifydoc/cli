@@ -10,8 +10,7 @@ import {
   type Manifest,
 } from "./manifest.js";
 import {
-  gatherProjectInfo,
-  detectFrameworks,
+  detectFrameworksAcrossRoots,
 } from "./framework-detector.js";
 import { detectSubProjects, assignProjectId } from "./project-detector.js";
 import {
@@ -41,7 +40,7 @@ import { buildDataAccessGraph, attributeDataAccessToSymbols } from "./data-acces
 import { buildEntityGraph, reconcileEntityInheritance, linkEntityModels } from "./entity-graph.js";
 import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
-import { linkApiCallsToRoutes } from "./route-linker.js";
+import { linkApiCallsToRoutes, dedupeRoutes } from "./route-linker.js";
 import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
 import { buildComponentLaunches } from "./component-launches.js";
 import { buildImportIndex, resolveImportSource, type ImportIndex } from "./import-index.js";
@@ -276,10 +275,21 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     };
   }
 
-  // Step 2: Detect frameworks
+  // Step 2: Detect sub-projects (monorepo packages, multi-language repos) FIRST,
+  // so framework detection can scan each sub-project's own (often nested) manifests.
+  progress.step("Detecting sub-projects...");
+  const subProjects = await detectSubProjects(projectRoot);
+
+  // Step 2b: Detect frameworks at the root AND inside each sub-project root.
   progress.step("Detecting frameworks...");
-  const projectInfo = await gatherProjectInfo(projectRoot);
-  const frameworks = detectFrameworks(projectInfo);
+  const { merged: frameworks, byRoot: frameworksByRoot } = await detectFrameworksAcrossRoots(
+    projectRoot,
+    subProjects.map((sp) => sp.root),
+  );
+  for (const sp of subProjects) {
+    const fws = frameworksByRoot.get(sp.root);
+    if (fws && fws.length > 0) sp.frameworks = fws;
+  }
   const frameworkIds = frameworks.map((f) => f.id);
 
   progress.detail(
@@ -288,9 +298,6 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       : "No frameworks detected",
   );
 
-  // Step 2b: Detect sub-projects (monorepo packages, multi-language repos)
-  progress.step("Detecting sub-projects...");
-  const subProjects = await detectSubProjects(projectRoot);
   const fileProjects: Record<string, string> = {};
   for (const f of files) {
     fileProjects[f.relativePath] = assignProjectId(f.relativePath, subProjects);
@@ -476,8 +483,11 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // from the finalized symbol links.
   const componentLaunches = buildComponentLaunches(symbolLinks);
 
-  const allRoutes = allAnalyses.flatMap((a) =>
-    a.routes.map((r) => ({ ...r, filePath: a.filePath })),
+  // Collapse the same endpoint declared twice (Rails: `routes.rb` expansion +
+  // controller-action convention) into one richest entry, so the route map and
+  // the cross-tier linker don't double-count or pick a code-less handler.
+  const allRoutes = dedupeRoutes(
+    allAnalyses.flatMap((a) => a.routes.map((r) => ({ ...r, filePath: a.filePath }))),
   );
   const allInteractiveElements = allAnalyses.flatMap((a) =>
     a.interactiveElements.map((el) => ({ ...el, filePath: a.filePath })),
