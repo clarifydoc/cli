@@ -78,6 +78,28 @@ class Dao {
   });
 });
 
+describe("DAO / Repository receiver → entity (the dominant data path here)", () => {
+  it("derives the entity from a `<entity>DAO.<crud>()` call", async () => {
+    const s = db(await sourcesOf(
+      `    val d = documentDAO.get(id); documentDAO.update(d); val c = caseDAO.findByStudent(x)`,
+      "kotlin",
+    ));
+    expect(s.some((d) => d.entity === "document" && d.name === "DAO: get")).toBe(true);
+    expect(s.some((d) => d.entity === "document" && d.name === "DAO: update")).toBe(true);
+    expect(s.some((d) => d.entity === "case")).toBe(true);
+  });
+
+  it("handles a `this.userRepository.save()` receiver", async () => {
+    const s = db(await sourcesOf(`    this.userRepository.save(u)`, "kotlin"));
+    expect(s.some((d) => d.entity === "user")).toBe(true);
+  });
+
+  it("does NOT treat a non-CRUD method on a DAO, or a DAO factory, as access", async () => {
+    const s = db(await sourcesOf(`    caseDAO.toString(); val dao = CaseDAOFactory.getInstance()`, "kotlin"));
+    expect(s.length).toBe(0);
+  });
+});
+
 describe("Java jOOQ + Spring Data", () => {
   it("captures jOOQ table on the Java AST too", async () => {
     const s = db(await sourcesOf(`    var r = dsl.deleteFrom(REIMBURSEMENT).where(c).execute();`, "java"));

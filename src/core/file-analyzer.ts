@@ -144,7 +144,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // Test files (unit/integration/e2e specs) never expose real routes — a
     // Cypress `cy.get('button')` or `request(app).get('/x')` is not an endpoint.
     const isTest = isTestFile(file.relativePath, language);
-    analysis.routes = isTest ? [] : extractRoutes(tree, sourceText, language);
+    analysis.routes = isTest ? [] : extractRoutes(tree, sourceText, language, analysis.filePath);
     analysis.dataSources = extractDataSources(tree, sourceText, language);
     // Backfill missing `target` on data sources by tracing each call's root
     // identifier through this file's imports (named imports, namespace

@@ -68,19 +68,19 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       }
     }
 
-    // Kotlin: delegation_specifiers (extends/implements combined)
+    // Kotlin: one `delegation_specifier` child per supertype (`: Base(), IFoo`).
+    // The grammar has no plural wrapper — the previous `delegation_specifiers`
+    // lookup never matched, so Kotlin extends/implements were always empty
+    // (interface→impl resolution couldn't find the impl). A `()` constructor
+    // call marks the superCLASS (Kotlin requires it); a bare name is an interface.
     for (const child of node.children) {
-      if (child.type === "delegation_specifiers" || child.type === "super_interfaces") {
-        for (const spec of child.children) {
-          if (spec.type !== "," && spec.type !== ":") {
-            const specText = spec.text.replace(/\(.*\)$/, "").trim();
-            if (!extendsName) {
-              extendsName = specText;
-            } else {
-              implementsList.push(specText);
-            }
-          }
-        }
+      if (child.type !== "delegation_specifier") continue;
+      const specText = child.text.replace(/[<(].*$/s, "").trim();
+      if (!specText) continue;
+      if (child.text.includes("(") && !extendsName) {
+        extendsName = specText;
+      } else {
+        implementsList.push(specText);
       }
     }
 
@@ -106,8 +106,17 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     const vis = this.getVisibility(node);
     const isExported = lang === "kotlin" ? vis !== "private" : vis === "public" || vis === null;
 
+    // Kotlin parses `interface X` as a class_declaration carrying an `interface`
+    // keyword token; Java uses a dedicated `interface_declaration`. Marking
+    // `kind` is what lets `buildInterfaceImplMap` seed the interface (and thus
+    // redirect `this.service.X()` to the implementing class's method).
+    const isInterface =
+      node.type === "interface_declaration" ||
+      node.children.some((c) => c.type === "interface");
+
     return {
       name,
+      kind: isInterface ? "interface" : "class",
       extends: extendsName,
       implements: implementsList,
       decorators,
@@ -138,12 +147,21 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
         member.type === "field_declaration" ||
         member.type === "property_declaration"
       ) {
+        // Kotlin nests the name + type inside a `variable_declaration`
+        // (`service: IAppService`); Java uses a `variable_declarator` + `type`
+        // field. Getting the name/type right is what lets the injection map
+        // resolve `this.service.X()` → the service class (DI-style fields).
+        const varDecl = this.findChildByType(member, "variable_declaration");
         const propName =
           member.childForFieldName("name")?.text ??
           this.findChildByType(member, "variable_declarator")?.childForFieldName("name")?.text ??
+          (varDecl && this.findChildByType(varDecl, "simple_identifier")?.text) ??
           this.findChildByType(member, "simple_identifier")?.text ??
           "unknown";
-        const typeNode = member.childForFieldName("type") ?? this.findChildByType(member, "user_type");
+        const typeNode =
+          member.childForFieldName("type") ??
+          (varDecl && this.findChildByType(varDecl, "user_type")) ??
+          this.findChildByType(member, "user_type");
         properties.push({
           name: propName,
           type: typeNode?.text ?? null,

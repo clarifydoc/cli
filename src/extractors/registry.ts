@@ -24,6 +24,7 @@ import { sqlMeta } from "./plugins/sql/meta.js";
 import { cMeta } from "./plugins/c/meta.js";
 import { cppMeta } from "./plugins/cpp/meta.js";
 import { prismaMeta } from "./plugins/prisma/meta.js";
+import { dartMeta } from "./plugins/dart/meta.js";
 
 /**
  * The language plugin registry. Aggregates every plugin's LanguagePluginMeta
@@ -37,7 +38,7 @@ const ALL_METAS: LanguagePluginMeta[] = [
   pascalMeta, dfmMeta,
   phpMeta,
   goMeta, rustMeta, rubyMeta, swiftMeta, luaMeta, scalaMeta, perlMeta,
-  vbMeta, sqlMeta, cMeta, cppMeta, prismaMeta,
+  vbMeta, sqlMeta, cMeta, cppMeta, prismaMeta, dartMeta,
 ];
 
 const BY_LANGUAGE = new Map<Language, LanguagePluginMeta>();

@@ -321,6 +321,9 @@ a{color:#58a6ff;text-decoration:none}
 .trace-sym-item .sym-entities{flex-shrink:0;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:#3fb950;background:#14301f;border:1px solid #2ea04366;border-radius:8px;padding:0 6px;line-height:15px}
 /* Call Traces → Data Model: per-symbol DB access section in the detail pane */
 .trace-da-section{margin:10px 0;padding:8px 10px;background:#0d1117;border:1px solid #1f3a28;border-left:3px solid #3fb950;border-radius:6px}
+.trace-da-section.via{border-color:#1f2f3a;border-left-color:#388bfd}
+.trace-da-section.via .trace-da-head{color:#58a6ff}
+.sym-entities.via{color:#58a6ff;background:#0f1d30;border-color:#1f6feb66}
 .trace-da-head{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#3fb950;font-weight:600;margin-bottom:6px}
 .trace-da-row{display:flex;gap:8px;align-items:baseline;font-size:11px;padding:3px 0;flex-wrap:wrap;border-bottom:1px solid #161b22}
 .trace-da-entity{font-family:monospace;color:#8b949e;background:#161b22;border-radius:4px;padding:1px 6px}
@@ -2435,6 +2438,44 @@ function renderTraces() {
     if (!allSymbols[k]) allSymbols[k] = { file: r.file, symbol: r.symbol, inCount: 0, outCount: 0, defLine: (r.sites && r.sites[0] && r.sites[0].line) || 0 };
   });
 
+  // Transitive data access: an entity touched by a downstream call. A controller
+  // method that only delegates (this.service.x which calls caseDAO.get) has no
+  // DIRECT access, so its trace dead-ended at the Data Model. Propagate each
+  // direct-access symbol's entities BACKWARD over the caller graph so every
+  // ancestor in the call chain surfaces the tables it ultimately reaches.
+  // Records the nearest downstream symbol per entity (closer callers win, BFS
+  // order). Excludes a symbol's own direct entities.
+  const transAccess = {}; // key -> { entity: viaSymbol }
+  let transGuard = 0;
+  Object.keys(symAccess).forEach(function(leafKey) {
+    const leafSym = (allSymbols[leafKey] || {}).symbol || leafKey.split('::').pop();
+    const entities = [...new Set(symAccess[leafKey].map(r => r.entity))];
+    const seen = {}; seen[leafKey] = true;
+    let frontier = [leafKey];
+    while (frontier.length && transGuard < 4000000) {
+      const next = [];
+      for (let i = 0; i < frontier.length; i++) {
+        const callers = callerMap[frontier[i]] || [];
+        for (let j = 0; j < callers.length; j++) {
+          const par = callers[j].sourceFile + '::' + callers[j].sourceSymbol;
+          if (seen[par]) continue;
+          seen[par] = true; transGuard++;
+          const m = transAccess[par] = transAccess[par] || {};
+          for (const e of entities) if (!m[e]) m[e] = leafSym;
+          next.push(par);
+        }
+      }
+      frontier = next;
+    }
+  });
+  // Direct entities take precedence: drop them from a symbol's transitive set.
+  function transitiveEntitiesFor(key) {
+    const m = transAccess[key];
+    if (!m) return [];
+    const direct = new Set((symAccess[key] || []).map(r => r.entity));
+    return Object.keys(m).filter(e => !direct.has(e)).map(e => ({ entity: e, via: m[e] }));
+  }
+
   // Repopulate the trace-specific file filter (scoped to visible symbols only)
   const traceFiles = [...new Set(Object.values(allSymbols).map(s => s.file))].sort();
   const prevFileValue = traceFileSel.value;
@@ -2486,6 +2527,13 @@ function renderTraces() {
             const names = acc.map(r => r.entity);
             const shown = names.slice(0, 2).join(', ') + (names.length > 2 ? ' +' + (names.length - 2) : '');
             accBadge = '<span class="sym-entities" title="Reads/writes: ' + esc(names.join(', ')) + '">' + esc(shown) + '</span>';
+          } else {
+            const via = transitiveEntitiesFor(s.key);
+            if (via.length) {
+              const names = via.map(v => v.entity);
+              const shown = names.slice(0, 2).join(', ') + (names.length > 2 ? ' +' + (names.length - 2) : '');
+              accBadge = '<span class="sym-entities via" title="Reaches via calls: ' + esc(names.join(', ')) + '">\\u21B3 ' + esc(shown) + '</span>';
+            }
           }
           return '<div class="trace-sym-item' + sel + '" data-sym-key="' + esc(s.key) + '">' +
             '<span class="sym-name">' + esc(s.symbol) + '</span>' +
@@ -2578,6 +2626,22 @@ function renderTraces() {
           '<span class="trace-da-sites">' + sites + (r.sites.length > 5 ? ' +' + (r.sites.length - 5) : '') + '</span>' +
         '</div>';
       });
+      html += '</div>';
+    }
+
+    // Data Model connection THROUGH the call chain: entities reached by
+    // downstream calls (e.g. a controller → service → DAO → table). Shown
+    // separately from the direct access above so the provenance is clear.
+    const viaAccess = transitiveEntitiesFor(key);
+    if (viaAccess.length > 0) {
+      html += '<div class="trace-da-section via"><div class="trace-da-head">\\u21B3 Data access via calls (' + viaAccess.length + ')</div>';
+      viaAccess.slice(0, 40).forEach(function(r) {
+        html += '<div class="trace-da-row">' +
+          '<span class="trace-da-entity matched">' + esc(r.entity) + '</span>' +
+          '<span class="trace-da-store">via ' + esc(r.via) + '</span>' +
+        '</div>';
+      });
+      if (viaAccess.length > 40) html += '<div class="trace-da-sites">+' + (viaAccess.length - 40) + ' more</div>';
       html += '</div>';
     }
 

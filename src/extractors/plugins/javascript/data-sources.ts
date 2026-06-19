@@ -1,4 +1,4 @@
-import type { Node } from "web-tree-sitter";
+import type { Node, Tree } from "web-tree-sitter";
 import type { DataSourceInfo, CallInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { extractCalls } from "../../shared/call-graph.js";
@@ -82,8 +82,44 @@ const NOISE_METHODS = new Set([
   "toString", "valueOf", "toJSON",
 ]);
 
+const NO_CONSTS: ReadonlyMap<string, string> = new Map();
+
 export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
+
+  /**
+   * File-local map of `const X = '…url…'` bindings, resolved once per file so a
+   * `fetch(X)` / `` fetch(`${X}?q=…`) `` can recover the endpoint URL. Real Vue/
+   * React data layers hoist endpoints into module consts — frequently
+   * `import.meta.env.VITE_X ?? '/site/cui_checkout_json'` — and call `fetch` with
+   * the identifier, so without this the api-call carried no URL and never joined
+   * to a backend route. Per-file and reset after each `extract()` (the extractor
+   * is a per-worker singleton run sequentially), so it never leaks across files.
+   */
+  private urlConsts: ReadonlyMap<string, string> = NO_CONSTS;
+
+  override extract(tree: Tree, sourceText: string): DataSourceInfo[] {
+    this.urlConsts = buildUrlConstMap(tree.rootNode);
+    try {
+      return super.extract(tree, sourceText);
+    } finally {
+      this.urlConsts = NO_CONSTS;
+    }
+  }
+
+  /**
+   * Resolve a `fetch`/client call's URL argument to a literal path. Handles a
+   * string/template literal directly and resolves a bare identifier or a
+   * template's `${id}` interpolation through the file-local const map; an
+   * interpolation that doesn't resolve is reproduced verbatim so an otherwise
+   * unchanged template yields the same target as before (no fixture churn).
+   */
+  private resolveUrlArg(arg: Node): string | null {
+    if (arg.type === "string") return stripQuotes(arg.text);
+    if (arg.type === "template_string") return resolveTemplateUrl(arg, this.urlConsts);
+    if (arg.type === "identifier") return this.urlConsts.get(arg.text) ?? null;
+    return null;
+  }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
     if (node.type === "call_expression") {
@@ -116,23 +152,18 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         if ((isRoot || isVerb) && fn && !isServerRouteDef(fn, node)) {
           const args = node.childForFieldName("arguments");
           const firstArg = args && args.childCount > 1 ? args.child(1) : null;
-          if (
-            firstArg &&
-            (firstArg.type === "string" || firstArg.type === "template_string")
-          ) {
-            const url = stripQuotes(firstArg.text);
-            // Bare HTTP verbs (`get`/`post`/...) collide with `Map.get`,
-            // `searchParams.get`, etc., so require a URL-shaped argument; named
-            // clients (fetch/axios/http/request) are trusted without it.
-            if (isRoot || looksLikeUrl(url)) {
-              sources.push(this.ds({
-                kind: "api-call",
-                name: fnName,
-                target: url,
-                line: node.startPosition.row + 1,
-              }));
-              emittedApiCall = true;
-            }
+          const url = firstArg ? this.resolveUrlArg(firstArg) : null;
+          // Bare HTTP verbs (`get`/`post`/...) collide with `Map.get`,
+          // `searchParams.get`, etc., so require a URL-shaped argument; named
+          // clients (fetch/axios/http/request) are trusted without it.
+          if (url != null && (isRoot || looksLikeUrl(url))) {
+            sources.push(this.ds({
+              kind: "api-call",
+              name: fnName,
+              target: url,
+              line: node.startPosition.row + 1,
+            }));
+            emittedApiCall = true;
           }
         }
 
@@ -307,6 +338,84 @@ function objectPropValue(obj: Node, key: string): Node | null {
     if (keyText === key) return pair.childForFieldName("value");
   }
   return null;
+}
+
+/**
+ * Resolve a const initializer to a literal string, when it is one. Follows the
+ * common endpoint idioms: a plain string, an interpolation-free template, and
+ * the env-default `import.meta.env.VITE_X ?? '/path'` / `process.env.Y || '/p'`
+ * (the string operand of a `??`/`||`). Returns null for anything dynamic.
+ */
+function resolveConstString(node: Node | null): string | null {
+  if (!node) return null;
+  switch (node.type) {
+    case "string":
+      return stripQuotes(node.text);
+    case "template_string":
+      return node.children.some((c) => c.type === "template_substitution")
+        ? null // has interpolation — not a static literal
+        : stripQuotes(node.text);
+    case "binary_expression": {
+      // `env ?? '/default'` / `env || '/default'` — prefer the (default) operand
+      // that resolves to a string.
+      return (
+        resolveConstString(node.childForFieldName("right")) ??
+        resolveConstString(node.childForFieldName("left"))
+      );
+    }
+    case "parenthesized_expression":
+      return resolveConstString(node.namedChild(0));
+    default:
+      return null;
+  }
+}
+
+/**
+ * Build the file-local URL-const map: every `const/let X = <…>` whose value
+ * resolves to a URL-shaped literal. Only URL-shaped values are kept so the map
+ * stays an endpoint table rather than a dump of every string const.
+ */
+function buildUrlConstMap(root: Node): ReadonlyMap<string, string> {
+  const map = new Map<string, string>();
+  const stack: Node[] = [root];
+  while (stack.length > 0) {
+    const n = stack.pop()!;
+    if (n.type === "variable_declarator") {
+      const name = n.childForFieldName("name");
+      if (name && name.type === "identifier") {
+        const value = resolveConstString(n.childForFieldName("value"));
+        if (value && looksLikeUrl(value) && !map.has(name.text)) {
+          map.set(name.text, value);
+        }
+      }
+    }
+    for (const c of n.children) stack.push(c);
+  }
+  return map;
+}
+
+/**
+ * Reconstruct a template literal as a URL, substituting `${id}` interpolations
+ * found in the const map and reproducing every other part (literal fragments
+ * and unresolved `${…}`) verbatim — so a template that references no known URL
+ * const yields exactly its original text.
+ */
+function resolveTemplateUrl(tpl: Node, consts: ReadonlyMap<string, string>): string {
+  let out = "";
+  for (const part of tpl.children) {
+    if (part.type === "`") continue;
+    if (part.type === "template_substitution") {
+      const inner = part.namedChild(0);
+      if (inner && inner.type === "identifier" && consts.has(inner.text)) {
+        out += consts.get(inner.text)!;
+      } else {
+        out += part.text; // reproduce `${…}` verbatim
+      }
+    } else {
+      out += part.text; // string_fragment / escape_sequence
+    }
+  }
+  return out;
 }
 
 /** Leaf/callee name of a call's function node: `apiClient.post` → "post", `fetch` → "fetch". */

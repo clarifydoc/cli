@@ -50,6 +50,7 @@ export class PhpExtractor extends FunctionClassExtractor {
       isExported: true,
       decorators: this.parseAttributes(node),
       calls: extractCalls(body, "php"),
+      localTypes: extractLocalNewTypes(body),
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
@@ -95,6 +96,15 @@ export class PhpExtractor extends FunctionClassExtractor {
       }
     }
 
+    // CodeIgniter loads models/libraries dynamically (`$this->load->model('x')`),
+    // so `$this->x` has no declared type and the call linker can't follow
+    // `$this->x_model->method()` — the controller→model edge that carries the
+    // whole DB tier into Call Traces. Synthesize a typed property for each loaded
+    // dependency (CI's class name is the Ucfirst of the loaded name) so the
+    // standard injection map binds it; resolution no-ops when no such class
+    // exists, so this is safe for non-CI PHP.
+    this.collectCiLoadedDeps(node, properties);
+
     return {
       name,
       extends: extendsName,
@@ -122,6 +132,7 @@ export class PhpExtractor extends FunctionClassExtractor {
       isExported: this.isPublicMember(node),
       decorators: this.parseAttributes(node),
       calls: extractCalls(body, "php"),
+      localTypes: extractLocalNewTypes(body),
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
@@ -228,6 +239,65 @@ export class PhpExtractor extends FunctionClassExtractor {
     }
   }
 
+  /**
+   * Scan a class body for CodeIgniter `$this->load->model('x')` /
+   * `$this->load->library('y')` calls and append a synthetic typed property for
+   * each — `$this->customers_model` → `Customers_model`. CI's loaded name maps
+   * to its class by Ucfirst of the file basename (a `'sub/foo_model'` path keeps
+   * only `foo_model`); an optional second string arg is the object name CI binds
+   * the instance to (`$this->load->model('x_model','alias')` → `$this->alias`).
+   */
+  private collectCiLoadedDeps(classNode: Node, out: PropertyInfo[]): void {
+    const seen = new Set(out.map((p) => p.name));
+    const visit = (n: Node): void => {
+      if (n.type === "member_call_expression") {
+        const method = n.childForFieldName("name")?.text ?? "";
+        const recv = (n.childForFieldName("object")?.text ?? "").replace(/\s+/g, "");
+        if ((method === "model" || method === "library") && /\$this->load$/.test(recv)) {
+          const args = this.stringArgs(n.childForFieldName("arguments"));
+          if (args.length > 0) {
+            const baseName = args[0]!.split("/").pop() ?? args[0]!;
+            const propName = args[1] && /^[A-Za-z_]\w*$/.test(args[1]) ? args[1]! : baseName;
+            const typeName = baseName.charAt(0).toUpperCase() + baseName.slice(1);
+            if (propName && /^[A-Za-z_]\w*$/.test(propName) && !seen.has(propName)) {
+              seen.add(propName);
+              out.push({
+                name: propName,
+                type: typeName,
+                visibility: "public",
+                isStatic: false,
+                isReadonly: false,
+              });
+            }
+          }
+        }
+      }
+      for (const c of n.children) visit(c);
+    };
+    visit(classNode);
+  }
+
+  /** All literal string arguments of a call's `arguments` node, in order. */
+  private stringArgs(argsNode: Node | null): string[] {
+    if (!argsNode) return [];
+    const out: string[] = [];
+    for (const a of argsNode.children) {
+      if (a.type !== "argument") continue;
+      for (const inner of a.children) {
+        if (inner.type === "string") {
+          const frag = this.findChildByType(inner, "string_content");
+          out.push((frag?.text ?? inner.text).replace(/^['"]|['"]$/g, ""));
+          break;
+        }
+        if (inner.type === "encapsed_string") {
+          out.push(inner.text.replace(/^"|"$/g, ""));
+          break;
+        }
+      }
+    }
+    return out;
+  }
+
   /** Map PHP 8 `#[Attribute(args)]` lists onto our `decorators` field. */
   private parseAttributes(node: Node): string[] {
     const decorators: string[] = [];
@@ -254,4 +324,44 @@ export class PhpExtractor extends FunctionClassExtractor {
     }
     return true;
   }
+}
+
+/**
+ * Collect `$x = new Type(...)` local bindings in a function body so the symbol
+ * linker can resolve `$x->method()` to `Type::method`. PHP controllers here
+ * build a client locally (`$connection = new ApiConnection()`) and then call it
+ * — without this the call is an unresolved same-file `internal` reference.
+ * Skips nested closures (different scope).
+ */
+function extractLocalNewTypes(body: Node | null): Array<{ name: string; type: string }> {
+  if (!body) return [];
+  const out: Array<{ name: string; type: string }> = [];
+  const seen = new Set<string>();
+  const walk = (n: Node): void => {
+    if (
+      n.type === "anonymous_function_creation_expression" ||
+      n.type === "arrow_function" ||
+      n.type === "function_definition" ||
+      n.type === "method_declaration"
+    ) {
+      return; // don't descend into a nested scope
+    }
+    if (n.type === "assignment_expression") {
+      const left = n.childForFieldName("left") ?? n.child(0);
+      const right = n.childForFieldName("right") ?? n.child(n.childCount - 1);
+      if (left?.type === "variable_name" && right?.type === "object_creation_expression") {
+        const varName = left.childForFieldName("name")?.text
+          ?? left.children.find((c) => c.type === "name")?.text;
+        const typeNode = right.children.find((c) => c.type === "name" || c.type === "qualified_name");
+        const typeName = typeNode?.text.replace(/.*\\/, ""); // strip namespace
+        if (varName && typeName && !seen.has(varName)) {
+          seen.add(varName);
+          out.push({ name: varName, type: typeName });
+        }
+      }
+    }
+    for (const c of n.children) walk(c);
+  };
+  walk(body);
+  return out;
 }

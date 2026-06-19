@@ -3,8 +3,9 @@ import { resolve } from "path";
 import { analyze } from "./core/analyzer.js";
 import {
   gatherProjectInfo,
-  detectFrameworks,
+  detectFrameworksAcrossRoots,
 } from "./core/framework-detector.js";
+import { detectSubProjects } from "./core/project-detector.js";
 
 const program = new Command();
 
@@ -158,7 +159,16 @@ program
   .action(async (path: string) => {
     const projectRoot = resolve(path);
     const info = await gatherProjectInfo(projectRoot);
-    const frameworks = detectFrameworks(info);
+
+    // Frameworks are detected across the analyzed root AND every sub-project
+    // root — build manifests in a monorepo (a Flutter `pubspec.yaml`, a nested
+    // `package.json`/`pom.xml`) live below the root, so a root-only scan misses
+    // them. This mirrors what `analyze` records in `detectedFrameworks`.
+    const subProjects = await detectSubProjects(projectRoot);
+    const { merged: frameworks } = await detectFrameworksAcrossRoots(
+      projectRoot,
+      subProjects.map((s) => s.root),
+    );
 
     console.log("Project info:");
     console.log(`  Root: ${projectRoot}`);

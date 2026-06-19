@@ -415,6 +415,26 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     check: (info) => hasGradleDep(info, "com.android") || hasGradleDep(info, "android"),
     detectedVia: "build file dependency",
   },
+
+  // Dart / Flutter frameworks
+  {
+    id: "flutter",
+    name: "Flutter",
+    check: (info) => hasPubspecDep(info, "flutter"),
+    detectedVia: "pubspec.yaml dependency",
+  },
+  {
+    id: "shelf",
+    name: "Shelf",
+    check: (info) => hasPubspecDep(info, "shelf") || hasPubspecDep(info, "shelf_router"),
+    detectedVia: "pubspec.yaml dependency",
+  },
+  {
+    id: "dart_frog",
+    name: "Dart Frog",
+    check: (info) => hasPubspecDep(info, "dart_frog"),
+    detectedVia: "pubspec.yaml dependency",
+  },
 ];
 
 function hasDep(info: ProjectInfo, name: string): boolean {
@@ -478,6 +498,15 @@ function hasGemfileDep(info: ProjectInfo, name: string): boolean {
   // `gem "name"` or `gem 'name'`
   const re = new RegExp(`gem\\s+['"]${escapeRegex(name)}['"]`, "m");
   return re.test(info.gemfile);
+}
+
+function hasPubspecDep(info: ProjectInfo, name: string): boolean {
+  if (!info.pubspecYaml) return false;
+  // A dependency is an indented `  name:` key under dependencies/dev_dependencies.
+  // The leading whitespace requirement avoids matching the top-level `flutter:`
+  // config section (which is column-0) — only the `flutter:` *dependency* counts.
+  const re = new RegExp(`^\\s+${escapeRegex(name)}\\s*:`, "m");
+  return re.test(info.pubspecYaml);
 }
 
 function escapeRegex(s: string): string {
@@ -642,6 +671,9 @@ export async function gatherProjectInfo(
   let gemfile: string | null = null;
   try { gemfile = await readFile(join(root, "Gemfile"), "utf-8"); } catch { /* no Gemfile */ }
 
+  let pubspecYaml: string | null = null;
+  try { pubspecYaml = await readFile(join(root, "pubspec.yaml"), "utf-8"); } catch { /* no pubspec.yaml */ }
+
   // Find .sql / .ddl files for raw-SQL framework detection
   const sqlFiles = await fg("**/*.{sql,ddl,dml,psql,tsql,plsql,mysql}", {
     cwd: root,
@@ -666,6 +698,7 @@ export async function gatherProjectInfo(
     cargoToml,
     composerJson,
     gemfile,
+    pubspecYaml,
     sqlFiles,
   };
 }

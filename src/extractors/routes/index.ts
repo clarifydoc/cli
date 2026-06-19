@@ -6,6 +6,7 @@ import { pythonRouteExtractor } from "../plugins/python/routes.js";
 import { csharpRouteExtractor } from "../plugins/csharp/routes/aspnet.js";
 import { javaKotlinRouteExtractor } from "../plugins/java-kotlin/routes/spring.js";
 import { pascalRouteExtractor } from "../plugins/pascal/routes.js";
+import { phpRouteExtractor } from "../plugins/php/routes/codeigniter.js";
 
 /** All registered route extractors */
 const extractors: RouteExtractor[] = [
@@ -14,6 +15,7 @@ const extractors: RouteExtractor[] = [
   csharpRouteExtractor,
   javaKotlinRouteExtractor,
   pascalRouteExtractor,
+  phpRouteExtractor,
 ];
 
 /** Language → extractor lookup (built once at import time) */
@@ -32,10 +34,11 @@ export function extractRoutes(
   tree: Tree,
   sourceText: string,
   language: Language,
+  filePath?: string,
 ): RouteInfo[] {
   const extractor = extractorMap.get(language);
   if (!extractor) return [];
-  return extractor.extractRoutes(tree, sourceText);
+  return extractor.extractRoutes(tree, sourceText, filePath);
 }
 
 /** Register a custom route extractor at runtime */

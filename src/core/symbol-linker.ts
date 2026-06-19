@@ -25,6 +25,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
     injectionMap: buildInjectionMap(analyses),
     interfaceImplMap: buildInterfaceImplMap(analyses),
     classCatalog: buildClassCatalog(analyses),
+    classByProject: buildClassCatalogByProject(analyses),
     leafCatalog: buildLeafCatalog(symbolIndex, projectOf),
     dirTailIndex: buildDirTailIndex(symbolIndex),
     classNameIndex: buildClassNameIndex(symbolIndex),
@@ -287,6 +288,23 @@ function buildClassCatalog(analyses: FileAnalysis[]): Map<string, ClassCatalogEn
   return map;
 }
 
+/** Per-(project, class name) catalog: lets injection resolution disambiguate a
+ *  type name that's unique within the caller's project but duplicated elsewhere. */
+function buildClassCatalogByProject(
+  analyses: FileAnalysis[],
+): Map<string, { file: string; count: number }> {
+  const map = new Map<string, { file: string; count: number }>();
+  for (const a of analyses) {
+    for (const cls of a.classes) {
+      const key = `${a.projectId}\x00${cls.name}`;
+      const existing = map.get(key);
+      if (existing) existing.count++;
+      else map.set(key, { file: a.filePath, count: 1 });
+    }
+  }
+  return map;
+}
+
 interface LeafCatalogEntry {
   file: string;
   projectId: string;
@@ -344,6 +362,33 @@ function resolveTypeIn<T>(
 }
 
 /**
+ * Pick the candidate whose file shares the longest leading directory path with
+ * `sourceFile` — used to disambiguate a duplicated type name across packages
+ * (`app/IAppService` vs `mobileapp/IAppService`) by caller proximity. Returns
+ * null on a tie so the caller can fall through instead of guessing.
+ */
+function closestByDir<T>(items: T[], sourceFile: string, fileOf: (t: T) => string): T | null {
+  if (items.length === 0) return null;
+  if (items.length === 1) return items[0]!;
+  const src = sourceFile.split("/").slice(0, -1);
+  const score = (f: string): number => {
+    const p = f.split("/").slice(0, -1);
+    let n = 0;
+    while (n < src.length && n < p.length && src[n] === p[n]) n++;
+    return n;
+  };
+  let best: T | null = null;
+  let bestScore = -1;
+  let tie = false;
+  for (const it of items) {
+    const s = score(fileOf(it));
+    if (s > bestScore) { bestScore = s; best = it; tie = false; }
+    else if (s === bestScore) tie = true;
+  }
+  return tie ? null : best;
+}
+
+/**
  * Shared guard for the heuristic (global-name) strategies: only link to an
  * unambiguous target in the same sub-project, and never from production code
  * into test-fixture files.
@@ -396,6 +441,10 @@ interface LinkContext {
   injectionMap: Map<string, { typeName: string; typeFile: string }>;
   interfaceImplMap: Map<string, InterfaceImplInfo>;
   classCatalog: Map<string, ClassCatalogEntry>;
+  /** `${projectId}\x00${className}` → {file, count} — for same-project uniqueness
+   *  when a class name collides ACROSS projects (e.g. a PHP `ApiConnection` and a
+   *  Dart `ApiConnection` in different sub-projects). */
+  classByProject: Map<string, { file: string; count: number }>;
   leafCatalog: Map<string, LeafCatalogEntry>;
   dirTailIndex: Map<string, string[]>;
   /** Top-level symbol name → files that define it (in symbolIndex order). Lets
@@ -592,7 +641,7 @@ function resolveCallToDefinition(
   analysis: FileAnalysis,
   ctx: LinkContext,
 ): SymbolLink | null {
-  const { filePathMap, symbolIndex, inheritanceMap, injectionMap, interfaceImplMap, classCatalog, leafCatalog, classNameIndex } = ctx;
+  const { filePathMap, symbolIndex, inheritanceMap, injectionMap, interfaceImplMap, classCatalog, classByProject, leafCatalog, classNameIndex } = ctx;
 
   // Skip API and database calls — they don't resolve to project symbols
   if (call.kind === "api-call" || call.kind === "database") return null;
@@ -645,10 +694,15 @@ function resolveCallToDefinition(
   if (!def && !isQualified) {
     def = fileSymbols.get(leafName);
   }
-  // `self.foo` / `Self.foo` / `this.foo` — strip the receiver and look up the
-  // leaf in the current file. Safe for internal calls because the receiver is
-  // unambiguous; for cross-file calls we rely on injection tracking.
-  if (!def && isQualified && call.kind === "internal" && targetFile === sourceFile) {
+  // `self.foo` / `Self.foo` / `this.foo` — a direct call on the current
+  // instance: strip the receiver and look up the leaf in the current file.
+  // Restricted to a TWO-segment receiver (`this.foo`, exactly head + leaf): a
+  // longer chain like `this.service.foo` is a call THROUGH a field, where `foo`
+  // must resolve on the field's type (Strategy 2), NOT on a same-named method of
+  // the current class — controllers that delegate to an identically-named
+  // service method (`this.service.studentPostStandardDocumentFile`) were
+  // self-linking and dead-ending instead of reaching the service.
+  if (!def && isQualified && call.kind === "internal" && targetFile === sourceFile && parts.length === 2) {
     const head = parts[0]!;
     if (head === "self" || head === "Self" || head === "this") {
       def = fileSymbols.get(leafName);
@@ -685,6 +739,7 @@ function resolveCallToDefinition(
   if (!def && isQualified) {
     // Lazy: only pay the enclosing-callable scan when the injection map misses.
     let enclosingParams: ParamInfo[] | null = null;
+    let enclosingLocals: Array<{ name: string; type: string }> | null = null;
     // Try various prefixes: "this.authService", "authService", "self.service"
     for (let segLen = 1; segLen < parts.length; segLen++) {
       const prefix = parts.slice(0, segLen).join(".");
@@ -697,27 +752,36 @@ function resolveCallToDefinition(
       if (!injection) {
         enclosingParams ??= findEnclosingCallableParams(analysis, sourceSymbol);
         const param = enclosingParams.find((p) => p.name === prefix && p.type);
-        if (param) {
-          const resolved = resolveTypeIn(classCatalog, param.type!);
-          if (
-            resolved &&
-            resolved.value.count === 1 &&
-            resolved.value.file !== sourceFile &&
-            resolved.value.projectId === analysis.projectId
-          ) {
-            injection = { typeName: resolved.name, typeFile: resolved.value.file };
-          }
-        }
+        if (param) injection = resolveInjectedType(classCatalog, classByProject, param.type!, sourceFile, analysis.projectId);
+      }
+      // Local-variable types: `$connection = new ApiConnection(); $connection->request()`
+      // — the receiver is a function-local bound to a constructed instance, not a
+      // field or param. Resolved from the enclosing function's `localTypes`.
+      if (!injection) {
+        enclosingLocals ??= findEnclosingLocalTypes(analysis, sourceSymbol);
+        const local = enclosingLocals.find((l) => l.name === prefix && l.type);
+        if (local) injection = resolveInjectedType(classCatalog, classByProject, local.type, sourceFile, analysis.projectId);
       }
       if (injection) {
-        // If the declared type is an interface with exactly one implementation,
-        // skip the interface and link straight to the implementation's method.
+        // Skip the interface and link straight to the implementation's method.
+        // With a single impl that's unambiguous; with several (a duplicated
+        // interface name across packages — e.g. `app/IAppService` vs
+        // `mobileapp/IAppService`), pick the impl whose file is closest to the
+        // caller (longest shared directory prefix). Ambiguous ties resolve to
+        // null and fall through rather than guess.
         const iface = interfaceImplMap.get(injection.typeName);
-        if (iface && iface.impls.length === 1) {
-          const impl = iface.impls[0]!;
-          const implMethod = impl.methods.get(methodName) ?? impl.methods.get(leafName);
-          if (implMethod) {
-            return mkLink(impl.classFile, `${impl.className}.${implMethod.name}`, implMethod.line, "INFERRED");
+        if (iface && iface.impls.length >= 1) {
+          const candidates = iface.impls.filter(
+            (im) => im.methods.has(methodName) || im.methods.has(leafName),
+          );
+          const impl = candidates.length === 1
+            ? candidates[0]!
+            : closestByDir(candidates, sourceFile, (im) => im.classFile);
+          if (impl) {
+            const implMethod = impl.methods.get(methodName) ?? impl.methods.get(leafName);
+            if (implMethod) {
+              return mkLink(impl.classFile, `${impl.className}.${implMethod.name}`, implMethod.line, "INFERRED");
+            }
           }
         }
 
@@ -910,15 +974,71 @@ function resolveCallToDefinition(
  * sources have no declared params — empty.
  */
 function findEnclosingCallableParams(analysis: FileAnalysis, sourceSymbol: string): ParamInfo[] {
+  return findEnclosingCallable(analysis, sourceSymbol)?.params ?? [];
+}
+
+/** Local `new`-bound variable types of the enclosing function (see FunctionInfo.localTypes). */
+function findEnclosingLocalTypes(
+  analysis: FileAnalysis,
+  sourceSymbol: string,
+): Array<{ name: string; type: string }> {
+  return findEnclosingCallable(analysis, sourceSymbol)?.localTypes ?? [];
+}
+
+/** The FunctionInfo for `sourceSymbol` — a top-level function or a `Class.method`. */
+function findEnclosingCallable(
+  analysis: FileAnalysis,
+  sourceSymbol: string,
+): FileAnalysis["functions"][number] | null {
   const fn = analysis.functions.find((f) => f.name === sourceSymbol);
-  if (fn) return fn.params;
+  if (fn) return fn;
   const dot = sourceSymbol.indexOf(".");
   if (dot > 0) {
     const cls = analysis.classes.find((c) => c.name === sourceSymbol.slice(0, dot));
     const method = cls?.methods.find((m) => m.name === sourceSymbol.slice(dot + 1));
-    if (method) return method.params;
+    if (method) return method;
   }
-  return [];
+  return null;
+}
+
+/**
+ * Resolve a declared/inferred type name to an injection target — a unique class
+ * in the same sub-project, defined in another file. Shared by the param-type and
+ * local-`new` resolution paths in Strategy 2.
+ */
+function resolveInjectedType(
+  classCatalog: Map<string, ClassCatalogEntry>,
+  classByProject: Map<string, { file: string; count: number }>,
+  typeName: string,
+  sourceFile: string,
+  projectId: string,
+): { typeName: string; typeFile: string } | undefined {
+  // Strip generics/nullability, and try both the full name and its last dotted
+  // segment (FQN / package-qualified types) — same normalization as resolveTypeIn.
+  const clean = typeName.replace(/<.*$/, "").replace(/[?*&]/g, "").trim();
+  const names = clean.includes(".") ? [clean, clean.split(".").pop()!] : [clean];
+
+  // 1) Same-project uniqueness — handles a name duplicated across sub-projects
+  // (the global count would be >1 and block it) while staying unambiguous.
+  for (const name of names) {
+    const e = classByProject.get(`${projectId}\x00${name}`);
+    if (e && e.count === 1 && e.file !== sourceFile) {
+      return { typeName: name, typeFile: e.file };
+    }
+  }
+
+  // 2) Globally-unique name (the original guard) — allows resolving to a class in
+  // another sub-project when the name is unique everywhere.
+  const resolved = resolveTypeIn(classCatalog, typeName);
+  if (
+    resolved &&
+    resolved.value.count === 1 &&
+    resolved.value.file !== sourceFile &&
+    resolved.value.projectId === projectId
+  ) {
+    return { typeName: resolved.name, typeFile: resolved.value.file };
+  }
+  return undefined;
 }
 
 /**
