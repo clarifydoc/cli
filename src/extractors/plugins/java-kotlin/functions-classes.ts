@@ -8,41 +8,48 @@ import {
 } from "../../shared/node-helpers.js";
 import { extractCalls } from "../../shared/call-graph.js";
 
+type JkLang = "java" | "kotlin";
+
 export class JavaKotlinExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["java", "kotlin"];
 
   protected collectFunctions(node: Node, functions: FunctionInfo[]): void {
-    // Only Kotlin has top-level functions; Java doesn't
+    // Only Kotlin has top-level functions; Java doesn't.
+    const lang = detectLang(node);
     for (const child of node.children) {
       if (child.type === "function_declaration") {
         functions.push(this.parseMethod(child, "kotlin"));
       }
+      // Kotlin top-level funcs may sit under a wrapping source_file node.
+      if (child.type === "source_file" || child.type === "program") {
+        this.collectFunctions(child, functions);
+      }
     }
+    void lang;
   }
 
   protected collectClasses(node: Node, classes: ClassInfo[]): void {
-    this.walkClasses(node, classes);
+    this.walkClasses(node, classes, detectLang(node));
   }
 
-  private walkClasses(node: Node, classes: ClassInfo[]): void {
+  private walkClasses(node: Node, classes: ClassInfo[], lang: JkLang): void {
     for (const child of node.children) {
-
       if (
         child.type === "class_declaration" ||
         child.type === "interface_declaration" ||
         child.type === "object_declaration" ||
         child.type === "enum_declaration"
       ) {
-        classes.push(this.parseClass(child));
+        classes.push(this.parseClass(child, lang));
       }
 
       if (child.type === "program" || child.type === "source_file") {
-        this.walkClasses(child, classes);
+        this.walkClasses(child, classes, lang);
       }
     }
   }
 
-  private parseClass(node: Node): ClassInfo {
+  private parseClass(node: Node, lang: JkLang): ClassInfo {
     const name = this.getJkName(node);
 
     let extendsName: string | null = null;
@@ -81,43 +88,22 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
 
     const methods: FunctionInfo[] = [];
     const properties: PropertyInfo[] = [];
-    const body = node.childForFieldName("body");
+    // Java exposes the class body via the `body` field (class_body / interface_body /
+    // enum_body); Kotlin's `class_declaration` has no such field — the body is a
+    // `class_body` / `enum_class_body` CHILD. Falling through here is what left every
+    // Kotlin class method-less (and the call graph blind to the whole server).
+    const body =
+      node.childForFieldName("body") ??
+      this.findChildByType(node, "class_body") ??
+      this.findChildByType(node, "enum_class_body") ??
+      this.findChildByType(node, "interface_body") ??
+      this.findChildByType(node, "enum_body");
 
-    if (body) {
-      for (const member of body.children) {
-        if (
-          member.type === "method_declaration" ||
-          member.type === "function_declaration" ||
-          member.type === "constructor_declaration"
-        ) {
-          // Determine language from context: if node has delegation_specifiers it's Kotlin
-          const lang = this.guessLanguage(node);
-          methods.push(this.parseMethod(member, lang));
-        } else if (
-          member.type === "field_declaration" ||
-          member.type === "property_declaration"
-        ) {
-          const propName =
-            member.childForFieldName("name")?.text ??
-            this.findChildByType(member, "variable_declarator")?.childForFieldName("name")?.text ??
-            "unknown";
-          const typeNode = member.childForFieldName("type");
-          properties.push({
-            name: propName,
-            type: typeNode?.text ?? null,
-            visibility: this.getVisibility(member),
-            isStatic: member.text.includes("static ") || member.text.includes("companion"),
-            isReadonly:
-              member.text.includes("final ") || member.text.includes("val "),
-          });
-        }
-      }
-    }
+    if (body) this.collectMembers(body, lang, methods, properties);
 
     // Java: default visibility is package-private (not public)
     // Kotlin: default visibility is public
     const vis = this.getVisibility(node);
-    const lang = this.guessLanguage(node);
     const isExported = lang === "kotlin" ? vis !== "private" : vis === "public" || vis === null;
 
     return {
@@ -133,15 +119,60 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     };
   }
 
-  private parseMethod(node: Node, _language: string): FunctionInfo {
+  /** Collect methods + properties from a class/interface/enum/companion body. */
+  private collectMembers(
+    body: Node,
+    lang: JkLang,
+    methods: FunctionInfo[],
+    properties: PropertyInfo[],
+  ): void {
+    for (const member of body.children) {
+      if (
+        member.type === "method_declaration" ||
+        member.type === "function_declaration" ||
+        member.type === "constructor_declaration" ||
+        member.type === "secondary_constructor"
+      ) {
+        methods.push(this.parseMethod(member, lang));
+      } else if (
+        member.type === "field_declaration" ||
+        member.type === "property_declaration"
+      ) {
+        const propName =
+          member.childForFieldName("name")?.text ??
+          this.findChildByType(member, "variable_declarator")?.childForFieldName("name")?.text ??
+          this.findChildByType(member, "simple_identifier")?.text ??
+          "unknown";
+        const typeNode = member.childForFieldName("type") ?? this.findChildByType(member, "user_type");
+        properties.push({
+          name: propName,
+          type: typeNode?.text ?? null,
+          visibility: this.getVisibility(member),
+          isStatic: member.text.includes("static ") || member.text.includes("companion"),
+          isReadonly: member.text.includes("final ") || member.text.startsWith("val "),
+        });
+      } else if (member.type === "companion_object" || member.type === "object_declaration") {
+        // Flatten companion / nested object members onto the class so their
+        // calls and data access still attribute to a trace symbol.
+        const inner = this.findChildByType(member, "class_body");
+        if (inner) this.collectMembers(inner, lang, methods, properties);
+      }
+    }
+  }
+
+  private parseMethod(node: Node, language: JkLang): FunctionInfo {
     const name =
       this.getJkName(node) !== "anonymous"
         ? this.getJkName(node)
-        : (node.type === "constructor_declaration" ? "constructor" : "anonymous");
+        : (node.type === "constructor_declaration" || node.type === "secondary_constructor"
+            ? "constructor"
+            : "anonymous");
 
     const paramsNode =
       node.childForFieldName("parameters") ??
-      node.childForFieldName("value_parameters");
+      node.childForFieldName("value_parameters") ??
+      this.findChildByType(node, "function_value_parameters") ??
+      this.findChildByType(node, "formal_parameters");
     const params: ParamInfo[] = [];
 
     if (paramsNode) {
@@ -151,8 +182,15 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
           p.type === "parameter" ||
           p.type === "spread_parameter"
         ) {
-          const pName = p.childForFieldName("name")?.text ?? p.text;
-          const pType = p.childForFieldName("type")?.text ?? null;
+          const pName =
+            p.childForFieldName("name")?.text ??
+            this.findChildByType(p, "simple_identifier")?.text ??
+            this.findChildByType(p, "identifier")?.text ??
+            p.text;
+          const pType =
+            p.childForFieldName("type")?.text ??
+            this.findChildByType(p, "user_type")?.text ??
+            null;
           params.push({
             name: pName,
             type: pType,
@@ -175,12 +213,17 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       text.includes("@Async");
 
     const decorators = this.extractAnnotations(node);
-    const body = node.childForFieldName("body");
-    const lang = _language === "kotlin" ? "kotlin" as const : "java" as const;
+    // Java: `body` field (block). Kotlin: a `function_body` CHILD (covers both the
+    // `{ ... }` block and the `= expression` form). Without this fallback Kotlin
+    // method bodies were never walked, so no calls / data access were extracted.
+    const body =
+      node.childForFieldName("body") ??
+      this.findChildByType(node, "function_body") ??
+      this.findChildByType(node, "constructor_body");
 
     // Check visibility: Java defaults to package-private, Kotlin defaults to public
     const vis = sharedGetVisibility(node);
-    const isExported = lang === "kotlin"
+    const isExported = language === "kotlin"
       ? vis !== "private"
       : vis === "public" || (node.type === "constructor_declaration");
 
@@ -191,7 +234,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       isAsync,
       isExported,
       decorators,
-      calls: extractCalls(body, lang),
+      calls: extractCalls(body, language),
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
@@ -210,14 +253,9 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
   ): "public" | "private" | "protected" | null {
     return sharedGetVisibility(node);
   }
+}
 
-  /** Heuristic: if the node tree has Kotlin-specific constructs, it's Kotlin */
-  private guessLanguage(node: Node): string {
-    for (const child of node.children) {
-      if (child.type === "delegation_specifiers" || child.type === "type_parameters") {
-        return "kotlin";
-      }
-    }
-    return "java";
-  }
+/** Kotlin parses to a `source_file` root; Java to a `program` root. */
+function detectLang(root: Node): JkLang {
+  return root.type === "source_file" ? "kotlin" : "java";
 }
