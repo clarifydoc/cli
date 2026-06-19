@@ -329,7 +329,10 @@ function resolveTypeIn<T>(
   map: Map<string, T>,
   rawType: string,
 ): { name: string; value: T } | null {
-  const cleaned = rawType.replace(/[?*&]/g, "").trim();
+  // Strip generic args so a DI field typed `IRepository<Account>` /
+  // `IReadOnlyList<Foo>` resolves to its class (`IRepository`) — otherwise the
+  // injection map never binds the receiver and `_repository.X` stays unresolved.
+  const cleaned = rawType.replace(/<.*$/, "").replace(/[?*&]/g, "").trim();
   const direct = map.get(cleaned);
   if (direct !== undefined) return { name: cleaned, value: direct };
   if (cleaned.includes(".")) {
@@ -457,11 +460,14 @@ function buildInheritanceMap(
 function buildInjectionMap(
   analyses: FileAnalysis[],
 ): Map<string, { typeName: string; typeFile: string }> {
-  // Build class → file lookup
+  // Build class → file lookup, and a className → ClassInfo lookup for walking
+  // base classes (inherited protected DI fields).
   const classToFile = new Map<string, string>();
+  const classByName = new Map<string, FileAnalysis["classes"][number]>();
   for (const a of analyses) {
     for (const cls of a.classes) {
       classToFile.set(cls.name, a.filePath);
+      if (!classByName.has(cls.name)) classByName.set(cls.name, cls);
     }
   }
 
@@ -473,34 +479,39 @@ function buildInjectionMap(
   };
 
   const map = new Map<string, { typeName: string; typeFile: string }>();
+  const add = (file: string, name: string, type: string | null, overwrite: boolean): void => {
+    if (!type) return;
+    const resolved = resolveTypeName(type, classToFile);
+    if (!resolved) return;
+    const key = `${file}::${name}`;
+    if (overwrite || !map.has(key)) {
+      map.set(key, resolved);
+      map.set(`${file}::this.${name}`, resolved);
+    }
+  };
+
+  const bareClass = (t: string | null): string =>
+    (t ?? "").replace(/<.*$/, "").trim().split(".").pop() ?? "";
+
   for (const a of analyses) {
     for (const cls of a.classes) {
-      // Check constructor params for typed dependencies (various language conventions)
+      // Own constructor params + properties (highest precedence).
       const ctor = cls.methods.find((m) => CTOR_NAMES.has(m.name));
-      if (ctor) {
-        for (const param of ctor.params) {
-          if (param.type) {
-            const resolved = resolveTypeName(param.type, classToFile);
-            if (resolved) {
-              // Map both the param name and camelCase variants
-              const key = `${a.filePath}::${param.name}`;
-              map.set(key, resolved);
-              // Also map with "this." prefix for PHP/TS ($this->service, this.service)
-              map.set(`${a.filePath}::this.${param.name}`, resolved);
-            }
-          }
-        }
-      }
+      for (const param of ctor?.params ?? []) add(a.filePath, param.name, param.type, true);
+      for (const prop of cls.properties) add(a.filePath, prop.name, prop.type, true);
 
-      // Also check class properties with known types
-      for (const prop of cls.properties) {
-        if (prop.type) {
-          const resolved = resolveTypeName(prop.type, classToFile);
-          if (resolved) {
-            map.set(`${a.filePath}::${prop.name}`, resolved);
-            map.set(`${a.filePath}::this.${prop.name}`, resolved);
-          }
-        }
+      // Inherited protected DI fields: the CQRS base-handler pattern stores the
+      // injected dependency on a base class (`BaseCommandHandler<T,R>` holds
+      // `_repository`), so `_repository.X` in a derived handler resolves only if
+      // we pull base-class fields down. Walk the extends chain; don't overwrite
+      // the derived class's own members.
+      const seen = new Set<string>();
+      let base = bareClass(cls.extends);
+      while (base && classByName.has(base) && !seen.has(base)) {
+        seen.add(base);
+        const baseCls = classByName.get(base)!;
+        for (const prop of baseCls.properties) add(a.filePath, prop.name, prop.type, false);
+        base = bareClass(baseCls.extends);
       }
     }
   }

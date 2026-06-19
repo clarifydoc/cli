@@ -1,8 +1,8 @@
-import type { RouteInfo, ClassInfo, FunctionInfo } from "../../../types/analysis.js";
+import type { RouteInfo, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractClassesWithSpec } from "../shared/regex-base.js";
 
-/** Rails RESTful action → HTTP method + URL shape */
+/** Rails RESTful action → HTTP method + URL shape (plural `resources`). */
 const RAILS_ACTION_MAP: Record<string, { method: string; suffix: string }> = {
   index:   { method: "GET",    suffix: "" },
   show:    { method: "GET",    suffix: "/:id" },
@@ -12,6 +12,31 @@ const RAILS_ACTION_MAP: Record<string, { method: string; suffix: string }> = {
   update:  { method: "PUT",    suffix: "/:id" },
   destroy: { method: "DELETE", suffix: "/:id" },
 };
+
+/** Singular `resource` action map — no `index`, and the member has no `/:id`. */
+const SINGULAR_ACTION_MAP: Record<string, { method: string; suffix: string }> = {
+  new:     { method: "GET",    suffix: "/new" },
+  edit:    { method: "GET",    suffix: "/edit" },
+  show:    { method: "GET",    suffix: "" },
+  create:  { method: "POST",   suffix: "" },
+  update:  { method: "PUT",    suffix: "" },
+  destroy: { method: "DELETE", suffix: "" },
+};
+
+/**
+ * Parse a `resources` declaration's `only:`/`except:` action filter (both
+ * `only: [:a, :b]` and the hash-rocket `:only => [:a]` spellings). `only`
+ * is null when absent (= all actions); `except` defaults to empty.
+ */
+function parseActionFilter(stmt: string): { only: Set<string> | null; except: Set<string> } {
+  let only: Set<string> | null = null;
+  const except = new Set<string>();
+  const onlyM = stmt.match(/(?:\bonly\s*:|:only\s*=>)\s*(\[[^\]]*\]|:\w+)/);
+  if (onlyM) only = new Set([...onlyM[1]!.matchAll(/:(\w+)/g)].map((m) => m[1]!));
+  const exceptM = stmt.match(/(?:\bexcept\s*:|:except\s*=>)\s*(\[[^\]]*\]|:\w+)/);
+  if (exceptM) for (const m of exceptM[1]!.matchAll(/:(\w+)/g)) except.add(m[1]!);
+  return { only, except };
+}
 
 /**
  * Controllers provided by Rails / its engines, not the application. Routes that
@@ -52,6 +77,83 @@ function railsPluralize(token: string): string {
   if (/[^aeiou]y$/.test(token)) return token.replace(/y$/, "ies");
   if (/(s|x|z|ch|sh)$/.test(token)) return token + "es";
   return token + "s";
+}
+
+/**
+ * ActiveRecord query/persistence methods that mark a `Model.<method>` call-site
+ * as database access. Reads and writes are both surfaced as `kind:"database"`
+ * data sources — the regex path has no separate mutation channel, and what the
+ * screen→API→DB chain needs is "this code touches entity X", which either
+ * direction supplies. Only the HEAD of a chain matches (`Absence.where(..)`); the
+ * lowercase relation receiver of a trailing `.order(..)` never re-triggers, so a
+ * chained query yields exactly one source.
+ */
+const AR_QUERY_METHODS = new Set([
+  "where", "all", "first", "last", "take", "pluck", "ids", "count", "sum",
+  "average", "maximum", "minimum", "exists?", "any?", "many?", "none?",
+  "includes", "joins", "left_joins", "left_outer_joins", "eager_load",
+  "preload", "references", "group", "having", "order", "reorder", "limit",
+  "offset", "distinct", "select", "none", "unscoped", "scoped",
+  "create", "create!", "update", "update!", "update_all", "update_columns",
+  "insert", "insert!", "insert_all", "insert_all!", "upsert", "upsert_all",
+  "destroy", "destroy!", "destroy_all", "delete", "delete_all", "delete_by",
+  "destroy_by", "first_or_create", "first_or_create!", "first_or_initialize",
+  "touch_all", "increment_counter", "decrement_counter", "update_counters",
+]);
+
+/**
+ * Capitalised constants that share method names with AR but are not models —
+ * `File.delete`, `Dir.exists?`, `Time.now`. Denylisted (by their bare last
+ * segment) so stdlib calls don't masquerade as DB access.
+ */
+const NON_MODEL_CONSTANTS = new Set([
+  "File", "Dir", "Time", "Date", "DateTime", "Math", "JSON", "YAML", "Rails",
+  "Kernel", "Hash", "Array", "String", "Integer", "Float", "Object", "Struct",
+  "Set", "Logger", "URI", "Base64", "Digest", "OpenStruct", "Thread", "Mutex",
+  "Process", "ENV", "GC", "Random", "Marshal", "Regexp", "Range", "Comparable",
+  "Enumerable", "Module", "Class", "Proc", "Method", "Symbol", "NilClass",
+]);
+
+/** A (possibly namespaced) capitalised receiver, not preceded by `.`/word char,
+ *  followed by a `.method`. Global — a line may hold several queries. */
+const AR_CALL_RE = /(?<![\w.@$])([A-Z]\w*(?:::[A-Z]\w*)*)\.([a-z_]\w*[!?]?)/g;
+
+/** A query entry point: an explicit AR method, or any `find…` finder
+ *  (`find`, `find_by`, `find_each`, dynamic `find_by_email`, app `find_authorized`). */
+function isArQueryMethod(method: string): boolean {
+  return AR_QUERY_METHODS.has(method) || /^find($|_)/.test(method);
+}
+
+/**
+ * Surface ActiveRecord access (`Absence.find_authorized(..)`, `Department.where(..)`,
+ * `Employee.create!`, namespaced `League::MatchReport.all`) as `database`
+ * data sources, so a controller/service method links to the entity it touches —
+ * the backend half of the screen→API→DB chain. Per-file extraction can't see
+ * cross-file types, so `entity` is set to the receiver's bare model name (matching
+ * how the entity graph indexes its nodes); the shared enricher would otherwise
+ * reject a `Ns::Model` receiver as a non-identifier.
+ */
+function extractRubyDataSources(lines: string[]): DataSourceInfo[] {
+  const out: DataSourceInfo[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    const trimmed = line.trimStart();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    for (const m of line.matchAll(AR_CALL_RE)) {
+      const receiver = m[1]!;
+      const method = m[2]!;
+      const bare = receiver.split("::").pop()!;
+      if (NON_MODEL_CONSTANTS.has(bare)) continue;
+      if (!isArQueryMethod(method)) continue;
+      const name = `${receiver}.${method}`;
+      const key = `${name}@${i + 1}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ kind: "database", name, target: null, calls: [], line: i + 1, entity: bare });
+    }
+  }
+  return out;
 }
 
 export const rubySpec: RegexLangSpec = {
@@ -127,6 +229,8 @@ export const rubySpec: RegexLangSpec = {
     // extractClasses.
     return classes;
   },
+
+  extractDataSources: (lines) => extractRubyDataSources(lines),
 
   importPatterns: [
     {
@@ -277,7 +381,14 @@ export const rubySpec: RegexLangSpec = {
     const blockStack: string[] = [];
     const currentPrefix = () => blockStack.join("");
 
-    for (let i = 0; i < lines.length; i++) {
+    // Only run the routes.rb DSL matchers on an actual router file. Without this
+    // gate the verb / `resources` patterns below mis-read any `.rb` that happens
+    // to call `get`/`post`/`delete` with a string — RSpec request specs and
+    // Cucumber steps (`get "/duties.xml?employee_id=#{id}"`) — flooding the map
+    // with bogus routes. A real router opens `…routes.draw do`.
+    const isRailsRouter = lines.some((l) => /\.routes\.draw\b/.test(l));
+
+    for (let i = 0; isRailsRouter && i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line || line.startsWith("#")) continue;
 
@@ -303,24 +414,39 @@ export const rubySpec: RegexLangSpec = {
       }
 
       // resources :a, :b, :only => [...] — may span multiple lines (trailing comma).
+      // Expand each resource into its full RESTful route set so member paths
+      // (`/duties/:id`) exist for cross-tier matching — not just the collection
+      // base — honoring the enclosing namespace/scope prefix and any
+      // `only:`/`except:` filter. `resource` (singular) drops `index`/`:id`.
       const resourcesMatch = line.match(/^(resources?)\b/);
       if (resourcesMatch) {
         let stmt = line;
         while (/,\s*$/.test(stmt) && i + 1 < lines.length) {
           stmt += " " + lines[++i].trim();
         }
+        const singular = resourcesMatch[1] === "resource";
+        const actionMap = singular ? SINGULAR_ACTION_MAP : RAILS_ACTION_MAP;
+        const { only, except } = parseActionFilter(stmt);
         // Take the leading :symbol list, before any option (only:/except:/=>).
         const beforeOpts = stmt.slice(resourcesMatch[1].length).split(/\b(?:only|except)\b|=>/)[0];
         for (const m of beforeOpts.matchAll(/:(\w+)/g)) {
-          routes.push({
-            path: currentPrefix() + "/" + m[1],
-            httpMethod: null,
-            kind: "api",
-            handler: railsControllerClass(m[1]),
-            calls: [],
-            middleware: [],
-            line: i + 1,
-          });
+          const name = m[1]!;
+          // Rails maps a singular `resource :session` to the plural SessionsController.
+          const controllerClass = railsControllerClass(singular ? railsPluralize(name) : name);
+          const base = currentPrefix() + "/" + name;
+          for (const [action, info] of Object.entries(actionMap)) {
+            if (only && !only.has(action)) continue;
+            if (except.has(action)) continue;
+            routes.push({
+              path: base + info.suffix,
+              httpMethod: info.method,
+              kind: "api",
+              handler: `${controllerClass}#${action}`,
+              calls: [],
+              middleware: [],
+              line: i + 1,
+            });
+          }
         }
         if (opensDoBlock) blockStack.push(""); // `resources :x do` opens a nested block
         continue;

@@ -74,6 +74,49 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     check: (info) => hasDep(info, "fastify"),
     detectedVia: "package.json dependency",
   },
+  {
+    id: "quasar",
+    name: "Quasar",
+    check: (info) => hasDep(info, "quasar") || hasDep(info, "@quasar/app-vite") || hasDep(info, "@quasar/app-webpack"),
+    detectedVia: "package.json dependency",
+  },
+  {
+    id: "nuxt",
+    name: "Nuxt",
+    check: (info) => hasDep(info, "nuxt") || hasDep(info, "nuxt3") || hasDep(info, "nuxt-edge"),
+    detectedVia: "package.json dependency",
+  },
+  // State management
+  {
+    id: "vuex",
+    name: "Vuex",
+    check: (info) => hasDep(info, "vuex"),
+    detectedVia: "package.json dependency",
+  },
+  {
+    id: "pinia",
+    name: "Pinia",
+    check: (info) => hasDep(info, "pinia"),
+    detectedVia: "package.json dependency",
+  },
+  {
+    id: "redux",
+    name: "Redux",
+    check: (info) => hasDep(info, "redux") || hasDep(info, "@reduxjs/toolkit") || hasDep(info, "react-redux"),
+    detectedVia: "package.json dependency",
+  },
+  {
+    id: "zustand",
+    name: "Zustand",
+    check: (info) => hasDep(info, "zustand"),
+    detectedVia: "package.json dependency",
+  },
+  {
+    id: "react-query",
+    name: "React Query",
+    check: (info) => hasDep(info, "@tanstack/react-query") || hasDep(info, "react-query"),
+    detectedVia: "package.json dependency",
+  },
 
   // C# frameworks
   {
@@ -645,4 +688,39 @@ export function detectFrameworks(
   }
 
   return results;
+}
+
+export interface MultiRootFrameworks {
+  /** De-duped union across the analyzed root and every sub-project root. */
+  merged: FrameworkDetection[];
+  /** Per-root detections, keyed by the (relative) root string passed in (`""` = analyzed root). */
+  byRoot: Map<string, FrameworkDetection[]>;
+}
+
+/**
+ * Detect frameworks at the analyzed root AND at each sub-project root, merging
+ * the results. Build manifests (`package.json`, `Gemfile`, `*.csproj`, …) are
+ * frequently nested — a `/spa` Vue app beside a `/server` Rails app under one
+ * repo, or a wrapper dir whose real app lives a level down — so a root-only scan
+ * (which reads `package.json`/`Gemfile`/`go.mod`/… at exactly the root) sees
+ * none of them and the project looks frameworkless. Gathering per sub-project
+ * root closes that gap. Detections are de-duped by framework id, first wins.
+ *
+ * `subRoots` are relative to `projectRoot` (the same strings carried on
+ * `SubProject.root`); `""` denotes the analyzed root and is always included.
+ */
+export async function detectFrameworksAcrossRoots(
+  projectRoot: string,
+  subRoots: readonly string[],
+): Promise<MultiRootFrameworks> {
+  const roots = ["", ...subRoots].filter((r, i, a) => a.indexOf(r) === i);
+  const byRoot = new Map<string, FrameworkDetection[]>();
+  const merged = new Map<string, FrameworkDetection>();
+  for (const rel of roots) {
+    const info = await gatherProjectInfo(rel ? resolve(projectRoot, rel) : projectRoot);
+    const fws = detectFrameworks(info);
+    byRoot.set(rel, fws);
+    for (const f of fws) if (!merged.has(f.id)) merged.set(f.id, f);
+  }
+  return { merged: [...merged.values()], byRoot };
 }

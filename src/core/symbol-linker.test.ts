@@ -42,6 +42,25 @@ describe("symbol-linker — C# cross-project + generic type-arg resolution", () 
     expect(links.some((l) => l.targetFile === "Domain/Account.cs")).toBe(true);
   });
 
+  it("resolves a call on a dependency INHERITED from a base handler (`_repository.AddAsync`)", () => {
+    // CQRS base-handler pattern: the injected repo lives on the base class.
+    const iface = file("Shared/IRepository.cs", "Shared", {
+      classes: [{ ...cls("IRepository"), kind: "interface", methods: [{ name: "AddAsync", line: 7, endLine: 7, params: [], calls: [] }] }],
+    });
+    const base = file("Shared/BaseCommandHandler.cs", "Shared", {
+      classes: [{ ...cls("BaseCommandHandler"), properties: [{ name: "_repository", type: "IRepository<TResult>" }] }],
+    });
+    const handler = file("App/CreateAccountCommandHandler.cs", "App", {
+      classes: [{
+        ...cls("CreateAccountCommandHandler"),
+        extends: "BaseCommandHandler<CreateAccountCommand, Account>",
+        methods: [fn("Handle", [call("_repository.AddAsync")])],
+      }],
+    });
+    const links = buildSymbolLinks([iface, base, handler]);
+    expect(links.some((l) => l.sourceFile === "App/CreateAccountCommandHandler.cs" && l.targetFile === "Shared/IRepository.cs")).toBe(true);
+  });
+
   it("does NOT resolve a generic arg when the type name is not globally unique (avoids false edges)", () => {
     const repo = file("Infra/AccountRepository.cs", "Infra", {
       classes: [{ ...cls("AccountRepository"), methods: [fn("GetAll", [call("_db.Set<Account>")])] }],

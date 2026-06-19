@@ -864,6 +864,12 @@ export interface SubProject {
   root: string;
   kind: SubProjectKind;
   markers: string[];
+  /**
+   * Frameworks/ORMs detected from this sub-project's own manifests (its nested
+   * `package.json`, `Gemfile`, `*.csproj`, …). A repo whose build files live in
+   * sub-project roots rather than the analyzed root only surfaces them here.
+   */
+  frameworks?: FrameworkDetection[];
 }
 
 /** Project-level summary */
