@@ -53,7 +53,7 @@ const LANGUAGE_MARKERS: Partial<Record<Language, RegExp>> = {
   go: /\bgorm\b|gorm:"|\bent\.Schema\b|\bRegisterModel\s*\(|orm:"/,
   rust: /\btable!\s*\{|\bdiesel\b|\bQueryable\b|\bInsertable\b|\bDeriveEntityModel\b|\bsea_orm\b/,
   php:
-    /\bextends\s+(?:Model|Authenticatable|Pivot)\b|@ORM\\|#\[\s*ORM\\|->\s*(?:hasMany|belongsTo|hasOne|belongsToMany|morph\w*|hasManyThrough|hasOneThrough)\s*\(|\b(?:hasMany|belongsTo|hasOne|belongsToMany)\s*\(/,
+    /\bextends\s+(?:Model|Authenticatable|Pivot)\b|@ORM\\|#\[\s*ORM\\|->\s*(?:hasMany|belongsTo|hasOne|belongsToMany|morph\w*|hasManyThrough|hasOneThrough)\s*\(|\b(?:hasMany|belongsTo|hasOne|belongsToMany)\s*\(|->\s*join\s*\(\s*['"]/,
   ruby:
     /<\s*(?:ApplicationRecord|ActiveRecord::Base)\b|\bhas_many\b|\bbelongs_to\b|\bhas_one\b|\bhas_and_belongs_to_many\b|self\.table_name|ActiveRecord::Schema\b/,
 };

@@ -57,7 +57,104 @@ export class PhpEntityExtractor extends EntityExtractor {
       }
     }
 
+    try {
+      this.extractQueryBuilderJoins(ctx, relations);
+    } catch {
+      // Best-effort — join parsing never blocks entity extraction.
+    }
+
     return { entities, relations };
+  }
+
+  // ─── CodeIgniter / query-builder JOIN relationships ───────────────────────
+
+  /**
+   * Derive table relationships from `->join('table', 'a.x = b.y')` calls. The
+   * ON condition names BOTH tables and the join column, so a single call yields
+   * a complete relation — and for CodeIgniter (tables are bare strings, no FK
+   * metadata) joins are the ONLY relationship signal. Emitted with orm
+   * `"ci-query"` so the entity-graph synthesis — which owns the inferred table
+   * nodes those relations connect — builds the edges. Deduped per (pair, FK).
+   */
+  private extractQueryBuilderJoins(ctx: EntityExtractContext, relations: EntityRelation[]): void {
+    const text = ctx.sourceText;
+    const seen = new Set<string>();
+    const re = /->\s*join\s*\(/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const openIdx = text.indexOf("(", m.index + m[0].length - 1);
+      if (openIdx < 0) continue;
+      const close = this.matchBracket(text, openIdx);
+      const argsText = close >= 0 ? text.slice(openIdx + 1, close) : "";
+      const args = this.splitTopLevelArgs(argsText);
+      if (args.length < 2) continue;
+
+      const joined = this.cleanTableRef(this.firstStringLiteral(args[0]));
+      const cond = this.firstStringLiteral(args[1]);
+      if (!joined || !cond) continue;
+
+      const rel = this.parseJoinCondition(cond, joined);
+      if (!rel) continue;
+
+      const key = `${rel.from.toLowerCase()}|${rel.to.toLowerCase()}|${rel.fk ?? ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      relations.push({
+        fromEntity: rel.from,
+        fromField: rel.fk ?? rel.to.toLowerCase(),
+        toEntity: rel.to,
+        cardinality: "many-to-one",
+        foreignKey: rel.fk,
+        orm: "ci-query",
+        confidence: "INFERRED",
+      });
+    }
+  }
+
+  /** A bare table name from a join's first arg: drops an alias and schema/quotes. */
+  private cleanTableRef(raw: string | null): string | null {
+    if (!raw) return null;
+    let t = (raw.trim().split(/\s+/)[0] ?? "").split(".").pop() ?? "";
+    t = t.replace(/`/g, "");
+    return /^[A-Za-z_]\w*$/.test(t) ? t : null;
+  }
+
+  /**
+   * Parse a join ON condition (`orders.customer_id = customers.customer_id`)
+   * into a `many → one` relation between its two `table.column` operands.
+   *
+   * Direction comes from the foreign-key COLUMN, not from which side was joined
+   * (joining a lookup/master table is just as common as joining a detail): a
+   * `customer_id` column references the `customers` table, so the table whose
+   * (singularized) name matches the column's `_id` prefix is the referenced
+   * `to` (one) side and the other table owns the FK and is the `from` (many)
+   * side. Falls back to treating the just-joined table as the referenced side
+   * when no prefix matches. Returns null for non-`t.c = t.c` conditions.
+   */
+  private parseJoinCondition(
+    cond: string,
+    joined: string,
+  ): { from: string; to: string; fk: string | null } | null {
+    const m = cond.match(/(\w+)\.(\w+)\s*=\s*(\w+)\.(\w+)/);
+    if (!m) return null;
+    const [, t1, c1, t2, c2] = m;
+    if (t1.toLowerCase() === t2.toLowerCase()) return null; // self-join — skip noise
+
+    // The FK column is a non-`id` `<entity>_id`; prefer it over a bare `id`/PK.
+    const isFk = (c: string) => /_id$/i.test(c) && c.toLowerCase() !== "id";
+    const fk = isFk(c1) ? c1 : isFk(c2) ? c2 : c1;
+    const prefix = fk.replace(/_id$/i, "").toLowerCase(); // customer_id → "customer"
+    const sing = (t: string) => t.toLowerCase().replace(/s$/, "");
+    const refsPrefix = (t: string) => sing(t) === prefix || t.toLowerCase() === prefix;
+
+    // Referenced (one) table = the one the FK prefix names; the other owns the FK.
+    if (refsPrefix(t1) && !refsPrefix(t2)) return { from: t2, to: t1, fk };
+    if (refsPrefix(t2) && !refsPrefix(t1)) return { from: t1, to: t2, fk };
+    // Ambiguous prefix — the freshly-joined table is usually the looked-up (one) side.
+    const jl = joined.toLowerCase();
+    if (t1.toLowerCase() === jl) return { from: t2, to: t1, fk };
+    return { from: t1, to: t2, fk };
   }
 
   // ─── Eloquent detection (inheritance chain) ───────────────────────────────

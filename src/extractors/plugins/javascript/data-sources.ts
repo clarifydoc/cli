@@ -88,36 +88,53 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
 
   /**
-   * File-local map of `const X = '…url…'` bindings, resolved once per file so a
-   * `fetch(X)` / `` fetch(`${X}?q=…`) `` can recover the endpoint URL. Real Vue/
-   * React data layers hoist endpoints into module consts — frequently
+   * File-local map of `const X = '…url…'` bindings so a `fetch(X)` /
+   * `` fetch(`${X}?q=…`) `` can recover the endpoint URL. Real Vue/React data
+   * layers hoist endpoints into module consts — frequently
    * `import.meta.env.VITE_X ?? '/site/cui_checkout_json'` — and call `fetch` with
    * the identifier, so without this the api-call carried no URL and never joined
-   * to a backend route. Per-file and reset after each `extract()` (the extractor
-   * is a per-worker singleton run sequentially), so it never leaks across files.
+   * to a backend route.
+   *
+   * Built LAZILY (a whole-tree walk) the first time a URL argument is actually a
+   * bare identifier or template — the overwhelmingly common string-literal
+   * `fetch('/x')` and the many files with no fetch at all never pay for it.
+   * `null` = not yet built; reset after each `extract()` (the extractor is a
+   * per-worker singleton run sequentially), so it never leaks across files.
    */
-  private urlConsts: ReadonlyMap<string, string> = NO_CONSTS;
+  private root: Node | null = null;
+  private urlConsts: ReadonlyMap<string, string> | null = null;
 
   override extract(tree: Tree, sourceText: string): DataSourceInfo[] {
-    this.urlConsts = buildUrlConstMap(tree.rootNode);
+    this.root = tree.rootNode;
+    this.urlConsts = null;
     try {
       return super.extract(tree, sourceText);
     } finally {
-      this.urlConsts = NO_CONSTS;
+      this.root = null;
+      this.urlConsts = null;
     }
   }
 
+  /** Lazily build + cache the file's URL-const map (see {@link urlConsts}). */
+  private getUrlConsts(): ReadonlyMap<string, string> {
+    if (this.urlConsts === null) {
+      this.urlConsts = this.root ? buildUrlConstMap(this.root) : NO_CONSTS;
+    }
+    return this.urlConsts;
+  }
+
   /**
-   * Resolve a `fetch`/client call's URL argument to a literal path. Handles a
-   * string/template literal directly and resolves a bare identifier or a
-   * template's `${id}` interpolation through the file-local const map; an
-   * interpolation that doesn't resolve is reproduced verbatim so an otherwise
-   * unchanged template yields the same target as before (no fixture churn).
+   * Resolve a `fetch`/client call's URL argument to a literal path. A string
+   * literal resolves directly (no const map needed); a bare identifier or a
+   * template's `${id}` interpolation is resolved through the file-local const
+   * map, which is built on first such use. An interpolation that doesn't resolve
+   * is reproduced verbatim so an otherwise unchanged template yields the same
+   * target as before (no fixture churn).
    */
   private resolveUrlArg(arg: Node): string | null {
     if (arg.type === "string") return stripQuotes(arg.text);
-    if (arg.type === "template_string") return resolveTemplateUrl(arg, this.urlConsts);
-    if (arg.type === "identifier") return this.urlConsts.get(arg.text) ?? null;
+    if (arg.type === "template_string") return resolveTemplateUrl(arg, this.getUrlConsts());
+    if (arg.type === "identifier") return this.getUrlConsts().get(arg.text) ?? null;
     return null;
   }
 

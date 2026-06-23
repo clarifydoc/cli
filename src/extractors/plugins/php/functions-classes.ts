@@ -1,4 +1,4 @@
-import type { Node } from "web-tree-sitter";
+import type { Node, Tree } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from "../../functions-classes/base.js";
 import { extractCalls } from "../../shared/call-graph.js";
@@ -15,6 +15,17 @@ import { extractCalls } from "../../shared/call-graph.js";
  */
 export class PhpExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["php"];
+
+  /** Set per file: does the source contain a CodeIgniter `$this->load->…` call?
+   *  Gates the (otherwise per-class, whole-subtree) `collectCiLoadedDeps` scan so
+   *  non-CI files — including large vendor trees — skip it entirely. */
+  private fileLoadsDeps = false;
+
+  override extractClasses(tree: Tree, sourceText: string): ClassInfo[] {
+    // `$this->load->model(...)` / `->library(...)` always contains `->load->`.
+    this.fileLoadsDeps = /->\s*load\s*->/.test(sourceText);
+    return super.extractClasses(tree, sourceText);
+  }
 
   protected collectFunctions(node: Node, functions: FunctionInfo[]): void {
     for (const child of node.children) {
@@ -248,6 +259,7 @@ export class PhpExtractor extends FunctionClassExtractor {
    * the instance to (`$this->load->model('x_model','alias')` → `$this->alias`).
    */
   private collectCiLoadedDeps(classNode: Node, out: PropertyInfo[]): void {
+    if (!this.fileLoadsDeps) return; // no `->load->` in this file — skip the walk
     const seen = new Set(out.map((p) => p.name));
     const visit = (n: Node): void => {
       if (n.type === "member_call_expression") {
