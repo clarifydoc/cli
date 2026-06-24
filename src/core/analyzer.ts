@@ -12,7 +12,15 @@ import {
 import {
   detectFrameworksAcrossRoots,
 } from "./framework-detector.js";
+import {
+  collectExternalPackages,
+  collectComposerAutoload,
+  attachPackageUsage,
+  deriveFrameworksFromPackages,
+  mergeFrameworkDetections,
+} from "./dependency-inventory.js";
 import { detectSubProjects, assignProjectId } from "./project-detector.js";
+import { detectFileBasedRoutes } from "../extractors/plugins/javascript/routes/file-based.js";
 import {
   writeProjectSummary,
   writeLspGroundTruth,
@@ -282,7 +290,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
 
   // Step 2b: Detect frameworks at the root AND inside each sub-project root.
   progress.step("Detecting frameworks...");
-  const { merged: frameworks, byRoot: frameworksByRoot } = await detectFrameworksAcrossRoots(
+  const { merged: ruleFrameworks, byRoot: frameworksByRoot } = await detectFrameworksAcrossRoots(
     projectRoot,
     subProjects.map((sp) => sp.root),
   );
@@ -290,6 +298,25 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     const fws = frameworksByRoot.get(sp.root);
     if (fws && fws.length > 0) sp.frameworks = fws;
   }
+
+  // Step 2c: Build the full external-dependency inventory across every manifest
+  // ecosystem, then fold the frameworks it recognises into the rule-based set
+  // (rule-based wins on id collisions; the inventory adds the long tail). This
+  // happens before per-file analysis so derived ids (e.g. nextjs/nuxt) reach the
+  // route detectors via `frameworkIds`; per-package usage is attached afterward.
+  const externalPackages = await collectExternalPackages(
+    projectRoot,
+    subProjects.map((sp) => sp.root),
+  );
+  // PHP namespace→package map from vendor/ (makes Composer usage reliable; empty if absent).
+  const composerAutoload = await collectComposerAutoload(
+    projectRoot,
+    subProjects.map((sp) => sp.root),
+  );
+  const frameworks = mergeFrameworkDetections(
+    ruleFrameworks,
+    deriveFrameworksFromPackages(externalPackages),
+  );
   const frameworkIds = frameworks.map((f) => f.id);
 
   progress.detail(
@@ -483,6 +510,22 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // from the finalized symbol links.
   const componentLaunches = buildComponentLaunches(symbolLinks);
 
+  // File-based ("auto") frontend routes: plugins like unplugin-vue-router /
+  // vite-plugin-pages generate the route table from a page-file directory, so
+  // the routes are not present as source. Synthesize them from the file tree
+  // (reads each candidate root's Vite config to detect the convention) and push
+  // them onto the page files' analyses so they flow into the route map, screens,
+  // and the screen→API links below. Project-level + in-memory (no per-file JSON
+  // change), so it mirrors reconcileProjectEntities and needs no version bump.
+  const autoRouteCount = await detectFileBasedRoutes(
+    allAnalyses,
+    projectRoot,
+    subProjects.map((sp) => sp.root),
+  );
+  if (autoRouteCount > 0 && verbose) {
+    progress.detail(`  file-based routes: ${autoRouteCount}`);
+  }
+
   // Collapse the same endpoint declared twice (Rails: `routes.rb` expansion +
   // controller-action convention) into one richest entry, so the route map and
   // the cross-tier linker don't double-count or pick a code-less handler.
@@ -658,10 +701,15 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     else if (link.confidence === "AMBIGUOUS") confidenceCounts.ambiguous++;
   }
 
+  // Cross-reference the dependency inventory against the imports we extracted,
+  // marking each package used/unused (where the ecosystem mapping is reliable).
+  attachPackageUsage(externalPackages, allAnalyses, { composerAutoload });
+
   // Step 5: Write project summary
   const summary: ProjectAnalysis = {
     projectRoot,
     detectedFrameworks: frameworks,
+    externalPackages: externalPackages.length > 0 ? externalPackages : undefined,
     subProjects,
     fileProjects,
     files: allAnalyses.map((a) => a.filePath),

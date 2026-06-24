@@ -1,6 +1,7 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { phpCallHooks } from "./call-hooks.js";
+import { composerPackages } from "./packages.js";
 
 const PHP_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -22,6 +23,7 @@ export const phpMeta: LanguagePluginMeta = {
     variants: { php: { pkg: "tree-sitter-php", wasm: "tree-sitter-php.wasm" } },
   },
   builtinTypes: PHP_BUILTINS,
+  knownPackages: composerPackages,
   externalModulePrefixes: ["Illuminate\\", "Symfony\\", "Doctrine\\", "Laravel\\"],
   complexity: {
     branchNodes: new Set([

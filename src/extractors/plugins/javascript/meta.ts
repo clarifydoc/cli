@@ -15,6 +15,7 @@ import { javascriptCallHooks } from "./call-hooks.js";
 import { extractJsVariableAliases } from "./variable-aliases.js";
 import { vuePreprocess } from "./vue-hooks.js";
 import { sveltePreprocess } from "./svelte-hooks.js";
+import { npmPackages } from "./packages.js";
 
 const TS_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -224,6 +225,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   securityRules: SECURITY_RULES,
   securityPostScan: consolePostScan,
   frameworkImportHints: NPM_FRAMEWORK_HINTS,
+  knownPackages: npmPackages,
   apiCallRoots: API_CALL_ROOTS,
   dbCallRoots: DB_CALL_ROOTS,
   builtinMembers: JS_BUILTIN_MEMBERS,
@@ -246,6 +248,7 @@ export const javascriptMeta: LanguagePluginMeta = {
   securityRules: SECURITY_RULES,
   securityPostScan: consolePostScan,
   frameworkImportHints: NPM_FRAMEWORK_HINTS,
+  knownPackages: npmPackages,
   apiCallRoots: API_CALL_ROOTS,
   dbCallRoots: DB_CALL_ROOTS,
   builtinMembers: JS_BUILTIN_MEMBERS,

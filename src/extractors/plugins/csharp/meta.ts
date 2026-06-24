@@ -2,6 +2,7 @@ import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { extractCsharpTypeReferences } from "./type-references.js";
 import { csharpCallHooks } from "./call-hooks.js";
+import { nugetPackages } from "./packages.js";
 
 const CSHARP_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -28,6 +29,7 @@ export const csharpMeta: LanguagePluginMeta = {
     variants: { csharp: { pkg: "tree-sitter-c-sharp", wasm: "tree-sitter-c_sharp.wasm" } },
   },
   builtinTypes: CSHARP_BUILTINS,
+  knownPackages: nugetPackages,
   externalModulePrefixes: ["System", "Microsoft.", "Newtonsoft."],
   externalNamespaceRoots: ["System", "Microsoft"],
   complexity: {
