@@ -1,5 +1,6 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { cppSpec } from "./index.js";
+import { nativePackages } from "./packages.js";
 import { C_BUILTINS } from "../c/meta.js";
 
 const CPP_BUILTINS: ReadonlySet<string> = new Set<string>([
@@ -20,5 +21,6 @@ export const cppMeta: LanguagePluginMeta = {
   parsing: "regex",
   extensions: cppSpec.extensions,
   regexSpec: cppSpec,
+  knownPackages: nativePackages,
   builtinTypes: CPP_BUILTINS,
 };

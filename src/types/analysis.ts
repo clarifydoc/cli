@@ -2,7 +2,7 @@
 export type Language =
   | "typescript" | "javascript" | "csharp" | "python" | "java" | "kotlin" | "pascal" | "dfm"
   | "go" | "rust" | "ruby" | "php" | "swift" | "lua" | "scala"
-  | "perl" | "vb" | "sql" | "c" | "cpp" | "prisma" | "dart";
+  | "perl" | "vb" | "sql" | "c" | "cpp" | "prisma" | "dart" | "elixir" | "erlang" | "objc";
 
 export interface ExtractorWarning {
   /** Dotted-path location, e.g. "functions[3].endLine" or "routes[0].kind". */
@@ -966,6 +966,13 @@ export interface ProjectAnalysis {
   symbolDataAccess?: SymbolDataAccess[];
   /** Detected ORM/DB migrations across known ecosystems. Omitted when empty. */
   migrations?: MigrationInfo[];
+  /**
+   * Full third-party dependency inventory across every manifest ecosystem,
+   * cross-referenced against the imports in analyzed code. Drives the report's
+   * Dependencies view and feeds the framework detector. Omitted when the
+   * project declares no external dependencies.
+   */
+  externalPackages?: ExternalPackage[];
 }
 
 export interface FrameworkDetection {
@@ -973,6 +980,85 @@ export interface FrameworkDetection {
   name: string;
   confidence: "high" | "medium" | "low";
   detectedVia: string;
+}
+
+/** Package-manager ecosystem a dependency was declared in. */
+export type PackageEcosystem =
+  | "npm"
+  | "nuget"
+  | "pypi"
+  | "maven"
+  | "gradle"
+  | "composer"
+  | "cargo"
+  | "go"
+  | "rubygems"
+  | "pub"
+  | "swiftpm"
+  | "cocoapods"
+  | "vcpkg"
+  | "conan"
+  | "cpan"
+  | "luarocks"
+  | "hex";
+
+/** How a dependency is consumed (production vs tooling-only). */
+export type PackageScope = "prod" | "dev" | "peer" | "optional";
+
+/**
+ * Best-effort functional bucket for an external dependency. `framework` and
+ * `orm` mirror the dedicated detectors; the rest let the report group the long
+ * tail (build tooling, test runners, HTTP clients, …) instead of one flat list.
+ */
+export type PackageCategory =
+  | "framework"
+  | "frontend"
+  | "orm"
+  | "database"
+  | "http"
+  | "state"
+  | "ui"
+  | "testing"
+  | "build"
+  | "lint"
+  | "auth"
+  | "validation"
+  | "logging"
+  | "messaging"
+  | "serialization"
+  | "graphql"
+  | "grpc"
+  | "cloud"
+  | "types"
+  | "util"
+  | "other";
+
+/**
+ * One external dependency declared in a project manifest (package.json,
+ * *.csproj, go.mod, …), cross-referenced against the code that actually imports
+ * it. This is the inventory the framework detector consumes and the report
+ * surfaces — a reverse-doc tool should know not just *which* frameworks a repo
+ * uses but its full third-party surface and how much of it is live.
+ */
+export interface ExternalPackage {
+  /** Canonical package name in its ecosystem (`react`, `gorm.io/gorm`, `Microsoft.EntityFrameworkCore`). */
+  name: string;
+  /** Declared version / range spec, when the manifest carries one. */
+  version: string | null;
+  ecosystem: PackageEcosystem;
+  scope: PackageScope;
+  category: PackageCategory;
+  /**
+   * Whether any analyzed source file imports this package. `undefined` means
+   * usage could not be reliably mapped for this ecosystem (e.g. Maven/NuGet,
+   * where imports are namespaces, not artifact coordinates) — we never assert
+   * "unused" when the import→package mapping is unreliable.
+   */
+  used?: boolean;
+  /** Number of analyzed files importing it (only set when `used` is known). */
+  usageCount?: number;
+  /** Manifest the dependency was declared in, relative to the project root. */
+  declaredIn: string;
 }
 
 /** Create an empty FileAnalysis for a given file */

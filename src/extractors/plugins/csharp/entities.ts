@@ -1,5 +1,5 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
-import type { ClassInfo, EntityRelation, Language, PropertyInfo } from "../../../types/analysis.js";
+import type { ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
 
 /**
  * Entity-Framework-Core (and lightly, NHibernate) entity extractor for C#.
@@ -38,7 +38,16 @@ export class CSharpEntityExtractor extends EntityExtractor {
 
       // The Fluent API can describe relations even when no annotation/property
       // shape does, so always attempt it (it self-limits to non-scalar targets).
-      const fluentRelations = this.parseFluentApi(ctx);
+      // Two declaration sites: `modelBuilder.Entity<T>()` chains inside
+      // OnModelCreating, and `builder.HasOne(...)` chains inside an
+      // `IEntityTypeConfiguration<T>` class — the dominant pattern in larger EF
+      // Core codebases, where every entity's mapping lives in its own config
+      // class with NO `modelBuilder.Entity<T>()` head.
+      const fluentRelations = [
+        ...this.parseFluentApi(ctx),
+        ...this.parseEntityConfigurations(ctx),
+        ...this.parseModelSnapshot(ctx),
+      ];
 
       if (entityNames.size === 0 && fluentRelations.length === 0) {
         return { entities, relations };
@@ -100,6 +109,163 @@ export class CSharpEntityExtractor extends EntityExtractor {
     }
 
     return { entities, relations };
+  }
+
+  /**
+   * Project-level pass: mark POCO entity classes that are declared as EF
+   * entities ONLY in another file. A clean-architecture / database-first EF Core
+   * codebase commonly defines a plain domain class (`class Institution : IEventModel`
+   * — no `[Table]`, no entity base) whose entity-ness is established elsewhere via
+   * `DbSet<Institution>` in the DbContext and/or an `IEntityTypeConfiguration<Institution>`
+   * class. Per-file discovery cannot see those cross-file declarations, so the
+   * POCO never gets the `entity` decorator and so is absent from the ER graph —
+   * which also drops every relation that points at it. This pass collects the EF
+   * entity type names from `DbSet<T>` properties and `IEntityTypeConfiguration<T>`
+   * bases across ALL files, then tags the matching domain classes so they become
+   * ER nodes (and their config-declared relations resolve). Mutates in place.
+   */
+  override reconcileProject(analyses: FileAnalysis[]): void {
+    // (1) Names declared as EF entities by `DbSet<T>` or `IEntityTypeConfiguration<T>`.
+    const efEntityNames = new Set<string>();
+    for (const a of analyses) {
+      for (const cls of a.classes ?? []) {
+        // `DbSet<T>` / `IDbSet<T>` properties — the authoritative entity set.
+        for (const p of cls.properties ?? []) {
+          for (const m of (p.type ?? "").matchAll(DBSET_RE)) {
+            const t = bareType(m[1]);
+            if (t) efEntityNames.add(t);
+          }
+        }
+        // `IEntityTypeConfiguration<T>` — lands in extends or implements
+        // depending on how the class extractor split the base list.
+        for (const decl of [cls.extends ?? "", ...(cls.implements ?? [])]) {
+          const m = /IEntityTypeConfiguration\s*<\s*([^>]+?)\s*>/.exec(decl);
+          if (m) {
+            const t = bareType(m[1]);
+            if (t) efEntityNames.add(t);
+          }
+        }
+      }
+    }
+    if (efEntityNames.size === 0) return;
+
+    // (2) Tag the matching domain POCO classes so they become ER nodes.
+    for (const a of analyses) {
+      // A class in a clearly non-persistence folder (DTO / view model /
+      // API contract) that merely shares an entity's name is NOT the entity —
+      // tagging it would add a phantom ER node and mis-route relations.
+      if (NON_ENTITY_PATH_RE.test(a.filePath)) continue;
+      for (const cls of a.classes ?? []) {
+        if (!efEntityNames.has(cls.name)) continue;
+        const decs = cls.decorators ?? (cls.decorators = []);
+        if (decs.includes("entity")) continue;
+        decs.push("entity", "ef-core");
+      }
+    }
+
+    // (3) The set of all entity names (after tagging above).
+    const entityNames = new Set<string>();
+    for (const a of analyses) {
+      for (const cls of a.classes ?? []) {
+        if ((cls.decorators ?? []).includes("entity")) entityNames.add(cls.name);
+      }
+    }
+
+    // (3b) Per-entity navigation map (nav property name -> the entity its
+    // declared TYPE points at), built BEFORE the column pruning below so the
+    // declared nav types are still present.
+    const navTargetOf = (type: string | null): string | null => {
+      const inner = collectionInner(type ?? "");
+      const bare = inner ? bareType(inner) : bareType(type ?? "");
+      return bare && entityNames.has(bare) && !isScalar(bare) && !isDenylistedType(bare) ? bare : null;
+    };
+    const navIndex = new Map<string, Map<string, string>>();
+    for (const a of analyses) {
+      for (const cls of a.classes ?? []) {
+        if (!(cls.decorators ?? []).includes("entity")) continue;
+        for (const p of cls.properties ?? []) {
+          const target = navTargetOf(p.type);
+          if (!target) continue;
+          let m = navIndex.get(cls.name);
+          if (!m) navIndex.set(cls.name, (m = new Map()));
+          if (!m.has(p.name)) m.set(p.name, target);
+        }
+      }
+    }
+
+    // (4) Correct relation targets the per-file config pass guessed from a
+    // navigation lambda's PROPERTY NAME: `builder.HasOne(a => a.Ansat)` with no
+    // explicit `<T>` yields toEntity "Ansat", but the `Ansat` property is of type
+    // `TrioSyncAnsat`. The config pass sees only the lambda, never the entity
+    // class, so a nav whose name differs from its type never resolved. The index
+    // only holds known-entity targets, so this can only repoint at a real node.
+    for (const a of analyses) {
+      for (const r of a.entityRelations ?? []) {
+        const declared = navIndex.get(r.fromEntity)?.get(r.fromField);
+        if (declared && declared !== r.toEntity) r.toEntity = declared;
+      }
+    }
+
+    // (5) Derive navigation relations from entity-typed properties (POCOs only
+    // still carry them — per-file entities had theirs pruned).
+    for (const a of analyses) {
+      for (const cls of a.classes ?? []) {
+        if (!(cls.decorators ?? []).includes("entity")) continue;
+        const props = cls.properties ?? [];
+        if (props.length === 0) continue;
+        // Case-insensitive column lookup so a synthesized convention FK
+        // (`<Nav>Id` / `<Type>Id`) reports the column's REAL casing
+        // (`INSTITUTIONID`, not `InstitutionId`) — and reports none when no such
+        // column exists, rather than a fabricated label.
+        const colByLower = new Map(props.map((p) => [p.name.toLowerCase(), p.name]));
+        const seen = new Set(
+          (a.entityRelations ?? [])
+            .filter((r) => r.fromEntity === cls.name)
+            .map((r) => `${r.fromField} ${r.toEntity}`),
+        );
+        const derived: EntityRelation[] = [];
+        const keep: PropertyInfo[] = [];
+        for (const p of props) {
+          const rawType = p.type ?? "";
+          const inner = collectionInner(rawType);
+          if (inner) {
+            const target = bareType(inner);
+            if (target && entityNames.has(target) && !isScalar(target) && !isDenylistedType(target)) {
+              if (!seen.has(`${p.name} ${target}`)) {
+                derived.push({
+                  fromEntity: cls.name, fromField: p.name, toEntity: target,
+                  cardinality: "one-to-many", foreignKey: null, optional: false,
+                  confidence: "INFERRED", orm: "ef-core",
+                });
+              }
+              continue; // navigation collection — not a scalar column
+            }
+            keep.push(p);
+            continue;
+          }
+          const bare = bareType(rawType);
+          if (bare && entityNames.has(bare) && !isScalar(bare) && !isDenylistedType(bare)) {
+            const fk =
+              colByLower.get(`${p.name}Id`.toLowerCase()) ??
+              colByLower.get(`${bare}Id`.toLowerCase()) ??
+              null;
+            if (!seen.has(`${p.name} ${bare}`)) {
+              derived.push({
+                fromEntity: cls.name, fromField: p.name, toEntity: bare,
+                cardinality: "many-to-one", foreignKey: fk, optional: isNullable(rawType),
+                confidence: "INFERRED", orm: "ef-core",
+              });
+            }
+            continue; // reference navigation — the scalar FK column is kept above
+          }
+          keep.push(p);
+        }
+        if (derived.length > 0) {
+          a.entityRelations = [...(a.entityRelations ?? []), ...derived];
+          cls.properties = keep;
+        }
+      }
+    }
   }
 
   // ── Phase 1: which class names are entities? ───────────────────────────
@@ -500,82 +666,8 @@ export class CSharpEntityExtractor extends EntityExtractor {
         if (!entMatch) continue;
         const from = bareType(entMatch[1]);
         if (!from) continue;
-
-        // Determine the target entity from HasOne<T> / HasMany<T> or the lambda
-        // navigation property (`p => p.Author`).
-        const hasOne = /\.\s*HasOne\s*(?:<\s*([^>]+?)\s*>)?\s*\(([^)]*)\)/.exec(text);
-        const hasMany = /\.\s*HasMany\s*(?:<\s*([^>]+?)\s*>)?\s*\(([^)]*)\)/.exec(text);
-        const withMany = /\.\s*WithMany\s*(?:<\s*[^>]+?\s*>)?\s*\(([^)]*)\)/.exec(text);
-        const withOne = /\.\s*WithOne\s*(?:<\s*[^>]+?\s*>)?\s*\(([^)]*)\)/.exec(text);
-        const fkMatch = /\.\s*HasForeignKey\s*(?:<\s*[^>]+?\s*>)?\s*\(([^)]*)\)/.exec(text);
-        const joinMatch = /\.\s*UsingEntity\s*<\s*([^>]+?)\s*>/.exec(text);
-
-        // Skip pure value-type / owned configuration chains.
-        if (/\.\s*OwnsOne\b|\.\s*OwnsMany\b|\.\s*Ignore\b/.test(text)) continue;
-
-        const navTarget = (m: RegExpExecArray | null): string => {
-          if (!m) return "";
-          if (m[1]) return bareType(m[1]); // explicit generic <T>
-          return navTypeFromLambda(m[2] ?? "");
-        };
-
-        let toEntity = "";
-        let cardinality: EntityRelation["cardinality"] | null = null;
-        let fromFieldName = "";
-        let inverseField: string | null = null;
-
-        if (hasOne && withMany) {
-          // many-to-one (HasOne ... WithMany)
-          toEntity = navTarget(hasOne);
-          cardinality = "many-to-one";
-          fromFieldName = lambdaProperty(hasOne[2] ?? "");
-          inverseField = lambdaProperty(withMany[1] ?? "") || null;
-        } else if (hasMany && withOne) {
-          // one-to-many (HasMany ... WithOne)
-          toEntity = navTarget(hasMany);
-          cardinality = "one-to-many";
-          fromFieldName = lambdaProperty(hasMany[2] ?? "");
-          inverseField = lambdaProperty(withOne[1] ?? "") || null;
-        } else if (hasMany && withMany) {
-          // many-to-many (HasMany ... WithMany)
-          toEntity = navTarget(hasMany);
-          cardinality = "many-to-many";
-          fromFieldName = lambdaProperty(hasMany[2] ?? "");
-          inverseField = lambdaProperty(withMany[1] ?? "") || null;
-        } else if (hasOne && withOne) {
-          // one-to-one (HasOne ... WithOne)
-          toEntity = navTarget(hasOne);
-          cardinality = "one-to-one";
-          fromFieldName = lambdaProperty(hasOne[2] ?? "");
-          inverseField = lambdaProperty(withOne[1] ?? "") || null;
-        } else if (hasOne) {
-          toEntity = navTarget(hasOne);
-          cardinality = "many-to-one";
-          fromFieldName = lambdaProperty(hasOne[2] ?? "");
-        } else if (hasMany) {
-          toEntity = navTarget(hasMany);
-          cardinality = "one-to-many";
-          fromFieldName = lambdaProperty(hasMany[2] ?? "");
-        }
-
-        if (!toEntity || !cardinality) continue;
-        if (isScalar(toEntity) || isDenylistedType(toEntity)) continue;
-
-        const foreignKey = fkMatch ? lambdaProperty(fkMatch[1] ?? "") || null : null;
-        const joinTable = joinMatch ? bareType(joinMatch[1]) || null : null;
-
-        out.push({
-          fromEntity: from,
-          fromField: fromFieldName || lowerFirst(toEntity),
-          toEntity,
-          cardinality,
-          foreignKey,
-          inverseField,
-          joinTable: cardinality === "many-to-many" ? joinTable : undefined,
-          // FK / explicit cardinality declared by the Fluent chain → EXTRACTED.
-          confidence: "EXTRACTED",
-          orm: "ef-core",
-        });
+        const rel = this.relationFromStatement(text, from);
+        if (rel) out.push(rel);
       } catch {
         // Skip any chain we can't parse; keep going.
       }
@@ -585,12 +677,228 @@ export class CSharpEntityExtractor extends EntityExtractor {
   }
 
   /**
+   * Extract relations declared inside `IEntityTypeConfiguration<T>` classes.
+   * Unlike `modelBuilder.Entity<T>()` chains, a configuration class writes
+   * `builder.HasOne(...)` with NO entity head — the source entity for EVERY
+   * chain in the class is the configuration's generic argument T, recovered
+   * from the `IEntityTypeConfiguration<T>` base or the `EntityTypeBuilder<T>`
+   * `Configure` parameter. This is the dominant relationship-declaration site
+   * in larger EF Core codebases (e.g. one config class per entity), invisible
+   * to `parseFluentApi` because it never mentions `.Entity<`.
+   */
+  private parseEntityConfigurations(ctx: EntityExtractContext): EntityRelation[] {
+    const out: EntityRelation[] = [];
+    // Cheap file-level guard: only EF configuration classes carry these tokens,
+    // so non-config files (the overwhelming majority) skip the per-class scan.
+    if (!CONFIG_MARKER_RE.test(ctx.sourceText)) return out;
+
+    for (const cls of ctx.analysis.classes ?? []) {
+      try {
+        const from = this.configEntityOf(ctx, cls);
+        if (!from) continue;
+        const body = this.bodyOf(ctx, cls);
+        const statements = this.collectStatements(body, (s) => REL_VERB_RE.test(s));
+        for (const text of statements) {
+          const rel = this.relationFromStatement(text, from);
+          if (rel) out.push(rel);
+        }
+      } catch {
+        // A single unparseable configuration class must not lose the others.
+      }
+    }
+
+    return out;
+  }
+
+  /**
+   * The entity type a configuration class maps: the generic argument of
+   * `IEntityTypeConfiguration<T>` (preferred) or, failing that, the
+   * `EntityTypeBuilder<T>` `Configure` parameter. Returns null when the class
+   * is not an EF entity configuration.
+   */
+  private configEntityOf(ctx: EntityExtractContext, cls: ClassInfo): string | null {
+    const text = this.bodyOf(ctx, cls).join("\n");
+    const iface = /IEntityTypeConfiguration\s*<\s*([A-Za-z_][\w.]*)\s*>/.exec(text);
+    if (iface) return bareType(iface[1]);
+    const param = /EntityTypeBuilder\s*<\s*([A-Za-z_][\w.]*)\s*>/.exec(text);
+    if (param) return bareType(param[1]);
+    return null;
+  }
+
+  /**
+   * Extract relations from an EF Core **ModelSnapshot** (`*ModelSnapshot.cs`) —
+   * the generated but committed, authoritative model the EF tooling keeps in
+   * sync. Its relationship section uses the string-arg form
+   * `modelBuilder.Entity("Ns.From", b => { b.HasOne("Ns.To","nav").WithMany().HasForeignKey("Col") })`,
+   * which the `<T>`-only `parseFluentApi` and the config-class pass both miss.
+   * This recovers relationships declared purely by EF convention (no nav
+   * property, no explicit `IEntityTypeConfiguration`), with EXACT FK columns.
+   *
+   * Scoped to the current `*ModelSnapshot.cs` ONLY — never the per-migration
+   * `*.Designer.cs` files, which each embed a full historical snapshot and would
+   * multiply every relation by the migration count. No nodes are created here
+   * (the snapshot's fully-qualified names can disagree with authored class names
+   * across model layers); relations whose endpoints don't resolve to an already
+   * discovered entity are simply dropped by the graph builder.
+   */
+  private parseModelSnapshot(ctx: EntityExtractContext): EntityRelation[] {
+    const out: EntityRelation[] = [];
+    const filePath = ctx.analysis.filePath ?? "";
+    if (!/ModelSnapshot\.cs$/i.test(filePath)) return out;
+
+    // Line-oriented scan: an EF snapshot wraps relationships in
+    // `modelBuilder.Entity("From", b => { b.HasOne("To","nav").WithMany().HasForeignKey("Col"); ... })`
+    // blocks. The `Entity(` paren stays open across the whole lambda body, so a
+    // statement-joiner would fuse the entire block; instead we track the current
+    // `from` entity from each `Entity("...")` line and accumulate each
+    // `b.HasOne(...)` chain until the next chain / block / end.
+    let from = "";
+    let pendingTo = "";
+    let pendingNav = "";
+    let chain = "";
+
+    const flush = (): void => {
+      if (from && pendingTo && !isScalar(pendingTo) && !isDenylistedType(pendingTo)) {
+        // WithOne → one-to-one; otherwise the dependent side is many.
+        const cardinality: EntityRelation["cardinality"] = /\.\s*WithOne\s*\(/.test(chain)
+          ? "one-to-one"
+          : "many-to-one";
+        // many-to-one: `HasForeignKey("Col")`; one-to-one: `HasForeignKey("DepType","Col")`.
+        const fk = /\.\s*HasForeignKey\s*\(\s*"([^"]+)"(?:\s*,\s*"([^"]+)")?/.exec(chain);
+        out.push({
+          fromEntity: from,
+          fromField: pendingNav || lowerFirst(pendingTo),
+          toEntity: pendingTo,
+          cardinality,
+          foreignKey: fk ? fk[2] ?? fk[1] : null,
+          confidence: "EXTRACTED",
+          orm: "ef-core",
+        });
+      }
+      pendingTo = "";
+      pendingNav = "";
+      chain = "";
+    };
+
+    for (const raw of ctx.lines ?? []) {
+      try {
+        const line = this.stripLineComment(raw, CSharpEntityExtractor.LINE_COMMENT);
+        const ent = /\.\s*Entity\s*\(\s*"([^"]+)"/.exec(line);
+        if (ent) { flush(); from = bareType(ent[1]); continue; }
+        const ho = /\.\s*HasOne\s*\(\s*"([^"]+)"\s*(?:,\s*"([^"]+)")?/.exec(line);
+        if (ho) { flush(); pendingTo = bareType(ho[1]); pendingNav = ho[2] ?? ""; chain = line; continue; }
+        if (pendingTo) chain += " " + line;
+      } catch {
+        // Skip any line we can't parse; keep going.
+      }
+    }
+    flush();
+    return out;
+  }
+
+  /**
+   * Parse a single fluent configuration statement into an EntityRelation, given
+   * the already-resolved source entity `from`. Recognises the full
+   * `HasOne/HasMany` × `WithOne/WithMany` cardinality matrix plus
+   * `HasForeignKey` / `UsingEntity`. Returns null for non-relation chains
+   * (`Property`/`HasKey`/`ToTable`/`OwnsOne`/…) and unresolvable targets.
+   */
+  private relationFromStatement(text: string, from: string): EntityRelation | null {
+    // Skip pure value-type / owned configuration chains.
+    if (/\.\s*OwnsOne\b|\.\s*OwnsMany\b|\.\s*Ignore\b/.test(text)) return null;
+
+    // Determine the target entity from HasOne<T> / HasMany<T> or the lambda
+    // navigation property (`p => p.Author`).
+    const hasOne = /\.\s*HasOne\s*(?:<\s*([^>]+?)\s*>)?\s*\(([^)]*)\)/.exec(text);
+    const hasMany = /\.\s*HasMany\s*(?:<\s*([^>]+?)\s*>)?\s*\(([^)]*)\)/.exec(text);
+    const withMany = /\.\s*WithMany\s*(?:<\s*[^>]+?\s*>)?\s*\(([^)]*)\)/.exec(text);
+    const withOne = /\.\s*WithOne\s*(?:<\s*[^>]+?\s*>)?\s*\(([^)]*)\)/.exec(text);
+    const fkMatch = /\.\s*HasForeignKey\s*(?:<\s*[^>]+?\s*>)?\s*\(([^)]*)\)/.exec(text);
+    const joinMatch = /\.\s*UsingEntity\s*<\s*([^>]+?)\s*>/.exec(text);
+
+    const navTarget = (m: RegExpExecArray | null): string => {
+      if (!m) return "";
+      if (m[1]) return bareType(m[1]); // explicit generic <T>
+      return navTypeFromLambda(m[2] ?? "");
+    };
+
+    let toEntity = "";
+    let cardinality: EntityRelation["cardinality"] | null = null;
+    let fromFieldName = "";
+    let inverseField: string | null = null;
+
+    if (hasOne && withMany) {
+      // many-to-one (HasOne ... WithMany)
+      toEntity = navTarget(hasOne);
+      cardinality = "many-to-one";
+      fromFieldName = lambdaProperty(hasOne[2] ?? "");
+      inverseField = lambdaProperty(withMany[1] ?? "") || null;
+    } else if (hasMany && withOne) {
+      // one-to-many (HasMany ... WithOne)
+      toEntity = navTarget(hasMany);
+      cardinality = "one-to-many";
+      fromFieldName = lambdaProperty(hasMany[2] ?? "");
+      inverseField = lambdaProperty(withOne[1] ?? "") || null;
+    } else if (hasMany && withMany) {
+      // many-to-many (HasMany ... WithMany)
+      toEntity = navTarget(hasMany);
+      cardinality = "many-to-many";
+      fromFieldName = lambdaProperty(hasMany[2] ?? "");
+      inverseField = lambdaProperty(withMany[1] ?? "") || null;
+    } else if (hasOne && withOne) {
+      // one-to-one (HasOne ... WithOne)
+      toEntity = navTarget(hasOne);
+      cardinality = "one-to-one";
+      fromFieldName = lambdaProperty(hasOne[2] ?? "");
+      inverseField = lambdaProperty(withOne[1] ?? "") || null;
+    } else if (hasOne) {
+      toEntity = navTarget(hasOne);
+      cardinality = "many-to-one";
+      fromFieldName = lambdaProperty(hasOne[2] ?? "");
+    } else if (hasMany) {
+      toEntity = navTarget(hasMany);
+      cardinality = "one-to-many";
+      fromFieldName = lambdaProperty(hasMany[2] ?? "");
+    }
+
+    if (!toEntity || !cardinality) return null;
+    if (isScalar(toEntity) || isDenylistedType(toEntity)) return null;
+
+    const foreignKey = fkMatch ? lambdaProperty(fkMatch[1] ?? "") || null : null;
+    const joinTable = joinMatch ? bareType(joinMatch[1]) || null : null;
+
+    return {
+      fromEntity: from,
+      fromField: fromFieldName || lowerFirst(toEntity),
+      toEntity,
+      cardinality,
+      foreignKey,
+      inverseField,
+      joinTable: cardinality === "many-to-many" ? joinTable : undefined,
+      // FK / explicit cardinality declared by the Fluent chain → EXTRACTED.
+      confidence: "EXTRACTED",
+      orm: "ef-core",
+    };
+  }
+
+  /**
    * Merge physical lines into `;`-terminated statements (string- and
    * bracket-aware) so a fluent method chain split across lines is recombined.
    * Only statements that mention `.Entity<` are returned, keeping the scan
    * focused on EF configuration and cheap.
    */
   private joinFluentStatements(lines: string[]): string[] {
+    return this.collectStatements(lines, (s) => /\.\s*Entity\s*</.test(s));
+  }
+
+  /**
+   * Merge physical lines into `;`-terminated statements (string- and
+   * paren/bracket-aware) so a fluent method chain split across lines is
+   * recombined, then keep only statements for which `keep` returns true. `{}`
+   * (class / method bodies) act as boundaries but never hold a statement open,
+   * so a `;` ending a chain inside a method body is still seen as a terminator.
+   */
+  private collectStatements(lines: string[], keep: (statement: string) => boolean): string[] {
     const out: string[] = [];
     let buf = "";
     // Only `()` / `[]` nesting holds a statement open; `{}` (class/method bodies)
@@ -599,7 +907,7 @@ export class CSharpEntityExtractor extends EntityExtractor {
     let depth = 0;
     let quote = "";
     const flush = () => {
-      if (/\.\s*Entity\s*</.test(buf)) out.push(buf);
+      if (keep(buf)) out.push(buf);
       buf = "";
     };
     for (const raw of lines) {
@@ -657,6 +965,16 @@ const AUTO_PROP_RE =
 const RECORD_HEADER_RE = /\brecord\b(?:\s+(?:class|struct))?\s+[A-Za-z_]\w*\s*(?=\()/;
 // `modelBuilder.Entity<Type>()` — the head of a Fluent API configuration chain.
 const ENTITY_CALL_RE = /\b\w+\s*\.\s*Entity\s*<\s*([^>]+?)\s*>\s*\(/;
+// A statement that configures a relationship (vs. Property/HasKey/ToTable/…),
+// used to keep only relation chains inside an `IEntityTypeConfiguration<T>`.
+const REL_VERB_RE = /\.\s*(?:HasOne|HasMany)\s*[(<]/;
+// File-level guard: tokens that appear only in EF entity-configuration classes.
+const CONFIG_MARKER_RE = /IEntityTypeConfiguration\s*<|EntityTypeBuilder\s*</;
+// Folders whose classes are DTOs / view models / API contracts, never the
+// persisted entity — so a same-named class there must NOT be tagged an entity
+// by the cross-file reconcile. Matches path separators in either slash style.
+const NON_ENTITY_PATH_RE =
+  /[\/\\](?:ViewModels?|Dtos?|Contracts|Requests?|Responses?)[\/\\]/i;
 
 // ── type classification ──────────────────────────────────────────────────
 

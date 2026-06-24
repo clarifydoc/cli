@@ -3,6 +3,7 @@ import type { LanguagePluginMeta, CallExtractionHooks } from "../../../types/lan
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { extractJavaKotlinTypeReferences } from "./type-references.js";
 import { javaCallHooks, kotlinCallHooks } from "./call-hooks.js";
+import { jvmPackages } from "./packages.js";
 
 const JAVA_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -83,6 +84,7 @@ function jvmMeta(language: Language, opts: {
       logicalOps: new Set(["&&", "||"]),
     },
     frameworkImportHints: JVM_FRAMEWORK_HINTS,
+    knownPackages: jvmPackages,
     apiCallRoots: opts.apiCallRoots,
     dbCallRoots: JVM_DB_ROOTS,
     ast: {

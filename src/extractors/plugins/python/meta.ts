@@ -3,6 +3,7 @@ import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { stripPythonNonCode } from "./python-tokenizer.js";
 import { extractPythonTypeReferences } from "./type-references.js";
 import { pythonCallHooks } from "./call-hooks.js";
+import { pypiPackages } from "./packages.js";
 
 const PYTHON_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -57,6 +58,7 @@ const SECURITY_RULES: readonly SecurityRule[] = [
 
 export const pythonMeta: LanguagePluginMeta = {
   language: "python",
+  knownPackages: pypiPackages,
   parsing: "tree-sitter",
   extensions: [".py", ".pyw"],
   // pytest/unittest: `test_*.py`, `*_test.py`, and `conftest.py` fixtures.

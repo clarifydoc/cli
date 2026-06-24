@@ -1,4 +1,4 @@
-import type { Language } from "../types/analysis.js";
+import type { Language, PackageCategory } from "../types/analysis.js";
 import type { LanguagePluginMeta, LanguageComplexitySpec, SecurityRule, AstExtractorHooks } from "../types/language-plugin.js";
 import type { RegexLangSpec } from "./plugins/shared/regex-base.js";
 import { registerBuiltinTypes } from "./shared/builtin-types.js";
@@ -25,6 +25,9 @@ import { cMeta } from "./plugins/c/meta.js";
 import { cppMeta } from "./plugins/cpp/meta.js";
 import { prismaMeta } from "./plugins/prisma/meta.js";
 import { dartMeta } from "./plugins/dart/meta.js";
+import { elixirMeta } from "./plugins/elixir/meta.js";
+import { erlangMeta } from "./plugins/erlang/meta.js";
+import { objcMeta } from "./plugins/objc/meta.js";
 
 /**
  * The language plugin registry. Aggregates every plugin's LanguagePluginMeta
@@ -38,7 +41,7 @@ const ALL_METAS: LanguagePluginMeta[] = [
   pascalMeta, dfmMeta,
   phpMeta,
   goMeta, rustMeta, rubyMeta, swiftMeta, luaMeta, scalaMeta, perlMeta,
-  vbMeta, sqlMeta, cMeta, cppMeta, prismaMeta, dartMeta,
+  vbMeta, sqlMeta, cMeta, cppMeta, prismaMeta, dartMeta, elixirMeta, erlangMeta, objcMeta,
 ];
 
 const BY_LANGUAGE = new Map<Language, LanguagePluginMeta>();
@@ -204,6 +207,60 @@ export function inferFileFrameworks(
   }
 
   return [...fileFrameworks];
+}
+
+// ─── Package recognition ─────────────────────────────────────────────────
+
+export interface KnownPackageEntry {
+  category: PackageCategory;
+  framework?: { id: string; name: string };
+}
+
+/**
+ * Aggregated third-party package classification from every plugin's
+ * `knownPackages`. Keyed by lowercased package name; framework-bearing rules
+ * take precedence over plain-category ones on a collision (two-pass build), so
+ * the core dependency inventory needs no hardcoded package knowledge of its own.
+ */
+const { KNOWN_PACKAGES, KNOWN_PACKAGE_PATTERNS } = (() => {
+  const exact = new Map<string, KnownPackageEntry>();
+  const patterns: Array<{ match: RegExp; entry: KnownPackageEntry }> = [];
+  // Pass 1: framework-bearing rules win (exact names + family patterns).
+  for (const meta of ALL_METAS) {
+    for (const rule of meta.knownPackages ?? []) {
+      if (!rule.framework) continue;
+      const entry: KnownPackageEntry = { category: rule.category, framework: rule.framework };
+      for (const n of rule.names ?? []) exact.set(n.toLowerCase(), entry);
+      if (rule.match) patterns.push({ match: rule.match, entry });
+    }
+  }
+  // Pass 2: plain-category rules fill remaining names / patterns.
+  for (const meta of ALL_METAS) {
+    for (const rule of meta.knownPackages ?? []) {
+      if (rule.framework) continue;
+      const entry: KnownPackageEntry = { category: rule.category };
+      for (const n of rule.names ?? []) {
+        const key = n.toLowerCase();
+        if (!exact.has(key)) exact.set(key, entry);
+      }
+      if (rule.match) patterns.push({ match: rule.match, entry });
+    }
+  }
+  return { KNOWN_PACKAGES: exact, KNOWN_PACKAGE_PATTERNS: patterns };
+})();
+
+/**
+ * Classify a package by name: exact plugin hit first, then family patterns
+ * (framework-bearing patterns before plain-category ones; first match wins).
+ */
+export function classifyKnownPackage(name: string): KnownPackageEntry | undefined {
+  const key = name.toLowerCase();
+  const exact = KNOWN_PACKAGES.get(key);
+  if (exact) return exact;
+  for (const p of KNOWN_PACKAGE_PATTERNS) {
+    if (p.match.test(key)) return p.entry;
+  }
+  return undefined;
 }
 
 // ─── Security rules ──────────────────────────────────────────────────────

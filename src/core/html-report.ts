@@ -147,6 +147,8 @@ function renderReport(summary: ProjectAnalysis): string {
     // to the Data Model (entity badges on traces + "Accessed by" on entities).
     symbolDataAccess: (summary as any).symbolDataAccess ?? [],
     migrations: (summary as any).migrations ?? [],
+    /** Full third-party dependency inventory (declared + usage cross-check). */
+    externalPackages: (summary as any).externalPackages ?? [],
   };
 
   return `<!DOCTYPE html>
@@ -174,6 +176,7 @@ ${renderSecurityView()}
 ${renderComplexityView()}
 ${renderSuggestionsView()}
 ${renderInsightsView()}
+${renderDependenciesView()}
 ${renderSummaryView()}
 <script>
 const DATA = ${JSON.stringify(payload)};
@@ -800,6 +803,7 @@ function renderNav(payload: Record<string, unknown>): string {
     { view: "complexity",  label: "Complexity",           hasData: nonEmptyArray(payload.complexity) },
     { view: "suggestions", label: "Suggestions",          hasData: nonEmptyArray(payload.suggestions) },
     { view: "insights",    label: "Insights",             hasData: nonEmptyArray(payload.godNodes) || nonEmptyArray(payload.surprisingConnections) || nonEmptyArray(payload.suggestedQuestions) },
+    { view: "dependencies",label: "Dependencies",         hasData: nonEmptyArray(payload.externalPackages) },
     { view: "summary",     label: "Overview",             hasData: true },
   ];
   const visible = tabs.filter(t => t.hasData);
@@ -1048,6 +1052,26 @@ function renderSuggestionsView(): string {
 function renderInsightsView(): string {
   return `<section id="view-insights" class="view">
   <div id="insights-content"></div>
+</section>`;
+}
+
+// ─── Dependencies View ────────────────────────────────────────────────────
+// The full third-party inventory across every manifest ecosystem, with each
+// package cross-referenced against the code that imports it (used / unused /
+// unknown). Populated client-side from DATA.externalPackages.
+
+function renderDependenciesView(): string {
+  return `<section id="view-dependencies" class="view">
+  <div class="filter-bar">
+    <select id="dep-filter-eco"><option value="">All ecosystems</option></select>
+    <select id="dep-filter-cat"><option value="">All categories</option></select>
+    <select id="dep-filter-use"><option value="">All</option>
+      <option value="used">Used</option><option value="unused">Unused</option><option value="unknown">Usage unknown</option>
+    </select>
+    <input id="dep-filter-search" type="search" placeholder="Search packages..." />
+  </div>
+  <div id="dep-summary" style="padding:6px 12px;color:#8b949e;font-size:13px"></div>
+  <div id="dep-grid"></div>
 </section>`;
 }
 
@@ -2375,6 +2399,7 @@ function renderSummary() {
     { num: links.length, lbl: 'File Links' },
     { num: traces.length, lbl: 'Call Traces' },
     { num: DATA.frameworks.length, lbl: 'Frameworks' },
+    { num: (DATA.externalPackages || []).length, lbl: 'Packages' },
   ];
   statsEl.innerHTML = statCards.map(s =>
     '<div class="stat-card"><div class="num">' + s.num + '</div><div class="lbl">' + s.lbl + '</div></div>'
@@ -5024,6 +5049,71 @@ function renderSecurity() {
   ).join('');
 }
 renderSecurity();
+
+// ─── Dependencies View ────────────────────────────────────────────────
+// Category sort order: stack-defining buckets first, long tail last.
+const DEP_CAT_RANK = { framework:0, frontend:1, orm:2, database:3, http:4, graphql:5, grpc:6, state:7, ui:8, auth:9, messaging:10 };
+const DEP_BADGE = 'background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:10px;padding:1px 8px;font-size:11px;white-space:nowrap';
+let _depFiltersPopulated = false;
+function renderDependencies() {
+  const ecoSel = document.getElementById('dep-filter-eco');
+  const catSel = document.getElementById('dep-filter-cat');
+  const useSel = document.getElementById('dep-filter-use');
+  const searchEl = document.getElementById('dep-filter-search');
+  const summaryEl = document.getElementById('dep-summary');
+  const grid = document.getElementById('dep-grid');
+  if (!ecoSel || !catSel || !useSel || !searchEl || !grid || !summaryEl) return;
+
+  const pkgs = DATA.externalPackages || [];
+  if (!_depFiltersPopulated) {
+    [...new Set(pkgs.map(p => p.ecosystem))].sort().forEach(e => { const o = document.createElement('option'); o.value = e; o.textContent = e; ecoSel.appendChild(o); });
+    [...new Set(pkgs.map(p => p.category))].sort().forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = c; catSel.appendChild(o); });
+    ecoSel.onchange = renderDependencies;
+    catSel.onchange = renderDependencies;
+    useSel.onchange = renderDependencies;
+    searchEl.oninput = renderDependencies;
+    _depFiltersPopulated = true;
+  }
+
+  const ecoF = ecoSel.value, catF = catSel.value, useF = useSel.value, searchF = searchEl.value.toLowerCase();
+  let filtered = pkgs.slice();
+  if (ecoF) filtered = filtered.filter(p => p.ecosystem === ecoF);
+  if (catF) filtered = filtered.filter(p => p.category === catF);
+  if (useF === 'used') filtered = filtered.filter(p => p.used === true);
+  else if (useF === 'unused') filtered = filtered.filter(p => p.used === false);
+  else if (useF === 'unknown') filtered = filtered.filter(p => p.used == null);
+  if (searchF) filtered = filtered.filter(p => p.name.toLowerCase().includes(searchF));
+
+  const usedCount = pkgs.filter(p => p.used === true).length;
+  const unusedCount = pkgs.filter(p => p.used === false).length;
+  const unknownCount = pkgs.filter(p => p.used == null).length;
+  summaryEl.innerHTML = '<strong style="color:#e6edf3">' + pkgs.length + '</strong> packages — ' +
+    '<span style="color:#3fb950">' + usedCount + ' used</span>, ' +
+    '<span style="color:#f85149">' + unusedCount + ' unused</span>, ' +
+    '<span style="color:#8b949e">' + unknownCount + ' usage unknown</span>';
+
+  if (filtered.length === 0) { grid.innerHTML = '<div class="empty">No packages match the filters</div>'; return; }
+
+  filtered.sort((a, b) =>
+    (DEP_CAT_RANK[a.category] ?? 50) - (DEP_CAT_RANK[b.category] ?? 50) || a.name.localeCompare(b.name));
+
+  grid.innerHTML = filtered.map(p => {
+    const usage = p.used === true
+      ? '<span style="color:#3fb950">● used' + (p.usageCount ? ' ×' + p.usageCount : '') + '</span>'
+      : p.used === false
+        ? '<span style="color:#f85149">○ unused</span>'
+        : '<span style="color:#8b949e">— unknown</span>';
+    return '<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid #21262d">' +
+      '<span style="font-family:monospace;color:#e6edf3;min-width:260px;overflow-wrap:anywhere">' + esc(p.name) +
+        (p.version ? ' <span style="color:#6e7681">' + esc(p.version) + '</span>' : '') + '</span>' +
+      '<span style="' + DEP_BADGE + '">' + esc(p.ecosystem) + '</span>' +
+      '<span style="' + DEP_BADGE + '">' + esc(p.category) + '</span>' +
+      (p.scope !== 'prod' ? '<span style="' + DEP_BADGE + ';opacity:.7">' + esc(p.scope) + '</span>' : '') +
+      '<span style="margin-left:auto;font-size:12px;white-space:nowrap">' + usage + '</span>' +
+    '</div>';
+  }).join('');
+}
+renderDependencies();
 
 // ─── Complexity View ──────────────────────────────────────────────────
 function renderComplexity() {

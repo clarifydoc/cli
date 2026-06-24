@@ -1,6 +1,7 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { rustSpec } from "./index.js";
+import { cargoPackages } from "./packages.js";
 
 const RUST_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -21,6 +22,7 @@ export const rustMeta: LanguagePluginMeta = {
   extensions: rustSpec.extensions,
   regexSpec: rustSpec,
   builtinTypes: RUST_BUILTINS,
+  knownPackages: cargoPackages,
   externalModulePrefixes: [
     "std::", "core::", "alloc::", "serde", "tokio", "actix", "rocket",
     "hyper", "reqwest", "diesel", "sqlx",

@@ -10,7 +10,41 @@ import type {
   EventInfo,
   ImportInfo,
   FileAnalysis,
+  PackageCategory,
 } from "./analysis.js";
+
+/**
+ * Package-recognition rule contributed by a language plugin for the package
+ * ecosystem it owns (JS→npm, C#→nuget, Go→go modules, …). The core dependency
+ * inventory stays deliberately generic — it parses manifests and cross-checks
+ * imports without knowing any specific package — while plugins own the
+ * package-specific knowledge: which third-party names map to which functional
+ * category, and which imply a framework. Matched by exact (case-insensitive)
+ * name; the long-tail name-shape heuristics (`@types/*`, `*-eslint-*`, …) live
+ * in core. This is the home for ecosystem-specific package handling, alongside
+ * the plugin's other subsections (routes/, data-sources/, …).
+ */
+export interface KnownPackageRule {
+  /**
+   * Exact package names this rule covers — an npm bare name (`react`), a Maven
+   * `group:artifact` or artifactId, a Go module path (`gorm.io/gorm`), a NuGet
+   * id (`Microsoft.EntityFrameworkCore`), a Composer `vendor/pkg`, etc.
+   * Case-insensitive. Highest priority (an exact hit always wins over `match`).
+   */
+  names?: readonly string[];
+  /**
+   * Regex matched against the LOWERCASED package name, for whole families that
+   * share a prefix/shape (`spring-boot-*`, `@aws-sdk/*`,
+   * `org.apache.logging.log4j:*`). Lower priority than any exact `names` hit, so
+   * specific packages can still override their family. Provide `names`, `match`,
+   * or both.
+   */
+  match?: RegExp;
+  /** Functional bucket for the report's Dependencies grouping. */
+  category: PackageCategory;
+  /** When set, matching packages also imply this framework detection. */
+  framework?: { id: string; name: string };
+}
 
 /**
  * A regex security rule. Contributed by language plugins (language-specific
@@ -216,6 +250,12 @@ export interface LanguagePluginMeta {
   /** Skip security scanning entirely (resource formats). */
   skipSecurityScan?: boolean;
 
+  /**
+   * Third-party packages this language's ecosystem owns — drives the dependency
+   * inventory's categorisation and framework derivation. Aggregated globally by
+   * the registry (frameworks win over plain categories on a name collision).
+   */
+  knownPackages?: readonly KnownPackageRule[];
   /** import source (exact, or prefix-matched with "/" or ".") → framework id. */
   frameworkImportHints?: Readonly<Record<string, string>>;
   /** Call roots that indicate an HTTP/API client (call-graph classification). */
