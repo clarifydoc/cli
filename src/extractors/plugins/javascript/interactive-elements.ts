@@ -78,7 +78,12 @@ export function isEventProp(name: string): boolean {
 
 /** Extract the handler function name from a JSX attribute value */
 function extractHandlerName(attrNode: Node): string | null {
-  const valueNode = attrNode.childForFieldName("value");
+  // tree-sitter-typescript's jsx_attribute exposes NO `value` field (children
+  // are [name, "=", jsx_expression]), so the field lookup returns null on every
+  // attribute — which silently nulled every React handler. Fall back to the
+  // positional value child.
+  const valueNode = attrNode.childForFieldName("value")
+    ?? attrNode.children.find((c) => c.type === "jsx_expression" || c.type === "string");
   if (!valueNode) return null;
 
   // {handleClick} → jsx_expression containing identifier

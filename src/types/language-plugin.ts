@@ -145,6 +145,16 @@ export interface CallExtractionHooks {
    * matches per-language behavior in practice).
    */
   nestedScopeTypes?: readonly string[];
+  /**
+   * The subset of nested-scope types that are function EXPRESSIONS (arrow
+   * functions, lambdas). When such a node is anonymous — not bound to a name
+   * via a variable declarator — `extractCalls` descends into it and attributes
+   * its calls to the enclosing function: an inline `onClick={() =>
+   * addToCart(id)}` or a `useEffect(() => { fetch(...) })` callback executes
+   * on behalf of the function that wires it. Named bindings still stop the
+   * walk (they are extracted as their own functions). Unioned across plugins.
+   */
+  anonymousScopeTypes?: readonly string[];
   /** Call node types whose arguments are scanned for callback identifiers (also unioned). */
   callbackArgNodeTypes?: readonly string[];
   /**

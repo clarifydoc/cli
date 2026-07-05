@@ -201,6 +201,13 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         child.type === "generator_function_declaration"
       ) {
         functions.push(this.parseJsFunction(child, isExported));
+        // Descend into the body: NAMED functions nested inside a function are
+        // real symbols — a React component's `const onSubmitHandler = async
+        // (e) => {…}` is where the click handling (and its api-calls) actually
+        // lives. Skipping them dropped the handler AND its body's calls from
+        // the graph, so every React click-trace dead-ended at the component.
+        const body = child.childForFieldName("body");
+        if (body) this.extractJsFunctions(body, functions, false);
       } else if (
         child.type === "lexical_declaration" ||
         child.type === "variable_declaration"
@@ -217,8 +224,22 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
             ) {
               functions.push(this.parseJsArrowOrExpr(name, value, isExported));
             }
+            // Named bindings can hide anywhere below (an arrow's body, a
+            // useEffect callback, a call argument) — keep walking the value.
+            if (value) this.extractJsFunctions(value, functions, false);
           }
         }
+      } else if (
+        child.type === "class_declaration" ||
+        child.type === "abstract_class_declaration" ||
+        child.type === "class_body"
+      ) {
+        // Class members are the class extractor's territory.
+        continue;
+      } else {
+        // Generic descent: statements, blocks, JSX, call arguments — anonymous
+        // functions are never extracted, but named bindings inside them are.
+        this.extractJsFunctions(child, functions, false);
       }
     }
   }

@@ -25,12 +25,27 @@ const NESTED_SCOPE_TYPES = new Set<string>();
 /** Call node types whose arguments are scanned for callback identifiers (union). */
 const CALLBACK_ARG_NODE_TYPES = new Set<string>();
 
+/** Nested-scope types that are function EXPRESSIONS — descend when anonymous (union). */
+const ANONYMOUS_SCOPE_TYPES = new Set<string>();
+
 /** Called by the registry while aggregating plugin metas. */
 export function registerCallExtraction(language: Language, hooks: CallExtractionHooks | undefined): void {
   if (!hooks) return;
   callHooksByLanguage.set(language, hooks);
   for (const t of hooks.nestedScopeTypes ?? []) NESTED_SCOPE_TYPES.add(t);
+  for (const t of hooks.anonymousScopeTypes ?? []) ANONYMOUS_SCOPE_TYPES.add(t);
   for (const t of hooks.callbackArgNodeTypes ?? []) CALLBACK_ARG_NODE_TYPES.add(t);
+}
+
+/**
+ * An anonymous function expression (inline JSX handler, effect callback, IIFE)
+ * is not a symbol of its own — its calls execute on behalf of the enclosing
+ * function, so the call walk continues through it. A function expression bound
+ * to a name (`const f = () => {…}`) IS extracted as its own function and stays
+ * a boundary.
+ */
+function isAnonymousFnExpression(node: Node): boolean {
+  return ANONYMOUS_SCOPE_TYPES.has(node.type) && node.parent?.type !== "variable_declarator";
 }
 
 /** True if the node type opens a nested function/class scope (cross-plugin union). */
@@ -90,8 +105,11 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     if (visited.has(node.id)) return;
     visited.add(node.id);
 
-    // Don't descend into nested function/class definitions (except the root body itself)
-    if (!isRoot && NESTED_SCOPE_TYPES.has(node.type)) return;
+    // Don't descend into nested function/class definitions (except the root
+    // body itself) — those are symbols of their own. Anonymous function
+    // expressions are the exception: `onClick={() => addToCart(id)}` has no
+    // symbol, so its calls attribute here.
+    if (!isRoot && NESTED_SCOPE_TYPES.has(node.type) && !isAnonymousFnExpression(node)) return;
 
     // Standard call expressions
     if (callTypes.has(node.type)) {
@@ -244,9 +262,13 @@ export function classifyCalls(
       continue;
     }
 
-    // 2b. Variable alias resolution: const userStore = useUserStore() → userStore.x resolves to useUserStore's source
-    if (variableAliases && call.name.includes(".")) {
-      const aliasSource = variableAliases.get(root);
+    // 2b. Variable alias resolution: const userStore = useUserStore() → userStore.x
+    // resolves to useUserStore's source. A BARE name consults the alias map too —
+    // that's a destructured factory member (`const { refreshCart } = useShopCart()`;
+    // the later `refreshCart()` call must classify into the composable's module,
+    // or every hook/composable-based UI trace dead-ends one hop from the screen).
+    if (variableAliases) {
+      const aliasSource = variableAliases.get(call.name.includes(".") ? root : call.name);
       if (aliasSource) {
         call.kind = "cross-file";
         call.target = aliasSource;

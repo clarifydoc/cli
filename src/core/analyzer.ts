@@ -45,6 +45,7 @@ import { generateSuggestions } from "./suggestions-engine.js";
 import { detectCommunities } from "./community-detector.js";
 import { findGodNodes, findSurprisingConnections, suggestQuestions } from "./topology-analyzer.js";
 import { dedupSymbolLinks, dropNameCollisionReferences } from "./symbol-dedup.js";
+import { synthesizeApiRouteSymbolLinks, synthesizeQueueSymbolLinks } from "./api-route-symbol-links.js";
 import { aggregateTypeBlast, buildClassGraph } from "./data-model-blast.js";
 import { buildDataAccessGraph, attributeDataAccessToSymbols } from "./data-access-graph.js";
 import { buildEntityGraph, reconcileEntityInheritance, linkEntityModels, synthesizeReferencedTableEntities } from "./entity-graph.js";
@@ -589,6 +590,19 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     progress.detail(`  API↔route links: ${apiRouteLinks.length}`);
   }
 
+  // Turn the api↔route join into call-graph edges (frontend caller → route
+  // handler) so Call Traces cross the HTTP boundary — without these, a click
+  // handler's trace stops at fetch() and the backend trace starts fresh, and
+  // the trace view's transitive entity propagation can never reach a screen.
+  // Appended after enrichGraphFromSymbolLinks ran, so the component dependency
+  // graph is untouched; blast radius (below) does include them — a handler's
+  // blast genuinely covers the screens that call it.
+  const apiSymbolLinks = synthesizeApiRouteSymbolLinks(apiRouteLinks, allAnalyses);
+  if (apiSymbolLinks.length > 0) {
+    symbolLinks = dedupSymbolLinks([...symbolLinks, ...apiSymbolLinks]);
+    progress.detail(`  API→handler trace links: ${apiSymbolLinks.length}`);
+  }
+
   // Step 4c: Advanced analysis
   progress.step("Analyzing complexity and patterns...");
   const complexity = aggregateComplexity(perFileComplexity);
@@ -643,9 +657,12 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const hasDbAccess = allAnalyses.some((a) =>
     a.dataSources?.some((ds) => ds.kind === "database"),
   );
+  const hasQueueAccess = allAnalyses.some((a) =>
+    a.dataSources?.some((ds) => ds.kind === "queue-publish" || ds.kind === "queue-consume"),
+  );
 
   // File→datastore graph for the Architecture tab's Data Access view.
-  const dataAccessGraph: DataAccessGraph = hasDbAccess
+  const dataAccessGraph: DataAccessGraph = hasDbAccess || hasQueueAccess
     ? buildDataAccessGraph(allAnalyses)
     : { nodes: [], edges: [] };
 
@@ -674,11 +691,20 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
 
   // Bridge Call Traces ↔ Data Model: attribute each DB access to its containing
   // function and match the touched entity to an ER node. Drives the entity
-  // badges on traces and the "Accessed by" list on entities. Only DB calls
-  // produce entries, so skipping when none is output-identical.
-  const symbolDataAccess = hasDbAccess
+  // badges on traces and the "Accessed by" list on entities. Only DB/queue
+  // calls produce entries, so skipping when none is output-identical.
+  const symbolDataAccess = hasDbAccess || hasQueueAccess
     ? attributeDataAccessToSymbols(allAnalyses, entityGraph)
     : [];
+
+  // Broker hop for Call Traces: a publish and a consume naming the same
+  // destination become a publisher→consumer edge, so a trace follows the
+  // message across the queue the way apiSymbolLinks follow HTTP.
+  const queueSymbolLinks = synthesizeQueueSymbolLinks(symbolDataAccess);
+  if (queueSymbolLinks.length > 0) {
+    symbolLinks = dedupSymbolLinks([...symbolLinks, ...queueSymbolLinks]);
+    progress.detail(`  MQ publish→consume trace links: ${queueSymbolLinks.length}`);
+  }
 
   // ORM/DB migrations across known ecosystems (path-convention based).
   const migrations = detectMigrations(allAnalyses.map((a) => a.filePath));

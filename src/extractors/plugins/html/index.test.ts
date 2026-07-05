@@ -71,6 +71,12 @@ describe("HTML interactive-element extraction", () => {
     ]);
   });
 
+  it("does NOT read attributes merely containing 'on' as events (content= matched as ontent)", () => {
+    const out = els(`<meta name="google" content="notranslate">
+<a href="#" data-context="x">y</a>`);
+    expect(out).toEqual([]);
+  });
+
   it("resolves an inline on*= handler to its invoked function", () => {
     const out = els(`<button onclick="addToCart(3)">Add</button>`);
     expect(out[0]).toEqual({ element: "button", event: "onclick", handler: "addToCart", line: 1 });
