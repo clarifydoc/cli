@@ -29,33 +29,54 @@ function countBranches(node: TSNode, language: string): number {
   return count;
 }
 
-/** Find the AST node covering a given line range */
-function findBodyNode(root: TSNode, startLine: number, endLine: number): TSNode | null {
-  // Walk tree looking for a function/method body that starts near startLine
+/**
+ * Find the AST node covering a given line range.
+ *
+ * `endRow` memoizes `Node.endPosition` lookups (a WASM call per access,
+ * unlike the free `startPosition` field) across the repeated per-function
+ * walks; already-computed rows are passed down the recursion so each node's
+ * span is read at most once per file.
+ */
+function findBodyNode(
+  root: TSNode,
+  startLine: number,
+  endLine: number,
+  endRow: (n: TSNode) => number,
+): TSNode | null {
   let best: TSNode | null = null;
+  let bestSpan = -1;
 
-  function walk(n: TSNode) {
-    const nStart = n.startPosition.row + 1;
-    const nEnd = n.endPosition.row + 1;
-
-    if (nStart >= startLine && nEnd <= endLine) {
-      if (!best || (nEnd - nStart) > (best.endPosition.row - best.startPosition.row)) {
-        best = n;
-      }
+  function walk(n: TSNode, nStart: number, nEnd: number) {
+    if (nStart >= startLine && nEnd <= endLine && nEnd - nStart > bestSpan) {
+      best = n;
+      bestSpan = nEnd - nStart;
     }
 
     for (const child of n.children) {
       const cStart = child.startPosition.row + 1;
-      const cEnd = child.endPosition.row + 1;
+      const cEnd = endRow(child) + 1;
       // Only recurse if child overlaps the target range
       if (cEnd >= startLine && cStart <= endLine) {
-        walk(child);
+        walk(child, cStart, cEnd);
       }
     }
   }
 
-  walk(root);
+  walk(root, root.startPosition.row + 1, endRow(root) + 1);
   return best;
+}
+
+/** Per-file memo for `endPosition.row`, keyed by tree-sitter's stable node id. */
+function makeEndRowMemo(): (n: TSNode) => number {
+  const cache = new Map<number, number>();
+  return (n: TSNode) => {
+    let v = cache.get(n.id);
+    if (v === undefined) {
+      v = n.endPosition.row;
+      cache.set(n.id, v);
+    }
+    return v;
+  };
 }
 
 /**
@@ -73,11 +94,12 @@ export function computeComplexity(
 
   const results: ComplexityInfo[] = [];
   const root = tree.rootNode;
+  const endRow = makeEndRowMemo();
 
   // Process top-level functions
   for (const fn of functions) {
     if (fn.name === "<setup>") continue;
-    const body = findBodyNode(root, fn.line, fn.endLine);
+    const body = findBodyNode(root, fn.line, fn.endLine, endRow);
     const branches = body ? countBranches(body, language) : 0;
     results.push({
       functionName: fn.name,
@@ -90,7 +112,7 @@ export function computeComplexity(
   // Process class methods
   for (const cls of classes) {
     for (const method of cls.methods) {
-      const body = findBodyNode(root, method.line, method.endLine);
+      const body = findBodyNode(root, method.line, method.endLine, endRow);
       const branches = body ? countBranches(body, language) : 0;
       results.push({
         functionName: `${cls.name}.${method.name}`,

@@ -57,6 +57,11 @@ function resolvePackageFile(pkg: string, file: string): string {
  * read `.type` many times per node (long if/else chains, repeat visits via
  * the shared `children` arrays). Trees are parsed once and never edited
  * here, so a node's type is immutable and safe to cache.
+ *
+ * Only `type` gets this treatment: caching more getters as extra lazy
+ * instance properties (tried with endIndex/endPosition) forks V8 hidden
+ * classes by property-insertion order and makes every node property access
+ * megamorphic — measurably slower than the WASM calls it saves.
  */
 function installNodeTypeCache(): void {
   const proto = TSNodeClass.prototype as any;

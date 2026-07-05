@@ -21,6 +21,8 @@ import {
 } from "./dependency-inventory.js";
 import { detectSubProjects, assignProjectId } from "./project-detector.js";
 import { detectFileBasedRoutes } from "../extractors/plugins/javascript/routes/file-based.js";
+import { resolveExpressMounts } from "../extractors/plugins/javascript/routes/express-mounts.js";
+import { resolveUrlBuilders } from "../extractors/plugins/javascript/url-builders.js";
 import {
   writeProjectSummary,
   writeLspGroundTruth,
@@ -526,6 +528,21 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     progress.detail(`  file-based routes: ${autoRouteCount}`);
   }
 
+  // One project-wide import index, shared across the Express mount resolver and
+  // every serial builder that resolves cross-file references (screens, type
+  // blast, class graph). Building it once avoids re-iterating all imports.
+  const importIndex = buildImportIndex(allAnalyses);
+
+  // Express router mounts: `app.use("/api/auth", authRoutes)` in the entry file
+  // prefixes the bare router-level paths declared in another file. Resolve the
+  // mount identifier through the import index and apply the prefix so routes
+  // carry their full path and the screen→API join can match them. Project-level
+  // + in-memory (mirrors reconcileProjectEntities); no per-file JSON change.
+  const mountedRouteCount = resolveExpressMounts(allAnalyses, importIndex);
+  if (mountedRouteCount > 0 && verbose) {
+    progress.detail(`  mounted routes prefixed: ${mountedRouteCount}`);
+  }
+
   // Collapse the same endpoint declared twice (Rails: `routes.rb` expansion +
   // controller-action convention) into one richest entry, so the route map and
   // the cross-tier linker don't double-count or pick a code-less handler.
@@ -547,13 +564,18 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       .filter((ds) => ds.kind === "api-call")
       .map((ds) => ({ ...ds, filePath: a.filePath })),
   );
+  // Resolve URL-builder helper calls in api-call targets
+  // (`axios.get(requestUri('vikarbesked','v4'))` → `/api/v4/institution/{}/vikarbesked`)
+  // so frontend calls funneled through a project URL helper carry a concrete
+  // path the cross-tier linker can join. Project-level + in-memory (operates on
+  // the aggregated copies; no per-file JSON change), mirroring resolveExpressMounts.
+  const resolvedUrlCount = resolveUrlBuilders(allApiCalls, allAnalyses);
+  if (resolvedUrlCount > 0 && verbose) {
+    progress.detail(`  URL-builder calls resolved: ${resolvedUrlCount}`);
+  }
   // Build screens: DFM screens + web screens from routes + routeless UI
   // component files (so their component tree shows in the "Components" group).
   const dfmScreens = allAnalyses.flatMap((a) => a.screens ?? []);
-  // One project-wide import index, shared across every serial builder that
-  // resolves cross-file references (screens, type blast, class graph). Building
-  // it once instead of per-builder avoids re-iterating all files' imports 3-4x.
-  const importIndex = buildImportIndex(allAnalyses);
   const webScreens = buildScreensFromRoutes(allAnalyses, rawSources, importIndex);
   const screenedFiles = new Set(webScreens.map((s) => s.filePath));
   const componentScreens = buildScreensFromComponents(allAnalyses, rawSources, screenedFiles);
@@ -803,6 +825,9 @@ function extractPageTitle(source: string): string | null {
   // Vue: <h1>{{ title }}</h1> — shows the binding name
   const vueMatch = source.match(/<h1[^>]*>\{\{\s*(\w+)\s*\}\}<\/h1>/);
   if (vueMatch) return `{{ ${vueMatch[1]} }}`;
+  // Plain HTML page: fall back to the document <title>.
+  const titleMatch = source.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (titleMatch) return titleMatch[1].trim().replace(/\s+/g, " ") || null;
   return null;
 }
 
@@ -813,6 +838,8 @@ function extractNavigationTargets(source: string): string[] {
     /navigate\(\s*['"`]([^'"`\s]+)['"`]/g,
     /router\.push\(\s*['"`]([^'"`\s]+)['"`]/g,
     /<Link\s+[^>]*to\s*=\s*['"`]([^'"`]+)['"`]/g,
+    // Programmatic page navigation in vanilla JS: `location.href = "x.html"`.
+    /location(?:\.href)?\s*=\s*['"`]([^'"`]+)['"`]/g,
   ];
   for (const re of patterns) {
     let m: RegExpExecArray | null;
@@ -820,6 +847,16 @@ function extractNavigationTargets(source: string): string[] {
       const path = m[1];
       if (path && path.startsWith("/")) targets.add(path);
     }
+  }
+  // Plain-HTML page navigation: `<a href="other.html">`. Restricted to local
+  // `.html`/`.htm` targets (no scheme, anchor, or mailto) so it adds nothing on
+  // framework SPAs (which route by path, not by .html files).
+  const anchorRe = /<a\b[^>]*\bhref\s*=\s*['"`]([^'"`#][^'"`]*?\.html?)(?:[?#][^'"`]*)?['"`]/gi;
+  let am: RegExpExecArray | null;
+  while ((am = anchorRe.exec(source)) !== null) {
+    const href = am[1];
+    if (/^(https?:|\/\/|mailto:|tel:|javascript:)/i.test(href)) continue;
+    targets.add(href);
   }
   return [...targets];
 }
@@ -911,7 +948,7 @@ function buildScreensFromComponents(
     // Frontend SFC/JSX files, OR any file that yielded a component tree (e.g. an
     // Angular `.ts` component with an inline `@Component` template).
     const hasTree = (analysis.templateTree?.length ?? 0) > 0;
-    if (!hasTree && !/\.(vue|svelte|jsx|tsx)$/.test(analysis.filePath)) continue;
+    if (!hasTree && !/\.(vue|svelte|jsx|tsx|razor)$/.test(analysis.filePath)) continue;
     const screen = buildScreen(
       analysis,
       screenNameFromFile(analysis),
@@ -945,7 +982,11 @@ function screenNameFromFile(analysis: FileAnalysis): string {
 function screenFormType(analysis: FileAnalysis, isComponent: boolean): string {
   const path = analysis.filePath;
   const fw = analysis.frameworks;
-  const label = path.endsWith(".vue")
+  const label = /\.html?$/.test(path)
+    ? "Html"
+    : path.endsWith(".razor")
+    ? "Blazor"
+    : path.endsWith(".vue")
     ? "Vue"
     : path.endsWith(".svelte")
       ? "Svelte"

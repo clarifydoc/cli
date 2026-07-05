@@ -1,0 +1,23 @@
+import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
+import { blazorSpec } from "./index.js";
+
+/**
+ * Blazor `.razor` markup. The component's C# logic is parsed elsewhere (a
+ * `@code` block is C#, and most components keep their code in a sibling
+ * `Foo.razor.cs` code-behind owned by the C# plugin), so this plugin is the
+ * UI-markup half: component usage, interactive elements, `@page` routes.
+ */
+export const blazorMeta: LanguagePluginMeta = {
+  language: "blazor",
+  parsing: "regex",
+  extensions: blazorSpec.extensions,
+  regexSpec: blazorSpec,
+  // A `.razor` is never imported by file path (components resolve by namespace),
+  // and it shares a basename stem with its `Foo.razor.cs` code-behind — keeping
+  // it out of the path map avoids a basename collision.
+  importTarget: false,
+  // `@using Microsoft.AspNetCore.Components[.*]` ⇒ this file is Blazor.
+  frameworkImportHints: {
+    "Microsoft.AspNetCore.Components": "blazor",
+  },
+};

@@ -11,11 +11,24 @@ export abstract class DataSourceExtractor {
   abstract readonly languages: Language[];
 
   /** Extract all data sources from the given AST */
-  extract(tree: Tree, _sourceText: string): DataSourceInfo[] {
-    const sources: DataSourceInfo[] = [];
-    this.walk(tree.rootNode, sources);
-    return sources;
+  extract(tree: Tree, sourceText: string): DataSourceInfo[] {
+    this.beginFile(tree, sourceText);
+    try {
+      const sources: DataSourceInfo[] = [];
+      this.walk(tree.rootNode, sources);
+      return sources;
+    } finally {
+      this.endFile();
+    }
   }
+
+  /**
+   * Per-file setup/teardown for stateful extractors. Fused walks (which call
+   * `visitOne` instead of `extract`) MUST bracket the traversal with these so
+   * per-file state (e.g. URL-const or table-alias maps) is initialized.
+   */
+  beginFile(_tree: Tree, _sourceText: string): void {}
+  endFile(): void {}
 
   /** Recursively walk the AST; calls `visitNode` on each node */
   protected walk(node: Node, sources: DataSourceInfo[]): void {
@@ -23,6 +36,11 @@ export abstract class DataSourceExtractor {
     for (const child of node.children) {
       this.walk(child, sources);
     }
+  }
+
+  /** Inspect one node without recursing — for fused walks that share a single traversal. */
+  visitOne(node: Node, sources: DataSourceInfo[]): void {
+    this.visitNode(node, sources);
   }
 
   /** Inspect a single AST node and push any data sources found */

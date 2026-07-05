@@ -10,11 +10,24 @@ export abstract class DataMutationExtractor {
   abstract readonly languages: Language[];
 
   /** Extract all data mutations from the given AST */
-  extract(tree: Tree, _sourceText: string): DataMutationInfo[] {
-    const mutations: DataMutationInfo[] = [];
-    this.walk(tree.rootNode, mutations);
-    return mutations;
+  extract(tree: Tree, sourceText: string): DataMutationInfo[] {
+    this.beginFile(tree, sourceText);
+    try {
+      const mutations: DataMutationInfo[] = [];
+      this.walk(tree.rootNode, mutations);
+      return mutations;
+    } finally {
+      this.endFile();
+    }
   }
+
+  /**
+   * Per-file setup/teardown for stateful extractors. Fused walks (which call
+   * `visitOne` instead of `extract`) MUST bracket the traversal with these so
+   * per-file state is initialized.
+   */
+  beginFile(_tree: Tree, _sourceText: string): void {}
+  endFile(): void {}
 
   /** Recursively walk the AST; override `visitNode` to collect mutations */
   protected walk(node: Node, mutations: DataMutationInfo[]): void {
@@ -22,6 +35,11 @@ export abstract class DataMutationExtractor {
     for (const child of node.children) {
       this.walk(child, mutations);
     }
+  }
+
+  /** Inspect one node without recursing — for fused walks that share a single traversal. */
+  visitOne(node: Node, mutations: DataMutationInfo[]): void {
+    this.visitNode(node, mutations);
   }
 
   /** Inspect a single AST node and push any mutations found */

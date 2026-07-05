@@ -8,6 +8,14 @@ export function extractReactRouterRoutes(root: Node, routes: RouteInfo[]): void 
 }
 
 function walkForJsxRoutes(node: Node, routes: RouteInfo[]) {
+  visitReactRouterRoute(node, routes);
+  for (const child of node.children) {
+    walkForJsxRoutes(child, routes);
+  }
+}
+
+/** Inspect a single node for a React Router `<Route …>` element. */
+export function visitReactRouterRoute(node: Node, routes: RouteInfo[]): void {
   if (
     node.type === "jsx_opening_element" ||
     node.type === "jsx_self_closing_element"
@@ -44,9 +52,5 @@ function walkForJsxRoutes(node: Node, routes: RouteInfo[]) {
         });
       }
     }
-  }
-
-  for (const child of node.children) {
-    walkForJsxRoutes(child, routes);
   }
 }

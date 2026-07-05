@@ -49,6 +49,14 @@ export function extractExpressRoutes(root: Node, routes: RouteInfo[]): void {
 }
 
 function walkForRoutes(node: Node, routes: RouteInfo[]) {
+  visitExpressRoute(node, routes);
+  for (const child of node.children) {
+    walkForRoutes(child, routes);
+  }
+}
+
+/** Inspect a single node for an Express-style route registration. */
+export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
   if (node.type === "call_expression") {
     const fn = node.childForFieldName("function");
     if (fn?.type === "member_expression") {
@@ -116,9 +124,5 @@ function walkForRoutes(node: Node, routes: RouteInfo[]) {
         }
       }
     }
-  }
-
-  for (const child of node.children) {
-    walkForRoutes(child, routes);
   }
 }

@@ -1,4 +1,4 @@
-import type { FunctionInfo, ClassInfo, CallInfo, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language } from "../../../types/analysis.js";
+import type { FunctionInfo, ClassInfo, CallInfo, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo } from "../../../types/analysis.js";
 
 /**
  * Shared regex-based extraction framework for languages without tree-sitter support.
@@ -73,11 +73,24 @@ export interface RegexLangSpec {
    *  like Go (`func foo() Type`), Rust (`fn foo() -> Type`), or VB
    *  (`Function Foo() As Type`) need to override the default (null). */
   parseReturnType?: (line: string) => string | null;
-  extractRoutes?: (lines: string[], classes: ClassInfo[]) => RouteInfo[];
+  /** Extract routes. `filePath` is the project-relative path (needed by
+   *  convention-routed/static formats — e.g. an HTML page's URL is its path). */
+  extractRoutes?: (lines: string[], classes: ClassInfo[], filePath?: string) => RouteInfo[];
   /** Override class extraction entirely (for languages like Perl where packages are file-scoped). */
   extractClasses?: (lines: string[], fns: FunctionInfo[]) => ClassInfo[];
   /** Extract UI screens/forms — analog of the Delphi DFM parser for languages with designer code. */
   extractScreens?: (lines: string[], filePath: string, classes: ClassInfo[]) => ScreenInfo[];
+  /**
+   * Rendered sub-components from a template/markup file (the regex-path analog of
+   * `AstExtractorHooks.subComponents`, used by Blazor `.razor`). Feeds the
+   * project `componentUsage` graph and the screen builder's flat fallback.
+   */
+  extractSubComponents?: (lines: string[]) => SubComponentInfo[];
+  /**
+   * Interactive UI elements (buttons/inputs with handlers, bound fields) from a
+   * template/markup file (regex-path analog of `AstExtractorHooks.interactiveElements`).
+   */
+  extractInteractiveElements?: (lines: string[]) => InteractiveElementInfo[];
   /** Detect API call sites — HTTP client calls, fetch patterns, etc. */
   extractDataSources?: (lines: string[], classes: ClassInfo[]) => DataSourceInfo[];
   /** Extract ORM entity relations (e.g. Prisma schema model relations). The

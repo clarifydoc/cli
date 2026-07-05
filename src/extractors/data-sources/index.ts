@@ -40,6 +40,11 @@ export function extractDataSources(
   return extractor.extract(tree, sourceText);
 }
 
+/** The registered extractor for a language, if any (for fused walks). */
+export function dataSourceExtractorFor(language: Language): DataSourceExtractor | undefined {
+  return extractorMap.get(language);
+}
+
 /** Register a custom extractor at runtime */
 export function registerDataSourceExtractor(extractor: DataSourceExtractor): void {
   extractors.push(extractor);

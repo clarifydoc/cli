@@ -73,12 +73,15 @@ export function scanSecurity(
     ? plugin.securityPreprocess(sourceText)
     : sourceText;
   const lines = effectiveSource.split("\n");
-  const originalLines = sourceText.split("\n"); // for snippets
+  let originalLines: string[] | null = null; // for snippets, split on first hit
   const isTest = isTestFile(filePath, language);
 
   // Apply regex rules
   for (const rule of rulesFor(language)) {
     if (rule.excludeTest && isTest) continue;
+    // Whole-text gate: a per-line match implies a whole-text match, so a
+    // rule that matches nothing in the file skips the per-line loop.
+    if (!rule.pattern.test(effectiveSource)) continue;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -95,6 +98,7 @@ export function scanSecurity(
         )) {
           continue;
         }
+        originalLines ??= sourceText.split("\n");
         issues.push({
           category: rule.category,
           severity: rule.severity,
@@ -114,9 +118,11 @@ export function scanSecurity(
 
   // Check for TODO/FIXME/HACK
   const todoMatches: number[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (/\b(TODO|FIXME|HACK|XXX)\b/.test(lines[i])) {
-      todoMatches.push(i);
+  if (/\b(TODO|FIXME|HACK|XXX)\b/.test(effectiveSource)) {
+    for (let i = 0; i < lines.length; i++) {
+      if (/\b(TODO|FIXME|HACK|XXX)\b/.test(lines[i])) {
+        todoMatches.push(i);
+      }
     }
   }
   if (todoMatches.length > 0) {

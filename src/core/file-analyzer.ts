@@ -5,9 +5,8 @@ import { parseSource } from "../parsers/parser-manager.js";
 import { extractImports, extractExports } from "../extractors/imports-exports/index.js";
 import { extractFunctions, extractClasses } from "../extractors/functions-classes/index.js";
 import { extractRoutes } from "../extractors/routes/index.js";
-import { extractDataSources } from "../extractors/data-sources/index.js";
+import { extractDataAccess } from "../extractors/data-access.js";
 import { extractEntities, mergeEntities } from "../extractors/entities/index.js";
-import { extractDataMutations } from "../extractors/data-mutations/index.js";
 import { classifyCalls, extractTopLevelCalls } from "../extractors/shared/call-graph.js";
 import { applyAliases } from "../extractors/shared/tsconfig-aliases.js";
 import { pluginFor, astHooksFor, inferFileFrameworks } from "../extractors/registry.js";
@@ -89,7 +88,13 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       const regexTypeRefs = extractTypeReferences(analysis, file.language);
       if (regexTypeRefs.length > 0) analysis.typeReferences = regexTypeRefs;
       await writeFileAnalysis(analysis, outputOpts);
-      return { analysis, rawSource: null, complexities: [], securityIssues: fileSecurityIssues };
+      // Keep raw source for regex-path UI files that back a screen (HTML pages,
+      // Blazor .razor) so buildScreen can recover the page caption + navigation.
+      const isUiSource =
+        analysis.routes.some((r) => r.kind === "frontend") ||
+        analysis.subComponents.length > 0 ||
+        analysis.interactiveElements.length > 0;
+      return { analysis, rawSource: isUiSource ? rawSource : null, complexities: [], securityIssues: fileSecurityIssues };
     }
 
     // Container-format preprocessing (e.g. Vue SFC → its <script> block)
@@ -145,7 +150,10 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // Cypress `cy.get('button')` or `request(app).get('/x')` is not an endpoint.
     const isTest = isTestFile(file.relativePath, language);
     analysis.routes = isTest ? [] : extractRoutes(tree, sourceText, language, analysis.filePath);
-    analysis.dataSources = extractDataSources(tree, sourceText, language);
+    // Data sources + mutations share one tree walk (extractDataAccess);
+    // mutations are assigned further down at their original position.
+    const dataAccess = extractDataAccess(tree, sourceText, language);
+    analysis.dataSources = dataAccess.dataSources;
     // Backfill missing `target` on data sources by tracing each call's root
     // identifier through this file's imports (named imports, namespace
     // aliases, and global/wildcard namespaces).
@@ -159,7 +167,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     if (entityResult.schemaTables && entityResult.schemaTables.length > 0) {
       analysis.railsSchemaTables = entityResult.schemaTables;
     }
-    analysis.dataMutations = extractDataMutations(tree, sourceText, language);
+    analysis.dataMutations = dataAccess.dataMutations;
     analysis.events = hooks?.events?.(sourceText) ?? [];
     analysis.subComponents = hooks?.subComponents?.(tree, sourceText, analysis.imports) ?? [];
 

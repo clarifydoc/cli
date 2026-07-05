@@ -122,8 +122,76 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
   {
     id: "aspnet",
     name: "ASP.NET",
-    check: (info) => info.csprojFiles.length > 0,
-    detectedVia: ".csproj file",
+    // A `.csproj` alone means "some .NET project" — NOT ASP.NET (it's just as
+    // likely a desktop/Blazor/console/library project). Require a real server-web
+    // signal: the Web SDK, the AspNetCore shared framework, or an MVC package.
+    // (Blazor's `Microsoft.AspNetCore.Components.*` is deliberately NOT counted —
+    // see the dedicated `blazor` rule below.)
+    check: (info) =>
+      hasCsprojSdk(info, "Microsoft.NET.Sdk.Web") ||
+      hasCsprojFrameworkRef(info, "Microsoft.AspNetCore.App") ||
+      hasCsprojPackage(info, "Microsoft.AspNetCore.Mvc") ||
+      hasCsprojPackage(info, "Microsoft.AspNetCore.App"),
+    detectedVia: ".csproj Web SDK / AspNetCore reference",
+  },
+  {
+    id: "blazor",
+    name: "Blazor",
+    // `Microsoft.AspNetCore.Components[.Web|.WebView|.WebAssembly]` — covers
+    // Blazor Server, WASM, and Hybrid (WebView). `hasCsprojPackage` is a prefix
+    // match, so the base namespace catches every variant.
+    check: (info) => hasCsprojPackage(info, "Microsoft.AspNetCore.Components"),
+    detectedVia: ".csproj PackageReference",
+  },
+  {
+    id: "maui",
+    name: ".NET MAUI",
+    check: (info) => hasCsprojProp(info, "UseMaui") || hasCsprojPackage(info, "Microsoft.Maui"),
+    detectedVia: ".csproj reference",
+  },
+  {
+    id: "winui",
+    name: "WinUI / Windows App SDK",
+    check: (info) => hasCsprojPackage(info, "Microsoft.WindowsAppSDK"),
+    detectedVia: ".csproj PackageReference",
+  },
+  {
+    id: "uno",
+    name: "Uno Platform",
+    check: (info) => hasCsprojPackage(info, "Uno.WinUI") || hasCsprojPackage(info, "Uno.UI"),
+    detectedVia: ".csproj PackageReference",
+  },
+  {
+    id: "wpf",
+    name: "WPF",
+    check: (info) => hasCsprojProp(info, "UseWPF"),
+    detectedVia: ".csproj <UseWPF>",
+  },
+  {
+    id: "winforms",
+    name: "Windows Forms",
+    check: (info) => hasCsprojProp(info, "UseWindowsForms"),
+    detectedVia: ".csproj <UseWindowsForms>",
+  },
+  {
+    id: "avalonia",
+    name: "Avalonia",
+    check: (info) => hasCsprojPackage(info, "Avalonia"),
+    detectedVia: ".csproj PackageReference",
+  },
+  {
+    id: "gtk",
+    name: "GTK",
+    check: (info) => hasCsprojPackage(info, "GtkSharp") || hasCsprojPackage(info, "GirCore.Gtk"),
+    detectedVia: ".csproj PackageReference",
+  },
+  {
+    id: "mef",
+    name: "MEF (Managed Extensibility Framework)",
+    check: (info) =>
+      hasCsprojPackage(info, "System.ComponentModel.Composition") ||
+      hasCsprojPackage(info, "System.Composition"),
+    detectedVia: ".csproj PackageReference",
   },
 
   // ─── ORM frameworks ─────────────────────────────────────────────────────
@@ -471,9 +539,30 @@ function hasMavenDep(info: ProjectInfo, name: string): boolean {
 
 function hasCsprojPackage(info: ProjectInfo, name: string): boolean {
   if (!info.csprojText) return false;
-  // `<PackageReference Include="Microsoft.EntityFrameworkCore" ...>`
+  // `<PackageReference Include="Microsoft.EntityFrameworkCore" ...>`. The match
+  // is anchored at the start of the name only (no closing `"`), so it is a
+  // prefix match — `"Microsoft.AspNetCore.Components"` also matches
+  // `Microsoft.AspNetCore.Components.WebView.Wpf`.
   const re = new RegExp(`PackageReference[^>]*Include\\s*=\\s*"${escapeRegex(name)}`, "i");
   return re.test(info.csprojText);
+}
+
+/** `<Project Sdk="Microsoft.NET.Sdk.Web">` (Web SDK vs the base/Razor SDKs). */
+function hasCsprojSdk(info: ProjectInfo, sdk: string): boolean {
+  if (!info.csprojText) return false;
+  return new RegExp(`Sdk\\s*=\\s*"${escapeRegex(sdk)}"`, "i").test(info.csprojText);
+}
+
+/** A boolean MSBuild property toggle, e.g. `<UseWPF>true</UseWPF>`. */
+function hasCsprojProp(info: ProjectInfo, prop: string): boolean {
+  if (!info.csprojText) return false;
+  return new RegExp(`<${escapeRegex(prop)}>\\s*true\\s*</${escapeRegex(prop)}>`, "i").test(info.csprojText);
+}
+
+/** `<FrameworkReference Include="Microsoft.AspNetCore.App" />` (shared framework). */
+function hasCsprojFrameworkRef(info: ProjectInfo, name: string): boolean {
+  if (!info.csprojText) return false;
+  return new RegExp(`FrameworkReference[^>]*Include\\s*=\\s*"${escapeRegex(name)}`, "i").test(info.csprojText);
 }
 
 function hasGoMod(info: ProjectInfo, name: string): boolean {

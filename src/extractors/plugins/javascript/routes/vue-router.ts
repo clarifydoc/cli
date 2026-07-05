@@ -8,6 +8,14 @@ export function extractVueRouterRoutes(root: Node, routes: RouteInfo[]): void {
 }
 
 function walkForVueRouterConfig(node: Node, routes: RouteInfo[]) {
+  visitVueRouterRoute(node, routes);
+  for (const child of node.children) {
+    walkForVueRouterConfig(child, routes);
+  }
+}
+
+/** Inspect a single node for a Vue Router route config object. */
+export function visitVueRouterRoute(node: Node, routes: RouteInfo[]): void {
   if (node.type === "object") {
     let path: string | null = null;
     let handler: string | null = null;
@@ -44,10 +52,6 @@ function walkForVueRouterConfig(node: Node, routes: RouteInfo[]) {
         line: node.startPosition.row + 1,
       });
     }
-  }
-
-  for (const child of node.children) {
-    walkForVueRouterConfig(child, routes);
   }
 }
 
