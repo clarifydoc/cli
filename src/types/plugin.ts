@@ -30,6 +30,12 @@ export interface ProjectInfo {
   pubspecYaml: string | null;
   /** Any *.sql / *.ddl files discovered (used to detect raw-SQL usage in the project). */
   sqlFiles: string[];
+  /**
+   * Framework marker files found at well-known relative paths — vendored
+   * frameworks (CodeIgniter 2/3's `system/` tree) have no manifest entry, so
+   * their presence is only visible in the file layout. Relative POSIX paths.
+   */
+  markerFiles: string[];
 }
 
 /** Result from a tree-sitter query capture */

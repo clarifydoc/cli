@@ -1,4 +1,4 @@
-import type { Node } from "web-tree-sitter";
+import type { Node, Tree } from "web-tree-sitter";
 import type { DataSourceInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 
@@ -59,6 +59,29 @@ const HTTP_CLIENT_METHODS = new Set([
   "GetFromJsonAsync", "PostAsJsonAsync", "PutAsJsonAsync",
 ]);
 
+// ─── Message queues (RabbitMQ.Client + publisher-wrapper heuristic) ─────────
+// The raw client calls anchor the infrastructure layer; the wrapper heuristic
+// anchors the *business* publish sites (`_eventPublisher.PublishAsync(...)`,
+// `producer.ProduceAsync(msg, GrantExpiringMessage.RoutingKey)`) — which is
+// where a button→API→handler→event trace actually terminates.
+
+/** Raw RabbitMQ.Client publish calls (v6 sync + v7 async API). */
+const MQ_RAW_PUBLISH = new Set(["BasicPublish", "BasicPublishAsync"]);
+/** Raw RabbitMQ.Client consume calls. */
+const MQ_RAW_CONSUME = new Set(["BasicConsume", "BasicConsumeAsync"]);
+
+/**
+ * Wrapper publish verbs. Only trusted on a broker-shaped receiver (below) so
+ * `_mediator.Publish(notification)` (in-process MediatR) and MVC's
+ * `producerService.Send(sms)` don't false-positive.
+ */
+const MQ_WRAPPER_PUBLISH_RE = /^(?:Publish|Produce)(?:Event|Message)?(?:Async)?$/;
+
+/** Receiver that reads like a broker publisher (`_eventPublisher`, `producer`, `_bus`). */
+const MQ_PUBLISHER_RECEIVER_RE = /publisher|producer|(?:^|_)bus$|broker/i;
+/** In-process dispatchers that must never count as broker publishes. */
+const MQ_RECEIVER_DENY_RE = /mediator|dispatcher/i;
+
 /**
  * HttpClient verb methods whose names also read like repository/service
  * operations (`_repo.DeleteAsync(id)`). Only treated as outbound HTTP when the
@@ -109,6 +132,27 @@ const FILE_STORAGE_RECEIVER_RE = /file.?storage/i;
 
 export class CSharpDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["csharp"];
+
+  /**
+   * File-local `const string Name = "value"` bindings. Broker destinations are
+   * habitually hoisted into consts (`private const string Exchange =
+   * "shop-events"`); resolving them at the call site lets a publisher and a
+   * consumer that share the destination meet at the same queue node.
+   */
+  private constStrings = new Map<string, string>();
+
+  override beginFile(_tree: Tree, sourceText: string): void {
+    this.constStrings = new Map();
+    for (const m of sourceText.matchAll(/\bconst\s+string\s+(\w+)\s*=\s*[@$]*"([^"]*)"/g)) {
+      this.constStrings.set(m[1]!, m[2]!);
+    }
+  }
+
+  /** Swap a captured label for its file-local const value, when one exists. */
+  private mqResolve(label: string | null): string | null {
+    if (!label) return null;
+    return this.constStrings.get(label) ?? label;
+  }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
     if (node.type !== "invocation_expression") return;
@@ -190,6 +234,60 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         kind: "database",
         name: `NHibernate: ${method}`,
         target: receiver || null,
+        line: node.startPosition.row + 1,
+      }));
+      return;
+    }
+
+    // RabbitMQ — raw client calls. `BasicPublish(Async)` / `BasicConsume(Async)`
+    // exist only on RabbitMQ.Client channels, so the method name alone is
+    // trusted. Exchange/queue names are frequently config-driven
+    // (`_eventConsumerConfiguration.Queue`) — the argument's source text is
+    // still captured as the destination label so publishers and consumers that
+    // name the same config member meet at one queue node.
+    if (MQ_RAW_PUBLISH.has(method)) {
+      const args = argumentNodes(node);
+      // Routing key: a literal is trusted as-is; a bare identifier only counts
+      // when it resolves through a file-local const (a runtime variable does not
+      // name the event).
+      const rkLiteral = mqArgLabel(args, "routingKey", 1, /* literalOnly */ true);
+      const rk = rkLiteral ?? this.constStrings.get(mqArgLabel(args, "routingKey", 1) ?? "") ?? null;
+      sources.push(this.ds({
+        kind: "queue-publish",
+        name: `RabbitMQ: ${method}`,
+        target: this.mqResolve(mqArgLabel(args, "exchange", 0)),
+        ...(rk ? { entity: rk } : {}),
+        line: node.startPosition.row + 1,
+      }));
+      return;
+    }
+    if (MQ_RAW_CONSUME.has(method)) {
+      sources.push(this.ds({
+        kind: "queue-consume",
+        name: `RabbitMQ: ${method}`,
+        target: this.mqResolve(mqArgLabel(argumentNodes(node), "queue", 0)),
+        line: node.startPosition.row + 1,
+      }));
+      return;
+    }
+
+    // Broker-publisher wrappers — `_eventPublisher.PublishAsync(...)`,
+    // `producer.ProduceAsync(msg, GrantExpiringMessage.RoutingKey, ct)`. Real
+    // codebases publish through an injected wrapper, not the raw channel; this
+    // is the business-level publish site a screen→…→event trace terminates at.
+    // Gated on a broker-shaped receiver so MediatR's in-process
+    // `_mediator.Publish(...)` never counts.
+    if (
+      MQ_WRAPPER_PUBLISH_RE.test(method) &&
+      (MQ_PUBLISHER_RECEIVER_RE.test(root) || MQ_PUBLISHER_RECEIVER_RE.test(receiver)) &&
+      !MQ_RECEIVER_DENY_RE.test(root) && !MQ_RECEIVER_DENY_RE.test(receiver)
+    ) {
+      const entity = mqMessageEntity(argumentNodes(node));
+      sources.push(this.ds({
+        kind: "queue-publish",
+        name: `MQ: ${method}`,
+        target: null, // exchange is bound inside the wrapper, not at this call site
+        ...(entity ? { entity } : {}),
         line: node.startPosition.row + 1,
       }));
       return;
@@ -342,6 +440,60 @@ function cleanEntityName(raw: string | null): string | null {
   if (dot >= 0) s = s.slice(dot + 1);
   if (!s || NON_DBSET_MEMBERS.has(s)) return null;
   return s;
+}
+
+/** The `argument` children of an invocation's argument_list. */
+function argumentNodes(node: Node): Node[] {
+  const args = node.childForFieldName("arguments");
+  if (!args) return [];
+  return args.children.filter((c) => c.type === "argument");
+}
+
+const NAMED_ARG_RE = /^[A-Za-z_]\w*\s*:/;
+
+/**
+ * Label for an argument addressed by C# named-argument form (`exchange: expr`)
+ * or position. String literals are unquoted; any other expression contributes
+ * its source text (`_exchange`, `binding.Queue`) as a join label — unless
+ * `literalOnly`, in which case non-literals return null. Positional fallback is
+ * skipped when that slot is itself a named argument for something else.
+ */
+function mqArgLabel(args: Node[], name: string, index: number, literalOnly = false): string | null {
+  const namedRe = new RegExp(`^${name}\\s*:`);
+  let text: string | null = null;
+  for (const a of args) {
+    if (namedRe.test(a.text)) {
+      text = a.text.replace(namedRe, "").trim();
+      break;
+    }
+  }
+  if (text === null) {
+    const a = args[index];
+    if (!a || NAMED_ARG_RE.test(a.text)) return null;
+    text = a.text.trim();
+  }
+  const isLiteral = /^[@$]*"/.test(text);
+  if (literalOnly && !isLiteral) return null;
+  const cleaned = (isLiteral ? text.replace(/^[@$]*"|"$/g, "") : text).replace(/\s+/g, " ");
+  return cleaned && cleaned.length <= 64 ? cleaned : null;
+}
+
+/**
+ * Business-level event name for a wrapper publish, from its arguments:
+ * `new OrderCreatedEvent(...)` → "OrderCreatedEvent";
+ * `GrantExpiringMessage.RoutingKey` → "GrantExpiringMessage";
+ * a plain `"license.expiring"` routing-key literal is used as-is.
+ */
+function mqMessageEntity(args: Node[]): string | null {
+  for (const a of args) {
+    const t = a.text.trim();
+    const ctor = t.match(/^new\s+([A-Za-z_][\w.]*)/);
+    if (ctor) return ctor[1]!.split(".").pop()!;
+    const rk = t.match(/^([A-Za-z_][\w.]*)\.RoutingKey$/);
+    if (rk) return rk[1]!.split(".").pop()!;
+    if (/^[@$]*"[\w.\-:*#]+"$/.test(t)) return t.replace(/^[@$]*"|"$/g, "");
+  }
+  return null;
 }
 
 /** Pull the first string-literal argument from an invocation_expression's arg list. */

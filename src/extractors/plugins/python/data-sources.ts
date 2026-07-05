@@ -11,6 +11,30 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
       const fnName = fn?.text;
 
       if (fnName) {
+        // pika (RabbitMQ): channel.basic_publish(exchange=, routing_key=, body=)
+        // / channel.basic_consume(queue=, on_message_callback=). The method
+        // names are AMQP-specific, so any receiver is trusted.
+        const leaf = fnName.split(".").pop()!;
+        if (leaf === "basic_publish") {
+          const routingKey = pyArg(node, "routing_key", 1);
+          sources.push(this.ds({
+            kind: "queue-publish",
+            name: "RabbitMQ: basic_publish",
+            target: pyArg(node, "exchange", 0),
+            ...(routingKey ? { entity: routingKey } : {}),
+            line: node.startPosition.row + 1,
+          }));
+          return;
+        }
+        if (leaf === "basic_consume") {
+          sources.push(this.ds({
+            kind: "queue-consume",
+            name: "RabbitMQ: basic_consume",
+            target: pyArg(node, "queue", 0),
+            line: node.startPosition.row + 1,
+          }));
+          return;
+        }
         // requests.get(), httpx.get(), etc.
         if (
           fnName.includes("requests.") ||
@@ -58,4 +82,33 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
       }
     }
   }
+}
+
+/**
+ * Resolve a call argument by keyword (`queue="tasks"`) or position, returning
+ * a string literal's unquoted value or any other expression's source text
+ * (`config.EXCHANGE` — still a usable join label). Empty-string literals
+ * (pika's default exchange) return null.
+ */
+function pyArg(call: Node, keyword: string, index: number): string | null {
+  const args = call.childForFieldName("arguments");
+  if (!args) return null;
+  let value: Node | null = null;
+  let positional = 0;
+  for (const a of args.namedChildren) {
+    if (a.type === "keyword_argument") {
+      if (a.childForFieldName("name")?.text === keyword) {
+        value = a.childForFieldName("value");
+        break;
+      }
+    } else if (a.type !== "comment") {
+      if (positional === index && value === null) value = a;
+      positional++;
+    }
+  }
+  if (!value) return null;
+  const text = value.type === "string"
+    ? value.text.replace(/^[rbfu]*['"]{1,3}|['"]{1,3}$/gi, "")
+    : value.text.replace(/\s+/g, " ");
+  return text && text.length <= 64 ? text : null;
 }

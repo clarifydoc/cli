@@ -11,7 +11,7 @@ extractors/
 ├── registry.ts            THE language plugin registry — aggregates every plugin's meta.ts
 ├── imports-exports/       plugin interface + dispatcher
 ├── functions-classes/     plugin interface + dispatcher
-├── data-sources/          plugin interface + dispatcher (API calls, state hooks, ORM queries)
+├── data-sources/          plugin interface + dispatcher (API calls, state hooks, ORM queries, MQ publish/consume)
 ├── data-mutations/        plugin interface + dispatcher (setState, dispatch, assignments)
 ├── routes/                plugin interface + dispatcher (one RouteExtractor per language family)
 ├── entities/              ORM entity + relation extraction (per-file extract + project-level reconcile)

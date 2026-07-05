@@ -76,6 +76,21 @@ export function buildDataAccessGraph(analyses: FileAnalysis[]): DataAccessGraph 
     return id;
   }
 
+  function ensureQueue(target: string): string {
+    const id = `queue::${target}`;
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        id,
+        name: target,
+        kind: "queue",
+        filePath: "",
+        inboundCount: 0,
+        outboundCount: 0,
+      });
+    }
+    return id;
+  }
+
   function edgeFor(source: string, target: string): DataAccessEdge {
     const key = `${source}→${target}`;
     let edge = edges.get(key);
@@ -88,6 +103,19 @@ export function buildDataAccessGraph(analyses: FileAnalysis[]): DataAccessGraph 
 
   for (const a of analyses) {
     for (const ds of a.dataSources ?? []) {
+      if (ds.kind === "queue-publish" || ds.kind === "queue-consume") {
+        // Broker destinations are shared rendezvous nodes: a publisher file and
+        // a consumer file that name the same exchange/queue/topic meet at one
+        // queue node, and edge direction carries the message flow —
+        // file→queue for publish, queue→file for consume.
+        const qTarget = ds.target && ds.target.trim() !== "" ? ds.target.trim() : UNKNOWN_TARGET;
+        const fileId = ensureFile(a.filePath);
+        const qId = ensureQueue(qTarget);
+        const edge = ds.kind === "queue-publish" ? edgeFor(fileId, qId) : edgeFor(qId, fileId);
+        edge.calls.push({ name: ds.name, line: ds.line, ...(ds.entity ? { entity: ds.entity } : {}) });
+        edge.total += 1;
+        continue;
+      }
       if (ds.kind !== "database") continue;
       const target = ds.target && ds.target.trim() !== "" ? ds.target : UNKNOWN_TARGET;
       const srcId = ensureFile(a.filePath);
@@ -194,7 +222,8 @@ export function attributeDataAccessToSymbols(
     if (fns.length === 0) continue;
 
     for (const ds of a.dataSources ?? []) {
-      if (ds.kind !== "database") continue;
+      const isQueue = ds.kind === "queue-publish" || ds.kind === "queue-consume";
+      if (ds.kind !== "database" && !isQueue) continue;
       // Innermost (smallest-span) function whose body contains the call line.
       let best: { symbol: string; line: number } | null = null;
       let bestSpan = Infinity;
@@ -210,21 +239,26 @@ export function attributeDataAccessToSymbols(
       if (!best) continue;
 
       const raw = (ds.entity ?? "").trim();
-      const matchedName = raw ? matchEntity(raw) : null;
-      const entity = matchedName ?? raw;
-      if (!entity) continue; // DB call with no resolvable target — nothing to link.
-
+      const matchedName = raw && !isQueue ? matchEntity(raw) : null;
+      // Queue ops don't join the ER model; the "entity" is the routing key /
+      // message type, falling back to the destination so a publish with only
+      // an exchange name still reaches the trace.
+      const entity = matchedName ?? raw ?? "";
       const datastore = ds.target && ds.target.trim() !== "" ? ds.target.trim() : null;
-      const key = `${a.filePath}::${best.symbol}::${entity}`;
+      const traceEntity = entity || (isQueue ? (datastore ?? "") : "");
+      if (!traceEntity) continue; // no resolvable target — nothing to link.
+
+      const key = `${a.filePath}::${best.symbol}::${ds.kind}::${traceEntity}`;
       let rec = merged.get(key);
       if (!rec) {
         rec = {
           file: a.filePath,
           symbol: best.symbol,
           symbolLine: best.line,
-          entity,
+          entity: traceEntity,
           entityMatched: matchedName !== null,
           datastore,
+          ...(isQueue ? { access: ds.kind as "queue-publish" | "queue-consume" } : {}),
           sites: [],
         };
         merged.set(key, rec);

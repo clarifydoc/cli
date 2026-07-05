@@ -84,6 +84,17 @@ const ORM_METHODS = new Set([
   "insert", "del", "where", "join", "leftJoin", "rightJoin",
 ]);
 
+// ─── Message queues (amqplib + kafkajs) ─────────────────────────────────────
+// `sendToQueue` exists only on an amqplib channel, so the name alone is
+// trusted. `publish`/`consume` are common words — they need a channel-shaped
+// receiver. kafkajs verbs (`send`/`subscribe`) are gated on producer/consumer
+// receivers plus the `{ topic }` descriptor shape.
+
+/** Immediate receiver that reads like an AMQP channel (`ch`, `channel`, `this.channel`). */
+const MQ_CHANNEL_RECEIVER_RE = /^ch$|channel/i;
+const MQ_PRODUCER_RECEIVER_RE = /producer/i;
+const MQ_CONSUMER_RECEIVER_RE = /consumer/i;
+
 /** Method names that are chaining noise, not meaningful calls */
 const NOISE_METHODS = new Set([
   "then", "catch", "finally", "json", "text", "blob", "arrayBuffer", "formData",
@@ -215,6 +226,65 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
               line: node.startPosition.row + 1,
             }));
             emittedApiCall = true;
+          }
+        }
+
+        // Message queues — amqplib channel ops + kafkajs producer/consumer.
+        // These are the broker endpoints of a screen→…→event trace.
+        if (!emittedApiCall && fn && fn.type === "member_expression") {
+          const recv = fn.childForFieldName("object")?.text ?? "";
+          const mqArgs = node.childForFieldName("arguments")?.namedChildren ?? [];
+          const line = node.startPosition.row + 1;
+          const channelish = MQ_CHANNEL_RECEIVER_RE.test(recv);
+
+          // amqplib: ch.sendToQueue("tasks", buf) / ch.publish("ex", "key", buf)
+          // / ch.consume("tasks", handler).
+          if (fnName === "sendToQueue" || (fnName === "publish" && channelish)) {
+            const routingKey = fnName === "publish" ? literalString(mqArgs[1] ?? null) : null;
+            sources.push(this.ds({
+              kind: "queue-publish",
+              name: `AMQP: ${fnName}`,
+              target: literalString(mqArgs[0] ?? null),
+              ...(routingKey ? { entity: routingKey } : {}),
+              line,
+            }));
+            return;
+          }
+          if (fnName === "consume" && channelish) {
+            sources.push(this.ds({
+              kind: "queue-consume",
+              name: "AMQP: consume",
+              target: literalString(mqArgs[0] ?? null),
+              line,
+            }));
+            return;
+          }
+
+          // kafkajs: producer.send({ topic, messages }) /
+          // consumer.subscribe({ topic } | { topics: [...] }).
+          const descriptor = mqArgs[0]?.type === "object" ? mqArgs[0]! : null;
+          if (descriptor && fnName === "send" && MQ_PRODUCER_RECEIVER_RE.test(recv)) {
+            const topic = literalString(objectPropValue(descriptor, "topic"));
+            if (topic) {
+              sources.push(this.ds({ kind: "queue-publish", name: "Kafka: send", target: topic, line }));
+              return;
+            }
+          }
+          if (descriptor && fnName === "subscribe" && MQ_CONSUMER_RECEIVER_RE.test(recv)) {
+            const topics: string[] = [];
+            const single = literalString(objectPropValue(descriptor, "topic"));
+            if (single) topics.push(single);
+            const list = objectPropValue(descriptor, "topics");
+            if (list?.type === "array") {
+              for (const el of list.namedChildren) {
+                const t = literalString(el);
+                if (t) topics.push(t);
+              }
+            }
+            for (const topic of topics) {
+              sources.push(this.ds({ kind: "queue-consume", name: "Kafka: subscribe", target: topic, line }));
+            }
+            if (topics.length > 0) return;
           }
         }
 

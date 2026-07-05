@@ -16,6 +16,10 @@ export const jvmPackages: readonly KnownPackageRule[] = [
   { names: ["dropwizard-core"], category: "framework", framework: { id: "dropwizard", name: "Dropwizard" } },
   // ── ORM ──
   { names: ["hibernate-core", "spring-boot-starter-data-jpa", "mybatis", "jooq", "org.jetbrains.exposed"], category: "orm" },
+  // ── Messaging ── (exact names win over the spring-boot family pattern below)
+  { names: ["spring-boot-starter-amqp", "spring-rabbit", "amqp-client"], category: "messaging", framework: { id: "rabbitmq", name: "RabbitMQ" } },
+  { names: ["spring-kafka", "kafka-clients"], category: "messaging", framework: { id: "kafka", name: "Kafka" } },
+  { names: ["spring-boot-starter-activemq", "artemis-jms-client"], category: "messaging" },
   // ── Auth ──
   { names: ["spring-boot-starter-security", "spring-security-core"], category: "auth" },
   // ── Testing ──

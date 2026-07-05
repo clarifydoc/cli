@@ -221,13 +221,15 @@ export interface EntityGraph {
  */
 export interface DataAccessNode {
   /** Unique id. For files: `file::<path>`. For datastores: `db::<target>`.
-   *  For entities: `entity::<target>::<entity>`. */
+   *  For entities: `entity::<target>::<entity>`. For queues: `queue::<target>`. */
   id: string;
   /** Display name (file basename, datastore target, or entity/table name). */
   name: string;
   /** "file" for caller files; "datastore" for synthetic DB sinks;
-   *  "entity" for a specific table/model under a datastore. */
-  kind: "file" | "datastore" | "entity";
+   *  "entity" for a specific table/model under a datastore;
+   *  "queue" for message-broker destinations (exchange/queue/topic) —
+   *  publish edges point file→queue, consume edges queue→file. */
+  kind: "file" | "datastore" | "entity" | "queue";
   /** File path for "file" nodes. Empty for datastore/entity nodes. */
   filePath: string;
   /** Number of incoming edges (only meaningful for datastore nodes). */
@@ -476,8 +478,16 @@ export interface DataSourceInfo {
     | "context"
     | "import"
     | "database"
-    | "env";
+    | "env"
+    | "queue-publish"
+    | "queue-consume";
   name: string;
+  /**
+   * For queue kinds: the broker destination — exchange (RabbitMQ publish),
+   * queue (consume / sendToQueue), or topic (Kafka). May be a non-literal
+   * expression's source text (`_eventConsumerConfiguration.Queue`) when the
+   * name is resolved at runtime; still useful as a label and join key.
+   */
   target: string | null;
   calls: CallInfo[];
   line: number;
@@ -486,6 +496,10 @@ export interface DataSourceInfo {
    * the call chain (e.g. "user" from `prisma.user.findMany`) or the DML target
    * (e.g. the table named in `knex("users")`). Only meaningful for
    * `kind === "database"`. Populated by `enrichFileDataSources`.
+   *
+   * For `queue-publish`: the routing key or message type when statically
+   * visible (`GrantExpiringMessage.RoutingKey`, `new OrderCreatedEvent(...)` →
+   * "OrderCreatedEvent") — the business-level name of the event.
    */
   entity?: string;
 }
@@ -720,6 +734,13 @@ export interface SymbolDataAccess {
   entityMatched: boolean;
   /** Datastore target, e.g. "@prisma/client" (null when unresolved). */
   datastore: string | null;
+  /**
+   * How the symbol touches the resource. Absent = "database" (the historical
+   * meaning). Queue kinds mark message-broker I/O: `entity` is the routing
+   * key / message type / topic and `datastore` the exchange/queue — the
+   * "event on RabbitMQ" endpoint of a button→…→event trace.
+   */
+  access?: "queue-publish" | "queue-consume";
   /** Individual DB call sites inside the function, sorted by line. */
   sites: Array<{ name: string; line: number }>;
 }

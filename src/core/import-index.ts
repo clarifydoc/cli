@@ -70,10 +70,11 @@ export function enrichFileDataSources(a: FileAnalysis, index?: ImportIndex): voi
   const idx = index ?? buildImportIndex([a]);
   for (const ds of a.dataSources ?? []) {
     if (ds.target) continue;
-    // An api-call's target is an endpoint URL, never an import module — leave it
-    // null rather than backfilling the caller's import source (which produced
-    // bogus targets like "../store", "axios", "zod").
-    if (ds.kind === "api-call") continue;
+    // An api-call's target is an endpoint URL — and a queue op's target is a
+    // broker destination (exchange/queue/topic) — never an import module; leave
+    // them null rather than backfilling the caller's import source (which
+    // produced bogus targets like "../store", "axios", "zod").
+    if (ds.kind === "api-call" || ds.kind === "queue-publish" || ds.kind === "queue-consume") continue;
     const root = rootIdentifier(ds.name);
 
     // 1) Direct name match — strongest signal.
