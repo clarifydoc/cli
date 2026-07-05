@@ -59,7 +59,9 @@ export const npmPackages: readonly KnownPackageRule[] = [
   { names: ["graphql", "@apollo/client", "apollo-server", "@apollo/server", "@nestjs/graphql", "type-graphql", "urql"], category: "graphql" },
   { names: ["grpc", "@grpc/grpc-js"], category: "grpc" },
   // ── Messaging / queues ──
-  { names: ["amqplib", "kafkajs", "bull", "bullmq", "nats", "@nestjs/microservices"], category: "messaging" },
+  { names: ["amqplib", "amqp-connection-manager"], category: "messaging", framework: { id: "rabbitmq", name: "RabbitMQ" } },
+  { names: ["kafkajs", "node-rdkafka"], category: "messaging", framework: { id: "kafka", name: "Kafka" } },
+  { names: ["bull", "bullmq", "nats", "@nestjs/microservices"], category: "messaging" },
   // ── Auth ──
   { names: ["passport", "jsonwebtoken", "bcrypt", "bcryptjs", "next-auth", "@auth/core", "oauth", "argon2"], category: "auth" },
   // ── Validation ──

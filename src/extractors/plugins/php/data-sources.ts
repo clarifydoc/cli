@@ -28,6 +28,19 @@ const CI_TABLE_VERBS: ReadonlySet<string> = new Set<string>([
 export class PhpDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["php"];
 
+  /**
+   * curl handle → URL, per file: `$ch = curl_init($url)` and
+   * `curl_setopt($ch, CURLOPT_URL, $url)` feed it; `curl_exec($ch)` reads it.
+   * A curl session is ONE outbound request — emitting every `curl_setopt` /
+   * `curl_close` / `curl_errno` as its own api-call drowned real cross-tier
+   * calls in noise (photo-booth: 398 of 431 "api calls" were curl/file plumbing).
+   */
+  private curlUrls = new Map<string, string>();
+
+  override beginFile(): void {
+    this.curlUrls = new Map();
+  }
+
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
     // function_call_expression (env, curl_*, getenv, file_get_contents)
     if (node.type === "function_call_expression") {
@@ -47,13 +60,41 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
         return;
       }
 
-      if (fnName.startsWith("curl_") || fnName === "file_get_contents") {
+      // curl: the session's URL is recorded where it's configured; the ONE
+      // api-call is emitted at curl_exec — the actual request.
+      if (fnName === "curl_init") {
+        const url = this.firstStringArg(node);
+        const handle = curlInitHandle(node);
+        if (url && handle) this.curlUrls.set(handle, url);
+        return;
+      }
+      if (fnName === "curl_setopt" || fnName === "curl_setopt_array") {
+        const handle = this.argText(node, 0);
+        const url = fnName === "curl_setopt"
+          ? (this.argText(node, 1) === "CURLOPT_URL" ? this.stringArgAt(node, 2) : null)
+          : (node.text.match(/CURLOPT_URL\s*=>\s*['"]([^'"]+)['"]/)?.[1] ?? null);
+        if (handle && url) this.curlUrls.set(handle, url);
+        return;
+      }
+      if (fnName === "curl_exec") {
+        const handle = this.argText(node, 0);
         sources.push(this.ds({
           kind: "api-call",
-          name: fnName,
-          target: this.firstStringArg(node) ?? null,
+          name: "curl",
+          target: (handle ? this.curlUrls.get(handle) : null) ?? null,
           line,
         }));
+        return;
+      }
+      if (fnName.startsWith("curl_")) return; // close/errno/getinfo/… — session plumbing, not requests
+
+      // file_get_contents doubles as file I/O and a poor man's HTTP client —
+      // only a URL-literal argument marks an outbound call.
+      if (fnName === "file_get_contents") {
+        const target = this.firstStringArg(node);
+        if (target && /^https?:\/\//i.test(target)) {
+          sources.push(this.ds({ kind: "api-call", name: fnName, target, line }));
+        }
         return;
       }
     }
@@ -66,6 +107,31 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
       const recvText = objNode?.text ?? "";
       const line = node.startPosition.row + 1;
       const callText = `${recvText}->${method}`;
+
+      // php-amqplib (RabbitMQ): $channel->basic_publish($msg, $exchange, $key)
+      // / $channel->basic_consume($queue, ...). AMQP-specific names — any
+      // receiver is trusted. Note the argument order differs from pika:
+      // the message comes first, the exchange second.
+      if (method === "basic_publish") {
+        const routingKey = this.stringArgAt(node, 2);
+        sources.push(this.ds({
+          kind: "queue-publish",
+          name: "RabbitMQ: basic_publish",
+          target: this.stringArgAt(node, 1) ?? this.argText(node, 1),
+          ...(routingKey ? { entity: routingKey } : {}),
+          line,
+        }));
+        return;
+      }
+      if (method === "basic_consume") {
+        sources.push(this.ds({
+          kind: "queue-consume",
+          name: "RabbitMQ: basic_consume",
+          target: this.stringArgAt(node, 0) ?? this.argText(node, 0),
+          line,
+        }));
+        return;
+      }
 
       // CodeIgniter Query Builder: `$this->db->get('orders')`,
       // `$this->db->from('orders')`, `$this->db->insert('orders', $d)`, …
@@ -187,6 +253,43 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
     return null;
   }
 
+  /** Raw source text of the argument at `index` (`$ch`, `CURLOPT_URL`), null if absent. */
+  private argText(node: Node, index: number): string | null {
+    const args = node.childForFieldName("arguments");
+    if (!args) return null;
+    let i = 0;
+    for (const a of args.children) {
+      if (a.type !== "argument") continue;
+      if (i === index) {
+        const text = a.text.trim().replace(/\s+/g, " ");
+        return text && text.length <= 64 ? text : null;
+      }
+      i++;
+    }
+    return null;
+  }
+
+  /** Unquoted string-literal value of the argument at `index`; null for non-literals. */
+  private stringArgAt(node: Node, index: number): string | null {
+    const args = node.childForFieldName("arguments");
+    if (!args) return null;
+    let i = 0;
+    for (const a of args.children) {
+      if (a.type !== "argument") continue;
+      if (i === index) {
+        for (const inner of a.children) {
+          if (inner.type === "string" || inner.type === "encapsed_string") {
+            const v = inner.text.replace(/^['"]|['"]$/g, "");
+            return v || null;
+          }
+        }
+        return null;
+      }
+      i++;
+    }
+    return null;
+  }
+
   private firstStringChild(node: Node): string | null {
     for (const c of node.children) {
       if (c.type === "string") return c.text.replace(/^['"]|['"]$/g, "");
@@ -208,4 +311,14 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
     t = t.replace(/`/g, ""); // strip backtick identifier quoting
     return /^[A-Za-z_]\w*$/.test(t) ? t : null;
   }
+}
+
+/**
+ * The variable a `curl_init(...)` result is assigned to (`$ch = curl_init($url)`
+ * → "$ch"), so a URL passed to curl_init can be recalled at curl_exec time.
+ */
+function curlInitHandle(callNode: Node): string | null {
+  const parent = callNode.parent;
+  if (parent?.type !== "assignment_expression") return null;
+  return parent.childForFieldName("left")?.text ?? null;
 }

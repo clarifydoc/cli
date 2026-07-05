@@ -12,7 +12,9 @@ export const nugetPackages: readonly KnownPackageRule[] = [
   // ── gRPC ──
   { names: ["Grpc.AspNetCore", "Grpc.Net.Client"], category: "grpc" },
   // ── Messaging ──
-  { names: ["MassTransit", "Confluent.Kafka", "RabbitMQ.Client"], category: "messaging" },
+  { names: ["RabbitMQ.Client"], category: "messaging", framework: { id: "rabbitmq", name: "RabbitMQ" } },
+  { names: ["Confluent.Kafka"], category: "messaging", framework: { id: "kafka", name: "Kafka" } },
+  { names: ["MassTransit", "Rebus", "NServiceBus"], category: "messaging" },
   // ── Logging ──
   { names: ["Serilog", "NLog"], category: "logging" },
   // ── Serialization ──

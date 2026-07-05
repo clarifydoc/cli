@@ -11,6 +11,8 @@ export const composerPackages: readonly KnownPackageRule[] = [
   { names: ["codeigniter4/framework"], category: "framework", framework: { id: "codeigniter", name: "CodeIgniter" } },
   // ── ORM ──
   { names: ["doctrine/orm", "doctrine/dbal", "illuminate/database"], category: "orm" },
+  // ── Messaging ──
+  { names: ["php-amqplib/php-amqplib", "enqueue/amqp-lib"], category: "messaging", framework: { id: "rabbitmq", name: "RabbitMQ" } },
   // ── HTTP ──
   { names: ["guzzlehttp/guzzle"], category: "http" },
   // ── Testing ──

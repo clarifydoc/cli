@@ -95,6 +95,21 @@ const DAO_RECEIVER_RE = /^(.+?)(DAO|Dao|Repository|Repo)$/;
 const DAO_CRUD_RE =
   /^(get|find|fetch|load|list|search|read|select|query|save|store|insert|create|add|update|merge|upsert|persist|delete|remove|count|exists|all)/i;
 
+// ─── Message queues (Spring AMQP / Kafka / JMS) ──────────────────────────────
+// Publish side: the template verbs are generic (`send`), so they're gated on a
+// messaging-template receiver. The first argument is the destination —
+// exchange or routing key for RabbitTemplate, topic for KafkaTemplate.
+const MQ_TEMPLATE_PUBLISH = new Set([
+  "convertAndSend", "convertSendAndReceive", "send", "sendAndReceive",
+]);
+const MQ_TEMPLATE_RECEIVER_RE = /rabbitTemplate|amqpTemplate|kafkaTemplate|jmsTemplate/i;
+
+// Consume side: listener annotations. Destination attribute per flavor:
+// @RabbitListener(queues = "q"), @KafkaListener(topics = {"t1","t2"}),
+// @JmsListener(destination = "d"). Kotlin writes arrays as ["t"].
+const MQ_LISTENER_RE = /@(RabbitListener|KafkaListener|JmsListener)\b/;
+const MQ_LISTENER_DEST_RE = /(?:queues|topics|destination|queueNames)\s*=\s*[[{]?\s*"([^"]+)"/;
+
 export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["java", "kotlin"];
 
@@ -124,6 +139,18 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
           kind: "import",
           name: text.replace(/^@/, ""),
           target: null,
+          line: node.startPosition.row + 1,
+        }));
+      }
+
+      // Listener annotations mark the consume side of a message flow:
+      // the annotated method is the broker's entry point into this file.
+      const listener = text.match(MQ_LISTENER_RE);
+      if (listener) {
+        sources.push(this.ds({
+          kind: "queue-consume",
+          name: `@${listener[1]}`,
+          target: text.match(MQ_LISTENER_DEST_RE)?.[1] ?? null,
           line: node.startPosition.row + 1,
         }));
       }
@@ -178,17 +205,44 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       return;
     }
 
-    // 5) HTTP client calls.
+    // 5) Message-queue publish — rabbitTemplate.convertAndSend(exchange, key,
+    // payload) / kafkaTemplate.send(topic, msg). The first argument names the
+    // destination; a string literal is unquoted, any other expression's source
+    // text is kept as a join label.
+    if (MQ_TEMPLATE_PUBLISH.has(method) && MQ_TEMPLATE_RECEIVER_RE.test(receiver)) {
+      sources.push(this.ds({
+        kind: "queue-publish",
+        name: `MQ: ${method}`,
+        target: destinationLabel(call.firstArg),
+        line,
+      }));
+      return;
+    }
+
+    // 6) HTTP client calls.
     if (HTTP_METHODS.has(method) || HTTP_HINT_RE.test(node.text)) {
       sources.push(this.ds({ kind: "api-call", name: method, target: null, line }));
       return;
     }
 
-    // 6) Environment / config reads.
+    // 7) Environment / config reads.
     if (method === "getProperty" || method === "getenv") {
       sources.push(this.ds({ kind: "env", name: method, target: null, line }));
     }
   }
+}
+
+/**
+ * Broker-destination label from a template call's first argument: a string
+ * literal's unquoted value, or any other expression's source text
+ * (`RabbitConfig.ORDERS_EXCHANGE`) — still a usable join key.
+ */
+function destinationLabel(arg: Node | null): string | null {
+  if (!arg) return null;
+  const text = /string/.test(arg.type)
+    ? arg.text.replace(/^"|"$/g, "")
+    : arg.text.replace(/\s+/g, " ");
+  return text && text.length <= 64 ? text : null;
 }
 
 interface CallParts {

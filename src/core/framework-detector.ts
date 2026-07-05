@@ -1,4 +1,5 @@
 import { readFile } from "fs/promises";
+import { existsSync } from "fs";
 import { resolve, join } from "path";
 import fg from "fast-glob";
 import type { FrameworkDetection } from "../types/analysis.js";
@@ -10,6 +11,14 @@ interface FrameworkRule {
   check: (info: ProjectInfo) => boolean;
   detectedVia: string;
 }
+
+/**
+ * Well-known relative paths whose existence identifies a vendored framework.
+ * Checked with a cheap existsSync per candidate while building ProjectInfo.
+ */
+const MARKER_CANDIDATES = [
+  "system/core/CodeIgniter.php", // CodeIgniter 2/3 vendored core
+];
 
 const FRAMEWORK_RULES: FrameworkRule[] = [
   // JavaScript/TypeScript frameworks
@@ -340,6 +349,15 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     name: "Sequel",
     check: (info) => hasGemfileDep(info, "sequel"),
     detectedVia: "Gemfile dependency",
+  },
+  // PHP frameworks with no composer manifest — detected via vendored layout.
+  // CodeIgniter 2/3 ships its framework as a checked-in `system/` tree beside
+  // the `application/` dir; composer-era CI4 is covered by knownPackages.
+  {
+    id: "codeigniter",
+    name: "CodeIgniter",
+    check: (info) => info.markerFiles.includes("system/core/CodeIgniter.php"),
+    detectedVia: "vendored system/core/CodeIgniter.php",
   },
   // PHP ORMs
   {
@@ -771,6 +789,11 @@ export async function gatherProjectInfo(
     deep: 5,
   });
 
+  // Framework marker files no manifest records (vendored frameworks).
+  const markerFiles = MARKER_CANDIDATES.filter((rel) =>
+    existsSync(join(root, ...rel.split("/"))),
+  );
+
   return {
     root,
     packageJson,
@@ -789,6 +812,7 @@ export async function gatherProjectInfo(
     gemfile,
     pubspecYaml,
     sqlFiles,
+    markerFiles,
   };
 }
 

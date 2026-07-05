@@ -14,6 +14,8 @@ export const pypiPackages: readonly KnownPackageRule[] = [
   { names: ["falcon"], category: "framework", framework: { id: "falcon", name: "Falcon" } },
   { names: ["pyramid"], category: "framework", framework: { id: "pyramid", name: "Pyramid" } },
   { names: ["celery"], category: "messaging", framework: { id: "celery", name: "Celery" } },
+  { names: ["pika", "aio-pika"], category: "messaging", framework: { id: "rabbitmq", name: "RabbitMQ" } },
+  { names: ["kafka-python", "confluent-kafka", "aiokafka"], category: "messaging", framework: { id: "kafka", name: "Kafka" } },
   { names: ["scrapy"], category: "framework", framework: { id: "scrapy", name: "Scrapy" } },
   // ── ORM ──
   { names: ["sqlalchemy", "tortoise-orm", "peewee", "pony"], category: "orm" },

@@ -2645,8 +2645,13 @@ function renderTraces() {
       html += '<div class="trace-da-section"><div class="trace-da-head">\\u25A4 Data access (' + access.length + ')</div>';
       access.forEach(function(r) {
         const sites = r.sites.slice(0, 5).map(function(s){ return esc(s.name) + ' :' + s.line; }).join(', ');
+        // Queue rows: mark the broker direction so an event publish reads as
+        // the endpoint of the trace, not as a table access.
+        const mqTag = r.access === 'queue-publish' ? '<span class="trace-da-store" style="color:#d2a8ff">\\u2192 publishes</span>'
+          : r.access === 'queue-consume' ? '<span class="trace-da-store" style="color:#d2a8ff">\\u2190 consumes</span>' : '';
         html += '<div class="trace-da-row">' +
           '<span class="trace-da-entity' + (r.entityMatched ? ' matched' : '') + '">' + esc(r.entity) + '</span>' +
+          mqTag +
           (r.datastore ? '<span class="trace-da-store">' + esc(r.datastore) + '</span>' : '') +
           '<span class="trace-da-sites">' + sites + (r.sites.length > 5 ? ' +' + (r.sites.length - 5) : '') + '</span>' +
         '</div>';
@@ -4089,19 +4094,25 @@ function initDataAccessGraph() {
     if (n.kind === 'file' && (!n.filePath || isFileVisible(n.filePath))) visibleFiles.add(n.id);
   }
   // Reachability over up to two hops: file → entity → datastore (plus legacy
-  // file → datastore edges). Keep file-sourced edges first, then entity-sourced
-  // edges whose entity was reached from a visible file.
+  // file → datastore edges). Keep file-adjacent edges first, then entity-sourced
+  // edges whose entity was reached from a visible file. Queue consume edges run
+  // queue→file (edge direction = message flow), so a visible file on EITHER end
+  // keeps the edge — otherwise consumer-only files and their queues vanish.
   const reached = new Set();
   const filteredEdges = [];
   dag.edges.forEach(function(e){
-    if (visibleFiles.has(e.source)) { filteredEdges.push(e); reached.add(e.target); }
+    if (visibleFiles.has(e.source) || visibleFiles.has(e.target)) {
+      filteredEdges.push(e); reached.add(e.target); reached.add(e.source);
+    }
   });
   dag.edges.forEach(function(e){
-    if (!visibleFiles.has(e.source) && reached.has(e.source)) { filteredEdges.push(e); reached.add(e.target); }
+    if (!visibleFiles.has(e.source) && !visibleFiles.has(e.target) && reached.has(e.source)) {
+      filteredEdges.push(e); reached.add(e.target);
+    }
   });
   const filteredNodes = dag.nodes.filter(function(n){
     return n.kind === 'file'
-      ? visibleFiles.has(n.id) && filteredEdges.some(function(e){ return e.source === n.id; })
+      ? visibleFiles.has(n.id) && filteredEdges.some(function(e){ return e.source === n.id || e.target === n.id; })
       : reached.has(n.id);
   });
 
@@ -4113,22 +4124,31 @@ function initDataAccessGraph() {
   const DB_COLOR = '#f0883e';      // orange — pops against the blue/purple type view palette
   const FILE_COLOR = '#56d4dd';    // matches the file-node teal from the type view
   const ENTITY_COLOR = '#7ee787';  // green — a specific table/model grouped under a datastore
+  const QUEUE_COLOR = '#d2a8ff';   // purple — broker destinations (exchange/queue/topic)
   const EDGE_COLOR = '#f0883e';
 
   function edgeWidth(d) { return Math.min(6, 1 + Math.log2(Math.max(1, d.total))); }
   function edgeOpacity(d) { return Math.min(0.9, 0.4 + d.total * 0.06); }
   function nodeRadius(d) {
-    const deg = (d.kind === 'datastore' || d.kind === 'entity') ? d.inboundCount : d.outboundCount;
-    const floor = d.kind === 'datastore' ? 14 : d.kind === 'entity' ? 11 : 9;
+    // Queues are meaningful in both directions (publishers in, consumers out).
+    const deg = (d.kind === 'datastore' || d.kind === 'entity') ? d.inboundCount
+      : d.kind === 'queue' ? d.inboundCount + d.outboundCount
+      : d.outboundCount;
+    const floor = d.kind === 'datastore' ? 14 : d.kind === 'queue' ? 12 : d.kind === 'entity' ? 11 : 9;
     return Math.max(floor, Math.min(36, 8 + Math.log2(Math.max(1, deg + 1)) * 5));
   }
-  function targetKindOf(l) {
-    const t = l.target;
-    if (t && t.kind) return t.kind;
-    const n = filteredNodes.find(function(nn){ return nn.id === t; });
+  function endpointKindOf(end) {
+    if (end && end.kind) return end.kind;
+    const n = filteredNodes.find(function(nn){ return nn.id === end; });
     return n ? n.kind : null;
   }
-  function linkColor(l) { return targetKindOf(l) === 'entity' ? ENTITY_COLOR : EDGE_COLOR; }
+  function targetKindOf(l) { return endpointKindOf(l.target); }
+  function linkColor(l) {
+    // A message-flow edge touches a queue on either end (publish: file→queue,
+    // consume: queue→file).
+    if (targetKindOf(l) === 'queue' || endpointKindOf(l.source) === 'queue') return QUEUE_COLOR;
+    return targetKindOf(l) === 'entity' ? ENTITY_COLOR : EDGE_COLOR;
+  }
 
   const svg = d3.select(container).append('svg').attr('width', w).attr('height', h);
   const defs = svg.append('defs');
@@ -4203,6 +4223,22 @@ function initDataAccessGraph() {
         .attr('x1', -wd / 2).attr('y1', -ht / 2 + ht * 0.32)
         .attr('x2', wd / 2).attr('y2', -ht / 2 + ht * 0.32)
         .attr('stroke', ENTITY_COLOR).attr('stroke-width', 1).attr('stroke-opacity', 0.6);
+    } else if (d.kind === 'queue') {
+      // Queue glyph: wide rect with stacked-message slats — messages in transit.
+      const wd = r * 2.2, ht = r * 1.2;
+      sel.append('rect')
+        .attr('x', -wd / 2).attr('y', -ht / 2)
+        .attr('width', wd).attr('height', ht)
+        .attr('rx', ht / 2).attr('ry', ht / 2)
+        .attr('fill', '#241a35')
+        .attr('stroke', QUEUE_COLOR)
+        .attr('stroke-width', 2);
+      [-0.28, 0, 0.28].forEach(function(fx){
+        sel.append('line')
+          .attr('x1', wd * fx - 2).attr('y1', -ht * 0.2)
+          .attr('x2', wd * fx + 2).attr('y2', ht * 0.2)
+          .attr('stroke', QUEUE_COLOR).attr('stroke-width', 1.5).attr('stroke-opacity', 0.7);
+      });
     } else {
       const side = r * 1.8;
       sel.append('rect')
@@ -4289,8 +4325,8 @@ function initDataAccessGraph() {
     let html = '<div class="type-detail-head">';
     html += '<div class="type-detail-name">' + esc(node.name) + '</div>';
     html += '<div class="type-detail-sub">';
-    const tagBg = node.kind === 'datastore' ? '#3a1f0a' : node.kind === 'entity' ? '#12261a' : '#162a2d';
-    const tagFg = node.kind === 'datastore' ? DB_COLOR : node.kind === 'entity' ? ENTITY_COLOR : FILE_COLOR;
+    const tagBg = node.kind === 'datastore' ? '#3a1f0a' : node.kind === 'entity' ? '#12261a' : node.kind === 'queue' ? '#241a35' : '#162a2d';
+    const tagFg = node.kind === 'datastore' ? DB_COLOR : node.kind === 'entity' ? ENTITY_COLOR : node.kind === 'queue' ? QUEUE_COLOR : FILE_COLOR;
     html += '<span class="type-iface-tag" style="background:' + tagBg + ';color:' + tagFg + '">' + node.kind + '</span> ';
     html += '<code>' + esc(node.filePath || node.name) + '</code>';
     html += '</div></div>';
@@ -4300,7 +4336,7 @@ function initDataAccessGraph() {
     html += '</div>';
 
     if (inbound.length > 0) {
-      html += '<div class="type-edge-section"><h4>Callers (' + inbound.length + ')</h4>';
+      html += '<div class="type-edge-section"><h4>' + (node.kind === 'queue' ? 'Publishers' : 'Callers') + ' (' + inbound.length + ')</h4>';
       inbound.sort(function(a,b){ return b.total - a.total; });
       inbound.forEach(function(l){
         const sId = (l.source && l.source.id) || l.source;
@@ -4315,7 +4351,7 @@ function initDataAccessGraph() {
       html += '</div>';
     }
     if (outbound.length > 0) {
-      html += '<div class="type-edge-section"><h4>Accesses (' + outbound.length + ')</h4>';
+      html += '<div class="type-edge-section"><h4>' + (node.kind === 'queue' ? 'Consumers' : 'Accesses') + ' (' + outbound.length + ')</h4>';
       outbound.sort(function(a,b){ return b.total - a.total; });
       outbound.forEach(function(l){
         const tId = (l.target && l.target.id) || l.target;
@@ -4347,7 +4383,9 @@ function initDataAccessGraph() {
     const role = d.kind;
     const useInbound = d.kind === 'datastore' || d.kind === 'entity';
     const cnt = useInbound ? d.inboundCount : d.outboundCount;
-    const counts = cnt + (useInbound ? ' inbound call' : ' outbound call') + (cnt === 1 ? '' : 's');
+    const counts = d.kind === 'queue'
+      ? d.inboundCount + ' publish' + (d.inboundCount === 1 ? '' : 'es') + ' · ' + d.outboundCount + ' consumer' + (d.outboundCount === 1 ? '' : 's')
+      : cnt + (useInbound ? ' inbound call' : ' outbound call') + (cnt === 1 ? '' : 's');
     tooltip.style('display', 'block')
       .html('<strong>' + esc(d.name) + '</strong> <em>(' + role + ')</em><br/>' +
             (d.filePath ? esc(d.filePath) + '<br/>' : '') + counts);
@@ -4379,17 +4417,22 @@ function initDataAccessGraph() {
     const fileCount = nodes.filter(function(n){ return n.kind === 'file'; }).length;
     const entityCount = nodes.filter(function(n){ return n.kind === 'entity'; }).length;
     const dbCount = nodes.filter(function(n){ return n.kind === 'datastore'; }).length;
+    const queueCount = nodes.filter(function(n){ return n.kind === 'queue'; }).length;
     // Count actual call sites once — they live on file→entity / file→datastore
     // edges; the entity→datastore grouping edges carry no call list.
     const callCount = links.reduce(function(s,l){ return s + (l.calls ? l.calls.length : 0); }, 0);
     const entityLegend = entityCount > 0
       ? '<span class="d3-legend-item"><i style="background:#12261a;border:1.5px solid ' + ENTITY_COLOR + ';border-radius:2px"></i>Table / model</span>'
       : '';
+    const queueLegend = queueCount > 0
+      ? '<span class="d3-legend-item"><i style="background:#241a35;border:1.5px solid ' + QUEUE_COLOR + ';border-radius:6px"></i>Queue / exchange</span>'
+      : '';
     legend.innerHTML =
       '<div class="d3-legend-row">' +
-        '<span class="d3-legend-title">' + fileCount + ' files · ' + (entityCount > 0 ? entityCount + ' tables · ' : '') + dbCount + ' datastores · ' + callCount + ' calls</span>' +
+        '<span class="d3-legend-title">' + fileCount + ' files · ' + (entityCount > 0 ? entityCount + ' tables · ' : '') + (queueCount > 0 ? queueCount + ' queues · ' : '') + dbCount + ' datastores · ' + callCount + ' calls</span>' +
         '<span class="d3-legend-item"><i style="background:#3a1f0a;border:1.5px solid ' + DB_COLOR + ';border-radius:50%"></i>Datastore (import target)</span>' +
         entityLegend +
+        queueLegend +
         '<span class="d3-legend-item"><i style="background:#162a2d;border:1.5px solid ' + FILE_COLOR + ';border-radius:2px"></i>File (caller)</span>' +
         '<span class="d3-legend-item"><i style="background:' + EDGE_COLOR + ';height:3px"></i>DB call</span>' +
       '</div>';
