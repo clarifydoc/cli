@@ -1,10 +1,18 @@
-import type { Node } from "web-tree-sitter";
+import type { Node, Tree } from "web-tree-sitter";
 import { ImportExportExtractor } from "../../imports-exports/base.js";
 import type { ImportInfo, ExportInfo, Language } from "../../imports-exports/base.js";
 import { stripQuotes } from "../../shared/node-helpers.js";
 
 export class JavaScriptImportExportExtractor extends ImportExportExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
+
+  // Set per extractImports() call (synchronous), consumed by collectImports.
+  private mayHaveDynamicImport = true;
+
+  extractImports(tree: Tree, sourceText: string): ImportInfo[] {
+    this.mayHaveDynamicImport = sourceText.includes("import(");
+    return super.extractImports(tree, sourceText);
+  }
 
   protected collectImports(node: Node, imports: ImportInfo[]): void {
     for (const child of node.children) {
@@ -35,8 +43,9 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
     // statement — most commonly a lazy-loaded route component
     // (`{ component: () => import("./main.vue") }`), `await import(...)`, or a
     // conditional import. Walk the whole subtree so these still register as
-    // import edges to the lazily-loaded module.
-    this.collectDynamicImports(node, imports);
+    // import edges to the lazily-loaded module. The substring gate skips the
+    // walk for the common case of a file with no `import(` at all.
+    if (this.mayHaveDynamicImport) this.collectDynamicImports(node, imports);
   }
 
   /** Recursively collect every dynamic `import("module")` call in the subtree. */

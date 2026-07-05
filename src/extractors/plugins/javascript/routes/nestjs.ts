@@ -19,6 +19,14 @@ export function extractNestjsRoutes(root: Node, routes: RouteInfo[]): void {
 }
 
 function walkForDecoratorRoutes(node: Node, routes: RouteInfo[]) {
+  visitNestjsRoute(node, routes);
+  for (const child of node.children) {
+    walkForDecoratorRoutes(child, routes);
+  }
+}
+
+/** Inspect a single node for a NestJS HTTP-verb decorator. */
+export function visitNestjsRoute(node: Node, routes: RouteInfo[]): void {
   if (node.type === "decorator") {
     const expr = node.child(1);
     if (expr?.type === "call_expression") {
@@ -55,9 +63,5 @@ function walkForDecoratorRoutes(node: Node, routes: RouteInfo[]) {
         });
       }
     }
-  }
-
-  for (const child of node.children) {
-    walkForDecoratorRoutes(child, routes);
   }
 }

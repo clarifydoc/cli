@@ -120,3 +120,58 @@ describe("framework rules — UI / state-management coverage", () => {
     }
   });
 });
+
+describe("framework rules — .NET / Blazor / desktop", () => {
+  let root: string;
+
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), "revdoc-fw-net-"));
+
+    // A Blazor Hybrid desktop project (like DevToys): Razor SDK + Components +
+    // MEF + WPF — and crucially NO Web SDK / AspNetCore.App, so it is NOT ASP.NET.
+    await mkdir(join(root, "blazor"), { recursive: true });
+    await writeFile(
+      join(root, "blazor", "App.csproj"),
+      `<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <PropertyGroup>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Wpf" />
+    <PackageReference Include="System.ComponentModel.Composition" />
+  </ItemGroup>
+</Project>`,
+    );
+
+    // A genuine ASP.NET Web API: the Web SDK is the discriminator.
+    await mkdir(join(root, "api"), { recursive: true });
+    await writeFile(
+      join(root, "api", "Api.csproj"),
+      `<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.NewtonsoftJson" />
+  </ItemGroup>
+</Project>`,
+    );
+  });
+
+  afterAll(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("detects Blazor + MEF + WPF for a Razor-SDK desktop project and does NOT call it ASP.NET", async () => {
+    const { byRoot } = await detectFrameworksAcrossRoots(root, ["blazor"]);
+    const ids = (byRoot.get("blazor") ?? []).map((f) => f.id);
+    expect(ids).toContain("blazor");
+    expect(ids).toContain("mef");
+    expect(ids).toContain("wpf");
+    // The keystone fix: a `.csproj` alone no longer means ASP.NET.
+    expect(ids).not.toContain("aspnet");
+  });
+
+  it("still detects ASP.NET for a Web-SDK project", async () => {
+    const { byRoot } = await detectFrameworksAcrossRoots(root, ["api"]);
+    const ids = (byRoot.get("api") ?? []).map((f) => f.id);
+    expect(ids).toContain("aspnet");
+  });
+});

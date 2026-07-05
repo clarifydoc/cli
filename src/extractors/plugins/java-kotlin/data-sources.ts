@@ -106,9 +106,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
    */
   private tableAliases = new Map<string, string>();
 
-  override extract(tree: Tree, sourceText: string): DataSourceInfo[] {
+  override beginFile(tree: Tree): void {
     this.tableAliases = buildTableAliases(tree.rootNode);
-    return super.extract(tree, sourceText);
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {

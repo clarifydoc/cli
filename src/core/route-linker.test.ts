@@ -55,6 +55,17 @@ describe("normalizeRoutePath", () => {
     // Only a trailing extension is dropped — a dotted middle segment survives.
     expect(normalizeRoutePath("/a.json/b")).toBe("/ajson/b");
   });
+
+  it("canonicalizes an API-version segment (concrete v4 ≈ templated v{apiVersion})", () => {
+    // A client URL carries a concrete version; an ASP.NET/versioned route carries
+    // the template. Both must compare equal so the cross-tier join lands.
+    expect(normalizeRoutePath("/api/v4/institution/{id}/teamtalk")).toBe(
+      normalizeRoutePath("/api/v{apiVersion}/institution/{institutionId}/teamtalk"),
+    );
+    expect(normalizeRoutePath("/api/v1/license/product")).toBe("/api/v{}/license/product");
+    // A non-version segment that merely starts with `v` is untouched.
+    expect(normalizeRoutePath("/api/vendors/list")).toBe("/api/vendors/list");
+  });
 });
 
 describe("linkApiCallsToRoutes", () => {
@@ -176,6 +187,28 @@ describe("linkApiCallsToRoutes — Rails behind an /api proxy", () => {
     );
     expect(links).toHaveLength(1);
     expect(links[0]).toMatchObject({ handler: "WidgetsController#show" });
+  });
+});
+
+describe("linkApiCallsToRoutes — frontend client omits the base the route carries", () => {
+  // `axios.create({ baseURL: "/api" })` then `client.get("/products")`: the
+  // captured call URL is the base-less `/products`, but the backend route is
+  // `/api/products`. The mirror of proxy-stripping — prepend a conventional base
+  // to the call and retry.
+  it("links a base-less call to the `/api`-prefixed route (downgraded confidence)", () => {
+    const backend = [route("server/products.ts", "GET", "/api/products", "list", 5)];
+    const links = linkApiCallsToRoutes([apiCall("web/api.ts", "get", "/products")], backend);
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({ routePath: "/api/products", handler: "list", confidence: "INFERRED" });
+  });
+
+  it("still prefers a literal match (no base prepended when the call already matches)", () => {
+    const backend = [
+      route("server/products.ts", "GET", "/products", "bare", 1),
+      route("server/products.ts", "GET", "/api/products", "prefixed", 2),
+    ];
+    const links = linkApiCallsToRoutes([apiCall("web/api.ts", "get", "/products")], backend);
+    expect(links[0]).toMatchObject({ handler: "bare", confidence: "EXTRACTED" });
   });
 });
 

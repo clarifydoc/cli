@@ -2,7 +2,8 @@
 export type Language =
   | "typescript" | "javascript" | "csharp" | "python" | "java" | "kotlin" | "pascal" | "dfm"
   | "go" | "rust" | "ruby" | "php" | "swift" | "lua" | "scala"
-  | "perl" | "vb" | "sql" | "c" | "cpp" | "prisma" | "dart" | "elixir" | "erlang" | "objc";
+  | "perl" | "vb" | "sql" | "c" | "cpp" | "prisma" | "dart" | "elixir" | "erlang" | "objc"
+  | "haskell" | "clojure" | "blazor" | "html";
 
 export interface ExtractorWarning {
   /** Dotted-path location, e.g. "functions[3].endLine" or "routes[0].kind". */
@@ -380,6 +381,17 @@ export interface FunctionInfo {
    * by plugins that extract it.
    */
   localTypes?: Array<{ name: string; type: string }>;
+  /**
+   * For a URL-builder helper — a function whose return value is an
+   * app-relative request URL assembled from string concatenation / a template
+   * (`requestUri(endpoint, version) → /api/{version}/institution/{}/{endpoint}`)
+   * — the parameterized URL template: path literals verbatim, each parameter
+   * as `{paramName}`, and any unresolvable runtime reference (env base, closure
+   * variable) as `{}`. A project-level pass substitutes a call site's literal
+   * args so an `axios.get(requestUri('teamtalk','v4'))` api-call gets a
+   * concrete URL that joins to the backend route. Optional; only JS/TS sets it.
+   */
+  urlTemplate?: string;
 }
 
 export interface PropertyInfo {
@@ -1000,7 +1012,9 @@ export type PackageEcosystem =
   | "conan"
   | "cpan"
   | "luarocks"
-  | "hex";
+  | "hex"
+  | "hackage"
+  | "clojars";
 
 /** How a dependency is consumed (production vs tooling-only). */
 export type PackageScope = "prod" | "dev" | "peer" | "optional";

@@ -55,11 +55,13 @@ const VUE_MACROS = new Set([
   "defineOptions", "defineModel", "defineSlots", "withDefaults",
 ]);
 
-/** ORM root identifiers — when a call starts with one of these, it's a DB op. */
-const ORM_ROOTS = new Set([
-  "prisma", "db", "client",
-  "User", "Users", "Post", "Posts", "Order", "Orders", // generic — caught by DB_METHODS in call-patterns anyway
-]);
+/**
+ * Generic ORM root identifiers — a call whose chain starts with one of these is
+ * a DB op regardless of the leaf method (`db.prepare("sql").all()`,
+ * `prisma.user.findMany()`). Model classes (`Product`, `User`) are recognised
+ * generically by {@link isModelLikeRoot}, not hardcoded here.
+ */
+const ORM_ROOTS = new Set(["prisma", "db", "client"]);
 
 /** ORM method names that are unambiguously database operations. */
 const ORM_METHODS = new Set([
@@ -69,6 +71,13 @@ const ORM_METHODS = new Set([
   // TypeORM / Sequelize / Mongoose
   "findOne", "findAll", "findByPk", "findOrCreate", "save", "remove", "destroy",
   "bulkCreate", "bulkUpdate", "bulkDelete",
+  // Mongoose finder/mutator family — these collide with no JS builtin or Array
+  // method, so they're unambiguous DB ops on any receiver (`Model.findById(id)`,
+  // `Model.findByIdAndUpdate(...)`, `Model.countDocuments()`).
+  "findById", "findByIdAndUpdate", "findByIdAndDelete", "findByIdAndRemove",
+  "findOneAndUpdate", "findOneAndDelete", "findOneAndRemove", "findOneAndReplace",
+  "updateOne", "deleteOne", "replaceOne", "insertMany", "bulkWrite",
+  "countDocuments", "estimatedDocumentCount", "distinct",
   // Drizzle
   "execute", "all", "get", "values", "returning",
   // Knex / query builder
@@ -104,15 +113,14 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   private root: Node | null = null;
   private urlConsts: ReadonlyMap<string, string> | null = null;
 
-  override extract(tree: Tree, sourceText: string): DataSourceInfo[] {
+  override beginFile(tree: Tree): void {
     this.root = tree.rootNode;
     this.urlConsts = null;
-    try {
-      return super.extract(tree, sourceText);
-    } finally {
-      this.root = null;
-      this.urlConsts = null;
-    }
+  }
+
+  override endFile(): void {
+    this.root = null;
+    this.urlConsts = null;
   }
 
   /** Lazily build + cache the file's URL-const map (see {@link urlConsts}). */
@@ -135,6 +143,12 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     if (arg.type === "string") return stripQuotes(arg.text);
     if (arg.type === "template_string") return resolveTemplateUrl(arg, this.getUrlConsts());
     if (arg.type === "identifier") return this.getUrlConsts().get(arg.text) ?? null;
+    // A URL-builder helper call: `axios.get(requestUri('teamtalk', 'v4'))`.
+    // Keep the call text verbatim (whitespace-collapsed) so a project-level pass
+    // can substitute the helper's template and recover the concrete URL. Emitted
+    // only on a trusted HTTP receiver (see visitNode) so a non-client verb call
+    // isn't mistaken for one.
+    if (arg.type === "call_expression") return arg.text.replace(/\s+/g, " ").trim();
     return null;
   }
 
@@ -164,6 +178,14 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         // the request-descriptor `object` branch below.
         const isRoot = isHttpRoot(fnName);
         const isVerb = HTTP_VERBS.has(fnName.toLowerCase());
+        // A verb call on a known HTTP-client receiver (`axios.get`,
+        // `apiClient.post`, `httpClient.delete`) is itself a strong HTTP signal —
+        // trust it like a named root so the URL-shape check is relaxed and a
+        // helper-built URL (`axios.get(requestUri(...))`, no literal slash) is
+        // still captured.
+        const recvRoot = fn && fn.type === "member_expression" ? memberRoot(fn) : null;
+        const trustedReceiver =
+          !!recvRoot && (isHttpRoot(recvRoot) || /client$/i.test(recvRoot));
         // `app.get("/x", handler)` / `router.post(...)` are inbound route
         // definitions (already captured as routes), not outbound calls — exclude.
         if ((isRoot || isVerb) && fn && !isServerRouteDef(fn, node)) {
@@ -172,8 +194,20 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           const url = firstArg ? this.resolveUrlArg(firstArg) : null;
           // Bare HTTP verbs (`get`/`post`/...) collide with `Map.get`,
           // `searchParams.get`, etc., so require a URL-shaped argument; named
-          // clients (fetch/axios/http/request) are trusted without it.
-          if (url != null && (isRoot || looksLikeUrl(url))) {
+          // clients (fetch/axios/http/request) and trusted client receivers are
+          // trusted without it.
+          const trusted = isRoot || trustedReceiver;
+          // A call-expression URL arg (a helper-built URL with no literal slash)
+          // needs a STRICT HTTP signal — an exact client root (`fetch`/`axios`/…)
+          // or a client member receiver (`axios.get`) — so a local data-fetcher
+          // named `fetchX(localArg)` (matched by the fuzzy isHttpRoot) isn't read
+          // as an HTTP call to a non-URL argument.
+          const argIsCall = firstArg?.type === "call_expression";
+          const strictHttp = HTTP_ROOTS.has(fnName.toLowerCase()) || trustedReceiver;
+          if (
+            url != null &&
+            (looksLikeUrl(url) || (trusted && (!argIsCall || strictHttp)))
+          ) {
             sources.push(this.ds({
               kind: "api-call",
               name: fnName,
@@ -275,7 +309,15 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         // Record the full receiver chain (`prisma.user.findUnique`) as the name so
         // the model/table (`user`) is visible and the import-index enrichment can
         // resolve `target` from the root identifier (`prisma` → its db module).
-        if (!emittedApiCall && ormChain && isOrmCall(ormChain)) {
+        // Veto: a `find` whose first argument is a function is `Array.prototype.find`
+        // on a PascalCase-named collection (`const Product = […]; Product.find(p => …)`),
+        // not a Mongoose query (whose first arg is a filter object/id) — see isOrmCall.
+        if (
+          !emittedApiCall &&
+          ormChain &&
+          isOrmCall(ormChain) &&
+          !(fnName === "find" && firstArgIsFunction(node))
+        ) {
           sources.push(this.ds({
             kind: "database",
             name: ormChain,
@@ -368,10 +410,26 @@ function resolveConstString(node: Node | null): string | null {
   switch (node.type) {
     case "string":
       return stripQuotes(node.text);
-    case "template_string":
-      return node.children.some((c) => c.type === "template_substitution")
-        ? null // has interpolation — not a static literal
-        : stripQuotes(node.text);
+    case "template_string": {
+      // Reconstruct the template, resolving each `${…}` recursively. A template
+      // with no interpolation collapses to its text; the env-base idiom
+      // `` `${import.meta.env.VITE_API_URL || ""}/api/admin` `` collapses to
+      // `/api/admin` (the `||`/`??` default resolves to a string). Any
+      // interpolation that isn't itself a static string makes the whole value
+      // dynamic → null.
+      let out = "";
+      for (const part of node.children) {
+        if (part.type === "`") continue;
+        if (part.type === "template_substitution") {
+          const resolved = resolveConstString(part.namedChild(0));
+          if (resolved == null) return null;
+          out += resolved;
+        } else {
+          out += part.text; // string_fragment / escape_sequence
+        }
+      }
+      return out;
+    }
     case "binary_expression": {
       // `env ?? '/default'` / `env || '/default'` — prefer the (default) operand
       // that resolves to a string.
@@ -435,6 +493,26 @@ function resolveTemplateUrl(tpl: Node, consts: ReadonlyMap<string, string>): str
   return out;
 }
 
+/**
+ * Whether a call's first positional argument is a function literal. Distinguishes
+ * `Array.prototype.find(predicate)` (callback) from a Mongoose `Model.find(filter)`
+ * (object/id/none) when the receiver is PascalCase and could be either.
+ */
+function firstArgIsFunction(callNode: Node): boolean {
+  const a = callNode.childForFieldName("arguments")?.namedChild(0);
+  return (
+    !!a &&
+    (a.type === "arrow_function" || a.type === "function_expression" || a.type === "function")
+  );
+}
+
+/** Root identifier of a member chain: `apiClient.post` → "apiClient", `a.b.c` → "a". */
+function memberRoot(fn: Node): string | null {
+  let obj = fn.childForFieldName("object");
+  while (obj && obj.type === "member_expression") obj = obj.childForFieldName("object");
+  return obj && obj.type === "identifier" ? obj.text : null;
+}
+
 /** Leaf/callee name of a call's function node: `apiClient.post` → "post", `fetch` → "fetch". */
 function calleeLeaf(fn: Node | null): string | null {
   if (!fn) return null;
@@ -458,6 +536,13 @@ function isServerRouteDef(fn: Node, callNode: Node): boolean {
   if (fn.type !== "member_expression") return false;
   const objRoot = (fn.childForFieldName("object")?.text ?? "").split(/[.[]/)[0];
   if (SERVER_ROUTER_OBJECTS.has(objRoot)) return true;
+  // A receiver named like an Express router/route (`productRouter.post(...)`,
+  // `userRoute.get(...)`, `apiRoutes.delete(...)`) is an inbound route
+  // registration even when the handler is an imported identifier
+  // (`router.post("/x", authSeller, addProduct)`) rather than an inline function
+  // — the literal `router` name is too narrow for the common `<name>Router`
+  // convention, so the whole route file was being mis-read as outbound calls.
+  if (/route(r|s)?$/i.test(objRoot)) return true;
   const args = callNode.childForFieldName("arguments");
   if (args) {
     for (const a of args.namedChildren) {
@@ -489,6 +574,45 @@ function looksLikeUrl(s: string): boolean {
 }
 
 /**
+ * DOM / JS-builtin receiver segments that share method names with ORM verbs
+ * (`classList.remove`, `el.style.remove`, `arr.values()`, `document.…`,
+ * `localStorage.…`) but are never database access. A chain whose receiver is one
+ * of these is rejected before the leaf-method check, killing the dominant
+ * false-positive class on vanilla-JS / DOM-heavy frontends (a phantom
+ * `classList`/`document` "entity"). Lowercased comparison.
+ */
+const DOM_BUILTIN_RECEIVERS = new Set([
+  "classlist", "style", "dataset", "document", "documentelement", "window",
+  "location", "history", "navigator", "console", "localstorage", "sessionstorage",
+  "math", "json", "object", "array", "string", "number", "boolean", "date",
+  "promise", "map", "set", "weakmap", "weakset", "reflect", "symbol",
+  "element", "node", "event", "e", "evt",
+]);
+
+/**
+ * PascalCase identifiers that are JS/global builtins, NOT ORM models — used to
+ * tell a model receiver (`Product.find`) from a builtin (`Promise.all`,
+ * `Array.from`, `Object.keys`) when admitting the Array-colliding `find` verb.
+ */
+const CAP_BUILTINS = new Set([
+  "Array", "Object", "Math", "JSON", "Promise", "Map", "Set", "WeakMap", "WeakSet",
+  "Date", "String", "Number", "Boolean", "Symbol", "BigInt", "Reflect", "Proxy",
+  "Error", "RegExp", "Function", "Infinity", "NaN", "Image", "Audio", "Intl",
+  "Buffer", "JSON",
+]);
+
+/**
+ * A receiver that reads like an ORM model class: a single PascalCase identifier
+ * (`Product`, `User`, `OrderItem`) that isn't a JS builtin. Mongoose/Sequelize/
+ * TypeORM models are referenced this way, so a model-colliding verb (`find`) on
+ * such a receiver is a DB op, while the same verb on a plain collection
+ * (`users.find(u => …)`) is not.
+ */
+function isModelLikeRoot(seg: string): boolean {
+  return /^[A-Z][A-Za-z0-9_]*$/.test(seg) && !CAP_BUILTINS.has(seg);
+}
+
+/**
  * Heuristic: a call is an ORM operation when its leaf method is in ORM_METHODS
  * AND it's a member access (`x.findMany`, not bare `findMany`). The root-name
  * check (`prisma.x.findMany`) is a softer signal that also counts.
@@ -504,9 +628,32 @@ function isOrmCall(name: string): boolean {
   // An HTTP client receiver (`axios.create`, `http.get`, `fetchClient.delete`)
   // is never an ORM — its verb/CRUD-shaped methods are HTTP, not DB.
   if (isHttpRoot(root)) return false;
+  // A trusted ORM root (`db`, `prisma`, `*Repository`) makes the whole chain DB
+  // access regardless of intermediate calls — `db.prepare("sql").all()`,
+  // `repo.createQueryBuilder().getMany()`.
+  const trustedRoot = ORM_ROOTS.has(root) || /Repository$/.test(root);
+  // Otherwise the receiver must not be a DOM/builtin object (`navbar.classList.remove`,
+  // `document.querySelector(...)`) or a fluent builtin chain (`s.split(' ').map(…)`)
+  // — those share verb names with ORM CRUD but are DOM/array manipulation, the
+  // dominant false-positive on vanilla-JS frontends (phantom `classList` entity).
+  if (!trustedRoot) {
+    for (let i = 0; i < parts.length - 1; i++) {
+      const seg = parts[i]!;
+      if (DOM_BUILTIN_RECEIVERS.has(seg.toLowerCase())) return false;
+      if (seg.includes("(")) return false; // a call in the receiver chain → builtin fluent op
+    }
+  }
   const leaf = parts[parts.length - 1]!;
   if (ORM_METHODS.has(leaf)) return true;
-  if (ORM_ROOTS.has(root) || /Repository$/.test(root)) return true;
+  // Bare `find` collides with `Array.prototype.find`, so it's a DB op only on a
+  // model-like receiver — `Product.find({})` / `Order.find(query)` (Mongoose/
+  // Sequelize statics), never `users.find(u => …)`. The immediate receiver is
+  // the segment before the leaf.
+  if (leaf === "find") {
+    const receiver = parts[parts.length - 2];
+    if (receiver && isModelLikeRoot(receiver)) return true;
+  }
+  if (trustedRoot) return true;
   return false;
 }
 

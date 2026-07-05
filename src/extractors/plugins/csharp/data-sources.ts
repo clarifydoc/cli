@@ -75,6 +75,38 @@ const HTTP_RECEIVER_RE = /http|client/i;
 /** Detect EF DbContext "owner" patterns — names ending with Context/DbContext. */
 const DBCONTEXT_SUFFIX = /Context$/;
 
+// ─── Desktop/GUI I/O sinks (settings, clipboard, file storage) ──────────────
+// A desktop/GUI app (e.g. a Blazor Hybrid / WinUI tool app) has no HTTP or DB
+// tier — its "data" is the OS resources it reads/writes: user settings, the
+// clipboard, and picked files. Surfacing these as `database` data sources (with
+// a distinguishing `target` label) lets the existing screen→data-access→entity
+// trace + Data Model show what each tool persists to — the desktop analogue of
+// the screen→route→DB chain. The method names below are specific enough to a
+// settings-provider / clipboard / file-storage abstraction that they don't
+// collide with web/DB code (verified against the existing fixtures).
+
+/** `ISettingsProvider.GetSetting(def)` / `SetSetting(def, v)` (and async variants). */
+const SETTINGS_METHODS = new Set([
+  "GetSetting", "SetSetting", "GetSettingAsync", "SetSettingAsync",
+]);
+
+/** `IClipboard.GetClipboardTextAsync()` / `SetClipboardImageAsync(...)` — every method is `(Get|Set)Clipboard*`. */
+const CLIPBOARD_METHOD_RE = /^(?:Get|Set)Clipboard/;
+
+/** `IFileStorage` methods distinctive enough to trust on name alone. */
+const FILE_STORAGE_METHODS = new Set([
+  "PickOpenFileAsync", "PickOpenFilesAsync", "PickSaveFileAsync", "PickFolderAsync",
+  "CreateSelfDestroyingTempFile",
+]);
+
+/** `IFileStorage` methods that are generic enough to require a file-storage receiver. */
+const FILE_STORAGE_RECEIVER_METHODS = new Set([
+  "OpenReadFile", "OpenWriteFile", "FileExists", "ReadFileAsync", "WriteToFileAsync",
+]);
+
+/** A receiver that looks like an `IFileStorage` (`_fileStorage`, `fileStorage`). */
+const FILE_STORAGE_RECEIVER_RE = /file.?storage/i;
+
 export class CSharpDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["csharp"];
 
@@ -158,6 +190,49 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         kind: "database",
         name: `NHibernate: ${method}`,
         target: receiver || null,
+        line: node.startPosition.row + 1,
+      }));
+      return;
+    }
+
+    // Settings store — ISettingsProvider.GetSetting / SetSetting. Distinctive
+    // names; treated as I/O on the synthetic "Settings" resource.
+    if (SETTINGS_METHODS.has(method)) {
+      sources.push(this.ds({
+        kind: "database",
+        name: `Settings: ${method}`,
+        target: "settings",
+        entity: "Settings",
+        line: node.startPosition.row + 1,
+      }));
+      return;
+    }
+
+    // Clipboard — IClipboard.(Get|Set)Clipboard*Async.
+    if (CLIPBOARD_METHOD_RE.test(method)) {
+      sources.push(this.ds({
+        kind: "database",
+        name: `Clipboard: ${method}`,
+        target: "clipboard",
+        entity: "Clipboard",
+        line: node.startPosition.row + 1,
+      }));
+      return;
+    }
+
+    // File storage — IFileStorage.PickOpenFileAsync / OpenWriteFile / … . The
+    // generic verbs require a file-storage-shaped receiver; the Pick*/temp-file
+    // methods are distinctive enough to trust on name alone.
+    if (
+      FILE_STORAGE_METHODS.has(method) ||
+      (FILE_STORAGE_RECEIVER_METHODS.has(method) &&
+        (FILE_STORAGE_RECEIVER_RE.test(root) || FILE_STORAGE_RECEIVER_RE.test(receiver)))
+    ) {
+      sources.push(this.ds({
+        kind: "database",
+        name: `FileStorage: ${method}`,
+        target: "file-storage",
+        entity: "FileStorage",
         line: node.startPosition.row + 1,
       }));
       return;

@@ -28,6 +28,10 @@ import { dartMeta } from "./plugins/dart/meta.js";
 import { elixirMeta } from "./plugins/elixir/meta.js";
 import { erlangMeta } from "./plugins/erlang/meta.js";
 import { objcMeta } from "./plugins/objc/meta.js";
+import { haskellMeta } from "./plugins/haskell/meta.js";
+import { clojureMeta } from "./plugins/clojure/meta.js";
+import { blazorMeta } from "./plugins/blazor/meta.js";
+import { htmlMeta } from "./plugins/html/meta.js";
 
 /**
  * The language plugin registry. Aggregates every plugin's LanguagePluginMeta
@@ -42,6 +46,7 @@ const ALL_METAS: LanguagePluginMeta[] = [
   phpMeta,
   goMeta, rustMeta, rubyMeta, swiftMeta, luaMeta, scalaMeta, perlMeta,
   vbMeta, sqlMeta, cMeta, cppMeta, prismaMeta, dartMeta, elixirMeta, erlangMeta, objcMeta,
+  haskellMeta, clojureMeta, blazorMeta, htmlMeta,
 ];
 
 const BY_LANGUAGE = new Map<Language, LanguagePluginMeta>();

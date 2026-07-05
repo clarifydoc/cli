@@ -38,6 +38,11 @@ export function extractDataMutations(
   return extractor.extract(tree, sourceText);
 }
 
+/** The registered extractor for a language, if any (for fused walks). */
+export function dataMutationExtractorFor(language: Language): DataMutationExtractor | undefined {
+  return extractorMap.get(language);
+}
+
 /** Register a custom extractor at runtime */
 export function registerMutationExtractor(extractor: DataMutationExtractor): void {
   extractors.push(extractor);

@@ -83,3 +83,55 @@ describe("C# HTTP-client detection — receiver gating", () => {
     expect(json.some((s) => s.name === "GetFromJsonAsync")).toBe(true);
   });
 });
+
+/**
+ * Desktop/GUI I/O sinks. A Blazor Hybrid / WinUI tool app (DevToys) has no HTTP
+ * or DB tier — its "data" is the settings store, clipboard, and picked files.
+ * Surfacing these as `database` data sources (with a distinguishing `target`
+ * label + a synthetic entity) lights up the screen→data-access→entity trace +
+ * Data Model — the desktop analogue of screen→route→DB.
+ */
+async function ioSourcesOf(body: string): Promise<DataSourceInfo[]> {
+  const src = `namespace X;
+public class T {
+  private readonly ISettingsProvider _settingsProvider;
+  private readonly IClipboard _clipboard;
+  private readonly IFileStorage _fileStorage;
+  public async Task M() {
+${body}
+  }
+}`;
+  const tree = await parseSource(src, "csharp" as any, "T.cs");
+  return new CSharpDataSourceExtractor()
+    .extract(tree, src)
+    .filter((d) => d.kind === "database");
+}
+
+describe("C# desktop I/O sinks — settings / clipboard / file storage", () => {
+  it("maps GetSetting/SetSetting to the Settings resource", async () => {
+    const s = await ioSourcesOf(
+      `    var lang = _settingsProvider.GetSetting(PredefinedSettings.Language);\n    _settingsProvider.SetSetting(PredefinedSettings.Language, "en");`,
+    );
+    expect(s.map((x) => x.entity)).toEqual(["Settings", "Settings"]);
+    expect(s.every((x) => x.target === "settings")).toBe(true);
+  });
+
+  it("maps (Get|Set)Clipboard* to the Clipboard resource", async () => {
+    const s = await ioSourcesOf(`    await _clipboard.SetClipboardTextAsync("hi");`);
+    expect(s).toHaveLength(1);
+    expect(s[0]).toMatchObject({ entity: "Clipboard", target: "clipboard" });
+  });
+
+  it("maps distinctive file-storage verbs on name, generic verbs only on a file-storage receiver", async () => {
+    const s = await ioSourcesOf(
+      `    await _fileStorage.PickOpenFileAsync("*.json");\n    using var w = _fileStorage.OpenWriteFile("out.txt", true);`,
+    );
+    expect(s.map((x) => x.entity)).toEqual(["FileStorage", "FileStorage"]);
+  });
+
+  it("does NOT treat a non-file-storage receiver's OpenWriteFile as I/O", async () => {
+    // `OpenWriteFile` is generic enough to require a file-storage-shaped receiver.
+    const s = await ioSourcesOf(`    var x = _helper.OpenWriteFile("out.txt");`);
+    expect(s).toHaveLength(0);
+  });
+});

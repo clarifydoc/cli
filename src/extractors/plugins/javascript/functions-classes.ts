@@ -64,6 +64,115 @@ function collectDynamicImportCalls(body: Node | null): CallInfo[] {
   return out;
 }
 
+/**
+ * If a function's return value is an app-relative request URL built from string
+ * concatenation / a template literal, derive its parameterized template:
+ * path literals verbatim, each parameter referenced in the URL as `{paramName}`,
+ * an environment base (`import.meta.env.VITE_X` / `process.env.Y`) dropped, and
+ * any other runtime reference (a closure/local variable) as `{}`. Returns
+ * undefined for non-URL functions (the result must contain a `/`).
+ *
+ * Real Vue/React data layers funnel every request through such a helper
+ * (`requestUri(endpoint, version)`, `adminUri(subPath)`), so without resolving
+ * it the api-call carries no joinable URL. A project-level pass substitutes a
+ * call site's literal args into this template.
+ *
+ * Deliberately shallow: only a top-level `return` (and a one-hop local `const
+ * x = <url>; return x`) is followed — a URL assembled inside a branch can't be
+ * represented as a single template anyway.
+ */
+export function extractUrlTemplate(
+  body: Node | null,
+  paramNames: ReadonlySet<string>,
+): string | undefined {
+  if (!body) return undefined;
+
+  // Top-level `const/let x = <expr>` bindings, for a `return x` indirection.
+  const locals = new Map<string, Node>();
+  let returnExpr: Node | null = null;
+
+  if (body.type === "statement_block") {
+    for (const stmt of body.namedChildren) {
+      if (
+        (stmt.type === "lexical_declaration" || stmt.type === "variable_declaration") &&
+        !returnExpr
+      ) {
+        for (const decl of stmt.namedChildren) {
+          if (decl.type !== "variable_declarator") continue;
+          const nm = decl.childForFieldName("name");
+          const val = decl.childForFieldName("value");
+          if (nm?.type === "identifier" && val) locals.set(nm.text, val);
+        }
+      } else if (stmt.type === "return_statement") {
+        returnExpr = stmt.namedChild(0);
+        break;
+      }
+    }
+  } else {
+    // Expression-bodied arrow: the body itself is the returned expression.
+    returnExpr = body;
+  }
+
+  if (!returnExpr) return undefined;
+  const seen = new Set<Node>();
+
+  const render = (node: Node | null): string | null => {
+    if (!node || seen.has(node)) return null;
+    switch (node.type) {
+      case "string":
+        return stripQuotes(node.text);
+      case "template_string": {
+        let out = "";
+        for (const part of node.children) {
+          if (part.type === "`") continue;
+          if (part.type === "template_substitution") {
+            const r = render(part.namedChild(0));
+            out += r ?? "{}";
+          } else {
+            out += part.text;
+          }
+        }
+        return out;
+      }
+      case "binary_expression": {
+        // Only string concatenation contributes to a URL.
+        const op = node.childForFieldName("operator")?.text;
+        if (op !== "+") return "{}";
+        const l = render(node.childForFieldName("left"));
+        const r = render(node.childForFieldName("right"));
+        if (l == null || r == null) return null;
+        return l + r;
+      }
+      case "parenthesized_expression":
+      case "non_null_expression":
+      case "as_expression":
+        return render(node.namedChild(0));
+      case "identifier": {
+        if (paramNames.has(node.text)) return `{${node.text}}`;
+        const local = locals.get(node.text);
+        if (local) {
+          seen.add(node);
+          return render(local);
+        }
+        return "{}"; // closure/runtime variable — unresolvable, but positional
+      }
+      case "member_expression":
+      case "subscript_expression": {
+        const t = node.text;
+        // Environment base prefix collapses to empty — the route is app-relative.
+        if (t.startsWith("import.meta.env") || t.startsWith("process.env")) return "";
+        return "{}";
+      }
+      default:
+        return "{}";
+    }
+  };
+
+  const tpl = render(returnExpr);
+  if (tpl == null || !tpl.includes("/")) return undefined;
+  return tpl;
+}
+
 export class JavaScriptExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
 
@@ -122,6 +231,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const decorators = this.extractDecorators(node);
 
     const body = node.childForFieldName("body");
+    const urlTemplate = extractUrlTemplate(body, new Set(params.map((p) => p.name)));
     return {
       name,
       params,
@@ -132,6 +242,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       calls: [...extractCalls(body, "typescript"), ...collectDynamicImportCalls(body)],
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
+      ...(urlTemplate ? { urlTemplate } : {}),
     };
   }
 
@@ -164,6 +275,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       declaration ? this.extractDecorators(declaration) : [];
 
     const body = funcNode.childForFieldName("body") ?? funcNode;
+    const urlTemplate = extractUrlTemplate(body, new Set(params.map((p) => p.name)));
     return {
       name,
       params,
@@ -174,6 +286,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       calls: [...extractCalls(body, "typescript"), ...collectDynamicImportCalls(body)],
       line: funcNode.startPosition.row + 1,
       endLine: funcNode.endPosition.row + 1,
+      ...(urlTemplate ? { urlTemplate } : {}),
     };
   }
 
