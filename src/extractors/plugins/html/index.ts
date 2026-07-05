@@ -149,8 +149,10 @@ const ELEMENT_FOR_TAG: Record<string, InteractiveElementInfo["element"]> = {
 
 /** A `<tag ...>` opening plus the attribute text on the SAME line (stops at `>`). */
 const TAG_RE = /<([a-zA-Z][\w-]*)\b([^>]*)/g;
-/** Inline event handlers: `onclick="foo()"`, `onsubmit='...'`. */
-const HANDLER_RE = /on([a-z]+)\s*=\s*"([^"]*)"|on([a-z]+)\s*=\s*'([^']*)'/gi;
+/** Inline event handlers: `onclick="foo()"`, `onsubmit='...'`. The `\b` keeps
+ *  attributes merely CONTAINING "on" out — without it, `content="notranslate"`
+ *  matched as event "ontent" / handler "notranslate". */
+const HANDLER_RE = /\bon([a-z]+)\s*=\s*"([^"]*)"|\bon([a-z]+)\s*=\s*'([^']*)'/gi;
 /** Input types that are state/filter noise rather than meaningful actions. */
 const SKIP_INPUT_TYPES = new Set(["checkbox", "radio", "hidden"]);
 

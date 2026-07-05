@@ -17,6 +17,9 @@ export const javascriptCallHooks: CallExtractionHooks = {
     "class_declaration",
     "class",
   ],
+  // Inline handlers/callbacks are anonymous expressions — their calls belong
+  // to the enclosing function (see CallExtractionHooks.anonymousScopeTypes).
+  anonymousScopeTypes: ["arrow_function", "function_expression"],
   callbackArgNodeTypes: ["call_expression"],
 
   // Generic name resolution covers JS/TS; the extra call shape is JSX:

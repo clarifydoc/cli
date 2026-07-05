@@ -2045,8 +2045,9 @@ function elemBaseName(fp) {
 // Handler name → trace symbol key, for linking interactive handlers to traces.
 function findHandlerSymbolKey(handlerName, filePath) {
   if (!handlerName || !DATA.symbolLinks) return null;
-  // Strip function call syntax: "handleDeleteUser(user.id)" → "handleDeleteUser"
-  const clean = handlerName.replace(/\\(.*$/, '').trim();
+  // Strip function call syntax and unary prefixes:
+  // "void toggleFavorite(p.id)" / "await save()" / "!toggle()" → bare name.
+  const clean = handlerName.replace(/\\(.*$/, '').replace(/^(?:void|await|return)\\s+|^!/, '').trim();
   if (!clean) return null;
   // Candidate files: exact + companions (Delphi .dfm events → .pas handlers).
   const candidateFiles = [filePath];
@@ -2060,6 +2061,13 @@ function findHandlerSymbolKey(handlerName, filePath) {
       if (matchesSymbol(match.sourceSymbol)) return match.sourceFile + '::' + match.sourceSymbol;
       return match.targetFile + '::' + match.targetSymbol;
     }
+    // The handler may be DEFINED elsewhere and only referenced here — a React
+    // context member ("const { addToCart } = useAppContext()") or a composable
+    // function. The click still invokes it: find a call FROM this file whose
+    // call name matches and jump to the definition the linker resolved.
+    const viaCall = DATA.symbolLinks.find(l => l.sourceFile === fp &&
+      (l.callName === clean || (l.callName && l.callName.endsWith('.' + clean))));
+    if (viaCall) return viaCall.targetFile + '::' + viaCall.targetSymbol;
   }
   return null;
 }
