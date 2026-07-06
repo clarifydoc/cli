@@ -447,18 +447,47 @@ function c4BuildComponents(containerId) {
 // are overlaid with code-link evidence: a resolved link between two deployed
 // projects raises the arrow weight and confirms the env edge.
 
+// Deployment-stack filter: null = union of every compose stack; a compose
+// file path = only services declared in that file. Repos often carry several
+// stacks (legacy Rancher + current Portainer) whose union muddies the view.
+var c4StackFilter = null;
+
+function c4SvcInStack(s) {
+  if (!c4StackFilter) return true;
+  var files = s.composeFiles || [s.composeFile];
+  return files.indexOf(c4StackFilter) >= 0;
+}
+
 // Group deployed app services by matched project so stack duplicates
 // (triosync + trio-api both = TrioSyncService) render as one container.
+// Honors the stack filter — everything downstream (nodes, edges, evidence)
+// derives from these groups, so filtering here keeps the model consistent.
 function c4DeployAppGroups() {
   var groupOfService = {}, groups = {}, order = [];
   ((DATA.deployment || {}).services || []).forEach(function(s){
-    if (s.kind !== 'app') return;
+    if (s.kind !== 'app' || !c4SvcInStack(s)) return;
     var gid = s.project ? 'dproj:' + s.project : 'dsvc:' + s.name.toLowerCase();
     groupOfService[s.name.toLowerCase()] = gid;
     if (!groups[gid]) { groups[gid] = { services: [], project: s.project || null }; order.push(gid); }
     groups[gid].services.push(s);
   });
   return { groupOfService: groupOfService, groups: groups, order: order };
+}
+
+// Externals ranked by how many distinct services reference them; the tail
+// past C4_DEPLOY_EXT_CAP (declared with the shared constants in the runtime
+// fragment) collapses into one "+N more" box so a URL-heavy env can't flood
+// the diagram (mirrors c4AttachExternals' capping).
+function c4RankedExternals(dep) {
+  var refs = {};
+  (dep.edges || []).forEach(function(e){
+    if (String(e.to).indexOf('ext:') === 0) {
+      (refs[e.to] = refs[e.to] || {})[e.from] = true;
+    }
+  });
+  return (dep.externals || []).slice().sort(function(a, b){
+    return Object.keys(refs[b.id] || {}).length - Object.keys(refs[a.id] || {}).length;
+  });
 }
 
 function c4BuildDeployment() {
@@ -483,6 +512,7 @@ function c4BuildDeployment() {
                ['Compose file', s0.composeFile]];
     if (s0.image) tip.push(['Image', s0.image]);
     if (dbNames.length) tip.push(['Databases', dbNames.join(', ')]);
+    if (!g.project) tip.push(['Source', 'no matching project in this repo']);
     nodes.push({ id: gid, kind: 'container', name: name,
                  sub: subBits.join(' \\u00b7 ') || 'service',
                  color: meta ? meta.color : '#a371f7',
@@ -492,15 +522,16 @@ function c4BuildDeployment() {
   });
 
   // Infra services, merged by family. Pure cache infra stays a chip on the
-  // app boxes (a redis hub with an edge to every service is noise, not signal).
+  // app boxes (a redis hub with an edge to every service is noise, not
+  // signal). Infra is NOT stack-filtered by file (stacks keep infra in
+  // sibling compose files) — edge-less infra is pruned below instead.
   var infraOf = {}, infras = {}, iorder = [];
   (dep.services || []).forEach(function(s){
     if (s.kind === 'app') return;
     var fid = 'dinfra:' + (s.family || s.name.toLowerCase());
     infraOf[s.name.toLowerCase()] = fid;
-    if (!infras[fid]) { infras[fid] = { kind: s.kind, name: s.family || s.name, services: [], hosted: [], files: {} }; iorder.push(fid); }
+    if (!infras[fid]) { infras[fid] = { kind: s.kind, name: s.family || s.name, services: [], hosted: [] }; iorder.push(fid); }
     infras[fid].services.push(s.name);
-    infras[fid].files[s.composeFile] = true;
     (s.hostedDatabases || []).forEach(function(d){ if (infras[fid].hosted.indexOf(d) < 0) infras[fid].hosted.push(d); });
   });
   iorder.forEach(function(fid){
@@ -517,23 +548,37 @@ function c4BuildDeployment() {
     have[fid] = true;
   });
 
-  // Externals referenced from env.
-  (dep.externals || []).forEach(function(x){
-    var host = x.url ? c4ExternalHost(x.url) : null;
-    nodes.push({ id: x.id, kind: 'extapi', name: x.name, sub: host || 'external system',
-                 color: C4_COLORS.extapi, drill: null,
-                 tip: [['Kind', 'external system']].concat(x.url ? [['URL', x.url]] : []) });
-    have[x.id] = true;
+  // Externals referenced from env — busiest first, tail collapsed.
+  var ranked = c4RankedExternals(dep);
+  var extRemap = {};
+  ranked.forEach(function(x, i){
+    if (i < C4_DEPLOY_EXT_CAP) {
+      var host = x.url ? c4ExternalHost(x.url) : null;
+      nodes.push({ id: x.id, kind: 'extapi', name: x.name, sub: host || 'external system',
+                   color: C4_COLORS.extapi, drill: null,
+                   tip: [['Kind', 'external system']].concat(x.url ? [['URL', x.url]] : []) });
+      have[x.id] = true;
+    } else {
+      extRemap[x.id] = 'dext:more';
+    }
   });
+  if (ranked.length > C4_DEPLOY_EXT_CAP) {
+    var moreCount = ranked.length - C4_DEPLOY_EXT_CAP;
+    nodes.push({ id: 'dext:more', kind: 'extapi', name: '+' + moreCount + ' more externals',
+                 sub: 'external systems', color: C4_COLORS.extapi, drill: null,
+                 tip: [['Systems', ranked.slice(C4_DEPLOY_EXT_CAP).map(function(x){ return x.name; }).join(', ')]] });
+    have['dext:more'] = true;
+  }
 
   function nodeIdFor(name) {
     var k = String(name).toLowerCase();
     if (ag.groupOfService[k]) return ag.groupOfService[k];
     if (infraOf[k]) return infraOf[k];
-    return String(name).indexOf('ext:') === 0 ? name : null;
+    if (String(name).indexOf('ext:') === 0) return extRemap[name] || name;
+    return null;
   }
 
-  var edgeSeen = {};
+  var edgeSeen = {}, httpEdgeByPair = {};
   (dep.edges || []).forEach(function(e){
     var s = nodeIdFor(e.from), t = nodeIdFor(e.to);
     if (!s || !t || s === t || !have[s] || !have[t]) return;
@@ -542,7 +587,9 @@ function c4BuildDeployment() {
     var key = s + '|' + t + '|' + etype + '|' + (elabel || '');
     if (edgeSeen[key]) return;
     edgeSeen[key] = true;
-    edges.push({ source: s, target: t, etype: etype, elabel: elabel, weight: 1 });
+    var edge = { source: s, target: t, etype: etype, elabel: elabel, weight: 1 };
+    edges.push(edge);
+    if (etype === 'http') httpEdgeByPair[s + '|' + t] = edge;
   });
 
   // Code-link evidence overlay: confirmed env edges get their weight, links
@@ -550,15 +597,18 @@ function c4BuildDeployment() {
   var projToNode = {};
   ag.order.forEach(function(gid){ var p = ag.groups[gid].project; if (p) projToNode[p] = gid; });
   c4AggregateLinks(function(f){ return projToNode[fileProject(f)] || null; }).forEach(function(ev){
-    for (var i = 0; i < edges.length; i++) {
-      if (edges[i].source === ev.source && edges[i].target === ev.target && edges[i].etype === 'http') {
-        edges[i].weight = ev.weight;
-        edges[i].confirmed = true;
-        return;
-      }
-    }
+    var hit = httpEdgeByPair[ev.source + '|' + ev.target];
+    if (hit) { hit.weight = ev.weight; hit.confirmed = true; return; }
     edges.push({ source: ev.source, target: ev.target, etype: 'code', weight: ev.weight });
   });
+
+  // With a stack filter active, infra/external boxes that nothing in the
+  // selected stack touches are noise — prune the edge-less ones.
+  if (c4StackFilter) {
+    var used = {};
+    edges.forEach(function(e){ used[e.source] = true; used[e.target] = true; });
+    nodes = nodes.filter(function(n){ return n.kind === 'container' || used[n.id]; });
+  }
 
   return { nodes: nodes, edges: edges };
 }
@@ -592,20 +642,33 @@ function c4BuildContext() {
     edges.push({ source: 'person:users', target: 'sys', etype: 'person', weight: 1 });
   }
 
+  // Env-evidenced externals, busiest first, tail past the cap collapsed —
+  // same ranking the Deployment level uses.
   var have = { sys: true };
-  (dep.externals || []).forEach(function(x){
+  var ranked = c4RankedExternals(dep);
+  ranked.forEach(function(x, i){
+    if (i >= C4_DEPLOY_EXT_CAP) return;
     var host = x.url ? c4ExternalHost(x.url) : null;
     nodes.push({ id: x.id, kind: 'extapi', name: x.name, sub: host || 'external system',
                  color: C4_COLORS.extapi, drill: null,
                  tip: [['Kind', 'external system']].concat(x.url ? [['URL', x.url]] : []) });
     have[x.id] = true;
   });
+  if (ranked.length > C4_DEPLOY_EXT_CAP) {
+    var moreCount = ranked.length - C4_DEPLOY_EXT_CAP;
+    nodes.push({ id: 'dext:more', kind: 'extapi', name: '+' + moreCount + ' more externals',
+                 sub: 'external systems', color: C4_COLORS.extapi, drill: null,
+                 tip: [['Systems', ranked.slice(C4_DEPLOY_EXT_CAP).map(function(x){ return x.name; }).join(', ')]] });
+    have['dext:more'] = true;
+  }
   var extSeen = {};
   (dep.edges || []).forEach(function(e){
-    if (String(e.to).indexOf('ext:') !== 0 || !have[e.to]) return;
-    if (extSeen[e.to]) { extSeen[e.to].weight++; return; }
-    var edge = { source: 'sys', target: e.to, etype: 'external', weight: 1 };
-    extSeen[e.to] = edge;
+    if (String(e.to).indexOf('ext:') !== 0) return;
+    var to = have[e.to] ? e.to : (have['dext:more'] ? 'dext:more' : null);
+    if (!to) return;
+    if (extSeen[to]) { extSeen[to].weight++; return; }
+    var edge = { source: 'sys', target: to, etype: 'external', weight: 1 };
+    extSeen[to] = edge;
     edges.push(edge);
   });
 
@@ -872,11 +935,28 @@ function renderC4Breadcrumb() {
     if (i) html += '<span class="c4-sep">\\u203a</span>';
     html += '<span class="c4-crumb' + (c.current ? ' current' : '') + '" data-crumb="' + i + '">' + esc(c.label) + '</span>';
   });
+  // Stack filter: only meaningful at the Deployment level of a repo carrying
+  // more than one compose file (legacy + current stacks render as a union
+  // unless narrowed).
+  var stackFiles = c4HasDeployment() ? (DATA.deployment.composeFiles || []) : [];
+  if (archC4.level === 'deployment' && stackFiles.length > 1) {
+    html += '<select id="c4-stack-select" class="c4-stack-select" title="Show only services declared in one compose file">';
+    html += '<option value="">all stacks (' + stackFiles.length + ' compose files)</option>';
+    stackFiles.forEach(function(f){
+      html += '<option value="' + esc(f) + '"' + (c4StackFilter === f ? ' selected' : '') + '>' + esc(f) + '</option>';
+    });
+    html += '</select>';
+  }
   html += '<span class="c4-hint">' + (HINTS[archC4.level] || '') + '</span>';
   bc.innerHTML = html;
   bc.querySelectorAll('.c4-crumb').forEach(function(el, i){
     if (crumbs[i].current) return;
     el.addEventListener('click', function(){ c4Drill(crumbs[i].drill); });
+  });
+  var stackSel = document.getElementById('c4-stack-select');
+  if (stackSel) stackSel.addEventListener('change', function(){
+    c4StackFilter = stackSel.value || null;
+    rebuildLinkGraph();
   });
 }
 
