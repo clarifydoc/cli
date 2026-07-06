@@ -624,6 +624,13 @@ export interface InteractiveElementInfo {
   event: string;
   handler: string | null;
   line: number;
+  /**
+   * For `element === "custom"`: the component tag the binding sits on
+   * (`<IstButton @click=…>` → "IstButton"). Joined against the file's
+   * subComponents to wire a child's `emit('save')` to THIS parent handler —
+   * without the tag, two children used in one template are indistinguishable.
+   */
+  component?: string;
 }
 
 export interface EventInfo {

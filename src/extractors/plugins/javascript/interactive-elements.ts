@@ -44,6 +44,7 @@ function walkForInteractive(node: Node, elements: InteractiveElementInfo[]) {
           event: ev.event,
           handler: ev.handler,
           line: node.startPosition.row + 1,
+          ...(element === "custom" ? { component: tagName } : {}),
         });
       }
     }
@@ -180,11 +181,13 @@ export function extractVueInteractiveElements(
     while ((eventMatch = eventRegex.exec(attrs)) !== null) {
       const event = `@${eventMatch[1]}`;
       const handler = eventMatch[2] || null;
+      const element = resolveVueElementType(tagName);
       elements.push({
-        element: resolveVueElementType(tagName),
+        element,
         event,
         handler,
         line,
+        ...(element === "custom" ? { component: tagName } : {}),
       });
     }
 
@@ -192,11 +195,13 @@ export function extractVueInteractiveElements(
     const vonRegex = /v-on:([a-zA-Z]+)(?:="([^"]*)")?/g;
     let vonMatch: RegExpExecArray | null;
     while ((vonMatch = vonRegex.exec(attrs)) !== null) {
+      const vonElement = resolveVueElementType(tagName);
       elements.push({
-        element: resolveVueElementType(tagName),
+        element: vonElement,
         event: `@${vonMatch[1]}`,
         handler: vonMatch[2] || null,
         line,
+        ...(vonElement === "custom" ? { component: tagName } : {}),
       });
     }
 
