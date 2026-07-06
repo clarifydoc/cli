@@ -141,10 +141,25 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
    */
   private constStrings = new Map<string, string>();
 
+  /**
+   * String locals in declaration order (`var uri = $"api/v1/..."`), with their
+   * lines. HttpClient URIs are habitually built into a local and passed by
+   * name (`GetAsync(uri, ct)`) — without recalling the assignment, the
+   * outbound call has no target and can never join a backend route. The same
+   * local name recurs in every method (`var uri` per endpoint), so lookup is
+   * by nearest PRECEDING assignment, not by name alone.
+   */
+  private stringLocals: Array<{ name: string; line: number; value: string }> = [];
+
   override beginFile(_tree: Tree, sourceText: string): void {
     this.constStrings = new Map();
     for (const m of sourceText.matchAll(/\bconst\s+string\s+(\w+)\s*=\s*[@$]*"([^"]*)"/g)) {
       this.constStrings.set(m[1]!, m[2]!);
+    }
+    this.stringLocals = [];
+    for (const m of sourceText.matchAll(/\b(?:var|string)\s+(\w+)\s*=\s*[@$]*"([^"]*)"/g)) {
+      const line = sourceText.slice(0, m.index!).split("\n").length;
+      this.stringLocals.push({ name: m[1]!, line, value: m[2]! });
     }
   }
 
@@ -152,6 +167,34 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   private mqResolve(label: string | null): string | null {
     if (!label) return null;
     return this.constStrings.get(label) ?? label;
+  }
+
+  /**
+   * Substitute file-level const-string interpolations into a URI template:
+   * `{_basePath}/license` (+ `_basePath = "internal/api/v1"`) →
+   * `internal/api/v1/license`. Runtime parts stay as `{param}` placeholders,
+   * which is exactly the form the route linker normalizes for matching.
+   */
+  private substituteConsts(uri: string): string {
+    return uri.replace(/\{(\w+)\}/g, (whole, name: string) => this.constStrings.get(name) ?? whole);
+  }
+
+  /**
+   * Resolve an HttpClient call's URI argument: a string/interpolated literal
+   * directly, or an identifier via the nearest preceding string local.
+   */
+  private resolveHttpUri(node: Node): string | null {
+    const direct = extractFirstStringArg(node);
+    if (direct) return this.substituteConsts(direct);
+    const args = argumentNodes(node);
+    const first = args[0]?.text.trim();
+    if (!first || !/^\w+$/.test(first)) return null;
+    const callLine = node.startPosition.row + 1;
+    let best: { line: number; value: string } | null = null;
+    for (const l of this.stringLocals) {
+      if (l.name === first && l.line <= callLine && (!best || l.line > best.line)) best = l;
+    }
+    return best ? this.substituteConsts(best.value) : null;
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
@@ -348,7 +391,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         sources.push(this.ds({
           kind: "api-call",
           name: method,
-          target: extractFirstStringArg(node),
+          target: this.resolveHttpUri(node),
           line: node.startPosition.row + 1,
         }));
       }

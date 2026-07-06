@@ -1,5 +1,6 @@
 import type { Node } from "web-tree-sitter";
 import type { ImportInfo } from "../../../types/analysis.js";
+import type { VariableAliasBinding } from "../../../types/language-plugin.js";
 import { buildImportMaps } from "../../shared/call-graph.js";
 
 /**
@@ -24,20 +25,26 @@ import { buildImportMaps } from "../../shared/call-graph.js";
 export function extractJsVariableAliases(
   tree: { rootNode: Node },
   imports: ImportInfo[],
-): Map<string, string> {
-  const aliases = new Map<string, string>();
+): Map<string, VariableAliasBinding> {
+  const aliases = new Map<string, VariableAliasBinding>();
   const conflicted = new Set<string>();
   const { importMap } = buildImportMaps(imports);
 
-  function bind(name: string, source: string) {
+  function bind(name: string, source: string, factory: string) {
     if (conflicted.has(name)) return;
     const prev = aliases.get(name);
-    if (prev !== undefined && prev !== source) {
-      aliases.delete(name);
-      conflicted.add(name);
+    if (prev !== undefined) {
+      if (prev.source !== source) {
+        aliases.delete(name);
+        conflicted.add(name);
+      } else if (prev.factory !== factory) {
+        // Same module, different factories — the module is still a safe
+        // classification target, but the factory is ambiguous.
+        prev.factory = undefined;
+      }
       return;
     }
-    aliases.set(name, source);
+    aliases.set(name, { source, factory });
   }
 
   function walk(node: Node) {
@@ -57,16 +64,16 @@ export function extractJsVariableAliases(
         const source = importMap.get(fnName)!;
 
         if (nameNode.type === "identifier") {
-          bind(nameNode.text, source);
+          bind(nameNode.text, source, fnName);
         } else if (nameNode.type === "object_pattern") {
           for (const prop of nameNode.namedChildren) {
             // `{ a }` → shorthand_property_identifier_pattern "a";
             // `{ a: b }` → pair_pattern whose value is the local name.
             if (prop.type === "shorthand_property_identifier_pattern") {
-              bind(prop.text, source);
+              bind(prop.text, source, fnName);
             } else if (prop.type === "pair_pattern") {
               const local = prop.childForFieldName("value");
-              if (local?.type === "identifier") bind(local.text, source);
+              if (local?.type === "identifier") bind(local.text, source, fnName);
             }
           }
         }

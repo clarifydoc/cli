@@ -290,16 +290,26 @@ function buildClassCatalog(analyses: FileAnalysis[]): Map<string, ClassCatalogEn
 
 /** Per-(project, class name) catalog: lets injection resolution disambiguate a
  *  type name that's unique within the caller's project but duplicated elsewhere. */
+/** Cap on per-name candidate files kept for closest-dir disambiguation. */
+const CLASS_CANDIDATE_CAP = 8;
+
 function buildClassCatalogByProject(
   analyses: FileAnalysis[],
-): Map<string, { file: string; count: number }> {
-  const map = new Map<string, { file: string; count: number }>();
+): Map<string, { file: string; count: number; files: string[] }> {
+  const map = new Map<string, { file: string; count: number; files: string[] }>();
   for (const a of analyses) {
     for (const cls of a.classes) {
       const key = `${a.projectId}\x00${cls.name}`;
       const existing = map.get(key);
-      if (existing) existing.count++;
-      else map.set(key, { file: a.filePath, count: 1 });
+      if (existing) {
+        existing.count++;
+        // Keep a bounded candidate list — a name defined in a handful of
+        // places can still be disambiguated by directory proximity; one
+        // defined everywhere (Config, Program) is hopeless either way.
+        if (existing.files.length < CLASS_CANDIDATE_CAP) existing.files.push(a.filePath);
+      } else {
+        map.set(key, { file: a.filePath, count: 1, files: [a.filePath] });
+      }
     }
   }
   return map;
@@ -444,7 +454,7 @@ interface LinkContext {
   /** `${projectId}\x00${className}` → {file, count} — for same-project uniqueness
    *  when a class name collides ACROSS projects (e.g. a PHP `ApiConnection` and a
    *  Dart `ApiConnection` in different sub-projects). */
-  classByProject: Map<string, { file: string; count: number }>;
+  classByProject: Map<string, { file: string; count: number; files: string[] }>;
   leafCatalog: Map<string, LeafCatalogEntry>;
   dirTailIndex: Map<string, string[]>;
   /** Top-level symbol name → files that define it (in symbolIndex order). Lets
@@ -509,28 +519,41 @@ function buildInheritanceMap(
 function buildInjectionMap(
   analyses: FileAnalysis[],
 ): Map<string, { typeName: string; typeFile: string }> {
-  // Build class → file lookup, and a className → ClassInfo lookup for walking
-  // base classes (inherited protected DI fields).
-  const classToFile = new Map<string, string>();
+  // Build class → files lookup (ALL definitions — a name can recur across
+  // services/features), and a className → ClassInfo lookup for walking base
+  // classes (inherited protected DI fields).
+  const classToFiles = new Map<string, string[]>();
   const classByName = new Map<string, FileAnalysis["classes"][number]>();
   for (const a of analyses) {
     for (const cls of a.classes) {
-      classToFile.set(cls.name, a.filePath);
+      let arr = classToFiles.get(cls.name);
+      if (!arr) classToFiles.set(cls.name, (arr = []));
+      if (arr.length < CLASS_CANDIDATE_CAP) arr.push(a.filePath);
       if (!classByName.has(cls.name)) classByName.set(cls.name, cls);
     }
   }
 
-  // resolveTypeIn returns the SHORT name for qualified types, which is what
-  // interfaceImplMap lookups (keyed by class name) need.
-  const resolveTypeName = (rawType: string, classToFile: Map<string, string>) => {
-    const r = resolveTypeIn(classToFile, rawType);
-    return r ? { typeName: r.name, typeFile: r.value } : null;
+  // Resolve a declared type to its defining file. A duplicated class name
+  // (microservice repos: a LicenseService per service/feature) picks the
+  // definition closest to the CONSUMING file by shared directory prefix —
+  // last-writer-wins here silently bound fields to the wrong duplicate and
+  // dead-ended every trace through them. Ambiguous ties resolve to nothing.
+  const resolveTypeName = (rawType: string, consumerFile: string) => {
+    const clean = rawType.replace(/<.*$/, "").replace(/[?*&]/g, "").trim();
+    const names = clean.includes(".") ? [clean, clean.split(".").pop()!] : [clean];
+    for (const name of names) {
+      const files = classToFiles.get(name);
+      if (!files || files.length === 0) continue;
+      const pick = files.length === 1 ? files[0]! : closestByDir(files, consumerFile, (f) => f);
+      if (pick) return { typeName: name, typeFile: pick };
+    }
+    return null;
   };
 
   const map = new Map<string, { typeName: string; typeFile: string }>();
   const add = (file: string, name: string, type: string | null, overwrite: boolean): void => {
     if (!type) return;
-    const resolved = resolveTypeName(type, classToFile);
+    const resolved = resolveTypeName(type, file);
     if (!resolved) return;
     const key = `${file}::${name}`;
     if (overwrite || !map.has(key)) {
@@ -815,6 +838,20 @@ function resolveCallToDefinition(
     }
   }
 
+  // ── Strategy 3b: factory fallback via the binding's provenance ──
+  // The member doesn't exist in the target module — the receiver is a
+  // library-made object (`const m = useAddLicenseMutation(...)` then
+  // `m.mutateAsync(...)`: mutateAsync is tanstack's, not the project's). The
+  // classifier recorded WHICH factory made the receiver (CallInfo.via); the
+  // factory's definition is where the meaningful project code sits (its
+  // mutationFn closure calls the service), so the trace routes through it.
+  if (!def && call.kind === "cross-file" && call.via && targetFile) {
+    const viaDef = symbolIndex.get(targetFile)?.get(call.via);
+    if (viaDef) {
+      return mkLink(targetFile, viaDef.name, viaDef.line, "INFERRED");
+    }
+  }
+
   // ── Strategy 4: ClassName.method resolution for static/class methods ──
   // For calls like "UserService.find_by_id" — searches all files for the class.
   // Without an explicit import this is at best INFERRED.
@@ -1008,7 +1045,7 @@ function findEnclosingCallable(
  */
 function resolveInjectedType(
   classCatalog: Map<string, ClassCatalogEntry>,
-  classByProject: Map<string, { file: string; count: number }>,
+  classByProject: Map<string, { file: string; count: number; files: string[] }>,
   typeName: string,
   sourceFile: string,
   projectId: string,
@@ -1024,6 +1061,15 @@ function resolveInjectedType(
     const e = classByProject.get(`${projectId}\x00${name}`);
     if (e && e.count === 1 && e.file !== sourceFile) {
       return { typeName: name, typeFile: e.file };
+    }
+    // 1b) Same name in several places (microservice repos: a LicenseService in
+    // License.Application AND in a Wage feature) — pick the definition whose
+    // directory is closest to the caller, the same longest-shared-prefix rule
+    // that disambiguates duplicated interfaces. Ambiguous ties resolve to
+    // nothing rather than guessing.
+    if (e && e.count > 1 && e.count <= CLASS_CANDIDATE_CAP) {
+      const pick = closestByDir(e.files.filter((f) => f !== sourceFile), sourceFile, (f) => f);
+      if (pick) return { typeName: name, typeFile: pick };
     }
   }
 

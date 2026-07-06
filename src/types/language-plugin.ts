@@ -95,10 +95,21 @@ export interface AstExtractorHooks {
   /** Component events (e.g. Vue defineEmits / emit calls). */
   events?(sourceText: string): EventInfo[];
   /**
-   * Module-level variable → import-source aliases
+   * Variable → import-source aliases, any scope
    * (`const store = useUserStore()` → store resolves to useUserStore's source).
+   * A rich binding also names the FACTORY the variable came from, so a member
+   * call whose leaf doesn't exist in the source module (`mutation.mutateAsync`)
+   * can fall back to the factory symbol (see CallInfo.via).
    */
-  variableAliases?(tree: Tree, imports: ImportInfo[]): Map<string, string>;
+  variableAliases?(tree: Tree, imports: ImportInfo[]): Map<string, string | VariableAliasBinding>;
+}
+
+/** Rich variable-alias value: the module the binding resolves to + the factory that made it. */
+export interface VariableAliasBinding {
+  /** Import source of the factory (`../composables/useShopCart`). */
+  source: string;
+  /** The factory function's name (`useShopCart`). */
+  factory?: string;
 }
 
 /** Location of a tree-sitter grammar WASM inside an npm package. */
