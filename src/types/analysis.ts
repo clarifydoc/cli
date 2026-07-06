@@ -1023,6 +1023,79 @@ export interface ProjectAnalysis {
    * project declares no external dependencies.
    */
   externalPackages?: ExternalPackage[];
+  /**
+   * Deployment topology parsed from container-orchestration manifests
+   * (docker-compose/compose files): the deployed services, the infrastructure
+   * they attach to, and the service→service edges evidenced by injected
+   * API keys / connection strings / URLs. Drives the Architecture tab's
+   * Context (C1) and Deployment (C2) levels. Omitted when no compose files.
+   */
+  deployment?: DeploymentModel;
+}
+
+// ─── Deployment topology (compose files) ───────────────────────────────────
+
+/** Broad role of a deployed service, classified from its image/name. */
+export type DeployedServiceKind =
+  | "app"
+  | "datastore"
+  | "queue"
+  | "cache"
+  | "proxy"
+  | "observability"
+  | "other";
+
+export interface DeployedService {
+  /** Compose service name — unique across all parsed compose files. */
+  name: string;
+  /** Repo-relative posix path of the compose file that declared it. */
+  composeFile: string;
+  image?: string;
+  /** Joined entrypoint/command, when declared (e.g. "dotnet Plan.API.dll"). */
+  entrypoint?: string;
+  kind: DeployedServiceKind;
+  /** Infra family for merging instances (postgres, firebird, rabbitmq, redis…). */
+  family?: string;
+  /** Short tech label: entrypoint artifact or image tail. */
+  tech?: string;
+  /** Matched SubProject id — links the deployed unit to its source code. */
+  project?: string;
+  /** Attaches to a message bus (EventBus/AMQP/Kafka env vars present). */
+  bus?: boolean;
+  /** Uses a shared cache (Redis/Memcached env vars present). */
+  cache?: boolean;
+  /** Logical databases named by this service's connection-string env vars. */
+  databases?: Array<{ name: string; primary: boolean }>;
+  /** Databases hosted BY this service (datastore kind), e.g. POSTGRES_MULTIPLE_DATABASES. */
+  hostedDatabases?: string[];
+}
+
+export interface DeploymentEdge {
+  /** Compose service name, or an `ext:` external id. */
+  from: string;
+  to: string;
+  kind: "http" | "db" | "bus" | "external" | "depends";
+  /** Human hint: logical db name, external host, … */
+  label?: string;
+  /** Env var that evidenced the edge. */
+  via?: string;
+}
+
+/** A system outside the compose network, evidenced by env URLs/issuers. */
+export interface DeploymentExternal {
+  /** Stable id, `ext:<slug>`. */
+  id: string;
+  name: string;
+  /** Literal URL when one was present in the env (not a ${VAR} placeholder). */
+  url?: string;
+}
+
+export interface DeploymentModel {
+  /** Repo-relative posix paths of every compose file that contributed. */
+  composeFiles: string[];
+  services: DeployedService[];
+  externals: DeploymentExternal[];
+  edges: DeploymentEdge[];
 }
 
 export interface FrameworkDetection {

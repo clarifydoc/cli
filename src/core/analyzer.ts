@@ -20,6 +20,7 @@ import {
   mergeFrameworkDetections,
 } from "./dependency-inventory.js";
 import { detectSubProjects, assignProjectId } from "./project-detector.js";
+import { detectDeployment } from "./deployment.js";
 import { detectFileBasedRoutes } from "../extractors/plugins/javascript/routes/file-based.js";
 import { resolveExpressMounts } from "../extractors/plugins/javascript/routes/express-mounts.js";
 import { resolveUrlBuilders } from "../extractors/plugins/javascript/url-builders.js";
@@ -338,6 +339,17 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       ? `Detected ${realProjectCount} sub-project${realProjectCount === 1 ? "" : "s"}`
       : "No sub-projects detected (single project)",
   );
+
+  // Step 2d: Deployment topology from compose manifests — which units actually
+  // deploy, their infrastructure, and env-evidenced service→service edges.
+  // Feeds the report's Context/Deployment (C1/C2) architecture levels.
+  const deployment = await detectDeployment(projectRoot, { subProjects, fileProjects });
+  if (deployment) {
+    progress.detail(
+      `Deployment: ${deployment.services.length} compose service${deployment.services.length === 1 ? "" : "s"}, ` +
+        `${deployment.edges.length} edges (${deployment.composeFiles.length} compose file${deployment.composeFiles.length === 1 ? "" : "s"})`,
+    );
+  }
 
   // Step 3: Analyze each file (parallel with concurrency limit).
   // When `incremental` is on, classify each file against the manifest first;
@@ -799,6 +811,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     apiRouteLinks: apiRouteLinks.length > 0 ? apiRouteLinks : undefined,
     generatedRoots: generatedRoots.length > 0 ? generatedRoots : undefined,
     unusedFiles: unusedFiles.length > 0 ? unusedFiles : undefined,
+    deployment,
   };
 
   progress.step("Writing project summary...");

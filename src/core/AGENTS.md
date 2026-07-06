@@ -54,13 +54,20 @@ All take `FileAnalysis[]` and/or `componentGraph` and return typed results.
 
 - [file-discovery.ts](file-discovery.ts) — fast-glob by extension. The `EXTENSION_MAP` is the source of truth for which extensions are analyzed.
 - [framework-detector.ts](framework-detector.ts) — reads package.json, pom.xml, build.gradle, etc. Produces `FrameworkDetection[]`.
+- [deployment.ts](deployment.ts) — compose-manifest deployment topology (`ProjectAnalysis.deployment`): parses docker-compose/compose files with a built-in YAML-subset parser, classifies services (app vs datastore/queue/cache), matches app services to sub-projects (entrypoint dll / image tail / marker basenames), and derives service→service edges from env evidence (api-key handshake per file, connection strings literal-first, URL/issuer vars, bus/cache attachment). Powers the report's Context (C1) / Deployment (C2) architecture levels.
 - [output-writer.ts](output-writer.ts) — writes per-file JSONs + `project-summary.json` (+ `lsp-enhancement.json` / `lsp-ground-truth.json` when LSP runs).
 - [element-registry.ts](element-registry.ts) — the disk-I/O codec. `normalizeProject` (write) lifts repeated nodes into two registries — `elements[]` (symbol-level `file::symbol` ids) and `files[]` page_ids (a file's index, used everywhere a path was repeated); `denormalizeProject` (read) reverses it. In-memory shapes are untouched; all readers go through `denormalizeProject`. A round-trip test over every fixture is the regression gate — adding a path-bearing `ProjectAnalysis` field means adding it to `rewritePageRefs`.
 - [regex-extractor.ts](regex-extractor.ts) — thin dispatcher for regex-only languages. Real logic lives in `src/extractors/plugins/<lang>/`.
 
 ## Report
 
-[html-report.ts](html-report.ts) is a single large file that generates a self-contained HTML report with D3-based architecture graph, 11+ tabs (screens, traces, architecture, routes, health, patterns, security, complexity, suggestions, blast radius, overview). The CSS, HTML template, and client JS are all string concatenation — intentional to keep the report single-file and portable.
+[html-report.ts](html-report.ts) generates a self-contained HTML report with D3-based architecture graph, 11+ tabs (screens, traces, architecture, routes, health, patterns, security, complexity, suggestions, blast radius, overview). The CSS, HTML template, and client JS are all string concatenation — intentional to keep the report single-file and portable.
+
+It is split into a `html-report/` subdirectory:
+
+- `html-report.ts` — thin entry: `generateHtmlReport`, `loadProjectSummary`, `renderReport` (assembles the payload + document). Public API unchanged.
+- `html-report/util.ts` (`esc`), `html-report/css.ts` (`renderCss`), `html-report/views.ts` (static tab-shell renderers).
+- `html-report/client/` — the ~5k-line client bundle sliced into ordered template-literal fragments (`runtime`, `filters`, `screens`, `ui`, `routes-summary`, `traces`, `arch-c4`, `arch-graph`, `arch-types`, `arch-data-access`, `data-model`, `health-blast`, `report-tabs`); `client/index.ts:renderClientJs()` joins them. **Order is load-bearing** (one shared `<script>` scope; hash-nav in `report-tabs` stays last). Fragments must stay **backtick-free**; `arch-c4` is the only fragment with a `${}` interpolation (`UNKNOWN_TARGET`). `fragments.test.ts` guards both invariants; `smoke.test.ts` renders a minimal report end-to-end.
 
 ## Adding a new analyzer
 
