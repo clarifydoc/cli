@@ -5,6 +5,7 @@ import type { ProjectAnalysis, BlastRadiusInfo } from "../types/analysis.js";
 import { writeFile, mkdir } from "fs/promises";
 import { dirname } from "path";
 import { denormalizeProject } from "./element-registry.js";
+import { UNKNOWN_TARGET } from "./data-access-graph.js";
 
 export interface ReportOptions {
   analysisDir: string;
@@ -382,6 +383,8 @@ a{color:#58a6ff;text-decoration:none}
 .d3-btn.active{background:#1f6feb22;color:#58a6ff;border-color:#1f6feb}
 .d3-btn.trace-blast-link{color:#ff9f43;border-color:#ff9f4344;margin-right:8px}
 .d3-btn.trace-blast-link:hover{background:#ff9f4322;color:#ffb86b;border-color:#ff9f43}
+.d3-btn.trace-screen-link{color:#56d364;border-color:#56d36444;margin-right:8px}
+.d3-btn.trace-screen-link:hover{background:#56d36422;color:#7ee787;border-color:#56d364}
 #d3-legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;font-size:11px;color:#8b949e}
 .legend-item{display:flex;align-items:center;gap:5px}
 .legend-dot{width:10px;height:10px;border-radius:3px;flex-shrink:0}
@@ -393,6 +396,16 @@ a{color:#58a6ff;text-decoration:none}
 .d3-tooltip .tt-row{display:flex;justify-content:space-between;gap:16px;padding:1px 0;color:#8b949e}
 .d3-tooltip .tt-val{color:#e6edf3;font-weight:500}
 .arch-hidden{display:none !important}
+.c4-hidden{display:none !important}
+
+/* C4 drill-down breadcrumb (Architecture tab Files mode) */
+.c4-breadcrumb{display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:12px;flex-wrap:wrap}
+.c4-crumb{color:#58a6ff;cursor:pointer;padding:3px 10px;border-radius:6px;background:#161b22;border:1px solid #30363d;font-family:inherit}
+.c4-crumb:hover{background:#1c2128;border-color:#58a6ff}
+.c4-crumb.current{color:#e6edf3;cursor:default;background:#1f6feb22;border-color:#1f6feb;font-weight:600}
+.c4-sep{color:#484f58}
+.c4-hint{color:#8b949e;font-size:11px;margin-left:10px}
+.c4-edge-label{fill:#8b949e;font-size:9px;font-family:monospace;pointer-events:none}
 
 /* Data Models grouped sidebar (Architecture tab → Data Models mode) */
 #d3-types-sidebar{width:300px;flex-shrink:0;height:640px;background:#0d1117;border:1px solid #30363d;border-radius:8px;display:flex;flex-direction:column;overflow:hidden;font-size:12px}
@@ -479,6 +492,11 @@ a{color:#58a6ff;text-decoration:none}
 /* Route table */
 .route-table{width:100%;border-collapse:collapse}
 .route-table th{text-align:left;padding:10px 14px;background:#1c2128;border-bottom:1px solid #30363d;font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px}
+.route-group-row{cursor:pointer;user-select:none}
+.route-group-row td{background:#161b22;border-top:1px solid #30363d;border-bottom:1px solid #21262d;padding:8px 14px;font-size:12px;font-weight:600;color:#e6edf3}
+.route-group-row:hover td{background:#1c2128}
+.route-group-toggle{color:#484f58;font-size:10px;margin-right:4px}
+.route-group-count{color:#8b949e;font-weight:400;margin-left:6px;background:#21262d;border-radius:8px;padding:1px 8px;font-size:11px}
 .route-table td{padding:8px 14px;border-bottom:1px solid #21262d;font-size:13px}
 .route-table tr:hover td{background:#1c2128}
 .method-badge{display:inline-block;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:700;font-family:monospace}
@@ -713,6 +731,12 @@ a{color:#58a6ff;text-decoration:none}
 .tree-node.hidden{display:none}
 .tree-toggle{width:16px;text-align:center;cursor:pointer;color:#484f58;font-size:11px;flex-shrink:0;user-select:none}
 .tree-toggle:hover{color:#e6edf3}
+.comp-expand{cursor:pointer;color:#58a6ff;font-size:13px;flex-shrink:0;user-select:none;opacity:0.75}
+.comp-expand:hover{opacity:1}
+.inline-children{border-left:1px dashed #30363d;margin-left:8px;background:#0d111755}
+.tree-tools{padding:6px 14px;border-bottom:1px solid #21262d}
+.tree-tools button{background:#21262d;border:1px solid #30363d;color:#8b949e;font-size:11px;padding:3px 10px;border-radius:6px;cursor:pointer}
+.tree-tools button:hover{color:#e6edf3;border-color:#58a6ff}
 .tree-children{overflow:hidden}
 .tree-children.collapsed{display:none}
 
@@ -877,28 +901,29 @@ function renderLinksView(): string {
   return `<section id="view-links" class="view">
   <div class="d3-toolbar">
     <span class="d3-toolbar-label">View:</span>
-    <button class="d3-btn active" data-arch-mode="files">Files</button>
+    <button class="d3-btn active" data-arch-mode="files">C4 Architecture</button>
     <button class="d3-btn" data-arch-mode="types">Data Models</button>
     <button class="d3-btn" data-arch-mode="data-access">Data Access</button>
-    <span class="d3-toolbar-sep"></span>
-    <span class="d3-toolbar-label" id="d3-colour-label">Color by:</span>
-    <button class="d3-btn active" data-color="layer">Layer</button>
-    <button class="d3-btn" data-color="folder">Folder</button>
-    <button class="d3-btn arch-proj-only" data-color="project">Project</button>
-    <button class="d3-btn" data-color="risk">Risk</button>
+    <span class="d3-toolbar-sep c4-code-only"></span>
+    <span class="d3-toolbar-label c4-code-only" id="d3-colour-label">Color by:</span>
+    <button class="d3-btn active c4-code-only" data-color="layer">Layer</button>
+    <button class="d3-btn c4-code-only" data-color="folder">Folder</button>
+    <button class="d3-btn arch-proj-only c4-code-only" data-color="project">Project</button>
+    <button class="d3-btn c4-code-only" data-color="risk">Risk</button>
     <span class="d3-toolbar-sep arch-files-only arch-proj-only"></span>
     <span class="d3-toolbar-label arch-files-only arch-proj-only">Group:</span>
     <button class="d3-btn arch-files-only arch-proj-only" data-arch-group="folder">Folder</button>
     <button class="d3-btn arch-files-only arch-proj-only" data-arch-group="project">Project</button>
     <label class="d3-check arch-types-only arch-hidden" id="d3-types-group-wrap" title="Colour the type nodes by sub-project and cluster each project into its own region"><input type="checkbox" id="d3-types-group-project"> Group by project</label>
     <label class="d3-check arch-types-only arch-hidden" id="d3-types-hide-unlinked-wrap" title="Hide data models that have no relationships to other models"><input type="checkbox" id="d3-types-hide-unlinked" checked> Hide unlinked</label>
-    <span class="d3-toolbar-sep"></span>
-    <label class="d3-check" id="d3-hide-unlinked-wrap"><input type="checkbox" id="d3-hide-unlinked" checked> Hide unlinked</label>
+    <span class="d3-toolbar-sep c4-code-only"></span>
+    <label class="d3-check c4-code-only" id="d3-hide-unlinked-wrap"><input type="checkbox" id="d3-hide-unlinked" checked> Hide unlinked</label>
     <label class="d3-check arch-files-only" id="d3-hide-unused-wrap" style="display:none"><input type="checkbox" id="d3-hide-unused" checked> Hide unused <span id="d3-hide-unused-count" style="color:#8b949e"></span></label>
-    <span class="d3-toolbar-sep"></span>
-    <button class="d3-btn" id="d3-toggle-labels">Labels</button>
+    <span class="d3-toolbar-sep c4-code-only"></span>
+    <button class="d3-btn c4-code-only" id="d3-toggle-labels">Labels</button>
     <button class="d3-btn" id="d3-zoom-fit">Fit</button>
   </div>
+  <div id="c4-breadcrumb" class="c4-breadcrumb"></div>
   <div class="d3-arch-main">
     <div id="d3-types-sidebar" class="arch-types-only arch-hidden"></div>
     <div id="d3-graph-container"></div>
@@ -1353,6 +1378,14 @@ function refreshAllViews() {
 }
 
 let archMode = 'files'; // 'files' | 'types' | 'data-access'
+// C4 drill-down state for the Files mode: which C4 level is shown, the
+// group-path trail drilled through at the Containers level (large monorepos
+// aggregate sub-projects by root-path prefix), and the selected container
+// (sub-project id) / component (folder-module key) at the deeper levels.
+// depth records how many path segments the component keys were aggregated at
+// when drilling, so the Code level scopes with the same grouping. level is
+// lazily initialized on first render (needs DATA).
+let archC4 = { level: null, trail: [], container: null, component: null, depth: 1 };
 let traceViewMode = 'tree'; // Call Traces right pane: 'tree' (double-tree diagram) | 'list'
 // Architecture Files graph clustering: 'auto' (project when 2+ sub-projects, else
 // folder), or an explicit 'folder' / 'project' chosen via the Group toggle.
@@ -1385,8 +1418,13 @@ function rebuildLinkGraph() {
     initDataAccessGraph();
     renderMigrationsPanel();
   } else {
-    initLinkGraph();
+    if (!archC4.level) c4Reset();
+    if (archC4.level === 'code') initLinkGraph();
+    else initC4Graph();
   }
+  // Breadcrumb + level-dependent toolbar visibility (both no-op outside Files mode).
+  renderC4Breadcrumb();
+  updateC4Toolbar();
 }
 
 // Render the detected ORM/DB migrations (schema evolution) beneath the Data
@@ -1540,6 +1578,12 @@ function renderComponentTree(components, depth, screenIdx, ctr) {
     html += '<span class="tree-toggle">' + (hasKids ? '\\u25BC' : '\\u00B7') + '</span>';
     html += '<span class="cat-badge ' + cat.cls + '">' + cat.letter + '</span>';
     html += '<span class="comp-name">' + esc(c.name) + '</span>';
+    // A used component whose own file was analyzed can be expanded INLINE —
+    // its screen entry's tree renders beneath this node, recursively.
+    const subScreen = resolveComponentScreen(c.name, screenIdx);
+    if (subScreen !== null && subScreen !== screenIdx) {
+      html += '<span class="comp-expand" data-sub-screen="' + subScreen + '" title="Expand component internals">\\u2295</span>';
+    }
     // Only show the type when it adds information (an import path / element kind);
     // suppress the common case where it just repeats the name (e.g. "QLayout QLayout").
     if (c.componentType && c.componentType !== c.name) html += '<span class="comp-type">' + esc(c.componentType) + '</span>';
@@ -1567,6 +1611,77 @@ function renderComponentTree(components, depth, screenIdx, ctr) {
     }
     return html;
   }).join('');
+}
+
+// Resolve a used component NAME to the screen entry describing the component's
+// own file, so its tree can be inlined under the usage node. Precise path:
+// the using file's componentUsage row carries the import source — resolve it
+// with resolveComponentFile (the same resolver the "used by" pills use) and
+// map the file to its screen. Fallback: a unique basename match (ambiguity =
+// no guess). Runs once per rendered tree node, so lookups are lazily indexed
+// and results memoized — the data is static.
+let _usageTargetByKey = null;   // "usingFile|compName" -> import source
+let _screenIdxByFile = null;    // filePath -> screen index
+let _screenIdxByBase = null;    // lowercased basename -> screen index | -1 (ambiguous)
+const _compScreenMemo = new Map();
+function resolveComponentScreen(compName, usingScreenIdx) {
+  if (!DATA.screens || !DATA.screens[usingScreenIdx]) return null;
+  const key = DATA.screens[usingScreenIdx].filePath + '|' + compName;
+  if (_compScreenMemo.has(key)) return _compScreenMemo.get(key);
+  if (!_usageTargetByKey) {
+    _usageTargetByKey = new Map();
+    (DATA.componentUsage || []).forEach(u => {
+      if (!u.target || u.target.indexOf('/') < 0) return;
+      const k = u.filePath + '|' + u.name;
+      if (!_usageTargetByKey.has(k)) _usageTargetByKey.set(k, u.target);
+    });
+    _screenIdxByFile = new Map();
+    _screenIdxByBase = new Map();
+    DATA.screens.forEach((s, i) => {
+      if (!_screenIdxByFile.has(s.filePath)) _screenIdxByFile.set(s.filePath, i);
+      const base = s.filePath.split('/').pop().replace(/\\.\\w+$/, '').toLowerCase();
+      _screenIdxByBase.set(base, _screenIdxByBase.has(base) ? -1 : i);
+    });
+  }
+  let result = null;
+  const target = _usageTargetByKey.get(key);
+  if (target) {
+    const file = resolveComponentFile(target);
+    if (file && _screenIdxByFile.has(file)) result = _screenIdxByFile.get(file);
+  }
+  if (result === null) {
+    const byBase = _screenIdxByBase.get(compName.toLowerCase());
+    if (byBase !== undefined && byBase !== -1) result = byBase;
+  }
+  _compScreenMemo.set(key, result);
+  return result;
+}
+
+// Inline (or collapse) a component's own tree beneath its usage node.
+function toggleInlineComponent(expandEl) {
+  const node = expandEl.closest('.tree-node');
+  if (node.dataset.inlined === '1') {
+    const kids = node.nextElementSibling;
+    if (kids && kids.classList.contains('inline-children')) kids.remove();
+    node.dataset.inlined = '';
+    expandEl.textContent = '\\u2295';
+    return;
+  }
+  const subIdx = parseInt(expandEl.dataset.subScreen, 10);
+  const chain = (node.dataset.chain || '').split(',').filter(Boolean);
+  if (chain.indexOf(String(subIdx)) >= 0) return; // component cycle — stop
+  const sub = DATA.screens[subIdx];
+  if (!sub || !sub.components || !sub.components.length) return;
+  const depth = Math.round((parseInt(node.style.paddingLeft, 10) - 14) / 22) + 1;
+  const div = document.createElement('div');
+  div.className = 'tree-children inline-children';
+  div.innerHTML = renderComponentTree(sub.components, depth, subIdx, { i: 0 });
+  const nextChain = chain.concat([node.dataset.screen, String(subIdx)]).join(',');
+  div.querySelectorAll('.tree-node').forEach(n => { n.dataset.chain = nextChain; });
+  node.after(div);
+  bindTreeInteractions(div);
+  node.dataset.inlined = '1';
+  expandEl.textContent = '\\u2296';
 }
 
 // Find the handler function name for a component event
@@ -1759,8 +1874,19 @@ function renderScreenDetail(c, screenIdx) {
   html += '<div class="detail-item"><div class="detail-label">Line</div><div class="detail-value">:' + c.line + '</div></div>';
   html += '</div>';
 
-  // Event handlers with function names
   const filePath = DATA.screens[screenIdx].filePath;
+
+  // Bridge to Call Traces: for a component's own screen (incl. inlined nodes,
+  // where screenIdx is the COMPONENT's screen), offer a jump to the file's
+  // best trace symbol — the popup's trace-link wiring handles the navigation.
+  const screenTraceKey = traceKeyForFile(filePath);
+  if (screenTraceKey) {
+    html += '<div style="margin-top:8px"><span class="trace-link" data-sym-key="' + esc(screenTraceKey) + '"'
+      + ' style="cursor:pointer;color:#58a6ff;text-decoration:underline;text-decoration-style:dotted;font-size:12px">'
+      + 'Call traces \\u2197</span></div>';
+  }
+
+  // Event handlers with function names
   if (c.events && c.events.length) {
     html += '<div style="margin-top:8px"><div class="detail-label" style="margin-bottom:4px">Event Handlers</div>';
     c.events.forEach(e => {
@@ -1812,7 +1938,9 @@ function renderScreenDetail(c, screenIdx) {
 function buildScreenBody(screen, idx) {
   let html = '<div class="screen-card" data-screen-card="' + idx + '" id="screen-' + idx + '">';
   html += '<div class="screen-body">';
-  html += '<div class="screen-tree-pane">' + renderComponentTree(screen.components, 0, idx) + '</div>';
+  html += '<div class="screen-tree-pane">'
+    + '<div class="tree-tools"><button class="expand-all-btn" data-screen="' + idx + '" title="Inline the internals of every used component (recursively)">\\u2295 Expand components</button></div>'
+    + renderComponentTree(screen.components, 0, idx) + '</div>';
 
   // Use wireframe for Delphi (has dimensions), navigation flow for web
   const wireframe = renderWireframe(screen, idx);
@@ -1830,9 +1958,10 @@ function buildScreenBody(screen, idx) {
   return html;
 }
 
-function wireUpScreenInteractions() {
-  // Tree toggles
-  document.querySelectorAll('.tree-toggle').forEach(tog => {
+// Tree bindings scoped to a root, so INLINED subtrees (inserted after initial
+// wiring) get the same toggle/select/expand behavior as the original tree.
+function bindTreeInteractions(root) {
+  root.querySelectorAll('.tree-toggle').forEach(tog => {
     tog.addEventListener('click', (e) => {
       e.stopPropagation();
       const childrenDiv = tog.closest('.tree-node').nextElementSibling;
@@ -1842,11 +1971,33 @@ function wireUpScreenInteractions() {
       }
     });
   });
-
-  // Click tree node → highlight in wireframe + show detail
-  document.querySelectorAll('.tree-node').forEach(node => {
+  root.querySelectorAll('.tree-node').forEach(node => {
     node.addEventListener('click', () => {
-      selectComponent(node.dataset.screen, node.dataset.nodeId, 'tree');
+      selectComponent(node.dataset.screen, node.dataset.nodeId, 'tree', node);
+    });
+  });
+  root.querySelectorAll('.comp-expand').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleInlineComponent(el);
+    });
+  });
+}
+
+function wireUpScreenInteractions() {
+  bindTreeInteractions(document);
+
+  // Expand ALL used components in a screen, recursively. Each pass inlines the
+  // expanders visible so far; new passes pick up what the previous pass added.
+  // The per-node chain guard stops component cycles; the pass cap bounds depth.
+  document.querySelectorAll('.expand-all-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.screen-card');
+      for (let pass = 0; pass < 4; pass++) {
+        const pending = card.querySelectorAll('.tree-node:not([data-inlined="1"]) .comp-expand');
+        if (pending.length === 0) break;
+        pending.forEach(el => toggleInlineComponent(el));
+      }
     });
   });
 
@@ -1872,24 +2023,34 @@ function wireUpScreenInteractions() {
 // Select a single tree/wireframe node by its unique per-screen node id (its
 // index in flattenComponents) — NOT by name, so repeated names like "Column"
 // each select the exact node clicked.
-function selectComponent(screenIdx, nodeId, source) {
-  const card = document.querySelector('[data-screen-card="' + screenIdx + '"]');
+function selectComponent(screenIdx, nodeId, source, anchorEl) {
+  // An INLINED component node lives in a DIFFERENT screen's card than its
+  // data-screen (which names the component's OWN screen for tree/detail
+  // lookups). Scope highlighting to the card that actually hosts the click —
+  // resolving by screen index would target the component's own card elsewhere
+  // in the DOM (or nothing, if it isn't rendered) and the popup never showed.
+  const card = anchorEl
+    ? anchorEl.closest('.screen-card')
+    : document.querySelector('[data-screen-card="' + screenIdx + '"]');
   if (!card || nodeId == null) return;
   const sel = '[data-node-id="' + nodeId + '"]';
+  const foreign = card.dataset.screenCard !== String(screenIdx);
 
   // Clear previous selections in this screen
   card.querySelectorAll('.tree-node.selected').forEach(n => n.classList.remove('selected'));
   card.querySelectorAll('.wf-highlight').forEach(n => n.classList.remove('wf-highlight'));
 
   // Highlight tree node
-  const treeNode = card.querySelector('.tree-node' + sel);
+  const treeNode = anchorEl || card.querySelector('.tree-node' + sel);
   if (treeNode) {
     treeNode.classList.add('selected');
     if (source === 'wireframe') treeNode.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
-  // Highlight wireframe component
-  const wfComp = card.querySelector('.wf-component' + sel);
+  // Highlight wireframe component — node ids are only meaningful within the
+  // card's OWN screen; an inlined foreign node would highlight an unrelated
+  // element that happens to share the id.
+  const wfComp = foreign ? null : card.querySelector('.wf-component' + sel);
   if (wfComp) {
     wfComp.querySelectorAll('rect,line').forEach(r => r.classList.add('wf-highlight'));
   }
@@ -2194,6 +2355,41 @@ function navigateToTrace(key) {
   if (li) li.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
+// Best trace symbol for a FILE — bridges Screens & UI to Call Traces when all
+// we know is the component's file. Prefers the component-root pseudo-symbols
+// the linker anchors routes/emits to; falls back to any linked symbol in the
+// file. Scans symbolLinks (always loaded) rather than the traces view's own
+// index, which only exists after that tab has rendered.
+const _traceKeyMemo = new Map(); // filePath -> best key | null (links are static)
+function traceKeyForFile(filePath) {
+  if (_traceKeyMemo.has(filePath)) return _traceKeyMemo.get(filePath);
+  const pref = ['<setup>', '<component>', '<template>'];
+  let best = null;
+  let bestRank = 99;
+  function consider(file, symbol) {
+    if (file !== filePath || symbol === '(reference)' || symbol.indexOf('route:') === 0) return;
+    const p = pref.indexOf(symbol);
+    const rank = p >= 0 ? p : 10;
+    if (rank < bestRank) { bestRank = rank; best = file + '::' + symbol; }
+  }
+  (DATA.symbolLinks || []).forEach(l => {
+    consider(l.sourceFile, l.sourceSymbol);
+    consider(l.targetFile, l.targetSymbol);
+  });
+  _traceKeyMemo.set(filePath, best);
+  return best;
+}
+
+// Reverse jump: switch to Screens & UI and select the file's screen entry.
+// activateTab runs the UI tab's lazy renderer first, so uiEntryMap and
+// selectUiFile are live by the time we call them.
+function gotoScreen(filePath) {
+  activateTab('ui');
+  if (typeof selectUiFile === 'function' && uiEntryMap[filePath]) selectUiFile(filePath);
+  const it = document.querySelector('.ui-item[data-file="' + CSS.escape(filePath) + '"]');
+  if (it) it.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
 function wireUpUiLinks(scope) {
   scope.querySelectorAll('.el-route').forEach(el => {
     el.addEventListener('click', () => activateTab('routes'));
@@ -2332,6 +2528,47 @@ function routeSymbolKey(r) {
   return DATA.symbolLinks.some(l => l.sourceFile === r.filePath && l.sourceSymbol === sym) ? key : null;
 }
 
+// Display label for a sub-project id — same rule as the Architecture views
+// (name, else root basename, else '(root)') so tabs agree on project names.
+function projectLabel(pid) {
+  return archProjectMetaOf(pid).name;
+}
+
+// Group table rows by sub-project: returns [label, items[]] pairs, labels
+// sorted alphabetically with the root project last (it's usually the misc
+// bucket in a monorepo).
+function groupByProject(items, fileOf) {
+  const groups = new Map();
+  for (const it of items) {
+    const pid = fileProject(fileOf(it));
+    let g = groups.get(pid);
+    if (!g) groups.set(pid, (g = []));
+    g.push(it);
+  }
+  return [...groups.entries()]
+    .map(([pid, arr]) => ({ pid, label: projectLabel(pid), items: arr }))
+    .sort((a, b) => (a.pid === 'root') - (b.pid === 'root') || a.label.localeCompare(b.label));
+}
+
+// Collapsible project-group header row + per-row group tagging. Group ids
+// only need to be unique within one tbody — bindGroupToggles scopes to it.
+function groupHeaderRow(group, colspan) {
+  return '<tr class="route-group-row" data-group="' + esc(group.pid) + '">' +
+    '<td colspan="' + colspan + '"><span class="route-group-toggle">\\u25BC</span> ' +
+    esc(group.label) + ' <span class="route-group-count">' + group.items.length + '</span></td></tr>';
+}
+
+function bindGroupToggles(tbodyEl) {
+  tbodyEl.querySelectorAll('.route-group-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const collapsed = row.classList.toggle('collapsed');
+      row.querySelector('.route-group-toggle').textContent = collapsed ? '\\u25B6' : '\\u25BC';
+      tbodyEl.querySelectorAll('tr[data-in-group="' + CSS.escape(row.dataset.group) + '"]')
+        .forEach(tr => { tr.style.display = collapsed ? 'none' : ''; });
+    });
+  });
+}
+
 function renderRoutes() {
   const tbody = document.getElementById('route-tbody');
   const apiTbody = document.getElementById('apicall-tbody');
@@ -2342,12 +2579,14 @@ function renderRoutes() {
     tbody.innerHTML = '<tr><td colspan="6" class="empty">' +
       (DATA.routeMap.length ? 'No routes match the active filters' : 'No routes found') + '</td></tr>';
   } else {
-    tbody.innerHTML = routes.map(r => {
+    tbody.innerHTML = groupByProject(routes, r => r.filePath).map(group =>
+      groupHeaderRow(group, 6) +
+      group.items.map(r => {
       const m = r.httpMethod || 'USE';
       const symKey = routeSymbolKey(r);
       const clickable = symKey ? ' class="trace-link" data-sym-key="' + esc(symKey) + '" style="cursor:pointer"' : '';
       const traceIcon = symKey ? ' <span style="font-size:10px;color:#58a6ff;cursor:pointer" title="View call traces">\\u2197</span>' : '';
-      return '<tr' + clickable + '>' +
+      return '<tr data-in-group="' + esc(group.pid) + '"' + clickable + '>' +
         '<td><span class="method-badge method-' + m + '">' + m + '</span></td>' +
         '<td style="font-family:monospace;color:#79c0ff">' + esc(r.path) + '</td>' +
         '<td><span class="kind-badge kind-' + r.kind + '">' + r.kind + '</span></td>' +
@@ -2355,7 +2594,9 @@ function renderRoutes() {
         '<td style="color:#484f58;font-family:monospace;font-size:11px">' + (r.filePath ? esc(r.filePath) : '') + '</td>' +
         '<td style="color:#484f58">:' + r.line + '</td>' +
       '</tr>';
-    }).join('');
+      }).join('')
+    ).join('');
+    bindGroupToggles(tbody);
 
     tbody.querySelectorAll('.trace-link').forEach(el => {
       el.addEventListener('click', () => {
@@ -2375,7 +2616,9 @@ function renderRoutes() {
   } else {
     const routePaths = new Map();
     for (const r of routes) routePaths.set(r.path, r);
-    apiTbody.innerHTML = calls.map(c => {
+    apiTbody.innerHTML = groupByProject(calls, c => c.filePath).map(group =>
+      groupHeaderRow(group, 4) +
+      group.items.map(c => {
       const matched = routePaths.get(c.target);
       const matchBadge = matched
         ? ' <span style="font-size:9px;background:#238636;color:#0d1117;padding:1px 5px;border-radius:3px" title="Matches inbound route">matches route</span>'
@@ -2383,13 +2626,15 @@ function renderRoutes() {
       const verbMatch = (c.name || '').match(/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\\s/i);
       const verb = verbMatch ? verbMatch[1].toUpperCase() : null;
       const verbCell = verb ? '<span class="method-badge method-' + verb + '">' + verb + '</span> ' : '';
-      return '<tr>' +
+      return '<tr data-in-group="' + esc(group.pid) + '">' +
         '<td>' + verbCell + '<span style="color:#8b949e">' + esc(c.name || '') + '</span></td>' +
         '<td style="font-family:monospace;color:#79c0ff">' + esc(c.target || '') + matchBadge + '</td>' +
         '<td style="color:#484f58;font-family:monospace;font-size:11px">' + esc(c.filePath) + '</td>' +
         '<td style="color:#484f58">:' + c.line + '</td>' +
       '</tr>';
-    }).join('');
+      }).join('')
+    ).join('');
+    bindGroupToggles(apiTbody);
   }
 }
 renderRoutes();
@@ -2641,7 +2886,9 @@ function renderTraces() {
     html += '<div><div class="trace-selected-title">' + esc(sym.symbol) +
       openSrc(sym.file, sym.defLine, 'Open ' + sym.symbol + ' in editor') + '</div>';
     html += '<div class="trace-selected-file">' + esc(sym.file) + '</div></div>';
+    const hasScreen = (DATA.screens || []).some(s => s.filePath === sym.file);
     html += '<div class="trace-view-toggle">' +
+      (hasScreen ? '<button class="d3-btn trace-screen-link" data-screen-file="' + esc(sym.file) + '" title="View this file\\u2019s screen / component tree in Screens &amp; UI">Screen \\u2197</button>' : '') +
       (hasBlast ? '<button class="d3-btn trace-blast-link" data-blast-file="' + esc(sym.file) + '" title="View this file\\u2019s blast radius">Blast radius \\u2197</button>' : '') +
       '<button class="d3-btn' + (traceViewMode === 'tree' ? ' active' : '') + '" data-trace-view="tree">Diagram</button>' +
       '<button class="d3-btn' + (traceViewMode === 'list' ? ' active' : '') + '" data-trace-view="list">List</button>' +
@@ -2757,6 +3004,8 @@ function renderTraces() {
     mapDiv.onclick = function(e) {
       const blastBtn = e.target.closest('.trace-blast-link');
       if (blastBtn) { gotoBlast(blastBtn.dataset.blastFile); return; }
+      const screenBtn = e.target.closest('.trace-screen-link');
+      if (screenBtn) { gotoScreen(screenBtn.dataset.screenFile); return; }
       const viewBtn = e.target.closest('[data-trace-view]');
       if (viewBtn) { traceViewMode = viewBtn.dataset.traceView; selectSymbol(key); return; }
       if (e.target.closest('[data-chain-all]')) { selectSymbol(key, true); return; }
@@ -2942,6 +3191,654 @@ function renderTraces() {
 lazyRenderers.traces = renderTraces;
 requestRender('traces');
 
+// ─── C4 architecture drill-down (Files mode) ──────────────────────────
+// The architecture graph is navigated as C4 levels instead of one all-files
+// hairball: System Context → Containers (sub-projects) → Components
+// (folder-modules inside one container) → Code (the file-level force graph,
+// scoped to one component). Everything is aggregated client-side from
+// linkGraph / symbolLinks / dataAccessGraph / apiCalls, honoring the global
+// file filter, so large projects never render thousands of nodes at once.
+
+// Shared palettes (the Code-level file graph reuses these).
+var ARCH_LAYER_COLORS = {ui:'#58a6ff',components:'#22d3ee',services:'#a371f7',data:'#ff9f43',utils:'#3fb950',config:'#ec4899',test:'#f59e0b',unknown:'#8b949e'};
+var ARCH_PROJECT_PALETTE = ['#58a6ff','#a371f7','#3fb950','#ff9f43','#ec4899','#22d3ee','#f85149','#84cc16','#d29922','#56d364'];
+var C4_COLORS = { datastore:'#f0883e', queue:'#d2a8ff', extapi:'#8b949e' };
+
+// Sub-project metadata: id → { name, color, root }. Memoized — DATA is static —
+// so colours stay stable across every graph that mentions a project.
+// NB: declared WITHOUT an initializer — earlier sections (Routes) call
+// archProjectMetaOf during initial render, before this statement executes;
+// assigning null here would wipe the memo they already built.
+var _archProjMeta;
+function archProjectMeta() {
+  if (_archProjMeta) return _archProjMeta;
+  var list = (DATA.subProjects || []).slice().sort(function(a,b){ return (a.root||'').localeCompare(b.root||''); });
+  var meta = {}; var realIdx = 0;
+  list.forEach(function(sp){
+    var disp = sp.name || (sp.root ? sp.root.split('/').pop() : '(root)') || '(root)';
+    var color = sp.id === 'root' ? '#8b949e' : ARCH_PROJECT_PALETTE[(realIdx++) % ARCH_PROJECT_PALETTE.length];
+    meta[sp.id] = { name: disp, color: color, root: sp.root || '' };
+  });
+  _archProjMeta = meta;
+  return meta;
+}
+function archProjectMetaOf(id) { return archProjectMeta()[id] || { name: id || 'root', color: '#8b949e', root: '' }; }
+
+// One shared tooltip div for every D3 graph. Graphs re-init often (each C4
+// drill, filter change, or mode switch rebuilds), and a per-init append would
+// leak one detached div onto <body> per rebuild. Hidden on handout so a
+// tooltip left visible by a torn-down graph disappears.
+var _d3TooltipSel = null;
+function getD3Tooltip() {
+  if (!_d3TooltipSel) _d3TooltipSel = d3.select('body').append('div').attr('class','d3-tooltip');
+  return _d3TooltipSel.style('display','none');
+}
+
+// Default entry level: repos whose files span 2+ containers start at
+// Containers; single-container repos skip straight to its Components. Counted
+// from the files (not subProjects) so the root catch-all counts as a
+// container when it actually holds code.
+function c4Reset() {
+  var seen = {};
+  (DATA.files || []).forEach(function(f){ seen[fileProject(f)] = true; });
+  var ids = Object.keys(seen);
+  if (ids.length >= 2) {
+    archC4 = { level: 'containers', trail: [], container: null, component: null, depth: 1 };
+  } else {
+    archC4 = { level: 'component', trail: [], container: ids[0] || 'root', component: null, depth: 1 };
+  }
+}
+
+// Drill spec: { level, trail?, container?, component?, depth? }. trail is
+// inherited from the current state unless the spec sets one, so descending
+// container → component → code keeps the group breadcrumb intact.
+function c4Drill(d) {
+  archC4 = {
+    level: d.level,
+    trail: d.trail !== undefined ? d.trail : (archC4.trail || []),
+    container: d.container || null,
+    component: d.component || null,
+    depth: d.depth || archC4.depth || 1
+  };
+  rebuildLinkGraph();
+}
+
+// Component key = first N (= depth) folder segments of the file path relative
+// to its container's root. Files sitting at the container root map to '(root)'.
+function c4ComponentKey(fp, rootPath, depth) {
+  var rel = fp;
+  if (rootPath && fp.indexOf(rootPath + '/') === 0) rel = fp.slice(rootPath.length + 1);
+  var slash = rel.lastIndexOf('/');
+  if (slash < 0) return '(root)';
+  return rel.substring(0, slash).split('/').slice(0, Math.max(1, depth)).join('/');
+}
+
+// True when the file falls inside the current Code-level C4 scope. Aggregate
+// levels and the other arch modes are unscoped.
+function c4InScope(fp) {
+  if (archMode !== 'files' || archC4.level !== 'code' || !archC4.container) return true;
+  if (fileProject(fp) !== archC4.container) return false;
+  if (!archC4.component) return true;
+  return c4ComponentKey(fp, archProjectMetaOf(archC4.container).root, archC4.depth) === archC4.component;
+}
+
+// Host of an absolute http(s) URL, or null — relative api-calls stay internal.
+function c4ExternalHost(target) {
+  if (!target) return null;
+  var t = String(target).trim();
+  var off = t.indexOf('https://') === 0 ? 8 : t.indexOf('http://') === 0 ? 7 : -1;
+  if (off < 0) return null;
+  var rest = t.slice(off);
+  var end = rest.search(/[/?#]/);
+  var host = end < 0 ? rest : rest.slice(0, end);
+  return host || null;
+}
+
+// Aggregate file→file edges (imports from linkGraph + resolved call/API/queue
+// bridges from symbolLinks) into group-pair weights. keyOf maps a file path to
+// its group id (or null to drop the file). Weight = distinct file pairs, so a
+// single chatty file doesn't dominate the arrow widths.
+function c4AggregateLinks(keyOf) {
+  var pairFiles = {}; // "ka|kb" -> { "src|tgt": true }
+  function add(sf, tf) {
+    if (!sf || !tf || sf === tf) return;
+    if (!isFileVisible(sf) || !isFileVisible(tf)) return;
+    var ka = keyOf(sf), kb = keyOf(tf);
+    if (ka == null || kb == null || ka === kb) return;
+    (pairFiles[ka + '|' + kb] || (pairFiles[ka + '|' + kb] = {}))[sf + '|' + tf] = true;
+  }
+  (DATA.linkGraph || []).forEach(function(l){ add(l.source, l.target); });
+  (DATA.symbolLinks || []).forEach(function(l){ if (!l.navigational) add(l.sourceFile, l.targetFile); });
+  return Object.keys(pairFiles).map(function(pk){
+    var sep = pk.indexOf('|');
+    return { source: pk.slice(0, sep), target: pk.slice(sep + 1), weight: Object.keys(pairFiles[pk]).length };
+  });
+}
+
+// External datastore / queue / API-host usage attributed per group key,
+// derived from dataAccessGraph (file→[entity→]datastore, file⇄queue) and
+// apiCalls with absolute URLs.
+function c4Externals(keyOf) {
+  var out = { stores: {}, queuesIn: {}, queuesOut: {}, apis: {} };
+  function bump(map, id, name, key, w) {
+    var rec = map[id] || (map[id] = { id: id, name: name, byKey: {}, total: 0 });
+    rec.byKey[key] = (rec.byKey[key] || 0) + w;
+    rec.total += w;
+  }
+  var dag = DATA.dataAccessGraph;
+  if (dag && dag.nodes && dag.nodes.length) {
+    var kind = {}, fileOf = {}, nameOf = {};
+    dag.nodes.forEach(function(n){ kind[n.id] = n.kind; fileOf[n.id] = n.filePath || null; nameOf[n.id] = n.name; });
+    // The UNKNOWN_TARGET catch-all (DB/queue calls whose target could not be
+    // named) is noise at architecture altitude — skip it here; its call sites
+    // stay inspectable in the Data Access view. Interpolated server-side so
+    // the sentinel has a single definition (data-access-graph.ts).
+    function named(id) { return !!nameOf[id] && nameOf[id] !== ${JSON.stringify(UNKNOWN_TARGET)}; }
+    // Entity nodes collapse into the datastore they belong to.
+    var entityStore = {};
+    dag.edges.forEach(function(e){ if (kind[e.source] === 'entity' && kind[e.target] === 'datastore') entityStore[e.source] = e.target; });
+    dag.edges.forEach(function(e){
+      var w = e.total || 1;
+      if (kind[e.source] === 'file') {
+        var f = fileOf[e.source]; if (!f || !isFileVisible(f)) return;
+        var k = keyOf(f); if (k == null) return;
+        var tgt = kind[e.target] === 'entity' ? (entityStore[e.target] || null) : e.target;
+        if (tgt && kind[tgt] === 'datastore' && named(tgt)) bump(out.stores, tgt, nameOf[tgt], k, w);
+        else if (kind[e.target] === 'queue' && named(e.target)) bump(out.queuesOut, e.target, nameOf[e.target], k, w);
+      } else if (kind[e.source] === 'queue' && kind[e.target] === 'file') {
+        if (!named(e.source)) return;
+        var f2 = fileOf[e.target]; if (!f2 || !isFileVisible(f2)) return;
+        var k2 = keyOf(f2); if (k2 == null) return;
+        bump(out.queuesIn, e.source, nameOf[e.source], k2, w);
+      }
+    });
+  }
+  (DATA.apiCalls || []).forEach(function(c){
+    if (!c.filePath || !isFileVisible(c.filePath)) return;
+    var host = c4ExternalHost(c.target);
+    if (!host) return;
+    var k = keyOf(c.filePath); if (k == null) return;
+    bump(out.apis, 'api:' + host, host, k, 1);
+  });
+  return out;
+}
+
+// Add datastore/queue/external-API nodes + their edges to a level model.
+// Fan-out is capped per kind (large repos surface hundreds of receiver-named
+// datastores): the busiest survive individually, the tail collapses into one
+// "+N more" box so nothing is silently hidden — full detail lives in the
+// Data Access view.
+var C4_STORE_CAP = 10, C4_QUEUE_CAP = 8, C4_API_CAP = 8;
+function c4AttachExternals(nodes, edges, ext) {
+  var have = {};
+  nodes.forEach(function(n){ have[n.id] = true; });
+  function ensure(rec, kindName, color, subLabel) {
+    if (have[rec.id]) return;
+    have[rec.id] = true;
+    nodes.push({ id: rec.id, kind: kindName, name: rec.name, sub: subLabel, color: color, drill: null,
+                 tip: [['Kind', subLabel], ['Calls', rec.total]] });
+  }
+  function fan(rec, inbound) {
+    Object.keys(rec.byKey).forEach(function(k){
+      if (!have[k]) return;
+      edges.push(inbound ? { source: rec.id, target: k, weight: rec.byKey[k], external: true }
+                         : { source: k, target: rec.id, weight: rec.byKey[k], external: true });
+    });
+  }
+  // Records carry byKey (single-direction edges) or outByKey/inByKey (queues);
+  // mergeRest sums whichever maps the collapsed records have.
+  var BYKEY_FIELDS = ['byKey', 'outByKey', 'inByKey'];
+  function mergeRest(rest, moreId, label) {
+    var merged = { id: moreId, name: '+' + rest.length + ' more ' + label, byKey: {}, outByKey: {}, inByKey: {}, total: 0 };
+    rest.forEach(function(r){
+      merged.total += r.total;
+      BYKEY_FIELDS.forEach(function(field){
+        if (!r[field]) return;
+        Object.keys(r[field]).forEach(function(k){ merged[field][k] = (merged[field][k] || 0) + r[field][k]; });
+      });
+    });
+    return merged;
+  }
+  function capped(map, cap, moreId, label) {
+    var recs = Object.keys(map).map(function(id){ return map[id]; })
+      .sort(function(a, b){ return b.total - a.total; });
+    if (recs.length <= cap + 1) return recs;
+    var keep = recs.slice(0, cap);
+    keep.push(mergeRest(recs.slice(cap), moreId, label));
+    return keep;
+  }
+
+  capped(ext.stores, C4_STORE_CAP, 'c4more:stores', 'datastores').forEach(function(r){
+    ensure(r, 'datastore', C4_COLORS.datastore, 'datastore'); fan(r, false);
+  });
+  // Queues rank by combined publish+consume traffic so a busy queue isn't
+  // kept in one direction and collapsed in the other: merge the directions
+  // into one record per queue (direction-split key maps), cap once, then fan
+  // each survivor both ways.
+  var queues = {};
+  [[ext.queuesOut, 'outByKey'], [ext.queuesIn, 'inByKey']].forEach(function(pair){
+    Object.keys(pair[0]).forEach(function(id){
+      var r = pair[0][id];
+      var q = queues[id] || (queues[id] = { id: id, name: r.name, outByKey: {}, inByKey: {}, total: 0 });
+      q[pair[1]] = r.byKey;
+      q.total += r.total;
+    });
+  });
+  capped(queues, C4_QUEUE_CAP, 'c4more:queues', 'queues').forEach(function(q){
+    ensure(q, 'queue', C4_COLORS.queue, 'message queue');
+    fan({ id: q.id, byKey: q.outByKey }, false);
+    fan({ id: q.id, byKey: q.inByKey }, true);
+  });
+  capped(ext.apis, C4_API_CAP, 'c4more:apis', 'external APIs').forEach(function(r){
+    ensure(r, 'extapi', C4_COLORS.extapi, 'external API'); fan(r, false);
+  });
+}
+
+// ── Containers-level project grouping ──
+// Big monorepos (tessa: 179 sub-projects) can't render one box per project.
+// The Containers level therefore aggregates projects by their root-path
+// prefix and drills RECURSIVELY: each drill appends a longer prefix to
+// archC4.trail until few enough projects remain to show individually.
+var C4_GROUP_MAX = 35; // max boxes per Containers view before grouping kicks in
+var C4_GHOST_MAX = 8;  // max dashed outside-scope group boxes on a scoped view
+
+// Path segments of a project root beyond the given prefix; null = not under
+// the prefix; [] = the root IS the prefix (or sits at the repo top).
+function c4SegmentsBeyond(root, prefix) {
+  if (!prefix) return root ? root.split('/') : [];
+  if (root === prefix) return [];
+  if (root.indexOf(prefix + '/') === 0) return root.slice(prefix.length + 1).split('/');
+  return null;
+}
+
+// Group projects by the first 1..4 root-path segments beyond the prefix,
+// choosing the DEEPEST split whose distinct group count stays within cap
+// (richest view that still fits). Returns { keyOf: pid → groupPath|null }
+// or null when even one segment overflows the cap. Projects sitting directly
+// at the prefix map to null (they render as themselves).
+function c4GroupProjects(members, prefix, cap) {
+  var best = null;
+  for (var d = 1; d <= 4; d++) {
+    var keyOf = {}, distinct = {};
+    members.forEach(function(m){
+      var segs = c4SegmentsBeyond(m.root, prefix);
+      if (!segs || segs.length === 0) { keyOf[m.id] = null; return; }
+      var key = (prefix ? prefix + '/' : '') + segs.slice(0, Math.min(d, segs.length)).join('/');
+      keyOf[m.id] = key;
+      distinct[key] = true;
+    });
+    if (Object.keys(distinct).length <= cap) best = { depth: d, keyOf: keyOf };
+    else break;
+  }
+  return best;
+}
+
+function c4FmtWeight(w) { return w >= 1000 ? (w / 1000).toFixed(1) + 'k' : String(w); }
+
+// Top level — how the projects are grouped and connected. Scoped by the
+// group-path trail: boxes are path groups (drill deeper), individual projects
+// (drill to components), dashed ghosts for linked projects outside the scope,
+// and the datastores/queues/APIs the in-scope projects touch.
+function c4BuildContainers(trail) {
+  var prefix = trail && trail.length ? trail[trail.length - 1] : null;
+  var meta = archProjectMeta();
+  var counts = {};
+  (DATA.files || []).forEach(function(f){ if (isFileVisible(f)) { var p = fileProject(f); counts[p] = (counts[p] || 0) + 1; } });
+  var inside = [], outside = [];
+  Object.keys(counts).forEach(function(pid){
+    var root = (meta[pid] || {}).root || '';
+    var segs = c4SegmentsBeyond(root, prefix);
+    (segs === null ? outside : inside).push({ id: pid, root: root, files: counts[pid] });
+  });
+
+  var grouping = inside.length > C4_GROUP_MAX ? c4GroupProjects(inside, prefix, C4_GROUP_MAX) : null;
+  var groupMembers = {};
+  inside.forEach(function(p){
+    var gk = grouping ? grouping.keyOf[p.id] : null;
+    if (gk) (groupMembers[gk] || (groupMembers[gk] = [])).push(p);
+  });
+
+  var nodes = [], nodeKeyOf = {}, gi = 0;
+  Object.keys(groupMembers).sort().forEach(function(gk){
+    var mem = groupMembers[gk];
+    if (mem.length === 1) return; // single-member group → render the project itself
+    var files = 0; mem.forEach(function(p){ files += p.files; });
+    var color = ARCH_PROJECT_PALETTE[gi++ % ARCH_PROJECT_PALETTE.length];
+    mem.forEach(function(p){ nodeKeyOf[p.id] = 'grp:' + gk; });
+    nodes.push({ id: 'grp:' + gk, kind: 'group', name: prefix ? gk.slice(prefix.length + 1) : gk,
+                 sub: mem.length + ' projects \\u00b7 ' + files + ' files', color: color,
+                 drill: { level: 'containers', trail: (trail || []).concat([gk]) },
+                 tip: [['Path', gk], ['Projects', mem.length], ['Files', files]] });
+  });
+  inside.sort(function(a, b){ return a.id.localeCompare(b.id); }).forEach(function(p){
+    if (nodeKeyOf[p.id]) return;
+    nodeKeyOf[p.id] = 'proj:' + p.id;
+    var m = archProjectMetaOf(p.id);
+    nodes.push({ id: 'proj:' + p.id, kind: 'container', name: m.name,
+                 sub: p.files + ' file' + (p.files === 1 ? '' : 's'), color: m.color,
+                 drill: { level: 'component', container: p.id },
+                 tip: [['Root', m.root || '(repo root)'], ['Files', p.files]] });
+  });
+
+  // Outside-scope projects collapse into a few dashed ghost boxes, grouped by
+  // their root path (relative to the repo top). A single-project ghost keeps
+  // its project identity and drills straight to its components.
+  var ghostKeyOf = {}, ghostMembers = {};
+  if (outside.length) {
+    var g2 = c4GroupProjects(outside, null, C4_GHOST_MAX);
+    outside.forEach(function(p){
+      var key = (g2 && g2.keyOf[p.id]) || p.root || '(repo root)';
+      ghostKeyOf[p.id] = 'ghost:' + key;
+      (ghostMembers[key] || (ghostMembers[key] = [])).push(p);
+    });
+  }
+
+  var keyOf = function(f){ var pid = fileProject(f); return nodeKeyOf[pid] || ghostKeyOf[pid] || null; };
+  var edges = c4AggregateLinks(keyOf).filter(function(e){
+    return e.source.indexOf('ghost:') !== 0 || e.target.indexOf('ghost:') !== 0;
+  });
+  var ghostsUsed = {};
+  edges.forEach(function(e){
+    if (e.source.indexOf('ghost:') === 0) ghostsUsed[e.source] = true;
+    if (e.target.indexOf('ghost:') === 0) ghostsUsed[e.target] = true;
+  });
+  Object.keys(ghostsUsed).sort().forEach(function(id){
+    var key = id.slice(6);
+    var mem = ghostMembers[key] || [];
+    var single = mem.length === 1 ? mem[0] : null;
+    nodes.push({ id: id, kind: 'container-ref',
+                 name: single ? archProjectMetaOf(single.id).name : key,
+                 sub: single ? 'outside project' : mem.length + ' outside projects', color: '#8b949e',
+                 drill: single ? { level: 'component', container: single.id, trail: [] }
+                               : { level: 'containers', trail: [key] },
+                 tip: [['Path', key], ['Projects', mem.length]] });
+  });
+
+  c4AttachExternals(nodes, edges, c4Externals(function(f){ return nodeKeyOf[fileProject(f)] || null; }));
+  return { nodes: nodes, edges: edges };
+}
+
+// L3 — folder-modules inside one container, plus ghost boxes for the other
+// containers it links to and the datastores/queues its files touch.
+function c4BuildComponents(containerId) {
+  var m = archProjectMetaOf(containerId);
+  var files = (DATA.files || []).filter(function(f){ return isFileVisible(f) && fileProject(f) === containerId; });
+  // Adaptive grouping depth: the deepest depth (1..3) that keeps ≤ 40
+  // components, so big containers stay readable and small ones still split.
+  var depth = 1;
+  for (var d = 1; d <= 3; d++) {
+    var probe = {};
+    files.forEach(function(f){ probe[c4ComponentKey(f, m.root, d)] = true; });
+    if (Object.keys(probe).length <= 40) depth = d; else break;
+  }
+  var groups = {};
+  files.forEach(function(f){
+    var k = c4ComponentKey(f, m.root, depth);
+    var g = groups[k] || (groups[k] = { files: 0, layers: {} });
+    g.files++;
+    var layer = (DATA.fileLayerMap || {})[f] || 'unknown';
+    g.layers[layer] = (g.layers[layer] || 0) + 1;
+  });
+  var nodes = Object.keys(groups).sort().map(function(k){
+    var g = groups[k];
+    var domLayer = 'unknown', best = -1;
+    Object.keys(g.layers).forEach(function(L){ if (g.layers[L] > best) { best = g.layers[L]; domLayer = L; } });
+    return { id: 'comp:' + k, kind: 'component', name: k, sub: g.files + ' file' + (g.files === 1 ? '' : 's') + ' \\u00b7 ' + domLayer,
+             color: ARCH_LAYER_COLORS[domLayer] || ARCH_LAYER_COLORS.unknown,
+             drill: { level: 'code', container: containerId, component: k, depth: depth },
+             tip: [['Container', m.name], ['Files', g.files], ['Dominant layer', domLayer]] };
+  });
+  function keyOf(f) {
+    var p = fileProject(f);
+    return p === containerId ? 'comp:' + c4ComponentKey(f, m.root, depth) : 'proj:' + p;
+  }
+  // Drop ghost↔ghost edges — only links touching this container matter here.
+  var edges = c4AggregateLinks(keyOf).filter(function(e){
+    return e.source.indexOf('comp:') === 0 || e.target.indexOf('comp:') === 0;
+  });
+  var ghosts = {};
+  edges.forEach(function(e){
+    if (e.source.indexOf('proj:') === 0) ghosts[e.source] = true;
+    if (e.target.indexOf('proj:') === 0) ghosts[e.target] = true;
+  });
+  Object.keys(ghosts).sort().forEach(function(id){
+    var pid = id.slice(5);
+    var gm = archProjectMetaOf(pid);
+    nodes.push({ id: id, kind: 'container-ref', name: gm.name, sub: 'other container', color: gm.color,
+                 drill: { level: 'component', container: pid, trail: [] },
+                 tip: [['Container', gm.name]] });
+  });
+  c4AttachExternals(nodes, edges, c4Externals(function(f){
+    return fileProject(f) === containerId ? 'comp:' + c4ComponentKey(f, m.root, depth) : null;
+  }));
+  return { nodes: nodes, edges: edges, depth: depth };
+}
+
+// Render one aggregate C4 level (context / container / component) as a small
+// force layout of C4-style boxes. Clicking a drillable box descends a level;
+// datastores/queues/external APIs show a detail line instead.
+function initC4Graph() {
+  if (graphInitialized) return;
+  graphInitialized = true;
+  var container = document.getElementById('d3-graph-container');
+  if (!container) return;
+  var w = container.clientWidth || 900;
+  var h = container.clientHeight || 640;
+
+  var model = archC4.level === 'containers' ? c4BuildContainers(archC4.trail)
+            : c4BuildComponents(archC4.container);
+  if (archC4.level === 'component' && model.depth) archC4.depth = model.depth;
+
+  if (!model.nodes.length) {
+    container.innerHTML = '<div class="empty" style="padding-top:200px">Nothing matches the current filters at this level</div>';
+    return;
+  }
+
+  // Box sizing from label lengths — C4 nodes are labelled boxes, not dots.
+  model.nodes.forEach(function(n){
+    n.label = n.name.length > 28 ? n.name.slice(0, 27) + '\\u2026' : n.name;
+    var chars = Math.max(n.label.length, (n.sub || '').length * 0.85);
+    n.w = Math.max(90, Math.min(250, chars * 7.2 + 26));
+    n.h = n.sub ? 46 : 34;
+    if (n.kind === 'datastore') { n.w = Math.max(n.w, 100); n.h = 56; }
+  });
+
+  var svg = d3.select(container).append('svg').attr('width', w).attr('height', h);
+  svg.append('defs').append('marker').attr('id','arrow-c4').attr('viewBox','0 -5 10 10').attr('refX',9).attr('markerWidth',6).attr('markerHeight',6).attr('orient','auto')
+    .append('path').attr('d','M0,-4L10,0L0,4').attr('fill','#8b949e');
+  var g = svg.append('g');
+  var zoom = d3.zoom().scaleExtent([0.15, 4]).on('zoom', function(e){ g.attr('transform', e.transform); });
+  svg.call(zoom);
+
+  var linkLayer = g.append('g'), nodeLayer = g.append('g'), labelLayer = g.append('g');
+  var tooltip = getD3Tooltip();
+
+  var nodes = model.nodes;
+  var links = model.edges.map(function(e){ return Object.assign({}, e); });
+
+  var sim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(function(d){ return d.id; }).distance(160).strength(0.2))
+    .force('charge', d3.forceManyBody().strength(-900).distanceMax(700))
+    .force('collision', d3.forceCollide().radius(function(d){ return Math.max(d.w, d.h) / 2 + 26; }))
+    .force('center', d3.forceCenter(w/2, h/2))
+    .force('x', d3.forceX(w/2).strength(0.05))
+    .force('y', d3.forceY(h/2).strength(0.08))
+    .velocityDecay(0.55).alphaDecay(0.04);
+
+  var linkSel = linkLayer.selectAll('path').data(links).join('path')
+    .attr('fill','none')
+    .attr('stroke', function(d){ return d.external ? '#f0883e' : '#8b949e'; })
+    .attr('stroke-opacity', 0.45)
+    .attr('stroke-width', function(d){ return Math.min(6, 1 + Math.log2(Math.max(1, d.weight))); })
+    .attr('stroke-dasharray', function(d){ return d.external ? '5 4' : null; })
+    .attr('marker-end','url(#arrow-c4)');
+
+  var edgeLabelSel = labelLayer.selectAll('text').data(links.length <= 60 ? links : []).join('text')
+    .attr('class','c4-edge-label').attr('text-anchor','middle')
+    .text(function(d){ return c4FmtWeight(d.weight); });
+
+  var nodeSel = nodeLayer.selectAll('g').data(nodes).join('g')
+    .style('cursor', function(d){ return d.drill ? 'pointer' : 'default'; });
+
+  nodeSel.call(d3.drag()
+    .on('start', function(e,d){ if(!e.active) sim.alphaTarget(0.1).restart(); d.fx=d.x; d.fy=d.y; })
+    .on('drag', function(e,d){ d.fx=e.x; d.fy=e.y; })
+    .on('end', function(e,d){ if(!e.active) sim.alphaTarget(0); d.fx=null; d.fy=null; })
+  );
+
+  // Shapes: system/container/component = rounded box, container-ref/extapi =
+  // dashed box, datastore = cylinder, queue = pill.
+  nodeSel.each(function(d){
+    var sel = d3.select(this);
+    if (d.kind === 'datastore') {
+      var rx = d.w/2, ry = 9, body = d.h - ry*2;
+      sel.append('path')
+        .attr('d','M'+(-rx)+','+(-body/2)+' L'+(-rx)+','+(body/2)+' A'+rx+','+ry+' 0 0,0 '+rx+','+(body/2)+' L'+rx+','+(-body/2))
+        .attr('fill','#161b22').attr('stroke',d.color).attr('stroke-width',1.6);
+      sel.append('ellipse').attr('cx',0).attr('cy',-body/2).attr('rx',rx).attr('ry',ry)
+        .attr('fill','#161b22').attr('stroke',d.color).attr('stroke-width',1.6);
+    } else {
+      sel.append('rect')
+        .attr('x',-d.w/2).attr('y',-d.h/2).attr('width',d.w).attr('height',d.h)
+        .attr('rx', d.kind === 'queue' ? d.h/2 : 8)
+        .attr('fill', d.kind === 'container-ref' ? '#0d1117' : '#161b22')
+        .attr('stroke', d.color).attr('stroke-width', d.kind === 'group' ? 2.2 : 1.6)
+        .attr('stroke-dasharray', (d.kind === 'extapi' || d.kind === 'container-ref') ? '5 4' : null)
+        .attr('opacity', d.kind === 'container-ref' ? 0.75 : 1);
+    }
+    sel.append('text').attr('text-anchor','middle').attr('dy', d.sub ? -2 : 4)
+      .attr('fill','#e6edf3').attr('font-size','12px').attr('font-weight','600')
+      .attr('font-family','monospace').attr('pointer-events','none')
+      .text(d.label);
+    if (d.sub) sel.append('text').attr('text-anchor','middle').attr('dy', 14)
+      .attr('fill','#8b949e').attr('font-size','10px').attr('pointer-events','none')
+      .text(d.sub);
+  });
+
+  nodeSel.on('mouseenter', function(e, d){
+    var html = '<div class="tt-name">' + esc(d.name) + '</div>';
+    (d.tip || []).forEach(function(row){
+      html += '<div class="tt-row"><span>' + esc(String(row[0])) + '</span><span class="tt-val">' + esc(String(row[1])) + '</span></div>';
+    });
+    if (d.drill) {
+      var into = d.drill.level === 'code' ? 'files' : d.drill.level === 'component' ? 'components' : 'group';
+      html += '<div class="tt-row"><span style="color:#58a6ff">Click to open ' + into + ' \\u2192</span></div>';
+    }
+    tooltip.html(html).style('display','block').style('left',(e.pageX+14)+'px').style('top',(e.pageY-10)+'px');
+  })
+  .on('mousemove', function(e){ tooltip.style('left',(e.pageX+14)+'px').style('top',(e.pageY-10)+'px'); })
+  .on('mouseleave', function(){ tooltip.style('display','none'); });
+
+  nodeSel.on('click', function(e, d){
+    if (e.defaultPrevented) return; // drag, not click
+    e.stopPropagation();
+    tooltip.style('display','none');
+    if (d.drill) { c4Drill(d.drill); return; }
+    var panel = document.getElementById('d3-detail-panel');
+    if (!panel) return;
+    var html = '<strong style="color:#f0f6fc">' + esc(d.name) + '</strong> \\u2014 ' + esc(d.sub || d.kind);
+    if (d.kind === 'datastore' || d.kind === 'queue') {
+      html += ' \\u00b7 <span class="arch-trace-link" id="c4-open-dataaccess">Open Data Access view \\u2192</span>';
+    }
+    panel.innerHTML = html;
+    var openBtn = document.getElementById('c4-open-dataaccess');
+    if (openBtn) openBtn.addEventListener('click', function(){
+      var btn = document.querySelector('[data-arch-mode="data-access"]');
+      if (btn) btn.click();
+    });
+  });
+  svg.on('click', function(){ var p = document.getElementById('d3-detail-panel'); if (p) p.innerHTML = ''; });
+
+  // Distance from a box centre to its border along direction (ux,uy), so
+  // arrows start/end at box edges instead of underneath them.
+  function boxRadius(n, ux, uy) {
+    var rx = Math.abs(ux) > 1e-6 ? (n.w/2) / Math.abs(ux) : Infinity;
+    var ry = Math.abs(uy) > 1e-6 ? (n.h/2) / Math.abs(uy) : Infinity;
+    return Math.min(rx, ry);
+  }
+  sim.on('tick', function(){
+    linkSel.attr('d', function(d){
+      var dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+      var len = Math.sqrt(dx*dx + dy*dy) || 1;
+      var ux = dx/len, uy = dy/len;
+      var sr = boxRadius(d.source, ux, uy), tr = boxRadius(d.target, ux, uy) + 6;
+      return 'M' + (d.source.x + ux*sr) + ',' + (d.source.y + uy*sr) +
+             'L' + (d.target.x - ux*tr) + ',' + (d.target.y - uy*tr);
+    });
+    edgeLabelSel.attr('x', function(d){ return (d.source.x + d.target.x)/2; })
+                .attr('y', function(d){ return (d.source.y + d.target.y)/2 - 4; });
+    nodeSel.attr('transform', function(d){ return 'translate(' + d.x + ',' + d.y + ')'; });
+  });
+
+  var legendEl = document.getElementById('d3-legend');
+  if (legendEl) {
+    var items = [];
+    function legendItem(color, label){ items.push('<span class="legend-item"><span class="legend-dot" style="background:' + color + '"></span>' + label + '</span>'); }
+    var present = {};
+    nodes.forEach(function(n){ present[n.kind] = true; });
+    if (present.group) legendItem('#58a6ff', 'project group (click to expand)');
+    if (present.container) legendItem('#a371f7', 'project (sub-project)');
+    if (present.component) Object.keys(ARCH_LAYER_COLORS).forEach(function(L){ legendItem(ARCH_LAYER_COLORS[L], L); });
+    if (present['container-ref']) legendItem('#484f58', 'outside current scope');
+    if (present.datastore) legendItem(C4_COLORS.datastore, 'datastore');
+    if (present.queue) legendItem(C4_COLORS.queue, 'message queue');
+    if (present.extapi) legendItem(C4_COLORS.extapi, 'external API');
+    items.push('<span class="legend-item" style="margin-left:16px">edge number = linked file pairs \\u00b7 dashed = external/cross-boundary</span>');
+    legendEl.innerHTML = items.join('');
+  }
+
+  var fitBtn = document.getElementById('d3-zoom-fit');
+  if (fitBtn) fitBtn.onclick = function(){ svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity); };
+}
+
+// Breadcrumb: Containers › <group path…> › <container> › <component>.
+// Clicking a crumb jumps back up to that level/scope.
+function renderC4Breadcrumb() {
+  var bc = document.getElementById('c4-breadcrumb');
+  if (!bc) return;
+  if (archMode !== 'files') { bc.style.display = 'none'; return; }
+  bc.style.display = '';
+  var trail = archC4.trail || [];
+  var crumbs = [{ label: 'Containers', drill: { level: 'containers', trail: [] } }];
+  trail.forEach(function(path, i){
+    var parent = i > 0 ? trail[i - 1] : null;
+    var label = parent && path.indexOf(parent + '/') === 0 ? path.slice(parent.length + 1) : path;
+    crumbs.push({ label: label, drill: { level: 'containers', trail: trail.slice(0, i + 1) } });
+  });
+  if (archC4.container && (archC4.level === 'component' || archC4.level === 'code'))
+    crumbs.push({ label: archProjectMetaOf(archC4.container).name,
+                  drill: { level: 'component', trail: trail, container: archC4.container } });
+  if (archC4.level === 'code' && archC4.component)
+    crumbs.push({ label: archC4.component,
+                  drill: { level: 'code', trail: trail, container: archC4.container, component: archC4.component, depth: archC4.depth } });
+  var HINTS = {
+    containers: 'how the projects are grouped and connected \\u2014 click a box to drill in; dashed = outside this scope',
+    component: 'folder modules \\u2014 click a component to open its files',
+    code: 'file-level dependencies inside this component'
+  };
+  var html = '';
+  crumbs.forEach(function(c, i){
+    if (i) html += '<span class="c4-sep">\\u203a</span>';
+    html += '<span class="c4-crumb' + (i === crumbs.length - 1 ? ' current' : '') + '" data-crumb="' + i + '">' + esc(c.label) + '</span>';
+  });
+  html += '<span class="c4-hint">' + (HINTS[archC4.level] || '') + '</span>';
+  bc.innerHTML = html;
+  bc.querySelectorAll('.c4-crumb').forEach(function(el, i){
+    if (i === crumbs.length - 1) return;
+    el.addEventListener('click', function(){ c4Drill(crumbs[i].drill); });
+  });
+}
+
+// Colour/group/label/unlinked controls only apply to the Code-level file
+// graph; hide them while on an aggregate C4 level. Elements opt in via the
+// c4-code-only class in the markup (arch-files-only ones are code-only too),
+// so this stays decoupled from toolbar element order.
+function updateC4Toolbar() {
+  var aggregate = archMode === 'files' && !!archC4.level && archC4.level !== 'code';
+  document.querySelectorAll('#view-links .c4-code-only, #view-links .arch-files-only')
+    .forEach(function(el){ el.classList.toggle('c4-hidden', aggregate); });
+}
+
 // ─── D3 Architecture Graph ────────────────────────────────────────────
 var graphInitialized = false;
 var entityGraphInitialized = false;
@@ -2953,26 +3850,17 @@ function initLinkGraph() {
   var w = container.clientWidth || 900;
   var h = container.clientHeight || 640;
 
-  // Layer color scheme
-  var LAYER_COLORS = {ui:'#58a6ff',components:'#22d3ee',services:'#a371f7',data:'#ff9f43',utils:'#3fb950',config:'#ec4899',test:'#f59e0b',unknown:'#8b949e'};
+  // Layer color scheme (shared with the C4 aggregate levels)
+  var LAYER_COLORS = ARCH_LAYER_COLORS;
   var FOLDER_COLORS = ['#58a6ff','#a371f7','#22d3ee','#3fb950','#ff9f43','#ec4899','#f85149','#84cc16'];
-  var PROJECT_PALETTE = ['#58a6ff','#a371f7','#3fb950','#ff9f43','#ec4899','#22d3ee','#f85149','#84cc16','#d29922','#56d364'];
   var RISK_COLORS = {dangerous:'#f85149',moderate:'#d29922',safe:'#3fb950'};
   var PROX_COLORS = {1:'#58a6ff',2:'#d29922',3:'#484f58'};
 
-  // Sub-project metadata: id -> { name, color }. Drives the "Project" colour mode
-  // and the per-project clustering that isolates each sub-project in its own
-  // region of the canvas. "root" (the catch-all) stays neutral grey.
-  var subProjectList = (DATA.subProjects || []).slice().sort(function(a,b){ return (a.root||'').localeCompare(b.root||''); });
-  var realProjects = subProjectList.filter(function(s){ return s.id !== 'root'; });
-  var projectMeta = {};
-  var realIdx = 0;
-  subProjectList.forEach(function(sp){
-    var disp = sp.name || (sp.root ? sp.root.split('/').pop() : '(root)') || '(root)';
-    var color = sp.id === 'root' ? '#8b949e' : PROJECT_PALETTE[(realIdx++) % PROJECT_PALETTE.length];
-    projectMeta[sp.id] = { name: disp, color: color };
-  });
-  function projectMetaOf(id){ return projectMeta[id] || { name: id || 'root', color: '#8b949e' }; }
+  // Sub-project metadata (shared with the C4 levels so colours line up).
+  // Drives the "Project" colour mode and the per-project clustering that
+  // isolates each sub-project in its own region of the canvas.
+  var realProjects = (DATA.subProjects || []).filter(function(p){ return p.id !== 'root'; });
+  var projectMetaOf = archProjectMetaOf;
   // Effective clustering: explicit choice wins; otherwise cluster by project as
   // soon as there are at least two real sub-projects to keep apart.
   var effGroup = (archGroupMode === 'project' || (archGroupMode === 'auto' && realProjects.length >= 2)) ? 'project' : 'folder';
@@ -3007,7 +3895,15 @@ function initLinkGraph() {
   // predicates so it scopes to this graph only, not other tabs.
   var hideUnusedCb = document.getElementById('d3-hide-unused');
   var unusedSet = new Set((hideUnusedCb && hideUnusedCb.checked) ? (DATA.unusedFiles || []) : []);
-  function fileShown(f){ return isFileVisible(f) && !unusedSet.has(f); }
+  // C4 Code-level scope (the drilled-into component), precomputed once per
+  // rebuild — fileShown runs tens of thousands of times per render and the
+  // per-file component-key derivation is pure string churn.
+  var c4ScopeSet = null;
+  if (archMode === 'files' && archC4.level === 'code' && archC4.container) {
+    c4ScopeSet = new Set();
+    DATA.files.forEach(function(f){ if (c4InScope(f)) c4ScopeSet.add(f); });
+  }
+  function fileShown(f){ return isFileVisible(f) && !unusedSet.has(f) && (!c4ScopeSet || c4ScopeSet.has(f)); }
   function edgeShown(a, b){ return fileShown(a) && fileShown(b); }
 
   // Build unique edges from linkGraph first (deduplicate, merge proximity;
@@ -3074,8 +3970,11 @@ function initLinkGraph() {
   });
 
   if (nodes.length === 0) {
+    var scoped = archC4.level === 'code' && archC4.component;
     container.innerHTML = '<div class="empty" style="padding-top:200px">' +
-      (hideUnlinked ? 'No linked files to visualize \\u2014 untick \\u201cHide unlinked\\u201d to show all files' : 'No file dependencies to visualize') +
+      (hideUnlinked
+        ? 'No linked files' + (scoped ? ' inside this component' : '') + ' to visualize \\u2014 untick \\u201cHide unlinked\\u201d to show all files'
+        : 'No file dependencies' + (scoped ? ' inside this component' : '') + ' to visualize') +
       '</div>';
     return;
   }
@@ -3127,7 +4026,7 @@ function initLinkGraph() {
   var nodeLayer = g.append('g');
 
   // Tooltip element
-  var tooltip = d3.select('body').append('div').attr('class','d3-tooltip').style('display','none');
+  var tooltip = getD3Tooltip();
 
   // Force simulation: lay one cell out per cluster (project or folder).
   var cols = Math.max(2, Math.ceil(Math.sqrt(groups.length)));
@@ -3422,16 +4321,7 @@ function initTypeGraph() {
   // coloured by project and pulled into per-project convex-hull regions
   // (mirroring the Files graph). Auto-on the first time the visible types span
   // 2+ projects; toggled thereafter via the "Group by project" checkbox.
-  var PROJECT_PALETTE = ['#58a6ff','#a371f7','#3fb950','#ff9f43','#ec4899','#22d3ee','#f85149','#84cc16','#d29922','#56d364'];
-  var subProjectList = (DATA.subProjects || []).slice().sort(function(a, b){ return (a.root || '').localeCompare(b.root || ''); });
-  var projectMeta = {};
-  var realIdx = 0;
-  subProjectList.forEach(function(sp){
-    var disp = sp.name || (sp.root ? sp.root.split('/').pop() : '(root)') || '(root)';
-    var color = sp.id === 'root' ? '#8b949e' : PROJECT_PALETTE[(realIdx++) % PROJECT_PALETTE.length];
-    projectMeta[sp.id] = { name: disp, color: color };
-  });
-  function projectMetaOf(id){ return projectMeta[id] || { name: id || '(root)', color: '#8b949e' }; }
+  var projectMetaOf = archProjectMetaOf; // shared with the Files/C4 views so colours line up
   function projectOf(n){ return (n.isExternal || !n.filePath) ? null : fileProject(n.filePath); }
   var projectsPresent = Array.from(new Set(filteredNodes.map(projectOf).filter(Boolean)));
   var canGroupByProject = projectsPresent.length >= 2;
@@ -3518,7 +4408,7 @@ function initTypeGraph() {
   const nodeLayer = g.append('g');
   const labelLayer = g.append('g');
 
-  const tooltip = d3.select('body').append('div').attr('class', 'd3-tooltip').style('display', 'none');
+  const tooltip = getD3Tooltip();
 
   // Make a working copy so d3 force-sim can mutate x/y without polluting DATA.
   // _core marks the selected group; non-core nodes are the +1 linked neighbours.
@@ -4181,7 +5071,7 @@ function initDataAccessGraph() {
   const nodeLayer = g.append('g');
   const labelLayer = g.append('g');
 
-  const tooltip = d3.select('body').append('div').attr('class', 'd3-tooltip').style('display', 'none');
+  const tooltip = getD3Tooltip();
 
   const nodes = filteredNodes.map(function(n){ return Object.assign({}, n); });
   const links = filteredEdges.map(function(e){ return Object.assign({}, e); });

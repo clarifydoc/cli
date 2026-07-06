@@ -1,5 +1,6 @@
 import type { FileAnalysis, RouteInfo } from "../../../../types/analysis.js";
 import type { ImportIndex } from "../../../../core/import-index.js";
+import { joinRoutePath } from "../../../shared/route-paths.js";
 
 /**
  * Apply Express router MOUNT PREFIXES so each route carries its full path.
@@ -115,13 +116,4 @@ export function resolveExpressMounts(analyses: FileAnalysis[], importIndex: Impo
     a.routes = next;
   }
   return prefixed;
-}
-
-/** Join a mount prefix and a route path into one normalized path (`/api` + `/x` → `/api/x`). */
-function joinRoutePath(prefix: string, path: string): string {
-  const head = prefix.replace(/\/+$/, "");
-  const tail = path === "/" ? "" : path;
-  if (!head) return tail || "/";
-  const joined = tail === "" || tail.startsWith("/") ? head + tail : `${head}/${tail}`;
-  return joined.replace(/\/{2,}/g, "/") || "/";
 }

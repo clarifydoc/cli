@@ -342,6 +342,18 @@ function tryMatch(candidate: string, filePathMap: Map<string, string>): string |
   const direct = filePathMap.get(candidate);
   if (direct) return direct;
 
+  // ESM-TS convention: the specifier says `./router.js` (what the COMPILED
+  // module will be) while the file on disk is `router.ts`. The map's keys are
+  // extension-stripped, so stripping the script extension off the CANDIDATE
+  // bridges .js→.ts/.tsx, .mjs→.mts, .cjs→.cts in one step. Restricted to
+  // script extensions — stripping `.json`/`.css` could alias a sibling source
+  // file that is NOT the import's target.
+  const scriptExt = candidate.match(/\.(?:mjs|cjs|jsx|js)$/);
+  if (scriptExt) {
+    const stripped = filePathMap.get(candidate.slice(0, -scriptExt[0].length));
+    if (stripped) return stripped;
+  }
+
   // With common extensions
   for (const ext of MATCH_EXTENSIONS) {
     const withExt = filePathMap.get(candidate + ext);

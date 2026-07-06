@@ -14,12 +14,23 @@ function walkForVueRouterConfig(node: Node, routes: RouteInfo[]) {
   }
 }
 
+/**
+ * Route-config keys that distinguish a router entry from an arbitrary object
+ * that merely HAS a `path` property. Data arrays are full of the latter —
+ * category descriptors (`{ text: "Vegetables", path: "Vegetables", image }`),
+ * sidebar link lists (`{ name, path, icon }`) — and each one became a phantom
+ * frontend route. A real Vue Router record renders/forwards something, so it
+ * carries at least one of these.
+ */
+const ROUTE_CONFIG_KEYS = new Set(["component", "components", "children", "redirect", "beforeEnter"]);
+
 /** Inspect a single node for a Vue Router route config object. */
 export function visitVueRouterRoute(node: Node, routes: RouteInfo[]): void {
   if (node.type === "object") {
     let path: string | null = null;
     let handler: string | null = null;
     let componentPath: string | null = null;
+    let isRouteConfig = false;
 
     for (const prop of node.children) {
       if (prop.type === "pair" || prop.type === "property_assignment") {
@@ -27,6 +38,7 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[]): void {
         const value = prop.childForFieldName("value");
         const keyText = key?.text;
 
+        if (keyText && ROUTE_CONFIG_KEYS.has(keyText)) isRouteConfig = true;
         if (keyText === "path" && value) {
           path = stripQuotes(value.text);
         } else if (keyText === "component" && value) {
@@ -40,7 +52,7 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[]): void {
       }
     }
 
-    if (path !== null) {
+    if (path !== null && isRouteConfig) {
       routes.push({
         path,
         httpMethod: null,

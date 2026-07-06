@@ -80,21 +80,77 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
         if (handlerLink) {
           links.push(handlerLink);
         } else {
-          // Fallback: search all files for the handler name — best-effort, no import proof.
-          for (const [filePath, syms] of symbolIndex) {
-            const def = syms.get(handlerName);
-            if (def) {
-              links.push({
-                sourceFile,
-                sourceSymbol,
-                sourceLine: route.line,
-                callName: route.handler,
-                targetFile: filePath,
-                targetSymbol: def.name,
-                targetLine: def.line,
-                confidence: "AMBIGUOUS",
-              });
-              break;
+          // Frontend routes: the handler is a COMPONENT defined in another
+          // file (`{ path: '/loenopsaetning', component: LoenOpsaetning }` /
+          // `<Route element={<ProductList/>}>`) — no same-file symbol exists,
+          // so these routes had no trace anchor at all. Resolve through the
+          // route's componentPath (lazy `import('./X.vue')`) or the router
+          // file's import of the handler name, and anchor at the component's
+          // root symbol so the trace continues into its data calls.
+          // Try the componentPath (lazy-import module path OR a bare
+          // identifier), THEN the import that binds the handler name — a
+          // statically-imported component's componentPath is just the
+          // identifier, which misses when the file's basename differs in case
+          // (component `LoenOpsaetning`, file `Loenopsaetning.vue`); the
+          // import's module path is exact.
+          const candidateSpecs: string[] = [];
+          if (route.componentPath) candidateSpecs.push(route.componentPath);
+          const handlerImport = analysis.imports.find(
+            (imp) => !imp.isType && imp.specifiers.includes(handlerName),
+          );
+          if (handlerImport) candidateSpecs.push(handlerImport.source);
+          let compFile: string | null = null;
+          for (const spec of candidateSpecs) {
+            compFile = resolveTarget(spec, sourceFile, ctx.filePathMap);
+            if (compFile) break;
+          }
+          const compSyms = compFile ? symbolIndex.get(compFile) : undefined;
+          // Every anchor branch emits the same route→target link shape.
+          // (route.handler is narrowed to string by the enclosing if, but the
+          // narrowing doesn't survive into a closure — capture it.)
+          const callName = route.handler;
+          const pushRouteLink = (targetFile: string, def: { name: string; line: number }, confidence: Confidence) => {
+            links.push({
+              sourceFile,
+              sourceSymbol,
+              sourceLine: route.line,
+              callName,
+              targetFile,
+              targetSymbol: def.name,
+              targetLine: def.line,
+              confidence,
+            });
+          };
+          let componentLinked = false;
+          if (compFile && compSyms) {
+            const base = compFile.split("/").pop()!.replace(/\.\w+$/, "");
+            // A layout/template-only component may extract NO symbols at all
+            // (imports-only script setup) — anchor at a `<component>` pseudo-
+            // symbol so the route still deep-links to the component's node in
+            // the trace view instead of silently having no handler link.
+            const def = compSyms.get(handlerName) ?? compSyms.get("<setup>") ?? compSyms.get(base)
+              ?? { name: "<component>", line: 1 };
+            pushRouteLink(compFile, def, "EXTRACTED");
+            componentLinked = true;
+          }
+          // File-based routing: the route's own file IS the page component
+          // (`routes/index/beskedcenter.vue` → `/beskedcenter`) — anchor at
+          // the file's own component root. Gated on a component file
+          // extension so a ROUTER-CONFIG route whose component couldn't be
+          // resolved never self-anchors to the config file.
+          if (!componentLinked && route.kind === "frontend" && /\.(vue|jsx|tsx|svelte)$/.test(sourceFile)) {
+            const ownDef = symbolIndex.get(sourceFile)?.get("<setup>") ?? { name: "<component>", line: route.line };
+            pushRouteLink(sourceFile, ownDef, "EXTRACTED");
+            componentLinked = true;
+          }
+          if (!componentLinked) {
+            // Fallback: search all files for the handler name — best-effort, no import proof.
+            for (const [filePath, syms] of symbolIndex) {
+              const def = syms.get(handlerName);
+              if (def) {
+                pushRouteLink(filePath, def, "AMBIGUOUS");
+                break;
+              }
             }
           }
         }
