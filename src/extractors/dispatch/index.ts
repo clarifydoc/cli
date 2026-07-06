@@ -1,9 +1,10 @@
 import type { FileAnalysis, SymbolLink } from "../../types/analysis.js";
 import type { DispatchResolver } from "./base.js";
 import { CSharpMediatrResolver } from "../plugins/csharp/dispatch.js";
+import { JsComponentEmitResolver } from "../plugins/javascript/dispatch.js";
 
 /** All registered dispatch-indirection resolvers (one per language pattern). */
-const resolvers: DispatchResolver[] = [new CSharpMediatrResolver()];
+const resolvers: DispatchResolver[] = [new CSharpMediatrResolver(), new JsComponentEmitResolver()];
 
 /**
  * Run every dispatch resolver over the project and return the synthetic

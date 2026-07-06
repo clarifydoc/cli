@@ -2045,6 +2045,14 @@ function elemBaseName(fp) {
 // Handler name → trace symbol key, for linking interactive handlers to traces.
 function findHandlerSymbolKey(handlerName, filePath) {
   if (!handlerName || !DATA.symbolLinks) return null;
+  // A component-event handler — emit('save', x) / $emit('save') — has no local
+  // symbol: the dispatch resolver wired it to the parent's bound handler via a
+  // synthetic link with callName "emit:save". Jump straight to that target.
+  const emitMatch = handlerName.match(/^\\$?emit\\s*\\(\\s*['"]([\\w:.-]+)['"]/);
+  if (emitMatch) {
+    const viaEmit = DATA.symbolLinks.find(l => l.sourceFile === filePath && l.callName === 'emit:' + emitMatch[1]);
+    return viaEmit ? viaEmit.targetFile + '::' + viaEmit.targetSymbol : null;
+  }
   // Strip function call syntax and unary prefixes:
   // "void toggleFavorite(p.id)" / "await save()" / "!toggle()" → bare name.
   const clean = handlerName.replace(/\\(.*$/, '').replace(/^(?:void|await|return)\\s+|^!/, '').trim();
