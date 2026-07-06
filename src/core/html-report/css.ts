@@ -211,6 +211,8 @@ a{color:#58a6ff;text-decoration:none}
 .c4-crumb.current{color:#e6edf3;cursor:default;background:#1f6feb22;border-color:#1f6feb;font-weight:600}
 .c4-sep{color:#484f58}
 .c4-hint{color:#8b949e;font-size:11px;margin-left:10px}
+.c4-stack-select{margin-left:12px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:2px 6px;font-size:11px;font-family:inherit;max-width:340px}
+.c4-stack-select:hover{border-color:#58a6ff}
 .c4-edge-label{fill:#8b949e;font-size:9px;font-family:monospace;pointer-events:none}
 
 /* Data Models grouped sidebar (Architecture tab → Data Models mode) */

@@ -182,6 +182,25 @@ describe("detectDeployment", () => {
     expect(orders.tech).toBe("Orders.API");
   });
 
+  it("records every compose file that declares a service (stack membership)", async () => {
+    const dep = await detectDeployment(root, { subProjects });
+    const orders = dep!.services.find((s) => s.name === "orders-api")!;
+    expect(orders.composeFiles).toEqual([
+      "compose/app-services-compose.yml",
+      "compose/rancher-compose.yml",
+    ]);
+    const billing = dep!.services.find((s) => s.name === "billing-api")!;
+    expect(billing.composeFiles).toEqual(["compose/app-services-compose.yml"]);
+  });
+
+  it("never turns proxy URL vars into external systems", async () => {
+    const dep = await detectDeployment(root, { subProjects });
+    // shop-spa carries API_PROXY_URL: ${API_PROXY_URL} — the system's own
+    // front door, not an external dependency.
+    expect(dep!.externals.some((x) => /proxy/i.test(x.id))).toBe(false);
+    expect(dep!.edges.some((e) => /proxy/i.test(e.to))).toBe(false);
+  });
+
   it("derives the api-key handshake edge (consumer → provider)", async () => {
     const dep = await detectDeployment(root, { subProjects });
     expect(dep!.edges).toContainEqual(

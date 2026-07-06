@@ -1048,8 +1048,14 @@ export type DeployedServiceKind =
 export interface DeployedService {
   /** Compose service name — unique across all parsed compose files. */
   name: string;
-  /** Repo-relative posix path of the compose file that declared it. */
+  /** Repo-relative posix path of the compose file that declared it (primary). */
   composeFile: string;
+  /**
+   * Every compose file that declares this service. Repos often carry several
+   * deployment stacks (legacy + current, base + local variant) — this is what
+   * lets the report filter the Deployment view down to one stack.
+   */
+  composeFiles?: string[];
   image?: string;
   /** Joined entrypoint/command, when declared (e.g. "dotnet Plan.API.dll"). */
   entrypoint?: string;

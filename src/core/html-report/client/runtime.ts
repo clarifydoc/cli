@@ -20,6 +20,8 @@ var C4_EDGE_STYLE = {
   external: { color: '#8b949e', dash: '5 4' },
   depends:  { color: '#484f58', dash: '2 4' }
 };
+// Deployment/Context externals cap — busiest kept, tail collapses to "+N more".
+var C4_DEPLOY_EXT_CAP = 12;
 
 // Activate the first visible tab chosen server-side. Sections are emitted
 // without any .active class so that an empty "screens" view never flashes
