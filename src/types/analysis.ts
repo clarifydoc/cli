@@ -363,6 +363,16 @@ export interface CallInfo {
   line: number;
   column?: number;
   confidence?: Confidence;
+  /**
+   * The FACTORY function this call's receiver was bound from, when the
+   * binding is visible (`const m = useAddLicenseMutation(...)` →
+   * `m.mutateAsync(...)` carries via:"useAddLicenseMutation"). When the call's
+   * leaf doesn't exist in the target module (the member lives on a
+   * library-made object — a tanstack mutation, an event emitter), the symbol
+   * linker falls back to linking the factory itself, which is where the
+   * meaningful project code (mutationFn → service call) sits.
+   */
+  via?: string;
 }
 
 export interface FunctionInfo {

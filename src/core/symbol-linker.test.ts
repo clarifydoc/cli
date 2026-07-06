@@ -71,3 +71,34 @@ describe("symbol-linker — C# cross-project + generic type-arg resolution", () 
     expect(links.some((l) => /Account\.cs$/.test(l.targetFile) && l.sourceFile === "Infra/AccountRepository.cs")).toBe(false);
   });
 });
+
+describe("symbol-linker — factory fallback via binding provenance (Strategy 3b)", () => {
+  it("links mutation.mutateAsync to the FACTORY when the leaf is not in the target module", () => {
+    const component = file("spa/CreateLicense.vue", "spa", {
+      functions: [fn("submit", [
+        { name: "licenseMutation.mutateAsync", kind: "cross-file", target: "./LicenseQueries", via: "useAddLicenseMutation", line: 3 },
+      ])],
+    });
+    const queries = file("spa/LicenseQueries.ts", "spa", {
+      functions: [fn("useAddLicenseMutation", [])],
+    });
+    const links = buildSymbolLinks([component, queries]);
+    const hit = links.find((l) => l.targetSymbol === "useAddLicenseMutation");
+    expect(hit).toBeDefined();
+    expect(hit!.sourceSymbol).toBe("submit");
+    expect(hit!.confidence).toBe("INFERRED");
+  });
+
+  it("prefers a REAL member over the factory when the leaf exists in the module", () => {
+    const component = file("spa/Cart.vue", "spa", {
+      functions: [fn("onClick", [
+        { name: "cart.updateQuantity", kind: "cross-file", target: "./useShopCart", via: "useShopCart", line: 3 },
+      ])],
+    });
+    const composable = file("spa/useShopCart.ts", "spa", {
+      functions: [fn("useShopCart", []), fn("updateQuantity", [])],
+    });
+    const links = buildSymbolLinks([component, composable]);
+    expect(links.find((l) => l.sourceSymbol === "onClick")?.targetSymbol).toBe("updateQuantity");
+  });
+});

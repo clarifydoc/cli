@@ -218,7 +218,7 @@ export function classifyCalls(
   calls: CallInfo[],
   imports: ImportInfo[],
   language: Language,
-  variableAliases?: Map<string, string>,
+  variableAliases?: Map<string, string | import("../../types/language-plugin.js").VariableAliasBinding>,
 ): CallInfo[] {
   const { importMap, defaultImports } = buildImportMaps(imports);
   const hooks = callHooksByLanguage.get(language);
@@ -268,12 +268,16 @@ export function classifyCalls(
     // the later `refreshCart()` call must classify into the composable's module,
     // or every hook/composable-based UI trace dead-ends one hop from the screen).
     if (variableAliases) {
-      const aliasSource = variableAliases.get(call.name.includes(".") ? root : call.name);
-      if (aliasSource) {
+      const alias = variableAliases.get(call.name.includes(".") ? root : call.name);
+      if (alias) {
         call.kind = "cross-file";
-        call.target = aliasSource;
+        call.target = typeof alias === "string" ? alias : alias.source;
         // Tracked through a const = importedFn() assignment — one indirection from source
         call.confidence = "INFERRED";
+        // Remember the factory the receiver came from: when the member doesn't
+        // exist in the target module (a library-made object like a tanstack
+        // mutation), the linker links the factory instead (CallInfo.via).
+        if (typeof alias !== "string" && alias.factory) call.via = alias.factory;
         continue;
       }
     }

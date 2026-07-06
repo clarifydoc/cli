@@ -98,8 +98,8 @@ export function Cart() {
 }`;
     const tree = await parse(src);
     const aliases = extractJsVariableAliases(tree, IMPORTS);
-    expect(aliases.get("addToCart")).toBe("../context/AppContext");
-    expect(aliases.get("drop")).toBe("../context/AppContext"); // renamed binding
+    expect(aliases.get("addToCart")).toEqual({ source: "../context/AppContext", factory: "useAppContext" });
+    expect(aliases.get("drop")).toEqual({ source: "../context/AppContext", factory: "useAppContext" }); // renamed binding
   });
 
   it("drops a name bound to DIFFERENT sources (ambiguous) rather than guessing", async () => {
@@ -121,6 +121,19 @@ function two() { const { save } = useB(); }`;
     const calls = [{ name: "addToCart", kind: "internal" as const, target: null, line: 5 }];
     classifyCalls(calls, [], "typescript", aliases);
     expect(calls[0]).toMatchObject({ kind: "cross-file", target: "../context/AppContext", confidence: "INFERRED" });
+  });
+
+  it("records the factory on the call (via) so tanstack mutate() can route through it", () => {
+    const aliases = new Map([
+      ["licenseMutation", { source: "./LicenseQueries", factory: "useAddLicenseMutation" }],
+    ]);
+    const calls = [{ name: "licenseMutation.mutateAsync", kind: "internal" as const, target: null, line: 9 }];
+    classifyCalls(calls, [], "typescript", aliases);
+    expect(calls[0]).toMatchObject({
+      kind: "cross-file",
+      target: "./LicenseQueries",
+      via: "useAddLicenseMutation",
+    });
   });
 });
 
