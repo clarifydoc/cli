@@ -130,6 +130,44 @@ export function loadTsconfigAliases(startDir: string): Map<string, string> {
   }
 }
 
+/** Per-directory memo — sibling files share a dir, nested dirs share ancestors. */
+const dirAliasCache = new Map<string, Map<string, string>>();
+
+/**
+ * Aliases of the tsconfig NEAREST to a file's directory. A monorepo defines
+ * paths per sub-project (each SPA its own `@src/*`, `@queries/*`, …) and the
+ * repo root often has NO tsconfig at all — resolving only the root left every
+ * aliased import in such sub-projects unresolved (whole SPAs with zero symbol
+ * links). Prefix collisions across sub-projects (`@src` in two SPAs) also make
+ * a merged global map wrong; nearest-wins is the compiler's own rule.
+ *
+ * The upward walk caches EVERY directory it passes through (they all share the
+ * same nearest tsconfig), so across a whole repo the stat cost is amortized to
+ * one visit per unique directory instead of one walk per file.
+ */
+export function loadTsconfigAliasesForDir(startDir: string): Map<string, string> {
+  const visited: string[] = [];
+  let current = resolve(startDir);
+  let result: Map<string, string>;
+  for (;;) {
+    const hit = dirAliasCache.get(current);
+    if (hit) { result = hit; break; }
+    visited.push(current);
+    const tsconfigPath = resolve(current, "tsconfig.json");
+    if (existsSync(tsconfigPath)) {
+      const cached = tsconfigCache.get(tsconfigPath);
+      result = cached ?? readTsconfig(tsconfigPath, new Set());
+      if (!cached) tsconfigCache.set(tsconfigPath, result);
+      break;
+    }
+    const parent = dirname(current);
+    if (parent === current) { result = new Map(); break; }
+    current = parent;
+  }
+  for (const dir of visited) dirAliasCache.set(dir, result);
+  return result;
+}
+
 /**
  * If `importSource` matches a known alias prefix, return the rewritten path
  * (POSIX, relative to `projectRoot`). Otherwise return the input unchanged.

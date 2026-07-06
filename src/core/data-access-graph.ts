@@ -25,7 +25,8 @@ import type {
  * Only data sources with `kind === "database"` participate — `state`,
  * `api-call`, `env`, etc. are not data accesses in the storage sense.
  */
-const UNKNOWN_TARGET = "(unresolved)";
+/** Sentinel datastore/queue name for DB-shaped calls whose target could not be resolved. */
+export const UNKNOWN_TARGET = "(unresolved)";
 
 export function buildDataAccessGraph(analyses: FileAnalysis[]): DataAccessGraph {
   const nodes = new Map<string, DataAccessNode>();

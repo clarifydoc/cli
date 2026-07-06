@@ -443,6 +443,24 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     }
   }
 
+  // File-based ("auto") frontend routes: plugins like unplugin-vue-router /
+  // vite-plugin-pages generate the route table from a page-file directory, so
+  // the routes are not present as source. Synthesize them from the file tree
+  // (reads each candidate root's Vite config to detect the convention) and push
+  // them onto the page files' analyses so they flow into the route map, screens,
+  // and the screen→API links below. Runs BEFORE buildSymbolLinks so these routes
+  // get trace anchors like any extracted route (they used to be invisible to the
+  // linker and the Routes tab had no handler links for them). Project-level +
+  // in-memory (no per-file JSON change), so it needs no version bump.
+  const autoRouteCount = await detectFileBasedRoutes(
+    allAnalyses,
+    projectRoot,
+    subProjects.map((sp) => sp.root),
+  );
+  if (autoRouteCount > 0 && verbose) {
+    progress.detail(`  file-based routes: ${autoRouteCount}`);
+  }
+
   // Step 4: Post-analysis
   progress.step("Building dependency graph...");
   const componentGraph = buildComponentGraph(allAnalyses);
@@ -512,22 +530,6 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Dynamic-import "opens component" edges (dialogs, lazy components) derived
   // from the finalized symbol links.
   const componentLaunches = buildComponentLaunches(symbolLinks);
-
-  // File-based ("auto") frontend routes: plugins like unplugin-vue-router /
-  // vite-plugin-pages generate the route table from a page-file directory, so
-  // the routes are not present as source. Synthesize them from the file tree
-  // (reads each candidate root's Vite config to detect the convention) and push
-  // them onto the page files' analyses so they flow into the route map, screens,
-  // and the screen→API links below. Project-level + in-memory (no per-file JSON
-  // change), so it mirrors reconcileProjectEntities and needs no version bump.
-  const autoRouteCount = await detectFileBasedRoutes(
-    allAnalyses,
-    projectRoot,
-    subProjects.map((sp) => sp.root),
-  );
-  if (autoRouteCount > 0 && verbose) {
-    progress.detail(`  file-based routes: ${autoRouteCount}`);
-  }
 
   // One project-wide import index, shared across the Express mount resolver and
   // every serial builder that resolves cross-file references (screens, type

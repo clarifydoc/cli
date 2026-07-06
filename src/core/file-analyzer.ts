@@ -8,7 +8,8 @@ import { extractRoutes } from "../extractors/routes/index.js";
 import { extractDataAccess } from "../extractors/data-access.js";
 import { extractEntities, mergeEntities } from "../extractors/entities/index.js";
 import { classifyCalls, extractTopLevelCalls } from "../extractors/shared/call-graph.js";
-import { applyAliases } from "../extractors/shared/tsconfig-aliases.js";
+import { dirname } from "path";
+import { applyAliases, loadTsconfigAliasesForDir } from "../extractors/shared/tsconfig-aliases.js";
 import { pluginFor, astHooksFor, inferFileFrameworks } from "../extractors/registry.js";
 import { computeComplexity } from "./complexity-analyzer.js";
 import { scanSecurity } from "./security-scanner.js";
@@ -54,9 +55,16 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
   const { file, frameworkIds, projectId, outputOpts, verbose, projectRoot, tsconfigAliases } = task;
 
   const applyTsconfigAliasesToImports = (a: FileAnalysis): void => {
-    if (tsconfigAliases.size === 0) return;
+    if (a.imports.length === 0) return; // nothing to rewrite — skip the tsconfig lookup
+    // Nearest tsconfig wins (the compiler's own rule): monorepo sub-projects
+    // define their own `paths` and the repo root often has NO tsconfig, so
+    // the task-level root map alone left whole SPAs' aliased imports — and
+    // with them every cross-file link in those SPAs — unresolved.
+    const nearest = loadTsconfigAliasesForDir(dirname(file.absolutePath));
+    const aliases = nearest.size > 0 ? nearest : tsconfigAliases;
+    if (aliases.size === 0) return;
     for (const imp of a.imports) {
-      imp.source = applyAliases(imp.source, tsconfigAliases, projectRoot);
+      imp.source = applyAliases(imp.source, aliases, projectRoot);
     }
   };
 
