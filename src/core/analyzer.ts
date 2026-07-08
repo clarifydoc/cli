@@ -5,6 +5,7 @@ import {
   EXTRACTOR_VERSION,
   loadManifest,
   saveManifest,
+  cleanupStaleArtifacts,
   classifyFile as classifyFileForCache,
   normalizeManifestKey,
   type Manifest,
@@ -26,9 +27,11 @@ import { resolveExpressMounts } from "../extractors/plugins/javascript/routes/ex
 import { resolveUrlBuilders } from "../extractors/plugins/javascript/url-builders.js";
 import {
   writeProjectSummary,
+  writeReportData,
   writeLspGroundTruth,
   type OutputOptions,
 } from "./output-writer.js";
+import { buildReportPayload } from "./report-payload.js";
 import { analyzeFile, type FileTask, type FileResult } from "./file-analyzer.js";
 import { AnalysisWorkerPool } from "./worker-pool.js";
 import { loadTsconfigAliases } from "../extractors/shared/tsconfig-aliases.js";
@@ -815,7 +818,12 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   };
 
   progress.step("Writing project summary...");
+  // Build the report payload from the in-memory (denormalized) summary BEFORE
+  // writeProjectSummary, which normalizes for on-disk storage. Written so the
+  // report viewer (SPA / server) can fetch it directly.
+  const reportPayload = buildReportPayload(summary);
   await writeProjectSummary(summary, outputOpts);
+  await writeReportData(reportPayload, outputOpts);
 
   // Save the manifest only after the rest of the pipeline succeeds so a crash
   // mid-run leaves the previous manifest intact.
@@ -826,6 +834,16 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       entries: newManifestEntries,
     };
     await saveManifest(outputDir, manifest);
+    // Remove per-file JSON for sources that disappeared since the last run so
+    // the cache, the file browser, and the file count stay in sync.
+    if (prevManifest) {
+      const removed = await cleanupStaleArtifacts(
+        outputDir,
+        Object.keys(prevManifest.entries),
+        new Set(Object.keys(newManifestEntries)),
+      );
+      if (removed > 0) progress.detail(`  Incremental: removed ${removed} stale artifact(s)`);
+    }
   }
 
   progress.clear();

@@ -165,6 +165,20 @@ export async function writeLspGroundTruth(
   return writeJson("lsp-ground-truth.json", groundTruth, options);
 }
 
+/**
+ * Write the report-viewer data payload — the denormalized, reshaped subset of
+ * the summary that the standalone report.html and the SPA report viewer both
+ * consume. Written on every analyze so the server (and any external viewer) can
+ * serve it directly, without re-denormalizing the summary per request.
+ * Creates: <outputDir>/report-data.json
+ */
+export async function writeReportData(
+  payload: unknown,
+  options: OutputOptions,
+): Promise<string> {
+  return writeJson("report-data.json", payload, options);
+}
+
 /** Write an HTML report. Creates: <outputDir>/report.html */
 export async function writeHtmlReport(html: string, options: OutputOptions): Promise<string> {
   const htmlPath = join(resolve(options.outputDir), "report.html");

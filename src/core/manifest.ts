@@ -117,6 +117,33 @@ export async function classifyFile(
   return { state: "changed", mtime, sha256 };
 }
 
+/**
+ * Delete per-file FileAnalysis JSON left behind by sources that no longer
+ * exist. A key present in the previous manifest but absent from the new one is
+ * a file removed/renamed since the last run; its `<outputDir>/<rel>.json` cache
+ * would otherwise linger — reused by a future `loadCachedFileResult`, listed by
+ * the server's file browser, and counted as a phantom file. Best-effort:
+ * unlink failures are swallowed. Returns the number removed.
+ */
+export async function cleanupStaleArtifacts(
+  outputDir: string,
+  prevKeys: Iterable<string>,
+  currentKeys: Set<string>,
+): Promise<number> {
+  const dir = resolve(outputDir);
+  let removed = 0;
+  for (const key of prevKeys) {
+    if (currentKeys.has(key)) continue;
+    try {
+      await unlink(join(dir, `${key}.json`));
+      removed++;
+    } catch {
+      // Already gone or never written — nothing to clean.
+    }
+  }
+  return removed;
+}
+
 /** Stream the file through SHA-256. 64KB chunks, no buffering of the whole file. */
 export function hashFile(absPath: string): Promise<string> {
   return new Promise((res, rej) => {
