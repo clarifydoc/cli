@@ -1,6 +1,8 @@
 import type { ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
+import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
+import { extractCppStringConstants } from "../cpp/index.js";
 
 function stripCType(raw: string): string {
   return stripTypeModifiers(raw, "c");
@@ -88,4 +90,8 @@ export const cSpec: RegexLangSpec = {
       },
     },
   ],
+
+  // Raw SQL in string literals (sqlite3_exec / sqlite3_prepare_v2 and friends).
+  extractDataSources: (lines) => extractSqlStringDataSources(lines),
+  extractStringConstants: extractCppStringConstants,
 };

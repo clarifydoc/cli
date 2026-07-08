@@ -58,7 +58,7 @@ import { detectMigrations } from "./migration-detector.js";
 import { linkApiCallsToRoutes, dedupeRoutes } from "./route-linker.js";
 import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
 import { buildComponentLaunches } from "./component-launches.js";
-import { buildImportIndex, resolveImportSource, type ImportIndex } from "./import-index.js";
+import { buildImportIndex, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
 import { denormalizeFileAnalysis } from "./element-registry.js";
 import {
   type FileAnalysis,
@@ -671,6 +671,12 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       return !!d && (d.includes("entity") || d.includes("table") || d.includes("enum"));
     }),
   );
+  // Resolve macro-valued raw-SQL tables (`CUE_TABLE` → "cues") through the
+  // project-wide constant map BEFORE any data-access aggregation, so the
+  // datastore/entity nodes carry physical table names and merge with accesses
+  // that spell the table literally.
+  resolveDataSourceStringConstants(allAnalyses);
+
   const hasDbAccess = allAnalyses.some((a) =>
     a.dataSources?.some((ds) => ds.kind === "database"),
   );

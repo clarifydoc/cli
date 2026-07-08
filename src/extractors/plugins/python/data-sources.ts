@@ -65,13 +65,10 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           }));
         }
 
-        // Database patterns
-        if (
-          fnName.includes(".query") ||
-          fnName.includes(".execute") ||
-          fnName.includes(".find") ||
-          fnName.includes(".filter")
-        ) {
+        // Database patterns — matched on the exact method LEAF, not substring:
+        // `RE_CPP_CLASSNAME.findall(...)` (the re module) contains ".find" but
+        // is not a DB op, and it was minting phantom regex-constant "entities".
+        if (fnName.includes(".") && PY_DB_LEAVES.has(leaf)) {
           sources.push(this.ds({
             kind: "database",
             name: fnName,
@@ -83,6 +80,14 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
     }
   }
 }
+
+/** Method leaves that indicate a DB op (SQLAlchemy / Django ORM / pymongo / DB-API). */
+const PY_DB_LEAVES = new Set([
+  "query", "execute", "executemany", "find", "find_one", "find_many",
+  "filter", "filter_by", "all", "first", "get_or_create", "save",
+  "insert_one", "insert_many", "update_one", "update_many",
+  "delete_one", "delete_many", "count_documents", "aggregate",
+]);
 
 /**
  * Resolve a call argument by keyword (`queue="tasks"`) or position, returning

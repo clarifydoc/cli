@@ -1,5 +1,6 @@
 import fg from "fast-glob";
-import { resolve } from "path";
+import { readFile } from "fs/promises";
+import { join, resolve } from "path";
 import type { SubProject, SubProjectKind } from "../types/analysis.js";
 
 /**
@@ -37,6 +38,10 @@ const MARKER_GLOBS: { pattern: string; kind: SubProjectKind }[] = [
   { pattern: "**/Gemfile", kind: "ruby" },
   { pattern: "**/Package.swift", kind: "swift" },
   { pattern: "**/pubspec.yaml", kind: "dart" },
+  // Only a CMakeLists.txt containing a project() call marks a project root —
+  // most CMakeLists are per-directory source lists (add_subdirectory targets)
+  // and treating them as markers would fragment the repo under innermost-wins.
+  { pattern: "**/CMakeLists.txt", kind: "cmake" },
 ];
 
 const MARKER_IGNORE = [
@@ -70,6 +75,7 @@ const KIND_PRIORITY: SubProjectKind[] = [
   "java-gradle",
   "rust",
   "go",
+  "cmake",
   "python",
   "php",
   "ruby",
@@ -96,6 +102,7 @@ export async function detectSubProjects(
       dot: false,
     });
     for (const match of matches) {
+      if (kind === "cmake" && !(await isCmakeProjectRoot(root, match))) continue;
       const norm = match.replace(/\\/g, "/");
       const lastSlash = norm.lastIndexOf("/");
       const dir = lastSlash >= 0 ? norm.slice(0, lastSlash) : "";
@@ -137,6 +144,16 @@ export async function detectSubProjects(
 
   subProjects.sort((a, b) => a.root.localeCompare(b.root));
   return subProjects;
+}
+
+/** True when this CMakeLists.txt declares a project (`project(...)` call). */
+async function isCmakeProjectRoot(root: string, relPath: string): Promise<boolean> {
+  try {
+    const content = await readFile(join(root, relPath), "utf-8");
+    return /^\s*project\s*\(/im.test(content);
+  } catch {
+    return false;
+  }
 }
 
 function pickPrimaryKind(kinds: Set<SubProjectKind>): SubProjectKind {

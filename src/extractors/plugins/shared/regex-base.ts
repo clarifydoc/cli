@@ -98,6 +98,34 @@ export interface RegexLangSpec {
   extractEntityRelations?: (lines: string[], classes: ClassInfo[]) => EntityRelation[];
   /** Post-process extracted functions (e.g. SQL BEGIN/END-aware end-line patching). */
   postProcessFunctions?: (lines: string[], fns: FunctionInfo[]) => FunctionInfo[];
+  /** Post-process extracted classes (e.g. C++ tagging QML_NAMED_ELEMENT registrations
+   *  as decorators so the QML→C++ bridge resolver can join on them). */
+  postProcessClasses?: (lines: string[], classes: ClassInfo[]) => ClassInfo[];
+  /** Named string constants (`#define CUE_TABLE "cues"`) — feeds the project-level
+   *  dataSource target/entity macro resolution. */
+  extractStringConstants?: (lines: string[]) => Record<string, string>;
+}
+
+/**
+ * Control-flow keywords across the regex-path languages — never function
+ * definitions, never linkable calls. Checked case-insensitively (VB `If (…)`).
+ *
+ * This name-level guard exists because per-pattern lookaheads cannot be made
+ * safe: in `^\s*(?!if\b)…(?:[\w:<>,*&\s]+?[*&\s>])?(name)\(`, backtracking lets
+ * `^\s*` give back a tab, the lookahead then passes on `\tif`, and the optional
+ * type-part absorbs the whitespace — so `\t\tif (x) {` still captured `if` as a
+ * function (40% of extracted C++ "functions" on a large Qt codebase).
+ */
+export const CONTROL_FLOW_KEYWORDS: ReadonlySet<string> = new Set([
+  "if", "else", "elseif", "elsif", "elif", "for", "foreach", "while", "do",
+  "switch", "case", "when", "unless", "until", "try", "catch", "finally",
+  "return", "throw", "sizeof", "typeof", "goto", "with", "using",
+  "synchronized", "await", "yield", "defer",
+]);
+
+/** True when `name` is a control-flow keyword (any casing). */
+export function isControlFlowKeyword(name: string): boolean {
+  return CONTROL_FLOW_KEYWORDS.has(name.toLowerCase());
 }
 
 /** Common call names to filter out as noise */
@@ -190,7 +218,7 @@ export function extractFunctionsWithSpec(lines: string[], spec: RegexLangSpec): 
 
     for (const { pattern, isExported, isAsync: asyncCheck } of spec.functionPatterns) {
       const m = line.match(pattern);
-      if (m && m[1]) {
+      if (m && m[1] && !isControlFlowKeyword(m[1])) {
         const endLine = findEndLine(lines, i, resolveBlockStyle(spec), spec.keywordEnd);
         const calls = extractCallsFromBody(lines, i + 1, endLine, spec.lineCommentPrefixes, spec.callPatterns);
         fns.push({
@@ -230,7 +258,7 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
 
           for (const { pattern: fnPat, isExported, isAsync: asyncCheck } of spec.functionPatterns) {
             const fm = bodyLine.match(fnPat);
-            if (fm && fm[1]) {
+            if (fm && fm[1] && !isControlFlowKeyword(fm[1])) {
               const methodStart = i + 1 + j;
               const methodEnd = findEndLine(lines, methodStart, resolveBlockStyle(spec), spec.keywordEnd);
               const calls = extractCallsFromBody(lines, methodStart + 1, methodEnd, spec.lineCommentPrefixes, spec.callPatterns);
@@ -365,7 +393,7 @@ export function extractCallsFromBody(
   const seen = new Set<string>();
 
   function add(name: string, shortName: string, line: number, column: number) {
-    if (CALL_NOISE.has(shortName)) return;
+    if (CALL_NOISE.has(shortName) || isControlFlowKeyword(shortName)) return;
     if (seen.has(name)) return;
     seen.add(name);
     calls.push({ name, kind: "internal", target: null, line, column });

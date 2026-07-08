@@ -55,6 +55,13 @@ export function extractWithRegex(
   if (spec.postProcessFunctions) {
     analysis.functions = spec.postProcessFunctions(lines, analysis.functions);
   }
+  if (spec.postProcessClasses) {
+    analysis.classes = spec.postProcessClasses(lines, analysis.classes);
+  }
+  if (spec.extractStringConstants) {
+    const consts = spec.extractStringConstants(lines);
+    if (Object.keys(consts).length > 0) analysis.stringConstants = consts;
+  }
 
   // ORM entities & relations. `extractEntityRelations` covers schema-file
   // formats (Prisma); the `entities` domain covers code-embedded models

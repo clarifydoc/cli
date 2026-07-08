@@ -61,6 +61,41 @@ export function enrichDataSourcesWithImports(analyses: FileAnalysis[], index: Im
 }
 
 /**
+ * Resolve macro-valued dataSource targets/entities through the project-wide
+ * union of extracted string constants. C/C++ DAOs name their tables via
+ * preprocessor constants (`#define CUE_TABLE "cues"` in the header, used as
+ * `"DELETE FROM " CUE_TABLE` in the .cpp) — per-file extraction can only carry
+ * the macro NAME across, so the physical table name is resolved here where all
+ * files are visible. A name defined with CONFLICTING values anywhere in the
+ * project is left unresolved (safety over coverage). Mutates analyses.
+ */
+export function resolveDataSourceStringConstants(analyses: FileAnalysis[]): void {
+  const values = new Map<string, string | null>(); // null = conflicting → skip
+  for (const a of analyses) {
+    for (const [name, value] of Object.entries(a.stringConstants ?? {})) {
+      const prev = values.get(name);
+      if (prev === undefined) values.set(name, value);
+      else if (prev !== value) values.set(name, null);
+    }
+  }
+  if (values.size === 0) return;
+
+  for (const a of analyses) {
+    for (const ds of a.dataSources ?? []) {
+      if (ds.kind !== "database") continue;
+      if (ds.target) {
+        const v = values.get(ds.target);
+        if (v) ds.target = v;
+      }
+      if (ds.entity) {
+        const v = values.get(ds.entity);
+        if (v) ds.entity = v;
+      }
+    }
+  }
+}
+
+/**
  * Same logic as `enrichDataSourcesWithImports` but for a single file —
  * runnable inline during per-file extraction so the on-disk per-file JSON
  * reflects the enriched `target`. The lookup only needs the file's own
@@ -152,13 +187,13 @@ function entitySegment(callName: string): string | null {
   const parts = chain.split(".").map((p) => p.trim()).filter(Boolean);
   if (parts.length >= 3) {
     const cand = parts[parts.length - 2]!; // segment before the method leaf
-    return isIdentifier(cand) ? cand : null;
+    return isEntityCandidate(cand) ? cand : null;
   }
   if (parts.length === 2) {
     const root = parts[0]!;
     // `User.findOne` — the root is the model when it isn't a technical receiver
     // and reads like a type name (Capitalised).
-    if (!NON_ENTITY_ROOTS.has(root.toLowerCase()) && /^[A-Z]/.test(root) && isIdentifier(root)) {
+    if (!NON_ENTITY_ROOTS.has(root.toLowerCase()) && /^[A-Z]/.test(root) && isEntityCandidate(root)) {
       return root;
     }
   }
@@ -167,6 +202,18 @@ function entitySegment(callName: string): string | null {
 
 function isIdentifier(s: string): boolean {
   return /^[A-Za-z_$][\w$]*$/.test(s) && !NON_ENTITY_ROOTS.has(s.toLowerCase());
+}
+
+/**
+ * A chain segment that can plausibly BE an entity/model. SCREAMING_SNAKE
+ * segments are constants (`RE_CPP_CLASSNAME.findall`), and `_`/`__`-prefixed
+ * segments are private internals (`this.__data__.get`) — neither is a model.
+ */
+function isEntityCandidate(s: string): boolean {
+  if (!isIdentifier(s)) return false;
+  if (/^[A-Z][A-Z0-9_]*$/.test(s) && s.includes("_")) return false;
+  if (s.startsWith("_")) return false;
+  return true;
 }
 
 function matchesDbNamespace(ns: string): boolean {

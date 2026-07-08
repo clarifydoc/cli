@@ -78,10 +78,13 @@ const ORM_METHODS = new Set([
   "findOneAndUpdate", "findOneAndDelete", "findOneAndRemove", "findOneAndReplace",
   "updateOne", "deleteOne", "replaceOne", "insertMany", "bulkWrite",
   "countDocuments", "estimatedDocumentCount", "distinct",
-  // Drizzle
-  "execute", "all", "get", "values", "returning",
-  // Knex / query builder
-  "insert", "del", "where", "join", "leftJoin", "rightJoin",
+  // Drizzle's `get`/`all`/`values`/`execute`/`returning` are NOT here: they
+  // collide with Map.get / Array-ish leaves on arbitrary receivers (phantom
+  // `this.__data__.get` "entities" from lodash internals). On a trusted ORM
+  // root (`db`, `prisma`, `*Repository`) ANY leaf already classifies as DB via
+  // the trustedRoot fallthrough in isOrmCall, so real Drizzle chains still count.
+  // Knex / query builder — bare `join` is dropped too (Array.prototype.join).
+  "insert", "del", "where", "leftJoin", "rightJoin",
 ]);
 
 // ─── Message queues (amqplib + kafkajs) ─────────────────────────────────────

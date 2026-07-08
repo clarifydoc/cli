@@ -3,7 +3,7 @@ export type Language =
   | "typescript" | "javascript" | "csharp" | "python" | "java" | "kotlin" | "pascal" | "dfm"
   | "go" | "rust" | "ruby" | "php" | "swift" | "lua" | "scala"
   | "perl" | "vb" | "sql" | "c" | "cpp" | "prisma" | "dart" | "elixir" | "erlang" | "objc"
-  | "haskell" | "clojure" | "blazor" | "html";
+  | "haskell" | "clojure" | "blazor" | "html" | "qml" | "qtui";
 
 export interface ExtractorWarning {
   /** Dotted-path location, e.g. "functions[3].endLine" or "routes[0].kind". */
@@ -277,6 +277,14 @@ export interface FileAnalysis {
   routes: RouteInfo[];
   dataSources: DataSourceInfo[];
   dataMutations: DataMutationInfo[];
+  /**
+   * Named string constants defined in this file (`#define CUE_TABLE "cues"`,
+   * `const QString kTable = QStringLiteral("x")`). Project-level enrichment
+   * resolves macro-valued dataSource targets/entities through the union of
+   * these maps (a DAO's table macro is usually defined in its header).
+   * Omitted when empty.
+   */
+  stringConstants?: Record<string, string>;
   subComponents: SubComponentInfo[];
   interactiveElements: InteractiveElementInfo[];
   /**
@@ -904,6 +912,7 @@ export interface Suggestion {
 export type SubProjectKind =
   | "node"
   | "dotnet"
+  | "cmake"
   | "delphi"
   | "lazarus"
   | "java-maven"

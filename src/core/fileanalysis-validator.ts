@@ -8,12 +8,14 @@ import type {
   RouteInfo,
   Confidence,
 } from "../types/analysis.js";
+import { EXTENSION_TO_LANGUAGE } from "../extractors/registry.js";
 
-const VALID_LANGUAGES: ReadonlySet<Language> = new Set<Language>([
-  "typescript", "javascript", "csharp", "python", "java", "kotlin",
-  "pascal", "dfm", "go", "rust", "ruby", "php", "swift", "lua",
-  "scala", "perl", "vb", "sql",
-]);
+// Derived from the plugin registry so it can never drift from the actual
+// language set again (a hand-maintained list here was missing cpp/c/objc/…,
+// stamping thousands of bogus "unknown language" warnings on C++ scans).
+const VALID_LANGUAGES: ReadonlySet<Language> = new Set<Language>(
+  Object.values(EXTENSION_TO_LANGUAGE),
+);
 
 const VALID_CALL_KINDS: ReadonlySet<CallInfo["kind"]> = new Set([
   "internal", "cross-file", "api-call", "database",

@@ -1,15 +1,18 @@
 import type { Node } from "web-tree-sitter";
 import type { DataMutationInfo, Language } from "../../../types/analysis.js";
 import { DataMutationExtractor } from "../../data-mutations/base.js";
+import { resolveCall } from "./data-sources.js";
 
 export class JavaKotlinMutationExtractor extends DataMutationExtractor {
   readonly languages: Language[] = ["java", "kotlin"];
 
   protected visitNode(node: Node, mutations: DataMutationInfo[]): void {
     if (node.type === "method_invocation" || node.type === "call_expression") {
-      const fnNode =
-        node.childForFieldName("name") ?? node.childForFieldName("function");
-      const fnName = fnNode?.text;
+      // Kotlin `call_expression` has NO name/function field — the callee is a
+      // navigation_expression/simple_identifier child. `resolveCall` handles
+      // both grammars (same fix data-sources needed; the field-based path here
+      // yielded zero Kotlin mutations).
+      const fnName = resolveCall(node)?.method;
 
       if (fnName) {
         // Repository/database writes

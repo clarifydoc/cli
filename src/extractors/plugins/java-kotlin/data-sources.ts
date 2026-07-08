@@ -245,7 +245,7 @@ function destinationLabel(arg: Node | null): string | null {
   return text && text.length <= 64 ? text : null;
 }
 
-interface CallParts {
+export interface CallParts {
   /** Bare method name (`selectFrom`, `findByEmail`). */
   method: string;
   /** Receiver text (`jdbcTemplate`, `JooqFactory.getDSL()`), "" when unqualified. */
@@ -258,7 +258,7 @@ interface CallParts {
  * Resolve method name / receiver / first-arg for both Java `method_invocation`
  * (field-based) and Kotlin `call_expression` (navigation_expression + call_suffix).
  */
-function resolveCall(node: Node): CallParts | null {
+export function resolveCall(node: Node): CallParts | null {
   if (node.type === "method_invocation") {
     const name = node.childForFieldName("name")?.text;
     if (!name) return null;
