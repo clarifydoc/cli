@@ -32,6 +32,8 @@ import { haskellMeta } from "./plugins/haskell/meta.js";
 import { clojureMeta } from "./plugins/clojure/meta.js";
 import { blazorMeta } from "./plugins/blazor/meta.js";
 import { htmlMeta } from "./plugins/html/meta.js";
+import { qmlMeta } from "./plugins/qml/meta.js";
+import { qtuiMeta } from "./plugins/qtui/meta.js";
 
 /**
  * The language plugin registry. Aggregates every plugin's LanguagePluginMeta
@@ -46,7 +48,7 @@ const ALL_METAS: LanguagePluginMeta[] = [
   phpMeta,
   goMeta, rustMeta, rubyMeta, swiftMeta, luaMeta, scalaMeta, perlMeta,
   vbMeta, sqlMeta, cMeta, cppMeta, prismaMeta, dartMeta, elixirMeta, erlangMeta, objcMeta,
-  haskellMeta, clojureMeta, blazorMeta, htmlMeta,
+  haskellMeta, clojureMeta, blazorMeta, htmlMeta, qmlMeta, qtuiMeta,
 ];
 
 const BY_LANGUAGE = new Map<Language, LanguagePluginMeta>();

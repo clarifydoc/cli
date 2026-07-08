@@ -30,6 +30,8 @@ export interface ProjectInfo {
   pubspecYaml: string | null;
   /** Any *.sql / *.ddl files discovered (used to detect raw-SQL usage in the project). */
   sqlFiles: string[];
+  /** Raw content of the root CMakeLists.txt if found (used for Qt/C++ framework detection). */
+  cmakeLists: string | null;
   /**
    * Framework marker files found at well-known relative paths — vendored
    * frameworks (CodeIgniter 2/3's `system/` tree) have no manifest entry, so

@@ -1,6 +1,39 @@
-import type { ParamInfo, PropertyInfo } from "../../../types/analysis.js";
+import type { ClassInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
+import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
+import { extractCppConnectElements } from "./connect-elements.js";
+
+/** `#define NAME "value"` — how DAOs name their tables (trackschema.h). */
+const DEFINE_STRING_RE = /^\s*#\s*define\s+([A-Za-z_]\w*)\s+"((?:[^"\\]|\\.)*)"\s*$/;
+/** `[static] const[expr] <type> NAME = [QStringLiteral(]"value"[)];` */
+const CONST_STRING_RE =
+  /^\s*(?:static\s+)?const(?:expr)?\s+[\w:<>]+\s*(?:\*|&)?\s*([A-Za-z_]\w*)(?:\[\])?\s*=\s*(?:QStringLiteral\s*\(\s*)?"((?:[^"\\]|\\.)*)"\s*\)?\s*;/;
+
+/** Named string constants — feeds project-level table-macro resolution. */
+export function extractCppStringConstants(lines: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of lines) {
+    const m = line.match(DEFINE_STRING_RE) ?? line.match(CONST_STRING_RE);
+    if (m && m[2] !== "") out[m[1]!] = m[2]!;
+  }
+  return out;
+}
+
+/** `QML_NAMED_ELEMENT(Name)` / `QML_ELEMENT` / `QML_SINGLETON` inside a class
+ *  body register the class as a QML type — tag it so the QML→C++ bridge
+ *  resolver can join component usages in .qml files onto this class. */
+export function tagQmlElementClasses(lines: string[], classes: ClassInfo[]): ClassInfo[] {
+  for (const cls of classes) {
+    for (let i = cls.line - 1; i < Math.min(cls.endLine, lines.length); i++) {
+      const named = lines[i]!.match(/^\s*QML_NAMED_ELEMENT\s*\(\s*(\w+)\s*\)/);
+      if (named) cls.decorators.push(`qml-element:${named[1]}`);
+      else if (/^\s*QML_ELEMENT\b/.test(lines[i]!)) cls.decorators.push(`qml-element:${cls.name}`);
+      if (/^\s*QML_SINGLETON\b/.test(lines[i]!)) cls.decorators.push("qml-singleton");
+    }
+  }
+  return classes;
+}
 
 function stripCppType(raw: string): string {
   // Drop namespace qualifier: `std::vector<User>` → `vector<User>` → `vector`
@@ -118,5 +151,17 @@ export const cppSpec: RegexLangSpec = {
       getSpecifiers: (m) => [m[1].split("::").pop()!],
     },
   ],
+
+  // Raw SQL in string literals — QSqlQuery prepare/exec, sqlite3, ODBC. This is
+  // how Qt desktop apps talk to their database (no ORM), so without it the
+  // whole DAO layer is invisible to the data-access graph.
+  extractDataSources: (lines) => extractSqlStringDataSources(lines),
+
+  postProcessClasses: tagQmlElementClasses,
+  extractStringConstants: extractCppStringConstants,
+
+  // Qt Widgets `connect(Widget, &QClass::signal, this, &Dlg::slot)` wiring —
+  // the handlers that Designer .ui forms don't carry (see connect-elements.ts).
+  extractInteractiveElements: extractCppConnectElements,
 
 };

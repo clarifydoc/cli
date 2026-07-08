@@ -410,6 +410,23 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     check: (info) => hasCargoDep(info, "sqlx") && !hasCargoDep(info, "sea-orm"),
     detectedVia: "Cargo.toml dependency",
   },
+  // Qt (C++ desktop) — find_package(Qt5/Qt6 …) in the root CMakeLists, or
+  // qmake project files alongside C++ sources.
+  {
+    id: "qt",
+    name: "Qt",
+    check: (info) =>
+      (!!info.cmakeLists && /find_package\s*\(\s*Qt[456]?/i.test(info.cmakeLists)) ||
+      info.fileExtensions.has(".qml") ||
+      info.fileExtensions.has(".pro"),
+    detectedVia: "CMakeLists find_package / .qml files",
+  },
+  {
+    id: "qt-quick",
+    name: "Qt Quick (QML)",
+    check: (info) => info.fileExtensions.has(".qml"),
+    detectedVia: ".qml files",
+  },
   // Raw SQL — surfaced when *.sql / *.ddl files exist
   {
     id: "sql",
@@ -781,6 +798,9 @@ export async function gatherProjectInfo(
   let pubspecYaml: string | null = null;
   try { pubspecYaml = await readFile(join(root, "pubspec.yaml"), "utf-8"); } catch { /* no pubspec.yaml */ }
 
+  let cmakeLists: string | null = null;
+  try { cmakeLists = await readFile(join(root, "CMakeLists.txt"), "utf-8"); } catch { /* no CMakeLists.txt */ }
+
   // Find .sql / .ddl files for raw-SQL framework detection
   const sqlFiles = await fg("**/*.{sql,ddl,dml,psql,tsql,plsql,mysql}", {
     cwd: root,
@@ -812,6 +832,7 @@ export async function gatherProjectInfo(
     gemfile,
     pubspecYaml,
     sqlFiles,
+    cmakeLists,
     markerFiles,
   };
 }

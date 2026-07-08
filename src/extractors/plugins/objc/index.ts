@@ -1,5 +1,6 @@
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import type { ClassInfo } from "../../../types/analysis.js";
+import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 
 /**
  * Objective-C regex spec. Claims `.m`/`.mm` only — `.h` headers are shared with
@@ -55,4 +56,7 @@ export const objcSpec: RegexLangSpec = {
       buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2] }),
     },
   ],
+
+  // Raw SQL in string literals (sqlite3 / FMDB-style executeQuery:@"SELECT …").
+  extractDataSources: (lines) => extractSqlStringDataSources(lines),
 };
