@@ -61,13 +61,11 @@ All take `FileAnalysis[]` and/or `componentGraph` and return typed results.
 
 ## Report
 
-[html-report.ts](html-report.ts) generates a self-contained HTML report with D3-based architecture graph, 11+ tabs (screens, traces, architecture, routes, health, patterns, security, complexity, suggestions, blast radius, overview). The CSS, HTML template, and client JS are all string concatenation — intentional to keep the report single-file and portable.
+**One renderer, two packagings.** The React viewer in `application/spa/src/report/` is THE report renderer. `report.html` is that same viewer built into a single self-contained file (react + d3 + dagre + css inlined, fully offline) with the payload JSON injected — report features are written ONCE, in the SPA viewer, then `npm run build:viewer` refreshes the standalone template.
 
-It is split into a `html-report/` subdirectory:
-
-- `html-report.ts` — thin entry: `generateHtmlReport`, `loadProjectSummary`, `renderReport` (assembles the payload + document). Public API unchanged.
-- `html-report/util.ts` (`esc`), `html-report/css.ts` (`renderCss`), `html-report/views.ts` (static tab-shell renderers).
-- `html-report/client/` — the ~5k-line client bundle sliced into ordered template-literal fragments (`runtime`, `filters`, `screens`, `ui`, `routes-summary`, `traces`, `arch-c4`, `arch-graph`, `arch-types`, `arch-data-access`, `data-model`, `health-blast`, `report-tabs`); `client/index.ts:renderClientJs()` joins them. **Order is load-bearing** (one shared `<script>` scope; hash-nav in `report-tabs` stays last). Fragments must stay **backtick-free**; `arch-c4` is the only fragment with a `${}` interpolation (`UNKNOWN_TARGET`). `fragments.test.ts` guards both invariants; `smoke.test.ts` renders a minimal report end-to-end.
+- `html-report.ts` — `generateHtmlReport` loads the prebuilt template from `html-report/viewer-assets/report-template.html` (committed; built by `npm run build:viewer`; mirrored into `dist/` by the root tsup `onSuccess` hook) and swaps `__REVERSEDOC_TITLE__` / `__REVERSEDOC_PAYLOAD__`. The payload embeds as **gzip+base64** (`encodeReportPayload`; ~10x smaller than inline JSON, no `<` so no HTML-escaping concerns) and `standalone.tsx` inflates it in the browser via the native `DecompressionStream`. Token replace uses a replacer *function* so `$&` can't corrupt. Also writes `report-data.json` (plain JSON — the server slices it) alongside `report.html`.
+- `report-payload.ts` — `buildReportPayload(summary)` reshapes a (denormalized) `ProjectAnalysis` into the `ReportPayload` the viewer consumes; `loadReportSummary(dir)` / `loadReportPayload(dir)` read it from disk (with the `lsp-enhancement.json` merge). The payload carries `deferredFields` so the server's slice cache follows the producer's list.
+- `smoke.test.ts` renders a minimal report end-to-end and round-trips hostile payload content through the encoder; `scripts/compare-report-payload.mjs` regenerates every corpus scan and verifies embedded-payload ↔ report-data.json parity (plus prints sizes).
 
 ## Adding a new analyzer
 
@@ -75,7 +73,7 @@ It is split into a `html-report/` subdirectory:
 2. Add the return type to [../types/analysis.ts](../types/analysis.ts) and add an optional field to `ProjectAnalysis`
 3. Wire into `analyzer.ts` post-analysis section (step 4c)
 4. Pass data to `suggestions-engine.ts` if it should drive suggestions
-5. Add view to `html-report.ts` — new tab, new render function, new client JS handler
+5. Add the view to the SPA report viewer (`application/spa/src/report/` — new tab in `ReportViewer.tsx` TABS + a tab component), then `npm run build:viewer` to refresh the standalone template
 6. Add exports to [../index.ts](../index.ts) if public API
 
 ## Conventions

@@ -5,6 +5,12 @@ export { parseSource, parseFile, runQuery } from "./parsers/parser-manager.js";
 export { parseDfm } from "./parsers/dfm-parser.js";
 export type { TSTree, TSNode, TSLanguage } from "./parsers/parser-manager.js";
 export { generateHtmlReport, type ReportOptions } from "./core/html-report.js";
+export {
+  buildReportPayload,
+  loadReportSummary,
+  loadReportPayload,
+  type ReportPayload,
+} from "./core/report-payload.js";
 export { detectDeployment, parseSimpleYaml } from "./core/deployment.js";
 export {
   normalizeProject,
