@@ -1,7 +1,33 @@
 import type { FileAnalysis, LinkInfo, LinkProximity, Confidence } from "../../types/analysis.js";
 import { posix } from "path";
 import { bestConfidence } from "./confidence.js";
-import { ALL_EXTERNAL_MODULE_PREFIXES, STRIP_SOURCE_EXTENSION_RE } from "../registry.js";
+// Registry-aggregated data, PUSHED here by the registry (same pattern as
+// call-patterns/parser-manager registration): this module is imported by
+// plugin code, and plugin metas are imported by the registry, so importing
+// the registry from here would close an ESM cycle and TDZ the plugin classes.
+// Deliberately null until registered — resolving with partial data would
+// silently mis-link, so consumers throw with an actionable message instead.
+let externalModulePrefixes: readonly string[] | null = null;
+let stripSourceExtensionReSlot: RegExp | null = null;
+
+/** Called once by the registry after aggregating every plugin's data. */
+export function registerLinkScoringData(
+  prefixes: readonly string[],
+  stripRe: RegExp,
+): void {
+  externalModulePrefixes = prefixes;
+  stripSourceExtensionReSlot = stripRe;
+}
+
+function requireRegistered<T>(value: T | null): T {
+  if (value === null) {
+    throw new Error(
+      "link-scoring: plugin-aggregated data not registered — import the plugin " +
+        'registry ("extractors/registry.js") before building link/path maps',
+    );
+  }
+  return value;
+}
 
 /** Lifecycle hooks — calls here run on mount/create → tight (1) */
 const LIFECYCLE_HOOKS = new Set([
@@ -233,7 +259,7 @@ export function buildFilePathMap(analyses: FileAnalysis[]): Map<string, string> 
   const map = new Map<string, string>();
   for (const a of analyses) {
     map.set(a.filePath, a.filePath);
-    const base = a.filePath.replace(STRIP_SOURCE_EXTENSION_RE, "");
+    const base = a.filePath.replace(requireRegistered(stripSourceExtensionReSlot), "");
     setPreferring(map, base, a.filePath);
     const noIndex = base.replace(/\/index$/, "");
     if (noIndex !== base) setPreferring(map, noIndex, a.filePath);
@@ -375,7 +401,7 @@ function tryMatch(candidate: string, filePathMap: Map<string, string>): string |
 }
 
 export function isExternalPackage(source: string): boolean {
-  return ALL_EXTERNAL_MODULE_PREFIXES.some(prefix =>
+  return requireRegistered(externalModulePrefixes).some(prefix =>
     source === prefix || source.startsWith(prefix + ".") || source.startsWith(prefix + "/")
   );
 }

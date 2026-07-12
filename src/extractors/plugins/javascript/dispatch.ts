@@ -21,6 +21,7 @@ import { resolveTarget, buildFilePathMap } from "../../shared/link-scoring.js";
  */
 export class JsComponentEmitResolver implements DispatchResolver {
   readonly languages: Language[] = ["typescript", "javascript"];
+  readonly priority = 30;
 
   resolve(analyses: FileAnalysis[]): SymbolLink[] {
     const filePathMap = buildFilePathMap(analyses);

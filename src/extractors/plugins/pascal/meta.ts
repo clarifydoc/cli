@@ -1,7 +1,12 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { parseDfm } from "../../../parsers/dfm-parser.js";
 import { pascalCallHooks } from "./call-hooks.js";
-import { pascalFrameworkRules } from "./frameworks.js";
+import { pascalManifest, dfmManifest } from "./manifest.js";
+import { PascalExtractor } from "./functions-classes.js";
+import { PascalImportExportExtractor } from "./imports-exports.js";
+import { PascalDataSourceExtractor } from "./data-sources.js";
+import { PascalMutationExtractor } from "./data-mutations.js";
+import { pascalRouteExtractor } from "./routes.js";
 
 const PASCAL_BUILTINS: ReadonlySet<string> = new Set<string>([
   "Integer", "Cardinal", "Word", "Byte", "ShortInt", "SmallInt", "LongInt",
@@ -17,20 +22,14 @@ const PASCAL_BUILTINS: ReadonlySet<string> = new Set<string>([
   "TStream", "TStringList", "TStrings", "TList", "TDateTime", "Exception",
 ]);
 
-const DELPHI_EXTERNAL_PREFIXES = [
-  "System.", "Vcl.", "Fmx.", "Data.", "Datasnap.", "EMS.", "Winapi.", "Posix.",
-  "IdHTTP", "IdTCP", "IdSSL",
-];
-
 export const pascalMeta: LanguagePluginMeta = {
-  language: "pascal",
-  parsing: "tree-sitter",
-  extensions: [".pas", ".pp", ".lpr", ".dpr", ".dpk"],
-  grammar: {
-    variants: { pascal: { pkg: "tree-sitter-pascal", wasm: "tree-sitter-pascal.wasm" } },
-  },
+  ...pascalManifest,
+  routes: pascalRouteExtractor,
+  functionsClasses: new PascalExtractor(),
+  importsExports: new PascalImportExportExtractor(),
+  dataSources: new PascalDataSourceExtractor(),
+  dataMutations: new PascalMutationExtractor(),
   builtinTypes: PASCAL_BUILTINS,
-  externalModulePrefixes: DELPHI_EXTERNAL_PREFIXES,
   complexity: {
     branchNodes: new Set([
       "ifStatement", "whileStatement", "forStatement",
@@ -41,8 +40,6 @@ export const pascalMeta: LanguagePluginMeta = {
   apiCallRoots: ["THTTPClient", "TRESTClient", "TIdHTTP"],
   dbCallRoots: ["Query", "Connection", "DataSet", "SQLQuery"],
   calls: pascalCallHooks,
-  // Family plugin: rules ride on the pascal meta only (never the .dfm resource meta).
-  frameworkRules: pascalFrameworkRules,
 };
 
 /**
@@ -51,10 +48,7 @@ export const pascalMeta: LanguagePluginMeta = {
  * they are excluded from import-path resolution and security scanning.
  */
 export const dfmMeta: LanguagePluginMeta = {
-  language: "dfm",
-  parsing: "custom",
-  extensions: [".dfm"],
-  importTarget: false,
+  ...dfmManifest,
   customParse: parseDfm,
   builtinTypes: PASCAL_BUILTINS,
   skipSecurityScan: true,

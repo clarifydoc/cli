@@ -2,7 +2,8 @@ import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { rustSpec } from "./index.js";
 import { cargoPackages } from "./packages.js";
-import { rustFrameworkRules } from "./frameworks.js";
+import { rustManifest } from "./manifest.js";
+import { RustEntityExtractor } from "./entities.js";
 
 const RUST_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -18,28 +19,17 @@ const RUST_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const rustMeta: LanguagePluginMeta = {
-  language: "rust",
-  parsing: "regex",
-  extensions: rustSpec.extensions,
+  ...rustManifest,
   regexSpec: rustSpec,
   builtinTypes: RUST_BUILTINS,
   knownPackages: cargoPackages,
-  frameworkRules: rustFrameworkRules,
-  externalModulePrefixes: [
-    "std::", "core::", "alloc::", "serde", "tokio", "actix", "rocket",
-    "hyper", "reqwest", "diesel", "sqlx",
-  ],
+  entities: new RustEntityExtractor(),
   complexity: {
     branchNodes: new Set([
       "if_expression", "while_expression", "for_expression", "loop_expression",
       "match_arm", "if_let_expression",
     ]),
     logicalOps: new Set(["&&", "||"]),
-  },
-  frameworkImportHints: {
-    "diesel": "diesel",
-    "sea_orm": "sea-orm",
-    "sqlx": "rust-sqlx",
   },
   // Call node types for when a tree-sitter grammar is wired up.
   calls: { callNodeTypes: new Set(["call_expression", "macro_invocation"]) },

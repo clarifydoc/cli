@@ -13,6 +13,13 @@ import type {
   PackageCategory,
 } from "./analysis.js";
 import type { ProjectInfo } from "./plugin.js";
+import type { RouteExtractor } from "../extractors/routes/base.js";
+import type { DataSourceExtractor } from "../extractors/data-sources/base.js";
+import type { DataMutationExtractor } from "../extractors/data-mutations/base.js";
+import type { EntityExtractor } from "../extractors/entities/base.js";
+import type { FunctionClassExtractor } from "../extractors/functions-classes/base.js";
+import type { ImportExportExtractor } from "../extractors/imports-exports/base.js";
+import type { DispatchResolver } from "../extractors/dispatch/base.js";
 
 /**
  * Framework-detection rule contributed by a language plugin for the ecosystem
@@ -219,16 +226,16 @@ export interface CallExtractionHooks {
 }
 
 /**
- * Per-language plugin metadata: everything the pipeline needs to know about
- * a language that isn't one of the five domain extractors (imports/exports,
- * functions/classes, routes, data sources, data mutations — those have their
- * own registries). One meta per Language; a plugin directory that covers a
- * language family (java-kotlin, javascript) exports one meta per member.
- *
- * Metas must stay leaf modules: import types, their own plugin code, and
- * shared leaf helpers only — never core or the registry.
+ * The STATIC tier of a language plugin — the cheap pure data the registry
+ * aggregates eagerly for every plugin, before (and without) loading any plugin
+ * body: file-extension ownership, grammar locations, framework-detection
+ * rules, import-resolution string lists. Lives in `plugins/<dir>/manifest.ts`,
+ * which must stay a leaf module importing only types and the plugin's
+ * `frameworks.ts`. Everything heavy (extractors, regex specs, AST hooks)
+ * belongs on `LanguagePluginMeta`, whose module is loaded lazily per language
+ * via `ensureLanguagesLoaded`.
  */
-export interface LanguagePluginMeta {
+export interface LanguagePluginManifest {
   language: Language;
   /** How files of this language are parsed. */
   parsing: "tree-sitter" | "regex" | "custom";
@@ -241,6 +248,8 @@ export interface LanguagePluginMeta {
    * their code counterpart and are never imported by name. Default: true.
    */
   importTarget?: boolean;
+  /** Tree-sitter grammar location(s) for `parsing: "tree-sitter"` languages. */
+  grammar?: GrammarSpec;
   /**
    * Language-specific filename/path patterns that mark a file as a test
    * (unit, integration, or e2e) — e.g. Go `_test.go`, JS `*_spec.js`/`*.cy.ts`,
@@ -251,21 +260,6 @@ export interface LanguagePluginMeta {
    * excluded from route extraction (see `extractRoutes` callers).
    */
   testFilePatterns?: readonly RegExp[];
-  /** Parser for `parsing: "custom"` formats (e.g. .dfm). */
-  customParse?(rawSource: string, relativePath: string): FileAnalysis;
-  /** Tree-sitter grammar location(s) for `parsing: "tree-sitter"` languages. */
-  grammar?: GrammarSpec;
-  /** Regex extraction spec for `parsing: "regex"` languages (and tree-sitter parse-failure fallback). */
-  regexSpec?: import("../extractors/plugins/shared/regex-base.js").RegexLangSpec;
-  /**
-   * Container-format preprocessing (e.g. Vue SFC): swap in the embedded
-   * source/language before parsing, or skip the file entirely.
-   * Return null to proceed with the file as-is.
-   */
-  preprocess?(rawSource: string, relativePath: string): PreprocessOutcome | { skip: string } | null;
-
-  /** Builtin/stdlib type names — never tracked as project type references. */
-  builtinTypes?: ReadonlySet<string>;
   /**
    * Builtin member/method names (`set.add`, `str.toUpperCase`) — a call whose
    * leaf is one of these never resolves to a project symbol by name-uniqueness
@@ -282,6 +276,63 @@ export interface LanguagePluginMeta {
    * directory-import resolution (e.g. "System", "java", "com").
    */
   externalNamespaceRoots?: readonly string[];
+  /** import source (exact, or prefix-matched with "/" or ".") → framework id. */
+  frameworkImportHints?: Readonly<Record<string, string>>;
+  /**
+   * Manifest-level framework rules for this plugin's ecosystem, evaluated per
+   * project root by `core/framework-detector`. Family plugins (javascript,
+   * java-kotlin, pascal) attach rules to ONE member manifest only, so the
+   * registry aggregates each rule exactly once.
+   */
+  frameworkRules?: readonly FrameworkRule[];
+  /**
+   * Well-known relative paths whose existence at a project root identifies a
+   * vendored framework that no manifest records (e.g. CodeIgniter 2/3's
+   * `system/` tree). Collected into `ProjectInfo.markerFiles` with a cheap
+   * existsSync per candidate; rules then match on membership.
+   */
+  markerCandidates?: readonly string[];
+  /**
+   * Root-level build-manifest filenames whose presence at the project root or
+   * a sub-project root activates (lazy-loads) this plugin even when no source
+   * file of the language was discovered — e.g. `go.mod` activates go so its
+   * `knownPackages` can classify the dependency inventory.
+   */
+  activationFiles?: readonly string[];
+  /**
+   * OTHER languages this plugin's `dispatchResolvers` act on (beyond its own).
+   * Discovering any of them lazy-loads this plugin too, so a cross-language
+   * resolver still runs when its owner's language is absent — e.g. csharp's
+   * UI-bridge resolver joins VB/XAML code-behind in a pure-VB MAUI project.
+   */
+  dispatchLanguages?: readonly Language[];
+}
+
+/**
+ * Per-language plugin metadata — the LAZY tier: everything the static
+ * manifest doesn't carry (domain extractors, regex specs, AST/call hooks,
+ * security rules, package knowledge). One meta per Language; a plugin
+ * directory that covers a language family (java-kotlin, javascript) exports
+ * one meta per member, each spreading its manifest so the static fields have
+ * a single source of truth.
+ *
+ * Metas must stay leaf modules: import types, their own plugin code, and
+ * shared leaf helpers only — never core or the registry.
+ */
+export interface LanguagePluginMeta extends LanguagePluginManifest {
+  /** Parser for `parsing: "custom"` formats (e.g. .dfm). */
+  customParse?(rawSource: string, relativePath: string): FileAnalysis;
+  /** Regex extraction spec for `parsing: "regex"` languages (and tree-sitter parse-failure fallback). */
+  regexSpec?: import("../extractors/plugins/shared/regex-base.js").RegexLangSpec;
+  /**
+   * Container-format preprocessing (e.g. Vue SFC): swap in the embedded
+   * source/language before parsing, or skip the file entirely.
+   * Return null to proceed with the file as-is.
+   */
+  preprocess?(rawSource: string, relativePath: string): PreprocessOutcome | { skip: string } | null;
+
+  /** Builtin/stdlib type names — never tracked as project type references. */
+  builtinTypes?: ReadonlySet<string>;
   /** Cyclomatic-complexity counting tables. */
   complexity?: LanguageComplexitySpec;
 
@@ -300,22 +351,6 @@ export interface LanguagePluginMeta {
    * the registry (frameworks win over plain categories on a name collision).
    */
   knownPackages?: readonly KnownPackageRule[];
-  /**
-   * Manifest-level framework rules for this plugin's ecosystem, evaluated per
-   * project root by `core/framework-detector`. Family plugins (javascript,
-   * java-kotlin, pascal) attach rules to ONE member meta only, so the registry
-   * aggregates each rule exactly once.
-   */
-  frameworkRules?: readonly FrameworkRule[];
-  /**
-   * Well-known relative paths whose existence at a project root identifies a
-   * vendored framework that no manifest records (e.g. CodeIgniter 2/3's
-   * `system/` tree). Collected into `ProjectInfo.markerFiles` with a cheap
-   * existsSync per candidate; rules then match on membership.
-   */
-  markerCandidates?: readonly string[];
-  /** import source (exact, or prefix-matched with "/" or ".") → framework id. */
-  frameworkImportHints?: Readonly<Record<string, string>>;
   /** Call roots that indicate an HTTP/API client (call-graph classification). */
   apiCallRoots?: readonly string[];
   /** Call roots that indicate a database/ORM object (call-graph classification). */
@@ -325,4 +360,32 @@ export interface LanguagePluginMeta {
   ast?: AstExtractorHooks;
   /** Call extraction/classification hooks (see shared/call-graph.ts). */
   calls?: CallExtractionHooks;
+
+  // ─── Domain extractors ───────────────────────────────────────────────────
+  // The per-file extraction categories, carried on the meta so it is the ONLY
+  // path from the registry to a plugin's heavy code (the domain index.ts files
+  // dispatch via `pluginFor(language)`, they import no plugin modules).
+  // Family plugins (javascript, java-kotlin) share ONE instance across their
+  // member metas — instance identity is how project-level passes
+  // (reconcileProjectEntities, resolveProjectDispatch) run each once.
+
+  /** Route/endpoint extractor for tree-sitter languages (regex languages use `regexSpec.extractRoutes`). */
+  routes?: RouteExtractor;
+  /** Data-source extractor (API calls, DB/ORM reads, env vars, queue pub/sub). */
+  dataSources?: DataSourceExtractor;
+  /** Data-mutation extractor (setState/dispatch/assignment sites). */
+  dataMutations?: DataMutationExtractor;
+  /** ORM entity + relation extractor. */
+  entities?: EntityExtractor;
+  /** Function/class extractor for tree-sitter languages. */
+  functionsClasses?: FunctionClassExtractor;
+  /** Import/export extractor for tree-sitter languages. */
+  importsExports?: ImportExportExtractor;
+  /**
+   * Project-level dispatch-indirection resolvers this plugin contributes
+   * (MediatR, component emits, UI bridges). A resolver spanning several
+   * languages rides on ONE owning meta; its `languages` field decides which
+   * analyses it sees, and its `priority` fixes cross-plugin output order.
+   */
+  dispatchResolvers?: readonly DispatchResolver[];
 }

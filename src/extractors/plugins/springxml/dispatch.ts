@@ -25,6 +25,7 @@ import { flowIdOf } from "./index.js";
  */
 export class WebflowUiBridgeResolver implements DispatchResolver {
   readonly languages: Language[] = ["springxml", "jsp", "java"];
+  readonly priority = 50;
 
   resolve(analyses: FileAnalysis[]): SymbolLink[] {
     const flows = analyses.filter((a) => a.language === "springxml" && a.functions.some((f) => f.name === "<flow>"));

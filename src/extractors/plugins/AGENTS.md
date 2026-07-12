@@ -9,7 +9,8 @@ Folders: `javascript/`, `python/`, `java-kotlin/`, `csharp/`, `pascal/`
 Contents (varies slightly per language):
 ```
 <lang>/
-├── meta.ts                   LanguagePluginMeta — tables, hooks, extensions (registered in ../registry.ts)
+├── manifest.ts               LanguagePluginManifest — STATIC tier (extensions, grammar, patterns, framework rules), eagerly aggregated
+├── meta.ts                   LanguagePluginMeta — LAZY tier (spreads the manifest + hooks/extractors), loaded via registry LOADERS
 ├── frameworks.ts             FrameworkRule[] — manifest-level framework detection for the ecosystem (optional)
 ├── functions-classes.ts      extends FunctionClassExtractor
 ├── imports-exports.ts        extends ImportExportExtractor
@@ -18,7 +19,7 @@ Contents (varies slightly per language):
 └── routes/                   framework-specific route extractors (optional)
 ```
 
-Each extractor class implements `abstract collectFunctions(node, results)` / `collectClasses` / `collectImports` / etc. using tree-sitter AST walking. The class is registered in the corresponding `src/extractors/<category>/index.ts`.
+Each extractor class implements `abstract collectFunctions(node, results)` / `collectClasses` / `collectImports` / etc. using tree-sitter AST walking. Instances are carried on the plugin's meta (`meta.functionsClasses`, `meta.importsExports`, `meta.routes`, `meta.dataSources`, `meta.dataMutations`, `meta.entities`, `meta.dispatchResolvers`) — the domain `src/extractors/<category>/index.ts` files dispatch via `pluginFor(language)` and import no plugin code. Family plugins share ONE instance across member metas (instance identity = run-once in project-level passes like `reconcileProjectEntities`); dispatch resolvers carry a `priority` that fixes cross-plugin link order.
 
 ## Regex plugins (source text–based)
 
@@ -81,9 +82,9 @@ like `knownPackages`. Notes:
 1. `npm install tree-sitter-<lang>` (or verify WASM is in a deps package)
 2. Add to `Language` type in [../../types/analysis.ts](../../types/analysis.ts)
 3. Create `src/extractors/plugins/<lang>/` with per-category extractors
-4. Register each extractor in `src/extractors/<category>/index.ts`
-5. Create `meta.ts` (`parsing: "tree-sitter"`, extensions, `grammar` — package + wasm location, with optional per-file variant selection like tsx — builtins, complexity tables, security rules, framework hints, ast hooks, and `calls` — at minimum `callNodeTypes`, plus name-resolution/scope hooks as needed; see `call-hooks.ts` in existing plugins) and add it to `ALL_METAS` in [../registry.ts](../registry.ts) — extensions, discovery, grammar loading, complexity, call extraction, and the rest flow from there
-6. If the ecosystem has detectable frameworks, add `frameworks.ts` (`FrameworkRule[]`) and wire `meta.frameworkRules` (see "Framework detection" above)
+4. Wire each extractor instance onto the meta (`functionsClasses`, `importsExports`, `routes`, `dataSources`, `dataMutations`, `entities`, `dispatchResolvers`)
+5. Create `manifest.ts` (the STATIC tier: `language`, `parsing`, extensions, `grammar` — package + wasm location, with optional per-file variant selection like tsx — test patterns, prefixes/roots, framework hints, `activationFiles`) and `meta.ts` (spreads the manifest, then adds builtins, complexity tables, security rules, ast hooks, and `calls` — at minimum `callNodeTypes`, plus name-resolution/scope hooks as needed; see `call-hooks.ts` in existing plugins). Register the manifest in `ALL_MANIFESTS` and the meta in `LOADERS` in [../registry.ts](../registry.ts) — extensions, discovery, grammar loading, complexity, call extraction, and the rest flow from there
+6. If the ecosystem has detectable frameworks, add `frameworks.ts` (`FrameworkRule[]`) and wire `manifest.frameworkRules` (see "Framework detection" above)
 
 ### Regex path (languages without reliable grammar)
 

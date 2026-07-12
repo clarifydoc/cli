@@ -1,5 +1,6 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { htmlSpec } from "./index.js";
+import { htmlManifest } from "./manifest.js";
 
 /**
  * Plain HTML pages (vanilla multi-page static sites). Each `.html` page becomes a
@@ -9,13 +10,6 @@ import { htmlSpec } from "./index.js";
  * local script imports.
  */
 export const htmlMeta: LanguagePluginMeta = {
-  language: "html",
-  parsing: "regex",
-  extensions: htmlSpec.extensions,
+  ...htmlManifest,
   regexSpec: htmlSpec,
-  // HTML pages are reached by `<a href>` navigation, not by module import, and a
-  // page often shares a basename stem with its sibling script (`index.html` /
-  // `index.js`) — keeping it out of the import path map avoids a basename
-  // collision that would mis-resolve `<script src>` includes.
-  importTarget: false,
 };

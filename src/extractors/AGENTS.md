@@ -21,13 +21,19 @@ extractors/
 
 Each of `imports-exports`, `functions-classes`, `data-sources`, `data-mutations`, `routes` has:
 - `base.ts` — abstract class / interface defining the plugin contract
-- `index.ts` — language-keyed dispatcher + `register*Extractor()` runtime registration
+- `index.ts` — thin dispatcher that looks up the plugin's extractor instance via
+  `pluginFor(language)` (`meta.functionsClasses`, `meta.routes`, …). Domain
+  index files import NO plugin code — the meta is the only path from the
+  registry to a plugin's implementation.
 
 ## The registry (registry.ts)
 
 Each plugin directory exports a `LanguagePluginMeta` from `meta.ts` (see
 [../types/language-plugin.ts](../types/language-plugin.ts)) carrying everything
-language-specific that isn't one of the five domain extractors:
+language-specific, including the domain extractor instances
+(`functionsClasses`, `importsExports`, `routes`, `dataSources`,
+`dataMutations`, `entities`, `dispatchResolvers` — family plugins share one
+instance across member metas) plus:
 
 - `extensions` + `parsing` ("tree-sitter" | "regex" | "custom") — drives discovery and `file-analyzer`'s parse strategy
 - `grammar` (tree-sitter wasm location + per-file variant selection), `regexSpec` (RegexLangSpec), `customParse` (dedicated parsers like .dfm), `preprocess` (container formats like Vue SFC)
@@ -37,15 +43,41 @@ language-specific that isn't one of the five domain extractors:
 - `ast` hooks: `typeReferences`, `interactiveElements`, `subComponents`, `events`, `variableAliases`
 - `calls` hooks: `callNodeTypes`, scope/callback node types, name resolution, auto-imported classification
 
-`registry.ts` aggregates the metas into the lookups core consumes
-(`EXTENSION_TO_LANGUAGE`, `STRIP_SOURCE_EXTENSION_RE`, `ALL_EXTERNAL_MODULE_PREFIXES`,
-`EXTERNAL_NAMESPACE_ROOT_RE`, `inferFileFrameworks`, `securityRulesFor`,
-`complexityFor`, `pluginFor`, `astHooksFor`) and pushes data into the leaf
-modules plugin code itself imports (`shared/builtin-types.ts`,
-`shared/call-patterns.ts`).
+**Two tiers.** Each plugin also has a `manifest.ts` — the STATIC tier
+(`LanguagePluginManifest`): extensions, parsing kind, grammar location,
+test-file patterns, external prefixes/roots, builtin members, framework
+import hints, `frameworks.ts` rules, `activationFiles`, `dispatchLanguages`.
+The registry imports every manifest EAGERLY and builds the module-scope
+constants from them (`EXTENSION_TO_LANGUAGE`, `STRIP_SOURCE_EXTENSION_RE`,
+`ALL_EXTERNAL_MODULE_PREFIXES`, `EXTERNAL_NAMESPACE_ROOT_RE`,
+`ALL_BUILTIN_MEMBERS`, `FRAMEWORK_RULES`, `testFilePatternsFor`,
+`inferFileFrameworks`). Manifests are leaf modules: types + the plugin's
+`frameworks.ts` only. Each meta spreads its manifest so static fields have one
+source of truth.
+
+The metas (LAZY tier) sit behind a static thunk map (`LOADERS`) of dynamic
+imports — tsup's ESM code splitting emits one chunk per plugin. `await
+ensureLanguagesLoaded(langs)` (or `loadAllPlugins()`) populates `pluginFor`;
+the analyzer calls it after file discovery with the discovered languages ∪
+`ACTIVATION_FILE_LANGUAGES` hits (go.mod → go, …) ∪ dispatch couplings
+(`manifest.dispatchLanguages` — a vb project loads csharp so its UI-bridge
+resolver runs). `analyzeFile` self-activates per file as a safety net.
+`pluginFor` THROWS for a registered-but-unloaded language (silent undefined
+would quietly degrade extraction); vitest loads everything via
+`src/test-setup.ts`. Lazy-tier accessors: `pluginFor`, `astHooksFor`,
+`complexityFor`, `regexSpecFor`, `securityRulesFor`, `classifyKnownPackage`
+(rebuilt from loaded metas in manifest order), `allPluginMetas` (loaded metas,
+manifest order).
+
+The registry also pushes data into the leaf modules plugin code itself
+imports (`shared/builtin-types.ts`, `shared/call-patterns.ts`,
+`shared/link-scoring.ts` — these must NOT import the registry: plugin code
+imports them and the registry imports the metas, so a static import back
+would close an ESM cycle and TDZ plugin classes).
 
 **Adding a language**: create `plugins/<lang>/` with the domain extractors you
-support, a `meta.ts`, and add the meta to `ALL_METAS` in `registry.ts`.
+support, a `manifest.ts` + `meta.ts` (meta spreads the manifest), and register
+BOTH in `registry.ts` — the manifest in `ALL_MANIFESTS`, the meta in `LOADERS`.
 
 **Layering rule**: metas are leaf modules — they import types, their own plugin
 code, and leaf shared helpers, never core or the registry. Core never names a
@@ -63,12 +95,9 @@ export abstract class FunctionClassExtractor {
   protected abstract collectClasses(node, classes): void;
 }
 
-// index.ts — dispatcher
-const extractorMap = new Map<Language, FunctionClassExtractor>();
-for (const ext of extractors) for (const lang of ext.languages) extractorMap.set(lang, ext);
-
+// index.ts — dispatcher (no plugin imports; instances live on the metas)
 export function extractFunctions(tree, sourceText, language): FunctionInfo[] {
-  return extractorMap.get(language)?.extractFunctions(tree, sourceText) ?? [];
+  return pluginFor(language)?.functionsClasses?.extractFunctions(tree, sourceText) ?? [];
 }
 ```
 
@@ -105,7 +134,7 @@ Regex-path languages (Go, Ruby, PHP) extract routes inside their `plugins/<lang>
 ## entities/ (ORM entities + relations)
 
 `entities/base.ts` defines `EntityExtractor`; each plugin subclasses it in
-`plugins/<lang>/entities.ts` and registers in `entities/index.ts`. Two surfaces:
+`plugins/<lang>/entities.ts` and wires the instance as `meta.entities`. Two surfaces:
 
 - **`extract(ctx)`** — per file: emit entity `ClassInfo`s (merged into
   `analysis.classes` by name) + `EntityRelation`s. This is where the bulk of

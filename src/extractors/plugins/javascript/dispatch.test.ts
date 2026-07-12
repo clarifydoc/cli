@@ -1,4 +1,8 @@
 import { describe, it, expect } from "vitest";
+// Side-effect: the resolver builds file-path maps via link-scoring, whose
+// plugin-aggregated data (extension strip regex, external prefixes) is pushed
+// in by the registry.
+import "../../registry.js";
 import { JsComponentEmitResolver } from "./dispatch.js";
 import type { FileAnalysis } from "../../../types/analysis.js";
 

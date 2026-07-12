@@ -1,5 +1,6 @@
 import { readFile } from "fs/promises";
-import { resolve as pathResolve } from "path";
+import { resolve as pathResolve, join } from "path";
+import { existsSync } from "fs";
 import { discoverFiles, type DiscoveryOptions, type DiscoveredFile } from "./file-discovery.js";
 import {
   EXTRACTOR_VERSION,
@@ -37,7 +38,12 @@ import { analyzeFile, type FileTask, type FileResult } from "./file-analyzer.js"
 import { AnalysisWorkerPool } from "./worker-pool.js";
 import { loadTsconfigAliases } from "../extractors/shared/tsconfig-aliases.js";
 import { buildLinkGraph, isExternalPackage } from "../extractors/shared/link-scoring.js";
-import { STRIP_SOURCE_EXTENSION_RE, EXTERNAL_NAMESPACE_ROOT_RE } from "../extractors/registry.js";
+import {
+  STRIP_SOURCE_EXTENSION_RE,
+  EXTERNAL_NAMESPACE_ROOT_RE,
+  ACTIVATION_FILE_LANGUAGES,
+  ensureLanguagesLoaded,
+} from "../extractors/registry.js";
 import { buildSymbolLinks } from "./symbol-linker.js";
 import { aggregateComplexity } from "./complexity-analyzer.js";
 import { detectPatterns } from "./pattern-detector.js";
@@ -295,6 +301,23 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // so framework detection can scan each sub-project's own (often nested) manifests.
   progress.step("Detecting sub-projects...");
   const subProjects = await detectSubProjects(projectRoot);
+
+  // Step 2a: Lazily load the language plugins this project actually needs —
+  // the languages of the discovered files, plus ecosystems whose build
+  // manifests exist at the analyzed root or a sub-project root (go.mod →
+  // go, pom.xml → java, …) so their `knownPackages` classify the dependency
+  // inventory even with no source files of that language. Framework
+  // detection needs no plugin bodies (rules are static-tier), but Step 2c
+  // and everything after assume the plugins are loaded.
+  const activationLangs = new Set(files.map((f) => f.language));
+  for (const rel of ["", ...subProjects.map((sp) => sp.root)]) {
+    for (const [name, langs] of ACTIVATION_FILE_LANGUAGES) {
+      if (existsSync(join(projectRoot, ...(rel ? [rel] : []), name))) {
+        for (const lang of langs) activationLangs.add(lang);
+      }
+    }
+  }
+  await ensureLanguagesLoaded(activationLangs);
 
   // Step 2b: Detect frameworks at the root AND inside each sub-project root.
   progress.step("Detecting frameworks...");

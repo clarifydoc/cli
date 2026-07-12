@@ -2,7 +2,7 @@ import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { cppSpec } from "./index.js";
 import { nativePackages } from "./packages.js";
 import { C_BUILTINS } from "../c/meta.js";
-import { cppFrameworkRules } from "./frameworks.js";
+import { cppManifest } from "./manifest.js";
 
 const CPP_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...C_BUILTINS,
@@ -18,11 +18,8 @@ const CPP_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const cppMeta: LanguagePluginMeta = {
-  language: "cpp",
-  parsing: "regex",
-  extensions: cppSpec.extensions,
+  ...cppManifest,
   regexSpec: cppSpec,
   knownPackages: nativePackages,
   builtinTypes: CPP_BUILTINS,
-  frameworkRules: cppFrameworkRules,
 };

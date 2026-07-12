@@ -23,6 +23,7 @@ export class CsharpUiBridgeResolver implements DispatchResolver {
   // VB is included for MAUI/WPF projects with VB code-behind — the partial-class
   // join is language-agnostic (classes + methods).
   readonly languages: Language[] = ["csharp", "vb", "xaml"];
+  readonly priority = 20;
 
   resolve(analyses: FileAnalysis[]): SymbolLink[] {
     // class name → declaring analyses (with the class itself).
