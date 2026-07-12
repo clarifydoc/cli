@@ -86,8 +86,18 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
 
     // Languages without tree-sitter grammars: use regex extraction
     if (filePlugin?.parsing === "regex") {
+      // Content-sniffing preprocess, mirroring the tree-sitter path below: a
+      // plugin that claims a broad extension (springxml claims `.xml`) skips
+      // the files that aren't its format instead of emitting empty analyses.
+      const pre = filePlugin.preprocess?.(rawSource, file.relativePath);
+      if (pre && "skip" in pre) {
+        if (verbose) console.log(`    Skipping ${file.relativePath}: ${pre.skip}`);
+        return null;
+      }
+      const regexSource = pre?.sourceText ?? rawSource;
       const { extractWithRegex } = await import("./regex-extractor.js");
-      const analysis = extractWithRegex(rawSource, file.relativePath, file.language);
+      const analysis = extractWithRegex(regexSource, file.relativePath, pre?.language ?? file.language);
+      pre?.postExtract?.(analysis, rawSource);
       analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
       analysis.projectId = projectId;
       applyTsconfigAliasesToImports(analysis);
@@ -220,6 +230,10 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
 
     // Extract interactive elements (buttons, inputs, forms with event bindings)
     analysis.interactiveElements = hooks?.interactiveElements?.(tree, sourceText) ?? [];
+
+    // Designer screens embedded in source files (e.g. WinForms *.Designer.cs).
+    const hookScreens = hooks?.screens?.(tree, sourceText, file.relativePath);
+    if (hookScreens && hookScreens.length > 0) analysis.screens = hookScreens;
 
     // Nested component tree from the AST (React JSX, Angular inline templates).
     // Vue/Svelte SFCs populate this from their preprocess postExtract instead,

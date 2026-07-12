@@ -83,6 +83,12 @@ export interface AstExtractorHooks {
   typeReferences?(tree: Tree, filePath: string): TypeReference[];
   /** Interactive UI elements (buttons, inputs with handlers) from the AST. */
   interactiveElements?(tree: Tree, sourceText: string): InteractiveElementInfo[];
+  /**
+   * UI screens for tree-sitter languages with designer/markup code embedded in
+   * source files (e.g. WinForms `*.Designer.cs`). Regex-path languages use
+   * `RegexLangSpec.extractScreens` instead.
+   */
+  screens?(tree: Tree, sourceText: string, filePath: string): import("./analysis.js").ScreenInfo[];
   /** Rendered sub-components (e.g. JSX <UserTable />). */
   subComponents?(tree: Tree, sourceText: string, imports: ImportInfo[]): SubComponentInfo[];
   /**

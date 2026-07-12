@@ -1,14 +1,18 @@
 import type { FileAnalysis, SymbolLink } from "../../types/analysis.js";
 import type { DispatchResolver } from "./base.js";
 import { CSharpMediatrResolver } from "../plugins/csharp/dispatch.js";
+import { CsharpUiBridgeResolver } from "../plugins/csharp/ui-bridge.js";
 import { JsComponentEmitResolver } from "../plugins/javascript/dispatch.js";
 import { QmlCppBridgeResolver } from "../plugins/qml/dispatch.js";
+import { WebflowUiBridgeResolver } from "../plugins/springxml/dispatch.js";
 
 /** All registered dispatch-indirection resolvers (one per language pattern). */
 const resolvers: DispatchResolver[] = [
   new CSharpMediatrResolver(),
+  new CsharpUiBridgeResolver(),
   new JsComponentEmitResolver(),
   new QmlCppBridgeResolver(),
+  new WebflowUiBridgeResolver(),
 ];
 
 /**
