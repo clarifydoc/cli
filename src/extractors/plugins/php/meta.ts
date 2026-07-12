@@ -2,6 +2,7 @@ import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { phpCallHooks } from "./call-hooks.js";
 import { composerPackages } from "./packages.js";
+import { extractBladeScreens, extractBladeInteractiveElements } from "./blade.js";
 
 const PHP_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -39,6 +40,12 @@ export const phpMeta: LanguagePluginMeta = {
     "Propel": "propel",
     "Propel\\Runtime": "propel",
     "Envms\\FluentPDO": "fluentpdo",
+  },
+  ast: {
+    // Blade templates (.blade.php) surface as UI screens; interactive elements
+    // are content-gated on Blade directives (the hook receives no file path).
+    screens: (_tree, sourceText, filePath) => extractBladeScreens(sourceText, filePath),
+    interactiveElements: (_tree, sourceText) => extractBladeInteractiveElements(sourceText),
   },
   calls: phpCallHooks,
 };

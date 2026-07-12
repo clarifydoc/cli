@@ -260,7 +260,7 @@ const INFRA_FAMILIES: Array<{ re: RegExp; kind: DeployedServiceKind; family: str
   { re: /kafka|redpanda/i, kind: "queue", family: "kafka" },
   { re: /activemq|artemis|nats(?![a-z])|mosquitto|emqx/i, kind: "queue", family: "mq" },
   { re: /redis|keydb|valkey|memcached/i, kind: "cache", family: "redis" },
-  { re: /traefik|haproxy|envoy/i, kind: "proxy", family: "proxy" },
+  { re: /traefik|haproxy|envoy|nginx|ingress/i, kind: "proxy", family: "proxy" },
   { re: /graylog|grafana|prometheus|jaeger|zipkin|kibana|loki/i, kind: "observability", family: "observability" },
 ];
 
@@ -340,11 +340,15 @@ const EXTERNAL_KEY_RE = /(url|uri|baseurl|base_url|endpoint|issuer|host)$/i;
 /** Placeholder vars that are credentials/coordinates, not database identity. */
 const CREDENTIAL_VAR_RE = /(^|_)(user|users|username|password|pass|pwd|secret|host|port|server)$/i;
 
-/** Logical database name from a connection var: `PLAN_DB_CONNECTIONSTRING` → `plan`. */
+/**
+ * Logical database name from a connection var: `PLAN_DB_CONNECTIONSTRING` →
+ * `plan`. Separators include `-`/`.` because k8s secret references synthesize
+ * placeholders like `${user-api-db.connection-string}`.
+ */
 function dbNameFromVar(varName: string): string | undefined {
   const name = varName
-    .replace(/_?(db)?_?connection_?string$/i, "")
-    .replace(/_?db$/i, "")
+    .replace(/[-_.]?(db)?[-_.]?connection[-_.]?string$/i, "")
+    .replace(/[-_.]?db$/i, "")
     .toLowerCase();
   if (!name || name.length < 2 || CREDENTIAL_VAR_RE.test(name)) return undefined;
   return name;
@@ -723,6 +727,13 @@ export async function detectDeployment(
     if (s.bus && queues.length > 0) {
       addEdge({ from: svc.name, to: queues[0].name, kind: "bus" });
     }
+  }
+
+  // ── k8s Ingress edges: front door → the workload each rule routes to ──
+  for (const e of k8s?.ingressEdges ?? []) {
+    const target = k8s?.aliases.get(e.to) ?? e.to;
+    if (!svcByLower.has(target.toLowerCase())) continue;
+    addEdge({ from: canon(e.from), to: canon(target), kind: "http", label: e.host, via: "ingress" });
   }
 
   // ── depends_on (weakest evidence; only for pairs with no better edge) ──

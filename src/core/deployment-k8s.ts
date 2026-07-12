@@ -38,7 +38,7 @@ import {
 
 const WORKLOAD_KINDS = new Set(["Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob"]);
 const K8S_SNIFF_RE = /^\s*apiVersion\s*:/m;
-const K8S_KIND_RE = /^\s*kind\s*:\s*(Deployment|StatefulSet|DaemonSet|Job|CronJob|Service|ConfigMap)\s*$/m;
+const K8S_KIND_RE = /^\s*kind\s*:\s*(Deployment|StatefulSet|DaemonSet|Job|CronJob|Service|ConfigMap|Ingress)\s*$/m;
 
 // ─── Safe YAML traversal ─────────────────────────────────────────────────────
 
@@ -120,7 +120,12 @@ export function renderHelmTemplate(text: string, chart: ChartContext | undefined
 
 // ─── Workload → RawService ──────────────────────────────────────────────────
 
-/** k8s container env: `- name: K` with `value:` (valueFrom entries are opaque). */
+/**
+ * k8s container env. `value:` literals pass through; `valueFrom` secret /
+ * ConfigMap references synthesize a `${refName.key}` placeholder — the secret
+ * VALUE is unknowable, but its NAME carries identity (`user-api-db` /
+ * `plan-connection`) that the evidence engine's placeholder inference reads.
+ */
 function containerEnv(container: YamlMap): Record<string, string> {
   const out: Record<string, string> = {};
   for (const item of asList(container.env)) {
@@ -128,7 +133,18 @@ function containerEnv(container: YamlMap): Record<string, string> {
     const name = asString(m?.name);
     if (!name) continue;
     const value = m ? m.value : undefined;
-    if (typeof value === "string") out[name] = value;
+    if (typeof value === "string" && value) {
+      out[name] = value;
+      continue;
+    }
+    for (const refKind of ["secretKeyRef", "configMapKeyRef"] as const) {
+      const refName = asString(dig(m, "valueFrom", refKind, "name"));
+      if (refName) {
+        const key = asString(dig(m, "valueFrom", refKind, "key"));
+        out[name] = "${" + refName + (key ? "." + key : "") + "}";
+        break;
+      }
+    }
   }
   return out;
 }
@@ -183,6 +199,11 @@ export interface K8sManifests {
   groups: RawService[][];
   /** k8s Service name → workload name (URL hosts point at Service DNS names). */
   aliases: Map<string, string>;
+  /**
+   * Ingress → backend edges. `to` is the k8s SERVICE name as written in the
+   * Ingress rule — the caller resolves it through `aliases` onto the workload.
+   */
+  ingressEdges: Array<{ from: string; to: string; host?: string }>;
 }
 
 /**
@@ -233,6 +254,7 @@ export async function collectK8sManifests(
   const files: string[] = [];
   const groups: RawService[][] = [];
   const aliases = new Map<string, string>();
+  const ingressEdges: Array<{ from: string; to: string; host?: string }> = [];
   // ConfigMaps pool across all manifests — envFrom references resolve by name.
   const configMaps = new Map<string, Record<string, string>>();
   const pending: Array<{ file: string; docs: K8sDoc[] }> = [];
@@ -301,6 +323,31 @@ export async function collectK8sManifests(
       workloadsByFile.push({ name, labels: podLabels(kind, doc) });
     }
 
+    // Ingress: the cluster's front door — one proxy node + an http edge per
+    // backend service its rules route to (v1 `backend.service.name`, with the
+    // v1beta1 `backend.serviceName` fallback).
+    for (const { kind, name, doc } of docs) {
+      if (kind !== "Ingress") continue;
+      const backends = new Set<string>();
+      let host: string | undefined;
+      for (const rule of asList(dig(doc, "spec", "rules"))) {
+        const r = asMap(rule);
+        host ??= asString(r?.host);
+        for (const p of asList(dig(r, "http", "paths"))) {
+          const backend = asMap(dig(asMap(p), "backend"));
+          const svc =
+            asString(dig(backend, "service", "name")) ?? asString(backend?.serviceName);
+          if (svc) backends.add(svc);
+        }
+      }
+      const def = asMap(dig(doc, "spec", "defaultBackend"));
+      const defSvc = asString(dig(def, "service", "name")) ?? asString(def?.serviceName);
+      if (defSvc) backends.add(defSvc);
+      if (backends.size === 0) continue;
+      group.push({ name, file, env: {}, dependsOn: [] });
+      for (const to of backends) ingressEdges.push({ from: name, to, host });
+    }
+
     // Service → workload aliases: every selector entry must match a pod label.
     for (const { kind, name, doc } of docs) {
       if (kind !== "Service") continue;
@@ -340,5 +387,5 @@ export async function collectK8sManifests(
     }
   }
 
-  return groups.length > 0 ? { files, groups, aliases } : undefined;
+  return groups.length > 0 ? { files, groups, aliases, ingressEdges } : undefined;
 }

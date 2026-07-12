@@ -56,6 +56,36 @@ let app = Router::new()
   });
 });
 
+describe("Rust routes: axum .nest() prefix resolution", () => {
+  it("applies same-file nest prefixes to routes declared in the nested fn, transitively", () => {
+    const routes = extractRustRoutes(lines(`
+fn item_routes() -> Router {
+    Router::new()
+        .route("/", get(list_items))
+        .route("/:id", get(get_item))
+}
+
+fn user_routes() -> Router {
+    Router::new()
+        .route("/", get(list_users))
+        .nest("/items", item_routes())
+}
+
+pub fn app() -> Router {
+    Router::new()
+        .route("/health", get(health))
+        .nest("/api/users", user_routes())
+}
+`));
+    expect(routes.map((r) => `${r.httpMethod} ${r.path}`).sort()).toEqual([
+      "GET /api/users",
+      "GET /api/users/items",
+      "GET /api/users/items/:id",
+      "GET /health",
+    ].sort());
+  });
+});
+
 describe("Rust data sources", () => {
   it("normalizes r#\"...\"# raw strings into per-line quoted fragments", () => {
     const norm = normalizeRawStrings('sqlx::query(r#"SELECT id\nFROM orders"#)');

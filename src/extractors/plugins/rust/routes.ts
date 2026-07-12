@@ -12,8 +12,11 @@ import type { RouteInfo } from "../../../types/analysis.js";
  *   - axum:       Router::new().route("/users", get(list).post(create)) —
  *                 one route per method-router verb on the line
  *
- * axum `.nest("/api", other_router)` prefixes require cross-variable router
- * resolution and are out of scope here (logged as a gap).
+ * axum `.nest("/api", user_routes())` composes when the nested router is
+ * built by a SAME-FILE function: routes remember which `fn` they were declared
+ * in, nest calls map that fn to a prefix (transitively — a nest inside a
+ * nested fn chains), and prefixes are applied in a second pass. Cross-file
+ * nesting stays out of scope.
  */
 
 /** `#[get("/path")]` / `#[rocket::get("/path?<q>")]` — actix & Rocket verb macros. */
@@ -26,6 +29,10 @@ const AXUM_ROUTE_RE = /\.\s*route\s*\(\s*"([^"]+)"\s*,(.*)$/;
 const AXUM_VERB_RE = /\b(get|post|put|patch|delete|head|options)\s*\(\s*([\w:]+)?/g;
 
 const FN_RE = /\bfn\s+(\w+)/;
+/** Top-level fn declaration — marks route-ownership scope for nest resolution. */
+const FN_DEF_RE = /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(\w+)/;
+/** `.nest("/api", user_routes())` / `.nest("/api", routes::users())`. */
+const NEST_RE = /\.\s*nest\s*\(\s*"([^"]+)"\s*,\s*(?:\w+::)*(\w+)/;
 
 /** Rocket `<id>` / `<id..>` path params → `{id}` (the normalizer's wildcard form). */
 function normalizeParams(path: string): string {
@@ -46,10 +53,23 @@ function fnBelow(lines: string[], attrLine: number): string | null {
 
 export function extractRustRoutes(lines: string[]): RouteInfo[] {
   const routes: RouteInfo[] = [];
+  /** Owning fn per emitted axum route (parallel to `routes`; "" = top level). */
+  const routeOwner: string[] = [];
+  /** fn name → { prefix, owner } from the FIRST `.nest("/p", fn())` naming it. */
+  const nests = new Map<string, { prefix: string; owner: string }>();
+  let currentFn = "";
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     const lineNo = i + 1;
+
+    const fnDef = line.match(FN_DEF_RE);
+    if (fnDef) currentFn = fnDef[1]!;
+
+    const nest = line.match(NEST_RE);
+    if (nest && !nests.has(nest[2]!)) {
+      nests.set(nest[2]!, { prefix: nest[1]!, owner: currentFn });
+    }
 
     const verbAttr = line.match(ATTR_VERB_RE);
     if (verbAttr) {
@@ -62,6 +82,7 @@ export function extractRustRoutes(lines: string[]): RouteInfo[] {
         middleware: [],
         line: lineNo,
       });
+      routeOwner.push(currentFn);
       continue;
     }
 
@@ -79,6 +100,7 @@ export function extractRustRoutes(lines: string[]): RouteInfo[] {
           middleware: [],
           line: lineNo,
         });
+        routeOwner.push(currentFn);
       }
       continue;
     }
@@ -97,7 +119,25 @@ export function extractRustRoutes(lines: string[]): RouteInfo[] {
           middleware: [],
           line: lineNo,
         });
+        routeOwner.push(currentFn);
       }
+    }
+  }
+
+  // Apply nest prefixes: a route declared in fn F gets F's (transitive) nest
+  // prefix — `.nest("/api", user_routes())` inside a fn that is itself nested
+  // chains outward. Cycle-guarded; unnested fns resolve to "".
+  const resolvePrefix = (fn: string, seen: Set<string>): string => {
+    const n = nests.get(fn);
+    if (!n || seen.has(fn)) return "";
+    seen.add(fn);
+    return resolvePrefix(n.owner, seen) + n.prefix;
+  };
+  for (let i = 0; i < routes.length; i++) {
+    const prefix = resolvePrefix(routeOwner[i]!, new Set());
+    if (prefix) {
+      const joined = (prefix + routes[i]!.path).replace(/\/{2,}/g, "/").replace(/\/+$/, "");
+      routes[i]!.path = joined || "/";
     }
   }
 
