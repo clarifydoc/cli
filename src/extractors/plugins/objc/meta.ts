@@ -2,6 +2,7 @@ import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { objcSpec } from "./index.js";
 import { objcPackages } from "./packages.js";
+import { objcManifest } from "./manifest.js";
 
 const OBJC_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -14,18 +15,9 @@ const OBJC_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const objcMeta: LanguagePluginMeta = {
-  language: "objc",
-  parsing: "regex",
-  extensions: objcSpec.extensions,
+  ...objcManifest,
   regexSpec: objcSpec,
-  // XCTest specs: `FooTests.m`, `FooTest.m`.
-  testFilePatterns: [/Tests?\.mm?$/],
   builtinTypes: OBJC_BUILTINS,
   knownPackages: objcPackages,
-  externalNamespaceRoots: ["NS", "UI", "CG", "CA", "CF"],
-  externalModulePrefixes: [
-    "Foundation", "UIKit", "AppKit", "CoreData", "CoreGraphics", "CoreFoundation",
-    "QuartzCore", "AVFoundation", "MapKit", "WebKit", "Security",
-  ],
   apiCallRoots: ["AFHTTPSessionManager", "NSURLSession", "NSURLConnection"],
 };

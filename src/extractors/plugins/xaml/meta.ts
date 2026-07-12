@@ -1,5 +1,6 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { xamlSpec } from "./index.js";
+import { xamlManifest } from "./manifest.js";
 
 /**
  * XAML UI markup (WPF / Avalonia / MAUI / WinUI). Screens + interactive
@@ -8,12 +9,6 @@ import { xamlSpec } from "./index.js";
  * CsharpUiBridgeResolver.
  */
 export const xamlMeta: LanguagePluginMeta = {
-  language: "xaml",
-  parsing: "regex",
-  extensions: xamlSpec.extensions,
+  ...xamlManifest,
   regexSpec: xamlSpec,
-  // Markup is never an import target; the code-behind shares its basename
-  // (`MainWindow.axaml` / `MainWindow.axaml.cs`), so keeping .xaml out of the
-  // import path map avoids collisions (mirrors the qtui/dfm handling).
-  importTarget: false,
 };

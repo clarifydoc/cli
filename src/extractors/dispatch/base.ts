@@ -16,6 +16,13 @@ export interface DispatchResolver {
   readonly languages: Language[];
 
   /**
+   * Run order across ALL resolvers (lower runs first). Observable: synthetic
+   * links are appended in resolver order, so the order must be stable
+   * regardless of which plugin meta carries the resolver.
+   */
+  readonly priority: number;
+
+  /**
    * Inspect the (already per-file analyzed) project and return extra symbol
    * links bridging dispatch sites to their handlers. Must be side-effect free.
    */

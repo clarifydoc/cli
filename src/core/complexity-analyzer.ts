@@ -1,6 +1,7 @@
 import type { FunctionInfo, ClassInfo, ComplexityInfo, FileComplexityInfo, Language } from "../types/analysis.js";
 import type { TSTree, TSNode } from "../parsers/parser-manager.js";
-import { complexityFor, DEFAULT_COMPLEXITY, pluginFor } from "../extractors/registry.js";
+import { complexityFor, pluginFor } from "../extractors/registry.js";
+import { DEFAULT_COMPLEXITY } from "../extractors/shared/complexity-defaults.js";
 
 /** Count branch nodes in a subtree */
 function countBranches(node: TSNode, language: string): number {

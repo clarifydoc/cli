@@ -1,6 +1,7 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { cSpec } from "./index.js";
+import { cManifest } from "./manifest.js";
 
 export const C_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -11,9 +12,7 @@ export const C_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const cMeta: LanguagePluginMeta = {
-  language: "c",
-  parsing: "regex",
-  extensions: cSpec.extensions,
+  ...cManifest,
   regexSpec: cSpec,
   builtinTypes: C_BUILTINS,
 };

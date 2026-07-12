@@ -1,27 +1,27 @@
 import type { FileAnalysis, SymbolLink } from "../../types/analysis.js";
 import type { DispatchResolver } from "./base.js";
-import { CSharpMediatrResolver } from "../plugins/csharp/dispatch.js";
-import { CsharpUiBridgeResolver } from "../plugins/csharp/ui-bridge.js";
-import { JsComponentEmitResolver } from "../plugins/javascript/dispatch.js";
-import { QmlCppBridgeResolver } from "../plugins/qml/dispatch.js";
-import { WebflowUiBridgeResolver } from "../plugins/springxml/dispatch.js";
-
-/** All registered dispatch-indirection resolvers (one per language pattern). */
-const resolvers: DispatchResolver[] = [
-  new CSharpMediatrResolver(),
-  new CsharpUiBridgeResolver(),
-  new JsComponentEmitResolver(),
-  new QmlCppBridgeResolver(),
-  new WebflowUiBridgeResolver(),
-];
+import { allPluginMetas } from "../registry.js";
 
 /**
- * Run every dispatch resolver over the project and return the synthetic
- * caller→handler symbol links they find. Each resolver only sees analyses for
- * its own languages; core never names a framework itself (mirrors
- * `reconcileProjectEntities`).
+ * Run every plugin-contributed dispatch resolver (`meta.dispatchResolvers`)
+ * over the project and return the synthetic caller→handler symbol links they
+ * find. Each resolver only sees analyses for its own languages; core never
+ * names a framework itself (mirrors `reconcileProjectEntities`). Resolvers run
+ * in `priority` order so the emitted link order is stable regardless of which
+ * plugin meta carries a resolver.
  */
 export function resolveProjectDispatch(analyses: FileAnalysis[]): SymbolLink[] {
+  const resolvers: DispatchResolver[] = [];
+  const seen = new Set<DispatchResolver>();
+  for (const meta of allPluginMetas()) {
+    for (const r of meta.dispatchResolvers ?? []) {
+      if (seen.has(r)) continue;
+      seen.add(r);
+      resolvers.push(r);
+    }
+  }
+  resolvers.sort((a, b) => a.priority - b.priority);
+
   const out: SymbolLink[] = [];
   for (const r of resolvers) {
     const langs = new Set(r.languages);

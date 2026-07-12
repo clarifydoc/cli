@@ -2,6 +2,7 @@ import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { scalaSpec } from "./index.js";
 import { scalaPackages } from "./packages.js";
+import { scalaManifest } from "./manifest.js";
 
 const SCALA_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -13,9 +14,7 @@ const SCALA_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const scalaMeta: LanguagePluginMeta = {
-  language: "scala",
-  parsing: "regex",
-  extensions: scalaSpec.extensions,
+  ...scalaManifest,
   regexSpec: scalaSpec,
   knownPackages: scalaPackages,
   builtinTypes: SCALA_BUILTINS,

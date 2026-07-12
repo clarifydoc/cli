@@ -3,7 +3,13 @@ import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { phpCallHooks } from "./call-hooks.js";
 import { composerPackages } from "./packages.js";
 import { extractBladeScreens, extractBladeInteractiveElements } from "./blade.js";
-import { phpFrameworkRules, phpMarkerCandidates } from "./frameworks.js";
+import { phpManifest } from "./manifest.js";
+import { PhpExtractor } from "./functions-classes.js";
+import { PhpImportExportExtractor } from "./imports-exports.js";
+import { PhpDataSourceExtractor } from "./data-sources.js";
+import { PhpMutationExtractor } from "./data-mutations.js";
+import { PhpEntityExtractor } from "./entities.js";
+import { phpRouteExtractor } from "./routes/index.js";
 
 const PHP_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -16,33 +22,21 @@ const PHP_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const phpMeta: LanguagePluginMeta = {
-  language: "php",
-  parsing: "tree-sitter",
-  extensions: [".php"],
-  // PHPUnit: `FooTest.php`, `FooTestCase.php`.
-  testFilePatterns: [/(Test|TestCase)\.php$/],
-  grammar: {
-    variants: { php: { pkg: "tree-sitter-php", wasm: "tree-sitter-php.wasm" } },
-  },
+  ...phpManifest,
+  routes: phpRouteExtractor,
+  functionsClasses: new PhpExtractor(),
+  importsExports: new PhpImportExportExtractor(),
+  dataSources: new PhpDataSourceExtractor(),
+  dataMutations: new PhpMutationExtractor(),
+  entities: new PhpEntityExtractor(),
   builtinTypes: PHP_BUILTINS,
   knownPackages: composerPackages,
-  frameworkRules: phpFrameworkRules,
-  markerCandidates: phpMarkerCandidates,
-  externalModulePrefixes: ["Illuminate\\", "Symfony\\", "Doctrine\\", "Laravel\\"],
   complexity: {
     branchNodes: new Set([
       "if_statement", "while_statement", "for_statement", "foreach_statement",
       "switch_case", "catch_clause",
     ]),
     logicalOps: new Set(["&&", "||", "??"]),
-  },
-  frameworkImportHints: {
-    "Doctrine\\ORM": "doctrine",
-    "Illuminate\\Database": "eloquent",
-    "Illuminate\\Database\\Eloquent": "eloquent",
-    "Propel": "propel",
-    "Propel\\Runtime": "propel",
-    "Envms\\FluentPDO": "fluentpdo",
   },
   ast: {
     // Blade templates (.blade.php) surface as UI screens; interactive elements

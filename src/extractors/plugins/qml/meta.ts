@@ -1,6 +1,7 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { qmlSpec } from "./index.js";
-import { qmlFrameworkRules } from "./frameworks.js";
+import { qmlManifest } from "./manifest.js";
+import { QmlCppBridgeResolver } from "./dispatch.js";
 
 /**
  * QML (Qt Quick) — declarative UI files of Qt desktop/mobile apps. Each `.qml`
@@ -9,17 +10,7 @@ import { qmlFrameworkRules } from "./frameworks.js";
  * interaction signal handlers (`onClicked:` …) become interactive elements.
  */
 export const qmlMeta: LanguagePluginMeta = {
-  language: "qml",
-  parsing: "regex",
-  extensions: qmlSpec.extensions,
+  ...qmlManifest,
   regexSpec: qmlSpec,
-  frameworkImportHints: {
-    QtQuick: "qt-quick",
-  },
-  frameworkRules: qmlFrameworkRules,
-  // QML components reference each other by TYPE NAME (implicit directory
-  // import), not by module path — `import "Theme"` points at a directory.
-  // Keeping .qml out of the import path map avoids basename collisions with
-  // same-named JS helpers.
-  importTarget: false,
+  dispatchResolvers: [new QmlCppBridgeResolver()],
 };

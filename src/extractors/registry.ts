@@ -1,107 +1,270 @@
 import type { Language, PackageCategory } from "../types/analysis.js";
-import type { LanguagePluginMeta, LanguageComplexitySpec, SecurityRule, AstExtractorHooks, FrameworkRule } from "../types/language-plugin.js";
+import type {
+  LanguagePluginMeta,
+  LanguagePluginManifest,
+  LanguageComplexitySpec,
+  SecurityRule,
+  AstExtractorHooks,
+  FrameworkRule,
+} from "../types/language-plugin.js";
 import type { RegexLangSpec } from "./plugins/shared/regex-base.js";
 import { registerBuiltinTypes } from "./shared/builtin-types.js";
 import { registerCallPatterns } from "./shared/call-patterns.js";
 import { registerCallExtraction } from "./shared/call-graph.js";
+import { registerLinkScoringData } from "./shared/link-scoring.js";
 import { registerGrammar } from "../parsers/parser-manager.js";
 
-import { typescriptMeta, javascriptMeta } from "./plugins/javascript/meta.js";
-import { csharpMeta } from "./plugins/csharp/meta.js";
-import { pythonMeta } from "./plugins/python/meta.js";
-import { javaMeta, kotlinMeta } from "./plugins/java-kotlin/meta.js";
-import { pascalMeta, dfmMeta } from "./plugins/pascal/meta.js";
-import { phpMeta } from "./plugins/php/meta.js";
-import { goMeta } from "./plugins/go/meta.js";
-import { rustMeta } from "./plugins/rust/meta.js";
-import { rubyMeta } from "./plugins/ruby/meta.js";
-import { swiftMeta } from "./plugins/swift/meta.js";
-import { luaMeta } from "./plugins/lua/meta.js";
-import { scalaMeta } from "./plugins/scala/meta.js";
-import { perlMeta } from "./plugins/perl/meta.js";
-import { vbMeta } from "./plugins/vb/meta.js";
-import { sqlMeta } from "./plugins/sql/meta.js";
-import { cMeta } from "./plugins/c/meta.js";
-import { cppMeta } from "./plugins/cpp/meta.js";
-import { prismaMeta } from "./plugins/prisma/meta.js";
-import { dartMeta } from "./plugins/dart/meta.js";
-import { elixirMeta } from "./plugins/elixir/meta.js";
-import { erlangMeta } from "./plugins/erlang/meta.js";
-import { objcMeta } from "./plugins/objc/meta.js";
-import { haskellMeta } from "./plugins/haskell/meta.js";
-import { clojureMeta } from "./plugins/clojure/meta.js";
-import { blazorMeta } from "./plugins/blazor/meta.js";
-import { htmlMeta } from "./plugins/html/meta.js";
-import { qmlMeta } from "./plugins/qml/meta.js";
-import { qtuiMeta } from "./plugins/qtui/meta.js";
-import { xamlMeta } from "./plugins/xaml/meta.js";
-import { jspMeta } from "./plugins/jsp/meta.js";
-import { springxmlMeta } from "./plugins/springxml/meta.js";
+// ─── Static tier: plugin manifests (eager, cheap) ─────────────────────────
+// Each plugin's manifest.ts is a leaf module carrying only pure data —
+// extensions, grammar locations, framework rules, import-resolution string
+// lists. The heavy plugin bodies (meta.ts and everything they import) load
+// lazily via the thunk map below.
 
-/**
- * The language plugin registry. Aggregates every plugin's LanguagePluginMeta
- * into the lookup structures the (language-agnostic) core consumes. Adding a
- * language = create `plugins/<lang>/meta.ts` and list it here.
- */
-const ALL_METAS: LanguagePluginMeta[] = [
-  typescriptMeta, javascriptMeta,
-  csharpMeta, pythonMeta,
-  javaMeta, kotlinMeta,
-  pascalMeta, dfmMeta,
-  phpMeta,
-  goMeta, rustMeta, rubyMeta, swiftMeta, luaMeta, scalaMeta, perlMeta,
-  vbMeta, sqlMeta, cMeta, cppMeta, prismaMeta, dartMeta, elixirMeta, erlangMeta, objcMeta,
-  haskellMeta, clojureMeta, blazorMeta, htmlMeta, qmlMeta, qtuiMeta, xamlMeta,
-  jspMeta, springxmlMeta,
+import { typescriptManifest, javascriptManifest } from "./plugins/javascript/manifest.js";
+import { csharpManifest } from "./plugins/csharp/manifest.js";
+import { pythonManifest } from "./plugins/python/manifest.js";
+import { javaManifest, kotlinManifest } from "./plugins/java-kotlin/manifest.js";
+import { pascalManifest, dfmManifest } from "./plugins/pascal/manifest.js";
+import { phpManifest } from "./plugins/php/manifest.js";
+import { goManifest } from "./plugins/go/manifest.js";
+import { rustManifest } from "./plugins/rust/manifest.js";
+import { rubyManifest } from "./plugins/ruby/manifest.js";
+import { swiftManifest } from "./plugins/swift/manifest.js";
+import { luaManifest } from "./plugins/lua/manifest.js";
+import { scalaManifest } from "./plugins/scala/manifest.js";
+import { perlManifest } from "./plugins/perl/manifest.js";
+import { vbManifest } from "./plugins/vb/manifest.js";
+import { sqlManifest } from "./plugins/sql/manifest.js";
+import { cManifest } from "./plugins/c/manifest.js";
+import { cppManifest } from "./plugins/cpp/manifest.js";
+import { prismaManifest } from "./plugins/prisma/manifest.js";
+import { dartManifest } from "./plugins/dart/manifest.js";
+import { elixirManifest } from "./plugins/elixir/manifest.js";
+import { erlangManifest } from "./plugins/erlang/manifest.js";
+import { objcManifest } from "./plugins/objc/manifest.js";
+import { haskellManifest } from "./plugins/haskell/manifest.js";
+import { clojureManifest } from "./plugins/clojure/manifest.js";
+import { blazorManifest } from "./plugins/blazor/manifest.js";
+import { htmlManifest } from "./plugins/html/manifest.js";
+import { qmlManifest } from "./plugins/qml/manifest.js";
+import { qtuiManifest } from "./plugins/qtui/manifest.js";
+import { xamlManifest } from "./plugins/xaml/manifest.js";
+import { jspManifest } from "./plugins/jsp/manifest.js";
+import { springxmlManifest } from "./plugins/springxml/manifest.js";
+
+/** All plugin manifests, in registration order (order is observable — keep stable). */
+const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
+  typescriptManifest, javascriptManifest,
+  csharpManifest, pythonManifest,
+  javaManifest, kotlinManifest,
+  pascalManifest, dfmManifest,
+  phpManifest,
+  goManifest, rustManifest, rubyManifest, swiftManifest, luaManifest, scalaManifest, perlManifest,
+  vbManifest, sqlManifest, cManifest, cppManifest, prismaManifest, dartManifest, elixirManifest, erlangManifest, objcManifest,
+  haskellManifest, clojureManifest, blazorManifest, htmlManifest, qmlManifest, qtuiManifest, xamlManifest,
+  jspManifest, springxmlManifest,
 ];
 
+const MANIFEST_BY_LANGUAGE = new Map<Language, LanguagePluginManifest>();
+for (const manifest of ALL_MANIFESTS) {
+  MANIFEST_BY_LANGUAGE.set(manifest.language, manifest);
+  registerGrammar(manifest.language, manifest.grammar);
+}
+
+/** Manifest for a language (static data — always available, no load needed). */
+export function manifestFor(language: Language): LanguagePluginManifest | undefined {
+  return MANIFEST_BY_LANGUAGE.get(language);
+}
+
+// ─── Lazy tier: plugin metas behind a static thunk map ────────────────────
+// One loader per plugin DIRECTORY (family plugins load all member metas at
+// once). The thunks are statically analyzable so bundlers (tsup/esbuild with
+// ESM code splitting) emit one lazy chunk per plugin.
+
+interface PluginLoader {
+  readonly languages: readonly Language[];
+  readonly load: () => Promise<readonly LanguagePluginMeta[]>;
+}
+
+const LOADERS: readonly PluginLoader[] = [
+  { languages: ["typescript", "javascript"], load: () => import("./plugins/javascript/meta.js").then((m) => [m.typescriptMeta, m.javascriptMeta]) },
+  { languages: ["csharp"], load: () => import("./plugins/csharp/meta.js").then((m) => [m.csharpMeta]) },
+  { languages: ["python"], load: () => import("./plugins/python/meta.js").then((m) => [m.pythonMeta]) },
+  { languages: ["java", "kotlin"], load: () => import("./plugins/java-kotlin/meta.js").then((m) => [m.javaMeta, m.kotlinMeta]) },
+  { languages: ["pascal", "dfm"], load: () => import("./plugins/pascal/meta.js").then((m) => [m.pascalMeta, m.dfmMeta]) },
+  { languages: ["php"], load: () => import("./plugins/php/meta.js").then((m) => [m.phpMeta]) },
+  { languages: ["go"], load: () => import("./plugins/go/meta.js").then((m) => [m.goMeta]) },
+  { languages: ["rust"], load: () => import("./plugins/rust/meta.js").then((m) => [m.rustMeta]) },
+  { languages: ["ruby"], load: () => import("./plugins/ruby/meta.js").then((m) => [m.rubyMeta]) },
+  { languages: ["swift"], load: () => import("./plugins/swift/meta.js").then((m) => [m.swiftMeta]) },
+  { languages: ["lua"], load: () => import("./plugins/lua/meta.js").then((m) => [m.luaMeta]) },
+  { languages: ["scala"], load: () => import("./plugins/scala/meta.js").then((m) => [m.scalaMeta]) },
+  { languages: ["perl"], load: () => import("./plugins/perl/meta.js").then((m) => [m.perlMeta]) },
+  { languages: ["vb"], load: () => import("./plugins/vb/meta.js").then((m) => [m.vbMeta]) },
+  { languages: ["sql"], load: () => import("./plugins/sql/meta.js").then((m) => [m.sqlMeta]) },
+  { languages: ["c"], load: () => import("./plugins/c/meta.js").then((m) => [m.cMeta]) },
+  { languages: ["cpp"], load: () => import("./plugins/cpp/meta.js").then((m) => [m.cppMeta]) },
+  { languages: ["prisma"], load: () => import("./plugins/prisma/meta.js").then((m) => [m.prismaMeta]) },
+  { languages: ["dart"], load: () => import("./plugins/dart/meta.js").then((m) => [m.dartMeta]) },
+  { languages: ["elixir"], load: () => import("./plugins/elixir/meta.js").then((m) => [m.elixirMeta]) },
+  { languages: ["erlang"], load: () => import("./plugins/erlang/meta.js").then((m) => [m.erlangMeta]) },
+  { languages: ["objc"], load: () => import("./plugins/objc/meta.js").then((m) => [m.objcMeta]) },
+  { languages: ["haskell"], load: () => import("./plugins/haskell/meta.js").then((m) => [m.haskellMeta]) },
+  { languages: ["clojure"], load: () => import("./plugins/clojure/meta.js").then((m) => [m.clojureMeta]) },
+  { languages: ["blazor"], load: () => import("./plugins/blazor/meta.js").then((m) => [m.blazorMeta]) },
+  { languages: ["html"], load: () => import("./plugins/html/meta.js").then((m) => [m.htmlMeta]) },
+  { languages: ["qml"], load: () => import("./plugins/qml/meta.js").then((m) => [m.qmlMeta]) },
+  { languages: ["qtui"], load: () => import("./plugins/qtui/meta.js").then((m) => [m.qtuiMeta]) },
+  { languages: ["xaml"], load: () => import("./plugins/xaml/meta.js").then((m) => [m.xamlMeta]) },
+  { languages: ["jsp"], load: () => import("./plugins/jsp/meta.js").then((m) => [m.jspMeta]) },
+  { languages: ["springxml"], load: () => import("./plugins/springxml/meta.js").then((m) => [m.springxmlMeta]) },
+];
+
+const LOADER_BY_LANGUAGE = new Map<Language, PluginLoader>();
+for (const loader of LOADERS) {
+  for (const lang of loader.languages) LOADER_BY_LANGUAGE.set(lang, loader);
+}
+
+/**
+ * language → loaders of OTHER plugins whose dispatch resolvers act on it
+ * (`manifest.dispatchLanguages`). Requesting "vb" must also load csharp so
+ * its UI-bridge resolver runs — matching the eager-registry behavior where
+ * every resolver saw every project.
+ */
+const DISPATCH_COUPLED_LOADERS = new Map<Language, PluginLoader[]>();
+for (const manifest of ALL_MANIFESTS) {
+  for (const lang of manifest.dispatchLanguages ?? []) {
+    const owner = LOADER_BY_LANGUAGE.get(manifest.language);
+    if (!owner) continue;
+    if (!DISPATCH_COUPLED_LOADERS.has(lang)) DISPATCH_COUPLED_LOADERS.set(lang, []);
+    DISPATCH_COUPLED_LOADERS.get(lang)!.push(owner);
+  }
+}
+
 const BY_LANGUAGE = new Map<Language, LanguagePluginMeta>();
-for (const meta of ALL_METAS) {
+const loadedLoaders = new Set<PluginLoader>();
+const inflight = new Map<PluginLoader, Promise<void>>();
+
+/** Fold one just-loaded meta into the per-language lookups and push registrations. */
+function registerMeta(meta: LanguagePluginMeta): void {
   BY_LANGUAGE.set(meta.language, meta);
   if (meta.builtinTypes) registerBuiltinTypes(meta.language, meta.builtinTypes);
   registerCallPatterns(meta.language, meta.apiCallRoots, meta.dbCallRoots);
   registerCallExtraction(meta.language, meta.calls);
-  registerGrammar(meta.language, meta.grammar);
+  if (meta.securityRules && meta.securityRules.length > 0) {
+    SECURITY_RULES_BY_LANGUAGE.set(meta.language, [...meta.securityRules].sort((a, b) => a.priority - b.priority));
+  }
+  knownPackagesDirty = true;
 }
 
-/** Meta for a language, or undefined for unregistered languages. */
+/**
+ * Lazily load the plugin bodies for the given languages (idempotent, safe to
+ * call concurrently). Languages without a registered plugin are ignored.
+ * Family plugins load all member metas together. Call this after file
+ * discovery with the project's language set (plus `ACTIVATION_FILE_LANGUAGES`
+ * hits) — every synchronous accessor below assumes the language was loaded.
+ */
+export async function ensureLanguagesLoaded(languages: Iterable<Language>): Promise<void> {
+  const wanted = new Set<PluginLoader>();
+  for (const lang of languages) {
+    const loader = LOADER_BY_LANGUAGE.get(lang);
+    if (loader) wanted.add(loader);
+    for (const coupled of DISPATCH_COUPLED_LOADERS.get(lang) ?? []) wanted.add(coupled);
+  }
+
+  const pending: Promise<void>[] = [];
+  for (const loader of wanted) {
+    if (loadedLoaders.has(loader)) continue;
+    let p = inflight.get(loader);
+    if (!p) {
+      p = loader.load().then((metas) => {
+        for (const meta of metas) registerMeta(meta);
+        loadedLoaders.add(loader);
+        inflight.delete(loader);
+      });
+      inflight.set(loader, p);
+    }
+    pending.push(p);
+  }
+  if (pending.length > 0) await Promise.all(pending);
+}
+
+/** Load every registered plugin (tests, and tools that can see any language). */
+export async function loadAllPlugins(): Promise<void> {
+  await ensureLanguagesLoaded(MANIFEST_BY_LANGUAGE.keys());
+}
+
+/**
+ * Root-level build-manifest filename → languages it activates (`go.mod` → go),
+ * aggregated from every plugin manifest's `activationFiles`. The analyzer
+ * checks these at the project root and each sub-project root so a plugin's
+ * `knownPackages` participate in the dependency inventory even when no source
+ * file of the language was discovered.
+ */
+export const ACTIVATION_FILE_LANGUAGES: ReadonlyMap<string, readonly Language[]> = (() => {
+  const map = new Map<string, Language[]>();
+  for (const manifest of ALL_MANIFESTS) {
+    for (const file of manifest.activationFiles ?? []) {
+      if (!map.has(file)) map.set(file, []);
+      map.get(file)!.push(manifest.language);
+    }
+  }
+  return map;
+})();
+
+/**
+ * Meta for a language. Returns undefined for languages with no registered
+ * plugin; THROWS for a registered language whose body hasn't been loaded —
+ * silently returning undefined there would degrade extraction quietly.
+ */
 export function pluginFor(language: Language): LanguagePluginMeta | undefined {
-  return BY_LANGUAGE.get(language);
+  const meta = BY_LANGUAGE.get(language);
+  if (!meta && MANIFEST_BY_LANGUAGE.has(language)) {
+    throw new Error(
+      `Plugin for language "${language}" is not loaded — await ensureLanguagesLoaded([...]) ` +
+        `(or loadAllPlugins() in tests) before using extraction paths.`,
+    );
+  }
+  return meta;
+}
+
+/**
+ * Every LOADED plugin meta, in manifest registration order (stable regardless
+ * of load order). Project-level passes iterate this; unloaded plugins have no
+ * analyzed files, so their absence is correct.
+ */
+export function allPluginMetas(): readonly LanguagePluginMeta[] {
+  const out: LanguagePluginMeta[] = [];
+  for (const manifest of ALL_MANIFESTS) {
+    const meta = BY_LANGUAGE.get(manifest.language);
+    if (meta) out.push(meta);
+  }
+  return out;
 }
 
 /** AST extractor hooks for a language (undefined when the plugin has none). */
 export function astHooksFor(language: Language): AstExtractorHooks | undefined {
-  return BY_LANGUAGE.get(language)?.ast;
+  return pluginFor(language)?.ast;
 }
 
 /** Complexity tables for a language (undefined when the plugin has none). */
 export function complexityFor(language: string): LanguageComplexitySpec | undefined {
-  return BY_LANGUAGE.get(language as Language)?.complexity;
+  return pluginFor(language as Language)?.complexity;
 }
-
-/**
- * Default complexity tables for languages that haven't declared their own —
- * C-family branch/operator names, which most grammars share.
- */
-export const DEFAULT_COMPLEXITY: LanguageComplexitySpec = (() => {
-  const spec = BY_LANGUAGE.get("typescript")?.complexity;
-  if (!spec) throw new Error("typescript plugin must declare complexity tables (used as the default)");
-  return spec;
-})();
 
 /** Regex extraction spec for a language (undefined when the plugin has none). */
 export function regexSpecFor(language: Language): RegexLangSpec | undefined {
-  return BY_LANGUAGE.get(language)?.regexSpec;
+  return pluginFor(language)?.regexSpec;
 }
 
 // ─── Extensions ──────────────────────────────────────────────────────────
 
-/** File extension (with dot) → language, aggregated from every plugin. */
+/** File extension (with dot) → language, aggregated from every plugin manifest. */
 export const EXTENSION_TO_LANGUAGE: Readonly<Record<string, Language>> = (() => {
   const map: Record<string, Language> = {};
-  for (const meta of ALL_METAS) {
-    for (const ext of meta.extensions) {
-      map[ext] = meta.language;
+  for (const manifest of ALL_MANIFESTS) {
+    for (const ext of manifest.extensions) {
+      map[ext] = manifest.language;
     }
   }
   return map;
@@ -115,9 +278,9 @@ export const EXTENSION_TO_LANGUAGE: Readonly<Record<string, Language>> = (() => 
  */
 export const STRIP_SOURCE_EXTENSION_RE: RegExp = (() => {
   const exts: string[] = [];
-  for (const meta of ALL_METAS) {
-    if (meta.importTarget === false) continue;
-    for (const ext of meta.extensions) {
+  for (const manifest of ALL_MANIFESTS) {
+    if (manifest.importTarget === false) continue;
+    for (const ext of manifest.extensions) {
       exts.push(ext.slice(1)); // drop the leading dot
     }
   }
@@ -130,8 +293,8 @@ export const STRIP_SOURCE_EXTENSION_RE: RegExp = (() => {
 export const ALL_EXTERNAL_MODULE_PREFIXES: readonly string[] = (() => {
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const meta of ALL_METAS) {
-    for (const prefix of meta.externalModulePrefixes ?? []) {
+  for (const manifest of ALL_MANIFESTS) {
+    for (const prefix of manifest.externalModulePrefixes ?? []) {
       if (!seen.has(prefix)) {
         seen.add(prefix);
         out.push(prefix);
@@ -148,8 +311,8 @@ export const ALL_EXTERNAL_MODULE_PREFIXES: readonly string[] = (() => {
  */
 export const ALL_BUILTIN_MEMBERS: ReadonlySet<string> = (() => {
   const s = new Set<string>();
-  for (const meta of ALL_METAS) {
-    for (const member of meta.builtinMembers ?? []) s.add(member);
+  for (const manifest of ALL_MANIFESTS) {
+    for (const member of manifest.builtinMembers ?? []) s.add(member);
   }
   return s;
 })();
@@ -162,8 +325,8 @@ export const ALL_BUILTIN_MEMBERS: ReadonlySet<string> = (() => {
 export const EXTERNAL_NAMESPACE_ROOT_RE: RegExp = (() => {
   const seen = new Set<string>();
   const roots: string[] = [];
-  for (const meta of ALL_METAS) {
-    for (const root of meta.externalNamespaceRoots ?? []) {
+  for (const manifest of ALL_MANIFESTS) {
+    for (const root of manifest.externalNamespaceRoots ?? []) {
       if (!seen.has(root)) {
         seen.add(root);
         roots.push(root);
@@ -173,22 +336,29 @@ export const EXTERNAL_NAMESPACE_ROOT_RE: RegExp = (() => {
   return new RegExp(`^(${roots.join("|")})\\b`);
 })();
 
+// Push the aggregates into link-scoring (it cannot import the registry: it is
+// imported by plugin code, and metas are imported by the registry — a static
+// import here would close an ESM cycle and TDZ plugin classes).
+registerLinkScoringData(ALL_EXTERNAL_MODULE_PREFIXES, STRIP_SOURCE_EXTENSION_RE);
+
 // ─── Framework detection rules ───────────────────────────────────────────
 
 /**
- * Manifest-level framework rules from every plugin, in `ALL_METAS` order
+ * Manifest-level framework rules from every plugin, in `ALL_MANIFESTS` order
  * (rules within a plugin keep their declaration order). Consumed by
  * `core/framework-detector`, which sorts the *detections* by id so the output
  * never depends on plugin registration order. Rule ids must be globally
- * unique — plugins own disjoint framework domains by design.
+ * unique — plugins own disjoint framework domains by design. Static tier:
+ * detection always runs over ALL rules, independent of which plugin bodies
+ * are loaded.
  */
 export const FRAMEWORK_RULES: readonly FrameworkRule[] = (() => {
   const seen = new Set<string>();
   const rules: FrameworkRule[] = [];
-  for (const meta of ALL_METAS) {
-    for (const rule of meta.frameworkRules ?? []) {
+  for (const manifest of ALL_MANIFESTS) {
+    for (const rule of manifest.frameworkRules ?? []) {
       if (seen.has(rule.id)) {
-        throw new Error(`Duplicate framework rule id "${rule.id}" (contributed by ${meta.language})`);
+        throw new Error(`Duplicate framework rule id "${rule.id}" (contributed by ${manifest.language})`);
       }
       seen.add(rule.id);
       rules.push(rule);
@@ -203,19 +373,19 @@ export const FRAMEWORK_RULES: readonly FrameworkRule[] = (() => {
  */
 export const FRAMEWORK_MARKER_CANDIDATES: readonly string[] = (() => {
   const seen = new Set<string>();
-  for (const meta of ALL_METAS) {
-    for (const marker of meta.markerCandidates ?? []) seen.add(marker);
+  for (const manifest of ALL_MANIFESTS) {
+    for (const marker of manifest.markerCandidates ?? []) seen.add(marker);
   }
   return [...seen];
 })();
 
 // ─── Framework hints ─────────────────────────────────────────────────────
 
-/** import source → framework id, aggregated from every plugin. */
+/** import source → framework id, aggregated from every plugin manifest. */
 const FRAMEWORK_IMPORT_HINTS: ReadonlyMap<string, string> = (() => {
   const map = new Map<string, string>();
-  for (const meta of ALL_METAS) {
-    for (const [source, fwId] of Object.entries(meta.frameworkImportHints ?? {})) {
+  for (const manifest of ALL_MANIFESTS) {
+    for (const [source, fwId] of Object.entries(manifest.frameworkImportHints ?? {})) {
       map.set(source, fwId);
     }
   }
@@ -264,16 +434,23 @@ export interface KnownPackageEntry {
 }
 
 /**
- * Aggregated third-party package classification from every plugin's
- * `knownPackages`. Keyed by lowercased package name; framework-bearing rules
- * take precedence over plain-category ones on a collision (two-pass build), so
- * the core dependency inventory needs no hardcoded package knowledge of its own.
+ * Third-party package classification from every LOADED plugin's
+ * `knownPackages` (lazy tier — the analyzer activates ecosystem plugins via
+ * source files or `activationFiles` before the dependency inventory runs).
+ * Keyed by lowercased package name; framework-bearing rules take precedence
+ * over plain-category ones on a collision (two-pass build over the loaded
+ * metas in manifest order, so the result is independent of load order).
  */
-const { KNOWN_PACKAGES, KNOWN_PACKAGE_PATTERNS } = (() => {
+let knownPackagesDirty = true;
+let KNOWN_PACKAGES = new Map<string, KnownPackageEntry>();
+let KNOWN_PACKAGE_PATTERNS: Array<{ match: RegExp; entry: KnownPackageEntry }> = [];
+
+function rebuildKnownPackages(): void {
   const exact = new Map<string, KnownPackageEntry>();
   const patterns: Array<{ match: RegExp; entry: KnownPackageEntry }> = [];
+  const metas = allPluginMetas();
   // Pass 1: framework-bearing rules win (exact names + family patterns).
-  for (const meta of ALL_METAS) {
+  for (const meta of metas) {
     for (const rule of meta.knownPackages ?? []) {
       if (!rule.framework) continue;
       const entry: KnownPackageEntry = { category: rule.category, framework: rule.framework };
@@ -282,7 +459,7 @@ const { KNOWN_PACKAGES, KNOWN_PACKAGE_PATTERNS } = (() => {
     }
   }
   // Pass 2: plain-category rules fill remaining names / patterns.
-  for (const meta of ALL_METAS) {
+  for (const meta of metas) {
     for (const rule of meta.knownPackages ?? []) {
       if (rule.framework) continue;
       const entry: KnownPackageEntry = { category: rule.category };
@@ -293,14 +470,17 @@ const { KNOWN_PACKAGES, KNOWN_PACKAGE_PATTERNS } = (() => {
       if (rule.match) patterns.push({ match: rule.match, entry });
     }
   }
-  return { KNOWN_PACKAGES: exact, KNOWN_PACKAGE_PATTERNS: patterns };
-})();
+  KNOWN_PACKAGES = exact;
+  KNOWN_PACKAGE_PATTERNS = patterns;
+  knownPackagesDirty = false;
+}
 
 /**
  * Classify a package by name: exact plugin hit first, then family patterns
  * (framework-bearing patterns before plain-category ones; first match wins).
  */
 export function classifyKnownPackage(name: string): KnownPackageEntry | undefined {
+  if (knownPackagesDirty) rebuildKnownPackages();
   const key = name.toLowerCase();
   const exact = KNOWN_PACKAGES.get(key);
   if (exact) return exact;
@@ -313,18 +493,10 @@ export function classifyKnownPackage(name: string): KnownPackageEntry | undefine
 // ─── Security rules ──────────────────────────────────────────────────────
 
 /**
- * Per-language security rules from every plugin, sorted by priority so the
- * scan (and therefore the reported issue order) is independent of plugin
- * registration order. Rules are pre-bucketed per language.
+ * Per-language security rules, filled as plugins load (rules are pre-sorted
+ * by priority in `registerMeta` so the reported issue order is stable).
  */
-const SECURITY_RULES_BY_LANGUAGE: ReadonlyMap<Language, readonly SecurityRule[]> = (() => {
-  const map = new Map<Language, SecurityRule[]>();
-  for (const meta of ALL_METAS) {
-    if (!meta.securityRules || meta.securityRules.length === 0) continue;
-    map.set(meta.language, [...meta.securityRules].sort((a, b) => a.priority - b.priority));
-  }
-  return map;
-})();
+const SECURITY_RULES_BY_LANGUAGE = new Map<Language, readonly SecurityRule[]>();
 
 export function securityRulesFor(language: Language): readonly SecurityRule[] {
   return SECURITY_RULES_BY_LANGUAGE.get(language) ?? [];
@@ -332,12 +504,12 @@ export function securityRulesFor(language: Language): readonly SecurityRule[] {
 
 // ─── Test-file patterns ──────────────────────────────────────────────────
 
-/** Language-specific test-file path patterns from every plugin, bucketed per language. */
+/** Language-specific test-file path patterns from every plugin manifest, bucketed per language. */
 const TEST_FILE_PATTERNS_BY_LANGUAGE: ReadonlyMap<Language, readonly RegExp[]> = (() => {
   const map = new Map<Language, readonly RegExp[]>();
-  for (const meta of ALL_METAS) {
-    if (meta.testFilePatterns && meta.testFilePatterns.length > 0) {
-      map.set(meta.language, meta.testFilePatterns);
+  for (const manifest of ALL_MANIFESTS) {
+    if (manifest.testFilePatterns && manifest.testFilePatterns.length > 0) {
+      map.set(manifest.language, manifest.testFilePatterns);
     }
   }
   return map;

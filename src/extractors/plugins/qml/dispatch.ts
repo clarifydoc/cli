@@ -21,6 +21,7 @@ import type { DispatchResolver } from "../../dispatch/base.js";
  */
 export class QmlCppBridgeResolver implements DispatchResolver {
   readonly languages: Language[] = ["qml", "cpp", "c", "objc"];
+  readonly priority = 40;
 
   resolve(analyses: FileAnalysis[]): SymbolLink[] {
     // QML type name → registering C++ class.

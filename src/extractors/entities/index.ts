@@ -1,30 +1,6 @@
 import type { EntityRelation, FileAnalysis, Language } from "../../types/analysis.js";
-import { EntityExtractor, type EntityExtractResult } from "./base.js";
-import { JavaScriptEntityExtractor } from "../plugins/javascript/entities.js";
-import { PythonEntityExtractor } from "../plugins/python/entities.js";
-import { JavaKotlinEntityExtractor } from "../plugins/java-kotlin/entities.js";
-import { CSharpEntityExtractor } from "../plugins/csharp/entities.js";
-import { GoEntityExtractor } from "../plugins/go/entities.js";
-import { RustEntityExtractor } from "../plugins/rust/entities.js";
-import { PhpEntityExtractor } from "../plugins/php/entities.js";
-import { RubyEntityExtractor } from "../plugins/ruby/entities.js";
-
-/** All registered language entity extractors. */
-const extractors: EntityExtractor[] = [
-  new JavaScriptEntityExtractor(),
-  new PythonEntityExtractor(),
-  new JavaKotlinEntityExtractor(),
-  new CSharpEntityExtractor(),
-  new GoEntityExtractor(),
-  new RustEntityExtractor(),
-  new PhpEntityExtractor(),
-  new RubyEntityExtractor(),
-];
-
-const extractorMap = new Map<Language, EntityExtractor>();
-for (const ex of extractors) {
-  for (const lang of ex.languages) extractorMap.set(lang, ex);
-}
+import { type EntityExtractor, type EntityExtractResult } from "./base.js";
+import { pluginFor, allPluginMetas } from "../registry.js";
 
 const EMPTY_RESULT: EntityExtractResult = { entities: [], relations: [] };
 
@@ -69,7 +45,7 @@ export function extractEntities(
   sourceText: string,
   language: Language,
 ): EntityExtractResult {
-  const ex = extractorMap.get(language);
+  const ex = pluginFor(language)?.entities;
   if (!ex) return EMPTY_RESULT;
   const markers = LANGUAGE_MARKERS[language];
   if (markers && !markers.test(sourceText)) return EMPTY_RESULT;
@@ -85,7 +61,15 @@ export function extractEntities(
  * it never reaches into a language-specific reconciler itself.
  */
 export function reconcileProjectEntities(analyses: FileAnalysis[]): void {
-  for (const ex of extractors) ex.reconcileProject(analyses);
+  // Family plugins share ONE extractor instance across member metas, so the
+  // identity set runs each extractor exactly once.
+  const seen = new Set<EntityExtractor>();
+  for (const meta of allPluginMetas()) {
+    const ex = meta.entities;
+    if (!ex || seen.has(ex)) continue;
+    seen.add(ex);
+    ex.reconcileProject(analyses);
+  }
 }
 
 /**

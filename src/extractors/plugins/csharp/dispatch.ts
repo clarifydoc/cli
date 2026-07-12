@@ -43,6 +43,7 @@ interface HandlerDef {
 
 export class CSharpMediatrResolver implements DispatchResolver {
   readonly languages: Language[] = ["csharp"];
+  readonly priority = 10;
 
   resolve(analyses: FileAnalysis[]): SymbolLink[] {
     // 1) request type → handler's Handle method.

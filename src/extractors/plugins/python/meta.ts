@@ -4,7 +4,13 @@ import { stripPythonNonCode } from "./python-tokenizer.js";
 import { extractPythonTypeReferences } from "./type-references.js";
 import { pythonCallHooks } from "./call-hooks.js";
 import { pypiPackages } from "./packages.js";
-import { pythonFrameworkRules } from "./frameworks.js";
+import { pythonManifest } from "./manifest.js";
+import { PythonExtractor } from "./functions-classes.js";
+import { PythonImportExportExtractor } from "./imports-exports.js";
+import { PythonDataSourceExtractor } from "./data-sources.js";
+import { PythonMutationExtractor } from "./data-mutations.js";
+import { PythonEntityExtractor } from "./entities.js";
+import { pythonRouteExtractor } from "./routes.js";
 
 const PYTHON_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -58,27 +64,15 @@ const SECURITY_RULES: readonly SecurityRule[] = [
 ];
 
 export const pythonMeta: LanguagePluginMeta = {
-  language: "python",
+  ...pythonManifest,
   knownPackages: pypiPackages,
-  frameworkRules: pythonFrameworkRules,
-  parsing: "tree-sitter",
-  extensions: [".py", ".pyw"],
-  // pytest/unittest: `test_*.py`, `*_test.py`, and `conftest.py` fixtures.
-  testFilePatterns: [/(^|[\\/])test_[^\\/]*\.py$/, /_test\.py$/, /(^|[\\/])conftest\.py$/],
-  grammar: {
-    variants: { python: { pkg: "tree-sitter-python", wasm: "tree-sitter-python.wasm" } },
-  },
+  routes: pythonRouteExtractor,
+  functionsClasses: new PythonExtractor(),
+  importsExports: new PythonImportExportExtractor(),
+  dataSources: new PythonDataSourceExtractor(),
+  dataMutations: new PythonMutationExtractor(),
+  entities: new PythonEntityExtractor(),
   builtinTypes: PYTHON_BUILTINS,
-  externalModulePrefixes: [
-    // Standard library
-    "os", "sys", "json", "re", "math", "datetime", "typing", "enum",
-    "collections", "itertools", "functools", "pathlib", "hashlib",
-    "asyncio", "logging", "unittest", "abc",
-    // Common packages
-    "fastapi", "flask", "django", "pydantic", "sqlalchemy",
-    "requests", "httpx", "aiohttp", "pytest",
-    "numpy", "pandas", "scipy",
-  ],
   complexity: {
     branchNodes: new Set([
       "if_statement", "elif_clause", "while_statement", "for_statement",
@@ -89,30 +83,8 @@ export const pythonMeta: LanguagePluginMeta = {
   securityRules: SECURITY_RULES,
   // Strip strings and comments first to avoid false positives.
   securityPreprocess: stripPythonNonCode,
-  frameworkImportHints: {
-    "sqlalchemy": "sqlalchemy",
-    "django.db.models": "django-orm",
-    "django.db": "django-orm",
-    "tortoise": "tortoise-orm",
-    "peewee": "peewee",
-    "pony": "pony-orm",
-    "pony.orm": "pony-orm",
-  },
   apiCallRoots: ["requests", "httpx", "aiohttp", "urllib", "http.client"],
   dbCallRoots: ["cursor", "session", "engine", "db", "connection", "pool"],
-  // str/list/dict/set/file/stdlib-object methods — `server.login()`, `s.strip()`
-  // must never resolve to a project symbol by name coincidence.
-  builtinMembers: [
-    "append", "extend", "insert", "remove", "pop", "clear", "index", "count",
-    "sort", "reverse", "copy", "items", "keys", "values", "update", "setdefault",
-    "strip", "lstrip", "rstrip", "lower", "upper", "title", "capitalize",
-    "startswith", "endswith", "split", "rsplit", "splitlines", "join", "format",
-    "replace", "encode", "decode", "find", "rfind", "isdigit", "isalpha",
-    "read", "readline", "readlines", "write", "writelines", "close", "flush",
-    "seek", "tell", "open", "connect", "login", "sendmail", "quit", "send",
-    "recv", "bind", "listen", "accept", "get", "add", "discard", "union",
-    "intersection", "difference",
-  ],
   ast: {
     typeReferences: extractPythonTypeReferences,
   },

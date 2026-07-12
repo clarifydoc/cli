@@ -1,6 +1,7 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { vbSpec } from "./index.js";
+import { vbManifest } from "./manifest.js";
 
 const VB_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -13,11 +14,7 @@ const VB_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const vbMeta: LanguagePluginMeta = {
-  language: "vb",
-  parsing: "regex",
-  extensions: vbSpec.extensions,
+  ...vbManifest,
   regexSpec: vbSpec,
   builtinTypes: VB_BUILTINS,
-  // `Imports System.Windows.Forms` must not match a local Forms/ directory.
-  externalNamespaceRoots: ["System", "Microsoft"],
 };

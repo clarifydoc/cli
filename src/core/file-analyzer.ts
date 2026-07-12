@@ -10,7 +10,7 @@ import { extractEntities, mergeEntities } from "../extractors/entities/index.js"
 import { classifyCalls, extractTopLevelCalls } from "../extractors/shared/call-graph.js";
 import { dirname } from "path";
 import { applyAliases, loadTsconfigAliasesForDir } from "../extractors/shared/tsconfig-aliases.js";
-import { pluginFor, astHooksFor, inferFileFrameworks } from "../extractors/registry.js";
+import { pluginFor, astHooksFor, inferFileFrameworks, ensureLanguagesLoaded } from "../extractors/registry.js";
 import { computeComplexity } from "./complexity-analyzer.js";
 import { scanSecurity } from "./security-scanner.js";
 import { extractTypeReferences } from "./type-reference-extractor.js";
@@ -69,6 +69,10 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
   };
 
   try {
+    // Safety net for entry points that never ran the analyzer's bulk load
+    // (worker threads see it via the analyzer-set activation; watch mode and
+    // single-file callers may not) — a no-op when the plugin is loaded.
+    await ensureLanguagesLoaded([file.language]);
     const rawSource = await readFile(file.absolutePath, "utf-8");
     const filePlugin = pluginFor(file.language);
 
@@ -128,6 +132,9 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       sourceText = pre.sourceText;
       language = pre.language;
       postExtract = pre.postExtract;
+      // The effective language can differ from the file's (Vue SFC → its
+      // <script> block); make sure ITS plugin is loaded too.
+      await ensureLanguagesLoaded([language]);
     }
 
     let tree;
