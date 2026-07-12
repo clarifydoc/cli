@@ -1,5 +1,6 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { jspSpec } from "./index.js";
+import { jspFrameworkRules } from "./frameworks.js";
 
 /**
  * JSP views — the screen tier of classic Java web monoliths. Screens +
@@ -16,4 +17,5 @@ export const jspMeta: LanguagePluginMeta = {
   // imported by module name; keeping .jsp out of the import path map avoids
   // basename collisions with same-named Java/JS files.
   importTarget: false,
+  frameworkRules: jspFrameworkRules,
 };

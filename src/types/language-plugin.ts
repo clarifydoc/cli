@@ -12,6 +12,23 @@ import type {
   FileAnalysis,
   PackageCategory,
 } from "./analysis.js";
+import type { ProjectInfo } from "./plugin.js";
+
+/**
+ * Framework-detection rule contributed by a language plugin for the ecosystem
+ * it owns. Evaluated against the `ProjectInfo` gathered at each project /
+ * sub-project root (manifest contents, file-extension sample, marker files) —
+ * the core detector stays deliberately generic while plugins own the
+ * framework-specific knowledge, exactly like `knownPackages`. Rule ids must be
+ * unique across ALL plugins (asserted at registry build time).
+ */
+export interface FrameworkRule {
+  id: string;
+  name: string;
+  check: (info: ProjectInfo) => boolean;
+  /** Human-readable evidence string surfaced in the report ("package.json dependency"). */
+  detectedVia: string;
+}
 
 /**
  * Package-recognition rule contributed by a language plugin for the package
@@ -283,6 +300,20 @@ export interface LanguagePluginMeta {
    * the registry (frameworks win over plain categories on a name collision).
    */
   knownPackages?: readonly KnownPackageRule[];
+  /**
+   * Manifest-level framework rules for this plugin's ecosystem, evaluated per
+   * project root by `core/framework-detector`. Family plugins (javascript,
+   * java-kotlin, pascal) attach rules to ONE member meta only, so the registry
+   * aggregates each rule exactly once.
+   */
+  frameworkRules?: readonly FrameworkRule[];
+  /**
+   * Well-known relative paths whose existence at a project root identifies a
+   * vendored framework that no manifest records (e.g. CodeIgniter 2/3's
+   * `system/` tree). Collected into `ProjectInfo.markerFiles` with a cheap
+   * existsSync per candidate; rules then match on membership.
+   */
+  markerCandidates?: readonly string[];
   /** import source (exact, or prefix-matched with "/" or ".") → framework id. */
   frameworkImportHints?: Readonly<Record<string, string>>;
   /** Call roots that indicate an HTTP/API client (call-graph classification). */

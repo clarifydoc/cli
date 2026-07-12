@@ -1,5 +1,6 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { qmlSpec } from "./index.js";
+import { qmlFrameworkRules } from "./frameworks.js";
 
 /**
  * QML (Qt Quick) — declarative UI files of Qt desktop/mobile apps. Each `.qml`
@@ -15,6 +16,7 @@ export const qmlMeta: LanguagePluginMeta = {
   frameworkImportHints: {
     QtQuick: "qt-quick",
   },
+  frameworkRules: qmlFrameworkRules,
   // QML components reference each other by TYPE NAME (implicit directory
   // import), not by module path — `import "Theme"` points at a directory.
   // Keeping .qml out of the import path map avoids basename collisions with

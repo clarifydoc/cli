@@ -1,5 +1,6 @@
 import type { Language } from "../../../types/analysis.js";
-import type { LanguagePluginMeta, CallExtractionHooks } from "../../../types/language-plugin.js";
+import type { LanguagePluginMeta, CallExtractionHooks, FrameworkRule } from "../../../types/language-plugin.js";
+import { javaKotlinFrameworkRules } from "./frameworks.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { extractJavaKotlinTypeReferences } from "./type-references.js";
 import { javaCallHooks, kotlinCallHooks } from "./call-hooks.js";
@@ -69,12 +70,15 @@ function jvmMeta(language: Language, opts: {
   calls: CallExtractionHooks;
   grammar: LanguagePluginMeta["grammar"];
   testFilePatterns: readonly RegExp[];
+  /** Family plugin: rules ride on the java meta only, so the registry sees them once. */
+  frameworkRules?: readonly FrameworkRule[];
 }): LanguagePluginMeta {
   return {
     language,
     parsing: "tree-sitter",
     extensions: opts.extensions,
     testFilePatterns: opts.testFilePatterns,
+    frameworkRules: opts.frameworkRules,
     grammar: opts.grammar,
     builtinTypes: opts.builtinTypes,
     externalModulePrefixes: JVM_EXTERNAL_PREFIXES,
@@ -106,6 +110,7 @@ export const javaMeta: LanguagePluginMeta = jvmMeta("java", {
   grammar: { variants: { java: { pkg: "tree-sitter-java", wasm: "tree-sitter-java.wasm" } } },
   // JUnit/TestNG: `FooTest.java`, `FooTests.java`, and `FooIT`/`FooITCase` integration tests.
   testFilePatterns: [/(Test|Tests|IT|ITCase)\.java$/],
+  frameworkRules: javaKotlinFrameworkRules,
 });
 
 export const kotlinMeta: LanguagePluginMeta = jvmMeta("kotlin", {

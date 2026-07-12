@@ -2,6 +2,7 @@ import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { rubySpec } from "./index.js";
 import { rubygemsPackages } from "./packages.js";
+import { rubyFrameworkRules } from "./frameworks.js";
 
 export const rubyMeta: LanguagePluginMeta = {
   language: "ruby",
@@ -9,6 +10,7 @@ export const rubyMeta: LanguagePluginMeta = {
   extensions: rubySpec.extensions,
   regexSpec: rubySpec,
   knownPackages: rubygemsPackages,
+  frameworkRules: rubyFrameworkRules,
   // RSpec / Minitest: `foo_spec.rb`, `foo_test.rb`.
   testFilePatterns: [/_(spec|test)\.rb$/],
   builtinTypes: new Set(COMMON_PRIMITIVES),

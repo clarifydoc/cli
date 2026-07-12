@@ -10,6 +10,7 @@ Contents (varies slightly per language):
 ```
 <lang>/
 ├── meta.ts                   LanguagePluginMeta — tables, hooks, extensions (registered in ../registry.ts)
+├── frameworks.ts             FrameworkRule[] — manifest-level framework detection for the ecosystem (optional)
 ├── functions-classes.ts      extends FunctionClassExtractor
 ├── imports-exports.ts        extends ImportExportExtractor
 ├── data-sources.ts           extends DataSourceExtractor (optional)
@@ -49,6 +50,30 @@ Specs are loaded by [../../core/regex-extractor.ts](../../core/regex-extractor.t
 
 [shared/regex-base.ts](shared/regex-base.ts) — the `RegexLangSpec` type and the generic `extractFunctionsWithSpec` / `extractClassesWithSpec` / `extractImportsWithSpec` / `extractCallsFromBody` helpers used by all regex plugins.
 
+[shared/project-info-queries.ts](shared/project-info-queries.ts) — `hasDep` / `hasGoMod` / `hasCsprojPackage` / … predicate helpers over `ProjectInfo` for `frameworks.ts` rules.
+
+## Framework detection (frameworks.ts)
+
+Manifest-level framework rules live with the plugin that owns the ecosystem —
+`plugins/<lang>/frameworks.ts` exports `FrameworkRule[]`, wired via
+`meta.frameworkRules` and aggregated by the registry into `FRAMEWORK_RULES`
+(duplicate ids throw at registry build). `core/framework-detector.ts` only
+gathers `ProjectInfo` and runs the rules; it knows no framework names, exactly
+like `knownPackages`. Notes:
+
+- Rule `check` predicates compose the helpers in
+  [shared/project-info-queries.ts](shared/project-info-queries.ts).
+- Detections are sorted by id in the detector, so output never depends on
+  plugin registration order.
+- Family plugins (javascript, java-kotlin, pascal) attach rules to ONE member
+  meta only (typescript/java/pascal) so the registry sees each rule once.
+- Cross-cutting rules live with the plugin that owns the file format:
+  `qt` → cpp, `qt-quick` → qml, `sql` → sql, `jsp` → jsp,
+  `spring-webflow` → springxml, `prisma` → prisma.
+- Vendored frameworks with no manifest entry (CodeIgniter 2/3) declare
+  `meta.markerCandidates` — well-known relative paths collected into
+  `ProjectInfo.markerFiles` for rules to match on.
+
 ## Adding a new language
 
 ### Tree-sitter path (preferred when grammar is available)
@@ -58,6 +83,7 @@ Specs are loaded by [../../core/regex-extractor.ts](../../core/regex-extractor.t
 3. Create `src/extractors/plugins/<lang>/` with per-category extractors
 4. Register each extractor in `src/extractors/<category>/index.ts`
 5. Create `meta.ts` (`parsing: "tree-sitter"`, extensions, `grammar` — package + wasm location, with optional per-file variant selection like tsx — builtins, complexity tables, security rules, framework hints, ast hooks, and `calls` — at minimum `callNodeTypes`, plus name-resolution/scope hooks as needed; see `call-hooks.ts` in existing plugins) and add it to `ALL_METAS` in [../registry.ts](../registry.ts) — extensions, discovery, grammar loading, complexity, call extraction, and the rest flow from there
+6. If the ecosystem has detectable frameworks, add `frameworks.ts` (`FrameworkRule[]`) and wire `meta.frameworkRules` (see "Framework detection" above)
 
 ### Regex path (languages without reliable grammar)
 

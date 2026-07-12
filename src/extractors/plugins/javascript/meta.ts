@@ -16,6 +16,7 @@ import { extractJsVariableAliases } from "./variable-aliases.js";
 import { vuePreprocess } from "./vue-hooks.js";
 import { sveltePreprocess } from "./svelte-hooks.js";
 import { npmPackages } from "./packages.js";
+import { javascriptFrameworkRules } from "./frameworks.js";
 
 const TS_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -208,6 +209,9 @@ export const typescriptMeta: LanguagePluginMeta = {
   language: "typescript",
   parsing: "tree-sitter",
   extensions: [".ts", ".tsx", ".vue", ".svelte"],
+  // Family plugin: npm-ecosystem framework rules ride on the typescript meta
+  // only, so the registry sees each rule exactly once.
+  frameworkRules: javascriptFrameworkRules,
   testFilePatterns: JS_TEST_PATTERNS,
   grammar: {
     variants: {

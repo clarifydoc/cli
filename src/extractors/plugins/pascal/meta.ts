@@ -1,6 +1,7 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { parseDfm } from "../../../parsers/dfm-parser.js";
 import { pascalCallHooks } from "./call-hooks.js";
+import { pascalFrameworkRules } from "./frameworks.js";
 
 const PASCAL_BUILTINS: ReadonlySet<string> = new Set<string>([
   "Integer", "Cardinal", "Word", "Byte", "ShortInt", "SmallInt", "LongInt",
@@ -40,6 +41,8 @@ export const pascalMeta: LanguagePluginMeta = {
   apiCallRoots: ["THTTPClient", "TRESTClient", "TIdHTTP"],
   dbCallRoots: ["Query", "Connection", "DataSet", "SQLQuery"],
   calls: pascalCallHooks,
+  // Family plugin: rules ride on the pascal meta only (never the .dfm resource meta).
+  frameworkRules: pascalFrameworkRules,
 };
 
 /**

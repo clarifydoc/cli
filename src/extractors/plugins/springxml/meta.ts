@@ -1,5 +1,6 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { springxmlSpec } from "./index.js";
+import { springxmlFrameworkRules } from "./frameworks.js";
 
 /**
  * Spring XML (Web Flow definitions + bean definitions). Claims the whole
@@ -18,6 +19,7 @@ export const springxmlMeta: LanguagePluginMeta = {
   // Declarative wiring, not code — the generic secret/injection regexes only
   // false-positive on it.
   skipSecurityScan: true,
+  frameworkRules: springxmlFrameworkRules,
   preprocess(rawSource) {
     const isFlow = rawSource.includes("springframework.org/schema/webflow") && /<flow[\s>]/.test(rawSource);
     const isBeans = /<beans[\s>]/.test(rawSource) && /<bean\b[^>]*\bclass\s*=/.test(rawSource);

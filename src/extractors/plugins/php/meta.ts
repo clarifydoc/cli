@@ -3,6 +3,7 @@ import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { phpCallHooks } from "./call-hooks.js";
 import { composerPackages } from "./packages.js";
 import { extractBladeScreens, extractBladeInteractiveElements } from "./blade.js";
+import { phpFrameworkRules, phpMarkerCandidates } from "./frameworks.js";
 
 const PHP_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -25,6 +26,8 @@ export const phpMeta: LanguagePluginMeta = {
   },
   builtinTypes: PHP_BUILTINS,
   knownPackages: composerPackages,
+  frameworkRules: phpFrameworkRules,
+  markerCandidates: phpMarkerCandidates,
   externalModulePrefixes: ["Illuminate\\", "Symfony\\", "Doctrine\\", "Laravel\\"],
   complexity: {
     branchNodes: new Set([
