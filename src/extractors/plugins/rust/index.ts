@@ -1,6 +1,8 @@
 import type { ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
+import { extractRustRoutes } from "./routes.js";
+import { extractRustDataSources } from "./data-sources.js";
 
 /** Bare the Rust type identifier — `&'a mut User` / `*const User` → `User`. */
 function stripRustTypeModifiers(raw: string): string {
@@ -98,4 +100,7 @@ export const rustSpec: RegexLangSpec = {
       },
     },
   ],
+
+  extractRoutes: (lines) => extractRustRoutes(lines),
+  extractDataSources: (lines) => extractRustDataSources(lines),
 };
