@@ -201,9 +201,15 @@ function buildPath(
 }
 
 /** Route-registry adapter for this plugin (see routes/base.ts). */
+// Every route this extractor can produce comes from a `[Http*]`/`[Route]`
+// attribute; `[^\]]` spans newlines, so multi-line attribute lists still match.
+const ROUTE_ATTRIBUTE_GATE = /\[[^\]]*\b(?:Http(?:Get|Post|Put|Patch|Delete|Head|Options)|Route)\b/;
+
 export const csharpRouteExtractor: RouteExtractor = {
   languages: ["csharp"],
-  extractRoutes(tree, _sourceText) {
+  extractRoutes(tree, sourceText) {
+    // Cheap gate: skip the full-tree walk for files with no route attributes.
+    if (!ROUTE_ATTRIBUTE_GATE.test(sourceText)) return [];
     const routes: RouteInfo[] = [];
     extractAspnetRoutes(tree.rootNode, routes);
     return routes;

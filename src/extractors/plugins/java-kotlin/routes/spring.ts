@@ -417,6 +417,11 @@ export function extractSpringRoutesRegex(source: string, routes: RouteInfo[]): v
 export const javaKotlinRouteExtractor: RouteExtractor = {
   languages: ["java", "kotlin"],
   extractRoutes(tree, sourceText) {
+    // Cheap gate: every route this extractor can produce comes from a
+    // `@*Mapping` annotation (AST walk and regex fallback alike), so a file
+    // without the substring can skip the full-tree walk entirely — on
+    // annotation-light monoliths that walk dominates route extraction.
+    if (!sourceText.includes("Mapping")) return [];
     const routes: RouteInfo[] = [];
     extractSpringRoutes(tree.rootNode, routes);
     // Recover routes from files the grammar misparsed into a routeless tree.
