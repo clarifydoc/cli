@@ -1,6 +1,8 @@
-import type { RouteInfo, ClassInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
+import type { ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
+import { extractGoRoutes } from "./routes.js";
+import { extractGoDataSources } from "./data-sources.js";
 
 /** Bare the Go type identifier — `*[]map[string]User` → `User`. */
 function stripGoTypeModifiers(raw: string): string {
@@ -93,38 +95,6 @@ export const goSpec: RegexLangSpec = {
     },
   ],
 
-  extractRoutes: (lines, _classes: ClassInfo[]) => {
-    const routes: RouteInfo[] = [];
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      // http.HandleFunc("GET /path", handler)
-      const handleFuncMatch = line.match(/HandleFunc\s*\(\s*["']([A-Z]+)\s+([^"']+)["']\s*,\s*(\w+(?:\.\w+)?)/);
-      if (handleFuncMatch) {
-        routes.push({
-          path: handleFuncMatch[2],
-          httpMethod: handleFuncMatch[1],
-          kind: "api",
-          handler: handleFuncMatch[3],
-          calls: [],
-          middleware: [],
-          line: i + 1,
-        });
-        continue;
-      }
-      // r.GET("/path", handler) — chi/gin/echo
-      const verbMatch = line.match(/\.\s*(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s*\(\s*["']([^"']+)["']\s*,\s*(\w+(?:\.\w+)?)/);
-      if (verbMatch) {
-        routes.push({
-          path: verbMatch[2],
-          httpMethod: verbMatch[1],
-          kind: "api",
-          handler: verbMatch[3],
-          calls: [],
-          middleware: [],
-          line: i + 1,
-        });
-      }
-    }
-    return routes;
-  },
+  extractRoutes: (lines) => extractGoRoutes(lines),
+  extractDataSources: (lines) => extractGoDataSources(lines),
 };

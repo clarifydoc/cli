@@ -3,12 +3,13 @@ import type { RouteInfo } from "../../../../types/analysis.js";
 import type { RouteExtractor } from "../../../routes/base.js";
 import { extractSpringRoutes, extractSpringRoutesRegex } from "./spring.js";
 import { extractJaxrsMicronautRoutes } from "./jaxrs.js";
+import { extractKtorRoutes } from "./ktor.js";
 
 /**
  * Java / Kotlin route extraction — Spring (@GetMapping/@RequestMapping),
- * JAX-RS (@Path + @GET markers) and Micronaut (@Controller + @Get). Each
- * family is gated on a cheap substring so annotation-free files skip the
- * full-tree walks entirely.
+ * JAX-RS (@Path + @GET markers), Micronaut (@Controller + @Get) and the Ktor
+ * routing DSL. Each family is gated on a cheap substring so annotation-free
+ * files skip the full-tree walks entirely.
  */
 export const javaKotlinRouteExtractor: RouteExtractor = {
   languages: ["java", "kotlin"],
@@ -24,6 +25,12 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
 
     if (/@(Path|Controller)\b/.test(sourceText)) {
       extractJaxrsMicronautRoutes(tree.rootNode, routes);
+    }
+
+    // Ktor verbs are maximally generic (`get`), so the DSL walk only runs in
+    // files that actually import io.ktor.
+    if (sourceText.includes("io.ktor")) {
+      extractKtorRoutes(tree.rootNode, routes);
     }
 
     return routes;

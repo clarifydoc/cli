@@ -390,6 +390,56 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     check: (info) => hasComposerDep(info, "illuminate/database") || hasComposerDep(info, "laravel/framework"),
     detectedVia: "composer.json dependency",
   },
+  // Go web frameworks
+  {
+    id: "gin",
+    name: "Gin",
+    check: (info) => hasGoMod(info, "github.com/gin-gonic/gin"),
+    detectedVia: "go.mod dependency",
+  },
+  {
+    id: "echo",
+    name: "Echo",
+    check: (info) => hasGoMod(info, "github.com/labstack/echo"),
+    detectedVia: "go.mod dependency",
+  },
+  {
+    id: "chi",
+    name: "chi",
+    check: (info) => hasGoMod(info, "github.com/go-chi/chi"),
+    detectedVia: "go.mod dependency",
+  },
+  {
+    id: "fiber",
+    name: "Fiber",
+    check: (info) => hasGoMod(info, "github.com/gofiber/fiber"),
+    detectedVia: "go.mod dependency",
+  },
+  {
+    id: "gorilla-mux",
+    name: "gorilla/mux",
+    check: (info) => hasGoMod(info, "github.com/gorilla/mux"),
+    detectedVia: "go.mod dependency",
+  },
+  // Rust web frameworks
+  {
+    id: "axum",
+    name: "Axum",
+    check: (info) => hasCargoDep(info, "axum"),
+    detectedVia: "Cargo.toml dependency",
+  },
+  {
+    id: "actix-web",
+    name: "Actix Web",
+    check: (info) => hasCargoDep(info, "actix-web"),
+    detectedVia: "Cargo.toml dependency",
+  },
+  {
+    id: "rocket",
+    name: "Rocket",
+    check: (info) => hasCargoDep(info, "rocket"),
+    detectedVia: "Cargo.toml dependency",
+  },
   // Go ORMs
   {
     id: "gorm",
