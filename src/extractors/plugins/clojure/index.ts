@@ -1,4 +1,5 @@
 import type { RegexLangSpec } from "../shared/regex-base.js";
+import { extractClojureRoutes, extractClojureDataSources } from "./web.js";
 
 /**
  * Clojure regex spec. Lisp forms are paren-balanced; the regex framework has no
@@ -46,4 +47,7 @@ export const clojureSpec: RegexLangSpec = {
       buildName: (m) => ({ name: `${m[1]}/${m[2]}`, leafName: m[2] }),
     },
   ],
+
+  extractRoutes: (lines) => extractClojureRoutes(lines),
+  extractDataSources: (lines) => extractClojureDataSources(lines),
 };
