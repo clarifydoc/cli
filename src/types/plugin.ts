@@ -28,6 +28,10 @@ export interface ProjectInfo {
   gemfile: string | null;
   /** Raw content of pubspec.yaml if found (used for Dart/Flutter detection). */
   pubspecYaml: string | null;
+  /** Raw content of Package.swift if found (used for Vapor/Fluent detection). */
+  packageSwift: string | null;
+  /** Raw content of project.clj or deps.edn if found (Clojure web-framework detection). */
+  cljProject: string | null;
   /** Any *.sql / *.ddl files discovered (used to detect raw-SQL usage in the project). */
   sqlFiles: string[];
   /** Any *.jsp files discovered (Java web view tier — JSP framework detection). */

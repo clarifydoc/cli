@@ -1,4 +1,6 @@
 import type { RegexLangSpec } from "../shared/regex-base.js";
+import { extractVaporRoutes } from "./routes.js";
+import { extractSwiftDataSources } from "./data-sources.js";
 
 export const swiftSpec: RegexLangSpec = {
   language: "swift",
@@ -31,4 +33,7 @@ export const swiftSpec: RegexLangSpec = {
       getSpecifiers: () => [],
     },
   ],
+
+  extractRoutes: (lines) => extractVaporRoutes(lines),
+  extractDataSources: (lines) => extractSwiftDataSources(lines),
 };

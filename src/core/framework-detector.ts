@@ -633,6 +633,40 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     detectedVia: "build file dependency",
   },
 
+  // Swift server frameworks
+  {
+    id: "vapor",
+    name: "Vapor",
+    check: (info) => hasSwiftPackage(info, "vapor"),
+    detectedVia: "Package.swift dependency",
+  },
+  {
+    id: "fluent",
+    name: "Fluent",
+    check: (info) => hasSwiftPackage(info, "fluent"),
+    detectedVia: "Package.swift dependency",
+  },
+
+  // Clojure web frameworks
+  {
+    id: "ring",
+    name: "Ring",
+    check: (info) => hasCljDep(info, "ring"),
+    detectedVia: "project.clj / deps.edn dependency",
+  },
+  {
+    id: "compojure",
+    name: "Compojure",
+    check: (info) => hasCljDep(info, "compojure"),
+    detectedVia: "project.clj / deps.edn dependency",
+  },
+  {
+    id: "reitit",
+    name: "reitit",
+    check: (info) => hasCljDep(info, "reitit"),
+    detectedVia: "project.clj / deps.edn dependency",
+  },
+
   // Dart / Flutter frameworks
   {
     id: "flutter",
@@ -745,6 +779,19 @@ function hasPubspecDep(info: ProjectInfo, name: string): boolean {
   // config section (which is column-0) — only the `flutter:` *dependency* counts.
   const re = new RegExp(`^\\s+${escapeRegex(name)}\\s*:`, "m");
   return re.test(info.pubspecYaml);
+}
+
+/** `.package(url: "https://github.com/vapor/vapor.git", ...)` / `.product(name: "Fluent", ...)`. */
+function hasSwiftPackage(info: ProjectInfo, name: string): boolean {
+  if (!info.packageSwift) return false;
+  return new RegExp(`(github\\.com/[\\w-]+/${escapeRegex(name)}\\b|name:\\s*"${escapeRegex(name)}")`, "i")
+    .test(info.packageSwift);
+}
+
+/** Lein `[compojure "1.7.0"]` or deps.edn `compojure/compojure {:mvn/version ...}`. */
+function hasCljDep(info: ProjectInfo, name: string): boolean {
+  if (!info.cljProject) return false;
+  return new RegExp(`[\\[{ ]${escapeRegex(name)}[/ "]`).test(info.cljProject);
 }
 
 function escapeRegex(s: string): string {
@@ -912,6 +959,14 @@ export async function gatherProjectInfo(
   let pubspecYaml: string | null = null;
   try { pubspecYaml = await readFile(join(root, "pubspec.yaml"), "utf-8"); } catch { /* no pubspec.yaml */ }
 
+  let packageSwift: string | null = null;
+  try { packageSwift = await readFile(join(root, "Package.swift"), "utf-8"); } catch { /* no Package.swift */ }
+
+  let cljProject: string | null = null;
+  for (const name of ["project.clj", "deps.edn"]) {
+    try { cljProject = await readFile(join(root, name), "utf-8"); break; } catch { /* try next */ }
+  }
+
   let cmakeLists: string | null = null;
   try { cmakeLists = await readFile(join(root, "CMakeLists.txt"), "utf-8"); } catch { /* no CMakeLists.txt */ }
 
@@ -960,6 +1015,8 @@ export async function gatherProjectInfo(
     composerJson,
     gemfile,
     pubspecYaml,
+    packageSwift,
+    cljProject,
     sqlFiles,
     jspFiles,
     webflowFiles,
