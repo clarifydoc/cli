@@ -137,6 +137,45 @@ describe("k8s deployment topology", () => {
       ].join("\n"),
     );
 
+    // Ingress routing to the first workload's Service + a secretKeyRef env.
+    await writeFile(
+      join(root, "deploy", "ingress.yaml"),
+      [
+        "apiVersion: networking.k8s.io/v1",
+        "kind: Ingress",
+        "metadata:",
+        "  name: main-ingress",
+        "spec:",
+        "  rules:",
+        "    - host: shop.example.com",
+        "      http:",
+        "        paths:",
+        "          - path: /",
+        "            backend:",
+        "              service:",
+        "                name: user-svc",
+        "                port:",
+        "                  number: 80",
+        "---",
+        "apiVersion: apps/v1",
+        "kind: Deployment",
+        "metadata:",
+        "  name: billing-api",
+        "spec:",
+        "  template:",
+        "    spec:",
+        "      containers:",
+        "        - name: api",
+        "          image: reg.io/acme/billing-api:1.0",
+        "          env:",
+        "            - name: ConnectionString",
+        "              valueFrom:",
+        "                secretKeyRef:",
+        "                  name: billing-db",
+        "                  key: connection-string",
+      ].join("\n"),
+    );
+
     // Noise: a CI-style yaml that must not parse as a workload.
     await writeFile(join(root, "deploy", "lint.yaml"), "rules:\n  semi: error\n");
   });
@@ -148,7 +187,7 @@ describe("k8s deployment topology", () => {
   it("collects workloads with ConfigMap-merged env and Service aliases", async () => {
     const k8s = (await collectK8sManifests(root))!;
     expect(k8s).toBeDefined();
-    expect(k8s.files).toHaveLength(2);
+    expect(k8s.files).toHaveLength(3);
 
     const all = k8s.groups.flat();
     const user = all.find((s) => s.name === "user-api-deployment")!;
@@ -159,6 +198,12 @@ describe("k8s deployment topology", () => {
     expect(k8s.aliases.get("user-svc")).toBe("user-api-deployment");
   });
 
+  it("synthesizes ${secret.key} placeholders for secretKeyRef env values", async () => {
+    const k8s = (await collectK8sManifests(root))!;
+    const billing = k8s.groups.flat().find((s) => s.name === "billing-api")!;
+    expect(billing.env.ConnectionString).toBe("${billing-db.connection-string}");
+  });
+
   it("feeds detectDeployment: app/datastore classification, URL edge via Service alias, db edge", async () => {
     const model = (await detectDeployment(root, {
       subProjects: [sub("p1", "UserApi", "user-api"), sub("p2", "OrderApi", "order-api")],
@@ -166,7 +211,25 @@ describe("k8s deployment topology", () => {
     expect(model).toBeDefined();
 
     const names = model.services.map((s) => s.name).sort();
-    expect(names).toEqual(["order-api", "pg", "user-api-deployment"]);
+    expect(names).toEqual(["billing-api", "main-ingress", "order-api", "pg", "user-api-deployment"]);
+
+    // The ingress classifies as proxy and routes to the workload the Service
+    // alias selects, labelled with the rule host.
+    expect(model.services.find((s) => s.name === "main-ingress")!.kind).toBe("proxy");
+    expect(model.edges).toContainEqual(
+      expect.objectContaining({
+        from: "main-ingress",
+        to: "user-api-deployment",
+        kind: "http",
+        label: "shop.example.com",
+        via: "ingress",
+      }),
+    );
+
+    // secretKeyRef-backed ConnectionString still yields a logical database
+    // (name inferred from the secret's name: billing-db → billing).
+    const billing = model.services.find((s) => s.name === "billing-api")!;
+    expect(billing.databases?.map((d) => d.name)).toContain("billing");
     expect(model.services.find((s) => s.name === "pg")!.kind).toBe("datastore");
     expect(model.services.find((s) => s.name === "pg")!.hostedDatabases).toContain("users");
 

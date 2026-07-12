@@ -49,9 +49,12 @@ export function resolveViewBySuffix(
   fromFile: string,
 ): string | null {
   const rel = spec.replace(/\\/g, "/").replace(/^\/+/, "");
+  // `(\.\w+)+` (not a single `\.\w+`): view files routinely carry compound
+  // extensions — `catalog.blade.php`, `page.html.twig` — and the view name
+  // never includes them.
   const suffixRe = /\.\w+$/.test(rel)
     ? new RegExp(`(^|/)${escapeRegex(rel)}$`)
-    : new RegExp(`(^|/)${escapeRegex(rel)}\\.\\w+$`);
+    : new RegExp(`(^|/)${escapeRegex(rel)}(\\.\\w+)+$`);
   let best: string | null = null;
   let bestScore = -1;
   for (const f of candidates) {

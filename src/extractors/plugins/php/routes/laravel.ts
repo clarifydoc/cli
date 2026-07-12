@@ -233,10 +233,23 @@ function emitVerbRoute(
   }
 
   if (verb === "view") {
-    // Route::view('/welcome', 'welcome') — a GET that renders a named view.
+    // Route::view('/welcome', 'shop.catalog') — a GET that renders a named
+    // Blade view. Emitted as a FRONTEND route whose componentPath is the
+    // dotted view name as a /-path, so the screen builder's suffix resolver
+    // anchors it to resources/views/shop/catalog.blade.php.
     const path = stringValue(args[0]);
     if (!path) return;
-    routes.push({ path: joinPath(prefixes, path), httpMethod: "GET", kind: "api", handler: stringValue(args[1]), calls: [], middleware: [], line });
+    const view = stringValue(args[1]);
+    routes.push({
+      path: joinPath(prefixes, path),
+      httpMethod: "GET",
+      kind: "frontend",
+      handler: view,
+      componentPath: view ? "/" + view.replace(/\./g, "/") : null,
+      calls: [],
+      middleware: [],
+      line,
+    });
     return;
   }
 
