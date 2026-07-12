@@ -2,7 +2,6 @@ import type { Node } from "web-tree-sitter";
 import type { RouteInfo, CallInfo } from "../../../../types/analysis.js";
 import { stripQuotes, findChildByType, getNameFromNode } from "../../../shared/node-helpers.js";
 import { extractCalls } from "../../../shared/call-graph.js";
-import type { RouteExtractor } from "../../../routes/base.js";
 
 /** Spring Boot mapping annotations */
 const SPRING_MAPPING_ANNOTATIONS: Record<string, string | null> = {
@@ -36,7 +35,7 @@ const HTTP_VERB_RE = /\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE)\b/g;
 // controllers (annotation name nested under constructor_invocation/user_type)
 // produced zero routes.
 
-function isAnnotationNode(node: Node): boolean {
+export function isAnnotationNode(node: Node): boolean {
   return (
     node.type === "annotation" ||
     node.type === "marker_annotation" ||
@@ -50,7 +49,7 @@ function lastSegment(text: string): string {
 }
 
 /** Resolve an annotation's simple name across both grammars (e.g. "GetMapping"). */
-function annotationSimpleName(node: Node): string | null {
+export function annotationSimpleName(node: Node): string | null {
   // Java: dedicated `name` field.
   const nameField = node.childForFieldName("name");
   if (nameField) return lastSegment(nameField.text);
@@ -76,7 +75,7 @@ function annotationSimpleName(node: Node): string | null {
 }
 
 /** The annotation's argument-list node, across both grammars (null if none). */
-function annotationArgsNode(node: Node): Node | null {
+export function annotationArgsNode(node: Node): Node | null {
   // Java
   const argField = node.childForFieldName("arguments");
   if (argField) return argField;
@@ -114,7 +113,7 @@ function kotlinArgKey(valueArg: Node): string | null {
  * strings, brace-arrays (`{"/x"}`), and element_value_pairs, plus Kotlin
  * value_arguments (positional, named, array-wrapped `value = ["/x"]`).
  */
-function extractAnnotationPath(argsNode: Node): string | null {
+export function extractAnnotationPath(argsNode: Node): string | null {
   let positional: string | null = null;
   let named: string | null = null;
 
@@ -174,7 +173,7 @@ function extractAnnotationMethods(argsNode: Node): string[] {
 }
 
 /** Join a class-level prefix with a method-level path. */
-function mergePrefix(classPrefix: string, path: string): string {
+export function mergePrefix(classPrefix: string, path: string): string {
   if (!classPrefix) return path;
   const prefix = classPrefix.endsWith("/") ? classPrefix.slice(0, -1) : classPrefix;
   if (path === "/") return prefix;
@@ -182,7 +181,7 @@ function mergePrefix(classPrefix: string, path: string): string {
 }
 
 /** True if a class/interface declaration carries the named annotation (e.g. "FeignClient"). */
-function declarationHasAnnotation(declNode: Node, name: string): boolean {
+export function declarationHasAnnotation(declNode: Node, name: string): boolean {
   for (const child of declNode.children) {
     if (isAnnotationNode(child) && annotationSimpleName(child) === name) return true;
     if (child.type === "modifiers") {
@@ -413,19 +412,3 @@ export function extractSpringRoutesRegex(source: string, routes: RouteInfo[]): v
   }
 }
 
-/** Route-registry adapter for this plugin (see routes/base.ts). */
-export const javaKotlinRouteExtractor: RouteExtractor = {
-  languages: ["java", "kotlin"],
-  extractRoutes(tree, sourceText) {
-    // Cheap gate: every route this extractor can produce comes from a
-    // `@*Mapping` annotation (AST walk and regex fallback alike), so a file
-    // without the substring can skip the full-tree walk entirely — on
-    // annotation-light monoliths that walk dominates route extraction.
-    if (!sourceText.includes("Mapping")) return [];
-    const routes: RouteInfo[] = [];
-    extractSpringRoutes(tree.rootNode, routes);
-    // Recover routes from files the grammar misparsed into a routeless tree.
-    if (routes.length === 0) extractSpringRoutesRegex(sourceText, routes);
-    return routes;
-  },
-};

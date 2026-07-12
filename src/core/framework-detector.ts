@@ -359,6 +359,24 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     check: (info) => info.markerFiles.includes("system/core/CodeIgniter.php"),
     detectedVia: "vendored system/core/CodeIgniter.php",
   },
+  // PHP frameworks (composer-era)
+  {
+    id: "laravel",
+    name: "Laravel",
+    check: (info) =>
+      hasComposerDep(info, "laravel/framework") ||
+      hasComposerDep(info, "laravel/lumen-framework") ||
+      existsSync(join(info.root, "artisan")),
+    detectedVia: "composer.json dependency / artisan file",
+  },
+  {
+    id: "symfony",
+    name: "Symfony",
+    check: (info) =>
+      hasComposerDep(info, "symfony/framework-bundle") ||
+      hasComposerDep(info, "symfony/http-kernel"),
+    detectedVia: "composer.json dependency",
+  },
   // PHP ORMs
   {
     id: "doctrine",
@@ -528,6 +546,34 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     id: "ktor",
     name: "Ktor",
     check: (info) => hasGradleDep(info, "ktor"),
+    detectedVia: "build file dependency",
+  },
+  {
+    id: "quarkus",
+    name: "Quarkus",
+    check: (info) => hasGradleDep(info, "quarkus") || hasMavenDep(info, "quarkus"),
+    detectedVia: "build file dependency",
+  },
+  {
+    id: "micronaut",
+    name: "Micronaut",
+    check: (info) => hasGradleDep(info, "io.micronaut") || hasMavenDep(info, "io.micronaut"),
+    detectedVia: "build file dependency",
+  },
+  {
+    id: "jaxrs",
+    name: "JAX-RS",
+    check: (info) =>
+      hasGradleDep(info, "javax.ws.rs") || hasMavenDep(info, "javax.ws.rs") ||
+      hasGradleDep(info, "jakarta.ws.rs") || hasMavenDep(info, "jakarta.ws.rs") ||
+      hasGradleDep(info, "jersey") || hasMavenDep(info, "jersey") ||
+      hasGradleDep(info, "resteasy") || hasMavenDep(info, "resteasy"),
+    detectedVia: "build file dependency",
+  },
+  {
+    id: "retrofit",
+    name: "Retrofit",
+    check: (info) => hasGradleDep(info, "retrofit") || hasMavenDep(info, "retrofit"),
     detectedVia: "build file dependency",
   },
   {

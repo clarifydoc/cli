@@ -4,9 +4,9 @@ import type { RouteExtractor } from "./base.js";
 import { javascriptRouteExtractor } from "../plugins/javascript/routes/index.js";
 import { pythonRouteExtractor } from "../plugins/python/routes.js";
 import { csharpRouteExtractor } from "../plugins/csharp/routes/aspnet.js";
-import { javaKotlinRouteExtractor } from "../plugins/java-kotlin/routes/spring.js";
+import { javaKotlinRouteExtractor } from "../plugins/java-kotlin/routes/index.js";
 import { pascalRouteExtractor } from "../plugins/pascal/routes.js";
-import { phpRouteExtractor } from "../plugins/php/routes/codeigniter.js";
+import { phpRouteExtractor } from "../plugins/php/routes/index.js";
 
 /** All registered route extractors */
 const extractors: RouteExtractor[] = [
