@@ -110,6 +110,23 @@ const MQ_TEMPLATE_RECEIVER_RE = /rabbitTemplate|amqpTemplate|kafkaTemplate|jmsTe
 const MQ_LISTENER_RE = /@(RabbitListener|KafkaListener|JmsListener)\b/;
 const MQ_LISTENER_DEST_RE = /(?:queues|topics|destination|queueNames)\s*=\s*[[{]?\s*"([^"]+)"/;
 
+// ─── Outbound HTTP declared via annotations ──────────────────────────────────
+// Retrofit interface methods carry the outbound URL in the verb annotation
+// itself: `@GET("users/{id}")`. JAX-RS uses the same names but as argument-less
+// markers (the path lives in a separate @Path), so requiring the string
+// argument is what keeps server resources from reading as outbound calls.
+const RETROFIT_ANN_RE = /^@(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*\(\s*"([^"]+)"/;
+// Feign (Spring Cloud) client interfaces reuse Spring's mapping annotations
+// for OUTBOUND calls — only honored in files that carry @FeignClient.
+const FEIGN_MAPPING_RE = /^@(Get|Post|Put|Patch|Delete)Mapping\s*\(/;
+const ANN_PATH_RE = /(?:value|path)\s*=\s*[[{]?\s*"([^"]*)"|\(\s*[[{]?\s*"([^"]*)"/;
+
+/** Join an optional client base path with a call path, with one leading `/`. */
+function joinUrl(base: string | null, path: string): string {
+  const parts = [base ?? "", path].map((p) => p.replace(/^\/+|\/+$/g, "")).filter(Boolean);
+  return "/" + parts.join("/");
+}
+
 export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["java", "kotlin"];
 
@@ -121,8 +138,18 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
    */
   private tableAliases = new Map<string, string>();
 
+  /** File declares a Feign client — its mapping annotations are outbound calls. */
+  private isFeignFile = false;
+  /** `@FeignClient(path = "/api/users")` prefix, prepended to method paths. */
+  private feignBasePath: string | null = null;
+
   override beginFile(tree: Tree): void {
     this.tableAliases = buildTableAliases(tree.rootNode);
+    const text = tree.rootNode.text;
+    this.isFeignFile = text.includes("@FeignClient");
+    this.feignBasePath = this.isFeignFile
+      ? (text.match(/@FeignClient\s*\(([^)]*)\)/)?.[1]?.match(/path\s*=\s*"([^"]+)"/)?.[1] ?? null)
+      : null;
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
@@ -153,6 +180,33 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
           target: text.match(MQ_LISTENER_DEST_RE)?.[1] ?? null,
           line: node.startPosition.row + 1,
         }));
+      }
+
+      // Retrofit: the verb annotation IS the outbound call declaration. The
+      // path is emitted app-relative so the cross-tier route linker can join
+      // it to the serving backend route.
+      const retrofit = text.match(RETROFIT_ANN_RE);
+      if (retrofit) {
+        sources.push(this.ds({
+          kind: "api-call",
+          name: retrofit[1]!,
+          target: joinUrl(null, retrofit[2]!),
+          line: node.startPosition.row + 1,
+        }));
+      }
+
+      // Feign client methods: Spring mapping annotations, outbound semantics.
+      if (this.isFeignFile) {
+        const feign = text.match(FEIGN_MAPPING_RE);
+        if (feign) {
+          const pm = text.match(ANN_PATH_RE);
+          sources.push(this.ds({
+            kind: "api-call",
+            name: feign[1]!.toUpperCase(),
+            target: joinUrl(this.feignBasePath, pm?.[1] ?? pm?.[2] ?? ""),
+            line: node.startPosition.row + 1,
+          }));
+        }
       }
     }
   }

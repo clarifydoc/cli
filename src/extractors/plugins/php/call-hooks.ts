@@ -17,7 +17,9 @@ export const phpCallHooks: CallExtractionHooks = {
   nestedScopeTypes: [
     "method_declaration", "function_definition", "class_declaration",
     "interface_declaration", "trait_declaration",
-    "anonymous_function_creation_expression", "arrow_function",
+    // tree-sitter-php ≥0.23 names closures `anonymous_function`; the long
+    // form is the pre-rename name, kept for older grammars.
+    "anonymous_function", "anonymous_function_creation_expression", "arrow_function",
   ],
 
   // PHP call shapes. We normalize `$this->prop->method` chains into the

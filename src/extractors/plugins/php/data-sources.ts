@@ -6,6 +6,18 @@ import { DataSourceExtractor } from "../../data-sources/base.js";
 const CI_DB_RECEIVER = /\$this\s*->\s*db\b/;
 
 /**
+ * Laravel facades that are NOT Eloquent models but share its verb names
+ * (`Route::delete('/x')`, `Session::all()`, `View::first(...)`). Static calls
+ * on these must never be classified as database access.
+ */
+const NON_MODEL_FACADES: ReadonlySet<string> = new Set([
+  "Route", "Gate", "Event", "Queue", "Bus", "Log", "Mail", "Notification",
+  "Session", "Config", "App", "Artisan", "Validator", "Storage", "File",
+  "URL", "Response", "Request", "Broadcast", "Password", "Hash", "Crypt",
+  "Cookie", "Lang", "View", "Redirect", "Blade", "Auth",
+]);
+
+/**
  * CodeIgniter Query Builder verbs whose first string argument names a table.
  * (Refinement verbs — where/select/order_by/group_by/like/limit/… — carry only
  * columns, so they're deliberately excluded.)
@@ -210,8 +222,12 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
       }
 
       // Eloquent: Model::find / Model::where / Model::create etc. Heuristic —
-      // PascalCase scope and a known persistence method.
-      if (/^[A-Z]/.test(scope) && /^(find|where|create|update|destroy|delete|all|first|firstOrCreate|firstOrFail|paginate|with|join|select)$/.test(name)) {
+      // PascalCase scope and a known persistence method. Laravel's non-model
+      // facades share these verbs (`Route::delete`, `Session::all`,
+      // `View::first`) — veto them so facade plumbing never becomes a phantom
+      // database source.
+      if (NON_MODEL_FACADES.has(scope)) return;
+      if (/^[A-Z]/.test(scope) && /^(find|findOrFail|where|create|update|updateOrCreate|destroy|delete|all|first|firstOrCreate|firstOrFail|paginate|with|join|select)$/.test(name)) {
         sources.push(this.ds({
           kind: "database",
           name: callText,

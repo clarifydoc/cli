@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import "../../../registry.js"; // side effect: registers tree-sitter grammars
 import { parseSource } from "../../../../parsers/parser-manager.js";
-import { phpRouteExtractor } from "./codeigniter.js";
+import { codeigniterRouteExtractor as phpRouteExtractor } from "./codeigniter.js";
 import type { RouteInfo } from "../../../../types/analysis.js";
 
 /**

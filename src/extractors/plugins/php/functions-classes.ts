@@ -351,7 +351,8 @@ function extractLocalNewTypes(body: Node | null): Array<{ name: string; type: st
   const seen = new Set<string>();
   const walk = (n: Node): void => {
     if (
-      n.type === "anonymous_function_creation_expression" ||
+      n.type === "anonymous_function" || // tree-sitter-php ≥0.23 name
+      n.type === "anonymous_function_creation_expression" || // pre-rename
       n.type === "arrow_function" ||
       n.type === "function_definition" ||
       n.type === "method_declaration"

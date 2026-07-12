@@ -1,0 +1,157 @@
+import type { Node } from "web-tree-sitter";
+import type { RouteInfo } from "../../../../types/analysis.js";
+import { findChildByType, getNameFromNode } from "../../../shared/node-helpers.js";
+import { extractCalls } from "../../../shared/call-graph.js";
+import {
+  isAnnotationNode,
+  annotationSimpleName,
+  annotationArgsNode,
+  extractAnnotationPath,
+  mergePrefix,
+  declarationHasAnnotation,
+} from "./spring.js";
+
+/**
+ * JAX-RS (Jersey / RESTEasy / Quarkus) and Micronaut inbound routes.
+ *
+ * JAX-RS splits the declaration Spring merges into one annotation:
+ *
+ *   @Path("/users")            // class-level prefix
+ *   public class UserResource {
+ *     @GET                     // verb is a MARKER (never takes arguments)
+ *     @Path("{id}")            // optional method-level subpath
+ *     public User get(...) {}
+ *   }
+ *
+ * Micronaut uses Spring-like verbs with Micronaut casing:
+ *
+ *   @Controller("/users")
+ *   class UserController {
+ *     @Get("/{id}") fun get(...) { }
+ *   }
+ *
+ * The argument-less requirement on JAX-RS verbs is load-bearing: Retrofit
+ * declares OUTBOUND calls with the same names but always passes the path as an
+ * argument (`@GET("users/{id}")`), so requiring a marker keeps client
+ * interfaces from minting phantom inbound routes. MicroProfile REST-client
+ * interfaces (`@RegisterRestClient`) are outbound too and skipped wholesale.
+ */
+
+const JAXRS_VERBS: ReadonlySet<string> = new Set([
+  "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS",
+]);
+const MICRONAUT_VERBS: ReadonlySet<string> = new Set([
+  "Get", "Post", "Put", "Delete", "Patch", "Head", "Options",
+]);
+
+/** All annotations on a declaration — direct children plus the `modifiers` block. */
+function annotationsOf(decl: Node): Node[] {
+  const out: Node[] = [];
+  for (const child of decl.children) {
+    if (isAnnotationNode(child)) out.push(child);
+    if (child.type === "modifiers") {
+      for (const mod of child.children) if (isAnnotationNode(mod)) out.push(mod);
+    }
+  }
+  return out;
+}
+
+/** Path argument of an annotation (`@Path("x")` / `@Get("/x")`), null if none. */
+function annotationPath(ann: Node): string | null {
+  const args = annotationArgsNode(ann);
+  return args ? extractAnnotationPath(args) : null;
+}
+
+const CLASS_TYPES = new Set(["class_declaration", "class_definition", "interface_declaration"]);
+const METHOD_TYPES = new Set(["method_declaration", "function_declaration"]);
+
+export function extractJaxrsMicronautRoutes(root: Node, routes: RouteInfo[]): void {
+  walk(root, routes, "", "none");
+}
+
+type Flavor = "none" | "jaxrs" | "micronaut";
+
+function walk(node: Node, routes: RouteInfo[], classPrefix: string, flavor: Flavor): void {
+  if (CLASS_TYPES.has(node.type)) {
+    // Outbound-client interfaces reuse the same annotations — never routes.
+    if (
+      declarationHasAnnotation(node, "RegisterRestClient") ||
+      declarationHasAnnotation(node, "Client") // Micronaut @Client("...")
+    ) {
+      return;
+    }
+    let prefix = classPrefix;
+    let childFlavor = flavor;
+    for (const ann of annotationsOf(node)) {
+      const name = annotationSimpleName(ann);
+      if (name === "Path") {
+        prefix = annotationPath(ann) ?? prefix;
+        childFlavor = "jaxrs";
+      } else if (name === "Controller") {
+        // Micronaut carries the prefix in @Controller("/x"); Spring MVC's
+        // bare @Controller has no path and its methods use *Mapping names
+        // that this walk never matches, so claiming it here is harmless.
+        prefix = annotationPath(ann) ?? prefix;
+        childFlavor = "micronaut";
+      }
+    }
+    for (const child of node.children) walk(child, routes, prefix, childFlavor);
+    return;
+  }
+
+  if (METHOD_TYPES.has(node.type)) {
+    emitMethodRoutes(node, routes, classPrefix, flavor);
+    // Fall through: Kotlin nests local declarations inside function bodies.
+  }
+
+  for (const child of node.children) walk(child, routes, classPrefix, flavor);
+}
+
+function emitMethodRoutes(method: Node, routes: RouteInfo[], classPrefix: string, flavor: Flavor): void {
+  let verb: string | null = null;
+  let subPath: string | null = null;
+  let micronautLine = 0;
+
+  for (const ann of annotationsOf(method)) {
+    const name = annotationSimpleName(ann);
+    if (!name) continue;
+
+    // JAX-RS: verb is a marker — an argument means Retrofit-style outbound.
+    if (JAXRS_VERBS.has(name) && !annotationArgsNode(ann)) {
+      verb = name;
+      micronautLine = ann.startPosition.row + 1;
+      continue;
+    }
+    if (name === "Path") {
+      subPath = annotationPath(ann);
+      continue;
+    }
+    // Micronaut: @Get / @Get("/x") — only inside an @Controller class.
+    if (flavor === "micronaut" && MICRONAUT_VERBS.has(name)) {
+      verb = name.toUpperCase();
+      subPath = annotationPath(ann) ?? subPath;
+      micronautLine = ann.startPosition.row + 1;
+    }
+  }
+
+  if (!verb) return;
+  // A JAX-RS verb outside any @Path context is not evidence of a resource.
+  if (flavor === "none" && !classPrefix && subPath === null) return;
+
+  const lang = method.type === "function_declaration" ? ("kotlin" as const) : ("java" as const);
+  const body =
+    method.childForFieldName("body") ??
+    findChildByType(method, "function_body") ??
+    findChildByType(method, "block");
+
+  const merged = mergePrefix(classPrefix, subPath ?? "/");
+  routes.push({
+    path: merged.startsWith("/") ? merged : "/" + merged,
+    httpMethod: verb,
+    kind: "api",
+    handler: getNameFromNode(method),
+    calls: body ? extractCalls(body, lang) : [],
+    middleware: [],
+    line: micronautLine || method.startPosition.row + 1,
+  });
+}

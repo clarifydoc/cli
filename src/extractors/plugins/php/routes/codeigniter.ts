@@ -39,6 +39,10 @@ const NON_ROUTE_METHODS: ReadonlySet<string> = new Set<string>([
 /** `application/controllers/api/photos.php` → `api/photos`; null if not a controller. */
 function controllerBase(filePath: string): string | null {
   const posix = filePath.replace(/\\/g, "/");
+  // Laravel controllers live under `app/Http/Controllers/` — routed by the
+  // `Route::` facade, not by CI's URL-from-path convention. Without this veto
+  // every Laravel controller minted phantom `/usercontroller/...` routes.
+  if (/\/Http\/Controllers\//i.test(posix)) return null;
   const m = posix.match(/(?:^|\/)controllers\/(.+)\.php$/i);
   if (!m) return null;
   return m[1].toLowerCase();
@@ -64,7 +68,7 @@ function collectClassDeclarations(node: Node, out: Node[]): void {
   for (const child of node.children) collectClassDeclarations(child, out);
 }
 
-export const phpRouteExtractor: RouteExtractor = {
+export const codeigniterRouteExtractor: RouteExtractor = {
   languages: ["php"] as Language[],
 
   extractRoutes(tree: Tree, _sourceText: string, filePath?: string): RouteInfo[] {

@@ -9,6 +9,7 @@ import type {
   DeploymentModel,
   SubProject,
 } from "../types/analysis.js";
+import { collectK8sManifests } from "./deployment-k8s.js";
 
 /**
  * Deployment-topology extraction from docker-compose / compose manifests.
@@ -49,8 +50,8 @@ import type {
 // doesn't understand degrades to a missing key, never a crash. Anchors,
 // aliases and multi-line scalars are out of scope by design.
 
-type YamlValue = string | YamlValue[] | YamlMap;
-interface YamlMap {
+export type YamlValue = string | YamlValue[] | YamlMap;
+export interface YamlMap {
   [key: string]: YamlValue;
 }
 
@@ -174,7 +175,7 @@ export function parseSimpleYaml(text: string): YamlMap {
 
 // ─── Compose discovery & raw services ───────────────────────────────────────
 
-const IGNORE = [
+export const IGNORE = [
   "**/node_modules/**", "**/dist/**", "**/.git/**", "**/bin/**", "**/obj/**",
   "**/vendor/**", "**/build/**", "**/out/**", "**/target/**",
 ];
@@ -185,11 +186,11 @@ const IGNORE = [
  * `deployment/PR/docker-compose.yml` and `tessa-tests-compose.yml` are both
  * excluded while `production/` or `services/` pass.
  */
-const NON_RUNTIME_RE = /(^|[^a-z0-9])(build|test|tests|ci|pr|example|examples|sample|samples|demo)([^a-z0-9]|$)/i;
+export const NON_RUNTIME_RE = /(^|[^a-z0-9])(build|test|tests|ci|pr|example|examples|sample|samples|demo)([^a-z0-9]|$)/i;
 /** Tokens that mark an environment variant — parsed, but after the base files. */
 const VARIANT_RE = /(^|[^a-z0-9])(local|macos|osx|windows|ports|override|dev)([^a-z0-9]|$)/i;
 
-interface RawService {
+export interface RawService {
   name: string;
   file: string;
   image?: string;
@@ -425,8 +426,6 @@ export async function detectDeployment(
     })
     .slice(0, options.maxFiles ?? 20);
 
-  if (runtime.length === 0) return undefined;
-
   // ── parse: keep every per-file declaration AND a merged inventory ──
   /** Env key that lists the databases a datastore hosts. */
   const HOSTED_DBS_KEY_RE = /^[A-Z]+_(MULTIPLE_)?(INITDB_)?(DATABASES?|DB)$/i;
@@ -435,16 +434,9 @@ export async function detectDeployment(
   const merged = new Map<string, RawService>(); // key: lowercased service name
   const declaredIn = new Map<string, Set<string>>(); // key: lowercased service name → compose files
   const usedFiles = new Set<string>();
-  for (const rel of runtime) {
-    let text: string;
-    try {
-      text = await readFile(join(absRoot, rel), "utf-8");
-    } catch {
-      continue;
-    }
-    if (text.length > 1_000_000) continue;
-    const raws = collectRawServices(parseSimpleYaml(text), rel);
-    if (raws.length === 0) continue;
+
+  /** Fold one manifest's services into the per-file + merged inventories. */
+  function mergeGroup(raws: RawService[], rel: string): void {
     perFile.push(raws);
     usedFiles.add(rel);
     for (const svc of raws) {
@@ -478,6 +470,27 @@ export async function detectDeployment(
       for (const dep of svc.dependsOn) if (!existing.dependsOn.includes(dep)) existing.dependsOn.push(dep);
     }
   }
+
+  for (const rel of runtime) {
+    let text: string;
+    try {
+      text = await readFile(join(absRoot, rel), "utf-8");
+    } catch {
+      continue;
+    }
+    if (text.length > 1_000_000) continue;
+    const raws = collectRawServices(parseSimpleYaml(text), rel);
+    if (raws.length === 0) continue;
+    mergeGroup(raws, rel);
+  }
+
+  // k8s / Helm manifests feed the same inventory — each manifest file is a
+  // stack scope, workloads arrive pre-shaped as RawService.
+  const k8s = await collectK8sManifests(absRoot);
+  if (k8s) {
+    for (let i = 0; i < k8s.groups.length; i++) mergeGroup(k8s.groups[i]!, k8s.files[i]!);
+  }
+
   const rawMerged = [...merged.values()];
   if (rawMerged.length === 0) return undefined;
 
@@ -546,6 +559,14 @@ export async function detectDeployment(
   const normToService = new Map<string, string>();
   for (const s of services) {
     if (s.kind === "app") normToService.set(normName(s.name), s.name);
+  }
+  // k8s Service DNS aliases: env URLs point at the Service name, the workload
+  // may be named differently — resolve the alias onto the workload it selects.
+  for (const [alias, target] of k8s?.aliases ?? []) {
+    const svc = svcByLower.get(target.toLowerCase());
+    if (svc && svc.kind === "app" && !normToService.has(normName(alias))) {
+      normToService.set(normName(alias), svc.name);
+    }
   }
 
   /** App service whose normalized name shares the longest (≥4 char) prefix relation with `norm`. */
