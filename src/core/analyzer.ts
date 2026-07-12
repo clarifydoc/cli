@@ -22,6 +22,7 @@ import {
 } from "./dependency-inventory.js";
 import { detectSubProjects, assignProjectId } from "./project-detector.js";
 import { detectDeployment } from "./deployment.js";
+import { resolveViewBySuffix } from "../extractors/plugins/shared/path-utils.js";
 import { detectFileBasedRoutes } from "../extractors/plugins/javascript/routes/file-based.js";
 import { resolveExpressMounts } from "../extractors/plugins/javascript/routes/express-mounts.js";
 import { resolveUrlBuilders } from "../extractors/plugins/javascript/url-builders.js";
@@ -946,7 +947,13 @@ function buildScreensFromRoutes(
     const spec = route.componentPath;
     if (!spec) return null;
     if (spec.startsWith(".") || spec.startsWith("/")) {
-      return resolveImportSource(configFile, spec, knownFiles);
+      const direct = resolveImportSource(configFile, spec, knownFiles);
+      if (direct) return direct;
+      // Server-rendered view path (`view="/account/details"` in a Web Flow /
+      // MVC config): resolve by path suffix, tie-broken toward the config
+      // file's own webapp.
+      if (spec.startsWith("/")) return resolveViewBySuffix(spec, knownFiles, configFile);
+      return null;
     }
     return importIndex.localFor(configFile, spec);
   };
@@ -973,7 +980,13 @@ function buildScreensFromRoutes(
       byComponent.set(target.filePath, entry);
       resolvedAny = true;
     }
-    if (!resolvedAny) inline.push({ analysis, route: frontendRoutes[0] });
+    // A config file whose routes all point at absolute VIEW paths is pure
+    // wiring (a Web Flow XML, an MVC route table) — when none of its views
+    // resolved, an inline screen of the config file itself is an empty shell,
+    // not a page. Inline screens remain for route-in-page files (React) and
+    // pages that route themselves (HTML, Blazor `@page`).
+    const wiringOnly = frontendRoutes.every((r) => r.componentPath?.startsWith("/"));
+    if (!resolvedAny && !wiringOnly) inline.push({ analysis, route: frontendRoutes[0] });
   }
 
   const screens: ScreenInfo[] = [];
@@ -981,6 +994,16 @@ function buildScreensFromRoutes(
   for (const { analysis, routes } of byComponent.values()) {
     // Canonical path = the shortest (least-parameterised) route to the page.
     const primary = routes.slice().sort((a, b) => a.path.length - b.path.length)[0]!;
+    // The target's plugin may already have authored the screen (JSP views,
+    // Qt Designer forms): give it the route instead of synthesizing a second
+    // screen for the same file. The mutation flows into the plugin-screens
+    // pass, which collects these same ScreenInfo objects.
+    if (analysis.screens.length > 0) {
+      for (const s of analysis.screens) {
+        if (!s.routePath) s.routePath = primary.path;
+      }
+      continue;
+    }
     const screenName = primary.handler ?? screenNameFromFile(analysis);
     screens.push(buildScreen(analysis, screenName, primary.path, rawSources));
   }

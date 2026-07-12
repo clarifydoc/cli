@@ -73,7 +73,7 @@ function extractHtmlRoutes(lines: string[], filePath?: string): RouteInfo[] {
  * must not count). Line numbers are preserved 1:1. The opening `<script …>`/`<style …>`
  * tag itself is kept (import extraction reads `src` from the raw lines separately).
  */
-function maskMarkup(lines: string[]): string[] {
+export function maskMarkup(lines: string[]): string[] {
   const out: string[] = [];
   let inComment = false;
   let blockTag: string | null = null; // inside a <script>/<style> body
@@ -167,12 +167,21 @@ function cleanHandler(raw: string): string | null {
   return null;
 }
 
-function attr(attrs: string, name: string): string | null {
-  const m = attrs.match(new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"|\\b${name}\\s*=\\s*'([^']*)'`, "i"));
+// Compiled once per attribute name — the JSP plugin reads a handful of fixed
+// attributes on every taglib tag, which made per-call compilation a hot spot.
+const ATTR_RE_CACHE = new Map<string, RegExp>();
+
+export function attr(attrs: string, name: string): string | null {
+  let re = ATTR_RE_CACHE.get(name);
+  if (!re) {
+    re = new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"|\\b${name}\\s*=\\s*'([^']*)'`, "i");
+    ATTR_RE_CACHE.set(name, re);
+  }
+  const m = attrs.match(re);
   return m ? (m[1] ?? m[2] ?? null) : null;
 }
 
-function extractHtmlInteractiveElements(lines: string[]): InteractiveElementInfo[] {
+export function extractHtmlInteractiveElements(lines: string[]): InteractiveElementInfo[] {
   const markup = maskMarkup(lines);
   const out: InteractiveElementInfo[] = [];
   for (let i = 0; i < markup.length; i++) {

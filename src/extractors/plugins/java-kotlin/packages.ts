@@ -9,6 +9,7 @@ export const jvmPackages: readonly KnownPackageRule[] = [
   // ── Frameworks ──
   { names: ["spring-boot", "spring-boot-starter", "org.springframework.boot"], category: "framework", framework: { id: "spring-boot", name: "Spring Boot" } },
   { names: ["spring-web", "spring-webmvc"], category: "framework", framework: { id: "spring-web", name: "Spring Web" } },
+  { match: /(^|[:/])spring-webflow/, category: "framework", framework: { id: "spring-webflow", name: "Spring Web Flow" } },
   { names: ["micronaut", "micronaut-core"], category: "framework", framework: { id: "micronaut", name: "Micronaut" } },
   { names: ["quarkus", "quarkus-core"], category: "framework", framework: { id: "quarkus", name: "Quarkus" } },
   { names: ["ktor", "ktor-server-core"], category: "framework", framework: { id: "ktor", name: "Ktor" } },

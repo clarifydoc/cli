@@ -30,6 +30,10 @@ export interface ProjectInfo {
   pubspecYaml: string | null;
   /** Any *.sql / *.ddl files discovered (used to detect raw-SQL usage in the project). */
   sqlFiles: string[];
+  /** Any *.jsp files discovered (Java web view tier — JSP framework detection). */
+  jspFiles: string[];
+  /** Spring Web Flow definition files (`*webflow*.xml`, or XML under a `flows/` dir). */
+  webflowFiles: string[];
   /** Raw content of the root CMakeLists.txt if found (used for Qt/C++ framework detection). */
   cmakeLists: string | null;
   /**

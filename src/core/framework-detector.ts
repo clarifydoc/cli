@@ -434,6 +434,24 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     check: (info) => info.sqlFiles.length > 0,
     detectedVia: ".sql / .ddl files",
   },
+  // Java web view tier — JSP pages exist
+  {
+    id: "jsp",
+    name: "JSP",
+    check: (info) => info.jspFiles.length > 0,
+    detectedVia: ".jsp files",
+  },
+  // Spring Web Flow — flow definition XMLs (in-house wrappers pull the jar in
+  // transitively, so the build file often never names it) or an explicit dep.
+  {
+    id: "spring-webflow",
+    name: "Spring Web Flow",
+    check: (info) =>
+      info.webflowFiles.length > 0 ||
+      hasMavenDep(info, "spring-webflow") ||
+      hasGradleDep(info, "spring-webflow"),
+    detectedVia: "webflow XML definitions / build dependency",
+  },
 
   // Python frameworks
   {
@@ -809,6 +827,21 @@ export async function gatherProjectInfo(
     deep: 5,
   });
 
+  // JSP views + Spring Web Flow definitions (Java web monoliths nest these
+  // deep under src/main/webapp/, hence the higher depth).
+  const jspFiles = await fg("**/*.jsp", {
+    cwd: root,
+    ignore: ["**/node_modules/**", "**/target/**", "**/.git/**"],
+    absolute: false,
+    deep: 8,
+  });
+  const webflowFiles = await fg(["**/*webflow*.xml", "**/WEB-INF/flows/**/*.xml"], {
+    cwd: root,
+    ignore: ["**/node_modules/**", "**/target/**", "**/.git/**"],
+    absolute: false,
+    deep: 9,
+  });
+
   // Framework marker files no manifest records (vendored frameworks).
   const markerFiles = MARKER_CANDIDATES.filter((rel) =>
     existsSync(join(root, ...rel.split("/"))),
@@ -832,6 +865,8 @@ export async function gatherProjectInfo(
     gemfile,
     pubspecYaml,
     sqlFiles,
+    jspFiles,
+    webflowFiles,
     cmakeLists,
     markerFiles,
   };

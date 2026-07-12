@@ -3,6 +3,7 @@ import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { extractCsharpTypeReferences } from "./type-references.js";
 import { csharpCallHooks } from "./call-hooks.js";
 import { nugetPackages } from "./packages.js";
+import { extractWinFormsInteractiveElements, extractWinFormsScreens } from "./winforms-ui.js";
 
 const CSHARP_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -51,6 +52,10 @@ export const csharpMeta: LanguagePluginMeta = {
   dbCallRoots: ["DbContext", "DbSet", "SqlCommand", "SqlConnection"],
   ast: {
     typeReferences: extractCsharpTypeReferences,
+    // WinForms wiring (`X.Click += Handler;`) — Designer files AND hand-wired
+    // forms; the partial-class handler link is added by CsharpUiBridgeResolver.
+    interactiveElements: (_tree, sourceText) => extractWinFormsInteractiveElements(sourceText),
+    screens: (_tree, sourceText, filePath) => extractWinFormsScreens(sourceText, filePath),
   },
   calls: csharpCallHooks,
 };
