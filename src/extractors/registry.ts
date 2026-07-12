@@ -1,5 +1,5 @@
 import type { Language, PackageCategory } from "../types/analysis.js";
-import type { LanguagePluginMeta, LanguageComplexitySpec, SecurityRule, AstExtractorHooks } from "../types/language-plugin.js";
+import type { LanguagePluginMeta, LanguageComplexitySpec, SecurityRule, AstExtractorHooks, FrameworkRule } from "../types/language-plugin.js";
 import type { RegexLangSpec } from "./plugins/shared/regex-base.js";
 import { registerBuiltinTypes } from "./shared/builtin-types.js";
 import { registerCallPatterns } from "./shared/call-patterns.js";
@@ -171,6 +171,42 @@ export const EXTERNAL_NAMESPACE_ROOT_RE: RegExp = (() => {
     }
   }
   return new RegExp(`^(${roots.join("|")})\\b`);
+})();
+
+// ─── Framework detection rules ───────────────────────────────────────────
+
+/**
+ * Manifest-level framework rules from every plugin, in `ALL_METAS` order
+ * (rules within a plugin keep their declaration order). Consumed by
+ * `core/framework-detector`, which sorts the *detections* by id so the output
+ * never depends on plugin registration order. Rule ids must be globally
+ * unique — plugins own disjoint framework domains by design.
+ */
+export const FRAMEWORK_RULES: readonly FrameworkRule[] = (() => {
+  const seen = new Set<string>();
+  const rules: FrameworkRule[] = [];
+  for (const meta of ALL_METAS) {
+    for (const rule of meta.frameworkRules ?? []) {
+      if (seen.has(rule.id)) {
+        throw new Error(`Duplicate framework rule id "${rule.id}" (contributed by ${meta.language})`);
+      }
+      seen.add(rule.id);
+      rules.push(rule);
+    }
+  }
+  return rules;
+})();
+
+/**
+ * Union of every plugin's vendored-framework marker paths, checked with a
+ * cheap existsSync per project root while building `ProjectInfo.markerFiles`.
+ */
+export const FRAMEWORK_MARKER_CANDIDATES: readonly string[] = (() => {
+  const seen = new Set<string>();
+  for (const meta of ALL_METAS) {
+    for (const marker of meta.markerCandidates ?? []) seen.add(marker);
+  }
+  return [...seen];
 })();
 
 // ─── Framework hints ─────────────────────────────────────────────────────

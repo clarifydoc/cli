@@ -2,6 +2,7 @@ import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { dartSpec } from "./index.js";
 import { pubPackages } from "./packages.js";
+import { dartFrameworkRules } from "./frameworks.js";
 
 const DART_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -22,6 +23,7 @@ export const dartMeta: LanguagePluginMeta = {
   extensions: dartSpec.extensions,
   regexSpec: dartSpec,
   knownPackages: pubPackages,
+  frameworkRules: dartFrameworkRules,
   // `package:test` / `flutter_test`: `foo_test.dart` is the canonical suffix.
   testFilePatterns: [/_test\.dart$/],
   builtinTypes: DART_BUILTINS,

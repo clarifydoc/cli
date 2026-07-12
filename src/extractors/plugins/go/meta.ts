@@ -2,6 +2,7 @@ import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { goSpec } from "./index.js";
 import { goPackages } from "./packages.js";
+import { goFrameworkRules } from "./frameworks.js";
 
 const GO_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -22,6 +23,7 @@ export const goMeta: LanguagePluginMeta = {
   testFilePatterns: [/_test\.go$/],
   builtinTypes: GO_BUILTINS,
   knownPackages: goPackages,
+  frameworkRules: goFrameworkRules,
   externalModulePrefixes: [
     "fmt", "net/", "os", "io", "context", "strings", "strconv", "errors", "encoding/",
     "crypto/", "database/", "log", "sync", "time", "testing",

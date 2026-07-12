@@ -1,6 +1,7 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { prismaSpec } from "./index.js";
+import { prismaFrameworkRules } from "./frameworks.js";
 
 /**
  * Prisma schema files (`schema.prisma`). Parsed by the dedicated regex spec;
@@ -14,4 +15,5 @@ export const prismaMeta: LanguagePluginMeta = {
   regexSpec: prismaSpec,
   importTarget: false,
   builtinTypes: new Set(COMMON_PRIMITIVES),
+  frameworkRules: prismaFrameworkRules,
 };

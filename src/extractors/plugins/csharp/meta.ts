@@ -3,6 +3,7 @@ import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { extractCsharpTypeReferences } from "./type-references.js";
 import { csharpCallHooks } from "./call-hooks.js";
 import { nugetPackages } from "./packages.js";
+import { csharpFrameworkRules } from "./frameworks.js";
 import { extractWinFormsInteractiveElements, extractWinFormsScreens } from "./winforms-ui.js";
 
 const CSHARP_BUILTINS: ReadonlySet<string> = new Set<string>([
@@ -31,6 +32,7 @@ export const csharpMeta: LanguagePluginMeta = {
   },
   builtinTypes: CSHARP_BUILTINS,
   knownPackages: nugetPackages,
+  frameworkRules: csharpFrameworkRules,
   externalModulePrefixes: ["System", "Microsoft.", "Newtonsoft."],
   externalNamespaceRoots: ["System", "Microsoft"],
   complexity: {

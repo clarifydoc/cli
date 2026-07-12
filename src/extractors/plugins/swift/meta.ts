@@ -2,6 +2,7 @@ import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { swiftSpec } from "./index.js";
 import { swiftPackages } from "./packages.js";
+import { swiftFrameworkRules } from "./frameworks.js";
 
 const SWIFT_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -22,4 +23,5 @@ export const swiftMeta: LanguagePluginMeta = {
   regexSpec: swiftSpec,
   knownPackages: swiftPackages,
   builtinTypes: SWIFT_BUILTINS,
+  frameworkRules: swiftFrameworkRules,
 };
