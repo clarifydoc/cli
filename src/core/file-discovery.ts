@@ -84,6 +84,9 @@ export async function discoverFiles(
     ignore,
     absolute: false,
     dot: false,
+    // Legacy Windows codebases (Delphi, VB) ship UNIT1.PAS / FORM1.DFM —
+    // match extensions case-insensitively or a third of such repos vanishes.
+    caseSensitiveMatch: false,
   });
 
   const ignorePatterns = loadIgnorePatterns(root);
@@ -124,7 +127,7 @@ export async function discoverFiles(
 
 function getExtension(filePath: string): string {
   const lastDot = filePath.lastIndexOf(".");
-  return lastDot >= 0 ? filePath.slice(lastDot) : "";
+  return lastDot >= 0 ? filePath.slice(lastDot).toLowerCase() : "";
 }
 
 /** Get unique extensions found in a directory (for framework detection) */

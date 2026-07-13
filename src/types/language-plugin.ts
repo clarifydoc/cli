@@ -322,6 +322,13 @@ export interface LanguagePluginManifest {
 export interface LanguagePluginMeta extends LanguagePluginManifest {
   /** Parser for `parsing: "custom"` formats (e.g. .dfm). */
   customParse?(rawSource: string, relativePath: string): FileAnalysis;
+  /**
+   * Encoding used to read the file from disk (default "utf-8"). Formats that
+   * can be BINARY (Delphi .dfm TPF0 streams) use "latin1" so every byte
+   * survives round-tripping through the string (charCodeAt(i) === byte i) —
+   * a utf-8 decode would collapse invalid sequences into U+FFFD.
+   */
+  sourceEncoding?: "utf-8" | "latin1";
   /** Regex extraction spec for `parsing: "regex"` languages (and tree-sitter parse-failure fallback). */
   regexSpec?: import("../extractors/plugins/shared/regex-base.js").RegexLangSpec;
   /**

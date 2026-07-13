@@ -6,11 +6,20 @@ import { extractCalls } from "../../shared/call-graph.js";
 export class PascalExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["pascal"];
 
-  /** Map of "ClassName.MethodName" → CallInfo[] built from implementation section */
-  private methodCallsMap = new Map<string, import("../../../types/analysis.js").CallInfo[]>();
+  /** "ClassName.MethodName" → calls + line span of the IMPLEMENTATION block.
+   *  The interface declaration is a single line; symbol attribution (and
+   *  click-through) need the body span, like every other language. */
+  private methodCallsMap = new Map<string, {
+    calls: import("../../../types/analysis.js").CallInfo[];
+    line: number;
+    endLine: number;
+  }>();
 
   protected collectFunctions(node: Node, functions: FunctionInfo[]): void {
-    // First pass: collect calls from all method implementations
+    // First pass: collect calls from all method implementations. Reset per
+    // file — `TForm1.FormCreate` exists in half the units of a VCL app, and a
+    // stale entry would attach another file's calls and line span.
+    this.methodCallsMap.clear();
     this.buildMethodCallsMap(node);
     this.extractPascalFunctions(node, functions);
   }
@@ -28,7 +37,11 @@ export class PascalExtractor extends FunctionClassExtractor {
           const key = this.getMethodKey(declProc);
           const block = this.findChildByType(child, "block");
           if (key && block) {
-            this.methodCallsMap.set(key, extractCalls(block, "pascal"));
+            this.methodCallsMap.set(key, {
+              calls: extractCalls(block, "pascal"),
+              line: child.startPosition.row + 1,
+              endLine: child.endPosition.row + 1,
+            });
           }
         }
       }
@@ -235,9 +248,14 @@ export class PascalExtractor extends FunctionClassExtractor {
           if (member.type === "declProc") {
             const fn = this.parsePascalProc(member);
             fn.isExported = visibility === "public" || visibility === null;
-            // Look up calls from implementation section
-            const implCalls = this.methodCallsMap.get(`${name}.${fn.name}`);
-            if (implCalls) fn.calls = implCalls;
+            // Adopt the implementation's calls AND line span (the interface
+            // declaration is one line — useless for attribution/navigation).
+            const impl = this.methodCallsMap.get(`${name}.${fn.name}`);
+            if (impl) {
+              fn.calls = impl.calls;
+              fn.line = impl.line;
+              fn.endLine = impl.endLine;
+            }
             methods.push(fn);
           } else if (member.type === "declField") {
             properties.push(this.parsePascalField(member, visibility));
@@ -249,8 +267,12 @@ export class PascalExtractor extends FunctionClassExtractor {
 
       if (child.type === "declProc") {
         const fn = this.parsePascalProc(child);
-        const implCalls = this.methodCallsMap.get(`${name}.${fn.name}`);
-        if (implCalls) fn.calls = implCalls;
+        const impl = this.methodCallsMap.get(`${name}.${fn.name}`);
+        if (impl) {
+          fn.calls = impl.calls;
+          fn.line = impl.line;
+          fn.endLine = impl.endLine;
+        }
         methods.push(fn);
       } else if (child.type === "declField") {
         properties.push(this.parsePascalField(child, null));

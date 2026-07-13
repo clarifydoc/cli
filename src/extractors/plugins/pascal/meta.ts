@@ -7,6 +7,7 @@ import { PascalImportExportExtractor } from "./imports-exports.js";
 import { PascalDataSourceExtractor } from "./data-sources.js";
 import { PascalMutationExtractor } from "./data-mutations.js";
 import { pascalRouteExtractor } from "./routes.js";
+import { PascalUiBridgeResolver } from "./ui-bridge.js";
 
 const PASCAL_BUILTINS: ReadonlySet<string> = new Set<string>([
   "Integer", "Cardinal", "Word", "Byte", "ShortInt", "SmallInt", "LongInt",
@@ -40,6 +41,7 @@ export const pascalMeta: LanguagePluginMeta = {
   apiCallRoots: ["THTTPClient", "TRESTClient", "TIdHTTP"],
   dbCallRoots: ["Query", "Connection", "DataSet", "SQLQuery"],
   calls: pascalCallHooks,
+  dispatchResolvers: [new PascalUiBridgeResolver()],
 };
 
 /**
@@ -50,6 +52,9 @@ export const pascalMeta: LanguagePluginMeta = {
 export const dfmMeta: LanguagePluginMeta = {
   ...dfmManifest,
   customParse: parseDfm,
+  // Old Delphi DFMs are binary TPF0 streams; latin1 keeps every byte intact
+  // for the binary→text converter (utf-8 would mangle them irreversibly).
+  sourceEncoding: "latin1",
   builtinTypes: PASCAL_BUILTINS,
   skipSecurityScan: true,
 };

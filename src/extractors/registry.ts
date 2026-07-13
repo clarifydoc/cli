@@ -259,12 +259,17 @@ export function regexSpecFor(language: Language): RegexLangSpec | undefined {
 
 // ─── Extensions ──────────────────────────────────────────────────────────
 
-/** File extension (with dot) → language, aggregated from every plugin manifest. */
+/**
+ * File extension (with dot) → language, aggregated from every plugin manifest.
+ * Keys are lowercase; look up with a lowercased extension — legacy Windows
+ * codebases (Delphi, VB) routinely ship `UNIT1.PAS` / `FORM1.DFM` files that
+ * a case-sensitive lookup would silently skip.
+ */
 export const EXTENSION_TO_LANGUAGE: Readonly<Record<string, Language>> = (() => {
   const map: Record<string, Language> = {};
   for (const manifest of ALL_MANIFESTS) {
     for (const ext of manifest.extensions) {
-      map[ext] = manifest.language;
+      map[ext.toLowerCase()] = manifest.language;
     }
   }
   return map;
@@ -284,7 +289,7 @@ export const STRIP_SOURCE_EXTENSION_RE: RegExp = (() => {
       exts.push(ext.slice(1)); // drop the leading dot
     }
   }
-  return new RegExp(`\\.(${exts.join("|")})$`);
+  return new RegExp(`\\.(${exts.join("|")})$`, "i");
 })();
 
 // ─── Import resolution data ──────────────────────────────────────────────

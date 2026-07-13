@@ -14,6 +14,9 @@ export const pascalManifest: LanguagePluginManifest = {
   grammar: { variants: { pascal: { pkg: "tree-sitter-pascal", wasm: "tree-sitter-pascal.wasm" } } },
   externalModulePrefixes: ["System.", "Vcl.", "Fmx.", "Data.", "Datasnap.", "EMS.", "Winapi.", "Posix.", "IdHTTP", "IdTCP", "IdSSL"],
   frameworkRules: pascalFrameworkRules,
+  // The DFM→handler UI bridge joins .dfm event wirings to form methods, so
+  // discovering dfm files must load this plugin's resolvers too.
+  dispatchLanguages: ["dfm"],
 };
 
 export const dfmManifest: LanguagePluginManifest = {

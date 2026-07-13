@@ -9,10 +9,11 @@ export const EXTENSION_TO_LANGUAGE: Record<string, Language> = {
   ...REGISTRY_EXTENSION_TO_LANGUAGE,
 };
 
-/** Get language for a file path based on its extension */
+/** Get language for a file path based on its extension (case-insensitive:
+ *  legacy Windows codebases ship `UNIT1.PAS` / `FORM1.DFM`). */
 export function getLanguageForFile(filePath: string): Language | null {
   const lastDot = filePath.lastIndexOf(".");
   if (lastDot < 0) return null;
-  const ext = filePath.slice(lastDot);
+  const ext = filePath.slice(lastDot).toLowerCase();
   return EXTENSION_TO_LANGUAGE[ext] ?? null;
 }
