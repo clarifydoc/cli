@@ -23,7 +23,7 @@ import {
 } from "./dependency-inventory.js";
 import { detectSubProjects, assignProjectId } from "./project-detector.js";
 import { detectDeployment } from "./deployment.js";
-import { resolveViewBySuffix } from "../extractors/plugins/shared/path-utils.js";
+import { resolveViewBySuffix, pickByPathAffinity, extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { detectFileBasedRoutes } from "../extractors/plugins/javascript/routes/file-based.js";
 import { resolveExpressMounts } from "../extractors/plugins/javascript/routes/express-mounts.js";
 import { resolveUrlBuilders } from "../extractors/plugins/javascript/url-builders.js";
@@ -1304,28 +1304,58 @@ const PACKAGE_DIR_IMPORT_LANGS: ReadonlySet<Language> = new Set([
 ]);
 
 /** Build a graph of file -> files it imports */
-function buildComponentGraph(
+export function buildComponentGraph(
   analyses: FileAnalysis[],
 ): Record<string, string[]> {
   const graph: Record<string, string[]> = {};
 
-  // Build a map of export names to file paths for resolution
-  const exportToFile = new Map<string, string>();
+  // Export names / basenames map to EVERY declaring file — a repo of many
+  // sibling projects repeats names freely (every Delphi project exports a
+  // TForm1, every second one ships a Unit1.pas). A single-winner map made the
+  // edge target an insertion-order accident; the candidate closest to the
+  // importing file wins instead (same policy as link-scoring's tryMatch).
+  const exportToFiles = new Map<string, string[]>();
+  const push = (map: Map<string, string[]>, key: string, file: string) => {
+    const list = map.get(key);
+    if (list) {
+      if (!list.includes(file)) list.push(file);
+    } else map.set(key, [file]);
+  };
+  const projectOf = new Map<string, string>();
   for (const a of analyses) {
+    if (a.projectId) projectOf.set(a.filePath, a.projectId);
     for (const exp of a.exports) {
-      exportToFile.set(exp.name, a.filePath);
+      push(exportToFiles, exp.name, a.filePath);
     }
   }
+  // Same-project candidates beat everything in a multi-project solution;
+  // affinity only breaks ties within the chosen scope.
+  const pickScoped = (candidates: string[], fromFile: string): string | null => {
+    let others = candidates.filter((c) => c !== fromFile);
+    if (others.length === 0) return null;
+    // Same language family only (a Pascal `uses` never targets a .js file).
+    const family = extensionFamily(fromFile);
+    if (family) {
+      others = others.filter((c) => extensionFamily(c) === family);
+      if (others.length === 0) return null;
+    }
+    const srcProject = projectOf.get(fromFile);
+    const sameProject = srcProject !== undefined
+      ? others.filter((c) => projectOf.get(c) === srcProject)
+      : [];
+    return pickByPathAffinity(sameProject.length > 0 ? sameProject : others, (c) => c, fromFile);
+  };
 
-  // Build a map of file base names (without extension) to file paths
-  const baseNameToFile = new Map<string, string>();
+  // File base names (without extension, LOWERCASED — Pascal and friends match
+  // units case-insensitively) → declaring files.
+  const baseNameToFiles = new Map<string, string[]>();
   // Build a map of stripped paths to file paths for relative import resolution (O(1) lookup)
   const strippedPathToFile = new Map<string, string>();
   // Build a map of directory names → files in that directory (for Go/Rust package imports)
   const dirToFiles = new Map<string, string[]>();
   for (const a of analyses) {
-    const baseName = a.filePath.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "");
-    baseNameToFile.set(baseName, a.filePath);
+    const baseName = a.filePath.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "").toLowerCase();
+    push(baseNameToFiles, baseName, a.filePath);
     const stripped = a.filePath
       .replace(STRIP_SOURCE_EXTENSION_RE, "")
       .replace(/\/index$/, "");
@@ -1421,9 +1451,19 @@ function buildComponentGraph(
       // Works for C# (using MyApp.Services → specifier matching)
       for (const spec of imp.specifiers) {
         if (!spec) continue;
-        const target = exportToFile.get(spec);
-        if (target && target !== a.filePath) {
-          refSet.add(target);
+        // A NAMESPACE import's specifier is a module/unit name, not a symbol
+        // binding — matching it against exported SYMBOL names is a category
+        // error unless the file actually uses a symbol so named (same gate as
+        // step 3). Without it, every `uses X` in a Delphi repo grew an edge to
+        // whichever type-library unit exports a symbol coincidentally named X
+        // (Word_97.pas exports thousands — it collected 68 false dependents).
+        if (imp.isNamespace && !usedNames.has(spec)) continue;
+        const candidates = exportToFiles.get(spec);
+        if (candidates) {
+          // Self is dropped BEFORE the pick (an import never targets its own
+          // file) so a same-named import from elsewhere can still resolve.
+          const target = pickScoped(candidates, a.filePath);
+          if (target) refSet.add(target);
         }
       }
 
@@ -1431,8 +1471,9 @@ function buildComponentGraph(
       // e.g. "com.example.api.service.UserService" → "UserService" → UserService.java
       const lastSegment = imp.source.split(/[./\\]/).filter(Boolean).pop();
       if (lastSegment) {
-        const target = baseNameToFile.get(lastSegment);
-        if (target && target !== a.filePath) {
+        const candidates = baseNameToFiles.get(lastSegment.toLowerCase());
+        const target = candidates ? pickScoped(candidates, a.filePath) : null;
+        if (target) {
           // A bare namespace import (`using X.Y.Z;`, no named binding) only
           // implies a dependency when the file actually uses a symbol named like
           // the matched file. A named import (specifiers) is a direct reference,

@@ -1,6 +1,6 @@
 import type { FileAnalysis, LinkInfo, LinkProximity, Confidence } from "../../types/analysis.js";
 import { posix } from "path";
-import { pickByPathAffinity } from "../plugins/shared/path-utils.js";
+import { pickByPathAffinity, extensionFamily } from "../plugins/shared/path-utils.js";
 import { bestConfidence } from "./confidence.js";
 // Registry-aggregated data, PUSHED here by the registry (same pattern as
 // call-patterns/parser-manager registration): this module is imported by
@@ -255,10 +255,16 @@ function setPreferring(map: Map<string, string>, key: string, filePath: string):
   }
 }
 
+/** filePath → sub-project id per filePathMap — same-project candidates win
+ *  bare-name resolution in a multi-project solution. */
+const projectOfCache = new WeakMap<Map<string, string>, Map<string, string>>();
+
 /** Build a map for resolving import sources to file paths */
 export function buildFilePathMap(analyses: FileAnalysis[]): Map<string, string> {
   const map = new Map<string, string>();
+  const projectOf = new Map<string, string>();
   for (const a of analyses) {
+    if (a.projectId) projectOf.set(a.filePath, a.projectId);
     map.set(a.filePath, a.filePath);
     const base = a.filePath.replace(requireRegistered(stripSourceExtensionReSlot), "");
     setPreferring(map, base, a.filePath);
@@ -268,6 +274,7 @@ export function buildFilePathMap(analyses: FileAnalysis[]): Map<string, string> 
     // index in tryMatch — a single basename key here would pick an arbitrary
     // winner when several projects in one repo share a unit/module name.
   }
+  projectOfCache.set(map, projectOf);
   return map;
 }
 
@@ -406,7 +413,24 @@ function tryMatch(candidate: string, filePathMap: Map<string, string>, sourceFil
   if (!candidate.includes("/")) {
     const candidates = getBasenameCandidates(filePathMap).get(candidate.toLowerCase());
     if (candidates && candidates.length > 0) {
-      return pickByPathAffinity(candidates, (c) => c, sourceFile);
+      // Same LANGUAGE FAMILY only — `uses X` never imports a .js file, and a
+      // doc-generator TOC stub must not shadow a same-named unit. Importers
+      // with an unknown family keep every candidate.
+      const family = extensionFamily(sourceFile);
+      const kin = family ? candidates.filter((c) => extensionFamily(c) === family) : candidates;
+      if (kin.length === 0) return null;
+      // In a multi-project solution the importer's OWN project wins outright;
+      // path affinity only breaks ties within the chosen scope.
+      const projectOf = projectOfCache.get(filePathMap);
+      const srcProject = projectOf?.get(sourceFile);
+      const sameProject = srcProject !== undefined
+        ? kin.filter((c) => projectOf!.get(c) === srcProject)
+        : [];
+      return pickByPathAffinity(
+        sameProject.length > 0 ? sameProject : kin,
+        (c) => c,
+        sourceFile,
+      );
     }
   }
 

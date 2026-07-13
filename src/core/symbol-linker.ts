@@ -1,6 +1,7 @@
 import type { FileAnalysis, SymbolLink, CallInfo, Confidence, ParamInfo } from "../types/analysis.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
+import { commonPrefixLength } from "../extractors/plugins/shared/path-utils.js";
 import { ALL_BUILTIN_MEMBERS } from "../extractors/registry.js";
 
 interface SymbolDef {
@@ -29,6 +30,8 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
     leafCatalog: buildLeafCatalog(symbolIndex, projectOf),
     dirTailIndex: buildDirTailIndex(symbolIndex),
     classNameIndex: buildClassNameIndex(symbolIndex),
+    projectOf,
+    importedFilesCache: new Map(),
   };
   const interfaceImplMap = ctx.interfaceImplMap;
   const links: SymbolLink[] = [];
@@ -516,6 +519,25 @@ interface LinkContext {
   /** Top-level symbol name → files that define it (in symbolIndex order). Lets
    *  Strategy 4 find the class file by O(1) lookup instead of scanning all files. */
   classNameIndex: Map<string, string[]>;
+  /** filePath → sub-project id, for project-scoped candidate selection. */
+  projectOf: Map<string, string>;
+  /** Lazy per-file cache: files this file's imports resolve to (Strategy 4's
+   *  cross-project gate). */
+  importedFilesCache: Map<string, Set<string>>;
+}
+
+/** Files the analysis's imports resolve to (cached per source file). */
+function importedFilesOf(analysis: FileAnalysis, ctx: LinkContext): Set<string> {
+  let set = ctx.importedFilesCache.get(analysis.filePath);
+  if (!set) {
+    set = new Set();
+    for (const imp of analysis.imports) {
+      const f = resolveTarget(imp.source, analysis.filePath, ctx.filePathMap);
+      if (f && f !== analysis.filePath) set.add(f);
+    }
+    ctx.importedFilesCache.set(analysis.filePath, set);
+  }
+  return set;
 }
 
 /**
@@ -915,12 +937,32 @@ function resolveCallToDefinition(
     const className = parts[0]!;
     const methodName = parts.slice(1).join(".");
 
-    // Find which file defines this class — files are pre-indexed by the class
-    // name in symbolIndex order, so the first match here is identical to the
-    // old full scan but without iterating every file.
+    // Files defining this class, PROJECT-SCOPED: same-project candidates win
+    // (nearest first); a cross-project class is eligible only when this file
+    // actually IMPORTS it. Without the gate, `Application.Run` in every
+    // Delphi .dpr resolved into an unrelated project's type-library unit that
+    // happens to export a class named Application (Word_97.pas collected 68
+    // cross-project dependents that way).
     const candidateFiles = classNameIndex.get(className);
     if (candidateFiles) {
-      for (const filePath of candidateFiles) {
+      const sameProject = candidateFiles
+        .filter((f) => ctx.projectOf.get(f) === analysis.projectId)
+        .sort(
+          (x, y) =>
+            commonPrefixLength(y, sourceFile) - commonPrefixLength(x, sourceFile),
+        );
+      const eligible =
+        sameProject.length === candidateFiles.length
+          ? sameProject
+          : [
+              ...sameProject,
+              ...candidateFiles.filter(
+                (f) =>
+                  ctx.projectOf.get(f) !== analysis.projectId &&
+                  importedFilesOf(analysis, ctx).has(f),
+              ),
+            ];
+      for (const filePath of eligible) {
         const syms = symbolIndex.get(filePath)!;
         const classDef = syms.get(`${className}.${methodName}`) ?? syms.get(methodName);
         if (classDef) {
