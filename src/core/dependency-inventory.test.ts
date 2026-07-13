@@ -71,9 +71,43 @@ describe("collectExternalPackages — manifest parsing", () => {
     await writeFile(join(dir, "Gemfile"), [
       'gem "rails", "~> 7.0"',
       'gem "pg"',
+      'gem "puma", ">= 5.0", "< 7"',
+      'gem "redis", require: false',
+      'gem "nokogiri"',
+      'gem "devise", github: "heartcombo/devise", branch: "4-stable"',
       "group :development, :test do",
       '  gem "rspec-rails"',
       "end",
+    ].join("\n"));
+    await writeFile(join(dir, "Gemfile.lock"), [
+      "GIT",
+      "  remote: https://github.com/heartcombo/devise.git",
+      "  revision: 0123456789abcdef",
+      "  branch: 4-stable",
+      "  specs:",
+      "    devise (4.9.3)",
+      "",
+      "GEM",
+      "  remote: https://rubygems.org/",
+      "  specs:",
+      "    nio4r (2.7.0)",
+      "    nokogiri (1.15.4-x86_64-linux)",
+      "    pg (1.5.4)",
+      "    puma (6.4.0)",
+      "    rails (7.0.8)",
+      "      nio4r (~> 2.0)",
+      "    redis (5.0.7)",
+      "    rspec-rails (6.1.0)",
+      "",
+      "PLATFORMS",
+      "  x86_64-linux",
+      "",
+      "DEPENDENCIES",
+      "  pg",
+      "  rails (~> 7.0)",
+      "",
+      "BUNDLED WITH",
+      "   2.4.10",
     ].join("\n"));
     await writeFile(join(dir, "requirements.txt"), [
       "# top comment",
@@ -134,9 +168,20 @@ describe("collectExternalPackages — manifest parsing", () => {
     expect(find("pub", "dio")?.version).toBe("^5.3.0");
     expect(find("pub", "build_runner")?.scope).toBe("dev");
 
-    // rubygems: inline + group block
+    // rubygems: inline constraint stays authoritative over the lock
     expect(find("rubygems", "rails")?.version).toBe("~> 7.0");
-    expect(find("rubygems", "rspec-rails")?.scope).toBe("dev");
+    // multi-constraint positional args are all captured
+    expect(find("rubygems", "puma")?.version).toBe(">= 5.0, < 7");
+    // no inline constraint → exact version backfilled from Gemfile.lock
+    expect(find("rubygems", "pg")?.version).toBe("1.5.4");
+    expect(find("rubygems", "rspec-rails")).toMatchObject({ version: "6.1.0", scope: "dev" });
+    // keyword-arg values (require:, branch:) are not constraints; GIT-section specs backfill too
+    expect(find("rubygems", "redis")?.version).toBe("5.0.7");
+    expect(find("rubygems", "devise")?.version).toBe("4.9.3");
+    // platform suffix stripped off the locked version
+    expect(find("rubygems", "nokogiri")?.version).toBe("1.15.4");
+    // the lock never introduces packages (nio4r is transitive-only)
+    expect(find("rubygems", "nio4r")).toBeUndefined();
 
     // pypi requirements: comment + flag lines skipped
     expect(find("pypi", "Django")?.version).toBe("==4.2.0");

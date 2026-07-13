@@ -875,6 +875,47 @@ export interface BlastSymbolUsage {
   callers: { file: string; line: number }[];
 }
 
+/** One screen whose execution transitively reaches the blast subject file. */
+export interface TraceImpactScreen {
+  /** Screen display name (ScreenInfo.name). */
+  name: string;
+  /** The screen's file — deep-link target for the Screens & UI tab. */
+  file: string;
+  /** Frontend route serving the screen, when routed. */
+  route: string | null;
+}
+
+/** One API route whose handler transitively calls into the blast subject file. */
+export interface TraceImpactRoute {
+  /** HTTP method, uppercased; null when the route matches any verb. */
+  method: string | null;
+  path: string;
+  /** File declaring the route. */
+  file: string;
+  line: number;
+}
+
+/**
+ * Cross-tier projection of a file's blast radius, computed over the SAME
+ * symbol-link graph Call Traces use (including the synthetic HTTP and MQ
+ * edges): upstream, the screens and API routes whose execution transitively
+ * reaches a symbol in this file; downstream, the ER entities and message-broker
+ * destinations the file's symbols ultimately touch. Lists are capped — the
+ * `*Count` fields carry the true totals.
+ */
+export interface TraceImpactInfo {
+  screens: TraceImpactScreen[];
+  screenCount: number;
+  routes: TraceImpactRoute[];
+  routeCount: number;
+  /** ER entity names (EntityGraph node names) transitively read/written. */
+  entities: string[];
+  entityCount: number;
+  /** Broker destinations (exchange/queue/topic) transitively published to or consumed from. */
+  queues: string[];
+  queueCount: number;
+}
+
 export interface BlastRadiusInfo {
   filePath: string;
   directDependents: number;
@@ -893,6 +934,9 @@ export interface BlastRadiusInfo {
    *  answer "if I change User, what's the blast?" alongside the existing
    *  file-level answer. */
   typeUsages?: TypeUsageSummary[];
+  /** Cross-tier reach: screens/routes that depend on this file and the
+   *  entities/queues it touches. Omitted when the file has none. */
+  traceImpact?: TraceImpactInfo;
 }
 
 export interface HealthScore {
@@ -1184,7 +1228,11 @@ export type PackageCategory =
 export interface ExternalPackage {
   /** Canonical package name in its ecosystem (`react`, `gorm.io/gorm`, `Microsoft.EntityFrameworkCore`). */
   name: string;
-  /** Declared version / range spec, when the manifest carries one. */
+  /**
+   * Declared version / range spec, when the manifest carries one; for
+   * ecosystems with a lockfile fallback (rubygems), the lock's exact resolved
+   * version when the manifest declares none.
+   */
   version: string | null;
   ecosystem: PackageEcosystem;
   scope: PackageScope;

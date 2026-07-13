@@ -180,20 +180,36 @@ export async function loadReportSummary(dir: string): Promise<ProjectAnalysis> {
     if (lsp.linkGraph) summary.linkGraph = lsp.linkGraph as ProjectAnalysis["linkGraph"];
     if (lsp.blastRadius) {
       // LSP enhancement replaces blastRadius wholesale, but it doesn't know
-      // about additive type-usage data. Preserve typeUsages from the base
-      // summary by matching on filePath so the Data Models view doesn't go
-      // blank whenever an LSP run is present.
-      const typeUsagesByFile = new Map<string, BlastRadiusInfo["typeUsages"]>();
+      // about additive type-usage or cross-tier data. Preserve typeUsages and
+      // traceImpact from the base summary by matching on filePath so the Data
+      // Models view and cross-tier reach don't go blank whenever an LSP run
+      // is present.
+      const additiveByFile = new Map<
+        string,
+        { typeUsages?: BlastRadiusInfo["typeUsages"]; traceImpact?: BlastRadiusInfo["traceImpact"] }
+      >();
       const baseBlast = (summary.blastRadius ?? []) as BlastRadiusInfo[];
       for (const info of baseBlast) {
-        if (info.typeUsages && info.typeUsages.length > 0) {
-          typeUsagesByFile.set(info.filePath, info.typeUsages);
+        const hasTu = info.typeUsages && info.typeUsages.length > 0;
+        if (hasTu || info.traceImpact) {
+          additiveByFile.set(info.filePath, {
+            typeUsages: hasTu ? info.typeUsages : undefined,
+            traceImpact: info.traceImpact,
+          });
         }
       }
       const lspBlast = lsp.blastRadius as BlastRadiusInfo[];
+      const lspFiles = new Set<string>();
       for (const info of lspBlast) {
-        const tu = typeUsagesByFile.get(info.filePath);
-        if (tu) info.typeUsages = tu;
+        lspFiles.add(info.filePath);
+        const add = additiveByFile.get(info.filePath);
+        if (add?.typeUsages) info.typeUsages = add.typeUsages;
+        if (add?.traceImpact) info.traceImpact = add.traceImpact;
+      }
+      // Synthetic zero-scored entries (cross-tier reach without import-graph
+      // presence) exist only in the base blast — carry them over too.
+      for (const info of baseBlast) {
+        if (info.traceImpact && !lspFiles.has(info.filePath)) lspBlast.push(info);
       }
       summary.blastRadius = lspBlast;
     }
