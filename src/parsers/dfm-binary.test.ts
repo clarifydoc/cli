@@ -184,4 +184,30 @@ describe("parseDfm text DFM with multi-line SQL", () => {
     expect(table).toBeDefined();
     expect(table!.target).toBe("items");
   });
+
+  it("publishes component→table constants for the cross-file datastore join", () => {
+    // resolveDataSourceStringConstants rewrites the companion unit's
+    // `qryOrders.Open` (entity/target = component name) to the real table.
+    expect(analysis.stringConstants).toEqual({
+      qryOrders: "orders",
+      tblItems: "items",
+    });
+  });
+});
+
+describe("parseDfm on Lazarus .lfm content", () => {
+  it("parses the same object syntax (screens + events)", () => {
+    const text = [
+      "object Form1: TForm1",
+      "  Caption = 'Lazarus App'",
+      "  object btnGo: TButton",
+      "    Caption = 'Go'",
+      "    OnClick = btnGoClick",
+      "  end",
+      "end",
+    ].join("\n");
+    const a = parseDfm(text, "src/unit1.lfm");
+    expect(a.screens).toHaveLength(1);
+    expect(a.interactiveElements.find((e) => e.handler === "btnGoClick")).toBeDefined();
+  });
 });

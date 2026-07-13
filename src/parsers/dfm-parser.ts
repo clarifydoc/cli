@@ -117,6 +117,26 @@ function dbSourcesFromObject(
 }
 
 /**
+ * `component name → table` for data components whose query/table resolved.
+ * Published as `stringConstants` so the project-wide constants pass
+ * (`resolveDataSourceStringConstants`) rewrites the CODE side's
+ * `qrySales.Open` (target/entity = the component name, from the companion
+ * unit) to the physical table declared here in the form — one datastore node
+ * instead of two, and the method attributes to the real entity.
+ */
+function componentTableConstants(
+  objects: { name: string; dbProps: { prop: string; value: string; line: number }[] }[],
+): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const obj of objects) {
+    if (obj.dbProps.length === 0 || !/^[A-Za-z_]\w*$/.test(obj.name)) continue;
+    const table = dbSourcesFromObject(obj).find((s) => s.entity)?.entity;
+    if (table && table !== obj.name) map[obj.name] = table;
+  }
+  return map;
+}
+
+/**
  * Parse a Delphi .dfm (form definition) file.
  *
  * DFM files describe a visual component tree in a custom text format:
@@ -398,6 +418,13 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
       });
     }
     analysis.dataSources.push(...dbSourcesFromObject(rootObject));
+  }
+
+  // Component→table map for the project-wide constants pass (joins the
+  // companion unit's `qrySales.Open` to the SQL declared on the form).
+  const tableConstants = componentTableConstants(allObjects);
+  if (Object.keys(tableConstants).length > 0) {
+    analysis.stringConstants = tableConstants;
   }
 
   // Build screen info with hierarchy
