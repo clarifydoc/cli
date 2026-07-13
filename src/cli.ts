@@ -33,6 +33,7 @@ program
   .option("--lsp-timeout <ms>", "Timeout for LSP server startup in ms", parseInt)
   .option("--html", "Generate an HTML report after analysis", false)
   .option("--incremental", "Reuse cached per-file analysis for unchanged files (mtime + SHA-256)", false)
+  .option("--no-git-history", "Skip git churn/hotspot collection")
   .action(async (path: string, options) => {
     const projectRoot = resolve(path);
     const projectName = projectRoot.replace(/\\/g, "/").split("/").pop()!;
@@ -56,6 +57,7 @@ program
         lsp: options.lsp,
         lspTimeout: options.lspTimeout,
         incremental: options.incremental,
+        gitHistory: options.gitHistory,
       });
 
       if (options.dryRun) {

@@ -40,6 +40,8 @@ export interface ReportPayload {
   duplicates: any[];
   layerViolations: any[];
   blastRadius: any[];
+  fileChurn: any[];
+  hotspots: any[];
   godNodes: any[];
   surprisingConnections: any[];
   suggestedQuestions: any[];
@@ -133,6 +135,8 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
     duplicates: summary.duplicates ?? [],
     layerViolations: summary.layerViolations ?? [],
     blastRadius: summary.blastRadius ?? [],
+    fileChurn: summary.fileChurn ?? [],
+    hotspots: summary.hotspots ?? [],
     godNodes: summary.godNodes ?? [],
     surprisingConnections: summary.surprisingConnections ?? [],
     suggestedQuestions: summary.suggestedQuestions ?? [],

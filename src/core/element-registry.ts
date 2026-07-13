@@ -585,6 +585,8 @@ function rewritePageRefs<T extends object>(
   arr("surprisingConnections", (s) => ({ ...s, source: ref(s.source), target: ref(s.target) }));
   arr("godNodes", (n) => ({ ...n, file: ref(n.file) }));
   arr("symbolDataAccess", (s) => ({ ...s, file: ref(s.file) }));
+  arr("fileChurn", (c) => ({ ...c, file: ref(c.file) }));
+  arr("hotspots", (h) => ({ ...h, file: ref(h.file) }));
   arr("componentLaunches", (c) => ({ ...c, sourceFile: ref(c.sourceFile), targetFile: ref(c.targetFile) }));
   arr("layerViolations", (v) => ({ ...v, sourceFile: ref(v.sourceFile), targetFile: ref(v.targetFile) }));
   arr("duplicates", (d) => ({
