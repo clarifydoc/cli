@@ -26,6 +26,40 @@ import type { FileAnalysis } from "../types/analysis.js";
 const BARREL_RE = /(^|\/)index\.(ts|tsx|js|jsx|mjs|cjs)$/;
 const MIN_REEXPORTS = 5;
 
+/**
+ * Directory segments that mark a subtree as generated or vendored by
+ * convention alone — no barrel needed. Language-agnostic path tokens:
+ * `generated` covers jOOQ/protobuf/openapi output (`…/jooq/generated/…`),
+ * the rest are package-manager / vendoring conventions. Deliberately NOT
+ * `gen` (a real word) or `external` (apps name integration code that).
+ */
+const CONVENTION_SEGMENT_RE =
+  /^(?:generated|__generated__|codegen|node_modules|bower_components|jspm_packages|vendors?|third[-_]?party|thirdparty)$/i;
+
+/** Static-asset containers; a `plugins`/`lib(s)` dir below one holds vendored
+ *  browser libraries (`public/js/plugins/ckeditor`), not authored code. */
+const ASSETS_SEGMENT_RE = /^(?:public|static|assets|wwwroot|htdocs)$/i;
+const ASSET_LIB_SEGMENT_RE = /^(?:plugins|libs?)$/i;
+
+/** Root dirs (posix, no trailing slash) marked generated/vendored by path
+ *  convention. Shallowest-wins pruning happens in the caller's merge. */
+export function conventionRoots(filePaths: string[]): string[] {
+  const roots = new Set<string>();
+  for (const f of filePaths) {
+    const segs = f.replace(/\\/g, "/").split("/");
+    let underAssets = false;
+    for (let i = 0; i < segs.length - 1; i++) {
+      const seg = segs[i]!;
+      if (CONVENTION_SEGMENT_RE.test(seg) || (underAssets && ASSET_LIB_SEGMENT_RE.test(seg))) {
+        roots.add(segs.slice(0, i + 1).join("/"));
+        break;
+      }
+      if (ASSETS_SEGMENT_RE.test(seg)) underAssets = true;
+    }
+  }
+  return [...roots];
+}
+
 export interface UnusedCodeResult {
   /** Shallowest barrel directories (posix paths, no trailing slash). */
   generatedRoots: string[];
@@ -51,8 +85,9 @@ export function analyzeUnusedCode(
     if (reexports >= MIN_REEXPORTS) barrelDirs.add(dirOf(a.filePath));
   }
 
-  // Keep only the shallowest roots — drop any dir nested under another.
-  const dirs = [...barrelDirs];
+  // Merge barrel roots with convention-marked dirs (generated/, vendor/,
+  // public/**/plugins/, …), keep only the shallowest — drop nested dirs.
+  const dirs = [...new Set([...barrelDirs, ...conventionRoots(analyses.map((a) => a.filePath))])];
   const generatedRoots = dirs
     .filter((r) => r && !dirs.some((o) => o !== r && r.startsWith(o + "/")))
     .sort();

@@ -53,4 +53,25 @@ describe("computeHealthScore — generated-code exclusion", () => {
     });
     expect(r.penalties.some((p) => p.reason.includes("god object"))).toBe(true);
   });
+
+  it("excludes security issues in generated and minified files (pit-stop FP)", () => {
+    const sec = (filePath: string, severity: string) =>
+      ({ filePath, severity, category: "xss", message: "", line: 1 }) as never;
+    const r = computeHealthScore({
+      analyses: [{ filePath: "public/js/app.js", minified: true }] as never,
+      componentGraph: {},
+      patterns: [],
+      duplicates: [],
+      complexity: [],
+      layerViolations: [],
+      generatedRoots: ["public/js/plugins"],
+      securityIssues: [
+        sec("public/js/plugins/ckeditor/ckeditor.js", "high"), // vendored
+        sec("public/js/app.js", "high"), // minified bundle
+        sec("public/js/plugins/x/y.js", "medium"),
+      ],
+    });
+    expect(r.score).toBe(100);
+    expect(r.penalties).toHaveLength(0);
+  });
 });

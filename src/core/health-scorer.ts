@@ -98,7 +98,9 @@ export function computeHealthScore(input: HealthInput): HealthScore {
   // metric below — the team neither authors nor maintains it, so its size,
   // repetition, and heavy fan-in are not health problems to grade.
   const genRoots = input.generatedRoots ?? [];
+  const minified = new Set(input.analyses.filter((a) => a.minified).map((a) => a.filePath));
   const isGenerated = (f: string): boolean => {
+    if (minified.has(f)) return true;
     if (genRoots.length === 0) return false;
     const p = f.replace(/\\/g, "/");
     return genRoots.some((r) => p === r || p.startsWith(r + "/"));
@@ -151,10 +153,13 @@ export function computeHealthScore(input: HealthInput): HealthScore {
     penalize(`${highlyCoupled.length} highly coupled file(s) (10+ importers)`, scaled(highlyCoupled.length, 2, 15, 0.1));
   }
 
-  // 5. Security issues (single pass)
+  // 5. Security issues (single pass) — generated/vendored files excluded like
+  // every other metric (the analyzer pre-filters these, but direct callers
+  // may pass raw issues).
   let critSecCount = 0;
   let medSecCount = 0;
   for (const s of input.securityIssues) {
+    if (isGenerated(s.filePath)) continue;
     if (s.severity === "critical" || s.severity === "high") critSecCount++;
     else if (s.severity === "medium") medSecCount++;
   }

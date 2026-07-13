@@ -16,26 +16,43 @@ function seg(names: string): RegExp {
  * `app/models/` is data despite living under `app/`.
  */
 const LAYER_PATTERNS: [RegExp, ArchLayer][] = [
-  [seg("models?|entities|repositories|stores?|data|schemas?|serializers?|migrations?|persistence"), "data"],
+  [seg("models?|entities|repositories|stores?|data|schemas?|serializers?|migrations?|persistence|dtos?"), "data"],
   [seg("services|api|clients|httpclients?|hooks|controllers?|endpoints?|routers?|middleware|handlers?|signals?"), "services"],
   [seg("components|widgets"), "components"],
   // `routes` sits with ui: in FE frameworks route dirs hold pages, in BE
   // frameworks endpoint surfaces — both top-of-stack, so their imports of
   // components/services never read as upward violations.
-  [seg("pages|views|screens|forms|app|routes?"), "ui"],
-  [seg("utils?|helpers?|lib|shared|common|types?|typings|interfaces?"), "utils"],
+  // Deliberately NO `app` token: Laravel/Rails/Kotlin `app/` is an application
+  // CONTAINER (models, providers, enums, DTOs all live under it) — as ui it
+  // made every `app/Enums/X.php` a phantom violation target.
+  [seg("pages|views|screens|forms|routes?"), "ui"],
+  [seg("utils?|helpers?|lib|shared|common|types?|typings|interfaces?|enums?"), "utils"],
   [seg("config|settings|constants|env"), "config"],
 ];
 
-/** A layer token as a basename suffix — CamelCase (`TodoController`) or
- *  separator-delimited (`user.service`, `users_controller`). The lowercase
- *  branch requires a leading separator so `Platform` never reads as `*Form`. */
+/** Automation/tooling trees (CI pipelines, deploy scripts) are not part of
+ *  the layered application — exempt like tests. */
+const TOOLING_SEGMENT_RE = seg("cicd|ci[-_]cd|scripts?|tooling|devops|automation");
+
+/** Build-tool config FILES (`vite.config.js`, `webpack.config.ts`) orchestrate
+ *  the whole app and legitimately import anything — exempt as violation
+ *  sources. Config DIRECTORIES (constants, settings) keep the config layer. */
+const CONFIG_FILE_RE = /\.config\.\w+$/i;
+
+/** A layer token as a basename suffix — CamelCase (`TodoController`), an
+ *  ALL-CAPS acronym (`AppSupportActivityDTO`), or separator-delimited
+ *  (`user.service`, `users_controller`). The lowercase branch requires a
+ *  leading separator so `Platform` never reads as `*Form`; the CamelCase and
+ *  acronym branches require a compound name (at least one char before the
+ *  suffix) so a bare `Page.kt` — a pagination util, not a screen — falls
+ *  through to the directory tier. */
 function suffix(names: string): RegExp {
-  const cap = names
-    .split("|")
-    .map((n) => n[0]!.toUpperCase() + n.slice(1))
-    .join("|");
-  return new RegExp(`(?:(?:^|[._-])(?:${names})|(?:${cap}))$`);
+  const tokens = names.split("|");
+  const cap = tokens.map((n) => n[0]!.toUpperCase() + n.slice(1)).join("|");
+  // Short tokens double as acronyms: `dto` also matches `…DTO`, `api` `…API`.
+  const acronyms = tokens.filter((n) => n.length <= 4).map((n) => n.toUpperCase()).join("|");
+  const acronymAlt = acronyms ? `|.(?:${acronyms})` : "";
+  return new RegExp(`(?:(?:^|[._-])(?:${names})|.(?:${cap})${acronymAlt})$`);
 }
 
 /**
@@ -87,9 +104,12 @@ export function classifyFileLayers(
     let assigned: ArchLayer = "unknown";
 
     // Test conventions trump directory tokens — a spec that lives in `utils/`
-    // is still a test, and tests are exempt from layer violations.
+    // is still a test, and tests are exempt from layer violations. Tooling
+    // trees and build-config files are equally outside the layered app.
     if (isTestFile(normalized) || TEST_SEGMENT_RE.test(normalized)) {
       assigned = "test";
+    } else if (TOOLING_SEGMENT_RE.test(normalized)) {
+      assigned = "unknown";
     } else {
       // Strip only the final extension: Angular-style compound names
       // (`user.service.ts`) carry the layer in their second segment.
@@ -127,6 +147,10 @@ export function detectLayerViolations(
   const violations: LayerViolation[] = [];
 
   for (const [sourceFile, targets] of Object.entries(componentGraph)) {
+    // Build-tool config files keep their `config` layer for display, but as
+    // violation SOURCES they're exempt — vite/webpack/tailwind configs
+    // legitimately import app code from the very top of the world.
+    if (CONFIG_FILE_RE.test(sourceFile)) continue;
     const sourceLayer = fileLayerMap[sourceFile] ?? "unknown";
     const sourceLevel = LAYER_LEVEL[sourceLayer];
     if (sourceLevel < 0) continue; // exempt

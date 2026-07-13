@@ -10,11 +10,15 @@ import { isTestFile } from "./test-file-detector.js";
  * issues are reported in.
  */
 const GENERIC_RULES: SecurityRule[] = [
-  // Hardcoded secrets
+  // Hardcoded secrets. The value must not start with `/` (a URL path —
+  // `resetPassword = '/passwordReset'` is a route constant, not a credential)
+  // nor with whitespace/`.`/`+` — those mean the "value" opened at a CLOSING
+  // quote inside string concatenation (`dd("by Token: ".$identifier."…")`,
+  // `console.log("token: " + token…)`), i.e. a log line, not an assignment.
   {
     category: "hardcoded-secret",
     severity: "high",
-    pattern: /(?:password|passwd|pwd|secret|api_key|apikey|token|auth_token|private_key)\s*[=:]\s*['"][^'"]{4,}['"]/i,
+    pattern: /(?:password|passwd|pwd|secret|api_key|apikey|token|auth_token|private_key)\s*[=:]\s*['"](?![\s./+])[^'"]{4,}['"]/i,
     message: "Hardcoded secret detected. Use environment variables or a secrets manager.",
     priority: 10,
     excludeTest: true,
@@ -50,6 +54,30 @@ const GENERIC_RULES: SecurityRule[] = [
   },
 ];
 
+/**
+ * Minified or bundled build artifact — not authored source. Findings in these
+ * files (vendored library internals, webpack output) aren't actionable, and
+ * their repeated helper functions pollute duplicate detection. Signals: a
+ * bundler runtime marker, a single enormous line, or a minified-typical
+ * average line length.
+ */
+const BUNDLE_MARKER_RE = /__webpack_require__|webpackJsonp|webpackChunk|\bparcelRequire\b|System\.register\(/;
+export function isMinifiedSource(sourceText: string): boolean {
+  if (sourceText.length < 2000) return false;
+  if (BUNDLE_MARKER_RE.test(sourceText)) return true;
+  let lines = 1;
+  let maxLine = 0;
+  let start = 0;
+  for (let i = 0; i <= sourceText.length; i++) {
+    if (i === sourceText.length || sourceText.charCodeAt(i) === 10) {
+      const len = i - start;
+      if (len > maxLine) maxLine = len;
+      if (i < sourceText.length) { lines++; start = i + 1; }
+    }
+  }
+  return maxLine >= 5000 || sourceText.length / lines >= 200;
+}
+
 /** Merged generic + plugin rules per language, sorted by priority (cached). */
 const mergedRulesCache = new Map<Language, readonly SecurityRule[]>();
 
@@ -72,6 +100,8 @@ export function scanSecurity(
 ): SecurityIssue[] {
   const plugin = pluginFor(language);
   if (plugin?.skipSecurityScan) return [];
+  // Vendored/minified/bundled artifacts: nothing in them is actionable.
+  if (isMinifiedSource(sourceText)) return [];
 
   const issues: SecurityIssue[] = [];
   // Plugin pre-filter (e.g. Python strips strings/comments to avoid false positives)
@@ -97,10 +127,13 @@ export function scanSecurity(
         if (trimmed.startsWith("//") || trimmed.startsWith("#") || trimmed.startsWith("*") || trimmed.startsWith("/*")) {
           continue;
         }
-        // Skip env variable references
+        // Skip env variable references, and KEY_* constants — an identifier
+        // NAMED `KEY_PASSWORD` holds a settings-store key name, not a secret
+        // (`const val KEY_PASSWORD = "myDpPassword"`).
         if (rule.category === "hardcoded-secret" && (
           line.includes("process.env") || line.includes("os.environ") ||
-          line.includes("config.") || line.includes("settings.")
+          line.includes("config.") || line.includes("settings.") ||
+          /(?:^|[^\w])KEY_\w*\s*[=:]/.test(line)
         )) {
           continue;
         }

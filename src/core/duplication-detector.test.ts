@@ -73,6 +73,20 @@ describe("detectDuplicates — name-based precision", () => {
     ]);
     expect(groups).toHaveLength(0);
   });
+
+  it("excludes minified/bundled files (a webpack bundle duplicates its own sources — pit-stop FP)", () => {
+    const calls = ["parseISO", "format", "padStart"];
+    const bundled = file("public/js/app.js", [fn("formatStamp", calls)]);
+    (bundled as { minified?: boolean }).minified = true;
+    const groups = detectDuplicates([
+      bundled,
+      file("resources/js/util/date.ts", [fn("formatStamp", calls)]),
+      file("resources/js/other/stamp.ts", [fn("formatStamp", calls)]),
+    ]);
+    // Without the bundle only 2 authored occurrences remain — below the
+    // 3-file bar for a name-based group.
+    expect(groups.filter((g) => g.kind === "name-based")).toHaveLength(0);
+  });
 });
 
 describe("detectDuplicates — structural", () => {

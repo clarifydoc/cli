@@ -667,12 +667,44 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
 
   // Step 4c: Advanced analysis
   progress.step("Analyzing complexity and patterns...");
+
+  // Generated/vendored trees (barrel detection + conventional dirs like
+  // jOOQ `…/generated/`, `vendor/`, `public/js/plugins/`) plus minified or
+  // bundled artifacts are code the team doesn't author — findings inside them
+  // (god objects in codegen output, duplicate helpers in a vendored library,
+  // security issues in a webpack bundle) are noise, so they're dropped at
+  // aggregation and the tabs and health score agree. Detected BEFORE the
+  // finding detectors so their output can be filtered.
+  const { generatedRoots, unusedFiles } = analyzeUnusedCode(allAnalyses, componentGraph);
+  if (unusedFiles.length > 0) {
+    progress.detail(`  Unused (generated): ${unusedFiles.length} file(s) under ${generatedRoots.join(", ")}`);
+  }
+  const minifiedFiles = new Set(allAnalyses.filter((a) => a.minified).map((a) => a.filePath));
+  const isUnauthored = (f: string): boolean => {
+    if (minifiedFiles.has(f)) return true;
+    if (generatedRoots.length === 0) return false;
+    const p = f.replace(/\\/g, "/");
+    return generatedRoots.some((r) => p === r || p.startsWith(r + "/"));
+  };
+  // The per-file scanner already skips minified sources; this catches issues
+  // cached by older extractor versions and everything under generatedRoots.
+  const keptSecurityIssues = allSecurityIssues.filter((i) => !isUnauthored(i.filePath));
+  if (keptSecurityIssues.length < allSecurityIssues.length) {
+    progress.detail(`  Security: ${allSecurityIssues.length - keptSecurityIssues.length} issue(s) in generated/vendored files dropped`);
+    allSecurityIssues.length = 0;
+    allSecurityIssues.push(...keptSecurityIssues);
+  }
+
   const complexity = aggregateComplexity(perFileComplexity);
-  const patterns = detectPatterns(allAnalyses, frameworks);
+  const patterns = detectPatterns(allAnalyses, frameworks).filter((p) => !isUnauthored(p.filePath));
   progress.status("Detecting duplicates and layer violations...");
-  const duplicates = detectDuplicates(allAnalyses);
+  const duplicates = detectDuplicates(allAnalyses).filter(
+    (d) => !d.occurrences.every((o) => isUnauthored(o.filePath)),
+  );
   const fileLayerMap = classifyFileLayers(allAnalyses.map((a) => a.filePath));
-  const layerViolations = detectLayerViolations(allAnalyses, componentGraph, fileLayerMap);
+  const layerViolations = detectLayerViolations(allAnalyses, componentGraph, fileLayerMap).filter(
+    (v) => !isUnauthored(v.sourceFile) && !isUnauthored(v.targetFile),
+  );
   progress.status("Detecting communities...");
   const fileList = allAnalyses.map((a) => a.filePath);
   const { communities, cohesion } = detectCommunities(linkGraph, fileList);
@@ -693,13 +725,6 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     if (summaries && summaries.length > 0) {
       info.typeUsages = summaries;
     }
-  }
-
-  // Auto-detect generated/library barrel trees and the unused files within
-  // them (e.g. kubb output where only a handful of endpoints are imported).
-  const { generatedRoots, unusedFiles } = analyzeUnusedCode(allAnalyses, componentGraph);
-  if (unusedFiles.length > 0) {
-    progress.detail(`  Unused (generated): ${unusedFiles.length} file(s) under ${generatedRoots.join(", ")}`);
   }
 
   // Class-level dependency graph for the Architecture tab's Data Models view.
@@ -1379,6 +1404,15 @@ export function buildComponentGraph(
       push(exportToFiles, exp.name, a.filePath);
     }
   }
+  // Cross-family edges are never real (a PHP route file cannot import a
+  // Kotlin service; pit-stop's web.php grew 50+ phantom edges into
+  // dsps-server). Unknown families (html, xml, …) stay eligible — an .html
+  // page genuinely script-links .js files.
+  const familyCompatible = (from: string, to: string): boolean => {
+    const f1 = extensionFamily(from);
+    const f2 = extensionFamily(to);
+    return !f1 || !f2 || f1 === f2;
+  };
   // Same-project candidates beat everything in a multi-project solution;
   // affinity only breaks ties within the chosen scope.
   const pickScoped = (candidates: string[], fromFile: string): string | null => {
@@ -1483,7 +1517,7 @@ export function buildComponentGraph(
           .replace(/^\.\//, "")
           .replace(STRIP_SOURCE_EXTENSION_RE, "");
         const match = scanForImport(candidate);
-        if (match && match !== a.filePath) refSet.add(match);
+        if (match && match !== a.filePath && familyCompatible(a.filePath, match)) refSet.add(match);
         continue;
       }
 
@@ -1564,7 +1598,7 @@ export function buildComponentGraph(
       if (comp.importSource) {
         const candidate = comp.importSource.replace(/^\.\//, "");
         const match = scanForSubComponent(candidate);
-        if (match && match !== a.filePath) refSet.add(match);
+        if (match && match !== a.filePath && familyCompatible(a.filePath, match)) refSet.add(match);
       }
     }
 

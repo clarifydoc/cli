@@ -133,3 +133,48 @@ describe("symbol-linker — language-family fence on name heuristics", () => {
     expect(links.some((l) => l.targetFile === "lib/models/LicensePayload.ts")).toBe(true);
   });
 });
+
+describe("symbol-linker — route-handler fallback guards (pit-stop FPs)", () => {
+  const route = (path: string, handler: string) =>
+    ({ path, httpMethod: "GET", handler, kind: "api", line: 3, calls: [] }) as any;
+
+  it("never links a route handler across language families (Laravel #create → Kotlin DAO)", () => {
+    const webPhp = {
+      ...file("web/LEGACY/routes/web.php", "web", {}),
+      language: "php",
+      routes: [route("/dashboard", "DashboardController#create")],
+    } as unknown as FileAnalysis;
+    const dao = {
+      ...file("server/dao/BackendChatDAO.kt", "server", {
+        classes: [{ ...cls("BackendChatDAO"), methods: [fn("create", [])] }],
+      }),
+      language: "kotlin",
+    } as unknown as FileAnalysis;
+    const links = buildSymbolLinks([webPhp, dao]);
+    expect(links.some((l) => l.targetFile === "server/dao/BackendChatDAO.kt")).toBe(false);
+  });
+
+  it("requires the qualified handler's class to be evidenced in the target file", () => {
+    const webPhp = {
+      ...file("web/LEGACY/routes/web.php", "web", {}),
+      language: "php",
+      routes: [route("/dashboard", "DashboardController#create")],
+    } as unknown as FileAnalysis;
+    const wrong = {
+      ...file("web/LEGACY/app/Models/Order.php", "web", {
+        classes: [{ ...cls("Order"), methods: [fn("create", [])] }],
+      }),
+      language: "php",
+    } as unknown as FileAnalysis;
+    const right = {
+      ...file("web/LEGACY/app/Http/Controllers/DashboardController.php", "web", {
+        classes: [{ ...cls("DashboardController"), methods: [fn("create", [])] }],
+      }),
+      language: "php",
+    } as unknown as FileAnalysis;
+    const links = buildSymbolLinks([webPhp, wrong, right]);
+    const handlerLinks = links.filter((l) => l.sourceSymbol.startsWith("route:") && l.callName === "DashboardController#create");
+    expect(handlerLinks.some((l) => l.targetFile === "web/LEGACY/app/Models/Order.php")).toBe(false);
+    expect(handlerLinks.some((l) => l.targetFile === "web/LEGACY/app/Http/Controllers/DashboardController.php")).toBe(true);
+  });
+});
