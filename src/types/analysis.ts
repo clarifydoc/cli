@@ -829,6 +829,30 @@ export interface FileComplexityInfo {
   functions: ComplexityInfo[];
 }
 
+/** Per-file git activity inside the history window (git-history.ts). */
+export interface FileChurnInfo {
+  /** Project-relative path, matching files[]. */
+  file: string;
+  /** Commits touching the file inside the window. */
+  commits: number;
+  additions: number;
+  deletions: number;
+  /** ISO timestamp of the most recent commit touching the file. */
+  lastTouched: string;
+  /** Top contributors by commit count (max 3). */
+  authors: string[];
+  authorCount: number;
+}
+
+/** Churn × complexity hotspot — where the codebase actually hurts. */
+export interface HotspotInfo {
+  file: string;
+  /** normalizedCommits × normalizedTotalComplexity, (0..1], 3 decimals. */
+  score: number;
+  commits: number;
+  totalComplexity: number;
+}
+
 export type PatternKind =
   | "singleton" | "factory" | "observer" | "custom-hook" | "hoc"
   | "context-provider" | "dataclass" | "abc" | "middleware"
@@ -1035,6 +1059,11 @@ export interface ProjectAnalysis {
   blastRadius?: BlastRadiusInfo[];
   healthScore?: HealthScore;
   suggestions?: Suggestion[];
+  /** Per-file git activity in the history window; absent for non-repos,
+   *  shallow clones, or `--no-git-history` runs. */
+  fileChurn?: FileChurnInfo[];
+  /** Top churn × complexity hotspots (derived from fileChurn + complexity). */
+  hotspots?: HotspotInfo[];
   fileLayerMap?: Record<string, ArchLayer>;
   /** Auto-detected generated/library barrel roots (e.g. kubb output dirs). */
   generatedRoots?: string[];

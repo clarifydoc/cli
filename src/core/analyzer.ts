@@ -54,6 +54,7 @@ import { classifyFileLayers, detectLayerViolations } from "./layer-analyzer.js";
 import { analyzeBlastRadius } from "./blast-radius.js";
 import { attachTraceImpact } from "./trace-impact.js";
 import { computeImpactDiff } from "./impact-diff.js";
+import { collectGitHistory, computeHotspots, type GitHistoryResult } from "./git-history.js";
 import { analyzeUnusedCode } from "./dead-code.js";
 import { computeHealthScore } from "./health-scorer.js";
 import { generateSuggestions } from "./suggestions-engine.js";
@@ -83,6 +84,8 @@ import {
   type TemplateComponentNode,
   type EntityGraph,
   type DataAccessGraph,
+  type FileChurnInfo,
+  type HotspotInfo,
 } from "../types/analysis.js";
 
 export interface AnalyzeOptions {
@@ -102,6 +105,11 @@ export interface AnalyzeOptions {
    * Post-analysis (linkGraph, symbolLinks, etc.) always runs on the full set.
    */
   incremental?: boolean;
+  /**
+   * Collect git churn + hotspots (default true). Silently skipped on non-repos
+   * and shallow clones; set false to keep outputs history-free (fixtures).
+   */
+  gitHistory?: boolean;
 }
 
 export interface AnalyzeResult {
@@ -397,6 +405,15 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     progress.detail(`  tsconfig aliases: ${[...tsconfigAliases.keys()].join(", ")}`);
   }
   let completedCount = 0;
+
+  // Git churn is pure subprocess I/O — kick it off now so it overlaps the
+  // CPU-bound per-file analysis, and await it at summary-assembly time.
+  const gitHistoryPromise =
+    options.gitHistory === false
+      ? null
+      : collectGitHistory(projectRoot, files.map((f) => f.relativePath)).catch(
+          (e): GitHistoryResult => ({ skipped: (e as Error).message }),
+        );
 
   const prevManifest = options.incremental ? await loadManifest(outputDir) : null;
   const newManifestEntries: Record<string, { mtime: number; sha256: string }> = {};
@@ -696,6 +713,24 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   }
 
   const complexity = aggregateComplexity(perFileComplexity);
+
+  // Git history → per-file churn + churn×complexity hotspots. Skips (non-repo,
+  // shallow clone, git missing) are silent unless verbose — never an error.
+  let fileChurn: FileChurnInfo[] | undefined;
+  let hotspots: HotspotInfo[] | undefined;
+  if (gitHistoryPromise) {
+    const gh = await gitHistoryPromise;
+    if ("churn" in gh && gh.churn.length > 0) {
+      fileChurn = gh.churn;
+      hotspots = computeHotspots(gh.churn, complexity);
+      progress.detail(
+        `  Git history: ${gh.churn.length} file(s) across ${gh.commitCount} commit(s), ${hotspots.length} hotspot(s)`,
+      );
+    } else if ("skipped" in gh && verbose) {
+      progress.detail(`  Git history skipped: ${gh.skipped}`);
+    }
+  }
+
   const patterns = detectPatterns(allAnalyses, frameworks).filter((p) => !isUnauthored(p.filePath));
   progress.status("Detecting duplicates and layer violations...");
   const duplicates = detectDuplicates(allAnalyses).filter(
@@ -889,6 +924,8 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     blastRadius,
     healthScore,
     suggestions,
+    fileChurn,
+    hotspots,
     fileLayerMap,
     confidenceCounts,
     skippedSensitive: skippedSensitive.length > 0 ? skippedSensitive : undefined,

@@ -1,0 +1,176 @@
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { execFileSync } from "child_process";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { collectGitHistory, computeHotspots } from "./git-history.js";
+import type { FileChurnInfo, FileComplexityInfo } from "../types/analysis.js";
+
+/**
+ * The collector tests build a real throwaway repo — git behavior (numstat
+ * format, --show-prefix, shallow detection) is exactly what's under test, so
+ * mocking it would test nothing.
+ */
+
+let root: string;
+const repo = () => join(root, "repo");
+
+const git = (cwd: string, args: string[], env: Record<string, string> = {}) =>
+  execFileSync("git", args, {
+    cwd,
+    env: {
+      ...process.env,
+      GIT_AUTHOR_EMAIL: "t@t",
+      GIT_COMMITTER_EMAIL: "t@t",
+      ...env,
+    },
+    stdio: "pipe",
+  });
+
+const commit = (msg: string, author: string, dateIso?: string) =>
+  git(repo(), ["commit", "-m", msg, "--author", `${author} <t@t>`], {
+    ...(dateIso ? { GIT_AUTHOR_DATE: dateIso, GIT_COMMITTER_DATE: dateIso } : {}),
+  });
+
+beforeAll(() => {
+  root = mkdtempSync(join(tmpdir(), "rvd-git-history-"));
+  mkdirSync(repo(), { recursive: true });
+  git(repo(), ["init", "-q"]);
+  git(repo(), ["config", "user.name", "t"]);
+  git(repo(), ["config", "user.email", "t@t"]);
+
+  // Commit 1 (alice): a.ts + sub/b.ts
+  writeFileSync(join(repo(), "a.ts"), "line1\nline2\n");
+  mkdirSync(join(repo(), "sub"), { recursive: true });
+  writeFileSync(join(repo(), "sub", "b.ts"), "b\n");
+  git(repo(), ["add", "-A"]);
+  commit("init", "alice");
+
+  // Commit 2 (bob): touch a.ts
+  writeFileSync(join(repo(), "a.ts"), "line1\nline2\nline3\n");
+  git(repo(), ["add", "-A"]);
+  commit("second", "bob");
+
+  // Commit 3 (alice): touch a.ts again + add doomed.ts
+  writeFileSync(join(repo(), "a.ts"), "line1\n");
+  writeFileSync(join(repo(), "doomed.ts"), "x\n");
+  git(repo(), ["add", "-A"]);
+  commit("third", "alice");
+
+  // Commit 4 (alice): delete doomed.ts — it must not appear in churn.
+  git(repo(), ["rm", "-q", "doomed.ts"]);
+  commit("delete", "alice");
+});
+
+afterAll(() => {
+  try {
+    rmSync(root, { recursive: true, force: true });
+  } catch {
+    /* Windows can hold git handles briefly — temp dir, best effort. */
+  }
+});
+
+describe("collectGitHistory", () => {
+  it("aggregates commits, line deltas, recency and authors per current file", async () => {
+    const res = await collectGitHistory(repo(), ["a.ts", "sub/b.ts"]);
+    expect("churn" in res).toBe(true);
+    const { churn, commitCount } = res as { churn: FileChurnInfo[]; commitCount: number };
+    expect(commitCount).toBe(4);
+
+    const a = churn.find((c) => c.file === "a.ts")!;
+    expect(a.commits).toBe(3);
+    expect(a.additions).toBe(3); // +2 (init) +1 (line3) +0 (shrink)
+    expect(a.deletions).toBe(2); // −0 −0 −2
+    expect(a.authors[0]).toBe("alice"); // 2 commits vs bob's 1
+    expect(a.authorCount).toBe(2);
+    expect(a.lastTouched).toBeTruthy();
+
+    const b = churn.find((c) => c.file === "sub/b.ts")!;
+    expect(b.commits).toBe(1);
+
+    // Deleted files never make it into churn.
+    expect(churn.some((c) => c.file === "doomed.ts")).toBe(false);
+    // Most-churned first.
+    expect(churn[0]!.file).toBe("a.ts");
+  });
+
+  it("matches current-tree paths case-insensitively", async () => {
+    const res = await collectGitHistory(repo(), ["A.TS"]);
+    const { churn } = res as { churn: FileChurnInfo[] };
+    expect(churn).toHaveLength(1);
+    expect(churn[0]!.file).toBe("A.TS"); // caller's canonical casing wins
+  });
+
+  it("strips the --show-prefix when the analyzed root is a repo subdirectory", async () => {
+    const res = await collectGitHistory(join(repo(), "sub"), ["b.ts"]);
+    const { churn } = res as { churn: FileChurnInfo[] };
+    expect(churn).toHaveLength(1);
+    expect(churn[0]!.file).toBe("b.ts");
+  });
+
+  it("excludes commits older than the window", async () => {
+    // An ancient commit outside a 1-month window on a fresh file.
+    writeFileSync(join(repo(), "old.ts"), "old\n");
+    git(repo(), ["add", "-A"]);
+    commit("ancient", "carol", "2020-01-01T12:00:00");
+
+    const res = await collectGitHistory(repo(), ["old.ts"], { months: 1 });
+    const { churn } = res as { churn: FileChurnInfo[] };
+    expect(churn.some((c) => c.file === "old.ts")).toBe(false);
+  });
+
+  it("skips non-repos", async () => {
+    const plain = join(root, "plain");
+    mkdirSync(plain, { recursive: true });
+    const res = await collectGitHistory(plain, ["x.ts"]);
+    expect(res).toEqual({ skipped: "not a git repository" });
+  });
+
+  it("skips shallow clones", async () => {
+    const shallow = join(root, "shallow");
+    git(root, ["clone", "-q", "--depth", "1", `file://${repo().replace(/\\/g, "/")}`, shallow]);
+    const res = await collectGitHistory(shallow, ["a.ts"]);
+    expect("skipped" in res && /shallow/.test((res as { skipped: string }).skipped)).toBe(true);
+  });
+
+  it("skips when the git binary is missing", async () => {
+    const res = await collectGitHistory(repo(), ["a.ts"], { gitBin: "definitely-not-git-xyz" });
+    expect("skipped" in res).toBe(true);
+  });
+});
+
+describe("computeHotspots", () => {
+  const churnOf = (file: string, commits: number): FileChurnInfo => ({
+    file, commits, additions: 0, deletions: 0, lastTouched: "", authors: [], authorCount: 1,
+  });
+  const cxOf = (filePath: string, totalComplexity: number): FileComplexityInfo => ({
+    filePath, totalComplexity, maxComplexity: totalComplexity, averageComplexity: totalComplexity, functions: [],
+  });
+
+  it("multiplies normalized churn by normalized complexity", () => {
+    const hs = computeHotspots(
+      [churnOf("hot.ts", 10), churnOf("warm.ts", 5), churnOf("cold.ts", 1)],
+      [cxOf("hot.ts", 100), cxOf("warm.ts", 100), cxOf("cold.ts", 1)],
+    );
+    expect(hs[0]).toEqual({ file: "hot.ts", score: 1, commits: 10, totalComplexity: 100 });
+    expect(hs[1]!.file).toBe("warm.ts");
+    expect(hs[1]!.score).toBe(0.5);
+    expect(hs[2]!.score).toBeCloseTo(0.001, 3);
+  });
+
+  it("requires BOTH signals — churned-but-trivial and complex-but-static files drop out", () => {
+    const hs = computeHotspots(
+      [churnOf("readme-ish.ts", 50)],
+      [cxOf("static-beast.ts", 500)],
+    );
+    expect(hs).toEqual([]);
+  });
+
+  it("joins case-insensitively and caps at top N", () => {
+    const churn = Array.from({ length: 60 }, (_, i) => churnOf(`f${i}.ts`, i + 1));
+    const cx = Array.from({ length: 60 }, (_, i) => cxOf(`F${i}.TS`, 10));
+    const hs = computeHotspots(churn, cx, 50);
+    expect(hs).toHaveLength(50);
+    expect(hs[0]!.file).toBe("f59.ts");
+  });
+});
