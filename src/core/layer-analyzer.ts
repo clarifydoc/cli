@@ -1,20 +1,66 @@
 import type { FileAnalysis, ArchLayer, LayerViolation } from "../types/analysis.js";
+import { isTestFile } from "./test-file-detector.js";
+
+/** A layer token as a path segment — `.` counts as a separator so dotted
+ *  .NET-style directories (`League.Models`) and file suffixes (`webpack.config.js`)
+ *  participate. */
+function seg(names: string): RegExp {
+  return new RegExp(`(?:^|[/\\\\.])(?:${names})(?=[/\\\\.]|$)`, "i");
+}
 
 /**
- * Layer assignment patterns: regex → layer.
- * Match the directory name whether it appears at the start of the path
- * or between separators.
+ * Layer assignment patterns: regex → layer, first match wins.
+ * Order matters for paths carrying several tokens: specific semantic tokens
+ * (models, services) must beat generic containers — `views` under
+ * `League.Models/LeagueDb/` holds SQL-view entities, not UI, and Rails
+ * `app/models/` is data despite living under `app/`.
  */
 const LAYER_PATTERNS: [RegExp, ArchLayer][] = [
-  [/(?:^|[/\\])(pages|views|screens|forms|app)[/\\]/i, "ui"],
-  [/(?:^|[/\\])(components|widgets)[/\\]/i, "components"],
-  [/(?:^|[/\\])(services|api|clients|hooks|controllers?|endpoints?|routers?)[/\\]/i, "services"],
-  [/(?:^|[/\\])(middleware|handlers?|signals?)[/\\]/i, "services"],
-  [/(?:^|[/\\])(models?|entities|repositories|stores?|data|schemas?|serializers?|migrations?)[/\\]/i, "data"],
-  [/(?:^|[/\\])(utils?|helpers?|lib|shared|common)[/\\]/i, "utils"],
-  [/(?:^|[/\\])(config|settings|constants|env)[/\\]/i, "config"],
-  [/(?:^|[/\\])(tests?|__tests__|spec|__mocks__|fixtures)[/\\]/i, "test"],
+  [seg("models?|entities|repositories|stores?|data|schemas?|serializers?|migrations?|persistence"), "data"],
+  [seg("services|api|clients|httpclients?|hooks|controllers?|endpoints?|routers?|middleware|handlers?|signals?"), "services"],
+  [seg("components|widgets"), "components"],
+  // `routes` sits with ui: in FE frameworks route dirs hold pages, in BE
+  // frameworks endpoint surfaces — both top-of-stack, so their imports of
+  // components/services never read as upward violations.
+  [seg("pages|views|screens|forms|app|routes?"), "ui"],
+  [seg("utils?|helpers?|lib|shared|common|types?|typings|interfaces?"), "utils"],
+  [seg("config|settings|constants|env"), "config"],
 ];
+
+/** A layer token as a basename suffix — CamelCase (`TodoController`) or
+ *  separator-delimited (`user.service`, `users_controller`). The lowercase
+ *  branch requires a leading separator so `Platform` never reads as `*Form`. */
+function suffix(names: string): RegExp {
+  const cap = names
+    .split("|")
+    .map((n) => n[0]!.toUpperCase() + n.slice(1))
+    .join("|");
+  return new RegExp(`(?:(?:^|[._-])(?:${names})|(?:${cap}))$`);
+}
+
+/**
+ * The file's own name is a more specific signal than any directory token:
+ * `Sources/App/TodoController.swift` is services however generic its folder,
+ * and Angular's `user.service.ts` / `app.component.ts` carry the layer in the
+ * basename alone. Checked before LAYER_PATTERNS.
+ */
+const BASENAME_PATTERNS: [RegExp, ArchLayer][] = [
+  [suffix("controller|service|client|handler|middleware|router|api|endpoint|query|queries"), "services"],
+  [suffix("repository|entity|model|store|dao|dto|schema|migration"), "data"],
+  [suffix("view|page|screen|form|window|dialog"), "ui"],
+  [suffix("component|widget"), "components"],
+  // Deliberately NO util/helper suffixes: a `*Util.cs` inside an application
+  // project is application code — only a utils/ directory marks the layer.
+  [suffix("type|types"), "utils"],
+];
+
+/**
+ * .NET-style test scaffolding the generic test conventions miss: a segment
+ * like `CommonTest`, `Foo.Tests`, `IntegrationTests` (capital-T suffix so
+ * `Contest` never matches), or a `TestXxx` basename (`TestDataAccessHelper`,
+ * but not `Testimonial`).
+ */
+const TEST_SEGMENT_RE = /(?:^|[/\\])(?:[^/\\]*Tests?|Test[A-Z_0-9][^/\\]*)(?=$|[/\\.])/;
 
 /** Layer hierarchy — lower number = lower layer */
 const LAYER_LEVEL: Record<ArchLayer, number> = {
@@ -40,20 +86,27 @@ export function classifyFileLayers(
     const normalized = fp.replace(/\\/g, "/");
     let assigned: ArchLayer = "unknown";
 
-    for (const [pattern, layer] of LAYER_PATTERNS) {
-      if (pattern.test(normalized)) {
-        assigned = layer;
-        break;
+    // Test conventions trump directory tokens — a spec that lives in `utils/`
+    // is still a test, and tests are exempt from layer violations.
+    if (isTestFile(normalized) || TEST_SEGMENT_RE.test(normalized)) {
+      assigned = "test";
+    } else {
+      // Strip only the final extension: Angular-style compound names
+      // (`user.service.ts`) carry the layer in their second segment.
+      const baseName = (normalized.split("/").pop() ?? "").replace(/\.\w+$/, "");
+      for (const [pattern, layer] of BASENAME_PATTERNS) {
+        if (pattern.test(baseName)) {
+          assigned = layer;
+          break;
+        }
       }
-    }
-
-    // Fallback heuristics for files not in recognized directories
-    if (assigned === "unknown") {
-      const fileName = normalized.split("/").pop() ?? "";
-      if (/\.(test|spec)\.[^.]+$/.test(fileName) || fileName.startsWith("test_")) {
-        assigned = "test";
-      } else if (/config|settings/i.test(fileName)) {
-        assigned = "config";
+      if (assigned === "unknown") {
+        for (const [pattern, layer] of LAYER_PATTERNS) {
+          if (pattern.test(normalized)) {
+            assigned = layer;
+            break;
+          }
+        }
       }
     }
 

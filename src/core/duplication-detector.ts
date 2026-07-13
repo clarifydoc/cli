@@ -1,4 +1,5 @@
 import type { FileAnalysis, DuplicateGroup } from "../types/analysis.js";
+import { isTestFile } from "./test-file-detector.js";
 
 /** Common/idiomatic function names that are expected to repeat across files */
 const IDIOMATIC_NAMES = new Set([
@@ -66,16 +67,24 @@ function callSimilarity(
 export function detectDuplicates(analyses: FileAnalysis[]): DuplicateGroup[] {
   const groups: DuplicateGroup[] = [];
 
+  // Test files are full of intentionally repeated scaffolding (mock factories,
+  // mount helpers) — not duplication the team should deduplicate.
+  const authored = analyses.filter((a) => !isTestFile(a.filePath, a.language));
+
   // ── Name-based duplication ──
   const fnByName = new Map<string, { filePath: string; line: number; fn: FileAnalysis["functions"][0] }[]>();
 
-  for (const a of analyses) {
+  for (const a of authored) {
     for (const fn of a.functions) {
       if (IDIOMATIC_NAMES.has(fn.name)) continue;
       if (fn.name.length < 3) continue;
       if (fn.name.startsWith("_") && fn.name.endsWith("_")) continue;
       // Skip decorated functions (framework handlers)
       if (fn.decorators.length > 0) continue;
+      // A shared name only signals copy-paste when there's a body worth
+      // comparing — tiny handlers (submit/logout/onDragStart) repeat by idiom.
+      if (fn.endLine - fn.line < 5) continue;
+      if (fn.calls.length < 2) continue;
 
       const existing = fnByName.get(fn.name) ?? [];
       existing.push({ filePath: a.filePath, line: fn.line, fn });
@@ -84,31 +93,31 @@ export function detectDuplicates(analyses: FileAnalysis[]): DuplicateGroup[] {
   }
 
   for (const [name, occurrences] of fnByName) {
-    const uniqueFiles = new Set(occurrences.map((o) => o.filePath));
+    // Same name is not duplication — require each occurrence to actually make
+    // the same calls as the first before it counts toward the group.
+    const anchor = occurrences[0];
+    const similar = [anchor, ...occurrences.slice(1).filter(
+      (o) => callSimilarity(anchor.fn.calls, o.fn.calls) >= 0.6,
+    )];
+
+    const uniqueFiles = new Set(similar.map((o) => o.filePath));
     if (uniqueFiles.size < 3) continue;
 
-    // Check if functions are actually similar (not just same name)
-    const first = occurrences[0].fn;
-    const second = occurrences[1].fn;
-    const sim = callSimilarity(first.calls, second.calls);
-
-    if (sim > 0.3 || (first.params.length === second.params.length && first.calls.length > 0)) {
-      groups.push({
-        functionName: name,
-        occurrences: occurrences.map((o) => ({
-          filePath: o.filePath,
-          line: o.line,
-          similarity: Math.round(sim * 100),
-        })),
-        kind: "name-based",
-      });
-    }
+    groups.push({
+      functionName: name,
+      occurrences: similar.map((o) => ({
+        filePath: o.filePath,
+        line: o.line,
+        similarity: Math.round(callSimilarity(anchor.fn.calls, o.fn.calls) * 100),
+      })),
+      kind: "name-based",
+    });
   }
 
   // ── Structural fingerprint duplication ──
   const fingerprints = new Map<string, { filePath: string; name: string; line: number; fn: FileAnalysis["functions"][0] }[]>();
 
-  for (const a of analyses) {
+  for (const a of authored) {
     for (const fn of a.functions) {
       if (fn.name === "<setup>") continue;
       if (fn.endLine - fn.line < 5) continue; // skip very short functions
@@ -123,28 +132,31 @@ export function detectDuplicates(analyses: FileAnalysis[]): DuplicateGroup[] {
 
   for (const [_fp, fns] of fingerprints) {
     if (fns.length < 2) continue;
-    const uniqueFiles = new Set(fns.map((f) => f.filePath));
+
+    // Same fingerprint bucket ≠ same code — keep only members whose calls
+    // actually overlap with the first one's.
+    const similar = [fns[0], ...fns.slice(1).filter(
+      (f) => callSimilarity(fns[0].fn.calls, f.fn.calls) > 0.7,
+    )];
+    if (similar.length < 2) continue;
+    const uniqueFiles = new Set(similar.map((f) => f.filePath));
     if (uniqueFiles.size < 2) continue;
 
-    // Verify with actual call similarity
-    const sim = callSimilarity(fns[0].fn.calls, fns[1].fn.calls);
-    if (sim > 0.7) {
-      // Avoid duplicating name-based findings
-      const names = new Set(fns.map((f) => f.name));
-      if (names.size === 1 && groups.some((g) => g.functionName === fns[0].name)) {
-        continue;
-      }
-
-      groups.push({
-        functionName: fns.map((f) => f.name).filter((n, i, a) => a.indexOf(n) === i).join(", "),
-        occurrences: fns.map((f) => ({
-          filePath: f.filePath,
-          line: f.line,
-          similarity: Math.round(sim * 100),
-        })),
-        kind: "structural",
-      });
+    // Avoid duplicating name-based findings
+    const names = new Set(similar.map((f) => f.name));
+    if (names.size === 1 && groups.some((g) => g.functionName === similar[0].name)) {
+      continue;
     }
+
+    groups.push({
+      functionName: similar.map((f) => f.name).filter((n, i, a) => a.indexOf(n) === i).join(", "),
+      occurrences: similar.map((f) => ({
+        filePath: f.filePath,
+        line: f.line,
+        similarity: Math.round(callSimilarity(fns[0].fn.calls, f.fn.calls) * 100),
+      })),
+      kind: "structural",
+    });
   }
 
   return groups;

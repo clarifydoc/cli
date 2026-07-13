@@ -1,7 +1,7 @@
 import type { FileAnalysis, SymbolLink, CallInfo, Confidence, ParamInfo } from "../types/analysis.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
-import { commonPrefixLength } from "../extractors/plugins/shared/path-utils.js";
+import { commonPrefixLength, extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { ALL_BUILTIN_MEMBERS } from "../extractors/registry.js";
 
 interface SymbolDef {
@@ -468,7 +468,14 @@ function isSafeHeuristicTarget(
   sourceProjectId: string,
   opts: { allowCrossProject?: boolean } = {},
 ): boolean {
+  // A name-only heuristic never crosses language families — a JS `new Error()`
+  // must not bind a C# `Error` class even when the name is globally unique.
+  // Deliberate cross-language joins (QML→C++, webflow→Java) run as dedicated
+  // resolvers, not these strategies. Unknown families stay eligible.
+  const srcFamily = extensionFamily(sourceFile);
+  const tgtFamily = extensionFamily(entry.file);
   return (
+    (srcFamily === null || tgtFamily === null || srcFamily === tgtFamily) &&
     entry.count === 1 &&
     entry.file !== sourceFile &&
     // Clean/layered architectures deliberately reference types across sub-projects
