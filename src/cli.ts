@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { resolve } from "path";
+import { execFile } from "child_process";
 import { analyze } from "./core/analyzer.js";
 import {
   gatherProjectInfo,
@@ -153,6 +154,59 @@ program
   });
 
 program
+  .command("impact")
+  .description(
+    "Project a set of changed files onto an existing analysis: impacted screens, API routes, entities, queues and tests",
+  )
+  .argument("<path>", "Path to project root (a git repository unless --files is given)")
+  .option("-o, --output <dir>", "Analysis output directory (same value as `analyze -o`)", ".reversedoc")
+  .option("--base <ref>", "Git ref to diff the working tree against", "HEAD")
+  .option("--staged", "Use staged changes only (git diff --cached)", false)
+  .option("--files <files...>", "Explicit changed-file list, project-relative (skips git)")
+  .option("--json", "Print the raw JSON result", false)
+  .option("--md", "Print a markdown summary (PR-comment ready)", false)
+  .action(async (path: string, options) => {
+    const projectRoot = resolve(path);
+    const projectName = projectRoot.replace(/\\/g, "/").split("/").pop()!;
+    const analysisDir = resolve(options.output, projectName);
+    try {
+      const { loadReportSummary } = await import("./core/report-payload.js");
+      let summary;
+      try {
+        summary = await loadReportSummary(analysisDir);
+      } catch {
+        throw new Error(
+          `No analysis found at ${analysisDir}.\n` +
+            `Run first: reversedoc analyze ${path} -o ${options.output} --incremental`,
+        );
+      }
+
+      let changed: string[];
+      let label: string;
+      if (options.files?.length) {
+        changed = options.files;
+        label = "--files";
+      } else {
+        ({ files: changed, label } = await gitChangedFiles(projectRoot, {
+          base: options.base,
+          staged: options.staged,
+        }));
+      }
+
+      const { computeImpactDiff, renderImpactText, renderImpactMarkdown } = await import(
+        "./core/impact-diff.js"
+      );
+      const impact = computeImpactDiff(summary, changed, { baseLabel: label });
+      if (options.json) console.log(JSON.stringify(impact, null, 2));
+      else if (options.md) console.log(renderImpactMarkdown(impact));
+      else console.log(renderImpactText(impact));
+    } catch (err) {
+      console.error("Error:", (err as Error).message);
+      process.exit(1);
+    }
+  });
+
+program
   .command("detect")
   .description("Detect languages and frameworks in a project")
   .argument("<path>", "Path to project root")
@@ -214,5 +268,37 @@ program
       ),
     );
   });
+
+/**
+ * Changed files via git, project-relative (matching the analysis files[]).
+ * `-C root` + `--relative` scope the diff to the analyzed directory even when
+ * it sits below the repository root. Default mode diffs the WORKING TREE
+ * against `base` and appends untracked files; `--staged` diffs the index.
+ */
+async function gitChangedFiles(
+  root: string,
+  opts: { base?: string; staged?: boolean },
+): Promise<{ files: string[]; label: string }> {
+  const run = (args: string[]): Promise<string> =>
+    new Promise((res, rej) => {
+      execFile(
+        "git",
+        ["-C", root, ...args],
+        { maxBuffer: 16 * 1024 * 1024 },
+        (err, stdout, stderr) =>
+          err ? rej(new Error((stderr || err.message).trim())) : res(stdout),
+      );
+    });
+  const split = (out: string): string[] =>
+    out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+  if (opts.staged) {
+    return { files: split(await run(["diff", "--name-only", "--relative", "--cached"])), label: "staged" };
+  }
+  const base = opts.base ?? "HEAD";
+  const tracked = await run(["diff", "--name-only", "--relative", base]);
+  const untracked = await run(["ls-files", "--others", "--exclude-standard"]);
+  return { files: [...split(tracked), ...split(untracked)], label: base };
+}
 
 program.parse();

@@ -12,6 +12,7 @@ import type {
 } from "../types/analysis.js";
 import { validateFileAnalysis } from "./fileanalysis-validator.js";
 import { normalizeProject } from "./element-registry.js";
+import type { ImpactDiffResult } from "./impact-diff.js";
 
 /**
  * LSP enhancement delta — written as a SEPARATE file from the base summary
@@ -115,6 +116,17 @@ export async function writeProjectSummary(
   options: OutputOptions,
 ): Promise<string> {
   return writeJson("project-summary.json", normalizeProject(summary), options);
+}
+
+/**
+ * Write the diff-scoped impact of the latest incremental run.
+ * Creates: <outputDir>/impact-latest.json
+ */
+export async function writeImpactDiff(
+  impact: ImpactDiffResult,
+  options: OutputOptions,
+): Promise<string> {
+  return writeJson("impact-latest.json", impact, options);
 }
 
 /**
