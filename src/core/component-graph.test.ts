@@ -79,6 +79,36 @@ describe("buildComponentGraph — same-name disambiguation", () => {
   });
 });
 
+describe("buildComponentGraph — language-family fence", () => {
+  it("never resolves a relative import across language families (spsflow FP: web.php → *.kt)", () => {
+    const graph = buildComponentGraph([
+      file("dsps-web/LEGACY/routes/web.php", {
+        language: "php",
+        imports: [{ source: "./ChatService", specifiers: [] }],
+      }),
+      file("dsps-server/functions/chat/ChatService.kt", { language: "kotlin", exports: ["ChatService"] }),
+    ]);
+    expect(graph["dsps-web/LEGACY/routes/web.php"]).toBeUndefined();
+  });
+
+  it("fences sub-component references the same way (kt → dart)", () => {
+    const kt = file("server/mobileapp/view/AppController.kt", { language: "kotlin" });
+    kt.subComponents = [{ name: "NewChatPage", importSource: "NewChatPage", line: 1 } as never];
+    const graph = buildComponentGraph([
+      kt,
+      file("dsps_app/lib/widgets/chatPage/NewChatPage.dart", { language: "dart" }),
+    ]);
+    expect(graph["server/mobileapp/view/AppController.kt"]).toBeUndefined();
+  });
+
+  it("keeps unknown-family sources eligible (an .html page script-links .js)", () => {
+    const page = file("site/index.html", { language: "html" });
+    page.subComponents = [{ name: "app", importSource: "js/app", line: 1 } as never];
+    const graph = buildComponentGraph([page, file("site/js/app.js", { language: "javascript" })]);
+    expect(graph["site/index.html"]).toEqual(["site/js/app.js"]);
+  });
+});
+
 describe("buildComponentGraph — project scope", () => {
   it("same-project export wins over a textually-closer sibling project", () => {
     const consumer = file("sol/apps/mail/deep/nested/Consumer.pas", {

@@ -82,6 +82,31 @@ describe("classifyFileLayers", () => {
     expect(classify("app/controllers/users_controller.rb")).toBe("services");
     expect(classify("app/views/users/index.html.erb")).toBe("ui");
   });
+
+  it("does not read the app/ container dir as ui (spsflow FP: Laravel Enums, Kotlin dto)", () => {
+    // 92 phantom services→ui violations: controllers importing an enum that
+    // only lived under Laravel's app/ container.
+    expect(classify("dsps-web/LEGACY/app/Enums/API_REQUEST_TYPE.php")).toBe("utils");
+    expect(classify("dsps-web/LEGACY/app/Providers/ApiUserProvider.php")).toBe("unknown");
+  });
+
+  it("classifies dto dirs and ALL-CAPS acronym suffixes as data (spsflow FP)", () => {
+    expect(classify("server/model/dto/organization/US2000InstitutionNumberDTO.kt")).toBe("data");
+    expect(classify("server/app/dto/AppSupportActivityDTO.kt")).toBe("data");
+    expect(classify("server/model/dao/DatabaseStudentDAO.kt")).toBe("data");
+  });
+
+  it("does not let a bare capitalized word claim a suffix layer (spsflow FP: util/Page.kt)", () => {
+    // Page.kt is a pagination util — the ui suffix needs a compound name.
+    expect(classify("server/util/Page.kt")).toBe("utils");
+    expect(classify("app/NewChatPage.dart")).toBe("ui"); // compound still works
+  });
+
+  it("exempts CI/CD and script trees from layering (spsflow FP)", () => {
+    expect(classify("dsps_app/CICD/ios_app_store_api/set_release_type.py")).toBe("unknown");
+    expect(classify("dsps_app/CICD/utils/csv_deployment_manager.py")).toBe("unknown");
+    expect(classify("spsflow-scripts/jira/sync.py")).toBe("unknown");
+  });
 });
 
 describe("detectLayerViolations", () => {
@@ -106,5 +131,13 @@ describe("detectLayerViolations", () => {
     expect(v).toHaveLength(1);
     expect(v[0].sourceLayer).toBe("data");
     expect(v[0].targetLayer).toBe("ui");
+  });
+
+  it("exempts build-tool config files as violation sources (spsflow FP: vite.config.js)", () => {
+    const files = ["web/vite.config.js", "web/src/pages/Home.vue"];
+    const graph = { "web/vite.config.js": ["web/src/pages/Home.vue"] };
+    const layers = classifyFileLayers(files);
+    expect(layers["web/vite.config.js"]).toBe("config"); // display keeps the layer
+    expect(detectLayerViolations(analyses, graph, layers)).toHaveLength(0);
   });
 });

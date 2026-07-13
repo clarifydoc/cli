@@ -68,8 +68,11 @@ export function detectDuplicates(analyses: FileAnalysis[]): DuplicateGroup[] {
   const groups: DuplicateGroup[] = [];
 
   // Test files are full of intentionally repeated scaffolding (mock factories,
-  // mount helpers) — not duplication the team should deduplicate.
-  const authored = analyses.filter((a) => !isTestFile(a.filePath, a.language));
+  // mount helpers) — not duplication the team should deduplicate. Minified or
+  // bundled artifacts are excluded too: a webpack bundle carries compiled
+  // COPIES of authored functions, so every source function would pair with
+  // its own build output.
+  const authored = analyses.filter((a) => !a.minified && !isTestFile(a.filePath, a.language));
 
   // ── Name-based duplication ──
   const fnByName = new Map<string, { filePath: string; line: number; fn: FileAnalysis["functions"][0] }[]>();

@@ -147,13 +147,27 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
             componentLinked = true;
           }
           if (!componentLinked) {
-            // Fallback: search all files for the handler name — best-effort, no import proof.
+            // Fallback: search all files for the handler name — best-effort, no
+            // import proof. Two guards keep it from linking noise (spsflow: a
+            // Laravel `DashboardController#create` bound the first `create`
+            // anywhere — a Kotlin DAO; a Kotlin route's `sendMessage` bound a
+            // Dart widget): candidates must be in the route file's language
+            // family, and a qualified handler's class must be evidenced in the
+            // candidate (a same-named symbol or the file's basename).
+            const srcFamily = extensionFamily(sourceFile);
+            const qualParts = route.handler.split(/[#.]/).filter(Boolean);
+            const classPart = qualParts.length > 1 ? qualParts[qualParts.length - 2]! : null;
             for (const [filePath, syms] of symbolIndex) {
               const def = syms.get(handlerName);
-              if (def) {
-                pushRouteLink(filePath, def, "AMBIGUOUS");
-                break;
+              if (!def) continue;
+              const tgtFamily = extensionFamily(filePath);
+              if (srcFamily && tgtFamily && srcFamily !== tgtFamily) continue;
+              if (classPart) {
+                const base = filePath.split("/").pop()!.replace(/\.\w+$/, "");
+                if (!syms.has(classPart) && !syms.has(`${classPart}.${handlerName}`) && base !== classPart) continue;
               }
+              pushRouteLink(filePath, def, "AMBIGUOUS");
+              break;
             }
           }
         }

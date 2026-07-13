@@ -59,3 +59,52 @@ describe("scanSecurity — xss innerHTML rule", () => {
     expect(cats("el.innerHTML = userInput;", "src/Foo.spec.ts")).not.toContain("xss");
   });
 });
+
+// ─── Hardcoded secrets: route paths and key-name constants (spsflow FPs) ────
+
+describe("scanSecurity — hardcoded-secret rule", () => {
+  it("does not flag debug prints that concatenate a token variable", () => {
+    expect(cats('dd("Retrieve by Token: ".$identifier." and ". $token);', "app/ApiUserProvider.php"))
+      .not.toContain("hardcoded-secret");
+    expect(cats('console.log("Access token: " + token.substring(0, 10) + "...")'))
+      .not.toContain("hardcoded-secret");
+  });
+
+  it("does not flag URL-path values or KEY_* constants", () => {
+    expect(cats("static const String resetPassword = '/passwordReset';", "lib/RouterGenerator.dart"))
+      .not.toContain("hardcoded-secret");
+    expect(cats('const val KEY_PASSWORD = "istDpPassword"', "src/SystemVariablesService.kt"))
+      .not.toContain("hardcoded-secret");
+    expect(cats('const val KEY_CC_API_KEY = "commandoCentralApiKey"', "src/SystemVariablesService.kt"))
+      .not.toContain("hardcoded-secret");
+  });
+
+  it("still flags real credentials", () => {
+    expect(cats("const client_secret = 'fake-client-secret-0001';"))
+      .toContain("hardcoded-secret");
+    expect(cats('val token = "fake-token-0001"')).toContain("hardcoded-secret");
+    // The KEY_ veto is about `KEY_*` NAMES — an API_KEY holding a value stays flagged.
+    expect(cats("API_KEY = 'abc123def456'")).toContain("hardcoded-secret");
+  });
+});
+
+// ─── Minified/bundled artifacts are skipped wholesale (spsflow FPs) ──────────
+
+describe("scanSecurity — minified/bundle skip", () => {
+  it("skips a file with an enormous minified line", () => {
+    const minified = "var a=1;" + "el.innerHTML = userInput;".repeat(300);
+    expect(scanSecurity(minified, "public/js/plugins/sweetalert2.all.js", "javascript")).toHaveLength(0);
+  });
+
+  it("skips a webpack bundle regardless of line shape", () => {
+    const bundle =
+      "/******/ (function(modules) {\n__webpack_require__(0);\n" +
+      "el.innerHTML = userInput;\n".repeat(200);
+    expect(scanSecurity(bundle, "public/js/app.js", "javascript")).toHaveLength(0);
+  });
+
+  it("still scans normal source of the same size", () => {
+    const normal = "function f(x) {\n  el.innerHTML = userInput;\n}\n".repeat(100);
+    expect(scanSecurity(normal, "src/app.ts", "typescript").map((i) => i.category)).toContain("xss");
+  });
+});

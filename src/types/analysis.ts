@@ -307,6 +307,12 @@ export interface FileAnalysis {
   /** Per-file security findings — persisted for the same reason as `complexities`. */
   securityIssues?: SecurityIssue[];
   /**
+   * Minified or bundled build artifact (webpack output, `*.min.js`-shaped
+   * content) — not authored source. Project-level detectors (duplicates,
+   * patterns, health) exclude these files the way they exclude generatedRoots.
+   */
+  minified?: boolean;
+  /**
    * Type-position references emitted from this file (class extends/implements,
    * parameter/return/field/variable types, generic args, casts, `new`
    * expressions). Used by `data-model-blast` to compute per-class blast
