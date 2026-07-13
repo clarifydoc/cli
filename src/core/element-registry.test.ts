@@ -186,10 +186,6 @@ describe("element-registry codec — synthetic edge cases", () => {
             totalUsages: 1,
             usedByFiles: ["src/a.ts"],
             usagesByFile: [{ filePath: "src/a.ts", count: 1, byKind: { field: 1 }, sites: [{ symbol: "A.m", line: 5, kind: "field" }] }],
-            topReferences: [
-              // sourceClass + resolvedTargetFile + confidence all absent
-              { rawType: "M", typeName: "M", usageKind: "field", sourceFile: "src/a.ts", sourceLine: 5, sourceSymbol: "A.m" },
-            ],
             impactScore: 2,
             level: "low",
             changeRisk: "safe",

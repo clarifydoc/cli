@@ -9,7 +9,6 @@ import type {
   ClassGraphNode,
   ClassGraphEdge,
 } from "../types/analysis.js";
-import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
 import { buildImportIndex, type ImportIndex } from "./import-index.js";
 import { ormOf } from "./entity-graph.js";
 
@@ -26,19 +25,6 @@ import { ormOf } from "./entity-graph.js";
  * file-level and type-level computations stay independent — file blast
  * depends on the component graph, type blast depends on type references.
  */
-
-/** Weight per usage kind for ranking topReferences. Higher = more important. */
-const KIND_WEIGHT: Record<TypeUsageKind, number> = {
-  extends: 10,
-  implements: 9,
-  field: 7,
-  parameter: 6,
-  return: 5,
-  variable: 4,
-  cast: 3,
-  instantiation: 3,
-  "generic-arg": 2,
-};
 
 export function aggregateTypeBlast(
   analyses: FileAnalysis[],
@@ -169,26 +155,16 @@ export function aggregateTypeBlast(
       const usedByFiles = [...usedByFilesSet].sort();
 
       // Sort each file's sites by line for stable navigation; sort the
-      // per-file list by count desc (top-impact callers first).
+      // per-file list by count desc (top-impact callers first). Sites are
+      // capped per file — `count` stays exact, and the viewer shows 12 with a
+      // "+N more" badge anyway; unbounded site lists were a payload-size
+      // driver on reflection-heavy corpora.
       const usagesByFile = [...byFile.values()];
       for (const entry of usagesByFile) {
         entry.sites.sort((a, b) => a.line - b.line);
+        if (entry.sites.length > 20) entry.sites.length = 20;
       }
       usagesByFile.sort((a, b) => b.count - a.count || a.filePath.localeCompare(b.filePath));
-
-      // Top-N references — rank by kind weight then by confidence then by
-      // source file alphabetical for stability. Cap at 100 so the JSON
-      // doesn't bloat but a "full effect" view has enough data.
-      const ranked = refs.slice().sort((a, b) => {
-        const wA = KIND_WEIGHT[a.usageKind] ?? 0;
-        const wB = KIND_WEIGHT[b.usageKind] ?? 0;
-        if (wA !== wB) return wB - wA;
-        const cA = a.confidence ? CONFIDENCE_RANK[a.confidence] : 0;
-        const cB = b.confidence ? CONFIDENCE_RANK[b.confidence] : 0;
-        if (cA !== cB) return cB - cA;
-        return a.sourceFile.localeCompare(b.sourceFile);
-      });
-      const topReferences = ranked.slice(0, 100);
 
       const totalUsages = refs.length;
       const extendsCount = usageByKind.extends ?? 0;
@@ -214,7 +190,6 @@ export function aggregateTypeBlast(
         totalUsages,
         usedByFiles,
         usagesByFile,
-        topReferences,
         impactScore,
         level,
         changeRisk,

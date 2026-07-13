@@ -116,6 +116,9 @@ export function computeImpactDiff(
     if (!b) continue;
     if (b.changeRisk === "dangerous" && !dangerous) dangerous = file;
     if (b.changeRisk === "moderate" && !moderate) moderate = file;
+    // The stored blast lists are CAPPED on hub-dense repos (counts stay exact),
+    // so on monsters the dependent union is a lower bound — same contract as
+    // the traceImpact `truncated` flag below.
     for (const f of b.affectedFiles) dependents.add(f);
     for (const f of b.transitiveFiles) dependents.add(f);
     const t = b.traceImpact;
