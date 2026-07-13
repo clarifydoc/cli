@@ -454,3 +454,33 @@ describe("mergeFrameworkDetections", () => {
     expect(merged.find((f) => f.id === "astro")?.detectedVia).toBe("npm dependency");
   });
 });
+
+describe("collectExternalPackages — vendored git submodules", () => {
+  let dir: string;
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "revdoc-gitmod-"));
+    await writeFile(join(dir, ".gitmodules"), [
+      '[submodule "lib-externes/ZXing.Delphi"]',
+      "\tpath = lib-externes/ZXing.Delphi",
+      "\turl = https://github.com/Spelt/ZXing.Delphi.git",
+      '[submodule "lib-externes/librairies"]',
+      "\tpath = lib-externes/librairies",
+      "\turl = https://github.com/DeveloppeurPascal/librairies.git",
+      '[submodule "pathless"]',
+      "\turl = git@github.com:acme/tools.git",
+    ].join("\n"));
+  });
+
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("declares each submodule as a git-ecosystem dependency named by its repo", async () => {
+    const pkgs = await collectExternalPackages(dir, []);
+    const git = pkgs.filter((p) => p.ecosystem === "git");
+    expect(git.map((p) => p.name).sort()).toEqual(["ZXing.Delphi", "librairies", "tools"]);
+    expect(git[0]!.declaredIn).toBe(".gitmodules");
+    expect(git[0]!.version).toBeNull();
+  });
+});

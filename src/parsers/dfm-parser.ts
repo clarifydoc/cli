@@ -18,6 +18,7 @@ const DFM_ELEMENT_MAP: Record<string, InteractiveElementInfo["element"]> = {
   tbutton: "button",
   tbitbtn: "button",
   tspeedbutton: "button",
+  tcornerbutton: "button",
   tedit: "input",
   tlabelededit: "input",
   tmaskedit: "input",
@@ -44,27 +45,37 @@ const DFM_CATEGORY_MAP: Record<string, ScreenComponentCategory> = {
   tpanel: "container", tgroupbox: "container", tpagecontrol: "container",
   ttabsheet: "container", tscrollbox: "container", tsplitter: "container",
   tflowpanel: "container", tgridpanel: "container", tframe: "container",
+  // FMX containers
+  tlayout: "container", tgridpanellayout: "container", tflowlayout: "container",
+  tscaledlayout: "container", ttabcontrol: "container", ttabitem: "container",
+  texpander: "container", trectangle: "container",
   // Inputs
   tedit: "input", tlabelededit: "input", tmaskedit: "input",
   tmemo: "input", trichedit: "input", tcombobox: "input",
   tcomboboxex: "input", tcheckbox: "input", tradiobutton: "input",
   tradiogroup: "input", tdatetimepicker: "input", tspinedit: "input",
   tnumberbox: "input", tcolorbox: "input",
+  tswitch: "input", ttrackbar: "input", tspinbox: "input", tarcdial: "input",
   // Display
   tlabel: "display", timage: "display", tstatusbar: "display",
   tprogressbar: "display", tshape: "display", tbevel: "display",
+  ttext: "display", timagecontrol: "display", tpath: "display",
+  tcircle: "display", tline: "display",
   // Data
   tdbgrid: "data", tdbnavigator: "data", tdbedit: "data",
   tdbmemo: "data", tdbcombobox: "data", tdbcheckbox: "data",
   tdbimage: "data", tdblookupcombobox: "data", tstringgrid: "data",
   tdatasource: "data", tclientdataset: "data", tfdmemtable: "data",
   tquery: "data", ttable: "data",
+  tfdconnection: "data", tfdquery: "data", tfdtable: "data",
+  tbindsourcedb: "data", tbindnavigator: "data", tbindingslist: "data",
   // Action
   tbutton: "action", tbitbtn: "action", tspeedbutton: "action",
-  ttoolbar: "action", ttoolbutton: "action",
+  ttoolbar: "action", ttoolbutton: "action", tcornerbutton: "action",
   // Navigation
   tmainmenu: "navigation", tpopupmenu: "navigation", tmenuitem: "navigation",
   ttreeview: "navigation", tlistview: "navigation", tlistbox: "navigation",
+  ttreeviewitem: "navigation", tlistboxitem: "navigation",
 };
 
 /** Visual properties we capture values for (case-insensitive match) */

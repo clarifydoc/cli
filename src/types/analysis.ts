@@ -1140,7 +1140,8 @@ export type PackageEcosystem =
   | "luarocks"
   | "hex"
   | "hackage"
-  | "clojars";
+  | "clojars"
+  | "git";
 
 /** How a dependency is consumed (production vs tooling-only). */
 export type PackageScope = "prod" | "dev" | "peer" | "optional";

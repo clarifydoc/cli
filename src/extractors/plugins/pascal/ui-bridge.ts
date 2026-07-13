@@ -76,7 +76,7 @@ export class PascalUiBridgeResolver implements DispatchResolver {
     handler: string,
     dfmFile: string,
   ): { file: string; cls: ClassInfo; method: FunctionInfo } | null {
-    const companion = dfmFile.replace(/\.(dfm|lfm)$/i, "").toLowerCase();
+    const companion = dfmFile.replace(/\.(dfm|lfm|fmx)$/i, "").toLowerCase();
     let className: string | null = formClass;
     const visited = new Set<string>();
     while (className && !visited.has(className.toLowerCase())) {

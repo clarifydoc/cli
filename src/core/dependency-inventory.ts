@@ -544,6 +544,39 @@ async function readIf(absPath: string): Promise<string | null> {
 }
 
 /** Parse all dependencies declared at a single root directory. */
+/**
+ * `.gitmodules` — vendored submodules as declared dependencies. The package
+ * name is the remote repo's basename (stable identity across checkouts); the
+ * recorded "version" is null (submodules pin by commit, not by version).
+ */
+function parseGitmodules(text: string, declaredIn: string): RawPkg[] {
+  const out: RawPkg[] = [];
+  let path: string | null = null;
+  let url: string | null = null;
+  const flush = () => {
+    if (!path && !url) return;
+    const fromUrl = url?.replace(/\/+$/, "").split("/").pop()?.replace(/\.git$/i, "");
+    const fromPath = path?.replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop();
+    const name = fromUrl || fromPath;
+    if (name) out.push(mk(name, null, "git", "prod", declaredIn));
+    path = null;
+    url = null;
+  };
+  for (const line of text.split(/\r?\n/)) {
+    if (/^\s*\[submodule\b/.test(line)) {
+      flush();
+      continue;
+    }
+    const kv = line.match(/^\s*(path|url)\s*=\s*(.+?)\s*$/);
+    if (kv) {
+      if (kv[1] === "path") path = kv[2]!;
+      else url = kv[2]!;
+    }
+  }
+  flush();
+  return out;
+}
+
 async function collectAtRoot(absRoot: string, rel: string): Promise<RawPkg[]> {
   const out: RawPkg[] = [];
   const at = (name: string) => (rel ? `${rel}/${name}` : name);
@@ -609,6 +642,12 @@ async function collectAtRoot(absRoot: string, rel: string): Promise<RawPkg[]> {
 
   const projectClj = await readIf(join(absRoot, "project.clj"));
   if (projectClj) out.push(...parseClojureDeps(projectClj, at("project.clj")));
+
+  // Vendored git submodules — the de-facto dependency channel for ecosystems
+  // without a package manager (Delphi, plain C, game engines): the library IS
+  // an external dependency even though its source sits inside the repo.
+  const gitmodules = await readIf(join(absRoot, ".gitmodules"));
+  if (gitmodules) out.push(...parseGitmodules(gitmodules, at(".gitmodules")));
 
   // Multi-file ecosystems within this root (shallow scan).
   const csprojFiles = await fg(["**/*.csproj", "**/Directory.Packages.props", "**/packages.config"], {
