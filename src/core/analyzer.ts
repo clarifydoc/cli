@@ -31,6 +31,7 @@ import {
   writeProjectSummary,
   writeReportData,
   writeLspGroundTruth,
+  writeImpactDiff,
   type OutputOptions,
 } from "./output-writer.js";
 import { buildReportPayload } from "./report-payload.js";
@@ -52,6 +53,7 @@ import { detectDuplicates } from "./duplication-detector.js";
 import { classifyFileLayers, detectLayerViolations } from "./layer-analyzer.js";
 import { analyzeBlastRadius } from "./blast-radius.js";
 import { attachTraceImpact } from "./trace-impact.js";
+import { computeImpactDiff } from "./impact-diff.js";
 import { analyzeUnusedCode } from "./dead-code.js";
 import { computeHealthScore } from "./health-scorer.js";
 import { generateSuggestions } from "./suggestions-engine.js";
@@ -115,6 +117,11 @@ export interface AnalyzeResult {
   patternCount?: number;
   securityIssueCount?: number;
   suggestionCount?: number;
+  /** Files whose content changed vs. the previous manifest (incremental runs
+   *  against a prior manifest only). */
+  changedFiles?: string[];
+  /** Files present in the previous manifest but gone now (same condition). */
+  removedFiles?: string[];
 }
 
 // ─── Concurrency pool ────────────────────────────────────────────────────
@@ -395,6 +402,9 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const newManifestEntries: Record<string, { mtime: number; sha256: string }> = {};
   let unchangedCount = 0;
   let reparsedCount = 0;
+  // Files whose CONTENT changed since the previous manifest (changed + new).
+  // Only meaningful against a prior manifest — feeds impact-latest.json.
+  const changedSinceLastRun: string[] = [];
 
   // Per-file analysis is CPU-bound (tree-sitter + extractors), so spread it
   // across worker threads when the project is big enough to amortize worker
@@ -423,6 +433,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
           const prev = prevManifest.entries[manifestKey];
           const classification = await classifyFileForCache(file.absolutePath, prev);
           newManifestEntries[manifestKey] = { mtime: classification.mtime, sha256: classification.sha256 };
+          if (classification.state !== "unchanged") changedSinceLastRun.push(manifestKey);
           if (classification.state === "unchanged") {
             const cached = await loadCachedFileResult(file, outputDir);
             if (cached) {
@@ -880,6 +891,27 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   await writeProjectSummary(summary, outputOpts);
   await writeReportData(reportPayload, outputOpts);
 
+  // Diff-scoped impact: against a PRIOR manifest the changed set is exact, so
+  // project it onto the cross-tier blast data and persist it — the application
+  // server serves this on watch re-runs and the viewer's Overview renders it.
+  // First incremental runs (no prior manifest) have no diff to speak of.
+  let removedSinceLastRun: string[] | undefined;
+  if (options.incremental && prevManifest) {
+    removedSinceLastRun = Object.keys(prevManifest.entries).filter(
+      (k) => !(k in newManifestEntries),
+    );
+    const impact = computeImpactDiff(summary, changedSinceLastRun, {
+      removedFiles: removedSinceLastRun,
+      baseLabel: "previous analysis run",
+    });
+    await writeImpactDiff(impact, outputOpts);
+    if (impact.changedFiles.length > 0) {
+      progress.detail(
+        `  Impact: ${impact.changedFiles.length} changed → ${impact.screenCount} screen(s), ${impact.routeCount} route(s), ${impact.entityCount} entit(ies)`,
+      );
+    }
+  }
+
   // Save the manifest only after the rest of the pipeline succeeds so a crash
   // mid-run leaves the previous manifest intact.
   if (options.incremental) {
@@ -916,6 +948,8 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     patternCount: patterns.length,
     securityIssueCount: allSecurityIssues.length,
     suggestionCount: suggestions.length,
+    changedFiles: prevManifest ? changedSinceLastRun.sort() : undefined,
+    removedFiles: removedSinceLastRun,
   };
 }
 
