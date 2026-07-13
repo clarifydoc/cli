@@ -60,6 +60,7 @@ import type {
   Suggestion,
   SymbolDataAccess,
   SymbolLink,
+  TraceImpactInfo,
   TypeReference,
   TypeUsageByFile,
   TypeUsageKind,
@@ -252,6 +253,10 @@ export interface NormBlastRadiusInfo {
   dependsOn: number[];
   exportedSymbols: NormBlastSymbolUsage[];
   typeUsages?: NormTypeUsageSummary[];
+  /** Cross-tier reach — carried VERBATIM (paths stay strings): the lists are
+   *  hard-capped, so interning would save nothing, and screens/routes are
+   *  mostly non-path data (names, HTTP methods, route paths) anyway. */
+  traceImpact?: TraceImpactInfo;
 }
 
 // ── dataAccessGraph ──
@@ -815,6 +820,7 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
           callers: callers.map(({ c, ref }) => ({ ref: remap[ref], line: c.line })),
         })),
       };
+      if (r.b.traceImpact) nb.traceImpact = r.b.traceImpact;
       if (r.typeUsages) {
         nb.typeUsages = r.typeUsages.map(({ tu, type, usagesByFile, topReferences }) => ({
           type: remap[type],
@@ -1025,6 +1031,7 @@ export function denormalizeProject(obj: unknown): ProjectAnalysis {
         changeRisk: nb.changeRisk,
         maxDepth: nb.maxDepth,
       };
+      if (nb.traceImpact) info.traceImpact = nb.traceImpact;
       if (nb.typeUsages) {
         info.typeUsages = nb.typeUsages.map((ntu): TypeUsageSummary => {
           const tEl = elements[ntu.type];

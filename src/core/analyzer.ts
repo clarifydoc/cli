@@ -50,6 +50,7 @@ import { detectPatterns } from "./pattern-detector.js";
 import { detectDuplicates } from "./duplication-detector.js";
 import { classifyFileLayers, detectLayerViolations } from "./layer-analyzer.js";
 import { analyzeBlastRadius } from "./blast-radius.js";
+import { attachTraceImpact } from "./trace-impact.js";
 import { analyzeUnusedCode } from "./dead-code.js";
 import { computeHealthScore } from "./health-scorer.js";
 import { generateSuggestions } from "./suggestions-engine.js";
@@ -759,6 +760,21 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   if (queueSymbolLinks.length > 0) {
     symbolLinks = dedupSymbolLinks([...symbolLinks, ...queueSymbolLinks]);
     progress.detail(`  MQ publish→consume trace links: ${queueSymbolLinks.length}`);
+  }
+
+  // Cross-tier blast: project each file's symbol-graph reach onto the UI and
+  // data tiers — which screens/API routes transitively reach it, and which
+  // entities/queues it ultimately touches. Runs AFTER the HTTP + MQ synthetic
+  // links above so impact crosses tier boundaries the same way traces do.
+  const traceImpactCount = attachTraceImpact(blastRadius, {
+    symbolLinks,
+    screens: allScreens,
+    routes: allRoutes,
+    symbolDataAccess,
+    analyses: allAnalyses,
+  });
+  if (traceImpactCount > 0) {
+    progress.detail(`  Cross-tier blast: ${traceImpactCount} file(s) with screen/route/entity reach`);
   }
 
   // ORM/DB migrations across known ecosystems (path-convention based).

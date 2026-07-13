@@ -29,14 +29,14 @@ import type { ApiRouteLink, FileAnalysis, SymbolDataAccess, SymbolLink } from ".
  *    controllers file).
  */
 
-interface SymbolSpan {
+export interface SymbolSpan {
   symbol: string;
   line: number;
   endLine: number;
 }
 
 /** Function + qualified-method spans of one file, for innermost-span lookup. */
-function spansOf(a: FileAnalysis): SymbolSpan[] {
+export function spansOf(a: FileAnalysis): SymbolSpan[] {
   const spans: SymbolSpan[] = [];
   for (const fn of a.functions ?? []) {
     spans.push({ symbol: fn.name, line: fn.line, endLine: fn.endLine });
@@ -49,7 +49,7 @@ function spansOf(a: FileAnalysis): SymbolSpan[] {
   return spans;
 }
 
-function innermostAt(spans: SymbolSpan[], line: number): SymbolSpan | null {
+export function innermostAt(spans: SymbolSpan[], line: number): SymbolSpan | null {
   let best: SymbolSpan | null = null;
   let bestSpan = Infinity;
   for (const s of spans) {
@@ -65,7 +65,7 @@ function innermostAt(spans: SymbolSpan[], line: number): SymbolSpan | null {
 }
 
 /** Spans in `spans` matching a bare handler name (`login` or `Auth.login`). */
-function byName(spans: SymbolSpan[], name: string): SymbolSpan[] {
+export function byName(spans: SymbolSpan[], name: string): SymbolSpan[] {
   return spans.filter((s) => s.symbol === name || s.symbol.endsWith(`.${name}`));
 }
 
