@@ -80,8 +80,6 @@ export interface TypeUsageSummary {
    * return type, specifically?".
    */
   usagesByFile: TypeUsageByFile[];
-  /** Up to 100 representative reference sites — sorted by usage-kind weight. */
-  topReferences: TypeReference[];
   /** Same scoring scheme as the existing BlastRadiusInfo. */
   impactScore: number;
   level: "critical" | "high" | "medium" | "low";

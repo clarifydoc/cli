@@ -214,18 +214,6 @@ export interface NormTypeUsageByFile {
   byKind: Partial<Record<TypeUsageKind, number>>;
   sites: NormSite[];
 }
-export interface NormTypeReference {
-  rawType: string;
-  typeName: string;
-  usageKind: TypeUsageKind;
-  /** Source use-site element index (sourceFile::sourceSymbol). */
-  source: number;
-  sourceLine: number;
-  sourceClass?: string;
-  /** Resolved target file element index (file node), when known. */
-  resolvedTarget?: number;
-  confidence?: Confidence;
-}
 export interface NormTypeUsageSummary {
   /** Type-declaration element index (carries definedAt line + isInterface). */
   type: number;
@@ -233,7 +221,6 @@ export interface NormTypeUsageSummary {
   totalUsages: number;
   // usedByFiles is DERIVED on denormalize (sorted unique usagesByFile paths minus the defining file).
   usagesByFile: NormTypeUsageByFile[];
-  topReferences: NormTypeReference[];
   impactScore: number;
   level: "critical" | "high" | "medium" | "low";
   changeRisk: "safe" | "moderate" | "dangerous";
@@ -685,11 +672,6 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
       // Type declaration: defined in this blast entry's filePath; line + isInterface live in the registry.
       type: reg.intern(b.filePath, tu.typeName, { line: tu.definedAt.line, isInterface: tu.definedAt.isInterface }),
       usagesByFile: tu.usagesByFile.map((uf) => ({ uf, file: internFile(reg, uf.filePath) })),
-      topReferences: tu.topReferences.map((tr) => ({
-        tr,
-        source: reg.intern(tr.sourceFile, tr.sourceSymbol),
-        resolvedTarget: tr.resolvedTargetFile !== undefined ? internFile(reg, tr.resolvedTargetFile) : undefined,
-      })),
     })),
   }));
 
@@ -824,7 +806,7 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
       };
       if (r.b.traceImpact) nb.traceImpact = r.b.traceImpact;
       if (r.typeUsages) {
-        nb.typeUsages = r.typeUsages.map(({ tu, type, usagesByFile, topReferences }) => ({
+        nb.typeUsages = r.typeUsages.map(({ tu, type, usagesByFile }) => ({
           type: remap[type],
           usageByKind: tu.usageByKind,
           totalUsages: tu.totalUsages,
@@ -834,19 +816,6 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
             byKind: uf.byKind,
             sites: uf.sites,
           })),
-          topReferences: topReferences.map(({ tr, source, resolvedTarget }) => {
-            const ntr: NormTypeReference = {
-              rawType: tr.rawType,
-              typeName: tr.typeName,
-              usageKind: tr.usageKind,
-              source: remap[source],
-              sourceLine: tr.sourceLine,
-            };
-            if (tr.sourceClass !== undefined) ntr.sourceClass = tr.sourceClass;
-            if (resolvedTarget !== undefined) ntr.resolvedTarget = remap[resolvedTarget];
-            if (tr.confidence !== undefined) ntr.confidence = tr.confidence;
-            return ntr;
-          }),
           impactScore: tu.impactScore,
           level: tu.level,
           changeRisk: tu.changeRisk,
@@ -1055,22 +1024,6 @@ export function denormalizeProject(obj: unknown): ProjectAnalysis {
             totalUsages: ntu.totalUsages,
             usedByFiles,
             usagesByFile,
-            topReferences: ntu.topReferences.map((ntr): TypeReference => {
-              const sEl = elements[ntr.source];
-              const [sourceFile, sourceSymbol] = splitElementId(sEl?.id ?? "");
-              const tr: TypeReference = {
-                rawType: ntr.rawType,
-                typeName: ntr.typeName,
-                usageKind: ntr.usageKind,
-                sourceFile,
-                sourceLine: ntr.sourceLine,
-                sourceSymbol,
-              };
-              if (ntr.sourceClass !== undefined) tr.sourceClass = ntr.sourceClass;
-              if (ntr.resolvedTarget !== undefined) tr.resolvedTargetFile = fileOf(elements, ntr.resolvedTarget);
-              if (ntr.confidence !== undefined) tr.confidence = ntr.confidence;
-              return tr;
-            }),
             impactScore: ntu.impactScore,
             level: ntu.level,
             changeRisk: ntu.changeRisk,

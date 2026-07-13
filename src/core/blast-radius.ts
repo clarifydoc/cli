@@ -8,6 +8,18 @@ import type { BlastRadiusInfo, BlastSymbolUsage, SymbolLink } from "../types/ana
  * - The file's own fragility (what it depends on)
  * - Change risk classification
  */
+/**
+ * Stored-list caps. The COUNT fields (directDependents, transitiveDependents,
+ * usedByCount) stay exact; only the enumerated lists are truncated — the
+ * transitive closure is O(files²) on hub-dense repos (a 5k-file corpus
+ * produced 213MB of transitiveFiles strings in one report payload) and
+ * unreadable long before that. Transitive entries keep BFS discovery order,
+ * so the capped list holds the NEAREST dependents.
+ */
+const AFFECTED_LIST_CAP = 500;
+const TRANSITIVE_LIST_CAP = 50;
+const CALLERS_LIST_CAP = 10;
+
 export function analyzeBlastRadius(
   componentGraph: Record<string, string[]>,
   symbolLinks: SymbolLink[],
@@ -69,8 +81,8 @@ export function analyzeBlastRadius(
   for (const filePath of allFiles) {
     // ── Direct dependents ──
     const directDeps = reverseGraph.get(filePath) ?? new Set();
-    const affectedFiles = [...directDeps].sort();
-    const directCount = affectedFiles.length;
+    const directCount = directDeps.size;
+    const affectedFiles = [...directDeps].sort().slice(0, AFFECTED_LIST_CAP);
 
     // ── Transitive dependents via BFS (max depth 8) ──
     const visited = new Set<string>([filePath, ...directDeps]);
@@ -80,6 +92,7 @@ export function analyzeBlastRadius(
     }
 
     const transitiveFiles: string[] = [];
+    let transitiveCount = 0;
     let impactScore = directCount;
     let maxDepth = directCount > 0 ? 1 : 0;
 
@@ -94,7 +107,8 @@ export function analyzeBlastRadius(
       for (const next of nextDeps) {
         if (!visited.has(next)) {
           visited.add(next);
-          transitiveFiles.push(next);
+          transitiveCount++;
+          if (transitiveFiles.length < TRANSITIVE_LIST_CAP) transitiveFiles.push(next);
           impactScore += 1 / (depth + 1); // decay with depth
           queue.push({ file: next, depth: depth + 1 });
         }
@@ -113,7 +127,9 @@ export function analyzeBlastRadius(
         exportedSymbols.push({
           name,
           usedByCount: callers.length,
-          callers: callers.sort((a, b) => a.file.localeCompare(b.file)),
+          callers: callers
+            .sort((a, b) => a.file.localeCompare(b.file))
+            .slice(0, CALLERS_LIST_CAP),
         });
       }
       exportedSymbols.sort((a, b) => b.usedByCount - a.usedByCount);
@@ -131,7 +147,7 @@ export function analyzeBlastRadius(
 
     // ── Change risk: accounts for both inbound (dependents) and outbound (dependencies) ──
     // A file that is both heavily depended upon AND depends on many things is most dangerous
-    const inboundWeight = directCount + transitiveFiles.length * 0.3;
+    const inboundWeight = directCount + transitiveCount * 0.3;
     const outboundWeight = dependsOn.length;
     const riskScore = inboundWeight * 2 + outboundWeight;
     let changeRisk: BlastRadiusInfo["changeRisk"] = "safe";
@@ -144,7 +160,7 @@ export function analyzeBlastRadius(
     results.push({
       filePath,
       directDependents: directCount,
-      transitiveDependents: transitiveFiles.length,
+      transitiveDependents: transitiveCount,
       impactScore: Math.round(impactScore * 10) / 10,
       centrality,
       level,

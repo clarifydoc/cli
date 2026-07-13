@@ -76,15 +76,80 @@ export interface ReportPayload {
 export const DEFERRED_FIELDS = ["blastRadius", "complexity", "classGraph"] as const;
 
 /**
+ * Wire encoding for the payload's biggest arrays: file-path fields are emitted
+ * as `files[]` INDICES instead of repeated path strings — a 5k-file corpus
+ * carried 200k+ path copies in symbolLinks/linkGraph/blastRadius alone, most
+ * of the payload's bytes and parse time. The viewer decodes them back to
+ * strings in ONE pass right after load (application/spa/src/report/decode.ts),
+ * so tab code keeps reading plain paths. A path that isn't a files[] member
+ * stays a verbatim string, and the decoder passes strings through — old
+ * artifacts and new viewers stay mutually compatible in both directions.
+ * Encoding builds NEW row objects: the summary is written to disk after this
+ * runs and must not see index-typed fields.
+ */
+function refEncoder(files: string[]): (p: string) => string | number {
+  const idx = new Map<string, number>();
+  files.forEach((f, i) => idx.set(f, i));
+  return (p) => idx.get(p) ?? p;
+}
+
+function encodeBlastRow(b: any, ref: (p: string) => string | number): any {
+  const out: any = {
+    ...b,
+    filePath: ref(b.filePath),
+    affectedFiles: b.affectedFiles.map(ref),
+    transitiveFiles: b.transitiveFiles.map(ref),
+    dependsOn: b.dependsOn.map(ref),
+    exportedSymbols: b.exportedSymbols.map((es: any) => ({
+      ...es,
+      callers: es.callers.map((c: any) => ({ ...c, file: ref(c.file) })),
+    })),
+  };
+  if (b.typeUsages) {
+    out.typeUsages = b.typeUsages.map((tu: any) => ({
+      ...tu,
+      usedByFiles: tu.usedByFiles.map(ref),
+      usagesByFile: tu.usagesByFile.map((uf: any) => ({ ...uf, filePath: ref(uf.filePath) })),
+    }));
+  }
+  if (b.traceImpact) {
+    out.traceImpact = {
+      ...b.traceImpact,
+      screens: b.traceImpact.screens.map((sc: any) => ({ ...sc, file: ref(sc.file) })),
+      routes: b.traceImpact.routes.map((rt: any) => ({ ...rt, file: ref(rt.file) })),
+    };
+  }
+  return out;
+}
+
+/** classGraph edges name nodes by id string — encode them as node INDICES. */
+function encodeClassGraph(cg: any, ref: (p: string) => string | number): any {
+  if (!cg) return null;
+  const nodeIdx = new Map<string, number>();
+  cg.nodes.forEach((n: any, i: number) => nodeIdx.set(n.id, i));
+  return {
+    nodes: cg.nodes.map((n: any) => ({ ...n, filePath: ref(n.filePath) })),
+    edges: cg.edges.map((e: any) => ({
+      ...e,
+      source: nodeIdx.get(e.source) ?? e.source,
+      target: nodeIdx.get(e.target) ?? e.target,
+    })),
+  };
+}
+
+/**
  * Reshape a (denormalized) ProjectAnalysis into the report payload. Pure — takes
  * an in-memory summary, does no I/O — so the analyze pipeline can build it from
  * its live summary and the report/server paths can build it from a disk-loaded
  * one. Field names here are the contract shared with the report client and the
- * SPA viewer; changing one means updating both consumers.
+ * SPA viewer; changing one means updating both consumers. The BIG arrays carry
+ * files[]-index refs on the wire (see refEncoder above) — the viewer's
+ * decodePayload restores strings before any tab sees them.
  */
 export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
   const s = summary as any;
   const projectName = basename(summary.projectRoot || "project");
+  const ref = refEncoder(summary.files ?? []);
   return {
     projectName,
     // Absolute root the analysis ran against — used client-side to build
@@ -96,7 +161,7 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
     frameworks: summary.detectedFrameworks.map((f) => ({ name: f.name, confidence: f.confidence })),
     files: summary.files,
     interactiveElements: s.interactiveElements ?? [],
-    linkGraph: s.linkGraph ?? [],
+    linkGraph: (s.linkGraph ?? []).map((l: any) => ({ ...l, source: ref(l.source), target: ref(l.target) })),
     screens: s.screens ?? [],
     componentUsage: (s.componentUsage ?? []).map((c: any) => ({
       name: c.name,
@@ -104,7 +169,11 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
       filePath: c.filePath,
       line: c.line,
     })),
-    symbolLinks: s.symbolLinks ?? [],
+    symbolLinks: (s.symbolLinks ?? []).map((l: any) => ({
+      ...l,
+      sourceFile: ref(l.sourceFile),
+      targetFile: ref(l.targetFile),
+    })),
     componentLaunches: s.componentLaunches ?? [],
     subProjects: s.subProjects ?? [{ id: "root", name: "(root)", root: "", kind: "root", markers: [] }],
     fileProjects: s.fileProjects ?? {},
@@ -134,9 +203,9 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
     suggestions: summary.suggestions ?? [],
     duplicates: summary.duplicates ?? [],
     layerViolations: summary.layerViolations ?? [],
-    blastRadius: summary.blastRadius ?? [],
-    fileChurn: summary.fileChurn ?? [],
-    hotspots: summary.hotspots ?? [],
+    blastRadius: (summary.blastRadius ?? []).map((b) => encodeBlastRow(b, ref)),
+    fileChurn: (summary.fileChurn ?? []).map((c) => ({ ...c, file: ref(c.file) })),
+    hotspots: (summary.hotspots ?? []).map((h) => ({ ...h, file: ref(h.file) })),
     godNodes: summary.godNodes ?? [],
     surprisingConnections: summary.surprisingConnections ?? [],
     suggestedQuestions: summary.suggestedQuestions ?? [],
@@ -144,7 +213,7 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
     communities: summary.communities ?? {},
     cohesion: summary.cohesion ?? {},
     skippedSensitive: summary.skippedSensitive ?? [],
-    classGraph: summary.classGraph ?? null,
+    classGraph: encodeClassGraph(summary.classGraph ?? null, ref),
     dataAccessGraph: summary.dataAccessGraph ?? null,
     entityGraph: s.entityGraph ?? null,
     symbolDataAccess: s.symbolDataAccess ?? [],
