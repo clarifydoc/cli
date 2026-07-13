@@ -435,6 +435,14 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
           file, frameworkIds, projectId, outputOpts, verbose: !!verbose,
           projectRoot, tsconfigAliases,
         });
+        if (result === null) {
+          // Skipped (preprocess {skip}: generated API docs, foreign-format
+          // xml…) — no output JSON was written, so a manifest entry would make
+          // the NEXT incremental run "reuse" whatever stale JSON an older,
+          // pre-skip run left at that path and resurrect the skipped file.
+          delete newManifestEntries[manifestKey];
+          return result;
+        }
         if (options.incremental && !prevManifest) {
           // First-time incremental run: compute hash for manifest seed.
           const classification = await classifyFileForCache(file.absolutePath, undefined);
@@ -443,7 +451,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
           const classification = await classifyFileForCache(file.absolutePath, undefined);
           newManifestEntries[manifestKey] = { mtime: classification.mtime, sha256: classification.sha256 };
         }
-        if (result) reparsedCount++;
+        reparsedCount++;
         return result;
       },
       () => {

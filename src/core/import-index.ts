@@ -61,37 +61,75 @@ export function enrichDataSourcesWithImports(analyses: FileAnalysis[], index: Im
 }
 
 /**
- * Resolve macro-valued dataSource targets/entities through the project-wide
- * union of extracted string constants. C/C++ DAOs name their tables via
- * preprocessor constants (`#define CUE_TABLE "cues"` in the header, used as
- * `"DELETE FROM " CUE_TABLE` in the .cpp) — per-file extraction can only carry
- * the macro NAME across, so the physical table name is resolved here where all
- * files are visible. A name defined with CONFLICTING values anywhere in the
- * project is left unresolved (safety over coverage). Mutates analyses.
+ * Resolve macro-valued dataSource targets/entities through extracted string
+ * constants. C/C++ DAOs name their tables via preprocessor constants
+ * (`#define CUE_TABLE "cues"` in the header, used as `"DELETE FROM "
+ * CUE_TABLE` in the .cpp); Delphi forms declare a component's table
+ * (`FDTable1: TFDTable` + `TableName = 'liste'`) that the companion unit
+ * opens by component name.
+ *
+ * Resolution is TIERED, most-local first, and each tier nullifies a name
+ * defined with conflicting values (safety over coverage):
+ *   1. companion scope — constants from files sharing the path-minus-extension
+ *      (fMain.fmx ↔ fMain.pas). IDE-default component names (`FDTable1`)
+ *      repeat across projects with different tables; the project-wide union
+ *      nullifies them, but each pair is unambiguous locally.
+ *   2. project-wide union — cross-file macros (header → .cpp).
+ * Each tier is consulted exact-case first, then case-folded (Pascal is a
+ * case-insensitive language; `qrySales` in the form, `QrySales` in code).
+ * Mutates analyses.
  */
 export function resolveDataSourceStringConstants(analyses: FileAnalysis[]): void {
-  const values = new Map<string, string | null>(); // null = conflicting → skip
-  for (const a of analyses) {
-    for (const [name, value] of Object.entries(a.stringConstants ?? {})) {
-      const prev = values.get(name);
-      if (prev === undefined) values.set(name, value);
-      else if (prev !== value) values.set(name, null);
-    }
-  }
-  if (values.size === 0) return;
+  type Tier = Map<string, string | null>; // null = conflicting → skip
+  const global: Tier = new Map();
+  const globalCi: Tier = new Map();
+  const localByBase = new Map<string, { exact: Tier; ci: Tier }>();
+
+  const put = (m: Tier, k: string, v: string) => {
+    const prev = m.get(k);
+    if (prev === undefined) m.set(k, v);
+    else if (prev !== v) m.set(k, null);
+  };
+  const baseOf = (p: string) =>
+    p.replace(/\\/g, "/").replace(/\.[^./]+$/, "").toLowerCase();
 
   for (const a of analyses) {
+    const entries = Object.entries(a.stringConstants ?? {});
+    if (entries.length === 0) continue;
+    const base = baseOf(a.filePath);
+    let local = localByBase.get(base);
+    if (!local) {
+      local = { exact: new Map(), ci: new Map() };
+      localByBase.set(base, local);
+    }
+    for (const [name, value] of entries) {
+      put(global, name, value);
+      put(globalCi, name.toLowerCase(), value);
+      put(local.exact, name, value);
+      put(local.ci, name.toLowerCase(), value);
+    }
+  }
+  if (global.size === 0) return;
+
+  for (const a of analyses) {
+    const local = localByBase.get(baseOf(a.filePath));
+    const resolve = (name: string): string | null => {
+      const lower = name.toLowerCase();
+      return (
+        local?.exact.get(name) ?? local?.ci.get(lower) ??
+        global.get(name) ?? globalCi.get(lower) ?? null
+      );
+    };
     for (const ds of a.dataSources ?? []) {
       if (ds.kind !== "database") continue;
-      const targetValue = ds.target ? values.get(ds.target) : undefined;
+      const targetValue = ds.target ? resolve(ds.target) : null;
       if (ds.entity) {
-        const v = values.get(ds.entity);
+        const v = resolve(ds.entity);
         if (v) ds.entity = v;
       } else if (targetValue) {
-        // A datastore NAMED by a project constant IS that table — backfill the
-        // entity so symbol attribution reaches the physical entity. This is how
-        // Delphi `qrySales.Open` in code joins the SQL declared on the form
-        // (the .dfm publishes component→table as a string constant).
+        // A datastore NAMED by a resolvable constant IS that table — backfill
+        // the entity so symbol attribution reaches the physical entity (how
+        // Delphi `qrySales.Open` in code joins the SQL declared on the form).
         ds.entity = targetValue;
       }
       if (targetValue) ds.target = targetValue;

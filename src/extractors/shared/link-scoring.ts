@@ -1,5 +1,6 @@
 import type { FileAnalysis, LinkInfo, LinkProximity, Confidence } from "../../types/analysis.js";
 import { posix } from "path";
+import { pickByPathAffinity } from "../plugins/shared/path-utils.js";
 import { bestConfidence } from "./confidence.js";
 // Registry-aggregated data, PUSHED here by the registry (same pattern as
 // call-patterns/parser-manager registration): this module is imported by
@@ -263,10 +264,9 @@ export function buildFilePathMap(analyses: FileAnalysis[]): Map<string, string> 
     setPreferring(map, base, a.filePath);
     const noIndex = base.replace(/\/index$/, "");
     if (noIndex !== base) setPreferring(map, noIndex, a.filePath);
-
-    // Also map the file's basename (without extension) for package-qualified resolution
-    const baseName = base.split("/").pop()!;
-    setPreferring(map, baseName, a.filePath);
+    // Bare-name (basename) resolution is handled by the per-map candidates
+    // index in tryMatch — a single basename key here would pick an arbitrary
+    // winner when several projects in one repo share a unit/module name.
   }
   return map;
 }
@@ -294,11 +294,10 @@ export function resolveTarget(importSource: string, sourceFile: string, filePath
     cache = new Map();
     resolveCache.set(filePathMap, cache);
   }
-  // Relative imports resolve against the importer's directory, so the cache
-  // key must include it; non-relative resolution is importer-independent.
-  const cacheKey = importSource.startsWith(".")
-    ? `${posix.dirname(sourceFile)}\u0000${importSource}`
-    : importSource;
+  // Relative imports resolve against the importer's directory, and bare-name
+  // (basename) matches pick by path affinity to the importer — the cache key
+  // must always carry the importer's directory.
+  const cacheKey = `${posix.dirname(sourceFile)}\u0000${importSource}`;
   const cached = cache.get(cacheKey);
   if (cached !== undefined) return cached;
 
@@ -312,7 +311,7 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
   if (importSource.startsWith(".")) {
     const sourceDir = posix.dirname(sourceFile);
     const resolved = posix.normalize(posix.join(sourceDir, importSource));
-    const match = tryMatch(resolved, filePathMap);
+    const match = tryMatch(resolved, filePathMap, sourceFile);
     if (match) return match;
     return null;
   }
@@ -321,18 +320,18 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
   if (isExternalPackage(importSource)) return null;
 
   // 3. Bare unit name: "UserModel" → try matching against file basenames
-  const bareMatch = tryMatch(importSource, filePathMap);
+  const bareMatch = tryMatch(importSource, filePathMap, sourceFile);
   if (bareMatch) return bareMatch;
 
   // 4. Dotted module path: "models.user" → "models/user", "services.user_service" → "services/user_service"
   if (importSource.includes(".")) {
     const asPath = importSource.replace(/\./g, "/");
-    const dotMatch = tryMatch(asPath, filePathMap);
+    const dotMatch = tryMatch(asPath, filePathMap, sourceFile);
     if (dotMatch) return dotMatch;
 
     // Try last segment only: "com.example.api.service.UserService" → "UserService"
     const lastSegment = importSource.split(".").pop()!;
-    const segMatch = tryMatch(lastSegment, filePathMap);
+    const segMatch = tryMatch(lastSegment, filePathMap, sourceFile);
     if (segMatch) return segMatch;
   }
 
@@ -342,28 +341,39 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
 const MATCH_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".java", ".kt", ".cs", ".pas", ".go", ".rs", ".rb", ".php", ".swift", ".lua", ".scala", ".pl", ".pm", ".vb", ".bas"];
 
 /**
- * Lazily-built index per filePathMap: basename of each map key → first map key
- * with that basename (insertion order, matching what a linear scan over the
- * map would return). Keyed on the map instance; the map is never mutated
- * after buildFilePathMap.
+ * Lazily-built index per filePathMap: LOWERCASED extension-stripped basename →
+ * every file carrying it, extension-priority-sorted. Case-insensitive because
+ * the languages that resolve by bare name (Delphi/Pascal foremost) are
+ * case-insensitive (`uses Progress` ↔ PROGRESS.PAS); all candidates are kept
+ * so the caller can pick by path affinity instead of by insertion accident —
+ * a repo of many small projects shares default names (Unit1, fMain) freely.
  */
-const baseNameIndexCache = new WeakMap<Map<string, string>, Map<string, string>>();
+const basenameCandidatesCache = new WeakMap<Map<string, string>, Map<string, string[]>>();
 
-function getBaseNameIndex(filePathMap: Map<string, string>): Map<string, string> {
-  let idx = baseNameIndexCache.get(filePathMap);
+function getBasenameCandidates(filePathMap: Map<string, string>): Map<string, string[]> {
+  let idx = basenameCandidatesCache.get(filePathMap);
   if (!idx) {
     idx = new Map();
-    for (const key of filePathMap.keys()) {
-      const keyBase = key.slice(key.lastIndexOf("/") + 1);
-      if (!idx.has(keyBase)) idx.set(keyBase, key);
+    for (const [key, value] of filePathMap) {
+      if (key !== value) continue; // identity entries enumerate each file once
+      const base = value
+        .slice(value.lastIndexOf("/") + 1)
+        .replace(requireRegistered(stripSourceExtensionReSlot), "")
+        .toLowerCase();
+      const list = idx.get(base);
+      if (list) list.push(value);
+      else idx.set(base, [value]);
     }
-    baseNameIndexCache.set(filePathMap, idx);
+    for (const list of idx.values()) {
+      if (list.length > 1) list.sort((a, b) => extPriority(a) - extPriority(b));
+    }
+    basenameCandidatesCache.set(filePathMap, idx);
   }
   return idx;
 }
 
 /** Try to match a candidate path against the file path map (with extension/index fallbacks) */
-function tryMatch(candidate: string, filePathMap: Map<string, string>): string | null {
+function tryMatch(candidate: string, filePathMap: Map<string, string>, sourceFile: string): string | null {
   // Direct match
   const direct = filePathMap.get(candidate);
   if (direct) return direct;
@@ -390,11 +400,14 @@ function tryMatch(candidate: string, filePathMap: Map<string, string>): string |
   const withIndex = filePathMap.get(candidate + "/index");
   if (withIndex) return withIndex;
 
-  // Basename match: "UserModel" → find any file whose basename matches
-  const baseKey = getBaseNameIndex(filePathMap).get(candidate);
-  if (baseKey !== undefined) {
-    const byBase = filePathMap.get(baseKey);
-    if (byBase) return byBase;
+  // Basename match: "UserModel" → files whose basename matches
+  // (case-insensitive). Several projects in one repo routinely share a
+  // name — prefer the candidate closest to the importing file.
+  if (!candidate.includes("/")) {
+    const candidates = getBasenameCandidates(filePathMap).get(candidate.toLowerCase());
+    if (candidates && candidates.length > 0) {
+      return pickByPathAffinity(candidates, (c) => c, sourceFile);
+    }
   }
 
   return null;
@@ -402,6 +415,13 @@ function tryMatch(candidate: string, filePathMap: Map<string, string>): string |
 
 export function isExternalPackage(source: string): boolean {
   return requireRegistered(externalModulePrefixes).some(prefix =>
-    source === prefix || source.startsWith(prefix + ".") || source.startsWith(prefix + "/")
+    // A prefix ending in a namespace delimiter ("java.", "std::",
+    // "Illuminate\", "net/") is already a full prefix — match it literally.
+    // The bare-root branch below appends its own delimiter, which silently
+    // made every such entry unmatchable ("java." + "." never prefixes
+    // java.util.List), across half the plugin manifests.
+    /[./\\:]$/.test(prefix)
+      ? source.startsWith(prefix)
+      : source === prefix || source.startsWith(prefix + ".") || source.startsWith(prefix + "/")
   );
 }

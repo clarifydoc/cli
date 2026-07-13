@@ -1,9 +1,37 @@
-import type { Node } from "web-tree-sitter";
+import type { Node, Tree } from "web-tree-sitter";
 import { ImportExportExtractor } from "../../imports-exports/base.js";
 import type { ImportInfo, ExportInfo, Language } from "../../imports-exports/base.js";
 
+/**
+ * `uses Unit1 in 'src\Unit1.pas'` — .dpr project files name each unit's FILE.
+ * tree-sitter-pascal ERRORs on the in-clause (the string never reaches the
+ * AST), so the paths are scanned from the source and joined to the walked
+ * imports by unit name. Only names that ARE imports get rewritten, so an
+ * unrelated `for c in 'abc'` match can never invent one.
+ */
+const USES_IN_RE = /\b([A-Za-z_][\w.]*)\s+in\s+'([^']+)'/g;
+
 export class PascalImportExportExtractor extends ImportExportExtractor {
   readonly languages: Language[] = ["pascal"];
+
+  override extractImports(tree: Tree, sourceText: string): ImportInfo[] {
+    const imports: ImportInfo[] = [];
+    this.collectImports(tree.rootNode, imports);
+
+    const paths = new Map<string, string>();
+    for (const m of sourceText.matchAll(USES_IN_RE)) {
+      paths.set(m[1]!.toLowerCase(), m[2]!.replace(/\\/g, "/"));
+    }
+    if (paths.size > 0) {
+      for (const imp of imports) {
+        const p = paths.get(imp.source.toLowerCase());
+        // Keep the unit name as the specifier; the source becomes the
+        // importer-relative file path, which resolves exactly.
+        if (p) imp.source = p.startsWith(".") ? p : "./" + p;
+      }
+    }
+    return imports;
+  }
 
   protected collectImports(node: Node, imports: ImportInfo[]): void {
     this.walkImports(node, imports);

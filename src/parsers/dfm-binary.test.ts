@@ -211,3 +211,43 @@ describe("parseDfm on Lazarus .lfm content", () => {
     expect(a.interactiveElements.find((e) => e.handler === "btnGoClick")).toBeDefined();
   });
 });
+
+describe("parseDfm on FireMonkey .fmx content", () => {
+  const text = [
+    "object frmMobile: TfrmMobile",
+    "  Caption = 'Mobile Main'",
+    "  FormFactor.Width = 320",
+    "  OnCreate = FormCreate",
+    "  object Layout1: TLayout",
+    "    Align = Top",
+    "    Size.Width = 886.000000000000000000",
+    "    object Button1: TButton",
+    "      Text = 'Sync'",
+    "      OnClick = Button1Click",
+    "    end",
+    "  end",
+    "  object FDQuery1: TFDQuery",
+    "    Connection = FDConnection1",
+    "    SQL.Strings = (",
+    "      'SELECT id, title FROM feeds')",
+    "  end",
+    "end",
+  ].join("\n");
+  const a = parseDfm(text, "app/fMain.fmx");
+
+  it("categorizes FMX components (Layout=container, FDQuery=data)", () => {
+    const screen = a.screens[0]!;
+    const layout = screen.components.find((c) => c.name === "Layout1")!;
+    expect(layout.category).toBe("container");
+    expect(layout.children.map((c) => c.name)).toContain("Button1");
+    const q = screen.components.find((c) => c.name === "FDQuery1")!;
+    expect(q.category).toBe("data");
+  });
+
+  it("wires FMX events and extracts form-declared FireDAC SQL", () => {
+    expect(a.interactiveElements.find((e) => e.handler === "Button1Click")).toBeDefined();
+    const sql = a.dataSources.find((d) => d.entity === "feeds");
+    expect(sql).toBeDefined();
+    expect(a.stringConstants).toMatchObject({ FDQuery1: "feeds" });
+  });
+});
