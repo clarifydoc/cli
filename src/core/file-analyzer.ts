@@ -73,8 +73,8 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // (worker threads see it via the analyzer-set activation; watch mode and
     // single-file callers may not) — a no-op when the plugin is loaded.
     await ensureLanguagesLoaded([file.language]);
-    const rawSource = await readFile(file.absolutePath, "utf-8");
     const filePlugin = pluginFor(file.language);
+    const rawSource = await readFile(file.absolutePath, filePlugin?.sourceEncoding ?? "utf-8");
 
     // Formats with their own dedicated parser (e.g. Delphi .dfm — no tree-sitter)
     if (filePlugin?.customParse) {

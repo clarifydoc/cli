@@ -10,6 +10,8 @@ import type {
   ScreenInfo,
 } from "../types/analysis.js";
 import { createEmptyAnalysis } from "../types/analysis.js";
+import { binaryDfmToText, isBinaryDfm } from "./dfm-binary.js";
+import { extractSqlStringDataSources } from "../extractors/plugins/shared/sql-string-sources.js";
 
 /** Map Delphi VCL/FMX component types to interactive element categories */
 const DFM_ELEMENT_MAP: Record<string, InteractiveElementInfo["element"]> = {
@@ -71,6 +73,49 @@ const VISUAL_PROPS = new Set([
   "ClientWidth", "ClientHeight", "Align", "Visible", "Enabled", "FieldName",
 ]);
 
+/** String-list properties that hold SQL on data components (TQuery.SQL,
+ *  TIBDataSet.SelectSQL, TADODataSet.CommandText as list, …). */
+const DB_LIST_PROP_RE = /^(SQL|SelectSQL|ModifySQL|InsertSQL|DeleteSQL|RefreshSQL|CommandText)\.Strings$/;
+
+/** Scalar properties that name the table / statement directly. */
+const DB_SCALAR_PROPS = new Set(["TableName", "CommandText"]);
+
+/** `CUSTOMER.DB` / `orders.dbf` (BDE Paradox/dBase) → bare table name. */
+function tableNameFromFile(value: string): string {
+  return value.replace(/\.(db|dbf)$/i, "");
+}
+
+/** Database sources declared in the FORM: `TableName = 'customers'` or SQL
+ *  text living in SQL.Strings/CommandText. The SQL is pushed through the
+ *  shared SQL-string scanner so verb/table parsing (and its vetoes) match
+ *  every other language. */
+function dbSourcesFromObject(
+  obj: { name: string; dbProps: { prop: string; value: string; line: number }[] },
+): FileAnalysis["dataSources"] {
+  const out: FileAnalysis["dataSources"] = [];
+  for (const { prop, value, line } of obj.dbProps) {
+    if (prop === "TableName") {
+      const table = tableNameFromFile(value);
+      if (!/^[A-Za-z_][\w .-]*$/.test(table)) continue;
+      out.push({
+        kind: "database",
+        name: `${obj.name}.TableName`,
+        target: table,
+        entity: table,
+        calls: [],
+        line,
+      });
+      continue;
+    }
+    // SQL text (SQL.Strings list or CommandText scalar/list).
+    const asLine = `"${value.replace(/"/g, '\\"')}"`;
+    for (const src of extractSqlStringDataSources([asLine])) {
+      out.push({ ...src, name: `${obj.name}: ${src.name}`, line });
+    }
+  }
+  return out;
+}
+
 /**
  * Parse a Delphi .dfm (form definition) file.
  *
@@ -92,6 +137,14 @@ const VISUAL_PROPS = new Set([
  */
 export function parseDfm(source: string, filePath: string): FileAnalysis {
   const analysis = createEmptyAnalysis(filePath, "dfm");
+  // Delphi ≤4 saved forms as binary TWriter streams — convert to the text
+  // form first so both formats share one extraction path (needs the file
+  // read as latin1; see `sourceEncoding` on the dfm meta).
+  if (isBinaryDfm(source)) {
+    const text = binaryDfmToText(source);
+    if (text === null) return analysis;
+    source = text;
+  }
   const lines = source.split(/\r?\n/);
 
   interface DfmObject {
@@ -102,6 +155,8 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
     propValues: Map<string, string>;
     events: { event: string; handler: string; line: number }[];
     dataLinks: { prop: string; target: string; line: number }[];
+    /** DB-shaped properties (TableName, SQL.Strings, …) with their lines. */
+    dbProps: { prop: string; value: string; line: number }[];
     parentIndex: number | null;
   }
 
@@ -109,10 +164,28 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
   const allObjects: DfmObject[] = [];
   let rootObject: DfmObject | null = null;
   let insideCollection = 0; // track depth of <...> collection blocks
+  /** Open multi-line string list (`SQL.Strings = (` … `'…')`). */
+  let pendingList: { obj: DfmObject; prop: string; line: number; parts: string[] } | null = null;
 
   for (let i = 0; i < lines.length; i++) {
     const lineNum = i + 1;
     const trimmed = lines[i].trim();
+
+    // Continuation of a captured multi-line string list.
+    if (pendingList) {
+      for (const m of trimmed.matchAll(/'((?:[^']|'')*)'/g)) {
+        pendingList.parts.push(m[1]!.replace(/''/g, "'"));
+      }
+      if (/\)\s*$/.test(trimmed)) {
+        pendingList.obj.dbProps.push({
+          prop: pendingList.prop,
+          value: pendingList.parts.join(" "),
+          line: pendingList.line,
+        });
+        pendingList = null;
+      }
+      continue;
+    }
 
     // Track collection blocks (Columns = <...>) to avoid mismatching "end"
     if (trimmed.endsWith("= <") || trimmed.endsWith("= <>")) {
@@ -145,6 +218,7 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
         propValues: new Map(),
         events: [],
         dataLinks: [],
+        dbProps: [],
         parentIndex: parentIdx,
       };
 
@@ -167,10 +241,30 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
     const current = objectStack[objectStack.length - 1];
     if (!current) continue;
 
-    const propMatch = trimmed.match(/^(\w+)\s*=\s*(.+)/);
+    const propMatch = trimmed.match(/^([\w.]+)\s*=\s*(.+)/);
     if (propMatch) {
       const propName = propMatch[1];
       const propValue = propMatch[2];
+
+      // Query/table text on data components: TableName = 'customers',
+      // SQL.Strings = (…) — single-line form (binary conversion) or the
+      // multi-line text form, which opens a pendingList.
+      if (DB_LIST_PROP_RE.test(propName)) {
+        if (propValue === "(") {
+          pendingList = { obj: current, prop: propName, line: lineNum, parts: [] };
+        } else {
+          const parts = [...propValue.matchAll(/'((?:[^']|'')*)'/g)].map(
+            (m) => m[1]!.replace(/''/g, "'"),
+          );
+          if (parts.length > 0) {
+            current.dbProps.push({ prop: propName, value: parts.join(" "), line: lineNum });
+          }
+        }
+        continue;
+      }
+      if (DB_SCALAR_PROPS.has(propName)) {
+        current.dbProps.push({ prop: propName, value: stripQuotes(propValue), line: lineNum });
+      }
 
       // Event handlers: OnClick = btnAddClick
       if (propName.startsWith("On")) {
@@ -189,7 +283,9 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
           target: propValue,
           line: lineNum,
         });
-      } else {
+      } else if (!propName.includes(".")) {
+        // Dotted props (Font.Name, …) are sub-property noise for the
+        // component-shape consumers — keep props lists as before.
         current.props.push(propName);
       }
 
@@ -272,6 +368,8 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
         line: link.line,
       });
     }
+    // Table names / SQL statements on data components → database sources
+    analysis.dataSources.push(...dbSourcesFromObject(obj));
   }
 
   // Root object event handlers too
@@ -299,6 +397,7 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
         line: link.line,
       });
     }
+    analysis.dataSources.push(...dbSourcesFromObject(rootObject));
   }
 
   // Build screen info with hierarchy

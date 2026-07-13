@@ -100,6 +100,8 @@ export async function detectSubProjects(
       ignore: MARKER_IGNORE,
       absolute: false,
       dot: false,
+      // Legacy Windows repos ship PROJECT.DPR / MAKEFILE-cased markers.
+      caseSensitiveMatch: false,
     });
     for (const match of matches) {
       if (kind === "cmake" && !(await isCmakeProjectRoot(root, match))) continue;

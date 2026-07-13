@@ -10,8 +10,18 @@ const DELPHI_METHOD_PREFIXES: Record<string, string> = {
   cancel: "DELETE",
 };
 
+/**
+ * The method-name convention above only means anything inside a DataSnap /
+ * RAD Server module — on an ordinary VCL form, `UpdateAll` is just a method.
+ * Require framework evidence in the unit text before running the heuristic
+ * (a desktop corpus otherwise sprouts a phantom `PUT /All` per Update* method).
+ */
+const DATASNAP_EVIDENCE_RE =
+  /\b(Datasnap\.|DSServer|DSHTTP|DSProviderDataModuleAdapter|TDSServerModule|EMS\.|TEMSResource|EMSEndpoint|ResourceSuffix)\b/;
+
 /** Pascal / Delphi: DataSnap and RAD Server route patterns */
-export function extractPascalRoutes(root: Node, routes: RouteInfo[]): void {
+export function extractPascalRoutes(root: Node, routes: RouteInfo[], sourceText?: string): void {
+  if (sourceText !== undefined && !DATASNAP_EVIDENCE_RE.test(sourceText)) return;
   walkForPascalRoutes(root, routes);
 }
 
@@ -67,9 +77,9 @@ function recurse(node: Node, routes: RouteInfo[]) {
 /** Route-registry adapter for this plugin (see routes/base.ts). */
 export const pascalRouteExtractor: RouteExtractor = {
   languages: ["pascal"],
-  extractRoutes(tree, _sourceText) {
+  extractRoutes(tree, sourceText) {
     const routes: RouteInfo[] = [];
-    extractPascalRoutes(tree.rootNode, routes);
+    extractPascalRoutes(tree.rootNode, routes, sourceText);
     return routes;
   },
 };

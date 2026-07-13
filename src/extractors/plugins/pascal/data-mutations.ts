@@ -2,6 +2,12 @@ import type { Node } from "web-tree-sitter";
 import type { DataMutationInfo, Language } from "../../../types/analysis.js";
 import { DataMutationExtractor } from "../../data-mutations/base.js";
 
+/** Write verbs on dataset/connection-shaped receivers (Query1, tblOrders,
+ *  cdsUsers, ADOConnection1…). Bare `.Delete`/`.Insert`/`.Edit` substrings
+ *  would flag every TStringList/TListItems call as a DB write. */
+const DATASET_WRITE_RE =
+  /\b((?:\w+\.)?\w*(?:query|qry|table|tbl|dataset|storedproc|cds|clientdata|connection|database)\w*)\s*\.\s*(Post|ApplyUpdates|ExecSQL|ExecProc|Delete|Insert|Edit|Append|CommitUpdates)\b/i;
+
 export class PascalMutationExtractor extends DataMutationExtractor {
   readonly languages: Language[] = ["pascal"];
 
@@ -37,21 +43,15 @@ export class PascalMutationExtractor extends DataMutationExtractor {
       }
     }
 
-    // Database write patterns via method calls
+    // Database writes: receiver-gated verbs only. The receiver's NAME must be
+    // dataset-shaped — matching bare verbs turned every TStringList.Insert
+    // and TListItems.Delete into a phantom db-write.
     if (node.type === "exprCall") {
-      const text = node.text.toLowerCase();
-      if (
-        text.includes(".post") ||
-        text.includes(".applyupdates") ||
-        text.includes(".execsql") ||
-        text.includes(".delete") ||
-        text.includes(".insert") ||
-        text.includes(".edit") ||
-        text.includes(".append")
-      ) {
+      const hit = node.text.match(DATASET_WRITE_RE);
+      if (hit) {
         mutations.push({
           kind: "db-write",
-          target: node.text.length > 100 ? node.text.slice(0, 100) + "..." : node.text,
+          target: `${hit[1]}.${hit[2]}`,
           value: null,
           line: node.startPosition.row + 1,
         });
