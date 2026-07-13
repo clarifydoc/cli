@@ -47,12 +47,16 @@ const TS_BUILTINS: ReadonlySet<string> = new Set<string>([
 const COMPLEXITY = DEFAULT_COMPLEXITY;
 
 const SECURITY_RULES: readonly SecurityRule[] = [
+  // Only assignments whose right-hand side has dynamic content (identifier,
+  // `${…}` interpolation, or `+ identifier` concat) can inject — a static
+  // literal (`el.innerHTML = ''`) can't, and `===` comparisons don't assign.
   {
     category: "xss",
     severity: "high",
-    pattern: /innerHTML\s*=/,
+    pattern: /(?:inner|outer)HTML\s*\+?=(?!=)\s*(?:[A-Za-z_$]|[^;\n]*?(?:\$\{|\+\s*[A-Za-z_$]))/,
     message: "Direct innerHTML assignment can lead to XSS. Sanitize user input.",
     priority: 20,
+    excludeTest: true,
   },
   {
     category: "xss",
@@ -60,6 +64,7 @@ const SECURITY_RULES: readonly SecurityRule[] = [
     pattern: /dangerouslySetInnerHTML/,
     message: "dangerouslySetInnerHTML can lead to XSS attacks. Sanitize input.",
     priority: 21,
+    excludeTest: true,
   },
   {
     category: "eval-exec",

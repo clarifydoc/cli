@@ -43,6 +43,7 @@ import {
   EXTERNAL_NAMESPACE_ROOT_RE,
   ACTIVATION_FILE_LANGUAGES,
   ensureLanguagesLoaded,
+  classifyKnownPackage,
 } from "../extractors/registry.js";
 import { buildSymbolLinks } from "./symbol-linker.js";
 import { aggregateComplexity } from "./complexity-analyzer.js";
@@ -1457,8 +1458,18 @@ export function buildComponentGraph(
       // skip all the name-collision heuristics below. e.g. `import … from "axios"`
       // must not match a local `axios/` directory, an `axios.ts` file, or any
       // local export whose name happens to collide with an imported specifier.
+      // The dependency-inventory catalog counts too: `@prisma/client` is a
+      // known package, so its last segment must never basename-match a local
+      // `client.ts` (checked as the full source and as the package root, so
+      // subpath imports like `@scope/pkg/sub` still hit).
+      const parts = imp.source.split("/");
+      const packageRoot =
+        imp.source.startsWith("@") && parts.length >= 2 ? `${parts[0]}/${parts[1]}` : parts[0]!;
       const isExternal =
-        EXTERNAL_NAMESPACE_ROOT_RE.test(imp.source) || isExternalPackage(imp.source);
+        EXTERNAL_NAMESPACE_ROOT_RE.test(imp.source) ||
+        isExternalPackage(imp.source) ||
+        classifyKnownPackage(imp.source) !== undefined ||
+        classifyKnownPackage(packageRoot) !== undefined;
       if (isExternal) continue;
 
       // 2. Resolve non-relative imports via specifier names → exported names

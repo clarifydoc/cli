@@ -102,3 +102,34 @@ describe("symbol-linker — factory fallback via binding provenance (Strategy 3b
     expect(links.find((l) => l.sourceSymbol === "onClick")?.targetSymbol).toBe("updateQuantity");
   });
 });
+
+describe("symbol-linker — language-family fence on name heuristics", () => {
+  it("does NOT bind a JS `new Error()` to a C# class named Error (tessa FP)", () => {
+    const spa = {
+      ...file("spa/queries/SubstatusQueries.ts", "spa", {
+        functions: [fn("fetchSubstatus", [call("new Error")])],
+      }),
+      language: "typescript",
+    } as unknown as FileAnalysis;
+    const backend = file("src/Core/ComonLib.Exceptions/Error.cs", "ComonLib", {
+      classes: [cls("Error")],
+    });
+    const links = buildSymbolLinks([spa, backend]);
+    expect(links.some((l) => l.targetFile === "src/Core/ComonLib.Exceptions/Error.cs")).toBe(false);
+  });
+
+  it("still resolves same-family constructors cross-project", () => {
+    const spa = {
+      ...file("spa/pages/Create.vue", "spa", {
+        functions: [fn("submit", [call("new LicensePayload")])],
+      }),
+      language: "vue",
+    } as unknown as FileAnalysis;
+    const lib = {
+      ...file("lib/models/LicensePayload.ts", "lib", { classes: [cls("LicensePayload")] }),
+      language: "typescript",
+    } as unknown as FileAnalysis;
+    const links = buildSymbolLinks([spa, lib]);
+    expect(links.some((l) => l.targetFile === "lib/models/LicensePayload.ts")).toBe(true);
+  });
+});

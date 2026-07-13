@@ -104,6 +104,15 @@ export function computeHealthScore(input: HealthInput): HealthScore {
     return genRoots.some((r) => p === r || p.startsWith(r + "/"));
   };
 
+  // Count-based penalties scale with codebase size: the same absolute count is
+  // a smaller problem in a large repo, and absolute formulas guarantee an F
+  // for any sizable codebase. Take the least of the per-item formula (keeps
+  // small-repo behavior) and a fraction-of-codebase formula, where
+  // `fullFraction` is the affected share at which the full cap applies.
+  const totalFiles = Math.max(1, input.analyses.filter((a) => !isGenerated(a.filePath)).length);
+  const scaled = (count: number, perItem: number, cap: number, fullFraction: number): number =>
+    Math.min(cap, count * perItem, Math.round((cap * count) / totalFiles / fullFraction));
+
   // 1. Circular dependencies — over the graph with generated nodes pruned, so a
   // generated tree's internal re-export cycles don't count against the app.
   const appGraph: Record<string, string[]> = {};
@@ -113,22 +122,19 @@ export function computeHealthScore(input: HealthInput): HealthScore {
   }
   const cycles = findCircularDeps(appGraph);
   if (cycles.length > 0) {
-    const pts = Math.min(20, cycles.length * 5);
-    penalize(`${cycles.length} circular dependency cycle(s)`, pts);
+    penalize(`${cycles.length} circular dependency cycle(s)`, scaled(cycles.length, 5, 20, 0.01));
   }
 
   // 2. God objects (15+ functions)
   const godFiles = input.patterns.filter((p) => p.kind === "god-object" && !isGenerated(p.filePath));
   if (godFiles.length > 0) {
-    const pts = Math.min(15, godFiles.length * 3);
-    penalize(`${godFiles.length} god object file(s)`, pts);
+    penalize(`${godFiles.length} god object file(s)`, scaled(godFiles.length, 3, 15, 0.1));
   }
 
   // 3. Long files
   const longFiles = input.patterns.filter((p) => p.kind === "long-file" && !isGenerated(p.filePath));
   if (longFiles.length > 0) {
-    const pts = Math.min(10, longFiles.length * 2);
-    penalize(`${longFiles.length} long file(s)`, pts);
+    penalize(`${longFiles.length} long file(s)`, scaled(longFiles.length, 2, 10, 0.15));
   }
 
   // 4. High coupling — a generated file with many importers isn't a code-health
@@ -142,8 +148,7 @@ export function computeHealthScore(input: HealthInput): HealthScore {
   }
   const highlyCoupled = [...reverseGraph.entries()].filter(([, count]) => count > 10);
   if (highlyCoupled.length > 0) {
-    const pts = Math.min(15, highlyCoupled.length * 2);
-    penalize(`${highlyCoupled.length} highly coupled file(s) (10+ importers)`, pts);
+    penalize(`${highlyCoupled.length} highly coupled file(s) (10+ importers)`, scaled(highlyCoupled.length, 2, 15, 0.1));
   }
 
   // 5. Security issues (single pass)
@@ -166,8 +171,7 @@ export function computeHealthScore(input: HealthInput): HealthScore {
     (d) => !(d.occurrences ?? []).every((o) => isGenerated(o.filePath)),
   );
   if (duplicates.length > 0) {
-    const pts = Math.min(10, duplicates.length * 2);
-    penalize(`${duplicates.length} duplicate code group(s)`, pts);
+    penalize(`${duplicates.length} duplicate code group(s)`, scaled(duplicates.length, 2, 10, 0.02));
   }
 
   // 7. Layer violations — ignore ones whose endpoints are generated.
@@ -175,8 +179,7 @@ export function computeHealthScore(input: HealthInput): HealthScore {
     (v) => !isGenerated(v.sourceFile) && !isGenerated(v.targetFile),
   );
   if (layerViolations.length > 0) {
-    const pts = Math.min(10, layerViolations.length * 2);
-    penalize(`${layerViolations.length} layer violation(s)`, pts);
+    penalize(`${layerViolations.length} layer violation(s)`, scaled(layerViolations.length, 2, 10, 0.01));
   }
 
   // 8. High average complexity (authored files only)

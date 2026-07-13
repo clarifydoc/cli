@@ -26,13 +26,19 @@ const GENERIC_RULES: SecurityRule[] = [
     pattern: /(?:query|execute)\s*\(\s*['"`][^'"`]*\s*\+/,
     message: "Possible SQL injection via string concatenation. Use parameterized queries.",
     priority: 11,
+    excludeTest: true,
   },
+  // A template literal is only SQL when it contains a real statement shape
+  // (SELECT … FROM / INSERT INTO / UPDATE … SET / DELETE FROM) next to an
+  // interpolation — a bare keyword substring matches ordinary prose and
+  // identifiers (`totalSelected`, `effectsOfUpdate`).
   {
     category: "sql-injection",
     severity: "high",
-    pattern: /\$\{[^}]*\}[^`]*(?:SELECT|INSERT|UPDATE|DELETE)/i,
+    pattern: /\b(?:SELECT\s+[\w*,\s]+?\s*FROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b[^`]*\$\{|\$\{[^}]*\}[^`]*\b(?:SELECT\s+[\w*,\s]+?\s*FROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b/i,
     message: "Possible SQL injection via template literal. Use parameterized queries.",
     priority: 12,
+    excludeTest: true,
   },
   // eval/exec
   {
