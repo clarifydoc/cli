@@ -83,14 +83,18 @@ export function resolveDataSourceStringConstants(analyses: FileAnalysis[]): void
   for (const a of analyses) {
     for (const ds of a.dataSources ?? []) {
       if (ds.kind !== "database") continue;
-      if (ds.target) {
-        const v = values.get(ds.target);
-        if (v) ds.target = v;
-      }
+      const targetValue = ds.target ? values.get(ds.target) : undefined;
       if (ds.entity) {
         const v = values.get(ds.entity);
         if (v) ds.entity = v;
+      } else if (targetValue) {
+        // A datastore NAMED by a project constant IS that table — backfill the
+        // entity so symbol attribution reaches the physical entity. This is how
+        // Delphi `qrySales.Open` in code joins the SQL declared on the form
+        // (the .dfm publishes component→table as a string constant).
+        ds.entity = targetValue;
       }
+      if (targetValue) ds.target = targetValue;
     }
   }
 }

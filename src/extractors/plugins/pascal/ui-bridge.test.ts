@@ -80,4 +80,14 @@ describe("PascalUiBridgeResolver", () => {
     ]);
     expect(links).toHaveLength(0);
   });
+
+  it("treats a Lazarus .lfm companion like a .dfm one", () => {
+    const links = resolver.resolve([
+      dfm("v2/Unit1.lfm", "TForm1", [{ event: "OnClick", handler: "Go", line: 5 }]),
+      pas("v1/Unit1.pas", [cls("TForm1", [method("Go", 10)])]),
+      pas("v2/Unit1.pas", [cls("TForm1", [method("Go", 20)])]),
+    ]);
+    expect(links).toHaveLength(1);
+    expect(links[0]!.targetFile).toBe("v2/Unit1.pas");
+  });
 });

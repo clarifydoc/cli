@@ -22,6 +22,7 @@ export const pascalManifest: LanguagePluginManifest = {
 export const dfmManifest: LanguagePluginManifest = {
   language: "dfm",
   parsing: "custom",
-  extensions: [".dfm"],
+  // .lfm = Lazarus form files — same object syntax (always text), same parser.
+  extensions: [".dfm", ".lfm"],
   importTarget: false,
 };
