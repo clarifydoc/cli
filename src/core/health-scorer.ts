@@ -2,6 +2,7 @@ import type {
   FileAnalysis, FileComplexityInfo, PatternInfo, SecurityIssue,
   DuplicateGroup, LayerViolation, HealthScore,
 } from "../types/analysis.js";
+import { vendoredMinoritySet } from "./security-scanner.js";
 
 interface HealthInput {
   analyses: FileAnalysis[];
@@ -99,8 +100,9 @@ export function computeHealthScore(input: HealthInput): HealthScore {
   // repetition, and heavy fan-in are not health problems to grade.
   const genRoots = input.generatedRoots ?? [];
   const minified = new Set(input.analyses.filter((a) => a.minified).map((a) => a.filePath));
+  const vendored = vendoredMinoritySet(input.analyses);
   const isGenerated = (f: string): boolean => {
-    if (minified.has(f)) return true;
+    if (minified.has(f) || vendored.has(f)) return true;
     if (genRoots.length === 0) return false;
     const p = f.replace(/\\/g, "/");
     return genRoots.some((r) => p === r || p.startsWith(r + "/"));

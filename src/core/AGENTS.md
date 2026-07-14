@@ -48,7 +48,7 @@ All take `FileAnalysis[]` and/or `componentGraph` and return typed results.
 
 - [file-analyzer.ts](file-analyzer.ts) — `analyzeFile(task)`: read + parse + run all extractors + write the per-file JSON. Pure per-file logic with no pipeline state, so it can run on any thread.
 - [analyze-worker.ts](analyze-worker.ts) — worker_threads entry that wraps `analyzeFile`. Built as its own tsup entry (`dist/analyze-worker.js`).
-- [worker-pool.ts](worker-pool.ts) — `AnalysisWorkerPool`: spreads per-file analysis across cores for projects ≥200 files (override with `REVERSEDOC_WORKERS=<n>`, `0` disables). Falls back to in-process analysis when workers can't start, and re-runs a crashed worker's task in-process.
+- [worker-pool.ts](worker-pool.ts) — `AnalysisWorkerPool`: spreads per-file analysis across cores for projects ≥200 files (override with `CLARIFYDOC_WORKERS=<n>`, `0` disables). Falls back to in-process analysis when workers can't start, and re-runs a crashed worker's task in-process.
 
 ## Discovery & IO
 
@@ -63,7 +63,7 @@ All take `FileAnalysis[]` and/or `componentGraph` and return typed results.
 
 **One renderer, two packagings.** The React viewer in `application/spa/src/report/` is THE report renderer. `report.html` is that same viewer built into a single self-contained file (react + d3 + dagre + css inlined, fully offline) with the payload JSON injected — report features are written ONCE, in the SPA viewer, then `npm run build:viewer` refreshes the standalone template.
 
-- `html-report.ts` — `generateHtmlReport` loads the prebuilt template from `html-report/viewer-assets/report-template.html` (committed; built by `npm run build:viewer`; mirrored into `dist/` by the root tsup `onSuccess` hook) and swaps `__REVERSEDOC_TITLE__` / `__REVERSEDOC_PAYLOAD__`. The payload embeds as **gzip+base64** (`encodeReportPayload`; ~10x smaller than inline JSON, no `<` so no HTML-escaping concerns) and `standalone.tsx` inflates it in the browser via the native `DecompressionStream`. Token replace uses a replacer *function* so `$&` can't corrupt. Also writes `report-data.json` (plain JSON — the server slices it) alongside `report.html`.
+- `html-report.ts` — `generateHtmlReport` loads the prebuilt template from `html-report/viewer-assets/report-template.html` (committed; built by `npm run build:viewer`; mirrored into `dist/` by the root tsup `onSuccess` hook) and swaps `__CLARIFYDOC_TITLE__` / `__CLARIFYDOC_PAYLOAD__`. The payload embeds as **gzip+base64** (`encodeReportPayload`; ~10x smaller than inline JSON, no `<` so no HTML-escaping concerns) and `standalone.tsx` inflates it in the browser via the native `DecompressionStream`. Token replace uses a replacer *function* so `$&` can't corrupt. Also writes `report-data.json` (plain JSON — the server slices it) alongside `report.html`.
 - `report-payload.ts` — `buildReportPayload(summary)` reshapes a (denormalized) `ProjectAnalysis` into the `ReportPayload` the viewer consumes; `loadReportSummary(dir)` / `loadReportPayload(dir)` read it from disk (with the `lsp-enhancement.json` merge). The payload carries `deferredFields` so the server's slice cache follows the producer's list.
 - `smoke.test.ts` renders a minimal report end-to-end and round-trips hostile payload content through the encoder; `scripts/compare-report-payload.mjs` regenerates every corpus scan and verifies embedded-payload ↔ report-data.json parity (plus prints sizes).
 

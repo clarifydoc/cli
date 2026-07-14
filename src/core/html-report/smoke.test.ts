@@ -9,7 +9,7 @@ import type { ProjectAnalysis } from "../../types/analysis.js";
 
 // End-to-end smoke test for the standalone report: the React viewer template
 // (built by `npm run build:viewer`, committed under html-report/viewer-assets/)
-// with the payload injected as gzip+base64 into the #reversedoc-data tag.
+// with the payload injected as gzip+base64 into the #clarifydoc-data tag.
 
 const MINIMAL_SUMMARY = {
   projectRoot: "/tmp/demo",
@@ -30,7 +30,7 @@ async function generate(dir: string): Promise<string> {
 /** Mirrors standalone.tsx's decoder: base64 → gunzip → JSON. */
 function extractPayload(html: string): Record<string, unknown> {
   const m = html.match(
-    /<script id="reversedoc-data" type="application\/gzip-base64\+json">([\s\S]*?)<\/script>/,
+    /<script id="clarifydoc-data" type="application\/gzip-base64\+json">([\s\S]*?)<\/script>/,
   );
   expect(m).not.toBeNull();
   return JSON.parse(gunzipSync(Buffer.from(m![1], "base64")).toString("utf8"));
@@ -52,11 +52,11 @@ describe("generateHtmlReport — standalone template", () => {
   it("emits a complete HTML document with no leftover tokens", () => {
     expect(html.trimStart().toLowerCase().startsWith("<!doctype html>")).toBe(true);
     expect(html.trimEnd().endsWith("</html>")).toBe(true);
-    expect(html).not.toContain("__REVERSEDOC_");
+    expect(html).not.toContain("__CLARIFYDOC_");
   });
 
   it("replaces the title with the project name", () => {
-    expect(html).toContain("<title>reverseDoc — demo</title>");
+    expect(html).toContain("<title>ClarifyDoc — demo</title>");
   });
 
   it("embeds a decodable payload that matches report-data.json", async () => {

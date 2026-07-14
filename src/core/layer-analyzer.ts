@@ -62,7 +62,10 @@ function suffix(names: string): RegExp {
  * basename alone. Checked before LAYER_PATTERNS.
  */
 const BASENAME_PATTERNS: [RegExp, ArchLayer][] = [
-  [suffix("controller|service|client|handler|middleware|router|api|endpoint|query|queries"), "services"],
+  // `action` — Struts/WebFlow/Grails controller tier (`AgeIntervalCreateAction`);
+  // without it a `web/settings/FooAction.java` fell through to the `settings`
+  // dir token and read as config importing services.
+  [suffix("controller|service|client|handler|middleware|router|api|endpoint|query|queries|action|actions"), "services"],
   [suffix("repository|entity|model|store|dao|dto|schema|migration"), "data"],
   [suffix("view|page|screen|form|window|dialog"), "ui"],
   [suffix("component|widget"), "components"],
@@ -70,6 +73,10 @@ const BASENAME_PATTERNS: [RegExp, ArchLayer][] = [
   // project is application code — only a utils/ directory marks the layer.
   [suffix("type|types"), "utils"],
 ];
+
+/** The `form` half of the ui suffix tier, tested separately so JVM
+ *  form-backing beans can opt out (see the basename loop). */
+const JVM_FORM_SUFFIX_RE = suffix("form");
 
 /**
  * .NET-style test scaffolding the generic test conventions miss: a segment
@@ -114,8 +121,13 @@ export function classifyFileLayers(
       // Strip only the final extension: Angular-style compound names
       // (`user.service.ts`) carry the layer in their second segment.
       const baseName = (normalized.split("/").pop() ?? "").replace(/\.\w+$/, "");
+      const isJvmFile = /\.(java|kt|kts)$/i.test(normalized);
       for (const [pattern, layer] of BASENAME_PATTERNS) {
         if (pattern.test(baseName)) {
+          // A JVM `*Form` is a form-backing BEAN (Struts ActionForm, WebFlow
+          // form object, Keycloak IdentityForm), not a window — fall through
+          // to the dir tier. `LoginForm.tsx` / Delphi `MainForm.pas` stay ui.
+          if (layer === "ui" && isJvmFile && JVM_FORM_SUFFIX_RE.test(baseName)) continue;
           assigned = layer;
           break;
         }

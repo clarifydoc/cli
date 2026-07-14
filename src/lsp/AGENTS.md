@@ -20,7 +20,7 @@ Optional enhancement that starts language servers in Docker containers and queri
 4. **Phase B**: for each exported symbol, query `textDocument/references` and create reference links
 5. `LspManager.shutdownAll()` — stops containers
 
-**Query positions matter.** LSP answers "the symbol at this exact position", so both phases re-read the source line to aim at the right token (`SourceLineCache` + `findTokenColumn` in [lsp-enhancer.ts](lsp-enhancer.ts)): definitions target the *leaf* identifier of the call (`svc.ListUsers` → `ListUsers`; at the expression's start column servers resolve the receiver and answer with its field/param/import declaration), references target the symbol's name on its declaration line (column 0 is a keyword like `func`/`public` — most servers return nothing there). Out-of-project answers (stdlib/framework) are dropped by `toHostPath`, so external calls record `target: null` in the ground truth. Set `REVERSEDOC_LSP_DEBUG=1` to log raw definition responses and per-query failures.
+**Query positions matter.** LSP answers "the symbol at this exact position", so both phases re-read the source line to aim at the right token (`SourceLineCache` + `findTokenColumn` in [lsp-enhancer.ts](lsp-enhancer.ts)): definitions target the *leaf* identifier of the call (`svc.ListUsers` → `ListUsers`; at the expression's start column servers resolve the receiver and answer with its field/param/import declaration), references target the symbol's name on its declaration line (column 0 is a keyword like `func`/`public` — most servers return nothing there). Out-of-project answers (stdlib/framework) are dropped by `toHostPath`, so external calls record `target: null` in the ground truth. Set `CLARIFYDOC_LSP_DEBUG=1` to log raw definition responses and per-query failures.
 
 ## Ground truth export
 
@@ -32,7 +32,7 @@ npm run update-lsp                  # once: saves ground truth per fixture
 node scripts/lsp-compare.mjs        # Matched / Conflict / Missed per fixture (--details lists calls)
 ```
 
-Docker containers are tagged `reversedoc-lsp-<lang>`. Images are cached between runs. Cleanup handlers stop containers on SIGINT/SIGTERM.
+Docker containers are tagged `clarifydoc-lsp-<lang>`. Images are cached between runs. Cleanup handlers stop containers on SIGINT/SIGTERM.
 
 ## Supported languages
 
@@ -44,7 +44,7 @@ Each language has a Dockerfile in `../../docker/<lang>/`.
 
 1. Create `docker/<lang>/Dockerfile` with the language server at ENTRYPOINT (stdio mode)
 2. Add entry to `LSP_CONFIGS` in [lsp-configs.ts](lsp-configs.ts):
-   - `id`, `languageIds` (matches reverseDoc `Language`), `dockerImage`, `dockerfilePath`
+   - `id`, `languageIds` (matches ClarifyDoc `Language`), `dockerImage`, `dockerfilePath`
    - `fileExtensions` — which files to open
    - `readOnly` — set false if server needs to write (e.g. jdtls .project, rust target/)
    - `indexDelayMs` — how long to wait after opening files before querying (5s for gopls, 10s for jdtls, 15s for rust-analyzer)

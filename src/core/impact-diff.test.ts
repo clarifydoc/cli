@@ -168,7 +168,7 @@ describe("impact renderers", () => {
 
   it("markdown output is a valid table with backticked values", () => {
     const md = renderImpactMarkdown(r);
-    expect(md).toContain("### reverseDoc impact — **MODERATE** risk");
+    expect(md).toContain("### ClarifyDoc impact — **MODERATE** risk");
     expect(md).toContain("|---|---|");
     expect(md).toContain("`srv/service.ts`");
     expect(md).toContain("`POST /api/orders`");

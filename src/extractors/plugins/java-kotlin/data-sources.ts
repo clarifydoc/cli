@@ -110,6 +110,25 @@ const MQ_TEMPLATE_RECEIVER_RE = /rabbitTemplate|amqpTemplate|kafkaTemplate|jmsTe
 const MQ_LISTENER_RE = /@(RabbitListener|KafkaListener|JmsListener)\b/;
 const MQ_LISTENER_DEST_RE = /(?:queues|topics|destination|queueNames)\s*=\s*[[{]?\s*"([^"]+)"/;
 
+// ─── Typed application/domain events ─────────────────────────────────────────
+// Frameworks that route messages by EVENT TYPE rather than a named queue:
+// Spring application events (@EventListener/@TransactionalEventListener +
+// publisher.publishEvent), Guava EventBus (@Subscribe + bus.post), Axon
+// (@EventHandler), and typed event-framework handlers (@MessageHandler). The
+// event's simple type name is the destination — it's the join key that pairs
+// a publisher with its handlers.
+const EVENT_LISTENER_ANN_RE =
+  /@(EventListener|TransactionalEventListener|MessageHandler|Subscribe|EventHandler)\b/;
+// `@EventListener(SourceIngestedEvent.class)` — type named in the annotation.
+const EVENT_ANN_CLASS_RE = /\(\s*(?:value\s*=\s*)?(?:classes\s*=\s*)?[[{]?\s*([A-Za-z_][\w.]*)\.class/;
+// Publish verbs, gated on a publisher/bus-shaped receiver (except
+// `publishEvent`, which is unambiguous on its own).
+const EVENT_PUBLISH_METHODS = new Set(["publishEvent", "publish", "send", "post", "emit"]);
+const EVENT_PUBLISHER_RECEIVER_RE = /(publisher|eventbus|bus)$/i;
+// An event payload type: `AccountCreatedEvent`, `LoginMessage`, … The suffix
+// fence keeps `emailPublisher.send(new Attachment())` from reading as an event.
+const EVENT_TYPE_RE = /(Event|Message|Command|Notification)$/;
+
 // ─── Outbound HTTP declared via annotations ──────────────────────────────────
 // Retrofit interface methods carry the outbound URL in the verb annotation
 // itself: `@GET("users/{id}")`. JAX-RS uses the same names but as argument-less
@@ -142,6 +161,18 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   private isFeignFile = false;
   /** `@FeignClient(path = "/api/users")` prefix, prepended to method paths. */
   private feignBasePath: string | null = null;
+  /**
+   * File references jOOQ (org.jooq import or generated-tables package). The
+   * jOOQ table branch only runs here — its generic verbs otherwise misread
+   * `String.join(SOME_CONSTANT, …)` as a query on table SOME_CONSTANT.
+   */
+  private isJooqFile = false;
+  /**
+   * Declared field/constructor-parameter types (`accountJpaRepository` →
+   * `AccountJpaRepository`). The TYPE names the entity more reliably than the
+   * field name: `externalIdJpaRepository` is a FederatedIdentityJpaRepository.
+   */
+  private fieldTypes = new Map<string, string>();
 
   override beginFile(tree: Tree): void {
     this.tableAliases = buildTableAliases(tree.rootNode);
@@ -150,6 +181,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     this.feignBasePath = this.isFeignFile
       ? (text.match(/@FeignClient\s*\(([^)]*)\)/)?.[1]?.match(/path\s*=\s*"([^"]+)"/)?.[1] ?? null)
       : null;
+    this.isJooqFile = /jooq/i.test(text);
+    this.fieldTypes = buildFieldTypes(tree.rootNode);
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
@@ -180,6 +213,24 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
           target: text.match(MQ_LISTENER_DEST_RE)?.[1] ?? null,
           line: node.startPosition.row + 1,
         }));
+      }
+
+      // Typed-event handlers: the subscribed event type is the destination —
+      // named in the annotation (`@EventListener(X.class)`) or, in the common
+      // `@MessageHandler void handle(XEvent event, Metadata md)` shape, the
+      // handler's first parameter type.
+      const evtListener = text.match(EVENT_LISTENER_ANN_RE);
+      if (evtListener && !listener) {
+        const annClass = text.match(EVENT_ANN_CLASS_RE)?.[1]?.split(".").pop();
+        const target = annClass ?? handlerFirstParamType(node);
+        if (target) {
+          sources.push(this.ds({
+            kind: "queue-consume",
+            name: `@${evtListener[1]}`,
+            target,
+            line: node.startPosition.row + 1,
+          }));
+        }
       }
 
       // Retrofit: the verb annotation IS the outbound call declaration. The
@@ -218,7 +269,13 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // 1) jOOQ — table lives in the first argument. Only CONSUME the call when a
     // table is actually found; otherwise fall through, since a verb like
     // `update` is also a DAO method (`documentDAO.update(doc)`) handled below.
-    if (JOOQ_TABLE_VERBS.has(method)) {
+    // Gated on file-level jOOQ evidence: `join`/`from` + an ALL-CAPS constant
+    // also describes `String.join(NAME_DELIMITER, …)`, which otherwise becomes
+    // a phantom table. The receiver veto covers the same shape inside genuine
+    // jOOQ files: a Capitalized bare-identifier receiver is a class (`String`,
+    // `LocalDate`), never a query chain (`dsl…`, `DSL`, `STUDENT` stay eligible).
+    const classShapedReceiver = /^[A-Z][a-z]\w*$/.test(receiver.trim());
+    if (this.isJooqFile && !classShapedReceiver && JOOQ_TABLE_VERBS.has(method)) {
       const table = resolveTableExpr(call.firstArg, this.tableAliases);
       if (table) {
         sources.push(this.ds({
@@ -232,10 +289,12 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       }
     }
 
-    // 2) DAO / Repository call — entity from the receiver name (`caseDAO.get` →
-    // Case). Dominant data path here: the DAO wraps jOOQ behind a factory, so
-    // this is where a service method's DB access is visible.
-    const daoEntity = daoReceiverEntity(receiver);
+    // 2) DAO / Repository call — entity from the receiver's declared type when
+    // the file declares it (`accountJpaRepository: AccountJpaRepository` →
+    // Account), else from the receiver name (`caseDAO.get` → Case). Dominant
+    // data path here: the DAO wraps jOOQ behind a factory, so this is where a
+    // service method's DB access is visible.
+    const daoEntity = daoReceiverEntity(receiver, this.fieldTypes);
     if (daoEntity && DAO_CRUD_RE.test(method)) {
       sources.push(this.ds({
         kind: "database",
@@ -273,6 +332,28 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       return;
     }
 
+    // 5b) Typed-event publish — `eventPublisher.send(audit, meta, message)` /
+    // `springPublisher.publishEvent(new SourceIngestedEvent(x))` /
+    // `eventBus.post(event)`. The destination is the event's TYPE, resolved
+    // from a `new X(...)` / `X.newBuilder()` argument or the declared type of
+    // an identifier argument (rightmost event-shaped argument wins — typed
+    // event frameworks put audit/metadata first, payload last).
+    if (EVENT_PUBLISH_METHODS.has(method)) {
+      const recvLeaf = receiver.split(".").pop()?.trim() ?? "";
+      if (method === "publishEvent" || EVENT_PUBLISHER_RECEIVER_RE.test(recvLeaf)) {
+        const evt = this.resolveEventArg(node, method === "publishEvent");
+        if (evt) {
+          sources.push(this.ds({
+            kind: "queue-publish",
+            name: `EVT: ${method}`,
+            target: evt,
+            line,
+          }));
+          return;
+        }
+      }
+    }
+
     // 6) HTTP client calls.
     if (HTTP_METHODS.has(method) || HTTP_HINT_RE.test(node.text)) {
       sources.push(this.ds({ kind: "api-call", name: method, target: null, line }));
@@ -283,6 +364,48 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     if (method === "getProperty" || method === "getenv") {
       sources.push(this.ds({ kind: "env", name: method, target: null, line }));
     }
+  }
+
+  /**
+   * Event type published by this call, scanning arguments right-to-left:
+   * `new AccountCreatedEvent(…)` → AccountCreatedEvent;
+   * `AccountUpdateMessage.newBuilder()…build()` → AccountUpdateMessage;
+   * a bare identifier → its declared local/parameter/field type.
+   * Non-`publishEvent` verbs require the EVENT_TYPE_RE suffix (`relaxed`
+   * lifts that for constructor args of the unambiguous `publishEvent`).
+   */
+  private resolveEventArg(call: Node, relaxed: boolean): string | null {
+    const args = callArguments(call);
+    for (let i = args.length - 1; i >= 0; i--) {
+      const arg = args[i]!;
+
+      // Java `new X(...)` / Kotlin `X(...)` constructor-call convention.
+      if (arg.type === "object_creation_expression") {
+        const t = cleanTypeName(arg.childForFieldName("type")?.text);
+        if (t && (relaxed || EVENT_TYPE_RE.test(t))) return t;
+        continue;
+      }
+      const text = arg.text;
+      const kotlinCtor = arg.type === "call_expression" && /^[A-Z]\w*\s*\(/.test(text);
+      if (kotlinCtor) {
+        const t = cleanTypeName(text.slice(0, text.indexOf("(")));
+        if (t && (relaxed || EVENT_TYPE_RE.test(t))) return t;
+        continue;
+      }
+
+      // Builder chain rooted at the message type: `X.newBuilder()…`.
+      const builderRoot = text.match(/^([A-Z]\w*)\s*\.\s*newBuilder\b/)?.[1];
+      if (builderRoot && (relaxed || EVENT_TYPE_RE.test(builderRoot))) return builderRoot;
+
+      // Identifier: resolve the declared type — enclosing-method local or
+      // parameter first, then a class field. Always suffix-fenced: without a
+      // constructor in sight the type is the only event-shaped evidence.
+      if (/^[\w$]+$/.test(text)) {
+        const t = localDeclaredType(call, text) ?? this.fieldTypes.get(text) ?? null;
+        if (t && EVENT_TYPE_RE.test(t)) return t;
+      }
+    }
+    return null;
   }
 }
 
@@ -395,15 +518,164 @@ function resolveTableExpr(arg: Node | null, aliases: Map<string, string>): strin
 }
 
 /**
- * Entity behind a DAO/Repository receiver: the last receiver segment with a
- * `DAO`/`Dao`/`Repository`/`Repo` suffix stripped (`this.caseDAO` → "case",
- * `reimbursementDAO` → "reimbursement"). Null when the receiver isn't a DAO.
+ * Entity behind a DAO/Repository receiver. The receiver's DECLARED TYPE wins
+ * when the file declares it and the type itself is DAO-shaped — a field named
+ * `externalIdJpaRepository` of type `FederatedIdentityJpaRepository` accesses
+ * FederatedIdentity, which only the type knows. Otherwise the receiver name is
+ * used (`this.caseDAO` → "case"). In both, the `DAO`/`Repository` suffix is
+ * stripped, plus a residual persistence-tech suffix (`AccountJpaRepository` →
+ * `AccountJpa` → `Account`) and an interface-convention `I` prefix
+ * (`ICaseDAO` → `Case`). Null when the receiver isn't a DAO.
  */
-function daoReceiverEntity(receiver: string): string | null {
+function daoReceiverEntity(receiver: string, fieldTypes?: Map<string, string>): string | null {
   const seg = receiver.split(".").pop()?.trim() ?? "";
-  const m = DAO_RECEIVER_RE.exec(seg);
-  const base = m?.[1];
-  return base && base.length > 1 ? base : null;
+  const declared = fieldTypes?.get(seg);
+  const src = declared && DAO_RECEIVER_RE.test(declared) ? declared : seg;
+  const m = DAO_RECEIVER_RE.exec(src);
+  let base = m?.[1];
+  if (!base) return null;
+  base = base.replace(/(jpa|db)$/i, "").replace(/^I(?=[A-Z])/, "");
+  return base.length > 1 ? base : null;
+}
+
+/**
+ * Declared field / constructor-parameter types of the file's classes:
+ * Java `field_declaration`, Kotlin class-level `property_declaration` and
+ * primary-constructor `class_parameter`. Values are simple type names
+ * (generics/package/nullability stripped).
+ */
+function buildFieldTypes(root: Node): Map<string, string> {
+  const map = new Map<string, string>();
+  const visit = (node: Node): void => {
+    if (node.type === "field_declaration") {
+      // Java: one type, possibly several declarators.
+      const type = cleanTypeName(node.childForFieldName("type")?.text);
+      if (type) {
+        for (const c of node.children) {
+          if (c.type !== "variable_declarator") continue;
+          const name = c.childForFieldName("name")?.text;
+          if (name && !map.has(name)) map.set(name, type);
+        }
+      }
+    } else if (node.type === "property_declaration" || node.type === "class_parameter") {
+      // Kotlin: `val x: Type` — name and type live under variable_declaration
+      // for properties, directly under class_parameter for constructor params.
+      const holder = node.type === "property_declaration"
+        ? node.children.find((c) => c.type === "variable_declaration") ?? node
+        : node;
+      const name = holder.children.find((c) => c.type === "simple_identifier")?.text;
+      const typeNode = holder.children.find(
+        (c) => c.type === "user_type" || c.type === "nullable_type",
+      );
+      const type = cleanTypeName(typeNode?.text);
+      if (name && type && !map.has(name)) map.set(name, type);
+    }
+    for (const child of node.children) visit(child);
+  };
+  visit(root);
+  return map;
+}
+
+/** Simple type name: generics, package qualifier and `?` nullability stripped. */
+function cleanTypeName(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const bare = raw.split("<")[0]!.replace(/\?/g, "").trim();
+  const simple = bare.split(".").pop() ?? "";
+  return /^[A-Za-z_]\w*$/.test(simple) ? simple : null;
+}
+
+/** Argument expression nodes of a Java/Kotlin call, in order. */
+function callArguments(call: Node): Node[] {
+  if (call.type === "method_invocation") {
+    const argList = call.childForFieldName("arguments");
+    return argList ? argList.children.filter((c) => c.isNamed && c.type !== "comment") : [];
+  }
+  const callSuffix = call.children.find((c) => c.type === "call_suffix");
+  const valueArgs = callSuffix?.children.find((c) => c.type === "value_arguments");
+  if (!valueArgs) return [];
+  const out: Node[] = [];
+  for (const va of valueArgs.children) {
+    if (va.type !== "value_argument") continue;
+    const named = va.children.filter((c) => c.isNamed);
+    const expr = named[named.length - 1];
+    if (expr) out.push(expr);
+  }
+  return out;
+}
+
+/**
+ * Declared type of `name` in the function enclosing `node`: a Java
+ * `local_variable_declaration` / Kotlin typed local `property_declaration`,
+ * or a parameter of the enclosing method. Returns a simple type name.
+ */
+function localDeclaredType(node: Node, name: string): string | null {
+  let fn: Node | null = node.parent;
+  while (fn && !/^(method_declaration|constructor_declaration|function_declaration|lambda_expression|lambda_literal)$/.test(fn.type)) {
+    fn = fn.parent;
+  }
+  if (!fn) return null;
+
+  const scan = (n: Node): string | null => {
+    if (n.type === "local_variable_declaration") {
+      for (const c of n.children) {
+        if (c.type === "variable_declarator" && c.childForFieldName("name")?.text === name) {
+          return cleanTypeName(n.childForFieldName("type")?.text);
+        }
+      }
+    } else if (n.type === "property_declaration") {
+      const vd = n.children.find((c) => c.type === "variable_declaration");
+      if (vd?.children.find((c) => c.type === "simple_identifier")?.text === name) {
+        const t = vd.children.find((c) => c.type === "user_type" || c.type === "nullable_type");
+        return cleanTypeName(t?.text);
+      }
+    } else if (n.type === "formal_parameter" || n.type === "parameter") {
+      const pName = n.childForFieldName("name")?.text
+        ?? n.children.find((c) => c.type === "simple_identifier")?.text;
+      if (pName === name) {
+        const t = n.childForFieldName("type")
+          ?? n.children.find((c) => c.type === "user_type" || c.type === "nullable_type");
+        return cleanTypeName(t?.text);
+      }
+    }
+    for (const child of n.children) {
+      const hit = scan(child);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  return scan(fn);
+}
+
+/**
+ * Subscribed event type of the method a listener annotation decorates —
+ * `@MessageHandler void handle(ElementUpdatedEvent event, Metadata md)` →
+ * ElementUpdatedEvent. Prefers the parameter whose type is event-shaped
+ * (frameworks pass audit/metadata alongside the payload — e.g.
+ * `handle(AuditInformation a, Metadata m, LoginMessage msg)`), falling back to
+ * the first parameter. Climbs annotation → modifiers → declaration; null when
+ * the annotation sits on a class or the method has no typed parameters.
+ */
+function handlerFirstParamType(ann: Node): string | null {
+  let holder: Node | null = ann.parent;
+  if (holder && holder.type === "modifiers") holder = holder.parent;
+  if (!holder || !/^(method_declaration|function_declaration)$/.test(holder.type)) return null;
+
+  // Java formal_parameters via field; Kotlin function_value_parameters child.
+  const params = holder.childForFieldName("parameters")
+    ?? holder.children.find((c) => c.type === "function_value_parameters");
+  if (!params) return null;
+  const types: string[] = [];
+  for (const p of params.children) {
+    if (p.type === "formal_parameter") {
+      const t = cleanTypeName(p.childForFieldName("type")?.text);
+      if (t) types.push(t);
+    } else if (p.type === "parameter") {
+      const t = p.children.find((c) => c.type === "user_type" || c.type === "nullable_type");
+      const clean = cleanTypeName(t?.text);
+      if (clean) types.push(clean);
+    }
+  }
+  return types.find((t) => EVENT_TYPE_RE.test(t)) ?? types[0] ?? null;
 }
 
 /** Receiver node of a `recv.method(...)` call (Java `object` field / Kotlin navigation). */

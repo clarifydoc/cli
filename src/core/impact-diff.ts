@@ -18,7 +18,7 @@ import { isTestFile } from "./test-file-detector.js";
  * traceImpact lists are capped, a union can undercount; `truncated` is set
  * whenever a contributing list was capped, making the counts lower bounds.
  *
- * Consumers: the `reversedoc impact` CLI command (git-diff driven), the
+ * Consumers: the `clarifydoc impact` CLI command (git-diff driven), the
  * analyzer's `impact-latest.json` artifact on incremental runs (served by the
  * application server and rendered by the viewer's Overview card).
  */
@@ -276,7 +276,7 @@ export function renderImpactText(r: ImpactDiffResult): string {
 
 export function renderImpactMarkdown(r: ImpactDiffResult): string {
   const md: string[] = [];
-  md.push(`### reverseDoc impact — **${r.risk.level.toUpperCase()}** risk`);
+  md.push(`### ClarifyDoc impact — **${r.risk.level.toUpperCase()}** risk`);
   md.push("");
   md.push(
     `**${r.changedFiles.length} changed file(s)** (base: ${r.baseLabel})` +

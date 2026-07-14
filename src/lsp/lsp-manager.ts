@@ -16,7 +16,7 @@ import {
   type LspDockerConfig,
 } from "./lsp-configs.js";
 
-/** Map from reverseDoc Language to LSP languageId string */
+/** Map from ClarifyDoc Language to LSP languageId string */
 const LANGUAGE_ID_MAP: Record<string, string> = {
   typescript: "typescript",
   javascript: "javascript",
@@ -177,7 +177,7 @@ export class LspManager {
       command: config.serverCommand,
       projectRoot: this.projectRoot,
       mountPath: config.mountPath,
-      name: `reversedoc-lsp-${config.id}-${Date.now()}`,
+      name: `clarifydoc-lsp-${config.id}-${Date.now()}`,
       readOnly: config.readOnly,
     });
 

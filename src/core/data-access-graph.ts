@@ -163,6 +163,14 @@ function entityMatchKeys(name: string): string[] {
   const base = name.split("::").pop()!.toLowerCase();
   const keys = [base];
   if (base.endsWith("s") && base.length > 1) keys.push(base.slice(0, -1));
+  // ORM naming convention: a `CustomerEntity` class models the `customer`
+  // table, so repository-derived access names (`customer`) must reach it.
+  // KEEP IN SYNC with tableMatchKeys in entity-graph.ts.
+  if (base.endsWith("entity") && base.length > "entity".length) {
+    const stripped = base.slice(0, -"entity".length);
+    keys.push(stripped);
+    if (stripped.endsWith("s") && stripped.length > 1) keys.push(stripped.slice(0, -1));
+  }
   return keys;
 }
 

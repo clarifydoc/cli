@@ -3,7 +3,7 @@ export type Language =
   | "typescript" | "javascript" | "csharp" | "python" | "java" | "kotlin" | "pascal" | "dfm"
   | "go" | "rust" | "ruby" | "php" | "swift" | "lua" | "scala"
   | "perl" | "vb" | "sql" | "c" | "cpp" | "prisma" | "dart" | "elixir" | "erlang" | "objc"
-  | "haskell" | "clojure" | "blazor" | "html" | "qml" | "qtui" | "xaml" | "jsp" | "springxml";
+  | "haskell" | "clojure" | "blazor" | "html" | "qml" | "qtui" | "xaml" | "jsp" | "springxml" | "jsight";
 
 export interface ExtractorWarning {
   /** Dotted-path location, e.g. "functions[3].endLine" or "routes[0].kind". */
@@ -310,6 +310,13 @@ export interface FileAnalysis {
    * patterns, health) exclude these files the way they exclude generatedRoots.
    */
   minified?: boolean;
+  /**
+   * Opens with a third-party license/attribution header — vendored source
+   * committed into the repo. Only honored at aggregation when such files are
+   * a small minority (open-source repos stamp a license on every authored
+   * file — that must not disable their scanning).
+   */
+  vendored?: boolean;
   /**
    * Type-position references emitted from this file (class extends/implements,
    * parameter/return/field/variable types, generic args, casts, `new`
@@ -1255,7 +1262,7 @@ export type PackageCategory =
  * One external dependency declared in a project manifest (package.json,
  * *.csproj, go.mod, …), cross-referenced against the code that actually imports
  * it. This is the inventory the framework detector consumes and the report
- * surfaces — a reverse-doc tool should know not just *which* frameworks a repo
+ * surfaces — ClarifyDoc should know not just *which* frameworks a repo
  * uses but its full third-party surface and how much of it is live.
  */
 export interface ExternalPackage {

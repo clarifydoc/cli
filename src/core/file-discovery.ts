@@ -2,7 +2,7 @@ import fg from "fast-glob";
 import { resolve } from "path";
 import type { Language } from "../types/analysis.js";
 import { EXTENSION_TO_LANGUAGE } from "../parsers/language-map.js";
-import { loadIgnorePatterns, isIgnored } from "./reversedoc-ignore.js";
+import { loadIgnorePatterns, isIgnored } from "./clarifydoc-ignore.js";
 
 /**
  * Files that may contain secrets — skipped silently and reported separately.
@@ -64,7 +64,7 @@ export interface DiscoveryOptions {
  * Discover all analyzable source files in a project directory.
  *
  * Applies (in order): fast-glob with DEFAULT_IGNORE → sensitive-file filter →
- * .reverseDocignore gitignore semantics. Sensitive files are surfaced separately
+ * .clarifydocignore gitignore semantics. Sensitive files are surfaced separately
  * rather than dropped silently so users can see what was excluded.
  */
 export async function discoverFiles(

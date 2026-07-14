@@ -80,7 +80,7 @@ export async function buildImage(
  * The container runs interactively (-i) so we can communicate over stdin/stdout.
  */
 export function startContainer(opts: DockerContainerOptions): DockerContainer {
-  const containerName = opts.name ?? `reversedoc-lsp-${Date.now()}`;
+  const containerName = opts.name ?? `clarifydoc-lsp-${Date.now()}`;
 
   // Normalize the project root path for Docker volume mounting
   // On Windows, convert C:\path to /c/path for Docker
@@ -143,14 +143,14 @@ export async function stopContainer(container: DockerContainer): Promise<void> {
 }
 
 /**
- * Stop all containers with the reversedoc-lsp prefix.
+ * Stop all containers with the clarifydoc-lsp prefix.
  * Used for cleanup on unexpected exit.
  */
 export async function stopAllContainers(): Promise<void> {
   return new Promise((resolve) => {
     const proc = spawn(
       "docker",
-      ["ps", "-q", "--filter", "name=reversedoc-lsp-"],
+      ["ps", "-q", "--filter", "name=clarifydoc-lsp-"],
       { stdio: ["ignore", "pipe", "ignore"], shell: true },
     );
 

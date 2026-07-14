@@ -141,3 +141,36 @@ describe("detectLayerViolations", () => {
     expect(detectLayerViolations(analyses, graph, layers)).toHaveLength(0);
   });
 });
+
+describe("Struts/WebFlow Action + JVM form-bean classification (EOS FPs)", () => {
+  it("classifies *Action.java as services even under a settings/ directory", () => {
+    const layers = classifyFileLayers([
+      "admin/src/main/java/com/ist/eos/admin/web/settings/AgeIntervalCreateAction.java",
+    ]);
+    expect(Object.values(layers)[0]).toBe("services");
+  });
+
+  it("does NOT read a JVM *Form as ui (form-backing bean), falling to dir tokens", () => {
+    const layers = classifyFileLayers([
+      "admin/src/main/java/com/ist/eos/admin/web/settings/ParagraphManageForm.java",
+      "src/main/java/com/ist/platform/iamadmin/domain/IdentityForm.java",
+    ]);
+    // settings/ dir → config; domain/ has no token → unknown (exempt). Neither is ui.
+    for (const layer of Object.values(layers)) expect(layer).not.toBe("ui");
+  });
+
+  it("keeps non-JVM *Form files as ui (React component, Delphi form)", () => {
+    const layers = classifyFileLayers([
+      "web/src/components/LoginForm.tsx",
+      "src/ui/MainForm.pas",
+    ]);
+    for (const layer of Object.values(layers)) {
+      expect(["ui", "components"]).toContain(layer);
+    }
+  });
+
+  it("keeps JVM *View/*Page/*Window basenames as ui", () => {
+    const layers = classifyFileLayers(["src/main/java/com/x/wicket/AccountPage.java"]);
+    expect(Object.values(layers)[0]).toBe("ui");
+  });
+});

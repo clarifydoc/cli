@@ -173,6 +173,50 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
         }
       }
 
+      // Spec-file routes (JSight/OpenAPI): the file declares the API surface
+      // but contains no code, so there is no handler and no same-file symbol —
+      // contract-first backends implement interfaces from an external artifact
+      // and the spec is the only in-repo route statement. Join the route to
+      // its implementing method BY NAME, verb-aware:
+      //   GET /grantable-universal-entity-types → getGrantableUniversalEntityTypes
+      //   GET /find-persons                     → findPersons
+      // Unique-or-nothing across non-test files; misses stay unlinked (no guess).
+      if (!route.handler && route.kind === "api" && (symbolIndex.get(sourceFile)?.size ?? 0) === 0) {
+        const segment = route.path.split("/").filter((s) => s && !/[{:}]/.test(s)).pop();
+        const words = segment ? segment.split(/[-_]/).filter(Boolean) : [];
+        if (words.length > 0) {
+          const camel = words.map((w, i) => (i === 0 ? w : w[0]!.toUpperCase() + w.slice(1))).join("");
+          const pascal = camel[0]!.toUpperCase() + camel.slice(1);
+          const verb = (route.httpMethod ?? "").toLowerCase();
+          const candidates = verb ? [`${verb}${pascal}`, camel] : [camel];
+          for (const cand of candidates) {
+            let found: { file: string; def: { name: string; line: number } } | null = null;
+            let count = 0;
+            for (const [filePath, syms] of symbolIndex) {
+              if (SPEC_JOIN_EXCLUDE_RE.test(filePath)) continue;
+              const def = syms.get(cand);
+              if (!def) continue;
+              count++;
+              if (count > 1) break;
+              found = { file: filePath, def };
+            }
+            if (count === 1 && found) {
+              links.push({
+                sourceFile,
+                sourceSymbol,
+                sourceLine: route.line,
+                callName: cand,
+                targetFile: found.file,
+                targetSymbol: found.def.name,
+                targetLine: found.def.line,
+                confidence: "INFERRED",
+              });
+              break;
+            }
+          }
+        }
+      }
+
       // Link route → functions it calls
       for (const call of route.calls) {
         const link = resolveCallToDefinition(
@@ -331,6 +375,11 @@ const CTOR_NAMES = new Set(["constructor", "__init__", "__construct", "New", "ne
  * production code into them. Explicit imports still resolve normally.
  */
 const TEST_FIXTURE_PATH_RE = /(^|\/)(tests?\/fixtures|__fixtures__|__mocks__|testdata)\//;
+
+/** Files a spec-route name join must never bind: test trees and test classes
+ *  (a uniquely-named test helper is not the route's implementation). */
+const SPEC_JOIN_EXCLUDE_RE =
+  /(^|\/)(tests?|__tests__|spec|specs)\/|(Test|Tests|Spec|IT)\.\w+$|\.(test|spec)\.\w+$/;
 
 /**
  * Global class-name catalog: className → defining file + constructor.
@@ -545,6 +594,13 @@ interface LinkContext {
   /** Lazy per-file cache: files this file's imports resolve to (Strategy 4's
    *  cross-project gate). */
   importedFilesCache: Map<string, Set<string>>;
+}
+
+/** Lowercased basename without extension: `include/User.h` → "user". */
+function fileStem(filePath: string): string {
+  const base = filePath.slice(filePath.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  return (dot > 0 ? base.slice(0, dot) : base).toLowerCase();
 }
 
 /** Files the analysis's imports resolve to (cached per source file). */
@@ -1059,9 +1115,11 @@ function resolveCallToDefinition(
   }
 
   // ── Strategy 7: Unique global definition (heuristic) ──
-  // Qualified internal call whose receiver type we can't track (`processor.run()`):
-  // if exactly one file in the whole project defines the leaf, link it.
-  // Uniqueness is the guard — on large projects common names are never unique.
+  // Qualified internal call whose receiver type we can't track
+  // (`parser.tokenize()`): if exactly one file in the whole project defines the
+  // leaf, link it. Uniqueness is the guard — on large projects common names are
+  // never unique. Note stdlib-shaped names (ALL_BUILTIN_MEMBERS) never qualify,
+  // however unique the app-side definition.
   if (!def && call.kind === "internal" && isQualified) {
     // Trimmed: multiline chains leave whitespace in extracted call names.
     const head = parts[0]!.trim();
@@ -1071,8 +1129,49 @@ function resolveCallToDefinition(
     const isPlainReceiver = /^[\w$]+\??$/.test(head);
     if (isPlainReceiver && head !== "this" && head !== "self" && head !== "Self" && !ALL_BUILTIN_MEMBERS.has(leafName)) {
       const entry = leafCatalog.get(leafName);
-      if (entry && isSafeHeuristicTarget(entry, sourceFile, analysis.projectId)) {
-        return mkLink(entry.file, entry.def.name, entry.def.line, "AMBIGUOUS");
+      // Receiver-type contradiction veto: when the receiver's DECLARED type is
+      // known (typed local / parameter / field) and names neither the
+      // candidate's class nor its file, the unique-name match is coincidence —
+      // `existing.setStartDate()` on an `Account` local must not bind
+      // `CustomerEntity.setStartDate` however unique that setter is. (If the
+      // declared type HAD resolved to a file defining the method, Strategy 2
+      // would have linked it before reaching here.)
+      const declared = entry ? receiverDeclaredType(analysis, sourceSymbol, head.replace(/\?$/, "")) : null;
+      const contradicted = (): boolean => {
+        if (!declared) return false;
+        const tgtClass = entry!.def.name.includes(".") ? entry!.def.name.split(".")[0]! : null;
+        if (declared === tgtClass) return false;
+        const declEntry = classCatalog.get(declared);
+        return !(declEntry && declEntry.count === 1 && declEntry.file === entry!.file);
+      };
+      if (entry && isSafeHeuristicTarget(entry, sourceFile, analysis.projectId) && !contradicted()) {
+        // Evidence gate: uniqueness alone still magnets every stdlib-shaped
+        // leaf in the repo onto the one app definition (`x.stream().toList()`
+        // → the sole app-defined `toList`; `ex.getMessage()` → some enum's
+        // `getMessage`), poisoning blast radius and the component graph with
+        // fully-connected phantom fan-in. Require the target file to be
+        // plausibly in scope: imported by this file, or in the same directory
+        // (same package/module — needs no import in Java/Kotlin/Go). Files
+        // whose imports resolve to nothing local keep the old behavior:
+        // import-blind ecosystems (CodeIgniter PHP autoloading) carry no
+        // evidence either way, so the gate would only destroy recall there.
+        const importedFiles = importedFilesOf(analysis, ctx);
+        const sameDir =
+          entry.file.slice(0, entry.file.lastIndexOf("/")) ===
+          sourceFile.slice(0, sourceFile.lastIndexOf("/"));
+        // Same-stem imports count as evidence for the definition file: C/C++
+        // includes name `User.h` while the method body lives in `User.cpp`.
+        const sameStemImported = (): boolean => {
+          const stem = fileStem(entry.file);
+          for (const f of importedFiles) if (fileStem(f) === stem) return true;
+          return false;
+        };
+        if (
+          importedFiles.size === 0 || sameDir || importedFiles.has(entry.file) ||
+          sameStemImported()
+        ) {
+          return mkLink(entry.file, entry.def.name, entry.def.line, "AMBIGUOUS");
+        }
       }
     }
   }
@@ -1131,6 +1230,39 @@ function resolveCallToDefinition(
  */
 function findEnclosingCallableParams(analysis: FileAnalysis, sourceSymbol: string): ParamInfo[] {
   return findEnclosingCallable(analysis, sourceSymbol)?.params ?? [];
+}
+
+/** Simple class name of a raw type: `List<Account>`→List, `a.b.Foo?`→Foo. */
+function simpleTypeName(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const simple = raw.split("<")[0]!.replace(/\?/g, "").trim().split(".").pop() ?? "";
+  return /^[A-Za-z_]\w*$/.test(simple) ? simple : null;
+}
+
+/**
+ * DECLARED type of `head` as visible from `sourceSymbol`: a typed local of the
+ * enclosing callable, one of its parameters, or a property of the enclosing
+ * class. Null when nothing declares it — dynamic receivers stay heuristic.
+ */
+function receiverDeclaredType(
+  analysis: FileAnalysis,
+  sourceSymbol: string,
+  head: string,
+): string | null {
+  const callable = findEnclosingCallable(analysis, sourceSymbol);
+  if (callable) {
+    const local = callable.localTypes?.find((l) => l.name === head);
+    if (local) return simpleTypeName(local.type);
+    const param = callable.params?.find((p) => p.name === head);
+    if (param?.type) return simpleTypeName(param.type);
+  }
+  const dot = sourceSymbol.indexOf(".");
+  if (dot > 0) {
+    const cls = analysis.classes.find((c) => c.name === sourceSymbol.slice(0, dot));
+    const prop = cls?.properties?.find((p) => p.name === head);
+    if (prop?.type) return simpleTypeName(prop.type);
+  }
+  return null;
 }
 
 /** Local `new`-bound variable types of the enclosing function (see FunctionInfo.localTypes). */

@@ -245,6 +245,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       ? vis !== "private"
       : vis === "public" || (node.type === "constructor_declaration");
 
+    const localTypes = extractLocalTypes(body);
     return {
       name,
       params,
@@ -255,6 +256,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       calls: extractCalls(body, language),
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
+      ...(localTypes.length > 0 ? { localTypes } : {}),
     };
   }
 
@@ -276,4 +278,52 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
 /** Kotlin parses to a `source_file` root; Java to a `program` root. */
 function detectLang(root: Node): JkLang {
   return root.type === "source_file" ? "kotlin" : "java";
+}
+
+/**
+ * Declared-type locals of a method body → `FunctionInfo.localTypes`
+ * (`Account existing = repo.find(id)` → {existing, Account}), the same channel
+ * PHP populates for `$x = new Foo()`. The symbol linker uses these both to
+ * RESOLVE calls through a typed local (Strategy 2) and to VETO unique-name
+ * guesses whose receiver's declared type contradicts the target (Strategy 7).
+ * Java: `local_variable_declaration` + enhanced-for; Kotlin: typed
+ * `val x: Type` locals (type-inferred locals carry no evidence — skipped).
+ * Only PascalCase class-like simple types are kept (`var`, primitives, and
+ * generic containers say nothing about the receiver's own members). Nested
+ * lambdas/anonymous classes are walked too — a shadowed name keeps the FIRST
+ * sighting, matching top-down reading order.
+ */
+function extractLocalTypes(body: Node | null): Array<{ name: string; type: string }> {
+  if (!body) return [];
+  const out: Array<{ name: string; type: string }> = [];
+  const seen = new Set<string>();
+  const push = (name: string | undefined, rawType: string | undefined) => {
+    if (!name || !rawType || seen.has(name)) return;
+    const simple = rawType.split("<")[0]!.replace(/\?/g, "").trim().split(".").pop() ?? "";
+    if (!/^[A-Z][A-Za-z0-9_]*$/.test(simple) || simple === "String") return;
+    seen.add(name);
+    out.push({ name, type: simple });
+  };
+  const visit = (n: Node): void => {
+    if (n.type === "local_variable_declaration" || n.type === "enhanced_for_statement") {
+      const type = n.childForFieldName("type")?.text;
+      if (n.type === "enhanced_for_statement") {
+        push(n.childForFieldName("name")?.text, type);
+      } else {
+        for (const c of n.children) {
+          if (c.type === "variable_declarator") push(c.childForFieldName("name")?.text, type);
+        }
+      }
+    } else if (n.type === "property_declaration") {
+      // Kotlin `val x: Type = …` local (class-level properties never reach
+      // here — this walks a function body only).
+      const vd = n.children.find((c) => c.type === "variable_declaration");
+      const name = vd?.children.find((c) => c.type === "simple_identifier")?.text;
+      const type = vd?.children.find((c) => c.type === "user_type" || c.type === "nullable_type")?.text;
+      push(name, type);
+    }
+    for (const child of n.children) visit(child);
+  };
+  visit(body);
+  return out;
 }

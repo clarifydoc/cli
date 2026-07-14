@@ -178,3 +178,146 @@ describe("symbol-linker — route-handler fallback guards (spsflow FPs)", () => 
     expect(handlerLinks.some((l) => l.targetFile === "web/LEGACY/app/Http/Controllers/DashboardController.php")).toBe(true);
   });
 });
+
+describe("symbol-linker — Strategy 7 evidence gate (stdlib-name magnets)", () => {
+  // A repo-unique leaf name must not magnet every qualified call in the repo:
+  // require the target to be imported, same-directory, or the source file to
+  // be import-blind (no resolvable imports at all).
+  const helper = file("b/svc/Helper.cs", "app", { classes: [cls("Helper")] });
+  const caller = (imports: Array<{ source: string; specifiers: string[] }>) =>
+    ({
+      ...file("b/svc/Caller.cs", "app", {
+        classes: [{ ...cls("Caller"), methods: [fn("Run", [call("existing.computeOverview")])] }],
+      }),
+      imports: imports.map((i) => ({ ...i, isDefault: false, isNamespace: false, isType: false, line: 1 })),
+    } as unknown as FileAnalysis);
+  const target = file("a/api/CustomerApiImpl.cs", "app", {
+    classes: [{ ...cls("CustomerApiImpl"), methods: [fn("computeOverview", [])] }],
+  });
+
+  it("does NOT link a unique leaf across directories without import evidence", () => {
+    const links = buildSymbolLinks([caller([{ source: "./Helper", specifiers: ["Helper"] }]), helper, target]);
+    expect(links.some((l) => l.targetFile === "a/api/CustomerApiImpl.cs")).toBe(false);
+  });
+
+  it("links when the source file imports the target", () => {
+    const links = buildSymbolLinks([
+      caller([{ source: "../../a/api/CustomerApiImpl", specifiers: ["CustomerApiImpl"] }]),
+      helper,
+      target,
+    ]);
+    expect(links.some((l) => l.targetFile === "a/api/CustomerApiImpl.cs")).toBe(true);
+  });
+
+  it("links a same-directory target (same package needs no import)", () => {
+    const sameDir = file("b/svc/CustomerApiImpl.cs", "app", {
+      classes: [{ ...cls("CustomerApiImpl"), methods: [fn("computeOverview", [])] }],
+    });
+    const links = buildSymbolLinks([caller([{ source: "./Helper", specifiers: ["Helper"] }]), helper, sameDir]);
+    expect(links.some((l) => l.targetFile === "b/svc/CustomerApiImpl.cs")).toBe(true);
+  });
+
+  it("keeps the old behavior for import-blind source files", () => {
+    const links = buildSymbolLinks([caller([]), helper, target]);
+    expect(links.some((l) => l.targetFile === "a/api/CustomerApiImpl.cs")).toBe(true);
+  });
+
+  it("never links a JDK/stdlib member name (builtin veto), even same-directory", () => {
+    const sameDirToList = file("b/svc/Utils.cs", "app", {
+      classes: [{ ...cls("Utils"), methods: [fn("toList", [])] }],
+    });
+    const src = {
+      ...file("b/svc/Caller2.cs", "app", {
+        classes: [{ ...cls("Caller2"), methods: [fn("Run", [call("items.toList")])] }],
+      }),
+      imports: [],
+    } as unknown as FileAnalysis;
+    const links = buildSymbolLinks([src, sameDirToList]);
+    expect(links.some((l) => l.targetFile === "b/svc/Utils.cs")).toBe(false);
+  });
+});
+
+describe("symbol-linker — Strategy 7 receiver-type contradiction veto", () => {
+  // `existing.setStartDate()` where `existing` is declared `Account` must not
+  // bind CustomerEntity.setStartDate — even when CustomerEntity is imported
+  // (evidence gate passes) and the setter name is repo-unique.
+  const customerEntity = file("jpa/CustomerEntity.cs", "app", {
+    classes: [{ ...cls("CustomerEntity"), methods: [fn("setStartDate", [])] }],
+  });
+  const accountEntity = file("jpa/Account.cs", "app", { classes: [cls("Account")] });
+  const callerWith = (localType: string) =>
+    ({
+      ...file("api/AccountApiImpl.cs", "app", {
+        classes: [{
+          ...cls("AccountApiImpl"),
+          methods: [{
+            ...fn("update", [call("existing.setStartDate")]),
+            localTypes: [{ name: "existing", type: localType }],
+          }],
+        }],
+      }),
+      imports: [
+        { source: "../jpa/CustomerEntity", specifiers: ["CustomerEntity"], isDefault: false, isNamespace: false, isType: false, line: 1 },
+        { source: "../jpa/Account", specifiers: ["Account"], isDefault: false, isNamespace: false, isType: false, line: 2 },
+      ],
+    } as unknown as FileAnalysis);
+
+  it("vetoes the unique-name match when the declared receiver type contradicts it", () => {
+    const links = buildSymbolLinks([callerWith("Account"), customerEntity, accountEntity]);
+    expect(links.some((l) => l.targetSymbol === "CustomerEntity.setStartDate")).toBe(false);
+  });
+
+  it("keeps the match when the declared type IS the target's class", () => {
+    const links = buildSymbolLinks([callerWith("CustomerEntity"), customerEntity, accountEntity]);
+    expect(links.some((l) => l.targetSymbol === "CustomerEntity.setStartDate")).toBe(true);
+  });
+
+  it("keeps the match when no declared type is known (dynamic receiver)", () => {
+    const noLocal = {
+      ...callerWith("ignored"),
+    } as any;
+    noLocal.classes[0].methods[0].localTypes = [];
+    const links = buildSymbolLinks([noLocal, customerEntity, accountEntity]);
+    expect(links.some((l) => l.targetSymbol === "CustomerEntity.setStartDate")).toBe(true);
+  });
+});
+
+describe("symbol-linker — spec-route → impl-method name join", () => {
+  const specFile = (path: string, httpMethod: string) =>
+    ({
+      ...file("src/main/jsight/account-ui-api.jsight", "app", {}),
+      language: "jsight",
+      routes: [{ path, httpMethod, kind: "api", handler: null, calls: [], middleware: [], line: 3 }],
+    } as unknown as FileAnalysis);
+
+  it("joins GET /grantable-universal-entity-types to the verb-prefixed method", () => {
+    const impl = file("api/AccountUiApiImpl.cs", "app", {
+      classes: [{ ...cls("AccountUiApiImpl"), methods: [fn("getGrantableUniversalEntityTypes", [])] }],
+    });
+    const links = buildSymbolLinks([specFile("/grantable-universal-entity-types", "GET"), impl]);
+    const l = links.find((x) => x.sourceSymbol === "route:GET /grantable-universal-entity-types");
+    expect(l?.targetSymbol).toBe("AccountUiApiImpl.getGrantableUniversalEntityTypes");
+    expect(l?.confidence).toBe("INFERRED");
+  });
+
+  it("joins the bare camel form when no verb-prefixed method exists", () => {
+    const impl = file("api/AccountUiApiImpl.cs", "app", {
+      classes: [{ ...cls("AccountUiApiImpl"), methods: [fn("findPersons", [])] }],
+    });
+    const links = buildSymbolLinks([specFile("/find-persons", "GET"), impl]);
+    expect(links.some((l) => l.targetSymbol === "AccountUiApiImpl.findPersons")).toBe(true);
+  });
+
+  it("never binds a test file, and stays silent on ambiguity", () => {
+    const test = file("src/test/api/FindPersonsTest.cs", "app", {
+      classes: [{ ...cls("FindPersonsTest"), methods: [fn("findPersons", [])] }],
+    });
+    const links = buildSymbolLinks([specFile("/find-persons", "GET"), test]);
+    expect(links.some((l) => l.targetFile.includes("Test"))).toBe(false);
+
+    const a = file("api/A.cs", "app", { classes: [{ ...cls("A"), methods: [fn("findPersons", [])] }] });
+    const b = file("api/B.cs", "app", { classes: [{ ...cls("B"), methods: [fn("findPersons", [])] }] });
+    const ambiguous = buildSymbolLinks([specFile("/find-persons", "GET"), a, b]);
+    expect(ambiguous.some((l) => String(l.sourceSymbol).startsWith("route:"))).toBe(false);
+  });
+});

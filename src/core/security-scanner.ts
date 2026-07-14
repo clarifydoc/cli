@@ -78,6 +78,37 @@ export function isMinifiedSource(sourceText: string): boolean {
   return maxLine >= 5000 || sourceText.length / lines >= 200;
 }
 
+/**
+ * Third-party license/attribution header — vendored source committed straight
+ * into the repo (2000s-era JS widgets, jsTree, a Kruse CalendarPopup pasted
+ * into a JSP). Head-window only; in-house code doesn't open with a
+ * grant-of-rights. NOTE: some open-source projects stamp a license header on
+ * EVERY authored file — that's why this flag is only honored at aggregation
+ * when licensed files are a small minority of the repo (see analyzer.ts),
+ * never as a per-file scan skip.
+ */
+const THIRD_PARTY_LICENSE_RE =
+  /Permission is hereby granted|The MIT License|terms of the MIT License|opensource\.org\/licenses|You may use this code for any purpose|Released under the (?:MIT|BSD|Apache|GPL|LGPL|MPL)|Licensed under the (?:MIT|BSD|Apache|GPL|LGPL|MPL)/i;
+
+export function isVendoredSource(sourceText: string): boolean {
+  return THIRD_PARTY_LICENSE_RE.test(sourceText.slice(0, 4096));
+}
+
+/**
+ * The license-headered files to treat as vendored — ONLY when they're a small
+ * minority of the repo. An open-source project stamps a license header on
+ * every authored file; treating those as vendored would silently disable its
+ * scanning, so a repo-wide convention disables the flag instead.
+ */
+export function vendoredMinoritySet(
+  analyses: ReadonlyArray<{ filePath: string; vendored?: boolean }>,
+): Set<string> {
+  const licensed = analyses.filter((a) => a.vendored).map((a) => a.filePath);
+  return new Set(
+    licensed.length > 0 && licensed.length / analyses.length < 0.25 ? licensed : [],
+  );
+}
+
 /** Merged generic + plugin rules per language, sorted by priority (cached). */
 const mergedRulesCache = new Map<Language, readonly SecurityRule[]>();
 

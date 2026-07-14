@@ -2,10 +2,10 @@ import { readFileSync, existsSync } from "fs";
 import { sep, posix, resolve, dirname } from "path";
 
 /**
- * Full gitignore-semantics ignore-file support for reverseDoc.
+ * Full gitignore-semantics ignore-file support for ClarifyDoc.
  *
  * Ported from graphify-7 (detect.py:397-522). Implements:
- *   - .reverseDocignore at the project root and ancestor directories
+ *   - .clarifydocignore at the project root and ancestor directories
  *   - Walking up to the nearest VCS root as a ceiling
  *   - Last-match-wins semantics with `!` negation
  *   - Anchored patterns (`/foo`) vs unanchored (`foo`)
@@ -17,17 +17,17 @@ import { sep, posix, resolve, dirname } from "path";
  */
 
 const VCS_MARKERS = [".git", ".hg", ".svn", "_darcs", ".fossil"] as const;
-const IGNORE_FILENAME = ".reverseDocignore";
+const IGNORE_FILENAME = ".clarifydocignore";
 
 export interface IgnorePattern {
-  /** Absolute path of the directory that contained the .reverseDocignore */
+  /** Absolute path of the directory that contained the .clarifydocignore */
   anchor: string;
   /** Raw pattern as written (still carries leading `!` and `/`) */
   pattern: string;
 }
 
 /**
- * Read .reverseDocignore files from the scan root up to the nearest VCS root
+ * Read .clarifydocignore files from the scan root up to the nearest VCS root
  * and return patterns in outer→inner order. Inner patterns win on equal-match
  * via last-match-wins traversal in isIgnored.
  */
@@ -62,7 +62,7 @@ export function loadIgnorePatterns(root: string): IgnorePattern[] {
 }
 
 /**
- * Parse a single .reverseDocignore line per the gitignore spec.
+ * Parse a single .clarifydocignore line per the gitignore spec.
  * Returns null for blank lines and full-line comments.
  */
 export function parseIgnoreLine(raw: string): string | null {

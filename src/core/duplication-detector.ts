@@ -1,5 +1,6 @@
 import type { FileAnalysis, DuplicateGroup } from "../types/analysis.js";
 import { isTestFile } from "./test-file-detector.js";
+import { vendoredMinoritySet } from "./security-scanner.js";
 
 /** Common/idiomatic function names that are expected to repeat across files */
 const IDIOMATIC_NAMES = new Set([
@@ -72,7 +73,10 @@ export function detectDuplicates(analyses: FileAnalysis[]): DuplicateGroup[] {
   // bundled artifacts are excluded too: a webpack bundle carries compiled
   // COPIES of authored functions, so every source function would pair with
   // its own build output.
-  const authored = analyses.filter((a) => !a.minified && !isTestFile(a.filePath, a.language));
+  const vendored = vendoredMinoritySet(analyses);
+  const authored = analyses.filter(
+    (a) => !a.minified && !vendored.has(a.filePath) && !isTestFile(a.filePath, a.language),
+  );
 
   // ── Name-based duplication ──
   const fnByName = new Map<string, { filePath: string; line: number; fn: FileAnalysis["functions"][0] }[]>();

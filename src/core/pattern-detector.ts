@@ -182,15 +182,24 @@ export function detectPatterns(
 
     // ── Anti-patterns ──
 
-    // God Object: 15+ functions/methods
-    if (totalFnCount > 15) {
+    // God Object: 15+ functions/methods. Trivial accessors don't count — a
+    // Java/C# entity with 20 hand-written getters/setters is a data holder,
+    // not a god object (each is ≤3 lines with at most one parameter).
+    const isTrivialAccessor = (fn: { name: string; line: number; endLine: number; params: unknown[] }): boolean =>
+      /^(?:get|set|is|has)[A-Z_$]/.test(fn.name.split(".").pop() ?? "") &&
+      fn.endLine - fn.line <= 2 &&
+      fn.params.length <= 1;
+    const godFnCount =
+      a.functions.filter((f) => !isTrivialAccessor(f)).length +
+      allMethods.filter((m) => !isTrivialAccessor(m)).length;
+    if (godFnCount > 15) {
       patterns.push({
         kind: "god-object",
         name: a.filePath.replace(/^.*[\\/]/, ""),
         filePath: a.filePath,
         line: 1,
-        confidence: totalFnCount > 25 ? "high" : "medium",
-        detail: `File has ${totalFnCount} functions/methods. Consider splitting.`,
+        confidence: godFnCount > 25 ? "high" : "medium",
+        detail: `File has ${godFnCount} non-accessor functions/methods${godFnCount === totalFnCount ? "" : ` (${totalFnCount} total)`}. Consider splitting.`,
       });
     }
 

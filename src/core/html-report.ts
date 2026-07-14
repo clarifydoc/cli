@@ -77,6 +77,6 @@ export async function renderReportFromTemplate(payload: ReportPayload): Promise<
       `report viewer template not found at ${TEMPLATE_URL} — run "npm run build:viewer" to build it`,
     );
   }
-  const html = replaceToken(template, "__REVERSEDOC_TITLE__", esc(`reverseDoc — ${payload.projectName}`));
-  return replaceToken(html, "__REVERSEDOC_PAYLOAD__", encodeReportPayload(payload));
+  const html = replaceToken(template, "__CLARIFYDOC_TITLE__", esc(`ClarifyDoc — ${payload.projectName}`));
+  return replaceToken(html, "__CLARIFYDOC_PAYLOAD__", encodeReportPayload(payload));
 }

@@ -14,7 +14,7 @@ import { extractKtorRoutes } from "./ktor.js";
 export const javaKotlinRouteExtractor: RouteExtractor = {
   languages: ["java", "kotlin"],
 
-  extractRoutes(tree: Tree, sourceText: string): RouteInfo[] {
+  extractRoutes(tree: Tree, sourceText: string, filePath?: string): RouteInfo[] {
     const routes: RouteInfo[] = [];
 
     if (sourceText.includes("Mapping")) {
@@ -23,7 +23,11 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
       if (routes.length === 0) extractSpringRoutesRegex(sourceText, routes);
     }
 
-    if (/@(Path|Controller)\b/.test(sourceText)) {
+    // A JAX-RS interface under a client/ package is an OUTBOUND proxy
+    // definition (CXF/RESTEasy client), not a served resource — extracting it
+    // as a route would invert the call direction.
+    const isClientFile = !!filePath && /(^|\/)clients?\//i.test(filePath.replace(/\\/g, "/"));
+    if (!isClientFile && /@(Path|Controller)\b/.test(sourceText)) {
       extractJaxrsMicronautRoutes(tree.rootNode, routes);
     }
 
