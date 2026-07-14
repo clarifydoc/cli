@@ -16,7 +16,13 @@ const summary = {
   subProjects: [],
   fileProjects: {},
   files: ["src/a.ts", "src/b.ts"],
-  componentGraph: {},
+  componentGraph: { "src/a.ts": ["src/b.ts"] },
+  complexity: [
+    {
+      filePath: "src/a.ts", totalComplexity: 5, maxComplexity: 5, averageComplexity: 5,
+      functions: [{ functionName: "f", complexity: 5, line: 1, endLine: 9 }],
+    },
+  ],
   linkGraph: [{ source: "src/a.ts", target: "src/b.ts", proximity: 1, reason: "import", calls: [] }],
   routeMap: [],
   apiCalls: [],
@@ -68,10 +74,54 @@ const summary = {
 
 describe("buildReportPayload wire encoding", () => {
   const payload = buildReportPayload(summary);
+  const strOf = (i: unknown) => payload.wireStrings![i as number];
 
-  it("encodes file paths on the big arrays as files[] indices", () => {
-    expect(payload.symbolLinks[0]).toMatchObject({ sourceFile: 0, targetFile: 1 });
-    expect(payload.linkGraph[0]).toMatchObject({ source: 0, target: 1 });
+  it("emits symbolLinks as tuples with files[]-index and wireStrings-index refs", () => {
+    const t = payload.symbolLinks[0];
+    expect(Array.isArray(t)).toBe(true);
+    expect(t[0]).toBe(0); // sourceFile → files[0]
+    expect(t[4]).toBe(1); // targetFile → files[1]
+    expect(strOf(t[1])).toBe("f");
+    expect(strOf(t[3])).toBe("g");
+    expect(strOf(t[5])).toBe("g");
+    expect(t[2]).toBe(1);
+    expect(t[6]).toBe(2);
+    expect(t.length).toBe(7); // no resolvedBy/confidence/navigational → meta omitted
+  });
+
+  it("packs resolvedBy/confidence/navigational into the meta slot", () => {
+    const withMeta = buildReportPayload({
+      ...(summary as object),
+      symbolLinks: [
+        {
+          sourceFile: "src/a.ts", sourceSymbol: "f", sourceLine: 1, callName: "g",
+          targetFile: "src/b.ts", targetSymbol: "g", targetLine: 2,
+          resolvedBy: "lsp", confidence: "INFERRED", navigational: true,
+        },
+      ],
+    } as unknown as ProjectAnalysis);
+    expect(withMeta.symbolLinks[0][7]).toBe(2 * 100 + 2 * 10 + 1);
+  });
+
+  it("emits linkGraph and complexity as tuples", () => {
+    const l = payload.linkGraph[0];
+    expect(l[0]).toBe(0);
+    expect(l[1]).toBe(1);
+    expect(l[2]).toBe(1); // proximity
+    expect(strOf(l[3])).toBe("import");
+
+    const c = payload.complexity[0];
+    expect(c[0]).toBe(0); // filePath → files[0]
+    expect(c[1]).toBe(5); // total
+    expect(c[4]).toEqual([[expect.any(Number), 5, 1, 9]]);
+    expect(strOf(c[4][0][0])).toBe("f");
+  });
+
+  it("emits componentGraph as [fileRef, depRefs[]] pairs", () => {
+    expect(payload.componentGraph).toEqual([[0, [1]]]);
+  });
+
+  it("encodes blast/churn/hotspot file paths as files[] indices", () => {
     const b = payload.blastRadius[0];
     expect(b.filePath).toBe(1);
     expect(b.affectedFiles).toEqual([0]);
@@ -82,7 +132,7 @@ describe("buildReportPayload wire encoding", () => {
   });
 
   it("keeps non-files[] paths as verbatim strings", () => {
-    expect(payload.symbolLinks[1].targetFile).toBe("node_modules/x.ts");
+    expect(payload.symbolLinks[1][4]).toBe("node_modules/x.ts");
   });
 
   it("encodes classGraph edges as node indices, keeps node ids", () => {
@@ -94,6 +144,9 @@ describe("buildReportPayload wire encoding", () => {
   it("NEVER mutates the summary (it is written to disk afterwards)", () => {
     expect(summary.symbolLinks[0]!.sourceFile).toBe("src/a.ts");
     expect(summary.linkGraph[0]!.source).toBe("src/a.ts");
+    expect(summary.componentGraph["src/a.ts"]).toEqual(["src/b.ts"]);
+    expect(summary.complexity![0]!.filePath).toBe("src/a.ts");
+    expect(summary.complexity![0]!.functions[0]!.functionName).toBe("f");
     expect(summary.blastRadius![0]!.filePath).toBe("src/b.ts");
     expect(summary.blastRadius![0]!.affectedFiles[0]).toBe("src/a.ts");
     expect(summary.blastRadius![0]!.traceImpact!.screens[0]!.file).toBe("src/a.ts");

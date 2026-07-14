@@ -28,7 +28,8 @@ export interface ReportPayload {
   fileProjects: Record<string, string>;
   routeMap: any[];
   apiCalls: any[];
-  componentGraph: Record<string, string[]>;
+  /** Wire form: `[fileRef, depRef[]][]` (decoded back to a Record client-side). */
+  componentGraph: any;
   fileLayerMap: Record<string, string>;
   generatedRoots: string[];
   unusedFiles: string[];
@@ -56,6 +57,9 @@ export interface ReportPayload {
   migrations: any[];
   externalPackages: any[];
   deployment: any;
+  /** Shared string table for tuple-encoded fields (symbol names, call names,
+   * link reasons) — see the wire-encoding note on buildReportPayload. */
+  wireStrings?: string[];
   /** The DEFERRED_FIELDS list, carried in the data so serve-time consumers
    * (application/server/report-cache.ts) slice on the producer's list instead
    * of a hand-synced copy. */
@@ -91,6 +95,81 @@ function refEncoder(files: string[]): (p: string) => string | number {
   const idx = new Map<string, number>();
   files.forEach((f, i) => idx.set(f, i));
   return (p) => idx.get(p) ?? p;
+}
+
+/**
+ * Shared string table for the tuple-encoded fields: symbol names, call names
+ * and link reasons repeat heavily (one caller emits many links; reasons come
+ * from a tiny set), so each distinct string is stored once in
+ * `payload.wireStrings` and referenced by index.
+ */
+function stringTable() {
+  const table: string[] = [];
+  const idx = new Map<string, number>();
+  const sym = (v: string): number | string => {
+    if (typeof v !== "string") return v;
+    let i = idx.get(v);
+    if (i === undefined) {
+      idx.set(v, (i = table.length));
+      table.push(v);
+    }
+    return i;
+  };
+  return { table, sym };
+}
+
+// Enum packing for the symbolLinks tuple's trailing meta slot:
+//   meta = resolvedBy*100 + confidence*10 + navigational   (omitted when 0)
+const RESOLVED_ENUM: Record<string, number> = { text: 1, lsp: 2 };
+const CONF_ENUM: Record<string, number> = { EXTRACTED: 1, INFERRED: 2, AMBIGUOUS: 3 };
+
+/**
+ * symbolLinks wire row (the payload's biggest field — 58k rows on a 5k-file
+ * corpus repeated ~90 chars of KEY NAMES per row as objects):
+ *   [sourceFile, sourceSymbol, sourceLine, callName, targetFile, targetSymbol, targetLine, meta?]
+ */
+function encodeSymbolLink(
+  l: any,
+  ref: (p: string) => string | number,
+  sym: (v: string) => number | string,
+): unknown[] {
+  const meta =
+    (RESOLVED_ENUM[l.resolvedBy] ?? 0) * 100 +
+    (CONF_ENUM[l.confidence] ?? 0) * 10 +
+    (l.navigational ? 1 : 0);
+  const row = [
+    ref(l.sourceFile), sym(l.sourceSymbol), l.sourceLine, sym(l.callName),
+    ref(l.targetFile), sym(l.targetSymbol), l.targetLine,
+  ];
+  if (meta !== 0) row.push(meta);
+  return row;
+}
+
+/** linkGraph wire row: [source, target, proximity, reason, calls[], confidence?] */
+function encodeLink(
+  l: any,
+  ref: (p: string) => string | number,
+  sym: (v: string) => number | string,
+): unknown[] {
+  const conf = CONF_ENUM[l.confidence] ?? 0;
+  const row = [
+    ref(l.source), ref(l.target), l.proximity, sym(l.reason),
+    (l.calls ?? []).map(sym),
+  ];
+  if (conf !== 0) row.push(conf);
+  return row;
+}
+
+/** complexity wire row: [filePath, total, max, avg, [[fn, cx, line, endLine], …]] */
+function encodeComplexity(
+  c: any,
+  ref: (p: string) => string | number,
+  sym: (v: string) => number | string,
+): unknown[] {
+  return [
+    ref(c.filePath), c.totalComplexity, c.maxComplexity, c.averageComplexity,
+    c.functions.map((f: any) => [sym(f.functionName), f.complexity, f.line, f.endLine]),
+  ];
 }
 
 function encodeBlastRow(b: any, ref: (p: string) => string | number): any {
@@ -150,6 +229,7 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
   const s = summary as any;
   const projectName = basename(summary.projectRoot || "project");
   const ref = refEncoder(summary.files ?? []);
+  const { table: wireStrings, sym } = stringTable();
   return {
     projectName,
     // Absolute root the analysis ran against — used client-side to build
@@ -161,7 +241,7 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
     frameworks: summary.detectedFrameworks.map((f) => ({ name: f.name, confidence: f.confidence })),
     files: summary.files,
     interactiveElements: s.interactiveElements ?? [],
-    linkGraph: (s.linkGraph ?? []).map((l: any) => ({ ...l, source: ref(l.source), target: ref(l.target) })),
+    linkGraph: (s.linkGraph ?? []).map((l: any) => encodeLink(l, ref, sym)),
     screens: s.screens ?? [],
     componentUsage: (s.componentUsage ?? []).map((c: any) => ({
       name: c.name,
@@ -169,11 +249,7 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
       filePath: c.filePath,
       line: c.line,
     })),
-    symbolLinks: (s.symbolLinks ?? []).map((l: any) => ({
-      ...l,
-      sourceFile: ref(l.sourceFile),
-      targetFile: ref(l.targetFile),
-    })),
+    symbolLinks: (s.symbolLinks ?? []).map((l: any) => encodeSymbolLink(l, ref, sym)),
     componentLaunches: s.componentLaunches ?? [],
     subProjects: s.subProjects ?? [{ id: "root", name: "(root)", root: "", kind: "root", markers: [] }],
     fileProjects: s.fileProjects ?? {},
@@ -192,14 +268,17 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
       filePath: c.filePath,
       line: c.line,
     })),
-    componentGraph: summary.componentGraph ?? {},
+    componentGraph: Object.entries(summary.componentGraph ?? {}).map(([f, deps]) => [
+      ref(f),
+      deps.map(ref),
+    ]),
     fileLayerMap: summary.fileLayerMap ?? {},
     generatedRoots: summary.generatedRoots ?? [],
     unusedFiles: summary.unusedFiles ?? [],
     healthScore: summary.healthScore ?? null,
     patterns: summary.patterns ?? [],
     securityIssues: summary.securityIssues ?? [],
-    complexity: summary.complexity ?? [],
+    complexity: (summary.complexity ?? []).map((c) => encodeComplexity(c, ref, sym)),
     suggestions: summary.suggestions ?? [],
     duplicates: summary.duplicates ?? [],
     layerViolations: summary.layerViolations ?? [],
@@ -220,6 +299,9 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
     migrations: s.migrations ?? [],
     externalPackages: s.externalPackages ?? [],
     deployment: s.deployment ?? null,
+    // Placed last: the object literal evaluates top-to-bottom, so every sym()
+    // call above has already populated the table by the time this reads it.
+    wireStrings,
     deferredFields: [...DEFERRED_FIELDS],
   };
 }
