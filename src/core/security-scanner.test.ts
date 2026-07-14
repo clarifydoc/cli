@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scanSecurity } from "./security-scanner.js";
+import { scanSecurity, isVendoredSource, vendoredMinoritySet } from "./security-scanner.js";
 
 const cats = (src: string, filePath = "src/app.ts") =>
   scanSecurity(src, filePath, "typescript").map((i) => i.category);
@@ -106,5 +106,44 @@ describe("scanSecurity — minified/bundle skip", () => {
   it("still scans normal source of the same size", () => {
     const normal = "function f(x) {\n  el.innerHTML = userInput;\n}\n".repeat(100);
     expect(scanSecurity(normal, "src/app.ts", "typescript").map((i) => i.category)).toContain("xss");
+  });
+});
+
+describe("vendored third-party source detection", () => {
+  const kruse = `// ===================================================
+// Author: Matt Kruse <matt@mattkruse.com>
+// WWW: http://www.mattkruse.com/
+// NOTICE: You may use this code for any purpose, commercial or
+// private, without any further permission from the author.
+// ===================================================
+function PopupWindow_getXYPosition() { document.all[x].innerHTML = y; }`;
+
+  const jstree = `/*!
+ * jsTree 3.0.0
+ * http://jstree.com/
+ * Copyright (c) 2014 Ivan Bozhanov (http://vakata.com)
+ * Licensed same as jquery - under the terms of the MIT License
+ *   http://www.opensource.org/licenses/mit-license.php
+ */
+(function (factory) {})();`;
+
+  it("recognizes grant-of-rights and MIT headers", () => {
+    expect(isVendoredSource(kruse)).toBe(true);
+    expect(isVendoredSource(jstree)).toBe(true);
+  });
+
+  it("does not flag plain corporate copyright headers", () => {
+    expect(isVendoredSource(`/*\n * Copyright (c) 2019 Acme Motors Ltd. All rights reserved.\n */\nclass X {}`)).toBe(false);
+  });
+
+  it("vendoredMinoritySet honors the flag only when licensed files are a minority", () => {
+    const files = (n: number, vendoredCount: number) =>
+      Array.from({ length: n }, (_, i) => ({ filePath: `f${i}.js`, vendored: i < vendoredCount }));
+    // 3 of 100 → vendored
+    expect(vendoredMinoritySet(files(100, 3)).size).toBe(3);
+    // 80 of 100 → repo-wide license convention, flag disabled
+    expect(vendoredMinoritySet(files(100, 80)).size).toBe(0);
+    // none licensed → empty
+    expect(vendoredMinoritySet(files(10, 0)).size).toBe(0);
   });
 });

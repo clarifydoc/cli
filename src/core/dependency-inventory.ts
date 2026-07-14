@@ -15,7 +15,7 @@ import { classifyKnownPackage, type KnownPackageEntry } from "../extractors/regi
  * Project-wide third-party dependency inventory.
  *
  * Where `framework-detector.ts` answers "is framework X present?" from a fixed
- * allowlist, this module answers the broader reverse-doc question: *what is the
+ * allowlist, this module answers the broader question: *what is the
  * full external surface of this codebase, and how much of it is actually live?*
  * It (1) parses every manifest ecosystem for declared dependencies, (2) buckets
  * each into a functional category, (3) cross-references the declarations against

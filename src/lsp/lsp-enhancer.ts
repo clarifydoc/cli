@@ -414,12 +414,12 @@ async function resolveUnresolvedCalls(
         if (definitions.length > 0) {
           const def = definitions[0]!;
           record.target = { file: def.uri, line: def.line + 1 }; // back to 1-based
-        } else if (process.env.REVERSEDOC_LSP_DEBUG) {
+        } else if (process.env.CLARIFYDOC_LSP_DEBUG) {
           console.error(`  [lsp-debug] def EMPTY ${item.sourceFile}:${pos.line}:${pos.column} ${item.call.name}`);
         }
       } catch (err) {
         // Individual request failed — recorded as unresolved
-        if (process.env.REVERSEDOC_LSP_DEBUG) {
+        if (process.env.CLARIFYDOC_LSP_DEBUG) {
           console.error(`  [lsp-debug] def FAIL ${item.sourceFile}:${pos.line}:${pos.column} ${item.call.name}: ${(err as Error).message}`);
         }
       } finally {

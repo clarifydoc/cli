@@ -11,7 +11,7 @@ import { detectSubProjects } from "./core/project-detector.js";
 const program = new Command();
 
 program
-  .name("reversedoc")
+  .name("clarifydoc")
   .description(
     "Extract structured information from any codebase — routes, endpoints, data flow, components",
   )
@@ -21,7 +21,7 @@ program
   .command("analyze")
   .description("Analyze a codebase and generate per-file JSON reports")
   .argument("<path>", "Path to project root")
-  .option("-o, --output <dir>", "Output directory", ".reversedoc")
+  .option("-o, --output <dir>", "Output directory", ".clarifydoc")
   .option("--include <globs...>", "Additional file patterns to include")
   .option("--exclude <globs...>", "Additional file patterns to exclude")
   .option("--max-files <n>", "Maximum number of files to analyze", parseInt)
@@ -161,7 +161,7 @@ program
     "Project a set of changed files onto an existing analysis: impacted screens, API routes, entities, queues and tests",
   )
   .argument("<path>", "Path to project root (a git repository unless --files is given)")
-  .option("-o, --output <dir>", "Analysis output directory (same value as `analyze -o`)", ".reversedoc")
+  .option("-o, --output <dir>", "Analysis output directory (same value as `analyze -o`)", ".clarifydoc")
   .option("--base <ref>", "Git ref to diff the working tree against", "HEAD")
   .option("--staged", "Use staged changes only (git diff --cached)", false)
   .option("--files <files...>", "Explicit changed-file list, project-relative (skips git)")
@@ -179,7 +179,7 @@ program
       } catch {
         throw new Error(
           `No analysis found at ${analysisDir}.\n` +
-            `Run first: reversedoc analyze ${path} -o ${options.output} --incremental`,
+            `Run first: clarifydoc analyze ${path} -o ${options.output} --incremental`,
         );
       }
 

@@ -110,3 +110,20 @@ describe("synthesizeReferencedTableEntities", () => {
     expect(g.edges).toHaveLength(0); // eloquent edges are buildEntityGraph's job
   });
 });
+
+describe("ORM-suffix dedupe (JPA `XEntity` classes vs repository-derived names)", () => {
+  it("does NOT synthesize a node when a real `<name>Entity` class covers the table", () => {
+    const g = graph(["CustomerEntity", "CachedItemEntity"]);
+    synthesizeReferencedTableEntities(
+      [analysis("a.java", ["customer", "cachedItem"])],
+      g,
+    );
+    expect(g.nodes.filter((n) => n.orm === "inferred")).toEqual([]);
+  });
+
+  it("still synthesizes genuinely unmodeled tables next to Entity-suffixed ones", () => {
+    const g = graph(["CustomerEntity"]);
+    synthesizeReferencedTableEntities([analysis("a.java", ["customer", "auditlog"])], g);
+    expect(g.nodes.filter((n) => n.orm === "inferred").map((n) => n.name)).toEqual(["auditlog"]);
+  });
+});

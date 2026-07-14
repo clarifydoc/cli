@@ -20,7 +20,7 @@ import type { FileChurnInfo, FileComplexityInfo, HotspotInfo } from "../types/an
  */
 
 export interface GitHistoryOptions {
-  /** git binary; defaults to $REVERSEDOC_GIT then "git". */
+  /** git binary; defaults to $CLARIFYDOC_GIT then "git". */
   gitBin?: string;
   /** History window in months (default 24). */
   months?: number;
@@ -57,7 +57,7 @@ export async function collectGitHistory(
   currentFiles: string[],
   options: GitHistoryOptions = {},
 ): Promise<GitHistoryResult> {
-  const gitBin = options.gitBin ?? process.env.REVERSEDOC_GIT ?? "git";
+  const gitBin = options.gitBin ?? process.env.CLARIFYDOC_GIT ?? "git";
   const months = options.months ?? 24;
   const maxCommits = options.maxCommits ?? 10_000;
   const timeoutMs = options.timeoutMs ?? 30_000;

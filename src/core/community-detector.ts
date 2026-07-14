@@ -3,7 +3,7 @@ import type { LinkInfo } from "../types/analysis.js";
 /**
  * Hand-rolled Louvain community detection — no external graph libraries.
  *
- * Models reverseDoc's directed linkGraph as an undirected weighted graph (parallel
+ * Models ClarifyDoc's directed linkGraph as an undirected weighted graph (parallel
  * edges are summed). Runs the classic two-phase Louvain loop: local
  * modularity-maximizing moves → contract → repeat until no improvement.
  *

@@ -64,6 +64,7 @@ import { dedupSymbolLinks, dropNameCollisionReferences } from "./symbol-dedup.js
 import { synthesizeApiRouteSymbolLinks, synthesizeQueueSymbolLinks } from "./api-route-symbol-links.js";
 import { aggregateTypeBlast, buildClassGraph } from "./data-model-blast.js";
 import { buildDataAccessGraph, attributeDataAccessToSymbols } from "./data-access-graph.js";
+import { vendoredMinoritySet } from "./security-scanner.js";
 import { buildEntityGraph, reconcileEntityInheritance, linkEntityModels, synthesizeReferencedTableEntities } from "./entity-graph.js";
 import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
@@ -426,7 +427,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Per-file analysis is CPU-bound (tree-sitter + extractors), so spread it
   // across worker threads when the project is big enough to amortize worker
   // startup. Falls back to in-process analysis when workers are unavailable
-  // (e.g. running from source, REVERSEDOC_WORKERS=0, or tiny projects).
+  // (e.g. running from source, CLARIFYDOC_WORKERS=0, or tiny projects).
   const poolSize = AnalysisWorkerPool.defaultSize(files.length);
   const pool = poolSize > 0 ? AnalysisWorkerPool.create(poolSize, analyzeFile) : null;
   const runTask = (task: FileTask): Promise<FileResult | null> =>
@@ -697,8 +698,9 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     progress.detail(`  Unused (generated): ${unusedFiles.length} file(s) under ${generatedRoots.join(", ")}`);
   }
   const minifiedFiles = new Set(allAnalyses.filter((a) => a.minified).map((a) => a.filePath));
+  const vendoredFiles = vendoredMinoritySet(allAnalyses);
   const isUnauthored = (f: string): boolean => {
-    if (minifiedFiles.has(f)) return true;
+    if (minifiedFiles.has(f) || vendoredFiles.has(f)) return true;
     if (generatedRoots.length === 0) return false;
     const p = f.replace(/\\/g, "/");
     return generatedRoots.some((r) => p === r || p.startsWith(r + "/"));

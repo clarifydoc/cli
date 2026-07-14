@@ -129,3 +129,25 @@ public interface PetClient {
     expect(await routesOf(SRC, "PetClient.java")).toEqual([]);
   });
 });
+
+describe("JAX-RS client-proxy fence", () => {
+  const CLIENT_SRC = `package x;
+import jakarta.ws.rs.*;
+
+@Path("/supplier/v1")
+public interface SupplierApiJakarta {
+  @GET
+  @Path("/suppliers")
+  Suppliers getSuppliers(@QueryParam("supplierIds") List<String> ids);
+}`;
+
+  it("does NOT read a JAX-RS interface under a client/ package as a served route", async () => {
+    const routes = await routesOf(CLIENT_SRC, "src/main/java/com/x/client/supplier/SupplierApiJakarta.java");
+    expect(routes).toEqual([]);
+  });
+
+  it("still extracts the same interface outside a client/ package", async () => {
+    const routes = await routesOf(CLIENT_SRC, "src/main/java/com/x/api/supplier/SupplierApiJakarta.java");
+    expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /supplier/v1/suppliers"]);
+  });
+});

@@ -52,7 +52,7 @@ export class AnalysisWorkerPool {
 
   /** A sensible pool size: leave a core for the main thread, cap the total. */
   static defaultSize(fileCount: number): number {
-    const envOverride = Number(process.env.REVERSEDOC_WORKERS);
+    const envOverride = Number(process.env.CLARIFYDOC_WORKERS);
     if (Number.isInteger(envOverride) && envOverride >= 0) return envOverride;
     // Workers only pay off once there are enough files to amortize pool
     // startup (~0.5-1s for module + WASM grammar init across the pool).

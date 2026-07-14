@@ -58,7 +58,7 @@ export function emitTypeRefs(
  * unions). Returns one record per identifier found, tagged with whether the
  * identifier was the outermost type or a generic-arg / union-member.
  *
- * Handles the shapes reverseDoc's extractors emit today:
+ * Handles the shapes ClarifyDoc's extractors emit today:
  *   - Optionals:   `User?`, `User | null`, `User | undefined`, `Optional<User>`, `Optional[User]`
  *   - Arrays:      `User[]`, `Array<User>`, `List<User>`, `IEnumerable<User>`, `[]User` (Go), `Vec<User>`
  *   - Generics:    `Promise<User>`, `Map<string, User>`, `Dict[str, User]` (Python)

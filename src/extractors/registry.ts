@@ -51,6 +51,7 @@ import { qtuiManifest } from "./plugins/qtui/manifest.js";
 import { xamlManifest } from "./plugins/xaml/manifest.js";
 import { jspManifest } from "./plugins/jsp/manifest.js";
 import { springxmlManifest } from "./plugins/springxml/manifest.js";
+import { jsightManifest } from "./plugins/jsight/manifest.js";
 
 /** All plugin manifests, in registration order (order is observable — keep stable). */
 const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
@@ -62,7 +63,7 @@ const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
   goManifest, rustManifest, rubyManifest, swiftManifest, luaManifest, scalaManifest, perlManifest,
   vbManifest, sqlManifest, cManifest, cppManifest, prismaManifest, dartManifest, elixirManifest, erlangManifest, objcManifest,
   haskellManifest, clojureManifest, blazorManifest, htmlManifest, qmlManifest, qtuiManifest, xamlManifest,
-  jspManifest, springxmlManifest,
+  jspManifest, springxmlManifest, jsightManifest,
 ];
 
 const MANIFEST_BY_LANGUAGE = new Map<Language, LanguagePluginManifest>();
@@ -118,6 +119,7 @@ const LOADERS: readonly PluginLoader[] = [
   { languages: ["xaml"], load: () => import("./plugins/xaml/meta.js").then((m) => [m.xamlMeta]) },
   { languages: ["jsp"], load: () => import("./plugins/jsp/meta.js").then((m) => [m.jspMeta]) },
   { languages: ["springxml"], load: () => import("./plugins/springxml/meta.js").then((m) => [m.springxmlMeta]) },
+  { languages: ["jsight"], load: () => import("./plugins/jsight/meta.js").then((m) => [m.jsightMeta]) },
 ];
 
 const LOADER_BY_LANGUAGE = new Map<Language, PluginLoader>();

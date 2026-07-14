@@ -33,7 +33,7 @@ export const LSP_CONFIGS: LspDockerConfig[] = [
   {
     id: "typescript",
     languageIds: ["typescript", "javascript"],
-    dockerImage: "reversedoc-lsp-typescript",
+    dockerImage: "clarifydoc-lsp-typescript",
     dockerfilePath: resolve(projectDir, "docker/typescript"),
     serverCommand: [], // Uses ENTRYPOINT from Dockerfile
     mountPath: "/workspace",
@@ -49,7 +49,7 @@ export const LSP_CONFIGS: LspDockerConfig[] = [
   {
     id: "python",
     languageIds: ["python"],
-    dockerImage: "reversedoc-lsp-python",
+    dockerImage: "clarifydoc-lsp-python",
     dockerfilePath: resolve(projectDir, "docker/python"),
     serverCommand: [],
     mountPath: "/workspace",
@@ -59,7 +59,7 @@ export const LSP_CONFIGS: LspDockerConfig[] = [
   {
     id: "java",
     languageIds: ["java"],
-    dockerImage: "reversedoc-lsp-java",
+    dockerImage: "clarifydoc-lsp-java",
     dockerfilePath: resolve(projectDir, "docker/java"),
     serverCommand: [],
     mountPath: "/workspace",
@@ -70,7 +70,7 @@ export const LSP_CONFIGS: LspDockerConfig[] = [
   {
     id: "kotlin",
     languageIds: ["kotlin"],
-    dockerImage: "reversedoc-lsp-kotlin",
+    dockerImage: "clarifydoc-lsp-kotlin",
     dockerfilePath: resolve(projectDir, "docker/kotlin"),
     serverCommand: [],
     mountPath: "/workspace",
@@ -80,7 +80,7 @@ export const LSP_CONFIGS: LspDockerConfig[] = [
   {
     id: "go",
     languageIds: ["go"],
-    dockerImage: "reversedoc-lsp-go",
+    dockerImage: "clarifydoc-lsp-go",
     dockerfilePath: resolve(projectDir, "docker/go"),
     serverCommand: [],
     mountPath: "/workspace",
@@ -91,7 +91,7 @@ export const LSP_CONFIGS: LspDockerConfig[] = [
   {
     id: "rust",
     languageIds: ["rust"],
-    dockerImage: "reversedoc-lsp-rust",
+    dockerImage: "clarifydoc-lsp-rust",
     dockerfilePath: resolve(projectDir, "docker/rust"),
     serverCommand: [],
     mountPath: "/workspace",
@@ -102,7 +102,7 @@ export const LSP_CONFIGS: LspDockerConfig[] = [
   {
     id: "ruby",
     languageIds: ["ruby"],
-    dockerImage: "reversedoc-lsp-ruby",
+    dockerImage: "clarifydoc-lsp-ruby",
     dockerfilePath: resolve(projectDir, "docker/ruby"),
     serverCommand: [],
     mountPath: "/workspace",
@@ -112,7 +112,7 @@ export const LSP_CONFIGS: LspDockerConfig[] = [
   {
     id: "php",
     languageIds: ["php"],
-    dockerImage: "reversedoc-lsp-php",
+    dockerImage: "clarifydoc-lsp-php",
     dockerfilePath: resolve(projectDir, "docker/php"),
     serverCommand: [],
     mountPath: "/workspace",
@@ -125,7 +125,7 @@ export const LSP_CONFIGS: LspDockerConfig[] = [
     // resolution for Delphi-only namespaces (VCL.*, FMX.*) is best-effort.
     id: "pascal",
     languageIds: ["pascal"],
-    dockerImage: "reversedoc-lsp-pascal",
+    dockerImage: "clarifydoc-lsp-pascal",
     dockerfilePath: resolve(projectDir, "docker/pascal"),
     serverCommand: [],
     mountPath: "/workspace",
@@ -138,7 +138,7 @@ export const LSP_CONFIGS: LspDockerConfig[] = [
     // Uses misterkiem/roslyn-plusvb fork which patches VB libs into the upstream server.
     id: "dotnet",
     languageIds: ["csharp", "vb"],
-    dockerImage: "reversedoc-lsp-dotnet",
+    dockerImage: "clarifydoc-lsp-dotnet",
     dockerfilePath: resolve(projectDir, "docker/dotnet"),
     serverCommand: [],
     mountPath: "/workspace",

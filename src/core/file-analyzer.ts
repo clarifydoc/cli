@@ -12,7 +12,7 @@ import { dirname } from "path";
 import { applyAliases, loadTsconfigAliasesForDir } from "../extractors/shared/tsconfig-aliases.js";
 import { pluginFor, astHooksFor, inferFileFrameworks, ensureLanguagesLoaded } from "../extractors/registry.js";
 import { computeComplexity } from "./complexity-analyzer.js";
-import { scanSecurity, isMinifiedSource } from "./security-scanner.js";
+import { scanSecurity, isMinifiedSource, isVendoredSource } from "./security-scanner.js";
 import { extractTypeReferences } from "./type-reference-extractor.js";
 import { enrichFileDataSources } from "./import-index.js";
 import { isTestFile } from "./test-file-detector.js";
@@ -78,6 +78,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // Flag minified/bundled artifacts once; every branch below stamps it on
     // the analysis so project-level detectors can exclude these files.
     const minified = isMinifiedSource(rawSource);
+    const vendored = isVendoredSource(rawSource);
 
     // Formats with their own dedicated parser (e.g. Delphi .dfm — no tree-sitter)
     if (filePlugin?.customParse) {
@@ -85,6 +86,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
       analysis.projectId = projectId;
       if (minified) analysis.minified = true;
+      if (vendored) analysis.vendored = true;
       applyTsconfigAliasesToImports(analysis);
       const customTypeRefs = extractTypeReferences(analysis, file.language);
       if (customTypeRefs.length > 0) analysis.typeReferences = customTypeRefs;
@@ -109,6 +111,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
       analysis.projectId = projectId;
       if (minified) analysis.minified = true;
+      if (vendored) analysis.vendored = true;
       applyTsconfigAliasesToImports(analysis);
       const fileSecurityIssues = scanSecurity(rawSource, file.relativePath, file.language);
       if (fileSecurityIssues.length > 0) analysis.securityIssues = fileSecurityIssues;
@@ -153,6 +156,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
       analysis.projectId = projectId;
       if (minified) analysis.minified = true;
+      if (vendored) analysis.vendored = true;
       applyTsconfigAliasesToImports(analysis);
       const fileSecurityIssues = scanSecurity(rawSource, file.relativePath, file.language);
       if (fileSecurityIssues.length > 0) analysis.securityIssues = fileSecurityIssues;
@@ -165,6 +169,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     const analysis = createEmptyAnalysis(file.relativePath, language);
     analysis.projectId = projectId;
     if (minified) analysis.minified = true;
+      if (vendored) analysis.vendored = true;
 
     // Language-specific AST hooks (looked up for the effective language —
     // for .vue files that's the <script> block's language).
