@@ -19,10 +19,18 @@ function walkForVueRouterConfig(node: Node, routes: RouteInfo[]) {
  * that merely HAS a `path` property. Data arrays are full of the latter —
  * category descriptors (`{ text: "Vegetables", path: "Vegetables", image }`),
  * sidebar link lists (`{ name, path, icon }`) — and each one became a phantom
- * frontend route. A real Vue Router record renders/forwards something, so it
+ * frontend route. A real SPA-router record renders/forwards something, so it
  * carries at least one of these.
+ *
+ * Covers Vue Router (`component`/`redirect`/`beforeEnter`) AND Angular Router
+ * (`loadComponent`/`loadChildren`/`redirectTo`/`canActivate`) — both are
+ * `{ path, component }[]` config arrays, so one object visitor handles both
+ * with no risk of double-emitting the shared `{ path, component }` shape.
  */
-const ROUTE_CONFIG_KEYS = new Set(["component", "components", "children", "redirect", "beforeEnter"]);
+const ROUTE_CONFIG_KEYS = new Set([
+  "component", "components", "children", "redirect", "beforeEnter",
+  "loadComponent", "loadChildren", "redirectTo", "canActivate",
+]);
 
 /** Inspect a single node for a Vue Router route config object. */
 export function visitVueRouterRoute(node: Node, routes: RouteInfo[]): void {
@@ -41,7 +49,10 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[]): void {
         if (keyText && ROUTE_CONFIG_KEYS.has(keyText)) isRouteConfig = true;
         if (keyText === "path" && value) {
           path = stripQuotes(value.text);
-        } else if (keyText === "component" && value) {
+        } else if ((keyText === "component" || keyText === "loadComponent" || keyText === "loadChildren") && value) {
+          // Angular lazy routes carry the target in a `loadComponent`/
+          // `loadChildren` thunk (`() => import('./x').then(m => m.XComponent)`)
+          // instead of a bare `component` identifier — same join target.
           handler = componentHandler(value);
           componentPath = componentSpecifier(value);
         } else if (keyText === "name" && value && handler === null) {
@@ -74,6 +85,11 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[]): void {
  * (e.g. "main") so the route reads cleanly instead of showing the raw arrow.
  */
 function componentHandler(value: Node): string {
+  // Angular `() => import('./x').then((m) => m.XComponent)` — the class named
+  // in the `.then` is the most precise handler (joins to the component symbol).
+  // The arrow param may be bare (`m`), parenthesized (`(m)`), or destructured.
+  const thenClass = value.text.match(/\.then\s*\(\s*\(?\s*(?:\w+|\{[^}]*\})\s*\)?\s*=>\s*[\w$]*\.?([A-Z][\w$]*)/);
+  if (thenClass) return thenClass[1]!;
   const lazy = value.text.match(/import\(\s*['"]([^'"]+)['"]\s*\)/);
   if (lazy) {
     return lazy[1].split("/").pop()!.replace(/\.\w+$/, "");

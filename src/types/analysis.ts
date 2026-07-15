@@ -3,7 +3,8 @@ export type Language =
   | "typescript" | "javascript" | "csharp" | "python" | "java" | "kotlin" | "pascal" | "dfm"
   | "go" | "rust" | "ruby" | "php" | "swift" | "lua" | "scala"
   | "perl" | "vb" | "sql" | "c" | "cpp" | "prisma" | "dart" | "elixir" | "erlang" | "objc"
-  | "haskell" | "clojure" | "blazor" | "html" | "qml" | "qtui" | "xaml" | "jsp" | "springxml" | "jsight";
+  | "haskell" | "clojure" | "blazor" | "html" | "qml" | "qtui" | "xaml" | "jsp" | "springxml" | "jsight"
+  | "openapi" | "graphql" | "wsdl";
 
 export interface ExtractorWarning {
   /** Dotted-path location, e.g. "functions[3].endLine" or "routes[0].kind". */
@@ -292,6 +293,21 @@ export interface FileAnalysis {
    * it to reproduce real nesting instead of the flat sub-component fallback.
    */
   templateTree?: TemplateComponentNode[];
+  /**
+   * For an Angular `@Component` that references an EXTERNAL template
+   * (`templateUrl: './x.component.html'`) instead of an inline `template:`
+   * string — the raw url. A project-level pass reads the sibling .html and
+   * back-fills this component's `interactiveElements`/`templateTree` from it
+   * (the per-file pass can't, as it never sees sibling files). Omitted for
+   * inline-template or non-Angular files.
+   */
+  angularTemplateUrl?: string;
+  /**
+   * Custom-element (Web Component) registrations in this file, so the component
+   * graph can resolve `<kebab-tag>` markup usages to the file that defines them.
+   * Omitted when the file registers none.
+   */
+  customElements?: CustomElementDef[];
   events: EventInfo[];
   screens: ScreenInfo[];
   /** Schema-validation warnings produced by validateFileAnalysis(). Omitted when empty. */
@@ -611,6 +627,22 @@ export interface SubComponentInfo {
   name: string;
   importSource: string | null;
   props: string[];
+  line: number;
+}
+
+/**
+ * A custom-element (Web Component) registration in a JS/TS file:
+ * `customElements.define("user-card", UserCard)` or Lit
+ * `@customElement("user-card") class UserCard`. Web components are used in
+ * markup by their kebab-case TAG (`<user-card>`), not by an imported symbol, so
+ * the component graph joins a `<user-card>` usage to its defining file through
+ * these registrations (a tag→file index) rather than an import path.
+ */
+export interface CustomElementDef {
+  /** The registered kebab-case tag (`user-card`). */
+  tag: string;
+  /** The implementing class/constructor name (`UserCard`). */
+  className: string;
   line: number;
 }
 

@@ -79,6 +79,31 @@ export const sidebarLinks = [
   });
 });
 
+describe("Angular Router route configs", () => {
+  it("extracts { path, component } eager routes", async () => {
+    const src = `export const routes = [
+  { path: 'users', component: UserListComponent },
+  { path: 'users/:id', component: UserDetailComponent },
+];`;
+    const routes = await routesOf(src, "app.routes.ts");
+    const byPath = new Map(routes.map((r) => [r.path, r]));
+    expect(byPath.get("users")?.handler).toBe("UserListComponent");
+    expect(byPath.get("users/:id")?.handler).toBe("UserDetailComponent");
+  });
+
+  it("extracts lazy loadComponent routes, taking the class from the .then()", async () => {
+    const src = `export const routes = [
+  { path: 'admin', loadComponent: () => import('./admin/admin.component').then(m => m.AdminComponent) },
+  { path: 'reports', loadChildren: () => import('./reports/reports.routes').then(m => m.REPORTS) },
+];`;
+    const routes = await routesOf(src, "app.routes.ts");
+    const admin = routes.find((r) => r.path === "admin");
+    expect(admin?.handler).toBe("AdminComponent");
+    expect(admin?.componentPath).toBe("./admin/admin.component");
+    expect(routes.some((r) => r.path === "reports")).toBe(true);
+  });
+});
+
 describe("ESM-TS .js specifier resolution", () => {
   const fa = (filePath: string): FileAnalysis => ({ filePath } as unknown as FileAnalysis);
 

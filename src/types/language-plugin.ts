@@ -7,6 +7,7 @@ import type {
   TypeReference,
   InteractiveElementInfo,
   SubComponentInfo,
+  CustomElementDef,
   EventInfo,
   ImportInfo,
   FileAnalysis,
@@ -124,6 +125,19 @@ export interface AstExtractorHooks {
   componentTree?(tree: Tree, sourceText: string, imports: ImportInfo[]): import("./analysis.js").TemplateComponentNode[];
   /** Component events (e.g. Vue defineEmits / emit calls). */
   events?(sourceText: string): EventInfo[];
+  /**
+   * For a component that references an EXTERNAL template file rather than an
+   * inline one (Angular `templateUrl: './x.html'`) — the raw url string, so a
+   * project-level pass can read the sibling file and back-fill the component's
+   * template-derived data. Null when the file has an inline template or none.
+   */
+  externalTemplate?(sourceText: string): string | null;
+  /**
+   * Custom-element (Web Component) registrations in the file
+   * (`customElements.define("x-y", Cls)`, Lit `@customElement("x-y")`), so the
+   * component graph can join `<x-y>` markup usages to the defining file.
+   */
+  customElements?(sourceText: string): CustomElementDef[];
   /**
    * Variable → import-source aliases, any scope
    * (`const store = useUserStore()` → store resolves to useUserStore's source).

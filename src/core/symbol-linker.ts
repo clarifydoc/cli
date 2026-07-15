@@ -53,7 +53,16 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
 
   for (const analysis of analyses) {
     const sourceFile = analysis.filePath;
-    const fileHasNoSymbols = (symbolIndex.get(sourceFile)?.size ?? 0) === 0;
+    // Spec/contract files (OpenAPI, WSDL, GraphQL, JSight) declare an API
+    // surface but no executable code. Their routes join to the implementing
+    // handler BY NAME (operationId / field / operation), not by resolving a
+    // same-repo `Controller#action` handler — so they route through the
+    // unique-or-nothing spec join below rather than the generic handler block.
+    // Gating on the file's language (not on "has no symbols") is what keeps a
+    // symbol-less-but-real route file — a Laravel `routes/web.php` whose
+    // `DashboardController#create` handler DOES need the generic resolution —
+    // out of the spec join.
+    const isSpecFile = SPEC_LANGUAGES.has(analysis.language);
 
     // Functions
     for (const fn of analysis.functions) {
@@ -82,8 +91,12 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
     for (const route of analysis.routes) {
       const sourceSymbol = `route:${route.httpMethod ?? "USE"} ${route.path}`;
 
-      // Link route → its handler method (e.g., route:GET /api/users → getAllUsers)
-      if (route.handler) {
+      // Link route → its handler method (e.g., route:GET /api/users → getAllUsers).
+      // Spec files route through the unique-or-nothing spec join below instead
+      // (their `handler` is a spec operationId, not a same-repo symbol), so the
+      // generic first-match fallback never binds an operationId to a coincidental
+      // same-named symbol.
+      if (route.handler && !isSpecFile) {
         // Extract the method name from qualified handlers like "h.ListUsers" or "UsersController#index"
         const handlerName = route.handler.includes("#")
           ? route.handler.split("#").pop()!
@@ -189,9 +202,11 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
         }
       }
 
-      // Spec-file routes (JSight/OpenAPI): the file declares the API surface
-      // but contains no code, so there is no handler and no same-file symbol.
-      if (!route.handler && route.kind === "api" && fileHasNoSymbols) {
+      // Spec-file routes (JSight/OpenAPI/WSDL/GraphQL): the file declares the
+      // API surface but contains no code, so there is no same-repo handler
+      // symbol. Join by the spec operationId (route.handler) when present, else
+      // derive a handler name from the path — unique-or-nothing, no guessing.
+      if (route.kind === "api" && isSpecFile) {
         const specLink = specRouteHandlerLink(route, sourceFile, sourceSymbol, ctx, isSpecJoinExcluded);
         if (specLink) links.push(specLink);
       }
@@ -349,6 +364,13 @@ interface ClassCatalogEntry {
 const CTOR_NAMES = new Set(["constructor", "__init__", "__construct", "New", "new"]);
 
 /**
+ * Contract/spec languages whose `api` routes declare the served surface but
+ * carry no same-repo handler code — their routes join to the implementing
+ * method BY NAME (operationId / GraphQL field / WSDL operation / JSight path).
+ */
+const SPEC_LANGUAGES: ReadonlySet<string> = new Set(["jsight", "openapi", "graphql", "wsdl"]);
+
+/**
  * Files under test-fixture/sample-data directories define symbols that mimic
  * real APIs by design — heuristic (name-uniqueness) strategies must never link
  * production code into them. Explicit imports still resolve normally.
@@ -368,7 +390,7 @@ const SPEC_JOIN_CLASS_SUFFIX_RE = /(Test|Tests|Spec|IT)\.\w+$/;
  * Unique-or-nothing across non-test files; misses stay unlinked (no guess).
  */
 function specRouteHandlerLink(
-  route: { path: string; httpMethod: string | null; line: number },
+  route: { path: string; httpMethod: string | null; line: number; handler?: string | null },
   sourceFile: string,
   sourceSymbol: string,
   ctx: LinkContext,
@@ -376,11 +398,28 @@ function specRouteHandlerLink(
 ): SymbolLink | null {
   const segment = route.path.split("/").filter((s) => s && !/[{:}]/.test(s)).pop();
   const words = segment ? segment.split(/[-_]/).filter(Boolean) : [];
-  if (words.length === 0) return null;
-  const camel = words.map((w, i) => (i === 0 ? w : w[0]!.toUpperCase() + w.slice(1))).join("");
-  const pascal = camel[0]!.toUpperCase() + camel.slice(1);
+  const camel = words.length > 0
+    ? words.map((w, i) => (i === 0 ? w : w[0]!.toUpperCase() + w.slice(1))).join("")
+    : null;
+  const pascal = camel ? camel[0]!.toUpperCase() + camel.slice(1) : null;
   const verb = (route.httpMethod ?? "").toLowerCase();
-  const candidates = verb ? [`${verb}${pascal}`, camel] : [camel];
+  // The spec operationId (`listUsers`, `UserService.getUser` → leaf `getUser`)
+  // is the most precise join key; try it before path-derived candidates. WSDL
+  // and OpenAPI carry it verbatim; JSight has none and falls to the path.
+  const opId = route.handler
+    ? route.handler.includes(".") ? route.handler.split(".").pop()! : route.handler
+    : null;
+  // A WSDL/SOAP operation is PascalCase (`GetUser`); its C# impl matches
+  // verbatim, but the Java (JAX-WS) impl de-capitalizes the first letter
+  // (`getUser`) — try both forms of the operationId.
+  const opIdLower = opId ? opId[0]!.toLowerCase() + opId.slice(1) : null;
+  const candidates = [
+    ...(opId ? [opId] : []),
+    ...(opIdLower && opIdLower !== opId ? [opIdLower] : []),
+    ...(pascal && verb ? [`${verb}${pascal}`] : []),
+    ...(camel ? [camel] : []),
+  ];
+  if (candidates.length === 0) return null;
   for (const cand of candidates) {
     // classNameIndex maps every dot-free symbol name to its defining files in
     // symbolIndex order — same uniqueness semantics as a full scan, O(hits).

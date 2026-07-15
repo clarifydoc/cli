@@ -8,8 +8,10 @@ import { extractJsxComponentTree } from "./component-tree.js";
 import {
   extractAngularComponentTree,
   extractAngularInteractiveElements,
+  extractAngularTemplateUrl,
 } from "./angular-template.js";
 import { extractEvents } from "./events.js";
+import { extractCustomElements } from "./web-components.js";
 import { javascriptCallHooks } from "./call-hooks.js";
 import { extractJsVariableAliases } from "./variable-aliases.js";
 import { vuePreprocess } from "./vue-hooks.js";
@@ -125,6 +127,8 @@ function astHooks(language: Language): AstExtractorHooks {
       return jsx.length > 0 ? jsx : extractAngularComponentTree(sourceText);
     },
     events: (sourceText) => extractEvents(sourceText, language),
+    externalTemplate: (sourceText) => extractAngularTemplateUrl(sourceText),
+    customElements: (sourceText) => extractCustomElements(sourceText),
     variableAliases: extractJsVariableAliases,
   };
 }
