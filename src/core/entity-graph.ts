@@ -353,14 +353,18 @@ export function linkEntityModels(entityGraph: EntityGraph, classGraph: ClassGrap
 
 /** Lowercase + de-pluralized match keys for a table/entity name — mirrors the
  *  keying used by `attributeDataAccessToSymbols` so the two stay in sync. */
-function tableMatchKeys(name: string): string[] {
+/**
+ * Case-insensitive match keys for an entity/table name: the name itself, a
+ * singular variant, and — because a `CustomerEntity` class models the
+ * `customer` table while repository-derived access names drop the suffix —
+ * the `entity`-suffix-stripped variants. Shared by node dedupe here and by
+ * `attributeDataAccessToSymbols` (data-access-graph.ts) so an access matches
+ * a real node instead of spawning a duplicate "inferred" one.
+ */
+export function tableMatchKeys(name: string): string[] {
   const base = name.split("::").pop()!.toLowerCase();
   const keys = [base];
   if (base.endsWith("s") && base.length > 1) keys.push(base.slice(0, -1));
-  // ORM naming convention: a `CustomerEntity` class models the `customer`
-  // table, and repository-derived access names drop the suffix — without the
-  // stripped key every such access spawns a duplicate "inferred" node.
-  // KEEP IN SYNC with entityMatchKeys in data-access-graph.ts.
   if (base.endsWith("entity") && base.length > "entity".length) {
     const stripped = base.slice(0, -"entity".length);
     keys.push(stripped);

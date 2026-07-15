@@ -171,6 +171,20 @@ export function stripTypeModifiers(input: string, language: Language): string {
   return stripDecoration(input, language);
 }
 
+/**
+ * Simple class name of a raw type annotation: `List<Account>` → "List",
+ * `a.b.Foo?` → "Foo". Null when what remains isn't a plain identifier.
+ * The one shared normalizer for declared-type strings — the symbol linker
+ * compares `FunctionInfo.localTypes` entries (produced by plugins) against
+ * its class catalog, so both ends MUST normalize identically.
+ */
+export function simpleTypeName(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const bare = raw.split("<")[0]!.replace(/\?/g, "").trim();
+  const simple = bare.split(".").pop() ?? "";
+  return /^[A-Za-z_]\w*$/.test(simple) ? simple : null;
+}
+
 function stripDecoration(input: string, _language: Language): string {
   let s = input.trim();
   if (!s) return "";

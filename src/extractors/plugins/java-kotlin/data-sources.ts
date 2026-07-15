@@ -1,6 +1,8 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { DataSourceInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
+import { simpleTypeName } from "../../shared/type-parser.js";
+import { kotlinNameAndType } from "./functions-classes.js";
 
 /**
  * Java / Kotlin data-source extractor — surfaces jOOQ, Spring Data / JPA,
@@ -175,14 +177,15 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   private fieldTypes = new Map<string, string>();
 
   override beginFile(tree: Tree): void {
-    this.tableAliases = buildTableAliases(tree.rootNode);
+    const prepass = buildFilePrepass(tree.rootNode);
+    this.tableAliases = prepass.tableAliases;
+    this.fieldTypes = prepass.fieldTypes;
     const text = tree.rootNode.text;
     this.isFeignFile = text.includes("@FeignClient");
     this.feignBasePath = this.isFeignFile
       ? (text.match(/@FeignClient\s*\(([^)]*)\)/)?.[1]?.match(/path\s*=\s*"([^"]+)"/)?.[1] ?? null)
       : null;
     this.isJooqFile = /jooq/i.test(text);
-    this.fieldTypes = buildFieldTypes(tree.rootNode);
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
@@ -274,8 +277,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // a phantom table. The receiver veto covers the same shape inside genuine
     // jOOQ files: a Capitalized bare-identifier receiver is a class (`String`,
     // `LocalDate`), never a query chain (`dsl…`, `DSL`, `STUDENT` stay eligible).
-    const classShapedReceiver = /^[A-Z][a-z]\w*$/.test(receiver.trim());
-    if (this.isJooqFile && !classShapedReceiver && JOOQ_TABLE_VERBS.has(method)) {
+    if (this.isJooqFile && JOOQ_TABLE_VERBS.has(method) && !/^[A-Z][a-z]\w*$/.test(receiver.trim())) {
       const table = resolveTableExpr(call.firstArg, this.tableAliases);
       if (table) {
         sources.push(this.ds({
@@ -379,23 +381,16 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     for (let i = args.length - 1; i >= 0; i--) {
       const arg = args[i]!;
 
-      // Java `new X(...)` / Kotlin `X(...)` constructor-call convention.
-      if (arg.type === "object_creation_expression") {
-        const t = cleanTypeName(arg.childForFieldName("type")?.text);
-        if (t && (relaxed || EVENT_TYPE_RE.test(t))) return t;
-        continue;
-      }
+      // Constructed or builder-built payload: Java `new X(...)`, Kotlin
+      // `X(...)`, or a builder chain rooted at the type (`X.newBuilder()…`).
       const text = arg.text;
-      const kotlinCtor = arg.type === "call_expression" && /^[A-Z]\w*\s*\(/.test(text);
-      if (kotlinCtor) {
-        const t = cleanTypeName(text.slice(0, text.indexOf("(")));
-        if (t && (relaxed || EVENT_TYPE_RE.test(t))) return t;
-        continue;
-      }
-
-      // Builder chain rooted at the message type: `X.newBuilder()…`.
-      const builderRoot = text.match(/^([A-Z]\w*)\s*\.\s*newBuilder\b/)?.[1];
-      if (builderRoot && (relaxed || EVENT_TYPE_RE.test(builderRoot))) return builderRoot;
+      const ctorType =
+        arg.type === "object_creation_expression"
+          ? simpleTypeName(arg.childForFieldName("type")?.text)
+          : arg.type === "call_expression" && /^[A-Z]\w*\s*\(/.test(text)
+            ? simpleTypeName(text.slice(0, text.indexOf("(")))
+            : text.match(/^([A-Z]\w*)\s*\.\s*newBuilder\b/)?.[1] ?? null;
+      if (ctorType && (relaxed || EVENT_TYPE_RE.test(ctorType))) return ctorType;
 
       // Identifier: resolve the declared type — enclosing-method local or
       // parameter first, then a class field. Always suffix-fenced: without a
@@ -538,51 +533,6 @@ function daoReceiverEntity(receiver: string, fieldTypes?: Map<string, string>): 
   return base.length > 1 ? base : null;
 }
 
-/**
- * Declared field / constructor-parameter types of the file's classes:
- * Java `field_declaration`, Kotlin class-level `property_declaration` and
- * primary-constructor `class_parameter`. Values are simple type names
- * (generics/package/nullability stripped).
- */
-function buildFieldTypes(root: Node): Map<string, string> {
-  const map = new Map<string, string>();
-  const visit = (node: Node): void => {
-    if (node.type === "field_declaration") {
-      // Java: one type, possibly several declarators.
-      const type = cleanTypeName(node.childForFieldName("type")?.text);
-      if (type) {
-        for (const c of node.children) {
-          if (c.type !== "variable_declarator") continue;
-          const name = c.childForFieldName("name")?.text;
-          if (name && !map.has(name)) map.set(name, type);
-        }
-      }
-    } else if (node.type === "property_declaration" || node.type === "class_parameter") {
-      // Kotlin: `val x: Type` — name and type live under variable_declaration
-      // for properties, directly under class_parameter for constructor params.
-      const holder = node.type === "property_declaration"
-        ? node.children.find((c) => c.type === "variable_declaration") ?? node
-        : node;
-      const name = holder.children.find((c) => c.type === "simple_identifier")?.text;
-      const typeNode = holder.children.find(
-        (c) => c.type === "user_type" || c.type === "nullable_type",
-      );
-      const type = cleanTypeName(typeNode?.text);
-      if (name && type && !map.has(name)) map.set(name, type);
-    }
-    for (const child of node.children) visit(child);
-  };
-  visit(root);
-  return map;
-}
-
-/** Simple type name: generics, package qualifier and `?` nullability stripped. */
-function cleanTypeName(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  const bare = raw.split("<")[0]!.replace(/\?/g, "").trim();
-  const simple = bare.split(".").pop() ?? "";
-  return /^[A-Za-z_]\w*$/.test(simple) ? simple : null;
-}
 
 /** Argument expression nodes of a Java/Kotlin call, in order. */
 function callArguments(call: Node): Node[] {
@@ -619,22 +569,17 @@ function localDeclaredType(node: Node, name: string): string | null {
     if (n.type === "local_variable_declaration") {
       for (const c of n.children) {
         if (c.type === "variable_declarator" && c.childForFieldName("name")?.text === name) {
-          return cleanTypeName(n.childForFieldName("type")?.text);
+          return simpleTypeName(n.childForFieldName("type")?.text);
         }
       }
     } else if (n.type === "property_declaration") {
-      const vd = n.children.find((c) => c.type === "variable_declaration");
-      if (vd?.children.find((c) => c.type === "simple_identifier")?.text === name) {
-        const t = vd.children.find((c) => c.type === "user_type" || c.type === "nullable_type");
-        return cleanTypeName(t?.text);
-      }
+      const kt = kotlinNameAndType(n);
+      if (kt.name === name) return simpleTypeName(kt.type);
     } else if (n.type === "formal_parameter" || n.type === "parameter") {
-      const pName = n.childForFieldName("name")?.text
-        ?? n.children.find((c) => c.type === "simple_identifier")?.text;
+      const kt = kotlinNameAndType(n);
+      const pName = n.childForFieldName("name")?.text ?? kt.name;
       if (pName === name) {
-        const t = n.childForFieldName("type")
-          ?? n.children.find((c) => c.type === "user_type" || c.type === "nullable_type");
-        return cleanTypeName(t?.text);
+        return simpleTypeName(n.childForFieldName("type")?.text ?? kt.type);
       }
     }
     for (const child of n.children) {
@@ -666,13 +611,9 @@ function handlerFirstParamType(ann: Node): string | null {
   if (!params) return null;
   const types: string[] = [];
   for (const p of params.children) {
-    if (p.type === "formal_parameter") {
-      const t = cleanTypeName(p.childForFieldName("type")?.text);
+    if (p.type === "formal_parameter" || p.type === "parameter") {
+      const t = simpleTypeName(p.childForFieldName("type")?.text ?? kotlinNameAndType(p).type);
       if (t) types.push(t);
-    } else if (p.type === "parameter") {
-      const t = p.children.find((c) => c.type === "user_type" || c.type === "nullable_type");
-      const clean = cleanTypeName(t?.text);
-      if (clean) types.push(clean);
     }
   }
   return types.find((t) => EVENT_TYPE_RE.test(t)) ?? types[0] ?? null;
@@ -686,17 +627,34 @@ function receiverNode(call: Node): Node | null {
 }
 
 /**
- * Pre-pass: index file-local `val`/field bindings whose initializer is a jOOQ
- * table reference, so `.from(TABLE)` / `.from(em)` resolve to the real table.
- * This is what splits one DAO-per-file `val TABLE = DSL.table(...)` convention
- * into distinct tables instead of collapsing every DAO onto a literal "TABLE".
+ * ONE pre-pass walk per file, collecting two per-file indexes (fused — a
+ * second full traversal is a real per-file cost on Java-heavy corpora):
+ *  - tableAliases: file-local `val`/field bindings whose initializer is a
+ *    jOOQ table reference, so `.from(TABLE)` / `.from(em)` resolve to the
+ *    real table. This is what splits one DAO-per-file `val TABLE =
+ *    DSL.table(...)` convention into distinct tables instead of collapsing
+ *    every DAO onto a literal "TABLE".
+ *  - fieldTypes: declared field / constructor-parameter types (Java
+ *    `field_declaration`, Kotlin `property_declaration`/`class_parameter`),
+ *    simple names only — the receiver's TYPE names the entity a repository
+ *    call touches better than the field name does.
  */
-function buildTableAliases(root: Node): Map<string, string> {
-  const aliases = new Map<string, string>();
+function buildFilePrepass(root: Node): {
+  tableAliases: Map<string, string>;
+  fieldTypes: Map<string, string>;
+} {
+  const tableAliases = new Map<string, string>();
+  const fieldTypes = new Map<string, string>();
+  const putType = (name: string | null | undefined, rawType: string | null | undefined): void => {
+    const type = simpleTypeName(rawType);
+    if (name && type && !fieldTypes.has(name)) fieldTypes.set(name, type);
+  };
   const visit = (n: Node): void => {
     let nameNode: Node | null = null;
     let initNode: Node | null = null;
     if (n.type === "property_declaration") {
+      const { name, type } = kotlinNameAndType(n);
+      putType(name, type);
       nameNode =
         findChild(n, "variable_declaration")?.children.find((c) => c.type === "simple_identifier") ?? null;
       initNode = initializerAfterEquals(n);
@@ -704,15 +662,26 @@ function buildTableAliases(root: Node): Map<string, string> {
       const vd = findChild(n, "variable_declarator");
       nameNode = vd?.childForFieldName("name") ?? null;
       initNode = vd?.childForFieldName("value") ?? null;
+      if (n.type === "field_declaration") {
+        // Java: one type, possibly several declarators.
+        const rawType = n.childForFieldName("type")?.text;
+        for (const c of n.children) {
+          if (c.type === "variable_declarator") putType(c.childForFieldName("name")?.text, rawType);
+        }
+      }
+    } else if (n.type === "class_parameter") {
+      // Kotlin primary-constructor `val x: Type`.
+      const { name, type } = kotlinNameAndType(n);
+      putType(name, type);
     }
     if (nameNode && initNode) {
-      const table = resolveTableExpr(initNode, aliases);
-      if (table) aliases.set(nameNode.text, table);
+      const table = resolveTableExpr(initNode, tableAliases);
+      if (table) tableAliases.set(nameNode.text, table);
     }
     for (const c of n.children) visit(c);
   };
   visit(root);
-  return aliases;
+  return { tableAliases, fieldTypes };
 }
 
 /** The expression node following the `=` of a Kotlin `property_declaration`. */

@@ -206,7 +206,7 @@ describe("wiring classes, flow definitions, singular service dirs (real-repo FPs
     ];
     const layers = classifyFileLayers(files);
     const graph = { "admin/web/config/LeagueResourceConfig.java": ["domain/capacity/StadiumService.java"] };
-    const violations = detectLayerViolations(graph, layers, [mk(files[0]!, ["StadiumService"])]);
+    const violations = detectLayerViolations([mk(files[0]!, ["StadiumService"])], graph, layers);
     expect(violations).toEqual([]);
   });
 });
