@@ -7,6 +7,7 @@ import {
   getNameFromNode,
 } from "../../shared/node-helpers.js";
 import { extractCalls } from "../../shared/call-graph.js";
+import { simpleTypeName } from "../../shared/type-parser.js";
 
 type JkLang = "java" | "kotlin";
 
@@ -281,6 +282,20 @@ function detectLang(root: Node): JkLang {
 }
 
 /**
+ * Kotlin name + declared type of a declaration-shaped node. tree-sitter-kotlin
+ * exposes few fields, so this is the ONE place that knows where they live:
+ * `property_declaration` carries them under its `variable_declaration` child;
+ * `class_parameter` / `parameter` carry them directly. Either half may be null.
+ */
+export function kotlinNameAndType(node: Node): { name: string | null; type: string | null } {
+  const holder = node.children.find((c) => c.type === "variable_declaration") ?? node;
+  const name = holder.children.find((c) => c.type === "simple_identifier")?.text ?? null;
+  const type =
+    holder.children.find((c) => c.type === "user_type" || c.type === "nullable_type")?.text ?? null;
+  return { name, type };
+}
+
+/**
  * Declared-type locals of a method body → `FunctionInfo.localTypes`
  * (`Account existing = repo.find(id)` → {existing, Account}), the same channel
  * PHP populates for `$x = new Foo()`. The symbol linker uses these both to
@@ -297,10 +312,10 @@ function extractLocalTypes(body: Node | null): Array<{ name: string; type: strin
   if (!body) return [];
   const out: Array<{ name: string; type: string }> = [];
   const seen = new Set<string>();
-  const push = (name: string | undefined, rawType: string | undefined) => {
-    if (!name || !rawType || seen.has(name)) return;
-    const simple = rawType.split("<")[0]!.replace(/\?/g, "").trim().split(".").pop() ?? "";
-    if (!/^[A-Z][A-Za-z0-9_]*$/.test(simple) || simple === "String") return;
+  const push = (name: string | null | undefined, rawType: string | null | undefined) => {
+    if (!name || seen.has(name)) return;
+    const simple = simpleTypeName(rawType);
+    if (!simple || !/^[A-Z]/.test(simple) || simple === "String") return;
     seen.add(name);
     out.push({ name, type: simple });
   };
@@ -317,9 +332,7 @@ function extractLocalTypes(body: Node | null): Array<{ name: string; type: strin
     } else if (n.type === "property_declaration") {
       // Kotlin `val x: Type = …` local (class-level properties never reach
       // here — this walks a function body only).
-      const vd = n.children.find((c) => c.type === "variable_declaration");
-      const name = vd?.children.find((c) => c.type === "simple_identifier")?.text;
-      const type = vd?.children.find((c) => c.type === "user_type" || c.type === "nullable_type")?.text;
+      const { name, type } = kotlinNameAndType(n);
       push(name, type);
     }
     for (const child of n.children) visit(child);

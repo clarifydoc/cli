@@ -62,32 +62,37 @@ function suffix(names: string): RegExp {
   return new RegExp(`(?:(?:^|[._-])(?:${names})|.(?:${cap})${acronymAlt})$`);
 }
 
+/** Row predicate: some basename suffixes mean different things per language
+ *  family, so a row can opt in/out based on whether the file is JVM source. */
+const jvmOnly = (isJvm: boolean): boolean => isJvm;
+const nonJvm = (isJvm: boolean): boolean => !isJvm;
+
 /**
  * The file's own name is a more specific signal than any directory token:
  * `Sources/App/TodoController.swift` is services however generic its folder,
  * and Angular's `user.service.ts` / `app.component.ts` carry the layer in the
- * basename alone. Checked before LAYER_PATTERNS.
+ * basename alone. Checked before LAYER_PATTERNS. Rows with a predicate apply
+ * only where it holds:
+ *  - `action|actions` is the Struts/WebFlow/Grails controller tier on the JVM
+ *    (`AgeIntervalCreateAction.java` — otherwise its `web/settings/` dir read
+ *    as config importing services), but an `XxxActions.vue`/`.tsx` is a UI
+ *    action-button cluster, not a controller.
+ *  - `form` on the JVM is a form-backing BEAN (Struts ActionForm, WebFlow
+ *    form object), not a window — it falls to the dir tier there, while
+ *    `LoginForm.tsx` / Delphi `MainForm.pas` / WinForms `LoginForm.cs`
+ *    stay ui.
  */
-const BASENAME_PATTERNS: [RegExp, ArchLayer][] = [
+const BASENAME_PATTERNS: [RegExp, ArchLayer, ((isJvm: boolean) => boolean)?][] = [
   [suffix("controller|service|client|handler|middleware|router|api|endpoint|query|queries"), "services"],
+  [suffix("action|actions"), "services", jvmOnly],
   [suffix("repository|entity|model|store|dao|dto|schema|migration"), "data"],
-  [suffix("view|page|screen|form|window|dialog"), "ui"],
+  [suffix("view|page|screen|window|dialog"), "ui"],
+  [suffix("form"), "ui", nonJvm],
   [suffix("component|widget"), "components"],
   // Deliberately NO util/helper suffixes: a `*Util.cs` inside an application
   // project is application code — only a utils/ directory marks the layer.
   [suffix("type|types"), "utils"],
 ];
-
-/** The `form` half of the ui suffix tier, tested separately so JVM
- *  form-backing beans can opt out (see the basename loop). */
-const JVM_FORM_SUFFIX_RE = suffix("form");
-
-/** JVM-only: `*Action` is the Struts/WebFlow/Grails controller tier
- *  (`AgeIntervalCreateAction.java`) — without this it falls to whatever dir
- *  token surrounds it (`web/settings/` read as config importing services).
- *  Deliberately NOT applied to frontend files: an `XxxActions.vue`/`.tsx` is
- *  a UI action-button cluster, not a controller. */
-const JVM_ACTION_SUFFIX_RE = suffix("action|actions");
 
 /**
  * .NET-style test scaffolding the generic test conventions miss: a segment
@@ -133,14 +138,9 @@ export function classifyFileLayers(
       // (`user.service.ts`) carry the layer in their second segment.
       const baseName = (normalized.split("/").pop() ?? "").replace(/\.\w+$/, "");
       const isJvmFile = /\.(java|kt|kts)$/i.test(normalized);
-      if (isJvmFile && JVM_ACTION_SUFFIX_RE.test(baseName)) assigned = "services";
-      for (const [pattern, layer] of BASENAME_PATTERNS) {
-        if (assigned !== "unknown") break;
+      for (const [pattern, layer, applies] of BASENAME_PATTERNS) {
+        if (applies && !applies(isJvmFile)) continue;
         if (pattern.test(baseName)) {
-          // A JVM `*Form` is a form-backing BEAN (Struts ActionForm, WebFlow
-          // form object, Keycloak IdentityForm), not a window — fall through
-          // to the dir tier. `LoginForm.tsx` / Delphi `MainForm.pas` stay ui.
-          if (layer === "ui" && isJvmFile && JVM_FORM_SUFFIX_RE.test(baseName)) continue;
           assigned = layer;
           break;
         }

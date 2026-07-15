@@ -206,7 +206,7 @@ describe("wiring classes, flow definitions, singular service dirs (EOS FPs)", ()
     ];
     const layers = classifyFileLayers(files);
     const graph = { "admin/web/config/EosResourceConfig.java": ["domain/capacity/AgeIntervalService.java"] };
-    const violations = detectLayerViolations(graph, layers, [mk(files[0]!, ["AgeIntervalService"])]);
+    const violations = detectLayerViolations([mk(files[0]!, ["AgeIntervalService"])], graph, layers);
     expect(violations).toEqual([]);
   });
 });

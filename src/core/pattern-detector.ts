@@ -1,5 +1,12 @@
 import type { FileAnalysis, PatternInfo, FrameworkDetection } from "../types/analysis.js";
 
+/** A ≤3-line get/set/is/has method with at most one parameter — data-holder
+ *  boilerplate, excluded from the god-object method count. */
+const isTrivialAccessor = (fn: { name: string; line: number; endLine: number; params: unknown[] }): boolean =>
+  /^(?:get|set|is|has)[A-Z_$]/.test(fn.name.split(".").pop() ?? "") &&
+  fn.endLine - fn.line <= 2 &&
+  fn.params.length <= 1;
+
 /**
  * Detect design patterns and anti-patterns from structural analysis data.
  */
@@ -185,10 +192,6 @@ export function detectPatterns(
     // God Object: 15+ functions/methods. Trivial accessors don't count — a
     // Java/C# entity with 20 hand-written getters/setters is a data holder,
     // not a god object (each is ≤3 lines with at most one parameter).
-    const isTrivialAccessor = (fn: { name: string; line: number; endLine: number; params: unknown[] }): boolean =>
-      /^(?:get|set|is|has)[A-Z_$]/.test(fn.name.split(".").pop() ?? "") &&
-      fn.endLine - fn.line <= 2 &&
-      fn.params.length <= 1;
     const godFnCount =
       a.functions.filter((f) => !isTrivialAccessor(f)).length +
       allMethods.filter((m) => !isTrivialAccessor(m)).length;

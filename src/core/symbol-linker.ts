@@ -2,6 +2,8 @@ import type { FileAnalysis, SymbolLink, CallInfo, Confidence, ParamInfo } from "
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
 import { commonPrefixLength, extensionFamily } from "../extractors/plugins/shared/path-utils.js";
+import { simpleTypeName } from "../extractors/shared/type-parser.js";
+import { isTestFile } from "./test-file-detector.js";
 import { ALL_BUILTIN_MEMBERS } from "../extractors/registry.js";
 
 interface SymbolDef {
@@ -32,12 +34,26 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
     classNameIndex: buildClassNameIndex(symbolIndex),
     projectOf,
     importedFilesCache: new Map(),
+    importedStemsCache: new Map(),
   };
   const interfaceImplMap = ctx.interfaceImplMap;
   const links: SymbolLink[] = [];
 
+  // Spec-route joins must never bind a test file (a uniquely-named test
+  // helper is not the route's implementation). Built lazily — most repos
+  // have no spec-file routes.
+  let specTestFiles: Set<string> | null = null;
+  const isSpecJoinExcluded = (filePath: string): boolean => {
+    if (SPEC_JOIN_CLASS_SUFFIX_RE.test(filePath)) return true;
+    specTestFiles ??= new Set(
+      analyses.filter((a) => isTestFile(a.filePath, a.language)).map((a) => a.filePath),
+    );
+    return specTestFiles.has(filePath);
+  };
+
   for (const analysis of analyses) {
     const sourceFile = analysis.filePath;
+    const fileHasNoSymbols = (symbolIndex.get(sourceFile)?.size ?? 0) === 0;
 
     // Functions
     for (const fn of analysis.functions) {
@@ -174,47 +190,10 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
       }
 
       // Spec-file routes (JSight/OpenAPI): the file declares the API surface
-      // but contains no code, so there is no handler and no same-file symbol —
-      // contract-first backends implement interfaces from an external artifact
-      // and the spec is the only in-repo route statement. Join the route to
-      // its implementing method BY NAME, verb-aware:
-      //   GET /grantable-universal-entity-types → getGrantableUniversalEntityTypes
-      //   GET /find-persons                     → findPersons
-      // Unique-or-nothing across non-test files; misses stay unlinked (no guess).
-      if (!route.handler && route.kind === "api" && (symbolIndex.get(sourceFile)?.size ?? 0) === 0) {
-        const segment = route.path.split("/").filter((s) => s && !/[{:}]/.test(s)).pop();
-        const words = segment ? segment.split(/[-_]/).filter(Boolean) : [];
-        if (words.length > 0) {
-          const camel = words.map((w, i) => (i === 0 ? w : w[0]!.toUpperCase() + w.slice(1))).join("");
-          const pascal = camel[0]!.toUpperCase() + camel.slice(1);
-          const verb = (route.httpMethod ?? "").toLowerCase();
-          const candidates = verb ? [`${verb}${pascal}`, camel] : [camel];
-          for (const cand of candidates) {
-            let found: { file: string; def: { name: string; line: number } } | null = null;
-            let count = 0;
-            for (const [filePath, syms] of symbolIndex) {
-              if (SPEC_JOIN_EXCLUDE_RE.test(filePath)) continue;
-              const def = syms.get(cand);
-              if (!def) continue;
-              count++;
-              if (count > 1) break;
-              found = { file: filePath, def };
-            }
-            if (count === 1 && found) {
-              links.push({
-                sourceFile,
-                sourceSymbol,
-                sourceLine: route.line,
-                callName: cand,
-                targetFile: found.file,
-                targetSymbol: found.def.name,
-                targetLine: found.def.line,
-                confidence: "INFERRED",
-              });
-              break;
-            }
-          }
-        }
+      // but contains no code, so there is no handler and no same-file symbol.
+      if (!route.handler && route.kind === "api" && fileHasNoSymbols) {
+        const specLink = specRouteHandlerLink(route, sourceFile, sourceSymbol, ctx, isSpecJoinExcluded);
+        if (specLink) links.push(specLink);
       }
 
       // Link route → functions it calls
@@ -376,10 +355,52 @@ const CTOR_NAMES = new Set(["constructor", "__init__", "__construct", "New", "ne
  */
 const TEST_FIXTURE_PATH_RE = /(^|\/)(tests?\/fixtures|__fixtures__|__mocks__|testdata)\//;
 
-/** Files a spec-route name join must never bind: test trees and test classes
- *  (a uniquely-named test helper is not the route's implementation). */
-const SPEC_JOIN_EXCLUDE_RE =
-  /(^|\/)(tests?|__tests__|spec|specs)\/|(Test|Tests|Spec|IT)\.\w+$|\.(test|spec)\.\w+$/;
+/** Test-class basename conventions some language plugins don't declare
+ *  (e.g. Kotest `*Spec.kt`) — supplements `isTestFile` for spec-route joins. */
+const SPEC_JOIN_CLASS_SUFFIX_RE = /(Test|Tests|Spec|IT)\.\w+$/;
+
+/**
+ * Join a spec-file route to its implementing method BY NAME, verb-aware —
+ * contract-first backends implement interfaces from an external artifact, so
+ * the spec is the only in-repo route statement and no handler symbol exists:
+ *   GET /grantable-universal-entity-types → getGrantableUniversalEntityTypes
+ *   GET /find-persons                     → findPersons
+ * Unique-or-nothing across non-test files; misses stay unlinked (no guess).
+ */
+function specRouteHandlerLink(
+  route: { path: string; httpMethod: string | null; line: number },
+  sourceFile: string,
+  sourceSymbol: string,
+  ctx: LinkContext,
+  isExcluded: (filePath: string) => boolean,
+): SymbolLink | null {
+  const segment = route.path.split("/").filter((s) => s && !/[{:}]/.test(s)).pop();
+  const words = segment ? segment.split(/[-_]/).filter(Boolean) : [];
+  if (words.length === 0) return null;
+  const camel = words.map((w, i) => (i === 0 ? w : w[0]!.toUpperCase() + w.slice(1))).join("");
+  const pascal = camel[0]!.toUpperCase() + camel.slice(1);
+  const verb = (route.httpMethod ?? "").toLowerCase();
+  const candidates = verb ? [`${verb}${pascal}`, camel] : [camel];
+  for (const cand of candidates) {
+    // classNameIndex maps every dot-free symbol name to its defining files in
+    // symbolIndex order — same uniqueness semantics as a full scan, O(hits).
+    const files = (ctx.classNameIndex.get(cand) ?? []).filter((f) => !isExcluded(f));
+    if (files.length !== 1) continue;
+    const def = ctx.symbolIndex.get(files[0]!)?.get(cand);
+    if (!def) continue;
+    return {
+      sourceFile,
+      sourceSymbol,
+      sourceLine: route.line,
+      callName: cand,
+      targetFile: files[0]!,
+      targetSymbol: def.name,
+      targetLine: def.line,
+      confidence: "INFERRED",
+    };
+  }
+  return null;
+}
 
 /**
  * Global class-name catalog: className → defining file + constructor.
@@ -594,6 +615,9 @@ interface LinkContext {
   /** Lazy per-file cache: files this file's imports resolve to (Strategy 4's
    *  cross-project gate). */
   importedFilesCache: Map<string, Set<string>>;
+  /** Lazy per-file cache: stems of the files this file's imports resolve to
+   *  (Strategy 7's C/C++ header↔impl evidence). */
+  importedStemsCache: Map<string, Set<string>>;
 }
 
 /** Lowercased basename without extension: `include/User.h` → "user". */
@@ -613,6 +637,17 @@ function importedFilesOf(analysis: FileAnalysis, ctx: LinkContext): Set<string> 
       if (f && f !== analysis.filePath) set.add(f);
     }
     ctx.importedFilesCache.set(analysis.filePath, set);
+  }
+  return set;
+}
+
+/** Stems of the files the analysis's imports resolve to (cached per source file). */
+function importedStemsOf(analysis: FileAnalysis, ctx: LinkContext): Set<string> {
+  let set = ctx.importedStemsCache.get(analysis.filePath);
+  if (!set) {
+    set = new Set();
+    for (const f of importedFilesOf(analysis, ctx)) set.add(fileStem(f));
+    ctx.importedStemsCache.set(analysis.filePath, set);
   }
   return set;
 }
@@ -1129,22 +1164,21 @@ function resolveCallToDefinition(
     const isPlainReceiver = /^[\w$]+\??$/.test(head);
     if (isPlainReceiver && head !== "this" && head !== "self" && head !== "Self" && !ALL_BUILTIN_MEMBERS.has(leafName)) {
       const entry = leafCatalog.get(leafName);
-      // Receiver-type contradiction veto: when the receiver's DECLARED type is
-      // known (typed local / parameter / field) and names neither the
-      // candidate's class nor its file, the unique-name match is coincidence —
-      // `existing.setStartDate()` on an `Account` local must not bind
-      // `CustomerEntity.setStartDate` however unique that setter is. (If the
-      // declared type HAD resolved to a file defining the method, Strategy 2
-      // would have linked it before reaching here.)
-      const declared = entry ? receiverDeclaredType(analysis, sourceSymbol, head.replace(/\?$/, "")) : null;
-      const contradicted = (): boolean => {
-        if (!declared) return false;
-        const tgtClass = entry!.def.name.includes(".") ? entry!.def.name.split(".")[0]! : null;
-        if (declared === tgtClass) return false;
-        const declEntry = classCatalog.get(declared);
-        return !(declEntry && declEntry.count === 1 && declEntry.file === entry!.file);
-      };
-      if (entry && isSafeHeuristicTarget(entry, sourceFile, analysis.projectId) && !contradicted()) {
+      if (entry && isSafeHeuristicTarget(entry, sourceFile, analysis.projectId)) {
+        // Receiver-type contradiction veto: when the receiver's DECLARED type
+        // is known (typed local / parameter / field) and names neither the
+        // candidate's class nor its file, the unique-name match is coincidence
+        // — `existing.setStartDate()` on an `Account` local must not bind
+        // `CustomerEntity.setStartDate` however unique that setter is. (If the
+        // declared type HAD resolved to a file defining the method, Strategy 2
+        // would have linked it before reaching here.)
+        const declared = receiverDeclaredType(analysis, sourceSymbol, head.replace(/\?$/, ""));
+        const tgtClass = entry.def.name.includes(".") ? entry.def.name.split(".")[0]! : null;
+        const declEntry = declared ? classCatalog.get(declared) : undefined;
+        const contradicted =
+          declared !== null && declared !== tgtClass &&
+          !(declEntry && declEntry.count === 1 && declEntry.file === entry.file);
+
         // Evidence gate: uniqueness alone still magnets every stdlib-shaped
         // leaf in the repo onto the one app definition (`x.stream().toList()`
         // → the sole app-defined `toList`; `ex.getMessage()` → some enum's
@@ -1155,20 +1189,16 @@ function resolveCallToDefinition(
         // whose imports resolve to nothing local keep the old behavior:
         // import-blind ecosystems (CodeIgniter PHP autoloading) carry no
         // evidence either way, so the gate would only destroy recall there.
+        // Same-stem imports count as evidence too: C/C++ includes name
+        // `User.h` while the method body lives in `User.cpp`.
         const importedFiles = importedFilesOf(analysis, ctx);
         const sameDir =
           entry.file.slice(0, entry.file.lastIndexOf("/")) ===
           sourceFile.slice(0, sourceFile.lastIndexOf("/"));
-        // Same-stem imports count as evidence for the definition file: C/C++
-        // includes name `User.h` while the method body lives in `User.cpp`.
-        const sameStemImported = (): boolean => {
-          const stem = fileStem(entry.file);
-          for (const f of importedFiles) if (fileStem(f) === stem) return true;
-          return false;
-        };
         if (
-          importedFiles.size === 0 || sameDir || importedFiles.has(entry.file) ||
-          sameStemImported()
+          !contradicted &&
+          (importedFiles.size === 0 || sameDir || importedFiles.has(entry.file) ||
+            importedStemsOf(analysis, ctx).has(fileStem(entry.file)))
         ) {
           return mkLink(entry.file, entry.def.name, entry.def.line, "AMBIGUOUS");
         }
@@ -1230,13 +1260,6 @@ function resolveCallToDefinition(
  */
 function findEnclosingCallableParams(analysis: FileAnalysis, sourceSymbol: string): ParamInfo[] {
   return findEnclosingCallable(analysis, sourceSymbol)?.params ?? [];
-}
-
-/** Simple class name of a raw type: `List<Account>`→List, `a.b.Foo?`→Foo. */
-function simpleTypeName(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  const simple = raw.split("<")[0]!.replace(/\?/g, "").trim().split(".").pop() ?? "";
-  return /^[A-Za-z_]\w*$/.test(simple) ? simple : null;
 }
 
 /**
