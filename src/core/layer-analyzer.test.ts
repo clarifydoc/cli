@@ -150,6 +150,13 @@ describe("Struts/WebFlow Action + JVM form-bean classification (real-repo FPs)",
     expect(Object.values(layers)[0]).toBe("services");
   });
 
+  it("does NOT read a frontend *Actions component as services (Vue toolbar, league-planner FP)", () => {
+    const layers = classifyFileLayers([
+      "frontend/src/components/MatchSheet/live/MatchSheetLiveHeaderActions.vue",
+    ]);
+    expect(Object.values(layers)[0]).not.toBe("services");
+  });
+
   it("does NOT read a JVM *Form as ui (form-backing bean), falling to dir tokens", () => {
     const layers = classifyFileLayers([
       "admin/src/main/java/com/example/league/admin/web/settings/RuleManageForm.java",
@@ -172,5 +179,34 @@ describe("Struts/WebFlow Action + JVM form-bean classification (real-repo FPs)",
   it("keeps JVM *View/*Page/*Window basenames as ui", () => {
     const layers = classifyFileLayers(["src/main/java/com/x/wicket/AccountPage.java"]);
     expect(Object.values(layers)[0]).toBe("ui");
+  });
+});
+
+describe("wiring classes, flow definitions, singular service dirs (real-repo FPs)", () => {
+  it("classifies WebFlow XMLs under flows/ as ui (top-of-stack, like routes)", () => {
+    const layers = classifyFileLayers([
+      "admin/src/main/webapp/WEB-INF/flows/settings/league.wf.settings.rule.manage.xml",
+    ]);
+    expect(Object.values(layers)[0]).toBe("ui");
+  });
+
+  it("matches a singular service/ directory segment", () => {
+    const layers = classifyFileLayers([
+      "core/src/main/java/com/example/league/domain/settings/service/SettingServiceImpl.java",
+    ]);
+    expect(Object.values(layers)[0]).toBe("services");
+  });
+
+  it("exempts *Config/*Configuration wiring classes as violation sources", () => {
+    const mk = (filePath: string, imports: string[]): FileAnalysis =>
+      ({ filePath, imports: imports.map((s, i) => ({ source: s, specifiers: [], isDefault: false, isNamespace: false, isType: false, line: i + 1 })) } as unknown as FileAnalysis);
+    const files = [
+      "admin/web/config/LeagueResourceConfig.java",
+      "domain/capacity/StadiumService.java",
+    ];
+    const layers = classifyFileLayers(files);
+    const graph = { "admin/web/config/LeagueResourceConfig.java": ["domain/capacity/StadiumService.java"] };
+    const violations = detectLayerViolations(graph, layers, [mk(files[0]!, ["StadiumService"])]);
+    expect(violations).toEqual([]);
   });
 });

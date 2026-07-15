@@ -17,7 +17,7 @@ function seg(names: string): RegExp {
  */
 const LAYER_PATTERNS: [RegExp, ArchLayer][] = [
   [seg("models?|entities|repositories|stores?|data|schemas?|serializers?|migrations?|persistence|dtos?"), "data"],
-  [seg("services|api|clients|httpclients?|hooks|controllers?|endpoints?|routers?|middleware|handlers?|signals?"), "services"],
+  [seg("services?|api|clients|httpclients?|hooks|controllers?|endpoints?|routers?|middleware|handlers?|signals?"), "services"],
   [seg("components|widgets"), "components"],
   // `routes` sits with ui: in FE frameworks route dirs hold pages, in BE
   // frameworks endpoint surfaces — both top-of-stack, so their imports of
@@ -25,7 +25,10 @@ const LAYER_PATTERNS: [RegExp, ArchLayer][] = [
   // Deliberately NO `app` token: Laravel/Rails/Kotlin `app/` is an application
   // CONTAINER (models, providers, enums, DTOs all live under it) — as ui it
   // made every `app/Enums/X.php` a phantom violation target.
-  [seg("pages|views|screens|forms|routes?"), "ui"],
+  // `flows?` sits with ui for the same reason as `routes`: a Spring WebFlow
+  // definition binds view-states to JSPs AND invokes services — top-of-stack,
+  // so neither direction reads as an upward violation.
+  [seg("pages|views|screens|forms|routes?|flows?"), "ui"],
   [seg("utils?|helpers?|lib|shared|common|types?|typings|interfaces?|enums?"), "utils"],
   [seg("config|settings|constants|env"), "config"],
 ];
@@ -38,6 +41,10 @@ const TOOLING_SEGMENT_RE = seg("cicd|ci[-_]cd|scripts?|tooling|devops|automation
  *  the whole app and legitimately import anything — exempt as violation
  *  sources. Config DIRECTORIES (constants, settings) keep the config layer. */
 const CONFIG_FILE_RE = /\.config\.\w+$/i;
+
+/** Wiring/DI configuration CLASSES — `*Config`/`*Configuration` basenames —
+ *  register the application's beans/resources; exempt as violation sources. */
+const WIRING_CLASS_RE = /(Config|Configuration)\.\w+$/;
 
 /** A layer token as a basename suffix — CamelCase (`TodoController`), an
  *  ALL-CAPS acronym (`AppSupportActivityDTO`), or separator-delimited
@@ -62,10 +69,7 @@ function suffix(names: string): RegExp {
  * basename alone. Checked before LAYER_PATTERNS.
  */
 const BASENAME_PATTERNS: [RegExp, ArchLayer][] = [
-  // `action` — Struts/WebFlow/Grails controller tier (`SeasonCreateAction`);
-  // without it a `web/settings/FooAction.java` fell through to the `settings`
-  // dir token and read as config importing services.
-  [suffix("controller|service|client|handler|middleware|router|api|endpoint|query|queries|action|actions"), "services"],
+  [suffix("controller|service|client|handler|middleware|router|api|endpoint|query|queries"), "services"],
   [suffix("repository|entity|model|store|dao|dto|schema|migration"), "data"],
   [suffix("view|page|screen|form|window|dialog"), "ui"],
   [suffix("component|widget"), "components"],
@@ -77,6 +81,13 @@ const BASENAME_PATTERNS: [RegExp, ArchLayer][] = [
 /** The `form` half of the ui suffix tier, tested separately so JVM
  *  form-backing beans can opt out (see the basename loop). */
 const JVM_FORM_SUFFIX_RE = suffix("form");
+
+/** JVM-only: `*Action` is the Struts/WebFlow/Grails controller tier
+ *  (`SeasonCreateAction.java`) — without this it falls to whatever dir
+ *  token surrounds it (`web/settings/` read as config importing services).
+ *  Deliberately NOT applied to frontend files: an `XxxActions.vue`/`.tsx` is
+ *  a UI action-button cluster, not a controller. */
+const JVM_ACTION_SUFFIX_RE = suffix("action|actions");
 
 /**
  * .NET-style test scaffolding the generic test conventions miss: a segment
@@ -122,7 +133,9 @@ export function classifyFileLayers(
       // (`user.service.ts`) carry the layer in their second segment.
       const baseName = (normalized.split("/").pop() ?? "").replace(/\.\w+$/, "");
       const isJvmFile = /\.(java|kt|kts)$/i.test(normalized);
+      if (isJvmFile && JVM_ACTION_SUFFIX_RE.test(baseName)) assigned = "services";
       for (const [pattern, layer] of BASENAME_PATTERNS) {
+        if (assigned !== "unknown") break;
         if (pattern.test(baseName)) {
           // A JVM `*Form` is a form-backing BEAN (Struts ActionForm, WebFlow
           // form object, Keycloak IdentityForm), not a window — fall through
@@ -163,6 +176,11 @@ export function detectLayerViolations(
     // violation SOURCES they're exempt — vite/webpack/tailwind configs
     // legitimately import app code from the very top of the world.
     if (CONFIG_FILE_RE.test(sourceFile)) continue;
+    // Wiring/DI classes (`LeagueResourceConfig.java`, `AppConfiguration.kt`,
+    // Guice `*Module`s registered by name) exist to import and register the
+    // rest of the app — importing services is their job, same as a build
+    // config file. They keep the config layer for display only.
+    if (WIRING_CLASS_RE.test(sourceFile)) continue;
     const sourceLayer = fileLayerMap[sourceFile] ?? "unknown";
     const sourceLevel = LAYER_LEVEL[sourceLayer];
     if (sourceLevel < 0) continue; // exempt
