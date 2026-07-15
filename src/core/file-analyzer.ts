@@ -250,6 +250,17 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // Extract interactive elements (buttons, inputs, forms with event bindings)
     analysis.interactiveElements = hooks?.interactiveElements?.(tree, sourceText) ?? [];
 
+    // Angular @Component with an external templateUrl: record the url so a
+    // project-level pass can read the sibling .html and back-fill this
+    // component's template-derived data (interactiveElements/templateTree).
+    const externalTpl = hooks?.externalTemplate?.(sourceText);
+    if (externalTpl) analysis.angularTemplateUrl = externalTpl;
+
+    // Web Component registrations (customElements.define / Lit @customElement),
+    // so the component graph can join `<kebab-tag>` markup usages to this file.
+    const customEls = hooks?.customElements?.(sourceText);
+    if (customEls && customEls.length > 0) analysis.customElements = customEls;
+
     // Designer screens embedded in source files (e.g. WinForms *.Designer.cs).
     const hookScreens = hooks?.screens?.(tree, sourceText, file.relativePath);
     if (hookScreens && hookScreens.length > 0) analysis.screens = hookScreens;
@@ -270,6 +281,14 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     const fileRoute = isTest ? null : inferFileBasedRoute(file.relativePath, frameworkIds);
     if (fileRoute) {
       analysis.routes.push(fileRoute);
+    }
+    // SvelteKit file-based routing (`src/routes/**/+page.svelte`,
+    // `+server.ts`) — a `+server` endpoint yields one api route per exported
+    // HTTP-method handler, so needs the analysis, not just the path.
+    if (!isTest) {
+      for (const r of inferSvelteKitRoutes(file.relativePath, analysis, frameworkIds)) {
+        analysis.routes.push(r);
+      }
     }
 
     // Detect React directives: 'use client' / 'use server'
@@ -417,6 +436,81 @@ function inferFileBasedRoute(
   }
 
   return null;
+}
+
+const SVELTEKIT_HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+
+/**
+ * SvelteKit file-based routing under `src/routes/`:
+ *   - `**​/+page.svelte`        → a frontend route (the page component)
+ *   - `**​/+server.{ts,js}`      → an API endpoint; each exported HTTP-method
+ *                                 function (`export function GET`, `export const
+ *                                 POST = …`) becomes one `api` route, handler =
+ *                                 the method name, so the endpoint's data calls
+ *                                 join into the trace like any other route.
+ *
+ * Path derivation mirrors SvelteKit's: route groups `(auth)` are dropped from
+ * the URL, `[id]`→`:id`, `[...rest]`→`*`, `[[opt]]`→`:opt?`.
+ */
+function inferSvelteKitRoutes(
+  relativePath: string,
+  analysis: FileAnalysis,
+  frameworkIds: string[],
+): RouteInfo[] {
+  if (!frameworkIds.includes("sveltekit")) return [];
+  const normalized = relativePath.replace(/\\/g, "/");
+
+  const page = normalized.match(/^(?:src\/)?routes\/(.*)\+page\.svelte$/);
+  if (page) {
+    return [{
+      path: svelteKitRoutePath(page[1]!),
+      httpMethod: null,
+      kind: "frontend",
+      handler: null,
+      componentPath: null,
+      calls: [],
+      middleware: [],
+      line: 1,
+    }];
+  }
+
+  const server = normalized.match(/^(?:src\/)?routes\/(.*)\+server\.(?:tsx?|jsx?)$/);
+  if (server) {
+    const path = svelteKitRoutePath(server[1]!);
+    // Exported HTTP-method handlers appear as functions or exported consts.
+    const methods = new Set<string>();
+    for (const fn of analysis.functions) {
+      if (SVELTEKIT_HTTP_METHODS.has(fn.name)) methods.add(fn.name);
+    }
+    for (const exp of analysis.exports) {
+      if (SVELTEKIT_HTTP_METHODS.has(exp.name)) methods.add(exp.name);
+    }
+    return [...methods].map((method) => ({
+      path,
+      httpMethod: method,
+      kind: "api" as const,
+      handler: method,
+      calls: [],
+      middleware: [],
+      line: analysis.functions.find((f) => f.name === method)?.line ?? 1,
+    }));
+  }
+
+  return [];
+}
+
+/** SvelteKit route dir → URL path (drops `(groups)`, maps `[param]` forms). */
+function svelteKitRoutePath(dir: string): string {
+  const segments = dir
+    .split("/")
+    .filter((s) => s.length > 0 && !/^\(.*\)$/.test(s)) // drop route groups
+    .map((s) =>
+      s
+        .replace(/\[\.\.\.(\w+)\]/g, "*") // [...rest] -> *
+        .replace(/\[\[(\w+)\]\]/g, ":$1?") // [[opt]] -> :opt?
+        .replace(/\[(\w+)\]/g, ":$1"), // [id] -> :id
+    );
+  return "/" + segments.join("/");
 }
 
 /** Convert file path segments to a route path */

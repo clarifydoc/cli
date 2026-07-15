@@ -154,6 +154,35 @@ describe("symbol-linker — route-handler fallback guards (spsflow FPs)", () => 
     expect(links.some((l) => l.targetFile === "server/dao/BackendChatDAO.kt")).toBe(false);
   });
 
+  it("joins an OpenAPI spec route to its handler by operationId (spec-language file)", () => {
+    const spec = {
+      ...file("api/openapi.yaml", "api", {}),
+      language: "openapi",
+      routes: [{ path: "/users", httpMethod: "GET", handler: "listUsers", kind: "api", line: 7, calls: [] }],
+    } as unknown as FileAnalysis;
+    const controller = file("src/users.controller.ts", "api", {
+      functions: [fn("listUsers", [])],
+    });
+    (controller as any).language = "typescript";
+    const links = buildSymbolLinks([spec, controller]);
+    const specLink = links.find((l) => l.sourceFile === "api/openapi.yaml" && l.callName === "listUsers");
+    expect(specLink?.targetFile).toBe("src/users.controller.ts");
+  });
+
+  it("joins a WSDL PascalCase operation to a camelCase Java handler (GetUser → getUser)", () => {
+    const wsdl = {
+      ...file("api/users.wsdl", "api", {}),
+      language: "wsdl",
+      routes: [{ path: "/GetUser", httpMethod: null, handler: "GetUser", kind: "api", line: 5, calls: [] }],
+    } as unknown as FileAnalysis;
+    const impl = file("src/UserServiceImpl.java", "api", {
+      classes: [{ ...cls("UserServiceImpl"), methods: [fn("getUser", [])] }],
+    });
+    (impl as any).language = "java";
+    const links = buildSymbolLinks([wsdl, impl]);
+    expect(links.some((l) => l.sourceFile === "api/users.wsdl" && l.targetFile === "src/UserServiceImpl.java")).toBe(true);
+  });
+
   it("requires the qualified handler's class to be evidenced in the target file", () => {
     const webPhp = {
       ...file("web/LEGACY/routes/web.php", "web", {}),

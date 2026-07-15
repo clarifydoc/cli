@@ -3,6 +3,7 @@ import type { DataSourceInfo, CallInfo, Language } from "../../../types/analysis
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { stripQuotes } from "../../shared/node-helpers.js";
+import { extractGqlOperationCalls } from "../shared/graphql-operations.js";
 
 /** Named HTTP clients — trusted as API calls without a URL-shape check. */
 const HTTP_ROOTS = new Set(["fetch", "axios", "http", "request", "ajax"]);
@@ -126,15 +127,34 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
    */
   private root: Node | null = null;
   private urlConsts: ReadonlyMap<string, string> | null = null;
+  /** File source, kept for the one-time gql-operation scan (see {@link scanGql}). */
+  private sourceText = "";
+  private gqlScanned = false;
 
-  override beginFile(tree: Tree): void {
+  override beginFile(tree: Tree, sourceText: string): void {
     this.root = tree.rootNode;
     this.urlConsts = null;
+    this.sourceText = sourceText;
+    this.gqlScanned = false;
   }
 
   override endFile(): void {
     this.root = null;
     this.urlConsts = null;
+    this.sourceText = "";
+  }
+
+  /**
+   * Emit api-calls for the file's `gql`…`` / `graphql`…`` operation templates,
+   * ONCE per file (there is no whole-file hook in the fused walk, so it piggy-
+   * backs on the first node visit). Gated on the gql tag so gql-free files —
+   * the overwhelming majority — pay only a substring check.
+   */
+  private scanGql(sources: DataSourceInfo[]): void {
+    this.gqlScanned = true;
+    const src = this.sourceText;
+    if (!src.includes("gql`") && !src.includes("graphql`")) return;
+    sources.push(...extractGqlOperationCalls(src));
   }
 
   /** Lazily build + cache the file's URL-const map (see {@link urlConsts}). */
@@ -167,6 +187,9 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
+    // One-time gql-operation scan (no whole-file hook exists in the fused walk).
+    if (!this.gqlScanned) this.scanGql(sources);
+
     if (node.type === "call_expression") {
       let fn = node.childForFieldName("function");
       // `await foo<T>(args)` mis-nests as call(function: await_expression(await,

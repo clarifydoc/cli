@@ -6,9 +6,11 @@
  * tokenizer with an Angular dialect (`*ngFor` loops, `(click)` events,
  * `[(ngModel)]` bindings, kebab-case component selectors).
  *
- * Limitation: only INLINE `template:` strings are supported. `templateUrl:`
- * (external .html) is not resolved — the analysis pipeline reads files
- * individually, so the sibling .html isn't available here.
+ * Inline `template:` strings are extracted here per-file. External
+ * `templateUrl:` files are resolved by a project-level pass
+ * (`angular-external-templates.ts`) that reads the sibling .html and calls the
+ * `*FromTemplate` variants below — the per-file pass can't, as the pipeline
+ * reads files individually and the sibling .html isn't available here.
  */
 import type {
   InteractiveElementInfo,
@@ -39,9 +41,33 @@ export function extractAngularComponentTree(
   if (!looksAngular(sourceText)) return [];
   const tpl = extractInlineTemplate(sourceText);
   if (!tpl) return [];
+  // Inline template: line numbers are relative to the enclosing .ts source, so
+  // the container for line offsets is sourceText (NOT the template slice).
   const roots: TemplateComponentNode[] = [];
   buildHtmlTemplateTree(tpl, sourceText, roots, ANGULAR_DIALECT);
   return roots;
+}
+
+/** Component tree from a standalone template (external `templateUrl` .html):
+ *  line numbers are relative to the .html file, so the container IS the template. */
+export function extractAngularComponentTreeFromTemplate(
+  tpl: string,
+): TemplateComponentNode[] {
+  const roots: TemplateComponentNode[] = [];
+  buildHtmlTemplateTree(tpl, tpl, roots, ANGULAR_DIALECT);
+  return roots;
+}
+
+/**
+ * The external template url of an `@Component({ templateUrl: './x.html' })`,
+ * or null for inline-template / non-Angular files. Used by the project-level
+ * external-template pass to locate the sibling .html.
+ */
+const TEMPLATE_URL_RE = /(?:^|[\s,{])templateUrl\s*:\s*(?:`([^`]*)`|'([^']*)'|"([^"]*)")/;
+export function extractAngularTemplateUrl(sourceText: string): string | null {
+  if (!looksAngular(sourceText)) return null;
+  const m = sourceText.match(TEMPLATE_URL_RE);
+  return m ? (m[1] ?? m[2] ?? m[3] ?? null) : null;
 }
 
 /** Opening-tag matcher: captures (1) tag name, (2) the attribute blob. Mirrors
@@ -57,15 +83,36 @@ export function extractAngularInteractiveElements(
   if (!looksAngular(sourceText)) return [];
   const tpl = extractInlineTemplate(sourceText);
   if (!tpl) return [];
+  // Inline template: line numbers are relative to the enclosing .ts source.
+  return collectAngularInteractive(tpl, sourceText, sourceText.indexOf(tpl));
+}
 
+/** Interactive elements from a standalone template (external `templateUrl` .html). */
+export function extractAngularInteractiveElementsFromTemplate(
+  tpl: string,
+): InteractiveElementInfo[] {
+  // External template: line numbers are relative to the .html file itself.
+  return collectAngularInteractive(tpl, tpl, 0);
+}
+
+/**
+ * Scan template markup for interactive elements. `containerText`/`tplOffset`
+ * anchor line numbers: for an inline template the container is the .ts source
+ * and the offset locates the template within it; for an external template the
+ * container IS the template and the offset is 0.
+ */
+function collectAngularInteractive(
+  tpl: string,
+  containerText: string,
+  tplOffset: number,
+): InteractiveElementInfo[] {
   const elements: InteractiveElementInfo[] = [];
-  const tplOffset = sourceText.indexOf(tpl);
   ANGULAR_TAG_RE.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = ANGULAR_TAG_RE.exec(tpl)) !== null) {
     const tag = match[1]!;
     const attrs = match[2] ?? "";
-    const line = (sourceText.slice(0, tplOffset + match.index).match(/\n/g)?.length ?? 0) + 1;
+    const line = (containerText.slice(0, tplOffset + match.index).match(/\n/g)?.length ?? 0) + 1;
     const element = resolveInteractiveElementKind(tag);
 
     // (event)="handler()" bindings.

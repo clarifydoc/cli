@@ -25,6 +25,7 @@ import { detectSubProjects, assignProjectId } from "./project-detector.js";
 import { detectDeployment } from "./deployment.js";
 import { resolveViewBySuffix, pickByPathAffinity, extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { detectFileBasedRoutes } from "../extractors/plugins/javascript/routes/file-based.js";
+import { resolveAngularExternalTemplates } from "../extractors/plugins/javascript/angular-external-templates.js";
 import { resolveExpressMounts } from "../extractors/plugins/javascript/routes/express-mounts.js";
 import { resolveUrlBuilders } from "../extractors/plugins/javascript/url-builders.js";
 import {
@@ -521,6 +522,19 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     }
   }
 
+  // Drop skipped files from `fileProjects`. A plugin that claims a broad
+  // extension (openapi → .yaml/.json, springxml → .xml) discovers every such
+  // file but `preprocess` skips the non-matching ones (package.json, tsconfig,
+  // k8s manifests, foreign-format xml), which produce no analysis. They were
+  // assigned a project id at discovery; prune them so `fileProjects` reflects
+  // the analyzed surface rather than raw discovery.
+  {
+    const analyzedPaths = new Set(allAnalyses.map((a) => a.filePath));
+    for (const key of Object.keys(fileProjects)) {
+      if (!analyzedPaths.has(key)) delete fileProjects[key];
+    }
+  }
+
   // File-based ("auto") frontend routes: plugins like unplugin-vue-router /
   // vite-plugin-pages generate the route table from a page-file directory, so
   // the routes are not present as source. Synthesize them from the file tree
@@ -537,6 +551,15 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   );
   if (autoRouteCount > 0 && verbose) {
     progress.detail(`  file-based routes: ${autoRouteCount}`);
+  }
+
+  // Angular external templates (`templateUrl: './x.html'`): read each sibling
+  // .html and back-fill the component's interactiveElements/templateTree, so an
+  // external-template component gets the same screen + button→handler→API chain
+  // an inline-template one does. Project-level + in-memory, before screens/links.
+  const angularTplCount = await resolveAngularExternalTemplates(allAnalyses, projectRoot);
+  if (angularTplCount > 0 && verbose) {
+    progress.detail(`  angular external templates: ${angularTplCount}`);
   }
 
   // Step 4: Post-analysis
@@ -1492,6 +1515,17 @@ export function buildComponentGraph(
     dirToFiles.get(dirName)!.push(a.filePath);
   }
 
+  // Web Component (custom element) tag → defining file(s). Usages appear in
+  // markup as `<kebab-tag>` with no import, so they can't resolve by path like
+  // ordinary sub-components — they resolve by tag. Keyed by a normalized form
+  // (non-alphanumerics stripped, lowercased) so a `user-card` registration
+  // matches a `<user-card>` / `UserCard` usage regardless of casing/separators.
+  const normTag = (s: string) => s.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  const customElToFiles = new Map<string, string[]>();
+  for (const a of analyses) {
+    for (const ce of a.customElements ?? []) push(customElToFiles, normTag(ce.tag), a.filePath);
+  }
+
   // The scans below depend only on the candidate string, and the same
   // candidate recurs across files (e.g. many files import "./types"), so
   // memoize per candidate. `undefined` (no match) is cached too.
@@ -1638,6 +1672,26 @@ export function buildComponentGraph(
         const candidate = comp.importSource.replace(/^\.\//, "");
         const match = scanForSubComponent(candidate);
         if (match && match !== a.filePath && familyCompatible(a.filePath, match)) refSet.add(match);
+      }
+    }
+
+    // Web Component usages: a `<kebab-tag>` in this file's markup resolves to
+    // the file that registered the tag (customElements.define / @customElement),
+    // by tag rather than import path. Names come from flat sub-components and the
+    // nested template tree (custom tags with no import land in both).
+    if (customElToFiles.size > 0) {
+      const usedNames = new Set<string>();
+      for (const comp of a.subComponents) usedNames.add(comp.name);
+      const collectTreeNames = (node: import("../types/analysis.js").TemplateComponentNode): void => {
+        if (!node.element) usedNames.add(node.name); // skip promoted interactive elements
+        for (const child of node.children) collectTreeNames(child);
+      };
+      for (const node of a.templateTree ?? []) collectTreeNames(node);
+      for (const name of usedNames) {
+        const files = customElToFiles.get(normTag(name));
+        if (!files) continue;
+        const target = pickByPathAffinity(files.filter((f) => f !== a.filePath), (c) => c, a.filePath);
+        if (target) refSet.add(target);
       }
     }
 

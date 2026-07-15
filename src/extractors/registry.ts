@@ -52,6 +52,9 @@ import { xamlManifest } from "./plugins/xaml/manifest.js";
 import { jspManifest } from "./plugins/jsp/manifest.js";
 import { springxmlManifest } from "./plugins/springxml/manifest.js";
 import { jsightManifest } from "./plugins/jsight/manifest.js";
+import { openapiManifest } from "./plugins/openapi/manifest.js";
+import { graphqlManifest } from "./plugins/graphql/manifest.js";
+import { wsdlManifest } from "./plugins/wsdl/manifest.js";
 
 /** All plugin manifests, in registration order (order is observable — keep stable). */
 const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
@@ -64,6 +67,7 @@ const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
   vbManifest, sqlManifest, cManifest, cppManifest, prismaManifest, dartManifest, elixirManifest, erlangManifest, objcManifest,
   haskellManifest, clojureManifest, blazorManifest, htmlManifest, qmlManifest, qtuiManifest, xamlManifest,
   jspManifest, springxmlManifest, jsightManifest,
+  openapiManifest, graphqlManifest, wsdlManifest,
 ];
 
 const MANIFEST_BY_LANGUAGE = new Map<Language, LanguagePluginManifest>();
@@ -120,6 +124,9 @@ const LOADERS: readonly PluginLoader[] = [
   { languages: ["jsp"], load: () => import("./plugins/jsp/meta.js").then((m) => [m.jspMeta]) },
   { languages: ["springxml"], load: () => import("./plugins/springxml/meta.js").then((m) => [m.springxmlMeta]) },
   { languages: ["jsight"], load: () => import("./plugins/jsight/meta.js").then((m) => [m.jsightMeta]) },
+  { languages: ["openapi"], load: () => import("./plugins/openapi/meta.js").then((m) => [m.openapiMeta]) },
+  { languages: ["graphql"], load: () => import("./plugins/graphql/meta.js").then((m) => [m.graphqlMeta]) },
+  { languages: ["wsdl"], load: () => import("./plugins/wsdl/meta.js").then((m) => [m.wsdlMeta]) },
 ];
 
 const LOADER_BY_LANGUAGE = new Map<Language, PluginLoader>();
