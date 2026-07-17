@@ -34,6 +34,26 @@ export interface VueSfcBlocks {
 }
 
 /**
+ * Return `source` with everything except `<script>` block *content* replaced by
+ * spaces, preserving all newlines. The result parses as the same script but at
+ * the SFC's original line/column positions — so functions, calls and symbol
+ * links get absolute file coordinates instead of ones relative to a sliced-out
+ * script (which is what made `.vue`/`.svelte` line numbers wrong downstream).
+ * Handles multiple blocks (a plain `<script>` plus a `<script setup>`).
+ */
+export function blankExceptScripts(source: string): string {
+  const out = source.replace(/[^\n\r]/g, " ").split("");
+  const regex = /<script\b[^>]*>([\s\S]*?)<\/script>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(source)) !== null) {
+    const content = m[1] ?? "";
+    const start = m.index + m[0].indexOf(">") + 1; // first '>' closes the opening tag
+    for (let i = 0; i < content.length; i++) out[start + i] = source[start + i];
+  }
+  return out.join("");
+}
+
+/**
  * Parse a .vue SFC file and extract its blocks.
  */
 export function parseVueSfc(source: string): VueSfcBlocks {

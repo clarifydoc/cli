@@ -3,6 +3,7 @@ import {
   parseSvelteSfc,
   extractSvelteInteractiveElements,
 } from "../../../parsers/svelte-sfc.js";
+import { blankExceptScripts } from "../../../parsers/vue-sfc.js";
 
 /**
  * Svelte SFC preprocessing: parse the `<script>` block as the file's source,
@@ -19,7 +20,9 @@ export function sveltePreprocess(
   if (!sfc.script) return { skip: "no <script> block" };
 
   return {
-    sourceText: sfc.script,
+    // Full source with non-script blanked out, so extracted line/column numbers
+    // are absolute to the .svelte file (not relative to a sliced-out script).
+    sourceText: blankExceptScripts(rawSource),
     language: sfc.scriptLang,
     postExtract(analysis) {
       // A .svelte file is a component with an implicit default export.

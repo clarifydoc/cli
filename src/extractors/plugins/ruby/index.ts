@@ -89,7 +89,7 @@ function railsPluralize(token: string): string {
  * chained query yields exactly one source.
  */
 const AR_QUERY_METHODS = new Set([
-  "where", "all", "first", "last", "take", "pluck", "ids", "count", "sum",
+  "where", "all", "first", "last", "take", "pluck", "ids", "count", "count_by_sql", "sum",
   "average", "maximum", "minimum", "exists?", "any?", "many?", "none?",
   "includes", "joins", "left_joins", "left_outer_joins", "eager_load",
   "preload", "references", "group", "having", "order", "reorder", "limit",
@@ -122,6 +122,137 @@ const AR_CALL_RE = /(?<![\w.@$])([A-Z]\w*(?:::[A-Z]\w*)*)\.([a-z_]\w*[!?]?)/g;
  *  (`find`, `find_by`, `find_each`, dynamic `find_by_email`, app `find_authorized`). */
 function isArQueryMethod(method: string): boolean {
   return AR_QUERY_METHODS.has(method) || /^find($|_)/.test(method);
+}
+
+// ─── Outbound HTTP (api-call) detection ──────────────────────────────────────
+
+/**
+ * `RestClient.get`, `HTTParty.post`, `Faraday.delete`, `Typhoeus.get`,
+ * `Excon.head` — module-level verb methods on the common Ruby HTTP client gems.
+ * The verb (group 2) is the HTTP method; the first argument is the URL.
+ */
+const HTTP_CLIENT_RE =
+  /\b(RestClient|HTTParty|Faraday|Typhoeus|Excon)\s*\.\s*(get|post|put|patch|delete|head|options)\b/g;
+
+/**
+ * `Net::HTTP::Post.new(uri)` / `Net::HTTP::Get.new(url)` — the stdlib request
+ * class names the verb. Anchored to `.new` so `response.is_a?(Net::HTTPSuccess)`
+ * (a *response* type, spelled `HTTPSuccess` without the `::Verb` segment) never
+ * matches.
+ */
+const NET_HTTP_CLASS_RE =
+  /\bNet::HTTP::(Get|Post|Put|Patch|Delete|Head|Options)\s*\.\s*new\b/g;
+
+/** `Net::HTTP.get`, `Net::HTTP.post_form`, `Net::HTTP.get_response`, `.request_post`. */
+const NET_HTTP_METHOD_RE =
+  /\bNet::HTTP\s*\.\s*(get_response|post_form|request_get|request_post|get|post)\b/g;
+
+/** Net::HTTP convenience method → HTTP verb. */
+const NET_HTTP_METHOD_MAP: Record<string, string> = {
+  get: "get",
+  get_response: "get",
+  request_get: "get",
+  post: "post",
+  post_form: "post",
+  request_post: "post",
+};
+
+/**
+ * Read the first argument of a call starting at `from` (the index just past the
+ * matched verb token). Handles both Ruby call forms — parenthesised
+ * `RestClient.get(url, headers)` and the paren-less "command call"
+ * `RestClient.get url, headers` (the grammar's `command_call`) — and returns the
+ * URL: a string literal with its quotes stripped, or the raw expression text
+ * (`url`, `uri.request_uri`) as a best-effort label. Bracket- and quote-aware so
+ * the argument boundary isn't mis-read inside `get_headers(a, b)` or `"a,b"`.
+ */
+function firstArgUrl(line: string, from: number): string | null {
+  let i = from;
+  while (i < line.length && /\s/.test(line[i]!)) i++;
+  if (line[i] === "(") i++; // parenthesised form — step inside
+  while (i < line.length && /\s/.test(line[i]!)) i++;
+
+  const start = i;
+  let depth = 0;
+  let quote: string | null = null;
+  for (; i < line.length; i++) {
+    const ch = line[i]!;
+    if (quote) {
+      if (ch === quote && line[i - 1] !== "\\") quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") { quote = ch; continue; }
+    if (ch === "(" || ch === "[" || ch === "{") { depth++; continue; }
+    if (ch === ")" || ch === "]" || ch === "}") {
+      if (depth === 0) break;
+      depth--;
+      continue;
+    }
+    if (ch === "," && depth === 0) break;
+  }
+
+  let arg = line.slice(start, i).trim();
+  const lit = arg.match(/^(['"])([\s\S]*)\1$/);
+  if (lit) arg = lit[2]!;
+  return arg.length > 0 ? arg : null;
+}
+
+/** `url = "#{BASE}/institution"` — a local var bound to a string literal. Group 1
+ *  is the name, group 2 the quoted literal. Only literals are tracked (a method
+ *  call RHS stays opaque, so the raw variable name remains the best label). */
+const URL_ASSIGN_RE = /^\s*([a-z_]\w*)\s*=\s*(?!=)(['"])((?:[^\\]|\\.)*?)\2\s*$/;
+
+/** A bare local-variable reference (no `.method`, no `(`) — resolvable via the
+ *  file-local literal map; anything richer (`uri.request_uri`) stays verbatim. */
+const BARE_VAR_RE = /^[a-z_]\w*$/;
+
+/**
+ * Surface outbound HTTP calls (`RestClient.get url`, `Net::HTTP::Post.new(uri)`,
+ * `HTTParty.post(...)`) as `api-call` data sources — the backend→external-service
+ * (and, in an API-only Rails app, the outbound-integration) half of the tracing
+ * story that every other language plugin already provides. `name` is the bare
+ * HTTP verb so the cross-tier route-linker can read it as the method; `target`
+ * is the request URL when statically visible.
+ *
+ * The URL argument is almost always a local var built one line earlier
+ * (`url = "#{LEAGUEDATA_API_URL}/institution"`), so a single top-to-bottom pass
+ * keeps a file-local map of the most recent string-literal assignment per name
+ * and resolves a bare-identifier target through it — reproducing `#{…}`
+ * interpolations verbatim (as the JS/PHP URL resolvers do) so a concrete
+ * endpoint path surfaces instead of the opaque variable name.
+ */
+function extractRubyHttpCalls(lines: string[]): DataSourceInfo[] {
+  const out: DataSourceInfo[] = [];
+  const seen = new Set<string>();
+  const varLiterals = new Map<string, string>();
+  const push = (verb: string, rawTarget: string | null, line: number, col: number): void => {
+    const target =
+      rawTarget && BARE_VAR_RE.test(rawTarget) ? varLiterals.get(rawTarget) ?? rawTarget : rawTarget;
+    const key = `${verb}:${target ?? ""}@${line}:${col}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ kind: "api-call", name: verb, target, calls: [], line });
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    const trimmed = line.trimStart();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const assign = URL_ASSIGN_RE.exec(line);
+    if (assign) varLiterals.set(assign[1]!, assign[3]!);
+
+    for (const m of line.matchAll(HTTP_CLIENT_RE)) {
+      push(m[2]!.toLowerCase(), firstArgUrl(line, m.index! + m[0]!.length), i + 1, m.index!);
+    }
+    for (const m of line.matchAll(NET_HTTP_CLASS_RE)) {
+      push(m[1]!.toLowerCase(), firstArgUrl(line, m.index! + m[0]!.length), i + 1, m.index!);
+    }
+    for (const m of line.matchAll(NET_HTTP_METHOD_RE)) {
+      push(NET_HTTP_METHOD_MAP[m[1]!]!, firstArgUrl(line, m.index! + m[0]!.length), i + 1, m.index!);
+    }
+  }
+  return out;
 }
 
 /**
@@ -230,7 +361,7 @@ export const rubySpec: RegexLangSpec = {
     return classes;
   },
 
-  extractDataSources: (lines) => extractRubyDataSources(lines),
+  extractDataSources: (lines) => [...extractRubyDataSources(lines), ...extractRubyHttpCalls(lines)],
 
   importPatterns: [
     {

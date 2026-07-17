@@ -547,6 +547,20 @@ export interface DataSourceInfo {
    * "OrderCreatedEvent") — the business-level name of the event.
    */
   entity?: string;
+  /**
+   * For `api-call`: the named environment variable of a leading base that was
+   * stripped to keep `target` app-relative (e.g. `VITE_API` from
+   * `import.meta.env.VITE_API + "/api/x"`). Display/deployment-facing; `target`
+   * stays app-relative so the route join is unaffected. Populated by the
+   * symbolic value resolver.
+   */
+  baseEnv?: string;
+  /**
+   * Provenance of a resolved `target`: EXTRACTED (fully literal), INFERRED (the
+   * fold left `{param}`/`{}`/`{env}` holes), or AMBIGUOUS (a conflicting
+   * binding). Absent when `target` was a plain literal needing no resolution.
+   */
+  targetConfidence?: Confidence;
 }
 
 /**
@@ -811,6 +825,71 @@ export interface SymbolDataAccess {
   access?: "queue-publish" | "queue-consume";
   /** Individual DB call sites inside the function, sorted by line. */
   sites: Array<{ name: string; line: number }>;
+}
+
+/**
+ * A data-access effect kind for the transitive propagation pass. `db` is the
+ * coarse historical bucket (the engine records `DataSourceInfo.kind === "database"`
+ * without a read/write flag); `db-read`/`db-write` are reserved for a later
+ * refinement (a plugin-provided classifier / DataMutationInfo join) and are not
+ * populated yet.
+ */
+export type DataEffectKind =
+  | "db"
+  | "db-read"
+  | "db-write"
+  | "queue-publish"
+  | "queue-consume"
+  | "api-call";
+
+/** One data-access effect reached (directly or transitively) from a symbol. */
+export interface ReachedEffect {
+  kind: DataEffectKind;
+  /** Entity/table, broker destination, or api target the effect touches. */
+  resource: string;
+  /** File where the effect is DIRECTLY performed. */
+  originFile: string;
+  /** Symbol ("Class.method" | "fn") where the effect is directly performed. */
+  originSymbol: string;
+  /** 0 = direct; ≥1 = transitive (call-graph hops to the nearest origin). */
+  distance: number;
+  /** EXTRACTED at distance 0; INFERRED transitively; AMBIGUOUS if a heuristic link is on the path. */
+  confidence: Confidence;
+}
+
+/**
+ * Per-symbol "dataflow-lite" summary: the set of data-access effects a
+ * function reaches through the call graph, computed by transitive propagation
+ * (data-flow-reach.ts). Emitted only for symbols that reach at least one effect.
+ */
+export interface SymbolReachSummary {
+  /** Defining file of the symbol (matches SymbolLink.sourceFile). */
+  file: string;
+  /** Symbol name ("Class.method" | "fn", matches SymbolLink.sourceSymbol). */
+  symbol: string;
+  /** Reached effects (capped; true totals in `effectCounts`), most-direct first. */
+  effects: ReachedEffect[];
+  /** Count of reached effects per kind (exact even when `effects` is capped). */
+  effectCounts: Partial<Record<DataEffectKind, number>>;
+  /** True when at least one effect is reached transitively (distance ≥ 1). */
+  hasTransitive: boolean;
+}
+
+/**
+ * A source→sink row: a UI/route entry point that transitively reaches a data
+ * effect. The natural payoff of the reach pass — e.g. filter on
+ * `effect === "db-write"` for "which handlers reach a DB write". Grounded in the
+ * existing call graph, not a taint engine.
+ */
+export interface DataFlowPath {
+  entryKind: "route" | "screen";
+  /** "POST /api/orders" for a route, or the screen name. */
+  entryLabel: string;
+  entryFile: string;
+  effect: DataEffectKind;
+  resource: string;
+  distance: number;
+  confidence: Confidence;
 }
 
 export interface LspStats {
@@ -1139,6 +1218,13 @@ export interface ProjectAnalysis {
   /** DB accesses attributed to the function that contains them — bridges the
    *  symbol-level Call Traces to the entity-level Data Model. Omitted when empty. */
   symbolDataAccess?: SymbolDataAccess[];
+  /** Transitive "dataflow-lite" reach: per-symbol summary of the data-access
+   *  effects each function reaches through the call graph (data-flow-reach.ts).
+   *  Omitted when the project has no data access. */
+  symbolReach?: SymbolReachSummary[];
+  /** Source→sink rows: UI/route entry points that transitively reach a data
+   *  effect (e.g. handlers that reach a DB write). Omitted when empty. */
+  dataFlows?: DataFlowPath[];
   /** Detected ORM/DB migrations across known ecosystems. Omitted when empty. */
   migrations?: MigrationInfo[];
   /**

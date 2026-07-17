@@ -54,6 +54,8 @@ export interface ReportPayload {
   dataAccessGraph: any;
   entityGraph: any;
   symbolDataAccess: any[];
+  symbolReach: any[];
+  dataFlows: any[];
   migrations: any[];
   externalPackages: any[];
   deployment: any;
@@ -296,6 +298,10 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
     dataAccessGraph: summary.dataAccessGraph ?? null,
     entityGraph: s.entityGraph ?? null,
     symbolDataAccess: s.symbolDataAccess ?? [],
+    // Transitive data-access reach + source→sink flows (dataflow-lite). Stored
+    // verbatim like symbolDataAccess; the viewer consumes them in a follow-up.
+    symbolReach: s.symbolReach ?? [],
+    dataFlows: s.dataFlows ?? [],
     migrations: s.migrations ?? [],
     externalPackages: s.externalPackages ?? [],
     deployment: s.deployment ?? null,

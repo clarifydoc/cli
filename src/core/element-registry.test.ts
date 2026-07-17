@@ -128,6 +128,41 @@ describe("element-registry codec — synthetic edge cases", () => {
     roundTrips(p);
   });
 
+  it("symbolReach + dataFlows page-id encode/decode round-trip", () => {
+    const p = baseProject();
+    p.files = ["srv/service.ts", "srv/routes.ts", "web/api.ts"];
+    p.symbolReach = [
+      {
+        file: "srv/routes.ts",
+        symbol: "createOrder",
+        effects: [
+          {
+            kind: "db",
+            resource: "orders",
+            originFile: "srv/service.ts",
+            originSymbol: "save",
+            distance: 1,
+            confidence: "INFERRED",
+          },
+        ],
+        effectCounts: { db: 1 },
+        hasTransitive: true,
+      },
+    ];
+    p.dataFlows = [
+      {
+        entryKind: "route",
+        entryLabel: "POST /api/orders",
+        entryFile: "srv/routes.ts",
+        effect: "db",
+        resource: "orders",
+        distance: 1,
+        confidence: "INFERRED",
+      },
+    ];
+    roundTrips(p);
+  });
+
   it("symbolLinks with Perl '::' symbols", () => {
     const p = baseProject();
     p.symbolLinks = [

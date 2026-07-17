@@ -1,5 +1,5 @@
 import type { PreprocessOutcome } from "../../../types/language-plugin.js";
-import { parseVueSfc } from "../../../parsers/vue-sfc.js";
+import { parseVueSfc, blankExceptScripts } from "../../../parsers/vue-sfc.js";
 import { extractVueInteractiveElements } from "./interactive-elements.js";
 
 /**
@@ -17,7 +17,9 @@ export function vuePreprocess(
   if (!sfc.script) return { skip: "no <script> block" };
 
   return {
-    sourceText: sfc.script,
+    // Full source with non-script blanked out, so extracted line/column numbers
+    // are absolute to the .vue file (not relative to a sliced-out script).
+    sourceText: blankExceptScripts(rawSource),
     language: sfc.scriptLang,
     postExtract(analysis, raw) {
       // A `<script setup>` SFC has no literal `export default`, but the file IS

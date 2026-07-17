@@ -6,6 +6,8 @@ import type {
   EntityGraphColumn,
   EntityModelRef,
   ClassGraph,
+  ClassInfo,
+  EntityRelation,
   TypeUsageKind,
   Confidence,
 } from "../types/analysis.js";
@@ -59,7 +61,7 @@ function bareName(name: string | null): string | null {
  */
 export function reconcileEntityInheritance(analyses: FileAnalysis[]): void {
   // Index every class by its bare name (superclass references are usually bare).
-  const byBare = new Map<string, import("../types/analysis.js").ClassInfo[]>();
+  const byBare = new Map<string, ClassInfo[]>();
   for (const a of analyses) {
     for (const c of a.classes ?? []) {
       const b = bareName(c.name);
@@ -89,6 +91,93 @@ export function reconcileEntityInheritance(analyses: FileAnalysis[]): void {
         c.decorators = [...(c.decorators ?? []), "entity", orm];
         changed = true;
       }
+    }
+  }
+}
+
+/**
+ * Propagate an STI base class's relations down to its subclasses. In
+ * single-table inheritance (Rails STI, JPA `@Inheritance`, EF TPH, Sequel STI) a
+ * subclass IS-A its parent and shares the parent's table AND associations. The
+ * engine already copies the shared COLUMNS down (each plugin's schema join), but
+ * the relations stay on the base — so every subclass node renders as an
+ * unconnected island in the Data Model view even though `ChangeRequest`'s
+ * `belongs_to :employee` applies to each of its STI children. This closes that
+ * gap symmetrically with the column inheritance: for every entity that
+ * (transitively) extends another entity, re-home a copy of each ancestor
+ * relation onto the subclass so it participates in the same relationships.
+ *
+ * Additive only — never removes or rewrites a declared relation; a relation the
+ * subclass already declares (an override) wins and is not duplicated. Inherited
+ * copies are marked `INFERRED`. Language-agnostic; must run on the reconciled
+ * (post-`reconcileEntityInheritance`) analyses so cross-file STI children are
+ * already tagged entities, and before `buildEntityGraph`.
+ */
+export function propagateStiRelations(analyses: FileAnalysis[]): void {
+  const isEntity = (c: ClassInfo) => (c.decorators ?? []).includes("entity");
+
+  // Index entity classes by bare name (STI parents are named by bare superclass).
+  const entityByBare = new Map<string, ClassInfo>();
+  for (const a of analyses) {
+    for (const c of a.classes ?? []) {
+      if (!isEntity(c)) continue;
+      const b = bareName(c.name);
+      if (b && !entityByBare.has(b)) entityByBare.set(b, c);
+    }
+  }
+
+  // Snapshot each entity's ORIGINAL declared relations by bare `fromEntity`, so
+  // propagation reads a base's own relations, never ones added by this pass.
+  const ownRelations = new Map<string, EntityRelation[]>();
+  for (const a of analyses) {
+    for (const r of a.entityRelations ?? []) {
+      const from = bareName(r.fromEntity);
+      if (!from) continue;
+      (ownRelations.get(from) ?? ownRelations.set(from, []).get(from)!).push(r);
+    }
+  }
+
+  /** Bare names of every entity ancestor of `bare`, nearest first (cycle-safe). */
+  const ancestorsOf = (bare: string): string[] => {
+    const chain: string[] = [];
+    const seen = new Set<string>([bare]);
+    let cur = entityByBare.get(bare);
+    while (cur) {
+      const parent = bareName(cur.extends);
+      if (!parent || seen.has(parent)) break;
+      seen.add(parent);
+      chain.push(parent);
+      cur = entityByBare.get(parent);
+    }
+    return chain;
+  };
+
+  // An association's identity is its field name (redefining `belongs_to :owner`
+  // overrides the base regardless of target), so dedup by `fromField`; fall back
+  // to target+cardinality for the rare field-less relation.
+  const relKey = (r: EntityRelation) =>
+    r.fromField ? `f:${r.fromField.toLowerCase()}` : `t:${(r.toEntity ?? "").toLowerCase()}|${r.cardinality}`;
+
+  for (const a of analyses) {
+    for (const c of a.classes ?? []) {
+      if (!isEntity(c)) continue;
+      const bare = bareName(c.name);
+      if (!bare) continue;
+      const ancestors = ancestorsOf(bare);
+      if (ancestors.length === 0) continue;
+
+      // Seed the dedup set with the subclass's OWN relations so an override wins.
+      const have = new Set<string>((ownRelations.get(bare) ?? []).map(relKey));
+      const additions: EntityRelation[] = [];
+      for (const anc of ancestors) {
+        for (const r of ownRelations.get(anc) ?? []) {
+          const k = relKey(r);
+          if (have.has(k)) continue;
+          have.add(k);
+          additions.push({ ...r, fromEntity: bare, confidence: "INFERRED" });
+        }
+      }
+      if (additions.length > 0) a.entityRelations = [...(a.entityRelations ?? []), ...additions];
     }
   }
 }

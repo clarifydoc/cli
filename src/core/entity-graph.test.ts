@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { synthesizeReferencedTableEntities } from "./entity-graph.js";
-import type { EntityGraph, FileAnalysis } from "../types/analysis.js";
+import { synthesizeReferencedTableEntities, propagateStiRelations, buildEntityGraph } from "./entity-graph.js";
+import type { EntityGraph, EntityRelation, FileAnalysis } from "../types/analysis.js";
 
 /**
  * `synthesizeReferencedTableEntities` adds ER nodes for tables that are queried
@@ -125,5 +125,108 @@ describe("ORM-suffix dedupe (JPA `XEntity` classes vs repository-derived names)"
     const g = graph(["CustomerEntity"]);
     synthesizeReferencedTableEntities([analysis("a.java", ["customer", "auditlog"])], g);
     expect(g.nodes.filter((n) => n.orm === "inferred").map((n) => n.name)).toEqual(["auditlog"]);
+  });
+});
+
+describe("propagateStiRelations — STI subclasses inherit their base's relations", () => {
+  const entityClass = (name: string, ext: string | null) => ({
+    name,
+    extends: ext,
+    decorators: ["entity", "active-record"],
+    properties: [],
+    methods: [],
+    implements: [],
+    line: 1,
+    endLine: 2,
+    isExported: true,
+  });
+  const file = (
+    filePath: string,
+    classes: ReturnType<typeof entityClass>[],
+    entityRelations: Partial<EntityRelation>[] = [],
+  ): FileAnalysis => ({ filePath, classes, entityRelations } as unknown as FileAnalysis);
+
+  const rel = (from: string, field: string, to: string): Partial<EntityRelation> => ({
+    fromEntity: from,
+    fromField: field,
+    toEntity: to,
+    cardinality: "many-to-one",
+    orm: "active-record",
+    confidence: "EXTRACTED",
+  });
+
+  it("re-homes a base's relations onto a cross-file STI subclass chain", () => {
+    const analyses = [
+      file("change_request.rb", [entityClass("ChangeRequest", "IdaModel")], [
+        rel("ChangeRequest", "employee", "Employee"),
+        rel("ChangeRequest", "department", "Department"),
+      ]),
+      file("duty_change_request.rb", [entityClass("DutyChangeRequest", "ChangeRequest")], [
+        rel("DutyChangeRequest", "duty", "Duty"),
+      ]),
+      // Grandchild in a separate file, declaring NO relations of its own.
+      file("time_duty_change_request.rb", [entityClass("TimeDutyChangeRequest", "DutyChangeRequest")]),
+      file("employee.rb", [entityClass("Employee", "IdaModel")]),
+      file("department.rb", [entityClass("Department", "IdaModel")]),
+      file("duty.rb", [entityClass("Duty", "IdaModel")]),
+    ];
+
+    propagateStiRelations(analyses);
+
+    const relsOf = (fp: string) =>
+      (analyses.find((a) => a.filePath === fp)!.entityRelations ?? []).map((r) => `${r.fromEntity}.${r.fromField}->${r.toEntity}`);
+
+    // DutyChangeRequest keeps its own `duty` and inherits employee+department.
+    expect(relsOf("duty_change_request.rb").sort()).toEqual([
+      "DutyChangeRequest.department->Department",
+      "DutyChangeRequest.duty->Duty",
+      "DutyChangeRequest.employee->Employee",
+    ]);
+    // The grandchild inherits all three, transitively.
+    expect(relsOf("time_duty_change_request.rb").sort()).toEqual([
+      "TimeDutyChangeRequest.department->Department",
+      "TimeDutyChangeRequest.duty->Duty",
+      "TimeDutyChangeRequest.employee->Employee",
+    ]);
+    // Inherited copies are marked INFERRED (only declared ones stay EXTRACTED).
+    const inherited = analyses
+      .find((a) => a.filePath === "time_duty_change_request.rb")!
+      .entityRelations!;
+    expect(inherited.every((r) => r.confidence === "INFERRED")).toBe(true);
+
+    // End-to-end: the grandchild is now connected in the graph, not an island.
+    const g = buildEntityGraph(analyses);
+    const nid = (n: string) => g.nodes.find((x) => x.name === n)!.id;
+    const touches = (aName: string, bName: string) =>
+      g.edges.some(
+        (e) =>
+          (e.source === nid(aName) && e.target === nid(bName)) ||
+          (e.source === nid(bName) && e.target === nid(aName)),
+      );
+    for (const target of ["Employee", "Department", "Duty"]) {
+      expect(touches("TimeDutyChangeRequest", target)).toBe(true);
+    }
+  });
+
+  it("does not duplicate a relation the subclass overrides, and is a no-op without STI", () => {
+    const analyses = [
+      file("base.rb", [entityClass("Base", "ApplicationRecord")], [rel("Base", "owner", "User")]),
+      // Child overrides `owner` to point at Admin instead of User.
+      file("child.rb", [entityClass("Child", "Base")], [
+        { ...rel("Child", "owner", "Admin") },
+      ]),
+      file("user.rb", [entityClass("User", "ApplicationRecord")]),
+      file("admin.rb", [entityClass("Admin", "ApplicationRecord")]),
+    ];
+    propagateStiRelations(analyses);
+    const childRels = analyses.find((a) => a.filePath === "child.rb")!.entityRelations!;
+    // Only the child's own `owner->Admin`; the base's `owner->User` is NOT added
+    // (same field = an override).
+    expect(childRels.map((r) => `${r.fromField}->${r.toEntity}`)).toEqual(["owner->Admin"]);
+
+    // A standalone entity with no entity ancestor is untouched.
+    const solo = [file("s.rb", [entityClass("Solo", "ApplicationRecord")], [rel("Solo", "x", "Y")])];
+    propagateStiRelations(solo);
+    expect(solo[0]!.entityRelations).toHaveLength(1);
   });
 });
