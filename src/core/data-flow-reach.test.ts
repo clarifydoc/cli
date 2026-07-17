@@ -121,6 +121,41 @@ describe("computeSymbolReach", () => {
     expect(reachOf(reach, "f.ts", "a")?.effects[0]?.distance).toBe(1);
   });
 
+  it("splits db into db-read/db-write from the dbAccessByLine classification", () => {
+    // save writes (line 1), read via a separate site (line 2); a caller inherits both.
+    const reach = computeSymbolReach({
+      symbolLinks: [link("ctl.ts", "handle", "svc.ts", "save")],
+      symbolDataAccess: [
+        {
+          file: "svc.ts",
+          symbol: "save",
+          symbolLine: 1,
+          entity: "orders",
+          entityMatched: true,
+          datastore: "db",
+          sites: [
+            { name: "Order.create", line: 10 },
+            { name: "Order.find", line: 12 },
+          ],
+        },
+      ],
+      dbAccessByLine: new Map([
+        ["svc.ts::10", "write"],
+        ["svc.ts::12", "read"],
+      ]),
+    });
+    const save = reachOf(reach, "svc.ts", "save");
+    expect(save?.effectCounts).toEqual({ "db-write": 1, "db-read": 1 });
+    const handler = reachOf(reach, "ctl.ts", "handle");
+    expect(handler?.effects.map((e) => e.kind).sort()).toEqual(["db-read", "db-write"]);
+    expect(handler?.effects.every((e) => e.distance === 1 && e.confidence === "INFERRED")).toBe(true);
+  });
+
+  it("keeps the coarse db effect when a site is unclassified", () => {
+    const reach = computeSymbolReach(chain); // no dbAccessByLine
+    expect(reachOf(reach, "srv/service.ts", "save")?.effects[0]?.kind).toBe("db");
+  });
+
   it("returns nothing when there is no data access", () => {
     expect(
       computeSymbolReach({ symbolLinks: chain.symbolLinks, symbolDataAccess: [] }),

@@ -73,6 +73,20 @@ describe("rubySpec.extractDataSources — ActiveRecord", () => {
     expect(ds).toHaveLength(0);
   });
 
+  it("classifies AR reads vs writes via the access field", () => {
+    const ds = dbSources(`
+      rows = Absence.where(active: true)
+      Absence.create!(create_params)
+      Duty.update_all(active: false)
+      one = Institution.find(id)
+    `);
+    const byName = Object.fromEntries(ds.map((d) => [d.name, d.access]));
+    expect(byName["Absence.where"]).toBe("read");
+    expect(byName["Institution.find"]).toBe("read");
+    expect(byName["Absence.create!"]).toBe("write");
+    expect(byName["Duty.update_all"]).toBe("write");
+  });
+
   it("does not treat a method on an instance/relation as model access", () => {
     // Lowercase / @ivar receivers carry no model name and must be skipped.
     const ds = dbSources(`
