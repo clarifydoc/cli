@@ -1,9 +1,18 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { DataSourceInfo, CallInfo, Language } from "../../../types/analysis.js";
+import type { Confidence, DataSourceInfo, CallInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { stripQuotes } from "../../shared/node-helpers.js";
+import { foldValue, toAppRelativeUrl } from "../../shared/value-resolver.js";
+import { astToValueExpr, buildScope } from "./value-capture.js";
 import { extractGqlOperationCalls } from "../shared/graphql-operations.js";
+
+/** A resolved api-call URL: the app-relative path plus recovered provenance. */
+interface ResolvedUrl {
+  url: string;
+  baseEnv?: string;
+  confidence: Confidence;
+}
 
 /** Named HTTP clients — trusted as API calls without a URL-shape check. */
 const HTTP_ROOTS = new Set(["fetch", "axios", "http", "request", "ajax"]);
@@ -106,7 +115,7 @@ const NOISE_METHODS = new Set([
   "toString", "valueOf", "toJSON",
 ]);
 
-const NO_CONSTS: ReadonlyMap<string, string> = new Map();
+const NO_CONSTS: ReadonlyMap<string, ResolvedUrl> = new Map();
 
 export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
@@ -126,7 +135,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
    * per-worker singleton run sequentially), so it never leaks across files.
    */
   private root: Node | null = null;
-  private urlConsts: ReadonlyMap<string, string> | null = null;
+  private urlConsts: ReadonlyMap<string, ResolvedUrl> | null = null;
   /** File source, kept for the one-time gql-operation scan (see {@link scanGql}). */
   private sourceText = "";
   private gqlScanned = false;
@@ -158,7 +167,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   }
 
   /** Lazily build + cache the file's URL-const map (see {@link urlConsts}). */
-  private getUrlConsts(): ReadonlyMap<string, string> {
+  private getUrlConsts(): ReadonlyMap<string, ResolvedUrl> {
     if (this.urlConsts === null) {
       this.urlConsts = this.root ? buildUrlConstMap(this.root) : NO_CONSTS;
     }
@@ -166,23 +175,31 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   }
 
   /**
-   * Resolve a `fetch`/client call's URL argument to a literal path. A string
-   * literal resolves directly (no const map needed); a bare identifier or a
-   * template's `${id}` interpolation is resolved through the file-local const
-   * map, which is built on first such use. An interpolation that doesn't resolve
-   * is reproduced verbatim so an otherwise unchanged template yields the same
-   * target as before (no fixture churn).
+   * Resolve a `fetch`/client call's URL argument to an app-relative path. A
+   * string literal resolves directly; a bare identifier is resolved through the
+   * file-local const map (now multi-hop and concat-aware via the symbolic value
+   * resolver); a template's `${id}` interpolation is substituted from the same
+   * map, reproducing an unresolved interpolation verbatim so an otherwise
+   * unchanged template yields the same target as before. A leading environment
+   * or runtime base is stripped to keep the path joinable (its env var, when
+   * known, is returned in `baseEnv`).
    */
-  private resolveUrlArg(arg: Node): string | null {
-    if (arg.type === "string") return stripQuotes(arg.text);
-    if (arg.type === "template_string") return resolveTemplateUrl(arg, this.getUrlConsts());
+  private resolveUrlArg(arg: Node): ResolvedUrl | null {
+    if (arg.type === "string") return { url: stripQuotes(arg.text), confidence: "EXTRACTED" };
+    if (arg.type === "template_string") {
+      const url = resolveTemplateUrl(arg, this.getUrlConsts());
+      // A leftover `${…}` means the template couldn't be fully resolved.
+      return { url, confidence: url.includes("${") ? "INFERRED" : "EXTRACTED" };
+    }
     if (arg.type === "identifier") return this.getUrlConsts().get(arg.text) ?? null;
     // A URL-builder helper call: `axios.get(requestUri('vikarbesked', 'v4'))`.
     // Keep the call text verbatim (whitespace-collapsed) so a project-level pass
     // can substitute the helper's template and recover the concrete URL. Emitted
     // only on a trusted HTTP receiver (see visitNode) so a non-client verb call
     // isn't mistaken for one.
-    if (arg.type === "call_expression") return arg.text.replace(/\s+/g, " ").trim();
+    if (arg.type === "call_expression") {
+      return { url: arg.text.replace(/\s+/g, " ").trim(), confidence: "INFERRED" };
+    }
     return null;
   }
 
@@ -228,7 +245,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         if ((isRoot || isVerb) && fn && !isServerRouteDef(fn, node)) {
           const args = node.childForFieldName("arguments");
           const firstArg = args && args.childCount > 1 ? args.child(1) : null;
-          const url = firstArg ? this.resolveUrlArg(firstArg) : null;
+          const resolved = firstArg ? this.resolveUrlArg(firstArg) : null;
           // Bare HTTP verbs (`get`/`post`/...) collide with `Map.get`,
           // `searchParams.get`, etc., so require a URL-shaped argument; named
           // clients (fetch/axios/http/request) and trusted client receivers are
@@ -242,14 +259,22 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           const argIsCall = firstArg?.type === "call_expression";
           const strictHttp = HTTP_ROOTS.has(fnName.toLowerCase()) || trustedReceiver;
           if (
-            url != null &&
-            (looksLikeUrl(url) || (trusted && (!argIsCall || strictHttp)))
+            resolved != null &&
+            (looksLikeUrl(resolved.url) || (trusted && (!argIsCall || strictHttp)))
           ) {
             sources.push(this.ds({
               kind: "api-call",
               name: fnName,
-              target: url,
+              target: resolved.url,
               line: node.startPosition.row + 1,
+              // Recovered env base (display only; `target` stays app-relative).
+              ...(resolved.baseEnv ? { baseEnv: resolved.baseEnv } : {}),
+              // Flag only AMBIGUOUS provenance — a conflicting binding — so a
+              // later pass can drop it; literal/inferred targets stay unmarked to
+              // avoid churning every existing api-call fixture.
+              ...(resolved.confidence === "AMBIGUOUS"
+                ? { targetConfidence: resolved.confidence }
+                : {}),
             }));
             emittedApiCall = true;
           }
@@ -496,67 +521,39 @@ function objectPropValue(obj: Node, key: string): Node | null {
 }
 
 /**
- * Resolve a const initializer to a literal string, when it is one. Follows the
- * common endpoint idioms: a plain string, an interpolation-free template, and
- * the env-default `import.meta.env.VITE_X ?? '/path'` / `process.env.Y || '/p'`
- * (the string operand of a `??`/`||`). Returns null for anything dynamic.
- */
-function resolveConstString(node: Node | null): string | null {
-  if (!node) return null;
-  switch (node.type) {
-    case "string":
-      return stripQuotes(node.text);
-    case "template_string": {
-      // Reconstruct the template, resolving each `${…}` recursively. A template
-      // with no interpolation collapses to its text; the env-base idiom
-      // `` `${import.meta.env.VITE_API_URL || ""}/api/admin` `` collapses to
-      // `/api/admin` (the `||`/`??` default resolves to a string). Any
-      // interpolation that isn't itself a static string makes the whole value
-      // dynamic → null.
-      let out = "";
-      for (const part of node.children) {
-        if (part.type === "`") continue;
-        if (part.type === "template_substitution") {
-          const resolved = resolveConstString(part.namedChild(0));
-          if (resolved == null) return null;
-          out += resolved;
-        } else {
-          out += part.text; // string_fragment / escape_sequence
-        }
-      }
-      return out;
-    }
-    case "binary_expression": {
-      // `env ?? '/default'` / `env || '/default'` — prefer the (default) operand
-      // that resolves to a string.
-      return (
-        resolveConstString(node.childForFieldName("right")) ??
-        resolveConstString(node.childForFieldName("left"))
-      );
-    }
-    case "parenthesized_expression":
-      return resolveConstString(node.namedChild(0));
-    default:
-      return null;
-  }
-}
-
-/**
  * Build the file-local URL-const map: every `const/let X = <…>` whose value
- * resolves to a URL-shaped literal. Only URL-shaped values are kept so the map
- * stays an endpoint table rather than a dump of every string const.
+ * folds to a URL-shaped path. Powered by the symbolic value resolver, so a
+ * value assembled by concatenation across several local assignments
+ * (`const url = base + '/api/' + v`) or built on an env base
+ * (`import.meta.env.VITE_API + '/api'`) now resolves — where the previous
+ * literal-only folder silently dropped it. A leading env/runtime base is
+ * stripped to keep the path app-relative (its env var recorded in `baseEnv`).
+ * Only URL-shaped values are kept so the map stays an endpoint table rather than
+ * a dump of every string const.
  */
-function buildUrlConstMap(root: Node): ReadonlyMap<string, string> {
-  const map = new Map<string, string>();
+function buildUrlConstMap(root: Node): ReadonlyMap<string, ResolvedUrl> {
+  // A file-wide scope of every binding lets a const's fold chase refs to other
+  // consts (multi-hop). The URL table itself is built by walking declarators in
+  // document order and keeping the first URL-shaped fold per name — matching the
+  // legacy first-URL-wins semantics (a name whose first binding isn't URL-shaped
+  // can still be filled by a later URL-shaped one).
+  const scope = buildScope(root, { logical: true });
+  const map = new Map<string, ResolvedUrl>();
   const stack: Node[] = [root];
   while (stack.length > 0) {
     const n = stack.pop()!;
     if (n.type === "variable_declarator") {
       const name = n.childForFieldName("name");
-      if (name && name.type === "identifier") {
-        const value = resolveConstString(n.childForFieldName("value"));
-        if (value && looksLikeUrl(value) && !map.has(name.text)) {
-          map.set(name.text, value);
+      const value = n.childForFieldName("value");
+      if (name && name.type === "identifier" && value && !map.has(name.text)) {
+        const folded = foldValue(astToValueExpr(value, { logical: true }), scope, {
+          envMode: "name",
+        });
+        if (folded.text != null) {
+          const { url, baseEnv } = toAppRelativeUrl(folded.text);
+          if (looksLikeUrl(url)) {
+            map.set(name.text, { url, confidence: folded.confidence, ...(baseEnv ? { baseEnv } : {}) });
+          }
         }
       }
     }
@@ -571,14 +568,15 @@ function buildUrlConstMap(root: Node): ReadonlyMap<string, string> {
  * and unresolved `${…}`) verbatim — so a template that references no known URL
  * const yields exactly its original text.
  */
-function resolveTemplateUrl(tpl: Node, consts: ReadonlyMap<string, string>): string {
+function resolveTemplateUrl(tpl: Node, consts: ReadonlyMap<string, ResolvedUrl>): string {
   let out = "";
   for (const part of tpl.children) {
     if (part.type === "`") continue;
     if (part.type === "template_substitution") {
       const inner = part.namedChild(0);
-      if (inner && inner.type === "identifier" && consts.has(inner.text)) {
-        out += consts.get(inner.text)!;
+      const hit = inner && inner.type === "identifier" ? consts.get(inner.text) : undefined;
+      if (hit) {
+        out += hit.url;
       } else {
         out += part.text; // reproduce `${…}` verbatim
       }

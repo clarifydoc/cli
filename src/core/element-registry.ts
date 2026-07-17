@@ -572,6 +572,14 @@ function rewritePageRefs<T extends object>(
   arr("surprisingConnections", (s) => ({ ...s, source: ref(s.source), target: ref(s.target) }));
   arr("godNodes", (n) => ({ ...n, file: ref(n.file) }));
   arr("symbolDataAccess", (s) => ({ ...s, file: ref(s.file) }));
+  arr("symbolReach", (s) => ({
+    ...s,
+    file: ref(s.file),
+    effects: Array.isArray(s.effects)
+      ? (s.effects as Record<string, unknown>[]).map((e) => ({ ...e, originFile: ref(e.originFile) }))
+      : s.effects,
+  }));
+  arr("dataFlows", (f) => ({ ...f, entryFile: ref(f.entryFile) }));
   arr("fileChurn", (c) => ({ ...c, file: ref(c.file) }));
   arr("hotspots", (h) => ({ ...h, file: ref(h.file) }));
   arr("componentLaunches", (c) => ({ ...c, sourceFile: ref(c.sourceFile), targetFile: ref(c.targetFile) }));

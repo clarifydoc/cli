@@ -4,6 +4,8 @@ import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from 
 import type { CallInfo } from "../../../types/analysis.js";
 import { getVisibility, extractJsDecorators, stripQuotes } from "../../shared/node-helpers.js";
 import { extractCalls } from "../../shared/call-graph.js";
+import { foldValue, type ValueExpr } from "../../shared/value-resolver.js";
+import { astToValueExpr } from "./value-capture.js";
 
 /**
  * Dynamic `import("./x.vue")` calls inside a function body, surfaced as
@@ -114,63 +116,20 @@ export function extractUrlTemplate(
   }
 
   if (!returnExpr) return undefined;
-  const seen = new Set<Node>();
 
-  const render = (node: Node | null): string | null => {
-    if (!node || seen.has(node)) return null;
-    switch (node.type) {
-      case "string":
-        return stripQuotes(node.text);
-      case "template_string": {
-        let out = "";
-        for (const part of node.children) {
-          if (part.type === "`") continue;
-          if (part.type === "template_substitution") {
-            const r = render(part.namedChild(0));
-            out += r ?? "{}";
-          } else {
-            out += part.text;
-          }
-        }
-        return out;
-      }
-      case "binary_expression": {
-        // Only string concatenation contributes to a URL.
-        const op = node.childForFieldName("operator")?.text;
-        if (op !== "+") return "{}";
-        const l = render(node.childForFieldName("left"));
-        const r = render(node.childForFieldName("right"));
-        if (l == null || r == null) return null;
-        return l + r;
-      }
-      case "parenthesized_expression":
-      case "non_null_expression":
-      case "as_expression":
-        return render(node.namedChild(0));
-      case "identifier": {
-        if (paramNames.has(node.text)) return `{${node.text}}`;
-        const local = locals.get(node.text);
-        if (local) {
-          seen.add(node);
-          return render(local);
-        }
-        return "{}"; // closure/runtime variable — unresolvable, but positional
-      }
-      case "member_expression":
-      case "subscript_expression": {
-        const t = node.text;
-        // Environment base prefix collapses to empty — the route is app-relative.
-        if (t.startsWith("import.meta.env") || t.startsWith("process.env")) return "";
-        return "{}";
-      }
-      default:
-        return "{}";
-    }
-  };
-
-  const tpl = render(returnExpr);
-  if (tpl == null || !tpl.includes("/")) return undefined;
-  return tpl;
+  // Capture the pre-return top-level consts as a function-local scope, then fold
+  // the returned expression. `envMode: "collapse"` drops an environment base to
+  // "" (the template is app-relative), matching the legacy behavior exactly.
+  const scope = new Map<string, ValueExpr>();
+  for (const [name, valueNode] of locals) {
+    scope.set(name, astToValueExpr(valueNode));
+  }
+  const { text } = foldValue(astToValueExpr(returnExpr), scope, {
+    params: paramNames,
+    envMode: "collapse",
+  });
+  if (text == null || !text.includes("/")) return undefined;
+  return text;
 }
 
 export class JavaScriptExtractor extends FunctionClassExtractor {

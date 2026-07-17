@@ -52,7 +52,11 @@ describe("generateHtmlReport — standalone template", () => {
   it("emits a complete HTML document with no leftover tokens", () => {
     expect(html.trimStart().toLowerCase().startsWith("<!doctype html>")).toBe(true);
     expect(html.trimEnd().endsWith("</html>")).toBe(true);
-    expect(html).not.toContain("__CLARIFYDOC_");
+    // The renderer substitutes exactly these placeholders; neither may remain.
+    // (Not a blanket `__CLARIFYDOC_` check — the viewer has a legitimate runtime
+    // global `window.__CLARIFYDOC_HASH__` for editor deep-linking.)
+    expect(html).not.toContain("__CLARIFYDOC_TITLE__");
+    expect(html).not.toContain("__CLARIFYDOC_PAYLOAD__");
   });
 
   it("replaces the title with the project name", () => {

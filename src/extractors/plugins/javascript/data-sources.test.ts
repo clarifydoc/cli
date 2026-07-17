@@ -33,6 +33,35 @@ async function go(ownerId: number) { await fetch(\`\${galleryUrl}?ownerCustomerI
     expect(calls[0]!.target).toBe("/site/cui_gallery_detail_json?ownerCustomerId=${ownerId}");
   });
 
+  it("resolves a concatenation-built const URL (the old literal-only gap)", async () => {
+    // `base + '/api/users/' + id` — the previous folder mishandled `+` and
+    // produced a mangled partial; the symbolic resolver reduces each runtime
+    // part to `{}` and strips the leading unknown base → an app-relative path
+    // that joins `/api/users/:id`.
+    const SRC = `function go(base, id) {
+  const url = base + '/api/users/' + id;
+  return fetch(url);
+}`;
+    const calls = await apiCallsOf(SRC);
+    expect(calls[0]!.target).toBe("/api/users/{}");
+  });
+
+  it("resolves an env-base concat const and records the env var in baseEnv", async () => {
+    const SRC = `const url = import.meta.env.VITE_API + '/orders';
+async function go() { await fetch(url); }`;
+    const calls = await apiCallsOf(SRC);
+    expect(calls[0]!.target).toBe("/orders");
+    expect(calls[0]!.baseEnv).toBe("VITE_API");
+  });
+
+  it("chases a const-to-const base multi-hop", async () => {
+    const SRC = `const base = '/api/v2';
+const url = base + '/users';
+async function go() { await fetch(url); }`;
+    const calls = await apiCallsOf(SRC);
+    expect(calls[0]!.target).toBe("/api/v2/users");
+  });
+
   it("still captures a literal URL and leaves an unresolved template unchanged", async () => {
     const lit = await apiCallsOf(`fetch('/api/users');`);
     expect(lit[0]!.target).toBe("/api/users");
@@ -84,13 +113,15 @@ async function go() { await fetch(API_URL, { method: "POST" }); }`;
     expect(calls[0]!.target).toBe("/api/auth/register");
   });
 
-  it("does not resolve a template whose interpolation isn't a static string", async () => {
-    // `base` is a runtime parameter, not a resolvable const → reproduced verbatim.
+  it("resolves a template with a leading runtime base to an app-relative path", async () => {
+    // `base` is a runtime parameter (an unknown leading base). The symbolic
+    // value resolver folds it to a `{}` hole, then strips that leading base so
+    // the path is app-relative and joinable — where the old literal-only folder
+    // dropped the call entirely.
     const SRC = `function f(base) { const u = \`\${base}/api/x\`; return fetch(u); }`;
     const calls = await apiCallsOf(SRC);
-    // `u` never enters the const map (unresolved), so the bare-identifier arg
-    // yields no URL and the call is dropped.
-    expect(calls).toHaveLength(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.target).toBe("/api/x");
   });
 });
 

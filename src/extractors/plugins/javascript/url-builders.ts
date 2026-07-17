@@ -25,6 +25,9 @@
  */
 
 import type { DataSourceInfo, FileAnalysis, ParamInfo } from "../../../types/analysis.js";
+// The quote/bracket-aware splitter and unquoter are shared with the symbolic
+// value resolver (one copy instead of the three that used to exist).
+import { splitTopLevel, unquote } from "../../shared/value-resolver.js";
 
 interface UrlBuilder {
   template: string;
@@ -32,54 +35,6 @@ interface UrlBuilder {
 }
 
 type ApiCall = DataSourceInfo & { filePath: string };
-
-/** Strip one layer of matching quotes/backticks from a literal's text. */
-function unquote(s: string): string {
-  const t = s.trim();
-  if (t.length >= 2) {
-    const q = t[0];
-    if ((q === "'" || q === '"' || q === "`") && t[t.length - 1] === q) {
-      return t.slice(1, -1);
-    }
-  }
-  return t;
-}
-
-/**
- * Split text on a top-level separator (`,` for an arg list, `+` for a concat),
- * respecting quote/backtick spans and bracket nesting so a separator inside a
- * string literal or a nested group doesn't split it.
- */
-function splitTop(text: string, sep: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let quote: string | null = null;
-  let cur = "";
-  for (const ch of text) {
-    if (quote) {
-      cur += ch;
-      if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === "'" || ch === '"' || ch === "`") {
-      quote = ch;
-      cur += ch;
-    } else if (ch === "(" || ch === "[" || ch === "{") {
-      depth++;
-      cur += ch;
-    } else if (ch === ")" || ch === "]" || ch === "}") {
-      depth--;
-      cur += ch;
-    } else if (ch === sep && depth === 0) {
-      out.push(cur);
-      cur = "";
-    } else {
-      cur += ch;
-    }
-  }
-  if (cur.trim().length > 0) out.push(cur);
-  return out;
-}
 
 /**
  * Resolve one call argument to a path fragment. A bare string/template literal
@@ -90,7 +45,7 @@ function splitTop(text: string, sep: string): string[] {
  * in instead (e.g. a version arg).
  */
 function argLiteral(raw: string): string | null {
-  const parts = splitTop(raw, "+");
+  const parts = splitTopLevel(raw, "+");
   if (parts.length === 1) {
     const t = parts[0]!.trim();
     if (t.startsWith("'") || t.startsWith('"') || t.startsWith("`")) return unquote(t);
@@ -156,7 +111,7 @@ function resolveTarget(target: string, index: Map<string, UrlBuilder | null>): s
     const argsText = (wName != null ? wArgs : bArgs) as string;
     const builder = index.get(name);
     if (!builder) return whole; // unknown or ambiguous — leave verbatim
-    return substitute(builder, splitTop(argsText, ","));
+    return substitute(builder, splitTopLevel(argsText, ","));
   });
 }
 

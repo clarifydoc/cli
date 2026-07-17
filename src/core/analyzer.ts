@@ -65,8 +65,13 @@ import { dedupSymbolLinks, dropNameCollisionReferences } from "./symbol-dedup.js
 import { synthesizeApiRouteSymbolLinks, synthesizeQueueSymbolLinks } from "./api-route-symbol-links.js";
 import { aggregateTypeBlast, buildClassGraph } from "./data-model-blast.js";
 import { buildDataAccessGraph, attributeDataAccessToSymbols } from "./data-access-graph.js";
+import {
+  attributeApiCallsToSymbols,
+  computeDataFlows,
+  computeSymbolReach,
+} from "./data-flow-reach.js";
 import { vendoredMinoritySet } from "./security-scanner.js";
-import { buildEntityGraph, reconcileEntityInheritance, linkEntityModels, synthesizeReferencedTableEntities } from "./entity-graph.js";
+import { buildEntityGraph, reconcileEntityInheritance, propagateStiRelations, linkEntityModels, synthesizeReferencedTableEntities } from "./entity-graph.js";
 import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
 import { linkApiCallsToRoutes, dedupeRoutes } from "./route-linker.js";
@@ -88,6 +93,8 @@ import {
   type DataAccessGraph,
   type FileChurnInfo,
   type HotspotInfo,
+  type SymbolReachSummary,
+  type DataFlowPath,
 } from "../types/analysis.js";
 
 export interface AnalyzeOptions {
@@ -827,6 +834,11 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     // `db/schema.rb` columns onto its models). Each plugin's entity extractor
     // contributes its own pass; core stays language-agnostic.
     reconcileProjectEntities(allAnalyses);
+    // Single-table-inheritance subclasses share their base's associations, not
+    // just its columns — re-home the base's relations onto each subclass so STI
+    // children aren't disconnected islands in the Data Model view. Runs last so
+    // it also propagates any relations the plugin passes above derived.
+    propagateStiRelations(allAnalyses);
   }
   // Entity-relationship graph for the "Data Model" (ER diagram) view.
   const entityGraph: EntityGraph = hasEntities
@@ -872,6 +884,30 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   });
   if (traceImpactCount > 0) {
     progress.detail(`  Cross-tier blast: ${traceImpactCount} file(s) with screen/route/entity reach`);
+  }
+
+  // Transitive data-access reach ("dataflow-lite"): propagate each DIRECT data
+  // effect (DB / queue / outbound api-call) to every function that reaches it
+  // through the call graph, so a controller that calls a repository that writes
+  // the DB is shown to (transitively) touch it. Reuses the same symbol-link
+  // edges (regular + synthetic HTTP/MQ) as the trace-impact pass above, so it
+  // must run after them. Gated on data access — a pure frontend has no sink to
+  // reach. `dataFlows` is the source→sink view (which handlers reach which
+  // effects).
+  let symbolReach: SymbolReachSummary[] = [];
+  let dataFlows: DataFlowPath[] = [];
+  if (hasDbAccess || hasQueueAccess) {
+    symbolReach = computeSymbolReach({
+      symbolLinks,
+      symbolDataAccess,
+      apiCallAccess: attributeApiCallsToSymbols(allAnalyses),
+    });
+    dataFlows = computeDataFlows(symbolReach, allRoutes, allAnalyses);
+    if (symbolReach.length > 0) {
+      progress.detail(
+        `  Data-flow reach: ${symbolReach.length} symbol(s), ${dataFlows.length} route→data flow(s)`,
+      );
+    }
   }
 
   // ORM/DB migrations across known ecosystems (path-convention based).
@@ -963,6 +999,8 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     dataAccessGraph: dataAccessGraph.nodes.length > 0 ? dataAccessGraph : undefined,
     entityGraph: entityGraph.nodes.length > 0 ? entityGraph : undefined,
     symbolDataAccess: symbolDataAccess.length > 0 ? symbolDataAccess : undefined,
+    symbolReach: symbolReach.length > 0 ? symbolReach : undefined,
+    dataFlows: dataFlows.length > 0 ? dataFlows : undefined,
     migrations: migrations.length > 0 ? migrations : undefined,
     apiRouteLinks: apiRouteLinks.length > 0 ? apiRouteLinks : undefined,
     generatedRoots: generatedRoots.length > 0 ? generatedRoots : undefined,
