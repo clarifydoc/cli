@@ -124,6 +124,20 @@ function isArQueryMethod(method: string): boolean {
   return AR_QUERY_METHODS.has(method) || /^find($|_)/.test(method);
 }
 
+/** ActiveRecord methods that MUTATE — feeds the dataflow-lite read/write split. */
+const AR_WRITE_METHODS = new Set([
+  "create", "create!", "update", "update!", "update_all", "update_columns",
+  "insert", "insert!", "insert_all", "insert_all!", "upsert", "upsert_all",
+  "destroy", "destroy!", "destroy_all", "delete", "delete_all", "delete_by",
+  "destroy_by", "first_or_create", "first_or_create!", "touch_all",
+  "increment_counter", "decrement_counter", "update_counters", "save", "save!",
+]);
+
+/** Read/write nature of an AR method (a `find…`/query is a read). */
+function arAccessKind(method: string): "read" | "write" {
+  return AR_WRITE_METHODS.has(method) ? "write" : "read";
+}
+
 // ─── Outbound HTTP (api-call) detection ──────────────────────────────────────
 
 /**
@@ -281,7 +295,7 @@ function extractRubyDataSources(lines: string[]): DataSourceInfo[] {
       const key = `${name}@${i + 1}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ kind: "database", name, target: null, calls: [], line: i + 1, entity: bare });
+      out.push({ kind: "database", name, target: null, calls: [], line: i + 1, entity: bare, access: arAccessKind(method) });
     }
   }
   return out;

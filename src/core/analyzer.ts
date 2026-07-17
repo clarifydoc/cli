@@ -897,10 +897,23 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   let symbolReach: SymbolReachSummary[] = [];
   let dataFlows: DataFlowPath[] = [];
   if (hasDbAccess || hasQueueAccess) {
+    // Per-site DB read/write classification: the plugin-set `access` on database
+    // data sources (ORM verb) unioned with `db-write` mutation lines. Core only
+    // unions line numbers — the verb knowledge stays in the plugins.
+    const dbAccessByLine = new Map<string, "read" | "write">();
+    for (const a of allAnalyses) {
+      for (const ds of a.dataSources ?? []) {
+        if (ds.kind === "database" && ds.access) dbAccessByLine.set(`${a.filePath}::${ds.line}`, ds.access);
+      }
+      for (const m of a.dataMutations ?? []) {
+        if (m.kind === "db-write") dbAccessByLine.set(`${a.filePath}::${m.line}`, "write");
+      }
+    }
     symbolReach = computeSymbolReach({
       symbolLinks,
       symbolDataAccess,
       apiCallAccess: attributeApiCallsToSymbols(allAnalyses),
+      dbAccessByLine,
     });
     dataFlows = computeDataFlows(symbolReach, allRoutes, allAnalyses);
     if (symbolReach.length > 0) {

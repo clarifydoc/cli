@@ -97,6 +97,30 @@ const ORM_METHODS = new Set([
   "insert", "del", "where", "leftJoin", "rightJoin",
 ]);
 
+/**
+ * ORM methods that MUTATE (a subset of {@link ORM_METHODS}). Used to tag a
+ * database data source's read/write nature so the dataflow-lite reach pass can
+ * answer "which endpoints reach a DB write". The verb knowledge lives here in
+ * the plugin, never in core. A leaf not in either set stays unclassified (the
+ * reach pass keeps it as the coarse `db` effect).
+ */
+const ORM_WRITE_METHODS = new Set([
+  "create", "createMany", "update", "updateMany", "upsert",
+  "delete", "deleteMany", "save", "remove", "destroy",
+  "bulkCreate", "bulkUpdate", "bulkDelete",
+  "findByIdAndUpdate", "findByIdAndDelete", "findByIdAndRemove",
+  "findOneAndUpdate", "findOneAndDelete", "findOneAndRemove", "findOneAndReplace",
+  "updateOne", "deleteOne", "replaceOne", "insertMany", "bulkWrite",
+  "insert", "del",
+]);
+
+/** Classify a DB op's leaf method as read/write when known; undefined otherwise. */
+function ormAccessKind(leaf: string): "read" | "write" | undefined {
+  if (ORM_WRITE_METHODS.has(leaf)) return "write";
+  if (ORM_METHODS.has(leaf)) return "read";
+  return undefined;
+}
+
 // ─── Message queues (amqplib + kafkajs) ─────────────────────────────────────
 // `sendToQueue` exists only on an amqplib channel, so the name alone is
 // trusted. `publish`/`consume` are common words — they need a channel-shaped
@@ -439,11 +463,13 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           isOrmCall(ormChain) &&
           !(fnName === "find" && firstArgIsFunction(node))
         ) {
+          const access = fnName ? ormAccessKind(fnName) : undefined;
           sources.push(this.ds({
             kind: "database",
             name: ormChain,
             target: null,
             line: node.startPosition.row + 1,
+            ...(access ? { access } : {}),
           }));
         }
       }

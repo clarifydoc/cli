@@ -556,6 +556,14 @@ export interface DataSourceInfo {
    */
   baseEnv?: string;
   /**
+   * For `kind === "database"`: whether the op reads or writes, when the plugin's
+   * ORM knowledge can tell (e.g. `findMany` → read, `create`/`save` → write).
+   * Absent = unclassified (the dataflow-lite pass keeps such an access as the
+   * coarse `db` effect rather than guessing). The write-verb knowledge stays in
+   * the language plugins — core never inspects method names.
+   */
+  access?: "read" | "write";
+  /**
    * Provenance of a resolved `target`: EXTRACTED (fully literal), INFERRED (the
    * fold left `{param}`/`{}`/`{env}` holes), or AMBIGUOUS (a conflicting
    * binding). Absent when `target` was a plain literal needing no resolution.

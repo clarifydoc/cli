@@ -16,6 +16,26 @@ async function apiCallsOf(src: string): Promise<DataSourceInfo[]> {
   return new JavaScriptDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call");
 }
 
+async function dbOf(src: string): Promise<DataSourceInfo[]> {
+  const tree = await parseSource(src, "typescript" as any, "x.ts");
+  return new JavaScriptDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
+}
+
+describe("JS ORM read/write classification (access)", () => {
+  it("tags write verbs as write and finders as read", async () => {
+    const ds = await dbOf(`
+      async function f() {
+        await prisma.user.findMany();
+        await prisma.user.create({ data });
+        await userRepo.save(user);
+      }`);
+    const byName = Object.fromEntries(ds.map((d) => [d.name, d.access]));
+    expect(byName["prisma.user.findMany"]).toBe("read");
+    expect(byName["prisma.user.create"]).toBe("write");
+    expect(byName["userRepo.save"]).toBe("write");
+  });
+});
+
 describe("JS api-call URL const resolution", () => {
   it("resolves a bare identifier fetch arg via an env-default const", async () => {
     const SRC = `const checkoutUrl = import.meta.env.VITE_CHECKOUT_URL ?? '/site/cui_checkout_json';
