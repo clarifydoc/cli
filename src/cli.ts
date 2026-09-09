@@ -1,12 +1,12 @@
 import { Command } from "commander";
 import { resolve } from "path";
-import { execFile } from "child_process";
 import { analyze } from "./core/analyzer.js";
 import {
   gatherProjectInfo,
   detectFrameworksAcrossRoots,
 } from "./core/framework-detector.js";
 import { detectSubProjects } from "./core/project-detector.js";
+import { gitChangedFiles } from "./core/git-changed-files.js";
 
 const program = new Command();
 
@@ -271,36 +271,46 @@ program
     );
   });
 
-/**
- * Changed files via git, project-relative (matching the analysis files[]).
- * `-C root` + `--relative` scope the diff to the analyzed directory even when
- * it sits below the repository root. Default mode diffs the WORKING TREE
- * against `base` and appends untracked files; `--staged` diffs the index.
- */
-async function gitChangedFiles(
-  root: string,
-  opts: { base?: string; staged?: boolean },
-): Promise<{ files: string[]; label: string }> {
-  const run = (args: string[]): Promise<string> =>
-    new Promise((res, rej) => {
-      execFile(
-        "git",
-        ["-C", root, ...args],
-        { maxBuffer: 16 * 1024 * 1024 },
-        (err, stdout, stderr) =>
-          err ? rej(new Error((stderr || err.message).trim())) : res(stdout),
-      );
-    });
-  const split = (out: string): string[] =>
-    out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-
-  if (opts.staged) {
-    return { files: split(await run(["diff", "--name-only", "--relative", "--cached"])), label: "staged" };
-  }
-  const base = opts.base ?? "HEAD";
-  const tracked = await run(["diff", "--name-only", "--relative", base]);
-  const untracked = await run(["ls-files", "--others", "--exclude-standard"]);
-  return { files: [...split(tracked), ...split(untracked)], label: base };
-}
+program
+  .command("mcp")
+  .description(
+    "Serve the analysis to an AI agent over the Model Context Protocol (stdio). Used by the VS Code extension and by any MCP client.",
+  )
+  .argument("[path]", "Path to project root", ".")
+  .option("-o, --output <dir>", "Analysis output directory (same value as `analyze -o`)", ".clarifydoc")
+  .option(
+    "--analysis-dir <dir>",
+    "Exact directory containing project-summary.json (overrides --output; what the VS Code extension passes)",
+  )
+  .option("--no-auto-analyze", "Never run an analysis — only read what is already on disk")
+  .option("--lsp", "Allow the optional LSP enhancement when this server runs an analysis (needs Docker)", false)
+  .option("--no-git-history", "Skip git churn/hotspot collection when this server runs an analysis")
+  .option("--max-files <n>", "Maximum number of files to analyze", parseInt)
+  .option("--include <globs...>", "Additional file patterns to include")
+  .option("--exclude <globs...>", "Additional file patterns to exclude")
+  .action(async (path: string, options) => {
+    // Nothing may write to stdout from here on — it is the JSON-RPC wire.
+    const { startMcpServer } = await import("./mcp/server.js");
+    try {
+      await startMcpServer({
+        projectRoot: resolve(path),
+        analysisDir: options.analysisDir,
+        outputBase: options.output,
+        allowAnalyze: options.autoAnalyze !== false,
+        version: program.version() ?? undefined,
+        analyzeSettings: {
+          incremental: true,
+          lsp: options.lsp === true,
+          gitHistory: options.gitHistory,
+          maxFiles: options.maxFiles,
+          include: options.include,
+          exclude: options.exclude,
+        },
+      });
+    } catch (err) {
+      process.stderr.write(`[clarifydoc-mcp] fatal: ${(err as Error).message}\n`);
+      process.exit(1);
+    }
+  });
 
 program.parse();
