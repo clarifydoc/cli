@@ -1,5 +1,5 @@
-import { writeFile, mkdir } from "fs/promises";
-import { resolve, dirname, join } from "path";
+import { writeFile, mkdir, access } from "fs/promises";
+import { resolve, dirname, join, relative, isAbsolute } from "path";
 import type {
   FileAnalysis,
   ProjectAnalysis,
@@ -61,6 +61,46 @@ export interface LspGroundTruth {
 export interface OutputOptions {
   outputDir: string;
   pretty?: boolean;
+}
+
+/**
+ * Keep a project-local analysis out of git without touching the user's own
+ * .gitignore: drop a `.gitignore` containing `*` INTO the analysis directory, so
+ * it ignores itself and everything beside it. Git then reports no untracked
+ * files there at all, and VS Code's search and Quick Open skip it too.
+ *
+ * Only written when the analysis actually lives inside the project (the VS Code
+ * extension can put it in its own private storage instead, where a marker would
+ * be pointless), and only when absent — emptying the file is how a team opts
+ * into committing the analysis so teammates and CI agents get the map with no
+ * scan of their own.
+ */
+export async function ensureSelfIgnored(outputDir: string, projectRoot: string): Promise<void> {
+  const rel = relative(resolve(projectRoot), resolve(outputDir));
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return;
+
+  const marker = join(resolve(outputDir), ".gitignore");
+  try {
+    await access(marker);
+    return; // already there (possibly emptied on purpose) — never overwrite
+  } catch {
+    // not there yet
+  }
+  await mkdir(dirname(marker), { recursive: true });
+  await writeFile(
+    marker,
+    [
+      "# ClarifyDoc keeps this project's analysis here so the CLI, the VS Code",
+      "# extension and any MCP client read one copy. This file makes the whole",
+      "# directory — itself included — invisible to git.",
+      "#",
+      "# To commit the analysis instead, so teammates and CI agents get the map",
+      "# without scanning, empty this file: ClarifyDoc only writes it when absent.",
+      "*",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
 }
 
 /**

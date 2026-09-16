@@ -25,6 +25,8 @@ function isSensitive(relativePath: string): boolean {
 
 const DEFAULT_IGNORE = [
   "**/node_modules/**",
+  // ClarifyDoc's own output, when it is written into the project.
+  "**/.clarifydoc/**",
   "**/dist/**",
   "**/build/**",
   "**/out/**",
