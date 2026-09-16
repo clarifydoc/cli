@@ -6,7 +6,7 @@ import { sep, posix, resolve, dirname } from "path";
  *
  * Ported from graphify-7 (detect.py:397-522). Implements:
  *   - .clarifydocignore at the project root and ancestor directories
- *   - Walking up to the nearest VCS root as a ceiling
+ *   - Walking up to the nearest project root (VCS dir or `.clarifydoc/`) as a ceiling
  *   - Last-match-wins semantics with `!` negation
  *   - Anchored patterns (`/foo`) vs unanchored (`foo`)
  *   - Inline `#` comments, escape `\#` for literal hash
@@ -16,8 +16,24 @@ import { sep, posix, resolve, dirname } from "path";
  * micromatch is intentionally not used (avoids a fragile peer dep).
  */
 
-const VCS_MARKERS = [".git", ".hg", ".svn", "_darcs", ".fossil"] as const;
+/**
+ * Directories that mark a project root, used as the ceiling when walking up for
+ * ignore files. `.clarifydoc/` counts: it is where ClarifyDoc keeps the analysis
+ * and the ignore file itself, so it identifies the project root even in a tree
+ * with no VCS directory at all (a Delphi checkout exported from source control,
+ * a vendored drop, a worktree). Without it the walk from a SUB-project root
+ * stops immediately and the root's ignore file is never inherited.
+ */
+const ROOT_MARKERS = [".git", ".hg", ".svn", "_darcs", ".fossil", ".clarifydoc"] as const;
 const IGNORE_FILENAME = ".clarifydocignore";
+/**
+ * Ignore file kept with the analysis instead of as a dotfile at the project
+ * root: `<root>/.clarifydoc/ignore`. Same gitignore syntax, and its patterns
+ * are relative to the PROJECT ROOT (not to `.clarifydoc/`), so
+ * `/Library/mORMot-master/*` means what it reads as.
+ */
+const OUTPUT_DIR = ".clarifydoc";
+const OUTPUT_IGNORE_FILENAME = "ignore";
 
 export interface IgnorePattern {
   /** Absolute path of the directory that contained the .clarifydocignore */
@@ -27,13 +43,20 @@ export interface IgnorePattern {
 }
 
 /**
- * Read .clarifydocignore files from the scan root up to the nearest VCS root
- * and return patterns in outer→inner order. Inner patterns win on equal-match
- * via last-match-wins traversal in isIgnored.
+ * Read ignore files and return patterns in outer→inner order. Inner patterns
+ * win on equal-match via last-match-wins traversal in isIgnored.
+ *
+ * Two locations, both gitignore syntax:
+ *   - `.clarifydocignore` at the scan root and every directory up to the
+ *     nearest project root (patterns relative to the file's own directory);
+ *   - `.clarifydoc/ignore` in those same directories, kept alongside the
+ *     analysis it affects (patterns relative to the directory that holds
+ *     `.clarifydoc/`), read second within each directory so it has the
+ *     final say.
  */
 export function loadIgnorePatterns(root: string): IgnorePattern[] {
   const absRoot = resolve(root);
-  const ceiling = findVcsRoot(absRoot) ?? absRoot;
+  const ceiling = findProjectRoot(absRoot) ?? absRoot;
 
   // Collect directories ceiling → root (outer first).
   const dirs: string[] = [];
@@ -49,16 +72,21 @@ export function loadIgnorePatterns(root: string): IgnorePattern[] {
 
   const patterns: IgnorePattern[] = [];
   for (const dir of dirs) {
-    const ignoreFile = posix.join(toPosix(dir), IGNORE_FILENAME);
-    if (existsSync(ignoreFile)) {
-      const raw = readFileSync(ignoreFile, "utf-8");
-      for (const line of raw.split(/\r?\n/)) {
-        const parsed = parseIgnoreLine(line);
-        if (parsed) patterns.push({ anchor: dir, pattern: parsed });
-      }
-    }
+    const p = toPosix(dir);
+    readInto(patterns, posix.join(p, IGNORE_FILENAME), dir);
+    // Read second, so within one directory it wins on an equal match.
+    readInto(patterns, posix.join(p, OUTPUT_DIR, OUTPUT_IGNORE_FILENAME), dir);
   }
   return patterns;
+}
+
+/** Append every pattern in `file` (if it exists), anchored at `anchor`. */
+function readInto(out: IgnorePattern[], file: string, anchor: string): void {
+  if (!existsSync(file)) return;
+  for (const line of readFileSync(file, "utf-8").split(/\r?\n/)) {
+    const parsed = parseIgnoreLine(line);
+    if (parsed) out.push({ anchor, pattern: parsed });
+  }
 }
 
 /**
@@ -146,11 +174,11 @@ function relativeBelow(path: string, base: string): string | null {
   return null;
 }
 
-function findVcsRoot(start: string): string | null {
+function findProjectRoot(start: string): string | null {
   let current = resolve(start);
   const home = process.env.HOME ?? process.env.USERPROFILE ?? null;
   while (true) {
-    for (const marker of VCS_MARKERS) {
+    for (const marker of ROOT_MARKERS) {
       if (existsSync(posix.join(toPosix(current), marker))) return current;
     }
     const parent = dirname(current);
