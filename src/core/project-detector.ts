@@ -2,6 +2,7 @@ import fg from "fast-glob";
 import { readFile } from "fs/promises";
 import { join, resolve } from "path";
 import type { SubProject, SubProjectKind } from "../types/analysis.js";
+import { loadIgnorePatterns, isIgnored } from "./clarifydoc-ignore.js";
 
 /**
  * Sub-project detection.
@@ -88,6 +89,10 @@ export async function detectSubProjects(
   projectRoot: string,
 ): Promise<SubProject[]> {
   const root = resolve(projectRoot);
+  // Ignored directories are not sub-projects: a vendored component library is
+  // full of package/project files (77 of them under one Delphi repo's
+  // `Library/`), and each one otherwise becomes its own scanned root.
+  const ignorePatterns = loadIgnorePatterns(root);
 
   const byDir = new Map<
     string,
@@ -95,7 +100,7 @@ export async function detectSubProjects(
   >();
 
   for (const { pattern, kind } of MARKER_GLOBS) {
-    const matches = await fg(pattern, {
+    const found = await fg(pattern, {
       cwd: root,
       ignore: MARKER_IGNORE,
       absolute: false,
@@ -103,6 +108,9 @@ export async function detectSubProjects(
       // Legacy Windows repos ship PROJECT.DPR / MAKEFILE-cased markers.
       caseSensitiveMatch: false,
     });
+    const matches = ignorePatterns.length === 0
+      ? found
+      : found.filter((rel) => !isIgnored(join(root, rel), root, ignorePatterns));
     for (const match of matches) {
       if (kind === "cmake" && !(await isCmakeProjectRoot(root, match))) continue;
       const norm = match.replace(/\\/g, "/");

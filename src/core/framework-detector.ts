@@ -2,6 +2,7 @@ import { readFile } from "fs/promises";
 import { existsSync } from "fs";
 import { resolve, join } from "path";
 import fg from "fast-glob";
+import { loadIgnorePatterns, isIgnored } from "./clarifydoc-ignore.js";
 import type { FrameworkDetection } from "../types/analysis.js";
 import type { ProjectInfo } from "../types/plugin.js";
 import { FRAMEWORK_RULES, FRAMEWORK_MARKER_CANDIDATES } from "../extractors/registry.js";
@@ -19,6 +20,21 @@ export async function gatherProjectInfo(
 ): Promise<ProjectInfo> {
   const root = resolve(projectRoot);
 
+  // Framework detection must see the same project the scan does: a directory
+  // excluded by `.clarifydoc/ignore` (or `.clarifydocignore`) should not be
+  // reporting frameworks either. A Delphi repo vendors its component libraries
+  // into the tree, and their demos drag in whole stacks the project never uses
+  // — FireMonkey, Lazarus and Qt were all reported from vendored samples.
+  const ignorePatterns = loadIgnorePatterns(root);
+  const globFiles = async (
+    patterns: string | string[],
+    options: Parameters<typeof fg>[1],
+  ): Promise<string[]> => {
+    const found = await fg(patterns, options);
+    if (ignorePatterns.length === 0) return found;
+    return found.filter((rel) => !isIgnored(join(root, rel), root, ignorePatterns));
+  };
+
   // Read package.json
   let packageJson: Record<string, unknown> | null = null;
   try {
@@ -29,7 +45,7 @@ export async function gatherProjectInfo(
   }
 
   // Find .csproj files
-  const csprojFiles = await fg("**/*.csproj", {
+  const csprojFiles = await globFiles("**/*.csproj", {
     cwd: root,
     ignore: ["**/node_modules/**", "**/bin/**", "**/obj/**"],
     absolute: false,
@@ -103,7 +119,7 @@ export async function gatherProjectInfo(
 
   // Get file extensions
   const fileExtensions = new Set<string>();
-  const sampleFiles = await fg("**/*.*", {
+  const sampleFiles = await globFiles("**/*.*", {
     cwd: root,
     ignore: [
       "**/node_modules/**",
@@ -121,7 +137,7 @@ export async function gatherProjectInfo(
   }
 
   // Find .dproj files (Delphi)
-  const dprojFiles = await fg("**/*.dproj", {
+  const dprojFiles = await globFiles("**/*.dproj", {
     cwd: root,
     ignore: ["**/node_modules/**", "**/bin/**", "**/obj/**"],
     absolute: false,
@@ -129,7 +145,7 @@ export async function gatherProjectInfo(
   });
 
   // Find .lpi files (Lazarus)
-  const lpiFiles = await fg("**/*.lpi", {
+  const lpiFiles = await globFiles("**/*.lpi", {
     cwd: root,
     ignore: ["**/node_modules/**", "**/bin/**", "**/obj/**"],
     absolute: false,
@@ -138,7 +154,7 @@ export async function gatherProjectInfo(
 
   // Scan a few Pascal source files for uses clauses (for framework detection)
   const delphiUses: string[] = [];
-  const pasFiles = await fg("**/*.{pas,dpr,lpr}", {
+  const pasFiles = await globFiles("**/*.{pas,dpr,lpr}", {
     cwd: root,
     ignore: ["**/node_modules/**", "**/bin/**", "**/obj/**", "**/__history/**"],
     absolute: false,
@@ -193,7 +209,7 @@ export async function gatherProjectInfo(
   try { cmakeLists = await readFile(join(root, "CMakeLists.txt"), "utf-8"); } catch { /* no CMakeLists.txt */ }
 
   // Find .sql / .ddl files for raw-SQL framework detection
-  const sqlFiles = await fg("**/*.{sql,ddl,dml,psql,tsql,plsql,mysql}", {
+  const sqlFiles = await globFiles("**/*.{sql,ddl,dml,psql,tsql,plsql,mysql}", {
     cwd: root,
     ignore: ["**/node_modules/**", "**/dist/**", "**/.git/**", "**/bin/**", "**/obj/**"],
     absolute: false,
@@ -202,13 +218,13 @@ export async function gatherProjectInfo(
 
   // JSP views + Spring Web Flow definitions (Java web monoliths nest these
   // deep under src/main/webapp/, hence the higher depth).
-  const jspFiles = await fg("**/*.jsp", {
+  const jspFiles = await globFiles("**/*.jsp", {
     cwd: root,
     ignore: ["**/node_modules/**", "**/target/**", "**/.git/**"],
     absolute: false,
     deep: 8,
   });
-  const webflowFiles = await fg(["**/*webflow*.xml", "**/WEB-INF/flows/**/*.xml"], {
+  const webflowFiles = await globFiles(["**/*webflow*.xml", "**/WEB-INF/flows/**/*.xml"], {
     cwd: root,
     ignore: ["**/node_modules/**", "**/target/**", "**/.git/**"],
     absolute: false,
@@ -217,8 +233,10 @@ export async function gatherProjectInfo(
 
   // Framework marker files no manifest records (vendored frameworks) —
   // candidate paths are plugin-contributed via `meta.markerCandidates`.
-  const markerFiles = FRAMEWORK_MARKER_CANDIDATES.filter((rel) =>
-    existsSync(join(root, ...rel.split("/"))),
+  const markerFiles = FRAMEWORK_MARKER_CANDIDATES.filter(
+    (rel) =>
+      existsSync(join(root, ...rel.split("/"))) &&
+      !isIgnored(join(root, ...rel.split("/")), root, ignorePatterns),
   );
 
   return {
