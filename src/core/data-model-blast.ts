@@ -11,6 +11,7 @@ import type {
 } from "../types/analysis.js";
 import { buildImportIndex, type ImportIndex } from "./import-index.js";
 import { ormOf } from "./entity-graph.js";
+import { SYNTHETIC_ENTITY } from "../extractors/entities/base.js";
 
 /**
  * Aggregate per-class type-blast records from per-file TypeReferences.
@@ -277,8 +278,20 @@ export function buildClassGraph(
   // Key on (filePath, className) so two classes with the same name in
   // different files remain distinct nodes.
   const localByName = new Map<string /* className */, string[] /* classIds */>();
+  // Synthesized entity names per file, so pass 2 can drop the column-type
+  // references they carry — otherwise those edges would re-create the node.
+  const syntheticByFile = new Map<string /* filePath */, Set<string /* className */>>();
   for (const a of analyses) {
     for (const cls of a.classes ?? []) {
+      // Synthesized tables (Delphi DFM dataset DML) are not declared types —
+      // they'd add one node per file that queries the table, next to the real
+      // class of the same name. The Data Model tab is where they belong.
+      if (cls.decorators?.includes(SYNTHETIC_ENTITY)) {
+        const names = syntheticByFile.get(a.filePath) ?? new Set<string>();
+        names.add(cls.name);
+        syntheticByFile.set(a.filePath, names);
+        continue;
+      }
       const isInterface = (cls.methods?.length ?? 0) === 0 && (cls.properties?.length ?? 0) > 0;
       const id = ensureNode(cls.name, a.filePath, isInterface, false);
       // Tag ORM entities so the Data Models view can distinguish DB-backed
@@ -311,7 +324,12 @@ export function buildClassGraph(
   // (importIndex is shared from the caller — see the default param above.)
   const edgeMap = new Map<string /* "src→tgt" */, ClassGraphEdge>();
   for (const a of analyses) {
+    const synthetic = syntheticByFile.get(a.filePath);
     for (const ref of a.typeReferences ?? []) {
+      // A synthesized table's columns reference SQL types (`varchar`, `date`).
+      // Those edges would re-add the node pass 1 deliberately skipped, and the
+      // SQL type nodes with them, so the reference is dropped whole.
+      if (ref.sourceClass && synthetic?.has(ref.sourceClass)) continue;
       // Resolve the target FIRST so we know whether to draw an edge at all.
       const candidates = localByName.get(ref.typeName) ?? [];
       let targetId: string;

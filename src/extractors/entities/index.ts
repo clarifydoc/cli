@@ -1,5 +1,5 @@
 import type { EntityRelation, FileAnalysis, Language } from "../../types/analysis.js";
-import { type EntityExtractor, type EntityExtractResult } from "./base.js";
+import { SYNTHETIC_ENTITY, type EntityExtractor, type EntityExtractResult } from "./base.js";
 import { pluginFor, allPluginMetas } from "../registry.js";
 
 const EMPTY_RESULT: EntityExtractResult = { entities: [], relations: [] };
@@ -83,6 +83,10 @@ export function mergeEntities(analysis: FileAnalysis, result: EntityExtractResul
     const existing = analysis.classes.find((c) => c.name === e.name);
     if (existing) {
       for (const d of e.decorators) {
+        // SYNTHETIC_ENTITY says "no declaration backs this" — a declaration
+        // clearly does back this one, and inheriting the marker would drop the
+        // real class from the class graph.
+        if (d === SYNTHETIC_ENTITY) continue;
         if (!existing.decorators.includes(d)) existing.decorators.push(d);
       }
       // jOOQ generated tables list EVERY column precisely via `createField`, so
