@@ -802,9 +802,6 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     }
   }
 
-  // Class-level dependency graph for the Architecture tab's Data Models view.
-  const classGraph = buildClassGraph(allAnalyses, importIndex);
-
   // Entity/data-access aggregation only produces output when the project has
   // ORM entities or DB calls. On pure-frontend codebases these markers are
   // absent, so skip ~6 full passes + a 50-iteration inheritance fixpoint — the
@@ -816,6 +813,27 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       return !!d && (d.includes("entity") || d.includes("table") || d.includes("enum"));
     }),
   );
+  if (hasEntities) {
+    // Resolve cross-file inheritance (custom base classes, STI chains) so models
+    // that subclass a project base in another file are recognized as entities.
+    reconcileEntityInheritance(allAnalyses);
+    // Language-specific cross-file entity reconciliation (e.g. Rails joining
+    // `db/schema.rb` columns onto its models). Each plugin's entity extractor
+    // contributes its own pass; core stays language-agnostic.
+    reconcileProjectEntities(allAnalyses);
+    // Single-table-inheritance subclasses share their base's associations, not
+    // just its columns — re-home the base's relations onto each subclass so STI
+    // children aren't disconnected islands in the Data Model view. Runs last so
+    // it also propagates any relations the plugin passes above derived.
+    propagateStiRelations(allAnalyses);
+  }
+
+  // Class-level dependency graph for the Architecture tab's Data Models view.
+  // AFTER the reconciliation above: that pass collapses the duplicate entities a
+  // cross-file merge resolves (the same Delphi table modelled by a dataset on
+  // every form), and a graph built before it would keep one node per file.
+  const classGraph = buildClassGraph(allAnalyses, importIndex);
+
   // Resolve macro-valued raw-SQL tables (`CUE_TABLE` → "cues") through the
   // project-wide constant map BEFORE any data-access aggregation, so the
   // datastore/entity nodes carry physical table names and merge with accesses
@@ -834,20 +852,6 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
     ? buildDataAccessGraph(allAnalyses)
     : { nodes: [], edges: [] };
 
-  if (hasEntities) {
-    // Resolve cross-file inheritance (custom base classes, STI chains) so models
-    // that subclass a project base in another file are recognized as entities.
-    reconcileEntityInheritance(allAnalyses);
-    // Language-specific cross-file entity reconciliation (e.g. Rails joining
-    // `db/schema.rb` columns onto its models). Each plugin's entity extractor
-    // contributes its own pass; core stays language-agnostic.
-    reconcileProjectEntities(allAnalyses);
-    // Single-table-inheritance subclasses share their base's associations, not
-    // just its columns — re-home the base's relations onto each subclass so STI
-    // children aren't disconnected islands in the Data Model view. Runs last so
-    // it also propagates any relations the plugin passes above derived.
-    propagateStiRelations(allAnalyses);
-  }
   // Entity-relationship graph for the "Data Model" (ER diagram) view.
   const entityGraph: EntityGraph = hasEntities
     ? buildEntityGraph(allAnalyses)
