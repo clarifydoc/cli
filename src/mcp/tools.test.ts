@@ -260,7 +260,7 @@ describe("clarifydoc MCP tools — data tier", () => {
   it("says so when a project has no extracted data model", async () => {
     const { server } = serverFor("sample-rust-cli");
     const { text } = await call(server, "clarifydoc_data_model");
-    expect(text).toContain("No ORM entities or SQL tables");
+    expect(text).toContain("No entities or tables were extracted");
   });
 });
 
