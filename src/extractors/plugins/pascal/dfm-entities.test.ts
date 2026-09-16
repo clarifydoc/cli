@@ -327,6 +327,30 @@ end`;
     });
   });
 
+  it("takes the dropped duplicate's type references with it", () => {
+    const form = (name: string, sql: string) => `object ${name}: T${name}
+  object q: TpFIBDataSet
+    InsertSQL.Strings = ('${sql}')
+    object f1: TStringField
+      FieldName = 'NAVN'
+      Size = 30
+    end
+  end
+end`;
+    const analyses = [
+      parseDfm(form("A", "INSERT INTO LARER (ID, NAVN) VALUES (:ID, :NAVN)"), "a.dfm"),
+      parseDfm(form("B", "INSERT INTO LARER (ID) VALUES (:ID)"), "b.dfm"),
+    ];
+    new DfmEntityExtractor().reconcileProject(analyses);
+
+    // b.dfm lost its LARER node, so nothing in b.dfm may still reference LARER
+    // as a containing class — buildClassGraph would resurrect the node from it.
+    const loser = analyses.find((a) => !a.classes.some((c) => c.name === "LARER"))!;
+    expect(loser.typeReferences?.some((r) => r.sourceClass === "LARER")).toBe(false);
+    const winner = analyses.find((a) => a !== loser)!;
+    expect(winner.typeReferences?.some((r) => r.sourceClass === "LARER")).toBe(true);
+  });
+
   it("leaves a table declared in only one file alone", () => {
     const analyses = [
       parseDfm(

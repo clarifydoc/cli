@@ -549,6 +549,16 @@ export class DfmEntityExtractor extends EntityExtractor {
         // Drop the duplicate node — these are synthetic entities this extractor
         // added, so removing them takes nothing the .dfm actually declared.
         d.analysis.classes = d.analysis.classes.filter((c) => c !== d.cls);
+        // Its column type references go with it. They describe a class the file
+        // no longer declares, and the class-graph aggregator re-creates a node
+        // for any reference whose `sourceClass` it doesn't recognise — which
+        // would put the duplicate straight back. A `.dfm` declares no Pascal
+        // type, so the only class this name can mean here is the one just cut.
+        if (d.analysis.typeReferences?.length) {
+          d.analysis.typeReferences = d.analysis.typeReferences.filter(
+            (r) => r.sourceClass !== d.cls.name,
+          );
+        }
       }
       winner.cls.properties = [...columns.values()];
     }
