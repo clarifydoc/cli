@@ -176,14 +176,47 @@ export function enrichFileDataSources(a: FileAnalysis, index?: ImportIndex): voi
   // resolution so it also fires when `target` was already set. SQL DML names are
   // single-segment verbs (SELECT/INSERT/…) — `entitySegment` returns null for
   // those, leaving the SQL flow (table already in `target`) untouched.
+  const delphi = a.language === "pascal" || a.language === "dfm";
   for (const ds of a.dataSources ?? []) {
     if (ds.kind !== "database" || ds.entity) continue;
+    // Delphi: `Query.FieldByName` / `dsLaerer.Open` is `component.method`, NOT
+    // the `Model.findOne` shape `entitySegment` is reading it as. The receiver
+    // is a dataset variable or form component, so naming it as the entity both
+    // invents tables (`DataSet`, `ADataSet`, `Qry` — half of tea's DB accesses)
+    // and BLOCKS the real link: `resolveDataSourceStringConstants` backfills the
+    // physical table from the form's component→table map only while `entity` is
+    // still empty. Leave it empty and let that pass do its job.
+    if (delphi && isDatasetApiCall(ds.name)) continue;
     // Prefer the call-chain segment; fall back to a generic type argument, which
     // is where EF Core / typed-ORM calls carry the entity (`_context.Set<User>()`,
     // `DbSet<Order>`, `repository.Query<Account>()`).
     const entity = entitySegment(ds.name) ?? entityFromGeneric(ds.target) ?? entityFromGeneric(ds.name);
     if (entity) ds.entity = entity;
   }
+}
+
+/**
+ * Methods of Delphi's `TDataSet` / `TCustomConnection` API. A call whose leaf is
+ * one of these operates ON a dataset or connection object, so its receiver is a
+ * component instance (`dsLaererInfo`, `Query`, `ADataSet`) — never a table name.
+ * No ORM names a model method `FieldByName` or `ExecSQL`, so this stays a purely
+ * Delphi-shaped signal even though it is matched by name.
+ */
+const DATASET_API_METHODS = new Set([
+  "open", "close", "execsql", "execproc", "execute", "executedirect",
+  "post", "append", "insert", "edit", "delete", "cancel", "refresh",
+  "first", "last", "next", "prior", "locate", "lookup", "fieldbyname",
+  "findfield", "parambyname", "applyupdates", "cancelupdates", "commitupdates",
+  "starttransaction", "commit", "rollback", "commitretaining", "rollbackretaining",
+  "disablecontrols", "enablecontrols", "fullrefresh", "checkbrowsemode", "prepare",
+]);
+
+/** `Receiver.Method` where Method is a TDataSet/connection API call. */
+function isDatasetApiCall(callName: string): boolean {
+  const chain = callName.split(/[([<]/)[0]!;
+  const parts = chain.split(".").map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2) return false;
+  return DATASET_API_METHODS.has(parts[parts.length - 1]!.toLowerCase());
 }
 
 /** First generic type argument in a call/receiver string, e.g. `Set<AccountOwner>()`. */

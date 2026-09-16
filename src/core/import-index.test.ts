@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveDataSourceStringConstants } from "./import-index.js";
+import { resolveDataSourceStringConstants, enrichFileDataSources } from "./import-index.js";
 import { createEmptyAnalysis, type FileAnalysis, type DataSourceInfo } from "../types/analysis.js";
 
 function file(
@@ -86,5 +86,49 @@ describe("resolveDataSourceStringConstants", () => {
     });
     resolveDataSourceStringConstants([file("app/U.dfm", { constants: { qryX: "t" } }), pas]);
     expect(pas.dataSources[0]!.target).toBe("qryX");
+  });
+});
+
+describe("Delphi dataset calls are not entities", () => {
+  const pascal = (names: string[]): FileAnalysis => ({
+    ...createEmptyAnalysis("t2ufLaerer.pas", "pascal"),
+    dataSources: names.map((name, i) => ({
+      kind: "database" as const,
+      name,
+      target: name.split(".")[0]!,
+      calls: [],
+      line: i + 1,
+    })),
+  });
+
+  it("does not turn a dataset component into a table", () => {
+    // `Query.FieldByName` is component.method, not Model.findOne — naming the
+    // receiver invented tables called DataSet/Query/ADataSet across tea.
+    const a = pascal(["Query.FieldByName", "DataSet.Open", "ADataSet.Post", "IBDataset.Locate"]);
+    enrichFileDataSources(a);
+    expect(a.dataSources.map((d) => d.entity)).toEqual([undefined, undefined, undefined, undefined]);
+  });
+
+  it("leaves the entity empty so the form's component→table map can fill it", () => {
+    const a = pascal(["dsLaererInfo.Open"]);
+    enrichFileDataSources(a);
+    // Empty, not "dsLaererInfo" — resolveDataSourceStringConstants only
+    // backfills the physical table while entity is still unset.
+    expect(a.dataSources[0]!.entity).toBeUndefined();
+  });
+
+  it("still reads a real entity from a non-dataset call chain", () => {
+    const a = pascal(["prisma.user.findMany"]);
+    enrichFileDataSources(a);
+    expect(a.dataSources[0]!.entity).toBe("user");
+  });
+
+  it("does not change other languages", () => {
+    const a: FileAnalysis = {
+      ...createEmptyAnalysis("app.ts", "typescript"),
+      dataSources: [{ kind: "database", name: "User.findOne", target: "User", calls: [], line: 1 }],
+    };
+    enrichFileDataSources(a);
+    expect(a.dataSources[0]!.entity).toBe("User");
   });
 });
