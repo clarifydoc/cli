@@ -8,6 +8,7 @@ import { PascalDataSourceExtractor } from "./data-sources.js";
 import { PascalMutationExtractor } from "./data-mutations.js";
 import { pascalRouteExtractor } from "./routes.js";
 import { PascalUiBridgeResolver } from "./ui-bridge.js";
+import { dfmEntityExtractor } from "./dfm-entities.js";
 
 const PASCAL_BUILTINS: ReadonlySet<string> = new Set<string>([
   "Integer", "Cardinal", "Word", "Byte", "ShortInt", "SmallInt", "LongInt",
@@ -52,6 +53,10 @@ export const pascalMeta: LanguagePluginMeta = {
 export const dfmMeta: LanguagePluginMeta = {
   ...dfmManifest,
   customParse: parseDfm,
+  // Table entities are built inside `parseDfm` (it already has the object
+  // tree); this registration is what gets the extractor's cross-file merge —
+  // one node per physical table, not one per form — run by core.
+  entities: dfmEntityExtractor,
   // Old Delphi DFMs are binary TPF0 streams; latin1 keeps every byte intact
   // for the binary→text converter (utf-8 would mangle them irreversibly).
   sourceEncoding: "latin1",
