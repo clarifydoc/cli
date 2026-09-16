@@ -23,11 +23,14 @@ import { requireAnalysis, type ToolContext } from "./context.js";
 export function dataModelTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_data_model",
-    title: "ORM entities, tables and relations",
+    title: "Entities, tables and relations",
     description:
       "The extracted data model: ORM entities / SQL tables with their columns, keys and relationships " +
       "(crow's-foot cardinality, foreign keys, join tables), plus which functions read or write each one. Call " +
-      "without `entity` for the inventory, then name an entity for its columns, relations and accessors.",
+      "without `entity` for the inventory, then name an entity for its columns, relations and accessors. " +
+      "Each row's `orm` says where it came from and how far to trust it: a named ORM or `sql` is declared " +
+      "schema; `dfm` is reconstructed from a Delphi form's dataset SQL and persistent fields; `inferred` is a " +
+      "table seen only in a query, so it has a name but no columns.",
     inputSchema: {
       type: "object",
       properties: {
@@ -45,8 +48,8 @@ export function dataModelTool(ctx: ToolContext): McpTool {
       if (!graph || graph.nodes.length === 0) {
         return {
           text:
-            "No ORM entities or SQL tables were extracted for this project. " +
-            "clarifydoc_file (data section) still shows raw database calls per file.",
+            "No entities or tables were extracted for this project — no ORM models, no DDL, and no query " +
+            "named a table. clarifydoc_file (data section) still shows raw database calls per file.",
         };
       }
 
