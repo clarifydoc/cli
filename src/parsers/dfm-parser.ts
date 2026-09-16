@@ -12,6 +12,7 @@ import type {
 import { createEmptyAnalysis } from "../types/analysis.js";
 import { binaryDfmToText, isBinaryDfm } from "./dfm-binary.js";
 import { extractSqlStringDataSources } from "../extractors/plugins/shared/sql-string-sources.js";
+import { extractDfmEntities } from "../extractors/plugins/pascal/dfm-entities.js";
 
 /** Map Delphi VCL/FMX component types to interactive element categories */
 const DFM_ELEMENT_MAP: Record<string, InteractiveElementInfo["element"]> = {
@@ -82,6 +83,8 @@ const DFM_CATEGORY_MAP: Record<string, ScreenComponentCategory> = {
 const VISUAL_PROPS = new Set([
   "Caption", "Text", "TextHint", "Width", "Height", "Left", "Top",
   "ClientWidth", "ClientHeight", "Align", "Visible", "Enabled", "FieldName",
+  // Declared width of a persistent TStringField — the column's varchar length.
+  "Size",
 ]);
 
 /** String-list properties that hold SQL on data components (TQuery.SQL,
@@ -461,6 +464,13 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
   if (Object.keys(tableConstants).length > 0) {
     analysis.stringConstants = tableConstants;
   }
+
+  // Physical tables + their columns, reconstructed from the SQL and persistent
+  // TField children the IDE persisted on this form's datasets. A Delphi repo
+  // holds no DDL, so the .dfm is the only in-repo description of the schema.
+  const { entities, relations } = extractDfmEntities(allObjects);
+  if (entities.length > 0) analysis.classes.push(...entities);
+  if (relations.length > 0) analysis.entityRelations = relations;
 
   // Build screen info with hierarchy
   if (rootObject) {
