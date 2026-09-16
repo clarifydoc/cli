@@ -144,7 +144,14 @@ export async function gatherProjectInfo(
     absolute: false,
     deep: 3,
   });
-  for (const pf of pasFiles.slice(0, 10)) {
+  // Delphi apps declare their whole stack in uses clauses, and the units that
+  // identify it (FIBPlus, DevExpress, Indy) appear in the forms that use them,
+  // not necessarily in the first few files alphabetically. Ten files is far too
+  // small a sample on a several-thousand-unit project — the detector reported
+  // frameworks picked up from whichever files happened to sort first. These are
+  // small text files and this is a one-off pre-pass, so a much wider sample is
+  // still cheap.
+  for (const pf of pasFiles.slice(0, 200)) {
     try {
       const content = await readFile(join(root, pf), "utf-8");
       // Simple regex to extract unit names from uses clauses
