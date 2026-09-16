@@ -33,8 +33,10 @@ import {
   writeReportData,
   writeLspGroundTruth,
   writeImpactDiff,
+  ensureSelfIgnored,
   type OutputOptions,
 } from "./output-writer.js";
+import { acquireAnalysisLock, readLockOwner, AnalysisLockedError } from "./analysis-lock.js";
 import { buildReportPayload } from "./report-payload.js";
 import { analyzeFile, type FileTask, type FileResult } from "./file-analyzer.js";
 import { AnalysisWorkerPool } from "./worker-pool.js";
@@ -291,6 +293,25 @@ class ProgressReporter {
  * 5. Write project summary
  */
 export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
+  // A dry run only lists files, so it neither locks nor writes.
+  if (options.dryRun) return analyzeProject(options);
+
+  // One writer per analysis directory. Now that the analysis lives in the
+  // project by default, a CLI run, the VS Code extension and an MCP server's
+  // cold start can all target the same directory at once.
+  const lock = await acquireAnalysisLock(options.outputDir, "analyze");
+  if (!lock) {
+    throw new AnalysisLockedError(options.outputDir, await readLockOwner(options.outputDir));
+  }
+  try {
+    await ensureSelfIgnored(options.outputDir, options.projectRoot);
+    return await analyzeProject(options);
+  } finally {
+    await lock.release();
+  }
+}
+
+async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const { projectRoot, outputDir, verbose, dryRun } = options;
   const progress = new ProgressReporter(!!verbose);
 
