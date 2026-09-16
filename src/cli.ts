@@ -276,7 +276,7 @@ program
   .description(
     "Serve the analysis to an AI agent over the Model Context Protocol (stdio). Used by the VS Code extension and by any MCP client.",
   )
-  .argument("[path]", "Path to project root", ".")
+  .argument("[path]", "Path to project root. Omit to use the project containing the working directory", "")
   .option("-o, --output <dir>", "Analysis output directory (same value as `analyze -o`)", ".clarifydoc")
   .option(
     "--analysis-dir <dir>",
@@ -290,10 +290,12 @@ program
   .option("--exclude <globs...>", "Additional file patterns to exclude")
   .action(async (path: string, options) => {
     // Nothing may write to stdout from here on — it is the JSON-RPC wire.
-    const { startMcpServer } = await import("./mcp/server.js");
+    const { startMcpServer, findProjectRoot } = await import("./mcp/server.js");
     try {
       await startMcpServer({
-        projectRoot: resolve(path),
+        // With no path given, serve the project the working directory sits in,
+        // so an argument-free client config works from anywhere inside it.
+        projectRoot: path ? resolve(path) : findProjectRoot(process.cwd()),
         analysisDir: options.analysisDir,
         outputBase: options.output,
         allowAnalyze: options.autoAnalyze !== false,

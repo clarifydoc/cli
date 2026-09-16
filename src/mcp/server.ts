@@ -8,7 +8,8 @@
  *     Copilot's agent mode gets the tools with no configuration at all.
  */
 
-import { basename, resolve } from "path";
+import { basename, dirname, join, resolve } from "path";
+import { existsSync } from "fs";
 import { McpServer, serveStdio, type McpResource, type McpTool } from "./protocol.js";
 import { AnalysisStore, type AnalyzeSettings } from "./store.js";
 import { statusReport, type ToolContext } from "./tools/context.js";
@@ -23,8 +24,9 @@ export interface McpServerConfig {
   projectRoot?: string;
   /**
    * Directory holding project-summary.json. Defaults to
-   * `<projectRoot>/.clarifydoc/<projectName>` — the layout `clarifydoc analyze`
-   * produces with its default `-o`.
+   * `<projectRoot>/.clarifydoc/<projectName>` — where `clarifydoc analyze` and
+   * the VS Code extension both write, so a client that passes nothing but a cwd
+   * finds the analysis.
    */
   analysisDir?: string;
   /** Base output dir, as passed to `analyze -o`; `<base>/<projectName>` is used. */
@@ -35,6 +37,44 @@ export interface McpServerConfig {
   /** Reported in `serverInfo.version`. */
   version?: string;
   log?: (message: string) => void;
+}
+
+/**
+ * Markers that identify a project root when a client launches the server with
+ * nothing but a working directory.
+ */
+const ROOT_MARKERS = [
+  ".git",
+  ".clarifydoc",
+  "package.json",
+  "go.mod",
+  "Cargo.toml",
+  "pom.xml",
+  "build.gradle",
+  "requirements.txt",
+  "pyproject.toml",
+  "composer.json",
+  "Gemfile",
+];
+
+/**
+ * The project root to serve when the client passed no path: the nearest
+ * ancestor of `startDir` that looks like a project.
+ *
+ * Agents launch a stdio server with their workspace as the working directory,
+ * but not always — a subdirectory is common, and analyzing that would map a
+ * fraction of the project. Walking up to a marker makes an argument-free
+ * config ("command": "clarifydoc-mcp") do the right thing from anywhere inside
+ * the project. Falls back to `startDir` when nothing matches.
+ */
+export function findProjectRoot(startDir: string): string {
+  let dir = resolve(startDir);
+  for (;;) {
+    if (ROOT_MARKERS.some((marker) => existsSync(join(dir, marker)))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return resolve(startDir);
+    dir = parent;
+  }
 }
 
 /** Where an analysis for `projectRoot` lives, given a base output dir. */
