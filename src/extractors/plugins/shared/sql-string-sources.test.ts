@@ -95,3 +95,25 @@ void markTrackLocationsAsDeleted(const QSqlDatabase& database) {
     expect(s).toEqual([]);
   });
 });
+
+describe("table-valued functions are not tables", () => {
+  const q = (sql: string) => extractSqlStringDataSources([`"${sql}"`]);
+
+  it("skips a Firebird selectable stored procedure in the FROM position", () => {
+    // The backbone of many Delphi/Firebird apps: a procedure called like a table.
+    expect(q("SELECT CPRNR FROM SP_VENTELISTE(:SKOLE_ID, :DATO)")).toEqual([]);
+  });
+
+  it("skips a Postgres set-returning function", () => {
+    expect(q("SELECT * FROM generate_series(1, 10)")).toEqual([]);
+  });
+
+  it("falls through to a real table joined alongside a procedure", () => {
+    const out = q("SELECT * FROM SP_ELEV_HISTORIK(:ID) H JOIN TPERSON P ON P.ID = H.PERSON_ID");
+    expect(out.map((d) => d.entity)).toEqual(["TPERSON"]);
+  });
+
+  it("still reads a plain table with no argument list", () => {
+    expect(q("SELECT ID FROM TPERSON").map((d) => d.entity)).toEqual(["TPERSON"]);
+  });
+});
