@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildFormLaunches } from "./component-launches.js";
-import { createEmptyAnalysis, type FileAnalysis, type FunctionInfo } from "../types/analysis.js";
+import { buildFormLaunches, markStartupScreens } from "./component-launches.js";
+import { createEmptyAnalysis, type FileAnalysis, type FunctionInfo, type ScreenInfo } from "../types/analysis.js";
 
 /** A .dfm as the parser reports it: root class + root instance variable. */
 function form(path: string, cls: string, instance: string): FileAnalysis {
@@ -154,5 +154,60 @@ describe("Delphi form launches", () => {
 
   it("returns nothing for a project with no forms", () => {
     expect(buildFormLaunches([createEmptyAnalysis("a.ts", "typescript")])).toEqual([]);
+  });
+});
+
+describe("Delphi startup screens", () => {
+  const screen = (path: string, name: string): ScreenInfo => ({
+    name, formType: name, caption: null, dimensions: null,
+    components: [], filePath: path, routePath: null, navigatesTo: [],
+  });
+
+  /** A .dpr whose source is supplied through the raw-source map. */
+  function project(body: string): [FileAnalysis, Map<string, string>] {
+    const a = createEmptyAnalysis("tea.dpr", "pascal");
+    return [a, new Map([["tea.dpr", body]])];
+  }
+
+  it("marks the first Application.CreateForm as the main form", () => {
+    const [dpr, sources] = project(`begin
+  Application.Initialize;
+  Application.CreateForm(TMainForm, MainForm);
+  Application.CreateForm(TFProgress, FProgress);
+  Application.Run;
+end.`);
+    const main = screen("Main.dfm", "MainForm");
+    const progress = screen("UFProgress.dfm", "FProgress");
+    const analyses = [dpr, form("Main.dfm", "TMainForm", "MainForm"), form("UFProgress.dfm", "TFProgress", "FProgress")];
+    markStartupScreens(analyses, [main, progress], sources);
+    expect(main.startup).toBe("main");
+    expect(progress.startup).toBe("auto-created");
+  });
+
+  it("leaves every other screen unmarked", () => {
+    const [dpr, sources] = project("Application.CreateForm(TMainForm, MainForm);");
+    const main = screen("Main.dfm", "MainForm");
+    const dialog = screen("Dlg.dfm", "Dlg");
+    markStartupScreens(
+      [dpr, form("Main.dfm", "TMainForm", "MainForm"), form("Dlg.dfm", "TDlg", "Dlg")],
+      [main, dialog],
+      sources,
+    );
+    expect(dialog.startup).toBeUndefined();
+  });
+
+  it("does not promote a later form when a data module is created first", () => {
+    // TDM has no .dfm screen; the form after it is still only auto-created.
+    const [dpr, sources] = project(`Application.CreateForm(TDM, DM);
+Application.CreateForm(TMainForm, MainForm);`);
+    const main = screen("Main.dfm", "MainForm");
+    markStartupScreens([dpr, form("Main.dfm", "TMainForm", "MainForm")], [main], sources);
+    expect(main.startup).toBe("auto-created");
+  });
+
+  it("does nothing without a project file", () => {
+    const main = screen("Main.dfm", "MainForm");
+    markStartupScreens([form("Main.dfm", "TMainForm", "MainForm")], [main], new Map());
+    expect(main.startup).toBeUndefined();
   });
 });

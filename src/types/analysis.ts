@@ -749,6 +749,16 @@ export interface ScreenInfo {
   filePath: string;
   routePath: string | null;
   navigatesTo: string[];
+  /**
+   * How the application creates this screen at startup, when it does.
+   *
+   * A Delphi `.dpr` states this outright: the FIRST `Application.CreateForm`
+   * is the main form — the window the user gets when the app launches, and the
+   * root of the navigation graph — and any later ones are auto-created at
+   * startup but shown on demand. Absent for every screen the app constructs
+   * later on (the normal case).
+   */
+  startup?: "main" | "auto-created";
 }
 
 /**

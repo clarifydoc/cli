@@ -76,7 +76,7 @@ import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
 import { linkApiCallsToRoutes, dedupeRoutes } from "./route-linker.js";
 import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
-import { buildComponentLaunches, buildFormLaunches } from "./component-launches.js";
+import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from "./component-launches.js";
 import { buildImportIndex, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
 import { denormalizeFileAnalysis } from "./element-registry.js";
 import {
@@ -696,6 +696,9 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const screenedFiles = new Set(webScreens.map((s) => s.filePath));
   const componentScreens = buildScreensFromComponents(allAnalyses, rawSources, screenedFiles);
   const allScreens = [...dfmScreens, ...webScreens, ...componentScreens];
+  // The Delphi project file names the main form outright — mark it, and the
+  // other forms the app creates at startup, so the screen graph has a root.
+  markStartupScreens(allAnalyses, allScreens, rawSources);
 
   // Cross-tier join: match each outbound api-call to the inbound route serving
   // it (by HTTP method + normalized path). Connects the two halves of the

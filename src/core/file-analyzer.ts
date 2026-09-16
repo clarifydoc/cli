@@ -322,6 +322,11 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     const isUiSource =
       hasFrontendRoute ||
       /\.(vue|svelte|jsx|tsx)$/.test(analysis.filePath) ||
+      // A Delphi/Lazarus project file is the application's entry point: its
+      // ordered `Application.CreateForm` calls name the main form and the
+      // startup-created ones, and the form class is an ARGUMENT, so the call
+      // table cannot carry it. There are one or two per project.
+      /\.(dpr|lpr)$/i.test(analysis.filePath) ||
       analysis.subComponents.length > 0 ||
       analysis.interactiveElements.length > 0;
     return {
