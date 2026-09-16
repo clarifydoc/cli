@@ -37,7 +37,15 @@ const SQL_START_RE =
 /** A table token: bracketed/quoted/backticked or a bare (possibly dotted) name. */
 const TABLE = String.raw`(?:\[([^\]]+)\]|"([^"]+)"|\x60([^\x60]+)\x60|([\w.]+))`;
 
-const FROM_JOIN_RE = new RegExp(String.raw`\b(?:FROM|JOIN)\s+${TABLE}`, "gi");
+/**
+ * `FROM`/`JOIN` source. The trailing `(` capture distinguishes a TABLE from a
+ * table-valued FUNCTION invoked in the same position — Firebird's selectable
+ * stored procedures (`FROM SP_PLAYER_HISTORY(:ID, :MATCH_DATE)`, the backbone of many
+ * Delphi apps), Postgres `FROM generate_series(1,10)` / `FROM my_func(x)`,
+ * SQL Server TVFs. Those are callable routines, not stored relations, so
+ * recording them as tables invents datastores and ER nodes that no schema has.
+ */
+const FROM_JOIN_RE = new RegExp(String.raw`\b(?:FROM|JOIN)\s+${TABLE}\s*(\()?`, "gi");
 const WRITE_RE = new RegExp(
   String.raw`^(INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM|REPLACE\s+INTO|MERGE\s+INTO|TRUNCATE\s+TABLE|ALTER\s+TABLE)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?${TABLE}`,
   "i",
@@ -101,6 +109,7 @@ function tableFrom(stmt: string): { verb: string; table: string } | null {
     FROM_JOIN_RE.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = FROM_JOIN_RE.exec(sql)) !== null) {
+      if (m[5]) continue; // `NAME(` — a table-valued function, not a table
       const t = m[1] ?? m[2] ?? m[3] ?? m[4];
       if (t && !NOT_A_TABLE.has(t.toUpperCase())) return { verb, table: t };
     }
