@@ -76,7 +76,7 @@ import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
 import { linkApiCallsToRoutes, dedupeRoutes } from "./route-linker.js";
 import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
-import { buildComponentLaunches } from "./component-launches.js";
+import { buildComponentLaunches, buildFormLaunches } from "./component-launches.js";
 import { buildImportIndex, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
 import { denormalizeFileAnalysis } from "./element-registry.js";
 import {
@@ -637,7 +637,12 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
 
   // Dynamic-import "opens component" edges (dialogs, lazy components) derived
   // from the finalized symbol links.
-  const componentLaunches = buildComponentLaunches(symbolLinks);
+  // Delphi navigates by constructing a form class rather than importing it, so
+  // those edges come from the form registry instead of the link table.
+  const componentLaunches = [
+    ...buildComponentLaunches(symbolLinks),
+    ...buildFormLaunches(allAnalyses, symbolLinks),
+  ];
 
   // One project-wide import index, shared across the Express mount resolver and
   // every serial builder that resolves cross-file references (screens, type

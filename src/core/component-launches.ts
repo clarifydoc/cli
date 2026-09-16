@@ -1,4 +1,4 @@
-import type { ComponentLaunch, SymbolLink } from "../types/analysis.js";
+import type { ComponentLaunch, FileAnalysis, SymbolLink } from "../types/analysis.js";
 
 /** Component files we treat as "launchable" UI — SFCs and JSX/TSX components. */
 const COMPONENT_FILE_RE = /\.(vue|tsx|jsx)$/i;
@@ -59,5 +59,149 @@ export function buildComponentLaunches(symbolLinks: SymbolLink[]): ComponentLaun
     }
   }
 
+  return out;
+}
+
+// ─── Delphi form navigation ───────────────────────────────────────────────
+
+/** Show methods that open a form that already exists as a global instance. */
+const SHOW_METHODS = new Set(["show", "showmodal"]);
+
+/** The synthetic symbol the Pascal extractor uses for unit-level code; it
+ *  re-reports the calls of the real routines, so it is never the launcher. */
+const SYNTHETIC_SYMBOL = "<setup>";
+
+/**
+ * Derive "form opens form" relationships for Delphi projects.
+ *
+ * A VCL app navigates by instantiating a form class and showing it — there is
+ * no router and no import of the target, so neither the symbol linker nor the
+ * dynamic-import launcher pass above sees any of it:
+ *
+ *     frmRedigerTiltag := TFTiltagRedigering.Create(Self);   // ← the edge
+ *     if frmRedigerTiltag.ShowModal = mrOK then …
+ *
+ *     with TfrmClipboardDialog.Create(nil) do try ShowModal; finally Free; end;
+ *
+ *     frmWait.Show;                                          // global instance
+ *
+ * The `.dfm` is an authoritative registry for this: its root object declares
+ * BOTH the form class (`object frmWait: TWaitForm` → class `TWaitForm`) and the
+ * global instance variable (`frmWait`). So a `TWaitForm.Create` or a
+ * `frmWait.Show` anywhere in the project names a specific screen file, with no
+ * guessing — and `TpFIBQuery.Create` / `TFileStream.Create`, which outnumber the
+ * form constructions, are excluded because they are not in the registry.
+ *
+ * Edges are reported between the SCREEN files (`.dfm`) so they land on the
+ * screens the reader is looking at; a launcher in a unit with no form of its own
+ * (a `ShowXDialog` helper) is reported against that unit instead.
+ */
+export function buildFormLaunches(
+  analyses: FileAnalysis[],
+  symbolLinks: SymbolLink[] = [],
+): ComponentLaunch[] {
+  const byClass = new Map<string, string>();    // TWaitForm      → WaitForm.dfm
+  const byInstance = new Map<string, string>(); // frmWait        → WaitForm.dfm
+  const screenOfUnit = new Map<string, string>(); // waitform      → WaitForm.dfm
+  for (const a of analyses) {
+    if (a.language !== "dfm") continue;
+    const root = a.classes?.[0]?.name;
+    if (root) {
+      const key = root.toLowerCase();
+      // A class declared by two forms is ambiguous — drop it rather than guess.
+      byClass.set(key, byClass.has(key) ? "" : a.filePath);
+    }
+    const instance = a.exports?.find((e) => e.kind === "variable")?.name;
+    if (instance) {
+      const key = instance.toLowerCase();
+      byInstance.set(key, byInstance.has(key) ? "" : a.filePath);
+    }
+    screenOfUnit.set(a.filePath.replace(/\.(dfm|lfm|fmx)$/i, "").toLowerCase(), a.filePath);
+  }
+  if (byClass.size === 0) return [];
+
+  const out: ComponentLaunch[] = [];
+  const seen = new Set<string>();
+  const emit = (l: ComponentLaunch) => {
+    const key = `${l.sourceFile} ${l.targetFile} ${l.launcher}`;
+    if (l.sourceFile === l.targetFile || seen.has(key)) return;
+    seen.add(key);
+    out.push(l);
+  };
+  /** Routines that open the form declared by their own unit (see below). */
+  const selfLaunchers: { file: string; routine: string; target: string }[] = [];
+
+  for (const a of analyses) {
+    if (a.language !== "pascal") continue;
+    // Report the edge from this unit's own form, when it has one.
+    const sourceFile =
+      screenOfUnit.get(a.filePath.replace(/\.(pas|pp)$/i, "").toLowerCase()) ?? a.filePath;
+
+    const routines = [
+      ...(a.classes ?? []).flatMap((c) => c.methods ?? []),
+      ...(a.functions ?? []),
+    ];
+    for (const routine of routines) {
+      if (routine.name === SYNTHETIC_SYMBOL) continue;
+      for (const call of routine.calls ?? []) {
+        const dot = call.name.lastIndexOf(".");
+        if (dot <= 0) continue;
+        const receiver = call.name.slice(0, dot);
+        const method = call.name.slice(dot + 1).toLowerCase();
+        if (receiver.includes(".")) continue; // `DM.qry.Create` — not a bare class
+        let target: string | undefined;
+        if (method === "create") target = byClass.get(receiver.toLowerCase());
+        else if (SHOW_METHODS.has(method)) target = byInstance.get(receiver.toLowerCase());
+        if (!target) continue; // "" = a class two forms declare — ambiguous
+        if (target === sourceFile) {
+          // A routine constructing its OWN form is the `ShowPupilsWindow` /
+          // `VisKlasser` dialog-opener idiom, not navigation. The screens that
+          // navigate are its CALLERS, resolved one hop back below.
+          selfLaunchers.push({ file: a.filePath, routine: routine.name, target });
+          continue;
+        }
+
+        emit({
+          sourceFile,
+          sourceSymbol: routine.name,
+          targetFile: target,
+          launcher: routine.name,
+          line: call.line,
+        });
+      }
+    }
+  }
+
+  // One hop back: every screen that CALLS a dialog-opener opens that dialog.
+  // Resolved through the symbol-link table rather than by routine name, so a
+  // launcher called `Execute` attributes only to the callers the linker
+  // actually resolved to it.
+  if (selfLaunchers.length > 0 && symbolLinks.length > 0) {
+    const callersOf = new Map<string, SymbolLink[]>();
+    for (const l of symbolLinks) {
+      const leaf = l.targetSymbol.split(".").pop() ?? l.targetSymbol;
+      const key = `${l.targetFile}::${leaf.toLowerCase()}`;
+      let arr = callersOf.get(key);
+      if (!arr) callersOf.set(key, (arr = []));
+      arr.push(l);
+    }
+    for (const sl of selfLaunchers) {
+      for (const caller of callersOf.get(`${sl.file}::${sl.routine.toLowerCase()}`) ?? []) {
+        emit({
+          sourceFile:
+            screenOfUnit.get(caller.sourceFile.replace(/\.(pas|pp)$/i, "").toLowerCase()) ??
+            caller.sourceFile,
+          // The link table attributes some calls to the unit-level bucket rather
+          // than to a routine. The navigation is still real, so keep the edge —
+          // but report the launcher, which names something that exists, instead
+          // of a placeholder no reader or deep link can resolve.
+          sourceSymbol: caller.sourceSymbol === SYNTHETIC_SYMBOL ? sl.routine : caller.sourceSymbol,
+          targetFile: sl.target,
+          launcher: sl.routine,
+          line: caller.sourceLine,
+        });
+      }
+    }
+  }
   return out;
 }
