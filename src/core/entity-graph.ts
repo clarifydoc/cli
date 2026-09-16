@@ -499,7 +499,13 @@ export function synthesizeReferencedTableEntities(
       if (keys.some((k) => covered.has(k))) continue; // matches a real or earlier node
       for (const k of keys) covered.add(k);
       graph.nodes.push({
-        id: `inferred::${keys[0]}`,
+        // `<file>::<symbol>` — the SAME id shape every real entity node uses.
+        // The on-disk element registry stores only the id and reconstructs
+        // `name` and `filePath` by splitting it (element-registry.ts), so an
+        // id like `inferred::<key>` came back as the table `inferred` with a
+        // lowercased match key for a name and no openable location. Keying on
+        // the file that queries the table restores all three.
+        id: `${a.filePath}::${table}`,
         name: table,
         orm: "inferred",
         kind: "entity",
