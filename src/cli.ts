@@ -320,4 +320,10 @@ program
     }
   });
 
-program.parse();
+// `from: "node"` explicitly. Commander otherwise sniffs `process.versions.electron`
+// and treats argv as Electron-style (script path NOT skipped) — but the VS Code
+// extension runs this very file on VS Code's own runtime with
+// ELECTRON_RUN_AS_NODE=1 when the machine has no Node, where argv IS
+// node-shaped. Without this, that fallback fails with "unknown command
+// '…/cli.js'".
+program.parse(process.argv, { from: "node" });
