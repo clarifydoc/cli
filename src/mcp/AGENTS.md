@@ -1,8 +1,11 @@
 # src/mcp — Model Context Protocol server
 
 Serves the analysis to AI agents. Started by `clarifydoc mcp` (see [src/cli.ts](../cli.ts)) and by the VS Code
-extension, which publishes the same command as an MCP server definition ([VsCode/src/mcp.ts](../../VsCode/src/mcp.ts))
-pointed at its private per-workspace analysis directory.
+extension, which publishes the same command as an MCP server definition ([VsCode/src/mcp.ts](../../VsCode/src/mcp.ts)).
+
+With no arguments the server serves the project containing the working directory (`findProjectRoot` walks up to a
+`.git`/manifest marker) and reads `<root>/.clarifydoc/<name>` — where both `clarifydoc analyze` and the extension
+write. That is what lets an external agent be configured as nothing but a command, with no path to keep in sync.
 
 | File | Purpose |
 |------|---------|
