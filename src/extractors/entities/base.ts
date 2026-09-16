@@ -39,6 +39,16 @@ export interface EntityExtractResult {
 }
 
 /**
+ * Marks an entity no class declaration backs — a table reconstructed from data
+ * rather than parsed from a type: a Delphi DFM dataset's DML, a schema dump, a
+ * query-builder call. Such entities belong in the Data Model (they ARE tables)
+ * but not in the class graph, which maps declared types; without this the same
+ * table shows up once per file that touches it. Extractors append it after the
+ * ORM tag so `ormOf` still reads the tag.
+ */
+export const SYNTHETIC_ENTITY = "synthetic";
+
+/**
  * Abstract base for language-specific ORM entity extractors. Each Tier-A
  * language plugin provides one subclass (e.g. `JavaScriptEntityExtractor`)
  * that recognizes that ecosystem's entity definitions and emits entity

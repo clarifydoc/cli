@@ -1,5 +1,5 @@
 import type { ClassInfo, EntityRelation, FileAnalysis, PropertyInfo } from "../../../types/analysis.js";
-import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
+import { EntityExtractor, SYNTHETIC_ENTITY, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 
 /**
  * Data-model extraction for Delphi forms and data modules.
@@ -473,7 +473,9 @@ export function extractDfmEntities(
       name: t.name,
       extends: null,
       implements: [],
-      decorators: ["entity", DFM_ORM],
+      // SYNTHETIC_ENTITY: this is a table read out of the dataset's DML, not a
+      // Pascal type — it belongs in the Data Model, not in the class graph.
+      decorators: ["entity", DFM_ORM, SYNTHETIC_ENTITY],
       methods: [],
       properties,
       isExported: true,
