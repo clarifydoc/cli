@@ -86,7 +86,11 @@ const VISUAL_PROPS = new Set([
 
 /** String-list properties that hold SQL on data components (TQuery.SQL,
  *  TIBDataSet.SelectSQL, TADODataSet.CommandText as list, …). */
-const DB_LIST_PROP_RE = /^(SQL|SelectSQL|ModifySQL|InsertSQL|DeleteSQL|RefreshSQL|CommandText)\.Strings$/;
+// `UpdateSQL` is FIBPlus/IBX naming for what IBX also calls `ModifySQL` — the
+// dataset's UPDATE statement. It is the single most reliable table-identity
+// signal on a Delphi dataset, so missing it hid both the UPDATE data access and
+// the table's writable column list.
+const DB_LIST_PROP_RE = /^(SQL|SelectSQL|ModifySQL|UpdateSQL|InsertSQL|DeleteSQL|RefreshSQL|CommandText)\.Strings$/;
 
 /** Scalar properties that name the table / statement directly. */
 const DB_SCALAR_PROPS = new Set(["TableName", "CommandText"]);
@@ -196,7 +200,14 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
   let rootObject: DfmObject | null = null;
   let insideCollection = 0; // track depth of <...> collection blocks
   /** Open multi-line string list (`SQL.Strings = (` … `'…')`). */
-  let pendingList: { obj: DfmObject; prop: string; line: number; parts: string[] } | null = null;
+  let pendingList: {
+    obj: DfmObject;
+    prop: string;
+    line: number;
+    parts: string[];
+    /** Previous line ended in `+`, so this line CONTINUES the same string. */
+    continues: boolean;
+  } | null = null;
 
   for (let i = 0; i < lines.length; i++) {
     const lineNum = i + 1;
@@ -204,9 +215,22 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
 
     // Continuation of a captured multi-line string list.
     if (pendingList) {
+      // Delphi wraps a long SQL line as `'…FIRST HALF' +` / `'SECOND HALF'`.
+      // The two fragments are ONE source line, split mid-token — joining them
+      // with a space would corrupt the identifier straddling the break
+      // (`KONT1.POST' + 'NR` → `KONT1.POST NR`). Only a line NOT continued by
+      // `+` starts a new SQL line, which does get a separating space.
+      let first = true;
       for (const m of trimmed.matchAll(/'((?:[^']|'')*)'/g)) {
-        pendingList.parts.push(m[1]!.replace(/''/g, "'"));
+        const text = m[1]!.replace(/''/g, "'");
+        if (first && pendingList.continues && pendingList.parts.length > 0) {
+          pendingList.parts[pendingList.parts.length - 1] += text;
+        } else {
+          pendingList.parts.push(text);
+        }
+        first = false;
       }
+      pendingList.continues = /\+\s*$/.test(trimmed);
       if (/\)\s*$/.test(trimmed)) {
         pendingList.obj.dbProps.push({
           prop: pendingList.prop,
@@ -282,7 +306,7 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
       // multi-line text form, which opens a pendingList.
       if (DB_LIST_PROP_RE.test(propName)) {
         if (propValue === "(") {
-          pendingList = { obj: current, prop: propName, line: lineNum, parts: [] };
+          pendingList = { obj: current, prop: propName, line: lineNum, parts: [], continues: false };
         } else {
           const parts = [...propValue.matchAll(/'((?:[^']|'')*)'/g)].map(
             (m) => m[1]!.replace(/''/g, "'"),
