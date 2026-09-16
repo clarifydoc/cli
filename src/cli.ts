@@ -282,7 +282,11 @@ program
     "--analysis-dir <dir>",
     "Exact directory containing project-summary.json (overrides --output; what the VS Code extension passes)",
   )
-  .option("--no-auto-analyze", "Never run an analysis — only read what is already on disk")
+  .option(
+    "--no-auto-analyze",
+    "Do not re-analyze on request. The first analysis still runs when the project has none — pass --no-cold-start to forbid that too",
+  )
+  .option("--no-cold-start", "Never analyze, not even when no analysis exists yet")
   .option("--lsp", "Allow the optional LSP enhancement when this server runs an analysis (needs Docker)", false)
   .option("--no-git-history", "Skip git churn/hotspot collection when this server runs an analysis")
   .option("--max-files <n>", "Maximum number of files to analyze", parseInt)
@@ -299,6 +303,7 @@ program
         analysisDir: options.analysisDir,
         outputBase: options.output,
         allowAnalyze: options.autoAnalyze !== false,
+        allowColdStart: options.coldStart !== false,
         version: program.version() ?? undefined,
         analyzeSettings: {
           incremental: true,
