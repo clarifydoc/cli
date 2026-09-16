@@ -39,7 +39,18 @@ export function hasGradleDep(info: ProjectInfo, name: string): boolean {
 
 /** Delphi: any aggregated uses-clause unit starting with `name`. */
 export function hasDelphiDep(info: ProjectInfo, name: string): boolean {
-  return info.delphiUses.some((u) => u.startsWith(name));
+  // Pascal is a case-insensitive language and unit names are spelled
+  // inconsistently across a codebase's eras (`Forms` / `forms`, `pFIBQuery` /
+  // `pFibQuery`), so a case-sensitive match silently misses real dependencies.
+  const lower = name.toLowerCase();
+  return info.delphiUses.some((u) => u.toLowerCase().startsWith(lower));
+}
+
+/** Exact (case-insensitive) uses-clause unit — for generic names like `Forms`
+ *  where a prefix match would also hit unrelated units. */
+export function usesDelphiUnit(info: ProjectInfo, ...names: string[]): boolean {
+  const want = new Set(names.map((n) => n.toLowerCase()));
+  return info.delphiUses.some((u) => want.has(u.toLowerCase()));
 }
 
 /** Maven: substring of pom.xml. */
