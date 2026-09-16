@@ -341,6 +341,21 @@ end`;
       parseDfm(form("A", "INSERT INTO COACH (ID, NAME) VALUES (:ID, :NAME)"), "a.dfm"),
       parseDfm(form("B", "INSERT INTO COACH (ID) VALUES (:ID)"), "b.dfm"),
     ];
+    // File analysis derives a "field" reference per typed column AFTER the
+    // entity lands in `classes` (type-reference-extractor.ts) — mirror that.
+    for (const a of analyses) {
+      a.typeReferences = a.classes.flatMap((c) =>
+        c.properties.filter((p) => p.type).map((p) => ({
+          rawType: p.type!,
+          typeName: p.type!,
+          usageKind: "field" as const,
+          sourceFile: a.filePath,
+          sourceLine: c.line,
+          sourceSymbol: `${c.name}.${p.name}`,
+          sourceClass: c.name,
+        })),
+      );
+    }
     new DfmEntityExtractor().reconcileProject(analyses);
 
     // b.dfm lost its COACH node, so nothing in b.dfm may still reference COACH
