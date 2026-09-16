@@ -12,6 +12,12 @@
 
 import { readFile, stat } from "fs/promises";
 import { join, resolve } from "path";
+import {
+  AnalysisLockedError,
+  currentLockHolder,
+  waitFor,
+  type LockOwner,
+} from "../core/analysis-lock.js";
 import type {
   ApiRouteLink,
   ArchLayer,
@@ -101,13 +107,24 @@ export interface AnalysisStoreOptions {
   projectRoot: string;
   /** Absolute directory holding project-summary.json (also the analyze output dir). */
   analysisDir: string;
-  /** When false, the store never runs an analysis — it only reads what exists. */
+  /** When false, the store never re-analyzes on request — it reads what exists. */
   allowAnalyze?: boolean;
+  /**
+   * When false, the store will not even run the FIRST analysis for a project
+   * that has none. Defaults to true: a read-only server (the VS Code
+   * extension's, say) still bootstraps itself once rather than answering every
+   * tool call with "run it from the editor", and the directory lock keeps that
+   * one run from colliding with the editor's.
+   */
+  allowColdStart?: boolean;
   analyzeSettings?: AnalyzeSettings;
   log?: (message: string) => void;
 }
 
 export class MissingAnalysisError extends Error {}
+
+/** How long a cold start waits for an analysis another process is running. */
+const COLD_START_WAIT_MS = 180_000;
 
 export class AnalysisStore {
   private cached: LoadedAnalysis | null = null;
@@ -134,6 +151,16 @@ export class AnalysisStore {
     return this.options.allowAnalyze !== false;
   }
 
+  /**
+   * Whether this store may bootstrap a project that has never been analyzed.
+   * Independent of `allowAnalyze`: --no-cold-start means "only analyze when
+   * asked", and folding `allowAnalyze` in here made the flag a silent no-op
+   * unless --no-auto-analyze was passed too.
+   */
+  get allowColdStart(): boolean {
+    return this.options.allowColdStart !== false;
+  }
+
   /** Absolute path of the summary this store reads. */
   get summaryPath(): string {
     return join(this.options.analysisDir, "project-summary.json");
@@ -150,18 +177,7 @@ export class AnalysisStore {
    */
   async load(): Promise<LoadedAnalysis> {
     let info = await statOrNull(this.summaryPath);
-    if (!info) {
-      if (!this.allowAnalyze) {
-        throw new MissingAnalysisError(
-          `No analysis found at ${this.summaryPath}. ` +
-            `Run \`clarifydoc analyze ${this.options.projectRoot} -o <dir>\` first.`,
-        );
-      }
-      this.log("no analysis on disk — running one now");
-      await this.refresh({ full: false });
-      info = await statOrNull(this.summaryPath);
-      if (!info) throw new MissingAnalysisError(`Analysis did not produce ${this.summaryPath}.`);
-    }
+    if (!info) info = await this.coldStart();
 
     const key = `${info.mtimeMs}:${info.size}`;
     if (this.cached && this.cacheKey === key) return this.cached;
@@ -189,6 +205,54 @@ export class AnalysisStore {
     }
   }
 
+  /**
+   * Produce the first analysis for a project that has none, and return its
+   * stat. Another process may be mid-analysis (the editor, a CLI run, a second
+   * MCP client) — in that case we wait for its summary rather than starting a
+   * competing scan.
+   */
+  private async coldStart() {
+    if (!this.allowColdStart) {
+      throw new MissingAnalysisError(
+        `No analysis found at ${this.summaryPath}. This server is read-only ` +
+          `(--no-auto-analyze --no-cold-start). Analyze from VS Code ` +
+          `(ClarifyDoc: Analyze Workspace) or run ` +
+          `\`clarifydoc analyze ${this.options.projectRoot}\`.`,
+      );
+    }
+
+    const holder = await currentLockHolder(this.options.analysisDir);
+    if (holder) return this.awaitOtherRun(holder);
+
+    this.log("no analysis on disk — running one now");
+    try {
+      await this.runAnalysis({ full: false });
+    } catch (err) {
+      // Lost the race between the check above and the lock: wait it out.
+      if (err instanceof AnalysisLockedError) return this.awaitOtherRun(err.owner);
+      throw err;
+    }
+    const info = await statOrNull(this.summaryPath);
+    if (!info) throw new MissingAnalysisError(`Analysis did not produce ${this.summaryPath}.`);
+    return info;
+  }
+
+  /** Wait for the summary another process is writing, up to COLD_START_WAIT_MS. */
+  private async awaitOtherRun(owner: LockOwner | null) {
+    const who = owner ? `pid ${owner.pid}` : "another process";
+    this.log(`${who} is analyzing ${this.options.analysisDir} — waiting for it`);
+    const arrived = await waitFor(async () => (await statOrNull(this.summaryPath)) !== null, COLD_START_WAIT_MS);
+    const info = arrived ? await statOrNull(this.summaryPath) : null;
+    if (!info) {
+      throw new MissingAnalysisError(
+        `An analysis started by ${who} is still running after ` +
+          `${Math.round(COLD_START_WAIT_MS / 1000)}s and ${this.summaryPath} does not exist yet. ` +
+          `Retry shortly.`,
+      );
+    }
+    return info;
+  }
+
   /** Run (or re-run) the analysis. Concurrent callers share one run. */
   async refresh(opts: { full?: boolean } = {}): Promise<AnalyzeResult> {
     if (!this.allowAnalyze) {
@@ -196,6 +260,11 @@ export class AnalysisStore {
         "This server was started read-only (--no-auto-analyze); run the analysis from the CLI or VS Code instead.",
       );
     }
+    return this.runAnalysis(opts);
+  }
+
+  /** The analysis run itself, without the read-only guard. */
+  private async runAnalysis(opts: { full?: boolean } = {}): Promise<AnalyzeResult> {
     if (this.running) {
       this.log("analysis already running — awaiting it");
       return this.running;

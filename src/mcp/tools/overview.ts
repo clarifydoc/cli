@@ -35,7 +35,7 @@ export function statusTool(ctx: ToolContext): McpTool {
       "entities, data flows and findings exist. Use it to decide which other clarifydoc_* tool to call.",
     inputSchema: NO_ARGS,
     handler: async () => {
-      if (!(await ctx.store.exists()) && !ctx.store.allowAnalyze) {
+      if (!(await ctx.store.exists()) && !ctx.store.allowColdStart) {
         return {
           text:
             `No ClarifyDoc analysis exists for ${ctx.store.projectRoot} (expected ${ctx.store.summaryPath}).\n` +
@@ -56,8 +56,8 @@ export function analyzeTool(ctx: ToolContext): McpTool {
     description:
       "Re-run the ClarifyDoc static analysis so the other tools see current code. Incremental by default " +
       "(only changed files are re-parsed), so it is cheap to call after edits. Pass full=true to invalidate " +
-      "the cache and re-parse everything. This is the only clarifydoc tool that writes anything (analysis " +
-      "artifacts in its own output directory, never in your source tree).",
+      "the cache and re-parse everything. This is the only clarifydoc tool that writes anything, and only " +
+      "into the analysis directory (.clarifydoc/ by default) — never into your source files.",
     inputSchema: {
       type: "object",
       properties: {

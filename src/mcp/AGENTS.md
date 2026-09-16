@@ -10,7 +10,7 @@ write. That is what lets an external agent be configured as nothing but a comman
 | File | Purpose |
 |------|---------|
 | [protocol.ts](protocol.ts) | Dependency-free MCP over stdio: JSON-RPC framing, `initialize` negotiation, `tools/*`, `resources/*` |
-| [store.ts](store.ts) | Locates/loads/refreshes the analysis, and indexes it per file (`FileFacts`) |
+| [store.ts](store.ts) | Locates/loads/refreshes the analysis, cold-starts a project with none, and indexes it per file (`FileFacts`) |
 | [format.ts](format.ts) | Text shaping (capped lists, `path:line`) and argument coercion |
 | [server.ts](server.ts) | Assembles store + tools + instructions into a servable `McpServer` |
 | [tools/](tools/) | The tools themselves — `context.ts` (shared), `overview.ts`, `code.ts`, `data.ts` |
@@ -33,6 +33,13 @@ write. That is what lets an external agent be configured as nothing but a comman
   call next).
 - **`readOnly` is a contract.** Every tool but `clarifydoc_analyze` only reads. Keep it that way: the VS Code
   integration advertises the server as safe and defaults to `--no-auto-analyze`.
+- **Read-only must still not dead-end.** `--no-auto-analyze` blocks re-analysis on request, but a project with no
+  analysis at all is still analyzed once (`AnalysisStore.coldStart`) — otherwise every tool call would answer "run it
+  from the editor" and the agent could do nothing. `--no-cold-start` forbids even that, which is what the tests use.
+- **One writer per analysis directory.** The CLI, the extension and a cold start now share `.clarifydoc/`, so
+  `analyze()` holds an advisory lock ([../core/analysis-lock.ts](../core/analysis-lock.ts)). A store that finds the
+  lock held waits for the other run's summary instead of starting a competing scan; the lock heartbeats, so a long
+  analysis is never stolen, and a crashed one is.
 
 ## Adding a tool
 

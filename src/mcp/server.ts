@@ -31,8 +31,10 @@ export interface McpServerConfig {
   analysisDir?: string;
   /** Base output dir, as passed to `analyze -o`; `<base>/<projectName>` is used. */
   outputBase?: string;
-  /** When false the server only reads existing analyses (never scans). */
+  /** When false the server never re-analyzes on request (it still cold-starts). */
   allowAnalyze?: boolean;
+  /** When false the server will not even run the first analysis for a project with none. */
+  allowColdStart?: boolean;
   analyzeSettings?: AnalyzeSettings;
   /** Reported in `serverInfo.version`. */
   version?: string;
@@ -119,6 +121,7 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
     projectRoot,
     analysisDir,
     allowAnalyze: config.allowAnalyze,
+    allowColdStart: config.allowColdStart,
     analyzeSettings: config.analyzeSettings,
     log,
   });
