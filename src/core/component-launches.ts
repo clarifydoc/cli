@@ -1,4 +1,4 @@
-import type { ComponentLaunch, FileAnalysis, SymbolLink } from "../types/analysis.js";
+import type { ComponentLaunch, FileAnalysis, ScreenInfo, SymbolLink } from "../types/analysis.js";
 
 /** Component files we treat as "launchable" UI — SFCs and JSX/TSX components. */
 const COMPONENT_FILE_RE = /\.(vue|tsx|jsx)$/i;
@@ -204,4 +204,66 @@ export function buildFormLaunches(
     }
   }
   return out;
+}
+
+/**
+ * Mark the application's main form, and the other forms it auto-creates.
+ *
+ * A Delphi project file says this explicitly, and in order:
+ *
+ *     program teamdesk;
+ *     begin
+ *       Application.Initialize;
+ *       Application.CreateForm(TMainForm, MainForm);   // ← the main form
+ *       Application.CreateForm(TFProgress, FProgress); // ← auto-created
+ *       Application.CreateForm(TDM, DM);               // ← a data module
+ *       Application.Run;
+ *     end.
+ *
+ * The FIRST `Application.CreateForm` is the main form: the window the user gets
+ * on launch, which the IDE also writes back as the project's MainForm setting.
+ * Later calls construct forms and data modules eagerly at startup, but the app
+ * shows them on demand. Everything else is built later, in code.
+ *
+ * Reading this turns the screen graph from a flat list into something rooted —
+ * the entry point is known, so "what can the user reach from startup" has an
+ * answer. Data modules carry no screen and are simply not marked.
+ *
+ * Mutates the matching `ScreenInfo`s in place.
+ */
+export function markStartupScreens(
+  analyses: FileAnalysis[],
+  screens: ScreenInfo[],
+  sources: ReadonlyMap<string, string>,
+): void {
+  const screenByFile = new Map<string, ScreenInfo>();
+  for (const s of screens) if (s.filePath) screenByFile.set(s.filePath, s);
+
+  // Form class → its screen file, from each .dfm's root object.
+  const screenOfClass = new Map<string, string>();
+  for (const a of analyses) {
+    if (a.language !== "dfm") continue;
+    const root = a.classes?.[0]?.name;
+    if (!root) continue;
+    const key = root.toLowerCase();
+    screenOfClass.set(key, screenOfClass.has(key) ? "" : a.filePath);
+  }
+  if (screenOfClass.size === 0) return;
+
+  for (const a of analyses) {
+    if (!/\.(dpr|lpr)$/i.test(a.filePath)) continue;
+    const source = sources.get(a.filePath);
+    if (!source) continue;
+    let first = true;
+    for (const m of source.matchAll(/\bApplication\s*\.\s*CreateForm\s*\(\s*([A-Za-z_]\w*)/gi)) {
+      const file = screenOfClass.get(m[1]!.toLowerCase());
+      // "" is an ambiguous class; a data module has no .dfm screen at all.
+      const screen = file ? screenByFile.get(file) : undefined;
+      if (screen && !screen.startup) screen.startup = first ? "main" : "auto-created";
+      // Only the first CreateForm can be the main form, whether or not it
+      // resolved to a screen — a data module created first does not promote
+      // the next form to main.
+      first = false;
+    }
+  }
 }
