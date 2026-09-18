@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { TOOL_VERSION } from "./core/version.js";
 import { resolve } from "path";
 import { analyze } from "./core/analyzer.js";
 import {
@@ -15,7 +16,7 @@ program
   .description(
     "Extract structured information from any codebase — routes, endpoints, data flow, components",
   )
-  .version("0.1.0");
+  .version(TOOL_VERSION);
 
 program
   .command("analyze")

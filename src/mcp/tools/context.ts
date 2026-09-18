@@ -91,6 +91,24 @@ export async function statusReport(loaded: LoadedAnalysis, store: AnalysisStore)
     "",
   ];
 
+  const prov = summary.provenance;
+  if (prov) {
+    lines.push(
+      `signals: extractor ${prov.extractorVersion} · lsp ${prov.signals.lsp} · git history ${prov.signals.gitHistory}` +
+        (prov.signals.gitSkipReason ? ` (${prov.signals.gitSkipReason})` : "") +
+        (prov.parseFallbacks ? ` · parse fallbacks ${Object.values(prov.parseFallbacks).reduce((a, b) => a + b, 0)}` : ""),
+    );
+    // Config problems were verbose-console only, i.e. invisible to exactly the
+    // people who configure a project and then analyze it from an editor.
+    if (prov.config.warnings.length) {
+      lines.push(
+        ...prov.config.warnings.slice(0, 5).map((w) => `config warning: ${w}`),
+        ...(prov.config.warnings.length > 5 ? [`config warning: +${prov.config.warnings.length - 5} more`] : []),
+      );
+    }
+    lines.push("");
+  }
+
   const frameworks = summary.detectedFrameworks ?? [];
   if (frameworks.length) {
     lines.push(
