@@ -25,4 +25,8 @@ export const goPackages: readonly KnownPackageRule[] = [
   { match: /^github\.com\/prometheus\//, category: "logging" },
   { match: /^github\.com\/(stretchr\/testify|onsi\/(ginkgo|gomega))/, category: "testing" },
   { match: /^github\.com\/sirupsen\/logrus/, category: "logging" },
+  // ── Cache / mail ──
+  { names: ["github.com/patrickmn/go-cache", "github.com/dgraph-io/ristretto", "github.com/allegro/bigcache"], category: "cache" },
+  { names: ["gopkg.in/gomail.v2", "github.com/sendgrid/sendgrid-go"], category: "email" },
+
 ];

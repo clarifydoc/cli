@@ -162,3 +162,37 @@ describe("per-symbol concentration", () => {
     expect(p.symbolsWithBoundary).toBeUndefined();
   });
 });
+
+describe("cache, filesystem and email are boundaries too", () => {
+  // A service that reads the database, writes files to disk and sends mail
+  // reported concernCount 1: filesystem and mail had no category at all, and
+  // caching libraries fell through to "other".
+  it("counts all four concerns", () => {
+    const a = file("src/mixed.ts", "typescript", (f) => {
+      f.imports.push(imp("@prisma/client", 1), imp("fs/promises", 2), imp("nodemailer", 3), imp("lru-cache", 4));
+    });
+    const [p] = buildResponsibilityProfiles([a]);
+    expect(p.boundaries).toEqual(["cache", "database", "email", "filesystem"]);
+    expect(p.roles).toEqual(["caching", "integration", "persistence"]);
+    // filesystem maps to persistence, so database + filesystem is one role.
+    expect(p.concernCount).toBe(3);
+  });
+
+  it("classifies the node: prefixed filesystem modules", () => {
+    expect(classifyImportSource("node:fs")?.category).toBe("filesystem");
+    expect(classifyImportSource("fs/promises")?.category).toBe("filesystem");
+  });
+
+  it("does not treat System.IO as a filesystem boundary", () => {
+    // It also holds Stream, MemoryStream and Path, which nearly every
+    // non-trivial .NET file uses — as a boundary it would inflate the concern
+    // count across a whole repository.
+    expect(classifyImportSource("System.IO")?.category).not.toBe("filesystem");
+  });
+
+  it("classifies .NET and JVM cache and mail packages", () => {
+    expect(classifyImportSource("Microsoft.Extensions.Caching.Memory")?.category).toBe("cache");
+    expect(classifyImportSource("MailKit.Net.Smtp")?.category).toBe("email");
+    expect(classifyImportSource("jakarta.mail")?.category).toBe("email");
+  });
+});

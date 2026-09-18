@@ -37,4 +37,11 @@ export const nugetPackages: readonly KnownPackageRule[] = [
   { match: /^azure\./, category: "cloud" },
   { match: /^swashbuckle/, category: "build" },
   { match: /^xunit/, category: "testing" },
+  // ── Cache / mail ──
+  // Note: no `System.IO` row. That namespace also holds Stream, MemoryStream
+  // and Path, which nearly every non-trivial .NET file uses, so treating it as
+  // a filesystem boundary would inflate the concern count across whole repos.
+  { names: ["Microsoft.Extensions.Caching.Memory", "Microsoft.Extensions.Caching.StackExchangeRedis", "Microsoft.Extensions.Caching.Distributed", "LazyCache", "EasyCaching.Core"], category: "cache" },
+  { names: ["MailKit", "MailKit.Net.Smtp", "MimeKit", "System.Net.Mail", "SendGrid", "FluentEmail.Core"], category: "email" },
+
 ];
