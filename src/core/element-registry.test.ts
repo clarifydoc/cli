@@ -38,17 +38,14 @@ function load(relPath: string): unknown {
   return JSON.parse(readFileSync(resolve(REPO_ROOT, relPath), "utf-8"));
 }
 
-// Cover every language/framework sample once; skip the all-fixtures mirror
-// (pure duplication) to keep the suite fast.
+// Cover every language/framework sample once.
 const PROJECT_SUMMARIES = fg.sync("test-output/**/project-summary.json", {
   cwd: REPO_ROOT,
-  ignore: ["test-output/all-fixtures/**"],
 });
 
 const PER_FILE = fg.sync("test-output/**/*.json", {
   cwd: REPO_ROOT,
   ignore: [
-    "test-output/all-fixtures/**",
     "**/project-summary.json",
     "**/lsp-*.json",
   ],

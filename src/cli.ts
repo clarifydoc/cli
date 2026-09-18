@@ -34,6 +34,10 @@ program
   .option("--html", "Generate an HTML report after analysis", false)
   .option("--incremental", "Reuse cached per-file analysis for unchanged files (mtime + SHA-256)", false)
   .option("--no-git-history", "Skip git churn/hotspot collection")
+  .option(
+    "--stable-output",
+    "Write a fixed timestamp and a relative project root, so repeated runs produce identical artifacts (for committed fixtures)",
+  )
   .action(async (path: string, options) => {
     const projectRoot = resolve(path);
     const projectName = projectRoot.replace(/\\/g, "/").split("/").pop()!;
@@ -58,6 +62,7 @@ program
         lspTimeout: options.lspTimeout,
         incremental: options.incremental,
         gitHistory: options.gitHistory,
+        stableOutput: options.stableOutput,
       });
 
       if (options.dryRun) {

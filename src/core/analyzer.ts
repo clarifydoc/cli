@@ -1,5 +1,5 @@
 import { readFile } from "fs/promises";
-import { resolve as pathResolve, join } from "path";
+import { resolve as pathResolve, join, relative, sep } from "path";
 import { existsSync } from "fs";
 import { discoverFiles, type DiscoveryOptions, type DiscoveredFile } from "./file-discovery.js";
 import {
@@ -125,7 +125,22 @@ export interface AnalyzeOptions {
    * and shallow clones; set false to keep outputs history-free (fixtures).
    */
   gitHistory?: boolean;
+  /**
+   * Write machine-independent artifacts: a sentinel `analyzedAt` and a
+   * cwd-relative `projectRoot`. For committed fixtures only.
+   *
+   * Without it every regeneration rewrites the timestamp and the absolute root
+   * in every summary and payload, so a fixture diff can never be read as an
+   * extraction diff and two developers' regenerations never agree — which is
+   * also what makes a "regenerate and the diff must be empty" CI gate
+   * impossible. The repository's committed fixtures still carry the path of
+   * the Windows machine they were last generated on.
+   */
+  stableOutput?: boolean;
 }
+
+/** Fixed timestamp written in place of the real one under `stableOutput`. */
+export const STABLE_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 
 export interface AnalyzeResult {
   fileCount: number;
@@ -145,6 +160,12 @@ export interface AnalyzeResult {
   changedFiles?: string[];
   /** Files present in the previous manifest but gone now (same condition). */
   removedFiles?: string[];
+}
+
+/** Project root as a posix path relative to the working directory, for stable fixtures. */
+function stableRoot(projectRoot: string): string {
+  const rel = relative(process.cwd(), projectRoot).split(sep).join("/");
+  return rel === "" ? "." : rel;
 }
 
 // ─── Concurrency pool ────────────────────────────────────────────────────
@@ -1073,7 +1094,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
 
   // Step 5: Write project summary
   const summary: ProjectAnalysis = {
-    projectRoot,
+    projectRoot: options.stableOutput ? stableRoot(projectRoot) : projectRoot,
     detectedFrameworks: frameworks,
     externalPackages: externalPackages.length > 0 ? externalPackages : undefined,
     subProjects,
@@ -1090,7 +1111,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     symbolLinks,
     componentLaunches: componentLaunches.length ? componentLaunches : undefined,
     lspStats,
-    analyzedAt: new Date().toISOString(),
+    analyzedAt: options.stableOutput ? STABLE_TIMESTAMP : new Date().toISOString(),
     complexity,
     patterns,
     securityIssues: allSecurityIssues,
