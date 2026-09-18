@@ -44,6 +44,7 @@ export const csharpMeta: LanguagePluginMeta = {
       "catch_clause", "case_switch_label", "conditional_expression",
     ]),
     logicalOps: new Set(["&&", "||", "??"]),
+    nestingNodes: new Set(["lambda_expression", "anonymous_method_expression", "local_function_statement"]),
   },
   apiCallRoots: ["HttpClient", "WebClient", "RestClient"],
   dbCallRoots: ["DbContext", "DbSet", "SqlCommand", "SqlConnection"],

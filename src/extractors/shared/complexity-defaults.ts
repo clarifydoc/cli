@@ -13,4 +13,9 @@ export const DEFAULT_COMPLEXITY: LanguageComplexitySpec = {
     "switch_case", "catch_clause", "ternary_expression",
   ]),
   logicalOps: new Set(["&&", "||", "??"]),
+  // Callbacks and nested functions deepen nesting for the cognitive metric.
+  nestingNodes: new Set([
+    "arrow_function", "function_expression", "function_declaration",
+    "generator_function", "generator_function_declaration", "method_definition",
+  ]),
 };

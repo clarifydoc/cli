@@ -950,9 +950,23 @@ export interface LspReferenceRecord {
 
 export interface ComplexityInfo {
   functionName: string;
+  /** Cyclomatic complexity: 1 + branches + logical operators. */
   complexity: number;
   line: number;
   endLine: number;
+  /**
+   * Cognitive complexity (an approximation of SonarSource's metric): every
+   * branch adds 1 plus its nesting depth, `else`/`elif` continuations add 1
+   * without a depth penalty, logical operators add 1. Separates "many flat
+   * cases" from "deeply nested logic", which the cyclomatic number cannot.
+   * Absent on rows written by extractor versions before 1.49.
+   */
+  cognitive?: number;
+  /** Deepest branch nesting in the body — 0 for a branch-free body, 1 for a
+   *  single `if`, 2 for an `if` inside a loop. Absent before 1.49. */
+  nestingDepth?: number;
+  /** Declared parameter count. Absent before 1.49. */
+  paramCount?: number;
 }
 
 export interface FileComplexityInfo {
@@ -960,6 +974,11 @@ export interface FileComplexityInfo {
   totalComplexity: number;
   maxComplexity: number;
   averageComplexity: number;
+  /** Sum / max of the per-function cognitive complexity. Absent before 1.49. */
+  totalCognitive?: number;
+  maxCognitive?: number;
+  /** Deepest nesting across the file's functions. Absent before 1.49. */
+  maxNestingDepth?: number;
   functions: ComplexityInfo[];
 }
 

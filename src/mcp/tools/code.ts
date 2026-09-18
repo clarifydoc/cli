@@ -294,7 +294,13 @@ export function fileTool(ctx: ToolContext): McpTool {
         blocks.push(
           section(
             `Functions (${sorted.length})`,
-            bulletList(sorted, limit, (fn) => `${fn.functionName}() line ${fn.line}-${fn.endLine} · complexity ${fn.complexity}`),
+            bulletList(
+              sorted,
+              limit,
+              (fn) =>
+                `${fn.functionName}() line ${fn.line}-${fn.endLine} · complexity ${fn.complexity}` +
+                (fn.cognitive !== undefined ? ` · cognitive ${fn.cognitive} · nesting ${fn.nestingDepth ?? 0}` : ""),
+            ),
           ),
         );
       }

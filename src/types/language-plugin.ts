@@ -93,8 +93,17 @@ export interface SecurityRule {
 
 /** Node types / operators that count toward cyclomatic complexity. */
 export interface LanguageComplexitySpec {
+  /** Node types that open a branch: +1 cyclomatic, +1 plus nesting depth cognitive. */
   branchNodes: ReadonlySet<string>;
+  /** Operator texts (`&&`, `or`, …) that count as a branch when they appear in a binary expression. */
   logicalOps: ReadonlySet<string>;
+  /**
+   * Node types that deepen nesting for the cognitive metric WITHOUT being a
+   * branch themselves — nested functions, lambdas, closures. A branch inside a
+   * callback is harder to follow than the same branch inline, so it pays the
+   * extra depth. Branch nodes always deepen nesting; this set is optional.
+   */
+  nestingNodes?: ReadonlySet<string>;
 }
 
 /**

@@ -52,6 +52,8 @@ const jvmEntities = new JavaKotlinEntityExtractor();
 function jvmMeta(language: Language, opts: {
   builtinTypes: ReadonlySet<string>;
   branchNodes: string[];
+  /** Lambda / nested-function node types that deepen cognitive nesting. */
+  nestingNodes: string[];
   apiCallRoots: string[];
   calls: CallExtractionHooks;
 }): LanguagePluginMeta {
@@ -67,6 +69,7 @@ function jvmMeta(language: Language, opts: {
     complexity: {
       branchNodes: new Set(opts.branchNodes),
       logicalOps: new Set(["&&", "||"]),
+      nestingNodes: new Set(opts.nestingNodes),
     },
     knownPackages: jvmPackages,
     apiCallRoots: opts.apiCallRoots,
@@ -84,6 +87,7 @@ export const javaMeta: LanguagePluginMeta = jvmMeta("java", {
     "if_statement", "while_statement", "for_statement", "enhanced_for_statement",
     "catch_clause", "ternary_expression", "switch_block_statement_group",
   ],
+  nestingNodes: ["lambda_expression"],
   apiCallRoots: ["RestTemplate", "WebClient", "HttpClient", "OkHttp", "Retrofit"],
   calls: javaCallHooks,
 });
@@ -94,6 +98,7 @@ export const kotlinMeta: LanguagePluginMeta = jvmMeta("kotlin", {
     "if_expression", "while_statement", "for_statement",
     "catch_block", "when_entry",
   ],
+  nestingNodes: ["lambda_literal", "anonymous_function"],
   apiCallRoots: ["RestTemplate", "WebClient", "HttpClient", "OkHttp", "Retrofit", "ktor"],
   calls: kotlinCallHooks,
 });
