@@ -1,4 +1,5 @@
 import type { ClassInfo, EntityRelation, PropertyInfo, RouteInfo } from "../../../types/analysis.js";
+import { splitLines } from "../../shared/source-lines.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 
 /**
@@ -74,7 +75,7 @@ function parsedOf(lines: string[]): GqlType[] {
 
 function parseSchema(lines: string[]): GqlType[] {
   const src = stripComments(lines.join("\n"));
-  const srcLines = src.split("\n");
+  const srcLines = splitLines(src);
   const types: GqlType[] = [];
   const headerRe = /^\s*(?:extend\s+)?(type|interface|input|enum|scalar|union)\s+([A-Za-z_]\w*)/;
   const fieldRe = /^\s*([A-Za-z_]\w*)\s*(?:\([^)]*\))?\s*:\s*(.+?)\s*$/;

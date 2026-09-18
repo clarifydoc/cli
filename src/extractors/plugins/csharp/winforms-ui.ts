@@ -4,6 +4,7 @@ import type {
   ScreenComponentInfo,
   ScreenInfo,
 } from "../../../types/analysis.js";
+import { splitLines } from "../../shared/source-lines.js";
 
 /**
  * WinForms UI extraction — the C# analog of the Qt pair (qtui Designer forms +
@@ -98,7 +99,7 @@ export function extractEventWirings(lines: string[]): EventWiring[] {
 
 /** Interactive elements from event subscriptions (strong/weak gated). */
 export function extractWinFormsInteractiveElements(sourceText: string): InteractiveElementInfo[] {
-  const lines = sourceText.split("\n");
+  const lines = splitLines(sourceText);
   const out: InteractiveElementInfo[] = [];
   for (const w of extractEventWirings(lines)) {
     const strong = STRONG_UI_EVENTS.has(w.event);
@@ -294,7 +295,7 @@ function toComponent(name: string, m: DesignerModel, childrenOf: Map<string, str
 export function extractWinFormsScreens(sourceText: string, filePath: string): ScreenInfo[] {
   if (!/\.Designer\.cs$/i.test(filePath)) return [];
   if (!/void InitializeComponent\s*\(\s*\)/.test(sourceText)) return [];
-  const lines = sourceText.split("\n");
+  const lines = splitLines(sourceText);
   const m = parseDesignerFile(lines);
   if (!m.className || m.types.size === 0) return [];
 

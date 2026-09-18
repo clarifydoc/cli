@@ -1,4 +1,5 @@
 import type { SecurityIssue, Language } from "../types/analysis.js";
+import { splitLines } from "../extractors/shared/source-lines.js";
 import type { SecurityRule } from "../types/language-plugin.js";
 import { pluginFor, securityRulesFor } from "../extractors/registry.js";
 import { isTestFile } from "./test-file-detector.js";
@@ -139,7 +140,7 @@ export function scanSecurity(
   const effectiveSource = plugin?.securityPreprocess
     ? plugin.securityPreprocess(sourceText)
     : sourceText;
-  const lines = effectiveSource.split("\n");
+  const lines = splitLines(effectiveSource);
   let originalLines: string[] | null = null; // for snippets, split on first hit
   const isTest = isTestFile(filePath, language);
 
@@ -168,7 +169,7 @@ export function scanSecurity(
         )) {
           continue;
         }
-        originalLines ??= sourceText.split("\n");
+        originalLines ??= splitLines(sourceText);
         issues.push({
           category: rule.category,
           severity: rule.severity,
