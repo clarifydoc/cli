@@ -119,7 +119,9 @@ export function statusReport(loaded: LoadedAnalysis, store: AnalysisStore): stri
   }
   if (summary.lspStats) {
     lines.push(
-      `lsp: ${summary.lspStats.serversUsed.join(", ") || "none"} (${summary.lspStats.lspResolvedCount} extra links)`,
+      summary.lspStats.stale
+        ? `lsp: stale — the enhancement predates this analysis and was not applied; run \`clarifydoc lsp-update\` to refresh it`
+        : `lsp: ${summary.lspStats.serversUsed.join(", ") || "none"} (${summary.lspStats.lspResolvedCount} extra links)`,
     );
   }
   lines.push("", `analysis dir: ${store.analysisDir}`);

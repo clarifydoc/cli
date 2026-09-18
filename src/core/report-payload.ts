@@ -1,6 +1,6 @@
 import { readFile } from "fs/promises";
 import { join, resolve, basename } from "path";
-import type { ProjectAnalysis, BlastRadiusInfo } from "../types/analysis.js";
+import type { ProjectAnalysis, BlastRadiusInfo, LspStats } from "../types/analysis.js";
 import { denormalizeProject } from "./element-registry.js";
 
 /**
@@ -335,7 +335,32 @@ export async function loadReportSummary(dir: string): Promise<ProjectAnalysis> {
       linkGraph?: unknown[];
       blastRadius?: unknown[];
       lspStats?: unknown;
+      enhancedAt?: string;
     };
+
+    // Age guard. `analyze` neither refreshes nor removes the delta, so a plain
+    // re-run leaves an older `lsp-enhancement.json` beside a newer summary —
+    // and merging it by mere presence silently replaced the fresh symbolLinks,
+    // componentGraph, linkGraph and blastRadius with graphs describing code
+    // that has since changed. `analyze --html` renders through this function,
+    // so the stale graph even reached the report.html that run had just
+    // written. Report the delta instead of applying it; `lsp-update` restores it.
+    const enhancedAt = Date.parse(lsp.enhancedAt ?? "");
+    const analyzedAt = Date.parse(summary.analyzedAt ?? "");
+    if (Number.isFinite(enhancedAt) && Number.isFinite(analyzedAt) && enhancedAt < analyzedAt) {
+      summary.lspStats = {
+        ...((lsp.lspStats as ProjectAnalysis["lspStats"]) ?? {
+          serversUsed: [],
+          lspResolvedCount: 0,
+          referenceLinksCount: 0,
+          enhancementTimeMs: 0,
+        }),
+        enhancedAt: lsp.enhancedAt,
+        stale: true,
+      };
+      return summary;
+    }
+
     if (lsp.symbolLinks) summary.symbolLinks = lsp.symbolLinks as ProjectAnalysis["symbolLinks"];
     if (lsp.componentGraph) summary.componentGraph = lsp.componentGraph;
     if (lsp.linkGraph) summary.linkGraph = lsp.linkGraph as ProjectAnalysis["linkGraph"];
@@ -382,7 +407,9 @@ export async function loadReportSummary(dir: string): Promise<ProjectAnalysis> {
       }
       summary.blastRadius = lspBlast;
     }
-    if (lsp.lspStats) summary.lspStats = lsp.lspStats as ProjectAnalysis["lspStats"];
+    if (lsp.lspStats) {
+      summary.lspStats = { ...(lsp.lspStats as LspStats), ...(lsp.enhancedAt ? { enhancedAt: lsp.enhancedAt } : {}) };
+    }
   } catch {
     // No lsp-enhancement.json — base summary stands alone.
   }
