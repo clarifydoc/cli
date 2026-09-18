@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { loadIgnorePatterns, isIgnored } from "./clarifydoc-ignore.js";
+import { loadIgnorePatterns, isIgnored, fnmatch } from "./clarifydoc-ignore.js";
 
 let root: string;
 
@@ -126,4 +126,35 @@ describe(".clarifydoc/ignore", () => {
     expect(loadIgnorePatterns(root)).toEqual([]);
     expect(ignored("Library/mORMot-master/SynCommons.pas")).toBe(false);
   });
+});
+
+describe("fnmatch — `**` respects path separators", () => {
+  // `**` used to compile to `.*`, which ignores the separator: the glob then
+  // claimed files the author never named. Both the ignore file and the
+  // config's layers/exempt/generated sections share this dialect.
+  const cases: Array<[path: string, pattern: string, expected: boolean]> = [
+    ["a/b", "a/**/b", true],
+    ["a/x/b", "a/**/b", true],
+    ["a/x/y/b", "a/**/b", true],
+    ["a/xb", "a/**/b", false],
+    ["vendor/x", "**/vendor/**", true],
+    ["a/vendor/x", "**/vendor/**", true],
+    ["myvendor/x", "**/vendor/**", false],
+    ["foo", "**/foo", true],
+    ["a/foo", "**/foo", true],
+    ["barfoo", "**/foo", false],
+    ["tools/a.ts", "tools/**", true],
+    ["tools", "tools/**", false],
+    ["src/db/x/y.ts", "src/db/**", true],
+    ["src/a/foo.ts", "src/**/foo.ts", true],
+    ["src/xfoo.ts", "src/**/foo.ts", false],
+    ["User.generated.ts", "*.generated.ts", true],
+    ["a/b.ts", "*.ts", false],
+    ["b.ts", "*.ts", true],
+  ];
+  for (const [path, pattern, expected] of cases) {
+    it(`${pattern} ${expected ? "matches" : "does not match"} ${path}`, () => {
+      expect(fnmatch(path, pattern)).toBe(expected);
+    });
+  }
 });

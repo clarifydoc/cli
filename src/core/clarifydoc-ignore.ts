@@ -220,10 +220,21 @@ function globToRegex(pattern: string): string {
     const ch = pattern[i]!;
     if (ch === "*") {
       if (pattern[i + 1] === "*") {
-        // ** matches any number of path segments, optionally followed by /
-        re += ".*";
         i += 2;
-        if (pattern[i] === "/") i++;
+        if (pattern[i] === "/") {
+          // `**/` matches zero or more COMPLETE path segments. Compiling it to
+          // `.*` (as this did) ignored the separator, so `a/**/b` matched
+          // `a/xb` and `**/vendor/**` matched `myvendor/`: the glob silently
+          // claimed files the author never named. That dialect is shared by
+          // `.clarifydoc/ignore` and the config's layers/exempt/generated
+          // globs, so an overmatch there excludes real code from the map.
+          re += "(?:[^/]*/)*";
+          i++;
+        } else {
+          // Trailing `/**`, or a `**` with no separator after it: anything,
+          // separators included.
+          re += ".*";
+        }
       } else {
         re += "[^/]*";
         i++;
