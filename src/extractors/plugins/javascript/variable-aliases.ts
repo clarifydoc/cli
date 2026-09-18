@@ -8,6 +8,7 @@ import { buildImportMaps } from "../../shared/call-graph.js";
  * Returns a map: variable name → import source (resolved through imports).
  *
  * Two binding shapes, both ubiquitous in composable/hook code:
+ *   - constructed:   `const prisma = new PrismaClient()` → prisma → "@prisma/client"
  *   - whole object:  `const userStore = useUserStore()` → userStore → "../stores/users"
  *     (lets `userStore.save()` classify as a cross-file call into that module)
  *   - destructured:  `const { refreshCart, updateCartItemQuantity } = useShopCart()`
@@ -57,8 +58,14 @@ export function extractJsVariableAliases(
         if (valueNode?.type === "await_expression") {
           valueNode = valueNode.namedChild(valueNode.namedChildCount - 1) ?? valueNode;
         }
-        if (!nameNode || !valueNode || valueNode.type !== "call_expression") continue;
-        const fnNode = valueNode.childForFieldName("function");
+        if (!nameNode || !valueNode) continue;
+        // `const prisma = new PrismaClient()` binds the receiver just as
+        // `const db = drizzle(...)` does — the constructor identifier is the
+        // imported name. Without this the single most common ORM idiom left
+        // every call on that receiver with an unresolved datastore.
+        const isCtor = valueNode.type === "new_expression";
+        if (!isCtor && valueNode.type !== "call_expression") continue;
+        const fnNode = valueNode.childForFieldName(isCtor ? "constructor" : "function");
         const fnName = fnNode?.text;
         if (!fnName || !importMap.has(fnName)) continue;
         const source = importMap.get(fnName)!;

@@ -143,8 +143,23 @@ export function resolveDataSourceStringConstants(analyses: FileAnalysis[]): void
  * reflects the enriched `target`. The lookup only needs the file's own
  * imports, so we can build a tiny one-file index without project context.
  */
-export function enrichFileDataSources(a: FileAnalysis, index?: ImportIndex): void {
+export function enrichFileDataSources(
+  a: FileAnalysis,
+  index?: ImportIndex,
+  /**
+   * Variable-to-module bindings from the language plugin
+   * (`const prisma = new PrismaClient()` → prisma → "@prisma/client"). An
+   * import alone cannot name the receiver a call is made on, so without these
+   * the commonest ORM idiom resolved to no datastore at all and every such
+   * call collected under the graph's "(unresolved)" node.
+   */
+  variableAliases?: ReadonlyMap<string, { source: string } | string>,
+): void {
   const idx = index ?? buildImportIndex([a]);
+  const aliasSource = (name: string): string | undefined => {
+    const hit = variableAliases?.get(name);
+    return typeof hit === "string" ? hit : hit?.source;
+  };
   for (const ds of a.dataSources ?? []) {
     if (ds.target) continue;
     // An api-call's target is an endpoint URL — and a queue op's target is a
@@ -159,6 +174,13 @@ export function enrichFileDataSources(a: FileAnalysis, index?: ImportIndex): voi
       const src = idx.sourceFor(a.filePath, root);
       if (src) {
         ds.target = src;
+        continue;
+      }
+      // 1b) The receiver is a local bound to an imported constructor/factory.
+      const viaAlias = aliasSource(root);
+      if (viaAlias) {
+        ds.target = viaAlias;
+        ds.targetConfidence = "INFERRED";
         continue;
       }
     }

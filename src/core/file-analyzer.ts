@@ -15,6 +15,7 @@ import { computeComplexity } from "./complexity-analyzer.js";
 import { scanSecurity, isMinifiedSource, isVendoredSource } from "./security-scanner.js";
 import { extractTypeReferences } from "./type-reference-extractor.js";
 import { enrichFileDataSources } from "./import-index.js";
+import type { VariableAliasBinding } from "../types/language-plugin.js";
 import { isTestFile } from "./test-file-detector.js";
 import {
   createEmptyAnalysis,
@@ -207,7 +208,12 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // Backfill missing `target` on data sources by tracing each call's root
     // identifier through this file's imports (named imports, namespace
     // aliases, and global/wildcard namespaces).
-    enrichFileDataSources(analysis);
+    // Variable aliases must exist BEFORE enrichment: they are what resolves a
+    // receiver bound to an imported constructor or factory. They were computed
+    // afterwards, so even the factory shape the extractor already understood
+    // (`const db = drizzle(...)`) reached enrichment too late to help.
+    const variableAliases = hooks?.variableAliases?.(tree, analysis.imports) ?? new Map<string, VariableAliasBinding>();
+    enrichFileDataSources(analysis, undefined, variableAliases);
     // ORM entity & relationship extraction (TypeORM/Mongoose/Sequelize, JPA,
     // EF Core, etc.). Entities are merged into analysis.classes by name so they
     // flow into the class/data-model graph; relations are persisted separately.
@@ -224,7 +230,6 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // Extract top-level calls (Vue <script setup>, module-level hooks)
     // and variable aliases (const userStore = useUserStore())
     const topLevelCalls = extractTopLevelCalls(tree, language);
-    const variableAliases = hooks?.variableAliases?.(tree, analysis.imports) ?? new Map<string, string>();
 
     if (topLevelCalls.length > 0) {
       const setupFn = {
