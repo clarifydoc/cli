@@ -1,4 +1,5 @@
 import type { LinkInfo, Confidence } from "../types/analysis.js";
+import { byOrdinal } from "./ordinal.js";
 import { SURPRISE_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
 
 /**
@@ -68,7 +69,7 @@ export function findGodNodes(
   const all: GodNode[] = files
     .map((f) => ({ file: f, degree: (inDeg.get(f) ?? 0) + (outDeg.get(f) ?? 0) }))
     .filter((n) => n.degree > 0);
-  all.sort((a, b) => b.degree - a.degree || a.file.localeCompare(b.file));
+  all.sort((a, b) => b.degree - a.degree || byOrdinal(a.file, b.file));
   return all.slice(0, topN);
 }
 
@@ -229,7 +230,7 @@ function topDegree(
   return files
     .map((f) => ({ file: f, score: deg.get(f) ?? 0 }))
     .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score || a.file.localeCompare(b.file))
+    .sort((a, b) => b.score - a.score || byOrdinal(a.file, b.file))
     .slice(0, k);
 }
 
@@ -307,6 +308,6 @@ function topBetweenness(
   return [...cb.entries()]
     .map(([file, score]) => ({ file, score: score * norm }))
     .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score || a.file.localeCompare(b.file))
+    .sort((a, b) => b.score - a.score || byOrdinal(a.file, b.file))
     .slice(0, k);
 }

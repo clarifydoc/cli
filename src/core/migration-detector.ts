@@ -1,4 +1,5 @@
 import type { MigrationInfo } from "../types/analysis.js";
+import { byOrdinal } from "./ordinal.js";
 
 /**
  * Detect ORM/DB migration files from a list of (relative) project file paths,
@@ -19,9 +20,9 @@ export function detectMigrations(filePaths: string[]): MigrationInfo[] {
   // Chronological within ecosystem, then by ecosystem name for stable output.
   out.sort(
     (a, b) =>
-      a.ecosystem.localeCompare(b.ecosystem) ||
-      a.order.localeCompare(b.order) ||
-      a.filePath.localeCompare(b.filePath),
+      byOrdinal(a.ecosystem, b.ecosystem) ||
+      byOrdinal(a.order, b.order) ||
+      byOrdinal(a.filePath, b.filePath),
   );
   return out;
 }

@@ -1,4 +1,5 @@
 import type { BlastRadiusInfo, BlastSymbolUsage, ContextBurden, SymbolLink } from "../types/analysis.js";
+import { byOrdinal } from "./ordinal.js";
 
 /**
  * Analyze blast radius for each file using the component graph and symbol links.
@@ -176,7 +177,7 @@ export function analyzeBlastRadius(
           name,
           usedByCount: callers.length,
           callers: callers
-            .sort((a, b) => a.file.localeCompare(b.file))
+            .sort((a, b) => byOrdinal(a.file, b.file))
             .slice(0, CALLERS_LIST_CAP),
         });
       }

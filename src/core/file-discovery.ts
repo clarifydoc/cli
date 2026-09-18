@@ -1,4 +1,5 @@
 import fg from "fast-glob";
+import { byOrdinal } from "./ordinal.js";
 import { resolve } from "path";
 import type { Language } from "../types/analysis.js";
 import { EXTENSION_TO_LANGUAGE } from "../parsers/language-map.js";
@@ -117,7 +118,7 @@ export async function discoverFiles(
   }
 
   // Sort for deterministic output
-  results.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+  results.sort((a, b) => byOrdinal(a.relativePath, b.relativePath));
   skippedSensitive.sort();
 
   if (options.maxFiles && results.length > options.maxFiles) {

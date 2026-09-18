@@ -1,4 +1,5 @@
 import { readFile } from "fs/promises";
+import { byOrdinal } from "./ordinal.js";
 import { resolve, join } from "path";
 import fg from "fast-glob";
 import type {
@@ -762,7 +763,7 @@ export async function collectExternalPackages(
   }
 
   return [...byKey.values()].sort(
-    (a, b) => a.ecosystem.localeCompare(b.ecosystem) || a.name.localeCompare(b.name),
+    (a, b) => byOrdinal(a.ecosystem, b.ecosystem) || byOrdinal(a.name, b.name),
   );
 }
 
@@ -1077,6 +1078,6 @@ export function mergeFrameworkDetections(
       added.push(f);
     }
   }
-  added.sort((a, b) => a.name.localeCompare(b.name));
+  added.sort((a, b) => byOrdinal(a.name, b.name));
   return [...ruleBased, ...added];
 }

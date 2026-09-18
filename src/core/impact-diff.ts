@@ -3,6 +3,7 @@ import type {
   TraceImpactRoute,
   TraceImpactScreen,
 } from "../types/analysis.js";
+import { byOrdinal } from "./ordinal.js";
 import { isTestFile } from "./test-file-detector.js";
 
 /**
@@ -218,9 +219,9 @@ export function computeImpactDiff(
     changedFiles,
     unknownFiles,
     removedFiles: (options?.removedFiles ?? []).map(normalizePath).sort(),
-    screens: [...screens.values()].sort((a, b) => a.name.localeCompare(b.name)),
+    screens: [...screens.values()].sort((a, b) => byOrdinal(a.name, b.name)),
     screenCount: screens.size,
-    routes: [...routes.values()].sort((a, b) => a.path.localeCompare(b.path)),
+    routes: [...routes.values()].sort((a, b) => byOrdinal(a.path, b.path)),
     routeCount: routes.size,
     entities: [...entities].sort(),
     entityCount: entities.size,

@@ -6,6 +6,7 @@ import type {
   EntityGraph,
   SymbolDataAccess,
 } from "../types/analysis.js";
+import { byOrdinal } from "./ordinal.js";
 // One shared key derivation with the ER-graph node dedupe — an access name
 // must reach the same node `synthesizeReferencedTableEntities` deduped against.
 import { tableMatchKeys as entityMatchKeys } from "./entity-graph.js";
@@ -149,9 +150,9 @@ export function buildDataAccessGraph(analyses: FileAnalysis[]): DataAccessGraph 
   }
 
   return {
-    nodes: [...nodes.values()].sort((a, b) => a.id.localeCompare(b.id)),
+    nodes: [...nodes.values()].sort((a, b) => byOrdinal(a.id, b.id)),
     edges: [...edges.values()].sort(
-      (a, b) => a.source.localeCompare(b.source) || a.target.localeCompare(b.target),
+      (a, b) => byOrdinal(a.source, b.source) || byOrdinal(a.target, b.target),
     ),
   };
 }
@@ -269,9 +270,9 @@ export function attributeDataAccessToSymbols(
   for (const r of out) r.sites.sort((x, y) => x.line - y.line);
   out.sort(
     (a, b) =>
-      a.file.localeCompare(b.file) ||
-      a.symbol.localeCompare(b.symbol) ||
-      a.entity.localeCompare(b.entity),
+      byOrdinal(a.file, b.file) ||
+      byOrdinal(a.symbol, b.symbol) ||
+      byOrdinal(a.entity, b.entity),
   );
   return out;
 }

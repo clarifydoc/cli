@@ -9,6 +9,7 @@ import type {
   ClassGraphNode,
   ClassGraphEdge,
 } from "../types/analysis.js";
+import { byOrdinal } from "./ordinal.js";
 import { buildImportIndex, type ImportIndex } from "./import-index.js";
 import { ormOf } from "./entity-graph.js";
 import { SYNTHETIC_ENTITY } from "../extractors/entities/base.js";
@@ -165,7 +166,7 @@ export function aggregateTypeBlast(
         entry.sites.sort((a, b) => a.line - b.line);
         if (entry.sites.length > 20) entry.sites.length = 20;
       }
-      usagesByFile.sort((a, b) => b.count - a.count || a.filePath.localeCompare(b.filePath));
+      usagesByFile.sort((a, b) => b.count - a.count || byOrdinal(a.filePath, b.filePath));
 
       const totalUsages = refs.length;
       const extendsCount = usageByKind.extends ?? 0;
@@ -197,7 +198,7 @@ export function aggregateTypeBlast(
       });
     }
     // Sort summaries by impact descending so the most-referenced types come first.
-    summaries.sort((a, b) => b.impactScore - a.impactScore || a.typeName.localeCompare(b.typeName));
+    summaries.sort((a, b) => b.impactScore - a.impactScore || byOrdinal(a.typeName, b.typeName));
     out.set(filePath, summaries);
   }
 
@@ -394,7 +395,7 @@ export function buildClassGraph(
   }
 
   return {
-    nodes: [...nodeIndex.values()].sort((a, b) => a.id.localeCompare(b.id)),
-    edges: [...edgeMap.values()].sort((a, b) => a.source.localeCompare(b.source) || a.target.localeCompare(b.target)),
+    nodes: [...nodeIndex.values()].sort((a, b) => byOrdinal(a.id, b.id)),
+    edges: [...edgeMap.values()].sort((a, b) => byOrdinal(a.source, b.source) || byOrdinal(a.target, b.target)),
   };
 }

@@ -1,4 +1,5 @@
 import fg from "fast-glob";
+import { byOrdinal } from "./ordinal.js";
 import { readFile } from "fs/promises";
 import { join, resolve } from "path";
 import type { SubProject, SubProjectKind } from "../types/analysis.js";
@@ -152,7 +153,7 @@ export async function detectSubProjects(
     });
   }
 
-  subProjects.sort((a, b) => a.root.localeCompare(b.root));
+  subProjects.sort((a, b) => byOrdinal(a.root, b.root));
   return subProjects;
 }
 
