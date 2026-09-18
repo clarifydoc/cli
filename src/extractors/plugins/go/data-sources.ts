@@ -1,4 +1,5 @@
 import type { DataSourceInfo } from "../../../types/analysis.js";
+import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 
 /**
@@ -61,6 +62,12 @@ export function normalizeRawStrings(text: string): string {
 /** `db.Find(&users)` etc. — GORM verbs, gated on a DB-shaped receiver. */
 const GORM_RE = /\b(\w*(?:db|DB|tx|orm|conn)\w*)\.\s*(Find|First|Take|Last|Create|Save|Update|Updates|Delete|Preload|Model)\s*\(\s*&?(\w+)/;
 /** Struct-literal entity on the line: `&User{}` / `Model(&User{})`. */
+/** GORM: `Preload`/`Model` only build the chain, so they stay unclassified. */
+const GORM_ACCESS = dbVerbTable(
+  ["Find", "First", "Take", "Last"],
+  ["Create", "Save", "Update", "Updates", "Delete"],
+);
+
 const STRUCT_ENTITY_RE = /&([A-Z]\w*)\s*\{/;
 
 /** `http.Get("url")` / `http.PostForm(...)` — stdlib client helpers. */
@@ -96,6 +103,10 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
         name: `GORM: ${gorm[2]}`,
         target: entity ?? gorm[3]!,
         ...(entity ? { entity } : {}),
+        ...(() => {
+          const a = dbAccessFor(gorm[2]!, GORM_ACCESS);
+          return a ? { access: a } : {};
+        })(),
         calls: [],
         line: lineNo,
       });

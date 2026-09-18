@@ -1,4 +1,5 @@
 import type { DataSourceInfo } from "../../../types/analysis.js";
+import { sqlVerbAccess } from "./db-access.js";
 
 /**
  * SQL-in-string-literal data-source extraction for regex-path languages whose
@@ -133,10 +134,15 @@ export function extractSqlStringDataSources(lines: string[]): DataSourceInfo[] {
     if (!pending) return;
     const hit = tableFrom(pending.text);
     if (hit) {
+      // The leading verb already says whether the statement reads or writes —
+      // it was computed for the name and then dropped, which is why a Go or C#
+      // `INSERT INTO orders` reported as a read. DDL stays unclassified.
+      const access = sqlVerbAccess(hit.verb);
       sources.push({
         kind: "database",
         name: hit.verb,
         target: hit.table,
+        ...(access ? { access } : {}),
         // The table IS the entity for raw SQL — this is what joins the access
         // to the ER model (synthesizeReferencedTableEntities) and attributes
         // it to the containing function (attributeDataAccessToSymbols).

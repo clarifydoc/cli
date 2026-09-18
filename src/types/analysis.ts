@@ -1036,7 +1036,7 @@ export type WorkflowRole =
 export interface BoundaryEvidence {
   kind: BoundaryKind;
   /** Where the evidence came from. */
-  source: "import" | "data-source" | "route" | "screen";
+  source: "import" | "data-source" | "data-mutation" | "route" | "screen";
   /** Import specifier, call name, route or screen name. */
   name: string;
   /** 1-based; absent for evidence without a location (screens). */

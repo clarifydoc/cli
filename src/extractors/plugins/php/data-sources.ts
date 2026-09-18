@@ -1,4 +1,5 @@
 import type { Node } from "web-tree-sitter";
+import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
 import type { DataSourceInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 
@@ -37,6 +38,28 @@ const CI_TABLE_VERBS: ReadonlySet<string> = new Set<string>([
  *   - DB:   PDO `$pdo->query(...)`, Eloquent `Model::where(...)`, Laravel `DB::table(...)`
  *   - Env:  `getenv(...)`, `$_ENV[...]`, `env(...)` (Laravel)
  */
+/**
+ * PDO / Eloquent / CodeIgniter verbs. `query`, `exec` and `prepare` stay
+ * unclassified — the SQL string decides, not the method. Builder verbs
+ * (`where`, `with`, `join`, `select`) are composition, not access.
+ */
+const PHP_DB_ACCESS = dbVerbTable(
+  [
+    "fetchAll", "fetch", "find", "findOrFail", "first", "firstOrFail",
+    "get", "all", "paginate", "count",
+  ],
+  [
+    "insert", "update", "delete", "save", "create", "destroy",
+    "updateOrCreate", "firstOrCreate", "replace", "truncate",
+  ],
+);
+
+/** `{ access }` when classified, `{}` otherwise. */
+function phpAccess(method: string): { access?: "read" | "write" } {
+  const a = dbAccessFor(method, PHP_DB_ACCESS);
+  return a ? { access: a } : {};
+}
+
 export class PhpDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["php"];
 
@@ -165,6 +188,7 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
               target: table,
               entity: table,
               line,
+              ...phpAccess(method),
             }));
           }
         }
@@ -189,6 +213,7 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
           name: callText,
           target: this.firstStringArg(node) ?? null,
           line,
+          ...phpAccess(method),
         }));
         return;
       }
@@ -217,6 +242,7 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
           name: callText,
           target: this.firstStringArg(node) ?? null,
           line,
+          ...phpAccess(name),
         }));
         return;
       }
@@ -233,6 +259,7 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
           name: callText,
           target: scope,
           line,
+          ...phpAccess(name),
         }));
       }
     }

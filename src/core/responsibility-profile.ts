@@ -143,6 +143,7 @@ export function buildResponsibilityProfiles(analyses: readonly FileAnalysis[]): 
     const evidence: BoundaryEvidence[] = [];
     const externals = new Set<string>();
     let readsState = false;
+    let touchesDatabase = false;
     let writesState = false;
     let emitsEvents = false;
     let consumesEvents = false;
@@ -171,8 +172,13 @@ export function buildResponsibilityProfiles(analyses: readonly FileAnalysis[]): 
       switch (ds.kind) {
         case "database": {
           const operation = ds.access ?? "use";
+          // Unclassified is NOT a read. Treating it as one meant a C# file that
+          // only ever wrote reported `readsState: true, writesState: false`,
+          // and the honest answer ("we could not tell") was unavailable to
+          // anyone. The boundary and its evidence row still stand.
           if (operation === "write") writesState = true;
-          else readsState = true; // an unclassified DB call at least reads
+          else if (operation === "read") readsState = true;
+          touchesDatabase = true;
           evidence.push({ kind: "database", source: "data-source", name: ds.name, line: ds.line, operation });
           break;
         }
@@ -212,6 +218,25 @@ export function buildResponsibilityProfiles(analyses: readonly FileAnalysis[]): 
     }
     for (const s of a.screens) {
       evidence.push({ kind: "ui", source: "screen", name: s.name, operation: "render" });
+    }
+
+    // A `db-write` mutation is a second, independent witness of a write — but
+    // only where the file is already known to touch the database. The mutation
+    // rules for several languages match a bare `save`/`update`/`add` with no
+    // receiver gate, so on their own they would import that noise into every
+    // profile.
+    if (touchesDatabase && !writesState) {
+      const dbWrite = a.dataMutations.find((m) => m.kind === "db-write");
+      if (dbWrite) {
+        writesState = true;
+        evidence.push({
+          kind: "database",
+          source: "data-mutation",
+          name: dbWrite.target,
+          line: dbWrite.line,
+          operation: "write",
+        });
+      }
     }
 
     if (evidence.length === 0) continue;
