@@ -1,4 +1,5 @@
 import type { Node, Tree } from "web-tree-sitter";
+import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
 import type { DataSourceInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { simpleTypeName } from "../../shared/type-parser.js";
@@ -72,6 +73,44 @@ const JDBC_METHODS = new Set([
   "getResultList", "getSingleResult", "persist", "merge",
 ]);
 const JDBC_RECEIVER_RE = /jdbc|template|entitymanager|^em$|session/i;
+
+/** `{ access }` when classified, `{}` when not — keeps the field absent rather than null. */
+function withAccess(a: "read" | "write" | undefined): { access?: "read" | "write" } {
+  return a ? { access: a } : {};
+}
+
+/**
+ * Read/write classification for the JVM data paths. A verb prefix decides the
+ * derived and DAO forms (`findByEmail` reads, `deleteById` writes); the exact
+ * sets cover the rest. `execute`, `createQuery` and friends stay unclassified
+ * because the statement, not the method, carries the verb.
+ */
+const SPRING_DATA_ACCESS = dbVerbTable(
+  ["findAll", "findAllById", "getOne", "getById", "getReferenceById", "count"],
+  ["save", "saveAll", "saveAndFlush", "deleteAll", "deleteAllInBatch", "deleteInBatch"],
+);
+
+const JDBC_ACCESS = dbVerbTable(
+  ["query", "queryForObject", "queryForList", "queryForMap", "queryForRowSet", "getResultList", "getSingleResult"],
+  ["update", "batchUpdate", "persist", "merge"],
+);
+
+/** Leading verb of a derived query or DAO method. */
+const JVM_READ_VERB_RE = /^(find|read|get|fetch|load|list|search|select|query|stream|count|exists|all)/i;
+const JVM_WRITE_VERB_RE = /^(save|store|insert|create|add|update|merge|upsert|persist|delete|remove)/i;
+
+/** Classify by leading verb — reads first, since `getOrCreate` reads before it writes. */
+function jvmVerbAccess(method: string): "read" | "write" | undefined {
+  if (JVM_READ_VERB_RE.test(method)) return "read";
+  if (JVM_WRITE_VERB_RE.test(method)) return "write";
+  return undefined;
+}
+
+/** jOOQ query builders: `selectFrom`/`from`/`join` read, the DML entry points write. */
+const JOOQ_ACCESS = dbVerbTable(
+  ["select", "selectFrom", "selectDistinct", "selectCount", "from", "join", "leftJoin", "rightJoin", "innerJoin", "fetch"],
+  ["insertInto", "update", "deleteFrom", "mergeInto", "truncate"],
+);
 
 /** HTTP-client hints anywhere in the call text, plus Spring REST method names. */
 const HTTP_HINT_RE = /RestTemplate|WebClient|HttpClient|OkHttpClient|Retrofit/;
@@ -286,6 +325,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
           target: table,
           entity: table,
           line,
+          ...withAccess(dbAccessFor(method, JOOQ_ACCESS)),
         }));
         return;
       }
@@ -304,19 +344,21 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
         target: daoEntity,
         entity: daoEntity,
         line,
+        ...withAccess(jvmVerbAccess(method)),
       }));
       return;
     }
 
     // 3) Spring Data / JPA repository methods.
     if (SPRING_DATA_EXACT.has(method) || SPRING_DATA_DERIVED.test(method)) {
-      sources.push(this.ds({ kind: "database", name: method, target: null, line }));
+      const access = dbAccessFor(method, SPRING_DATA_ACCESS) ?? jvmVerbAccess(method);
+      sources.push(this.ds({ kind: "database", name: method, target: null, line, ...withAccess(access) }));
       return;
     }
 
     // 4) JdbcTemplate / EntityManager — generic names, gated on receiver.
     if (JDBC_METHODS.has(method) && JDBC_RECEIVER_RE.test(receiver)) {
-      sources.push(this.ds({ kind: "database", name: method, target: null, line }));
+      sources.push(this.ds({ kind: "database", name: method, target: null, line, ...withAccess(dbAccessFor(method, JDBC_ACCESS)) }));
       return;
     }
 

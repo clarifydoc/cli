@@ -1,4 +1,5 @@
 import type { Node } from "web-tree-sitter";
+import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
 import type { DataSourceInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 
@@ -68,12 +69,23 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
         // Database patterns — matched on the exact method LEAF, not substring:
         // `RE_CPP_CLASSNAME.findall(...)` (the re module) contains ".find" but
         // is not a DB op, and it was minting phantom regex-constant "entities".
-        if (fnName.includes(".") && PY_DB_LEAVES.has(leaf)) {
+        const parts = fnName.split(".");
+        const receiver = parts.length > 1 ? parts[parts.length - 2]! : "";
+        // Session-mutating verbs are ordinary English words (`add`, `delete`,
+        // `merge`), so unlike the leaves above they are only trusted on a
+        // session/connection-shaped receiver. Without them a SQLAlchemy write
+        // was invisible: `session.add(order)` produced no data source at all,
+        // and the file reported `writesState: false`.
+        const isSessionWrite =
+          PY_SESSION_WRITE_LEAVES.has(leaf) && PY_DB_RECEIVER_RE.test(receiver);
+        if (fnName.includes(".") && (PY_DB_LEAVES.has(leaf) || isSessionWrite)) {
+          const access = isSessionWrite ? "write" : dbAccessFor(leaf, PY_DB_ACCESS);
           sources.push(this.ds({
             kind: "database",
             name: fnName,
             target: null,
             line: node.startPosition.row + 1,
+            ...(access ? { access } : {}),
           }));
         }
       }
@@ -88,6 +100,32 @@ const PY_DB_LEAVES = new Set([
   "insert_one", "insert_many", "update_one", "update_many",
   "delete_one", "delete_many", "count_documents", "aggregate",
 ]);
+
+/**
+ * Session/connection-mutating verbs. Plain English words, so they need a
+ * DB-shaped receiver before they count.
+ */
+const PY_SESSION_WRITE_LEAVES = new Set([
+  "add", "add_all", "delete", "merge", "commit", "flush", "bulk_save_objects",
+]);
+
+/** Receiver names that read as a SQLAlchemy session / DB-API connection. */
+const PY_DB_RECEIVER_RE = /(^|_)(session|db|conn|connection|cursor|engine)$/i;
+
+/**
+ * Read/write classification for the leaves above. `execute`/`executemany` stay
+ * unclassified: the statement's verb decides, and it is not visible here.
+ */
+const PY_DB_ACCESS = dbVerbTable(
+  [
+    "query", "find", "find_one", "find_many", "filter", "filter_by",
+    "all", "first", "count_documents", "aggregate",
+  ],
+  [
+    "insert_one", "insert_many", "update_one", "update_many",
+    "delete_one", "delete_many", "save", "get_or_create",
+  ],
+);
 
 /**
  * Resolve a call argument by keyword (`queue="tasks"`) or position, returning

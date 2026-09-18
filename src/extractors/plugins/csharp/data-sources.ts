@@ -1,6 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { DataSourceInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
+import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
 
 /**
  * C# data-source extractor — surfaces Entity Framework, Dapper, NHibernate,
@@ -36,6 +37,63 @@ const EF_WRITE_METHODS = new Set([
   "ExecuteSqlRaw", "ExecuteSqlInterpolated", "ExecuteSqlRawAsync", "ExecuteSqlInterpolatedAsync",
   "ExecuteUpdate", "ExecuteUpdateAsync", "ExecuteDelete", "ExecuteDeleteAsync",
 ]);
+
+/** `{ access }` when the table classifies the leaf, `{}` when it does not. */
+function access(leaf: string, table: Parameters<typeof dbAccessFor>[1]): { access?: "read" | "write" } {
+  const a = dbAccessFor(leaf, table);
+  return a ? { access: a } : {};
+}
+
+/**
+ * Read/write classification, kept separate from the sets above because those
+ * decide WHETHER a data source is emitted and this decides what it does.
+ * Fluent composition (`Where`, `Select`, `Include`, `OrderBy`, `GroupBy`,
+ * `Join`) is deliberately in neither: it builds a query, it does not execute
+ * one, and calling it a read would attribute an access to the wrong line.
+ * `Attach` counts as a write — on its own it only begins tracking, but it
+ * exists to carry modified state into the next `SaveChanges`.
+ */
+const EF_ACCESS = dbVerbTable(
+  [
+    "Find", "FindAsync",
+    "First", "FirstOrDefault", "FirstAsync", "FirstOrDefaultAsync",
+    "Single", "SingleOrDefault", "SingleAsync", "SingleOrDefaultAsync",
+    "ToList", "ToListAsync", "ToArray", "ToArrayAsync",
+    "Count", "CountAsync", "Any", "AnyAsync",
+    "FromSqlRaw", "FromSqlInterpolated", "FromSql",
+  ],
+  [
+    "Add", "AddAsync", "AddRange", "AddRangeAsync",
+    "Update", "UpdateRange", "Remove", "RemoveRange",
+    "Attach", "AttachRange",
+    "SaveChanges", "SaveChangesAsync",
+    "ExecuteSqlRaw", "ExecuteSqlInterpolated", "ExecuteSqlRawAsync", "ExecuteSqlInterpolatedAsync",
+    "ExecuteUpdate", "ExecuteUpdateAsync", "ExecuteDelete", "ExecuteDeleteAsync",
+  ],
+);
+
+/** Dapper: `Execute` runs a non-query; every `Query*` and the scalar/reader pair read. */
+const DAPPER_ACCESS = dbVerbTable(
+  [
+    "Query", "QueryAsync", "QueryFirst", "QueryFirstAsync",
+    "QueryFirstOrDefault", "QueryFirstOrDefaultAsync",
+    "QuerySingle", "QuerySingleAsync", "QuerySingleOrDefault",
+    "QueryMultiple", "QueryMultipleAsync",
+    "ExecuteScalar", "ExecuteScalarAsync", "ExecuteReader", "ExecuteReaderAsync",
+  ],
+  ["Execute", "ExecuteAsync"],
+);
+
+/** ADO.NET: `Open` is connection lifecycle, neither read nor write. */
+const ADO_ACCESS = dbVerbTable(
+  ["ExecuteReader", "ExecuteReaderAsync", "ExecuteScalar", "ExecuteScalarAsync", "Fill"],
+  ["ExecuteNonQuery", "ExecuteNonQueryAsync"],
+);
+
+const NHIBERNATE_ACCESS = dbVerbTable(
+  ["Query", "Get", "Load"],
+  ["Save", "Update", "Delete", "SaveOrUpdate", "Merge"],
+);
 
 const DAPPER_METHODS = new Set([
   "Query", "QueryAsync", "QueryFirst", "QueryFirstAsync",
@@ -235,6 +293,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
           name: `EF: ${method}`,
           target: dbSet ?? receiver ?? null,
           ...(entity ? { entity } : {}),
+          ...access(method, EF_ACCESS),
           line: node.startPosition.row + 1,
         }));
         return;
@@ -249,6 +308,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         kind: "database",
         name: `Dapper: ${method}`,
         target: extractFirstStringArg(node),
+        ...access(method, DAPPER_ACCESS),
         line: node.startPosition.row + 1,
       }));
       return;
@@ -263,6 +323,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         kind: "database",
         name: `ADO.NET: ${method}`,
         target: null,
+        ...access(method, ADO_ACCESS),
         line: node.startPosition.row + 1,
       }));
       return;
@@ -277,6 +338,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         kind: "database",
         name: `NHibernate: ${method}`,
         target: receiver || null,
+        ...access(method, NHIBERNATE_ACCESS),
         line: node.startPosition.row + 1,
       }));
       return;
