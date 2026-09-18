@@ -269,6 +269,13 @@ export interface FileAnalysis {
   /** ID of the sub-project this file belongs to (see SubProject). "root" if none. */
   projectId: string;
 
+  /**
+   * Physical line count of the source file. Feeds file-size signals (refactor
+   * pressure, context burden) without re-reading the file. Absent on artifacts
+   * written before extractor 1.50.
+   */
+  lineCount?: number;
+
   imports: ImportInfo[];
   exports: ExportInfo[];
   functions: FunctionInfo[];
@@ -1184,6 +1191,61 @@ export interface Suggestion {
   message: string;
   filePath?: string;
   actionable: string;
+  /** The concrete signals behind the suggestion (e.g. refactor-pressure drivers). Optional. */
+  evidence?: string[];
+  /** 0..1 — how much of the signal the suggestion rests on was actually available. Optional. */
+  confidence?: number;
+}
+
+// ─── Refactor pressure (refactor-pressure.ts) ──────────────────────────────
+
+/** Recommendation band derived from the score and any fired gates. */
+export type RefactorPressureBand = "none" | "observe" | "suggest" | "strong" | "urgent";
+
+/**
+ * One file's composite refactor pressure: where to refactor FIRST. Combines
+ * complexity, size, mixed concerns, coupling and churn into a 0–100 score
+ * with an explicit list of the drivers behind it, the hard gates that fired
+ * and a confidence that says how much of the signal was available (no git
+ * history, no complexity for regex-only languages, …).
+ */
+export interface RefactorPressureInfo {
+  filePath: string;
+  /** 0–100, one decimal. */
+  score: number;
+  band: RefactorPressureBand;
+  /** Normalized 0–100 sub-scores; `null` when that signal was unavailable for the project. */
+  components: {
+    complexity: number | null;
+    size: number | null;
+    responsibility: number;
+    coupling: number;
+    churn: number | null;
+  };
+  /** Evidence categories that pushed the score (stable identifiers). */
+  drivers: string[];
+  /** Hard gates that fired regardless of the weighted score. */
+  gates: string[];
+  /** 0..1 — share of the component weight that had evidence. */
+  confidence: number;
+  evidence: {
+    loc: number | null;
+    functions: number;
+    maxCyclomatic: number;
+    totalCyclomatic: number;
+    maxCognitive: number | null;
+    totalCognitive: number | null;
+    maxNestingDepth: number | null;
+    concernCount: number;
+    roles: WorkflowRole[];
+    directDependents: number;
+    transitiveDependents: number;
+    dependsOn: number;
+    inCycle: boolean;
+    layerViolations: number;
+    commits: number | null;
+    authors: number | null;
+  };
 }
 
 export type SubProjectKind =
@@ -1270,6 +1332,8 @@ export interface ProjectAnalysis {
   /** Per-file boundary/concern profile for files that touch at least one
    *  boundary (responsibility-profile.ts). Omitted when empty. */
   responsibilityProfiles?: ResponsibilityProfile[];
+  /** Files with measurable refactor pressure, highest first (refactor-pressure.ts). Omitted when empty. */
+  refactorPressure?: RefactorPressureInfo[];
   fileLayerMap?: Record<string, ArchLayer>;
   /** Auto-detected generated/library barrel roots (e.g. kubb output dirs). */
   generatedRoots?: string[];

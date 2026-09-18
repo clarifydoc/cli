@@ -1,5 +1,6 @@
 /** Project-level tools: status, (re-)analyze, search, health, git impact. */
 
+import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
 import type { McpTool } from "../protocol.js";
 import type { LoadedAnalysis } from "../store.js";
 import {
@@ -289,7 +290,8 @@ type HealthCategory =
   | "suggestions"
   | "patterns"
   | "unused"
-  | "concerns";
+  | "concerns"
+  | "pressure";
 const HEALTH_CATEGORIES: readonly HealthCategory[] = [
   "security",
   "layers",
@@ -300,6 +302,7 @@ const HEALTH_CATEGORIES: readonly HealthCategory[] = [
   "patterns",
   "unused",
   "concerns",
+  "pressure",
 ];
 
 export function healthTool(ctx: ToolContext): McpTool {
@@ -309,8 +312,9 @@ export function healthTool(ctx: ToolContext): McpTool {
     description:
       "The project's health score and the findings behind it: security issues, architecture layer violations, " +
       "high-complexity functions, duplicate code, churn×complexity hotspots, generated dead code, detected " +
-      "patterns, files that mix the most concerns (database + http + queue + auth …) and actionable " +
-      "suggestions. Call with no category for the summary, then drill into one.",
+      "patterns, files that mix the most concerns (database + http + queue + auth …), the composite refactor " +
+      "pressure ranking (where to refactor first, with drivers and confidence) and actionable suggestions. " +
+      "Call with no category for the summary, then drill into one.",
     inputSchema: {
       type: "object",
       properties: {
@@ -362,6 +366,7 @@ export function healthTool(ctx: ToolContext): McpTool {
               ["patterns", (summary.patterns ?? []).length],
               ["unused", (summary.unusedFiles ?? []).length],
               ["concerns", (summary.responsibilityProfiles ?? []).filter((r) => r.concernCount >= 2).length],
+              ["pressure", (summary.refactorPressure ?? []).length],
             ] as Array<[string, number]>,
             20,
             ([name, count]) => `${name}: ${count}${count ? ` — call with category="${name}"` : ""}`,
@@ -446,6 +451,26 @@ export function healthTool(ctx: ToolContext): McpTool {
                     .map((o) => loc(o.filePath, o.line))
                     .join(", ") +
                   (g.occurrences.length > 4 ? ", …" : ""),
+              ),
+            ]),
+          };
+        }
+        case "pressure": {
+          const rows = (summary.refactorPressure ?? []).filter((p) => inFile(p.filePath));
+          return {
+            text: joinLines([
+              `# Refactor pressure (${rows.length} files at "observe" or above) — where to refactor first`,
+              "Composite of cognitive complexity, size, mixed concerns, coupling and churn, 0–100. Bands: " +
+                "observe < suggest < strong < urgent. `confidence` is the share of signal that was available " +
+                "(no git history or no complexity rows lower it). Gates fire regardless of the score.",
+              "",
+              ...bulletList(
+                rows,
+                limit,
+                (p) =>
+                  `${p.score} ${p.band} (conf ${p.confidence}) — ${p.filePath}` +
+                  (p.drivers.length ? `: ${describeDrivers(p.drivers)}` : "") +
+                  (p.gates.length ? ` [${describeGates(p.gates)}]` : ""),
               ),
             ]),
           };

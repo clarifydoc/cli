@@ -1,8 +1,10 @@
 import type {
   FileAnalysis, FileComplexityInfo, PatternInfo, SecurityIssue,
   DuplicateGroup, LayerViolation, BlastRadiusInfo, HealthScore, Suggestion,
+  RefactorPressureInfo,
 } from "../types/analysis.js";
 import { findCircularDeps } from "./health-scorer.js";
+import { describeDrivers, describeGates } from "./refactor-pressure.js";
 
 /** Extract filename from path */
 function fileName(p: string): string {
@@ -46,6 +48,28 @@ interface SuggestionInput {
   componentGraph: Record<string, string[]>;
   /** Files under a generated/library tree that nothing outside imports (dead code). */
   unusedFiles?: string[];
+  /** Composite refactor pressure, highest first (refactor-pressure.ts). */
+  refactorPressure?: RefactorPressureInfo[];
+}
+
+/** Turn a pressure row's drivers into the one action most likely to relieve it. */
+export function pressureAction(p: RefactorPressureInfo): string {
+  const d = new Set(p.drivers);
+  const g = new Set(p.gates);
+  if (d.has("mixed_concerns") || g.has("concern_overload")) {
+    const roles = p.evidence.roles.filter((r) => r !== "observability" && r !== "configuration");
+    return `Split by responsibility — it mixes ${roles.join(", ")}; move each boundary behind its own module`;
+  }
+  if (g.has("dependency_hub") || (d.has("many_dependents") && d.has("many_dependencies"))) {
+    return "Narrow the public surface and push shared pieces into a leaf module — this file is both a hub and a heavy importer";
+  }
+  if (d.has("dependency_cycle")) return "Break the import cycle — extract the shared part or invert the dependency";
+  if (d.has("high_cognitive_complexity") || d.has("high_cyclomatic_complexity") || d.has("deep_nesting")) {
+    return "Flatten the most nested functions — extract guards and helpers, replace nested conditionals with early returns";
+  }
+  if (d.has("high_churn") || g.has("churn_hotspot")) return "Stabilize before the next change — add tests around what keeps changing, then simplify";
+  if (d.has("large_file") || g.has("god_class")) return "Break the file up along the seams its functions already form";
+  return "Review the drivers listed and pick the cheapest one to relieve first";
 }
 
 /**
@@ -202,6 +226,24 @@ export function generateSuggestions(input: SuggestionInput): Suggestion[] {
         }
       }
     }
+  }
+
+  // ── Refactor pressure: the composite ranking of where to refactor first ──
+  // Only the strong/urgent bands become suggestions; the full ranking stays
+  // in `refactorPressure` for the report and the MCP health tool.
+  const pressing = (input.refactorPressure ?? []).filter((p) => p.band === "urgent" || p.band === "strong");
+  for (const p of pressing.slice(0, 5)) {
+    const parts = [describeDrivers(p.drivers)];
+    if (p.gates.length > 0) parts.push(`gates: ${describeGates(p.gates)}`);
+    suggestions.push({
+      priority: p.band === "urgent" ? "high" : "medium",
+      category: "Refactor pressure",
+      message: `${fileName(p.filePath)} scores ${p.score}/100 (${p.band}) — ${parts.filter(Boolean).join("; ")}`,
+      filePath: p.filePath,
+      actionable: pressureAction(p),
+      evidence: [...p.drivers, ...p.gates.map((g) => `gate:${g}`)],
+      confidence: p.confidence,
+    });
   }
 
   // ── Medium: Unused generated code ──
