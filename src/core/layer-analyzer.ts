@@ -1,5 +1,6 @@
 import type { FileAnalysis, ArchLayer, LayerViolation } from "../types/analysis.js";
 import { isTestFile } from "./test-file-detector.js";
+import { matchesAnyGlob, type ArchitectureOverrides } from "./project-config.js";
 
 /** A layer token as a path segment — `.` counts as a separator so dotted
  *  .NET-style directories (`Trio.Models`) and file suffixes (`webpack.config.js`)
@@ -116,11 +117,21 @@ const LAYER_LEVEL: Record<ArchLayer, number> = {
 
 /**
  * Classify each file into an architectural layer based on its path.
+ *
+ * Order of authority: test conventions (a test is exempt wherever it lives),
+ * then the repository's own `.clarifydoc/config.json` overrides (`exempt`
+ * globs → unknown, `layers` rules first match wins), then the built-in path
+ * heuristics. The heuristics carry every framework convention this tool has
+ * met; the overrides are how a team fixes the ones it disagrees with for its
+ * codebase without waiting for a new heuristic.
  */
 export function classifyFileLayers(
   filePaths: string[],
+  overrides?: Pick<ArchitectureOverrides, "layers" | "exempt">,
 ): Record<string, ArchLayer> {
   const result: Record<string, ArchLayer> = {};
+  const rules = overrides?.layers ?? [];
+  const exempt = overrides?.exempt ?? [];
 
   for (const fp of filePaths) {
     const normalized = fp.replace(/\\/g, "/");
@@ -129,8 +140,13 @@ export function classifyFileLayers(
     // Test conventions trump directory tokens — a spec that lives in `utils/`
     // is still a test, and tests are exempt from layer violations. Tooling
     // trees and build-config files are equally outside the layered app.
+    const overridden = rules.find((r) => matchesAnyGlob(normalized, r.patterns));
     if (isTestFile(normalized) || TEST_SEGMENT_RE.test(normalized)) {
       assigned = "test";
+    } else if (matchesAnyGlob(normalized, exempt)) {
+      assigned = "unknown";
+    } else if (overridden) {
+      assigned = overridden.layer;
     } else if (TOOLING_SEGMENT_RE.test(normalized)) {
       assigned = "unknown";
     } else {

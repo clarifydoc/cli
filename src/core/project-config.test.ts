@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { loadProjectConfig, PROJECT_CONFIG_RELATIVE_PATH } from "./project-config.js";
+import { loadProjectConfig, matchesAnyGlob, resolveArchitectureOverrides, PROJECT_CONFIG_RELATIVE_PATH } from "./project-config.js";
 
 let root: string;
 beforeEach(() => {
@@ -43,5 +43,53 @@ describe("loadProjectConfig", () => {
       expect.stringMatching(/unknown section "typo"/),
       expect.stringMatching(/"refactorPressure" must be an object/),
     ]);
+  });
+});
+
+describe("loadProjectConfig — architecture sections", () => {
+  it("reads layers, exempt and generated", () => {
+    write(
+      JSON.stringify({
+        layers: [{ layer: "data", patterns: ["/src/db/**"], description: "EF" }],
+        exempt: ["tools/**"],
+        generated: ["**/*.generated.ts"],
+      }),
+    );
+    const r = loadProjectConfig(root);
+    expect(r.warnings).toEqual([]);
+    expect(r.config.layers).toEqual([{ layer: "data", patterns: ["/src/db/**"] }]);
+    expect(r.config.exempt).toEqual(["tools/**"]);
+    expect(r.config.generated).toEqual(["**/*.generated.ts"]);
+  });
+
+  it("drops layer rules with an unknown layer or no patterns, keeping the rest", () => {
+    write(JSON.stringify({ layers: [{ layer: "domain", patterns: ["a/**"] }, { layer: "ui", patterns: [] }, { layer: "ui", patterns: ["b/**"] }] }));
+    const r = loadProjectConfig(root);
+    expect(r.config.layers).toEqual([{ layer: "ui", patterns: ["b/**"] }]);
+    expect(r.warnings).toHaveLength(2);
+    expect(r.warnings[0]).toMatch(/layers\[0\]/);
+    expect(r.warnings[1]).toMatch(/layers\[1\]/);
+  });
+
+  it("keeps the string entries of a mixed exempt list and warns once", () => {
+    write(JSON.stringify({ exempt: ["tools/**", 3, ""] }));
+    const r = loadProjectConfig(root);
+    expect(r.config.exempt).toEqual(["tools/**"]);
+    expect(r.warnings).toEqual([expect.stringMatching(/"exempt" must be an array of glob strings/)]);
+  });
+});
+
+describe("resolveArchitectureOverrides / matchesAnyGlob", () => {
+  it("normalizes leading slashes and backslashes", () => {
+    const o = resolveArchitectureOverrides({ layers: [{ layer: "data", patterns: ["/src\\db/**"] }], exempt: ["/tools/**"] });
+    expect(o.layers[0]!.patterns).toEqual(["src/db/**"]);
+    expect(matchesAnyGlob("src/db/x/y.ts", o.layers[0]!.patterns)).toBe(true);
+    expect(matchesAnyGlob("tools/a.ts", o.exempt)).toBe(true);
+    expect(matchesAnyGlob("src/tools/a.ts", o.exempt)).toBe(false);
+  });
+
+  it("matches a slash-less pattern against the bare name only", () => {
+    expect(matchesAnyGlob("gen/api/User.generated.ts", ["*.generated.ts"])).toBe(true);
+    expect(matchesAnyGlob("gen/api/User.ts", ["*.generated.ts"])).toBe(false);
   });
 });
