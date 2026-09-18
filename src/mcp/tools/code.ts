@@ -292,6 +292,13 @@ export function fileTool(ctx: ToolContext): McpTool {
                 : undefined,
             ],
             [
+              "context burden",
+              f.blast?.contextBurden
+                ? `${f.blast.contextBurden.files} files within two hops` +
+                  (f.blast.contextBurden.estimatedTokens !== null ? `, ≈${f.blast.contextBurden.estimatedTokens} tokens` : "")
+                : undefined,
+            ],
+            [
               "refactor pressure",
               f.pressure
                 ? `${f.pressure.score}/100 (${f.pressure.band}, confidence ${f.pressure.confidence})` +
@@ -693,8 +700,9 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
     title: "Blast radius of a change",
     description:
       "What breaks if a file changes: direct and transitive dependents, the exported symbols other files use " +
-      "(with caller counts), and the cross-tier reach — screens and API routes whose execution passes through " +
-      "the file, plus the entities and queues it ultimately touches. Call without `path` for the riskiest files " +
+      "(with caller counts), the cross-tier reach — screens and API routes whose execution passes through " +
+      "the file, plus the entities and queues it ultimately touches — and the context burden: how many files " +
+      "and roughly how many tokens must be read to edit it safely. Call without `path` for the riskiest files " +
       "in the project.",
     inputSchema: {
       type: "object",
@@ -750,6 +758,15 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
             ["direct dependents", b.directDependents],
             ["transitive dependents", b.transitiveDependents],
             ["max depth", b.maxDepth],
+            [
+              "context burden",
+              b.contextBurden
+                ? `${b.contextBurden.files} files within two hops (imports and importers)` +
+                  (b.contextBurden.estimatedTokens !== null
+                    ? `, ≈${b.contextBurden.lines} lines / ≈${b.contextBurden.estimatedTokens} tokens to read`
+                    : "")
+                : undefined,
+            ],
           ]),
           "",
         ],

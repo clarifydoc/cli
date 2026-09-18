@@ -1,4 +1,4 @@
-import type { BlastRadiusInfo, BlastSymbolUsage, SymbolLink } from "../types/analysis.js";
+import type { BlastRadiusInfo, BlastSymbolUsage, ContextBurden, SymbolLink } from "../types/analysis.js";
 
 /**
  * Analyze blast radius for each file using the component graph and symbol links.
@@ -20,10 +20,58 @@ const AFFECTED_LIST_CAP = 500;
 const TRANSITIVE_LIST_CAP = 50;
 const CALLERS_LIST_CAP = 10;
 
+/** Context burden reach: two hops covers direct neighbours and their neighbours. */
+const CONTEXT_HOPS = 2;
+/** ≈40 characters per source line at ≈4 characters per token. */
+const TOKENS_PER_LINE = 10;
+
+export interface BlastRadiusOptions {
+  /** Physical line count per file (from `FileAnalysis.lineCount`); sizes the context burden. */
+  lineCounts?: ReadonlyMap<string, number>;
+}
+
+/**
+ * The files an editor must hold in mind to change `start` safely: everything
+ * within `hops` hops following imports in BOTH directions. Downstream files
+ * break when the contract changes; upstream files define the contracts being
+ * relied on. Self is excluded from the count but included in the size.
+ */
+function contextBurdenFor(
+  start: string,
+  forward: Record<string, string[]>,
+  reverse: Map<string, Set<string>>,
+  lineCounts: ReadonlyMap<string, number> | undefined,
+  hops: number,
+): ContextBurden {
+  const visited = new Set<string>([start]);
+  let frontier = [start];
+  for (let hop = 0; hop < hops && frontier.length > 0; hop++) {
+    const next: string[] = [];
+    for (const node of frontier) {
+      for (const n of forward[node] ?? []) if (!visited.has(n)) { visited.add(n); next.push(n); }
+      for (const n of reverse.get(node) ?? []) if (!visited.has(n)) { visited.add(n); next.push(n); }
+    }
+    frontier = next;
+  }
+  let lines: number | null = null;
+  if (lineCounts) {
+    for (const f of visited) {
+      const n = lineCounts.get(f);
+      if (n !== undefined) lines = (lines ?? 0) + n;
+    }
+  }
+  return {
+    files: visited.size - 1,
+    lines,
+    estimatedTokens: lines === null ? null : lines * TOKENS_PER_LINE,
+  };
+}
+
 export function analyzeBlastRadius(
   componentGraph: Record<string, string[]>,
   symbolLinks: SymbolLink[],
   totalFiles: number,
+  options: BlastRadiusOptions = {},
 ): BlastRadiusInfo[] {
   // ── Build reverse graph: file → files that depend on it ──
   const reverseGraph = new Map<string, Set<string>>();
@@ -170,6 +218,7 @@ export function analyzeBlastRadius(
       exportedSymbols,
       changeRisk,
       maxDepth,
+      contextBurden: contextBurdenFor(filePath, componentGraph, reverseGraph, options.lineCounts, CONTEXT_HOPS),
     });
   }
 
