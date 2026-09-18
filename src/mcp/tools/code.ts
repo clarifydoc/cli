@@ -284,6 +284,12 @@ export function fileTool(ctx: ToolContext): McpTool {
               "git",
               f.churn ? `${f.churn.commits} commits, last ${f.churn.lastTouched.slice(0, 10)}, authors ${f.churn.authorCount}` : undefined,
             ],
+            [
+              "concerns",
+              f.responsibility
+                ? `${f.responsibility.concernCount} (${f.responsibility.roles.join(", ")}) via ${f.responsibility.boundaries.join(", ")}`
+                : undefined,
+            ],
           ]),
           "",
         ]);

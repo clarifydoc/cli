@@ -37,6 +37,7 @@ import type {
   SymbolDataAccess,
   SymbolLink,
   SymbolReachSummary,
+  ResponsibilityProfile,
 } from "../types/analysis.js";
 import { analyze, type AnalyzeResult } from "../core/analyzer.js";
 import { loadReportSummary } from "../core/report-payload.js";
@@ -65,6 +66,8 @@ export interface FileFacts {
   reach: SymbolReachSummary[];
   blast?: BlastRadiusInfo;
   churn?: FileChurnInfo;
+  /** Boundary/concern profile — absent for files that touch no boundary. */
+  responsibility?: ResponsibilityProfile;
   duplicates: DuplicateGroup[];
   /** Frontend→backend links: calls made from here / routes served by here. */
   callsRoutes: ApiRouteLink[];
@@ -449,6 +452,10 @@ export function buildIndex(summary: ProjectAnalysis): AnalysisIndex {
   for (const churn of summary.fileChurn ?? []) {
     const f = facts(churn.file);
     if (f) f.churn = churn;
+  }
+  for (const profile of summary.responsibilityProfiles ?? []) {
+    const f = facts(profile.filePath);
+    if (f) f.responsibility = profile;
   }
   for (const group of summary.duplicates ?? []) {
     for (const occurrence of group.occurrences) {

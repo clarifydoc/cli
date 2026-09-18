@@ -36,6 +36,7 @@ All take `FileAnalysis[]` and/or `componentGraph` and return typed results.
 | [blast-radius.ts](blast-radius.ts) | `BlastRadiusInfo[]` | reverse graph from componentGraph |
 | [complexity-analyzer.ts](complexity-analyzer.ts) | `FileComplexityInfo[]` — per function: cyclomatic, cognitive (branch + nesting penalty, `else if` continuations exempt, callbacks deepen), nesting depth, parameter count | tree-sitter AST (per-file); the plugin `complexity` spec (`branchNodes`, `logicalOps`, `nestingNodes`) |
 | [pattern-detector.ts](pattern-detector.ts) | `PatternInfo[]` | classes, functions, imports |
+| [responsibility-profile.ts](responsibility-profile.ts) | `ResponsibilityProfile[]` — per file: boundaries touched (database, http, queue, auth, logging, …), workflow roles, concern count, read/write/publish/serve flags with evidence | imports classified through the plugins' `knownPackages` tables + dataSources/routes/screens; core names no package |
 | [security-scanner.ts](security-scanner.ts) | `SecurityIssue[]` | raw source text (regex-based) |
 | [duplication-detector.ts](duplication-detector.ts) | `DuplicateGroup[]` | structural fingerprinting |
 | [layer-analyzer.ts](layer-analyzer.ts) | `ArchLayer` map + violations | file paths + componentGraph |
