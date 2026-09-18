@@ -210,3 +210,45 @@ describe("wiring classes, flow definitions, singular service dirs (real-repo FPs
     expect(violations).toEqual([]);
   });
 });
+
+describe("classifyFileLayers — repository overrides", () => {
+  const overrides = {
+    layers: [
+      { layer: "data" as const, patterns: ["src/Persistence/**", "*Repository.cs"] },
+      { layer: "ui" as const, patterns: ["src/adapters/**"] },
+    ],
+    exempt: ["tools/**"],
+  };
+  const c = (fp: string) => classifyFileLayers([fp], overrides)[fp];
+
+  it("lets a layer rule beat the path heuristics", () => {
+    // Heuristics would say services (Application) / unknown (adapters).
+    expect(c("src/Persistence/Application/OrderStore.cs")).toBe("data");
+    expect(c("src/adapters/Toolbar.vue")).toBe("ui");
+  });
+
+  it("matches a slash-less pattern against the bare file name anywhere", () => {
+    expect(c("deep/in/the/tree/OrderRepository.cs")).toBe("data");
+    expect(c("deep/in/the/tree/OrderRepositoryTests.cs")).toBe("test"); // tests still win
+  });
+
+  it("applies rules in order — first match wins", () => {
+    const first = classifyFileLayers(["x/a.ts"], {
+      layers: [{ layer: "config", patterns: ["x/**"] }, { layer: "ui", patterns: ["x/a.ts"] }],
+      exempt: [],
+    })["x/a.ts"];
+    expect(first).toBe("config");
+  });
+
+  it("marks exempt trees unknown even when a heuristic or rule would classify them", () => {
+    expect(c("tools/services/deploy.ts")).toBe("unknown");
+  });
+
+  it("keeps tests exempt regardless of rules", () => {
+    expect(c("src/Persistence/OrderStore.spec.ts")).toBe("test");
+  });
+
+  it("changes nothing when no overrides are given", () => {
+    expect(classifyFileLayers(["src/adapters/Toolbar.vue"])["src/adapters/Toolbar.vue"]).toBe("unknown");
+  });
+});

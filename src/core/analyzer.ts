@@ -54,7 +54,7 @@ import { aggregateComplexity } from "./complexity-analyzer.js";
 import { detectPatterns } from "./pattern-detector.js";
 import { buildResponsibilityProfiles } from "./responsibility-profile.js";
 import { computeRefactorPressure, resolveRefactorPressureConfig } from "./refactor-pressure.js";
-import { loadProjectConfig } from "./project-config.js";
+import { loadProjectConfig, matchesAnyGlob, resolveArchitectureOverrides } from "./project-config.js";
 import { isTestFile } from "./test-file-detector.js";
 import { detectDuplicates } from "./duplication-detector.js";
 import { classifyFileLayers, detectLayerViolations } from "./layer-analyzer.js";
@@ -760,10 +760,23 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   if (unusedFiles.length > 0) {
     progress.detail(`  Unused (generated): ${unusedFiles.length} file(s) under ${generatedRoots.join(", ")}`);
   }
+  // The repository's own `.clarifydoc/config.json` (optional, never fatal):
+  // architecture layers, exempt trees, generated globs, scoring thresholds.
+  const projectConfig = loadProjectConfig(projectRoot);
+  for (const w of projectConfig.warnings) progress.detail(`  Config: ${w}`);
+  const architecture = resolveArchitectureOverrides(projectConfig.config);
+  if (projectConfig.path && verbose) {
+    progress.detail(
+      `  Config: ${architecture.layers.length} layer rule(s), ${architecture.exempt.length} exempt, ${architecture.generated.length} generated pattern(s)`,
+    );
+  }
+  const isConfiguredGenerated = (f: string): boolean => matchesAnyGlob(f, architecture.generated);
+
   const minifiedFiles = new Set(allAnalyses.filter((a) => a.minified).map((a) => a.filePath));
   const vendoredFiles = vendoredMinoritySet(allAnalyses);
   const isUnauthored = (f: string): boolean => {
     if (minifiedFiles.has(f) || vendoredFiles.has(f)) return true;
+    if (isConfiguredGenerated(f)) return true;
     if (generatedRoots.length === 0) return false;
     const p = f.replace(/\\/g, "/");
     return generatedRoots.some((r) => p === r || p.startsWith(r + "/"));
@@ -809,7 +822,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const duplicates = detectDuplicates(allAnalyses).filter(
     (d) => !d.occurrences.every((o) => isUnauthored(o.filePath)),
   );
-  const fileLayerMap = classifyFileLayers(allAnalyses.map((a) => a.filePath));
+  const fileLayerMap = classifyFileLayers(allAnalyses.map((a) => a.filePath), architecture);
   const layerViolations = detectLayerViolations(allAnalyses, componentGraph, fileLayerMap).filter(
     (v) => !isUnauthored(v.sourceFile) && !isUnauthored(v.targetFile),
   );
@@ -979,8 +992,6 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Composite refactor pressure — one ranked answer to "where first?", built
   // from the signals above. Thresholds can be tuned per repository in
   // `.clarifydoc/config.json`; bad values are reported and defaults kept.
-  const projectConfig = loadProjectConfig(projectRoot);
-  for (const w of projectConfig.warnings) progress.detail(`  Config: ${w}`);
   const pressureConfig = resolveRefactorPressureConfig(projectConfig.config.refactorPressure, (w) =>
     progress.detail(`  Config: ${w}`),
   );
@@ -1008,8 +1019,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     duplicates,
     complexity,
     layerViolations,
-    // Exclude generated barrel trees (kubb, …) so the grade reflects authored code.
+    // Exclude generated barrel trees (kubb, …) and the repository's own
+    // `generated` globs so the grade reflects authored code.
     generatedRoots,
+    isGenerated: isConfiguredGenerated,
   });
   progress.status("Generating suggestions...");
   const suggestions = generateSuggestions({

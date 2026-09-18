@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
+import type { ArchLayer } from "../types/analysis.js";
+import { fnmatch } from "./clarifydoc-ignore.js";
 
 /**
  * Project-local ClarifyDoc configuration: `<projectRoot>/.clarifydoc/config.json`.
@@ -11,8 +13,14 @@ import { join } from "path";
  * analysis — it is reported as a warning and ignored.
  *
  * Sections are consumed by their owners: `refactorPressure` by
- * `refactor-pressure.ts` (`resolveRefactorPressureConfig`). Add a section by
- * adding its key to `KNOWN_SECTIONS` and typing it here.
+ * `refactor-pressure.ts` (`resolveRefactorPressureConfig`); `layers`,
+ * `exempt` and `generated` by `layer-analyzer.ts` / the analyzer through
+ * `resolveArchitectureOverrides`. Add a section by adding its key to
+ * `KNOWN_SECTIONS` and typing it here.
+ *
+ * Glob patterns follow the ignore-file dialect (`*`, `**`, `?`, `[abc]`),
+ * are matched against the posix project-relative path, and — like gitignore —
+ * a pattern without a `/` also matches the bare file name anywhere.
  */
 
 export const PROJECT_CONFIG_RELATIVE_PATH = ".clarifydoc/config.json";
@@ -41,13 +49,37 @@ export interface RefactorPressureConfigInput {
   driverThreshold?: number;
 }
 
+/** One architecture-layer assignment: files matching any pattern belong to `layer`. */
+export interface LayerRuleInput {
+  layer: ArchLayer;
+  patterns: string[];
+  /** Optional note for the team; ignored by the tool. */
+  description?: string;
+}
+
 export interface ProjectConfig {
   /** Free-form; ignored by the tool. Lets a team note why thresholds were changed. */
   $comment?: string;
   refactorPressure?: RefactorPressureConfigInput;
+  /**
+   * Explicit layer assignments, checked in order before the path heuristics.
+   * Names must be the built-in layers: ui, components, services, data, utils,
+   * config (test and unknown are accepted but rarely useful).
+   */
+  layers?: LayerRuleInput[];
+  /** Paths outside the layered application (tooling, scripts, prototypes): never a violation source or target. */
+  exempt?: string[];
+  /** Generated code: excluded from every quality signal (patterns, duplicates, violations, pressure, health). */
+  generated?: string[];
 }
 
-const KNOWN_SECTIONS: ReadonlySet<string> = new Set(["$comment", "$schema", "refactorPressure"]);
+const KNOWN_SECTIONS: ReadonlySet<string> = new Set([
+  "$comment", "$schema", "refactorPressure", "layers", "exempt", "generated",
+]);
+
+const ARCH_LAYERS: ReadonlySet<string> = new Set<ArchLayer>([
+  "ui", "components", "services", "data", "utils", "config", "test", "unknown",
+]);
 
 export interface LoadedProjectConfig {
   config: ProjectConfig;
@@ -83,7 +115,76 @@ export function loadProjectConfig(projectRoot: string): LoadedProjectConfig {
       warnings.push(`${PROJECT_CONFIG_RELATIVE_PATH}: "refactorPressure" must be an object; ignored`);
     }
   }
+  if (parsed.layers !== undefined) {
+    if (!Array.isArray(parsed.layers)) {
+      warnings.push(`${PROJECT_CONFIG_RELATIVE_PATH}: "layers" must be an array; ignored`);
+    } else {
+      const rules: LayerRuleInput[] = [];
+      parsed.layers.forEach((rule, i) => {
+        if (!isPlainObject(rule) || typeof rule.layer !== "string" || !ARCH_LAYERS.has(rule.layer)) {
+          warnings.push(`${PROJECT_CONFIG_RELATIVE_PATH}: layers[${i}] needs a "layer" of ${[...ARCH_LAYERS].join("|")}; ignored`);
+          return;
+        }
+        const patterns = stringList(rule.patterns);
+        if (patterns.length === 0) {
+          warnings.push(`${PROJECT_CONFIG_RELATIVE_PATH}: layers[${i}] (${rule.layer}) has no string "patterns"; ignored`);
+          return;
+        }
+        rules.push({ layer: rule.layer as ArchLayer, patterns });
+      });
+      config.layers = rules;
+    }
+  }
+  for (const key of ["exempt", "generated"] as const) {
+    if (parsed[key] === undefined) continue;
+    const list = stringList(parsed[key]);
+    if (!Array.isArray(parsed[key]) || list.length !== (parsed[key] as unknown[]).length) {
+      warnings.push(`${PROJECT_CONFIG_RELATIVE_PATH}: "${key}" must be an array of glob strings; non-strings ignored`);
+    }
+    config[key] = list;
+  }
   return { config, path, warnings };
+}
+
+function stringList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "") : [];
+}
+
+/** Validated architecture overrides, ready for `classifyFileLayers` and the generated-code filter. */
+export interface ArchitectureOverrides {
+  layers: Array<{ layer: ArchLayer; patterns: string[] }>;
+  exempt: string[];
+  generated: string[];
+}
+
+export function resolveArchitectureOverrides(config: ProjectConfig): ArchitectureOverrides {
+  return {
+    layers: (config.layers ?? []).map((r) => ({ layer: r.layer, patterns: r.patterns.map(normalizeGlob) })),
+    exempt: (config.exempt ?? []).map(normalizeGlob),
+    generated: (config.generated ?? []).map(normalizeGlob),
+  };
+}
+
+/** Posix separators, no leading `/` (patterns are project-relative by definition). */
+function normalizeGlob(pattern: string): string {
+  const p = pattern.trim().replace(/\\/g, "/");
+  return p.startsWith("/") ? p.slice(1) : p;
+}
+
+/**
+ * Does a project-relative posix path match any of the (normalized) globs?
+ * A pattern without a slash is matched against the bare file name as well,
+ * the way gitignore treats `*.generated.ts`.
+ */
+export function matchesAnyGlob(filePath: string, patterns: readonly string[]): boolean {
+  if (patterns.length === 0) return false;
+  const path = filePath.replace(/\\/g, "/").replace(/^\/+/, "");
+  const base = path.slice(path.lastIndexOf("/") + 1);
+  for (const pat of patterns) {
+    if (fnmatch(path, pat)) return true;
+    if (!pat.includes("/") && fnmatch(base, pat)) return true;
+  }
+  return false;
 }
 
 export function isPlainObject(v: unknown): v is Record<string, unknown> {

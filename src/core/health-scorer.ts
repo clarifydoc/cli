@@ -21,6 +21,8 @@ interface HealthInput {
    * this stays language-agnostic.
    */
   generatedRoots?: string[];
+  /** Extra generated-code test (e.g. the repository's `generated` globs); OR-ed with the roots above. */
+  isGenerated?: (filePath: string) => boolean;
 }
 
 /**
@@ -103,6 +105,7 @@ export function computeHealthScore(input: HealthInput): HealthScore {
   const vendored = vendoredMinoritySet(input.analyses);
   const isGenerated = (f: string): boolean => {
     if (minified.has(f) || vendored.has(f)) return true;
+    if (input.isGenerated?.(f)) return true;
     if (genRoots.length === 0) return false;
     const p = f.replace(/\\/g, "/");
     return genRoots.some((r) => p === r || p.startsWith(r + "/"));
