@@ -79,6 +79,7 @@ export const pythonMeta: LanguagePluginMeta = {
       "except_clause", "with_statement", "conditional_expression",
     ]),
     logicalOps: new Set(["and", "or"]),
+    nestingNodes: new Set(["lambda", "function_definition"]),
   },
   securityRules: SECURITY_RULES,
   // Strip strings and comments first to avoid false positives.

@@ -34,7 +34,7 @@ All take `FileAnalysis[]` and/or `componentGraph` and return typed results.
 |------|--------|-----------|
 | [symbol-linker.ts](symbol-linker.ts) | `SymbolLink[]` | inheritance, injection (ctor params + properties + enclosing-method params), deep-qualified, ClassName.method, constructor (`new X`/bare class), package-qualified import head, unique-global-leaf — 7-strategy fallback resolution. Heuristic tiers are guarded: same sub-project only, never into test-fixture paths, registry `builtinMembers` stoplist (`set.add`, `s.strip`) |
 | [blast-radius.ts](blast-radius.ts) | `BlastRadiusInfo[]` | reverse graph from componentGraph |
-| [complexity-analyzer.ts](complexity-analyzer.ts) | `FileComplexityInfo[]` | tree-sitter AST (per-file) |
+| [complexity-analyzer.ts](complexity-analyzer.ts) | `FileComplexityInfo[]` — per function: cyclomatic, cognitive (branch + nesting penalty, `else if` continuations exempt, callbacks deepen), nesting depth, parameter count | tree-sitter AST (per-file); the plugin `complexity` spec (`branchNodes`, `logicalOps`, `nestingNodes`) |
 | [pattern-detector.ts](pattern-detector.ts) | `PatternInfo[]` | classes, functions, imports |
 | [security-scanner.ts](security-scanner.ts) | `SecurityIssue[]` | raw source text (regex-based) |
 | [duplication-detector.ts](duplication-detector.ts) | `DuplicateGroup[]` | structural fingerprinting |

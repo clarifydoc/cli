@@ -37,6 +37,7 @@ export const phpMeta: LanguagePluginMeta = {
       "switch_case", "catch_clause",
     ]),
     logicalOps: new Set(["&&", "||", "??"]),
+    nestingNodes: new Set(["anonymous_function", "anonymous_function_creation_expression", "arrow_function"]),
   },
   ast: {
     // Blade templates (.blade.php) surface as UI screens; interactive elements

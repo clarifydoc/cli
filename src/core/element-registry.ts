@@ -128,6 +128,10 @@ export interface NormComplexityFn {
   /** Function-declaration element index (carries line/endLine). */
   fn: number;
   complexity: number;
+  /** Cognitive metrics — present only for rows written by extractor ≥ 1.49. */
+  cognitive?: number;
+  nestingDepth?: number;
+  paramCount?: number;
 }
 export interface NormFileComplexity {
   /** File element index (kind "file"). */
@@ -135,6 +139,9 @@ export interface NormFileComplexity {
   totalComplexity: number;
   maxComplexity: number;
   averageComplexity: number;
+  totalCognitive?: number;
+  maxCognitive?: number;
+  maxNestingDepth?: number;
   functions: NormComplexityFn[];
 }
 
@@ -530,6 +537,11 @@ function keyFromPage(files: string[], key: string): string {
  * with fresh objects/arrays for every rewritten field — the input (and any shape
  * it shares with the caller's in-memory `ProjectAnalysis`) is never mutated.
  */
+/** `{ [key]: value }` when the value is defined, `{}` otherwise — for optional fields in codec copies. */
+function optional<K extends string, V>(key: K, value: V | undefined): Partial<Record<K, V>> {
+  return value === undefined ? {} : ({ [key]: value } as Record<K, V>);
+}
+
 function rewritePageRefs<T extends object>(
   src: T,
   ref: (v: unknown) => unknown,
@@ -733,7 +745,18 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
       totalComplexity: fe.totalComplexity,
       maxComplexity: fe.maxComplexity,
       averageComplexity: fe.averageComplexity,
-      functions: fns.map(({ fn, idx }) => ({ fn: remap[idx], complexity: fn.complexity })),
+      // Optional cognitive fields are carried only when present so artifacts
+      // written before they existed round-trip unchanged.
+      ...optional("totalCognitive", fe.totalCognitive),
+      ...optional("maxCognitive", fe.maxCognitive),
+      ...optional("maxNestingDepth", fe.maxNestingDepth),
+      functions: fns.map(({ fn, idx }) => ({
+        fn: remap[idx],
+        complexity: fn.complexity,
+        ...optional("cognitive", fn.cognitive),
+        ...optional("nestingDepth", fn.nestingDepth),
+        ...optional("paramCount", fn.paramCount),
+      })),
     }));
   }
 
@@ -903,10 +926,21 @@ export function denormalizeProject(obj: unknown): ProjectAnalysis {
       totalComplexity: fe.totalComplexity,
       maxComplexity: fe.maxComplexity,
       averageComplexity: fe.averageComplexity,
+      ...optional("totalCognitive", fe.totalCognitive),
+      ...optional("maxCognitive", fe.maxCognitive),
+      ...optional("maxNestingDepth", fe.maxNestingDepth),
       functions: fe.functions.map((nf) => {
         const el = elements[nf.fn];
         const [, functionName] = splitElementId(el?.id ?? "");
-        return { functionName, complexity: nf.complexity, line: el?.line ?? 0, endLine: el?.endLine ?? 0 };
+        return {
+          functionName,
+          complexity: nf.complexity,
+          line: el?.line ?? 0,
+          endLine: el?.endLine ?? 0,
+          ...optional("cognitive", nf.cognitive),
+          ...optional("nestingDepth", nf.nestingDepth),
+          ...optional("paramCount", nf.paramCount),
+        };
       }),
     }));
   }

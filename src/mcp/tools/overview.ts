@@ -408,14 +408,19 @@ export function healthTool(ctx: ToolContext): McpTool {
           const rows = (summary.complexity ?? [])
             .filter((c) => inFile(c.filePath))
             .flatMap((c) => c.functions.map((fn) => ({ ...fn, filePath: c.filePath })))
-            .sort((a, b) => b.complexity - a.complexity);
+            .sort((a, b) => (b.cognitive ?? b.complexity) - (a.cognitive ?? a.complexity) || b.complexity - a.complexity);
           return {
             text: joinLines([
               `# Most complex functions (${rows.length} total)`,
+              "cyclomatic = branches + 1; cognitive adds a penalty per nesting level, so it ranks deeply nested logic above flat switch tables.",
+              "",
               ...bulletList(
                 rows,
                 limit,
-                (fn) => `${fn.complexity} — ${fn.functionName}() (${loc(fn.filePath, fn.line)})`,
+                (fn) =>
+                  `cyclomatic ${fn.complexity}` +
+                  (fn.cognitive !== undefined ? `, cognitive ${fn.cognitive}, nesting ${fn.nestingDepth ?? 0}` : "") +
+                  ` — ${fn.functionName}() (${loc(fn.filePath, fn.line)})`,
               ),
             ]),
           };
