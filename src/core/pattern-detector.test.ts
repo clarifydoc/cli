@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { detectPatterns } from "./pattern-detector.js";
-import type { FileAnalysis } from "../types/analysis.js";
+import { createEmptyAnalysis, type FileAnalysis, type PatternInfo } from "../types/analysis.js";
 
 /**
  * God-object detection must not count trivial accessors: a Java/C# entity
@@ -51,5 +51,51 @@ describe("god-object accessor exclusion", () => {
     const longGetters = Array.from({ length: 16 }, (_, i) => method(`getDerived${i}`, 10 + i * 12, 19 + i * 12));
     const patterns = detectPatterns([fileWith(longGetters)], []);
     expect(patterns.some((p) => p.kind === "god-object")).toBe(true);
+  });
+});
+
+describe("god-object grading uses internal structure", () => {
+  // Counting functions alone put a cohesive parser and a service mixing four
+  // concerns in the same bucket with the same "split by responsibility" advice.
+  const manyFunctions = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      name: `fn${i}`, params: [{ name: "a", type: null, defaultValue: null }, { name: "b", type: null, defaultValue: null }],
+      returnType: null, isAsync: false, isExported: true, decorators: [], calls: [],
+      line: i * 5 + 1, endLine: i * 5 + 4,
+    }));
+
+  const analysisWith = (path: string, n: number): FileAnalysis =>
+    ({ ...createEmptyAnalysis(path, "typescript"), functions: manyFunctions(n) });
+
+  const god = (patterns: PatternInfo[]) => patterns.find((p) => p.kind === "god-object")!;
+
+  it("grades separable work high", () => {
+    const p = detectPatterns([analysisWith("svc.ts", 20)], [], new Map([
+      ["svc.ts", { componentSizes: [8, 7, 5], participation: 1, boundaries: 4 }],
+    ]));
+    expect(god(p).confidence).toBe("high");
+    expect(god(p).detail).toMatch(/separable work/);
+  });
+
+  it("grades one cohesive group with no boundaries low", () => {
+    const p = detectPatterns([analysisWith("parser.ts", 20)], [], new Map([
+      ["parser.ts", { componentSizes: [19, 1], participation: 1, boundaries: 0 }],
+    ]));
+    expect(god(p).confidence).toBe("low");
+    expect(god(p).detail).toMatch(/large but cohesive/);
+  });
+
+  it("says so when too little is connected to judge", () => {
+    const p = detectPatterns([analysisWith("misc.ts", 20)], [], new Map([
+      ["misc.ts", { componentSizes: [3, 1, 1, 1], participation: 0.2, boundaries: 1 }],
+    ]));
+    expect(god(p).confidence).toBe("medium");
+    expect(god(p).detail).toMatch(/internal structure is unclear/);
+  });
+
+  it("falls back to the count when no structure is supplied", () => {
+    const p = detectPatterns([analysisWith("legacy.ts", 20)], []);
+    expect(god(p).confidence).toBe("medium");
+    expect(god(p).detail).toMatch(/Structure unknown/);
   });
 });

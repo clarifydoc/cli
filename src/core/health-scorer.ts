@@ -133,7 +133,13 @@ export function computeHealthScore(input: HealthInput): HealthScore {
   }
 
   // 2. God objects (15+ functions)
-  const godFiles = input.patterns.filter((p) => p.kind === "god-object" && !isGenerated(p.filePath));
+  // A large but COHESIVE file (one connected call group, no boundaries) is
+  // graded `low` by the detector; penalizing it identically to a service that
+  // mixes four concerns across disjoint groups is what made the grade
+  // unresponsive to the difference.
+  const godFiles = input.patterns.filter(
+    (p) => p.kind === "god-object" && p.confidence !== "low" && !isGenerated(p.filePath),
+  );
   if (godFiles.length > 0) {
     penalize(`${godFiles.length} god object file(s)`, scaled(godFiles.length, 3, 15, 0.1));
   }
