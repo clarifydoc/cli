@@ -53,6 +53,9 @@ import { buildSymbolLinks } from "./symbol-linker.js";
 import { aggregateComplexity } from "./complexity-analyzer.js";
 import { detectPatterns } from "./pattern-detector.js";
 import { buildResponsibilityProfiles } from "./responsibility-profile.js";
+import { computeRefactorPressure, resolveRefactorPressureConfig } from "./refactor-pressure.js";
+import { loadProjectConfig } from "./project-config.js";
+import { isTestFile } from "./test-file-detector.js";
 import { detectDuplicates } from "./duplication-detector.js";
 import { classifyFileLayers, detectLayerViolations } from "./layer-analyzer.js";
 import { analyzeBlastRadius } from "./blast-radius.js";
@@ -971,6 +974,30 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     progress.detail(`  Migrations: ${migrations.length} across ${new Set(migrations.map((mig) => mig.ecosystem)).size} ecosystem(s)`);
   }
 
+  // Composite refactor pressure — one ranked answer to "where first?", built
+  // from the signals above. Thresholds can be tuned per repository in
+  // `.clarifydoc/config.json`; bad values are reported and defaults kept.
+  const projectConfig = loadProjectConfig(projectRoot);
+  for (const w of projectConfig.warnings) progress.detail(`  Config: ${w}`);
+  const pressureConfig = resolveRefactorPressureConfig(projectConfig.config.refactorPressure, (w) =>
+    progress.detail(`  Config: ${w}`),
+  );
+  const refactorPressure = computeRefactorPressure({
+    analyses: allAnalyses,
+    complexity,
+    blastRadius,
+    componentGraph,
+    layerViolations,
+    responsibilityProfiles,
+    fileChurn,
+    exclude: (f) => isUnauthored(f) || isTestFile(f),
+    config: pressureConfig,
+  });
+  if (refactorPressure.length > 0) {
+    const pressing = refactorPressure.filter((p) => p.band === "strong" || p.band === "urgent").length;
+    progress.detail(`  Refactor pressure: ${refactorPressure.length} file(s) scored, ${pressing} strong/urgent`);
+  }
+
   const healthScore = computeHealthScore({
     analyses: allAnalyses,
     componentGraph,
@@ -994,6 +1021,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     blastRadius,
     componentGraph,
     unusedFiles,
+    refactorPressure,
   });
 
   progress.detail(`  Health: ${healthScore.grade} (${healthScore.score}/100)`);
@@ -1043,6 +1071,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     fileChurn,
     hotspots,
     responsibilityProfiles: responsibilityProfiles.length > 0 ? responsibilityProfiles : undefined,
+    refactorPressure: refactorPressure.length > 0 ? refactorPressure : undefined,
     fileLayerMap,
     confidenceCounts,
     skippedSensitive: skippedSensitive.length > 0 ? skippedSensitive : undefined,

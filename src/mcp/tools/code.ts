@@ -1,5 +1,6 @@
 /** Code-navigation tools: routes, screens, per-file facts, call traces, blast radius. */
 
+import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
 import type { McpTool } from "../protocol.js";
 import type { SymbolLink } from "../../types/analysis.js";
 import { symbolKey, type FileFacts, type LoadedAnalysis, type RouteWithFile } from "../store.js";
@@ -288,6 +289,14 @@ export function fileTool(ctx: ToolContext): McpTool {
               "concerns",
               f.responsibility
                 ? `${f.responsibility.concernCount} (${f.responsibility.roles.join(", ")}) via ${f.responsibility.boundaries.join(", ")}`
+                : undefined,
+            ],
+            [
+              "refactor pressure",
+              f.pressure
+                ? `${f.pressure.score}/100 (${f.pressure.band}, confidence ${f.pressure.confidence})` +
+                  (f.pressure.drivers.length ? ` — ${describeDrivers(f.pressure.drivers)}` : "") +
+                  (f.pressure.gates.length ? `; gates: ${describeGates(f.pressure.gates)}` : "")
                 : undefined,
             ],
           ]),

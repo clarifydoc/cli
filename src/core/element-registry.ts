@@ -603,7 +603,7 @@ function rewritePageRefs<T extends object>(
   for (const name of [
     "routeMap", "apiCalls", "interactiveElements", "events", "componentUsage",
     "screens", "patterns", "securityIssues", "suggestions", "migrations",
-    "responsibilityProfiles",
+    "responsibilityProfiles", "refactorPressure",
   ]) {
     filePathArr(name);
   }

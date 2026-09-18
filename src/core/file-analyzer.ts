@@ -45,6 +45,15 @@ export interface FileResult {
   securityIssues: SecurityIssue[];
 }
 
+/** Physical line count of the raw source (a trailing newline does not add a line). */
+export function countLines(source: string): number {
+  if (source.length === 0) return 0;
+  let n = 1;
+  for (let i = 0; i < source.length; i++) if (source.charCodeAt(i) === 10) n++;
+  if (source.charCodeAt(source.length - 1) === 10) n--;
+  return n;
+}
+
 // ─── Single-file analysis ────────────────────────────────────────────────
 
 /**
@@ -85,6 +94,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       const analysis = filePlugin.customParse(rawSource, file.relativePath);
       analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
       analysis.projectId = projectId;
+      analysis.lineCount = countLines(rawSource);
       if (minified) analysis.minified = true;
       if (vendored) analysis.vendored = true;
       applyTsconfigAliasesToImports(analysis);
@@ -110,6 +120,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       pre?.postExtract?.(analysis, rawSource);
       analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
       analysis.projectId = projectId;
+      analysis.lineCount = countLines(rawSource);
       if (minified) analysis.minified = true;
       if (vendored) analysis.vendored = true;
       applyTsconfigAliasesToImports(analysis);
@@ -155,6 +166,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       const analysis = extractWithRegex(rawSource, file.relativePath, file.language);
       analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
       analysis.projectId = projectId;
+      analysis.lineCount = countLines(rawSource);
       if (minified) analysis.minified = true;
       if (vendored) analysis.vendored = true;
       applyTsconfigAliasesToImports(analysis);
@@ -168,6 +180,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
 
     const analysis = createEmptyAnalysis(file.relativePath, language);
     analysis.projectId = projectId;
+    analysis.lineCount = countLines(rawSource);
     if (minified) analysis.minified = true;
       if (vendored) analysis.vendored = true;
 
