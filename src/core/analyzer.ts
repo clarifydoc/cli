@@ -52,6 +52,7 @@ import {
 import { buildSymbolLinks } from "./symbol-linker.js";
 import { aggregateComplexity } from "./complexity-analyzer.js";
 import { detectPatterns } from "./pattern-detector.js";
+import { buildResponsibilityProfiles } from "./responsibility-profile.js";
 import { detectDuplicates } from "./duplication-detector.js";
 import { classifyFileLayers, detectLayerViolations } from "./layer-analyzer.js";
 import { analyzeBlastRadius } from "./blast-radius.js";
@@ -793,6 +794,14 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   }
 
   const patterns = detectPatterns(allAnalyses, frameworks).filter((p) => !isUnauthored(p.filePath));
+  // Which concerns each file mixes (database, http, queue, auth, …) — from
+  // classified imports plus data sources/routes/screens. Generated and vendored
+  // code is excluded like every other quality signal.
+  const responsibilityProfiles = buildResponsibilityProfiles(allAnalyses).filter((r) => !isUnauthored(r.filePath));
+  if (responsibilityProfiles.length > 0) {
+    const mixed = responsibilityProfiles.filter((r) => r.concernCount >= 3).length;
+    progress.detail(`  Responsibilities: ${responsibilityProfiles.length} file(s) touch a boundary, ${mixed} mix 3+ concerns`);
+  }
   progress.status("Detecting duplicates and layer violations...");
   const duplicates = detectDuplicates(allAnalyses).filter(
     (d) => !d.occurrences.every((o) => isUnauthored(o.filePath)),
@@ -1033,6 +1042,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     suggestions,
     fileChurn,
     hotspots,
+    responsibilityProfiles: responsibilityProfiles.length > 0 ? responsibilityProfiles : undefined,
     fileLayerMap,
     confidenceCounts,
     skippedSensitive: skippedSensitive.length > 0 ? skippedSensitive : undefined,

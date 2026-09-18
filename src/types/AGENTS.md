@@ -20,7 +20,7 @@ Single source of truth for all analysis types. If you're reading this to underst
 | Behavior | `CallInfo`, `RouteInfo`, `DataSourceInfo`, `DataMutationInfo` |
 | UI | `SubComponentInfo`, `InteractiveElementInfo`, `EventInfo`, `ScreenInfo`, `ScreenComponentInfo` |
 | Graph | `LinkInfo`, `SymbolLink`, `LinkProximity` |
-| Advanced | `ComplexityInfo`, `PatternInfo`, `SecurityIssue`, `DuplicateGroup`, `LayerViolation`, `BlastRadiusInfo`, `HealthScore`, `Suggestion` |
+| Advanced | `ComplexityInfo`, `PatternInfo`, `SecurityIssue`, `DuplicateGroup`, `LayerViolation`, `BlastRadiusInfo`, `ResponsibilityProfile`, `HealthScore`, `Suggestion` |
 | Framework | `FrameworkDetection` |
 | LSP | `LspStats` |
 

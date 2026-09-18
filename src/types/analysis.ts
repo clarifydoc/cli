@@ -1006,6 +1006,56 @@ export interface HotspotInfo {
   totalComplexity: number;
 }
 
+// ─── Responsibility profile (responsibility-profile.ts) ────────────────────
+
+/** An external boundary a file touches, derived from imports, data sources, routes and screens. */
+export type BoundaryKind =
+  | "database" | "http" | "graphql" | "grpc" | "queue" | "auth" | "logging"
+  | "cloud" | "serialization" | "validation" | "ui" | "state" | "config";
+
+/** The workflow concern a boundary evidences. */
+export type WorkflowRole =
+  | "persistence" | "transport" | "messaging" | "security" | "observability"
+  | "integration" | "mapping" | "validation" | "presentation" | "configuration";
+
+export interface BoundaryEvidence {
+  kind: BoundaryKind;
+  /** Where the evidence came from. */
+  source: "import" | "data-source" | "route" | "screen";
+  /** Import specifier, call name, route or screen name. */
+  name: string;
+  /** 1-based; absent for evidence without a location (screens). */
+  line?: number;
+  /** What the file does at that boundary — `use` when only the import is visible. */
+  operation?: "read" | "write" | "use" | "call" | "serve" | "publish" | "consume" | "route" | "render";
+}
+
+/**
+ * Which concerns one file mixes. Present only for files with at least one
+ * boundary. `concernCount` is the number of distinct roles minus the
+ * ubiquitous ones (observability, configuration) — the responsibility-spread
+ * signal the god-object function count cannot give.
+ */
+export interface ResponsibilityProfile {
+  filePath: string;
+  boundaries: BoundaryKind[];
+  roles: WorkflowRole[];
+  concernCount: number;
+  /** Distinct non-relative import roots — library fan-out. */
+  externalPackageCount: number;
+  readsState: boolean;
+  writesState: boolean;
+  emitsEvents: boolean;
+  consumesEvents: boolean;
+  /** Declares at least one API route. */
+  servesRequests: boolean;
+  /** Calls HTTP/GraphQL/gRPC/cloud services. */
+  callsExternal: boolean;
+  /** Total evidence rows found; `evidence` is capped. */
+  evidenceCount: number;
+  evidence: BoundaryEvidence[];
+}
+
 export type PatternKind =
   | "singleton" | "factory" | "observer" | "custom-hook" | "hoc"
   | "context-provider" | "dataclass" | "abc" | "middleware"
@@ -1217,6 +1267,9 @@ export interface ProjectAnalysis {
   fileChurn?: FileChurnInfo[];
   /** Top churn × complexity hotspots (derived from fileChurn + complexity). */
   hotspots?: HotspotInfo[];
+  /** Per-file boundary/concern profile for files that touch at least one
+   *  boundary (responsibility-profile.ts). Omitted when empty. */
+  responsibilityProfiles?: ResponsibilityProfile[];
   fileLayerMap?: Record<string, ArchLayer>;
   /** Auto-detected generated/library barrel roots (e.g. kubb output dirs). */
   generatedRoots?: string[];

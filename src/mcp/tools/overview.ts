@@ -288,7 +288,8 @@ type HealthCategory =
   | "hotspots"
   | "suggestions"
   | "patterns"
-  | "unused";
+  | "unused"
+  | "concerns";
 const HEALTH_CATEGORIES: readonly HealthCategory[] = [
   "security",
   "layers",
@@ -298,6 +299,7 @@ const HEALTH_CATEGORIES: readonly HealthCategory[] = [
   "suggestions",
   "patterns",
   "unused",
+  "concerns",
 ];
 
 export function healthTool(ctx: ToolContext): McpTool {
@@ -307,7 +309,8 @@ export function healthTool(ctx: ToolContext): McpTool {
     description:
       "The project's health score and the findings behind it: security issues, architecture layer violations, " +
       "high-complexity functions, duplicate code, churn×complexity hotspots, generated dead code, detected " +
-      "patterns and actionable suggestions. Call with no category for the summary, then drill into one.",
+      "patterns, files that mix the most concerns (database + http + queue + auth …) and actionable " +
+      "suggestions. Call with no category for the summary, then drill into one.",
     inputSchema: {
       type: "object",
       properties: {
@@ -358,6 +361,7 @@ export function healthTool(ctx: ToolContext): McpTool {
               ["suggestions", (summary.suggestions ?? []).length],
               ["patterns", (summary.patterns ?? []).length],
               ["unused", (summary.unusedFiles ?? []).length],
+              ["concerns", (summary.responsibilityProfiles ?? []).filter((r) => r.concernCount >= 2).length],
             ] as Array<[string, number]>,
             20,
             ([name, count]) => `${name}: ${count}${count ? ` — call with category="${name}"` : ""}`,
@@ -442,6 +446,31 @@ export function healthTool(ctx: ToolContext): McpTool {
                     .map((o) => loc(o.filePath, o.line))
                     .join(", ") +
                   (g.occurrences.length > 4 ? ", …" : ""),
+              ),
+            ]),
+          };
+        }
+        case "concerns": {
+          const rows = (summary.responsibilityProfiles ?? [])
+            .filter((r) => inFile(r.filePath))
+            .filter((r) => r.concernCount >= 2);
+          return {
+            text: joinLines([
+              `# Files mixing concerns (${rows.length})`,
+              "A concern is a workflow role evidenced by the file's imports and calls: persistence, transport, " +
+                "messaging, security, integration, presentation, … Logging and configuration are not counted. " +
+                "Files mixing three or more are candidates for splitting by responsibility.",
+              "",
+              ...bulletList(
+                rows,
+                limit,
+                (r) =>
+                  `${r.concernCount} — ${r.filePath}: ${r.roles.join(", ")} ` +
+                  `[${r.boundaries.join(", ")}]` +
+                  (r.writesState ? " writes" : "") +
+                  (r.emitsEvents ? " publishes" : "") +
+                  (r.servesRequests ? " serves" : "") +
+                  (r.callsExternal ? " calls-out" : ""),
               ),
             ]),
           };
