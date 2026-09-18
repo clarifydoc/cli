@@ -1,4 +1,5 @@
 import { createEmptyAnalysis, type FileAnalysis, type Language } from "../types/analysis.js";
+import { splitLines } from "../extractors/shared/source-lines.js";
 import {
   extractFunctionsWithSpec,
   extractClassesWithSpec,
@@ -23,7 +24,7 @@ export function extractWithRegex(
   const spec = regexSpecFor(language);
   if (!spec) return analysis;
 
-  const lines = sourceText.split("\n");
+  const lines = splitLines(sourceText);
 
   analysis.functions = extractFunctionsWithSpec(lines, spec);
   analysis.classes = spec.extractClasses

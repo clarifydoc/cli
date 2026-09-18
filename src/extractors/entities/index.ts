@@ -1,4 +1,5 @@
 import type { EntityRelation, FileAnalysis, Language } from "../../types/analysis.js";
+import { splitLines } from "../shared/source-lines.js";
 import { SYNTHETIC_ENTITY, type EntityExtractor, type EntityExtractResult } from "./base.js";
 import { pluginFor, allPluginMetas } from "../registry.js";
 
@@ -49,7 +50,7 @@ export function extractEntities(
   if (!ex) return EMPTY_RESULT;
   const markers = LANGUAGE_MARKERS[language];
   if (markers && !markers.test(sourceText)) return EMPTY_RESULT;
-  const lines = sourceText.split("\n");
+  const lines = splitLines(sourceText);
   return ex.extract({ analysis, sourceText, lines });
 }
 
