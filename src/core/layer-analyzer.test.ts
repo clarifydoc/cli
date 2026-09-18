@@ -252,3 +252,29 @@ describe("classifyFileLayers — repository overrides", () => {
     expect(classifyFileLayers(["src/adapters/Toolbar.vue"])["src/adapters/Toolbar.vue"]).toBe("unknown");
   });
 });
+
+describe("classifyFileLayers — language-aware test detection", () => {
+  // Without the language only the generic and .NET conventions fire, so these
+  // were classified as real application layers: they could be layer-violation
+  // endpoints and were scored for refactor pressure like production code.
+  const cases: Array<[path: string, language: string]> = [
+    ["pkg/handlers/server_test.go", "go"],
+    ["api/test_views.py", "python"],
+    ["lib/foo_spec.rb", "ruby"],
+    ["app/models/user_spec.rb", "ruby"],
+  ];
+  for (const [path, language] of cases) {
+    it(`${path} is a test when the language is known`, () => {
+      expect(classifyFileLayers([{ path, language: language as never }])[path]).toBe("test");
+    });
+  }
+
+  it("still accepts bare paths, and still finds the conventions that need no language", () => {
+    expect(classifyFileLayers(["src/services/api.test.ts"])["src/services/api.test.ts"]).toBe("test");
+    expect(classifyFileLayers(["src/Api/Api.IntegrationTests/UsersTests.cs"])["src/Api/Api.IntegrationTests/UsersTests.cs"]).toBe("test");
+  });
+
+  it("does not turn a production file into a test just because a language is supplied", () => {
+    expect(classifyFileLayers([{ path: "pkg/handlers/server.go", language: "go" as never }])["pkg/handlers/server.go"]).toBe("services");
+  });
+});
