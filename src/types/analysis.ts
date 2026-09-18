@@ -1346,6 +1346,43 @@ export interface SubProject {
 }
 
 /** Project-level summary */
+/**
+ * What produced this analysis and what it was able to see.
+ *
+ * A consumer — an MCP client, the viewer, a downstream ingester, or a person
+ * diffing two runs — could not tell which extractor version wrote a summary
+ * (that lived only in `manifest.json`, and only on incremental runs), whether
+ * a config was found and applied, whether git history was available, or
+ * whether any file silently fell back to regex. Config validation warnings
+ * were computed and then printed to a verbose console, which is exactly where
+ * nobody analyzing from an editor or through MCP would ever see them.
+ */
+export interface AnalysisProvenance {
+  extractorVersion: string;
+  /** On-disk normalization format of `project-summary.json`. */
+  schemaVersion: number;
+  toolVersion: string;
+  incremental: boolean;
+  /** Files reused from the cache on an incremental run. */
+  reusedFiles?: number;
+  config: {
+    /** Whether `.clarifydoc/config.json` was found. */
+    present: boolean;
+    /** Validation and lint messages; empty when the file is absent or clean. */
+    warnings: string[];
+  };
+  signals: {
+    lsp: "applied" | "absent";
+    gitHistory: "applied" | "disabled" | "skipped";
+    /** Why git history was skipped (not a repository, shallow clone, …). */
+    gitSkipReason?: string;
+  };
+  /** Files carrying extractor warnings from schema validation. */
+  extractorWarningFiles: number;
+  /** Files whose tree-sitter parse failed and fell back to regex, by language. */
+  parseFallbacks?: Record<string, number>;
+}
+
 export interface ProjectAnalysis {
   projectRoot: string;
   detectedFrameworks: FrameworkDetection[];
@@ -1401,6 +1438,8 @@ export interface ProjectAnalysis {
   /** Files with measurable refactor pressure, highest first (refactor-pressure.ts). Omitted when empty. */
   refactorPressure?: RefactorPressureInfo[];
   fileLayerMap?: Record<string, ArchLayer>;
+  /** What produced this analysis and what it could see. Omitted on old artifacts. */
+  provenance?: AnalysisProvenance;
   /** Auto-detected generated/library barrel roots (e.g. kubb output dirs). */
   generatedRoots?: string[];
   /** Files under a generated root that nothing outside that tree imports (dead code). */

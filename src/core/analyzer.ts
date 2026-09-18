@@ -58,6 +58,8 @@ import { computeRefactorPressure, resolveRefactorPressureConfig } from "./refact
 import { loadProjectConfig, matchesAnyGlob, resolveArchitectureOverrides } from "./project-config.js";
 import { isTestFile } from "./test-file-detector.js";
 import { isGeneratedFile } from "./generated-file-detector.js";
+import { TOOL_VERSION } from "./version.js";
+import { SCHEMA_VERSION } from "./element-registry.js";
 import { detectDuplicates } from "./duplication-detector.js";
 import { classifyFileLayers, detectLayerViolations } from "./layer-analyzer.js";
 import { analyzeBlastRadius } from "./blast-radius.js";
@@ -786,6 +788,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // The repository's own `.clarifydoc/config.json` (optional, never fatal):
   // architecture layers, exempt trees, generated globs, scoring thresholds.
   const projectConfig = loadProjectConfig(projectRoot);
+  // Kept as well as printed: verbose-only warnings are invisible to anyone
+  // analyzing from an editor or through MCP, which is most users of the config.
+  const configWarnings: string[] = [...projectConfig.warnings];
   for (const w of projectConfig.warnings) progress.detail(`  Config: ${w}`);
   const architecture = resolveArchitectureOverrides(projectConfig.config);
   if (projectConfig.path && verbose) {
@@ -828,16 +833,20 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // shallow clone, git missing) are silent unless verbose — never an error.
   let fileChurn: FileChurnInfo[] | undefined;
   let hotspots: HotspotInfo[] | undefined;
+  let gitSignal: "applied" | "disabled" | "skipped" = gitHistoryPromise ? "skipped" : "disabled";
+  let gitSkipReason: string | undefined;
   if (gitHistoryPromise) {
     const gh = await gitHistoryPromise;
     if ("churn" in gh && gh.churn.length > 0) {
       fileChurn = gh.churn;
       hotspots = computeHotspots(gh.churn, complexity);
+      gitSignal = "applied";
       progress.detail(
         `  Git history: ${gh.churn.length} file(s) across ${gh.commitCount} commit(s), ${hotspots.length} hotspot(s)`,
       );
-    } else if ("skipped" in gh && verbose) {
-      progress.detail(`  Git history skipped: ${gh.skipped}`);
+    } else if ("skipped" in gh) {
+      gitSkipReason = gh.skipped;
+      if (verbose) progress.detail(`  Git history skipped: ${gh.skipped}`);
     }
   }
 
@@ -1055,9 +1064,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Composite refactor pressure — one ranked answer to "where first?", built
   // from the signals above. Thresholds can be tuned per repository in
   // `.clarifydoc/config.json`; bad values are reported and defaults kept.
-  const pressureConfig = resolveRefactorPressureConfig(projectConfig.config.refactorPressure, (w) =>
-    progress.detail(`  Config: ${w}`),
-  );
+  const pressureConfig = resolveRefactorPressureConfig(projectConfig.config.refactorPressure, (w) => {
+    configWarnings.push(w);
+    progress.detail(`  Config: ${w}`);
+  });
   const refactorPressure = computeRefactorPressure({
     analyses: allAnalyses,
     complexity,
@@ -1151,6 +1161,27 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     suggestions,
     fileChurn,
     hotspots,
+    provenance: {
+      extractorVersion: EXTRACTOR_VERSION,
+      schemaVersion: SCHEMA_VERSION,
+      toolVersion: TOOL_VERSION,
+      incremental: options.incremental === true,
+      ...(options.incremental ? { reusedFiles: unchangedCount } : {}),
+      config: { present: projectConfig.path !== null, warnings: configWarnings },
+      signals: {
+        lsp: lspStats ? "applied" : "absent",
+        gitHistory: gitSignal,
+        ...(gitSkipReason ? { gitSkipReason } : {}),
+      },
+      extractorWarningFiles: allAnalyses.filter((a) => (a.extractorWarnings?.length ?? 0) > 0).length,
+      ...(parseFallbacks.length > 0
+        ? {
+            parseFallbacks: Object.fromEntries(
+              [...parseFallbacks.reduce((m, a) => m.set(a.language, (m.get(a.language) ?? 0) + 1), new Map<string, number>())].sort(),
+            ),
+          }
+        : {}),
+    },
     responsibilityProfiles: responsibilityProfiles.length > 0 ? responsibilityProfiles : undefined,
     refactorPressure: refactorPressure.length > 0 ? refactorPressure : undefined,
     fileLayerMap,
