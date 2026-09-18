@@ -1,4 +1,4 @@
-import type { FileAnalysis, ArchLayer, LayerViolation } from "../types/analysis.js";
+import type { FileAnalysis, ArchLayer, Language, LayerViolation } from "../types/analysis.js";
 import { isTestFile } from "./test-file-detector.js";
 import { matchesAnyGlob, type ArchitectureOverrides } from "./project-config.js";
 
@@ -126,14 +126,21 @@ const LAYER_LEVEL: Record<ArchLayer, number> = {
  * codebase without waiting for a new heuristic.
  */
 export function classifyFileLayers(
-  filePaths: string[],
+  files: ReadonlyArray<string | { path: string; language?: Language }>,
   overrides?: Pick<ArchitectureOverrides, "layers" | "exempt">,
 ): Record<string, ArchLayer> {
   const result: Record<string, ArchLayer> = {};
   const rules = overrides?.layers ?? [];
   const exempt = overrides?.exempt ?? [];
 
-  for (const fp of filePaths) {
+  for (const entry of files) {
+    const fp = typeof entry === "string" ? entry : entry.path;
+    // The language unlocks the plugin-declared test conventions. Without it
+    // only the generic and .NET patterns fire, so `server_test.go`,
+    // `test_views.py` and `foo_spec.rb` were classified as real application
+    // layers, could be layer-violation endpoints, and were scored for refactor
+    // pressure like production code.
+    const language = typeof entry === "string" ? undefined : entry.language;
     const normalized = fp.replace(/\\/g, "/");
     let assigned: ArchLayer = "unknown";
 
@@ -141,7 +148,7 @@ export function classifyFileLayers(
     // is still a test, and tests are exempt from layer violations. Tooling
     // trees and build-config files are equally outside the layered app.
     const overridden = rules.find((r) => matchesAnyGlob(normalized, r.patterns));
-    if (isTestFile(normalized) || TEST_SEGMENT_RE.test(normalized)) {
+    if (isTestFile(normalized, language) || TEST_SEGMENT_RE.test(normalized)) {
       assigned = "test";
     } else if (matchesAnyGlob(normalized, exempt)) {
       assigned = "unknown";

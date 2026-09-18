@@ -822,7 +822,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const duplicates = detectDuplicates(allAnalyses).filter(
     (d) => !d.occurrences.every((o) => isUnauthored(o.filePath)),
   );
-  const fileLayerMap = classifyFileLayers(allAnalyses.map((a) => a.filePath), architecture);
+  const fileLayerMap = classifyFileLayers(
+    allAnalyses.map((a) => ({ path: a.filePath, language: a.language })),
+    architecture,
+  );
   const layerViolations = detectLayerViolations(allAnalyses, componentGraph, fileLayerMap).filter(
     (v) => !isUnauthored(v.sourceFile) && !isUnauthored(v.targetFile),
   );
@@ -1003,7 +1006,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     layerViolations,
     responsibilityProfiles,
     fileChurn,
-    exclude: (f) => isUnauthored(f) || isTestFile(f),
+    // `fileLayerMap` is the single language-aware answer to "is this a test":
+    // calling isTestFile without the language here silently scored Go, Python
+    // and Ruby test files as production code.
+    exclude: (f) => isUnauthored(f) || fileLayerMap[f] === "test",
     config: pressureConfig,
   });
   if (refactorPressure.length > 0) {
@@ -1022,7 +1028,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     // Exclude generated barrel trees (kubb, …) and the repository's own
     // `generated` globs so the grade reflects authored code.
     generatedRoots,
-    isGenerated: isConfiguredGenerated,
+    isGenerated: isUnauthored,
   });
   progress.status("Generating suggestions...");
   const suggestions = generateSuggestions({

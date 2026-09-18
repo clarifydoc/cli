@@ -137,7 +137,9 @@ export function computeImpactDiff(
 
   // ── Tests to run: test files among changed ∪ dependents ──
   const tests = [...new Set([...changedSet, ...dependents])]
-    .filter((f) => isTestFile(f))
+    // The summary's layer map is language-aware; the bare check stays as the
+    // fallback for summaries written before it was.
+    .filter((f) => summary.fileLayerMap?.[f] === "test" || isTestFile(f))
     .sort();
 
   // ── Sample chains: reverse-import BFS from changed files to a screen/route file ──
