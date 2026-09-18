@@ -51,7 +51,8 @@ import {
 } from "../extractors/registry.js";
 import { buildSymbolLinks } from "./symbol-linker.js";
 import { aggregateComplexity } from "./complexity-analyzer.js";
-import { detectPatterns } from "./pattern-detector.js";
+import { detectPatterns, type FileStructure } from "./pattern-detector.js";
+import { buildSiblingGraph, sameFileLinksByFile } from "./sibling-graph.js";
 import { buildResponsibilityProfiles } from "./responsibility-profile.js";
 import { computeRefactorPressure, resolveRefactorPressureConfig } from "./refactor-pressure.js";
 import { loadProjectConfig, matchesAnyGlob, resolveArchitectureOverrides } from "./project-config.js";
@@ -840,7 +841,6 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     progress.detail(`  Parse fallbacks: ${parseFallbacks.length} file(s) fell back to regex (${summary})`);
   }
 
-  const patterns = detectPatterns(allAnalyses, frameworks).filter((p) => !isUnauthored(p.filePath));
   // Which concerns each file mixes (database, http, queue, auth, …) — from
   // classified imports plus data sources/routes/screens. Generated and vendored
   // code is excluded like every other quality signal.
@@ -859,6 +859,25 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   );
   const layerViolations = detectLayerViolations(allAnalyses, componentGraph, fileLayerMap).filter(
     (v) => !isUnauthored(v.sourceFile) && !isUnauthored(v.targetFile),
+  );
+
+  // Intra-file call structure: the edges exist in symbolLinks but nothing read
+  // them, so "20 functions" was all the god-object check ever knew.
+  const sameFileLinks = sameFileLinksByFile(symbolLinks);
+  const boundariesByFile = new Map(responsibilityProfiles.map((r) => [r.filePath, r.boundaries.length]));
+  const fileStructure = new Map<string, FileStructure>();
+  for (const a of allAnalyses) {
+    const graph = buildSiblingGraph(a, sameFileLinks.get(a.filePath) ?? []);
+    if (!graph) continue;
+    fileStructure.set(a.filePath, {
+      componentSizes: graph.components.map((c) => c.length),
+      participation: graph.participation,
+      boundaries: boundariesByFile.get(a.filePath) ?? 0,
+    });
+  }
+
+  const patterns = detectPatterns(allAnalyses, frameworks, fileStructure).filter(
+    (p) => !isUnauthored(p.filePath) && fileLayerMap[p.filePath] !== "test",
   );
   progress.status("Detecting communities...");
   const fileList = allAnalyses.map((a) => a.filePath);

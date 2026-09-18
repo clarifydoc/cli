@@ -1,5 +1,67 @@
 import type { FileAnalysis, PatternInfo, FrameworkDetection } from "../types/analysis.js";
 
+/**
+ * What a file's own call graph and boundaries say about whether it is one thing
+ * or several. Optional: callers that cannot supply it keep the old count-only
+ * grading, and the god-object confidence then says "unknown structure" rather
+ * than claiming more than is known.
+ */
+export interface FileStructure {
+  /** Sizes of the connected components of the intra-file call graph, largest first. */
+  componentSizes: number[];
+  /** Share of functions with at least one intra-file call edge, 0..1. */
+  participation: number;
+  /** Distinct external boundaries the file touches. */
+  boundaries: number;
+}
+
+/**
+ * How much of a god object is really a god object.
+ *
+ * Counting functions alone puts a cohesive 20-function parser — one connected
+ * call graph, no external boundaries — in the same bucket as a 20-method
+ * service that mixes database, HTTP and queue across four disjoint groups, and
+ * gives both the same "split by responsibility" advice. The intra-file call
+ * graph and the boundary count separate them.
+ *
+ * `low` is not "this is fine": it is a large file that should be judged on its
+ * size, not broken up along responsibilities it does not have.
+ */
+function gradeGodObject(
+  count: number,
+  structure: FileStructure | undefined,
+): { confidence: PatternInfo["confidence"]; detail: string } {
+  if (!structure) {
+    return { confidence: "medium", detail: "Structure unknown; judged on count alone." };
+  }
+  const groups = structure.componentSizes.filter((n) => n >= 3).length;
+  const largest = structure.componentSizes[0] ?? 0;
+  const total = structure.componentSizes.reduce((s, n) => s + n, 0);
+  const dominantShare = total > 0 ? largest / total : 0;
+  const where = `Touches ${structure.boundaries} boundary/boundaries across ${structure.componentSizes.length} call group(s)`;
+
+  if (structure.participation < 0.5) {
+    // Too few functions are connected for the graph to describe the file.
+    return {
+      confidence: "medium",
+      detail: `${where}, but most functions call no sibling, so its internal structure is unclear.`,
+    };
+  }
+  if (groups >= 2 || structure.boundaries >= 3) {
+    return {
+      confidence: "high",
+      detail: `${where} — it holds separable work, so splitting by responsibility is the right move.`,
+    };
+  }
+  if (dominantShare >= 0.8 && structure.boundaries <= 1) {
+    return {
+      confidence: "low",
+      detail: `${where}, and ${Math.round(dominantShare * 100)}% of it is one connected group — large but cohesive, so consider its size rather than its responsibilities.`,
+    };
+  }
+  return { confidence: "medium", detail: `${where}.` };
+}
+
 /** A ≤3-line get/set/is/has method with at most one parameter — data-holder
  *  boilerplate, excluded from the god-object method count. */
 const isTrivialAccessor = (fn: { name: string; line: number; endLine: number; params: unknown[] }): boolean =>
@@ -13,6 +75,7 @@ const isTrivialAccessor = (fn: { name: string; line: number; endLine: number; pa
 export function detectPatterns(
   analyses: FileAnalysis[],
   frameworks: FrameworkDetection[],
+  structure?: ReadonlyMap<string, FileStructure>,
 ): PatternInfo[] {
   const patterns: PatternInfo[] = [];
 
@@ -196,13 +259,16 @@ export function detectPatterns(
       a.functions.filter((f) => !isTrivialAccessor(f)).length +
       allMethods.filter((m) => !isTrivialAccessor(m)).length;
     if (godFnCount > 15) {
+      const graded = gradeGodObject(godFnCount, structure?.get(a.filePath));
       patterns.push({
         kind: "god-object",
         name: a.filePath.replace(/^.*[\\/]/, ""),
         filePath: a.filePath,
         line: 1,
-        confidence: godFnCount > 25 ? "high" : "medium",
-        detail: `File has ${godFnCount} non-accessor functions/methods${godFnCount === totalFnCount ? "" : ` (${totalFnCount} total)`}. Consider splitting.`,
+        confidence: graded.confidence,
+        detail:
+          `File has ${godFnCount} non-accessor functions/methods${godFnCount === totalFnCount ? "" : ` (${totalFnCount} total)`}. ` +
+          graded.detail,
       });
     }
 

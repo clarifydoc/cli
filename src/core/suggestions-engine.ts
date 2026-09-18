@@ -115,12 +115,19 @@ export function generateSuggestions(input: SuggestionInput): Suggestion[] {
   // ── High: God objects ──
   const godFiles = input.patterns.filter((p) => p.kind === "god-object");
   for (const gf of godFiles.slice(0, 5)) {
+    // `low` means the detector found one connected call group and no real
+    // boundaries: the file is large, but there are no responsibilities to split
+    // it along, and telling someone to split it anyway sends them looking for
+    // seams that are not there.
+    const cohesive = gf.confidence === "low";
     suggestions.push({
-      priority: "high",
+      priority: cohesive ? "medium" : "high",
       category: "Maintainability",
       message: gf.detail,
       filePath: gf.filePath,
-      actionable: "Split into smaller, focused modules by responsibility",
+      actionable: cohesive
+        ? "Large but cohesive — judge it on size, and split only if a group of functions gains its own reason to change"
+        : "Split into smaller, focused modules by responsibility",
     });
   }
 
