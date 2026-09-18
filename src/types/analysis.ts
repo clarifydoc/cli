@@ -1084,6 +1084,21 @@ export interface ResponsibilityProfile {
   /** Total evidence rows found; `evidence` is capped. */
   evidenceCount: number;
   evidence: BoundaryEvidence[];
+
+  /**
+   * How the concerns are DISTRIBUTED inside the file. A 900-line module where
+   * one function touches the queue and the rest do not is a very different
+   * refactoring job from one where every function mixes database, HTTP and
+   * queue, and the file-level count cannot tell them apart. Absent when no
+   * boundary evidence could be attributed to a function span.
+   */
+  symbolsWithBoundary?: number;
+  /** Functions that mix two or more non-ubiquitous concerns on their own. */
+  mixedSymbols?: number;
+  /** The highest concern count carried by any single function. */
+  maxSymbolConcerns?: number;
+  /** The most concern-heavy functions, most concerns first. Capped. */
+  topSymbols?: Array<{ symbol: string; line: number; boundaries: BoundaryKind[] }>;
 }
 
 export type PatternKind =
@@ -1267,6 +1282,16 @@ export interface RefactorPressureInfo {
   gates: string[];
   /** 0..1 — share of the component weight that had evidence. */
   confidence: number;
+  /**
+   * Where inside the file the concerns sit, when a responsibility profile could
+   * attribute them to functions. Turns "this file mixes four concerns" into
+   * advice that names the functions to split off.
+   */
+  concentration?: {
+    symbolsWithBoundary: number;
+    mixedSymbols: number;
+    topSymbols: Array<{ symbol: string; line: number; boundaries: BoundaryKind[] }>;
+  };
   evidence: {
     loc: number | null;
     functions: number;

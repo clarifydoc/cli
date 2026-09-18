@@ -96,3 +96,69 @@ describe("buildResponsibilityProfiles", () => {
     expect(buildResponsibilityProfiles([one, two]).map((p) => p.filePath)).toEqual(["b.ts", "a.ts"]);
   });
 });
+
+describe("per-symbol concentration", () => {
+  // "This file mixes four concerns" is not yet advice. Where the concerns SIT
+  // decides the refactor: one orchestrator that touches everything is a
+  // different job from ten single-purpose functions behind one module.
+  const fn = (name: string, line: number, endLine: number) => ({
+    name, params: [], returnType: null, isAsync: false, isExported: true,
+    decorators: [], calls: [], line, endLine,
+  });
+
+  it("attributes each boundary to the function that contains it", () => {
+    const a = file("src/svc.ts", "typescript", (f) => {
+      f.imports.push(imp("pg", 1), imp("axios", 2));
+      f.functions.push(fn("load", 10, 20), fn("notify", 30, 40));
+      f.dataSources.push(
+        ds("database", "pool.query", 12, { access: "read" }),
+        ds("api-call", "axios.post", 32),
+      );
+    });
+    const [p] = buildResponsibilityProfiles([a]);
+    expect(p.symbolsWithBoundary).toBe(2);
+    expect(p.mixedSymbols).toBe(0);
+    expect(p.maxSymbolConcerns).toBe(1);
+    expect(p.topSymbols).toEqual([
+      { symbol: "load", line: 10, boundaries: ["database"] },
+      { symbol: "notify", line: 30, boundaries: ["http"] },
+    ]);
+  });
+
+  it("finds the function that mixes concerns on its own", () => {
+    const a = file("src/god.ts", "typescript", (f) => {
+      f.imports.push(imp("pg", 1), imp("axios", 2), imp("amqplib", 3));
+      f.functions.push(fn("handle", 10, 40), fn("helper", 50, 55));
+      f.dataSources.push(
+        ds("database", "pool.query", 12, { access: "write" }),
+        ds("api-call", "axios.post", 20),
+        ds("queue-publish", "ch.publish", 30),
+        ds("database", "pool.query", 52, { access: "read" }),
+      );
+    });
+    const [p] = buildResponsibilityProfiles([a]);
+    expect(p.mixedSymbols).toBe(1);
+    expect(p.maxSymbolConcerns).toBe(3);
+    expect(p.topSymbols![0]).toEqual({
+      symbol: "handle", line: 10, boundaries: ["database", "http", "queue"],
+    });
+  });
+
+  it("ignores imports, which sit outside every function", () => {
+    const a = file("src/only-imports.ts", "typescript", (f) => {
+      f.imports.push(imp("pg", 1), imp("axios", 2));
+      f.functions.push(fn("noop", 10, 12));
+    });
+    const [p] = buildResponsibilityProfiles([a]);
+    expect(p.boundaries).toEqual(["database", "http"]);
+    expect(p.symbolsWithBoundary).toBeUndefined();
+  });
+
+  it("omits the aggregates when the file declares no functions", () => {
+    const a = file("src/config.ts", "typescript", (f) => {
+      f.dataSources.push(ds("database", "pool.query", 3));
+    });
+    const [p] = buildResponsibilityProfiles([a]);
+    expect(p.symbolsWithBoundary).toBeUndefined();
+  });
+});

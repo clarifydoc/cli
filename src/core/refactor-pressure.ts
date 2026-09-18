@@ -341,6 +341,15 @@ export function computeRefactorPressure(input: RefactorPressureInput): RefactorP
       drivers,
       gates,
       confidence,
+      ...(profile?.symbolsWithBoundary
+        ? {
+            concentration: {
+              symbolsWithBoundary: profile.symbolsWithBoundary,
+              mixedSymbols: profile.mixedSymbols ?? 0,
+              topSymbols: profile.topSymbols ?? [],
+            },
+          }
+        : {}),
       evidence: {
         loc,
         functions: functionCount,
