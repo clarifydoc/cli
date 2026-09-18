@@ -117,3 +117,32 @@ describe("analyzeBlastRadius — symbol usage", () => {
     expect(lib.exportedSymbols).toHaveLength(0);
   });
 });
+
+describe("analyzeBlastRadius — context burden", () => {
+  // a → b → c → d, and x → b   (two-hop neighbourhood of b: a, x, c upstream/downstream, d at hop 2 via c)
+  const graph = { "a.ts": ["b.ts"], "x.ts": ["b.ts"], "b.ts": ["c.ts"], "c.ts": ["d.ts"] };
+
+  it("counts files within two hops in both directions, excluding the file itself", () => {
+    const results = analyzeBlastRadius(graph, [], 5);
+    const b = results.find((r) => r.filePath === "b.ts")!;
+    // hop 1: a, x (importers), c (import); hop 2: d (via c). Nothing else.
+    expect(b.contextBurden).toEqual({ files: 4, lines: null, estimatedTokens: null });
+    const d = results.find((r) => r.filePath === "d.ts")!;
+    // hop 1: c; hop 2: b
+    expect(d.contextBurden?.files).toBe(2);
+  });
+
+  it("sizes the neighbourhood from line counts, including the file itself", () => {
+    const lineCounts = new Map([["a.ts", 100], ["x.ts", 50], ["b.ts", 10], ["c.ts", 200], ["d.ts", 1000]]);
+    const results = analyzeBlastRadius(graph, [], 5, { lineCounts });
+    const b = results.find((r) => r.filePath === "b.ts")!;
+    expect(b.contextBurden?.lines).toBe(100 + 50 + 10 + 200 + 1000);
+    expect(b.contextBurden?.estimatedTokens).toBe(13600);
+  });
+
+  it("sums only the files whose size is known", () => {
+    const results = analyzeBlastRadius(graph, [], 5, { lineCounts: new Map([["b.ts", 10]]) });
+    const a = results.find((r) => r.filePath === "a.ts")!;
+    expect(a.contextBurden?.lines).toBe(10); // own size unknown, b known
+  });
+});

@@ -344,18 +344,25 @@ export async function loadReportSummary(dir: string): Promise<ProjectAnalysis> {
       // about additive type-usage or cross-tier data. Preserve typeUsages and
       // traceImpact from the base summary by matching on filePath so the Data
       // Models view and cross-tier reach don't go blank whenever an LSP run
-      // is present.
+      // is present. contextBurden is carried over only when the LSP row lacks
+      // it (an enhancement written before the field existed): a fresh LSP run
+      // recomputes it over the enriched graph, which is the better number.
       const additiveByFile = new Map<
         string,
-        { typeUsages?: BlastRadiusInfo["typeUsages"]; traceImpact?: BlastRadiusInfo["traceImpact"] }
+        {
+          typeUsages?: BlastRadiusInfo["typeUsages"];
+          traceImpact?: BlastRadiusInfo["traceImpact"];
+          contextBurden?: BlastRadiusInfo["contextBurden"];
+        }
       >();
       const baseBlast = (summary.blastRadius ?? []) as BlastRadiusInfo[];
       for (const info of baseBlast) {
         const hasTu = info.typeUsages && info.typeUsages.length > 0;
-        if (hasTu || info.traceImpact) {
+        if (hasTu || info.traceImpact || info.contextBurden) {
           additiveByFile.set(info.filePath, {
             typeUsages: hasTu ? info.typeUsages : undefined,
             traceImpact: info.traceImpact,
+            contextBurden: info.contextBurden,
           });
         }
       }
@@ -366,6 +373,7 @@ export async function loadReportSummary(dir: string): Promise<ProjectAnalysis> {
         const add = additiveByFile.get(info.filePath);
         if (add?.typeUsages) info.typeUsages = add.typeUsages;
         if (add?.traceImpact) info.traceImpact = add.traceImpact;
+        if (add?.contextBurden && !info.contextBurden) info.contextBurden = add.contextBurden;
       }
       // Synthetic zero-scored entries (cross-tier reach without import-graph
       // presence) exist only in the base blast — carry them over too.

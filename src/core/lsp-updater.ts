@@ -107,10 +107,13 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
   const linkGraph = (summary.linkGraph ?? []).map((l) => ({ ...l }));
   enrichLinkGraphFromComponentGraph(linkGraph, componentGraph);
 
+  const lineCounts = new Map<string, number>();
+  for (const a of perFileAnalyses) if (a.lineCount !== undefined) lineCounts.set(a.filePath, a.lineCount);
   const blastRadius = analyzeBlastRadius(
     componentGraph,
     lspResult.enhancedLinks,
     perFileAnalyses.length,
+    { lineCounts },
   );
 
   // 5. Write the enhancement delta as its own file

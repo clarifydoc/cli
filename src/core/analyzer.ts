@@ -823,7 +823,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const suggestedQuestions = suggestQuestions(linkGraph, communities, cohesion, componentGraph, fileList, 7);
 
   progress.status("Computing blast radius and health score...");
-  const blastRadius = analyzeBlastRadius(componentGraph, symbolLinks, allAnalyses.length);
+  const lineCounts = new Map<string, number>();
+  for (const a of allAnalyses) if (a.lineCount !== undefined) lineCounts.set(a.filePath, a.lineCount);
+  const blastRadius = analyzeBlastRadius(componentGraph, symbolLinks, allAnalyses.length, { lineCounts });
 
   // Per-class type-usage blast — attach to the BlastRadiusInfo for the file
   // that defines each class. Empty entries are dropped to keep the JSON lean.

@@ -61,6 +61,7 @@ import type {
   SymbolDataAccess,
   SymbolLink,
   TraceImpactInfo,
+  ContextBurden,
   TypeReference,
   TypeUsageByFile,
   TypeUsageKind,
@@ -251,6 +252,8 @@ export interface NormBlastRadiusInfo {
    *  hard-capped, so interning would save nothing, and screens/routes are
    *  mostly non-path data (names, HTTP methods, route paths) anyway. */
   traceImpact?: TraceImpactInfo;
+  /** Two-hop neighbourhood size — plain numbers, carried verbatim. */
+  contextBurden?: ContextBurden;
 }
 
 // ── dataAccessGraph ──
@@ -837,6 +840,7 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
         })),
       };
       if (r.b.traceImpact) nb.traceImpact = r.b.traceImpact;
+      if (r.b.contextBurden) nb.contextBurden = r.b.contextBurden;
       if (r.typeUsages) {
         nb.typeUsages = r.typeUsages.map(({ tu, type, usagesByFile }) => ({
           type: remap[type],
@@ -1046,6 +1050,7 @@ export function denormalizeProject(obj: unknown): ProjectAnalysis {
         maxDepth: nb.maxDepth,
       };
       if (nb.traceImpact) info.traceImpact = nb.traceImpact;
+      if (nb.contextBurden) info.contextBurden = nb.contextBurden;
       if (nb.typeUsages) {
         info.typeUsages = nb.typeUsages.map((ntu): TypeUsageSummary => {
           const tEl = elements[ntu.type];

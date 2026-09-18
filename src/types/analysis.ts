@@ -1177,6 +1177,22 @@ export interface BlastRadiusInfo {
   /** Cross-tier reach: screens/routes that depend on this file and the
    *  entities/queues it touches. Omitted when the file has none. */
   traceImpact?: TraceImpactInfo;
+  /**
+   * How much must be read to edit this file safely: its two-hop neighborhood
+   * over imports AND importers (blast radius looks downstream only), with a
+   * size estimate. An agent-facing signal — a file whose neighborhood is 40
+   * files and 30k tokens cannot be changed from a single context window.
+   */
+  contextBurden?: ContextBurden;
+}
+
+export interface ContextBurden {
+  /** Distinct files within two hops in either direction, excluding the file itself. */
+  files: number;
+  /** Physical lines of the file plus its neighborhood; null when no line counts are known. */
+  lines: number | null;
+  /** Rough token estimate (≈10 tokens per line); null when `lines` is null. */
+  estimatedTokens: number | null;
 }
 
 export interface HealthScore {

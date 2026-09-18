@@ -33,7 +33,7 @@ All take `FileAnalysis[]` and/or `componentGraph` and return typed results.
 | File | Output | Depends on |
 |------|--------|-----------|
 | [symbol-linker.ts](symbol-linker.ts) | `SymbolLink[]` | inheritance, injection (ctor params + properties + enclosing-method params), deep-qualified, ClassName.method, constructor (`new X`/bare class), package-qualified import head, unique-global-leaf — 7-strategy fallback resolution. Heuristic tiers are guarded: same sub-project only, never into test-fixture paths, registry `builtinMembers` stoplist (`set.add`, `s.strip`) |
-| [blast-radius.ts](blast-radius.ts) | `BlastRadiusInfo[]` | reverse graph from componentGraph |
+| [blast-radius.ts](blast-radius.ts) | `BlastRadiusInfo[]` — downstream dependents, exported-symbol usage, plus `contextBurden`: the two-hop neighbourhood in BOTH directions with a line/token estimate (what must be read to edit the file safely) | reverse graph from componentGraph; `FileAnalysis.lineCount` for sizes |
 | [complexity-analyzer.ts](complexity-analyzer.ts) | `FileComplexityInfo[]` — per function: cyclomatic, cognitive (branch + nesting penalty, `else if` continuations exempt, callbacks deepen), nesting depth, parameter count | tree-sitter AST (per-file); the plugin `complexity` spec (`branchNodes`, `logicalOps`, `nestingNodes`) |
 | [pattern-detector.ts](pattern-detector.ts) | `PatternInfo[]` | classes, functions, imports |
 | [responsibility-profile.ts](responsibility-profile.ts) | `ResponsibilityProfile[]` — per file: boundaries touched (database, http, queue, auth, logging, …), workflow roles, concern count, read/write/publish/serve flags with evidence | imports classified through the plugins' `knownPackages` tables + dataSources/routes/screens; core names no package |
