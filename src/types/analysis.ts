@@ -270,6 +270,21 @@ export interface FileAnalysis {
   projectId: string;
 
   /**
+   * Set ONLY when tree-sitter parsing failed and extraction silently fell back
+   * to regex. A fallback result is indistinguishable from a first-class regex
+   * language on disk — no complexity rows, coarser calls, no AST routes — so
+   * without this marker a broken or missing grammar degrades every file of that
+   * language with no signal at all. Absent means the normal path ran (which
+   * path that was is derivable from `language` plus the plugin registry).
+   */
+  extraction?: {
+    method: "regex";
+    fallback: true;
+    /** Closed set: raw error text carries absolute grammar paths and would churn fixtures. */
+    reason: "grammar-unavailable" | "null-tree" | "parser-error";
+  };
+
+  /**
    * Physical line count of the source file. Feeds file-size signals (refactor
    * pressure, context burden) without re-reading the file. Absent on artifacts
    * written before extractor 1.50.

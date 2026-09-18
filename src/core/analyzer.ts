@@ -809,6 +809,16 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     }
   }
 
+  // A grammar that fails to load degrades every file of its language at once,
+  // so this count is reported whenever it is non-zero rather than under verbose.
+  const parseFallbacks = allAnalyses.filter((a) => a.extraction?.fallback);
+  if (parseFallbacks.length > 0) {
+    const byLanguage = new Map<string, number>();
+    for (const a of parseFallbacks) byLanguage.set(a.language, (byLanguage.get(a.language) ?? 0) + 1);
+    const summary = [...byLanguage].map(([lang, n]) => `${lang} ${n}`).join(", ");
+    progress.detail(`  Parse fallbacks: ${parseFallbacks.length} file(s) fell back to regex (${summary})`);
+  }
+
   const patterns = detectPatterns(allAnalyses, frameworks).filter((p) => !isUnauthored(p.filePath));
   // Which concerns each file mixes (database, http, queue, auth, …) — from
   // classified imports plus data sources/routes/screens. Generated and vendored

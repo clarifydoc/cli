@@ -46,6 +46,18 @@ export interface FileResult {
   securityIssues: SecurityIssue[];
 }
 
+/**
+ * Classify a parse failure into a closed reason. Raw messages carry absolute
+ * grammar paths, so they would leak machine state into the artifact and churn
+ * fixtures; the class of failure is what a reader needs.
+ */
+function fallbackReason(err: unknown): "grammar-unavailable" | "null-tree" | "parser-error" {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/grammar|\.wasm|registered|load/i.test(message)) return "grammar-unavailable";
+  if (/failed to parse|null tree/i.test(message)) return "null-tree";
+  return "parser-error";
+}
+
 /** Physical line count of the raw source (a trailing newline does not add a line). */
 export function countLines(source: string): number {
   if (source.length === 0) return 0;
@@ -161,10 +173,14 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     try {
       tree = await parseSource(sourceText, language as any, file.relativePath);
     } catch (parseErr) {
-      // Tree-sitter parse failure: fall back to regex extraction
+      // Tree-sitter parse failure: fall back to regex extraction. Marked on the
+      // analysis, because the result is otherwise indistinguishable from a
+      // first-class regex language — and the realistic trigger is a grammar
+      // that failed to load, which degrades EVERY file of that language at once.
       if (verbose) console.log(`    Parse failed for ${file.relativePath}, using regex fallback`);
       const { extractWithRegex } = await import("./regex-extractor.js");
       const analysis = extractWithRegex(rawSource, file.relativePath, file.language);
+      analysis.extraction = { method: "regex", fallback: true, reason: fallbackReason(parseErr) };
       analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
       analysis.projectId = projectId;
       analysis.lineCount = countLines(rawSource);
