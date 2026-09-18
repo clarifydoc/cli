@@ -11,4 +11,6 @@ export const vbManifest: LanguagePluginManifest = {
   parsing: "regex",
   extensions: [".vb", ".bas", ".cls", ".frm"],
   externalNamespaceRoots: ["System", "Microsoft"],
+  // WinForms designers, the VB counterpart of the C# rule above.
+  generatedFilePatterns: [/\.Designer\.vb$/],
 };

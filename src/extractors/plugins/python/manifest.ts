@@ -18,4 +18,6 @@ export const pythonManifest: LanguagePluginManifest = {
   frameworkImportHints: { sqlalchemy: "sqlalchemy", "django.db.models": "django-orm", "django.db": "django-orm", tortoise: "tortoise-orm", peewee: "peewee", pony: "pony-orm", "pony.orm": "pony-orm" },
   frameworkRules: pythonFrameworkRules,
   activationFiles: ["requirements.txt", "pyproject.toml"],
+  // protoc output for Python.
+  generatedFilePatterns: [/_pb2\.py$/, /_pb2_grpc\.py$/],
 };
