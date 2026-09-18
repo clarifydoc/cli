@@ -132,6 +132,16 @@ export function extractUrlTemplate(
   return text;
 }
 
+/**
+ * Bare name of a type reference: drops type arguments and trailing whitespace
+ * so `Repo<User>` matches the declaration named `Repo`. Keeps dotted names
+ * (`React.Component`) intact — that is how the source names the base.
+ */
+function bareTypeName(text: string): string {
+  const cut = text.indexOf("<");
+  return (cut === -1 ? text : text.slice(0, cut)).trim();
+}
+
 export class JavaScriptExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
 
@@ -300,41 +310,118 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
 
   private extractJsClasses(node: Node, classes: ClassInfo[]): void {
     for (const child of node.children) {
-      let isExported = false;
-
       if (child.type === "export_statement") {
-        isExported = true;
         for (const inner of child.children) {
-          if (inner.type === "class_declaration") {
-            classes.push(this.parseJsClass(inner, true));
-          }
+          this.collectJsClassLike(inner, classes, true);
         }
         continue;
       }
+      this.collectJsClassLike(child, classes, false);
+    }
+  }
 
-      if (child.type === "class_declaration") {
-        classes.push(this.parseJsClass(child, isExported));
+  /**
+   * A class, an abstract class or a TypeScript interface. Abstract classes and
+   * interfaces are first-class here because the symbol linker's interface
+   * fan-out (`buildInterfaceImplMap`) resolves a call on an interface-typed
+   * receiver to every implementation — machinery that stays dead for TS/JS
+   * unless interfaces reach `analysis.classes` with `kind: "interface"`.
+   */
+  private collectJsClassLike(node: Node, classes: ClassInfo[], isExported: boolean): void {
+    if (node.type === "class_declaration" || node.type === "abstract_class_declaration") {
+      classes.push(this.parseJsClass(node, isExported));
+    } else if (node.type === "interface_declaration") {
+      classes.push(this.parseTsInterface(node, isExported));
+    }
+  }
+
+  /**
+   * A TypeScript interface as a ClassInfo: method signatures become methods
+   * with no body (so `calls` is empty), property signatures become properties.
+   */
+  private parseTsInterface(node: Node, isExported: boolean): ClassInfo {
+    const name = node.childForFieldName("name")?.text ?? "anonymous";
+    const extendsList: string[] = [];
+    // `interface A extends B, C` is an `extends_type_clause` CHILD holding one
+    // `type` field entry per base — unlike a class, which can only have one.
+    for (const child of node.children) {
+      if (child.type !== "extends_type_clause") continue;
+      for (const t of child.namedChildren) {
+        const bare = bareTypeName(t.text);
+        if (bare) extendsList.push(bare);
       }
     }
+
+    const methods: FunctionInfo[] = [];
+    const properties: PropertyInfo[] = [];
+    const body = node.childForFieldName("body");
+    if (body) {
+      for (const member of body.namedChildren) {
+        if (member.type === "method_signature") {
+          methods.push({
+            name: member.childForFieldName("name")?.text ?? "anonymous",
+            params: this.extractJsParams(member.childForFieldName("parameters")),
+            returnType: member.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? null,
+            isAsync: false,
+            isExported: false,
+            decorators: [],
+            calls: [],
+            line: member.startPosition.row + 1,
+            endLine: member.endPosition.row + 1,
+          });
+        } else if (member.type === "property_signature") {
+          properties.push({
+            name: member.childForFieldName("name")?.text ?? "unknown",
+            type: member.childForFieldName("type")?.text?.replace(/^:\s*/, "") ?? null,
+            visibility: null,
+            isStatic: false,
+            isReadonly: member.text.includes("readonly "),
+          });
+        }
+      }
+    }
+
+    return {
+      name,
+      // An interface has no runtime base; the first `extends` keeps the shape
+      // other consumers expect, and the rest ride along in `implements` so the
+      // impl map can match on either (it inspects both).
+      extends: extendsList[0] ?? null,
+      implements: extendsList.slice(1),
+      decorators: [],
+      methods,
+      properties,
+      isExported,
+      line: node.startPosition.row + 1,
+      endLine: node.endPosition.row + 1,
+      kind: "interface",
+    };
   }
 
   private parseJsClass(node: Node, isExported: boolean): ClassInfo {
     const name = node.childForFieldName("name")?.text ?? "anonymous";
-    const heritage = node.childForFieldName("heritage");
     let extendsName: string | null = null;
     const implementsList: string[] = [];
 
-    if (heritage) {
-      for (const clause of heritage.children) {
+    // Heritage is a `class_heritage` CHILD, not a field — reading it as a field
+    // (`childForFieldName("heritage")`) silently returned null for every class
+    // in every TS and JS file, so inheritance was never recorded for the most
+    // common language in the corpus. TS spells the inside as
+    // `extends_clause` / `implements_clause`; plain JS has a bare expression.
+    for (const child of node.children) {
+      if (child.type !== "class_heritage") continue;
+      for (const clause of child.namedChildren) {
         if (clause.type === "extends_clause") {
-          extendsName = clause.child(1)?.text ?? null;
-        }
-        if (clause.type === "implements_clause") {
-          const kids = clause.children;
-          for (let j = 1; j < kids.length; j++) {
-            const impl = kids[j]!;
-            if (impl.type !== ",") implementsList.push(impl.text);
+          // `value` excludes `type_arguments`, so `extends Base<T>` -> `Base`.
+          extendsName = bareTypeName(clause.childForFieldName("value")?.text ?? "") || null;
+        } else if (clause.type === "implements_clause") {
+          for (const impl of clause.namedChildren) {
+            const bare = bareTypeName(impl.text);
+            if (bare) implementsList.push(bare);
           }
+        } else {
+          // JavaScript: `class_heritage` holds the extends expression directly.
+          extendsName ??= bareTypeName(clause.text) || null;
         }
       }
     }

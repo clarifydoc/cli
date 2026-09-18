@@ -359,6 +359,15 @@ interface ClassCatalogEntry {
   ctorLine?: number;
   /** How many files define a class with this name (1 = unambiguous). */
   count: number;
+  /**
+   * The same entry restricted to one language family, when the name is defined
+   * in more than one. `isSafeHeuristicTarget` already refuses to bind across
+   * families (a JS `new Error()` must not reach a C# `Error`), so counting a
+   * cross-family homonym as ambiguity only destroys correct links: in a
+   * full-stack repo a TypeScript `interface Owner` would silently block every
+   * C# `new Owner()` from resolving. Ambiguity is judged per family.
+   */
+  byFamily?: Map<string, ClassCatalogEntry>;
 }
 
 const CTOR_NAMES = new Set(["constructor", "__init__", "__construct", "New", "new"]);
@@ -451,13 +460,8 @@ function buildClassCatalog(analyses: FileAnalysis[]): Map<string, ClassCatalogEn
   const map = new Map<string, ClassCatalogEntry>();
   for (const a of analyses) {
     for (const cls of a.classes) {
-      const existing = map.get(cls.name);
-      if (existing) {
-        existing.count++;
-        continue;
-      }
       const ctor = cls.methods.find((m) => CTOR_NAMES.has(m.name) || m.name === cls.name);
-      map.set(cls.name, {
+      const fresh = (): ClassCatalogEntry => ({
         file: a.filePath,
         projectId: a.projectId,
         classLine: cls.line,
@@ -465,9 +469,45 @@ function buildClassCatalog(analyses: FileAnalysis[]): Map<string, ClassCatalogEn
         ctorLine: ctor?.line,
         count: 1,
       });
+      const family = extensionFamily(a.filePath);
+      const existing = map.get(cls.name);
+
+      if (!existing) {
+        const entry = fresh();
+        if (family) entry.byFamily = new Map([[family, fresh()]]);
+        map.set(cls.name, entry);
+        continue;
+      }
+
+      // Total stays the honest count of definitions; the per-family tally is
+      // what ambiguity is judged on, since a target in another family is never
+      // eligible anyway.
+      existing.count++;
+      if (!family) continue;
+      existing.byFamily ??= new Map();
+      const bucket = existing.byFamily.get(family);
+      if (bucket) bucket.count++;
+      else existing.byFamily.set(family, fresh());
     }
   }
   return map;
+}
+
+/**
+ * The catalog entry a call in `sourceFile` should be judged against: the
+ * definitions of that name in the caller's own language family. Falls back to
+ * the whole entry when the name is defined once, when the caller's family is
+ * unknown, or when no definition shares it — in the last case the family guard
+ * in `isSafeHeuristicTarget` rejects it anyway, so nothing unsafe gets through.
+ */
+function classEntryFor(
+  entry: ClassCatalogEntry | undefined,
+  sourceFile: string,
+): ClassCatalogEntry | undefined {
+  if (!entry?.byFamily) return entry;
+  const family = extensionFamily(sourceFile);
+  if (!family) return entry;
+  return entry.byFamily.get(family) ?? entry;
 }
 
 /** Per-(project, class name) catalog: lets injection resolution disambiguate a
@@ -1135,7 +1175,7 @@ function resolveCallToDefinition(
         ? call.name
         : null;
     if (className) {
-      const entry = classCatalog.get(className);
+      const entry = classEntryFor(classCatalog.get(className), sourceFile);
       // A constructor of a globally-unique type is unambiguous even across
       // sub-projects (`new GetRoleHoldersQuery()` in Api → its record in
       // Application), so allow cross-project resolution here.
@@ -1213,7 +1253,7 @@ function resolveCallToDefinition(
         // would have linked it before reaching here.)
         const declared = receiverDeclaredType(analysis, sourceSymbol, head.replace(/\?$/, ""));
         const tgtClass = entry.def.name.includes(".") ? entry.def.name.split(".")[0]! : null;
-        const declEntry = declared ? classCatalog.get(declared) : undefined;
+        const declEntry = declared ? classEntryFor(classCatalog.get(declared), sourceFile) : undefined;
         const contradicted =
           declared !== null && declared !== tgtClass &&
           !(declEntry && declEntry.count === 1 && declEntry.file === entry.file);
@@ -1258,7 +1298,7 @@ function resolveCallToDefinition(
     if (tm) {
       const arg = tm[1]!;
       const typeName = arg.slice(arg.lastIndexOf(".") + 1);
-      const entry = classCatalog.get(typeName);
+      const entry = classEntryFor(classCatalog.get(typeName), sourceFile);
       // `count === 1` (globally unique class) is the guard. When several files
       // define the type (a Domain entity AND its EF-scaffold duplicate), the
       // correct binding depends on real type resolution / which `using` is in
@@ -1389,13 +1429,15 @@ function resolveInjectedType(
   // 2) Globally-unique name (the original guard) — allows resolving to a class in
   // another sub-project when the name is unique everywhere.
   const resolved = resolveTypeIn(classCatalog, typeName);
+  const scoped = classEntryFor(resolved?.value, sourceFile);
   if (
     resolved &&
-    resolved.value.count === 1 &&
-    resolved.value.file !== sourceFile &&
-    resolved.value.projectId === projectId
+    scoped &&
+    scoped.count === 1 &&
+    scoped.file !== sourceFile &&
+    scoped.projectId === projectId
   ) {
-    return { typeName: resolved.name, typeFile: resolved.value.file };
+    return { typeName: resolved.name, typeFile: scoped.file };
   }
   return undefined;
 }
