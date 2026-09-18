@@ -1,4 +1,5 @@
 import { readFile } from "fs/promises";
+import { byOrdinal } from "./ordinal.js";
 import { existsSync } from "fs";
 import { resolve, join } from "path";
 import fg from "fast-glob";
@@ -287,7 +288,7 @@ export function detectFrameworks(
     }
   }
 
-  return results.sort((a, b) => a.id.localeCompare(b.id));
+  return results.sort((a, b) => byOrdinal(a.id, b.id));
 }
 
 export interface MultiRootFrameworks {
@@ -324,7 +325,7 @@ export async function detectFrameworksAcrossRoots(
     for (const f of fws) if (!merged.has(f.id)) merged.set(f.id, f);
   }
   return {
-    merged: [...merged.values()].sort((a, b) => a.id.localeCompare(b.id)),
+    merged: [...merged.values()].sort((a, b) => byOrdinal(a.id, b.id)),
     byRoot,
   };
 }

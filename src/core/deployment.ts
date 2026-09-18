@@ -1,4 +1,5 @@
 import fg from "fast-glob";
+import { byOrdinal } from "./ordinal.js";
 import { readFile } from "fs/promises";
 import { join, resolve } from "path";
 import type {
@@ -426,7 +427,7 @@ export async function detectDeployment(
     .sort((a, b) => {
       const va = VARIANT_RE.test(a.split("/").pop() ?? a) ? 1 : 0;
       const vb = VARIANT_RE.test(b.split("/").pop() ?? b) ? 1 : 0;
-      return va - vb || a.localeCompare(b);
+      return va - vb || byOrdinal(a, b);
     })
     .slice(0, options.maxFiles ?? 20);
 
@@ -750,7 +751,7 @@ export async function detectDeployment(
   return {
     composeFiles: [...usedFiles].sort(),
     services,
-    externals: [...externals.values()].sort((a, b) => a.name.localeCompare(b.name)),
+    externals: [...externals.values()].sort((a, b) => byOrdinal(a.name, b.name)),
     edges,
   };
 }

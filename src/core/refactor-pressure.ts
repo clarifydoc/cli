@@ -8,6 +8,7 @@ import type {
   RefactorPressureInfo,
   ResponsibilityProfile,
 } from "../types/analysis.js";
+import { byOrdinal } from "./ordinal.js";
 import { findCircularDeps } from "./health-scorer.js";
 import { overlayNumbers, type RefactorPressureConfigInput } from "./project-config.js";
 
@@ -362,7 +363,7 @@ export function computeRefactorPressure(input: RefactorPressureInput): RefactorP
   }
 
   const rank: Record<RefactorPressureBand, number> = { none: 0, observe: 1, suggest: 2, strong: 3, urgent: 4 };
-  results.sort((x, y) => rank[y.band] - rank[x.band] || y.score - x.score || x.filePath.localeCompare(y.filePath));
+  results.sort((x, y) => rank[y.band] - rank[x.band] || y.score - x.score || byOrdinal(x.filePath, y.filePath));
   return results;
 }
 

@@ -11,6 +11,7 @@ import type {
   TypeUsageKind,
   Confidence,
 } from "../types/analysis.js";
+import { byOrdinal } from "./ordinal.js";
 
 /**
  * Build the project-wide entity-relationship graph rendered in the report's
@@ -330,8 +331,8 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
   }
 
   return {
-    nodes: [...nodes.values()].sort((x, y) => x.id.localeCompare(y.id)),
-    edges: edges.sort((x, y) => x.source.localeCompare(y.source) || x.target.localeCompare(y.target)),
+    nodes: [...nodes.values()].sort((x, y) => byOrdinal(x.id, y.id)),
+    edges: edges.sort((x, y) => byOrdinal(x.source, y.source) || byOrdinal(x.target, y.target)),
   };
 }
 
@@ -435,7 +436,7 @@ export function linkEntityModels(entityGraph: EntityGraph, classGraph: ClassGrap
     );
     if (models.length === 0) continue;
     node.referencingModels = models.sort(
-      (a, b) => b.count - a.count || a.name.localeCompare(b.name),
+      (a, b) => b.count - a.count || byOrdinal(a.name, b.name),
     );
   }
 }

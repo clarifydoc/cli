@@ -6,6 +6,7 @@ import type {
   ResponsibilityProfile,
   WorkflowRole,
 } from "../types/analysis.js";
+import { byOrdinal } from "./ordinal.js";
 import { classifyKnownPackage, type KnownPackageEntry } from "../extractors/registry.js";
 
 /**
@@ -245,7 +246,7 @@ export function buildResponsibilityProfiles(analyses: readonly FileAnalysis[]): 
     const roles = [...new Set(boundaries.map((b) => BOUNDARY_ROLE[b]))].sort();
     const concernCount = roles.filter((r) => !UBIQUITOUS_ROLES.has(r)).length;
 
-    evidence.sort((x, y) => (x.line ?? Number.MAX_SAFE_INTEGER) - (y.line ?? Number.MAX_SAFE_INTEGER) || x.name.localeCompare(y.name));
+    evidence.sort((x, y) => (x.line ?? Number.MAX_SAFE_INTEGER) - (y.line ?? Number.MAX_SAFE_INTEGER) || byOrdinal(x.name, y.name));
 
     out.push({
       filePath: a.filePath,
@@ -264,6 +265,6 @@ export function buildResponsibilityProfiles(analyses: readonly FileAnalysis[]): 
     });
   }
 
-  out.sort((x, y) => y.concernCount - x.concernCount || x.filePath.localeCompare(y.filePath));
+  out.sort((x, y) => y.concernCount - x.concernCount || byOrdinal(x.filePath, y.filePath));
   return out;
 }

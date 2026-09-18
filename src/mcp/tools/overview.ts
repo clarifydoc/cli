@@ -1,6 +1,7 @@
 /** Project-level tools: status, (re-)analyze, search, health, git impact. */
 
 import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
+import { byOrdinal } from "../../core/ordinal.js";
 import type { McpTool } from "../protocol.js";
 import type { LoadedAnalysis } from "../store.js";
 import {
@@ -113,7 +114,7 @@ function best(...scores: number[]): number {
 }
 
 function collect(hits: Hit[], limit: number): string[] {
-  hits.sort((a, b) => b.score - a.score || a.text.localeCompare(b.text));
+  hits.sort((a, b) => b.score - a.score || byOrdinal(a.text, b.text));
   return bulletList(hits, limit, (h) => h.text);
 }
 

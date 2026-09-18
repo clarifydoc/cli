@@ -1,6 +1,7 @@
 /** Data-tier tools: the ER model and route/screen → data-effect flows. */
 
 import type { McpTool } from "../protocol.js";
+import { byOrdinal } from "../../core/ordinal.js";
 import type { EntityGraphEdge, EntityGraphNode } from "../../types/analysis.js";
 import {
   bulletList,
@@ -68,7 +69,7 @@ export function dataModelTool(ctx: ToolContext): McpTool {
             `orms: ${countMap(tally(graph.nodes, (n) => n.orm ?? "unknown")) || "unknown"}`,
             "",
             ...bulletList(
-              [...nodes].sort((a, b) => a.name.localeCompare(b.name)),
+              [...nodes].sort((a, b) => byOrdinal(a.name, b.name)),
               limit,
               (n) =>
                 `${n.name} [${n.kind}${n.orm ? `, ${n.orm}` : ""}] — ${plural(n.columns.length, "column")}, ` +

@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import { byOrdinal } from "./ordinal.js";
 import type { FileChurnInfo, FileComplexityInfo, HotspotInfo } from "../types/analysis.js";
 
 /**
@@ -141,12 +142,12 @@ export async function collectGitHistory(
       deletions: acc.deletions,
       lastTouched: acc.lastTouched,
       authors: [...acc.authors.entries()]
-        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .sort((a, b) => b[1] - a[1] || byOrdinal(a[0], b[0]))
         .slice(0, TOP_AUTHORS)
         .map(([name]) => name),
       authorCount: acc.authors.size,
     }))
-    .sort((a, b) => b.commits - a.commits || a.file.localeCompare(b.file));
+    .sort((a, b) => b.commits - a.commits || byOrdinal(a.file, b.file));
 
   return { churn, commitCount };
 }
@@ -179,6 +180,6 @@ export function computeHotspots(
       totalComplexity: cx,
     }))
     .filter((h) => h.score > 0)
-    .sort((a, b) => b.score - a.score || a.file.localeCompare(b.file))
+    .sort((a, b) => b.score - a.score || byOrdinal(a.file, b.file))
     .slice(0, top);
 }
