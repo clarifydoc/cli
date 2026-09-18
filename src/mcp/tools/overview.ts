@@ -46,7 +46,7 @@ export function statusTool(ctx: ToolContext): McpTool {
         };
       }
       const loaded = await requireAnalysis(ctx);
-      return { text: statusReport(loaded, ctx.store) };
+      return { text: await statusReport(loaded, ctx.store) };
     },
   };
 }
@@ -82,7 +82,7 @@ export function analyzeTool(ctx: ToolContext): McpTool {
             full ? "full re-scan" : "incremental"
           }): ${result.fileCount} files.`,
           "",
-          statusReport(loaded, ctx.store),
+          await statusReport(loaded, ctx.store),
         ]),
       };
     },
@@ -634,6 +634,6 @@ export function impactTool(ctx: ToolContext): McpTool {
 }
 
 /** Re-exported for the resource that mirrors `clarifydoc_status`. */
-export function statusText(loaded: LoadedAnalysis, ctx: ToolContext): string {
+export function statusText(loaded: LoadedAnalysis, ctx: ToolContext): Promise<string> {
   return statusReport(loaded, ctx.store);
 }

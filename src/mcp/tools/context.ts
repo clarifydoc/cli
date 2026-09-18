@@ -1,6 +1,7 @@
 /** Shared plumbing for the tool implementations. */
 
 import type { ProjectAnalysis } from "../../types/analysis.js";
+import { assessFreshness } from "../../core/manifest.js";
 import { AnalysisStore, resolveFilePath, type LoadedAnalysis } from "../store.js";
 import { ago, countMap, facts, tally } from "../format.js";
 
@@ -39,11 +40,37 @@ export function projectName(summary: ProjectAnalysis): string {
 }
 
 /**
+ * Whether the analysis still describes the source on disk. Wall-clock age
+ * ("analyzed 3 hours ago") says nothing about whether the code moved, and the
+ * manifest already carries an mtime and a hash per file, so this is the answer
+ * the caller actually needs before deciding to re-analyze.
+ */
+async function sourceFreshness(store: AnalysisStore): Promise<string | undefined> {
+  const f = await assessFreshness(store.analysisDir, store.projectRoot);
+  switch (f.state) {
+    case "fresh":
+      return `unchanged since the analysis (${f.checked} files checked)`;
+    case "changed": {
+      const parts = [
+        f.changed.length ? `${f.changed.length} changed` : "",
+        f.removed.length ? `${f.removed.length} removed` : "",
+      ].filter(Boolean);
+      const eg = [...f.changed, ...f.removed].slice(0, 3).join(", ");
+      return `${parts.join(", ")} since the analysis${eg ? ` (e.g. ${eg})` : ""}${f.sampled ? ", sampled" : ""} — call clarifydoc_analyze`;
+    }
+    case "extractor-changed":
+      return "the extractor changed since this analysis — call clarifydoc_analyze with full=true";
+    default:
+      return undefined; // no manifest: nothing to compare against
+  }
+}
+
+/**
  * The one-screen overview every session should start from: what was analyzed,
  * how stale it is, and how much of each dimension exists — so the model knows
  * which follow-up tool is worth calling.
  */
-export function statusReport(loaded: LoadedAnalysis, store: AnalysisStore): string {
+export async function statusReport(loaded: LoadedAnalysis, store: AnalysisStore): Promise<string> {
   const { summary } = loaded;
   const routes = summary.routeMap ?? [];
   const apiRoutes = routes.filter((r) => r.kind === "api");
@@ -57,6 +84,7 @@ export function statusReport(loaded: LoadedAnalysis, store: AnalysisStore): stri
     facts([
       ["root", summary.projectRoot],
       ["analyzed", `${summary.analyzedAt} (${ago(summary.analyzedAt)})`],
+      ["source", await sourceFreshness(store)],
       ["files", summary.files.length],
       ["health", health ? `${health.score}/100 (${health.grade})` : undefined],
     ]),

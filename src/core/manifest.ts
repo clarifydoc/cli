@@ -82,6 +82,95 @@ export async function saveManifest(outputDir: string, manifest: Manifest): Promi
 }
 
 /**
+ * Read the manifest WITHOUT the extractor-version gate, so a caller can tell
+ * "written by an older extractor" apart from "no manifest at all". The normal
+ * loader collapses both to null, which is right for cache reuse and wrong for
+ * reporting freshness.
+ */
+export async function loadManifestRaw(outputDir: string): Promise<Manifest | null> {
+  const path = join(resolve(outputDir), MANIFEST_NAME);
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = JSON.parse(await readFile(path, "utf-8")) as Partial<Manifest>;
+    if (parsed.version !== 1 || !parsed.entries || typeof parsed.entries !== "object") return null;
+    return parsed as Manifest;
+  } catch {
+    return null;
+  }
+}
+
+export interface FreshnessReport {
+  /**
+   * `fresh` — every recorded file still matches.
+   * `changed` — at least one recorded file was edited or removed.
+   * `extractor-changed` — the manifest predates the current extractor, so the
+   *   analysis would differ even for untouched source.
+   * `unknown` — no manifest (a non-incremental run writes none), so nothing
+   *   can be compared. Deliberately not reported as `fresh`.
+   */
+  state: "fresh" | "changed" | "extractor-changed" | "unknown";
+  changed: string[];
+  removed: string[];
+  /** How many manifest entries were examined. */
+  checked: number;
+  /** True when `maxStats` capped the check, so `changed`/`removed` may be short. */
+  sampled: boolean;
+}
+
+/** Entries examined before the freshness probe stops and reports `sampled`. */
+const FRESHNESS_STAT_CAP = 5000;
+
+/**
+ * Compare a written analysis against the source tree it describes.
+ *
+ * The only staleness signal available before this was "analyzed 3 hours ago",
+ * which says nothing about whether the code moved. The manifest already holds
+ * an mtime and a SHA-256 per file, so the answer is a stat per entry and a hash
+ * only where the mtime shifted.
+ *
+ * Added files are deliberately out of scope: finding them means re-running
+ * discovery with the caller's include/exclude settings, which is most of an
+ * analysis. This answers "is what I already know still true".
+ */
+export async function assessFreshness(
+  outputDir: string,
+  projectRoot: string,
+  opts: { maxStats?: number } = {},
+): Promise<FreshnessReport> {
+  const manifest = await loadManifestRaw(outputDir);
+  if (!manifest) return { state: "unknown", changed: [], removed: [], checked: 0, sampled: false };
+  if (manifest.extractorVersion !== EXTRACTOR_VERSION) {
+    return { state: "extractor-changed", changed: [], removed: [], checked: 0, sampled: false };
+  }
+
+  const cap = opts.maxStats ?? FRESHNESS_STAT_CAP;
+  const keys = Object.keys(manifest.entries).sort();
+  const sampled = keys.length > cap;
+  const examined = sampled ? keys.slice(0, cap) : keys;
+
+  const changed: string[] = [];
+  const removed: string[] = [];
+  for (const rel of examined) {
+    const entry = manifest.entries[rel]!;
+    const abs = join(resolve(projectRoot), rel);
+    try {
+      const classified = await classifyFile(abs, entry);
+      if (classified.state !== "unchanged") changed.push(rel);
+    } catch {
+      removed.push(rel); // stat failed: deleted, renamed, or no longer readable
+    }
+  }
+
+  return {
+    state: changed.length + removed.length > 0 ? "changed" : "fresh",
+    changed,
+    removed,
+    checked: examined.length,
+    sampled,
+  };
+}
+
+/**
  * Determine the cache state of a file relative to a previous manifest entry.
  *   "unchanged" — mtime matches, or content hash matches (sync tools touch mtime)
  *   "changed"   — content hash differs from cache
