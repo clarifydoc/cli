@@ -922,6 +922,14 @@ export interface LspStats {
   lspResolvedCount: number;
   referenceLinksCount: number;
   enhancementTimeMs: number;
+  /** When the enhancement was produced. Absent on deltas written before this was recorded. */
+  enhancedAt?: string;
+  /**
+   * The delta predates the analysis it was found next to, so its graphs describe
+   * source that has since been re-analyzed and were NOT merged. Run `lsp-update`
+   * to refresh it.
+   */
+  stale?: boolean;
 }
 
 /**
