@@ -58,7 +58,15 @@ export function pressureAction(p: RefactorPressureInfo): string {
   const g = new Set(p.gates);
   if (d.has("mixed_concerns") || g.has("concern_overload")) {
     const roles = p.evidence.roles.filter((r) => r !== "observability" && r !== "configuration");
-    return `Split by responsibility — it mixes ${roles.join(", ")}; move each boundary behind its own module`;
+    const where = p.concentration
+      ? p.concentration.mixedSymbols > 0
+        ? `; ${p.concentration.mixedSymbols} function(s) mix concerns on their own, starting with ${p.concentration.topSymbols
+            .slice(0, 2)
+            .map((t) => `${t.symbol}@${t.line}`)
+            .join(" and ")}`
+        : `; no single function mixes them, so the split is along the ${p.concentration.symbolsWithBoundary} functions that touch a boundary`
+      : "";
+    return `Split by responsibility — it mixes ${roles.join(", ")}${where}; move each boundary behind its own module`;
   }
   if (g.has("dependency_hub") || (d.has("many_dependents") && d.has("many_dependencies"))) {
     return "Narrow the public surface and push shared pieces into a leaf module — this file is both a hub and a heavy importer";

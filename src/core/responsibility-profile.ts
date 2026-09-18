@@ -8,6 +8,7 @@ import type {
 } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
 import { classifyKnownPackage, type KnownPackageEntry } from "../extractors/registry.js";
+import { spansOf, innermostAt } from "./api-route-symbol-links.js";
 
 /**
  * Per-file responsibility profile: which external boundaries a file touches
@@ -136,6 +137,55 @@ function externalRoot(source: string): string | null {
   return s.split(/[/.:\\]/)[0] || null;
 }
 
+/** Functions kept in `topSymbols`. Counts stay exact. */
+const TOP_SYMBOL_CAP = 5;
+
+/**
+ * Attribute each boundary-bearing piece of evidence to the function that
+ * contains it, so the profile can say whether a file's concerns are
+ * concentrated in one orchestrator or smeared across every function.
+ *
+ * Uses the evidence the profile already collects, which carries a line. It
+ * deliberately does NOT use `symbolDataAccess`: that is gated on resolving an
+ * entity, so a Spring Data module with fifty database calls and no resolvable
+ * entity produces no rows at all there.
+ */
+function attributeToSymbols(
+  a: FileAnalysis,
+  evidence: readonly BoundaryEvidence[],
+): Pick<ResponsibilityProfile, "symbolsWithBoundary" | "mixedSymbols" | "maxSymbolConcerns" | "topSymbols"> {
+  const spans = spansOf(a);
+  if (spans.length === 0) return {};
+
+  const bySymbol = new Map<string, { line: number; boundaries: Set<BoundaryKind> }>();
+  for (const row of evidence) {
+    // Imports sit at the top of the file, outside every function: they say the
+    // file can reach a boundary, not that any particular function does.
+    if (row.source === "import" || row.line === undefined) continue;
+    const span = innermostAt(spans, row.line);
+    if (!span) continue; // module-level statement
+    let entry = bySymbol.get(span.symbol);
+    if (!entry) bySymbol.set(span.symbol, (entry = { line: span.line, boundaries: new Set() }));
+    entry.boundaries.add(row.kind);
+  }
+  if (bySymbol.size === 0) return {};
+
+  const rows = [...bySymbol].map(([symbol, v]) => {
+    const boundaries = [...v.boundaries].sort();
+    const concerns = new Set(boundaries.map((b) => BOUNDARY_ROLE[b])).size
+      - boundaries.filter((b) => UBIQUITOUS_ROLES.has(BOUNDARY_ROLE[b])).length;
+    return { symbol, line: v.line, boundaries, concerns: Math.max(0, concerns) };
+  });
+
+  rows.sort((x, y) => y.concerns - x.concerns || x.line - y.line || byOrdinal(x.symbol, y.symbol));
+  return {
+    symbolsWithBoundary: rows.length,
+    mixedSymbols: rows.filter((r) => r.concerns >= 2).length,
+    maxSymbolConcerns: rows[0]?.concerns ?? 0,
+    topSymbols: rows.slice(0, TOP_SYMBOL_CAP).map(({ symbol, line, boundaries }) => ({ symbol, line, boundaries })),
+  };
+}
+
 /** Build the responsibility profile for every file that touches at least one boundary. */
 export function buildResponsibilityProfiles(analyses: readonly FileAnalysis[]): ResponsibilityProfile[] {
   const out: ResponsibilityProfile[] = [];
@@ -250,6 +300,7 @@ export function buildResponsibilityProfiles(analyses: readonly FileAnalysis[]): 
 
     out.push({
       filePath: a.filePath,
+      ...attributeToSymbols(a, evidence),
       boundaries,
       roles,
       concernCount,
