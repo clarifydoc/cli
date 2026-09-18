@@ -12,6 +12,8 @@ export const goManifest: LanguagePluginManifest = {
   parsing: "regex",
   extensions: [".go"],
   testFilePatterns: [/_test\.go$/],
+  // protoc and protoc-gen-grpc-gateway output.
+  generatedFilePatterns: [/\.pb\.go$/, /\.pb\.gw\.go$/],
   externalModulePrefixes: ["fmt", "net/", "os", "io", "context", "strings", "strconv", "errors", "encoding/", "crypto/", "database/", "log", "sync", "time", "testing"],
   frameworkImportHints: { "gorm.io/gorm": "gorm", "github.com/jmoiron/sqlx": "sqlx", "entgo.io/ent": "ent", "github.com/beego/beego": "beego-orm", "github.com/astaxie/beego": "beego-orm", "github.com/Masterminds/squirrel": "squirrel" },
   frameworkRules: goFrameworkRules,

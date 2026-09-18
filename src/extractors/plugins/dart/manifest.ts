@@ -12,6 +12,8 @@ export const dartManifest: LanguagePluginManifest = {
   parsing: "regex",
   extensions: [".dart"],
   testFilePatterns: [/_test\.dart$/],
+  // build_runner output: json_serializable, freezed, riverpod, injectable.
+  generatedFilePatterns: [/\.g\.dart$/, /\.freezed\.dart$/, /\.gr\.dart$/, /\.config\.dart$/],
   externalNamespaceRoots: ["dart", "package"],
   frameworkImportHints: { "package:flutter": "flutter", "package:go_router": "go_router", "package:http": "http", "package:dio": "dio", "package:cloud_firestore": "firestore", "package:sqflite": "sqflite", "package:supabase_flutter": "supabase", "package:shelf": "shelf", "package:shelf_router": "shelf" },
   frameworkRules: dartFrameworkRules,

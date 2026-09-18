@@ -57,6 +57,7 @@ import { buildResponsibilityProfiles } from "./responsibility-profile.js";
 import { computeRefactorPressure, resolveRefactorPressureConfig } from "./refactor-pressure.js";
 import { loadProjectConfig, matchesAnyGlob, resolveArchitectureOverrides } from "./project-config.js";
 import { isTestFile } from "./test-file-detector.js";
+import { isGeneratedFile } from "./generated-file-detector.js";
 import { detectDuplicates } from "./duplication-detector.js";
 import { classifyFileLayers, detectLayerViolations } from "./layer-analyzer.js";
 import { analyzeBlastRadius } from "./blast-radius.js";
@@ -793,12 +794,21 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     );
   }
   const isConfiguredGenerated = (f: string): boolean => matchesAnyGlob(f, architecture.generated);
+  // Language-idiomatic codegen that names FILES rather than folders
+  // (`Form1.Designer.cs`, `user.pb.go`) — invisible to the directory-based
+  // detection, so its size and repetition counted against the team.
+  const pluginGenerated = new Set(
+    allAnalyses.filter((a) => isGeneratedFile(a.filePath, a.language)).map((a) => a.filePath),
+  );
+  if (pluginGenerated.size > 0) {
+    progress.detail(`  Generated (by convention): ${pluginGenerated.size} file(s) excluded from quality signals`);
+  }
 
   const minifiedFiles = new Set(allAnalyses.filter((a) => a.minified).map((a) => a.filePath));
   const vendoredFiles = vendoredMinoritySet(allAnalyses);
   const isUnauthored = (f: string): boolean => {
     if (minifiedFiles.has(f) || vendoredFiles.has(f)) return true;
-    if (isConfiguredGenerated(f)) return true;
+    if (isConfiguredGenerated(f) || pluginGenerated.has(f)) return true;
     if (generatedRoots.length === 0) return false;
     const p = f.replace(/\\/g, "/");
     return generatedRoots.some((r) => p === r || p.startsWith(r + "/"));

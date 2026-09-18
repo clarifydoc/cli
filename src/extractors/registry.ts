@@ -532,3 +532,17 @@ const TEST_FILE_PATTERNS_BY_LANGUAGE: ReadonlyMap<Language, readonly RegExp[]> =
 export function testFilePatternsFor(language: Language): readonly RegExp[] {
   return TEST_FILE_PATTERNS_BY_LANGUAGE.get(language) ?? [];
 }
+
+const GENERATED_FILE_PATTERNS_BY_LANGUAGE: ReadonlyMap<Language, readonly RegExp[]> = (() => {
+  const map = new Map<Language, readonly RegExp[]>();
+  for (const manifest of ALL_MANIFESTS) {
+    if (manifest.generatedFilePatterns && manifest.generatedFilePatterns.length > 0) {
+      map.set(manifest.language, manifest.generatedFilePatterns);
+    }
+  }
+  return map;
+})();
+
+export function generatedFilePatternsFor(language: Language): readonly RegExp[] {
+  return GENERATED_FILE_PATTERNS_BY_LANGUAGE.get(language) ?? [];
+}

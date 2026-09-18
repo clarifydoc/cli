@@ -13,6 +13,9 @@ export const csharpManifest: LanguagePluginManifest = {
   extensions: [".cs"],
   grammar: { variants: { csharp: { pkg: "tree-sitter-c-sharp", wasm: "tree-sitter-c_sharp.wasm" } } },
   testFilePatterns: [/(Test|Tests)\.cs$/],
+  // WinForms/WPF designers and Roslyn source generators. Case-sensitive so
+  // `ReportDesigner.cs` — a hand-written class — is not swept up.
+  generatedFilePatterns: [/\.Designer\.cs$/, /\.g\.cs$/, /\.g\.i\.cs$/],
   externalModulePrefixes: ["System", "Microsoft.", "Newtonsoft."],
   externalNamespaceRoots: ["System", "Microsoft"],
   frameworkImportHints: { "Microsoft.EntityFrameworkCore": "ef-core", "System.Data.Entity": "ef6", Dapper: "dapper", NHibernate: "nhibernate", RepoDb: "repodb", PetaPoco: "petapoco" },

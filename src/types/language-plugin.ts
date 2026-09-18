@@ -284,6 +284,24 @@ export interface LanguagePluginManifest {
    */
   testFilePatterns?: readonly RegExp[];
   /**
+   * Language-idiomatic GENERATED-file conventions: `*.Designer.cs`, `*.g.cs`,
+   * `*.pb.go`, `*_pb2.py`, `*.freezed.dart`. Matched against the
+   * project-relative path.
+   *
+   * Generated-code detection is otherwise directory-based (barrel trees,
+   * `generated/`, `vendor/`) plus whatever a team writes into its config, so a
+   * codegen convention that names FILES rather than folders was invisible and
+   * its output counted against the team's quality signals.
+   *
+   * A match does NOT stop the file being analyzed — its screens, routes and
+   * entities are real facts, and a WinForms `*.Designer.cs` is the only place a
+   * form's layout exists. It excludes the file from the quality signals
+   * (patterns, duplicates, layer violations, refactor pressure, the health
+   * grade), which is what a team neither writes nor maintains should be
+   * excluded from.
+   */
+  generatedFilePatterns?: readonly RegExp[];
+  /**
    * Builtin member/method names (`set.add`, `str.toUpperCase`) — a call whose
    * leaf is one of these never resolves to a project symbol by name-uniqueness
    * heuristics (a project method merely sharing the name is a coincidence).
