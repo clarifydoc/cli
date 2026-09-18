@@ -17,4 +17,8 @@ export const composerPackages: readonly KnownPackageRule[] = [
   { names: ["guzzlehttp/guzzle"], category: "http" },
   // ── Testing ──
   { names: ["phpunit/phpunit", "mockery/mockery"], category: "testing" },
+  // ── Cache / mail ──
+  { names: ["symfony/cache", "illuminate/cache", "doctrine/cache"], category: "cache" },
+  { names: ["symfony/mailer", "phpmailer/phpmailer", "swiftmailer/swiftmailer"], category: "email" },
+
 ];

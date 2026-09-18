@@ -50,6 +50,9 @@ const CATEGORY_BOUNDARY: Partial<Record<PackageCategory, BoundaryKind>> = {
   state: "state",
   ui: "ui",
   frontend: "ui",
+  cache: "cache",
+  filesystem: "filesystem",
+  email: "email",
 };
 
 /** Boundary → the workflow role it evidences. */
@@ -67,6 +70,10 @@ export const BOUNDARY_ROLE: Record<BoundaryKind, WorkflowRole> = {
   ui: "presentation",
   state: "presentation",
   config: "configuration",
+  cache: "caching",
+  // Writing files is state that outlives the process, like a database write.
+  filesystem: "persistence",
+  email: "integration",
 };
 
 /**

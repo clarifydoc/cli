@@ -41,4 +41,8 @@ export const pypiPackages: readonly KnownPackageRule[] = [
   { names: ["numpy", "pandas", "scipy", "matplotlib"], category: "util" },
   // ── Family patterns ──
   { match: /^pytest-/, category: "testing" },
+  // ── Cache / mail ──
+  { names: ["cachetools", "aiocache", "django-redis", "dogpile.cache"], category: "cache" },
+  { names: ["flask-mail", "django-anymail", "sendgrid", "yagmail", "emails"], category: "email" },
+
 ];

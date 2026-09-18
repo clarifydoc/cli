@@ -1041,12 +1041,14 @@ export interface HotspotInfo {
 /** An external boundary a file touches, derived from imports, data sources, routes and screens. */
 export type BoundaryKind =
   | "database" | "http" | "graphql" | "grpc" | "queue" | "auth" | "logging"
-  | "cloud" | "serialization" | "validation" | "ui" | "state" | "config";
+  | "cloud" | "serialization" | "validation" | "ui" | "state" | "config"
+  | "cache" | "filesystem" | "email";
 
 /** The workflow concern a boundary evidences. */
 export type WorkflowRole =
   | "persistence" | "transport" | "messaging" | "security" | "observability"
-  | "integration" | "mapping" | "validation" | "presentation" | "configuration";
+  | "integration" | "mapping" | "validation" | "presentation" | "configuration"
+  | "caching";
 
 export interface BoundaryEvidence {
   kind: BoundaryKind;
@@ -1592,6 +1594,9 @@ export type PackageCategory =
   | "cloud"
   | "types"
   | "util"
+  | "cache"
+  | "filesystem"
+  | "email"
   | "other";
 
 /**

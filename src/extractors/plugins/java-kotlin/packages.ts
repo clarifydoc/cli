@@ -39,4 +39,8 @@ export const jvmPackages: readonly KnownPackageRule[] = [
   { match: /(^|[:/.])jackson/, category: "serialization" },
   { match: /(^|[:/])junit/, category: "testing" },
   { match: /(^|[:/])(mockito|assertj|testng|testcontainers)/, category: "testing" },
+  // ── Cache / mail ──
+  { names: ["caffeine", "com.github.ben-manes.caffeine:caffeine", "ehcache", "spring-boot-starter-cache"], category: "cache" },
+  { names: ["jakarta.mail", "javax.mail", "spring-boot-starter-mail", "org.springframework.mail"], category: "email" },
+
 ];

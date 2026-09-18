@@ -103,4 +103,11 @@ export const npmPackages: readonly KnownPackageRule[] = [
   { match: /(^|\/)eslint-/, category: "lint" },
   { match: /^@typescript-eslint\//, category: "lint" },
   { match: /^@testing-library\//, category: "testing" },
+  // ── Filesystem / cache / mail ──
+  // `System.IO`-style breadth is deliberately avoided: these are packages whose
+  // whole purpose is the boundary, not general-purpose namespaces.
+  { names: ["fs", "node:fs", "fs/promises", "node:fs/promises", "fs-extra", "graceful-fs", "chokidar", "memfs"], category: "filesystem" },
+  { names: ["lru-cache", "node-cache", "cache-manager", "keyv", "@vercel/kv", "@upstash/redis"], category: "cache" },
+  { names: ["nodemailer", "@sendgrid/mail", "postmark", "mailgun.js", "resend", "@aws-sdk/client-ses"], category: "email" },
+
 ];
