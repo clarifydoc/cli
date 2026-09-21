@@ -4,6 +4,7 @@ import type {
   LanguagePluginManifest,
   LanguageComplexitySpec,
   LanguageControlFlowSpec,
+  LanguageRegexControlFlowSpec,
   SecurityRule,
   AstExtractorHooks,
   FrameworkRule,
@@ -265,6 +266,11 @@ export function complexityFor(language: string): LanguageComplexitySpec | undefi
 /** Control-flow tables for a language (undefined when the plugin has none). */
 export function controlFlowFor(language: string): LanguageControlFlowSpec | undefined {
   return pluginFor(language as Language)?.controlFlow;
+}
+
+/** Regex control-flow tables for a language (undefined when the plugin has none). */
+export function regexControlFlowFor(language: string): LanguageRegexControlFlowSpec | undefined {
+  return pluginFor(language as Language)?.regexControlFlow;
 }
 
 /** Regex extraction spec for a language (undefined when the plugin has none). */

@@ -226,6 +226,65 @@ export interface LanguageControlFlowSpec {
 }
 
 /**
+ * Control-flow tables for a language with no parser.
+ *
+ * The counterpart of `LanguageControlFlowSpec` for the regex tier: where that
+ * one maps a grammar's node types to roles, this one recognises constructs in
+ * the source text and says how the language delimits a block. The scanner then
+ * synthesizes nodes carrying the SAME canonical types (`if_statement`,
+ * `while_statement`, …) and hands them to the same interpreter, so a language
+ * here needs no second builder — only a vocabulary.
+ *
+ * Almost every language can start from `BRACE_REGEX_CONTROL_FLOW` in
+ * `shared/control-flow-defaults.ts` and override the few lines it spells
+ * differently.
+ */
+export interface LanguageRegexControlFlowSpec {
+  /**
+   * Statement patterns, tried in order against each trimmed line. The first
+   * capture group, when there is one, is the controlling expression and
+   * becomes the node's label. `type` must be a canonical type the shared role
+   * table names.
+   */
+  statements: readonly { match: RegExp; type: string }[];
+  /** Token(s) that open a nesting level. Default `{`. */
+  blockOpen?: RegExp;
+  /** Token(s) that close one. Default `}`. */
+  blockClose?: RegExp;
+  /** Line-comment introducers, blanked before anything is matched. Default `//`. */
+  lineComments?: readonly string[];
+  /** Block-comment delimiters. Default `/* … *\/`. */
+  blockComment?: readonly [string, string];
+  /** String delimiters, blanked so a brace inside one cannot move the nesting. */
+  quotes?: readonly string[];
+  /** Whether a string may span lines (Python, Ruby heredocs, Go backticks). */
+  multilineStrings?: boolean;
+  /** `else if` / `elsif` / `elif`, capturing the condition. */
+  elseIf?: RegExp;
+  /** A bare `else`. */
+  else?: RegExp;
+  /** `catch` / `rescue` / `except`. */
+  catch?: RegExp;
+  /** `finally` / `ensure`. */
+  finally?: RegExp;
+  /** A switch arm label, capturing the matched value (absent capture = default). */
+  case?: RegExp;
+  /**
+   * Blank regular-expression literals as well as strings. Only for languages
+   * that have them as a literal form (JavaScript, TypeScript): `/\}\{/` holds
+   * braces that would otherwise move the nesting, and this repo's own source
+   * has enough of them to be the largest remaining source of error.
+   */
+  regexLiterals?: boolean;
+  /**
+   * Lines that open a nested function or closure. The scan draws the whole
+   * block as one step rather than descending, matching where the tree-sitter
+   * tier stops. Defaults to a broad C-family pattern.
+   */
+  nestedFunction?: RegExp;
+}
+
+/**
  * Optional AST/source-level extractor hooks for tree-sitter languages.
  * A language without a hook simply contributes nothing for that field —
  * exactly like the old shared extractors that returned [] for languages
@@ -508,6 +567,12 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * works, it just cannot be explained graphically.
    */
   controlFlow?: LanguageControlFlowSpec;
+  /**
+   * Control-flow tables for the regex tier — how this language's constructs
+   * look in source text, for a language with no grammar. Ignored when
+   * `controlFlow` is set, since a parse tree is always the better answer.
+   */
+  regexControlFlow?: LanguageRegexControlFlowSpec;
 
   /** Language-specific security rules (see SecurityRule.priority). */
   securityRules?: readonly SecurityRule[];

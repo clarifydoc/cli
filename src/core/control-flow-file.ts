@@ -8,11 +8,14 @@ import {
   ensureLanguagesLoaded,
   manifestFor,
   pluginFor,
+  regexControlFlowFor,
 } from "../extractors/registry.js";
 import { extractClasses, extractFunctions } from "../extractors/functions-classes/index.js";
 import { parseSource, type TreeSitterLanguage } from "../parsers/parser-manager.js";
 import { computeComplexity } from "./complexity-analyzer.js";
-import { buildControlFlow } from "./control-flow.js";
+import { buildControlFlow, type FunctionRef } from "./control-flow.js";
+import { buildRegexControlFlow } from "./control-flow-regex.js";
+import { extractWithRegex } from "./regex-extractor.js";
 
 /**
  * Build control-flow graphs for the functions of one file, on demand.
@@ -61,26 +64,45 @@ export class ControlFlowUnavailableError extends Error {}
  * registry rather than listed, so a plugin gaining a `controlFlow` spec turns
  * the feature on everywhere without a second edit.
  */
-export async function controlFlowCapabilities(): Promise<{
+export interface ControlFlowCapabilities {
+  /** Every language that can be drawn, by either tier. */
   languages: string[];
+  /** Every file extension that reaches one of them. */
   extensions: string[];
-}> {
-  // `parsing` is on the eagerly-loaded manifest, so the AST languages can be
-  // narrowed down before anything is loaded; `controlFlow` lives in the lazy
-  // plugin body, so only those few are brought in to be asked.
+  /**
+   * The subset drawn by reading the source text rather than a parse tree. A
+   * caller that offers the action should say so; the graphs themselves are
+   * marked `approximate` too.
+   */
+  approximate: string[];
+}
+
+export async function controlFlowCapabilities(): Promise<ControlFlowCapabilities> {
+  // `parsing` is on the eagerly-loaded manifest, so the formats with no code
+  // at all are dropped before anything is loaded; the two control-flow specs
+  // live in the lazy plugin body, so the rest are brought in to be asked.
   const candidates = [...new Set(Object.values(EXTENSION_TO_LANGUAGE))].filter(
-    (language) => manifestFor(language)?.parsing === "tree-sitter",
+    (language) => manifestFor(language)?.parsing !== "custom",
   );
   await ensureLanguagesLoaded(candidates);
 
   const languages = new Set<string>();
   const extensions = new Set<string>();
+  const approximate = new Set<string>();
   for (const [extension, language] of Object.entries(EXTENSION_TO_LANGUAGE)) {
-    if (!candidates.includes(language) || !controlFlowFor(language)) continue;
+    if (!candidates.includes(language)) continue;
+    const exact = manifestFor(language)?.parsing === "tree-sitter" && controlFlowFor(language);
+    const loose = !exact && regexControlFlowFor(language);
+    if (!exact && !loose) continue;
     languages.add(language);
     extensions.add(extension);
+    if (loose) approximate.add(language);
   }
-  return { languages: [...languages].sort(), extensions: [...extensions].sort() };
+  return {
+    languages: [...languages].sort(),
+    extensions: [...extensions].sort(),
+    approximate: [...approximate].sort(),
+  };
 }
 
 function languageOf(filePath: string): Language | undefined {
@@ -95,6 +117,42 @@ function matchesName(rowName: string, wanted: string): boolean {
   return rowName === wanted || rowName.slice(rowName.lastIndexOf(".") + 1) === wanted;
 }
 
+/**
+ * Pick the functions a name and/or a line select, in the order to draw them.
+ *
+ * Shared by both tiers so the two cannot disagree about what "the function the
+ * cursor is in" means.
+ */
+function selectRows(
+  rows: readonly FunctionRef[],
+  functionName: string | undefined,
+  line: number | undefined,
+): FunctionRef[] {
+  const both = rows.filter((row) => {
+    if (functionName !== undefined && !matchesName(row.name, functionName)) return false;
+    if (line !== undefined && (line < row.line || line > row.endLine)) return false;
+    return true;
+  });
+
+  // Both selectors given and nothing matching both means the caller's idea of
+  // the file is out of date — a CodeLens carries the name and the line from
+  // the same stored analysis, and an edit above the function moves the line
+  // while leaving the name right. So the name is tried alone first, and the
+  // line only when there was no name to go on.
+  const chosen =
+    both.length > 0
+      ? both
+      : functionName !== undefined
+        ? rows.filter((row) => matchesName(row.name, functionName))
+        : line !== undefined
+          ? rows.filter((row) => line >= row.line && line <= row.endLine)
+          : [];
+
+  // Innermost first: a cursor inside a nested function matches both it and its
+  // enclosing function, and the inner one is what the reader is looking at.
+  return [...chosen].sort((a, b) => a.endLine - a.line - (b.endLine - b.line));
+}
+
 export async function controlFlowForFile(
   request: ControlFlowRequest,
 ): Promise<ControlFlowFileResult> {
@@ -105,16 +163,16 @@ export async function controlFlowForFile(
     throw new ControlFlowUnavailableError(`No language is registered for ${extname(filePath)} files.`);
   }
   await ensureLanguagesLoaded([language]);
+  const plugin = pluginFor(language);
+
+  // No parse tree for this language: read the control flow off the text
+  // instead. An approximation, marked as one everywhere it surfaces.
+  if (plugin?.parsing !== "tree-sitter") {
+    return regexFallback(filePath, displayPath, language, functionName, line);
+  }
   if (!controlFlowFor(language)) {
     throw new ControlFlowUnavailableError(
       `${language} has no control-flow tables yet — its complexity numbers are computed, but not explained. See meta.controlFlow in the language plugin.`,
-    );
-  }
-
-  const plugin = pluginFor(language);
-  if (plugin?.parsing !== "tree-sitter") {
-    throw new ControlFlowUnavailableError(
-      `${language} is extracted without an AST, so there is no control flow to read.`,
     );
   }
   const raw = await readFile(filePath, plugin.sourceEncoding ?? "utf-8");
@@ -141,40 +199,13 @@ export async function controlFlowForFile(
   const classes = extractClasses(tree, source, effective);
   const rows = computeComplexity(tree, effective, functions, classes).sort((a, b) => a.line - b.line);
 
-  const selected = rows.filter((row) => {
-    if (functionName !== undefined && !matchesName(row.functionName, functionName)) return false;
-    if (line !== undefined && (line < row.line || line > row.endLine)) return false;
-    return true;
-  });
-
-  // Both selectors given and nothing matching both means the caller's idea of
-  // the file is out of date — a CodeLens carries the name and the line from
-  // the same stored analysis, and an edit above the function moves the line
-  // while leaving the name right. So the name is tried alone first, and the
-  // line only when there was no name to go on.
-  const rowsToBuild =
-    selected.length > 0
-      ? selected
-      : functionName !== undefined
-        ? rows.filter((row) => matchesName(row.functionName, functionName))
-        : line !== undefined
-          ? rows.filter((row) => line >= row.line && line <= row.endLine)
-          : [];
-
-  // Innermost first: a cursor inside a nested function matches both it and its
-  // enclosing function, and the inner one is what the reader is looking at.
-  const ordered = [...rowsToBuild].sort(
-    (a, b) => a.endLine - a.line - (b.endLine - b.line),
-  );
-
   const cfgs: Cfg[] = [];
-  for (const row of ordered) {
-    const cfg = buildControlFlow(
-      tree,
-      language,
-      { name: row.functionName, line: row.line, endLine: row.endLine },
-      displayPath,
-    );
+  for (const row of selectRows(
+    rows.map((r) => ({ name: r.functionName, line: r.line, endLine: r.endLine })),
+    functionName,
+    line,
+  )) {
+    const cfg = buildControlFlow(tree, language, row, displayPath);
     if (cfg) cfgs.push(cfg);
   }
 
@@ -187,6 +218,63 @@ export async function controlFlowForFile(
       line: row.line,
       endLine: row.endLine,
       complexity: row.complexity,
+    })),
+  };
+}
+
+
+/**
+ * The regex tier's path to a graph.
+ *
+ * It shares nothing with the tree-sitter path except its destination, because
+ * it has nothing to share: no tree to search for the body, and no complexity
+ * rows to name the functions. Both come from the regex extractor instead,
+ * which already reports every function with accurate start and end lines —
+ * that is the whole reason this is possible at all.
+ */
+async function regexFallback(
+  filePath: string,
+  displayPath: string,
+  language: Language,
+  functionName: string | undefined,
+  line: number | undefined,
+): Promise<ControlFlowFileResult> {
+  if (!regexControlFlowFor(language)) {
+    throw new ControlFlowUnavailableError(
+      `${language} has no control-flow tables yet — neither a grammar nor the source patterns the regex tier needs. See meta.regexControlFlow in the language plugin.`,
+    );
+  }
+
+  const source = await readFile(filePath, pluginFor(language)?.sourceEncoding ?? "utf-8");
+  const analysis = extractWithRegex(source, displayPath, language);
+
+  const rows = [
+    ...analysis.functions.map((f) => ({ name: f.name, line: f.line, endLine: f.endLine })),
+    ...analysis.classes.flatMap((c) =>
+      c.methods.map((m) => ({ name: `${c.name}.${m.name}`, line: m.line, endLine: m.endLine })),
+    ),
+  ]
+    .filter((row) => row.name !== "<setup>" && row.endLine > row.line)
+    .sort((a, b) => a.line - b.line);
+
+  const selected = selectRows(rows, functionName, line);
+  const cfgs: Cfg[] = [];
+  for (const row of selected) {
+    const cfg = buildRegexControlFlow(source, language, row, displayPath);
+    if (cfg) cfgs.push(cfg);
+  }
+
+  return {
+    filePath: displayPath,
+    language,
+    cfgs,
+    available: rows.map((row) => ({
+      functionName: row.name,
+      line: row.line,
+      endLine: row.endLine,
+      // The regex tier computes no complexity, so there is no number to show
+      // rather than a wrong one.
+      complexity: 0,
     })),
   };
 }

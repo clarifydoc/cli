@@ -1,4 +1,5 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
+import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { swiftSpec } from "./index.js";
 import { swiftPackages } from "./packages.js";
@@ -17,6 +18,12 @@ const SWIFT_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const swiftMeta: LanguagePluginMeta = {
+  // Swift: `guard … else { … }` is an early exit, and `repeat { } while` is
+  // its do-while.
+  regexControlFlow: extendRegexControlFlow([
+    { match: /^guard\b\s*(.*?)\s*else\s*\{?\s*$/, type: "if_statement" },
+    { match: /^repeat\s*\{?\s*$/, type: "do_statement" },
+  ], { quotes: ['"'] }),
   ...swiftManifest,
   regexSpec: swiftSpec,
   knownPackages: swiftPackages,

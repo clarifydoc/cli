@@ -1,4 +1,5 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
+import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { cppSpec } from "./index.js";
 import { nativePackages } from "./packages.js";
 import { C_BUILTINS } from "../c/meta.js";
@@ -18,6 +19,7 @@ const CPP_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const cppMeta: LanguagePluginMeta = {
+  regexControlFlow: extendRegexControlFlow([{ match: /^goto\b/, type: "break_statement" }]),
   ...cppManifest,
   regexSpec: cppSpec,
   knownPackages: nativePackages,

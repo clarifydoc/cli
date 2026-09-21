@@ -1,12 +1,12 @@
 import type { Language } from "../types/analysis.js";
-import type { TSTree, TSNode } from "../parsers/parser-manager.js";
+import type { TSTree } from "../parsers/parser-manager.js";
 import type {
   ControlFlowField,
   ControlFlowRole,
   LanguageComplexitySpec,
   LanguageControlFlowSpec,
 } from "../types/language-plugin.js";
-import type { Cfg, CfgEdge, CfgNode, CfgNodeKind } from "../types/control-flow.js";
+import type { Cfg, CfgEdge, CfgNode, CfgNodeKind, FlowNode } from "../types/control-flow.js";
 import { complexityFor, controlFlowFor, pluginFor } from "../extractors/registry.js";
 import { DEFAULT_COMPLEXITY } from "../extractors/shared/complexity-defaults.js";
 import {
@@ -109,6 +109,8 @@ class Builder {
   readonly edges: CfgEdge[] = [];
   readonly unmodelled = new Set<string>();
   hasFinally = false;
+  /** Branches in statements nothing reaches. See `Cfg.unreachableBranches`. */
+  unreachableBranches = 0;
 
   private seq = 0;
   private readonly jumps: JumpFrame[] = [];
@@ -148,7 +150,7 @@ class Builder {
   }
 
   /** Emit a node for a source construct, deriving its span and label. */
-  private node(kind: CfgNodeKind, label: string, src: TSNode, inline: number): string {
+  private node(kind: CfgNodeKind, label: string, src: FlowNode, inline: number): string {
     return this.add(
       kind,
       collapse(label),
@@ -184,13 +186,13 @@ class Builder {
 
   // ── spec lookups ───────────────────────────────────────────────────────
 
-  private role(n: TSNode): ControlFlowRole | undefined {
+  private role(n: FlowNode): ControlFlowRole | undefined {
     const declared = this.spec.roles.get(n.type);
     if (declared !== undefined) return declared;
     return this.spec.ignorePattern?.test(n.type) === true ? "ignore" : undefined;
   }
 
-  private field(n: TSNode, part: ControlFlowField): TSNode | null {
+  private field(n: FlowNode, part: ControlFlowField): FlowNode | null {
     for (const name of this.fields[part]) {
       const hit = n.childForFieldName(name);
       if (hit) return hit;
@@ -209,9 +211,9 @@ class Builder {
    * flatten an `elif` chain into a list of them on the one `if`, so reading
    * only the first would silently drop every branch after the first `elif`.
    */
-  private fieldAll(n: TSNode, part: ControlFlowField): TSNode[] {
+  private fieldAll(n: FlowNode, part: ControlFlowField): FlowNode[] {
     const names = new Set(this.fields[part]);
-    const out: TSNode[] = [];
+    const out: FlowNode[] = [];
     for (let i = 0; i < n.childCount; i++) {
       const name = n.fieldNameForChild(i);
       if (name === null || !names.has(name)) continue;
@@ -225,7 +227,7 @@ class Builder {
     return positional ? [positional] : [];
   }
 
-  private named(n: TSNode): TSNode[] {
+  private named(n: FlowNode): FlowNode[] {
     return n.children.filter((c) => c.isNamed);
   }
 
@@ -234,7 +236,7 @@ class Builder {
    * `break` / without raising". Found by role rather than by field, because it
    * sits among the node's plain children.
    */
-  private elseClause(n: TSNode, exclude: readonly (TSNode | null)[]): TSNode | null {
+  private elseClause(n: FlowNode, exclude: readonly (FlowNode | null)[]): FlowNode | null {
     const skip = new Set(exclude.filter(Boolean).map((c) => c!.id));
     return (
       this.named(n).find(
@@ -249,7 +251,7 @@ class Builder {
    * between a label and a paragraph for the grammars that give a `for…of` or a
    * `using` no condition field to point at.
    */
-  private header(n: TSNode, body: TSNode | null): string {
+  private header(n: FlowNode, body: FlowNode | null): string {
     if (!body) return n.text;
     const cut = body.startIndex - n.startIndex;
     return cut > 0 ? n.text.slice(0, cut) : n.text;
@@ -260,9 +262,9 @@ class Builder {
    * `complexity-analyzer.measureBody` counts by, so the two agree on what a
    * branch is.
    */
-  private scan(n: TSNode): number {
+  private scan(n: FlowNode): number {
     let count = 0;
-    const walk = (x: TSNode): void => {
+    const walk = (x: FlowNode): void => {
       if (this.complexity.branchNodes.has(x.type)) count++;
       if (x.type === "binary_expression" || x.type === "boolean_operator") {
         const op = x.childForFieldName("operator");
@@ -280,7 +282,7 @@ class Builder {
    * when it is a branch node (the CFG node carries its `nodeType`, so the
    * cross-check counts it there).
    */
-  private inline(n: TSNode, structural: readonly (TSNode | null)[]): number {
+  private inline(n: FlowNode, structural: readonly (FlowNode | null)[]): number {
     let count = this.scan(n);
     for (const child of structural) {
       if (child) count -= this.scan(child);
@@ -292,19 +294,33 @@ class Builder {
   // ── statement emission ─────────────────────────────────────────────────
 
   /** Emit a run of statements in order, threading the dangling exits through. */
-  private sequence(stmts: readonly TSNode[], incoming: Pending[]): Pending[] {
+  private sequence(stmts: readonly FlowNode[], incoming: Pending[]): Pending[] {
     let pending = incoming;
-    for (const stmt of stmts) {
+    for (let i = 0; i < stmts.length; i++) {
+      const stmt = stmts[i]!;
       if (this.role(stmt) === "ignore") continue;
       pending = this.statement(stmt, pending);
-      // Control cannot reach the rest of the block (a `return` mid-sequence);
-      // the remaining statements are unreachable and are not drawn.
-      if (pending.length === 0) break;
+      // Control cannot reach the rest of the block (a `return` mid-sequence).
+      // The remaining statements are not drawn — an edge to them would be a
+      // path that does not exist — but their branches are still counted, so
+      // the graph can still account for the complexity number.
+      if (pending.length === 0) {
+        this.countUnreachable(stmts.slice(i + 1));
+        break;
+      }
     }
     return pending;
   }
 
-  statement(n: TSNode, incoming: Pending[]): Pending[] {
+  /** Tally the branches in statements the graph will not draw. */
+  countUnreachable(stmts: readonly FlowNode[]): void {
+    for (const stmt of stmts) {
+      if (this.role(stmt) === "ignore") continue;
+      this.unreachableBranches += this.scan(stmt);
+    }
+  }
+
+  statement(n: FlowNode, incoming: Pending[]): Pending[] {
     const label = this.pendingLabel;
     this.pendingLabel = undefined;
 
@@ -356,7 +372,7 @@ class Builder {
    * `return`, `break`, `continue` and `throw` all as `jump_expression`, so the
    * leading token is the only thing that distinguishes them.
    */
-  private jump(n: TSNode, incoming: Pending[]): Pending[] {
+  private jump(n: FlowNode, incoming: Pending[]): Pending[] {
     const keyword = n.children[0]?.type ?? "";
     switch (this.spec.jumpRoles?.[keyword]) {
       case "return":
@@ -372,7 +388,7 @@ class Builder {
     }
   }
 
-  private plain(n: TSNode, incoming: Pending[]): Pending[] {
+  private plain(n: FlowNode, incoming: Pending[]): Pending[] {
     // A statement the spec has no role for is ordinary straight-line code, and
     // drawing it as one loses nothing. It is a gap only when the complexity
     // table says the node branches: then the number counts structure the graph
@@ -385,7 +401,7 @@ class Builder {
     return [{ id }];
   }
 
-  private branch(n: TSNode, incoming: Pending[]): Pending[] {
+  private branch(n: FlowNode, incoming: Pending[]): Pending[] {
     return this.branchOn(n, incoming, this.fieldAll(n, "alternative"), 0);
   }
 
@@ -399,9 +415,9 @@ class Builder {
    * this call is, so an `elif` takes the false edge and passes the rest on.
    */
   private branchOn(
-    n: TSNode,
+    n: FlowNode,
     incoming: Pending[],
-    alternatives: readonly TSNode[],
+    alternatives: readonly FlowNode[],
     index: number,
   ): Pending[] {
     const condition = this.field(n, "condition");
@@ -434,7 +450,7 @@ class Builder {
 
   /** Emit alternative `index` of a chain, or fall through when there is none. */
   private alternativeAt(
-    alternatives: readonly TSNode[],
+    alternatives: readonly FlowNode[],
     index: number,
     incoming: Pending[],
   ): Pending[] {
@@ -454,7 +470,7 @@ class Builder {
       : this.branchOn(alt, incoming, alternatives, index + 1);
   }
 
-  private loop(n: TSNode, incoming: Pending[], label: string | undefined): Pending[] {
+  private loop(n: FlowNode, incoming: Pending[], label: string | undefined): Pending[] {
     const body = this.field(n, "body");
     const condition = this.field(n, "condition");
     // Python's `for … else` hangs the else off the loop, and it is emitted
@@ -484,7 +500,7 @@ class Builder {
     return [...afterElse, ...frame.breaks];
   }
 
-  private postTestLoop(n: TSNode, incoming: Pending[], label: string | undefined): Pending[] {
+  private postTestLoop(n: FlowNode, incoming: Pending[], label: string | undefined): Pending[] {
     const body = this.field(n, "body");
     const condition = this.field(n, "condition");
 
@@ -504,7 +520,7 @@ class Builder {
     return [{ id: test, label: "false" }, ...frame.breaks];
   }
 
-  private switchStatement(n: TSNode, incoming: Pending[], label: string | undefined): Pending[] {
+  private switchStatement(n: FlowNode, incoming: Pending[], label: string | undefined): Pending[] {
     const body = this.field(n, "body") ?? n;
     const discriminant = this.field(n, "value");
     const arms = this.named(body).filter((c) => this.role(c) === "case");
@@ -597,7 +613,7 @@ class Builder {
     return exits;
   }
 
-  private tryStatement(n: TSNode, incoming: Pending[]): Pending[] {
+  private tryStatement(n: FlowNode, incoming: Pending[]): Pending[] {
     const body = this.field(n, "body");
     // Found by role rather than by field: TypeScript names the handler and the
     // finalizer, C# hangs both off the try as plain named children.
@@ -678,7 +694,7 @@ class Builder {
   }
 
   private jumpOut(
-    n: TSNode,
+    n: FlowNode,
     incoming: Pending[],
     kind: CfgNodeKind,
     target: string,
@@ -707,7 +723,7 @@ class Builder {
     }
   }
 
-  private throwStatement(n: TSNode, incoming: Pending[]): Pending[] {
+  private throwStatement(n: FlowNode, incoming: Pending[]): Pending[] {
     let handler: string | undefined;
     for (let i = this.guards.length - 1; i >= 0 && handler === undefined; i--) {
       handler = this.guards[i]!.handler;
@@ -733,12 +749,12 @@ class Builder {
   }
 
   /** The label on `break outer;` — the one named child, when the grammar has one. */
-  private jumpLabel(n: TSNode): string | undefined {
+  private jumpLabel(n: FlowNode): string | undefined {
     const target = this.named(n)[0];
     return target ? target.text : undefined;
   }
 
-  private breakStatement(n: TSNode, incoming: Pending[]): Pending[] {
+  private breakStatement(n: FlowNode, incoming: Pending[]): Pending[] {
     const id = this.node("BREAK_CONTINUE", n.text, n, this.inline(n, []));
     this.connect(incoming, id);
     const frame = this.frameFor(this.jumpLabel(n), false);
@@ -751,7 +767,7 @@ class Builder {
     return [];
   }
 
-  private continueStatement(n: TSNode, incoming: Pending[]): Pending[] {
+  private continueStatement(n: FlowNode, incoming: Pending[]): Pending[] {
     const id = this.node("BREAK_CONTINUE", n.text, n, this.inline(n, []));
     this.connect(incoming, id);
     const frame = this.frameFor(this.jumpLabel(n), true);
@@ -761,7 +777,7 @@ class Builder {
     return [];
   }
 
-  private labelled(n: TSNode, incoming: Pending[]): Pending[] {
+  private labelled(n: FlowNode, incoming: Pending[]): Pending[] {
     const labelNode = this.field(n, "label") ?? this.named(n)[0];
     const body = this.field(n, "body") ?? this.named(n).at(-1);
     if (!body) return this.plain(n, incoming);
@@ -769,7 +785,7 @@ class Builder {
     return this.statement(body, incoming);
   }
 
-  private wrapper(n: TSNode, incoming: Pending[]): Pending[] {
+  private wrapper(n: FlowNode, incoming: Pending[]): Pending[] {
     const body = this.field(n, "body") ?? this.named(n).at(-1);
     if (!body) return this.plain(n, incoming);
 
@@ -805,11 +821,11 @@ class Builder {
  * test `measureBody` uses for the same reason.
  */
 function resolveBody(
-  node: TSNode,
+  node: FlowNode,
   declRow: number,
   spec: LanguageControlFlowSpec,
   fields: Record<ControlFlowField, readonly string[]>,
-): TSNode | null {
+): FlowNode | null {
   // Strictly the declared body, with no blind "last child" fallback: an
   // interface signature or an abstract method has no body, and falling back
   // would hand back its return type and draw a one-box graph of a declaration.
@@ -818,7 +834,7 @@ function resolveBody(
   // and that answer is checked before it is used: a bodiless declaration's
   // last child is its return type, which holds no statements, so requiring the
   // candidate to actually be a block keeps the same refusal.
-  const bodyOf = (n: TSNode): TSNode | null => {
+  const bodyOf = (n: FlowNode): FlowNode | null => {
     for (const name of fields.body) {
       const hit = n.childForFieldName(name);
       if (hit) return hit;
@@ -839,7 +855,7 @@ function resolveBody(
   // at the first declaration that opens on the function's own line.
   let frontier = [node];
   for (let depth = 0; depth < 5 && frontier.length > 0; depth++) {
-    const next: TSNode[] = [];
+    const next: FlowNode[] = [];
     for (const n of frontier) {
       for (const child of n.children) {
         if (!child.isNamed) continue;
@@ -883,19 +899,47 @@ export function buildControlFlow(
   const body = resolveBody(located, fn.line - 1, spec, fields);
   if (!body) return null;
 
+  return buildFromBody(body, { spec, complexity, fields, language, fn, filePath });
+}
+
+/** Everything the interpreter needs that is not the body itself. */
+export interface BuildContext {
+  spec: LanguageControlFlowSpec;
+  complexity: LanguageComplexitySpec;
+  fields: Record<ControlFlowField, readonly string[]>;
+  language: Language;
+  fn: FunctionRef;
+  filePath: string;
+  /** Marks a graph read off the text rather than a parse tree. */
+  approximate?: boolean;
+}
+
+/**
+ * Run the interpreter over an already-resolved function body.
+ *
+ * Split out from `buildControlFlow` so the regex tier can reach it: that tier
+ * has no tree to search, because it synthesizes the body directly. Everything
+ * after this point is identical for both, which is the point — one
+ * interpreter, so a fix to either tier is a fix to both.
+ */
+export function buildFromBody(body: FlowNode, ctx: BuildContext): Cfg {
+  const { spec, complexity, fields, language, fn, filePath } = ctx;
   const builder = new Builder(spec, complexity, fields, fn.name, fn.line, fn.endLine);
   const statements =
     spec.roles.get(body.type) === "block"
       ? body.children.filter((c) => c.isNamed)
       : [body];
   let pending: Pending[] = [{ id: builder.entryId }];
-  for (const stmt of statements) {
-    pending = builder.statement(stmt, pending);
-    if (pending.length === 0) break;
+  for (let i = 0; i < statements.length; i++) {
+    pending = builder.statement(statements[i]!, pending);
+    if (pending.length === 0) {
+      builder.countUnreachable(statements.slice(i + 1));
+      break;
+    }
   }
   builder.finish(pending);
 
-  return {
+  const cfg: Cfg = {
     functionName: fn.name,
     filePath,
     language,
@@ -907,7 +951,10 @@ export function buildControlFlow(
     edges: builder.edges,
     unmodelled: [...builder.unmodelled].sort(),
     hasFinally: builder.hasFinally,
+    unreachableBranches: builder.unreachableBranches,
   };
+  if (ctx.approximate) cfg.approximate = true;
+  return cfg;
 }
 
 /**
@@ -923,7 +970,7 @@ export function buildControlFlow(
  */
 export function cyclomaticFromCfg(cfg: Cfg, language: Language): number {
   const branchNodes = (complexityFor(language) ?? DEFAULT_COMPLEXITY).branchNodes;
-  let count = 1;
+  let count = 1 + cfg.unreachableBranches;
   for (const node of cfg.nodes) {
     if (node.nodeType !== undefined && branchNodes.has(node.nodeType)) count++;
     count += node.inlineBranches;
@@ -991,7 +1038,7 @@ export function undrawnStructure(
   const roleOf = (type: string): ControlFlowRole | undefined =>
     spec.roles.get(type) ?? (spec.ignorePattern?.test(type) === true ? "ignore" : undefined);
 
-  const walk = (n: TSNode): void => {
+  const walk = (n: FlowNode): void => {
     const role = roleOf(n.type);
     // The graph deliberately stops at a nested function, so what is inside one
     // is not missing — it is out of scope, and counted as hidden instead.

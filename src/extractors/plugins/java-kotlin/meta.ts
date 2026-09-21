@@ -1,5 +1,8 @@
 import type { Language } from "../../../types/analysis.js";
-import { extendControlFlow } from "../../shared/control-flow-defaults.js";
+import {
+  extendControlFlow,
+  BRACE_REGEX_CONTROL_FLOW,
+} from "../../shared/control-flow-defaults.js";
 import type { LanguagePluginMeta, CallExtractionHooks } from "../../../types/language-plugin.js";
 import { javaManifest, kotlinManifest } from "./manifest.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
@@ -78,6 +81,7 @@ function jvmMeta(language: Language, opts: {
       logicalOps: new Set(["&&", "||"]),
       nestingNodes: new Set(opts.nestingNodes),
     },
+    regexControlFlow: BRACE_REGEX_CONTROL_FLOW,
     controlFlow: opts.controlFlow,
     knownPackages: jvmPackages,
     apiCallRoots: opts.apiCallRoots,

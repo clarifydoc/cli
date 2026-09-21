@@ -1,4 +1,5 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
+import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { cSpec } from "./index.js";
 import { cManifest } from "./manifest.js";
@@ -12,6 +13,8 @@ export const C_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const cMeta: LanguagePluginMeta = {
+  // C: the brace defaults, plus `goto` drawn as the jump it is.
+  regexControlFlow: extendRegexControlFlow([{ match: /^goto\b/, type: "break_statement" }]),
   ...cManifest,
   regexSpec: cSpec,
   builtinTypes: C_BUILTINS,
