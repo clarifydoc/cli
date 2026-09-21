@@ -53,6 +53,7 @@ import type {
   MigrationInfo,
   PatternInfo,
   ProjectAnalysis,
+  RiskVerdict,
   RouteInfo,
   ScreenInfo,
   SecurityIssue,
@@ -260,6 +261,9 @@ export interface NormBlastRadiusInfo {
   traceImpact?: TraceImpactInfo;
   /** Two-hop neighbourhood size — plain numbers, carried verbatim. */
   contextBurden?: ContextBurden;
+  /** Risk verdict — carried VERBATIM. `behaviourAtRisk` holds names, never
+   *  paths, precisely so there is nothing here to intern. */
+  verdict?: RiskVerdict;
 }
 
 // ── dataAccessGraph ──
@@ -849,6 +853,7 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
       };
       if (r.b.traceImpact) nb.traceImpact = r.b.traceImpact;
       if (r.b.contextBurden) nb.contextBurden = r.b.contextBurden;
+      if (r.b.verdict) nb.verdict = r.b.verdict;
       if (r.typeUsages) {
         nb.typeUsages = r.typeUsages.map(({ tu, type, usagesByFile }) => ({
           type: remap[type],
@@ -1061,6 +1066,7 @@ export function denormalizeProject(obj: unknown): ProjectAnalysis {
       };
       if (nb.traceImpact) info.traceImpact = nb.traceImpact;
       if (nb.contextBurden) info.contextBurden = nb.contextBurden;
+      if (nb.verdict) info.verdict = nb.verdict;
       if (nb.typeUsages) {
         info.typeUsages = nb.typeUsages.map((ntu): TypeUsageSummary => {
           const tEl = elements[ntu.type];

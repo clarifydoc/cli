@@ -1,6 +1,7 @@
 /** Code-navigation tools: routes, screens, per-file facts, call traces, blast radius. */
 
 import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
+import { describeReasons } from "../../core/risk-verdict.js";
 import type { McpTool } from "../protocol.js";
 import type { SymbolLink } from "../../types/analysis.js";
 import { symbolKey, type FileFacts, type LoadedAnalysis, type RouteWithFile } from "../store.js";
@@ -436,6 +437,7 @@ export function fileTool(ctx: ToolContext): McpTool {
       if (want.has("blast") && f.blast) {
         const b = f.blast;
         const lines = [
+          ...(b.verdict ? [`${b.verdict.category} / ${b.verdict.level} — ${b.verdict.summary}`, ""] : []),
           facts([
             ["risk", `${b.changeRisk} (${b.level})`],
             ["impact score", b.impactScore],
@@ -700,7 +702,9 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
     name: "clarifydoc_blast_radius",
     title: "Blast radius of a change",
     description:
-      "What breaks if a file changes: direct and transitive dependents, the exported symbols other files use " +
+      "What breaks if a file changes: a verdict naming what KIND of file it is (foundation type, boundary, " +
+      "on a UI-to-data flow, shared internals, localized) with the rules behind that judgement and the " +
+      "user-visible behaviour at risk, plus direct and transitive dependents, the exported symbols other files use " +
       "(with caller counts), the cross-tier reach — screens and API routes whose execution passes through " +
       "the file, plus the entities and queues it ultimately touches — and the context burden: how many files " +
       "and roughly how many tokens must be read to edit it safely. Call without `path` for the riskiest files " +
@@ -731,7 +735,8 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
               ranked,
               limit,
               (b) =>
-                `${b.filePath} — score ${b.impactScore}, ${b.level}/${b.changeRisk}, ` +
+                `${b.filePath} — ${b.verdict ? `${b.verdict.category}, ` : ""}score ${b.impactScore}, ` +
+                `${b.level}/${b.changeRisk}, ` +
                 `${b.directDependents} direct / ${b.transitiveDependents} transitive dependents`,
             ),
           ]),
@@ -752,7 +757,9 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
       const blocks: string[][] = [
         [
           `# Blast radius — ${path}`,
+          ...(b.verdict ? [b.verdict.summary, ""] : []),
           facts([
+            ["verdict", b.verdict ? `${b.verdict.category} (${b.verdict.level})` : undefined],
             ["risk", `${b.changeRisk} (${b.level})`],
             ["impact score", b.impactScore],
             ["centrality", b.centrality],
@@ -772,6 +779,22 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
           "",
         ],
       ];
+
+      if (b.verdict) {
+        // The rules behind the verdict, and what a user would notice breaking.
+        // Both come before the dependent lists: they are the answer, the lists
+        // are the working.
+        blocks.push(
+          section("Why", [
+            `${describeReasons(b.verdict.reasons)} (confidence ${b.verdict.confidence})`,
+          ]),
+        );
+        if (b.verdict.behaviourAtRisk.length) {
+          blocks.push(
+            section("Behaviour at risk", bulletList(b.verdict.behaviourAtRisk, limit, (x) => x)),
+          );
+        }
+      }
 
       blocks.push(section(`Direct dependents (${b.affectedFiles.length})`, bulletList(b.affectedFiles, limit, (f) => f)));
       if (b.transitiveFiles.length) {

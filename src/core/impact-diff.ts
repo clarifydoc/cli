@@ -1,5 +1,6 @@
 import type {
   ProjectAnalysis,
+  RiskVerdict,
   TraceImpactRoute,
   TraceImpactScreen,
 } from "../types/analysis.js";
@@ -111,12 +112,23 @@ export function computeImpactDiff(
   let truncated = false;
   let dangerous: string | null = null;
   let moderate: string | null = null;
+  // The most severe verdict among the changed files. "you touched a foundation
+  // type reached by 4 screens" is the sentence a reviewer acts on; the counts
+  // below are what back it up.
+  let topVerdict: { file: string; verdict: RiskVerdict } | null = null;
+  const VERDICT_RANK: Record<string, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 
   for (const file of changedFiles) {
     const b = blastByFile.get(file);
     if (!b) continue;
     if (b.changeRisk === "dangerous" && !dangerous) dangerous = file;
     if (b.changeRisk === "moderate" && !moderate) moderate = file;
+    if (b.verdict && b.verdict.category !== "unknown") {
+      const rank = VERDICT_RANK[b.verdict.level] ?? 0;
+      if (!topVerdict || rank > (VERDICT_RANK[topVerdict.verdict.level] ?? 0)) {
+        topVerdict = { file, verdict: b.verdict };
+      }
+    }
     // The stored blast lists are CAPPED on hub-dense repos (counts stay exact),
     // so on monsters the dependent union is a lower bound — same contract as
     // the traceImpact `truncated` flag below.
@@ -196,6 +208,11 @@ export function computeImpactDiff(
 
   // ── Risk rollup ──
   const reasons: string[] = [];
+  if (topVerdict) {
+    reasons.push(
+      `${topVerdict.file} is a ${topVerdict.verdict.category} file (${topVerdict.verdict.level} impact)`,
+    );
+  }
   if (dangerous) reasons.push(`${dangerous} is dangerous to change`);
   else if (moderate) reasons.push(`${moderate} is moderate to change`);
   if (screens.size > 0) reasons.push(`reaches ${screens.size} screen(s)`);
