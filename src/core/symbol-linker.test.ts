@@ -243,12 +243,21 @@ describe("symbol-linker — Strategy 7 evidence gate (stdlib-name magnets)", () 
       classes: [{ ...cls("CustomerApiImpl"), methods: [fn("computeOverview", [])] }],
     });
     const links = buildSymbolLinks([caller([{ source: "./Helper", specifiers: ["Helper"] }]), helper, sameDir]);
-    expect(links.some((l) => l.targetFile === "b/svc/CustomerApiImpl.cs")).toBe(true);
+    const link = links.find((l) => l.targetFile === "b/svc/CustomerApiImpl.cs");
+    expect(link).toBeDefined();
+    // Same directory IS evidence — the stronger of the two sub-tiers.
+    expect(link!.strategy).toBe("unique-global");
   });
 
   it("keeps the old behavior for import-blind source files", () => {
     const links = buildSymbolLinks([caller([]), helper, target]);
-    expect(links.some((l) => l.targetFile === "a/api/CustomerApiImpl.cs")).toBe(true);
+    const link = links.find((l) => l.targetFile === "a/api/CustomerApiImpl.cs");
+    expect(link).toBeDefined();
+    // Same edge, same AMBIGUOUS confidence, but reached with no evidence at all
+    // — only the strategy tag separates it from the case above, which is the
+    // whole reason strategy 7 was split.
+    expect(link!.strategy).toBe("unique-global-blind");
+    expect(link!.confidence).toBe("AMBIGUOUS");
   });
 
   it("never links a JDK/stdlib member name (builtin veto), even same-directory", () => {
@@ -348,5 +357,77 @@ describe("symbol-linker — spec-route → impl-method name join", () => {
     const b = file("api/B.cs", "app", { classes: [{ ...cls("B"), methods: [fn("findPersons", [])] }] });
     const ambiguous = buildSymbolLinks([specFile("/find-persons", "GET"), a, b]);
     expect(ambiguous.some((l) => String(l.sourceSymbol).startsWith("route:"))).toBe(false);
+  });
+});
+
+describe("symbol-linker — strategy provenance", () => {
+  /**
+   * The load-bearing invariant. `confidence` says how much to trust an edge;
+   * `strategy` says what produced it, and a link with no tag is a link no
+   * consumer can attribute — `lsp:compare` would bucket it under "(untagged)"
+   * and the standing "reject any strategy that introduces conflicts" rule would
+   * have nothing to name. Every construction site must set it, so assert over
+   * the whole output rather than per case.
+   */
+  it("tags every link it produces", () => {
+    const svc = file("app/Service.cs", "app", {
+      classes: [{ ...cls("Service"), methods: [fn("Run", [])] }],
+    });
+    const caller = file("app/Caller.cs", "app", {
+      classes: [{ ...cls("Caller"), methods: [fn("Go", [call("Service.Run")])] }],
+    });
+    const base = file("app/Base.cs", "app", {
+      classes: [{ ...cls("Base"), methods: [fn("Shared", [])] }],
+    });
+    const derived = {
+      ...file("app/Derived.cs", "app", {
+        classes: [
+          {
+            ...cls("Derived"),
+            extends: "Base",
+            methods: [fn("Use", [call("Shared")])],
+          },
+        ],
+      }),
+    } as unknown as FileAnalysis;
+
+    const links = buildSymbolLinks([svc, caller, base, derived]);
+    expect(links.length).toBeGreaterThan(0);
+    expect(links.filter((l) => l.strategy === undefined)).toEqual([]);
+    expect(links.filter((l) => l.relation === undefined)).toEqual([]);
+  });
+
+  it("names the strategy that resolved each kind of edge", () => {
+    const target = file("app/Target.cs", "app", {
+      classes: [{ ...cls("Target"), methods: [fn("Work", [])] }],
+    });
+    const caller = file("app/Caller.cs", "app", {
+      classes: [{ ...cls("Caller"), methods: [fn("Go", [call("Target.Work")])] }],
+    });
+    const links = buildSymbolLinks([target, caller]);
+    const link = links.find((l) => l.targetSymbol === "Target.Work");
+    expect(link?.strategy).toBe("class-name");
+    expect(link?.relation).toBe("calls");
+  });
+
+  it("derives relation from strategy rather than asking each site to repeat it", () => {
+    // A reverse-reference edge is not a call, and consumers should be able to
+    // ask that directly instead of sniffing `sourceSymbol === "(reference)"`.
+    const dep = {
+      ...file("app/dep.ts", "app", { functions: [fn("helper", [])] }),
+      language: "typescript",
+      exports: [{ name: "helper", line: 1, kind: "function" }],
+    } as unknown as FileAnalysis;
+    const user = {
+      ...file("app/user.ts", "app", { functions: [] }),
+      language: "typescript",
+      imports: [
+        { source: "./dep", specifiers: ["helper"], isDefault: false, isNamespace: false, isType: false, line: 1 },
+      ],
+    } as unknown as FileAnalysis;
+
+    const ref = buildSymbolLinks([dep, user]).find((l) => l.sourceSymbol === "(reference)");
+    expect(ref?.strategy).toBe("reference");
+    expect(ref?.relation).toBe("reference");
   });
 });

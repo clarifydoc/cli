@@ -120,10 +120,56 @@ function stringTable() {
   return { table, sym };
 }
 
-// Enum packing for the symbolLinks tuple's trailing meta slot:
-//   meta = resolvedBy*100 + confidence*10 + navigational   (omitted when 0)
+/**
+ * Enum packing for the symbolLinks tuple's trailing meta slot.
+ *
+ *   meta = relation*100000 + strategy*1000 + resolvedBy*100 + confidence*10 + navigational
+ *
+ * Decimal digits rather than bit fields, and each field keeps the decade it
+ * already had so an old decoder reading a new artifact still gets the three
+ * original values right (it masks with %10 and ignores anything above). Riding
+ * this int is what keeps the payload's largest field — tens of thousands of
+ * rows — from growing a slot per new fact.
+ *
+ * `SYMBOL_LINK_STRATEGIES` is the ordered wire alphabet: **append only**.
+ * Reordering it silently rewrites the provenance of every previously published
+ * report, because position IS the encoding.
+ *
+ * The inverse lives in `application/spa/src/report/decode.ts`, in a separate
+ * package that cannot import this one. `report-payload.test.ts` decodes with
+ * that very file to prove the two stay in lockstep.
+ */
 const RESOLVED_ENUM: Record<string, number> = { text: 1, lsp: 2 };
 const CONF_ENUM: Record<string, number> = { EXTRACTED: 1, INFERRED: 2, AMBIGUOUS: 3 };
+
+export const SYMBOL_LINK_STRATEGIES: readonly string[] = [
+  "direct", "inheritance", "interface-redirect", "injection", "deep-qualified",
+  "factory-via", "class-name", "constructor", "import-file", "import-dir",
+  "unique-global", "unique-global-blind", "type-argument",
+  "route-component", "route-self", "route-scan", "spec-join", "interface-fanout",
+  "reference", "api-route", "queue", "lsp-definition", "lsp-reference",
+];
+
+export const SYMBOL_LINK_RELATIONS: readonly string[] = [
+  "calls", "instantiates", "implements", "http", "mq", "dispatch", "reference",
+];
+
+/**
+ * Wire code for a strategy, 1-based (0 means absent).
+ *
+ * Dispatch strategies are `dispatch:<resolverId>`, an open set a fixed alphabet
+ * cannot hold — they all encode as the single `dispatch` code. The resolver id
+ * is lost in the REPORT payload only; `project-summary.json` keeps the full
+ * string, and that is the artifact `lsp:compare` and MCP read. The report needs
+ * to colour a pill, not to attribute a conflict.
+ */
+const DISPATCH_CODE = SYMBOL_LINK_STRATEGIES.length + 1;
+function strategyCode(strategy: string | undefined): number {
+  if (!strategy) return 0;
+  if (strategy.startsWith("dispatch:")) return DISPATCH_CODE;
+  const i = SYMBOL_LINK_STRATEGIES.indexOf(strategy);
+  return i === -1 ? 0 : i + 1;
+}
 
 /**
  * symbolLinks wire row (the payload's biggest field — 58k rows on a 5k-file
@@ -136,6 +182,8 @@ function encodeSymbolLink(
   sym: (v: string) => number | string,
 ): unknown[] {
   const meta =
+    (SYMBOL_LINK_RELATIONS.indexOf(l.relation) + 1) * 100000 +
+    strategyCode(l.strategy) * 1000 +
     (RESOLVED_ENUM[l.resolvedBy] ?? 0) * 100 +
     (CONF_ENUM[l.confidence] ?? 0) * 10 +
     (l.navigational ? 1 : 0);

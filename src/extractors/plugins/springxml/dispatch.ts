@@ -24,6 +24,7 @@ import { flowIdOf } from "./index.js";
  *  d. subflow-state → the target flow file's `<flow>` root.
  */
 export class WebflowUiBridgeResolver implements DispatchResolver {
+  readonly id = "webflow";
   readonly languages: Language[] = ["springxml", "jsp", "java"];
   readonly priority = 50;
 

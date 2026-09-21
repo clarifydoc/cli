@@ -60,6 +60,8 @@ import type {
   Suggestion,
   SymbolDataAccess,
   SymbolLink,
+  SymbolLinkRelation,
+  SymbolLinkStrategy,
   TraceImpactInfo,
   ContextBurden,
   TypeReference,
@@ -122,6 +124,10 @@ export interface NormSymbolLink {
   callName: string;
   resolvedBy?: "text" | "lsp";
   confidence?: Confidence;
+  /** Which resolution strategy produced the link — see `SymbolLinkStrategy`. */
+  strategy?: SymbolLinkStrategy;
+  /** What kind of edge it is — see `SymbolLinkRelation`. */
+  relation?: SymbolLinkRelation;
 }
 
 /** Normalized FileComplexityInfo — filePath → file element; each function → a function element. */
@@ -728,6 +734,8 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
     };
     if (l.resolvedBy !== undefined) out.resolvedBy = l.resolvedBy;
     if (l.confidence !== undefined) out.confidence = l.confidence;
+    if (l.strategy !== undefined) out.strategy = l.strategy;
+    if (l.relation !== undefined) out.relation = l.relation;
     return out;
   });
 
@@ -919,6 +927,8 @@ export function denormalizeProject(obj: unknown): ProjectAnalysis {
     };
     if (nl.resolvedBy !== undefined) out.resolvedBy = nl.resolvedBy;
     if (nl.confidence !== undefined) out.confidence = nl.confidence;
+    if (nl.strategy !== undefined) out.strategy = nl.strategy;
+    if (nl.relation !== undefined) out.relation = nl.relation;
     return out;
   });
 

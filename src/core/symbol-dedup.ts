@@ -20,7 +20,21 @@ function normalize(s: string): string {
 }
 
 /**
- * Drop reverse-reference links (`sourceSymbol === "(reference)"`) that are
+ * A reverse-reference edge (an import naming a symbol), not a call.
+ *
+ * Prefers the typed `relation`, falling back to the `"(reference)"` sentinel
+ * for links that predate the field — links deserialized from an artifact
+ * written before it existed, and the many tests that build links by hand. The
+ * sentinel remains the wire representation of `sourceSymbol`; this is only
+ * about not asking every consumer to know that.
+ */
+export function isReferenceLink(l: SymbolLink): boolean {
+  if (l.relation !== undefined) return l.relation === "reference";
+  return l.sourceSymbol === "(reference)";
+}
+
+/**
+ * Drop reverse-reference links (see {@link isReferenceLink}) that are
  * artifacts of polymorphism / name collisions rather than real dependencies.
  * Both fool reference resolution into producing *wrong-direction* edges that
  * fabricate circular dependencies and inflate coupling:
@@ -75,7 +89,7 @@ export function dropNameCollisionReferences(
   };
 
   return links.filter((l) => {
-    if (l.sourceSymbol !== "(reference)" || l.sourceFile === l.targetFile) return true;
+    if (!isReferenceLink(l) || l.sourceFile === l.targetFile) return true;
     const symbol = l.targetSymbol || l.callName;
     // Only the qualified `Class.method` form is a strong artifact signal.
     if (!symbol.includes(".")) return true;

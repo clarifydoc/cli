@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildReportPayload } from "./report-payload.js";
+import { buildReportPayload, SYMBOL_LINK_STRATEGIES, SYMBOL_LINK_RELATIONS } from "./report-payload.js";
 import type { ProjectAnalysis } from "../types/analysis.js";
 
 /**
@@ -101,6 +101,84 @@ describe("buildReportPayload wire encoding", () => {
       ],
     } as unknown as ProjectAnalysis);
     expect(withMeta.symbolLinks[0][7]).toBe(2 * 100 + 2 * 10 + 1);
+  });
+
+  it("packs strategy and relation into higher decades, leaving the old ones alone", () => {
+    const withMeta = buildReportPayload({
+      ...(summary as object),
+      symbolLinks: [
+        {
+          sourceFile: "src/a.ts", sourceSymbol: "f", sourceLine: 1, callName: "g",
+          targetFile: "src/b.ts", targetSymbol: "g", targetLine: 2,
+          resolvedBy: "lsp", confidence: "INFERRED", navigational: true,
+          strategy: "unique-global", relation: "calls",
+        },
+      ],
+    } as unknown as ProjectAnalysis);
+    const meta = withMeta.symbolLinks[0][7] as number;
+    // The three original fields keep their exact decades, so an OLD decoder
+    // reading a NEW artifact still gets them right.
+    expect(Math.floor(meta / 100) % 10).toBe(2); // resolvedBy: lsp
+    expect(Math.floor(meta / 10) % 10).toBe(2); // confidence: INFERRED
+    expect(meta % 10).toBe(1); // navigational
+    expect(SYMBOL_LINK_STRATEGIES[(Math.floor(meta / 1000) % 100) - 1]).toBe("unique-global");
+    expect(SYMBOL_LINK_RELATIONS[Math.floor(meta / 100000) - 1]).toBe("calls");
+  });
+
+  it("collapses every dispatch:<id> strategy to one report-side code", () => {
+    const enc = (strategy: string) =>
+      (buildReportPayload({
+        ...(summary as object),
+        symbolLinks: [
+          {
+            sourceFile: "src/a.ts", sourceSymbol: "f", sourceLine: 1, callName: "g",
+            targetFile: "src/b.ts", targetSymbol: "g", targetLine: 2, strategy,
+          },
+        ],
+      } as unknown as ProjectAnalysis).symbolLinks[0][7] as number);
+    // The resolver id is an open set; the report only needs the kind. The exact
+    // id survives in project-summary.json, which is what lsp:compare reads.
+    expect(enc("dispatch:mediatr")).toBe(enc("dispatch:webflow"));
+    expect(enc("dispatch:mediatr")).not.toBe(enc("direct"));
+  });
+
+  /**
+   * The encoder lives here and the decoder lives in application/spa, a package
+   * that cannot import this one — the two enum orders are kept in step by hand.
+   * This test removes the "by hand": it encodes with the real encoder and
+   * decodes with the real SPA decoder, so a reordered or truncated alphabet on
+   * either side fails here rather than silently mislabelling every published
+   * report.
+   */
+  it("round-trips through the SPA decoder, which is a separate package", async () => {
+    // Imported through a variable so `tsc --noEmit` does not try to pull a file
+    // outside this package's rootDir into the program (TS6059). The point of
+    // the test is the RUNTIME round-trip against the real decoder, not its
+    // types — vitest resolves the specifier, tsc stays out of it.
+    const decoderPath = "../../application/spa/src/report/decode.js";
+    const { decodePayload } = (await import(/* @vite-ignore */ decoderPath)) as {
+      decodePayload: (p: unknown) => { symbolLinks: unknown };
+    };
+    const cases = [
+      { strategy: "direct", relation: "calls" },
+      { strategy: "unique-global-blind", relation: "calls" },
+      { strategy: "lsp-reference", relation: "reference", resolvedBy: "lsp" },
+      { strategy: "interface-fanout", relation: "implements", navigational: true },
+      { strategy: "api-route", relation: "http", confidence: "AMBIGUOUS" },
+    ];
+    for (const c of cases) {
+      const encoded = buildReportPayload({
+        ...(summary as object),
+        symbolLinks: [
+          {
+            sourceFile: "src/a.ts", sourceSymbol: "f", sourceLine: 1, callName: "g",
+            targetFile: "src/b.ts", targetSymbol: "g", targetLine: 2, ...c,
+          },
+        ],
+      } as unknown as ProjectAnalysis);
+      const decoded = decodePayload(JSON.parse(JSON.stringify(encoded)));
+      expect((decoded.symbolLinks as unknown as Array<Record<string, unknown>>)[0]).toMatchObject(c);
+    }
   });
 
   it("emits linkGraph and complexity as tuples", () => {

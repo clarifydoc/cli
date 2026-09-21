@@ -12,6 +12,16 @@ import type { FileAnalysis, SymbolLink, Language } from "../../types/analysis.js
  * generically (see `resolveProjectDispatch`) and never names a framework itself.
  */
 export interface DispatchResolver {
+  /**
+   * Stable identifier, used as the `dispatch:<id>` strategy tag on every link
+   * this resolver emits. It is what makes a synthetic link attributable to the
+   * framework rule that invented it — before this existed, the only per-resolver
+   * identity was the class object or its `priority`, neither of which survives
+   * into the artifact. Lower-case, hyphenated, and stable across releases:
+   * changing one silently rewrites provenance in every committed fixture.
+   */
+  readonly id: string;
+
   /** Languages this resolver applies to; core pre-filters analyses to these. */
   readonly languages: Language[];
 

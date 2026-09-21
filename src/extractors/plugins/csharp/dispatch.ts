@@ -42,6 +42,7 @@ interface HandlerDef {
 }
 
 export class CSharpMediatrResolver implements DispatchResolver {
+  readonly id = "mediatr";
   readonly languages: Language[] = ["csharp"];
   readonly priority = 10;
 

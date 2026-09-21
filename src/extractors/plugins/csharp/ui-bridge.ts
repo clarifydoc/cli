@@ -20,6 +20,7 @@ import { commonPrefixLength } from "../shared/path-utils.js";
  * candidate whose path shares the longest prefix with the UI file wins.
  */
 export class CsharpUiBridgeResolver implements DispatchResolver {
+  readonly id = "dotnet-ui";
   // VB is included for MAUI/WPF projects with VB code-behind — the partial-class
   // join is language-agnostic (classes + methods).
   readonly languages: Language[] = ["csharp", "vb", "xaml"];

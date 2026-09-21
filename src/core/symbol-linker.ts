@@ -1,4 +1,12 @@
-import type { FileAnalysis, SymbolLink, CallInfo, Confidence, ParamInfo } from "../types/analysis.js";
+import {
+  relationForStrategy,
+  type FileAnalysis,
+  type SymbolLink,
+  type SymbolLinkStrategy,
+  type CallInfo,
+  type Confidence,
+  type ParamInfo,
+} from "../types/analysis.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
 import { commonPrefixLength, extensionFamily } from "../extractors/plugins/shared/path-utils.js";
@@ -141,7 +149,12 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
           // (route.handler is narrowed to string by the enclosing if, but the
           // narrowing doesn't survive into a closure — capture it.)
           const callName = route.handler;
-          const pushRouteLink = (targetFile: string, def: { name: string; line: number }, confidence: Confidence) => {
+          const pushRouteLink = (
+            targetFile: string,
+            def: { name: string; line: number },
+            confidence: Confidence,
+            strategy: SymbolLinkStrategy,
+          ) => {
             links.push({
               sourceFile,
               sourceSymbol,
@@ -151,6 +164,8 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
               targetSymbol: def.name,
               targetLine: def.line,
               confidence,
+              strategy,
+              relation: relationForStrategy(strategy),
             });
           };
           let componentLinked = false;
@@ -162,7 +177,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
             // the trace view instead of silently having no handler link.
             const def = compSyms.get(handlerName) ?? compSyms.get("<setup>") ?? compSyms.get(base)
               ?? { name: "<component>", line: 1 };
-            pushRouteLink(compFile, def, "EXTRACTED");
+            pushRouteLink(compFile, def, "EXTRACTED", "route-component");
             componentLinked = true;
           }
           // File-based routing: the route's own file IS the page component
@@ -172,7 +187,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
           // resolved never self-anchors to the config file.
           if (!componentLinked && route.kind === "frontend" && /\.(vue|jsx|tsx|svelte)$/.test(sourceFile)) {
             const ownDef = symbolIndex.get(sourceFile)?.get("<setup>") ?? { name: "<component>", line: route.line };
-            pushRouteLink(sourceFile, ownDef, "EXTRACTED");
+            pushRouteLink(sourceFile, ownDef, "EXTRACTED", "route-self");
             componentLinked = true;
           }
           if (!componentLinked) {
@@ -195,7 +210,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
                 const base = filePath.split("/").pop()!.replace(/\.\w+$/, "");
                 if (!syms.has(classPart) && !syms.has(`${classPart}.${handlerName}`) && base !== classPart) continue;
               }
-              pushRouteLink(filePath, def, "AMBIGUOUS");
+              pushRouteLink(filePath, def, "AMBIGUOUS", "route-scan");
               break;
             }
           }
@@ -251,6 +266,8 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
           targetSymbol: `${impl.className}.${ifaceMethod.name}`,
           targetLine: implMethod.line,
           confidence: "INFERRED",
+          strategy: "interface-fanout",
+          relation: "implements",
           // Navigational only: an interface does not depend on its implementors.
           // Kept for the trace view, excluded from the dependency/cycle graph.
           navigational: true,
@@ -445,6 +462,8 @@ function specRouteHandlerLink(
       targetSymbol: def.name,
       targetLine: def.line,
       confidence: "INFERRED",
+      strategy: "spec-join",
+      relation: "calls",
     };
   }
   return null;
@@ -965,6 +984,7 @@ function resolveCallToDefinition(
     targetSymbol: string,
     targetLine: number,
     confidence: Confidence,
+    strategy: SymbolLinkStrategy,
   ): SymbolLink => ({
     sourceFile,
     sourceSymbol,
@@ -974,6 +994,8 @@ function resolveCallToDefinition(
     targetSymbol,
     targetLine,
     confidence,
+    strategy,
+    relation: relationForStrategy(strategy),
   });
 
   // Try exact call name first. For unqualified calls, fall back to the leaf name —
@@ -983,6 +1005,11 @@ function resolveCallToDefinition(
   // is known (via injection tracking, inheritance, or ClassName.method patterns).
   // Same-file leaf matching for qualified calls causes false self-links.
   let def = fileSymbols.get(call.name);
+  // Which strategy found `def`. The default path at the bottom is reached from
+  // two places — this plain lookup and Strategy 3's suffix match — and they were
+  // previously distinguishable only by `linkConfidence`, which is a different
+  // question. Whoever sets `def` sets this.
+  let defStrategy: SymbolLinkStrategy = "direct";
   if (!def && !isQualified) {
     def = fileSymbols.get(leafName);
   }
@@ -1016,7 +1043,7 @@ function resolveCallToDefinition(
           const parentDef = parentSymbols.get(leafName)
             ?? parentSymbols.get(`${parentInfo.parentClass}.${leafName}`);
           if (parentDef) {
-            return mkLink(parentInfo.parentFile, parentDef.name, parentDef.line, "INFERRED");
+            return mkLink(parentInfo.parentFile, parentDef.name, parentDef.line, "INFERRED", "inheritance");
           }
         }
         // Walk further up the chain
@@ -1072,7 +1099,7 @@ function resolveCallToDefinition(
           if (impl) {
             const implMethod = impl.methods.get(methodName) ?? impl.methods.get(leafName);
             if (implMethod) {
-              return mkLink(impl.classFile, `${impl.className}.${implMethod.name}`, implMethod.line, "INFERRED");
+              return mkLink(impl.classFile, `${impl.className}.${implMethod.name}`, implMethod.line, "INFERRED", "interface-redirect");
             }
           }
         }
@@ -1083,7 +1110,7 @@ function resolveCallToDefinition(
             ?? typeSymbols.get(`${injection.typeName}.${methodName}`)
             ?? typeSymbols.get(leafName);
           if (injDef) {
-            return mkLink(injection.typeFile, injDef.name, injDef.line, "INFERRED");
+            return mkLink(injection.typeFile, injDef.name, injDef.line, "INFERRED", "injection");
           }
         }
       }
@@ -1101,6 +1128,7 @@ function resolveCallToDefinition(
         const suffixDef = targetSymbols.get(suffix) ?? targetSymbols.get(leafName);
         if (suffixDef) {
           def = suffixDef;
+          defStrategy = "deep-qualified";
           break;
         }
       }
@@ -1117,7 +1145,7 @@ function resolveCallToDefinition(
   if (!def && call.kind === "cross-file" && call.via && targetFile) {
     const viaDef = symbolIndex.get(targetFile)?.get(call.via);
     if (viaDef) {
-      return mkLink(targetFile, viaDef.name, viaDef.line, "INFERRED");
+      return mkLink(targetFile, viaDef.name, viaDef.line, "INFERRED", "factory-via");
     }
   }
 
@@ -1157,7 +1185,7 @@ function resolveCallToDefinition(
         const syms = symbolIndex.get(filePath)!;
         const classDef = syms.get(`${className}.${methodName}`) ?? syms.get(methodName);
         if (classDef) {
-          return mkLink(filePath, classDef.name, classDef.line, "INFERRED");
+          return mkLink(filePath, classDef.name, classDef.line, "INFERRED", "class-name");
         }
       }
     }
@@ -1185,6 +1213,7 @@ function resolveCallToDefinition(
           entry.ctorSymbol ?? className,
           entry.ctorLine ?? entry.classLine,
           "INFERRED",
+          "constructor",
         );
       }
     }
@@ -1204,7 +1233,7 @@ function resolveCallToDefinition(
         const syms = symbolIndex.get(impFile);
         const d = syms?.get(parts.slice(1).join(".")) ?? syms?.get(leafName);
         if (d) {
-          return mkLink(impFile, d.name, d.line, "INFERRED");
+          return mkLink(impFile, d.name, d.line, "INFERRED", "import-file");
         }
       } else if (!impFile) {
         // Import names a directory/package — candidates come from the dir-tail
@@ -1222,7 +1251,7 @@ function resolveCallToDefinition(
           }
         }
         if (count === 1 && found) {
-          return mkLink(found.file, found.def.name, found.def.line, "INFERRED");
+          return mkLink(found.file, found.def.name, found.def.line, "INFERRED", "import-dir");
         }
       }
     }
@@ -1274,12 +1303,26 @@ function resolveCallToDefinition(
         const sameDir =
           entry.file.slice(0, entry.file.lastIndexOf("/")) ===
           sourceFile.slice(0, sourceFile.lastIndexOf("/"));
-        if (
-          !contradicted &&
-          (importedFiles.size === 0 || sameDir || importedFiles.has(entry.file) ||
-            importedStemsOf(analysis, ctx).has(fileStem(entry.file)))
-        ) {
-          return mkLink(entry.file, entry.def.name, entry.def.line, "AMBIGUOUS");
+        // The disjunction below used to be one condition emitting one link.
+        // Its two halves are not equally trustworthy: `evidenced` has a reason
+        // to believe the target (same directory, or the file is actually
+        // imported), while the import-blind branch has only the absence of
+        // contrary evidence. They are split here so the artifact can tell them
+        // apart and `lsp:compare` can judge them separately — the weaker branch
+        // is the obvious first candidate to drop if it turns out to cost more
+        // in conflicts than it earns in recall.
+        const evidenced =
+          sameDir ||
+          importedFiles.has(entry.file) ||
+          importedStemsOf(analysis, ctx).has(fileStem(entry.file));
+        if (!contradicted && (evidenced || importedFiles.size === 0)) {
+          return mkLink(
+            entry.file,
+            entry.def.name,
+            entry.def.line,
+            "AMBIGUOUS",
+            evidenced ? "unique-global" : "unique-global-blind",
+          );
         }
       }
     }
@@ -1304,7 +1347,7 @@ function resolveCallToDefinition(
       // correct binding depends on real type resolution / which `using` is in
       // scope — guessing produces false edges, so leave those to the LSP layer.
       if (entry && isSafeHeuristicTarget(entry, sourceFile, analysis.projectId, { allowCrossProject: true })) {
-        return mkLink(entry.file, entry.ctorSymbol ?? typeName, entry.ctorLine ?? entry.classLine, "INFERRED");
+        return mkLink(entry.file, entry.ctorSymbol ?? typeName, entry.ctorLine ?? entry.classLine, "INFERRED", "type-argument");
       }
     }
   }
@@ -1327,6 +1370,8 @@ function resolveCallToDefinition(
     targetFile,
     targetSymbol: def.name,
     targetLine: def.line,
+    strategy: defStrategy,
+    relation: relationForStrategy(defStrategy),
   };
   if (linkConfidence) link.confidence = linkConfidence;
   return link;
@@ -1477,6 +1522,8 @@ function buildReverseReferenceLinks(
             targetSymbol: def.name,
             targetLine: def.line,
             confidence: "EXTRACTED",
+            strategy: "reference",
+            relation: "reference",
           });
         }
       }
