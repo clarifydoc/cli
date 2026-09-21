@@ -21,8 +21,15 @@ const HTTP_ROOTS = new Set(["fetch", "axios", "http", "request", "ajax"]);
  * HTTP "verb" methods. These collide with non-HTTP APIs (`Map.get`,
  * `URLSearchParams.get`, `array.includes`), so a verb call is only an API call
  * when its argument is URL-shaped — see `looksLikeUrl`.
+ *
+ * `del` is here because `delete` is a reserved word: superagent, koa-route and
+ * several wrappers spell the DELETE verb `del`, and a client that wraps them
+ * (`const requests = { del: url => superagent.del(...) }`) inherits the name.
+ * Leaving it out silently dropped every DELETE call in a codebase — the accuracy
+ * eval found exactly that on the RealWorld frontend, where `get`/`post`/`put`
+ * all resolved and all four DELETEs went missing.
  */
-const HTTP_VERBS = new Set(["get", "post", "put", "patch", "delete"]);
+const HTTP_VERBS = new Set(["get", "post", "put", "patch", "delete", "del"]);
 
 /** React hook patterns that indicate data sources */
 const STATE_HOOKS = new Set([

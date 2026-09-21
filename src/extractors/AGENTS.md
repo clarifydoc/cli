@@ -131,6 +131,20 @@ language family exports one:
 
 Regex-path languages (Go, Ruby, PHP) extract routes inside their `plugins/<lang>/index.ts` via `RegexLangSpec.extractRoutes`.
 
+**Mount prefixes are a project-level pass, not a per-file one.** A route's real
+path often comes from a *different file* — `app.use("/api/auth", authRoutes)`
+(Express) or `include_router(auth.router, prefix="/users")` (FastAPI). A
+per-file extractor cannot see it, so it emits the mount as an api route with
+`httpMethod: null` whose `handler` is the router identifier, and
+[shared/router-mounts.ts](shared/router-mounts.ts) resolves that identifier
+through the import index after per-file analysis, prefixes the target file's
+routes and drops the mount. It is language-agnostic — reading only
+`FileAnalysis.routes` — so a new framework joins by emitting mounts in that
+shape. Only emit a mount when the prefix is a **literal**: an unresolvable one
+leaves a non-endpoint sitting in the route map. Getting this wrong is not
+cosmetic — `dedupeRoutes` keys on method+path, so several routers' un-prefixed
+`@router.get("")` collapse into a single endpoint.
+
 ## entities/ (ORM entities + relations)
 
 `entities/base.ts` defines `EntityExtractor`; each plugin subclasses it in
