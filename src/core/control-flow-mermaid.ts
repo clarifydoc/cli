@@ -169,11 +169,22 @@ export function toMermaidFlowchart(cfg: Cfg, options: MermaidOptions = {}): Cont
   }
 
   const parts: string[] = [];
+  if (cfg.approximate) {
+    // First, because it qualifies everything else in the diagram.
+    parts.push(
+      `${cfg.language} has no parser here, so this was read off the source text and may misjudge nesting`,
+    );
+  }
   const hidden = drawable.length - shown.length;
   if (hidden > 0) parts.push(`${hidden} further node(s) omitted at the ${NODE_CAP}-node cap`);
   if (cfg.hasFinally) {
     parts.push(
       "dotted edges into the `finally` are the detour a `return` or `throw` takes on its way out; control then leaves rather than continuing past the `try`",
+    );
+  }
+  if (cfg.unreachableBranches > 0) {
+    parts.push(
+      `${cfg.unreachableBranches} branch(es) sit in code nothing reaches and are not drawn`,
     );
   }
   if (cfg.unmodelled.length > 0) {
@@ -189,7 +200,7 @@ export function toMarkdown(cfg: Cfg): string {
   const out = [
     `### ${cfg.functionName}`,
     "",
-    `\`${cfg.filePath}\`, lines ${cfg.line}–${cfg.endLine}`,
+    `\`${cfg.filePath}\`, lines ${cfg.line}–${cfg.endLine}${cfg.approximate ? " (approximate)" : ""}`,
     "",
     "```mermaid",
     diagram.text,

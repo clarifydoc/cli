@@ -2,6 +2,7 @@ import type {
   ControlFlowField,
   ControlFlowRole,
   LanguageControlFlowSpec,
+  LanguageRegexControlFlowSpec,
 } from "../../types/language-plugin.js";
 
 /**
@@ -127,4 +128,66 @@ export function extendControlFlow(
   const roles = new Map(ROLES);
   for (const [type, role] of extra) roles.set(type, role);
   return { roles, ...options };
+}
+
+// ── The regex tier ────────────────────────────────────────────────────────
+
+/**
+ * Statement vocabulary shared by the brace languages with no parser — Go,
+ * Rust, C, C++, Objective-C, Swift, Scala, Dart, Perl.
+ *
+ * The patterns are anchored at the start of a trimmed line and deliberately
+ * loose about what follows: `if err != nil {`, `if (x) {`, `if x > 0 {` and
+ * `if let Some(v) = opt {` all have to read as one branch, and the capture is
+ * only ever a label. A pattern that tried to be a parser here would fail on
+ * the first language that spells its condition differently, which is the
+ * failure this tier exists to avoid.
+ *
+ * `default:` is listed before `case`, and `else if` before `if`, because the
+ * first match wins.
+ */
+const BRACE_STATEMENTS: readonly { match: RegExp; type: string }[] = [
+  // Jumps first: they are exact words and cannot be confused with anything.
+  { match: /^return\b(.*)$/, type: "return_statement" },
+  { match: /^(?:throw|raise|panic!?)\b(.*)$/, type: "throw_statement" },
+  { match: /^break\b/, type: "break_statement" },
+  { match: /^continue\b/, type: "continue_statement" },
+
+  // `else if` must beat `if`, and neither may match a call named `ifSomething`.
+  { match: /^\}?\s*else\s+if\b\s*\(?\s*(.*?)\s*\)?\s*\{?\s*$/, type: "if_statement" },
+  { match: /^if\b\s*\(?\s*(.*?)\s*\)?\s*\{?\s*$/, type: "if_statement" },
+
+  { match: /^(?:while|until)\b\s*\(?\s*(.*?)\s*\)?\s*\{?\s*$/, type: "while_statement" },
+  { match: /^(?:for|foreach)\b\s*\(?\s*(.*?)\s*\)?\s*\{?\s*$/, type: "for_statement" },
+  { match: /^(?:loop|do)\b\s*\{?\s*$/, type: "while_statement" },
+
+  { match: /^(?:switch|match|select)\b\s*\(?\s*(.*?)\s*\)?\s*\{?\s*$/, type: "switch_statement" },
+  { match: /^try\b/, type: "try_statement" },
+];
+
+/**
+ * The starting point for a brace language with no grammar. A plugin overrides
+ * only what it spells differently — Go's backtick strings, Rust's `loop`, a
+ * language whose comments are not `//`.
+ */
+export const BRACE_REGEX_CONTROL_FLOW: LanguageRegexControlFlowSpec = {
+  statements: BRACE_STATEMENTS,
+};
+
+/** The brace defaults plus regex literals, for the ECMAScript family. */
+export const JS_REGEX_CONTROL_FLOW: LanguageRegexControlFlowSpec = {
+  statements: BRACE_STATEMENTS,
+  regexLiterals: true,
+};
+
+/**
+ * A regex spec built from the brace defaults plus a language's own rules.
+ * Extra statement patterns are tried BEFORE the shared ones, so a language can
+ * claim a keyword the defaults would have read differently.
+ */
+export function extendRegexControlFlow(
+  extra: readonly { match: RegExp; type: string }[] = [],
+  options: Omit<LanguageRegexControlFlowSpec, "statements"> = {},
+): LanguageRegexControlFlowSpec {
+  return { statements: [...extra, ...BRACE_STATEMENTS], ...options };
 }

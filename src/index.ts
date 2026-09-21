@@ -37,6 +37,7 @@ export {
   type ControlFlowRequest,
   type ControlFlowFileResult,
 } from "./core/control-flow-file.js";
+export { buildRegexControlFlow, blankNonCode } from "./core/control-flow-regex.js";
 export {
   toMermaidFlowchart,
   toMarkdown as controlFlowToMarkdown,

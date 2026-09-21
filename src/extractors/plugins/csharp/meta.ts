@@ -1,5 +1,8 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
-import { extendControlFlow } from "../../shared/control-flow-defaults.js";
+import {
+  extendControlFlow,
+  BRACE_REGEX_CONTROL_FLOW,
+} from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { extractCsharpTypeReferences } from "./type-references.js";
 import { csharpCallHooks } from "./call-hooks.js";
@@ -51,6 +54,7 @@ export const csharpMeta: LanguagePluginMeta = {
   // field, which TypeScript spells `increment`); what it adds is the member
   // declarations the body resolver has to recognise as "a function starts
   // here", and the expression-bodied member form.
+  regexControlFlow: BRACE_REGEX_CONTROL_FLOW,
   controlFlow: extendControlFlow([
     ["method_declaration", "nested-function"],
     ["constructor_declaration", "nested-function"],

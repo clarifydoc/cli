@@ -101,4 +101,55 @@ export interface Cfg {
    * not draw. See `control-flow.ts`.
    */
   hasFinally: boolean;
+  /**
+   * Branches in code the graph did not draw because nothing reaches it — a
+   * statement after a `return`, or a hoisted declaration below one.
+   *
+   * Unreachable code is still counted by the complexity metric, so without
+   * this the graph could not account for the number it exists to explain. It
+   * is reported rather than drawn: connecting it would invent a path, and
+   * leaving it out silently would lose it.
+   */
+  unreachableBranches: number;
+  /**
+   * True when the graph was read off the source text rather than a parse tree.
+   *
+   * The ~29 regex-extracted languages have no parser, so their graphs come
+   * from a line scanner that infers nesting from block delimiters. It gets the
+   * shape of ordinary code right and has no way to be sure: a keyword inside a
+   * construct it does not know, a brace inside something the comment stripper
+   * missed, and the nesting is off. Anything showing one of these has to say
+   * so — the reader can discount an approximation, but not one presented as a
+   * parse.
+   */
+  approximate?: boolean;
+}
+
+/**
+ * The slice of a syntax node the control-flow builder actually reads.
+ *
+ * It exists so there is exactly ONE interpreter. Most languages arrive as a
+ * tree-sitter tree, but the ~29 regex-extracted ones have no parser at all;
+ * rather than write a second builder for them — which would drift from the
+ * first the moment either was fixed — the regex tier synthesizes nodes of this
+ * shape from the source text, gives them the same canonical types the shared
+ * role table already names, and hands them to the same code.
+ *
+ * `web-tree-sitter`'s `Node` satisfies this structurally, so nothing had to
+ * change on the tree-sitter side to make room for it.
+ */
+export interface FlowNode {
+  /** Unique within its tree; used only to tell two nodes apart. */
+  readonly id: number;
+  readonly type: string;
+  readonly text: string;
+  readonly isNamed: boolean;
+  readonly startIndex: number;
+  readonly startPosition: { readonly row: number; readonly column: number };
+  readonly endPosition: { readonly row: number; readonly column: number };
+  readonly children: readonly FlowNode[];
+  readonly childCount: number;
+  child(index: number): FlowNode | null;
+  childForFieldName(fieldName: string): FlowNode | null;
+  fieldNameForChild(index: number): string | null;
 }

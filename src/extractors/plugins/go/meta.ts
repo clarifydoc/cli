@@ -1,4 +1,5 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
+import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { goSpec } from "./index.js";
 import { goPackages } from "./packages.js";
@@ -16,6 +17,14 @@ const GO_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const goMeta: LanguagePluginMeta = {
+  // Go has no grammar here, so its control flow is read off the source. The
+  // brace defaults cover it almost entirely; what it adds is `select`, the
+  // backtick raw string (a brace inside one would otherwise move the nesting),
+  // and `panic` as the throw.
+  regexControlFlow: extendRegexControlFlow(
+    [{ match: /^select\s*\{?\s*$/, type: "switch_statement" }],
+    { quotes: ['"', "`"], multilineStrings: true },
+  ),
   ...goManifest,
   regexSpec: goSpec,
   builtinTypes: GO_BUILTINS,

@@ -1,4 +1,5 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
+import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { objcSpec } from "./index.js";
 import { objcPackages } from "./packages.js";
@@ -15,6 +16,10 @@ const OBJC_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const objcMeta: LanguagePluginMeta = {
+  // Objective-C: `@try`/`@catch`/`@finally` carry a leading `@`.
+  regexControlFlow: extendRegexControlFlow([
+    { match: /^@try\b/, type: "try_statement" },
+  ], { catch: /^\}?\s*@?catch\b/, finally: /^\}?\s*@?finally\b/ }),
   ...objcManifest,
   regexSpec: objcSpec,
   builtinTypes: OBJC_BUILTINS,

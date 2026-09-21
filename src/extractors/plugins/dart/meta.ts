@@ -1,4 +1,5 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
+import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { dartSpec } from "./index.js";
 import { pubPackages } from "./packages.js";
@@ -18,6 +19,7 @@ const DART_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const dartMeta: LanguagePluginMeta = {
+  regexControlFlow: extendRegexControlFlow([], { quotes: ['"', "'"] }),
   ...dartManifest,
   regexSpec: dartSpec,
   knownPackages: pubPackages,

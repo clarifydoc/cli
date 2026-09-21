@@ -19,7 +19,10 @@ import { sveltePreprocess } from "./svelte-hooks.js";
 import { npmPackages } from "./packages.js";
 import { typescriptManifest, javascriptManifest } from "./manifest.js";
 import { DEFAULT_COMPLEXITY } from "../../shared/complexity-defaults.js";
-import { DEFAULT_CONTROL_FLOW } from "../../shared/control-flow-defaults.js";
+import {
+  DEFAULT_CONTROL_FLOW,
+  JS_REGEX_CONTROL_FLOW,
+} from "../../shared/control-flow-defaults.js";
 import { JavaScriptExtractor } from "./functions-classes.js";
 import { JavaScriptImportExportExtractor } from "./imports-exports.js";
 import { JavaScriptDataSourceExtractor } from "./data-sources.js";
@@ -51,6 +54,11 @@ const TS_BUILTINS: ReadonlySet<string> = new Set<string>([
 // and the TS/JS tables from ever drifting apart.
 const COMPLEXITY = DEFAULT_COMPLEXITY;
 const CONTROL_FLOW = DEFAULT_CONTROL_FLOW;
+// Also declared for the regex tier: a TS/JS file whose grammar failed to load
+// falls back to regex extraction, and this is what lets it still be drawn. It
+// doubles as the reference the regex scanner is measured against, since this
+// is the one language where both tiers can be run over the same code.
+const REGEX_CONTROL_FLOW = JS_REGEX_CONTROL_FLOW;
 
 const SECURITY_RULES: readonly SecurityRule[] = [
   // Only assignments whose right-hand side has dynamic content (identifier,
@@ -161,6 +169,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
   controlFlow: CONTROL_FLOW,
+  regexControlFlow: REGEX_CONTROL_FLOW,
   securityRules: SECURITY_RULES,
   securityPostScan: consolePostScan,
   knownPackages: npmPackages,
@@ -182,6 +191,7 @@ export const javascriptMeta: LanguagePluginMeta = {
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
   controlFlow: CONTROL_FLOW,
+  regexControlFlow: REGEX_CONTROL_FLOW,
   securityRules: SECURITY_RULES,
   securityPostScan: consolePostScan,
   knownPackages: npmPackages,

@@ -65,8 +65,10 @@ describe("controlFlowForFile", () => {
   });
 
   it("says so rather than guessing when a language has no control-flow tables", async () => {
+    // Ruby delimits blocks with `end`, which the line scanner cannot read
+    // reliably (a modifier `if` opens nothing), so it has neither tier.
     await expect(
-      controlFlowForFile({ filePath: resolve(FIXTURES, "sample-go-api/main.go") }),
+      controlFlowForFile({ filePath: resolve(FIXTURES, "sample-ruby-web/app/models/user.rb") }),
     ).rejects.toBeInstanceOf(ControlFlowUnavailableError);
   });
 
