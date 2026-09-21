@@ -534,6 +534,16 @@ export interface ApiRouteLink {
    * AMBIGUOUS — more than one route matched; `target` is the first.
    */
   confidence: Confidence;
+  /**
+   * How the path was matched, which `confidence` alone cannot tell you.
+   *
+   * `exact` and `method-fallback` are the difference between "this route serves
+   * this call" and "some route at this path does"; `base-prefix:<p>` means the
+   * two sides disagreed about a proxy base (`/api`) and names the prefix that
+   * reconciled them — the one piece of evidence needed to judge whether the
+   * match is real or an artefact of the default prefix list.
+   */
+  matchedVia?: "exact" | "method-fallback" | `base-prefix:${string}`;
 }
 
 export interface DataSourceInfo {
@@ -817,6 +827,99 @@ export interface LinkInfo {
   confidence?: Confidence;
 }
 
+/**
+ * Which resolution strategy produced a `SymbolLink`.
+ *
+ * `confidence` says how much to trust an edge; this says *why* it exists. The
+ * two are not the same question: an `INFERRED` link from inheritance lookup and
+ * an `INFERRED` link from a globally-unique-name guess warrant very different
+ * scepticism, and without this tag `lsp:compare` cannot attribute a conflict to
+ * the strategy that caused it — which is what `AGENTS.md`'s standing rule
+ * "reject any strategy that introduces conflicts" requires to be enforceable.
+ *
+ * Names are short because they are rendered to users (`[inferred via
+ * unique-global]`). Grouped below in the order the linker attempts them.
+ */
+export type SymbolLinkStrategy =
+  // ── Call cascade (symbol-linker.ts `resolveCallToDefinition`) ──
+  /** Exact name (or leaf) found in the target file — no heuristic applied. */
+  | "direct"
+  /** Walked the extends-chain to a parent's member. */
+  | "inheritance"
+  /** Receiver's declared type is an interface; linked past it to the implementation. */
+  | "interface-redirect"
+  /** Receiver type came from DI registration, a param type, or a local `new`. */
+  | "injection"
+  /** Cross-file qualified call matched by dotted suffix (`prisma.user.findMany`). */
+  | "deep-qualified"
+  /** Member absent from the target module; routed to the factory in `CallInfo.via`. */
+  | "factory-via"
+  /** `ClassName.method` resolved through the class-name index. */
+  | "class-name"
+  /** `new X` / bare class instantiation. */
+  | "constructor"
+  /** Head of the call is an import alias resolving to one file. */
+  | "import-file"
+  /** Head of the call is an import naming a directory; unique-or-nothing tail match. */
+  | "import-dir"
+  /** Unique leaf name project-wide, backed by evidence (same dir, or actually imported). */
+  | "unique-global"
+  /**
+   * Unique leaf name project-wide with NO import evidence either way — the
+   * import-blind-ecosystem fallback (CodeIgniter-style autoloading). Strictly
+   * weaker than `unique-global`; kept separate precisely so it can be measured
+   * and, if it earns its keep poorly, dropped on its own.
+   */
+  | "unique-global-blind"
+  /** Linked to a generic type argument's class (`_context.Set<Account>()`). */
+  | "type-argument"
+  // ── Outer pipeline (symbol-linker.ts `buildSymbolLinks`) ──
+  /** Frontend route → the component file its handler names. */
+  | "route-component"
+  /** Route file IS the page component; anchored at its own setup block. */
+  | "route-self"
+  /** Last-resort global scan for a route handler name. */
+  | "route-scan"
+  /** Spec route (OpenAPI/WSDL/GraphQL) joined to an implementation by name. */
+  | "spec-join"
+  /** Interface → each implementation, for navigation only. */
+  | "interface-fanout"
+  /** Reverse edge from an import specifier back to the symbol it names. */
+  | "reference"
+  // ── Produced outside the linker ──
+  /** Frontend api-call matched to the backend route serving it. */
+  | "api-route"
+  /** Message-queue publish matched to its consumer. */
+  | "queue"
+  /** Language server `textDocument/definition`. */
+  | "lsp-definition"
+  /** Language server `textDocument/references`. */
+  | "lsp-reference"
+  /** A plugin dispatch resolver, identified by its `id` (`dispatch:mediatr`). */
+  | `dispatch:${string}`;
+
+/**
+ * What KIND of edge this is, as opposed to how it was found.
+ *
+ * Consumers used to sniff strings for this (`sourceSymbol === "(reference)"`),
+ * which is both fragile and silent when it drifts.
+ */
+export type SymbolLinkRelation =
+  /** A call from one symbol to another. The default. */
+  | "calls"
+  /** Construction of a type (`new X`). */
+  | "instantiates"
+  /** Interface → implementation, either direction. */
+  | "implements"
+  /** Crosses the HTTP boundary: a client call to the route that serves it. */
+  | "http"
+  /** Crosses a message queue: publish → consume. */
+  | "mq"
+  /** Resolved through a framework's indirection rather than a direct call. */
+  | "dispatch"
+  /** A reverse edge from an import back to the symbol it names, not a call. */
+  | "reference";
+
 export interface SymbolLink {
   sourceFile: string;
   sourceSymbol: string;
@@ -828,6 +931,18 @@ export interface SymbolLink {
   resolvedBy?: "text" | "lsp";
   confidence?: Confidence;
   /**
+   * The strategy that produced this link, as it FINALLY stands.
+   *
+   * Two things follow from "finally". `dedupSymbolLinks` keeps the
+   * highest-confidence duplicate, so when several strategies find the same edge
+   * this records the one that won, not every one that agreed. And a link that
+   * is later re-aimed (LSP's interface redirect) is re-tagged at that point
+   * rather than keeping the tag of whatever first created it.
+   */
+  strategy?: SymbolLinkStrategy;
+  /** What kind of edge this is (call, instantiation, HTTP hop, …). */
+  relation?: SymbolLinkRelation;
+  /**
    * True for *navigational* edges that aid the trace view but are NOT real
    * dependencies — specifically interface→implementation fan-out (an interface
    * does not depend on its implementors). Excluded from the component dependency
@@ -835,6 +950,35 @@ export interface SymbolLink {
    * interface. In-memory only (not persisted in the normalized summary).
    */
   navigational?: boolean;
+}
+
+/**
+ * Default `relation` for a strategy. Every producer knows its strategy, and for
+ * all but a handful the relation follows from it — so deriving here keeps the
+ * two fields consistent by construction instead of asking twenty call sites to
+ * remember both.
+ */
+export function relationForStrategy(strategy: SymbolLinkStrategy): SymbolLinkRelation {
+  if (strategy.startsWith("dispatch:")) return "dispatch";
+  switch (strategy) {
+    case "constructor":
+      return "instantiates";
+    // Only the fan-out edge asserts the implements relationship. A redirect is
+    // an ordinary call that merely had to go through the interface to find its
+    // target — labelling it "implements" would tell a consumer the caller
+    // implements something, which it does not.
+    case "interface-fanout":
+      return "implements";
+    case "api-route":
+      return "http";
+    case "queue":
+      return "mq";
+    case "reference":
+    case "lsp-reference":
+      return "reference";
+    default:
+      return "calls";
+  }
 }
 
 /**

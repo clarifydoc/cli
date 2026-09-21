@@ -20,6 +20,7 @@ import { resolveTarget, buildFilePathMap } from "../../shared/link-scoring.js";
  * fans out to each bound handler (the runtime does too, one parent at a time).
  */
 export class JsComponentEmitResolver implements DispatchResolver {
+  readonly id = "component-emit";
   readonly languages: Language[] = ["typescript", "javascript"];
   readonly priority = 30;
 

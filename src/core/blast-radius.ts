@@ -91,7 +91,8 @@ export function analyzeBlastRadius(
   // Per-symbol caller sites, deduped by (file, line). Multiple SymbolLinks can
   // share the same call site — e.g. one emitted by the text-linker scoped to the
   // enclosing function, and one emitted by LSP findReferences with a generic
-  // "(reference)" sourceSymbol. They're correctly distinct at the graph layer
+  // "(reference)" sourceSymbol (`relation: "reference"`, `strategy:
+  // "lsp-reference"`). They're correctly distinct at the graph layer
   // (symbol-dedup keeps both), but the caller list only cares about unique sites.
   const callerSeen = new Map<string, Set<string>>();
   for (const link of symbolLinks) {

@@ -223,6 +223,8 @@ export async function enhanceWithLsp(options: LspEnhancerOptions): Promise<LspEn
           targetLine: rec.target.line,
           resolvedBy: "lsp",
           confidence: "INFERRED",
+          strategy: "lsp-definition",
+          relation: "calls",
         },
       });
     }
@@ -567,6 +569,8 @@ async function findReferences(
             targetLine: sym.line,
             resolvedBy: "lsp",
             confidence: "INFERRED",
+            strategy: "lsp-reference",
+            relation: "reference",
           });
         }
       } catch {
@@ -639,6 +643,14 @@ function deduplicateLinks(links: SymbolLink[]): SymbolLink[] {
  *     because the call expression resolves to a member access — useless for
  *     a call-graph reader.
  */
+/**
+ * Re-aim a link that landed on an interface so it points at the implementation.
+ *
+ * Every return here restates `strategy`: the link keeps its identity but not its
+ * provenance, because what resolved the FINAL target was this interface/impl
+ * step, not whatever first created the link. A spread that carried the old tag
+ * through would be quietly wrong in the artifact.
+ */
 function redirectThroughInterface(
   link: SymbolLink,
   analyses: FileAnalysis[],
@@ -663,6 +675,7 @@ function redirectThroughInterface(
           targetFile: impl.classFile,
           targetSymbol: `${impl.className}.${leaf}`,
           targetLine: implMethod.line,
+          strategy: "interface-redirect",
         };
       }
     }
@@ -700,6 +713,7 @@ function redirectThroughInterface(
         targetFile: iface.interfaceFile,
         targetSymbol: `${iface.interfaceName}.${leaf}`,
         targetLine: ifaceMethod.line,
+        strategy: "interface-redirect",
       };
     }
     return link;
@@ -712,5 +726,6 @@ function redirectThroughInterface(
     targetFile: impl.classFile,
     targetSymbol: `${impl.className}.${leaf}`,
     targetLine: implMethod.line,
+    strategy: "interface-redirect",
   };
 }

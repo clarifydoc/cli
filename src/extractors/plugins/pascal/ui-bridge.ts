@@ -19,6 +19,7 @@ import { commonPrefixLength } from "../shared/path-utils.js";
  * climbing `extends` one unit at a time.
  */
 export class PascalUiBridgeResolver implements DispatchResolver {
+  readonly id = "dfm-ui";
   readonly languages: Language[] = ["pascal", "dfm"];
   readonly priority = 20;
 

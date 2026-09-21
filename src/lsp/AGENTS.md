@@ -62,5 +62,8 @@ Each language has a Dockerfile in `../../docker/<lang>/`.
 ## Conventions
 
 - LSP enhancement is **additive** — it only adds links, never removes text-based ones
-- `resolvedBy: "lsp"` field on `SymbolLink` marks LSP-resolved links (vs default `"text"`)
+- `resolvedBy: "lsp"` field on `SymbolLink` marks LSP-resolved links. `"text"` is never actually
+  written, so the field is really present-or-absent; `strategy` (`lsp-definition` /
+  `lsp-reference`) is the precise form. `redirectThroughInterface` re-tags the links it
+  re-aims — a spread that kept the old tag would be wrong about what resolved the target.
 - Individual request failures are swallowed (one bad file shouldn't abort the whole pass)

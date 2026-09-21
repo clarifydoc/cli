@@ -143,6 +143,8 @@ export function synthesizeApiRouteSymbolLinks(
       targetSymbol: tgt.symbol,
       targetLine: tgt.line,
       confidence: link.confidence,
+      strategy: "api-route",
+      relation: "http",
     });
   }
   return out;
@@ -180,6 +182,8 @@ export function synthesizeQueueSymbolLinks(rows: SymbolDataAccess[]): SymbolLink
         targetSymbol: con.symbol,
         targetLine: con.symbolLine,
         confidence: "INFERRED",
+        strategy: "queue",
+        relation: "mq",
       });
     }
   }

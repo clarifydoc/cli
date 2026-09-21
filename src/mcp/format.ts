@@ -172,10 +172,20 @@ export function tally<T>(items: T[], key: (item: T) => string | undefined): Reco
   return out;
 }
 
-/** Provenance suffix — only rendered when it is not the default EXTRACTED. */
-export function confidenceNote(confidence?: string, resolvedBy?: string): string {
+/**
+ * Provenance suffix — only rendered when it is not the default EXTRACTED.
+ *
+ * `[inferred]` tells a model how much to trust an edge; `[inferred via
+ * unique-global]` also tells it *why the edge exists*, which is the difference
+ * between "be careful" and "this was a same-name guess with no import backing,
+ * go and check". The strategy is only worth the tokens when the link is not
+ * plainly EXTRACTED, so it rides the same suppression.
+ */
+export function confidenceNote(confidence?: string, resolvedBy?: string, strategy?: string): string {
   const parts: string[] = [];
   if (confidence && confidence !== "EXTRACTED") parts.push(confidence.toLowerCase());
   if (resolvedBy && resolvedBy !== "text") parts.push(resolvedBy);
+  // "direct" is the un-heuristic path — naming it would be noise on every row.
+  if (parts.length > 0 && strategy && strategy !== "direct") parts.push(`via ${strategy}`);
   return parts.length ? ` [${parts.join(", ")}]` : "";
 }

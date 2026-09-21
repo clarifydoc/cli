@@ -510,7 +510,8 @@ export function traceTool(ctx: ToolContext): McpTool {
       "Walk the resolved call graph from a symbol or file: who calls it (callers) and what it calls (callees), " +
       "up to `depth` hops, with file:line for every hop. Also reports the data effects the seed symbol reaches " +
       "(tables written, queues published) when known. Links resolved by heuristics are tagged with their " +
-      "confidence so you can judge them.",
+      "confidence AND the strategy that found them (`[inferred via unique-global]`), so you can judge not just " +
+      "how sure the tool is but what it based the edge on.",
     inputSchema: {
       type: "object",
       properties: {
@@ -675,7 +676,7 @@ function walk(
         rows.push(
           `${otherSymbol}() ${loc(otherFile, otherLine)} — ${
             direction === "callers" ? "calls" : "called from"
-          } ${edge.callName}${confidenceNote(edge.confidence, edge.resolvedBy)}`,
+          } ${edge.callName}${confidenceNote(edge.confidence, edge.resolvedBy, edge.strategy)}`,
         );
       }
     }

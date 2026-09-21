@@ -20,6 +20,7 @@ import type { DispatchResolver } from "../../dispatch/base.js";
  *     (falls back to the class itself when the method is unknown).
  */
 export class QmlCppBridgeResolver implements DispatchResolver {
+  readonly id = "qml-cpp";
   readonly languages: Language[] = ["qml", "cpp", "c", "objc"];
   readonly priority = 40;
 
