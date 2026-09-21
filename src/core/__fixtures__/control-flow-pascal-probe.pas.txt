@@ -1,0 +1,39 @@
+// Control-flow probe for the Pascal/Delphi CFG builder. Not compiled — read as
+// text by `control-flow.test.ts`. tree-sitter-pascal keeps field names but none of
+// the C-family spellings (`then`, `else`, `start`, `try`), makes all 155 of its
+// keywords named nodes, and has no node type for Break/Continue/Exit — those are
+// procedure calls in Pascal and are drawn as ordinary steps.
+//
+// NOTE: this language's complexity table names node types the grammar does not
+// have, so every Delphi function reports complexity 1 and the arithmetic
+// cross-check cannot fail here. `undrawnStructure` is what actually guards it.
+//
+// Add a construct to the spec, add it here.
+
+unit Probe;
+interface
+implementation
+function Everything(Total: Integer): Integer;
+var I: Integer;
+begin
+  if Total = 0 then Result := 0
+  else if (Total = 1) and (Total > 0) then Result := 1
+  else Result := 2;
+  while Total < 10 do begin Inc(Total); if Total = 5 then Break; end;
+  repeat Dec(Total); until Total <= 0;
+  for I := 0 to 10 do begin if I = 2 then Continue; Total := Total + I; end;
+  case Total of
+    1: Total := 10;
+    2, 3: Total := 20;
+  else
+    if Total > 100 then Total := 100 else Total := 30;
+  end;
+  try
+    Total := Total + 1;
+  except
+    on E: Exception do begin Total := -1; raise; end;
+  end;
+  try Total := Total + 1; finally Total := Total + 1; end;
+  Result := Total;
+end;
+end.

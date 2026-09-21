@@ -1,0 +1,34 @@
+// Control-flow probe for the Java CFG builder. Not compiled — read as text by
+// `control-flow.test.ts`. Java is the closest of these grammars to the C-family
+// defaults; what it adds is the enhanced `for`, a `switch` that is a
+// `switch_expression` node even in statement position, and labelled break.
+//
+// Add a construct to the spec, add it here.
+
+import java.util.*;
+class Probe {
+  public int everything(List<Integer> xs, Map<String,Integer> m) throws Exception {
+    int total = 0;
+    if (xs.size() == 0) { return 0; }
+    else if (xs.size() == 1 && total > 0) { total = 1; }
+    else { total = 2; }
+    while (total < 10) { total++; if (total == 5) break; }
+    do { total--; } while (total > 0);
+    for (int i = 0; i < xs.size(); i++) { if (i % 2 == 0) continue; total += xs.get(i); }
+    for (Integer x : xs) { total += x; }
+    switch (total) {
+      case 1: total = 10; break;
+      case 2:
+      case 3: total = 20; break;
+      default: total = 30;
+    }
+    try { total = compute(total); }
+    catch (IllegalArgumentException e) { total = -1; throw new Exception("bad"); }
+    catch (Throwable e) { total = -2; }
+    finally { total += 1; }
+    synchronized (this) { total += 1; }
+    outer: for (Integer x : xs) { for (Integer y : xs) { if (x.equals(y)) continue outer; } break outer; }
+    int t = total > 0 ? 1 : 2;
+    return total;
+  }
+}

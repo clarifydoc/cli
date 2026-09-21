@@ -107,6 +107,125 @@ export interface LanguageComplexitySpec {
 }
 
 /**
+ * What a node type does to control flow. The shared CFG builder
+ * (`core/control-flow.ts`) is a structured-statement interpreter; a role is
+ * all it needs from a language to know how to sequence a node, because every
+ * language it targets is structured the same way underneath.
+ */
+export type ControlFlowRole =
+  /** Holds a statement sequence (`statement_block`, `block`). */
+  | "block"
+  /** Two-way branch on a condition (`if_statement`). */
+  | "branch"
+  /** Pre-test loop — condition runs before the body (`while`, `for`, `foreach`). */
+  | "loop"
+  /** Post-test loop — body runs at least once (`do … while`). */
+  | "post-test-loop"
+  /** Multi-way branch (`switch_statement`). */
+  | "switch"
+  /** One arm of a switch (`switch_case`, `switch_section`, `switch_default`). */
+  | "case"
+  /** A label within an arm, as opposed to the arm's statements (`constant_pattern`). */
+  | "case-label"
+  /** Guarded region (`try_statement`). */
+  | "try"
+  | "catch"
+  | "finally"
+  | "return"
+  | "throw"
+  | "break"
+  | "continue"
+  /** A labelled statement, for `break`/`continue` with a target. */
+  | "label"
+  /**
+   * A node whose body is entered unconditionally — `else_clause`, `using`,
+   * `lock`. The builder descends into it and draws nothing of its own.
+   */
+  | "wrapper"
+  /** Opens a nested function; the CFG stops here rather than inlining it. */
+  | "nested-function"
+  /** Not control flow at all — comments. Skipped rather than drawn. */
+  | "ignore"
+  /**
+   * A jump whose kind is written in its keyword rather than its node type.
+   * Kotlin has one `jump_expression` for `return`, `break`, `continue` and
+   * `throw`; `jumpRoles` says which is which.
+   */
+  | "jump";
+
+/** Which part of a node the builder is asking for. */
+export type ControlFlowField =
+  | "condition"
+  | "consequence"
+  | "alternative"
+  | "body"
+  | "update"
+  | "initializer"
+  | "value"
+  | "label"
+  /** The `finally` region, for grammars that mark it with a field. */
+  | "finalizer";
+
+/**
+ * Per-language control-flow tables, the CFG counterpart of
+ * `LanguageComplexitySpec`. Grammars for C-family languages agree on the field
+ * names for the parts that matter (`condition` / `consequence` / `alternative`
+ * / `body`), so a language usually contributes only `roles`; `fields` exists
+ * for the handful that spell a part differently (C# says `update` where
+ * TypeScript says `increment`).
+ */
+export interface LanguageControlFlowSpec {
+  /** Tree-sitter node type → the role it plays in control flow. */
+  roles: ReadonlyMap<string, ControlFlowRole>;
+  /**
+   * Field-name candidates per part, tried in order, merged over the defaults
+   * in `shared/control-flow-defaults.ts`. A language only lists the parts it
+   * spells differently.
+   */
+  fields?: Partial<Record<ControlFlowField, readonly string[]>>;
+  /**
+   * Whether a switch arm runs on into the next one when nothing jumps out.
+   * True for the C family (`switch`), false for Python's `match` and Kotlin's
+   * `when`, where each arm leaves the construct on its own. Defaults to true.
+   */
+  fallthrough?: boolean;
+  /**
+   * Arm labels that mean "everything else", matched against the arm's label
+   * text. An arm with no label at all is already treated as the default; this
+   * is for the grammars that spell the catch-all as a label of its own —
+   * Java's `default:`, Python's `case _:`, Kotlin's `else ->`. Without it the
+   * switch is drawn with an extra unmatched-value edge past a construct that
+   * in fact always matches. Defaults to the list in
+   * `shared/control-flow-defaults.ts`.
+   */
+  wildcardLabels?: readonly string[];
+  /**
+   * Positional fallback for grammars that name no fields.
+   * `{ if_expression: { condition: 0, consequence: 1, alternative: 2 } }` reads
+   * "the condition is the first named child, …". A negative index counts from
+   * the end, so `-1` is "the last named child". Consulted only when no field
+   * name matched, so a grammar that names its parts is unaffected.
+   *
+   * tree-sitter-kotlin is the reason this exists: it labels nothing, so
+   * without positions an `if`'s branches cannot be told apart from its
+   * condition and the whole body would go undrawn.
+   */
+  shapes?: Readonly<Record<string, Partial<Record<ControlFlowField, number>>>>;
+  /**
+   * For the `jump` role: leading keyword → the role it really plays.
+   * `{ return: "return", break: "break", continue: "continue", throw: "throw" }`.
+   */
+  jumpRoles?: Readonly<Record<string, ControlFlowRole>>;
+  /**
+   * Node types matching this are skipped rather than drawn, on top of the
+   * `ignore` role. For grammars that make keywords named nodes: Pascal has 155
+   * of them (`kBegin`, `kEnd`, `kThen`, …) and they sit in statement position,
+   * so listing each one would be the whole table.
+   */
+  ignorePattern?: RegExp;
+}
+
+/**
  * Optional AST/source-level extractor hooks for tree-sitter languages.
  * A language without a hook simply contributes nothing for that field —
  * exactly like the old shared extractors that returned [] for languages
@@ -383,6 +502,12 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
   builtinTypes?: ReadonlySet<string>;
   /** Cyclomatic-complexity counting tables. */
   complexity?: LanguageComplexitySpec;
+  /**
+   * Control-flow role tables for the on-demand CFG (`clarifydoc cfg`). Absent
+   * means the language has no control-flow view — the complexity number still
+   * works, it just cannot be explained graphically.
+   */
+  controlFlow?: LanguageControlFlowSpec;
 
   /** Language-specific security rules (see SecurityRule.priority). */
   securityRules?: readonly SecurityRule[];

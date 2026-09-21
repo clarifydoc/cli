@@ -96,8 +96,11 @@ function measureBody(root: TSNode, declRow: number, spec: LanguageComplexitySpec
  * unlike the free `startPosition` field) across the repeated per-function
  * walks; already-computed rows are passed down the recursion so each node's
  * span is read at most once per file.
+ *
+ * Exported so `control-flow.ts` measures the SAME body node this analyzer
+ * counted: a graph built from a different node could not explain the number.
  */
-function findBodyNode(
+export function findBodyNode(
   root: TSNode,
   startLine: number,
   endLine: number,
@@ -127,7 +130,7 @@ function findBodyNode(
 }
 
 /** Per-file memo for `endPosition.row`, keyed by tree-sitter's stable node id. */
-function makeEndRowMemo(): (n: TSNode) => number {
+export function makeEndRowMemo(): (n: TSNode) => number {
   const cache = new Map<number, number>();
   return (n: TSNode) => {
     let v = cache.get(n.id);

@@ -24,6 +24,26 @@ export {
   type NormalizedProjectAnalysis,
 } from "./core/element-registry.js";
 export { computeComplexity, aggregateComplexity } from "./core/complexity-analyzer.js";
+export {
+  buildControlFlow,
+  cyclomaticFromCfg,
+  undrawnStructure,
+  type FunctionRef,
+} from "./core/control-flow.js";
+export {
+  controlFlowForFile,
+  controlFlowCapabilities,
+  ControlFlowUnavailableError,
+  type ControlFlowRequest,
+  type ControlFlowFileResult,
+} from "./core/control-flow-file.js";
+export {
+  toMermaidFlowchart,
+  toMarkdown as controlFlowToMarkdown,
+  type ControlFlowDiagram,
+} from "./core/control-flow-mermaid.js";
+export { mermaidLabel, idFactory } from "./core/mermaid-text.js";
+export type * from "./types/control-flow.js";
 export { scanSecurity } from "./core/security-scanner.js";
 export { detectPatterns } from "./core/pattern-detector.js";
 export { detectDuplicates } from "./core/duplication-detector.js";

@@ -1,0 +1,63 @@
+// Control-flow probe for the Kotlin CFG builder. Not compiled — read as text by
+// `control-flow.test.ts`. tree-sitter-kotlin names no fields at all, so this is
+// what exercises the spec's positional `shapes`; it also writes `return`, `break`,
+// `continue` and `throw` as one `jump_expression`, which `jumpRoles` resolves.
+//
+// Add a construct to the spec, add it here.
+
+class Probe {
+    fun branches(a: Int, b: Int): Int {
+        if (a > 0) {
+            return 1
+        } else if (a < 0 && b > 0) {
+            return -1
+        } else {
+            return 0
+        }
+    }
+
+    fun loops(xs: List<Int>): Int {
+        var total = 0
+        while (total < 10) {
+            total++
+            if (total == 5) break
+        }
+        do {
+            total--
+        } while (total > 0)
+        for (x in xs) {
+            if (x < 0) continue
+            total += x
+        }
+        return total
+    }
+
+    fun whens(value: Int): String {
+        when (value) {
+            1 -> return "one"
+            2 -> return "two"
+            else -> return "many"
+        }
+    }
+
+    fun exceptions(xs: List<Int>): Int {
+        var total = 0
+        try {
+            total = xs.size
+            if (total < 0) throw RuntimeException("negative")
+        } catch (e: IllegalArgumentException) {
+            total = -1
+        } catch (e: Throwable) {
+            total = -2
+        } finally {
+            total += 1
+        }
+        return total
+    }
+
+    fun inlineBranches(a: Int, b: Int): Int {
+        val x = if (a > 0) 1 else 2
+        val y = xs.map { if (it > 0) it else 0 }
+        return x + b
+    }
+}

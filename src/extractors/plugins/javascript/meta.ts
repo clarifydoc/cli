@@ -19,6 +19,7 @@ import { sveltePreprocess } from "./svelte-hooks.js";
 import { npmPackages } from "./packages.js";
 import { typescriptManifest, javascriptManifest } from "./manifest.js";
 import { DEFAULT_COMPLEXITY } from "../../shared/complexity-defaults.js";
+import { DEFAULT_CONTROL_FLOW } from "../../shared/control-flow-defaults.js";
 import { JavaScriptExtractor } from "./functions-classes.js";
 import { JavaScriptImportExportExtractor } from "./imports-exports.js";
 import { JavaScriptDataSourceExtractor } from "./data-sources.js";
@@ -45,8 +46,11 @@ const TS_BUILTINS: ReadonlySet<string> = new Set<string>([
   "Event", "MouseEvent", "KeyboardEvent",
 ]);
 
-// The TS/JS tables ARE the cross-language default (see complexity-defaults.ts).
+// The TS/JS tables ARE the cross-language default (see complexity-defaults.ts
+// and control-flow-defaults.ts) — reusing them here is what stops the default
+// and the TS/JS tables from ever drifting apart.
 const COMPLEXITY = DEFAULT_COMPLEXITY;
+const CONTROL_FLOW = DEFAULT_CONTROL_FLOW;
 
 const SECURITY_RULES: readonly SecurityRule[] = [
   // Only assignments whose right-hand side has dynamic content (identifier,
@@ -156,6 +160,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   preprocess: (raw, path) => vuePreprocess(raw, path) ?? sveltePreprocess(raw, path),
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
+  controlFlow: CONTROL_FLOW,
   securityRules: SECURITY_RULES,
   securityPostScan: consolePostScan,
   knownPackages: npmPackages,
@@ -176,6 +181,7 @@ export const javascriptMeta: LanguagePluginMeta = {
   dispatchResolvers,
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
+  controlFlow: CONTROL_FLOW,
   securityRules: SECURITY_RULES,
   securityPostScan: consolePostScan,
   knownPackages: npmPackages,

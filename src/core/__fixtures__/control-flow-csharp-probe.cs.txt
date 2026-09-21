@@ -1,0 +1,143 @@
+// Control-flow probe for the C# CFG builder. Not compiled and not analyzed as
+// a project fixture — read as text by `control-flow.test.ts`, which parses it
+// with the C# grammar. Its job is to contain one of every construct the
+// control-flow spec claims to handle, because the sample-* fixtures contain
+// almost none of them: at the time this was written the entire C# corpus held
+// four `if`s, three `try`s and no loop, switch or `break` at all, so the
+// cross-check against the complexity analyzer was passing without ever
+// exercising the code it was meant to guard.
+//
+// Add a construct to the spec, add it here.
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
+namespace Probe
+{
+    public class ControlFlowProbe
+    {
+        public int Branches(int a, int b)
+        {
+            if (a > 0) { return 1; }
+            else if (a < 0 && b > 0) { return -1; }
+            else { return 0; }
+        }
+
+        public int Loops(List<int> xs)
+        {
+            int total = 0;
+            while (total < 10)
+            {
+                total++;
+                if (total == 5) { break; }
+            }
+
+            do { total--; } while (total > 0);
+
+            for (int i = 0; i < xs.Count; i++)
+            {
+                if (i % 2 == 0) { continue; }
+                total += xs[i];
+            }
+
+            foreach (var x in xs)
+            {
+                if (x < 0) { continue; }
+                total += x > 100 ? 100 : x;
+            }
+
+            return total;
+        }
+
+        public string Switches(int value)
+        {
+            string label;
+            switch (value)
+            {
+                case 1:
+                    label = "one";
+                    break;
+                case 2:
+                case 3:
+                    label = "few";
+                    break;
+                default:
+                    label = value > 100 ? "many" : "some";
+                    break;
+            }
+
+            return label;
+        }
+
+        public async Task<int> Exceptions(List<int> xs)
+        {
+            int total = 0;
+            try
+            {
+                total = await Task.FromResult(xs.Count);
+                if (total < 0) { throw new InvalidOperationException("negative"); }
+            }
+            catch (InvalidOperationException e)
+            {
+                total = -1;
+                if (e.Message.Length > 10) { total = -2; }
+            }
+            catch
+            {
+                total = -3;
+            }
+            finally
+            {
+                total += 1;
+            }
+
+            return total;
+        }
+
+        public int Wrappers(List<int> xs)
+        {
+            int total = 0;
+            using (var stream = new System.IO.MemoryStream())
+            {
+                total += stream.Capacity;
+            }
+
+            lock (this)
+            {
+                if (xs.Count > 0) { total += xs[0]; }
+            }
+
+            return total;
+        }
+
+        public int NestedAndInline(List<List<int>> rows, Func<int, bool> keep)
+        {
+            int total = 0;
+            foreach (var row in rows)
+            {
+                foreach (var cell in row)
+                {
+                    if (cell > 0 && keep(cell)) { total += cell; }
+                }
+            }
+
+            // A lambda the graph does not descend into, whose branches must
+            // still be accounted for.
+            Func<int, int> clamp = v => v < 0 ? 0 : (v > 10 ? 10 : v);
+            return clamp(total);
+        }
+
+        public int Jumps(List<int> xs)
+        {
+            int total = 0;
+            for (int i = 0; i < xs.Count; i++)
+            {
+                if (xs[i] < 0) { goto done; }
+                total += xs[i];
+            }
+
+            done:
+            return total;
+        }
+    }
+}
