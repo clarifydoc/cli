@@ -64,6 +64,7 @@ import { detectDuplicates } from "./duplication-detector.js";
 import { classifyFileLayers, detectLayerViolations } from "./layer-analyzer.js";
 import { analyzeBlastRadius } from "./blast-radius.js";
 import { attachTraceImpact } from "./trace-impact.js";
+import { attachRiskVerdicts } from "./risk-verdict.js";
 import { computeImpactDiff } from "./impact-diff.js";
 import { collectGitHistory, computeHotspots, type GitHistoryResult } from "./git-history.js";
 import { analyzeUnusedCode } from "./dead-code.js";
@@ -1018,6 +1019,21 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   });
   if (traceImpactCount > 0) {
     progress.detail(`  Cross-tier blast: ${traceImpactCount} file(s) with screen/route/entity reach`);
+  }
+
+  // Interpret the blast counts: what KIND of file each one is, how bad a
+  // change is for that kind, and which rules said so. Runs after the two
+  // passes above because it reads `typeUsages` and `traceImpact`, and it is
+  // additive — `changeRisk` and `level` are left exactly as they are.
+  const verdictCount = attachRiskVerdicts(blastRadius, {
+    analyses: allAnalyses,
+    responsibilityProfiles,
+    fileLayerMap,
+    patterns,
+    entityGraph,
+  });
+  if (verdictCount > 0) {
+    progress.detail(`  Risk verdicts: ${verdictCount} of ${blastRadius.length} file(s) classified`);
   }
 
   // Transitive data-access reach ("dataflow-lite"): propagate each DIRECT data

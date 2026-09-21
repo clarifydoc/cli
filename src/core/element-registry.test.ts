@@ -228,6 +228,35 @@ describe("element-registry codec — synthetic edge cases", () => {
     roundTrips(p);
   });
 
+  it("blastRadius verdict survives the codec verbatim", () => {
+    const p = baseProject();
+    p.blastRadius = [
+      {
+        filePath: "src/m.ts",
+        directDependents: 2,
+        transitiveDependents: 0,
+        impactScore: 2,
+        centrality: 3,
+        level: "medium",
+        affectedFiles: ["src/a.ts"],
+        transitiveFiles: [],
+        dependsOn: [],
+        exportedSymbols: [],
+        changeRisk: "moderate",
+        maxDepth: 1,
+        verdict: {
+          category: "foundation",
+          level: "high",
+          summary: "Defines contracts other code is written against.",
+          behaviourAtRisk: ["Orders screen (/orders)", "data: Order"],
+          reasons: ["declares_data_entity", "many_dependents"],
+          confidence: 0.75,
+        },
+      },
+    ];
+    roundTrips(p);
+  });
+
   it("entityGraph columns/edges tri-state optionals and null orm", () => {
     const p = baseProject();
     p.entityGraph = {

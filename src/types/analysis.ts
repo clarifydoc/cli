@@ -1340,6 +1340,59 @@ export interface TraceImpactInfo {
   queueCount: number;
 }
 
+/**
+ * What KIND of thing a file is, for the purpose of deciding what changing it
+ * means. The import graph answers "how much depends on this"; the category
+ * answers "what sort of dependency", which is what decides whether 5 importers
+ * is critical (a contract others are typed against) or unremarkable (a util).
+ *
+ * `unknown` is a legitimate outcome, not a failure — a file with no
+ * classifying evidence says so instead of being guessed at.
+ */
+export type RiskCategory =
+  | "foundation" | "boundary" | "flow" | "shared" | "localized" | "unknown";
+
+/**
+ * The interpretation layer over `BlastRadiusInfo`'s counts: a category, a
+ * level derived from the thresholds that apply TO THAT CATEGORY, and the
+ * rules that produced both.
+ *
+ * `reasons` is the point of the whole record. A category without the rule
+ * that fired is astrology, so every verdict names its evidence the way
+ * `RefactorPressureInfo.drivers` does, using the same stable-identifier
+ * idiom (`REASON_LABELS` / `describeReasons` in `core/risk-verdict.ts`).
+ */
+export interface RiskVerdict {
+  category: RiskCategory;
+  /**
+   * Reuses `BlastRadiusInfo["level"]`'s union deliberately — the codebase
+   * already carries five scoring idioms and this is not a sixth. Derived
+   * per-category, so it does NOT track the sibling `level` field.
+   */
+  level: "critical" | "high" | "medium" | "low";
+  /** One deterministic sentence built from the category and the counts. */
+  summary: string;
+  /**
+   * The user-visible behaviour that changes with this file — screen names,
+   * route labels, entities written.
+   *
+   * Carries no SOURCE FILE reference: this is free text, so a file path
+   * embedded here could not be lifted into a `files[]` page id by
+   * `normalizeProject`, and would drift the moment a file moved. The paths
+   * are already carried structurally on `traceImpact`. Route strings are
+   * fine even when they look path-like (`/api/orders`, and static-site
+   * screens whose route IS an html path) — routes are plain strings
+   * everywhere in the artifact and are never page-encoded.
+   *
+   * Capped; `traceImpact`'s `*Count` fields hold the totals.
+   */
+  behaviourAtRisk: string[];
+  /** Every rule that fired, in cascade order. Never empty. */
+  reasons: string[];
+  /** 0..1 — share of the evidence sources that were available for this file. */
+  confidence: number;
+}
+
 export interface BlastRadiusInfo {
   filePath: string;
   directDependents: number;
@@ -1368,6 +1421,13 @@ export interface BlastRadiusInfo {
    * files and 30k tokens cannot be changed from a single context window.
    */
   contextBurden?: ContextBurden;
+  /**
+   * The verdict over the counts above: what kind of file this is, how bad
+   * changing it is FOR THAT KIND, and why. Additive — `changeRisk` and
+   * `level` keep their existing meaning and values. Omitted on artifacts
+   * written before the classifier existed.
+   */
+  verdict?: RiskVerdict;
 }
 
 export interface ContextBurden {
