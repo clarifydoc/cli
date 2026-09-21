@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { TOOL_VERSION } from "./core/version.js";
-import { resolve } from "path";
+import { resolve, relative } from "path";
 import { analyze } from "./core/analyzer.js";
 import {
   gatherProjectInfo,
@@ -8,6 +8,12 @@ import {
 } from "./core/framework-detector.js";
 import { detectSubProjects } from "./core/project-detector.js";
 import { gitChangedFiles } from "./core/git-changed-files.js";
+import {
+  controlFlowForFile,
+  controlFlowCapabilities,
+  ControlFlowUnavailableError,
+} from "./core/control-flow-file.js";
+import { toMermaidFlowchart, toMarkdown } from "./core/control-flow-mermaid.js";
 
 const program = new Command();
 
@@ -275,6 +281,115 @@ program
         2,
       ),
     );
+  });
+
+program
+  .command("cfg")
+  .description(
+    "Print the control flow of one function as a Mermaid flowchart — the structure behind its complexity number. Reads a single file; writes nothing",
+  )
+  .argument("[file]", "Path to the source file")
+  .option("-f, --function <name>", "Function to draw (`Class.method` or the bare method name)")
+  .option("-l, --line <n>", "Draw the function whose body covers this 1-based line", parseInt)
+  .option("--format <format>", "mermaid | markdown | json", "mermaid")
+  .option(
+    "--no-styled",
+    "Leave the colour table out of the Mermaid, keeping only the category classes — for a host that themes the diagram itself",
+  )
+  .option(
+    "--capabilities",
+    "Print the languages and file extensions that can have a control-flow graph drawn, as JSON, and exit",
+  )
+  .action(async (file: string | undefined, options) => {
+    if (options.capabilities) {
+      console.log(JSON.stringify(await controlFlowCapabilities()));
+      return;
+    }
+    if (!file) {
+      console.error("Missing <file>. Pass --capabilities to list the supported languages.");
+      process.exitCode = 1;
+      return;
+    }
+    const target = resolve(file);
+    try {
+      const result = await controlFlowForFile({
+        filePath: target,
+        displayPath: relative(process.cwd(), target) || file,
+        functionName: options.function,
+        line: Number.isFinite(options.line) ? options.line : undefined,
+      });
+
+      const listFunctions = (): void => {
+        if (result.available.length === 0) return;
+        console.error("Functions in this file:");
+        for (const fn of result.available) {
+          console.error(`  ${fn.functionName}  (lines ${fn.line}-${fn.endLine}, complexity ${fn.complexity})`);
+        }
+      };
+
+      if (result.cfgs.length === 0) {
+        console.error(
+          options.function || options.line
+            ? `No function matched in ${file}.`
+            : `Nothing in ${file} has a body to draw.`,
+        );
+        listFunctions();
+        process.exitCode = 1;
+        return;
+      }
+
+      // Several flowcharts concatenated are not one Mermaid document, so the
+      // raw format draws exactly one function. Markdown and JSON are containers
+      // and can hold the whole file.
+      if (options.format === "mermaid" && result.cfgs.length > 1) {
+        console.error(
+          `${file} has ${result.cfgs.length} functions — name one with --function or --line, or use --format markdown for all of them.`,
+        );
+        listFunctions();
+        process.exitCode = 1;
+        return;
+      }
+
+      // JSON carries the graph AND its rendering: a caller that wants to draw
+      // the diagram should not have to re-implement the renderer, and one that
+      // wants to navigate it needs the per-node source lines the Mermaid text
+      // has no room for.
+      if (options.format === "json") {
+        console.log(
+          JSON.stringify(
+            {
+              filePath: result.filePath,
+              language: result.language,
+              diagrams: result.cfgs.map((cfg) => {
+                const diagram = toMermaidFlowchart(cfg, { classDefs: options.styled });
+                return { cfg, mermaid: diagram.text, note: diagram.note };
+              }),
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+      for (const cfg of result.cfgs) {
+        if (options.format === "markdown") {
+          console.log(toMarkdown(cfg));
+          continue;
+        }
+        const diagram = toMermaidFlowchart(cfg, { classDefs: options.styled });
+        console.log(diagram.text);
+        // The note goes to stderr so `clarifydoc cfg … > flow.mmd` stays valid
+        // Mermaid while the caveats still reach a human at a terminal.
+        if (diagram.note) console.error(`note: ${diagram.note}.`);
+      }
+    } catch (error) {
+      if (error instanceof ControlFlowUnavailableError) {
+        console.error(error.message);
+      } else {
+        console.error("Failed to build control flow:", error instanceof Error ? error.message : error);
+      }
+      process.exitCode = 1;
+    }
   });
 
 program

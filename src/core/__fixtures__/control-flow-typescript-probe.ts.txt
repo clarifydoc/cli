@@ -1,0 +1,140 @@
+// Control-flow probe for the TypeScript CFG builder. Not compiled — read as
+// text by `control-flow.test.ts` and parsed with the TypeScript grammar. The
+// repo's own `src/**/*.ts` is the bulk corpus for the cross-check against the
+// complexity analyzer; this file exists to pin the constructs that corpus is
+// thin on (one `do/while`, two labelled statements) so the gate does not
+// quietly depend on the shape of unrelated code.
+//
+// Add a construct to the spec, add it here.
+declare function use(x: unknown): void;
+declare function risky(): number;
+
+export function branches(a: number, b: number): number {
+  if (a > 0) {
+    return 1;
+  } else if (a < 0 && b > 0) {
+    return -1;
+  } else {
+    return 0;
+  }
+}
+
+export function loops(xs: number[]): number {
+  let total = 0;
+
+  while (total < 10) {
+    total++;
+    if (total === 5) break;
+  }
+
+  do {
+    total--;
+  } while (total > 0);
+
+  for (let i = 0; i < xs.length; i++) {
+    if (i % 2 === 0) continue;
+    total += xs[i]!;
+  }
+
+  for (const x of xs) {
+    total += x > 100 ? 100 : x;
+  }
+
+  for (const key in { a: 1 }) {
+    use(key);
+  }
+
+  return total;
+}
+
+export function labelled(rows: number[][]): number {
+  let total = 0;
+
+  outer: for (const row of rows) {
+    for (const cell of row) {
+      if (cell < 0) continue outer;
+      if (cell > 1000) break outer;
+      total += cell;
+    }
+  }
+
+  return total;
+}
+
+export function switches(value: number): string {
+  switch (value) {
+    case 1:
+      return "one";
+    case 2:
+    case 3: {
+      const label = value === 2 ? "two" : "three";
+      return label;
+    }
+    default:
+      return value > 100 ? "many" : "some";
+  }
+}
+
+export function switchWithoutDefault(value: number): string {
+  let label = "none";
+  switch (value) {
+    case 1:
+      label = "one";
+      break;
+    case 2:
+      label = "two";
+      break;
+  }
+  return label;
+}
+
+export async function exceptions(xs: number[]): Promise<number> {
+  let total = 0;
+  try {
+    total = await Promise.resolve(xs.length);
+    if (total < 0) throw new Error("negative");
+  } catch (e) {
+    total = -1;
+    if (e instanceof Error && e.message.length > 10) total = -2;
+  } finally {
+    total += 1;
+  }
+  return total;
+}
+
+export function tryWithoutCatch(): number {
+  try {
+    return risky();
+  } finally {
+    use("cleanup");
+  }
+}
+
+export function inlineBranches(a: number, b: number): number {
+  // Nothing here branches the function's control flow, but every one of these
+  // counts toward its complexity and must be reported rather than lost.
+  const x = a > 0 ? 1 : 2;
+  const y = b ?? x;
+  const z = a > 0 && b > 0 ? x : y;
+  return z;
+}
+
+export function callbacks(xs: number[]): number {
+  let total = 0;
+  // The graph stops at the callback boundary; the branches inside still count.
+  xs.forEach((x) => {
+    if (x > 0) {
+      total += x;
+    } else if (x < -10) {
+      total -= x;
+    }
+  });
+  return total;
+}
+
+export function unreachableTail(a: number): number {
+  if (a > 0) {
+    return 1;
+  }
+  return 2;
+}

@@ -1,4 +1,5 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
+import { extendControlFlow } from "../../shared/control-flow-defaults.js";
 import { parseDfm } from "../../../parsers/dfm-parser.js";
 import { pascalCallHooks } from "./call-hooks.js";
 import { pascalManifest, dfmManifest } from "./manifest.js";
@@ -39,6 +40,48 @@ export const pascalMeta: LanguagePluginMeta = {
     ]),
     logicalOps: new Set(["and", "or"]),
   },
+  // tree-sitter-pascal keeps field names but none of the C-family spellings:
+  // an `if`'s arms are `then` and `else` (covered by the shared aliases), a
+  // `for` counts from `start`, and every statement type is a bare keyword
+  // (`while`, `repeat`, `case`, `try`). Break/Continue/Exit are procedure
+  // CALLS in Pascal, not statements, so they are drawn as ordinary steps —
+  // see `unmodelled` in the graph, which says so.
+  controlFlow: extendControlFlow([
+    ["block", "block"],
+    ["statements", "block"],
+    ["ifElse", "branch"],
+    ["if", "branch"],
+    ["while", "loop"],
+    ["for", "loop"],
+    ["repeat", "post-test-loop"],
+    ["case", "switch"],
+    ["caseCase", "case"],
+    ["caseLabel", "case-label"],
+    ["caseElse", "case"],
+    ["try", "try"],
+    ["exceptionHandler", "catch"],
+    ["defProc", "nested-function"],
+    ["declProc", "ignore"],
+    ["declVars", "ignore"],
+    ["comment", "ignore"],
+  ], {
+    fields: {
+      // `for I := 0 to N` counts from `start`, and a `try` calls its guarded
+      // block `try` rather than `body`.
+      initializer: ["start"],
+      body: ["body", "try"],
+    },
+    // 155 of this grammar's node types are keywords (`kBegin`, `kThen`, …)
+    // and they appear in statement position, so they are skipped by shape
+    // rather than listed one by one.
+    ignorePattern: /^k[A-Z]/,
+    shapes: {
+      // `defProc header=declProc local=declVars body=block`
+      defProc: { body: -1 },
+      // `case <discriminant> of …` names nothing; the value is child one.
+      case: { value: 0 },
+    },
+  }),
   apiCallRoots: ["THTTPClient", "TRESTClient", "TIdHTTP"],
   dbCallRoots: ["Query", "Connection", "DataSet", "SQLQuery"],
   calls: pascalCallHooks,

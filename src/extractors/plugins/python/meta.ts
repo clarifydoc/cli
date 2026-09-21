@@ -1,4 +1,5 @@
 import type { LanguagePluginMeta, SecurityRule } from "../../../types/language-plugin.js";
+import { extendControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { stripPythonNonCode } from "./python-tokenizer.js";
 import { extractPythonTypeReferences } from "./type-references.js";
@@ -81,6 +82,26 @@ export const pythonMeta: LanguagePluginMeta = {
     logicalOps: new Set(["and", "or"]),
     nestingNodes: new Set(["lambda", "function_definition"]),
   },
+  // Python's statements are the C-family ones under different names, plus two
+  // shapes no C-family grammar has: an `elif` chain flattened onto the parent
+  // `if` as repeated `alternative` fields, and the `else` that a loop or a
+  // `try` runs when it finished without a `break` or an exception.
+  controlFlow: extendControlFlow(
+    [
+      ["elif_clause", "branch"],
+      ["except_clause", "catch"],
+      ["raise_statement", "throw"],
+      ["with_statement", "wrapper"],
+      ["match_statement", "switch"],
+      ["case_clause", "case"],
+      ["function_definition", "nested-function"],
+      ["lambda", "nested-function"],
+      // Not a statement: `decorated_definition` wraps the function it decorates.
+      ["decorated_definition", "wrapper"],
+    ],
+    // `match` tests patterns in order and runs exactly one arm.
+    { fallthrough: false },
+  ),
   securityRules: SECURITY_RULES,
   // Strip strings and comments first to avoid false positives.
   securityPreprocess: stripPythonNonCode,

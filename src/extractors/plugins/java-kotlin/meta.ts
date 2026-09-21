@@ -1,4 +1,5 @@
 import type { Language } from "../../../types/analysis.js";
+import { extendControlFlow } from "../../shared/control-flow-defaults.js";
 import type { LanguagePluginMeta, CallExtractionHooks } from "../../../types/language-plugin.js";
 import { javaManifest, kotlinManifest } from "./manifest.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
@@ -54,6 +55,12 @@ function jvmMeta(language: Language, opts: {
   branchNodes: string[];
   /** Lambda / nested-function node types that deepen cognitive nesting. */
   nestingNodes: string[];
+  /**
+   * Control-flow tables. Java and Kotlin share this factory but not their
+   * grammars' shapes, so each supplies its own (or none, when its grammar
+   * cannot support a graph honestly).
+   */
+  controlFlow?: LanguagePluginMeta["controlFlow"];
   apiCallRoots: string[];
   calls: CallExtractionHooks;
 }): LanguagePluginMeta {
@@ -71,6 +78,7 @@ function jvmMeta(language: Language, opts: {
       logicalOps: new Set(["&&", "||"]),
       nestingNodes: new Set(opts.nestingNodes),
     },
+    controlFlow: opts.controlFlow,
     knownPackages: jvmPackages,
     apiCallRoots: opts.apiCallRoots,
     dbCallRoots: JVM_DB_ROOTS,
@@ -88,6 +96,27 @@ export const javaMeta: LanguagePluginMeta = jvmMeta("java", {
     "catch_clause", "ternary_expression", "switch_block_statement_group",
   ],
   nestingNodes: ["lambda_expression"],
+  // Java is the closest of any grammar here to the C-family defaults; what it
+  // adds is the enhanced `for`, the `switch` spelled as an expression node
+  // even in statement position, and try-with-resources.
+  controlFlow: extendControlFlow([
+    ["enhanced_for_statement", "loop"],
+    ["switch_expression", "switch"],
+    ["switch_block", "block"],
+    ["switch_block_statement_group", "case"],
+    ["switch_label", "case-label"],
+    ["switch_rule", "case"],
+    ["try_with_resources_statement", "try"],
+    ["resource_specification", "ignore"],
+    ["synchronized_statement", "wrapper"],
+    ["lambda_expression", "nested-function"],
+    ["method_declaration", "nested-function"],
+    ["constructor_declaration", "nested-function"],
+    ["compact_constructor_declaration", "nested-function"],
+    ["static_initializer", "nested-function"],
+    ["line_comment", "ignore"],
+    ["block_comment", "ignore"],
+  ]),
   apiCallRoots: ["RestTemplate", "WebClient", "HttpClient", "OkHttp", "Retrofit"],
   calls: javaCallHooks,
 });
@@ -99,6 +128,59 @@ export const kotlinMeta: LanguagePluginMeta = jvmMeta("kotlin", {
     "catch_block", "when_entry",
   ],
   nestingNodes: ["lambda_literal", "anonymous_function"],
+  // tree-sitter-kotlin names no fields at all and writes every jump as one
+  // `jump_expression`, so this spec leans on both escape hatches: `shapes` for
+  // which named child is the condition and which is the body, and `jumpRoles`
+  // for which keyword a jump carries.
+  controlFlow: extendControlFlow(
+    [
+      ["statements", "block"],
+      ["control_structure_body", "wrapper"],
+      ["function_body", "wrapper"],
+      ["if_expression", "branch"],
+      ["while_statement", "loop"],
+      ["for_statement", "loop"],
+      ["do_while_statement", "post-test-loop"],
+      ["when_expression", "switch"],
+      ["when_entry", "case"],
+      ["when_condition", "case-label"],
+      ["when_subject", "ignore"],
+      ["try_expression", "try"],
+      ["catch_block", "catch"],
+      ["finally_block", "finally"],
+      ["jump_expression", "jump"],
+      ["lambda_literal", "nested-function"],
+      ["anonymous_function", "nested-function"],
+      ["function_declaration", "nested-function"],
+      ["getter", "nested-function"],
+      ["setter", "nested-function"],
+      ["line_comment", "ignore"],
+      ["multiline_comment", "ignore"],
+    ],
+    {
+      // `when` runs exactly one arm; `else ->` is its catch-all.
+      fallthrough: false,
+      shapes: {
+        if_expression: { condition: 0, consequence: 1, alternative: 2 },
+        while_statement: { condition: 0, body: -1 },
+        do_while_statement: { body: 0, condition: -1 },
+        for_statement: { body: -1 },
+        when_expression: { value: 0 },
+        when_entry: { body: -1 },
+        try_expression: { body: 0 },
+        catch_block: { body: -1 },
+        finally_block: { body: -1 },
+        // Where a declaration keeps its body, for the resolver that has to
+        // find the function before it can draw anything.
+        function_declaration: { body: -1 },
+        getter: { body: -1 },
+        setter: { body: -1 },
+        anonymous_function: { body: -1 },
+        lambda_literal: { body: -1 },
+      },
+      jumpRoles: { return: "return", break: "break", continue: "continue", throw: "throw" },
+    },
+  ),
   apiCallRoots: ["RestTemplate", "WebClient", "HttpClient", "OkHttp", "Retrofit", "ktor"],
   calls: kotlinCallHooks,
 });

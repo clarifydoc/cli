@@ -1,0 +1,33 @@
+// Control-flow probe for the PHP CFG builder. Not executed — read as text by
+// `control-flow.test.ts`. PHP is C-family with its own vocabulary: the block is a
+// `compound_statement`, an `if`'s then-branch is its `body`, and `elseif` chains
+// flatten onto the parent `if` the way Python's do.
+//
+// Add a construct to the spec, add it here.
+
+<?php
+class Probe {
+  public function everything(array $xs, array $m): int {
+    $total = 0;
+    if (count($xs) === 0) { return 0; }
+    elseif (count($xs) === 1 && $total > 0) { $total = 1; }
+    else { $total = 2; }
+    while ($total < 10) { $total++; if ($total === 5) break; }
+    do { $total--; } while ($total > 0);
+    for ($i = 0; $i < count($xs); $i++) { if ($i % 2 === 0) continue; $total += $xs[$i]; }
+    foreach ($xs as $x) { $total += $x; }
+    switch ($total) {
+      case 1: $total = 10; break;
+      case 2:
+      case 3: $total = 20; break;
+      default: $total = 30;
+    }
+    try { $total = compute($total); }
+    catch (InvalidArgumentException $e) { $total = -1; throw new Exception("bad"); }
+    catch (Throwable $e) { $total = -2; }
+    finally { $total += 1; }
+    $t = $total > 0 ? 1 : 2;
+    $total = $total ?? $t;
+    return $total;
+  }
+}

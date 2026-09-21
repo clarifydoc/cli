@@ -1,4 +1,5 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
+import { extendControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { extractCsharpTypeReferences } from "./type-references.js";
 import { csharpCallHooks } from "./call-hooks.js";
@@ -46,6 +47,18 @@ export const csharpMeta: LanguagePluginMeta = {
     logicalOps: new Set(["&&", "||", "??"]),
     nestingNodes: new Set(["lambda_expression", "anonymous_method_expression", "local_function_statement"]),
   },
+  // The C-family defaults already cover C#'s statements (and its `update`
+  // field, which TypeScript spells `increment`); what it adds is the member
+  // declarations the body resolver has to recognise as "a function starts
+  // here", and the expression-bodied member form.
+  controlFlow: extendControlFlow([
+    ["method_declaration", "nested-function"],
+    ["constructor_declaration", "nested-function"],
+    ["destructor_declaration", "nested-function"],
+    ["operator_declaration", "nested-function"],
+    ["accessor_declaration", "nested-function"],
+    ["arrow_expression_clause", "wrapper"],
+  ]),
   apiCallRoots: ["HttpClient", "WebClient", "RestClient"],
   dbCallRoots: ["DbContext", "DbSet", "SqlCommand", "SqlConnection"],
   ast: {

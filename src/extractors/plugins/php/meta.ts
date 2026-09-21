@@ -1,4 +1,5 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
+import { extendControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { phpCallHooks } from "./call-hooks.js";
 import { composerPackages } from "./packages.js";
@@ -39,6 +40,25 @@ export const phpMeta: LanguagePluginMeta = {
     logicalOps: new Set(["&&", "||", "??"]),
     nestingNodes: new Set(["anonymous_function", "anonymous_function_creation_expression", "arrow_function"]),
   },
+  // PHP is C-family with its own vocabulary: the block is a
+  // `compound_statement`, an `if`'s then-branch is its `body` (the shared
+  // field aliases cover that), and an `elseif` chain is flattened onto the
+  // parent `if` as repeated `alternative` fields, the way Python does it.
+  controlFlow: extendControlFlow([
+    ["compound_statement", "block"],
+    ["else_if_clause", "branch"],
+    ["switch_block", "block"],
+    ["case_statement", "case"],
+    ["default_statement", "case"],
+    // PHP 8 made `throw` an expression; it is still a statement in effect.
+    ["throw_expression", "throw"],
+    ["anonymous_function", "nested-function"],
+    ["anonymous_function_creation_expression", "nested-function"],
+    ["arrow_function", "nested-function"],
+    ["method_declaration", "nested-function"],
+    ["function_definition", "nested-function"],
+    ["function_static_declaration", "nested-function"],
+  ]),
   ast: {
     // Blade templates (.blade.php) surface as UI screens; interactive elements
     // are content-gated on Blade directives (the hook receives no file path).

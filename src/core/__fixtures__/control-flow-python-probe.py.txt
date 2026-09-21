@@ -1,0 +1,54 @@
+# Control-flow probe for the Python CFG builder. Not executed — read as text by
+# `control-flow.test.ts` and parsed with the Python grammar. Python is the reason
+# two of the builder's generalisations exist: an `elif` chain arrives as repeated
+# `alternative` fields on the one `if` rather than as nested `if`s, and a loop or
+# a `try` can carry an `else` that runs only when nothing broke out or raised.
+# `match` arms do not fall through, unlike every C-family `switch`.
+#
+# Add a construct to the spec, add it here.
+
+async def everything(xs, m):
+    total = 0
+    if len(xs) == 0:
+        return 0
+    elif len(xs) == 1 and total > 0:
+        total = 1
+    else:
+        total = 2
+    while total < 10:
+        total += 1
+        if total == 5:
+            break
+    for x in xs:
+        if x < 0:
+            continue
+        total += x
+    for k in m:
+        total += 1
+    else:
+        if total > 100:
+            total = 100
+    try:
+        total = await compute(total)
+    except ValueError as e:
+        total = -1
+        raise RuntimeError("bad")
+    except Exception:
+        total = -2
+    else:
+        if total > 50:
+            total = 50
+    finally:
+        total += 1
+    with open("f") as fh:
+        total += 1
+    match total:
+        case 1:
+            total = 10
+        case 2 | 3:
+            total = 20
+        case _:
+            total = 30
+    t = 1 if total > 0 else 2
+    assert total >= 0
+    return total

@@ -3,6 +3,7 @@ import type {
   LanguagePluginMeta,
   LanguagePluginManifest,
   LanguageComplexitySpec,
+  LanguageControlFlowSpec,
   SecurityRule,
   AstExtractorHooks,
   FrameworkRule,
@@ -259,6 +260,11 @@ export function astHooksFor(language: Language): AstExtractorHooks | undefined {
 /** Complexity tables for a language (undefined when the plugin has none). */
 export function complexityFor(language: string): LanguageComplexitySpec | undefined {
   return pluginFor(language as Language)?.complexity;
+}
+
+/** Control-flow tables for a language (undefined when the plugin has none). */
+export function controlFlowFor(language: string): LanguageControlFlowSpec | undefined {
+  return pluginFor(language as Language)?.controlFlow;
 }
 
 /** Regex extraction spec for a language (undefined when the plugin has none). */
