@@ -18,9 +18,11 @@ import { fnmatch } from "./clarifydoc-ignore.js";
  * `resolveArchitectureOverrides`. Add a section by adding its key to
  * `KNOWN_SECTIONS` and typing it here.
  *
- * Glob patterns follow the ignore-file dialect (`*`, `**`, `?`, `[abc]`),
- * are matched against the posix project-relative path, and — like gitignore —
- * a pattern without a `/` also matches the bare file name anywhere.
+ * Glob patterns follow the ignore-file dialect (`*`, `**`, `?`, `[abc]`) and
+ * are matched against the posix project-relative path. Anchoring works as it
+ * does in gitignore: a pattern carrying a `/` is fixed to the project root,
+ * while a slash-less one (`*.generated.ts`, `dist`) also matches the bare file
+ * name at any depth.
  */
 
 export const PROJECT_CONFIG_RELATIVE_PATH = ".clarifydoc/config.json";
@@ -165,24 +167,34 @@ export function resolveArchitectureOverrides(config: ProjectConfig): Architectur
   };
 }
 
-/** Posix separators, no leading `/` (patterns are project-relative by definition). */
+/**
+ * Posix separators. The leading `/` is KEPT: patterns are project-relative
+ * either way, but the slash is what says the pattern is anchored, and dropping
+ * it here would leave `matchesAnyGlob` unable to tell `/dist` from `dist`.
+ */
 function normalizeGlob(pattern: string): string {
-  const p = pattern.trim().replace(/\\/g, "/");
-  return p.startsWith("/") ? p.slice(1) : p;
+  return pattern.trim().replace(/\\/g, "/");
 }
 
 /**
  * Does a project-relative posix path match any of the (normalized) globs?
- * A pattern without a slash is matched against the bare file name as well,
- * the way gitignore treats `*.generated.ts`.
+ * A pattern with no `/` in it is unanchored, so it is matched against the bare
+ * file name as well, the way gitignore treats `*.generated.ts`. One that does
+ * carry a `/` is anchored to the project root and gets no such fallback.
  */
 export function matchesAnyGlob(filePath: string, patterns: readonly string[]): boolean {
   if (patterns.length === 0) return false;
   const path = filePath.replace(/\\/g, "/").replace(/^\/+/, "");
   const base = path.slice(path.lastIndexOf("/") + 1);
   for (const pat of patterns) {
-    if (fnmatch(path, pat)) return true;
-    if (!pat.includes("/") && fnmatch(base, pat)) return true;
+    // A trailing `/` marks a directory; it must not count as the interior
+    // slash that anchors, so it comes off before the anchoring test.
+    const trimmed = pat.replace(/\/+$/, "");
+    const anchored = trimmed.includes("/");
+    const glob = trimmed.replace(/^\/+/, "");
+    if (!glob) continue;
+    if (fnmatch(path, glob)) return true;
+    if (!anchored && fnmatch(base, glob)) return true;
   }
   return false;
 }

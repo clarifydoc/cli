@@ -7,8 +7,11 @@ import { sep, posix, resolve, dirname } from "path";
  * Ported from graphify-7 (detect.py:397-522). Implements:
  *   - .clarifydocignore at the project root and ancestor directories
  *   - Walking up to the nearest project root (VCS dir or `.clarifydoc/`) as a ceiling
- *   - Last-match-wins semantics with `!` negation
- *   - Anchored patterns (`/foo`) vs unanchored (`foo`)
+ *   - Last-match-wins semantics with `!` negation. Unlike git, a file CAN be
+ *     re-included under an excluded parent (`src/**` then `!src/important.ts`):
+ *     for a documentation tool that is the request people actually make.
+ *   - Anchored patterns (`/foo`, `foo/bar`) vs unanchored (`foo`), decided when
+ *     the pattern is parsed rather than while matching
  *   - Inline `#` comments, escape `\#` for literal hash
  *   - Trailing-space trimming unless escaped
  *
@@ -35,11 +38,30 @@ const IGNORE_FILENAME = ".clarifydocignore";
 const OUTPUT_DIR = ".clarifydoc";
 const OUTPUT_IGNORE_FILENAME = "ignore";
 
+/**
+ * A parsed ignore line. Anchoring is decided HERE, when the pattern is read,
+ * not rediscovered while matching: gitignore treats `foo/bar` as if it were
+ * `/foo/bar`, but must NOT treat `foo` as `/foo`, and that distinction is
+ * unrecoverable once the pattern has been reduced to a glob string.
+ */
 export interface IgnorePattern {
-  /** Absolute path of the directory that contained the .clarifydocignore */
+  /** Absolute path of the directory that contained the ignore file */
   anchor: string;
   /** Raw pattern as written (still carries leading `!` and `/`) */
   pattern: string;
+  /** `!` prefix: a match re-includes instead of excluding. */
+  negated: boolean;
+  /**
+   * True when the pattern is fixed to `anchor` — it starts with `/`, or it
+   * carries a `/` anywhere but at the very end. An anchored pattern matches
+   * the anchor-relative path or one of its leading directories, and nothing
+   * else: no bare-name fallback, no interior segment.
+   */
+  anchored: boolean;
+  /** Written with a trailing `/`, which marks a directory but does not anchor. */
+  dirOnly: boolean;
+  /** The glob itself: `!`, the anchoring `/` and any trailing `/` removed. */
+  glob: string;
 }
 
 /**
@@ -84,9 +106,28 @@ export function loadIgnorePatterns(root: string): IgnorePattern[] {
 function readInto(out: IgnorePattern[], file: string, anchor: string): void {
   if (!existsSync(file)) return;
   for (const line of readFileSync(file, "utf-8").split(/\r?\n/)) {
-    const parsed = parseIgnoreLine(line);
-    if (parsed) out.push({ anchor, pattern: parsed });
+    const cleaned = parseIgnoreLine(line);
+    if (!cleaned) continue;
+    const parsed = parseIgnorePattern(cleaned, anchor);
+    if (parsed) out.push(parsed);
   }
+}
+
+/**
+ * Split a cleaned line into the record `isIgnored` matches with. Returns null
+ * for a line that is nothing but `!` and slashes.
+ */
+export function parseIgnorePattern(cleaned: string, anchor: string): IgnorePattern | null {
+  const negated = cleaned.startsWith("!");
+  const body = negated ? cleaned.slice(1) : cleaned;
+  const dirOnly = body.endsWith("/");
+  // Trailing slashes go first: `Library/` names a directory at any depth, so
+  // its one slash must not be mistaken for the interior slash that anchors.
+  const trimmed = body.replace(/\/+$/, "");
+  const anchored = trimmed.includes("/");
+  const glob = trimmed.replace(/^\/+/, "");
+  if (!glob) return null;
+  return { anchor, pattern: cleaned, negated, anchored, dirOnly, glob };
 }
 
 /**
@@ -120,51 +161,47 @@ export function isIgnored(
 
   const path = toPosix(absPath);
   const rootPosix = toPosix(resolve(root));
-  const basename = path.split("/").pop() ?? path;
 
   let ignored = false;
-
-  for (const { anchor, pattern: raw } of patterns) {
-    const negated = raw.startsWith("!");
-    const stripped = (negated ? raw.slice(1) : raw);
-    const anchored = stripped.startsWith("/");
-    const p = stripped.replace(/^\/+|\/+$/g, "");
-    if (!p) continue;
-
-    let matched = false;
-
-    if (anchored) {
-      const relAnchor = relativeBelow(path, toPosix(anchor));
-      if (relAnchor !== null) matched = matchesPattern(relAnchor, p, basename);
-    } else {
-      const rel = relativeBelow(path, rootPosix);
-      if (rel !== null) matched = matchesPattern(rel, p, basename);
-      if (!matched && toPosix(anchor) !== rootPosix) {
-        const relAnchor = relativeBelow(path, toPosix(anchor));
-        if (relAnchor !== null) matched = matchesPattern(relAnchor, p, basename);
-      }
-    }
-
-    if (matched) ignored = !negated;
+  for (const pattern of patterns) {
+    if (matches(path, rootPosix, pattern)) ignored = !pattern.negated;
   }
-
   return ignored;
 }
 
-function matchesPattern(rel: string, pattern: string, basename: string): boolean {
-  if (fnmatch(rel, pattern)) return true;
-  if (fnmatch(basename, pattern)) return true;
+function matches(path: string, rootPosix: string, pattern: IgnorePattern): boolean {
+  const anchorPosix = toPosix(pattern.anchor);
 
-  // Check each prefix of the path so an unanchored pattern like `build` matches
-  // both "build" and "src/build/foo.ts".
+  if (pattern.anchored) {
+    const rel = relativeBelow(path, anchorPosix);
+    return rel !== null && matchesAnchored(rel, pattern.glob);
+  }
+
+  // Unanchored: relative to the scan root first, and to the ignore file's own
+  // directory as well when a sub-root scan inherited it from above.
+  const rel = relativeBelow(path, rootPosix);
+  if (rel !== null && matchesUnanchored(rel, pattern.glob)) return true;
+  if (anchorPosix === rootPosix) return false;
+  const relAnchor = relativeBelow(path, anchorPosix);
+  return relAnchor !== null && matchesUnanchored(relAnchor, pattern.glob);
+}
+
+/**
+ * Anchored: the whole relative path, or one of its leading directories — so
+ * `/dist` covers `dist/a.js` but never `src/dist/a.js`.
+ */
+function matchesAnchored(rel: string, glob: string): boolean {
   const parts = rel.split("/");
   for (let i = 0; i < parts.length; i++) {
-    const part = parts[i]!;
-    if (fnmatch(part, pattern)) return true;
-    const prefix = parts.slice(0, i + 1).join("/");
-    if (fnmatch(prefix, pattern)) return true;
+    if (fnmatch(parts.slice(0, i + 1).join("/"), glob)) return true;
   }
   return false;
+}
+
+/** Unanchored: any single segment, so the name may sit at any depth. */
+function matchesUnanchored(rel: string, glob: string): boolean {
+  if (fnmatch(rel, glob)) return true; // a `**` glob that spans separators
+  return rel.split("/").some((part) => fnmatch(part, glob));
 }
 
 /** Return path relative to base if path is at or below base; null otherwise. */
