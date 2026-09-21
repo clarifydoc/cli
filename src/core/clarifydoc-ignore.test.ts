@@ -34,7 +34,9 @@ describe(".clarifydoc/ignore", () => {
   it("resolves patterns against the project root, not against .clarifydoc/", () => {
     outputIgnore("/Library/\n");
     expect(ignored("Library/x.pas")).toBe(true);
-    expect(ignored(".clarifydoc/Library/x.pas")).toBe(true); // below root too, harmless
+    // `/Library` is the one at the root. A second `Library/` nested anywhere
+    // else is a different directory and stays in the analysis.
+    expect(ignored(".clarifydoc/Library/x.pas")).toBe(false);
   });
 
   it("re-includes named directories from a wholesale exclusion", () => {
@@ -126,6 +128,55 @@ describe(".clarifydoc/ignore", () => {
     expect(loadIgnorePatterns(root)).toEqual([]);
     expect(ignored("Library/mORMot-master/SynCommons.pas")).toBe(false);
   });
+
+  it("re-includes a file even though its parent directory is excluded", () => {
+    // gitignore proper refuses this: once `src/` is out, nothing inside it can
+    // be brought back. ClarifyDoc is pure last-match-wins on file paths
+    // instead, because for a documentation tool "drop this tree except the two
+    // files I care about" is the request people actually make. Deliberate
+    // divergence, pinned here so it cannot drift back by accident.
+    outputIgnore(["src/**", "!src/important.ts"].join("\n"));
+    expect(ignored("src/other.ts")).toBe(true);
+    expect(ignored("src/important.ts")).toBe(false);
+  });
+});
+
+describe("anchoring — a leading `/` confines the pattern to the root", () => {
+  // A single-segment anchored pattern used to lose its anchor at match time:
+  // `/dist` also excluded `src/dist/`, and those files left the analysis with
+  // no warning. Anchoring is now decided when the pattern is parsed.
+  const cases: Array<[pattern: string, path: string, expected: boolean]> = [
+    // Anchored, one segment — the common case, and the one that was broken.
+    ["/dist", "dist/a.js", true],
+    ["/dist", "dist/nested/a.js", true],
+    ["/dist", "src/dist/a.js", false],
+    ["/dist", "src/dist", false],
+    // The same name unanchored still matches at any depth.
+    ["dist", "dist/a.js", true],
+    ["dist", "src/dist/a.js", true],
+    // An interior slash anchors too, with or without the leading one.
+    ["/src/gen", "src/gen/x.ts", true],
+    ["/src/gen", "lib/gen/x.ts", false],
+    ["/src/gen", "lib/src/gen/x.ts", false],
+    ["src/gen", "src/gen/x.ts", true],
+    ["src/gen", "lib/src/gen/x.ts", false],
+    // A trailing slash marks a directory; it is not the slash that anchors.
+    ["build/", "src/build/a.js", true],
+    ["/build/", "build/a.js", true],
+    ["/build/", "src/build/a.js", false],
+    // Wildcards inherit the same rule.
+    ["/*.log", "debug.log", true],
+    ["/*.log", "src/debug.log", false],
+    ["*.log", "src/debug.log", true],
+    ["/vendor/**", "vendor/x/y.c", true],
+    ["/vendor/**", "third/vendor/x.c", false],
+  ];
+  for (const [pattern, path, expected] of cases) {
+    it(`${pattern} ${expected ? "excludes" : "keeps"} ${path}`, () => {
+      outputIgnore(pattern + "\n");
+      expect(ignored(path)).toBe(expected);
+    });
+  }
 });
 
 describe("fnmatch — `**` respects path separators", () => {

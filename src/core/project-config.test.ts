@@ -80,9 +80,9 @@ describe("loadProjectConfig — architecture sections", () => {
 });
 
 describe("resolveArchitectureOverrides / matchesAnyGlob", () => {
-  it("normalizes leading slashes and backslashes", () => {
+  it("normalizes backslashes and keeps the slash that anchors", () => {
     const o = resolveArchitectureOverrides({ layers: [{ layer: "data", patterns: ["/src\\db/**"] }], exempt: ["/tools/**"] });
-    expect(o.layers[0]!.patterns).toEqual(["src/db/**"]);
+    expect(o.layers[0]!.patterns).toEqual(["/src/db/**"]);
     expect(matchesAnyGlob("src/db/x/y.ts", o.layers[0]!.patterns)).toBe(true);
     expect(matchesAnyGlob("tools/a.ts", o.exempt)).toBe(true);
     expect(matchesAnyGlob("src/tools/a.ts", o.exempt)).toBe(false);
@@ -91,5 +91,16 @@ describe("resolveArchitectureOverrides / matchesAnyGlob", () => {
   it("matches a slash-less pattern against the bare name only", () => {
     expect(matchesAnyGlob("gen/api/User.generated.ts", ["*.generated.ts"])).toBe(true);
     expect(matchesAnyGlob("gen/api/User.ts", ["*.generated.ts"])).toBe(false);
+  });
+
+  it("denies the bare-name fallback to an anchored pattern", () => {
+    // `/dist` is the build directory at the project root. Stripping its slash
+    // turned it into a slash-less pattern, which then matched anything named
+    // `dist` at any depth — the same anchoring loss as the ignore file's.
+    expect(matchesAnyGlob("dist", ["/dist"])).toBe(true);
+    expect(matchesAnyGlob("src/dist", ["/dist"])).toBe(false);
+    expect(matchesAnyGlob("src/dist", ["dist"])).toBe(true);
+    expect(matchesAnyGlob("src/vendor/gen.ts", ["/vendor/**"])).toBe(false);
+    expect(matchesAnyGlob("vendor/gen.ts", ["/vendor/**"])).toBe(true);
   });
 });
