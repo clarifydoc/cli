@@ -213,6 +213,62 @@ describe("computeDataFlows", () => {
     const flows = computeDataFlows(reach, [], []);
     expect(flows).toEqual([]);
   });
+
+  it("resolves a route with an inline handler through its synthetic route symbol", () => {
+    // `router.get("/orders", auth, async (req, res) => …)` — plain Express, and
+    // the shape every RealWorld controller uses. There is no function span at
+    // the route's line and `handler` holds the MIDDLEWARE's name, so both of
+    // the name-based fallbacks miss and the route used to resolve to nothing.
+    // `symbol-linker` already mints `route:GET /orders` and links it onward, so
+    // the effects were sitting in the reach summary one lookup away — which is
+    // how the accuracy eval found `clarifydoc_data_flows` reporting "no data
+    // flows" on a repo with 19 cross-tier links and 5 file→table edges.
+    const reach = computeSymbolReach({
+      symbolLinks: [
+        link("srv/ctrl.ts", "route:GET /orders", "srv/repo.ts", "listOrders", "listOrders"),
+      ],
+      symbolDataAccess: [dbRow("srv/repo.ts", "listOrders", "orders")],
+      apiCallAccess: [],
+      dbAccessByLine: new Map(),
+    });
+
+    const flows = computeDataFlows(
+      reach,
+      [route("srv/ctrl.ts", "/orders", "GET", "auth.optional", 12)],
+      [fns("srv/ctrl.ts")], // no named function anywhere near line 12
+    );
+
+    expect(flows).toEqual([
+      expect.objectContaining({
+        entryKind: "route",
+        entryLabel: "GET /orders",
+        entryFile: "srv/ctrl.ts",
+        resource: "orders",
+        distance: 1,
+      }),
+    ]);
+  });
+
+  it("prefers the route's own symbol over whatever function encloses its line", () => {
+    // A route registered inside `registerRoutes()` must attribute to the route,
+    // not to the registrar — otherwise every route in the file collapses onto
+    // one entry carrying the union of their effects.
+    const reach = computeSymbolReach({
+      symbolLinks: [link("srv/ctrl.ts", "route:GET /orders", "srv/repo.ts", "listOrders", "listOrders")],
+      symbolDataAccess: [dbRow("srv/repo.ts", "listOrders", "orders")],
+      apiCallAccess: [],
+      dbAccessByLine: new Map(),
+    });
+
+    const flows = computeDataFlows(
+      reach,
+      [route("srv/ctrl.ts", "/orders", "GET", null, 12)],
+      [fns("srv/ctrl.ts", ["registerRoutes", 1, 40])],
+    );
+
+    expect(flows).toHaveLength(1);
+    expect(flows[0]).toMatchObject({ entryLabel: "GET /orders", resource: "orders" });
+  });
 });
 
 describe("attributeApiCallsToSymbols", () => {

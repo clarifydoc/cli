@@ -19,7 +19,7 @@
  * concrete app-relative URL that {@link linkApiCallsToRoutes} can join to the
  * backend route. The helper definition and its call sites are almost always in
  * different files, so this must run after per-file analysis (it mirrors
- * `resolveExpressMounts` / `detectFileBasedRoutes`).
+ * `resolveRouterMounts` / `detectFileBasedRoutes`).
  *
  * Operates on the aggregated api-call list in memory; per-file JSON is untouched.
  */

@@ -1,35 +1,44 @@
-import type { FileAnalysis, RouteInfo } from "../../../../types/analysis.js";
-import type { ImportIndex } from "../../../../core/import-index.js";
-import { joinRoutePath } from "../../../shared/route-paths.js";
+import type { FileAnalysis, RouteInfo } from "../../types/analysis.js";
+import type { ImportIndex } from "../../core/import-index.js";
+import { joinRoutePath } from "./route-paths.js";
 
 /**
- * Apply Express router MOUNT PREFIXES so each route carries its full path.
+ * Apply router MOUNT PREFIXES so each route carries the path a caller requests.
  *
- * Express (the most common Node backend) splits routes across router modules
- * and wires them up in the entry file with `app.use("/api/auth", authRoutes)`.
- * The per-file route extractor only sees the bare router-level path
- * (`router.get("/profile", …)` → `/profile`) and never the mount prefix — which
- * lives in a *different* file (`server.js`) and references the router by an
- * imported identifier. So the route map shows `/profile` instead of the real
- * `/api/auth/profile`, and the cross-tier screen→API join can't match a frontend
- * call to `/api/auth/profile` against it.
+ * Frameworks that split routes across modules declare the prefix in a *different
+ * file* from the endpoints. Express wires it with `app.use("/api/auth", authRoutes)`
+ * in `server.js`; FastAPI with `router.include_router(auth.router, prefix="/users")`
+ * in `api.py`. Either way the per-file route extractor sees only the bare
+ * router-level path (`router.get("/profile", …)` → `/profile`, `@router.get("")`
+ * → `""`) and never the prefix. Without this pass the route map shows `/profile`
+ * instead of `/api/auth/profile`, and the cross-tier screen→API join cannot
+ * match a frontend call against it.
  *
- * The mount itself is already captured: `app.use(prefix, routerVar)` is emitted
- * by the express extractor as a `use` route (`httpMethod: null`) whose `handler`
- * is the router identifier. This project-level pass resolves that identifier
- * through the import index to the router's file, then prefixes every API route
- * declared in that file. Mounts compose transitively (a mounted router can
- * `router.use("/sub", child)`), and a router mounted at several prefixes yields
- * one route per prefix.
+ * On FastAPI it is worse than a cosmetic truncation: several routers each
+ * declare `@router.get("")`, so once the prefix is gone they are all literally
+ * `GET ""` and `dedupeRoutes` — which keys on method+path — collapses five
+ * distinct endpoints into one. The accuracy eval measured route-path F1 at
+ * 0.000 with declaration-site F1 at 0.848, which is exactly that shape: the
+ * declarations were found, the paths were wrong, and the collisions ate the
+ * rest.
  *
- * The resolved mount routes themselves are dropped — they are router wiring, not
+ * A mount is represented as an api route with `httpMethod: null` whose `handler`
+ * is the router identifier — the shape the Express extractor already emitted for
+ * `app.use(prefix, routerVar)`, and which the Python extractor now emits for
+ * `include_router(mod.router, prefix=…)`. This project-level pass resolves that
+ * identifier through the import index to the router's file, then prefixes every
+ * API route declared there. Mounts compose transitively (`server.js` → `apiRouter`
+ * → `authRouter`, or `api.py` → `articles/api.py` → `articles_resource.py`), and
+ * a router mounted at several prefixes yields one route per prefix.
+ *
+ * The resolved mount routes themselves are dropped — they are wiring, not
  * endpoints, so leaving them would inflate the route map with non-routes.
  *
- * This is the JS/Express ecosystem's project-level route step — it lives in the
- * JS route plugin (alongside the express/vue-router extractors and the
- * file-based-routes pass) and is invoked once by the analyzer after per-file
- * analysis, mirroring how `reconcileProjectEntities` runs each entity plugin's
- * cross-file pass. In-memory only — the per-file JSON on disk is unchanged.
+ * Language-agnostic by construction: it reads only `FileAnalysis.routes` and the
+ * import index, so any extractor that emits mounts in this shape participates.
+ * The analyzer invokes it once after per-file analysis, mirroring how
+ * `reconcileProjectEntities` runs each entity plugin's cross-file pass. In-memory
+ * only — the per-file JSON on disk is unchanged.
  *
  * Returns the number of routes that received a prefix. Mutates `analyses`.
  */
@@ -42,7 +51,7 @@ interface Mount {
   route: RouteInfo;
 }
 
-export function resolveExpressMounts(analyses: FileAnalysis[], importIndex: ImportIndex): number {
+export function resolveRouterMounts(analyses: FileAnalysis[], importIndex: ImportIndex): number {
   // A mount target must be a router — i.e. a file that declares ≥1 API route.
   const apiRouteFiles = new Set<string>();
   for (const a of analyses) {

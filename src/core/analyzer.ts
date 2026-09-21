@@ -26,7 +26,7 @@ import { detectDeployment } from "./deployment.js";
 import { resolveViewBySuffix, pickByPathAffinity, extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { detectFileBasedRoutes } from "../extractors/plugins/javascript/routes/file-based.js";
 import { resolveAngularExternalTemplates } from "../extractors/plugins/javascript/angular-external-templates.js";
-import { resolveExpressMounts } from "../extractors/plugins/javascript/routes/express-mounts.js";
+import { resolveRouterMounts } from "../extractors/shared/router-mounts.js";
 import { resolveUrlBuilders } from "../extractors/plugins/javascript/url-builders.js";
 import {
   writeProjectSummary,
@@ -699,12 +699,14 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // blast, class graph). Building it once avoids re-iterating all imports.
   const importIndex = buildImportIndex(allAnalyses);
 
-  // Express router mounts: `app.use("/api/auth", authRoutes)` in the entry file
-  // prefixes the bare router-level paths declared in another file. Resolve the
-  // mount identifier through the import index and apply the prefix so routes
-  // carry their full path and the screen→API join can match them. Project-level
-  // + in-memory (mirrors reconcileProjectEntities); no per-file JSON change.
-  const mountedRouteCount = resolveExpressMounts(allAnalyses, importIndex);
+  // Router mounts: `app.use("/api/auth", authRoutes)` (Express) or
+  // `include_router(auth.router, prefix="/users")` (FastAPI) sits in a different
+  // file from the endpoints and prefixes their bare router-level paths. Resolve
+  // the mount identifier through the import index and apply the prefix so routes
+  // carry the path a caller requests and the screen→API join can match them.
+  // Project-level + in-memory (mirrors reconcileProjectEntities); no per-file
+  // JSON change.
+  const mountedRouteCount = resolveRouterMounts(allAnalyses, importIndex);
   if (mountedRouteCount > 0 && verbose) {
     progress.detail(`  mounted routes prefixed: ${mountedRouteCount}`);
   }
@@ -734,7 +736,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // (`axios.get(requestUri('vikarbesked','v4'))` → `/api/v4/institution/{}/vikarbesked`)
   // so frontend calls funneled through a project URL helper carry a concrete
   // path the cross-tier linker can join. Project-level + in-memory (operates on
-  // the aggregated copies; no per-file JSON change), mirroring resolveExpressMounts.
+  // the aggregated copies; no per-file JSON change), mirroring resolveRouterMounts.
   const resolvedUrlCount = resolveUrlBuilders(allApiCalls, allAnalyses);
   if (resolvedUrlCount > 0 && verbose) {
     progress.detail(`  URL-builder calls resolved: ${resolvedUrlCount}`);

@@ -347,11 +347,13 @@ export function buildImportIndex(analyses: FileAnalysis[]): ImportIndex {
       for (const spec of imp.specifiers) {
         if (!sm.has(spec)) sm.set(spec, imp.source);
       }
-      const resolved = resolveImportSource(a.filePath, imp.source, knownFiles);
-      if (resolved) {
-        for (const spec of imp.specifiers) {
-          if (!lm.has(spec)) lm.set(spec, resolved);
-        }
+      // Resolved per specifier, not once per import: `from app.api.routes
+      // import authentication, comments` names two different FILES in one
+      // statement, so a single resolution would map both to whichever one won.
+      for (const spec of imp.specifiers) {
+        if (lm.has(spec)) continue;
+        const resolved = resolveImportSource(a.filePath, imp.source, knownFiles, spec);
+        if (resolved) lm.set(spec, resolved);
       }
     }
     local.set(a.filePath, lm);
@@ -373,16 +375,81 @@ export function buildImportIndex(analyses: FileAnalysis[]): ImportIndex {
  * known file matches. Exported so consumers outside the import index (e.g. the
  * screen builder following a route's lazy component) can reuse it.
  */
-export function resolveImportSource(importingFile: string, src: string, knownFiles: Set<string>): string | null {
-  if (!src || (!src.startsWith(".") && !src.startsWith("/"))) return null;
+export function resolveImportSource(
+  importingFile: string,
+  src: string,
+  knownFiles: Set<string>,
+  /**
+   * The bound name, when the caller has one. Python needs it: `from pkg.mod
+   * import thing` names the module in `src` and the *file* in the specifier, so
+   * `pkg/mod/thing.py` cannot be reached from `src` alone.
+   */
+  specifier?: string,
+): string | null {
+  if (!src) return null;
   const norm = importingFile.replace(/\\/g, "/");
   const dir = norm.includes("/") ? norm.slice(0, norm.lastIndexOf("/")) : "";
+
+  if (!src.startsWith(".") && !src.startsWith("/")) {
+    return norm.endsWith(".py") ? resolvePythonModule(norm, dir, src, knownFiles, specifier) : null;
+  }
+
   const joined = normalizeJoin(dir, src);
   const exts = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".d.ts", ".vue",
-                "/index.ts", "/index.tsx", "/index.js", "/index.jsx", "/index.vue"];
+                "/index.ts", "/index.tsx", "/index.js", "/index.jsx", "/index.vue",
+                // Python relative imports: `from .articles import api`.
+                ".py", "/__init__.py"];
   for (const ext of exts) {
     const candidate = joined + ext;
     if (knownFiles.has(candidate)) return candidate;
+  }
+  if (norm.endsWith(".py") && specifier) {
+    for (const ext of [`/${specifier}.py`, `/${specifier}/__init__.py`]) {
+      if (knownFiles.has(joined + ext)) return joined + ext;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve a dotted Python module (`app.api.routes`) to a file in the project.
+ *
+ * Two things make this harder than the relative case. The module path is
+ * absolute from a source root the analysis never learns (it may be the project
+ * root, or `src/`, or a package directory), so every ancestor of the importing
+ * file is tried as a candidate root, nearest first. And `from pkg import mod`
+ * puts the module the caller means in the *specifier*, not the source — so
+ * `pkg/<specifier>.py` is tried before `pkg.py` itself.
+ *
+ * Bounded work: (depth of the importing file) × 4 set lookups, no scan of the
+ * project. A bare third-party import (`from fastapi import APIRouter`) simply
+ * misses every candidate and returns null, which is the correct answer.
+ */
+function resolvePythonModule(
+  importingFile: string,
+  dir: string,
+  src: string,
+  knownFiles: Set<string>,
+  specifier: string | undefined,
+): string | null {
+  if (!/^[A-Za-z_][\w.]*$/.test(src)) return null;
+  const modulePath = src.replace(/\./g, "/");
+
+  // Ancestors of the importing file, nearest first, then the project root.
+  const roots: string[] = [];
+  for (let d = dir; d !== ""; d = d.includes("/") ? d.slice(0, d.lastIndexOf("/")) : "") {
+    roots.push(d);
+  }
+  roots.push("");
+
+  for (const root of roots) {
+    const base = root ? `${root}/${modulePath}` : modulePath;
+    const candidates = specifier
+      ? [`${base}/${specifier}.py`, `${base}/${specifier}/__init__.py`, `${base}.py`, `${base}/__init__.py`]
+      : [`${base}.py`, `${base}/__init__.py`];
+    for (const candidate of candidates) {
+      if (knownFiles.has(candidate) && candidate !== importingFile) return candidate;
+    }
   }
   return null;
 }

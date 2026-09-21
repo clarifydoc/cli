@@ -181,49 +181,65 @@ export class LspManager {
       readOnly: config.readOnly,
     });
 
-    // Create LSP client
-    const client = new LspClient({
-      stdin: container.stdin,
-      stdout: container.stdout,
-      projectRoot: this.projectRoot,
-      mountPath: config.mountPath,
-      initializationOptions: config.initializationOptions,
-    });
-
-    // Initialize with timeout. The timer MUST be cleared on success — otherwise
-    // it keeps the Node event loop alive for the full timeout duration after
-    // analysis completes, blocking process exit.
-    let initTimer: ReturnType<typeof setTimeout> | undefined;
+    // The container is a live child process from here on, and `shutdownAll`
+    // only knows about servers that reached `this.servers`. Anything that
+    // throws in between would strand it: the `docker run` child outlives the
+    // analysis and holds Node's event loop open, so `clarifydoc analyze`
+    // finishes all its work and then hangs forever instead of exiting. The
+    // accuracy eval walked straight into this on a repository with no
+    // TypeScript installed, where `initialize` rejects — `start()` above
+    // catches that and merely logs a warning, which made a leaked process look
+    // like a successful run that never ended.
+    let client: LspClient;
     try {
-      await Promise.race([
-        client.initialize(),
-        new Promise<never>((_, reject) => {
-          initTimer = setTimeout(
-            () => reject(new Error(`LSP initialize timed out after ${this.timeout}ms`)),
-            this.timeout,
-          );
-        }),
-      ]);
-    } finally {
-      if (initTimer) clearTimeout(initTimer);
-    }
+      client = new LspClient({
+        stdin: container.stdin,
+        stdout: container.stdout,
+        projectRoot: this.projectRoot,
+        mountPath: config.mountPath,
+        initializationOptions: config.initializationOptions,
+      });
 
-    if (this.verbose) {
-      console.log(`  LSP server ${config.id}: definition=${client.supportsDefinition}, references=${client.supportsReferences}`);
-    }
-
-    // Server-specific workspace setup (e.g., Roslyn's `project/open`)
-    if (config.postInitialize) {
+      // Initialize with timeout. The timer MUST be cleared on success —
+      // otherwise it keeps the Node event loop alive for the full timeout
+      // duration after analysis completes, blocking process exit.
+      let initTimer: ReturnType<typeof setTimeout> | undefined;
       try {
-        config.postInitialize(client, this.projectRoot);
-      } catch (err) {
-        if (this.verbose) {
-          console.warn(`  LSP ${config.id} postInitialize failed: ${(err as Error).message}`);
+        await Promise.race([
+          client.initialize(),
+          new Promise<never>((_, reject) => {
+            initTimer = setTimeout(
+              () => reject(new Error(`LSP initialize timed out after ${this.timeout}ms`)),
+              this.timeout,
+            );
+          }),
+        ]);
+      } finally {
+        if (initTimer) clearTimeout(initTimer);
+      }
+
+      if (this.verbose) {
+        console.log(`  LSP server ${config.id}: definition=${client.supportsDefinition}, references=${client.supportsReferences}`);
+      }
+
+      // Server-specific workspace setup (e.g., Roslyn's `project/open`)
+      if (config.postInitialize) {
+        try {
+          config.postInitialize(client, this.projectRoot);
+        } catch (err) {
+          if (this.verbose) {
+            console.warn(`  LSP ${config.id} postInitialize failed: ${(err as Error).message}`);
+          }
         }
       }
-    }
 
-    this.servers.set(config.id, { config, container, client });
+      this.servers.set(config.id, { config, container, client });
+    } catch (err) {
+      // Stop the container before rethrowing, so a server that failed to start
+      // costs a warning rather than a process that never exits.
+      await stopContainer(container).catch(() => {});
+      throw err;
+    }
 
     // Open relevant files so the server can build its project model
     const relevantFiles = files.filter((f) =>

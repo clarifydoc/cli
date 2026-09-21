@@ -109,6 +109,18 @@ describe("linkApiCallsToRoutes", () => {
     expect(links[0]!.confidence).toBe("AMBIGUOUS");
   });
 
+  it("reads `del` as DELETE, so a superagent-style client disambiguates", () => {
+    // `delete` is a reserved word, so superagent and friends spell the verb
+    // `del`. Without the alias this matched on path alone and landed on
+    // whichever route came first — here the GET — as INFERRED.
+    const links = linkApiCallsToRoutes(
+      [apiCall("web/api/users.ts", "del", "/api/users/${id}")],
+      routes,
+    );
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({ handler: "Delete", method: "DELETE", confidence: "EXTRACTED" });
+  });
+
   it("drops unmatched and external calls", () => {
     const links = linkApiCallsToRoutes(
       [
