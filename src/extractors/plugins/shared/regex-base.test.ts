@@ -3,6 +3,7 @@ import {
   extractFunctionsWithSpec,
   extractClassesWithSpec,
   extractCallsFromBody,
+  findEndLine,
   isControlFlowKeyword,
 } from "./regex-base.js";
 import { cppSpec } from "../cpp/index.js";
@@ -95,5 +96,41 @@ describe("control-flow keyword guard (call extraction)", () => {
     for (const kw of ["if", "for", "while", "switch", "foreach"]) {
       expect(names).not.toContain(kw);
     }
+  });
+});
+
+describe("brace block end — declarations with no body", () => {
+  const end = (src: string, at = 0) => findEndLine(src.split("\n"), at, "brace");
+
+  it("does not let a bodyless declaration adopt the next block", () => {
+    // Before the `head`/`declarationComplete` guard the scanner kept going
+    // until SOME block closed, so a prototype took the NEXT routine's range —
+    // and with it that routine's calls (seen as cross-routine call bleed in
+    // the SQL fixture, and as a `case class` owning the next class's methods
+    // in Scala).
+    const src = ["int find(int id);", "", "int helper(int id) {", "  return compute(id);", "}"].join("\n");
+    expect(end(src)).toBe(1);
+    expect(end(src, 2)).toBe(5);
+  });
+
+  it("still finds an Allman-style body on the following line", () => {
+    expect(end(["int find(int id)", "{", "  return compute(id);", "}"].join("\n"))).toBe(4);
+  });
+
+  it("looks past blank lines and comments for an Allman brace", () => {
+    expect(end(["int find(int id)", "", "// why", "{", "  return 1;", "}"].join("\n"))).toBe(6);
+  });
+
+  it("keeps a multi-line parameter list attached to its body", () => {
+    expect(end(["int find(", "    int id,", "    int tenant) {", "  return 1;", "}"].join("\n"))).toBe(5);
+  });
+
+  it("treats a wrapped inheritance clause as a continuation", () => {
+    expect(end(["class Foo", "    extends Bar {", "  int x;", "}"].join("\n"))).toBe(4);
+  });
+
+  it("ends a declaration that trails off into an expression body", () => {
+    // Scala `def apply(): X = new X(...)` — complete on one line, no block.
+    expect(end(["def apply(): X = new X(y)", "", "class Other {", "  val z = 1", "}"].join("\n"))).toBe(1);
   });
 });
