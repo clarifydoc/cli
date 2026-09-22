@@ -89,8 +89,32 @@ describe("clarifydoc MCP tools — react fixture", () => {
     const route = loaded.summary.routeMap[0];
     const { text } = await call(server, "clarifydoc_search", { query: route.path, kinds: ["route"] });
     expect(text).toContain(route.path);
-    expect(text).toContain("## Routes");
-    expect(text).not.toContain("## Files");
+    expect(text).toContain("[route]");
+    expect(text).not.toContain("[file]");
+  });
+
+  it("search ranks across kinds in one list, best first", async () => {
+    const route = loaded.summary.routeMap[0];
+    const { text } = await call(server, "clarifydoc_search", { query: route.path });
+    // One tally line, then one ranked list — never a per-kind section.
+    expect(text).toMatch(/^\d+ hits? · /m);
+    expect(text).not.toContain("## ");
+    // The route the query names exactly must lead, whatever else matched.
+    const first = text.split("\n").find((l) => l.startsWith("- "));
+    expect(first).toContain("[route]");
+    expect(first).toContain(route.path);
+  });
+
+  it("search matches terms independently and splits camelCase", async () => {
+    // A two-word query is a miss under substring matching; both words appear in
+    // this symbol's name, in order, so the ranked list must contain it.
+    const fn = loaded.summary.complexity
+      ?.flatMap((f) => f.functions)
+      .find((f) => /^[a-z]+[A-Z][a-z]+/.test(f.functionName));
+    expect(fn, "fixture has no camelCase function to search for").toBeDefined();
+    const words = fn!.functionName.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase();
+    const { text } = await call(server, "clarifydoc_search", { query: words, limit: 50 });
+    expect(text).toContain(`${fn!.functionName}()`);
   });
 
   it("search reports a miss without erroring", async () => {

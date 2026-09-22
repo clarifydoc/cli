@@ -2,6 +2,7 @@
 
 import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
 import { byOrdinal } from "../../core/ordinal.js";
+import { normalize, rankCandidates, type Candidate, type SearchKind } from "../search-rank.js";
 import type { McpTool } from "../protocol.js";
 import type { LoadedAnalysis } from "../store.js";
 import {
@@ -89,33 +90,10 @@ export function analyzeTool(ctx: ToolContext): McpTool {
   };
 }
 
-type SearchKind = "route" | "screen" | "file" | "symbol" | "entity" | "api-call";
 const SEARCH_KINDS: readonly SearchKind[] = ["route", "screen", "file", "symbol", "entity", "api-call"];
 
-interface Hit {
-  score: number;
-  text: string;
-}
-
-/** 3 = exact, 2 = word/segment boundary, 1 = substring, 0 = no match. */
-function score(haystack: string | null | undefined, needle: string): number {
-  if (!haystack) return 0;
-  const h = haystack.toLowerCase();
-  const n = needle.toLowerCase();
-  if (h === n) return 3;
-  const index = h.indexOf(n);
-  if (index === -1) return 0;
-  if (index === 0) return 2;
-  return /[^a-z0-9]/.test(h[index - 1] ?? "") ? 2 : 1;
-}
-
-function best(...scores: number[]): number {
-  return Math.max(0, ...scores);
-}
-
-function collect(hits: Hit[], limit: number): string[] {
-  hits.sort((a, b) => b.score - a.score || byOrdinal(a.text, b.text));
-  return bulletList(hits, limit, (h) => h.text);
+function kindTag(kind: SearchKind): string {
+  return `[${kind}]`;
 }
 
 export function searchTool(ctx: ToolContext): McpTool {
@@ -131,153 +109,185 @@ export function searchTool(ctx: ToolContext): McpTool {
       properties: {
         query: {
           type: "string",
-          description: "Substring to look for, case-insensitive (route path, screen title, symbol, table, file).",
+          description:
+            "What to look for, case-insensitive (route path, screen title, symbol, table, file). Terms are " +
+            "matched independently and camelCase splits, so `user login` and `user id` both work — the latter " +
+            "finds `getUserById`.",
         },
         kinds: {
           type: "array",
           items: { type: "string", enum: [...SEARCH_KINDS] },
           description: "Restrict the search to these kinds. Default: all.",
         },
-        limit: { type: "number", description: "Max results per kind (default 8)." },
+        limit: { type: "number", description: "Max results in total, best first (default 12)." },
       },
       required: ["query"],
       additionalProperties: false,
     },
     handler: async (args) => {
       const query = requiredStringArg(args, "query");
-      const limit = numberArg(args, "limit", 8, { max: 100 });
+      const limit = numberArg(args, "limit", 12, { max: 100 });
       const requested = stringArrayArg(args, "kinds")
         .map((k) => k.toLowerCase())
         .filter((k): k is SearchKind => (SEARCH_KINDS as readonly string[]).includes(k));
       const kinds = new Set<SearchKind>(requested.length ? requested : SEARCH_KINDS);
       const loaded = await requireAnalysis(ctx);
       const { summary, index } = loaded;
-      const blocks: string[][] = [];
+      const weightOf = (path: string | null | undefined): number =>
+        (path ? index.byFile.get(path)?.blast?.impactScore : 0) ?? 0;
+      const candidates: Candidate[] = [];
 
       if (kinds.has("route")) {
-        const hits: Hit[] = [];
         for (const route of summary.routeMap ?? []) {
-          const s = best(score(route.path, query), score(route.handler, query));
-          if (s) {
-            hits.push({
-              score: s,
-              text: `${routeLabel(route.httpMethod, route.path)} [${route.kind}]${
-                route.handler ? ` → ${route.handler}` : ""
-              } (${loc((route as { filePath?: string }).filePath, route.line)})`,
-            });
-          }
+          const path = (route as { filePath?: string }).filePath ?? null;
+          candidates.push({
+            kind: "route",
+            name: route.path,
+            nameIsPath: true,
+            isEndpoint: route.kind === "api",
+            aka: route.handler ? [route.handler] : undefined,
+            path,
+            line: route.line ?? null,
+            weight: weightOf(path),
+            text: `${routeLabel(route.httpMethod, route.path)} [${route.kind}]${
+              route.handler ? ` → ${route.handler}` : ""
+            } (${loc(path, route.line)})`,
+          });
         }
-        blocks.push(section(`Routes (${hits.length})`, collect(hits, limit)));
       }
 
       if (kinds.has("screen")) {
-        const hits: Hit[] = [];
         for (const screen of summary.screens ?? []) {
-          const s = best(
-            score(screen.name, query),
-            score(screen.caption, query),
-            score(screen.routePath, query),
-            score(screen.filePath, query),
-          );
-          if (s) {
-            hits.push({
-              score: s,
-              text: `${screen.name}${screen.routePath ? ` @ ${screen.routePath}` : ""} (${screen.filePath}) · ${
-                screen.components.length
-              } components`,
-            });
-          }
+          // ScreenInfo has no line of its own; its first component is the closest
+          // thing to "where the screen starts", and a row that can be opened at a
+          // line outranks one that cannot.
+          const line = screen.components.find((c) => c.line > 0)?.line ?? null;
+          candidates.push({
+            kind: "screen",
+            name: screen.name,
+            aka: [screen.caption, screen.routePath].filter((v): v is string => Boolean(v)),
+            path: screen.filePath,
+            line,
+            weight: weightOf(screen.filePath),
+            text: `${screen.name}${screen.routePath ? ` @ ${screen.routePath}` : ""} (${loc(
+              screen.filePath,
+              line,
+            )}) · ${screen.components.length} components`,
+          });
         }
-        blocks.push(section(`Screens (${hits.length})`, collect(hits, limit)));
       }
 
       if (kinds.has("symbol")) {
-        const hits: Hit[] = [];
         for (const file of summary.complexity ?? []) {
           for (const fn of file.functions) {
-            const s = score(fn.functionName, query);
-            if (s) {
-              hits.push({
-                score: s,
-                text: `${fn.functionName}() (${loc(file.filePath, fn.line)}) · complexity ${fn.complexity}`,
-              });
-            }
+            candidates.push({
+              kind: "symbol",
+              name: fn.functionName,
+              path: file.filePath,
+              line: fn.line ?? null,
+              weight: weightOf(file.filePath),
+              text: `${fn.functionName}() (${loc(file.filePath, fn.line)}) · complexity ${fn.complexity}`,
+            });
           }
         }
         for (const node of summary.classGraph?.nodes ?? []) {
           if (node.isFile || node.isExternal) continue;
-          const s = score(node.name, query);
-          if (s) {
-            hits.push({
-              score: s,
-              text: `${node.name} ${node.isInterface ? "(interface)" : "(class)"} (${node.filePath}) · refs in ${
-                node.inboundCount
-              } / out ${node.outboundCount}`,
-            });
-          }
+          // `ClassGraphNode` carries no line, so this row can only be opened at
+          // the file. Where the class body is also a complexity entry the loop
+          // above already emitted a locatable row for it.
+          candidates.push({
+            kind: "symbol",
+            name: node.name,
+            path: node.filePath,
+            line: null,
+            weight: weightOf(node.filePath),
+            text: `${node.name} ${node.isInterface ? "(interface)" : "(class)"} (${
+              node.filePath
+            }) · refs in ${node.inboundCount} / out ${node.outboundCount}`,
+          });
         }
-        blocks.push(section(`Symbols (${hits.length})`, collect(hits, limit)));
       }
 
       if (kinds.has("entity")) {
-        const hits: Hit[] = [];
         for (const node of summary.entityGraph?.nodes ?? []) {
-          const columnHit = node.columns.some((c) => score(c.name, query) === 3);
-          const s = best(score(node.name, query), columnHit ? 1 : 0);
-          if (s) {
-            hits.push({
-              score: s,
-              text: `${node.name} [${node.kind}${node.orm ? `, ${node.orm}` : ""}] (${loc(
-                node.filePath,
-                node.line,
-              )}) · ${node.columns.length} columns${columnHit ? " · column matches query" : ""}`,
-            });
-          }
+          const columnHit = node.columns.some((c) => normalize(c.name) === normalize(query));
+          candidates.push({
+            kind: "entity",
+            name: node.name,
+            aka: columnHit ? node.columns.map((c) => c.name) : undefined,
+            path: node.filePath,
+            line: node.line ?? null,
+            weight: weightOf(node.filePath),
+            text: `${node.name} [${node.kind}${node.orm ? `, ${node.orm}` : ""}] (${loc(
+              node.filePath,
+              node.line,
+            )}) · ${node.columns.length} columns${columnHit ? " · column matches query" : ""}`,
+          });
         }
-        blocks.push(section(`Entities (${hits.length})`, collect(hits, limit)));
       }
 
       if (kinds.has("api-call")) {
-        const hits: Hit[] = [];
         for (const call of summary.apiCalls ?? []) {
-          const s = best(score(call.name, query), score(call.target, query));
-          if (s) {
-            hits.push({
-              score: s,
-              text: `${call.target ?? call.name} (${loc(
-                (call as { filePath?: string }).filePath,
-                call.line,
-              )})`,
-            });
-          }
+          const path = (call as { filePath?: string }).filePath ?? null;
+          candidates.push({
+            kind: "api-call",
+            name: call.target ?? call.name,
+            aka: call.target ? [call.name] : undefined,
+            path,
+            line: call.line ?? null,
+            weight: weightOf(path),
+            text: `${call.target ?? call.name} (${loc(path, call.line)})`,
+          });
         }
-        blocks.push(section(`Outbound API calls (${hits.length})`, collect(hits, limit)));
       }
 
       if (kinds.has("file")) {
-        const hits: Hit[] = [];
         for (const path of index.pathLookup.values()) {
-          const s = score(path, query);
-          if (s) {
-            const f = index.byFile.get(path);
-            hits.push({
-              score: s,
-              text: `${path}${f?.layer ? ` [${f.layer}]` : ""}${
-                f?.complexity ? ` · complexity ${f.complexity.totalComplexity}` : ""
-              }`,
-            });
-          }
+          const f = index.byFile.get(path);
+          // A file is named by its basename, not by its whole path — otherwise
+          // every file under `src/prisma/` scores as well as `prisma-client.ts`
+          // does. The directory still matches, one tier lower.
+          candidates.push({
+            kind: "file",
+            name: path.slice(path.lastIndexOf("/") + 1),
+            path,
+            line: null,
+            weight: weightOf(path),
+            text: `${path}${f?.layer ? ` [${f.layer}]` : ""}${
+              f?.complexity ? ` · complexity ${f.complexity.totalComplexity}` : ""
+            }`,
+          });
         }
-        blocks.push(section(`Files (${hits.length})`, collect(hits, limit)));
       }
 
-      const body = blocks.filter((b) => b.length > 0);
-      if (body.length === 0) {
+      // Strict first: every term must be present. Only when that finds nothing at
+      // all does a looser any-term pass run, so a multi-word query degrades to
+      // partial matches instead of to silence.
+      let ranked = rankCandidates(candidates, query);
+      const loose = ranked.length === 0;
+      if (loose) ranked = rankCandidates(candidates, query, { loose: true });
+
+      if (ranked.length === 0) {
         return {
           text: `No matches for "${query}" in ${projectName(summary)} (${summary.files.length} files analyzed).`,
         };
       }
-      return { text: joinLines([`# Search: "${query}"`, "", ...body]) };
+
+      const counts = tally(ranked, (hit) => hit.kind);
+      const header = `${ranked.length} hit${ranked.length === 1 ? "" : "s"} · ${countMap(counts)}`;
+      const note = loose
+        ? [`No result matches every term — showing results matching some of them.`, ""]
+        : [];
+      return {
+        text: joinLines([
+          `# Search: "${query}"`,
+          "",
+          header,
+          "",
+          ...note,
+          bulletList(ranked, limit, (hit) => `${kindTag(hit.kind)} ${hit.text}`),
+        ]),
+      };
     },
   };
 }
