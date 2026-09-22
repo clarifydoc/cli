@@ -28,6 +28,11 @@ write. That is what lets an external agent be configured as nothing but a comman
 - **Tool output is for a context window.** Cap every list and say how many rows were withheld (`bulletList`), emit
   `path:line` for anything worth opening, and never silently return nothing — a miss explains what exists instead
   (`"No routes match … the analysis holds N routes"`), which is what stops an agent from re-guessing.
+- **Search ranks across kinds, not within them.** `clarifydoc_search` flattens every source into one
+  `Candidate` list ([search-rank.ts](search-rank.ts)) and prints one ranked list, because whatever prints first
+  IS the rank — for a model reading top-down and for the search-MRR benchmark alike. A new searchable kind
+  contributes `Candidate`s; it must not print a section of its own. The tiers and tie-breaks are tuned against
+  `eval/`, never against the tool's own output, and every one of them is pinned by a case in `search-rank.test.ts`.
 - **Tool failures are results, not transport errors.** A thrown handler is turned into `isError: true` content by
   `McpServer.callTool`, so the model reads the message. Throw with the fix in the text (candidate paths, the tool to
   call next).
