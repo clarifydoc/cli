@@ -136,6 +136,9 @@ export const CALL_NOISE = new Set([
   "to_s", "to_i", "to_f", "to_h", "to_a", "to_json",
   "puts", "p", "raise", "require", "include", "extend",
   "isset", "empty", "unset", "echo", "var_dump", "die", "exit",
+  // Ruby predicates that are always Object/ActiveSupport builtins. `valid?`
+  // and `save!` are deliberately absent — those name real project methods.
+  "nil?", "empty?", "present?", "blank?",
   "String", "Int", "Float", "Bool", "Array", "Dict", "Set",
   "Ok", "Err", "Some", "None", "vec", "Box", "Arc", "Rc",
 ]);
@@ -192,14 +195,56 @@ export function findEndLine(
   // brace
   let depth = 0;
   let started = false;
+  // Bracket depth of the declaration HEAD, tracked only until the body opens,
+  // so a parameter list spanning several lines isn't mistaken for a complete
+  // declaration.
+  let head = 0;
   for (let i = startIdx; i < lines.length; i++) {
     for (const ch of lines[i]) {
       if (ch === "{") { depth++; started = true; }
-      if (ch === "}") depth--;
+      else if (ch === "}") depth--;
+      else if (!started && (ch === "(" || ch === "[")) head++;
+      else if (!started && (ch === ")" || ch === "]")) head--;
     }
     if (started && depth <= 0) return i + 1;
+    // A declaration that never opens a brace has no body — a C/C++ prototype,
+    // a Scala abstract `def` or a brace-less `case class`. Without this the
+    // scan runs on until the NEXT block closes and adopts it, so the following
+    // class's methods and calls are attributed to this declaration.
+    if (!started && head <= 0 && declarationComplete(lines[i]) && !bodyFollows(lines, i + 1)) {
+      return i + 1;
+    }
   }
   return Math.min(startIdx + 30, lines.length);
+}
+
+/** Trailing tokens that mean the declaration continues on the next line. */
+const CONTINUES_RE = /(?:[,=+\-*\/&|.:?<]|->|=>|\\|\b(?:extends|implements|with|throws|where))\s*$/;
+
+/**
+ * True when `line` reads as a complete declaration — non-blank, not a comment,
+ * and not ending on an operator or inheritance keyword that carries over.
+ */
+function declarationComplete(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed === "") return false;
+  if (trimmed.startsWith("//") || trimmed.startsWith("#") || trimmed.startsWith("/*") || trimmed.startsWith("*")) return false;
+  return !CONTINUES_RE.test(trimmed);
+}
+
+/**
+ * True when the next code line opens or continues the declaration rather than
+ * starting something new — Allman braces (`void f()` / `{`) and wrapped
+ * inheritance clauses (`class Foo` / `  extends Bar {`).
+ */
+function bodyFollows(lines: string[], from: number): boolean {
+  for (let i = from; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (trimmed === "") continue;
+    if (trimmed.startsWith("//") || trimmed.startsWith("#") || trimmed.startsWith("/*") || trimmed.startsWith("*")) continue;
+    return trimmed.startsWith("{") || /^(?:extends|implements|with|throws|where|:|,|->|=>|=|&&|\|\||\.)/.test(trimmed);
+  }
+  return false;
 }
 
 /** Resolve the block style for a spec, honoring the legacy `indentBased` flag. */
@@ -244,6 +289,10 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
   const classes: ClassInfo[] = [];
 
   for (let i = 0; i < lines.length; i++) {
+    // A comment is not a declaration. Prose mentioning a keyword — "…only the
+    // first superclass AND protocol…" — otherwise yields a phantom class.
+    if (isCommentLine(lines[i], spec.lineCommentPrefixes)) continue;
+
     for (const { pattern, getExtends } of spec.classPatterns) {
       const m = lines[i].match(pattern);
       if (m && m[1]) {
@@ -365,14 +414,30 @@ export function extractParamsFromLine(line: string, parseParam: ParamParser = de
 }
 
 /** Extract properties from class body lines using language-specific detectors. */
+/**
+ * Fields declared directly in a class body. The body slice also contains every
+ * method body, where an annotated local (`let total: Int = 0`) is shaped
+ * exactly like a field — so only declarations at the body's own brace depth
+ * count. For an indent-delimited language no braces are seen, the depth stays
+ * 0, and every match is kept as before.
+ */
 function extractPropertiesFromBody(bodyLines: string[], propertyPatterns: PropertyPattern[] = []): PropertyInfo[] {
   const properties: PropertyInfo[] = [];
+  let depth = 0;
   for (const line of bodyLines) {
-    for (const pp of propertyPatterns) {
-      const m = line.match(pp.pattern);
-      if (!m) continue;
-      const prop = pp.build(m, line);
-      if (prop) properties.push(prop);
+    if (depth === 0) {
+      for (const pp of propertyPatterns) {
+        const m = line.match(pp.pattern);
+        if (!m) continue;
+        const prop = pp.build(m, line);
+        if (prop) properties.push(prop);
+      }
+    }
+    // Applied AFTER the match so a computed property (`var x: Int { … }`) is
+    // still read on the line that opens its accessor block.
+    for (const ch of line) {
+      if (ch === "{") depth++;
+      else if (ch === "}") depth = Math.max(0, depth - 1);
     }
   }
   return properties;

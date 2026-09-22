@@ -3,6 +3,7 @@ import type {
   PropertyInfo, ParamInfo, DataSourceInfo, RouteInfo, CallInfo,
 } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
+import { extractCallsFromBody } from "../shared/regex-base.js";
 
 /**
  * SQL plugin — covers DDL (CREATE/ALTER/DROP), DML (SELECT/INSERT/UPDATE/DELETE),
@@ -446,21 +447,22 @@ export const sqlSpec: RegexLangSpec = {
 
 /**
  * Override the default function extraction so routines pick up the right end
- * line and parameter list. The base regex-extractor only invokes this via the
- * `extractClasses` override path; for functions we still get the default
- * function loop, but the body-end detection is wrong for SQL — so we let the
- * default produce names + params, then patch endLine post-hoc.
+ * line and parameter list. The base regex-extractor produces names + params
+ * from the default function loop; SQL bodies are delimited by `BEGIN`/`END`
+ * (or `$$`), which the shared brace scanner cannot read at all, so both the
+ * end line and the call list are patched here from `findRoutineEnd`.
  *
- * This is called by `regex-extractor.ts` indirectly; the default endLine is
- * close enough for short routines, and the routine-end logic kicks in for
- * BEGIN/END blocks via findRoutineEnd when needed.
+ * The calls MUST be recomputed rather than kept: the shared scanner sees a
+ * `CREATE FUNCTION …` header that never opens a brace and correctly reports a
+ * bodyless declaration, so the default call list for a SQL routine is empty.
  */
 export function fixSqlFunctionEndLines(lines: string[], fns: FunctionInfo[]): FunctionInfo[] {
   return fns.map((fn) => {
     const idx = fn.line - 1;
     if (idx < 0 || idx >= lines.length) return fn;
     const endLine = findRoutineEnd(lines, idx);
-    return { ...fn, endLine };
+    const calls = extractCallsFromBody(lines, idx + 1, endLine, ["--", "#"]);
+    return { ...fn, endLine, calls };
   });
 }
 
