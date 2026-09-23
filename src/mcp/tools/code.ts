@@ -17,13 +17,16 @@ import {
   joinLines,
   loc,
   numberArg,
+  plural,
   requiredStringArg,
   routeLabel,
   section,
   stringArg,
   stringArrayArg,
+  tally,
 } from "../format.js";
-import { mustResolveFile, requireAnalysis, type ToolContext } from "./context.js";
+import { mustResolveFile, requireAnalysis, stalenessHint, type ToolContext } from "./context.js";
+import { filterToDrop, missHeadline, noResults, type DroppableFilter } from "../empty.js";
 
 export function routesTool(ctx: ToolContext): McpTool {
   return {
@@ -67,13 +70,39 @@ export function routesTool(ctx: ToolContext): McpTool {
       if (fileFilter) routes = routes.filter((r) => contains(r.filePath, fileFilter));
 
       if (routes.length === 0) {
+        const all = (summary.routeMap ?? []) as RouteWithFile[];
+        // Which single argument, dropped, would have matched something. Naming
+        // it with a count turns "try a looser filter" into a call that lands.
+        const drop = filterToDrop(all, [
+          kind ? { label: "kind", keep: (r: RouteWithFile) => r.kind === kind } : undefined,
+          methodFilter
+            ? { label: "method", keep: (r: RouteWithFile) => (r.httpMethod ?? "").toUpperCase() === methodFilter }
+            : undefined,
+          pathFilter
+            ? {
+                label: "path",
+                keep: (r: RouteWithFile) => contains(r.path, pathFilter) || contains(r.handler, pathFilter),
+              }
+            : undefined,
+          fileFilter ? { label: "file", keep: (r: RouteWithFile) => contains(r.filePath, fileFilter) } : undefined,
+        ].filter((f): f is DroppableFilter<RouteWithFile> => f !== undefined));
         return {
-          text: `No routes match (${facts([
-            ["path", pathFilter],
-            ["method", methodFilter],
-            ["kind", kind],
-            ["file", fileFilter],
-          ])}). The analysis holds ${(summary.routeMap ?? []).length} routes in total.`,
+          text: noResults({
+            headline: missHeadline("routes", [
+              ["path", pathFilter],
+              ["method", methodFilter],
+              ["kind", kind],
+              ["file", fileFilter],
+            ]),
+            holds: `The analysis holds ${plural(all.length, "route")}${
+              all.length ? ` — methods present: ${countMap(tally(all, (r) => (r.httpMethod ?? "ANY").toUpperCase()))}` : ""
+            }.`,
+            next: [
+              drop && `clarifydoc_routes without \`${drop.label}\` (${plural(drop.count, "match", "matches")})`,
+              pathFilter && `clarifydoc_search query="${pathFilter}" — find it by name across every kind`,
+              all.length === 0 && (await stalenessHint(ctx.store)),
+            ],
+          }),
         };
       }
 
@@ -168,8 +197,21 @@ export function screensTool(ctx: ToolContext): McpTool {
       }
       if (fileFilter) screens = screens.filter((s) => contains(s.filePath, fileFilter));
       if (screens.length === 0) {
+        const all = summary.screens ?? [];
         return {
-          text: `No screens match. The analysis holds ${(summary.screens ?? []).length} screens.`,
+          text: noResults({
+            headline: missHeadline("screens", [
+              ["query", query],
+              ["file", fileFilter],
+            ]),
+            holds: `The analysis holds ${plural(all.length, "screen")}.`,
+            next: [
+              all.length > 0 && query && `clarifydoc_search query="${query}" kinds=["screen","file"]`,
+              all.length > 0 && "clarifydoc_screens with no filter — the full list",
+              all.length === 0 && "clarifydoc_routes kind=\"frontend\" — router paths, where no screen was extracted",
+              all.length === 0 && (await stalenessHint(ctx.store)),
+            ],
+          }),
         };
       }
 
@@ -550,9 +592,20 @@ export function traceTool(ctx: ToolContext): McpTool {
       );
       if (seeds.length === 0) {
         return {
-          text:
-            `No call-graph edges found for ${facts([["symbol", symbol], ["file", file]])}. ` +
-            `Either nothing resolved to it, or the name differs — try clarifydoc_search kinds=["symbol"].`,
+          text: noResults({
+            headline: missHeadline("call-graph edges", [
+              ["symbol", symbol],
+              ["file", file],
+            ]),
+            holds:
+              `The analysis holds ${plural(all.length, "resolved call")}. Either nothing resolved to this one, ` +
+              `or the name differs.`,
+            next: [
+              symbol && `clarifydoc_search query="${symbol}" kinds=["symbol"] — check the spelling`,
+              file && `clarifydoc_file path="${file}" — what the file declares and imports`,
+              all.length === 0 && (await stalenessHint(ctx.store)),
+            ],
+          }),
         };
       }
 
@@ -723,7 +776,16 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
       const pathArg = stringArg(args, "path");
       const all = loaded.summary.blastRadius ?? [];
       if (all.length === 0) {
-        return { text: "This analysis carries no blast-radius data (it is computed in the advanced pass)." };
+        return {
+          text: noResults({
+            headline: "This analysis carries no blast-radius data (it is computed in the advanced pass).",
+            holds: `The analysis holds ${plural((loaded.summary.symbolLinks ?? []).length, "resolved call")}.`,
+            next: [
+              "clarifydoc_analyze full=true — re-run with the advanced pass",
+              "clarifydoc_trace file=… — who calls into a file, from the call graph",
+            ],
+          }),
+        };
       }
 
       if (!pathArg) {
@@ -748,9 +810,16 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
       if (!b) {
         const f: FileFacts | undefined = loaded.index.byFile.get(path);
         return {
-          text:
-            `${path} has no blast-radius entry — nothing in the analysis imports it` +
-            `${f?.inbound.length ? `, though ${f.inbound.length} call-graph edges resolve into it (see clarifydoc_trace)` : ""}.`,
+          text: noResults({
+            headline: `${path} has no blast-radius entry — nothing in the analysis imports it.`,
+            holds: f?.inbound.length
+              ? `${plural(f.inbound.length, "call-graph edge")} still resolve into it.`
+              : `${plural(all.length, "file")} are scored; this one is not among them.`,
+            next: [
+              f?.inbound.length ? `clarifydoc_trace file="${path}" direction="callers"` : undefined,
+              `clarifydoc_file path="${path}" — what it declares, and who it imports`,
+            ],
+          }),
         };
       }
 

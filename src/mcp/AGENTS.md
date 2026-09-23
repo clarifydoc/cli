@@ -12,6 +12,7 @@ write. That is what lets an external agent be configured as nothing but a comman
 | [protocol.ts](protocol.ts) | Dependency-free MCP over stdio: JSON-RPC framing, `initialize` negotiation, `tools/*`, `resources/*` |
 | [store.ts](store.ts) | Locates/loads/refreshes the analysis, cold-starts a project with none, and indexes it per file (`FileFacts`) |
 | [format.ts](format.ts) | Text shaping (capped lists, `path:line`) and argument coercion |
+| [empty.ts](empty.ts) | The shape of a result with no rows in it — miss, denominator, `Next:` |
 | [server.ts](server.ts) | Assembles store + tools + instructions into a servable `McpServer` |
 | [tools/](tools/) | The tools themselves — `context.ts` (shared), `overview.ts`, `code.ts`, `data.ts` |
 
@@ -28,6 +29,15 @@ write. That is what lets an external agent be configured as nothing but a comman
 - **Tool output is for a context window.** Cap every list and say how many rows were withheld (`bulletList`), emit
   `path:line` for anything worth opening, and never silently return nothing — a miss explains what exists instead
   (`"No routes match … the analysis holds N routes"`), which is what stops an agent from re-guessing.
+- **An empty result names the call that would have data.** Every miss goes through `noResults` ([empty.ts](empty.ts))
+  and reads the same three parts: the miss (with the filters echoed), the denominator, then one `Next:` line of at
+  most two calls. A miss is an answer, so `isError` stays false. Only suggest what was *computed* — the filter whose
+  removal actually yields rows (`filterToDrop`), the query term that actually has hits (`termDiagnosis`), the
+  freshness state actually observed (`stalenessHint`, which spends a few hundred stats to answer "is this empty
+  because the analysis is stale?" instead of delegating it to `clarifydoc_status`). A wrong next step costs more
+  than no next step, and a hint carrying a number is the difference between "try a looser filter" and a call that
+  lands. Hints are **stateless by design**: a stdio server's "session" is not reliably one agent, so nothing is
+  derived from what the caller asked earlier.
 - **Search ranks across kinds, not within them.** `clarifydoc_search` flattens every source into one
   `Candidate` list ([search-rank.ts](search-rank.ts)) and prints one ranked list, because whatever prints first
   IS the rank — for a model reading top-down and for the search-MRR benchmark alike. A new searchable kind
@@ -51,7 +61,8 @@ write. That is what lets an external agent be configured as nothing but a comman
 1. Write it in the matching `tools/*.ts` as a `McpTool` factory taking `ToolContext`.
 2. Register it in the `tools` array in [server.ts](server.ts) (order is the order clients list them in).
 3. Extend `tools.test.ts` — derive expectations from the loaded fixture summary rather than hardcoding names, so
-   regenerating `test-output/` cannot make the test lie.
+   regenerating `test-output/` cannot make the test lie. If the tool can come back empty, add it to the
+   `points at another tool when it has nothing to show` table with arguments that cannot match.
 
 Describe the tool in terms of the *question it answers*; the description is the only thing a model reads before
 choosing it.

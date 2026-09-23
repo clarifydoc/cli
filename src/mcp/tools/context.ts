@@ -3,7 +3,8 @@
 import type { ProjectAnalysis } from "../../types/analysis.js";
 import { assessFreshness } from "../../core/manifest.js";
 import { AnalysisStore, resolveFilePath, type LoadedAnalysis } from "../store.js";
-import { ago, countMap, facts, tally } from "../format.js";
+import { ago, countMap, facts, plural, tally } from "../format.js";
+import { STATUS_HINT } from "../empty.js";
 
 export interface ToolContext {
   store: AnalysisStore;
@@ -63,6 +64,33 @@ async function sourceFreshness(store: AnalysisStore): Promise<string | undefined
     default:
       return undefined; // no manifest: nothing to compare against
   }
+}
+
+/**
+ * The `Next:` suggestion for a result that came back empty.
+ *
+ * "Maybe nothing is analyzed" is the question behind most empty results, and
+ * naming `clarifydoc_status` only delegates it. The manifest can answer it
+ * here for the price of a few hundred stats — and an empty result is a rare
+ * enough path to afford them, which is why this is called from misses and not
+ * from every call. The stat budget is deliberately a tenth of the status
+ * report's: a hint may be sampled, a status line should not be.
+ */
+export async function stalenessHint(store: AnalysisStore): Promise<string> {
+  let report;
+  try {
+    report = await assessFreshness(store.analysisDir, store.projectRoot, { maxStats: 500 });
+  } catch {
+    return STATUS_HINT;
+  }
+  if (report.state === "extractor-changed") {
+    return "clarifydoc_analyze full=true — the extractor changed since this analysis";
+  }
+  if (report.state === "changed") {
+    const n = report.changed.length + report.removed.length;
+    return `clarifydoc_analyze — ${plural(n, "file")} changed since the analysis${report.sampled ? " (sampled)" : ""}`;
+  }
+  return STATUS_HINT;
 }
 
 /**
