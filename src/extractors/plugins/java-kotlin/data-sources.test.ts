@@ -177,6 +177,62 @@ class Service(private val caseDAO: ICaseDAO) {
   });
 });
 
+describe("Repository-PREFIX naming (`RepositoryClass repositoryClass`)", () => {
+  it("derives the entity from a prefix-named repository type", async () => {
+    const src = `package x;
+class ServiceTeacherImpl {
+  private final RepositoryClass repositoryClass;
+  void m(int id) {
+    repositoryClass.findByOrganizationIdAndIsDeletedFalse(id);
+    repositoryClass.save(c);
+  }
+}`;
+    const tree = await parseSource(src, "java" as any, "ServiceTeacherImpl.java");
+    const s = db(new JavaKotlinDataSourceExtractor().extract(tree, src));
+    expect(s).toHaveLength(2);
+    expect(s.every((d) => d.entity === "Class" && d.target === "Class")).toBe(true);
+  });
+
+  it("derives the entity from a prefix-named field with no declared type", async () => {
+    const s = db(await sourcesOf(`    daoInvoice.findById(id);`, "java"));
+    expect(s.some((d) => d.entity === "Invoice")).toBe(true);
+  });
+
+  it("vetoes a prefix base naming a collaborator role, and bare `repo…`", async () => {
+    const s = db(await sourcesOf(`    daoFactory.create(x); repoPath.getParent();`, "java"));
+    expect(s).toHaveLength(0);
+  });
+});
+
+describe("Spring Data call on a non-DAO-shaped receiver", () => {
+  it("targets the receiver's declared type rather than leaving it unresolved", async () => {
+    const src = `package x;
+class S {
+  private final UserStore store;
+  void m(String e) { store.findByEmail(e); }
+}`;
+    const tree = await parseSource(src, "java" as any, "S.java");
+    const s = db(new JavaKotlinDataSourceExtractor().extract(tree, src));
+    expect(s.map((d) => d.target)).toEqual(["UserStore"]);
+  });
+
+  it("does not make a service-layer receiver type a datastore", async () => {
+    const src = `package x;
+class UserController {
+  private final UserService userService;
+  void m() { userService.findAll(); }
+}`;
+    const tree = await parseSource(src, "java" as any, "UserController.java");
+    const s = db(new JavaKotlinDataSourceExtractor().extract(tree, src));
+    expect(s.map((d) => d.target)).toEqual([null]);
+  });
+
+  it("stays unresolved when the receiver has no declared type", async () => {
+    const s = db(await sourcesOf(`    lookup().findByEmail(e);`, "java"));
+    expect(s.map((d) => d.target)).toEqual([null]);
+  });
+});
+
 describe("Typed application/domain events", () => {
   const q = (s: DataSourceInfo[]) =>
     s.filter((d) => d.kind === "queue-publish" || d.kind === "queue-consume");
