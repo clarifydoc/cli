@@ -447,7 +447,8 @@ export function linkEntityModels(entityGraph: EntityGraph, classGraph: ClassGrap
  * Case-insensitive match keys for an entity/table name: the name itself, a
  * singular variant, and — because a `CustomerEntity` class models the
  * `customer` table while repository-derived access names drop the suffix —
- * the `entity`-suffix-stripped variants. Shared by node dedupe here and by
+ * the `entity`-suffix-stripped variants (and `entity`-prefix-stripped, for the
+ * `EntityCustomer` convention). Shared by node dedupe here and by
  * `attributeDataAccessToSymbols` (data-access-graph.ts) so an access matches
  * a real node instead of spawning a duplicate "inferred" one.
  */
@@ -455,8 +456,10 @@ export function tableMatchKeys(name: string): string[] {
   const base = name.split("::").pop()!.toLowerCase();
   const keys = [base];
   if (base.endsWith("s") && base.length > 1) keys.push(base.slice(0, -1));
-  if (base.endsWith("entity") && base.length > "entity".length) {
-    const stripped = base.slice(0, -"entity".length);
+  const affixStripped: string[] = [];
+  if (base.endsWith("entity") && base.length > "entity".length) affixStripped.push(base.slice(0, -"entity".length));
+  if (base.startsWith("entity") && base.length > "entity".length) affixStripped.push(base.slice("entity".length));
+  for (const stripped of affixStripped) {
     keys.push(stripped);
     if (stripped.endsWith("s") && stripped.length > 1) keys.push(stripped.slice(0, -1));
   }

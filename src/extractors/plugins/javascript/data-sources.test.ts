@@ -172,6 +172,17 @@ describe("JS ORM detection rejects DOM/builtin noise", () => {
     expect(await dbSourcesOf(`const t = str.toLowerCase().split(" ").map(w => w).join(" ");`)).toHaveLength(0);
   });
 
+  it("does not treat Map/Set .delete on a local collection as a DB op", async () => {
+    expect(await dbSourcesOf(`const next = new Set(ids); next.delete(id); this.byId.delete(k); state.freePeriod.delete(p);`)).toHaveLength(0);
+  });
+
+  it("still treats .delete with ORM evidence in the chain as a DB op", async () => {
+    const names = (await dbSourcesOf(
+      `async function go() { await prisma.user.delete({ where: { id } }); await this.userRepository.delete(id); await ctx.db.delete(users); await User.delete(id); }`,
+    )).map((d) => d.name);
+    expect(names).toEqual(["prisma.user.delete", "this.userRepository.delete", "ctx.db.delete", "User.delete"]);
+  });
+
   it("still recognises a genuine ORM call", async () => {
     const db = await dbSourcesOf(`async function go() { return prisma.user.findMany(); }`);
     expect(db.map((d) => d.name)).toContain("prisma.user.findMany");

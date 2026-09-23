@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { synthesizeReferencedTableEntities, propagateStiRelations, buildEntityGraph } from "./entity-graph.js";
+import { synthesizeReferencedTableEntities, propagateStiRelations, buildEntityGraph, tableMatchKeys } from "./entity-graph.js";
 import type { EntityGraph, EntityRelation, FileAnalysis } from "../types/analysis.js";
 
 /**
@@ -228,5 +228,16 @@ describe("propagateStiRelations — STI subclasses inherit their base's relation
     const solo = [file("s.rb", [entityClass("Solo", "ApplicationRecord")], [rel("Solo", "x", "Y")])];
     propagateStiRelations(solo);
     expect(solo[0]!.entityRelations).toHaveLength(1);
+  });
+});
+
+describe("tableMatchKeys", () => {
+  it("strips an `entity` affix on either side, so repository-derived names meet the class", () => {
+    // `RepositoryClass` → access entity "Class" must meet the `EntityClass` node,
+    // just as `ClassRepository` → "Class" meets `ClassEntity`.
+    expect(tableMatchKeys("EntityClass")).toContain("class");
+    expect(tableMatchKeys("ClassEntity")).toContain("class");
+    expect(tableMatchKeys("EntityRooms")).toContain("room");
+    expect(tableMatchKeys("Entity")).toEqual(["entity"]);
   });
 });

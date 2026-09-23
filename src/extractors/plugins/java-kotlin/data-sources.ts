@@ -132,6 +132,19 @@ const TABLE_CONST_RE = /^[A-Z][A-Z0-9_]*$/;
  */
 const DAO_RECEIVER_RE = /^(.+?)(DAO|Dao|Repository|Repo)$/;
 
+/**
+ * The same DAO/Repository marker as a PREFIX — codebases that name repositories
+ * `RepositoryClass` / fields `repositoryClass` instead of `ClassRepository`.
+ * Whole words only (no bare `repo…`: `repoPath`, `repoUrl` are VCS vocabulary),
+ * and a base naming a collaborator role rather than a record is vetoed —
+ * `daoFactory` / `repositoryService` are not data access on "Factory"/"Service".
+ */
+const DAO_PREFIX_RE = /^(?:Repository|repository|DAO|Dao|dao)([A-Z]\w*)$/;
+/** Declared receiver type that is a service-layer collaborator, not a data store. */
+const SERVICE_LAYER_TYPE_RE = /(Service|ServiceImpl|Controller|Facade|Handler|Resource|Client|Api|Gateway|Manager|Helper|Component)$/;
+const DAO_PREFIX_ROLE_VETO =
+  /(Factory|Service|Manager|Provider|Helper|Registry|Impl|Client|Utils?|Url|Uri|Path|Name|Dir|Root)$/;
+
 /** Verb that begins a DAO/Repository data operation (`get`, `findBy…`, `save`, `deleteAll`, …). */
 const DAO_CRUD_RE =
   /^(get|find|fetch|load|list|search|read|select|query|save|store|insert|create|add|update|merge|upsert|persist|delete|remove|count|exists|all)/i;
@@ -350,9 +363,19 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     }
 
     // 3) Spring Data / JPA repository methods.
+    // The receiver's declared type is the target when the file declares it
+    // (`store.findByEmail` on a `UserStore` field → "UserStore"): whatever the
+    // naming convention, the call then lands on a real repository node instead
+    // of the shared "(unresolved)" bucket. A service-layer type is no store —
+    // `userService.findAll()` in a controller merely shares Spring Data's verbs.
     if (SPRING_DATA_EXACT.has(method) || SPRING_DATA_DERIVED.test(method)) {
       const access = dbAccessFor(method, SPRING_DATA_ACCESS) ?? jvmVerbAccess(method);
-      sources.push(this.ds({ kind: "database", name: method, target: null, line, ...withAccess(access) }));
+      const seg = receiver.split(".").pop()?.trim() ?? "";
+      const declared = /^[\w$]+$/.test(seg)
+        ? (localDeclaredType(node, seg) ?? this.fieldTypes.get(seg) ?? null)
+        : null;
+      const target = declared && !SERVICE_LAYER_TYPE_RE.test(declared) ? declared : null;
+      sources.push(this.ds({ kind: "database", name: method, target, line, ...withAccess(access) }));
       return;
     }
 
@@ -562,19 +585,27 @@ function resolveTableExpr(arg: Node | null, aliases: Map<string, string>): strin
  * used (`this.caseDAO` → "case"). In both, the `DAO`/`Repository` suffix is
  * stripped, plus a residual persistence-tech suffix (`AccountJpaRepository` →
  * `AccountJpa` → `Account`) and an interface-convention `I` prefix
- * (`ICaseDAO` → `Case`). Null when the receiver isn't a DAO.
+ * (`ICaseDAO` → `Case`). The prefix convention works the same way
+ * (`RepositoryClass` → `Class`). Null when the receiver isn't a DAO.
  */
 function daoReceiverEntity(receiver: string, fieldTypes?: Map<string, string>): string | null {
   const seg = receiver.split(".").pop()?.trim() ?? "";
   const declared = fieldTypes?.get(seg);
-  const src = declared && DAO_RECEIVER_RE.test(declared) ? declared : seg;
-  const m = DAO_RECEIVER_RE.exec(src);
-  let base = m?.[1];
+  const src = declared && daoBase(declared) ? declared : seg;
+  let base = daoBase(src);
   if (!base) return null;
   base = base.replace(/(jpa|db)$/i, "").replace(/^I(?=[A-Z])/, "");
   return base.length > 1 ? base : null;
 }
 
+
+/** Entity-bearing part of a DAO-shaped name — suffix form first, then prefix form. */
+function daoBase(name: string): string | undefined {
+  const suffix = DAO_RECEIVER_RE.exec(name)?.[1];
+  if (suffix) return suffix;
+  const prefix = DAO_PREFIX_RE.exec(name)?.[1];
+  return prefix && !DAO_PREFIX_ROLE_VETO.test(prefix) ? prefix : undefined;
+}
 
 /** Argument expression nodes of a Java/Kotlin call, in order. */
 function callArguments(call: Node): Node[] {

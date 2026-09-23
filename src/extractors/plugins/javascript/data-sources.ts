@@ -735,6 +735,9 @@ const CAP_BUILTINS = new Set([
  * such a receiver is a DB op, while the same verb on a plain collection
  * (`users.find(u => …)`) is not.
  */
+/** Receiver segment named for a data-access object (`userRepo`, `orderModel`, `entityManager`, `em`). */
+const ORM_SEGMENT_RE = /(Repo|Repository|repo|repository|Model|model|Dao|DAO|dao|EntityManager|entityManager|^em)$/;
+
 function isModelLikeRoot(seg: string): boolean {
   return /^[A-Z][A-Za-z0-9_]*$/.test(seg) && !CAP_BUILTINS.has(seg);
 }
@@ -771,6 +774,16 @@ function isOrmCall(name: string): boolean {
     }
   }
   const leaf = parts[parts.length - 1]!;
+  // `delete` is also `Map`/`Set.prototype.delete` — `next.delete(id)`,
+  // `this.byId.delete(key)` on local collections are the dominant phantom DB op
+  // on React frontends. It counts only with ORM evidence somewhere in the
+  // receiver chain: a trusted root, an ORM root or repository/model-shaped
+  // segment (`ctx.prisma.user.delete`, `this.userRepo.delete`), or a model-like
+  // static receiver (`User.delete(id)`).
+  if (leaf === "delete") {
+    return trustedRoot || isModelLikeRoot(parts[parts.length - 2]!) ||
+      parts.slice(0, -1).some((seg) => ORM_ROOTS.has(seg) || ORM_SEGMENT_RE.test(seg));
+  }
   if (ORM_METHODS.has(leaf)) return true;
   // Bare `find` collides with `Array.prototype.find`, so it's a DB op only on a
   // model-like receiver — `Product.find({})` / `Order.find(query)` (Mongoose/
