@@ -123,6 +123,46 @@ describe("clarifydoc MCP tools — react fixture", () => {
     expect(text).toContain("No matches");
   });
 
+  it("search names the term worth keeping when only some of them match", async () => {
+    // A two-letter fragment can only substring-match, which is below the bar
+    // the loose pass sets (a term must NAME something), so this really misses
+    // — and the fragment is still the half of the query worth keeping.
+    const fragment = loaded.summary.screens[0].name.slice(0, 2).toLowerCase();
+    const { text } = await call(server, "clarifydoc_search", {
+      query: `${fragment} zzzqqqnotathing`,
+    });
+    expect(text).toContain("`zzzqqqnotathing` matches nothing");
+    expect(text).toContain(`clarifydoc_search query="${fragment}"`);
+  });
+
+  /**
+   * The standing rule, as a gate: a result with no rows in it must name the
+   * tool that would have data. Written as a table so a tool added later is one
+   * line away from being covered, instead of relying on whoever writes its
+   * empty branch to remember.
+   */
+  it.each([
+    ["clarifydoc_search", { query: "zzz-not-a-thing-zzz" }],
+    ["clarifydoc_routes", { path: "/zzz-not-a-thing" }],
+    ["clarifydoc_screens", { query: "zzz-not-a-thing" }],
+    ["clarifydoc_trace", { symbol: "zzzNotAThing" }],
+    ["clarifydoc_data_flows", { resource: "zzz-not-a-thing" }],
+    ["clarifydoc_health", { category: "security", file: "zzz-not-a-thing" }],
+  ])("%s points at another tool when it has nothing to show", async (name, args) => {
+    const { text, isError } = await call(server, name, args);
+    expect(isError, `${name} treated an empty result as a failure`).toBe(false);
+    const next = text.split("\n").find((line) => line.startsWith("Next: "));
+    expect(next, `${name} returned no Next: line:\n${text}`).toBeDefined();
+    // A suggestion counts when it is another tool, or the same tool with a
+    // different argument (drilling into another health category is a real next
+    // step). What it may never be is "call this again", unchanged.
+    const actionable = next!.slice("Next: ".length).split(" · ").filter((suggestion) => {
+      const tool = suggestion.match(/clarifydoc_[a-z_]+/)?.[0];
+      return tool !== undefined && (tool !== name || /\w+=|without `/.test(suggestion));
+    });
+    expect(actionable, `${name} suggested no call worth making:\n${text}`).not.toHaveLength(0);
+  });
+
   it("routes lists declarations with file:line and the frontend callers of an endpoint", async () => {
     const { text } = await call(server, "clarifydoc_routes", { limit: 100 });
     expect(text).toMatch(/^# Routes \(\d+ match/m);
@@ -138,9 +178,12 @@ describe("clarifydoc MCP tools — react fixture", () => {
   });
 
   it("routes explains an empty filter result instead of returning nothing", async () => {
-    const { text } = await call(server, "clarifydoc_routes", { method: "TRACE" });
+    const { text } = await call(server, "clarifydoc_routes", { method: "TRACE", kind: "api" });
     expect(text).toContain("No routes match");
-    expect(text).toContain("routes in total");
+    expect(text).toMatch(/The analysis holds \d+ routes/);
+    // Two filters were passed and only one of them is the reason, so the hint
+    // must name that one rather than telling the caller to try again.
+    expect(text).toContain("clarifydoc_routes without `method`");
   });
 
   it("screens names the page, its route and the endpoints it calls", async () => {
@@ -196,7 +239,7 @@ describe("clarifydoc MCP tools — react fixture", () => {
 
     const miss = await call(server, "clarifydoc_trace", { symbol: "zzzNoSuchSymbol" });
     expect(miss.isError).toBe(false);
-    expect(miss.text).toContain("No call-graph edges found");
+    expect(miss.text).toContain("No call-graph edges match");
   });
 
   it("blast radius ranks the project and details one file", async () => {
@@ -269,8 +312,8 @@ describe("clarifydoc MCP tools — data tier", () => {
     const { text } = await call(server, "clarifydoc_data_model", {
       entity: node.name.slice(0, Math.max(2, node.name.length - 1)),
     });
-    // Either an exact hit (short names) or a "did you mean" list — never silence.
-    expect(text).toMatch(/Did you mean|# /);
+    // Either an exact hit (short names) or the near misses — never silence.
+    expect(text).toMatch(/contain the name|# /);
   });
 
   it("groups route/screen → data-effect flows by entry point", async () => {

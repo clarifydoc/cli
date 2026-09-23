@@ -5,6 +5,7 @@ import { byOrdinal } from "../../core/ordinal.js";
 import { normalize, rankCandidates, type Candidate, type SearchKind } from "../search-rank.js";
 import type { McpTool } from "../protocol.js";
 import type { LoadedAnalysis } from "../store.js";
+import type { ProjectAnalysis } from "../../types/analysis.js";
 import {
   ago,
   bulletList,
@@ -23,8 +24,10 @@ import {
   tally,
   countMap,
   booleanArg,
+  plural,
 } from "../format.js";
-import { projectName, requireAnalysis, statusReport, type ToolContext } from "./context.js";
+import { projectName, requireAnalysis, stalenessHint, statusReport, type ToolContext } from "./context.js";
+import { filterToDrop, missHeadline, noResults, termDiagnosis } from "../empty.js";
 
 const NO_ARGS = { type: "object", properties: {}, additionalProperties: false } as const;
 
@@ -96,6 +99,145 @@ function kindTag(kind: SearchKind): string {
   return `[${kind}]`;
 }
 
+/**
+ * Every searchable thing in the analysis, flattened into one candidate list.
+ *
+ * Lives outside the handler so a miss can re-run it across ALL kinds and say
+ * what a narrower `kinds` filter cost. A second pass over the analysis is not
+ * worth it on a hit; on a result with nothing in it, a hint carrying a real
+ * count is the cheapest thing this server can offer.
+ */
+function searchCandidates(loaded: LoadedAnalysis, kinds: Set<SearchKind>, query: string): Candidate[] {
+  const { summary, index } = loaded;
+  const weightOf = (path: string | null | undefined): number =>
+    (path ? index.byFile.get(path)?.blast?.impactScore : 0) ?? 0;
+  const candidates: Candidate[] = [];
+
+  if (kinds.has("route")) {
+    for (const route of summary.routeMap ?? []) {
+      const path = (route as { filePath?: string }).filePath ?? null;
+      candidates.push({
+        kind: "route",
+        name: route.path,
+        nameIsPath: true,
+        isEndpoint: route.kind === "api",
+        aka: route.handler ? [route.handler] : undefined,
+        path,
+        line: route.line ?? null,
+        weight: weightOf(path),
+        text: `${routeLabel(route.httpMethod, route.path)} [${route.kind}]${
+          route.handler ? ` → ${route.handler}` : ""
+        } (${loc(path, route.line)})`,
+      });
+    }
+  }
+
+  if (kinds.has("screen")) {
+    for (const screen of summary.screens ?? []) {
+      // ScreenInfo has no line of its own; its first component is the closest
+      // thing to "where the screen starts", and a row that can be opened at a
+      // line outranks one that cannot.
+      const line = screen.components.find((c) => c.line > 0)?.line ?? null;
+      candidates.push({
+        kind: "screen",
+        name: screen.name,
+        aka: [screen.caption, screen.routePath].filter((v): v is string => Boolean(v)),
+        path: screen.filePath,
+        line,
+        weight: weightOf(screen.filePath),
+        text: `${screen.name}${screen.routePath ? ` @ ${screen.routePath}` : ""} (${loc(
+          screen.filePath,
+          line,
+        )}) · ${screen.components.length} components`,
+      });
+    }
+  }
+
+  if (kinds.has("symbol")) {
+    for (const file of summary.complexity ?? []) {
+      for (const fn of file.functions) {
+        candidates.push({
+          kind: "symbol",
+          name: fn.functionName,
+          path: file.filePath,
+          line: fn.line ?? null,
+          weight: weightOf(file.filePath),
+          text: `${fn.functionName}() (${loc(file.filePath, fn.line)}) · complexity ${fn.complexity}`,
+        });
+      }
+    }
+    for (const node of summary.classGraph?.nodes ?? []) {
+      if (node.isFile || node.isExternal) continue;
+      // `ClassGraphNode` carries no line, so this row can only be opened at
+      // the file. Where the class body is also a complexity entry the loop
+      // above already emitted a locatable row for it.
+      candidates.push({
+        kind: "symbol",
+        name: node.name,
+        path: node.filePath,
+        line: null,
+        weight: weightOf(node.filePath),
+        text: `${node.name} ${node.isInterface ? "(interface)" : "(class)"} (${
+          node.filePath
+        }) · refs in ${node.inboundCount} / out ${node.outboundCount}`,
+      });
+    }
+  }
+
+  if (kinds.has("entity")) {
+    for (const node of summary.entityGraph?.nodes ?? []) {
+      const columnHit = node.columns.some((c) => normalize(c.name) === normalize(query));
+      candidates.push({
+        kind: "entity",
+        name: node.name,
+        aka: columnHit ? node.columns.map((c) => c.name) : undefined,
+        path: node.filePath,
+        line: node.line ?? null,
+        weight: weightOf(node.filePath),
+        text: `${node.name} [${node.kind}${node.orm ? `, ${node.orm}` : ""}] (${loc(
+          node.filePath,
+          node.line,
+        )}) · ${node.columns.length} columns${columnHit ? " · column matches query" : ""}`,
+      });
+    }
+  }
+
+  if (kinds.has("api-call")) {
+    for (const call of summary.apiCalls ?? []) {
+      const path = (call as { filePath?: string }).filePath ?? null;
+      candidates.push({
+        kind: "api-call",
+        name: call.target ?? call.name,
+        aka: call.target ? [call.name] : undefined,
+        path,
+        line: call.line ?? null,
+        weight: weightOf(path),
+        text: `${call.target ?? call.name} (${loc(path, call.line)})`,
+      });
+    }
+  }
+
+  if (kinds.has("file")) {
+    for (const path of index.pathLookup.values()) {
+      const f = index.byFile.get(path);
+      // A file is named by its basename, not by its whole path — otherwise
+      // every file under `src/prisma/` scores as well as `prisma-client.ts`
+      // does. The directory still matches, one tier lower.
+      candidates.push({
+        kind: "file",
+        name: path.slice(path.lastIndexOf("/") + 1),
+        path,
+        line: null,
+        weight: weightOf(path),
+        text: `${path}${f?.layer ? ` [${f.layer}]` : ""}${
+          f?.complexity ? ` · complexity ${f.complexity.totalComplexity}` : ""
+        }`,
+      });
+    }
+  }
+  return candidates;
+}
+
 export function searchTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_search",
@@ -132,133 +274,8 @@ export function searchTool(ctx: ToolContext): McpTool {
         .filter((k): k is SearchKind => (SEARCH_KINDS as readonly string[]).includes(k));
       const kinds = new Set<SearchKind>(requested.length ? requested : SEARCH_KINDS);
       const loaded = await requireAnalysis(ctx);
-      const { summary, index } = loaded;
-      const weightOf = (path: string | null | undefined): number =>
-        (path ? index.byFile.get(path)?.blast?.impactScore : 0) ?? 0;
-      const candidates: Candidate[] = [];
-
-      if (kinds.has("route")) {
-        for (const route of summary.routeMap ?? []) {
-          const path = (route as { filePath?: string }).filePath ?? null;
-          candidates.push({
-            kind: "route",
-            name: route.path,
-            nameIsPath: true,
-            isEndpoint: route.kind === "api",
-            aka: route.handler ? [route.handler] : undefined,
-            path,
-            line: route.line ?? null,
-            weight: weightOf(path),
-            text: `${routeLabel(route.httpMethod, route.path)} [${route.kind}]${
-              route.handler ? ` → ${route.handler}` : ""
-            } (${loc(path, route.line)})`,
-          });
-        }
-      }
-
-      if (kinds.has("screen")) {
-        for (const screen of summary.screens ?? []) {
-          // ScreenInfo has no line of its own; its first component is the closest
-          // thing to "where the screen starts", and a row that can be opened at a
-          // line outranks one that cannot.
-          const line = screen.components.find((c) => c.line > 0)?.line ?? null;
-          candidates.push({
-            kind: "screen",
-            name: screen.name,
-            aka: [screen.caption, screen.routePath].filter((v): v is string => Boolean(v)),
-            path: screen.filePath,
-            line,
-            weight: weightOf(screen.filePath),
-            text: `${screen.name}${screen.routePath ? ` @ ${screen.routePath}` : ""} (${loc(
-              screen.filePath,
-              line,
-            )}) · ${screen.components.length} components`,
-          });
-        }
-      }
-
-      if (kinds.has("symbol")) {
-        for (const file of summary.complexity ?? []) {
-          for (const fn of file.functions) {
-            candidates.push({
-              kind: "symbol",
-              name: fn.functionName,
-              path: file.filePath,
-              line: fn.line ?? null,
-              weight: weightOf(file.filePath),
-              text: `${fn.functionName}() (${loc(file.filePath, fn.line)}) · complexity ${fn.complexity}`,
-            });
-          }
-        }
-        for (const node of summary.classGraph?.nodes ?? []) {
-          if (node.isFile || node.isExternal) continue;
-          // `ClassGraphNode` carries no line, so this row can only be opened at
-          // the file. Where the class body is also a complexity entry the loop
-          // above already emitted a locatable row for it.
-          candidates.push({
-            kind: "symbol",
-            name: node.name,
-            path: node.filePath,
-            line: null,
-            weight: weightOf(node.filePath),
-            text: `${node.name} ${node.isInterface ? "(interface)" : "(class)"} (${
-              node.filePath
-            }) · refs in ${node.inboundCount} / out ${node.outboundCount}`,
-          });
-        }
-      }
-
-      if (kinds.has("entity")) {
-        for (const node of summary.entityGraph?.nodes ?? []) {
-          const columnHit = node.columns.some((c) => normalize(c.name) === normalize(query));
-          candidates.push({
-            kind: "entity",
-            name: node.name,
-            aka: columnHit ? node.columns.map((c) => c.name) : undefined,
-            path: node.filePath,
-            line: node.line ?? null,
-            weight: weightOf(node.filePath),
-            text: `${node.name} [${node.kind}${node.orm ? `, ${node.orm}` : ""}] (${loc(
-              node.filePath,
-              node.line,
-            )}) · ${node.columns.length} columns${columnHit ? " · column matches query" : ""}`,
-          });
-        }
-      }
-
-      if (kinds.has("api-call")) {
-        for (const call of summary.apiCalls ?? []) {
-          const path = (call as { filePath?: string }).filePath ?? null;
-          candidates.push({
-            kind: "api-call",
-            name: call.target ?? call.name,
-            aka: call.target ? [call.name] : undefined,
-            path,
-            line: call.line ?? null,
-            weight: weightOf(path),
-            text: `${call.target ?? call.name} (${loc(path, call.line)})`,
-          });
-        }
-      }
-
-      if (kinds.has("file")) {
-        for (const path of index.pathLookup.values()) {
-          const f = index.byFile.get(path);
-          // A file is named by its basename, not by its whole path — otherwise
-          // every file under `src/prisma/` scores as well as `prisma-client.ts`
-          // does. The directory still matches, one tier lower.
-          candidates.push({
-            kind: "file",
-            name: path.slice(path.lastIndexOf("/") + 1),
-            path,
-            line: null,
-            weight: weightOf(path),
-            text: `${path}${f?.layer ? ` [${f.layer}]` : ""}${
-              f?.complexity ? ` · complexity ${f.complexity.totalComplexity}` : ""
-            }`,
-          });
-        }
-      }
+      const { summary } = loaded;
+      const candidates = searchCandidates(loaded, kinds, query);
 
       // Strict first: every term must be present. Only when that finds nothing at
       // all does a looser any-term pass run, so a multi-word query degrades to
@@ -268,8 +285,29 @@ export function searchTool(ctx: ToolContext): McpTool {
       if (loose) ranked = rankCandidates(candidates, query, { loose: true });
 
       if (ranked.length === 0) {
+        // Two things can make a search miss: the query, or the filter. Both are
+        // answerable here — re-ranking the other kinds and each term on its own
+        // costs one more pass over an analysis that is already in memory.
+        const narrowed =
+          requested.length > 0 && requested.length < SEARCH_KINDS.length
+            ? rankCandidates(searchCandidates(loaded, new Set(SEARCH_KINDS), query), query).length
+            : 0;
+        const diagnosis = termDiagnosis(candidates, query);
         return {
-          text: `No matches for "${query}" in ${projectName(summary)} (${summary.files.length} files analyzed).`,
+          text: noResults({
+            headline: `No matches for "${query}" in ${projectName(summary)}.`,
+            holds: [
+              `${plural(summary.files.length, "file")} analyzed${
+                requested.length ? `; kinds searched: ${requested.join(", ")}` : ""
+              }.`,
+              diagnosis?.text,
+            ],
+            next: [
+              narrowed > 0 && `clarifydoc_search query="${query}" without \`kinds\` (${plural(narrowed, "hit")})`,
+              diagnosis && `clarifydoc_search query="${diagnosis.best}"`,
+              await stalenessHint(ctx.store),
+            ],
+          }),
         };
       }
 
@@ -316,6 +354,56 @@ const HEALTH_CATEGORIES: readonly HealthCategory[] = [
   "pressure",
 ];
 
+/**
+ * How many findings each health category holds, unfiltered.
+ *
+ * One table, read twice: by the scoreboard, and by a category that came back
+ * empty — which is exactly when "where should I look instead" needs an answer
+ * with numbers in it rather than a list of category names.
+ */
+function categoryCounts(summary: ProjectAnalysis): Array<[HealthCategory, number]> {
+  return [
+    ["security", (summary.securityIssues ?? []).length],
+    ["layers", (summary.layerViolations ?? []).length],
+    ["complexity", (summary.complexity ?? []).reduce((n, c) => n + c.functions.length, 0)],
+    ["duplicates", (summary.duplicates ?? []).length],
+    ["hotspots", (summary.hotspots ?? []).length],
+    ["suggestions", (summary.suggestions ?? []).length],
+    ["patterns", (summary.patterns ?? []).length],
+    ["unused", (summary.unusedFiles ?? []).length],
+    ["concerns", (summary.responsibilityProfiles ?? []).filter((r) => r.concernCount >= 2).length],
+    ["pressure", (summary.refactorPressure ?? []).length],
+  ];
+}
+
+/**
+ * A drilled-into category with nothing in it would otherwise render a heading
+ * and stop. Whether the category is empty or the filters emptied it is the
+ * whole difference between "look elsewhere" and "widen the filter", so say
+ * which of the two happened.
+ */
+function noFindings(
+  summary: ProjectAnalysis,
+  category: HealthCategory,
+  filters: Array<[string, unknown]>,
+): string {
+  const counts = categoryCounts(summary);
+  const total = counts.find(([name]) => name === category)?.[1] ?? 0;
+  const others = counts.filter(([name, n]) => name !== category && n > 0).sort((a, b) => b[1] - a[1]);
+  const filtered = total > 0;
+  return noResults({
+    headline: missHeadline(`${category} findings`, filters),
+    holds: filtered
+      ? `The analysis holds ${plural(total, `${category} finding`)} — the filters above removed all of them.`
+      : `This analysis has no ${category} findings at all.`,
+    next: [
+      filtered && `clarifydoc_health category="${category}" with no other argument (${total})`,
+      others.length > 0 && `clarifydoc_health category="${others[0]![0]}" (${others[0]![1]})`,
+      "clarifydoc_health — the scoreboard for every category",
+    ],
+  });
+}
+
 export function healthTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_health",
@@ -353,6 +441,11 @@ export function healthTool(ctx: ToolContext): McpTool {
       const severity = enumArg(args, "severity", ["critical", "high", "medium", "low"] as const);
       const rank = { critical: 0, high: 1, medium: 2, low: 3 } as const;
       const inFile = (p: string | undefined) => !fileFilter || contains(p, fileFilter);
+      // Echoed back on a miss, so the caller sees which argument emptied the list.
+      const filters: Array<[string, unknown]> = [
+        ["file", fileFilter],
+        ["severity", severity],
+      ];
 
       if (!category) {
         const health = summary.healthScore;
@@ -367,18 +460,7 @@ export function healthTool(ctx: ToolContext): McpTool {
         lines.push(
           "## Findings available",
           ...bulletList(
-            [
-              ["security", (summary.securityIssues ?? []).length],
-              ["layers", (summary.layerViolations ?? []).length],
-              ["complexity", (summary.complexity ?? []).reduce((n, c) => n + c.functions.length, 0)],
-              ["duplicates", (summary.duplicates ?? []).length],
-              ["hotspots", (summary.hotspots ?? []).length],
-              ["suggestions", (summary.suggestions ?? []).length],
-              ["patterns", (summary.patterns ?? []).length],
-              ["unused", (summary.unusedFiles ?? []).length],
-              ["concerns", (summary.responsibilityProfiles ?? []).filter((r) => r.concernCount >= 2).length],
-              ["pressure", (summary.refactorPressure ?? []).length],
-            ] as Array<[string, number]>,
+            categoryCounts(summary),
             20,
             ([name, count]) => `${name}: ${count}${count ? ` — call with category="${name}"` : ""}`,
           ),
@@ -394,6 +476,7 @@ export function healthTool(ctx: ToolContext): McpTool {
             .filter((i) => inFile(i.filePath))
             .filter((i) => !severity || rank[i.severity] <= rank[severity])
             .sort((a, b) => rank[a.severity] - rank[b.severity]);
+          if (issues.length === 0) return { text: noFindings(summary, category, filters) };
           return {
             text: joinLines([
               `# Security issues (${issues.length})`,
@@ -409,6 +492,7 @@ export function healthTool(ctx: ToolContext): McpTool {
           const violations = (summary.layerViolations ?? []).filter(
             (v) => inFile(v.sourceFile) || inFile(v.targetFile),
           );
+          if (violations.length === 0) return { text: noFindings(summary, category, filters) };
           return {
             text: joinLines([
               `# Layer violations (${violations.length})`,
@@ -429,6 +513,7 @@ export function healthTool(ctx: ToolContext): McpTool {
             .filter((c) => inFile(c.filePath))
             .flatMap((c) => c.functions.map((fn) => ({ ...fn, filePath: c.filePath })))
             .sort((a, b) => (b.cognitive ?? b.complexity) - (a.cognitive ?? a.complexity) || b.complexity - a.complexity);
+          if (rows.length === 0) return { text: noFindings(summary, category, filters) };
           return {
             text: joinLines([
               `# Most complex functions (${rows.length} total)`,
@@ -449,6 +534,7 @@ export function healthTool(ctx: ToolContext): McpTool {
           const groups = (summary.duplicates ?? []).filter((g) =>
             g.occurrences.some((o) => inFile(o.filePath)),
           );
+          if (groups.length === 0) return { text: noFindings(summary, category, filters) };
           return {
             text: joinLines([
               `# Duplicate groups (${groups.length})`,
@@ -468,6 +554,7 @@ export function healthTool(ctx: ToolContext): McpTool {
         }
         case "pressure": {
           const rows = (summary.refactorPressure ?? []).filter((p) => inFile(p.filePath));
+          if (rows.length === 0) return { text: noFindings(summary, category, filters) };
           return {
             text: joinLines([
               `# Refactor pressure (${rows.length} files at "observe" or above) — where to refactor first`,
@@ -490,6 +577,7 @@ export function healthTool(ctx: ToolContext): McpTool {
           const rows = (summary.responsibilityProfiles ?? [])
             .filter((r) => inFile(r.filePath))
             .filter((r) => r.concernCount >= 2);
+          if (rows.length === 0) return { text: noFindings(summary, category, filters) };
           return {
             text: joinLines([
               `# Files mixing concerns (${rows.length})`,
@@ -513,6 +601,7 @@ export function healthTool(ctx: ToolContext): McpTool {
         }
         case "hotspots": {
           const rows = (summary.hotspots ?? []).filter((h) => inFile(h.file));
+          if (rows.length === 0) return { text: noFindings(summary, category, filters) };
           return {
             text: joinLines([
               `# Hotspots (${rows.length}) — churn × complexity`,
@@ -529,6 +618,7 @@ export function healthTool(ctx: ToolContext): McpTool {
             .filter((s) => inFile(s.filePath))
             .filter((s) => !severity || rank[s.priority] <= rank[severity])
             .sort((a, b) => rank[a.priority] - rank[b.priority]);
+          if (rows.length === 0) return { text: noFindings(summary, category, filters) };
           return {
             text: joinLines([
               `# Suggestions (${rows.length})`,
@@ -545,6 +635,7 @@ export function healthTool(ctx: ToolContext): McpTool {
         }
         case "patterns": {
           const rows = (summary.patterns ?? []).filter((p) => inFile(p.filePath));
+          if (rows.length === 0) return { text: noFindings(summary, category, filters) };
           return {
             text: joinLines([
               `# Detected patterns (${rows.length})`,
@@ -558,12 +649,11 @@ export function healthTool(ctx: ToolContext): McpTool {
         }
         case "unused": {
           const rows = (summary.unusedFiles ?? []).filter((f) => inFile(f));
+          if (rows.length === 0) return { text: noFindings(summary, category, filters) };
           return {
             text: joinLines([
               `# Unused generated files (${rows.length})`,
-              rows.length
-                ? "Files under a detected generated/barrel root that nothing outside that tree imports."
-                : "None.",
+              "Files under a detected generated/barrel root that nothing outside that tree imports.",
               "",
               ...bulletList(rows, limit, (f) => f),
             ]),
@@ -620,7 +710,18 @@ export function impactTool(ctx: ToolContext): McpTool {
         }
       }
       if (changed.length === 0) {
-        return { text: `No changed files (${label}) — nothing to project onto the analysis.` };
+        return {
+          text: noResults({
+            headline: `No changed files (${label}) — nothing to project onto the analysis.`,
+            holds: `The analysis covers ${plural(loaded.summary.files.length, "file")}.`,
+            next: [
+              // Only the git path can reach zero: an explicit `files` list that
+              // is empty never gets here (the branch above requires entries).
+              "clarifydoc_impact base=<branch> — diff against a branch instead of HEAD",
+              'clarifydoc_impact files=["src/…"] — name the changed files yourself',
+            ],
+          }),
+        };
       }
       const { computeImpactDiff, renderImpactMarkdown } = await import("../../core/impact-diff.js");
       const impact = computeImpactDiff(loaded.summary, changed, { baseLabel: label });

@@ -2,7 +2,7 @@
 
 import type { McpTool } from "../protocol.js";
 import { byOrdinal } from "../../core/ordinal.js";
-import type { EntityGraphEdge, EntityGraphNode } from "../../types/analysis.js";
+import type { DataFlowPath, EntityGraphEdge, EntityGraphNode } from "../../types/analysis.js";
 import {
   bulletList,
   cap,
@@ -19,7 +19,8 @@ import {
   stringArg,
   tally,
 } from "../format.js";
-import { requireAnalysis, type ToolContext } from "./context.js";
+import { requireAnalysis, stalenessHint, type ToolContext } from "./context.js";
+import { filterToDrop, missHeadline, noResults, type DroppableFilter } from "../empty.js";
 
 export function dataModelTool(ctx: ToolContext): McpTool {
   return {
@@ -48,9 +49,17 @@ export function dataModelTool(ctx: ToolContext): McpTool {
       const limit = numberArg(args, "limit", 30, { max: 300 });
       if (!graph || graph.nodes.length === 0) {
         return {
-          text:
-            "No entities or tables were extracted for this project — no ORM models, no DDL, and no query " +
-            "named a table. clarifydoc_file (data section) still shows raw database calls per file.",
+          text: noResults({
+            headline:
+              "No entities or tables were extracted for this project — no ORM models, no DDL, and no query " +
+              "named a table.",
+            holds: `The analysis holds ${plural((summary.dataFlows ?? []).length, "data flow")}.`,
+            next: [
+              "clarifydoc_file path=… — the data section shows raw database calls per file",
+              (summary.dataFlows ?? []).length > 0 && "clarifydoc_data_flows — what routes and screens reach",
+              await stalenessHint(ctx.store),
+            ],
+          }),
         };
       }
 
@@ -83,9 +92,19 @@ export function dataModelTool(ctx: ToolContext): McpTool {
       if (matches.length === 0) {
         const near = graph.nodes.filter((n) => contains(n.name, entityName)).map((n) => n.name);
         return {
-          text:
-            `No entity named "${entityName}".` +
-            (near.length ? ` Did you mean: ${cap(near, 10).shown.join(", ")}?` : " Call without `entity` for the inventory."),
+          text: noResults({
+            headline: `No entity named "${entityName}".`,
+            holds:
+              `The data model holds ${plural(graph.nodes.length, "entity", "entities")}` +
+              (near.length ? `; ${cap(near, 10).shown.join(", ")} contain the name.` : "."),
+            next: [
+              near.length > 0 && `clarifydoc_data_model entity="${near[0]}"`,
+              near.length === 0 && `clarifydoc_search query="${entityName}" kinds=["entity"]`,
+              "clarifydoc_data_model with no argument — the full inventory",
+            ],
+          }),
+          // A name that matches nothing at all is a caller error worth flagging;
+          // a near miss is an answer with a correction in it.
           isError: near.length === 0,
         };
       }
@@ -235,10 +254,18 @@ export function dataFlowsTool(ctx: ToolContext): McpTool {
       const loaded = await requireAnalysis(ctx);
       const flows = loaded.summary.dataFlows ?? [];
       if (flows.length === 0) {
+        const entities = loaded.summary.entityGraph?.nodes ?? [];
         return {
-          text:
-            "No data flows were computed — this project has no resolved data access reachable from a route or " +
-            "screen. clarifydoc_data_model and clarifydoc_file (data section) show the raw access that exists.",
+          text: noResults({
+            headline:
+              "No data flows were computed — this project has no resolved data access reachable from a route " +
+              "or screen.",
+            holds: `The analysis holds ${plural(entities.length, "entity", "entities")}.`,
+            next: [
+              entities.length > 0 && "clarifydoc_data_model — the entities and who reads or writes them",
+              "clarifydoc_file path=… — the data section, for the raw access that exists",
+            ],
+          }),
         };
       }
       const effect = enumArg(args, "effect", EFFECTS);
@@ -255,13 +282,33 @@ export function dataFlowsTool(ctx: ToolContext): McpTool {
         rows = rows.filter((f) => contains(f.entryLabel, entry) || contains(f.entryFile, entry));
       }
       if (rows.length === 0) {
+        const drop = filterToDrop(flows, [
+          effect ? { label: "effect", keep: (f: DataFlowPath) => f.effect === effect } : undefined,
+          entryKind ? { label: "entryKind", keep: (f: DataFlowPath) => f.entryKind === entryKind } : undefined,
+          resource ? { label: "resource", keep: (f: DataFlowPath) => contains(f.resource, resource) } : undefined,
+          entry
+            ? {
+                label: "entry",
+                keep: (f: DataFlowPath) => contains(f.entryLabel, entry) || contains(f.entryFile, entry),
+              }
+            : undefined,
+        ].filter((f): f is DroppableFilter<DataFlowPath> => f !== undefined));
         return {
-          text: `No data flows match ${facts([
-            ["effect", effect],
-            ["resource", resource],
-            ["entry", entry],
-            ["entryKind", entryKind],
-          ])}. The analysis holds ${flows.length} flows; effects present: ${countMap(tally(flows, (f) => f.effect))}.`,
+          text: noResults({
+            headline: missHeadline("data flows", [
+              ["effect", effect],
+              ["resource", resource],
+              ["entry", entry],
+              ["entryKind", entryKind],
+            ]),
+            holds:
+              `The analysis holds ${plural(flows.length, "flow")}; effects present: ` +
+              `${countMap(tally(flows, (f) => f.effect))}.`,
+            next: [
+              drop && `clarifydoc_data_flows without \`${drop.label}\` (${plural(drop.count, "match", "matches")})`,
+              resource && `clarifydoc_data_model query="${resource}" — is the table in the model at all`,
+            ],
+          }),
         };
       }
 
