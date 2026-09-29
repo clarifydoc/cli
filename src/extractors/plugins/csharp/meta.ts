@@ -16,6 +16,7 @@ import { CSharpEntityExtractor } from "./entities.js";
 import { csharpRouteExtractor } from "./routes/aspnet.js";
 import { CSharpMediatrResolver } from "./dispatch.js";
 import { CsharpUiBridgeResolver } from "./ui-bridge.js";
+import { csharpRequestSchema } from "./request-schema.js";
 
 const CSHARP_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -40,6 +41,7 @@ export const csharpMeta: LanguagePluginMeta = {
   dataSources: new CSharpDataSourceExtractor(),
   entities: new CSharpEntityExtractor(),
   dispatchResolvers: [new CSharpMediatrResolver(), new CsharpUiBridgeResolver()],
+  requestSchema: csharpRequestSchema,
   builtinTypes: CSHARP_BUILTINS,
   knownPackages: nugetPackages,
   complexity: {
