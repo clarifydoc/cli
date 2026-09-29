@@ -105,3 +105,34 @@ describe("resolveRouterMounts", () => {
     expect(a.routes[0]!.path).toBe("/health");
   });
 });
+
+describe("resolveRouterMounts — mount-level guards", () => {
+  it("a guard on the mount (`app.use('/admin', requireAuth, adminRouter)`) protects every mounted route, as inherited", () => {
+    const mount: RouteInfo = {
+      ...route(null, "/admin", "adminRoutes"),
+      middleware: ["requireAuth"],
+      auth: { policies: ["requireAuth"], roles: [], schemes: [], anonymous: false, inherited: false },
+    };
+    const server = file("server.js", [mount]);
+    const admin = file("routes/admin.js", [
+      route("GET", "/users", "list"),
+      { ...route("DELETE", "/users/:id", "remove"), middleware: ["requireAdmin"], auth: { policies: ["requireAdmin"], roles: [], schemes: [], anonymous: false, inherited: false } },
+    ]);
+    resolveRouterMounts([server, admin], importIndex({ "server.js": { adminRoutes: "routes/admin.js" } }));
+    const [list, remove] = admin.routes;
+    expect(list).toMatchObject({ path: "/admin/users", middleware: ["requireAuth"], auth: { policies: ["requireAuth"], inherited: true } });
+    expect(remove).toMatchObject({
+      path: "/admin/users/{id}".replace("{id}", ":id"),
+      middleware: ["requireAuth", "requireAdmin"],
+      auth: { policies: ["requireAuth", "requireAdmin"], inherited: false },
+    });
+  });
+
+  it("leaves mounted routes untouched when the mount declares no guard", () => {
+    const server = file("server.js", [route(null, "/api", "apiRoutes")]);
+    const api = file("routes/api.js", [route("GET", "/x", "x")]);
+    resolveRouterMounts([server, api], importIndex({ "server.js": { apiRoutes: "routes/api.js" } }));
+    expect(api.routes[0]!.middleware).toEqual([]);
+    expect(api.routes[0]!.auth).toBeUndefined();
+  });
+});

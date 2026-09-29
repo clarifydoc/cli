@@ -44,7 +44,7 @@ export function extractWithRegex(
   // Test files (unit/integration/e2e specs) never expose real routes.
   analysis.routes = isTestFile(filePath, language)
     ? []
-    : spec.extractRoutes?.(lines, analysis.classes, filePath) ?? [];
+    : spec.extractRoutes?.(lines, analysis.classes, filePath, analysis.functions) ?? [];
   analysis.screens = spec.extractScreens?.(lines, filePath, analysis.classes) ?? [];
   // UI markup files (Blazor .razor) contribute component usage + interactive
   // elements the same way Vue/React do via AST hooks — the screen builder's flat

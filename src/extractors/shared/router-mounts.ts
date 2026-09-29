@@ -101,6 +101,46 @@ export function resolveRouterMounts(analyses: FileAnalysis[], importIndex: Impor
     return result;
   };
 
+  // 2b. Guards declared on the mount (`app.use('/admin', requireAuth, adminRouter)`)
+  //     protect every route of the mounted router — the only place Express
+  //     mount-level auth is visible. Collected along the whole mount chain.
+  const guardMemo = new Map<string, RouteInfo[]>();
+  const guardStack = new Set<string>();
+  const mountGuards = (file: string): RouteInfo[] => {
+    const cached = guardMemo.get(file);
+    if (cached) return cached;
+    const incoming = mountsByTarget.get(file);
+    if (!incoming || guardStack.has(file)) return [];
+    guardStack.add(file);
+    const out: RouteInfo[] = [];
+    for (const m of incoming) {
+      out.push(...mountGuards(m.mountingFile));
+      if (m.route.middleware.length > 0 || m.route.auth) out.push(m.route);
+    }
+    guardStack.delete(file);
+    guardMemo.set(file, out);
+    return out;
+  };
+  const inheritGuards = (r: RouteInfo, mounts: RouteInfo[]): RouteInfo => {
+    if (mounts.length === 0) return r;
+    const middleware = [...mounts.flatMap((m) => m.middleware), ...r.middleware];
+    const auths = mounts.map((m) => m.auth).filter((a): a is NonNullable<typeof a> => !!a);
+    if (auths.length === 0) return { ...r, middleware };
+    const uniq = (xs: string[]) => [...new Set(xs)];
+    const own = r.auth;
+    return {
+      ...r,
+      middleware,
+      auth: {
+        policies: uniq([...auths.flatMap((a) => a.policies), ...(own?.policies ?? [])]),
+        roles: uniq([...auths.flatMap((a) => a.roles), ...(own?.roles ?? [])]),
+        schemes: uniq([...auths.flatMap((a) => a.schemes), ...(own?.schemes ?? [])]),
+        anonymous: own?.anonymous ?? false,
+        inherited: own ? own.inherited : true,
+      },
+    };
+  };
+
   // 3. Apply: prefix each mounted router's own API routes; drop mount routes.
   let prefixed = 0;
   for (const a of analyses) {
@@ -109,13 +149,15 @@ export function resolveRouterMounts(analyses: FileAnalysis[], importIndex: Impor
     const prefixes = effective(a.filePath);
     const isMounted = !(prefixes.length === 1 && prefixes[0] === "");
     if (!isMounted && !routes.some((r) => dropped.has(r))) continue;
+    const guards = isMounted ? mountGuards(a.filePath) : [];
 
     const next: RouteInfo[] = [];
     for (const r of routes) {
       if (dropped.has(r)) continue; // resolved router mount — not an endpoint
       if (isMounted && r.kind === "api") {
+        const guarded = inheritGuards(r, guards);
         for (const p of prefixes) {
-          next.push(p === "" ? r : { ...r, path: joinRoutePath(p, r.path) });
+          next.push(p === "" ? guarded : { ...guarded, path: joinRoutePath(p, r.path) });
           if (p !== "") prefixed++;
         }
       } else {
