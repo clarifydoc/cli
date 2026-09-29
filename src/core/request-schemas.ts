@@ -29,7 +29,7 @@ import type {
 } from "../types/analysis.js";
 import type { RequestSchemaHooks } from "../types/language-plugin.js";
 import { pluginFor } from "../extractors/registry.js";
-import { pathParamNames } from "../extractors/shared/route-metadata.js";
+import { pathParamNames, pathParamTokens } from "../extractors/shared/route-metadata.js";
 
 const MAX_DEPTH = 4;
 const MAX_BASES = 5;
@@ -199,11 +199,12 @@ export function attachHandlerParams(routes: RouteRow[], analyses: FileAnalysis[]
     // The route's own template is a fact whether or not the handler reads
     // the token (`:id` in Vapor, `<id>` in shelf): list it.
     const covered = new Set(params.filter((p) => p.binding === "route").map((p) => p.name.toLowerCase()));
-    for (const token of tokens) {
-      if (covered.has(token)) continue;
-      const declared = (ref.fn.params ?? []).find((p) => p.name.toLowerCase() === token);
+    for (const token of pathParamTokens(route.path)) {
+      const key = token.toLowerCase();
+      if (covered.has(key)) continue;
+      const declared = (ref.fn.params ?? []).find((p) => p.name.toLowerCase() === key);
       params.push({ name: declared?.name ?? token, type: declared?.type ?? null, binding: "route", inferred: true });
-      covered.add(token);
+      covered.add(key);
     }
     if (params.length === before) continue;
     route.params = params;

@@ -45,13 +45,18 @@ export function splitList(s: string | null | undefined): string[] {
   return s.split(",").map((x) => x.trim()).filter((x) => x.length > 0);
 }
 
-/** Parameter names a path template declares: `/users/{id}/posts/:postId/<int:pk>` → id, postId, pk. */
+/** Parameter names a path template declares, as written: `/users/{id}/posts/:postId/<int:pk>` → id, postId, pk. */
+export function pathParamTokens(path: string): string[] {
+  const names: string[] = [];
+  for (const m of path.matchAll(/\{\*{0,2}([A-Za-z_][\w]*)[^}]*\}/g)) names.push(m[1]!);
+  for (const m of path.matchAll(/:([A-Za-z_][\w]*)/g)) names.push(m[1]!);
+  for (const m of path.matchAll(/<(?:[\w.]+:)?([A-Za-z_][\w]*)>/g)) names.push(m[1]!);
+  return [...new Set(names)];
+}
+
+/** The same names lowercased, for case-insensitive matching against parameter names. */
 export function pathParamNames(path: string): Set<string> {
-  const names = new Set<string>();
-  for (const m of path.matchAll(/\{\*{0,2}([A-Za-z_][\w]*)[^}]*\}/g)) names.add(m[1]!.toLowerCase());
-  for (const m of path.matchAll(/:([A-Za-z_][\w]*)/g)) names.add(m[1]!.toLowerCase());
-  for (const m of path.matchAll(/<(?:[\w.]+:)?([A-Za-z_][\w]*)>/g)) names.add(m[1]!.toLowerCase());
-  return names;
+  return new Set(pathParamTokens(path).map((n) => n.toLowerCase()));
 }
 
 export interface RouteMeta {
