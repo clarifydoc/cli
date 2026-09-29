@@ -11,7 +11,9 @@ const FLOW = `<?xml version="1.0" encoding="UTF-8"?>
 <flow xmlns="http://www.springframework.org/schema/webflow"
       xsi:schemaLocation="http://www.springframework.org/schema/webflow/spring-webflow-2.0.xsd"
       start-state="setup">
+   <secured attributes="ROLE_ACCOUNTS, ROLE_ADMIN" match="any"/>
    <input name="applicationId" value="flowScope.applicationId"/>
+   <input name="mode" type="java.lang.String" required="true"/>
    <action-state id="setup">
       <on-entry>
          <evaluate expression="accountapplication_action.setupForm"/>
@@ -20,6 +22,7 @@ const FLOW = `<?xml version="1.0" encoding="UTF-8"?>
       <transition on="success" to="details"/>
    </action-state>
    <view-state id="details" view="/account/accountapplication_details">
+      <secured attributes="ROLE_ADMIN, hasPermission('approve')"/>
       <transition on="approve" to="checkResources">
          <evaluate expression="accountapplication_action.bindAndValidate"/>
       </transition>
@@ -105,6 +108,48 @@ describe("springxmlSpec hooks", () => {
     expect(routes[0]!.kind).toBe("frontend");
     expect(routes[0]!.componentPath).toBe("/account/accountapplication_details");
     expect(routes[0]!.handler).toBe("accountapplication_details");
+  });
+
+  it("reads flow-level <secured> as inherited guards, state-level as own, and flow <input>s as params", () => {
+    const routes = springxmlSpec.extractRoutes!(FLOW.split("\n"), [], FLOW_PATH);
+    expect(routes[0]!.middleware).toEqual([
+      'secured(attributes="ROLE_ACCOUNTS, ROLE_ADMIN", match="any")',
+      'secured(attributes="ROLE_ADMIN, hasPermission(\'approve\')")',
+    ]);
+    expect(routes[0]!.auth).toEqual({
+      policies: ["hasPermission('approve')"],
+      roles: ["ROLE_ACCOUNTS", "ROLE_ADMIN"],
+      schemes: [],
+      anonymous: false,
+      inherited: false,
+    });
+    expect(routes[0]!.params).toEqual([
+      { name: "applicationId", type: null, binding: "query", inferred: true },
+      { name: "mode", type: "java.lang.String", binding: "query", inferred: true },
+    ]);
+  });
+
+  it("inherits only the flow-level guard on a state without its own <secured>", () => {
+    const flow = `<flow xmlns="http://www.springframework.org/schema/webflow">
+  <secured attributes="ROLE_X"/>
+  <view-state id="a" view="/a"/>
+  <subflow-state id="s" subflow="other"><input name="notFlowLevel" value="1"/></subflow-state>
+  <view-state id="b" view="/b"/>
+</flow>`;
+    const routes = springxmlSpec.extractRoutes!(flow.split("\n"), [], "x/league.wf.a.xml");
+    expect(routes.map((r) => r.path)).toEqual(["league.wf.a", "league.wf.a#b"]);
+    for (const r of routes) {
+      expect(r.auth).toEqual({ policies: [], roles: ["ROLE_X"], schemes: [], anonymous: false, inherited: true });
+      expect(r.params).toBeUndefined();
+    }
+  });
+
+  it("leaves auth and params absent on a flow that declares neither", () => {
+    const flow = `<flow xmlns="http://www.springframework.org/schema/webflow"><view-state id="a" view="/a"/></flow>`;
+    const [r] = springxmlSpec.extractRoutes!(flow.split("\n"), [], "x/league.wf.plain.xml");
+    expect(r!.auth).toBeUndefined();
+    expect(r!.params).toBeUndefined();
+    expect(r!.middleware).toEqual([]);
   });
 
   it("emits states as functions tagged with their kind", () => {

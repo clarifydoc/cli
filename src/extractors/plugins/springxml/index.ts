@@ -1,4 +1,5 @@
-import type { CallInfo, FunctionInfo, RouteInfo } from "../../../types/analysis.js";
+import type { CallInfo, FunctionInfo, RouteInfo, RouteParamInfo } from "../../../types/analysis.js";
+import { applyRouteMeta, splitList, type GuardAttr } from "../../shared/route-metadata.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 
 /**
@@ -15,6 +16,11 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
  *     trace graph), transitions become `on:<event>` calls carrying the target
  *     state, evaluates become `bean.method` calls — the webflow dispatch
  *     resolver joins all three to the JSP screens and Java action classes.
+ *     A flow-level `<secured attributes="ROLE_X"/>` is inherited by every
+ *     view-state route as `auth` roles, a state-level one is the state's own
+ *     guard, and flow-level `<input name="x" type="…"/>` declarations are the
+ *     launch request's parameters (`query`, marked inferred — Web Flow's
+ *     default mapping, not a binding the XML states).
  *
  *  2. Spring bean definitions (`<bean id="x" class="com.y.Z">`): the bean-id →
  *     class map that makes `<evaluate expression="x.method">` resolvable. Bean
@@ -111,6 +117,14 @@ export interface FlowState {
   line: number;
   endLine: number;
   calls: CallInfo[];
+  /** `<secured attributes="…"/>` inside the state, as guards. */
+  secured: GuardAttr[];
+}
+
+export interface FlowInput {
+  name: string;
+  type: string | null;
+  required: boolean;
 }
 
 export interface ParsedFlow {
@@ -118,6 +132,24 @@ export interface ParsedFlow {
   flowCalls: CallInfo[];
   states: FlowState[];
   lastLine: number;
+  /** Flow-level `<secured>` — applies to every state. */
+  secured: GuardAttr[];
+  /** Flow-level `<input>` declarations (the launch request's parameters). */
+  inputs: FlowInput[];
+}
+
+/** `<secured attributes="ROLE_A, ROLE_B" match="any"/>` → a role guard. */
+function securedGuard(attrs: string): GuardAttr | null {
+  const attributes = attrOf(attrs, "attributes");
+  if (!attributes) return null;
+  const match = attrOf(attrs, "match");
+  const text = `secured(attributes="${attributes}"${match ? `, match="${match}"` : ""})`;
+  const values = splitList(attributes);
+  // Spring Security role names are the common case; an expression or a
+  // permission name is a policy.
+  const roles = values.filter((v) => /^ROLE_/.test(v));
+  const policies = values.filter((v) => !/^ROLE_/.test(v));
+  return { text, roles, policies };
 }
 
 /** Parse a Web Flow definition into states with transition/evaluate calls. */
@@ -130,6 +162,8 @@ function parseFlowTags(tags: XmlTag[]): ParsedFlow | null {
 
   const flowCalls: CallInfo[] = [];
   const states: FlowState[] = [];
+  const secured: GuardAttr[] = [];
+  const inputs: FlowInput[] = [];
   let current: FlowState | null = null;
   const calls = () => (current ? current.calls : flowCalls);
 
@@ -148,6 +182,7 @@ function parseFlowTags(tags: XmlTag[]): ParsedFlow | null {
         line: tag.line,
         endLine: tag.line,
         calls: [],
+        secured: [],
       };
       states.push(current);
       if (tag.name === "subflow-state") {
@@ -186,10 +221,22 @@ function parseFlowTags(tags: XmlTag[]): ParsedFlow | null {
         if (value) calls().push(...exprCalls(value, tag.line));
         break;
       }
+      case "secured": {
+        const g = securedGuard(tag.attrs);
+        if (g) (current ? current.secured : secured).push(g);
+        break;
+      }
+      case "input": {
+        // Flow-level only: an <input> inside a subflow-state feeds the subflow.
+        if (current) break;
+        const name = attrOf(tag.attrs, "name");
+        if (name) inputs.push({ name, type: attrOf(tag.attrs, "type"), required: attrOf(tag.attrs, "required") === "true" });
+        break;
+      }
     }
   }
 
-  return { flowCalls, states, lastLine: tags.length > 0 ? tags[tags.length - 1]!.line : 1 };
+  return { flowCalls, states, lastLine: tags.length > 0 ? tags[tags.length - 1]!.line : 1, secured, inputs };
 }
 
 /** Flow id = file basename minus extension (`league.wf.club.manage.xml` → `league.wf.club.manage`). */
@@ -224,13 +271,15 @@ function extractFlowRoutes(lines: string[], filePath?: string): RouteInfo[] {
   const { flow } = parsedOf(lines);
   if (!flow) return [];
   const flowId = flowIdOf(filePath);
+  // Web Flow maps flow inputs from the launch request's parameters by name.
+  const params: RouteParamInfo[] = flow.inputs.map((i) => ({ name: i.name, type: i.type, binding: "query", inferred: true }));
   const routes: RouteInfo[] = [];
   for (const s of flow.states) {
     if (s.kind !== "view-state" || !s.view) continue;
     // Handler = the view's basename: meaningful in the Routes tab, and inert
     // for the generic linker (JSPs expose no symbols to false-match).
     const viewBase = s.view.replace(/\\/g, "/").split("/").pop()!.replace(/\.\w+$/, "");
-    routes.push({
+    const route: RouteInfo = {
       path: routes.length === 0 ? flowId : `${flowId}#${s.id}`,
       httpMethod: null,
       kind: "frontend",
@@ -239,7 +288,9 @@ function extractFlowRoutes(lines: string[], filePath?: string): RouteInfo[] {
       calls: [],
       middleware: [],
       line: s.line,
-    });
+    };
+    applyRouteMeta(route, { inheritedGuards: flow.secured, guards: s.secured, params });
+    routes.push(route);
   }
   return routes;
 }

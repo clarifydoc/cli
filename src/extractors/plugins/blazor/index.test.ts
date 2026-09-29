@@ -91,3 +91,70 @@ describe("Blazor imports (@using)", () => {
     expect(m && imp.getSource(m)).toBe("SampleBlazor.Components");
   });
 });
+
+describe("Blazor page attribute layer (auth + params)", () => {
+  const PAGE = `@page "/orders/{id:int}"
+@page "/orders/{id:int}/{slug?}"
+@attribute [Authorize(Roles = "Admin, Editor", Policy = "CanView")]
+@using SampleBlazor.Components
+
+<Card Title="Order">@Id</Card>
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [Parameter] public string? Slug { get; set; }
+
+    [SupplyParameterFromQuery]
+    public string? Q { get; set; }
+
+    [SupplyParameterFromQuery(Name = "page")]
+    public int? PageNumber { get; set; }
+
+    private string _notAParam = "x";
+}`;
+  const routes = blazorSpec.extractRoutes!(lines(PAGE), []);
+
+  it("reads @attribute [Authorize(…)] as the page's own guards on every @page route", () => {
+    expect(routes).toHaveLength(2);
+    for (const r of routes) {
+      expect(r.middleware).toEqual(['Authorize(Roles = "Admin, Editor", Policy = "CanView")']);
+      expect(r.auth).toEqual({
+        policies: ["CanView"], roles: ["Admin", "Editor"], schemes: [], anonymous: false, inherited: false,
+      });
+    }
+  });
+
+  it("types route tokens by constraint, else by the matching [Parameter] property", () => {
+    expect(routes[0]!.params).toEqual([
+      { name: "id", type: "int", binding: "route" },
+      { name: "Q", type: "string?", binding: "query" },
+      { name: "page", type: "int?", binding: "query" },
+    ]);
+    expect(routes[1]!.params![1]).toEqual({ name: "slug", type: "string?", binding: "route" });
+  });
+
+  it("reads [SupplyParameterFromQuery] properties from the @code block before it is blanked", () => {
+    const names = routes[0]!.params!.filter((p) => p.binding === "query").map((p) => p.name);
+    expect(names).toEqual(["Q", "page"]);
+    expect(routes[0]!.params!.some((p) => p.name === "_notAParam")).toBe(false);
+  });
+
+  it("reads [AllowAnonymous] as anonymous and a bare [Authorize] as an empty guard", () => {
+    const anon = blazorSpec.extractRoutes!(lines(`@page "/login"\n@attribute [AllowAnonymous]`), []);
+    expect(anon[0]!.auth).toMatchObject({ anonymous: true, inherited: false });
+    const bare = blazorSpec.extractRoutes!(lines(`@page "/secure"\n@attribute [Authorize]`), []);
+    expect(bare[0]!.auth).toEqual({ policies: [], roles: [], schemes: [], anonymous: false, inherited: false });
+    expect(bare[0]!.middleware).toEqual(["Authorize"]);
+  });
+
+  it("leaves auth and params absent on a page that declares neither", () => {
+    const plain = blazorSpec.extractRoutes!(lines(`@page "/counter"\n<h1>Hi</h1>`), []);
+    expect(plain[0]!.auth).toBeUndefined();
+    expect(plain[0]!.params).toBeUndefined();
+    expect(plain[0]!.middleware).toEqual([]);
+  });
+
+  it("never marks a page-declared binding as inferred", () => {
+    expect(routes.flatMap((r) => r.params ?? []).some((p) => p.inferred)).toBe(false);
+  });
+});
