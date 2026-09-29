@@ -2,6 +2,8 @@ import type { Node } from "web-tree-sitter";
 import type { RouteInfo, CallInfo } from "../../../../types/analysis.js";
 import { stripQuotes, findChildByType, getNameFromNode } from "../../../shared/node-helpers.js";
 import { extractCalls } from "../../../shared/call-graph.js";
+import { applyRouteMeta, type GuardAttr } from "../../../shared/route-metadata.js";
+import { guardsOn, routeParamsOf } from "./meta-annotations.js";
 
 /** Spring Boot mapping annotations */
 const SPRING_MAPPING_ANNOTATIONS: Record<string, string | null> = {
@@ -197,7 +199,7 @@ export function declarationHasAnnotation(declNode: Node, name: string): boolean 
 
 /** Java / Kotlin: Spring Boot @GetMapping, @PostMapping, @RequestMapping */
 export function extractSpringRoutes(root: Node, routes: RouteInfo[]): void {
-  walkForJavaKotlinRoutes(root, routes, "", false);
+  walkForJavaKotlinRoutes(root, routes, "", false, []);
 }
 
 function walkForJavaKotlinRoutes(
@@ -205,14 +207,17 @@ function walkForJavaKotlinRoutes(
   routes: RouteInfo[],
   classPrefix: string,
   suppress: boolean,
+  classGuards: readonly GuardAttr[],
 ) {
   // Check for class-level @RequestMapping to capture prefix
   if (node.type === "class_declaration" || node.type === "class_definition") {
     const prefix = extractClassRequestMappingPath(node);
     // @FeignClient methods are *outbound* HTTP calls, not inbound routes — skip them.
     const childSuppress = suppress || declarationHasAnnotation(node, "FeignClient");
+    // Class-level @PreAuthorize/@Secured/@RolesAllowed guard every handler in the class.
+    const guards = [...classGuards, ...guardsOn(node)];
     for (const child of node.children) {
-      walkForJavaKotlinRoutes(child, routes, prefix || classPrefix, childSuppress);
+      walkForJavaKotlinRoutes(child, routes, prefix || classPrefix, childSuppress, guards);
     }
     return;
   }
@@ -229,24 +234,29 @@ function walkForJavaKotlinRoutes(
       findChildByType(node, "function_body") ??
       findChildByType(node, "block");
     const bodyCalls = body ? extractCalls(body, lang) : [];
+    const methodGuards = guardsOn(node);
 
-    for (const child of node.children) {
-      if (isAnnotationNode(child)) {
-        routes.push(...parseSpringAnnotation(child, methodName, bodyCalls, classPrefix));
+    const emit = (ann: Node): void => {
+      for (const route of parseSpringAnnotation(ann, methodName, bodyCalls, classPrefix)) {
+        applyRouteMeta(route, {
+          inheritedGuards: classGuards,
+          guards: methodGuards,
+          params: routeParamsOf(node, route.path, "spring"),
+        });
+        routes.push(route);
       }
+    };
+    for (const child of node.children) {
+      if (isAnnotationNode(child)) emit(child);
       // Annotations live inside a `modifiers` block (Java and Kotlin both).
       if (child.type === "modifiers") {
-        for (const mod of child.children) {
-          if (isAnnotationNode(mod)) {
-            routes.push(...parseSpringAnnotation(mod, methodName, bodyCalls, classPrefix));
-          }
-        }
+        for (const mod of child.children) if (isAnnotationNode(mod)) emit(mod);
       }
     }
   }
 
   for (const child of node.children) {
-    walkForJavaKotlinRoutes(child, routes, classPrefix, suppress);
+    walkForJavaKotlinRoutes(child, routes, classPrefix, suppress, classGuards);
   }
 }
 

@@ -212,3 +212,91 @@ public class C {
     expect(routes).toEqual(["GET /api"]);
   });
 });
+
+/**
+ * The attribute layer: Spring Security guards (class-level ones inherited),
+ * and where each handler parameter binds from — declared by annotation, or
+ * by Spring's defaults (simple → query, complex → implicit @ModelAttribute
+ * form, framework types → injected).
+ */
+async function fullRoutesOf(source: string, lang: "kotlin" | "java"): Promise<RouteInfo[]> {
+  const tree = await parseSource(source, lang as any, lang === "java" ? "A.java" : "A.kt");
+  const routes: RouteInfo[] = [];
+  extractSpringRoutes(tree.rootNode, routes);
+  return routes;
+}
+
+describe("Spring routes — guards and parameter bindings", () => {
+  it("merges class-level @PreAuthorize with action-level @Secured/@RolesAllowed and reads every binding annotation", async () => {
+    const SRC = `package x;
+@RestController
+@RequestMapping("/api/users")
+@PreAuthorize("hasRole('ADMIN')")
+public class UserController {
+  @PostMapping("/{id}")
+  @Secured({"ROLE_A", "ROLE_B"})
+  public ResponseEntity<User> save(@PathVariable Long id, @RequestBody CreateUserDto dto,
+      @RequestParam(name = "q", required = false) String q, @RequestHeader("X-T") String t,
+      @Valid @ModelAttribute Form f, Principal p, HttpServletRequest r, Filter filter, int page) { return null; }
+}`;
+    const [r] = await fullRoutesOf(SRC, "java");
+    expect(r!.middleware).toEqual(["PreAuthorize(\"hasRole('ADMIN')\")", 'Secured({"ROLE_A", "ROLE_B"})']);
+    expect(r!.auth).toEqual({
+      policies: ["hasRole('ADMIN')"],
+      roles: ["ROLE_A", "ROLE_B"],
+      schemes: [],
+      anonymous: false,
+      inherited: false,
+    });
+    expect(r!.params).toEqual([
+      { name: "id", type: "Long", binding: "route" },
+      { name: "dto", type: "CreateUserDto", binding: "body" },
+      { name: "q", type: "String", binding: "query" },
+      { name: "t", type: "String", binding: "header" },
+      { name: "f", type: "Form", binding: "form" },
+      { name: "p", type: "Principal", binding: "services", inferred: true },
+      { name: "r", type: "HttpServletRequest", binding: "services", inferred: true },
+      { name: "filter", type: "Filter", binding: "form", inferred: true },
+      { name: "page", type: "int", binding: "query", inferred: true },
+    ]);
+  });
+
+  it("marks a class guard as inherited and @PermitAll as anonymous", async () => {
+    const SRC = `package x;
+@RestController
+@PreAuthorize("isAuthenticated()")
+public class C {
+  @GetMapping("/a") public int a() { return 1; }
+  @GetMapping("/b") @PermitAll public int b() { return 1; }
+}`;
+    const [a, b] = await fullRoutesOf(SRC, "java");
+    expect(a!.auth).toMatchObject({ policies: ["isAuthenticated()"], inherited: true, anonymous: false });
+    expect(b!.auth).toMatchObject({ policies: ["isAuthenticated()"], inherited: false, anonymous: true });
+    expect(a!.params).toBeUndefined();
+  });
+
+  it("reads Kotlin parameter annotations from the preceding parameter_modifiers sibling", async () => {
+    const SRC = `package x
+class UserController {
+  @PostMapping("/{id}")
+  @PreAuthorize("hasRole('ADMIN')")
+  fun save(@PathVariable id: Long, @RequestBody dto: CreateUserDto, @RequestParam(name = "q") q: String?): User = TODO()
+}`;
+    const [r] = await fullRoutesOf(SRC, "kotlin");
+    expect(r!.auth?.policies).toEqual(["hasRole('ADMIN')"]);
+    expect(r!.params).toEqual([
+      { name: "id", type: "Long", binding: "route" },
+      { name: "dto", type: "CreateUserDto", binding: "body" },
+      { name: "q", type: "String?", binding: "query" },
+    ]);
+  });
+
+  it("emits no auth and no params when nothing is declared", async () => {
+    const SRC = `package x;
+@RestController
+public class C { @GetMapping("/a") public int a() { return 1; } }`;
+    const [r] = await fullRoutesOf(SRC, "java");
+    expect(r!.auth).toBeUndefined();
+    expect(r!.middleware).toEqual([]);
+  });
+});

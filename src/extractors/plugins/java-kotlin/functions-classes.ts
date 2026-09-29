@@ -39,7 +39,8 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
         child.type === "class_declaration" ||
         child.type === "interface_declaration" ||
         child.type === "object_declaration" ||
-        child.type === "enum_declaration"
+        child.type === "enum_declaration" ||
+        child.type === "record_declaration"
       ) {
         classes.push(this.parseClass(child, lang));
       }
@@ -58,7 +59,10 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
 
     // Java: superclass / interfaces
     const superclass = node.childForFieldName("superclass");
-    if (superclass) extendsName = superclass.text;
+    // The `superclass` node's text carries the keyword (`extends Base`);
+    // consumers resolve the NAME, so strip it — with the keyword in, a DTO's
+    // base class never joined its request schema.
+    if (superclass) extendsName = superclass.text.replace(/^extends\s+/, "").trim();
 
     const interfaces = node.childForFieldName("interfaces");
     if (interfaces) {
@@ -101,6 +105,10 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       this.findChildByType(node, "enum_body");
 
     if (body) this.collectMembers(body, lang, methods, properties);
+    // Kotlin `data class Dto(val a: String)` and a Java `record Dto(String a)`
+    // declare their fields in the header, not the body — the request-model
+    // shape in both languages. Without these, DTOs have zero properties.
+    this.collectHeaderProperties(node, lang, properties);
 
     // Java: default visibility is package-private (not public)
     // Kotlin: default visibility is public
@@ -114,10 +122,22 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     const isInterface =
       node.type === "interface_declaration" ||
       node.children.some((c) => c.type === "interface");
+    // Java `enum X { A, B }` / Kotlin `enum class X { A, B }`: the constants
+    // are the members a request schema lists.
+    const isEnum = node.type === "enum_declaration" || node.children.some((c) => c.type === "enum");
+    if (isEnum && body) {
+      for (const c of body.children) {
+        const constName =
+          c.type === "enum_constant" ? c.childForFieldName("name")?.text ?? this.findChildByType(c, "identifier")?.text
+          : c.type === "enum_entry" ? this.findChildByType(c, "simple_identifier")?.text
+          : undefined;
+        if (constName) properties.push({ name: constName, type: name, visibility: "public", isStatic: true, isReadonly: true });
+      }
+    }
 
     return {
       name,
-      kind: isInterface ? "interface" : "class",
+      kind: isInterface ? "interface" : isEnum ? "enum" : "class",
       extends: extendsName,
       implements: implementsList,
       decorators,
@@ -161,21 +181,76 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
           "unknown";
         const typeNode =
           member.childForFieldName("type") ??
-          (varDecl && this.findChildByType(varDecl, "user_type")) ??
-          this.findChildByType(member, "user_type");
-        properties.push({
+          (varDecl && (this.findChildByType(varDecl, "user_type") ?? this.findChildByType(varDecl, "nullable_type"))) ??
+          this.findChildByType(member, "user_type") ??
+          this.findChildByType(member, "nullable_type");
+        const prop: PropertyInfo = {
           name: propName,
           type: typeNode?.text ?? null,
           visibility: this.getVisibility(member),
           isStatic: member.text.includes("static ") || member.text.includes("companion"),
           isReadonly: member.text.includes("final ") || member.text.startsWith("val "),
-        });
+        };
+        // `@JsonProperty("x")` / `@NotNull` — what the request schema reads.
+        const attrs = this.extractAnnotations(member).map((a) => a.replace(/\s+/g, " "));
+        if (attrs.length > 0) prop.decorators = attrs;
+        properties.push(prop);
       } else if (member.type === "companion_object" || member.type === "object_declaration") {
         // Flatten companion / nested object members onto the class so their
         // calls and data access still attribute to a trace symbol.
         const inner = this.findChildByType(member, "class_body");
         if (inner) this.collectMembers(inner, lang, methods, properties);
       }
+    }
+  }
+
+  /**
+   * Header-declared fields: Kotlin primary-constructor `val`/`var` parameters
+   * and Java record components. A Kotlin parameter without `val`/`var` is a
+   * constructor argument only and is skipped. `isRequired` marks a Kotlin
+   * non-nullable parameter with no default — the one a caller must send.
+   */
+  private collectHeaderProperties(node: Node, lang: JkLang, properties: PropertyInfo[]): void {
+    if (node.type === "record_declaration") {
+      const params = node.childForFieldName("parameters") ?? this.findChildByType(node, "formal_parameters");
+      for (const p of params?.children ?? []) {
+        if (p.type !== "formal_parameter") continue;
+        const prop: PropertyInfo = {
+          name: p.childForFieldName("name")?.text ?? "unknown",
+          type: p.childForFieldName("type")?.text ?? null,
+          visibility: "public",
+          isStatic: false,
+          isReadonly: true,
+        };
+        const attrs = this.extractAnnotations(p).map((a) => a.replace(/\s+/g, " "));
+        if (attrs.length > 0) prop.decorators = attrs;
+        properties.push(prop);
+      }
+      return;
+    }
+    if (lang !== "kotlin") return;
+    const ctor = this.findChildByType(node, "primary_constructor");
+    if (!ctor) return;
+    for (const p of ctor.children) {
+      if (p.type !== "class_parameter") continue;
+      const kind = this.findChildByType(p, "binding_pattern_kind")?.text;
+      if (kind !== "val" && kind !== "var") continue;
+      const name = this.findChildByType(p, "simple_identifier")?.text ?? "unknown";
+      const typeNode = p.children.find((c) =>
+        c.type === "user_type" || c.type === "nullable_type" || c.type === "function_type" || c.type === "parenthesized_type",
+      );
+      const hasDefault = p.children.some((c) => c.type === "=");
+      const prop: PropertyInfo = {
+        name,
+        type: typeNode?.text ?? null,
+        visibility: this.getVisibility(p) ?? "public",
+        isStatic: false,
+        isReadonly: kind === "val",
+      };
+      const attrs = this.extractAnnotations(p).map((a) => a.replace(/\s+/g, " "));
+      if (attrs.length > 0) prop.decorators = attrs;
+      if (!hasDefault && typeNode && typeNode.type !== "nullable_type") prop.isRequired = true;
+      properties.push(prop);
     }
   }
 

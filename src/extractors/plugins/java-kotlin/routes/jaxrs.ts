@@ -10,6 +10,8 @@ import {
   mergePrefix,
   declarationHasAnnotation,
 } from "./spring.js";
+import { applyRouteMeta, type GuardAttr } from "../../../shared/route-metadata.js";
+import { guardsOn, routeParamsOf } from "./meta-annotations.js";
 
 /**
  * JAX-RS (Jersey / RESTEasy / Quarkus) and Micronaut inbound routes.
@@ -66,12 +68,18 @@ const CLASS_TYPES = new Set(["class_declaration", "class_definition", "interface
 const METHOD_TYPES = new Set(["method_declaration", "function_declaration"]);
 
 export function extractJaxrsMicronautRoutes(root: Node, routes: RouteInfo[]): void {
-  walk(root, routes, "", "none");
+  walk(root, routes, "", "none", []);
 }
 
 type Flavor = "none" | "jaxrs" | "micronaut";
 
-function walk(node: Node, routes: RouteInfo[], classPrefix: string, flavor: Flavor): void {
+function walk(
+  node: Node,
+  routes: RouteInfo[],
+  classPrefix: string,
+  flavor: Flavor,
+  classGuards: readonly GuardAttr[],
+): void {
   if (CLASS_TYPES.has(node.type)) {
     // Outbound-client interfaces reuse the same annotations — never routes.
     if (
@@ -95,19 +103,26 @@ function walk(node: Node, routes: RouteInfo[], classPrefix: string, flavor: Flav
         childFlavor = "micronaut";
       }
     }
-    for (const child of node.children) walk(child, routes, prefix, childFlavor);
+    const guards = [...classGuards, ...guardsOn(node)];
+    for (const child of node.children) walk(child, routes, prefix, childFlavor, guards);
     return;
   }
 
   if (METHOD_TYPES.has(node.type)) {
-    emitMethodRoutes(node, routes, classPrefix, flavor);
+    emitMethodRoutes(node, routes, classPrefix, flavor, classGuards);
     // Fall through: Kotlin nests local declarations inside function bodies.
   }
 
-  for (const child of node.children) walk(child, routes, classPrefix, flavor);
+  for (const child of node.children) walk(child, routes, classPrefix, flavor, classGuards);
 }
 
-function emitMethodRoutes(method: Node, routes: RouteInfo[], classPrefix: string, flavor: Flavor): void {
+function emitMethodRoutes(
+  method: Node,
+  routes: RouteInfo[],
+  classPrefix: string,
+  flavor: Flavor,
+  classGuards: readonly GuardAttr[],
+): void {
   let verb: string | null = null;
   let subPath: string | null = null;
   let micronautLine = 0;
@@ -145,13 +160,20 @@ function emitMethodRoutes(method: Node, routes: RouteInfo[], classPrefix: string
     findChildByType(method, "block");
 
   const merged = mergePrefix(classPrefix, subPath ?? "/");
-  routes.push({
-    path: merged.startsWith("/") ? merged : "/" + merged,
+  const path = merged.startsWith("/") ? merged : "/" + merged;
+  const route: RouteInfo = {
+    path,
     httpMethod: verb,
     kind: "api",
     handler: getNameFromNode(method),
     calls: body ? extractCalls(body, lang) : [],
     middleware: [],
     line: micronautLine || method.startPosition.row + 1,
+  };
+  applyRouteMeta(route, {
+    inheritedGuards: classGuards,
+    guards: guardsOn(method),
+    params: routeParamsOf(method, path, flavor === "micronaut" ? "micronaut" : "jaxrs"),
   });
+  routes.push(route);
 }
