@@ -1,9 +1,10 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { RouteInfo, Language } from "../../../../types/analysis.js";
+import type { RouteInfo, Language, RouteParamBinding, RouteParamInfo } from "../../../../types/analysis.js";
 import type { RouteExtractor } from "../../../routes/base.js";
 import { route } from "../../../routes/base.js";
 import { findChildByType } from "../../../shared/node-helpers.js";
 import { extractCalls } from "../../../shared/call-graph.js";
+import { applyRouteMeta } from "../../../shared/route-metadata.js";
 
 /**
  * CodeIgniter convention-based routing.
@@ -27,7 +28,63 @@ import { extractCalls } from "../../../shared/call-graph.js";
  *
  * Routing is purely path-driven, so the extractor needs the file path; files
  * outside a `controllers/` directory produce nothing.
+ *
+ * Parameters: CI passes the URI segments after the method name as the
+ * method's arguments (`/photos/archive/5` → `archive($id)`), so every
+ * signature parameter binds from the route (inferred — the path template
+ * never spells them). What the body reads through the input class is
+ * appended: `$this->input->post('x')` → form, `->get('x')` → query,
+ * CI4 `$this->request->getJSON()` / `getVar('x')` → body,
+ * `getHeaderLine('X')` → header. CI has no auth layer of its own, so `auth`
+ * stays absent.
  */
+
+/** CI3 `$this->input->…` and CI4 `$this->request->…` accessors, with the binding each reads. */
+const INPUT_ACCESSORS: ReadonlyArray<[RegExp, RouteParamBinding, string | null]> = [
+  [/\$this->input->post\(\s*(['"])([^'"]+)\1/g, "form", null],
+  [/\$this->input->get\(\s*(['"])([^'"]+)\1/g, "query", null],
+  [/\$this->input->get_post\(\s*(['"])([^'"]+)\1/g, "query", null],
+  [/\$this->input->post_get\(\s*(['"])([^'"]+)\1/g, "form", null],
+  [/\$this->input->get_request_header\(\s*(['"])([^'"]+)\1/g, "header", null],
+  [/\$this->request->getPost\(\s*(['"])([^'"]+)\1/g, "form", null],
+  [/\$this->request->getGet\(\s*(['"])([^'"]+)\1/g, "query", null],
+  [/\$this->request->getVar\(\s*(['"])([^'"]+)\1/g, "body", null],
+  [/\$this->request->getJsonVar\(\s*(['"])([^'"]+)\1/g, "body", null],
+  [/\$this->request->getHeaderLine\(\s*(['"])([^'"]+)\1/g, "header", null],
+  [/\$this->request->getFile\(\s*(['"])([^'"]+)\1/g, "form", "UploadedFile"],
+];
+
+/** Signature params (URI segments → route) plus what the body reads through the input class. */
+function ciParams(method: Node, body: Node | null): RouteParamInfo[] {
+  const out: RouteParamInfo[] = [];
+  const seen = new Set<string>();
+  const push = (p: RouteParamInfo): void => {
+    const key = `${p.binding}:${p.name}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(p);
+  };
+  const formal = method.childForFieldName("parameters") ?? findChildByType(method, "formal_parameters");
+  for (const p of formal?.children ?? []) {
+    if (p.type !== "simple_parameter" && p.type !== "variadic_parameter") continue;
+    const name = findChildByType(p, "variable_name")?.text.replace(/^\$/, "");
+    if (!name) continue;
+    const typeNode = p.children.find((c) => /_type$/.test(c.type));
+    const type = typeNode ? typeNode.text.replace(/^\?/, "").replace(/.*\\/, "") : null;
+    push({ name, type, binding: "route", inferred: true });
+  }
+  if (!body) return out;
+  const text = body.text;
+  if (!text.includes("$this->input->") && !text.includes("$this->request->")) return out;
+  for (const [re, binding, type] of INPUT_ACCESSORS) {
+    for (const m of text.matchAll(re)) push({ name: m[2]!, type, binding, inferred: true });
+  }
+  if (/\$this->request->(?:getJSON|getRawInput|getBody)\(/.test(text) || /\$this->input->raw_input_stream\b/.test(text)) {
+    push({ name: "body", type: null, binding: "body", inferred: true });
+  }
+  if (/\$this->input->post\(\s*\)/.test(text)) push({ name: "body", type: null, binding: "form", inferred: true });
+  return out;
+}
 
 // PHP magic + lifecycle methods CodeIgniter never exposes as a URL segment.
 const NON_ROUTE_METHODS: ReadonlySet<string> = new Set<string>([
@@ -100,14 +157,17 @@ export const codeigniterRouteExtractor: RouteExtractor = {
         const path = lower === "index" ? `/${base}` : `/${base}/${name}`;
         const mbody = member.childForFieldName("body");
         routes.push(
-          route({
-            path,
-            httpMethod: null, // CI dispatches all HTTP verbs to one URI
-            kind: "api",
-            handler: name,
-            line: member.startPosition.row + 1,
-            calls: mbody ? extractCalls(mbody, "php") : [],
-          }),
+          applyRouteMeta(
+            route({
+              path,
+              httpMethod: null, // CI dispatches all HTTP verbs to one URI
+              kind: "api",
+              handler: name,
+              line: member.startPosition.row + 1,
+              calls: mbody ? extractCalls(mbody, "php") : [],
+            }),
+            { params: ciParams(member, mbody) },
+          ),
         );
       }
     }

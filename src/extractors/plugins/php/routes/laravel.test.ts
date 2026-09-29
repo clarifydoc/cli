@@ -143,3 +143,86 @@ SomeModel::get();
     expect(routes.map((r) => r.path)).toEqual(["/inside"]); // middleware-only group adds no prefix
   });
 });
+
+/**
+ * The attribute layer: middleware from every place Laravel declares it,
+ * reduced to `auth`, and a closure handler's params. Controller handlers
+ * get their params from the project-level join (`core/request-schemas.ts`)
+ * via the PHP plugin's `bindParam` + `requestAccess`, not here.
+ */
+describe("Laravel middleware → auth", () => {
+  it("reads the chain below and above the verb, and inherits from every enclosing group", async () => {
+    const SRC = `<?php
+Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
+    Route::get('/orders/{order}', [OrderController::class, 'show'])->name('orders.show')->middleware('can:view,order');
+    Route::prefix('reports')->middleware('throttle:60,1')->group(function () {
+        Route::get('/daily', [ReportController::class, 'daily']);
+    });
+});
+Route::group(['prefix' => 'v1', 'middleware' => ['auth']], function () {
+    Route::post('/orders', [OrderController::class, 'store']);
+});
+Route::group(['middleware' => 'auth.basic'], function () {
+    Route::apiResource('tags', TagController::class);
+});
+Route::middleware('guest')->get('/login', [AuthController::class, 'form']);
+Route::get('/health', fn () => 'ok');
+Route::middleware('permission:orders.export')->get('/export', [OrderController::class, 'export']);
+Route::get('/verified', [ProfileController::class, 'show'])->middleware(['auth', 'verified']);
+`;
+    const routes = await routesOf(SRC, "routes/api.php");
+    const byPath = (p: string) => routes.find((r) => r.path === p)!;
+
+    // Group middleware is inherited; the trailing `->middleware('can:…')` is the route's own.
+    const show = byPath("/api/orders/{order}");
+    expect(show.middleware).toEqual(["auth:sanctum", "role:admin", "can:view,order"]);
+    expect(show.auth).toEqual({
+      schemes: ["sanctum"], roles: ["admin"], policies: ["can:view,order"], anonymous: false, inherited: false,
+    });
+
+    // A nested group adds its middleware; `throttle` is middleware but not auth.
+    const daily = byPath("/api/reports/daily");
+    expect(daily.middleware).toEqual(["auth:sanctum", "role:admin", "throttle:60,1"]);
+    expect(daily.auth).toEqual({ schemes: ["sanctum"], roles: ["admin"], policies: [], anonymous: false, inherited: true });
+
+    // Options-array group: `'middleware' => ['auth']` + `'prefix' => 'v1'`.
+    const store = byPath("/api/v1/orders");
+    expect(store.middleware).toEqual(["auth"]);
+    expect(store.auth).toMatchObject({ schemes: ["auth"], inherited: true });
+
+    // A string `'middleware' => 'auth.basic'` and a resource expansion inherit alike.
+    const tags = routes.filter((r) => r.path.startsWith("/api/tags"));
+    expect(tags).toHaveLength(5);
+    for (const t of tags) expect(t.auth).toMatchObject({ schemes: ["basic"], inherited: true });
+
+    // `guest` waives auth; a bare route declares nothing at all.
+    expect(byPath("/api/login").auth).toMatchObject({ anonymous: true });
+    expect(byPath("/api/health").auth).toBeUndefined();
+    expect(byPath("/api/health").middleware).toEqual([]);
+
+    // `permission:` is a policy; `->middleware([...])` above the verb with several entries.
+    expect(byPath("/api/export").auth).toMatchObject({ policies: ["permission:orders.export"], inherited: false });
+    expect(byPath("/api/verified").middleware).toEqual(["auth", "verified"]);
+    expect(byPath("/api/verified").auth).toMatchObject({ schemes: ["auth"], policies: ["verified"], inherited: false });
+  });
+
+  it("leaves params to the join for controller handlers, but fills them for closures", async () => {
+    const SRC = `<?php
+Route::get('/users/{id}', [UserController::class, 'show']);
+Route::put('/users/{id}', function (Request $request, $id) {
+    $name = $request->input('name');
+    $page = $request->query('page');
+    return $this->userService->update($id, $name);
+});
+`;
+    const routes = await routesOf(SRC);
+    expect(routes.find((r) => r.httpMethod === "GET")!.params).toBeUndefined();
+    const put = routes.find((r) => r.httpMethod === "PUT")!;
+    expect(put.params).toEqual([
+      { name: "request", type: "Request", binding: "services", inferred: true },
+      { name: "id", type: null, binding: "route", inferred: true },
+      { name: "name", type: null, binding: "body", inferred: true },
+      { name: "page", type: null, binding: "query", inferred: true },
+    ]);
+  });
+});
