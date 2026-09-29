@@ -1,6 +1,12 @@
 import { spawn, type ChildProcess } from "child_process";
 import { Readable, Writable } from "stream";
 
+// Every docker call spawns the binary directly, never through a shell: `docker`
+// is a real executable on every platform, a shell would only concatenate the
+// args unescaped (Node 24 warns about it, and a project path with a space
+// would break the `-v` mount), and a missing binary still surfaces as the
+// 'error' event the callers already handle.
+
 export interface DockerContainerOptions {
   image: string;
   command: string[];
@@ -24,7 +30,7 @@ export async function isDockerAvailable(): Promise<boolean> {
   return new Promise((resolve) => {
     const proc = spawn("docker", ["info"], {
       stdio: ["ignore", "ignore", "ignore"],
-      shell: true,
+      windowsHide: true,
     });
     proc.on("error", () => resolve(false));
     proc.on("close", (code) => resolve(code === 0));
@@ -38,7 +44,7 @@ export async function imageExists(image: string): Promise<boolean> {
   return new Promise((resolve) => {
     const proc = spawn("docker", ["image", "inspect", image], {
       stdio: ["ignore", "ignore", "ignore"],
-      shell: true,
+      windowsHide: true,
     });
     proc.on("error", () => resolve(false));
     proc.on("close", (code) => resolve(code === 0));
@@ -57,7 +63,7 @@ export async function buildImage(
     const args = ["build", "-t", imageName, dockerfilePath];
     const proc = spawn("docker", args, {
       stdio: verbose ? ["ignore", "inherit", "inherit"] : ["ignore", "ignore", "pipe"],
-      shell: true,
+      windowsHide: true,
     });
 
     let stderr = "";
@@ -125,7 +131,7 @@ export async function stopContainer(container: DockerContainer): Promise<void> {
     // Try graceful kill first
     const killProc = spawn("docker", ["kill", container.name], {
       stdio: ["ignore", "ignore", "ignore"],
-      shell: true,
+      windowsHide: true,
     });
     killProc.on("close", () => resolve());
     killProc.on("error", () => resolve());
@@ -151,7 +157,7 @@ export async function stopAllContainers(): Promise<void> {
     const proc = spawn(
       "docker",
       ["ps", "-q", "--filter", "name=clarifydoc-lsp-"],
-      { stdio: ["ignore", "pipe", "ignore"], shell: true },
+      { stdio: ["ignore", "pipe", "ignore"], windowsHide: true },
     );
 
     let output = "";
@@ -168,7 +174,7 @@ export async function stopAllContainers(): Promise<void> {
 
       const killProc = spawn("docker", ["kill", ...ids], {
         stdio: ["ignore", "ignore", "ignore"],
-        shell: true,
+        windowsHide: true,
       });
       killProc.on("close", () => resolve());
       killProc.on("error", () => resolve());
