@@ -24,7 +24,7 @@ import {
   tally,
   countMap,
   booleanArg,
-  plural,
+  plural, routeGuardNote,
 } from "../format.js";
 import { projectName, requireAnalysis, stalenessHint, statusReport, type ToolContext } from "./context.js";
 import { filterToDrop, missHeadline, noResults, termDiagnosis } from "../empty.js";
@@ -121,13 +121,21 @@ function searchCandidates(loaded: LoadedAnalysis, kinds: Set<SearchKind>, query:
         name: route.path,
         nameIsPath: true,
         isEndpoint: route.kind === "api",
-        aka: route.handler ? [route.handler] : undefined,
+        // Policies, roles, schemes and versions are search terms too:
+        // "Permission.ManageSquad" or "v5" should find the routes they guard.
+        aka: [
+          ...(route.handler ? [route.handler] : []),
+          ...(route.auth?.policies ?? []),
+          ...(route.auth?.roles ?? []),
+          ...(route.auth?.schemes ?? []),
+          ...(route.versions ?? []).map((v) => `v${v}`),
+        ],
         path,
         line: route.line ?? null,
         weight: weightOf(path),
         text: `${routeLabel(route.httpMethod, route.path)} [${route.kind}]${
           route.handler ? ` → ${route.handler}` : ""
-        } (${loc(path, route.line)})`,
+        }${routeGuardNote(route)} (${loc(path, route.line)})`,
       });
     }
   }

@@ -14,7 +14,7 @@ import { McpServer, serveStdio, type McpResource, type McpTool } from "./protoco
 import { AnalysisStore, type AnalyzeSettings } from "./store.js";
 import { statusReport, type ToolContext } from "./tools/context.js";
 import { analyzeTool, healthTool, impactTool, searchTool, statusTool } from "./tools/overview.js";
-import { blastRadiusTool, fileTool, routesTool, screensTool, traceTool } from "./tools/code.js";
+import { blastRadiusTool, contractTool, fileTool, routesTool, screensTool, traceTool } from "./tools/code.js";
 import { dataFlowsTool, dataModelTool } from "./tools/data.js";
 
 export const MCP_SERVER_NAME = "clarifydoc";
@@ -95,7 +95,9 @@ Suggested order:
 3. clarifydoc_file / clarifydoc_trace / clarifydoc_blast_radius — what a file contains, who calls it, what breaks
    if it changes.
 4. clarifydoc_routes / clarifydoc_screens / clarifydoc_data_model / clarifydoc_data_flows — the cross-tier chain:
-   which screen calls which endpoint, and which table that endpoint writes.
+   which screen calls which endpoint, and which table that endpoint writes. Routes carry who may call them
+   (policy, roles, scheme, or anonymous), which API versions they serve, and each parameter's binding; filter by
+   those, and use clarifydoc_contract for one endpoint's full request shape before calling it.
 5. clarifydoc_health and clarifydoc_impact — findings, and the effect of the current git diff.
 
 Facts are extracted, not inferred, but cross-file links can be heuristic: rows tagged \`inferred\` or \`ambiguous\`
@@ -131,6 +133,7 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
     statusTool(ctx),
     searchTool(ctx),
     routesTool(ctx),
+    contractTool(ctx),
     screensTool(ctx),
     fileTool(ctx),
     traceTool(ctx),
