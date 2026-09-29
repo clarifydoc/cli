@@ -48,6 +48,24 @@ export function routesTool(ctx: ToolContext): McpTool {
           description: "Only backend API routes, or only frontend/router routes. Default: both.",
         },
         file: { type: "string", description: "Only routes declared in this file (project-relative path)." },
+        project: {
+          type: "string",
+          description:
+            "Only routes of this sub-project (substring of its id or name, e.g. 'Substitutions.API'). " +
+            "The same endpoint hosted by two services is two routes; this picks the service.",
+        },
+        detail: {
+          type: "boolean",
+          description:
+            "Print each route's parameters with their bindings (body/query/route/header). Default: only when the " +
+            "result is 10 routes or fewer — a broad listing stays one line per route.",
+        },
+        schema: {
+          type: "boolean",
+          description:
+            "Include each route's request-body JSON schema (flattened from the bound parameter's class, " +
+            "inheritance included) when one was derived. Implies `detail`. Default false; narrow with `path`/`file` first.",
+        },
         limit: { type: "number", description: "Max routes (default 40)." },
       },
       additionalProperties: false,
@@ -59,7 +77,16 @@ export function routesTool(ctx: ToolContext): McpTool {
       const methodFilter = stringArg(args, "method")?.toUpperCase();
       const kind = enumArg(args, "kind", ["api", "frontend"] as const);
       const fileFilter = stringArg(args, "file");
+      const projectFilter = stringArg(args, "project");
+      const withSchema = booleanArg(args, "schema", false);
+      const detailArg = booleanArg(args, "detail", false);
       const limit = numberArg(args, "limit", 40, { max: 500 });
+
+      const projectNames = new Map((summary.subProjects ?? []).map((p) => [p.id, p.name]));
+      const inProject = (r: RouteWithFile) =>
+        !projectFilter ||
+        contains(r.projectId, projectFilter) ||
+        contains(r.projectId ? projectNames.get(r.projectId) : undefined, projectFilter);
 
       let routes = (summary.routeMap ?? []) as RouteWithFile[];
       if (kind) routes = routes.filter((r) => r.kind === kind);
@@ -68,6 +95,7 @@ export function routesTool(ctx: ToolContext): McpTool {
         routes = routes.filter((r) => contains(r.path, pathFilter) || contains(r.handler, pathFilter));
       }
       if (fileFilter) routes = routes.filter((r) => contains(r.filePath, fileFilter));
+      if (projectFilter) routes = routes.filter(inProject);
 
       if (routes.length === 0) {
         const all = (summary.routeMap ?? []) as RouteWithFile[];
@@ -85,6 +113,7 @@ export function routesTool(ctx: ToolContext): McpTool {
               }
             : undefined,
           fileFilter ? { label: "file", keep: (r: RouteWithFile) => contains(r.filePath, fileFilter) } : undefined,
+          projectFilter ? { label: "project", keep: inProject } : undefined,
         ].filter((f): f is DroppableFilter<RouteWithFile> => f !== undefined));
         return {
           text: noResults({
@@ -93,6 +122,7 @@ export function routesTool(ctx: ToolContext): McpTool {
               ["method", methodFilter],
               ["kind", kind],
               ["file", fileFilter],
+              ["project", projectFilter],
             ]),
             holds: `The analysis holds ${plural(all.length, "route")}${
               all.length ? ` — methods present: ${countMap(tally(all, (r) => (r.httpMethod ?? "ANY").toUpperCase()))}` : ""
@@ -114,33 +144,65 @@ export function routesTool(ctx: ToolContext): McpTool {
         list.push(`${loc(link.source, link.sourceLine)}${confidenceNote(link.confidence)}`);
         callers.set(key, list);
       }
-      // Data effects, by route entry label (dataFlows uses "METHOD /path").
+      // Data effects, by route entry file + label (dataFlows uses "METHOD /path"
+      // for the label; the file keeps versioned twins in different controllers
+      // from pooling each other's effects).
       const effects = new Map<string, string[]>();
       for (const flow of summary.dataFlows ?? []) {
         if (flow.entryKind !== "route") continue;
-        const list = effects.get(flow.entryLabel) ?? [];
+        const key = `${flow.entryFile}\u0000${flow.entryLabel}`;
+        const list = effects.get(key) ?? [];
         list.push(`${flow.effect} ${flow.resource}${flow.distance > 0 ? ` (${flow.distance} hops)` : ""}`);
-        effects.set(flow.entryLabel, list);
+        effects.set(key, list);
       }
 
       const { shown, hidden } = cap(routes, limit);
+      // Parameters are per-route detail: on a narrowed result they are the
+      // answer, on a 200-route listing they double the tokens for nothing.
+      const showParams = withSchema || detailArg || shown.length <= 10;
       const rows = shown.map((route) => {
         const label = routeLabel(route.httpMethod, route.path);
+        const projectTag = route.projectId && route.projectId !== "root"
+          ? ` [${projectNames.get(route.projectId) ?? route.projectId}]`
+          : "";
         const head = `- ${label}${route.kind === "frontend" ? " [frontend]" : ""}${
           route.handler ? ` → ${route.handler}` : ""
-        } (${loc(route.filePath, route.line)})`;
+        }${projectTag} (${loc(route.filePath, route.line)})`;
         const extra: string[] = [];
-        if (route.middleware?.length) extra.push(`    middleware: ${route.middleware.join(", ")}`);
+        if (route.versions?.length) {
+          extra.push(`    versions: ${route.versions.map((v) =>
+            route.deprecatedVersions?.includes(v) ? `${v} (deprecated)` : v).join(", ")}`);
+        }
+        if (route.auth) {
+          const a = route.auth;
+          const parts = [
+            a.anonymous ? "anonymous (AllowAnonymous)" : "",
+            a.policies.length ? `policy ${a.policies.join(", ")}` : "",
+            a.roles.length ? `roles ${a.roles.join(", ")}` : "",
+            a.schemes.length ? `scheme ${a.schemes.join(", ")}` : "",
+          ].filter(Boolean);
+          extra.push(`    auth: ${parts.join("; ")}${a.inherited ? " (from controller)" : ""}`);
+        } else if (route.middleware?.length) {
+          extra.push(`    middleware: ${route.middleware.join(", ")}`);
+        }
+        const bound = showParams ? (route.params ?? []).filter((p) => p.binding !== "services") : [];
+        if (bound.length) {
+          extra.push(`    params: ${bound.map((p) =>
+            `${p.name}: ${p.type ?? "?"} ← ${p.binding ?? "?"}${p.inferred ? "?" : ""}`).join(", ")}`);
+        }
         const routeCallers = callers.get(`${route.filePath}:${route.line}`);
         if (routeCallers?.length) {
           const { shown: cs, hidden: ch } = cap([...new Set(routeCallers)], 6);
           extra.push(`    called from: ${cs.join(", ")}${ch ? ` … +${ch}` : ""}`);
         }
-        const routeEffects = effects.get(label);
+        const routeEffects = effects.get(`${route.filePath}\u0000${label}`);
         if (routeEffects?.length) {
           const unique = [...new Set(routeEffects)];
           const { shown: es, hidden: eh } = cap(unique, 6);
           extra.push(`    reaches: ${es.join(", ")}${eh ? ` … +${eh}` : ""}`);
+        }
+        if (withSchema && route.requestSchema) {
+          extra.push(`    body: ${JSON.stringify(route.requestSchema)}`);
         }
         return [head, ...extra].join("\n");
       });
