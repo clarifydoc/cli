@@ -42,6 +42,8 @@ export class CSharpExtractor extends FunctionClassExtractor {
         classes.push(this.parseCsharpClass(child, "class"));
       } else if (child.type === "interface_declaration") {
         classes.push(this.parseCsharpClass(child, "interface"));
+      } else if (child.type === "enum_declaration") {
+        classes.push(this.parseCsharpEnum(child));
       }
     }
   }
@@ -78,13 +80,20 @@ export class CSharpExtractor extends FunctionClassExtractor {
         } else if (member.type === "property_declaration") {
           const propName =
             member.childForFieldName("name")?.text ?? "unknown";
-          properties.push({
+          const prop: PropertyInfo = {
             name: propName,
             type: member.childForFieldName("type")?.text ?? null,
             visibility: this.getCsharpVisibility(member),
             isStatic: this.hasModifier(member, "static"),
             isReadonly: this.hasModifier(member, "readonly"),
-          });
+          };
+          // `[Required]` / `[JsonPropertyName("x")]` and the C# 11 `required`
+          // modifier are what a request schema needs; only set when present so
+          // the per-file JSON of attribute-less models is unchanged in shape.
+          const attrs = extractCsharpAttributes(member);
+          if (attrs.length > 0) prop.decorators = attrs;
+          if (this.hasModifier(member, "required")) prop.isRequired = true;
+          properties.push(prop);
         } else if (member.type === "field_declaration") {
           // private readonly Foo _bar; — the tree-sitter shape is
           // field_declaration → variable_declaration { type, variable_declarator { name } }
@@ -124,6 +133,32 @@ export class CSharpExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
       kind,
+    };
+  }
+
+  /** `enum Role { Guest, Admin = 2 }` → a class of kind "enum" whose members are its properties. */
+  private parseCsharpEnum(node: Node): ClassInfo {
+    const name = node.childForFieldName("name")?.text ?? "anonymous";
+    const properties: PropertyInfo[] = [];
+    const body = node.childForFieldName("body") ?? this.findChildByType(node, "enum_member_declaration_list");
+    for (const member of body?.children ?? []) {
+      if (member.type !== "enum_member_declaration") continue;
+      const memberName = member.childForFieldName("name")?.text ?? this.findChildByType(member, "identifier")?.text;
+      if (!memberName) continue;
+      properties.push({ name: memberName, type: name, visibility: "public", isStatic: true, isReadonly: true });
+    }
+    const classVis = this.getCsharpVisibility(node);
+    return {
+      name,
+      extends: null,
+      implements: [],
+      decorators: extractCsharpAttributes(node),
+      methods: [],
+      properties,
+      isExported: classVis === "public" || classVis === null,
+      line: node.startPosition.row + 1,
+      endLine: node.endPosition.row + 1,
+      kind: "enum",
     };
   }
 

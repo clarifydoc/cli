@@ -106,3 +106,182 @@ public class LegacyController {
     expect(routes).toEqual(["GET /api/Legacy/ping"]);
   });
 });
+
+/**
+ * The attribute layer: who may call a route, in which API versions, with what
+ * parameters. Previously discarded — every route came out with an empty
+ * `middleware`, no versions and no bindings, although the arguments were in
+ * the parse (Tessa's Vikardaekning.API: 154 of 316 routes carry a policy,
+ * none surfaced).
+ */
+async function fullRoutesOf(source: string): Promise<RouteInfo[]> {
+  const tree = await parseSource(source, "csharp" as any, "C.cs");
+  const routes: RouteInfo[] = [];
+  extractAspnetRoutes(tree.rootNode, routes);
+  return routes;
+}
+
+describe("ASP.NET routes — auth attributes", () => {
+  it("parses class-level [Authorize] with scheme + nameof policy, inherited by every action", async () => {
+    const SRC = `namespace X;
+[Authorize(AuthenticationSchemes = IstPersonale,
+    Policy = nameof(Rettighed.Vikardaekke))]
+[Route("api/[controller]")]
+public class VikarController : ControllerBase {
+    [HttpGet("list")]
+    public int List() => 1;
+}`;
+    const [r] = await fullRoutesOf(SRC);
+    expect(r!.middleware).toEqual([
+      "Authorize(AuthenticationSchemes = IstPersonale, Policy = nameof(Rettighed.Vikardaekke))",
+    ]);
+    expect(r!.auth).toEqual({
+      policies: ["Rettighed.Vikardaekke"],
+      roles: [],
+      schemes: ["IstPersonale"],
+      anonymous: false,
+      inherited: true,
+    });
+  });
+
+  it("merges an action-level [Authorize(Roles=…)] with the class guard and splits the role list", async () => {
+    const SRC = `namespace X;
+[Authorize(Policy = "Read")]
+public class DocsController {
+    [HttpDelete("{id}")]
+    [Authorize(Roles = "Admin, Editor")]
+    public int Delete(int id) => 1;
+}`;
+    const [r] = await fullRoutesOf(SRC);
+    expect(r!.auth).toEqual({
+      policies: ["Read"],
+      roles: ["Admin", "Editor"],
+      schemes: [],
+      anonymous: false,
+      inherited: false,
+    });
+    expect(r!.middleware).toHaveLength(2);
+  });
+
+  it("[AllowAnonymous] on the action waives the class guard, and a positional policy string is read", async () => {
+    const SRC = `namespace X;
+[Authorize("Staff")]
+public class PublicController {
+    [HttpGet("ping")]
+    [AllowAnonymous]
+    public int Ping() => 1;
+}`;
+    const [r] = await fullRoutesOf(SRC);
+    expect(r!.auth?.anonymous).toBe(true);
+    expect(r!.auth?.policies).toEqual(["Staff"]);
+    expect(r!.middleware).toEqual(["Authorize(\"Staff\")", "AllowAnonymous"]);
+  });
+
+  it("emits no auth and an empty middleware list when nothing is declared", async () => {
+    const SRC = `namespace X;
+public class BareController {
+    [HttpGet("x")]
+    public int X() => 1;
+}`;
+    const [r] = await fullRoutesOf(SRC);
+    expect(r!.auth).toBeUndefined();
+    expect(r!.middleware).toEqual([]);
+  });
+});
+
+describe("ASP.NET routes — API versions", () => {
+  it("collects class-level [ApiVersion]s, flags deprecated ones, and reads numeric literals", async () => {
+    const SRC = `namespace X;
+[ApiVersion("2", Deprecated = true)]
+[ApiVersion(3.0)]
+[Route("api/v{version:apiVersion}/[controller]")]
+public class PuljeController {
+    [HttpGet("myPuljer")]
+    public int Get() => 1;
+}`;
+    const [r] = await fullRoutesOf(SRC);
+    expect(r!.path).toBe("/api/v{version}/Pulje/myPuljer");
+    expect(r!.versions).toEqual(["2", "3.0"]);
+    expect(r!.deprecatedVersions).toEqual(["2"]);
+  });
+
+  it("[MapToApiVersion] narrows an action to a subset of the class versions", async () => {
+    const SRC = `namespace X;
+[ApiVersion("3")]
+[ApiVersion("4")]
+public class FravaerController {
+    [HttpGet("a")]
+    [MapToApiVersion("4")]
+    public int A() => 1;
+    [HttpGet("b")]
+    public int B() => 1;
+}`;
+    const [a, b] = await fullRoutesOf(SRC);
+    expect(a!.versions).toEqual(["4"]);
+    expect(b!.versions).toEqual(["3", "4"]);
+    expect(a!.deprecatedVersions).toBeUndefined();
+  });
+
+  it("leaves versions undefined for unversioned and [ApiVersionNeutral] controllers", async () => {
+    const SRC = `namespace X;
+public class PlainController {
+    [HttpGet("a")]
+    public int A() => 1;
+}
+[ApiVersionNeutral]
+[ApiVersion("1")]
+public class NeutralController {
+    [HttpGet("b")]
+    public int B() => 1;
+}`;
+    const [a, b] = await fullRoutesOf(SRC);
+    expect(a!.versions).toBeUndefined();
+    expect(b!.versions).toBeUndefined();
+  });
+});
+
+describe("ASP.NET routes — parameter bindings", () => {
+  it("reads explicit [FromX] attributes and infers route/query/body under [ApiController]", async () => {
+    const SRC = `namespace X;
+[ApiController]
+[Route("api/institution/{institutionId}/[controller]")]
+public class AktivitetController {
+    [HttpPost("{id}")]
+    public int Save([FromRoute] Guid institutionId, [FromBody] SaveRequest body,
+        [FromQuery(Name = "q")] string? q, [FromHeader] string tenant,
+        Guid id, int page = 1, List<Guid> ids = null, Filter filter = null,
+        CancellationToken ct = default) => 1;
+}`;
+    const [r] = await fullRoutesOf(SRC);
+    expect(r!.params).toEqual([
+      { name: "institutionId", type: "Guid", binding: "route" },
+      { name: "body", type: "SaveRequest", binding: "body" },
+      { name: "q", type: "string?", binding: "query" },
+      { name: "tenant", type: "string", binding: "header" },
+      { name: "id", type: "Guid", binding: "route", inferred: true },
+      { name: "page", type: "int", binding: "query", inferred: true },
+      { name: "ids", type: "List<Guid>", binding: "query", inferred: true },
+      { name: "filter", type: "Filter", binding: "body", inferred: true },
+    ]);
+  });
+
+  it("without [ApiController] only the route-token rule is applied; the rest is null", async () => {
+    const SRC = `namespace X;
+public class LegacyController {
+    [HttpPost("{id}")]
+    public int Save(int id, Filter filter) => 1;
+}`;
+    const [r] = await fullRoutesOf(SRC);
+    expect(r!.params).toEqual([
+      { name: "id", type: "int", binding: "route", inferred: true },
+      { name: "filter", type: "Filter", binding: null },
+    ]);
+  });
+
+  it("omits params on a parameterless action", async () => {
+    const SRC = `namespace X;
+public class C { [HttpGet("x")] public int X() => 1; }`;
+    const [r] = await fullRoutesOf(SRC);
+    expect(r!.params).toBeUndefined();
+  });
+});
