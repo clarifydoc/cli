@@ -519,6 +519,13 @@ export interface LanguagePluginManifest {
    */
   activationFiles?: readonly string[];
   /**
+   * Extension-less SOURCE files this language owns, by basename — Play's
+   * `conf/routes`. Discovery globs by extension, so without this such a file
+   * is never analysed; the registry maps the basename to the language and
+   * `getLanguageForFile` checks it before the extension.
+   */
+  namedFiles?: readonly string[];
+  /**
    * OTHER languages this plugin's `dispatchResolvers` act on (beyond its own).
    * Discovering any of them lazy-loads this plugin too, so a cross-language
    * resolver still runs when its owner's language is absent — e.g. csharp's
@@ -626,4 +633,46 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * analyses it sees, and its `priority` fixes cross-plugin output order.
    */
   dispatchResolvers?: readonly DispatchResolver[];
+  /**
+   * How this language's declared types and properties serialize as JSON —
+   * what the request-schema pass (`core/request-schemas.ts`) needs to turn a
+   * route's body parameter into an OpenAPI-shaped schema. The pass owns the
+   * recursion, class lookup and inheritance flattening; the plugin only says
+   * what one type text means and what one property is called on the wire.
+   */
+  requestSchema?: RequestSchemaHooks;
+}
+
+/** What a declared type text denotes, for JSON serialization. */
+export type TypeShape =
+  | { kind: "scalar"; schema: import("./analysis.js").JsonSchemaNode }
+  | { kind: "array"; element: string }
+  | { kind: "map"; value: string }
+  | { kind: "object"; name: string }
+  /** `object`/`dynamic`/`JsonElement` — anything goes. */
+  | { kind: "any" };
+
+export interface RequestSchemaHooks {
+  /**
+   * Where a handler parameter binds from, for a framework whose handler
+   * signature lives in another file than the route (Laravel `Ctl#action`,
+   * Rails, VB, Rust, Dart) or carries no annotation at all. Called by the
+   * project-level join for every parameter of a resolved handler; return null
+   * for "nothing can be said" (the join then keeps the parameter with
+   * `binding: null`), or a binding of `services` for framework-injected types
+   * (`Request`, `Response`, `Context`) so a reader can skip them. The path
+   * token rule (`{id}` → route) is applied by the join before this is asked.
+   */
+  bindParam?(param: import("./analysis.js").ParamInfo, route: import("./analysis.js").RouteInfo):
+    import("./analysis.js").RouteParamBinding | null;
+  /** Split the nullable marker off a type text (`int?` → `{ type: "int", nullable: true }`). */
+  unwrapNullable(type: string): { type: string; nullable: boolean };
+  /** Classify a (non-nullable) type text. */
+  describeType(type: string): TypeShape;
+  /** Property name as serialized (`[JsonPropertyName("x")]`, else the framework's default casing). */
+  serializedName(prop: import("./analysis.js").PropertyInfo): string;
+  /** Whether the property is part of the serialized shape at all (public instance, not ignored). */
+  isSerialized(prop: import("./analysis.js").PropertyInfo): boolean;
+  /** Whether a request must carry the property. */
+  isRequired(prop: import("./analysis.js").PropertyInfo): boolean;
 }
