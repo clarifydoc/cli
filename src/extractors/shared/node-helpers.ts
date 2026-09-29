@@ -124,10 +124,16 @@ export function extractJsDecorators(node: Node): string[] {
   if (!parent) return decorators;
 
   for (const sibling of parent.children) {
-    if (sibling === node) break;
+    // web-tree-sitter mints a new wrapper per access, so `===` never matched
+    // and the loop swept every decorator in the class body onto every method.
+    if (sibling.id === node.id) break;
     if (sibling.type === "decorator") {
       const expr = sibling.child(1);
       decorators.push(expr?.text ?? sibling.text.replace(/^@/, ""));
+    } else if (sibling.isNamed) {
+      // A decorator run belongs to the member right after it; passing another
+      // member (not a `;`/`,` token) starts a new run.
+      decorators.length = 0;
     }
   }
   return decorators;
@@ -166,7 +172,13 @@ export function extractCsharpAttributes(node: Node): string[] {
     if (child.type === "attribute_list") {
       for (const attr of child.children) {
         if (attr.type === "attribute") {
-          decorators.push(attr.childForFieldName("name")?.text ?? attr.text);
+          // Full attribute text, arguments included — `Authorize(Policy = X)`,
+          // `ApiVersion("2", Deprecated = true)`. The arguments are where
+          // routing, auth and serialization semantics live; the bare name was
+          // useless to every consumer that needed them. Matches what the
+          // JS/Python decorator helpers keep. Whitespace collapsed so a
+          // multi-line attribute is one line.
+          decorators.push(attr.text.replace(/\s+/g, " "));
         }
       }
     }

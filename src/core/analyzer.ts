@@ -86,6 +86,7 @@ import { buildEntityGraph, reconcileEntityInheritance, propagateStiRelations, li
 import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
 import { linkApiCallsToRoutes, dedupeRoutes } from "./route-linker.js";
+import { attachHandlerParams, attachRequestSchemas } from "./request-schemas.js";
 import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
 import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from "./component-launches.js";
 import { buildImportIndex, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
@@ -716,7 +717,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // controller-action convention) into one richest entry, so the route map and
   // the cross-tier linker don't double-count or pick a code-less handler.
   const allRoutes = dedupeRoutes(
-    allAnalyses.flatMap((a) => a.routes.map((r) => ({ ...r, filePath: a.filePath }))),
+    allAnalyses.flatMap((a) =>
+      a.routes.map((r) => ({ ...r, filePath: a.filePath, projectId: a.projectId ?? "root" })),
+    ),
   );
   const allInteractiveElements = allAnalyses.flatMap((a) =>
     a.interactiveElements.map((el) => ({ ...el, filePath: a.filePath })),
@@ -759,6 +762,16 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const apiRouteLinks = linkApiCallsToRoutes(allApiCalls, allRoutes);
   if (apiRouteLinks.length > 0) {
     progress.detail(`  API↔route links: ${apiRouteLinks.length}`);
+  }
+
+  // Request schema per endpoint: the body parameter's class, flattened through
+  // its bases and mapped to JSON by the route's language plugin. In-memory on
+  // the aggregated rows (like the mounts/URL-builder passes); a consumer that
+  // calls endpoints rather than reads about them needs it next to the route.
+  const handlerParamCount = attachHandlerParams(allRoutes, allAnalyses);
+  const schemaCount = attachRequestSchemas(allRoutes, allAnalyses);
+  if ((handlerParamCount > 0 || schemaCount > 0) && verbose) {
+    progress.detail(`  route params from handlers: ${handlerParamCount}, request schemas: ${schemaCount}`);
   }
 
   // Turn the api↔route join into call-graph edges (frontend caller → route
