@@ -285,3 +285,95 @@ describe("dedupeRoutes", () => {
     expect(dedupeRoutes(routes).map((r) => r.path)).toEqual(["/a", "/b", "/c"]);
   });
 });
+
+describe("dedupeRoutes — identity is per sub-project and API-version set", () => {
+  const inProject = (projectId: string, r: RouteInfo & { filePath: string }, extra: Partial<RouteInfo> = {}) => ({
+    ...r,
+    ...extra,
+    projectId,
+  });
+
+  it("keeps the same method+path when two sub-projects host it", () => {
+    // Tessa: Plan.API/V3/AktiviteterV3Controller.cs and
+    // Vikardaekning.API/V2/AktivitetV2Controller.cs both serve the path; the
+    // repo-wide dedupe kept one and attributed the other service's route to it.
+    const plan = inProject("plan-api", route("Plan.API/V3/AktiviteterV3Controller.cs", "GET", "/api/v{version}/institution/{id}/aktiviteter", "Get"));
+    const vikar = inProject("vikar-api", route("Vikardaekning.API/V2/AktivitetV2Controller.cs", "GET", "/api/v{version}/institution/{id}/aktiviteter", "Get"));
+    const out = dedupeRoutes([plan, vikar]);
+    expect(out.map((r) => r.filePath)).toEqual([plan.filePath, vikar.filePath]);
+  });
+
+  it("keeps versioned twins inside one sub-project apart", () => {
+    const v2 = inProject("vikar-api", route("V2/PuljeV4Controller.cs", "GET", "/api/v{version}/puljer/myPuljer", "Get"), { versions: ["4"] });
+    const v5 = inProject("vikar-api", route("V5/PuljeV5Controller.cs", "GET", "/api/v{version}/puljer/myPuljer", "Get"), { versions: ["5"] });
+    expect(dedupeRoutes([v2, v5])).toHaveLength(2);
+    // Same version set declared in a different order is the same identity.
+    const a = inProject("p", route("a.cs", "GET", "/x", "A"), { versions: ["3", "4"] });
+    const b = inProject("p", route("b.cs", "GET", "/x", "A"), { versions: ["4", "3"] });
+    expect(dedupeRoutes([a, b])).toHaveLength(1);
+  });
+
+  it("still collapses the Rails duplicate (same project, no versions)", () => {
+    const fromRoutesRb = inProject("root", route("config/routes.rb", "GET", "/absences", "AbsencesController#index", 12));
+    const fromController = inProject("root", { ...route("app/controllers/absences_controller.rb", "GET", "/absences", "AbsencesController#index", 30), calls: [{ name: "Absence.all", kind: "internal", target: null, line: 31 }] });
+    const out = dedupeRoutes([fromRoutesRb, fromController]);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.filePath).toBe("app/controllers/absences_controller.rb");
+  });
+});
+
+describe("linkApiCallsToRoutes — API version", () => {
+  const versioned = (file: string, versions: string[], path = "/api/v{version}/institution/{institutionId}/puljer/myPuljer") => ({
+    ...route(file, "GET", path, "MyPuljer"),
+    versions,
+  });
+  const call = (target: string) => ({
+    kind: "api-call" as const,
+    name: "get",
+    target,
+    calls: [],
+    line: 7,
+    filePath: "spa/src/api/puljer.ts",
+  });
+
+  it("picks the twin that serves the version the client names", () => {
+    const routes = [versioned("V4/PuljeV4Controller.cs", ["4"]), versioned("V5/PuljeV5Controller.cs", ["5"])];
+    const [link] = linkApiCallsToRoutes([call("/api/v5/institution/${id}/puljer/myPuljer")], routes);
+    expect(link).toMatchObject({ target: "V5/PuljeV5Controller.cs", confidence: "EXTRACTED", matchedVia: "exact" });
+    const [older] = linkApiCallsToRoutes([call("/api/v4/institution/${id}/puljer/myPuljer")], routes);
+    expect(older!.target).toBe("V4/PuljeV4Controller.cs");
+  });
+
+  it("treats `3` and `3.0` as one version and matches a multi-version controller", () => {
+    const routes = [versioned("V2/C.cs", ["2"]), versioned("V3/C.cs", ["3.0", "4.0"])];
+    const [link] = linkApiCallsToRoutes([call("/api/v3/institution/${id}/puljer/myPuljer")], routes);
+    expect(link!.target).toBe("V3/C.cs");
+    expect(link!.confidence).toBe("EXTRACTED");
+  });
+
+  it("flags a version no route declares serving, keeping the best guess downgraded", () => {
+    const [link] = linkApiCallsToRoutes([call("/api/v9/institution/${id}/puljer/myPuljer")], [versioned("V2/C.cs", ["2"])]);
+    expect(link).toMatchObject({ target: "V2/C.cs", confidence: "INFERRED", matchedVia: "version-mismatch" });
+    // Several twins, none serving it: ambiguous AND flagged.
+    const [multi] = linkApiCallsToRoutes(
+      [call("/api/v9/institution/${id}/puljer/myPuljer")],
+      [versioned("V2/C.cs", ["2"]), versioned("V3/C.cs", ["3"])],
+    );
+    expect(multi).toMatchObject({ confidence: "AMBIGUOUS", matchedVia: "version-mismatch" });
+  });
+
+  it("an unversioned route is unknown, not wrong: it wins only when no versioned twin serves the call", () => {
+    const literal = route("Legacy/C.cs", "GET", "/api/v3/institution/{id}/puljer/myPuljer", "Old"); // literal version in the template, no [ApiVersion]
+    const v5 = versioned("V5/C.cs", ["5"]);
+    const [toV5] = linkApiCallsToRoutes([call("/api/v5/institution/${id}/puljer/myPuljer")], [literal, v5]);
+    expect(toV5!.target).toBe("V5/C.cs");
+    const [toLegacy] = linkApiCallsToRoutes([call("/api/v3/institution/${id}/puljer/myPuljer")], [literal, v5]);
+    expect(toLegacy).toMatchObject({ target: "Legacy/C.cs", confidence: "EXTRACTED", matchedVia: "exact" });
+  });
+
+  it("is a no-op when the client URL carries no version", () => {
+    const routes = [versioned("V4/C.cs", ["4"], "/api/puljer"), versioned("V5/C.cs", ["5"], "/api/puljer")];
+    const [link] = linkApiCallsToRoutes([call("/api/puljer")], routes);
+    expect(link).toMatchObject({ target: "V4/C.cs", confidence: "AMBIGUOUS" });
+  });
+});
