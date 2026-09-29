@@ -1,5 +1,6 @@
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractClojureRoutes, extractClojureDataSources } from "./web.js";
+import { attachClojureProperties, attachDefnParams, clojureRequestAccess } from "./routes.js";
 
 /**
  * Clojure regex spec. Lisp forms are paren-balanced; the regex framework has no
@@ -26,6 +27,14 @@ export const clojureSpec: RegexLangSpec = {
     { pattern: /^\s*\(defrecord\s+([A-Z][^\s[\];()]*)/ },
     { pattern: /^\s*\(deftype\s+([A-Z][^\s[\];()]*)/ },
     { pattern: /^\s*\(defprotocol\s+([A-Z][^\s[\];()]*)/ },
+    // A Malli map schema `(def User [:map …])` / `(def User (m/schema [:map …]))`
+    // and a Plumatic `(s/defschema User {…})` are the typed shapes a body can
+    // have — the class concept for a request DTO.
+    // A capitalised `(def Name` whose value opens a vector/map/`(m/schema` on
+    // this or the next line is a candidate; `postProcessClasses` keeps it only
+    // when the value really is a map schema.
+    { pattern: /^\s*\(def\s+([A-Z][^\s[\];()]*)\s*(?:$|\(?[\w.]*\/?schema\b|\[\s*:map\b|\{)/ },
+    { pattern: /^\s*\((?:[\w.]+\/)?defschema\s+([A-Z][^\s[\];()]*)/ },
   ],
 
   importPatterns: [
@@ -47,6 +56,16 @@ export const clojureSpec: RegexLangSpec = {
       buildName: (m) => ({ name: `${m[1]}/${m[2]}`, leafName: m[2] }),
     },
   ],
+
+  /** `(:body req)` / `(get-in req [:params :q])` reads in a defn body — see `routes.ts`. */
+  extractRequestAccess: (bodyLines) => clojureRequestAccess(bodyLines),
+  /** Params from the defn arg vector (the generic paren scanner reads a Lisp head as one blob). */
+  postProcessFunctions: (lines, fns) => {
+    attachDefnParams(lines, fns);
+    return fns;
+  },
+  /** Record fields (untyped) and Malli/Schema map entries (typed) as properties. */
+  postProcessClasses: (lines, classes) => attachClojureProperties(lines, classes),
 
   extractRoutes: (lines) => extractClojureRoutes(lines),
   extractDataSources: (lines) => extractClojureDataSources(lines),

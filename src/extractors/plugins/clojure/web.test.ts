@@ -20,10 +20,10 @@ describe("Compojure routes", () => {
     expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
       "GET / -> home-page",
       "GET /users/:id -> get-user",
-      "POST /users -> null",
+      "POST /users -> create-user",
       "GET /api/orders -> list-orders",
       "DELETE /api/v2/orders/:id -> remove-order",
-      "null /webhook -> null",
+      "null /webhook -> handle-webhook",
     ]);
   });
 

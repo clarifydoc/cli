@@ -1,0 +1,249 @@
+import { describe, it, expect } from "vitest";
+import { elixirSpec } from "./index.js";
+import { elixirRequestSchema } from "./request-schema.js";
+import { extractElixirRequestAccess } from "./phoenix.js";
+import { extractFunctionsWithSpec } from "../shared/regex-base.js";
+import type { ClassInfo, RouteInfo } from "../../../types/analysis.js";
+
+const lines = (src: string) => src.split("\n");
+const routes = (src: string): RouteInfo[] => elixirSpec.extractRoutes!(lines(src), [], "lib/app_web/router.ex", []);
+const sig = (r: RouteInfo) => `${r.httpMethod} ${r.path} -> ${r.handler}`;
+
+/** Functions → classes → postProcessClasses, as regex-extractor.ts runs them. */
+function classesOf(src: string): ClassInfo[] {
+  const ls = lines(src);
+  const fns = extractFunctionsWithSpec(ls, elixirSpec);
+  const classes = elixirSpec.extractClasses!(ls, fns);
+  return elixirSpec.postProcessClasses!(ls, classes);
+}
+
+const ROUTER = `
+defmodule AppWeb.Router do
+  use Phoenix.Router
+
+  pipeline :api do
+    plug :accepts, ["json"]
+    plug :fetch_session
+  end
+
+  pipeline :auth do
+    plug AppWeb.Auth.Pipeline
+    plug :require_authenticated_user
+  end
+
+  pipeline :admin do
+    plug Guardian.Plug.EnsureAuthenticated
+    plug :ensure_admin_role
+  end
+
+  scope "/api", AppWeb do
+    pipe_through :api
+
+    get "/health", HealthController, :show
+  end
+
+  scope "/api", AppWeb do
+    pipe_through [:api, :auth]
+
+    resources "/users", UserController, only: [:index, :show, :create]
+    resources "/posts", PostController, except: [:new, :edit] do
+      resources "/comments", CommentController, only: [:index]
+    end
+    live "/dashboard", DashboardLive, :index
+  end
+
+  scope "/admin", AppWeb.Admin do
+    pipe_through [:api, :admin]
+    get "/stats", StatsController, :index
+  end
+end
+`;
+
+describe("Phoenix router — pipelines and pipe_through", () => {
+  const out = routes(ROUTER);
+
+  it("keeps plumbing plugs as middleware and none as a guard", () => {
+    const health = out.find((r) => r.path === "/api/health")!;
+    expect(health.auth).toBeUndefined();
+    expect(health.middleware).toEqual([':accepts, ["json"]', ":fetch_session"]);
+  });
+
+  it("inherits the auth pipeline's guard plugs on every route of the scope", () => {
+    const users = out.find((r) => r.handler === "UserController.index")!;
+    expect(users.auth).toEqual({
+      policies: ["AppWeb.Auth.Pipeline", "require_authenticated_user"],
+      roles: [],
+      schemes: [],
+      anonymous: false,
+      inherited: true,
+    });
+    expect(users.middleware).toEqual([':accepts, ["json"]', ":fetch_session", "AppWeb.Auth.Pipeline", ":require_authenticated_user"]);
+  });
+
+  it("treats Guardian plugs as schemes", () => {
+    const stats = out.find((r) => r.path === "/admin/stats")!;
+    expect(stats.auth).toMatchObject({ schemes: ["Guardian.Plug.EnsureAuthenticated"], policies: ["ensure_admin_role"] });
+  });
+
+  it("names an unknown pipeline as middleware rather than guessing", () => {
+    const out2 = routes(`scope "/x" do\n  pipe_through :browser\n  get "/a", ACtl, :a\nend`);
+    expect(out2[0]!.middleware).toEqual(["pipe_through :browser"]);
+    expect(out2[0]!.auth).toBeUndefined();
+  });
+});
+
+describe("Phoenix router — resources expansion", () => {
+  const out = routes(ROUTER);
+
+  it("expands `resources` with only:/except: and nests a do-block under /:parent_id", () => {
+    expect(out.filter((r) => r.handler?.startsWith("UserController")).map(sig)).toEqual([
+      "GET /api/users -> UserController.index",
+      "POST /api/users -> UserController.create",
+      "GET /api/users/:id -> UserController.show",
+    ]);
+    expect(out.filter((r) => r.handler?.startsWith("PostController")).map((r) => `${r.httpMethod} ${r.path}`)).toEqual([
+      "GET /api/posts", "POST /api/posts", "GET /api/posts/:id", "PUT /api/posts/:id", "DELETE /api/posts/:id",
+    ]);
+    expect(out.filter((r) => r.handler?.startsWith("CommentController")).map(sig)).toEqual([
+      "GET /api/posts/:post_id/comments -> CommentController.index",
+    ]);
+  });
+
+  it("keeps live routes as frontend routes with the action", () => {
+    const live = out.find((r) => r.kind === "frontend")!;
+    expect(sig(live)).toBe("null /api/dashboard -> DashboardLive.index");
+  });
+
+  it("does not let a nested resources block leak its prefix past its end", () => {
+    const stats = out.find((r) => r.path === "/admin/stats");
+    expect(stats).toBeDefined();
+  });
+});
+
+describe("Phoenix controller — pattern-matched params", () => {
+  const CTL = `
+defmodule AppWeb.UserController do
+  use Phoenix.Controller
+
+  def index(conn, params) do
+    page = conn.query_params["page"]
+    json(conn, [])
+  end
+
+  def show(conn, %{"id" => id}) do
+    json(conn, %{id: id})
+  end
+
+  def create(conn, %{"user" => user_params, "notify" => notify}) do
+    [client] = get_req_header(conn, "x-client-id")
+    json(conn, %{})
+  end
+
+  def update(conn, %{"id" => id, "user" => attrs} = params) do
+    json(conn, %{})
+  end
+end
+`;
+  const cls = classesOf(CTL)[0]!;
+  const method = (name: string) => cls.methods.find((m) => m.name === name)!;
+
+  it("keeps a named params map, drops an unnamed pattern (its keys are the params), never fragments", () => {
+    expect(method("show").params.map((p) => p.name)).toEqual(["conn"]);
+    expect(method("update").params.map((p) => p.name)).toEqual(["conn", "params"]);
+    expect(method("index").params.map((p) => p.name)).toEqual(["conn", "params"]);
+  });
+
+  it("binds `id` to the route, create keys to the body, and read keys to the query", () => {
+    expect(method("show").requestAccess).toEqual([{ name: "id", type: null, binding: "route" }]);
+    expect(method("create").requestAccess).toEqual([
+      { name: "user", type: null, binding: "body" },
+      { name: "notify", type: null, binding: "body" },
+      { name: "x-client-id", type: null, binding: "header" },
+    ]);
+    expect(method("update").requestAccess).toEqual([
+      { name: "id", type: null, binding: "route" },
+      { name: "user", type: null, binding: "body" },
+    ]);
+    expect(method("index").requestAccess).toEqual([{ name: "page", type: null, binding: "query" }]);
+  });
+
+  it("binds `conn` to services via the schema hook", () => {
+    expect(elixirRequestSchema.bindParam!({ name: "conn", type: null, defaultValue: null }, {} as RouteInfo)).toBe("services");
+    expect(elixirRequestSchema.bindParam!({ name: "params", type: null, defaultValue: null }, {} as RouteInfo)).toBeNull();
+  });
+});
+
+describe("Ecto schema → properties + hooks", () => {
+  const SCHEMA = `
+defmodule App.Accounts.User do
+  use Ecto.Schema
+  import Ecto.Changeset
+
+  schema "users" do
+    field :name, :string
+    field :age, :integer
+    field :tags, {:array, :string}, default: []
+    field :role, Ecto.Enum, values: [:user, :admin]
+    belongs_to :organization, App.Accounts.Organization
+    embeds_one :address, App.Accounts.Address
+    timestamps()
+  end
+
+  def changeset(user, attrs) do
+    user
+    |> cast(attrs, [:name, :age, :tags])
+    |> validate_required([:name])
+  end
+end
+`;
+  const cls = classesOf(SCHEMA)[0]!;
+
+  it("lists fields with their Ecto types and validate_required as isRequired", () => {
+    expect(cls.properties.map((p) => [p.name, p.type, p.isRequired ?? false])).toEqual([
+      ["name", ":string", true],
+      ["age", ":integer", false],
+      ["tags", "{:array, :string}", false],
+      ["role", "Ecto.Enum", false],
+      ["organization_id", ":id", false],
+      ["address", "App.Accounts.Address", false],
+      ["inserted_at", ":naive_datetime", false],
+      ["updated_at", ":naive_datetime", false],
+    ]);
+  });
+
+  it("reads the cast keys as the body the changeset accepts", () => {
+    expect(cls.methods.find((m) => m.name === "changeset")!.requestAccess).toEqual([
+      { name: "name", type: null, binding: "body" },
+      { name: "age", type: null, binding: "body" },
+      { name: "tags", type: null, binding: "body" },
+    ]);
+  });
+
+  it("maps Ecto types to shapes", () => {
+    expect(elixirRequestSchema.describeType(":integer")).toEqual({ kind: "scalar", schema: { type: "integer" } });
+    expect(elixirRequestSchema.describeType(":utc_datetime")).toEqual({ kind: "scalar", schema: { type: "string", format: "date-time" } });
+    expect(elixirRequestSchema.describeType("{:array, :string}")).toEqual({ kind: "array", element: ":string" });
+    expect(elixirRequestSchema.describeType(":map")).toEqual({ kind: "any" });
+    expect(elixirRequestSchema.describeType("App.Accounts.Address")).toEqual({ kind: "object", name: "Address" });
+  });
+
+  it("leaves a module without a schema block property-less", () => {
+    expect(classesOf(`defmodule App.Accounts do\n  def list_users, do: []\nend`)[0]!.properties).toEqual([]);
+  });
+});
+
+describe("extractElixirRequestAccess", () => {
+  it("reads conn.* params and headers", () => {
+    expect(extractElixirRequestAccess(lines(`
+      q = conn.query_params["q"]
+      body = conn.body_params["payload"]
+      id = conn.path_params["id"]
+      [tok] = get_req_header(conn, "authorization")
+    `))).toEqual([
+      { name: "q", type: null, binding: "query" },
+      { name: "payload", type: null, binding: "body" },
+      { name: "id", type: null, binding: "route" },
+      { name: "authorization", type: null, binding: "header" },
+    ]);
+  });
+});

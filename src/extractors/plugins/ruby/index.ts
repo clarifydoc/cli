@@ -1,6 +1,15 @@
 import type { RouteInfo, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractClassesWithSpec } from "../shared/regex-base.js";
+import type { GuardAttr } from "../../shared/route-metadata.js";
+import { applyRouteMeta } from "../../shared/route-metadata.js";
+import {
+  applyControllerMeta,
+  extractRubyRequestAccess,
+  extractSinatraRoutes,
+  isSinatraFile,
+  propagateHelperAccess,
+} from "./route-meta.js";
 
 /** Rails RESTful action → HTTP method + URL shape (plural `resources`). */
 const RAILS_ACTION_MAP: Record<string, { method: string; suffix: string }> = {
@@ -413,11 +422,21 @@ export const rubySpec: RegexLangSpec = {
         }
       }
     }
+    // Strong params live in a private `user_params` helper the action calls;
+    // copy that access onto the action so the route join sees it there.
+    propagateHelperAccess(lines, classes);
     // Suppress the now-duplicated methods from the top-level functions list,
     // mirroring what regex-extractor.ts does for any spec providing
     // extractClasses.
     return classes;
   },
+
+  /**
+   * What a method body reads from the request — Rails `params`/`request`
+   * idioms (see `route-meta.ts`). Lands on `FunctionInfo.requestAccess`; the
+   * convention routes below and the project-level handler join both consume it.
+   */
+  extractRequestAccess: (bodyLines) => extractRubyRequestAccess(bodyLines),
 
   extractDataSources: (lines) => [...extractRubyDataSources(lines), ...extractRubyHttpCalls(lines)],
 
@@ -450,6 +469,10 @@ export const rubySpec: RegexLangSpec = {
 
   extractRoutes: (lines, classes: ClassInfo[]) => {
     const routes: RouteInfo[] = [];
+
+    // Sinatra's block DSL — gated on the gem being required / subclassed so a
+    // `get '/x' do` in a request spec or a Rails router never counts.
+    if (isSinatraFile(lines)) routes.push(...extractSinatraRoutes(lines));
 
     // ActiveAdmin DSL. `ActiveAdmin.register Model do … end` mounts the standard
     // admin CRUD routes under `/admin/<pluralized_resource>`; the generated
@@ -536,27 +559,29 @@ export const rubySpec: RegexLangSpec = {
         if (method.name.startsWith("_")) continue;
 
         const action = RAILS_ACTION_MAP[method.name];
-        if (action) {
-          routes.push({
-            path: basePath + action.suffix,
-            httpMethod: action.method,
-            kind: "api",
-            handler: `${cls.name}#${method.name}`,
-            calls: method.calls,
-            middleware: [],
-            line: method.line,
-          });
-        } else {
-          routes.push({
-            path: basePath + "/" + method.name,
-            httpMethod: "GET",
-            kind: "api",
-            handler: `${cls.name}#${method.name}`,
-            calls: method.calls,
-            middleware: [],
-            line: method.line,
-          });
-        }
+        const route: RouteInfo = action
+          ? {
+              path: basePath + action.suffix,
+              httpMethod: action.method,
+              kind: "api",
+              handler: `${cls.name}#${method.name}`,
+              calls: method.calls,
+              middleware: [],
+              line: method.line,
+            }
+          : {
+              path: basePath + "/" + method.name,
+              httpMethod: "GET",
+              kind: "api",
+              handler: `${cls.name}#${method.name}`,
+              calls: method.calls,
+              middleware: [],
+              line: method.line,
+            };
+        // Filters (`before_action`, `skip_before_action`, CanCan/Pundit
+        // macros) and the body's `params` reads → auth / middleware / params.
+        applyControllerMeta(lines, cls, method, route);
+        routes.push(route);
       }
     }
 
@@ -569,6 +594,20 @@ export const rubySpec: RegexLangSpec = {
     // `resources do` — contributes ""), so `end` always pops exactly one frame.
     const blockStack: string[] = [];
     const currentPrefix = () => blockStack.join("");
+    // Parallel to `blockStack`: the Devise `authenticate :user do … end` guard a
+    // block contributes (null for every other block), inherited by the routes
+    // declared inside it.
+    const guardStack: (GuardAttr | null)[] = [];
+    const currentGuards = (): GuardAttr[] => guardStack.filter((g): g is GuardAttr => g !== null);
+    const pushBlock = (prefix: string, guard: GuardAttr | null = null): void => {
+      blockStack.push(prefix);
+      guardStack.push(guard);
+    };
+    const popBlock = (): void => {
+      blockStack.pop();
+      guardStack.pop();
+    };
+    const withGuards = (route: RouteInfo): RouteInfo => applyRouteMeta(route, { inheritedGuards: currentGuards() });
 
     // Only run the routes.rb DSL matchers on an actual router file. Without this
     // gate the verb / `resources` patterns below mis-read any `.rb` that happens
@@ -583,7 +622,7 @@ export const rubySpec: RegexLangSpec = {
 
       // `end` closes the most recent block.
       if (/^end\b/.test(line)) {
-        blockStack.pop();
+        popBlock();
         continue;
       }
 
@@ -592,13 +631,21 @@ export const rubySpec: RegexLangSpec = {
       // namespace :x do / scope '/x' do — open a block that prefixes child paths.
       const nsMatch = line.match(/^namespace\s+:(\w+)/);
       if (nsMatch && opensDoBlock) {
-        blockStack.push("/" + nsMatch[1]);
+        pushBlock("/" + nsMatch[1]);
         continue;
       }
       const scopeMatch = line.match(/^scope\s+['"]([^'"]+)['"]/);
       if (scopeMatch && opensDoBlock) {
         const p = scopeMatch[1].replace(/^\/?/, "/");
-        blockStack.push(p === "/" ? "" : p);
+        pushBlock(p === "/" ? "" : p);
+        continue;
+      }
+      // Devise: `authenticate :user do … end` / `authenticated :admin do … end`
+      // — every route inside requires that scope to be signed in.
+      const deviseMatch = line.match(/^(authenticated?)\s+:(\w+)/);
+      if (deviseMatch && opensDoBlock) {
+        const text = `${deviseMatch[1]} :${deviseMatch[2]}`;
+        pushBlock("", { text, policies: [text], schemes: ["devise"] });
         continue;
       }
 
@@ -626,7 +673,7 @@ export const rubySpec: RegexLangSpec = {
           for (const [action, info] of Object.entries(actionMap)) {
             if (only && !only.has(action)) continue;
             if (except.has(action)) continue;
-            routes.push({
+            routes.push(withGuards({
               path: base + info.suffix,
               httpMethod: info.method,
               kind: "api",
@@ -634,10 +681,10 @@ export const rubySpec: RegexLangSpec = {
               calls: [],
               middleware: [],
               line: i + 1,
-            });
+            }));
           }
         }
-        if (opensDoBlock) blockStack.push(""); // `resources :x do` opens a nested block
+        if (opensDoBlock) pushBlock(""); // `resources :x do` opens a nested block
         continue;
       }
 
@@ -663,7 +710,7 @@ export const rubySpec: RegexLangSpec = {
         // Framework-internal controllers have no project code — skip the route.
         if (controller && FRAMEWORK_CONTROLLER_RE.test(controller)) continue;
 
-        routes.push({
+        routes.push(withGuards({
           path: currentPrefix() + (rawPath.startsWith("/") ? rawPath : "/" + rawPath),
           httpMethod: verbMatch[1].toUpperCase(),
           kind: "api",
@@ -671,14 +718,14 @@ export const rubySpec: RegexLangSpec = {
           calls: [],
           middleware: [],
           line: i + 1,
-        });
+        }));
         continue;
       }
 
       // Any other `end`-terminated block (if/unless/case/do/...) — track depth
       // so a later `end` doesn't pop a namespace/scope prefix prematurely.
       const opensIfBlock = /^(if|unless|case|begin|while|until|module|class|def)\b/.test(line);
-      if (opensDoBlock || opensIfBlock) blockStack.push("");
+      if (opensDoBlock || opensIfBlock) pushBlock("");
     }
 
     return routes;

@@ -1,5 +1,6 @@
-import type { RouteInfo, ClassInfo, PropertyInfo } from "../../../types/analysis.js";
+import type { PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
+import { extractCatalystRoutes, extractMojoDancerRoutes, isDancerFile, isMojoliciousFile, perlRequestAccess } from "./web.js";
 
 /**
  * Moose / Moo style attribute declaration:
@@ -12,19 +13,24 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
  * data-model graph. Without this Perl classes look empty even when they
  * have rich attribute declarations.
  */
-function parseMooseHas(line: string): PropertyInfo | null {
-  const head = line.match(/^\s*has\s+(?:['"]([A-Za-z_][\w-]*)['"]|([A-Za-z_]\w*))\s*=>/);
+function parseMooseHas(lines: string[], i: number): PropertyInfo | null {
+  const head = (lines[i] ?? "").match(/^\s*has\s+(?:['"]([A-Za-z_][\w-]*)['"]|([A-Za-z_]\w*))\s*=>/);
   if (!head) return null;
   const name = head[1] ?? head[2];
   if (!name) return null;
-  const isaMatch = line.match(/isa\s*=>\s*['"]([^'"]+)['"]/);
-  return {
+  // The option list often wraps one option per line — read to the closing `);`.
+  let text = lines[i]!;
+  for (let j = i + 1; j < Math.min(i + 12, lines.length) && !/\)\s*;/.test(text); j++) text += " " + lines[j]!;
+  const isaMatch = text.match(/isa\s*=>\s*['"]([^'"]+)['"]/);
+  const prop: PropertyInfo = {
     name,
     type: isaMatch?.[1] ?? null,
     visibility: "public",
     isStatic: false,
-    isReadonly: /is\s*=>\s*['"]ro['"]/.test(line),
+    isReadonly: /is\s*=>\s*['"]ro['"]/.test(text),
   };
+  if (/required\s*=>\s*(?:1|true)\b/.test(text)) prop.isRequired = true;
+  return prop;
 }
 
 export const perlSpec: RegexLangSpec = {
@@ -41,6 +47,20 @@ export const perlSpec: RegexLangSpec = {
       isExported: (_l, name) => !name.startsWith("_"),
     },
   ],
+
+  /**
+   * Only sigiled tokens are parameters (`sub f ($x, @rest)` signatures). A
+   * Catalyst `sub index :Path('/users')` has no signature — the paren the
+   * generic scanner finds belongs to the attribute, and `'/users'` is not a
+   * parameter.
+   */
+  parseParam: (p) => {
+    const m = p.trim().match(/^[$@%](\w+)\s*(?:=\s*(.+))?$/);
+    return m ? { name: m[1]!, type: null, defaultValue: m[2]?.trim() ?? null } : null;
+  },
+
+  /** What a Catalyst action reads from `$c->request` — see `web.ts`. */
+  extractRequestAccess: perlRequestAccess,
 
   // Perl packages are file-scoped, not block-scoped — see `extractClasses` below.
   classPatterns: [],
@@ -82,7 +102,7 @@ export const perlSpec: RegexLangSpec = {
       const methods = fns.filter((fn) => fn.line >= pkg.line && fn.line <= pkg.endLine);
       const properties: PropertyInfo[] = [];
       for (let i = pkg.line; i < pkg.endLine && i < lines.length; i++) {
-        const prop = parseMooseHas(lines[i] ?? "");
+        const prop = parseMooseHas(lines, i);
         if (prop) properties.push(prop);
       }
       return {
@@ -130,61 +150,11 @@ export const perlSpec: RegexLangSpec = {
     },
   ],
 
-  extractRoutes: (lines, _classes: ClassInfo[]) => {
-    const routes: RouteInfo[] = [];
-
-    // Catalyst: sub action_name :Path('/uri') :Args(n) :Method('GET') { ... }
-    // Also: :Local (uses action name as path), :Global, :Chained
-    for (let i = 0; i < lines.length; i++) {
-      // Attributes can span the `sub` line or continue on next line
-      const subMatch = lines[i].match(/^\s*sub\s+(\w+)\s*:(.+)$/);
-      if (!subMatch) continue;
-
-      const actionName = subMatch[1];
-      // Collect attributes from this line and continuation lines until we hit `{`
-      let attrText = ":" + subMatch[2];
-      for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
-        if (lines[j].includes("{")) {
-          attrText += " " + lines[j].substring(0, lines[j].indexOf("{"));
-          break;
-        }
-        attrText += " " + lines[j];
-      }
-
-      // :Path('/users') or :Path("/users") or :Path (uses action name)
-      // :Local / :Global / :Chained('parent')
-      let path: string | null = null;
-      let httpMethod: string | null = null;
-
-      const pathMatch = attrText.match(/:Path\s*\(\s*['"]([^'"]+)['"]\s*\)/);
-      const localMatch = attrText.match(/:Local\b/);
-      const globalMatch = attrText.match(/:Global\b/);
-      const methodMatch = attrText.match(/:Method\s*\(\s*['"](\w+)['"]\s*\)/);
-
-      if (pathMatch) {
-        path = pathMatch[1];
-      } else if (globalMatch) {
-        path = "/" + actionName;
-      } else if (localMatch) {
-        // :Local is relative to controller namespace; we don't know it here, so use action name
-        path = "/" + actionName;
-      }
-
-      if (methodMatch) httpMethod = methodMatch[1].toUpperCase();
-
-      if (path) {
-        routes.push({
-          path,
-          httpMethod,
-          kind: "api",
-          handler: actionName,
-          calls: [],
-          middleware: [],
-          line: i + 1,
-        });
-      }
-    }
-
+  extractRoutes: (lines) => {
+    // Catalyst attribute dispatch (`sub x :Path('/p') :Args(1)`), plus the
+    // Mojolicious / Dancer DSLs when the file says it uses them.
+    const routes = extractCatalystRoutes(lines);
+    if (isMojoliciousFile(lines) || isDancerFile(lines)) routes.push(...extractMojoDancerRoutes(lines));
     return routes;
   },
 };

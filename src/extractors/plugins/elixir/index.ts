@@ -1,56 +1,12 @@
 import type { RegexLangSpec } from "../shared/regex-base.js";
-import type { RouteInfo, DataSourceInfo } from "../../../types/analysis.js";
+import { extractClassesWithSpec } from "../shared/regex-base.js";
+import type { DataSourceInfo } from "../../../types/analysis.js";
+import { attachEctoSchema, attachPatternKeys, extractElixirRequestAccess, extractPhoenixRoutes } from "./phoenix.js";
 
 /** Last dotted segment of an Elixir module alias (`MyApp.Accounts.User` → `User`). */
 function lastSeg(mod: string): string {
   const parts = mod.split(".");
   return parts[parts.length - 1] || mod;
-}
-
-// ─── Phoenix routes ────────────────────────────────────────────────────────
-
-const PHX_SCOPE_RE = /^\s*scope\s+"([^"]+)"/;
-const PHX_ROUTE_RE = /^\s*(get|post|put|patch|delete|head|options)\s+"([^"]+)"\s*,\s*([A-Za-z_][\w.]*)\s*,\s*:([a-z_]\w*)/;
-const PHX_RESOURCES_RE = /^\s*resources\s+"([^"]+)"\s*,\s*([A-Za-z_][\w.]*)/;
-const PHX_LIVE_RE = /^\s*live\s+"([^"]+)"\s*,\s*([A-Za-z_][\w.]*)/;
-
-/**
- * Phoenix router macros (`get "/users", UserController, :index`), with a simple
- * `scope "/prefix" do … end` prefix stack. The stack is approximate (Elixir's
- * shared `end` keyword means a non-scope block close can mis-pop), but routers
- * are overwhelmingly nested scopes, so it holds for the common case.
- */
-function extractElixirRoutes(lines: string[]): RouteInfo[] {
-  const routes: RouteInfo[] = [];
-  const scopeStack: string[] = [];
-  const join = (p: string) => ((scopeStack.join("") + p).replace(/\/{2,}/g, "/") || "/");
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    const trimmed = line.trimStart();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const ln = i + 1;
-
-    const scope = line.match(PHX_SCOPE_RE);
-    if (scope && /\bdo\b/.test(line)) { scopeStack.push(scope[1]); continue; }
-    if (/^end\b/.test(trimmed) && scopeStack.length) { scopeStack.pop(); continue; }
-
-    const r = line.match(PHX_ROUTE_RE);
-    if (r) {
-      routes.push({ path: join(r[2]), httpMethod: r[1].toUpperCase(), kind: "api", handler: `${r[3]}.${r[4]}`, calls: [], middleware: [], line: ln });
-      continue;
-    }
-    const res = line.match(PHX_RESOURCES_RE);
-    if (res) {
-      routes.push({ path: join(res[1]), httpMethod: null, kind: "api", handler: res[2], calls: [], middleware: [], line: ln });
-      continue;
-    }
-    const live = line.match(PHX_LIVE_RE);
-    if (live) {
-      routes.push({ path: join(live[1]), httpMethod: null, kind: "frontend", handler: live[2], calls: [], middleware: [], line: ln });
-    }
-  }
-  return routes;
 }
 
 // ─── Ecto data access ──────────────────────────────────────────────────────
@@ -120,6 +76,46 @@ export const elixirSpec: RegexLangSpec = {
     },
   ],
 
-  extractRoutes: (lines) => extractElixirRoutes(lines),
+  /**
+   * `def show(conn, %{"id" => id})` — the second argument is a map pattern
+   * whose keys are the request; the generic splitter hands it over in pieces
+   * (`=>` reads as a bracket to it). Keep the map only under its `= name`
+   * binding and drop the fragments; `attachPatternKeys` reads the keys from
+   * the head line itself. `opts \\ []` keeps its name.
+   */
+  parseParam: (p) => {
+    const t = p.trim();
+    if (!t) return null;
+    // `%{…} = params` binds the whole map; the splitter may hand the `= params`
+    // tail over on a later fragment, so look for it on any piece. An unnamed
+    // pattern has no name to bind — its keys are the parameters.
+    const bound = t.match(/\}\s*=\s*([a-z_]\w*)\s*$/);
+    if (bound) return { name: bound[1]!, type: null, defaultValue: null };
+    if (t.startsWith("%") || /^["'\[{]|=>|^\w+\}$/.test(t)) return null;
+    const m = t.match(/^([a-z_]\w*[?!]?)\s*(?:\\\\\s*(.+))?$/);
+    return m ? { name: m[1]!, type: null, defaultValue: m[2]?.trim() ?? null } : null;
+  },
+
+  /**
+   * Every Elixir `def` sits in a `defmodule`, so the generic pass already lists
+   * each one as a method; overriding `extractClasses` makes the core drop the
+   * top-level duplicate (it does so for any spec that provides the hook), which
+   * is what lets the project-level handler join find `show` once, not twice.
+   */
+  extractClasses: (lines) => extractClassesWithSpec(lines, elixirSpec),
+
+  /** `conn.body_params["x"]`, `get_req_header(conn, "x")`, `cast(attrs, [...])` — see `phoenix.ts`. */
+  extractRequestAccess: (bodyLines) => extractElixirRequestAccess(bodyLines),
+
+  /** Ecto `schema` fields → properties; action-head pattern keys → `requestAccess`. */
+  postProcessClasses: (lines, classes) => {
+    for (const cls of classes) {
+      attachEctoSchema(lines, cls);
+      attachPatternKeys(lines, cls.methods);
+    }
+    return classes;
+  },
+
+  extractRoutes: (lines) => extractPhoenixRoutes(lines),
   extractDataSources: (lines) => extractElixirDataSources(lines),
 };

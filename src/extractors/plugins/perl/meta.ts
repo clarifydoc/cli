@@ -4,6 +4,7 @@ import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { perlSpec } from "./index.js";
 import { cpanPackages } from "./packages.js";
 import { perlManifest } from "./manifest.js";
+import { perlRequestSchema } from "./request-schema.js";
 
 export const perlMeta: LanguagePluginMeta = {
   // Perl: `unless`/`until` are the negated forms, `foreach` is a loop, and `#`
@@ -17,4 +18,5 @@ export const perlMeta: LanguagePluginMeta = {
   regexSpec: perlSpec,
   knownPackages: cpanPackages,
   builtinTypes: new Set(COMMON_PRIMITIVES),
+  requestSchema: perlRequestSchema,
 };
