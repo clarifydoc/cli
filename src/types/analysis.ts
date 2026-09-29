@@ -461,6 +461,16 @@ export interface FunctionInfo {
    * concrete URL that joins to the backend route. Optional; only JS/TS sets it.
    */
   urlTemplate?: string;
+  /**
+   * What this function reads from an HTTP request when it is a route handler
+   * whose bindings are not declared in its signature — `req.body.name`,
+   * `c.ShouldBindJSON(&input)`, `req.content.decode(T.self)`,
+   * `params.require(:user)`. Extracted per file by the plugin from the body;
+   * the project-level join (`core/request-schemas.ts`) copies it onto the
+   * route that names this function as its handler, so a Go/Express/Vapor
+   * route gets `params` although its registration line never shows them.
+   */
+  requestAccess?: RouteParamInfo[];
 }
 
 export interface PropertyInfo {
@@ -469,6 +479,14 @@ export interface PropertyInfo {
   visibility: "public" | "private" | "protected" | null;
   isStatic: boolean;
   isReadonly: boolean;
+  /**
+   * Attributes/annotations on the member, full text with arguments
+   * (`Required`, `JsonPropertyName("start_date")`). Optional; populated by
+   * plugins that read them (C#), consumed by the request-schema pass.
+   */
+  decorators?: string[];
+  /** Language-level "must be set" marker (C# 11 `required` modifier). */
+  isRequired?: boolean;
 }
 
 export interface ClassInfo {
@@ -481,8 +499,13 @@ export interface ClassInfo {
   isExported: boolean;
   line: number;
   endLine: number;
-  /** "interface" marks abstract types so the linker can route calls to concrete implementations. */
-  kind?: "class" | "interface";
+  /**
+   * "interface" marks abstract types so the linker can route calls to concrete
+   * implementations; "enum" marks a closed set of named values (its members
+   * are the `properties`), which the request-schema pass renders as a string
+   * enum instead of an object.
+   */
+  kind?: "class" | "interface" | "enum";
 }
 
 export interface RouteInfo {
@@ -500,8 +523,90 @@ export interface RouteInfo {
    */
   componentPath?: string | null;
   calls: CallInfo[];
+  /**
+   * Guards and filters applied to the route, as readable strings: Express
+   * middleware names, ASP.NET `Authorize(Policy=…)` / `AllowAnonymous`
+   * attributes (class-level ones inherited by every action). The structured
+   * form of the auth subset is `auth`.
+   */
   middleware: string[];
   line: number;
+  /**
+   * Who may call the route, when the framework states it declaratively
+   * (`[Authorize(Policy = …)]`, `@PreAuthorize`, `@UseGuards`). Absent when no
+   * auth attribute is visible on the action or its class — which is "unknown",
+   * not "open": a global policy may still apply.
+   */
+  auth?: RouteAuthInfo;
+  /**
+   * API versions the route serves, as declared (`[ApiVersion("2")]` → "2",
+   * `[ApiVersion(2.0)]` → "2.0"). Absent for unversioned or version-neutral
+   * routes. The cross-tier linker uses it to pick the twin that serves the
+   * concrete version a client calls (`/api/v3/…`).
+   */
+  versions?: string[];
+  /** Subset of `versions` marked deprecated (`[ApiVersion("2", Deprecated = true)]`). */
+  deprecatedVersions?: string[];
+  /**
+   * The action's parameters with where each binds from in the request. Lets a
+   * consumer that CALLS the endpoint know what body, query and route values it
+   * takes — the per-file `FunctionInfo.params` has names and types but not the
+   * binding.
+   */
+  params?: RouteParamInfo[];
+}
+
+/** Where a route handler parameter is read from. */
+export type RouteParamBinding =
+  | "body"
+  | "query"
+  | "route"
+  | "header"
+  | "form"
+  | "services";
+
+export interface RouteParamInfo {
+  name: string;
+  type: string | null;
+  /** Null when neither declared nor inferable. */
+  binding: RouteParamBinding | null;
+  /**
+   * True when `binding` was derived from the framework's default rules (the
+   * name appears in the path template; a complex type on an `[ApiController]`
+   * binds from the body) rather than an explicit `[FromX]` attribute.
+   */
+  inferred?: boolean;
+}
+
+/**
+ * The subset of JSON Schema the request-schema pass emits for a route's body:
+ * enough for a caller to build a valid request, small enough to embed per
+ * route. `$ref` names a type that was not resolved (or was cut by the depth
+ * cap) so the consumer can look it up in `classes` instead.
+ */
+export interface JsonSchemaNode {
+  type?: "object" | "array" | "string" | "integer" | "number" | "boolean";
+  format?: string;
+  nullable?: boolean;
+  properties?: Record<string, JsonSchemaNode>;
+  required?: string[];
+  items?: JsonSchemaNode;
+  $ref?: string;
+  enum?: string[];
+  additionalProperties?: JsonSchemaNode | boolean;
+}
+
+export interface RouteAuthInfo {
+  /** Named policies (`Policy = nameof(Permission.ManageSquad)` → "Permission.ManageSquad"). */
+  policies: string[];
+  /** Required roles (`Roles = "Admin,Editor"` → ["Admin","Editor"]). */
+  roles: string[];
+  /** Authentication schemes (`AuthenticationSchemes = ClubStaff` → "ClubStaff"). */
+  schemes: string[];
+  /** `[AllowAnonymous]` — overrides any `Authorize` on the class. */
+  anonymous: boolean;
+  /** True when every guard came from the enclosing class, none from the action itself. */
+  inherited: boolean;
 }
 
 /**
@@ -541,9 +646,11 @@ export interface ApiRouteLink {
    * this call" and "some route at this path does"; `base-prefix:<p>` means the
    * two sides disagreed about a proxy base (`/api`) and names the prefix that
    * reconciled them — the one piece of evidence needed to judge whether the
-   * match is real or an artefact of the default prefix list.
+   * match is real or an artefact of the default prefix list. `version-mismatch`
+   * means the client named a concrete API version (`/api/v5/`) that no route
+   * at that path declares serving; `target` is the best remaining guess.
    */
-  matchedVia?: "exact" | "method-fallback" | `base-prefix:${string}`;
+  matchedVia?: "exact" | "method-fallback" | "version-mismatch" | `base-prefix:${string}`;
 }
 
 export interface DataSourceInfo {
@@ -1599,7 +1706,12 @@ export interface ProjectAnalysis {
   linkGraph: LinkInfo[];
   interactiveElements: (InteractiveElementInfo & { filePath: string })[];
   events: (EventInfo & { filePath: string })[];
-  routeMap: RouteInfo[];
+  /**
+   * Every route in the project, one row per (sub-project, method, path,
+   * version set). `projectId` names the sub-project the declaring file
+   * belongs to — the same endpoint hosted by two services is two rows.
+   */
+  routeMap: (RouteInfo & { filePath?: string; projectId?: string; requestSchema?: JsonSchemaNode })[];
   /**
    * Outbound API calls — HTTP calls made FROM client code to external or internal endpoints.
    * Aggregated from each file's `dataSources` where `kind === "api-call"`.
