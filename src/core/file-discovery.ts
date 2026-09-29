@@ -2,7 +2,8 @@ import fg from "fast-glob";
 import { byOrdinal } from "./ordinal.js";
 import { resolve } from "path";
 import type { Language } from "../types/analysis.js";
-import { EXTENSION_TO_LANGUAGE } from "../parsers/language-map.js";
+import { EXTENSION_TO_LANGUAGE, getLanguageForFile } from "../parsers/language-map.js";
+import { NAMED_FILE_LANGUAGE } from "../extractors/registry.js";
 import { loadIgnorePatterns, isIgnored } from "./clarifydoc-ignore.js";
 
 /**
@@ -76,9 +77,11 @@ export async function discoverFiles(
 ): Promise<DiscoveryResult> {
   const root = resolve(projectRoot);
 
-  const sourcePatterns = Object.keys(EXTENSION_TO_LANGUAGE).map(
-    (ext) => `**/*${ext}`,
-  );
+  const sourcePatterns = [
+    ...Object.keys(EXTENSION_TO_LANGUAGE).map((ext) => `**/*${ext}`),
+    // Extension-less source files a plugin claims by basename (Play `conf/routes`).
+    ...[...NAMED_FILE_LANGUAGE.keys()].map((name) => `**/${name}`),
+  ];
   const patterns = options.include?.length ? options.include : sourcePatterns;
   const ignore = [...DEFAULT_IGNORE, ...(options.exclude ?? [])];
 
@@ -98,8 +101,7 @@ export async function discoverFiles(
   const skippedSensitive: string[] = [];
 
   for (const relativePath of files) {
-    const ext = getExtension(relativePath);
-    const language = EXTENSION_TO_LANGUAGE[ext];
+    const language = getLanguageForFile(relativePath);
     if (!language) continue;
 
     if (isSensitive(relativePath)) {

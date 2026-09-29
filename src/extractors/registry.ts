@@ -224,6 +224,19 @@ export const ACTIVATION_FILE_LANGUAGES: ReadonlyMap<string, readonly Language[]>
 })();
 
 /**
+ * Extension-less source-file basename → language (`routes` → scala), from
+ * every manifest's `namedFiles`. Discovery adds a glob per entry and the
+ * language lookup consults it before the extension table.
+ */
+export const NAMED_FILE_LANGUAGE: ReadonlyMap<string, Language> = (() => {
+  const map = new Map<string, Language>();
+  for (const manifest of ALL_MANIFESTS) {
+    for (const file of manifest.namedFiles ?? []) map.set(file.toLowerCase(), manifest.language);
+  }
+  return map;
+})();
+
+/**
  * Meta for a language. Returns undefined for languages with no registered
  * plugin; THROWS for a registered language whose body hasn't been loaded —
  * silently returning undefined there would degrade extraction quietly.

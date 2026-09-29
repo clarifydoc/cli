@@ -1,4 +1,4 @@
-import type { FunctionInfo, ClassInfo, CallInfo, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo } from "../../../types/analysis.js";
+import type { FunctionInfo, ClassInfo, CallInfo, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo } from "../../../types/analysis.js";
 
 /**
  * Shared regex-based extraction framework for languages without tree-sitter support.
@@ -46,6 +46,20 @@ export interface PropertyPattern {
   build: (m: RegExpMatchArray, line: string) => PropertyInfo | null;
 }
 
+/**
+ * How a language spells an attribute that sits on its OWN line above the
+ * declaration it decorates — Rust `#[serde(rename = "x")]`, VB `<Required>`,
+ * Swift `@Field(key: "x")`, Scala `@JsonProperty("x")`. Stacked lines are
+ * gathered (nearest last) and attached as the declaration's `decorators`,
+ * for functions, classes and properties alike, with the leading marker kept
+ * as written minus the outer delimiters (`serde(rename = "x")`, `Required`,
+ * `Field(key: "x")`).
+ */
+export interface AttributeLineSpec {
+  /** Matches a whole attribute line; group 1 is the attribute text to keep. */
+  pattern: RegExp;
+}
+
 /** Language-specific parameter parser. */
 export type ParamParser = (paramText: string) => ParamInfo | null;
 
@@ -73,9 +87,20 @@ export interface RegexLangSpec {
    *  like Go (`func foo() Type`), Rust (`fn foo() -> Type`), or VB
    *  (`Function Foo() As Type`) need to override the default (null). */
   parseReturnType?: (line: string) => string | null;
+  /** Attribute-on-its-own-line syntax; see {@link AttributeLineSpec}. */
+  attributeLine?: AttributeLineSpec;
+  /**
+   * What a handler body reads from the request, for frameworks whose handler
+   * signature declares nothing (`c.ShouldBindJSON(&req)`, `req.content.decode`,
+   * `params.require(:user)`). Called per extracted function/method with the
+   * body lines; the result lands on `FunctionInfo.requestAccess` and the
+   * project-level join copies it onto the route naming this handler.
+   */
+  extractRequestAccess?: (bodyLines: string[], fn: { name: string; params: ParamInfo[] }) => RouteParamInfo[];
   /** Extract routes. `filePath` is the project-relative path (needed by
-   *  convention-routed/static formats — e.g. an HTML page's URL is its path). */
-  extractRoutes?: (lines: string[], classes: ClassInfo[], filePath?: string) => RouteInfo[];
+   *  convention-routed/static formats — e.g. an HTML page's URL is its path).
+   *  `fns` are the file's top-level functions, already extracted. */
+  extractRoutes?: (lines: string[], classes: ClassInfo[], filePath?: string, fns?: FunctionInfo[]) => RouteInfo[];
   /** Override class extraction entirely (for languages like Perl where packages are file-scoped). */
   extractClasses?: (lines: string[], fns: FunctionInfo[]) => ClassInfo[];
   /** Extract UI screens/forms — analog of the Delphi DFM parser for languages with designer code. */
@@ -266,22 +291,46 @@ export function extractFunctionsWithSpec(lines: string[], spec: RegexLangSpec): 
       if (m && m[1] && !isControlFlowKeyword(m[1])) {
         const endLine = findEndLine(lines, i, resolveBlockStyle(spec), spec.keywordEnd);
         const calls = extractCallsFromBody(lines, i + 1, endLine, spec.lineCommentPrefixes, spec.callPatterns);
-        fns.push({
+        const fn: FunctionInfo = {
           name: m[1],
-          params: extractParamsFromLine(line, spec.parseParam),
+          params: extractParamsFromDeclaration(lines, i, m[1], spec.parseParam),
           returnType: spec.parseReturnType?.(line) ?? null,
           isAsync: asyncCheck?.(line) ?? false,
           isExported: isExported?.(line, m[1]) ?? true,
-          decorators: [],
+          decorators: attributeLinesAbove(lines, i, spec),
           calls,
           line: i + 1,
           endLine,
-        });
+        };
+        attachRequestAccess(fn, lines, i + 1, endLine, spec);
+        fns.push(fn);
         break;
       }
     }
   }
   return fns;
+}
+
+/** Stacked own-line attributes immediately above line `i` (nearest last). */
+export function attributeLinesAbove(lines: string[], i: number, spec: RegexLangSpec): string[] {
+  const re = spec.attributeLine?.pattern;
+  if (!re) return [];
+  const out: string[] = [];
+  for (let j = i - 1; j >= 0; j--) {
+    const m = lines[j]!.match(re);
+    if (!m) {
+      if (lines[j]!.trim() === "") continue; // a blank line does not end a stack
+      break;
+    }
+    out.unshift((m[1] ?? m[0]).trim());
+  }
+  return out;
+}
+
+function attachRequestAccess(fn: FunctionInfo, lines: string[], from: number, to: number, spec: RegexLangSpec): void {
+  if (!spec.extractRequestAccess) return;
+  const access = spec.extractRequestAccess(lines.slice(from, Math.min(to, lines.length)), fn);
+  if (access.length > 0) fn.requestAccess = access;
 }
 
 /** Generic class extraction driven by a spec. */
@@ -311,30 +360,32 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
               const methodStart = i + 1 + j;
               const methodEnd = findEndLine(lines, methodStart, resolveBlockStyle(spec), spec.keywordEnd);
               const calls = extractCallsFromBody(lines, methodStart + 1, methodEnd, spec.lineCommentPrefixes, spec.callPatterns);
-              methods.push({
+              const method: FunctionInfo = {
                 name: fm[1],
-                params: extractParamsFromLine(bodyLine, spec.parseParam),
+                params: extractParamsFromDeclaration(lines, methodStart, fm[1], spec.parseParam),
                 returnType: spec.parseReturnType?.(bodyLine) ?? null,
                 isAsync: asyncCheck?.(bodyLine) ?? false,
                 isExported: isExported?.(bodyLine, fm[1]) ?? true,
-                decorators: [],
+                decorators: attributeLinesAbove(lines, methodStart, spec),
                 calls,
                 line: methodStart + 1,
                 endLine: methodEnd,
-              });
+              };
+              attachRequestAccess(method, lines, methodStart + 1, methodEnd, spec);
+              methods.push(method);
               break;
             }
           }
         }
 
         // Extract properties (typed fields)
-        const properties: PropertyInfo[] = extractPropertiesFromBody(bodyLines, spec.propertyPatterns);
+        const properties: PropertyInfo[] = extractPropertiesFromBody(bodyLines, spec.propertyPatterns, spec);
 
         classes.push({
           name: m[1],
           extends: getExtends?.(lines[i]) ?? null,
           implements: [],
-          decorators: [],
+          decorators: attributeLinesAbove(lines, i, spec),
           methods,
           properties,
           isExported: true,
@@ -403,14 +454,89 @@ function defaultParseParam(paramText: string): ParamInfo | null {
 
 /** Extract parameters from a function declaration line using a language-specific parser. */
 export function extractParamsFromLine(line: string, parseParam: ParamParser = defaultParseParam): ParamInfo[] {
-  const parenMatch = line.match(/\(([^)]*)\)/);
-  if (!parenMatch || !parenMatch[1].trim()) return [];
+  return extractParamsFromDeclaration([line], 0, null, parseParam);
+}
+
+/**
+ * The parameter list of the declaration starting at `lines[i]`: the balanced
+ * `(…)` that follows the function NAME (so a Go receiver `func (h *H) Get(`
+ * is skipped), continued across following lines when the signature wraps,
+ * and split only at depth-0 commas so `Json(p): Json<T>` and
+ * `Map<String, Int>` stay whole.
+ */
+export function extractParamsFromDeclaration(
+  lines: string[],
+  i: number,
+  name: string | null,
+  parseParam: ParamParser = defaultParseParam,
+): ParamInfo[] {
+  const first = lines[i] ?? "";
+  let start = -1;
+  if (name) {
+    // `name(`, `name (`, VB `[name](`, Perl `name :Path(...)` (attributes carry
+    // parens too — take the paren right after the name only).
+    const idx = first.search(new RegExp(`(?:^|[^\\w])\\[?${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\]?\\s*\\(`));
+    if (idx >= 0) start = first.indexOf("(", idx + 1);
+  }
+  if (start < 0) start = first.indexOf("(");
+  if (start < 0) return [];
+
+  // Balanced scan, continuing onto later lines for a wrapped signature.
+  let text = "";
+  let depth = 0;
+  let closed = false;
+  for (let li = i; li < Math.min(lines.length, i + 12) && !closed; li++) {
+    const line = lines[li]!;
+    for (let c = li === i ? start : 0; c < line.length; c++) {
+      const ch = line[c]!;
+      if (ch === "(") {
+        depth++;
+        if (depth === 1) continue;
+      } else if (ch === ")") {
+        depth--;
+        if (depth === 0) {
+          closed = true;
+          break;
+        }
+      }
+      text += ch;
+    }
+    if (!closed) text += " ";
+  }
+  if (!closed || !text.trim()) return [];
+
   const result: ParamInfo[] = [];
-  for (const p of parenMatch[1].split(",")) {
+  for (const p of splitTopLevel(text)) {
     const param = parseParam(p);
     if (param && param.name && param.name.length > 0) result.push(param);
   }
   return result;
+}
+
+/** Split on commas outside `()`, `[]`, `<>`, `{}` and quotes. */
+export function splitTopLevel(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  let quote: string | null = null;
+  for (const ch of text) {
+    if (quote) {
+      cur += ch;
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") quote = ch;
+    else if ("([<{".includes(ch)) depth++;
+    else if (")]>}".includes(ch)) depth = Math.max(0, depth - 1);
+    if (ch === "," && depth === 0) {
+      out.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur.trim()) out.push(cur);
+  return out;
 }
 
 /** Extract properties from class body lines using language-specific detectors. */
@@ -421,16 +547,27 @@ export function extractParamsFromLine(line: string, parseParam: ParamParser = de
  * count. For an indent-delimited language no braces are seen, the depth stays
  * 0, and every match is kept as before.
  */
-function extractPropertiesFromBody(bodyLines: string[], propertyPatterns: PropertyPattern[] = []): PropertyInfo[] {
+function extractPropertiesFromBody(
+  bodyLines: string[],
+  propertyPatterns: PropertyPattern[] = [],
+  spec?: RegexLangSpec,
+): PropertyInfo[] {
   const properties: PropertyInfo[] = [];
   let depth = 0;
-  for (const line of bodyLines) {
+  for (let i = 0; i < bodyLines.length; i++) {
+    const line = bodyLines[i]!;
     if (depth === 0) {
       for (const pp of propertyPatterns) {
         const m = line.match(pp.pattern);
         if (!m) continue;
         const prop = pp.build(m, line);
-        if (prop) properties.push(prop);
+        if (prop) {
+          if (spec) {
+            const attrs = attributeLinesAbove(bodyLines, i, spec);
+            if (attrs.length > 0) prop.decorators = [...(prop.decorators ?? []), ...attrs];
+          }
+          properties.push(prop);
+        }
       }
     }
     // Applied AFTER the match so a computed property (`var x: Int { … }`) is
