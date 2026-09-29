@@ -4,6 +4,7 @@ import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { dartSpec } from "./index.js";
 import { pubPackages } from "./packages.js";
 import { dartManifest } from "./manifest.js";
+import { dartRequestSchema } from "./request-schema.js";
 
 const DART_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -26,4 +27,5 @@ export const dartMeta: LanguagePluginMeta = {
   builtinTypes: DART_BUILTINS,
   apiCallRoots: ["http", "dio", "Dio", "Client", "client"],
   dbCallRoots: ["FirebaseFirestore", "Firestore", "Database", "db", "supabase"],
+  requestSchema: dartRequestSchema,
 };

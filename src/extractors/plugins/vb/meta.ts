@@ -2,6 +2,7 @@ import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { vbSpec } from "./index.js";
 import { vbManifest } from "./manifest.js";
+import { vbRequestSchema } from "./request-schema.js";
 
 const VB_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -17,4 +18,5 @@ export const vbMeta: LanguagePluginMeta = {
   ...vbManifest,
   regexSpec: vbSpec,
   builtinTypes: VB_BUILTINS,
+  requestSchema: vbRequestSchema,
 };
