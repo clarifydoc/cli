@@ -61,3 +61,62 @@ let rows = try await sql.raw("SELECT id, name FROM customers WHERE active = true
     expect(s.some((d) => d.kind === "database" && d.entity === "customers")).toBe(true);
   });
 });
+
+describe("Vapor route guards and params", () => {
+  it("inherits authenticator/guard middleware from grouped(...) as auth", () => {
+    const routes = extractVaporRoutes(lines(`
+let todos = app.grouped("api", "todos")
+let protected = todos.grouped(UserToken.authenticator(), User.guardMiddleware())
+todos.get(":id", use: TodoController.show)
+protected.post(use: TodoController.create)
+protected.delete(":id", use: TodoController.remove)
+`));
+    expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual([
+      "GET /api/todos/:id",
+      "POST /api/todos",
+      "DELETE /api/todos/:id",
+    ]);
+    expect(routes[0]!.auth).toBeUndefined();
+    expect(routes[0]!.middleware).toEqual([]);
+    expect(routes[1]!.middleware).toEqual(["UserToken.authenticator()", "User.guardMiddleware()"]);
+    expect(routes[1]!.auth).toEqual({
+      policies: ["User.guardMiddleware"],
+      roles: [],
+      schemes: ["UserToken.authenticator"],
+      anonymous: false,
+      inherited: true,
+    });
+    // A `use:` handler lives elsewhere: params come from the project-level join.
+    expect(routes[1]!.params).toBeUndefined();
+  });
+
+  it("reads an inline grouped(...) chain as the route's own guard and keeps plain middleware as text", () => {
+    const routes = extractVaporRoutes(lines(`
+app.grouped(JWTMiddleware()).grouped("me").get("profile") { req in
+    let user = try req.auth.require(User.self)
+    return user
+}
+app.grouped(RateLimiter(perMinute: 10)).get("open") { req in "OK" }
+`));
+    expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /me/profile", "GET /open"]);
+    expect(routes[0]!.auth).toEqual({ policies: [], roles: [], schemes: ["JWTMiddleware"], anonymous: false, inherited: false });
+    expect(routes[0]!.middleware).toEqual(["JWTMiddleware()"]);
+    expect(routes[0]!.params).toEqual([{ name: "auth", type: "User", binding: "services", inferred: true }]);
+    expect(routes[1]!.auth).toBeUndefined();
+    expect(routes[1]!.middleware).toEqual(["RateLimiter(perMinute: 10)"]);
+  });
+
+  it("derives route and query params for a trailing-closure handler from its path and body", () => {
+    const routes = extractVaporRoutes(lines(`
+app.get("users", ":id", "posts") { req in
+    let id = req.parameters.get("id")
+    let q = req.query["q"]
+    return []
+}
+`));
+    expect(routes[0]!.params).toEqual([
+      { name: "id", type: null, binding: "route", inferred: true },
+      { name: "q", type: null, binding: "query", inferred: true },
+    ]);
+  });
+});

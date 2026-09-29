@@ -5,8 +5,11 @@ import type {
   DataSourceInfo,
   ParamInfo,
 } from "../../../types/analysis.js";
+import type { PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
-import { extractClassesWithSpec } from "../shared/regex-base.js";
+import { extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
+import { applyRouteMeta, type GuardAttr } from "../../shared/route-metadata.js";
+import { extractDartRequestAccess, middlewareGuard } from "./request-schema.js";
 
 /**
  * Dart (and therefore Flutter) regex extraction.
@@ -214,8 +217,81 @@ const SHELF_ROUTE_RE =
 /** GoRouter `GoRoute(path: '/users/:id', builder: (c, s) => UsersPage())`. */
 const GOROUTE_RE = /GoRoute\(\s*path:\s*['"]([^'"]+)['"]/;
 
+/**
+ * A shelf `Pipeline` — where the middleware every route behind it inherits is
+ * declared:
+ *
+ *   final handler = const Pipeline()
+ *       .addMiddleware(logRequests())
+ *       .addMiddleware(authMiddleware())
+ *       .addHandler(router);
+ *
+ * The chain may wrap lines, so it is read as one statement up to its `;`.
+ * `addHandler(x)` names the router it wraps; when that identifier is the
+ * receiver of route registrations in this file, only those routes inherit
+ * the middleware — otherwise (`addHandler(server.router)`, `.call`) every
+ * api route in the file does.
+ */
+interface Pipeline {
+  targets: Set<string>;
+  middleware: string[];
+  guards: GuardAttr[];
+}
+
+/** The balanced argument text of the call whose `(` is at `open`, and the index after its `)`. */
+function balancedArgs(text: string, open: number): { args: string; end: number } | null {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "(") depth++;
+    else if (ch === ")") {
+      depth--;
+      if (depth === 0) return { args: text.slice(open + 1, i), end: i + 1 };
+    }
+  }
+  return null;
+}
+
+function extractPipelines(lines: string[]): Pipeline[] {
+  const out: Pipeline[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!/\bPipeline\s*\(\s*\)/.test(lines[i] ?? "")) continue;
+    // The whole statement, up to its `;`.
+    let text = "";
+    for (let j = i; j < Math.min(lines.length, i + 20); j++) {
+      const line = (lines[j] ?? "").replace(/\/\/.*$/, "");
+      text += " " + line;
+      if (line.includes(";")) break;
+    }
+    const pipeline: Pipeline = { targets: new Set(), middleware: [], guards: [] };
+    const re = /\.(addMiddleware|addHandler)\s*\(/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const call = balancedArgs(text, m.index + m[0].length - 1);
+      if (!call) break;
+      re.lastIndex = call.end;
+      if (m[1] === "addHandler") {
+        for (const id of call.args.matchAll(/[A-Za-z_$]\w*/g)) pipeline.targets.add(id[0]);
+        continue;
+      }
+      for (const arg of splitTopLevel(call.args)) {
+        const expr = arg.trim();
+        if (!expr) continue;
+        const guard = middlewareGuard(expr);
+        if (guard) pipeline.guards.push(guard);
+        else pipeline.middleware.push(expr.replace(/\s+/g, " "));
+      }
+    }
+    if (pipeline.middleware.length > 0 || pipeline.guards.length > 0) out.push(pipeline);
+    i += text.split("\n").length - 1;
+  }
+  return out;
+}
+
 function extractDartRoutes(lines: string[]): RouteInfo[] {
   const routes: RouteInfo[] = [];
+  /** Route → the router variable it was registered on. */
+  const receiverOf = new Map<RouteInfo, string>();
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     const trimmed = line.trimStart();
@@ -228,7 +304,7 @@ function extractDartRoutes(lines: string[]): RouteInfo[] {
       if (!ROUTER_RECEIVER_RE.test(receiver)) continue;
       const verb = m[2]!;
       if (verb === "mount") continue; // sub-router mount, not an endpoint
-      routes.push({
+      const route: RouteInfo = {
         path: m[3]!,
         httpMethod: verb.toUpperCase(),
         kind: "api",
@@ -236,7 +312,9 @@ function extractDartRoutes(lines: string[]): RouteInfo[] {
         calls: [],
         middleware: [],
         line: ln,
-      });
+      };
+      receiverOf.set(route, receiver);
+      routes.push(route);
     }
 
     // GoRouter declarative routes → frontend screens.
@@ -252,6 +330,18 @@ function extractDartRoutes(lines: string[]): RouteInfo[] {
         middleware: [],
         line: ln,
       });
+    }
+  }
+
+  // Pipeline middleware is inherited by the routes it wraps. `params` stay
+  // absent on purpose: the handler is named, and the project-level join reads
+  // its signature (`<id>` ↔ `String id`) and body.
+  for (const pipeline of extractPipelines(lines)) {
+    const api = routes.filter((r) => r.kind === "api");
+    const named = api.filter((r) => pipeline.targets.has(receiverOf.get(r) ?? ""));
+    for (const route of named.length > 0 ? named : api) {
+      route.middleware.push(...pipeline.middleware);
+      applyRouteMeta(route, { inheritedGuards: pipeline.guards });
     }
   }
   return routes;
@@ -314,6 +404,48 @@ export const dartSpec: RegexLangSpec = {
 
   parseParam: parseDartParam,
   parseReturnType: parseDartReturnType,
+
+  /**
+   * Fields: `final int id;`, `String? name;`, `late List<String> tags;`,
+   * `int count = 0;`. A type is required (an untyped `var x = …` is skipped),
+   * and only declarations at the class body's own brace depth count, so a
+   * method local never becomes a field. Annotations sit inline
+   * (`@JsonKey(name: 'x') final String name;`) or on their own line above
+   * (`attributeLine`); both become decorators with the `@` dropped. A
+   * non-nullable field without an initializer must be set by every
+   * constructor — and by every `fromJson` — so it is `isRequired`.
+   */
+  propertyPatterns: [
+    {
+      pattern: new RegExp(
+        String.raw`^\s*((?:@[\w.]+(?:\([^)]*\))?\s+)*)` + // (1) inline annotations
+          String.raw`(?:(static)\s+)?((?:(?:final|const|late)\s+)*)` + // (2) static, (3) final/const/late
+          String.raw`(?!(?:${STMT_KEYWORDS}|abstract|class|enum|mixin|extension|external|factory|operator|typedef|void)\b)` +
+          String.raw`([A-Za-z_$][\w$.]*(?:<[^;=]*>)?\??)\s+` + // (4) type
+          String.raw`([A-Za-z_$]\w*)\s*` + // (5) name
+          String.raw`(?:(=)\s*.*|;)\s*$`, // (6) `=` when initialised
+      ),
+      build: (m) => {
+        const type = m[4]!;
+        const decorators = [...m[1]!.matchAll(/@([\w.]+(?:\([^)]*\))?)/g)].map((d) => d[1]!.replace(/\s+/g, " "));
+        const prop: PropertyInfo = {
+          name: m[5]!,
+          type,
+          visibility: m[5]!.startsWith("_") ? "private" : "public",
+          isStatic: m[2] === "static" || /\bconst\b/.test(m[3]!),
+          isReadonly: /\b(?:final|const)\b/.test(m[3]!),
+        };
+        if (decorators.length > 0) prop.decorators = decorators;
+        if (m[6] !== "=" && !type.endsWith("?") && type !== "dynamic" && !prop.isStatic) prop.isRequired = true;
+        return prop;
+      },
+    },
+  ],
+
+  /** `@JsonKey(name: 'created_at')` / `@override` on the line above a declaration. */
+  attributeLine: { pattern: /^\s*@([\w.]+(?:\([^)]*\))?)\s*$/ },
+
+  extractRequestAccess: extractDartRequestAccess,
 
   classPatterns: [
     {

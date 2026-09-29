@@ -14,6 +14,8 @@ export const scalaManifest: LanguagePluginManifest = {
   // Without these an sbt module is not a sub-project, so every Scala file in a
   // multi-module build lands in the enclosing repo's bucket.
   activationFiles: ["build.sbt", "build.sc"],
+  // Play's routes table has no extension; the route extractor dispatches on its basename.
+  namedFiles: ["routes"],
   externalModulePrefixes: ["scala.", "java.", "javax.", "akka.", "cats.", "zio.", "play.", "org.apache.", "io.circe", "doobie.", "slick."],
   frameworkImportHints: { "slick.": "slick", "doobie.": "doobie", "io.getquill": "quill" },
 };
