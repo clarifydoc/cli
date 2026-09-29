@@ -189,3 +189,40 @@ export function confidenceNote(confidence?: string, resolvedBy?: string, strateg
   if (parts.length > 0 && strategy && strategy !== "direct") parts.push(`via ${strategy}`);
   return parts.length ? ` [${parts.join(", ")}]` : "";
 }
+
+/**
+ * The attribute layer of a route in a few words, for a route mentioned in
+ * passing (a screen's call, a file's declared routes, a trace's reach):
+ * `[anonymous]`, `[auth: policy X; roles A, B; scheme jwt | v2, v3 (deprecated)]`.
+ * Empty when the route declares nothing.
+ */
+export function routeGuardNote(route: {
+  auth?: { policies: string[]; roles: string[]; schemes: string[]; anonymous: boolean } | undefined;
+  versions?: string[];
+  deprecatedVersions?: string[];
+}): string {
+  const parts: string[] = [];
+  const a = route.auth;
+  if (a) {
+    if (a.anonymous) parts.push("anonymous");
+    else {
+      const bits = [
+        a.policies.length ? `policy ${a.policies.join(", ")}` : "",
+        a.roles.length ? `roles ${a.roles.join(", ")}` : "",
+        a.schemes.length ? `scheme ${a.schemes.join(", ")}` : "",
+      ].filter(Boolean);
+      if (bits.length) parts.push(`auth: ${bits.join("; ")}`);
+    }
+  }
+  if (route.versions?.length) {
+    parts.push(
+      route.versions.map((v) => (route.deprecatedVersions?.includes(v) ? `v${v} (deprecated)` : `v${v}`)).join(", "),
+    );
+  }
+  return parts.length ? ` [${parts.join(" | ")}]` : "";
+}
+
+/** `(version-mismatch)` on a frontend→backend link whose concrete version no route declares. */
+export function versionNote(link: { matchedVia?: string }): string {
+  return link.matchedVia === "version-mismatch" ? " (version-mismatch)" : "";
+}

@@ -61,6 +61,7 @@ describe("clarifydoc MCP tools — react fixture", () => {
       "clarifydoc_status",
       "clarifydoc_search",
       "clarifydoc_routes",
+      "clarifydoc_contract",
       "clarifydoc_screens",
       "clarifydoc_file",
       "clarifydoc_trace",
@@ -144,6 +145,7 @@ describe("clarifydoc MCP tools — react fixture", () => {
   it.each([
     ["clarifydoc_search", { query: "zzz-not-a-thing-zzz" }],
     ["clarifydoc_routes", { path: "/zzz-not-a-thing" }],
+    ["clarifydoc_contract", { path: "/zzz-not-a-thing" }],
     ["clarifydoc_screens", { query: "zzz-not-a-thing" }],
     ["clarifydoc_trace", { symbol: "zzzNotAThing" }],
     ["clarifydoc_data_flows", { resource: "zzz-not-a-thing" }],
@@ -408,5 +410,66 @@ describe("clarifydoc MCP tools — csharp fixture (route attribute layer)", () =
     const miss = await call(server, "clarifydoc_routes", { project: "no-such-service", method: "GET" });
     expect(miss.text).toContain("project");
     expect(miss.text).toContain("clarifydoc_routes without `project`");
+  });
+});
+
+describe("clarifydoc MCP tools — attribute-layer queries (csharp fixture)", () => {
+  const { server } = serverFor("sample-csharp-api");
+
+  it("routes filter by policy, role, scheme, anonymous, version, deprecated and body type", async () => {
+    const policy = await call(server, "clarifydoc_routes", { policy: "UsersRead", limit: 100 });
+    expect(policy.text).toMatch(/# Routes \(4 matches\)/);
+    const role = await call(server, "clarifydoc_routes", { role: "UserManager" });
+    expect(role.text).toContain("# Routes (1 match)");
+    expect(role.text).toContain("POST /api/v{version}/Users");
+    const anonymous = await call(server, "clarifydoc_routes", { anonymous: true });
+    expect(anonymous.text).toContain("# Routes (1 match)");
+    expect(anonymous.text).toContain("DELETE /api/v{version}/Users/{id}");
+    const guarded = await call(server, "clarifydoc_routes", { anonymous: false, limit: 100 });
+    expect(guarded.text).toMatch(/# Routes \(3 matches\)/); // routes with no auth at all are neither
+    const v1 = await call(server, "clarifydoc_routes", { version: "1.0", limit: 100 });
+    expect(v1.text).toMatch(/# Routes \(3 matches\)/); // POST is v2 only
+    const deprecated = await call(server, "clarifydoc_routes", { deprecated: true, limit: 100 });
+    expect(deprecated.text).toMatch(/# Routes \(3 matches\)/);
+    const body = await call(server, "clarifydoc_routes", { bodyType: "CreateUserDto", limit: 100 });
+    expect(body.text).toMatch(/# Routes \(2 matches\)/);
+    const miss = await call(server, "clarifydoc_routes", { scheme: "no-such-scheme", method: "GET" });
+    expect(miss.text).toContain("clarifydoc_routes without `scheme`");
+  });
+
+  it("search finds a route by its policy and shows the guard on the row", async () => {
+    const { text } = await call(server, "clarifydoc_search", { query: "UsersRead", kinds: ["route"] });
+    expect(text).toContain("[route]");
+    expect(text).toContain("auth: policy Policies.UsersRead");
+  });
+
+  it("contract renders one endpoint as an OpenAPI-shaped operation with security, parameters and body schema", async () => {
+    const { text, isError } = await call(server, "clarifydoc_contract", { path: "/api/v{version}/Users", method: "POST" });
+    expect(isError).toBe(false);
+    expect(text).toContain("# POST /api/v{version}/Users → Create");
+    expect(text).toContain("guards: Authorize(");
+    const json = JSON.parse(text.split("```json")[1]!.split("```")[0]!);
+    expect(json).toMatchObject({
+      operationId: "Create",
+      security: [{ Bearer: ["Admin", "UserManager"] }],
+      "x-policies": ["Policies.UsersRead"],
+      "x-api-versions": ["2"],
+    });
+    expect(json.requestBody.content["application/json"].schema).toMatchObject({ type: "object", required: ["name"] });
+    expect(json.requestBody.content["application/json"].schema.properties.email_address).toEqual({ type: "string" });
+    // Path parameters come from the route's params, typed and required.
+    const byId = await call(server, "clarifydoc_contract", { path: "/api/v{version}/Users/{id}", method: "GET" });
+    const op = JSON.parse(byId.text.split("```json")[1]!.split("```")[0]!);
+    expect(op.parameters).toEqual([
+      { name: "id", in: "path", required: true, schema: { type: "integer" }, "x-inferred": true },
+      { name: "version", in: "path", required: true, schema: {}, "x-inferred": true }, // the v{version} segment
+    ]);
+    expect(op.deprecated).toBeUndefined(); // serves v1 (deprecated) AND v2
+  });
+
+  it("contract lists the candidates when the path is ambiguous, and misses point elsewhere", async () => {
+    const many = await call(server, "clarifydoc_contract", { path: "/Users" });
+    expect(many.text).toMatch(/# \d+ endpoints match "\/Users"/);
+    expect(many.text).toContain("narrow with method, project, file or version");
   });
 });

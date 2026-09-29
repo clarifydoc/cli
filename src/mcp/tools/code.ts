@@ -20,10 +20,12 @@ import {
   plural,
   requiredStringArg,
   routeLabel,
+  routeGuardNote,
   section,
   stringArg,
   stringArrayArg,
   tally,
+  versionNote,
 } from "../format.js";
 import { mustResolveFile, requireAnalysis, stalenessHint, type ToolContext } from "./context.js";
 import { filterToDrop, missHeadline, noResults, type DroppableFilter } from "../empty.js";
@@ -54,6 +56,13 @@ export function routesTool(ctx: ToolContext): McpTool {
             "Only routes of this sub-project (substring of its id or name, e.g. 'Vikardaekning.API'). " +
             "The same endpoint hosted by two services is two routes; this picks the service.",
         },
+        policy: { type: "string", description: "Only routes whose auth names this policy (substring), e.g. 'Rettighed.Vikardaekke'." },
+        role: { type: "string", description: "Only routes requiring this role (substring)." },
+        scheme: { type: "string", description: "Only routes authenticated by this scheme (substring), e.g. 'jwt', 'sanctum'." },
+        anonymous: { type: "boolean", description: "true: only routes that waive authentication; false: only guarded routes." },
+        version: { type: "string", description: "Only routes serving this API version, e.g. '2' (matches '2' and '2.0')." },
+        deprecated: { type: "boolean", description: "true: only routes serving a deprecated version." },
+        bodyType: { type: "string", description: "Only routes whose body parameter type contains this (substring), e.g. 'CreateUserDto'." },
         detail: {
           type: "boolean",
           description:
@@ -81,6 +90,24 @@ export function routesTool(ctx: ToolContext): McpTool {
       const withSchema = booleanArg(args, "schema", false);
       const detailArg = booleanArg(args, "detail", false);
       const limit = numberArg(args, "limit", 40, { max: 500 });
+      const policyFilter = stringArg(args, "policy");
+      const roleFilter = stringArg(args, "role");
+      const schemeFilter = stringArg(args, "scheme");
+      const anonymousFilter = "anonymous" in args ? booleanArg(args, "anonymous") : undefined;
+      const versionFilter = stringArg(args, "version");
+      const deprecatedFilter = "deprecated" in args ? booleanArg(args, "deprecated") : undefined;
+      const bodyTypeFilter = stringArg(args, "bodyType");
+      // Attribute-layer predicates. A route with no `auth` is "nothing declared",
+      // so it matches neither anonymous:true nor anonymous:false.
+      const canon = (v: string) => v.replace(/^v/i, "").replace(/\.0$/, "");
+      const attrFilters: Array<DroppableFilter<RouteWithFile>> = [];
+      if (policyFilter) attrFilters.push({ label: "policy", keep: (r) => (r.auth?.policies ?? []).some((x) => contains(x, policyFilter)) });
+      if (roleFilter) attrFilters.push({ label: "role", keep: (r) => (r.auth?.roles ?? []).some((x) => contains(x, roleFilter)) });
+      if (schemeFilter) attrFilters.push({ label: "scheme", keep: (r) => (r.auth?.schemes ?? []).some((x) => contains(x, schemeFilter)) });
+      if (anonymousFilter !== undefined) attrFilters.push({ label: "anonymous", keep: (r) => !!r.auth && r.auth.anonymous === anonymousFilter });
+      if (versionFilter) attrFilters.push({ label: "version", keep: (r) => (r.versions ?? []).some((v) => canon(v) === canon(versionFilter)) });
+      if (deprecatedFilter !== undefined) attrFilters.push({ label: "deprecated", keep: (r) => ((r.deprecatedVersions?.length ?? 0) > 0) === deprecatedFilter });
+      if (bodyTypeFilter) attrFilters.push({ label: "bodyType", keep: (r) => (r.params ?? []).some((p) => p.binding === "body" && contains(p.type, bodyTypeFilter)) });
 
       const projectNames = new Map((summary.subProjects ?? []).map((p) => [p.id, p.name]));
       const inProject = (r: RouteWithFile) =>
@@ -96,6 +123,7 @@ export function routesTool(ctx: ToolContext): McpTool {
       }
       if (fileFilter) routes = routes.filter((r) => contains(r.filePath, fileFilter));
       if (projectFilter) routes = routes.filter(inProject);
+      for (const f of attrFilters) routes = routes.filter(f.keep);
 
       if (routes.length === 0) {
         const all = (summary.routeMap ?? []) as RouteWithFile[];
@@ -114,6 +142,7 @@ export function routesTool(ctx: ToolContext): McpTool {
             : undefined,
           fileFilter ? { label: "file", keep: (r: RouteWithFile) => contains(r.filePath, fileFilter) } : undefined,
           projectFilter ? { label: "project", keep: inProject } : undefined,
+          ...attrFilters,
         ].filter((f): f is DroppableFilter<RouteWithFile> => f !== undefined));
         return {
           text: noResults({
@@ -123,6 +152,13 @@ export function routesTool(ctx: ToolContext): McpTool {
               ["kind", kind],
               ["file", fileFilter],
               ["project", projectFilter],
+              ["policy", policyFilter],
+              ["role", roleFilter],
+              ["scheme", schemeFilter],
+              ["anonymous", anonymousFilter === undefined ? undefined : String(anonymousFilter)],
+              ["version", versionFilter],
+              ["deprecated", deprecatedFilter === undefined ? undefined : String(deprecatedFilter)],
+              ["bodyType", bodyTypeFilter],
             ]),
             holds: `The analysis holds ${plural(all.length, "route")}${
               all.length ? ` — methods present: ${countMap(tally(all, (r) => (r.httpMethod ?? "ANY").toUpperCase()))}` : ""
@@ -141,7 +177,7 @@ export function routesTool(ctx: ToolContext): McpTool {
       for (const link of summary.apiRouteLinks ?? []) {
         const key = `${link.target}:${link.targetLine}`;
         const list = callers.get(key) ?? [];
-        list.push(`${loc(link.source, link.sourceLine)}${confidenceNote(link.confidence)}`);
+        list.push(`${loc(link.source, link.sourceLine)}${confidenceNote(link.confidence)}${versionNote(link)}`);
         callers.set(key, list);
       }
       // Data effects, by route entry file + label (dataFlows uses "METHOD /path"
@@ -292,7 +328,8 @@ export function screensTool(ctx: ToolContext): McpTool {
           ])}`,
         );
         if (f?.callsRoutes.length) {
-          const calls = [...new Set(f.callsRoutes.map((l) => `${routeLabel(l.method, l.routePath)} → ${l.target}`))];
+          const calls = [...new Set(f.callsRoutes.map((l) =>
+            `${routeLabel(l.method, l.routePath)} → ${l.target}${routeGuardNote(routeAt(summary, l.target, l.targetLine))}${versionNote(l)}`))];
           const { shown: cs, hidden: ch } = cap(calls, 6);
           extra.push(`    calls: ${cs.join(" · ")}${ch ? ` … +${ch}` : ""}`);
         } else if (f?.apiCalls.length) {
@@ -436,7 +473,7 @@ export function fileTool(ctx: ToolContext): McpTool {
         const lines = bulletList(
           f.routes,
           limit,
-          (r) => `${routeLabel(r.httpMethod, r.path)} [${r.kind}]${r.handler ? ` → ${r.handler}` : ""} (line ${r.line})`,
+          (r) => `${routeLabel(r.httpMethod, r.path)} [${r.kind}]${r.handler ? ` → ${r.handler}` : ""}${routeGuardNote(r)} (line ${r.line})`,
         );
         if (f.servesCalls.length) {
           const sources = [...new Set(f.servesCalls.map((l) => l.source))];
@@ -458,7 +495,8 @@ export function fileTool(ctx: ToolContext): McpTool {
               f.callsRoutes,
               limit,
               (l) =>
-                `calls ${routeLabel(l.method, l.url)} → ${loc(l.target, l.targetLine)}${confidenceNote(l.confidence)}`,
+                `calls ${routeLabel(l.method, l.url)} → ${loc(l.target, l.targetLine)}${confidenceNote(l.confidence)}${
+                  routeGuardNote(routeAt(loaded.summary, l.target, l.targetLine))}${versionNote(l)}`,
             ),
           );
         }
@@ -961,7 +999,7 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
         if (t.routes.length) {
           lines.push(
             `routes (${t.routeCount}):`,
-            ...bulletList(t.routes, limit, (r) => `${routeLabel(r.method, r.path)} (${loc(r.file, r.line)})`, { indent: "  " }),
+            ...bulletList(t.routes, limit, (r) => `${routeLabel(r.method, r.path)}${routeGuardNote(routeAt(loaded.summary, r.file, r.line))} (${loc(r.file, r.line)})`, { indent: "  " }),
           );
         }
         if (t.entities.length) lines.push(`entities (${t.entityCount}): ${cap(t.entities, 20).shown.join(", ")}`);
@@ -985,6 +1023,174 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
       }
 
       return { text: joinLines(blocks) };
+    },
+  };
+}
+
+/** The routeMap row declared at `file:line`, or an empty object so note helpers print nothing. */
+function routeAt(summary: LoadedAnalysis["summary"], file: string | null | undefined, line: number | null | undefined): RouteWithFile | Record<string, never> {
+  if (!file) return {};
+  for (const r of (summary.routeMap ?? []) as RouteWithFile[]) {
+    if (r.filePath === file && r.line === line) return r;
+  }
+  return {};
+}
+
+/** The JSON schema of one route parameter from its declared type text, or a marker carrying the text. */
+function paramSchema(type: string | null): Record<string, unknown> {
+  if (!type) return {};
+  const t = type.replace(/\?$/, "").replace(/^System\./, "");
+  const scalar: Record<string, Record<string, unknown>> = {
+    string: { type: "string" }, String: { type: "string" }, str: { type: "string" },
+    int: { type: "integer" }, Integer: { type: "integer" }, Int: { type: "integer" }, long: { type: "integer" }, Long: { type: "integer" },
+    number: { type: "number" }, float: { type: "number" }, double: { type: "number" }, Double: { type: "number" }, decimal: { type: "number" },
+    bool: { type: "boolean" }, boolean: { type: "boolean" }, Boolean: { type: "boolean" },
+    Guid: { type: "string", format: "uuid" }, UUID: { type: "string", format: "uuid" },
+    DateTime: { type: "string", format: "date-time" }, Date: { type: "string", format: "date-time" },
+  };
+  return scalar[t] ?? { "x-type": type };
+}
+
+export function contractTool(ctx: ToolContext): McpTool {
+  return {
+    name: "clarifydoc_contract",
+    title: "Endpoint contract",
+    description:
+      "One API endpoint as a self-contained OpenAPI-shaped operation — its security (schemes, roles, policies, or " +
+      "anonymous), API versions and deprecation, every parameter with where it binds (path, query, header), and the " +
+      "request body schema flattened from the handler's DTO — plus who calls it. For an agent that intends to CALL " +
+      "the endpoint rather than read about it. Narrow with `method`, `project` or `file` when the path matches several routes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Route path or a distinctive substring of it (e.g. '/puljer/myPuljer')." },
+        method: { type: "string", description: "HTTP method, e.g. POST." },
+        project: { type: "string", description: "Sub-project id or name substring, when the path exists in several services." },
+        file: { type: "string", description: "Declaring file substring, when the path exists in several controllers." },
+        version: { type: "string", description: "API version the caller will use, e.g. '5' — picks the twin that serves it." },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+    handler: async (args) => {
+      const loaded = await requireAnalysis(ctx);
+      const { summary } = loaded;
+      const pathArg = requiredStringArg(args, "path");
+      const methodArg = stringArg(args, "method")?.toUpperCase();
+      const projectArg = stringArg(args, "project");
+      const fileArg = stringArg(args, "file");
+      const versionArg = stringArg(args, "version");
+      const projectNames = new Map((summary.subProjects ?? []).map((p) => [p.id, p.name]));
+      const canon = (v: string) => v.replace(/^v/i, "").replace(/\.0$/, "");
+
+      let routes = ((summary.routeMap ?? []) as RouteWithFile[]).filter((r) => r.kind === "api" && contains(r.path, pathArg));
+      if (methodArg) routes = routes.filter((r) => (r.httpMethod ?? "").toUpperCase() === methodArg);
+      if (projectArg) routes = routes.filter((r) => contains(r.projectId, projectArg) || contains(r.projectId ? projectNames.get(r.projectId) : undefined, projectArg));
+      if (fileArg) routes = routes.filter((r) => contains(r.filePath, fileArg));
+      if (versionArg) routes = routes.filter((r) => (r.versions ?? []).some((v) => canon(v) === canon(versionArg)));
+      // An exact path wins over substring matches, and a match on whole trailing
+      // segments (`/puljer/myPuljer`) over one inside a segment (`…myPuljerByPeriod`).
+      const exact = routes.filter((r) => r.path.toLowerCase() === pathArg.toLowerCase());
+      const trailing = routes.filter((r) => r.path.toLowerCase().endsWith(pathArg.toLowerCase()));
+      if (exact.length > 0) routes = exact;
+      else if (trailing.length > 0) routes = trailing;
+
+      if (routes.length === 0) {
+        const all = ((summary.routeMap ?? []) as RouteWithFile[]).filter((r) => r.kind === "api");
+        return {
+          text: noResults({
+            headline: missHeadline("endpoints", [["path", pathArg], ["method", methodArg], ["project", projectArg], ["file", fileArg]]),
+            holds: `The analysis holds ${plural(all.length, "API route")}.`,
+            next: [
+              `clarifydoc_search query="${pathArg}" kinds=["route"] — find the path as spelled in the code`,
+              all.length === 0 && (await stalenessHint(ctx.store)),
+            ],
+          }),
+        };
+      }
+      if (routes.length > 1) {
+        const { shown, hidden } = cap(routes, 12);
+        return {
+          text: joinLines([
+            `# ${routes.length} endpoints match "${pathArg}" — narrow with method, project, file or version`,
+            ...shown.map((r) => {
+              const project = r.projectId && r.projectId !== "root" ? ` [${projectNames.get(r.projectId) ?? r.projectId}]` : "";
+              return `- ${routeLabel(r.httpMethod, r.path)}${r.handler ? ` → ${r.handler}` : ""}${project}${routeGuardNote(r)} (${loc(r.filePath, r.line)})`;
+            }),
+            hidden ? `  … ${hidden} more` : "",
+          ]),
+        };
+      }
+
+      const route = routes[0]!;
+      const a = route.auth;
+      const security = a
+        ? a.anonymous
+          ? []
+          : a.schemes.length
+            ? [Object.fromEntries(a.schemes.map((s) => [s, a.roles]))]
+            : a.roles.length || a.policies.length
+              ? [{ authenticated: a.roles }]
+              : []
+        : undefined;
+      const inOf: Record<string, string> = { route: "path", query: "query", header: "header" };
+      const parameters = (route.params ?? [])
+        .filter((p) => p.binding && inOf[p.binding])
+        .map((p) => ({
+          name: p.name,
+          in: inOf[p.binding!],
+          required: p.binding === "route" ? true : undefined,
+          schema: paramSchema(p.type),
+          ...(p.inferred ? { "x-inferred": true } : {}),
+        }));
+      const bodyParams = (route.params ?? []).filter((p) => p.binding === "body");
+      const formParams = (route.params ?? []).filter((p) => p.binding === "form");
+      const requestBody: Record<string, unknown> = {};
+      if (route.requestSchema) {
+        requestBody["application/json"] = { schema: route.requestSchema };
+      } else if (bodyParams.length) {
+        const typed = bodyParams.find((p) => p.type);
+        requestBody["application/json"] = {
+          schema: typed ? { "x-type": typed.type } : { type: "object", properties: Object.fromEntries(bodyParams.map((p) => [p.name, {}])) },
+        };
+      }
+      if (formParams.length) {
+        requestBody["multipart/form-data"] = {
+          schema: { type: "object", properties: Object.fromEntries(formParams.map((p) => [p.name, paramSchema(p.type)])) },
+        };
+      }
+      const operation: Record<string, unknown> = {
+        operationId: route.handler ?? undefined,
+        ...(route.deprecatedVersions?.length && route.versions?.every((v) => route.deprecatedVersions!.includes(v))
+          ? { deprecated: true }
+          : {}),
+        ...(security !== undefined ? { security } : {}),
+        ...(a?.policies.length ? { "x-policies": a.policies } : {}),
+        ...(route.versions?.length ? { "x-api-versions": route.versions } : {}),
+        ...(route.deprecatedVersions?.length ? { "x-deprecated-versions": route.deprecatedVersions } : {}),
+        ...(parameters.length ? { parameters } : {}),
+        ...(Object.keys(requestBody).length ? { requestBody: { content: requestBody } } : {}),
+      };
+
+      const callers = (summary.apiRouteLinks ?? [])
+        .filter((l) => l.target === route.filePath && l.targetLine === route.line)
+        .map((l) => `${loc(l.source, l.sourceLine)}${confidenceNote(l.confidence)}${versionNote(l)}`);
+      const project = route.projectId && route.projectId !== "root" ? ` [${projectNames.get(route.projectId) ?? route.projectId}]` : "";
+      const { shown: cs, hidden: ch } = cap([...new Set(callers)], 8);
+      return {
+        text: joinLines([
+          `# ${routeLabel(route.httpMethod, route.path)}${route.handler ? ` → ${route.handler}` : ""}${project} (${loc(route.filePath, route.line)})`,
+          route.middleware?.length ? `guards: ${route.middleware.join(", ")}${a?.inherited ? " (from controller)" : ""}` : "guards: none declared here",
+          cs.length ? `called from: ${cs.join(", ")}${ch ? ` … +${ch}` : ""}` : "called from: no frontend call linked",
+          "",
+          "```json",
+          JSON.stringify(operation, null, 2),
+          "```",
+          !route.requestSchema && bodyParams.length
+            ? "(body type not resolved to a class in this project — see clarifydoc_search for the type name)"
+            : "",
+        ]),
+      };
     },
   };
 }
