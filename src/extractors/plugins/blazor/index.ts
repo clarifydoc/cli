@@ -1,8 +1,10 @@
 import type {
   RouteInfo,
+  RouteParamInfo,
   SubComponentInfo,
   InteractiveElementInfo,
 } from "../../../types/analysis.js";
+import { applyRouteMeta, splitList, type GuardAttr } from "../../shared/route-metadata.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 
 /**
@@ -13,7 +15,11 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
  * like DevToys — in a sibling `Foo.razor.cs` code-behind partial class (already
  * parsed by the C# plugin). So this spec extracts the UI half only:
  *
- *  - `@page "/route"`               → frontend routes (and therefore routed screens)
+ *  - `@page "/route"`               → frontend routes (and therefore routed screens),
+ *    with `{id:int}` tokens as route params (typed by the constraint, else by a
+ *    same-named `[Parameter]` property), `[SupplyParameterFromQuery]`
+ *    properties as query params, and `@attribute [Authorize(…)]` /
+ *    `[AllowAnonymous]` as the page's `auth` (same reading as the C# plugin's)
  *  - `@using X.Y`                   → imports (namespace dependencies + framework hints)
  *  - PascalCase tags (`<Button …>`) → sub-components (the component-composition graph)
  *  - `@onclick`/`@bind`/native      → interactive elements
@@ -89,13 +95,103 @@ function countChar(s: string, ch: string): number {
 // ─── Routes (`@page`) ───────────────────────────────────────────────────────
 
 const PAGE_RE = /^\s*@page\s+"([^"]+)"/;
+/** `@attribute [Authorize(Roles = "Admin")]` / `@attribute [AllowAnonymous]`. */
+const PAGE_ATTRIBUTE_RE = /^\s*@attribute\s+\[\s*([A-Za-z_][\w.]*)(?:Attribute)?\s*(\((?:[^()"]|"[^"]*"|\([^)]*\))*\))?\s*\]/;
+/** `{id:int}`, `{slug?}`, `{*rest}` in a page template. */
+const ROUTE_TOKEN_RE = /\{\*{0,2}([A-Za-z_]\w*)\??(?::([A-Za-z]+)[^}]*)?\}/g;
+/** Route-constraint names as a type text (`{id:int}` → `int`); unknown constraints leave the type null. */
+const CONSTRAINT_TYPES = new Set(["int", "guid", "long", "bool", "datetime", "decimal", "double", "float"]);
+/** `[SupplyParameterFromQuery(Name = "q")] public string? Q { get; set; }` — attribute and property, same or adjacent lines. */
+const PROPERTY_RE = /^\s*(?:public|internal|protected|private)?\s*(?:static\s+)?([A-Za-z_][\w.<>,\[\]?]*)\s+([A-Za-z_]\w*)\s*\{/;
+const ATTR_RE = /\[\s*([A-Za-z_]\w*)(?:Attribute)?\s*(\([^)]*\))?\s*\]/g;
+
+/** `Authorize(Roles = "A, B", Policy = "P", AuthenticationSchemes = "S")` → guard. */
+function guardOf(name: string, args: string | undefined): GuardAttr | null {
+  const simple = name.split(".").pop()!;
+  const text = simple + (args ? args.replace(/\s+/g, " ") : "");
+  if (simple === "AllowAnonymous") return { text, anonymous: true };
+  if (simple !== "Authorize") return null;
+  const named = (key: string): string | null => {
+    const m = args?.match(new RegExp(`\\b${key}\\s*=\\s*(?:"([^"]*)"|nameof\\(([^)]*)\\)|([A-Za-z_][\\w.]*))`));
+    return m ? (m[1] ?? m[2] ?? m[3] ?? null) : null;
+  };
+  // `[Authorize("PolicyName")]` — the positional argument is the policy.
+  const positional = args?.match(/^\(\s*"([^"]*)"/)?.[1] ?? null;
+  return {
+    text,
+    policies: splitList(named("Policy") ?? positional),
+    roles: splitList(named("Roles")),
+    schemes: splitList(named("AuthenticationSchemes")),
+  };
+}
+
+function pageGuards(lines: string[]): GuardAttr[] {
+  const out: GuardAttr[] = [];
+  for (const line of lines) {
+    const m = PAGE_ATTRIBUTE_RE.exec(line);
+    if (!m) continue;
+    const g = guardOf(m[1]!, m[2]);
+    if (g) out.push(g);
+  }
+  return out;
+}
+
+interface CodeProperty {
+  name: string;
+  type: string;
+  attrs: Array<{ name: string; args: string | undefined }>;
+}
+
+/** Attributed properties in the file's C# (`@code` blocks) — read from the raw lines, before blanking. */
+function codeProperties(lines: string[]): CodeProperty[] {
+  const out: CodeProperty[] = [];
+  let pending: CodeProperty["attrs"] = [];
+  for (const line of lines) {
+    const attrs: CodeProperty["attrs"] = [];
+    for (const a of line.matchAll(ATTR_RE)) attrs.push({ name: a[1]!, args: a[2] });
+    const rest = line.replace(ATTR_RE, "");
+    const pm = PROPERTY_RE.exec(rest);
+    if (pm && /\bget\b|\bset\b|\binit\b/.test(rest)) {
+      out.push({ name: pm[2]!, type: pm[1]!, attrs: [...pending, ...attrs] });
+      pending = [];
+    } else if (attrs.length > 0 && rest.trim() === "") {
+      pending.push(...attrs); // attributes on their own line above the property
+    } else if (rest.trim() !== "") {
+      pending = [];
+    }
+  }
+  return out;
+}
+
+function pageParams(path: string, props: CodeProperty[]): RouteParamInfo[] {
+  const out: RouteParamInfo[] = [];
+  const byName = new Map(props.map((p) => [p.name.toLowerCase(), p]));
+  for (const m of path.matchAll(ROUTE_TOKEN_RE)) {
+    const name = m[1]!;
+    const constraint = m[2]?.toLowerCase();
+    const bound = byName.get(name.toLowerCase());
+    const boundType = bound?.attrs.some((a) => a.name === "Parameter") ? bound.type : null;
+    out.push({ name, type: constraint && CONSTRAINT_TYPES.has(constraint) ? constraint : boundType, binding: "route" });
+  }
+  for (const p of props) {
+    const q = p.attrs.find((a) => a.name === "SupplyParameterFromQuery");
+    if (!q) continue;
+    const named = q.args?.match(/\bName\s*=\s*"([^"]*)"/)?.[1];
+    out.push({ name: named ?? p.name, type: p.type, binding: "query" });
+  }
+  return out;
+}
 
 function extractBlazorRoutes(lines: string[]): RouteInfo[] {
   const routes: RouteInfo[] = [];
+  let guards: GuardAttr[] | null = null;
+  let props: CodeProperty[] | null = null;
   for (let i = 0; i < lines.length; i++) {
     const m = (lines[i] ?? "").match(PAGE_RE);
     if (!m) continue;
-    routes.push({
+    guards ??= pageGuards(lines);
+    props ??= codeProperties(lines);
+    const route: RouteInfo = {
       path: m[1]!,
       httpMethod: null,
       kind: "frontend",
@@ -106,7 +202,9 @@ function extractBlazorRoutes(lines: string[]): RouteInfo[] {
       calls: [],
       middleware: [],
       line: i + 1,
-    });
+    };
+    applyRouteMeta(route, { guards, params: pageParams(route.path, props) });
+    routes.push(route);
   }
   return routes;
 }
