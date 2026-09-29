@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import "../../../registry.js"; // side effect: registers tree-sitter grammars
 import { parseSource } from "../../../../parsers/parser-manager.js";
 import { javaKotlinRouteExtractor } from "./index.js";
+import { extractJaxrsMicronautRoutes } from "./jaxrs.js";
 import type { RouteInfo } from "../../../../types/analysis.js";
 
 /**
@@ -149,5 +150,49 @@ public interface SupplierApiJakarta {
   it("still extracts the same interface outside a client/ package", async () => {
     const routes = await routesOf(CLIENT_SRC, "src/main/java/com/x/api/supplier/SupplierApiJakarta.java");
     expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /supplier/v1/suppliers"]);
+  });
+});
+
+describe("JAX-RS / Micronaut — guards and parameter bindings", () => {
+  it("JAX-RS: @RolesAllowed on the class, @PathParam/@QueryParam/@Context, unannotated entity → body", async () => {
+    const SRC = `package x;
+@Path("/res")
+@RolesAllowed("admin")
+public class Res {
+  @GET @Path("{id}") @PermitAll
+  public String get(@PathParam("id") int id, @QueryParam("q") String q, Payload body, @Context UriInfo u) { return null; }
+}`;
+    const tree = await parseSource(SRC, "java" as any, "A.java");
+    const routes: RouteInfo[] = [];
+    extractJaxrsMicronautRoutes(tree.rootNode, routes);
+    const [r] = routes;
+    expect(r!.auth).toEqual({ policies: [], roles: ["admin"], schemes: [], anonymous: true, inherited: false });
+    expect(r!.params).toEqual([
+      { name: "id", type: "int", binding: "route" },
+      { name: "q", type: "String", binding: "query" },
+      { name: "body", type: "Payload", binding: "body", inferred: true },
+      { name: "u", type: "UriInfo", binding: "services" },
+    ]);
+  });
+
+  it("Micronaut: @Secured rule expressions become policies, @Body/@QueryValue bindings, complex default → body", async () => {
+    const SRC = `package x
+@Controller("/users")
+@Secured("isAuthenticated()")
+class UserController {
+  @Post("/{id}")
+  fun save(@PathVariable id: Long, @Body dto: CreateUserDto, @QueryValue q: String, extra: Extra): User = TODO()
+}`;
+    const tree = await parseSource(SRC, "kotlin" as any, "A.kt");
+    const routes: RouteInfo[] = [];
+    extractJaxrsMicronautRoutes(tree.rootNode, routes);
+    const [r] = routes;
+    expect(r!.auth).toMatchObject({ policies: ["isAuthenticated()"], roles: [], inherited: true });
+    expect(r!.params).toEqual([
+      { name: "id", type: "Long", binding: "route" },
+      { name: "dto", type: "CreateUserDto", binding: "body" },
+      { name: "q", type: "String", binding: "query" },
+      { name: "extra", type: "Extra", binding: "body", inferred: true },
+    ]);
   });
 });

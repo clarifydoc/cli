@@ -1,4 +1,5 @@
 import type { Language } from "../../../types/analysis.js";
+import { jvmRequestSchema } from "./request-schema.js";
 import {
   extendControlFlow,
   BRACE_REGEX_CONTROL_FLOW,
@@ -71,6 +72,7 @@ function jvmMeta(language: Language, opts: {
     ...(language === "java" ? javaManifest : kotlinManifest),
     routes: javaKotlinRouteExtractor,
     functionsClasses: jvmFunctionsClasses,
+    requestSchema: jvmRequestSchema,
     importsExports: jvmImportsExports,
     dataSources: jvmDataSources,
     dataMutations: jvmDataMutations,
