@@ -39,12 +39,13 @@ import type {
   SymbolReachSummary,
   ResponsibilityProfile,
   RefactorPressureInfo,
+  JsonSchemaNode,
 } from "../types/analysis.js";
 import { analyze, type AnalyzeResult } from "../core/analyzer.js";
 import { loadReportSummary } from "../core/report-payload.js";
 
 /** Routes/api-calls carry the owning file once aggregated project-wide. */
-export type RouteWithFile = RouteInfo & { filePath: string };
+export type RouteWithFile = RouteInfo & { filePath: string; projectId?: string; requestSchema?: JsonSchemaNode };
 export type ApiCallWithFile = DataSourceInfo & { filePath: string };
 
 /** Everything the tools need about one file, pre-grouped. */

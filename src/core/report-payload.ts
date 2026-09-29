@@ -303,14 +303,27 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
     componentLaunches: s.componentLaunches ?? [],
     subProjects: s.subProjects ?? [{ id: "root", name: "(root)", root: "", kind: "root", markers: [] }],
     fileProjects: s.fileProjects ?? {},
-    routeMap: summary.routeMap.map((r: any) => ({
-      path: r.path,
-      httpMethod: r.httpMethod,
-      kind: r.kind,
-      handler: r.handler,
-      line: r.line,
-      filePath: r.filePath ?? null,
-    })),
+    routeMap: summary.routeMap.map((r: any) => {
+      const row: Record<string, unknown> = {
+        path: r.path,
+        httpMethod: r.httpMethod,
+        kind: r.kind,
+        handler: r.handler,
+        line: r.line,
+        filePath: r.filePath ?? null,
+      };
+      // The attribute layer (guards, API versions, parameter bindings) is
+      // optional on the route and stays optional on the wire — rows without
+      // it keep their old shape byte-for-byte.
+      if (r.projectId) row.projectId = r.projectId;
+      if (r.middleware?.length) row.middleware = r.middleware;
+      if (r.auth) row.auth = r.auth;
+      if (r.versions) row.versions = r.versions;
+      if (r.deprecatedVersions) row.deprecatedVersions = r.deprecatedVersions;
+      if (r.params) row.params = r.params;
+      if (r.requestSchema) row.requestSchema = r.requestSchema;
+      return row;
+    }),
     /** Outbound HTTP calls — surfaced alongside routes in the Routes tab. */
     apiCalls: (summary.apiCalls ?? []).map((c: any) => ({
       name: c.name,

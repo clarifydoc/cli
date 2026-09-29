@@ -382,3 +382,31 @@ describe("path resolution", () => {
     }
   });
 });
+
+describe("clarifydoc MCP tools — csharp fixture (route attribute layer)", () => {
+  const { server } = serverFor("sample-csharp-api");
+
+  it("routes print versions, auth and parameter bindings, and the body schema on request", async () => {
+    const { text } = await call(server, "clarifydoc_routes", { path: "/Users", method: "POST", schema: true });
+    expect(text).toContain("versions: 2");
+    expect(text).toContain("auth: policy Policies.UsersRead; roles Admin, UserManager; scheme Bearer");
+    expect(text).toContain("params: dto: CreateUserDto ← body");
+    expect(text).toContain('body: {"type":"object","properties":{"requestedBy"');
+    expect(text).toContain('"email_address":{"type":"string"}');
+    expect(text).toContain('"required":["name"]');
+  });
+
+  it("a deprecated version and an anonymous override are called out", async () => {
+    const { text } = await call(server, "clarifydoc_routes", { path: "/Users/{id}", method: "DELETE" });
+    expect(text).toContain("versions: 1 (deprecated), 2");
+    expect(text).toContain("auth: anonymous (AllowAnonymous)");
+  });
+
+  it("the project filter narrows to a sub-project and names it in the miss", async () => {
+    const hit = await call(server, "clarifydoc_routes", { project: "root", limit: 100 });
+    expect(hit.text).toMatch(/# Routes \(\d+ matches\)/);
+    const miss = await call(server, "clarifydoc_routes", { project: "no-such-service", method: "GET" });
+    expect(miss.text).toContain("project");
+    expect(miss.text).toContain("clarifydoc_routes without `project`");
+  });
+});
