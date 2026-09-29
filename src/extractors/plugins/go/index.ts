@@ -3,6 +3,7 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { extractGoRoutes } from "./routes.js";
 import { extractGoDataSources } from "./data-sources.js";
+import { extractGoRequestAccess } from "./request-access.js";
 
 /** Bare the Go type identifier — `*[]map[string]User` → `User`. */
 function stripGoTypeModifiers(raw: string): string {
@@ -63,28 +64,40 @@ export const goSpec: RegexLangSpec = {
    * tight to one-line declarations to avoid catching method signatures.
    * Lowercase (unexported) fields matter too — `svc *service.UserService`
    * is what lets the symbol linker resolve `h.svc.ListUsers()` cross-package.
+   *
+   * The type is kept AS WRITTEN (`*Address`, `[]string`, `map[string]any`):
+   * the request-schema hooks read nullable/array/map off exactly those
+   * markers, and every downstream consumer already bares the text itself.
+   * Each backtick tag becomes one decorator (`json:"name,omitempty"`,
+   * `validate:"required"`) — that is where the wire name and the required
+   * marker live.
    */
   propertyPatterns: [
     {
-      pattern: /^\s+([A-Za-z_]\w*)\s+([^`\n]+?)(?:\s+`[^`]*`)?\s*$/,
+      pattern: /^\s+([A-Za-z_]\w*)\s+([^`\n]+?)(?:\s+`([^`]*)`)?\s*$/,
       build: (m): PropertyInfo | null => {
         const name = m[1]!;
-        const rawType = m[2]!.trim();
-        if (/[{(]/.test(rawType)) return null; // skip func-shaped fields
-        return {
+        const rawType = m[2]!.trim().replace(/\s+/g, " ");
+        // Skip func-shaped and inline-struct fields, but keep `interface{}` / `struct{}`.
+        if (/[{(]/.test(rawType.replace(/interface\{\}|struct\{\}/g, ""))) return null;
+        const tags = m[3] ? [...m[3].matchAll(/(\w+):"((?:[^"\\]|\\.)*)"/g)].map((t) => `${t[1]}:"${t[2]}"`) : [];
+        const prop: PropertyInfo = {
           name,
-          type: stripGoTypeModifiers(rawType),
+          type: rawType,
           visibility: /^[A-Z]/.test(name) ? "public" : "private",
           isStatic: false,
           isReadonly: false,
         };
+        if (tags.length > 0) prop.decorators = tags;
+        return prop;
       },
     },
   ],
 
+  // Unexported structs count too: a request DTO is often `type createInput struct`.
   classPatterns: [
-    { pattern: /^type\s+([A-Z]\w*)\s+struct\s*\{/, getExtends: () => null },
-    { pattern: /^type\s+([A-Z]\w*)\s+interface\s*\{/, getExtends: () => null },
+    { pattern: /^type\s+([A-Za-z_]\w*)\s+struct\s*\{/, getExtends: () => null },
+    { pattern: /^type\s+([A-Za-z_]\w*)\s+interface\s*\{/, getExtends: () => null },
   ],
 
   importPatterns: [
@@ -97,4 +110,5 @@ export const goSpec: RegexLangSpec = {
 
   extractRoutes: (lines) => extractGoRoutes(lines),
   extractDataSources: (lines) => extractGoDataSources(lines),
+  extractRequestAccess: extractGoRequestAccess,
 };

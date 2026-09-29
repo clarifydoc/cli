@@ -1,22 +1,8 @@
-import type { ParamInfo, PropertyInfo } from "../../../types/analysis.js";
+import type { PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
-import { stripTypeModifiers } from "../../shared/type-parser.js";
+import { parseRustParam, stripRustTypeModifiers } from "./params.js";
 import { extractRustRoutes } from "./routes.js";
 import { extractRustDataSources } from "./data-sources.js";
-
-/** Bare the Rust type identifier — `&'a mut User` / `*const User` → `User`. */
-function stripRustTypeModifiers(raw: string): string {
-  return stripTypeModifiers(raw, "rust");
-}
-
-function parseRustParam(paramText: string): ParamInfo | null {
-  const trimmed = paramText.trim();
-  if (!trimmed) return null;
-  if (trimmed === "self" || trimmed === "&self" || trimmed === "&mut self") return null;
-  const m = trimmed.match(/^(?:mut\s+)?([a-zA-Z_]\w*)\s*:\s*(.+)$/);
-  if (!m) return null;
-  return { name: m[1]!, type: stripRustTypeModifiers(m[2]!), defaultValue: null };
-}
 
 function parseRustReturnType(line: string): string | null {
   const m = line.match(/->\s*([^{]+?)(?:\s+where\s|\s*\{|\s*;|\s*$)/);
@@ -42,6 +28,14 @@ export const rustSpec: RegexLangSpec = {
   parseReturnType: parseRustReturnType,
 
   /**
+   * `#[derive(Deserialize)]`, `#[serde(rename = "x")]`, `#[get("/users")]` —
+   * an attribute sits on its own line above the item it decorates. The
+   * inner text (delimiters dropped) becomes the item's decorator; stacked
+   * attributes gather nearest-last. `#![…]` inner attributes are not items'.
+   */
+  attributeLine: { pattern: /^\s*#\[(.*)\]\s*$/ },
+
+  /**
    * Rust qualified-call syntax — `Config::from_args()`, `<Type>::method()`.
    * The baseline `name(` matcher only sees the leaf, so cross-file calls like
    * `Config::from_args` would never link back to their definition. Capture the
@@ -61,16 +55,19 @@ export const rustSpec: RegexLangSpec = {
 
   /**
    * Struct fields: `pub name: Type,` or `name: Type,`. Trailing comma
-   * optional but rust-fmt always emits it.
+   * optional but rust-fmt always emits it. The type may carry commas of its
+   * own (`HashMap<String, Vec<u8>>`) — a field is one line, so the type is
+   * everything after the colon minus the trailing comma. Attributes on the
+   * line above (`#[serde(rename = "x")]`) arrive through `attributeLine`.
    */
   propertyPatterns: [
     {
-      pattern: /^\s+(?:pub(?:\([^)]+\))?\s+)?([a-zA-Z_]\w*)\s*:\s*([^,\n]+?),?\s*$/,
-      build: (m): PropertyInfo | null => {
+      pattern: /^\s+(?:pub(?:\([^)]+\))?\s+)?([a-zA-Z_]\w*)\s*:\s*(.+?),?\s*$/,
+      build: (m, line): PropertyInfo | null => {
         const name = m[1]!;
         const rawType = m[2]!.trim();
         if (!rawType) return null;
-        if (/[{(]/.test(rawType)) return null;
+        if (/[{(=;]/.test(rawType) || /^\s*(?:let|const|static)\b/.test(line)) return null;
         return {
           name,
           type: stripRustTypeModifiers(rawType),

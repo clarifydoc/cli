@@ -87,6 +87,76 @@ grp.Get("/orders/:id", getOrder)
   });
 });
 
+describe("Go routes: middleware and auth", () => {
+  it("inherits r.Use / Group guards in line order and reads inline guards on the registration", () => {
+    const routes = extractGoRoutes(lines(`
+r := gin.Default()
+r.Use(gin.Logger(), gin.Recovery())
+r.GET("/health", handler.Health)
+api := r.Group("/api")
+api.Use(middleware.JWTAuth(secret))
+api.GET("/me", handler.Me)
+admin := r.Group("/admin", AuthRequired())
+admin.DELETE("/products/:id", handler.DeleteProduct)
+admin.POST("/products", RequireRole("admin", "editor"), handler.CreateProduct)
+`));
+    const byPath = Object.fromEntries(routes.map((r) => [`${r.httpMethod} ${r.path}`, r]));
+    expect(byPath["GET /health"]!.middleware).toEqual(["gin.Logger()", "gin.Recovery()"]);
+    expect(byPath["GET /health"]!.auth).toBeUndefined(); // plain middleware says nothing about auth
+    expect(byPath["GET /api/me"]!.middleware).toEqual(["gin.Logger()", "gin.Recovery()", "middleware.JWTAuth(secret)"]);
+    expect(byPath["GET /api/me"]!.auth).toEqual({
+      policies: [], roles: [], schemes: ["middleware.JWTAuth"], anonymous: false, inherited: true,
+    });
+    expect(byPath["DELETE /admin/products/:id"]!.auth).toEqual({
+      policies: ["AuthRequired"], roles: [], schemes: [], anonymous: false, inherited: true,
+    });
+    expect(byPath["DELETE /admin/products/:id"]!.handler).toBe("handler.DeleteProduct");
+    const post = byPath["POST /admin/products"]!;
+    expect(post.handler).toBe("handler.CreateProduct");
+    expect(post.middleware).toEqual(["gin.Logger()", "gin.Recovery()", "AuthRequired()", 'RequireRole("admin", "editor")']);
+    expect(post.auth).toEqual({
+      policies: ["AuthRequired"], roles: ["admin", "editor"], schemes: [], anonymous: false, inherited: false,
+    });
+  });
+
+  it("scopes chi block Use to the block and reads With(...) and handler wrappers", () => {
+    const routes = extractGoRoutes(lines(`
+r := chi.NewRouter()
+r.Use(middleware.Logger)
+r.Route("/api", func(r chi.Router) {
+	r.Use(jwtauth.Verifier(tokenAuth), jwtauth.Authenticator)
+	r.Get("/me", me)
+	r.With(RequireAdmin).Delete("/users/{id}", deleteUser)
+})
+r.Get("/version", version)
+r.Method("GET", "/metrics", promhttp.Handler())
+mux.Handle("GET /secure", auth(http.HandlerFunc(secure)))
+`));
+    const byPath = Object.fromEntries(routes.map((r) => [`${r.httpMethod} ${r.path}`, r]));
+    expect(byPath["GET /api/me"]!.middleware).toEqual(["middleware.Logger", "jwtauth.Verifier(tokenAuth)", "jwtauth.Authenticator"]);
+    expect(byPath["GET /api/me"]!.auth!.schemes).toEqual(["jwtauth.Verifier", "jwtauth.Authenticator"]);
+    expect(byPath["DELETE /api/users/{id}"]!.auth).toEqual({
+      policies: ["RequireAdmin"], roles: [], schemes: ["jwtauth.Verifier", "jwtauth.Authenticator"], anonymous: false, inherited: false,
+    });
+    // Block-scoped Use does not leak past the block.
+    expect(byPath["GET /version"]!.middleware).toEqual(["middleware.Logger"]);
+    expect(byPath["GET /version"]!.auth).toBeUndefined();
+    expect(byPath["GET /metrics"]!.handler).toBeNull(); // promhttp.Handler() is a value, not a name
+    expect(byPath["GET /secure"]!.handler).toBe("secure");
+    expect(byPath["GET /secure"]!.middleware).toEqual(["auth(http.HandlerFunc(secure))"]);
+    expect(byPath["GET /secure"]!.auth!.policies).toEqual(["auth"]);
+  });
+
+  it("does not mistake single-argument Get calls or client requests for routes", () => {
+    const routes = extractGoRoutes(lines(`
+v := c.Get("user")
+resp, _ := http.Get("/internal/orders")
+q := r.URL.Query().Get("q")
+`));
+    expect(routes).toEqual([]);
+  });
+});
+
 describe("Go data sources", () => {
   it("normalizes backtick raw SQL into per-line quoted fragments", () => {
     const norm = normalizeRawStrings('q := `SELECT id\nFROM users\nWHERE active = 1`');
