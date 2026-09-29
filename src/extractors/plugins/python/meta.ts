@@ -12,6 +12,7 @@ import { PythonDataSourceExtractor } from "./data-sources.js";
 import { PythonMutationExtractor } from "./data-mutations.js";
 import { PythonEntityExtractor } from "./entities.js";
 import { pythonRouteExtractor } from "./routes.js";
+import { pythonRequestSchema } from "./request-schema.js";
 
 const PYTHON_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -111,4 +112,5 @@ export const pythonMeta: LanguagePluginMeta = {
     typeReferences: extractPythonTypeReferences,
   },
   calls: pythonCallHooks,
+  requestSchema: pythonRequestSchema,
 };
