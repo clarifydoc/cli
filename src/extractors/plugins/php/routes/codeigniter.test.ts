@@ -67,3 +67,46 @@ class Orders_model extends CI_Model {
     expect(await routesOf(SRC, "application/models/orders_model.php")).toEqual([]);
   });
 });
+
+/**
+ * Parameters: CI passes the URI segments after the method as arguments, and
+ * the body reads input through `$this->input` (CI3) / `$this->request` (CI4).
+ */
+describe("CodeIgniter route parameters", () => {
+  it("binds signature params from the route and input reads by accessor", async () => {
+    const SRC = `<?php
+class Photos extends CI_Controller {
+  function archive($id, $page = 1) {
+    $title = $this->input->post('title');
+    $sort = $this->input->get('sort');
+    $key = $this->input->get_request_header('X-Api-Key');
+    return $this->photos_model->archive($id, $title);
+  }
+  function upload() {
+    $json = $this->request->getJSON();
+    $name = $this->request->getVar('name');
+    $file = $this->request->getFile('photo');
+    $ct = $this->request->getHeaderLine('Content-Type');
+  }
+  function index() { return 1; }
+}`;
+    const routes = await routesOf(SRC, "application/controllers/photos.php");
+    const byPath = (p: string) => routes.find((r) => r.path === p)!;
+    expect(byPath("/photos/archive").params).toEqual([
+      { name: "id", type: null, binding: "route", inferred: true },
+      { name: "page", type: null, binding: "route", inferred: true },
+      { name: "title", type: null, binding: "form", inferred: true },
+      { name: "sort", type: null, binding: "query", inferred: true },
+      { name: "X-Api-Key", type: null, binding: "header", inferred: true },
+    ]);
+    expect(byPath("/photos/upload").params).toEqual([
+      { name: "name", type: null, binding: "body", inferred: true },
+      { name: "Content-Type", type: null, binding: "header", inferred: true },
+      { name: "photo", type: "UploadedFile", binding: "form", inferred: true },
+      { name: "body", type: null, binding: "body", inferred: true },
+    ]);
+    expect(byPath("/photos").params).toBeUndefined();
+    // CI has no auth layer of its own.
+    for (const r of routes) expect(r.auth).toBeUndefined();
+  });
+});

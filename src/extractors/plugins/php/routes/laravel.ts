@@ -1,6 +1,8 @@
 import type { Node } from "web-tree-sitter";
-import type { RouteInfo, CallInfo } from "../../../../types/analysis.js";
+import type { RouteInfo, CallInfo, ParamInfo, RouteParamInfo } from "../../../../types/analysis.js";
 import { extractCalls } from "../../../shared/call-graph.js";
+import { applyRouteMeta, buildAuth, type GuardAttr } from "../../../shared/route-metadata.js";
+import { bindPhpParams, extractPhpRequestAccess, laravelGuard, requestReceivers } from "../request-access.js";
 
 /**
  * Laravel `Route::` facade routing (routes/web.php, routes/api.php).
@@ -22,6 +24,19 @@ import { extractCalls } from "../../../shared/call-graph.js";
  * `[Controller::class, 'action']` tuple and the legacy `Controller@action`
  * string both normalize to it); closure handlers stay null but contribute
  * their body's calls so traces can continue through helper functions.
+ *
+ * Middleware is read from every place Laravel lets it be declared — the
+ * fluent chain below the verb (`Route::middleware('auth')->get(…)`), above it
+ * (`Route::get(…)->middleware('can:view,order')`), and every enclosing group
+ * (`Route::middleware([…])->group(…)`, `Route::group(['middleware' => …])`).
+ * Group middleware is inherited; chain middleware is the route's own. The
+ * auth-flavoured strings (`auth:sanctum`, `role:admin`, `can:…`, `guest`)
+ * become `auth`; the rest (`throttle:60,1`, `web`) stay plain middleware.
+ *
+ * A controller handler's parameters live in another file, so `params` are
+ * left for the project-level join (`core/request-schemas.ts`, via the PHP
+ * plugin's `bindParam` + `requestAccess`). A closure handler's signature and
+ * body ARE in hand, so its params are emitted here.
  */
 
 const LARAVEL_VERBS: ReadonlySet<string> = new Set([
@@ -79,13 +94,36 @@ function arrayStrings(node: Node | undefined): string[] {
 
 /** `'prefix' => 'admin'` value from a group-options array, null if absent. */
 function arrayKeyValue(node: Node | undefined, key: string): string | null {
-  if (!node || node.type !== "array_creation_expression") return null;
+  return arrayKeyValues(node, key)[0] ?? null;
+}
+
+/**
+ * Every string under a group-options key: `'middleware' => 'auth'` → [auth],
+ * `'middleware' => ['auth', 'role:admin']` → both. Empty when absent.
+ */
+function arrayKeyValues(node: Node | undefined, key: string): string[] {
+  if (!node || node.type !== "array_creation_expression") return [];
   for (const el of node.children) {
     if (el.type !== "array_element_initializer") continue;
-    const strs = el.children.filter((c) => c.type === "string" || c.type === "encapsed_string");
-    if (strs.length >= 2 && stringValue(strs[0]) === key) return stringValue(strs[1]);
+    const parts = el.children.filter((c) => c.type !== "=>" && c.type !== ",");
+    if (parts.length < 2 || stringValue(parts[0]) !== key) continue;
+    const value = parts[1]!;
+    const s = stringValue(value);
+    if (s !== null) return [s];
+    return arrayStrings(value);
   }
-  return null;
+  return [];
+}
+
+/** String arguments of a `->middleware('a')` / `->middleware(['a', 'b'])` / `->middleware('a', 'b')` call. */
+function middlewareArgs(call: Node): string[] {
+  const out: string[] = [];
+  for (const arg of callArgs(call)) {
+    const s = stringValue(arg);
+    if (s !== null) out.push(s);
+    else out.push(...arrayStrings(arg));
+  }
+  return out;
 }
 
 // ─── Handler resolution ─────────────────────────────────────────────────────
@@ -161,12 +199,55 @@ function chainPrefix(call: Node): string | null {
 }
 
 /**
- * Compose the path prefix from every enclosing `Route::group` /
- * `Route::prefix(..)->group(..)` closure, outermost first. Climbs from the
- * route call through each wrapping closure to the group call that received it.
+ * Every `->middleware(…)` in the fluent chain BELOW a call, root-first:
+ * `Route::middleware('a')->prefix('x')->middleware('b')->get(…)` → [a, b].
+ * The chain root `Route::middleware(…)` is a scoped call and counts too.
  */
-function groupPrefixOf(routeCall: Node): string[] {
+function chainMiddleware(call: Node): string[] {
+  const found: string[][] = [];
+  let cur: Node | null = call.childForFieldName("object");
+  while (cur) {
+    if (cur.type === "member_call_expression" || cur.type === "scoped_call_expression") {
+      if (cur.childForFieldName("name")?.text === "middleware") found.unshift(middlewareArgs(cur));
+      cur = cur.type === "member_call_expression" ? cur.childForFieldName("object") : null;
+    } else {
+      break;
+    }
+  }
+  return found.flat();
+}
+
+/**
+ * Every `->middleware(…)` chained ABOVE a call, up to the statement:
+ * `Route::get(…)->name('x')->middleware('can:view,order')`. The verb call is
+ * the `object` of the next member call, which is the `object` of the next…
+ */
+function trailingChainMiddleware(call: Node): string[] {
+  const out: string[] = [];
+  let cur: Node | null = call;
+  while (cur.parent && cur.parent.type === "member_call_expression" && cur.parent.childForFieldName("object")?.id === cur.id) {
+    cur = cur.parent;
+    if (cur.childForFieldName("name")?.text === "middleware") out.push(...middlewareArgs(cur));
+  }
+  return out;
+}
+
+interface GroupScope {
+  /** Path prefixes of the enclosing groups, outermost first. */
+  prefixes: string[];
+  /** Middleware of the enclosing groups, outermost first. */
+  middleware: string[];
+}
+
+/**
+ * Compose the path prefix and middleware from every enclosing `Route::group` /
+ * `Route::prefix(..)->group(..)` / `Route::middleware(..)->group(..)` closure,
+ * outermost first. Climbs from the route call through each wrapping closure to
+ * the group call that received it.
+ */
+function groupScopeOf(routeCall: Node): GroupScope {
   const prefixes: string[] = [];
+  const middleware: string[] = [];
   let cur: Node | null = routeCall.parent;
   while (cur) {
     if (cur.type === "anonymous_function" || cur.type === "anonymous_function_creation_expression" || cur.type === "arrow_function") {
@@ -178,10 +259,11 @@ function groupPrefixOf(routeCall: Node): string[] {
       if (up && (up.type === "member_call_expression" || up.type === "scoped_call_expression")) {
         const callName = up.childForFieldName("name")?.text;
         if (callName === "group") {
-          const p =
-            arrayKeyValue(callArgs(up).find((a) => a.type === "array_creation_expression"), "prefix") ??
-            chainPrefix(up);
+          const options = callArgs(up).find((a) => a.type === "array_creation_expression");
+          const p = arrayKeyValue(options, "prefix") ?? chainPrefix(up);
           if (p) prefixes.unshift(p);
+          // `['middleware' => …]` options and the `Route::middleware(…)->…->group(…)` chain both apply.
+          middleware.unshift(...arrayKeyValues(options, "middleware"), ...chainMiddleware(up));
         }
         cur = up; // continue climbing from the group call itself
         continue;
@@ -189,7 +271,52 @@ function groupPrefixOf(routeCall: Node): string[] {
     }
     cur = cur.parent;
   }
-  return prefixes;
+  return { prefixes, middleware };
+}
+
+// ─── Route metadata: middleware, auth, closure params ───────────────────────
+
+/**
+ * Write middleware + auth onto a route. Every string goes to `middleware`
+ * (inherited group ones first); only the auth-flavoured ones contribute to
+ * `auth`, so a route guarded by nothing but `throttle:60,1` carries no
+ * `auth` at all rather than an empty one.
+ */
+function applyMiddleware(route: RouteInfo, inherited: readonly string[], own: readonly string[]): void {
+  if (inherited.length === 0 && own.length === 0) return;
+  route.middleware = [...route.middleware, ...inherited, ...own];
+  const guards = (list: readonly string[]): GuardAttr[] =>
+    list.map(laravelGuard).filter((g): g is GuardAttr => g !== null);
+  const auth = buildAuth(guards(inherited), guards(own));
+  if (auth) route.auth = auth;
+}
+
+/** Closure handler parameters: `function (Request $request, $id) { … }` — signature + what the body reads. */
+function closureParams(node: Node | undefined, path: string): RouteParamInfo[] {
+  if (!node) return [];
+  if (node.type !== "anonymous_function" && node.type !== "anonymous_function_creation_expression" && node.type !== "arrow_function") return [];
+  const formal = node.childForFieldName("parameters") ?? node.children.find((c) => c.type === "formal_parameters");
+  const params: ParamInfo[] = [];
+  for (const p of formal?.children ?? []) {
+    if (p.type !== "simple_parameter" && p.type !== "variadic_parameter") continue;
+    const varNode = p.children.find((c) => c.type === "variable_name");
+    const name = varNode?.text.replace(/^\$/, "");
+    if (!name) continue;
+    const typeNode = p.children.find((c) => /_type$/.test(c.type));
+    const type = typeNode ? typeNode.text.replace(/^\?/, "").replace(/^\\/, "").replace(/.*\\/, "") : null;
+    params.push({ name, type, defaultValue: null });
+  }
+  const out = bindPhpParams(params, path);
+  const body = node.childForFieldName("body") ?? node.children.find((c) => c.type === "compound_statement");
+  if (body) {
+    const seen = new Set(out.map((p) => `${p.binding}:${p.name}`));
+    for (const acc of extractPhpRequestAccess(body.text, requestReceivers(params))) {
+      if (seen.has(`${acc.binding}:${acc.name}`)) continue;
+      seen.add(`${acc.binding}:${acc.name}`);
+      out.push({ ...acc, inferred: true });
+    }
+  }
+  return out;
 }
 
 function joinPath(prefixes: string[], path: string): string {
@@ -218,7 +345,14 @@ function emitVerbRoute(
   basePrefix: string,
 ): void {
   const line = call.startPosition.row + 1;
-  const prefixes = basePrefix ? [basePrefix, ...groupPrefixOf(call)] : groupPrefixOf(call);
+  const scope = groupScopeOf(call);
+  const prefixes = basePrefix ? [basePrefix, ...scope.prefixes] : scope.prefixes;
+  const own = [...chainMiddleware(call), ...trailingChainMiddleware(call)];
+  const emit = (r: RouteInfo, handlerArg?: Node): void => {
+    applyMiddleware(r, scope.middleware, own);
+    applyRouteMeta(r, { params: closureParams(handlerArg, r.path) });
+    routes.push(r);
+  };
 
   if (verb === "match") {
     // Route::match(['get','post'], '/multi', handler)
@@ -227,7 +361,7 @@ function emitVerbRoute(
     if (!path) return;
     const h = resolveHandler(args[2]);
     for (const m of verbs) {
-      routes.push({ path: joinPath(prefixes, path), httpMethod: m, kind: "api", handler: h.name, calls: h.calls, middleware: [], line });
+      emit({ path: joinPath(prefixes, path), httpMethod: m, kind: "api", handler: h.name, calls: h.calls, middleware: [], line }, args[2]);
     }
     return;
   }
@@ -240,7 +374,7 @@ function emitVerbRoute(
     const path = stringValue(args[0]);
     if (!path) return;
     const view = stringValue(args[1]);
-    routes.push({
+    emit({
       path: joinPath(prefixes, path),
       httpMethod: "GET",
       kind: "frontend",
@@ -260,7 +394,7 @@ function emitVerbRoute(
     const cls = ctlArg ? (classConstantName(ctlArg) ?? stringValue(ctlArg)?.split("\\").pop() ?? null) : null;
     for (const a of RESOURCE_ACTIONS) {
       if (verb === "apiResource" && API_RESOURCE_SKIP.has(a.action)) continue;
-      routes.push({
+      emit({
         path: joinPath(prefixes, base) + a.suffix,
         httpMethod: a.method,
         kind: "api",
@@ -277,7 +411,7 @@ function emitVerbRoute(
   const path = stringValue(args[0]);
   if (!path) return;
   const h = resolveHandler(args[1]);
-  routes.push({
+  emit({
     path: joinPath(prefixes, path),
     httpMethod: verb === "any" ? null : verb.toUpperCase(),
     kind: "api",
@@ -285,7 +419,7 @@ function emitVerbRoute(
     calls: h.calls,
     middleware: [],
     line,
-  });
+  }, args[1]);
 }
 
 const ROUTE_CALL_NAMES: ReadonlySet<string> = new Set([

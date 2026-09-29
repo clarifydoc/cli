@@ -11,6 +11,7 @@ import { PhpDataSourceExtractor } from "./data-sources.js";
 import { PhpMutationExtractor } from "./data-mutations.js";
 import { PhpEntityExtractor } from "./entities.js";
 import { phpRouteExtractor } from "./routes/index.js";
+import { phpRequestSchema } from "./request-schema.js";
 
 const PHP_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -31,6 +32,7 @@ export const phpMeta: LanguagePluginMeta = {
   dataMutations: new PhpMutationExtractor(),
   entities: new PhpEntityExtractor(),
   builtinTypes: PHP_BUILTINS,
+  requestSchema: phpRequestSchema,
   knownPackages: composerPackages,
   complexity: {
     branchNodes: new Set([

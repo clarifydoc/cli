@@ -79,3 +79,95 @@ class Plain { public function run(): void {} }`;
     expect(await routesOf(SRC, "src/Plain.php")).toEqual([]);
   });
 });
+
+/**
+ * The attribute layer: `#[IsGranted]` / `#[Security]` guards (class-level
+ * inherited, method-level own) and parameter bindings from Symfony's
+ * mapping attributes, injected types and the path.
+ */
+describe("Symfony guards and parameter bindings", () => {
+  it("inherits class-level IsGranted, adds the method's own, and binds params", async () => {
+    const SRC = `<?php
+namespace App\\Controller;
+
+#[Route('/api/users')]
+#[IsGranted('ROLE_ADMIN')]
+class UserController extends AbstractController
+{
+    #[Route('/{id}', methods: ['POST'])]
+    #[IsGranted('ROLE_EDITOR')]
+    public function update(
+        int $id,
+        #[MapRequestPayload] CreateUserDto $dto,
+        #[MapQueryParameter] ?string $q,
+        #[MapQueryParameter(name: 'page_size')] int $pageSize = 20,
+        Request $request,
+        #[CurrentUser] ?User $me = null,
+        UserRepository $repo,
+    ): JsonResponse {
+        $trace = $request->headers->get('X-Trace');
+        return $this->json([]);
+    }
+
+    #[Route('/{id}', methods: ['GET'])]
+    #[IsGranted('view', 'user')]
+    public function show(User $user, LoggerInterface $logger): JsonResponse { return $this->json($user); }
+
+    #[Route('', methods: ['GET'])]
+    #[Security("is_granted('ROLE_ADMIN') or is_granted('ROLE_AUDITOR')")]
+    public function list(#[MapQueryString] ListFilter $filter): JsonResponse { return $this->json([]); }
+
+    #[Route('/expr', methods: ['GET'])]
+    #[IsGranted(new Expression('user.isActive()'))]
+    public function expr(): JsonResponse { return $this->json([]); }
+}`;
+    const routes = await routesOf(SRC);
+    const byHandler = (h: string) => routes.find((r) => r.handler === h)!;
+
+    const update = byHandler("update");
+    expect(update.middleware).toEqual(["IsGranted('ROLE_ADMIN')", "IsGranted('ROLE_EDITOR')"]);
+    expect(update.auth).toEqual({ roles: ["ROLE_ADMIN", "ROLE_EDITOR"], policies: [], schemes: [], anonymous: false, inherited: false });
+    expect(update.params).toEqual([
+      { name: "id", type: "int", binding: "route", inferred: true },
+      { name: "dto", type: "CreateUserDto", binding: "body" },
+      { name: "q", type: "string", binding: "query" },
+      { name: "page_size", type: "int", binding: "query" },
+      { name: "request", type: "Request", binding: "services", inferred: true },
+      { name: "me", type: "User", binding: "services" },
+      { name: "repo", type: "UserRepository", binding: "services", inferred: true },
+      { name: "X-Trace", type: null, binding: "header", inferred: true },
+    ]);
+
+    // A voter attribute with a subject is a policy; an entity on a route with a
+    // path parameter is loaded by the entity value resolver (route, inferred).
+    const show = byHandler("show");
+    expect(show.auth).toMatchObject({ roles: ["ROLE_ADMIN"], policies: ["view,user"], inherited: false });
+    expect(show.params).toEqual([
+      { name: "user", type: "User", binding: "route", inferred: true },
+      { name: "logger", type: "LoggerInterface", binding: "services", inferred: true },
+    ]);
+
+    // `#[Security("…")]` and an Expression subject carry the expression as the policy.
+    expect(byHandler("list").auth!.policies).toEqual(["is_granted('ROLE_ADMIN') or is_granted('ROLE_AUDITOR')"]);
+    expect(byHandler("list").params).toEqual([{ name: "filter", type: "ListFilter", binding: "query" }]);
+    expect(byHandler("expr").auth!.policies).toEqual(["user.isActive()"]);
+    expect(byHandler("expr").auth!.roles).toEqual(["ROLE_ADMIN"]);
+    expect(byHandler("expr").params).toBeUndefined();
+  });
+
+  it("declares nothing when no guard is present, and no route binding without a path token", async () => {
+    const SRC = `<?php
+class PingController {
+    #[Route('/ping', methods: ['GET'])]
+    public function ping(): Response { return new Response('pong'); }
+    #[Route('/echo', methods: ['POST'])]
+    public function echo(Payload $payload): Response { return new Response('pong'); }
+}`;
+    const [route, echo] = await routesOf(SRC);
+    expect(route!.auth).toBeUndefined();
+    expect(route!.middleware).toEqual([]);
+    expect(route!.params).toBeUndefined();
+    // A class-typed argument with nothing in the path to load it by: unknown, not guessed.
+    expect(echo!.params).toEqual([{ name: "payload", type: "Payload", binding: null }]);
+  });
+});
