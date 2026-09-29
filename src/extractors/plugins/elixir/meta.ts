@@ -3,6 +3,7 @@ import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { elixirSpec } from "./index.js";
 import { hexPackages } from "./packages.js";
 import { elixirManifest } from "./manifest.js";
+import { elixirRequestSchema } from "./request-schema.js";
 
 const ELIXIR_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -19,4 +20,5 @@ export const elixirMeta: LanguagePluginMeta = {
   knownPackages: hexPackages,
   apiCallRoots: ["HTTPoison", "Tesla", "Finch", "Req", "Mint"],
   dbCallRoots: ["Repo"],
+  requestSchema: elixirRequestSchema,
 };
