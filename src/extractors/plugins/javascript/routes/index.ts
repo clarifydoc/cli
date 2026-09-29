@@ -1,7 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { RouteInfo } from "../../../../types/analysis.js";
 import type { RouteExtractor } from "../../../routes/base.js";
-import { visitExpressRoute } from "./express.js";
+import { visitExpressRoute, applyRouterLevelGuards } from "./express.js";
 import { visitReactRouterRoute } from "./react-router.js";
 import { visitNestjsRoute } from "./nestjs.js";
 import { visitVueRouterRoute } from "./vue-router.js";
@@ -29,6 +29,10 @@ export const javascriptRouteExtractor: RouteExtractor = {
       for (const child of node.children) walk(child);
     };
     walk(tree.rootNode);
+    // Express guards declared once on the router (`router.use(requireAuth)`)
+    // apply to every later route on it — a file-level fact the per-node
+    // visitor cannot see, so it is written after the walk.
+    applyRouterLevelGuards(tree.rootNode, express);
 
     return [...express, ...reactRouter, ...nestjs, ...vueRouter];
   },

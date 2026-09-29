@@ -1,8 +1,9 @@
 import type { Node } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from "../../functions-classes/base.js";
-import type { CallInfo } from "../../../types/analysis.js";
+import type { CallInfo, RouteParamInfo } from "../../../types/analysis.js";
 import { getVisibility, extractJsDecorators, stripQuotes } from "../../shared/node-helpers.js";
+import { REQUEST_PARAM_NAMES, scanRequestAccess } from "./request-access.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { foldValue, type ValueExpr } from "../../shared/value-resolver.js";
 import { astToValueExpr } from "./value-capture.js";
@@ -142,6 +143,38 @@ function bareTypeName(text: string): string {
   return (cut === -1 ? text : text.slice(0, cut)).trim();
 }
 
+/**
+ * Decorators that are CHILDREN of a node (class fields, parameters — unlike
+ * methods, whose decorators are class-body siblings): full text with
+ * arguments, `@` dropped, whitespace collapsed (`IsString()`, `Expose({ name: 'x' })`).
+ */
+function childDecorators(node: Node): string[] {
+  const out: string[] = [];
+  for (const child of node.children) {
+    if (child.type === "decorator") out.push(child.text.replace(/^@/, "").replace(/\s+/g, " ").trim());
+  }
+  return out;
+}
+
+/** A `?` token among a node's children — TS optional field, parameter or property signature. */
+function hasOptionalMarker(node: Node): boolean {
+  return node.children.some((c) => c.type === "?");
+}
+
+/**
+ * What a handler-shaped function reads off its request object: only when the
+ * first parameter is named like one (`req`, `request`, `ctx`) — that is how
+ * Express/Koa/Fastify handlers declared away from the route line (`router.get
+ * ('/', getUsers)`) get their bindings, through the project-level join.
+ * Absent (not empty) when the function reads nothing.
+ */
+function requestAccessOf(params: readonly ParamInfo[], body: Node | null): RouteParamInfo[] | undefined {
+  const first = params[0]?.name;
+  if (!first || !body || !REQUEST_PARAM_NAMES.has(first)) return undefined;
+  const access = scanRequestAccess(body.text, first);
+  return access.length > 0 ? access : undefined;
+}
+
 export class JavaScriptExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
 
@@ -222,6 +255,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
 
     const body = node.childForFieldName("body");
     const urlTemplate = extractUrlTemplate(body, new Set(params.map((p) => p.name)));
+    const requestAccess = requestAccessOf(params, body);
     return {
       name,
       params,
@@ -233,6 +267,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
       ...(urlTemplate ? { urlTemplate } : {}),
+      ...(requestAccess ? { requestAccess } : {}),
     };
   }
 
@@ -266,6 +301,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
 
     const body = funcNode.childForFieldName("body") ?? funcNode;
     const urlTemplate = extractUrlTemplate(body, new Set(params.map((p) => p.name)));
+    const requestAccess = requestAccessOf(params, body);
     return {
       name,
       params,
@@ -277,6 +313,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       line: funcNode.startPosition.row + 1,
       endLine: funcNode.endPosition.row + 1,
       ...(urlTemplate ? { urlTemplate } : {}),
+      ...(requestAccess ? { requestAccess } : {}),
     };
   }
 
@@ -376,6 +413,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
             visibility: null,
             isStatic: false,
             isReadonly: member.text.includes("readonly "),
+            isRequired: !hasOptionalMarker(member),
           });
         }
       }
@@ -446,6 +484,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
             const returnType = member.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? null;
             const isAsync = member.text.startsWith("async ");
             const methodBody = member.childForFieldName("body");
+            const requestAccess = requestAccessOf(params, methodBody);
             methods.push({
               name: methodName,
               params,
@@ -456,7 +495,12 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
               calls: [...extractCalls(methodBody, "typescript"), ...collectDynamicImportCalls(methodBody)],
               line: member.startPosition.row + 1,
               endLine: member.endPosition.row + 1,
+              ...(requestAccess ? { requestAccess } : {}),
             });
+            // `constructor(public readonly id: number)` declares a property.
+            if (methodName === "constructor") {
+              properties.push(...this.parameterProperties(member.childForFieldName("parameters")));
+            }
           } else {
             const propName =
               member.childForFieldName("name")?.text ?? "unknown";
@@ -466,6 +510,12 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
               visibility: this.getVisibility(member),
               isStatic: member.text.includes("static "),
               isReadonly: member.text.includes("readonly "),
+              // Field decorators are children of the field (unlike a method's,
+              // which sit beside it in the class body) — class-validator and
+              // class-transformer markers live here.
+              decorators: childDecorators(member),
+              // `name?: string` or `age = 0` is not something a caller must send.
+              isRequired: !hasOptionalMarker(member) && !member.childForFieldName("value"),
             });
           }
         }
@@ -483,6 +533,33 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
+  }
+
+  /**
+   * TypeScript parameter properties: a constructor parameter carrying an
+   * accessibility modifier or `readonly` declares a same-named property.
+   */
+  private parameterProperties(paramsNode: Node | null): PropertyInfo[] {
+    if (!paramsNode) return [];
+    const out: PropertyInfo[] = [];
+    for (const param of paramsNode.namedChildren) {
+      if (param.type !== "required_parameter" && param.type !== "optional_parameter") continue;
+      const modifier = param.children.find((c) => c.type === "accessibility_modifier")?.text ?? null;
+      const isReadonly = param.children.some((c) => c.type === "readonly");
+      if (!modifier && !isReadonly) continue;
+      const name = param.childForFieldName("pattern")?.text;
+      if (!name || !/^[A-Za-z_$][\w$]*$/.test(name)) continue;
+      out.push({
+        name,
+        type: param.childForFieldName("type")?.text?.replace(/^:\s*/, "") ?? null,
+        visibility: (modifier as "public" | "private" | "protected" | null) ?? "public",
+        isStatic: false,
+        isReadonly,
+        decorators: childDecorators(param),
+        isRequired: !hasOptionalMarker(param) && !param.childForFieldName("value"),
+      });
+    }
+    return out;
   }
 
   private extractDecorators(node: Node): string[] {

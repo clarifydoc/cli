@@ -1,17 +1,47 @@
 import type { Node } from "web-tree-sitter";
-import type { RouteInfo } from "../../../../types/analysis.js";
+import type { RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../../types/analysis.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
+import { applyRouteMeta, boundParam, inferredParam, type GuardAttr } from "../../../shared/route-metadata.js";
 
-const HTTP_DECORATORS = new Set([
-  "Get",
-  "Post",
-  "Put",
-  "Patch",
-  "Delete",
-  "All",
-  "Head",
-  "Options",
-]);
+/**
+ * NestJS decorator routing.
+ *
+ * A route is a `@Get('path')`-style decorator sitting in a `class_body` as a
+ * SIBLING of the method it decorates (tree-sitter-typescript keeps method
+ * decorators outside `method_definition`), so the handler is the next
+ * `method_definition` after the decorator run — not, as before, the first
+ * method in the class (usually `constructor`). The full path is the
+ * `@Controller('prefix')` of the enclosing class joined with the method path.
+ *
+ * The attribute layer comes from the same decorators: `@UseGuards(...)`,
+ * `@Roles(...)`, `@Public()` on the class (inherited) or the method,
+ * `@Version(...)` on either (the method's wins), and the parameter decorators
+ * `@Body() / @Query() / @Param() / @Headers() / @UploadedFile() / @Req()`,
+ * which are CHILDREN of the parameter node.
+ */
+
+const HTTP_DECORATORS = new Set(["Get", "Post", "Put", "Patch", "Delete", "All", "Head", "Options"]);
+
+/** `@Public()`, `@AllowAnonymous()`, `@SkipAuth()` — the usual custom "no guard here" markers. */
+const ANONYMOUS_DECORATORS = new Set(["Public", "AllowAnonymous", "SkipAuth", "SkipJwtAuth", "NoAuth", "IsPublic"]);
+
+/** Parameter decorator → binding. */
+const PARAM_BINDINGS: Record<string, RouteParamBinding> = {
+  Body: "body",
+  Query: "query",
+  Param: "route",
+  Headers: "header",
+  UploadedFile: "form",
+  UploadedFiles: "form",
+  Req: "services",
+  Request: "services",
+  Res: "services",
+  Response: "services",
+  Session: "services",
+  Ip: "services",
+  HostParam: "services",
+  Next: "services",
+};
 
 /** NestJS-style decorators: @Get("/path"), @Post("/path") */
 export function extractNestjsRoutes(root: Node, routes: RouteInfo[]): void {
@@ -25,43 +55,245 @@ function walkForDecoratorRoutes(node: Node, routes: RouteInfo[]) {
   }
 }
 
-/** Inspect a single node for a NestJS HTTP-verb decorator. */
-export function visitNestjsRoute(node: Node, routes: RouteInfo[]): void {
-  if (node.type === "decorator") {
-    const expr = node.child(1);
-    if (expr?.type === "call_expression") {
-      const callee = expr.childForFieldName("function");
-      const calleeName = callee?.text;
+/** The `call_expression` inside a decorator, with its bare callee name; null for `@foo` without a call. */
+function decoratorCall(dec: Node): { name: string; call: Node } | null {
+  const expr = dec.namedChildren[0];
+  if (!expr || expr.type !== "call_expression") return null;
+  const callee = expr.childForFieldName("function");
+  if (!callee) return null;
+  // `@common.Get()` — keep the leaf.
+  const name = callee.type === "member_expression" ? callee.childForFieldName("property")?.text ?? "" : callee.text;
+  return { name, call: expr };
+}
 
-      if (calleeName && HTTP_DECORATORS.has(calleeName)) {
-        const args = expr.childForFieldName("arguments");
-        let path = "/";
-        if (args && args.childCount > 2) {
-          const firstArg = args.child(1);
-          if (firstArg) path = stripQuotes(firstArg.text);
-        }
+/** Decorator text as a reader knows it: `UseGuards(AuthGuard('jwt'), RolesGuard)`. */
+function decoratorText(dec: Node): string {
+  return dec.text.replace(/^@/, "").replace(/\s+/g, " ").trim();
+}
 
-        const parent = node.parent;
-        let handler: string | null = null;
-        if (parent) {
-          for (const sibling of parent.children) {
-            if (sibling.type === "method_definition") {
-              handler = sibling.childForFieldName("name")?.text ?? null;
-              break;
-            }
-          }
-        }
+/** Argument nodes of a call, punctuation excluded. */
+function callArgs(call: Node): Node[] {
+  return call.childForFieldName("arguments")?.namedChildren ?? [];
+}
 
-        routes.push({
-          path,
-          httpMethod: calleeName.toUpperCase(),
-          kind: "api",
-          handler,
-          calls: [],
-          middleware: [],
-          line: node.startPosition.row + 1,
-        });
+/** First string argument of a call, or null. */
+function firstString(call: Node): string | null {
+  const first = callArgs(call)[0];
+  if (!first) return null;
+  if (first.type === "string" || first.type === "template_string") return stripQuotes(first.text);
+  // `@Get(['a', 'b'])` — the first alternative.
+  if (first.type === "array") {
+    const el = first.namedChildren[0];
+    if (el && (el.type === "string" || el.type === "template_string")) return stripQuotes(el.text);
+  }
+  return null;
+}
+
+/** Every string in an argument list, flattening one array level: `'2'`, `['2', '3']`. */
+function allStrings(call: Node): string[] {
+  const out: string[] = [];
+  for (const a of callArgs(call)) {
+    if (a.type === "string" || a.type === "template_string") out.push(stripQuotes(a.text));
+    else if (a.type === "array") {
+      for (const el of a.namedChildren) {
+        if (el.type === "string" || el.type === "template_string") out.push(stripQuotes(el.text));
       }
     }
   }
+  return out;
+}
+
+/** `{ path: 'users', version: '1' }` → the string value of one key, or null. */
+function objectStringField(obj: Node, key: string): string | null {
+  for (const pair of obj.namedChildren) {
+    if (pair.type !== "pair") continue;
+    if (pair.childForFieldName("key")?.text !== key) continue;
+    const value = pair.childForFieldName("value");
+    if (!value) return null;
+    if (value.type === "string" || value.type === "template_string") return stripQuotes(value.text);
+    if (value.type === "array") {
+      const el = value.namedChildren[0];
+      if (el && (el.type === "string" || el.type === "template_string")) return stripQuotes(el.text);
+    }
+    return null;
+  }
+  return null;
+}
+
+/**
+ * The guard a class- or method-level decorator declares, or null for one
+ * that says nothing about access (`@HttpCode`, `@ApiTags`, `@Get`).
+ */
+function guardOf(dec: Node): GuardAttr | null {
+  const d = decoratorCall(dec);
+  if (!d) return null;
+  const text = decoratorText(dec);
+  if (ANONYMOUS_DECORATORS.has(d.name)) return { text, anonymous: true };
+  if (d.name === "Roles") return { text, roles: allStrings(d.call) };
+  if (d.name === "UseGuards") {
+    const schemes: string[] = [];
+    const policies: string[] = [];
+    for (const arg of callArgs(d.call)) {
+      if (arg.type === "call_expression") {
+        // `AuthGuard('jwt')` — the strategy is the scheme; `AuthGuard()` is a policy by name.
+        const callee = arg.childForFieldName("function")?.text ?? arg.text;
+        const strings = callArgs(arg)
+          .filter((a) => a.type === "string" || a.type === "template_string")
+          .map((a) => stripQuotes(a.text));
+        if (/AuthGuard$/.test(callee) && strings.length > 0) schemes.push(...strings);
+        else policies.push(callee.replace(/\s+/g, ""));
+      } else if (arg.type === "new_expression") {
+        policies.push(arg.childForFieldName("constructor")?.text ?? arg.text);
+      } else {
+        policies.push(arg.text);
+      }
+    }
+    return { text, schemes, policies };
+  }
+  return null;
+}
+
+/** `@Version('2')` / `@Version(['2', '3'])`; `VERSION_NEUTRAL` and other identifiers contribute nothing. */
+function versionsOf(dec: Node): string[] {
+  const d = decoratorCall(dec);
+  return d && d.name === "Version" ? allStrings(d.call) : [];
+}
+
+/** What the enclosing controller contributes to every route in it. */
+interface ControllerScope {
+  prefix: string;
+  guards: GuardAttr[];
+  versions: string[];
+}
+
+/**
+ * Decorators of the class that owns a `class_body`: children of the class
+ * node, or of its `export_statement` parent when the class is exported.
+ */
+function classDecorators(classBody: Node): Node[] {
+  const cls = classBody.parent;
+  if (!cls) return [];
+  const own = cls.children.filter((c) => c.type === "decorator");
+  if (own.length > 0) return own;
+  const parent = cls.parent;
+  if (parent?.type === "export_statement") return parent.children.filter((c) => c.type === "decorator");
+  return [];
+}
+
+function controllerScope(classBody: Node): ControllerScope {
+  const scope: ControllerScope = { prefix: "", guards: [], versions: [] };
+  for (const dec of classDecorators(classBody)) {
+    const d = decoratorCall(dec);
+    if (!d) continue;
+    if (d.name === "Controller") {
+      const first = callArgs(d.call)[0];
+      if (first?.type === "object") {
+        scope.prefix = objectStringField(first, "path") ?? "";
+        const v = objectStringField(first, "version");
+        if (v) scope.versions.push(v);
+      } else {
+        scope.prefix = firstString(d.call) ?? "";
+      }
+      continue;
+    }
+    const guard = guardOf(dec);
+    if (guard) scope.guards.push(guard);
+    scope.versions.push(...versionsOf(dec));
+  }
+  return scope;
+}
+
+/** `users` + `:id` → `/users/:id`; empty parts collapse to `/`. */
+function joinPath(prefix: string, path: string): string {
+  const parts = [prefix, path].map((p) => p.replace(/^\/+|\/+$/g, "")).filter((p) => p.length > 0);
+  return "/" + parts.join("/");
+}
+
+/** The decorator run this decorator belongs to (contiguous decorator siblings) and the method after it. */
+function decoratorRun(dec: Node): { decorators: Node[]; method: Node | null } {
+  const siblings = dec.parent?.children ?? [];
+  let at = siblings.findIndex((s) => s.id === dec.id);
+  if (at < 0) return { decorators: [dec], method: null };
+  // Walk back to the start of the run, then forward to the method.
+  let start = at;
+  while (start > 0 && siblings[start - 1]!.type === "decorator") start--;
+  const decorators: Node[] = [];
+  let method: Node | null = null;
+  for (let i = start; i < siblings.length; i++) {
+    const s = siblings[i]!;
+    if (s.type === "decorator") decorators.push(s);
+    else {
+      if (s.type === "method_definition") method = s;
+      break;
+    }
+  }
+  return { decorators, method };
+}
+
+/** One route parameter from a method parameter node (`@Body() dto: CreateUserDto`, `@Param('id') id: string`, `plain: number`). */
+function paramOf(param: Node, fullPath: string): RouteParamInfo | null {
+  const ident = param.childForFieldName("pattern") ?? param.namedChildren.find((c) => c.type === "identifier");
+  const name = ident?.text;
+  if (!name) return null;
+  const type = param.childForFieldName("type")?.text?.replace(/^:\s*/, "") ?? null;
+  const dec = param.namedChildren.find((c) => c.type === "decorator");
+  if (!dec) return inferredParam(name, type, fullPath, null);
+  const d = decoratorCall(dec);
+  if (!d) return { name, type, binding: null };
+  const binding = PARAM_BINDINGS[d.name];
+  if (!binding) return { name, type, binding: null };
+  // Framework-injected objects are always an inference from the reader's
+  // point of view: nothing about the request binds there.
+  if (binding === "services") return { name, type, binding, inferred: true };
+  // `@Query('q') q`, `@Param('id') id`, `@Headers('x-t') t` — the string names
+  // the wire key; `@Body('name')` a body field.
+  return boundParam(firstString(d.call) ?? name, type, binding);
+}
+
+/** Inspect a single node for a NestJS HTTP-verb decorator. */
+export function visitNestjsRoute(node: Node, routes: RouteInfo[]): void {
+  if (node.type !== "decorator") return;
+  const d = decoratorCall(node);
+  if (!d || !HTTP_DECORATORS.has(d.name)) return;
+  const classBody = node.parent;
+  if (!classBody || classBody.type !== "class_body") return;
+
+  const scope = controllerScope(classBody);
+  const { decorators, method } = decoratorRun(node);
+  const fullPath = joinPath(scope.prefix, firstString(d.call) ?? "");
+
+  const guards: GuardAttr[] = [];
+  const methodVersions: string[] = [];
+  for (const dec of decorators) {
+    const guard = guardOf(dec);
+    if (guard) guards.push(guard);
+    methodVersions.push(...versionsOf(dec));
+  }
+
+  const params: RouteParamInfo[] = [];
+  if (method) {
+    for (const p of method.childForFieldName("parameters")?.namedChildren ?? []) {
+      if (p.type !== "required_parameter" && p.type !== "optional_parameter") continue;
+      const info = paramOf(p, fullPath);
+      if (info) params.push(info);
+    }
+  }
+
+  const route: RouteInfo = {
+    path: fullPath,
+    httpMethod: d.name.toUpperCase(),
+    kind: "api",
+    handler: method?.childForFieldName("name")?.text ?? null,
+    calls: [],
+    middleware: [],
+    line: node.startPosition.row + 1,
+  };
+  applyRouteMeta(route, {
+    inheritedGuards: scope.guards,
+    guards,
+    // A method-level @Version overrides the controller's.
+    versions: methodVersions.length > 0 ? methodVersions : scope.versions,
+    params,
+  });
+  routes.push(route);
 }
