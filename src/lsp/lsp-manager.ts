@@ -1,4 +1,6 @@
 import { readFile } from "fs/promises";
+import { existsSync } from "fs";
+import { join } from "path";
 import type { Language } from "../types/analysis.js";
 import type { DiscoveredFile } from "../core/file-discovery.js";
 import { LspClient } from "./lsp-client.js";
@@ -166,6 +168,16 @@ export class LspManager {
     // Build image if it doesn't exist
     const exists = await imageExists(config.dockerImage);
     if (!exists) {
+      // Name the missing build context outright. A packaged copy of the
+      // analyzer that forgot to ship `docker/` otherwise surfaces as a Docker
+      // build error deep in the log, and the run continues as if LSP had
+      // simply found nothing.
+      if (!existsSync(join(config.dockerfilePath, "Dockerfile"))) {
+        throw new Error(
+          `LSP build context missing at ${config.dockerfilePath} — this copy of ClarifyDoc does not ship the ` +
+            `Docker contexts, so the '${config.id}' language server cannot be built.`,
+        );
+      }
       if (this.verbose) console.log(`  Building Docker image: ${config.dockerImage}...`);
       await buildImage(config.dockerfilePath, config.dockerImage, this.verbose);
     }
