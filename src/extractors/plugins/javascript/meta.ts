@@ -30,6 +30,7 @@ import { JavaScriptMutationExtractor } from "./data-mutations.js";
 import { JavaScriptEntityExtractor } from "./entities.js";
 import { javascriptRouteExtractor } from "./routes/index.js";
 import { JsComponentEmitResolver } from "./dispatch.js";
+import { javascriptRequestSchema } from "./request-schema.js";
 
 const TS_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -177,6 +178,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   dbCallRoots: DB_CALL_ROOTS,
   ast: astHooks("typescript"),
   calls: javascriptCallHooks,
+  requestSchema: javascriptRequestSchema,
 };
 
 export const javascriptMeta: LanguagePluginMeta = {
@@ -199,4 +201,5 @@ export const javascriptMeta: LanguagePluginMeta = {
   dbCallRoots: DB_CALL_ROOTS,
   ast: astHooks("javascript"),
   calls: javascriptCallHooks,
+  requestSchema: javascriptRequestSchema,
 };
