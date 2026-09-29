@@ -5,6 +5,7 @@ import { goSpec } from "./index.js";
 import { goPackages } from "./packages.js";
 import { goManifest } from "./manifest.js";
 import { GoEntityExtractor } from "./entities.js";
+import { goRequestSchema } from "./request-schema.js";
 
 const GO_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -30,6 +31,7 @@ export const goMeta: LanguagePluginMeta = {
   builtinTypes: GO_BUILTINS,
   knownPackages: goPackages,
   entities: new GoEntityExtractor(),
+  requestSchema: goRequestSchema,
   complexity: {
     branchNodes: new Set([
       "if_statement", "for_statement", "expression_switch_statement",

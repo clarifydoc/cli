@@ -1,4 +1,5 @@
 import type { RouteInfo } from "../../../types/analysis.js";
+import { buildAuth, type GuardAttr } from "../../shared/route-metadata.js";
 
 /**
  * Go server routes across the ecosystem's router families:
@@ -6,7 +7,8 @@ import type { RouteInfo } from "../../../types/analysis.js";
  *   - net/http 1.22+:  mux.HandleFunc("GET /users/{id}", h) / mux.Handle(...)
  *   - net/http legacy: http.HandleFunc("/users", h)            (verb unknown)
  *   - gin / echo:      r.GET("/users", h), api := r.Group("/api"); api.GET(...)
- *   - chi:             r.Get("/users", h), r.Route("/api", func(r chi.Router) {...})
+ *   - chi:             r.Get("/users", h), r.Route("/api", func(r chi.Router) {...}),
+ *                      r.Method("GET", "/users", h), r.With(mw).Get(...)
  *   - fiber:           app.Get("/users/:id", h), g := app.Group("/api")
  *   - gorilla/mux:     r.HandleFunc("/users", h).Methods("GET", "POST"),
  *                      s := r.PathPrefix("/api").Subrouter()
@@ -18,29 +20,60 @@ import type { RouteInfo } from "../../../types/analysis.js";
  * no AST). Before this, Title-case verb routers (chi/fiber) and gorilla's
  * `.Methods(...)` form produced zero routes, and group prefixes were dropped,
  * so client `/api/v1/users` calls could not join gin's `users.GET("", h)`.
+ *
+ * Middleware travels the same way. `r.Use(a, b)` adds to every route later
+ * registered on `r` (and to groups created from `r` afterwards — gin/echo/chi
+ * copy the parent's chain at `Group` time, which is what line order models);
+ * `r.Group("/admin", auth())` and chi `With(mw)` / block-scoped `Use` attach
+ * to their group; extra arguments between the path and the handler
+ * (`r.GET("/x", AuthRequired(), h)`) and wrappers around the handler
+ * (`mux.Handle("/x", auth(h))`) are the route's own guards. Every guard text
+ * lands in `middleware`; the ones whose name reads as an auth check
+ * (`AuthRequired`, `jwtauth.Verifier`, `RequireRole("admin")`) also fill
+ * `auth` — a scheme when the name says how (jwt/bearer/basic/oauth), roles
+ * when a role middleware lists literals, a policy otherwise. Plain
+ * middleware (`gin.Logger()`, `cors.New()`) stays in `middleware` only.
+ *
+ * The handler is kept as the expression text (`handler.ListProducts`,
+ * `h.GetUser`); the project-level join resolves it and reads the handler's
+ * body for what it binds (`FunctionInfo.requestAccess`), so no params are
+ * written here.
  */
 
 const HTTP_VERBS_TITLE: Record<string, string> = {
   Get: "GET", Post: "POST", Put: "PUT", Patch: "PATCH",
   Delete: "DELETE", Options: "OPTIONS", Head: "HEAD",
 };
+const VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]);
 
-/** `mux.HandleFunc("GET /path", h)` / `mux.Handle("GET /path", h)` — Go 1.22 pattern syntax. */
-const GO122_RE = /\.\s*Handle(?:Func)?\s*\(\s*["'`]([A-Z]+)\s+([^"'`]+)["'`]\s*(?:,\s*([\w.]+))?/;
-/** `r.GET("/path", handler)` — gin/echo (ALL-CAPS verbs). */
-const CAPS_VERB_RE = /(\w+)\.\s*(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s*\(\s*["'`]([^"'`]+)["'`]\s*(?:,\s*([\w.]+))?/;
-/** `r.Get("/path", handler)` — chi/fiber (Title-case verbs). Path must be absolute. */
-const TITLE_VERB_RE = /(\w+)\.\s*(Get|Post|Put|Patch|Delete|Options|Head)\s*\(\s*["'`](\/[^"'`]*)["'`]\s*,\s*([\w.]+)?/;
-/** `r.HandleFunc("/path", h)` — gorilla/legacy net/http (path-first form). */
-const PATH_HF_RE = /(\w+)\.\s*HandleFunc\s*\(\s*["'`](\/[^"'`]*)["'`]\s*(?:,\s*([\w.]+))?/;
+/** `mux.HandleFunc(` / `mux.Handle(` — Go 1.22 pattern strings or gorilla/legacy path-first. */
+const HANDLE_RE = /(\w+|\))\.\s*Handle(?:Func)?\s*\(/;
+/** `r.GET(` — gin/echo (ALL-CAPS verbs). */
+const CAPS_VERB_RE = /(\w+|\))\.\s*(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s*\(/;
+/** `r.Get(` — chi/fiber (Title-case verbs). */
+const TITLE_VERB_RE = /(\w+|\))\.\s*(Get|Post|Put|Patch|Delete|Options|Head)\s*\(/;
+/** `r.Method("GET", "/path", h)` — chi. */
+const CHI_METHOD_RE = /(\w+|\))\.\s*Method\s*\(/;
+/** `r.With(mw...)` — chi inline middleware, chained before the verb. */
+const CHI_WITH_RE = /(\w+)\.\s*With\s*\(/;
 /** `.Methods("GET", "POST")` — gorilla verb constraint on the same line. */
 const METHODS_RE = /\.\s*Methods\s*\(([^)]*)\)/;
-/** `api := r.Group("/api")` — gin/echo/fiber group binding (chains compose). */
-const GROUP_RE = /(\w+)\s*:?=\s*(\w+)\.\s*Group\s*\(\s*["'`]([^"'`]*)["'`]/;
+/** `api := r.Group(` — gin/echo/fiber group binding (chains compose). */
+const GROUP_RE = /(\w+)\s*:?=\s*(\w+)\.\s*Group\s*\(/;
 /** `s := r.PathPrefix("/api").Subrouter()` — gorilla subrouter binding. */
 const SUBROUTER_RE = /(\w+)\s*:?=\s*(\w+)\.\s*PathPrefix\s*\(\s*["'`]([^"'`]*)["'`]\s*\)\s*\.\s*Subrouter\s*\(/;
-/** `r.Route("/api", func(r chi.Router) {` — chi nested block. */
-const CHI_ROUTE_RE = /(\w+)\.\s*Route\s*\(\s*["'`]([^"'`]*)["'`]\s*,\s*func\s*\(/;
+/** `r.Route("/api", func(r chi.Router) {` / `r.Group(func(r chi.Router) {` — chi nested blocks. */
+const CHI_BLOCK_RE = /(\w+)\.\s*(Route|Group)\s*\(/;
+/** `r.Use(a, b)` — router-level middleware. */
+const USE_RE = /(\w+)\.\s*Use\s*\(/;
+
+const STRING_RE = /^["'`]([^"'`]*)["'`]$/;
+/** Names that read as an authentication/authorization check. */
+const AUTH_NAME_RE = /auth|jwt|token|session|login|guard|protect|permission|role|admin|verify|require/i;
+/** Names that say HOW a request is authenticated. */
+const SCHEME_NAME_RE = /jwt|basic|bearer|oauth/i;
+/** Wrappers that are transparent, not middleware. */
+const TRANSPARENT_WRAPPERS = new Set(["http.HandlerFunc", "HandlerFunc", "http.Handler", "gin.WrapH", "gin.WrapF", "echo.WrapHandler", "adaptor.HTTPHandler"]);
 
 function joinPrefix(prefix: string, path: string): string {
   const parts = (prefix + "/" + path).split("/").filter(Boolean);
@@ -58,67 +91,236 @@ function braceDelta(line: string): number {
   return d;
 }
 
+/**
+ * Top-level arguments of the call whose `(` sits at `open`, split at depth-0
+ * commas with quotes honoured. `closed` is false when the line ends inside
+ * the call (an inline `func(c *gin.Context) {` closure spills onto the next
+ * lines) — the args collected so far are still right.
+ */
+function parseArgs(line: string, open: number): { args: string[]; end: number; closed: boolean } {
+  const args: string[] = [];
+  let depth = 0;
+  let cur = "";
+  let quote: string | null = null;
+  for (let i = open; i < line.length; i++) {
+    const ch = line[i]!;
+    if (quote) {
+      cur += ch;
+      if (ch === "\\" && i + 1 < line.length) { cur += line[++i]!; continue; }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") { quote = ch; cur += ch; continue; }
+    if (ch === "(" || ch === "[" || ch === "{") {
+      depth++;
+      if (depth === 1 && ch === "(") continue; // the call's own paren
+    } else if (ch === ")" || ch === "]" || ch === "}") {
+      depth--;
+      if (depth === 0) {
+        if (cur.trim()) args.push(cur.trim());
+        return { args, end: i + 1, closed: true };
+      }
+    } else if (ch === "," && depth === 1) {
+      if (cur.trim()) args.push(cur.trim());
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur.trim()) args.push(cur.trim());
+  return { args, end: line.length, closed: false };
+}
+
+/** A guard as declared, classified by what its name says. */
+function classifyGuard(raw: string): GuardAttr {
+  const text = raw.replace(/\s+/g, " ").trim();
+  const callee = text.match(/^[\w.]+/)?.[0] ?? text;
+  if (!AUTH_NAME_RE.test(callee)) return { text };
+  if (/role/i.test(callee)) {
+    const literals = [...text.matchAll(/["'`]([^"'`]+)["'`]/g)].map((m) => m[1]!);
+    if (literals.length > 0) return { text, roles: literals };
+  }
+  if (SCHEME_NAME_RE.test(callee)) return { text, schemes: [callee] };
+  return { text, policies: [callee] };
+}
+
+function isAuthGuard(g: GuardAttr): boolean {
+  return (g.policies?.length ?? 0) + (g.roles?.length ?? 0) + (g.schemes?.length ?? 0) > 0;
+}
+
+/**
+ * The handler an argument names, unwrapping middleware applied inline:
+ * `auth(h)` → handler `h` guarded by `auth`; `http.HandlerFunc(h)` → `h`.
+ * An inline closure (`func(c *gin.Context) {`) has no name.
+ */
+function unwrapHandler(arg: string): { handler: string | null; guards: GuardAttr[] } {
+  const guards: GuardAttr[] = [];
+  let cur = arg.trim();
+  for (let i = 0; i < 4; i++) {
+    if (/^[\w.]+$/.test(cur)) return { handler: cur, guards };
+    const wrap = cur.match(/^([\w.]+)\s*\(([\s\S]*)\)$/);
+    if (!wrap) break;
+    const inner = parseArgs(`(${wrap[2]!})`, 0).args;
+    if (!TRANSPARENT_WRAPPERS.has(wrap[1]!)) guards.push(classifyGuard(cur));
+    const next = inner.find((a) => /^[\w.]+$/.test(a) || /^[\w.]+\s*\(/.test(a));
+    if (!next) break;
+    cur = next;
+  }
+  return { handler: null, guards };
+}
+
 export function extractGoRoutes(lines: string[]): RouteInfo[] {
   const routes: RouteInfo[] = [];
   /** Router variable → composed path prefix (Group / PathPrefix chains). */
   const varPrefix = new Map<string, string>();
-  /** Open chi Route(...) blocks: prefix applies until depth drops below entry. */
-  const routeStack: Array<{ depth: number; prefix: string }> = [];
+  /** Router variable → middleware chain accumulated so far (Use + Group args). */
+  const varGuards = new Map<string, GuardAttr[]>();
+  /** Open chi Route/Group blocks: prefix + block-scoped Use apply until depth drops below entry. */
+  const routeStack: Array<{ depth: number; prefix: string; guards: GuardAttr[] }> = [];
   let depth = 0;
 
   const stackPrefix = (): string => routeStack.map((s) => s.prefix).join("");
   const prefixOf = (recv: string): string => stackPrefix() + (varPrefix.get(recv) ?? "");
+  const inheritedOf = (recv: string): GuardAttr[] => [
+    ...(varGuards.get(recv) ?? []),
+    ...routeStack.flatMap((s) => s.guards),
+  ];
 
-  const push = (path: string, method: string | null, handler: string | null | undefined, line: number): void => {
-    routes.push({
+  const push = (
+    path: string,
+    method: string | null,
+    handler: string | null | undefined,
+    line: number,
+    inherited: GuardAttr[],
+    own: GuardAttr[],
+  ): void => {
+    const route: RouteInfo = {
       path,
       httpMethod: method,
       kind: "api",
       handler: handler || null,
       calls: [],
-      middleware: [],
+      middleware: [...inherited, ...own].map((g) => g.text),
       line,
-    });
+    };
+    const auth = buildAuth(inherited.filter(isAuthGuard), own.filter(isAuthGuard));
+    if (auth) route.auth = auth;
+    routes.push(route);
+  };
+
+  /** Registration args after the path: middleware in the middle, the handler last. */
+  const splitHandler = (rest: string[]): { handler: string | null; guards: GuardAttr[] } => {
+    if (rest.length === 0) return { handler: null, guards: [] };
+    // A string literal between path and handler is a client call's content
+    // type, not middleware (`client.Post("/api", "application/json", body)`).
+    const guards = rest.slice(0, -1).filter((a) => !STRING_RE.test(a)).map(classifyGuard);
+    const last = unwrapHandler(rest[rest.length - 1]!);
+    return { handler: last.handler, guards: [...guards, ...last.guards] };
+  };
+
+  const literal = (arg: string | undefined): string | null => {
+    const m = arg?.match(STRING_RE);
+    return m ? m[1]! : null;
   };
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     const lineNo = i + 1;
 
-    const group = line.match(GROUP_RE) ?? line.match(SUBROUTER_RE);
+    const sub = line.match(SUBROUTER_RE);
+    if (sub) {
+      varPrefix.set(sub[1]!, (varPrefix.get(sub[2]!) ?? "") + sub[3]!);
+      varGuards.set(sub[1]!, [...(varGuards.get(sub[2]!) ?? [])]);
+    }
+    const group = sub ? null : line.match(GROUP_RE);
     if (group) {
-      varPrefix.set(group[1]!, (varPrefix.get(group[2]!) ?? "") + group[3]!);
+      const { args } = parseArgs(line, group.index! + group[0].length - 1);
+      const prefix = literal(args[0]);
+      if (prefix !== null) {
+        varPrefix.set(group[1]!, (varPrefix.get(group[2]!) ?? "") + prefix);
+        varGuards.set(group[1]!, [...(varGuards.get(group[2]!) ?? []), ...args.slice(1).map(classifyGuard)]);
+      }
     }
 
-    const chiRoute = line.match(CHI_ROUTE_RE);
-    if (chiRoute) {
-      // The block body sits one brace deeper than the current depth.
-      routeStack.push({ depth: depth + braceDelta(line), prefix: chiRoute[2]! });
+    const use = line.match(USE_RE);
+    if (use) {
+      const { args } = parseArgs(line, use.index! + use[0].length - 1);
+      const guards = args.map(classifyGuard);
+      if (routeStack.length > 0) routeStack[routeStack.length - 1]!.guards.push(...guards);
+      else varGuards.set(use[1]!, [...(varGuards.get(use[1]!) ?? []), ...guards]);
       depth += braceDelta(line);
       continue;
     }
 
-    // Go 1.22 "VERB /path" pattern strings (absolute — no group composition).
-    const go122 = line.match(GO122_RE);
-    if (go122) {
-      push(go122[2]!, go122[1]!, go122[3], lineNo);
+    const chiBlock = group ? null : line.match(CHI_BLOCK_RE);
+    if (chiBlock) {
+      const { args, closed } = parseArgs(line, chiBlock.index! + chiBlock[0].length - 1);
+      const prefix = chiBlock[2] === "Route" ? literal(args[0]) : "";
+      const body = args[chiBlock[2] === "Route" ? 1 : 0];
+      if (prefix !== null && body && /^func\s*\(/.test(body) && !closed) {
+        // The block body sits one brace deeper than the current depth.
+        routeStack.push({ depth: depth + braceDelta(line), prefix, guards: [] });
+        depth += braceDelta(line);
+        continue;
+      }
+    }
+
+    // chi `r.With(mw).Get("/p", h)` — inline guards, then the verb call.
+    let withGuards: GuardAttr[] = [];
+    let withRecv: string | null = null;
+    const withM = line.match(CHI_WITH_RE);
+    if (withM) {
+      const { args } = parseArgs(line, withM.index! + withM[0].length - 1);
+      withGuards = args.map(classifyGuard);
+      withRecv = withM[1]!;
+    }
+    // `r.With(mw).Get(` — the verb's receiver is a `)`, the router is `r`.
+    const receiver = (captured: string): string => (captured === ")" ? withRecv ?? "" : captured);
+
+    const caps = line.match(CAPS_VERB_RE);
+    const title = caps ? null : line.match(TITLE_VERB_RE);
+    const verb = caps ?? title;
+    if (verb) {
+      const recv = receiver(verb[1]!);
+      const method = caps ? caps[2]! : HTTP_VERBS_TITLE[title![2]!]!;
+      const { args } = parseArgs(line, verb.index! + verb[0].length - 1);
+      const path = literal(args[0]);
+      // Title-case verbs must carry an absolute path — `s.Get("key")` is not a route.
+      if (args.length >= 2 && path !== null && (caps || path.startsWith("/"))) {
+        const { handler, guards } = splitHandler(args.slice(1));
+        push(joinPrefix(prefixOf(recv), path), method, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards]);
+      }
     } else {
-      const caps = line.match(CAPS_VERB_RE);
-      const title = caps ? null : line.match(TITLE_VERB_RE);
-      if (caps) {
-        push(joinPrefix(prefixOf(caps[1]!), caps[3]!), caps[2]!, caps[4], lineNo);
-      } else if (title) {
-        push(joinPrefix(prefixOf(title[1]!), title[3]!), HTTP_VERBS_TITLE[title[2]!]!, title[4], lineNo);
-      } else {
-        // gorilla / legacy net/http: path-first HandleFunc, verbs (if any)
-        // constrained by a same-line `.Methods(...)`.
-        const hf = line.match(PATH_HF_RE);
-        if (hf) {
-          const path = joinPrefix(prefixOf(hf[1]!), hf[2]!);
+      const chiMethod = line.match(CHI_METHOD_RE);
+      const handle = chiMethod ? null : line.match(HANDLE_RE);
+      if (chiMethod) {
+        const recv = receiver(chiMethod[1]!);
+        const { args } = parseArgs(line, chiMethod.index! + chiMethod[0].length - 1);
+        const method = literal(args[0])?.toUpperCase();
+        const path = literal(args[1]);
+        if (args.length >= 3 && method && VERBS.has(method) && path !== null && path.startsWith("/")) {
+          const { handler, guards } = splitHandler(args.slice(2));
+          push(joinPrefix(prefixOf(recv), path), method, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards]);
+        }
+      } else if (handle) {
+        const recv = receiver(handle[1]!);
+        const { args } = parseArgs(line, handle.index! + handle[0].length - 1);
+        const first = args.length >= 2 ? literal(args[0]) : null;
+        const go122 = first?.match(/^([A-Z]+)\s+(\S+)$/);
+        if (go122 && VERBS.has(go122[1]!)) {
+          // Go 1.22 "VERB /path" pattern strings (absolute — no group composition).
+          const { handler, guards } = splitHandler(args.slice(1));
+          push(go122[2]!, go122[1]!, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards]);
+        } else if (first !== null && first.startsWith("/")) {
+          // gorilla / legacy net/http: path-first, verbs (if any) constrained
+          // by a same-line `.Methods(...)`.
+          const path = joinPrefix(prefixOf(recv), first);
+          const { handler, guards } = splitHandler(args.slice(1));
           const methodsArg = line.match(METHODS_RE)?.[1] ?? "";
           const verbs = [...methodsArg.matchAll(/["'`](\w+)["'`]/g)].map((m) => m[1]!.toUpperCase());
-          if (verbs.length > 0) for (const v of verbs) push(path, v, hf[3], lineNo);
-          else push(path, null, hf[3], lineNo);
+          const own = [...withGuards, ...guards];
+          if (verbs.length > 0) for (const v of verbs) push(path, v, handler, lineNo, inheritedOf(recv), own);
+          else push(path, null, handler, lineNo, inheritedOf(recv), own);
         }
       }
     }

@@ -5,6 +5,7 @@ import { rustSpec } from "./index.js";
 import { cargoPackages } from "./packages.js";
 import { rustManifest } from "./manifest.js";
 import { RustEntityExtractor } from "./entities.js";
+import { rustRequestSchema } from "./request-schema.js";
 
 const RUST_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -28,6 +29,7 @@ export const rustMeta: LanguagePluginMeta = {
   builtinTypes: RUST_BUILTINS,
   knownPackages: cargoPackages,
   entities: new RustEntityExtractor(),
+  requestSchema: rustRequestSchema,
   complexity: {
     branchNodes: new Set([
       "if_expression", "while_expression", "for_expression", "loop_expression",
