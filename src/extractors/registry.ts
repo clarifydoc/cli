@@ -85,7 +85,7 @@ export function manifestFor(language: Language): LanguagePluginManifest | undefi
 
 // ─── Lazy tier: plugin metas behind a static thunk map ────────────────────
 // One loader per plugin DIRECTORY (family plugins load all member metas at
-// once). The thunks are statically analyzable so bundlers (tsup/esbuild with
+// once). The thunks are statically analyzable so bundlers (tsdown/rolldown with
 // ESM code splitting) emit one lazy chunk per plugin.
 
 interface PluginLoader {

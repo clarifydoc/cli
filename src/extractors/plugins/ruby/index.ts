@@ -64,10 +64,44 @@ function railsCamelize(token: string): string {
     .join("");
 }
 
-/** A `controller` token (last segment) → its Rails class name, e.g. `session` → `SessionController`. */
-function railsControllerClass(controllerToken: string): string {
-  const last = controllerToken.split("/").pop() ?? controllerToken;
-  return railsCamelize(last) + "Controller";
+/**
+ * A `controller` token → its Rails class name: `session` → `SessionController`,
+ * `admin/users` → `Admin::UsersController` (a directory is a module). The
+ * enclosing `namespace` modules, if any, are prepended by the caller.
+ */
+function railsControllerClass(controllerToken: string, modules: readonly string[] = []): string {
+  const segs = controllerToken.split("/").filter(Boolean);
+  const leaf = railsCamelize(segs.pop() ?? controllerToken) + "Controller";
+  return [...modules, ...segs.map(railsCamelize), leaf].join("::");
+}
+
+/** Naive Rails inflector, the other way: `duties` → `duty`, `children` → `child`, `statuses` → `status`. */
+function railsSingularize(token: string): string {
+  const irregular: Record<string, string> = { children: "child", people: "person", men: "man", women: "woman" };
+  if (irregular[token]) return irregular[token]!;
+  if (/ies$/.test(token)) return token.replace(/ies$/, "y");
+  if (/(ss|x|z|ch|sh)es$/.test(token)) return token.replace(/es$/, "");
+  if (/s$/.test(token) && !/ss$/.test(token)) return token.slice(0, -1);
+  return token;
+}
+
+/**
+ * The modules a controller class is declared inside, outermost first — from
+ * `module Staff … class DutiesController` nesting (the module is captured
+ * as a class entry whose line range encloses the controller's) or from a
+ * `class Staff::DutiesController` name. Rails maps them to a path prefix
+ * and to the handler's qualified name: `app/controllers/staff/duties_
+ * controller.rb` serves `/staff/duties`, not `/duties`, and calling it
+ * `DutiesController` collides with the top-level controller of the same name.
+ */
+function enclosingModules(cls: ClassInfo, classes: readonly ClassInfo[]): string[] {
+  const fromNesting = classes
+    .filter((m) => m !== cls && m.line < cls.line && (m.endLine ?? 0) >= (cls.endLine ?? cls.line) && !/Controller$/.test(m.name))
+    .sort((a, b) => a.line - b.line)
+    .map((m) => m.name);
+  const parts = cls.name.split("::");
+  parts.pop();
+  return [...fromNesting.flatMap((n) => n.split("::")), ...parts];
 }
 
 /** `UserRole` / `Admin::BaseController` → `user_role` / `base_controller` — the
@@ -546,12 +580,15 @@ export const rubySpec: RegexLangSpec = {
 
     // Convention: XxxController classes map methods to REST routes
     for (const cls of classes) {
-      const match = cls.name.match(/^(\w+?)Controller$/);
+      const leaf = cls.name.split("::").pop() ?? cls.name;
+      const match = leaf.match(/^(\w+?)Controller$/);
       if (!match) continue;
-      if (cls.name === "ApplicationController" || cls.name === "ActionController") continue;
+      if (leaf === "ApplicationController" || leaf === "ActionController") continue;
 
+      const modules = enclosingModules(cls, classes);
+      const className = [...modules, leaf].join("::");
       const resource = match[1].replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase();
-      const basePath = "/" + resource;
+      const basePath = modules.map((m) => "/" + railsUnderscore(m)).join("") + "/" + resource;
 
       for (const method of cls.methods) {
         if (privateMethodLines.has(method.line)) continue;
@@ -564,7 +601,7 @@ export const rubySpec: RegexLangSpec = {
               path: basePath + action.suffix,
               httpMethod: action.method,
               kind: "api",
-              handler: `${cls.name}#${method.name}`,
+              handler: `${className}#${method.name}`,
               calls: method.calls,
               middleware: [],
               line: method.line,
@@ -573,7 +610,7 @@ export const rubySpec: RegexLangSpec = {
               path: basePath + "/" + method.name,
               httpMethod: "GET",
               kind: "api",
-              handler: `${cls.name}#${method.name}`,
+              handler: `${className}#${method.name}`,
               calls: method.calls,
               middleware: [],
               line: method.line,
@@ -599,13 +636,36 @@ export const rubySpec: RegexLangSpec = {
     // declared inside it.
     const guardStack: (GuardAttr | null)[] = [];
     const currentGuards = (): GuardAttr[] => guardStack.filter((g): g is GuardAttr => g !== null);
-    const pushBlock = (prefix: string, guard: GuardAttr | null = null): void => {
+    // Parallel to `blockStack`: the module a `namespace :x` block puts its
+    // controllers in (`Staff::`), so the handler names the class the file
+    // defines. A `scope '/x'` changes the path only, so it contributes nothing.
+    const moduleStack: (string | null)[] = [];
+    const currentModules = (): string[] => moduleStack.filter((m): m is string => m !== null);
+    // Parallel to `blockStack`: the `resources :x do … end` block a route is
+    // declared in, for `on: :collection` / `on: :member` and the implicit
+    // controller of a bare `get 'presence'` inside it.
+    interface ResourceFrame { base: string; controllerClass: string }
+    const resourceStack: (ResourceFrame | null)[] = [];
+    const innermostResource = (): ResourceFrame | null => {
+      for (let k = resourceStack.length - 1; k >= 0; k--) if (resourceStack[k]) return resourceStack[k];
+      return null;
+    };
+    const pushBlock = (
+      prefix: string,
+      guard: GuardAttr | null = null,
+      module: string | null = null,
+      resource: ResourceFrame | null = null,
+    ): void => {
       blockStack.push(prefix);
       guardStack.push(guard);
+      moduleStack.push(module);
+      resourceStack.push(resource);
     };
     const popBlock = (): void => {
       blockStack.pop();
       guardStack.pop();
+      moduleStack.pop();
+      resourceStack.pop();
     };
     const withGuards = (route: RouteInfo): RouteInfo => applyRouteMeta(route, { inheritedGuards: currentGuards() });
 
@@ -631,7 +691,7 @@ export const rubySpec: RegexLangSpec = {
       // namespace :x do / scope '/x' do — open a block that prefixes child paths.
       const nsMatch = line.match(/^namespace\s+:(\w+)/);
       if (nsMatch && opensDoBlock) {
-        pushBlock("/" + nsMatch[1]);
+        pushBlock("/" + nsMatch[1], null, railsCamelize(nsMatch[1]));
         continue;
       }
       const scopeMatch = line.match(/^scope\s+['"]([^'"]+)['"]/);
@@ -664,12 +724,24 @@ export const rubySpec: RegexLangSpec = {
         const actionMap = singular ? SINGULAR_ACTION_MAP : RAILS_ACTION_MAP;
         const { only, except } = parseActionFilter(stmt);
         // Take the leading :symbol list, before any option (only:/except:/=>).
-        const beforeOpts = stmt.slice(resourcesMatch[1].length).split(/\b(?:only|except)\b|=>/)[0];
+        const beforeOpts = stmt.slice(resourcesMatch[1].length).split(/\b(?:only|except|controller)\b|=>/)[0];
+        // `resources :children, controller: 'children'` names the class explicitly.
+        const explicitController = stmt.match(/\bcontroller:\s*['"]([\w/]+)['"]/)?.[1] ?? null;
+        let frame: ResourceFrame | null = null;
+        let nestedPrefix = "";
         for (const m of beforeOpts.matchAll(/:(\w+)/g)) {
           const name = m[1]!;
           // Rails maps a singular `resource :session` to the plural SessionsController.
-          const controllerClass = railsControllerClass(singular ? railsPluralize(name) : name);
+          const controllerClass = railsControllerClass(
+            explicitController ?? (singular ? railsPluralize(name) : name),
+            currentModules(),
+          );
           const base = currentPrefix() + "/" + name;
+          frame = { base, controllerClass };
+          // Routes nested in the block hang off one member: `resources
+          // :employees do resources :contact_informations end` serves
+          // `/employees/:employee_id/contact_informations`.
+          nestedPrefix = singular ? "/" + name : "/" + name + "/:" + railsSingularize(name) + "_id";
           for (const [action, info] of Object.entries(actionMap)) {
             if (only && !only.has(action)) continue;
             if (except.has(action)) continue;
@@ -684,7 +756,7 @@ export const rubySpec: RegexLangSpec = {
             }));
           }
         }
-        if (opensDoBlock) pushBlock(""); // `resources :x do` opens a nested block
+        if (opensDoBlock) pushBlock(nestedPrefix, null, null, frame); // `resources :x do` opens a nested block
         continue;
       }
 
@@ -693,8 +765,15 @@ export const rubySpec: RegexLangSpec = {
       if (verbMatch) {
         const rawPath = verbMatch[2];
         const target = line.match(/(?:=>|to:)\s*['"]([^'"#]+)#(\w+)['"]/);
+        // Inside `resources :children do … end`: `on: :collection` hangs off
+        // the collection (`/children/presence`), `on: :member` off one member
+        // (`/children/:id/presence`), and the handler is that resource's
+        // controller unless the line names another.
+        const on = line.match(/\bon:\s*:(collection|member)\b/)?.[1] ?? null;
+        const resource = innermostResource();
         let controller: string | null = null;
         let action: string | null = null;
+        let handler: string | null = null;
         if (target) {
           controller = target[1];
           action = target[2];
@@ -705,16 +784,25 @@ export const rubySpec: RegexLangSpec = {
             action = segs[segs.length - 1];
             controller = segs.slice(0, -1).join("/");
           }
+        } else if (resource) {
+          handler = `${resource.controllerClass}#${rawPath.replace(/^\//, "")}`;
         }
 
         // Framework-internal controllers have no project code — skip the route.
         if (controller && FRAMEWORK_CONTROLLER_RE.test(controller)) continue;
+        if (controller && action) handler = `${railsControllerClass(controller, currentModules())}#${action}`;
+
+        const relPath = rawPath.startsWith("/") ? rawPath : "/" + rawPath;
+        const path =
+          on && resource
+            ? resource.base + (on === "member" ? "/:id" : "") + relPath
+            : currentPrefix() + relPath;
 
         routes.push(withGuards({
-          path: currentPrefix() + (rawPath.startsWith("/") ? rawPath : "/" + rawPath),
+          path,
           httpMethod: verbMatch[1].toUpperCase(),
           kind: "api",
-          handler: controller && action ? `${railsControllerClass(controller)}#${action}` : null,
+          handler,
           calls: [],
           middleware: [],
           line: i + 1,

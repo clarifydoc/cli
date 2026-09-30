@@ -69,68 +69,145 @@ function collectDynamicImportCalls(body: Node | null): CallInfo[] {
 
 /**
  * If a function's return value is an app-relative request URL built from string
- * concatenation / a template literal, derive its parameterized template:
+ * concatenation / a template literal, derive its parameterized template(s):
  * path literals verbatim, each parameter referenced in the URL as `{paramName}`,
- * an environment base (`import.meta.env.VITE_X` / `process.env.Y`) dropped, and
- * any other runtime reference (a closure/local variable) as `{}`. Returns
- * undefined for non-URL functions (the result must contain a `/`).
+ * a base that is not part of the path — an environment read (`import.meta.env
+ * .VITE_X` / `process.env.Y`), a runtime config read (`store.state.config
+ * .API_URL`) or a literal origin (`http://localhost`) — dropped, and any other
+ * runtime reference (a closure/local variable) as `{}`. Empty for non-URL
+ * functions (a result must contain a `/`).
  *
  * Real Vue/React data layers funnel every request through such a helper
  * (`requestUri(endpoint, version)`, `adminUri(subPath)`), so without resolving
  * it the api-call carries no joinable URL. A project-level pass substitutes a
- * call site's literal args into this template.
+ * call site's literal args into these templates.
  *
- * Deliberately shallow: only a top-level `return` (and a one-hop local `const
- * x = <url>; return x`) is followed — a URL assembled inside a branch can't be
- * represented as a single template anyway.
+ * One template per DISTINCT branch, in source order: the helper's `return`
+ * statements, including those nested in `if`/`else` (a mock-vs-real switch on
+ * an env flag), and both arms of a returned ternary (`isEmployee ? base +
+ * "/api/staff/" + p : base + "/api/" + p`). Branches that only differ in
+ * a dropped base collapse to one template, so the common mock switch yields a
+ * single template while a genuine role switch yields two. A one-hop local
+ * (`const x = <url>; return x`) is followed; deeper flow is not.
  */
-export function extractUrlTemplate(
+export function extractUrlTemplates(
   body: Node | null,
   paramNames: ReadonlySet<string>,
-): string | undefined {
-  if (!body) return undefined;
+): string[] {
+  if (!body) return [];
 
   // Top-level `const/let x = <expr>` bindings, for a `return x` indirection.
   const locals = new Map<string, Node>();
-  let returnExpr: Node | null = null;
-
+  const returns: Node[] = [];
   if (body.type === "statement_block") {
-    for (const stmt of body.namedChildren) {
-      if (
-        (stmt.type === "lexical_declaration" || stmt.type === "variable_declaration") &&
-        !returnExpr
-      ) {
-        for (const decl of stmt.namedChildren) {
-          if (decl.type !== "variable_declarator") continue;
-          const nm = decl.childForFieldName("name");
-          const val = decl.childForFieldName("value");
-          if (nm?.type === "identifier" && val) locals.set(nm.text, val);
-        }
-      } else if (stmt.type === "return_statement") {
-        returnExpr = stmt.namedChild(0);
-        break;
-      }
-    }
+    collectReturns(body.namedChildren, locals, returns, 0);
   } else {
     // Expression-bodied arrow: the body itself is the returned expression.
-    returnExpr = body;
+    returns.push(body);
   }
-
-  if (!returnExpr) return undefined;
+  if (returns.length === 0) return [];
 
   // Capture the pre-return top-level consts as a function-local scope, then fold
-  // the returned expression. `envMode: "collapse"` drops an environment base to
-  // "" (the template is app-relative), matching the legacy behavior exactly.
+  // each returned branch. `envMode: "collapse"` drops an environment base to
+  // "" (the template is app-relative).
   const scope = new Map<string, ValueExpr>();
   for (const [name, valueNode] of locals) {
     scope.set(name, astToValueExpr(valueNode));
   }
-  const { text } = foldValue(astToValueExpr(returnExpr), scope, {
-    params: paramNames,
-    envMode: "collapse",
-  });
-  if (text == null || !text.includes("/")) return undefined;
-  return text;
+  const templates: string[] = [];
+  for (const ret of returns) {
+    for (const branch of ternaryArms(ret, 0)) {
+      const { text } = foldValue(astToValueExpr(branch), scope, {
+        params: paramNames,
+        envMode: "collapse",
+      });
+      if (text == null) continue;
+      const tpl = stripUrlBase(text);
+      if (!tpl.includes("/") || templates.includes(tpl)) continue;
+      templates.push(tpl);
+      if (templates.length >= MAX_URL_TEMPLATES) return templates;
+    }
+  }
+  return templates;
+}
+
+/** The first (primary) URL template of a function body; see {@link extractUrlTemplates}. */
+export function extractUrlTemplate(
+  body: Node | null,
+  paramNames: ReadonlySet<string>,
+): string | undefined {
+  return extractUrlTemplates(body, paramNames)[0];
+}
+
+const MAX_URL_TEMPLATES = 6;
+const MAX_RETURN_DEPTH = 4;
+
+/**
+ * Every `return <expr>` reachable in a statement list through `if`/`else`
+ * nesting, in source order, plus the variable bindings seen on the way. Loops,
+ * `try` and `switch` are not entered: a URL assembled inside one is not a
+ * branch of the helper but a computation this pass does not model.
+ */
+function collectReturns(stmts: readonly Node[], locals: Map<string, Node>, out: Node[], depth: number): void {
+  if (depth > MAX_RETURN_DEPTH) return;
+  for (const stmt of stmts) {
+    if (stmt.type === "lexical_declaration" || stmt.type === "variable_declaration") {
+      for (const decl of stmt.namedChildren) {
+        if (decl.type !== "variable_declarator") continue;
+        const nm = decl.childForFieldName("name");
+        const val = decl.childForFieldName("value");
+        if (nm?.type === "identifier" && val && !locals.has(nm.text)) locals.set(nm.text, val);
+      }
+    } else if (stmt.type === "return_statement") {
+      const expr = stmt.namedChild(0);
+      if (expr) out.push(expr);
+    } else if (stmt.type === "if_statement") {
+      const cons = stmt.childForFieldName("consequence");
+      if (cons) collectReturns(branchStatements(cons), locals, out, depth + 1);
+      const alt = stmt.childForFieldName("alternative")?.namedChild(0); // else_clause → body
+      if (alt) collectReturns(branchStatements(alt), locals, out, depth + 1);
+    }
+  }
+}
+
+/** A branch body's statements: a `{…}` block's children, or the one bare statement (`else if`, `else return x`). */
+function branchStatements(node: Node): readonly Node[] {
+  return node.type === "statement_block" ? node.namedChildren : [node];
+}
+
+/** The arms of a (possibly nested / parenthesized) ternary, or the expression itself. */
+function ternaryArms(expr: Node, depth: number): Node[] {
+  if (depth > MAX_RETURN_DEPTH) return [expr];
+  if (expr.type === "parenthesized_expression") {
+    const inner = expr.namedChild(0);
+    return inner ? ternaryArms(inner, depth + 1) : [expr];
+  }
+  if (expr.type === "ternary_expression") {
+    const cons = expr.childForFieldName("consequence");
+    const alt = expr.childForFieldName("alternative");
+    return [...(cons ? ternaryArms(cons, depth + 1) : []), ...(alt ? ternaryArms(alt, depth + 1) : [])];
+  }
+  return [expr];
+}
+
+/**
+ * Make a folded URL app-relative: drop a literal origin (`http://localhost`)
+ * and a leading runtime hole standing in for a configured base
+ * (`store.state.config.API_URL + "/api/" + p` folds to `{}/api/{p}`). A base
+ * concatenated in front of a `/`-led path is a base by construction; keeping
+ * it as a `{}` segment would put a wildcard where the route join expects `/api`.
+ */
+function stripUrlBase(text: string): string {
+  return text.replace(/^https?:\/\/[^/]+/i, "").replace(/^\{\}(?=\/)/, "");
+}
+
+/** `urlTemplate` (primary) + `urlTemplateAlternatives` (the other branches), or nothing. */
+function urlTemplateFields(templates: string[]): Pick<FunctionInfo, "urlTemplate" | "urlTemplateAlternatives"> {
+  if (templates.length === 0) return {};
+  return {
+    urlTemplate: templates[0],
+    ...(templates.length > 1 ? { urlTemplateAlternatives: templates.slice(1) } : {}),
+  };
 }
 
 /**
@@ -254,7 +331,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const decorators = this.extractDecorators(node);
 
     const body = node.childForFieldName("body");
-    const urlTemplate = extractUrlTemplate(body, new Set(params.map((p) => p.name)));
+    const templates = extractUrlTemplates(body, new Set(params.map((p) => p.name)));
     const requestAccess = requestAccessOf(params, body);
     return {
       name,
@@ -266,7 +343,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       calls: [...extractCalls(body, "typescript"), ...collectDynamicImportCalls(body)],
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
-      ...(urlTemplate ? { urlTemplate } : {}),
+      ...urlTemplateFields(templates),
       ...(requestAccess ? { requestAccess } : {}),
     };
   }
@@ -300,7 +377,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       declaration ? this.extractDecorators(declaration) : [];
 
     const body = funcNode.childForFieldName("body") ?? funcNode;
-    const urlTemplate = extractUrlTemplate(body, new Set(params.map((p) => p.name)));
+    const templates = extractUrlTemplates(body, new Set(params.map((p) => p.name)));
     const requestAccess = requestAccessOf(params, body);
     return {
       name,
@@ -312,7 +389,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       calls: [...extractCalls(body, "typescript"), ...collectDynamicImportCalls(body)],
       line: funcNode.startPosition.row + 1,
       endLine: funcNode.endPosition.row + 1,
-      ...(urlTemplate ? { urlTemplate } : {}),
+      ...urlTemplateFields(templates),
       ...(requestAccess ? { requestAccess } : {}),
     };
   }
@@ -485,6 +562,9 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
             const isAsync = member.text.startsWith("async ");
             const methodBody = member.childForFieldName("body");
             const requestAccess = requestAccessOf(params, methodBody);
+            // A URL-builder helper is as often a service-class method
+            // (`configService.APIUrl(sub)`) as a free function.
+            const templates = extractUrlTemplates(methodBody, new Set(params.map((p) => p.name)));
             methods.push({
               name: methodName,
               params,
@@ -495,6 +575,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
               calls: [...extractCalls(methodBody, "typescript"), ...collectDynamicImportCalls(methodBody)],
               line: member.startPosition.row + 1,
               endLine: member.endPosition.row + 1,
+              ...urlTemplateFields(templates),
               ...(requestAccess ? { requestAccess } : {}),
             });
             // `constructor(public readonly id: number)` declares a property.

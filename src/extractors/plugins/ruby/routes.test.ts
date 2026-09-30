@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { rubySpec } from "./index.js";
-import type { RouteInfo } from "../../../types/analysis.js";
+import type { ClassInfo, RouteInfo } from "../../../types/analysis.js";
 
 /** Run the spec's route extractor over a Ruby snippet (no controller classes). */
 function routes(src: string): RouteInfo[] {
@@ -58,11 +58,56 @@ describe("rubySpec.extractRoutes — resources expansion", () => {
     const out = routes(draw(`  namespace :staff do\n    resources :duties\n  end`)).map(sig);
     expect(out).toEqual(
       expect.arrayContaining([
-        "GET /staff/duties -> DutiesController#index",
-        "DELETE /staff/duties/:id -> DutiesController#destroy",
-        "PUT /staff/duties/:id -> DutiesController#update",
+        "GET /staff/duties -> Staff::DutiesController#index",
+        "DELETE /staff/duties/:id -> Staff::DutiesController#destroy",
+        "PUT /staff/duties/:id -> Staff::DutiesController#update",
       ]),
     );
+  });
+
+  it("qualifies a namespaced verb route's handler with the namespace module", () => {
+    // `namespace :staff` puts its controllers in `Staff::` — the class
+    // app/controllers/staff/events_controller.rb defines. A bare
+    // `EventsController#destroy` would name the top-level twin instead.
+    const out = routes(
+      draw(`  namespace :staff do\n    delete 'events/:id' => 'events#destroy'\n    get 'duties/get_conflicts_on_duties'\n  end`),
+    ).map(sig);
+    expect(out).toEqual([
+      "DELETE /staff/events/:id -> Staff::EventsController#destroy",
+      "GET /staff/duties/get_conflicts_on_duties -> Staff::DutiesController#get_conflicts_on_duties",
+    ]);
+  });
+
+  it("maps a directory in the controller token to a module (`admin/users#index`)", () => {
+    const out = routes(draw(`  get 'dashboard' => 'admin/users#index'`)).map(sig);
+    expect(out).toEqual(["GET /dashboard -> Admin::UsersController#index"]);
+  });
+
+  it("hangs `on: :collection` / `on: :member` routes off the enclosing resource", () => {
+    const out = routes(
+      draw(
+        `  resources :children, only: [:index], controller: 'children' do\n` +
+          `    get 'presence', on: :collection\n` +
+          `    post 'archive', on: :member\n` +
+          `  end`,
+      ),
+    ).map(sig);
+    expect(out).toEqual([
+      "GET /children -> ChildrenController#index",
+      "GET /children/presence -> ChildrenController#presence",
+      "POST /children/:id/archive -> ChildrenController#archive",
+    ]);
+  });
+
+  it("nests a resources block's children under one member of the parent", () => {
+    const out = routes(
+      draw(`  resources :employees, only: [:index] do\n    resources :contact_informations, only: [:index, :create]\n  end`),
+    ).map(sig);
+    expect(out).toEqual([
+      "GET /employees -> EmployeesController#index",
+      "GET /employees/:employee_id/contact_informations -> ContactInformationsController#index",
+      "POST /employees/:employee_id/contact_informations -> ContactInformationsController#create",
+    ]);
   });
 
   it("honors `only:` and `except:` filters", () => {
@@ -90,5 +135,54 @@ describe("rubySpec.extractRoutes — resources expansion", () => {
     );
     expect(out.some((s) => s.includes(":id"))).toBe(false);
     expect(out.some((s) => s.endsWith("#index"))).toBe(false);
+  });
+});
+
+describe("rubySpec.extractRoutes — controller convention", () => {
+  const cls = (name: string, line: number, endLine: number, methods: string[]): ClassInfo => ({
+    name,
+    extends: null,
+    implements: [],
+    decorators: [],
+    properties: [],
+    isExported: true,
+    line,
+    endLine,
+    methods: methods.map((m, i) => ({
+      name: m,
+      params: [],
+      returnType: null,
+      isAsync: false,
+      isExported: false,
+      decorators: [],
+      calls: [],
+      line: line + 1 + i,
+      endLine: line + 1 + i,
+    })),
+  });
+
+  it("prefixes a controller declared inside `module X` with the module's path and name", () => {
+    // app/controllers/staff/duties_controller.rb — the module is captured
+    // as a class entry whose line range encloses the controller's. Without the
+    // prefix the route collides with the top-level DutiesController's.
+    const src = `module Staff\n  class DutiesController < Controller\n    def index\n    end\n    def get_conflicts_on_duties\n    end\n  end\nend`;
+    const classes = [cls("Staff", 1, 8, ["index", "get_conflicts_on_duties"]), cls("DutiesController", 2, 7, ["index", "get_conflicts_on_duties"])];
+    const out = (rubySpec.extractRoutes?.(src.split("\n"), classes) ?? []).map(sig);
+    expect(out).toEqual([
+      "GET /staff/duties -> Staff::DutiesController#index",
+      "GET /staff/duties/get_conflicts_on_duties -> Staff::DutiesController#get_conflicts_on_duties",
+    ]);
+  });
+
+  it("reads the namespace off a `class Admin::UsersController` name", () => {
+    const src = `class Admin::UsersController < ApplicationController\n  def index\n  end\nend`;
+    const out = (rubySpec.extractRoutes?.(src.split("\n"), [cls("Admin::UsersController", 1, 4, ["index"])]) ?? []).map(sig);
+    expect(out).toEqual(["GET /admin/users -> Admin::UsersController#index"]);
+  });
+
+  it("leaves a top-level controller unprefixed", () => {
+    const src = `class UsersController < ApplicationController\n  def index\n  end\nend`;
+    const out = (rubySpec.extractRoutes?.(src.split("\n"), [cls("UsersController", 1, 4, ["index"])]) ?? []).map(sig);
+    expect(out).toEqual(["GET /users -> UsersController#index"]);
   });
 });

@@ -15,6 +15,16 @@ async function templateOf(src: string, fnName: string): Promise<string | undefin
   return fns.find((f) => f.name === fnName)?.urlTemplate;
 }
 
+/** `[urlTemplate, ...urlTemplateAlternatives]` of a free function or a class method. */
+async function templatesOf(src: string, name: string): Promise<string[]> {
+  const tree = await parseSource(src, "typescript" as any, "x.ts");
+  const x = new JavaScriptExtractor();
+  const fn =
+    x.extractFunctions(tree, src).find((f) => f.name === name) ??
+    x.extractClasses(tree, src).flatMap((c) => c.methods).find((m) => m.name === name);
+  return fn?.urlTemplate ? [fn.urlTemplate, ...(fn.urlTemplateAlternatives ?? [])] : [];
+}
+
 describe("URL-builder template extraction", () => {
   it("builds a template from a concat chain, dropping env base and runtime vars", async () => {
     const SRC = `export function requestUri(endpoint: string, version = 'v2'): string {
@@ -126,5 +136,66 @@ describe("requestAccess on handler-shaped functions", () => {
     expect(by("none").requestAccess).toBeUndefined();
     const [ctl] = ex.extractClasses(tree, src);
     expect(ctl!.methods[0]!.requestAccess).toEqual([{ name: "id", type: null, binding: "route" }]);
+  });
+});
+
+describe("URL-builder template extraction — branches and methods", () => {
+  it("captures a class method's template, dropping a runtime config base", async () => {
+    // A service singleton's method is as common a helper as a free function;
+    // the base read off a store is a base, not a `{}` path segment.
+    const SRC = `class ConfigService {
+      APIUrl(aSubPath: string): string {
+        return store.state.mainConfig.APP_API_URL + "/api/" + aSubPath;
+      }
+    }`;
+    expect(await templatesOf(SRC, "APIUrl")).toEqual(["/api/{aSubPath}"]);
+  });
+
+  it("folds an if/else mock switch whose branches differ only in the base into one template", async () => {
+    const SRC = `class ConfigService {
+      APIUrl(aSubPath: string): string {
+        if (import.meta.env.VITE_MOCKDATA === "true") {
+          return "http://localhost/api/" + aSubPath;
+        } else {
+          return store.state.mainConfig.APP_API_URL + "/api/" + aSubPath;
+        }
+      }
+    }`;
+    expect(await templatesOf(SRC, "APIUrl")).toEqual(["/api/{aSubPath}"]);
+  });
+
+  it("keeps both arms of a returned ternary as primary + alternative, in source order", async () => {
+    const SRC = `class ConfigService {
+      staffOrAdminUrl(aSubPath: string): string {
+        const user = store.getters["security/getUser"]();
+        if (import.meta.env.VITE_MOCKDATA === "true") {
+          return user && isEmployee(user)
+            ? "http://localhost/api/staff/" + aSubPath
+            : "http://localhost/api/" + aSubPath;
+        } else {
+          return user && isEmployee(user)
+            ? store.state.mainConfig.APP_API_URL + "/api/staff/" + aSubPath
+            : store.state.mainConfig.APP_API_URL + "/api/" + aSubPath;
+        }
+      }
+    }`;
+    expect(await templatesOf(SRC, "staffOrAdminUrl")).toEqual(["/api/staff/{aSubPath}", "/api/{aSubPath}"]);
+  });
+
+  it("follows an else-if chain and a bare-statement branch", async () => {
+    const SRC = `export function uri(kind: string, sub: string): string {
+      if (kind === "a") return "/a/" + sub;
+      else if (kind === "b") return "/b/" + sub;
+      else return "/c/" + sub;
+    }`;
+    expect(await templatesOf(SRC, "uri")).toEqual(["/a/{sub}", "/b/{sub}", "/c/{sub}"]);
+  });
+
+  it("ignores a guard return that is not a URL", async () => {
+    const SRC = `export function uri(sub: string | null): string | null {
+      if (!sub) return null;
+      return "/api/" + sub;
+    }`;
+    expect(await templatesOf(SRC, "uri")).toEqual(["/api/{sub}"]);
   });
 });

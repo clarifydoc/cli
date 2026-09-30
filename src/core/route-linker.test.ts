@@ -377,3 +377,47 @@ describe("linkApiCallsToRoutes — API version", () => {
     expect(link).toMatchObject({ target: "V4/C.cs", confidence: "AMBIGUOUS" });
   });
 });
+
+describe("linkApiCallsToRoutes — target alternatives", () => {
+  it("falls back to the next alternative URL when the primary reaches no route", () => {
+    // A `staffOrAdminUrl(sub)` helper resolves to `/api/staff/<sub>`
+    // for employees and `/api/<sub>` for admins; only the admin twin exists
+    // for this endpoint, so the link must follow the alternative.
+    const call = { ...apiCall("svc.ts", "get", "/api/staff/request_absence/absence_requests"), targetAlternatives: ["/api/request_absence/absence_requests"] };
+    const rt = route("routes.rb", "GET", "/request_absence/absence_requests", "RequestAbsenceController#get_absence_requests");
+    const links = linkApiCallsToRoutes([call], [rt]);
+    expect(links).toHaveLength(1);
+    expect(links[0]!.url).toBe("/api/request_absence/absence_requests");
+    expect(links[0]!.matchedVia).toBe("base-prefix:/api");
+  });
+
+  it("prefers the primary URL when both branches reach a route", () => {
+    const call = { ...apiCall("svc.ts", "get", "/api/staff/duties"), targetAlternatives: ["/api/duties"] };
+    const staff = route("staff/duties_controller.rb", "GET", "/staff/duties", "Staff::DutiesController#index");
+    const admin = route("duties_controller.rb", "GET", "/duties", "DutiesController#index");
+    const links = linkApiCallsToRoutes([call], [admin, staff]);
+    expect(links).toHaveLength(1);
+    expect(links[0]!.handler).toBe("Staff::DutiesController#index");
+  });
+});
+
+describe("linkApiCallsToRoutes — wildcard-only URLs", () => {
+  it("never joins a URL whose path is nothing but wildcards", () => {
+    // `configService.APIUrl(url)` with a bare variable resolves to `/api/{}`;
+    // after the `/api` base is stripped that is `/{}`, which must not land on
+    // a `/:id` route by accident.
+    const links = linkApiCallsToRoutes(
+      [apiCall("svc.ts", "get", "/api/{}"), apiCall("svc.ts", "get", "/${id}"), apiCall("svc.ts", "get", "/{}/{}")],
+      [route("routes.rb", "GET", "/:id", "ThingsController#show"), route("routes.rb", "GET", "/:a/:b", "PairsController#show")],
+    );
+    expect(links).toHaveLength(0);
+  });
+
+  it("still joins the root route — `/` has no segments, not a wildcard one", () => {
+    const links = linkApiCallsToRoutes(
+      [apiCall("server.spec.ts", "get", "/")],
+      [route("main.ts", "GET", "/", "root")],
+    );
+    expect(links).toHaveLength(1);
+  });
+});
