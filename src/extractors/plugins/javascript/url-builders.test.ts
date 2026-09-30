@@ -120,6 +120,48 @@ describe("resolveUrlBuilders", () => {
     expect(calls[0]!.target).toBe("requestUri('x', 'v4')");
   });
 
+  it("indexes class methods and consumes the receiver of a `service.method(...)` call", () => {
+    // `configService.APIUrl("logout.json")` — the helper is a method on a
+    // service singleton; the receiver only says where it lives.
+    const configService = analysis([]);
+    configService.classes = [
+      {
+        name: "ConfigService",
+        extends: null,
+        implements: [],
+        decorators: [],
+        properties: [],
+        isExported: false,
+        line: 1,
+        endLine: 9,
+        methods: [fn("APIUrl", "/api/{aSubPath}", [{ name: "aSubPath", type: "string", defaultValue: null }])],
+      },
+    ];
+    const calls = [apiCall('configService.APIUrl("logout.json")', "post"), apiCall("this.config.APIUrl(`users/${id}.json`)")];
+    expect(resolveUrlBuilders(calls, [configService])).toBe(2);
+    expect(calls[0]!.target).toBe("/api/logout.json");
+    expect(calls[1]!.target).toBe("/api/users/${id}.json");
+    expect(calls[0]!.targetAlternatives).toBeUndefined();
+  });
+
+  it("fans a branching helper out into target + targetAlternatives, primary first", () => {
+    const roleUri = fn("roleUri", "/api/personale/{sub}", [{ name: "sub", type: "string", defaultValue: null }]);
+    roleUri.urlTemplateAlternatives = ["/api/{sub}"];
+    const calls = [apiCall('configService.roleUri("employees.json")')];
+    expect(resolveUrlBuilders(calls, [analysis([roleUri])])).toBe(1);
+    expect(calls[0]!.target).toBe("/api/personale/employees.json");
+    expect(calls[0]!.targetAlternatives).toEqual(["/api/employees.json"]);
+  });
+
+  it("leaves a call whose path argument is a bare variable unresolved", () => {
+    // `APIUrl(url)` — nothing is known about the path; `/api/{}` would join
+    // whatever `/api/:id` route exists. A version arg still takes its default.
+    const calls = [apiCall("requestUri(url)"), apiCall("requestUri('x', version)")];
+    expect(resolveUrlBuilders(calls, [analysis([requestUri])])).toBe(1);
+    expect(calls[0]!.target).toBe("requestUri(url)");
+    expect(calls[1]!.target).toBe("/api/v2/institution/{}/x");
+  });
+
   it("is a no-op when the project defines no URL builders", () => {
     const calls = [apiCall("requestUri('x', 'v4')")];
     expect(resolveUrlBuilders(calls, [analysis([])])).toBe(0);

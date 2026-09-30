@@ -41,7 +41,7 @@ function openInBrowser(filePath: string): void {
 // ─── Template rendering (the React viewer, packaged as a single file) ────
 // The template is the SPA report viewer built by `npm run build:viewer`
 // (application/spa/vite.standalone.config.ts → vite-plugin-singlefile), committed
-// at src/core/html-report/viewer-assets/ and mirrored into dist/ by tsup's
+// at src/core/html-report/viewer-assets/ and mirrored into dist/ by tsdown's
 // onSuccess hook — the same relative path resolves in both layouts.
 
 const TEMPLATE_URL = new URL("./html-report/viewer-assets/report-template.html", import.meta.url);

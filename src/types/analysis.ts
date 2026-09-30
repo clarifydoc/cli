@@ -462,6 +462,14 @@ export interface FunctionInfo {
    */
   urlTemplate?: string;
   /**
+   * The helper's OTHER url templates, when its body returns a different URL
+   * per branch (`isEmployee ? base + "/api/personale/" + p : base + "/api/" + p`
+   * → `urlTemplate` `/api/personale/{p}`, alternatives `["/api/{p}"]`). Source
+   * order; a branch that only differs in a dropped base is not listed twice.
+   * Absent when there is exactly one template.
+   */
+  urlTemplateAlternatives?: string[];
+  /**
    * What this function reads from an HTTP request when it is a route handler
    * whose bindings are not declared in its signature — `req.body.name`,
    * `c.ShouldBindJSON(&input)`, `req.content.decode(T.self)`,
@@ -694,6 +702,13 @@ export interface DataSourceInfo {
    * symbolic value resolver.
    */
   baseEnv?: string;
+  /**
+   * For `api-call`: the other URLs this call may resolve to, when it goes
+   * through a URL-builder helper whose body returns a different URL per branch
+   * (see `FunctionInfo.urlTemplateAlternatives`). `target` is the first branch;
+   * the route join tries these in order when `target` matches no route.
+   */
+  targetAlternatives?: string[];
   /**
    * For `kind === "database"`: whether the op reads or writes, when the plugin's
    * ORM knowledge can tell (e.g. `findMany` → read, `create`/`save` → write).

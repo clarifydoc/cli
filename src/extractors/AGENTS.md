@@ -56,7 +56,7 @@ constants from them (`EXTENSION_TO_LANGUAGE`, `STRIP_SOURCE_EXTENSION_RE`,
 source of truth.
 
 The metas (LAZY tier) sit behind a static thunk map (`LOADERS`) of dynamic
-imports — tsup's ESM code splitting emits one chunk per plugin. `await
+imports — tsdown's ESM code splitting emits one chunk per plugin. `await
 ensureLanguagesLoaded(langs)` (or `loadAllPlugins()`) populates `pluginFor`;
 the analyzer calls it after file discovery with the discovered languages ∪
 `ACTIVATION_FILE_LANGUAGES` hits (go.mod → go, …) ∪ dispatch couplings
