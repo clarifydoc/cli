@@ -130,6 +130,19 @@ export function synthesizeApiRouteSymbolLinks(
         }
       }
     }
+    if (!tgt) {
+      // An inline handler (`router.get("/profiles/:u", auth.optional, async (req, res) => …)`,
+      // the ordinary Express style) has no named span at the route line, and
+      // `handler` holds the middleware's name. The route's own synthetic
+      // symbol is still there: `symbol-linker` mints `route:<METHOD> <path>`
+      // for every route and links it to whatever the route runs — the same
+      // anchor `computeDataFlows` uses. Without it the trace, and every
+      // screen's reach, stopped at the HTTP boundary of such backends.
+      const route = (fileOf.get(link.target)?.routes ?? []).find(
+        (r) => r.kind === "api" && r.line === link.targetLine && r.path === link.routePath,
+      );
+      if (route) tgt = { symbol: `route:${route.httpMethod ?? "USE"} ${route.path}`, line: route.line, endLine: route.line };
+    }
     if (!tgt) continue;
     // A self-edge (route handler calling its own endpoint) adds no trace value.
     if (link.source === targetFile && src.symbol === tgt.symbol) continue;

@@ -1082,10 +1082,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       apiCallAccess: attributeApiCallsToSymbols(allAnalyses),
       dbAccessByLine,
     });
-    dataFlows = computeDataFlows(symbolReach, allRoutes, allAnalyses);
+    dataFlows = computeDataFlows(symbolReach, allRoutes, allAnalyses, allScreens);
     if (symbolReach.length > 0) {
       progress.detail(
-        `  Data-flow reach: ${symbolReach.length} symbol(s), ${dataFlows.length} route→data flow(s)`,
+        `  Data-flow reach: ${symbolReach.length} symbol(s), ${dataFlows.length} route/screen→data flow(s)`,
       );
     }
   }
