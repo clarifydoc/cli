@@ -85,6 +85,21 @@ describe("synthesizeApiRouteSymbolLinks", () => {
     expect(out).toHaveLength(0);
   });
 
+  it("targets the route's synthetic symbol when the handler is inline (Express)", () => {
+    // `router.get("/profiles/:username", auth.optional, async (req, res) => …)`:
+    // no span at the route line, and `handler` is the middleware's name. The
+    // symbol linker's `route:GET /profiles/:username` is still there — without
+    // it, no frontend call in such a repo crossed into the backend at all.
+    const backend = fa("server/profile.controller.ts", {
+      routes: [{ path: "/profiles/:username", httpMethod: "GET", kind: "api", handler: "auth.optional", calls: [], middleware: [], line: 14 }],
+    } as any);
+    const out = synthesizeApiRouteSymbolLinks(
+      [link({ target: "server/profile.controller.ts", targetLine: 14, handler: "auth.optional", routePath: "/profiles/:username" })],
+      [frontend, backend],
+    );
+    expect(out.map((l) => `${l.targetFile}::${l.targetSymbol}`)).toEqual(["server/profile.controller.ts::route:GET /profiles/:username"]);
+  });
+
   it("skips AMBIGUOUS links and top-level (unanchored) calls", () => {
     const backend = fa("server/Controllers/OrdersController.cs", {
       classes: [{ name: "OrdersController", methods: [fn("GetAll", 18, 25)] }] as any,

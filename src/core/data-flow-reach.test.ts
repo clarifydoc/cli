@@ -208,6 +208,43 @@ describe("computeDataFlows", () => {
     ]);
   });
 
+  it("emits a screen row for whatever any function of the screen's file reaches, at the shortest distance", () => {
+    // The mission question as a row: which screen ends up touching which table.
+    // `web/Orders.vue` reaches `orders` only through postOrder → POST
+    // /api/orders → createOrder → save (3 hops); a second symbol of the same
+    // file reaching it in more hops must not lengthen the distance.
+    const reach = computeSymbolReach({
+      ...chain,
+      symbolLinks: [...chain.symbolLinks, link("web/Orders.vue", "render", "web/Orders.vue", "onSave")],
+    });
+    const flows = computeDataFlows(
+      reach,
+      [],
+      [fns("web/Orders.vue", ["render", 1, 4], ["onSave", 5, 9])],
+      [{ name: "Orders", filePath: "web/Orders.vue", routePath: "/orders" }],
+    );
+    expect(flows).toEqual([
+      {
+        entryKind: "screen",
+        entryLabel: "Orders /orders",
+        entryFile: "web/Orders.vue",
+        effect: "db",
+        resource: "orders",
+        distance: 3,
+        confidence: "INFERRED",
+      },
+    ]);
+  });
+
+  it("names a routeless screen by name alone, and skips a screen that reaches nothing", () => {
+    const reach = computeSymbolReach(chain);
+    const flows = computeDataFlows(reach, [], [fns("web/Orders.vue", ["onSave", 5, 9]), fns("web/Empty.vue", ["x", 1, 2])], [
+      { name: "OrderForm", filePath: "web/Orders.vue", routePath: null },
+      { name: "Empty", filePath: "web/Empty.vue", routePath: "/empty" },
+    ]);
+    expect(flows.map((f) => `${f.entryKind} ${f.entryLabel}`)).toEqual(["screen OrderForm"]);
+  });
+
   it("is empty when no route handler resolves to a reaching symbol", () => {
     const reach = computeSymbolReach(chain);
     const flows = computeDataFlows(reach, [], []);
