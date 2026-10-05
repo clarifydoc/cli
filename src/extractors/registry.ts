@@ -357,6 +357,23 @@ export const ALL_BUILTIN_MEMBERS: ReadonlySet<string> = (() => {
 })();
 
 /**
+ * Each language's own builtin member names. A heuristic that reads a leaf as
+ * "this is a stdlib value, not project code" must ask the CALLER's language:
+ * the union lists Python's `login` (smtplib), so a React hook's
+ * `const { login } = useAuth()` would read as a stdlib call.
+ */
+export const BUILTIN_MEMBERS_BY_LANGUAGE: ReadonlyMap<Language, ReadonlySet<string>> = (() => {
+  const m = new Map<Language, Set<string>>();
+  for (const manifest of ALL_MANIFESTS) {
+    if (!manifest.builtinMembers?.length) continue;
+    let s = m.get(manifest.language);
+    if (!s) m.set(manifest.language, (s = new Set()));
+    for (const member of manifest.builtinMembers) s.add(member);
+  }
+  return m;
+})();
+
+/**
  * Matches import sources whose first segment is a well-known external
  * namespace root (e.g. "System.Windows.Forms", "com.example.app") — used to
  * skip directory-name matching for such imports.

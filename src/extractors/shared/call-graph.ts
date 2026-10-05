@@ -28,6 +28,23 @@ const CALLBACK_ARG_NODE_TYPES = new Set<string>();
 /** Nested-scope types that are function EXPRESSIONS — descend when anonymous (union). */
 const ANONYMOUS_SCOPE_TYPES = new Set<string>();
 
+/** Node type → fields that bind a local name there (union, see CallExtractionHooks.bindingSites). */
+const BINDING_SITES = new Map<string, Set<string>>();
+
+/** Pattern node type → fields holding further bound names, "*" = all (union). */
+const BINDING_PATTERNS = new Map<string, Set<string>>();
+
+/** The leaves of a bound pattern. */
+const BOUND_IDENTIFIER_TYPES = new Set(["identifier", "shorthand_property_identifier_pattern"]);
+
+function unionFields(into: Map<string, Set<string>>, from: Readonly<Record<string, readonly string[]>> | undefined): void {
+  for (const [type, fields] of Object.entries(from ?? {})) {
+    let set = into.get(type);
+    if (!set) into.set(type, (set = new Set()));
+    for (const f of fields) set.add(f);
+  }
+}
+
 /** Called by the registry while aggregating plugin metas. */
 export function registerCallExtraction(language: Language, hooks: CallExtractionHooks | undefined): void {
   if (!hooks) return;
@@ -35,6 +52,44 @@ export function registerCallExtraction(language: Language, hooks: CallExtraction
   for (const t of hooks.nestedScopeTypes ?? []) NESTED_SCOPE_TYPES.add(t);
   for (const t of hooks.anonymousScopeTypes ?? []) ANONYMOUS_SCOPE_TYPES.add(t);
   for (const t of hooks.callbackArgNodeTypes ?? []) CALLBACK_ARG_NODE_TYPES.add(t);
+  unionFields(BINDING_SITES, hooks.bindingSites);
+  unionFields(BINDING_PATTERNS, hooks.bindingPatterns);
+}
+
+/**
+ * Add every name `node`'s binding site binds (its parameters, its declarator...).
+ * A declarator or assignment whose value is itself a function
+ * (`const onClick = () => …`, `f = lambda: …`) binds a function — the plugin
+ * extracts it as one — so passing it on stays a callback reference.
+ */
+function collectBoundNames(site: Node, into: Set<string>): void {
+  const fields = BINDING_SITES.get(site.type);
+  if (!fields) return;
+  if (!NESTED_SCOPE_TYPES.has(site.type)) {
+    const value = site.childForFieldName("value") ?? site.childForFieldName("right");
+    if (value && NESTED_SCOPE_TYPES.has(value.type)) return;
+  }
+  for (const field of fields) {
+    const bound = site.childForFieldName(field);
+    if (bound) collectPatternNames(bound, into);
+  }
+}
+
+function collectPatternNames(pattern: Node, into: Set<string>): void {
+  if (BOUND_IDENTIFIER_TYPES.has(pattern.type)) {
+    into.add(pattern.text);
+    return;
+  }
+  const fields = BINDING_PATTERNS.get(pattern.type);
+  if (!fields) return;
+  if (fields.has("*")) {
+    for (const child of pattern.namedChildren) collectPatternNames(child, into);
+    return;
+  }
+  for (const field of fields) {
+    const child = pattern.childForFieldName(field);
+    if (child) collectPatternNames(child, into);
+  }
 }
 
 /**
@@ -52,6 +107,9 @@ function isAnonymousFnExpression(node: Node): boolean {
 export function isNestedScopeType(nodeType: string): boolean {
   return NESTED_SCOPE_TYPES.has(nodeType);
 }
+
+/** Receivers that name the current instance, across the supported languages. */
+const OWN_INSTANCE_RECEIVERS = new Set(["this", "self", "cls", "Self", "$this"]);
 
 /** Methods that are noise — chaining, logging, promise utilities, etc. */
 export const NOISE_CALLS = new Set([
@@ -83,23 +141,22 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   if (!hooks) return [];
   const callTypes = hooks.callNodeTypes;
 
-  const results: CallInfo[] = [];
-  const seen = new Set<string>();
   const visited = new Set<number>();
   const resolve = (n: Node) => resolveCallName(n, language);
 
-  function addResult(name: string, node: Node) {
-    if (name && !isNoise(name) && !seen.has(name)) {
-      seen.add(name);
-      results.push({
-        name,
-        kind: "internal",
-        target: null,
-        line: node.startPosition.row + 1,
-        column: node.startPosition.column,
-      });
-    }
-  }
+  // Candidates in walk order. A callback-argument reference is only kept if
+  // the scope does not bind that name itself, which is known once the walk
+  // has seen the whole body — so the decision waits, and the order stays the
+  // walk's.
+  const candidates: Array<{ name: string; line: number; column: number; isReference: boolean }> = [];
+  const boundHere = new Set<string>();
+
+  const push = (name: string, node: Node, isReference: boolean) => {
+    candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference });
+  };
+  const addResult = (name: string, node: Node) => {
+    if (name) push(name, node, false);
+  };
 
   function walk(node: Node, isRoot: boolean) {
     if (visited.has(node.id)) return;
@@ -111,6 +168,10 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // symbol, so its calls attribute here.
     if (!isRoot && NESTED_SCOPE_TYPES.has(node.type) && !isAnonymousFnExpression(node)) return;
 
+    // Parameters, declarators, assignment targets, loop variables — every
+    // scope this walk attributes to the function (incl. inline arrows).
+    collectBoundNames(node, boundHere);
+
     // Standard call expressions
     if (callTypes.has(node.type)) {
       const name = resolve(node);
@@ -121,8 +182,8 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
         const args = node.childForFieldName("arguments");
         if (args) {
           for (const arg of args.children) {
-            if (arg.type === "identifier" && /^[a-zA-Z_]/.test(arg.text) && !isNoise(arg.text)) {
-              addResult(arg.text, arg);
+            if (arg.type === "identifier" && /^[a-zA-Z_]/.test(arg.text)) {
+              push(arg.text, arg, true);
             }
           }
         }
@@ -137,7 +198,18 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     }
   }
 
+  // A body's parameters live on its function node, outside the walk.
+  if (!BINDING_SITES.has(bodyNode.type) && bodyNode.parent) collectBoundNames(bodyNode.parent, boundHere);
   walk(bodyNode, true);
+
+  const results: CallInfo[] = [];
+  const seen = new Set<string>();
+  for (const c of candidates) {
+    if (c.isReference && boundHere.has(c.name)) continue;
+    if (isNoise(c.name) || seen.has(c.name)) continue;
+    seen.add(c.name);
+    results.push({ name: c.name, kind: "internal", target: null, line: c.line, column: c.column });
+  }
   return results;
 }
 
@@ -219,6 +291,11 @@ export function classifyCalls(
   imports: ImportInfo[],
   language: Language,
   variableAliases?: Map<string, string | import("../../types/language-plugin.js").VariableAliasBinding>,
+  /**
+   * Names this file defines — functions (with the root of a dotted one:
+   * `requests` for `requests.get`) and classes. See step 2d.
+   */
+  localSymbols?: ReadonlySet<string>,
 ): CallInfo[] {
   const { importMap, defaultImports } = buildImportMaps(imports);
   const hooks = callHooksByLanguage.get(language);
@@ -311,6 +388,14 @@ export function classifyCalls(
       }
     }
 
+    // 2d. The file's own code. A call whose root names something this file
+    // defines — `requests.get(…)` on a local namespace object, a bare
+    // `create(…)` beside `def create` — is a call into the project, whatever
+    // its method is called. Steps 3-4 guess from names for receivers we cannot
+    // see; applied here they labelled it `database`, and both the symbol
+    // linker and the LSP enhancer skip that kind, so it could never resolve.
+    if (localSymbols?.has(root)) continue;
+
     // 3. Check API call patterns
     if (isApiCall(call.name, language)) {
       call.kind = "api-call";
@@ -318,8 +403,12 @@ export function classifyCalls(
       continue;
     }
 
-    // 4. Check database patterns
-    if (isDatabaseCall(call.name, language)) {
+    // 4. Check database patterns. A method on the receiver's own instance
+    // (`this.exec(…)`, `self.repo.update(…)`) is not database evidence by its
+    // name alone — that is the class's own method or field, which the linker
+    // can follow. A known DB client root still is.
+    const ownInstance = call.name.includes(".") && OWN_INSTANCE_RECEIVERS.has(root);
+    if (isDatabaseCall(call.name, language, !ownInstance)) {
       call.kind = "database";
       call.confidence = "EXTRACTED";
       continue;

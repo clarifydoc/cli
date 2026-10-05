@@ -1,6 +1,6 @@
 import type { FileAnalysis, LinkInfo, LinkProximity, Confidence } from "../../types/analysis.js";
 import { posix } from "path";
-import { pickByPathAffinity, extensionFamily } from "../plugins/shared/path-utils.js";
+import { pickByPathAffinity, extensionFamily, relativeModulePath } from "../plugins/shared/path-utils.js";
 import { bestConfidence } from "./confidence.js";
 // Registry-aggregated data, PUSHED here by the registry (same pattern as
 // call-patterns/parser-manager registration): this module is imported by
@@ -317,7 +317,7 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
   // 1. Relative imports (JS/TS/Python relative)
   if (importSource.startsWith(".")) {
     const sourceDir = posix.dirname(sourceFile);
-    const resolved = posix.normalize(posix.join(sourceDir, importSource));
+    const resolved = posix.normalize(posix.join(sourceDir, relativeModulePath(importSource)));
     const match = tryMatch(resolved, filePathMap, sourceFile);
     if (match) return match;
     return null;
@@ -403,8 +403,8 @@ function tryMatch(candidate: string, filePathMap: Map<string, string>, sourceFil
     if (withExt) return withExt;
   }
 
-  // /index variants
-  const withIndex = filePathMap.get(candidate + "/index");
+  // /index variants — and a Python package's `__init__`
+  const withIndex = filePathMap.get(candidate + "/index") ?? filePathMap.get(candidate + "/__init__");
   if (withIndex) return withIndex;
 
   // Basename match: "UserModel" → files whose basename matches

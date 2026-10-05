@@ -12,7 +12,7 @@ import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js
 import { commonPrefixLength, extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { simpleTypeName } from "../extractors/shared/type-parser.js";
 import { isTestFile } from "./test-file-detector.js";
-import { ALL_BUILTIN_MEMBERS } from "../extractors/registry.js";
+import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE } from "../extractors/registry.js";
 
 interface SymbolDef {
   name: string;
@@ -133,12 +133,26 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
           // identifier, which misses when the file's basename differs in case
           // (component `WageSetup`, file `Wagesetup.vue`); the
           // import's module path is exact.
+          //
+          // A componentPath that is a bare identifier the file IMPORTS is
+          // decided by that import: the identifier only reaches resolveTarget's
+          // fuzzy basename match, which bound `<Route element={<Dashboard />}>`
+          // (imported from a missing `./pages/Dashboard`) to an unrelated
+          // `Dashboard.vue` elsewhere. A relative import that resolves to no
+          // file stops there; a non-relative one (an unresolved alias such as
+          // `@/views/Home`) may still fall back to the name.
           const candidateSpecs: string[] = [];
-          if (route.componentPath) candidateSpecs.push(route.componentPath);
+          const isModuleSpec = (s: string) => s.startsWith(".") || s.startsWith("/");
+          const bindingName =
+            route.componentPath && !isModuleSpec(route.componentPath) ? route.componentPath : handlerName;
           const handlerImport = analysis.imports.find(
-            (imp) => !imp.isType && imp.specifiers.includes(handlerName),
+            (imp) => !imp.isType && imp.specifiers.includes(bindingName),
           );
+          if (route.componentPath && isModuleSpec(route.componentPath)) candidateSpecs.push(route.componentPath);
           if (handlerImport) candidateSpecs.push(handlerImport.source);
+          if (route.componentPath && !isModuleSpec(route.componentPath) && !(handlerImport && isModuleSpec(handlerImport.source))) {
+            candidateSpecs.push(route.componentPath);
+          }
           let compFile: string | null = null;
           for (const spec of candidateSpecs) {
             compFile = resolveTarget(spec, sourceFile, ctx.filePathMap);
@@ -1142,7 +1156,14 @@ function resolveCallToDefinition(
   // classifier recorded WHICH factory made the receiver (CallInfo.via); the
   // factory's definition is where the meaningful project code sits (its
   // mutationFn closure calls the service), so the trace routes through it.
-  if (!def && call.kind === "cross-file" && call.via && targetFile) {
+  // A stdlib-shaped leaf (`name.startsWith`, `items.includes`) says the
+  // receiver is a plain value the factory RETURNED — a string, an array — not
+  // a library object standing in for the factory's own code; the factory call
+  // is already linked where it is made.
+  if (
+    !def && call.kind === "cross-file" && call.via && targetFile &&
+    !BUILTIN_MEMBERS_BY_LANGUAGE.get(analysis.language)?.has(leafName)
+  ) {
     const viaDef = symbolIndex.get(targetFile)?.get(call.via);
     if (viaDef) {
       return mkLink(targetFile, viaDef.name, viaDef.line, "INFERRED", "factory-via");

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveDataSourceStringConstants, enrichFileDataSources } from "./import-index.js";
+import { resolveDataSourceStringConstants, enrichFileDataSources, resolveImportSource } from "./import-index.js";
 import { createEmptyAnalysis, type FileAnalysis, type DataSourceInfo } from "../types/analysis.js";
 
 function file(
@@ -130,5 +130,20 @@ describe("Delphi dataset calls are not entities", () => {
     };
     enrichFileDataSources(a);
     expect(a.dataSources[0]!.entity).toBe("User");
+  });
+});
+
+describe("resolveImportSource — Python relative imports", () => {
+  const known = new Set(["pkg/cli.py", "pkg/graph.py", "pkg/__init__.py", "pkg/tools/build.py", "pkg/tools/__init__.py"]);
+
+  it("resolves dotted relative modules against the importer's package", () => {
+    expect(resolveImportSource("pkg/cli.py", ".graph", known, "GraphStore")).toBe("pkg/graph.py");
+    expect(resolveImportSource("pkg/tools/build.py", "..graph", known, "GraphStore")).toBe("pkg/graph.py");
+  });
+
+  it("prefers the module a `from . import x` names over the package's __init__", () => {
+    expect(resolveImportSource("pkg/cli.py", ".", known, "graph")).toBe("pkg/graph.py");
+    expect(resolveImportSource("pkg/cli.py", ".", known, "VERSION")).toBe("pkg/__init__.py");
+    expect(resolveImportSource("pkg/cli.py", ".tools", known, "build")).toBe("pkg/tools/build.py");
   });
 });

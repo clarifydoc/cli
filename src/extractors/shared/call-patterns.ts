@@ -73,7 +73,13 @@ export function isApiCall(name: string, language: Language): boolean {
 /**
  * Check if a call name matches a database/ORM pattern for the given language.
  */
-export function isDatabaseCall(name: string, language: Language): boolean {
+/**
+ * `byMethodName: false` keeps only the strong evidence — a known DB client or
+ * ORM root — and drops the method-name fallback (`get`, `update`, `count`…),
+ * which on its own also matches every dictionary, Map and project method of
+ * the same name.
+ */
+export function isDatabaseCall(name: string, language: Language, byMethodName = true): boolean {
   const roots = DB_ROOTS.get(language);
   if (!roots) return false;
 
@@ -83,6 +89,8 @@ export function isDatabaseCall(name: string, language: Language): boolean {
     // Must also have a method call (not just "db" by itself)
     if (name.includes(".")) return true;
   }
+
+  if (!byMethodName) return false;
 
   // Check if the method name matches DB patterns
   const method = name.includes(".") ? name.split(".").pop()! : name;

@@ -2,22 +2,57 @@ import type { Node } from "web-tree-sitter";
 import { ImportExportExtractor } from "../../imports-exports/base.js";
 import type { ImportInfo, ExportInfo, Language } from "../../imports-exports/base.js";
 
+/**
+ * Statements that hold other statements. An import is a statement, so it can
+ * only sit directly in one of these — never inside an expression — and the
+ * import walk descends nothing else, keeping it to the statement skeleton
+ * rather than the whole tree.
+ */
+const STATEMENT_CONTAINERS = new Set([
+  "block",
+  "if_statement", "elif_clause", "else_clause",
+  "try_statement", "except_clause", "except_group_clause", "finally_clause",
+  "with_statement", "for_statement", "while_statement",
+  "match_statement", "case_clause",
+  "function_definition", "class_definition", "decorated_definition",
+]);
+
+/** `if TYPE_CHECKING:` / `if typing.TYPE_CHECKING:` — the branch only a type checker runs. */
+function isTypeCheckingGuard(ifStatement: Node): boolean {
+  const condition = ifStatement.childForFieldName("condition")?.text;
+  return condition === "TYPE_CHECKING" || condition === "typing.TYPE_CHECKING";
+}
+
 export class PythonImportExportExtractor extends ImportExportExtractor {
   readonly languages: Language[] = ["python"];
 
-  protected collectImports(node: Node, imports: ImportInfo[]): void {
+  /**
+   * Imports at any statement depth, not just module level: a function-local
+   * `from x import y` (the usual way to break an import cycle or defer a
+   * heavy module), the `try: import ujson as json / except ImportError:`
+   * fallback, and `if TYPE_CHECKING:` blocks. Missing the local one left
+   * every call through it classified as internal and unlinkable. Imports
+   * under a TYPE_CHECKING guard are type-only (`isType`) — they exist for
+   * annotations and never bind at runtime.
+   */
+  protected collectImports(node: Node, imports: ImportInfo[], typeOnly = false): void {
+    let typeCheckingBranch: number | undefined;
+    if (node.type === "if_statement" && isTypeCheckingGuard(node)) {
+      typeCheckingBranch = node.childForFieldName("consequence")?.id;
+    }
     for (const child of node.children) {
-
       if (child.type === "import_statement") {
-        this.parseImportStatement(child, imports);
+        this.parseImportStatement(child, imports, typeOnly);
       } else if (child.type === "import_from_statement") {
-        this.parseImportFromStatement(child, imports);
+        this.parseImportFromStatement(child, imports, typeOnly);
+      } else if (STATEMENT_CONTAINERS.has(child.type)) {
+        this.collectImports(child, imports, typeOnly || child.id === typeCheckingBranch);
       }
     }
   }
 
   /** `import foo`, `import foo.bar`, `import foo as f, bar as b` */
-  private parseImportStatement(node: Node, imports: ImportInfo[]): void {
+  private parseImportStatement(node: Node, imports: ImportInfo[], isType: boolean): void {
     const names: string[] = [];
     for (const part of node.children) {
       if (part.type === "dotted_name") {
@@ -34,13 +69,13 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
       specifiers: names,
       isDefault: false,
       isNamespace: true,
-      isType: false,
+      isType,
       line: node.startPosition.row + 1,
     });
   }
 
   /** `from foo import bar, baz`, `from foo import *`, `from foo import bar as b` */
-  private parseImportFromStatement(node: Node, imports: ImportInfo[]): void {
+  private parseImportFromStatement(node: Node, imports: ImportInfo[], isType: boolean): void {
     const moduleNode = node.childForFieldName("module_name");
     const module = moduleNode?.text ?? "";
     // Track module node position to avoid matching it as a specifier
@@ -102,7 +137,7 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
       specifiers,
       isDefault: false,
       isNamespace,
-      isType: false,
+      isType,
       line: node.startPosition.row + 1,
     });
   }

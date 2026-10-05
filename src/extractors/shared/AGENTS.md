@@ -29,6 +29,7 @@ language-specific comes from each plugin's `meta.calls`
 3. **`resolveCallName`** — full name resolution for the language; plugins compose `genericResolveCallName(node, { calleeOverride?, extraCallee? })`.
 4. **`collectExtraCalls`** — extra call shapes (JSX component refs, Python decorators).
 5. **`classifyAutoImported`** / **`qualifiedRootCandidates`** — classification hooks (Vue macros; Java `userService`→`UserService`, Python snake→Pascal, Pascal `F`-strip).
+5b. **`callbackArgNodeTypes`** + **`bindingSites`** / **`bindingPatterns`** — an identifier passed as an argument is recorded as a call (`items.map(formatUser)` → `formatUser`) *unless the function binds that name itself*: a parameter, declarator, assignment target, loop/catch/`with` variable is a value, not a reference. The binding tables are grammar data (node type → field holding the bound pattern; pattern type → fields to descend, `"*"` = all), unioned across plugins; bindings are collected in the same walk as the calls and references are filtered once it ends, so output order is unchanged. A declarator whose value is itself a function (`const onClick = () => …`) stays a reference. Without this about a quarter of all extracted "calls" on real repos (26–27% on three measured) were variables, which the linker then bound by name or through a file-wide factory alias (`foo(client)` → `IxClient`).
 6. **`NOISE_CALLS`** — method names to skip (`.then`, `.map`, `console.log`, etc.). Cross-language, stays here — centralize noise here, not per-plugin.
 
 `classifyCalls(calls, imports, language, variableAliases?)` runs **after** extraction. It mutates `CallInfo.kind` from `"internal"` to `"cross-file"`/`"api-call"`/`"database"` based on:
@@ -37,7 +38,8 @@ language-specific comes from each plugin's `meta.calls`
 - Qualified name root matches import/default/namespace → `cross-file`
 - Variable alias lookup (`const s = useStore()` then `s.x.y`) → `cross-file` (the alias walker is a JS plugin `ast.variableAliases` hook)
 - Plugin `qualifiedRootCandidates` transforms → `cross-file` (INFERRED)
-- Pattern match on `isApiCall` / `isDatabaseCall` → `api-call` / `database`
+- Root names one of the file's own definitions (`localSymbols`: functions, dotted-name roots like `requests` of `requests.get`, classes) → stays `internal`, before any name heuristic. `api-call`/`database` calls are skipped by both the symbol linker and the LSP enhancer, so a wrong label there is a link that can never form.
+- Pattern match on `isApiCall` / `isDatabaseCall` → `api-call` / `database`. A `this.`/`self.` receiver is never `database` by its method name alone (`isDatabaseCall(…, byMethodName = false)`); a known DB client root still is.
 
 ## link-scoring.ts — file dependency graph
 

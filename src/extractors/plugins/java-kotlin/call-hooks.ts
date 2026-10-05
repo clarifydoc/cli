@@ -46,6 +46,24 @@ export const javaCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["method_invocation", "object_creation_expression"]),
   nestedScopeTypes: JVM_NESTED_SCOPE_TYPES,
   callbackArgNodeTypes: ["method_invocation"],
+  // A name the method binds itself is a value when passed as an argument,
+  // not a callback reference (see CallExtractionHooks.bindingSites).
+  bindingSites: {
+    method_declaration: ["parameters"],
+    constructor_declaration: ["parameters"],
+    lambda_expression: ["parameters"],
+    variable_declarator: ["name"],
+    enhanced_for_statement: ["name"],
+    catch_formal_parameter: ["name"],
+    resource: ["name"],
+  },
+  bindingPatterns: {
+    formal_parameters: ["*"],
+    inferred_parameters: ["*"],
+    formal_parameter: ["name"],
+    spread_parameter: ["*"],
+    variable_declarator: ["name"],
+  },
   resolveCallName: resolveJvmCallName,
   qualifiedRootCandidates: capitalizedRoot,
 };
