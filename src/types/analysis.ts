@@ -1779,6 +1779,12 @@ export interface ProjectAnalysis {
   confidenceCounts?: { extracted: number; inferred: number; ambiguous: number };
   /** Paths the discovery layer silently skipped because their names look like credentials. */
   skippedSensitive?: string[];
+  /**
+   * Symlinked source paths discovery refused to read — the link leaves the
+   * project root, dangles, or names a non-file. Linked directories are never
+   * descended at all.
+   */
+  skippedSymlinks?: string[];
   /** Louvain-detected communities (community ID → file paths). Largest first. */
   communities?: Record<string, string[]>;
   /** Cohesion ∈ [0, 1] for each community ID — intra-community edges / max possible. */

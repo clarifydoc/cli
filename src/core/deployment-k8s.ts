@@ -1,4 +1,5 @@
 import fg from "fast-glob";
+import { NO_SYMLINKS } from "./glob-safety.js";
 import { readFile } from "fs/promises";
 import { join, resolve } from "path";
 import {
@@ -216,6 +217,7 @@ export async function collectK8sManifests(
 ): Promise<K8sManifests | undefined> {
   const absRoot = resolve(projectRoot);
   const found = await fg(["**/*.{yml,yaml}"], {
+    ...NO_SYMLINKS,
     cwd: absRoot,
     ignore: [...IGNORE, "**/.github/**", "**/.gitlab/**", "**/.circleci/**"],
     absolute: false,
