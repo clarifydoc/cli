@@ -400,6 +400,31 @@ export interface CallExtractionHooks {
   /** Call node types whose arguments are scanned for callback identifiers (also unioned). */
   callbackArgNodeTypes?: readonly string[];
   /**
+   * Where this grammar binds a name locally, so the callback-argument scan can
+   * tell a function passed by reference (`items.map(formatUser)`) from a
+   * value passed by name (`save(user)`, `repo.find(user_id)`): an identifier
+   * the function binds itself — a parameter, a declarator, an assignment
+   * target, a loop or catch variable — names a value, never a definition the
+   * linker could reach, and is not recorded as a call. Without this every
+   * such argument became a "call" that the linker then resolved by name or
+   * through a factory alias to an unrelated function.
+   *
+   * Node type → the fields holding the bound pattern: the parameter list of
+   * a function-like node (`arrow_function` → `parameter`, `parameters`),
+   * `variable_declarator` → `name`, Python `assignment` → `left`. Unioned
+   * across plugins.
+   */
+  bindingSites?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * How to read the names out of a bound pattern: pattern node type → the
+   * fields that hold further bound names, or `"*"` for every named child
+   * (`object_pattern` → `*`, `pair_pattern` → `value`, `default_parameter` →
+   * `name`). Identifiers and shorthand pattern identifiers are the leaves;
+   * any other node in a bound position — `obj.x = …`, a type annotation, a
+   * default value — binds nothing. Unioned across plugins.
+   */
+  bindingPatterns?: Readonly<Record<string, readonly string[]>>;
+  /**
    * Full call-name resolution for this language. Implementations typically
    * delegate to `genericResolveCallName` from shared/call-graph.ts with
    * language-specific options.

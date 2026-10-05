@@ -55,6 +55,58 @@ describe("react-router nested <Route> prefix composition", () => {
   });
 });
 
+describe("react-router: the component a <Route> renders", () => {
+  // `componentPath` is what the screen builder follows from a route to its
+  // page file. JSX routes never set it, so every page they rendered was a
+  // screen without a route and the route file became the screen instead.
+  const rendered = async (jsx: string) => {
+    const [route] = await routesOf(`const r = (${jsx});`);
+    return { handler: route?.handler ?? null, componentPath: route?.componentPath ?? null };
+  };
+
+  it("reads component / Component / element / render", async () => {
+    expect(await rendered(`<Route path="/@:username" component={Profile} />`))
+      .toEqual({ handler: "Profile", componentPath: "Profile" });
+    expect(await rendered(`<Route path="/a" Component={Account} />`))
+      .toEqual({ handler: "Account", componentPath: "Account" });
+    expect(await rendered(`<Route path="/users/:id" element={<UserCard />} />`))
+      .toEqual({ handler: "UserCard", componentPath: "UserCard" });
+    expect(await rendered(`<Route path="/d" element={<Dashboard></Dashboard>} />`))
+      .toEqual({ handler: "Dashboard", componentPath: "Dashboard" });
+    expect(await rendered(`<Route path="/r" render={(props) => <Report {...props} />} />`))
+      .toEqual({ handler: "Report", componentPath: "Report" });
+  });
+
+  it("unwraps a single-child wrapper and an HOC, and follows a lazy import", async () => {
+    expect(await rendered(`<Route path="/admin" element={<RequireAuth><AdminPage /></RequireAuth>} />`))
+      .toEqual({ handler: "AdminPage", componentPath: "AdminPage" });
+    expect(await rendered(`<Route path="/s" element={<Suspense fallback={<Spinner />}><Settings /></Suspense>} />`))
+      .toEqual({ handler: "Settings", componentPath: "Settings" });
+    expect(await rendered(`<Route path="/p" component={withRouter(Profile)} />`))
+      .toEqual({ handler: "Profile", componentPath: "Profile" });
+    expect(await rendered(`<Route path="/c" component={connect(mapState)(Cart)} />`))
+      .toEqual({ handler: "Cart", componentPath: "Cart" });
+    expect(await rendered(`<Route path="/l" component={lazy(() => import("./pages/Login"))} />`))
+      .toEqual({ handler: "Login", componentPath: "./pages/Login" });
+  });
+
+  it("reads the v5 children form, but not a nested <Route> as the page", async () => {
+    expect(await rendered(`<Route path="/x"><Editor /></Route>`))
+      .toEqual({ handler: "Editor", componentPath: "Editor" });
+    const nested = await routesOf(`const r = (<Route path="/admin"><Route path="users" element={<Users />} /></Route>);`);
+    expect(nested.find((r) => r.path === "/admin")?.componentPath).toBeNull();
+    expect(nested.find((r) => r.path === "/admin/users")?.componentPath).toBe("Users");
+  });
+
+  it("names nothing when the route renders no single component", async () => {
+    // Intrinsic markup, a conditional, several siblings: no guess.
+    expect((await rendered(`<Route path="/" element={<h1>Welcome</h1>} />`)).componentPath).toBeNull();
+    expect((await rendered(`<Route path="/s" element={isSeller ? <SellerLayout /> : <SellerLogin />} />`)).componentPath).toBeNull();
+    expect((await rendered(`<Route path="/l" element={<Layout><Header /><Page /></Layout>} />`)).componentPath).toBeNull();
+    expect((await rendered(`<Route path="/q" element={<Pages.Profile />} />`)).componentPath).toBeNull();
+  });
+});
+
 describe("vue-router path-object guard", () => {
   it("ignores data objects that merely carry a path key", async () => {
     const src = `export const categories = [

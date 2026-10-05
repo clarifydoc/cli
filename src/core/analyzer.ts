@@ -1410,11 +1410,15 @@ function buildScreensFromRoutes(
     if (frontendRoutes.length === 0) continue;
 
     let resolvedAny = false;
+    const unresolved: RouteInfo[] = [];
     for (const route of frontendRoutes) {
       const targetFile = resolveComponentFile(analysis.filePath, route);
       const target =
         targetFile && targetFile !== analysis.filePath ? byPath.get(targetFile) : null;
-      if (!target) continue;
+      if (!target) {
+        unresolved.push(route);
+        continue;
+      }
       const entry = byComponent.get(target.filePath) ?? { analysis: target, routes: [] };
       entry.routes.push(route);
       byComponent.set(target.filePath, entry);
@@ -1426,7 +1430,15 @@ function buildScreensFromRoutes(
     // not a page. Inline screens remain for route-in-page files (React) and
     // pages that route themselves (HTML, Blazor `@page`).
     const wiringOnly = frontendRoutes.every((r) => r.componentPath?.startsWith("/"));
-    if (!resolvedAny && !wiringOnly) inline.push({ analysis, route: frontendRoutes[0] });
+    if (!resolvedAny && !wiringOnly) {
+      inline.push({ analysis, route: frontendRoutes[0] });
+    } else if (unresolved.length > 0 && !wiringOnly && (analysis.templateTree?.length ?? 0) > 0) {
+      // Some routes lead to their own page files, the rest render here: a
+      // file that renders UI itself (`<Route path="/" element={<h1>Welcome</h1>} />`
+      // in an App component) is the screen for the routes that go nowhere
+      // else. A route config that renders nothing (a Vue router file) is not.
+      inline.push({ analysis, route: unresolved[0]! });
+    }
   }
 
   const screens: ScreenInfo[] = [];

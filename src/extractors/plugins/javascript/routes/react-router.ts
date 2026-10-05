@@ -25,7 +25,8 @@ export function visitReactRouterRoute(node: Node, routes: RouteInfo[]): void {
     if (nameNode?.text === "Route") {
       let path = routeAttr(node, "path");
       const handlerRaw = routeAttrRaw(node, "component") ?? routeAttrRaw(node, "element");
-      const handler = handlerRaw != null ? handlerRaw.replace(/[{}< />]/g, "").trim() : null;
+      const rendered = renderedComponent(node);
+      const handler = rendered?.name ?? (handlerRaw != null ? handlerRaw.replace(/[{}< />]/g, "").trim() : null);
 
       if (path) {
         // Nested <Route> composition: a child of <Route path="/seller"> with
@@ -42,6 +43,7 @@ export function visitReactRouterRoute(node: Node, routes: RouteInfo[]): void {
           httpMethod: null,
           kind: "frontend",
           handler,
+          componentPath: rendered?.specifier ?? null,
           calls: [],
           middleware: [],
           line: node.startPosition.row + 1,
@@ -51,16 +53,117 @@ export function visitReactRouterRoute(node: Node, routes: RouteInfo[]): void {
   }
 }
 
-/** The raw value text of a named attribute on a JSX opening element. */
-function routeAttrRaw(openingEl: Node, name: string): string | null {
+/** Attributes that name what a `<Route>` renders, strongest first (v5, v6.4 data router, v6, v5 render prop). */
+const RENDER_ATTRIBUTES = ["component", "Component", "element", "render"];
+
+/**
+ * The page component a `<Route>` renders, as `componentPath` carries it: the
+ * identifier of a statically-imported component (resolved later through the
+ * file's imports) or the module of a lazy one. Without it the screen builder
+ * could not follow a JSX route to its page — every page reached from
+ * `<Route path="/@:username" component={Profile} />` was a screen with no
+ * route, and the route file became a screen in its place.
+ *
+ * Read from the AST, not the attribute text:
+ *  - `component={Profile}` / `Component={Profile}` → `Profile`
+ *  - `element={<UserCard />}` → `UserCard`
+ *  - a wrapper with one element child is unwrapped —
+ *    `<RequireAuth><Dashboard /></RequireAuth>`, `<Suspense fallback={…}><Page /></Suspense>`
+ *  - an HOC's last argument — `withRouter(Profile)`, `connect(map)(Profile)`
+ *  - `lazy(() => import("./Profile"))` → `./Profile`
+ *  - `render={() => <Profile />}`, and v5 children `<Route path="/x"><Profile /></Route>`
+ *
+ * Null when the route renders no single component: intrinsic markup
+ * (`<h1>Welcome</h1>`), a conditional, several siblings. No guessing.
+ */
+function renderedComponent(openingEl: Node): { name: string; specifier: string } | null {
+  for (const attrName of RENDER_ATTRIBUTES) {
+    const value = routeAttrValue(openingEl, attrName);
+    if (value) return componentOf(value);
+  }
+  // v5 children form: <Route path="/x"><Profile /></Route>
+  const element = openingEl.type === "jsx_opening_element" ? openingEl.parent : null;
+  return element?.type === "jsx_element" ? onlyChildComponent(element) : null;
+}
+
+function componentOf(node: Node): { name: string; specifier: string } | null {
+  switch (node.type) {
+    case "jsx_expression":
+    case "parenthesized_expression": {
+      const inner = node.namedChildren[0];
+      return inner ? componentOf(inner) : null;
+    }
+    case "identifier":
+      return { name: node.text, specifier: node.text };
+    case "jsx_self_closing_element":
+      return componentNamed(tagOf(node));
+    case "jsx_element": {
+      // A wrapper (guard, Suspense, layout) around exactly one element renders
+      // that element; with no element children the element itself is the page.
+      const children = elementChildren(node);
+      if (children.length === 0) return componentNamed(tagOf(node));
+      return children.length === 1 ? onlyChildComponent(node) : null;
+    }
+    case "arrow_function": {
+      const body = node.childForFieldName("body");
+      return body ? componentOf(body) : null;
+    }
+    case "call_expression": {
+      const lazy = node.text.match(/import\(\s*['"]([^'"]+)['"]\s*\)/);
+      if (lazy) {
+        const spec = lazy[1]!;
+        return { name: spec.split("/").pop()!.replace(/\.\w+$/, ""), specifier: spec };
+      }
+      const args = node.childForFieldName("arguments")?.namedChildren ?? [];
+      const last = args[args.length - 1];
+      return last ? componentOf(last) : null;
+    }
+    default:
+      return null;
+  }
+}
+
+/** The element children of a `jsx_element` (text, expressions and its own open/close tags excluded). */
+function elementChildren(element: Node): Node[] {
+  return element.namedChildren.filter(
+    (c) => c.type === "jsx_element" || c.type === "jsx_self_closing_element",
+  );
+}
+
+/** The tag name of a JSX element, paired or self-closing. */
+function tagOf(el: Node): string | undefined {
+  const opener = el.type === "jsx_element" ? el.child(0) : el;
+  return (opener?.childForFieldName("name") ?? opener?.child(1))?.text;
+}
+
+/** The component of a `jsx_element`'s single element child, or null for zero or several. */
+function onlyChildComponent(element: Node): { name: string; specifier: string } | null {
+  const children = elementChildren(element);
+  if (children.length !== 1) return null;
+  const tag = tagOf(children[0]!);
+  if (tag === "Route" || tag === "Routes" || tag === "Switch") return null; // nested routing, not a page
+  return componentOf(children[0]!);
+}
+
+/** A component reference by JSX tag: capitalized and unqualified. `<h1>` is markup; `<Foo.Bar>` has no import binding to follow. */
+function componentNamed(tag: string | undefined): { name: string; specifier: string } | null {
+  if (!tag || !/^[A-Z][\w$]*$/.test(tag)) return null;
+  return { name: tag, specifier: tag };
+}
+
+/** The value node of a named attribute on a JSX opening element. */
+function routeAttrValue(openingEl: Node, name: string): Node | null {
   for (const attr of openingEl.children) {
     if (attr.type !== "jsx_attribute") continue;
     const attrName = attr.childForFieldName("name")?.text ?? attr.child(0)?.text;
-    if (attrName === name) {
-      return attr.child(2)?.text ?? null;
-    }
+    if (attrName === name) return attr.child(2) ?? null;
   }
   return null;
+}
+
+/** The raw value text of a named attribute on a JSX opening element. */
+function routeAttrRaw(openingEl: Node, name: string): string | null {
+  return routeAttrValue(openingEl, name)?.text ?? null;
 }
 
 /** The string value of a named attribute on a JSX opening element, unquoted. */

@@ -262,22 +262,31 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       analysis.functions.unshift(setupFn);
     }
 
-    // Classify calls using import context, language patterns, and variable aliases
+    // Classify calls using import context, language patterns, and variable
+    // aliases — and what this file defines itself, so a call into the file's
+    // own code is never mistaken for a DB/API call by its method name.
+    const localSymbols = new Set<string>();
     for (const fn of analysis.functions) {
-      fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases);
+      if (fn.name === "<setup>") continue;
+      localSymbols.add(fn.name);
+      if (fn.name.includes(".")) localSymbols.add(fn.name.slice(0, fn.name.indexOf(".")));
+    }
+    for (const cls of analysis.classes) localSymbols.add(cls.name);
+    for (const fn of analysis.functions) {
+      fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases, localSymbols);
     }
     for (const cls of analysis.classes) {
       for (const method of cls.methods) {
-        method.calls = classifyCalls(method.calls, analysis.imports, language, variableAliases);
+        method.calls = classifyCalls(method.calls, analysis.imports, language, variableAliases, localSymbols);
       }
     }
     for (const route of analysis.routes) {
-      route.calls = classifyCalls(route.calls, analysis.imports, language, variableAliases);
+      route.calls = classifyCalls(route.calls, analysis.imports, language, variableAliases, localSymbols);
     }
     // Also classify calls inside data source callbacks (lifecycle hooks, watchers)
     for (const ds of analysis.dataSources) {
       if (ds.calls.length > 0) {
-        ds.calls = classifyCalls(ds.calls, analysis.imports, language, variableAliases);
+        ds.calls = classifyCalls(ds.calls, analysis.imports, language, variableAliases, localSymbols);
       }
     }
 
@@ -403,21 +412,44 @@ function mergeTypeRefs(
 
 /**
  * Infer a frontend route from file path for file-based routing frameworks.
- * Supports Next.js (pages/, app/) and Nuxt (pages/).
+ * Supports Next.js (pages/, app/) and Nuxt (pages/). Exported for unit tests.
  */
-function inferFileBasedRoute(
+export function inferFileBasedRoute(
   relativePath: string,
   frameworkIds: string[],
 ): RouteInfo | null {
+  // Each convention only under its own framework. This used to read "Vue or
+  // vue-router means Nuxt" and ran the Next.js patterns for either, so every
+  // `pages/` file of a plain React Router or Vue app — a folder name, not a
+  // router — got an invented route named after the file (`/UserEditPage`)
+  // beside, or instead of, the route its router actually declares.
   const isNextjs = frameworkIds.includes("nextjs");
-  const isNuxt = frameworkIds.includes("vue") || frameworkIds.includes("vue-router");
+  const isNuxt = frameworkIds.includes("nuxt");
 
   if (!isNextjs && !isNuxt) return null;
 
   const normalized = relativePath.replace(/\\/g, "/");
+  let match: RegExpMatchArray | null;
+
+  if (isNuxt) {
+    // Nuxt pages/ directory
+    match = normalized.match(/^pages\/(.+)\.vue$/);
+    if (match) {
+      return {
+        path: filePathToRoute(match[1]),
+        httpMethod: null,
+        kind: "frontend",
+        handler: null,
+        calls: [],
+        middleware: [],
+        line: 1,
+      };
+    }
+  }
+  if (!isNextjs) return null;
 
   // Next.js pages/ directory
-  let match = normalized.match(/^(?:src\/)?pages\/(.+)\.(tsx?|jsx?)$/);
+  match = normalized.match(/^(?:src\/)?pages\/(.+)\.(tsx?|jsx?)$/);
   if (match) {
     const route = filePathToRoute(match[1]);
     if (route === "/_app" || route === "/_document" || route === "/api") return null;
@@ -453,20 +485,6 @@ function inferFileBasedRoute(
       path: filePathToRoute(match[1]),
       httpMethod: null,
       kind: "api",
-      handler: null,
-      calls: [],
-      middleware: [],
-      line: 1,
-    };
-  }
-
-  // Nuxt pages/ directory
-  match = normalized.match(/^pages\/(.+)\.vue$/);
-  if (match) {
-    return {
-      path: filePathToRoute(match[1]),
-      httpMethod: null,
-      kind: "frontend",
       handler: null,
       calls: [],
       middleware: [],

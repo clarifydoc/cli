@@ -1,4 +1,5 @@
 import type { FileAnalysis } from "../types/analysis.js";
+import { relativeModulePath } from "../extractors/plugins/shared/path-utils.js";
 
 /**
  * Project-wide import index, built once after per-file extraction. Works
@@ -394,7 +395,14 @@ export function resolveImportSource(
     return norm.endsWith(".py") ? resolvePythonModule(norm, dir, src, knownFiles, specifier) : null;
   }
 
-  const joined = normalizeJoin(dir, src);
+  const joined = normalizeJoin(dir, relativeModulePath(src));
+  // `from . import graph` / `from .pkg import mod` name the module in the
+  // specifier — tried before the package itself, as for absolute imports.
+  if (norm.endsWith(".py") && specifier) {
+    for (const ext of [`/${specifier}.py`, `/${specifier}/__init__.py`]) {
+      if (knownFiles.has(joined + ext)) return joined + ext;
+    }
+  }
   const exts = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".d.ts", ".vue",
                 "/index.ts", "/index.tsx", "/index.js", "/index.jsx", "/index.vue",
                 // Python relative imports: `from .articles import api`.
@@ -402,11 +410,6 @@ export function resolveImportSource(
   for (const ext of exts) {
     const candidate = joined + ext;
     if (knownFiles.has(candidate)) return candidate;
-  }
-  if (norm.endsWith(".py") && specifier) {
-    for (const ext of [`/${specifier}.py`, `/${specifier}/__init__.py`]) {
-      if (knownFiles.has(joined + ext)) return joined + ext;
-    }
   }
   return null;
 }

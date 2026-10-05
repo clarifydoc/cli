@@ -9,6 +9,25 @@ export function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * A relative module written as dots and a dotted name — Python's
+ * `from .graph import x`, `from ..utils.text import y` — as the relative path
+ * a resolver can join: `.graph` → `./graph`, `..utils.text` → `../utils/text`,
+ * `...` → `../..`. The first dot is the importer's own package, each further
+ * dot one package up. Anything already in path form (`./x`, `../x`, `.`,
+ * `..`) comes back unchanged; no JS-family specifier has this shape, since a
+ * relative path there must continue with `/`. Joined as written, `.graph`
+ * named a file literally called `.graph`, and every call through a relative
+ * Python import went unresolved.
+ */
+export function relativeModulePath(spec: string): string {
+  const m = /^(\.+)([A-Za-z_][\w.]*)?$/.exec(spec);
+  if (!m) return spec;
+  const ups = m[1]!.length - 1;
+  const prefix = ups === 0 ? "." : Array.from({ length: ups }, () => "..").join("/");
+  return m[2] ? `${prefix}/${m[2].replace(/\./g, "/")}` : prefix;
+}
+
 /** Language family of a file by extension — bare-name import resolution only
  *  trusts candidates in the importer's own family (`uses X` never imports a
  *  .js file; a doc-generator TOC stub must not shadow a Pascal unit). */

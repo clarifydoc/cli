@@ -91,3 +91,30 @@ describe("resolveTarget — language-family fence", () => {
     expect(resolveTarget("userService", "web/src/page.js", map)).toBe("web/src/services/userService.ts");
   });
 });
+
+describe("resolveTarget — Python relative modules", () => {
+  const map = buildFilePathMap([
+    { filePath: "pkg/cli.py" },
+    { filePath: "pkg/graph.py" },
+    { filePath: "pkg/tools/build.py" },
+    { filePath: "pkg/tools/__init__.py" },
+    { filePath: "pkg/utils/text.py" },
+    { filePath: "web/src/page.ts" },
+    { filePath: "web/src/api.ts" },
+  ] as any[]);
+
+  it("reads leading dots as packages, not as a file name", () => {
+    // `.graph` used to be joined as a file literally named `.graph`.
+    expect(resolveTarget(".graph", "pkg/cli.py", map)).toBe("pkg/graph.py");
+    expect(resolveTarget("..graph", "pkg/tools/build.py", map)).toBe("pkg/graph.py");
+    expect(resolveTarget("..utils.text", "pkg/tools/build.py", map)).toBe("pkg/utils/text.py");
+  });
+
+  it("resolves a bare package dot to its __init__", () => {
+    expect(resolveTarget(".", "pkg/tools/build.py", map)).toBe("pkg/tools/__init__.py");
+  });
+
+  it("leaves path-form relative specifiers alone", () => {
+    expect(resolveTarget("./api", "web/src/page.ts", map)).toBe("web/src/api.ts");
+  });
+});

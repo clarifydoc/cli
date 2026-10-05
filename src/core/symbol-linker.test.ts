@@ -431,3 +431,24 @@ describe("symbol-linker — strategy provenance", () => {
     expect(ref?.relation).toBe("reference");
   });
 });
+
+describe("symbol-linker — factory-via fallback", () => {
+  // `const { login } = useAuth(); login(…)` links the hook; `name.startsWith`
+  // on a string the factory returned is a stdlib call, not the factory's code.
+  const viaCall = (name: string, via: string): CallInfo =>
+    ({ name, kind: "cross-file", target: "./hooks", line: 3, via, confidence: "INFERRED" });
+  const page = (calls: CallInfo[]) =>
+    ({ ...file("src/Page.tsx", "root", { functions: [fn("Page", calls)] }), language: "typescript" } as FileAnalysis);
+  const hooks = { ...file("src/hooks.ts", "root", { functions: [fn("useAuth", []), fn("useName", [])] }), language: "typescript" } as FileAnalysis;
+
+  it("links the factory for a member the project does not define", () => {
+    const links = buildSymbolLinks([page([viaCall("login", "useAuth")]), hooks]);
+    expect(links.map((l) => `${l.callName}->${l.targetSymbol}:${l.strategy}`)).toContain("login->useAuth:factory-via");
+  });
+
+  it("does not link it for the caller language's builtin members, but asks only that language", () => {
+    const links = buildSymbolLinks([page([viaCall("name.startsWith", "useName"), viaCall("name.trim", "useName")]), hooks]);
+    expect(links.filter((l) => l.strategy === "factory-via")).toEqual([]);
+    // `login` is a builtin member for Python (smtplib) — irrelevant to a .tsx caller, as the first test shows.
+  });
+});

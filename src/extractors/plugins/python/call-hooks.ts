@@ -5,6 +5,32 @@ export const pythonCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["call"]),
   nestedScopeTypes: ["function_definition", "class_definition", "lambda"],
   callbackArgNodeTypes: ["call"],
+  // A name the function binds itself is a value when passed as an argument,
+  // not a callback reference (see CallExtractionHooks.bindingSites).
+  bindingSites: {
+    function_definition: ["parameters"],
+    lambda: ["parameters"],
+    assignment: ["left"],
+    augmented_assignment: ["left"],
+    for_statement: ["left"],
+    for_in_clause: ["left"],
+    named_expression: ["name"],
+    as_pattern: ["alias"], // with … as f, except E as e
+  },
+  bindingPatterns: {
+    parameters: ["*"],
+    lambda_parameters: ["*"],
+    typed_parameter: ["*"], // the annotation's node is `type`, which binds nothing
+    default_parameter: ["name"],
+    typed_default_parameter: ["name"],
+    list_splat_pattern: ["*"],
+    dictionary_splat_pattern: ["*"],
+    pattern_list: ["*"],
+    tuple_pattern: ["*"],
+    list_pattern: ["*"],
+    as_pattern_target: ["*"],
+    tuple: ["*"], // `as (u, v)` parses its target as a tuple expression
+  },
 
   resolveCallName(node) {
     // Python `call` nodes resolve via the "function" field, falling back to

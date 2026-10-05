@@ -252,6 +252,39 @@ function requestAccessOf(params: readonly ParamInfo[], body: Node | null): Route
   return access.length > 0 ? access : undefined;
 }
 
+/** How deep a namespace object nests before its members stop being named (`api.users.admin.get`). */
+const MAX_NAMESPACE_DEPTH = 3;
+
+/**
+ * Keys only a Vue component's options object carries. Its `methods` are
+ * flattened onto `this` (called as `this.save()`, bound as `@click="save"`), so
+ * naming them `methods.save` would invent symbols nothing calls — Options API
+ * components are their own extraction problem and are left alone here.
+ */
+const VUE_OPTION_KEYS = new Set([
+  "data", "methods", "computed", "watch", "props", "components", "template",
+  "render", "setup", "mixins", "emits", "created", "mounted", "beforeMount",
+]);
+
+function isVueComponentOptions(obj: Node): boolean {
+  return obj.namedChildren.some((m) => {
+    const key = m.type === "pair" ? m.childForFieldName("key") : m.type === "method_definition" ? m.childForFieldName("name") : null;
+    const name = objectKeyName(key);
+    return name !== null && VUE_OPTION_KEYS.has(name);
+  });
+}
+
+/** An object key usable as a symbol name: an identifier, or a string that reads as one. Computed keys name nothing. */
+function objectKeyName(key: Node | null): string | null {
+  if (!key) return null;
+  if (key.type === "property_identifier" || key.type === "identifier") return key.text;
+  if (key.type === "string") {
+    const text = key.text.slice(1, -1);
+    return /^[A-Za-z_$][\w$]*$/.test(text) ? text : null;
+  }
+  return null;
+}
+
 export class JavaScriptExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
 
@@ -268,11 +301,32 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     functions: FunctionInfo[],
     isExported: boolean,
   ): void {
+    // Declarations directly in the module (or in a top-level `export`) — the
+    // only place an object literal of functions is a namespace rather than a
+    // value some function builds and passes around.
+    const moduleLevel =
+      node.type === "program" || (node.type === "export_statement" && node.parent?.type === "program");
+
     for (const child of node.children) {
 
       if (child.type === "export_statement") {
+        // `export default { Articles, setToken: (t) => … }`: the importer calls
+        // `agent.setToken(…)`, so each inline member is named by its key alone.
+        const value = child.childForFieldName("value");
+        if (moduleLevel && value?.type === "object" && !isVueComponentOptions(value)) {
+          this.extractObjectMembers(null, value, functions, true, 0);
+        }
         this.extractJsFunctions(child, functions, true);
         continue;
+      }
+
+      // CommonJS `module.exports = { … }` — the same namespace object.
+      if (moduleLevel && child.type === "expression_statement") {
+        const assign = child.namedChild(0);
+        const right = assign?.type === "assignment_expression" ? assign.childForFieldName("right") : null;
+        if (right?.type === "object" && assign!.childForFieldName("left")?.text === "module.exports" && !isVueComponentOptions(right)) {
+          this.extractObjectMembers(null, right, functions, true, 0);
+        }
       }
 
       if (
@@ -302,6 +356,12 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
                 value.type === "function_expression")
             ) {
               functions.push(this.parseJsArrowOrExpr(name, value, isExported));
+            } else if (name && value?.type === "object" && moduleLevel && decl.childForFieldName("name")?.type === "identifier") {
+              // `const Profile = { get: (u) => requests.get(…) }` — an API client
+              // or service written as a namespace object. Its members are what
+              // callers invoke (`agent.Profile.get`), and the api-calls inside
+              // them need an enclosing symbol to belong to.
+              this.extractObjectMembers(name, value, functions, isExported, 0);
             }
             // Named bindings can hide anywhere below (an arrow's body, a
             // useEffect callback, a call argument) — keep walking the value.
@@ -366,7 +426,11 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       }
     }
 
-    const params = this.extractJsParams(funcNode.childForFieldName("parameters"));
+    // `(u) => …` puts its list in `parameters`; a bare `u => …` puts the one
+    // identifier in `parameter`, which used to leave the arrow with no params.
+    const params = this.extractJsParams(
+      funcNode.childForFieldName("parameters") ?? funcNode.childForFieldName("parameter"),
+    );
     const returnType = funcNode.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? null;
     const isAsync = funcNode.text.startsWith("async ");
 
@@ -394,8 +458,47 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     };
   }
 
+  /**
+   * The function members of a namespace object literal, named
+   * `prefix.key` (`Profile.get`) — the same shape the symbol index uses for a
+   * class method, so a call `agent.Profile.get` reaches it through the linker's
+   * suffix match. A nested object extends the prefix (`api.users.get`). With no
+   * prefix (a default-exported object) the key alone is the name. Shorthand
+   * entries and spreads reference something defined elsewhere and add nothing.
+   */
+  private extractObjectMembers(
+    prefix: string | null,
+    obj: Node,
+    functions: FunctionInfo[],
+    isExported: boolean,
+    depth: number,
+  ): void {
+    for (const member of obj.namedChildren) {
+      if (member.type === "pair") {
+        const key = objectKeyName(member.childForFieldName("key"));
+        const value = member.childForFieldName("value");
+        if (!key || !value) continue;
+        const name = prefix ? `${prefix}.${key}` : key;
+        if (value.type === "arrow_function" || value.type === "function_expression") {
+          functions.push(this.parseJsArrowOrExpr(name, value, isExported));
+        } else if (value.type === "object" && depth < MAX_NAMESPACE_DEPTH) {
+          this.extractObjectMembers(name, value, functions, isExported, depth + 1);
+        }
+      } else if (member.type === "method_definition") {
+        const key = objectKeyName(member.childForFieldName("name"));
+        if (!key) continue;
+        const fn = this.parseJsFunction(member, isExported);
+        fn.name = prefix ? `${prefix}.${key}` : key;
+        functions.push(fn);
+      }
+    }
+  }
+
   private extractJsParams(paramsNode: Node | null): ParamInfo[] {
     if (!paramsNode) return [];
+    if (paramsNode.type === "identifier") {
+      return [{ name: paramsNode.text, type: null, defaultValue: null }];
+    }
     const params: ParamInfo[] = [];
 
     for (const child of paramsNode.children) {
