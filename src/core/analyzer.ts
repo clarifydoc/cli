@@ -90,6 +90,7 @@ import { attachHandlerParams, attachRequestSchemas } from "./request-schemas.js"
 import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
 import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from "./component-launches.js";
 import { buildImportIndex, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
+import { demoteProjectCallDataSources } from "./project-call-data-sources.js";
 import { denormalizeFileAnalysis } from "./element-registry.js";
 import {
   type FileAnalysis,
@@ -789,6 +790,16 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   if (apiSymbolLinks.length > 0) {
     symbolLinks = dedupSymbolLinks([...symbolLinks, ...apiSymbolLinks]);
     progress.detail(`  API→handler trace links: ${apiSymbolLinks.length}`);
+  }
+
+  // A "database" data source recognised by method name whose call the linker
+  // resolves into the project's own code (an API client, a service, an
+  // in-memory store) is not database access — the function it calls is.
+  // Before the data-access graph, per-symbol attribution and responsibility
+  // profiles read the data sources.
+  const projectCallSources = demoteProjectCallDataSources(allAnalyses, symbolLinks);
+  if (projectCallSources > 0) {
+    progress.detail(`  Data sources that are calls into project code: ${projectCallSources}`);
   }
 
   // Step 4c: Advanced analysis
