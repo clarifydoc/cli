@@ -1,4 +1,5 @@
 import fg from "fast-glob";
+import { NO_SYMLINKS } from "./glob-safety.js";
 import { byOrdinal } from "./ordinal.js";
 import { readFile } from "fs/promises";
 import { join, resolve } from "path";
@@ -411,6 +412,7 @@ export async function detectDeployment(
 ): Promise<DeploymentModel | undefined> {
   const absRoot = resolve(projectRoot);
   const found = await fg(["**/*compose*.{yml,yaml}"], {
+    ...NO_SYMLINKS,
     cwd: absRoot,
     ignore: IGNORE,
     absolute: false,

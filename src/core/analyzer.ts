@@ -356,10 +356,14 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const discovery = await discoverFiles(projectRoot, discoveryOpts);
   const files = discovery.files;
   const skippedSensitive = discovery.skippedSensitive;
+  const skippedSymlinks = discovery.skippedSymlinks;
 
   progress.detail(`Found ${files.length} source files`);
   if (skippedSensitive.length > 0) {
     progress.detail(`Skipped ${skippedSensitive.length} sensitive file(s)`);
+  }
+  if (skippedSymlinks.length > 0) {
+    progress.detail(`Skipped ${skippedSymlinks.length} symlink(s) that leave the project root or point at nothing`);
   }
 
   if (dryRun) {
@@ -1218,6 +1222,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     fileLayerMap,
     confidenceCounts,
     skippedSensitive: skippedSensitive.length > 0 ? skippedSensitive : undefined,
+    skippedSymlinks: skippedSymlinks.length > 0 ? skippedSymlinks : undefined,
     communities: Object.keys(communities).length > 0 ? communities : undefined,
     cohesion: Object.keys(cohesion).length > 0 ? cohesion : undefined,
     godNodes: godNodes.length > 0 ? godNodes : undefined,

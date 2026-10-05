@@ -1,6 +1,8 @@
 import fg from "fast-glob";
+import { realpathSync, statSync } from "fs";
 import { byOrdinal } from "./ordinal.js";
-import { resolve } from "path";
+import { resolve, sep } from "path";
+import { NO_SYMLINKS } from "./glob-safety.js";
 import type { Language } from "../types/analysis.js";
 import { EXTENSION_TO_LANGUAGE, getLanguageForFile } from "../parsers/language-map.js";
 import { NAMED_FILE_LANGUAGE } from "../extractors/registry.js";
@@ -38,6 +40,10 @@ const DEFAULT_IGNORE = [
   "**/__pycache__/**",
   "**/.venv/**",
   "**/venv/**",
+  // Installed Python packages under a virtualenv of any other name (`env/`,
+  // conda envs) — the node_modules of Python.
+  "**/site-packages/**",
+  "**/bower_components/**",
   "**/vendor/**",
   "**/target/**",
   "**/Pods/**",
@@ -56,6 +62,11 @@ export interface DiscoveryResult {
   files: DiscoveredFile[];
   /** Files matching a sensitive-name pattern (.env, *.pem, id_rsa, ...). Skipped silently. */
   skippedSensitive: string[];
+  /**
+   * Symlinked source paths that were not read: the link leaves the project
+   * root, dangles, or names something other than a regular file.
+   */
+  skippedSymlinks: string[];
 }
 
 export interface DiscoveryOptions {
@@ -67,9 +78,14 @@ export interface DiscoveryOptions {
 /**
  * Discover all analyzable source files in a project directory.
  *
- * Applies (in order): fast-glob with DEFAULT_IGNORE → sensitive-file filter →
- * .clarifydocignore gitignore semantics. Sensitive files are surfaced separately
- * rather than dropped silently so users can see what was excluded.
+ * Applies (in order): fast-glob with DEFAULT_IGNORE → symlink containment →
+ * sensitive-file filter → .clarifydocignore gitignore semantics. Sensitive
+ * files and refused symlinks are surfaced separately rather than dropped
+ * silently so users can see what was excluded.
+ *
+ * Linked directories are never descended (see `NO_SYMLINKS`); a linked file is
+ * read only when it resolves to a regular file inside the root, so the alias
+ * behaves as before while a link out of the tree reads nothing.
  */
 export async function discoverFiles(
   projectRoot: string,
@@ -85,7 +101,8 @@ export async function discoverFiles(
   const patterns = options.include?.length ? options.include : sourcePatterns;
   const ignore = [...DEFAULT_IGNORE, ...(options.exclude ?? [])];
 
-  const files = await fg(patterns, {
+  const entries = await fg(patterns, {
+    ...NO_SYMLINKS,
     cwd: root,
     ignore,
     absolute: false,
@@ -93,14 +110,31 @@ export async function discoverFiles(
     // Legacy Windows codebases (Delphi, VB) ship UNIT1.PAS / FORM1.DFM —
     // match extensions case-insensitively or a third of such repos vanishes.
     caseSensitiveMatch: false,
+    // Not following links, fast-glob's file filter would drop every linked
+    // file; keep the entries and decide per link below.
+    onlyFiles: false,
+    objectMode: true,
   });
 
   const ignorePatterns = loadIgnorePatterns(root);
 
   let results: DiscoveredFile[] = [];
   const skippedSensitive: string[] = [];
+  const skippedSymlinks: string[] = [];
+  let realRoot: string | undefined;
 
-  for (const relativePath of files) {
+  for (const entry of entries) {
+    const relativePath = entry.path;
+    if (entry.dirent.isSymbolicLink()) {
+      realRoot ??= realpathSync(root);
+      if (!linksToFileInside(resolve(root, relativePath), realRoot)) {
+        skippedSymlinks.push(relativePath);
+        continue;
+      }
+    } else if (!entry.dirent.isFile()) {
+      continue; // a directory named like a source file (`d3.js/`)
+    }
+
     const language = getLanguageForFile(relativePath);
     if (!language) continue;
 
@@ -122,12 +156,25 @@ export async function discoverFiles(
   // Sort for deterministic output
   results.sort((a, b) => byOrdinal(a.relativePath, b.relativePath));
   skippedSensitive.sort();
+  skippedSymlinks.sort(byOrdinal);
 
   if (options.maxFiles && results.length > options.maxFiles) {
     results = results.slice(0, options.maxFiles);
   }
 
-  return { files: results, skippedSensitive };
+  return { files: results, skippedSensitive, skippedSymlinks };
+}
+
+/** True when `linkPath` resolves to a regular file under `realRoot` (itself resolved). */
+function linksToFileInside(linkPath: string, realRoot: string): boolean {
+  try {
+    const target = realpathSync(linkPath);
+    const prefix = realRoot.endsWith(sep) ? realRoot : realRoot + sep;
+    if (!target.startsWith(prefix)) return false;
+    return statSync(target).isFile();
+  } catch {
+    return false; // dangling link, or a loop the OS refuses to resolve
+  }
 }
 
 function getExtension(filePath: string): string {
@@ -140,6 +187,7 @@ export async function getFileExtensions(
   projectRoot: string,
 ): Promise<Set<string>> {
   const files = await fg("**/*.*", {
+    ...NO_SYMLINKS,
     cwd: resolve(projectRoot),
     ignore: DEFAULT_IGNORE,
     absolute: false,

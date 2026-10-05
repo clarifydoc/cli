@@ -2,6 +2,7 @@ import { readFile } from "fs/promises";
 import { byOrdinal } from "./ordinal.js";
 import { resolve, join } from "path";
 import fg from "fast-glob";
+import { NO_SYMLINKS } from "./glob-safety.js";
 import type {
   ExternalPackage,
   PackageEcosystem,
@@ -698,7 +699,7 @@ async function collectAtRoot(absRoot: string, rel: string): Promise<RawPkg[]> {
 
   // Multi-file ecosystems within this root (shallow scan).
   const csprojFiles = await fg(["**/*.csproj", "**/Directory.Packages.props", "**/packages.config"], {
-    cwd: absRoot, ignore: IGNORE, deep: 3, absolute: false,
+    ...NO_SYMLINKS, cwd: absRoot, ignore: IGNORE, deep: 3, absolute: false,
   });
   for (const f of csprojFiles.slice(0, 50)) {
     const t = await readIf(join(absRoot, f));
@@ -706,7 +707,7 @@ async function collectAtRoot(absRoot: string, rel: string): Promise<RawPkg[]> {
   }
 
   const reqFiles = await fg(["requirements*.txt", "**/requirements*.txt"], {
-    cwd: absRoot, ignore: IGNORE, deep: 2, absolute: false,
+    ...NO_SYMLINKS, cwd: absRoot, ignore: IGNORE, deep: 2, absolute: false,
   });
   for (const f of reqFiles.slice(0, 20)) {
     const t = await readIf(join(absRoot, f));
@@ -714,7 +715,7 @@ async function collectAtRoot(absRoot: string, rel: string): Promise<RawPkg[]> {
   }
 
   const rockspecs = await fg(["*.rockspec", "**/*.rockspec"], {
-    cwd: absRoot, ignore: IGNORE, deep: 2, absolute: false,
+    ...NO_SYMLINKS, cwd: absRoot, ignore: IGNORE, deep: 2, absolute: false,
   });
   for (const f of rockspecs.slice(0, 10)) {
     const t = await readIf(join(absRoot, f));
@@ -722,7 +723,7 @@ async function collectAtRoot(absRoot: string, rel: string): Promise<RawPkg[]> {
   }
 
   const cabals = await fg(["*.cabal", "**/*.cabal"], {
-    cwd: absRoot, ignore: IGNORE, deep: 2, absolute: false,
+    ...NO_SYMLINKS, cwd: absRoot, ignore: IGNORE, deep: 2, absolute: false,
   });
   for (const f of cabals.slice(0, 10)) {
     const t = await readIf(join(absRoot, f));
