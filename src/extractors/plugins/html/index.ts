@@ -280,7 +280,9 @@ export const htmlSpec: RegexLangSpec = {
     {
       // LOCAL `<script src="./x.js">` only — CDN/absolute URLs aren't project
       // files. Ties the page to its JS modules in the import/component graph.
-      pattern: /<script\b[^>]*\bsrc\s*=\s*["'](?!https?:|\/\/)([^"']+\.[cm]?js)["']/i,
+      // TS/JSX sources too: a Vite page loads `<script type="module"
+      // src="/src/main.ts">` straight from source.
+      pattern: /<script\b[^>]*\bsrc\s*=\s*["'](?!https?:|\/\/)([^"']+\.[cm]?[jt]sx?)["']/i,
       getSource: (m) => m[1]!,
       getSpecifiers: () => [],
     },

@@ -60,6 +60,9 @@ import type {
   SubComponentInfo,
   Suggestion,
   SymbolDataAccess,
+  DeadCodeReport,
+  UnreachableFile,
+  UnusedExport,
   SymbolLink,
   SymbolLinkRelation,
   SymbolLinkStrategy,
@@ -315,6 +318,10 @@ type NormDuplicateGroup = Omit<DuplicateGroup, "occurrences"> & {
 type NormLayerViolation = Omit<LayerViolation, "sourceFile" | "targetFile"> & { sourceFile: PageId; targetFile: PageId };
 type NormMigrationInfo = Omit<MigrationInfo, "filePath"> & { filePath: PageId };
 type NormSymbolDataAccess = Omit<SymbolDataAccess, "file"> & { file: PageId };
+type NormDeadCodeReport = Omit<DeadCodeReport, "files" | "exports"> & {
+  files: Array<Omit<UnreachableFile, "filePath"> & { filePath: PageId }>;
+  exports: Array<Omit<UnusedExport, "filePath"> & { filePath: PageId }>;
+};
 
 /**
  * Elements-normalized but BEFORE the page-id layer (internal intermediate). The
@@ -347,7 +354,7 @@ export type NormalizedProjectAnalysis = Omit<
   | "componentGraph" | "linkGraph" | "communities" | "godNodes" | "surprisingConnections"
   | "routeMap" | "apiCalls" | "apiRouteLinks" | "interactiveElements" | "events" | "componentUsage" | "screens"
   | "componentLaunches" | "patterns" | "securityIssues" | "suggestions" | "duplicates"
-  | "layerViolations" | "migrations" | "symbolDataAccess" | "unusedFiles"
+  | "layerViolations" | "migrations" | "symbolDataAccess" | "unusedFiles" | "deadCode"
 > & {
   componentGraph: Record<string, PageId[]>;
   linkGraph: NormLinkInfo[];
@@ -370,6 +377,7 @@ export type NormalizedProjectAnalysis = Omit<
   migrations?: NormMigrationInfo[];
   symbolDataAccess?: NormSymbolDataAccess[];
   unusedFiles?: PageId[];
+  deadCode?: NormDeadCodeReport;
 };
 
 /** Normalized per-file artifact. See `NormalizedProjectAnalysis`. */
@@ -621,6 +629,12 @@ function rewritePageRefs<T extends object>(
     filePathArr(name);
   }
   if (Array.isArray(o.unusedFiles)) o.unusedFiles = o.unusedFiles.map(ref);
+  if (o.deadCode && typeof o.deadCode === "object") {
+    const d = o.deadCode as Record<string, unknown>;
+    const rows = (v: unknown): unknown =>
+      Array.isArray(v) ? (v as Record<string, unknown>[]).map((e) => ({ ...e, filePath: ref(e.filePath) })) : v;
+    o.deadCode = { ...d, files: rows(d.files), exports: rows(d.exports) };
+  }
 
   return o as T;
 }

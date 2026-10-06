@@ -304,6 +304,11 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     const customEls = hooks?.customElements?.(sourceText);
     if (customEls && customEls.length > 0) analysis.customElements = customEls;
 
+    // Paths named as string data the toolchain loads (glob imports, worker
+    // URLs, config-file script paths) — dead-code reachability follows them.
+    const pathRefs = hooks?.pathReferences?.(sourceText);
+    if (pathRefs && pathRefs.length > 0) analysis.pathReferences = pathRefs;
+
     // Designer screens embedded in source files (e.g. WinForms *.Designer.cs).
     const hookScreens = hooks?.screens?.(tree, sourceText, file.relativePath);
     if (hookScreens && hookScreens.length > 0) analysis.screens = hookScreens;

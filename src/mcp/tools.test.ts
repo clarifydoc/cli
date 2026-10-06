@@ -273,6 +273,22 @@ describe("clarifydoc MCP tools — react fixture", () => {
     expect(complexity.text).toContain("# Most complex functions");
   });
 
+  it("health lists dead code: unreachable files first, then unused exports", async () => {
+    const dead = loaded.summary.deadCode!;
+    expect(dead.files.length).toBeGreaterThan(0);
+    const total = dead.files.length + dead.exports.length;
+    const summary = await call(server, "clarifydoc_health");
+    expect(summary.text).toContain(`dead-code: ${total} — call with category="dead-code"`);
+
+    const { text, isError } = await call(server, "clarifydoc_health", { category: "dead-code", limit: 2 });
+    expect(isError).toBe(false);
+    expect(text).toContain(`## Unreachable files (${dead.files.length})`);
+    expect(text).toContain(dead.files[0]!.filePath);
+    if (dead.exports.length > 0) expect(text).toContain(`## Unused exports (${dead.exports.length})`);
+    // Capped, and says so.
+    if (dead.files.length > 2) expect(text).not.toContain(dead.files[2]!.filePath);
+  });
+
   it("refuses to analyze when the server is read-only", async () => {
     const { text, isError } = await call(server, "clarifydoc_analyze");
     expect(isError).toBe(true);

@@ -49,6 +49,9 @@ describe("HTML local <script src> imports (page → JS call graph)", () => {
   it("captures a local script include", () => {
     expect(src(`<script src="./homepage/index.js"></script>`)).toBe("./homepage/index.js");
     expect(src(`<script src="login1.js" type=""></script>`)).toBe("login1.js");
+    // A Vite page loads its TS entry straight from source.
+    expect(src(`<script type="module" src="/src/main.ts"></script>`)).toBe("/src/main.ts");
+    expect(src(`<script type="module" src="/src/standalone.tsx"></script>`)).toBe("/src/standalone.tsx");
   });
   it("ignores CDN / absolute-URL scripts (not project files)", () => {
     expect(src(`<script src="https://cdn.tailwindcss.com"></script>`)).toBe(null);

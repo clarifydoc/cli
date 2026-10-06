@@ -13,6 +13,7 @@ import { PythonMutationExtractor } from "./data-mutations.js";
 import { PythonEntityExtractor } from "./entities.js";
 import { pythonRouteExtractor } from "./routes.js";
 import { pythonRequestSchema } from "./request-schema.js";
+import { pythonReachability, extractPythonPathReferences } from "./reachability.js";
 
 const PYTHON_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -110,7 +111,11 @@ export const pythonMeta: LanguagePluginMeta = {
   dbCallRoots: ["cursor", "session", "engine", "db", "connection", "pool"],
   ast: {
     typeReferences: extractPythonTypeReferences,
+    // `__main__` guards, dotted module strings, `.py` paths — what
+    // reachability follows besides imports (see reachability.ts).
+    pathReferences: extractPythonPathReferences,
   },
   calls: pythonCallHooks,
   requestSchema: pythonRequestSchema,
+  reachability: pythonReachability,
 };

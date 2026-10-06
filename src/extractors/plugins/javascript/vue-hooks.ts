@@ -14,7 +14,10 @@ export function vuePreprocess(
   if (!relativePath.endsWith(".vue")) return null;
 
   const sfc = parseVueSfc(rawSource);
-  if (!sfc.script) return { skip: "no <script> block" };
+  // A markup-only component (no <script>) is still a component: its template
+  // renders children and carries buttons, and it is a file a parent imports.
+  // Skipping it hid all of that — and made a dead one impossible to report.
+  // The blanked source parses as an empty program.
 
   return {
     // Full source with non-script blanked out, so extracted line/column numbers

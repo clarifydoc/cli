@@ -45,9 +45,18 @@ except ImportError:
 finally:
     from x import y
 `)).toEqual([
-      { source: "json", specifiers: ["json"], isType: false, line: 3 },
+      // The module is ujson; `json` is only the name it is bound to.
+      { source: "ujson", specifiers: ["json"], isType: false, line: 3 },
       { source: "json", specifiers: ["json"], isType: false, line: 5 },
       { source: "x", specifiers: ["y"], isType: false, line: 7 },
+    ]);
+  });
+
+  it("keeps the dotted module of an aliased import, and every module of one statement", async () => {
+    expect(await imports(`import app.models as m, os, numpy as np`)).toEqual([
+      { source: "app.models", specifiers: ["m"], isType: false, line: 1 },
+      { source: "os", specifiers: ["os"], isType: false, line: 1 },
+      { source: "numpy", specifiers: ["np"], isType: false, line: 1 },
     ]);
   });
 

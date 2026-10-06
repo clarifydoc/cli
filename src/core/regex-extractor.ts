@@ -59,6 +59,8 @@ export function extractWithRegex(
   if (spec.postProcessClasses) {
     analysis.classes = spec.postProcessClasses(lines, analysis.classes);
   }
+  const pathRefs = spec.extractPathReferences?.(lines);
+  if (pathRefs && pathRefs.length > 0) analysis.pathReferences = pathRefs;
   if (spec.extractStringConstants) {
     const consts = spec.extractStringConstants(lines);
     if (Object.keys(consts).length > 0) analysis.stringConstants = consts;

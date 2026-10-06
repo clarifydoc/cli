@@ -1,6 +1,6 @@
 import { readFile } from "fs/promises";
 import { resolve as pathResolve, join, relative, sep } from "path";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { discoverFiles, type DiscoveryOptions, type DiscoveredFile } from "./file-discovery.js";
 import {
   EXTRACTOR_VERSION,
@@ -48,6 +48,7 @@ import {
   ACTIVATION_FILE_LANGUAGES,
   ensureLanguagesLoaded,
   classifyKnownPackage,
+  pluginFor,
 } from "../extractors/registry.js";
 import { buildSymbolLinks } from "./symbol-linker.js";
 import { aggregateComplexity } from "./complexity-analyzer.js";
@@ -67,7 +68,7 @@ import { attachTraceImpact } from "./trace-impact.js";
 import { attachRiskVerdicts } from "./risk-verdict.js";
 import { computeImpactDiff } from "./impact-diff.js";
 import { collectGitHistory, computeHotspots, type GitHistoryResult } from "./git-history.js";
-import { analyzeUnusedCode } from "./dead-code.js";
+import { analyzeUnusedCode, analyzeReachability } from "./dead-code.js";
 import { computeHealthScore } from "./health-scorer.js";
 import { generateSuggestions } from "./suggestions-engine.js";
 import { detectCommunities } from "./community-detector.js";
@@ -109,6 +110,7 @@ import {
   type SymbolReachSummary,
   type DataFlowPath,
 } from "../types/analysis.js";
+import type { ReachabilityHooks, ReachabilityModel } from "../types/language-plugin.js";
 
 export interface AnalyzeOptions {
   projectRoot: string;
@@ -812,7 +814,31 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // security issues in a webpack bundle) are noise, so they're dropped at
   // aggregation and the tabs and health score agree. Detected BEFORE the
   // finding detectors so their output can be filtered.
-  const { generatedRoots, unusedFiles } = analyzeUnusedCode(allAnalyses, componentGraph);
+  //
+  // Each language's reachability model (package.json entries, module
+  // resolution) is loaded here because the barrel detection needs it: a
+  // package's PUBLIC barrel (`main: "dist/index.js"` → src/index.ts) is
+  // authored API, not codegen output. The dead-code pass below reuses it.
+  const reachabilityModels = new Map<Language, ReachabilityModel>();
+  {
+    const loaded = new Map<ReachabilityHooks, ReachabilityModel>();
+    // Unreadable files are still files: an import of one resolves to it.
+    const analyzedFiles = new Set([...allAnalyses.map((a) => a.filePath), ...skippedSensitive, ...skippedSymlinks]);
+    for (const lang of [...new Set(allAnalyses.map((a) => a.language))].sort()) {
+      const hooks = pluginFor(lang)?.reachability;
+      if (!hooks) continue;
+      let model = loaded.get(hooks);
+      if (!model) {
+        model = await hooks.load({ projectRoot, roots: subProjects.map((sp) => sp.root), files: analyzedFiles });
+        loaded.set(hooks, model);
+      }
+      reachabilityModels.set(lang, model);
+    }
+  }
+  const publicEntries = new Set(
+    [...new Set(reachabilityModels.values())].flatMap((m) => m.manifestEntries.map((e) => e.file)),
+  );
+  const { generatedRoots, unusedFiles } = analyzeUnusedCode(allAnalyses, componentGraph, publicEntries);
   if (unusedFiles.length > 0) {
     progress.detail(`  Unused (generated): ${unusedFiles.length} file(s) under ${generatedRoots.join(", ")}`);
   }
@@ -1146,6 +1172,36 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     generatedRoots,
     isGenerated: isUnauthored,
   });
+  // Dead code: authored files no entry point reaches, and exports nothing
+  // imports. Only languages whose plugin declares a reachability model are
+  // judged; the plugin reads its toolchain's entry points (package.json, …).
+  progress.status("Finding unreachable code...");
+  const deadCode = analyzeReachability({
+    analyses: allAnalyses,
+    componentGraph,
+    symbolLinks,
+    models: reachabilityModels,
+    frameworks: new Set(frameworkIds),
+    projectRoots: new Map(subProjects.map((sp) => [sp.id, sp.root])),
+    isTest: isTestFile,
+    isUnauthored,
+    opaqueFiles: [...skippedSensitive, ...skippedSymlinks],
+    readSource: (f) => {
+      const raw = rawSources.get(f);
+      if (raw !== undefined) return raw;
+      try {
+        return readFileSync(join(projectRoot, f), "utf-8");
+      } catch {
+        return undefined;
+      }
+    },
+  });
+  if (deadCode && (deadCode.files.length > 0 || deadCode.exports.length > 0)) {
+    progress.detail(
+      `  Dead code: ${deadCode.files.length} unreachable file(s), ${deadCode.exports.length} unused export(s) of ${deadCode.judgedFiles} judged file(s)`,
+    );
+  }
+
   progress.status("Generating suggestions...");
   const suggestions = generateSuggestions({
     analyses: allAnalyses,
@@ -1158,6 +1214,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     blastRadius,
     componentGraph,
     unusedFiles,
+    deadCode,
     refactorPressure,
   });
 
@@ -1249,6 +1306,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     apiRouteLinks: apiRouteLinks.length > 0 ? apiRouteLinks : undefined,
     generatedRoots: generatedRoots.length > 0 ? generatedRoots : undefined,
     unusedFiles: unusedFiles.length > 0 ? unusedFiles : undefined,
+    deadCode,
     deployment,
   };
 

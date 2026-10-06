@@ -330,6 +330,16 @@ export interface FileAnalysis {
    * Omitted when the file registers none.
    */
   customElements?: CustomElementDef[];
+  /**
+   * Project paths this file names as string DATA rather than importing —
+   * `import.meta.glob("./pages/*.vue")`, `new URL("./worker.ts",
+   * import.meta.url)`, a jest config's `"<rootDir>/setup.ts"`. The toolchain
+   * loads them, so reachability (dead-code analysis) follows them; nothing
+   * else does, since they are not dependencies in the import sense. Specs as
+   * written (globs allowed), resolved by the language plugin's
+   * `reachability` model. Omitted when the file names none.
+   */
+  pathReferences?: string[];
   events: EventInfo[];
   screens: ScreenInfo[];
   /** Schema-validation warnings produced by validateFileAnalysis(). Omitted when empty. */
@@ -397,6 +407,15 @@ export interface ExportInfo {
     | "default"
     | "re-export";
   line: number;
+  /**
+   * Re-exports only: the module the name is forwarded from, as written
+   * (`export { x } from "./y"` → "./y"). `export * from "./y"` is recorded as
+   * name "*". Absent on a local `export { x }`, which also has kind
+   * "re-export" but forwards nothing.
+   */
+  source?: string;
+  /** Re-exports only: the name inside `source`, when the re-export renames it (`export { a as b } from` → "a"). */
+  sourceName?: string;
 }
 
 export interface ParamInfo {
@@ -1671,6 +1690,58 @@ export interface SubProject {
   frameworks?: FrameworkDetection[];
 }
 
+/**
+ * Layer-1 dead-code findings: what a static walk from the project's entry
+ * points cannot reach. Precision over recall throughout — a file or export
+ * the analysis cannot account for is left out, never flagged.
+ */
+export interface DeadCodeReport {
+  /** Languages whose files were judged (their plugin declares a reachability model). */
+  languages: Language[];
+  /** Files judged: authored, non-test, in a judged language, in a project with an entry point. */
+  judgedFiles: number;
+  /** Judged files that are entry points themselves (toolchain manifest or framework convention). */
+  entryFiles: number;
+  /**
+   * Projects (sub-project roots, "" for the analyzed root) holding files of a
+   * judged language that were NOT judged, and why — a project with no
+   * detectable entry point for those languages has nothing to measure
+   * reachability from. Anchoring is per language: one row per project and
+   * language model.
+   */
+  skippedProjects?: Array<{ root: string; files: number; languages?: Language[]; reason: string }>;
+  /**
+   * Imports that look local (`@/x`, `~/x`) but name nothing analyzed. Each
+   * may hide an edge, so unreachable files in a project with any are AMBIGUOUS.
+   */
+  unresolvedImports?: number;
+  files: UnreachableFile[];
+  exports: UnusedExport[];
+}
+
+export interface UnreachableFile {
+  filePath: string;
+  /**
+   * INFERRED — nothing reaches it. AMBIGUOUS — nothing reaches it through an
+   * import, but a reachable file names it (a call, type or tag spelled like
+   * its basename), so it may be loaded by convention (auto-import, global
+   * registration) the resolver cannot see.
+   */
+  confidence: Confidence;
+  /** Other unreachable files that import it; 0 = top of a dead cluster, the one to delete first. */
+  deadImporters: number;
+  lineCount?: number;
+}
+
+export interface UnusedExport {
+  filePath: string;
+  name: string;
+  kind: ExportInfo["kind"];
+  line: number;
+  /** Still referenced inside its own file: drop the `export`, don't delete the declaration. */
+  usedInFile: boolean;
+}
+
 /** Project-level summary */
 /**
  * What produced this analysis and what it was able to see.
@@ -1775,6 +1846,12 @@ export interface ProjectAnalysis {
   generatedRoots?: string[];
   /** Files under a generated root that nothing outside that tree imports (dead code). */
   unusedFiles?: string[];
+  /**
+   * Authored code no entry point reaches, and exports nothing imports
+   * (core/dead-code.ts `analyzeReachability`). Only languages whose plugin
+   * declares a `reachability` model are judged. Omitted when nothing was.
+   */
+  deadCode?: DeadCodeReport;
   /** Aggregate provenance counts across symbolLinks for at-a-glance quality assessment. */
   confidenceCounts?: { extracted: number; inferred: number; ambiguous: number };
   /** Paths the discovery layer silently skipped because their names look like credentials. */

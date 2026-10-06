@@ -1,7 +1,7 @@
 import type {
   FileAnalysis, FileComplexityInfo, PatternInfo, SecurityIssue,
   DuplicateGroup, LayerViolation, BlastRadiusInfo, HealthScore, Suggestion,
-  RefactorPressureInfo,
+  RefactorPressureInfo, DeadCodeReport,
 } from "../types/analysis.js";
 import { findCircularDeps } from "./health-scorer.js";
 import { describeDrivers, describeGates } from "./refactor-pressure.js";
@@ -48,6 +48,8 @@ interface SuggestionInput {
   componentGraph: Record<string, string[]>;
   /** Files under a generated/library tree that nothing outside imports (dead code). */
   unusedFiles?: string[];
+  /** Authored code no entry point reaches, and unused exports (dead-code.ts). */
+  deadCode?: DeadCodeReport;
   /** Composite refactor pressure, highest first (refactor-pressure.ts). */
   refactorPressure?: RefactorPressureInfo[];
 }
@@ -281,6 +283,45 @@ export function generateSuggestions(input: SuggestionInput): Suggestion[] {
       category: "Dead Code",
       message: `${unused.length} generated file(s) appear unused — nothing outside their tree imports them (e.g. ${topCount} under ${topDir})`,
       actionable: "Prune unused generated output, or narrow your generator config to only the endpoints you consume. Use the Architecture tab's “Hide unused” toggle to focus the graph.",
+    });
+  }
+
+  // ── Medium/Low: Unreachable authored code ──
+  // Files no entry point reaches (static walk from package entries and
+  // framework conventions), and exports no other file imports.
+  const dead = input.deadCode;
+  if (dead && dead.files.length > 0) {
+    // Cluster tops first: deleting one is what unblocks the files below it.
+    const tops = dead.files.filter((f) => f.deadImporters === 0);
+    const sure = dead.files.filter((f) => f.confidence === "INFERRED").length;
+    const lines = dead.files.reduce((n, f) => n + (f.lineCount ?? 0), 0);
+    const example = (tops[0] ?? dead.files[0])!.filePath;
+    suggestions.push({
+      priority: "medium",
+      category: "Dead Code",
+      message: `${dead.files.length} file(s) no entry point reaches${lines > 0 ? ` (${lines} lines)` : ""} — e.g. ${fileName(example)}`,
+      filePath: example,
+      actionable:
+        "Confirm nothing loads these by name (dynamic import with a computed path, a framework convention), then delete them — " +
+        "start with files no other dead file imports.",
+      evidence: [
+        `${sure} with no mention anywhere, ${dead.files.length - sure} ambiguous (named by reachable code or behind an unresolved alias)`,
+        `${tops.length} cluster top(s)`,
+      ],
+    });
+  }
+  if (dead && dead.exports.length > 0) {
+    const local = dead.exports.filter((e) => e.usedInFile).length;
+    const byFile = new Map<string, number>();
+    for (const e of dead.exports) byFile.set(e.filePath, (byFile.get(e.filePath) ?? 0) + 1);
+    const [topFile, topCount] = [...byFile].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]!;
+    suggestions.push({
+      priority: "low",
+      category: "Dead Code",
+      message: `${dead.exports.length} export(s) no other file imports (e.g. ${topCount} in ${fileName(topFile)})`,
+      filePath: topFile,
+      actionable: "Delete the unused declarations; for the ones still used inside their own file, drop the `export` keyword.",
+      evidence: [`${dead.exports.length - local} unused anywhere`, `${local} used only in their own file`],
     });
   }
 
