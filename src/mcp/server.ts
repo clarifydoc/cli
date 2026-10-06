@@ -11,6 +11,7 @@
 import { basename, dirname, join, resolve } from "path";
 import { existsSync } from "fs";
 import { McpServer, serveStdio, type McpResource, type McpTool } from "./protocol.js";
+import { TOOL_VERSION } from "../core/version.js";
 import { AnalysisStore, type AnalyzeSettings } from "./store.js";
 import { statusReport, type ToolContext } from "./tools/context.js";
 import { analyzeTool, healthTool, impactTool, searchTool, statusTool } from "./tools/overview.js";
@@ -157,7 +158,7 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
 
   const server = new McpServer({
     name: MCP_SERVER_NAME,
-    version: config.version ?? "0.1.0",
+    version: config.version ?? TOOL_VERSION,
     instructions: INSTRUCTIONS,
     tools,
     resources,
