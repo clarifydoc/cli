@@ -239,6 +239,51 @@ describe("analyzeReachability", () => {
     expect(r.skippedProjects).toEqual([{ root: "", files: 1, languages: ["typescript"], reason: "no entry point found" }]);
   });
 
+  it("reaches by name from any reachable text, and anchors what configuration names", () => {
+    const named: ReachabilityModel = {
+      ...stubModel(["Program.cs"]),
+      judgeExports: false,
+      declaredNames: (a) => a.classes.map((c) => c.name),
+      configMentions: new Set(["AuditPlugin"]),
+    };
+    const sources: Record<string, string> = {
+      "Program.cs": "builder.Services.AddScoped<OrderService>();",
+      "OrderService.cs": "class OrderService { }",
+      "LegacyPricing.cs": "class LegacyPricing { PricingRules r; }",
+      "PricingRules.cs": "class PricingRules { }",
+      "AuditPlugin.cs": "class AuditPlugin { }",
+    };
+    const cs = (filePath: string, name?: string) =>
+      file({ filePath, language: "csharp" as never, classes: name ? ([{ name, methods: [] }] as never) : [] });
+    const r = run(
+      [cs("Program.cs"), cs("OrderService.cs", "OrderService"), cs("LegacyPricing.cs", "LegacyPricing"), cs("PricingRules.cs", "PricingRules"), cs("AuditPlugin.cs", "AuditPlugin")],
+      named,
+      { models: new Map([["csharp", named]]) as never, readSource: (f) => sources[f] },
+    );
+    expect(r.files.map((f) => [f.filePath, f.deadImporters])).toEqual([
+      ["LegacyPricing.cs", 0],
+      ["PricingRules.cs", 1],
+    ]);
+    expect(r.entryFiles).toBe(2); // Program.cs + AuditPlugin (named in configuration)
+  });
+
+  it("reaches a whole compilation unit through any of its files", () => {
+    const go: ReachabilityModel = {
+      ...stubModel(["main.go"]),
+      judgeExports: false,
+      resolve: (_f, src) => (src === "store" ? ["store/a.go"] : []),
+      unitOf: (f) => (f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : ""),
+    };
+    const g = (filePath: string, imports: ReturnType<typeof imp>[] = []) => file({ filePath, language: "go" as never, imports });
+    const r = run([g("main.go", [imp("store", ["store"])]), g("store/a.go"), g("store/b.go"), g("legacy/x.go"), g("legacy/y.go")], go, {
+      models: new Map([["go", go]]) as never,
+    });
+    expect(r.files.map((f) => [f.filePath, f.deadImporters])).toEqual([
+      ["legacy/x.go", 0],
+      ["legacy/y.go", 0],
+    ]);
+  });
+
   it("returns nothing when no language declares a model", () => {
     expect(
       analyzeReachability({

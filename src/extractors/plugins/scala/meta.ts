@@ -4,6 +4,7 @@ import { scalaSpec } from "./index.js";
 import { scalaPackages } from "./packages.js";
 import { scalaManifest } from "./manifest.js";
 import { scalaRequestSchema } from "./request-schema.js";
+import { scalaReachability } from "./reachability.js";
 
 const SCALA_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -15,6 +16,8 @@ const SCALA_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const scalaMeta: LanguagePluginMeta = {
+  // Dead-code reachability (see reachability.ts).
+  reachability: scalaReachability,
   ...scalaManifest,
   regexSpec: scalaSpec,
   knownPackages: scalaPackages,

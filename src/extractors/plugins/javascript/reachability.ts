@@ -391,8 +391,13 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
       return null;
     },
 
-    passiveReason(_analysis: FileAnalysis, relPath: string): string | null {
+    passiveReason(analysis: FileAnalysis, relPath: string): string | null {
       for (const [re, reason] of TOOL_LOADED) if (re.test(relPath)) return reason;
+      // No import, no export: a classic browser script, loaded by URL from
+      // markup — often server-rendered (Razor, JSP, PHP, Delphi templates)
+      // where `<script src>` is computed — not by any module. "Nothing
+      // imports it" says nothing about such a file.
+      if (analysis.imports.length === 0 && analysis.exports.length === 0) return "classic script (loaded by URL, not imported)";
       return null;
     },
 

@@ -3,6 +3,7 @@ import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { cSpec } from "./index.js";
 import { cManifest } from "./manifest.js";
+import { cFamilyReachability } from "../shared/c-family-reachability.js";
 
 export const C_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -13,6 +14,8 @@ export const C_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const cMeta: LanguagePluginMeta = {
+  // Dead-code reachability (see c-family-reachability.ts).
+  reachability: cFamilyReachability,
   // C: the brace defaults, plus `goto` drawn as the jump it is.
   regexControlFlow: extendRegexControlFlow([{ match: /^goto\b/, type: "break_statement" }]),
   ...cManifest,

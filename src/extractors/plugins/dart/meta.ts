@@ -5,6 +5,7 @@ import { dartSpec } from "./index.js";
 import { pubPackages } from "./packages.js";
 import { dartManifest } from "./manifest.js";
 import { dartRequestSchema } from "./request-schema.js";
+import { dartReachability } from "./reachability.js";
 
 const DART_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -20,6 +21,8 @@ const DART_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const dartMeta: LanguagePluginMeta = {
+  // Dead-code reachability (see reachability.ts).
+  reachability: dartReachability,
   regexControlFlow: extendRegexControlFlow([], { quotes: ['"', "'"] }),
   ...dartManifest,
   regexSpec: dartSpec,

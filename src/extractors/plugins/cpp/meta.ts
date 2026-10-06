@@ -4,6 +4,7 @@ import { cppSpec } from "./index.js";
 import { nativePackages } from "./packages.js";
 import { C_BUILTINS } from "../c/meta.js";
 import { cppManifest } from "./manifest.js";
+import { cFamilyReachability } from "../shared/c-family-reachability.js";
 
 const CPP_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...C_BUILTINS,
@@ -19,6 +20,8 @@ const CPP_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const cppMeta: LanguagePluginMeta = {
+  // Dead-code reachability (see c-family-reachability.ts).
+  reachability: cFamilyReachability,
   regexControlFlow: extendRegexControlFlow([{ match: /^goto\b/, type: "break_statement" }]),
   ...cppManifest,
   regexSpec: cppSpec,

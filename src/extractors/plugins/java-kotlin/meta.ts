@@ -16,6 +16,7 @@ import { JavaKotlinDataSourceExtractor } from "./data-sources.js";
 import { JavaKotlinMutationExtractor } from "./data-mutations.js";
 import { JavaKotlinEntityExtractor } from "./entities.js";
 import { javaKotlinRouteExtractor } from "./routes/index.js";
+import { javaKotlinReachability } from "./reachability.js";
 
 const JAVA_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -92,6 +93,8 @@ function jvmMeta(language: Language, opts: {
       typeReferences: (tree, filePath) => extractJavaKotlinTypeReferences(tree, language, filePath),
     },
     calls: opts.calls,
+    // ONE instance for both members: core loads it once.
+    reachability: javaKotlinReachability,
   };
 }
 

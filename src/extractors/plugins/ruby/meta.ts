@@ -4,8 +4,11 @@ import { rubySpec } from "./index.js";
 import { rubygemsPackages } from "./packages.js";
 import { rubyManifest } from "./manifest.js";
 import { RubyEntityExtractor } from "./entities.js";
+import { rubyReachability } from "./reachability.js";
 
 export const rubyMeta: LanguagePluginMeta = {
+  // Dead-code reachability (see reachability.ts).
+  reachability: rubyReachability,
   ...rubyManifest,
   regexSpec: rubySpec,
   knownPackages: rubygemsPackages,

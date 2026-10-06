@@ -715,7 +715,34 @@ export interface ReachabilityModel {
    * `relPath` is relative to the file's own project root; `frameworks` are
    * the framework ids detected for the analysis.
    */
-  entryReason(analysis: FileAnalysis, relPath: string, frameworks: ReadonlySet<string>): string | null;
+  entryReason(
+    analysis: FileAnalysis,
+    relPath: string,
+    frameworks: ReadonlySet<string>,
+    /** The file's source text, read on demand (an `@main` attribute, a `__FILE__ == $0` guard). */
+    readSource?: () => string | undefined,
+  ): string | null;
+  /**
+   * Names a file declares that OTHER files use without naming the file — a
+   * C# or Java type referenced across its namespace/package, a PHP class
+   * autoloaded on first use, a C function called through a header, a Ruby
+   * constant Zeitwerk loads. When set, any reachable file whose text contains
+   * one of these names (as a whole identifier, comments and strings
+   * included) reaches this file. Over-matching only keeps code alive.
+   */
+  declaredNames?(analysis: FileAnalysis, source: string | undefined): readonly string[];
+  /**
+   * Identifiers the toolchain reads from configuration the model scanned at
+   * load — AndroidManifest components, `web.xml` servlets, an `.app.src`
+   * application module, types named in `appsettings.json`. A file declaring
+   * one is an entry point: the framework instantiates it by that name.
+   */
+  configMentions?: ReadonlySet<string>;
+  /**
+   * Files compiled as ONE unit (a Go package is its directory): reaching any
+   * file of a unit reaches all of them. null = the file is its own unit.
+   */
+  unitOf?(filePath: string): string | null;
   /**
    * Why a file is run by a TOOL rather than being part of the program — a
    * migration, a script under `scripts/`, a tool config, a Storybook story.
@@ -724,7 +751,12 @@ export interface ReachabilityModel {
    * project whose only "entry" is a migration is not judged). Same arguments
    * as `entryReason`, which is asked first.
    */
-  passiveReason?(analysis: FileAnalysis, relPath: string, frameworks: ReadonlySet<string>): string | null;
+  passiveReason?(
+    analysis: FileAnalysis,
+    relPath: string,
+    frameworks: ReadonlySet<string>,
+    readSource?: () => string | undefined,
+  ): string | null;
   /** Files consumed without being imported (ambient `.d.ts`): never judged. */
   isAmbient?(filePath: string): boolean;
   /**

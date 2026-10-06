@@ -10,5 +10,15 @@ export const perlManifest: LanguagePluginManifest = {
   language: "perl",
   parsing: "regex",
   extensions: [".pl", ".pm"],
+  // Web frameworks a module's `use` names: an app with no cpanfile is still
+  // a Catalyst app (and Catalyst loads its controllers by namespace).
+  frameworkImportHints: {
+    Catalyst: "catalyst",
+    "Catalyst::Runtime": "catalyst",
+    Mojolicious: "mojolicious",
+    "Mojolicious::Lite": "mojolicious",
+    Dancer: "dancer",
+    Dancer2: "dancer",
+  },
   testFilePatterns: [/\.t$/],
 };

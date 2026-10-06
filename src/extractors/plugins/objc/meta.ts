@@ -4,6 +4,7 @@ import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { objcSpec } from "./index.js";
 import { objcPackages } from "./packages.js";
 import { objcManifest } from "./manifest.js";
+import { cFamilyReachability } from "../shared/c-family-reachability.js";
 
 const OBJC_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -16,6 +17,8 @@ const OBJC_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const objcMeta: LanguagePluginMeta = {
+  // Dead-code reachability (see c-family-reachability.ts).
+  reachability: cFamilyReachability,
   // Objective-C: `@try`/`@catch`/`@finally` carry a leading `@`.
   regexControlFlow: extendRegexControlFlow([
     { match: /^@try\b/, type: "try_statement" },

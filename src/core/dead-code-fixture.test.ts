@@ -27,6 +27,17 @@ import type { DeadCodeReport } from "../types/analysis.js";
  * worker/ (Python): the Procfile's `uvicorn service.api:app`, relative
  * imports, a module loaded by `importlib` string, a `scripts/` convention and
  * an extension-less `#!python` script in tools/. Neither judges exports.
+ *
+ * Languages that reach by NAME, each with a trap that must stay alive:
+ *   dotnet/  extension method used as `x.Slugify()`; a MediatR handler
+ *            registered by assembly scanning; [ApiController] discovered.
+ *   jvm/     a ServiceLoader plugin named only in META-INF/services;
+ *            @RestController discovered; same-package types by name.
+ *   goapp/   cache.go reached because its PACKAGE is imported.
+ *   clib/    parse() reached through parser.h; oldfmt.c compiled but uncalled.
+ *   phpapp/  route file names its controller; a Console command discovered.
+ *   rubyapp/ Rails routes controllers and includes helpers by convention.
+ *   elixirapp/ mix.exs `mod:` names the application, which names the Repo.
  */
 const FIXTURE = resolve(__dirname, "..", "..", "test-fixtures", "sample-dead-code");
 
@@ -47,13 +58,29 @@ describe("dead code — hand-labelled fixture", () => {
   it("finds exactly the unreachable files and unused exports", async () => {
     const d = await deadCode();
 
-    expect(d.languages).toEqual(["javascript", "python", "rust", "typescript"]);
+    // No "cpp": parser.h holds only a prototype — nothing to reference by
+    // name — so it is kept alive without being judged.
+    expect(d.languages).toEqual([
+      "c", "csharp", "elixir", "go", "java", "javascript", "php", "python", "ruby", "rust", "typescript",
+    ]);
     expect(d.skippedProjects).toBeUndefined();
     expect(d.unresolvedImports).toBeUndefined();
 
     expect(d.files).toEqual([
+      // Compiled (CMake lists it) but no reachable code calls format_v1.
+      { filePath: "clib/oldfmt.c", confidence: "INFERRED", deadImporters: 0, lineCount: 4 },
+      { filePath: "dotnet/Services/LegacyPricing.cs", confidence: "INFERRED", deadImporters: 0, lineCount: 6 },
+      // Named only by LegacyPricing, itself dead.
+      { filePath: "dotnet/Services/PricingRules.cs", confidence: "INFERRED", deadImporters: 1, lineCount: 6 },
+      { filePath: "elixirapp/lib/shop/legacy_csv.ex", confidence: "INFERRED", deadImporters: 0, lineCount: 3 },
+      // A whole package nobody imports; its two files are one unit, not importers of each other.
+      { filePath: "goapp/internal/legacy/export.go", confidence: "INFERRED", deadImporters: 0, lineCount: 3 },
+      { filePath: "goapp/internal/legacy/format.go", confidence: "INFERRED", deadImporters: 0, lineCount: 3 },
+      { filePath: "jvm/src/main/java/com/shop/util/CsvExporter.java", confidence: "INFERRED", deadImporters: 0, lineCount: 7 },
       // No `mod old_parser;` anywhere: rustc never compiles it.
       { filePath: "native/src/old_parser.rs", confidence: "INFERRED", deadImporters: 0, lineCount: 4 },
+      { filePath: "phpapp/app/Services/LegacyReport.php", confidence: "INFERRED", deadImporters: 0, lineCount: 10 },
+      { filePath: "rubyapp/app/services/legacy_import.rb", confidence: "INFERRED", deadImporters: 0, lineCount: 5 },
       { filePath: "src/components/OldBanner.vue", confidence: "INFERRED", deadImporters: 0, lineCount: 1 },
       // Imported only by oldApi, which is dead itself: delete oldApi first.
       { filePath: "src/legacy/oldApi.ts", confidence: "INFERRED", deadImporters: 0, lineCount: 5 },
