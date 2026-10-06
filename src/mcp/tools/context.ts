@@ -185,6 +185,8 @@ export async function statusReport(loaded: LoadedAnalysis, store: AnalysisStore)
         hotspots: (summary.hotspots ?? []).length,
         suggestions: (summary.suggestions ?? []).length,
         "unused files": (summary.unusedFiles ?? []).length,
+        "unreachable files": summary.deadCode?.files.length ?? 0,
+        "unused exports": summary.deadCode?.exports.length ?? 0,
       }) || "none"
     }`,
   );

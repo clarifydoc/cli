@@ -326,6 +326,12 @@ export interface AstExtractorHooks {
    */
   customElements?(sourceText: string): CustomElementDef[];
   /**
+   * Paths the file names as string data that the toolchain loads as modules
+   * (glob imports, worker URLs, config-file script paths) →
+   * `FileAnalysis.pathReferences`, which reachability follows.
+   */
+  pathReferences?(sourceText: string): string[];
+  /**
    * Variable → import-source aliases, any scope
    * (`const store = useUserStore()` → store resolves to useUserStore's source).
    * A rich binding also names the FACTORY the variable came from, so a member
@@ -666,6 +672,86 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * what one type text means and what one property is called on the wire.
    */
   requestSchema?: RequestSchemaHooks;
+  /**
+   * How this language's toolchain finds files — what dead-code analysis
+   * (`core/dead-code.ts`) needs to tell a file nothing loads from one that is
+   * loaded by convention. Declaring it opts the language's files into being
+   * JUDGED. A language whose files are found by namespace, package or
+   * autoload convention (C#, Java, PHP, Rails) must leave it unset: an import
+   * graph cannot prove those unreachable. Family plugins share ONE instance,
+   * so core loads it once.
+   */
+  reachability?: ReachabilityHooks;
+}
+
+export interface ReachabilityHooks {
+  /**
+   * Once per analysis: read what the ecosystem's toolchain config says about
+   * entry points (package.json `main`/`bin`/`exports`/`scripts`, …) and
+   * return the model core resolves every file of the language through.
+   */
+  load(ctx: ReachabilityLoadContext): Promise<ReachabilityModel>;
+}
+
+export interface ReachabilityLoadContext {
+  /** Absolute path of the analyzed root. */
+  projectRoot: string;
+  /** Project roots, posix and project-relative; "" is the analyzed root. */
+  roots: readonly string[];
+  /** Every analyzed file (posix, project-relative). */
+  files: ReadonlySet<string>;
+}
+
+export interface ReachabilityModel {
+  /**
+   * Files the toolchain starts from, read from manifests (package.json
+   * `main`, `bin`, `exports`, files named in `scripts`), with the reason.
+   * Their exports are public API — never reported unused.
+   */
+  manifestEntries: ReadonlyArray<{ file: string; reason: string }>;
+  /**
+   * Why a file is loaded by a framework or tool by convention rather than by
+   * import (a Next.js page, a `*.config.ts`, a Storybook story), or null.
+   * `relPath` is relative to the file's own project root; `frameworks` are
+   * the framework ids detected for the analysis.
+   */
+  entryReason(analysis: FileAnalysis, relPath: string, frameworks: ReadonlySet<string>): string | null;
+  /**
+   * Why a file is run by a TOOL rather than being part of the program — a
+   * migration, a script under `scripts/`, a tool config, a Storybook story.
+   * Such a file keeps what it loads alive and is never reported, but it is
+   * no evidence of where the program starts, so it anchors nothing (a
+   * project whose only "entry" is a migration is not judged). Same arguments
+   * as `entryReason`, which is asked first.
+   */
+  passiveReason?(analysis: FileAnalysis, relPath: string, frameworks: ReadonlySet<string>): string | null;
+  /** Files consumed without being imported (ambient `.d.ts`): never judged. */
+  isAmbient?(filePath: string): boolean;
+  /**
+   * Resolve a module specifier as written in `fromFile` to the project files
+   * it loads. `[]` = an external package (precisely nothing local); null = it
+   * looks local but cannot be pinned down (an alias the model doesn't know).
+   * Several files = all of them load (a Python import runs every package
+   * `__init__` on the way) or the target is ambiguous; core treats all as
+   * reached. `specifiers` are the import's bound names, for languages where
+   * a name can be a module (`from pkg import mod`).
+   */
+  resolve(fromFile: string, source: string, specifiers?: readonly string[]): string[] | null;
+  /**
+   * Whether this language's imports name what they use precisely enough to
+   * report unused exports. False where a module is used through a qualified
+   * path (`processor::run()`) or an import keeps only its alias — the files
+   * are still judged. Default true.
+   */
+  judgeExports?: boolean;
+  /** Resolve a `FileAnalysis.pathReferences` entry (globs allowed) to project files. */
+  resolvePath(fromFile: string, ref: string): string[];
+  /**
+   * Files a template tag used WITHOUT an import may render (auto-imported or
+   * globally registered components). Optional; core counts every candidate
+   * as reached.
+   */
+  resolveTag?(fromFile: string, tag: string): string[];
 }
 
 /** What a declared type text denotes, for JSON serialization. */

@@ -3,6 +3,7 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
 import { parseRustParam, stripRustTypeModifiers } from "./params.js";
 import { extractRustRoutes } from "./routes.js";
 import { extractRustDataSources } from "./data-sources.js";
+import { extractRustModuleRefs } from "./reachability.js";
 
 function parseRustReturnType(line: string): string | null {
   const m = line.match(/->\s*([^{]+?)(?:\s+where\s|\s*\{|\s*;|\s*$)/);
@@ -11,6 +12,9 @@ function parseRustReturnType(line: string): string | null {
 }
 
 export const rustSpec: RegexLangSpec = {
+  // `mod x;` / `#[path]` / `include!` — the module tree dead-code analysis
+  // walks (see reachability.ts).
+  extractPathReferences: extractRustModuleRefs,
   language: "rust",
   extensions: [".rs"],
   indentBased: false,

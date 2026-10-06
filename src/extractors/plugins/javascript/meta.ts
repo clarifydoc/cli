@@ -12,6 +12,7 @@ import {
 } from "./angular-template.js";
 import { extractEvents } from "./events.js";
 import { extractCustomElements } from "./web-components.js";
+import { extractPathReferences } from "./path-references.js";
 import { javascriptCallHooks } from "./call-hooks.js";
 import { extractJsVariableAliases } from "./variable-aliases.js";
 import { vuePreprocess } from "./vue-hooks.js";
@@ -31,6 +32,7 @@ import { JavaScriptEntityExtractor } from "./entities.js";
 import { javascriptRouteExtractor } from "./routes/index.js";
 import { JsComponentEmitResolver } from "./dispatch.js";
 import { javascriptRequestSchema } from "./request-schema.js";
+import { javascriptReachability } from "./reachability.js";
 
 const TS_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -142,6 +144,7 @@ function astHooks(language: Language): AstExtractorHooks {
     events: (sourceText) => extractEvents(sourceText, language),
     externalTemplate: (sourceText) => extractAngularTemplateUrl(sourceText),
     customElements: (sourceText) => extractCustomElements(sourceText),
+    pathReferences: (sourceText) => extractPathReferences(sourceText),
     variableAliases: extractJsVariableAliases,
   };
 }
@@ -179,6 +182,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   ast: astHooks("typescript"),
   calls: javascriptCallHooks,
   requestSchema: javascriptRequestSchema,
+  reachability: javascriptReachability,
 };
 
 export const javascriptMeta: LanguagePluginMeta = {
@@ -202,4 +206,5 @@ export const javascriptMeta: LanguagePluginMeta = {
   ast: astHooks("javascript"),
   calls: javascriptCallHooks,
   requestSchema: javascriptRequestSchema,
+  reachability: javascriptReachability,
 };

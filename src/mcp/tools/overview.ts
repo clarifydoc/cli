@@ -347,6 +347,7 @@ type HealthCategory =
   | "suggestions"
   | "patterns"
   | "unused"
+  | "dead-code"
   | "concerns"
   | "pressure";
 const HEALTH_CATEGORIES: readonly HealthCategory[] = [
@@ -358,6 +359,7 @@ const HEALTH_CATEGORIES: readonly HealthCategory[] = [
   "suggestions",
   "patterns",
   "unused",
+  "dead-code",
   "concerns",
   "pressure",
 ];
@@ -379,6 +381,7 @@ function categoryCounts(summary: ProjectAnalysis): Array<[HealthCategory, number
     ["suggestions", (summary.suggestions ?? []).length],
     ["patterns", (summary.patterns ?? []).length],
     ["unused", (summary.unusedFiles ?? []).length],
+    ["dead-code", (summary.deadCode?.files.length ?? 0) + (summary.deadCode?.exports.length ?? 0)],
     ["concerns", (summary.responsibilityProfiles ?? []).filter((r) => r.concernCount >= 2).length],
     ["pressure", (summary.refactorPressure ?? []).length],
   ];
@@ -418,7 +421,8 @@ export function healthTool(ctx: ToolContext): McpTool {
     title: "Code health findings",
     description:
       "The project's health score and the findings behind it: security issues, architecture layer violations, " +
-      "high-complexity functions, duplicate code, churn×complexity hotspots, generated dead code, detected " +
+      "high-complexity functions, duplicate code, churn×complexity hotspots, dead code (files no entry point reaches, " +
+      "exports nothing imports, unused generated output), detected " +
       "patterns, files that mix the most concerns (database + http + queue + auth …), the composite refactor " +
       "pressure ranking (where to refactor first, with drivers and confidence) and actionable suggestions. " +
       "Call with no category for the summary, then drill into one.",
@@ -654,6 +658,52 @@ export function healthTool(ctx: ToolContext): McpTool {
               ),
             ]),
           };
+        }
+        case "dead-code": {
+          const dead = summary.deadCode;
+          const files = (dead?.files ?? []).filter((f) => inFile(f.filePath));
+          const exports = (dead?.exports ?? []).filter((e) => inFile(e.filePath));
+          if (!dead || (files.length + exports.length === 0 && fileFilter)) return { text: noFindings(summary, category, filters) };
+          const scope = [
+            dead.judgedFiles > 0
+              ? `Judged ${plural(dead.judgedFiles, "file")} (${dead.languages.join(", ")}) from ${plural(dead.entryFiles, "entry point")}.`
+              : "No project had an entry point to walk from, so nothing was judged.",
+            dead.skippedProjects?.length &&
+              `Not judged — no entry point found: ${dead.skippedProjects.map((p) => `${p.root || "(root)"} (${p.files}${p.languages?.length ? ` ${p.languages.join("/")}` : ""})`).join(", ")}.`,
+            dead.unresolvedImports &&
+              `${plural(dead.unresolvedImports, "local-looking import")} named nothing analyzed; unreachable files beside them are [ambiguous].`,
+          ].filter(Boolean) as string[];
+          const lines = [`# Dead code — ${plural(files.length, "unreachable file")}, ${plural(exports.length, "unused export")}`, ...scope];
+          // Nothing found is an answer when files were judged; say what was covered.
+          if (files.length + exports.length === 0) {
+            if (dead.judgedFiles > 0) lines.push("", "Every judged file is reachable and every judged export is imported.");
+            return { text: joinLines(lines) };
+          }
+          if (files.length > 0) {
+            lines.push(
+              "",
+              `## Unreachable files (${files.length})`,
+              "Nothing an entry point loads reaches these. Delete the ones no other dead file imports first.",
+              ...bulletList(files, limit, (f) => {
+                const where = f.deadImporters === 0 ? "top of a dead cluster" : `imported only by ${plural(f.deadImporters, "dead file")}`;
+                const size = f.lineCount !== undefined ? `, ${plural(f.lineCount, "line")}` : "";
+                return `${f.filePath} — ${where}${size}${f.confidence === "AMBIGUOUS" ? " [ambiguous]" : ""}`;
+              }),
+            );
+          }
+          if (exports.length > 0) {
+            lines.push(
+              "",
+              `## Unused exports (${exports.length})`,
+              "No other file imports these names.",
+              ...bulletList(
+                exports,
+                limit,
+                (e) => `${loc(e.filePath, e.line)} ${e.name} (${e.kind}) — ${e.usedInFile ? "used in its own file: drop `export`" : "unused: delete"}`,
+              ),
+            );
+          }
+          return { text: joinLines(lines) };
         }
         case "unused": {
           const rows = (summary.unusedFiles ?? []).filter((f) => inFile(f));

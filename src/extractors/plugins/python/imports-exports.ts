@@ -51,27 +51,33 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
     }
   }
 
-  /** `import foo`, `import foo.bar`, `import foo as f, bar as b` */
+  /**
+   * `import foo`, `import foo.bar`, `import foo as f, bar as b` — one import
+   * per module, its source the module's dotted path and its specifier the name
+   * it binds. The alias used to become the source (`import app.models as m`
+   * recorded source "m"), and every module after the first in one statement
+   * was dropped, so neither could ever resolve to a file.
+   */
   private parseImportStatement(node: Node, imports: ImportInfo[], isType: boolean): void {
-    const names: string[] = [];
     for (const part of node.children) {
+      let source: string | undefined;
+      let bound: string | undefined;
       if (part.type === "dotted_name") {
-        names.push(part.text);
+        source = bound = part.text;
       } else if (part.type === "aliased_import") {
-        // `import foo as f` — extract the original module name
-        const original = part.childForFieldName("name");
-        const alias = part.childForFieldName("alias");
-        names.push(alias?.text ?? original?.text ?? part.text);
+        source = part.childForFieldName("name")?.text;
+        bound = part.childForFieldName("alias")?.text ?? source;
       }
+      if (!source || !bound) continue;
+      imports.push({
+        source,
+        specifiers: [bound],
+        isDefault: false,
+        isNamespace: true,
+        isType,
+        line: node.startPosition.row + 1,
+      });
     }
-    imports.push({
-      source: names[0] ?? node.text,
-      specifiers: names,
-      isDefault: false,
-      isNamespace: true,
-      isType,
-      line: node.startPosition.row + 1,
-    });
   }
 
   /** `from foo import bar, baz`, `from foo import *`, `from foo import bar as b` */
@@ -116,8 +122,7 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
           if (spec.type === "dotted_name" || spec.type === "identifier") {
             specifiers.push(spec.text);
           } else if (spec.type === "aliased_import") {
-            const alias = spec.childForFieldName("alias");
-            specifiers.push(alias?.text ?? spec.childForFieldName("name")?.text ?? spec.text);
+            pushAliased(spec, specifiers);
           }
         }
         continue;
@@ -127,8 +132,7 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
       if (part.type === "dotted_name" || part.type === "identifier") {
         specifiers.push(part.text);
       } else if (part.type === "aliased_import") {
-        const alias = part.childForFieldName("alias");
-        specifiers.push(alias?.text ?? part.childForFieldName("name")?.text ?? part.text);
+        pushAliased(part, specifiers);
       }
     }
 
@@ -174,4 +178,16 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
       }
     }
   }
+}
+
+/**
+ * `bar as b`: the local name first (what call classification looks up), then
+ * the imported name when it differs — `from pkg import sub as s` loads
+ * `pkg/sub.py`, which only the original name can find.
+ */
+function pushAliased(node: Node, specifiers: string[]): void {
+  const name = node.childForFieldName("name")?.text;
+  const alias = node.childForFieldName("alias")?.text;
+  specifiers.push(alias ?? name ?? node.text);
+  if (alias && name && alias !== name) specifiers.push(name);
 }

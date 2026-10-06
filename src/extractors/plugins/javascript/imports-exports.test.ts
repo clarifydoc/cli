@@ -1,0 +1,82 @@
+import { describe, it, expect } from "vitest";
+import "../../registry.js"; // side effect: registers tree-sitter grammars
+import { parseSource } from "../../../parsers/parser-manager.js";
+import { JavaScriptImportExportExtractor } from "./imports-exports.js";
+import type { ExportInfo } from "../../../types/analysis.js";
+
+async function exportsOf(src: string, lang: "typescript" | "javascript" = "typescript"): Promise<ExportInfo[]> {
+  const tree = await parseSource(src, lang as any, lang === "typescript" ? "x.ts" : "x.js");
+  return new JavaScriptImportExportExtractor().extractExports(tree, src);
+}
+
+const brief = (e: ExportInfo) =>
+  [e.name, e.kind, e.source, e.sourceName].filter((v) => v !== undefined).join(" ");
+
+describe("JS/TS export extraction", () => {
+  it("names every binding of a const/let export, including destructuring", async () => {
+    const out = await exportsOf(`
+      export const a = 1, b = 2;
+      export const { c, d: renamed, e = 3, ...rest } = obj;
+      export const [f, , g] = arr;
+      export let fn = () => 1;
+    `);
+    expect(out.map(brief)).toEqual([
+      "a variable", "b variable",
+      "c variable", "renamed variable", "e variable", "rest variable",
+      "f variable", "g variable",
+      "fn function",
+    ]);
+  });
+
+  it("detects default from the keyword, not from a name that contains it", async () => {
+    const out = await exportsOf(`
+      export const defaultOptions = {};
+      export function setDefault() { switch (x) { default: return 1; } }
+      export default function App() {}
+    `);
+    expect(out.map(brief)).toEqual([
+      "defaultOptions variable",
+      "setDefault function",
+      "default default",
+    ]);
+  });
+
+  it("records TS `export =` as the default export", async () => {
+    expect((await exportsOf(`const x = 1;\nexport = x;`)).map(brief)).toEqual(["default default"]);
+  });
+
+  it("keeps the source of re-exports and leaves local export lists without one", async () => {
+    const out = await exportsOf(`
+      const local = 1;
+      export { local };
+      export { x, y as z } from "./xy";
+      export * from "./everything";
+      export * as ns from "./ns";
+      export type { T } from "./types";
+    `);
+    expect(out.map(brief)).toEqual([
+      "local re-export",
+      "x re-export ./xy",
+      "z re-export ./xy y",
+      "* re-export ./everything",
+      "ns re-export ./ns *",
+      "T re-export ./types",
+    ]);
+  });
+
+  it("covers declaration kinds, ambient declarations and plain JS", async () => {
+    const ts = await exportsOf(`
+      export abstract class Base {}
+      export interface Props {}
+      export type Id = string;
+      export enum Color { Red }
+      export declare function ext(): void;
+      export async function* gen() {}
+    `);
+    expect(ts.map(brief)).toEqual([
+      "Base class", "Props interface", "Id type", "Color enum", "ext function", "gen function",
+    ]);
+    const js = await exportsOf(`export const h = function () {};\nexport * from "./more.js";`, "javascript");
+    expect(js.map(brief)).toEqual(["h function", "* re-export ./more.js"]);
+  });
+});

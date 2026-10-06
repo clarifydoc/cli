@@ -1,6 +1,6 @@
 import { readFile } from "fs/promises";
 import { join, resolve, basename } from "path";
-import type { ProjectAnalysis, BlastRadiusInfo, LspStats } from "../types/analysis.js";
+import type { ProjectAnalysis, BlastRadiusInfo, LspStats, DeadCodeReport } from "../types/analysis.js";
 import { denormalizeProject } from "./element-registry.js";
 
 /**
@@ -33,6 +33,8 @@ export interface ReportPayload {
   fileLayerMap: Record<string, string>;
   generatedRoots: string[];
   unusedFiles: string[];
+  /** Unreachable files + unused exports (plain paths; small, read by the Health tab). Null on old artifacts. */
+  deadCode: DeadCodeReport | null;
   healthScore: any;
   patterns: any[];
   securityIssues: any[];
@@ -338,6 +340,7 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
     fileLayerMap: summary.fileLayerMap ?? {},
     generatedRoots: summary.generatedRoots ?? [],
     unusedFiles: summary.unusedFiles ?? [],
+    deadCode: summary.deadCode ?? null,
     healthScore: summary.healthScore ?? null,
     patterns: summary.patterns ?? [],
     securityIssues: summary.securityIssues ?? [],
