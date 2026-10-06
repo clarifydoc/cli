@@ -5,6 +5,7 @@ import { swiftSpec } from "./index.js";
 import { swiftPackages } from "./packages.js";
 import { swiftManifest } from "./manifest.js";
 import { swiftRequestSchema } from "./request-schema.js";
+import { swiftReachability } from "./reachability.js";
 
 const SWIFT_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -19,6 +20,8 @@ const SWIFT_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const swiftMeta: LanguagePluginMeta = {
+  // Dead-code reachability (see reachability.ts).
+  reachability: swiftReachability,
   // Swift: `guard … else { … }` is an early exit, and `repeat { } while` is
   // its do-while.
   regexControlFlow: extendRegexControlFlow([

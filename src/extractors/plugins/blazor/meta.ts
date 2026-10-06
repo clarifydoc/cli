@@ -1,6 +1,7 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { blazorSpec } from "./index.js";
 import { blazorManifest } from "./manifest.js";
+import { blazorReachability } from "./reachability.js";
 
 /**
  * Blazor `.razor` markup. The component's C# logic is parsed elsewhere (a
@@ -9,6 +10,8 @@ import { blazorManifest } from "./manifest.js";
  * UI-markup half: component usage, interactive elements, `@page` routes.
  */
 export const blazorMeta: LanguagePluginMeta = {
+  // Dead-code reachability (see reachability.ts).
+  reachability: blazorReachability,
   ...blazorManifest,
   regexSpec: blazorSpec,
 };

@@ -4,6 +4,7 @@ import { elixirSpec } from "./index.js";
 import { hexPackages } from "./packages.js";
 import { elixirManifest } from "./manifest.js";
 import { elixirRequestSchema } from "./request-schema.js";
+import { elixirReachability } from "./reachability.js";
 
 const ELIXIR_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -14,6 +15,8 @@ const ELIXIR_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const elixirMeta: LanguagePluginMeta = {
+  // Dead-code reachability (see reachability.ts).
+  reachability: elixirReachability,
   ...elixirManifest,
   regexSpec: elixirSpec,
   builtinTypes: ELIXIR_BUILTINS,

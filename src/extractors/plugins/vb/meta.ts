@@ -3,6 +3,7 @@ import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { vbSpec } from "./index.js";
 import { vbManifest } from "./manifest.js";
 import { vbRequestSchema } from "./request-schema.js";
+import { vbReachability } from "./reachability.js";
 
 const VB_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -15,6 +16,8 @@ const VB_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const vbMeta: LanguagePluginMeta = {
+  // Dead-code reachability (see reachability.ts).
+  reachability: vbReachability,
   ...vbManifest,
   regexSpec: vbSpec,
   builtinTypes: VB_BUILTINS,

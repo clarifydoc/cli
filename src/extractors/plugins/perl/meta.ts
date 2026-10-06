@@ -5,8 +5,11 @@ import { perlSpec } from "./index.js";
 import { cpanPackages } from "./packages.js";
 import { perlManifest } from "./manifest.js";
 import { perlRequestSchema } from "./request-schema.js";
+import { perlReachability } from "./reachability.js";
 
 export const perlMeta: LanguagePluginMeta = {
+  // Dead-code reachability (see reachability.ts).
+  reachability: perlReachability,
   // Perl: `unless`/`until` are the negated forms, `foreach` is a loop, and `#`
   // is the comment.
   regexControlFlow: extendRegexControlFlow([], {

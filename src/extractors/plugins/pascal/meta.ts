@@ -10,6 +10,7 @@ import { PascalMutationExtractor } from "./data-mutations.js";
 import { pascalRouteExtractor } from "./routes.js";
 import { PascalUiBridgeResolver } from "./ui-bridge.js";
 import { dfmEntityExtractor } from "./dfm-entities.js";
+import { pascalReachability } from "./reachability.js";
 
 const PASCAL_BUILTINS: ReadonlySet<string> = new Set<string>([
   "Integer", "Cardinal", "Word", "Byte", "ShortInt", "SmallInt", "LongInt",
@@ -26,6 +27,8 @@ const PASCAL_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const pascalMeta: LanguagePluginMeta = {
+  // Dead-code reachability (see reachability.ts).
+  reachability: pascalReachability,
   ...pascalManifest,
   routes: pascalRouteExtractor,
   functionsClasses: new PascalExtractor(),

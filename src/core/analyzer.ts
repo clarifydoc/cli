@@ -824,12 +824,15 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     const loaded = new Map<ReachabilityHooks, ReachabilityModel>();
     // Unreadable files are still files: an import of one resolves to it.
     const analyzedFiles = new Set([...allAnalyses.map((a) => a.filePath), ...skippedSensitive, ...skippedSymlinks]);
+    // One context for every model: plugins share per-analysis work through it
+    // (the configuration-file listing).
+    const loadContext = { projectRoot, roots: subProjects.map((sp) => sp.root), files: analyzedFiles };
     for (const lang of [...new Set(allAnalyses.map((a) => a.language))].sort()) {
       const hooks = pluginFor(lang)?.reachability;
       if (!hooks) continue;
       let model = loaded.get(hooks);
       if (!model) {
-        model = await hooks.load({ projectRoot, roots: subProjects.map((sp) => sp.root), files: analyzedFiles });
+        model = await hooks.load(loadContext);
         loaded.set(hooks, model);
       }
       reachabilityModels.set(lang, model);
@@ -1181,7 +1184,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     componentGraph,
     symbolLinks,
     models: reachabilityModels,
-    frameworks: new Set(frameworkIds),
+    // Manifest-detected frameworks plus those a file's imports reveal (`use
+    // Catalyst` with no cpanfile): conventions gate on either.
+    frameworks: new Set([...frameworkIds, ...allAnalyses.flatMap((a) => a.frameworks ?? [])]),
     projectRoots: new Map(subProjects.map((sp) => [sp.id, sp.root])),
     isTest: isTestFile,
     isUnauthored,

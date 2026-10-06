@@ -17,6 +17,7 @@ import { csharpRouteExtractor } from "./routes/aspnet.js";
 import { CSharpMediatrResolver } from "./dispatch.js";
 import { CsharpUiBridgeResolver } from "./ui-bridge.js";
 import { csharpRequestSchema } from "./request-schema.js";
+import { csharpReachability } from "./reachability.js";
 
 const CSHARP_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -34,6 +35,8 @@ const CSHARP_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const csharpMeta: LanguagePluginMeta = {
+  // Dead-code reachability (see reachability.ts).
+  reachability: csharpReachability,
   ...csharpManifest,
   routes: csharpRouteExtractor,
   functionsClasses: new CSharpExtractor(),

@@ -269,11 +269,11 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
     if (!reason) {
       const root = input.projectRoots.get(projectOf(a)) ?? "";
       const rel = root && a.filePath.startsWith(root + "/") ? a.filePath.slice(root.length + 1) : a.filePath;
-      reason = model.entryReason(a, rel, input.frameworks) ?? undefined;
+      reason = model.entryReason(a, rel, input.frameworks, () => input.readSource(a.filePath)) ?? undefined;
       if (reason) entryReason.set(a.filePath, reason);
       // Run by a tool (a migration, a script, a config): alive, not judged,
       // and no evidence of where the program starts.
-      else if (model.passiveReason?.(a, rel, input.frameworks)) {
+      else if (model.passiveReason?.(a, rel, input.frameworks, () => input.readSource(a.filePath))) {
         passive.push(a.filePath);
         continue;
       }
@@ -282,6 +282,56 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
     if (reason) anchors.push(a.filePath);
   }
   if (candidates.length === 0) return undefined;
+
+  // ── 1b. Names, configuration entries, compilation units ──
+  // Languages that reference by NAME (C#, Java, PHP, C, …) declare what other
+  // files may mention; a type their framework reads from configuration is an
+  // entry; a Go package is reached whole.
+  const nameIndex = new Map<string, string[]>();
+  const unitOfFile = new Map<string, string>();
+  const unitMembers = new Map<string, string[]>();
+  {
+    const modelKey = new Map([...new Set(models.values())].map((m, i) => [m, i] as const));
+    for (const a of candidates) {
+      const model = models.get(a.language)!;
+      if (model.declaredNames) {
+        let configured: string | undefined;
+        for (const n of new Set(model.declaredNames(a, input.readSource(a.filePath)))) {
+          if (n.length < 2) continue;
+          const list = nameIndex.get(n);
+          if (list) list.push(a.filePath);
+          else nameIndex.set(n, [a.filePath]);
+          if (!configured && model.configMentions?.has(n)) configured = n;
+        }
+        if (configured && !entryReason.has(a.filePath)) {
+          entryReason.set(a.filePath, `named in configuration (${configured})`);
+          anchors.push(a.filePath);
+        }
+      }
+      const unit = model.unitOf?.(a.filePath);
+      if (unit) {
+        const key = `${modelKey.get(model)}\0${unit}`;
+        unitOfFile.set(a.filePath, key);
+        const members = unitMembers.get(key);
+        if (members) members.push(a.filePath);
+        else unitMembers.set(key, [a.filePath]);
+      }
+    }
+  }
+  /** Files whose declared names `file`'s text mentions. Read once per file. */
+  const nameTargets = (file: string): string[] => {
+    if (nameIndex.size === 0) return [];
+    const src = input.readSource(file);
+    if (!src) return [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const tok of src.match(IDENTIFIER_RE) ?? []) {
+      if (seen.has(tok)) continue;
+      seen.add(tok);
+      for (const t of nameIndex.get(tok) ?? []) if (t !== file) out.push(t);
+    }
+    return out;
+  };
 
   // ── 2. Edges, and which export names each edge asks for ──
   const edges = new Map<string, Set<string>>();
@@ -418,12 +468,17 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
   const visited = new Set<string>();
   const walk = (roots: Iterable<string>): void => {
     const queue: string[] = [];
-    for (const r of roots) if (!visited.has(r)) { visited.add(r); queue.push(r); }
+    const enqueue = (t: string): void => {
+      if (!visited.has(t)) { visited.add(t); queue.push(t); }
+    };
+    for (const r of roots) enqueue(r);
     let qi = 0;
     while (qi < queue.length) {
-      for (const t of edges.get(queue[qi++]!) ?? []) {
-        if (!visited.has(t)) { visited.add(t); queue.push(t); }
-      }
+      const f = queue[qi++]!;
+      for (const t of edges.get(f) ?? []) enqueue(t);
+      const unit = unitOfFile.get(f);
+      if (unit) for (const t of unitMembers.get(unit)!) enqueue(t);
+      for (const t of nameTargets(f)) enqueue(t);
     }
   };
   walk(anchors);
@@ -455,20 +510,29 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
   const unreachableSet = new Set(unreachable.map((a) => a.filePath));
   const deadImporters = new Map<string, number>();
   for (const f of unreachableSet) {
-    for (const t of edges.get(f) ?? []) {
-      if (unreachableSet.has(t)) deadImporters.set(t, (deadImporters.get(t) ?? 0) + 1);
+    const unit = unitOfFile.get(f);
+    for (const t of new Set([...(edges.get(f) ?? []), ...nameTargets(f)])) {
+      // A file of the same compilation unit is not an importer.
+      if (unreachableSet.has(t) && (unit === undefined || unitOfFile.get(t) !== unit)) {
+        deadImporters.set(t, (deadImporters.get(t) ?? 0) + 1);
+      }
     }
   }
   // Names reachable code mentions without an import that resolved to them —
   // a dead-looking file spelled like one may be auto-imported or registered.
-  const mentioned = new Set<string>();
+  // Per language model, and only for models that do not already match by
+  // name or unit: a Rust `format!` says nothing about a Go `format.go`.
+  const mentioned = new Map<ReachabilityModel, Set<string>>();
   if (unreachable.length > 0) {
-    const mention = (s: string): void => {
-      for (const seg of s.split(/[^A-Za-z0-9_$-]+/)) if (seg) mentioned.add(normName(seg));
-    };
     for (const f of visited) {
       const a = byPath.get(f);
-      if (!a) continue;
+      const model = a ? models.get(a.language) : undefined;
+      if (!a || !model || model.declaredNames || model.unitOf) continue;
+      let set = mentioned.get(model);
+      if (!set) mentioned.set(model, (set = new Set()));
+      const mention = (s: string): void => {
+        for (const seg of s.split(/[^A-Za-z0-9_$-]+/)) if (seg) set!.add(normName(seg));
+      };
       for (const fn of a.functions) for (const c of fn.calls) mention(c.name);
       for (const cls of a.classes) {
         for (const m of cls.methods) for (const c of m.calls) mention(c.name);
@@ -481,7 +545,8 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
   const files: UnreachableFile[] = unreachable.map((a) => {
     const name = normName(fileStem(a.filePath));
     const ambiguous =
-      (unresolvedByProject.get(projectOf(a)) ?? 0) > 0 || (name.length >= 3 && mentioned.has(name));
+      (unresolvedByProject.get(projectOf(a)) ?? 0) > 0 ||
+      (name.length >= 3 && !!mentioned.get(models.get(a.language)!)?.has(name));
     const row: UnreachableFile = {
       filePath: a.filePath,
       confidence: ambiguous ? "AMBIGUOUS" : "INFERRED",
@@ -589,6 +654,9 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
  */
 const FIXTURE_DIR_RE =
   /(?:^|\/)(?:__fixtures__|fixtures|test-?fixtures|test-?data|__mocks__|examples?|samples?|demos?|bench(?:es|marks?)?)\//i;
+
+/** A whole identifier, for name references (`$`/`@` prefixes split off). */
+const IDENTIFIER_RE = /[A-Za-z_][A-Za-z0-9_]*/g;
 
 /** Basename without extension; an `index` file is named by its directory. */
 function fileStem(filePath: string): string {

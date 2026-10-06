@@ -3,8 +3,11 @@ import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { haskellSpec } from "./index.js";
 import { hackagePackages } from "./packages.js";
 import { haskellManifest } from "./manifest.js";
+import { haskellReachability } from "./reachability.js";
 
 export const haskellMeta: LanguagePluginMeta = {
+  // Dead-code reachability (see reachability.ts).
+  reachability: haskellReachability,
   ...haskellManifest,
   regexSpec: haskellSpec,
   builtinTypes: new Set<string>([
