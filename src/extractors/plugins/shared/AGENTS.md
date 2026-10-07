@@ -16,9 +16,15 @@ interface RegexLangSpec {
   importPatterns: ImpPattern[];        // regex + source/specifier extractors
   indentBased?: boolean;               // Ruby/Lua use indent; brace languages don't
   lineCommentPrefixes: string[];       // ["//"], ["#"], ["--"]
+  topLevelCalls?: boolean | RegExp;    // scripts: top-level statements → `<setup>` (VB: `.vbs` only)
+  callPatterns?: CallPattern[];        // extra call shapes; `notAfter` skips continuation lines
   extractRoutes?: (lines, classes) => RouteInfo[];
 }
 ```
+
+A language whose call forms the patterns state completely sets `replacesBaseline` on one of them, and the baseline `name(` matcher is skipped (PowerShell: `Write-Output (Get-Date)` is no call of `Output`).
+
+A `CallPattern` anchored at a statement's start (VB's parenthesis-less `ProcessOrders conn`) sets `notAfter` — a regex the previous line (strings blanked, comment dropped) matches when it carries the statement on — so a continuation line (`b Then` under `If a AndAlso`) is never read as a call.
 
 ### Generic extractors
 

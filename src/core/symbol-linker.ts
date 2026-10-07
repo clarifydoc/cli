@@ -132,7 +132,22 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
           { name: route.handler, kind: "internal", target: null, line: route.line },
           analysis, ctx,
         );
-        if (handlerLink) {
+        // A handler named by its class (`BookController.create`, Play's
+        // `OrderController.list`) is that class's method or nothing: a
+        // same-named method of ANOTHER class, found by name alone, is a
+        // different action (a Grails `resources:` mapping names actions the
+        // controller may not define). A lowercase qualifier is a variable
+        // (`h.ListUsers`) and keeps the name fallback. The owner may be
+        // namespaced on the target side (Phoenix's `MyAppWeb.UserController`).
+        const owner = /^([A-Z]\w*)\.\w+$/.exec(route.handler)?.[1];
+        const targetClass = handlerLink?.targetSymbol.slice(0, Math.max(0, handlerLink.targetSymbol.lastIndexOf(".")));
+        const nameOnlyElsewhere =
+          handlerLink !== null && owner !== undefined && targetClass !== undefined &&
+          (handlerLink.strategy === "unique-global" || handlerLink.strategy === "unique-global-blind") &&
+          targetClass !== owner && !targetClass.endsWith("." + owner);
+        if (nameOnlyElsewhere) {
+          // No link: the route keeps its handler name, unresolved.
+        } else if (handlerLink) {
           links.push(handlerLink);
         } else {
           // Frontend routes: the handler is a COMPONENT defined in another
@@ -718,6 +733,11 @@ function typesSpanFiles(language: string | undefined): boolean {
 /** Are `language`'s identifiers case-insensitive (VB, Pascal — `caseInsensitiveNames`)? */
 function caseInsensitive(language: string | undefined): boolean {
   return !!language && pluginFor(language as Language)?.caseInsensitiveNames === true;
+}
+
+/** Does an import put the imported file's top-level functions in scope (`importsShareScope`)? */
+function importsShareScope(language: string | undefined): boolean {
+  return !!language && pluginFor(language as Language)?.importsShareScope === true;
 }
 
 /** A member/method name as `language` compares it. */
@@ -1632,6 +1652,26 @@ function resolveCallToDefinition(
           return mkLink(found.file, found.def.name, found.def.line, "INFERRED", "import-dir");
         }
       }
+    }
+  }
+
+  // ── Strategy 6b: a bare call into a file whose import shares its scope ──
+  // Dot-sourcing / `Import-Module` (PowerShell), `source` (Bash) put the other
+  // file's top-level functions in scope without naming them: `Write-Log "x"`
+  // after `. ./lib/Common.ps1` is Common's `Write-Log`. Only for languages
+  // that say so (`importsShareScope`) — a JS or Python module's names are in
+  // scope only when imported by name. Exactly one imported file may define it.
+  if (!def && !isQualified && call.kind === "internal" && importsShareScope(analysis.language)) {
+    const hits = new Map<string, SymbolDef>();
+    for (const imp of analysis.imports) {
+      const impFile = resolveTarget(imp.source, sourceFile, filePathMap);
+      if (!impFile || impFile === sourceFile || hits.has(impFile)) continue;
+      const d = symbolIn(ctx, impFile, call.name);
+      if (d && !d.name.includes(".")) hits.set(impFile, d);
+    }
+    if (hits.size === 1) {
+      const [[file, d]] = [...hits];
+      return mkLink(file!, d!.name, d!.line, "INFERRED", "import-file");
     }
   }
 

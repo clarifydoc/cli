@@ -1,13 +1,17 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
+import { hackagePackageManager } from "./package-manifests.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
  * EAGERLY (extensions, grammar location, framework rules, …). The heavy
  * body (meta.ts and everything it imports) is loaded lazily per language;
- * this module must stay a leaf: types + frameworks.ts only.
+ * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const haskellManifest: LanguagePluginManifest = {
   language: "haskell",
+  family: "haskell",
+  packageManagers: [hackagePackageManager],
+  packageEcosystems: ["hackage"],
   parsing: "regex",
   extensions: [".hs", ".lhs"],
   testFilePatterns: [/Spec\.hs$/, /Test\.hs$/],

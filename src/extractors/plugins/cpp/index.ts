@@ -79,9 +79,19 @@ function parseCppReturnType(line: string): string | null {
 
 export const cppSpec: RegexLangSpec = {
   language: "cpp",
-  extensions: [".h", ".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".hh"],
+  extensions: [".h", ".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".hh", ".cu", ".cuh"],
   indentBased: false,
   lineCommentPrefixes: ["//"],
+
+  // CUDA kernel launch `vecAdd<<<grid, block>>>(a, b, n)` (or
+  // `scale<float><<<…>>>(…)`): the call the baseline `name(` never sees.
+  // Kernel definitions need nothing — `__global__` reads as part of the type.
+  callPatterns: [
+    {
+      pattern: /\b([A-Za-z_]\w*)\s*(?:<[^<>]*>)?\s*<<<[^;]*?>>>\s*\(/,
+      buildName: (m) => ({ name: m[1]!, leafName: m[1]! }),
+    },
+  ],
 
   functionPatterns: [
     {

@@ -1,5 +1,5 @@
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
-import { extractClassesWithSpec, splitTopLevel, type RegexLangSpec } from "../shared/regex-base.js";
+import { extractClassesWithSpec, splitTopLevel, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
 import { extractWinFormsScreens } from "./winforms-screens.js";
 import { extractVbDataSources } from "./data-sources.js";
 import { extractVbRoutes } from "./routes.js";
@@ -28,13 +28,61 @@ function inlineAttributes(prefix: string): string[] {
 const VB_OPEN_RE = /^\s*(?:(?:Public|Private|Friend|Protected|Shared|Static|Partial|Async|Overrides|Overridable|Overloads|ReadOnly|WriteOnly|Default|MustOverride|NotOverridable|NotInheritable|MustInherit)\s+)*(Sub|Function|Property|Class|Module|Structure|Interface|Enum|Namespace|If|Select|While|With|For|Try|SyncLock|Using|Do)\b/i;
 const VB_END_RE = /^\s*End\s+(Sub|Function|Property|Class|Module|Structure|Interface|Enum|Namespace|If|Select|While|With|For|Try|SyncLock|Using|Do)\b/i;
 
+/**
+ * Words that open a VB statement which is not a call (declarations, control
+ * flow, VB6 file I/O, LINQ clauses) — lowercase. See VB_STATEMENT_CALL.
+ */
+const VB_STATEMENT_KEYWORDS: ReadonlySet<string> = new Set([
+  "addhandler", "aggregate", "and", "andalso", "async", "await", "call", "case", "catch", "class", "close",
+  "const", "continue", "declare", "default", "delegate", "dim", "distinct", "do", "each", "else", "elseif",
+  "end", "enum", "erase", "error", "event", "exit", "finally", "for", "friend", "from", "function", "get",
+  "global", "gosub", "goto", "group", "handles", "if", "implements", "imports", "in", "inherits", "input",
+  "interface", "into", "is", "isnot", "iterator", "join", "kill", "let", "line", "load", "lock", "loop", "me",
+  "mod", "module", "mustinherit", "mustoverride", "mybase", "myclass", "namespace", "narrowing", "new",
+  "next", "not", "nothing", "notinheritable", "notoverridable", "of", "on", "open", "operator", "option",
+  "optional", "or", "order", "orelse", "overloads", "overridable", "overrides", "paramarray", "partial",
+  "print", "private", "property", "protected", "public", "put", "raiseevent", "randomize", "readonly", "redim",
+  "rem", "removehandler", "resume", "return", "seek", "select", "set", "shadows", "shared", "skip", "static",
+  "step", "stop", "structure", "sub", "synclock", "take", "then", "throw", "to", "try", "type", "unload",
+  "unlock", "until", "using", "wend", "when", "where", "while", "widening", "with", "withevents", "write",
+  "writeonly", "xor", "yield",
+]);
+
+/**
+ * A call written as a statement, without parentheses — `ProcessOrders conn`,
+ * `Main`, `rs.MoveNext`, `Call Cleanup`. VB (every dialect) admits no
+ * expression statement but a call or an assignment, so a statement that
+ * opens with a name that is no keyword, and assigns nothing, calls it. That
+ * is how VBScript and VB6 call almost every Sub; `Foo(x)` / `Call Foo(x)`
+ * are the baseline's. A line continuing the one above is not a statement.
+ */
+const VB_STATEMENT_CALL: CallPattern = {
+  // The name may not be a keyword — unless a member follows (`Me.Close`,
+  // `Err.Raise`); after it comes the end of the line or an argument, never
+  // an assignment, a binary operator, or a bare `_` (`builder _` continues
+  // into `.UseX()` — a member chain, not a call of `builder`).
+  pattern: new RegExp(
+    String.raw`^\s*(?:Call\s+)?(?!(?:${[...VB_STATEMENT_KEYWORDS].join("|")})\b(?!\.))` +
+      String.raw`([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)` +
+      String.raw`(?=[ \t]*$|[ \t]+(?![+\-*\/\\^&<>]?=|(?:And|AndAlso|Or|OrElse|Xor|Is|IsNot|Like|Mod|Then|To|Step|As|In)\b|[+\-*\/\\^&<>]|_\s*$)\S)`,
+    "i",
+  ),
+  notAfter: /(?:\s_|[,(&+\-*\/{=<>.]|\b(?:And|AndAlso|Or|OrElse|Xor|Is|IsNot|Like|Mod|Not|In|Of|As|To|Step|Handles|Implements|Into|Equals))\s*$/i,
+  buildName: (m) => {
+    const name = m[1]!;
+    return { name, leafName: name.slice(name.lastIndexOf(".") + 1) };
+  },
+};
+
 const vbBase: RegexLangSpec = {
   language: "vb",
-  extensions: [".vb", ".bas", ".cls", ".frm"],
+  extensions: [".vb", ".bas", ".cls", ".frm", ".vbs"],
   blockStyle: "keyword-end",
   keywordEnd: { openRe: VB_OPEN_RE, endRe: VB_END_RE },
   // VB line comments: ' (tick) or REM keyword
   lineCommentPrefixes: ["'", "REM ", "rem "],
+  // A VBScript file IS its top-level statements (cscript/wscript run them).
+  topLevelCalls: /\.vbs$/i,
 
   // VB: `ClassName.method()` — shared static/instance access pattern — plus
   // container lookups and casts chained into a call, which carry the
@@ -45,6 +93,7 @@ const vbBase: RegexLangSpec = {
       pattern: /\b([A-Z]\w+)\.(\w+)\s*\(/,
       buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2] }),
     },
+    VB_STATEMENT_CALL,
   ],
 
   // VB: `name As Type` / `ByVal name As Type` / `Optional name As Type = default`
@@ -122,8 +171,9 @@ const vbBase: RegexLangSpec = {
       // Covers VB.NET and VBA
       // `Function [Get](…)` escapes a keyword name with brackets.
       // Abstract (`MustOverride`) and interface members have no body; the
-      // class post-pass below says so.
-      pattern: /^\s*(?:<[^<>]*(?:"[^"]*"[^<>]*)*>\s*)*(?:(?:Public|Private|Friend|Protected|Shared|Static|Overrides|Overridable|Overloads|NotOverridable|MustOverride|Shadows|Partial|Iterator|Async)\s+)*(?:Sub|Function)\s+\[?([A-Za-z_]\w*)\]?\s*\(/i,
+      // class post-pass below says so. VBScript and VB6 drop the empty
+      // parentheses: `Sub Main`.
+      pattern: /^\s*(?:<[^<>]*(?:"[^"]*"[^<>]*)*>\s*)*(?:(?:Public|Private|Friend|Protected|Shared|Static|Overrides|Overridable|Overloads|NotOverridable|MustOverride|Shadows|Partial|Iterator|Async)\s+)*(?:Sub|Function)\s+\[?([A-Za-z_]\w*)\]?(?=\s*(?:\(|'|$))/i,
       isExported: (line) => !/\b(Private|Friend)\b/i.test(line),
       isAsync: (line) => /\bAsync\b/i.test(line),
     },

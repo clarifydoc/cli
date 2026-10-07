@@ -15,10 +15,21 @@ const SCALA_BUILTINS: ReadonlySet<string> = new Set<string>([
   "String", "AnyVal", "AnyRef", "Nothing", "Unit",
 ]);
 
+/**
+ * A Scala declaration opening a line — what every Scala script has and a
+ * SuperCollider `.sc` class file (`MyClass : Object { *new { … } }`) or
+ * session file (`SynthDef(\x, { … }).add;`) does not.
+ */
+const SCALA_DECLARATION_RE = /^[ \t]*(?:import|def|val|object|class|trait|enum|given|package|case\s+class|@main|\/\/>\s*using)\b/m;
+
 export const scalaMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: scalaReachability,
   ...scalaManifest,
+  preprocess: (rawSource, relativePath) =>
+    relativePath.toLowerCase().endsWith(".sc") && !SCALA_DECLARATION_RE.test(rawSource)
+      ? { skip: "not a Scala script (no Scala declaration — SuperCollider?)" }
+      : null,
   regexSpec: scalaSpec,
   knownPackages: scalaPackages,
   builtinTypes: SCALA_BUILTINS,

@@ -10,7 +10,7 @@ import { conventionReachability } from "./reachability-kit.js";
  * friends, Arduino sketches, UIKit/AppKit classes a storyboard names.
  */
 export const cFamilyReachability = conventionReachability({
-  extensions: [".c", ".h", ".cc", ".cpp", ".cxx", ".c++", ".hpp", ".hh", ".hxx", ".h++", ".inl", ".ino", ".m", ".mm", ".cu"],
+  extensions: [".c", ".h", ".cc", ".cpp", ".cxx", ".c++", ".hpp", ".hh", ".hxx", ".h++", ".inl", ".ino", ".m", ".mm", ".cu", ".cuh"],
   importPath: (source) => (/^[\w./+-]+$/.test(source) ? source : null),
   names: {
     types: true,

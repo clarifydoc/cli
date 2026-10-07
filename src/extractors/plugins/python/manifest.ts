@@ -1,14 +1,18 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { pythonFrameworkRules } from "./frameworks.js";
+import { pypiPackageManager } from "./package-manifests.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
  * EAGERLY (extensions, grammar location, framework rules, …). The heavy
  * body (meta.ts and everything it imports) is loaded lazily per language;
- * this module must stay a leaf: types + frameworks.ts only.
+ * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const pythonManifest: LanguagePluginManifest = {
   language: "python",
+  family: "python",
+  packageManagers: [pypiPackageManager],
+  packageEcosystems: ["pypi"],
   parsing: "tree-sitter",
   extensions: [".py", ".pyw"],
   // A field is only reached through the instance (`this.x`); a bare name never is one.

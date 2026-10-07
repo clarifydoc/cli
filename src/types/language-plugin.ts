@@ -12,6 +12,8 @@ import type {
   ImportInfo,
   FileAnalysis,
   PackageCategory,
+  ExternalPackage,
+  PackageEcosystem,
 } from "./analysis.js";
 import type { ProjectInfo } from "./plugin.js";
 import type { RouteExtractor } from "../extractors/routes/base.js";
@@ -36,6 +38,81 @@ export interface FrameworkRule {
   check: (info: ProjectInfo) => boolean;
   /** Human-readable evidence string surfaced in the report ("package.json dependency"). */
   detectedVia: string;
+}
+
+/** A dependency as a manifest declares it — core adds its `category`. */
+export type DeclaredPackage = Omit<ExternalPackage, "category">;
+
+/** Where one manifest file sits, for its parser. */
+export interface ManifestFileContext {
+  /** Path relative to the PROJECT root — what `ExternalPackage.declaredIn` records. */
+  declaredIn: string;
+  /** Path relative to the root being scanned (the analyzed root or a sub-project's). */
+  path: string;
+  /** Another file in the manifest's own directory (`Gemfile.lock` beside `Gemfile`); null when absent. */
+  readSibling(name: string): Promise<string | null>;
+}
+
+/** One manifest format of a package manager, read at the analyzed root and at every sub-project root. */
+export interface PackageManifestSpec {
+  /**
+   * File names at the root, read in order (`package.json`); with `glob`, glob
+   * patterns under it for a format spread over many files (`**\/*.csproj`).
+   */
+  files: readonly string[];
+  /** Read only the first of `files` that exists (`build.gradle.kts`, else `build.gradle`). */
+  firstOnly?: boolean;
+  /** `files` are globs, searched `deep` directories down, at most `limit` files read. */
+  glob?: { deep: number; limit: number };
+  parse(text: string, file: ManifestFileContext): DeclaredPackage[] | Promise<DeclaredPackage[]>;
+}
+
+/**
+ * A package manager a plugin owns: the manifests declaring its packages, and
+ * how a source import names one of them. The inventory reads every
+ * registered manifest whether or not a file of the plugin's language was
+ * found (a `requirements.txt` beside no Python is still a declaration), which
+ * is why this lives on the STATIC manifest. Two plugins may contribute
+ * manifests to one ecosystem (Maven: Java's `pom.xml`, Scala's `build.sbt`);
+ * only one of them says how imports match it.
+ */
+export interface PackageManagerSpec {
+  ecosystem: PackageEcosystem;
+  manifests: readonly PackageManifestSpec[];
+  /**
+   * Import source as written → the key packages are matched on (`@scope/pkg`
+   * of `@scope/pkg/sub`); null when the import names no package (a relative
+   * path, the stdlib). Unset: an import never names a package of this
+   * ecosystem (Maven — a Java package is not an artifact), so usage stays
+   * unknown.
+   */
+  importKey?(source: string): string | null;
+  /** Declared package name → the key `importKey` produces for it (default: lowercased). */
+  packageKey?(name: string): string;
+  /**
+   * An import key also reaches a package whose key it extends past
+   * `separator` (`gorm.io/gorm/clause` → `gorm.io/gorm`) — and, `bidirectional`,
+   * one that extends it (namespace `Microsoft.Extensions` ↔ package
+   * `Microsoft.Extensions.Http`). Default: equal keys only.
+   */
+  prefixMatch?: { separator: string; bidirectional?: boolean };
+  /**
+   * Every import of a package is visible in source (npm, Go, Cargo, pub): a
+   * declared package nothing imports is reported unused. Otherwise usage is
+   * positive-only — a miss stays unknown.
+   */
+  assertsUnused?: boolean;
+  /**
+   * Import keys resolved to their package through what the package manager
+   * INSTALLED (Composer's `vendor/composer/installed.json` lists each
+   * package's autoload namespaces): `load` reads a root's metadata into import
+   * key → package name; an import reaches the package owning its longest key,
+   * equal or extended past `separator`.
+   */
+  installedOwners?: {
+    separator: string;
+    load(readAtRoot: (relativePath: string) => Promise<string | null>): Promise<ReadonlyMap<string, string>>;
+  };
 }
 
 /**
@@ -496,8 +573,21 @@ export interface LanguagePluginManifest {
   language: Language;
   /** How files of this language are parsed. */
   parsing: "tree-sitter" | "regex" | "custom";
-  /** File extensions (with leading dot) owned by this language. */
+  /**
+   * File extensions (with leading dot) owned by this language. An extension
+   * has ONE owner — the registry throws on a second claim. A plugin whose
+   * extension also names foreign formats (openapi's `.json`, a `.d` make
+   * dependency file) refuses those files in `preprocess` with `{ skip }`.
+   */
   extensions: readonly string[];
+  /**
+   * Language family: languages whose files resolve each other's bare-name
+   * imports (`jvm` = Java/Kotlin/Scala, `dotnet` = C#/VB/XAML/Razor, `cfam` =
+   * C/C++/Objective-C, `script` = JS/TS/Vue/Svelte). Bare-name resolution only
+   * trusts candidates in the importer's own family — Pascal `uses X` never
+   * imports a .js file. Unset: no family, so candidates are not filtered.
+   */
+  family?: string;
   /**
    * Whether import resolution should treat files of this language as
    * resolvable targets (extension stripped when building path maps).
@@ -523,6 +613,14 @@ export interface LanguagePluginManifest {
    * member, local, parameter and method names without regard to case.
    */
   caseInsensitiveNames?: boolean;
+  /**
+   * An import puts the imported file's top-level functions in scope without
+   * naming them — PowerShell dot-sourcing / `Import-Module`, Bash `source`:
+   * a bare call no definition in its own file answers is linked to the ONE
+   * imported file that defines it. Unset for module systems that bind names
+   * explicitly (JS, Python, Java), where such a call names something else.
+   */
+  importsShareScope?: boolean;
   /**
    * Fields are only reached through the instance — `this.x`, `self.x`,
    * `$this->x` — and the call extractor keeps that head (JS/TS, Python,
@@ -599,6 +697,16 @@ export interface LanguagePluginManifest {
    * `knownPackages` can classify the dependency inventory.
    */
   activationFiles?: readonly string[];
+  /**
+   * Package managers this plugin owns — manifest parsers and import matching
+   * (see `PackageManagerSpec`). Family plugins attach them to ONE member.
+   */
+  packageManagers?: readonly PackageManagerSpec[];
+  /**
+   * Ecosystems this language's imports are matched against — usually one;
+   * Swift/Objective-C import from SwiftPM AND CocoaPods packages.
+   */
+  packageEcosystems?: readonly PackageEcosystem[];
   /**
    * Extension-less SOURCE files this language owns, by basename — Play's
    * `conf/routes`. Discovery globs by extension, so without this such a file

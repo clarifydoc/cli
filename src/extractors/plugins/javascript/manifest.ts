@@ -1,6 +1,7 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { NOISE_CALLS } from "../../shared/call-graph.js";
 import { javascriptFrameworkRules } from "./frameworks.js";
+import { npmPackageManager } from "./package-manifests.js";
 
 /**
  * Prototype members of core JS builtins (Array/Set/Map/String/Object/Promise/
@@ -89,10 +90,13 @@ const NPM_FRAMEWORK_HINTS: Readonly<Record<string, string>> = {
  * Static tier of this plugin — the cheap pure data the registry aggregates
  * EAGERLY (extensions, grammar location, framework rules, …). The heavy
  * body (meta.ts and everything it imports) is loaded lazily per language;
- * this module must stay a leaf: types + frameworks.ts only.
+ * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const typescriptManifest: LanguagePluginManifest = {
   language: "typescript",
+  family: "script",
+  packageManagers: [npmPackageManager],
+  packageEcosystems: ["npm"],
   parsing: "tree-sitter",
   extensions: [".ts", ".tsx", ".vue", ".svelte"],
   // A field is only reached through the instance (`this.x`); a bare name never is one.
@@ -113,6 +117,8 @@ export const typescriptManifest: LanguagePluginManifest = {
 
 export const javascriptManifest: LanguagePluginManifest = {
   language: "javascript",
+  family: "script",
+  packageEcosystems: ["npm"],
   parsing: "tree-sitter",
   extensions: [".js", ".jsx", ".mjs", ".cjs"],
   // A field is only reached through the instance (`this.x`); a bare name never is one.

@@ -11,7 +11,7 @@ import { conventionReachability } from "../shared/reachability-kit.js";
  * library.
  */
 export const csharpReachability = conventionReachability({
-  extensions: [".cs"],
+  extensions: [".cs", ".csx"],
   names: {
     types: true,
     functions: true,
@@ -28,6 +28,9 @@ export const csharpReachability = conventionReachability({
     [/(?:^|\/)(?:App|Global)\.(?:xaml|asax)\.cs$/i, "application class"],
   ],
   passiveFiles: [
+    // Run by dotnet-script, never compiled into the assembly: a script keeps
+    // what it mentions alive, but a repo of tooling scripts is not a program.
+    [/\.csx$/i, "C# script"],
     [/(?:^|\/)Migrations\//, "EF migration"],
     [/(?:^|\/)Properties\/AssemblyInfo\.cs$/, "assembly metadata"],
   ],

@@ -206,6 +206,41 @@ describe("symbol-linker — route-handler fallback guards (pit-stop FPs)", () =>
     expect(handlerLinks.some((l) => l.targetFile === "web/LEGACY/app/Models/Order.php")).toBe(false);
     expect(handlerLinks.some((l) => l.targetFile === "web/LEGACY/app/Http/Controllers/DashboardController.php")).toBe(true);
   });
+
+  it("never binds a `Class.method` handler to another class's method by name alone", () => {
+    const groovy = (path: string, opts: Parameters<typeof file>[2]) =>
+      ({ ...file(path, "app", opts), language: "groovy" }) as unknown as FileAnalysis;
+    // Grails `resources: "book"` routes every REST action, `create` included,
+    // and `/api/reviews` names a controller the project does not have.
+    const mappings = {
+      ...groovy("grails-app/controllers/UrlMappings.groovy", {}),
+      routes: [route("/api/books/create", "BookController.create"), route("/api/reviews", "ReviewController.save")],
+    } as unknown as FileAnalysis;
+    const controller = groovy("grails-app/controllers/BookController.groovy", {
+      classes: [{ ...cls("BookController"), methods: [fn("save", [])] }],
+    });
+    const service = groovy("grails-app/services/BookService.groovy", {
+      classes: [{ ...cls("BookService"), methods: [fn("create", [])] }],
+    });
+    const links = buildSymbolLinks([mappings, controller, service]).filter((l) => l.sourceSymbol.startsWith("route:"));
+    expect(links).toEqual([]);
+  });
+
+  it("keeps a `Class.method` handler whose class is namespaced on the target side (Phoenix)", () => {
+    const router = {
+      ...file("lib/app_web/router.ex", "app", {}),
+      language: "elixir",
+      routes: [route("/api/users/:id", "UserController.show")],
+    } as unknown as FileAnalysis;
+    const controller = {
+      ...file("lib/app_web/user_controller.ex", "app", {
+        classes: [{ ...cls("AppWeb.UserController"), methods: [fn("show", [])] }],
+      }),
+      language: "elixir",
+    } as unknown as FileAnalysis;
+    const links = buildSymbolLinks([router, controller]).filter((l) => l.sourceSymbol.startsWith("route:"));
+    expect(links.map((l) => l.targetSymbol)).toEqual(["AppWeb.UserController.show"]);
+  });
 });
 
 describe("symbol-linker — Strategy 7 evidence gate (stdlib-name magnets)", () => {

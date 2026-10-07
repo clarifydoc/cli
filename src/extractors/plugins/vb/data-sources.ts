@@ -1,4 +1,5 @@
 import type { ClassInfo, DataSourceInfo } from "../../../types/analysis.js";
+import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 
 /**
  * Detect API call sites in VB.NET / VBA source code.
@@ -35,10 +36,69 @@ function normalizePath(raw: string): string {
     });
 }
 
-export function extractVbDataSources(
-  lines: string[],
-  _classes: ClassInfo[],
-): DataSourceInfo[] {
+export function extractVbDataSources(lines: string[], classes: ClassInfo[]): DataSourceInfo[] {
+  return [...extractVbHttpClientCalls(lines, classes), ...extractComHttpCalls(lines), ...extractSqlStringDataSources(vbSqlLines(lines))]
+    .sort((a, b) => a.line - b.line);
+}
+
+/**
+ * `http.Open "GET", "https://api.example.com/orders/" & id, False` — the COM
+ * HTTP objects (MSXML2.XMLHTTP / ServerXMLHTTP, WinHttp.WinHttpRequest) that
+ * VBScript, classic ASP and VB6 call. The verb literal in first position is
+ * what tells it from `rs.Open "SELECT …"` and `conn.Open "Provider=…"`.
+ */
+function extractComHttpCalls(lines: string[]): DataSourceInfo[] {
+  const out: DataSourceInfo[] = [];
+  const re = /\.Open\s*\(?\s*"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)"\s*,\s*"([^"]+)"(?:\s*&\s*([A-Za-z_]\w*))?/i;
+  for (let i = 0; i < lines.length; i++) {
+    const m = re.exec(vbCodeLine(lines[i]!));
+    if (!m) continue;
+    const target = m[2]! + (m[3] ? `{${m[3]}}` : "");
+    if (!target.startsWith("/") && !/^https?:/i.test(target)) continue;
+    const method = m[1]!.toUpperCase();
+    out.push({ kind: "api-call", name: `${method} ${target}`, target, calls: [], line: i + 1 });
+  }
+  return out;
+}
+
+/**
+ * VB source in the C-like shape the shared SQL-string scanner reads: a
+ * statement ends at the end of its line unless `_` (or a trailing operator)
+ * carries it on, so the last physical line of each statement gets the `;` a
+ * C statement would end with; `""` inside a string becomes `\"`; comments go.
+ * One output line per input line, so line numbers stay true.
+ */
+function vbSqlLines(lines: string[]): string[] {
+  const out = lines.map(vbCodeLine);
+  for (let i = 0; i < out.length; i++) {
+    if (!/(?:\s_|[,(&+])\s*$/.test(out[i]!)) out[i] += ";";
+  }
+  return out;
+}
+
+/** One VB line with its comment dropped and `""` escapes written `\"`. */
+function vbCodeLine(line: string): string {
+  if (/^\s*REM\b/i.test(line)) return "";
+  if (!line.includes('"') && !line.includes("'")) return line;
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]!;
+    if (inString) {
+      if (c === '"' && line[i + 1] === '"') { out += '\\"'; i++; continue; }
+      if (c === '"') inString = false;
+      out += c;
+      continue;
+    }
+    if (c === "'") break;
+    if (c === '"') inString = true;
+    out += c;
+  }
+  return out;
+}
+
+/** VB.NET HttpClient-style calls with a literal route (see file header). */
+function extractVbHttpClientCalls(lines: string[], _classes: ClassInfo[]): DataSourceInfo[] {
   const results: DataSourceInfo[] = [];
   const seen = new Set<string>();
 

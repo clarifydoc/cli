@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import {
   collectExternalPackages,
+  collectInstalledOwners,
   attachPackageUsage,
   deriveFrameworksFromPackages,
   mergeFrameworkDetections,
@@ -443,7 +444,7 @@ describe("attachPackageUsage", () => {
     attachPackageUsage(
       pkgs,
       [fileWith("php", ["GuzzleHttp\\Client", "App\\Domain\\Order"])],
-      { composerAutoload },
+      { installedOwners: new Map([["composer", composerAutoload]]) },
     );
     expect(pkgs[0].used).toBe(true); // GuzzleHttp\Client → guzzlehttp/guzzle
     expect(pkgs[1].used).toBeUndefined(); // declared, never imported → unknown
@@ -453,6 +454,46 @@ describe("attachPackageUsage", () => {
     const pkgs = [pkg("composer", "guzzlehttp/guzzle")];
     attachPackageUsage(pkgs, [fileWith("php", ["GuzzleHttp\\Client"])]);
     expect(pkgs[0].used).toBeUndefined();
+  });
+});
+
+describe("collectInstalledOwners", () => {
+  let dir: string;
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "revdoc-owners-"));
+    // Composer 2 shape at the root; Composer 1 (a bare array) in a sub-project
+    // that also installs guzzle — the root's entry wins.
+    await mkdir(join(dir, "vendor", "composer"), { recursive: true });
+    await writeFile(join(dir, "vendor", "composer", "installed.json"), JSON.stringify({
+      packages: [
+        { name: "guzzlehttp/guzzle", autoload: { "psr-4": { "GuzzleHttp\\": "src/" } } },
+        { name: "Monolog/Monolog", autoload: { "psr-0": { "Monolog\\Handler\\": "src/" } } },
+      ],
+    }));
+    await mkdir(join(dir, "api", "vendor", "composer"), { recursive: true });
+    await writeFile(join(dir, "api", "vendor", "composer", "installed.json"), JSON.stringify([
+      { name: "other/guzzle-fork", autoload: { "psr-4": { "GuzzleHttp\\": "src/" } } },
+      { name: "slim/slim", autoload: { "psr-4": { "Slim\\": "Slim" } } },
+    ]));
+  });
+
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("maps each installed namespace to its package, the first root winning", async () => {
+    const owners = await collectInstalledOwners(dir, ["api"]);
+    expect([...owners.keys()]).toEqual(["composer"]);
+    expect(Object.fromEntries(owners.get("composer")!)).toEqual({
+      guzzlehttp: "guzzlehttp/guzzle",
+      "monolog\\handler": "monolog/monolog",
+      slim: "slim/slim",
+    });
+  });
+
+  it("is empty when nothing is installed", async () => {
+    expect((await collectInstalledOwners(join(dir, "api", "vendor"), [])).size).toBe(0);
   });
 });
 
