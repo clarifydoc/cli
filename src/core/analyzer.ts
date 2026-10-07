@@ -1238,6 +1238,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     // `generated` globs so the grade reflects authored code.
     generatedRoots,
     isGenerated: isUnauthored,
+    isTest: (f) => fileLayerMap[f] === "test",
   });
   // Dead code: authored files no entry point reaches, and exports nothing
   // imports. Only languages whose plugin declares a reachability model are

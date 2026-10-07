@@ -1843,6 +1843,12 @@ export interface HealthScore {
   score: number;
   grade: "A" | "B" | "C" | "D" | "F";
   penalties: { reason: string; points: number }[];
+  /** The scoring model (`rates-v2`); absent on scores from older runs. */
+  model?: string;
+  /** N: the authored non-test file count every rate is over (at least 50). */
+  basis?: number;
+  /** Every graded dimension, deducting or not, with the rate behind it. */
+  dimensions?: { id: string; count: number; rate: number; points: number; cap: number }[];
 }
 
 export interface Suggestion {
