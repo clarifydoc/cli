@@ -18,8 +18,23 @@ import {
 export class CSharpExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["csharp"];
 
-  protected collectFunctions(_node: Node, _functions: FunctionInfo[]): void {
-    // C# functions are inside classes, handled in collectClasses
+  /**
+   * Methods live in classes (collectClasses). The exception is a local
+   * function declared among top-level statements — `Program.cs`, and every
+   * `.csx` script, whose helpers are all written that way: it is the file's
+   * own function, callable from anywhere in those statements.
+   */
+  protected collectFunctions(node: Node, functions: FunctionInfo[]): void {
+    this.scope = new FileScopeNodes(node);
+    try {
+      for (const stmt of node.namedChildren) {
+        if (stmt.type !== "global_statement") continue;
+        const fnNode = stmt.namedChildren.find((c) => c.type === "local_function_statement");
+        if (fnNode) functions.push(this.parseCsharpMethod(fnNode));
+      }
+    } finally {
+      this.scope = null;
+    }
   }
 
   /** The file being extracted's declaration/assignment nodes (one query per file). */

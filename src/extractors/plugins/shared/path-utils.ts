@@ -28,28 +28,22 @@ export function relativeModulePath(spec: string): string {
   return m[2] ? `${prefix}/${m[2].replace(/\./g, "/")}` : prefix;
 }
 
+/** Extension (lowercase, no dot) → language family, from every manifest's
+ *  `family`. Pushed by the registry: this module is a leaf that plugin code
+ *  imports, so it cannot import the registry without closing an ESM cycle. */
+let EXT_FAMILY: ReadonlyMap<string, string> = new Map();
+
+export function registerExtensionFamilies(families: ReadonlyMap<string, string>): void {
+  EXT_FAMILY = families;
+}
+
 /** Language family of a file by extension — bare-name import resolution only
  *  trusts candidates in the importer's own family (`uses X` never imports a
  *  .js file; a doc-generator TOC stub must not shadow a Pascal unit). */
-const EXT_FAMILY: Record<string, string> = {
-  ts: "script", tsx: "script", js: "script", jsx: "script", mjs: "script",
-  cjs: "script", vue: "script", svelte: "script",
-  pas: "pascal", pp: "pascal", dpr: "pascal", dpk: "pascal", lpr: "pascal",
-  dfm: "pascal", lfm: "pascal", fmx: "pascal",
-  java: "jvm", kt: "jvm", kts: "jvm", scala: "jvm", groovy: "jvm",
-  cs: "dotnet", vb: "dotnet", razor: "dotnet", xaml: "dotnet", axaml: "dotnet",
-  c: "cfam", cpp: "cfam", cc: "cfam", cxx: "cfam", h: "cfam", hpp: "cfam",
-  m: "cfam", mm: "cfam",
-  py: "python", rb: "ruby", php: "php", go: "go", rs: "rust", swift: "swift",
-  pl: "perl", pm: "perl", lua: "lua", ex: "elixir", exs: "elixir",
-  erl: "erlang", hrl: "erlang", clj: "clojure", cljs: "clojure", hs: "haskell",
-  dart: "dart",
-};
-
 export function extensionFamily(path: string): string | null {
   const dot = path.lastIndexOf(".");
   if (dot < 0) return null;
-  return EXT_FAMILY[path.slice(dot + 1).toLowerCase()] ?? null;
+  return EXT_FAMILY.get(path.slice(dot + 1).toLowerCase()) ?? null;
 }
 
 /** Character-level common-prefix length of two paths. */

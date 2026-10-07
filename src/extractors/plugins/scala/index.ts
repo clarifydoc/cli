@@ -176,7 +176,7 @@ function memberOf(m: RegExpMatchArray, type: string | null): PropertyInfo {
 
 export const scalaSpec: RegexLangSpec = {
   language: "scala",
-  extensions: [".scala"],
+  extensions: [".scala", ".sc"],
   indentBased: false,
   lineCommentPrefixes: ["//"],
 

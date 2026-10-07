@@ -1,16 +1,21 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { csharpFrameworkRules } from "./frameworks.js";
+import { nugetPackageManager } from "./package-manifests.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
  * EAGERLY (extensions, grammar location, framework rules, …). The heavy
  * body (meta.ts and everything it imports) is loaded lazily per language;
- * this module must stay a leaf: types + frameworks.ts only.
+ * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const csharpManifest: LanguagePluginManifest = {
   language: "csharp",
+  family: "dotnet",
+  packageManagers: [nugetPackageManager],
+  packageEcosystems: ["nuget"],
   parsing: "tree-sitter",
-  extensions: [".cs"],
+  // `.csx`: C# script (dotnet-script, Roslyn scripting) — see script.ts.
+  extensions: [".cs", ".csx"],
   // One type spans files here: `partial` classes split one type across files.
   typesSpanFiles: true,
   grammar: { variants: { csharp: { pkg: "tree-sitter-c-sharp", wasm: "tree-sitter-c_sharp.wasm" } } },

@@ -1,10 +1,12 @@
-import { createEmptyAnalysis, type FileAnalysis, type Language } from "../types/analysis.js";
+import { createEmptyAnalysis, type FileAnalysis, type FunctionInfo, type Language } from "../types/analysis.js";
 import { splitLines } from "../extractors/shared/source-lines.js";
 import {
   extractFunctionsWithSpec,
   extractClassesWithSpec,
   extractImportsWithSpec,
+  extractCallsFromBody,
   deriveExportsFromFnClasses,
+  type RegexLangSpec,
 } from "../extractors/plugins/shared/regex-base.js";
 import { regexSpecFor } from "../extractors/registry.js";
 import { extractEntities, mergeEntities } from "../extractors/entities/index.js";
@@ -59,6 +61,8 @@ export function extractWithRegex(
   if (spec.postProcessClasses) {
     analysis.classes = spec.postProcessClasses(lines, analysis.classes);
   }
+  const setup = topLevelSetup(lines, analysis, spec, filePath);
+  if (setup) analysis.functions.unshift(setup);
   const pathRefs = spec.extractPathReferences?.(lines);
   if (pathRefs && pathRefs.length > 0) analysis.pathReferences = pathRefs;
   const diBindings = spec.extractDiBindings?.(lines, filePath);
@@ -82,4 +86,26 @@ export function extractWithRegex(
   }
 
   return analysis;
+}
+
+/**
+ * A script's top-level statements as the `<setup>` pseudo-function (the
+ * tree-sitter path builds the same one from module-level calls): the calls
+ * on every line no function or class covers. Null when the spec does not
+ * run top-level code for this file, or those lines call nothing.
+ */
+function topLevelSetup(lines: string[], analysis: FileAnalysis, spec: RegexLangSpec, filePath: string): FunctionInfo | null {
+  const on = spec.topLevelCalls;
+  if (!on || (on instanceof RegExp && !on.test(filePath))) return null;
+  const outside = [...lines];
+  for (const span of [...analysis.functions, ...analysis.classes]) {
+    for (let i = span.line - 1; i < Math.min(span.endLine, outside.length); i++) outside[i] = "";
+  }
+  // An attribute line (`@RestController`, VB `<Serializable>`) belongs to the
+  // declaration below it: it is not a statement the script runs.
+  const attribute = spec.attributeLine?.pattern;
+  if (attribute) for (let i = 0; i < outside.length; i++) if (attribute.test(outside[i]!)) outside[i] = "";
+  const calls = extractCallsFromBody(outside, 0, outside.length, spec.lineCommentPrefixes, spec.callPatterns);
+  if (calls.length === 0) return null;
+  return { name: "<setup>", params: [], returnType: null, isAsync: false, isExported: false, decorators: [], calls, line: 1, endLine: 1 };
 }

@@ -16,7 +16,7 @@ import {
 } from "./framework-detector.js";
 import {
   collectExternalPackages,
-  collectComposerAutoload,
+  collectInstalledOwners,
   attachPackageUsage,
   deriveFrameworksFromPackages,
   mergeFrameworkDetections,
@@ -426,8 +426,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     projectRoot,
     subProjects.map((sp) => sp.root),
   );
-  // PHP namespace→package map from vendor/ (makes Composer usage reliable; empty if absent).
-  const composerAutoload = await collectComposerAutoload(
+  // What the package managers installed (Composer's vendor/ autoload map): makes
+  // their import→package mapping reliable; empty when nothing is installed.
+  const installedOwners = await collectInstalledOwners(
     projectRoot,
     subProjects.map((sp) => sp.root),
   );
@@ -1244,7 +1245,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
 
   // Cross-reference the dependency inventory against the imports we extracted,
   // marking each package used/unused (where the ecosystem mapping is reliable).
-  attachPackageUsage(externalPackages, allAnalyses, { composerAutoload });
+  attachPackageUsage(externalPackages, allAnalyses, { installedOwners });
 
   // Step 5: Write project summary
   const summary: ProjectAnalysis = {

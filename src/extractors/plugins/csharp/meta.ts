@@ -20,11 +20,14 @@ import { csharpRequestSchema } from "./request-schema.js";
 import { csharpReachability } from "./reachability.js";
 import { extractCsharpDiBindings } from "./di-bindings.js";
 import { extractCsharpTopLevelLocalTypes } from "./local-types.js";
+import { preprocessCsharpScript } from "./script.js";
 
 export const csharpMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: csharpReachability,
   ...csharpManifest,
+  // `.csx` scripts: blank `#r`/`#load`, restore them as imports.
+  preprocess: preprocessCsharpScript,
   routes: csharpRouteExtractor,
   functionsClasses: new CSharpExtractor(),
   importsExports: new CSharpImportExportExtractor(),

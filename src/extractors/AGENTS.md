@@ -44,16 +44,19 @@ instance across member metas) plus:
 - `calls` hooks: `callNodeTypes`, scope/callback node types, name resolution, auto-imported classification
 
 **Two tiers.** Each plugin also has a `manifest.ts` — the STATIC tier
-(`LanguagePluginManifest`): extensions, parsing kind, grammar location,
-test-file patterns, external prefixes/roots, builtin members, framework
-import hints, `frameworks.ts` rules, `activationFiles`, `dispatchLanguages`.
+(`LanguagePluginManifest`): extensions, `family`, parsing kind, grammar
+location, test-file patterns, external prefixes/roots, builtin members,
+framework import hints, `frameworks.ts` rules, `activationFiles`,
+`dispatchLanguages`, and the plugin's package managers (`packageManagers` —
+manifest parsers + how an import names a package, from `package-manifests.ts`
+— and `packageEcosystems`, the ecosystems the language imports from).
 The registry imports every manifest EAGERLY and builds the module-scope
 constants from them (`EXTENSION_TO_LANGUAGE`, `STRIP_SOURCE_EXTENSION_RE`,
 `ALL_EXTERNAL_MODULE_PREFIXES`, `EXTERNAL_NAMESPACE_ROOT_RE`,
-`ALL_BUILTIN_MEMBERS`, `FRAMEWORK_RULES`, `testFilePatternsFor`,
-`inferFileFrameworks`). Manifests are leaf modules: types + the plugin's
-`frameworks.ts` only. Each meta spreads its manifest so static fields have one
-source of truth.
+`ALL_BUILTIN_MEMBERS`, `FRAMEWORK_RULES`, `PACKAGE_MANAGERS`,
+`testFilePatternsFor`, `inferFileFrameworks`). Manifests are leaf modules:
+types, the plugin's `frameworks.ts` and `package-manifests.ts` only. Each
+meta spreads its manifest so static fields have one source of truth.
 
 The metas (LAZY tier) sit behind a static thunk map (`LOADERS`) of dynamic
 imports — tsdown's ESM code splitting emits one chunk per plugin. `await

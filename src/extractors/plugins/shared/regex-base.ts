@@ -55,6 +55,21 @@ export interface CallPattern {
    * written as a string (`resolve(Repo.self, name: "mem")`).
    */
   buildName: (m: RegExpExecArray, rawLine?: string) => { name: string; leafName: string; receiverType?: string; receiverQualifier?: string };
+  /**
+   * Skip a line that continues the statement above it: the previous line
+   * (strings blanked, comment dropped) matches this. For a pattern anchored
+   * at a statement's start — VB's parenthesis-less `ProcessOrders conn` —
+   * which a continuation line (`   b Then`) would otherwise satisfy.
+   */
+  notAfter?: RegExp;
+  /**
+   * The language's patterns state every call form, so the baseline `name(`
+   * matcher is not run. For a language where `name(` is mostly NOT a call —
+   * PowerShell, whose `Write-Output (Get-Date)` reads to the baseline as a
+   * call of `Output`, and whose `-Value (…)` / `[Parameter(…)]` / `param(`
+   * call nothing.
+   */
+  replacesBaseline?: boolean;
 }
 
 /** Additional property detector for class bodies. */
@@ -94,6 +109,13 @@ export interface RegexLangSpec {
   /** Required when `blockStyle === "keyword-end"`. */
   keywordEnd?: KeywordEndConfig;
   lineCommentPrefixes: string[]; // e.g. ["//", "#", "--"]
+  /**
+   * The file's own statements run (a script): calls on lines outside every
+   * function and class become the `<setup>` pseudo-function, as module-level
+   * calls do on the tree-sitter path. `true` for every file of the language,
+   * a RegExp for the files whose path matches (VB: only `.vbs` scripts).
+   */
+  topLevelCalls?: boolean | RegExp;
   /** Extra call patterns (e.g. PHP `$this->x->y`, Python `self.x.y`). */
   callPatterns?: CallPattern[];
   /** Extra property detectors (e.g. PHP `$name`, VB `As Type`). */
@@ -774,6 +796,7 @@ export function extractCallsFromBody(
 ): CallInfo[] {
   const calls: CallInfo[] = [];
   const seen = new Set<string>();
+  const noBaseline = extraCallPatterns.some((cp) => cp.replacesBaseline);
 
   function add(name: string, shortName: string, line: number, column: number, receiver?: { receiverType?: string; receiverQualifier?: string }) {
     if (isControlFlowKeyword(shortName)) return;
@@ -800,6 +823,7 @@ export function extractCallsFromBody(
     const line = blankStringLiterals(raw, commentPrefixes);
     // Language-specific call patterns first (they produce more-qualified names)
     for (const cp of extraCallPatterns) {
+      if (cp.notAfter && offset === 0 && i > 0 && cp.notAfter.test(blankStringLiterals(lines[i - 1] ?? "", commentPrefixes))) continue;
       const re = new RegExp(cp.pattern.source, cp.pattern.flags.includes("g") ? cp.pattern.flags : cp.pattern.flags + "g");
       let pm: RegExpExecArray | null;
       while ((pm = re.exec(line)) !== null) {
@@ -809,6 +833,7 @@ export function extractCallsFromBody(
     }
 
     // Baseline: `name(` or `obj.method(`
+    if (noBaseline) return;
     let m: RegExpExecArray | null;
     BASELINE_CALL_RE.lastIndex = 0;
     while ((m = BASELINE_CALL_RE.exec(line)) !== null) {

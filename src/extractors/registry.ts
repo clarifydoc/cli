@@ -1,7 +1,8 @@
-import type { Language, PackageCategory } from "../types/analysis.js";
+import type { Language, PackageCategory, PackageEcosystem } from "../types/analysis.js";
 import type {
   LanguagePluginMeta,
   LanguagePluginManifest,
+  PackageManagerSpec,
   LanguageComplexitySpec,
   LanguageControlFlowSpec,
   LanguageRegexControlFlowSpec,
@@ -15,6 +16,7 @@ import { registerTransparentTypeWrappers } from "./shared/type-parser.js";
 import { registerCallPatterns } from "./shared/call-patterns.js";
 import { registerCallExtraction } from "./shared/call-graph.js";
 import { registerLinkScoringData } from "./shared/link-scoring.js";
+import { registerExtensionFamilies } from "./plugins/shared/path-utils.js";
 import { registerGrammar } from "../parsers/parser-manager.js";
 
 // ─── Static tier: plugin manifests (eager, cheap) ─────────────────────────
@@ -58,6 +60,8 @@ import { jsightManifest } from "./plugins/jsight/manifest.js";
 import { openapiManifest } from "./plugins/openapi/manifest.js";
 import { graphqlManifest } from "./plugins/graphql/manifest.js";
 import { wsdlManifest } from "./plugins/wsdl/manifest.js";
+import { groovyManifest } from "./plugins/groovy/manifest.js";
+import { powershellManifest } from "./plugins/powershell/manifest.js";
 
 /** All plugin manifests, in registration order (order is observable — keep stable). */
 const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
@@ -71,6 +75,8 @@ const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
   haskellManifest, clojureManifest, blazorManifest, htmlManifest, qmlManifest, qtuiManifest, xamlManifest,
   jspManifest, springxmlManifest, jsightManifest,
   openapiManifest, graphqlManifest, wsdlManifest,
+  groovyManifest,
+  powershellManifest,
 ];
 
 const MANIFEST_BY_LANGUAGE = new Map<Language, LanguagePluginManifest>();
@@ -130,6 +136,8 @@ const LOADERS: readonly PluginLoader[] = [
   { languages: ["openapi"], load: () => import("./plugins/openapi/meta.js").then((m) => [m.openapiMeta]) },
   { languages: ["graphql"], load: () => import("./plugins/graphql/meta.js").then((m) => [m.graphqlMeta]) },
   { languages: ["wsdl"], load: () => import("./plugins/wsdl/meta.js").then((m) => [m.wsdlMeta]) },
+  { languages: ["groovy"], load: () => import("./plugins/groovy/meta.js").then((m) => [m.groovyMeta]) },
+  { languages: ["powershell"], load: () => import("./plugins/powershell/meta.js").then((m) => [m.powershellMeta]) },
 ];
 
 const LOADER_BY_LANGUAGE = new Map<Language, PluginLoader>();
@@ -230,13 +238,30 @@ export const ACTIVATION_FILE_LANGUAGES: ReadonlyMap<string, readonly Language[]>
  * every manifest's `namedFiles`. Discovery adds a glob per entry and the
  * language lookup consults it before the extension table.
  */
-export const NAMED_FILE_LANGUAGE: ReadonlyMap<string, Language> = (() => {
+export const NAMED_FILE_LANGUAGE: ReadonlyMap<string, Language> =
+  claimTable(ALL_MANIFESTS, (m) => m.namedFiles ?? [], "Named file");
+
+/**
+ * Lowercased key (extension, basename) → the ONE language that claims it. A
+ * second claim throws: the later plugin used to win silently, and the
+ * earlier one's files vanished from analysis.
+ */
+export function claimTable(
+  manifests: readonly LanguagePluginManifest[],
+  keysOf: (manifest: LanguagePluginManifest) => readonly string[],
+  what: string,
+): Map<string, Language> {
   const map = new Map<string, Language>();
-  for (const manifest of ALL_MANIFESTS) {
-    for (const file of manifest.namedFiles ?? []) map.set(file.toLowerCase(), manifest.language);
+  for (const manifest of manifests) {
+    for (const raw of keysOf(manifest)) {
+      const key = raw.toLowerCase();
+      const owner = map.get(key);
+      if (owner) throw new Error(`${what} "${raw}" claimed by both ${owner} and ${manifest.language}`);
+      map.set(key, manifest.language);
+    }
   }
   return map;
-})();
+}
 
 /**
  * Meta for a language. Returns undefined for languages with no registered
@@ -299,17 +324,22 @@ export function regexSpecFor(language: Language): RegexLangSpec | undefined {
  * File extension (with dot) → language, aggregated from every plugin manifest.
  * Keys are lowercase; look up with a lowercased extension — legacy Windows
  * codebases (Delphi, VB) routinely ship `UNIT1.PAS` / `FORM1.DFM` files that
- * a case-sensitive lookup would silently skip.
+ * a case-sensitive lookup would silently skip. One owner per extension (see
+ * `claimTable`).
  */
-export const EXTENSION_TO_LANGUAGE: Readonly<Record<string, Language>> = (() => {
-  const map: Record<string, Language> = {};
-  for (const manifest of ALL_MANIFESTS) {
-    for (const ext of manifest.extensions) {
-      map[ext.toLowerCase()] = manifest.language;
-    }
-  }
-  return map;
-})();
+export const EXTENSION_TO_LANGUAGE: Readonly<Record<string, Language>> = Object.fromEntries(
+  claimTable(ALL_MANIFESTS, (m) => m.extensions, "Extension"),
+);
+
+// Push each extension's language family into path-utils (a leaf module plugin
+// code imports — it cannot import the registry, see link-scoring below).
+registerExtensionFamilies(
+  new Map(
+    ALL_MANIFESTS.flatMap((manifest) =>
+      manifest.family ? manifest.extensions.map((ext) => [ext.slice(1).toLowerCase(), manifest.family!] as const) : [],
+    ),
+  ),
+);
 
 /**
  * Regex that strips a known source-file extension from a path, for building
@@ -482,6 +512,43 @@ export function inferFileFrameworks(
   }
 
   return [...fileFrameworks];
+}
+
+// ─── Package managers ────────────────────────────────────────────────────
+
+/**
+ * Every plugin's package managers, in `ALL_MANIFESTS` order — the order the
+ * dependency inventory reads their manifests in, which decides which
+ * declaration of a package is recorded first. Static tier: every manifest is
+ * read whether or not its language was discovered.
+ */
+export const PACKAGE_MANAGERS: readonly PackageManagerSpec[] = ALL_MANIFESTS.flatMap((m) => m.packageManagers ?? []);
+
+const MATCHING_FIELDS = ["importKey", "packageKey", "prefixMatch", "assertsUnused", "installedOwners"] as const;
+
+/**
+ * Per ecosystem, the spec that says how imports match its packages. Several
+ * plugins may contribute manifests to one ecosystem (sbt → maven, rebar3 →
+ * hex); a second one that also defines matching throws.
+ */
+const PACKAGE_MATCHING: ReadonlyMap<PackageEcosystem, PackageManagerSpec> = (() => {
+  const map = new Map<PackageEcosystem, PackageManagerSpec>();
+  for (const spec of PACKAGE_MANAGERS) {
+    if (!MATCHING_FIELDS.some((f) => spec[f] !== undefined)) continue;
+    if (map.has(spec.ecosystem)) throw new Error(`Package ecosystem "${spec.ecosystem}" has import matching defined twice`);
+    map.set(spec.ecosystem, spec);
+  }
+  return map;
+})();
+
+/** How imports match the packages of an ecosystem (undefined: they never do — usage stays unknown). */
+export function packageMatchingFor(ecosystem: PackageEcosystem): PackageManagerSpec | undefined {
+  return PACKAGE_MATCHING.get(ecosystem);
+}
+
+/** The package ecosystems a language's imports are matched against. */
+export function packageEcosystemsFor(language: Language): readonly PackageEcosystem[] {
+  return MANIFEST_BY_LANGUAGE.get(language)?.packageEcosystems ?? [];
 }
 
 // ─── Package recognition ─────────────────────────────────────────────────
