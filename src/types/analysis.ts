@@ -846,6 +846,32 @@ export interface ApiRouteLink {
    * at that path declares serving; `target` is the best remaining guess.
    */
   matchedVia?: "exact" | "method-fallback" | "version-mismatch" | `base-prefix:${string}`;
+  /**
+   * Where the calling file sits, when it is not production code: a `test`
+   * (spec, e2e, integration test) or `generated` (an SDK, a bundle). The link
+   * is real — the test does request that route — but "which screen calls this
+   * endpoint" is about production callers, so consumers count them apart.
+   * Absent = production.
+   */
+  sourceRole?: "test" | "generated";
+}
+
+/** What the cross-tier linker did with every outbound call, including what it refused. */
+export interface ApiRouteLinkStats {
+  calls: number;
+  /** Calls with at least one URL naming an app path. */
+  joinable: number;
+  linked: number;
+  refused: {
+    /** Routes existed at the path, but none serves the call's method (or any method). */
+    methodMismatch: number;
+    /** Every URL was wildcards only (`/{}/{}`) — it names no route. */
+    wildcardOnly: number;
+  };
+  /** Joinable calls no route matched at all. */
+  unmatched: number;
+  /** Links by the role of the calling file. */
+  byRole?: { production: number; test: number; generated: number };
 }
 
 export interface DataSourceInfo {
@@ -1991,6 +2017,8 @@ export interface ProjectAnalysis {
    * screen→API→DB chain. Omitted when empty (e.g. pure frontend/backend repos).
    */
   apiRouteLinks?: ApiRouteLink[];
+  /** What the cross-tier linker did with every call — links, refusals, unmatched, by caller role. */
+  apiRouteLinkStats?: ApiRouteLinkStats;
   /** Per-file child-component usages (JSX/Vue-template tags), with import source as `target`. */
   componentUsage?: (SubComponentInfo & { filePath: string })[];
   symbolLinks: SymbolLink[];

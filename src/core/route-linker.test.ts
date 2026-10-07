@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { linkApiCallsToRoutes, normalizeRoutePath, dedupeRoutes } from "./route-linker.js";
+import {
+  linkApiCallsToRoutes,
+  linkApiCallsToRoutesDetailed,
+  normalizeRoutePath,
+  dedupeRoutes,
+  pairContractTwins,
+} from "./route-linker.js";
 import type { CallInfo, DataSourceInfo, RouteInfo } from "../types/analysis.js";
 
 const apiCall = (
@@ -351,9 +357,11 @@ describe("linkApiCallsToRoutes — API version", () => {
     expect(link!.confidence).toBe("EXTRACTED");
   });
 
-  it("flags a version no route declares serving, keeping the best guess downgraded", () => {
+  it("flags a version no route declares serving, keeping the best guess as a guess", () => {
+    // AMBIGUOUS, not merely downgraded: a link to a version the client does not
+    // call must never become a trace edge.
     const [link] = linkApiCallsToRoutes([call("/api/v9/institution/${id}/puljer/myPuljer")], [versioned("V2/C.cs", ["2"])]);
-    expect(link).toMatchObject({ target: "V2/C.cs", confidence: "INFERRED", matchedVia: "version-mismatch" });
+    expect(link).toMatchObject({ target: "V2/C.cs", confidence: "AMBIGUOUS", matchedVia: "version-mismatch" });
     // Several twins, none serving it: ambiguous AND flagged.
     const [multi] = linkApiCallsToRoutes(
       [call("/api/v9/institution/${id}/puljer/myPuljer")],
@@ -493,5 +501,132 @@ describe("linkApiCallsToRoutes — what the call itself knows", () => {
       [v("Catalog/V1.cs", ["1.0"]), v("Catalog/V2.cs", ["2.0"])],
     );
     expect(links[0]).toMatchObject({ target: "Catalog/V2.cs", confidence: "EXTRACTED" });
+  });
+});
+
+describe("linkApiCallsToRoutes — method policy", () => {
+  it("refuses a route that serves another method, whichever tier found it (Radarr)", () => {
+    // `POST /movie`: the literal path is BlocklistController's GET; the
+    // /api/v3 contract row serving POST is one tier further.
+    const blocklist = route("Blocklist/BlocklistController.cs", "GET", "/movie", "GetMovieBlocklist");
+    const contract = route("openapi.json", "POST", "/api/v3/movie", "post_movie");
+    const links = linkApiCallsToRoutes([apiCall("web/addMovie.js", "post", "/movie")], [blocklist, contract]);
+    expect(links[0]).toMatchObject({ target: "openapi.json", matchedVia: "base-prefix:/api/v{}" });
+  });
+
+  it("refuses outright when only another method is served, and counts it", () => {
+    const { links, stats } = linkApiCallsToRoutesDetailed(
+      [apiCall("web/a.js", "put", "/api/filters")],
+      [route("srv/filters.go", "POST", "/api/filters", "create")],
+    );
+    expect(links).toEqual([]);
+    expect(stats).toMatchObject({ calls: 1, joinable: 1, linked: 0, refused: { methodMismatch: 1 } });
+  });
+
+  it("falls back to a route that takes any method, as INFERRED", () => {
+    const anyRoute = { ...route("app.clj", "ANY", "/legacy", "legacy") };
+    const links = linkApiCallsToRoutes([apiCall("web/a.js", "post", "/legacy")], [anyRoute]);
+    expect(links[0]).toMatchObject({ confidence: "INFERRED", matchedVia: "method-fallback" });
+  });
+
+  it("serves HEAD with GET", () => {
+    const links = linkApiCallsToRoutes([apiCall("web/a.js", "head", "/api/x")], [route("srv/x.ts", "GET", "/api/x", "x")]);
+    expect(links[0]!.confidence).toBe("EXTRACTED");
+  });
+
+  it("still links a call whose method is unknown, on path alone", () => {
+    const links = linkApiCallsToRoutes([apiCall("web/a.js", "fetch", "/api/x")], [route("srv/x.ts", "POST", "/api/x", "x")]);
+    expect(links[0]).toMatchObject({ confidence: "INFERRED", matchedVia: "method-fallback" });
+  });
+
+  it("reads a version written in the route path: v2 is not v1", () => {
+    const v1 = route("pkg/routes.go", "GET", "/api/v1/tasks/:id", "getTask");
+    const [link] = linkApiCallsToRoutes([apiCall("e2e/task.spec.ts", "get", "/api/v2/tasks/${id}")], [v1]);
+    expect(link).toMatchObject({ confidence: "AMBIGUOUS", matchedVia: "version-mismatch" });
+  });
+});
+
+describe("linkApiCallsToRoutes — code rows and their API-contract twins", () => {
+  const isContract = (r: { filePath: string }) => r.filePath.endsWith(".json");
+
+  it("prefers the implementing code row over the contract row for the same endpoint (immich)", () => {
+    const ctl = route("server/src/controllers/album.controller.ts", "GET", "/api/albums", "getAllAlbums", 40);
+    const spec = route("open-api/immich-openapi-specs.json", "GET", "/api/albums", "getAllAlbums", 900);
+    const twins = pairContractTwins([ctl, spec], [], isContract);
+    const links = linkApiCallsToRoutes([apiCall("web/albums.ts", "get", "/api/albums")], [spec, ctl], {
+      isContract,
+      contractTwins: twins,
+    });
+    expect(links[0]).toMatchObject({ target: ctl.filePath, confidence: "EXTRACTED", matchedVia: "exact" });
+  });
+
+  it("still ranks code above an unpaired contract row", () => {
+    const ctl = route("srv/a.ts", "GET", "/api/x", "x");
+    const spec = route("spec.json", "GET", "/api/x", "x2");
+    const links = linkApiCallsToRoutes([apiCall("web/a.ts", "get", "/api/x")], [spec, ctl], { isContract });
+    expect(links[0]).toMatchObject({ target: "srv/a.ts", confidence: "EXTRACTED" });
+  });
+
+  it("lands on the code twin a spec join found when the code row knows only its tail", () => {
+    // Radarr: the controller row is prefix-less (`/movie`), the contract row
+    // carries the real path; the symbol linker's spec join tied the operation
+    // to MovieController.AddMovie.
+    const ctl = route("Movies/MovieController.cs", "POST", "/movie", "AddMovie", 120);
+    const spec = route("openapi.json", "POST", "/api/v3/movie", "post_api_v3_movie", 5000);
+    const join = {
+      sourceFile: "openapi.json",
+      sourceLine: 5000,
+      targetFile: "Movies/MovieController.cs",
+      targetSymbol: "MovieController.AddMovie",
+      targetLine: 121,
+      strategy: "spec-join",
+    };
+    const twins = pairContractTwins([ctl, spec], [join], isContract);
+    expect(twins.get(spec)).toBe(ctl);
+    const [link] = linkApiCallsToRoutes([apiCall("web/addMovie.js", "post", "/api/v3/movie")], [ctl, spec], {
+      isContract,
+      contractTwins: twins,
+    });
+    expect(link).toMatchObject({ target: ctl.filePath, targetLine: 120, routePath: "/api/v3/movie", confidence: "EXTRACTED" });
+  });
+
+  it("pairs nothing when several code rows could be the twin", () => {
+    const a = route("svcA/x.ts", "GET", "/api/x", "x");
+    const b = route("svcB/x.ts", "GET", "/api/x", "x");
+    const spec = route("spec.json", "GET", "/api/x", "x");
+    expect(pairContractTwins([a, b, spec], [], isContract).size).toBe(0);
+  });
+});
+
+describe("linkApiCallsToRoutes — same sub-project breaks a tie", () => {
+  it("prefers the route the call's own service declares", () => {
+    const own = { ...route("svcA/routes.ts", "GET", "/api/x", "x"), projectId: "svcA" };
+    const other = { ...route("svcB/routes.ts", "GET", "/api/x", "x"), projectId: "svcB" };
+    const projectOf = (f: string) => f.split("/")[0];
+    const links = linkApiCallsToRoutes([apiCall("svcA/test/x.spec.ts", "get", "/api/x")], [other, own], { projectOf });
+    expect(links[0]).toMatchObject({ target: "svcA/routes.ts", confidence: "EXTRACTED" });
+    const fromWeb = linkApiCallsToRoutes([apiCall("web/x.ts", "get", "/api/x")], [other, own], { projectOf });
+    expect(fromWeb[0]!.confidence).toBe("AMBIGUOUS");
+  });
+});
+
+describe("linkApiCallsToRoutesDetailed — stats", () => {
+  it("accounts for every call", () => {
+    const { stats } = linkApiCallsToRoutesDetailed(
+      [
+        apiCall("web/a.js", "get", "/api/x"),
+        apiCall("web/a.js", "get", "/${kind}/${id}"),
+        apiCall("web/a.js", "get", "/nothing/here"),
+        apiCall("web/a.js", "get", "https://example.com/x"),
+      ],
+      [route("srv/x.ts", "GET", "/api/x", "x")],
+    );
+    expect(stats).toEqual({
+      calls: 4,
+      joinable: 3,
+      linked: 1,
+      refused: { methodMismatch: 0, wildcardOnly: 1 },
+      unmatched: 1,
+    });
   });
 });

@@ -1174,7 +1174,7 @@ export function contractTool(ctx: ToolContext): McpTool {
 
       const callers = (summary.apiRouteLinks ?? [])
         .filter((l) => l.target === route.filePath && l.targetLine === route.line)
-        .map((l) => `${loc(l.source, l.sourceLine)}${confidenceNote(l.confidence)}${versionNote(l)}`);
+        .map((l) => `${loc(l.source, l.sourceLine)}${l.sourceRole ? ` (${l.sourceRole})` : ""}${confidenceNote(l.confidence)}${versionNote(l)}`);
       const project = route.projectId && route.projectId !== "root" ? ` [${projectNames.get(route.projectId) ?? route.projectId}]` : "";
       const { shown: cs, hidden: ch } = cap([...new Set(callers)], 8);
       return {

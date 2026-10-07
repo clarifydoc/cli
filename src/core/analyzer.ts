@@ -49,6 +49,7 @@ import {
   classifyKnownPackage,
   pluginFor,
   PARTIAL_PREFIX_BY_LANGUAGE,
+  isApiContractLanguage,
 } from "../extractors/registry.js";
 import { buildSymbolLinks } from "./symbol-linker.js";
 import { enrichGraphFromInheritance } from "./inheritance-edges.js";
@@ -88,7 +89,7 @@ import { vendoredMinoritySet } from "./security-scanner.js";
 import { buildEntityGraph, reconcileEntityInheritance, propagateStiRelations, linkEntityModels, synthesizeReferencedTableEntities } from "./entity-graph.js";
 import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
-import { linkApiCallsToRoutes, dedupeRoutes } from "./route-linker.js";
+import { linkApiCallsToRoutesDetailed, dedupeRoutes, pairContractTwins } from "./route-linker.js";
 import { attachHandlerParams, attachRequestSchemas } from "./request-schemas.js";
 import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
 import { reconcileProjectRoutes } from "../extractors/route-resolvers/index.js";
@@ -797,7 +798,16 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Cross-tier join: match each outbound api-call to the inbound route serving
   // it (by HTTP method + normalized path). Connects the two halves of the
   // screen→API→DB chain that the extractors produce independently.
-  const apiRouteLinks = linkApiCallsToRoutes(allApiCalls, allRoutes);
+  // An API description's row (OpenAPI, …) yields to the code row implementing
+  // it — the handler, which is what leads on to the data.
+  const isContractRoute = (r: { filePath: string }) =>
+    isApiContractLanguage(analysisByPath.get(r.filePath)?.language ?? "");
+  const contractTwins = pairContractTwins(allRoutes, symbolLinks, isContractRoute);
+  const { links: apiRouteLinks, stats: apiRouteLinkStats } = linkApiCallsToRoutesDetailed(allApiCalls, allRoutes, {
+    isContract: isContractRoute,
+    projectOf: (f) => analysisByPath.get(f)?.projectId,
+    contractTwins,
+  });
   if (apiRouteLinks.length > 0) {
     progress.detail(`  API↔route links: ${apiRouteLinks.length}`);
   }
@@ -970,6 +980,17 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const layerViolations = detectLayerViolations(allAnalyses, componentGraph, fileLayerMap).filter(
     (v) => !isUnauthored(v.sourceFile) && !isUnauthored(v.targetFile),
   );
+
+  // Which links come from tests or generated code. The link stands — the test
+  // does request that route — but "which screen calls this endpoint" is about
+  // production callers, so consumers count these apart. Same definitions the
+  // quality signals use.
+  apiRouteLinkStats.byRole = { production: 0, test: 0, generated: 0 };
+  for (const link of apiRouteLinks) {
+    if (isUnauthored(link.source)) link.sourceRole = "generated";
+    else if (fileLayerMap[link.source] === "test") link.sourceRole = "test";
+    apiRouteLinkStats.byRole[link.sourceRole ?? "production"]++;
+  }
 
   // Intra-file call structure: the edges exist in symbolLinks but nothing read
   // them, so "20 functions" was all the god-object check ever knew.
@@ -1340,6 +1361,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     dataFlows: dataFlows.length > 0 ? dataFlows : undefined,
     migrations: migrations.length > 0 ? migrations : undefined,
     apiRouteLinks: apiRouteLinks.length > 0 ? apiRouteLinks : undefined,
+    apiRouteLinkStats: apiRouteLinkStats.calls > 0 ? apiRouteLinkStats : undefined,
     generatedRoots: generatedRoots.length > 0 ? generatedRoots : undefined,
     unusedFiles: unusedFiles.length > 0 ? unusedFiles : undefined,
     deadCode,
