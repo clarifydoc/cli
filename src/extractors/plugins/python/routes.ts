@@ -6,6 +6,7 @@ import { HTTP_METHODS } from "../../routes/base.js";
 import type { RouteExtractor } from "../../routes/base.js";
 import { scanRequestAccess } from "./request-access.js";
 import { splitGeneric, unwrapNullable } from "./request-schema.js";
+import { DJANGO_GATE, collectDjangoFacts } from "./django/facts.js";
 
 /**
  * Python: `@app.get("/path")` (FastAPI, Flask ≥2), `@bp.route("/path", methods=[…])`
@@ -499,9 +500,11 @@ function bodyAccessParams(fnDef: Node | null, path: string, declared: readonly R
 /** Route-registry adapter for this plugin (see routes/base.ts). */
 export const pythonRouteExtractor: RouteExtractor = {
   languages: ["python"],
-  extractRoutes(tree, _sourceText) {
+  extractRoutes(tree, sourceText, _filePath, facts) {
     const routes: RouteInfo[] = [];
     extractPythonRoutes(tree.rootNode, routes);
+    // Django / DRF routing is only facts per file; `django-urlconf` joins them.
+    if (facts && DJANGO_GATE.test(sourceText)) collectDjangoFacts(tree.rootNode, facts);
     return routes;
   },
 };
