@@ -146,7 +146,7 @@ Same registry pattern as the other domains: `routes/base.ts` defines
 `RouteExtractor` (`languages` + `extractRoutes(tree, sourceText)`), and each
 language family exports one:
 - `javascript/routes/index.ts` — runs Express, React Router, NestJS, Vue Router in order
-- `python/routes.ts` (Flask, FastAPI, Django)
+- `python/routes.ts` (Flask, FastAPI decorators and mounts; Django guard decorators) and `python/django/` — Django urlconfs and DRF routers are per-file `routeFacts` (urlpatterns entries, `router.register`, view-class attributes) that the `django-urlconf` route resolver joins: from `ROOT_URLCONF` through `include("mod")` / inline lists / `*router.urls`, ViewSet actions from mixins + project methods + `@action`, `path()` converters and `re_path` regexes as `{name}`
 - `csharp/routes/aspnet.ts`
 - `java-kotlin/routes/spring.ts`
 - `pascal/routes.ts`

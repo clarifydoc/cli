@@ -12,6 +12,7 @@ import { PythonDataSourceExtractor } from "./data-sources.js";
 import { PythonMutationExtractor } from "./data-mutations.js";
 import { PythonEntityExtractor } from "./entities.js";
 import { pythonRouteExtractor } from "./routes.js";
+import { djangoUrlconfResolver } from "./django/resolver.js";
 import { pythonRequestSchema } from "./request-schema.js";
 import { pythonReachability, extractPythonPathReferences } from "./reachability.js";
 import { extractPythonDiBindings } from "./di.js";
@@ -71,6 +72,7 @@ export const pythonMeta: LanguagePluginMeta = {
   ...pythonManifest,
   knownPackages: pypiPackages,
   routes: pythonRouteExtractor,
+  routeResolvers: [djangoUrlconfResolver],
   functionsClasses: new PythonExtractor(),
   importsExports: new PythonImportExportExtractor(),
   dataSources: new PythonDataSourceExtractor(),
