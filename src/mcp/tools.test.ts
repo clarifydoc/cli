@@ -439,10 +439,15 @@ describe("clarifydoc MCP tools — attribute-layer queries (csharp fixture)", ()
     expect(role.text).toContain("# Routes (1 match)");
     expect(role.text).toContain("POST /api/v{version}/Users");
     const anonymous = await call(server, "clarifydoc_routes", { anonymous: true });
-    expect(anonymous.text).toContain("# Routes (1 match)");
+    expect(anonymous.text).toContain("# Routes (2 matches)");
     expect(anonymous.text).toContain("DELETE /api/v{version}/Users/{id}");
+    // Its own [AllowAnonymous] waives the [Authorize] it inherits from BaseApiController.
+    expect(anonymous.text).toContain("POST /api/Reports/run");
     const guarded = await call(server, "clarifydoc_routes", { anonymous: false, limit: 100 });
-    expect(guarded.text).toMatch(/# Routes \(3 matches\)/); // routes with no auth at all are neither
+    // Routes with no auth at all are neither; GET /api/Reports/{reportId} is
+    // guarded only by the [Authorize] it inherits.
+    expect(guarded.text).toMatch(/# Routes \(4 matches\)/);
+    expect(guarded.text).toContain("GET /api/Reports/{reportId}");
     const v1 = await call(server, "clarifydoc_routes", { version: "1.0", limit: 100 });
     expect(v1.text).toMatch(/# Routes \(3 matches\)/); // POST is v2 only
     const deprecated = await call(server, "clarifydoc_routes", { deprecated: true, limit: 100 });

@@ -1,5 +1,5 @@
 import type { Tree } from "web-tree-sitter";
-import type { RouteInfo, Language } from "../../types/analysis.js";
+import type { RouteInfo, RouteFact, Language } from "../../types/analysis.js";
 import { pluginFor } from "../registry.js";
 
 /**
@@ -11,8 +11,9 @@ export function extractRoutes(
   sourceText: string,
   language: Language,
   filePath?: string,
+  facts?: RouteFact[],
 ): RouteInfo[] {
   const extractor = pluginFor(language)?.routes;
   if (!extractor) return [];
-  return extractor.extractRoutes(tree, sourceText, filePath);
+  return extractor.extractRoutes(tree, sourceText, filePath, facts);
 }
