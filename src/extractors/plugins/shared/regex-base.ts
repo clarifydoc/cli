@@ -255,7 +255,8 @@ export function findEndLine(
         return i;
       }
     }
-    return Math.min(startIdx + 20, lines.length);
+    // Nothing dedents again: the block runs to the end of the file.
+    return lines.length;
   }
 
   if (style === "keyword-end") {

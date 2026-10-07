@@ -284,6 +284,19 @@ describe("analyzeReachability", () => {
     ]);
   });
 
+  it("treats the project root's directory as a unit too", () => {
+    const go: ReachabilityModel = {
+      ...stubModel(["main.go"]),
+      judgeExports: false,
+      resolve: () => [],
+      unitOf: (f) => (f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : ""),
+    };
+    const g = (filePath: string) => file({ filePath, language: "go" as never });
+    // `helpers.go` sits beside `main.go` in the root package: compiled with it, never imported.
+    const r = run([g("main.go"), g("helpers.go"), g("legacy/x.go")], go, { models: new Map([["go", go]]) as never });
+    expect(r.files.map((f) => f.filePath)).toEqual(["legacy/x.go"]);
+  });
+
   it("returns nothing when no language declares a model", () => {
     expect(
       analyzeReachability({
