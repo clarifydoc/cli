@@ -99,6 +99,9 @@ function readTsconfig(tsconfigPath: string, seen: Set<string>): Map<string, stri
   const compilerBase = parsed.compilerOptions?.baseUrl
     ? resolve(baseDir, parsed.compilerOptions.baseUrl)
     : baseDir;
+  // `baseUrl` alone makes every directory under it importable by bare path
+  // (`import { environment } from 'src/environments/environment'`).
+  if (parsed.compilerOptions?.baseUrl) aliases.set(BASE_URL_KEY, compilerBase);
   const paths = parsed.compilerOptions?.paths ?? {};
   for (const [alias, targets] of Object.entries(paths)) {
     if (!Array.isArray(targets) || targets.length === 0) continue;
@@ -182,6 +185,7 @@ export function applyAliases(
 ): string {
   if (aliases.size === 0) return importSource;
   for (const [prefix, base] of aliases) {
+    if (prefix === BASE_URL_KEY) continue;
     if (importSource === prefix || importSource.startsWith(prefix + "/")) {
       const rest = importSource.slice(prefix.length).replace(/^\/+/, "");
       const abs = resolve(base, rest);
@@ -191,8 +195,22 @@ export function applyAliases(
       return rel;
     }
   }
+  // A bare path under `baseUrl` — only when a file is there, so a package
+  // import (`rxjs/operators`) is never mistaken for one.
+  const baseUrl = aliases.get(BASE_URL_KEY);
+  if (baseUrl && importSource.includes("/") && !/^[./@]/.test(importSource)) {
+    const abs = resolve(baseUrl, importSource);
+    if (BASE_URL_EXTENSIONS.some((ext) => existsSync(abs + ext))) {
+      const rel = posix.relative(toPosix(resolve(projectRoot)), toPosix(abs));
+      if (!rel.startsWith("..")) return rel;
+    }
+  }
   return importSource;
 }
+
+/** The alias-map key carrying a tsconfig's `baseUrl` directory. */
+const BASE_URL_KEY = "<baseUrl>";
+const BASE_URL_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".vue", "/index.ts", "/index.js"];
 
 function toPosix(p: string): string {
   return p.split(sep).join("/");

@@ -1,4 +1,5 @@
 import type { Node, Tree } from "web-tree-sitter";
+import { renderUrlExpr } from "./url-expr.js";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from "../../functions-classes/base.js";
 import type { CallInfo, RouteParamInfo } from "../../../types/analysis.js";
@@ -864,6 +865,13 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const body = node.childForFieldName("body");
     const methods: FunctionInfo[] = [];
     const properties: PropertyInfo[] = [];
+    // String-shaped field values (`baseUrl = environment.apiUrl`, `this.resourceName = 'tags'`);
+    // null marks a field given two different values.
+    const fieldValues = new Map<string, string | null>();
+    const setValue = (field: string, value: string | null) => {
+      if (value === null || value.length > 300) return;
+      fieldValues.set(field, fieldValues.has(field) && fieldValues.get(field) !== value ? null : value);
+    };
     let concreteMembers = 0;
     let abstractMembers = 0;
     let ctor: { params: ParamInfo[]; body: Node } | null = null;
@@ -923,13 +931,15 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         } else if (member.type === "public_field_definition" || member.type === "field_definition") {
           if (member.children.some((c) => c.type === "abstract")) abstractMembers++;
           else concreteMembers++;
-          properties.push(this.parseField(member));
+          const field = this.parseField(member);
+          properties.push(field);
+          setValue(field.name, renderUrlExpr(member.childForFieldName("value")));
         } else if (member.type === "class_static_block") {
           concreteMembers++;
         }
       }
     }
-    if (ctor) this.constructorAssignments(ctor.body, ctor.params, properties);
+    if (ctor) this.constructorAssignments(ctor.body, ctor.params, properties, setValue);
 
     // An abstract class with nothing BUT abstract members is an interface in
     // all but name (the Angular/NestJS DI-token idiom `abstract class Logger
@@ -954,6 +964,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
       ...(isInterface ? { kind: "interface" as const } : {}),
+      ...knownFieldValues(fieldValues),
     };
   }
 
@@ -1006,7 +1017,12 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
    * when its type or token is known. Two top-level assignments of one field
    * that disagree state nothing.
    */
-  private constructorAssignments(body: Node, params: readonly ParamInfo[], properties: PropertyInfo[]): void {
+  private constructorAssignments(
+    body: Node,
+    params: readonly ParamInfo[],
+    properties: PropertyInfo[],
+    setValue: (field: string, value: string | null) => void,
+  ): void {
     const assigned = new Map<string, InjectedType | null>();
     for (const stmt of body.namedChildren) {
       if (stmt.type !== "expression_statement") continue;
@@ -1017,6 +1033,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       const field = left.childForFieldName("property")?.text;
       const right = assign.childForFieldName("right");
       if (!field || !right) continue;
+      setValue(field, renderUrlExpr(right));
 
       const doc = this.jsdocOf(stmt);
       const docType = doc ? jsDocTypeTag(doc) : null;
@@ -1098,4 +1115,10 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
   ): "public" | "private" | "protected" | null {
     return getVisibility(node);
   }
+}
+
+/** The field values that were stated once, for `ClassInfo.fieldValues`; nothing when there are none. */
+function knownFieldValues(values: ReadonlyMap<string, string | null>): { fieldValues?: Record<string, string> } {
+  const known = [...values].filter((e): e is [string, string] => e[1] !== null).slice(0, 50);
+  return known.length > 0 ? { fieldValues: Object.fromEntries(known) } : {};
 }

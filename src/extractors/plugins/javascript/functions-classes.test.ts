@@ -199,3 +199,23 @@ describe("URL-builder template extraction — branches and methods", () => {
     expect(await templatesOf(SRC, "uri")).toEqual(["/api/{sub}"]);
   });
 });
+
+describe("JS class field values", () => {
+  it("records initializers and constructor assignments as URL strings with holes", async () => {
+    const [cls] = await classesOf(`
+      export class TagService extends AbstractService {
+        baseUrl = environment.apiUrl + 'tags/';
+        constructor(http) { super(http); this.resourceName = 'tags'; this.http = http; }
+      }`);
+    expect(cls!.fieldValues).toEqual({
+      baseUrl: "${environment.apiUrl}tags/",
+      resourceName: "tags",
+      http: "${http}",
+    });
+  });
+
+  it("records nothing for a field given two different values", async () => {
+    const [cls] = await classesOf(`class A { url = '/a'; constructor() { this.url = '/b'; } }`);
+    expect(cls!.fieldValues).toBeUndefined();
+  });
+});

@@ -307,6 +307,13 @@ export interface FileAnalysis {
    * literal into the factory's URL at this call site.
    */
   pathArgCalls?: PathArgCall[];
+  /**
+   * URL-shaped values this module defines at its top level, by name — an
+   * object's members as `name.member` (`environment.apiUrl` →
+   * `http://localhost:5000/api/`). A project pass follows an import here to
+   * resolve `${environment.apiUrl}` in another file's URL.
+   */
+  moduleValues?: Record<string, string>;
   dataSources: DataSourceInfo[];
   dataMutations: DataMutationInfo[];
   /**
@@ -651,6 +658,14 @@ export interface ClassInfo {
   decorators: string[];
   methods: FunctionInfo[];
   properties: PropertyInfo[];
+  /**
+   * String-shaped values the class gives its fields — an initializer or a
+   * constructor's top-level `this.x = …` — rendered with `${…}` holes for
+   * what is not literal (`baseUrl` → `${environment.apiUrl}`,
+   * `resourceName` → `tags`). A field given two different values is absent.
+   * What a project pass needs to resolve `${this.baseUrl}` in a URL.
+   */
+  fieldValues?: Record<string, string>;
   isExported: boolean;
   line: number;
   endLine: number;
