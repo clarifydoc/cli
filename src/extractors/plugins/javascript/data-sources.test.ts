@@ -513,3 +513,30 @@ describe("JS route decorators are not outbound calls", () => {
     expect(calls.map((c) => c.target)).toEqual(["/api/remote/sync"]);
   });
 });
+
+describe("JS request factories: a descriptor URL built from a parameter", () => {
+  it("reads a ternary's arms and the factory's parameter as a hole (Radarr createFetchHandler)", async () => {
+    const calls = await apiCallsOf(`
+      export default function createFetchHandler(section, url) {
+        return function(getState, payload, dispatch) {
+          const { id } = payload;
+          const { request } = createAjaxRequest({ url: id == null ? url : \`\${url}/\${id}\`, data: payload, traditional: true });
+          return request;
+        };
+      }`);
+    expect(calls.map((c) => [c.name, c.target, c.targetAlternatives])).toEqual([["request", "${url}", ["${url}/${id}"]]]);
+  });
+
+  it("reads a shorthand `{ url }` beside a verb", async () => {
+    const calls = await apiCallsOf(`
+      export function createRemoveItemHandler(section, url) {
+        return () => createAjaxRequest({ url, method: 'DELETE' });
+      }`);
+    expect(calls.map((c) => [c.name, c.target])).toEqual([["delete", "${url}"]]);
+  });
+
+  it("does not take a non-parameter variable for a request without a verb", async () => {
+    const calls = await apiCallsOf(`function f() { const x = compute(); return track({ url: x, data: 1 }); }`);
+    expect(calls).toEqual([]);
+  });
+});

@@ -300,6 +300,13 @@ export interface FileAnalysis {
   routes: RouteInfo[];
   /** Routing facts for the plugin's project-level route resolver (see `RouteFact`). */
   routeFacts?: RouteFact[];
+  /**
+   * Calls that hand a path literal to a project function (`createFetchHandler(
+   * 'system.status', '/system/status')`): a request FACTORY whose own api-call
+   * builds its URL from that parameter. The project pass substitutes the
+   * literal into the factory's URL at this call site.
+   */
+  pathArgCalls?: PathArgCall[];
   dataSources: DataSourceInfo[];
   dataMutations: DataMutationInfo[];
   /**
@@ -737,6 +744,15 @@ export interface RouteInfo {
   resolvedBy?: string;
 }
 
+/** A call passing at least one path literal to a function (see `FileAnalysis.pathArgCalls`). */
+export interface PathArgCall {
+  /** The callee as written: a function name, or the leaf of a member call. */
+  callee: string;
+  /** Each positional argument: a string literal's content, else null. */
+  args: Array<string | null>;
+  line: number;
+}
+
 /**
  * A routing fact a per-file extractor saw but could not turn into a route on
  * its own — a Django `urlpatterns` entry, a DRF `router.register`, a base
@@ -962,6 +978,8 @@ export interface DataSourceInfo {
    * aggregated rows, not per file.
    */
   baseExpr?: string;
+  /** For an api-call made through a request factory: the factory, its URL filled in from this call site's arguments. */
+  via?: string;
 }
 
 /**
