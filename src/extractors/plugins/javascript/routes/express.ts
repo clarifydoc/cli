@@ -266,6 +266,7 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
                 middleware,
                 line: node.startPosition.row + 1,
               };
+              if (method === "use") route.mount = true;
               routeMeta.set(route, { receiver, guards, params });
               routes.push(route);
             }

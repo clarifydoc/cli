@@ -22,10 +22,12 @@ import { joinRoutePath } from "./route-paths.js";
  * declarations were found, the paths were wrong, and the collisions ate the
  * rest.
  *
- * A mount is represented as an api route with `httpMethod: null` whose `handler`
- * is the router identifier — the shape the Express extractor already emitted for
- * `app.use(prefix, routerVar)`, and which the Python extractor now emits for
- * `include_router(mod.router, prefix=…)`. This project-level pass resolves that
+ * A mount is an api route marked `mount: true` whose `handler` is the router
+ * identifier — what the Express extractor emits for `app.use(prefix, routerVar)`
+ * and the Python extractor for `include_router(mod.router, prefix=…)`. The
+ * marker is explicit because the shape alone (null method, identifier handler)
+ * is also an "any method" endpoint — Compojure `ANY "/x" handler` — which must
+ * never be swallowed as wiring. This project-level pass resolves that
  * identifier through the import index to the router's file, then prefixes every
  * API route declared there. Mounts compose transitively (`server.js` → `apiRouter`
  * → `authRouter`, or `api.py` → `articles/api.py` → `articles_resource.py`), and
@@ -58,14 +60,13 @@ export function resolveRouterMounts(analyses: FileAnalysis[], importIndex: Impor
     if ((a.routes ?? []).some((r) => r.kind === "api")) apiRouteFiles.add(a.filePath);
   }
 
-  // 1. Collect direct mounts: a `use` route (httpMethod null) whose handler is a
-  //    bare identifier resolving — through the importing file's imports — to a
-  //    known router file.
+  // 1. Collect direct mounts: a mount row whose handler is a bare identifier
+  //    resolving — through the importing file's imports — to a known router file.
   const mountsByTarget = new Map<string, Mount[]>();
   const dropped = new Set<RouteInfo>();
   for (const a of analyses) {
     for (const r of a.routes ?? []) {
-      if (r.kind !== "api" || r.httpMethod !== null) continue;
+      if (!r.mount || r.kind !== "api") continue;
       if (!r.handler || !BARE_IDENT.test(r.handler)) continue;
       const target = importIndex.localFor(a.filePath, r.handler);
       if (!target || target === a.filePath || !apiRouteFiles.has(target)) continue;

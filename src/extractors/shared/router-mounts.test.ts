@@ -10,6 +10,9 @@ const route = (
   kind: "api" | "frontend" = "api",
 ): RouteInfo => ({ path, httpMethod, kind, handler, calls: [], middleware: [], line: 1 });
 
+/** `app.use(prefix, handler)` — the explicit mount row the Express extractor emits. */
+const use = (path: string, handler: string | null): RouteInfo => ({ ...route(null, path, handler), mount: true });
+
 /** Minimal FileAnalysis carrying only what resolveRouterMounts reads. */
 const file = (filePath: string, routes: RouteInfo[]): FileAnalysis =>
   ({ filePath, routes } as unknown as FileAnalysis);
@@ -25,7 +28,7 @@ const apiPaths = (a: FileAnalysis) => a.routes.filter((r) => r.kind === "api").m
 
 describe("resolveRouterMounts", () => {
   it("prefixes a mounted router's routes and drops the mount route", () => {
-    const server = file("backend/server.js", [route(null, "/api/auth", "authRoutes")]);
+    const server = file("backend/server.js", [use("/api/auth", "authRoutes")]);
     const auth = file("backend/routes/authRoutes.js", [
       route("POST", "/login", "login"),
       route("GET", "/profile", "getProfile"),
@@ -42,8 +45,8 @@ describe("resolveRouterMounts", () => {
 
   it("distinguishes same-named bare paths once each router carries its prefix", () => {
     const server = file("server.js", [
-      route(null, "/api/admin", "adminRoutes"),
-      route(null, "/api/donor", "donorRoutes"),
+      use("/api/admin", "adminRoutes"),
+      use("/api/donor", "donorRoutes"),
     ]);
     const admin = file("routes/adminRoutes.js", [route("GET", "/dashboard", "adminDash")]);
     const donor = file("routes/donorRoutes.js", [route("GET", "/dashboard", "donorDash")]);
@@ -56,8 +59,8 @@ describe("resolveRouterMounts", () => {
   });
 
   it("composes transitively through a nested router mount", () => {
-    const server = file("server.js", [route(null, "/api", "apiRouter")]);
-    const api = file("routes/api.js", [route(null, "/users", "usersRouter")]);
+    const server = file("server.js", [use("/api", "apiRouter")]);
+    const api = file("routes/api.js", [use("/users", "usersRouter")]);
     const users = file("routes/users.js", [route("GET", "/:id", "getUser")]);
     resolveRouterMounts([server, api, users], importIndex({
       "server.js": { apiRouter: "routes/api.js" },
@@ -70,8 +73,8 @@ describe("resolveRouterMounts", () => {
 
   it("duplicates routes when a router is mounted at several prefixes", () => {
     const server = file("server.js", [
-      route(null, "/api/v1/users", "usersRouter"),
-      route(null, "/api/v2/users", "usersRouter"),
+      use("/api/v1/users", "usersRouter"),
+      use("/api/v2/users", "usersRouter"),
     ]);
     const users = file("routes/users.js", [route("GET", "/", "list")]);
     resolveRouterMounts([server, users], importIndex({
@@ -83,8 +86,8 @@ describe("resolveRouterMounts", () => {
 
   it("leaves an unmounted (orphan) router and non-router middleware untouched", () => {
     const server = file("server.js", [
-      route(null, "/api/auth", "authRoutes"),
-      route(null, "/api/doc", "swaggerUi.serve"), // member expr — not a bare router
+      use("/api/auth", "authRoutes"),
+      use("/api/doc", "swaggerUi.serve"), // member expr — not a bare router
     ]);
     const auth = file("routes/authRoutes.js", [route("GET", "/me", "me")]);
     const orphan = file("routes/legacy.js", [route("POST", "/login", "login")]); // never mounted
@@ -96,7 +99,18 @@ describe("resolveRouterMounts", () => {
     expect(auth.routes[0]!.path).toBe("/api/auth/me");
     expect(orphan.routes[0]!.path).toBe("/login"); // unmounted → unchanged
     // The non-router `use` (member-expression handler) stays as-is.
-    expect(server.routes).toEqual([route(null, "/api/doc", "swaggerUi.serve")]);
+    expect(server.routes).toEqual([use("/api/doc", "swaggerUi.serve")]);
+  });
+
+  it("never treats an any-method endpoint with an identifier handler as a mount", () => {
+    // Compojure `(ANY "/legacy" [] legacy-handler)`: null method, identifier
+    // handler, and the handler's file does declare routes — still an endpoint.
+    const app = file("src/app.clj", [route(null, "/legacy", "legacyHandler")]);
+    const legacy = file("src/legacy.clj", [route("GET", "/x", "x")]);
+    const count = resolveRouterMounts([app, legacy], importIndex({ "src/app.clj": { legacyHandler: "src/legacy.clj" } }));
+    expect(count).toBe(0);
+    expect(app.routes).toHaveLength(1);
+    expect(legacy.routes[0]!.path).toBe("/x");
   });
 
   it("is a no-op when nothing mounts a router", () => {
@@ -109,7 +123,7 @@ describe("resolveRouterMounts", () => {
 describe("resolveRouterMounts — mount-level guards", () => {
   it("a guard on the mount (`app.use('/admin', requireAuth, adminRouter)`) protects every mounted route, as inherited", () => {
     const mount: RouteInfo = {
-      ...route(null, "/admin", "adminRoutes"),
+      ...use("/admin", "adminRoutes"),
       middleware: ["requireAuth"],
       auth: { policies: ["requireAuth"], roles: [], schemes: [], anonymous: false, inherited: false },
     };
@@ -129,7 +143,7 @@ describe("resolveRouterMounts — mount-level guards", () => {
   });
 
   it("leaves mounted routes untouched when the mount declares no guard", () => {
-    const server = file("server.js", [route(null, "/api", "apiRoutes")]);
+    const server = file("server.js", [use("/api", "apiRoutes")]);
     const api = file("routes/api.js", [route("GET", "/x", "x")]);
     resolveRouterMounts([server, api], importIndex({ "server.js": { apiRoutes: "routes/api.js" } }));
     expect(api.routes[0]!.middleware).toEqual([]);

@@ -633,6 +633,26 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   }
 
   // Step 4: Post-analysis
+
+  // One project-wide import index, shared across the router mount resolver and
+  // every serial builder that resolves cross-file references (screens, type
+  // blast, class graph). Building it once avoids re-iterating all imports.
+  const importIndex = buildImportIndex(allAnalyses);
+
+  // Router mounts: `app.use("/api/auth", authRoutes)` (Express) or
+  // `include_router(auth.router, prefix="/users")` (FastAPI) sits in a different
+  // file from the endpoints and prefixes their bare router-level paths. Resolve
+  // the mount identifier through the import index and apply the prefix so routes
+  // carry the path a caller requests and the screen→API join can match them.
+  // Runs BEFORE the symbol linker: its `route:<METHOD> <path>` anchors are what
+  // the route map, data-flow reach and the Routes tab look a route up by, so
+  // they must carry the composed path, not the router-local one. Project-level
+  // + in-memory (mirrors reconcileProjectEntities); no per-file JSON change.
+  const mountedRouteCount = resolveRouterMounts(allAnalyses, importIndex);
+  if (mountedRouteCount > 0 && verbose) {
+    progress.detail(`  mounted routes prefixed: ${mountedRouteCount}`);
+  }
+
   progress.step("Building dependency graph...");
   const componentGraph = buildComponentGraph(allAnalyses);
   progress.status("Building link graph...");
@@ -709,23 +729,6 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     ...buildComponentLaunches(symbolLinks),
     ...buildFormLaunches(allAnalyses, symbolLinks),
   ];
-
-  // One project-wide import index, shared across the Express mount resolver and
-  // every serial builder that resolves cross-file references (screens, type
-  // blast, class graph). Building it once avoids re-iterating all imports.
-  const importIndex = buildImportIndex(allAnalyses);
-
-  // Router mounts: `app.use("/api/auth", authRoutes)` (Express) or
-  // `include_router(auth.router, prefix="/users")` (FastAPI) sits in a different
-  // file from the endpoints and prefixes their bare router-level paths. Resolve
-  // the mount identifier through the import index and apply the prefix so routes
-  // carry the path a caller requests and the screen→API join can match them.
-  // Project-level + in-memory (mirrors reconcileProjectEntities); no per-file
-  // JSON change.
-  const mountedRouteCount = resolveRouterMounts(allAnalyses, importIndex);
-  if (mountedRouteCount > 0 && verbose) {
-    progress.detail(`  mounted routes prefixed: ${mountedRouteCount}`);
-  }
 
   // Collapse the same endpoint declared twice (Rails: `routes.rb` expansion +
   // controller-action convention) into one richest entry, so the route map and
