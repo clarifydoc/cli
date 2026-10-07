@@ -1,4 +1,5 @@
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
+import { receiverTypeOfCall } from "./di.js";
 
 /** Vue 3 <script setup> compiler macros — auto-imported, not in imports array */
 const VUE_COMPILER_MACROS = new Set([
@@ -61,4 +62,10 @@ export const javascriptCallHooks: CallExtractionHooks = {
   classifyAutoImported(callName) {
     return VUE_COMPILER_MACROS.has(callName) ? { target: "vue" } : null;
   },
+
+  // A container lookup or a cast chained straight into the call
+  // (`this.moduleRef.get(ReportService).buildReport()`,
+  // `container.get<IUserRepo>(TYPES.UserRepo).fetchUserById(1)`,
+  // `(this.gadget as GadgetService).buffGadget()`) names its receiver's type.
+  receiverTypeOf: receiverTypeOfCall,
 };

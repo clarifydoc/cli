@@ -28,6 +28,10 @@ export const rustMeta: LanguagePluginMeta = {
   ...rustManifest,
   regexSpec: rustSpec,
   builtinTypes: RUST_BUILTINS,
+  // Auto-deref: `self.repo.find()` on a `repo: Arc<dyn UserRepo>` calls the
+  // trait's `find`. `RefCell`/`Mutex` are not listed — their calls go through
+  // `.borrow()` / `.lock()` first.
+  transparentTypeWrappers: ["Arc", "Box", "Rc", "Cow"],
   knownPackages: cargoPackages,
   entities: new RustEntityExtractor(),
   requestSchema: rustRequestSchema,

@@ -61,6 +61,8 @@ export function extractWithRegex(
   }
   const pathRefs = spec.extractPathReferences?.(lines);
   if (pathRefs && pathRefs.length > 0) analysis.pathReferences = pathRefs;
+  const diBindings = spec.extractDiBindings?.(lines, filePath);
+  if (diBindings && diBindings.length > 0) analysis.diBindings = diBindings;
   if (spec.extractStringConstants) {
     const consts = spec.extractStringConstants(lines);
     if (Object.keys(consts).length > 0) analysis.stringConstants = consts;

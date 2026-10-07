@@ -134,3 +134,43 @@ describe("brace block end — declarations with no body", () => {
     expect(end(["def apply(): X = new X(y)", "", "class Other {", "  val z = 1", "}"].join("\n"))).toBe(1);
   });
 });
+
+describe("one-line bodies and string literals in regex call extraction", () => {
+  it("finds where a declaration line's own body starts", async () => {
+    const { inlineBodyColumn } = await import("./regex-base.js");
+    const at = (line: string, name: string) => {
+      const col = inlineBodyColumn(line, line.indexOf(name) + name.length);
+      return col < 0 ? null : line.slice(col).trim();
+    };
+    expect(at("func (s *Svc) One(id int) { s.repo.Find(id) }", "One")).toBe("s.repo.Find(id) }");
+    expect(at("  def f(r: Repo): Unit = r.loadAll()", "f")).toBe("r.loadAll()");
+    expect(at("  void save() => _repo.save();", "save")).toBe("_repo.save();");
+    expect(at("func load(id: Int = 3) -> User? {", "load")).toBe("");
+    expect(at("  Future<void> f({required this.x}) async {", "f")).toBe("");
+    expect(at("int f(int a);", "f")).toBeNull();
+    expect(at("local f = function(x)", "f")).toBeNull();
+    expect(at("sub handler { my $x = shift; $x->go() }", "handler")).toBe("my $x = shift; $x->go() }");
+  });
+
+  it("blanks string contents but keeps interpolated code", async () => {
+    const { blankStringLiterals } = await import("./regex-base.js");
+    expect(blankStringLiterals("String d() => 'UserService($baseUrl)';")).not.toMatch(/UserService\(/);
+    expect(blankStringLiterals('puts "a #{repo.find(1)} b"')).toContain("#{repo.find(1)}");
+    expect(blankStringLiterals('let s = "\\(repo.load())"')).toContain("\\(repo.load())");
+    expect(blankStringLiterals("fn f<'a>(x: &'a Foo) { x.bar() }")).toBe("fn f<'a>(x: &'a Foo) { x.bar() }");
+  });
+});
+
+describe("class properties under a wrapped header", () => {
+  it("scans fields from the line that opens the body", async () => {
+    const { extractClassesWithSpec } = await import("./regex-base.js");
+    const spec = {
+      language: "dart", extensions: [".dart"], functionPatterns: [], importPatterns: [], lineCommentPrefixes: ["//"],
+      classPatterns: [{ pattern: /^\s*class\s+(\w+)/ }],
+      propertyPatterns: [{ pattern: /^\s*final\s+(\w+)\s+(\w+);/, build: (m: RegExpMatchArray) => ({ name: m[2]!, type: m[1]!, visibility: null, isStatic: false, isReadonly: true }) }],
+    } as any;
+    const lines = ["class A extends B", "    implements C {", "  final Repo repo;", "}"];
+    const [cls] = extractClassesWithSpec(lines, spec);
+    expect(cls!.properties.map((p) => [p.name, p.type])).toEqual([["repo", "Repo"]]);
+  });
+});

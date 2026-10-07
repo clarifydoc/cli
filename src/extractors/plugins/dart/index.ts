@@ -10,6 +10,16 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
 import { applyRouteMeta, type GuardAttr } from "../../shared/route-metadata.js";
 import { extractDartRequestAccess, middlewareGuard } from "./request-schema.js";
+import {
+  applyProviderTypes,
+  dartDiCallPatterns,
+  dartInitializerQualifier,
+  dartInitializerType,
+  extractDartDiBindings,
+  extractDartLocalTypes,
+  riverpodProviderTypes,
+} from "./di.js";
+import { addBodyLevelMembers, isDartInterface } from "./members.js";
 
 /**
  * Dart (and therefore Flutter) regex extraction.
@@ -68,9 +78,27 @@ function parseDartReturnType(line: string): string | null {
   return !t || t === "void" || t === "Future" || t === "void?" ? null : t;
 }
 
-/** Parse a Dart parameter token: `int id`, `String? name`, `this.client`, `{Key? key}`, `required User u`. */
+/**
+ * Parse a Dart parameter token: `int id`, `String? name`, `this.client`,
+ * `{Key? key}`, `required User u`, `@Named('mem') this._repo`. injectable's
+ * `@Named('x')` / `@Named.from(Impl)` is the key the parameter is injected by.
+ */
 function parseDartParam(paramText: string): ParamInfo | null {
   let trimmed = paramText.trim().replace(/^[{[]|[}\]]$/g, "").trim();
+  let qualifier: string | undefined;
+  let ann: RegExpMatchArray | null;
+  while ((ann = trimmed.match(/^@([\w.]+)\s*(?:\(([^)]*)\))?\s*/))) {
+    if (ann[1] === "Named" && ann[2] !== undefined) qualifier = ann[2].trim().replace(/^r?(['"])(.*)\1$/s, "$2");
+    else if (ann[1] === "Named.from" && ann[2] !== undefined) qualifier = ann[2].trim().replace(/<.*$/s, "");
+    trimmed = trimmed.slice(ann[0].length).replace(/^[{[]/, "").trim();
+  }
+  const param = parseDartParamText(trimmed);
+  if (param && qualifier) param.qualifier = qualifier;
+  return param;
+}
+
+function parseDartParamText(text: string): ParamInfo | null {
+  let trimmed = text;
   if (!trimmed) return null;
   // Default value: `name = expr` / `name: expr` (named).
   let defaultValue: string | null = null;
@@ -357,6 +385,12 @@ function splitTypeList(raw: string): string[] {
     .filter((s) => /^[A-Za-z_$]\w*$/.test(s));
 }
 
+/** Core value types — never a dependency, often a model field. */
+const DART_VALUE_TYPES: ReadonlySet<string> = new Set([
+  "int", "double", "num", "bool", "String", "DateTime", "Duration", "Uri", "RegExp", "BigInt", "Symbol",
+  "List", "Map", "Set", "Object", "dynamic",
+]);
+
 /** Join a class declaration that may wrap across lines, up to its body `{`. */
 function declarationText(lines: string[], startIdx: number): string {
   let text = "";
@@ -374,7 +408,7 @@ function declarationText(lines: string[], startIdx: number): string {
  * also triggers `regex-extractor.ts`'s method de-duplication, so a class method
  * isn't double-listed as a top-level function.
  */
-function extractDartClasses(lines: string[]): ClassInfo[] {
+function extractDartClasses(lines: string[], fns: FunctionInfo[]): ClassInfo[] {
   const classes = extractClassesWithSpec(lines, dartSpec);
   for (const cls of classes) {
     const decl = declarationText(lines, cls.line - 1);
@@ -384,6 +418,17 @@ function extractDartClasses(lines: string[]): ClassInfo[] {
     const implM = decl.match(/\bimplements\s+([^{]*?)(?:\s*\{|$)/);
     if (implM) for (const n of splitTypeList(implM[1]!)) seen.add(n);
     cls.implements = [...seen];
+    // An enum's value list (`venus(4.8e24);`) is shaped like a signature.
+    if (/^\s*enum\b/.test(lines[cls.line - 1] ?? "")) continue;
+    addBodyLevelMembers(lines, cls, dartSpec, parseDartParam);
+    if (/\bclass\b/.test(decl) && isDartInterface(decl, cls, lines)) cls.kind = "interface";
+  }
+  // A Riverpod read keyed by a provider declared in this file has that
+  // provider's declared type too.
+  if (lines.some((l) => l.includes("Provider") || l.includes("riverpod"))) {
+    const providers = riverpodProviderTypes(lines);
+    applyProviderTypes(fns, providers);
+    for (const cls of classes) applyProviderTypes(cls.methods, providers);
   }
   return classes;
 }
@@ -425,7 +470,7 @@ export const dartSpec: RegexLangSpec = {
           String.raw`([A-Za-z_$]\w*)\s*` + // (5) name
           String.raw`(?:(=)\s*.*|;)\s*$`, // (6) `=` when initialised
       ),
-      build: (m) => {
+      build: (m, line) => {
         const type = m[4]!;
         const decorators = [...m[1]!.matchAll(/@([\w.]+(?:\([^)]*\))?)/g)].map((d) => d[1]!.replace(/\s+/g, " "));
         const prop: PropertyInfo = {
@@ -437,7 +482,32 @@ export const dartSpec: RegexLangSpec = {
         };
         if (decorators.length > 0) prop.decorators = decorators;
         if (m[6] !== "=" && !type.endsWith("?") && type !== "dynamic" && !prop.isStatic) prop.isRequired = true;
+        if (m[6] === "=") {
+          // `final UserRepo repo = getIt<UserRepo>(instanceName: 'pg');`
+          const q = dartInitializerQualifier(line.slice(line.indexOf("=", line.indexOf(m[5]!) + m[5]!.length) + 1));
+          if (q) prop.qualifier = q;
+        }
         return prop;
+      },
+    },
+    {
+      // An untyped field whose initializer states its type — a construction
+      // or a container lookup (`final _repo = getIt.get<UserRepo>();`,
+      // `late final repo = PgRepo();`). Value types are left out so a model's
+      // shape (`final createdAt = DateTime.now();`) is unchanged.
+      pattern: /^\s*((?:@[\w.]+(?:\([^)]*\))?\s+)*)(?:(static)\s+)?((?:(?:final|const|late|var)\s+)+)([A-Za-z_$]\w*)\s*=\s*(.+?)\s*;\s*$/,
+      build: (m) => {
+        const init = dartInitializerType(m[5]!);
+        if (!init || DART_VALUE_TYPES.has(init.type.replace(/[<?].*$/s, ""))) return null;
+        const prop: PropertyInfo = {
+          name: m[4]!,
+          type: init.type || null,
+          visibility: m[4]!.startsWith("_") ? "private" : "public",
+          isStatic: m[2] === "static" || /\bconst\b/.test(m[3]!),
+          isReadonly: /\b(?:final|const)\b/.test(m[3]!),
+        };
+        if (init.qualifier) prop.qualifier = init.qualifier;
+        return prop.type || prop.qualifier ? prop : null;
       },
     },
   ],
@@ -467,7 +537,11 @@ export const dartSpec: RegexLangSpec = {
     { pattern: /^\s*enum\s+([A-Za-z_$]\w*)/, getExtends: () => null },
   ],
 
-  extractClasses: (lines) => extractDartClasses(lines),
+  extractClasses: (lines, fns) => extractDartClasses(lines, fns),
+
+  callPatterns: dartDiCallPatterns,
+  extractLocalTypes: extractDartLocalTypes,
+  extractDiBindings: (lines) => extractDartDiBindings(lines),
 
   importPatterns: [
     {

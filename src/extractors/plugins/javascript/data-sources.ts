@@ -300,6 +300,12 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
               line: node.startPosition.row + 1,
               // Recovered env base (display only; `target` stays app-relative).
               ...(resolved.baseEnv ? { baseEnv: resolved.baseEnv } : {}),
+              // The client instance (`apiClient.get(...)`): its base URL is
+              // prepended by a project pass. Library roots (`axios`, `fetch`)
+              // are not instances.
+              ...(recvRoot && /^[A-Za-z_$][\w$]*$/.test(recvRoot) && !HTTP_ROOTS.has(recvRoot.toLowerCase())
+                ? { client: recvRoot }
+                : {}),
               // Flag only AMBIGUOUS provenance — a conflicting binding — so a
               // later pass can drop it; literal/inferred targets stay unmarked to
               // avoid churning every existing api-call fixture.

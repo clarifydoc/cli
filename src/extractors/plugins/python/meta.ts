@@ -14,6 +14,7 @@ import { PythonEntityExtractor } from "./entities.js";
 import { pythonRouteExtractor } from "./routes.js";
 import { pythonRequestSchema } from "./request-schema.js";
 import { pythonReachability, extractPythonPathReferences } from "./reachability.js";
+import { extractPythonDiBindings } from "./di.js";
 
 const PYTHON_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -76,6 +77,10 @@ export const pythonMeta: LanguagePluginMeta = {
   dataMutations: new PythonMutationExtractor(),
   entities: new PythonEntityExtractor(),
   builtinTypes: PYTHON_BUILTINS,
+  // Typing-only wrappers: `Annotated[UserRepo, Depends(get_repo)]`,
+  // `ClassVar[Repo]`, `Final[Repo]`, injector's `Inject[Repo]` — a member call
+  // on the value is a call on the wrapped type.
+  transparentTypeWrappers: ["Annotated", "ClassVar", "Final", "Inject", "NoInject"],
   complexity: {
     branchNodes: new Set([
       "if_statement", "elif_clause", "while_statement", "for_statement",
@@ -114,6 +119,9 @@ export const pythonMeta: LanguagePluginMeta = {
     // `__main__` guards, dotted module strings, `.py` paths — what
     // reachability follows besides imports (see reachability.ts).
     pathReferences: extractPythonPathReferences,
+    // Container registrations: FastAPI dependency functions, dependency-injector
+    // providers, `injector` bindings (see di.ts).
+    diBindings: (tree, sourceText) => extractPythonDiBindings(tree, sourceText),
   },
   calls: pythonCallHooks,
   requestSchema: pythonRequestSchema,

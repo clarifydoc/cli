@@ -18,15 +18,24 @@ const callHooksByLanguage = new Map<Language, CallExtractionHooks>();
 /**
  * Node types that define nested functions/classes — `extractCalls` doesn't
  * descend into these when collecting calls for the current function scope.
- * Union across all registered plugins (see CallExtractionHooks.nestedScopeTypes).
+ * Union across all registered plugins (see CallExtractionHooks.nestedScopeTypes);
+ * the walk itself uses the per-language sets below.
  */
 const NESTED_SCOPE_TYPES = new Set<string>();
 
+/**
+ * Per-language scope sets. The walk must not use the cross-plugin union:
+ * grammars DO share node names (`arrow_function` is both a JS and a PHP
+ * node), so a PHP closure's calls were attributed to its enclosing method
+ * only when the JS plugin happened to be loaded — which differs between a
+ * worker thread and an in-process run of the same file.
+ */
+const NESTED_SCOPE_BY_LANGUAGE = new Map<Language, ReadonlySet<string>>();
+const ANONYMOUS_SCOPE_BY_LANGUAGE = new Map<Language, ReadonlySet<string>>();
+const NO_TYPES: ReadonlySet<string> = new Set();
+
 /** Call node types whose arguments are scanned for callback identifiers (union). */
 const CALLBACK_ARG_NODE_TYPES = new Set<string>();
-
-/** Nested-scope types that are function EXPRESSIONS — descend when anonymous (union). */
-const ANONYMOUS_SCOPE_TYPES = new Set<string>();
 
 /** Node type → fields that bind a local name there (union, see CallExtractionHooks.bindingSites). */
 const BINDING_SITES = new Map<string, Set<string>>();
@@ -50,7 +59,8 @@ export function registerCallExtraction(language: Language, hooks: CallExtraction
   if (!hooks) return;
   callHooksByLanguage.set(language, hooks);
   for (const t of hooks.nestedScopeTypes ?? []) NESTED_SCOPE_TYPES.add(t);
-  for (const t of hooks.anonymousScopeTypes ?? []) ANONYMOUS_SCOPE_TYPES.add(t);
+  NESTED_SCOPE_BY_LANGUAGE.set(language, new Set(hooks.nestedScopeTypes ?? []));
+  ANONYMOUS_SCOPE_BY_LANGUAGE.set(language, new Set(hooks.anonymousScopeTypes ?? []));
   for (const t of hooks.callbackArgNodeTypes ?? []) CALLBACK_ARG_NODE_TYPES.add(t);
   unionFields(BINDING_SITES, hooks.bindingSites);
   unionFields(BINDING_PATTERNS, hooks.bindingPatterns);
@@ -62,12 +72,12 @@ export function registerCallExtraction(language: Language, hooks: CallExtraction
  * (`const onClick = () => …`, `f = lambda: …`) binds a function — the plugin
  * extracts it as one — so passing it on stays a callback reference.
  */
-function collectBoundNames(site: Node, into: Set<string>): void {
+function collectBoundNames(site: Node, into: Set<string>, nested: ReadonlySet<string>): void {
   const fields = BINDING_SITES.get(site.type);
   if (!fields) return;
-  if (!NESTED_SCOPE_TYPES.has(site.type)) {
+  if (!nested.has(site.type)) {
     const value = site.childForFieldName("value") ?? site.childForFieldName("right");
-    if (value && NESTED_SCOPE_TYPES.has(value.type)) return;
+    if (value && nested.has(value.type)) return;
   }
   for (const field of fields) {
     const bound = site.childForFieldName(field);
@@ -99,8 +109,8 @@ function collectPatternNames(pattern: Node, into: Set<string>): void {
  * to a name (`const f = () => {…}`) IS extracted as its own function and stays
  * a boundary.
  */
-function isAnonymousFnExpression(node: Node): boolean {
-  return ANONYMOUS_SCOPE_TYPES.has(node.type) && node.parent?.type !== "variable_declarator";
+function isAnonymousFnExpression(node: Node, anonymous: ReadonlySet<string>): boolean {
+  return anonymous.has(node.type) && node.parent?.type !== "variable_declarator";
 }
 
 /** True if the node type opens a nested function/class scope (cross-plugin union). */
@@ -140,6 +150,9 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   const hooks = callHooksByLanguage.get(language);
   if (!hooks) return [];
   const callTypes = hooks.callNodeTypes;
+  const receiverTypeOf = hooks.receiverTypeOf;
+  const nested = NESTED_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
+  const anonymous = ANONYMOUS_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
 
   const visited = new Set<number>();
   const resolve = (n: Node) => resolveCallName(n, language);
@@ -148,11 +161,14 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   // the scope does not bind that name itself, which is known once the walk
   // has seen the whole body — so the decision waits, and the order stays the
   // walk's.
-  const candidates: Array<{ name: string; line: number; column: number; isReference: boolean }> = [];
+  const candidates: Array<{
+    name: string; line: number; column: number; isReference: boolean;
+    receiver?: { type: string; qualifier?: string } | null;
+  }> = [];
   const boundHere = new Set<string>();
 
-  const push = (name: string, node: Node, isReference: boolean) => {
-    candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference });
+  const push = (name: string, node: Node, isReference: boolean, receiver?: { type: string; qualifier?: string } | null) => {
+    candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference, receiver });
   };
   const addResult = (name: string, node: Node) => {
     if (name) push(name, node, false);
@@ -166,16 +182,16 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // body itself) — those are symbols of their own. Anonymous function
     // expressions are the exception: `onClick={() => addToCart(id)}` has no
     // symbol, so its calls attribute here.
-    if (!isRoot && NESTED_SCOPE_TYPES.has(node.type) && !isAnonymousFnExpression(node)) return;
+    if (!isRoot && nested.has(node.type) && !isAnonymousFnExpression(node, anonymous)) return;
 
     // Parameters, declarators, assignment targets, loop variables — every
     // scope this walk attributes to the function (incl. inline arrows).
-    collectBoundNames(node, boundHere);
+    collectBoundNames(node, boundHere, nested);
 
     // Standard call expressions
     if (callTypes.has(node.type)) {
       const name = resolve(node);
-      if (name) addResult(name, node);
+      if (name) push(name, node, false, receiverTypeOf?.(node));
 
       // Detect callback arguments: fn(callback) — identifiers passed as args
       if (CALLBACK_ARG_NODE_TYPES.has(node.type)) {
@@ -199,18 +215,74 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   }
 
   // A body's parameters live on its function node, outside the walk.
-  if (!BINDING_SITES.has(bodyNode.type) && bodyNode.parent) collectBoundNames(bodyNode.parent, boundHere);
+  if (!BINDING_SITES.has(bodyNode.type) && bodyNode.parent) collectBoundNames(bodyNode.parent, boundHere, nested);
   walk(bodyNode, true);
 
   const results: CallInfo[] = [];
   const seen = new Set<string>();
+  const held: HeldCall[] = [];
   for (const c of candidates) {
     if (c.isReference && boundHere.has(c.name)) continue;
-    if (isNoise(c.name) || seen.has(c.name)) continue;
+    if (seen.has(c.name)) continue;
+    const call: CallInfo = { name: c.name, kind: "internal", target: null, line: c.line, column: c.column };
+    if (c.receiver && (c.receiver.type || c.receiver.qualifier)) {
+      // The expression names its receiver's type (or the key it was looked
+      // up by) — a member call on a container lookup is never Array#find.
+      if (c.receiver.type) call.receiverType = c.receiver.type;
+      if (c.receiver.qualifier) call.receiverQualifier = c.receiver.qualifier;
+    } else if (isNoise(c.name)) {
+      seen.add(c.name);
+      if (!c.isReference && c.name.includes(".")) held.push({ index: results.length, call });
+      continue;
+    }
     seen.add(c.name);
-    results.push({ name: c.name, kind: "internal", target: null, line: c.line, column: c.column });
+    results.push(call);
   }
+  if (held.length > 0) HELD_NOISE_CALLS.set(results, held);
   return results;
+}
+
+/** A call dropped as noise by its leaf name, and where it would have stood. */
+interface HeldCall {
+  /** Position in the result array it was dropped from (before later insertions). */
+  index: number;
+  call: CallInfo;
+}
+
+/**
+ * Member calls held back as noise ONLY because of their leaf name
+ * (`repo.find`, `notifier.send`, `$this->parser->parse`), keyed by the result
+ * array they were dropped from. Whether `find` is Array#find or a repository
+ * method depends on the receiver's declared type, which the extractor that
+ * calls `extractCalls` with a bare body cannot see — so the decision is
+ * deferred to `restoreHeldCalls`, run by the per-file pipeline once params,
+ * properties and locals are known. A path that never restores keeps the old
+ * behaviour exactly: the calls stay dropped.
+ */
+const HELD_NOISE_CALLS = new WeakMap<CallInfo[], HeldCall[]>();
+
+/** Hold `call` back from `results` (regex-path counterpart of the tree-sitter walk). */
+export function holdNoiseCall(results: CallInfo[], call: CallInfo): void {
+  let held = HELD_NOISE_CALLS.get(results);
+  if (!held) HELD_NOISE_CALLS.set(results, (held = []));
+  held.push({ index: results.length, call });
+}
+
+/**
+ * Put back the held calls of `calls` that `keep` accepts, at the position the
+ * walk found them. Returns how many were restored. Consumes the held set.
+ */
+export function restoreHeldCalls(calls: CallInfo[], keep: (call: CallInfo) => boolean): number {
+  const held = HELD_NOISE_CALLS.get(calls);
+  if (!held) return 0;
+  HELD_NOISE_CALLS.delete(calls);
+  let inserted = 0;
+  for (const h of held) {
+    if (!keep(h.call)) continue;
+    calls.splice(h.index + inserted, 0, h.call);
+    inserted++;
+  }
+  return inserted;
 }
 
 /**
@@ -221,13 +293,15 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
   const hooks = callHooksByLanguage.get(language);
   if (!hooks) return [];
   const callTypes = hooks.callNodeTypes;
+  const receiverTypeOf = hooks.receiverTypeOf;
+  const nested = NESTED_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
 
   const results: CallInfo[] = [];
   const seen = new Set<string>();
 
   function walk(node: Node) {
     // Stop at function/class boundaries — those are handled by extractCalls
-    if (NESTED_SCOPE_TYPES.has(node.type)) return;
+    if (nested.has(node.type)) return;
     // Also stop at named function declarations and class declarations
     if (
       node.type === "function_declaration" ||
@@ -237,15 +311,28 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
 
     if (callTypes.has(node.type)) {
       const name = resolveCallName(node, language);
-      if (name && !isNoise(name) && !seen.has(name)) {
+      if (name && !seen.has(name)) {
         seen.add(name);
-        results.push({
+        const call: CallInfo = {
           name,
           kind: "internal",
           target: null,
           line: node.startPosition.row + 1,
           column: node.startPosition.column,
-        });
+        };
+        // Same rules as `extractCalls`: a lookup chained into the call names
+        // its receiver; a noise-named member call is held for the
+        // typed-receiver pass rather than dropped.
+        const receiver = receiverTypeOf?.(node);
+        if (receiver && (receiver.type || receiver.qualifier)) {
+          if (receiver.type) call.receiverType = receiver.type;
+          if (receiver.qualifier) call.receiverQualifier = receiver.qualifier;
+          results.push(call);
+        } else if (!isNoise(name)) {
+          results.push(call);
+        } else if (name.includes(".")) {
+          holdNoiseCall(results, call);
+        }
       }
     }
 

@@ -11,6 +11,7 @@ import { pascalRouteExtractor } from "./routes.js";
 import { PascalUiBridgeResolver } from "./ui-bridge.js";
 import { dfmEntityExtractor } from "./dfm-entities.js";
 import { pascalReachability } from "./reachability.js";
+import { pascalDiBindings } from "./di.js";
 
 const PASCAL_BUILTINS: ReadonlySet<string> = new Set<string>([
   "Integer", "Cardinal", "Word", "Byte", "ShortInt", "SmallInt", "LongInt",
@@ -88,6 +89,8 @@ export const pascalMeta: LanguagePluginMeta = {
   apiCallRoots: ["THTTPClient", "TRESTClient", "TIdHTTP"],
   dbCallRoots: ["Query", "Connection", "DataSet", "SQLQuery"],
   calls: pascalCallHooks,
+  // Spring4D container registrations (see di.ts).
+  ast: { diBindings: pascalDiBindings },
   dispatchResolvers: [new PascalUiBridgeResolver()],
 };
 

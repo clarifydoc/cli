@@ -107,7 +107,7 @@ export function attachHandlerParams(routes: RouteRow[], analyses: FileAnalysis[]
     const lang = byFile.get(ref.filePath)?.language;
     const hooks = lang ? pluginFor(lang)?.requestSchema : undefined;
     if (!hooks?.bindParam) return false;
-    return (ref.fn.params ?? []).some((p) => hooks.bindParam!(p, route) === "services");
+    return (ref.fn.params ?? []).some((p) => !p.isReceiver && hooks.bindParam!(p, route) === "services");
   };
   /**
    * `handler.ListProducts` vs `store.ListProducts`: a leaf name several
@@ -178,7 +178,8 @@ export function attachHandlerParams(routes: RouteRow[], analyses: FileAnalysis[]
     const declaredSignature = params.some((p) => p.binding !== null && !p.inferred);
     const before = params.length;
     for (const p of declaredSignature ? [] : ref.fn.params ?? []) {
-      if (!p.name || p.name === "_" || seenNames.has(p.name.toLowerCase())) continue;
+      // An extension method's receiver is the object it is called on, not a request input.
+      if (p.isReceiver || !p.name || p.name === "_" || seenNames.has(p.name.toLowerCase())) continue;
       let binding: RouteParamBinding | null = tokens.has(p.name.toLowerCase()) ? "route" : null;
       if (!binding && hooks?.bindParam) binding = hooks.bindParam(p, route);
       seen.add(`${binding}:${p.name}`);

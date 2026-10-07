@@ -11,6 +11,7 @@ import type {
 } from "../types/language-plugin.js";
 import type { RegexLangSpec } from "./plugins/shared/regex-base.js";
 import { registerBuiltinTypes } from "./shared/builtin-types.js";
+import { registerTransparentTypeWrappers } from "./shared/type-parser.js";
 import { registerCallPatterns } from "./shared/call-patterns.js";
 import { registerCallExtraction } from "./shared/call-graph.js";
 import { registerLinkScoringData } from "./shared/link-scoring.js";
@@ -160,6 +161,7 @@ const inflight = new Map<PluginLoader, Promise<void>>();
 function registerMeta(meta: LanguagePluginMeta): void {
   BY_LANGUAGE.set(meta.language, meta);
   if (meta.builtinTypes) registerBuiltinTypes(meta.language, meta.builtinTypes);
+  registerTransparentTypeWrappers(meta.language, meta.transparentTypeWrappers);
   registerCallPatterns(meta.language, meta.apiCallRoots, meta.dbCallRoots);
   registerCallExtraction(meta.language, meta.calls);
   if (meta.securityRules && meta.securityRules.length > 0) {

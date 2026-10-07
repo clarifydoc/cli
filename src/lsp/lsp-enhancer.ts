@@ -12,7 +12,7 @@ import type {
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
 import type { DiscoveredFile } from "../core/file-discovery.js";
 import { LspManager } from "./lsp-manager.js";
-import { buildInterfaceImplMap, type InterfaceImplInfo } from "../core/symbol-linker.js";
+import { buildInterfaceImplMap, closestByDir, type InterfaceImplInfo } from "../core/symbol-linker.js";
 
 export interface LspEnhancerOptions {
   projectRoot: string;
@@ -701,7 +701,10 @@ function redirectThroughInterface(
   }
   if (!propertyType) return link;
 
-  const iface = ifaceMap.get(propertyType);
+  // The map holds one entry per interface DEFINITION; a name defined in
+  // several packages means the one closest to the caller.
+  const named = [...ifaceMap.values()].filter((i) => i.interfaceName === propertyType);
+  const iface = named.length <= 1 ? named[0] : closestByDir(named, link.sourceFile, (i) => i.interfaceFile);
   if (!iface) return link;
   if (iface.impls.length !== 1) {
     // Re-aim at the interface method instead of the field — at least gives the

@@ -11,6 +11,8 @@ export const phpManifest: LanguagePluginManifest = {
   language: "php",
   parsing: "tree-sitter",
   extensions: [".php"],
+  // A field is only reached through the instance (`this.x`); a bare name never is one.
+  explicitSelfMembers: true,
   grammar: { variants: { php: { pkg: "tree-sitter-php", wasm: "tree-sitter-php.wasm" } } },
   testFilePatterns: [/(Test|TestCase)\.php$/],
   externalModulePrefixes: ["Illuminate\\", "Symfony\\", "Doctrine\\", "Laravel\\"],

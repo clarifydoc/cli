@@ -140,6 +140,9 @@ describe("buildReportPayload wire encoding", () => {
     // id survives in project-summary.json, which is what lsp:compare reads.
     expect(enc("dispatch:mediatr")).toBe(enc("dispatch:webflow"));
     expect(enc("dispatch:mediatr")).not.toBe(enc("direct"));
+    // Pinned: reports published before the alphabet grew carry 24 for dispatch.
+    expect(Math.floor(enc("dispatch:mediatr") / 1000) % 100).toBe(24);
+    expect(enc("di-binding")).not.toBe(enc("dispatch:mediatr"));
   });
 
   /**
@@ -165,6 +168,7 @@ describe("buildReportPayload wire encoding", () => {
       { strategy: "lsp-reference", relation: "reference", resolvedBy: "lsp" },
       { strategy: "interface-fanout", relation: "implements", navigational: true },
       { strategy: "api-route", relation: "http", confidence: "AMBIGUOUS" },
+      { strategy: "di-binding", relation: "calls", confidence: "INFERRED" },
     ];
     for (const c of cases) {
       const encoded = buildReportPayload({

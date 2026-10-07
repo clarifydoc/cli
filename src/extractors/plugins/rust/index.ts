@@ -4,6 +4,8 @@ import { parseRustParam, stripRustTypeModifiers } from "./params.js";
 import { extractRustRoutes } from "./routes.js";
 import { extractRustDataSources } from "./data-sources.js";
 import { extractRustModuleRefs } from "./reachability.js";
+import { extractRustClasses } from "./classes.js";
+import { extractRustLocalTypes } from "./locals.js";
 
 function parseRustReturnType(line: string): string | null {
   const m = line.match(/->\s*([^{]+?)(?:\s+where\s|\s*\{|\s*;|\s*$)/);
@@ -86,8 +88,17 @@ export const rustSpec: RegexLangSpec = {
   classPatterns: [
     { pattern: /(?:pub\s+)?struct\s+([A-Z]\w*)/, getExtends: () => null },
     { pattern: /(?:pub\s+)?enum\s+([A-Z]\w*)/, getExtends: () => null },
-    { pattern: /(?:pub\s+)?trait\s+([A-Z]\w*)/, getExtends: () => null },
+    // A trait is nominal: implemented only by an `impl Trait for X` block.
+    { pattern: /(?:pub\s+)?trait\s+([A-Z]\w*)/, getExtends: () => null, kind: "interface" },
   ],
+
+  /**
+   * `impl X { … }` / `impl Trait for X { … }` methods belong to X (see
+   * classes.ts). Overriding `extractClasses` also makes the core drop class
+   * methods — impl methods, trait signatures — from the top-level functions.
+   */
+  extractClasses: (lines, fns) => extractRustClasses(lines, fns, rustSpec),
+  extractLocalTypes: (body, fn) => extractRustLocalTypes(body, fn.params),
 
   importPatterns: [
     {

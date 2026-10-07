@@ -51,6 +51,8 @@ import {
   pluginFor,
 } from "../extractors/registry.js";
 import { buildSymbolLinks } from "./symbol-linker.js";
+import { enrichGraphFromInheritance } from "./inheritance-edges.js";
+import { applyHttpClientBases } from "./http-client-bases.js";
 import { aggregateComplexity } from "./complexity-analyzer.js";
 import { detectPatterns, type FileStructure } from "./pattern-detector.js";
 import { buildSiblingGraph, sameFileLinksByFile } from "./sibling-graph.js";
@@ -689,6 +691,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // This catches cross-file dependencies that import resolution missed
   // (e.g. Java package imports, Python absolute imports, C# usings)
   enrichGraphFromSymbolLinks(componentGraph, symbolLinks);
+  // …and from extends/implements that no import names (same namespace/package),
+  // so an interface's dependents include its implementations.
+  enrichGraphFromInheritance(componentGraph, allAnalyses);
 
   // Enrich link graph from component graph edges that buildLinkGraph missed
   // (e.g. Go package imports resolved via directory matching)
@@ -749,6 +754,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // path the cross-tier linker can join. Project-level + in-memory (operates on
   // the aggregated copies; no per-file JSON change), mirroring resolveRouterMounts.
   const resolvedUrlCount = resolveUrlBuilders(allApiCalls, allAnalyses);
+  // A call through a client instance requests the client's base + its path.
+  applyHttpClientBases(allApiCalls, allAnalyses, importIndex);
   if (resolvedUrlCount > 0 && verbose) {
     progress.detail(`  URL-builder calls resolved: ${resolvedUrlCount}`);
   }

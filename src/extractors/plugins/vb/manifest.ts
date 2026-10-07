@@ -10,6 +10,10 @@ export const vbManifest: LanguagePluginManifest = {
   language: "vb",
   parsing: "regex",
   extensions: [".vb", ".bas", ".cls", ".frm"],
+  // VB is case-insensitive: `_repo.save` calls the declared `Save`.
+  caseInsensitiveNames: true,
+  // One type spans files here: `Partial Class` splits one type across files.
+  typesSpanFiles: true,
   externalNamespaceRoots: ["System", "Microsoft"],
   // WinForms designers, the VB counterpart of the C# rule above.
   generatedFilePatterns: [/\.Designer\.vb$/],

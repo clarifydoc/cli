@@ -2,7 +2,9 @@ import type { Node, Tree } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from "../../functions-classes/base.js";
 import { extractCalls } from "../../shared/call-graph.js";
+import { receiverTypeName } from "../../shared/type-parser.js";
 import { arrayLiteralAt, extractPhpRequestAccess, requestReceivers, ruleEntries, ruleType } from "./request-access.js";
+import { docblockAbove, parseDocblock, phpLocatorType, useAliases, type DocTypes } from "./di.js";
 
 /**
  * PHP tree-sitter extractor.
@@ -32,9 +34,12 @@ export class PhpExtractor extends FunctionClassExtractor {
   private fileLoadsDeps = false;
   /** Set per file: any `request` token at all? Gates the per-method body scan for `requestAccess`. */
   private fileUsesRequest = false;
+  /** Set per file: `use X as Y` aliases, so `Y::class` in a container lookup names X. */
+  private fileAliases: ReadonlyMap<string, string> = new Map();
 
   override extractFunctions(tree: Tree, sourceText: string): FunctionInfo[] {
     this.fileUsesRequest = /request/i.test(sourceText);
+    this.fileAliases = / as /.test(sourceText) ? useAliases(tree) : new Map();
     return super.extractFunctions(tree, sourceText);
   }
 
@@ -42,6 +47,7 @@ export class PhpExtractor extends FunctionClassExtractor {
     // `$this->load->model(...)` / `->library(...)` always contains `->load->`.
     this.fileLoadsDeps = /->\s*load\s*->/.test(sourceText);
     this.fileUsesRequest = /request/i.test(sourceText);
+    this.fileAliases = / as /.test(sourceText) ? useAliases(tree) : new Map();
     return super.extractClasses(tree, sourceText);
   }
 
@@ -75,7 +81,7 @@ export class PhpExtractor extends FunctionClassExtractor {
 
   private parseFunction(node: Node): FunctionInfo {
     const name = node.childForFieldName("name")?.text ?? "anonymous";
-    const params = this.parseParams(node.childForFieldName("parameters"));
+    const params = this.parseParams(node.childForFieldName("parameters"), docTypesAbove(node));
     const returnType = this.parseReturnType(node);
     const body = node.childForFieldName("body");
     const fn: FunctionInfo = {
@@ -86,7 +92,7 @@ export class PhpExtractor extends FunctionClassExtractor {
       isExported: true,
       decorators: this.parseAttributes(node),
       calls: extractCalls(body, "php"),
-      localTypes: extractLocalNewTypes(body),
+      localTypes: extractLocalTypes(body, this.fileAliases),
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
@@ -124,17 +130,29 @@ export class PhpExtractor extends FunctionClassExtractor {
     const methods: FunctionInfo[] = [];
     const properties: PropertyInfo[] = [];
 
+    let ctorNode: Node | null = null;
     if (body) {
       for (const member of body.children) {
         if (member.type === "method_declaration") {
           const method = this.parseMethod(member);
           methods.push(method);
-          if (method.name === "__construct") this.collectPromotedProperties(member, properties);
+          if (method.name === "__construct") {
+            this.collectPromotedProperties(member, properties);
+            ctorNode = member;
+          }
         } else if (member.type === "property_declaration") {
-          this.collectProperties(member, properties);
+          this.collectProperties(member, properties, docTypesAbove(member));
         }
       }
     }
+    // Untyped dependencies: a class docblock's `@property Repo $repo` (Laravel
+    // IDE helpers, CodeIgniter `@property Users_model $users_model`), and what
+    // the constructor stores (`$this->repo = $repo` from a typed parameter,
+    // `= new Repo`, `= app(Repo::class)`).
+    this.collectDocblockProperties(docTypesAbove(node), properties);
+    const ctor = methods.find((m) => m.name === "__construct");
+    if (ctor && ctorNode) this.collectConstructorAssignments(ctorNode, ctor, properties);
+    markContainerInjectedParams(name, extendsName, methods);
 
     // CodeIgniter loads models/libraries dynamically (`$this->load->model('x')`),
     // so `$this->x` has no declared type and the call linker can't follow
@@ -162,7 +180,7 @@ export class PhpExtractor extends FunctionClassExtractor {
 
   private parseMethod(node: Node): FunctionInfo {
     const name = node.childForFieldName("name")?.text ?? "anonymous";
-    const params = this.parseParams(node.childForFieldName("parameters"));
+    const params = this.parseParams(node.childForFieldName("parameters"), docTypesAbove(node));
     const returnType = this.parseReturnType(node);
     const body = node.childForFieldName("body");
     const fn: FunctionInfo = {
@@ -173,7 +191,7 @@ export class PhpExtractor extends FunctionClassExtractor {
       isExported: this.isPublicMember(node),
       decorators: this.parseAttributes(node),
       calls: extractCalls(body, "php"),
-      localTypes: extractLocalNewTypes(body),
+      localTypes: extractLocalTypes(body, this.fileAliases),
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
@@ -202,7 +220,7 @@ export class PhpExtractor extends FunctionClassExtractor {
    *   - `property_promotion_parameter` — `private Type $name` (PHP 8)
    *   - `variadic_parameter` — `...$args`
    */
-  private parseParams(paramsNode: Node | null): ParamInfo[] {
+  private parseParams(paramsNode: Node | null, doc?: DocTypes): ParamInfo[] {
     const params: ParamInfo[] = [];
     if (!paramsNode) return params;
 
@@ -215,13 +233,17 @@ export class PhpExtractor extends FunctionClassExtractor {
         const varNode = this.findChildByType(p, "variable_name");
         const nameNode = varNode ? this.findChildByType(varNode, "name") : null;
         const pName = nameNode?.text ?? varNode?.text.replace(/^\$/, "") ?? "_";
-        const typeText = this.parseParamType(p);
+        // A native type wins; a docblock `@param T $name` types an untyped one.
+        const typeText = this.parseParamType(p) ?? doc?.named.get(pName) ?? null;
         const defaultNode = p.childForFieldName("default_value");
-        params.push({
+        const param: ParamInfo = {
           name: pName,
           type: typeText,
           defaultValue: defaultNode?.text ?? null,
-        });
+        };
+        const qualifier = injectionQualifier(this.parseAttributes(p));
+        if (qualifier) param.qualifier = qualifier;
+        params.push(param);
       }
     }
     return params;
@@ -286,12 +308,13 @@ export class PhpExtractor extends FunctionClassExtractor {
    * uninitialized, so a request that builds the object must supply it — the
    * same "must be set" that C# 11's `required` spells out.
    */
-  private collectProperties(node: Node, out: PropertyInfo[]): void {
+  private collectProperties(node: Node, out: PropertyInfo[], doc?: DocTypes): void {
     let visibility: PropertyInfo["visibility"] = "public";
     let isStatic = false;
     let isReadonly = false;
     let typeText: string | null = null;
     const decorators = this.parseAttributes(node);
+    const qualifier = injectionQualifier(decorators);
 
     for (const c of node.children) {
       if (c.type === "visibility_modifier") {
@@ -309,11 +332,77 @@ export class PhpExtractor extends FunctionClassExtractor {
         const name = nameNode?.text ?? varNode?.text.replace(/^\$/, "") ?? null;
         if (name) {
           const hasDefault = !!c.childForFieldName("default_value") || c.namedChildren.some((n) => n.type !== "variable_name");
-          const prop: PropertyInfo = { name, type: typeText, visibility, isStatic, isReadonly };
+          // `/** @var Repo */ private $repo;` — the docblock types an untyped property.
+          const docType = typeText ? null : doc?.named.get(name) ?? doc?.varType ?? null;
+          const prop: PropertyInfo = { name, type: typeText ?? docType, visibility, isStatic, isReadonly };
           if (decorators.length > 0) prop.decorators = decorators;
+          if (qualifier) prop.qualifier = qualifier;
           if (typeText && !isNullableType(typeText) && !hasDefault) prop.isRequired = true;
           out.push(prop);
         }
+      }
+    }
+  }
+
+  /**
+   * Object-typed `@property T $name` tags of a class docblock, for properties
+   * the class does not declare. Scalars are left out: they type nothing the
+   * linker follows, and Eloquent IDE helpers list every column.
+   */
+  private collectDocblockProperties(doc: DocTypes | undefined, out: PropertyInfo[]): void {
+    if (!doc || doc.properties.size === 0) return;
+    const declared = new Set(out.map((p) => p.name));
+    for (const [name, type] of doc.properties) {
+      if (declared.has(name) || !receiverTypeName(type, "php")) continue;
+      out.push({ name, type, visibility: "public", isStatic: false, isReadonly: false });
+    }
+  }
+
+  /**
+   * Type the properties a constructor fills: `$this->repo = $repo` takes the
+   * (native or docblock) type of parameter `$repo`; `= new Repo(...)` and a
+   * container lookup (`= app(Repo::class)`, `= $container->get(Repo::class)`)
+   * take the constructed/looked-up class. Only an UNTYPED property is typed
+   * (a declared type wins), and a property the class never declares is added
+   * — pre-8.2 PHP creates it on assignment.
+   */
+  private collectConstructorAssignments(ctorNode: Node, ctor: FunctionInfo, out: PropertyInfo[]): void {
+    const body = ctorNode.childForFieldName("body");
+    if (!body || !body.text.includes("$this->")) return;
+    const byName = new Map(out.map((p) => [p.name, p]));
+    const params = new Map(ctor.params.map((p) => [p.name, p]));
+    for (const stmt of body.namedChildren) {
+      const assign = stmt.type === "expression_statement" ? stmt.namedChildren[0] : null;
+      if (assign?.type !== "assignment_expression") continue;
+      const left = assign.childForFieldName("left");
+      const right = assign.childForFieldName("right");
+      if (left?.type !== "member_access_expression" || left.childForFieldName("object")?.text !== "$this" || !right) continue;
+      const name = left.childForFieldName("name")?.text;
+      if (!name) continue;
+      let type: string | null = null;
+      let qualifier: string | undefined;
+      if (right.type === "variable_name") {
+        const param = params.get(right.text.replace(/^\$/, ""));
+        type = param?.type ?? null;
+        qualifier = param?.qualifier;
+      } else {
+        const looked = phpLocatorType(right, this.fileAliases);
+        if (looked) {
+          type = looked.type || null;
+          qualifier = looked.qualifier;
+        }
+      }
+      if (!type && !qualifier) continue;
+      const existing = byName.get(name);
+      if (existing) {
+        if (existing.type) continue;
+        existing.type = type;
+        if (qualifier && !existing.qualifier) existing.qualifier = qualifier;
+      } else {
+        const prop: PropertyInfo = { name, type, visibility: null, isStatic: false, isReadonly: false };
+        if (qualifier) prop.qualifier = qualifier;
+        out.push(prop);
+        byName.set(name, prop);
       }
     }
   }
@@ -349,6 +438,8 @@ export class PhpExtractor extends FunctionClassExtractor {
       const prop: PropertyInfo = { name, type: typeText, visibility, isStatic: false, isReadonly };
       const decorators = this.parseAttributes(p);
       if (decorators.length > 0) prop.decorators = decorators;
+      const qualifier = injectionQualifier(decorators);
+      if (qualifier) prop.qualifier = qualifier;
       if (typeText && !isNullableType(typeText) && !hasDefault) prop.isRequired = true;
       out.push(prop);
     }
@@ -492,16 +583,71 @@ function isNullableType(type: string): boolean {
 }
 
 /**
- * Collect `$x = new Type(...)` local bindings in a function body so the symbol
- * linker can resolve `$x->method()` to `Type::method`. PHP controllers here
- * build a client locally (`$connection = new ApiConnection()`) and then call it
- * — without this the call is an unresolved same-file `internal` reference.
- * Skips nested closures (different scope).
+ * Parameters the container resolves although they are not a constructor's:
+ * Laravel and Symfony call controller actions with their class-typed
+ * parameters resolved from the container (method injection), and Laravel
+ * does the same for the `handle()` of jobs, listeners, commands and
+ * middleware and for an invokable's `__invoke()`. Marked so container
+ * registrations decide them; any other method's parameters are whatever its
+ * caller passes.
  */
-function extractLocalNewTypes(body: Node | null): Array<{ name: string; type: string }> {
+function markContainerInjectedParams(className: string, extendsName: string | null, methods: FunctionInfo[]): void {
+  const controller = /Controller$/.test(className) || /(?:^|\\)(?:Abstract)?Controller$/.test(extendsName ?? "");
+  for (const m of methods) {
+    if (m.name === "__construct") continue;
+    if (!(m.name === "handle" || m.name === "__invoke" || (controller && m.isExported))) continue;
+    for (const p of m.params) if (p.type) p.injected = true;
+  }
+}
+
+/** The docblock above a declaration, parsed (undefined when there is none). */
+function docTypesAbove(node: Node): DocTypes | undefined {
+  const text = docblockAbove(node);
+  return text ? parseDocblock(text) : undefined;
+}
+
+/**
+ * The DI token an attribute names on an injection point: Symfony
+ * `#[Target('name')]` (a named autowiring alias) and `#[Autowire(service:
+ * 'id')]` / `#[Autowire('@id')]`.
+ */
+function injectionQualifier(decorators: string[]): string | undefined {
+  for (const d of decorators) {
+    const target = /^(?:[\w\\]+\\)?Target\(\s*['"]([^'"]+)['"]/.exec(d);
+    if (target) return target[1];
+    const autowire = /^(?:[\w\\]+\\)?Autowire\((?:[^)]*\bservice\s*:\s*)?['"]@?([^'"]+)['"]/.exec(d);
+    if (autowire && /\bservice\s*:|['"]@/.test(d)) return autowire[1];
+  }
+  return undefined;
+}
+
+/**
+ * Locals whose type the body states, so the symbol linker can resolve
+ * `$x->method()` to `Type::method`:
+ *   `$x = new Type(...)`                — PHP controllers build a client locally
+ *   `$x = app(Type::class)`, `resolve()`, `->make()`, `->get(Type::class)`,
+ *   `App::make()`                       — a container lookup (string ids give a qualifier)
+ *   `/** @var Type $x *\/` above a statement, or `/** @var Type *\/` above `$x = …`
+ * The first binding of a name wins. Skips nested closures (different scope).
+ */
+function extractLocalTypes(
+  body: Node | null,
+  aliases: ReadonlyMap<string, string>,
+): Array<{ name: string; type: string; qualifier?: string }> {
   if (!body) return [];
-  const out: Array<{ name: string; type: string }> = [];
+  const out: Array<{ name: string; type: string; qualifier?: string }> = [];
   const seen = new Set<string>();
+  const add = (name: string | undefined, type: string, qualifier?: string): void => {
+    if (!name || seen.has(name) || (!type && !qualifier)) return;
+    seen.add(name);
+    const local: { name: string; type: string; qualifier?: string } = { name, type };
+    if (qualifier) local.qualifier = qualifier;
+    out.push(local);
+  };
+  const varName = (n: Node | null | undefined): string | undefined =>
+    n?.type === "variable_name"
+      ? n.childForFieldName("name")?.text ?? n.children.find((c) => c.type === "name")?.text
+      : undefined;
   const walk = (n: Node): void => {
     if (
       n.type === "anonymous_function" || // tree-sitter-php ≥0.23 name
@@ -512,18 +658,24 @@ function extractLocalNewTypes(body: Node | null): Array<{ name: string; type: st
     ) {
       return; // don't descend into a nested scope
     }
+    if (n.type === "comment" && n.text.startsWith("/**") && n.text.includes("@var")) {
+      // `/** @var Repo $repo */` names its variable; a bare `/** @var Repo */`
+      // types the assignment that follows.
+      const doc = parseDocblock(n.text);
+      for (const [name, type] of doc.named) add(name, type);
+      if (doc.varType) {
+        const next = n.nextNamedSibling;
+        const assign = next?.type === "expression_statement" ? next.namedChildren[0] : null;
+        if (assign?.type === "assignment_expression") add(varName(assign.childForFieldName("left")), doc.varType);
+      }
+    }
     if (n.type === "assignment_expression") {
       const left = n.childForFieldName("left") ?? n.child(0);
       const right = n.childForFieldName("right") ?? n.child(n.childCount - 1);
-      if (left?.type === "variable_name" && right?.type === "object_creation_expression") {
-        const varName = left.childForFieldName("name")?.text
-          ?? left.children.find((c) => c.type === "name")?.text;
-        const typeNode = right.children.find((c) => c.type === "name" || c.type === "qualified_name");
-        const typeName = typeNode?.text.replace(/.*\\/, ""); // strip namespace
-        if (varName && typeName && !seen.has(varName)) {
-          seen.add(varName);
-          out.push({ name: varName, type: typeName });
-        }
+      const name = varName(left);
+      if (name && right) {
+        const looked = phpLocatorType(right, aliases);
+        if (looked) add(name, looked.type, looked.qualifier);
       }
     }
     for (const c of n.children) walk(c);

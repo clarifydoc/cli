@@ -19,7 +19,7 @@ async def create(user_id: int, body: UserCreate, q: str | None = Query(None), cu
       { name: "user_id", type: "int", defaultValue: null },
       { name: "body", type: "UserCreate", defaultValue: null },
       { name: "q", type: "str | None", defaultValue: "Query(None)" },
-      { name: "current", type: null, defaultValue: "Depends(get_current_user)" },
+      { name: "current", type: null, defaultValue: "Depends(get_current_user)", qualifier: "get_current_user" },
       { name: "plain", type: null, defaultValue: null },
     ]);
   });

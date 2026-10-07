@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractFunctionsWithSpec, extractClassesWithSpec } from "../shared/regex-base.js";
+import { extractFunctionsWithSpec } from "../shared/regex-base.js";
 import { goSpec } from "./index.js";
 import { extractGoRequestAccess } from "./request-access.js";
 
@@ -110,7 +110,7 @@ func helper(x int) int { return x }
 
 describe("Go struct fields for the schema pass", () => {
   it("keeps the type as written, turns tags into decorators, and sees unexported structs", () => {
-    const classes = extractClassesWithSpec(lines(`
+    const src = lines(`
 package store
 
 type Product struct {
@@ -127,7 +127,8 @@ type Product struct {
 type createInput struct {
 	Name string \`json:"name" binding:"required"\`
 }
-`), goSpec);
+`);
+    const classes = goSpec.extractClasses!(src, extractFunctionsWithSpec(src, goSpec));
     expect(classes.map((c) => c.name)).toEqual(["Product", "createInput"]);
     const props = Object.fromEntries(classes[0]!.properties.map((p) => [p.name, p]));
     expect(props["Name"]!.decorators).toEqual(['json:"name"', 'validate:"required"']);

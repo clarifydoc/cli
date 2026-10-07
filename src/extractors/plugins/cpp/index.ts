@@ -3,6 +3,7 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractCppConnectElements } from "./connect-elements.js";
+import { extractCppClasses } from "./classes.js";
 
 /** `#define NAME "value"` — how DAOs name their tables (trackschema.h). */
 const DEFINE_STRING_RE = /^\s*#\s*define\s+([A-Za-z_]\w*)\s+"((?:[^"\\]|\\.)*)"\s*$/;
@@ -157,6 +158,11 @@ export const cppSpec: RegexLangSpec = {
   // whole DAO layer is invisible to the data-access graph.
   extractDataSources: (lines) => extractSqlStringDataSources(lines),
 
+  // Out-of-line definitions (`User::displayName() {` in User.cpp) belong to
+  // their class, and pure virtual declarations are the abstract base's
+  // methods (see classes.ts). Overriding `extractClasses` also makes the core
+  // drop class methods from the top-level function list.
+  extractClasses: (lines, fns) => extractCppClasses(lines, fns, cppSpec),
   postProcessClasses: tagQmlElementClasses,
   extractStringConstants: extractCppStringConstants,
 

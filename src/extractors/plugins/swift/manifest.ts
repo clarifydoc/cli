@@ -11,6 +11,8 @@ export const swiftManifest: LanguagePluginManifest = {
   language: "swift",
   parsing: "regex",
   extensions: [".swift"],
+  // One type spans files here: `extension`s add to a type from other files.
+  typesSpanFiles: true,
   frameworkRules: swiftFrameworkRules,
   activationFiles: ["Package.swift"],
 };

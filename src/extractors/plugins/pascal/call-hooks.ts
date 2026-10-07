@@ -1,5 +1,6 @@
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
+import { pascalReceiverTypeOf } from "./di.js";
 
 /** Control-transfer std procedures — statement-position identifiers that are
  *  never interesting call edges. */
@@ -11,15 +12,24 @@ export const pascalCallHooks: CallExtractionHooks = {
   // under `statement`, so statements are call nodes too.
   callNodeTypes: new Set(["exprCall", "statement"]),
 
-  // exprCall with exprDot, identifier, or inherited as callee
+  // Every routine body (`defProc`) is a scope of its own: its calls belong to
+  // the routine, not ALSO to the unit-level `<setup>` pseudo-function, which
+  // keeps only what runs at unit level (a program's main block,
+  // `initialization`). An RTTI attribute's arguments (`[Inject('email')]`,
+  // `[ResourceSuffix('/{id}')]`) are compile-time metadata, never a call.
+  nestedScopeTypes: ["defProc", "rttiAttributes"],
+
+  // exprCall with exprDot, identifier, inherited or a generic instantiation
+  // (`X.Resolve<IRepo>('name')`) as callee
   resolveCallName: (node) => {
     if (node.type === "statement") {
       // Only a statement that IS a bare identifier/dotted expression is a
-      // paren-less call. Anything else (exprCall, assignment, if/while…)
-      // either resolves via its own node or is not a call.
+      // paren-less call — a generic one too (`X.RegisterType<IFoo, TFoo>;`).
+      // Anything else (exprCall, assignment, if/while…) either resolves via
+      // its own node or is not a call.
       const first = node.children.find((c) => c.type !== "comment");
       if (!first) return null;
-      if (first.type !== "identifier" && first.type !== "exprDot") return null;
+      if (first.type !== "identifier" && first.type !== "exprDot" && first.type !== "exprTpl") return null;
       const name = first.text;
       const leaf = name.split(".").pop()!.toLowerCase();
       if (PASCAL_STATEMENT_NOISE.has(leaf)) return null;
@@ -31,11 +41,16 @@ export const pascalCallHooks: CallExtractionHooks = {
           if (callee.type === "exprDot") return callee.text;
           if (callee.type === "identifier") return callee.text;
           if (callee.type === "inherited") return callee.text;
+          if (callee.type === "exprTpl") return callee.text;
         }
         return null;
       },
     });
   },
+
+  // A container lookup chained into a call names its receiver's type:
+  // `GlobalContainer.Resolve<INotifier>('sms').Send(…)`.
+  receiverTypeOf: pascalReceiverTypeOf,
 
   // Delphi fields prefixed with F: FUserService.Save → UserService
   qualifiedRootCandidates(root) {

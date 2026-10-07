@@ -1,4 +1,4 @@
-import type { Node } from "web-tree-sitter";
+import type { Node, Tree } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from "../../functions-classes/base.js";
 import type { CallInfo, RouteParamInfo } from "../../../types/analysis.js";
@@ -7,64 +7,209 @@ import { REQUEST_PARAM_NAMES, scanRequestAccess } from "./request-access.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { foldValue, type ValueExpr } from "../../shared/value-resolver.js";
 import { astToValueExpr } from "./value-capture.js";
+import {
+  collectInjectionTokenTypes,
+  initializerType,
+  injectionOf,
+  namesReceiverType,
+  restatesType,
+  type InjectedType,
+} from "./di.js";
+import { jsDocImplements, jsDocIsInterface, jsDocParamTypes, jsDocTypeTag, precedingJsDoc } from "./jsdoc.js";
+
+/** A local variable whose type the body states (see `FunctionInfo.localTypes`). */
+type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
+
+/** Per-file facts the body scan reads (set by the extractor when a file starts). */
+interface ScanContext {
+  /** Whether the file has JSDoc type tags worth looking for (a cheap substring gate). */
+  jsdoc: boolean;
+  /** Same-file `InjectionToken<T>` constants (see `collectInjectionTokenTypes`). */
+  tokenTypes: ReadonlyMap<string, string>;
+}
 
 /**
- * Dynamic `import("./x.vue")` calls inside a function body, surfaced as
- * cross-file call edges so lazy-loaded modules — route targets and components
- * launched via `useDialog().open({ component: import("./dlg.vue") })` — stay
- * reachable in the call/trace graph instead of dead-ending at the loader.
- *
- * Launchers usually wrap the import in a callback (`new Promise((res) => …)`),
- * which `extractCalls` skips as a nested scope, so this descends through
- * anonymous arrows/function-expressions but stops at nested *named* functions
- * and classes (those are linked as their own units). The target resolves to the
- * imported module's default export — for a `.vue` that's the component itself.
+ * The body's calls, finished: `calls` with the dynamic-import pseudo-calls
+ * appended IN PLACE — the array `extractCalls` returned carries the calls it
+ * held back as noise (restored later by the per-file pipeline), keyed by its
+ * identity — plus the local variables whose type the body states.
  */
-function collectDynamicImportCalls(body: Node | null): CallInfo[] {
-  if (!body) return [];
-  const out: CallInfo[] = [];
-  const seen = new Set<string>();
+function finishBody(
+  calls: CallInfo[],
+  body: Node | null,
+  paramNames: ReadonlySet<string>,
+  ctx: ScanContext,
+): { calls: CallInfo[]; localTypes?: LocalType[] } {
+  const scan = scanBody(body, paramNames, ctx);
+  calls.push(...scan.dynamicImports);
+  return scan.localTypes.length > 0 ? { calls, localTypes: scan.localTypes } : { calls };
+}
 
-  const walk = (node: Node, isRoot: boolean): void => {
-    if (
-      !isRoot &&
-      (node.type === "function_declaration" ||
-        node.type === "generator_function_declaration" ||
-        node.type === "class_declaration" ||
-        node.type === "class")
-    ) {
+/** Nested declarations a body walk never enters: they are symbols of their own. */
+const SEPARATE_SCOPES: ReadonlySet<string> = new Set([
+  "function_declaration", "generator_function_declaration", "class_declaration", "class",
+]);
+
+/** Function expressions — anonymous ones run on the enclosing function's behalf. */
+const FUNCTION_EXPRESSIONS: ReadonlySet<string> = new Set(["arrow_function", "function_expression"]);
+
+/**
+ * One walk over a function body for what `extractCalls` does not collect:
+ *
+ * - Dynamic `import("./x.vue")` calls, surfaced as cross-file call edges so
+ *   lazy-loaded modules — route targets and components launched via
+ *   `useDialog().open({ component: import("./dlg.vue") })` — stay reachable
+ *   in the call/trace graph instead of dead-ending at the loader. Launchers
+ *   usually wrap the import in a callback (`new Promise((res) => …)`), which
+ *   `extractCalls` skips as a nested scope, so this descends through every
+ *   function expression but stops at nested function DECLARATIONS and classes
+ *   (those are linked as their own units). The target resolves to the
+ *   imported module's default export — for a `.vue` that's the component.
+ * - Locals whose type the body states, so `x.method()` resolves through `x`'s
+ *   type: `const x: T = …`, `/** @type {T} *\/ const x = …`, `const x = new
+ *   T()`, a container lookup (`inject(T)`, `moduleRef.get(T)`,
+ *   `container.get<T>(TOKEN)`, `await app.resolve(T)`), a cast (`… as T`). An
+ *   annotation wins over the initializer. Scoped like `extractCalls`: through
+ *   anonymous function expressions (their calls are attributed here), never
+ *   into a named nested function. A name is reported only when every binding
+ *   of it in that scope agrees — a second declaration of another type, an
+ *   untyped one (`catch (x)`, `for (const x of …)`, a callback parameter `x`),
+ *   a function parameter `x`, or a reassignment of an initializer-typed `x`
+ *   leaves it out (unique-or-nothing, like the linker).
+ */
+function scanBody(
+  body: Node | null,
+  paramNames: ReadonlySet<string>,
+  ctx: ScanContext,
+): { dynamicImports: CallInfo[]; localTypes: LocalType[] } {
+  const dynamicImports: CallInfo[] = [];
+  if (!body) return { dynamicImports, localTypes: [] };
+  const seenImports = new Set<string>();
+  // name → every binding seen (null = a binding whose type is not stated).
+  const bindings = new Map<string, Array<{ local: LocalType; annotated: boolean } | null>>();
+  const reassigned = new Set<string>();
+  const bindUntyped = (name: string): void => {
+    const list = bindings.get(name);
+    if (list) list.push(null);
+    else bindings.set(name, [null]);
+  };
+  const bindPattern = (pattern: Node | null): void => {
+    if (!pattern) return;
+    if (pattern.type === "identifier" || pattern.type === "shorthand_property_identifier_pattern") {
+      bindUntyped(pattern.text);
       return;
     }
+    for (const child of pattern.namedChildren) bindPattern(child);
+  };
 
-    if (node.type === "call_expression") {
-      const callee = node.childForFieldName("function");
-      if (callee && callee.type === "import") {
-        const arg = node.childForFieldName("arguments")?.child(1);
-        if (arg && arg.type === "string") {
-          const source = stripQuotes(arg.text);
-          // Project-local specifiers only (relative or path-alias) — a bare
-          // package import isn't a project file. Unresolvable ones simply
-          // produce no link downstream.
-          const local = /^[./]/.test(source) || /^[@~]/.test(source);
-          if (local && !seen.has(source)) {
-            seen.add(source);
-            out.push({
-              name: "default",
-              kind: "cross-file",
-              target: source,
-              line: node.startPosition.row + 1,
-              confidence: "EXTRACTED",
-            });
-          }
+  // Children are read once per node (each read crosses into WASM) and the
+  // parent's type is passed down rather than asked for.
+  const walk = (node: Node, isRoot: boolean, inScope: boolean, parentType: string): void => {
+    const type = node.type;
+    if (!isRoot && SEPARATE_SCOPES.has(type)) return;
+    const children = node.children;
+
+    if (type === "call_expression" && children[0]?.type === "import") {
+      const args = children[children.length - 1];
+      const arg = args?.type === "arguments" ? args.child(1) : null;
+      if (arg && arg.type === "string") {
+        const source = stripQuotes(arg.text);
+        // Project-local specifiers only (relative or path-alias) — a bare
+        // package import isn't a project file. Unresolvable ones simply
+        // produce no link downstream.
+        const local = /^[./]/.test(source) || /^[@~]/.test(source);
+        if (local && !seenImports.has(source)) {
+          seenImports.add(source);
+          dynamicImports.push({
+            name: "default",
+            kind: "cross-file",
+            target: source,
+            line: node.startPosition.row + 1,
+            confidence: "EXTRACTED",
+          });
         }
       }
     }
 
-    for (const child of node.children) walk(child, false);
-  };
+    let childScope = inScope;
+    if (inScope && !isRoot) {
+      if (FUNCTION_EXPRESSIONS.has(type)) {
+        if (parentType === "variable_declarator") {
+          // A named function expression is its own symbol: its locals are not ours.
+          childScope = false;
+        } else {
+          // An inline callback's parameters shadow our locals inside it.
+          bindPattern(node.childForFieldName("parameters") ?? node.childForFieldName("parameter"));
+        }
+      } else if (type === "method_definition") {
+        bindPattern(node.childForFieldName("parameters"));
+      } else if (type === "variable_declarator") {
+        const name = children[0];
+        if (name?.type === "identifier") {
+          const local = declaredLocal(node, children, name.text, ctx);
+          const list = bindings.get(name.text);
+          if (list) list.push(local);
+          else bindings.set(name.text, [local]);
+        } else {
+          bindPattern(name ?? null);
+        }
+      } else if (type === "catch_clause") {
+        bindPattern(node.childForFieldName("parameter"));
+      } else if (type === "for_in_statement") {
+        bindPattern(node.childForFieldName("left"));
+      } else if (type === "assignment_expression") {
+        const left = children[0];
+        if (left?.type === "identifier") reassigned.add(left.text);
+      }
+    }
 
-  walk(body, true);
-  return out;
+    for (const child of children) walk(child, false, childScope, type);
+  };
+  walk(body, true, true, "");
+
+  const localTypes: LocalType[] = [];
+  for (const [name, list] of bindings) {
+    if (paramNames.has(name)) continue;
+    const first = list[0];
+    if (!first || list.some((b) => !b || b.local.type !== first.local.type || b.local.qualifier !== first.local.qualifier)) continue;
+    if (reassigned.has(name) && !list.every((b) => b!.annotated)) continue;
+    localTypes.push(first.local);
+  }
+  return { dynamicImports, localTypes };
+}
+
+/**
+ * The type one `variable_declarator` states for its name: the TypeScript
+ * annotation, else a JSDoc `@type` on the declaration, else what the
+ * initializer constructs / looks up / casts to — with the token a lookup
+ * named either way (`const m: IMailer = container.get(TYPES.Mailer)`).
+ */
+function declaredLocal(
+  declarator: Node,
+  children: readonly Node[],
+  name: string,
+  ctx: ScanContext,
+): { local: LocalType; annotated: boolean } | null {
+  // `name [: type] [= value]` — read off the children already in hand.
+  let annotation: string | null = null;
+  let value: Node | null = null;
+  for (let i = 1; i < children.length; i++) {
+    const c = children[i]!;
+    if (c.type === "type_annotation") annotation = c.text.replace(/^:\s*/, "");
+    else if (c.type === "=") value = children[i + 1] ?? null;
+  }
+  if (!annotation && ctx.jsdoc && declarator.parent) {
+    const doc = precedingJsDoc(declarator.parent);
+    annotation = doc ? jsDocTypeTag(doc) : null;
+  }
+  const init = value ? initializerType(value, ctx.tokenTypes) : null;
+  let type = annotation ?? init?.type ?? "";
+  const qualifier = init?.qualifier && !(annotation && restatesType(init.qualifier, annotation)) ? init.qualifier : undefined;
+  // `const seen = new Set()`, `const out: Order[] = []` say nothing about a
+  // receiver's members — not reported (a lookup's token still is).
+  if (type && !namesReceiverType(type)) type = "";
+  if (!type && !qualifier) return null;
+  return { local: qualifier ? { name, type, qualifier } : { name, type }, annotated: annotation !== null };
 }
 
 /**
@@ -285,8 +430,44 @@ function objectKeyName(key: Node | null): string | null {
   return null;
 }
 
+/** Any JSDoc tag this extractor reads — the per-file gate before looking at comments at all. */
+const JSDOC_TAG_RE = /@(?:param|arg|argument|type|implements|interface)\b/;
+
 export class JavaScriptExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
+
+  /**
+   * Per-file facts, set when a file starts (`extractFunctions` /
+   * `extractClasses` are each called once per file, synchronously — the one
+   * instance is shared by the typescript and javascript metas).
+   */
+  private ctx: ScanContext = { jsdoc: false, tokenTypes: new Map() };
+  private ctxTree: Tree | null = null;
+
+  override extractFunctions(tree: Tree, sourceText: string): FunctionInfo[] {
+    this.beginFile(tree, sourceText);
+    return super.extractFunctions(tree, sourceText);
+  }
+
+  override extractClasses(tree: Tree, sourceText: string): ClassInfo[] {
+    this.beginFile(tree, sourceText);
+    return super.extractClasses(tree, sourceText);
+  }
+
+  private beginFile(tree: Tree, sourceText: string): void {
+    // Both entry points run for the same file in turn — compute once.
+    if (this.ctxTree === tree) return;
+    this.ctxTree = tree;
+    this.ctx = {
+      jsdoc: JSDOC_TAG_RE.test(sourceText),
+      tokenTypes: collectInjectionTokenTypes(tree.rootNode, sourceText),
+    };
+  }
+
+  /** The JSDoc block documenting `node`, when the file has any JSDoc type tags. */
+  private jsdocOf(node: Node | null): string | null {
+    return this.ctx.jsdoc && node ? precedingJsDoc(node) : null;
+  }
 
   protected collectFunctions(node: Node, functions: FunctionInfo[]): void {
     this.extractJsFunctions(node, functions, false);
@@ -385,14 +566,16 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
 
   private parseJsFunction(node: Node, isExported: boolean): FunctionInfo {
     const name = node.childForFieldName("name")?.text ?? "anonymous";
-    const params = this.extractJsParams(node.childForFieldName("parameters"));
+    const params = this.extractJsParams(node.childForFieldName("parameters"), this.jsdocOf(node));
     const returnType = node.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? null;
     const isAsync = node.text.startsWith("async ");
     const decorators = this.extractDecorators(node);
 
     const body = node.childForFieldName("body");
-    const templates = extractUrlTemplates(body, new Set(params.map((p) => p.name)));
+    const paramNames = new Set(params.map((p) => p.name));
+    const templates = extractUrlTemplates(body, paramNames);
     const requestAccess = requestAccessOf(params, body);
+    const { calls, localTypes } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx);
     return {
       name,
       params,
@@ -400,9 +583,10 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       isAsync,
       isExported,
       decorators,
-      calls: [...extractCalls(body, "typescript"), ...collectDynamicImportCalls(body)],
+      calls,
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
+      ...(localTypes ? { localTypes } : {}),
       ...urlTemplateFields(templates),
       ...(requestAccess ? { requestAccess } : {}),
     };
@@ -426,23 +610,29 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       }
     }
 
-    // `(u) => …` puts its list in `parameters`; a bare `u => …` puts the one
-    // identifier in `parameter`, which used to leave the arrow with no params.
-    const params = this.extractJsParams(
-      funcNode.childForFieldName("parameters") ?? funcNode.childForFieldName("parameter"),
-    );
-    const returnType = funcNode.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? null;
-    const isAsync = funcNode.text.startsWith("async ");
-
     // Extract decorators from the parent declaration if present
     const declarator = funcNode.parent;
     const declaration = declarator?.parent;
     const decorators =
       declaration ? this.extractDecorators(declaration) : [];
+    // JSDoc sits before the statement declaring the binding (`/** … */ const
+    // f = (a) => …`) or before an object member (`/** … */ get: (id) => …`).
+    const docAnchor = declarator?.type === "variable_declarator" ? declaration ?? null : declarator?.type === "pair" ? declarator : null;
+
+    // `(u) => …` puts its list in `parameters`; a bare `u => …` puts the one
+    // identifier in `parameter`, which used to leave the arrow with no params.
+    const params = this.extractJsParams(
+      funcNode.childForFieldName("parameters") ?? funcNode.childForFieldName("parameter"),
+      this.jsdocOf(docAnchor),
+    );
+    const returnType = funcNode.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? null;
+    const isAsync = funcNode.text.startsWith("async ");
 
     const body = funcNode.childForFieldName("body") ?? funcNode;
-    const templates = extractUrlTemplates(body, new Set(params.map((p) => p.name)));
+    const paramNames = new Set(params.map((p) => p.name));
+    const templates = extractUrlTemplates(body, paramNames);
     const requestAccess = requestAccessOf(params, body);
+    const { calls, localTypes } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx);
     return {
       name,
       params,
@@ -450,9 +640,10 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       isAsync,
       isExported,
       decorators,
-      calls: [...extractCalls(body, "typescript"), ...collectDynamicImportCalls(body)],
+      calls,
       line: funcNode.startPosition.row + 1,
       endLine: funcNode.endPosition.row + 1,
+      ...(localTypes ? { localTypes } : {}),
       ...urlTemplateFields(templates),
       ...(requestAccess ? { requestAccess } : {}),
     };
@@ -494,10 +685,17 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     }
   }
 
-  private extractJsParams(paramsNode: Node | null): ParamInfo[] {
+  /**
+   * Parameters with their declared type — the TypeScript annotation, else the
+   * JSDoc `@param {T} name` of `jsdoc` (the function's doc block) — and the DI
+   * token an injection decorator puts on them (`@Inject(USER_REPO)`,
+   * `@inject(TYPES.UserRepo) @named('file')`, see `injectionOf`).
+   */
+  private extractJsParams(paramsNode: Node | null, jsdoc: string | null = null): ParamInfo[] {
     if (!paramsNode) return [];
+    const docTypes = jsdoc ? jsDocParamTypes(jsdoc) : null;
     if (paramsNode.type === "identifier") {
-      return [{ name: paramsNode.text, type: null, defaultValue: null }];
+      return [{ name: paramsNode.text, type: docTypes?.get(paramsNode.text) ?? null, defaultValue: null }];
     }
     const params: ParamInfo[] = [];
 
@@ -506,19 +704,31 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         child.type === "required_parameter" ||
         child.type === "optional_parameter" ||
         child.type === "identifier" ||
-        child.type === "rest_pattern"
+        child.type === "rest_pattern" ||
+        child.type === "assignment_pattern"
       ) {
+        // Plain JS `repo = defaultRepo` is an `assignment_pattern` (left/right).
+        const isAssignment = child.type === "assignment_pattern";
         const name =
+          (isAssignment ? child.childForFieldName("left")?.text : null) ??
           child.childForFieldName("pattern")?.text ??
           child.childForFieldName("name")?.text ??
           child.text;
         const typeNode = child.childForFieldName("type");
-        const defaultNode = child.childForFieldName("value");
+        const defaultNode = child.childForFieldName(isAssignment ? "right" : "value");
+        let type = typeNode?.text?.replace(/^:\s*/, "") ?? docTypes?.get(name) ?? null;
+        // Decorators lead the parameter — one child read rules them out.
+        const di = (child.type === "required_parameter" || child.type === "optional_parameter") &&
+          child.child(0)?.type === "decorator"
+          ? injectionOf(child, type, this.ctx.tokenTypes)
+          : {};
+        if (!type && di.type) type = di.type;
 
         params.push({
           name,
-          type: typeNode?.text?.replace(/^:\s*/, "") ?? null,
+          type,
           defaultValue: defaultNode?.text ?? null,
+          ...(di.qualifier ? { qualifier: di.qualifier } : {}),
         });
       }
     }
@@ -644,67 +854,94 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       }
     }
 
+    // Plain JS declares what TS writes as heritage in the class's JSDoc.
+    const classDoc = this.jsdocOf(node);
+    if (classDoc) {
+      for (const iface of jsDocImplements(classDoc)) if (!implementsList.includes(iface)) implementsList.push(iface);
+    }
+
     const decorators = this.extractDecorators(node);
     const body = node.childForFieldName("body");
     const methods: FunctionInfo[] = [];
     const properties: PropertyInfo[] = [];
+    let concreteMembers = 0;
+    let abstractMembers = 0;
+    let ctor: { params: ParamInfo[]; body: Node } | null = null;
 
     if (body) {
       for (const member of body.children) {
-        if (
-          member.type === "method_definition" ||
-          member.type === "public_field_definition"
-        ) {
-          if (member.type === "method_definition") {
-            const methodName =
-              member.childForFieldName("name")?.text ?? "anonymous";
-            const params = this.extractJsParams(
-              member.childForFieldName("parameters"),
-            );
-            const returnType = member.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? null;
-            const isAsync = member.text.startsWith("async ");
-            const methodBody = member.childForFieldName("body");
-            const requestAccess = requestAccessOf(params, methodBody);
-            // A URL-builder helper is as often a service-class method
-            // (`configService.APIUrl(sub)`) as a free function.
-            const templates = extractUrlTemplates(methodBody, new Set(params.map((p) => p.name)));
-            methods.push({
-              name: methodName,
-              params,
-              returnType,
-              isAsync,
-              isExported: false,
-              decorators: this.extractDecorators(member),
-              calls: [...extractCalls(methodBody, "typescript"), ...collectDynamicImportCalls(methodBody)],
-              line: member.startPosition.row + 1,
-              endLine: member.endPosition.row + 1,
-              ...urlTemplateFields(templates),
-              ...(requestAccess ? { requestAccess } : {}),
-            });
-            // `constructor(public readonly id: number)` declares a property.
-            if (methodName === "constructor") {
-              properties.push(...this.parameterProperties(member.childForFieldName("parameters")));
-            }
-          } else {
-            const propName =
-              member.childForFieldName("name")?.text ?? "unknown";
-            properties.push({
-              name: propName,
-              type: member.childForFieldName("type")?.text?.replace(/^:\s*/, "") ?? null,
-              visibility: this.getVisibility(member),
-              isStatic: member.text.includes("static "),
-              isReadonly: member.text.includes("readonly "),
-              // Field decorators are children of the field (unlike a method's,
-              // which sit beside it in the class body) — class-validator and
-              // class-transformer markers live here.
-              decorators: childDecorators(member),
-              // `name?: string` or `age = 0` is not something a caller must send.
-              isRequired: !hasOptionalMarker(member) && !member.childForFieldName("value"),
-            });
+        if (member.type === "method_definition") {
+          concreteMembers++;
+          const methodName =
+            member.childForFieldName("name")?.text ?? "anonymous";
+          const paramsNode = member.childForFieldName("parameters");
+          const params = this.extractJsParams(paramsNode, this.jsdocOf(member));
+          const returnType = member.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? null;
+          const isAsync = member.text.startsWith("async ");
+          const methodBody = member.childForFieldName("body");
+          const requestAccess = requestAccessOf(params, methodBody);
+          const paramNames = new Set(params.map((p) => p.name));
+          // A URL-builder helper is as often a service-class method
+          // (`configService.APIUrl(sub)`) as a free function.
+          const templates = extractUrlTemplates(methodBody, paramNames);
+          const { calls, localTypes } = finishBody(extractCalls(methodBody, "typescript"), methodBody, paramNames, this.ctx);
+          methods.push({
+            name: methodName,
+            params,
+            returnType,
+            isAsync,
+            isExported: false,
+            decorators: this.extractDecorators(member),
+            calls,
+            line: member.startPosition.row + 1,
+            endLine: member.endPosition.row + 1,
+            ...(localTypes ? { localTypes } : {}),
+            ...urlTemplateFields(templates),
+            ...(requestAccess ? { requestAccess } : {}),
+          });
+          // `constructor(public readonly id: number)` declares a property.
+          if (methodName === "constructor") {
+            properties.push(...this.parameterProperties(paramsNode, params));
+            if (methodBody) ctor = { params, body: methodBody };
           }
+        } else if (member.type === "abstract_method_signature") {
+          // `abstract fetchValue(key: string): string;` — a member every
+          // subclass implements. Kept (without calls) so a call through an
+          // abstract-class-typed dependency has a declaration to land on.
+          abstractMembers++;
+          methods.push({
+            name: member.childForFieldName("name")?.text ?? "anonymous",
+            params: this.extractJsParams(member.childForFieldName("parameters")),
+            returnType: member.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? null,
+            isAsync: false,
+            isExported: false,
+            decorators: [],
+            calls: [],
+            line: member.startPosition.row + 1,
+            endLine: member.endPosition.row + 1,
+          });
+        } else if (member.type === "public_field_definition" || member.type === "field_definition") {
+          if (member.children.some((c) => c.type === "abstract")) abstractMembers++;
+          else concreteMembers++;
+          properties.push(this.parseField(member));
+        } else if (member.type === "class_static_block") {
+          concreteMembers++;
         }
       }
     }
+    if (ctor) this.constructorAssignments(ctor.body, ctor.params, properties);
+
+    // An abstract class with nothing BUT abstract members is an interface in
+    // all but name (the Angular/NestJS DI-token idiom `abstract class Logger
+    // { abstract write(m): void }`): no behaviour of its own, implemented by
+    // whatever extends it — exactly what `kind: "interface"` tells the linker
+    // (single-implementation redirect, fan-out). One concrete member, field
+    // or constructor makes it a class: core treats an interface as code-free
+    // (persistence boundary, request schemas, risk), which would misreport
+    // that member. JSDoc `@interface` is plain JS's way of saying the same.
+    const isInterface =
+      (classDoc !== null && jsDocIsInterface(classDoc)) ||
+      (node.type === "abstract_class_declaration" && abstractMembers > 0 && concreteMembers === 0);
 
     return {
       name,
@@ -716,14 +953,118 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       isExported,
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
+      ...(isInterface ? { kind: "interface" as const } : {}),
     };
   }
 
   /**
-   * TypeScript parameter properties: a constructor parameter carrying an
-   * accessibility modifier or `readonly` declares a same-named property.
+   * A class field: TS `public_field_definition` (`name`) or JS
+   * `field_definition` (`property`). Its type is the annotation, else a JSDoc
+   * `@type`, else what an injection decorator or the initializer states —
+   * `inject(UserService)`, `inject<Notifier>(NOTIFIER)`, `new GadgetService()`,
+   * `x as T`; the DI token comes from `@Inject(TOKEN)`/`@inject(id)`/
+   * `@named(n)` or from the lookup the initializer makes.
    */
-  private parameterProperties(paramsNode: Node | null): PropertyInfo[] {
+  private parseField(member: Node): PropertyInfo {
+    const isJsField = member.type === "field_definition";
+    const nameNode = member.childForFieldName(isJsField ? "property" : "name");
+    const propName = nameNode?.text ?? "unknown";
+    let declared = member.childForFieldName("type")?.text?.replace(/^:\s*/, "") ?? null;
+    if (!declared) {
+      const doc = this.jsdocOf(member);
+      declared = doc ? jsDocTypeTag(doc) : null;
+    }
+    const decorators = childDecorators(member);
+    const di = decorators.length > 0 ? injectionOf(member, declared, this.ctx.tokenTypes) : {};
+    const value = member.childForFieldName("value");
+    const init = value ? initializerType(value, this.ctx.tokenTypes) : null;
+    const type = declared ?? di.type ?? (init?.type || null);
+    const qualifier = di.qualifier ?? (init?.qualifier && !(type && restatesType(init.qualifier, type)) ? init.qualifier : undefined);
+    return {
+      name: propName,
+      type,
+      visibility: nameNode?.type === "private_property_identifier" ? "private" : this.getVisibility(member),
+      isStatic: isJsField ? member.children.some((c) => c.type === "static") : member.text.includes("static "),
+      isReadonly: member.text.includes("readonly "),
+      // Field decorators are children of the field (unlike a method's,
+      // which sit beside it in the class body) — class-validator and
+      // class-transformer markers live here.
+      decorators,
+      // `name?: string` or `age = 0` is not something a caller must send.
+      isRequired: !hasOptionalMarker(member) && !value,
+      ...(qualifier ? { qualifier } : {}),
+    };
+  }
+
+  /**
+   * Fields a constructor assigns at its top level: `this.repo = repo` (the
+   * parameter's type and DI token — JSDoc `@param` in plain JS), `this.x =
+   * new T()`, `this.x = inject(T)`, `/** @type {T} *\/ this.x = …`. A field
+   * the class already declares gets the missing type/token filled in (a TS
+   * `private audit: IAuditLog` assigned from an `@Inject(AUDIT_LOG)`
+   * parameter now carries AUDIT_LOG); an undeclared one (plain JS) is added
+   * when its type or token is known. Two top-level assignments of one field
+   * that disagree state nothing.
+   */
+  private constructorAssignments(body: Node, params: readonly ParamInfo[], properties: PropertyInfo[]): void {
+    const assigned = new Map<string, InjectedType | null>();
+    for (const stmt of body.namedChildren) {
+      if (stmt.type !== "expression_statement") continue;
+      const assign = stmt.namedChild(0);
+      if (assign?.type !== "assignment_expression") continue;
+      const left = assign.childForFieldName("left");
+      if (left?.type !== "member_expression" || left.childForFieldName("object")?.type !== "this") continue;
+      const field = left.childForFieldName("property")?.text;
+      const right = assign.childForFieldName("right");
+      if (!field || !right) continue;
+
+      const doc = this.jsdocOf(stmt);
+      const docType = doc ? jsDocTypeTag(doc) : null;
+      let found: InjectedType | null = null;
+      if (right.type === "identifier") {
+        const param = params.find((p) => p.name === right.text);
+        if (param && (param.type || param.qualifier)) {
+          found = { type: param.type ?? "", ...(param.qualifier ? { qualifier: param.qualifier } : {}) };
+        }
+      } else {
+        found = initializerType(right, this.ctx.tokenTypes);
+      }
+      if (docType) found = { ...found, type: docType };
+
+      if (!assigned.has(field)) {
+        assigned.set(field, found);
+      } else {
+        const prev = assigned.get(field);
+        if (!prev || !found || prev.type !== found.type || prev.qualifier !== found.qualifier) assigned.set(field, null);
+      }
+    }
+
+    for (const [field, found] of assigned) {
+      if (!found || (!found.type && !found.qualifier)) continue;
+      const existing = properties.find((p) => p.name === field);
+      if (existing) {
+        if (!existing.type && found.type) existing.type = found.type;
+        if (!existing.qualifier && found.qualifier) existing.qualifier = found.qualifier;
+        continue;
+      }
+      properties.push({
+        name: field,
+        type: found.type || null,
+        visibility: field.startsWith("#") ? "private" : null,
+        isStatic: false,
+        isReadonly: false,
+        ...(found.qualifier ? { qualifier: found.qualifier } : {}),
+      });
+    }
+  }
+
+  /**
+   * TypeScript parameter properties: a constructor parameter carrying an
+   * accessibility modifier or `readonly` declares a same-named property —
+   * with the parameter's type and DI token (`@Inject(USER_REPO) private
+   * readonly users: IUserRepository` is a `users` field injected by USER_REPO).
+   */
+  private parameterProperties(paramsNode: Node | null, params: readonly ParamInfo[]): PropertyInfo[] {
     if (!paramsNode) return [];
     const out: PropertyInfo[] = [];
     for (const param of paramsNode.namedChildren) {
@@ -733,14 +1074,16 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       if (!modifier && !isReadonly) continue;
       const name = param.childForFieldName("pattern")?.text;
       if (!name || !/^[A-Za-z_$][\w$]*$/.test(name)) continue;
+      const info = params.find((p) => p.name === name);
       out.push({
         name,
-        type: param.childForFieldName("type")?.text?.replace(/^:\s*/, "") ?? null,
+        type: info?.type ?? param.childForFieldName("type")?.text?.replace(/^:\s*/, "") ?? null,
         visibility: (modifier as "public" | "private" | "protected" | null) ?? "public",
         isStatic: false,
         isReadonly,
         decorators: childDecorators(param),
         isRequired: !hasOptionalMarker(param) && !param.childForFieldName("value"),
+        ...(info?.qualifier ? { qualifier: info.qualifier } : {}),
       });
     }
     return out;

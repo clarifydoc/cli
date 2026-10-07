@@ -185,6 +185,109 @@ export function simpleTypeName(raw: string | null | undefined): string | null {
   return /^[A-Za-z_]\w*$/.test(simple) ? simple : null;
 }
 
+/**
+ * Generic wrappers a member call passes straight through, per language —
+ * `self.repo.find()` on a `repo: Arc<dyn UserRepo>` field calls UserRepo's
+ * `find` (Rust auto-deref); `Optional[UserRepo]` / `Annotated[UserRepo,
+ * Depends(…)]` are typing-only in Python. Pushed in by the registry from
+ * `meta.transparentTypeWrappers`; this module stays a leaf.
+ */
+const TRANSPARENT_WRAPPERS = new Map<Language, ReadonlySet<string>>();
+
+/** Called by the registry while aggregating plugin metas. */
+export function registerTransparentTypeWrappers(language: Language, wrappers: readonly string[] | undefined): void {
+  if (wrappers && wrappers.length > 0) TRANSPARENT_WRAPPERS.set(language, new Set(wrappers));
+}
+
+/** Union members that only add absence — `Foo | null` still dispatches to Foo. */
+const ABSENT_TYPES: ReadonlySet<string> = new Set(["null", "undefined", "None", "NoneType", "nil", "void"]);
+
+/**
+ * The class a value of declared type `raw` dispatches member calls to — what
+ * the symbol linker resolves `x.method()` against when `x` is an injected
+ * field, a parameter or a typed local. Conservative by design: null when the
+ * value is a collection, an ambiguous union or intersection, a builtin, or
+ * anything that is not plainly ONE named type, because a wrong receiver type
+ * produces a confident wrong link.
+ *
+ *   `?Repo`, `Repo?`, `Repo!`, `Repo|null`, `Repo | undefined`, `*Repo`,
+ *   `&'a dyn Repo`, `"Repo"`, `App\Repo\Repo`, `pkg.Repo`         → Repo
+ *   `Arc<dyn Repo + Send>`, `Optional[Repo]` (registered wrappers)  → Repo
+ *   `IRepository<User>`                                           → IRepository
+ *   `Repo[]`, `[]Repo`, `[Repo]`, `map[string]Repo`, `A | B`       → null
+ */
+export function receiverTypeName(raw: string | null | undefined, language: Language): string | null {
+  if (!raw) return null;
+  const wrappers = TRANSPARENT_WRAPPERS.get(language);
+  let s = raw.trim();
+  for (let guard = 0; guard < 12; guard++) {
+    s = s.trim();
+    if (!s) return null;
+    // Quoted forward reference (`"UserRepo"` in a Python annotation).
+    if (/^(['"])[^'"]+\1$/.test(s)) { s = s.slice(1, -1); continue; }
+    // Nullability / implicit unwrap.
+    if (s.startsWith("?")) { s = s.slice(1); continue; }
+    if (s.endsWith("?") || s.endsWith("!")) { s = s.slice(0, -1); continue; }
+    // References, pointers, trait objects, declaration modifiers.
+    const ref = /^&(?:'\w+\s+)?(?:mut\s+)?(.+)$/s.exec(s);
+    if (ref) { s = ref[1]!; continue; }
+    // `any P` / `some P` are Swift existential/opaque spellings of P.
+    const mod = /^(?:dyn|impl|mut|readonly|final|const|lateinit|any|some)\s+(.+)$/s.exec(s);
+    if (mod) { s = mod[1]!; continue; }
+    // One enclosing pair of parentheses (Swift `(any P)?`) — only when it
+    // encloses the whole text, so `(Int) -> Int` is left alone.
+    if (s.startsWith("(") && s.endsWith(")") && matchClose(s, 0, "(", ")") === s.length - 1) { s = s.slice(1, -1); continue; }
+    if (/^\*[A-Za-z_]/.test(s)) { s = s.slice(1); continue; }
+    // Collections and channels are not a receiver of the element's methods
+    // (VB spells an array `Name()`).
+    if (s.endsWith("[]") || s.endsWith("()") || s.startsWith("[") || s.startsWith("map[") || /^(?:<-\s*)?chan\b/.test(s)) return null;
+    // VB generics: `IStore(Of String)` is the generic type `IStore`.
+    const vbGeneric = /^([\w.]+)\s*\(\s*Of\s.+\)$/is.exec(s);
+    if (vbGeneric) { s = vbGeneric[1]!; continue; }
+    // Rust bounds (`dyn Repo + Send + Sync`): the trait is the first one.
+    const bounds = splitTopLevel(s, ["+"]);
+    if (bounds.length > 1) {
+      const first = bounds.find((b) => !b.startsWith("'"));
+      if (!first) return null;
+      s = first;
+      continue;
+    }
+    const union = splitTopLevel(s, ["|"]);
+    if (union.length > 1) {
+      const present = union.filter((m) => !ABSENT_TYPES.has(m.trim()));
+      if (present.length !== 1) return null;
+      s = present[0]!;
+      continue;
+    }
+    if (splitTopLevel(s, ["&"]).length > 1) return null;
+    const generic = matchGeneric(s);
+    if (generic) {
+      const name = generic.name.split(/\\|::|\./).pop() ?? "";
+      const args = splitTopLevel(generic.body, [","]);
+      // Python's typing forms (bracket syntax only: Java's `Optional<Repo>`
+      // is a real container whose calls go through `.get()`).
+      if (generic.close === "bracket" && (name === "Union" || name === "Optional")) {
+        const present = args.filter((a) => !ABSENT_TYPES.has(a.trim()));
+        if (present.length !== 1) return null;
+        s = present[0]!;
+        continue;
+      }
+      if (wrappers?.has(name)) {
+        if (args.length === 0) return null;
+        s = args[0]!;
+        continue;
+      }
+      s = generic.name;
+      continue;
+    }
+    break;
+  }
+  const simple = s.split(/\\|::|\./).filter(Boolean).pop() ?? "";
+  if (!/^[A-Za-z_$][\w$]*$/.test(simple)) return null;
+  if (ABSENT_TYPES.has(simple) || isBuiltinType(simple, language)) return null;
+  return simple;
+}
+
 function stripDecoration(input: string, _language: Language): string {
   let s = input.trim();
   if (!s) return "";

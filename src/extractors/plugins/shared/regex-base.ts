@@ -1,4 +1,6 @@
-import type { FunctionInfo, ClassInfo, CallInfo, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo } from "../../../types/analysis.js";
+import type { FunctionInfo, ClassInfo, CallInfo, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo, DiBinding } from "../../../types/analysis.js";
+
+import { holdNoiseCall } from "../../shared/call-graph.js";
 
 /**
  * Shared regex-based extraction framework for languages without tree-sitter support.
@@ -14,6 +16,14 @@ export interface FnPattern {
 export interface ClsPattern {
   pattern: RegExp;
   getExtends?: (line: string) => string | null;
+  /** Interfaces/protocols/traits the declaration line names as implemented. */
+  getImplements?: (line: string) => string[];
+  /**
+   * What the pattern declares: an `interface` (Go interface, Swift protocol,
+   * Scala trait, Rust trait, VB `Interface`) seeds the linker's
+   * interface→implementation map. Omitted for ordinary classes.
+   */
+  kind?: ClassInfo["kind"];
 }
 
 export interface ImpPattern {
@@ -36,8 +46,15 @@ export interface KeywordEndConfig {
 export interface CallPattern {
   /** A regex with capture groups — the resolver turns them into a qualified call name. */
   pattern: RegExp;
-  /** Build the qualified call name (e.g. `this.service.method`) from the regex match. */
-  buildName: (m: RegExpExecArray) => { name: string; leafName: string };
+  /**
+   * Build the qualified call name (e.g. `this.service.method`) from the regex
+   * match. `receiverType`/`receiverQualifier` say what a service-locator
+   * receiver chained into the call evaluates to (`getIt<Repo>().find()`) —
+   * see `CallInfo.receiverType`. The pattern runs on the line with string
+   * contents blanked; `rawLine` is the original (same columns), for a key
+   * written as a string (`resolve(Repo.self, name: "mem")`).
+   */
+  buildName: (m: RegExpExecArray, rawLine?: string) => { name: string; leafName: string; receiverType?: string; receiverQualifier?: string };
 }
 
 /** Additional property detector for class bodies. */
@@ -135,6 +152,20 @@ export interface RegexLangSpec {
    * dialect the language's `reachability` model resolves.
    */
   extractPathReferences?: (lines: string[]) => string[];
+  /**
+   * Dependency-injection container registrations in the file (get_it
+   * `registerSingleton<Repo>(PgRepo())`, Swinject `register(Repo.self) { _ in
+   * PgRepo() }`, wire `wire.Bind(new(Repo), new(*PgRepo))`) →
+   * `FileAnalysis.diBindings`.
+   */
+  extractDiBindings?: (lines: string[], filePath: string) => DiBinding[];
+  /**
+   * Locals whose type the body states (`let r: Repo = …`, `r := &PgRepo{}`,
+   * `final repo = getIt<Repo>()`) → `FunctionInfo.localTypes`. Called per
+   * function/method with its body lines (the declaration line's own body text
+   * first, for one-line bodies).
+   */
+  extractLocalTypes?: (bodyLines: string[], fn: { name: string; params: ParamInfo[] }) => NonNullable<FunctionInfo["localTypes"]>;
 }
 
 /**
@@ -296,7 +327,8 @@ export function extractFunctionsWithSpec(lines: string[], spec: RegexLangSpec): 
       const m = line.match(pattern);
       if (m && m[1] && !isControlFlowKeyword(m[1])) {
         const endLine = findEndLine(lines, i, resolveBlockStyle(spec), spec.keywordEnd);
-        const calls = extractCallsFromBody(lines, i + 1, endLine, spec.lineCommentPrefixes, spec.callPatterns);
+        const inline = inlineBodyColumn(line, line.indexOf(m[1], m.index ?? 0) + m[1].length);
+        const calls = extractCallsFromBody(lines, i + 1, endLine, spec.lineCommentPrefixes, spec.callPatterns, inline >= 0 ? { line: i, column: inline } : undefined);
         const fn: FunctionInfo = {
           name: m[1],
           params: extractParamsFromDeclaration(lines, i, m[1], spec.parseParam),
@@ -309,6 +341,7 @@ export function extractFunctionsWithSpec(lines: string[], spec: RegexLangSpec): 
           endLine,
         };
         attachRequestAccess(fn, lines, i + 1, endLine, spec);
+        attachLocalTypes(fn, lines, i, inline, endLine, spec);
         fns.push(fn);
         break;
       }
@@ -333,6 +366,45 @@ export function attributeLinesAbove(lines: string[], i: number, spec: RegexLangS
   return out;
 }
 
+/**
+ * Column where a declaration line's own body text starts — after the `{`,
+ * `=>` or `=` that opens a one-line body (`func (s *S) One() { s.repo.Find() }`,
+ * `def f(r: R): Unit = r.load()`, `void f() => _repo.save();`) — or -1 when
+ * the line opens no body. `from` is the end of the declared name; brackets
+ * after it (the parameter list, a Go receiver, default values) are skipped.
+ */
+export function inlineBodyColumn(line: string, from: number): number {
+  if (from <= 0) return -1;
+  let depth = 0;
+  for (let k = from; k < line.length; k++) {
+    const c = line[k]!;
+    if (c === "(" || c === "[") depth++;
+    else if (c === ")" || c === "]") depth = Math.max(0, depth - 1);
+    else if (depth === 0) {
+      if (c === "{") return k + 1;
+      if (c === "=") {
+        const next = line[k + 1];
+        const prev = line[k - 1];
+        if (next === ">") return k + 2;
+        if (next !== "=" && prev !== "=" && prev !== "!" && prev !== "<" && prev !== ">" && prev !== ":") {
+          // `local f = function(x)` binds a function literal: its body is
+          // not on this line's terms, and `function(` is no call.
+          return /^\s*(?:function|func|fun|fn|sub|lambda|proc)\b/.test(line.slice(k + 1)) ? -1 : k + 1;
+        }
+      }
+    }
+  }
+  return -1;
+}
+
+function attachLocalTypes(fn: FunctionInfo, lines: string[], declLine: number, inline: number, to: number, spec: RegexLangSpec): void {
+  if (!spec.extractLocalTypes) return;
+  const body = lines.slice(declLine + 1, Math.min(to, lines.length));
+  if (inline >= 0) body.unshift(lines[declLine]!.slice(inline));
+  const locals = spec.extractLocalTypes(body, fn);
+  if (locals.length > 0) fn.localTypes = locals;
+}
+
 function attachRequestAccess(fn: FunctionInfo, lines: string[], from: number, to: number, spec: RegexLangSpec): void {
   if (!spec.extractRequestAccess) return;
   const access = spec.extractRequestAccess(lines.slice(from, Math.min(to, lines.length)), fn);
@@ -348,7 +420,7 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
     // first superclass AND protocol…" — otherwise yields a phantom class.
     if (isCommentLine(lines[i], spec.lineCommentPrefixes)) continue;
 
-    for (const { pattern, getExtends } of spec.classPatterns) {
+    for (const { pattern, getExtends, getImplements, kind } of spec.classPatterns) {
       const m = lines[i].match(pattern);
       if (m && m[1]) {
         const endLine = findEndLine(lines, i, resolveBlockStyle(spec), spec.keywordEnd);
@@ -365,7 +437,8 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
             if (fm && fm[1] && !isControlFlowKeyword(fm[1])) {
               const methodStart = i + 1 + j;
               const methodEnd = findEndLine(lines, methodStart, resolveBlockStyle(spec), spec.keywordEnd);
-              const calls = extractCallsFromBody(lines, methodStart + 1, methodEnd, spec.lineCommentPrefixes, spec.callPatterns);
+              const inline = inlineBodyColumn(bodyLine, bodyLine.indexOf(fm[1], fm.index ?? 0) + fm[1].length);
+              const calls = extractCallsFromBody(lines, methodStart + 1, methodEnd, spec.lineCommentPrefixes, spec.callPatterns, inline >= 0 ? { line: methodStart, column: inline } : undefined);
               const method: FunctionInfo = {
                 name: fm[1],
                 params: extractParamsFromDeclaration(lines, methodStart, fm[1], spec.parseParam),
@@ -378,26 +451,37 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
                 endLine: methodEnd,
               };
               attachRequestAccess(method, lines, methodStart + 1, methodEnd, spec);
+              attachLocalTypes(method, lines, methodStart, inline, methodEnd, spec);
               methods.push(method);
               break;
             }
           }
         }
 
-        // Extract properties (typed fields)
-        const properties: PropertyInfo[] = extractPropertiesFromBody(bodyLines, spec.propertyPatterns, spec);
+        // Extract properties (typed fields). A wrapped header (`class A extends B`
+        // / `    implements C {`, a Scala constructor list over several lines)
+        // opens its body on a LATER line: scan from there, or that `{` puts
+        // every field at depth 1 and they are all skipped.
+        let open = i;
+        if (resolveBlockStyle(spec) === "brace") {
+          while (open < endLine - 1 && !lines[open]!.includes("{")) open++;
+          if (!lines[open]!.includes("{")) open = i;
+        }
+        const properties: PropertyInfo[] = extractPropertiesFromBody(lines.slice(open + 1, endLine), spec.propertyPatterns, spec);
 
-        classes.push({
+        const cls: ClassInfo = {
           name: m[1],
           extends: getExtends?.(lines[i]) ?? null,
-          implements: [],
+          implements: getImplements?.(lines[i]) ?? [],
           decorators: attributeLinesAbove(lines, i, spec),
           methods,
           properties,
           isExported: true,
           line: i + 1,
           endLine,
-        });
+        };
+        if (kind) cls.kind = kind;
+        classes.push(cls);
         break;
       }
     }
@@ -586,38 +670,141 @@ function extractPropertiesFromBody(
   return properties;
 }
 
-/** Baseline call matcher — `name(` or `obj.method(` — applies to every language. */
-const BASELINE_CALL_RE = /\b([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?)\s*\(/g;
+/**
+ * `line` with the text inside string literals blanked (same length, so match
+ * columns stay true) — `'UserService($baseUrl)'` names no call. Interpolated
+ * expressions are code and are kept: `${…}` (Dart, Kotlin, JS-ish), `#{…}`
+ * (Ruby, Elixir), `\(…)` (Swift). A `'` right after a word character, `&`, `<`
+ * or another quote is not an opening quote (Rust lifetimes `&'a`, Haskell
+ * primes `foldl'`); an unterminated quote leaves the rest of the line as is.
+ */
+export function blankStringLiterals(line: string, commentPrefixes: readonly string[] = []): string {
+  // VB-family: `'` starts a comment, never a string, and strings have no
+  // backslash escapes (`"C:\temp\"` ends at its last quote; `""` is a quote).
+  const vbStyle = commentPrefixes.includes("'");
+  const commentAt = (i: number): boolean => commentPrefixes.some((p) => line.startsWith(p, i));
+  if (!line.includes('"') && !line.includes("'") && !commentPrefixes.some((p) => line.includes(p))) return line;
+  let out = "";
+  let i = 0;
+  while (i < line.length) {
+    const c = line[i]!;
+    // A trailing comment is not code: blank the rest of the line.
+    if (commentAt(i)) return out + " ".repeat(line.length - i);
+    const opens =
+      c === '"' ||
+      (c === "'" && !vbStyle && !(i > 0 && /[\w&<'"]/.test(line[i - 1]!)));
+    if (opens) {
+      let close = -1;
+      for (let k = i + 1; k < line.length; k++) {
+        if (!vbStyle && line[k] === "\\") { k++; continue; }
+        if (line[k] === c) {
+          if (vbStyle && line[k + 1] === c) { k++; continue; }
+          close = k;
+          break;
+        }
+      }
+      if (close < 0) return out + line.slice(i);
+      // `$"Hi {name.Trim()}"` (C#/VB interpolation, also `$@"…"`/`@$"…"`).
+      const braceHoles = /\$@?$|@\$$/.test(line.slice(Math.max(0, i - 2), i));
+      out += c + keepInterpolations(line.slice(i + 1, close), braceHoles) + c;
+      i = close + 1;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
 
-/** Extract function calls from a body region using regex. */
+function keepInterpolations(body: string, braceHoles = false): string {
+  let out = "";
+  let i = 0;
+  while (i < body.length) {
+    const two = body.slice(i, i + 2);
+    const hole = two === "${" || two === "#{" || two === "\\(";
+    if (braceHoles && body[i] === "{" && body[i + 1] !== "{") {
+      // `{expr}` hole of a `$"…"` string (`{{` is a literal brace).
+      let depth = 0;
+      let k = i;
+      for (; k < body.length; k++) {
+        if (body[k] === "{") depth++;
+        else if (body[k] === "}" && --depth === 0) break;
+      }
+      out += body.slice(i, k + 1);
+      i = k + 1;
+      continue;
+    }
+    if (hole) {
+      const open = body[i + 1]!;
+      const closeCh = open === "{" ? "}" : ")";
+      let depth = 0;
+      let k = i + 1;
+      for (; k < body.length; k++) {
+        if (body[k] === open) depth++;
+        else if (body[k] === closeCh && --depth === 0) break;
+      }
+      out += body.slice(i, k + 1);
+      i = k + 1;
+      continue;
+    }
+    out += " ";
+    i++;
+  }
+  return out;
+}
+
+/**
+ * Baseline call matcher — `name(` or `obj.method(` (also through optional
+ * chaining / a non-null assertion, `obj?.method(`, `obj!.method(`, recorded as
+ * `obj.method`) — applies to every language.
+ */
+const BASELINE_CALL_RE = /\b([a-zA-Z_]\w*(?:[?!]?\.[a-zA-Z_]\w*)?)\s*\(/g;
+
+/**
+ * Extract function calls from a body region using regex. `inline` adds the
+ * text of a declaration line from `column` on — a one-line body.
+ */
 export function extractCallsFromBody(
   lines: string[],
   startLine: number,
   endLine: number,
   commentPrefixes: string[],
   extraCallPatterns: CallPattern[] = [],
+  inline?: { line: number; column: number },
 ): CallInfo[] {
   const calls: CallInfo[] = [];
   const seen = new Set<string>();
 
-  function add(name: string, shortName: string, line: number, column: number) {
-    if (CALL_NOISE.has(shortName) || isControlFlowKeyword(shortName)) return;
+  function add(name: string, shortName: string, line: number, column: number, receiver?: { receiverType?: string; receiverQualifier?: string }) {
+    if (isControlFlowKeyword(shortName)) return;
     if (seen.has(name)) return;
     seen.add(name);
+    if (receiver?.receiverType || receiver?.receiverQualifier) {
+      const call: CallInfo = { name, kind: "internal", target: null, line, column };
+      if (receiver.receiverType) call.receiverType = receiver.receiverType;
+      if (receiver.receiverQualifier) call.receiverQualifier = receiver.receiverQualifier;
+      calls.push(call);
+      return;
+    }
+    if (CALL_NOISE.has(shortName)) {
+      // `repo.delete(id)` on a declared repository is a project call, not
+      // stdlib noise — held back until the receiver's type is known (see
+      // `holdNoiseCall`). A bare `delete(x)` / `print(x)` stays dropped.
+      if (name.includes(".")) holdNoiseCall(calls, { name, kind: "internal", target: null, line, column });
+      return;
+    }
     calls.push({ name, kind: "internal", target: null, line, column });
   }
 
-  for (let i = startLine; i < Math.min(endLine, lines.length); i++) {
-    const line = lines[i];
-    if (isCommentLine(line, commentPrefixes)) continue;
-
+  const scanLine = (raw: string, i: number, offset: number): void => {
+    const line = blankStringLiterals(raw, commentPrefixes);
     // Language-specific call patterns first (they produce more-qualified names)
     for (const cp of extraCallPatterns) {
       const re = new RegExp(cp.pattern.source, cp.pattern.flags.includes("g") ? cp.pattern.flags : cp.pattern.flags + "g");
       let pm: RegExpExecArray | null;
       while ((pm = re.exec(line)) !== null) {
-        const built = cp.buildName(pm);
-        add(built.name, built.leafName, i + 1, pm.index);
+        const built = cp.buildName(pm, raw);
+        add(built.name, built.leafName, i + 1, pm.index + offset, built);
       }
     }
 
@@ -625,10 +812,24 @@ export function extractCallsFromBody(
     let m: RegExpExecArray | null;
     BASELINE_CALL_RE.lastIndex = 0;
     while ((m = BASELINE_CALL_RE.exec(line)) !== null) {
-      const name = m[1];
+      // `make().bar(` / `items[0].bar(`: the receiver is a call or index
+      // result the baseline cannot name — recording a bare `bar` would let a
+      // same-named function capture it. (A language call pattern that types
+      // the receiver records it instead.)
+      if (m.index >= 2 && line[m.index - 1] === "." && /[)\]]/.test(line[m.index - 2]!)) continue;
+      const name = m[1].replace(/[?!]\./, ".");
       const shortName = name.includes(".") ? name.split(".").pop()! : name;
-      add(name, shortName, i + 1, m.index);
+      add(name, shortName, i + 1, m.index + offset);
     }
+  };
+
+  if (inline && !isCommentLine(lines[inline.line] ?? "", commentPrefixes)) {
+    scanLine((lines[inline.line] ?? "").slice(inline.column), inline.line, inline.column);
+  }
+  for (let i = startLine; i < Math.min(endLine, lines.length); i++) {
+    const line = lines[i];
+    if (isCommentLine(line, commentPrefixes)) continue;
+    scanLine(line, i, 0);
   }
   return calls;
 }
