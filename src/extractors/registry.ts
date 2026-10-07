@@ -73,6 +73,8 @@ import { zigManifest } from "./plugins/zig/manifest.js";
 import { ocamlManifest } from "./plugins/ocaml/manifest.js";
 import { rakuManifest } from "./plugins/raku/manifest.js";
 import { commonLispManifest, racketManifest, schemeManifest } from "./plugins/lisp/manifest.js";
+import { haxeManifest } from "./plugins/haxe/manifest.js";
+import { mojoManifest } from "./plugins/mojo/manifest.js";
 import { nimManifest } from "./plugins/nim/manifest.js";
 import { dManifest } from "./plugins/dlang/manifest.js";
 import { vManifest } from "./plugins/vlang/manifest.js";
@@ -105,6 +107,8 @@ const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
   racketManifest,
   schemeManifest,
   commonLispManifest,
+  haxeManifest,
+  mojoManifest,
   nimManifest,
   dManifest,
   vManifest,
@@ -181,6 +185,8 @@ const LOADERS: readonly PluginLoader[] = [
   { languages: ["ocaml"], load: () => import("./plugins/ocaml/meta.js").then((m) => [m.ocamlMeta]) },
   { languages: ["raku"], load: () => import("./plugins/raku/meta.js").then((m) => [m.rakuMeta]) },
   { languages: ["racket", "scheme", "commonlisp"], load: () => import("./plugins/lisp/meta.js").then((m) => [m.racketMeta, m.schemeMeta, m.commonLispMeta]) },
+  { languages: ["haxe"], load: () => import("./plugins/haxe/meta.js").then((m) => [m.haxeMeta]) },
+  { languages: ["mojo"], load: () => import("./plugins/mojo/meta.js").then((m) => [m.mojoMeta]) },
   { languages: ["nim"], load: () => import("./plugins/nim/meta.js").then((m) => [m.nimMeta]) },
   { languages: ["dlang"], load: () => import("./plugins/dlang/meta.js").then((m) => [m.dMeta]) },
   { languages: ["vlang"], load: () => import("./plugins/vlang/meta.js").then((m) => [m.vMeta]) },
