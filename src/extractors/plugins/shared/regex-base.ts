@@ -102,6 +102,12 @@ export interface RegexLangSpec {
   functionPatterns: FnPattern[];
   classPatterns: ClsPattern[];
   importPatterns: ImpPattern[];
+  /**
+   * Replaces the per-line `importPatterns` pass when where an import may
+   * appear is structural — Go's `import ( … )` block, whose entries are bare
+   * or aliased string lines that look like any other string line.
+   */
+  extractImports?: (lines: string[]) => ImportInfo[];
   /** @deprecated prefer `blockStyle` */
   indentBased?: boolean;
   /** How to find the end of a block. Default is "brace". */

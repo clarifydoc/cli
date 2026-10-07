@@ -123,3 +123,42 @@ describe("buildComponentGraph — project scope", () => {
     expect(graph["sol/apps/mail/deep/nested/Consumer.pas"]).toEqual(["sol/apps/mail/Progress.pas"]);
   });
 });
+
+describe("buildComponentGraph — package-directory imports (Go)", () => {
+  const goFile = (filePath: string, funcs: string[] = [], imports: string[] = [], calls: string[] = []): FileAnalysis => {
+    const a = file(filePath, { language: "go", imports: imports.map((source) => ({ source, specifiers: [source.split("/").pop()!], isNamespace: false })) });
+    a.functions = funcs.map((name) => ({ name, line: 1, calls: [] }) as never);
+    if (calls.length > 0) a.functions.push({ name: "main", line: 1, calls: calls.map((name) => ({ name, line: 2 })) } as never);
+    return a;
+  };
+
+  it("resolves an import to the directory its longest path suffix names, never every same-named package (gitea)", () => {
+    const graph = buildComponentGraph([
+      goFile("modules/setting/setting.go", ["AppName"]),
+      goFile("modules/setting/database.go", ["LoadDBSetting"]),
+      goFile("routers/web/repo/setting/setting.go", ["Settings"]),
+      goFile("cmd/web.go", [], ["code.gitea.io/gitea/modules/setting"], ["setting.AppName"]),
+    ]);
+    // Narrowed to the file declaring the name used; the router's `setting` package is another directory.
+    expect(graph["cmd/web.go"]).toEqual(["modules/setting/setting.go"]);
+  });
+
+  it("keeps every file of the package when the importer uses no name it declares, but never its tests", () => {
+    const graph = buildComponentGraph([
+      goFile("handler/user.go", ["NewUser"]),
+      goFile("handler/order.go", ["NewOrder"]),
+      goFile("handler/user_test.go", ["TestNewUser"]),
+      goFile("main.go", [], ["sample-go-api/handler"]),
+    ]);
+    expect(graph["main.go"]?.sort()).toEqual(["handler/order.go", "handler/user.go"]);
+  });
+
+  it("refuses an import two directories match equally well", () => {
+    const graph = buildComponentGraph([
+      goFile("svc-a/internal/models/user.go", ["User"]),
+      goFile("svc-b/internal/models/user.go", ["User"]),
+      goFile("tools/gen.go", [], ["example.com/internal/models"], ["models.User"]),
+    ]);
+    expect(graph["tools/gen.go"]).toBeUndefined();
+  });
+});

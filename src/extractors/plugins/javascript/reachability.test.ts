@@ -61,6 +61,14 @@ describe("JS reachability — module resolution", () => {
     expect(m.resolve("src/a.ts", "~/missing/thing")).toBeNull();
   });
 
+  it("matches a bundler-rooted path that names its file with the extension (photoprism)", async () => {
+    // `overlayResolver({ roots: [src] })`: `component/…` is `frontend/src/component/…`.
+    const m = await model(["frontend/src/component/album/edit/dialog.vue", "frontend/src/component/components.js"]);
+    expect(m.resolve("frontend/src/component/components.js", "component/album/edit/dialog.vue")).toEqual([
+      "frontend/src/component/album/edit/dialog.vue",
+    ]);
+  });
+
   it("resolves workspace packages into their own root", async () => {
     const m = await model(
       ["packages/ui/src/index.ts", "packages/ui/src/button.ts", "apps/web/src/main.ts"],
@@ -73,6 +81,17 @@ describe("JS reachability — module resolution", () => {
 });
 
 describe("JS reachability — entry points", () => {
+  it("treats every file under vite_ruby's entrypoints directory as an entry (chatwoot)", async () => {
+    const m = await model(
+      ["app/javascript/entrypoints/dashboard.js", "app/javascript/entrypoints/v3app.js", "app/javascript/v3/App.vue"],
+      { "config/vite.json": { all: { sourceCodeDir: "app/javascript" } } },
+    );
+    expect(m.manifestEntries).toEqual([
+      { file: "app/javascript/entrypoints/dashboard.js", reason: "vite_ruby entrypoint" },
+      { file: "app/javascript/entrypoints/v3app.js", reason: "vite_ruby entrypoint" },
+    ]);
+  });
+
   it("reads package.json fields and script paths, mapping build output back to source", async () => {
     const m = await model(
       ["src/index.ts", "src/cli.ts", "src/worker.ts", "ops/report.ts", "src/feature/x.ts", "prisma/seed.ts", "test/setup.ts"],

@@ -11,6 +11,7 @@ import { goPackageManager } from "./package-manifests.js";
 export const goManifest: LanguagePluginManifest = {
   language: "go",
   family: "go",
+  importsNameDirectories: true,
   packageManagers: [goPackageManager],
   packageEcosystems: ["go"],
   parsing: "regex",

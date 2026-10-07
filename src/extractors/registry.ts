@@ -322,6 +322,15 @@ export function isApiContractLanguage(language: string): boolean {
   return API_CONTRACT_LANGUAGES.has(language);
 }
 
+/** Languages whose imports name package directories (see `LanguagePluginManifest.importsNameDirectories`). */
+const DIRECTORY_IMPORT_LANGUAGES: ReadonlySet<string> = new Set(
+  ALL_MANIFESTS.filter((m) => m.importsNameDirectories).map((m) => m.language),
+);
+
+export function importsNameDirectories(language: string): boolean {
+  return DIRECTORY_IMPORT_LANGUAGES.has(language);
+}
+
 /** Every manifest's `sourceDirs` (`bin/` beside a `META6.json`, …): skipped directories that are source. */
 export const SOURCE_DIRS: ReadonlyArray<{ dir: string; marker: string }> = ALL_MANIFESTS.flatMap((m) => m.sourceDirs ?? []);
 
