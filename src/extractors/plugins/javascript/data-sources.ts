@@ -1,6 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { Confidence, DataSourceInfo, CallInfo, FileAnalysis, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor, type ProjectApiCall } from "../../data-sources/base.js";
+import type { ProjectContext } from "../../../types/project.js";
 import { resolveUrlBuilders } from "./url-builders.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { stripQuotes } from "../../shared/node-helpers.js";
@@ -158,8 +159,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
    * a call funneled through a project URL helper gets the concrete path the
    * cross-tier linker can join.
    */
-  override resolveProject(calls: ProjectApiCall[], analyses: FileAnalysis[]): number {
-    return resolveUrlBuilders(calls, analyses);
+  override resolveProject(calls: ProjectApiCall[], analyses: FileAnalysis[], ctx: ProjectContext): number {
+    return resolveUrlBuilders(calls, analyses, ctx);
   }
 
   /**

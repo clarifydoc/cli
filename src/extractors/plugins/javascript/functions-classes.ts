@@ -242,39 +242,96 @@ export function extractUrlTemplates(
 ): string[] {
   if (!body) return [];
 
-  // Top-level `const/let x = <expr>` bindings, for a `return x` indirection.
-  const locals = new Map<string, Node>();
+  const locals: Locals = { values: new Map(), appends: new Map() };
   const returns: Node[] = [];
   if (body.type === "statement_block") {
-    collectReturns(body.namedChildren, locals, returns, 0);
+    collectReturns(body.namedChildren, locals, returns, 0, null, paramNames);
   } else {
-    // Expression-bodied arrow: the body itself is the returned expression.
     returns.push(body);
   }
   if (returns.length === 0) return [];
 
-  // Capture the pre-return top-level consts as a function-local scope, then fold
-  // each returned branch. `envMode: "collapse"` drops an environment base to
-  // "" (the template is app-relative).
   const scope = new Map<string, ValueExpr>();
-  for (const [name, valueNode] of locals) {
+  for (const [name, valueNode] of locals.values) {
     scope.set(name, astToValueExpr(valueNode));
   }
+  // Fields (`this.baseUrl`) and module names (`prefix`) stay `${…}` holes: a
+  // project pass resolves them where the helper is CALLED — `this` is the
+  // caller's instance, so an inherited `getResourceUrl()` builds each
+  // subclass's own URL.
+  const fold = (expr: ValueExpr) =>
+    foldValue(expr, scope, {
+      params: paramNames,
+      envMode: "collapse",
+      opaqueCall: "template",
+      unknownRef: "template",
+      keepHole: resolvableHole,
+    }).text;
   const templates: string[] = [];
+  const push = (text: string | null): boolean => {
+    if (text == null) return false;
+    const tpl = stripUrlBase(text);
+    if (tpl.includes("/") && !templates.includes(tpl)) templates.push(tpl);
+    return templates.length >= MAX_URL_TEMPLATES;
+  };
   for (const ret of returns) {
+    // `let url = base; if (id) url += `${id}/`; return url` — one template per
+    // combination of the guarded appends, fewest first.
+    const appended = ret.type === "identifier" ? locals.appends.get(ret.text) : undefined;
+    const base = ret.type === "identifier" ? locals.values.get(ret.text) : undefined;
+    if (appended && base) {
+      for (const variant of appendVariants(appended)) {
+        const expr: ValueExpr = { kind: "concat", parts: [astToValueExpr(base), ...variant.map((a) => astToValueExpr(a))] };
+        if (push(fold(expr))) return templates;
+      }
+      continue;
+    }
     for (const branch of ternaryArms(ret, 0)) {
-      const { text } = foldValue(astToValueExpr(branch), scope, {
-        params: paramNames,
-        envMode: "collapse",
-      });
-      if (text == null) continue;
-      const tpl = stripUrlBase(text);
-      if (!tpl.includes("/") || templates.includes(tpl)) continue;
-      templates.push(tpl);
-      if (templates.length >= MAX_URL_TEMPLATES) return templates;
+      if (push(fold(astToValueExpr(branch)))) return templates;
     }
   }
   return templates;
+}
+
+/**
+ * A hole a later pass could fill: one field of `this` (`this.baseUrl`), or a
+ * name with at most two members that is no browser global (`config.PREFIX`).
+ * A call (`useStore().id`), a deeper chain (`store.state.config.API`) or
+ * `window.location.origin` cannot be, and stays a `{}`.
+ */
+function resolvableHole(text: string): boolean {
+  const t = text.replace(/\s+/g, "");
+  if (/^this\.[A-Za-z_$][\w$]*$/.test(t)) return true;
+  // Module values are keyed at most `name.a.b`; a deeper chain is runtime state (`store.state.config.API`).
+  if (!/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*){0,2}$/.test(t)) return false;
+  return !/^(?:this|window|document|location|globalThis|self|navigator|process|import)\b/.test(t);
+}
+
+interface Locals {
+  values: Map<string, Node>;
+  /** `url += …` appends per local, each with the parameter whose truthiness guards it (`?` = some other condition). */
+  appends: Map<string, Array<{ guard: string | null; expr: Node }>>;
+}
+
+/** The appended expressions of every combination of guards, unconditional appends always in, fewest guards first. */
+function appendVariants(appends: ReadonlyArray<{ guard: string | null; expr: Node }>): Node[][] {
+  const guards = [...new Set(appends.map((a) => a.guard).filter((g): g is string => g !== null))].slice(0, 3);
+  const subsets: Set<string>[] = [];
+  for (let mask = 0; mask < 1 << guards.length; mask++) {
+    subsets.push(new Set(guards.filter((_, i) => mask & (1 << i))));
+  }
+  subsets.sort((a, b) => a.size - b.size);
+  return subsets.map((on) => appends.filter((a) => a.guard === null || on.has(a.guard)).map((a) => a.expr));
+}
+
+/** The parameter a condition tests: `id`, `id !== null`, `id != undefined`, `!!id`; else `?`. */
+function guardParam(cond: Node, params: ReadonlySet<string>): string {
+  let c: Node | null = cond;
+  while (c?.type === "parenthesized_expression") c = c.namedChild(0);
+  if (!c) return "?";
+  const text = c.text.replace(/\s+/g, "");
+  const m = /^(?:!!)?([A-Za-z_$][\w$]*)(?:!==?(?:null|undefined))?$/.exec(text) ?? /^(?:null|undefined)!==?([A-Za-z_$][\w$]*)$/.exec(text);
+  return m && params.has(m[1]!) ? m[1]! : "?";
 }
 
 /** The first (primary) URL template of a function body; see {@link extractUrlTemplates}. */
@@ -294,7 +351,14 @@ const MAX_RETURN_DEPTH = 4;
  * `try` and `switch` are not entered: a URL assembled inside one is not a
  * branch of the helper but a computation this pass does not model.
  */
-function collectReturns(stmts: readonly Node[], locals: Map<string, Node>, out: Node[], depth: number): void {
+function collectReturns(
+  stmts: readonly Node[],
+  locals: Locals,
+  out: Node[],
+  depth: number,
+  guard: string | null,
+  params: ReadonlySet<string>,
+): void {
   if (depth > MAX_RETURN_DEPTH) return;
   for (const stmt of stmts) {
     if (stmt.type === "lexical_declaration" || stmt.type === "variable_declaration") {
@@ -302,16 +366,30 @@ function collectReturns(stmts: readonly Node[], locals: Map<string, Node>, out: 
         if (decl.type !== "variable_declarator") continue;
         const nm = decl.childForFieldName("name");
         const val = decl.childForFieldName("value");
-        if (nm?.type === "identifier" && val && !locals.has(nm.text)) locals.set(nm.text, val);
+        if (nm?.type === "identifier" && val && !locals.values.has(nm.text)) locals.values.set(nm.text, val);
+      }
+    } else if (stmt.type === "expression_statement") {
+      // `url += `${id}/`` — appended under whatever guards this statement.
+      const e = stmt.namedChild(0);
+      if (e?.type === "augmented_assignment_expression" && e.childForFieldName("operator")?.text === "+=") {
+        const left = e.childForFieldName("left");
+        const right = e.childForFieldName("right");
+        if (left?.type === "identifier" && right && locals.values.has(left.text)) {
+          const list = locals.appends.get(left.text) ?? [];
+          list.push({ guard, expr: right });
+          locals.appends.set(left.text, list);
+        }
       }
     } else if (stmt.type === "return_statement") {
       const expr = stmt.namedChild(0);
       if (expr) out.push(expr);
     } else if (stmt.type === "if_statement") {
+      const cond = stmt.childForFieldName("condition");
+      const inner = cond ? guardParam(cond, params) : "?";
       const cons = stmt.childForFieldName("consequence");
-      if (cons) collectReturns(branchStatements(cons), locals, out, depth + 1);
+      if (cons) collectReturns(branchStatements(cons), locals, out, depth + 1, inner, params);
       const alt = stmt.childForFieldName("alternative")?.namedChild(0); // else_clause → body
-      if (alt) collectReturns(branchStatements(alt), locals, out, depth + 1);
+      if (alt) collectReturns(branchStatements(alt), locals, out, depth + 1, "?", params);
     }
   }
 }

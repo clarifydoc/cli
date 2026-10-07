@@ -71,7 +71,19 @@ export interface FoldOptions {
    * source text verbatim (used when a later pass will still substitute it, e.g.
    * a URL-builder helper call kept for project-level resolution).
    */
-  opaqueCall?: "hole" | "keep";
+  opaqueCall?: "hole" | "keep" | "template";
+  /**
+   * How an identifier with no binding in scope renders: `"hole"` → `{}`
+   * (default); `"template"` → `${name}`, so a project pass that knows the
+   * module or class it comes from can still fill it in.
+   */
+  unknownRef?: "hole" | "template";
+  /**
+   * With `opaqueCall: "template"`, which opaque pieces stay `${…}` — the ones
+   * a later pass could resolve (a field, an imported name); the rest are `{}`.
+   * Default: all.
+   */
+  keepHole?: (text: string) => boolean;
   /** Ref-chain depth guard (default 16). */
   maxDepth?: number;
 }
@@ -106,6 +118,7 @@ export function foldValue(expr: ValueExpr, scope: Scope, opts: FoldOptions = {})
   const params = opts.params ?? EMPTY_PARAMS;
   const envMode = opts.envMode ?? "name";
   const opaqueMode = opts.opaqueCall ?? "hole";
+  const unknownRefMode = opts.unknownRef ?? "hole";
   const maxDepth = opts.maxDepth ?? 16;
 
   let hadHole = false;
@@ -153,6 +166,8 @@ export function foldValue(expr: ValueExpr, scope: Scope, opts: FoldOptions = {})
             params,
             envMode,
             opaqueCall: opaqueMode,
+            unknownRef: unknownRefMode,
+            ...(opts.keepHole ? { keepHole: opts.keepHole } : {}),
             maxDepth: Math.max(0, maxDepth - depth),
           });
           if (sub.text !== null && !sub.hadHole) return sub.text; // fully literal
@@ -166,11 +181,17 @@ export function foldValue(expr: ValueExpr, scope: Scope, opts: FoldOptions = {})
       case "env":
         return hole(envMode === "collapse" ? "" : `{env:${e.name}}`);
       case "opaque":
-        return hole(opaqueMode === "keep" ? e.text : "{}");
+        return hole(
+          opaqueMode === "keep"
+            ? e.text
+            : opaqueMode === "template" && (opts.keepHole?.(e.text) ?? true)
+              ? `\${${e.text.replace(/\s+/g, "")}}`
+              : "{}",
+        );
       case "ref": {
         if (params.has(e.name)) return hole(`{${e.name}}`);
         if (visited.has(e.name)) return null; // cycle
-        if (!scope.has(e.name)) return hole("{}"); // unknown identifier
+        if (!scope.has(e.name)) return hole(unknownRefMode === "template" ? `\${${e.name}}` : "{}"); // unknown identifier
         const bound = scope.get(e.name);
         if (bound == null) return hole("{}", "AMBIGUOUS"); // conflicting binding
         visited.add(e.name);

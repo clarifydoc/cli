@@ -25,6 +25,7 @@
  */
 
 import type { DataSourceInfo, FileAnalysis, FunctionInfo, ParamInfo } from "../../../types/analysis.js";
+import type { ClassRef, ProjectContext } from "../../../types/project.js";
 // The quote/bracket-aware splitter and unquoter are shared with the symbolic
 // value resolver (one copy instead of the three that used to exist).
 import { splitTopLevel, unquote } from "../../shared/value-resolver.js";
@@ -74,12 +75,46 @@ function substitute(template: string, params: ParamInfo[], args: string[]): stri
     const token = `{${p.name}}`;
     if (!out.includes(token)) continue;
     const provided = i < args.length ? argLiteral(args[i]!) : null;
-    const fallback = p.defaultValue != null ? unquote(p.defaultValue) : null;
-    const value = provided ?? fallback;
+    // A `null`/`undefined`/`''` default is the absence of a value, never one to splice in.
+    const fallback = p.defaultValue != null && !NULLISH.test(p.defaultValue.trim()) ? unquote(p.defaultValue) : null;
+    let value = provided ?? fallback;
+    // A variable argument stands for one path segment — when the template
+    // stays specific without it: literal path follows it (`/documents/{}/notes/`),
+    // or a base is still to resolve. In `/api/v2/institution/{}/{endpoint}`
+    // the variable names the endpoint itself, and `{}` would join any route.
+    if (value === null && i < args.length && !NULLISH.test(args[i]!.trim()) && specificWithout(out, token)) value = "{}";
     if (value === null) return null;
     out = out.split(token).join(value);
   }
   return out;
+}
+
+const NULLISH = /^(?:null|undefined|''|""|``)$/;
+
+function specificWithout(template: string, token: string): boolean {
+  if (template.includes("${")) return true;
+  const after = template.slice(template.indexOf(token) + token.length).replace(/\{[^}]*\}/g, "");
+  return /[A-Za-z0-9]/.test(after);
+}
+
+/**
+ * The templates a call means, by the arguments it passes. A helper that
+ * appends optional parts (`if (id) url += `${id}/``) has one template per
+ * combination; the call supplying `id` and `action` means the one using both
+ * — not the bare collection URL, which would link it to the wrong route.
+ */
+function chooseTemplates(builder: UrlBuilder, args: string[]): string[] {
+  const used = (tpl: string) => new Set(builder.params.filter((p) => tpl.includes(`{${p.name}}`)).map((p) => p.name));
+  const universe = new Set(builder.templates.flatMap((t) => [...used(t)]));
+  if (universe.size === 0 || builder.templates.length === 1) return builder.templates;
+  const supplied = new Set(
+    builder.params.filter((p, i) => universe.has(p.name) && i < args.length && !NULLISH.test(args[i]!.trim())).map((p) => p.name),
+  );
+  const exact = builder.templates.filter((t) => {
+    const u = used(t);
+    return u.size === supplied.size && [...u].every((n) => supplied.has(n));
+  });
+  return exact.length > 0 ? exact : builder.templates;
 }
 
 function templatesOf(fn: FunctionInfo): string[] {
@@ -93,6 +128,15 @@ function templatesOf(fn: FunctionInfo): string[] {
  * different template sets is ambiguous and dropped (set to null) so we never
  * resolve it the wrong way.
  */
+interface HelperLookup {
+  /** Helpers by bare name across the project; null = two different ones (ambiguous). */
+  global: Map<string, UrlBuilder | null>;
+  /** File-local helpers by their dotted name — a route table's `routes.tagsSlug`. */
+  local: Map<string, Map<string, UrlBuilder>>;
+  /** `this.m(…)`: the method of that name along the calling class's chain. */
+  method?: (file: string, line: number, name: string) => UrlBuilder | null;
+}
+
 function buildIndex(analyses: FileAnalysis[]): Map<string, UrlBuilder | null> {
   const index = new Map<string, UrlBuilder | null>();
   for (const a of analyses) {
@@ -100,7 +144,7 @@ function buildIndex(analyses: FileAnalysis[]): Map<string, UrlBuilder | null> {
     const fns = [...a.functions, ...a.classes.flatMap((c) => c.methods)];
     for (const fn of fns) {
       const templates = templatesOf(fn);
-      if (templates.length === 0) continue;
+      if (templates.length === 0 || fn.name.includes(".")) continue;
       const existing = index.get(fn.name);
       if (existing === undefined) {
         index.set(fn.name, { templates, params: fn.params });
@@ -120,7 +164,7 @@ function buildIndex(analyses: FileAnalysis[]): Map<string, UrlBuilder | null> {
 // `requestUri(`x/${periodParams(p)}`, 'v1')` — is matched whole instead of
 // truncating at the inner `)`.
 const ARG = "((?:[^()]|\\([^()]*\\))*)";
-const RECEIVER = "(?:[A-Za-z_$][\\w$]*\\s*\\.\\s*)*";
+const RECEIVER = "((?:[A-Za-z_$][\\w$]*\\s*\\.\\s*)*)";
 const HELPER_CALL_RE = new RegExp(
   `\\$\\{\\s*${RECEIVER}([A-Za-z_$][\\w$]*)\\s*\\(${ARG}\\)\\s*\\}|${RECEIVER}([A-Za-z_$][\\w$]*)\\s*\\(${ARG}\\)`,
   "g",
@@ -136,15 +180,42 @@ interface HelperOccurrence {
   rewrites: string[];
 }
 
+/** Where a call sits — which file's route tables and which class's methods it sees. */
+interface CallSite {
+  file: string;
+  line: number;
+}
+
+/**
+ * The helper a call names: a dotted helper of the call's own file
+ * (`routes.tagsSlug(…)`), then — for `this.m(…)` — the method along the
+ * calling class's chain, then a helper of that bare name anywhere (unless two
+ * differ).
+ */
+function lookupHelper(lookup: HelperLookup, site: CallSite, receiver: string, name: string): UrlBuilder | null {
+  const recv = receiver.replace(/\s+/g, "").replace(/\.$/, "");
+  if (recv) {
+    const local = lookup.local.get(site.file)?.get(`${recv}.${name}`);
+    if (local) return local;
+  }
+  if (recv === "this" && lookup.method) {
+    const own = lookup.method(site.file, site.line, name);
+    if (own) return own;
+  }
+  return lookup.global.get(name) ?? null;
+}
+
 /** The first helper call in `text` that the index can resolve, or null. */
-function firstResolvable(text: string, index: Map<string, UrlBuilder | null>): HelperOccurrence | null {
+function firstResolvable(text: string, lookup: HelperLookup, site: CallSite): HelperOccurrence | null {
   for (const m of text.matchAll(HELPER_CALL_RE)) {
-    const name = (m[1] ?? m[3]) as string;
-    const argsText = (m[1] != null ? m[2] : m[4]) as string;
-    const builder = index.get(name);
+    const inTemplate = m[2] != null;
+    const receiver = (inTemplate ? m[1] : m[4]) ?? "";
+    const name = (inTemplate ? m[2] : m[5]) as string;
+    const argsText = (inTemplate ? m[3] : m[6]) as string;
+    const builder = lookupHelper(lookup, site, receiver, name);
     if (!builder) continue; // unknown or ambiguous — leave verbatim
-    const args = splitTopLevel(argsText, ",");
-    const rewrites = builder.templates.map((tpl) => substitute(tpl, builder.params, args));
+    const args = splitTopLevel(argsText, ",").map((a) => a.trim()).filter((a) => a.length > 0);
+    const rewrites = chooseTemplates(builder, args).map((tpl) => substitute(tpl, builder.params, args));
     if (rewrites.some((r) => r === null)) continue; // a bare-variable arg — leave verbatim
     return { start: m.index!, end: m.index! + m[0].length, rewrites: rewrites as string[] };
   }
@@ -156,13 +227,13 @@ function firstResolvable(text: string, index: Map<string, UrlBuilder | null>): H
  * with several templates fans the target out into one variant per template,
  * primary first; variants are deduplicated and capped at {@link MAX_VARIANTS}.
  */
-function resolveTargets(target: string, index: Map<string, UrlBuilder | null>): string[] {
+function resolveTargets(target: string, lookup: HelperLookup, site: CallSite): string[] {
   let variants = [target];
   for (let pass = 0; pass < MAX_VARIANTS; pass++) {
     const next: string[] = [];
     let changed = false;
     for (const v of variants) {
-      const occ = firstResolvable(v, index);
+      const occ = firstResolvable(v, lookup, site);
       if (!occ) {
         next.push(v);
         continue;
@@ -185,14 +256,15 @@ function resolveTargets(target: string, index: Map<string, UrlBuilder | null>): 
  * returns the number rewritten. No-op when the project defines no URL-builder
  * helpers.
  */
-export function resolveUrlBuilders(apiCalls: ApiCall[], analyses: FileAnalysis[]): number {
-  const index = buildIndex(analyses);
-  if (index.size === 0) return 0;
+export function resolveUrlBuilders(apiCalls: ApiCall[], analyses: FileAnalysis[], ctx?: ProjectContext): number {
+  const lookup: HelperLookup = { global: buildIndex(analyses), local: localHelpers(analyses) };
+  if (ctx) lookup.method = methodResolver(ctx);
+  if (lookup.global.size === 0 && lookup.local.size === 0 && !lookup.method) return 0;
   let count = 0;
   for (const call of apiCalls) {
     if (call.kind !== "api-call" || !call.target) continue;
     if (!call.target.includes("(")) continue; // a helper call always has `(`
-    const [primary, ...rest] = resolveTargets(call.target, index);
+    const [primary, ...rest] = resolveTargets(call.target, lookup, { file: call.filePath, line: call.line });
     if (primary !== undefined && primary !== call.target) {
       call.target = primary;
       if (rest.length > 0) call.targetAlternatives = rest;
@@ -200,4 +272,38 @@ export function resolveUrlBuilders(apiCalls: ApiCall[], analyses: FileAnalysis[]
     }
   }
   return count;
+}
+
+/** Each file's dotted helpers (`routes.tagsSlug: (tag) => `${prefix}/tags/slug/${tag}``). */
+function localHelpers(analyses: FileAnalysis[]): Map<string, Map<string, UrlBuilder>> {
+  const out = new Map<string, Map<string, UrlBuilder>>();
+  for (const a of analyses) {
+    for (const fn of a.functions) {
+      if (!fn.name.includes(".")) continue;
+      const templates = templatesOf(fn);
+      if (templates.length === 0) continue;
+      const map = out.get(a.filePath) ?? new Map<string, UrlBuilder>();
+      map.set(fn.name, { templates, params: fn.params });
+      out.set(a.filePath, map);
+    }
+  }
+  return out;
+}
+
+/** `this.m(…)` → the first `m` along the calling class's chain, with its templates (or nothing when it has none). */
+function methodResolver(ctx: ProjectContext): (file: string, line: number, name: string) => UrlBuilder | null {
+  return (file, line, name) => {
+    let cls: ClassRef | null = null;
+    for (const ref of ctx.classes.classesIn(file)) {
+      if (ref.cls.line <= line && line <= ref.cls.endLine && (!cls || ref.cls.line >= cls.cls.line)) cls = ref;
+    }
+    if (!cls) return null;
+    for (const c of [cls, ...ctx.classes.ancestors(cls).flatMap((s) => (s.ref ? [s.ref] : []))]) {
+      const fn = c.cls.methods.find((m) => m.name === name);
+      if (!fn) continue;
+      const templates = templatesOf(fn);
+      return templates.length > 0 ? { templates, params: fn.params } : null;
+    }
+    return null;
+  };
 }

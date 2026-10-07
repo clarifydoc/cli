@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import "../extractors/registry.js"; // side effect: registers tree-sitter grammars
 import { parseSource } from "../parsers/parser-manager.js";
-import { extractClasses } from "../extractors/functions-classes/index.js";
+import { extractClasses, extractFunctions } from "../extractors/functions-classes/index.js";
+import { resolveUrlBuilders } from "../extractors/plugins/javascript/url-builders.js";
 import { extractImports } from "../extractors/imports-exports/index.js";
 import { extractDataSources } from "../extractors/data-sources/index.js";
 import { extractModuleValues } from "../extractors/plugins/javascript/module-values.js";
@@ -23,6 +24,7 @@ async function project(files: Record<string, string>) {
       exports: [],
       entityRelations: [],
       classes: extractClasses(tree, src, "typescript" as never),
+      functions: extractFunctions(tree, src, "typescript" as never),
       dataSources: extractDataSources(tree, src, "typescript" as never),
       moduleValues: extractModuleValues(tree, src),
     } as unknown as FileAnalysis);
@@ -32,9 +34,10 @@ async function project(files: Record<string, string>) {
   const calls = analyses.flatMap((a) =>
     a.dataSources.filter((d) => d.kind === "api-call").map((d) => ({ ...d, filePath: a.filePath })),
   ) as Array<DataSourceInfo & { filePath: string }>;
+  resolveUrlBuilders(calls, analyses, ctx);
   resolveSymbolicTargets(calls, analyses, ctx);
   finalizeApiTargets(calls);
-  return calls.map((c) => [c.target, c.baseExpr ?? null]);
+  return calls.map((c) => (c.targetAlternatives ? [c.target, c.baseExpr ?? null, c.targetAlternatives] : [c.target, c.baseExpr ?? null]));
 }
 
 describe("resolveSymbolicTargets", () => {
@@ -91,5 +94,97 @@ class AccountAPI {
       "src/a.service.ts": `export class A { constructor(private http: HttpClient, private url: string) {} list() { return this.http.get(\`\${this.url}/items\`); } }`,
     });
     expect(targets).toEqual([["/items", "this.url"]]);
+  });
+});
+
+describe("URL builders resolved where they are called", () => {
+  async function linked(files: Record<string, string>) {
+    const analyses: FileAnalysis[] = [];
+    for (const [filePath, src] of Object.entries(files)) {
+      const tree = await parseSource(src, "typescript" as never, filePath);
+      analyses.push({
+        filePath,
+        language: "typescript",
+        projectId: "root",
+        imports: extractImports(tree, src, "typescript" as never),
+        exports: [],
+        entityRelations: [],
+        classes: extractClasses(tree, src, "typescript" as never),
+        functions: extractFunctions(tree, src, "typescript" as never),
+        dataSources: extractDataSources(tree, src, "typescript" as never),
+        moduleValues: extractModuleValues(tree, src),
+      } as unknown as FileAnalysis);
+    }
+    const importIndex = buildImportIndex(analyses);
+    const ctx = { importIndex, classes: buildClassIndex(analyses, importIndex) } as ProjectContext;
+    const calls = analyses.flatMap((a) =>
+      a.dataSources.filter((d) => d.kind === "api-call").map((d) => ({ ...d, filePath: a.filePath })),
+    ) as Array<DataSourceInfo & { filePath: string }>;
+    resolveUrlBuilders(calls, analyses, ctx);
+    resolveSymbolicTargets(calls, analyses, ctx);
+    finalizeApiTargets(calls);
+    return calls.map((c) => `${c.filePath.split("/").pop()}:${c.line} ${c.name} ${c.target}`);
+  }
+
+  const PAPERLESS = {
+    "src/environments/environment.ts": `export const environment = { apiBaseUrl: 'http://localhost:8000/api/' };`,
+    "src/app/services/abstract-paperless-service.ts": `
+import { environment } from '../../environments/environment';
+export abstract class AbstractPaperlessService<T> {
+  protected baseUrl: string = environment.apiBaseUrl;
+  constructor(protected http: HttpClient, protected resourceName: string) {}
+  protected getResourceUrl(id: number = null, action: string = null): string {
+    let url = \`\${this.baseUrl}\${this.resourceName}/\`;
+    if (id !== null) url += \`\${id}/\`;
+    if (action) url += \`\${action}/\`;
+    return url;
+  }
+}`,
+    "src/app/services/document.service.ts": `
+import { AbstractPaperlessService } from './abstract-paperless-service';
+export class DocumentService extends AbstractPaperlessService<Document> {
+  constructor(http: HttpClient) { super(http, 'documents'); this.resourceName = 'documents'; }
+  get(id: number) { return this.http.get(this.getResourceUrl(id)); }
+  notes(id: number) { return this.http.get(this.getResourceUrl(id, 'notes')); }
+  bulkEdit() { return this.http.post(this.getResourceUrl(null, 'bulk_edit'), {}); }
+}`,
+  };
+
+  it("builds an inherited helper's URL from the CALLING subclass's fields, the variant its arguments pick (paperless)", async () => {
+    expect(await linked(PAPERLESS)).toEqual([
+      "document.service.ts:5 get /api/documents/{}/",
+      "document.service.ts:6 get /api/documents/{}/notes/",
+      "document.service.ts:7 post /api/documents/bulk_edit/",
+    ]);
+  });
+
+  it("resolves a route table's arrow helper in its own file, over an imported prefix (mealie)", async () => {
+    expect(
+      await linked({
+        "lib/api/config.ts": `const PREFIX = "/api";\nexport const config = { PREFIX };`,
+        "lib/api/user/organizer-tags.ts": `
+import { config } from '../config';
+const prefix = config.PREFIX + "/organizers";
+const routes = {
+  tags: \`\${prefix}/tags\`,
+  tagsSlug: (tag: string) => \`\${prefix}/tags/slug/\${tag}\`,
+};
+export class TagsAPI {
+  constructor(private requests: ApiRequestInstance) {}
+  bySlug(slug: string) { return this.requests.get(routes.tagsSlug(slug)); }
+  all() { return this.requests.get(routes.tags); }
+}`,
+      }),
+    ).toEqual(["organizer-tags.ts:10 get /api/organizers/tags/slug/{}", "organizer-tags.ts:11 get /api/organizers/tags"]);
+  });
+
+  it("does not let a variable argument stand for the segment that names the endpoint", async () => {
+    // `/api/v1/{}` would join any `/api/v1/:id` route; the call stays unresolved.
+    expect(
+      await linked({
+        "src/uri.ts": `export function apiUri(endpoint: string) { return '/api/v1/' + endpoint; }`,
+        "src/a.service.ts": `import { apiUri } from './uri';\nexport function load(path) { return axios.get(apiUri(path)); }`,
+      }),
+    ).toEqual(["a.service.ts:2 get apiUri(path)"]);
   });
 });
