@@ -483,7 +483,15 @@ async function corpusSources(corpus: Corpus): Promise<{ file: string; source: st
   return out;
 }
 
-describe.each(CORPORA)("buildControlFlow — $label corpus", (corpus) => {
+/**
+ * The TypeScript corpus is this repository's own source, so every gate below
+ * grows with `src/` — a few seconds alone, but CI runs all test files at once
+ * on a small runner and the 5 s default is a wall-clock guess that the growing
+ * corpus outran.
+ */
+const CORPUS_TIMEOUT_MS = 120_000;
+
+describe.each(CORPORA)("buildControlFlow — $label corpus", { timeout: CORPUS_TIMEOUT_MS }, (corpus) => {
   it("covers the constructs it claims to", async () => {
     const present = new Set<string>();
     for (const { file, source } of await corpusSources(corpus)) {
