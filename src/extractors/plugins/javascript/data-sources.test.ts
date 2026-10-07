@@ -324,3 +324,91 @@ describe("JS api-call — `del` is the DELETE verb", () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+describe("JS api-call bindings are resolved in the scope of the call", () => {
+  it("gives each method its own `let url` (Kavita's series service)", async () => {
+    const calls = await apiCallsOf(`
+      class SeriesService {
+        wantToRead() {
+          let url = '/api/want-to-read/v2';
+          return this.httpClient.post(url, {});
+        }
+        onDeck() {
+          let url = '/api/series/on-deck?libraryId=1';
+          return this.httpClient.post(url, {});
+        }
+        updateMatch() {
+          let url = '/api/series/update-match';
+          return this.httpClient.post(url, {});
+        }
+      }`);
+    expect(calls.map((c) => c.target)).toEqual([
+      "/api/want-to-read/v2",
+      "/api/series/on-deck?libraryId=1",
+      "/api/series/update-match",
+    ]);
+  });
+
+  it("lets a parameter shadow a module const of the same name", async () => {
+    const calls = await apiCallsOf(`
+      const url = '/api/default';
+      export function load(url) { return fetch(url); }
+      export function def() { return fetch(url); }`);
+    expect(calls.map((c) => c.target)).toEqual(["/api/default"]);
+  });
+
+  it("still finds a module const declared below the function using it", async () => {
+    const calls = await apiCallsOf(`
+      export function load() { return fetch(ENDPOINT); }
+      const ENDPOINT = '/api/items';`);
+    expect(calls.map((c) => c.target)).toEqual(["/api/items"]);
+  });
+});
+
+describe("JS api-call trust: only a real client is believed without a URL", () => {
+  it("does not read a query-param read in a test predicate as a GET", async () => {
+    const calls = await apiCallsOf(`
+      httpTestingController.expectOne((request) =>
+        request.params.get('page') === '1' && req.request.params.get('page_size') === '25');
+      const p = httpParams.get('tag');`);
+    expect(calls).toEqual([]);
+  });
+
+  it("does not take a factory's first argument for its URL because its name contains fetch", async () => {
+    const calls = await apiCallsOf(`
+      export const fetchStatus = createFetchHandler('system.status', '/system/status');
+      const comments = useCommentsFetch('core:comments');`);
+    expect(calls).toEqual([]);
+  });
+
+  it("trusts a verb on a one-hop client receiver, `this.http` included", async () => {
+    const calls = await apiCallsOf(`
+      class S {
+        list() { return this.http.get(this.getResourceUrl()); }
+        one() { return apiClient.get(buildUrl('x')); }
+        two() { return this.$axios.delete(urlFor(1)); }
+      }`);
+    expect(calls.map((c) => [c.name, c.target])).toEqual([
+      ["get", "this.getResourceUrl()"],
+      ["get", "buildUrl('x')"],
+      ["delete", "urlFor(1)"],
+    ]);
+  });
+
+  it("trusts a client name as a method only on a client or global receiver", async () => {
+    const calls = await apiCallsOf(`
+      navigator.wakeLock.request('screen');
+      $.ajax({ url: '/api/a', type: 'GET' });
+      window.fetch('/api/b');
+      api.request('/api/c');`);
+    expect(calls.map((c) => c.target)).toEqual(["/api/b", "/api/c"]);
+  });
+
+  it("does not treat an inbound route config as an outbound request", async () => {
+    const calls = await apiCallsOf(`
+      fastify.route({ method: 'GET', url: '/api/items', handler: listItems });
+      fastify.route({ method: 'POST', url: '/api/items', handler });
+      axios({ method: 'get', url: '/api/users' });`);
+    expect(calls.map((c) => c.target)).toEqual(["/api/users"]);
+  });
+});

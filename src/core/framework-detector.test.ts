@@ -175,3 +175,37 @@ describe("framework rules — .NET / Blazor / desktop", () => {
     expect(ids).toContain("aspnet");
   });
 });
+
+describe("framework rules — pyproject.toml", () => {
+  let root: string;
+
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), "revdoc-fw-py-"));
+    // paperless-ngx's layout: PEP 621 dependencies under [project], with an
+    // [project.optional-dependencies] table after it.
+    await writeFile(
+      join(root, "pyproject.toml"),
+      [
+        "[project]",
+        'name = "paperless-ngx"',
+        "dependencies = [",
+        '  "celery[redis]~=5.5.1",',
+        '  "django~=5.2.13",',
+        '  "djangorestframework~=3.16",',
+        "]",
+        "",
+        "[project.optional-dependencies]",
+        'postgres = ["psycopg[c,pool]==3.2.12"]',
+      ].join("\n"),
+    );
+  });
+
+  afterAll(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("reads PEP 621 dependencies, not only an optional-dependencies table", async () => {
+    const { merged } = await detectFrameworksAcrossRoots(root, []);
+    expect(merged.map((f) => f.id)).toContain("django");
+  });
+});
