@@ -1,6 +1,6 @@
 import type { FileAnalysis } from "../types/analysis.js";
 import { extensionFamily, relativeModulePath } from "../extractors/plugins/shared/path-utils.js";
-import { extensionsOfFamily } from "../extractors/registry.js";
+import { EXTENSION_TO_LANGUAGE, PARTIAL_PREFIX_BY_LANGUAGE, extensionsOfFamily } from "../extractors/registry.js";
 
 /**
  * Project-wide import index, built once after per-file extraction. Works
@@ -413,9 +413,14 @@ export function resolveImportSource(
     if (knownFiles.has(candidate)) return candidate;
   }
   // Any other extension of the importer's own family: CoffeeScript's
-  // `require './routes/orders'` names `orders.coffee`.
+  // `require './routes/orders'` names `orders.coffee`. A family whose
+  // partials carry a prefix (Sass `_buttons.scss`) is tried with it too.
+  const partial = PARTIAL_PREFIX_BY_LANGUAGE.get(EXTENSION_TO_LANGUAGE[norm.slice(norm.lastIndexOf(".")).toLowerCase()] ?? "");
+  const slash = joined.lastIndexOf("/");
   for (const ext of extensionsOfFamily(extensionFamily(norm))) {
-    for (const candidate of [joined + ext, `${joined}/index${ext}`]) {
+    const candidates = [joined + ext, `${joined}/index${ext}`];
+    if (partial) candidates.push(`${joined.slice(0, slash + 1)}${partial}${joined.slice(slash + 1)}${ext}`, `${joined}/${partial}index${ext}`);
+    for (const candidate of candidates) {
       if (knownFiles.has(candidate)) return candidate;
     }
   }

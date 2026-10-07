@@ -739,6 +739,12 @@ export interface LanguagePluginManifest {
    */
   sourceDirs?: ReadonlyArray<{ dir: string; marker: string }>;
   /**
+   * A file named with this prefix is also importable without it — Sass's
+   * partials: `@use "buttons"` loads `_buttons.scss` (and `@use "theme"`
+   * a `theme/_index.scss`). Import resolution tries the prefixed name.
+   */
+  partialPrefix?: string;
+  /**
    * OTHER languages this plugin's `dispatchResolvers` act on (beyond its own).
    * Discovering any of them lazy-loads this plugin too, so a cross-language
    * resolver still runs when its owner's language is absent — e.g. csharp's

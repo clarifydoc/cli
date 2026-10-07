@@ -49,6 +49,7 @@ import {
   ensureLanguagesLoaded,
   classifyKnownPackage,
   pluginFor,
+  PARTIAL_PREFIX_BY_LANGUAGE,
 } from "../extractors/registry.js";
 import { buildSymbolLinks } from "./symbol-linker.js";
 import { enrichGraphFromInheritance } from "./inheritance-edges.js";
@@ -1876,6 +1877,18 @@ export function buildComponentGraph(
       .replace(STRIP_SOURCE_EXTENSION_RE, "")
       .replace(/\/index$/, "");
     strippedPathToFile.set(stripped, a.filePath);
+    // A partial is also imported by its plain name: `_buttons.scss` by
+    // `@use "buttons"`, `theme/_index.scss` by `@use "theme"`.
+    const partial = PARTIAL_PREFIX_BY_LANGUAGE.get(a.language);
+    if (partial) {
+      const slash = stripped.lastIndexOf("/");
+      const name = stripped.slice(slash + 1);
+      if (name.startsWith(partial)) {
+        const dir = stripped.slice(0, Math.max(0, slash));
+        const plain = name === `${partial}index` ? dir : stripped.slice(0, slash + 1) + name.slice(partial.length);
+        if (plain && !strippedPathToFile.has(plain)) strippedPathToFile.set(plain, a.filePath);
+      }
+    }
 
     // Map directory name → files
     const dir = a.filePath.replace(/\\/g, "/").replace(/\/[^/]+$/, "");
@@ -1959,7 +1972,10 @@ export function buildComponentGraph(
           .replace(/^\.\//, "")
           .replace(STRIP_SOURCE_EXTENSION_RE, "");
         const match = scanForImport(candidate);
-        if (match && match !== a.filePath && familyCompatible(a.filePath, match)) refSet.add(match);
+        // Another family's file only when the import names it, extension and
+        // all: a component's `import "./app.scss"` is that stylesheet.
+        const named = match !== undefined && imp.source.toLowerCase().endsWith(match.slice(match.lastIndexOf(".")).toLowerCase());
+        if (match && match !== a.filePath && (familyCompatible(a.filePath, match) || named)) refSet.add(match);
         continue;
       }
 

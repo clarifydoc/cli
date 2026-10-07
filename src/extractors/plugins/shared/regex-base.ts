@@ -526,8 +526,11 @@ export function extractImportsWithSpec(lines: string[], spec: RegexLangSpec): Im
     for (const { pattern, getSource, getSpecifiers } of spec.importPatterns) {
       const m = lines[i].match(pattern);
       if (m) {
+        // An empty source names nothing to load (`@use "sass:math"`, a URL).
+        const source = getSource(m);
+        if (!source) break;
         imports.push({
-          source: getSource(m),
+          source,
           specifiers: getSpecifiers?.(m) ?? [],
           isDefault: false,
           isNamespace: false,
@@ -807,7 +810,8 @@ export function extractCallsFromBody(
   const noBaseline = extraCallPatterns.some((cp) => cp.replacesBaseline);
 
   function add(name: string, shortName: string, line: number, column: number, receiver?: { receiverType?: string; receiverQualifier?: string }) {
-    if (isControlFlowKeyword(shortName)) return;
+    // A pattern returns no name for a match that calls nothing (a CSS built-in).
+    if (!name || isControlFlowKeyword(shortName)) return;
     if (seen.has(name)) return;
     seen.add(name);
     if (receiver?.receiverType || receiver?.receiverQualifier) {
