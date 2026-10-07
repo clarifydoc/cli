@@ -73,6 +73,10 @@ import { zigManifest } from "./plugins/zig/manifest.js";
 import { ocamlManifest } from "./plugins/ocaml/manifest.js";
 import { rakuManifest } from "./plugins/raku/manifest.js";
 import { commonLispManifest, racketManifest, schemeManifest } from "./plugins/lisp/manifest.js";
+import { nimManifest } from "./plugins/nim/manifest.js";
+import { dManifest } from "./plugins/dlang/manifest.js";
+import { vManifest } from "./plugins/vlang/manifest.js";
+import { fortranManifest } from "./plugins/fortran/manifest.js";
 
 /** All plugin manifests, in registration order (order is observable — keep stable). */
 const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
@@ -101,6 +105,10 @@ const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
   racketManifest,
   schemeManifest,
   commonLispManifest,
+  nimManifest,
+  dManifest,
+  vManifest,
+  fortranManifest,
 ];
 
 const MANIFEST_BY_LANGUAGE = new Map<Language, LanguagePluginManifest>();
@@ -173,6 +181,10 @@ const LOADERS: readonly PluginLoader[] = [
   { languages: ["ocaml"], load: () => import("./plugins/ocaml/meta.js").then((m) => [m.ocamlMeta]) },
   { languages: ["raku"], load: () => import("./plugins/raku/meta.js").then((m) => [m.rakuMeta]) },
   { languages: ["racket", "scheme", "commonlisp"], load: () => import("./plugins/lisp/meta.js").then((m) => [m.racketMeta, m.schemeMeta, m.commonLispMeta]) },
+  { languages: ["nim"], load: () => import("./plugins/nim/meta.js").then((m) => [m.nimMeta]) },
+  { languages: ["dlang"], load: () => import("./plugins/dlang/meta.js").then((m) => [m.dMeta]) },
+  { languages: ["vlang"], load: () => import("./plugins/vlang/meta.js").then((m) => [m.vMeta]) },
+  { languages: ["fortran"], load: () => import("./plugins/fortran/meta.js").then((m) => [m.fortranMeta]) },
 ];
 
 const LOADER_BY_LANGUAGE = new Map<Language, PluginLoader>();
