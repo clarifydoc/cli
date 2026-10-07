@@ -6,7 +6,7 @@ export type Language =
   | "haskell" | "clojure" | "blazor" | "html" | "qml" | "qtui" | "xaml" | "jsp" | "springxml" | "jsight"
   | "openapi" | "graphql" | "wsdl" | "groovy" | "powershell" | "bash" | "batch" | "fsharp" | "coffeescript" | "r" | "julia" | "crystal" | "zig" | "ocaml" | "raku" | "racket" | "scheme" | "commonlisp"
   | "nim" | "dlang" | "vlang" | "fortran" | "haxe" | "mojo"
-  | "scss" | "sass" | "less";
+  | "scss" | "sass" | "less" | "autohotkey" | "autoit" | "applescript";
 
 export interface ExtractorWarning {
   /** Dotted-path location, e.g. "functions[3].endLine" or "routes[0].kind". */
