@@ -342,6 +342,13 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
     if (segMatch) return segMatch;
   }
 
+  // 5. `::` namespace: "Shop::Orders" → "Shop/Orders", then "Orders".
+  if (importSource.includes("::")) {
+    const asPath = importSource.replace(/::/g, "/");
+    const nsMatch = tryMatch(asPath, filePathMap, sourceFile) ?? tryMatch(importSource.split("::").pop()!, filePathMap, sourceFile);
+    if (nsMatch) return nsMatch;
+  }
+
   return null;
 }
 

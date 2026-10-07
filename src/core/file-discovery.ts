@@ -5,7 +5,7 @@ import { resolve, sep } from "path";
 import { NO_SYMLINKS } from "./glob-safety.js";
 import type { Language } from "../types/analysis.js";
 import { EXTENSION_TO_LANGUAGE, getLanguageForFile } from "../parsers/language-map.js";
-import { NAMED_FILE_LANGUAGE } from "../extractors/registry.js";
+import { NAMED_FILE_LANGUAGE, SOURCE_DIRS } from "../extractors/registry.js";
 import { loadIgnorePatterns, isIgnored } from "./clarifydoc-ignore.js";
 
 /**
@@ -116,6 +116,32 @@ export async function discoverFiles(
     objectMode: true,
   });
 
+  // A skipped directory a plugin says holds source (`bin/` with a `dune`
+  // file, or beside a `META6.json`): read it too, with the default ignores below it.
+  if (!options.include?.length && SOURCE_DIRS.length > 0) {
+    const seen = new Set(entries.map((e) => e.path));
+    const dirs = new Set<string>();
+    for (const { dir, marker } of SOURCE_DIRS) {
+      const markers = await fg(`**/${marker}`, {
+        ...NO_SYMLINKS,
+        cwd: root,
+        ignore: ignore.filter((p) => !marker.startsWith(p.replace(/^\*\*\//, "").replace(/\/\*\*$/, "") + "/")),
+        absolute: false,
+        onlyFiles: true,
+      });
+      for (const m of markers) {
+        const parent = m.slice(0, m.length - marker.length).replace(/\/$/, "");
+        dirs.add(parent ? `${parent}/${dir}` : dir);
+      }
+    }
+    for (const dir of dirs) {
+      const inner = await fg(patterns, { ...NO_SYMLINKS, cwd: resolve(root, dir), ignore, absolute: false, dot: false, caseSensitiveMatch: false, onlyFiles: false, objectMode: true });
+      for (const e of inner) {
+        const path = `${dir}/${e.path}`;
+        if (!seen.has(path)) { seen.add(path); entries.push({ ...e, path }); }
+      }
+    }
+  }
   const ignorePatterns = loadIgnorePatterns(root);
 
   let results: DiscoveredFile[] = [];

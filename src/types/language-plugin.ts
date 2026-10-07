@@ -730,6 +730,15 @@ export interface LanguagePluginManifest {
    */
   namedFiles?: readonly string[];
   /**
+   * Directories discovery skips as build output that this ecosystem keeps
+   * SOURCE in, and the marker that says so — `bin/` is .NET's build output
+   * everywhere else: `{ dir: "bin", marker: "bin/dune" }` (dune keeps
+   * executables there), `{ dir: "bin", marker: "META6.json" }` (a Raku
+   * distribution's scripts). The marker path is relative to the directory's
+   * parent; the directory is read with the default ignores below it.
+   */
+  sourceDirs?: ReadonlyArray<{ dir: string; marker: string }>;
+  /**
    * OTHER languages this plugin's `dispatchResolvers` act on (beyond its own).
    * Discovering any of them lazy-loads this plugin too, so a cross-language
    * resolver still runs when its owner's language is absent — e.g. csharp's

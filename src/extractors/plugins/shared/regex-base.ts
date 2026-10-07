@@ -116,6 +116,13 @@ export interface RegexLangSpec {
    * a RegExp for the files whose path matches (VB: only `.vbs` scripts).
    */
   topLevelCalls?: boolean | RegExp;
+  /**
+   * Top-level blocks that run LATER, not when the script loads — a route's
+   * `do` block, a registered callback (1-based, inclusive line spans).
+   * `<setup>` leaves their calls out, as the tree-sitter path leaves out a
+   * closure at module level; a route carries them as its own `calls`.
+   */
+  deferredBlocks?: (lines: string[]) => Array<[number, number]>;
   /** Extra call patterns (e.g. PHP `$this->x->y`, Python `self.x.y`). */
   callPatterns?: CallPattern[];
   /** Extra property detectors (e.g. PHP `$name`, VB `As Type`). */
