@@ -7,6 +7,8 @@ import {
   estimateTokens,
   mean,
   poolSetScores,
+  scoreSampledLinks,
+  type PredictedLink,
 } from "./scorer.js";
 
 describe("scoreSet", () => {
@@ -150,5 +152,91 @@ describe("mean", () => {
   it("averages, and treats empty as 0", () => {
     expect(mean([1, 2, 3])).toBe(2);
     expect(mean([])).toBe(0);
+  });
+});
+
+describe("scoreSampledLinks", () => {
+  const p = (over: Partial<PredictedLink>): PredictedLink => ({
+    source: "web/api.ts",
+    sourceLine: 1,
+    target: "srv/Ctl.cs",
+    targetLine: 20,
+    matchedVia: "exact",
+    confidence: "EXTRACTED",
+    ...over,
+  });
+
+  it("accepts a route anchored on an attribute a few lines above the handler", () => {
+    const s = scoreSampledLinks([p({ targetLine: 17 })], [
+      { source: "web/api.ts", sourceLine: 1, targets: [{ file: "srv/Ctl.cs", line: 20 }] },
+    ]);
+    expect(s).toMatchObject({ truePositives: 1, falsePositives: 0, falseNegatives: 0, precision: 1, recall: 1 });
+  });
+
+  it("does not accept a line after the handler or outside the window", () => {
+    const s = scoreSampledLinks([p({ targetLine: 21 }), p({ sourceLine: 2, targetLine: 5 })], [
+      { source: "web/api.ts", sourceLine: 1, targets: [{ file: "srv/Ctl.cs", line: 20 }] },
+      { source: "web/api.ts", sourceLine: 2, targets: [{ file: "srv/Ctl.cs", line: 20 }] },
+    ]);
+    expect(s).toMatchObject({ truePositives: 0, falsePositives: 2, falseNegatives: 2 });
+  });
+
+  it("counts a wrong link against precision and recall both", () => {
+    const s = scoreSampledLinks([p({ target: "srv/Other.cs" })], [
+      { source: "web/api.ts", sourceLine: 1, targets: [{ file: "srv/Ctl.cs", line: 20 }] },
+    ]);
+    expect(s).toMatchObject({ truePositives: 0, falsePositives: 1, falseNegatives: 1, precision: 0, recall: 0 });
+  });
+
+  it("credits a landing on an accepted twin, such as the OpenAPI row for the same endpoint", () => {
+    const s = scoreSampledLinks([p({ target: "openapi.json", targetLine: 400 })], [
+      {
+        source: "web/api.ts",
+        sourceLine: 1,
+        targets: [{ file: "srv/Ctl.cs", line: 20, accept: [{ file: "openapi.json", line: 401 }] }],
+      },
+    ]);
+    expect(s.truePositives).toBe(1);
+  });
+
+  it("scores a must-not-link call: silence is a TN, any link an FP", () => {
+    const s = scoreSampledLinks([p({ sourceLine: 2 })], [
+      { source: "web/api.ts", sourceLine: 1, targets: [] },
+      { source: "web/api.ts", sourceLine: 2, targets: [] },
+    ]);
+    expect(s).toMatchObject({ trueNegatives: 1, falsePositives: 1, truePositives: 0, falseNegatives: 0 });
+  });
+
+  it("scores a fanned-out call target by target", () => {
+    const s = scoreSampledLinks([p({ target: "a.py", targetLine: 3 }), p({ target: "c.py", targetLine: 3 })], [
+      {
+        source: "web/api.ts",
+        sourceLine: 1,
+        targets: [
+          { file: "a.py", line: 3 },
+          { file: "b.py", line: 3 },
+        ],
+      },
+    ]);
+    expect(s).toMatchObject({ truePositives: 1, falseNegatives: 1, falsePositives: 1 });
+  });
+
+  it("ignores links from calls nobody labelled", () => {
+    const s = scoreSampledLinks([p({ sourceLine: 99, target: "x" })], [
+      { source: "web/api.ts", sourceLine: 1, targets: [{ file: "srv/Ctl.cs", line: 20 }] },
+    ]);
+    expect(s).toMatchObject({ truePositives: 0, falsePositives: 0, falseNegatives: 1 });
+  });
+
+  it("breaks results down by matching tier", () => {
+    const s = scoreSampledLinks(
+      [p({}), p({ sourceLine: 2, target: "wrong.cs", matchedVia: "base-prefix:/api", confidence: "INFERRED" })],
+      [
+        { source: "web/api.ts", sourceLine: 1, targets: [{ file: "srv/Ctl.cs", line: 20 }] },
+        { source: "web/api.ts", sourceLine: 2, targets: [{ file: "srv/Ctl.cs", line: 40 }] },
+      ],
+    );
+    expect(s.byTier).toEqual({ exact: { tp: 1, fp: 0 }, "base-prefix:/api": { tp: 0, fp: 1 } });
+    expect(s.byConfidence).toEqual({ EXTRACTED: { tp: 1, fp: 0 }, INFERRED: { tp: 0, fp: 1 } });
   });
 });

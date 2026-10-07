@@ -168,3 +168,153 @@ export function poolSetScores(scores: readonly SetScore[]): SetScore {
     spurious: scores.flatMap((s) => s.spurious),
   };
 }
+
+// ─── Sampled cross-tier links ────────────────────────────────────────────────
+
+/**
+ * A place in the source a label points at. `line` is the handler's declaration
+ * line as a human reads it; a tool may anchor a route on an attribute or
+ * decorator stacked above it, so `line` accepts the `window` lines before it
+ * too. `lines` overrides that with an explicit inclusive range.
+ */
+export interface LabelLocation {
+  file: string;
+  line: number;
+  lines?: readonly [number, number];
+}
+
+/** One route a labelled call reaches, plus equally right places to land (an API contract's twin row). */
+export interface LabelTarget extends LabelLocation {
+  accept?: readonly LabelLocation[];
+}
+
+/**
+ * One frontend call, read by hand. `targets` is every route it reaches — one
+ * for an ordinary call, several for a call in a base class that each subclass
+ * aims elsewhere, and none for a call that must NOT link (a test mock, a
+ * third-party URL, a call ClarifyDoc once linked wrongly).
+ */
+export interface SampledCallLabel {
+  source: string;
+  sourceLine: number;
+  targets: readonly LabelTarget[];
+}
+
+export interface PredictedLink {
+  source: string;
+  sourceLine: number;
+  target: string;
+  targetLine: number;
+  matchedVia?: string;
+  confidence?: string;
+}
+
+export interface SampledLinkOutcome {
+  call: string;
+  /** What landed where: `tp` right, `fp` landed somewhere unlabelled, `fn` missing, `tn` correctly unlinked. */
+  outcome: "tp" | "fp" | "fn" | "tn";
+  /** Where the tool landed (tp / fp) or where it should have (fn). */
+  at: string;
+  matchedVia?: string;
+  confidence?: string;
+}
+
+export interface SampledLinkScore {
+  truePositives: number;
+  falsePositives: number;
+  falseNegatives: number;
+  /** Must-not-link calls the tool rightly left alone. */
+  trueNegatives: number;
+  precision: number;
+  recall: number;
+  f1: number;
+  /** tp / fp per matching tier — the evidence for keeping or killing a tier. */
+  byTier: Record<string, { tp: number; fp: number }>;
+  byConfidence: Record<string, { tp: number; fp: number }>;
+  outcomes: SampledLinkOutcome[];
+}
+
+function within(loc: LabelLocation, file: string, line: number, window: number): boolean {
+  if (loc.file !== file) return false;
+  const [lo, hi] = loc.lines ?? [loc.line - window, loc.line];
+  return line >= lo && line <= hi;
+}
+
+/**
+ * Score links against a SAMPLE of hand-labelled calls.
+ *
+ * `scoreSet` needs labels that cover the whole repo (`complete: true`), which
+ * is fine for a 23-call RealWorld frontend and impossible for a 400-call one.
+ * Here only the labelled calls are scored: whatever the tool linked from a
+ * labelled `source:sourceLine` is compared with that call's targets, and every
+ * other link in the repo is out of scope — neither credit nor blame.
+ *
+ * Per call: each target matched by a link is a TP; each target nothing landed
+ * on is an FN; each link that landed on none of them is an FP (so a wrong link
+ * counts against both precision and recall). A must-not-link call with no link
+ * is a TN, which is reported but, like every TN, moves neither ratio.
+ */
+export function scoreSampledLinks(
+  predicted: readonly PredictedLink[],
+  labels: readonly SampledCallLabel[],
+  { window = 8 }: { window?: number } = {},
+): SampledLinkScore {
+  const bySite = new Map<string, PredictedLink[]>();
+  for (const p of predicted) {
+    const key = `${p.source}:${p.sourceLine}`;
+    (bySite.get(key) ?? bySite.set(key, []).get(key)!).push(p);
+  }
+
+  const outcomes: SampledLinkOutcome[] = [];
+  const byTier: Record<string, { tp: number; fp: number }> = {};
+  const byConfidence: Record<string, { tp: number; fp: number }> = {};
+  const tally = (p: PredictedLink, kind: "tp" | "fp") => {
+    const tier = p.matchedVia ?? "exact";
+    (byTier[tier] ??= { tp: 0, fp: 0 })[kind]++;
+    const conf = p.confidence ?? "unknown";
+    (byConfidence[conf] ??= { tp: 0, fp: 0 })[kind]++;
+  };
+
+  for (const label of labels) {
+    const call = `${label.source}:${label.sourceLine}`;
+    const links = [...(bySite.get(call) ?? [])];
+    if (label.targets.length === 0 && links.length === 0) {
+      outcomes.push({ call, outcome: "tn", at: "" });
+      continue;
+    }
+    for (const t of label.targets) {
+      const places = [t, ...(t.accept ?? [])];
+      const hit = links.findIndex((p) => places.some((loc) => within(loc, p.target, p.targetLine, window)));
+      if (hit === -1) {
+        outcomes.push({ call, outcome: "fn", at: `${t.file}:${t.line}` });
+        continue;
+      }
+      const [p] = links.splice(hit, 1);
+      tally(p, "tp");
+      outcomes.push({ call, outcome: "tp", at: `${p.target}:${p.targetLine}`, matchedVia: p.matchedVia, confidence: p.confidence });
+    }
+    for (const p of links) {
+      tally(p, "fp");
+      outcomes.push({ call, outcome: "fp", at: `${p.target}:${p.targetLine}`, matchedVia: p.matchedVia, confidence: p.confidence });
+    }
+  }
+
+  const count = (k: SampledLinkOutcome["outcome"]) => outcomes.filter((o) => o.outcome === k).length;
+  const truePositives = count("tp");
+  const falsePositives = count("fp");
+  const falseNegatives = count("fn");
+  const precision = truePositives + falsePositives === 0 ? 1 : truePositives / (truePositives + falsePositives);
+  const recall = truePositives + falseNegatives === 0 ? 1 : truePositives / (truePositives + falseNegatives);
+  return {
+    truePositives,
+    falsePositives,
+    falseNegatives,
+    trueNegatives: count("tn"),
+    precision,
+    recall,
+    f1: precision + recall === 0 ? 0 : (2 * precision * recall) / (precision + recall),
+    byTier,
+    byConfidence,
+    outcomes,
+  };
+}
