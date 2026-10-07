@@ -5,7 +5,7 @@ export type Language =
   | "perl" | "vb" | "sql" | "c" | "cpp" | "prisma" | "dart" | "elixir" | "erlang" | "objc"
   | "haskell" | "clojure" | "blazor" | "html" | "qml" | "qtui" | "xaml" | "jsp" | "springxml" | "jsight"
   | "openapi" | "graphql" | "wsdl" | "groovy" | "powershell" | "bash" | "batch" | "fsharp" | "coffeescript" | "r" | "julia" | "crystal" | "zig" | "ocaml" | "raku" | "racket" | "scheme" | "commonlisp"
-  | "nim" | "dlang" | "vlang" | "fortran";
+  | "nim" | "dlang" | "vlang" | "fortran" | "haxe" | "mojo";
 
 export interface ExtractorWarning {
   /** Dotted-path location, e.g. "functions[3].endLine" or "routes[0].kind". */
@@ -2163,6 +2163,8 @@ export type PackageEcosystem =
   | "raku"
   | "racket"
   | "quicklisp"
+  | "haxelib"
+  | "conda"
   | "nimble"
   | "dub"
   | "vpm"
