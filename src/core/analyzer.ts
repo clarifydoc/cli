@@ -95,6 +95,7 @@ import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
 import { reconcileProjectRoutes } from "../extractors/route-resolvers/index.js";
 import { resolveProjectApiCalls } from "../extractors/data-sources/index.js";
 import { buildClassIndex } from "./class-index.js";
+import { finalizeApiTargets } from "./api-targets.js";
 import type { ProjectContext } from "../types/project.js";
 import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from "./component-launches.js";
 import { buildImportIndex, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
@@ -779,6 +780,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // path the cross-tier linker can join. Project-level + in-memory (operates on
   // the aggregated copies; no per-file JSON change), mirroring resolveRouterMounts.
   const resolvedUrlCount = resolveProjectApiCalls(allApiCalls, allAnalyses, projectContext);
+  // What no pass resolved is made explicit: a leading runtime base
+  // (`${this.baseUrl}series/1`) is split off into `baseExpr`, so the linker
+  // treats it as an unknown prefix instead of a path segment.
+  finalizeApiTargets(allApiCalls);
   // A call through a client instance requests the client's base + its path.
   applyHttpClientBases(allApiCalls, allAnalyses, importIndex);
   if (resolvedUrlCount > 0 && verbose) {

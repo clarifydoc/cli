@@ -235,6 +235,16 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       return { url, confidence: url.includes("${") ? "INFERRED" : "EXTRACTED" };
     }
     if (arg.type === "identifier") return this.bindings()?.lookup(arg.text, arg) ?? null;
+    // `this.baseUrl + 'series/' + seriesId` — Angular's dominant spelling
+    // (Kavita: 398 of 417 call sites). Rendered the way a template literal is,
+    // `${this.baseUrl}series/${seriesId}`, so one downstream path handles both.
+    if (arg.type === "binary_expression" && arg.childForFieldName("operator")?.text === "+") {
+      const url = this.concatUrl(arg);
+      return url === null ? null : { url, confidence: url.includes("${") ? "INFERRED" : "EXTRACTED" };
+    }
+    // `this.url`, `routes.tags`: a URL held in a field or a route table. Kept as
+    // a hole a project pass may still fill; only a trusted client call emits it.
+    if (arg.type === "member_expression") return { url: `\${${arg.text}}`, confidence: "INFERRED" };
     // A URL-builder helper call: `axios.get(requestUri('vikarbesked', 'v4'))`.
     // Keep the call text verbatim (whitespace-collapsed) so a project-level pass
     // can substitute the helper's template and recover the concrete URL. Emitted
@@ -244,6 +254,35 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       return { url: arg.text.replace(/\s+/g, " ").trim(), confidence: "INFERRED" };
     }
     return null;
+  }
+
+  /**
+   * A `+` chain as a URL: string and template pieces as written (a template's
+   * `${id}` substituted from the URL bindings in scope, as a whole-template
+   * argument is), an identifier bound to a URL in scope by its value, and
+   * anything else — a field, a call, a parameter — as a `${…}` hole. Null when
+   * no piece is a string at all (`a + b` is arithmetic, not a URL).
+   */
+  private concatUrl(expr: Node): string | null {
+    const pieces: Node[] = [];
+    const flatten = (n: Node): void => {
+      if (n.type === "binary_expression" && n.childForFieldName("operator")?.text === "+") {
+        flatten(n.childForFieldName("left")!);
+        flatten(n.childForFieldName("right")!);
+      } else if (n.type === "parenthesized_expression" && n.namedChild(0)) {
+        flatten(n.namedChild(0)!);
+      } else pieces.push(n);
+    };
+    flatten(expr);
+    if (!pieces.some((p) => p.type === "string" || p.type === "template_string")) return null;
+    let out = "";
+    for (const p of pieces) {
+      if (p.type === "string") out += stripQuotes(p.text);
+      else if (p.type === "template_string") out += resolveTemplateUrl(p, (name) => this.bindings()?.lookup(name, p) ?? null);
+      else if (p.type === "identifier") out += this.bindings()?.lookup(p.text, p)?.url ?? `\${${p.text}}`;
+      else out += `\${${p.text.replace(/\s+/g, " ")}}`;
+    }
+    return out;
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
@@ -287,7 +326,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         const trustedReceiver = !!recv && (HTTP_RECEIVER_RE.test(recv) || /client$/i.test(recv));
         // `app.get("/x", handler)` / `router.post(...)` are inbound route
         // definitions (already captured as routes), not outbound calls — exclude.
-        if ((isRoot || isVerb) && fn && !isServerRouteDef(fn, node)) {
+        // So is a route decorator: NestJS `@Get('public/:id')` is a call too.
+        if ((isRoot || isVerb) && fn && !isServerRouteDef(fn, node) && node.parent?.type !== "decorator") {
           const args = node.childForFieldName("arguments");
           let firstArg = args && args.childCount > 1 ? args.child(1) : null;
           // Bare HTTP verbs (`get`/`post`/...) collide with `Map.get`,

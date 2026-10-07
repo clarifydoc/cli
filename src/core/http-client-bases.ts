@@ -46,6 +46,9 @@ export function applyHttpClientBases(
     if (call.kind !== "api-call" || !call.client || !call.target) continue;
     const base = baseFor(call.filePath, call.client);
     if (base === null) continue;
+    // A relative path (`session`) was relative to exactly this base: once it
+    // is known, the base is no longer unknown.
+    if (call.baseExpr === "") delete call.baseExpr;
     const target = apply(call.target, base);
     if (target === call.target) continue;
     call.target = target;
