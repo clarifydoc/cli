@@ -75,6 +75,7 @@ import { rakuManifest } from "./plugins/raku/manifest.js";
 import { commonLispManifest, racketManifest, schemeManifest } from "./plugins/lisp/manifest.js";
 import { haxeManifest } from "./plugins/haxe/manifest.js";
 import { mojoManifest } from "./plugins/mojo/manifest.js";
+import { lessManifest, sassManifest, scssManifest } from "./plugins/stylesheet/manifest.js";
 import { nimManifest } from "./plugins/nim/manifest.js";
 import { dManifest } from "./plugins/dlang/manifest.js";
 import { vManifest } from "./plugins/vlang/manifest.js";
@@ -109,6 +110,9 @@ const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
   commonLispManifest,
   haxeManifest,
   mojoManifest,
+  scssManifest,
+  sassManifest,
+  lessManifest,
   nimManifest,
   dManifest,
   vManifest,
@@ -187,6 +191,7 @@ const LOADERS: readonly PluginLoader[] = [
   { languages: ["racket", "scheme", "commonlisp"], load: () => import("./plugins/lisp/meta.js").then((m) => [m.racketMeta, m.schemeMeta, m.commonLispMeta]) },
   { languages: ["haxe"], load: () => import("./plugins/haxe/meta.js").then((m) => [m.haxeMeta]) },
   { languages: ["mojo"], load: () => import("./plugins/mojo/meta.js").then((m) => [m.mojoMeta]) },
+  { languages: ["scss", "sass", "less"], load: () => import("./plugins/stylesheet/meta.js").then((m) => [m.scssMeta, m.sassMeta, m.lessMeta]) },
   { languages: ["nim"], load: () => import("./plugins/nim/meta.js").then((m) => [m.nimMeta]) },
   { languages: ["dlang"], load: () => import("./plugins/dlang/meta.js").then((m) => [m.dMeta]) },
   { languages: ["vlang"], load: () => import("./plugins/vlang/meta.js").then((m) => [m.vMeta]) },
@@ -293,6 +298,11 @@ export const ACTIVATION_FILE_LANGUAGES: ReadonlyMap<string, readonly Language[]>
  */
 export const NAMED_FILE_LANGUAGE: ReadonlyMap<string, Language> =
   claimTable(ALL_MANIFESTS, (m) => m.namedFiles ?? [], "Named file");
+
+/** Language → the prefix its partials carry (`_` for Sass). See `LanguagePluginManifest.partialPrefix`. */
+export const PARTIAL_PREFIX_BY_LANGUAGE: ReadonlyMap<string, string> = new Map(
+  ALL_MANIFESTS.filter((m) => m.partialPrefix).map((m) => [m.language, m.partialPrefix!]),
+);
 
 /** Every manifest's `sourceDirs` (`bin/` beside a `META6.json`, …): skipped directories that are source. */
 export const SOURCE_DIRS: ReadonlyArray<{ dir: string; marker: string }> = ALL_MANIFESTS.flatMap((m) => m.sourceDirs ?? []);
@@ -502,7 +512,7 @@ export const EXTERNAL_NAMESPACE_ROOT_RE: RegExp = (() => {
 // Push the aggregates into link-scoring (it cannot import the registry: it is
 // imported by plugin code, and metas are imported by the registry — a static
 // import here would close an ESM cycle and TDZ plugin classes).
-registerLinkScoringData(ALL_EXTERNAL_MODULE_PREFIXES, STRIP_SOURCE_EXTENSION_RE);
+registerLinkScoringData(ALL_EXTERNAL_MODULE_PREFIXES, STRIP_SOURCE_EXTENSION_RE, PARTIAL_PREFIX_BY_LANGUAGE);
 
 // ─── Framework detection rules ───────────────────────────────────────────
 

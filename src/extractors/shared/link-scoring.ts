@@ -10,14 +10,18 @@ import { bestConfidence } from "./confidence.js";
 // silently mis-link, so consumers throw with an actionable message instead.
 let externalModulePrefixes: readonly string[] | null = null;
 let stripSourceExtensionReSlot: RegExp | null = null;
+/** Language → its partials' prefix (`_` for Sass) — see `LanguagePluginManifest.partialPrefix`. */
+let partialPrefixByLanguage: ReadonlyMap<string, string> = new Map();
 
 /** Called once by the registry after aggregating every plugin's data. */
 export function registerLinkScoringData(
   prefixes: readonly string[],
   stripRe: RegExp,
+  partialPrefixes: ReadonlyMap<string, string> = new Map(),
 ): void {
   externalModulePrefixes = prefixes;
   stripSourceExtensionReSlot = stripRe;
+  partialPrefixByLanguage = partialPrefixes;
 }
 
 function requireRegistered<T>(value: T | null): T {
@@ -270,6 +274,18 @@ export function buildFilePathMap(analyses: FileAnalysis[]): Map<string, string> 
     setPreferring(map, base, a.filePath);
     const noIndex = base.replace(/\/index$/, "");
     if (noIndex !== base) setPreferring(map, noIndex, a.filePath);
+    // A partial answers to its name without the prefix: `_buttons.scss` is
+    // what `@use "buttons"` loads, `theme/_index.scss` what `@use "theme"` does.
+    const partial = partialPrefixByLanguage.get(a.language);
+    if (partial) {
+      const slash = base.lastIndexOf("/");
+      const name = base.slice(slash + 1);
+      if (name.startsWith(partial)) {
+        const plain = base.slice(0, slash + 1) + name.slice(partial.length);
+        setPreferring(map, plain, a.filePath);
+        if (name === `${partial}index`) setPreferring(map, base.slice(0, Math.max(0, slash)), a.filePath);
+      }
+    }
     // Bare-name (basename) resolution is handled by the per-map candidates
     // index in tryMatch — a single basename key here would pick an arbitrary
     // winner when several projects in one repo share a unit/module name.
