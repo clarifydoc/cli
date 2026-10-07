@@ -7,6 +7,7 @@ import { extractGoRequestAccess } from "./request-access.js";
 import { extractGoClasses } from "./classes.js";
 import { extractGoDiBindings } from "./di-bindings.js";
 import { goResultTextAt, goResultTypes } from "./syntax.js";
+import { extractGoImports } from "./imports.js";
 
 /** Bare the Go type identifier — `*[]map[string]User` → `User`. */
 function stripGoTypeModifiers(raw: string): string {
@@ -76,13 +77,8 @@ export const goSpec: RegexLangSpec = {
   // wire / fx / dig interface bindings (see di-bindings.ts).
   extractDiBindings: (lines) => extractGoDiBindings(lines),
 
-  importPatterns: [
-    {
-      pattern: /^\s*"([^"]+)"/,
-      getSource: (m) => m[1],
-      getSpecifiers: (m) => { const parts = m[1].split("/"); return [parts[parts.length - 1]]; },
-    },
-  ],
+  importPatterns: [],
+  extractImports: extractGoImports,
 
   extractRoutes: (lines) => extractGoRoutes(lines),
   extractDataSources: (lines) => extractGoDataSources(lines),

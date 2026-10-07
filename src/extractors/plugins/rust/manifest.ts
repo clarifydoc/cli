@@ -11,6 +11,7 @@ import { cargoPackageManager } from "./package-manifests.js";
 export const rustManifest: LanguagePluginManifest = {
   language: "rust",
   family: "rust",
+  importsNameDirectories: true,
   packageManagers: [cargoPackageManager],
   packageEcosystems: ["cargo"],
   parsing: "regex",

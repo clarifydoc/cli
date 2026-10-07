@@ -19,7 +19,7 @@ never names the language. A `schema.rb` parser or a pluralization rule in
 
 1. File discovery + framework detection
 2. Parallel per-file analysis (tree-sitter + extractors, or regex fallback)
-3. Post-analysis: component graph, link graph, symbol links
+3. Post-analysis: component graph, link graph, symbol links. A package import (`importsNameDirectories` — Go, Rust, Ruby) resolves to the ONE directory whose path ends with the longest run of its segments (a tie is no edge), narrowed to the files declaring a name the importer uses, tests excluded; dead code reads these edges as reachability, so a phantom fan-out hides real gaps in a language's own model
 4. Optional LSP enhancement
 5. Advanced analysis (complexity, patterns, duplicates, layer violations, blast radius, health, suggestions)
 6. Write project summary + optional HTML report

@@ -282,7 +282,9 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
     const aliasLike = /^[@~#$]/.test(source);
     const tails = aliasLike ? [segs.slice(1).join("/")] : [source, segs.slice(1).join("/")];
     for (const tail of tails) {
-      const hits = tail ? bySuffix.get(tail) : undefined;
+      // The index is extension-less; `component/album/edit/dialog.vue` names its file with one.
+      const key = tail.replace(STRIP_EXT_RE, "");
+      const hits = key ? bySuffix.get(key) : undefined;
       if (hits && hits.length > 0) return [...hits];
     }
     // `@/x`, `~/x`, `#x`, `$x` can only be local, so naming nothing analyzed
@@ -353,6 +355,18 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
     const wrangler = await readText(join(ctx.projectRoot, root, "wrangler.toml"));
     const main = wrangler && /^\s*main\s*=\s*["']([^"']+)["']/m.exec(wrangler)?.[1];
     if (main) addEntry(root, main, "wrangler.toml main");
+    // vite_ruby (Rails): every file under `<sourceCodeDir>/<entrypointsDir>` is
+    // an entry a layout's `vite_javascript_tag` names.
+    const viteRuby = await readJson(join(ctx.projectRoot, root, "config/vite.json"));
+    if (viteRuby) {
+      const all = (viteRuby.all && typeof viteRuby.all === "object" ? viteRuby.all : {}) as Record<string, unknown>;
+      const src = typeof all.sourceCodeDir === "string" ? all.sourceCodeDir : "app/frontend";
+      const entryDir = typeof all.entrypointsDir === "string" ? all.entrypointsDir : "entrypoints";
+      const dir = under(root, `${src.replace(/\/+$/, "")}/${entryDir.replace(/^\/+|\/+$/g, "")}`) + "/";
+      for (const f of files) {
+        if (f.startsWith(dir) && STRIP_EXT_RE.test(f)) manifestEntries.push({ file: f, reason: "vite_ruby entrypoint" });
+      }
+    }
     for (const name of ["serverless.yml", "serverless.yaml"]) {
       const sls = await readText(join(ctx.projectRoot, root, name));
       if (!sls) continue;

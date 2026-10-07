@@ -32,7 +32,7 @@ These consume a `RegexLangSpec` and produce standard output:
 
 - `extractFunctionsWithSpec(lines, spec)` — top-level functions
 - `extractClassesWithSpec(lines, spec)` — classes + methods + properties (runs function patterns on class body lines)
-- `extractImportsWithSpec(lines, spec)` — imports
+- `extractImportsWithSpec(lines, spec)` — imports, one `importPatterns` match per line; a spec whose imports are structural sets `extractImports` instead (Go: only inside `import` declarations, aliases kept as the specifier — a per-line `"…"` pattern took every string line for an import and missed `alias "path"`)
 - `deriveExportsFromFnClasses(fns, classes)` — all public functions + classes become exports
 
 ### Helpers

@@ -49,6 +49,7 @@ import {
   classifyKnownPackage,
   pluginFor,
   PARTIAL_PREFIX_BY_LANGUAGE,
+  importsNameDirectories,
   isApiContractLanguage,
 } from "../extractors/registry.js";
 import { buildSymbolLinks } from "./symbol-linker.js";
@@ -1846,22 +1847,6 @@ function treeToComponents(
   });
 }
 
-/**
- * Languages where a bare import path denotes a package/directory of files, so
- * resolving its last segment to every file in a same-named directory is correct
- * (e.g. Go `import "myapp/handler"`, Rust modules, Ruby requires).
- *
- * For JS/TS/Vue and the rest, a non-relative specifier like "axios" is an npm
- * package, not a local folder — fanning it out to every file in a coincidentally
- * same-named directory produced ~O(N²) phantom edges (e.g. every generated API
- * hook wired to all 227 files under a local `axios/` dir).
- */
-const PACKAGE_DIR_IMPORT_LANGS: ReadonlySet<Language> = new Set([
-  "go",
-  "rust",
-  "ruby",
-]);
-
 /** Build a graph of file -> files it imports */
 export function buildComponentGraph(
   analyses: FileAnalysis[],
@@ -1922,8 +1907,11 @@ export function buildComponentGraph(
   const fileNameToFiles = new Map<string, string[]>();
   // Build a map of stripped paths to file paths for relative import resolution (O(1) lookup)
   const strippedPathToFile = new Map<string, string>();
-  // Build a map of directory names → files in that directory (for Go/Rust package imports)
-  const dirToFiles = new Map<string, string[]>();
+  // Directory path → the files directly in it, and a directory's own name →
+  // every directory path so named: for languages whose imports name a
+  // package directory (`importsNameDirectories` — Go, Rust, Ruby).
+  const dirPathToFiles = new Map<string, string[]>();
+  const dirsByName = new Map<string, string[]>();
   for (const a of analyses) {
     const baseName = a.filePath.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "").toLowerCase();
     push(baseNameToFiles, baseName, a.filePath);
@@ -1945,12 +1933,66 @@ export function buildComponentGraph(
       }
     }
 
-    // Map directory name → files
-    const dir = a.filePath.replace(/\\/g, "/").replace(/\/[^/]+$/, "");
-    const dirName = dir.split("/").pop() ?? dir;
-    if (!dirToFiles.has(dirName)) dirToFiles.set(dirName, []);
-    dirToFiles.get(dirName)!.push(a.filePath);
+    const slash = a.filePath.lastIndexOf("/");
+    const dir = slash >= 0 ? a.filePath.slice(0, slash) : "";
+    if (dir && !dirPathToFiles.has(dir)) push(dirsByName, dir.slice(dir.lastIndexOf("/") + 1), dir);
+    push(dirPathToFiles, dir, a.filePath);
   }
+
+  // The ONE project directory a package import names: the directory whose
+  // path ends with the longest run of the import's trailing segments
+  // (`code.gitea.io/gitea/modules/setting` → `modules/setting`, never
+  // `routers/web/repo/setting`). Anchored when two or more segments agree, or
+  // the whole directory path does (a root-level `handler/` under a module
+  // path); otherwise only a directory unique by name in the importer's
+  // sub-project. A tie is no directory — fanning one import out across
+  // same-named packages made gitea's graph ~4× its real size.
+  const dirImportCache = new Map<string, string | null>();
+  const resolveImportDirectory = (source: string, fromFile: string): string | null => {
+    const project = projectOf.get(fromFile) ?? "";
+    const key = `${project}\0${source}`;
+    if (dirImportCache.has(key)) return dirImportCache.get(key)!;
+    const segs = source.split(/[/\\.:]+/).filter(Boolean);
+    const dirs = dirsByName.get(segs[segs.length - 1] ?? "") ?? [];
+    const scored = dirs.map((d) => {
+      const dsegs = d.split("/");
+      let k = 0;
+      while (k < dsegs.length && k < segs.length && dsegs[dsegs.length - 1 - k] === segs[segs.length - 1 - k]) k++;
+      return { d, k, anchored: k >= 2 || k === dsegs.length };
+    });
+    const unique = (list: typeof scored): string | null => {
+      if (list.length === 1) return list[0]!.d;
+      const own = list.filter((c) => (projectOf.get(dirPathToFiles.get(c.d)![0]!) ?? "") === project);
+      return own.length === 1 ? own[0]!.d : null;
+    };
+    const anchored = scored.filter((c) => c.anchored);
+    let result: string | null;
+    if (anchored.length > 0) {
+      const best = Math.max(...anchored.map((c) => c.k));
+      result = unique(anchored.filter((c) => c.k === best));
+    } else {
+      const own = scored.filter((c) => (projectOf.get(dirPathToFiles.get(c.d)![0]!) ?? "") === project);
+      result = own.length === 1 ? own[0]!.d : null;
+    }
+    dirImportCache.set(key, result);
+    return result;
+  };
+  // Names each file declares, for narrowing a package import to the files
+  // whose names the importer uses.
+  const declaredCache = new Map<string, Set<string>>();
+  const byPath = new Map(analyses.map((a) => [a.filePath, a]));
+  const declaredIn = (file: string): Set<string> => {
+    let names = declaredCache.get(file);
+    if (!names) {
+      const f = byPath.get(file);
+      names = new Set<string>();
+      for (const e of f?.exports ?? []) names.add(e.name);
+      for (const fn of f?.functions ?? []) names.add(fn.name);
+      for (const c of f?.classes ?? []) names.add(c.name);
+      declaredCache.set(file, names);
+    }
+    return names;
+  };
 
   // Web Component (custom element) tag → defining file(s). Usages appear in
   // markup as `<kebab-tag>` with no import, so they can't resolve by path like
@@ -2016,6 +2058,8 @@ export function buildComponentGraph(
     for (const cls of a.classes ?? []) {
       for (const m of cls.methods ?? []) addCallLeaves(m.calls);
     }
+    const dirImports = importsNameDirectories(a.language);
+    const usedLeaves = dirImports ? new Set([...usedNames].map((n) => n.slice(n.lastIndexOf(".") + 1))) : usedNames;
 
     for (const imp of a.imports) {
       // 1. Resolve relative imports (JS/TS/Vue) via pre-built path map.
@@ -2090,7 +2134,23 @@ export function buildComponentGraph(
         }
       }
 
-      // 3. Resolve by matching the last segment of the import source to a file name
+      // 3. A package import (Go, Rust, Ruby): the files of the one directory
+      // it names that declare a name this file uses — all of them when none
+      // does (a side-effect `import _ "pkg"`). Tests never belong to the
+      // package an import loads.
+      if (dirImports) {
+        const dir = resolveImportDirectory(imp.source, a.filePath);
+        const files = dir
+          ? dirPathToFiles.get(dir)!.filter((f) => f !== a.filePath && familyCompatible(a.filePath, f) && !isTestFile(f, byPath.get(f)!.language))
+          : [];
+        if (files.length > 0) {
+          const used = files.filter((f) => [...declaredIn(f)].some((n) => usedLeaves.has(n)));
+          for (const target of used.length > 0 ? used : files) refSet.add(target);
+          continue;
+        }
+      }
+
+      // 4. Resolve by matching the last segment of the import source to a file name
       // e.g. "com.example.api.service.UserService" → "UserService" → UserService.java
       const lastSegment = imp.source.split(/[./\\]/).filter(Boolean).pop();
       if (lastSegment) {
@@ -2107,18 +2167,6 @@ export function buildComponentGraph(
         }
       }
 
-      // 4. Resolve package/directory imports — only for languages where a bare
-      // import path genuinely denotes a directory of files (Go, Rust, Ruby).
-      // e.g. "sample-go-api/handler" → all files in handler/ directory.
-      // For JS/TS/etc. this fan-out is pure name-collision noise, so it's gated.
-      if (lastSegment && PACKAGE_DIR_IMPORT_LANGS.has(a.language)) {
-        const dirFiles = dirToFiles.get(lastSegment);
-        if (dirFiles) {
-          for (const target of dirFiles) {
-            if (target !== a.filePath) refSet.add(target);
-          }
-        }
-      }
     }
 
     // Also track sub-component references via pre-built path map

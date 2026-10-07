@@ -764,6 +764,15 @@ export interface LanguagePluginManifest {
    * both exist, and symbol links never treat its "functions" as code.
    */
   apiContract?: boolean;
+  /**
+   * A non-relative import names a PACKAGE DIRECTORY, every file of which it
+   * loads — Go `import "app/handler"`, Rust `mod` trees, Ruby load paths. The
+   * component graph resolves such an import to the one project directory
+   * whose path ends with the longest run of the import's segments (two
+   * directories tied → no edge), and within it to the files declaring a name
+   * the importer uses.
+   */
+  importsNameDirectories?: boolean;
 }
 
 /**
