@@ -18,6 +18,7 @@ import { extractJsVariableAliases } from "./variable-aliases.js";
 import { extractJsDiBindings } from "./di-bindings.js";
 import { extractHttpClientBases } from "./http-clients.js";
 import { extractPathArgCalls } from "./path-arg-calls.js";
+import { extractModuleValues } from "./module-values.js";
 import { vuePreprocess } from "./vue-hooks.js";
 import { sveltePreprocess } from "./svelte-hooks.js";
 import { npmPackages } from "./packages.js";
@@ -149,6 +150,7 @@ function astHooks(language: Language): AstExtractorHooks {
     customElements: (sourceText) => extractCustomElements(sourceText),
     httpClientBases: extractHttpClientBases,
     pathArgCalls: extractPathArgCalls,
+    moduleValues: extractModuleValues,
     pathReferences: (sourceText) => extractPathReferences(sourceText),
     variableAliases: extractJsVariableAliases,
     diBindings: extractJsDiBindings,

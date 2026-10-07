@@ -415,6 +415,8 @@ export interface AstExtractorHooks {
   httpClientBases?(tree: Tree, sourceText: string): Record<string, string>;
   /** Calls handing a path literal to a project function → `FileAnalysis.pathArgCalls`. */
   pathArgCalls?(tree: Tree, sourceText: string): PathArgCall[];
+  /** URL-shaped module-level values by name (`environment.apiUrl`) → `FileAnalysis.moduleValues`. */
+  moduleValues?(tree: Tree, sourceText: string): Record<string, string>;
   /**
    * Paths the file names as string data that the toolchain loads as modules
    * (glob imports, worker URLs, config-file script paths) →

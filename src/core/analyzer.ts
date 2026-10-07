@@ -95,7 +95,7 @@ import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
 import { reconcileProjectRoutes } from "../extractors/route-resolvers/index.js";
 import { resolveProjectApiCalls } from "../extractors/data-sources/index.js";
 import { buildClassIndex } from "./class-index.js";
-import { expandRequestFactories, finalizeApiTargets } from "./api-targets.js";
+import { expandRequestFactories, finalizeApiTargets, resolveSymbolicTargets } from "./api-targets.js";
 import type { ProjectContext } from "../types/project.js";
 import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from "./component-launches.js";
 import { buildImportIndex, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
@@ -784,6 +784,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // (`createFetchHandler('system.status', '/system/status')`).
   const factoryCalls = expandRequestFactories(allApiCalls, allAnalyses, importIndex);
   if (factoryCalls > 0 && verbose) progress.detail(`  request-factory calls: ${factoryCalls}`);
+  // `${this.baseUrl}` / `${environment.apiUrl}`: values a class or a module states.
+  resolveSymbolicTargets(allApiCalls, allAnalyses, projectContext);
   // What no pass resolved is made explicit: a leading runtime base
   // (`${this.baseUrl}series/1`) is split off into `baseExpr`, so the linker
   // treats it as an unknown prefix instead of a path segment.

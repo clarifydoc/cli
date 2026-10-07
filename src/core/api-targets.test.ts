@@ -25,11 +25,9 @@ describe("splitUnknownBase", () => {
     expect(splitUnknownBase("${fn({ a: 1 })}/x")).toEqual({ target: "/x", baseExpr: "fn({ a: 1 })" });
   });
 
-  it("drops a loopback origin but leaves another host's URL alone", () => {
-    expect(splitUnknownBase("http://localhost:5000/api/series")).toEqual({
-      target: "/api/series",
-      baseExpr: "http://localhost:5000",
-    });
+  it("drops a loopback origin — the app's own server, so nothing is unknown — but leaves another host's URL alone", () => {
+    expect(splitUnknownBase("http://localhost:5000/api/series")).toEqual({ target: "/api/series" });
+    expect(splitUnknownBase("http://${IP}:5000/api/series")).toEqual({ target: "/api/series" });
     expect(splitUnknownBase("https://api.github.com/repos")).toBeNull();
   });
 

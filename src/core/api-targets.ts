@@ -1,5 +1,5 @@
 import type { DataSourceInfo, FileAnalysis, FunctionInfo } from "../types/analysis.js";
-import type { ImportIndex } from "../types/project.js";
+import type { ClassRef, ImportIndex, ProjectContext } from "../types/project.js";
 
 type ApiCall = DataSourceInfo & { filePath: string };
 
@@ -41,7 +41,8 @@ export function finalizeApiTargets(calls: ApiCall[]): number {
   return changed;
 }
 
-const LOOPBACK_ORIGIN = /^https?:\/\/(?:localhost|127(?:\.\d+){3}|0\.0\.0\.0|\[::1\])(?::\d+)?(?=\/|$)/i;
+/** The app's own server: a loopback host, or a host the source leaves as a hole (`http://${IP}:5000`). */
+const LOOPBACK_ORIGIN = /^https?:\/\/(?:localhost|127(?:\.\d+){3}|0\.0\.0\.0|\[::1\]|[^/]*\$\{[^/]*)(?::\d+)?(?=\/|$)/i;
 const RELATIVE_PATH = /^[A-Za-z0-9_.~-]+(?:[/?#]|$)/;
 
 /**
@@ -52,11 +53,9 @@ const RELATIVE_PATH = /^[A-Za-z0-9_.~-]+(?:[/?#]|$)/;
 export function splitUnknownBase(url: string): { target: string; baseExpr?: string } | null {
   let s = url.trim();
   let base: string | undefined;
+  // The app's own server: the path after it is complete, so no base is unknown.
   const origin = LOOPBACK_ORIGIN.exec(s);
-  if (origin) {
-    s = s.slice(origin[0].length) || "/";
-    base = origin[0];
-  }
+  if (origin) s = s.slice(origin[0].length) || "/";
   let holes = "";
   for (;;) {
     const len = leadingHoleLength(s);
@@ -72,9 +71,10 @@ export function splitUnknownBase(url: string): { target: string; baseExpr?: stri
   }
   if (!s || s.startsWith("?") || s.startsWith("#")) {
     // Only a base and a query: no path to link — leave the URL as written.
-    return origin ? { target: "/" + s, baseExpr: base } : null;
+    return origin ? { target: "/" + s } : null;
   }
-  return { target: s.startsWith("/") ? s : "/" + s, baseExpr: base };
+  const target = s.startsWith("/") ? s : "/" + s;
+  return base === undefined ? { target } : { target, baseExpr: base };
 }
 
 /** Length of a `${…}` or `{…}` hole (braces balanced) at the start of `s`, or 0. */
@@ -234,4 +234,77 @@ export function expandRequestFactories(
     }
   }
   return added;
+}
+
+// ─── Symbols in URLs ─────────────────────────────────────────────────────────
+
+const ANY_HOLE = /\$\{([^{}]*)\}/g;
+
+/**
+ * Fill the holes in api-call URLs that the project states the value of:
+ *
+ *   - `${this.baseUrl}` — a field the enclosing class, or the nearest class it
+ *     extends, gives a value (`ClassInfo.fieldValues`: `baseUrl =
+ *     environment.apiUrl`, a constructor's `this.resourceName = 'tags'`);
+ *   - `${environment.apiUrl}`, `${config.PREFIX}` — a module-level value
+ *     (`FileAnalysis.moduleValues`) of the file the name is IMPORTED from,
+ *     or of the call's own file.
+ *
+ * A value may itself hold holes (`baseUrl` → `${environment.apiUrl}`), which
+ * resolve in the context of the file and class that declared it, up to four
+ * levels. Names are only followed through the class chain and the import
+ * index — never looked up project-wide — and a hole nothing explains stays a
+ * hole for `finalizeApiTargets`. Kavita's `${this.baseUrl}series/${id}`
+ * becomes `http://localhost:5000/api/series/${id}`, then `/api/series/${id}`.
+ *
+ * Returns the number of rows changed.
+ */
+export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly FileAnalysis[], ctx: ProjectContext): number {
+  const byFile = new Map<string, FileAnalysis>(analyses.map((a) => [a.filePath, a]));
+  const classAt = (file: string, line: number): ClassRef | null => {
+    let best: ClassRef | null = null;
+    for (const ref of ctx.classes.classesIn(file)) {
+      const { line: start, endLine } = ref.cls;
+      if (start <= line && line <= endLine && (!best || start >= best.cls.line)) best = ref;
+    }
+    return best;
+  };
+
+  const resolveHole = (expr: string, file: string, cls: ClassRef | null, depth: number): string | null => {
+    if (depth > 4) return null;
+    // `options.apiVersion || DEFAULT_API_VERSION`: the first side the project states.
+    const fallback = /^(.+?)\s*(?:\|\||\?\?)\s*(.+)$/.exec(expr);
+    if (fallback) return resolveHole(fallback[1]!.trim(), file, cls, depth) ?? resolveHole(fallback[2]!.trim(), file, cls, depth);
+    const field = /^this\.([\w$]+)$/.exec(expr);
+    if (field) {
+      if (!cls) return null;
+      const chain = [cls, ...ctx.classes.ancestors(cls).flatMap((s) => (s.ref ? [s.ref] : []))];
+      for (const c of chain) {
+        const v = c.cls.fieldValues?.[field[1]!];
+        if (v !== undefined) return resolveValue(v, c.filePath, c, depth + 1);
+      }
+      return null;
+    }
+    const name = /^([A-Za-z_$][\w$]*)((?:\.[\w$]+)*)$/.exec(expr);
+    if (!name) return null;
+    const source = ctx.importIndex.localFor(file, name[1]!) ?? file;
+    const v = byFile.get(source)?.moduleValues?.[expr];
+    return v === undefined ? null : resolveValue(v, source, null, depth + 1);
+  };
+
+  const resolveValue = (value: string, file: string, cls: ClassRef | null, depth: number): string =>
+    value.replace(ANY_HOLE, (hole, expr: string) => resolveHole(expr.trim(), file, cls, depth) ?? hole);
+
+  let changed = 0;
+  for (const call of calls) {
+    if (call.kind !== "api-call" || !call.target?.includes("${")) continue;
+    const cls = classAt(call.filePath, call.line);
+    const target = resolveValue(call.target, call.filePath, cls, 0);
+    const alternatives = call.targetAlternatives?.map((alt) => resolveValue(alt, call.filePath, cls, 0));
+    if (target === call.target && (alternatives ?? []).every((a, i) => a === call.targetAlternatives![i])) continue;
+    call.target = target;
+    if (alternatives) call.targetAlternatives = alternatives;
+    changed++;
+  }
+  return changed;
 }
