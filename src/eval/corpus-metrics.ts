@@ -58,7 +58,13 @@ export interface CorpusSummary {
   componentGraph?: Readonly<Record<string, readonly string[]>>;
   layerViolations?: readonly { sourceFile?: string }[];
   securityIssues?: readonly { severity?: string; filePath?: string }[];
-  healthScore?: { score: number; grade: string; penalties?: readonly { reason: string; points: number }[] };
+  healthScore?: {
+    score: number;
+    grade: string;
+    penalties?: readonly { reason: string; points: number }[];
+    basis?: number;
+    dimensions?: readonly { id: string; count: number; rate: number; points: number; cap: number }[];
+  };
   deadCode?: { files?: readonly unknown[]; exports?: readonly unknown[] };
 }
 
@@ -107,7 +113,14 @@ export interface CorpusMetrics {
     securityMedium: number;
     securityCriticalHighFiles: number;
   };
-  health: { score: number | null; grade: string | null; penalties: Record<string, number> };
+  health: {
+    score: number | null;
+    grade: string | null;
+    penalties: Record<string, number>;
+    /** rates-v2: the file count every rate is over, and each dimension's rate and points. */
+    basis?: number;
+    dimensions?: Record<string, { rate: number; points: number; cap: number }>;
+  };
   deadCode: { files: number; exports: number };
 }
 
@@ -283,6 +296,12 @@ export function computeCorpusMetrics(summary: CorpusSummary, opts: CorpusMetrics
       score: summary.healthScore?.score ?? null,
       grade: summary.healthScore?.grade ?? null,
       penalties,
+      ...(summary.healthScore?.dimensions
+        ? {
+            basis: summary.healthScore.basis,
+            dimensions: Object.fromEntries(summary.healthScore.dimensions.map((d) => [d.id, { rate: d.rate, points: d.points, cap: d.cap }])),
+          }
+        : {}),
     },
     deadCode: { files: summary.deadCode?.files?.length ?? 0, exports: summary.deadCode?.exports?.length ?? 0 },
   };
