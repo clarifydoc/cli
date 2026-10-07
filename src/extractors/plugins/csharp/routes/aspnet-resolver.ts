@@ -3,6 +3,7 @@ import type { ClassRef, ProjectContext } from "../../../../types/project.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
 import { buildAuth, type GuardAttr } from "../../../shared/route-metadata.js";
 import { buildPath, rebindParams, CS_CONTROLLER_FACT, type CsControllerFact, type CsActionFact } from "./aspnet.js";
+import { CustomAttributes } from "./aspnet-attributes.js";
 
 /** Bases ASP.NET itself provides — reaching one means the chain is fully known. */
 const FRAMEWORK_CONTROLLER_BASES = new Set(["Controller", "ControllerBase", "ODataController", "ApiController"]);
@@ -16,12 +17,54 @@ interface InheritedScope {
   guards: GuardAttr[];
   /** A base no project class or framework explains — its template, if any, is unknown. */
   unresolvedBase: string | null;
+  /** A project routing attribute whose template could not be evaluated. */
+  unresolvedAttr: string | null;
+}
+
+/** A controller fact with the project's own routing attributes applied. */
+interface EffectiveFact extends CsControllerFact {
+  /** The class-level project attribute that provides a template no evaluation could state. */
+  unresolvedAttr: string | null;
+  /** Actions routed only by a project attribute — no row exists for them yet. */
+  synthetic: CsActionFact[];
 }
 
 interface Controller {
   analysis: FileAnalysis;
   ref: ClassRef;
-  fact: CsControllerFact;
+  /** What the extractor saw — the rows it built used these. */
+  raw: CsControllerFact;
+  fact: EffectiveFact;
+}
+
+/**
+ * Apply project routing attributes (`[V3ApiController]`, `[RestPutById]`) to
+ * a controller's fact: the class template and `[ApiController]` behaviour
+ * they provide, and one action per verb a candidate method's attribute names.
+ */
+function effectiveFact(raw: CsControllerFact, filePath: string, attrs: CustomAttributes): EffectiveFact {
+  const fact: EffectiveFact = { ...raw, unresolvedAttr: null, synthetic: [] };
+  if (attrs.empty) return fact;
+  for (const use of raw.attrs ?? []) {
+    const m = attrs.meaning(filePath, use);
+    if (!m) continue;
+    fact.apiController ||= m.apiController;
+    if (fact.template !== null) continue;
+    if (m.template !== null) fact.template = m.template;
+    else if (m.templateUnknown) fact.unresolvedAttr ??= use.name;
+  }
+  for (const c of raw.candidates ?? []) {
+    for (const use of c.attrs) {
+      const m = attrs.meaning(filePath, use);
+      // A verb with a template no evaluation could state would be a guessed path: refuse it.
+      if (!m || m.verbs.length === 0 || m.templateUnknown) continue;
+      for (const verb of m.verbs) {
+        fact.synthetic.push({ line: use.line, verb, handler: c.handler, template: m.template, guards: c.guards });
+      }
+    }
+  }
+  if (fact.synthetic.length > 0) fact.actions = [...raw.actions, ...fact.synthetic];
+  return fact;
 }
 
 /**
@@ -50,12 +93,15 @@ export const aspnetControllerInheritance: RouteResolver = {
   languages: ["csharp"],
   priority: 20,
   resolve(analyses: FileAnalysis[], ctx: ProjectContext): void {
+    const attrs = new CustomAttributes(analyses, ctx);
     const controllers = new Map<ClassRef, Controller>();
     for (const analysis of analyses) {
       for (const f of analysis.routeFacts ?? []) {
         if (f.kind !== CS_CONTROLLER_FACT || !f.owner) continue;
         const ref = ctx.classes.classesIn(analysis.filePath).find((c) => c.cls.name === f.owner);
-        if (ref) controllers.set(ref, { analysis, ref, fact: f.data as CsControllerFact });
+        if (!ref) continue;
+        const raw = f.data as CsControllerFact;
+        controllers.set(ref, { analysis, ref, raw, fact: effectiveFact(raw, analysis.filePath, attrs) });
       }
     }
     if (controllers.size === 0) return;
@@ -69,6 +115,7 @@ export const aspnetControllerInheritance: RouteResolver = {
         apiController: c.fact.apiController,
         guards: [],
         unresolvedBase: null,
+        unresolvedAttr: c.fact.unresolvedAttr,
       };
       // Walk the `extends` chain only: implemented interfaces carry no routing.
       let cur: ClassRef = c.ref;
@@ -84,7 +131,10 @@ export const aspnetControllerInheritance: RouteResolver = {
         seen.add(st.ref);
         const base = controllers.get(st.ref);
         if (base) {
-          scope.template ??= base.fact.template;
+          if (scope.template === null && scope.unresolvedAttr === null) {
+            scope.template = base.fact.template;
+            scope.unresolvedAttr = base.fact.unresolvedAttr;
+          }
           scope.apiController ||= base.fact.apiController;
           scope.guards.unshift(...base.fact.guards);
         }
@@ -110,12 +160,35 @@ export const aspnetControllerInheritance: RouteResolver = {
       if (auth) row.auth = auth;
       else delete row.auth;
       if (source.params) row.params = rebindParams(source.params, path, scope.apiController);
-      if (scope.template === null && scope.unresolvedBase) row.prefixUnresolved = `base:${scope.unresolvedBase}`;
+      if (scope.template === null && scope.unresolvedAttr) row.prefixUnresolved = `attribute:${scope.unresolvedAttr}`;
+      else if (scope.template === null && scope.unresolvedBase) row.prefixUnresolved = `base:${scope.unresolvedBase}`;
       return row;
     };
 
     const rowOf = (c: Controller, action: CsActionFact): RouteInfo | undefined =>
       c.analysis.routes.find((r) => r.owner === c.ref.cls.name && r.line === action.line && r.httpMethod === action.verb);
+
+    // 0. Rows for actions only a project attribute routes. Built at their own
+    //    controller here; inherited copies and own-row rewrites follow.
+    for (const c of controllers.values()) {
+      for (const action of c.fact.synthetic) {
+        const candidate = c.raw.candidates?.find((k) => k.handler === action.handler && k.attrs.some((a) => a.line === action.line));
+        const source: RouteInfo = {
+          path: "/",
+          httpMethod: action.verb,
+          kind: "api",
+          handler: action.handler,
+          calls: [],
+          middleware: [],
+          line: action.line,
+          owner: c.ref.cls.name,
+        };
+        if (candidate?.params) source.params = candidate.params;
+        if (candidate?.versions) source.versions = candidate.versions;
+        if (candidate?.deprecatedVersions) source.deprecatedVersions = candidate.deprecatedVersions;
+        c.analysis.routes = [...c.analysis.routes, rowFor(source, action, c)];
+      }
+    }
 
     // 1. Actions a concrete subclass inherits from a base that declares them.
     //    The copy lives in the BASE's file (that is where the handler code is)
@@ -143,11 +216,14 @@ export const aspnetControllerInheritance: RouteResolver = {
     // 2. Each controller's own rows, under what it inherits.
     for (const c of controllers.values()) {
       const scope = scopeOf(c);
-      const inheritsSomething =
-        (c.fact.template === null && (scope.template !== null || scope.unresolvedBase !== null)) ||
+      // The extractor built these rows from the raw fact; rebuild them when
+      // the scope says otherwise.
+      const stale =
+        scope.template !== c.raw.template ||
+        (scope.template === null && (scope.unresolvedBase !== null || scope.unresolvedAttr !== null)) ||
         scope.guards.length > 0 ||
-        scope.apiController !== c.fact.apiController;
-      if (!inheritsSomething || c.fact.actions.length === 0) continue;
+        scope.apiController !== c.raw.apiController;
+      if (!stale || c.fact.actions.length === 0) continue;
       c.analysis.routes = c.analysis.routes.map((r) => {
         if (r.owner !== c.ref.cls.name) return r;
         const action = c.fact.actions.find((a) => a.line === r.line && a.verb === r.httpMethod);

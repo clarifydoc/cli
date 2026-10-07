@@ -140,3 +140,166 @@ public abstract class RestController<T> : Controller
     expect(ctl!.routes[0]!.prefixUnresolved).toBeUndefined();
   });
 });
+
+/** Radarr's own routing attributes, as declared in `src/Radarr.Http`. */
+const RADARR_ATTRS = {
+  "Radarr.Http/VersionedApiControllerAttribute.cs": `
+namespace Radarr.Http
+{
+    public class VersionedApiControllerAttribute : Attribute, IRouteTemplateProvider, IEnableCorsAttribute, IApiBehaviorMetadata
+    {
+        public const string API_CORS_POLICY = "ApiCorsPolicy";
+        public const string CONTROLLER_RESOURCE = "[controller]";
+
+        public VersionedApiControllerAttribute(int version, string resource = CONTROLLER_RESOURCE)
+        {
+            Resource = resource;
+            Template = $"api/v{version}/{resource}";
+            PolicyName = API_CORS_POLICY;
+        }
+
+        public string Resource { get; }
+        public string Template { get; }
+        public int? Order => 2;
+        public string Name { get; set; }
+        public string PolicyName { get; set; }
+    }
+
+    public class V3ApiControllerAttribute : VersionedApiControllerAttribute
+    {
+        public V3ApiControllerAttribute(string resource = "[controller]")
+            : base(3, resource)
+        {
+        }
+    }
+}`,
+  "Radarr.Http/REST/Attributes/RestPutByIdAttribute.cs": `
+[AttributeUsage(AttributeTargets.Method)]
+public class RestPutByIdAttribute : HttpPutAttribute
+{
+    public RestPutByIdAttribute()
+        : base("{id:int?}")
+    {
+    }
+}`,
+  "Radarr.Http/REST/Attributes/RestDeleteByIdAttribute.cs": `
+public class RestDeleteByIdAttribute : HttpDeleteAttribute
+{
+    public RestDeleteByIdAttribute() : base("{id:int}") { }
+}`,
+  "Radarr.Http/REST/Attributes/RestPostByIdAttribute.cs": `
+public class RestPostByIdAttribute : HttpPostAttribute
+{
+}`,
+  "Radarr.Http/REST/Attributes/RestGetByIdAttribute.cs": `
+public class RestGetByIdAttribute : Attribute, IActionHttpMethodProvider, IRouteTemplateProvider
+{
+    public IEnumerable<string> HttpMethods => new[] { "GET" };
+    public string Template => "{id:int}";
+    public int? Order => 0;
+    public string Name { get; }
+}`,
+  "Radarr.Http/REST/RestController.cs": `
+public abstract class RestController<TResource> : Controller
+{
+    [RestGetById]
+    public virtual ActionResult<TResource> GetResourceByIdWithErrorHandler(int id) { return GetResourceById(id); }
+
+    protected abstract TResource GetResourceById(int id);
+}`,
+};
+
+describe("project routing attributes (Radarr)", () => {
+  const rows = (a: FileAnalysis | undefined) => (a?.routes ?? []).map((r) => `${r.httpMethod} ${r.path} ${r.owner}`).sort();
+
+  it("evaluates [V3ApiController] through its constructor chain, and custom verb attributes through their base call", async () => {
+    const out = await analyze({
+      ...RADARR_ATTRS,
+      "Radarr.Api.V3/Tags/TagController.cs": `
+[V3ApiController]
+public class TagController : RestController<TagResource>
+{
+    [HttpGet]
+    public List<TagResource> GetAll() => null;
+
+    [RestPostById]
+    [Consumes("application/json")]
+    public ActionResult<TagResource> Create([FromBody] TagResource resource) => null;
+
+    [RestPutById]
+    public ActionResult<TagResource> Update(TagResource resource) => null;
+
+    [RestDeleteById]
+    public void DeleteTag(int id) { }
+
+    [NonAction]
+    public void Handle(TagsUpdatedEvent message) { }
+}`,
+      "Radarr.Api.V3/Movies/MovieLookupController.cs": `
+[V3ApiController("movie/lookup")]
+public class MovieLookupController : RestController<MovieResource>
+{
+    [HttpGet("tmdb")]
+    public object SearchByTmdbId(int tmdbId) => null;
+}`,
+    });
+    const byPath = (p: string) => out.find((a) => a.filePath === p);
+    expect(rows(byPath("Radarr.Api.V3/Tags/TagController.cs"))).toEqual([
+      "DELETE /api/v3/Tag/{id} TagController",
+      "GET /api/v3/Tag TagController",
+      "POST /api/v3/Tag TagController",
+      "PUT /api/v3/Tag/{id} TagController",
+    ]);
+    expect(rows(byPath("Radarr.Api.V3/Movies/MovieLookupController.cs"))).toEqual(["GET /api/v3/movie/lookup/tmdb MovieLookupController"]);
+    // The abstract base's [RestGetById] action is served under each concrete controller.
+    expect(rows(byPath("Radarr.Http/REST/RestController.cs"))).toEqual([
+      "GET /api/v3/Tag/{id} TagController",
+      "GET /api/v3/movie/lookup/{id} MovieLookupController",
+    ]);
+    // `IApiBehaviorMetadata` is [ApiController] behaviour: the complex parameter binds from the body.
+    const put = byPath("Radarr.Api.V3/Tags/TagController.cs")!.routes.find((r) => r.httpMethod === "PUT")!;
+    expect(put.params).toEqual([{ name: "resource", type: "TagResource", binding: "body", inferred: true }]);
+    expect(put.resolvedBy).toBe("aspnet-controller-inheritance");
+  });
+
+  it("marks a controller whose project attribute builds its template in a way nobody can evaluate", async () => {
+    const [, ctl] = await analyze({
+      "Http/DynamicRouteAttribute.cs": `
+public class DynamicRouteAttribute : Attribute, IRouteTemplateProvider
+{
+    public DynamicRouteAttribute(int version) { Template = Routes.Build(version); }
+    public string Template { get; }
+}`,
+      "Api/ThingController.cs": `[DynamicRoute(2)] public class ThingController : ControllerBase { [HttpGet("things")] public IActionResult List() => Ok(); }`,
+    });
+    expect(ctl!.routes[0]).toMatchObject({ path: "/things", prefixUnresolved: "attribute:DynamicRoute" });
+  });
+
+  it("refuses a verb attribute whose template cannot be evaluated, and ignores attributes that do not route", async () => {
+    const [, ctl] = await analyze({
+      "Http/Attrs.cs": `
+public class OddPutAttribute : HttpPutAttribute
+{
+    public OddPutAttribute() : base(Templates.Next()) { }
+}
+public class SkipValidationAttribute : ActionFilterAttribute
+{
+}`,
+      "Api/ThingController.cs": `
+[Route("api/things")]
+public class ThingController : ControllerBase
+{
+    [OddPut]
+    public IActionResult Put(int id) => Ok();
+
+    [SkipValidation]
+    public IActionResult Helper() => Ok();
+
+    [HttpGet]
+    public IActionResult List() => Ok();
+}`,
+    });
+    expect(rows(ctl)).toEqual(["GET /api/things ThingController"]);
+  });
+});
+

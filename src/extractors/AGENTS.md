@@ -147,7 +147,7 @@ Same registry pattern as the other domains: `routes/base.ts` defines
 language family exports one:
 - `javascript/routes/index.ts` — runs Express, React Router, NestJS, Vue Router in order
 - `python/routes.ts` (Flask, FastAPI decorators and mounts; Django guard decorators) and `python/django/` — Django urlconfs and DRF routers are per-file `routeFacts` (urlpatterns entries, `router.register`, view-class attributes) that the `django-urlconf` route resolver joins: from `ROOT_URLCONF` through `include("mod")` / inline lists / `*router.urls`, ViewSet actions from mixins + project methods + `@action`, `path()` converters and `re_path` regexes as `{name}`
-- `csharp/routes/aspnet.ts`
+- `csharp/routes/aspnet.ts` — plus `aspnet-resolver.ts` (base-controller `[Route]`/`[ApiController]`/`[Authorize]` inheritance, abstract base actions served by each subclass) and `aspnet-attributes.ts`: a project's own routing attributes (`[V3ApiController]` implementing `IRouteTemplateProvider`, `[RestPutById] : HttpPutAttribute`) are recorded per file as a small expression IR (`cs:attr-def` facts — constructor params + defaults, `base(…)` args, `Template`/`HttpMethods` values, consts) and evaluated at each use site through the constructor chain; a template no evaluation can state marks the rows `prefixUnresolved: "attribute:X"`, and a verb attribute with such a template routes nothing
 - `java-kotlin/routes/spring.ts`
 - `pascal/routes.ts`
 
