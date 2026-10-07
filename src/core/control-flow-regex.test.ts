@@ -114,7 +114,15 @@ const MEASURED: Measured[] = [
   { language: "java", globs: [`${FIXTURES}/**/*.java`], minFunctions: 40, minExact: 0.9 },
 ];
 
-describe.each(MEASURED)("regex tier agrees with the parser — $language", (target) => {
+/**
+ * The TypeScript corpus is this repository's own source, so the gate's cost
+ * grows with every line added to `src/`. A few seconds alone, but CI runs all
+ * test files at once on a small runner and the 5 s default is a wall-clock
+ * guess that the growing corpus outran.
+ */
+const CORPUS_TIMEOUT_MS = 120_000;
+
+describe.each(MEASURED)("regex tier agrees with the parser — $language", { timeout: CORPUS_TIMEOUT_MS }, (target) => {
   it("reads the same shape as the parse tree", async () => {
     const files = await fg(target.globs, {
       ignore: ["**/node_modules/**", "**/*.test.ts", "**/*.d.ts", "**/obj/**", "**/bin/**"],
