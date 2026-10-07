@@ -14,38 +14,75 @@ import { splitGeneric, unwrapNullable } from "./request-schema.js";
  * the parameter bindings FastAPI reads off the handler signature.
  */
 export function extractPythonRoutes(root: Node, routes: RouteInfo[]): void {
-  const routers = collectRouterDecls(root);
+  const consts = collectModuleStrings(root);
+  const routers = collectRouterDecls(root, consts);
   walkForPythonRoutes(root, routes, routers);
-  walkForRouterMounts(root, routes);
+  walkForRouterMounts(root, routes, routers, consts);
+}
+
+/** Module-level `NAME = "literal"` — what a `prefix=prefix` keyword names. */
+function collectModuleStrings(root: Node): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const stmt of root.namedChildren) {
+    if (stmt.type !== "expression_statement") continue;
+    const assignment = stmt.namedChild(0);
+    if (assignment?.type !== "assignment") continue;
+    const left = assignment.childForFieldName("left");
+    const right = assignment.childForFieldName("right");
+    if (left?.type === "identifier" && right?.type === "string") out.set(left.text, stripQuotes(right.text));
+  }
+  return out;
+}
+
+/** A keyword argument's string value: a literal, or a module constant it names. Undefined when absent, null when unknowable. */
+function stringKeyword(args: Node, name: string, consts: ReadonlyMap<string, string>): string | null | undefined {
+  const value = keywordArg(args, name);
+  if (!value) return undefined;
+  if (value.type === "string") return stripQuotes(value.text);
+  if (value.type === "identifier" && consts.has(value.text)) return consts.get(value.text)!;
+  return null;
 }
 
 /**
- * FastAPI router mounts: `router.include_router(auth.router, prefix="/users")`.
+ * Router mounts: FastAPI `router.include_router(auth.router, prefix="/users")`,
+ * Flask `app.register_blueprint(bp, url_prefix="/admin")`.
  *
  * The prefix lives here, in the wiring file, while the endpoints it applies to
- * are decorated in the module being mounted — so on its own this file's routes
- * look prefix-less and several routers' `@router.get("")` all collapse to the
- * same empty path. Emitted in the shape `resolveRouterMounts` consumes
- * (`mount: true`, `httpMethod: null`, `handler` = the identifier to resolve
- * through the import index), which then applies the prefix across files.
+ * are decorated in the module being mounted — so on its own that module's
+ * routes look prefix-less and several routers' `@router.get("")` all collapse
+ * to the same empty path. Emitted as `mount: true` rows (`handler` = the module
+ * identifier to resolve through the import index), which `resolveRouterMounts`
+ * composes across files.
  *
- * Only mounts with a LITERAL `prefix=` are emitted. `include_router(x.router)`
- * contributes no prefix, and `prefix=settings.api_prefix` is a value this
- * analysis cannot know; emitting either would leave an unresolvable non-endpoint
- * sitting in the route map, which is worse than the prefix it failed to supply.
+ * The mount's path is the RECEIVING router's own prefix joined with the include
+ * prefix: `router = APIRouter(prefix="/api")` then `router.include_router(app.router)`
+ * mounts `app` at `/api`, prefix or not — mealie lost `/api` on every route
+ * when only a literal `prefix=` produced a mount. An empty mount still
+ * composes (`api.py` → `recipe/__init__.py` → `recipe_crud_routes.py`). A
+ * prefix this file cannot know (`prefix=settings.api_prefix`) mounts at what
+ * is known and says so (`prefixUnresolved`). The receiving router's
+ * `dependencies` guard everything mounted under it.
  */
-function walkForRouterMounts(node: Node, routes: RouteInfo[]): void {
+function walkForRouterMounts(
+  node: Node,
+  routes: RouteInfo[],
+  routers: ReadonlyMap<string, RouterDecl>,
+  consts: ReadonlyMap<string, string>,
+): void {
   if (node.type === "call") {
     const fn = node.childForFieldName("function");
-    if (fn?.type === "attribute" && fn.childForFieldName("attribute")?.text === "include_router") {
+    const leaf = fn?.type === "attribute" ? fn.childForFieldName("attribute")?.text : null;
+    if (leaf === "include_router" || leaf === "register_blueprint") {
       const args = node.childForFieldName("arguments");
       const router = args ? firstPositionalArg(args) : null;
-      const prefix = args ? literalKeywordArg(args, "prefix") : null;
       // `auth.router` → "auth", the name the import index can resolve.
       const handler = router ? rootIdentifier(router) : null;
-      if (handler && prefix !== null) {
-        routes.push({
-          path: prefix,
+      const receiverNode = fn!.childForFieldName("object");
+      const receiver = receiverNode?.type === "identifier" ? routers.get(receiverNode.text) : undefined;
+      const prefix = args ? stringKeyword(args, leaf === "include_router" ? "prefix" : "url_prefix", consts) : undefined;
+      if (handler) {
+        const mount: RouteInfo = {
+          path: joinPrefix(receiver?.prefix ?? "", prefix ?? ""),
           httpMethod: null,
           kind: "api",
           handler,
@@ -53,11 +90,14 @@ function walkForRouterMounts(node: Node, routes: RouteInfo[]): void {
           middleware: [],
           line: node.startPosition.row + 1,
           mount: true,
-        });
+        };
+        if (prefix === null) mount.prefixUnresolved = `mount:${collapse(keywordArg(args!, leaf === "include_router" ? "prefix" : "url_prefix")!.text)}`;
+        if (receiver?.guards.length) applyRouteMeta(mount, { guards: receiver.guards });
+        routes.push(mount);
       }
     }
   }
-  for (const child of node.children) walkForRouterMounts(child, routes);
+  for (const child of node.children) walkForRouterMounts(child, routes, routers, consts);
 }
 
 /** First non-keyword argument inside an `argument_list`. */
@@ -138,13 +178,15 @@ interface RouterDecl {
 }
 
 const ROUTER_CTORS = new Set(["APIRouter", "Blueprint", "FastAPI", "Flask"]);
+/** A project's own router class (`UserAPIRouter(APIRouter)`, `AdminRouter`) takes a prefix the same way. */
+const ROUTER_CLASS_NAME = /Router$/;
 
 /**
  * Module-level `name = APIRouter(...)` / `Blueprint(...)` assignments, keyed by
  * the variable a decorator will name as its receiver. Same file only: a router
  * imported from elsewhere carries its prefix through `include_router`, not here.
  */
-function collectRouterDecls(root: Node): Map<string, RouterDecl> {
+function collectRouterDecls(root: Node, consts: ReadonlyMap<string, string>): Map<string, RouterDecl> {
   const decls = new Map<string, RouterDecl>();
   for (const stmt of root.namedChildren) {
     if (stmt.type !== "expression_statement") continue;
@@ -155,9 +197,9 @@ function collectRouterDecls(root: Node): Map<string, RouterDecl> {
     if (left?.type !== "identifier" || right?.type !== "call") continue;
     const ctor = right.childForFieldName("function");
     const ctorName = ctor?.type === "attribute" ? ctor.childForFieldName("attribute")?.text : ctor?.text;
-    if (!ctorName || !ROUTER_CTORS.has(ctorName)) continue;
+    if (!ctorName || (!ROUTER_CTORS.has(ctorName) && !ROUTER_CLASS_NAME.test(ctorName))) continue;
     const args = right.childForFieldName("arguments");
-    const prefix = args ? (literalKeywordArg(args, "prefix") ?? literalKeywordArg(args, "url_prefix") ?? "") : "";
+    const prefix = args ? (stringKeyword(args, "prefix", consts) ?? stringKeyword(args, "url_prefix", consts) ?? "") : "";
     const deps = args ? keywordArg(args, "dependencies") : null;
     decls.set(left.text, { prefix, guards: deps ? guardsFromDependencies(deps) : [] });
   }

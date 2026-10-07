@@ -78,6 +78,15 @@ export function resolveRouterMounts(analyses: FileAnalysis[], importIndex: Impor
       dropped.add(r);
     }
   }
+  // A mount that resolves to no router and adds no prefix says nothing: drop it
+  // rather than leave an empty, method-less non-endpoint in the route map.
+  // (A non-empty unresolved one stays — `app.use("/static", serveStatic)` is a
+  // real path.)
+  for (const a of analyses) {
+    if ((a.routes ?? []).some((r) => r.mount && !dropped.has(r) && !r.path)) {
+      a.routes = a.routes.filter((r) => !(r.mount && !dropped.has(r) && !r.path));
+    }
+  }
   if (mountsByTarget.size === 0) return 0;
 
   // 2. Effective prefix(es) per file. A mounting file may itself be mounted
