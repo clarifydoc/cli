@@ -181,6 +181,13 @@ export interface LanguageComplexitySpec {
    * extra depth. Branch nodes always deepen nesting; this set is optional.
    */
   nestingNodes?: ReadonlySet<string>;
+  /**
+   * Node types that chain their operands with a `logicalOps` token child
+   * rather than an `operator` field — the shell's `list` (`build && deploy
+   * || rollback`, an unnamed token), F#'s `infix_expression` (a named
+   * `infix_op` leaf). Each such token is a branch.
+   */
+  logicalOpNodes?: ReadonlySet<string>;
 }
 
 /**
@@ -497,6 +504,14 @@ export interface CallExtractionHooks {
    * walk (they are extracted as their own functions). Unioned across plugins.
    */
   anonymousScopeTypes?: readonly string[];
+  /**
+   * A node that DEFINES a named function, for a grammar whose function and
+   * value bindings share one node type (F# `let f x = …` vs `let x = …`, both
+   * `function_or_value_defn`): the module-level walk that builds `<setup>`
+   * stops at it, while a function body's walk still reads the body's local
+   * value bindings (which a `nestedScopeTypes` entry would cut off).
+   */
+  isFunctionDefinition?(node: Node): boolean;
   /** Call node types whose arguments are scanned for callback identifiers (also unioned). */
   callbackArgNodeTypes?: readonly string[];
   /**

@@ -1664,6 +1664,8 @@ function resolveCallToDefinition(
   if (!def && !isQualified && call.kind === "internal" && importsShareScope(analysis.language)) {
     const hits = new Map<string, SymbolDef>();
     for (const imp of analysis.imports) {
+      // A script it RUNS shares no names with it.
+      if (imp.executes) continue;
       const impFile = resolveTarget(imp.source, sourceFile, filePathMap);
       if (!impFile || impFile === sourceFile || hits.has(impFile)) continue;
       const d = symbolIn(ctx, impFile, call.name);

@@ -1,5 +1,6 @@
 import type { FileAnalysis } from "../types/analysis.js";
-import { relativeModulePath } from "../extractors/plugins/shared/path-utils.js";
+import { extensionFamily, relativeModulePath } from "../extractors/plugins/shared/path-utils.js";
+import { extensionsOfFamily } from "../extractors/registry.js";
 
 /**
  * Project-wide import index, built once after per-file extraction. Works
@@ -410,6 +411,13 @@ export function resolveImportSource(
   for (const ext of exts) {
     const candidate = joined + ext;
     if (knownFiles.has(candidate)) return candidate;
+  }
+  // Any other extension of the importer's own family: CoffeeScript's
+  // `require './routes/orders'` names `orders.coffee`.
+  for (const ext of extensionsOfFamily(extensionFamily(norm))) {
+    for (const candidate of [joined + ext, `${joined}/index${ext}`]) {
+      if (knownFiles.has(candidate)) return candidate;
+    }
   }
   return null;
 }

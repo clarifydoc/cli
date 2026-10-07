@@ -78,6 +78,16 @@ function measureBody(root: TSNode, declRow: number, spec: LanguageComplexitySpec
         m.branches++;
         m.cognitive++;
       }
+    } else if (spec.logicalOpNodes?.has(type)) {
+      // `build && deploy || rollback`: the operator is a token child —
+      // unnamed (the shell's `list`) or a named leaf (F#'s `infix_op`).
+      for (const child of n.children) {
+        const op = child.isNamed ? (child.childCount === 0 ? child.text : "") : child.type;
+        if (logicalOps.has(op)) {
+          m.branches++;
+          m.cognitive++;
+        }
+      }
     }
 
     for (const child of n.children) {

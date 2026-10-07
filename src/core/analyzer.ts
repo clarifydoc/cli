@@ -1861,6 +1861,9 @@ export function buildComponentGraph(
   // File base names (without extension, LOWERCASED — Pascal and friends match
   // units case-insensitively) → declaring files.
   const baseNameToFiles = new Map<string, string[]>();
+  // File names WITH their extension (lowercased) → declaring files, for an
+  // import that names a file (`#include "parser.h"`, `source lib/common.sh`).
+  const fileNameToFiles = new Map<string, string[]>();
   // Build a map of stripped paths to file paths for relative import resolution (O(1) lookup)
   const strippedPathToFile = new Map<string, string>();
   // Build a map of directory names → files in that directory (for Go/Rust package imports)
@@ -1868,6 +1871,7 @@ export function buildComponentGraph(
   for (const a of analyses) {
     const baseName = a.filePath.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "").toLowerCase();
     push(baseNameToFiles, baseName, a.filePath);
+    push(fileNameToFiles, a.filePath.replace(/^.*[\\/]/, "").toLowerCase(), a.filePath);
     const stripped = a.filePath
       .replace(STRIP_SOURCE_EXTENSION_RE, "")
       .replace(/\/index$/, "");
@@ -1997,6 +2001,21 @@ export function buildComponentGraph(
           // file) so a same-named import from elsewhere can still resolve.
           const target = pickScoped(candidates, a.filePath);
           if (target) refSet.add(target);
+        }
+      }
+
+      // 2b. An import that names a FILE, extension and all (`#include
+      // "parser.h"`, `source lib/common.sh`, `. ./helpers.ps1`): the file of
+      // exactly that name. Step 3 splits on dots, so its "last segment" is the
+      // extension (`h`, `sh`), which names no file — every such include was
+      // edgeless. An exact file name is required: `java.sql` names no file.
+      const fileName = imp.source.replace(/\\/g, "/").split("/").pop() ?? "";
+      if (STRIP_SOURCE_EXTENSION_RE.test(fileName)) {
+        const candidates = fileNameToFiles.get(fileName.toLowerCase());
+        const target = candidates ? pickScoped(candidates, a.filePath) : null;
+        if (target) {
+          refSet.add(target);
+          continue;
         }
       }
 
