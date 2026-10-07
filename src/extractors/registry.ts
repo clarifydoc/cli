@@ -76,6 +76,9 @@ import { commonLispManifest, racketManifest, schemeManifest } from "./plugins/li
 import { haxeManifest } from "./plugins/haxe/manifest.js";
 import { mojoManifest } from "./plugins/mojo/manifest.js";
 import { lessManifest, sassManifest, scssManifest } from "./plugins/stylesheet/manifest.js";
+import { autohotkeyManifest } from "./plugins/autohotkey/manifest.js";
+import { autoitManifest } from "./plugins/autoit/manifest.js";
+import { applescriptManifest } from "./plugins/applescript/manifest.js";
 import { nimManifest } from "./plugins/nim/manifest.js";
 import { dManifest } from "./plugins/dlang/manifest.js";
 import { vManifest } from "./plugins/vlang/manifest.js";
@@ -113,6 +116,9 @@ const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
   scssManifest,
   sassManifest,
   lessManifest,
+  autohotkeyManifest,
+  autoitManifest,
+  applescriptManifest,
   nimManifest,
   dManifest,
   vManifest,
@@ -192,6 +198,9 @@ const LOADERS: readonly PluginLoader[] = [
   { languages: ["haxe"], load: () => import("./plugins/haxe/meta.js").then((m) => [m.haxeMeta]) },
   { languages: ["mojo"], load: () => import("./plugins/mojo/meta.js").then((m) => [m.mojoMeta]) },
   { languages: ["scss", "sass", "less"], load: () => import("./plugins/stylesheet/meta.js").then((m) => [m.scssMeta, m.sassMeta, m.lessMeta]) },
+  { languages: ["autohotkey"], load: () => import("./plugins/autohotkey/meta.js").then((m) => [m.autohotkeyMeta]) },
+  { languages: ["autoit"], load: () => import("./plugins/autoit/meta.js").then((m) => [m.autoitMeta]) },
+  { languages: ["applescript"], load: () => import("./plugins/applescript/meta.js").then((m) => [m.applescriptMeta]) },
   { languages: ["nim"], load: () => import("./plugins/nim/meta.js").then((m) => [m.nimMeta]) },
   { languages: ["dlang"], load: () => import("./plugins/dlang/meta.js").then((m) => [m.dMeta]) },
   { languages: ["vlang"], load: () => import("./plugins/vlang/meta.js").then((m) => [m.vMeta]) },
