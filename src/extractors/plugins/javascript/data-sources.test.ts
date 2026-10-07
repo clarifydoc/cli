@@ -540,3 +540,19 @@ describe("JS request factories: a descriptor URL built from a parameter", () => 
     expect(calls).toEqual([]);
   });
 });
+
+describe("JS fetch-style calls carry their verb in the options", () => {
+  it("reads method from fetch's options and from a wrapped options object", async () => {
+    const calls = await apiCallsOf(`
+      fetch('/api/orders', { method: 'POST', body });
+      oazapfts.fetchJson('/activities', oazapfts.json({ ...opts, method: 'DELETE', body }));
+      fetch('/api/orders');
+      fetch('/api/x', { method: someVar });`);
+    expect(calls.map((c) => [c.name, c.target])).toEqual([
+      ["post", "/api/orders"],
+      ["delete", "/activities"],
+      ["fetch", "/api/orders"],
+      ["fetch", "/api/x"],
+    ]);
+  });
+});

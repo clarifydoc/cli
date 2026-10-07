@@ -389,6 +389,12 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
               firstArg = positional[1]!;
             }
           }
+          // `fetch(url, { method: "POST" })`, `oazapfts.fetchJson(url, oazapfts.json({ ...opts, method: "POST" }))`:
+          // a client named for fetching carries its verb in the options.
+          if (!HTTP_VERBS.has(callName.toLowerCase())) {
+            const verb = optionsMethod(positional[1]);
+            if (verb) callName = verb;
+          }
           const resolved = firstArg ? this.resolveUrlArg(firstArg) : null;
           // A call-expression URL arg (a helper-built URL with no literal slash)
           // needs a STRICT HTTP signal — an exact client root (`fetch`/`axios`/…)
@@ -699,6 +705,18 @@ function literalString(node: Node | null): string | null {
 }
 
 /** Value node of `obj`'s property named `key` (handles bare and quoted keys). */
+/**
+ * The literal HTTP verb in a request's options argument — an object, or a
+ * helper call wrapping one (`json({ ...opts, method: "POST" })`) — else null.
+ */
+function optionsMethod(arg: Node | undefined): string | null {
+  let obj = arg ?? null;
+  if (obj?.type === "call_expression") obj = obj.childForFieldName("arguments")?.namedChildren[0] ?? null;
+  if (obj?.type !== "object") return null;
+  const verb = literalString(objectPropValue(obj, "method"));
+  return verb && HTTP_VERBS.has(verb.toLowerCase()) ? verb.toLowerCase() : null;
+}
+
 /** Whether an object literal has this key, as a pair or a shorthand (`{ handler }`). */
 function hasProp(obj: Node, key: string): boolean {
   if (objectPropValue(obj, key)) return true;
