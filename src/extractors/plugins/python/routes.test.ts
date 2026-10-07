@@ -26,14 +26,52 @@ router.include_router(tags.router, prefix="/tags")
     ]);
   });
 
-  it("ignores a mount whose prefix is absent or not a literal", async () => {
-    // Neither can contribute a prefix, and emitting them would leave a
-    // non-endpoint in the route map that nothing can ever resolve.
+  it("mounts at the receiving router's own prefix, with or without an include prefix (mealie)", async () => {
     const routes = await routesOf(`
-router.include_router(articles.router, tags=["articles"])
+router = APIRouter(prefix="/api")
+router.include_router(app.router)
+router.include_router(users.router, prefix="/users")
+`);
+    expect(routes.map((r) => [r.path, r.handler, r.mount])).toEqual([
+      ["/api", "app", true],
+      ["/api/users", "users", true],
+    ]);
+  });
+
+  it("still emits a prefix-less mount on a prefix-less router, so mounts compose", async () => {
+    const routes = await routesOf(`router.include_router(articles.router, tags=["articles"])`);
+    expect(routes).toEqual([expect.objectContaining({ path: "", handler: "articles", mount: true })]);
+  });
+
+  it("resolves a module constant prefix, and marks one it cannot know", async () => {
+    const routes = await routesOf(`
+prefix = "/recipes"
+router = APIRouter()
+router.include_router(comments.router, prefix=prefix)
 app.include_router(api_router, prefix=settings.api_prefix)
 `);
-    expect(routes).toEqual([]);
+    expect(routes[0]).toMatchObject({ path: "/recipes", handler: "comments" });
+    expect(routes[1]).toMatchObject({ path: "", handler: "api_router", prefixUnresolved: "mount:settings.api_prefix" });
+  });
+
+  it("reads a project router class's prefix and puts the receiver's guards on the mount", async () => {
+    const routes = await routesOf(`
+router = UserAPIRouter(prefix="/recipes", route_class=MealieCrudRoute)
+
+@router.get("/{slug}")
+def get_one(slug: str): ...
+
+admin = APIRouter(prefix="/admin", dependencies=[Depends(get_admin_user)])
+admin.include_router(about.router)
+`);
+    expect(routes.find((r) => r.handler === "get_one")!.path).toBe("/recipes/{slug}");
+    const mounted = routes.find((r) => r.mount)!;
+    expect(mounted).toMatchObject({ path: "/admin", middleware: ["Depends(get_admin_user)"] });
+  });
+
+  it("reads a Flask blueprint registration as a mount", async () => {
+    const routes = await routesOf(`app.register_blueprint(admin_bp, url_prefix="/admin")`);
+    expect(routes).toEqual([expect.objectContaining({ path: "/admin", handler: "admin_bp", mount: true })]);
   });
 
   it("keeps the decorator path as written — composition is a project-level pass", async () => {
@@ -95,6 +133,29 @@ describe("FastAPI mounts resolved across files", () => {
     resolveRouterMounts(analyses, buildImportIndex(analyses));
 
     expect(resource.routes.map((r) => r.path)).toEqual(["/articles", "/articles/{slug}"]);
+  });
+
+  it("composes the receiving router's prefix through prefix-less includes (mealie's /api/app/about)", async () => {
+    const api = file(
+      "mealie/routes/__init__.py",
+      [mount("/api", "app")],
+      [{ source: ".", specifiers: ["app"], isDefault: false, isNamespace: false, isType: false, line: 1 }],
+    );
+    const appPkg = file(
+      "mealie/routes/app/__init__.py",
+      [mount("/app", "app_about")],
+      [{ source: ".", specifiers: ["app_about"], isDefault: false, isNamespace: false, isType: false, line: 1 }],
+    );
+    const about = file("mealie/routes/app/app_about.py", [get("/about")]);
+    const analyses = [api, appPkg, about];
+    resolveRouterMounts(analyses, buildImportIndex(analyses));
+    expect(about.routes.map((r) => r.path)).toEqual(["/api/app/about"]);
+  });
+
+  it("drops an empty mount that resolves to nothing", () => {
+    const api = file("app/main.py", [mount("", "external_router"), get("/health")]);
+    resolveRouterMounts([api], buildImportIndex([api]));
+    expect(api.routes.map((r) => r.path)).toEqual(["/health"]);
   });
 
   it("gives colliding empty paths distinct identities, which is what dedupe needs", async () => {
