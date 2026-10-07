@@ -1,5 +1,5 @@
 import type { FileAnalysis, RouteInfo } from "../../types/analysis.js";
-import type { ImportIndex } from "../../core/import-index.js";
+import type { ImportIndex } from "../../types/project.js";
 import { joinRoutePath } from "./route-paths.js";
 
 /**

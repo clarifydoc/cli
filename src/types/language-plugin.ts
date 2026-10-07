@@ -23,6 +23,7 @@ import type { EntityExtractor } from "../extractors/entities/base.js";
 import type { FunctionClassExtractor } from "../extractors/functions-classes/base.js";
 import type { ImportExportExtractor } from "../extractors/imports-exports/base.js";
 import type { DispatchResolver } from "../extractors/dispatch/base.js";
+import type { RouteResolver } from "../extractors/route-resolvers/base.js";
 
 /**
  * Framework-detection rule contributed by a language plugin for the ecosystem
@@ -751,6 +752,13 @@ export interface LanguagePluginManifest {
    * UI-bridge resolver joins VB/XAML code-behind in a pure-VB MAUI project.
    */
   dispatchLanguages?: readonly Language[];
+  /**
+   * The language DESCRIBES an API rather than implementing it — OpenAPI,
+   * GraphQL SDL, WSDL, JSight. Its routes state a served surface and carry no
+   * handler code: the cross-tier linker prefers the implementing route when
+   * both exist, and symbol links never treat its "functions" as code.
+   */
+  apiContract?: boolean;
 }
 
 /**
@@ -862,6 +870,13 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * analyses it sees, and its `priority` fixes cross-plugin output order.
    */
   dispatchResolvers?: readonly DispatchResolver[];
+  /**
+   * Project-level route passes this plugin contributes (inherited controller
+   * route templates, urlconf includes, router registrations). Each sees the
+   * analyses of its `languages` plus the `ProjectContext`, and rewrites
+   * `routes` before mounts compose and before the symbol linker anchors them.
+   */
+  routeResolvers?: readonly RouteResolver[];
   /**
    * How this language's declared types and properties serialize as JSON —
    * what the request-schema pass (`core/request-schemas.ts`) needs to turn a

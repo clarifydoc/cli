@@ -1,5 +1,9 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { DataSourceInfo, CallInfo, Language } from "../../types/analysis.js";
+import type { DataSourceInfo, CallInfo, FileAnalysis, Language } from "../../types/analysis.js";
+import type { ProjectContext } from "../../types/project.js";
+
+/** An api-call row aggregated across the project: the data source plus the file it was found in. */
+export type ProjectApiCall = DataSourceInfo & { filePath: string };
 import { getCallName } from "../shared/node-helpers.js";
 
 /**
@@ -45,6 +49,15 @@ export abstract class DataSourceExtractor {
 
   /** Inspect a single AST node and push any data sources found */
   protected abstract visitNode(node: Node, sources: DataSourceInfo[]): void;
+
+  /**
+   * Optional project-level pass over EVERY api-call row in the project — from
+   * any language, since a helper defined in TypeScript is called from Vue and
+   * Svelte files too. Rewrites targets in place (a URL-builder call → the URL
+   * it builds) and returns how many it rewrote. Runs on the aggregated copies
+   * only, before the cross-tier linker; per-file JSON is untouched.
+   */
+  resolveProject?(calls: ProjectApiCall[], analyses: FileAnalysis[], ctx: ProjectContext): number;
 
   /** Create a DataSourceInfo with default calls: [] */
   protected ds(info: Omit<DataSourceInfo, "calls"> & { calls?: CallInfo[] }): DataSourceInfo {

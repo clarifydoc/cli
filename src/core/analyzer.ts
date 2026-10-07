@@ -27,7 +27,6 @@ import { resolveViewBySuffix, pickByPathAffinity, extensionFamily } from "../ext
 import { detectFileBasedRoutes } from "../extractors/plugins/javascript/routes/file-based.js";
 import { resolveAngularExternalTemplates } from "../extractors/plugins/javascript/angular-external-templates.js";
 import { resolveRouterMounts } from "../extractors/shared/router-mounts.js";
-import { resolveUrlBuilders } from "../extractors/plugins/javascript/url-builders.js";
 import {
   writeProjectSummary,
   writeReportData,
@@ -92,6 +91,10 @@ import { detectMigrations } from "./migration-detector.js";
 import { linkApiCallsToRoutes, dedupeRoutes } from "./route-linker.js";
 import { attachHandlerParams, attachRequestSchemas } from "./request-schemas.js";
 import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
+import { reconcileProjectRoutes } from "../extractors/route-resolvers/index.js";
+import { resolveProjectApiCalls } from "../extractors/data-sources/index.js";
+import { buildClassIndex } from "./class-index.js";
+import type { ProjectContext } from "../types/project.js";
 import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from "./component-launches.js";
 import { buildImportIndex, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
 import { demoteProjectCallDataSources } from "./project-call-data-sources.js";
@@ -638,6 +641,22 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // every serial builder that resolves cross-file references (screens, type
   // blast, class graph). Building it once avoids re-iterating all imports.
   const importIndex = buildImportIndex(allAnalyses);
+  const knownFiles = new Set(allAnalyses.map((a) => a.filePath));
+  const analysisByPath = new Map(allAnalyses.map((a) => [a.filePath, a]));
+  const projectContext: ProjectContext = {
+    importIndex,
+    classes: buildClassIndex(allAnalyses, importIndex),
+    resolveModule: (fromFile, specifier) => resolveImportSource(fromFile, specifier, knownFiles),
+    fileOf: (path) => analysisByPath.get(path),
+  };
+
+  // Plugin route passes that need other files: an inherited controller route
+  // template, a urlconf include, a router registration whose handler class
+  // lives elsewhere. Before mounts, so a resolver may emit mounts to compose.
+  const resolvedRouteCount = reconcileProjectRoutes(allAnalyses, projectContext);
+  if (resolvedRouteCount > 0 && verbose) {
+    progress.detail(`  routes resolved across files: ${resolvedRouteCount}`);
+  }
 
   // Router mounts: `app.use("/api/auth", authRoutes)` (Express) or
   // `include_router(auth.router, prefix="/users")` (FastAPI) sits in a different
@@ -753,12 +772,12 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       .filter((ds) => ds.kind === "api-call")
       .map((ds) => ({ ...ds, filePath: a.filePath })),
   );
-  // Resolve URL-builder helper calls in api-call targets
+  // Plugin project passes over the api-call targets — URL-builder helper calls
   // (`axios.get(requestUri('vikarbesked','v4'))` → `/api/v4/institution/{}/vikarbesked`)
   // so frontend calls funneled through a project URL helper carry a concrete
   // path the cross-tier linker can join. Project-level + in-memory (operates on
   // the aggregated copies; no per-file JSON change), mirroring resolveRouterMounts.
-  const resolvedUrlCount = resolveUrlBuilders(allApiCalls, allAnalyses);
+  const resolvedUrlCount = resolveProjectApiCalls(allApiCalls, allAnalyses, projectContext);
   // A call through a client instance requests the client's base + its path.
   applyHttpClientBases(allApiCalls, allAnalyses, importIndex);
   if (resolvedUrlCount > 0 && verbose) {

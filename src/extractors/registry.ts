@@ -313,6 +313,15 @@ export const PARTIAL_PREFIX_BY_LANGUAGE: ReadonlyMap<string, string> = new Map(
   ALL_MANIFESTS.filter((m) => m.partialPrefix).map((m) => [m.language, m.partialPrefix!]),
 );
 
+/** Languages that describe an API rather than implement it (see `LanguagePluginManifest.apiContract`). */
+const API_CONTRACT_LANGUAGES: ReadonlySet<string> = new Set(
+  ALL_MANIFESTS.filter((m) => m.apiContract).map((m) => m.language),
+);
+
+export function isApiContractLanguage(language: string): boolean {
+  return API_CONTRACT_LANGUAGES.has(language);
+}
+
 /** Every manifest's `sourceDirs` (`bin/` beside a `META6.json`, …): skipped directories that are source. */
 export const SOURCE_DIRS: ReadonlyArray<{ dir: string; marker: string }> = ALL_MANIFESTS.flatMap((m) => m.sourceDirs ?? []);
 

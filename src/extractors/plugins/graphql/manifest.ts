@@ -5,5 +5,6 @@ export const graphqlManifest: LanguagePluginManifest = {
   language: "graphql",
   parsing: "regex",
   extensions: [".graphql", ".gql"],
+  apiContract: true,
   importTarget: false,
 };

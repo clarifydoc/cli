@@ -5,5 +5,6 @@ export const wsdlManifest: LanguagePluginManifest = {
   language: "wsdl",
   parsing: "regex",
   extensions: [".wsdl"],
+  apiContract: true,
   importTarget: false,
 };

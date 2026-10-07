@@ -1,4 +1,5 @@
 import type { FileAnalysis } from "../types/analysis.js";
+import type { ImportIndex } from "../types/project.js";
 import { extensionFamily, relativeModulePath } from "../extractors/plugins/shared/path-utils.js";
 import { EXTENSION_TO_LANGUAGE, PARTIAL_PREFIX_BY_LANGUAGE, extensionsOfFamily } from "../extractors/registry.js";
 
@@ -23,11 +24,7 @@ import { EXTENSION_TO_LANGUAGE, PARTIAL_PREFIX_BY_LANGUAGE, extensionsOfFamily }
  *     a secondary signal when a call's root identifier can't be resolved by
  *     name (e.g. EF Core's DI-injected `dbContext`).
  */
-export interface ImportIndex {
-  localFor(file: string, name: string): string | null;
-  sourceFor(file: string, name: string): string | null;
-  namespacesFor(file: string): string[];
-}
+export type { ImportIndex } from "../types/project.js";
 
 /**
  * Substring markers that flag a namespace import as data-access related.
