@@ -1,5 +1,5 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { RouteInfo, CallInfo, Language } from "../../types/analysis.js";
+import type { RouteInfo, RouteFact, CallInfo, Language } from "../../types/analysis.js";
 import { extractCalls } from "../shared/call-graph.js";
 
 /**
@@ -17,8 +17,12 @@ export interface RouteExtractor {
    * frameworks whose routing is path-derived (e.g. CodeIgniter maps a URL
    * onto `controllers/<dir>/<file>.php`); extractors that don't need it ignore
    * the argument.
+   *
+   * `facts` collects what this file shows about routing that only a project
+   * pass can finish — a controller's base class, a urlconf include — for the
+   * plugin's `routeResolvers` (see `FileAnalysis.routeFacts`).
    */
-  extractRoutes(tree: Tree, sourceText: string, filePath?: string): RouteInfo[];
+  extractRoutes(tree: Tree, sourceText: string, filePath?: string, facts?: RouteFact[]): RouteInfo[];
 }
 
 export const HTTP_METHODS = new Set([

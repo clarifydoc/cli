@@ -1,5 +1,5 @@
 import type { Node } from "web-tree-sitter";
-import type { RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../../types/analysis.js";
+import type { RouteFact, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../../types/analysis.js";
 import { findChildByType } from "../../../shared/node-helpers.js";
 import { buildAuth, splitList, type GuardAttr } from "../../../shared/route-metadata.js";
 import type { RouteExtractor } from "../../../routes/base.js";
@@ -41,6 +41,8 @@ const CSHARP_HTTP_ATTRIBUTES: Record<string, string> = {
 interface ControllerScope {
   prefix: string | null;
   controllerName: string | null;
+  /** The declaring class's own name (`SeriesController`) — every row's `owner`. */
+  className: string | null;
   /** `[ApiController]` turns on ASP.NET's binding-source inference. */
   apiController: boolean;
   /** Class-level `[Authorize]`/`[AllowAnonymous]`, applied to every action. */
@@ -53,44 +55,112 @@ interface ControllerScope {
 const EMPTY_SCOPE: ControllerScope = {
   prefix: null,
   controllerName: null,
+  className: null,
   apiController: false,
   guards: [],
   versions: new Map(),
   versionNeutral: false,
 };
 
-/** C#: [HttpGet("path")] / [Route("path")] with class-level prefix merging. */
-export function extractAspnetRoutes(root: Node, routes: RouteInfo[]): void {
-  walkForCsharpRoutes(root, routes, EMPTY_SCOPE);
+/**
+ * What one controller class declares, for the project pass that resolves what
+ * it INHERITS (`aspnet-resolver.ts`): ASP.NET attribute routing inherits a
+ * base controller's `[Route]`, `[ApiController]` and `[Authorize]`, and a
+ * base class's routed actions are served by every concrete subclass — none of
+ * which one file can see when the base lives in another.
+ */
+export interface CsControllerFact {
+  /** The class's base type as written (`BaseApiController`, `RestController<MovieResource>`). */
+  base: string | null;
+  abstract: boolean;
+  /** Its own class-level `[Route]` template, tokens unresolved. */
+  template: string | null;
+  apiController: boolean;
+  /** Its own class-level `[Authorize]` / `[AllowAnonymous]`. */
+  guards: GuardAttr[];
+  /** Each routed action: the verb attribute's line (the row's `line`), its own template and guards. */
+  actions: CsActionFact[];
 }
 
-function walkForCsharpRoutes(node: Node, routes: RouteInfo[], scope: ControllerScope) {
+export interface CsActionFact {
+  line: number;
+  verb: string;
+  handler: string | null;
+  template: string | null;
+  guards: GuardAttr[];
+}
+
+export const CS_CONTROLLER_FACT = "cs:controller";
+
+/** C#: [HttpGet("path")] / [Route("path")] with class-level prefix merging. */
+export function extractAspnetRoutes(root: Node, routes: RouteInfo[], facts?: RouteFact[]): void {
+  walkForCsharpRoutes(root, routes, EMPTY_SCOPE, facts);
+}
+
+function walkForCsharpRoutes(
+  node: Node,
+  routes: RouteInfo[],
+  scope: ControllerScope,
+  facts?: RouteFact[],
+  /** The enclosing class's routed actions, collected for its fact. */
+  actions?: CsActionFact[],
+) {
   if (node.type === "class_declaration") {
     const name = node.childForFieldName("name")?.text ?? null;
     const attrs = attributesOf(node);
+    const ownTemplate = classRoutePrefix(attrs);
+    const ownApiController = attrs.some((a) => attributeName(a) === "ApiController");
+    const ownGuards = guardAttributes(attrs);
     // ASP.NET strips the conventional "Controller" suffix for the [controller] token.
     const inner: ControllerScope = {
-      prefix: classRoutePrefix(attrs) ?? scope.prefix,
+      prefix: ownTemplate ?? scope.prefix,
       controllerName: name ? name.replace(/Controller$/, "") : scope.controllerName,
-      apiController: scope.apiController || attrs.some((a) => attributeName(a) === "ApiController"),
-      guards: [...scope.guards, ...guardAttributes(attrs)],
+      className: name ?? scope.className,
+      apiController: scope.apiController || ownApiController,
+      guards: [...scope.guards, ...ownGuards],
       versions: apiVersionsOf(attrs, scope.versions),
       versionNeutral: scope.versionNeutral || attrs.some((a) => attributeName(a) === "ApiVersionNeutral"),
     };
+    const own: CsActionFact[] = [];
     for (const child of node.children) {
-      walkForCsharpRoutes(child, routes, inner);
+      walkForCsharpRoutes(child, routes, inner, facts, own);
+    }
+    const controllerish =
+      own.length > 0 ||
+      ownTemplate !== null ||
+      ownApiController ||
+      attrs.some((a) => attributeName(a) === "Controller") ||
+      /Controller$/.test(name ?? "");
+    if (facts && name && controllerish) {
+      const data: CsControllerFact = {
+        base: firstBaseType(node),
+        abstract: node.children.some((c) => c.type === "modifier" && c.text === "abstract"),
+        template: ownTemplate,
+        apiController: ownApiController,
+        guards: ownGuards,
+        actions: own,
+      };
+      facts.push({ kind: CS_CONTROLLER_FACT, line: node.startPosition.row + 1, owner: name, data });
     }
     return;
   }
 
   if (node.type === "method_declaration") {
-    parseMethodRoutes(node, routes, scope);
+    parseMethodRoutes(node, routes, scope, actions);
     return;
   }
 
   for (const child of node.children) {
-    walkForCsharpRoutes(child, routes, scope);
+    walkForCsharpRoutes(child, routes, scope, facts, actions);
   }
+}
+
+/** First type in a class's base list (`: BaseApiController, IDisposable` → `BaseApiController`). */
+function firstBaseType(cls: Node): string | null {
+  const list = findChildByType(cls, "base_list");
+  if (!list) return null;
+  const first = list.namedChildren.find((c) => c.type !== "comment");
+  return first ? first.text.replace(/\s+/g, "") : null;
 }
 
 /** Every `attribute` node directly on a declaration, across its attribute lists. */
@@ -117,7 +187,7 @@ function classRoutePrefix(attrs: Node[]): string | null {
 }
 
 /** Emit a RouteInfo for each HTTP-verb attribute on a method. */
-function parseMethodRoutes(methodNode: Node, routes: RouteInfo[], scope: ControllerScope) {
+function parseMethodRoutes(methodNode: Node, routes: RouteInfo[], scope: ControllerScope, actions?: CsActionFact[]) {
   const methodName = methodNode.childForFieldName("name")?.text ?? null;
   const attrs = attributesOf(methodNode);
 
@@ -144,11 +214,13 @@ function parseMethodRoutes(methodNode: Node, routes: RouteInfo[], scope: Control
   }
   if (verbAttrs.length === 0) return;
 
-  const guards = [...scope.guards, ...guardAttributes(attrs)];
-  const auth = buildAuth(scope.guards, guardAttributes(attrs));
+  const methodGuards = guardAttributes(attrs);
+  const guards = [...scope.guards, ...methodGuards];
+  const auth = buildAuth(scope.guards, methodGuards);
   const versions = resolveVersions(scope, mapToVersions);
 
   for (const { verb, template: own, line } of verbAttrs) {
+    actions?.push({ line, verb, handler: methodName, template: own ?? routeAttrTemplate, guards: methodGuards });
     const path = buildPath(scope.prefix, own ?? routeAttrTemplate, scope.controllerName, methodName);
     const params = parameterBindings(methodNode, path, scope.apiController);
     const route: RouteInfo = {
@@ -160,6 +232,7 @@ function parseMethodRoutes(methodNode: Node, routes: RouteInfo[], scope: Control
       middleware: guards.map((g) => g.text),
       line,
     };
+    if (scope.className) route.owner = scope.className;
     if (auth) route.auth = auth;
     if (versions) {
       route.versions = versions.all;
@@ -264,6 +337,22 @@ const SIMPLE_TYPES = new Set([
 
 /** Framework-supplied parameters that are never bound from the request. */
 const UNBOUND_TYPES = new Set(["CancellationToken"]);
+
+/**
+ * Re-derive inferred bindings once a route's path or `[ApiController]` status
+ * is known from an inherited scope. Explicit `[From*]` bindings never change;
+ * an inferred or unknown one follows the same rules as at extraction.
+ */
+export function rebindParams(params: readonly RouteParamInfo[], path: string, apiController: boolean): RouteParamInfo[] {
+  const routeParams = new Set([...path.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]!.toLowerCase()));
+  return params.map((p) => {
+    if (p.binding !== null && !p.inferred) return p;
+    let inferred: RouteParamBinding | null = null;
+    if (routeParams.has(p.name.toLowerCase())) inferred = "route";
+    else if (apiController) inferred = isSimpleType(p.type) ? "query" : "body";
+    return inferred ? { name: p.name, type: p.type, binding: inferred, inferred: true } : { name: p.name, type: p.type, binding: null };
+  });
+}
 
 function parameterBindings(methodNode: Node, path: string, apiController: boolean): RouteParamInfo[] {
   const paramsNode = methodNode.childForFieldName("parameters");
@@ -418,7 +507,7 @@ function stripConstraints(path: string): string {
 }
 
 /** Build the full, normalized endpoint path for one route. */
-function buildPath(
+export function buildPath(
   classPrefix: string | null,
   template: string | null,
   controllerName: string | null,
@@ -450,14 +539,17 @@ function buildPath(
 // Every route this extractor can produce comes from a `[Http*]`/`[Route]`
 // attribute; `[^\]]` spans newlines, so multi-line attribute lists still match.
 const ROUTE_ATTRIBUTE_GATE = /\[[^\]]*\b(?:Http(?:Get|Post|Put|Patch|Delete|Head|Options)|Route)\b/;
+// A controller with no route attribute of its own — it inherits its template
+// and perhaps its actions — still needs its fact recorded.
+const CONTROLLER_CLASS_GATE = /\bclass\s+\w*Controller\b|\[\s*(?:Api)?Controller\b/;
 
 export const csharpRouteExtractor: RouteExtractor = {
   languages: ["csharp"],
-  extractRoutes(tree, sourceText) {
+  extractRoutes(tree, sourceText, _filePath, facts) {
     // Cheap gate: skip the full-tree walk for files with no route attributes.
-    if (!ROUTE_ATTRIBUTE_GATE.test(sourceText)) return [];
+    if (!ROUTE_ATTRIBUTE_GATE.test(sourceText) && !CONTROLLER_CLASS_GATE.test(sourceText)) return [];
     const routes: RouteInfo[] = [];
-    extractAspnetRoutes(tree.rootNode, routes);
+    extractAspnetRoutes(tree.rootNode, routes, facts);
     return routes;
   },
 };

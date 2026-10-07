@@ -16,7 +16,7 @@ import { scanSecurity, isMinifiedSource, isVendoredSource } from "./security-sca
 import { extractTypeReferences } from "./type-reference-extractor.js";
 import { enrichFileDataSources } from "./import-index.js";
 import type { VariableAliasBinding } from "../types/language-plugin.js";
-import type { FunctionInfo } from "../types/analysis.js";
+import type { FunctionInfo, RouteFact } from "../types/analysis.js";
 import { isTestFile } from "./test-file-detector.js";
 import { restoreTypedReceiverCalls } from "./typed-receivers.js";
 import {
@@ -220,7 +220,9 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // Test files (unit/integration/e2e specs) never expose real routes — a
     // Cypress `cy.get('button')` or `request(app).get('/x')` is not an endpoint.
     const isTest = isTestFile(file.relativePath, language);
-    analysis.routes = isTest ? [] : extractRoutes(tree, sourceText, language, analysis.filePath);
+    const routeFacts: RouteFact[] = [];
+    analysis.routes = isTest ? [] : extractRoutes(tree, sourceText, language, analysis.filePath, routeFacts);
+    if (routeFacts.length > 0) analysis.routeFacts = routeFacts;
     // Data sources + mutations share one tree walk (extractDataAccess);
     // mutations are assigned further down at their original position.
     const dataAccess = extractDataAccess(tree, sourceText, language);

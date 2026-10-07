@@ -14,6 +14,7 @@ import { CSharpImportExportExtractor } from "./imports-exports.js";
 import { CSharpDataSourceExtractor } from "./data-sources.js";
 import { CSharpEntityExtractor } from "./entities.js";
 import { csharpRouteExtractor } from "./routes/aspnet.js";
+import { aspnetControllerInheritance } from "./routes/aspnet-resolver.js";
 import { CSharpMediatrResolver } from "./dispatch.js";
 import { CsharpUiBridgeResolver } from "./ui-bridge.js";
 import { csharpRequestSchema } from "./request-schema.js";
@@ -34,6 +35,7 @@ export const csharpMeta: LanguagePluginMeta = {
   dataSources: new CSharpDataSourceExtractor(),
   entities: new CSharpEntityExtractor(),
   dispatchResolvers: [new CSharpMediatrResolver(), new CsharpUiBridgeResolver()],
+  routeResolvers: [aspnetControllerInheritance],
   requestSchema: csharpRequestSchema,
   builtinTypes: CSHARP_BUILTINS,
   knownPackages: nugetPackages,
