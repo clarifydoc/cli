@@ -4,7 +4,7 @@ export type Language =
   | "go" | "rust" | "ruby" | "php" | "swift" | "lua" | "scala"
   | "perl" | "vb" | "sql" | "c" | "cpp" | "prisma" | "dart" | "elixir" | "erlang" | "objc"
   | "haskell" | "clojure" | "blazor" | "html" | "qml" | "qtui" | "xaml" | "jsp" | "springxml" | "jsight"
-  | "openapi" | "graphql" | "wsdl" | "groovy" | "powershell";
+  | "openapi" | "graphql" | "wsdl" | "groovy" | "powershell" | "bash" | "batch" | "fsharp" | "coffeescript";
 
 export interface ExtractorWarning {
   /** Dotted-path location, e.g. "functions[3].endLine" or "routes[0].kind". */
@@ -466,6 +466,12 @@ export interface ImportInfo {
   isNamespace: boolean;
   isType: boolean;
   line: number;
+  /**
+   * The file is RUN as a program of its own (`./scripts/build.sh`, PowerShell
+   * `& .\deploy.ps1`), not loaded: a dependency, but none of its names come
+   * into the importer's scope. Absent for a real import.
+   */
+  executes?: true;
 }
 
 export interface ExportInfo {

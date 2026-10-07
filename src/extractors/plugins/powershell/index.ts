@@ -170,7 +170,8 @@ function extractPowerShellImports(lines: string[]): ImportInfo[] {
     const run = /^\s*(?:&\s*)?(["']?(?:\$PSScriptRoot|\.{1,2})[\\/][^\s"';|]+\.ps1["']?)/i.exec(line);
     if (run) {
       const path = scriptPath(run[1]!);
-      if (path) out.push(imp(path, n));
+      // Run, not dot-sourced: its functions do not come into this scope.
+      if (path) out.push({ ...imp(path, n), executes: true });
     }
   });
   return out;

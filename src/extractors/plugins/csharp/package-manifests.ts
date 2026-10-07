@@ -27,7 +27,8 @@ export const nugetPackageManager: PackageManagerSpec = {
   ecosystem: "nuget",
   manifests: [
     {
-      files: ["**/*.csproj", "**/Directory.Packages.props", "**/packages.config"],
+      // Every .NET project format writes `<PackageReference>` the same way.
+      files: ["**/*.csproj", "**/*.fsproj", "**/*.vbproj", "**/Directory.Packages.props", "**/packages.config"],
       glob: { deep: 3, limit: 50 },
       parse: (text, file) => parseCsproj(text, file.declaredIn),
     },

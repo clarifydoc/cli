@@ -301,7 +301,7 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
 
   function walk(node: Node) {
     // Stop at function/class boundaries — those are handled by extractCalls
-    if (nested.has(node.type)) return;
+    if (nested.has(node.type) || hooks!.isFunctionDefinition?.(node)) return;
     // Also stop at named function declarations and class declarations
     if (
       node.type === "function_declaration" ||

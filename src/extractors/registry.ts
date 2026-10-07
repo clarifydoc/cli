@@ -62,6 +62,10 @@ import { graphqlManifest } from "./plugins/graphql/manifest.js";
 import { wsdlManifest } from "./plugins/wsdl/manifest.js";
 import { groovyManifest } from "./plugins/groovy/manifest.js";
 import { powershellManifest } from "./plugins/powershell/manifest.js";
+import { bashManifest } from "./plugins/bash/manifest.js";
+import { batchManifest } from "./plugins/batch/manifest.js";
+import { fsharpManifest } from "./plugins/fsharp/manifest.js";
+import { coffeeManifest } from "./plugins/coffeescript/manifest.js";
 
 /** All plugin manifests, in registration order (order is observable — keep stable). */
 const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
@@ -77,6 +81,10 @@ const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
   openapiManifest, graphqlManifest, wsdlManifest,
   groovyManifest,
   powershellManifest,
+  bashManifest,
+  batchManifest,
+  fsharpManifest,
+  coffeeManifest,
 ];
 
 const MANIFEST_BY_LANGUAGE = new Map<Language, LanguagePluginManifest>();
@@ -138,6 +146,10 @@ const LOADERS: readonly PluginLoader[] = [
   { languages: ["wsdl"], load: () => import("./plugins/wsdl/meta.js").then((m) => [m.wsdlMeta]) },
   { languages: ["groovy"], load: () => import("./plugins/groovy/meta.js").then((m) => [m.groovyMeta]) },
   { languages: ["powershell"], load: () => import("./plugins/powershell/meta.js").then((m) => [m.powershellMeta]) },
+  { languages: ["bash"], load: () => import("./plugins/bash/meta.js").then((m) => [m.bashMeta]) },
+  { languages: ["batch"], load: () => import("./plugins/batch/meta.js").then((m) => [m.batchMeta]) },
+  { languages: ["fsharp"], load: () => import("./plugins/fsharp/meta.js").then((m) => [m.fsharpMeta]) },
+  { languages: ["coffeescript"], load: () => import("./plugins/coffeescript/meta.js").then((m) => [m.coffeeMeta]) },
 ];
 
 const LOADER_BY_LANGUAGE = new Map<Language, PluginLoader>();
@@ -330,6 +342,25 @@ export function regexSpecFor(language: Language): RegexLangSpec | undefined {
 export const EXTENSION_TO_LANGUAGE: Readonly<Record<string, Language>> = Object.fromEntries(
   claimTable(ALL_MANIFESTS, (m) => m.extensions, "Extension"),
 );
+
+/**
+ * Every registered extension of a language family, in manifest order (`script`
+ * → `.ts`, `.tsx`, `.vue`, …, `.coffee`): what a relative import written
+ * without an extension may name.
+ */
+const FAMILY_EXTENSIONS: ReadonlyMap<string, readonly string[]> = (() => {
+  const map = new Map<string, string[]>();
+  for (const manifest of ALL_MANIFESTS) {
+    if (!manifest.family) continue;
+    const list = map.get(manifest.family) ?? map.set(manifest.family, []).get(manifest.family)!;
+    for (const ext of manifest.extensions) if (!list.includes(ext.toLowerCase())) list.push(ext.toLowerCase());
+  }
+  return map;
+})();
+
+export function extensionsOfFamily(family: string | null): readonly string[] {
+  return family ? FAMILY_EXTENSIONS.get(family) ?? [] : [];
+}
 
 // Push each extension's language family into path-utils (a leaf module plugin
 // code imports — it cannot import the registry, see link-scoring below).
