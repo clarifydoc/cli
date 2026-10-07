@@ -61,11 +61,21 @@ export function demoteProjectCallDataSources(
  * are not member resolutions.
  */
 const MEMBER_RESOLVING = new Set<SymbolLinkStrategy>([
-  "direct", "inheritance", "interface-redirect", "injection", "deep-qualified", "class-name",
+  "direct", "inheritance", "interface-redirect", "injection", "di-binding", "deep-qualified", "class-name",
 ]);
 
 function siteKey(file: string, line: number, callName: string): string {
-  return `${file}\u0000${line}\u0000${callName}`;
+  return `${file}\u0000${line}\u0000${canonicalCallText(callName)}`;
+}
+
+/**
+ * One spelling for a call as a data source names it and as the call graph
+ * does: PHP data sources keep the source text (`$this->repo->save`) while the
+ * call extractor normalizes the chain (`this.repo.save`); optional chaining and
+ * line breaks differ the same way elsewhere.
+ */
+function canonicalCallText(name: string): string {
+  return name.replace(/\s+/g, "").replace(/\$/g, "").replace(/\?\.|->|::/g, ".");
 }
 
 /** The target is an ORM entity (or one of its methods) or an interface method. */

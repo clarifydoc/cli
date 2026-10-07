@@ -1,5 +1,6 @@
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
+import { pythonReceiverTypeOf } from "./di.js";
 
 export const pythonCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["call"]),
@@ -59,4 +60,8 @@ export const pythonCallHooks: CallExtractionHooks = {
     if (!root.includes("_")) return [];
     return [root.split("_").map(s => s.charAt(0).toUpperCase() + s.slice(1)).join("")];
   },
+
+  // `injector.get(UserRepo).find()`, `container.repo().find()` — a container
+  // lookup chained straight into the call types its receiver (see di.ts).
+  receiverTypeOf: pythonReceiverTypeOf,
 };

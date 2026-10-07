@@ -10,6 +10,19 @@ import {
   isSinatraFile,
   propagateHelperAccess,
 } from "./route-meta.js";
+import {
+  RUBY_DI_CALL_PATTERNS,
+  applyDeclaredParamTypes,
+  autoInjectProperties,
+  collectIvarProperties,
+  dropDetachedMemberCalls,
+  extractRubyDiBindings,
+  extractRubyLocalTypes,
+  isAutoInjectInclude,
+  parseRubyParam,
+  separateSingletonMethods,
+  typeBareConstructions,
+} from "./di.js";
 
 /** Rails RESTful action → HTTP method + URL shape (plural `resources`). */
 const RAILS_ACTION_MAP: Record<string, { method: string; suffix: string }> = {
@@ -366,7 +379,8 @@ export const rubySpec: RegexLangSpec = {
     },
   ],
 
-  // Ruby: `self.service.method()` and `ClassName.method()`.
+  // Ruby: `ClassName.method()`, plus the receiver-typed shapes of di.ts
+  // (`UserRepo.new.find`, `AppContainer[:repo].find`, `self.repo.find`).
   //
   // Parentheses are optional in Ruby, so the shared `name(` baseline misses
   // most real call sites (`user.save`, `User.all`, `record.valid?`). A blanket
@@ -375,10 +389,7 @@ export const rubySpec: RegexLangSpec = {
   // call edge to every project method named `total`. The three rules below are
   // the paren-less shapes that carry their own evidence of being calls.
   callPatterns: [
-    {
-      pattern: /self\.(\w+)\.(\w+)\s*\(/,
-      buildName: (m) => ({ name: `self.${m[1]}.${m[2]}`, leafName: m[2] }),
-    },
+    ...RUBY_DI_CALL_PATTERNS,
     {
       pattern: /\b([A-Z]\w+)\.(\w+)\s*\(/,
       buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2] }),
@@ -438,6 +449,19 @@ export const rubySpec: RegexLangSpec = {
     if (classes.length === 0) return classes;
 
     for (const cls of classes) {
+      separateSingletonMethods(lines, cls);
+      typeBareConstructions(lines, cls);
+      for (const m of cls.methods) {
+        applyDeclaredParamTypes(lines, m);
+        dropDetachedMemberCalls(lines, m);
+      }
+      // What the class holds: dry-auto_inject readers (by container key) and
+      // instance variables typed by what they are assigned.
+      const properties = autoInjectProperties(lines, cls, classes);
+      const injected = new Set(properties.map((p) => p.name));
+      for (const p of collectIvarProperties(lines, cls, classes)) if (!injected.has(p.name)) properties.push(p);
+      cls.properties.push(...properties);
+
       // Scan the class body for include/extend/prepend statements.
       // Each one names a module that ought to count as a relationship for
       // the data-model graph. Lines outside the class's body range are
@@ -445,6 +469,8 @@ export const rubySpec: RegexLangSpec = {
       const seen = new Set<string>(cls.implements ?? []);
       for (let i = cls.line; i < cls.endLine && i < lines.length; i++) {
         const line = lines[i] ?? "";
+        // `include Import["repo"]` builds readers — it is no module the class implements.
+        if (isAutoInjectInclude(line)) continue;
         // include Foo, Bar    /   extend Foo    /   prepend Foo
         const mixinMatch = line.match(/^\s*(include|extend|prepend)\s+([A-Z][\w:]*(?:\s*,\s*[A-Z][\w:]*)*)/);
         if (!mixinMatch) continue;
@@ -471,6 +497,25 @@ export const rubySpec: RegexLangSpec = {
    * convention routes below and the project-level handler join both consume it.
    */
   extractRequestAccess: (bodyLines) => extractRubyRequestAccess(bodyLines),
+
+  // `def initialize(repo: UserRepo.new)` — a constructing default types the
+  // parameter (see di.ts for YARD / Sorbet declarations).
+  parseParam: parseRubyParam,
+
+  // `repo = UserRepo.new`, `repo = AppContainer[:user_repo]`.
+  extractLocalTypes: (bodyLines, fn) => extractRubyLocalTypes(bodyLines, fn),
+
+  // dry-container `register(:user_repo) { SqlUserRepo.new }`.
+  extractDiBindings: (lines) => extractRubyDiBindings(lines),
+
+  // Top-level `def`s get the same declared types and call clean-up as methods.
+  postProcessFunctions: (lines, fns) => {
+    for (const fn of fns) {
+      applyDeclaredParamTypes(lines, fn);
+      dropDetachedMemberCalls(lines, fn);
+    }
+    return fns;
+  },
 
   extractDataSources: (lines) => [...extractRubyDataSources(lines), ...extractRubyHttpCalls(lines)],
 
@@ -592,6 +637,8 @@ export const rubySpec: RegexLangSpec = {
 
       for (const method of cls.methods) {
         if (privateMethodLines.has(method.line)) continue;
+        // A singleton method (`self.x`, see di.ts) is no action.
+        if (method.name.startsWith("self.")) continue;
         if (method.name.endsWith("?") || method.name.endsWith("!")) continue;
         if (method.name.startsWith("_")) continue;
 

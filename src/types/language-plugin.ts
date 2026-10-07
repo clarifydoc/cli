@@ -325,6 +325,8 @@ export interface AstExtractorHooks {
    * component graph can join `<x-y>` markup usages to the defining file.
    */
   customElements?(sourceText: string): CustomElementDef[];
+  /** HTTP client instances created with a base URL → `FileAnalysis.httpClientBases`. */
+  httpClientBases?(tree: Tree, sourceText: string): Record<string, string>;
   /**
    * Paths the file names as string data that the toolchain loads as modules
    * (glob imports, worker URLs, config-file script paths) →
@@ -339,6 +341,21 @@ export interface AstExtractorHooks {
    * can fall back to the factory symbol (see CallInfo.via).
    */
   variableAliases?(tree: Tree, imports: ImportInfo[]): Map<string, string | VariableAliasBinding>;
+  /**
+   * Dependency-injection container registrations in the file
+   * (`services.AddScoped<IRepo, Repo>()`, `{ provide: X, useClass: Y }`, a
+   * Spring stereotype class) → `FileAnalysis.diBindings`. The symbol linker
+   * joins them to injection points project-wide; the hook only reports what
+   * this file registers.
+   */
+  diBindings?(tree: Tree, sourceText: string, filePath: string): import("./analysis.js").DiBinding[];
+  /**
+   * Typed locals of the file's TOP-LEVEL statements (C# `Program.cs`,
+   * a script body) → the `<setup>` pseudo-function's `localTypes`, so
+   * `var pricing = app.Services.GetRequiredService<IPricing>(); pricing.Quote()`
+   * resolves like it would inside a method.
+   */
+  topLevelLocalTypes?(tree: Tree): import("./analysis.js").FunctionInfo["localTypes"];
 }
 
 /** Rich variable-alias value: the module the binding resolves to + the factory that made it. */
@@ -455,6 +472,14 @@ export interface CallExtractionHooks {
    * (e.g. Java `userService` → `UserService`). Matches classify as INFERRED.
    */
   qualifiedRootCandidates?(root: string): readonly string[];
+  /**
+   * The type a call's receiver EXPRESSION evaluates to, when the expression
+   * says so itself — a service-locator lookup chained straight into the call
+   * (`app(Mailer::class)->send()`, `sp.GetRequiredService<IMailer>().Send()`).
+   * Called for every call node, so it must bail out cheaply on the receiver's
+   * node type. Sets `CallInfo.receiverType` / `receiverQualifier`.
+   */
+  receiverTypeOf?(node: Node): { type: string; qualifier?: string } | null;
 }
 
 /**
@@ -482,6 +507,31 @@ export interface LanguagePluginManifest {
   importTarget?: boolean;
   /** Tree-sitter grammar location(s) for `parsing: "tree-sitter"` languages. */
   grammar?: GrammarSpec;
+  /**
+   * One type's declaration can be split across files of a directory — C#/VB
+   * partial classes, Swift/Dart extensions, Obj-C categories, C++
+   * out-of-line member definitions, Rust `impl` blocks, Go methods beside
+   * their struct, reopened Ruby classes. The linker then treats same-named
+   * classes of one directory as ONE type (shared members, methods found in
+   * sibling files, counted once). Elsewhere (Python, JS/TS, Java, PHP, …)
+   * two such classes are different types and stay apart.
+   */
+  typesSpanFiles?: boolean;
+  /**
+   * Identifiers are case-insensitive (VB, Pascal/Delphi): `_repo.save()`
+   * calls the `Save` that `_Repo`'s class declares. The linker then matches
+   * member, local, parameter and method names without regard to case.
+   */
+  caseInsensitiveNames?: boolean;
+  /**
+   * Fields are only reached through the instance — `this.x`, `self.x`,
+   * `$this->x` — and the call extractor keeps that head (JS/TS, Python,
+   * PHP): a bare `repo.find()` names a local, parameter or global, never a
+   * field. Languages with implicit `this` (Java, C#, Kotlin, Swift, …) and
+   * regex extractors that drop the head (`self.repo.find(` → `repo.find`)
+   * leave it unset, so a bare name may still be a field.
+   */
+  explicitSelfMembers?: boolean;
   /**
    * Language-specific filename/path patterns that mark a file as a test
    * (unit, integration, or e2e) — e.g. Go `_test.go`, JS `*_spec.js`/`*.cy.ts`,
@@ -597,6 +647,16 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
 
   /** Builtin/stdlib type names — never tracked as project type references. */
   builtinTypes?: ReadonlySet<string>;
+  /**
+   * Generic wrappers a member call passes straight through to their first
+   * type argument — Rust `Arc`/`Box`/`Rc` (auto-deref), Python `Annotated`.
+   * Lets an injected `repo: Arc<dyn UserRepo>` resolve `self.repo.find()`
+   * against `UserRepo` (see `receiverTypeName` in shared/type-parser.ts).
+   * A wrapper whose calls need an explicit hop (`Optional<T>.get()`,
+   * `Lazy<T>.Value`) must NOT be listed.
+   */
+  transparentTypeWrappers?: readonly string[];
+
   /** Cyclomatic-complexity counting tables. */
   complexity?: LanguageComplexitySpec;
   /**

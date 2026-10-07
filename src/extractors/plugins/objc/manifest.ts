@@ -10,6 +10,8 @@ export const objcManifest: LanguagePluginManifest = {
   language: "objc",
   parsing: "regex",
   extensions: [".m", ".mm"],
+  // One type spans files here: categories and the `@implementation` file add to a class declared elsewhere.
+  typesSpanFiles: true,
   testFilePatterns: [/Tests?\.mm?$/],
   externalModulePrefixes: ["Foundation", "UIKit", "AppKit", "CoreData", "CoreGraphics", "CoreFoundation", "QuartzCore", "AVFoundation", "MapKit", "WebKit", "Security"],
   externalNamespaceRoots: ["NS", "UI", "CG", "CA", "CF"],

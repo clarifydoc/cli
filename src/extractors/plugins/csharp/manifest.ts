@@ -11,6 +11,8 @@ export const csharpManifest: LanguagePluginManifest = {
   language: "csharp",
   parsing: "tree-sitter",
   extensions: [".cs"],
+  // One type spans files here: `partial` classes split one type across files.
+  typesSpanFiles: true,
   grammar: { variants: { csharp: { pkg: "tree-sitter-c-sharp", wasm: "tree-sitter-c_sharp.wasm" } } },
   testFilePatterns: [/(Test|Tests)\.cs$/],
   // WinForms/WPF designers and Roslyn source generators. Case-sensitive so

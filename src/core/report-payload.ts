@@ -150,6 +150,11 @@ export const SYMBOL_LINK_STRATEGIES: readonly string[] = [
   "unique-global", "unique-global-blind", "type-argument",
   "route-component", "route-self", "route-scan", "spec-join", "interface-fanout",
   "reference", "api-route", "queue", "lsp-definition", "lsp-reference",
+  // Every `dispatch:<id>` encodes as this one code (see strategyCode). It sat
+  // implicitly at length+1 until the alphabet first grew past it; spelling it
+  // out pins it at 24, so codes appended after it never move it.
+  "dispatch",
+  "di-binding",
 ];
 
 export const SYMBOL_LINK_RELATIONS: readonly string[] = [
@@ -165,7 +170,7 @@ export const SYMBOL_LINK_RELATIONS: readonly string[] = [
  * string, and that is the artifact `lsp:compare` and MCP read. The report needs
  * to colour a pill, not to attribute a conflict.
  */
-const DISPATCH_CODE = SYMBOL_LINK_STRATEGIES.length + 1;
+const DISPATCH_CODE = SYMBOL_LINK_STRATEGIES.indexOf("dispatch") + 1;
 function strategyCode(strategy: string | undefined): number {
   if (!strategy) return 0;
   if (strategy.startsWith("dispatch:")) return DISPATCH_CODE;

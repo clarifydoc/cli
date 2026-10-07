@@ -15,6 +15,8 @@ import { extractCustomElements } from "./web-components.js";
 import { extractPathReferences } from "./path-references.js";
 import { javascriptCallHooks } from "./call-hooks.js";
 import { extractJsVariableAliases } from "./variable-aliases.js";
+import { extractJsDiBindings } from "./di-bindings.js";
+import { extractHttpClientBases } from "./http-clients.js";
 import { vuePreprocess } from "./vue-hooks.js";
 import { sveltePreprocess } from "./svelte-hooks.js";
 import { npmPackages } from "./packages.js";
@@ -144,8 +146,10 @@ function astHooks(language: Language): AstExtractorHooks {
     events: (sourceText) => extractEvents(sourceText, language),
     externalTemplate: (sourceText) => extractAngularTemplateUrl(sourceText),
     customElements: (sourceText) => extractCustomElements(sourceText),
+    httpClientBases: extractHttpClientBases,
     pathReferences: (sourceText) => extractPathReferences(sourceText),
     variableAliases: extractJsVariableAliases,
+    diBindings: extractJsDiBindings,
   };
 }
 

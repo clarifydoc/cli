@@ -384,6 +384,79 @@ export interface FileAnalysis {
    * (whose own class bodies declare no columns). Omitted for non-schema files.
    */
   railsSchemaTables?: RailsSchemaTable[];
+  /**
+   * Dependency-injection container registrations made in this file
+   * (`services.AddScoped<IRepo, SqlRepo>()`, `$this->app->bind(I::class,
+   * Impl::class)`, `{ provide: TOKEN, useClass: Impl }`, a Spring `@Service`
+   * implementing an interface). The symbol linker uses them to send a call
+   * through an injected interface to the implementation the container
+   * actually builds. Omitted when the file registers none.
+   */
+  diBindings?: DiBinding[];
+  /**
+   * HTTP client instances this file creates with a base URL, by variable name
+   * → the base's PATH (`const apiClient = axios.create({ baseURL: "/api" })`
+   * → `{ apiClient: "/api" }`; a full URL keeps only its path). Calls through
+   * the client name the path relative to it (`apiClient.get("/users")` asks
+   * for `/api/users`). Omitted when the file creates none.
+   */
+  httpClientBases?: Record<string, string>;
+}
+
+/**
+ * One dependency-injection registration: asking the container for `service`
+ * yields an instance of `implementation`.
+ *
+ * Names are bare simple type names (`IUserRepository`, not
+ * `App\Repo\IUserRepository`) so they compare with `ClassInfo.name`; a
+ * registration keyed by a token instead of a type (`provide: USER_REPO`,
+ * `TYPES.UserRepo`, `"userRepo"`) keeps the token's source text as `service`,
+ * and the injection point names the same token as its `qualifier`.
+ */
+export interface DiBinding {
+  /** What is requested: a type name or a token. */
+  service: string;
+  /** The class the container constructs (or the service it aliases — resolved transitively). */
+  implementation: string;
+  line: number;
+  /**
+   * The name this registration answers to besides its type — a Spring bean
+   * name, a `@Named("x")`, a .NET service key. An injection point carrying the
+   * same `qualifier` selects it.
+   */
+  qualifier?: string;
+  /**
+   * Reachable ONLY through its qualifier (a .NET keyed service, a Guice
+   * `annotatedWith`, a Dagger `@Named` binding): an unqualified injection
+   * point never receives it.
+   */
+  keyedOnly?: boolean;
+  /** Wins when several registrations match (Spring `@Primary`). */
+  primary?: boolean;
+  /**
+   * The container falls back to matching the injection point's member name
+   * against `qualifier` when the type alone is ambiguous (Spring autowiring:
+   * a `Notifier mailNotifier` parameter receives the `mailNotifier` bean).
+   */
+  matchesMemberName?: boolean;
+  /** Applies only when injected into this class (Laravel contextual binding). */
+  consumer?: string;
+  /**
+   * A default that yields to any other registration of the same service:
+   * .NET `TryAdd*` (whatever order, a plain `Add*` of the service wins),
+   * Autofac `PreserveExistingDefaults()`, Guice `@ImplementedBy` (used only
+   * without an explicit `bind`).
+   */
+  ifAbsent?: boolean;
+  /**
+   * Exposed under EVERY interface `implementation` declares (Autofac
+   * `AsImplementedInterfaces()` on a class declared in another file):
+   * `service` is ignored and the linker expands the registration from the
+   * class's own declaration — project-defined interfaces only.
+   */
+  allInterfaces?: boolean;
+  /** How the registration was written — `AddScoped`, `bind`, `@Bean`, `@Service` — for display. */
+  via: string;
 }
 
 export interface ImportInfo {
@@ -422,6 +495,29 @@ export interface ParamInfo {
   name: string;
   type: string | null;
   defaultValue: string | null;
+  /**
+   * What a dependency-injection container is asked for when it is not the
+   * declared type alone: the token or key on the parameter
+   * (`@Inject(USER_REPO)`, `@Qualifier("mailNotifier")`, `@Named("x")`,
+   * `[FromKeyedServices("k")]`). Matched against `DiBinding.service` /
+   * `DiBinding.qualifier`. Omitted when the parameter carries none.
+   */
+  qualifier?: string;
+  /**
+   * The receiver of an extension method — C# `this BandBase band`, a Kotlin
+   * `fun Band.f()` receiver: the method is called as `band.f()` on that type
+   * although no class of it declares `f`. Omitted otherwise.
+   */
+  isReceiver?: boolean;
+  /**
+   * The DI container supplies this parameter although it is not a
+   * constructor's: a Laravel/Symfony controller action, ASP.NET
+   * `[FromServices]`, FastAPI `Depends()`, a Spring `@Bean` method's
+   * parameters. Container registrations decide such a parameter's
+   * implementation; an ordinary method parameter is whatever the CALLER
+   * passes, and registrations never apply to it. Omitted otherwise.
+   */
+  injected?: boolean;
 }
 
 /**
@@ -449,6 +545,16 @@ export interface CallInfo {
    * meaningful project code (mutationFn → service call) sits.
    */
   via?: string;
+  /**
+   * The type the call's receiver is, when the call expression itself says
+   * so and no field, parameter or local does — a service-locator lookup
+   * chained straight into the call (`app(Mailer::class)->send()`,
+   * `sp.GetRequiredService<IMailer>().Send()`, `getIt<Mailer>().send()`).
+   * The linker resolves it exactly like an injected field of that type.
+   */
+  receiverType?: string;
+  /** The DI token/key that lookup named, when it named one (`container.get(TYPES.Mailer)`). */
+  receiverQualifier?: string;
 }
 
 export interface FunctionInfo {
@@ -462,13 +568,16 @@ export interface FunctionInfo {
   line: number;
   endLine: number;
   /**
-   * Local variables assigned a constructed instance in this body
-   * (`$x = new Foo()` → `{ name: "x", type: "Foo" }`). Lets the symbol linker
-   * resolve `x.method()` to `Foo.method` without LSP — the common "construct a
-   * client/connection locally, then call it" pattern. Optional; populated only
-   * by plugins that extract it.
+   * Local variables whose type this body states: assigned a constructed
+   * instance (`$x = new Foo()` → `{ name: "x", type: "Foo" }`), declared with
+   * a type, or fetched from a DI container (`$x = app(Foo::class)`,
+   * `var x = sp.GetRequiredService<IFoo>()`). Lets the symbol linker resolve
+   * `x.method()` to `Foo.method` without LSP. `qualifier` is the token/key a
+   * container lookup named (see `ParamInfo.qualifier`); a lookup by key alone
+   * (`ref.read(repoProvider)`) has `type: ""`. Optional; populated only by
+   * plugins that extract it.
    */
-  localTypes?: Array<{ name: string; type: string }>;
+  localTypes?: Array<{ name: string; type: string; qualifier?: string }>;
   /**
    * For a URL-builder helper — a function whose return value is an
    * app-relative request URL assembled from string concatenation / a template
@@ -514,6 +623,8 @@ export interface PropertyInfo {
   decorators?: string[];
   /** Language-level "must be set" marker (C# 11 `required` modifier). */
   isRequired?: boolean;
+  /** The DI token/key the field is injected by — see `ParamInfo.qualifier`. */
+  qualifier?: string;
 }
 
 export interface ClassInfo {
@@ -533,6 +644,13 @@ export interface ClassInfo {
    * enum instead of an object.
    */
   kind?: "class" | "interface" | "enum";
+  /**
+   * On an interface: satisfied STRUCTURALLY — a type implements it by having
+   * its methods, never by naming it (every Go interface, a Python `Protocol`).
+   * The linker then counts a same-language class whose methods cover this
+   * interface's as one of its implementations.
+   */
+  structural?: boolean;
 }
 
 export interface RouteInfo {
@@ -721,6 +839,13 @@ export interface DataSourceInfo {
    * symbolic value resolver.
    */
   baseEnv?: string;
+  /**
+   * For `api-call`: the client INSTANCE the request goes through, when it is
+   * a plain variable (`apiClient` in `apiClient.get("/users")`). A project
+   * pass prepends that client's base URL (`FileAnalysis.httpClientBases`, in
+   * this file or the one it is imported from) before the route join.
+   */
+  client?: string;
   /**
    * For `api-call`: the other URLs this call may resolve to, when it goes
    * through a URL-builder helper whose body returns a different URL per branch
@@ -989,8 +1114,14 @@ export type SymbolLinkStrategy =
   | "inheritance"
   /** Receiver's declared type is an interface; linked past it to the implementation. */
   | "interface-redirect"
-  /** Receiver type came from DI registration, a param type, or a local `new`. */
+  /** Receiver type came from a field, constructor/method param, or typed local. */
   | "injection"
+  /**
+   * Receiver's declared type (or DI token) is bound by a container
+   * registration (`FileAnalysis.diBindings`) to one implementation; linked to
+   * that implementation's member.
+   */
+  | "di-binding"
   /** Cross-file qualified call matched by dotted suffix (`prisma.user.findMany`). */
   | "deep-qualified"
   /** Member absent from the target module; routed to the factory in `CallInfo.via`. */

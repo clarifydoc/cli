@@ -11,6 +11,8 @@ export const dartManifest: LanguagePluginManifest = {
   language: "dart",
   parsing: "regex",
   extensions: [".dart"],
+  // One type spans files here: `part` files and `extension`s add to a type from other files.
+  typesSpanFiles: true,
   testFilePatterns: [/_test\.dart$/],
   // build_runner output: json_serializable, freezed, riverpod, injectable.
   generatedFilePatterns: [/\.g\.dart$/, /\.freezed\.dart$/, /\.gr\.dart$/, /\.config\.dart$/],

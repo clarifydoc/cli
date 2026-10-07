@@ -11,6 +11,8 @@ export const pascalManifest: LanguagePluginManifest = {
   language: "pascal",
   parsing: "tree-sitter",
   extensions: [".pas", ".pp", ".lpr", ".dpr", ".dpk"],
+  // Delphi/Pascal is case-insensitive: `_repo.save` calls the declared `Save`.
+  caseInsensitiveNames: true,
   grammar: { variants: { pascal: { pkg: "tree-sitter-pascal", wasm: "tree-sitter-pascal.wasm" } } },
   externalModulePrefixes: [
     // Unit-scope roots (dotted namespaces, Delphi XE2+). Canonical IDE casing.

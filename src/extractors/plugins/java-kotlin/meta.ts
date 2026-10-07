@@ -17,6 +17,8 @@ import { JavaKotlinMutationExtractor } from "./data-mutations.js";
 import { JavaKotlinEntityExtractor } from "./entities.js";
 import { javaKotlinRouteExtractor } from "./routes/index.js";
 import { javaKotlinReachability } from "./reachability.js";
+import { extractJvmDiBindings } from "./di-bindings.js";
+import { terminateAnnotatedDeclarations } from "./kotlin-preprocess.js";
 
 const JAVA_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -68,9 +70,11 @@ function jvmMeta(language: Language, opts: {
   controlFlow?: LanguagePluginMeta["controlFlow"];
   apiCallRoots: string[];
   calls: CallExtractionHooks;
+  preprocess?: LanguagePluginMeta["preprocess"];
 }): LanguagePluginMeta {
   return {
     ...(language === "java" ? javaManifest : kotlinManifest),
+    ...(opts.preprocess ? { preprocess: opts.preprocess } : {}),
     routes: javaKotlinRouteExtractor,
     functionsClasses: jvmFunctionsClasses,
     requestSchema: jvmRequestSchema,
@@ -91,6 +95,8 @@ function jvmMeta(language: Language, opts: {
     dbCallRoots: JVM_DB_ROOTS,
     ast: {
       typeReferences: (tree, filePath) => extractJavaKotlinTypeReferences(tree, language, filePath),
+      // Spring / Guice / Dagger-Hilt / CDI / Koin registrations (see di-bindings.ts).
+      diBindings: (tree, sourceText) => extractJvmDiBindings(tree, sourceText, language === "kotlin" ? "kotlin" : "java"),
     },
     calls: opts.calls,
     // ONE instance for both members: core loads it once.
@@ -192,4 +198,13 @@ export const kotlinMeta: LanguagePluginMeta = jvmMeta("kotlin", {
   ),
   apiCallRoots: ["RestTemplate", "WebClient", "HttpClient", "OkHttp", "Retrofit", "ktor"],
   calls: kotlinCallHooks,
+  // tree-sitter-kotlin misreads about half of all annotated top-level
+  // declarations as annotated expressions (the class, its routes and its
+  // `@Binds` vanish); joining the annotations onto the keyword line and a
+  // terminating `;` make every measured layout parse (see kotlin-preprocess.ts).
+  // Rows at and after each declaration keyword are unchanged.
+  preprocess: (rawSource) => {
+    const fixed = terminateAnnotatedDeclarations(rawSource);
+    return fixed === null ? null : { sourceText: fixed, language: "kotlin" };
+  },
 });

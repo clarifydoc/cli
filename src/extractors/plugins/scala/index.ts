@@ -3,6 +3,16 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
 import { extractPlayRoutes, isPlayRoutesFile } from "./routes.js";
 import { extractScalaRequestAccess } from "./request-schema.js";
+import {
+  codeOf,
+  constructorParamLists,
+  continuedBelow,
+  extractScalaDiBindings,
+  extractScalaLocalTypes,
+  namedQualifier,
+  scalaDiCallPatterns,
+  scalaInitializerType,
+} from "./di.js";
 
 /**
  * Everything a declaration can inherit from: `extends A with B with C`.
@@ -54,75 +64,114 @@ function parseScalaReturnType(line: string): string | null {
 }
 
 /**
- * The primary constructor's parameter list — for a `case class` that IS the
- * field list, and the shape Play JSON / circe serialize. It may wrap lines,
- * so it is read as the balanced `(…)` after the name (the first list only:
- * `(implicit ec: ExecutionContext)` is a second one). A plain class's
- * parameters are members only when marked `val`/`var`; a case class's are
- * all public vals. `Option[T]` and a default value both make a field
- * optional; anything else must be supplied.
+ * The primary constructor's parameter lists (every one but an `implicit` /
+ * `using` list, which carries context). For a `case class` the parameters
+ * ARE the field list, and the shape Play JSON / circe serialize; a plain
+ * class's parameters are members only when marked `val`/`var`. `Option[T]`
+ * and a default value both make a field optional; anything else must be
+ * supplied.
+ *
+ * A plain class's other parameters are still what a method body reads —
+ * `class OrderService @Inject()(repo: OrderRepo)` is how a Scala dependency
+ * is injected — so when there are any, the primary constructor itself is
+ * returned too, as a method named after the class carrying every parameter
+ * (keyed by its `@Named`). The field list, and the request schemas built from
+ * it, stay as the language defines them.
  */
-function constructorProperties(lines: string[], startIdx: number, name: string, isCase: boolean): PropertyInfo[] {
-  const first = lines[startIdx] ?? "";
-  const nameAt = first.search(new RegExp(`\\b${name}\\b`));
-  if (nameAt < 0) return [];
-  // The list opens right after the name (or its type parameters).
-  const afterName = first.slice(nameAt + name.length).match(/^\s*(?:\[[^\]]*\])?\s*\(/);
-  if (!afterName) return [];
-  const open = nameAt + name.length + afterName[0].length - 1;
-  let text = "";
-  let depth = 0;
-  let closed = false;
-  for (let li = startIdx; li < Math.min(lines.length, startIdx + 30) && !closed; li++) {
-    const line = lines[li]!;
-    for (let c = li === startIdx ? open : 0; c < line.length; c++) {
-      const ch = line[c]!;
-      if (ch === "(") {
-        depth++;
-        if (depth === 1) continue;
-      } else if (ch === ")") {
-        depth--;
-        if (depth === 0) {
-          closed = true;
-          break;
-        }
+function primaryConstructor(
+  lines: string[],
+  startIdx: number,
+  name: string,
+  isCase: boolean,
+): { properties: PropertyInfo[]; ctor: FunctionInfo | null } {
+  const properties: PropertyInfo[] = [];
+  const params: ParamInfo[] = [];
+  let hidden = false;
+  for (const list of constructorParamLists(lines, startIdx, name)) {
+    for (const piece of splitTopLevel(list)) {
+      let param = piece.trim();
+      if (!param) continue;
+      const decorators: string[] = [];
+      let ann: RegExpMatchArray | null;
+      while ((ann = param.match(/^@([\w.]+(?:\([^)]*\))?)\s*/))) {
+        decorators.push(ann[1]!.replace(/\s+/g, " "));
+        param = param.slice(ann[0].length);
       }
-      text += ch;
+      const mods = param.match(/^((?:(?:private|protected)(?:\s*\[[^\]]*\])?\s+|(?:override|implicit|final|lazy)\s+)*)(?:(val|var)\s+)?/);
+      const modifiers = mods?.[1] ?? "";
+      const binding = mods?.[2];
+      param = param.slice(mods?.[0].length ?? 0);
+      const m = param.match(/^([a-zA-Z_]\w*)\s*:\s*([^=]+?)\s*(?:=\s*(.+))?$/);
+      if (!m) continue;
+      const type = m[2]!.trim();
+      const qualifier = namedQualifier(decorators);
+      const p: ParamInfo = { name: m[1]!, type, defaultValue: m[3]?.trim() ?? null };
+      if (qualifier) p.qualifier = qualifier;
+      params.push(p);
+      if (!isCase && !binding) {
+        hidden = true;
+        continue;
+      }
+      const prop: PropertyInfo = {
+        name: m[1]!,
+        type,
+        visibility: /\bprivate\b/.test(modifiers) ? "private" : /\bprotected\b/.test(modifiers) ? "protected" : "public",
+        isStatic: false,
+        isReadonly: binding !== "var",
+      };
+      if (decorators.length > 0) prop.decorators = decorators;
+      if (qualifier) prop.qualifier = qualifier;
+      if (m[3] === undefined && !/^Option\[/.test(type)) prop.isRequired = true;
+      properties.push(prop);
     }
-    if (!closed) text += " ";
   }
-  if (!closed) return [];
+  const ctor: FunctionInfo | null = hidden
+    ? { name, params, returnType: null, isAsync: false, isExported: true, decorators: [], calls: [], line: startIdx + 1, endLine: startIdx + 1 }
+    : null;
+  return { properties, ctor };
+}
 
-  const out: PropertyInfo[] = [];
-  for (const piece of splitTopLevel(text)) {
-    let param = piece.trim();
-    if (!param) continue;
-    const decorators: string[] = [];
-    let ann: RegExpMatchArray | null;
-    while ((ann = param.match(/^@([\w.]+(?:\([^)]*\))?)\s*/))) {
-      decorators.push(ann[1]!.replace(/\s+/g, " "));
-      param = param.slice(ann[0].length);
+/**
+ * Does the declaration at `startIdx` open a `{` body? Read past wrapped
+ * parameter lists and heritage clauses; a header ending in `:` (Scala 3) or
+ * on a line nothing continues has no braces.
+ */
+function opensBrace(lines: string[], startIdx: number): boolean {
+  let depth = 0;
+  for (let i = startIdx; i < Math.min(lines.length, startIdx + 15); i++) {
+    const code = codeOf(lines[i]!);
+    for (const c of code) {
+      if (c === "(" || c === "[") depth++;
+      else if (c === ")" || c === "]") depth--;
+      else if (c === "{" && depth === 0) return true;
     }
-    const mods = param.match(/^((?:(?:private|protected|override|implicit|final|lazy)\s+)*)(?:(val|var)\s+)?/);
-    const modifiers = mods?.[1] ?? "";
-    const binding = mods?.[2];
-    param = param.slice(mods?.[0].length ?? 0);
-    if (!isCase && !binding) continue;
-    const m = param.match(/^([a-zA-Z_]\w*)\s*:\s*([^=]+?)\s*(?:=\s*(.+))?$/);
-    if (!m) continue;
-    const type = m[2]!.trim();
-    const prop: PropertyInfo = {
-      name: m[1]!,
-      type,
-      visibility: /\bprivate\b/.test(modifiers) ? "private" : /\bprotected\b/.test(modifiers) ? "protected" : "public",
-      isStatic: false,
-      isReadonly: binding !== "var",
-    };
-    if (decorators.length > 0) prop.decorators = decorators;
-    if (m[3] === undefined && !/^Option\[/.test(type)) prop.isRequired = true;
-    out.push(prop);
+    if (depth > 0) continue;
+    const trimmed = code.trim();
+    if (trimmed.endsWith(":")) return false;
+    const next = (lines[i + 1] ?? "").trim();
+    if (!/^(?:extends|with|\(|\{|derives)\b|^[({]/.test(next)) return false;
   }
-  return out;
+  return false;
+}
+
+/** Inline annotations and member modifiers before `val` / `var`. */
+const MEMBER_PREFIX = String.raw`^\s*((?:@[\w.]+(?:\([^)]*\))?\s+)*)((?:(?:private|protected)(?:\s*\[[^\]]*\])?\s+|(?:override|final|lazy|implicit)\s+)*)`;
+
+/** Members typed by their initializer rather than an annotation (see the second property pattern). */
+const INFERRED_MEMBERS = new WeakSet<PropertyInfo>();
+
+function memberOf(m: RegExpMatchArray, type: string | null): PropertyInfo {
+  const mods = m[2]!;
+  const decorators = [...m[1]!.matchAll(/@([\w.]+(?:\([^)]*\))?)/g)].map((d) => d[1]!.replace(/\s+/g, " "));
+  const prop: PropertyInfo = {
+    name: m[4]!,
+    type,
+    visibility: /\bprivate\b/.test(mods) ? "private" : /\bprotected\b/.test(mods) ? "protected" : "public",
+    isStatic: false,
+    isReadonly: m[3] === "val",
+  };
+  if (decorators.length > 0) prop.decorators = decorators;
+  return prop;
 }
 
 export const scalaSpec: RegexLangSpec = {
@@ -144,8 +193,11 @@ export const scalaSpec: RegexLangSpec = {
       getExtends: (line) => parseHeritage(line).base,
     },
     {
+      // A trait is what a dependency is declared as and a class mixes in —
+      // the linker's interface (nominal: a class names it to implement it).
       pattern: /(?:^|\s)(?:sealed\s+)?trait\s+([A-Z]\w*)/,
       getExtends: (line) => parseHeritage(line).base,
+      kind: "interface",
     },
     {
       pattern: /(?:^|\s)(?:case\s+)?object\s+([A-Z]\w*)/,
@@ -162,14 +214,24 @@ export const scalaSpec: RegexLangSpec = {
    */
   propertyPatterns: [
     {
-      pattern: /^\s*(?:(private|protected)\s+)?(?:final\s+)?(val|var)\s+([a-zA-Z_]\w*)\s*:\s*([^=]+?)\s*(?:=|$)/,
-      build: (m) => ({
-        name: m[3]!,
-        type: m[4]!.trim(),
-        visibility: (m[1] as "private" | "protected" | undefined) ?? "public",
-        isStatic: false,
-        isReadonly: m[2] === "val",
-      }),
+      // Inline annotations stay with the member: `@Inject var repo: Repo = _`,
+      // `@Inject @Named("x") var gw: PayGw = _`.
+      pattern: new RegExp(MEMBER_PREFIX + String.raw`(val|var)\s+([a-zA-Z_]\w*)\s*:\s*([^=]+?)\s*(?:=|$)`),
+      build: (m) => memberOf(m, m[5]!.trim()),
+    },
+    {
+      // Unannotated, but typed by what the initializer constructs or looks up:
+      // `private val repo = new PgRepo(db)`, `lazy val repo = wire[PgRepo]`,
+      // `val repo = injector.instanceOf[Repo]`.
+      pattern: new RegExp(MEMBER_PREFIX + String.raw`(val|var)\s+([a-zA-Z_]\w*)\s*=\s*(.+?)\s*$`),
+      build: (m) => {
+        const init = scalaInitializerType(m[5]!);
+        if (!init) return null;
+        const prop = memberOf(m, init.type);
+        if (init.qualifier) prop.qualifier = init.qualifier;
+        INFERRED_MEMBERS.add(prop);
+        return prop;
+      },
     },
   ],
 
@@ -204,13 +266,35 @@ export const scalaSpec: RegexLangSpec = {
       for (const mixin of mixins) {
         if (!cls.implements.includes(mixin)) cls.implements.push(mixin);
       }
+      // Without braces (Scala 3 indentation syntax) the body slice cannot
+      // tell a method's `val x = new Foo` from a field's: only annotated
+      // members are kept there, as before.
+      if (!opensBrace(lines, cls.line - 1)) cls.properties = cls.properties.filter((p) => !INFERRED_MEMBERS.has(p));
+      // …and one whose initializer wraps onto a chain below states no type.
+      cls.properties = cls.properties.filter((p) => {
+        if (!INFERRED_MEMBERS.has(p)) return true;
+        const re = new RegExp(String.raw`\b(?:val|var)\s+${p.name}\s*=`);
+        for (let i = cls.line; i < Math.min(cls.endLine, lines.length); i++) {
+          if (re.test(lines[i]!)) return !continuedBelow(lines, i);
+        }
+        return true;
+      });
+      for (const p of cls.properties) {
+        const q = p.qualifier ?? namedQualifier(p.decorators);
+        if (q) p.qualifier = q;
+      }
       if (/\bclass\b/.test(header)) {
-        const fromCtor = constructorProperties(lines, cls.line - 1, cls.name, /\bcase\s+class\b/.test(header));
-        if (fromCtor.length > 0) cls.properties = [...fromCtor, ...cls.properties];
+        const primary = primaryConstructor(lines, cls.line - 1, cls.name, /\bcase\s+class\b/.test(header));
+        if (primary.properties.length > 0) cls.properties = [...primary.properties, ...cls.properties];
+        if (primary.ctor) cls.methods.unshift(primary.ctor);
       }
     }
     return classes;
   },
+
+  callPatterns: scalaDiCallPatterns,
+  extractLocalTypes: extractScalaLocalTypes,
+  extractDiBindings: (lines) => extractScalaDiBindings(lines),
 
   importPatterns: [
     {

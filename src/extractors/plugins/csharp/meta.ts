@@ -3,7 +3,7 @@ import {
   extendControlFlow,
   BRACE_REGEX_CONTROL_FLOW,
 } from "../../shared/control-flow-defaults.js";
-import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
+import { CSHARP_BUILTINS } from "./builtins.js";
 import { extractCsharpTypeReferences } from "./type-references.js";
 import { csharpCallHooks } from "./call-hooks.js";
 import { nugetPackages } from "./packages.js";
@@ -18,21 +18,8 @@ import { CSharpMediatrResolver } from "./dispatch.js";
 import { CsharpUiBridgeResolver } from "./ui-bridge.js";
 import { csharpRequestSchema } from "./request-schema.js";
 import { csharpReachability } from "./reachability.js";
-
-const CSHARP_BUILTINS: ReadonlySet<string> = new Set<string>([
-  ...COMMON_PRIMITIVES,
-  "Int16", "Int32", "Int64", "UInt16", "UInt32", "UInt64",
-  "Single", "Double", "Decimal",
-  "List", "Dictionary", "HashSet", "Queue", "Stack",
-  "IEnumerable", "ICollection", "IList", "IDictionary", "ISet",
-  "Task", "ValueTask", "Action", "Func",
-  "String", "StringBuilder",
-  "DateTime", "DateTimeOffset", "TimeSpan", "Guid",
-  "Exception", "ArgumentException", "InvalidOperationException",
-  "Tuple", "ValueTuple", "Nullable",
-  // ASP.NET common
-  "IActionResult", "ActionResult", "IServiceCollection",
-]);
+import { extractCsharpDiBindings } from "./di-bindings.js";
+import { extractCsharpTopLevelLocalTypes } from "./local-types.js";
 
 export const csharpMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
@@ -76,6 +63,10 @@ export const csharpMeta: LanguagePluginMeta = {
     // forms; the partial-class handler link is added by CsharpUiBridgeResolver.
     interactiveElements: (_tree, sourceText) => extractWinFormsInteractiveElements(sourceText),
     screens: (_tree, sourceText, filePath) => extractWinFormsScreens(sourceText, filePath),
+    // `services.AddScoped<IRepo, SqlRepo>()`, Autofac `RegisterType<T>().As<I>()`, …
+    diBindings: (tree, sourceText) => extractCsharpDiBindings(tree, sourceText),
+    // `Program.cs` top-level statements → the `<setup>` pseudo-function's locals.
+    topLevelLocalTypes: (tree) => extractCsharpTopLevelLocalTypes(tree.rootNode),
   },
   calls: csharpCallHooks,
 };

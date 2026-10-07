@@ -46,6 +46,16 @@ interface StructField {
 
 const GO_LINE_COMMENT = ["//"] as const;
 
+/**
+ * The struct's ClassInfo lists its embedded fields (`gorm.Model`,
+ * `ent.Schema`) as members, for the linker; an embedded mixin is never a
+ * column, so an entity's merged properties must not carry it.
+ */
+function dropEmbeddedColumns(ctx: EntityExtractContext, name: string): void {
+  const own = ctx.analysis.classes.find((c) => c.name === name);
+  if (own) own.properties = own.properties.filter((p) => !p.decorators?.includes("embedded"));
+}
+
 export class GoEntityExtractor extends EntityExtractor {
   readonly languages: Language[] = ["go"];
 
@@ -89,6 +99,7 @@ export class GoEntityExtractor extends EntityExtractor {
           entFields.has(struct.name) ||
           entEdges.has(struct.name);
         if (isEnt) {
+          dropEmbeddedColumns(ctx, struct.name);
           if (!emitted.has(struct.name)) {
             const props: PropertyInfo[] = [];
             for (const fb of entFields.get(struct.name) ?? []) {
@@ -141,6 +152,8 @@ export class GoEntityExtractor extends EntityExtractor {
           if (isGorm && /\bpolymorphic\s*:/i.test(f.tags.gorm ?? "")) continue;
           props.push(this.column(f.name, f.columnType || null));
         }
+
+        dropEmbeddedColumns(ctx, struct.name);
 
         if (!emitted.has(struct.name)) {
           const related = isGorm

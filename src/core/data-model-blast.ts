@@ -13,6 +13,41 @@ import { byOrdinal } from "./ordinal.js";
 import { buildImportIndex, type ImportIndex } from "./import-index.js";
 import { ormOf } from "./entity-graph.js";
 import { SYNTHETIC_ENTITY } from "../extractors/entities/base.js";
+import { pluginFor } from "../extractors/registry.js";
+
+/**
+ * Where a type is split across files of one directory — a Go struct and the
+ * stubs carrying its methods, a C# partial, a Swift extension, a C++ `.cpp`
+ * beside its header (`LanguagePluginManifest.typesSpanFiles`) — the file that
+ * stands for it: its richest declaration (a base class, then the most
+ * properties, then the most methods, then the path — the same choice the
+ * symbol linker makes). `${file}::${name}` → representative file, for parts
+ * only; a type declared once maps to nothing.
+ */
+export function splitTypeRepresentatives(analyses: FileAnalysis[]): Map<string, string> {
+  const groups = new Map<string, Array<{ file: string; cls: FileAnalysis["classes"][number] }>>();
+  for (const a of analyses) {
+    if (pluginFor(a.language)?.typesSpanFiles !== true) continue;
+    const dir = a.filePath.slice(0, a.filePath.lastIndexOf("/") + 1);
+    for (const cls of a.classes ?? []) {
+      const key = `${dir}\0${a.language}\0${cls.name}`;
+      let list = groups.get(key);
+      if (!list) groups.set(key, (list = []));
+      list.push({ file: a.filePath, cls });
+    }
+  }
+  const out = new Map<string, string>();
+  for (const parts of groups.values()) {
+    if (parts.length < 2) continue;
+    const rank = (p: (typeof parts)[number]) => [p.cls.extends ? 1 : 0, p.cls.properties.length, p.cls.methods.length];
+    const rep = [...parts].sort((x, y) => {
+      const rx = rank(x), ry = rank(y);
+      return ry[0]! - rx[0]! || ry[1]! - rx[1]! || ry[2]! - rx[2]! || byOrdinal(x.file, y.file);
+    })[0]!.file;
+    for (const p of parts) out.set(`${p.file}::${p.cls.name}`, rep);
+  }
+  return out;
+}
 
 /**
  * Aggregate per-class type-blast records from per-file TypeReferences.
@@ -38,12 +73,16 @@ export function aggregateTypeBlast(
   // captured in ClassInfo by the TS/JS extractor.
   const nameToFiles = new Map<string, string[]>();
   const classMeta = new Map<string /* file::name */, { line: number; isInterface: boolean }>();
+  // A type split across files counts once, at its representative file.
+  const splitRep = splitTypeRepresentatives(analyses);
 
   for (const a of analyses) {
     for (const cls of a.classes ?? []) {
+      const defFile = splitRep.get(`${a.filePath}::${cls.name}`) ?? a.filePath;
       const arr = nameToFiles.get(cls.name) ?? [];
-      if (!arr.includes(a.filePath)) arr.push(a.filePath);
+      if (!arr.includes(defFile)) arr.push(defFile);
       nameToFiles.set(cls.name, arr);
+      if (defFile !== a.filePath) continue;
 
       // Heuristic for interface-vs-class: TS/Java/C# all store interfaces in
       // ClassInfo with no methods + no extends and may or may not have a
@@ -253,16 +292,18 @@ export function buildClassGraph(
   // (no defining ClassInfo or interface export) become "external" nodes so
   // edges to them don't dangle.
   const nodeIndex = new Map<string /* classId */, ClassGraphNode>();
+  // The parts of a type split across files are ONE node, at its representative.
+  const splitRep = splitTypeRepresentatives(analyses);
 
   function nodeIdFor(name: string, filePath: string): string {
-    return `${filePath}::${name}`;
+    return `${splitRep.get(`${filePath}::${name}`) ?? filePath}::${name}`;
   }
 
   function ensureNode(name: string, filePath: string, isInterface: boolean, isExternal: boolean, isFile = false): string {
     const id = isFile ? `file::${filePath}` : nodeIdFor(name, filePath);
     if (!nodeIndex.has(id)) {
       nodeIndex.set(id, {
-        id, name, filePath,
+        id, name, filePath: isFile ? filePath : splitRep.get(`${filePath}::${name}`) ?? filePath,
         isInterface, isExternal, isFile,
         inboundCount: 0, outboundCount: 0,
       });
@@ -295,6 +336,8 @@ export function buildClassGraph(
       }
       const isInterface = (cls.methods?.length ?? 0) === 0 && (cls.properties?.length ?? 0) > 0;
       const id = ensureNode(cls.name, a.filePath, isInterface, false);
+      // A split type's node is no interface if ANY part carries methods.
+      if ((cls.methods?.length ?? 0) > 0) nodeIndex.get(id)!.isInterface = false;
       // Tag ORM entities so the Data Models view can distinguish DB-backed
       // entities (also shown in the ER diagram) from plain models/DTOs.
       if (cls.decorators?.includes("entity")) {
@@ -343,7 +386,7 @@ export function buildClassGraph(
         targetId = candidates[0]!;
       } else {
         const importedFrom = importIndex.localFor(ref.sourceFile, ref.typeName);
-        const importedId = importedFrom ? `${importedFrom}::${ref.typeName}` : null;
+        const importedId = importedFrom ? nodeIdFor(ref.typeName, importedFrom) : null;
         const fromImport = importedId && candidates.includes(importedId) ? importedId : null;
         const sameFile = candidates.find((c) => c.startsWith(`${a.filePath}::`));
         targetId = fromImport ?? sameFile ?? candidates[0]!;

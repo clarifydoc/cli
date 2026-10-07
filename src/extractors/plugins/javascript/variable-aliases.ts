@@ -2,6 +2,7 @@ import type { Node } from "web-tree-sitter";
 import type { ImportInfo } from "../../../types/analysis.js";
 import type { VariableAliasBinding } from "../../../types/language-plugin.js";
 import { buildImportMaps } from "../../shared/call-graph.js";
+import { containerLookup } from "./di.js";
 
 /**
  * Extract variable-to-call assignments, in any scope.
@@ -68,6 +69,11 @@ export function extractJsVariableAliases(
         const fnNode = valueNode.childForFieldName(isCtor ? "constructor" : "function");
         const fnName = fnNode?.text;
         if (!fnName || !importMap.has(fnName)) continue;
+        // `const svc = inject(UserService)` is an instance of UserService, not
+        // something `@angular/core` exports: binding it to the injector's
+        // module made `svc.countUsers()` a call into an external package. The
+        // local's type (FunctionInfo.localTypes) is what resolves it.
+        if (!isCtor && containerLookup(valueNode)) continue;
         const source = importMap.get(fnName)!;
 
         if (nameNode.type === "identifier") {

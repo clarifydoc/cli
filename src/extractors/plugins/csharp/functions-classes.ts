@@ -7,6 +7,13 @@ import {
   extractCsharpAttributes,
 } from "../../shared/node-helpers.js";
 import { extractCalls } from "../../shared/call-graph.js";
+import {
+  FileScopeNodes,
+  injectionKey,
+  unwrapExpression,
+  PARAM_KEY_ATTRIBUTES,
+  PROPERTY_KEY_ATTRIBUTES,
+} from "./local-types.js";
 
 export class CSharpExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["csharp"];
@@ -15,8 +22,16 @@ export class CSharpExtractor extends FunctionClassExtractor {
     // C# functions are inside classes, handled in collectClasses
   }
 
+  /** The file being extracted's declaration/assignment nodes (one query per file). */
+  private scope: FileScopeNodes | null = null;
+
   protected collectClasses(node: Node, classes: ClassInfo[]): void {
-    this.extractCsharpClasses(node, classes);
+    this.scope = new FileScopeNodes(node);
+    try {
+      this.extractCsharpClasses(node, classes);
+    } finally {
+      this.scope = null;
+    }
   }
 
   private extractCsharpClasses(node: Node, classes: ClassInfo[]): void {
@@ -50,33 +65,56 @@ export class CSharpExtractor extends FunctionClassExtractor {
 
   private parseCsharpClass(node: Node, kind: "class" | "interface"): ClassInfo {
     const name = node.childForFieldName("name")?.text ?? "anonymous";
-    const bases = node.childForFieldName("bases")
-      ?? this.findChildByType(node, "base_list");
-    let extendsName: string | null = null;
-    const implementsList: string[] = [];
-
-    if (bases) {
-      for (const base of bases.children) {
-        if (base.type !== "," && base.type !== ":") {
-          if (!extendsName) {
-            extendsName = base.text;
-          } else {
-            implementsList.push(base.text);
-          }
-        }
-      }
-    }
+    // C# cannot tell a base class from an interface syntactically: the first
+    // base goes to `extends`, the rest to `implements` (consumers check both).
+    const [extendsName = null, ...implementsList] = baseTypeTexts(node);
 
     const decorators = extractCsharpAttributes(node);
+    // C#: default class visibility is internal, check for public
+    const classVis = this.getCsharpVisibility(node);
 
     const body = node.childForFieldName("body");
     const methods: FunctionInfo[] = [];
     const properties: PropertyInfo[] = [];
 
+    // C# 12 primary constructor (`class S(IRepo repo)`, records, structs): its
+    // parameters are in scope in every member, which is what lets the linker
+    // type a bare `repo.Find()` — reported as the constructor they are.
+    // A field that stores a keyed constructor parameter holds the keyed
+    // instance: `_storage = storage;` with `[FromKeyedServices("disk")]
+    // IStorage storage` gives `_storage` the qualifier `disk`.
+    const fieldKeys = new Map<string, string | null>();
+    // Non-public fields of a named type → every value the class stores in them
+    // (initializer + assignments), to tell a constructed field from an injected one.
+    const fieldValues = new Map<string, { prop: PropertyInfo; values: Node[] }>();
+    let primaryKeys: ReadonlyMap<string, string> = new Map();
+    const primaryParams = node.namedChildren.find((c) => c.type === "parameter_list");
+    if (primaryParams && primaryParams.namedChildren.some((c) => c.type === "parameter")) {
+      const params = this.parseCsharpParams(primaryParams);
+      primaryKeys = keyedParams(params);
+      methods.push({
+        name,
+        params,
+        returnType: null,
+        isAsync: false,
+        isExported: classVis === "public" || classVis === null,
+        decorators: [],
+        calls: [],
+        line: primaryParams.startPosition.row + 1,
+        endLine: primaryParams.endPosition.row + 1,
+      });
+    }
+
     if (body) {
       for (const member of body.children) {
-        if (member.type === "method_declaration") {
-          methods.push(this.parseCsharpMethod(member));
+        if (member.type === "method_declaration" || member.type === "constructor_declaration") {
+          // Constructors keep the class's name (`isConstructor` in core): their
+          // parameters are the injection points, their bodies make calls.
+          const fn = this.parseCsharpMethod(member);
+          methods.push(fn);
+          if (member.type === "constructor_declaration") {
+            noteKeyedAssignments(this.assignmentsIn(member.childForFieldName("body")), keyedParams(fn.params), fieldKeys);
+          }
         } else if (member.type === "property_declaration") {
           const propName =
             member.childForFieldName("name")?.text ?? "unknown";
@@ -93,6 +131,11 @@ export class CSharpExtractor extends FunctionClassExtractor {
           const attrs = extractCsharpAttributes(member);
           if (attrs.length > 0) prop.decorators = attrs;
           if (this.hasModifier(member, "required")) prop.isRequired = true;
+          // `[Inject(Key = "k")]` (Blazor), `[Dependency("n")]` (Unity).
+          if (attrs.length > 0) {
+            const key = injectionKey(member, PROPERTY_KEY_ATTRIBUTES);
+            if (key) prop.qualifier = key;
+          }
           properties.push(prop);
         } else if (member.type === "field_declaration") {
           // private readonly Foo _bar; — the tree-sitter shape is
@@ -105,14 +148,27 @@ export class CSharpExtractor extends FunctionClassExtractor {
           if (varDecl) {
             for (const decl of varDecl.children) {
               if (decl.type === "variable_declarator") {
-                const fieldName = decl.childForFieldName("name")?.text ?? decl.text;
-                properties.push({
+                const nameNode = decl.childForFieldName("name");
+                const fieldName = nameNode?.text ?? decl.text;
+                // `private readonly IStorage _s = storage;` from a keyed primary-constructor parameter.
+                if (primaryKeys.size > 0) {
+                  const init = decl.namedChildren.find((c) => c.id !== nameNode?.id);
+                  const key = init ? primaryKeys.get(storedName(init) ?? "") : undefined;
+                  if (key) noteKey(fieldKeys, fieldName, key);
+                }
+                const prop: PropertyInfo = {
                   name: fieldName,
                   type: typeText,
                   visibility: this.getCsharpVisibility(member),
                   isStatic: this.hasModifier(member, "static"),
                   isReadonly: this.hasModifier(member, "readonly"),
-                });
+                };
+                properties.push(prop);
+                const typeNode = varDecl.childForFieldName("type");
+                if (prop.visibility !== "public" && typeNode && NAMED_FIELD_TYPES.has(typeNode.type)) {
+                  const init = decl.namedChildren.find((c) => c.id !== nameNode?.id && c.type !== "bracketed_argument_list");
+                  fieldValues.set(fieldName, { prop, values: init ? [init] : [] });
+                }
               }
             }
           }
@@ -120,8 +176,12 @@ export class CSharpExtractor extends FunctionClassExtractor {
       }
     }
 
-    // C#: default class visibility is internal, check for public
-    const classVis = this.getCsharpVisibility(node);
+    for (const prop of properties) {
+      const key = fieldKeys.get(prop.name);
+      if (key && !prop.qualifier) prop.qualifier = key;
+    }
+    if (body && fieldValues.size > 0) refineConstructedFields(this.assignmentsIn(body), fieldValues);
+
     return {
       name,
       extends: extendsName,
@@ -165,19 +225,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
   private parseCsharpMethod(node: Node): FunctionInfo {
     const name = node.childForFieldName("name")?.text ?? "anonymous";
     const paramsNode = node.childForFieldName("parameters");
-    const params: ParamInfo[] = [];
-
-    if (paramsNode) {
-      for (const p of paramsNode.children) {
-        if (p.type === "parameter") {
-          params.push({
-            name: p.childForFieldName("name")?.text ?? p.text,
-            type: p.childForFieldName("type")?.text ?? null,
-            defaultValue: p.childForFieldName("default_value")?.text ?? null,
-          });
-        }
-      }
-    }
+    const params = paramsNode ? this.parseCsharpParams(paramsNode) : [];
 
     const returnType = node.childForFieldName("type")?.text ?? null;
     const isAsync = this.hasModifier(node, "async");
@@ -186,7 +234,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
 
     // C#: methods default to private
     const methodVis = this.getCsharpVisibility(node);
-    return {
+    const fn: FunctionInfo = {
       name,
       params,
       returnType,
@@ -197,6 +245,43 @@ export class CSharpExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
+    const localTypes = this.scope?.localTypesOf(body);
+    if (localTypes) fn.localTypes = localTypes;
+    return fn;
+  }
+
+  /**
+   * A `parameter_list`'s parameters. The DI key on an injection point
+   * (`[FromKeyedServices("k")]`, Autofac `[KeyFilter("k")]`) is its qualifier;
+   * `[FromServices]` needs none — the declared type is the request.
+   */
+  private parseCsharpParams(paramsNode: Node): ParamInfo[] {
+    const params: ParamInfo[] = [];
+    for (const p of paramsNode.children) {
+      if (p.type !== "parameter") continue;
+      const param: ParamInfo = {
+        name: p.childForFieldName("name")?.text ?? p.text,
+        type: p.childForFieldName("type")?.text ?? null,
+        defaultValue: p.childForFieldName("default_value")?.text ?? null,
+      };
+      if (p.firstChild?.type === "attribute_list") {
+        const key = injectionKey(p, PARAM_KEY_ATTRIBUTES);
+        if (key) param.qualifier = key;
+        // `[FromServices]` (and a keyed one): the container supplies it.
+        else if (/\[\s*(?:[\w.]+\.)?FromServices(?:Attribute)?\s*[\],(]/.test(p.text)) param.injected = true;
+      }
+      // `static T M(this IServiceCollection s, …)` — an extension method: the
+      // call site writes this parameter as the receiver (`services.M(…)`).
+      if (p.namedChildren.some((c) => c.type === "modifier" && c.text === "this")) {
+        param.isReceiver = true;
+      }
+      params.push(param);
+    }
+    return params;
+  }
+
+  private assignmentsIn(scope: Node | null): Node[] {
+    return scope && this.scope ? this.scope.within(scope, ASSIGNMENT) : [];
   }
 
   private getCsharpVisibility(
@@ -209,4 +294,109 @@ export class CSharpExtractor extends FunctionClassExtractor {
     return sharedHasModifier(node, modifier);
   }
 
+}
+
+/**
+ * The base types a type declaration names, as written (`IRepo<User>`,
+ * `N.IBar`, `IRequestHandler<Q, R>` — consumers strip what they need). A
+ * primary-constructor base call (`: Base(x)`) contributes its type, never its
+ * argument list.
+ */
+export function baseTypeTexts(decl: Node): string[] {
+  const bases = decl.childForFieldName("bases") ?? decl.namedChildren.find((c) => c.type === "base_list") ?? null;
+  const out: string[] = [];
+  for (const base of bases?.namedChildren ?? []) {
+    if (base.type === "argument_list" || base.type === "comment") continue;
+    if (base.type === "primary_constructor_base_type") {
+      const t = base.childForFieldName("type") ?? base.namedChild(0);
+      if (t) out.push(t.text);
+      continue;
+    }
+    out.push(base.text);
+  }
+  return out;
+}
+
+const ASSIGNMENT: ReadonlySet<string> = new Set(["assignment_expression"]);
+
+/** Declared field types that can name a project class (an interface the container could bind). */
+const NAMED_FIELD_TYPES: ReadonlySet<string> = new Set(["identifier", "generic_name", "qualified_name", "nullable_type"]);
+
+/**
+ * A private field the class only ever fills with `new X(..)` (initializer or
+ * assignments, all the same class) holds an X — not whatever a container
+ * binds for its declared interface. `private readonly IClock _clock = new
+ * SystemClock();` is typed `SystemClock`, so `_clock.Now()` never follows an
+ * `AddSingleton<IClock, …>` meant for injected clocks. A field assigned
+ * anything else anywhere (a constructor parameter, a factory call) keeps its
+ * declared type.
+ */
+function refineConstructedFields(assignments: Node[], fields: Map<string, { prop: PropertyInfo; values: Node[] }>): void {
+  for (const a of assignments) {
+    const left = a.childForFieldName("left");
+    if (!left) continue;
+    let target: string | null = null;
+    if (left.type === "identifier") target = left.text;
+    else if (left.type === "member_access_expression" && left.childForFieldName("expression")?.text === "this") {
+      target = left.childForFieldName("name")?.text ?? null;
+    }
+    const entry = target ? fields.get(target) : undefined;
+    const right = a.childForFieldName("right");
+    if (entry && right) entry.values.push(right);
+  }
+  for (const { prop, values } of fields.values()) {
+    if (values.length === 0) continue;
+    let built: string | null = null;
+    for (const v of values) {
+      const node = unwrapExpression(v);
+      const t = node.type === "object_creation_expression" ? node.childForFieldName("type")?.text ?? null : null;
+      if (!t || (built !== null && t !== built)) {
+        built = null;
+        break;
+      }
+      built = t;
+    }
+    if (built) prop.type = built;
+  }
+}
+
+/** Parameter name → the DI key it is injected by. */
+function keyedParams(params: ParamInfo[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const p of params) if (p.qualifier) out.set(p.name, p.qualifier);
+  return out;
+}
+
+/** `_x = x;` / `this._x = x ?? throw …;` in a constructor body, `x` a keyed parameter. */
+function noteKeyedAssignments(assignments: Node[], keyed: ReadonlyMap<string, string>, into: Map<string, string | null>): void {
+  if (keyed.size === 0) return;
+  for (const a of assignments) {
+    const left = a.childForFieldName("left");
+    const right = a.childForFieldName("right");
+    if (!left || !right) continue;
+    let field: string | null = null;
+    if (left.type === "identifier") field = left.text;
+    else if (left.type === "member_access_expression" && left.childForFieldName("expression")?.text === "this") {
+      field = left.childForFieldName("name")?.text ?? null;
+    }
+    const key = keyed.get(storedName(right) ?? "");
+    if (field && key) noteKey(into, field, key);
+  }
+}
+
+/** The parameter an assignment stores: `x`, `(x)`, `x!`, `x ?? throw new …` (a guard, not a fallback). */
+function storedName(value: Node): string | null {
+  let node = unwrapExpression(value);
+  if (node.type === "binary_expression" && node.childForFieldName("right")?.type === "throw_expression") {
+    const lhs = node.childForFieldName("left");
+    if (!lhs) return null;
+    node = unwrapExpression(lhs);
+  }
+  return node.type === "identifier" ? node.text : null;
+}
+
+/** Two different keys stored into one field: neither. */
+function noteKey(into: Map<string, string | null>, field: string, key: string): void {
+  const prev = into.get(field);
+  into.set(field, prev === undefined || prev === key ? key : null);
 }

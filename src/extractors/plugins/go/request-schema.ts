@@ -132,6 +132,10 @@ export const goRequestSchema: RequestSchemaHooks = {
 
   isSerialized(prop: PropertyInfo) {
     if (prop.isStatic) return false;
+    // An embedded struct without a json name is flattened into its parent by
+    // encoding/json — it is not a field of its own (the flattening itself is
+    // not modelled, so it is left out rather than shown as a nested object).
+    if (prop.decorators?.includes("embedded") && !tagValue(prop.decorators, "json")) return false;
     // encoding/json only sees exported fields; `json:"-"` opts one out.
     if (!/^[A-Z]/.test(prop.name)) return false;
     const json = tagValue(prop.decorators, "json");

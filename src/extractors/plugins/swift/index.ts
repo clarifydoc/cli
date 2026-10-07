@@ -4,6 +4,15 @@ import { extractClassesWithSpec } from "../shared/regex-base.js";
 import { extractVaporRoutes } from "./routes.js";
 import { extractSwiftDataSources } from "./data-sources.js";
 import { extractSwiftRequestAccess } from "./request-schema.js";
+import {
+  continuedBelow,
+  applyInjectionKeys,
+  extractSwiftDiBindings,
+  extractSwiftLocalTypes,
+  initializerQualifier,
+  initializerType,
+  swiftDiCallPatterns,
+} from "./di.js";
 
 /**
  * The conformance list of a declaration: `class Foo: Bar, Codable, Sendable`.
@@ -22,6 +31,53 @@ function parseConformance(header: string): string[] {
     .split(",")
     .map((t) => t.trim().replace(/<.*/, ""))
     .filter((t) => /^[A-Z]\w*$/.test(t));
+}
+
+/** Inline property wrappers / attributes: `@Injected(\.repo) `, `@Published `. */
+const WRAPPERS = String.raw`((?:@\w+(?:\([^)]*\))?\s+)*)`;
+
+/** Member modifiers in any order: access (with `(set)`), `static`, `lazy`, `weak`, … */
+const MODIFIERS = String.raw`((?:(?:private|public|internal|fileprivate|open|package)(?:\(set\))?\s+|(?:static|class|lazy|weak|unowned(?:\((?:safe|unsafe)\))?|final|override|nonisolated|dynamic)\s+)*)`;
+
+/** Members typed by their initializer (see the second property pattern). */
+const INFERRED_MEMBERS = new WeakSet<PropertyInfo>();
+
+/**
+ * Drop an initializer-typed member whose initializer wraps onto a chain
+ * below (`let client = Builder()` / `.build()`): its first line does not
+ * state the value's type.
+ */
+function dropWrappedInitializers(lines: string[], cls: ClassInfo): void {
+  cls.properties = cls.properties.filter((p) => {
+    if (!INFERRED_MEMBERS.has(p)) return true;
+    const re = new RegExp(String.raw`\b(?:let|var)\s+${p.name}\s*=`);
+    for (let i = cls.line; i < Math.min(cls.endLine, lines.length); i++) {
+      if (re.test(lines[i]!)) return !continuedBelow(lines, i);
+    }
+    return true;
+  });
+}
+
+/** Standard-library and Foundation value types — never a dependency, often a `Codable` field. */
+const SWIFT_VALUE_TYPES: ReadonlySet<string> = new Set([
+  "String", "Character", "Substring", "Int", "Int8", "Int16", "Int32", "Int64", "UInt", "UInt8", "UInt16", "UInt32",
+  "UInt64", "Double", "Float", "Decimal", "Bool", "Date", "UUID", "URL", "Data", "Array", "Set", "Dictionary",
+]);
+
+/** The common part of a member match: name, wrappers, modifiers (`m[1]`, `m[2]`, `m[3]`, `m[4]`). */
+function memberOf(m: RegExpMatchArray): PropertyInfo {
+  const mods = m[2]!;
+  const access = mods.match(/\b(private|public|internal|fileprivate|open|package)\b/)?.[1];
+  const decorators = [...m[1]!.matchAll(/@(\w+(?:\([^)]*\))?)/g)].map((d) => d[1]!.replace(/\s+/g, " "));
+  const prop: PropertyInfo = {
+    name: m[4]!,
+    type: null,
+    visibility: access === "private" || access === "fileprivate" ? "private" : access === "internal" ? "protected" : "public",
+    isStatic: /\b(?:static|class)\b/.test(mods),
+    isReadonly: m[3] === "let",
+  };
+  if (decorators.length > 0) prop.decorators = decorators;
+  return prop;
 }
 
 /** Declarations whose conformance list can only be protocols, never a base class. */
@@ -72,7 +128,9 @@ export const swiftSpec: RegexLangSpec = {
     // An actor is a reference type like a class; the schema has no separate
     // kind for it, and treating it as one keeps it in the class graph.
     { pattern: /(?:^|\s)(?:public\s+)?actor\s+([A-Z]\w*)/, getExtends: () => null },
-    { pattern: /(?:^|\s)protocol\s+([A-Z]\w*)/, getExtends: () => null },
+    // A protocol is what a dependency is declared as and an implementation
+    // conforms to — the linker's interface.
+    { pattern: /(?:^|\s)protocol\s+([A-Z]\w*)/, getExtends: () => null, kind: "interface" },
     { pattern: /(?:^|\s)struct\s+([A-Z]\w*)/, getExtends: () => null },
     { pattern: /(?:^|\s)enum\s+([A-Z]\w*)/, getExtends: () => null },
     // `extension Foo: Codable` adds members and conformances to a type
@@ -93,20 +151,37 @@ export const swiftSpec: RegexLangSpec = {
    */
   propertyPatterns: [
     {
-      pattern: /^\s*((?:@\w+(?:\([^)]*\))?\s+)*)(?:(private|public|internal|fileprivate|open)(?:\(set\))?\s+)?(?:(static|class)\s+)?(let|var)\s+([a-zA-Z_]\w*)\s*:\s*([^={]+?)\s*(=|\{|$)/,
-      build: (m) => {
-        const type = m[6]!.trim();
-        const decorators = [...m[1]!.matchAll(/@(\w+(?:\([^)]*\))?)/g)].map((d) => d[1]!.replace(/\s+/g, " "));
-        const prop: PropertyInfo = {
-          name: m[5]!,
-          type,
-          visibility: m[2] === "private" || m[2] === "fileprivate" ? "private" : m[2] === "internal" ? "protected" : "public",
-          isStatic: m[3] === "static" || m[3] === "class",
-          isReadonly: m[4] === "let",
-        };
-        if (decorators.length > 0) prop.decorators = decorators;
+      pattern: new RegExp(String.raw`^\s*${WRAPPERS}${MODIFIERS}(let|var)\s+([a-zA-Z_]\w*)\s*:\s*([^={]+?)\s*(=|\{|$)`),
+      build: (m, line) => {
+        const type = m[5]!.trim();
+        const prop = memberOf(m);
+        prop.type = type;
         const optional = type.endsWith("?") || type.endsWith("!") || /^Optional</.test(type);
-        if (m[7] !== "=" && !optional && !prop.isStatic) prop.isRequired = true;
+        if (m[6] !== "=" && !optional && !prop.isStatic) prop.isRequired = true;
+        if (m[6] === "=") {
+          const q = initializerQualifier(line.slice(m[0].length));
+          if (q) prop.qualifier = q;
+        }
+        return prop;
+      },
+    },
+    {
+      // Unannotated members whose type the source still states: a
+      // construction or container lookup (`private let repo = PgRepo()`,
+      // `lazy var repo = container.resolve(UserRepo.self)!`), or a bare
+      // `@Injected(\.userRepo) var repo` whose wrapper names the key. Only
+      // declarations at the body's own depth are read, so a method local
+      // never becomes a field; value types (`let id = UUID()`) are left out
+      // so a `Codable` body's shape is unchanged.
+      pattern: new RegExp(String.raw`^\s*${WRAPPERS}${MODIFIERS}(let|var)\s+([a-zA-Z_]\w*)\s*(?:=\s*(.+?))?\s*$`),
+      build: (m) => {
+        const prop = memberOf(m);
+        if (m[5] === undefined) return prop; // wrapper-typed; kept only when it names a key
+        const init = initializerType(m[5]);
+        if (!init || SWIFT_VALUE_TYPES.has(init.type.replace(/<.*$/, ""))) return null;
+        prop.type = init.type || null;
+        if (init.qualifier) prop.qualifier = init.qualifier;
+        INFERRED_MEMBERS.add(prop);
         return prop;
       },
     },
@@ -118,7 +193,14 @@ export const swiftSpec: RegexLangSpec = {
   /**
    * Wrap the generic extractor to record the whole conformance list. Only a
    * class can name a superclass, and only in first position; for every other
-   * declaration each entry is a protocol, which maps onto `implements`.
+   * declaration each entry is a protocol, which maps onto `implements`. (A
+   * class's first entry may be a protocol too — the linker treats `extends`
+   * as a possible interface.)
+   *
+   * A protocol's requirements have no body: `func save(_ u: User) throws` ends
+   * on its own line. The generic end-of-block scan reads a trailing `throws`
+   * or `?` as a continuation and would hand each requirement the following
+   * ones as calls.
    */
   extractClasses: (lines: string[], _fns: FunctionInfo[]): ClassInfo[] => {
     const classes = extractClassesWithSpec(lines, swiftSpec);
@@ -131,6 +213,17 @@ export const swiftSpec: RegexLangSpec = {
       for (const name of protocols) {
         if (!cls.implements.includes(name)) cls.implements.push(name);
       }
+      if (cls.kind === "interface") {
+        for (const m of cls.methods) {
+          if ((lines[m.line - 1] ?? "").includes("{")) continue;
+          m.endLine = m.line;
+          m.calls = [];
+          delete m.localTypes;
+          delete m.requestAccess;
+        }
+      }
+      cls.properties = applyInjectionKeys(cls.properties);
+      dropWrappedInitializers(lines, cls);
     }
     return classes;
   },
@@ -142,6 +235,10 @@ export const swiftSpec: RegexLangSpec = {
       getSpecifiers: () => [],
     },
   ],
+
+  callPatterns: swiftDiCallPatterns,
+  extractLocalTypes: extractSwiftLocalTypes,
+  extractDiBindings: (lines) => extractSwiftDiBindings(lines),
 
   extractRoutes: (lines) => extractVaporRoutes(lines),
   extractDataSources: (lines) => extractSwiftDataSources(lines),

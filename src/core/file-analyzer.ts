@@ -16,7 +16,9 @@ import { scanSecurity, isMinifiedSource, isVendoredSource } from "./security-sca
 import { extractTypeReferences } from "./type-reference-extractor.js";
 import { enrichFileDataSources } from "./import-index.js";
 import type { VariableAliasBinding } from "../types/language-plugin.js";
+import type { FunctionInfo } from "../types/analysis.js";
 import { isTestFile } from "./test-file-detector.js";
+import { restoreTypedReceiverCalls } from "./typed-receivers.js";
 import {
   createEmptyAnalysis,
   type FileAnalysis,
@@ -130,6 +132,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       const regexSource = pre?.sourceText ?? rawSource;
       const { extractWithRegex } = await import("./regex-extractor.js");
       const analysis = extractWithRegex(regexSource, file.relativePath, pre?.language ?? file.language);
+      restoreTypedReceiverCalls(analysis, pluginFor(analysis.language)?.caseInsensitiveNames === true);
       pre?.postExtract?.(analysis, rawSource);
       analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
       analysis.projectId = projectId;
@@ -180,6 +183,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       if (verbose) console.log(`    Parse failed for ${file.relativePath}, using regex fallback`);
       const { extractWithRegex } = await import("./regex-extractor.js");
       const analysis = extractWithRegex(rawSource, file.relativePath, file.language);
+      restoreTypedReceiverCalls(analysis, pluginFor(analysis.language)?.caseInsensitiveNames === true);
       analysis.extraction = { method: "regex", fallback: true, reason: fallbackReason(parseErr) };
       analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
       analysis.projectId = projectId;
@@ -248,7 +252,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     const topLevelCalls = extractTopLevelCalls(tree, language);
 
     if (topLevelCalls.length > 0) {
-      const setupFn = {
+      const setupFn: FunctionInfo = {
         name: "<setup>",
         params: [],
         returnType: null,
@@ -259,8 +263,20 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
         line: 1,
         endLine: 1,
       };
+      const topLocals = hooks?.topLevelLocalTypes?.(tree);
+      if (topLocals && topLocals.length > 0) setupFn.localTypes = topLocals;
       analysis.functions.unshift(setupFn);
     }
+
+    // Member calls held back as noise by their leaf name (`repo.find`) come
+    // back when their receiver has a declared type — before classification,
+    // so they are classified like every other call.
+    restoreTypedReceiverCalls(analysis, pluginFor(analysis.language)?.caseInsensitiveNames === true);
+
+    // Dependency-injection registrations this file makes (project-level
+    // linking joins them to injection points).
+    const diBindings = hooks?.diBindings?.(tree, sourceText, file.relativePath);
+    if (diBindings && diBindings.length > 0) analysis.diBindings = diBindings;
 
     // Classify calls using import context, language patterns, and variable
     // aliases — and what this file defines itself, so a call into the file's
@@ -303,6 +319,11 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // so the component graph can join `<kebab-tag>` markup usages to this file.
     const customEls = hooks?.customElements?.(sourceText);
     if (customEls && customEls.length > 0) analysis.customElements = customEls;
+
+    // HTTP client instances with a base URL (`axios.create({ baseURL })`) —
+    // the project pass prepends the base to calls made through them.
+    const clientBases = hooks?.httpClientBases?.(tree, sourceText);
+    if (clientBases && Object.keys(clientBases).length > 0) analysis.httpClientBases = clientBases;
 
     // Paths named as string data the toolchain loads (glob imports, worker
     // URLs, config-file script paths) — dead-code reachability follows them.

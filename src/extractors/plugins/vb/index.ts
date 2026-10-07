@@ -1,9 +1,17 @@
-import type { PropertyInfo } from "../../../types/analysis.js";
-import { extractClassesWithSpec, type RegexLangSpec } from "../shared/regex-base.js";
+import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
+import { extractClassesWithSpec, splitTopLevel, type RegexLangSpec } from "../shared/regex-base.js";
 import { extractWinFormsScreens } from "./winforms-screens.js";
 import { extractVbDataSources } from "./data-sources.js";
 import { extractVbRoutes } from "./routes.js";
 import { readVbType, splitVbAttributes } from "./request-schema.js";
+import {
+  extractVbDiBindings,
+  extractVbLocalTypes,
+  vbCodeText,
+  vbLogicalLines,
+  vbParamQualifier,
+  VB_LOOKUP_CALL_PATTERNS,
+} from "./di.js";
 
 /** Inline `<Attr>` lists at the start of a declaration line, as a regex source. */
 const INLINE_ATTRS = String.raw`((?:<[^<>]*(?:"[^"]*"[^<>]*)*>\s*)*)`;
@@ -28,8 +36,11 @@ const vbBase: RegexLangSpec = {
   // VB line comments: ' (tick) or REM keyword
   lineCommentPrefixes: ["'", "REM ", "rem "],
 
-  // VB: `ClassName.method()` — shared static/instance access pattern
+  // VB: `ClassName.method()` — shared static/instance access pattern — plus
+  // container lookups and casts chained into a call, which carry the
+  // receiver's type (`sp.GetRequiredService(Of IClock)().NowUtc()`).
   callPatterns: [
+    ...VB_LOOKUP_CALL_PATTERNS,
     {
       pattern: /\b([A-Z]\w+)\.(\w+)\s*\(/,
       buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2] }),
@@ -39,6 +50,8 @@ const vbBase: RegexLangSpec = {
   // VB: `name As Type` / `ByVal name As Type` / `Optional name As Type = default`
   // / `<FromBody> request As T`. A leading attribute list is skipped (it is
   // read by the route extractor), and the type keeps its generic arguments.
+  // A keyed service parameter (`<FromKeyedServices("sms")> n As INotifier`)
+  // carries its key as the parameter's `qualifier`.
   parseParam: (p) => {
     const trimmed = p.trim().replace(/^(?:<[^<>]*(?:"[^"]*"[^<>]*)*>\s*)+/, "");
     if (!trimmed) return null;
@@ -46,7 +59,10 @@ const vbBase: RegexLangSpec = {
     if (!m) return null;
     const type = m[2] ? readVbType(trimmed, m[0].length)?.type ?? null : null;
     const def = trimmed.match(/=\s*(.+)$/);
-    return { name: m[1]!, type, defaultValue: def ? def[1]!.trim() : null };
+    const param: ParamInfo = { name: m[1]!, type, defaultValue: def ? def[1]!.trim() : null };
+    const qualifier = vbParamQualifier(p);
+    if (qualifier) param.qualifier = qualifier;
+    return param;
   },
 
   // VB: `Private ReadOnly _svc As ServiceType` (fields) and
@@ -105,7 +121,9 @@ const vbBase: RegexLangSpec = {
       // Sub Foo() / Function Foo() As Type / Public Sub Foo / Private Function Foo
       // Covers VB.NET and VBA
       // `Function [Get](…)` escapes a keyword name with brackets.
-      pattern: /^\s*(?:<[^<>]*(?:"[^"]*"[^<>]*)*>\s*)*(?:Public\s+|Private\s+|Friend\s+|Protected\s+|Shared\s+|Static\s+|Overrides\s+|Overridable\s+|Async\s+)*(?:Sub|Function)\s+\[?([A-Za-z_]\w*)\]?\s*\(/i,
+      // Abstract (`MustOverride`) and interface members have no body; the
+      // class post-pass below says so.
+      pattern: /^\s*(?:<[^<>]*(?:"[^"]*"[^<>]*)*>\s*)*(?:(?:Public|Private|Friend|Protected|Shared|Static|Overrides|Overridable|Overloads|NotOverridable|MustOverride|Shadows|Partial|Iterator|Async)\s+)*(?:Sub|Function)\s+\[?([A-Za-z_]\w*)\]?\s*\(/i,
       isExported: (line) => !/\b(Private|Friend)\b/i.test(line),
       isAsync: (line) => /\bAsync\b/i.test(line),
     },
@@ -118,46 +136,52 @@ const vbBase: RegexLangSpec = {
 
   classPatterns: [
     {
-      // Class Foo / Public Class Foo / Module Foo
-      // In VB.NET, `Inherits Parent` typically appears on the line after the class declaration.
-      // The single-line check here catches single-line cases; multi-line cases are handled below
-      // via post-processing after class extraction.
-      pattern: /^\s*(?:Public\s+|Private\s+|Friend\s+)*(?:Partial\s+)?(?:Class|Module|Structure)\s+([A-Za-z_]\w*)/i,
-      getExtends: (line) => {
-        const m = line.match(/\bInherits\s+([A-Za-z_][\w.]*)/i);
-        return m?.[1] ?? null;
-      },
+      // Class Foo / Public MustInherit Class Foo / Partial Friend Class Foo / Module Foo.
+      // `Inherits` / `Implements` follow on the next lines by convention, or
+      // on the declaration line after a `:` — both are read by the post-pass.
+      pattern: /^\s*(?:(?:Public|Private|Friend|Protected|Partial|MustInherit|NotInheritable|Shadows)\s+)*(?:Class|Module|Structure)\s+([A-Za-z_]\w*)/i,
+      getExtends: (line) => declarationClauses(line).inherits[0] ?? null,
+      getImplements: (line) => declarationClauses(line).implements,
     },
     {
-      pattern: /^\s*(?:Public\s+|Private\s+|Friend\s+)*Interface\s+([A-Za-z_]\w*)/i,
-      getExtends: () => null,
+      // A VB interface seeds the linker's interface → implementation map.
+      pattern: /^\s*(?:(?:Public|Private|Friend|Protected|Partial|Shadows)\s+)*Interface\s+([A-Za-z_]\w*)/i,
+      kind: "interface",
+      getExtends: (line) => declarationClauses(line).inherits[0] ?? null,
+      getImplements: (line) => declarationClauses(line).inherits.slice(1),
     },
   ],
 
   /**
-   * Post-pass to catch `Inherits Foo` / `Implements IFoo` on lines following the class declaration.
-   * VB places these keywords on separate lines by convention.
-   */
-  /**
-   * Post-pass: pick up `Inherits Foo` / `Implements IFoo` keywords which
-   * in VB idiomatically appear on the line after the class declaration.
+   * Post-pass over the generic class extraction:
+   *  - `Inherits Foo` / `Implements IA, IB` statements, which VB places on the
+   *    lines right after the declaration (and only there — they must come
+   *    before any member, so the scan stops at the first other statement);
+   *  - members with no body — every interface member, `MustOverride` methods —
+   *    end on their own line. The generic keyword-end scan would otherwise run
+   *    on to the next `End Function` and adopt another member's lines as calls;
+   *  - a `MustInherit` class with nothing but `MustOverride` members is an
+   *    interface in all but name (no behaviour of its own; whatever inherits
+   *    it is the implementation). One concrete member keeps it a class;
+   *  - a field assigned from a keyed constructor parameter carries the key.
    */
   extractClasses: (lines, _fns) => {
     const classes = extractClassesWithSpec(lines, vbBase);
     for (const cls of classes) {
-      for (let i = cls.line; i < Math.min(cls.line + 5, lines.length); i++) {
-        const line = lines[i];
-        if (!cls.extends) {
-          const inh = line.match(/^\s*Inherits\s+([A-Za-z_][\w.]*)/i);
-          if (inh) cls.extends = inh[1];
-        }
-        const impl = line.match(/^\s*Implements\s+([A-Za-z_][\w.,\s]*)/i);
-        if (impl) {
-          for (const name of impl[1].split(",").map((s) => s.trim()).filter(Boolean)) {
-            if (!cls.implements.includes(name)) cls.implements.push(name);
-          }
-        }
+      readHeaderClauses(lines, cls);
+      let abstractMembers = 0;
+      for (const m of cls.methods) {
+        const isAbstract = /\bMustOverride\b/i.test(vbCodeText(lines[m.line - 1] ?? ""));
+        if (isAbstract) abstractMembers++;
+        if (cls.kind === "interface" || isAbstract) bodyless(m);
       }
+      if (
+        cls.kind === undefined && abstractMembers > 0 && abstractMembers === cls.methods.length &&
+        cls.properties.length === 0 && /\bMustInherit\b/i.test(vbCodeText(lines[cls.line - 1] ?? ""))
+      ) {
+        cls.kind = "interface";
+      }
+      keyedFieldsFromConstructor(lines, cls);
     }
     return classes;
   },
@@ -181,6 +205,89 @@ const vbBase: RegexLangSpec = {
 
   extractScreens: extractWinFormsScreens,
   extractDataSources: extractVbDataSources,
+
+  // Dependency injection (see di.ts): typed locals and container registrations.
+  extractLocalTypes: extractVbLocalTypes,
+  extractDiBindings: extractVbDiBindings,
 };
+
+/** `Inherits` / `Implements` statements of one header statement (`:`-separated), or null for any other statement. */
+function headerClauses(code: string): { inherits: string[]; implements: string[] } | null {
+  const out = { inherits: [] as string[], implements: [] as string[] };
+  for (const part of code.split(/:(?!=)/)) {
+    const stmt = part.replace(/\s+/g, " ").trim();
+    if (stmt === "") continue;
+    const m = stmt.match(/^(Inherits|Implements) (.+)$/i);
+    if (!m) return null;
+    const names = splitTopLevel(m[2]!).map((n) => n.trim()).filter(Boolean);
+    (m[1]!.toLowerCase() === "inherits" ? out.inherits : out.implements).push(...names);
+  }
+  return out;
+}
+
+/** The clauses written on the declaration line itself after a `:` (`Public Class X : Implements IX`). */
+function declarationClauses(line: string): { inherits: string[]; implements: string[] } {
+  const code = vbCodeText(line);
+  const colon = code.search(/:(?!=)/);
+  return (colon >= 0 ? headerClauses(code.slice(colon + 1)) : null) ?? { inherits: [], implements: [] };
+}
+
+/**
+ * `Inherits` / `Implements` statements on the lines after a declaration, up
+ * to the first other statement (a `_` continuation or a trailing comma joins
+ * lines). An interface's `Inherits IA, IB`: the first is `extends`, the rest
+ * `implements`, as on its declaration line.
+ */
+function readHeaderClauses(lines: string[], cls: ClassInfo): void {
+  const body = lines.slice(cls.line, Math.max(cls.line, cls.endLine - 1));
+  for (const stmt of vbLogicalLines(body)) {
+    // `#Region` / `#If` directives may sit anywhere, the header included.
+    if (stmt.code.trimStart().startsWith("#")) continue;
+    const clauses = headerClauses(stmt.code);
+    if (!clauses) break;
+    const inherits = [...clauses.inherits];
+    if (!cls.extends && inherits.length > 0) cls.extends = inherits.shift()!;
+    const implemented = cls.kind === "interface" ? [...inherits, ...clauses.implements] : clauses.implements;
+    for (const name of implemented) if (!cls.implements.includes(name)) cls.implements.push(name);
+  }
+}
+
+/**
+ * `_sms = sms` / `Me._sms = sms` in a constructor whose `sms` parameter is
+ * keyed (`<FromKeyedServices("sms")>`): the field holds that keyed service,
+ * so it carries the same `qualifier`. Two constructors assigning different
+ * keys to one field leave it unkeyed.
+ */
+function keyedFieldsFromConstructor(lines: string[], cls: ClassInfo): void {
+  const keyed = new Map<string, string | null>();
+  for (const ctor of cls.methods) {
+    if (ctor.name.toLowerCase() !== "new" || !ctor.params.some((p) => p.qualifier)) continue;
+    const body = lines.slice(ctor.line, Math.max(ctor.line, ctor.endLine - 1));
+    for (const stmt of vbLogicalLines(body)) {
+      for (const part of stmt.code.split(/:(?!=)/)) {
+        const m = part.trim().match(/^(?:Me\.)?([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)$/i);
+        if (!m) continue;
+        const qualifier = ctor.params.find((p) => p.name.toLowerCase() === m[2]!.toLowerCase())?.qualifier;
+        if (!qualifier) continue;
+        // VB names are case-insensitive: `_Sms` and `_sms` are one field.
+        const field = m[1]!.toLowerCase();
+        const prev = keyed.get(field);
+        keyed.set(field, prev === undefined || prev === qualifier ? qualifier : null);
+      }
+    }
+  }
+  for (const prop of cls.properties) {
+    const qualifier = keyed.get(prop.name.toLowerCase());
+    if (qualifier) prop.qualifier = qualifier;
+  }
+}
+
+/** A member declared without a body (interface member, `MustOverride`): it spans its own line and calls nothing. */
+function bodyless(m: FunctionInfo): void {
+  m.endLine = m.line;
+  m.calls = [];
+  delete m.localTypes;
+  delete m.requestAccess;
+}
 
 export const vbSpec: RegexLangSpec = vbBase;

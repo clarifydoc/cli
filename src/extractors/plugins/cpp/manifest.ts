@@ -11,6 +11,8 @@ export const cppManifest: LanguagePluginManifest = {
   language: "cpp",
   parsing: "regex",
   extensions: [".h", ".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".hh"],
+  // One type spans files here: member functions are defined out of line in a `.cpp` beside the header.
+  typesSpanFiles: true,
   frameworkRules: cppFrameworkRules,
   activationFiles: ["CMakeLists.txt", "conanfile.txt", "vcpkg.json"],
 };
