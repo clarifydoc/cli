@@ -499,3 +499,17 @@ describe("JS generated OpenAPI clients (openapi-generator typescript-axios)", ()
     expect(await apiCallsOf(common)).toEqual([]);
   });
 });
+
+describe("JS route decorators are not outbound calls", () => {
+  it("skips NestJS @Get / @Post decorators", async () => {
+    const calls = await apiCallsOf(`
+      @Controller('users')
+      export class UsersController {
+        @Get('public/:id')
+        publicProfile(@Param('id') id: string) { return id; }
+        @Post('sync/all')
+        sync() { return fetch('/api/remote/sync'); }
+      }`);
+    expect(calls.map((c) => c.target)).toEqual(["/api/remote/sync"]);
+  });
+});

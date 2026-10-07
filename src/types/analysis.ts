@@ -845,7 +845,14 @@ export interface ApiRouteLink {
    * means the client named a concrete API version (`/api/v5/`) that no route
    * at that path declares serving; `target` is the best remaining guess.
    */
-  matchedVia?: "exact" | "method-fallback" | "version-mismatch" | `base-prefix:${string}`;
+  matchedVia?:
+    | "exact"
+    | "method-fallback"
+    | "version-mismatch"
+    | `base-prefix:${string}`
+    | "base-unresolved"
+    | `base-unresolved:${string}`
+    | "route-prefix-unresolved";
   /**
    * Where the calling file sits, when it is not production code: a `test`
    * (spec, e2e, integration test) or `generated` (an SDK, a bundle). The link
@@ -867,6 +874,8 @@ export interface ApiRouteLinkStats {
     methodMismatch: number;
     /** Every URL was wildcards only (`/{}/{}`) — it names no route. */
     wildcardOnly: number;
+    /** Only a suffix could match (unknown base or route prefix), and several routes did. */
+    ambiguousSuffix: number;
   };
   /** Joinable calls no route matched at all. */
   unmatched: number;
@@ -943,6 +952,16 @@ export interface DataSourceInfo {
    * binding). Absent when `target` was a plain literal needing no resolution.
    */
   targetConfidence?: Confidence;
+  /**
+   * For an api-call: the URL's leading base was a runtime value no pass could
+   * resolve (`this.baseUrl`, `environment.apiBaseUrl`, a client's base), so it
+   * was split off and `target` holds the app-relative rest (`/series/{}`). The
+   * base may span any number of segments, so the linker matches such a call
+   * only literally, through a known base prefix, or as a unique suffix — never
+   * by letting the base stand for one wildcard segment. Set on the project's
+   * aggregated rows, not per file.
+   */
+  baseExpr?: string;
 }
 
 /**

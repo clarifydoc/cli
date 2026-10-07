@@ -625,8 +625,92 @@ describe("linkApiCallsToRoutesDetailed — stats", () => {
       calls: 4,
       joinable: 3,
       linked: 1,
-      refused: { methodMismatch: 0, wildcardOnly: 1 },
+      refused: { methodMismatch: 0, wildcardOnly: 1, ambiguousSuffix: 0 },
       unmatched: 1,
     });
+  });
+});
+
+describe("linkApiCallsToRoutes — a call whose base is unknown", () => {
+  const withBase = (target: string, name = "get", baseExpr = "this.baseUrl") => ({
+    ...apiCall("web/series.service.ts", name, target),
+    baseExpr,
+  });
+
+  it("matches through a known base prefix, as base-unresolved and at most INFERRED", () => {
+    const links = linkApiCallsToRoutes([withBase("/series/${id}")], [route("Api/SeriesController.cs", "GET", "/api/Series/{seriesId}", "GetSeries")]);
+    expect(links[0]).toMatchObject({ confidence: "INFERRED", matchedVia: "base-unresolved:/api" });
+  });
+
+  it("falls back to a unique same-method suffix (Kavita `email/all`)", () => {
+    const routes = [
+      // A base no conventional prefix covers.
+      route("Api/EmailController.cs", "GET", "/kavita/api/Email/all", "GetEmails"),
+      route("Api/AnnotationController.cs", "GET", "/kavita/api/Annotation/all", "GetAll"),
+    ];
+    const links = linkApiCallsToRoutes([withBase("/email/all")], routes);
+    expect(links[0]).toMatchObject({ target: "Api/EmailController.cs", confidence: "INFERRED", matchedVia: "base-unresolved:suffix" });
+  });
+
+  it("refuses an ambiguous suffix, and one whose method is unknown or different", () => {
+    const routes = [
+      route("Api/EmailController.cs", "GET", "/x/Email/all", "a"),
+      route("Api/LegacyController.cs", "GET", "/y/Email/all", "b"),
+    ];
+    const { links, stats } = linkApiCallsToRoutesDetailed([withBase("/email/all")], routes);
+    expect(links).toEqual([]);
+    expect(stats.refused.ambiguousSuffix).toBe(1);
+    expect(linkApiCallsToRoutes([withBase("/email/all", "post")], [routes[0]!])).toEqual([]);
+    expect(linkApiCallsToRoutes([withBase("/email/all", "fetch")], [routes[0]!])).toEqual([]);
+  });
+
+  it("never lets an unsplit leading hole stand for a path segment (mealie /duplicate)", () => {
+    const links = linkApiCallsToRoutes(
+      [apiCall("web/base-clients.ts", "post", "${this.itemRoute(itemId)}/duplicate")],
+      [route("recipes.py", "POST", "/{slug}/duplicate", "duplicate_one")],
+    );
+    expect(links).toEqual([]);
+  });
+
+  it("does not link the bare base: `/` behind an unknown base names nothing", () => {
+    expect(linkApiCallsToRoutes([withBase("/", "post")], [route("srv/root.ts", "POST", "/", "upload")])).toEqual([]);
+  });
+
+  it("does not take two fused holes for a literal segment", () => {
+    expect(linkApiCallsToRoutes([apiCall("web/a.ts", "get", "/{}{}/")], [route("srv/x.ts", "GET", "/:a/", "x")])).toEqual([]);
+  });
+});
+
+describe("linkApiCallsToRoutes — a route whose prefix is unknown", () => {
+  const tail = (file: string, method: string, path: string, owner: string, line = 1) => ({
+    ...route(file, method, path, "h", line),
+    prefixUnresolved: "base:BaseApiController",
+    owner,
+  });
+
+  it("is reached only as a tail of the call, at most INFERRED", () => {
+    const links = linkApiCallsToRoutes([apiCall("web/a.ts", "get", "/api/series/${id}")], [tail("SeriesController.cs", "GET", "/{seriesId}/details", "SeriesController")]);
+    expect(links).toEqual([]);
+    const hit = linkApiCallsToRoutes(
+      [apiCall("web/a.ts", "get", "/api/series/${id}/details")],
+      [tail("SeriesController.cs", "GET", "/{seriesId}/details", "SeriesController")],
+    );
+    expect(hit[0]).toMatchObject({ confidence: "INFERRED", matchedVia: "route-prefix-unresolved" });
+  });
+
+  it("never wins over a route whose path is complete", () => {
+    const links = linkApiCallsToRoutes(
+      [apiCall("web/a.ts", "get", "/api/email/all")],
+      [tail("AnnotationController.cs", "GET", "/all", "AnnotationController"), route("EmailController.cs", "GET", "/api/email/all", "GetEmails")],
+    );
+    expect(links[0]).toMatchObject({ target: "EmailController.cs", matchedVia: "exact" });
+  });
+
+  it("keeps two controllers' same tail apart in dedupe", () => {
+    const rows = dedupeRoutes([
+      tail("EmailController.cs", "GET", "/all", "EmailController"),
+      tail("AnnotationController.cs", "GET", "/all", "AnnotationController"),
+    ]);
+    expect(rows).toHaveLength(2);
   });
 });
