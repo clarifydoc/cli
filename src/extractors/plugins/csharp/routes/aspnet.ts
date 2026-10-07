@@ -3,6 +3,7 @@ import type { RouteFact, RouteInfo, RouteParamBinding, RouteParamInfo } from "..
 import { findChildByType } from "../../../shared/node-helpers.js";
 import { buildAuth, splitList, type GuardAttr } from "../../../shared/route-metadata.js";
 import type { RouteExtractor } from "../../../routes/base.js";
+import { attributeDefFact, attributeUse, type CsAttrUse } from "./aspnet-attributes.js";
 
 /**
  * ASP.NET attribute routing.
@@ -80,6 +81,21 @@ export interface CsControllerFact {
   guards: GuardAttr[];
   /** Each routed action: the verb attribute's line (the row's `line`), its own template and guards. */
   actions: CsActionFact[];
+  /** Class-level attributes ASP.NET does not define — maybe the project's own `IRouteTemplateProvider`. */
+  attrs?: CsAttrUse[];
+  /** Methods routed, if at all, only by such attributes (`[RestPutById]`). */
+  candidates?: CsCandidateFact[];
+}
+
+/** A method whose only routing could come from project attributes; the resolver decides. */
+export interface CsCandidateFact {
+  handler: string | null;
+  attrs: CsAttrUse[];
+  guards: GuardAttr[];
+  /** Explicit `[From*]` bindings; the rest are inferred once the path is known. */
+  params?: RouteParamInfo[];
+  versions?: string[];
+  deprecatedVersions?: string[];
 }
 
 export interface CsActionFact {
@@ -104,10 +120,12 @@ function walkForCsharpRoutes(
   facts?: RouteFact[],
   /** The enclosing class's routed actions, collected for its fact. */
   actions?: CsActionFact[],
+  candidates?: CsCandidateFact[],
 ) {
   if (node.type === "class_declaration") {
     const name = node.childForFieldName("name")?.text ?? null;
     const attrs = attributesOf(node);
+    if (facts && name && /Attribute$/.test(name)) attributeDefFact(node, name, baseTypes(node), facts);
     const ownTemplate = classRoutePrefix(attrs);
     const ownApiController = attrs.some((a) => attributeName(a) === "ApiController");
     const ownGuards = guardAttributes(attrs);
@@ -122,8 +140,9 @@ function walkForCsharpRoutes(
       versionNeutral: scope.versionNeutral || attrs.some((a) => attributeName(a) === "ApiVersionNeutral"),
     };
     const own: CsActionFact[] = [];
+    const ownCandidates: CsCandidateFact[] = [];
     for (const child of node.children) {
-      walkForCsharpRoutes(child, routes, inner, facts, own);
+      walkForCsharpRoutes(child, routes, inner, facts, own, ownCandidates);
     }
     const controllerish =
       own.length > 0 ||
@@ -140,19 +159,56 @@ function walkForCsharpRoutes(
         guards: ownGuards,
         actions: own,
       };
+      const custom = customAttributes(attrs);
+      if (custom.length > 0) data.attrs = custom;
+      if (ownCandidates.length > 0) data.candidates = ownCandidates;
       facts.push({ kind: CS_CONTROLLER_FACT, line: node.startPosition.row + 1, owner: name, data });
     }
     return;
   }
 
   if (node.type === "method_declaration") {
-    parseMethodRoutes(node, routes, scope, actions);
+    parseMethodRoutes(node, routes, scope, actions, candidates);
     return;
   }
 
   for (const child of node.children) {
-    walkForCsharpRoutes(child, routes, scope, facts, actions);
+    walkForCsharpRoutes(child, routes, scope, facts, actions, candidates);
   }
+}
+
+/** Every type in a class's base list, as written. */
+function baseTypes(cls: Node): string[] {
+  const list = findChildByType(cls, "base_list");
+  if (!list) return [];
+  return list.namedChildren.filter((c) => c.type !== "comment" && c.type !== "argument_list").map((c) => c.text.replace(/\s+/g, ""));
+}
+
+/**
+ * Attributes ASP.NET (or a common library) defines, whose meaning this
+ * extractor already knows or which never route. Anything else may be the
+ * project's own routing attribute and is recorded for the resolver.
+ */
+const KNOWN_ATTRIBUTES = new Set([
+  "Route", ...Object.keys(CSHARP_HTTP_ATTRIBUTES), "AcceptVerbs", "ApiController", "Controller", "NonController", "NonAction",
+  "Authorize", "AllowAnonymous", "ApiVersion", "ApiVersionNeutral", "MapToApiVersion", "Area",
+  "Produces", "ProducesResponseType", "ProducesDefaultResponseType", "ProducesErrorResponseType", "Consumes",
+  "ApiExplorerSettings", "Obsolete", "ResponseCache", "RequestSizeLimit", "DisableRequestSizeLimit", "RequestFormLimits",
+  "ValidateAntiForgeryToken", "IgnoreAntiforgeryToken", "AutoValidateAntiforgeryToken", "EnableCors", "DisableCors",
+  "ServiceFilter", "TypeFilter", "FormatFilter", "EnableRateLimiting", "DisableRateLimiting", "OutputCache",
+  "SwaggerOperation", "SwaggerResponse", "SwaggerTag", "Description", "DisplayName", "Tags", "EndpointSummary",
+  "EndpointDescription", "EndpointName", "ExcludeFromDescription", "DebuggerStepThrough", "DebuggerHidden",
+  "SuppressMessage", "ExcludeFromCodeCoverage", "GeneratedCode", "AttributeUsage", "Serializable", "Fact", "Theory",
+]);
+
+function customAttributes(attrs: Node[]): CsAttrUse[] {
+  const out: CsAttrUse[] = [];
+  for (const attr of attrs) {
+    const name = attributeName(attr);
+    if (!name || KNOWN_ATTRIBUTES.has(name.replace(/Attribute$/, ""))) continue;
+    out.push(attributeUse(attr, name.replace(/Attribute$/, "")));
+  }
+  return out;
 }
 
 /** First type in a class's base list (`: BaseApiController, IDisposable` → `BaseApiController`). */
@@ -187,7 +243,13 @@ function classRoutePrefix(attrs: Node[]): string | null {
 }
 
 /** Emit a RouteInfo for each HTTP-verb attribute on a method. */
-function parseMethodRoutes(methodNode: Node, routes: RouteInfo[], scope: ControllerScope, actions?: CsActionFact[]) {
+function parseMethodRoutes(
+  methodNode: Node,
+  routes: RouteInfo[],
+  scope: ControllerScope,
+  actions?: CsActionFact[],
+  candidates?: CsCandidateFact[],
+) {
   const methodName = methodNode.childForFieldName("name")?.text ?? null;
   const attrs = attributesOf(methodNode);
 
@@ -212,7 +274,22 @@ function parseMethodRoutes(methodNode: Node, routes: RouteInfo[], scope: Control
       if (v !== null) mapToVersions.push(v);
     }
   }
-  if (verbAttrs.length === 0) return;
+  if (verbAttrs.length === 0) {
+    // Routed, if at all, by a project attribute declared elsewhere (`[RestPutById]`).
+    if (!candidates || attrs.some((a) => attributeName(a) === "NonAction")) return;
+    const custom = customAttributes(attrs);
+    if (custom.length === 0) return;
+    const candidate: CsCandidateFact = { handler: methodName, attrs: custom, guards: guardAttributes(attrs) };
+    const params = parameterBindings(methodNode, "", false);
+    if (params.length > 0) candidate.params = params;
+    const versions = resolveVersions(scope, mapToVersions);
+    if (versions) {
+      candidate.versions = versions.all;
+      if (versions.deprecated.length > 0) candidate.deprecatedVersions = versions.deprecated;
+    }
+    candidates.push(candidate);
+    return;
+  }
 
   const methodGuards = guardAttributes(attrs);
   const guards = [...scope.guards, ...methodGuards];
@@ -542,12 +619,16 @@ const ROUTE_ATTRIBUTE_GATE = /\[[^\]]*\b(?:Http(?:Get|Post|Put|Patch|Delete|Head
 // A controller with no route attribute of its own — it inherits its template
 // and perhaps its actions — still needs its fact recorded.
 const CONTROLLER_CLASS_GATE = /\bclass\s+\w*Controller\b|\[\s*(?:Api)?Controller\b/;
+// A project's own routing attribute (`class V3ApiControllerAttribute : …`).
+const ATTRIBUTE_CLASS_GATE = /\bclass\s+\w+Attribute\s*:/;
 
 export const csharpRouteExtractor: RouteExtractor = {
   languages: ["csharp"],
   extractRoutes(tree, sourceText, _filePath, facts) {
     // Cheap gate: skip the full-tree walk for files with no route attributes.
-    if (!ROUTE_ATTRIBUTE_GATE.test(sourceText) && !CONTROLLER_CLASS_GATE.test(sourceText)) return [];
+    if (!ROUTE_ATTRIBUTE_GATE.test(sourceText) && !CONTROLLER_CLASS_GATE.test(sourceText) && !ATTRIBUTE_CLASS_GATE.test(sourceText)) {
+      return [];
+    }
     const routes: RouteInfo[] = [];
     extractAspnetRoutes(tree.rootNode, routes, facts);
     return routes;
