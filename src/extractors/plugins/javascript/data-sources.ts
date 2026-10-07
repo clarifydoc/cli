@@ -147,7 +147,6 @@ const NOISE_METHODS = new Set([
   "toString", "valueOf", "toJSON",
 ]);
 
-const NO_CONSTS: ReadonlyMap<string, ResolvedUrl> = new Map();
 
 export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
@@ -177,21 +176,21 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
    * per-worker singleton run sequentially), so it never leaks across files.
    */
   private root: Node | null = null;
-  private urlConsts: ReadonlyMap<string, ResolvedUrl> | null = null;
+  private urlBindings: UrlBindings | null = null;
   /** File source, kept for the one-time gql-operation scan (see {@link scanGql}). */
   private sourceText = "";
   private gqlScanned = false;
 
   override beginFile(tree: Tree, sourceText: string): void {
     this.root = tree.rootNode;
-    this.urlConsts = null;
+    this.urlBindings = null;
     this.sourceText = sourceText;
     this.gqlScanned = false;
   }
 
   override endFile(): void {
     this.root = null;
-    this.urlConsts = null;
+    this.urlBindings = null;
     this.sourceText = "";
   }
 
@@ -208,12 +207,10 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     sources.push(...extractGqlOperationCalls(src));
   }
 
-  /** Lazily build + cache the file's URL-const map (see {@link urlConsts}). */
-  private getUrlConsts(): ReadonlyMap<string, ResolvedUrl> {
-    if (this.urlConsts === null) {
-      this.urlConsts = this.root ? buildUrlConstMap(this.root) : NO_CONSTS;
-    }
-    return this.urlConsts;
+  /** Lazily build + cache the file's URL bindings (see {@link urlBindings}). */
+  private bindings(): UrlBindings | null {
+    if (this.urlBindings === null && this.root) this.urlBindings = new UrlBindings(this.root);
+    return this.urlBindings;
   }
 
   /**
@@ -229,11 +226,11 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   private resolveUrlArg(arg: Node): ResolvedUrl | null {
     if (arg.type === "string") return { url: stripQuotes(arg.text), confidence: "EXTRACTED" };
     if (arg.type === "template_string") {
-      const url = resolveTemplateUrl(arg, this.getUrlConsts());
+      const url = resolveTemplateUrl(arg, (name) => this.bindings()?.lookup(name, arg) ?? null);
       // A leftover `${…}` means the template couldn't be fully resolved.
       return { url, confidence: url.includes("${") ? "INFERRED" : "EXTRACTED" };
     }
-    if (arg.type === "identifier") return this.getUrlConsts().get(arg.text) ?? null;
+    if (arg.type === "identifier") return this.bindings()?.lookup(arg.text, arg) ?? null;
     // A URL-builder helper call: `axios.get(requestUri('vikarbesked', 'v4'))`.
     // Keep the call text verbatim (whitespace-collapsed) so a project-level pass
     // can substitute the helper's template and recover the concrete URL. Emitted
@@ -275,13 +272,15 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         const isRoot = isHttpRoot(fnName);
         const isVerb = HTTP_VERBS.has(fnName.toLowerCase());
         // A verb call on a known HTTP-client receiver (`axios.get`,
-        // `apiClient.post`, `httpClient.delete`) is itself a strong HTTP signal —
+        // `apiClient.post`, `this.http.delete`) is itself a strong HTTP signal —
         // trust it like a named root so the URL-shape check is relaxed and a
         // helper-built URL (`axios.get(requestUri(...))`, no literal slash) is
-        // still captured.
+        // still captured. Only the receiver the verb is called ON counts, and
+        // only a client-shaped name: trusting the root of any chain read
+        // `request.params.get('page')` in a test predicate as a GET to "page".
         const recvRoot = fn && fn.type === "member_expression" ? memberRoot(fn) : null;
-        const trustedReceiver =
-          !!recvRoot && (isHttpRoot(recvRoot) || /client$/i.test(recvRoot));
+        const recv = fn && fn.type === "member_expression" ? directReceiver(fn) : null;
+        const trustedReceiver = !!recv && (HTTP_RECEIVER_RE.test(recv) || /client$/i.test(recv));
         // `app.get("/x", handler)` / `router.post(...)` are inbound route
         // definitions (already captured as routes), not outbound calls — exclude.
         if ((isRoot || isVerb) && fn && !isServerRouteDef(fn, node)) {
@@ -291,15 +290,24 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           // Bare HTTP verbs (`get`/`post`/...) collide with `Map.get`,
           // `searchParams.get`, etc., so require a URL-shaped argument; named
           // clients (fetch/axios/http/request) and trusted client receivers are
-          // trusted without it.
-          const trusted = isRoot || trustedReceiver;
+          // trusted without it. A name that merely CONTAINS fetch/http
+          // (`createFetchHandler('system.status', '/system/status')`) is a
+          // project function that may take anything first — it needs the
+          // URL-shaped argument too.
+          // A client name as a METHOD counts only on a receiver that is itself
+          // a client or a global (`$.ajax`, `window.fetch`, `api.request`):
+          // `navigator.wakeLock.request("screen")` is not an HTTP call.
+          const exactRoot =
+            HTTP_ROOTS.has(fnName.toLowerCase()) &&
+            (fn.type === "identifier" || trustedReceiver || (!!recv && GLOBAL_RECEIVERS.has(recv)));
+          const trusted = exactRoot || trustedReceiver;
           // A call-expression URL arg (a helper-built URL with no literal slash)
           // needs a STRICT HTTP signal — an exact client root (`fetch`/`axios`/…)
           // or a client member receiver (`axios.get`) — so a local data-fetcher
           // named `fetchX(localArg)` (matched by the fuzzy isHttpRoot) isn't read
           // as an HTTP call to a non-URL argument.
           const argIsCall = firstArg?.type === "call_expression";
-          const strictHttp = HTTP_ROOTS.has(fnName.toLowerCase()) || trustedReceiver;
+          const strictHttp = exactRoot || trustedReceiver;
           if (
             resolved != null &&
             (looksLikeUrl(resolved.url) || (trusted && (!argIsCall || strictHttp)))
@@ -509,8 +517,10 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       const method = literalString(objectPropValue(node, "method"));
       // Require a `method` sibling: that's what distinguishes a real request
       // descriptor (`{ method, url }`) from query/mutation cache keys and other
-      // metadata objects that merely carry a `url` (`[{ url }] as const`).
-      if (url && method) {
+      // metadata objects that merely carry a `url` (`[{ url }] as const`). A
+      // `handler` makes it the opposite: an inbound route config
+      // (`fastify.route({ method, url, handler })`).
+      if (url && method && !hasProp(node, "handler")) {
         sources.push(this.ds({
           kind: "api-call",
           name: method.toLowerCase(),
@@ -559,6 +569,12 @@ function literalString(node: Node | null): string | null {
 }
 
 /** Value node of `obj`'s property named `key` (handles bare and quoted keys). */
+/** Whether an object literal has this key, as a pair or a shorthand (`{ handler }`). */
+function hasProp(obj: Node, key: string): boolean {
+  if (objectPropValue(obj, key)) return true;
+  return obj.namedChildren.some((c) => c.type === "shorthand_property_identifier" && c.text === key);
+}
+
 function objectPropValue(obj: Node, key: string): Node | null {
   for (const pair of obj.children) {
     if (pair.type !== "pair") continue;
@@ -570,46 +586,105 @@ function objectPropValue(obj: Node, key: string): Node | null {
   return null;
 }
 
+/** Nodes that open a scope for `const` / `let` / `var` bindings. */
+const FUNCTION_SCOPES = new Set([
+  "function_declaration",
+  "function_expression",
+  "function",
+  "arrow_function",
+  "method_definition",
+  "generator_function_declaration",
+  "generator_function",
+]);
+
+interface UrlBinding {
+  start: number;
+  /** Node id of the enclosing function, or of the program for a module binding. */
+  scope: number;
+  value: Node;
+}
+
 /**
- * Build the file-local URL-const map: every `const/let X = <…>` whose value
- * folds to a URL-shaped path. Powered by the symbolic value resolver, so a
- * value assembled by concatenation across several local assignments
- * (`const url = base + '/api/' + v`) or built on an env base
- * (`import.meta.env.VITE_API + '/api'`) now resolves — where the previous
- * literal-only folder silently dropped it. A leading env/runtime base is
- * stripped to keep the path app-relative (its env var recorded in `baseEnv`).
- * Only URL-shaped values are kept so the map stays an endpoint table rather than
- * a dump of every string const.
+ * The file's `const/let/var X = <…>` bindings, resolved where they are USED.
+ * Real Vue/React data layers hoist endpoints into module consts — frequently
+ * `import.meta.env.VITE_X ?? '/site/cui_checkout_json'` — and Angular services
+ * build `let url = this.baseUrl + '…'` in each method, so a `fetch(X)` needs
+ * the binding that is in scope at the call: the nearest enclosing function's
+ * own declaration before it, else an outer function's, else the module's. A
+ * parameter of that name shadows everything outside it. (The file-wide map
+ * this replaced kept one binding per name, so three methods each posting to
+ * their own `url` all got the last method's URL.)
+ *
+ * Values fold through the symbolic value resolver, so a URL assembled by
+ * concatenation across several bindings (`const url = base + '/api/' + v`) or
+ * on an env base (`import.meta.env.VITE_API + '/api'`) resolves; a leading
+ * env/runtime base is stripped to keep the path app-relative (its env var in
+ * `baseEnv`). Only URL-shaped values count.
+ *
+ * Built lazily — the first time a URL argument is an identifier or template —
+ * so the overwhelmingly common `fetch('/x')` never pays for the walk.
  */
-function buildUrlConstMap(root: Node): ReadonlyMap<string, ResolvedUrl> {
-  // A file-wide scope of every binding lets a const's fold chase refs to other
-  // consts (multi-hop). The URL table itself is built by walking declarators in
-  // document order and keeping the first URL-shaped fold per name — matching the
-  // legacy first-URL-wins semantics (a name whose first binding isn't URL-shaped
-  // can still be filled by a later URL-shaped one).
-  const scope = buildScope(root, { logical: true });
-  const map = new Map<string, ResolvedUrl>();
-  const stack: Node[] = [root];
-  while (stack.length > 0) {
-    const n = stack.pop()!;
-    if (n.type === "variable_declarator") {
-      const name = n.childForFieldName("name");
-      const value = n.childForFieldName("value");
-      if (name && name.type === "identifier" && value && !map.has(name.text)) {
-        const folded = foldValue(astToValueExpr(value, { logical: true }), scope, {
-          envMode: "name",
-        });
-        if (folded.text != null) {
-          const { url, baseEnv } = toAppRelativeUrl(folded.text);
-          if (looksLikeUrl(url)) {
-            map.set(name.text, { url, confidence: folded.confidence, ...(baseEnv ? { baseEnv } : {}) });
-          }
+class UrlBindings {
+  private readonly byName = new Map<string, UrlBinding[]>();
+  private readonly folded = new Map<number, ResolvedUrl | null>();
+  private readonly scope: ReturnType<typeof buildScope>;
+
+  constructor(private readonly root: Node) {
+    this.scope = buildScope(root, { logical: true });
+    const stack: Array<[Node, number]> = [[root, root.id]];
+    while (stack.length > 0) {
+      const [n, scope] = stack.pop()!;
+      if (n.type === "variable_declarator") {
+        const name = n.childForFieldName("name");
+        const value = n.childForFieldName("value");
+        if (name?.type === "identifier" && value) {
+          const list = this.byName.get(name.text) ?? [];
+          list.push({ start: n.startIndex, scope, value });
+          this.byName.set(name.text, list);
         }
       }
+      const inner = FUNCTION_SCOPES.has(n.type) ? n.id : scope;
+      for (const c of n.children) stack.push([c, inner]);
     }
-    for (const c of n.children) stack.push(c);
+    for (const list of this.byName.values()) list.sort((a, b) => a.start - b.start);
   }
-  return map;
+
+  lookup(name: string, at: Node): ResolvedUrl | null {
+    const list = this.byName.get(name);
+    if (!list) return null;
+    for (let p: Node | null = at.parent; p; p = p.parent) {
+      if (!FUNCTION_SCOPES.has(p.type)) continue;
+      let pick: UrlBinding | null = null;
+      for (const b of list) if (b.scope === p.id && b.start < at.startIndex) pick = b;
+      if (pick) return this.fold(pick);
+      if (declaresParam(p, name)) return null;
+    }
+    // Module scope: a function body runs after the module has initialized, so
+    // a module binding declared below its use still counts.
+    const mod = list.filter((b) => b.scope === this.root.id);
+    const pick = [...mod].reverse().find((b) => b.start < at.startIndex) ?? mod[0];
+    return pick ? this.fold(pick) : null;
+  }
+
+  private fold(b: UrlBinding): ResolvedUrl | null {
+    if (this.folded.has(b.start)) return this.folded.get(b.start)!;
+    let out: ResolvedUrl | null = null;
+    const folded = foldValue(astToValueExpr(b.value, { logical: true }), this.scope, { envMode: "name" });
+    if (folded.text != null) {
+      const { url, baseEnv } = toAppRelativeUrl(folded.text);
+      if (looksLikeUrl(url)) out = { url, confidence: folded.confidence, ...(baseEnv ? { baseEnv } : {}) };
+    }
+    this.folded.set(b.start, out);
+    return out;
+  }
+}
+
+/** Whether a function node declares a parameter of this name. */
+function declaresParam(fnNode: Node, name: string): boolean {
+  const params = fnNode.childForFieldName("parameters") ?? fnNode.childForFieldName("parameter");
+  if (!params) return false;
+  if (params.type === "identifier") return params.text === name;
+  return new RegExp(`(^|[^\\w$])${name.replace(/\$/g, "\\$")}([^\\w$]|$)`).test(params.text);
 }
 
 /**
@@ -618,13 +693,13 @@ function buildUrlConstMap(root: Node): ReadonlyMap<string, ResolvedUrl> {
  * and unresolved `${…}`) verbatim — so a template that references no known URL
  * const yields exactly its original text.
  */
-function resolveTemplateUrl(tpl: Node, consts: ReadonlyMap<string, ResolvedUrl>): string {
+function resolveTemplateUrl(tpl: Node, lookup: (name: string) => ResolvedUrl | null): string {
   let out = "";
   for (const part of tpl.children) {
     if (part.type === "`") continue;
     if (part.type === "template_substitution") {
       const inner = part.namedChild(0);
-      const hit = inner && inner.type === "identifier" ? consts.get(inner.text) : undefined;
+      const hit = inner && inner.type === "identifier" ? lookup(inner.text) : null;
       if (hit) {
         out += hit.url;
       } else {
@@ -649,6 +724,26 @@ function firstArgIsFunction(callNode: Node): boolean {
     (a.type === "arrow_function" || a.type === "function_expression" || a.type === "function")
   );
 }
+
+/**
+ * The receiver a method is called ON, one hop: `api.get` → "api",
+ * `this.http.get` → "http". A longer chain (`request.params.get`) → null.
+ */
+function directReceiver(fn: Node): string | null {
+  const obj = fn.childForFieldName("object");
+  if (!obj) return null;
+  if (obj.type === "identifier") return obj.text;
+  if (obj.type === "member_expression" && obj.childForFieldName("object")?.type === "this") {
+    return obj.childForFieldName("property")?.text ?? null;
+  }
+  return null;
+}
+
+/** Globals an HTTP root may hang off: jQuery's `$.ajax`, `window.fetch`. */
+const GLOBAL_RECEIVERS = new Set(["$", "jQuery", "window", "globalThis", "self"]);
+
+/** A receiver named like an HTTP client: `http`, `$http`, `httpClient`, `axios`, `$axios`, `api`, `apiService`, `requests`. */
+const HTTP_RECEIVER_RE = /^\$?(http|axios|ky|got|api|request|requests)(client|service)?$/i;
 
 /** Root identifier of a member chain: `apiClient.post` → "apiClient", `a.b.c` → "a". */
 function memberRoot(fn: Node): string | null {

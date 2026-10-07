@@ -78,7 +78,7 @@ export interface CorpusMetrics {
     /** Targets the linker could join on: a path, not an external URL or a bare word. */
     joinable: number;
     joinableProduction: number;
-    /** Production calls whose target is a bare word — a call that was never an HTTP call. */
+    /** Production calls whose target is a bare word (no `/`, not a helper call) — often a call that was never an HTTP call. */
     noSlashTargets: number;
     /** Targets that still start with an unresolved hole (`${this.baseUrl}x`). */
     leadingHole: number;
@@ -186,7 +186,9 @@ export function computeCorpusMetrics(summary: CorpusSummary, opts: CorpusMetrics
       joinable++;
       if (role === "production") joinableProduction++;
     }
-    if (role === "production" && c.target && !c.target.includes("/") && !startsWithHole(c.target)) noSlash++;
+    // A helper call left unresolved (`routes.item(id)`) is a URL nobody could
+    // build yet, not a word mistaken for one.
+    if (role === "production" && c.target && !/[/(]/.test(c.target) && !startsWithHole(c.target)) noSlash++;
     if (startsWithHole(c.target)) leadingHole++;
     if (c.baseExpr) baseUnresolved++;
   }

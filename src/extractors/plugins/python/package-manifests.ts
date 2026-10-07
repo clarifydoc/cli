@@ -25,16 +25,27 @@ function parseRequirements(text: string, declaredIn: string, isDev: boolean): De
 function parsePyproject(text: string, declaredIn: string): DeclaredPackage[] {
   const out: DeclaredPackage[] = [];
   const lines = text.split(/\r?\n/);
-  let mode: "none" | "pep621" | "poetry-main" | "poetry-dev" = "none";
+  let mode: "none" | "pep621" | "pep621-optional" | "poetry-main" | "poetry-dev" = "none";
+  const quotedEntries = (line: string, isDev: boolean) => {
+    // each quoted entry "pkg>=1.0", "celery[redis]~=5.5"
+    for (const q of line.matchAll(/["']([A-Za-z0-9_.-]+[^"']*)["']/g)) {
+      out.push(...parseRequirements(q[1]!, declaredIn, isDev));
+    }
+  };
   for (const raw of lines) {
     const line = raw.trim();
     const section = line.match(/^\[([^\]]+)\]$/);
     if (section) {
       const s = section[1]!;
-      if (/optional-dependencies/.test(s)) mode = "poetry-dev";
+      // PEP 621 extras: `group = ["pkg>=1", …]` — arrays of requirements, not Poetry `name = "version"`.
+      if (/optional-dependencies/.test(s)) mode = "pep621-optional";
       else if (/tool\.poetry\.dependencies/.test(s)) mode = "poetry-main";
       else if (/tool\.poetry\.(group\..*\.)?dependencies/.test(s)) mode = "poetry-dev";
       else mode = "none";
+      continue;
+    }
+    if (mode === "pep621-optional") {
+      quotedEntries(line, true);
       continue;
     }
     if (mode === "none") {
@@ -42,11 +53,10 @@ function parsePyproject(text: string, declaredIn: string): DeclaredPackage[] {
       if (arr) mode = "pep621";
     }
     if (mode === "pep621") {
-      // each quoted entry "pkg>=1.0"
-      for (const q of line.matchAll(/["']([A-Za-z0-9_.-]+[^"']*)["']/g)) {
-        out.push(...parseRequirements(q[1]!, declaredIn, false));
-      }
-      if (line.includes("]")) mode = "none";
+      quotedEntries(line, false);
+      // The array closes on a `]` OUTSIDE quotes — `"celery[redis]~=5.5"` has
+      // one inside, and ending there dropped every dependency after it.
+      if (line.replace(/(["'])(?:(?!\1).)*\1/g, "").includes("]")) mode = "none";
       continue;
     }
     if (mode === "poetry-main" || mode === "poetry-dev") {

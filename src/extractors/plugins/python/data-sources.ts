@@ -36,22 +36,13 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           }));
           return;
         }
-        // requests.get(), httpx.get(), etc.
-        if (
-          fnName.includes("requests.") ||
-          fnName.includes("httpx.") ||
-          fnName.includes("aiohttp.")
-        ) {
-          const args = node.childForFieldName("arguments");
-          let target: string | null = null;
-          if (args && args.childCount > 1) {
-            const firstArg = args.child(1);
-            if (firstArg) target = firstArg.text.replace(/^['"]|['"]$/g, "");
-          }
+        // requests.get(url), httpx.post(url), session.get("/api/x")
+        const http = httpCall(fn!, node);
+        if (http) {
           sources.push(this.ds({
             kind: "api-call",
-            name: fnName,
-            target,
+            name: http.name,
+            target: http.target,
             line: node.startPosition.row + 1,
           }));
         }
@@ -154,4 +145,55 @@ function pyArg(call: Node, keyword: string, index: number): string | null {
     ? value.text.replace(/^[rbfu]*['"]{1,3}|['"]{1,3}$/gi, "")
     : value.text.replace(/\s+/g, " ");
   return text && text.length <= 64 ? text : null;
+}
+
+/** HTTP client modules whose verb functions are always outbound calls. */
+const PY_HTTP_MODULES = new Set(["requests", "httpx", "aiohttp"]);
+const PY_HTTP_VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
+/** A client/session object (`session.get`, `self.client.post`) — an HTTP call only with a URL-shaped argument. */
+const PY_HTTP_RECEIVER_RE = /(^|_)(session|client|http)$/i;
+
+/**
+ * An outbound HTTP call, decided on the call's SHAPE rather than on a substring
+ * of its text. The old substring test (`fnName.includes("requests.")`) read
+ * `pending_requests.get("task_type")`, `httpx.Response(200)` and
+ * `requests.get(url).json().get("page")` as HTTP calls, with the first
+ * argument's raw text — a variable name, a status code — as the URL.
+ *
+ * Accepted: `<module>.<verb>(…)` on requests / httpx / aiohttp, and
+ * `<module>.request(VERB, url)`; or a verb on a session/client receiver whose
+ * first argument is a URL-shaped string. The target is a string literal's
+ * content (an f-string keeps its `{holes}`), else null — a variable's name is
+ * not a URL.
+ */
+function httpCall(fn: Node, call: Node): { name: string; target: string | null } | null {
+  if (fn.type !== "attribute") return null;
+  const leaf = fn.childForFieldName("attribute")?.text ?? "";
+  const obj = fn.childForFieldName("object");
+  if (!obj) return null;
+  const args = call.childForFieldName("arguments")?.namedChildren.filter((a) => a.type !== "keyword_argument") ?? [];
+  const recv = obj.type === "identifier" ? obj.text : obj.type === "attribute" ? obj.childForFieldName("attribute")?.text ?? "" : "";
+
+  if (obj.type === "identifier" && PY_HTTP_MODULES.has(recv)) {
+    if (PY_HTTP_VERBS.has(leaf)) return { name: `${recv}.${leaf}`, target: pyStringLiteral(args[0]) };
+    if (leaf === "request") {
+      const method = pyStringLiteral(args[0]);
+      return method && PY_HTTP_VERBS.has(method.toLowerCase())
+        ? { name: method.toLowerCase(), target: pyStringLiteral(args[1]) }
+        : null;
+    }
+    return null;
+  }
+  if (PY_HTTP_VERBS.has(leaf) && PY_HTTP_RECEIVER_RE.test(recv)) {
+    const target = pyStringLiteral(args[0]);
+    if (target && (target.includes("/") || /^https?:/i.test(target))) return { name: leaf, target };
+  }
+  return null;
+}
+
+/** Content of a string literal or f-string (`{holes}` kept), else null. */
+function pyStringLiteral(node: Node | undefined): string | null {
+  if (!node || node.type !== "string") return null;
+  const m = /^[a-zA-Z]*("""|'''|"|')([\s\S]*)\1$/.exec(node.text);
+  return m ? m[2]! : null;
 }

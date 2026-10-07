@@ -7,7 +7,7 @@ import { NO_SYMLINKS } from "./glob-safety.js";
 import { loadIgnorePatterns, isIgnored } from "./clarifydoc-ignore.js";
 import type { FrameworkDetection } from "../types/analysis.js";
 import type { ProjectInfo } from "../types/plugin.js";
-import { FRAMEWORK_RULES, FRAMEWORK_MARKER_CANDIDATES } from "../extractors/registry.js";
+import { FRAMEWORK_RULES, FRAMEWORK_MARKER_CANDIDATES, PACKAGE_MANAGERS } from "../extractors/registry.js";
 
 /**
  * Framework detection over project/sub-project manifests. The rules themselves
@@ -78,20 +78,15 @@ export async function gatherProjectInfo(
     // Try pyproject.toml (basic parse)
     try {
       const raw = await readFile(join(root, "pyproject.toml"), "utf-8");
-      // Extract dependencies line by line (simple parse, not full TOML)
-      const deps: string[] = [];
-      let inDeps = false;
-      for (const line of raw.split("\n")) {
-        if (line.match(/^\[.*dependencies.*\]/i)) {
-          inDeps = true;
-          continue;
-        }
-        if (line.startsWith("[") && inDeps) break;
-        if (inDeps) {
-          const match = line.match(/["']([^"']+)["']/);
-          if (match) deps.push(match[1]);
-        }
-      }
+      // The owning plugin's manifest parser reads every layout — PEP 621
+      // `[project] dependencies = [...]`, optional-dependencies, Poetry tables —
+      // where a section-header scan here missed `[project]` (paperless-ngx was
+      // not detected as Django) and took Poetry's version strings for names.
+      const spec = PACKAGE_MANAGERS.flatMap((pm) => pm.manifests).find((m) => m.files.includes("pyproject.toml"));
+      const declared = spec
+        ? await spec.parse(raw, { declaredIn: "pyproject.toml", path: "pyproject.toml", readSibling: async () => null })
+        : [];
+      const deps = declared.map((d) => d.name);
       if (deps.length > 0) {
         pythonManifest = { dependencies: deps };
       }
