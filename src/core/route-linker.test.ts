@@ -421,3 +421,77 @@ describe("linkApiCallsToRoutes — wildcard-only URLs", () => {
     expect(links).toHaveLength(1);
   });
 });
+
+describe("normalizeRoutePath — holes before separators", () => {
+  it("keeps a `?` inside a template-literal hole from cutting the path", () => {
+    expect(normalizeRoutePath("/api/${isAdmin ? 'a' : 'b'}/items")).toBe("/api/{}/items");
+  });
+
+  it("counts nested braces, so one hole stays one hole", () => {
+    expect(normalizeRoutePath("/api/${fn({ a: 1 })}/x")).toBe("/api/{}/x");
+  });
+
+  it("reads Flask/Django converters as parameters", () => {
+    expect(normalizeRoutePath("/items/<int:id>/")).toBe("/items/{}");
+    expect(normalizeRoutePath("users/<pk>/notes")).toBe("/users/{}/notes");
+  });
+
+  it("reduces a Django re_path regex to the path it matches", () => {
+    expect(normalizeRoutePath("^users/(?P<pk>[^/.]+)/$")).toBe("/users/{}");
+    expect(normalizeRoutePath("^documents/(?P<pk>\\d+)/versions/(?P<version_id>\\d+)/?$")).toBe(
+      "/documents/{}/versions/{}",
+    );
+    expect(normalizeRoutePath("^$")).toBe("/");
+    expect(normalizeRoutePath("^api/statistics/$")).toBe("/api/statistics");
+  });
+
+  it("drops a format-suffix group like a response extension", () => {
+    expect(normalizeRoutePath("^users\\.(?P<format>[a-z0-9]+)/?$")).toBe("/users");
+    expect(normalizeRoutePath("/users.{format}")).toBe("/users");
+  });
+
+  it("keeps ASP.NET constraints and catch-alls as one parameter", () => {
+    expect(normalizeRoutePath("/api/files/{id:regex(^\\d+$)}")).toBe("/api/files/{}");
+    expect(normalizeRoutePath("/spa/{*path}")).toBe("/spa/{}");
+  });
+});
+
+describe("linkApiCallsToRoutes — normalized base prefixes", () => {
+  it("strips a concrete `/api/vN` base, not just `/api/v1` and `/api/v2`", () => {
+    const links = linkApiCallsToRoutes(
+      [apiCall("web/movie.js", "post", "/api/v3/movie")],
+      [route("api/MovieController.cs", "POST", "/movie", "AddMovie")],
+    );
+    expect(links[0]).toMatchObject({ target: "api/MovieController.cs", matchedVia: "base-prefix:/api/v{}" });
+  });
+
+  it("mirrors a versioned base the route carries but the call omits", () => {
+    const links = linkApiCallsToRoutes(
+      [apiCall("web/movie.js", "post", "/movie")],
+      [route("openapi.json", "POST", "/api/v3/movie", "post_movie")],
+    );
+    expect(links[0]).toMatchObject({ target: "openapi.json", matchedVia: "base-prefix:/api/v{}", confidence: "INFERRED" });
+  });
+
+  it("joins a route path written without a slash", () => {
+    const links = linkApiCallsToRoutes([apiCall("web/a.js", "get", "/health")], [route("urls.py", "GET", "health", "health")]);
+    expect(links).toHaveLength(1);
+  });
+});
+
+describe("linkApiCallsToRoutes — what the call itself knows", () => {
+  it("never makes a link surer than the URL the extractor was unsure of", () => {
+    const call = { ...apiCall("web/a.js", "get", "/api/x"), targetConfidence: "AMBIGUOUS" as const };
+    const links = linkApiCallsToRoutes([call], [route("srv/x.ts", "GET", "/api/x", "x")]);
+    expect(links[0]!.confidence).toBe("AMBIGUOUS");
+  });
+
+  it("reads the API version from `?api-version=` when the path carries none", () => {
+    const v = (file: string, versions: string[]) => ({ ...route(file, "GET", "/api/catalog/items", "Items"), versions });
+    const links = linkApiCallsToRoutes(
+      [apiCall("web/catalog.ts", "get", "/api/catalog/items?api-version=2.0")],
+      [v("Catalog/V1.cs", ["1.0"]), v("Catalog/V2.cs", ["2.0"])],
+    );
+    expect(links[0]).toMatchObject({ target: "Catalog/V2.cs", confidence: "EXTRACTED" });
+  });
+});
