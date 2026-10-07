@@ -7,6 +7,7 @@ import { stripQuotes } from "../../shared/node-helpers.js";
 import { foldValue, toAppRelativeUrl } from "../../shared/value-resolver.js";
 import { astToValueExpr, buildScope } from "./value-capture.js";
 import { extractGqlOperationCalls } from "../shared/graphql-operations.js";
+import { GENERATED_CLIENT_MARKER, generatedClientCall } from "./generated-clients.js";
 
 /** A resolved api-call URL: the app-relative path plus recovered provenance. */
 interface ResolvedUrl {
@@ -180,10 +181,13 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   /** File source, kept for the one-time gql-operation scan (see {@link scanGql}). */
   private sourceText = "";
   private gqlScanned = false;
+  /** The file is an openapi-generator client (see generated-clients.ts). */
+  private generatedClient = false;
 
   override beginFile(tree: Tree, sourceText: string): void {
     this.root = tree.rootNode;
     this.urlBindings = null;
+    this.generatedClient = sourceText.includes(GENERATED_CLIENT_MARKER);
     this.sourceText = sourceText;
     this.gqlScanned = false;
   }
@@ -285,8 +289,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         // definitions (already captured as routes), not outbound calls — exclude.
         if ((isRoot || isVerb) && fn && !isServerRouteDef(fn, node)) {
           const args = node.childForFieldName("arguments");
-          const firstArg = args && args.childCount > 1 ? args.child(1) : null;
-          const resolved = firstArg ? this.resolveUrlArg(firstArg) : null;
+          let firstArg = args && args.childCount > 1 ? args.child(1) : null;
           // Bare HTTP verbs (`get`/`post`/...) collide with `Map.get`,
           // `searchParams.get`, etc., so require a URL-shaped argument; named
           // clients (fetch/axios/http/request) and trusted client receivers are
@@ -301,6 +304,18 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
             HTTP_ROOTS.has(fnName.toLowerCase()) &&
             (fn.type === "identifier" || trustedReceiver || (!!recv && GLOBAL_RECEIVERS.has(recv)));
           const trusted = exactRoot || trustedReceiver;
+          // `http.request('POST', url)` / `this.http.request('GET', url)`:
+          // the verb comes first and the URL second.
+          let callName = fnName;
+          const positional = args?.namedChildren.filter((a) => a.type !== "comment") ?? [];
+          if (trusted && fnName.toLowerCase() === "request" && positional.length > 1) {
+            const verb = literalString(positional[0]!);
+            if (verb && HTTP_VERBS.has(verb.toLowerCase())) {
+              callName = verb.toLowerCase();
+              firstArg = positional[1]!;
+            }
+          }
+          const resolved = firstArg ? this.resolveUrlArg(firstArg) : null;
           // A call-expression URL arg (a helper-built URL with no literal slash)
           // needs a STRICT HTTP signal — an exact client root (`fetch`/`axios`/…)
           // or a client member receiver (`axios.get`) — so a local data-fetcher
@@ -314,7 +329,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           ) {
             sources.push(this.ds({
               kind: "api-call",
-              name: fnName,
+              name: callName,
               target: resolved.url,
               line: node.startPosition.row + 1,
               // Recovered env base (display only; `target` stays app-relative).
@@ -513,21 +528,46 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     // including the URL-builder helper `{ method, url: `/api/x` }` whose value is
     // referenced indirectly at the call site.
     if (node.type === "object") {
-      const url = literalString(objectPropValue(node, "url"));
-      const method = literalString(objectPropValue(node, "method"));
-      // Require a `method` sibling: that's what distinguishes a real request
-      // descriptor (`{ method, url }`) from query/mutation cache keys and other
-      // metadata objects that merely carry a `url` (`[{ url }] as const`). A
-      // `handler` makes it the opposite: an inbound route config
+      // `type` is jQuery's spelling of the method (`$.ajax({ type: 'POST', url })`);
+      // either only counts when its value IS an HTTP verb.
+      const verb = literalString(objectPropValue(node, "method")) ?? literalString(objectPropValue(node, "type"));
+      // …or the verb is the call the descriptor is handed to: hey-api's
+      // generated `(options.client ?? client).post({ url: '/x', ...options })`.
+      const callee = node.parent?.type === "arguments" ? calleeLeaf(node.parent.parent?.childForFieldName("function") ?? null) : null;
+      const method = verb && HTTP_VERBS.has(verb.toLowerCase())
+        ? verb.toLowerCase()
+        : callee && HTTP_VERBS.has(callee.toLowerCase()) && objectPropValue(node, "url")
+          ? callee.toLowerCase()
+          : null;
+      // `path` is Node's `http.request({ method, path })` — trusted only beside a
+      // verb, because a router location (`router.push({ path, params })`) has one too.
+      const url = literalString(objectPropValue(node, "url")) ?? (method ? literalString(objectPropValue(node, "path")) : null);
+      // A `method` sibling distinguishes a real request descriptor
+      // (`{ method, url }`) from query/mutation cache keys and other metadata
+      // objects that merely carry a `url` (`[{ url }] as const`). Without one,
+      // a descriptor handed to a call with request-shaped company
+      // (`createAjaxRequest({ url: '/calendar', data })`) is still a request —
+      // a GET by jQuery's default, left unnamed so the linker matches on path.
+      // A `handler` makes it the opposite: an inbound route config
       // (`fastify.route({ method, url, handler })`).
-      if (url && method && !hasProp(node, "handler")) {
-        sources.push(this.ds({
-          kind: "api-call",
-          name: method.toLowerCase(),
-          target: url,
-          line: node.startPosition.row + 1,
-        }));
+      if (url && !hasProp(node, "handler")) {
+        const requestShaped =
+          !method && node.parent?.type === "arguments" && looksLikeUrl(url) && REQUEST_KEYS.some((k) => hasProp(node, k));
+        if (method || requestShaped) {
+          sources.push(this.ds({
+            kind: "api-call",
+            name: method ?? "request",
+            target: url,
+            line: node.startPosition.row + 1,
+          }));
+        }
       }
+    }
+
+    // A generated OpenAPI client's operation (see generated-clients.ts).
+    if (node.type === "variable_declarator" && this.generatedClient) {
+      const op = generatedClientCall(node);
+      if (op) sources.push(op);
     }
 
     // process.env access
@@ -553,14 +593,24 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
  */
 function literalString(node: Node | null): string | null {
   let n = node;
-  while (
-    n &&
-    (n.type === "as_expression" ||
+  while (n) {
+    if (
+      n.type === "as_expression" ||
       n.type === "satisfies_expression" ||
       n.type === "parenthesized_expression" ||
-      n.type === "non_null_expression")
-  ) {
-    n = n.namedChild(0);
+      n.type === "non_null_expression"
+    ) {
+      n = n.namedChild(0);
+      continue;
+    }
+    // `` `/users/{id}`.replace('{id}', id) `` — the literal before the
+    // substitution is the template; its `{id}` stays a parameter.
+    const fn = n.type === "call_expression" ? n.childForFieldName("function") : null;
+    if (fn?.type === "member_expression" && fn.childForFieldName("property")?.text === "replace") {
+      n = fn.childForFieldName("object");
+      continue;
+    }
+    break;
   }
   if (n && (n.type === "string" || n.type === "template_string")) {
     return stripQuotes(n.text);
@@ -738,6 +788,9 @@ function directReceiver(fn: Node): string | null {
   }
   return null;
 }
+
+/** Keys only a request descriptor carries beside its `url`. */
+const REQUEST_KEYS = ["data", "body", "params", "headers", "dataType", "contentType", "traditional", "timeout"];
 
 /** Globals an HTTP root may hang off: jQuery's `$.ajax`, `window.fetch`. */
 const GLOBAL_RECEIVERS = new Set(["$", "jQuery", "window", "globalThis", "self"]);

@@ -401,7 +401,9 @@ describe("JS api-call trust: only a real client is believed without a URL", () =
       $.ajax({ url: '/api/a', type: 'GET' });
       window.fetch('/api/b');
       api.request('/api/c');`);
-    expect(calls.map((c) => c.target)).toEqual(["/api/b", "/api/c"]);
+    // `$.ajax` itself takes no URL argument; its descriptor is read by the
+    // object branch (`type` is jQuery's method key).
+    expect(calls.map((c) => c.target)).toEqual(["/api/a", "/api/b", "/api/c"]);
   });
 
   it("does not treat an inbound route config as an outbound request", async () => {
@@ -410,5 +412,90 @@ describe("JS api-call trust: only a real client is believed without a URL", () =
       fastify.route({ method: 'POST', url: '/api/items', handler });
       axios({ method: 'get', url: '/api/users' });`);
     expect(calls.map((c) => c.target)).toEqual(["/api/users"]);
+  });
+});
+
+describe("JS request descriptors and positional request()", () => {
+  it("reads jQuery's `type` and Node's `path`, but only beside a real verb", async () => {
+    const calls = await apiCallsOf(`
+      $.ajax({ type: 'POST', url: '/api/a' });
+      http.request({ method: 'GET', path: '/api/b' });
+      notify({ type: 'success', url: '/docs' });
+      this.$router.push({ path: '/users', params: { id } });`);
+    expect(calls.map((c) => [c.name, c.target])).toEqual([
+      ["post", "/api/a"],
+      ["get", "/api/b"],
+    ]);
+  });
+
+  it("takes the method from the verb a descriptor is handed to (hey-api)", async () => {
+    const calls = await apiCallsOf(`
+      export const migrate = (options) => (options.client ?? client).post({ url: '/migration/trello/migrate', ...options });`);
+    expect(calls.map((c) => [c.name, c.target])).toEqual([["post", "/migration/trello/migrate"]]);
+  });
+
+  it("accepts a method-less descriptor passed to a call with request-shaped keys (Radarr)", async () => {
+    const calls = await apiCallsOf(`
+      const promise = createAjaxRequest({ url: '/calendar', data: { start, end } }).request;
+      const key = [{ url: '/api/cache-key' }];
+      useThing({ url: '/not/a/request' });`);
+    expect(calls.map((c) => [c.name, c.target])).toEqual([["request", "/calendar"]]);
+  });
+
+  it("reads the verb first and the URL second in request(VERB, url)", async () => {
+    const calls = await apiCallsOf(`
+      class A { save() { return this.http.request('POST', '/api/upload', { body }); } }
+      http.request('DELETE', \`/api/items/\${id}\`);`);
+    expect(calls.map((c) => [c.name, c.target])).toEqual([
+      ["post", "/api/upload"],
+      ["delete", "/api/items/${id}"],
+    ]);
+  });
+
+  it("unwraps a .replace() on a literal path, keeping its parameter", async () => {
+    const calls = await apiCallsOf(`axios({ method: 'GET', url: '/users/{id}'.replace('{id}', String(id)) });`);
+    expect(calls.map((c) => c.target)).toEqual(["/users/{id}"]);
+  });
+});
+
+describe("JS generated OpenAPI clients (openapi-generator typescript-axios)", () => {
+  const generated = `
+    export const PostV1alpha1ApiAxiosParamCreator = function (configuration?: Configuration) {
+      return {
+        getPost: async (name: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+          assertParamExists('getPost', 'name', name)
+          const localVarPath = \`/apis/content.halo.run/v1alpha1/posts/{name}\`
+              .replace(\`{\${"name"}}\`, encodeURIComponent(String(name)));
+          const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+          let baseOptions;
+          const localVarRequestOptions = { method: 'GET', ...baseOptions, ...options};
+          return { url: toPathString(localVarUrlObj), options: localVarRequestOptions };
+        },
+        deletePost: async (name: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+          const localVarPath = \`/apis/content.halo.run/v1alpha1/posts/{name}\`
+              .replace(\`{\${"name"}}\`, encodeURIComponent(String(name)));
+          const localVarRequestOptions = { method: 'DELETE', ...baseOptions, ...options};
+          return { url: toPathString(localVarUrlObj), options: localVarRequestOptions };
+        },
+      };
+    };`;
+
+  it("emits one api-call per operation from the path and method locals", async () => {
+    const calls = await apiCallsOf(generated);
+    expect(calls.map((c) => [c.name, c.target])).toEqual([
+      ["get", "/apis/content.halo.run/v1alpha1/posts/{name}"],
+      ["delete", "/apis/content.halo.run/v1alpha1/posts/{name}"],
+    ]);
+  });
+
+  it("does not count the shared request function a second time", async () => {
+    const common = `
+      export const createRequestFunction = function (axiosArgs: RequestArgs, globalAxios: AxiosStatic, BASE_PATH: string, configuration?: Configuration) {
+        return <T = unknown, R = AxiosResponse<T>>(axios: AxiosInstance = globalAxios, basePath: string = BASE_PATH) => {
+          const axiosRequestArgs = {...axiosArgs.options, url: (axios.defaults.baseURL ? '' : configuration?.basePath ?? basePath) + axiosArgs.url};
+          return axios.request<T, R>(axiosRequestArgs);
+        };
+      };`;
+    expect(await apiCallsOf(common)).toEqual([]);
   });
 });
