@@ -65,10 +65,26 @@ export {
   estimateTokens,
   mean,
   poolSetScores,
+  scoreSampledLinks,
   type SetScore,
+  type SampledCallLabel,
+  type SampledLinkScore,
+  type PredictedLink,
   type RankResult,
   type TokenScore,
 } from "./eval/scorer.js";
+/** Corpus-wide link and health counts, run against run — see src/eval/corpus-metrics.ts. */
+export {
+  computeCorpusMetrics,
+  linkRecords,
+  diffCorpusLinks,
+  isJoinableTarget,
+  startsWithHole,
+  type CorpusMetrics,
+  type CorpusSummary,
+  type LinkRecord,
+  type LinkDiff,
+} from "./eval/corpus-metrics.js";
 export type * from "./types/analysis.js";
 export type * from "./types/plugin.js";
 export type * from "./types/language-plugin.js";
