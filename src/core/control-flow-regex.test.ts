@@ -14,6 +14,12 @@ import { controlFlowForFile } from "./control-flow-file.js";
 
 const REPO = resolve(__dirname, "../..");
 const FIXTURES = resolve(REPO, "test-fixtures");
+/**
+ * Globs are relative to REPO and run with `cwd`: an absolute pattern built by
+ * `resolve()` carries backslashes on Windows, which fast-glob reads as escapes,
+ * and the corpus silently comes back empty.
+ */
+const GLOB = { cwd: REPO, absolute: true } as const;
 
 beforeAll(async () => {
   await ensureLanguagesLoaded([
@@ -106,12 +112,12 @@ interface Measured {
 const MEASURED: Measured[] = [
   {
     language: "typescript",
-    globs: [resolve(REPO, "src/**/*.ts")],
+    globs: ["src/**/*.ts"],
     minFunctions: 1200,
     minExact: 0.9,
   },
-  { language: "csharp", globs: [`${FIXTURES}/**/*.cs`], minFunctions: 20, minExact: 0.85 },
-  { language: "java", globs: [`${FIXTURES}/**/*.java`], minFunctions: 40, minExact: 0.9 },
+  { language: "csharp", globs: ["test-fixtures/**/*.cs"], minFunctions: 20, minExact: 0.85 },
+  { language: "java", globs: ["test-fixtures/**/*.java"], minFunctions: 40, minExact: 0.9 },
 ];
 
 /**
@@ -125,6 +131,7 @@ const CORPUS_TIMEOUT_MS = 120_000;
 describe.each(MEASURED)("regex tier agrees with the parser — $language", { timeout: CORPUS_TIMEOUT_MS }, (target) => {
   it("reads the same shape as the parse tree", async () => {
     const files = await fg(target.globs, {
+      ...GLOB,
       ignore: ["**/node_modules/**", "**/*.test.ts", "**/*.d.ts", "**/obj/**", "**/bin/**"],
     });
 
@@ -202,8 +209,8 @@ describe("regex tier — the languages that have only it", () => {
     // A scanner must terminate whatever it is handed. Pathological nesting and
     // unbalanced delimiters are the two ways this kind of code hangs.
     const files = await fg(
-      [`${FIXTURES}/**/*.go`, `${FIXTURES}/**/*.rs`, `${FIXTURES}/**/*.c`, `${FIXTURES}/**/*.dart`],
-      { ignore: ["**/node_modules/**"] },
+      ["test-fixtures/**/*.go", "test-fixtures/**/*.rs", "test-fixtures/**/*.c", "test-fixtures/**/*.dart"],
+      { ...GLOB, ignore: ["**/node_modules/**"] },
     );
     expect(files.length).toBeGreaterThan(5);
 

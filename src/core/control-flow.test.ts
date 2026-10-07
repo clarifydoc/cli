@@ -10,7 +10,12 @@ import { parseSource, type TSNode, type TreeSitterLanguage } from "../parsers/pa
 import { computeComplexity } from "./complexity-analyzer.js";
 import { buildControlFlow, cyclomaticFromCfg, undrawnStructure } from "./control-flow.js";
 
-const FIXTURES = resolve(__dirname, "../../test-fixtures");
+/**
+ * Corpus globs are relative to the repository and run with `cwd`: an absolute
+ * pattern built by `resolve()` carries backslashes on Windows, which fast-glob
+ * reads as escapes, and the corpus silently comes back empty.
+ */
+const REPO = resolve(__dirname, "../..");
 
 async function cfgsFor(source: string, language: TreeSitterLanguage, file: string) {
   const tree = await parseSource(source, language, file);
@@ -382,7 +387,7 @@ const CORPORA: Corpus[] = [
   {
     label: "TypeScript",
     language: "typescript",
-    globs: [resolve(__dirname, "../**/*.ts")],
+    globs: ["src/**/*.ts"],
     probe: resolve(PROBES, "control-flow-typescript-probe.ts.txt"),
     required: [
       "if_statement", "else_clause", "while_statement", "do_statement",
@@ -396,7 +401,7 @@ const CORPORA: Corpus[] = [
   {
     label: "C#",
     language: "csharp",
-    globs: [`${FIXTURES}/sample-csharp-api/**/*.cs`, `${FIXTURES}/sample-fullstack-cqrs/**/*.cs`],
+    globs: ["test-fixtures/sample-csharp-api/**/*.cs", "test-fixtures/sample-fullstack-cqrs/**/*.cs"],
     probe: resolve(PROBES, "control-flow-csharp-probe.cs.txt"),
     required: [
       "if_statement", "while_statement", "do_statement", "for_statement",
@@ -410,7 +415,7 @@ const CORPORA: Corpus[] = [
   {
     label: "Python",
     language: "python",
-    globs: [`${FIXTURES}/**/*.py`],
+    globs: ["test-fixtures/**/*.py"],
     probe: resolve(PROBES, "control-flow-python-probe.py.txt"),
     required: [
       "if_statement", "elif_clause", "else_clause", "while_statement",
@@ -424,7 +429,7 @@ const CORPORA: Corpus[] = [
   {
     label: "PHP",
     language: "php",
-    globs: [`${FIXTURES}/**/*.php`],
+    globs: ["test-fixtures/**/*.php"],
     probe: resolve(PROBES, "control-flow-php-probe.php.txt"),
     required: [
       "if_statement", "else_if_clause", "else_clause", "while_statement",
@@ -438,7 +443,7 @@ const CORPORA: Corpus[] = [
   {
     label: "Java",
     language: "java",
-    globs: [`${FIXTURES}/**/*.java`],
+    globs: ["test-fixtures/**/*.java"],
     probe: resolve(PROBES, "control-flow-java-probe.java.txt"),
     required: [
       "if_statement", "while_statement", "do_statement", "for_statement",
@@ -452,7 +457,7 @@ const CORPORA: Corpus[] = [
   {
     label: "Kotlin",
     language: "kotlin",
-    globs: [`${FIXTURES}/**/*.kt`],
+    globs: ["test-fixtures/**/*.kt"],
     probe: resolve(PROBES, "control-flow-kotlin-probe.kt.txt"),
     required: [
       "if_expression", "while_statement", "do_while_statement", "for_statement",
@@ -464,7 +469,7 @@ const CORPORA: Corpus[] = [
   {
     label: "Pascal",
     language: "pascal",
-    globs: [`${FIXTURES}/**/*.pas`],
+    globs: ["test-fixtures/**/*.pas"],
     probe: resolve(PROBES, "control-flow-pascal-probe.pas.txt"),
     required: ["ifElse", "while", "repeat", "for", "case", "caseCase", "try", "exceptionHandler"],
     minGraphs: 30,
@@ -473,6 +478,8 @@ const CORPORA: Corpus[] = [
 
 async function corpusSources(corpus: Corpus): Promise<{ file: string; source: string }[]> {
   const files = await fg(corpus.globs, {
+    cwd: REPO,
+    absolute: true,
     ignore: [
       "**/node_modules/**", "**/vendor/**", "**/obj/**", "**/bin/**",
       "**/*.d.ts", "**/*.test.ts",
