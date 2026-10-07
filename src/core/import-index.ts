@@ -374,6 +374,8 @@ export function buildImportIndex(analyses: FileAnalysis[]): ImportIndex {
  * known file matches. Exported so consumers outside the import index (e.g. the
  * screen builder following a route's lazy component) can reuse it.
  */
+const PROJECT_PATH_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".vue", ".svelte", "/index.ts", "/index.tsx", "/index.js", "/index.vue"];
+
 export function resolveImportSource(
   importingFile: string,
   src: string,
@@ -390,7 +392,15 @@ export function resolveImportSource(
   const dir = norm.includes("/") ? norm.slice(0, norm.lastIndexOf("/")) : "";
 
   if (!src.startsWith(".") && !src.startsWith("/")) {
-    return norm.endsWith(".py") ? resolvePythonModule(norm, dir, src, knownFiles, specifier) : null;
+    if (norm.endsWith(".py")) return resolvePythonModule(norm, dir, src, knownFiles, specifier);
+    // A tsconfig alias (`@/foo`, a `baseUrl` path) is rewritten to a
+    // project-relative path before this runs; it names a project file only if
+    // one is there — a package import (`lodash/fp`) never matches.
+    if (!src.includes("/")) return null;
+    for (const ext of PROJECT_PATH_EXTENSIONS) {
+      if (knownFiles.has(src + ext)) return src + ext;
+    }
+    return null;
   }
 
   const joined = normalizeJoin(dir, relativeModulePath(src));

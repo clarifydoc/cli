@@ -219,3 +219,26 @@ describe("JS class field values", () => {
     expect(cls!.fieldValues).toBeUndefined();
   });
 });
+
+describe("URL-builder template extraction — guarded appends", () => {
+  it("emits one template per combination of parameter-guarded appends, fields kept as holes (paperless)", async () => {
+    const SRC = `class AbstractPaperlessService {
+      protected getResourceUrl(id: number = null, action: string = null): string {
+        let url = \`\${this.baseUrl}\${this.resourceName}/\`;
+        if (id !== null) {
+          url += \`\${id}/\`;
+        }
+        if (action) {
+          url += \`\${action}/\`;
+        }
+        return url;
+      }
+    }`;
+    expect(await templatesOf(SRC, "getResourceUrl")).toEqual([
+      "${this.baseUrl}${this.resourceName}/",
+      "${this.baseUrl}${this.resourceName}/{id}/",
+      "${this.baseUrl}${this.resourceName}/{action}/",
+      "${this.baseUrl}${this.resourceName}/{id}/{action}/",
+    ]);
+  });
+});
