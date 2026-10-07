@@ -72,6 +72,7 @@ import { crystalManifest } from "./plugins/crystal/manifest.js";
 import { zigManifest } from "./plugins/zig/manifest.js";
 import { ocamlManifest } from "./plugins/ocaml/manifest.js";
 import { rakuManifest } from "./plugins/raku/manifest.js";
+import { commonLispManifest, racketManifest, schemeManifest } from "./plugins/lisp/manifest.js";
 
 /** All plugin manifests, in registration order (order is observable — keep stable). */
 const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
@@ -97,6 +98,9 @@ const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
   zigManifest,
   ocamlManifest,
   rakuManifest,
+  racketManifest,
+  schemeManifest,
+  commonLispManifest,
 ];
 
 const MANIFEST_BY_LANGUAGE = new Map<Language, LanguagePluginManifest>();
@@ -168,6 +172,7 @@ const LOADERS: readonly PluginLoader[] = [
   { languages: ["zig"], load: () => import("./plugins/zig/meta.js").then((m) => [m.zigMeta]) },
   { languages: ["ocaml"], load: () => import("./plugins/ocaml/meta.js").then((m) => [m.ocamlMeta]) },
   { languages: ["raku"], load: () => import("./plugins/raku/meta.js").then((m) => [m.rakuMeta]) },
+  { languages: ["racket", "scheme", "commonlisp"], load: () => import("./plugins/lisp/meta.js").then((m) => [m.racketMeta, m.schemeMeta, m.commonLispMeta]) },
 ];
 
 const LOADER_BY_LANGUAGE = new Map<Language, PluginLoader>();
