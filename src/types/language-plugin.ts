@@ -14,6 +14,7 @@ import type {
   PackageCategory,
   ExternalPackage,
   PackageEcosystem,
+  PathArgCall,
 } from "./analysis.js";
 import type { ProjectInfo } from "./plugin.js";
 import type { RouteExtractor } from "../extractors/routes/base.js";
@@ -412,6 +413,8 @@ export interface AstExtractorHooks {
   customElements?(sourceText: string): CustomElementDef[];
   /** HTTP client instances created with a base URL → `FileAnalysis.httpClientBases`. */
   httpClientBases?(tree: Tree, sourceText: string): Record<string, string>;
+  /** Calls handing a path literal to a project function → `FileAnalysis.pathArgCalls`. */
+  pathArgCalls?(tree: Tree, sourceText: string): PathArgCall[];
   /**
    * Paths the file names as string data that the toolchain loads as modules
    * (glob imports, worker URLs, config-file script paths) →

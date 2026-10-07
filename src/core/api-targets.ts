@@ -1,4 +1,5 @@
-import type { DataSourceInfo } from "../types/analysis.js";
+import type { DataSourceInfo, FileAnalysis, FunctionInfo } from "../types/analysis.js";
+import type { ImportIndex } from "../types/project.js";
 
 type ApiCall = DataSourceInfo & { filePath: string };
 
@@ -101,4 +102,136 @@ function stripHole(holes: string): string {
     rest = rest.slice(len);
   }
   return parts.join(" + ");
+}
+
+// ─── Request factories ───────────────────────────────────────────────────────
+
+interface FactoryRow {
+  row: ApiCall;
+  /** Parameter name → its position in the factory's parameter list. */
+  params: Map<string, number>;
+}
+
+const HOLE = /\$\{([A-Za-z_$][\w$]*)\}/g;
+
+/**
+ * A request FACTORY builds its request from its parameters, and every call
+ * site names the endpoint:
+ *
+ *     export default function createFetchHandler(section, url) {
+ *       … createAjaxRequest({ url: id == null ? url : `${url}/${id}`, data }) …
+ *     }
+ *     export const fetchStatus = createFetchHandler('system.status', '/system/status');
+ *
+ * The factory's own api-call carries `${url}` and says nothing; the call site
+ * is where the endpoint is. For each call that hands a literal to a function
+ * (`FileAnalysis.pathArgCalls`), this resolves the callee — a function of
+ * that name in the caller's file, else the file the name is imported from —
+ * and, for every api-call of that function whose URL holes are ITS parameters
+ * (the innermost enclosing function declaring the name), adds a row at the
+ * call site with the literals substituted by position. A callee whose import
+ * does not resolve (a bundler source-root path) falls back to the one factory
+ * of that name in the project. A hole whose argument
+ * is not a literal leaves that row out; a callee resolving to anything but
+ * one function adds nothing. One level deep: a factory calling a factory is
+ * not followed.
+ *
+ * Returns the number of rows added (appended to `calls`).
+ */
+export function expandRequestFactories(
+  calls: ApiCall[],
+  analyses: readonly FileAnalysis[],
+  importIndex: ImportIndex,
+): number {
+  const byFile = new Map<string, FileAnalysis>(analyses.map((a) => [a.filePath, a]));
+  if (!analyses.some((a) => a.pathArgCalls?.length)) return 0;
+
+  // Factory rows per (file, function name).
+  const factories = new Map<string, FactoryRow[]>();
+  const fnsOf = new Map<string, FunctionInfo[]>();
+  const functionsIn = (file: string): FunctionInfo[] => {
+    let fns = fnsOf.get(file);
+    if (!fns) {
+      const a = byFile.get(file);
+      fns = a ? [...a.functions, ...a.classes.flatMap((c) => c.methods)] : [];
+      fnsOf.set(file, fns);
+    }
+    return fns;
+  };
+  for (const row of calls) {
+    if (row.kind !== "api-call" || !row.target) continue;
+    const holes = new Set<string>();
+    for (const url of [row.target, ...(row.targetAlternatives ?? [])]) for (const m of url.matchAll(HOLE)) holes.add(m[1]!);
+    if (holes.size === 0) continue;
+    for (const name of holes) {
+      // The innermost function enclosing the row that declares this name.
+      const owner = functionsIn(row.filePath)
+        .filter((f) => f.line <= row.line && row.line <= f.endLine && f.params.some((p) => p.name === name))
+        .sort((a, b) => a.endLine - a.line - (b.endLine - b.line))[0];
+      if (!owner) continue;
+      const key = `${row.filePath}::${owner.name}`;
+      const list = factories.get(key) ?? [];
+      let entry = list.find((e) => e.row === row);
+      if (!entry) {
+        entry = { row, params: new Map() };
+        list.push(entry);
+      }
+      entry.params.set(name, owner.params.findIndex((p) => p.name === name));
+      factories.set(key, list);
+    }
+  }
+  if (factories.size === 0) return 0;
+
+  let added = 0;
+  for (const a of analyses) {
+    for (const site of a.pathArgCalls ?? []) {
+      const ownKey = `${a.filePath}::${site.callee}`;
+      const source = importIndex.localFor(a.filePath, site.callee);
+      let rows = factories.get(ownKey) ?? (source ? factories.get(`${source}::${site.callee}`) : undefined);
+      if (!rows && !source) {
+        // An import the index cannot resolve — a bundler's source-root path
+        // (`'Store/Actions/Creators/createFetchHandler'`): the ONE factory in
+        // the project with that name, or nothing.
+        const named = [...factories.keys()].filter((k) => k.endsWith(`::${site.callee}`));
+        if (named.length === 1) rows = factories.get(named[0]!);
+      }
+      if (!rows && source) {
+        // A default export bound under another name (`import fetchIt from './createFetchHandler'`):
+        // the file's default export, if it is a factory.
+        // The export records no name, but it sits on the function's own line.
+        const def = byFile.get(source)?.exports.find((e) => e.kind === "default");
+        const fnName = def ? functionsIn(source).find((f) => f.line === def.line)?.name : undefined;
+        if (fnName) rows = factories.get(`${source}::${fnName}`);
+      }
+      for (const f of rows ?? []) {
+        const fill = (url: string): string | null => {
+          let ok = true;
+          const out = url.replace(HOLE, (whole, name: string) => {
+            const i = f.params.get(name);
+            if (i === undefined) return whole;
+            const arg = site.args[i];
+            if (arg === null || arg === undefined) {
+              ok = false;
+              return whole;
+            }
+            return arg;
+          });
+          return ok ? out : null;
+        };
+        const target = fill(f.row.target!);
+        if (target === null) continue;
+        const alternatives = (f.row.targetAlternatives ?? []).map(fill).filter((u): u is string => u !== null);
+        calls.push({
+          ...f.row,
+          filePath: a.filePath,
+          line: site.line,
+          target,
+          ...(alternatives.length ? { targetAlternatives: alternatives } : {}),
+          via: site.callee,
+        });
+        added++;
+      }
+    }
+  }
+  return added;
 }

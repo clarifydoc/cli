@@ -285,6 +285,40 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     return out;
   }
 
+  /**
+   * The URL(s) a request descriptor's key holds: a literal, a template or `+`
+   * chain with its holes, an identifier bound to a URL in scope (else a
+   * `${name}` hole — a request factory's parameter, filled in at each call
+   * site by a project pass), both arms of a ternary
+   * (`url: id == null ? url : `${url}/${id}``). Empty when it is none of these.
+   */
+  private descriptorUrls(obj: Node, key: string): string[] {
+    const value = objectPropValue(obj, key);
+    if (value) return [...new Set(this.urlsOf(value))];
+    const shorthand = obj.namedChildren.find((c) => c.type === "shorthand_property_identifier" && c.text === key);
+    if (!shorthand) return [];
+    return [this.bindings()?.lookup(key, shorthand)?.url ?? `\${${key}}`];
+  }
+
+  private urlsOf(v: Node): string[] {
+    let n: Node | null = v;
+    while (n && (n.type === "parenthesized_expression" || n.type === "as_expression" || n.type === "non_null_expression")) {
+      n = n.namedChild(0);
+    }
+    if (!n) return [];
+    if (n.type === "ternary_expression") {
+      return [...this.urlsOf(n.childForFieldName("consequence")!), ...this.urlsOf(n.childForFieldName("alternative")!)];
+    }
+    if (n.type === "template_string") return [resolveTemplateUrl(n, (name) => this.bindings()?.lookup(name, n!) ?? null)];
+    if (n.type === "identifier") return [this.bindings()?.lookup(n.text, n)?.url ?? `\${${n.text}}`];
+    if (n.type === "binary_expression") {
+      const url = this.concatUrl(n);
+      return url ? [url] : [];
+    }
+    const lit = literalString(n);
+    return lit === null ? [] : [lit];
+  }
+
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
     // One-time gql-operation scan (no whole-file hook exists in the fused walk).
     if (!this.gqlScanned) this.scanGql(sources);
@@ -581,7 +615,9 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           : null;
       // `path` is Node's `http.request({ method, path })` — trusted only beside a
       // verb, because a router location (`router.push({ path, params })`) has one too.
-      const url = literalString(objectPropValue(node, "url")) ?? (method ? literalString(objectPropValue(node, "path")) : null);
+      const urls = this.descriptorUrls(node, "url");
+      if (urls.length === 0 && method) urls.push(...this.descriptorUrls(node, "path"));
+      const url = urls[0] ?? null;
       // A `method` sibling distinguishes a real request descriptor
       // (`{ method, url }`) from query/mutation cache keys and other metadata
       // objects that merely carry a `url` (`[{ url }] as const`). Without one,
@@ -592,13 +628,17 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       // (`fastify.route({ method, url, handler })`).
       if (url && !hasProp(node, "handler")) {
         const requestShaped =
-          !method && node.parent?.type === "arguments" && looksLikeUrl(url) && REQUEST_KEYS.some((k) => hasProp(node, k));
+          !method &&
+          node.parent?.type === "arguments" &&
+          (looksLikeUrl(url) || isParamHole(url, node)) &&
+          REQUEST_KEYS.some((k) => hasProp(node, k));
         if (method || requestShaped) {
           sources.push(this.ds({
             kind: "api-call",
             name: method ?? "request",
             target: url,
             line: node.startPosition.row + 1,
+            ...(urls.length > 1 ? { targetAlternatives: urls.slice(1) } : {}),
           }));
         }
       }
@@ -767,6 +807,16 @@ class UrlBindings {
     this.folded.set(b.start, out);
     return out;
   }
+}
+
+/** `${url}`… where `url` is a parameter of a function enclosing `at` — a request factory's URL. */
+function isParamHole(url: string, at: Node): boolean {
+  const m = /^\$\{([A-Za-z_$][\w$]*)\}/.exec(url);
+  if (!m) return false;
+  for (let p: Node | null = at.parent; p; p = p.parent) {
+    if (FUNCTION_SCOPES.has(p.type) && declaresParam(p, m[1]!)) return true;
+  }
+  return false;
 }
 
 /** Whether a function node declares a parameter of this name. */
