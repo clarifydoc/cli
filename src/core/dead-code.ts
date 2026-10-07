@@ -308,8 +308,9 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
           anchors.push(a.filePath);
         }
       }
+      // `""` is a unit too — the project root's directory (a Go `main` package at the root).
       const unit = model.unitOf?.(a.filePath);
-      if (unit) {
+      if (unit !== null && unit !== undefined) {
         const key = `${modelKey.get(model)}\0${unit}`;
         unitOfFile.set(a.filePath, key);
         const members = unitMembers.get(key);

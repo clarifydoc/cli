@@ -174,3 +174,11 @@ describe("class properties under a wrapped header", () => {
     expect(cls!.properties.map((p) => [p.name, p.type])).toEqual([["repo", "Repo"]]);
   });
 });
+
+describe("indent block end", () => {
+  it("runs a block nothing dedents after to the end of the file, however long", () => {
+    const lines = ["def last", ...Array.from({ length: 30 }, (_, i) => `  step${i}`)];
+    expect(findEndLine(lines, 0, "indent")).toBe(lines.length);
+    expect(findEndLine(["def a", "  x", "def b", "  y"], 0, "indent")).toBe(2);
+  });
+});
