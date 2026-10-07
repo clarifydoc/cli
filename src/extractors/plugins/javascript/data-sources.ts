@@ -1,6 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { Confidence, DataSourceInfo, CallInfo, Language } from "../../../types/analysis.js";
-import { DataSourceExtractor } from "../../data-sources/base.js";
+import type { Confidence, DataSourceInfo, CallInfo, FileAnalysis, Language } from "../../../types/analysis.js";
+import { DataSourceExtractor, type ProjectApiCall } from "../../data-sources/base.js";
+import { resolveUrlBuilders } from "./url-builders.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { stripQuotes } from "../../shared/node-helpers.js";
 import { foldValue, toAppRelativeUrl } from "../../shared/value-resolver.js";
@@ -150,6 +151,16 @@ const NO_CONSTS: ReadonlyMap<string, ResolvedUrl> = new Map();
 
 export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
+
+  /**
+   * URL-builder helper calls in api-call targets
+   * (`axios.get(requestUri('teamtalk','v4'))` → `/api/v4/institution/{}/teamtalk`):
+   * a call funneled through a project URL helper gets the concrete path the
+   * cross-tier linker can join.
+   */
+  override resolveProject(calls: ProjectApiCall[], analyses: FileAnalysis[]): number {
+    return resolveUrlBuilders(calls, analyses);
+  }
 
   /**
    * File-local map of `const X = '…url…'` bindings so a `fetch(X)` /

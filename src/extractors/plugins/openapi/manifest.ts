@@ -10,5 +10,6 @@ export const openapiManifest: LanguagePluginManifest = {
   language: "openapi",
   parsing: "regex",
   extensions: [".yaml", ".yml", ".json"],
+  apiContract: true,
   importTarget: false,
 };

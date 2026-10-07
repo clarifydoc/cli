@@ -10,5 +10,6 @@ export const jsightManifest: LanguagePluginManifest = {
   language: "jsight",
   parsing: "regex",
   extensions: [".jsight"],
+  apiContract: true,
   importTarget: false,
 };

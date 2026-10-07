@@ -15,7 +15,7 @@ import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js
 import { commonPrefixLength, extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { isTestFile } from "./test-file-detector.js";
-import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, pluginFor } from "../extractors/registry.js";
+import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, isApiContractLanguage, pluginFor } from "../extractors/registry.js";
 import { SELF_HEADS, bareSupertypeName, declaredSupertypes, isConstructor, sameTypeSpace } from "./typed-receivers.js";
 
 interface SymbolDef {
@@ -86,7 +86,10 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
     // symbol-less-but-real route file — a Laravel `routes/web.php` whose
     // `DashboardController#create` handler DOES need the generic resolution —
     // out of the spec join.
-    const isSpecFile = SPEC_LANGUAGES.has(analysis.language);
+    // Contract languages (OpenAPI, GraphQL SDL, …) declare the served surface but
+    // carry no handler code — their routes join the implementing method BY NAME
+    // (operationId / field / operation).
+    const isSpecFile = isApiContractLanguage(analysis.language);
 
     // Functions
     for (const fn of analysis.functions) {
@@ -437,13 +440,6 @@ interface ClassCatalogEntry {
 }
 
 const CTOR_NAMES = new Set(["constructor", "__init__", "__construct", "New", "new"]);
-
-/**
- * Contract/spec languages whose `api` routes declare the served surface but
- * carry no same-repo handler code — their routes join to the implementing
- * method BY NAME (operationId / GraphQL field / WSDL operation / JSight path).
- */
-const SPEC_LANGUAGES: ReadonlySet<string> = new Set(["jsight", "openapi", "graphql", "wsdl"]);
 
 /**
  * Files under test-fixture/sample-data directories define symbols that mimic

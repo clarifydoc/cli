@@ -1,6 +1,6 @@
 import type { FileAnalysis } from "../types/analysis.js";
-import { closestByDir } from "./symbol-linker.js";
-import { bareSupertypeName, declaredSupertypes, sameTypeSpace } from "./typed-receivers.js";
+import { createTypeResolver } from "./class-index.js";
+import { bareSupertypeName, declaredSupertypes } from "./typed-receivers.js";
 
 /**
  * Add a dependency edge from every class file to the file defining the class
@@ -22,33 +22,7 @@ export function enrichGraphFromInheritance(
   graph: Record<string, string[]>,
   analyses: FileAnalysis[],
 ): number {
-  const definitions = new Map<string, string[]>();
-  const define = (name: string, file: string): void => {
-    const list = definitions.get(name);
-    if (!list) definitions.set(name, [file]);
-    else if (!list.includes(file)) list.push(file);
-  };
-  for (const a of analyses) {
-    for (const cls of a.classes) define(cls.name, a.filePath);
-    for (const exp of a.exports) {
-      if (exp.kind === "interface" || exp.kind === "class") define(exp.name, a.filePath);
-    }
-  }
-  const projectOf = new Map(analyses.map((a) => [a.filePath, a.projectId]));
-  const languageOf = new Map(analyses.map((a) => [a.filePath, a.language as string]));
-
-  const resolve = (name: string, from: FileAnalysis): string | null => {
-    let candidates = (definitions.get(name) ?? []).filter((f) =>
-      sameTypeSpace(from.filePath, from.language, f, languageOf.get(f) ?? ""),
-    );
-    if (candidates.length === 0 || candidates.includes(from.filePath)) return null;
-    // A same-family homonym in another language (Kotlin beside Java) is not it.
-    const sameLang = candidates.filter((f) => languageOf.get(f) === from.language);
-    if (sameLang.length > 0) candidates = sameLang;
-    const own = candidates.filter((f) => projectOf.get(f) === from.projectId);
-    if (own.length > 0) return own.length === 1 ? own[0]! : closestByDir(own, from.filePath, (f) => f);
-    return candidates.length === 1 ? candidates[0]! : null;
-  };
+  const resolve = createTypeResolver(analyses, { includeExports: true, allowOwnFile: false });
 
   let added = 0;
   for (const a of analyses) {

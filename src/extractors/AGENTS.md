@@ -42,6 +42,25 @@ instance across member metas) plus:
 - `frameworkImportHints`, `apiCallRoots`, `dbCallRoots`
 - `ast` hooks: `typeReferences`, `interactiveElements`, `subComponents`, `events`, `variableAliases`
 - `calls` hooks: `callNodeTypes`, scope/callback node types, name resolution, auto-imported classification
+- `apiContract` (manifest) — the language describes an API rather than implementing it (OpenAPI, GraphQL SDL, WSDL, JSight); `isApiContractLanguage()` is how core asks
+
+**Project-level passes.** Some facts only exist across files: a base controller's
+route template, a Django `include("app.urls")`, a URL helper defined in another
+module. A plugin reports what one file shows and contributes a pass that joins
+them; core runs every pass generically and never names a framework:
+
+- `routeResolvers` ([route-resolvers/](route-resolvers/)) — rewrite
+  `analysis.routes` before mounts compose and before the symbol linker anchors
+  them. Replace a row you change (the runner stamps `resolvedBy` on new rows);
+  emit `prefixUnresolved` when an outer prefix exists but cannot be known.
+  Per-file inputs no `RouteInfo` can carry go in `FileAnalysis.routeFacts`.
+- `dataSources.resolveProject` — rewrite api-call targets across the project
+  (the JS URL-builder pass lives here).
+- `entities.reconcileProject`, `dispatchResolvers` — as before.
+
+Each receives a `ProjectContext` ([../types/project.ts](../types/project.ts)):
+the import index, a class index (`resolve`, `supertypes`, `ancestors`,
+`descendants` — import-aware, refusing ties), `resolveModule` and `fileOf`.
 
 **Two tiers.** Each plugin also has a `manifest.ts` — the STATIC tier
 (`LanguagePluginManifest`): extensions, `family`, parsing kind, grammar
