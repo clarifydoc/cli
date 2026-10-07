@@ -91,7 +91,7 @@ like `knownPackages`. Notes:
 1. Add to `Language` type in [../../types/analysis.ts](../../types/analysis.ts)
 2. Create `src/extractors/plugins/<lang>/index.ts` exporting a `RegexLangSpec`
 3. Create `manifest.ts` (`parsing: "regex"`, `family`, `extensions` — the same list as the spec's) and `meta.ts` (spreads the manifest, `regexSpec: <spec>`, builtins), and register both in [../registry.ts](../registry.ts)
-4. A script language whose files run their own statements sets the spec's `topLevelCalls` (`true`, or a path RegExp — VB sets it for `.vbs` only): calls outside every function/class become the `<setup>` pseudo-function
+4. A script language whose files run their own statements sets the spec's `topLevelCalls` (`true`, or a path RegExp — VB sets it for `.vbs` only): calls outside every function/class become the `<setup>` pseudo-function. A top-level block that only REGISTERS code to run later (`get "/x" do … end`, `before_all do`) is listed by `deferredBlocks` so `<setup>` skips its body.
 
 ### Container formats (e.g. Vue SFC, Delphi .dfm)
 

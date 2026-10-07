@@ -72,9 +72,9 @@ function measureBody(root: TSNode, declRow: number, spec: LanguageComplexitySpec
 
     // Logical operators in binary expressions count as a branch (cyclomatic)
     // and as one cognitive increment.
-    if (type === "binary_expression" || type === "boolean_operator") {
-      const op = n.childForFieldName("operator");
-      if (op && logicalOps.has(op.text)) {
+    const opField = type === "binary_expression" || type === "boolean_operator" ? n.childForFieldName("operator") : null;
+    if (opField) {
+      if (logicalOps.has(opField.text)) {
         m.branches++;
         m.cognitive++;
       }

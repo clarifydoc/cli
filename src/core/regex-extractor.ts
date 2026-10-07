@@ -101,6 +101,11 @@ function topLevelSetup(lines: string[], analysis: FileAnalysis, spec: RegexLangS
   for (const span of [...analysis.functions, ...analysis.classes]) {
     for (let i = span.line - 1; i < Math.min(span.endLine, outside.length); i++) outside[i] = "";
   }
+  // A deferred block's opening line is the statement that registers it
+  // (`get "/x" do`): that call runs now, its body later.
+  for (const [start, end] of spec.deferredBlocks?.(lines) ?? []) {
+    for (let i = start; i < Math.min(end, outside.length); i++) outside[i] = "";
+  }
   // An attribute line (`@RestController`, VB `<Serializable>`) belongs to the
   // declaration below it: it is not a statement the script runs.
   const attribute = spec.attributeLine?.pattern;

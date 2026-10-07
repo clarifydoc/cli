@@ -66,6 +66,12 @@ import { bashManifest } from "./plugins/bash/manifest.js";
 import { batchManifest } from "./plugins/batch/manifest.js";
 import { fsharpManifest } from "./plugins/fsharp/manifest.js";
 import { coffeeManifest } from "./plugins/coffeescript/manifest.js";
+import { rManifest } from "./plugins/r/manifest.js";
+import { juliaManifest } from "./plugins/julia/manifest.js";
+import { crystalManifest } from "./plugins/crystal/manifest.js";
+import { zigManifest } from "./plugins/zig/manifest.js";
+import { ocamlManifest } from "./plugins/ocaml/manifest.js";
+import { rakuManifest } from "./plugins/raku/manifest.js";
 
 /** All plugin manifests, in registration order (order is observable — keep stable). */
 const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
@@ -85,6 +91,12 @@ const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
   batchManifest,
   fsharpManifest,
   coffeeManifest,
+  rManifest,
+  juliaManifest,
+  crystalManifest,
+  zigManifest,
+  ocamlManifest,
+  rakuManifest,
 ];
 
 const MANIFEST_BY_LANGUAGE = new Map<Language, LanguagePluginManifest>();
@@ -150,6 +162,12 @@ const LOADERS: readonly PluginLoader[] = [
   { languages: ["batch"], load: () => import("./plugins/batch/meta.js").then((m) => [m.batchMeta]) },
   { languages: ["fsharp"], load: () => import("./plugins/fsharp/meta.js").then((m) => [m.fsharpMeta]) },
   { languages: ["coffeescript"], load: () => import("./plugins/coffeescript/meta.js").then((m) => [m.coffeeMeta]) },
+  { languages: ["r"], load: () => import("./plugins/r/meta.js").then((m) => [m.rMeta]) },
+  { languages: ["julia"], load: () => import("./plugins/julia/meta.js").then((m) => [m.juliaMeta]) },
+  { languages: ["crystal"], load: () => import("./plugins/crystal/meta.js").then((m) => [m.crystalMeta]) },
+  { languages: ["zig"], load: () => import("./plugins/zig/meta.js").then((m) => [m.zigMeta]) },
+  { languages: ["ocaml"], load: () => import("./plugins/ocaml/meta.js").then((m) => [m.ocamlMeta]) },
+  { languages: ["raku"], load: () => import("./plugins/raku/meta.js").then((m) => [m.rakuMeta]) },
 ];
 
 const LOADER_BY_LANGUAGE = new Map<Language, PluginLoader>();
@@ -252,6 +270,9 @@ export const ACTIVATION_FILE_LANGUAGES: ReadonlyMap<string, readonly Language[]>
  */
 export const NAMED_FILE_LANGUAGE: ReadonlyMap<string, Language> =
   claimTable(ALL_MANIFESTS, (m) => m.namedFiles ?? [], "Named file");
+
+/** Every manifest's `sourceDirs` (`bin/` beside a `META6.json`, …): skipped directories that are source. */
+export const SOURCE_DIRS: ReadonlyArray<{ dir: string; marker: string }> = ALL_MANIFESTS.flatMap((m) => m.sourceDirs ?? []);
 
 /**
  * Lowercased key (extension, basename) → the ONE language that claims it. A

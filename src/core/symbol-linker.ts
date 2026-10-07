@@ -54,6 +54,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
     leafCatalog: buildLeafCatalog(symbolIndex, projectOf),
     dirTailIndex: buildDirTailIndex(symbolIndex),
     classNameIndex: buildClassNameIndex(symbolIndex),
+    namespaceSuffixIndex: buildNamespaceSuffixIndex(symbolIndex),
     projectOf,
     languageOf: new Map(analyses.map((a) => [a.filePath, a.language as string])),
     importedFilesCache: new Map(),
@@ -887,6 +888,10 @@ interface LinkContext {
   /** Top-level symbol name → files that define it (in symbolIndex order). Lets
    *  Strategy 4 find the class file by O(1) lookup instead of scanning all files. */
   classNameIndex: Map<string, string[]>;
+  /** A namespaced class's trailing names (`Routes::Misc`, `Misc` of
+   *  `Invidious::Routes::Misc`) → the declarations ending that way. Strategy 4's
+   *  relative-constant fallback. */
+  namespaceSuffixIndex: Map<string, Array<{ file: string; name: string }>>;
   /** filePath → sub-project id, for project-scoped candidate selection. */
   projectOf: Map<string, string>;
   /** filePath → language, for type-space checks on formats without an extension family. */
@@ -947,6 +952,26 @@ function buildClassNameIndex(
       const arr = idx.get(name);
       if (arr) arr.push(filePath);
       else idx.set(name, [filePath]);
+    }
+  }
+  return idx;
+}
+
+/** See `LinkContext.namespaceSuffixIndex`. */
+function buildNamespaceSuffixIndex(
+  symbolIndex: Map<string, Map<string, SymbolDef>>,
+): Map<string, Array<{ file: string; name: string }>> {
+  const idx = new Map<string, Array<{ file: string; name: string }>>();
+  for (const [filePath, syms] of symbolIndex) {
+    for (const name of syms.keys()) {
+      if (name.includes(".") || !name.includes("::")) continue;
+      const segments = name.split("::");
+      for (let k = 1; k < segments.length; k++) {
+        const suffix = segments.slice(k).join("::");
+        const arr = idx.get(suffix);
+        if (arr) arr.push({ file: filePath, name });
+        else idx.set(suffix, [{ file: filePath, name }]);
+      }
     }
   }
   return idx;
@@ -1558,7 +1583,19 @@ function resolveCallToDefinition(
     // Delphi .dpr resolved into an unrelated project's type-library unit that
     // happens to export a class named Application (Word_97.pas collected 68
     // cross-project dependents that way).
-    const candidateFiles = classNameIndex.get(className);
+    let candidateFiles = classNameIndex.get(className);
+    // A namespace written relative to the caller's (`Routes::Misc.home`
+    // inside `module Invidious`, a Rails `Users::Create` under `Admin`)
+    // names the ONE class whose declared name ends that way; two such
+    // classes are a lookup the linker cannot decide, so neither is taken.
+    let declaredClass = className;
+    if (!candidateFiles) {
+      const matches = ctx.namespaceSuffixIndex.get(className);
+      if (matches && new Set(matches.map((m) => m.name)).size === 1) {
+        candidateFiles = matches.map((m) => m.file);
+        declaredClass = matches[0]!.name;
+      }
+    }
     if (candidateFiles) {
       const sameProject = candidateFiles
         .filter((f) => ctx.projectOf.get(f) === analysis.projectId)
@@ -1581,7 +1618,7 @@ function resolveCallToDefinition(
         const syms = symbolIndex.get(filePath)!;
         // A call on the class itself reaches its class-level method when the
         // language names one apart (Ruby `def self.call` → `X.self.call`).
-        const classDef = syms.get(`${className}.self.${methodName}`) ?? syms.get(`${className}.${methodName}`) ?? syms.get(methodName);
+        const classDef = syms.get(`${declaredClass}.self.${methodName}`) ?? syms.get(`${declaredClass}.${methodName}`) ?? syms.get(methodName);
         if (classDef) {
           return mkLink(filePath, classDef.name, classDef.line, "INFERRED", "class-name");
         }
@@ -1700,7 +1737,12 @@ function resolveCallToDefinition(
         // `CustomerEntity.setStartDate` however unique that setter is. (If the
         // declared type HAD resolved to a file defining the method, Strategy 2
         // would have linked it before reaching here.)
-        const declared = receiverDeclaredType(analysis, sourceSymbol, head.replace(/\?$/, ""));
+        // The call's own statement of its receiver (`Printexc.to_string` on
+        // the OCaml module `Printexc`, a container lookup) counts first.
+        // A builtin one (`String`) normalizes to nothing, and contradicts any
+        // app class all the more: it is kept as written.
+        const declared = (call.receiverType ? receiverTypeName(call.receiverType, analysis.language) || call.receiverType : null)
+          ?? receiverDeclaredType(analysis, sourceSymbol, head.replace(/\?$/, ""));
         const tgtClass = entry.def.name.includes(".") ? entry.def.name.split(".")[0]! : null;
         const declEntry = declared ? classEntryFor(classCatalog.get(declared), sourceFile) : undefined;
         // An extension method is called on a type that does not declare it
