@@ -99,6 +99,7 @@ function coffeeRoutes(lines: string[]): RouteInfo[] {
       calls: [],
       middleware,
       line: i + 1,
+      ...(verb === "use" ? { mount: true as const } : {}),
     });
   });
   return routes;

@@ -298,6 +298,8 @@ export interface FileAnalysis {
   functions: FunctionInfo[];
   classes: ClassInfo[];
   routes: RouteInfo[];
+  /** Routing facts for the plugin's project-level route resolver (see `RouteFact`). */
+  routeFacts?: RouteFact[];
   dataSources: DataSourceInfo[];
   dataMutations: DataMutationInfo[];
   /**
@@ -707,6 +709,46 @@ export interface RouteInfo {
    * binding.
    */
   params?: RouteParamInfo[];
+  /**
+   * A router MOUNT, not an endpoint: `app.use("/api", apiRouter)`,
+   * `include_router(x.router, prefix="/users")`. `path` is the prefix and
+   * `handler` the router to resolve; the project mount pass prefixes that
+   * router's routes and drops this row. Explicit so an "any method" route with
+   * an identifier handler (Compojure `ANY`, Express `all`) is never mistaken
+   * for one.
+   */
+  mount?: true;
+  /**
+   * The router variable or controller class the route is declared on, as
+   * written (`router`, `SeriesController`). Lets a project-level pass apply a
+   * prefix to one router's routes when a file declares several.
+   */
+  owner?: string;
+  /**
+   * An outer prefix exists but could not be resolved, and `path` is only the
+   * known tail of what a caller requests. The value names why: `base:X` (an
+   * unresolved base controller), `attribute:X` (a routing attribute whose
+   * template could not be evaluated), `mount:<expr>` (mounted under a runtime
+   * value), `urlconf:not-included`. The cross-tier linker matches such a row
+   * only as a suffix, and never above a row whose path is complete.
+   */
+  prefixUnresolved?: string;
+  /** Id of the project-level resolver that created or rewrote this row. */
+  resolvedBy?: string;
+}
+
+/**
+ * A routing fact a per-file extractor saw but could not turn into a route on
+ * its own — a Django `urlpatterns` entry, a DRF `router.register`, a base
+ * controller's route template. Opaque to core: only the emitting plugin's
+ * route resolver reads `kind` and `data`. Persisted with the file so an
+ * incremental run can reconcile without re-parsing.
+ */
+export interface RouteFact {
+  kind: string;
+  line: number;
+  owner?: string;
+  data: unknown;
 }
 
 /** Where a route handler parameter is read from. */

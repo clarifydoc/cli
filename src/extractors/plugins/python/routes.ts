@@ -25,9 +25,9 @@ export function extractPythonRoutes(root: Node, routes: RouteInfo[]): void {
  * The prefix lives here, in the wiring file, while the endpoints it applies to
  * are decorated in the module being mounted — so on its own this file's routes
  * look prefix-less and several routers' `@router.get("")` all collapse to the
- * same empty path. Emitted in the shape `resolveRouterMounts` already consumes
- * for Express (`kind: "api"`, `httpMethod: null`, `handler` = the identifier to
- * resolve through the import index), which then applies the prefix across files.
+ * same empty path. Emitted in the shape `resolveRouterMounts` consumes
+ * (`mount: true`, `httpMethod: null`, `handler` = the identifier to resolve
+ * through the import index), which then applies the prefix across files.
  *
  * Only mounts with a LITERAL `prefix=` are emitted. `include_router(x.router)`
  * contributes no prefix, and `prefix=settings.api_prefix` is a value this
@@ -52,6 +52,7 @@ function walkForRouterMounts(node: Node, routes: RouteInfo[]): void {
           calls: [],
           middleware: [],
           line: node.startPosition.row + 1,
+          mount: true,
         });
       }
     }

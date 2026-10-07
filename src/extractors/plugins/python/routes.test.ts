@@ -21,8 +21,8 @@ router.include_router(authentication.router, tags=["auth"], prefix="/users")
 router.include_router(tags.router, prefix="/tags")
 `);
     expect(routes).toEqual([
-      expect.objectContaining({ path: "/users", httpMethod: null, kind: "api", handler: "authentication" }),
-      expect.objectContaining({ path: "/tags", httpMethod: null, kind: "api", handler: "tags" }),
+      expect.objectContaining({ path: "/users", httpMethod: null, kind: "api", handler: "authentication", mount: true }),
+      expect.objectContaining({ path: "/tags", httpMethod: null, kind: "api", handler: "tags", mount: true }),
     ]);
   });
 
@@ -57,7 +57,7 @@ const get = (path: string, line = 1): RouteInfo => ({
   path, httpMethod: "GET", kind: "api", handler: "h", calls: [], middleware: [], line,
 });
 const mount = (prefix: string, handler: string, line = 1): RouteInfo => ({
-  path: prefix, httpMethod: null, kind: "api", handler, calls: [], middleware: [], line,
+  path: prefix, httpMethod: null, kind: "api", handler, calls: [], middleware: [], line, mount: true,
 });
 
 describe("FastAPI mounts resolved across files", () => {
