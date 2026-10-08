@@ -1,6 +1,7 @@
 import type { CallInfo, FunctionInfo, RouteInfo, RouteParamInfo } from "../../../types/analysis.js";
 import { applyRouteMeta, splitList, type GuardAttr } from "../../shared/route-metadata.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
+import { extractSpringClientProxies } from "./client-proxies.js";
 
 /**
  * Spring XML definitions — the declarative wiring tier of classic Java web
@@ -320,4 +321,6 @@ export const springxmlSpec: RegexLangSpec = {
   postProcessFunctions: (lines) => extractFlowFunctions(lines),
   extractRoutes: (lines, _classes, filePath) => extractFlowRoutes(lines, filePath),
   extractStringConstants: extractBeanConstants,
+  // REST client proxies the beans build (factory beans, `<jaxrs:client>`).
+  extractHttpClientRegistrations: (lines) => extractSpringClientProxies(lines),
 };

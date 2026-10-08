@@ -36,6 +36,12 @@ import type { ProjectAnalysis } from "../types/analysis.js";
  *                             YARP routes → orders / inventory; `/api/stock/{**rest}`
  *                             is rewritten to `/api/items/{**rest}`. The gateway
  *                             serves no route itself.
+ *   billing CustomerLookup    a JAX-RS proxy of person's published API, built
+ *                             by a Spring XML factory bean (clients.xml) —
+ *                             no URL on the calling side at all. Each call
+ *                             invokes an operation of `com.shop.person.api.
+ *                             PersonRepository`, which person-api declares
+ *                             (@GET/@POST) and person-service implements.
  */
 const FIXTURE = resolve(__dirname, "..", "..", "test-fixtures", "sample-microservices");
 
@@ -48,6 +54,8 @@ const EXPECTED = [
   { call: "web/src/api.ts:2", route: "POST /api/orders", at: "orders/Controllers/OrdersController.cs:26" },
   { call: "web/src/api.ts:7", route: "GET /api/items", at: "inventory/Controllers/ItemsController.cs:9" },
   { call: "web/src/api.ts:12", route: "GET /api/items/{id}", at: "inventory/Controllers/ItemsController.cs:12" },
+  { call: "billing/src/main/java/com/shop/billing/CustomerLookup.java:11", route: "GET /v1/persons/{personId}", at: "person/person-api/src/main/java/com/shop/person/api/PersonRepository.java:15" },
+  { call: "billing/src/main/java/com/shop/billing/CustomerLookup.java:16", route: "POST /v1/persons", at: "person/person-api/src/main/java/com/shop/person/api/PersonRepository.java:19" },
 ];
 
 let out: string | undefined;
@@ -95,6 +103,7 @@ describe("service-to-service links — hand-labelled fixture", () => {
   it("lifts the links to the services that depend on each other", () => {
     const deps = (summary.projectDependencies ?? []).map((d) => [d.from, d.to, d.kind, d.links, d.deployment?.via ?? null]);
     expect(deps).toEqual([
+      ["billing", "person-person-api", "http", 2, null],
       // docker-compose.yml: orders `Services__Inventory: http://inventory:8080`.
       ["orders", "inventory", "http", 2, "Services__Inventory"],
       ["orders", "legacy", "http", 1, null],

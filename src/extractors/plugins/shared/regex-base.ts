@@ -1,4 +1,4 @@
-import type { FunctionInfo, ClassInfo, CallInfo, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo, DiBinding } from "../../../types/analysis.js";
+import type { FunctionInfo, ClassInfo, CallInfo, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo, DiBinding, HttpClientRegistration } from "../../../types/analysis.js";
 
 import { holdNoiseCall } from "../../shared/call-graph.js";
 
@@ -194,6 +194,8 @@ export interface RegexLangSpec {
    * `FileAnalysis.diBindings`.
    */
   extractDiBindings?: (lines: string[], filePath: string) => DiBinding[];
+  /** HTTP clients and client proxies the file configures → `FileAnalysis.httpClientRegistrations`. */
+  extractHttpClientRegistrations?: (lines: string[], filePath: string) => HttpClientRegistration[];
   /**
    * Locals whose type the body states (`let r: Repo = …`, `r := &PgRepo{}`,
    * `final repo = getIt<Repo>()`) → `FunctionInfo.localTypes`. Called per

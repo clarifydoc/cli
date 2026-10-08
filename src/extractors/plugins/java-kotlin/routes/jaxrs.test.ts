@@ -196,3 +196,21 @@ class UserController {
     ]);
   });
 });
+
+describe("JAX-RS routes name the operation they are", () => {
+  it("records the declaring interface, fully qualified, and the method", async () => {
+    const SRC = `package com.acme.person.api;
+import javax.ws.rs.*;
+
+@Path("/v1/")
+public interface PersonRepository {
+  @GET
+  @Path("persons/{personId}")
+  Person getPerson(@PathParam("personId") String personId);
+}`;
+    const routes = await routesOf(SRC, "PersonRepository.java");
+    expect(routes.map((r) => [r.httpMethod, r.path, r.contract])).toEqual([
+      ["GET", "/v1/persons/{personId}", { type: "com.acme.person.api.PersonRepository", method: "getPerson" }],
+    ]);
+  });
+});

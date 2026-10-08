@@ -66,12 +66,16 @@ export function resolveCallOrigins(input: {
   const rulesByProject = new Map<string, ProxyRule[]>();
   for (const r of input.proxyRules ?? []) (rulesByProject.get(r.project) ?? rulesByProject.set(r.project, []).get(r.project)!).push(r);
 
-  const projectRegs = new Map<string, Array<{ reg: HttpClientRegistration; file: string; project: string }>>();
-  const fileRegs = new Map<string, HttpClientRegistration[]>();
+  type Based = HttpClientRegistration & { base: CallBaseRef };
+  const projectRegs = new Map<string, Array<{ reg: Based; file: string; project: string }>>();
+  const fileRegs = new Map<string, Based[]>();
   for (const a of analyses) {
     for (const reg of a.httpClientRegistrations ?? []) {
-      if (reg.scope === "file") (fileRegs.get(a.filePath) ?? fileRegs.set(a.filePath, []).get(a.filePath)!).push(reg);
-      else (projectRegs.get(reg.client) ?? projectRegs.set(reg.client, []).get(reg.client)!).push({ reg, file: a.filePath, project: a.projectId });
+      // A registration that states no base (a proxy built from a computed URL) places nothing.
+      if (!reg.base) continue;
+      const based = reg as Based;
+      if (reg.scope === "file") (fileRegs.get(a.filePath) ?? fileRegs.set(a.filePath, []).get(a.filePath)!).push(based);
+      else (projectRegs.get(reg.client) ?? projectRegs.set(reg.client, []).get(reg.client)!).push({ reg: based, file: a.filePath, project: a.projectId });
     }
   }
 
