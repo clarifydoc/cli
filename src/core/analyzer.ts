@@ -92,7 +92,7 @@ import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
 import { linkApiCallsToRoutesDetailed, dedupeRoutes, pairContractTwins } from "./route-linker.js";
 import { buildProjectDependencies, projectServesClosure } from "./project-dependencies.js";
-import { readProjectConfig } from "./config-values.js";
+import { readProjectConfig, readProjectProxies } from "./config-values.js";
 import { buildServiceAddresses } from "./service-addresses.js";
 import { resolveCallOrigins } from "./call-origins.js";
 import { attachHandlerParams, attachRequestSchemas } from "./request-schemas.js";
@@ -122,6 +122,7 @@ import {
   type HotspotInfo,
   type SymbolReachSummary,
   type DataFlowPath,
+  type ProxyRule,
 } from "../types/analysis.js";
 import type { ReachabilityHooks, ReachabilityModel } from "../types/language-plugin.js";
 
@@ -802,6 +803,14 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // host — so the join below stays inside that service's routes.
   const serviceConfigValues = await readProjectConfig(projectRoot, subProjects);
   const serviceAddresses = buildServiceAddresses(deployment, serviceConfigValues);
+  // Dev proxies and gateway routes: stated in code (vite.config.ts) or in
+  // configuration files (proxy.conf.json, YARP, Ocelot).
+  // The same rule in two files (`proxy.conf.json` and `src/proxy.conf.json`) is one rule.
+  const proxyRules: Array<ProxyRule & { project: string }> = [
+    ...allAnalyses.flatMap((a) => (a.proxyRules ?? []).map((r) => ({ ...r, project: a.projectId }))),
+    ...[...(await readProjectProxies(projectRoot, subProjects))].flatMap(([project, rules]) => rules.map((r) => ({ ...r, project }))),
+  ].filter((r, i, all) =>
+    all.findIndex((o) => o.project === r.project && o.pathPrefix === r.pathPrefix && o.target === r.target && o.rewriteTo === r.rewriteTo) === i);
   const originCount = resolveCallOrigins({
     calls: allApiCalls,
     analyses: allAnalyses,
@@ -809,6 +818,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     deployment,
     config: serviceConfigValues,
     addresses: serviceAddresses,
+    proxyRules,
   });
   if (originCount > 0) progress.detail(`  Call origins resolved: ${originCount}`);
   if (resolvedUrlCount > 0 && verbose) {
@@ -1408,6 +1418,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     apiRouteLinkStats: apiRouteLinkStats.calls > 0 ? apiRouteLinkStats : undefined,
     projectDependencies: projectDependencies.length > 0 ? projectDependencies : undefined,
     serviceAddresses: serviceAddresses.length > 0 ? serviceAddresses : undefined,
+    proxyRules: proxyRules.length > 0 ? proxyRules : undefined,
     generatedRoots: generatedRoots.length > 0 ? generatedRoots : undefined,
     unusedFiles: unusedFiles.length > 0 ? unusedFiles : undefined,
     deadCode,

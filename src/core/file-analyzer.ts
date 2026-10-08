@@ -328,6 +328,8 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     if (clientBases && Object.keys(clientBases).length > 0) analysis.httpClientBases = clientBases;
     const clientRegistrations = hooks?.httpClientRegistrations?.(tree, sourceText);
     if (clientRegistrations && clientRegistrations.length > 0) analysis.httpClientRegistrations = clientRegistrations;
+    const proxyRules = hooks?.proxyRules?.(tree, sourceText, file.relativePath);
+    if (proxyRules && proxyRules.length > 0) analysis.proxyRules = proxyRules;
     const pathArgCalls = hooks?.pathArgCalls?.(tree, sourceText);
     if (pathArgCalls && pathArgCalls.length > 0) analysis.pathArgCalls = pathArgCalls;
     const moduleValues = hooks?.moduleValues?.(tree, sourceText);

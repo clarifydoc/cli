@@ -1,6 +1,7 @@
-import type { CallBaseRef } from "../../../types/analysis.js";
-import type { ConfigEntry, ConfigSourceSpec, ServiceConfigSpec } from "../../../types/language-plugin.js";
+import type { CallBaseRef, ProxyRule } from "../../../types/analysis.js";
+import type { ConfigEntry, ConfigSourceSpec, ProxySourceSpec, ServiceConfigSpec } from "../../../types/language-plugin.js";
 import { flattenStrings, lineOfPair, parseJsoncObject } from "../shared/jsonc.js";
+import { isHttpTarget, templatePrefix } from "../shared/proxy-kit.js";
 
 /**
  * How a .NET program is told where other services are: `appsettings*.json`
@@ -135,8 +136,84 @@ export function csharpBaseRefOf(expr: string): CallBaseRef | null {
   return { kind: "config", key: keys.join(":") };
 }
 
+const asMap = (v: unknown): Array<[string, Record<string, unknown>]> => {
+  if (Array.isArray(v)) return v.map((x, i) => [String(i), x]).filter((e): e is [string, Record<string, unknown>] => !!e[1] && typeof e[1] === "object");
+  if (v && typeof v === "object") return Object.entries(v as Record<string, unknown>).filter((e): e is [string, Record<string, unknown>] => !!e[1] && typeof e[1] === "object");
+  return [];
+};
+
+/**
+ * YARP's `ReverseProxy` section: each route's `Match.Path` forwards to every
+ * destination address of its cluster, through the path transforms it lists
+ * (`PathRemovePrefix`, `PathPrefix`, `PathPattern`, `PathSet`).
+ */
+const yarp: ProxySourceSpec = {
+  files: ["appsettings.json", "appsettings.*.json"],
+  glob: { deep: 1, limit: 12 },
+  parse(text, path) {
+    if (TEST_PROFILE.test(/appsettings\.([^/.]+)\.json$/i.exec(path)?.[1] ?? "")) return [];
+    const proxy = parseJsoncObject(text)?.ReverseProxy;
+    if (!proxy || typeof proxy !== "object") return [];
+    const { Routes, Clusters } = proxy as Record<string, unknown>;
+    const clusters = new Map(asMap(Clusters));
+    const out: Array<Omit<ProxyRule, "file">> = [];
+    for (const [, route] of asMap(Routes)) {
+      const match = route.Match as Record<string, unknown> | undefined;
+      const pattern = typeof match?.Path === "string" ? match.Path : "{**catch-all}";
+      const pathPrefix = templatePrefix(pattern);
+      let rewriteTo: string | undefined;
+      for (const [, t] of asMap(route.Transforms)) {
+        if (typeof t.PathRemovePrefix === "string") {
+          const rp = t.PathRemovePrefix.replace(/\/+$/, "");
+          if (pathPrefix === rp || pathPrefix.startsWith(rp + "/")) rewriteTo = pathPrefix.slice(rp.length);
+        } else if (typeof t.PathPrefix === "string") rewriteTo = t.PathPrefix.replace(/\/+$/, "") + (rewriteTo ?? pathPrefix);
+        else if (typeof t.PathPattern === "string") rewriteTo = templatePrefix(t.PathPattern);
+        else if (typeof t.PathSet === "string") rewriteTo = templatePrefix(t.PathSet);
+      }
+      const cluster = typeof route.ClusterId === "string" ? clusters.get(route.ClusterId) : undefined;
+      const line = typeof match?.Path === "string" ? lineOfPair(text, "Path", match.Path) : undefined;
+      for (const [, dest] of asMap(cluster?.Destinations)) {
+        const target = typeof dest.Address === "string" ? dest.Address : "";
+        if (!isHttpTarget(target)) continue;
+        out.push({ pathPrefix, target, ...(rewriteTo !== undefined ? { rewriteTo } : {}), via: "yarp", ...(line ? { line } : {}) });
+      }
+    }
+    return out;
+  },
+};
+
+/** Ocelot: `ocelot.json` `Routes` (`ReRoutes` before v16), upstream template → downstream host + template. */
+const ocelot: ProxySourceSpec = {
+  files: ["ocelot.json", "ocelot.*.json"],
+  glob: { deep: 1, limit: 8 },
+  parse(text, path) {
+    if (TEST_PROFILE.test(/ocelot\.([^/.]+)\.json$/i.exec(path)?.[1] ?? "")) return [];
+    const obj = parseJsoncObject(text);
+    const out: Array<Omit<ProxyRule, "file">> = [];
+    for (const [, r] of asMap(obj?.Routes ?? obj?.ReRoutes)) {
+      if (typeof r.UpstreamPathTemplate !== "string" || typeof r.DownstreamPathTemplate !== "string") continue;
+      const scheme = typeof r.DownstreamScheme === "string" ? r.DownstreamScheme : "http";
+      const line = lineOfPair(text, "UpstreamPathTemplate", r.UpstreamPathTemplate);
+      for (const [, hp] of asMap(r.DownstreamHostAndPorts)) {
+        if (typeof hp.Host !== "string") continue;
+        const target = `${scheme}://${hp.Host}${hp.Port !== undefined ? `:${hp.Port}` : ""}`;
+        if (!isHttpTarget(target)) continue;
+        out.push({
+          pathPrefix: templatePrefix(r.UpstreamPathTemplate),
+          target,
+          rewriteTo: templatePrefix(r.DownstreamPathTemplate),
+          via: "ocelot",
+          ...(line ? { line } : {}),
+        });
+      }
+    }
+    return out;
+  },
+};
+
 export const csharpServiceConfig: ServiceConfigSpec = {
   sources: [appsettings, launchSettings],
+  proxySources: [yarp, ocelot],
   baseRefOf: csharpBaseRefOf,
   // .NET's environment provider maps `__` to the `:` key separator.
   envNamesFor: (key) => [key.replace(/:/g, "__")],

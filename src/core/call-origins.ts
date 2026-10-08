@@ -5,6 +5,7 @@ import type {
   DeploymentModel,
   FileAnalysis,
   HttpClientRegistration,
+  ProxyRule,
   ServiceAddress,
 } from "../types/analysis.js";
 import type { ImportIndex } from "../types/project.js";
@@ -34,7 +35,14 @@ type Evidence = CallOrigin["evidence"][number];
  *
  * A project is named only when every value that resolves names the same one;
  * values naming two projects decide nothing (AMBIGUOUS). A host no project
- * answers to is `external`. Once the base is known the call's target is made
+ * answers to is `external`.
+ *
+ * Then forwarding: a request arriving at a project that declares a matching
+ * rule — a frontend's dev proxy (for a call that states no base and so goes
+ * to its own server), a gateway route (for a call whose origin is the
+ * gateway) — goes on to the rule's target, its path rewritten, and the
+ * origin names the project behind it. A rule whose target is not one of this
+ * analysis's services changes nothing. Once the base is known the call's target is made
  * whole — the origin stripped, the base's path prefixed — and `baseExpr` is
  * dropped, so the linker reads a complete path and joins it against the
  * routes of that project only.
@@ -50,9 +58,13 @@ export function resolveCallOrigins(input: {
   deployment: DeploymentModel | undefined;
   config: ReadonlyMap<string, readonly ProjectConfigValue[]>;
   addresses: readonly ServiceAddress[];
+  /** Forwarding rules, each with the project requests arrive at. */
+  proxyRules?: ReadonlyArray<ProxyRule & { project: string }>;
 }): number {
   const { calls, analyses, importIndex, deployment, config, addresses } = input;
   const byFile = new Map(analyses.map((a) => [a.filePath, a]));
+  const rulesByProject = new Map<string, ProxyRule[]>();
+  for (const r of input.proxyRules ?? []) (rulesByProject.get(r.project) ?? rulesByProject.set(r.project, []).get(r.project)!).push(r);
 
   const projectRegs = new Map<string, Array<{ reg: HttpClientRegistration; file: string; project: string }>>();
   const fileRegs = new Map<string, HttpClientRegistration[]>();
@@ -145,15 +157,12 @@ export function resolveCallOrigins(input: {
     return out;
   };
 
-  let resolved = 0;
-  for (const call of calls) {
-    if (call.kind !== "api-call") continue;
-    const a = byFile.get(call.filePath);
-    if (!a) continue;
+  /** The origin a call's own base states, or null when it states none. */
+  const stated = (call: ApiCall, a: FileAnalysis): CallOrigin | null => {
     const found = referenceOf(call, a);
-    if (!found) continue;
+    if (!found) return null;
     const values = valuesOf(found.ref, a.projectId, a.language);
-    if (values.length === 0) continue;
+    if (values.length === 0) return null;
 
     const evidence: Evidence[] = [...found.evidence];
     const projects = new Map<string, { host: string; path: string; via: ServiceAddress }>();
@@ -184,32 +193,104 @@ export function resolveCallOrigins(input: {
     }
 
     const allFallback = values.every((v) => v.fallback);
-    let origin: CallOrigin;
     if (projects.size === 1 && !shared) {
       const [project, hit] = [...projects][0]!;
       evidence.push({ step: "address", detail: `${hit.host} → ${project} (${hit.via.source})`, file: hit.via.file });
       const clean = outside.length === 0 && !unknownLoopback;
-      origin = { baseRef: found.ref, host: hit.host, project, confidence: clean && !allFallback && !found.assumed ? "EXTRACTED" : "INFERRED", evidence };
       call.target = rebase(call.target!, hit.path);
       if (call.targetAlternatives) call.targetAlternatives = call.targetAlternatives.map((t) => rebase(t, hit.path));
       delete call.baseExpr;
-    } else if (projects.size > 1 || shared) {
-      origin = { baseRef: found.ref, confidence: "AMBIGUOUS", evidence };
-    } else if (outside.length > 0) {
+      return { baseRef: found.ref, host: hit.host, project, confidence: clean && !allFallback && !found.assumed ? "EXTRACTED" : "INFERRED", evidence };
+    }
+    if (projects.size > 1 || shared) return { baseRef: found.ref, confidence: "AMBIGUOUS", evidence };
+    if (outside.length > 0) {
       const hit = outside[0]!;
-      origin = { baseRef: found.ref, host: hit.host, external: true, confidence: allFallback ? "INFERRED" : "EXTRACTED", evidence };
       // Another system's URL: whole and absolute, so it never joins a route here.
       if (call.target && !/^[a-z][a-z0-9+.-]*:\/\//i.test(call.target)) {
         call.target = hit.origin + rebase(call.target, hit.path);
         delete call.baseExpr;
       }
-    } else {
-      origin = { baseRef: found.ref, ...(unknownLoopback ? { host: unknownLoopback } : {}), confidence: "INFERRED", evidence };
+      return { baseRef: found.ref, host: hit.host, external: true, confidence: allFallback ? "INFERRED" : "EXTRACTED", evidence };
     }
+    return { baseRef: found.ref, ...(unknownLoopback ? { host: unknownLoopback } : {}), confidence: "INFERRED", evidence };
+  };
+
+  /**
+   * A call that states no base at all (`fetch("/api/orders")`, a client whose
+   * base is only a path) goes to the server that served its own page — its
+   * own project, which is where a dev proxy forwards it from.
+   */
+  const sameOrigin = (call: ApiCall): boolean =>
+    call.baseExpr === undefined && call.baseEnv === undefined && call.baseRef === undefined &&
+    !!call.target && call.target.startsWith("/");
+
+  let resolved = 0;
+  for (const call of calls) {
+    if (call.kind !== "api-call") continue;
+    const a = byFile.get(call.filePath);
+    if (!a) continue;
+    let origin = stated(call, a);
+    // Forwarding: a request arriving at a project with a matching rule (a dev
+    // proxy, a gateway route) goes on to the rule's target, rewritten. Up to a
+    // few hops — frontend dev proxy → gateway → service.
+    let arrival = origin ? (origin.confidence !== "AMBIGUOUS" ? origin.project : undefined) : sameOrigin(call) ? a.projectId : undefined;
+    for (let hop = 0; hop < 4 && arrival !== undefined && call.target?.startsWith("/"); hop++) {
+      const rule = matchRule(rulesByProject.get(arrival) ?? [], call.target);
+      if (!rule) break;
+      const addr = parseAddress(rule.target);
+      const r = addr ? resolveHost(addresses, addr.host, addr.port) : { kind: "unknown" as const };
+      // A rule pointing outside this analysis (a staging host) says nothing
+      // about which of its services serves the path: the call stays as it was.
+      if (r.kind !== "project" || !addr || r.project === arrival) break;
+      const forward = (t: string) => {
+        if (!t.startsWith("/") || !prefixMatches(rule.pathPrefix, pathOf(t))) return t;
+        const rest = t.slice(rule.pathPrefix.length);
+        return rebase((rule.rewriteTo ?? rule.pathPrefix) + rest, addr.path);
+      };
+      call.target = forward(call.target);
+      if (call.targetAlternatives) call.targetAlternatives = call.targetAlternatives.map(forward);
+      const hostLabel = isLoopbackHost(addr.host) ? `localhost:${addr.port ?? ""}` : addr.host;
+      origin = {
+        baseRef: origin?.baseRef ?? { kind: "literal", key: rule.target },
+        host: hostLabel,
+        project: r.project,
+        confidence: origin?.confidence === "INFERRED" ? "INFERRED" : "EXTRACTED",
+        evidence: [
+          ...(origin?.evidence ?? []),
+          {
+            step: "proxy",
+            detail: `${rule.pathPrefix || "/"} → ${rule.target}${rule.rewriteTo !== undefined ? ` as ${rule.rewriteTo || "/"}` : ""} (${rule.via})`,
+            file: rule.file,
+            ...(rule.line ? { line: rule.line } : {}),
+          },
+          { step: "address", detail: `${hostLabel} → ${r.project} (${r.via.source})`, file: r.via.file },
+        ],
+      };
+      arrival = r.project;
+    }
+    if (!origin) continue;
     call.origin = origin;
     resolved++;
   }
   return resolved;
+}
+
+function pathOf(target: string): string {
+  return target.split(/[?#]/)[0]!;
+}
+
+function prefixMatches(prefix: string, path: string): boolean {
+  return prefix === "" || path === prefix || path.startsWith(prefix + "/");
+}
+
+/** The rule with the longest prefix the path falls under. */
+function matchRule(rules: ReadonlyArray<ProxyRule>, target: string): ProxyRule | undefined {
+  const path = pathOf(target);
+  let best: ProxyRule | undefined;
+  for (const r of rules) {
+    if (prefixMatches(r.pathPrefix, path) && (!best || r.pathPrefix.length > best.pathPrefix.length)) best = r;
+  }
+  return best;
 }
 
 /** `target` with any origin stripped and `basePath` in front (once). */

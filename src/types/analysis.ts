@@ -425,6 +425,8 @@ export interface FileAnalysis {
    * `axios.create({ baseURL: process.env.X })`.
    */
   httpClientRegistrations?: HttpClientRegistration[];
+  /** Forwarding rules this file declares (a `vite.config.ts` `server.proxy`, `setupProxy.js`). */
+  proxyRules?: ProxyRule[];
 }
 
 /**
@@ -1102,6 +1104,26 @@ export interface HttpClientRegistration {
   line: number;
 }
 
+/**
+ * A rule that forwards requests: a dev server's proxy (Vite, webpack, Angular,
+ * CRA) or a gateway route (YARP, Ocelot). Requests arriving at the project
+ * that declares it whose path starts with `pathPrefix` go on to `target`,
+ * the prefix replaced by `rewriteTo` when set.
+ */
+export interface ProxyRule {
+  /** `/api`, `/api/orders`; "" forwards every path. */
+  pathPrefix: string;
+  /** Where to: an address (`http://localhost:5000`, `http://orders:8080`). */
+  target: string;
+  /** What replaces `pathPrefix` before forwarding (`/api` → ""); absent = the path is kept. */
+  rewriteTo?: string;
+  /** What declared it: `vite`, `webpack`, `angular`, `cra`, `yarp`, `ocelot`. */
+  via: string;
+  /** Project-relative posix path of the declaring file. */
+  file: string;
+  line?: number;
+}
+
 /** Where an outbound call goes, resolved from the facts that state it. */
 export interface CallOrigin {
   /** The reference the base came from, after following a client to its registration. */
@@ -1120,7 +1142,7 @@ export interface CallOrigin {
    */
   confidence: Confidence;
   /** Each fact that led there, in order: client registration, env/config value, address. */
-  evidence: Array<{ step: "client" | "env" | "config" | "literal" | "fallback" | "address"; detail: string; file?: string; line?: number }>;
+  evidence: Array<{ step: "client" | "env" | "config" | "literal" | "fallback" | "address" | "proxy"; detail: string; file?: string; line?: number }>;
 }
 
 /**
@@ -2232,6 +2254,8 @@ export interface ProjectAnalysis {
   projectDependencies?: ProjectDependency[];
   /** The names each sub-project answers to at runtime — what call origins resolve hosts through. */
   serviceAddresses?: ServiceAddress[];
+  /** Forwarding rules (dev proxies, gateway routes), each with the sub-project requests arrive at. */
+  proxyRules?: Array<ProxyRule & { project: string }>;
   /** Per-file child-component usages (JSX/Vue-template tags), with import source as `target`. */
   componentUsage?: (SubComponentInfo & { filePath: string })[];
   symbolLinks: SymbolLink[];

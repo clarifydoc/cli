@@ -124,3 +124,41 @@ describe("C# configuration files", () => {
     expect(csharpServiceConfig.envNamesFor!("Services:Orders")).toEqual(["Services__Orders"]);
   });
 });
+
+describe("C# gateway routes", () => {
+  const [yarp, ocelot] = csharpServiceConfig.proxySources!;
+  const strip = (rules: Array<{ line?: number }>) => rules.map(({ line: _l, ...r }) => r);
+
+  it("reads YARP routes through their cluster destinations and path transforms", () => {
+    const text = JSON.stringify({
+      ReverseProxy: {
+        Routes: {
+          orders: { ClusterId: "orders", Match: { Path: "/api/orders/{**catch-all}" } },
+          legacy: { ClusterId: "orders", Match: { Path: "/legacy/{**rest}" }, Transforms: [{ PathRemovePrefix: "/legacy" }] },
+          stock: { ClusterId: "inv", Match: { Path: "/stock/{**rest}" }, Transforms: [{ PathPattern: "/api/items/{**rest}" }] },
+        },
+        Clusters: {
+          orders: { Destinations: { a: { Address: "http://orders:8080/" } } },
+          inv: { Destinations: { a: { Address: "http://inventory:8080" }, b: { Address: "http://inventory-2:8080" } } },
+        },
+      },
+    });
+    expect(strip(yarp!.parse(text, "appsettings.json"))).toEqual([
+      { pathPrefix: "/api/orders", target: "http://orders:8080/", via: "yarp" },
+      { pathPrefix: "/legacy", target: "http://orders:8080/", rewriteTo: "", via: "yarp" },
+      { pathPrefix: "/stock", target: "http://inventory:8080", rewriteTo: "/api/items", via: "yarp" },
+      { pathPrefix: "/stock", target: "http://inventory-2:8080", rewriteTo: "/api/items", via: "yarp" },
+    ]);
+    expect(yarp!.parse(text, "appsettings.Test.json")).toEqual([]);
+  });
+
+  it("reads Ocelot routes, upstream template to downstream host and template", () => {
+    const text = JSON.stringify({ Routes: [{
+      UpstreamPathTemplate: "/orders/{everything}", DownstreamPathTemplate: "/api/orders/{everything}",
+      DownstreamScheme: "http", DownstreamHostAndPorts: [{ Host: "orders", Port: 8080 }],
+    }] });
+    expect(strip(ocelot!.parse(text, "ocelot.json"))).toEqual([
+      { pathPrefix: "/orders", target: "http://orders:8080", rewriteTo: "/api/orders", via: "ocelot" },
+    ]);
+  });
+});
