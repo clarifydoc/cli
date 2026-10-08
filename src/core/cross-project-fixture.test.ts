@@ -30,6 +30,12 @@ import type { ProjectAnalysis } from "../types/analysis.js";
  *                             → compose worker `ORDERS_URL: http://orders:8080`.
  *   worker  stockOf           axios.create({ baseURL: process.env.INVENTORY_URL })
  *                             → compose worker `INVENTORY_URL: http://inventory:8080`.
+ *   web     api.ts            same-origin fetch("/api/…") → vite.config.ts proxy
+ *                             `/api` → http://localhost:5100, the gateway's
+ *                             launchSettings URL and compose port → the gateway's
+ *                             YARP routes → orders / inventory; `/api/stock/{**rest}`
+ *                             is rewritten to `/api/items/{**rest}`. The gateway
+ *                             serves no route itself.
  */
 const FIXTURE = resolve(__dirname, "..", "..", "test-fixtures", "sample-microservices");
 
@@ -39,6 +45,9 @@ const EXPECTED = [
   { call: "orders/Controllers/OrdersController.cs:37", route: "GET /api/items", at: "legacy/Controllers/ItemsController.cs:11" },
   { call: "worker/src/index.ts:6", route: "POST /api/orders", at: "orders/Controllers/OrdersController.cs:26" },
   { call: "worker/src/index.ts:15", route: "GET /api/items/{id}", at: "inventory/Controllers/ItemsController.cs:12" },
+  { call: "web/src/api.ts:2", route: "POST /api/orders", at: "orders/Controllers/OrdersController.cs:26" },
+  { call: "web/src/api.ts:7", route: "GET /api/items", at: "inventory/Controllers/ItemsController.cs:9" },
+  { call: "web/src/api.ts:12", route: "GET /api/items/{id}", at: "inventory/Controllers/ItemsController.cs:12" },
 ];
 
 let out: string | undefined;
@@ -75,6 +84,12 @@ describe("service-to-service links — hand-labelled fixture", () => {
     expect(origin("worker/src/index.ts", 15)).toMatchObject({ project: "inventory", host: "inventory" });
     expect(origin("orders/Clients/PaymentsClient.cs", 9)).toMatchObject({ host: "api.stripe.com", external: true });
     expect(origin("orders/Clients/PaymentsClient.cs", 9)).not.toHaveProperty("project");
+    // Two hops: the dev proxy to the gateway, the gateway's route to the service.
+    expect(origin("web/src/api.ts", 12)).toMatchObject({ project: "inventory", host: "inventory", confidence: "EXTRACTED" });
+    expect(origin("web/src/api.ts", 12)!.evidence.filter((e) => e.step === "proxy").map((e) => e.file)).toEqual([
+      "web/vite.config.ts",
+      "gateway/appsettings.json",
+    ]);
   });
 
   it("lifts the links to the services that depend on each other", () => {
@@ -83,6 +98,8 @@ describe("service-to-service links — hand-labelled fixture", () => {
       // docker-compose.yml: orders `Services__Inventory: http://inventory:8080`.
       ["orders", "inventory", "http", 2, "Services__Inventory"],
       ["orders", "legacy", "http", 1, null],
+      ["web", "inventory", "http", 2, null],
+      ["web", "orders", "http", 1, null],
       ["worker", "inventory", "http", 1, "INVENTORY_URL"],
       ["worker", "orders", "http", 1, "ORDERS_URL"],
     ]);

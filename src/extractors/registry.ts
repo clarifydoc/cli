@@ -4,6 +4,7 @@ import type {
   LanguagePluginManifest,
   PackageManagerSpec,
   ConfigSourceSpec,
+  ProxySourceSpec,
   ServiceConfigSpec,
   LanguageComplexitySpec,
   LanguageControlFlowSpec,
@@ -661,6 +662,9 @@ const PACKAGE_MATCHING: ReadonlyMap<PackageEcosystem, PackageManagerSpec> = (() 
  * root whether or not a `.cs` file was found beside it.
  */
 export const CONFIG_SOURCES: readonly ConfigSourceSpec[] = ALL_MANIFESTS.flatMap((m) => m.serviceConfig?.sources ?? []);
+
+/** Every plugin's forwarding-rule readers (dev proxies, gateways), in `ALL_MANIFESTS` order. */
+export const PROXY_SOURCES: readonly ProxySourceSpec[] = ALL_MANIFESTS.flatMap((m) => m.serviceConfig?.proxySources ?? []);
 
 /** How a language's programs are configured to reach other services (undefined: the plugin says nothing). */
 export function serviceConfigFor(language: string): ServiceConfigSpec | undefined {

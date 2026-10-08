@@ -1,5 +1,7 @@
-import type { CallBaseRef } from "../../../types/analysis.js";
-import type { ServiceConfigSpec } from "../../../types/language-plugin.js";
+import type { CallBaseRef, ProxyRule } from "../../../types/analysis.js";
+import type { ProxySourceSpec, ServiceConfigSpec } from "../../../types/language-plugin.js";
+import { lineOfPair, parseJsoncObject } from "../shared/jsonc.js";
+import { isHttpTarget, prefixOfPattern, rewritePrefix } from "../shared/proxy-kit.js";
 
 /**
  * How a JS/TS program is told where other services are: environment
@@ -8,7 +10,7 @@ import type { ServiceConfigSpec } from "../../../types/language-plugin.js";
  * treats them as secrets — so a variable's value comes from the deployment
  * (compose, k8s) or the code's own fallback.
  *
- * Leaf module (the static manifest imports it): types only.
+ * Leaf module (the static manifest imports it): types and the shared kits only.
  */
 
 function literal(text: string): string | null {
@@ -43,6 +45,50 @@ export function jsBaseRefOf(expr: string): CallBaseRef | null {
   return env ? { kind: "env", key: env[1]! } : null;
 }
 
+/**
+ * Angular CLI's `proxy.conf.json` (named by `angular.json` `proxyConfig`):
+ * `{ "/api": { "target": "http://localhost:5000", "pathRewrite": { "^/api": "" } } }`,
+ * or the array form with `context`.
+ */
+const angularProxy: ProxySourceSpec = {
+  files: ["proxy.conf.json", "proxy.config.json", "src/proxy.conf.json", "src/proxy.config.json"],
+  parse(text) {
+    const obj = parseJsoncObject(text);
+    if (!obj) return [];
+    const out: Array<Omit<ProxyRule, "file">> = [];
+    const add = (key: string, body: Record<string, unknown>) => {
+      const pathPrefix = prefixOfPattern(key);
+      const target = typeof body.target === "string" ? body.target : null;
+      if (pathPrefix === null || !target || !isHttpTarget(target)) return;
+      let rewriteTo: string | undefined;
+      const rw = body.pathRewrite;
+      if (rw && typeof rw === "object") {
+        for (const [pattern, to] of Object.entries(rw as Record<string, unknown>)) {
+          if (typeof to === "string") rewriteTo ??= rewritePrefix(pathPrefix, pattern, to);
+        }
+      }
+      const line = lineOfPair(text, "target", target);
+      out.push({ pathPrefix, target, ...(rewriteTo !== undefined ? { rewriteTo } : {}), via: "angular", ...(line ? { line } : {}) });
+    };
+    for (const [key, body] of Object.entries(obj)) {
+      if (body && typeof body === "object" && !Array.isArray(body)) add(key, body as Record<string, unknown>);
+    }
+    return out;
+  },
+};
+
+/** Create React App: `package.json` `"proxy": "http://localhost:4000"` forwards every API path. */
+const craProxy: ProxySourceSpec = {
+  files: ["package.json"],
+  parse(text) {
+    const proxy = parseJsoncObject(text)?.proxy;
+    if (typeof proxy !== "string" || !isHttpTarget(proxy)) return [];
+    const line = lineOfPair(text, "proxy", proxy);
+    return [{ pathPrefix: "", target: proxy, via: "cra", ...(line ? { line } : {}) }];
+  },
+};
+
 export const jsServiceConfig: ServiceConfigSpec = {
   baseRefOf: jsBaseRefOf,
+  proxySources: [angularProxy, craProxy],
 };

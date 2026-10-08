@@ -17,6 +17,7 @@ import type {
   PathArgCall,
   CallBaseRef,
   HttpClientRegistration,
+  ProxyRule,
 } from "./analysis.js";
 import type { ProjectInfo } from "./plugin.js";
 import type { RouteExtractor } from "../extractors/routes/base.js";
@@ -80,6 +81,11 @@ export interface ServiceConfigSpec {
   /** Configuration files read at each sub-project root. */
   sources?: readonly ConfigSourceSpec[];
   /**
+   * Configuration files that declare forwarding rules (Angular `proxy.conf.json`,
+   * YARP `ReverseProxy` in appsettings, `ocelot.json`), read at each root.
+   */
+  proxySources?: readonly ProxySourceSpec[];
+  /**
    * A base expression as written (`process.env.ORDERS_URL`,
    * `_config["Services:Orders"]`, `os.environ["X"]`) → what it reads; null when
    * it reads nothing this language knows as configuration.
@@ -92,6 +98,14 @@ export interface ServiceConfigSpec {
    * looked up by its own name only).
    */
   envNamesFor?(key: string): string[];
+}
+
+/** One proxy-rule file format: where it sits under a project root, and how to read it. */
+export interface ProxySourceSpec {
+  files: readonly string[];
+  glob?: { deep: number; limit: number };
+  /** The forwarding rules the file declares; `file` is filled in by core. */
+  parse(text: string, path: string): Array<Omit<ProxyRule, "file">>;
 }
 
 /** One configuration file format: where it sits under a project root, and how to read it. */
@@ -464,6 +478,8 @@ export interface AstExtractorHooks {
   httpClientBases?(tree: Tree, sourceText: string): Record<string, string>;
   /** HTTP clients configured with a base, host included → `FileAnalysis.httpClientRegistrations`. */
   httpClientRegistrations?(tree: Tree, sourceText: string): HttpClientRegistration[];
+  /** Forwarding rules a code file declares (`vite.config.ts` `server.proxy`) → `FileAnalysis.proxyRules`. */
+  proxyRules?(tree: Tree, sourceText: string, filePath: string): ProxyRule[];
   /** Calls handing a path literal to a project function → `FileAnalysis.pathArgCalls`. */
   pathArgCalls?(tree: Tree, sourceText: string): PathArgCall[];
   /** URL-shaped module-level values by name (`environment.apiUrl`) → `FileAnalysis.moduleValues`. */

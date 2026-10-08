@@ -118,5 +118,27 @@ describe("resolveCallOrigins", () => {
     expect(d!.origin).not.toHaveProperty("project");
     expect(d!.baseExpr).toBe("http://${IP}:5999");
   });
+
+  it("forwards a same-origin call through its project's proxy, and no further than a stated service", () => {
+    const rules = [
+      { pathPrefix: "/api", target: "http://localhost:5102", rewriteTo: "", via: "vite", file: "web/vite.config.ts", project: "web" },
+      { pathPrefix: "/ext", target: "https://staging.example.com", via: "vite", file: "web/vite.config.ts", project: "web" },
+    ];
+    const calls = [call("web/api.ts", "/api/items"), call("web/api.ts", "/ext/items"), call("web/api.ts", "/other")];
+    resolveCallOrigins({
+      calls,
+      analyses: [analysis("web/api.ts", "web", "typescript")],
+      importIndex: noImports,
+      deployment,
+      config: new Map(),
+      addresses: buildServiceAddresses(deployment, new Map()),
+      proxyRules: rules,
+    });
+    expect(calls[0]).toMatchObject({ target: "/items", origin: { project: "inventory", confidence: "EXTRACTED" } });
+    // A staging host is not one of this analysis's services: nothing changes.
+    expect(calls[1]).toMatchObject({ target: "/ext/items" });
+    expect(calls[1]).not.toHaveProperty("origin");
+    expect(calls[2]).not.toHaveProperty("origin");
+  });
 });
 
