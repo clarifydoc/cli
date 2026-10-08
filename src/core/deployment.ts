@@ -347,21 +347,49 @@ function entryArtifact(entrypoint: string | undefined): string | undefined {
   return undefined;
 }
 
-function matchProject(
-  svc: RawService,
-  byExact: Map<string, SubProject[]>,
-  byNorm: Map<string, SubProject[]>,
-  fileCounts: Map<string, number>,
-): string | undefined {
-  // Ambiguity (two projects normalizing alike, e.g. an old and a new copy of a
-  // SPA) resolves to the one that owns more analyzed files.
-  const pick = (cands: SubProject[] | undefined): string | undefined => {
-    if (!cands || cands.length === 0) return undefined;
-    return cands
-      .slice()
-      .sort((a, b) => (fileCounts.get(b.id) ?? 0) - (fileCounts.get(a.id) ?? 0))[0].id;
-  };
+/** Sub-projects by the names a deployed unit may carry: project name, and project-file marker basenames. */
+interface ProjectIndex {
+  byExact: Map<string, SubProject[]>;
+  byNorm: Map<string, SubProject[]>;
+}
 
+function indexProjects(subProjects: readonly SubProject[]): ProjectIndex {
+  const byExact = new Map<string, SubProject[]>();
+  const byNorm = new Map<string, SubProject[]>();
+  for (const sp of subProjects) {
+    if (sp.id !== "root") {
+      const lower = sp.name.toLowerCase();
+      (byExact.get(lower) ?? byExact.set(lower, []).get(lower)!).push(sp);
+      const norm = normName(sp.name);
+      if (norm) (byNorm.get(norm) ?? byNorm.set(norm, []).get(norm)!).push(sp);
+    }
+    // Named project-file markers carry a matchable identity even when the
+    // project itself doesn't (the root catch-all is named "(root)" but its
+    // marker may be SampleMq.csproj → entrypoint SampleMq.dll).
+    for (const marker of sp.markers ?? []) {
+      const base = marker.split("/").pop() ?? "";
+      // .sln deliberately excluded: a solution names the repo, not a deployable
+      // project — matching it would glue every same-image service to root.
+      const m = base.match(/^(.+)\.(csproj|fsproj|vbproj|gemspec|cabal)$/i);
+      if (!m) continue;
+      const mn = normName(m[1]);
+      if (mn && !(byNorm.get(mn) ?? []).includes(sp)) (byNorm.get(mn) ?? byNorm.set(mn, []).get(mn)!).push(sp);
+    }
+  }
+  return { byExact, byNorm };
+}
+
+/**
+ * The sub-project a deployed service runs: its entrypoint artifact
+ * (`Plan.API.dll`), then its image's last segment, then its own name, each
+ * matched against project names and project-file markers. `pick` decides
+ * between several candidates at one tier.
+ */
+function matchProject(
+  svc: Pick<RawService, "name" | "image" | "entrypoint">,
+  { byExact, byNorm }: ProjectIndex,
+  pick: (cands: SubProject[] | undefined) => string | undefined,
+): string | undefined {
   const artifact = entryArtifact(svc.entrypoint);
   if (artifact) {
     const hit = pick(byExact.get(artifact.toLowerCase())) ?? pick(byNorm.get(normName(artifact)));
@@ -373,6 +401,23 @@ function matchProject(
     if (hit) return hit;
   }
   return pick(byNorm.get(normName(svc.name)));
+}
+
+/**
+ * The ONE sub-project a deployed service runs, among `subProjects` — for a
+ * caller holding services and projects from separate analyses (the app
+ * linking repositories: an infra repo's compose service, another repo's
+ * project). Unlike the in-analysis match, a tie between candidates matches
+ * nothing: across repositories there is no file count to break it with.
+ */
+export function matchServiceToProject(
+  svc: { name: string; image?: string; entrypoint?: string },
+  subProjects: readonly SubProject[],
+): string | undefined {
+  return matchProject(svc, indexProjects(subProjects), (cands) => {
+    const ids = [...new Set((cands ?? []).map((c) => c.id))];
+    return ids.length === 1 ? ids[0] : undefined;
+  });
 }
 
 // ─── Env-derived edges ──────────────────────────────────────────────────────
@@ -553,28 +598,15 @@ export async function detectDeployment(
   for (const pid of Object.values(options.fileProjects ?? {})) {
     fileCounts.set(pid, (fileCounts.get(pid) ?? 0) + 1);
   }
-  const projByExact = new Map<string, SubProject[]>();
-  const projByNorm = new Map<string, SubProject[]>();
-  for (const sp of options.subProjects) {
-    if (sp.id !== "root") {
-      const lower = sp.name.toLowerCase();
-      (projByExact.get(lower) ?? projByExact.set(lower, []).get(lower)!).push(sp);
-      const norm = normName(sp.name);
-      if (norm) (projByNorm.get(norm) ?? projByNorm.set(norm, []).get(norm)!).push(sp);
-    }
-    // Named project-file markers carry a matchable identity even when the
-    // project itself doesn't (the root catch-all is named "(root)" but its
-    // marker may be SampleMq.csproj → entrypoint SampleMq.dll).
-    for (const marker of sp.markers ?? []) {
-      const base = marker.split("/").pop() ?? "";
-      // .sln deliberately excluded: a solution names the repo, not a deployable
-      // project — matching it would glue every same-image service to root.
-      const m = base.match(/^(.+)\.(csproj|fsproj|vbproj|gemspec|cabal)$/i);
-      if (!m) continue;
-      const mn = normName(m[1]);
-      if (mn) (projByNorm.get(mn) ?? projByNorm.set(mn, []).get(mn)!).push(sp);
-    }
-  }
+  const projects = indexProjects(options.subProjects);
+  // Ambiguity (two projects normalizing alike, e.g. an old and a new copy of a
+  // SPA) resolves to the one that owns more analyzed files.
+  const byFiles = (cands: SubProject[] | undefined): string | undefined => {
+    if (!cands || cands.length === 0) return undefined;
+    return cands
+      .slice()
+      .sort((a, b) => (fileCounts.get(b.id) ?? 0) - (fileCounts.get(a.id) ?? 0))[0].id;
+  };
 
   // ── classify + match ──
   const services: DeployedService[] = rawMerged.map((svc) => {
@@ -591,7 +623,7 @@ export async function detectDeployment(
       tech: artifact ?? imageTail(svc.image),
     };
     if (kind === "app") {
-      s.project = matchProject(svc, projByExact, projByNorm, fileCounts);
+      s.project = matchProject(svc, projects, byFiles);
       // Where the service is told other services are — URL-shaped values only.
       const urlEnv: Record<string, string> = {};
       for (const k of Object.keys(svc.env).sort(byOrdinal)) {
