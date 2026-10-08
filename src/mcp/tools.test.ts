@@ -62,6 +62,7 @@ describe("clarifydoc MCP tools — react fixture", () => {
       "clarifydoc_search",
       "clarifydoc_routes",
       "clarifydoc_contract",
+      "clarifydoc_services",
       "clarifydoc_screens",
       "clarifydoc_file",
       "clarifydoc_trace",
@@ -146,6 +147,7 @@ describe("clarifydoc MCP tools — react fixture", () => {
     ["clarifydoc_search", { query: "zzz-not-a-thing-zzz" }],
     ["clarifydoc_routes", { path: "/zzz-not-a-thing" }],
     ["clarifydoc_contract", { path: "/zzz-not-a-thing" }],
+    ["clarifydoc_services", { project: "zzz-not-a-thing" }],
     ["clarifydoc_screens", { query: "zzz-not-a-thing" }],
     ["clarifydoc_trace", { symbol: "zzzNotAThing" }],
     ["clarifydoc_data_flows", { resource: "zzz-not-a-thing" }],
@@ -177,6 +179,31 @@ describe("clarifydoc MCP tools — react fixture", () => {
       expect(target.text).toContain("called from:");
       expect(target.text).toContain(link.source);
     }
+  });
+
+  it("services lifts cross-project links to one edge per project pair, with its endpoints", async () => {
+    const deps = loaded.summary.projectDependencies ?? [];
+    expect(deps.length, "fixture has no cross-project dependency").toBeGreaterThan(0);
+    const names = new Map(loaded.summary.subProjects!.map((p) => [p.id, p.name]));
+    const { text, isError } = await call(server, "clarifydoc_services");
+    expect(isError).toBe(false);
+    expect(text).toMatch(/^# Project dependencies — \d+ edges? between \d+ projects?/m);
+    for (const d of deps) {
+      expect(text).toContain(`${names.get(d.from)} → ${names.get(d.to)} [${d.kind}]`);
+      expect(text).toContain(d.endpoints[0]!.name);
+    }
+    const one = await call(server, "clarifydoc_services", { project: names.get(deps[0]!.to)! });
+    expect(one.text).toContain(`${names.get(deps[0]!.from)} → ${names.get(deps[0]!.to)}`);
+  });
+
+  it("routes names a caller's project when it calls across projects", async () => {
+    const link = (loaded.summary.apiRouteLinks ?? []).find(
+      (l) => l.sourceProject !== undefined && l.sourceProject !== l.targetProject,
+    );
+    expect(link, "fixture has no cross-project link").toBeDefined();
+    const name = loaded.summary.subProjects!.find((p) => p.id === link!.sourceProject)!.name;
+    const { text } = await call(server, "clarifydoc_routes", { path: link!.routePath });
+    expect(text).toContain(`${link!.source}:${link!.sourceLine} [${name}]`);
   });
 
   it("routes explains an empty filter result instead of returning nothing", async () => {

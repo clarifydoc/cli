@@ -91,6 +91,7 @@ import { buildEntityGraph, reconcileEntityInheritance, propagateStiRelations, li
 import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
 import { linkApiCallsToRoutesDetailed, dedupeRoutes, pairContractTwins } from "./route-linker.js";
+import { buildProjectDependencies } from "./project-dependencies.js";
 import { attachHandlerParams, attachRequestSchemas } from "./request-schemas.js";
 import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
 import { reconcileProjectRoutes } from "../extractors/route-resolvers/index.js";
@@ -1127,6 +1128,18 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     progress.detail(`  MQ publish→consume trace links: ${queueSymbolLinks.length}`);
   }
 
+  // Project level: which sub-project calls or messages which, made of the
+  // HTTP and broker links above, with the deployment edge that agrees.
+  const projectDependencies = buildProjectDependencies({
+    apiRouteLinks,
+    symbolLinks,
+    projectOf: (f) => analysisByPath.get(f)?.projectId,
+    deployment,
+  });
+  if (projectDependencies.length > 0) {
+    progress.detail(`  Project dependencies (HTTP/bus): ${projectDependencies.length}`);
+  }
+
   // Cross-tier blast: project each file's symbol-graph reach onto the UI and
   // data tiers — which screens/API routes transitively reach it, and which
   // entities/queues it ultimately touches. Runs AFTER the HTTP + MQ synthetic
@@ -1375,6 +1388,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     migrations: migrations.length > 0 ? migrations : undefined,
     apiRouteLinks: apiRouteLinks.length > 0 ? apiRouteLinks : undefined,
     apiRouteLinkStats: apiRouteLinkStats.calls > 0 ? apiRouteLinkStats : undefined,
+    projectDependencies: projectDependencies.length > 0 ? projectDependencies : undefined,
     generatedRoots: generatedRoots.length > 0 ? generatedRoots : undefined,
     unusedFiles: unusedFiles.length > 0 ? unusedFiles : undefined,
     deadCode,

@@ -627,7 +627,47 @@ describe("linkApiCallsToRoutesDetailed — stats", () => {
       linked: 1,
       refused: { methodMismatch: 0, wildcardOnly: 1, ambiguousSuffix: 0 },
       unmatched: 1,
+      crossProject: 0,
+      otherHost: 1,
+      unresolvedBase: 0,
     });
+  });
+
+  it("counts calls behind an unknown base, whether or not they link", () => {
+    const { stats } = linkApiCallsToRoutesDetailed(
+      [
+        { ...apiCall("web/a.js", "get", "/x"), baseExpr: "this.baseUrl" },
+        { ...apiCall("web/a.js", "get", "/nowhere"), baseExpr: "" },
+      ],
+      [route("srv/x.ts", "GET", "/api/x", "x")],
+    );
+    expect(stats).toMatchObject({ linked: 1, unresolvedBase: 2 });
+  });
+});
+
+describe("linkApiCallsToRoutes — the sub-projects of both ends", () => {
+  const projectOf = (f: string) => f.split("/")[0];
+  const orders = { ...route("orders/OrdersController.cs", "GET", "/api/orders", "List"), projectId: "orders" };
+  const web = { ...route("web/routes.ts", "GET", "/api/session", "session"), projectId: "web" };
+
+  it("names the calling and the serving project, and counts a link between two", () => {
+    const { links, stats } = linkApiCallsToRoutesDetailed(
+      [apiCall("web/orders.ts", "get", "/api/orders"), apiCall("web/session.ts", "get", "/api/session")],
+      [orders, web],
+      { projectOf },
+    );
+    expect(links.map((l) => [l.sourceProject, l.targetProject])).toEqual([
+      ["web", "orders"],
+      ["web", "web"],
+    ]);
+    expect(stats.crossProject).toBe(1);
+  });
+
+  it("leaves an end it cannot place unnamed, and never counts unknown as a difference", () => {
+    const { links, stats } = linkApiCallsToRoutesDetailed([apiCall("web/orders.ts", "get", "/api/orders")], [orders]);
+    expect(links[0]).not.toHaveProperty("sourceProject");
+    expect(links[0]).toMatchObject({ targetProject: "orders" });
+    expect(stats.crossProject).toBe(0);
   });
 });
 

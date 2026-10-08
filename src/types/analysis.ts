@@ -860,6 +860,13 @@ export interface ApiRouteLink {
   /** Matched route's full path (e.g. `/AccessReport/roles/{roleId}/holders`). */
   routePath: string;
   /**
+   * Sub-project of the calling file and of the route. They differ when one
+   * project calls another's API — a frontend its backend, a service another
+   * service — which is what a project-level dependency is made of.
+   */
+  sourceProject?: string;
+  targetProject?: string;
+  /**
    * EXTRACTED — method + path matched exactly (one route).
    * INFERRED  — path matched but method differed/was unknown.
    * AMBIGUOUS — more than one route matched; `target` is the first.
@@ -910,8 +917,47 @@ export interface ApiRouteLinkStats {
   };
   /** Joinable calls no route matched at all. */
   unmatched: number;
+  /** Links whose call and route are in different sub-projects. */
+  crossProject?: number;
+  /**
+   * Calls whose only URLs are absolute and name another host
+   * (`http://orders:8080/api/orders`). Not joinable: which project serves that
+   * host is not known from the path.
+   */
+  otherHost?: number;
+  /** Calls whose URL sits behind a base nobody resolved (`baseExpr`), linked or not. */
+  unresolvedBase?: number;
   /** Links by the role of the calling file. */
   byRole?: { production: number; test: number; generated: number };
+}
+
+/**
+ * One sub-project depending on another at runtime: requests (`http`, an
+ * api-call joined to the route serving it) or messages (`bus`, a publish
+ * matched to its consumer) cross from `from` to `to`. Import coupling is not
+ * an edge here — that is the component graph.
+ */
+export interface ProjectDependency {
+  /** Sub-project ids (see `SubProject.id`). */
+  from: string;
+  to: string;
+  kind: "http" | "bus";
+  /** Links behind the edge — test callers and AMBIGUOUS links excluded. 0 = only deployment states it. */
+  links: number;
+  /** Those links by confidence. */
+  confidence: Partial<Record<Confidence, number>>;
+  /**
+   * What crosses the edge, most-linked first: `GET /api/orders` (http) or a
+   * broker destination (bus). Capped; `endpointCount` is the total.
+   */
+  endpoints: Array<{ name: string; links: number }>;
+  endpointCount: number;
+  /**
+   * A compose/k8s edge between the two projects' services states the same
+   * dependency: the env var that evidenced it on the caller's service, and the
+   * manifest declaring that service.
+   */
+  deployment?: { via?: string; file: string };
 }
 
 export interface DataSourceInfo {
@@ -2077,6 +2123,12 @@ export interface ProjectAnalysis {
   apiRouteLinks?: ApiRouteLink[];
   /** What the cross-tier linker did with every call — links, refusals, unmatched, by caller role. */
   apiRouteLinkStats?: ApiRouteLinkStats;
+  /**
+   * Sub-project → sub-project runtime dependencies: HTTP calls and broker
+   * messages that cross between them, with the endpoints behind each and the
+   * deployment edge that agrees. Omitted when nothing crosses.
+   */
+  projectDependencies?: ProjectDependency[];
   /** Per-file child-component usages (JSX/Vue-template tags), with import source as `target`. */
   componentUsage?: (SubComponentInfo & { filePath: string })[];
   symbolLinks: SymbolLink[];
