@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "fs";
 import { dirname, resolve, sep, posix } from "path";
+import { stripJsonc } from "../plugins/shared/jsonc.js";
 
 /**
  * tsconfig.json path-alias resolution, ported from graphify-7
@@ -17,48 +18,8 @@ import { dirname, resolve, sep, posix } from "path";
 
 const tsconfigCache = new Map<string, Map<string, string>>();
 
-/**
- * Strip JSONC comments and trailing commas, preserving string literals.
- * Required because SvelteKit/NestJS/Vite/T3/Astro all ship JSONC tsconfigs.
- */
-export function stripJsonc(text: string): string {
-  // First pass: walk the string skipping over string-literal spans so // and
-  // /* inside strings are preserved.
-  let out = "";
-  let i = 0;
-  while (i < text.length) {
-    const ch = text[i]!;
-    if (ch === '"') {
-      // Copy the string verbatim, handling escapes.
-      out += ch;
-      i++;
-      while (i < text.length) {
-        const c = text[i]!;
-        out += c;
-        i++;
-        if (c === "\\" && i < text.length) {
-          out += text[i];
-          i++;
-        } else if (c === '"') {
-          break;
-        }
-      }
-    } else if (ch === "/" && text[i + 1] === "/") {
-      // Line comment — skip to newline.
-      while (i < text.length && text[i] !== "\n") i++;
-    } else if (ch === "/" && text[i + 1] === "*") {
-      // Block comment — skip to terminator.
-      i += 2;
-      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
-      i += 2;
-    } else {
-      out += ch;
-      i++;
-    }
-  }
-  // Strip trailing commas before } or ].
-  return out.replace(/,(\s*[}\]])/g, "$1");
-}
+// JSONC lives in the plugins' shared leaf so static manifests can use it too.
+export { stripJsonc };
 
 interface RawTsconfig {
   extends?: string;

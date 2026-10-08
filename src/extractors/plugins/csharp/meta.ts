@@ -20,6 +20,7 @@ import { CsharpUiBridgeResolver } from "./ui-bridge.js";
 import { csharpRequestSchema } from "./request-schema.js";
 import { csharpReachability } from "./reachability.js";
 import { extractCsharpDiBindings } from "./di-bindings.js";
+import { extractCsharpHttpClientRegistrations } from "./http-clients.js";
 import { extractCsharpTopLevelLocalTypes } from "./local-types.js";
 import { preprocessCsharpScript } from "./script.js";
 
@@ -70,6 +71,8 @@ export const csharpMeta: LanguagePluginMeta = {
     screens: (_tree, sourceText, filePath) => extractWinFormsScreens(sourceText, filePath),
     // `services.AddScoped<IRepo, SqlRepo>()`, Autofac `RegisterType<T>().As<I>()`, …
     diBindings: (tree, sourceText) => extractCsharpDiBindings(tree, sourceText),
+    // `AddHttpClient<T>(c => c.BaseAddress = …)`, named clients, `_http.BaseAddress = …`.
+    httpClientRegistrations: extractCsharpHttpClientRegistrations,
     // `Program.cs` top-level statements → the `<setup>` pseudo-function's locals.
     topLevelLocalTypes: (tree) => extractCsharpTopLevelLocalTypes(tree.rootNode),
   },

@@ -625,7 +625,7 @@ describe("linkApiCallsToRoutesDetailed — stats", () => {
       calls: 4,
       joinable: 3,
       linked: 1,
-      refused: { methodMismatch: 0, wildcardOnly: 1, ambiguousSuffix: 0 },
+      refused: { methodMismatch: 0, wildcardOnly: 1, ambiguousSuffix: 0, originMismatch: 0 },
       unmatched: 1,
       crossProject: 0,
       otherHost: 1,
@@ -752,5 +752,42 @@ describe("linkApiCallsToRoutes — a route whose prefix is unknown", () => {
       tail("AnnotationController.cs", "GET", "/all", "AnnotationController"),
     ]);
     expect(rows).toHaveLength(2);
+  });
+});
+
+describe("linkApiCallsToRoutes — the service a call names", () => {
+  const inventory = { ...route("inventory/ItemsController.cs", "GET", "/api/items", "List"), projectId: "inventory" };
+  const legacy = { ...route("legacy/ItemsController.cs", "GET", "/api/items", "Items"), projectId: "legacy" };
+  const toward = (project: string, confidence: "EXTRACTED" | "INFERRED" | "AMBIGUOUS") => ({
+    ...apiCall("orders/InventoryClient.cs", "GetFromJsonAsync", "/api/items"),
+    origin: { project, host: project, confidence, evidence: [] },
+  });
+
+  it("joins only the named service's routes, and says so", () => {
+    const links = linkApiCallsToRoutes([toward("legacy", "EXTRACTED")], [inventory, legacy]);
+    expect(links[0]).toMatchObject({ target: "legacy/ItemsController.cs", confidence: "EXTRACTED", matchedVia: "service:legacy" });
+  });
+
+  it("refuses rather than fall back to another service's route", () => {
+    const { links, stats } = linkApiCallsToRoutesDetailed([toward("billing", "EXTRACTED")], [inventory, legacy]);
+    expect(links).toEqual([]);
+    expect(stats.refused.originMismatch).toBe(1);
+  });
+
+  it("ranks an inferred service first without excluding the others", () => {
+    expect(linkApiCallsToRoutes([toward("legacy", "INFERRED")], [inventory, legacy])[0]).toMatchObject({ target: "legacy/ItemsController.cs" });
+    expect(linkApiCallsToRoutes([toward("billing", "INFERRED")], [inventory, legacy])[0]!.confidence).toBe("AMBIGUOUS");
+  });
+
+  it("reaches a route in a library the named service imports", () => {
+    const libRoute = { ...route("shop-api/ItemsController.cs", "GET", "/api/items", "List"), projectId: "shop-api" };
+    const servedBy = (p: string) => new Set(p === "shop-server" ? ["shop-server", "shop-api"] : [p]);
+    const links = linkApiCallsToRoutes([toward("shop-server", "EXTRACTED")], [legacy, libRoute], { servedBy });
+    expect(links[0]).toMatchObject({ target: "shop-api/ItemsController.cs", confidence: "EXTRACTED", matchedVia: "service:shop-server" });
+  });
+
+  it("ignores an origin that could not choose between services", () => {
+    const call = { ...apiCall("orders/InventoryClient.cs", "GetFromJsonAsync", "/api/items"), origin: { confidence: "AMBIGUOUS" as const, evidence: [] } };
+    expect(linkApiCallsToRoutes([call], [inventory, legacy])[0]!.confidence).toBe("AMBIGUOUS");
   });
 });

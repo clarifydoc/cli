@@ -15,6 +15,8 @@ import type {
   ExternalPackage,
   PackageEcosystem,
   PathArgCall,
+  CallBaseRef,
+  HttpClientRegistration,
 } from "./analysis.js";
 import type { ProjectInfo } from "./plugin.js";
 import type { RouteExtractor } from "../extractors/routes/base.js";
@@ -67,6 +69,53 @@ export interface PackageManifestSpec {
   /** `files` are globs, searched `deep` directories down, at most `limit` files read. */
   glob?: { deep: number; limit: number };
   parse(text: string, file: ManifestFileContext): DeclaredPackage[] | Promise<DeclaredPackage[]>;
+}
+
+/**
+ * How a language's programs are configured to reach other services. Pure data
+ * and pure functions: it lives on the static manifest, so it must not import
+ * the plugin body.
+ */
+export interface ServiceConfigSpec {
+  /** Configuration files read at each sub-project root. */
+  sources?: readonly ConfigSourceSpec[];
+  /**
+   * A base expression as written (`process.env.ORDERS_URL`,
+   * `_config["Services:Orders"]`, `os.environ["X"]`) → what it reads; null when
+   * it reads nothing this language knows as configuration.
+   */
+  baseRefOf?(expr: string): CallBaseRef | null;
+  /**
+   * The environment variables that set configuration key `key` at runtime —
+   * .NET `Services:Orders` ← `Services__Orders`, Spring `orders.url` ←
+   * `ORDERS_URL`. Matched case-insensitively. Default: none (an env ref is
+   * looked up by its own name only).
+   */
+  envNamesFor?(key: string): string[];
+}
+
+/** One configuration file format: where it sits under a project root, and how to read it. */
+export interface ConfigSourceSpec {
+  /** File names, or globs with `glob`, relative to the root (`appsettings.json`, `appsettings.*.json`). */
+  files: readonly string[];
+  glob?: { deep: number; limit: number };
+  /** Every key → string value the file sets. Core keeps only URL-shaped values and drops the rest unread. */
+  parse(text: string, path: string): ConfigEntry[];
+}
+
+/** A configuration value as a file states it. */
+export interface ConfigEntry {
+  key: string;
+  value: string;
+  line?: number;
+  /** Environment profile the value applies to (`Development`, from `appsettings.Development.json`). */
+  profile?: string;
+  /** A test profile: it never decides where production calls go. */
+  test?: boolean;
+  /** An environment variable the profile sets (launchSettings `environmentVariables`), not a configuration key. */
+  env?: boolean;
+  /** A URL the project itself listens on (`applicationUrl`, Kestrel `Urls`), not one it calls. */
+  listen?: boolean;
 }
 
 /**
@@ -413,6 +462,8 @@ export interface AstExtractorHooks {
   customElements?(sourceText: string): CustomElementDef[];
   /** HTTP client instances created with a base URL → `FileAnalysis.httpClientBases`. */
   httpClientBases?(tree: Tree, sourceText: string): Record<string, string>;
+  /** HTTP clients configured with a base, host included → `FileAnalysis.httpClientRegistrations`. */
+  httpClientRegistrations?(tree: Tree, sourceText: string): HttpClientRegistration[];
   /** Calls handing a path literal to a project function → `FileAnalysis.pathArgCalls`. */
   pathArgCalls?(tree: Tree, sourceText: string): PathArgCall[];
   /** URL-shaped module-level values by name (`environment.apiUrl`) → `FileAnalysis.moduleValues`. */
@@ -728,6 +779,13 @@ export interface LanguagePluginManifest {
    * Swift/Objective-C import from SwiftPM AND CocoaPods packages.
    */
   packageEcosystems?: readonly PackageEcosystem[];
+  /**
+   * How this language's programs are told where other services are: the
+   * configuration files they read, the expressions that read them, and how an
+   * environment variable addresses a configuration key. Core's call-origin
+   * pass reads only this; it names no language, file or framework.
+   */
+  serviceConfig?: ServiceConfigSpec;
   /**
    * Extension-less SOURCE files this language owns, by basename — Play's
    * `conf/routes`. Discovery globs by extension, so without this such a file

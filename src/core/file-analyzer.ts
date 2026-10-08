@@ -326,6 +326,8 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // the project pass prepends the base to calls made through them.
     const clientBases = hooks?.httpClientBases?.(tree, sourceText);
     if (clientBases && Object.keys(clientBases).length > 0) analysis.httpClientBases = clientBases;
+    const clientRegistrations = hooks?.httpClientRegistrations?.(tree, sourceText);
+    if (clientRegistrations && clientRegistrations.length > 0) analysis.httpClientRegistrations = clientRegistrations;
     const pathArgCalls = hooks?.pathArgCalls?.(tree, sourceText);
     if (pathArgCalls && pathArgCalls.length > 0) analysis.pathArgCalls = pathArgCalls;
     const moduleValues = hooks?.moduleValues?.(tree, sourceText);

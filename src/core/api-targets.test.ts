@@ -25,10 +25,14 @@ describe("splitUnknownBase", () => {
     expect(splitUnknownBase("${fn({ a: 1 })}/x")).toEqual({ target: "/x", baseExpr: "fn({ a: 1 })" });
   });
 
-  it("drops a loopback origin — the app's own server, so nothing is unknown — but leaves another host's URL alone", () => {
-    expect(splitUnknownBase("http://localhost:5000/api/series")).toEqual({ target: "/api/series" });
-    expect(splitUnknownBase("http://${IP}:5000/api/series")).toEqual({ target: "/api/series" });
+  it("drops a loopback origin — a server on this machine, named by its port — but leaves another host's URL alone", () => {
+    expect(splitUnknownBase("http://localhost:5000/api/series")).toEqual({ target: "/api/series", origin: "http://localhost:5000" });
     expect(splitUnknownBase("https://api.github.com/repos")).toBeNull();
+  });
+
+  it("reads a host left as a hole as an unknown base, never as this machine", () => {
+    expect(splitUnknownBase("http://${IP}:5000/api/series")).toEqual({ target: "/api/series", baseExpr: "http://${IP}:5000" });
+    expect(splitUnknownBase("http://${host}/api/${path}")).toEqual({ target: "/api/${path}", baseExpr: "http://${host}" });
   });
 
   it("reads a bare relative path as relative to an unknown base", () => {

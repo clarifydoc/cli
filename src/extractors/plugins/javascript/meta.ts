@@ -16,7 +16,7 @@ import { extractPathReferences } from "./path-references.js";
 import { javascriptCallHooks } from "./call-hooks.js";
 import { extractJsVariableAliases } from "./variable-aliases.js";
 import { extractJsDiBindings } from "./di-bindings.js";
-import { extractHttpClientBases } from "./http-clients.js";
+import { extractHttpClientBases, extractHttpClientRegistrations } from "./http-clients.js";
 import { extractPathArgCalls } from "./path-arg-calls.js";
 import { extractModuleValues } from "./module-values.js";
 import { vuePreprocess } from "./vue-hooks.js";
@@ -149,6 +149,7 @@ function astHooks(language: Language): AstExtractorHooks {
     externalTemplate: (sourceText) => extractAngularTemplateUrl(sourceText),
     customElements: (sourceText) => extractCustomElements(sourceText),
     httpClientBases: extractHttpClientBases,
+    httpClientRegistrations: extractHttpClientRegistrations,
     pathArgCalls: extractPathArgCalls,
     moduleValues: extractModuleValues,
     pathReferences: (sourceText) => extractPathReferences(sourceText),
