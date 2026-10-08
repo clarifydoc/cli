@@ -1,6 +1,6 @@
 import { readFile } from "fs/promises";
 import { join, resolve, basename } from "path";
-import type { ProjectAnalysis, BlastRadiusInfo, LspStats, DeadCodeReport } from "../types/analysis.js";
+import type { ApiRouteLink, ProjectAnalysis, BlastRadiusInfo, LspStats, DeadCodeReport } from "../types/analysis.js";
 import { denormalizeProject } from "./element-registry.js";
 
 /**
@@ -28,6 +28,14 @@ export interface ReportPayload {
   fileProjects: Record<string, string>;
   routeMap: any[];
   apiCalls: any[];
+  /**
+   * True when each linked `apiCalls` row carries its `route` (the linker's
+   * answer). Absent on payloads from before rows carried it — the Routes tab
+   * then falls back to comparing paths.
+   */
+  apiCallsLinked?: boolean;
+  /** Sub-project → sub-project runtime dependencies (`ProjectDependency[]`); small, plain paths. */
+  projectDependencies: any[];
   /** Wire form: `[fileRef, depRef[]][]` (decoded back to a Record client-side). */
   componentGraph: any;
   fileLayerMap: Record<string, string>;
@@ -331,13 +339,10 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
       if (r.requestSchema) row.requestSchema = r.requestSchema;
       return row;
     }),
-    /** Outbound HTTP calls — surfaced alongside routes in the Routes tab. */
-    apiCalls: (summary.apiCalls ?? []).map((c: any) => ({
-      name: c.name,
-      target: c.target,
-      filePath: c.filePath,
-      line: c.line,
-    })),
+    /** Outbound HTTP calls — surfaced alongside routes in the Routes tab, each with the route it reaches. */
+    apiCalls: withRoutes(summary),
+    apiCallsLinked: true,
+    projectDependencies: s.projectDependencies ?? [],
     componentGraph: Object.entries(summary.componentGraph ?? {}).map(([f, deps]) => [
       ref(f),
       deps.map(ref),
@@ -379,6 +384,40 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
     wireStrings,
     deferredFields: [...DEFERRED_FIELDS],
   };
+}
+
+/**
+ * The api-call rows with the route each one reaches, as the linker decided it.
+ * A link names its call by file + line (+ the URL that matched, for a call
+ * whose builder has alternatives), so that is the join. Plain paths: the rows
+ * are few next to symbolLinks and the Routes tab reads them as they are.
+ */
+function withRoutes(summary: ProjectAnalysis): Array<Record<string, unknown>> {
+  const byLine = new Map<string, ApiRouteLink[]>();
+  for (const l of summary.apiRouteLinks ?? []) {
+    const key = `${l.source}\u0000${l.sourceLine}`;
+    (byLine.get(key) ?? byLine.set(key, []).get(key)!).push(l);
+  }
+  return (summary.apiCalls ?? []).map((c) => {
+    const row: Record<string, unknown> = { name: c.name, target: c.target, filePath: c.filePath, line: c.line };
+    const here = byLine.get(`${c.filePath}\u0000${c.line}`) ?? [];
+    const urls = [c.target, ...(c.targetAlternatives ?? [])];
+    const link = here.find((l) => urls.includes(l.url)) ?? (here.length === 1 ? here[0] : undefined);
+    if (link) {
+      const route: Record<string, unknown> = {
+        method: link.method,
+        path: link.routePath,
+        file: link.target,
+        line: link.targetLine,
+        confidence: link.confidence,
+      };
+      if (link.handler) route.handler = link.handler;
+      if (link.targetProject) route.project = link.targetProject;
+      if (link.matchedVia) route.via = link.matchedVia;
+      row.route = route;
+    }
+    return row;
+  });
 }
 
 /**

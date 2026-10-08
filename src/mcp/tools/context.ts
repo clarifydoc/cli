@@ -166,6 +166,7 @@ export async function statusReport(loaded: LoadedAnalysis, store: AnalysisStore)
         "outbound api calls": (summary.apiCalls ?? []).length,
         "frontend→backend links": (summary.apiRouteLinks ?? []).filter((l) => !l.sourceRole).length,
         "links from tests": (summary.apiRouteLinks ?? []).filter((l) => l.sourceRole === "test").length,
+        "project dependencies": (summary.projectDependencies ?? []).length,
         "call traces": (summary.symbolLinks ?? []).length,
         entities: (summary.entityGraph?.nodes ?? []).length,
         "er relations": (summary.entityGraph?.edges ?? []).length,

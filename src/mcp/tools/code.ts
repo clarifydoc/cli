@@ -177,7 +177,11 @@ export function routesTool(ctx: ToolContext): McpTool {
       for (const link of summary.apiRouteLinks ?? []) {
         const key = `${link.target}:${link.targetLine}`;
         const list = callers.get(key) ?? [];
-        list.push(`${loc(link.source, link.sourceLine)}${confidenceNote(link.confidence)}${versionNote(link)}`);
+        // A caller in another sub-project is named: that is the cross-service edge.
+        const fromOther = link.sourceProject !== undefined && link.sourceProject !== link.targetProject
+          ? ` [${projectNames.get(link.sourceProject) ?? link.sourceProject}]`
+          : "";
+        list.push(`${loc(link.source, link.sourceLine)}${fromOther}${confidenceNote(link.confidence)}${versionNote(link)}`);
         callers.set(key, list);
       }
       // Data effects, by route entry file + label (dataFlows uses "METHOD /path"

@@ -5,7 +5,7 @@ import { byOrdinal } from "../../core/ordinal.js";
 import { normalize, rankCandidates, type Candidate, type SearchKind } from "../search-rank.js";
 import type { McpTool } from "../protocol.js";
 import type { LoadedAnalysis } from "../store.js";
-import type { ProjectAnalysis } from "../../types/analysis.js";
+import type { ProjectAnalysis, ProjectDependency } from "../../types/analysis.js";
 import {
   ago,
   bulletList,
@@ -413,6 +413,102 @@ function noFindings(
       "clarifydoc_health — the scoreboard for every category",
     ],
   });
+}
+
+export function servicesTool(ctx: ToolContext): McpTool {
+  return {
+    name: "clarifydoc_services",
+    title: "Which project calls which",
+    description:
+      "Runtime dependencies between the sub-projects of this analysis: a frontend and its backend, one service " +
+      "and another, a publisher and the worker consuming its messages. Each edge lists the endpoints (or broker " +
+      "destinations) that cross it, and whether a deployment manifest (docker-compose, k8s) states it too. An edge " +
+      "with 0 links is stated by deployment only — no call was found in code. Name a `project` for what it calls " +
+      "and what calls it; then clarifydoc_routes for one endpoint's callers.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Sub-project id or name (substring) — edges with it at either end." },
+        kind: { type: "string", enum: ["http", "bus"], description: "Only HTTP calls, or only broker messages." },
+        limit: { type: "number", description: "Max edges (default 30)." },
+      },
+      additionalProperties: false,
+    },
+    handler: async (args) => {
+      const { summary } = await requireAnalysis(ctx);
+      const projectFilter = stringArg(args, "project");
+      const kind = enumArg(args, "kind", ["http", "bus"] as const);
+      const limit = numberArg(args, "limit", 30, { max: 300 });
+      const all = summary.projectDependencies ?? [];
+      const subProjects = summary.subProjects ?? [];
+      const nameOf = new Map(subProjects.map((p) => [p.id, p.name]));
+      const name = (id: string) => nameOf.get(id) ?? id;
+      const isProject = (id: string) => !!projectFilter && (contains(id, projectFilter) || contains(nameOf.get(id), projectFilter));
+
+      if (subProjects.length < 2 && all.length === 0) {
+        return {
+          text: noResults({
+            headline: "This analysis holds one project, so nothing crosses between projects.",
+            holds: `It holds ${plural((summary.apiRouteLinks ?? []).length, "call→route link")} inside that project.`,
+            next: ["clarifydoc_routes — every endpoint and the code that calls it"],
+          }),
+        };
+      }
+
+      let deps = all;
+      if (kind) deps = deps.filter((d) => d.kind === kind);
+      if (projectFilter) deps = deps.filter((d) => isProject(d.from) || isProject(d.to));
+      if (deps.length === 0) {
+        const drop = filterToDrop(all, [
+          projectFilter ? { label: "project", keep: (d: ProjectDependency) => isProject(d.from) || isProject(d.to) } : undefined,
+          kind ? { label: "kind", keep: (d: ProjectDependency) => d.kind === kind } : undefined,
+        ].filter((f) => f !== undefined));
+        const known = projectFilter && !subProjects.some((p) => isProject(p.id));
+        return {
+          text: noResults({
+            headline: missHeadline("project dependencies", [["project", projectFilter], ["kind", kind]]),
+            holds: [
+              `The analysis holds ${plural(all.length, "dependency", "dependencies")} between ${plural(subProjects.length, "sub-project")}.`,
+              known && `No sub-project is named like "${projectFilter}": ${cap(subProjects.map((p) => p.name), 8).shown.join(", ")}.`,
+            ],
+            next: [
+              drop && `clarifydoc_services without \`${drop.label}\` (${plural(drop.count, "edge")})`,
+              !drop && all.length > 0 && `clarifydoc_services without \`${projectFilter ? "project" : "kind"}\` (${plural(all.length, "edge")})`,
+              all.length === 0 && "clarifydoc_routes — calls that link inside each project",
+              all.length === 0 && (await stalenessHint(ctx.store)),
+            ],
+          }),
+        };
+      }
+
+      const ordered = [...deps].sort((a, b) => b.links - a.links || byOrdinal(a.from, b.from) || byOrdinal(a.to, b.to));
+      const endpointCap = projectFilter ? 12 : 6;
+      const render = (d: ProjectDependency): string => {
+        const head =
+          `${name(d.from)} → ${name(d.to)} [${d.kind}] — ` +
+          (d.links > 0
+            ? `${plural(d.links, "link")}${d.confidence.INFERRED ? ` (${d.confidence.INFERRED} inferred)` : ""}`
+            : "deployment only, no call found in code");
+        const dep = d.deployment ? ` · deployment: ${d.deployment.via ? `${d.deployment.via} in ` : ""}${d.deployment.file}` : "";
+        const lines = [head + dep];
+        if (d.endpoints.length) {
+          const shown = d.endpoints.slice(0, endpointCap).map((e) => (e.links > 1 ? `${e.name} (${e.links})` : e.name));
+          const hidden = d.endpointCount - shown.length;
+          lines.push(`    ${d.kind === "bus" ? "destinations" : "endpoints"}: ${shown.join(", ")}${hidden > 0 ? ` … +${hidden}` : ""}`);
+        }
+        return lines.join("\n");
+      };
+      const projects = new Set(deps.flatMap((d) => [d.from, d.to]));
+      return {
+        text: joinLines([
+          `# Project dependencies — ${plural(deps.length, "edge")} between ${plural(projects.size, "project")}`,
+          countMap(tally(deps, (d) => d.kind)),
+          "",
+          ...bulletList(ordered, limit, render),
+        ]),
+      };
+    },
+  };
 }
 
 export function healthTool(ctx: ToolContext): McpTool {

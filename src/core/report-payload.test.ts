@@ -236,3 +236,32 @@ describe("buildReportPayload wire encoding", () => {
     expect(summary.fileChurn![0]!.file).toBe("src/a.ts");
   });
 });
+
+describe("buildReportPayload — the route each api-call reaches", () => {
+  const call = (filePath: string, line: number, target: string, extra: Record<string, unknown> = {}) =>
+    ({ kind: "api-call", name: "get", target, filePath, line, calls: [], ...extra });
+  const link = (source: string, sourceLine: number, url: string, routePath: string, extra: Record<string, unknown> = {}) => ({
+    source, sourceLine, method: "GET", url, target: "api/Orders.cs", targetLine: 12, handler: "List",
+    routePath, sourceProject: "web", targetProject: "orders", confidence: "EXTRACTED", matchedVia: "exact", ...extra,
+  });
+  const withLinks = (apiCalls: unknown[], apiRouteLinks: unknown[]) =>
+    buildReportPayload({ ...summary, apiCalls, apiRouteLinks } as unknown as ProjectAnalysis);
+
+  it("attaches the linked route, with its project and how it matched", () => {
+    const payload = withLinks([call("web/a.ts", 3, "/api/orders"), call("web/a.ts", 9, "/nowhere")], [link("web/a.ts", 3, "/api/orders", "/api/orders")]);
+    expect(payload.apiCallsLinked).toBe(true);
+    expect(payload.apiCalls[0].route).toEqual({
+      method: "GET", path: "/api/orders", file: "api/Orders.cs", line: 12, handler: "List",
+      confidence: "EXTRACTED", project: "orders", via: "exact",
+    });
+    expect(payload.apiCalls[1]).not.toHaveProperty("route");
+  });
+
+  it("tells two calls on one line apart by the URL that matched, alternatives included", () => {
+    const payload = withLinks(
+      [call("web/a.ts", 3, "/api/a"), call("web/a.ts", 3, "/api/b", { targetAlternatives: ["/api/c"] })],
+      [link("web/a.ts", 3, "/api/c", "/api/c"), link("web/a.ts", 3, "/api/a", "/api/a")],
+    );
+    expect(payload.apiCalls.map((c: { route?: { path: string } }) => c.route?.path)).toEqual(["/api/a", "/api/c"]);
+  });
+});

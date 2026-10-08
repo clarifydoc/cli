@@ -14,7 +14,7 @@ import { McpServer, serveStdio, type McpResource, type McpTool } from "./protoco
 import { TOOL_VERSION } from "../core/version.js";
 import { AnalysisStore, type AnalyzeSettings } from "./store.js";
 import { statusReport, type ToolContext } from "./tools/context.js";
-import { analyzeTool, healthTool, impactTool, searchTool, statusTool } from "./tools/overview.js";
+import { analyzeTool, healthTool, impactTool, searchTool, servicesTool, statusTool } from "./tools/overview.js";
 import { blastRadiusTool, contractTool, fileTool, routesTool, screensTool, traceTool } from "./tools/code.js";
 import { dataFlowsTool, dataModelTool } from "./tools/data.js";
 
@@ -99,6 +99,7 @@ Suggested order:
    which screen calls which endpoint, and which table that endpoint writes. Routes carry who may call them
    (policy, roles, scheme, or anonymous), which API versions they serve, and each parameter's binding; filter by
    those, and use clarifydoc_contract for one endpoint's full request shape before calling it.
+   clarifydoc_services lifts the same links to sub-projects: which frontend, service or worker calls which.
 5. clarifydoc_health and clarifydoc_impact — findings, and the effect of the current git diff.
 
 Facts are extracted, not inferred, but cross-file links can be heuristic: rows tagged \`inferred\` or \`ambiguous\`
@@ -135,6 +136,7 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
     searchTool(ctx),
     routesTool(ctx),
     contractTool(ctx),
+    servicesTool(ctx),
     screensTool(ctx),
     fileTool(ctx),
     traceTool(ctx),
