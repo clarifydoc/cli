@@ -22,7 +22,7 @@ const SENSITIVE_PATTERNS: ReadonlyArray<RegExp> = [
   /(aws_credentials|gcloud_credentials|service.account)/i,
 ];
 
-function isSensitive(relativePath: string): boolean {
+export function isSensitive(relativePath: string): boolean {
   return SENSITIVE_PATTERNS.some((p) => p.test(relativePath));
 }
 

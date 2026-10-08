@@ -17,10 +17,13 @@ type ApiCall = DataSourceInfo & { filePath: string };
  * linker can treat the base as what it is — an unknown prefix of any length.
  *
  * A loopback origin (`http://localhost:5000/api/x`, a dev `environment.ts`) is
- * the app's own server, so it is dropped; any other absolute URL is another
- * service and stays as written. A bare relative path (`session`, `me`,
- * `forgot-password`) is relative to its client's base, which is just as
- * unknown.
+ * a server on this machine: it is dropped from the target and kept as the
+ * call's literal base, so the call-origin pass can tell WHICH server by its
+ * port. A host the source leaves as a hole (`http://${IP}:5000`) states no
+ * machine at all: it is an unknown base like any other. Any other absolute
+ * URL is another service and stays as written. A bare relative path
+ * (`session`, `me`, `forgot-password`) is relative to its client's base, which
+ * is just as unknown.
  *
  * Language-agnostic: it reads only the `${…}` / `{…}` hole notation every URL
  * fold renders. Mutates the aggregated rows; returns how many it rewrote.
@@ -36,13 +39,16 @@ export function finalizeApiTargets(calls: ApiCall[]): number {
     if (!split) continue;
     call.target = split.target;
     if (split.baseExpr !== undefined) call.baseExpr = split.baseExpr;
+    if (split.origin !== undefined) call.baseRef = { kind: "literal", key: split.origin };
     changed++;
   }
   return changed;
 }
 
-/** The app's own server: a loopback host, or a host the source leaves as a hole (`http://${IP}:5000`). */
-const LOOPBACK_ORIGIN = /^https?:\/\/(?:localhost|127(?:\.\d+){3}|0\.0\.0\.0|\[::1\]|[^/]*\$\{[^/]*)(?::\d+)?(?=\/|$)/i;
+/** A server on this machine: a loopback host. */
+const LOOPBACK_ORIGIN = /^https?:\/\/(?:localhost|127(?:\.\d+){3}|0\.0\.0\.0|\[::1\])(?::\d+)?(?=\/|$)/i;
+/** A host the source leaves as a hole (`http://${IP}:5000`): some server, not stated which. */
+const HOLE_HOST_ORIGIN = /^https?:\/\/[^/]*\$\{[^/]*?(?=\/|$)/i;
 const RELATIVE_PATH = /^[A-Za-z0-9_.~-]+(?:[/?#]|$)/;
 
 /**
@@ -50,12 +56,16 @@ const RELATIVE_PATH = /^[A-Za-z0-9_.~-]+(?:[/?#]|$)/;
  * split (an app path already, another host's URL, or nothing but holes).
  * Exported for tests.
  */
-export function splitUnknownBase(url: string): { target: string; baseExpr?: string } | null {
+export function splitUnknownBase(url: string): { target: string; baseExpr?: string; origin?: string } | null {
   let s = url.trim();
   let base: string | undefined;
-  // The app's own server: the path after it is complete, so no base is unknown.
+  // A server on this machine: the path after it is complete, so no base is
+  // unknown — the origin itself is returned for the port it names.
   const origin = LOOPBACK_ORIGIN.exec(s);
   if (origin) s = s.slice(origin[0].length) || "/";
+  // An unstated host: the base is unknown, whatever port it carries.
+  const holeHost = origin ? null : HOLE_HOST_ORIGIN.exec(s);
+  if (holeHost) s = s.slice(holeHost[0].length) || "/";
   let holes = "";
   for (;;) {
     const len = leadingHoleLength(s);
@@ -64,17 +74,22 @@ export function splitUnknownBase(url: string): { target: string; baseExpr?: stri
     s = s.slice(len);
   }
   if (holes) base = stripHole(holes);
-  if (!holes && !origin) {
+  if (holeHost) base = holes ? `${holeHost[0]} + ${base}` : holeHost[0];
+  if (!holes && !origin && !holeHost) {
     // `session` on a client with a base: as unknown a base as a hole.
     if (s.startsWith("/") || /^[a-z][a-z0-9+.-]*:/i.test(s) || !RELATIVE_PATH.test(s)) return null;
     base = "";
   }
   if (!s || s.startsWith("?") || s.startsWith("#")) {
     // Only a base and a query: no path to link — leave the URL as written.
-    return origin ? { target: "/" + s } : null;
+    return origin ? { target: "/" + s, origin: origin[0] } : null;
   }
   const target = s.startsWith("/") ? s : "/" + s;
-  return base === undefined ? { target } : { target, baseExpr: base };
+  return {
+    target,
+    ...(base !== undefined ? { baseExpr: base } : {}),
+    ...(origin ? { origin: origin[0] } : {}),
+  };
 }
 
 /** Length of a `${…}` or `{…}` hole (braces balanced) at the start of `s`, or 0. */

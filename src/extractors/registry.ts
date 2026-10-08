@@ -3,6 +3,8 @@ import type {
   LanguagePluginMeta,
   LanguagePluginManifest,
   PackageManagerSpec,
+  ConfigSourceSpec,
+  ServiceConfigSpec,
   LanguageComplexitySpec,
   LanguageControlFlowSpec,
   LanguageRegexControlFlowSpec,
@@ -652,6 +654,18 @@ const PACKAGE_MATCHING: ReadonlyMap<PackageEcosystem, PackageManagerSpec> = (() 
   }
   return map;
 })();
+
+/**
+ * Every plugin's configuration-file readers, in `ALL_MANIFESTS` order. Static
+ * tier like the package managers: an `appsettings.json` is read at a project
+ * root whether or not a `.cs` file was found beside it.
+ */
+export const CONFIG_SOURCES: readonly ConfigSourceSpec[] = ALL_MANIFESTS.flatMap((m) => m.serviceConfig?.sources ?? []);
+
+/** How a language's programs are configured to reach other services (undefined: the plugin says nothing). */
+export function serviceConfigFor(language: string): ServiceConfigSpec | undefined {
+  return MANIFEST_BY_LANGUAGE.get(language as Language)?.serviceConfig;
+}
 
 /** How imports match the packages of an ecosystem (undefined: they never do — usage stays unknown). */
 export function packageMatchingFor(ecosystem: PackageEcosystem): PackageManagerSpec | undefined {

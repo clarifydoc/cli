@@ -106,3 +106,44 @@ export function buildProjectDependencies(input: {
   }
   return out.sort((a, b) => byOrdinal(a.from, b.from) || byOrdinal(a.to, b.to) || byOrdinal(a.kind, b.kind));
 }
+
+/**
+ * What a deployed project serves: its own routes and those of every project
+ * it imports, transitively. A .NET host (`Shop.Server`, matched to the compose
+ * service or owning the launchSettings URL) commonly serves controllers that
+ * live in a referenced class library (`Shop.Api`); a call naming the host must
+ * still reach them. Built from the component graph's cross-project edges, so
+ * it follows what the code imports, never what merely sits nearby.
+ */
+export function projectServesClosure(
+  componentGraph: Readonly<Record<string, readonly string[]>>,
+  projectOf: (file: string) => string | undefined,
+): (project: string) => ReadonlySet<string> {
+  const refs = new Map<string, Set<string>>();
+  for (const [file, deps] of Object.entries(componentGraph)) {
+    const from = projectOf(file);
+    if (from === undefined) continue;
+    for (const dep of deps) {
+      const to = projectOf(dep);
+      if (to === undefined || to === from) continue;
+      (refs.get(from) ?? refs.set(from, new Set()).get(from)!).add(to);
+    }
+  }
+  const memo = new Map<string, ReadonlySet<string>>();
+  return (project) => {
+    const hit = memo.get(project);
+    if (hit) return hit;
+    const seen = new Set<string>([project]);
+    const queue = [project];
+    let qi = 0;
+    while (qi < queue.length) {
+      for (const next of refs.get(queue[qi++]!) ?? []) {
+        if (seen.has(next)) continue;
+        seen.add(next);
+        queue.push(next);
+      }
+    }
+    memo.set(project, seen);
+    return seen;
+  };
+}

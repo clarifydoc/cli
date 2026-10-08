@@ -419,6 +419,12 @@ export interface FileAnalysis {
    * for `/api/users`). Omitted when the file creates none.
    */
   httpClientBases?: Record<string, string>;
+  /**
+   * HTTP clients configured with a base URL in this file, the host included
+   * (`httpClientBases` keeps only the path): typed and named .NET clients,
+   * `axios.create({ baseURL: process.env.X })`.
+   */
+  httpClientRegistrations?: HttpClientRegistration[];
 }
 
 /**
@@ -890,7 +896,8 @@ export interface ApiRouteLink {
     | `base-prefix:${string}`
     | "base-unresolved"
     | `base-unresolved:${string}`
-    | "route-prefix-unresolved";
+    | "route-prefix-unresolved"
+    | `service:${string}`;
   /**
    * Where the calling file sits, when it is not production code: a `test`
    * (spec, e2e, integration test) or `generated` (an SDK, a bundle). The link
@@ -914,6 +921,12 @@ export interface ApiRouteLinkStats {
     wildcardOnly: number;
     /** Only a suffix could match (unknown base or route prefix), and several routes did. */
     ambiguousSuffix: number;
+    /**
+     * The call's origin names a service, and no route of that service matches
+     * — never retried on another service's routes. Often the most interesting
+     * row: a route renamed or removed on one side only.
+     */
+    originMismatch?: number;
   };
   /** Joinable calls no route matched at all. */
   unmatched: number;
@@ -1041,6 +1054,94 @@ export interface DataSourceInfo {
   baseExpr?: string;
   /** For an api-call made through a request factory: the factory, its URL filled in from this call site's arguments. */
   via?: string;
+  /**
+   * For an api-call: where its base URL comes from, as the source states it —
+   * the registered client it is made through (`_http` of a typed client,
+   * `CreateClient("legacy")`), or an environment variable / configuration key.
+   * A plugin fact; what the reference resolves to is decided by core (`origin`).
+   */
+  baseRef?: CallBaseRef;
+  /**
+   * For an api-call: the service it reaches, resolved from the base reference
+   * through configuration, deployment env and the service address book. Set on
+   * the project's aggregated rows. Absent when nothing states where it goes.
+   */
+  origin?: CallOrigin;
+}
+
+/** Where a call's base URL comes from, as the source states it. */
+export interface CallBaseRef {
+  /**
+   * `env`: an environment variable · `config`: a configuration key ·
+   * `client`: the base a registered client carries · `literal`: written out.
+   */
+  kind: "env" | "config" | "client" | "literal";
+  /**
+   * `ORDERS_URL` · `Services:Orders` · a client as its registration names it
+   * (`InventoryClient`, `name:legacy`) · `http://orders:8080`.
+   */
+  key: string;
+  /** A literal the code falls back to when the variable or key is unset (`?? "http://localhost:5002"`). */
+  fallback?: string;
+}
+
+/**
+ * An HTTP client configured with a base URL: `AddHttpClient<T>(c =>
+ * c.BaseAddress = …)`, `axios.create({ baseURL: … })`. A call made through
+ * the client inherits the base.
+ */
+export interface HttpClientRegistration {
+  /** What a call names to use it: a variable, a type, or `name:<n>` for a named client. */
+  client: string;
+  /**
+   * `file`: a variable, visible in this file and to the files importing it.
+   * `project`: a type or a client name, visible across the sub-project.
+   */
+  scope: "file" | "project";
+  base: CallBaseRef;
+  line: number;
+}
+
+/** Where an outbound call goes, resolved from the facts that state it. */
+export interface CallOrigin {
+  /** The reference the base came from, after following a client to its registration. */
+  baseRef?: CallBaseRef;
+  /** Host the call goes to (`orders`, `api.stripe.com`, `localhost:5102`). */
+  host?: string;
+  /** Sub-project serving that host. Absent when no project answers to it, or several do. */
+  project?: string;
+  /** The host is not one of this analysis's services. */
+  external?: boolean;
+  /**
+   * EXTRACTED — every value stated for the base names one project.
+   * INFERRED  — only a code fallback did, or the values disagreed only with
+   *             hosts outside the analysis.
+   * AMBIGUOUS — the values name different projects; none is chosen.
+   */
+  confidence: Confidence;
+  /** Each fact that led there, in order: client registration, env/config value, address. */
+  evidence: Array<{ step: "client" | "env" | "config" | "literal" | "fallback" | "address"; detail: string; file?: string; line?: number }>;
+}
+
+/**
+ * A name a sub-project answers to at runtime: a compose service or a k8s
+ * Service DNS name, a host port compose maps onto it, or a URL it listens on
+ * (launchSettings `applicationUrl`). Calls resolve their host through these.
+ */
+export interface ServiceAddress {
+  /** Lowercased host (`orders`, `localhost`). */
+  host: string;
+  port?: number;
+  project: string;
+  /**
+   * `service`: a compose service / k8s workload name · `alias`: another DNS
+   * name it answers to (k8s Service, `hostname`, network alias) · `port`: a
+   * host port compose publishes onto it · `listen`: a URL its own
+   * configuration binds (launchSettings `applicationUrl`, Kestrel `Urls`).
+   */
+  source: "service" | "alias" | "port" | "listen";
+  /** The manifest or config file stating it. */
+  file: string;
 }
 
 /**
@@ -2129,6 +2230,8 @@ export interface ProjectAnalysis {
    * deployment edge that agrees. Omitted when nothing crosses.
    */
   projectDependencies?: ProjectDependency[];
+  /** The names each sub-project answers to at runtime — what call origins resolve hosts through. */
+  serviceAddresses?: ServiceAddress[];
   /** Per-file child-component usages (JSX/Vue-template tags), with import source as `target`. */
   componentUsage?: (SubComponentInfo & { filePath: string })[];
   symbolLinks: SymbolLink[];
@@ -2267,6 +2370,16 @@ export interface DeployedService {
   family?: string;
   /** Short tech label: entrypoint artifact or image tail. */
   tech?: string;
+  /**
+   * Environment values that are URLs (`ORDERS_URL: http://orders:8080`),
+   * credentials stripped; every other value is left out. What a call's
+   * `process.env.ORDERS_URL` or configuration key resolves to at runtime.
+   */
+  urlEnv?: Record<string, string>;
+  /** Host ports compose maps onto the service (`"5101:8080"` → 5101): what `localhost:5101` reaches. */
+  hostPorts?: number[];
+  /** Other DNS names the service answers to: k8s Service names, compose `hostname`/`container_name`. */
+  aliases?: string[];
   /** Matched SubProject id — links the deployed unit to its source code. */
   project?: string;
   /** Attaches to a message bus (EventBus/AMQP/Kafka env vars present). */

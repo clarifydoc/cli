@@ -1,18 +1,21 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { csharpFrameworkRules } from "./frameworks.js";
 import { nugetPackageManager } from "./package-manifests.js";
+import { csharpServiceConfig } from "./service-config.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
  * EAGERLY (extensions, grammar location, framework rules, …). The heavy
  * body (meta.ts and everything it imports) is loaded lazily per language;
- * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
+ * this module must stay a leaf: types, frameworks.ts, package-manifests.ts and service-config.ts only.
  */
 export const csharpManifest: LanguagePluginManifest = {
   language: "csharp",
   family: "dotnet",
   packageManagers: [nugetPackageManager],
   packageEcosystems: ["nuget"],
+  // appsettings*.json + launchSettings, `IConfiguration[...]`, `__` env overrides.
+  serviceConfig: csharpServiceConfig,
   parsing: "tree-sitter",
   // `.csx`: C# script (dotnet-script, Roslyn scripting) — see script.ts.
   extensions: [".cs", ".csx"],

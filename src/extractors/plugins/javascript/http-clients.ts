@@ -1,4 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
+import type { HttpClientRegistration } from "../../../types/analysis.js";
+import { jsBaseRefOf } from "./service-config.js";
 
 /**
  * HTTP client instances a file creates with a base URL —
@@ -30,6 +32,35 @@ export function extractHttpClientBases(tree: Tree, sourceText: string): Record<s
       if (key !== "baseURL" && key !== "prefixUrl" && key !== "prefixURL") continue;
       const base = basePath(pair.childForFieldName("value"));
       if (base !== null) out[name.text] = base;
+    }
+  }
+  return out;
+}
+
+/**
+ * The same client instances, as registrations that keep what `basePath`
+ * drops: the host of a literal base (`baseURL: "http://orders:8080/api"`) and
+ * a base read from the environment (`baseURL: process.env.ORDERS_URL`). The
+ * call-origin pass follows a call through its client to these, to find the
+ * service it reaches. A base that is only a path names no service.
+ */
+export function extractHttpClientRegistrations(tree: Tree, sourceText: string): HttpClientRegistration[] {
+  if (!CLIENT_FACTORY_RE.test(sourceText)) return [];
+  const out: HttpClientRegistration[] = [];
+  for (const decl of tree.rootNode.descendantsOfType("variable_declarator")) {
+    const name = decl.childForFieldName("name");
+    const value = decl.childForFieldName("value");
+    if (name?.type !== "identifier" || value?.type !== "call_expression") continue;
+    const fn = value.childForFieldName("function")?.text.replace(/\s+/g, "") ?? "";
+    if (!/^(?:axios|ky|got)\.(?:create|extend)$/.test(fn)) continue;
+    const config = value.childForFieldName("arguments")?.namedChildren[0];
+    if (config?.type !== "object") continue;
+    for (const pair of config.namedChildren) {
+      if (pair.type !== "pair") continue;
+      const key = pair.childForFieldName("key")?.text.replace(/^['"]|['"]$/g, "");
+      if (key !== "baseURL" && key !== "prefixUrl" && key !== "prefixURL") continue;
+      const base = jsBaseRefOf(pair.childForFieldName("value")?.text ?? "");
+      if (base) out.push({ client: name.text, scope: "file", base, line: pair.startPosition.row + 1 });
     }
   }
   return out;

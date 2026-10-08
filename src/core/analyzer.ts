@@ -91,7 +91,10 @@ import { buildEntityGraph, reconcileEntityInheritance, propagateStiRelations, li
 import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
 import { linkApiCallsToRoutesDetailed, dedupeRoutes, pairContractTwins } from "./route-linker.js";
-import { buildProjectDependencies } from "./project-dependencies.js";
+import { buildProjectDependencies, projectServesClosure } from "./project-dependencies.js";
+import { readProjectConfig } from "./config-values.js";
+import { buildServiceAddresses } from "./service-addresses.js";
+import { resolveCallOrigins } from "./call-origins.js";
 import { attachHandlerParams, attachRequestSchemas } from "./request-schemas.js";
 import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
 import { reconcileProjectRoutes } from "../extractors/route-resolvers/index.js";
@@ -794,6 +797,20 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   finalizeApiTargets(allApiCalls);
   // A call through a client instance requests the client's base + its path.
   applyHttpClientBases(allApiCalls, allAnalyses, importIndex);
+  // Where each call goes: its base followed through the client it is made
+  // with, configuration and deployment env, to the service answering that
+  // host — so the join below stays inside that service's routes.
+  const serviceConfigValues = await readProjectConfig(projectRoot, subProjects);
+  const serviceAddresses = buildServiceAddresses(deployment, serviceConfigValues);
+  const originCount = resolveCallOrigins({
+    calls: allApiCalls,
+    analyses: allAnalyses,
+    importIndex,
+    deployment,
+    config: serviceConfigValues,
+    addresses: serviceAddresses,
+  });
+  if (originCount > 0) progress.detail(`  Call origins resolved: ${originCount}`);
   if (resolvedUrlCount > 0 && verbose) {
     progress.detail(`  URL-builder calls resolved: ${resolvedUrlCount}`);
   }
@@ -819,6 +836,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const { links: apiRouteLinks, stats: apiRouteLinkStats } = linkApiCallsToRoutesDetailed(allApiCalls, allRoutes, {
     isContract: isContractRoute,
     projectOf: (f) => analysisByPath.get(f)?.projectId,
+    servedBy: projectServesClosure(componentGraph, (f) => analysisByPath.get(f)?.projectId),
     contractTwins,
   });
   if (apiRouteLinks.length > 0) {
@@ -1389,6 +1407,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     apiRouteLinks: apiRouteLinks.length > 0 ? apiRouteLinks : undefined,
     apiRouteLinkStats: apiRouteLinkStats.calls > 0 ? apiRouteLinkStats : undefined,
     projectDependencies: projectDependencies.length > 0 ? projectDependencies : undefined,
+    serviceAddresses: serviceAddresses.length > 0 ? serviceAddresses : undefined,
     generatedRoots: generatedRoots.length > 0 ? generatedRoots : undefined,
     unusedFiles: unusedFiles.length > 0 ? unusedFiles : undefined,
     deadCode,

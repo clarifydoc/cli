@@ -1,5 +1,6 @@
 import fg from "fast-glob";
 import { NO_SYMLINKS } from "./glob-safety.js";
+import { urlValue } from "./url-values.js";
 import { byOrdinal } from "./ordinal.js";
 import { readFile } from "fs/promises";
 import { join, resolve } from "path";
@@ -199,6 +200,49 @@ export interface RawService {
   entrypoint?: string;
   env: Record<string, string>;
   dependsOn: string[];
+  /** Host ports published onto the service (`"5101:8080"` → 5101). */
+  ports?: number[];
+  /** Other names the service answers to: `hostname`, `container_name`, network aliases. */
+  aliases?: string[];
+}
+
+/**
+ * Host ports from compose `ports:` — short form `"5101:8080"`,
+ * `"127.0.0.1:5101:8080/tcp"` (a lone `"8080"` publishes none), or the long
+ * form's `published:`.
+ */
+function hostPorts(v: YamlValue | undefined): number[] {
+  if (!Array.isArray(v)) return [];
+  const out: number[] = [];
+  for (const item of v) {
+    if (typeof item === "string") {
+      const parts = unquote(item).split("/")[0]!.split(":");
+      if (parts.length < 2) continue;
+      const port = Number(parts[parts.length - 2]);
+      if (Number.isInteger(port) && port > 0) out.push(port);
+    } else if (item && typeof item === "object" && !Array.isArray(item)) {
+      const published = (item as YamlMap).published;
+      const port = typeof published === "string" ? Number(unquote(published)) : NaN;
+      if (Number.isInteger(port) && port > 0) out.push(port);
+    }
+  }
+  return out;
+}
+
+/** `hostname`, `container_name` and every `networks.<n>.aliases` entry. */
+function serviceAliases(b: YamlMap): string[] {
+  const out: string[] = [];
+  for (const key of ["hostname", "container_name"]) {
+    const v = b[key];
+    if (typeof v === "string" && v && !v.includes("${")) out.push(unquote(v));
+  }
+  const nets = b.networks;
+  if (nets && typeof nets === "object" && !Array.isArray(nets)) {
+    for (const net of Object.values(nets as YamlMap)) {
+      if (net && typeof net === "object" && !Array.isArray(net)) out.push(...asStringArray((net as YamlMap).aliases));
+    }
+  }
+  return out;
 }
 
 function asStringArray(v: YamlValue | undefined): string[] {
@@ -243,6 +287,8 @@ function collectRawServices(doc: YamlMap, file: string): RawService[] {
       entrypoint: entry || undefined,
       env: envMap(b.environment),
       dependsOn: asStringArray(b.depends_on),
+      ports: hostPorts(b.ports),
+      aliases: serviceAliases(b),
     });
   }
   return out;
@@ -475,6 +521,8 @@ export async function detectDeployment(
       if (!existing.image) existing.image = svc.image;
       if (!existing.entrypoint) existing.entrypoint = svc.entrypoint;
       for (const dep of svc.dependsOn) if (!existing.dependsOn.includes(dep)) existing.dependsOn.push(dep);
+      for (const p of svc.ports ?? []) if (!(existing.ports ??= []).includes(p)) existing.ports.push(p);
+      for (const a of svc.aliases ?? []) if (!(existing.aliases ??= []).includes(a)) existing.aliases.push(a);
     }
   }
 
@@ -544,6 +592,15 @@ export async function detectDeployment(
     };
     if (kind === "app") {
       s.project = matchProject(svc, projByExact, projByNorm, fileCounts);
+      // Where the service is told other services are — URL-shaped values only.
+      const urlEnv: Record<string, string> = {};
+      for (const k of Object.keys(svc.env).sort(byOrdinal)) {
+        const url = urlValue(svc.env[k]!);
+        if (url) urlEnv[k] = url;
+      }
+      if (Object.keys(urlEnv).length) s.urlEnv = urlEnv;
+      if (svc.ports?.length) s.hostPorts = [...svc.ports].sort((a, b) => a - b);
+      if (svc.aliases?.length) s.aliases = [...new Set(svc.aliases)].sort(byOrdinal);
       const envText = Object.entries(svc.env).map(([k, v]) => k + "=" + v);
       s.bus = envText.some((e) => BUS_RE.test(e)) || undefined;
       s.cache = envText.some((e) => CACHE_RE.test(e)) || undefined;
@@ -573,6 +630,9 @@ export async function detectDeployment(
     const svc = svcByLower.get(target.toLowerCase());
     if (svc && svc.kind === "app" && !normToService.has(normName(alias))) {
       normToService.set(normName(alias), svc.name);
+    }
+    if (svc && svc.kind === "app" && alias.toLowerCase() !== svc.name.toLowerCase()) {
+      svc.aliases = [...new Set([...(svc.aliases ?? []), alias])].sort(byOrdinal);
     }
   }
 
@@ -681,6 +741,17 @@ export async function detectDeployment(
         else s.databases.push({ name: dbName, primary });
         const host = storeHosting(dbName);
         if (host) addEdge({ from: svc.name, to: host, kind: "db", label: dbName, via: ph ? ph[1] : k });
+        continue;
+      }
+
+      // A key not named like a URL whose value is one, naming another service:
+      // .NET configuration overrides are named after the section they set
+      // (`Services__Inventory: http://inventory:8080`). An edge only — an
+      // arbitrary key's unknown host is not evidence of an external system.
+      if (!EXTERNAL_KEY_RE.test(k) && /^https?:\/\//i.test(v)) {
+        const host = hostOf(v);
+        const target = host ? normToService.get(normName(host.split(".")[0]!)) : undefined;
+        if (target) addEdge({ from: svc.name, to: target, kind: "http", via: k });
         continue;
       }
 

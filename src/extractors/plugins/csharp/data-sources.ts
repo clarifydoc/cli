@@ -2,6 +2,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { DataSourceInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
+import { csharpCallClient } from "./http-clients.js";
 
 /**
  * C# data-source extractor — surfaces Entity Framework, Dapper, NHibernate,
@@ -450,11 +451,15 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     if (HTTP_CLIENT_METHODS.has(method)) {
       const httpish = HTTP_RECEIVER_RE.test(root) || HTTP_RECEIVER_RE.test(receiver);
       if (!HTTP_AMBIGUOUS_METHODS.has(method) || httpish) {
+        // Which registered client the call goes through — its base address
+        // says which service the relative URI is relative to.
+        const client = csharpCallClient(node, root);
         sources.push(this.ds({
           kind: "api-call",
           name: method,
           target: this.resolveHttpUri(node),
           line: node.startPosition.row + 1,
+          ...(client ? { baseRef: client } : {}),
         }));
       }
       return;
