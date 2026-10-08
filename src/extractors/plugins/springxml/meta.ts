@@ -18,7 +18,7 @@ export const springxmlMeta: LanguagePluginMeta = {
   dispatchResolvers: [new WebflowUiBridgeResolver()],
   preprocess(rawSource) {
     const isFlow = rawSource.includes("springframework.org/schema/webflow") && /<flow[\s>]/.test(rawSource);
-    const isBeans = /<beans[\s>]/.test(rawSource) && /<bean\b[^>]*\bclass\s*=/.test(rawSource);
+    const isBeans = /<beans[\s>]/.test(rawSource) && (/<bean\b[^>]*\bclass\s*=/.test(rawSource) || /<jaxrs:client\b/.test(rawSource));
     if (!isFlow && !isBeans) return { skip: "not a Spring flow/bean definition" };
     return null;
   },

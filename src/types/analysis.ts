@@ -699,6 +699,12 @@ export interface RouteInfo {
   kind: "frontend" | "api";
   handler: string | null;
   /**
+   * The interface (or class) method this route IS, when the route is declared
+   * on a typed API (`@GET @Path(...)` on `PersonRepository#getPerson`). A
+   * client proxy of the same interface calls it whatever URL it is mounted at.
+   */
+  contract?: ApiContract;
+  /**
    * For frontend routes: the raw module specifier of the route's `component`
    * (e.g. "./pak.vue" from `component: () => import("./pak.vue")`, or the
    * identifier name for a statically-imported component). Lets the screen
@@ -899,7 +905,8 @@ export interface ApiRouteLink {
     | "base-unresolved"
     | `base-unresolved:${string}`
     | "route-prefix-unresolved"
-    | `service:${string}`;
+    | `service:${string}`
+    | "contract";
   /**
    * Where the calling file sits, when it is not production code: a `test`
    * (spec, e2e, integration test) or `generated` (an SDK, a bundle). The link
@@ -1056,6 +1063,8 @@ export interface DataSourceInfo {
   baseExpr?: string;
   /** For an api-call made through a request factory: the factory, its URL filled in from this call site's arguments. */
   via?: string;
+  /** For an api-call made through a client proxy: the interface operation it invokes. */
+  contract?: ApiContract;
   /**
    * For an api-call: where its base URL comes from, as the source states it —
    * the registered client it is made through (`_http` of a typed client,
@@ -1093,15 +1102,38 @@ export interface CallBaseRef {
  * the client inherits the base.
  */
 export interface HttpClientRegistration {
-  /** What a call names to use it: a variable, a type, or `name:<n>` for a named client. */
+  /**
+   * What a call names to use it: a variable, a type, or `name:<n>` for a named
+   * client. A client proxy is keyed by the fully qualified interface it proxies.
+   */
   client: string;
   /**
    * `file`: a variable, visible in this file and to the files importing it.
    * `project`: a type or a client name, visible across the sub-project.
    */
   scope: "file" | "project";
-  base: CallBaseRef;
+  /** Where the client's base comes from; absent when the registration does not say. */
+  base?: CallBaseRef;
+  /**
+   * The client is a generated proxy of this API interface (fully qualified):
+   * a JAX-RS / CXF / RESTEasy proxy, a Feign or MicroProfile client. Every call
+   * on a receiver of that type is an HTTP request to the operation the
+   * interface method declares.
+   */
+  proxyOf?: string;
   line: number;
+}
+
+/**
+ * An API operation named by the interface method that declares it — the
+ * shared contract a client proxy calls and a resource implements
+ * (`com.acme.person.api.PersonRepository#getPerson`). Joins a call to its
+ * route without either side knowing a URL.
+ */
+export interface ApiContract {
+  /** Fully qualified type declaring the operation (the shared API interface). */
+  type: string;
+  method: string;
 }
 
 /**

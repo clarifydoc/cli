@@ -791,3 +791,30 @@ describe("linkApiCallsToRoutes — the service a call names", () => {
     expect(linkApiCallsToRoutes([call], [inventory, legacy])[0]!.confidence).toBe("AMBIGUOUS");
   });
 });
+
+describe("linkApiCallsToRoutes — a call through a client proxy", () => {
+  const contract = { type: "com.acme.api.PersonRepository", method: "getPerson" };
+  const declared = { ...route("person-api/PersonRepository.java", "GET", "/v1/persons/{personId}", "getPerson", 15), projectId: "person-api", contract };
+  const proxyCall = (extra: Record<string, unknown> = {}) => ({
+    ...apiCall("billing/Lookup.java", "PersonRepository.getPerson", null as unknown as string, 11),
+    contract,
+    ...extra,
+  });
+
+  it("joins the route declaring the same operation, though the call states no URL", () => {
+    expect(linkApiCallsToRoutes([proxyCall()], [declared])[0]).toMatchObject({
+      method: "GET", routePath: "/v1/persons/{personId}", target: "person-api/PersonRepository.java", confidence: "EXTRACTED", matchedVia: "contract",
+    });
+  });
+
+  it("names a guess when two routes declare the operation, and refuses outside the service the call names", () => {
+    const twin = { ...declared, filePath: "vendored/PersonRepository.java", projectId: "vendored" };
+    expect(linkApiCallsToRoutes([proxyCall()], [declared, twin])[0]!.confidence).toBe("AMBIGUOUS");
+    const { links, stats } = linkApiCallsToRoutesDetailed(
+      [proxyCall({ origin: { project: "billing", confidence: "EXTRACTED", evidence: [] } })],
+      [declared],
+    );
+    expect(links).toEqual([]);
+    expect(stats.refused.originMismatch).toBe(1);
+  });
+});

@@ -1,12 +1,13 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { javaKotlinFrameworkRules } from "./frameworks.js";
 import { mavenPackageManager, gradlePackageManager } from "./package-manifests.js";
+import { jvmServiceConfig } from "./service-config.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
  * EAGERLY (extensions, grammar location, framework rules, …). The heavy
  * body (meta.ts and everything it imports) is loaded lazily per language;
- * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
+ * this module must stay a leaf: types, frameworks.ts, package-manifests.ts and service-config.ts only.
  */
 /**
  * JDK / Kotlin-stdlib member names that must never be resolved by name-only
@@ -86,6 +87,8 @@ export const javaManifest: LanguagePluginManifest = {
   family: "jvm",
   packageManagers: [mavenPackageManager, gradlePackageManager],
   packageEcosystems: ["maven"],
+  // Spring relaxed binding: `person.service.url` ← `PERSON_SERVICE_URL`.
+  serviceConfig: jvmServiceConfig,
   parsing: "tree-sitter",
   extensions: [".java"],
   grammar: { variants: { java: { pkg: "tree-sitter-java", wasm: "tree-sitter-java.wasm" } } },
@@ -102,6 +105,8 @@ export const kotlinManifest: LanguagePluginManifest = {
   language: "kotlin",
   family: "jvm",
   packageEcosystems: ["maven"],
+  // Spring relaxed binding: `person.service.url` ← `PERSON_SERVICE_URL`.
+  serviceConfig: jvmServiceConfig,
   parsing: "tree-sitter",
   extensions: [".kt", ".kts"],
   grammar: { variants: { kotlin: { pkg: "tree-sitter-kotlin", wasm: "tree-sitter-kotlin.wasm" } } },

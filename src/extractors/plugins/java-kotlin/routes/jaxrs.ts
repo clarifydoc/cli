@@ -68,7 +68,17 @@ const CLASS_TYPES = new Set(["class_declaration", "class_definition", "interface
 const METHOD_TYPES = new Set(["method_declaration", "function_declaration"]);
 
 export function extractJaxrsMicronautRoutes(root: Node, routes: RouteInfo[]): void {
-  walk(root, routes, "", "none", []);
+  walk(root, routes, "", "none", [], packageOf(root));
+}
+
+/** The file's package (`package com.acme.api;`, Kotlin `package com.acme.api`), "" for the default package. */
+function packageOf(root: Node): string {
+  for (const child of root.children) {
+    if (child.type !== "package_declaration" && child.type !== "package_header") continue;
+    const m = /package\s+([\w.]+)/.exec(child.text);
+    if (m) return m[1]!;
+  }
+  return "";
 }
 
 type Flavor = "none" | "jaxrs" | "micronaut";
@@ -79,6 +89,8 @@ function walk(
   classPrefix: string,
   flavor: Flavor,
   classGuards: readonly GuardAttr[],
+  /** Qualified name of the enclosing type (the package, outside any type). */
+  owner: string,
 ): void {
   if (CLASS_TYPES.has(node.type)) {
     // Outbound-client interfaces reuse the same annotations — never routes.
@@ -104,16 +116,18 @@ function walk(
       }
     }
     const guards = [...classGuards, ...guardsOn(node)];
-    for (const child of node.children) walk(child, routes, prefix, childFlavor, guards);
+    const name = node.childForFieldName("name")?.text ?? findChildByType(node, "type_identifier")?.text;
+    const type = name ? (owner ? `${owner}.${name}` : name) : owner;
+    for (const child of node.children) walk(child, routes, prefix, childFlavor, guards, type);
     return;
   }
 
   if (METHOD_TYPES.has(node.type)) {
-    emitMethodRoutes(node, routes, classPrefix, flavor, classGuards);
+    emitMethodRoutes(node, routes, classPrefix, flavor, classGuards, owner);
     // Fall through: Kotlin nests local declarations inside function bodies.
   }
 
-  for (const child of node.children) walk(child, routes, classPrefix, flavor, classGuards);
+  for (const child of node.children) walk(child, routes, classPrefix, flavor, classGuards, owner);
 }
 
 function emitMethodRoutes(
@@ -122,6 +136,7 @@ function emitMethodRoutes(
   classPrefix: string,
   flavor: Flavor,
   classGuards: readonly GuardAttr[],
+  owner: string,
 ): void {
   let verb: string | null = null;
   let subPath: string | null = null;
@@ -161,11 +176,15 @@ function emitMethodRoutes(
 
   const merged = mergePrefix(classPrefix, subPath ?? "/");
   const path = merged.startsWith("/") ? merged : "/" + merged;
+  const handler = getNameFromNode(method);
   const route: RouteInfo = {
     path,
     httpMethod: verb,
     kind: "api",
-    handler: getNameFromNode(method),
+    handler,
+    // The typed operation this route is: what a client proxy of the same
+    // interface invokes, wherever the resource is mounted.
+    ...(handler && owner ? { contract: { type: owner, method: handler } } : {}),
     calls: body ? extractCalls(body, lang) : [],
     middleware: [],
     line: micronautLine || method.startPosition.row + 1,

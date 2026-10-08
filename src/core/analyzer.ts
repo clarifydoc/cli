@@ -95,6 +95,7 @@ import { buildProjectDependencies, projectServesClosure } from "./project-depend
 import { readProjectConfig, readProjectProxies } from "./config-values.js";
 import { buildServiceAddresses } from "./service-addresses.js";
 import { resolveCallOrigins } from "./call-origins.js";
+import { clientProxyCalls } from "./client-proxies.js";
 import { attachHandlerParams, attachRequestSchemas } from "./request-schemas.js";
 import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
 import { reconcileProjectRoutes } from "../extractors/route-resolvers/index.js";
@@ -780,6 +781,12 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       .filter((ds) => ds.kind === "api-call")
       .map((ds) => ({ ...ds, filePath: a.filePath })),
   );
+  // Calls through REST client proxies (`personRepository.getPerson(…)` on a
+  // JAX-RS proxy a Spring bean builds): outbound calls named by the interface
+  // operation they invoke, which the linker joins to the route declaring it.
+  const proxyCalls = clientProxyCalls(allAnalyses);
+  allApiCalls.push(...proxyCalls);
+  if (proxyCalls.length > 0) progress.detail(`  Calls through client proxies: ${proxyCalls.length}`);
   // Plugin project passes over the api-call targets — URL-builder helper calls
   // (`axios.get(requestUri('vikarbesked','v4'))` → `/api/v4/institution/{}/vikarbesked`)
   // so frontend calls funneled through a project URL helper carry a concrete

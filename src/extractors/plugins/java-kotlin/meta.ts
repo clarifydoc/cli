@@ -18,6 +18,7 @@ import { JavaKotlinEntityExtractor } from "./entities.js";
 import { javaKotlinRouteExtractor } from "./routes/index.js";
 import { javaKotlinReachability } from "./reachability.js";
 import { extractJvmDiBindings } from "./di-bindings.js";
+import { extractJavaClientProxies } from "./client-proxies.js";
 import { terminateAnnotatedDeclarations } from "./kotlin-preprocess.js";
 
 const JAVA_BUILTINS: ReadonlySet<string> = new Set<string>([
@@ -97,6 +98,8 @@ function jvmMeta(language: Language, opts: {
       typeReferences: (tree, filePath) => extractJavaKotlinTypeReferences(tree, language, filePath),
       // Spring / Guice / Dagger-Hilt / CDI / Koin registrations (see di-bindings.ts).
       diBindings: (tree, sourceText) => extractJvmDiBindings(tree, sourceText, language === "kotlin" ? "kotlin" : "java"),
+      // `RestClient.createClient(X.class, url)` and other proxy factories.
+      ...(language === "java" ? { httpClientRegistrations: extractJavaClientProxies } : {}),
     },
     calls: opts.calls,
     // ONE instance for both members: core loads it once.
