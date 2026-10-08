@@ -162,7 +162,12 @@ export function resolveCallOrigins(input: {
     const found = referenceOf(call, a);
     if (!found) return null;
     const values = valuesOf(found.ref, a.projectId, a.language);
-    if (values.length === 0) return null;
+    if (values.length === 0) {
+      // Stated, but not valued here: keep what would value it, for a
+      // deployment this analysis does not hold.
+      const envNames = found.ref.kind === "env" ? [found.ref.key] : found.ref.kind === "config" ? (serviceConfigFor(a.language)?.envNamesFor?.(found.ref.key) ?? []) : [];
+      return { baseRef: found.ref, ...(envNames.length ? { envNames } : {}), confidence: "INFERRED", evidence: found.evidence };
+    }
 
     const evidence: Evidence[] = [...found.evidence];
     const projects = new Map<string, { host: string; path: string; via: ServiceAddress }>();
@@ -235,18 +240,33 @@ export function resolveCallOrigins(input: {
     // few hops — frontend dev proxy → gateway → service.
     let arrival = origin ? (origin.confidence !== "AMBIGUOUS" ? origin.project : undefined) : sameOrigin(call) ? a.projectId : undefined;
     for (let hop = 0; hop < 4 && arrival !== undefined && call.target?.startsWith("/"); hop++) {
-      const rule = matchRule(rulesByProject.get(arrival) ?? [], call.target);
+      const rule = matchProxyRule(rulesByProject.get(arrival) ?? [], call.target);
       if (!rule) break;
       const addr = parseAddress(rule.target);
       const r = addr ? resolveHost(addresses, addr.host, addr.port) : { kind: "unknown" as const };
+      const forward = (t: string) => forwardPath(rule, t, addr?.path ?? "");
+      const proxyStep: Evidence = {
+        step: "proxy",
+        detail: `${rule.pathPrefix || "/"} → ${rule.target}${rule.rewriteTo !== undefined ? ` as ${rule.rewriteTo || "/"}` : ""} (${rule.via})`,
+        file: rule.file,
+        ...(rule.line ? { line: rule.line } : {}),
+      };
+      // A server on this machine that no project here answers to: some other
+      // repository's, perhaps. The call stays as it was; the origin keeps where
+      // the request goes and the path it takes there.
+      if (r.kind === "unknown" && addr && isLoopbackHost(addr.host) && !origin) {
+        origin = {
+          baseRef: { kind: "literal", key: rule.target },
+          host: `localhost:${addr.port ?? ""}`,
+          path: forward(call.target),
+          confidence: "INFERRED",
+          evidence: [proxyStep],
+        };
+        break;
+      }
       // A rule pointing outside this analysis (a staging host) says nothing
       // about which of its services serves the path: the call stays as it was.
       if (r.kind !== "project" || !addr || r.project === arrival) break;
-      const forward = (t: string) => {
-        if (!t.startsWith("/") || !prefixMatches(rule.pathPrefix, pathOf(t))) return t;
-        const rest = t.slice(rule.pathPrefix.length);
-        return rebase((rule.rewriteTo ?? rule.pathPrefix) + rest, addr.path);
-      };
       call.target = forward(call.target);
       if (call.targetAlternatives) call.targetAlternatives = call.targetAlternatives.map(forward);
       const hostLabel = isLoopbackHost(addr.host) ? `localhost:${addr.port ?? ""}` : addr.host;
@@ -257,12 +277,7 @@ export function resolveCallOrigins(input: {
         confidence: origin?.confidence === "INFERRED" ? "INFERRED" : "EXTRACTED",
         evidence: [
           ...(origin?.evidence ?? []),
-          {
-            step: "proxy",
-            detail: `${rule.pathPrefix || "/"} → ${rule.target}${rule.rewriteTo !== undefined ? ` as ${rule.rewriteTo || "/"}` : ""} (${rule.via})`,
-            file: rule.file,
-            ...(rule.line ? { line: rule.line } : {}),
-          },
+          proxyStep,
           { step: "address", detail: `${hostLabel} → ${r.project} (${r.via.source})`, file: r.via.file },
         ],
       };
@@ -283,8 +298,19 @@ function prefixMatches(prefix: string, path: string): boolean {
   return prefix === "" || path === prefix || path.startsWith(prefix + "/");
 }
 
-/** The rule with the longest prefix the path falls under. */
-function matchRule(rules: ReadonlyArray<ProxyRule>, target: string): ProxyRule | undefined {
+/**
+ * The path a request takes once `rule` forwards it to a base carrying
+ * `basePath`: the rule's prefix replaced by its rewrite. A target the rule
+ * does not cover is returned as is. Exported for the app, which forwards
+ * across analyses with the same semantics.
+ */
+export function forwardPath(rule: ProxyRule, target: string, basePath: string): string {
+  if (!target.startsWith("/") || !prefixMatches(rule.pathPrefix, pathOf(target))) return target;
+  return rebase((rule.rewriteTo ?? rule.pathPrefix) + target.slice(rule.pathPrefix.length), basePath);
+}
+
+/** The rule with the longest prefix the path falls under. Exported for the app. */
+export function matchProxyRule(rules: ReadonlyArray<ProxyRule>, target: string): ProxyRule | undefined {
   const path = pathOf(target);
   let best: ProxyRule | undefined;
   for (const r of rules) {

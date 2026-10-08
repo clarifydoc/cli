@@ -1135,6 +1135,19 @@ export interface CallOrigin {
   /** The host is not one of this analysis's services. */
   external?: boolean;
   /**
+   * The environment variables that would set the base (an `env` reference's
+   * own name, or what overrides a `config` key) — kept when nothing in this
+   * analysis states their value, so a deployment elsewhere (an infra
+   * repository's compose file) still can.
+   */
+  envNames?: string[];
+  /**
+   * The path the request takes at `host`, when a forwarding rule rewrote it
+   * on the way to a host this analysis has no project for. The call's own
+   * `target` is left as written.
+   */
+  path?: string;
+  /**
    * EXTRACTED — every value stated for the base names one project.
    * INFERRED  — only a code fallback did, or the values disagreed only with
    *             hosts outside the analysis.

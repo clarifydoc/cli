@@ -14,7 +14,14 @@ export {
   loadReportPayload,
   type ReportPayload,
 } from "./core/report-payload.js";
-export { detectDeployment, parseSimpleYaml } from "./core/deployment.js";
+export { detectDeployment, parseSimpleYaml, matchServiceToProject } from "./core/deployment.js";
+// The pieces the app joins separately analyzed repositories with: the same
+// address book, forwarding and route join one analysis uses on itself.
+export { linkApiCallsToRoutesDetailed, normalizeRoutePath } from "./core/route-linker.js";
+export { buildServiceAddresses, resolveHost, type HostResolution } from "./core/service-addresses.js";
+export { matchProxyRule, forwardPath } from "./core/call-origins.js";
+export { urlValue, parseAddress, isLoopbackHost } from "./core/url-values.js";
+export { projectServesClosure } from "./core/project-dependencies.js";
 export {
   normalizeProject,
   denormalizeProject,
