@@ -22,6 +22,9 @@ export { buildServiceAddresses, resolveHost, type HostResolution } from "./core/
 export { matchProxyRule, forwardPath } from "./core/call-origins.js";
 export { urlValue, parseAddress, isLoopbackHost } from "./core/url-values.js";
 export { projectServesClosure } from "./core/project-dependencies.js";
+// What the app compares a stored analysis against: one made by an older
+// extractor lacks facts a newer one records (and links by).
+export { EXTRACTOR_VERSION } from "./core/manifest.js";
 export {
   normalizeProject,
   denormalizeProject,
