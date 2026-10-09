@@ -582,7 +582,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
 
   // Collect successful results
   const allAnalyses: FileAnalysis[] = [];
-  const rawSources = new Map<string, string>();
+  // Raw text by path. An incremental run reuses cached analyses of files it
+  // never read; a pass that needs one (the .dpr naming the main form, a page's
+  // <title>) reads it from disk, exactly as a full run would have.
+  const rawSources = new SourceTexts(projectRoot);
   const perFileComplexity: { filePath: string; complexities: ComplexityInfo[] }[] = [];
   const allSecurityIssues: SecurityIssue[] = [];
 
@@ -2533,5 +2536,28 @@ function detectDirectives(
       calls: [],
       line: 1,
     });
+  }
+}
+
+/**
+ * The source texts of the analyzed files: what per-file analysis read, else
+ * — for a file whose analysis came from the incremental cache — the file on
+ * disk, read once on first use.
+ */
+class SourceTexts extends Map<string, string> {
+  constructor(private readonly root: string) {
+    super();
+  }
+
+  override get(file: string): string | undefined {
+    const known = super.get(file);
+    if (known !== undefined) return known;
+    try {
+      const text = readFileSync(join(this.root, file), "utf-8");
+      super.set(file, text);
+      return text;
+    } catch {
+      return undefined;
+    }
   }
 }
