@@ -608,8 +608,17 @@ export interface FunctionInfo {
    * container lookup named (see `ParamInfo.qualifier`); a lookup by key alone
    * (`ref.read(repoProvider)`) has `type: ""`. Optional; populated only by
    * plugins that extract it.
+   *
+   * `from`: a local whose initializer is a call that states no type
+   * (`val dao = UserDAOFactory.getDAO()`, `$w = IOFactory::createWriter(…)`,
+   * `var s = repo.Find(id)`) carries that call as a chain spelled the way
+   * `CallInfo.name` spells one, closed by `()` (`UserDAOFactory.getDAO()`;
+   * `callChainText` builds it), with `type: ""`. The linker types the local
+   * with the call's DECLARED return type — the plugin never infers it.
+   * `awaited`: the initializer was awaited (`var s = await repo.FindAsync(id)`),
+   * so the local holds what the returned task/promise resolves to.
    */
-  localTypes?: Array<{ name: string; type: string; qualifier?: string }>;
+  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean }>;
   /**
    * For a URL-builder helper — a function whose return value is an
    * app-relative request URL assembled from string concatenation / a template
@@ -901,6 +910,8 @@ export interface ApiRouteLink {
     | "exact"
     | "method-fallback"
     | "version-mismatch"
+    /** A runtime segment of the call (`/api/{version}/x`) read as the route's API version. */
+    | "version-assumed"
     | `base-prefix:${string}`
     | "base-unresolved"
     | `base-unresolved:${string}`
@@ -1450,7 +1461,13 @@ export interface LinkInfo {
  */
 export type SymbolLinkStrategy =
   // ── Call cascade (symbol-linker.ts `resolveCallToDefinition`) ──
-  /** Exact name (or leaf) found in the target file — no heuristic applied. */
+  /**
+   * Exact name (or leaf) found in the target file — no heuristic applied.
+   * Where the language's scope is the directory (`directoryScope`, a Go
+   * package), the target file is the one in it that declares the name; where
+   * the imported file only re-exports it (a barrel, a package `__init__`),
+   * the file the re-export leads to.
+   */
   | "direct"
   /** Walked the extends-chain to a parent's member. */
   | "inheritance"

@@ -12,6 +12,8 @@ import { csharpServiceConfig } from "./service-config.js";
 export const csharpManifest: LanguagePluginManifest = {
   language: "csharp",
   family: "dotnet",
+  // `var u = await repo.FindAsync(id)` holds the `User` a declared `Task<User>` resolves to.
+  asyncResultTypes: ["Task", "ValueTask"],
   packageManagers: [nugetPackageManager],
   packageEcosystems: ["nuget"],
   // appsettings*.json + launchSettings, `IConfiguration[...]`, `__` env overrides.

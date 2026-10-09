@@ -14,6 +14,9 @@ export const pascalManifest: LanguagePluginManifest = {
   extensions: [".pas", ".pp", ".lpr", ".dpr", ".dpk"],
   // Delphi/Pascal is case-insensitive: `_repo.save` calls the declared `Save`.
   caseInsensitiveNames: true,
+  // `uses WaitForm;` puts the unit's interface routines in scope unqualified:
+  // a bare `ShowWaitForm(…)` is the one used unit that declares it.
+  importsShareScope: true,
   grammar: { variants: { pascal: { pkg: "tree-sitter-pascal", wasm: "tree-sitter-pascal.wasm" } } },
   externalModulePrefixes: [
     // Unit-scope roots (dotted namespaces, Delphi XE2+). Canonical IDE casing.

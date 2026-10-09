@@ -55,6 +55,25 @@ const SEPARATE_SCOPES: ReadonlySet<string> = new Set([
 const FUNCTION_EXPRESSIONS: ReadonlySet<string> = new Set(["arrow_function", "function_expression"]);
 
 /**
+ * Wrappers that return (a memoized, debounced or ref-forwarding version of)
+ * the function they are given: `useCallback(fn, deps)`, `memo(Component)`,
+ * `forwardRef(render)`, lodash `debounce(fn, ms)` / `throttle(fn, ms)`.
+ */
+const IDENTITY_WRAPPERS: ReadonlySet<string> = new Set([
+  "useCallback", "useEvent", "useEffectEvent", "useMemoizedFn", "memo", "forwardRef", "debounce", "throttle",
+]);
+
+/** The function an identity wrapper call is given as its first argument, if any. */
+function wrappedFunction(value: Node): Node | null {
+  if (value.type !== "call_expression") return null;
+  const callee = value.childForFieldName("function");
+  const name = callee?.type === "identifier" ? callee.text : callee?.type === "member_expression" ? callee.childForFieldName("property")?.text : undefined;
+  if (!name || !IDENTITY_WRAPPERS.has(name)) return null;
+  const first = value.childForFieldName("arguments")?.namedChildren[0];
+  return first && FUNCTION_EXPRESSIONS.has(first.type) ? first : null;
+}
+
+/**
  * One walk over a function body for what `extractCalls` does not collect:
  *
  * - Dynamic `import("./x.vue")` calls, surfaced as cross-file call edges so
@@ -609,6 +628,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           if (decl.type === "variable_declarator") {
             const name = decl.childForFieldName("name")?.text;
             const value = decl.childForFieldName("value");
+            const wrapped = value ? wrappedFunction(value) : null;
             if (
               name &&
               value &&
@@ -616,6 +636,11 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
                 value.type === "function_expression")
             ) {
               functions.push(this.parseJsArrowOrExpr(name, value, isExported));
+            } else if (name && wrapped) {
+              // `const save = useCallback(async () => {…}, [deps])`,
+              // `const Row = memo((props) => …)` — the wrapper returns the
+              // function it is given, so the binding names that function.
+              functions.push(this.parseJsArrowOrExpr(name, wrapped, isExported));
             } else if (name && value?.type === "object" && moduleLevel && decl.childForFieldName("name")?.type === "identifier") {
               // `const Profile = { get: (u) => requests.get(…) }` — an API client
               // or service written as a namespace object. Its members are what

@@ -176,7 +176,9 @@ const NON_MODEL_CONSTANTS = new Set([
  * denylist has one home.
  */
 const PARENLESS_CONST_CALL_RE = new RegExp(
-  `(?<![\\w.@$:])(?!(?:${[...NON_MODEL_CONSTANTS].join("|")})\\b)([A-Z]\\w*(?:::[A-Z]\\w*)*)\\.([a-z_]\\w*)`,
+  // The `?`/`!` of a predicate or bang method is part of its name (`is_holiday?`
+  // is not `is_holiday`); a `!=` after the name is an operator.
+  `(?<![\\w.@$:])(?!(?:${[...NON_MODEL_CONSTANTS].join("|")})\\b)([A-Z]\\w*(?:::[A-Z]\\w*)*)\\.([a-z_]\\w*(?:[?!](?!=))?)`,
 );
 
 /** A (possibly namespaced) capitalised receiver, not preceded by `.`/word char,
@@ -270,10 +272,21 @@ function firstArgUrl(line: string, from: number): string | null {
     if (ch === "," && depth === 0) break;
   }
 
-  let arg = line.slice(start, i).trim();
-  const lit = arg.match(/^(['"])([\s\S]*)\1$/);
-  if (lit) arg = lit[2]!;
+  const arg = line.slice(start, i).trim();
   return arg.length > 0 ? arg : null;
+}
+
+/**
+ * The URL a first argument states: a string literal's text, a local bound to
+ * one, else the expression as a Ruby interpolation hole (`#{url}`,
+ * `#{CICO_API_URL}`) — a runtime value, never the path `/url`.
+ */
+function urlOfArg(arg: string | null, varLiterals: ReadonlyMap<string, string>): string | null {
+  if (!arg) return null;
+  const lit = arg.match(/^(['"])([\s\S]*)\1$/);
+  if (lit) return lit[2]!;
+  if (BARE_VAR_RE.test(arg) && varLiterals.has(arg)) return varLiterals.get(arg)!;
+  return `#{${arg}}`;
 }
 
 /** `url = "#{BASE}/institution"` — a local var bound to a string literal. Group 1
@@ -304,9 +317,8 @@ function extractRubyHttpCalls(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
   const seen = new Set<string>();
   const varLiterals = new Map<string, string>();
-  const push = (verb: string, rawTarget: string | null, line: number, col: number): void => {
-    const target =
-      rawTarget && BARE_VAR_RE.test(rawTarget) ? varLiterals.get(rawTarget) ?? rawTarget : rawTarget;
+  const push = (verb: string, rawArg: string | null, line: number, col: number): void => {
+    const target = urlOfArg(rawArg, varLiterals);
     const key = `${verb}:${target ?? ""}@${line}:${col}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -401,7 +413,7 @@ export const rubySpec: RegexLangSpec = {
       // drops receivers that are themselves a call result
       // (`u.name.downcase.include?`), where the receiver token names nothing
       // the linker could resolve.
-      pattern: /(?<![\w.@$])[@$]?(\w+)\.(\w+[?!])/,
+      pattern: /(?<![\w.@$])[@$]?(\w+)\.(\w+[?!])(?!=)/,
       buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2] }),
     },
     {

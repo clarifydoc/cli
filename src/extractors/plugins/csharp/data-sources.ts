@@ -210,15 +210,33 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
    */
   private stringLocals: Array<{ name: string; line: number; value: string }> = [];
 
+  /**
+   * Same-file methods that only return a path built from strings
+   * (`string GetTrainingPath(Guid id) => $"{GetBasePath(id)}/trainings";`,
+   * `{ return $"{_basePath}/{_v3}/institution/{id}"; }`): name → the returned
+   * expression. A client composes its URLs from them, so the call site names
+   * the helper, never the path.
+   */
+  private pathHelpers = new Map<string, string>();
+
   override beginFile(_tree: Tree, sourceText: string): void {
     this.constStrings = new Map();
-    for (const m of sourceText.matchAll(/\bconst\s+string\s+(\w+)\s*=\s*[@$]*"([^"]*)"/g)) {
-      this.constStrings.set(m[1]!, m[2]!);
+    // `const string`, and a `readonly`/`static` string field initialized with a
+    // literal (`protected readonly string _basePath = "internal/api";`).
+    for (const m of sourceText.matchAll(/\b(?:const|readonly|static)\s+string\s+(\w+)\s*=\s*[@$]*"([^"]*)"\s*;/g)) {
+      if (!this.constStrings.has(m[1]!)) this.constStrings.set(m[1]!, m[2]!);
+    }
+    this.pathHelpers = new Map();
+    for (const m of sourceText.matchAll(/\bstring\s+(\w+)\s*\([^()]*\)\s*(?:=>\s*((?:[^;{}]|\{[^{}]*\})+);|\{\s*return\s+((?:[^;{}]|\{[^{}]*\})+);\s*\})/g)) {
+      const expr = (m[2] ?? m[3] ?? "").trim();
+      if (expr.includes('"') && !this.pathHelpers.has(m[1]!)) this.pathHelpers.set(m[1]!, expr);
     }
     this.stringLocals = [];
-    for (const m of sourceText.matchAll(/\b(?:var|string)\s+(\w+)\s*=\s*[@$]*"([^"]*)"/g)) {
+    // Each initializer as written (`$"api/v1/x"`, `GetPath(id) + "/x"`); `evalUri` reads it.
+    for (const m of sourceText.matchAll(/\b(?:var|string)\s+(\w+)\s*=\s*([^;]+);/g)) {
+      if (!m[2]!.includes('"') && !/^\s*\w+\s*\(/.test(m[2]!)) continue;
       const line = sourceText.slice(0, m.index!).split("\n").length;
-      this.stringLocals.push({ name: m[1]!, line, value: m[2]! });
+      this.stringLocals.push({ name: m[1]!, line, value: m[2]!.trim() });
     }
   }
 
@@ -243,17 +261,73 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
    * directly, or an identifier via the nearest preceding string local.
    */
   private resolveHttpUri(node: Node): string | null {
-    const direct = extractFirstStringArg(node);
-    if (direct) return this.substituteConsts(direct);
-    const args = argumentNodes(node);
-    const first = args[0]?.text.trim();
-    if (!first || !/^\w+$/.test(first)) return null;
     const callLine = node.startPosition.row + 1;
+    const first = argumentNodes(node)[0]?.text.trim().replace(NAMED_ARG_RE, "").trim();
+    const evaluated = first ? this.evalUri(first, callLine, 0) : null;
+    if (evaluated) return evaluated;
+    const direct = extractFirstStringArg(node);
+    return direct ? this.substituteConsts(direct) : null;
+  }
+
+  /** The nearest string local named `name` assigned at or before `line`. */
+  private nearestLocal(name: string, line: number): string | null {
     let best: { line: number; value: string } | null = null;
     for (const l of this.stringLocals) {
-      if (l.name === first && l.line <= callLine && (!best || l.line > best.line)) best = l;
+      if (l.name === name && l.line <= line && (!best || l.line > best.line)) best = l;
     }
-    return best ? this.substituteConsts(best.value) : null;
+    return best?.value ?? null;
+  }
+
+  /**
+   * A URI expression as a template: string literals (holes resolved through
+   * consts and path helpers), `+` concatenation, a path helper's call, a const
+   * or string local. A piece it cannot state becomes a `{hole}`; an expression
+   * that is nothing but such a piece states no URI (null).
+   */
+  private evalUri(expr: string, line: number, depth: number): string | null {
+    if (depth > 4) return null;
+    const pieces = splitConcat(expr);
+    if (!pieces) return null;
+    let out = "";
+    let stated = false;
+    for (const raw of pieces) {
+      const p = raw.trim();
+      const lit = /^[@$]*"((?:[^"\\]|\\.)*)"$/.exec(p);
+      const helper = /^(\w+)\s*\([^()]*\)$/.exec(p);
+      if (lit) {
+        out += this.fillHoles(lit[1]!, line, depth);
+        stated = true;
+      } else if (helper && this.pathHelpers.has(helper[1]!)) {
+        const v = this.evalUri(this.pathHelpers.get(helper[1]!)!, line, depth + 1);
+        if (v === null) return null;
+        out += v;
+        stated = true;
+      } else if (/^\w+$/.test(p) && this.constStrings.has(p)) {
+        out += this.fillHoles(this.constStrings.get(p)!, line, depth + 1);
+        stated = true;
+      } else if (/^\w+$/.test(p) && this.nearestLocal(p, line) !== null) {
+        // A local whose initializer states no URI is a runtime part (`{name}`).
+        const v = this.evalUri(this.nearestLocal(p, line)!, line, depth + 1);
+        if (v !== null) stated = true;
+        out += v ?? `{${p}}`;
+      } else {
+        out += `{${p}}`;
+      }
+    }
+    return stated ? out : null;
+  }
+
+  /** Resolve the `{…}` holes of an interpolated template that name a const or a path helper. */
+  private fillHoles(template: string, line: number, depth: number): string {
+    return template.replace(/\{([^{}]+)\}/g, (whole, hole: string) => {
+      const name = hole.split(":")[0]!.trim();
+      if (this.constStrings.has(name)) return this.fillHoles(this.constStrings.get(name)!, line, depth + 1);
+      const helper = /^(\w+)\s*\([^()]*\)$/.exec(name);
+      if (helper && this.pathHelpers.has(helper[1]!) && depth < 4) {
+        return this.evalUri(this.pathHelpers.get(helper[1]!)!, line, depth + 1) ?? whole;
+      }
+      return whole;
+    });
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
@@ -604,6 +678,38 @@ function mqMessageEntity(args: Node[]): string | null {
     if (/^[@$]*"[\w.\-:*#]+"$/.test(t)) return t.replace(/^[@$]*"|"$/g, "");
   }
   return null;
+}
+
+/**
+ * Split a string expression on its top-level `+` (outside strings, brackets
+ * and interpolation holes); null when a quote is left open.
+ */
+function splitConcat(expr: string): string[] | null {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i];
+    if (ch === '"') {
+      let j = i + 1;
+      let holes = 0;
+      for (; j < expr.length; j++) {
+        if (expr[j] === "\\") j++;
+        else if (expr[j] === "{") holes++;
+        else if (expr[j] === "}") holes--;
+        else if (expr[j] === '"' && holes <= 0) break;
+      }
+      if (j >= expr.length) return null;
+      i = j;
+    } else if (ch === "(" || ch === "[") depth++;
+    else if (ch === ")" || ch === "]") depth--;
+    else if (ch === "+" && depth === 0) {
+      out.push(expr.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(expr.slice(start));
+  return out;
 }
 
 /** Pull the first string-literal argument from an invocation_expression's arg list. */

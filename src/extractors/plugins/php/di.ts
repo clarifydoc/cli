@@ -377,10 +377,12 @@ export function phpLocatorType(
 
 const EMPTY: ReadonlyMap<string, string> = new Map();
 
-/** One docblock's type tags: `@var T [$name]`, `@param T $name`, `@property[-read|-write] T $name`. */
+/** One docblock's type tags: `@var T [$name]`, `@param T $name`, `@property[-read|-write] T $name`, `@return T`. */
 export interface DocTypes {
   /** `@var T` with no variable name — applies to the declaration below. */
   varType?: string;
+  /** `@return T` — `$this` kept as written (the method returns its own instance). */
+  returnType?: string;
   /** `$name` → T from `@param` / named `@var`. */
   named: Map<string, string>;
   /** `@property T $name` on a class. */
@@ -395,10 +397,14 @@ export interface DocTypes {
 export function parseDocblock(text: string): DocTypes {
   const out: DocTypes = { named: new Map(), properties: new Map() };
   if (!text.startsWith("/**")) return out;
-  const re = /@(var|param|property(?:-read|-write)?)\s+([^\s*]+(?:<[^>]*>)?)(?:\s+(?:\.\.\.)?\$(\w+))?/g;
+  const re = /@(var|param|property(?:-read|-write)?|return)\s+([^\s*]+(?:<[^>]*>)?)(?:\s+(?:\.\.\.)?\$(\w+))?/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const [, tag, rawType, name] = m;
+    if (tag === "return") {
+      out.returnType ??= rawType === "$this" ? rawType : normalizeDocType(rawType!) || undefined;
+      continue;
+    }
     const type = normalizeDocType(rawType!);
     if (!type) continue;
     if (tag!.startsWith("property")) {

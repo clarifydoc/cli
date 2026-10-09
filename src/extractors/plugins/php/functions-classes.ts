@@ -1,10 +1,12 @@
 import type { Node, Tree } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from "../../functions-classes/base.js";
-import { extractCalls } from "../../shared/call-graph.js";
+import { callChainText, extractCalls } from "../../shared/call-graph.js";
 import { receiverTypeName } from "../../shared/type-parser.js";
 import { arrayLiteralAt, extractPhpRequestAccess, requestReceivers, ruleEntries, ruleType } from "./request-access.js";
 import { docblockAbove, parseDocblock, phpLocatorType, useAliases, type DocTypes } from "./di.js";
+
+type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
 
 /**
  * PHP tree-sitter extractor.
@@ -81,8 +83,10 @@ export class PhpExtractor extends FunctionClassExtractor {
 
   private parseFunction(node: Node): FunctionInfo {
     const name = node.childForFieldName("name")?.text ?? "anonymous";
-    const params = this.parseParams(node.childForFieldName("parameters"), docTypesAbove(node));
-    const returnType = this.parseReturnType(node);
+    const doc = docTypesAbove(node);
+    const params = this.parseParams(node.childForFieldName("parameters"), doc);
+    // A native return type wins; a docblock `@return T` types an untyped one.
+    const returnType = this.parseReturnType(node) ?? doc?.returnType ?? null;
     const body = node.childForFieldName("body");
     const fn: FunctionInfo = {
       name,
@@ -142,6 +146,12 @@ export class PhpExtractor extends FunctionClassExtractor {
           }
         } else if (member.type === "property_declaration") {
           this.collectProperties(member, properties, docTypesAbove(member));
+        } else if (member.type === "use_declaration") {
+          // `use HasRoles, Notifiable;` — a trait's methods are the class's own,
+          // recorded as supertypes the way Ruby records an `include`.
+          for (const part of member.namedChildren) {
+            if (part.type === "name" || part.type === "qualified_name") impls.push(part.text.replace(/.*\\/, ""));
+          }
         }
       }
     }
@@ -180,8 +190,10 @@ export class PhpExtractor extends FunctionClassExtractor {
 
   private parseMethod(node: Node): FunctionInfo {
     const name = node.childForFieldName("name")?.text ?? "anonymous";
-    const params = this.parseParams(node.childForFieldName("parameters"), docTypesAbove(node));
-    const returnType = this.parseReturnType(node);
+    const doc = docTypesAbove(node);
+    const params = this.parseParams(node.childForFieldName("parameters"), doc);
+    // A native return type wins; a docblock `@return T` types an untyped one.
+    const returnType = this.parseReturnType(node) ?? doc?.returnType ?? null;
     const body = node.childForFieldName("body");
     const fn: FunctionInfo = {
       name,
@@ -633,14 +645,22 @@ function injectionQualifier(decorators: string[]): string | undefined {
 function extractLocalTypes(
   body: Node | null,
   aliases: ReadonlyMap<string, string>,
-): Array<{ name: string; type: string; qualifier?: string }> {
+): LocalType[] {
   if (!body) return [];
-  const out: Array<{ name: string; type: string; qualifier?: string }> = [];
+  const out: LocalType[] = [];
   const seen = new Set<string>();
-  const add = (name: string | undefined, type: string, qualifier?: string): void => {
-    if (!name || seen.has(name) || (!type && !qualifier)) return;
+  // Initializer calls wait: a type the body states anywhere beats them. Each
+  // distinct call is kept (`$t = $v->createText()` / `$t = $v->createTextRun()`);
+  // the linker types the local only when their return types agree.
+  const fromCalls = new Map<string, Set<string>>();
+  const add = (name: string | undefined, type: string, qualifier?: string, from?: string): void => {
+    if (!name || seen.has(name)) return;
+    if (!type && !qualifier) {
+      if (from) fromCalls.set(name, (fromCalls.get(name) ?? new Set()).add(from));
+      return;
+    }
     seen.add(name);
-    const local: { name: string; type: string; qualifier?: string } = { name, type };
+    const local: LocalType = { name, type };
     if (qualifier) local.qualifier = qualifier;
     out.push(local);
   };
@@ -676,10 +696,13 @@ function extractLocalTypes(
       if (name && right) {
         const looked = phpLocatorType(right, aliases);
         if (looked) add(name, looked.type, looked.qualifier);
+        // `$w = PHPExcel_IOFactory::createWriter(…)` — typed by what the call returns.
+        else add(name, "", undefined, callChainText(right, "php") ?? undefined);
       }
     }
     for (const c of n.children) walk(c);
   };
   walk(body);
+  for (const [name, froms] of fromCalls) if (!seen.has(name)) for (const from of froms) out.push({ name, type: "", from });
   return out;
 }

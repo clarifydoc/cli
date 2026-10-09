@@ -23,6 +23,34 @@ async function parse(src: string, file = "App.tsx") {
   return parseSource(src, "typescript" as any, file);
 }
 
+describe("functions behind identity wrappers (useCallback, memo, forwardRef, debounce)", () => {
+  it("names the function a wrapper returns, and links a bare call to it rather than to React", async () => {
+    const imports = [{ source: "react", specifiers: ["useCallback", "memo"], line: 1 }] as unknown as ImportInfo[];
+    const src = `import { useCallback, memo } from "react";
+export function Selector() {
+  const fetchOrganizations = useCallback(async (q) => {
+    await load(q);
+  }, []);
+  const onSearch = debounce((q) => fetchOrganizations(q), 300);
+  useEffect(() => { fetchOrganizations(); }, [fetchOrganizations]);
+  return null;
+}
+export const Row = memo(function Row(props) { return render(props); });
+export const Lazy = useMemo(() => compute(), []);`;
+    const tree = await parse(src);
+    const fns = new JavaScriptExtractor().extractFunctions(tree, src);
+    expect(fns.map((f) => f.name)).toEqual(expect.arrayContaining(["Selector", "fetchOrganizations", "onSearch", "Row"]));
+    expect(fns.map((f) => f.name)).not.toContain("Lazy");
+    expect(fns.find((f) => f.name === "fetchOrganizations")!.calls.map((c) => c.name)).toEqual(["load"]);
+
+    const aliases = extractJsVariableAliases(tree, imports);
+    const local = new Set(fns.map((f) => f.name));
+    const selector = fns.find((f) => f.name === "Selector")!;
+    const call = classifyCalls(selector.calls, imports, "typescript", aliases, local).find((c) => c.name === "fetchOrganizations")!;
+    expect([call.kind, call.target]).toEqual(["internal", null]);
+  });
+});
+
 describe("nested named function extraction (React handler idiom)", () => {
   it("extracts a const-arrow handler defined INSIDE a component", async () => {
     const src = `export function Login() {

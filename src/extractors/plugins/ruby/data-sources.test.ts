@@ -110,10 +110,10 @@ describe("rubySpec.extractDataSources — outbound HTTP (api-call)", () => {
       RestClient.delete "http://leaguedata-api/api/v2/institution/#{id}"
     `);
     // `name` is the bare verb (the route-linker reads it as the HTTP method);
-    // `target` is the URL argument — a variable label or a literal.
+    // `target` is the URL argument — a literal, or a variable as a runtime hole.
     expect(ds.map((d) => `${d.name} ${d.target}`)).toEqual([
-      "get url",
-      "post url",
+      "get #{url}",
+      "post #{url}",
       "delete http://leaguedata-api/api/v2/institution/#{id}",
     ]);
     expect(ds.every((d) => d.kind === "api-call")).toBe(true);
@@ -122,7 +122,7 @@ describe("rubySpec.extractDataSources — outbound HTTP (api-call)", () => {
   it("reads the URL past a nested helper call without splitting on its comma", () => {
     // The first arg boundary must respect the parens of get_headers(a, b).
     const ds = apiCalls(`res = RestClient.post(build_url(a, b), payload, get_headers(x, y))`);
-    expect(ds).toEqual([expect.objectContaining({ name: "post", target: "build_url(a, b)" })]);
+    expect(ds).toEqual([expect.objectContaining({ name: "post", target: "#{build_url(a, b)}" })]);
   });
 
   it("maps Net::HTTP request classes and convenience methods to their verb", () => {
@@ -133,10 +133,10 @@ describe("rubySpec.extractDataSources — outbound HTTP (api-call)", () => {
       response = Net::HTTP.get_response(uri)
     `).map((d) => `${d.name} ${d.target}`);
     expect(ds).toEqual([
-      "post uri.request_uri",
-      "get url",
-      "post uri",
-      "get uri",
+      "post #{uri.request_uri}",
+      "get #{url}",
+      "post #{uri}",
+      "get #{uri}",
     ]);
   });
 
@@ -172,12 +172,12 @@ describe("rubySpec.extractDataSources — outbound HTTP (api-call)", () => {
     ]);
   });
 
-  it("leaves the variable name when the assignment is not a string literal", () => {
+  it("keeps the variable as a runtime hole when the assignment is not a string literal — never the path `/url`", () => {
     const ds = apiCalls(`
       url = build_url(a, b)
       RestClient.post(url, payload)
     `);
-    expect(ds).toEqual([expect.objectContaining({ name: "post", target: "url" })]);
+    expect(ds).toEqual([expect.objectContaining({ name: "post", target: "#{url}" })]);
   });
 
   it("does not emit api-calls for ActiveRecord model access", () => {

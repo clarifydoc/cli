@@ -6,10 +6,12 @@ import {
   extractAnnotations as sharedExtractAnnotations,
   getNameFromNode,
 } from "../../shared/node-helpers.js";
-import { extractCalls } from "../../shared/call-graph.js";
+import { callChainText, extractCalls } from "../../shared/call-graph.js";
 import { simpleTypeName } from "../../shared/type-parser.js";
 import { annotationNodes, isInjectMarked, pointQualifier } from "./di-annotations.js";
 import { expressionFact, koinQualifier, type ExprFact } from "./di-expressions.js";
+
+type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
 
 type JkLang = "java" | "kotlin";
 
@@ -646,20 +648,31 @@ export function lastExpressionFact(lambda: Node | null | undefined): ExprFact | 
  * classes are walked too — a shadowed name keeps the FIRST sighting, matching
  * top-down reading order.
  */
-function extractLocalTypes(body: Node | null, language: JkLang): Array<{ name: string; type: string; qualifier?: string }> {
+function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
   if (!body) return [];
-  const out: Array<{ name: string; type: string; qualifier?: string }> = [];
+  const out: LocalType[] = [];
   const seen = new Set<string>();
+  // Initializer calls wait: a type the body states anywhere beats them. Each
+  // distinct call is kept (locals of one name in sibling blocks); the linker
+  // types the local only when their return types agree.
+  const fromCalls = new Map<string, Set<string>>();
   const push = (name: string | null | undefined, rawType: string | null | undefined, init?: Node | null) =>
-    pushFact(name, rawType, init ? expressionFact(init) : null);
-  const pushFact = (name: string | null | undefined, rawType: string | null | undefined, fact: ExprFact | null) => {
+    pushFact(name, rawType, init ? expressionFact(init) : null, init);
+  const pushFact = (name: string | null | undefined, rawType: string | null | undefined, fact: ExprFact | null, init?: Node | null) => {
     if (!name || seen.has(name)) return;
     let declared = rawType && rawType !== "var" ? rawType : null;
     if (!declared && fact?.type) declared = fact.type;
+    if (!declared && !fact?.qualifier) {
+      // `var dao = DaoFactory.getDAO()` / `val case = repo.find(id)` — typed
+      // by what the call is declared to return; the linker reads that.
+      const from = callChainText(init, language);
+      if (from) fromCalls.set(name, (fromCalls.get(name) ?? new Set()).add(from));
+      return;
+    }
     const simple = simpleTypeName(declared);
     if (!simple || !/^[A-Z]/.test(simple) || simple === "String") return;
     seen.add(name);
-    const entry: { name: string; type: string; qualifier?: string } = { name, type: simple };
+    const entry: LocalType = { name, type: simple };
     if (fact?.qualifier) entry.qualifier = fact.qualifier;
     out.push(entry);
   };
@@ -688,5 +701,6 @@ function extractLocalTypes(body: Node | null, language: JkLang): Array<{ name: s
     for (const child of n.children) visit(child);
   };
   visit(body);
+  for (const [name, froms] of fromCalls) if (!seen.has(name)) for (const from of froms) out.push({ name, type: "", from });
   return out;
 }

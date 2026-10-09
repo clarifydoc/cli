@@ -91,6 +91,40 @@ describe("C# HTTP-client detection — receiver gating", () => {
  * label + a synthetic entity) lights up the screen→data-access→entity trace +
  * Data Model — the desktop analogue of screen→route→DB.
  */
+describe("C# HTTP-client URLs a client builds from its own fields and helpers", () => {
+  it("substitutes literal string fields and same-file path helpers into the URL", async () => {
+    const src = `namespace X;
+public class PlanClient {
+  private readonly HttpClient _httpClient;
+  protected readonly string _basePath = "internal/api";
+  private static readonly string _versionThree = "v3";
+  private readonly string _apiVersion;
+  private string GetBasePath(Guid institutionId)
+  {
+    return $"{_basePath}/{_versionThree}/institution/{institutionId}";
+  }
+  private string GetTrainingPath(Guid institutionId) => $"{GetBasePath(institutionId)}/trainings";
+  public async Task M(Guid institutionId, Guid trainingId) {
+    await _httpClient.PutAsJsonAsync($"{GetTrainingPath(institutionId)}/{trainingId}/updateallowed", x);
+    await _httpClient.PostAsJsonAsync(GetTrainingPath(institutionId), x);
+    var path = GetTrainingPath(institutionId) + "/substitutions";
+    await _httpClient.GetAsync(path);
+    await _httpClient.PostAsJsonAsync($"{_basePath}/{_apiVersion}/institution/{institutionId}/wagecodes", x);
+    await _httpClient.GetAsync(SomeOtherClass.Url());
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as any, "PlanClient.cs");
+    const calls = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call");
+    expect(calls.map((c) => c.target)).toEqual([
+      "internal/api/v3/institution/{institutionId}/trainings/{trainingId}/updateallowed",
+      "internal/api/v3/institution/{institutionId}/trainings",
+      "internal/api/v3/institution/{institutionId}/trainings/substitutions",
+      "internal/api/{_apiVersion}/institution/{institutionId}/wagecodes",
+      null,
+    ]);
+  });
+});
+
 async function ioSourcesOf(body: string): Promise<DataSourceInfo[]> {
   const src = `namespace X;
 public class T {

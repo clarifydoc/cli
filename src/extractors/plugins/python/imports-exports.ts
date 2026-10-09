@@ -149,6 +149,10 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
   protected collectExports(node: Node, exports: ExportInfo[]): void {
     // In Python, top-level functions and classes are "exports"
     for (const child of node.children) {
+      if (child.type === "import_from_statement") {
+        reExportsOf(child, exports);
+        continue;
+      }
 
       if (child.type === "function_definition") {
         const name = child.childForFieldName("name")?.text ?? "anonymous";
@@ -176,6 +180,40 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
           }
         }
       }
+    }
+  }
+}
+
+/**
+ * What a module-level `from … import` forwards: a package's `__init__.py`
+ * publishing its modules (`from .dependencies import *`, `from .user import
+ * User as Account`) — the names a caller importing the package finds there.
+ * Relative imports name the package's own modules; `import *` forwards
+ * whatever it imports. Recorded as `re-export` exports with their `source`.
+ */
+function reExportsOf(stmt: Node, exports: ExportInfo[]): void {
+  const module = stmt.childForFieldName("module_name")?.text ?? "";
+  if (!module) return;
+  const line = stmt.startPosition.row + 1;
+  const wildcard = stmt.children.some((c) => c.type === "wildcard_import");
+  if (wildcard) {
+    exports.push({ name: "*", kind: "re-export", line, source: module });
+    return;
+  }
+  if (!module.startsWith(".")) return;
+  const moduleNode = stmt.childForFieldName("module_name");
+  const inModule = (n: Node): boolean => !!moduleNode && n.startIndex >= moduleNode.startIndex && n.endIndex <= moduleNode.endIndex;
+  for (const part of stmt.descendantsOfType(["dotted_name", "aliased_import"])) {
+    if (inModule(part) || part.parent?.type === "aliased_import") continue;
+    if (part.type === "aliased_import") {
+      const name = part.childForFieldName("name")?.text;
+      const alias = part.childForFieldName("alias")?.text;
+      if (!name) continue;
+      const entry: ExportInfo = { name: alias ?? name, kind: "re-export", line, source: module };
+      if (alias && alias !== name) entry.sourceName = name;
+      exports.push(entry);
+    } else if (!part.text.includes(".")) {
+      exports.push({ name: part.text, kind: "re-export", line, source: module });
     }
   }
 }

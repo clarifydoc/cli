@@ -432,7 +432,10 @@ export function classifyCalls(
     // the later `refreshCart()` call must classify into the composable's module,
     // or every hook/composable-based UI trace dead-ends one hop from the screen).
     if (variableAliases) {
-      const alias = variableAliases.get(call.name.includes(".") ? root : call.name);
+      // A bare name this file defines as a function is that function — the
+      // binding that made it is an identity wrapper (`const f = useCallback(() => …)`).
+      const ownFunction = !call.name.includes(".") && localSymbols?.has(call.name);
+      const alias = ownFunction ? undefined : variableAliases.get(call.name.includes(".") ? root : call.name);
       if (alias) {
         call.kind = "cross-file";
         call.target = typeof alias === "string" ? alias : alias.source;
@@ -576,6 +579,20 @@ export function genericResolveCallName(node: Node, opts?: GenericResolveOptions)
   }
 
   return null;
+}
+
+/**
+ * A call expression as the chain a local initialized from it carries
+ * (`localTypes[].from`): the call's name exactly as `extractCalls` spells it,
+ * closed by `()` — `val dao = UserDAOFactory.getDAO()` → `UserDAOFactory.getDAO()`.
+ * Null for a node this language's call walk would not record as a call.
+ */
+export function callChainText(node: Node | null | undefined, language: Language): string | null {
+  if (!node) return null;
+  const hooks = callHooksByLanguage.get(language);
+  if (!hooks?.callNodeTypes.has(node.type)) return null;
+  const name = resolveCallName(node, language);
+  return name ? `${name}()` : null;
 }
 
 /**
