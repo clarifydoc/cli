@@ -11,6 +11,8 @@ import { rubygemsPackageManager } from "./package-manifests.js";
 export const rubyManifest: LanguagePluginManifest = {
   language: "ruby",
   family: "ruby",
+  // `Foo.new(…)` runs `initialize`.
+  constructorCalls: ["new"],
   importsNameDirectories: true,
   packageManagers: [rubygemsPackageManager],
   packageEcosystems: ["rubygems"],
