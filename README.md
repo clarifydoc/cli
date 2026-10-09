@@ -4,6 +4,9 @@ Extract a structured, versioned map of any codebase — **frontend route → API
 
 ClarifyDoc parses a repo (or a folder of repos) with tree-sitter / regex extractors and produces per-file JSON plus a project-wide summary: routes, call traces, data access, an entity-relationship model, dependency and blast-radius graphs, and an interactive HTML report. Everything it extracts is content-hashed so you can tell exactly what changed between runs.
 
+**Documentation:** [CLI reference](docs/cli-reference.md) — every command and option ·
+[Reading the output](docs/reading-the-output.md) — what each file holds, how it is encoded, and how to query it.
+
 ## Why
 
 The goal is to answer questions like *"which screen calls this endpoint, and which table does that endpoint write to?"* — across a **monolith** or **multiple repositories** — without reading the code by hand. ClarifyDoc builds the chain:
@@ -86,7 +89,9 @@ Every `clarifydoc <command>` example in this README works with any of these form
 clarifydoc analyze <path> [options]
 ```
 
-Output is written to `<output>/<project-name>/` (default `.clarifydoc/<project-name>/`).
+Output is written to `<output>/<project-name>/` (default `.clarifydoc/<project-name>/`, with `<output>` resolved
+against the current directory). What each file in it holds is described in
+[Reading the output](docs/reading-the-output.md).
 
 When that directory is inside the project, ClarifyDoc writes a `.gitignore` containing `*` into it, so the analysis
 ignores itself — nothing appears in `git status` and your own `.gitignore` is never touched. Empty that file to commit
@@ -96,7 +101,7 @@ the analysis instead, so teammates and CI agents get the map without scanning; i
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-o, --output <dir>` | Output directory | `.clarifydoc` |
-| `--include <globs...>` | Additional file patterns to include | all supported |
+| `--include <globs...>` | Analyze only files matching these patterns (replaces the default set) | all supported |
 | `--exclude <globs...>` | Additional file patterns to exclude | — |
 | `--max-files <n>` | Max files to analyze | unlimited |
 | `--pretty` / `--no-pretty` | Pretty-print JSON | `--pretty` |
@@ -105,7 +110,11 @@ the analysis instead, so teammates and CI agents get the map without scanning; i
 | `--no-lsp` | Disable LSP-based symbol resolution | LSP on |
 | `--lsp-timeout <ms>` | LSP server startup timeout | — |
 | `--incremental` | Reuse cached analysis for unchanged files (mtime + SHA-256) | false |
+| `--no-git-history` | Skip git churn/hotspot collection | history on |
+| `--stable-output` | Fixed timestamp + relative root, for byte-identical committed analyses | false |
 | `--html` | Generate + open an HTML report afterwards | false |
+
+All options, with examples: [CLI reference → analyze](docs/cli-reference.md#analyze).
 
 ```bash
 # Analyze a React app and open the report
@@ -121,14 +130,17 @@ clarifydoc analyze ./my-app --include "**/*.ts" "**/*.tsx" --max-files 50 --no-p
 ### Other commands
 
 ```bash
+clarifydoc impact <path>               # What changed files reach: screens, routes, entities, tests to run
 clarifydoc lsp-update <analysis-dir>   # Run layer-2 LSP enhancement on an existing analysis
 clarifydoc report <analysis-dir>       # (Re)generate the HTML report from project-summary.json
+clarifydoc cfg <file> -f <function>    # Draw one function's control flow as Mermaid
 clarifydoc detect <path>               # Print detected languages + frameworks only
 clarifydoc schema                      # Print the FileAnalysis output schema
 clarifydoc mcp [path]                  # Serve the analysis to an AI agent over MCP (stdio)
 ```
 
 `lsp-update` writes `lsp-enhancement.json` alongside `project-summary.json`; `report` reads the summary and emits `report.html`.
+Every command's options are in the [CLI reference](docs/cli-reference.md).
 
 ## Supported languages
 
@@ -188,7 +200,7 @@ ClarifyDoc scans for project markers (`package.json`, `*.csproj`/`*.sln`, `*.dpr
 - `files[]` is the **file registry** — a file's `page_id` is its index in this array. Every section that references a file (`componentGraph`, `linkGraph`, `routeMap`, `communities`, `godNodes`, the `fileProjects`/`fileLayerMap` keys, the analysis lists, …) stores that integer page_id instead of the path.
 - `elements[]` is the **symbol registry** (`file::symbol` ids) — `symbolLinks`, `complexity`, `classGraph`, `blastRadius`, `dataAccessGraph` reference it by index.
 
-Reconstruct the path-based, in-memory shape with `denormalizeProject(JSON.parse(raw))` (exported from `clarifydoc`). It is shape-detecting, so summaries written before this encoding still load.
+Reconstruct the path-based, in-memory shape with `denormalizeProject(JSON.parse(raw))` (exported from `clarifydoc`). It is shape-detecting, so summaries written before this encoding still load. [Reading the output](docs/reading-the-output.md#four-rules-that-apply-to-every-file) lists which field points into which registry, with `jq` recipes that resolve them.
 
 ## Interactive report
 
