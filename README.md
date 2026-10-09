@@ -55,7 +55,7 @@ Once the package is published to npm, no install or clone is needed at all:
 
 ```bash
 npx clarifydoc analyze ./my-app --html   # always the latest published version
-npx clarifydoc@0.4.0 analyze ./my-app    # pin a version (recommended in CI)
+npx clarifydoc@0.5.0 analyze ./my-app    # pin a version (recommended in CI)
 npx --yes clarifydoc report ./.clarifydoc/my-app   # --yes skips the install prompt in CI
 ```
 
