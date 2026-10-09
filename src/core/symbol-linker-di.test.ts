@@ -628,6 +628,29 @@ describe("symbol-linker — typed receivers", () => {
     expect(made.map((l) => [l.targetSymbol, l.strategy, l.relation])).toEqual([["UnitConverter.__init__", "constructor", "instantiates"]]);
   });
 
+  it("types a Delphi form variable past its .dfm and links `TFoo.Create` to the constructor", () => {
+    const unit = file("Players.pas", [{ ...cls("TfrmPlayers", {
+      extends: "TBaseForm",
+      methods: [method("constructor", [], [], 417), method("UpdateTotals", [], [], 1763)],
+    }), line: 27, endLine: 380 }], { language: "pascal", functions: [{ ...method("ShowPlayers", [
+      call("TfrmPlayers.Create"), call("form.UpdateTotals"), call("form.ShowModal"),
+    ], [], 398), localTypes: [{ name: "form", type: "TfrmPlayers" }] }] });
+    // The design file's root object names the same class.
+    const design = file("Players.dfm", [{ ...cls("TfrmPlayers", { properties: [prop("StatusBar1", "TStatusBar")] }), line: 1, endLine: 1951 }], { language: "dfm" });
+    const out = callsFrom(buildSymbolLinks([design, unit]), "Players.pas");
+    expect(out.map((l) => [l.callName, l.targetFile, l.targetSymbol, l.relation])).toEqual([
+      ["TfrmPlayers.Create", "Players.pas", "TfrmPlayers.constructor", "instantiates"],
+      ["form.UpdateTotals", "Players.pas", "TfrmPlayers.UpdateTotals", "calls"],
+    ]);
+  });
+
+  it("links Ruby `Foo.new` to `initialize`, and only for a class-level constructor call", () => {
+    const resp = file("app/helpers/communication_response.rb", [cls("CommunicationResponse", { methods: [method("initialize", [], [], 13), method("ok?", [], [], 27)] })], { language: "ruby" });
+    const user = file("app/helpers/garage.rb", [cls("Garage", { methods: [method("get", [call("CommunicationResponse.new"), call("CommunicationResponse.create")])] })], { language: "ruby" });
+    const out = callsFrom(buildSymbolLinks([resp, user]), "app/helpers/garage.rb");
+    expect(out.map((l) => [l.callName, l.targetSymbol, l.strategy])).toEqual([["CommunicationResponse.new", "CommunicationResponse.initialize", "constructor"]]);
+  });
+
   it("matches a method name without regard to case where the language calls it so (PHP), never elsewhere", () => {
     const serializer = (path: string, language: string) => file(path, [cls("Serializer", {
       methods: [method("writeUtf", [], [], 3), method("serialize", [call("this.writeUTF"), call("writeUTF")], [], 8)],

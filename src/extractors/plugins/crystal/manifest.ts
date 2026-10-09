@@ -10,6 +10,8 @@ import { shardsPackageManager } from "./package-manifests.js";
 export const crystalManifest: LanguagePluginManifest = {
   language: "crystal",
   family: "crystal",
+  // `Foo.new(…)` runs `initialize`.
+  constructorCalls: ["new"],
   packageManagers: [shardsPackageManager],
   packageEcosystems: ["shards"],
   parsing: "regex",

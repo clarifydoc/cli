@@ -39,24 +39,27 @@ interface SymbolDef {
 export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
   const symbolIndex = buildSymbolIndex(analyses);
   const projectOf = new Map(analyses.map((a) => [a.filePath, a.projectId]));
-  const memberTypes = buildMemberTypes(analyses);
+  // Design files (a Delphi `.dfm`) name the class their code unit declares;
+  // the type catalogs see only the declarations, or every form is ambiguous.
+  const typeDecls = analyses.filter((a) => !isDesignFormat(a.language));
+  const memberTypes = buildMemberTypes(typeDecls);
   const ctx: LinkContext = {
     filePathMap: buildFilePathMap(analyses),
     symbolIndex,
-    inheritanceMap: buildInheritanceMap(analyses),
+    inheritanceMap: buildInheritanceMap(typeDecls),
     memberTypes,
     injectionMap: buildInjectionMap(analyses, memberTypes),
     bindings: buildBindingIndex(analyses),
     classAt: buildClassAt(analyses),
-    classFiles: buildClassFiles(analyses),
+    classFiles: buildClassFiles(typeDecls),
     extensionMethods: buildExtensionMethods(analyses),
     qualifiedDefs: buildQualifiedDefs(symbolIndex, new Map(analyses.map((a) => [a.filePath, a.language as string]))),
     foldedSymbols: new Map(),
     analyses,
     extraLinks: [],
-    interfaceImplMap: buildInterfaceImplMap(analyses),
-    classCatalog: buildClassCatalog(analyses),
-    classByProject: buildClassCatalogByProject(analyses),
+    interfaceImplMap: buildInterfaceImplMap(typeDecls),
+    classCatalog: buildClassCatalog(typeDecls),
+    classByProject: buildClassCatalogByProject(typeDecls),
     leafCatalog: buildLeafCatalog(symbolIndex, projectOf),
     dirTailIndex: buildDirTailIndex(symbolIndex),
     classNameIndex: buildClassNameIndex(symbolIndex),
@@ -754,6 +757,16 @@ function importsShareScope(language: string | undefined): boolean {
 }
 
 /** A member/method name as `language` compares it. */
+/** Is `language` a design format (`designFormat`: a Delphi `.dfm`) rather than code declaring types? */
+function isDesignFormat(language: string | undefined): boolean {
+  return !!language && pluginFor(language as Language)?.designFormat === true;
+}
+
+/** Class-level call names that construct an instance in `language` (`constructorCalls`). */
+function constructorCallsOf(language: string | undefined): readonly string[] {
+  return (language && pluginFor(language as Language)?.constructorCalls) || [];
+}
+
 /** Are `language`'s function and method names case-insensitive (all of its identifiers, or `caseInsensitiveCallables` — PHP)? */
 function callablesFoldCase(language: string | undefined): boolean {
   if (!language) return false;
@@ -1712,6 +1725,17 @@ function resolveCallToDefinition(
         const classDef = syms.get(`${declaredClass}.self.${methodName}`) ?? syms.get(`${declaredClass}.${methodName}`) ?? syms.get(methodName);
         if (classDef) {
           return mkLink(filePath, classDef.name, classDef.line, "INFERRED", "class-name");
+        }
+      }
+      // `TfrmPlayers.Create(AOwner)` / `Foo.new` — the language constructs
+      // through a class-level call the class does not declare by that name.
+      if (constructorCallsOf(analysis.language).some((c) => nameKey(analysis.language, c) === nameKey(analysis.language, methodName))) {
+        for (const filePath of eligible) {
+          const cls = ctx.classAt.get(memberKey(filePath, declaredClass));
+          if (!cls || isDesignFormat(ctx.languageOf.get(filePath))) continue;
+          const ctor = cls.methods.find((m) => isConstructor(m, cls));
+          const d = ctor ? symbolIn(ctx, filePath, `${declaredClass}.${ctor.name}`) : undefined;
+          return mkLink(filePath, d?.name ?? declaredClass, d?.line ?? cls.line, "INFERRED", "constructor");
         }
       }
     }

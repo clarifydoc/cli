@@ -17,6 +17,8 @@ export const pascalManifest: LanguagePluginManifest = {
   // `uses WaitForm;` puts the unit's interface routines in scope unqualified:
   // a bare `ShowWaitForm(…)` is the one used unit that declares it.
   importsShareScope: true,
+  // `TfrmPlayers.Create(AOwner)` runs the constructor (reported as `constructor`).
+  constructorCalls: ["Create"],
   grammar: { variants: { pascal: { pkg: "tree-sitter-pascal", wasm: "tree-sitter-pascal.wasm" } } },
   externalModulePrefixes: [
     // Unit-scope roots (dotted namespaces, Delphi XE2+). Canonical IDE casing.
@@ -60,6 +62,8 @@ export const pascalManifest: LanguagePluginManifest = {
 export const dfmManifest: LanguagePluginManifest = {
   language: "dfm",
   family: "pascal",
+  // `object frmPlayers: TfrmPlayers` describes the form the .pas unit declares.
+  designFormat: true,
   parsing: "custom",
   // .lfm = Lazarus, .fmx = FireMonkey — same object syntax (both always
   // text), same parser. Only classic .dfm can be a binary TPF0 stream.

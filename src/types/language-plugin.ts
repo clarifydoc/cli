@@ -709,6 +709,20 @@ export interface LanguagePluginManifest {
    */
   caseInsensitiveCallables?: boolean;
   /**
+   * A design file (Delphi `.dfm`/`.lfm`/`.fmx`): its root object names the
+   * class its code unit declares (`object frmPlayers: TfrmPlayers`) and
+   * describes that form's components. The linker never takes such a class as
+   * a type definition of its own — the code declaration is the type, and a
+   * second "definition" would make every `form: TfrmPlayers` ambiguous.
+   */
+  designFormat?: boolean;
+  /**
+   * Class-level calls that construct an instance (Delphi `TFoo.Create(…)`,
+   * Ruby/Crystal `Foo.new`): a `X.<name>` call on a class that declares no
+   * method of that name reaches the class's constructor.
+   */
+  constructorCalls?: readonly string[];
+  /**
    * Generic types an `await` unwraps to their first type argument — what a
    * local initialized by `await repo.FindAsync(id)` holds when `FindAsync`
    * declares `Task<User>` (C# `Task`/`ValueTask`, TS `Promise`, Dart
