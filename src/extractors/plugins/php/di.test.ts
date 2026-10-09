@@ -143,6 +143,56 @@ class Svc {
     ]);
   });
 
+  it("keeps every initializer call of a local the body never types", async () => {
+    const [cls] = await classes(`<?php
+class Svc {
+  public function run($group) {
+    $journal = $group->journals->first();
+    $writer = IOFactory::createWriter($book);
+    if (!$journal) { $journal = new Journal(); }
+    if ($rich) { $text = $v->createText(); } else { $text = $v->createTextRun(); }
+  }
+}`);
+    expect(cls!.methods[0]!.localTypes).toEqual([
+      { name: "journal", type: "Journal" },
+      { name: "writer", type: "", from: "IOFactory.createWriter()" },
+      // One per branch: the linker types `$text` only if both return the same class.
+      { name: "text", type: "", from: "v.createText()" },
+      { name: "text", type: "", from: "v.createTextRun()" },
+    ]);
+  });
+
+  it("records a class's trait uses beside the interfaces it implements", async () => {
+    const [cls] = await classes(`<?php
+class User extends Model implements Auth {
+  use \\App\\Concerns\\HasRoles, Notifiable;
+  use Sorts { sort as order; }
+}`);
+    expect([cls!.extends, cls!.implements]).toEqual(["Model", ["Auth", "HasRoles", "Notifiable", "Sorts"]]);
+  });
+
+  it("reads a method's return type from `@return` when it declares none", async () => {
+    const [cls] = await classes(`<?php
+class Sheet {
+  /**
+   * @param string $v
+   * @return \\PHPExcel\\Worksheet
+   */
+  public function getActiveSheet($v) {}
+  /** @return $this */
+  public function setTitle($t) {}
+  /** @return Other|false */
+  public function getCell($c): ?Cell {}
+  public function plain() {}
+}`);
+    expect(cls!.methods.map((m) => [m.name, m.returnType])).toEqual([
+      ["getActiveSheet", "Worksheet"],
+      ["setTitle", "$this"],
+      ["getCell", "Cell"],
+      ["plain", null],
+    ]);
+  });
+
   it("types properties the constructor fills, and object-typed class @property tags", async () => {
     const [cls] = await classes(`<?php
 /**
@@ -190,6 +240,8 @@ class Svc {
       { name: "c", type: "Baz" },
       { name: "d", type: "Qux" },
       { name: "e", type: "", qualifier: "payments" },
+      // A call that states no type: typed by what it is declared to return.
+      { name: "f", type: "", from: "request.get()" },
     ]);
   });
 

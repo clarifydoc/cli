@@ -90,6 +90,9 @@ class Helper { void M() { var hidden = new Hidden(); } }`;
     expect(extractCsharpTopLevelLocalTypes(tree.rootNode)).toEqual([
       { name: "pricing", type: "IPricing" },
       { name: "clock", type: "SystemClock" },
+      // Initialized by calls that state no type: the linker reads their return types.
+      { name: "builder", type: "", from: "WebApplication.CreateBuilder()" },
+      { name: "app", type: "", from: "builder.Build()" },
     ]);
   });
 });

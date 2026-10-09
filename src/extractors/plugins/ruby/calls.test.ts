@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { extractCallsFromBody } from "../shared/regex-base.js";
 import { rubySpec } from "./index.js";
+import { extractClassesWithSpec } from "../shared/regex-base.js";
 
 const calls = (src: string) => {
   const lines = src.split("\n");
@@ -15,6 +16,12 @@ describe("ruby paren-less calls", () => {
   it("captures predicate and bang methods", () => {
     expect(calls("    raise 'nope' unless user.valid?")).toContain("user.valid?");
     expect(calls("    order.save!")).toContain("order.save!");
+  });
+
+  it("keeps a predicate or bang method's suffix on a constant receiver — no truncated twin", () => {
+    expect(calls("      HolidaysHelper.is_holiday?(date)")).toEqual(["HolidaysHelper.is_holiday?"]);
+    expect(calls("      Pools.validate!(params[:id])")).toEqual(["Pools.validate!"]);
+    expect(calls("      return if Order.count!= 0")).toEqual(["Order.count"]);
   });
 
   it("captures a bare `receiver.method` statement", () => {
@@ -34,5 +41,23 @@ describe("ruby paren-less calls", () => {
 
   it("skips a receiver that is itself a call result", () => {
     expect(calls("    matched = u.name.downcase.include?(query)")).toEqual([]);
+  });
+});
+
+describe("ruby nested classes", () => {
+  it("gives a method to its innermost class or module only", () => {
+    const src = `module Personale
+  def self.helper
+  end
+  class PlannerController < ApplicationController
+    def index
+    end
+  end
+end`;
+    const classes = extractClassesWithSpec(src.split("\n"), rubySpec);
+    expect(classes.map((c) => [c.name, c.methods.map((m) => m.name)])).toEqual([
+      ["Personale", ["helper"]],
+      ["PlannerController", ["index"]],
+    ]);
   });
 });

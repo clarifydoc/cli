@@ -818,3 +818,21 @@ describe("linkApiCallsToRoutes — a call through a client proxy", () => {
     expect(stats.refused.originMismatch).toBe(1);
   });
 });
+
+describe("linkApiCallsToRoutes — a runtime segment where the route has a version", () => {
+  it("reads the segment as the version, INFERRED and labelled so", () => {
+    const links = linkApiCallsToRoutes(
+      [apiCall("Grunddata.HttpClients/BaseClient.cs", "GetAsync", "/api/{BaseVersion}/institution/byskolekode/{skolekode}")],
+      [route("Grunddata.Api/InstitutionController.cs", "GET", "/api/v{apiVersion}/institution/byskolekode/{skolekode}", "BySkolekode")],
+    );
+    expect(links.map((l) => [l.handler, l.confidence, l.matchedVia])).toEqual([["BySkolekode", "INFERRED", "version-assumed"]]);
+  });
+
+  it("prefers a route that takes a runtime segment there as written", () => {
+    const links = linkApiCallsToRoutes(
+      [apiCall("web/client.ts", "get", "/api/${tenant}/orders")],
+      [route("api/Orders.cs", "GET", "/api/v{apiVersion}/orders", "Versioned"), route("api/Tenant.cs", "GET", "/api/{tenant}/orders", "PerTenant")],
+    );
+    expect(links.map((l) => [l.handler, l.matchedVia])).toEqual([["PerTenant", "exact"]]);
+  });
+});

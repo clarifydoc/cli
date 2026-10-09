@@ -199,8 +199,8 @@ export function registerTransparentTypeWrappers(language: Language, wrappers: re
   if (wrappers && wrappers.length > 0) TRANSPARENT_WRAPPERS.set(language, new Set(wrappers));
 }
 
-/** Union members that only add absence — `Foo | null` still dispatches to Foo. */
-const ABSENT_TYPES: ReadonlySet<string> = new Set(["null", "undefined", "None", "NoneType", "nil", "void"]);
+/** Union members that only add absence — `Foo | null` (or PHP's `Foo|false` failure value) still dispatches to Foo. */
+const ABSENT_TYPES: ReadonlySet<string> = new Set(["null", "undefined", "None", "NoneType", "nil", "void", "false"]);
 
 /**
  * The class a value of declared type `raw` dispatches member calls to — what

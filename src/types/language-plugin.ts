@@ -702,6 +702,21 @@ export interface LanguagePluginManifest {
    */
   caseInsensitiveNames?: boolean;
   /**
+   * Function and method names are case-insensitive while variables and
+   * properties are not (PHP): `$this->writeUTF()` calls the `writeUtf` the
+   * class declares, but `$Repo` is not `$repo`. The linker folds case only
+   * when it looks a callable up, after an exact match fails.
+   */
+  caseInsensitiveCallables?: boolean;
+  /**
+   * Generic types an `await` unwraps to their first type argument — what a
+   * local initialized by `await repo.FindAsync(id)` holds when `FindAsync`
+   * declares `Task<User>` (C# `Task`/`ValueTask`, TS `Promise`, Dart
+   * `Future`). Unset where an async function declares the awaited type
+   * itself (Python, Rust, Kotlin `suspend`).
+   */
+  asyncResultTypes?: readonly string[];
+  /**
    * An import puts the imported file's top-level functions in scope without
    * naming them — PowerShell dot-sourcing / `Import-Module`, Bash `source`:
    * a bare call no definition in its own file answers is linked to the ONE
@@ -709,6 +724,14 @@ export interface LanguagePluginManifest {
    * explicitly (JS, Python, Java), where such a call names something else.
    */
   importsShareScope?: boolean;
+  /**
+   * Every file of a directory shares one top-level scope (Go: a package IS
+   * its directory; Kotlin and Swift files of one package/module): a bare call
+   * the caller's file does not define reaches the ONE other non-test file of
+   * that directory declaring the function. Two declarations (build-tagged
+   * `x_linux.go` / `x_windows.go`) decide nothing.
+   */
+  directoryScope?: boolean;
   /**
    * Fields are only reached through the instance — `this.x`, `self.x`,
    * `$this->x` — and the call extractor keeps that head (JS/TS, Python,

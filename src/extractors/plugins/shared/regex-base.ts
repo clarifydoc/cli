@@ -524,6 +524,13 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
       }
     }
   }
+  // A method belongs to its innermost class: one nested in another
+  // (`module Admin` … `class UsersController`) takes its methods out of the
+  // outer one, which would otherwise claim them a second time.
+  for (const outer of classes) {
+    const inner = classes.filter((c) => c !== outer && c.line > outer.line && c.endLine <= outer.endLine);
+    if (inner.length > 0) outer.methods = outer.methods.filter((m) => !inner.some((c) => m.line > c.line && m.line <= c.endLine));
+  }
   return classes;
 }
 
@@ -841,6 +848,8 @@ export function extractCallsFromBody(
 
   const scanLine = (raw: string, i: number, offset: number): void => {
     const line = blankStringLiterals(raw, commentPrefixes);
+    // Text a language pattern already read as a call (`CommentView::read(`).
+    const matched: Array<[number, number]> = [];
     // Language-specific call patterns first (they produce more-qualified names)
     for (const cp of extraCallPatterns) {
       if (cp.notAfter && offset === 0 && i > 0 && cp.notAfter.test(blankStringLiterals(lines[i - 1] ?? "", commentPrefixes))) continue;
@@ -849,6 +858,8 @@ export function extractCallsFromBody(
       while ((pm = re.exec(line)) !== null) {
         const built = cp.buildName(pm, raw);
         add(built.name, built.leafName, i + 1, pm.index + offset, built);
+        if (built.name) matched.push([pm.index, pm.index + pm[0].length]);
+        if (pm[0].length === 0) re.lastIndex++;
       }
     }
 
@@ -862,6 +873,10 @@ export function extractCallsFromBody(
       // same-named function capture it. (A language call pattern that types
       // the receiver records it instead.)
       if (m.index >= 2 && line[m.index - 1] === "." && /[)\]]/.test(line[m.index - 2]!)) continue;
+      // The member half of a path a language pattern recorded whole
+      // (`read` of `CommentView::read(`): a bare `read` would let any
+      // same-named function capture it.
+      if (m.index > 0 && /[.:]/.test(line[m.index - 1]!) && matched.some(([a, b]) => m!.index > a && m!.index < b)) continue;
       const name = m[1].replace(/[?!]\./, ".");
       const shortName = name.includes(".") ? name.split(".").pop()! : name;
       add(name, shortName, i + 1, m.index + offset);

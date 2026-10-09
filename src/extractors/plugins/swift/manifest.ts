@@ -11,6 +11,8 @@ import { swiftpmPackageManager, cocoapodsPackageManager } from "./package-manife
 export const swiftManifest: LanguagePluginManifest = {
   language: "swift",
   family: "swift",
+  // One module's files share their top-level scope; a directory is the closest evidence.
+  directoryScope: true,
   packageManagers: [swiftpmPackageManager, cocoapodsPackageManager],
   packageEcosystems: ["swiftpm", "cocoapods"],
   parsing: "regex",

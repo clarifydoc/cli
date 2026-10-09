@@ -133,6 +133,7 @@ export function extractFunctions(tree, sourceText, language): FunctionInfo[] {
 | [node-helpers.ts](shared/node-helpers.ts) | Tree-sitter AST utilities: `getVisibility`, `getNameFromNode`, `getCallName`, `extractJsDecorators`, `extractAnnotations`, `extractCsharpAttributes`, `extractPythonDecorators` |
 | [builtin-types.ts](shared/builtin-types.ts) | `isBuiltinType(name, language)` — per-language deny sets come from plugin metas via the registry; exports `COMMON_PRIMITIVES` as the base for plugin sets. |
 | [type-ref-helpers.ts](shared/type-ref-helpers.ts) | Shared helpers for the per-plugin `type-references.ts` walkers (`emitParsed`, `findChildByType`, `lineOf`) |
+| [tsconfig-aliases.ts](shared/tsconfig-aliases.ts) | Import aliases of the nearest config directory, rewritten into imports before call classification: tsconfig/jsconfig `paths` + `baseUrl` (`extends`, array `extends`, and a solution-style config's `references`), filled by [bundler-aliases.ts](shared/bundler-aliases.ts) — the literal `resolve.alias` of `vite.config.*` / `webpack.config.*` / `vue.config.*` (object or array form, an `aliases` object imported from a sibling file), kept only when it points into the project. Never throws: a config of an unexpected shape contributes nothing |
 
 Language-specific extractors that used to live here moved into their plugins:
 `interactive-elements.ts`, `sub-components.ts`, `events.ts` →

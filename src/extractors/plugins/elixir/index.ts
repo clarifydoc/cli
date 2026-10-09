@@ -1,12 +1,49 @@
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractClassesWithSpec } from "../shared/regex-base.js";
-import type { DataSourceInfo } from "../../../types/analysis.js";
+import type { DataSourceInfo, ImportInfo } from "../../../types/analysis.js";
 import { attachEctoSchema, attachPatternKeys, extractElixirRequestAccess, extractPhoenixRoutes } from "./phoenix.js";
 
 /** Last dotted segment of an Elixir module alias (`MyApp.Accounts.User` → `User`). */
 function lastSeg(mod: string): string {
   const parts = mod.split(".");
   return parts[parts.length - 1] || mod;
+}
+
+// ─── Imports ───────────────────────────────────────────────────────────────
+
+const DIRECTIVE_RE = /^\s*(import|alias|use|require)\s+([A-Z][\w.]*)(.*)$/;
+
+/**
+ * `import`/`alias`/`use`/`require` lines as imports of the module they name,
+ * with the name the file then calls it by: the last segment (`alias
+ * MyApp.Accounts.User` → `User`), the `as:` name, or each member of a
+ * multi-alias (`alias MyApp.Accounts.{User, Token}` — over several lines too).
+ */
+export function extractElixirImports(lines: string[]): ImportInfo[] {
+  const out: ImportInfo[] = [];
+  const push = (source: string, name: string, line: number): void => {
+    out.push({ source, specifiers: [name], isDefault: false, isNamespace: false, isType: false, line });
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const m = DIRECTIVE_RE.exec(lines[i] ?? "");
+    if (!m) continue;
+    const [, kind, mod, rest] = m;
+    if (kind === "alias" && mod!.endsWith(".") && rest!.trimStart().startsWith("{")) {
+      const uncommented = (line: string): string => line.replace(/#.*$/, "");
+      let text = uncommented(rest!);
+      let j = i;
+      while (!text.includes("}") && j + 1 < lines.length && j - i < 50) text += " " + uncommented(lines[++j] ?? "");
+      const inner = text.slice(text.indexOf("{") + 1, text.indexOf("}") >= 0 ? text.indexOf("}") : undefined);
+      for (const item of inner.split(",")) {
+        const member = item.trim();
+        if (/^[A-Z][\w.]*$/.test(member)) push(mod! + member, lastSeg(member), i + 1);
+      }
+      continue;
+    }
+    const as = kind === "alias" ? /,\s*as:\s*([A-Z]\w*)/.exec(rest!) : null;
+    push(mod!, as ? as[1]! : lastSeg(mod!), i + 1);
+  }
+  return out;
 }
 
 // ─── Ecto data access ──────────────────────────────────────────────────────
@@ -63,6 +100,9 @@ export const elixirSpec: RegexLangSpec = {
     { pattern: /^\s*defmodule\s+([A-Z][\w.]*)/ },
     { pattern: /^\s*defprotocol\s+([A-Z][\w.]*)/ },
   ],
+
+  // Multi-aliases and `as:` need more than one line or one specifier.
+  extractImports: (lines) => extractElixirImports(lines),
 
   importPatterns: [
     {

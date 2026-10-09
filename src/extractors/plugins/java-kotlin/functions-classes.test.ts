@@ -22,7 +22,7 @@ function method(cls: ClassInfo | undefined, name: string): FunctionInfo {
  * the target (Strategy 7).
  */
 describe("Java/Kotlin localTypes extraction", () => {
-  it("captures Java typed locals and enhanced-for variables, skipping untyped var/String", async () => {
+  it("captures Java typed locals and enhanced-for variables, skipping String; an untyped var keeps its initializer call", async () => {
     const src = `package x;
 class AccountApiImpl {
   void update(String id) {
@@ -39,11 +39,12 @@ class AccountApiImpl {
     expect(byName["existing"]).toBe("Account");
     expect(byName["grants"]).toBe("List");
     expect(byName["g"]).toBe("Grant");
-    expect(byName["inferred"]).toBeUndefined();
+    // No stated type: the linker types it by what `other()` is declared to return.
+    expect(locals.find((l) => l.name === "inferred")).toEqual({ name: "inferred", type: "", from: "other()" });
     expect(byName["name"]).toBeUndefined();
   });
 
-  it("captures Kotlin explicitly-typed locals, and leaves an initializer that states nothing untyped", async () => {
+  it("captures Kotlin explicitly-typed locals, and keeps the call an initializer that states nothing makes", async () => {
     const src = `package x
 class Service {
   fun m(id: Int) {
@@ -53,7 +54,7 @@ class Service {
 }`;
     const classes = await classesOf(src, "kotlin");
     const locals = classes[0]!.methods.find((m) => m.name === "m")!.localTypes ?? [];
-    expect(locals).toEqual([{ name: "doc", type: "Document" }]);
+    expect(locals).toEqual([{ name: "doc", type: "Document" }, { name: "inferred", type: "", from: "dao.other()" }]);
   });
 
   it("infers a Java `var` local from a construction, a container lookup or a cast — with the lookup's key", async () => {
@@ -79,6 +80,8 @@ class Service {
       { name: "guice", type: "Pricing" },
       { name: "keyed", type: "Sorter", qualifier: "fast" },
       { name: "typed", type: "Sorter", qualifier: "slow" },
+      { name: "unknown", type: "", from: "factory.create()" },
+      { name: "single", type: "", from: "Foo.getInstance()" },
     ]);
   });
 
@@ -116,6 +119,10 @@ class C {
       { name: "cast", type: "Exporter", qualifier: "x" },
       { name: "delegated", type: "Clock", qualifier: "utc" },
       { name: "lazyLocal", type: "Cache" },
+      // No stated type: typed later by what each call is declared to return.
+      { name: "composable", type: "", from: "Text()" },
+      { name: "list", type: "", from: "listOf()" },
+      { name: "lower", type: "", from: "repo.find()" },
     ]);
   });
 });

@@ -221,6 +221,20 @@ var y = sp.GetServices<IPlugin>();`)).toEqual([
       { name: "k2", type: "IStorage", qualifier: "StorageKeys.Disk" },
       { name: "r", type: "IUserStore" },
       { name: "n", type: "IUserStore", qualifier: "mongo" },
+      // No stated type: typed later by what each call is declared to return.
+      { name: "x", type: "", from: "Build()" },
+      { name: "y", type: "", from: "sp.GetServices<IPlugin>()" },
+    ]);
+  });
+
+  it("keeps the call a `var` local is initialized from, awaited or not", async () => {
+    expect(await localsOf(`var u = repo.Find(id);
+var a = await repo.FindAsync(id);
+var c = await (repo.FindAsync(id)).ConfigureAwait(false);
+var n = 5 + Count();`)).toEqual([
+      { name: "u", type: "", from: "repo.Find()" },
+      { name: "a", type: "", from: "repo.FindAsync()", awaited: true },
+      { name: "c", type: "", from: "repo.FindAsync()", awaited: true },
     ]);
   });
 

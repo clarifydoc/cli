@@ -92,3 +92,25 @@ def f():
 `)).toEqual([]);
   });
 });
+
+describe("python package re-exports", () => {
+  it("records what a module-level relative or wildcard import forwards", async () => {
+    const { parseSource } = await import("../../../parsers/parser-manager.js");
+    const { PythonImportExportExtractor } = await import("./imports-exports.js");
+    const src = `from .dependencies import *
+from .user import User as Account, Group
+from mealie.schema import *
+from typing import Any
+def helper():
+    from .late import x
+`;
+    const tree = await parseSource(src, "python" as any, "pkg/__init__.py");
+    const exports = new PythonImportExportExtractor().extractExports(tree, src).filter((e) => e.kind === "re-export");
+    expect(exports.map((e) => [e.name, e.source, e.sourceName])).toEqual([
+      ["*", ".dependencies", undefined],
+      ["Account", ".user", "User"],
+      ["Group", ".user", undefined],
+      ["*", "mealie.schema", undefined],
+    ]);
+  });
+});

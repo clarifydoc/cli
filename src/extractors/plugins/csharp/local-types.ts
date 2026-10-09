@@ -1,6 +1,7 @@
 import type { Node } from "web-tree-sitter";
 import type { FunctionInfo } from "../../../types/analysis.js";
 import { CSHARP_BUILTINS } from "./builtins.js";
+import { callChainText } from "../../shared/call-graph.js";
 
 /**
  * What a C# expression or declaration says about the TYPE of a value — the
@@ -344,13 +345,25 @@ function localTypesFrom(found: Node[], scopeIds: ReadonlySet<number>, intoLambda
 
   const reassigned = new Set<string>();
   const byName = new Map<string, LocalType | null>();
+  // Initializer calls by name, one per distinct call: a stated type beats
+  // them all, and the linker types the local only when their returns agree.
+  const fromCalls = new Map<string, Map<string, LocalType>>();
+  const put = (name: string, entry: LocalType): void => {
+    if (entry.from) {
+      const calls = fromCalls.get(name) ?? new Map<string, LocalType>();
+      calls.set(`${entry.awaited ? "await " : ""}${entry.from}`, entry);
+      fromCalls.set(name, calls);
+      return;
+    }
+    const prev = byName.get(name);
+    if (prev === undefined) byName.set(name, entry);
+    else if (prev && (prev.type !== entry.type || prev.qualifier !== entry.qualifier)) byName.set(name, null);
+  };
   const add = (name: string | undefined, type: string | undefined, qualifier?: string): void => {
     if (!name || !type) return;
     const entry: LocalType = { name, type };
     if (qualifier) entry.qualifier = qualifier;
-    const prev = byName.get(name);
-    if (prev === undefined) byName.set(name, entry);
-    else if (prev && (prev.type !== type || prev.qualifier !== qualifier)) byName.set(name, null);
+    put(name, entry);
   };
   // Declarations whose type depends on whether the name is reassigned.
   const constructed: Array<{ name: string; declared: string; built: string }> = [];
@@ -378,6 +391,12 @@ function localTypesFrom(found: Node[], scopeIds: ReadonlySet<number>, intoLambda
           const stated = init ? staticTypeOf(init) : null;
           if (implicit) {
             if (stated) add(name, stated.type, stated.qualifier);
+            else {
+              // `var s = await repo.FindAsync(id)` — typed by what the call
+              // is declared to return; the linker reads that.
+              const call = init ? initializerCall(init) : null;
+              if (call) put(name, { name, type: "", ...call });
+            }
           } else if (stated && init && unwrapExpression(init).type === "object_creation_expression") {
             constructed.push({ name, declared: typeNode.text, built: stated.type });
           } else {
@@ -417,7 +436,33 @@ function localTypesFrom(found: Node[], scopeIds: ReadonlySet<number>, intoLambda
 
   const out: LocalType[] = [];
   for (const entry of byName.values()) if (entry) out.push(entry);
+  for (const [name, calls] of fromCalls) if (!byName.has(name)) out.push(...calls.values());
   return out.length > 0 ? out : undefined;
+}
+
+/**
+ * An initializer that is a call (awaited or not) as `localTypes[].from`:
+ * `repo.FindAsync(id)` → `repo.FindAsync()`; `await x.GetAsync().ConfigureAwait(false)`
+ * awaits `x.GetAsync()`.
+ */
+function initializerCall(init: Node): { from: string; awaited?: true } | null {
+  let node = unwrapExpression(init);
+  let awaited = false;
+  if (node.type === "await_expression") {
+    const inner = node.namedChild(0);
+    if (!inner) return null;
+    awaited = true;
+    node = unwrapExpression(inner);
+    const callee = node.type === "invocation_expression" ? node.childForFieldName("function") : null;
+    if (callee?.type === "member_access_expression" && callee.childForFieldName("name")?.text === "ConfigureAwait") {
+      const target = callee.childForFieldName("expression");
+      if (!target) return null;
+      node = unwrapExpression(target);
+    }
+  }
+  const from = callChainText(node, "csharp");
+  if (!from) return null;
+  return awaited ? { from, awaited: true } : { from };
 }
 
 /** A function expression that is not bound to a name (passed as an argument, assigned to an event). */

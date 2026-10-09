@@ -11,6 +11,8 @@ import { goPackageManager } from "./package-manifests.js";
 export const goManifest: LanguagePluginManifest = {
   language: "go",
   family: "go",
+  // A package is its directory: a bare call reaches the function a sibling file declares.
+  directoryScope: true,
   importsNameDirectories: true,
   packageManagers: [goPackageManager],
   packageEcosystems: ["go"],

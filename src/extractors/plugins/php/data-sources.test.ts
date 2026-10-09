@@ -56,3 +56,34 @@ describe("CodeIgniter query-builder entity attribution", () => {
     expect(sources).toHaveLength(0);
   });
 });
+
+describe("PHP HTTP client calls", () => {
+  async function httpOf(body: string): Promise<Array<[string, string | null]>> {
+    const src = `<?php
+class Api {
+  function call($client, $endpoint) {
+${body}
+  }
+}`;
+    const tree = await parseSource(src, "php" as any, "Api.php");
+    return new PhpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call").map((d) => [d.name, d.target]);
+  }
+
+  it("takes the verb and the URL from `request`/`send`, not the verb as the URL", async () => {
+    expect(await httpOf(`    $r = $client->request('POST', $endpoint, $param);
+    $s = $client->request('GET', '/api/users');
+    $t = Http::send('PUT', '/api/x');`)).toEqual([
+      ["POST", "{$endpoint}"],
+      ["GET", "/api/users"],
+      ["PUT", "/api/x"],
+    ]);
+  });
+
+  it("reads a verb method's URL from its first argument only", async () => {
+    expect(await httpOf(`    $client->get('auth', ['cookies' => $jar]);
+    $client->post($url, 'body-text');`)).toEqual([
+      ["$client->get", "auth"],
+      ["$client->post", "{$url}"],
+    ]);
+  });
+});

@@ -196,13 +196,8 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
       }
 
       // Guzzle-style HTTP: $client->get/post/put/patch/delete/request
-      if (/Http|Client|Guzzle/i.test(recvText) && /^(get|post|put|patch|delete|request)$/i.test(method)) {
-        sources.push(this.ds({
-          kind: "api-call",
-          name: callText,
-          target: this.firstStringArg(node) ?? null,
-          line,
-        }));
+      if (/Http|Client|Guzzle/i.test(recvText) && /^(get|post|put|patch|delete|request|send)$/i.test(method)) {
+        sources.push(this.ds({ kind: "api-call", ...this.httpRequest(node, method, callText), line }));
         return;
       }
 
@@ -227,12 +222,7 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
       const callText = `${scope}::${name}`;
 
       if (scope === "Http" && /^(get|post|put|patch|delete|head|options|send|request)$/i.test(name)) {
-        sources.push(this.ds({
-          kind: "api-call",
-          name: callText,
-          target: this.firstStringArg(node) ?? null,
-          line,
-        }));
+        sources.push(this.ds({ kind: "api-call", ...this.httpRequest(node, name, callText), line }));
         return;
       }
 
@@ -282,6 +272,31 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
   }
 
   /** Pull the first string argument from a call's `arguments` field. */
+  /**
+   * Name and URL of an HTTP client call. `request('POST', $url)` /
+   * `send('POST', $url)` take the verb first — the row is named by that verb
+   * (what the route linker reads the method from) and the URL is the second
+   * argument; a verb method takes the URL first. A variable URL is a
+   * `{$name}` runtime part.
+   */
+  private httpRequest(node: Node, method: string, callText: string): { name: string; target: string | null } {
+    if (/^(request|send)$/i.test(method)) {
+      const verb = this.stringArgAt(node, 0)?.toUpperCase();
+      if (verb && /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/.test(verb)) return { name: verb, target: this.urlArgAt(node, 1) };
+      return { name: callText, target: null };
+    }
+    return { name: callText, target: this.urlArgAt(node, 0) };
+  }
+
+  /** A URL argument: a string literal, or a variable as its `{$name}` runtime part. */
+  private urlArgAt(node: Node, index: number): string | null {
+    const literal = this.stringArgAt(node, index);
+    if (literal !== null) return literal;
+    const arg = node.childForFieldName("arguments")?.children.filter((c) => c.type === "argument")[index];
+    const inner = arg?.namedChildren[0];
+    return inner?.type === "variable_name" ? `{${inner.text}}` : null;
+  }
+
   private firstStringArg(node: Node): string | null {
     const args = node.childForFieldName("arguments");
     if (!args) return null;

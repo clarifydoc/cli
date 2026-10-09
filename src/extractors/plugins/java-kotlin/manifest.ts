@@ -104,6 +104,8 @@ export const javaManifest: LanguagePluginManifest = {
 export const kotlinManifest: LanguagePluginManifest = {
   language: "kotlin",
   family: "jvm",
+  // A package's top-level functions need no import in its other files.
+  directoryScope: true,
   packageEcosystems: ["maven"],
   // Spring relaxed binding: `person.service.url` ← `PERSON_SERVICE_URL`.
   serviceConfig: jvmServiceConfig,

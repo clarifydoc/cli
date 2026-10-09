@@ -22,6 +22,12 @@ interface SymbolDef {
   name: string;
   line: number;
   endLine: number;
+  /**
+   * The declared return type as written — what a call chained onto this one
+   * (`a.getB().c()`) is made on. Undefined when overloads of the name declare
+   * different ones: the arguments would have to pick, and nothing here does.
+   */
+  returnType?: string | null;
 }
 
 /**
@@ -368,10 +374,12 @@ function buildSymbolIndex(
 
     // Functions
     for (const fn of analysis.functions) {
+      const prev = fileSymbols.get(fn.name);
       fileSymbols.set(fn.name, {
         name: fn.name,
         line: fn.line,
         endLine: fn.endLine,
+        returnType: overloadReturn(prev, fn.returnType),
       });
     }
 
@@ -386,10 +394,12 @@ function buildSymbolIndex(
 
       for (const method of cls.methods) {
         const qualified = `${cls.name}.${method.name}`;
+        const prev = fileSymbols.get(qualified);
         fileSymbols.set(qualified, {
           name: qualified,
           line: method.line,
           endLine: method.endLine,
+          returnType: overloadReturn(prev, method.returnType),
         });
         // Also store unqualified as fallback (if not already taken by a function)
         if (!fileSymbols.has(method.name)) {
@@ -417,6 +427,12 @@ function buildSymbolIndex(
   }
 
   return index;
+}
+
+/** A name's return type once another definition of it (an overload) is seen: kept only when both agree. */
+function overloadReturn(prev: SymbolDef | undefined, returnType: string | null): string | null | undefined {
+  if (!prev) return returnType;
+  return prev.returnType === returnType ? returnType : undefined;
 }
 
 interface ClassCatalogEntry {
@@ -738,6 +754,12 @@ function importsShareScope(language: string | undefined): boolean {
 }
 
 /** A member/method name as `language` compares it. */
+/** Are `language`'s function and method names case-insensitive (all of its identifiers, or `caseInsensitiveCallables` — PHP)? */
+function callablesFoldCase(language: string | undefined): boolean {
+  if (!language) return false;
+  const plugin = pluginFor(language as Language);
+  return plugin?.caseInsensitiveNames === true || plugin?.caseInsensitiveCallables === true;
+}
 function nameKey(language: string | undefined, name: string): string {
   return caseInsensitive(language) ? name.toLowerCase() : name;
 }
@@ -843,6 +865,10 @@ function buildDirTailIndex(
 /** Lookup tables built once per buildSymbolLinks run, shared by every call resolution. */
 interface LinkContext {
   filePathMap: Map<string, string>;
+  /** Files per directory (with trailing `/`), built on first use by `directoryScope` languages. */
+  directoryFiles?: Map<string, string[]>;
+  /** Analyses by path, built on first use (re-export following). */
+  analysisByFile?: Map<string, FileAnalysis>;
   symbolIndex: Map<string, Map<string, SymbolDef>>;
   inheritanceMap: Map<string, { parentClass: string; parentFile: string }>;
   /** `${file}\0${class}` → member → declared type (own + inherited). */
@@ -1448,7 +1474,9 @@ function resolveCallToDefinition(
   if (call.kind === "cross-file" && call.target) {
     // Resolve import source to actual file path
     targetFile = resolveTarget(call.target, sourceFile, filePathMap);
-    if (!targetFile) return throughDeclaredType();
+    // An import naming a module by its DECLARED name rather than a path
+    // (Elixir `alias MyApp.Accounts.User`): `User.get(…)` is that module's.
+    if (!targetFile) return declaredModuleMember(ctx, analysis, call.target, parts, mkLink) ?? throughDeclaredType();
   } else if (call.kind === "internal") {
     // Internal calls resolve within the same file
     targetFile = sourceFile;
@@ -1466,15 +1494,37 @@ function resolveCallToDefinition(
   // a qualified call like `_http.PostAsync` should only resolve when the prefix
   // is known (via injection tracking, inheritance, or ClassName.method patterns).
   // Same-file leaf matching for qualified calls causes false self-links.
-  let def = fileSymbols.get(call.name);
+  // Case folds only on a callable's own name — never on a receiver
+  // (`handler.render` is not `Handler.render`).
+  let def = isQualified ? fileSymbols.get(call.name) : symbolIn(ctx, targetFile, call.name);
   // Which strategy found `def`. The default path at the bottom is reached from
   // two places — this plain lookup and Strategy 3's suffix match — and they were
   // previously distinguishable only by `linkConfidence`, which is a different
   // question. Whoever sets `def` sets this.
   let defStrategy: SymbolLinkStrategy = "direct";
   if (!def && !isQualified) {
-    def = fileSymbols.get(leafName);
+    def = symbolIn(ctx, targetFile, leafName);
   }
+  // A barrel / package `__init__` that forwards the name (`export * from
+  // "./x"`, `from .x import *`): the definition is where the re-export leads.
+  if (!def && call.kind === "cross-file" && parts.length <= 2) {
+    const head = parts[0]!;
+    // `import * as utils from "./utils"; utils.format()` — the member by its own name.
+    const viaNamespace = isQualified && analysis.imports.some((i) => i.isNamespace && i.specifiers.includes(head));
+    const fwd = forwardedDefinition(ctx, targetFile, isQualified && !viaNamespace ? head : leafName, 0, new Set());
+    const member = fwd && isQualified && !viaNamespace ? symbolIn(ctx, fwd.file, `${head}.${leafName}`) : undefined;
+    if (fwd && (!isQualified || viaNamespace || member)) {
+      // A forwarded CLASS called by name is constructed (Strategy 5's link).
+      const cls = member ? undefined : ctx.classAt.get(memberKey(fwd.file, fwd.def.name));
+      if (cls) {
+        const ctor = cls.methods.find((m) => CTOR_NAMES.has(m.name) || m.name === cls.name);
+        return mkLink(fwd.file, ctor ? `${cls.name}.${ctor.name}` : cls.name, ctor?.line ?? cls.line, "INFERRED", "constructor");
+      }
+      targetFile = fwd.file;
+      def = member ?? fwd.def;
+    }
+  }
+
   // `self.foo` / `Self.foo` / `this.foo` — a direct call on the current
   // instance: strip the receiver and look up the leaf in the current file.
   // Restricted to a TWO-segment receiver (`this.foo`, exactly head + leaf): a
@@ -1486,8 +1536,20 @@ function resolveCallToDefinition(
   if (!def && isQualified && call.kind === "internal" && targetFile === sourceFile && parts.length === 2) {
     const head = parts[0]!;
     if (head === "self" || head === "Self" || head === "this") {
-      def = fileSymbols.get(leafName);
+      def = symbolIn(ctx, targetFile, leafName);
     }
+  }
+
+  // ── Strategy 1a: a bare `super` / `super(…)` ──
+  // Re-dispatches the ENCLOSING method to the base class (Ruby/Crystal
+  // `super`); inside a constructor it is the base class's constructor
+  // (Java/JS/TS `super(…)`). Never anything else.
+  // A `super(…)` that is only the receiver of a member call on the same line
+  // (Python `super().save()`) is resolved through that member call instead.
+  if (!def && call.kind === "internal" && call.name === "super") {
+    const asReceiver = findEnclosingCallable(analysis, sourceSymbol)?.calls
+      .some((c) => c.line === call.line && /^super\s*(?:\([^]*\))?\s*\./.test(c.name));
+    return asReceiver ? null : superTarget(ctx, analysis, sourceFile, sourceSymbol, mkLink);
   }
 
   // ── Strategy 1: Inheritance resolution ──
@@ -1506,8 +1568,8 @@ function resolveCallToDefinition(
         visited.add(parentInfo.parentClass);
         const parentSymbols = symbolIndex.get(parentInfo.parentFile);
         if (parentSymbols) {
-          const parentDef = parentSymbols.get(leafName)
-            ?? parentSymbols.get(`${parentInfo.parentClass}.${leafName}`);
+          const parentDef = symbolIn(ctx, parentInfo.parentFile, leafName)
+            ?? symbolIn(ctx, parentInfo.parentFile, `${parentInfo.parentClass}.${leafName}`);
           if (parentDef) {
             return mkLink(parentInfo.parentFile, parentDef.name, parentDef.line, "INFERRED", "inheritance");
           }
@@ -1516,6 +1578,13 @@ function resolveCallToDefinition(
         parentInfo = inheritanceMap.get(parentInfo.parentClass);
       }
     }
+    // A method the class takes from a module/trait it mixes in (Ruby
+    // `include Helper`, PHP `use Trait`, a default interface method). Where
+    // members need `this.`/`self.`, a bare name is never one of them.
+    const mixed = isQualified || !pluginFor(analysis.language)?.explicitSelfMembers
+      ? mixinMember(ctx, analysis, sourceFile, sourceSymbol, leafName)
+      : null;
+    if (mixed) return mkLink(mixed.file, mixed.symbol, mixed.line, "INFERRED", "inheritance");
   }
 
   // ── Strategy 2: through the receiver's declared type ──
@@ -1566,6 +1635,16 @@ function resolveCallToDefinition(
     }
   }
 
+  // ── Strategy 3c: a call on a module written out by its declared name ──
+  // `MyApp.Accounts.User.get(…)`: the longest dotted prefix some file declares
+  // as a module/class is the receiver.
+  if (!def && isQualified && parts.length >= 3) {
+    for (let k = parts.length - 1; k >= 2; k--) {
+      const link = declaredModuleMember(ctx, analysis, parts.slice(0, k).join("."), [parts.slice(0, k).join("."), ...parts.slice(k)], mkLink);
+      if (link) return link;
+    }
+  }
+
   // ── Strategy 4: ClassName.method resolution for static/class methods ──
   // For calls like "UserService.find_by_id" — searches all files for the class.
   // Without an explicit import this is at best INFERRED.
@@ -1590,6 +1669,22 @@ function resolveCallToDefinition(
       if (matches && new Set(matches.map((m) => m.name)).size === 1) {
         candidateFiles = matches.map((m) => m.file);
         declaredClass = matches[0]!.name;
+      }
+    }
+    // `P19LogHelper::P19Logger.log` where the class is declared NESTED —
+    // `module P19LogHelper` … `class P19Logger` — under its simple name.
+    if (!candidateFiles && className.includes("::")) {
+      const segments = className.split("::");
+      const inner = segments[segments.length - 1]!;
+      const outer = segments[segments.length - 2]!;
+      const nested = (classNameIndex.get(inner) ?? []).filter((f) => {
+        const o = ctx.classAt.get(memberKey(f, outer));
+        const i = ctx.classAt.get(memberKey(f, inner));
+        return !!o && !!i && o.line < i.line && i.endLine <= o.endLine;
+      });
+      if (nested.length > 0) {
+        candidateFiles = nested;
+        declaredClass = inner;
       }
     }
     if (candidateFiles) {
@@ -1708,6 +1803,15 @@ function resolveCallToDefinition(
       const [[file, d]] = [...hits];
       return mkLink(file!, d!.name, d!.line, "INFERRED", "import-file");
     }
+  }
+
+  // ── Strategy 6c: a bare call into the caller's package directory ──
+  // Go's package is its directory: `normalizeEmbedding(e)` in embeddings.go is
+  // the function embedding.go declares, no import involved. The compiler
+  // forbids a second declaration, so one non-test hit is the definition.
+  if (!def && !isQualified && call.kind === "internal" && pluginFor(analysis.language)?.directoryScope) {
+    const hit = directoryFunction(ctx, analysis, sourceFile, call.name);
+    if (hit) return mkLink(hit.file, hit.def.name, hit.def.line, "EXTRACTED", "direct");
   }
 
   // ── Strategy 7: Unique global definition (heuristic) ──
@@ -1893,7 +1997,173 @@ function findEnclosingCallable(
   return null;
 }
 
-/** Longest receiver chain followed through member types (`this.a.b.c.m()`). */
+/** Longest chain of re-exports followed to a definition. */
+const MAX_REEXPORT_DEPTH = 5;
+
+/**
+ * The top-level definition of `name` that `file` forwards through its
+ * re-exports (`export { x } from "./x"`, `export * from "./x"`, Python
+ * `from .x import *`), followed through further barrels. Two re-exports
+ * leading to different definitions decide nothing.
+ */
+function forwardedDefinition(
+  ctx: LinkContext,
+  file: string,
+  name: string,
+  depth: number,
+  seen: Set<string>,
+): { file: string; def: SymbolDef } | null {
+  if (depth > MAX_REEXPORT_DEPTH || seen.has(file)) return null;
+  seen.add(file);
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const exports = ctx.analysisByFile.get(file)?.exports ?? [];
+  let found: { file: string; def: SymbolDef } | null = null;
+  for (const e of exports) {
+    if (e.kind !== "re-export" || !e.source || (e.name !== name && e.name !== "*")) continue;
+    const inner = e.name === "*" ? name : e.sourceName ?? name;
+    const target = resolveTarget(e.source, file, ctx.filePathMap);
+    if (!target || target === file) continue;
+    const d = symbolIn(ctx, target, inner);
+    const hit = d && d.name === inner ? { file: target, def: d } : forwardedDefinition(ctx, target, inner, depth + 1, seen);
+    if (!hit) continue;
+    if (found && (found.file !== hit.file || found.def.name !== hit.def.name)) return null;
+    found = hit;
+  }
+  return found;
+}
+
+/**
+ * `Head.member` where `Head` stands for the module/class DECLARED as `module`
+ * (exactly that name — `MyApp.Accounts.User`) by one file of the caller's
+ * type space, its own sub-project first.
+ */
+function declaredModuleMember(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  module: string,
+  parts: string[],
+  mkLink: MkLink,
+): SymbolLink | null {
+  if (parts.length !== 2 || !module.includes(".")) return null;
+  const files = (ctx.classFiles.get(module) ?? []).filter((f) =>
+    sameTypeSpace(analysis.filePath, analysis.language, f, ctx.languageOf.get(f) ?? ""),
+  );
+  const own = files.filter((f) => ctx.projectOf.get(f) === analysis.projectId);
+  const pool = own.length > 0 ? own : files;
+  if (pool.length !== 1) return null;
+  const hit = findMethodInClass(ctx, module, pool[0]!, receiverSegment(parts[1]!));
+  return hit ? mkLink(hit.file, hit.symbol, hit.line, "EXTRACTED", "import-file") : null;
+}
+
+/**
+ * Where a bare `super` in `sourceSymbol` (`Class.method`) goes: the base
+ * class's (own or inherited) method of the same name — or, from a
+ * constructor, the base class's constructor.
+ */
+function superTarget(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  sourceSymbol: string,
+  mkLink: MkLink,
+): SymbolLink | null {
+  const dot = sourceSymbol.indexOf(".");
+  if (dot <= 0) return null;
+  const consumer = sourceSymbol.slice(0, dot);
+  const methodName = sourceSymbol.slice(dot + 1);
+  const cls = ctx.classAt.get(memberKey(sourceFile, consumer));
+  const base = bareClassName(cls?.extends);
+  if (!cls || !base) return null;
+  const baseFile = locateClass(ctx, base, sourceFile, analysis.projectId);
+  if (!baseFile) return null;
+  const method = cls.methods.find((m) => m.name === methodName);
+  const names = method && isConstructor(method, cls) ? [...CTOR_NAMES, "init", "initialize", base] : [methodName];
+  for (const name of names) {
+    const hit = findMethodInClass(ctx, base, baseFile, name);
+    if (hit) return mkLink(hit.file, hit.symbol, hit.line, "INFERRED", "inheritance");
+  }
+  return null;
+}
+
+/**
+ * The one module/trait/interface the enclosing class (or a base class)
+ * declares as a supertype that defines `method` — what a bare call reaches
+ * when neither the class nor its base chain defines it. Two that do: none.
+ */
+function mixinMember(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  sourceSymbol: string,
+  method: string,
+): { file: string; symbol: string; line: number } | null {
+  const dot = sourceSymbol.indexOf(".");
+  if (dot <= 0 || sourceSymbol.startsWith("route:")) return null;
+  let name = sourceSymbol.slice(0, dot);
+  let file: string | null = sourceFile;
+  const found = new Map<string, { file: string; symbol: string; line: number }>();
+  const seen = new Set<string>();
+  for (let depth = 0; file && depth < MAX_BASE_DEPTH; depth++) {
+    const key = memberKey(file, name);
+    if (seen.has(key)) break;
+    seen.add(key);
+    const cls = ctx.classAt.get(key);
+    if (!cls) break;
+    const supertypes = depth === 0 ? declaredSupertypes(cls, analysis) : cls.implements;
+    for (const raw of supertypes) {
+      const mixin = bareClassName(raw);
+      if (!mixin || mixin === bareClassName(cls.extends)) continue;
+      const mixinFile = locateClass(ctx, mixin, file, ctx.projectOf.get(file) ?? "root");
+      const hit = mixinFile ? findMethodInClass(ctx, mixin, mixinFile, method) : null;
+      if (hit) found.set(`${hit.file}\0${hit.symbol}`, hit);
+    }
+    const base = bareClassName(cls.extends);
+    if (!base) break;
+    file = locateClass(ctx, base, file, ctx.projectOf.get(file) ?? "root");
+    name = base;
+  }
+  return found.size === 1 ? [...found.values()][0]! : null;
+}
+
+/**
+ * The top-level function `name` declared by exactly one other file of
+ * `sourceFile`'s directory in its language family — never a test file for
+ * production code.
+ */
+function directoryFunction(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  name: string,
+): { file: string; def: SymbolDef } | null {
+  const dir = sourceFile.slice(0, sourceFile.lastIndexOf("/") + 1);
+  ctx.directoryFiles ??= filesByDirectory(ctx.analyses);
+  const sourceIsTest = isTestFile(sourceFile, analysis.language);
+  const family = extensionFamily(sourceFile);
+  let found: { file: string; def: SymbolDef } | null = null;
+  for (const file of ctx.directoryFiles.get(dir) ?? []) {
+    if (file === sourceFile || extensionFamily(file) !== family) continue;
+    if (!sourceIsTest && isTestFile(file, (ctx.languageOf.get(file) ?? analysis.language) as Language)) continue;
+    const def = symbolIn(ctx, file, name);
+    if (!def || def.name.includes(".")) continue;
+    if (found) return null;
+    found = { file, def };
+  }
+  return found;
+}
+
+function filesByDirectory(analyses: FileAnalysis[]): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const a of analyses) {
+    const dir = a.filePath.slice(0, a.filePath.lastIndexOf("/") + 1);
+    const list = out.get(dir);
+    if (list) list.push(a.filePath);
+    else out.set(dir, [a.filePath]);
+  }
+  return out;
+}
+
+/** Longest receiver chain followed through member and return types (`this.a.b.c.m()`, `a.getB().getC().m()`). */
 const MAX_RECEIVER_CHAIN = 3;
 
 /**
@@ -1938,24 +2208,252 @@ function resolveThroughDeclaredType(
     return linkThroughPoint(ctx, analysis, sourceFile, point, leafName, mkLink);
   }
 
-  const receiver = parts.slice(0, -1).map(receiverSegment);
-  if (receiver.length === 0 || receiver.length > MAX_RECEIVER_CHAIN + 1) return null;
-
-  let point: InjectionPoint | null;
-  let rest: string[];
-  if (receiver.length >= 2 && SELF_HEADS.has(receiver[0]!)) {
-    point = ownMember(ctx, sourceFile, consumer, receiver[1]!);
-    rest = receiver.slice(2);
-  } else {
-    point = scopedName(ctx, analysis, sourceFile, sourceSymbol, consumer, receiver[0]!);
-    rest = receiver.slice(1);
-  }
-  for (const seg of rest) {
-    if (!point?.typeFile) return null;
-    point = ctx.memberTypes.get(memberKey(point.typeFile, point.typeName))?.get(nameKey(ctx.languageOf.get(point.typeFile), seg)) ?? null;
-  }
+  const receiver = receiverChain(call.name);
+  if (!receiver || receiver.length === 0 || receiver.length > MAX_RECEIVER_CHAIN + 1) return null;
+  const point = chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, receiver, 0, false);
   if (!point) return null;
   return linkThroughPoint(ctx, analysis, sourceFile, point, leafName, mkLink);
+}
+
+/**
+ * Where a receiver chain ends: its head as the enclosing callable scopes it
+ * (or a constructed instance, an own method's result, a project class), then
+ * each further segment as a member of the previous one's class — a field
+ * through its declared type, a call through its declared return type.
+ * `depth` counts the initializer calls already followed to type a local;
+ * `awaited`: the chain's value is awaited, so its last call yields what its
+ * task/promise resolves to.
+ */
+function chainPoint(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  sourceSymbol: string,
+  consumer: string,
+  receiver: ChainSegment[],
+  depth: number,
+  awaited: boolean,
+): InjectionPoint | null {
+  const head = receiver[0]!;
+  let point: InjectionPoint | null;
+  let rest: ChainSegment[];
+  if (head.ctor) {
+    // `new Report(…).render()` — an instance of the class named.
+    point = instancePoint(ctx, head.name, sourceFile, analysis.projectId, consumer);
+    rest = receiver.slice(1);
+  } else if (receiver.length >= 2 && !head.call && SELF_HEADS.has(head.name)) {
+    const own = receiver[1]!;
+    point = own.call ? ownMethodResult(ctx, sourceFile, consumer, own.name) : ownMember(ctx, sourceFile, consumer, own.name);
+    rest = receiver.slice(2);
+  } else if (head.call) {
+    // `root().getPriority()` — what the enclosing class's own method returns;
+    // `Report(…).render()` where no such method exists and `Report` is a
+    // class — the instance its constructor makes (as Strategy 5 reads a bare
+    // class call).
+    point = ownMethodResult(ctx, sourceFile, consumer, head.name, awaited && receiver.length === 1)
+      ?? instancePoint(ctx, head.name, sourceFile, analysis.projectId, consumer, true);
+    rest = receiver.slice(1);
+  } else {
+    point = scopedName(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, depth);
+    rest = receiver.slice(1);
+    // `Factory::getInstance()->run()` — a call on a project class itself.
+    if (!point && rest[0]?.call && /^[A-Z]/.test(head.name)) {
+      const typeFile = typeFileFor(ctx, head.name, sourceFile, analysis.projectId);
+      if (typeFile) point = { typeName: head.name, typeFile, member: "", consumer, container: false };
+    }
+  }
+  for (let i = 0; i < rest.length; i++) {
+    const seg = rest[i]!;
+    if (!point?.typeFile) return null;
+    point = seg.call
+      ? methodResult(ctx, point, seg.name, awaited && i === rest.length - 1)
+      : ctx.memberTypes.get(memberKey(point.typeFile, point.typeName))?.get(nameKey(ctx.languageOf.get(point.typeFile), seg.name)) ?? null;
+  }
+  return point;
+}
+
+/** Longest run of initializer calls followed to type one local (`a = f(); b = a.g(); b.h()`). */
+const MAX_INITIALIZER_DEPTH = 3;
+
+/** A local initialized by a call (`localTypes[].from`), typed by what that call is declared to return. */
+function initializerPoint(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  sourceSymbol: string,
+  consumer: string,
+  local: { from?: string; awaited?: boolean },
+  depth: number,
+): InjectionPoint | null {
+  if (!local.from || depth >= MAX_INITIALIZER_DEPTH) return null;
+  // The initializer is the receiver of an imagined member call on its result.
+  const chain = receiverChain(`${local.from}.x`);
+  if (!chain || chain.length === 0 || chain.length > MAX_RECEIVER_CHAIN + 1 || !chain[chain.length - 1]!.call) return null;
+  return chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, chain, depth + 1, local.awaited === true);
+}
+
+/** One receiver segment of a call chain: `repo`, `getSheet()` (`call`), `new Report(…)` (`ctor`). */
+interface ChainSegment {
+  name: string;
+  call: boolean;
+  ctor?: boolean;
+}
+
+/**
+ * The receiver segments of a call name, leaf dropped: `a.getB(x.y).c` →
+ * `a`, `getB()`. Splits on `.` and `::` outside brackets, so arguments that
+ * contain dots stay inside their call. Null when the receiver indexes
+ * (`rows[i].m()` — an element, not a declared member) or the brackets do not
+ * balance.
+ */
+function receiverChain(callName: string): ChainSegment[] | null {
+  const out: ChainSegment[] = [];
+  let i = 0;
+  const ctor = /^\s*new\s+([\w$\\.]+)\s*(?=\()/.exec(callName);
+  if (ctor) {
+    const close = closingParen(callName, ctor[0].length);
+    if (close < 0 || callName[close + 1] !== ".") return null;
+    out.push({ name: ctor[1]!, call: true, ctor: true });
+    i = close + 2;
+  }
+  let start = i;
+  let depth = 0;
+  const raw: string[] = [];
+  for (; i < callName.length; i++) {
+    const ch = callName[i]!;
+    if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") {
+      if (--depth < 0) return null;
+    } else if (depth === 0 && ch === ".") {
+      raw.push(callName.slice(start, i));
+      start = i + 1;
+    } else if (depth === 0 && ch === ":" && callName[i + 1] === ":") {
+      raw.push(callName.slice(start, i));
+      start = i + 2;
+      i++;
+    }
+  }
+  if (depth !== 0) return null;
+  // `raw` now holds everything before the leaf.
+  for (const text of raw) {
+    const seg = receiverSegment(text);
+    const paren = seg.indexOf("(");
+    if (paren < 0) {
+      if (seg.includes("[") || seg.includes("<") || !seg) return null;
+      out.push({ name: seg, call: false });
+      continue;
+    }
+    // `getB(…)`, `getB(…)?`, `getB(…)!!` — a call; anything after its
+    // argument list (`get(0)[1]`) indexes the result.
+    const name = seg.slice(0, paren);
+    const close = closingParen(seg, paren);
+    if (!name || /[[<]/.test(name) || close !== seg.length - 1) return null;
+    out.push({ name, call: true });
+  }
+  return out;
+}
+
+/** Index of the `)` closing the `(` at `open`, or -1. */
+function closingParen(s: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < s.length; i++) {
+    if (s[i] === "(") depth++;
+    else if (s[i] === ")" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/** Return-type spellings that mean "the receiver's own class" (fluent setters, `static` factories). */
+const SELF_TYPES: ReadonlySet<string> = new Set(["self", "static", "$this", "this", "Self"]);
+
+/**
+ * What a call of `method` on a receiver of the point's type returns, as the
+ * next receiver: its DECLARED return type (own or inherited method), resolved
+ * from the file that declares it. A method returning its own class
+ * (`@return $this`, `-> Self`) keeps the receiver's type, so a fluent chain
+ * on a subclass stays on the subclass.
+ */
+function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, awaited = false): InjectionPoint | null {
+  if (!point.typeFile) return null;
+  const hit = findMethodInClass(ctx, point.typeName, point.typeFile, method);
+  if (!hit) return null;
+  return returnedPoint(ctx, symbolIn(ctx, hit.file, hit.symbol)?.returnType, hit.file, point, awaited);
+}
+
+/**
+ * The point a declared return type names, judged from `declFile`; `self`
+ * keeps `receiver`'s type. Awaited, the type is first unwrapped from the
+ * language's task/promise type (`Task<User>` → `User`); a type that is not
+ * one is taken as written (Python/Rust declare the awaited type themselves).
+ */
+function returnedPoint(
+  ctx: LinkContext,
+  returnType: string | null | undefined,
+  declFile: string,
+  receiver: Pick<InjectionPoint, "typeName" | "typeFile" | "consumer">,
+  awaited = false,
+): InjectionPoint | null {
+  if (!returnType) return null;
+  let written = returnType.trim();
+  if (awaited) written = awaitedType(written, pluginFor((ctx.languageOf.get(declFile) ?? "") as Language)?.asyncResultTypes);
+  if (SELF_TYPES.has(written)) {
+    return receiver.typeFile ? { typeName: receiver.typeName, typeFile: receiver.typeFile, member: "", consumer: receiver.consumer, container: false } : null;
+  }
+  const typeName = receiverTypeName(written, (ctx.languageOf.get(declFile) ?? "") as Language);
+  if (!typeName) return null;
+  const typeFile = typeFileFor(ctx, typeName, declFile, ctx.projectOf.get(declFile) ?? "root");
+  return typeFile ? { typeName, typeFile, member: "", consumer: receiver.consumer, container: false } : null;
+}
+
+/**
+ * What the caller's own method `name()` returns: a method of the enclosing
+ * class (own or inherited), else a top-level function of the same file.
+ */
+function ownMethodResult(ctx: LinkContext, sourceFile: string, consumer: string, name: string, awaited = false): InjectionPoint | null {
+  if (consumer && ctx.classAt.has(memberKey(sourceFile, consumer))) {
+    return methodResult(ctx, { typeName: consumer, typeFile: sourceFile, member: "", consumer }, name, awaited);
+  }
+  const def = symbolIn(ctx, sourceFile, name);
+  if (!def || def.name !== name) return null;
+  return returnedPoint(ctx, def.returnType, sourceFile, { typeName: consumer, typeFile: null, consumer }, awaited);
+}
+
+/** `Task<User>` → `User` when `Task` is one of the language's async result types; otherwise as written. */
+function awaitedType(written: string, asyncTypes: readonly string[] | undefined): string {
+  if (!asyncTypes?.length) return written;
+  const open = written.indexOf("<");
+  if (open <= 0 || !written.endsWith(">")) return written;
+  const name = written.slice(0, open).trim().split(".").pop() ?? "";
+  if (!asyncTypes.includes(name)) return written;
+  const body = written.slice(open + 1, -1);
+  let depth = 0;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (ch === "<" || ch === "(" || ch === "[") depth++;
+    else if (ch === ">" || ch === ")" || ch === "]") depth--;
+    else if (ch === "," && depth === 0) return body.slice(0, i).trim();
+  }
+  return body.trim();
+}
+
+/**
+ * An instance of the project class `written` (`new X(…)`, or — `bareCall` —
+ * `X(…)` in languages that construct without `new`). A bare call names a
+ * class only when one is declared with exactly that name.
+ */
+function instancePoint(
+  ctx: LinkContext,
+  written: string,
+  sourceFile: string,
+  projectId: string,
+  consumer: string,
+  bareCall = false,
+): InjectionPoint | null {
+  const typeName = bareCall ? written : receiverTypeName(written, (ctx.languageOf.get(sourceFile) ?? "") as Language);
+  if (!typeName || (bareCall && !/^[A-Z]/.test(typeName))) return null;
+  const typeFile = typeFileFor(ctx, typeName, sourceFile, projectId);
+  if (!typeFile || (bareCall && !ctx.classAt.has(memberKey(typeFile, typeName)))) return null;
+  return { typeName, typeFile, member: "", consumer, container: false };
 }
 
 /** A field of the enclosing class — or, outside any class, of whichever class in the file declares it. */
@@ -1974,10 +2472,29 @@ function scopedName(
   sourceSymbol: string,
   consumer: string,
   name: string,
+  depth = 0,
 ): InjectionPoint | null {
   const callable = findEnclosingCallable(analysis, sourceSymbol);
   const key = nameKey(analysis.language, name);
-  const local = callable?.localTypes?.find((l) => nameKey(analysis.language, l.name) === key);
+  let local = callable?.localTypes?.find((l) => nameKey(analysis.language, l.name) === key);
+  if (local?.from && !local.type && !local.qualifier) {
+    // Every call the local is initialized from (one per branch) must agree.
+    const inits = callable!.localTypes!.filter((l) => nameKey(analysis.language, l.name) === key && l.from);
+    let typed: InjectionPoint | null = null;
+    for (const init of inits) {
+      const p = initializerPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, init, depth);
+      if (!p || (typed && (typed.typeFile !== p.typeFile || typed.typeName !== p.typeName))) {
+        typed = null;
+        break;
+      }
+      typed = p;
+    }
+    if (typed) return typed;
+    // A local that reassigns a parameter (`$repo = $this->fallback()`) keeps
+    // the parameter's declared type when the call states none.
+    local = undefined;
+    if (!callable?.params.some((p) => nameKey(analysis.language, p.name) === key)) return null;
+  }
   const param = local ? undefined : callable?.params.find((p) => nameKey(analysis.language, p.name) === key);
   const declared = local ?? param;
   if (declared) {
@@ -2207,10 +2724,10 @@ function findMethodInClass(
   return null;
 }
 
-/** A symbol of `file` by name — case-insensitively where the file's language is. */
+/** A symbol of `file` by name — case-insensitively where the file's language names callables so. */
 function symbolIn(ctx: LinkContext, file: string, name: string): SymbolDef | undefined {
   const exact = ctx.symbolIndex.get(file)?.get(name);
-  if (exact || !caseInsensitive(ctx.languageOf.get(file))) return exact;
+  if (exact || !callablesFoldCase(ctx.languageOf.get(file))) return exact;
   let folded = ctx.foldedSymbols.get(file);
   if (!folded) {
     folded = new Map();
