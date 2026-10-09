@@ -521,3 +521,22 @@ describe("clarifydoc MCP tools — attribute-layer queries (csharp fixture)", ()
     expect(many.text).toContain("narrow with method, project, file or version");
   });
 });
+
+describe("clarifydoc MCP tools — delphi fixture (entry forms)", () => {
+  const { server, store } = serverFor("sample-delphi");
+  let loaded: LoadedAnalysis;
+  beforeAll(async () => {
+    loaded = await store.load();
+  });
+
+  it("screens entry=true lists only the startup forms, the main form first", async () => {
+    const startup = (loaded.summary.screens ?? []).filter((s) => s.startup);
+    expect(startup.length, "fixture's .dpr should create forms at startup").toBeGreaterThan(0);
+    const main = startup.find((s) => s.startup === "main")!;
+    const { text } = await call(server, "clarifydoc_screens", { entry: true });
+    const listed = (loaded.summary.screens ?? []).filter((s) => text.includes(`(${s.filePath})`));
+    expect(listed.map((s) => s.filePath).sort()).toEqual(startup.map((s) => s.filePath).sort());
+    expect(text.indexOf(`(${main.filePath})`)).toBeLessThan(Math.min(...listed.filter((s) => s !== main).map((s) => text.indexOf(`(${s.filePath})`)), Infinity));
+    expect(text).toContain("startup: main");
+  });
+});

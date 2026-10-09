@@ -271,6 +271,12 @@ export function screensTool(ctx: ToolContext): McpTool {
       properties: {
         query: { type: "string", description: "Substring of screen name, caption, route or file." },
         file: { type: "string", description: "Only the screen(s) defined in this file." },
+        entry: {
+          type: "boolean",
+          description:
+            "Only the screens an application starts on: a desktop program's main form (`Application.CreateForm`, " +
+            "first) and the forms it creates at startup. Main forms are listed first.",
+        },
         detail: {
           type: "boolean",
           description: "Include each screen's component list and navigation detail (default false).",
@@ -284,6 +290,7 @@ export function screensTool(ctx: ToolContext): McpTool {
       const { summary, index } = loaded;
       const query = stringArg(args, "query");
       const fileFilter = stringArg(args, "file");
+      const entry = booleanArg(args, "entry");
       const detail = booleanArg(args, "detail");
       const limit = numberArg(args, "limit", 30, { max: 300 });
 
@@ -298,6 +305,11 @@ export function screensTool(ctx: ToolContext): McpTool {
         );
       }
       if (fileFilter) screens = screens.filter((s) => contains(s.filePath, fileFilter));
+      if (entry) {
+        screens = screens
+          .filter((s) => s.startup)
+          .sort((a, b) => Number(b.startup === "main") - Number(a.startup === "main"));
+      }
       if (screens.length === 0) {
         const all = summary.screens ?? [];
         return {
@@ -305,6 +317,7 @@ export function screensTool(ctx: ToolContext): McpTool {
             headline: missHeadline("screens", [
               ["query", query],
               ["file", fileFilter],
+              ["entry", entry ? "true" : undefined],
             ]),
             holds: `The analysis holds ${plural(all.length, "screen")}.`,
             next: [
@@ -327,6 +340,7 @@ export function screensTool(ctx: ToolContext): McpTool {
         extra.push(
           `    ${facts([
             ["type", screen.formType],
+            ["startup", screen.startup],
             ["components", screen.components.length],
             ["navigates to", screen.navigatesTo.length ? screen.navigatesTo.slice(0, 6).join(", ") : undefined],
           ])}`,
