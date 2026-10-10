@@ -1,5 +1,5 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
-import type { ClassInfo, EntityRelation, Language, PropertyInfo } from "../../../types/analysis.js";
+import type { ClassInfo, DataSourceInfo, EntityRelation, FileAnalysis, FunctionInfo, Language, PropertyInfo } from "../../../types/analysis.js";
 
 /**
  * Extracts ORM entities + relations from Python source for the major
@@ -33,6 +33,20 @@ import type { ClassInfo, EntityRelation, Language, PropertyInfo } from "../../..
  */
 export class PythonEntityExtractor extends EntityExtractor {
   readonly languages: Language[] = ["python"];
+
+  /**
+   * Project-level pass: the repository pattern over a generic base. A service
+   * reaches the database as `self.repos.recipes.create(…)`: `repos` is a
+   * property typed `AllRepositories` (declared on a base class in another
+   * file), `recipes` a `@cached_property` returning `RepositoryRecipes`, and
+   * `RepositoryRecipes(HouseholdRepositoryGeneric[Recipe, RecipeModel])` names
+   * its table only through the type argument that is an entity. The per-file
+   * pass sees none of that; this walks the typed member chain across files and
+   * puts the entity on the call (mealie: 42 of 277 routes reached the database).
+   */
+  override reconcileProject(analyses: FileAnalysis[]): void {
+    attributeRepositoryAccesses(analyses);
+  }
 
   extract(ctx: EntityExtractContext): EntityExtractResult {
     const entities: ClassInfo[] = [];
@@ -756,5 +770,128 @@ export class PythonEntityExtractor extends EntityExtractor {
     else if (/sses$/.test(t)) t = t.replace(/es$/, "");
     else if (/s$/.test(t) && !/ss$/.test(t)) t = t.replace(/s$/, "");
     return t.charAt(0).toUpperCase() + t.slice(1);
+  }
+}
+
+// ─── Generic repository access (project-level) ──────────────────────────────
+
+/** `Optional[AllRepositories]`, `AllRepositories | None`, `mealie.repos.AllRepositories` → `AllRepositories`. */
+function bareTypeName(type: string | null | undefined): string | null {
+  if (!type) return null;
+  let t = type.trim().replace(/^Optional\[(.*)\]$/, "$1").replace(/\s*\|\s*None\b/g, "").replace(/^None\s*\|\s*/, "").trim();
+  t = t.replace(/\[.*$/, "").replace(/^["']|["']$/g, "");
+  const bare = t.split(".").pop() ?? "";
+  return /^[A-Za-z_]\w*$/.test(bare) ? bare : null;
+}
+
+const PY_REPOSITORY_GENERIC_RE = /\b\w*(?:Repository|Repo|Store|Dao)\w*\s*\[([^\]]+)\]/;
+const PY_REPOSITORY_VERB_RE =
+  /^(get|find|fetch|create|update|delete|patch|save|add|remove|insert|upsert|list|page|count|exists|query|all|first|by_|search)\w*$/;
+const PY_REPOSITORY_WRITE_RE = /^(create|update|delete|patch|save|add|remove|insert|upsert)/;
+
+function attributeRepositoryAccesses(analyses: FileAnalysis[]): void {
+  const py = analyses.filter((a) => a.language === "python");
+  const classes = new Map<string, ClassInfo>();
+  const entities = new Set<string>();
+  for (const a of py) {
+    for (const cls of a.classes ?? []) {
+      if (!classes.has(cls.name)) classes.set(cls.name, cls);
+      if (cls.decorators.includes("entity")) entities.add(cls.name);
+    }
+  }
+  if (classes.size === 0) return;
+  const basesOf = (cls: ClassInfo): string[] => [cls.extends ?? "", ...(cls.implements ?? [])].filter(Boolean);
+
+  /** Declared type of `member` on `className`, through bases; a memoizing property falls back to its `_member` backing field. */
+  const typeOfMember = (className: string, member: string, depth = 0): string | null => {
+    const cls = classes.get(className);
+    if (!cls || depth > 6) return null;
+    const prop = cls.properties.find((p) => p.name === member)?.type;
+    if (bareTypeName(prop)) return bareTypeName(prop);
+    const method = cls.methods.find((m) => m.name === member);
+    if (method) {
+      const ret = bareTypeName(method.returnType);
+      if (ret) return ret;
+      const backing = bareTypeName(cls.properties.find((p) => p.name === `_${member}`)?.type);
+      if (backing) return backing;
+    }
+    const ctor = cls.methods.find((m) => m.name === "__init__");
+    const param = bareTypeName(ctor?.params.find((p) => p.name === member)?.type);
+    if (param) return param;
+    for (const base of basesOf(cls)) {
+      const found = typeOfMember(bareTypeName(base) ?? "", member, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  };
+
+  const repoEntityCache = new Map<string, string | null>();
+  /** The entity a repository type works on: the entity-typed argument of its generic base, through bases. */
+  const repoEntity = (typeName: string | null, depth = 0): string | null => {
+    if (!typeName || depth > 6) return null;
+    if (repoEntityCache.has(typeName)) return repoEntityCache.get(typeName)!;
+    repoEntityCache.set(typeName, null);
+    const cls = classes.get(typeName);
+    let found: string | null = null;
+    for (const base of cls ? basesOf(cls) : []) {
+      const generic = PY_REPOSITORY_GENERIC_RE.exec(base);
+      if (generic) {
+        const args = generic[1]!.split(",").map((x) => bareTypeName(x)).filter((x): x is string => !!x);
+        found = args.find((x) => entities.has(x)) ?? null;
+      }
+      found ??= repoEntity(bareTypeName(base), depth + 1);
+      if (found) break;
+    }
+    repoEntityCache.set(typeName, found);
+    return found;
+  };
+
+  const resolveChain = (segments: string[], startType: string | null): string | null => {
+    let type = startType;
+    for (const seg of segments) {
+      if (!type) return null;
+      type = typeOfMember(type, seg);
+    }
+    return type;
+  };
+
+  for (const a of py) {
+    let changed = false;
+    const rows = [...(a.dataSources ?? [])];
+    const index = new Map(rows.map((d, i) => [`${d.line}\0${d.name}`, i]));
+    const visit = (fn: FunctionInfo, owner: ClassInfo | null) => {
+      for (const call of fn.calls ?? []) {
+        const parts = call.name.split(".");
+        if (parts.length < 2 || parts.some((p) => /[^\w]/.test(p))) continue;
+        const leaf = parts[parts.length - 1]!;
+        if (!PY_REPOSITORY_VERB_RE.test(leaf)) continue;
+        let type: string | null;
+        if (parts[0] === "self" && owner) type = resolveChain(parts.slice(1, -1), owner.name);
+        else {
+          const head = parts[0]!;
+          const start = bareTypeName(fn.params.find((p) => p.name === head)?.type ?? fn.localTypes?.find((l) => l.name === head)?.type);
+          type = start ? resolveChain(parts.slice(1, -1), start) : null;
+        }
+        const entity = repoEntity(type);
+        if (!entity) continue;
+        const key = `${call.line}\0${call.name}`;
+        const row: DataSourceInfo = {
+          kind: "database",
+          name: call.name,
+          target: entity,
+          entity,
+          access: PY_REPOSITORY_WRITE_RE.test(leaf) ? "write" : "read",
+          calls: [],
+          line: call.line,
+        };
+        const at = index.get(key);
+        if (at !== undefined) rows[at] = { ...rows[at]!, ...row };
+        else { index.set(key, rows.length); rows.push(row); }
+        changed = true;
+      }
+    };
+    for (const fn of a.functions ?? []) visit(fn, null);
+    for (const cls of a.classes ?? []) for (const m of cls.methods ?? []) visit(m, cls);
+    if (changed) a.dataSources = rows.sort((x, y) => x.line - y.line);
   }
 }
