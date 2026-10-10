@@ -133,12 +133,16 @@ export class GoEntityExtractor extends EntityExtractor {
         );
         const hasGormTag = fields.some((f) => f.tags.gorm !== undefined);
         const isGorm = embedsGormModel || hasGormTag;
-        // xorm (gitea, and anything on `xorm.io`): `xorm:"pk autoincr"` tags,
-        // registered through the same `RegisterModel(new(X))` call shape.
+        // xorm (gitea, and anything on `xorm.io`) registers its models through
+        // the same `RegisterModel(new(X))` call shape as Beego; the tag only
+        // says which ORM. A tag alone is NOT a marker: xorm migrations redeclare
+        // partial copies of a table's struct (`type Repository struct {…}` in
+        // every `v*.go`), and marking those made the real `Repository` one of
+        // twelve — the typed-receiver resolution then refused every call on it.
         const hasXormTag = fields.some((f) => f.tags.xorm !== undefined);
 
         // No genuine ORM marker → not an entity (reduces false positives).
-        if (!isGorm && !isBeego && !hasXormTag) continue;
+        if (!isGorm && !isBeego) continue;
 
         const orm = isGorm ? "gorm" : hasXormTag ? "xorm" : "beego-orm";
         const props: PropertyInfo[] = [];
