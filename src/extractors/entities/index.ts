@@ -28,6 +28,7 @@ const LANGUAGE_MARKERS: Partial<Record<Language, RegExp>> = {
   csharp:
     /\bDbSet\s*<|\[\s*(?:Table|Column|Key|ForeignKey|Class)\b|\bmodelBuilder\b|\.HasOne\s*\(|\.HasMany\s*\(|\.WithMany\s*\(/,
   go: /\bgorm\b|gorm:"|\bent\.Schema\b|\bRegisterModel\s*\(|orm:"/,
+  dart: /\bextends\s+Table\b|@[cC]ollection\b|@[eE]ntity\b|@HiveType\b|\bIsarLinks?</,
   rust: /\btable!\s*\{|\bdiesel\b|\bQueryable\b|\bInsertable\b|\bDeriveEntityModel\b|\bsea_orm\b/,
   php:
     /\bextends\s+(?:Model|Authenticatable|Pivot)\b|@ORM\\|#\[\s*ORM\\|->\s*(?:hasMany|belongsTo|hasOne|belongsToMany|morph\w*|hasManyThrough|hasOneThrough)\s*\(|\b(?:hasMany|belongsTo|hasOne|belongsToMany)\s*\(|->\s*join\s*\(\s*['"]/,

@@ -6,6 +6,7 @@ import { pubPackages } from "./packages.js";
 import { dartManifest } from "./manifest.js";
 import { dartRequestSchema } from "./request-schema.js";
 import { dartReachability } from "./reachability.js";
+import { DartEntityExtractor } from "./entities.js";
 
 const DART_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -26,6 +27,7 @@ export const dartMeta: LanguagePluginMeta = {
   regexControlFlow: extendRegexControlFlow([], { quotes: ['"', "'"] }),
   ...dartManifest,
   regexSpec: dartSpec,
+  entities: new DartEntityExtractor(),
   knownPackages: pubPackages,
   builtinTypes: DART_BUILTINS,
   apiCallRoots: ["http", "dio", "Dio", "Client", "client"],

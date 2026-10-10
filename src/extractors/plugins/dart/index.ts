@@ -167,6 +167,18 @@ const SQFLITE_RE = new RegExp(
 /** Methods whose first string arg names a table (vs raw SQL we can't attribute). */
 const SQFLITE_TABLE_METHODS = new Set(["query", "insert", "update", "delete"]);
 
+/** Drift: `select(_db.userEntity)`, `update(db.remoteAlbumEntity)`, `into(_db.x)`, `delete(_db.x)` — the table getter names the table class. */
+const DRIFT_STATEMENT_RE = /(?<!\w)(?:\w+\.)?(select|selectOnly|update|delete|into)\(\s*(?:\w+\.)+(\w+)\s*\)/g;
+/** Drift: `_db.remoteAssetEntity.delete()`, `db.managers.localAssetEntity.filter(…)`. */
+const DRIFT_TABLE_CALL_RE =
+  /(?<![\w.])(?:\w*[dD](?:b|atabase)|attachedDatabase|this)(?:\.managers)?\.(\w+)\.(delete|deleteWhere|deleteAll|insert|insertAll|insertOne|insertOnConflictUpdate|insertReturning|update|replace|select|selectOnly|get|getSingle|getSingleOrNull|watch|watchSingle|create|bulkCreate|bulkUpdate|bulkDelete|filter|count)\b/g;
+/** Isar: `isar.assets.put(a)` / `_isar.users.where()` — the collection getter is the class, plural. */
+const ISAR_CALL_RE = /(?<![\w.])_?isar\.(\w+)\.(put|putAll|putSync|get|getAll|getSync|delete|deleteAll|deleteSync|where|filter|clear|count|watch\w*)\b/g;
+const DRIFT_WRITE = /^(delete|deleteWhere|deleteAll|insert\w*|into|update|replace|create|bulk\w+)$/;
+
+const pascal = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+const singular = (s: string): string => (/ies$/.test(s) ? s.replace(/ies$/, "y") : /(ss|x|z|ch|sh)es$/.test(s) ? s.replace(/es$/, "") : /[^s]s$/.test(s) ? s.slice(0, -1) : s);
+
 /** Pull a URL-ish first argument out of an HTTP call (`'…'`, `"…"`, or `Uri.parse('…')`). */
 function firstUrlArg(line: string, fromIndex: number): string | null {
   const slice = line.slice(fromIndex);
@@ -214,6 +226,22 @@ function extractDartDataSources(lines: string[]): DataSourceInfo[] {
     // Supabase — `supabase.from('table')`.
     for (const m of line.matchAll(SUPABASE_RE)) {
       push({ kind: "database", name: `from(${m[1]})`, target: m[1]!, calls: [], line: ln, entity: m[1]! });
+    }
+
+    // Drift — statement builders and table getters; Isar — collection getters.
+    for (const m of line.matchAll(DRIFT_STATEMENT_RE)) {
+      const entity = pascal(m[2]!);
+      push({ kind: "database", name: `${m[1]}(${m[2]})`, target: entity, calls: [], line: ln, entity, access: m[1] === "select" || m[1] === "selectOnly" ? "read" : "write" });
+    }
+    for (const m of line.matchAll(DRIFT_TABLE_CALL_RE)) {
+      if (/^(?:managers|transaction|batch|customStatement|customSelect|customUpdate|executor|select|update|delete|into)$/.test(m[1]!)) continue;
+      const entity = pascal(m[1]!);
+      push({ kind: "database", name: `db.${m[1]}.${m[2]}`, target: entity, calls: [], line: ln, entity, access: DRIFT_WRITE.test(m[2]!) ? "write" : "read" });
+    }
+    for (const m of line.matchAll(ISAR_CALL_RE)) {
+      if (/^(?:txn|writeTxn|writeTxnSync|collection|close|clear)$/.test(m[1]!)) continue;
+      const entity = pascal(singular(m[1]!));
+      push({ kind: "database", name: `isar.${m[1]}.${m[2]}`, target: entity, calls: [], line: ln, entity, access: /^(put|delete|clear)/.test(m[2]!) ? "write" : "read" });
     }
 
     // sqflite — `db.query('users', …)`.
