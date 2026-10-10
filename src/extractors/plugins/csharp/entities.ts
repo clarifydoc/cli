@@ -1,5 +1,5 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
-import type { ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
+import type { ClassInfo, DataSourceInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
 
 /**
  * Entity-Framework-Core (and lightly, NHibernate) entity extractor for C#.
@@ -147,7 +147,21 @@ export class CSharpEntityExtractor extends EntityExtractor {
         }
       }
     }
-    if (efEntityNames.size === 0) return;
+    // Marr / NzbDrone-style table mapping (the *arr family): the mapper call
+    // names the model class and its table — `Mapper.Entity<Movie>("Movies")`.
+    const marrEntityNames = new Set<string>();
+    for (const a of analyses) {
+      if (a.language !== "csharp") continue;
+      for (const call of allCalls(a)) {
+        for (const m of call.name.matchAll(/\bEntity<\s*([\w.]+)\s*>\s*\(\s*"\w+"/g)) {
+          const t = bareType(m[1]);
+          if (t) marrEntityNames.add(t);
+        }
+      }
+    }
+
+    attributeRepositoryAccesses(analyses);
+    if (efEntityNames.size === 0 && marrEntityNames.size === 0) return;
 
     // (2) Tag the matching domain POCO classes so they become ER nodes.
     for (const a of analyses) {
@@ -156,10 +170,11 @@ export class CSharpEntityExtractor extends EntityExtractor {
       // tagging it would add a phantom ER node and mis-route relations.
       if (NON_ENTITY_PATH_RE.test(a.filePath)) continue;
       for (const cls of a.classes ?? []) {
-        if (!efEntityNames.has(cls.name)) continue;
+        const orm = efEntityNames.has(cls.name) ? "ef-core" : marrEntityNames.has(cls.name) ? "marr" : null;
+        if (!orm) continue;
         const decs = cls.decorators ?? (cls.decorators = []);
         if (decs.includes("entity")) continue;
-        decs.push("entity", "ef-core");
+        decs.push("entity", orm);
       }
     }
 
@@ -1198,4 +1213,107 @@ function sameRelation(a: EntityRelation, b: EntityRelation): boolean {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
+}
+
+// ─── Generic repository access (project-level) ──────────────────────────────
+
+function* allCalls(a: FileAnalysis) {
+  for (const f of a.functions ?? []) yield* f.calls ?? [];
+  for (const c of a.classes ?? []) for (const m of c.methods ?? []) yield* m.calls ?? [];
+}
+
+/** `IBasicRepository<Movie>`, `IRepository<Order, int>`, `MovieStore<Movie>` → the first type argument. */
+const REPOSITORY_GENERIC_RE = /^(?:[\w.]*\.)?I?\w*(?:Repository|Repo|Store|Dao)\w*\s*<\s*([\w.]+)/;
+const REPOSITORY_VERB_RE =
+  /^(Get|Find|All|Single|First|Query|Where|Count|Exists|Paged|Insert|Add|Update|Set|Upsert|Save|Delete|Remove|Purge|Clear)\w*$/;
+const REPOSITORY_WRITE_RE = /^(Insert|Add|Update|Set|Upsert|Save|Delete|Remove|Purge|Clear)/;
+
+/**
+ * The repository pattern over a generic base — `IMovieRepository : IBasicRepository<Movie>`,
+ * `MovieRepository : BasicRepository<Movie>` — puts the data access in a base
+ * class whose type parameter is unknown there, so a service's
+ * `_movieRepository.Get(id)` reached no entity (Radarr: 0 of 239 routes reached
+ * the database). The entity is the type ARGUMENT, read where the member is
+ * declared: a class member or constructor parameter whose declared type is, or
+ * derives (across files) from, a `*Repository*<T>` / `*Store<T>` / `*Dao<T>`
+ * whose `T` is a class the project declares. Every `member.Verb(…)` call with a
+ * CRUD-shaped verb in that class then carries `T` as a `database` row.
+ */
+function attributeRepositoryAccesses(analyses: FileAnalysis[]): void {
+  const cs = analyses.filter((a) => a.language === "csharp");
+  const supertypes = new Map<string, string[]>();
+  const classNames = new Set<string>();
+  for (const a of cs) {
+    for (const cls of a.classes ?? []) {
+      classNames.add(cls.name);
+      const written = [cls.extends ?? "", ...(cls.implements ?? [])].filter(Boolean);
+      supertypes.set(cls.name, [...(supertypes.get(cls.name) ?? []), ...written]);
+    }
+  }
+  if (classNames.size === 0) return;
+  const cache = new Map<string, string | null>();
+  const entityOfType = (type: string | null | undefined, depth = 0): string | null => {
+    if (!type || depth > 6) return null;
+    const written = type.trim();
+    const direct = REPOSITORY_GENERIC_RE.exec(written);
+    if (direct) {
+      const arg = bareType(direct[1]);
+      return arg && classNames.has(arg) ? arg : null;
+    }
+    const bare = bareType(written.replace(/<.*$/, ""));
+    if (!bare) return null;
+    if (cache.has(bare)) return cache.get(bare)!;
+    cache.set(bare, null); // cycle guard
+    let found: string | null = null;
+    for (const sup of supertypes.get(bare) ?? []) {
+      found = entityOfType(sup, depth + 1);
+      if (found) break;
+    }
+    cache.set(bare, found);
+    return found;
+  };
+
+  for (const a of cs) {
+    const added: DataSourceInfo[] = [];
+    const seen = new Set((a.dataSources ?? []).map((d) => `${d.line}\0${d.name}`));
+    for (const cls of a.classes ?? []) {
+      const members = new Map<string, string>();
+      for (const p of cls.properties ?? []) {
+        const e = entityOfType(p.type);
+        if (e) members.set(p.name.replace(/^_/, ""), e);
+      }
+      for (const m of cls.methods ?? []) {
+        if (m.name !== cls.name && m.name !== "constructor") continue;
+        for (const p of m.params ?? []) {
+          const e = entityOfType(p.type);
+          if (e) members.set(p.name.replace(/^_/, ""), e);
+        }
+      }
+      if (members.size === 0) continue;
+      for (const m of cls.methods ?? []) {
+        for (const call of m.calls ?? []) {
+          const dot = call.name.indexOf(".");
+          if (dot <= 0) continue;
+          const head = call.name.slice(0, dot).replace(/^(?:this\.)?_?/, "");
+          const leaf = call.name.slice(dot + 1);
+          if (leaf.includes(".") || leaf.includes("(") || !REPOSITORY_VERB_RE.test(leaf)) continue;
+          const entity = members.get(head);
+          if (!entity) continue;
+          const key = `${call.line}\0${call.name}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          added.push({
+            kind: "database",
+            name: call.name,
+            target: entity,
+            entity,
+            access: REPOSITORY_WRITE_RE.test(leaf) ? "write" : "read",
+            calls: [],
+            line: call.line,
+          });
+        }
+      }
+    }
+    if (added.length > 0) a.dataSources = [...(a.dataSources ?? []), ...added].sort((x, y) => x.line - y.line);
+  }
 }

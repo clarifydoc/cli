@@ -360,3 +360,35 @@ describe("EF Core cross-file entity reconciliation", () => {
     expect(barRels).toHaveLength(1);
   });
 });
+
+describe("generic repository access + Marr table mapping (project-level)", () => {
+  it("attributes `_movieRepository.Get(id)` to the type argument of the repository's generic base", () => {
+    const repo = analysis("Movies/MovieRepository.cs", [
+      cls("IMovieRepository", { extends: "IBasicRepository<Movie>" }),
+      cls("MovieRepository", { extends: "BasicRepository<Movie>", implements: ["IMovieRepository"] }),
+    ]);
+    const movie = analysis("Movies/Movie.cs", [cls("Movie", { extends: "ModelBase" })]);
+    const mapping = analysis("Datastore/TableMapping.cs", [{
+      ...cls("TableMapping"),
+      methods: [{ name: "Map", line: 5, endLine: 9, params: [], calls: [{ name: 'Mapper.Entity<Movie>("Movies").RegisterModel', kind: "internal", target: null, line: 6 }] } as any],
+    }]);
+    const service = analysis("Movies/MovieService.cs", [{
+      ...cls("MovieService", { properties: [{ name: "_movieRepository", type: "IMovieRepository" }] }),
+      methods: [
+        { name: "MovieService", line: 10, endLine: 12, params: [{ name: "movieRepository", type: "IMovieRepository" }], calls: [] } as any,
+        { name: "GetMovie", line: 20, endLine: 24, params: [], calls: [
+          { name: "_movieRepository.Get", kind: "internal", target: null, line: 21 },
+          { name: "_movieRepository.Insert", kind: "internal", target: null, line: 22 },
+          { name: "_logger.Info", kind: "internal", target: null, line: 23 },
+        ] } as any,
+      ],
+    }]);
+    for (const a of [repo, movie, mapping, service]) { (a as any).language = "csharp"; (a as any).functions = []; (a as any).dataSources = []; }
+    new CSharpEntityExtractor().reconcileProject([repo, movie, mapping, service]);
+    expect(service.dataSources.map((d) => [d.name, d.entity, d.access])).toEqual([
+      ["_movieRepository.Get", "Movie", "read"],
+      ["_movieRepository.Insert", "Movie", "write"],
+    ]);
+    expect(movie.classes[0]!.decorators).toEqual(["entity", "marr"]);
+  });
+});
