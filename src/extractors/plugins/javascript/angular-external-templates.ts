@@ -46,23 +46,27 @@ export async function resolveAngularExternalTemplates(
       continue; // template moved/renamed — leave the component un-enriched
     }
 
+    // The sibling .html is an Angular component template PARTIAL, not a
+    // standalone page — the HTML plugin gave it a `kind:"frontend"` route by
+    // its file path, and read its buttons with HTML's syntax (`(click)="save()"`
+    // as no handler, `{{label}}` as one). Both describe the component, which is
+    // enriched below; drop them from the partial whatever the template holds,
+    // so an Angular app's templates don't each surface as a bogus screen or
+    // double every element (Kavita: 692 html rows beside 1,011 component rows).
+    const htmlAnalysis = byAbs.get(htmlPath);
+    if (htmlAnalysis && htmlAnalysis !== a) {
+      const kept = (htmlAnalysis.routes ?? []).filter((r) => r.kind !== "frontend");
+      if (kept.length !== (htmlAnalysis.routes?.length ?? 0)) htmlAnalysis.routes = kept;
+      if (htmlAnalysis.interactiveElements?.length) htmlAnalysis.interactiveElements = [];
+      if (htmlAnalysis.templateTree?.length) htmlAnalysis.templateTree = [];
+    }
+
     const interactive = extractAngularInteractiveElementsFromTemplate(text);
     const tree = extractAngularComponentTreeFromTemplate(text);
     if (interactive.length === 0 && tree.length === 0) continue;
     if (interactive.length > 0) a.interactiveElements = interactive;
     if (tree.length > 0) a.templateTree = tree;
     enriched++;
-
-    // The sibling .html is an Angular component template PARTIAL, not a
-    // standalone page — the HTML plugin gave it a `kind:"frontend"` route by
-    // its file path. Drop that phantom page route so an Angular app's component
-    // templates don't each surface as a bogus screen (the real screen is the
-    // component this partial belongs to).
-    const htmlAnalysis = byAbs.get(htmlPath);
-    if (htmlAnalysis && htmlAnalysis !== a) {
-      const kept = (htmlAnalysis.routes ?? []).filter((r) => r.kind !== "frontend");
-      if (kept.length !== (htmlAnalysis.routes?.length ?? 0)) htmlAnalysis.routes = kept;
-    }
   }
   return enriched;
 }
