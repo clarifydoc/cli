@@ -116,6 +116,11 @@ export interface RegexLangSpec {
   keywordEnd?: KeywordEndConfig;
   lineCommentPrefixes: string[]; // e.g. ["//", "#", "--"]
   /**
+   * Branch keywords and logical operators for the regex-path complexity count
+   * (core/complexity-regex.ts). Omitted: the shared C-family + script table.
+   */
+  complexity?: { branches: RegExp; logicalOps?: RegExp };
+  /**
    * The file's own statements run (a script): calls on lines outside every
    * function and class become the `<setup>` pseudo-function, as module-level
    * calls do on the tree-sitter path. `true` for every file of the language,

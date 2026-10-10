@@ -31,7 +31,7 @@ export const csharpReachability = conventionReachability({
     // Run by dotnet-script, never compiled into the assembly: a script keeps
     // what it mentions alive, but a repo of tooling scripts is not a program.
     [/\.csx$/i, "C# script"],
-    [/(?:^|\/)Migrations\//, "EF migration"],
+    [/(?:^|\/)Migrations?\//, "migration (EF Core, FluentMigrator)"],
     [/(?:^|\/)Properties\/AssemblyInfo\.cs$/, "assembly metadata"],
   ],
   entryDecorators:

@@ -1,4 +1,5 @@
 import { readFile } from "fs/promises";
+import { computeRegexComplexity } from "./complexity-regex.js";
 import type { DiscoveredFile } from "./file-discovery.js";
 import { writeFileAnalysis, type OutputOptions } from "./output-writer.js";
 import { parseSource } from "../parsers/parser-manager.js";
@@ -10,7 +11,7 @@ import { extractEntities, mergeEntities } from "../extractors/entities/index.js"
 import { classifyCalls, extractTopLevelCalls } from "../extractors/shared/call-graph.js";
 import { dirname } from "path";
 import { applyAliases, loadTsconfigAliasesForDir } from "../extractors/shared/tsconfig-aliases.js";
-import { pluginFor, astHooksFor, inferFileFrameworks, ensureLanguagesLoaded } from "../extractors/registry.js";
+import { pluginFor, astHooksFor, inferFileFrameworks, ensureLanguagesLoaded, regexSpecFor } from "../extractors/registry.js";
 import { computeComplexity } from "./complexity-analyzer.js";
 import { scanSecurity, isMinifiedSource, isVendoredSource } from "./security-scanner.js";
 import { extractTypeReferences } from "./type-reference-extractor.js";
@@ -144,6 +145,11 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       if (fileSecurityIssues.length > 0) analysis.securityIssues = fileSecurityIssues;
       const regexTypeRefs = extractTypeReferences(analysis, file.language);
       if (regexTypeRefs.length > 0) analysis.typeReferences = regexTypeRefs;
+      const regexSpec = regexSpecFor(analysis.language);
+      const regexComplexities = regexSpec
+        ? computeRegexComplexity(regexSource.split("\n"), analysis, regexSpec, pluginFor(analysis.language)?.caseInsensitiveNames === true)
+        : [];
+      if (regexComplexities.length > 0) analysis.complexities = regexComplexities;
       await writeFileAnalysis(analysis, outputOpts);
       // Keep raw source for regex-path UI files that back a screen (HTML pages,
       // Blazor .razor) so buildScreen can recover the page caption + navigation.
@@ -151,7 +157,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
         analysis.routes.some((r) => r.kind === "frontend") ||
         analysis.subComponents.length > 0 ||
         analysis.interactiveElements.length > 0;
-      return { analysis, rawSource: isUiSource ? rawSource : null, complexities: [], securityIssues: fileSecurityIssues };
+      return { analysis, rawSource: isUiSource ? rawSource : null, complexities: regexComplexities, securityIssues: fileSecurityIssues };
     }
 
     // Container-format preprocessing (e.g. Vue SFC → its <script> block)
