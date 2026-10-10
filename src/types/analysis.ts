@@ -2177,6 +2177,13 @@ export interface SubProject {
   name: string;
   root: string;
   kind: SubProjectKind;
+  /**
+   * The name the sub-project's own manifest declares (`lemmy_db_views_site`
+   * in its Cargo.toml, `@scope/ui` in package.json, a go.mod `module` path):
+   * what a sibling sub-project writes to import it. Absent when no manifest
+   * at the root declares one.
+   */
+  packageName?: string;
   markers: string[];
   /**
    * Frameworks/ORMs detected from this sub-project's own manifests (its nested

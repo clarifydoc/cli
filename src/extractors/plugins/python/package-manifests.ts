@@ -94,7 +94,12 @@ function parsePipfile(text: string, declaredIn: string): DeclaredPackage[] {
 export const pypiPackageManager: PackageManagerSpec = {
   ecosystem: "pypi",
   manifests: [
-    { files: ["pyproject.toml"], parse: (text, file) => parsePyproject(text, file.declaredIn) },
+    {
+      files: ["pyproject.toml"],
+      parse: (text, file) => parsePyproject(text, file.declaredIn),
+      // `[project] name` (PEP 621) or Poetry's `[tool.poetry] name`.
+      selfName: (text) => /^\[(?:project|tool\.poetry)\]\s*$[\s\S]*?^name\s*=\s*["']([^"']+)["']/m.exec(text.replace(/#.*$/gm, ""))?.[1] ?? null,
+    },
     { files: ["Pipfile"], parse: (text, file) => parsePipfile(text, file.declaredIn) },
     {
       files: ["requirements*.txt", "**/requirements*.txt"],

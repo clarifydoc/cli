@@ -487,3 +487,41 @@ describe("symbol-linker — factory-via fallback", () => {
     // `login` is a builtin member for Python (smtplib) — irrelevant to a .tsx caller, as the first test shows.
   });
 });
+
+describe("symbol-linker — imports that name a sibling sub-project by package", () => {
+  const rust = (filePath: string, projectId: string, opts: { functions?: any[]; classes?: any[]; imports?: any[] }): FileAnalysis =>
+    ({ ...file(filePath, projectId, opts), language: "rust", imports: opts.imports ?? [] } as unknown as FileAnalysis);
+  const subProjects = [
+    { id: "crates-api", name: "api", root: "crates/api", kind: "rust", markers: [], packageName: "lemmy_api" },
+    { id: "crates-db_views-site", name: "site", root: "crates/db_views/site", kind: "rust", markers: [], packageName: "lemmy-db-views-site" },
+  ] as any[];
+
+  it("resolves `Type::method` into the crate a `use` names by its Cargo package name", () => {
+    const handler = rust("crates/api/src/site/read.rs", "crates-api", {
+      functions: [fn("read_site", [call("SiteView.read_local")])],
+      imports: [{ source: "lemmy_db_views_site::SiteView", specifiers: ["SiteView"], isDefault: false, isNamespace: false, isType: false, line: 1 }],
+    });
+    const struct = rust("crates/db_views/site/src/lib.rs", "crates-db_views-site", { classes: [cls("SiteView")] });
+    const impls = rust("crates/db_views/site/src/impls.rs", "crates-db_views-site", {
+      classes: [{ ...cls("SiteView"), methods: [{ name: "read_local", line: 10, endLine: 20, params: [], calls: [] }] }],
+    });
+    const links = buildSymbolLinks([handler, struct, impls], subProjects);
+    expect(links.filter((l) => l.callName === "SiteView.read_local").map((l) => `${l.targetFile}::${l.targetSymbol}`)).toEqual([
+      "crates/db_views/site/src/impls.rs::SiteView.read_local",
+    ]);
+  });
+
+  it("stays unlinked when the import names no sub-project", () => {
+    const handler = rust("crates/api/src/site/read.rs", "crates-api", {
+      functions: [fn("read_site", [call("SiteView.read_local")])],
+      imports: [{ source: "some_crate::SiteView", specifiers: ["SiteView"], isDefault: false, isNamespace: false, isType: false, line: 1 }],
+    });
+    const impls = rust("crates/db_views/site/src/impls.rs", "crates-db_views-site", {
+      classes: [{ ...cls("SiteView"), methods: [{ name: "read_local", line: 10, endLine: 20, params: [], calls: [] }] }],
+    });
+    const other = rust("crates/other/src/lib.rs", "crates-other", {
+      classes: [{ ...cls("SiteView"), methods: [{ name: "read_local", line: 10, endLine: 20, params: [], calls: [] }] }],
+    });
+    expect(buildSymbolLinks([handler, impls, other], subProjects).filter((l) => l.callName === "SiteView.read_local")).toEqual([]);
+  });
+});

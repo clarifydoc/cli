@@ -47,7 +47,12 @@ function parseCargo(text: string, declaredIn: string): DeclaredPackage[] {
 
 export const cargoPackageManager: PackageManagerSpec = {
   ecosystem: "cargo",
-  manifests: [{ files: ["Cargo.toml"], parse: (text, file) => parseCargo(text, file.declaredIn) }],
+  manifests: [{
+    files: ["Cargo.toml"],
+    parse: (text, file) => parseCargo(text, file.declaredIn),
+    // `[package] name = "x"` — not a workspace-only manifest's `[workspace.package]`.
+    selfName: (text) => /^\[package\]\s*$[\s\S]*?^name\s*=\s*"([^"]+)"/m.exec(text.replace(/#.*$/gm, ""))?.[1] ?? null,
+  }],
   // `serde_json::Value` → `serde-json`: a crate is imported with `_` for its `-`.
   importKey(s) {
     const head = s.split("::")[0]!.toLowerCase();
