@@ -2,7 +2,7 @@ import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../
 import { extractParamsFromDeclaration, findEndLine, inlineBodyColumn, type ParamParser } from "../shared/regex-base.js";
 import { extractGoLocalTypes, type GoConstructors } from "./locals.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
-import { bracketDelta, goResultTextAt, goResultTypes, splitGoTopLevel, stripGoComment } from "./syntax.js";
+import { bracketDelta, goResultTextAt, goResultTypes, splitGoStatements, splitGoTopLevel, stripGoComment } from "./syntax.js";
 
 /**
  * Go types as the linker needs them. Go declares methods OUTSIDE the type, in
@@ -143,7 +143,7 @@ function bodySegments(lines: string[], declIdx: number, open: number, endLine: n
   const decl = stripGoComment(lines[declIdx]!);
   const out: Segment[] = [];
   const push = (text: string, line: number, end: number) => {
-    for (const part of text.split(";")) {
+    for (const part of splitGoStatements(text)) {
       const t = part.trim();
       if (t) out.push({ text: t, line, endLine: end });
     }

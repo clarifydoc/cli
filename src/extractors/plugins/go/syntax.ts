@@ -47,6 +47,31 @@ export function matchingClose(text: string, open: number): number {
 }
 
 /** Split on commas at bracket depth 0 (strings skipped). */
+/** Split struct/interface member text on `;` outside strings, backtick tags and brackets — a GORM tag is full of them. */
+export function splitGoStatements(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (quote) {
+      if (c === "\\" && quote !== "`") { i++; continue; }
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "`" || c === "'") quote = c;
+    else if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === ";" && depth === 0) {
+      out.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(text.slice(start));
+  return out;
+}
+
 export function splitGoTopLevel(text: string): string[] {
   const out: string[] = [];
   let depth = 0;

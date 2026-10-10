@@ -453,7 +453,10 @@ export function linkEntityModels(entityGraph: EntityGraph, classGraph: ClassGrap
  * a real node instead of spawning a duplicate "inferred" one.
  */
 export function tableMatchKeys(name: string): string[] {
-  const base = name.split("::").pop()!.toLowerCase();
+  // The last segment of a namespaced name — Ruby `Ns::Model`, an Elixir module
+  // `Plausible.Site`, a schema-qualified table `shop.orders` — is how code
+  // names it (`Repo.get(Site, id)`, `FROM orders`).
+  const base = name.split(/::|\./).pop()!.toLowerCase();
   const keys = [base];
   if (base.endsWith("s") && base.length > 1) keys.push(base.slice(0, -1));
   const affixStripped: string[] = [];

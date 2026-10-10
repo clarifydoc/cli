@@ -247,3 +247,35 @@ describe("extractElixirRequestAccess", () => {
     ]);
   });
 });
+
+describe("Ecto schemas as entities with associations", () => {
+  it("marks a schema module as an ecto entity with its table and resolves association targets to modules", async () => {
+    const { elixirSpec } = await import("./index.js");
+    const src = `defmodule Plausible.Site do
+  use Ecto.Schema
+  alias Plausible.Goal
+  alias Plausible.Teams.{Team, GuestMembership}
+
+  schema "sites" do
+    field :domain, :string
+    belongs_to :team, Team
+    has_many :guest_memberships, GuestMembership
+    has_many :goals, Goal, preload_order: [desc: :id]
+    many_to_many :tags, Tag, join_through: "sites_tags"
+    timestamps()
+  end
+end`;
+    const lines = src.split("\n");
+    const classes = elixirSpec.postProcessClasses!(lines, elixirSpec.extractClasses!(lines, []));
+    expect(classes[0]!.decorators).toEqual(expect.arrayContaining(["entity", "ecto", "table:sites"]));
+    const rels = elixirSpec.extractEntityRelations!(lines, classes);
+    expect(rels.map((r) => `${r.fromField} -> ${r.toEntity} (${r.cardinality})`)).toEqual([
+      "team -> Plausible.Teams.Team (many-to-one)",
+      "guest_memberships -> Plausible.Teams.GuestMembership (one-to-many)",
+      "goals -> Plausible.Goal (one-to-many)",
+      "tags -> Plausible.Tag (many-to-many)",
+    ]);
+    expect(rels[0]!.foreignKey).toBe("team_id");
+    expect(rels[3]!.joinTable).toBe("sites_tags");
+  });
+});
