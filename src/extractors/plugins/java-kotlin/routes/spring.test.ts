@@ -300,3 +300,33 @@ public class C { @GetMapping("/a") public int a() { return 1; } }`;
     expect(r!.middleware).toEqual([]);
   });
 });
+
+describe("Spring WebFlux functional endpoints", () => {
+  it("reads route().GET/POST with method-reference handlers and nest prefixes", async () => {
+    const src = `package x;
+class PolicyEndpoint {
+  public RouterFunction<ServerResponse> endpoint() {
+    return SpringdocRouteBuilder.route()
+        .GET("/policies/{name}/configs/{group}", this::getPolicyConfigByGroup, builder -> builder.operationId("get"))
+        .PUT("/policies/{name}/configs/{group}", this::updatePolicyConfigByGroup, builder -> builder.operationId("update"))
+        .build();
+  }
+  public RouterFunction<ServerResponse> pages() {
+    return RouterFunctions.route()
+        .GET(consolePagePredicate, request -> ServerResponse.ok().bodyValue(html))
+        .nest(RequestPredicates.path("/apis/v1"), b -> b.POST("/attachments", request -> attachmentService.upload(request)))
+        .build();
+  }
+}`;
+    const tree = await parseSource(src, "java" as any, "PolicyEndpoint.java");
+    const routes: RouteInfo[] = [];
+    extractSpringRoutes(tree.rootNode, routes);
+    routes.sort((a, b) => a.line - b.line); // a chain is walked outermost-first
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
+      "GET /policies/{name}/configs/{group} -> getPolicyConfigByGroup",
+      "PUT /policies/{name}/configs/{group} -> updatePolicyConfigByGroup",
+      "POST /apis/v1/attachments -> null",
+    ]);
+    expect(routes[2]!.calls.map((c) => c.name)).toContain("attachmentService.upload");
+  });
+});

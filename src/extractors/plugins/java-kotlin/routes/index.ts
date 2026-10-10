@@ -17,7 +17,8 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
   extractRoutes(tree: Tree, sourceText: string, filePath?: string): RouteInfo[] {
     const routes: RouteInfo[] = [];
 
-    if (sourceText.includes("Mapping")) {
+    // Annotation routes name a `*Mapping`; functional endpoints build on `route()`.
+    if (sourceText.includes("Mapping") || /\broute\s*\(\s*\)|\bRouterFunctions\b|\bSpringdocRouteBuilder\b/.test(sourceText)) {
       extractSpringRoutes(tree.rootNode, routes);
       // Recover routes from files the grammar misparsed into a routeless tree.
       if (routes.length === 0) extractSpringRoutesRegex(sourceText, routes);

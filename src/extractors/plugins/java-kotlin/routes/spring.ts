@@ -255,9 +255,63 @@ function walkForJavaKotlinRoutes(
     }
   }
 
+  // WebFlux functional endpoints: `RouterFunctions.route().GET("/x", this::handle)`,
+  // springdoc's `SpringdocRouteBuilder.route().GET("/x", this::handle, builder -> …)`,
+  // nested under `.nest(path("/api"), b -> b.GET(…))` / `.path("/api", b -> …)`.
+  // The handler is the method reference, or the lambda's calls when inline.
+  // A predicate variable as the first argument (`GET(consolePagePredicate, …)`)
+  // names no path and is skipped.
+  if (!suppress && node.type === "method_invocation") {
+    const verb = node.childForFieldName("name")?.text ?? "";
+    const receiver = node.childForFieldName("object")?.text ?? "";
+    if (FUNCTIONAL_VERBS.has(verb) && FUNCTIONAL_ROUTER_RE.test(receiver)) {
+      const args = node.childForFieldName("arguments")?.namedChildren ?? [];
+      const path = args[0] ? firstStringLiteral(args[0]) : null;
+      if (path !== null && args[0]!.type !== "lambda_expression") {
+        const handlerArg = args[1];
+        const ref = handlerArg?.type === "method_reference" ? handlerArg.text.split("::").pop() ?? null : null;
+        const calls = handlerArg?.type === "lambda_expression" ? extractCalls(handlerArg, "java") : [];
+        const route: RouteInfo = {
+          path: mergePrefix(classPrefix, functionalNestPrefix(node) + (path.startsWith("/") ? path : "/" + path)),
+          httpMethod: verb,
+          kind: "api",
+          handler: ref,
+          calls,
+          middleware: [],
+          // The invocation node starts where its chain starts; the verb token is the route's line.
+          line: (node.childForFieldName("name") ?? node).startPosition.row + 1,
+        };
+        applyRouteMeta(route, { inheritedGuards: classGuards });
+        routes.push(route);
+      }
+    }
+  }
+
   for (const child of node.children) {
     walkForJavaKotlinRoutes(child, routes, classPrefix, suppress, classGuards);
   }
+}
+
+const FUNCTIONAL_VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+/** A receiver chain rooted at a router builder: `route()`, `RouterFunctions…`, `SpringdocRouteBuilder…`, or a nest lambda's builder parameter. */
+const FUNCTIONAL_ROUTER_RE = /\broute\s*\(\s*\)|\bRouterFunctions\b|\bSpringdocRouteBuilder\b|\b(?:builder|b|r|router|routes)$/;
+
+/** Path prefix from enclosing `.nest(path("/api"), b -> …)` / `.path("/api", b -> …)` calls, outermost first. */
+function functionalNestPrefix(node: Node): string {
+  const parts: string[] = [];
+  let cur: Node | null = node.parent;
+  while (cur) {
+    if (cur.type === "method_invocation") {
+      const name = cur.childForFieldName("name")?.text;
+      if (name === "nest" || name === "path") {
+        const first = cur.childForFieldName("arguments")?.namedChildren[0];
+        const prefix = first && first.type !== "lambda_expression" ? firstStringLiteral(first) : null;
+        if (prefix) parts.unshift(prefix.startsWith("/") ? prefix : "/" + prefix);
+      }
+    }
+    cur = cur.parent;
+  }
+  return parts.join("").replace(/\/+$/, "");
 }
 
 /**
