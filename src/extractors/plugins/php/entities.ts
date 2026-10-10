@@ -1,5 +1,13 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
-import type { ClassInfo, EntityRelation, Language, PropertyInfo } from "../../../types/analysis.js";
+import type {
+  ClassInfo,
+  DataSourceInfo,
+  EntityRelation,
+  FileAnalysis,
+  FunctionInfo,
+  Language,
+  PropertyInfo,
+} from "../../../types/analysis.js";
 
 /**
  * Extracts ORM entities + relations from PHP source for two ecosystems:
@@ -155,6 +163,68 @@ export class PhpEntityExtractor extends EntityExtractor {
     const jl = joined.toLowerCase();
     if (t1.toLowerCase() === jl) return { from: t2, to: t1, fk };
     return { from: t1, to: t2, fk };
+  }
+
+  /**
+   * Project-level pass: which Eloquent accesses touch which model.
+   *
+   * Per file, `Account::where(…)->first()` is a query on `Account` only if
+   * `Account` is a model — `Carbon::create(…)` and `Finder::create()` share the
+   * verb and were two thirds of firefly-iii's and koel's "database" rows. And
+   * `$user->accounts()->where(…)->get()` names its table only through the
+   * relation `accounts()`, declared on `User` in another file. Both joins need
+   * every model the project declares, so they happen here:
+   *   - a static root that is a declared model → that model (`static::`/`self::`
+   *     inside a model class → the class);
+   *   - the LAST `->relation()` segment whose name every declaring model maps
+   *     to one target → that target;
+   *   - `$this->prop->…` through a property or promoted constructor parameter
+   *     typed as a model, `$var->…` through a typed parameter or local;
+   *   - a chain on `$this`, `$query` or `$builder` inside a model's own method
+   *     (scopes, accessors) → that model.
+   * A row that resolves gets `entity` (what `attributeDataAccessToSymbols`
+   * keys on) and `target`. One that does not, in a project that DOES declare
+   * models, was never an Eloquent access and is removed — a facade or value
+   * object sharing the verb. PDO (`$pdo->query(…)`, `$stmt->fetchAll()`),
+   * CodeIgniter (`$this->db->…`) and the `DB`/`Schema` facades are left as
+   * they are: their table is the SQL text or the argument, not a model.
+   */
+  override reconcileProject(analyses: FileAnalysis[]): void {
+    const php = analyses.filter((a) => a.language === "php");
+    const models = new Set<string>();
+    const relationTargets = new Map<string, Set<string>>();
+    for (const a of php) {
+      for (const cls of a.classes) {
+        if (cls.decorators.includes("entity") && cls.decorators.includes("eloquent")) models.add(cls.name);
+      }
+      for (const rel of a.entityRelations ?? []) {
+        if (rel.orm !== "eloquent") continue;
+        const set = relationTargets.get(rel.fromField) ?? new Set<string>();
+        set.add(rel.toEntity);
+        relationTargets.set(rel.fromField, set);
+      }
+    }
+    if (models.size === 0) return;
+    const relationEntity = (field: string): string | null => {
+      const set = relationTargets.get(field);
+      return set && set.size === 1 ? [...set][0]! : null;
+    };
+
+    for (const a of php) {
+      let changed = false;
+      const next: DataSourceInfo[] = [];
+      for (const ds of a.dataSources) {
+        if (ds.kind !== "database" || ds.entity || !isEloquentCandidate(ds.name)) {
+          next.push(ds);
+          continue;
+        }
+        const entity = resolveEloquentEntity(ds, a, models, relationEntity);
+        changed = true;
+        if (entity) next.push({ ...ds, entity, target: entity });
+        // else: dropped — a verb-sharing non-model call.
+      }
+      if (changed) a.dataSources = next;
+    }
   }
 
   // ─── Eloquent detection (inheritance chain) ───────────────────────────────
@@ -909,4 +979,80 @@ export class PhpEntityExtractor extends EntityExtractor {
     const seg = s.split("\\").pop();
     return seg ? seg.trim() || null : null;
   }
+}
+
+
+// ─── Eloquent access resolution (project-level) ─────────────────────────────
+
+/** CodeIgniter, PDO and Laravel's non-model facades keep their rows as emitted. */
+const NON_ELOQUENT_ROW_RE =
+  /^\$this\s*->\s*db\b|^(?:DB|Schema|Cache|Redis)::|^\$(?:pdo|db|dbh|conn|connection|stmt|statement|sth|mysqli|link)\b|->(?:query|exec|prepare|fetchAll|fetch)$/i;
+
+function isEloquentCandidate(name: string): boolean {
+  return !NON_ELOQUENT_ROW_RE.test(name);
+}
+
+/** Innermost class whose line range holds `line`, and the method inside it. */
+function enclosing(a: FileAnalysis, line: number): { cls: ClassInfo | null; fn: FunctionInfo | null } {
+  let cls: ClassInfo | null = null;
+  for (const c of a.classes) {
+    if (c.line <= line && line <= c.endLine && (!cls || c.line >= cls.line)) cls = c;
+  }
+  let fn: FunctionInfo | null = null;
+  const pool = cls ? cls.methods : a.functions;
+  for (const f of pool) {
+    if (f.line <= line && line <= f.endLine && (!fn || f.line >= fn.line)) fn = f;
+  }
+  return { cls, fn };
+}
+
+const shortType = (type: string | null | undefined): string | null =>
+  type ? (type.replace(/^\?/, "").replace(/\|null$/, "").split("\\").pop() ?? null) : null;
+
+function resolveEloquentEntity(
+  ds: DataSourceInfo,
+  a: FileAnalysis,
+  models: ReadonlySet<string>,
+  relationEntity: (field: string) => string | null,
+): string | null {
+  const name = ds.name;
+  // The last relation call in the chain is the table the terminal verb runs on
+  // (`$user->accounts()->transactions()->first()` reads transactions).
+  const relationCalls = [...name.matchAll(/->\s*(\w+)\s*\(\s*\)/g)].map((m) => m[1]!);
+  for (let i = relationCalls.length - 1; i >= 0; i--) {
+    const target = relationEntity(relationCalls[i]!);
+    if (target && models.has(target)) return target;
+  }
+
+  const { cls, fn } = enclosing(a, ds.line);
+  const enclosingModel = cls && models.has(cls.name) ? cls.name : null;
+
+  const staticRoot = /^([A-Za-z_\\]\w*(?:\\\w+)*)::/.exec(name)?.[1] ?? null;
+  if (staticRoot) {
+    if (/^(static|self|parent)$/.test(staticRoot)) return enclosingModel;
+    const short = staticRoot.split("\\").pop()!;
+    return models.has(short) ? short : null;
+  }
+
+  // `$this->prop->…`: the property's declared type, or the promoted constructor parameter's.
+  const prop = /^\$this\s*->\s*(\w+)\s*->/.exec(name)?.[1];
+  if (prop && cls) {
+    const declared = cls.properties.find((p) => p.name === prop || p.name === `$${prop}`)?.type
+      ?? cls.methods.find((m) => m.name === "__construct")?.params.find((p) => p.name === prop)?.type;
+    const type = shortType(declared);
+    if (type && models.has(type)) return type;
+  }
+
+  // `$var->…`: a typed parameter or local of the enclosing function.
+  const variable = /^\$(\w+)\s*->/.exec(name)?.[1];
+  if (variable && variable !== "this" && fn) {
+    const declared = fn.params.find((p) => p.name === variable)?.type
+      ?? fn.localTypes?.find((l) => l.name === variable)?.type;
+    const type = shortType(declared);
+    if (type && models.has(type)) return type;
+  }
+
+  // Inside a model: its own query builder / instance is the model's table.
+  if (enclosingModel && /^(?:\$this|\$query|\$builder|\$q)\b/.test(name)) return enclosingModel;
+  return null;
 }

@@ -1,5 +1,5 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
-import type { ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
+import type { ClassInfo, DataSourceInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
 import { isRailsSchemaFile, joinSchemaColumns, parseRailsSchema } from "./schema.js";
 
 /**
@@ -129,6 +129,7 @@ export class RubyEntityExtractor extends EntityExtractor {
    */
   override reconcileProject(analyses: FileAnalysis[]): void {
     joinSchemaColumns(analyses);
+    resolveChainAccesses(analyses);
   }
 
   /**
@@ -612,5 +613,61 @@ export class RubyEntityExtractor extends EntityExtractor {
       .filter((p) => p.length > 0)
       .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
       .join("");
+  }
+}
+
+// ─── Association / instance chain resolution (project-level) ───────────────
+
+/** `ContactInbox` → `contact_inbox`: the variable a Rails developer names after the model. */
+function railsUnderscore(name: string): string {
+  return name.replace(/([a-z\d])([A-Z])/g, "$1_$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2").toLowerCase();
+}
+
+/**
+ * The entity-less `database` rows the per-file pass emitted for chains
+ * (`Current.account.conversations.find_by!`, `conversation.update!`) resolve
+ * here, against every model the project declares:
+ *   - the segment before the verb is an association ONE model declares (or
+ *     several, all to the same target) → that target;
+ *   - else it is a variable named like a declared model (`conversation`,
+ *     `@contact_inbox`) → that model;
+ *   - else the row is removed — a collection or a service object sharing the verb.
+ * A project without models (plain Ruby) keeps nothing of these.
+ */
+function resolveChainAccesses(analyses: FileAnalysis[]): void {
+  const ruby = analyses.filter((a) => a.language === "ruby");
+  const models = new Map<string, string>(); // underscored → model name
+  const associations = new Map<string, Set<string>>();
+  for (const a of ruby) {
+    for (const cls of a.classes) {
+      if (!cls.decorators.includes("entity")) continue;
+      const bare = cls.name.split("::").pop()!;
+      models.set(railsUnderscore(bare), bare);
+    }
+    for (const rel of a.entityRelations ?? []) {
+      const set = associations.get(rel.fromField) ?? new Set<string>();
+      set.add(rel.toEntity.split("::").pop()!);
+      associations.set(rel.fromField, set);
+    }
+  }
+  for (const a of ruby) {
+    let changed = false;
+    const next: DataSourceInfo[] = [];
+    for (const ds of a.dataSources) {
+      // Every other Ruby `database` row names its entity already; the
+      // entity-less dotted ones are the chain candidates.
+      if (ds.kind !== "database" || ds.entity || !ds.name.includes(".")) {
+        next.push(ds);
+        continue;
+      }
+      const segments = ds.name.split(".");
+      changed = true;
+      if (models.size === 0) continue;
+      const before = segments[segments.length - 2]!.replace(/\(\)$/, "").replace(/^(?:@{1,2}|\$)/, "");
+      const targets = associations.get(before);
+      const entity = targets && targets.size === 1 ? [...targets][0]! : models.get(before) ?? null;
+      if (entity && [...models.values()].includes(entity)) next.push({ ...ds, entity });
+    }
+    if (changed) a.dataSources = next;
   }
 }

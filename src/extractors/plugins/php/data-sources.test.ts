@@ -87,3 +87,46 @@ ${body}
     ]);
   });
 });
+
+/**
+ * Eloquent chains: one row per chain, at the outermost verb, and no column
+ * name mistaken for a table. The model itself is joined project-wide
+ * (`PhpEntityExtractor.reconcileProject`), so per file these rows carry no
+ * entity yet.
+ */
+async function eloquentRowsOf(body: string): Promise<DataSourceInfo[]> {
+  const src = `<?php
+class R {
+  function q(User $user) {
+${body}
+  }
+}`;
+  const tree = await parseSource(src, "php" as any, "R.php");
+  return new PhpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
+}
+
+describe("Eloquent chain rows", () => {
+  it("emits one row for a fluent chain, at the terminal verb, with no column as target", async () => {
+    const rows = await eloquentRowsOf(`    return $user->accounts()->where('name', $n)->where('id', '!=', 3)->first();`);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.name).toBe("$user->accounts()->where('name', $n)->where('id', '!=', 3)->first");
+    expect(rows[0]!.target).toBeNull();
+    expect(rows[0]!.access).toBe("read");
+  });
+
+  it("folds a static root into its chain's one row and keeps a lone static as the row", async () => {
+    const rows = await eloquentRowsOf(`    $a = Account::where('active', 1)->get();\n    $b = Account::find($id);\n    $c = Account::query()->onlyActive()->paginate();`);
+    expect(rows.map((r) => r.name)).toEqual([
+      "Account::where('active', 1)->get",
+      "Account::find",
+      "Account::query()->onlyActive()->paginate",
+    ]);
+    expect(rows[1]!.target).toBe("Account");
+  });
+
+  it("keeps the SQL text as a PDO target", async () => {
+    const rows = await eloquentRowsOf(`    $rows = $pdo->query('SELECT * FROM orders')->fetchAll();`);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.name).toBe("$pdo->query('SELECT * FROM orders')->fetchAll");
+  });
+});

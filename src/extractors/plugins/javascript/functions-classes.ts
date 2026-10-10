@@ -509,6 +509,29 @@ const VUE_OPTION_KEYS = new Set([
   "render", "setup", "mixins", "emits", "created", "mounted", "beforeMount",
 ]);
 
+/** Option groups whose members are component methods (`this.x` / `@click="x"`). */
+const VUE_FUNCTION_GROUPS = new Set(["methods", "computed", "watch"]);
+/** Options that are functions in their own right. */
+const VUE_HOOKS = new Set([
+  "data", "setup", "render", "beforeCreate", "created", "beforeMount", "mounted", "beforeUpdate", "updated",
+  "beforeDestroy", "destroyed", "beforeUnmount", "unmounted", "activated", "deactivated", "errorCaptured",
+]);
+
+/**
+ * The options object of a Vue component declaration: the object itself, or the
+ * first argument of `defineComponent({ … })` / `Vue.extend({ … })`. Null for
+ * anything else (a namespace object, a value).
+ */
+function vueComponentOptions(value: Node): Node | null {
+  let obj: Node | null = value;
+  if (value.type === "call_expression") {
+    const callee = value.childForFieldName("function")?.text ?? "";
+    if (!/^(defineComponent|Vue\.extend|defineNuxtComponent)$/.test(callee)) return null;
+    obj = value.childForFieldName("arguments")?.namedChildren.find((a) => a.type === "object") ?? null;
+  }
+  return obj && obj.type === "object" && isVueComponentOptions(obj) ? obj : null;
+}
+
 function isVueComponentOptions(obj: Node): boolean {
   return obj.namedChildren.some((m) => {
     const key = m.type === "pair" ? m.childForFieldName("key") : m.type === "method_definition" ? m.childForFieldName("name") : null;
@@ -595,6 +618,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         if (moduleLevel && value?.type === "object" && !isVueComponentOptions(value)) {
           this.extractObjectMembers(null, value, functions, true, 0);
         }
+        const options = moduleLevel && value ? vueComponentOptions(value) : null;
+        if (options) this.extractVueOptionsMembers(options, functions);
         this.extractJsFunctions(child, functions, true);
         continue;
       }
@@ -606,6 +631,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         if (right?.type === "object" && assign!.childForFieldName("left")?.text === "module.exports" && !isVueComponentOptions(right)) {
           this.extractObjectMembers(null, right, functions, true, 0);
         }
+        const options = right && assign!.childForFieldName("left")?.text === "module.exports" ? vueComponentOptions(right) : null;
+        if (options) this.extractVueOptionsMembers(options, functions);
       }
 
       if (
@@ -761,6 +788,42 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
    * prefix (a default-exported object) the key alone is the name. Shorthand
    * entries and spreads reference something defined elsewhere and add nothing.
    */
+  /**
+   * A Vue Options API component (`export default { methods: { save() {} } }`,
+   * `defineComponent({ … })`): its `methods`, `computed` and `watch` members
+   * are flattened onto `this` — called as `this.save()`, bound as
+   * `@click="save"` — so each is a function named by its key alone, and the
+   * lifecycle hooks (`created`, `mounted`, …) plus `data` and `setup` are
+   * functions of their own name. A `setup()` body is descended for the named
+   * inner functions it returns to the template. Before this an Options API
+   * component declared NO functions at all, so none of its handlers resolved
+   * and no click trace left the component (photoprism: 0 of 754 handlers).
+   */
+  private extractVueOptionsMembers(options: Node, functions: FunctionInfo[]): void {
+    for (const member of options.namedChildren) {
+      if (member.type === "pair") {
+        const key = objectKeyName(member.childForFieldName("key"));
+        const value = member.childForFieldName("value");
+        if (!key || !value) continue;
+        if (VUE_FUNCTION_GROUPS.has(key) && value.type === "object") {
+          this.extractObjectMembers(null, value, functions, false, MAX_NAMESPACE_DEPTH);
+        } else if (VUE_HOOKS.has(key) && (value.type === "arrow_function" || value.type === "function_expression")) {
+          functions.push(this.parseJsArrowOrExpr(key, value, false));
+        }
+      } else if (member.type === "method_definition") {
+        const key = objectKeyName(member.childForFieldName("name"));
+        if (!key || !VUE_HOOKS.has(key)) continue;
+        const fn = this.parseJsFunction(member, false);
+        fn.name = key;
+        functions.push(fn);
+        if (key === "setup") {
+          const body = member.childForFieldName("body");
+          if (body) this.extractJsFunctions(body, functions, false);
+        }
+      }
+    }
+  }
+
   private extractObjectMembers(
     prefix: string | null,
     obj: Node,

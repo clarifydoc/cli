@@ -64,6 +64,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
     dirTailIndex: buildDirTailIndex(symbolIndex),
     classNameIndex: buildClassNameIndex(symbolIndex),
     namespaceSuffixIndex: buildNamespaceSuffixIndex(symbolIndex),
+    dottedClassSuffixIndex: buildDottedClassSuffixIndex(typeDecls),
     projectOf,
     languageOf: new Map(analyses.map((a) => [a.filePath, a.language as string])),
     importedFilesCache: new Map(),
@@ -144,7 +145,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
           sourceFile, sourceSymbol,
           { name: route.handler, kind: "internal", target: null, line: route.line },
           analysis, ctx,
-        );
+        ) ?? resolveDottedOwnerHandler(sourceFile, sourceSymbol, route.handler, route.line, analysis, ctx);
         // A handler named by its class (`BookController.create`, Play's
         // `OrderController.list`) is that class's method or nothing: a
         // same-named method of ANOTHER class, found by name alone, is a
@@ -923,6 +924,13 @@ interface LinkContext {
   /** Top-level symbol name → files that define it (in symbolIndex order). Lets
    *  Strategy 4 find the class file by O(1) lookup instead of scanning all files. */
   classNameIndex: Map<string, string[]>;
+  /**
+   * Classes whose own name is dotted (an Elixir module `PlausibleWeb.OAuth.MetadataController`),
+   * by every dotted suffix of that name — what a Phoenix route names its controller by
+   * (`OAuth.MetadataController`, under `scope "/", PlausibleWeb`). `classNameIndex` leaves
+   * dotted names out, since there a dot means `Class.member`.
+   */
+  dottedClassSuffixIndex: Map<string, Array<{ file: string; name: string }>>;
   /** A namespaced class's trailing names (`Routes::Misc`, `Misc` of
    *  `Invidious::Routes::Misc`) → the declarations ending that way. Strategy 4's
    *  relative-constant fallback. */
@@ -990,6 +998,66 @@ function buildClassNameIndex(
     }
   }
   return idx;
+}
+
+/** See `LinkContext.dottedClassSuffixIndex`. */
+function buildDottedClassSuffixIndex(analyses: FileAnalysis[]): Map<string, Array<{ file: string; name: string }>> {
+  const idx = new Map<string, Array<{ file: string; name: string }>>();
+  for (const a of analyses) {
+    for (const cls of a.classes) {
+      if (!cls.name.includes(".")) continue;
+      const segments = cls.name.split(".");
+      for (let k = 0; k < segments.length; k++) {
+        const suffix = segments.slice(k).join(".");
+        const arr = idx.get(suffix);
+        if (arr) arr.push({ file: a.filePath, name: cls.name });
+        else idx.set(suffix, [{ file: a.filePath, name: cls.name }]);
+      }
+    }
+  }
+  return idx;
+}
+
+/**
+ * A route handler written `Owner.Sub.action` whose owner is a dotted module
+ * name: the method `action` of the ONE class (in the route's sub-project
+ * first) whose dotted name ends in `Owner.Sub`. `resolveCallToDefinition`
+ * reads a dotted name as receiver + member and never sees the module.
+ */
+function resolveDottedOwnerHandler(
+  sourceFile: string,
+  sourceSymbol: string,
+  handler: string,
+  line: number,
+  analysis: FileAnalysis,
+  ctx: LinkContext,
+): SymbolLink | null {
+  const m = /^([A-Z]\w*(?:\.[A-Z]\w*)*)\.([a-z_]\w*[?!]?)$/.exec(handler);
+  if (!m) return null;
+  const [, owner, method] = m;
+  const candidates = ctx.dottedClassSuffixIndex.get(owner!) ?? [];
+  if (candidates.length === 0) return null;
+  const hits: Array<{ file: string; def: SymbolDef }> = [];
+  for (const c of candidates) {
+    const def = ctx.symbolIndex.get(c.file)?.get(`${c.name}.${method}`);
+    if (def) hits.push({ file: c.file, def });
+  }
+  if (hits.length === 0) return null;
+  const sameProject = hits.filter((h) => ctx.projectOf.get(h.file) === analysis.projectId);
+  const chosen = sameProject.length === 1 ? sameProject[0]! : hits.length === 1 ? hits[0]! : null;
+  if (!chosen) return null;
+  return {
+    sourceFile,
+    sourceSymbol,
+    sourceLine: line,
+    callName: handler,
+    targetFile: chosen.file,
+    targetSymbol: chosen.def.name,
+    targetLine: chosen.def.line,
+    confidence: "INFERRED",
+    strategy: "class-name",
+    relation: relationForStrategy("class-name"),
+  };
 }
 
 /** See `LinkContext.namespaceSuffixIndex`. */

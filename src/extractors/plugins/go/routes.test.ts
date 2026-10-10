@@ -205,3 +205,21 @@ cache.Find(&results)
     expect(s.filter((d) => d.kind === "database")).toEqual([]);
   });
 });
+
+describe("Go routes: inline closures", () => {
+  it("anchors a closure-handled route at the function declaring it", () => {
+    const routes = extractGoRoutes(lines(`
+func GetAlbum(router *gin.RouterGroup) {
+	router.GET("/albums/:uid", func(c *gin.Context) {
+		a, err := query.AlbumByUID(c.Param("uid"))
+		c.JSON(http.StatusOK, a)
+	})
+	router.POST("/albums", CreateAlbum)
+}
+`));
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
+      "GET /albums/:uid -> GetAlbum",
+      "POST /albums -> CreateAlbum",
+    ]);
+  });
+});

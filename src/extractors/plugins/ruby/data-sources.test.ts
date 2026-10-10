@@ -87,14 +87,22 @@ describe("rubySpec.extractDataSources — ActiveRecord", () => {
     expect(byName["Duty.update_all"]).toBe("write");
   });
 
-  it("does not treat a method on an instance/relation as model access", () => {
-    // Lowercase / @ivar receivers carry no model name and must be skipped.
+  it("emits an instance/relation chain as an entity-less candidate for the project join", () => {
+    // Lowercase / @ivar receivers carry no model name per file: the row goes
+    // out without an entity and `RubyEntityExtractor.reconcileProject` joins it
+    // to the association's target or the model the variable is named after —
+    // or drops it. A read on a bare variable (`absences.each`) is no access.
     const ds = dbSources(`
       @absence.update(params)
       absences.each { |a| a.save }
       self.scope.where(x: 1)
+      Current.account.conversations.find_by!(display_id: 3)
     `);
-    expect(ds).toHaveLength(0);
+    expect(ds.map((d) => [d.name, d.entity ?? null, d.access])).toEqual([
+      ["@absence.update", null, "write"],
+      ["self.scope.where", null, "read"],
+      ["Current.account.conversations.find_by!", null, "read"],
+    ]);
   });
 
   it("does not match inside comments", () => {

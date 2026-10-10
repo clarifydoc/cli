@@ -49,7 +49,8 @@ export const Profile = {
     // Built inside a function: a value that function passes around, and its
     // arrows' calls already belong to the enclosing function.
     expect(await names(`function setup() { const handlers = { onSave: () => save() }; return handlers; }`)).toEqual(["setup"]);
-    // A Vue Options API component: `methods` are called as `this.save()`.
-    expect(await names(`export default { data() { return {}; }, methods: { save() { api.post(); } } };`)).toEqual([]);
+    // A Vue Options API component: `methods` are flattened onto `this`, so
+    // `save` is a function of its own name (not `methods.save`), as is `data`.
+    expect(await names(`export default { data() { return {}; }, methods: { save() { api.post(); } } };`)).toEqual(["data", "save"]);
   });
 });

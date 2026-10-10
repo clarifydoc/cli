@@ -83,6 +83,9 @@ const VUE_MACROS = new Set([
  */
 const ORM_ROOTS = new Set(["prisma", "db", "client"]);
 
+/** Kysely query-builder clause verbs whose first argument names the table. */
+const KYSELY_TABLE_VERBS = new Set(["selectFrom", "insertInto", "updateTable", "deleteFrom", "replaceInto", "mergeInto"]);
+
 /** ORM method names that are unambiguously database operations. */
 const ORM_METHODS = new Set([
   // Prisma
@@ -585,7 +588,24 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         // Veto: a `find` whose first argument is a function is `Array.prototype.find`
         // on a PascalCase-named collection (`const Product = […]; Product.find(p => …)`),
         // not a Mongoose query (whose first arg is a filter object/id) — see isOrmCall.
-        if (
+        // Kysely: the table is the string the clause verb takes —
+        // `this.db.selectFrom('asset')`, `.insertInto('asset_exif')`,
+        // `.updateTable('user')`, `.deleteFrom('session')` (an alias
+        // `'asset as a'` is cut). The chain's root is usually `this.db`, which
+        // no root-name rule trusts, and the verbs are Kysely's alone — so the
+        // table literal is the evidence.
+        const kyselyTable = fnName && KYSELY_TABLE_VERBS.has(fnName) ? literalString(node.childForFieldName("arguments")?.namedChildren[0] ?? null) : null;
+        if (!emittedApiCall && kyselyTable && /^[A-Za-z_][\w.]*(?:\s+as\s+\w+)?$/.test(kyselyTable)) {
+          const table = kyselyTable.replace(/\s+as\s+\w+$/, "").split(".").pop()!;
+          sources.push(this.ds({
+            kind: "database",
+            name: ormChain ?? `kysely.${fnName}`,
+            target: table,
+            entity: table,
+            line: node.startPosition.row + 1,
+            access: fnName === "selectFrom" ? "read" : "write",
+          }));
+        } else if (
           !emittedApiCall &&
           ormChain &&
           isOrmCall(ormChain) &&

@@ -1,4 +1,4 @@
-import type { ClassInfo, EntityRelation, FileAnalysis, PropertyInfo } from "../../../types/analysis.js";
+import type { ClassInfo, DataSourceInfo, EntityRelation, FileAnalysis, PropertyInfo } from "../../../types/analysis.js";
 import { EntityExtractor, SYNTHETIC_ENTITY, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 
 /**
@@ -514,6 +514,7 @@ export class DfmEntityExtractor extends EntityExtractor {
   }
 
   override reconcileProject(analyses: FileAnalysis[]): void {
+    joinUnitAccessesToFormTables(analyses);
     // Gather every DFM-derived entity, keyed by table name.
     const byTable = new Map<string, { analysis: FileAnalysis; cls: ClassInfo }[]>();
     for (const a of analyses) {
@@ -566,3 +567,46 @@ export class DfmEntityExtractor extends EntityExtractor {
 }
 
 export const dfmEntityExtractor = new DfmEntityExtractor();
+
+/**
+ * A unit's dataset access names the COMPONENT (`qryDrill.Open`,
+ * `dsDrill.FieldByName(…)` → target `qryDrill`); the table is in the
+ * companion `.dfm`, whose rows are named `<component>: <VERB>` with the table
+ * as entity. Join the two: the `.pas` row gets the table its component reads,
+ * and the form's handler then reaches the table in Call Traces (team-desk: 3,400 of
+ * 4,200 Pascal accesses carried no entity). Only the companion form (same
+ * path, `.dfm`) is consulted — a component name is local to its form.
+ */
+function joinUnitAccessesToFormTables(analyses: FileAnalysis[]): void {
+  const tablesByForm = new Map<string, Map<string, string>>();
+  for (const a of analyses) {
+    if (a.language !== "dfm") continue;
+    const byComponent = new Map<string, string>();
+    for (const ds of a.dataSources) {
+      if (ds.kind !== "database" || !ds.entity) continue;
+      const component = /^(\w+):\s/.exec(ds.name)?.[1];
+      if (!component) continue;
+      const key = component.toLowerCase();
+      const known = byComponent.get(key);
+      if (known && known !== ds.entity) byComponent.set(key, ""); // several tables: no single answer
+      else if (!known) byComponent.set(key, ds.entity);
+    }
+    tablesByForm.set(a.filePath.replace(/\.dfm$/i, "").toLowerCase(), byComponent);
+  }
+  if (tablesByForm.size === 0) return;
+  for (const a of analyses) {
+    if (a.language !== "pascal") continue;
+    const form = tablesByForm.get(a.filePath.replace(/\.(pas|pp|dpr)$/i, "").toLowerCase());
+    if (!form || form.size === 0) continue;
+    let changed = false;
+    const next: DataSourceInfo[] = a.dataSources.map((ds) => {
+      if (ds.kind !== "database" || ds.entity || !ds.target) return ds;
+      const component = ds.target.split(".").pop()!.toLowerCase();
+      const table = form.get(component);
+      if (!table) return ds;
+      changed = true;
+      return { ...ds, entity: table };
+    });
+    if (changed) a.dataSources = next;
+  }
+}

@@ -49,10 +49,11 @@ const ATTR_VERB_RE = /^\s*#\[\s*(?:\w+::)*(get|post|put|patch|delete|head|option
 const ATTR_ROUTE_RE = /^\s*#\[\s*(?:\w+::)*route\s*\(\s*"([^"]+)"([^)]*)\)/;
 const METHOD_ATTR_RE = /method\s*=\s*"(\w+)"/g;
 /** `.route("/path", get(handler).post(handler2))` — axum method routers. */
-const AXUM_ROUTE_RE = /\.\s*route\s*\(\s*"([^"]+)"\s*,(.*)$/;
+const AXUM_ROUTE_RE = /\.\s*route\s*\(\s*"([^"]*)"\s*,(.*)$/;
 const AXUM_VERB_RE = /\b(get|post|put|patch|delete|head|options)\s*\(\s*([\w:]+)?/g;
 /** `web::get().to(handler)` — actix's closure-free route form. */
-const ACTIX_TO_RE = /\bweb::(get|post|put|patch|delete|head)\s*\(\s*\)\s*\.\s*to\s*\(\s*(?:\w+::)*(\w+)/g;
+/** `web::get().to(h)` — or `get().to(h)` with the verb fns imported (`use actix_web::web::{get, post}`). An empty route path (`.route("", …)`) is the scope's own path. */
+const ACTIX_TO_RE = /\b(?:web::)?(get|post|put|patch|delete|head)\s*\(\s*\)\s*\.\s*to\s*\(\s*(?:\w+::)*(\w+)/g;
 
 const FN_RE = /\bfn\s+(\w+)/;
 /** Top-level fn declaration — marks route-ownership scope for nest resolution. */
@@ -411,8 +412,10 @@ function scanActix(
       continue;
     }
     if ((m = rest.match(/^(?:\w+::)*scope\s*\(\s*"([^"]*)"\s*\)/))) {
-      const parent = scopes.map((s) => s.prefix).join("");
-      scopes.push({ prefix: parent + m[1]!, guards: [], depth });
+      // Each frame holds its OWN segment; every reader joins the stack. A
+      // frame that pre-composed its parents doubled them at the join
+      // (`scope("/api/v4") … scope("/site")` → `/api/v4/api/v4/site`).
+      scopes.push({ prefix: m[1]!, guards: [], depth });
       i += m[0].length - 1;
       continue;
     }

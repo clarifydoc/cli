@@ -5,7 +5,7 @@ import type {
   DataSourceInfo,
   ParamInfo,
 } from "../../../types/analysis.js";
-import type { PropertyInfo } from "../../../types/analysis.js";
+import type { InteractiveElementInfo, PropertyInfo, ScreenInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
 import { applyRouteMeta, type GuardAttr } from "../../shared/route-metadata.js";
@@ -433,6 +433,116 @@ function extractDartClasses(lines: string[], fns: FunctionInfo[]): ClassInfo[] {
   return classes;
 }
 
+// ─── Flutter UI (the screen half) ───────────────────────────────────────────
+
+/** Event-handler named arguments on Flutter widgets, with the element each usually sits on. */
+const FLUTTER_EVENT_RE =
+  /\b(onPressed|onTap|onLongPress|onDoubleTap|onChanged|onSubmitted|onEditingComplete|onSaved|onSelected|onFieldSubmitted|onToggle|onRefresh|onDismissed)\s*:\s*([^,\n]*)/g;
+
+/** Widget constructors by the interactive element they render. */
+const FLUTTER_ELEMENT_OF: ReadonlyArray<[RegExp, InteractiveElementInfo["element"]]> = [
+  [/\b(?:Elevated|Text|Outlined|Icon|Filled|Floating(?:Action)?|Cupertino|Back|Close|Menu|Popup\w*|Dropdown\w*|Segmented)?Button(?:\.\w+)?\s*\(/, "button"],
+  [/\b(?:TextField|TextFormField|CupertinoTextField|EditableText)\s*\(/, "input"],
+  [/\b(?:Form)\s*\(/, "form"],
+  [/\b(?:DropdownButton\w*|PopupMenuButton|Dropdown\w*)\s*\(/, "select"],
+  [/\b(?:Checkbox|Switch|Radio|Slider|CupertinoSwitch)\w*\s*\(/, "input"],
+  [/\b(?:InkWell|GestureDetector|ListTile|InkResponse|Card|Dismissible|RefreshIndicator)\s*\(/, "custom"],
+];
+
+/**
+ * `() => _save(ctx)` → `_save`; `_save` → `_save`; `widget.onTap` → `widget.onTap`;
+ * `() => Navigator.of(context).pop()` → `Navigator.of`; a block body (`() {`) → null;
+ * `null` → null.
+ */
+function flutterHandlerName(expr: string): string | null {
+  let t = expr.trim().replace(/[,;)\s]+$/, "");
+  if (!t || t === "null") return null;
+  const arrow = t.match(/^\(?[^()]*\)?\s*(?:async\s*)?=>\s*(.*)$/);
+  if (arrow) t = arrow[1]!.trim();
+  else if (/^\(?[^()]*\)?\s*(?:async\s*)?\{/.test(t)) return null;
+  if (/^\{/.test(t)) return null;
+  const callee = t.match(/^(?:await\s+)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)/);
+  return callee ? callee[1]! : null;
+}
+
+/** Widget constructor the named argument on line `i` belongs to: the nearest earlier (or same) line opening one. */
+function flutterElementAt(lines: string[], i: number): InteractiveElementInfo["element"] {
+  for (let j = i; j >= Math.max(0, i - 12); j--) {
+    const l = lines[j]!;
+    for (const [re, element] of FLUTTER_ELEMENT_OF) if (re.test(l)) return element;
+  }
+  return "custom";
+}
+
+function extractFlutterInteractiveElements(lines: string[]): InteractiveElementInfo[] {
+  const out: InteractiveElementInfo[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (!line.includes("on")) continue;
+    FLUTTER_EVENT_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = FLUTTER_EVENT_RE.exec(line)) !== null) {
+      // A declaration (`final VoidCallback? onTap;`, `required this.onTap,`) is no handler.
+      if (/\b(?:final|required|this\.|VoidCallback|Function)\b/.test(line.slice(0, m.index + 2)) || /^\s*(?:final|required)\b/.test(line)) continue;
+      out.push({ element: flutterElementAt(lines, i), event: m[1]!, handler: flutterHandlerName(m[2]!), line: i + 1 });
+    }
+  }
+  return out;
+}
+
+/** Widget base classes whose subclasses can be screens. */
+const FLUTTER_WIDGET_BASE_RE =
+  /^(?:StatelessWidget|StatefulWidget|ConsumerWidget|ConsumerStatefulWidget|HookWidget|HookConsumerWidget|StatelessHookWidget|StatefulHookWidget|StatelessHookConsumerWidget|StatefulHookConsumerWidget)$/;
+/** `Navigator.push(context, … (_) => SettingsPage())` / `context.push('/settings')` / `context.router.push(SettingsRoute())` / `showDialog(… SettingsDialog(`. */
+const FLUTTER_NAV_RE = [
+  /\bcontext\.(?:push|go|replace|pushReplacement|pushNamed|goNamed)\s*\(\s*['"]([^'"]+)['"]/g,
+  /\b(?:Navigator(?:\.of\(\w+\))?|context\.router|router|_router|appRouter)\.(?:push|pushReplacement|pushAndRemoveUntil|navigate|replace)\w*\s*\([^;]*?\b(?:=>\s*(?:const\s+)?|\(\s*)([A-Z]\w*)(?:Route|Page|Screen)?\s*\(/g,
+  /\bshow(?:Dialog|ModalBottomSheet|CupertinoDialog|GeneralDialog|Menu)\s*(?:<[^>]*>)?\s*\([^;]*?=>\s*(?:const\s+)?([A-Z]\w*)\s*\(/g,
+];
+
+/**
+ * Flutter screens: a widget class that renders a `Scaffold` (or a Cupertino
+ * page scaffold), is annotated `@RoutePage`, or is named `*Page` / `*Screen`.
+ * A `State<X>` class belongs to the screen `X` — its body is scanned for the
+ * screen's navigation. `components` stay empty: the widget tree is code, not a
+ * designer file; the interactive elements carry the handlers.
+ */
+function extractFlutterScreens(lines: string[], filePath: string, classes: ClassInfo[]): ScreenInfo[] {
+  const screens: ScreenInfo[] = [];
+  const stateOf = new Map<string, ClassInfo>(); // screen class → its State class
+  for (const cls of classes) {
+    const m = cls.extends?.match(/^State<\s*([A-Z]\w*)/);
+    if (m) stateOf.set(m[1]!, cls);
+  }
+  const bodyOf = (cls: ClassInfo): string => lines.slice(cls.line - 1, cls.endLine).join("\n");
+  for (const cls of classes) {
+    const base = cls.extends?.replace(/<.*$/, "") ?? "";
+    if (!FLUTTER_WIDGET_BASE_RE.test(base)) continue;
+    const state = stateOf.get(cls.name);
+    const body = bodyOf(cls) + (state ? "\n" + bodyOf(state) : "");
+    const annotated = cls.decorators.some((d) => /^RoutePage\b/.test(d)) || /@RoutePage\b/.test(lines[Math.max(0, cls.line - 2)] ?? "");
+    const scaffold = /\b(?:Scaffold|CupertinoPageScaffold|CupertinoTabScaffold|AdaptiveScaffold)\s*(?:\.\w+\s*)?\(/.test(body);
+    if (!annotated && !scaffold && !/(?:Page|Screen)$/.test(cls.name)) continue;
+    const navigatesTo = new Set<string>();
+    for (const re of FLUTTER_NAV_RE) {
+      re.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(body)) !== null) if (m[1] && m[1] !== cls.name) navigatesTo.add(m[1]);
+    }
+    screens.push({
+      name: cls.name,
+      formType: "FlutterPage",
+      caption: null,
+      dimensions: null,
+      components: [],
+      filePath,
+      routePath: null,
+      navigatesTo: [...navigatesTo],
+    });
+  }
+  return screens;
+}
+
 export const dartSpec: RegexLangSpec = {
   language: "dart",
   extensions: [".dart"],
@@ -553,4 +663,6 @@ export const dartSpec: RegexLangSpec = {
 
   extractDataSources: (lines) => extractDartDataSources(lines),
   extractRoutes: (lines) => extractDartRoutes(lines),
+  extractInteractiveElements: (lines) => extractFlutterInteractiveElements(lines),
+  extractScreens: (lines, filePath, classes) => extractFlutterScreens(lines, filePath, classes),
 };
