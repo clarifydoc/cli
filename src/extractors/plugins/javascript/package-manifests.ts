@@ -25,7 +25,11 @@ function parseNpm(text: string, declaredIn: string): DeclaredPackage[] {
 
 export const npmPackageManager: PackageManagerSpec = {
   ecosystem: "npm",
-  manifests: [{ files: ["package.json"], parse: (text, file) => parseNpm(text, file.declaredIn) }],
+  manifests: [{
+    files: ["package.json"],
+    parse: (text, file) => parseNpm(text, file.declaredIn),
+    selfName: (text) => { const name = jsonObject(text)?.name; return typeof name === "string" && name ? name : null; },
+  }],
   // `@scope/pkg/sub` → `@scope/pkg`, `lodash/fp` → `lodash`; relative paths
   // and the `@/` / `~` aliases name project files.
   importKey(s) {

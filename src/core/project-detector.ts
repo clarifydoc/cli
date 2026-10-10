@@ -5,6 +5,7 @@ import { readFile } from "fs/promises";
 import { join, resolve } from "path";
 import type { SubProject, SubProjectKind } from "../types/analysis.js";
 import { loadIgnorePatterns, isIgnored } from "./clarifydoc-ignore.js";
+import { PACKAGE_MANAGERS } from "../extractors/registry.js";
 
 /**
  * Sub-project detection.
@@ -156,7 +157,36 @@ export async function detectSubProjects(
   }
 
   subProjects.sort((a, b) => byOrdinal(a.root, b.root));
+  await Promise.all(subProjects.map(async (p) => {
+    const name = await declaredPackageName(root, p.root);
+    if (name) p.packageName = name;
+  }));
   return subProjects;
+}
+
+/**
+ * The name the manifest at `dir` declares for its own package, asked of every
+ * registered package-manager format that can say (the registry's
+ * `PackageManifestSpec.selfName`): core reads the file, the plugin reads the
+ * format. The first format whose manifest is present and names one wins.
+ */
+async function declaredPackageName(root: string, dir: string): Promise<string | null> {
+  for (const manager of PACKAGE_MANAGERS) {
+    for (const spec of manager.manifests) {
+      if (!spec.selfName || spec.glob) continue;
+      for (const file of spec.files) {
+        let text: string;
+        try {
+          text = await readFile(join(root, dir, file), "utf-8");
+        } catch {
+          continue;
+        }
+        const name = spec.selfName(text);
+        if (name) return name;
+      }
+    }
+  }
+  return null;
 }
 
 /** True when this CMakeLists.txt declares a project (`project(...)` call). */

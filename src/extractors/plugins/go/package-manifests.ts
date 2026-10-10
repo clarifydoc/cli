@@ -27,7 +27,11 @@ function parseGoMod(text: string, declaredIn: string): DeclaredPackage[] {
 
 export const goPackageManager: PackageManagerSpec = {
   ecosystem: "go",
-  manifests: [{ files: ["go.mod"], parse: (text, file) => parseGoMod(text, file.declaredIn) }],
+  manifests: [{
+    files: ["go.mod"],
+    parse: (text, file) => parseGoMod(text, file.declaredIn),
+    selfName: (text) => /^module\s+(\S+)/m.exec(text)?.[1] ?? null,
+  }],
   // The full import path: the module path is it, or an ancestor of it.
   importKey: (s) => (s.startsWith(".") ? null : s.toLowerCase()),
   prefixMatch: { separator: "/" },

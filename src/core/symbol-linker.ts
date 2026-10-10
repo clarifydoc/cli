@@ -9,6 +9,7 @@ import {
   type CallInfo,
   type Confidence,
   type ParamInfo,
+  type SubProject,
 } from "../types/analysis.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
@@ -36,7 +37,7 @@ interface SymbolDef {
  *
  * Runs as a post-analysis pass after all files have been individually analyzed.
  */
-export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
+export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly SubProject[] = []): SymbolLink[] {
   const symbolIndex = buildSymbolIndex(analyses);
   const projectOf = new Map(analyses.map((a) => [a.filePath, a.projectId]));
   // Design files (a Delphi `.dfm`) name the class their code unit declares;
@@ -68,6 +69,10 @@ export function buildSymbolLinks(analyses: FileAnalysis[]): SymbolLink[] {
     projectOf,
     languageOf: new Map(analyses.map((a) => [a.filePath, a.language as string])),
     importedFilesCache: new Map(),
+    packageProjects: subProjects
+      .filter((p) => p.packageName)
+      .map((p) => ({ name: normalizePackageName(p.packageName!), projectId: p.id })),
+    projectFilesCache: new Map(),
     importedStemsCache: new Map(),
   };
   const interfaceImplMap = ctx.interfaceImplMap;
@@ -942,6 +947,15 @@ interface LinkContext {
   /** Lazy per-file cache: files this file's imports resolve to (Strategy 4's
    *  cross-project gate). */
   importedFilesCache: Map<string, Set<string>>;
+  /**
+   * Sub-projects by the package name their manifest declares (normalized by
+   * `normalizePackageName`). An import whose source is that name, or starts
+   * with it and a separator (`lemmy_db_views_site::SiteView`,
+   * `@acme/ui/Button`, `code.gitea.io/gitea/models/user`), imports that
+   * sub-project: every file in it is then an import of the importer's.
+   */
+  packageProjects: Array<{ name: string; projectId: string }>;
+  projectFilesCache: Map<string, string[]>;
   /** Lazy per-file cache: stems of the files this file's imports resolve to
    *  (Strategy 7's C/C++ header↔impl evidence). */
   importedStemsCache: Map<string, Set<string>>;
@@ -961,11 +975,48 @@ function importedFilesOf(analysis: FileAnalysis, ctx: LinkContext): Set<string> 
     set = new Set();
     for (const imp of analysis.imports) {
       const f = resolveTarget(imp.source, analysis.filePath, ctx.filePathMap);
-      if (f && f !== analysis.filePath) set.add(f);
+      if (f && f !== analysis.filePath) {
+        set.add(f);
+        continue;
+      }
+      // Not a file of this project: a sibling sub-project, when the source
+      // names one by its declared package name. A Cargo workspace member
+      // (`use lemmy_db_views_site::SiteView`), an npm workspace package, a
+      // Go module path — none resolve by path, since the name is the
+      // manifest's, not the directory's.
+      const project = packageProjectOf(imp.source, ctx);
+      if (project && project !== analysis.projectId) {
+        for (const f of projectFilesOf(project, ctx)) if (f !== analysis.filePath) set.add(f);
+      }
     }
     ctx.importedFilesCache.set(analysis.filePath, set);
   }
   return set;
+}
+
+/** Lowercased, `-` and `_` unified, path separators as `/` — how two spellings of one package compare. */
+function normalizePackageName(name: string): string {
+  return name.toLowerCase().replace(/-/g, "_").replace(/::/g, "/").replace(/\/+$/, "");
+}
+
+/** The sub-project an import source names by declared package (exact, or as a prefix before a `/`). */
+function packageProjectOf(source: string, ctx: LinkContext): string | null {
+  if (ctx.packageProjects.length === 0 || source.startsWith(".") || source.startsWith("/")) return null;
+  const norm = normalizePackageName(source);
+  let best: { name: string; projectId: string } | null = null;
+  for (const p of ctx.packageProjects) {
+    if ((norm === p.name || norm.startsWith(p.name + "/")) && (!best || p.name.length > best.name.length)) best = p;
+  }
+  return best?.projectId ?? null;
+}
+
+function projectFilesOf(projectId: string, ctx: LinkContext): string[] {
+  let files = ctx.projectFilesCache.get(projectId);
+  if (!files) {
+    files = ctx.analyses.filter((a) => a.projectId === projectId).map((a) => a.filePath);
+    ctx.projectFilesCache.set(projectId, files);
+  }
+  return files;
 }
 
 /** Stems of the files the analysis's imports resolve to (cached per source file). */

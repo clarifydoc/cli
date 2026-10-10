@@ -70,6 +70,14 @@ export interface PackageManifestSpec {
   /** `files` are globs, searched `deep` directories down, at most `limit` files read. */
   glob?: { deep: number; limit: number };
   parse(text: string, file: ManifestFileContext): DeclaredPackage[] | Promise<DeclaredPackage[]>;
+  /**
+   * The package this manifest itself declares (Cargo `[package] name`, go.mod
+   * `module`, package.json `name`), when the format has one: what a sibling
+   * sub-project imports it by. Read at each sub-project root into
+   * `SubProject.packageName`; the linker treats an import naming it as an
+   * import of that sub-project.
+   */
+  selfName?(text: string): string | null;
 }
 
 /**

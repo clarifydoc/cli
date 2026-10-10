@@ -689,7 +689,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   progress.status("Building link graph...");
   const linkGraph = buildLinkGraph(allAnalyses);
   progress.status("Resolving cross-file symbols...");
-  let symbolLinks = dedupSymbolLinks(buildSymbolLinks(allAnalyses));
+  let symbolLinks = dedupSymbolLinks(buildSymbolLinks(allAnalyses, subProjects));
 
   // Resolve dispatch indirection (mediator / command-bus) the generic linker
   // can't see: a controller's `Send(new XQuery())` has no call edge to the
