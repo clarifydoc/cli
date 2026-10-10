@@ -57,8 +57,9 @@ export async function resolveAngularExternalTemplates(
     if (htmlAnalysis && htmlAnalysis !== a) {
       const kept = (htmlAnalysis.routes ?? []).filter((r) => r.kind !== "frontend");
       if (kept.length !== (htmlAnalysis.routes?.length ?? 0)) htmlAnalysis.routes = kept;
+      // The template tree stays: it is how the markup's `<app-x>` tags reach
+      // the components they use (dead-code's mention sources read it).
       if (htmlAnalysis.interactiveElements?.length) htmlAnalysis.interactiveElements = [];
-      if (htmlAnalysis.templateTree?.length) htmlAnalysis.templateTree = [];
     }
 
     const interactive = extractAngularInteractiveElementsFromTemplate(text);
