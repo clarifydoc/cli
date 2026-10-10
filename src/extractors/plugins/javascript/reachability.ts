@@ -367,6 +367,45 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
         if (f.startsWith(dir) && STRIP_EXT_RE.test(f)) manifestEntries.push({ file: f, reason: "vite_ruby entrypoint" });
       }
     }
+    // unplugin-vue-components / unplugin-auto-import write a registry
+    // (`components.d.ts`: `Agenda: typeof import('./src/components/Agenda.vue')['default']`)
+    // for what templates use by TAG, with no import anywhere — so no import
+    // graph reaches those components (tessa: 308 of a Vue app's files reported
+    // dead). Every module the registry names is registered by the tool and
+    // used as a default export.
+    for (const name of ["components.d.ts", "auto-imports.d.ts", "src/components.d.ts", "src/auto-imports.d.ts"]) {
+      const registry = await readText(join(ctx.projectRoot, root, name));
+      if (!registry || !/unplugin|typeof import\(/.test(registry)) continue;
+      for (const m of registry.matchAll(/typeof import\(\s*["']([^"']+)["']\s*\)/g)) {
+        for (const file of resolve(under(root, name), m[1]!) ?? []) manifestEntries.push({ file, reason: `${name} (auto-registered)` });
+      }
+    }
+    // File-based routers configured in vite: unplugin-vue-router
+    // (`VueRouter({ routesFolder: 'src/routes' })`, default `src/pages`) and
+    // vite-plugin-pages (`Pages({ dirs: ['src/views'] })`). Every page under
+    // the folder is a route the router generates — an entry, like a Nuxt page
+    // — and nothing imports it (tessa: 50 pages and the 230 files only they
+    // reach were reported dead).
+    for (const name of ["vite.config.ts", "vite.config.mts", "vite.config.js", "vite.config.mjs"]) {
+      const vite = await readText(join(ctx.projectRoot, root, name));
+      if (!vite) continue;
+      const folders: string[] = [];
+      const router = /\bVueRouter\s*\(\s*\{([\s\S]*?)\}\s*\)/.exec(vite);
+      if (router) folders.push(/routesFolder\s*:\s*["'`]([^"'`]+)["'`]/.exec(router[1]!)?.[1] ?? "src/pages");
+      else if (/\bVueRouter\s*\(\s*\)/.test(vite)) folders.push("src/pages");
+      const pages = /\bPages\s*\(\s*\{([\s\S]*?)\}\s*\)/.exec(vite);
+      if (pages) {
+        const dirs = [...pages[1]!.matchAll(/["'`]([^"'`]+)["'`]/g)].map((m) => m[1]!).filter((d) => !d.includes("*") && !d.startsWith("."));
+        folders.push(...(dirs.length > 0 ? dirs : ["src/pages"]));
+      } else if (/\bPages\s*\(\s*\)/.test(vite)) folders.push("src/pages");
+      for (const folder of folders) {
+        const dir = under(root, folder.replace(/^\.\/|\/+$/g, "")) + "/";
+        for (const f of files) {
+          if (f.startsWith(dir) && /\.(?:vue|tsx|jsx|md)$/.test(f)) manifestEntries.push({ file: f, reason: `${name} file-based route (${folder})` });
+        }
+      }
+      break;
+    }
     for (const name of ["serverless.yml", "serverless.yaml"]) {
       const sls = await readText(join(ctx.projectRoot, root, name));
       if (!sls) continue;

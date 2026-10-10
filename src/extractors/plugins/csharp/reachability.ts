@@ -32,6 +32,8 @@ export const csharpReachability = conventionReachability({
     // what it mentions alive, but a repo of tooling scripts is not a program.
     [/\.csx$/i, "C# script"],
     [/(?:^|\/)Migrations?\//, "migration (EF Core, FluentMigrator)"],
+    // BenchmarkDotNet discovers `[Benchmark]` classes by reflection: run by the tool, never imported.
+    [/(?:^|\/)[^/]*Benchmarks?\//i, "benchmark project"],
     [/(?:^|\/)Properties\/AssemblyInfo\.cs$/, "assembly metadata"],
   ],
   entryDecorators:
