@@ -209,7 +209,7 @@ function modelDirPrefix(filePath: string): string {
 }
 
 /** `KmdIndberetning` / `IstLoen::KmdIndberetning` → `kmd_indberetning` / `ist_loen_kmd_indberetning`. */
-function railsUnderscore(name: string): string {
+export function railsUnderscore(name: string): string {
   return name
     .replace(/::/g, "/")
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")

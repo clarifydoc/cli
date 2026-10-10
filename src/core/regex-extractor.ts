@@ -21,12 +21,14 @@ export function extractWithRegex(
   sourceText: string,
   filePath: string,
   language: Language,
+  /** The source already split by `splitLines`, when the caller has it. */
+  presplit?: string[],
 ): FileAnalysis {
   const analysis = createEmptyAnalysis(filePath, language);
   const spec = regexSpecFor(language);
   if (!spec) return analysis;
 
-  const lines = splitLines(sourceText);
+  const lines = presplit ?? splitLines(sourceText);
 
   analysis.functions = extractFunctionsWithSpec(lines, spec);
   analysis.classes = spec.extractClasses
@@ -78,7 +80,7 @@ export function extractWithRegex(
   // formats (Prisma); the `entities` domain covers code-embedded models
   // (Go/Rust/Ruby). Both contribute to entityRelations; entities are merged
   // into analysis.classes by name (enrich-or-add).
-  const specRelations = spec.extractEntityRelations?.(lines, analysis.classes) ?? [];
+  const specRelations = spec.extractEntityRelations?.(lines, analysis.classes, analysis.imports) ?? [];
   const entityResult = extractEntities(analysis, sourceText, language);
   mergeEntities(analysis, entityResult);
   const relations = [...specRelations, ...entityResult.relations];

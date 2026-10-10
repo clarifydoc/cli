@@ -1,4 +1,5 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
+import { simpleTypeName, stripTypeModifiers } from "../../shared/type-parser.js";
 import type { ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
 
 /**
@@ -211,11 +212,10 @@ export class GoEntityExtractor extends EntityExtractor {
       if (!type) return null;
       // The declared type token only — a property type may still carry the
       // struct tag text (`*Camera \`gorm:"…"`) when the tag was not split off.
-      let t = (type.trim().match(/^[\[\]*\w.]+/) ?? [""])[0]!;
-      const slice = /^\[\]/.test(t) || /^map\[/.test(t);
-      t = t.replace(/^(?:\[\]|\*|map\[[^\]]*\])+/, "").replace(/^\*/, "");
-      const ref = t.split(".").pop() ?? "";
-      return /^[A-Z]\w*$/.test(ref) ? { ref, slice } : null;
+      const token = (type.trim().match(/^[\[\]*\w.]+/) ?? [""])[0]!;
+      const slice = /^\[\]/.test(token) || /^map\[/.test(token);
+      const ref = simpleTypeName(stripTypeModifiers(token, "go"));
+      return ref && /^[A-Z]\w*$/.test(ref) ? { ref, slice } : null;
     };
     for (const a of go) {
       const added: EntityRelation[] = [];

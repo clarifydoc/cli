@@ -1,3 +1,4 @@
+import { pluralize, singularize } from "../shared/inflection.js";
 import type { CallInfo, ClassInfo, DataSourceInfo, EntityRelation, FileAnalysis, FunctionInfo, Language, PropertyInfo } from "../../../types/analysis.js";
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import { isInstanceWrite, modelAccess } from "./data-sources.js";
@@ -119,14 +120,4 @@ function underscore(name: string): string {
 }
 function camelize(word: string): string {
   return word.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join("");
-}
-function singularize(word: string): string {
-  if (/ies$/.test(word)) return word.replace(/ies$/, "y");
-  if (/(ss|x|z|ch|sh)es$/.test(word)) return word.replace(/es$/, "");
-  return /[^s]s$/.test(word) ? word.slice(0, -1) : word;
-}
-function pluralize(word: string): string {
-  if (/[^aeiou]y$/.test(word)) return word.replace(/y$/, "ies");
-  if (/(s|x|z|ch|sh)$/.test(word)) return word + "es";
-  return word + "s";
 }

@@ -20,7 +20,7 @@ describe("regex-path complexity", () => {
 	switch x { case 1: return 2 }
 	return 0
 }`.split("\n");
-    const [row] = computeRegexComplexity(src, analysis([fn("Handle", 1, 11)]), spec);
+    const [row] = computeRegexComplexity(src, analysis([fn("Handle", 1, 11)]), spec, false);
     // if, &&, for, case → 1 + 4
     expect(row).toMatchObject({ functionName: "Handle", complexity: 5, line: 1, endLine: 11, paramCount: 1 });
   });

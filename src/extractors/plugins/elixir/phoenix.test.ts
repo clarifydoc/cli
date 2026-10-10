@@ -268,7 +268,7 @@ end`;
     const lines = src.split("\n");
     const classes = elixirSpec.postProcessClasses!(lines, elixirSpec.extractClasses!(lines, []));
     expect(classes[0]!.decorators).toEqual(expect.arrayContaining(["entity", "ecto", "table:sites"]));
-    const rels = elixirSpec.extractEntityRelations!(lines, classes);
+    const rels = elixirSpec.extractEntityRelations!(lines, classes, elixirSpec.extractImports!(lines));
     expect(rels.map((r) => `${r.fromField} -> ${r.toEntity} (${r.cardinality})`)).toEqual([
       "team -> Plausible.Teams.Team (many-to-one)",
       "guest_memberships -> Plausible.Teams.GuestMembership (one-to-many)",

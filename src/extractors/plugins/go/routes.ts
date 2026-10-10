@@ -235,7 +235,7 @@ export function extractGoRoutes(lines: string[]): RouteInfo[] {
     const line = lines[i]!;
     const lineNo = i + 1;
 
-    const fnDecl = line.match(/^func\s+(?:\([^)]*\)\s*)?(\w+)\s*\(/);
+    const fnDecl = line.match(/^func\s+(?:\([^)]*\)\s*)?(\w+)\s*[[(]/); // `[` — a generic func's type parameters
     if (fnDecl) currentFn = fnDecl[1]!;
 
     const sub = line.match(SUBROUTER_RE);

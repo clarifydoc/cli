@@ -159,5 +159,5 @@ export const elixirSpec: RegexLangSpec = {
   extractRoutes: (lines) => extractPhoenixRoutes(lines),
   extractDataSources: (lines) => extractElixirDataSources(lines),
   /** Ecto `belongs_to` / `has_many` / `has_one` / `many_to_many` → entity relations (see `phoenix.ts`). */
-  extractEntityRelations: (lines, classes) => extractEctoRelations(lines, classes),
+  extractEntityRelations: (lines, classes, imports) => extractEctoRelations(lines, classes, imports),
 };

@@ -1,7 +1,7 @@
 import type { Tree } from "web-tree-sitter";
 import type { RouteInfo } from "../../../../types/analysis.js";
 import type { RouteExtractor } from "../../../routes/base.js";
-import { extractSpringRoutes, extractSpringRoutesRegex } from "./spring.js";
+import { FUNCTIONAL_ROUTER_GATE_RE, extractSpringRoutes, extractSpringRoutesRegex } from "./spring.js";
 import { extractJaxrsMicronautRoutes } from "./jaxrs.js";
 import { extractKtorRoutes } from "./ktor.js";
 
@@ -18,7 +18,7 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
     const routes: RouteInfo[] = [];
 
     // Annotation routes name a `*Mapping`; functional endpoints build on `route()`.
-    if (sourceText.includes("Mapping") || /\broute\s*\(\s*\)|\bRouterFunctions\b|\bSpringdocRouteBuilder\b/.test(sourceText)) {
+    if (sourceText.includes("Mapping") || FUNCTIONAL_ROUTER_GATE_RE.test(sourceText)) {
       extractSpringRoutes(tree.rootNode, routes);
       // Recover routes from files the grammar misparsed into a routeless tree.
       if (routes.length === 0) extractSpringRoutesRegex(sourceText, routes);

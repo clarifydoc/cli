@@ -34,6 +34,9 @@ These consume a `RegexLangSpec` and produce standard output:
 - `extractClassesWithSpec(lines, spec)` — classes + methods + properties (runs function patterns on class body lines)
 - `extractImportsWithSpec(lines, spec)` — imports, one `importPatterns` match per line; a spec whose imports are structural sets `extractImports` instead (Go: only inside `import` declarations, aliases kept as the specifier — a per-line `"…"` pattern took every string line for an import and missed `alias "path"`)
 - `deriveExportsFromFnClasses(fns, classes)` — all public functions + classes become exports
+- `repository-access.ts` `attributeRepositoryAccesses(analyses, knobs)` — the repository pattern over a generic base (`IMovieRepository : IBasicRepository<Movie>`, `RepositoryRecipes(Generic[Recipe, RecipeModel])`): walks the typed member chain across files and puts the generic's entity-typed argument on every CRUD-shaped call; a plugin's entity extractor calls it from `reconcileProject` with its spelling knobs (C#, Python)
+- `inflection.ts` `singularize`/`pluralize` — the loose English inflection ORM conventions share (Crystal, Dart)
+- `declared-package.ts` `tomlSectionValue(text, sections, key)` — a manifest's own `[package]`/`[project]` name
 
 ### Helpers
 

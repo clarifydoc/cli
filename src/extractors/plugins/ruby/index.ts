@@ -364,6 +364,9 @@ function extractRubyHttpCalls(lines: string[]): DataSourceInfo[] {
  * how the entity graph indexes its nodes); the shared enricher would otherwise
  * reject a `Ns::Model` receiver as a non-identifier.
  */
+/** A line worth the chain scan: it calls an AR verb (or any `find…` finder) through a dot. */
+const AR_VERB_GATE = new RegExp(`\\.(?:${[...AR_QUERY_METHODS, ...AR_WRITE_METHODS].map((v) => v.replace(/[!?]$/, "")).join("|")}|find\\w*)[!?]?(?=\\s*(?:\\(|$|\\s|[,)\\]}]))`);
+
 function extractRubyDataSources(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
   const seen = new Set<string>();
@@ -390,6 +393,7 @@ function extractRubyDataSources(lines: string[]): DataSourceInfo[] {
     // `RubyEntityExtractor.reconcileProject` joins or drops it. A bare
     // lowercase receiver counts only with a WRITE verb — `items.first` is an
     // Array; `contact.save!` is persistence.
+    if (!AR_VERB_GATE.test(line)) continue; // the chain regex is costly; most lines call no AR verb
     for (const m of line.matchAll(AR_CHAIN_RE)) {
       const receiver = m[1]!;
       const method = m[2]!;

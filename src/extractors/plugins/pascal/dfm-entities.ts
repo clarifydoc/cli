@@ -1,5 +1,6 @@
 import type { ClassInfo, DataSourceInfo, EntityRelation, FileAnalysis, PropertyInfo } from "../../../types/analysis.js";
 import { EntityExtractor, SYNTHETIC_ENTITY, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
+import { companionStem } from "./companion.js";
 
 /**
  * Data-model extraction for Delphi forms and data modules.
@@ -591,12 +592,12 @@ function joinUnitAccessesToFormTables(analyses: FileAnalysis[]): void {
       if (known && known !== ds.entity) byComponent.set(key, ""); // several tables: no single answer
       else if (!known) byComponent.set(key, ds.entity);
     }
-    tablesByForm.set(a.filePath.replace(/\.dfm$/i, "").toLowerCase(), byComponent);
+    tablesByForm.set(companionStem(a.filePath), byComponent);
   }
   if (tablesByForm.size === 0) return;
   for (const a of analyses) {
     if (a.language !== "pascal") continue;
-    const form = tablesByForm.get(a.filePath.replace(/\.(pas|pp|dpr)$/i, "").toLowerCase());
+    const form = tablesByForm.get(companionStem(a.filePath));
     if (!form || form.size === 0) continue;
     let changed = false;
     const next: DataSourceInfo[] = a.dataSources.map((ds) => {

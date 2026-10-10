@@ -1,5 +1,6 @@
 import { readFile } from "fs/promises";
 import { computeRegexComplexity } from "./complexity-regex.js";
+import { splitLines } from "../extractors/shared/source-lines.js";
 import type { DiscoveredFile } from "./file-discovery.js";
 import { writeFileAnalysis, type OutputOptions } from "./output-writer.js";
 import { parseSource } from "../parsers/parser-manager.js";
@@ -132,8 +133,10 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       }
       const regexSource = pre?.sourceText ?? rawSource;
       const { extractWithRegex } = await import("./regex-extractor.js");
-      const analysis = extractWithRegex(regexSource, file.relativePath, pre?.language ?? file.language);
-      restoreTypedReceiverCalls(analysis, pluginFor(analysis.language)?.caseInsensitiveNames === true);
+      const regexLines = splitLines(regexSource);
+      const analysis = extractWithRegex(regexSource, file.relativePath, pre?.language ?? file.language, regexLines);
+      const caseInsensitive = pluginFor(analysis.language)?.caseInsensitiveNames === true;
+      restoreTypedReceiverCalls(analysis, caseInsensitive);
       pre?.postExtract?.(analysis, rawSource);
       analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
       analysis.projectId = projectId;
@@ -146,9 +149,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       const regexTypeRefs = extractTypeReferences(analysis, file.language);
       if (regexTypeRefs.length > 0) analysis.typeReferences = regexTypeRefs;
       const regexSpec = regexSpecFor(analysis.language);
-      const regexComplexities = regexSpec
-        ? computeRegexComplexity(regexSource.split("\n"), analysis, regexSpec, pluginFor(analysis.language)?.caseInsensitiveNames === true)
-        : [];
+      const regexComplexities = regexSpec ? computeRegexComplexity(regexLines, analysis, regexSpec, caseInsensitive) : [];
       if (regexComplexities.length > 0) analysis.complexities = regexComplexities;
       await writeFileAnalysis(analysis, outputOpts);
       // Keep raw source for regex-path UI files that back a screen (HTML pages,

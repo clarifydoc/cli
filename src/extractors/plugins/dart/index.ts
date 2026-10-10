@@ -20,6 +20,7 @@ import {
   riverpodProviderTypes,
 } from "./di.js";
 import { addBodyLevelMembers, isDartInterface } from "./members.js";
+import { singularize } from "../shared/inflection.js";
 
 /**
  * Dart (and therefore Flutter) regex extraction.
@@ -177,7 +178,6 @@ const ISAR_CALL_RE = /(?<![\w.])_?isar\.(\w+)\.(put|putAll|putSync|get|getAll|ge
 const DRIFT_WRITE = /^(delete|deleteWhere|deleteAll|insert\w*|into|update|replace|create|bulk\w+)$/;
 
 const pascal = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
-const singular = (s: string): string => (/ies$/.test(s) ? s.replace(/ies$/, "y") : /(ss|x|z|ch|sh)es$/.test(s) ? s.replace(/es$/, "") : /[^s]s$/.test(s) ? s.slice(0, -1) : s);
 
 /** Pull a URL-ish first argument out of an HTTP call (`'…'`, `"…"`, or `Uri.parse('…')`). */
 function firstUrlArg(line: string, fromIndex: number): string | null {
@@ -240,7 +240,7 @@ function extractDartDataSources(lines: string[]): DataSourceInfo[] {
     }
     for (const m of line.matchAll(ISAR_CALL_RE)) {
       if (/^(?:txn|writeTxn|writeTxnSync|collection|close|clear)$/.test(m[1]!)) continue;
-      const entity = pascal(singular(m[1]!));
+      const entity = pascal(singularize(m[1]!));
       push({ kind: "database", name: `isar.${m[1]}.${m[2]}`, target: entity, calls: [], line: ln, entity, access: /^(put|delete|clear)/.test(m[2]!) ? "write" : "read" });
     }
 
@@ -471,8 +471,8 @@ const FLUTTER_EVENT_RE =
 const FLUTTER_ELEMENT_OF: ReadonlyArray<[RegExp, InteractiveElementInfo["element"]]> = [
   [/\b(?:Elevated|Text|Outlined|Icon|Filled|Floating(?:Action)?|Cupertino|Back|Close|Menu|Popup\w*|Dropdown\w*|Segmented)?Button(?:\.\w+)?\s*\(/, "button"],
   [/\b(?:TextField|TextFormField|CupertinoTextField|EditableText)\s*\(/, "input"],
-  [/\b(?:Form)\s*\(/, "form"],
-  [/\b(?:DropdownButton\w*|PopupMenuButton|Dropdown\w*)\s*\(/, "select"],
+  [/\bForm\s*\(/, "form"],
+  [/\bDropdown\w*\s*\(/, "select"],
   [/\b(?:Checkbox|Switch|Radio|Slider|CupertinoSwitch)\w*\s*\(/, "input"],
   [/\b(?:InkWell|GestureDetector|ListTile|InkResponse|Card|Dismissible|RefreshIndicator)\s*\(/, "custom"],
 ];
@@ -511,7 +511,7 @@ function extractFlutterInteractiveElements(lines: string[]): InteractiveElementI
     let m: RegExpExecArray | null;
     while ((m = FLUTTER_EVENT_RE.exec(line)) !== null) {
       // A declaration (`final VoidCallback? onTap;`, `required this.onTap,`) is no handler.
-      if (/\b(?:final|required|this\.|VoidCallback|Function)\b/.test(line.slice(0, m.index + 2)) || /^\s*(?:final|required)\b/.test(line)) continue;
+      if (/\b(?:final|required|this\.|VoidCallback|Function)\b/.test(line.slice(0, m.index + 2))) continue;
       out.push({ element: flutterElementAt(lines, i), event: m[1]!, handler: flutterHandlerName(m[2]!), line: i + 1 });
     }
   }

@@ -594,9 +594,10 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         // `'asset as a'` is cut). The chain's root is usually `this.db`, which
         // no root-name rule trusts, and the verbs are Kysely's alone — so the
         // table literal is the evidence.
-        const kyselyTable = fnName && KYSELY_TABLE_VERBS.has(fnName) ? literalString(node.childForFieldName("arguments")?.namedChildren[0] ?? null) : null;
-        if (!emittedApiCall && kyselyTable && /^[A-Za-z_][\w.]*(?:\s+as\s+\w+)?$/.test(kyselyTable)) {
-          const table = kyselyTable.replace(/\s+as\s+\w+$/, "").split(".").pop()!;
+        const kyselyArg = fnName && KYSELY_TABLE_VERBS.has(fnName) ? literalString(node.childForFieldName("arguments")?.namedChildren[0] ?? null) : null;
+        const kysely = kyselyArg ? /^([A-Za-z_]\w*(?:\.\w+)*)(?:\s+as\s+\w+)?$/.exec(kyselyArg) : null;
+        if (!emittedApiCall && kysely) {
+          const table = kysely[1]!.split(".").pop()!;
           sources.push(this.ds({
             kind: "database",
             name: ormChain ?? `kysely.${fnName}`,

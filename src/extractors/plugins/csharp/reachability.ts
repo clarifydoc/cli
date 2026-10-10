@@ -27,13 +27,13 @@ export const csharpReachability = conventionReachability({
     [/(?:^|\/)(?:Program|Startup|MauiProgram|GlobalUsings)\.cs$/i, "conventional .NET entry"],
     [/(?:^|\/)(?:App|Global)\.(?:xaml|asax)\.cs$/i, "application class"],
   ],
+  // BenchmarkDotNet discovers `[Benchmark]` methods by reflection: run by the tool, never imported.
+  passiveSource: [[/\[\s*Benchmark\b/, "BenchmarkDotNet benchmark"]],
   passiveFiles: [
     // Run by dotnet-script, never compiled into the assembly: a script keeps
     // what it mentions alive, but a repo of tooling scripts is not a program.
     [/\.csx$/i, "C# script"],
     [/(?:^|\/)Migrations?\//, "migration (EF Core, FluentMigrator)"],
-    // BenchmarkDotNet discovers `[Benchmark]` classes by reflection: run by the tool, never imported.
-    [/(?:^|\/)[^/]*Benchmarks?\//i, "benchmark project"],
     [/(?:^|\/)Properties\/AssemblyInfo\.cs$/, "assembly metadata"],
   ],
   entryDecorators:

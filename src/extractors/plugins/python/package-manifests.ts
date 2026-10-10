@@ -1,6 +1,6 @@
 import type { PackageScope } from "../../../types/analysis.js";
 import type { DeclaredPackage, PackageManagerSpec } from "../../../types/language-plugin.js";
-import { declared } from "../shared/declared-package.js";
+import { declared, tomlSectionValue } from "../shared/declared-package.js";
 
 /** requirements.txt-style lines (also each entry of a pyproject dependency array). */
 function parseRequirements(text: string, declaredIn: string, isDev: boolean): DeclaredPackage[] {
@@ -98,7 +98,7 @@ export const pypiPackageManager: PackageManagerSpec = {
       files: ["pyproject.toml"],
       parse: (text, file) => parsePyproject(text, file.declaredIn),
       // `[project] name` (PEP 621) or Poetry's `[tool.poetry] name`.
-      selfName: (text) => /^\[(?:project|tool\.poetry)\]\s*$[\s\S]*?^name\s*=\s*["']([^"']+)["']/m.exec(text.replace(/#.*$/gm, ""))?.[1] ?? null,
+      selfName: (text) => tomlSectionValue(text, ["project", "tool.poetry"], "name"),
     },
     { files: ["Pipfile"], parse: (text, file) => parsePipfile(text, file.declaredIn) },
     {

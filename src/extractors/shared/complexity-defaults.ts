@@ -19,3 +19,17 @@ export const DEFAULT_COMPLEXITY: LanguageComplexitySpec = {
     "generator_function", "generator_function_declaration", "method_definition",
   ]),
 };
+
+/**
+ * The regex path's complexity vocabulary (core/complexity-regex.ts): the
+ * C-family keywords plus the script languages' `elif`/`elsif`/`unless`/
+ * `until`/`when`/`rescue` spellings, the logical operators, and the block
+ * closers that repeat an opener's keyword (VB `End If`, Fortran `END DO`),
+ * which open nothing. A plugin overrides it with `RegexLangSpec.complexity`.
+ */
+export const REGEX_COMPLEXITY_DEFAULT = {
+  branches:
+    /\b(?:if|elif|elsif|elseif|for|foreach|while|until|unless|case|when|match|catch|rescue|except|guard|cond|loop|select)\b/g,
+  logicalOps: /&&|\|\||\b(?:and|or|andalso|orelse)\b/g,
+  closers: /\bend\s+(?:if|do|select|while|for|case|match|loop|try|with)\b/gi,
+};

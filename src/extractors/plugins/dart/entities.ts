@@ -13,6 +13,9 @@ import type { ClassInfo, EntityRelation, Language, PropertyInfo } from "../../..
  *   - Hive:   `@HiveType(typeId: 1) class Settings { @HiveField(0) late String theme; }`.
  * Source-text based over each class's line range; never throws.
  */
+/** A plain Dart field declaration: `late String name;`, `final int id;`, `@HiveField(0) String? theme;`, `Id id = …`. */
+const DART_FIELD_RE = /^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:late\s+|final\s+)?([A-Z]\w*(?:<[^>]*>)?\??|int|double|bool|num)\s+(\w+)\s*(?:=|;)/;
+
 export class DartEntityExtractor extends EntityExtractor {
   readonly languages: Language[] = ["dart"];
 
@@ -65,7 +68,7 @@ export class DartEntityExtractor extends EntityExtractor {
         relations.push({ fromEntity: cls.name, fromField: field, toEntity: target, cardinality: /IsarLinks</.test(line) ? "one-to-many" : "many-to-one", orm: "isar", confidence: "EXTRACTED" });
         continue;
       }
-      const f = /^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:late\s+|final\s+)?([A-Z]\w*(?:<[^>]*>)?\??|int|double|bool|num)\s+(\w+)\s*(?:=|;)/.exec(line);
+      const f = DART_FIELD_RE.exec(line);
       if (!f) continue;
       props.push(this.column(f[2]!, f[1]!.replace(/\?$/, "")));
     }
@@ -88,7 +91,7 @@ export class DartEntityExtractor extends EntityExtractor {
     for (let i = 0; i < body.length; i++) {
       const line = body[i]!;
       if (marker && !marker.test(line) && !marker.test(body[i - 1] ?? "")) continue;
-      const f = /^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:late\s+|final\s+)?([A-Z]\w*(?:<[^>]*>)?\??|int|double|bool|num)\s+(\w+)\s*(?:=|;)/.exec(line);
+      const f = DART_FIELD_RE.exec(line);
       if (!f) continue;
       props.push(this.column(f[2]!, f[1]!.replace(/\?$/, "")));
     }

@@ -389,6 +389,6 @@ describe("generic repository access + Marr table mapping (project-level)", () =>
       ["_movieRepository.Get", "Movie", "read"],
       ["_movieRepository.Insert", "Movie", "write"],
     ]);
-    expect(movie.classes[0]!.decorators).toEqual(["entity", "marr"]);
+    expect(movie.classes[0]!.decorators).toEqual(["entity", "marr", "table:Movies"]);
   });
 });
