@@ -60,6 +60,63 @@ function phpAccess(method: string): { access?: "read" | "write" } {
   return a ? { access: a } : {};
 }
 
+/** PDO verbs whose first string argument is SQL text, not a column. */
+const PDO_SQL_VERBS: ReadonlySet<string> = new Set(["query", "exec", "prepare"]);
+
+/** Instance-call verbs that mark a PDO / Eloquent / generic ORM access. */
+const PHP_INSTANCE_VERBS: ReadonlySet<string> = new Set([
+  "query", "exec", "prepare", "fetchAll", "fetch", "find", "findOrFail", "first", "firstOrFail",
+  "firstWhere", "sole", "get", "all", "where", "select", "insert", "update", "delete", "save",
+  "create", "destroy", "updateOrCreate", "firstOrCreate", "upsert", "paginate", "count", "exists",
+  "pluck", "cursor", "chunk", "truncate", "forceDelete", "restore", "increment", "decrement",
+]);
+
+/** Eloquent statics that start a query or run one: `Model::where(…)`, `Model::create(…)`. */
+const ELOQUENT_STATIC_VERBS: ReadonlySet<string> = new Set([
+  "find", "findOrFail", "findMany", "where", "whereIn", "whereHas", "whereNull", "whereNotNull",
+  "create", "update", "updateOrCreate", "upsert", "insert", "destroy", "delete", "all", "first",
+  "firstOrCreate", "firstOrFail", "firstWhere", "sole", "paginate", "with", "withCount", "join",
+  "select", "query", "newQuery", "orderBy", "latest", "oldest", "pluck", "count", "exists",
+  "truncate", "cursor", "chunk", "has", "doesntHave", "withTrashed", "onlyTrashed",
+]);
+
+/**
+ * Builder verbs that keep an Eloquent chain going. A call whose parent is a
+ * member call with one of these names (or a terminal verb) is an inner link —
+ * the chain's one data-source row is emitted at its outermost such call.
+ * Project-specific scopes (`->onlyStandard()`) are not known here: a chain
+ * `Model::query()->myScope()->get()` still emits at `get`, whose text carries
+ * the `Model::query()` root for the project-level join.
+ */
+const ELOQUENT_CHAIN_VERBS: ReadonlySet<string> = new Set([
+  ...PHP_INSTANCE_VERBS, ...ELOQUENT_STATIC_VERBS,
+  "orWhere", "whereIn", "whereNotIn", "orWhereIn", "whereNull", "whereNotNull", "whereBetween",
+  "whereDate", "whereHas", "orWhereHas", "whereDoesntHave", "whereRelation", "whereKey", "whereColumn",
+  "with", "withCount", "withTrashed", "onlyTrashed", "has", "doesntHave", "orderBy", "orderByDesc",
+  "latest", "oldest", "limit", "take", "skip", "offset", "groupBy", "having", "distinct", "join",
+  "leftJoin", "rightJoin", "lockForUpdate", "sharedLock", "when", "unless", "inRandomOrder",
+  "reorder", "forPage", "selectRaw", "whereRaw", "orderByRaw", "addSelect", "newQuery", "getQuery",
+  "toBase", "withoutGlobalScopes", "withoutGlobalScope",
+]);
+
+/**
+ * True when a member call further up `node`'s fluent chain is an Eloquent/PDO
+ * chain verb — that call emits the chain's row. Unknown links in between
+ * (`Model::query()->myScope()->get()`) are stepped over; a chain that ends in
+ * no known verb (`Model::all()->map(…)`) leaves the row at `node`.
+ */
+function continuesEloquentChain(node: Node): boolean {
+  let cur: Node = node;
+  for (;;) {
+    const parent = cur.parent;
+    if (!parent || parent.type !== "member_call_expression") return false;
+    if (parent.childForFieldName("object")?.id !== cur.id) return false;
+    const method = parent.childForFieldName("name")?.text ?? "";
+    if (ELOQUENT_CHAIN_VERBS.has(method)) return true;
+    cur = parent;
+  }
+}
+
 export class PhpDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["php"];
 
@@ -201,12 +258,22 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
         return;
       }
 
-      // PDO + Eloquent + generic ORM patterns
-      if (/^(query|exec|prepare|fetchAll|fetch|find|first|get|all|where|select|insert|update|delete|save|create)$/.test(method)) {
+      // PDO + Eloquent + generic ORM patterns. One row per fluent chain — the
+      // OUTERMOST call, whose verb is the access that actually runs
+      // (`$user->accounts()->where(…)->first()` is one read, not a `where`
+      // and a `first`); an inner call whose parent continues the chain with
+      // another builder/terminal verb is left to that parent. The first string
+      // argument is a TABLE only for the SQL-text verbs — a `where('id', …)`
+      // argument is a column, and recording it as the target put a datastore
+      // called "id" on the Data Access graph. The Eloquent entity is joined
+      // project-wide in `PhpEntityExtractor.reconcileProject`, which knows
+      // which classes are models and which relation names reach which.
+      if (PHP_INSTANCE_VERBS.has(method)) {
+        if (continuesEloquentChain(node)) return;
         sources.push(this.ds({
           kind: "database",
           name: callText,
-          target: this.firstStringArg(node) ?? null,
+          target: PDO_SQL_VERBS.has(method) ? (this.firstStringArg(node) ?? null) : null,
           line,
           ...phpAccess(method),
         }));
@@ -242,12 +309,18 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
       // facades share these verbs (`Route::delete`, `Session::all`,
       // `View::first`) — veto them so facade plumbing never becomes a phantom
       // database source.
+      // A static call that a fluent chain continues (`Model::where(…)->first()`)
+      // is the chain's root, not its access: the member row for the terminal
+      // verb carries the whole chain text, root included, and is the one row.
+      // `static::`/`self::` inside a model class are the model itself —
+      // resolved against the enclosing class in `reconcileProject`.
       if (NON_MODEL_FACADES.has(scope)) return;
-      if (/^[A-Z]/.test(scope) && /^(find|findOrFail|where|create|update|updateOrCreate|destroy|delete|all|first|firstOrCreate|firstOrFail|paginate|with|join|select)$/.test(name)) {
+      if ((/^[A-Z]/.test(scope) || /^(static|self|parent)$/.test(scope)) && ELOQUENT_STATIC_VERBS.has(name)) {
+        if (continuesEloquentChain(node)) return;
         sources.push(this.ds({
           kind: "database",
           name: callText,
-          target: scope,
+          target: /^(static|self|parent)$/.test(scope) ? null : scope,
           line,
           ...phpAccess(name),
         }));

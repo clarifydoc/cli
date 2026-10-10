@@ -214,9 +214,17 @@ export function extractGoRoutes(lines: string[]): RouteInfo[] {
     // A string literal between path and handler is a client call's content
     // type, not middleware (`client.Post("/api", "application/json", body)`).
     const guards = rest.slice(0, -1).filter((a) => !STRING_RE.test(a)).map(classifyGuard);
-    const last = unwrapHandler(rest[rest.length - 1]!);
-    return { handler: last.handler, guards: [...guards, ...last.guards] };
+    const lastArg = rest[rest.length - 1]!;
+    const last = unwrapHandler(lastArg);
+    // An inline closure (`router.GET("/albums/:uid", func(c *gin.Context) {`)
+    // has no name of its own, but the function declaring the route does, and
+    // its body — the closure included — is where the handling lives. Anchor
+    // the route there so the trace continues into that body's calls.
+    const handler = last.handler ?? (/^func\s*\(/.test(lastArg.trim()) && currentFn ? currentFn : null);
+    return { handler, guards: [...guards, ...last.guards] };
   };
+  /** The top-level function the current line is in (`func GetAlbum(router *gin.RouterGroup) {`). */
+  let currentFn: string | null = null;
 
   const literal = (arg: string | undefined): string | null => {
     const m = arg?.match(STRING_RE);
@@ -226,6 +234,9 @@ export function extractGoRoutes(lines: string[]): RouteInfo[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     const lineNo = i + 1;
+
+    const fnDecl = line.match(/^func\s+(?:\([^)]*\)\s*)?(\w+)\s*\(/);
+    if (fnDecl) currentFn = fnDecl[1]!;
 
     const sub = line.match(SUBROUTER_RE);
     if (sub) {

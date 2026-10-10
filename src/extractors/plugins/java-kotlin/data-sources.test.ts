@@ -224,7 +224,9 @@ class UserController {
 }`;
     const tree = await parseSource(src, "java" as any, "UserController.java");
     const s = db(new JavaKotlinDataSourceExtractor().extract(tree, src));
-    expect(s.map((d) => d.target)).toEqual([null]);
+    // A call into the service layer is no access of its own — the service's
+    // method shows the access where it happens.
+    expect(s).toEqual([]);
   });
 
   it("stays unresolved when the receiver has no declared type", async () => {

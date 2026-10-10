@@ -93,6 +93,7 @@ function extractSvelteProps(attrs: string): string[] {
   while ((m = re.exec(attrs)) !== null) {
     const key = m[1]!;
     if (key.startsWith("on:")) continue; // events surface as event pills
+    if (/^on[a-z]+$/.test(key) && new RegExp(SVELTE5_EVENT_RE.source.replace(/=.*$/, "=")).test(`${key}=`)) continue; // Svelte 5 event attribute
     if (key === "class" || key === "style") continue;
     props.push(key);
   }
@@ -111,6 +112,13 @@ function extractSvelteProps(attrs: string): string[] {
  */
 const SVELTE_TAG_RE = /<([a-zA-Z][a-zA-Z0-9-]*)((?:"[^"]*"|'[^']*'|\{[^{}]*\}|[^>'"])*?)\/?>/g;
 const SVELTE_EVENT_RE = /\bon:([a-zA-Z][a-zA-Z0-9]*)(?:=(?:"([^"]*)"|\{([^}]*)\}))?/g;
+/**
+ * Svelte 5 event attributes: `onclick={save}` / `onsubmit={(e) => …}` — plain
+ * DOM event properties, no colon. Only known DOM events qualify, so a prop
+ * named `once` or `onboarding` stays a prop.
+ */
+const SVELTE5_EVENT_RE =
+  /\bon(click|dblclick|input|change|submit|reset|keydown|keyup|keypress|blur|focus|focusin|focusout|mousedown|mouseup|mouseenter|mouseleave|mouseover|mouseout|mousemove|contextmenu|touchstart|touchend|touchmove|pointerdown|pointerup|pointermove|drop|dragstart|dragend|dragover|scroll|wheel|load|error|toggle|select|paste|copy|cut)=(?:"([^"]*)"|\{([^}]*)\})/g;
 const SVELTE_BIND_RE = /\bbind:([a-zA-Z][a-zA-Z0-9]*)/g;
 
 export function extractSvelteInteractiveElements(
@@ -131,6 +139,15 @@ export function extractSvelteInteractiveElements(
       elements.push({
         element,
         event: `on:${e[1]}`,
+        handler: cleanHandler(e[2] ?? e[3] ?? null),
+        line,
+      });
+    }
+    SVELTE5_EVENT_RE.lastIndex = 0;
+    while ((e = SVELTE5_EVENT_RE.exec(attrs)) !== null) {
+      elements.push({
+        element,
+        event: `on${e[1]}`,
         handler: cleanHandler(e[2] ?? e[3] ?? null),
         line,
       });

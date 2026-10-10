@@ -374,14 +374,32 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       const declared = /^[\w$]+$/.test(seg)
         ? (localDeclaredType(node, seg) ?? this.fieldTypes.get(seg) ?? null)
         : null;
-      const target = declared && !SERVICE_LAYER_TYPE_RE.test(declared) ? declared : null;
-      sources.push(this.ds({ kind: "database", name: method, target, line, ...withAccess(access) }));
+      // A service receiver (`personService.save(cmd)`) is a call into the
+      // service layer, where the access — if any — is visible in its own
+      // right; a bare `save(x)` / `getByCivicNumber(id)` is a call on this
+      // class, which the linker follows to its definition. Neither is a data
+      // access here: emitting them put a target-less "database" row on two
+      // thirds of eos's service methods.
+      if (!seg || (declared && SERVICE_LAYER_TYPE_RE.test(declared))) return;
+      sources.push(this.ds({ kind: "database", name: method, target: declared, line, ...withAccess(access) }));
       return;
     }
 
-    // 4) JdbcTemplate / EntityManager — generic names, gated on receiver.
+    // 4) JdbcTemplate / EntityManager — generic names, gated on receiver. The
+    // entity is the class literal JPA takes (`find(Person.class, id)`,
+    // `createNamedQuery("…", Person.class)`, `createQuery(jpql, Person.class)`)
+    // or the `from Person` of a JPQL/HQL string; a criteria query
+    // (`createQuery(cq)`) names none.
     if (JDBC_METHODS.has(method) && JDBC_RECEIVER_RE.test(receiver)) {
-      sources.push(this.ds({ kind: "database", name: method, target: null, line, ...withAccess(dbAccessFor(method, JDBC_ACCESS)) }));
+      const entity = jpaEntityArg(node);
+      sources.push(this.ds({
+        kind: "database",
+        name: method,
+        target: entity,
+        ...(entity ? { entity } : {}),
+        line,
+        ...withAccess(dbAccessFor(method, JDBC_ACCESS)),
+      }));
       return;
     }
 
@@ -495,6 +513,16 @@ export interface CallParts {
  * Resolve method name / receiver / first-arg for both Java `method_invocation`
  * (field-based) and Kotlin `call_expression` (navigation_expression + call_suffix).
  */
+/** The entity a JPA call names: a `X.class` argument, else `from X` inside a string argument. */
+function jpaEntityArg(node: Node): string | null {
+  const args = node.childForFieldName("arguments") ?? node.children.find((c) => c.type === "call_suffix" || c.type === "value_arguments");
+  const text = args?.text ?? "";
+  const literal = /\b([A-Z]\w*)(?:\.class|::class(?:\.java)?)\b/.exec(text);
+  if (literal) return literal[1]!;
+  const jpql = /["']\s*(?:select\b[^"']*?)?\bfrom\s+([A-Z]\w*)\b/i.exec(text);
+  return jpql && /^[A-Z]/.test(jpql[1]!) ? jpql[1]! : null;
+}
+
 export function resolveCall(node: Node): CallParts | null {
   if (node.type === "method_invocation") {
     const name = node.childForFieldName("name")?.text;

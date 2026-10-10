@@ -306,6 +306,16 @@ export function applyControllerMeta(lines: string[], cls: ClassInfo, method: Fun
         for (const acc of loader?.requestAccess ?? []) access.push(acc);
       }
     }
+    // Rails runs the filter before the action: for the trace, the action calls
+    // it. Recorded as a call of the method (the route shares its `calls`
+    // array) so the linker binds `show` → `conversation`, where
+    // `Current.account.conversations.find_by!(…)` actually runs — without it
+    // every loader-pattern controller dead-ended at the action's own body.
+    for (const name of d.names) {
+      if (name === method.name || !cls.methods.some((m) => m.name === name)) continue;
+      if (method.calls.some((c) => c.name === name)) continue;
+      method.calls.push({ name, kind: "internal", target: null, line: method.line });
+    }
   }
   own.push(...guardsInBody(lines.slice(method.line, Math.max(method.line, method.endLine))));
   const seen = new Set<string>();

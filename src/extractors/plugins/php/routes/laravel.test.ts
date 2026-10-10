@@ -226,3 +226,17 @@ Route::put('/users/{id}', function (Request $request, $id) {
     ]);
   });
 });
+
+describe("Laravel handler forms beyond the tuple", () => {
+  it("names an invokable controller's __invoke and reads the 'uses' options key", async () => {
+    const src = `<?php
+use App\\Http\\Controllers\\LoginController;
+Route::post('me', LoginController::class);
+Route::group(['namespace' => 'App\\Api', 'prefix' => 'v1'], static function (): void {
+    Route::get('accounts', ['uses' => 'AccountController@accounts', 'as' => 'accounts']);
+});`;
+    const routes = await routesOf(src);
+    expect(routes.find((r) => r.path === "/me")!.handler).toBe("LoginController#__invoke");
+    expect(routes.find((r) => r.path === "/v1/accounts")!.handler).toBe("AccountController#accounts");
+  });
+});

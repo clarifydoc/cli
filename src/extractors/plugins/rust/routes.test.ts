@@ -247,6 +247,28 @@ async fn main() -> std::io::Result<()> {
   });
 });
 
+describe("actix nested scopes", () => {
+  it("composes a nested scope's prefix once", () => {
+    const routes = extractRustRoutes(lines(`
+pub fn config(cfg: &mut ServiceConfig) {
+    cfg.service(
+        scope("/api/v4")
+            .wrap(rate_limit.message())
+            .service(
+                scope("/site")
+                    .route("", get().to(get_site))
+                    .route("/icon", post().to(upload_site_icon)),
+            )
+            .route("/modlog", get().to(get_mod_log)),
+    );
+}
+`));
+    expect(routes.map((r) => `${r.httpMethod} ${r.path}`).sort()).toEqual([
+      "GET /api/v4/modlog", "GET /api/v4/site", "POST /api/v4/site/icon",
+    ]);
+  });
+});
+
 describe("Rust data sources", () => {
   it("normalizes r#\"...\"# raw strings into per-line quoted fragments", () => {
     const norm = normalizeRawStrings('sqlx::query(r#"SELECT id\nFROM orders"#)');

@@ -150,7 +150,20 @@ function classConstantName(node: Node): string | null {
 function resolveHandler(node: Node | undefined): Handler {
   if (!node) return { name: null, calls: [] };
 
+  // Invokable controller: `Route::post('me', LoginController::class)` runs
+  // its `__invoke`.
+  if (node.type === "class_constant_access_expression") {
+    const cls = classConstantName(node);
+    return { name: cls ? `${cls}#__invoke` : null, calls: [] };
+  }
+
   if (node.type === "array_creation_expression") {
+    // Options array: `['uses' => 'AccountController@accounts', 'as' => 'accounts']`.
+    const uses = arrayKeyValue(node, "uses");
+    if (uses) {
+      const m = uses.match(/^([\w\\]+)[@]([\w]+)$/) ?? uses.match(/^([\w\\]+)::([\w]+)$/);
+      return { name: m ? `${m[1]!.split("\\").pop()}#${m[2]}` : uses.split("\\").pop()!, calls: [] };
+    }
     let cls: string | null = null;
     let method: string | null = null;
     for (const el of node.children) {

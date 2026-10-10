@@ -185,6 +185,15 @@ const PARENLESS_CONST_CALL_RE = new RegExp(
  *  followed by a `.method`. Global — a line may hold several queries. */
 const AR_CALL_RE = /(?<![\w.@$])([A-Z]\w*(?:::[A-Z]\w*)*)\.([a-z_]\w*[!?]?)/g;
 
+/**
+ * A receiver chain ending in a lowercase segment, then an AR verb:
+ * `Current.account.conversations.find_by!`, `@conversation.messages.create!`,
+ * `conversation.update!`. Segments may carry empty parens (`.messages()`),
+ * never arguments — a chain through `find(id)` is cut there, which is right:
+ * the verb after it runs on whatever that returned.
+ */
+const AR_CHAIN_RE = /(?<![\w.@$:])((?:@{1,2}|\$)?[A-Za-z_]\w*(?:(?:::[A-Z]\w*)*(?:\(\))?\.[a-z_]\w*)*)\.([a-z_]\w*[!?]?)(?=\s*(?:\(|$|\s|[,)\]}]))/g;
+
 /** A query entry point: an explicit AR method, or any `find…` finder
  *  (`find`, `find_by`, `find_each`, dynamic `find_by_email`, app `find_authorized`). */
 function isArQueryMethod(method: string): boolean {
@@ -373,6 +382,26 @@ function extractRubyDataSources(lines: string[]): DataSourceInfo[] {
       if (seen.has(key)) continue;
       seen.add(key);
       out.push({ kind: "database", name, target: null, calls: [], line: i + 1, entity: bare, access: arAccessKind(method) });
+    }
+    // Association and instance chains: `Current.account.conversations.find_by!(…)`,
+    // `@conversation.messages.create!(…)`, `conversation.update!(…)`. Which
+    // model that is lives in another file (the association's declaration, the
+    // model named like the variable), so the row goes out entity-less and
+    // `RubyEntityExtractor.reconcileProject` joins or drops it. A bare
+    // lowercase receiver counts only with a WRITE verb — `items.first` is an
+    // Array; `contact.save!` is persistence.
+    for (const m of line.matchAll(AR_CHAIN_RE)) {
+      const receiver = m[1]!;
+      const method = m[2]!;
+      if (!isArQueryMethod(method)) continue;
+      const chained = receiver.includes(".");
+      if (!chained && !AR_WRITE_METHODS.has(method)) continue;
+      if (/^[A-Z]/.test(receiver) && !chained) continue; // `Model.verb` — the row above
+      const name = `${receiver}.${method}`;
+      const key = `${name}@${i + 1}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ kind: "database", name, target: null, calls: [], line: i + 1, access: arAccessKind(method) });
     }
   }
   return out;
