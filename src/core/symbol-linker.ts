@@ -9,6 +9,7 @@ import {
   type CallInfo,
   type Confidence,
   type ParamInfo,
+  type PackageEcosystem,
   type SubProject,
 } from "../types/analysis.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
@@ -16,7 +17,7 @@ import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js
 import { commonPrefixLength, extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { isTestFile } from "./test-file-detector.js";
-import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, isApiContractLanguage, pluginFor } from "../extractors/registry.js";
+import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, isApiContractLanguage, packageEcosystemsFor, packageMatchingFor, pluginFor } from "../extractors/registry.js";
 import { SELF_HEADS, bareSupertypeName, declaredSupertypes, isConstructor, sameTypeSpace } from "./typed-receivers.js";
 
 interface SymbolDef {
@@ -69,10 +70,9 @@ export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly
     projectOf,
     languageOf: new Map(analyses.map((a) => [a.filePath, a.language as string])),
     importedFilesCache: new Map(),
-    packageProjects: subProjects
-      .filter((p) => p.packageName)
-      .map((p) => ({ name: normalizePackageName(p.packageName!), projectId: p.id })),
-    projectFilesCache: new Map(),
+    packageProjects: buildPackageProjectIndex(subProjects),
+    importedProjectsCache: new Map(),
+    projectStemsCache: new Map(),
     importedStemsCache: new Map(),
   };
   const interfaceImplMap = ctx.interfaceImplMap;
@@ -948,14 +948,18 @@ interface LinkContext {
    *  cross-project gate). */
   importedFilesCache: Map<string, Set<string>>;
   /**
-   * Sub-projects by the package name their manifest declares (normalized by
-   * `normalizePackageName`). An import whose source is that name, or starts
-   * with it and a separator (`lemmy_db_views_site::SiteView`,
-   * `@acme/ui/Button`, `code.gitea.io/gitea/models/user`), imports that
-   * sub-project: every file in it is then an import of the importer's.
+   * Sub-projects by the package their manifest declares, keyed per ecosystem
+   * the way that ecosystem's `PackageManagerSpec` keys packages
+   * (`packageKey`): what an import of a sibling sub-project resolves against,
+   * with the same `importKey`/`prefixMatch` rules the dependency inventory
+   * uses — `lemmy_db_views_site::SiteView` (Cargo), `@acme/ui/Button` (npm),
+   * `code.gitea.io/gitea/models/user` (Go), `my_pkg.models` (pypi).
    */
-  packageProjects: Array<{ name: string; projectId: string }>;
-  projectFilesCache: Map<string, string[]>;
+  packageProjects: Map<PackageEcosystem, Array<{ key: string; projectId: string }>>;
+  /** Sub-projects an analysis imports by package (see `importedProjectsOf`). */
+  importedProjectsCache: Map<string, Set<string>>;
+  /** File stems of a sub-project's files, computed once per project. */
+  projectStemsCache: Map<string, Set<string>>;
   /** Lazy per-file cache: stems of the files this file's imports resolve to
    *  (Strategy 7's C/C++ header↔impl evidence). */
   importedStemsCache: Map<string, Set<string>>;
@@ -975,59 +979,107 @@ function importedFilesOf(analysis: FileAnalysis, ctx: LinkContext): Set<string> 
     set = new Set();
     for (const imp of analysis.imports) {
       const f = resolveTarget(imp.source, analysis.filePath, ctx.filePathMap);
-      if (f && f !== analysis.filePath) {
-        set.add(f);
-        continue;
-      }
-      // Not a file of this project: a sibling sub-project, when the source
-      // names one by its declared package name. A Cargo workspace member
-      // (`use lemmy_db_views_site::SiteView`), an npm workspace package, a
-      // Go module path — none resolve by path, since the name is the
-      // manifest's, not the directory's.
-      const project = packageProjectOf(imp.source, ctx);
-      if (project && project !== analysis.projectId) {
-        for (const f of projectFilesOf(project, ctx)) if (f !== analysis.filePath) set.add(f);
-      }
+      if (f && f !== analysis.filePath) set.add(f);
     }
     ctx.importedFilesCache.set(analysis.filePath, set);
   }
   return set;
 }
 
-/** Lowercased, `-` and `_` unified, path separators as `/` — how two spellings of one package compare. */
-function normalizePackageName(name: string): string {
-  return name.toLowerCase().replace(/-/g, "_").replace(/::/g, "/").replace(/\/+$/, "");
+/**
+ * Sub-projects the analysis imports by declared package name: an import that
+ * resolves to no file of this project but names a sibling sub-project — a
+ * Cargo workspace member (`use lemmy_db_views_site::SiteView`), an npm
+ * workspace package, a Go module path. None resolve by path, since the name
+ * is the manifest's, not the directory's. Kept as project ids, not expanded
+ * to the project's files: a shared package imported by thousands of files
+ * would otherwise be copied into each importer's set.
+ */
+function importedProjectsOf(analysis: FileAnalysis, ctx: LinkContext): Set<string> {
+  let set = ctx.importedProjectsCache.get(analysis.filePath);
+  if (!set) {
+    set = new Set();
+    if (ctx.packageProjects.size > 0) {
+      for (const imp of analysis.imports) {
+        if (resolveTarget(imp.source, analysis.filePath, ctx.filePathMap)) continue;
+        const project = packageProjectOf(imp.source, analysis.language, ctx);
+        if (project && project !== analysis.projectId) set.add(project);
+      }
+    }
+    ctx.importedProjectsCache.set(analysis.filePath, set);
+  }
+  return set;
 }
 
-/** The sub-project an import source names by declared package (exact, or as a prefix before a `/`). */
-function packageProjectOf(source: string, ctx: LinkContext): string | null {
-  if (ctx.packageProjects.length === 0 || source.startsWith(".") || source.startsWith("/")) return null;
-  const norm = normalizePackageName(source);
-  let best: { name: string; projectId: string } | null = null;
-  for (const p of ctx.packageProjects) {
-    if ((norm === p.name || norm.startsWith(p.name + "/")) && (!best || p.name.length > best.name.length)) best = p;
+/** True when the analysis imports `file` — by path, or by the package of the sub-project that holds it. */
+function importsFile(analysis: FileAnalysis, file: string, ctx: LinkContext): boolean {
+  if (importedFilesOf(analysis, ctx).has(file)) return true;
+  const projects = importedProjectsOf(analysis, ctx);
+  if (projects.size === 0) return false;
+  const project = ctx.projectOf.get(file);
+  return project !== undefined && projects.has(project);
+}
+
+/** True when the analysis imports nothing the linker can see — by path or by package. */
+function importsNothing(analysis: FileAnalysis, ctx: LinkContext): boolean {
+  return importedFilesOf(analysis, ctx).size === 0 && importedProjectsOf(analysis, ctx).size === 0;
+}
+
+function buildPackageProjectIndex(subProjects: readonly SubProject[]): Map<PackageEcosystem, Array<{ key: string; projectId: string }>> {
+  const index = new Map<PackageEcosystem, Array<{ key: string; projectId: string }>>();
+  for (const p of subProjects) {
+    if (!p.packageName || !p.packageEcosystem) continue;
+    const spec = packageMatchingFor(p.packageEcosystem);
+    const key = spec?.packageKey?.(p.packageName) ?? p.packageName.toLowerCase();
+    const list = index.get(p.packageEcosystem) ?? [];
+    list.push({ key, projectId: p.id });
+    index.set(p.packageEcosystem, list);
+  }
+  return index;
+}
+
+/**
+ * The sub-project an import source names by declared package: the importer
+ * language's ecosystems decide how the source is keyed (`importKey`) and
+ * whether a longer path still names the package (`prefixMatch`) — the same
+ * rules `dependency-inventory.ts` applies to third-party packages.
+ */
+function packageProjectOf(source: string, language: Language, ctx: LinkContext): string | null {
+  let best: { key: string; projectId: string } | null = null;
+  for (const ecosystem of packageEcosystemsFor(language)) {
+    const candidates = ctx.packageProjects.get(ecosystem);
+    if (!candidates) continue;
+    const spec = packageMatchingFor(ecosystem);
+    const key = spec?.importKey?.(source) ?? source.toLowerCase();
+    if (!key) continue;
+    const separator = spec?.prefixMatch?.separator;
+    for (const c of candidates) {
+      if ((key === c.key || (separator !== undefined && key.startsWith(c.key + separator))) && (!best || c.key.length > best.key.length)) best = c;
+    }
   }
   return best?.projectId ?? null;
 }
 
-function projectFilesOf(projectId: string, ctx: LinkContext): string[] {
-  let files = ctx.projectFilesCache.get(projectId);
-  if (!files) {
-    files = ctx.analyses.filter((a) => a.projectId === projectId).map((a) => a.filePath);
-    ctx.projectFilesCache.set(projectId, files);
-  }
-  return files;
-}
-
-/** Stems of the files the analysis's imports resolve to (cached per source file). */
+/** Stems of the files the analysis's imports resolve to — by path, or through an imported sub-project (cached). */
 function importedStemsOf(analysis: FileAnalysis, ctx: LinkContext): Set<string> {
   let set = ctx.importedStemsCache.get(analysis.filePath);
   if (!set) {
     set = new Set();
     for (const f of importedFilesOf(analysis, ctx)) set.add(fileStem(f));
+    for (const project of importedProjectsOf(analysis, ctx)) for (const stem of projectStemsOf(project, ctx)) set.add(stem);
     ctx.importedStemsCache.set(analysis.filePath, set);
   }
   return set;
+}
+
+function projectStemsOf(projectId: string, ctx: LinkContext): Set<string> {
+  let stems = ctx.projectStemsCache.get(projectId);
+  if (!stems) {
+    stems = new Set();
+    for (const a of ctx.analyses) if (a.projectId === projectId) stems.add(fileStem(a.filePath));
+    ctx.projectStemsCache.set(projectId, stems);
+  }
+  return stems;
 }
 
 /**
@@ -1834,7 +1886,7 @@ function resolveCallToDefinition(
               ...candidateFiles.filter(
                 (f) =>
                   ctx.projectOf.get(f) !== analysis.projectId &&
-                  importedFilesOf(analysis, ctx).has(f),
+                  importsFile(analysis, f, ctx),
               ),
             ];
       for (const filePath of eligible) {
@@ -2008,7 +2060,6 @@ function resolveCallToDefinition(
         // evidence either way, so the gate would only destroy recall there.
         // Same-stem imports count as evidence too: C/C++ includes name
         // `User.h` while the method body lives in `User.cpp`.
-        const importedFiles = importedFilesOf(analysis, ctx);
         const sameDir =
           entry.file.slice(0, entry.file.lastIndexOf("/")) ===
           sourceFile.slice(0, sourceFile.lastIndexOf("/"));
@@ -2022,9 +2073,9 @@ function resolveCallToDefinition(
         // in conflicts than it earns in recall.
         const evidenced =
           sameDir ||
-          importedFiles.has(entry.file) ||
+          importsFile(analysis, entry.file, ctx) ||
           importedStemsOf(analysis, ctx).has(fileStem(entry.file));
-        if (!contradicted && (evidenced || importedFiles.size === 0)) {
+        if (!contradicted && (evidenced || importsNothing(analysis, ctx))) {
           return mkLink(
             entry.file,
             entry.def.name,

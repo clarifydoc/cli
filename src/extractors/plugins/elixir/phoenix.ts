@@ -1,5 +1,4 @@
-import type { EntityRelation } from "../../../types/analysis.js";
-import type { ClassInfo, FunctionInfo, PropertyInfo, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../types/analysis.js";
+import type { ClassInfo, EntityRelation, FunctionInfo, ImportInfo, PropertyInfo, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../types/analysis.js";
 import type { GuardAttr } from "../../shared/route-metadata.js";
 import { applyRouteMeta } from "../../shared/route-metadata.js";
 
@@ -283,7 +282,6 @@ export function attachPatternKeys(lines: string[], fns: FunctionInfo[]): void {
 const ECTO_FIELD_RE = /^\s*field\s+:(\w+)\s*(?:,\s*(\{[^}]*\}|:\w+|[A-Z][\w.]*))?/;
 /** `belongs_to :team, Plausible.Teams.Team` / `has_many :goals, Goal, preload_order: …` / `many_to_many :tags, Tag, join_through: "posts_tags"`. */
 const ECTO_ASSOC_RE = /^\s*(belongs_to|has_many|has_one|many_to_many)\s+:(\w+)\s*,\s*([A-Z][\w.]*)(.*)$/;
-const ECTO_BELONGS_RE = /^\s*belongs_to\s+:(\w+)\s*,\s*([A-Z][\w.]*)/;
 const ECTO_EMBEDS_RE = /^\s*embeds_(one|many)\s+:(\w+)\s*,\s*([A-Z][\w.]*)/;
 
 function prop(name: string, type: string | null): PropertyInfo {
@@ -294,7 +292,7 @@ function prop(name: string, type: string | null): PropertyInfo {
 export function ectoProperty(line: string): PropertyInfo[] {
   let m: RegExpMatchArray | null;
   if ((m = line.match(ECTO_FIELD_RE))) return [prop(m[1]!, m[2] ?? ":string")];
-  if ((m = line.match(ECTO_BELONGS_RE))) return [prop(`${m[1]}_id`, ":id")];
+  if ((m = ECTO_ASSOC_RE.exec(line)) && m[1] === "belongs_to") return [prop(`${m[2]}_id`, ":id")];
   if ((m = line.match(ECTO_EMBEDS_RE))) return [prop(m[2]!, m[1] === "many" ? `{:array, ${m[3]}}` : m[3]!)];
   if (/^\s*timestamps\s*\(?\s*\)?\s*$/.test(line)) return [prop("inserted_at", ":naive_datetime"), prop("updated_at", ":naive_datetime")];
   return [];
@@ -343,14 +341,11 @@ export function attachEctoSchema(lines: string[], cls: ClassInfo): void {
  * alias the file never declares is taken as a sibling of the declaring module.
  * `many_to_many` carries its `join_through` table.
  */
-export function extractEctoRelations(lines: string[], classes: ClassInfo[]): EntityRelation[] {
+export function extractEctoRelations(lines: string[], classes: ClassInfo[], imports: readonly ImportInfo[]): EntityRelation[] {
+  if (!classes.some((c) => c.decorators.includes("ecto"))) return [];
+  // The file's `alias` directives, as the import extractor read them (multi-line `{A, B}`, `as:`).
   const aliases = new Map<string, string>();
-  for (const line of lines) {
-    const m = /^\s*alias\s+([A-Z][\w.]*)(?:\s*,\s*as:\s*([A-Z]\w*))?\s*$/.exec(line);
-    if (m) aliases.set(m[2] ?? m[1]!.split(".").pop()!, m[1]!);
-    const multi = /^\s*alias\s+([A-Z][\w.]*)\.\{([^}]+)\}/.exec(line);
-    if (multi) for (const name of multi[2]!.split(",").map((x) => x.trim()).filter(Boolean)) aliases.set(name, `${multi[1]}.${name}`);
-  }
+  for (const imp of imports) for (const local of imp.specifiers) aliases.set(local, imp.source);
   const relations: EntityRelation[] = [];
   for (const cls of classes) {
     if (!cls.decorators.includes("ecto")) continue;

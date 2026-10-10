@@ -1,6 +1,6 @@
 import type { PackageScope } from "../../../types/analysis.js";
 import type { DeclaredPackage, PackageManagerSpec } from "../../../types/language-plugin.js";
-import { declared } from "../shared/declared-package.js";
+import { declared, tomlSectionValue } from "../shared/declared-package.js";
 
 /** Cargo: `Cargo.toml` dependency tables (flat lists and `[dependencies.foo]` tables). */
 function parseCargo(text: string, declaredIn: string): DeclaredPackage[] {
@@ -51,7 +51,7 @@ export const cargoPackageManager: PackageManagerSpec = {
     files: ["Cargo.toml"],
     parse: (text, file) => parseCargo(text, file.declaredIn),
     // `[package] name = "x"` — not a workspace-only manifest's `[workspace.package]`.
-    selfName: (text) => /^\[package\]\s*$[\s\S]*?^name\s*=\s*"([^"]+)"/m.exec(text.replace(/#.*$/gm, ""))?.[1] ?? null,
+    selfName: (text) => tomlSectionValue(text, ["package"], "name"),
   }],
   // `serde_json::Value` → `serde-json`: a crate is imported with `_` for its `-`.
   importKey(s) {

@@ -40,15 +40,16 @@ export async function detectFileBasedRoutes(
     if (seen.has(key)) continue;
     seen.add(key);
 
-    const folder = await detectRoutesFolder(projectRoot, key);
-    if (!folder) continue;
+    const folders = await detectRoutesFolders(projectRoot, key);
+    if (folders.length === 0) continue;
 
     const base = key ? `${normalizeSlashes(key).replace(/\/$/, "")}/` : "";
+    for (const folder of folders) {
     const prefix = `${base}${folder.replace(/^\.?\/+/, "").replace(/\/+$/, "")}/`;
 
     for (const a of analyses) {
       const fp = normalizeSlashes(a.filePath);
-      if (!fp.startsWith(prefix) || !/\.vue$/i.test(fp)) continue;
+      if (!fp.startsWith(prefix) || !PAGE_FILE_RE.test(fp)) continue;
       // Don't override an explicit route already extracted for this page.
       if ((a.routes ?? []).some((r) => r.kind === "frontend")) continue;
 
@@ -66,9 +67,13 @@ export async function detectFileBasedRoutes(
       });
       added++;
     }
+    }
   }
   return added;
 }
+
+/** What a routes folder may hold as a page: Vue SFCs, JSX/TSX pages, Markdown pages (vite-plugin-pages). */
+const PAGE_FILE_RE = /\.(?:vue|tsx|jsx|md)$/i;
 
 const VITE_CONFIG_NAMES = [
   "vite.config.ts", "vite.config.mts", "vite.config.cts",
@@ -76,10 +81,14 @@ const VITE_CONFIG_NAMES = [
 ];
 
 /**
- * Inspect a root's Vite config for a file-based-routing plugin and return its
- * page directory (the convention default when the option is omitted), or null.
+ * Inspect a root's Vite config for the file-based-routing plugins and return
+ * their page directories: unplugin-vue-router (`VueRouter({ routesFolder })`,
+ * imported from `unplugin-vue-router/vite` or `vue-router/vite`) and
+ * vite-plugin-pages (`Pages({ dirs })`, a string or an array). The convention
+ * default `src/pages` applies when the option is omitted. Empty when no such
+ * plugin is configured.
  */
-async function detectRoutesFolder(projectRoot: string, root: string): Promise<string | null> {
+async function detectRoutesFolders(projectRoot: string, root: string): Promise<string[]> {
   for (const name of VITE_CONFIG_NAMES) {
     let text: string;
     try {
@@ -87,17 +96,21 @@ async function detectRoutesFolder(projectRoot: string, root: string): Promise<st
     } catch {
       continue; // no such config file
     }
-    if (/unplugin-vue-router/.test(text)) {
-      // `routesFolder: 'src/routes'` (a string form; arrays/objects fall back).
-      const m = /routesFolder\s*:\s*['"]([^'"]+)['"]/.exec(text);
-      return m ? m[1] : "src/pages";
+    const folders: string[] = [];
+    const router = /\bVueRouter\s*\(\s*(?:\{([\s\S]*?)\})?\s*\)/.exec(text);
+    if (router || /unplugin-vue-router|vue-router\/vite/.test(text)) {
+      folders.push(/routesFolder\s*:\s*['"`]([^'"`]+)['"`]/.exec(router?.[1] ?? "")?.[1] ?? "src/pages");
     }
-    if (/vite-plugin-pages/.test(text)) {
-      const m = /(?:dirs|pagesDir)\s*:\s*['"]([^'"]+)['"]/.exec(text);
-      return m ? m[1] : "src/pages";
+    const pages = /\bPages\s*\(\s*(?:\{([\s\S]*?)\})?\s*\)/.exec(text);
+    if (pages || /vite-plugin-pages/.test(text)) {
+      const body = pages?.[1] ?? "";
+      const option = /(?:dirs|pagesDir)\s*:\s*(\[[^\]]*\]|['"`][^'"`]+['"`])/.exec(body)?.[1] ?? "";
+      const dirs = [...option.matchAll(/['"`]([^'"`]+)['"`]/g)].map((m) => m[1]!).filter((d) => !d.includes("*"));
+      folders.push(...(dirs.length > 0 ? dirs : ["src/pages"]));
     }
+    return [...new Set(folders)];
   }
-  return null;
+  return [];
 }
 
 /**
@@ -106,7 +119,7 @@ async function detectRoutesFolder(projectRoot: string, root: string): Promise<st
  * file is not a routable page.
  */
 export function fileToRoutePath(relative: string): string | null {
-  const noExt = relative.replace(/\.vue$/i, "");
+  const noExt = relative.replace(PAGE_FILE_RE, "");
   const out: string[] = [];
   for (const seg of noExt.split("/")) {
     if (seg === "index" || seg === "") continue; // index → the parent's path

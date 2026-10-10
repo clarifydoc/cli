@@ -1,4 +1,6 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
+import { receiverTypeName } from "../../shared/type-parser.js";
+import { RELATIVE_SCOPE_RE } from "./data-sources.js";
 import type {
   ClassInfo,
   DataSourceInfo,
@@ -1006,8 +1008,8 @@ function enclosing(a: FileAnalysis, line: number): { cls: ClassInfo | null; fn: 
   return { cls, fn };
 }
 
-const shortType = (type: string | null | undefined): string | null =>
-  type ? (type.replace(/^\?/, "").replace(/\|null$/, "").split("\\").pop() ?? null) : null;
+/** `?User`, `User|null`, `App\\Models\\User` → `User` (the shared declared-type normalizer). */
+const shortType = (type: string | null | undefined): string | null => receiverTypeName(type, "php");
 
 function resolveEloquentEntity(
   ds: DataSourceInfo,
@@ -1029,7 +1031,7 @@ function resolveEloquentEntity(
 
   const staticRoot = /^([A-Za-z_\\]\w*(?:\\\w+)*)::/.exec(name)?.[1] ?? null;
   if (staticRoot) {
-    if (/^(static|self|parent)$/.test(staticRoot)) return enclosingModel;
+    if (RELATIVE_SCOPE_RE.test(staticRoot)) return enclosingModel;
     const short = staticRoot.split("\\").pop()!;
     return models.has(short) ? short : null;
   }

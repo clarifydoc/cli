@@ -615,11 +615,9 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         // `export default { Articles, setToken: (t) => … }`: the importer calls
         // `agent.setToken(…)`, so each inline member is named by its key alone.
         const value = child.childForFieldName("value");
-        if (moduleLevel && value?.type === "object" && !isVueComponentOptions(value)) {
-          this.extractObjectMembers(null, value, functions, true, 0);
-        }
         const options = moduleLevel && value ? vueComponentOptions(value) : null;
         if (options) this.extractVueOptionsMembers(options, functions);
+        else if (moduleLevel && value?.type === "object") this.extractObjectMembers(null, value, functions, true, 0);
         this.extractJsFunctions(child, functions, true);
         continue;
       }
@@ -628,11 +626,10 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       if (moduleLevel && child.type === "expression_statement") {
         const assign = child.namedChild(0);
         const right = assign?.type === "assignment_expression" ? assign.childForFieldName("right") : null;
-        if (right?.type === "object" && assign!.childForFieldName("left")?.text === "module.exports" && !isVueComponentOptions(right)) {
-          this.extractObjectMembers(null, right, functions, true, 0);
-        }
-        const options = right && assign!.childForFieldName("left")?.text === "module.exports" ? vueComponentOptions(right) : null;
+        const isModuleExports = right !== null && assign!.childForFieldName("left")?.text === "module.exports";
+        const options = isModuleExports ? vueComponentOptions(right!) : null;
         if (options) this.extractVueOptionsMembers(options, functions);
+        else if (isModuleExports && right!.type === "object") this.extractObjectMembers(null, right!, functions, true, 0);
       }
 
       if (

@@ -3,7 +3,7 @@ import { NO_SYMLINKS } from "./glob-safety.js";
 import { byOrdinal } from "./ordinal.js";
 import { readFile } from "fs/promises";
 import { join, resolve } from "path";
-import type { SubProject, SubProjectKind } from "../types/analysis.js";
+import type { PackageEcosystem, SubProject, SubProjectKind } from "../types/analysis.js";
 import { loadIgnorePatterns, isIgnored } from "./clarifydoc-ignore.js";
 import { PACKAGE_MANAGERS } from "../extractors/registry.js";
 
@@ -158,8 +158,11 @@ export async function detectSubProjects(
 
   subProjects.sort((a, b) => byOrdinal(a.root, b.root));
   await Promise.all(subProjects.map(async (p) => {
-    const name = await declaredPackageName(root, p.root);
-    if (name) p.packageName = name;
+    const declared = await declaredPackageName(root, p);
+    if (declared) {
+      p.packageName = declared.name;
+      p.packageEcosystem = declared.ecosystem;
+    }
   }));
   return subProjects;
 }
@@ -170,19 +173,22 @@ export async function detectSubProjects(
  * `PackageManifestSpec.selfName`): core reads the file, the plugin reads the
  * format. The first format whose manifest is present and names one wins.
  */
-async function declaredPackageName(root: string, dir: string): Promise<string | null> {
+async function declaredPackageName(
+  root: string,
+  project: SubProject,
+): Promise<{ name: string; ecosystem: PackageEcosystem } | null> {
   for (const manager of PACKAGE_MANAGERS) {
     for (const spec of manager.manifests) {
       if (!spec.selfName || spec.glob) continue;
       for (const file of spec.files) {
         let text: string;
         try {
-          text = await readFile(join(root, dir, file), "utf-8");
+          text = await readFile(join(root, project.root, file), "utf-8");
         } catch {
           continue;
         }
         const name = spec.selfName(text);
-        if (name) return name;
+        if (name) return { name, ecosystem: manager.ecosystem };
       }
     }
   }

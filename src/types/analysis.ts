@@ -1772,6 +1772,12 @@ export interface ComplexityInfo {
   nestingDepth?: number;
   /** Declared parameter count. Absent before 1.49. */
   paramCount?: number;
+  /**
+   * Counted from the function's text (branch keywords and operators, no
+   * tree): a floor, not an exact structure walk — as the regex-path control-
+   * flow graph is marked. Absent on rows measured from a parse tree.
+   */
+  approximate?: true;
 }
 
 export interface FileComplexityInfo {
@@ -2184,6 +2190,8 @@ export interface SubProject {
    * at the root declares one.
    */
   packageName?: string;
+  /** The package ecosystem that name belongs to (`cargo`, `npm`, `go`, …) — the matching rules are the ecosystem's. */
+  packageEcosystem?: PackageEcosystem;
   markers: string[];
   /**
    * Frameworks/ORMs detected from this sub-project's own manifests (its nested

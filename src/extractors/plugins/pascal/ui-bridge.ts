@@ -1,6 +1,7 @@
 import type { ClassInfo, FileAnalysis, FunctionInfo, Language, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { commonPrefixLength } from "../shared/path-utils.js";
+import { companionStem } from "./companion.js";
 
 /**
  * Delphi form → handler bridge. A .dfm wires events by NAME only
@@ -77,7 +78,7 @@ export class PascalUiBridgeResolver implements DispatchResolver {
     handler: string,
     dfmFile: string,
   ): { file: string; cls: ClassInfo; method: FunctionInfo } | null {
-    const companion = dfmFile.replace(/\.(dfm|lfm|fmx)$/i, "").toLowerCase();
+    const companion = companionStem(dfmFile);
     let className: string | null = formClass;
     const visited = new Set<string>();
     while (className && !visited.has(className.toLowerCase())) {
@@ -91,7 +92,7 @@ export class PascalUiBridgeResolver implements DispatchResolver {
         const method = c.cls.methods.find((m: FunctionInfo) => m.name.toLowerCase() === handler.toLowerCase());
         if (!method) continue;
         // The companion unit (same basename) beats any path-prefix score.
-        const isCompanion = c.file.replace(/\.(pas|pp)$/i, "").toLowerCase() === companion;
+        const isCompanion = companionStem(c.file) === companion;
         const score = isCompanion ? Number.MAX_SAFE_INTEGER : commonPrefixLength(c.file, dfmFile);
         if (score > bestScore) {
           bestScore = score;

@@ -263,8 +263,8 @@ function walkForJavaKotlinRoutes(
   // names no path and is skipped.
   if (!suppress && node.type === "method_invocation") {
     const verb = node.childForFieldName("name")?.text ?? "";
-    const receiver = node.childForFieldName("object")?.text ?? "";
-    if (FUNCTIONAL_VERBS.has(verb) && FUNCTIONAL_ROUTER_RE.test(receiver)) {
+    // The verb is cheap and rare; the receiver text of a chain is the whole chain.
+    if (FUNCTIONAL_VERBS.has(verb) && FUNCTIONAL_ROUTER_RE.test(node.childForFieldName("object")?.text ?? "")) {
       const args = node.childForFieldName("arguments")?.namedChildren ?? [];
       const path = args[0] ? firstStringLiteral(args[0]) : null;
       if (path !== null && args[0]!.type !== "lambda_expression") {
@@ -293,8 +293,10 @@ function walkForJavaKotlinRoutes(
 }
 
 const FUNCTIONAL_VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
-/** A receiver chain rooted at a router builder: `route()`, `RouterFunctions…`, `SpringdocRouteBuilder…`, or a nest lambda's builder parameter. */
-const FUNCTIONAL_ROUTER_RE = /\broute\s*\(\s*\)|\bRouterFunctions\b|\bSpringdocRouteBuilder\b|\b(?:builder|b|r|router|routes)$/;
+/** A file that builds functional endpoints: the gate the route index applies before walking. */
+export const FUNCTIONAL_ROUTER_GATE_RE = /\broute\s*\(\s*\)|\bRouterFunctions\b|\bSpringdocRouteBuilder\b/;
+/** A receiver chain rooted at a router builder, or a nest lambda's builder parameter. */
+const FUNCTIONAL_ROUTER_RE = new RegExp(`${FUNCTIONAL_ROUTER_GATE_RE.source}|\\b(?:builder|b|r|router|routes)$`);
 
 /** Path prefix from enclosing `.nest(path("/api"), b -> …)` / `.path("/api", b -> …)` calls, outermost first. */
 function functionalNestPrefix(node: Node): string {

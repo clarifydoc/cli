@@ -209,7 +209,7 @@ function modelDirPrefix(filePath: string): string {
 }
 
 /** `MatchReport` / `League::MatchReport` → `match_report` / `league_match_report`. */
-function railsUnderscore(name: string): string {
+export function railsUnderscore(name: string): string {
   return name
     .replace(/::/g, "/")
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")

@@ -47,8 +47,8 @@ export function matchingClose(text: string, open: number): number {
 }
 
 /** Split on commas at bracket depth 0 (strings skipped). */
-/** Split struct/interface member text on `;` outside strings, backtick tags and brackets — a GORM tag is full of them. */
-export function splitGoStatements(text: string): string[] {
+/** Split `text` on `sep` at bracket depth 0, outside strings and backtick tags. */
+function splitGoOutside(text: string, sep: string): string[] {
   const out: string[] = [];
   let depth = 0;
   let quote: string | null = null;
@@ -63,7 +63,7 @@ export function splitGoStatements(text: string): string[] {
     if (c === '"' || c === "`" || c === "'") quote = c;
     else if (c === "(" || c === "[" || c === "{") depth++;
     else if (c === ")" || c === "]" || c === "}") depth--;
-    else if (c === ";" && depth === 0) {
+    else if (c === sep && depth === 0) {
       out.push(text.slice(start, i));
       start = i + 1;
     }
@@ -72,29 +72,16 @@ export function splitGoStatements(text: string): string[] {
   return out;
 }
 
+/** Struct/interface members: split on `;` — a GORM tag is full of them, so strings and tags are skipped. */
+export function splitGoStatements(text: string): string[] {
+  return splitGoOutside(text, ";");
+}
+
+/** Split on commas at bracket depth 0 (a parameter list, a type-argument list), trimmed, no trailing empty. */
 export function splitGoTopLevel(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let quote: string | null = null;
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i]!;
-    if (quote) {
-      if (c === "\\" && quote !== "`") { i++; continue; }
-      if (c === quote) quote = null;
-      continue;
-    }
-    if (c === '"' || c === "`" || c === "'") quote = c;
-    else if (c === "(" || c === "[" || c === "{") depth++;
-    else if (c === ")" || c === "]" || c === "}") depth--;
-    else if (c === "," && depth === 0) {
-      out.push(text.slice(start, i).trim());
-      start = i + 1;
-    }
-  }
-  const last = text.slice(start).trim();
-  if (last) out.push(last);
-  return out;
+  const parts = splitGoOutside(text, ",").map((s) => s.trim());
+  if (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
+  return parts;
 }
 
 /** Net `{`/`(`/`[` depth change across `line`, strings skipped. */

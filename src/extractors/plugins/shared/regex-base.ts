@@ -119,7 +119,7 @@ export interface RegexLangSpec {
    * Branch keywords and logical operators for the regex-path complexity count
    * (core/complexity-regex.ts). Omitted: the shared C-family + script table.
    */
-  complexity?: { branches: RegExp; logicalOps?: RegExp };
+  complexity?: { branches: RegExp; logicalOps?: RegExp; closers?: RegExp };
   /**
    * The file's own statements run (a script): calls on lines outside every
    * function and class become the `<setup>` pseudo-function, as module-level
@@ -177,7 +177,7 @@ export interface RegexLangSpec {
   extractDataSources?: (lines: string[], classes: ClassInfo[]) => DataSourceInfo[];
   /** Extract ORM entity relations (e.g. Prisma schema model relations). The
    *  `classes` arg is the already-extracted entity classes for this file. */
-  extractEntityRelations?: (lines: string[], classes: ClassInfo[]) => EntityRelation[];
+  extractEntityRelations?: (lines: string[], classes: ClassInfo[], imports: readonly ImportInfo[]) => EntityRelation[];
   /** Post-process extracted functions (e.g. SQL BEGIN/END-aware end-line patching). */
   postProcessFunctions?: (lines: string[], fns: FunctionInfo[]) => FunctionInfo[];
   /** Post-process extracted classes (e.g. C++ tagging QML_NAMED_ELEMENT registrations

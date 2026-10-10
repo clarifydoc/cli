@@ -26,3 +26,21 @@ export function jsonObject(text: string): Record<string, unknown> | null {
     return null;
   }
 }
+
+/**
+ * The value of `key` inside one of `sections` of a TOML text — the package's
+ * own name in Cargo's `[package]` or pyproject's `[project]`. Bounded by the
+ * section: a `name` in a later table (a dependency's) is not read.
+ */
+export function tomlSectionValue(text: string, sections: readonly string[], key: string): string | null {
+  let inside = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, "").trim();
+    const section = /^\[([^\]]+)\]$/.exec(line);
+    if (section) { inside = sections.includes(section[1]!.trim()); continue; }
+    if (!inside) continue;
+    const kv = new RegExp(`^${key}\\s*=\\s*["']([^"']+)["']`).exec(line);
+    if (kv) return kv[1]!;
+  }
+  return null;
+}

@@ -63,21 +63,27 @@ function phpAccess(method: string): { access?: "read" | "write" } {
 /** PDO verbs whose first string argument is SQL text, not a column. */
 const PDO_SQL_VERBS: ReadonlySet<string> = new Set(["query", "exec", "prepare"]);
 
+/** `static::` / `self::` / `parent::` — the enclosing class, resolved project-wide. */
+export const RELATIVE_SCOPE_RE = /^(static|self|parent)$/;
+
+/** Eloquent verbs that start or run a query, on a model statically or on a builder/relation instance. */
+const ELOQUENT_VERBS = [
+  "find", "findOrFail", "where", "create", "update", "updateOrCreate", "upsert", "insert", "destroy", "delete",
+  "all", "first", "firstOrCreate", "firstOrFail", "firstWhere", "sole", "paginate", "select", "query", "pluck",
+  "count", "exists", "truncate", "cursor", "chunk",
+];
+
 /** Instance-call verbs that mark a PDO / Eloquent / generic ORM access. */
 const PHP_INSTANCE_VERBS: ReadonlySet<string> = new Set([
-  "query", "exec", "prepare", "fetchAll", "fetch", "find", "findOrFail", "first", "firstOrFail",
-  "firstWhere", "sole", "get", "all", "where", "select", "insert", "update", "delete", "save",
-  "create", "destroy", "updateOrCreate", "firstOrCreate", "upsert", "paginate", "count", "exists",
-  "pluck", "cursor", "chunk", "truncate", "forceDelete", "restore", "increment", "decrement",
+  ...PDO_SQL_VERBS, ...ELOQUENT_VERBS,
+  "fetchAll", "fetch", "get", "save", "forceDelete", "restore", "increment", "decrement",
 ]);
 
-/** Eloquent statics that start a query or run one: `Model::where(…)`, `Model::create(…)`. */
+/** Eloquent statics: `Model::where(…)`, `Model::create(…)`, `Model::query()`. */
 const ELOQUENT_STATIC_VERBS: ReadonlySet<string> = new Set([
-  "find", "findOrFail", "findMany", "where", "whereIn", "whereHas", "whereNull", "whereNotNull",
-  "create", "update", "updateOrCreate", "upsert", "insert", "destroy", "delete", "all", "first",
-  "firstOrCreate", "firstOrFail", "firstWhere", "sole", "paginate", "with", "withCount", "join",
-  "select", "query", "newQuery", "orderBy", "latest", "oldest", "pluck", "count", "exists",
-  "truncate", "cursor", "chunk", "has", "doesntHave", "withTrashed", "onlyTrashed",
+  ...ELOQUENT_VERBS,
+  "findMany", "whereIn", "whereHas", "whereNull", "whereNotNull", "with", "withCount", "join", "newQuery",
+  "orderBy", "latest", "oldest", "has", "doesntHave", "withTrashed", "onlyTrashed",
 ]);
 
 /**
@@ -90,12 +96,10 @@ const ELOQUENT_STATIC_VERBS: ReadonlySet<string> = new Set([
  */
 const ELOQUENT_CHAIN_VERBS: ReadonlySet<string> = new Set([
   ...PHP_INSTANCE_VERBS, ...ELOQUENT_STATIC_VERBS,
-  "orWhere", "whereIn", "whereNotIn", "orWhereIn", "whereNull", "whereNotNull", "whereBetween",
-  "whereDate", "whereHas", "orWhereHas", "whereDoesntHave", "whereRelation", "whereKey", "whereColumn",
-  "with", "withCount", "withTrashed", "onlyTrashed", "has", "doesntHave", "orderBy", "orderByDesc",
-  "latest", "oldest", "limit", "take", "skip", "offset", "groupBy", "having", "distinct", "join",
-  "leftJoin", "rightJoin", "lockForUpdate", "sharedLock", "when", "unless", "inRandomOrder",
-  "reorder", "forPage", "selectRaw", "whereRaw", "orderByRaw", "addSelect", "newQuery", "getQuery",
+  "orWhere", "whereNotIn", "orWhereIn", "whereBetween", "whereDate", "orWhereHas", "whereDoesntHave",
+  "whereRelation", "whereKey", "whereColumn", "orderByDesc", "limit", "take", "skip", "offset", "groupBy",
+  "having", "distinct", "leftJoin", "rightJoin", "lockForUpdate", "sharedLock", "when", "unless",
+  "inRandomOrder", "reorder", "forPage", "selectRaw", "whereRaw", "orderByRaw", "addSelect", "getQuery",
   "toBase", "withoutGlobalScopes", "withoutGlobalScope",
 ]);
 
@@ -315,12 +319,13 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
       // `static::`/`self::` inside a model class are the model itself —
       // resolved against the enclosing class in `reconcileProject`.
       if (NON_MODEL_FACADES.has(scope)) return;
-      if ((/^[A-Z]/.test(scope) || /^(static|self|parent)$/.test(scope)) && ELOQUENT_STATIC_VERBS.has(name)) {
+      const relative = RELATIVE_SCOPE_RE.test(scope);
+      if ((/^[A-Z]/.test(scope) || relative) && ELOQUENT_STATIC_VERBS.has(name)) {
         if (continuesEloquentChain(node)) return;
         sources.push(this.ds({
           kind: "database",
           name: callText,
-          target: /^(static|self|parent)$/.test(scope) ? null : scope,
+          target: relative ? null : scope,
           line,
           ...phpAccess(name),
         }));

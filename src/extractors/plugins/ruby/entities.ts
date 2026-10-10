@@ -1,6 +1,6 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import type { ClassInfo, DataSourceInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
-import { isRailsSchemaFile, joinSchemaColumns, parseRailsSchema } from "./schema.js";
+import { isRailsSchemaFile, joinSchemaColumns, parseRailsSchema, railsUnderscore } from "./schema.js";
 
 /**
  * Extracts ActiveRecord (Rails) and Sequel::Model entities + their
@@ -618,10 +618,6 @@ export class RubyEntityExtractor extends EntityExtractor {
 
 // ─── Association / instance chain resolution (project-level) ───────────────
 
-/** `ContactInbox` → `contact_inbox`: the variable a Rails developer names after the model. */
-function railsUnderscore(name: string): string {
-  return name.replace(/([a-z\d])([A-Z])/g, "$1_$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2").toLowerCase();
-}
 
 /**
  * The entity-less `database` rows the per-file pass emitted for chains
@@ -650,6 +646,7 @@ function resolveChainAccesses(analyses: FileAnalysis[]): void {
       associations.set(rel.fromField, set);
     }
   }
+  const modelNames = new Set(models.values());
   for (const a of ruby) {
     let changed = false;
     const next: DataSourceInfo[] = [];
@@ -666,7 +663,7 @@ function resolveChainAccesses(analyses: FileAnalysis[]): void {
       const before = segments[segments.length - 2]!.replace(/\(\)$/, "").replace(/^(?:@{1,2}|\$)/, "");
       const targets = associations.get(before);
       const entity = targets && targets.size === 1 ? [...targets][0]! : models.get(before) ?? null;
-      if (entity && [...models.values()].includes(entity)) next.push({ ...ds, entity });
+      if (entity && modelNames.has(entity)) next.push({ ...ds, entity });
     }
     if (changed) a.dataSources = next;
   }

@@ -492,8 +492,8 @@ describe("symbol-linker — imports that name a sibling sub-project by package",
   const rust = (filePath: string, projectId: string, opts: { functions?: any[]; classes?: any[]; imports?: any[] }): FileAnalysis =>
     ({ ...file(filePath, projectId, opts), language: "rust", imports: opts.imports ?? [] } as unknown as FileAnalysis);
   const subProjects = [
-    { id: "crates-api", name: "api", root: "crates/api", kind: "rust", markers: [], packageName: "lemmy_api" },
-    { id: "crates-db_views-site", name: "site", root: "crates/db_views/site", kind: "rust", markers: [], packageName: "lemmy-db-views-site" },
+    { id: "crates-api", name: "api", root: "crates/api", kind: "rust", markers: [], packageName: "lemmy_api", packageEcosystem: "cargo" },
+    { id: "crates-db_views-site", name: "site", root: "crates/db_views/site", kind: "rust", markers: [], packageName: "lemmy-db-views-site", packageEcosystem: "cargo" },
   ] as any[];
 
   it("resolves `Type::method` into the crate a `use` names by its Cargo package name", () => {
