@@ -1,7 +1,7 @@
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractClassesWithSpec } from "../shared/regex-base.js";
 import type { DataSourceInfo, ImportInfo } from "../../../types/analysis.js";
-import { attachEctoSchema, attachPatternKeys, extractElixirRequestAccess, extractPhoenixRoutes } from "./phoenix.js";
+import { attachEctoSchema, attachPatternKeys, extractEctoRelations, extractElixirRequestAccess, extractPhoenixRoutes } from "./phoenix.js";
 
 /** Last dotted segment of an Elixir module alias (`MyApp.Accounts.User` → `User`). */
 function lastSeg(mod: string): string {
@@ -158,4 +158,6 @@ export const elixirSpec: RegexLangSpec = {
 
   extractRoutes: (lines) => extractPhoenixRoutes(lines),
   extractDataSources: (lines) => extractElixirDataSources(lines),
+  /** Ecto `belongs_to` / `has_many` / `has_one` / `many_to_many` → entity relations (see `phoenix.ts`). */
+  extractEntityRelations: (lines, classes) => extractEctoRelations(lines, classes),
 };

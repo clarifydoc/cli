@@ -1,5 +1,5 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
-import type { ClassInfo, EntityRelation, Language, PropertyInfo } from "../../../types/analysis.js";
+import type { ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
 
 /**
  * Go ORM entity extractor. Go is regex-parsed, so `ctx.analysis.classes` does
@@ -133,11 +133,14 @@ export class GoEntityExtractor extends EntityExtractor {
         );
         const hasGormTag = fields.some((f) => f.tags.gorm !== undefined);
         const isGorm = embedsGormModel || hasGormTag;
+        // xorm (gitea, and anything on `xorm.io`): `xorm:"pk autoincr"` tags,
+        // registered through the same `RegisterModel(new(X))` call shape.
+        const hasXormTag = fields.some((f) => f.tags.xorm !== undefined);
 
         // No genuine ORM marker → not an entity (reduces false positives).
-        if (!isGorm && !isBeego) continue;
+        if (!isGorm && !isBeego && !hasXormTag) continue;
 
-        const orm = isGorm ? "gorm" : "beego-orm";
+        const orm = isGorm ? "gorm" : hasXormTag ? "xorm" : "beego-orm";
         const props: PropertyInfo[] = [];
         const fieldNames = new Set(fields.filter((f) => f.name).map((f) => f.name));
 
@@ -178,6 +181,63 @@ export class GoEntityExtractor extends EntityExtractor {
     }
 
     return { entities, relations };
+  }
+
+  /**
+   * Project-level pass: an entity's field typed as ANOTHER entity — declared in
+   * another file, so the per-file pass kept it as a column — is an association
+   * (`Repo *repo_model.Repository` on gitea's Issue, `Photos []Photo` on a
+   * GORM Album). Pointer or value → many-to-one, slice → one-to-many; the
+   * `<Field>ID` column beside it is the foreign key. Inferred from the type,
+   * not an ORM tag, so INFERRED; a relation the per-file pass already derived
+   * from a tag for the same field is kept as it is. gitea: 128 relations
+   * between 382 entities, photoprism: 1 between 300, before this.
+   */
+  override reconcileProject(analyses: FileAnalysis[]): void {
+    const go = analyses.filter((a) => a.language === "go");
+    const entityOrm = new Map<string, string>();
+    for (const a of go) {
+      for (const cls of a.classes) {
+        const i = cls.decorators.indexOf("entity");
+        if (i >= 0) entityOrm.set(cls.name, cls.decorators[i + 1] ?? "gorm");
+      }
+    }
+    if (entityOrm.size < 2) return;
+    const refOf = (type: string | null): { ref: string; slice: boolean } | null => {
+      if (!type) return null;
+      // The declared type token only — a property type may still carry the
+      // struct tag text (`*Camera \`gorm:"…"`) when the tag was not split off.
+      let t = (type.trim().match(/^[\[\]*\w.]+/) ?? [""])[0]!;
+      const slice = /^\[\]/.test(t) || /^map\[/.test(t);
+      t = t.replace(/^(?:\[\]|\*|map\[[^\]]*\])+/, "").replace(/^\*/, "");
+      const ref = t.split(".").pop() ?? "";
+      return /^[A-Z]\w*$/.test(ref) ? { ref, slice } : null;
+    };
+    for (const a of go) {
+      const added: EntityRelation[] = [];
+      for (const cls of a.classes) {
+        const orm = entityOrm.get(cls.name);
+        if (!orm) continue;
+        const have = new Set((a.entityRelations ?? []).filter((r) => r.fromEntity === cls.name).map((r) => r.fromField));
+        const columns = new Set(cls.properties.map((p) => p.name));
+        for (const p of cls.properties) {
+          if (have.has(p.name)) continue;
+          const r = refOf(p.type);
+          if (!r || r.ref === cls.name || !entityOrm.has(r.ref)) continue;
+          const fk = columns.has(`${p.name}ID`) ? `${p.name}ID` : columns.has(`${p.name}Id`) ? `${p.name}Id` : null;
+          added.push({
+            fromEntity: cls.name,
+            fromField: p.name,
+            toEntity: r.ref,
+            cardinality: r.slice ? "one-to-many" : "many-to-one",
+            ...(fk ? { foreignKey: fk } : {}),
+            orm,
+            confidence: "INFERRED",
+          });
+        }
+      }
+      if (added.length > 0) a.entityRelations = [...(a.entityRelations ?? []), ...added];
+    }
   }
 
   // ── Struct discovery ──────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ import { join, resolve, sep } from "path";
  * stored in the manifest and this constant invalidates the whole cache so a
  * fixed extractor never leaves stale JSON behind.
  */
-export const EXTRACTOR_VERSION = "1.90.0";
+export const EXTRACTOR_VERSION = "1.91.0";
 
 export interface ManifestEntry {
   /** Modification time as ms since epoch. Fast-path check before hashing. */

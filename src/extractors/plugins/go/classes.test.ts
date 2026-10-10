@@ -289,3 +289,17 @@ type User struct {
     expect(goRequestSchema.serializedName(named!)).toBe("base");
   });
 });
+
+describe("struct tags containing semicolons", () => {
+  it("keeps a GORM tag whole instead of cutting the member at its first `;`", async () => {
+    const { extractGoClasses } = await import("./classes.js");
+    const lines = [
+      "type Photo struct {",
+      "\tCamera *Camera `gorm:\"association_autoupdate:false;association_autocreate:false\" json:\"Camera\"`",
+      "\tAlbums []Album `json:\"Albums\"`",
+      "}",
+    ];
+    const [photo] = extractGoClasses(lines, [], (t: string) => ({ name: t.trim(), type: null, defaultValue: null }));
+    expect(photo!.properties.map((p) => [p.name, p.type])).toEqual([["Camera", "*Camera"], ["Albums", "[]Album"]]);
+  });
+});

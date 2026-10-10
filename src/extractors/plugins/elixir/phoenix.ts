@@ -1,3 +1,4 @@
+import type { EntityRelation } from "../../../types/analysis.js";
 import type { ClassInfo, FunctionInfo, PropertyInfo, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../types/analysis.js";
 import type { GuardAttr } from "../../shared/route-metadata.js";
 import { applyRouteMeta } from "../../shared/route-metadata.js";
@@ -280,6 +281,8 @@ export function attachPatternKeys(lines: string[], fns: FunctionInfo[]): void {
 // ─── Ecto schema ─────────────────────────────────────────────────────────────
 
 const ECTO_FIELD_RE = /^\s*field\s+:(\w+)\s*(?:,\s*(\{[^}]*\}|:\w+|[A-Z][\w.]*))?/;
+/** `belongs_to :team, Plausible.Teams.Team` / `has_many :goals, Goal, preload_order: …` / `many_to_many :tags, Tag, join_through: "posts_tags"`. */
+const ECTO_ASSOC_RE = /^\s*(belongs_to|has_many|has_one|many_to_many)\s+:(\w+)\s*,\s*([A-Z][\w.]*)(.*)$/;
 const ECTO_BELONGS_RE = /^\s*belongs_to\s+:(\w+)\s*,\s*([A-Z][\w.]*)/;
 const ECTO_EMBEDS_RE = /^\s*embeds_(one|many)\s+:(\w+)\s*,\s*([A-Z][\w.]*)/;
 
@@ -305,10 +308,16 @@ export function ectoProperty(line: string): PropertyInfo[] {
  */
 export function attachEctoSchema(lines: string[], cls: ClassInfo): void {
   let start = -1;
+  let table: string | null = null;
   for (let i = cls.line; i < Math.min(cls.endLine, lines.length); i++) {
-    if (/^\s*(?:schema\s+"[^"]+"|embedded_schema)\s+do\b/.test(lines[i]!)) { start = i; break; }
+    const m = /^\s*(?:schema\s+"([^"]+)"|embedded_schema)\s+do\b/.exec(lines[i]!);
+    if (m) { start = i; table = m[1] ?? null; break; }
   }
   if (start < 0) return;
+  // A module with a `schema "table"` block IS the table's model: an entity of
+  // the Ecto ORM, carrying its table as Rails models do. An `embedded_schema`
+  // is a value type, not a table.
+  if (table && !cls.decorators.includes("entity")) cls.decorators.push("entity", "ecto", `table:${table}`);
   const properties: PropertyInfo[] = [];
   const indent = (lines[start]!.match(/^\s*/) ?? [""])[0]!.length;
   for (let i = start + 1; i < Math.min(cls.endLine, lines.length); i++) {
@@ -324,4 +333,48 @@ export function attachEctoSchema(lines: string[], cls: ClassInfo): void {
   for (const p of properties) if (required.has(p.name)) p.isRequired = true;
   const seen = new Set(properties.map((p) => p.name));
   cls.properties = [...properties, ...cls.properties.filter((p) => !seen.has(p.name))];
+}
+
+/**
+ * Ecto associations of every schema module in the file, as entity relations.
+ * The target is written as a module — fully (`Plausible.Teams.Team`) or by an
+ * alias (`Team`, after `alias Plausible.Teams.Team`) — and is resolved to the
+ * full module name, which is what the entity graph names the schema by; an
+ * alias the file never declares is taken as a sibling of the declaring module.
+ * `many_to_many` carries its `join_through` table.
+ */
+export function extractEctoRelations(lines: string[], classes: ClassInfo[]): EntityRelation[] {
+  const aliases = new Map<string, string>();
+  for (const line of lines) {
+    const m = /^\s*alias\s+([A-Z][\w.]*)(?:\s*,\s*as:\s*([A-Z]\w*))?\s*$/.exec(line);
+    if (m) aliases.set(m[2] ?? m[1]!.split(".").pop()!, m[1]!);
+    const multi = /^\s*alias\s+([A-Z][\w.]*)\.\{([^}]+)\}/.exec(line);
+    if (multi) for (const name of multi[2]!.split(",").map((x) => x.trim()).filter(Boolean)) aliases.set(name, `${multi[1]}.${name}`);
+  }
+  const relations: EntityRelation[] = [];
+  for (const cls of classes) {
+    if (!cls.decorators.includes("ecto")) continue;
+    const namespace = cls.name.includes(".") ? cls.name.slice(0, cls.name.lastIndexOf(".")) : "";
+    const resolve = (written: string): string =>
+      written.includes(".") ? written : aliases.get(written) ?? (namespace ? `${namespace}.${written}` : written);
+    for (let i = cls.line; i < Math.min(cls.endLine, lines.length); i++) {
+      const m = ECTO_ASSOC_RE.exec(lines[i]!);
+      if (!m) continue;
+      const [, macro, field, target, rest] = m;
+      const cardinality: EntityRelation["cardinality"] =
+        macro === "belongs_to" ? "many-to-one" : macro === "has_one" ? "one-to-one" : macro === "has_many" ? "one-to-many" : "many-to-many";
+      const join = /join_through:\s*"([^"]+)"/.exec(rest ?? "")?.[1];
+      relations.push({
+        fromEntity: cls.name,
+        fromField: field!,
+        toEntity: resolve(target!),
+        cardinality,
+        ...(macro === "belongs_to" ? { foreignKey: `${field}_id` } : {}),
+        ...(join ? { joinTable: join } : {}),
+        orm: "ecto",
+        confidence: "EXTRACTED",
+      });
+    }
+  }
+  return relations;
 }
