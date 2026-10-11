@@ -1,5 +1,5 @@
 import type { ClassInfo, DataSourceInfo } from "../../../types/analysis.js";
-import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
+import { asDoubleQuotedLiteral, extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 
 /**
  * Haxe data access: SQL in strings (`cnx.request("SELECT …")` on a
@@ -9,7 +9,7 @@ import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
  */
 export function extractHaxeDataSources(lines: string[], _classes: ClassInfo[]): DataSourceInfo[] {
   const sqlLines = lines.map((l) =>
-    l.replace(/'((?:[^'\\]|\\.)*)'/g, (all, body: string) => (/\b(?:SELECT|INSERT|UPDATE|DELETE|MERGE)\b/i.test(body) ? `"${body.replace(/"/g, '\\"').replace(/\$\{?(\w+)\}?/g, "?")}"` : all)),
+    l.replace(/'((?:[^'\\]|\\.)*)'/g, (all, body: string) => (/\b(?:SELECT|INSERT|UPDATE|DELETE|MERGE)\b/i.test(body) ? asDoubleQuotedLiteral(body.replace(/\$\{?(\w+)\}?/g, "?")) : all)),
   );
   const out = extractSqlStringDataSources(sqlLines);
   for (let i = 0; i < lines.length; i++) {

@@ -80,8 +80,8 @@ const SVELTE_DIALECT: TemplateDialect = {
 function blankNonMarkup(source: string): string {
   const blank = (m: string): string => "\n".repeat((m.match(/\n/g)?.length ?? 0));
   return source
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, blank)
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, blank);
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, blank)
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, blank);
 }
 
 /** Extract prop/binding names from a Svelte tag's attributes. */
@@ -110,7 +110,7 @@ function extractSvelteProps(attrs: string): string[] {
  * Extract interactive elements (event/`bind:` bindings) from Svelte markup, so
  * the screen builder can attach event pills to the matching tree nodes by line.
  */
-const SVELTE_TAG_RE = /<([a-zA-Z][a-zA-Z0-9-]*)((?:"[^"]*"|'[^']*'|\{[^{}]*\}|[^>'"])*?)\/?>/g;
+const SVELTE_TAG_RE = /<([a-zA-Z][a-zA-Z0-9-]*)((?:"[^"]*"|'[^']*'|\{[^{}]*\}|[^>'"{])*?)\/?>/g;
 const SVELTE_EVENT_RE = /\bon:([a-zA-Z][a-zA-Z0-9]*)(?:=(?:"([^"]*)"|\{([^}]*)\}))?/g;
 /**
  * Svelte 5 event attributes: `onclick={save}` / `onsubmit={(e) => …}` — plain

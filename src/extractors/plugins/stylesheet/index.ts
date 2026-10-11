@@ -138,7 +138,7 @@ export function lessSpec(): RegexLangSpec {
     callPatterns: [
       // A mixin call is a selector statement: `.button(red);`, `.clearfix;`, `#ns > .mixin();` (`ns.mixin`).
       {
-        pattern: /^\s*([.#][\w-]+(?:\s*>?\s*[.#][\w-]+)*)\s*(?:\([^)]*\))?\s*(?:!important\s*)?;/,
+        pattern: /^\s*([.#][\w-]+(?:(?:\s*>\s*|\s*)[.#][\w-]+)*)\s*(?:\([^)]*\))?\s*(?:!important\s*)?;/,
         buildName: (m) => {
           const parts = m[1]!.split(/\s*>?\s*[.#]/).filter(Boolean).map((p) => p.replace(/^[.#]/, ""));
           return { name: parts.join("."), leafName: parts[parts.length - 1]! };

@@ -13,7 +13,10 @@ import { extractRakuDataSources } from "./data-sources.js";
 
 /** `Str $name`, `Int :$limit = 10`, `$id`, `*@rest`, `Repo $repo where *.ok`, `::?CLASS:D: `. */
 function parseRakuParam(raw: string): ParamInfo | null {
-  let text = raw.trim().replace(/\s*-->.*$/, "").replace(/\s+where\s+.*$/, "").replace(/\s+is\s+\w+.*$/, "");
+  let text = raw.trim();
+  const arrow = text.indexOf("-->"); // `--> Str`: the return type, not part of the parameter
+  if (arrow >= 0) text = text.slice(0, arrow).trimEnd();
+  text = text.replace(/\s+where\s+.*$/, "").replace(/\s+is\s+\w+.*$/, "");
   if (!text || /:\s*$/.test(text)) return null;
   let defaultValue: string | null = null;
   const eq = text.search(/=(?!=)/);

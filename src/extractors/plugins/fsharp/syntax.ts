@@ -1,5 +1,6 @@
 import type { Node } from "web-tree-sitter";
 import type { ParamInfo } from "../../../types/analysis.js";
+import { stripAngleGroups } from "../shared/path-utils.js";
 
 /**
  * Shared readers over the tree-sitter-fsharp tree.
@@ -98,7 +99,7 @@ export function calleeName(node: Node): string | null {
   }
   if (node.type === "typed_expression") return calleeName(node.namedChildren[0]!);
   if (node.type === "dot_expression") {
-    const text = node.text.replace(/<[^<>]*>/g, "").replace(/\s+/g, "");
+    const text = stripAngleGroups(node.text).replace(/\s+/g, "");
     return /^[A-Za-z_][\w'.]*$/.test(text) ? text : null;
   }
   return null;

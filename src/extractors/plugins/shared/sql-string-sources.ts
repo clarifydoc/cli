@@ -28,6 +28,15 @@ import { sqlVerbAccess } from "./db-access.js";
  * polluting the graph with `(unresolved)` datastores.
  */
 
+/**
+ * `body` as the `"…"` literal `LINE_TOKEN_RE` reads back verbatim: backslashes
+ * and quotes both escaped, so a `\` or `"` inside the text can neither end the
+ * literal early nor swallow the quote that does.
+ */
+export function asDoubleQuotedLiteral(body: string): string {
+  return `"${body.replace(/[\\"]/g, "\\$&")}"`;
+}
+
 /** A string literal's content, or an ALL-CAPS macro identifier between literals. */
 const LINE_TOKEN_RE = /"((?:[^"\\]|\\.)*)"|\b([A-Z][A-Z0-9_]{2,})\b/g;
 

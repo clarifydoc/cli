@@ -209,7 +209,7 @@ function objectFields(lines: string[], cls: ClassInfo): PropertyInfo[] {
   for (let i = cls.line; i < Math.min(cls.endLine, lines.length); i++) {
     const text = lines[i]!.replace(/\s*#.*$/, "").trim().replace(/^case\s+/, "");
     if (/^(?:of|else|elif|when)\b/.test(text)) continue;
-    const m = /^((?:[A-Za-z_]\w*\s*\*?\s*(?:\{\.[^}]*\.\})?\s*,\s*)*[A-Za-z_]\w*\s*\*?\s*(?:\{\.[^}]*\.\})?)\s*:\s*([^=]+?)\s*(?:=.*)?$/.exec(text);
+    const m = /^((?:[A-Za-z_]\w*(?:\s*\*)?(?:\s*\{\.[^}]*\.\})?\s*,\s*)*[A-Za-z_]\w*(?:\s*\*)?(?:\s*\{\.[^}]*\.\})?)\s*:\s*([^=]+?)\s*(?:=.*)?$/.exec(text);
     if (!m) continue;
     for (const raw of m[1]!.split(",")) {
       const name = /^\s*([A-Za-z_]\w*)/.exec(raw)?.[1];

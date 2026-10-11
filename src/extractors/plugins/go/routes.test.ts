@@ -66,7 +66,7 @@ r.HandleFunc("/legacy", LegacyHandler)
       "GET /api/users",
       "POST /api/users",
       "PUT /api/users",
-      "null /legacy".replace("null", "null"),
+      "null /legacy",
     ]);
     expect(routes[3]!.httpMethod).toBeNull(); // no Methods constraint = all verbs
   });

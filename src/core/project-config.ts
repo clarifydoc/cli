@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import type { ArchLayer } from "../types/analysis.js";
 import { fnmatch } from "./clarifydoc-ignore.js";
+import { trimTrailingSlashes } from "../extractors/plugins/shared/path-utils.js";
 
 /**
  * Project-local ClarifyDoc configuration: `<projectRoot>/.clarifydoc/config.json`.
@@ -189,7 +190,7 @@ export function matchesAnyGlob(filePath: string, patterns: readonly string[]): b
   for (const pat of patterns) {
     // A trailing `/` marks a directory; it must not count as the interior
     // slash that anchors, so it comes off before the anchoring test.
-    const trimmed = pat.replace(/\/+$/, "");
+    const trimmed = trimTrailingSlashes(pat);
     const anchored = trimmed.includes("/");
     const glob = trimmed.replace(/^\/+/, "");
     if (!glob) continue;

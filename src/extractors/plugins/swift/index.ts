@@ -29,7 +29,7 @@ function parseConformance(header: string): string[] {
   return decl
     .slice(colon + 1)
     .split(",")
-    .map((t) => t.trim().replace(/<.*/, ""))
+    .map((t) => { const lt = t.indexOf("<"); return (lt < 0 ? t : t.slice(0, lt)).trim(); })
     .filter((t) => /^[A-Z]\w*$/.test(t));
 }
 

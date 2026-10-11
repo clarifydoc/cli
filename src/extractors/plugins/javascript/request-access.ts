@@ -1,4 +1,5 @@
 import type { RouteParamInfo } from "../../../types/analysis.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * What a JS/TS request handler reads off its request object, from the body
@@ -42,7 +43,7 @@ export function scanRequestAccess(text: string, reqName: string): RouteParamInfo
   const hits: Hit[] = [];
   const consumed = new Set<number>();
 
-  const esc = reqName.replace(/\$/g, "\\$");
+  const esc = escapeRegex(reqName);
   // `req.` or Koa's `ctx.request.`; the group anchors every pattern below.
   const base = String.raw`\b${esc}(\.request)?`;
   // Koa: `ctx.body` is the RESPONSE body — only `ctx.request.body` is a read.
