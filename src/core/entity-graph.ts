@@ -183,6 +183,17 @@ export function propagateStiRelations(analyses: FileAnalysis[]): void {
   }
 }
 
+/**
+ * Build the ER graph: one node per ORM entity, table or enum class, one edge
+ * per `EntityRelation`, resolved by entity name across files.
+ *
+ * Tables that are only referenced by raw SQL get synthesized nodes so a query
+ * has something to point at; relations inherited through `extends` were
+ * already copied onto subclasses by `propagateInheritedRelations`.
+ *
+ * @param analyses - Every file analysis
+ * @returns Nodes and edges in a stable order
+ */
 export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
   const nodes = new Map<string, EntityGraphNode>();
   const nameToIds = new Map<string, string[]>();

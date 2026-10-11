@@ -13,6 +13,13 @@ interface Pending {
   resolve: (r: FileResult | null) => void;
 }
 
+/**
+ * A fixed set of worker threads that run `analyzeFile` off the main thread.
+ *
+ * Create one with `AnalysisWorkerPool.create`; `run` hands a task to the next
+ * idle worker and resolves with its result, and `destroy` terminates the
+ * threads. See the module comment for the crash-fallback behaviour.
+ */
 export class AnalysisWorkerPool {
   private workers: Worker[] = [];
   private idle: Worker[] = [];

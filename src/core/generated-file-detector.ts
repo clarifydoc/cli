@@ -24,6 +24,7 @@ const GENERIC_GENERATED_PATTERNS: readonly RegExp[] = [/\.generated\.[^.\\/]+$/i
 
 const combinedCache = new Map<Language | "<none>", readonly RegExp[]>();
 
+/** The generic generated-file patterns plus the language's own, merged once per language and cached. */
 function patternsFor(language?: Language): readonly RegExp[] {
   const key = language ?? "<none>";
   let combined = combinedCache.get(key);

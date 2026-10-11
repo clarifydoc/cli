@@ -76,6 +76,10 @@ export function conventionRoots(filePaths: string[]): string[] {
   return [...roots];
 }
 
+/**
+ * Generated/vendored roots found by `analyzeUnusedCode`, and the files under
+ * them that nothing authored imports.
+ */
 export interface UnusedCodeResult {
   /** Shallowest barrel directories (posix paths, no trailing slash). */
   generatedRoots: string[];
@@ -83,12 +87,26 @@ export interface UnusedCodeResult {
   unusedFiles: string[];
 }
 
+/** The posix directory of a path; empty for a root-level file. */
 function dirOf(filePath: string): string {
   const p = filePath.replace(/\\/g, "/");
   const idx = p.lastIndexOf("/");
   return idx >= 0 ? p.slice(0, idx) : "";
 }
 
+/**
+ * Find generated or vendored code and the part of it the project never uses.
+ *
+ * A root is a directory whose barrel re-exports many modules and that depends
+ * on almost nothing outside itself (codegen output), or one named by
+ * convention (`generated/`, `vendor/`, …). Files under a root count as unused
+ * when no file outside any root reaches them through the component graph.
+ *
+ * @param analyses - Every file analysis
+ * @param componentGraph - file → files it imports
+ * @param publicEntries - Package entry points that must never be taken for a codegen barrel
+ * @returns The shallowest roots and the unused files beneath them
+ */
 export function analyzeUnusedCode(
   analyses: FileAnalysis[],
   componentGraph: Record<string, string[]>,
@@ -667,6 +685,7 @@ function fileStem(filePath: string): string {
   return base === "index" && segs.length > 1 ? segs[segs.length - 2]! : base;
 }
 
+/** Lowercase alphanumerics only, so `my-module`, `MyModule` and `my_module` compare equal. */
 function normName(s: string): string {
   return s.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
 }

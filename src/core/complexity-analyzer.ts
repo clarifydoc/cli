@@ -152,6 +152,16 @@ export function makeEndRowMemo(): (n: TSNode) => number {
   };
 }
 
+/**
+ * Measure one function: find its body node under `root` by line range, count
+ * its branches and nesting, and shape the result as a complexity row.
+ *
+ * @param functionName - The row's name, `Class.method` for methods
+ * @param fn - The declaration, for its line range and parameter count
+ * @param root - The file's parse tree
+ * @param spec - The language's complexity tables
+ * @param endRow - How to read a node's end row (differs per grammar)
+ */
 function rowFor(
   functionName: string,
   fn: FunctionInfo,

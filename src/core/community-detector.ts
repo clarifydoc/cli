@@ -25,6 +25,10 @@ function proximityWeight(proximity: number): number {
   return Math.max(1, 4 - proximity);
 }
 
+/**
+ * Communities found by `detectCommunities`. Both maps are empty when the
+ * graph had no files or exceeded the node cap.
+ */
 export interface CommunityResult {
   /** Map community ID (stringified number) → sorted list of file paths. */
   communities: Record<string, string[]>;
@@ -41,6 +45,14 @@ interface AdjacencyMap {
   m2: number;
 }
 
+/**
+ * Cluster the project's files into communities by Louvain modularity over the
+ * link graph (see the module comment for the algorithm and its caps).
+ *
+ * @param linkGraph - Proximity-weighted file links; direction is ignored
+ * @param files - Every file to place, including ones with no links (isolates)
+ * @returns Communities numbered by descending size, with their cohesion
+ */
 export function detectCommunities(linkGraph: LinkInfo[], files: string[]): CommunityResult {
   if (files.length === 0) return { communities: {}, cohesion: {} };
   if (files.length > MAX_NODES) {
@@ -112,6 +124,7 @@ function buildUndirectedAdj(linkGraph: LinkInfo[], files: string[]): AdjacencyMa
   return { edges, degree, m2 };
 }
 
+/** Add weight `w` to the a–b edge in both directions, summing parallel edges. */
 function addUndirectedEdge(
   edges: Map<string, Map<string, number>>,
   a: string,
@@ -189,6 +202,7 @@ function runLouvain(nodes: string[], adj: AdjacencyMap): Map<string, number> {
   return community;
 }
 
+/** Group the nodes of a partition into one array per community id. */
 function bucketByCommunity(partition: Map<string, number>): string[][] {
   const buckets = new Map<number, string[]>();
   for (const [node, c] of partition) {

@@ -43,6 +43,7 @@ export async function generateHtmlReport(options: ReportOptions): Promise<string
   return outPath;
 }
 
+/** Open a file with the platform's default handler, without waiting for it. */
 function openInBrowser(filePath: string): void {
   // Argument vectors, never a shell string: the path is passed as-is.
   const [file, args] =
@@ -70,6 +71,11 @@ export function encodeReportPayload(payload: unknown): string {
   return gzipSync(Buffer.from(JSON.stringify(payload), "utf8")).toString("base64");
 }
 
+/**
+ * Replace a placeholder that must occur exactly once in the template.
+ *
+ * @throws When the placeholder is missing or duplicated (a stale template)
+ */
 function replaceToken(html: string, token: string, value: string): string {
   const count = html.split(token).length - 1;
   if (count !== 1) {

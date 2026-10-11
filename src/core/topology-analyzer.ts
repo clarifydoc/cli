@@ -23,11 +23,17 @@ import { SURPRISE_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidenc
 
 const BETWEENNESS_NODE_CAP = 1000;
 
+/** A file with an unusually high combined in+out degree in the component graph. */
 export interface GodNode {
   file: string;
   degree: number;
 }
 
+/**
+ * A link the graph did not expect — inferred or ambiguous, bridging two
+ * communities, or a peripheral file reaching a hub — scored so the report can
+ * rank them.
+ */
 export interface SurprisingConnection {
   source: string;
   target: string;
@@ -37,12 +43,17 @@ export interface SurprisingConnection {
   reason: string;
 }
 
+/** What a suggested question is prompted by. */
 export type SuggestedQuestionType =
   | "ambiguous-edge"
   | "bridge-node"
   | "isolated-node"
   | "low-cohesion";
 
+/**
+ * A human-readable prompt the graph is positioned to answer, with the
+ * observation that motivated it.
+ */
 export interface SuggestedQuestion {
   type: SuggestedQuestionType;
   question: string;
@@ -212,6 +223,7 @@ function invertCommunities(communities: Record<string, string[]>): Map<string, s
   return m;
 }
 
+/** Combined in+out degree of every file in the component graph. */
 function degreeMap(componentGraph: Record<string, string[]>): Map<string, number> {
   const deg = new Map<string, number>();
   for (const [src, targets] of Object.entries(componentGraph)) {
@@ -221,6 +233,7 @@ function degreeMap(componentGraph: Record<string, string[]>): Map<string, number
   return deg;
 }
 
+/** The `k` highest-degree files (ties broken by path); files with no edges are left out. */
 function topDegree(
   componentGraph: Record<string, string[]>,
   files: string[],

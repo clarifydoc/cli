@@ -49,6 +49,15 @@ export function spansOf(a: FileAnalysis): SymbolSpan[] {
   return spans;
 }
 
+/**
+ * The narrowest span containing `line`, or `null` when no span covers it.
+ *
+ * Nested functions and methods produce overlapping spans; the narrowest one
+ * is the symbol the reader is actually looking at.
+ *
+ * @param spans - Spans of one file, from `spansOf`
+ * @param line - 1-based source line
+ */
 export function innermostAt(spans: SymbolSpan[], line: number): SymbolSpan | null {
   let best: SymbolSpan | null = null;
   let bestSpan = Infinity;
@@ -69,6 +78,14 @@ export function byName(spans: SymbolSpan[], name: string): SymbolSpan[] {
   return spans.filter((s) => s.symbol === name || s.symbol.endsWith(`.${name}`));
 }
 
+/**
+ * Turn every unambiguous api↔route link into a `SymbolLink` from the function
+ * making the call to the handler serving the route (see the module comment).
+ *
+ * @param links - The `apiRouteLinks` produced by the route linker
+ * @param analyses - Every file analysis, used to locate the symbols on both ends
+ * @returns New symbol links, one per resolvable link; never mutates `links`
+ */
 export function synthesizeApiRouteSymbolLinks(
   links: ApiRouteLink[],
   analyses: FileAnalysis[],

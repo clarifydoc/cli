@@ -286,6 +286,10 @@ export function detectFrameworks(
   return results.sort((a, b) => byOrdinal(a.id, b.id));
 }
 
+/**
+ * Result of `detectFrameworksMultiRoot`: the merged list, and which root each
+ * detection came from.
+ */
 export interface MultiRootFrameworks {
   /** De-duped union across the analyzed root and every sub-project root. */
   merged: FrameworkDetection[];

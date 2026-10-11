@@ -111,6 +111,15 @@ function bareTypeName(type: string): string {
   return t.trim();
 }
 
+/**
+ * Collapse duplicate symbol links: the same caller, target symbol and
+ * (normalized) call name keep one edge. The higher-confidence duplicate wins;
+ * on a tie the earliest source line does, so the report points at the first
+ * occurrence.
+ *
+ * @param links - Links in discovery order
+ * @returns A new array; the survivors keep their first-seen position
+ */
 export function dedupSymbolLinks(links: SymbolLink[]): SymbolLink[] {
   const seen = new Map<string, number>();
   const result: SymbolLink[] = [];

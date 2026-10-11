@@ -84,6 +84,7 @@ function classify(name: string): KnownPackageEntry {
 
 const IGNORE = ["**/node_modules/**", "**/dist/**", "**/.git/**", "**/bin/**", "**/obj/**", "**/vendor/**"];
 
+/** Read a file as UTF-8, or null when it cannot be read. */
 async function readIf(absPath: string): Promise<string | null> {
   try {
     return await readFile(absPath, "utf-8");

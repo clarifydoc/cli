@@ -33,4 +33,5 @@ function readVersion(): string {
   return "0.0.0";
 }
 
+/** The running tool's version from its `package.json`; `"0.0.0"` when none was found. */
 export const TOOL_VERSION: string = readVersion();

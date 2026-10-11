@@ -630,6 +630,11 @@ function classEntryFor(
 /** Cap on per-name candidate files kept for closest-dir disambiguation. */
 const CLASS_CANDIDATE_CAP = 8;
 
+/**
+ * Per sub-project, every class name → the first file declaring it, the count
+ * of declarations and the files themselves, so a class-name lookup can tell a
+ * unique definition from a name declared in several places.
+ */
 function buildClassCatalogByProject(
   analyses: FileAnalysis[],
 ): Map<string, { file: string; count: number; files: string[] }> {
@@ -779,6 +784,7 @@ function callablesFoldCase(language: string | undefined): boolean {
   const plugin = pluginFor(language as Language);
   return plugin?.caseInsensitiveNames === true || plugin?.caseInsensitiveCallables === true;
 }
+/** A symbol name as the language compares it: lowercased for case-insensitive languages. */
 function nameKey(language: string | undefined, name: string): string {
   return caseInsensitive(language) ? name.toLowerCase() : name;
 }
@@ -1025,6 +1031,11 @@ function importsNothing(analysis: FileAnalysis, ctx: LinkContext): boolean {
   return importedFilesOf(analysis, ctx).size === 0 && importedProjectsOf(analysis, ctx).size === 0;
 }
 
+/**
+ * Per ecosystem, the published package name of every sub-project (in the
+ * ecosystem's own key form) → its id, so a package import can be followed to
+ * the sub-project that is that package.
+ */
 function buildPackageProjectIndex(subProjects: readonly SubProject[]): Map<PackageEcosystem, Array<{ key: string; projectId: string }>> {
   const index = new Map<PackageEcosystem, Array<{ key: string; projectId: string }>>();
   for (const p of subProjects) {
@@ -1072,6 +1083,7 @@ function importedStemsOf(analysis: FileAnalysis, ctx: LinkContext): Set<string> 
   return set;
 }
 
+/** The file stems (names without directory or extension) of one sub-project, cached on the context. */
 function projectStemsOf(projectId: string, ctx: LinkContext): Set<string> {
   let stems = ctx.projectStemsCache.get(projectId);
   if (!stems) {
@@ -1326,10 +1338,12 @@ function buildMemberTypes(analyses: FileAnalysis[]): Map<string, Map<string, Inj
   return out;
 }
 
+/** Key of a class within a file: `file\0className`. */
 function memberKey(file: string, className: string): string {
   return `${file}\0${className}`;
 }
 
+/** A type as written → its bare class name: generics and namespace qualifiers dropped. */
 function bareClassName(t: string | null | undefined): string {
   return (t ?? "").replace(/<.*$/, "").trim().split(".").pop() ?? "";
 }
@@ -1389,6 +1403,7 @@ function buildBindingIndex(analyses: FileAnalysis[]): Map<string, IndexedBinding
   return index;
 }
 
+/** Every class name → each declaration of it with the file analysis it lives in. */
 function indexClassDecls(analyses: FileAnalysis[]): Map<string, Array<{ a: FileAnalysis; cls: ClassInfo }>> {
   const out = new Map<string, Array<{ a: FileAnalysis; cls: ClassInfo }>>();
   for (const a of analyses) {
@@ -1568,6 +1583,11 @@ export interface InterfaceImplInfo {
   }[];
 }
 
+/**
+ * Keys (`file\0symbol`) of every function and method declared with a receiver
+ * parameter — Go methods, Kotlin/C# extension functions — under both the
+ * bare and the `Class.method` spelling the symbol index uses.
+ */
 function buildExtensionMethods(analyses: FileAnalysis[]): Set<string> {
   const out = new Set<string>();
   for (const a of analyses) {
@@ -1587,6 +1607,7 @@ function buildExtensionMethods(analyses: FileAnalysis[]): Set<string> {
 /** Upper bound on files kept per class name in `classFiles`. */
 const CLASS_FILES_CAP = 32;
 
+/** Every class name → the files declaring it, capped at `CLASS_FILES_CAP`. */
 function buildClassFiles(analyses: FileAnalysis[]): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const a of analyses) {
@@ -1599,6 +1620,7 @@ function buildClassFiles(analyses: FileAnalysis[]): Map<string, string[]> {
   return out;
 }
 
+/** `file\0className` → the class declaration, for direct member lookups. */
 function buildClassAt(analyses: FileAnalysis[]): Map<string, ClassInfo> {
   const at = new Map<string, ClassInfo>();
   for (const a of analyses) {
@@ -2346,6 +2368,7 @@ function directoryFunction(
   return found;
 }
 
+/** Every directory (with trailing slash) → the files directly inside it. */
 function filesByDirectory(analyses: FileAnalysis[]): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const a of analyses) {
@@ -2866,6 +2889,10 @@ function extensionMethodFor(
   return { file: hit.file, symbol: hit.symbol, line: hit.line };
 }
 
+/**
+ * Every receiver-bearing function/method name → its definitions with the
+ * receiver type each extends, so `x.foo()` can resolve on the type of `x`.
+ */
 function buildExtensionIndex(analyses: FileAnalysis[]): Map<string, ExtensionDef[]> {
   const out = new Map<string, ExtensionDef[]>();
   const add = (name: string, def: ExtensionDef): void => {
@@ -3150,6 +3177,7 @@ function providerReturnType(ctx: LinkContext, name: string, nearFile: string, pr
   return receiverTypeName(scoped[0]!.returnType, (ctx.languageOf.get(scoped[0]!.file) ?? "") as Language);
 }
 
+/** Every free function name → the files defining it and their declared return types. */
 function buildFunctionsByName(analyses: FileAnalysis[]): Map<string, Array<{ file: string; returnType: string | null }>> {
   const out = new Map<string, Array<{ file: string; returnType: string | null }>>();
   for (const a of analyses) {

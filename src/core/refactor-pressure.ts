@@ -75,6 +75,10 @@ export interface RefactorPressureConfig {
   driverThreshold: number;
 }
 
+/**
+ * The built-in scoring configuration. A project overrides individual numbers
+ * through `.clarifydoc/config.json` (`resolveRefactorPressureConfig`).
+ */
 export const DEFAULT_REFACTOR_PRESSURE_CONFIG: RefactorPressureConfig = {
   weights: { complexity: 0.25, size: 0.1, responsibility: 0.2, coupling: 0.2, churn: 0.25 },
   ceilings: {
@@ -141,6 +145,10 @@ export function resolveRefactorPressureConfig(
   return cfg;
 }
 
+/**
+ * Everything `computeRefactorPressure` scores from: the per-file analyses and
+ * the quality signals other analyzers already produced.
+ */
 export interface RefactorPressureInput {
   analyses: readonly FileAnalysis[];
   complexity: readonly FileComplexityInfo[];
@@ -169,12 +177,25 @@ function estimateLoc(a: FileAnalysis): number | null {
   return last > 0 ? last : null;
 }
 
+/** The `p`-th percentile (nearest-rank) of an ascending list; `Infinity` for an empty one, so nothing qualifies. */
 function percentile(sortedAsc: number[], p: number): number {
   if (sortedAsc.length === 0) return Infinity;
   const idx = Math.min(sortedAsc.length - 1, Math.max(0, Math.ceil((p / 100) * sortedAsc.length) - 1));
   return sortedAsc[idx]!;
 }
 
+/**
+ * Score every file's pressure to be refactored, 0–100.
+ *
+ * Five components (complexity, size, responsibility, coupling, churn) are each
+ * normalized against the config ceilings, weighted and summed; sub-scores
+ * above `driverThreshold` are reported as drivers. Independently, gates
+ * (god class, concern overload, dependency hub, churn hotspot) fire on
+ * absolute thresholds and raise the band. Files `exclude` rejects, and files
+ * without a complexity row, are skipped.
+ *
+ * @returns One row per scored file, sorted by band and then by descending score
+ */
 export function computeRefactorPressure(input: RefactorPressureInput): RefactorPressureInfo[] {
   const cfg = input.config ?? DEFAULT_REFACTOR_PRESSURE_CONFIG;
   const { ceilings: C, weights: W, gates: G, bands: B } = cfg;
@@ -391,6 +412,7 @@ export const DRIVER_LABELS: Record<string, string> = {
   many_authors: "many authors",
 };
 
+/** Human-readable name of each gate id, for the report and the MCP text. */
 export const GATE_LABELS: Record<string, string> = {
   god_class: "god class",
   concern_overload: "concern overload",
@@ -398,7 +420,9 @@ export const GATE_LABELS: Record<string, string> = {
   churn_hotspot: "churn hotspot",
 };
 
+/** Driver ids → a comma-separated readable list (unknown ids pass through). */
 export const describeDrivers = (ids: readonly string[]): string =>
   ids.map((d) => DRIVER_LABELS[d] ?? d).join(", ");
+/** Gate ids → a comma-separated readable list (unknown ids pass through). */
 export const describeGates = (ids: readonly string[]): string =>
   ids.map((g) => GATE_LABELS[g] ?? g).join(", ");

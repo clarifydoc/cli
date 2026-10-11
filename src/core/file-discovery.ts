@@ -21,6 +21,13 @@ const SENSITIVE_PATTERNS: ReadonlyArray<RegExp> = [
   /(aws_credentials|gcloud_credentials|service.account)/i,
 ];
 
+/**
+ * Whether a path looks like it holds a credential (`.env`, a key or
+ * certificate, anything named `secret`/`password`/`token`, …). Such files are
+ * never read, whatever their extension.
+ *
+ * @param relativePath - Posix path relative to the project root
+ */
 export function isSensitive(relativePath: string): boolean {
   return SENSITIVE_PATTERNS.some((p) => p.test(relativePath));
 }
@@ -51,12 +58,17 @@ const DEFAULT_IGNORE = [
   "**/*.d.ts",
 ];
 
+/**
+ * A source file discovery decided to analyze, with the language its extension
+ * maps to.
+ */
 export interface DiscoveredFile {
   absolutePath: string;
   relativePath: string;
   language: Language;
 }
 
+/** Files to analyze plus what was deliberately skipped, so the CLI can report it. */
 export interface DiscoveryResult {
   files: DiscoveredFile[];
   /** Files matching a sensitive-name pattern (.env, *.pem, id_rsa, ...). Skipped silently. */
@@ -68,6 +80,10 @@ export interface DiscoveryResult {
   skippedSymlinks: string[];
 }
 
+/**
+ * Filters for `discoverFiles`: extra include/exclude globs (relative to the
+ * root) and a cap on how many files to return.
+ */
 export interface DiscoveryOptions {
   include?: string[];
   exclude?: string[];
@@ -193,6 +209,7 @@ function linksToFileInside(linkPath: string, realRoot: string): boolean {
   }
 }
 
+/** The lowercased extension including the dot, or empty when there is none. */
 function getExtension(filePath: string): string {
   const lastDot = filePath.lastIndexOf(".");
   return lastDot >= 0 ? filePath.slice(lastDot).toLowerCase() : "";

@@ -17,6 +17,7 @@ export function urlValue(raw: string): string | null {
   return /^[a-z0-9.-]+:\d{1,5}(?:\/\S*)?$/i.test(v) ? v : null;
 }
 
+/** The parts of a service address, as `parseAddress` splits them. */
 export interface ParsedAddress {
   /** Lowercased host. */
   host: string;

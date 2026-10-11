@@ -152,6 +152,11 @@ function stringTable() {
 const RESOLVED_ENUM: Record<string, number> = { text: 1, lsp: 2 };
 const CONF_ENUM: Record<string, number> = { EXTRACTED: 1, INFERRED: 2, AMBIGUOUS: 3 };
 
+/**
+ * Wire alphabet for `SymbolLink.strategy`: a strategy encodes as its 1-based
+ * index here. APPEND only — reordering or inserting would silently re-label
+ * every link in already-written reports that the viewer decodes.
+ */
 export const SYMBOL_LINK_STRATEGIES: readonly string[] = [
   "direct", "inheritance", "interface-redirect", "injection", "deep-qualified",
   "factory-via", "class-name", "constructor", "import-file", "import-dir",
@@ -165,6 +170,7 @@ export const SYMBOL_LINK_STRATEGIES: readonly string[] = [
   "di-binding",
 ];
 
+/** Wire alphabet for `SymbolLink.relation`, 1-based like the strategies. Append only. */
 export const SYMBOL_LINK_RELATIONS: readonly string[] = [
   "calls", "instantiates", "implements", "http", "mq", "dispatch", "reference",
 ];
@@ -179,6 +185,7 @@ export const SYMBOL_LINK_RELATIONS: readonly string[] = [
  * to colour a pill, not to attribute a conflict.
  */
 const DISPATCH_CODE = SYMBOL_LINK_STRATEGIES.indexOf("dispatch") + 1;
+/** 1-based wire code of a strategy (`dispatch:*` all map to `DISPATCH_CODE`); 0 when absent or unknown. */
 function strategyCode(strategy: string | undefined): number {
   if (!strategy) return 0;
   if (strategy.startsWith("dispatch:")) return DISPATCH_CODE;
@@ -237,6 +244,10 @@ function encodeComplexity(
   ];
 }
 
+/**
+ * Copy of one blast-radius row with every file path replaced through `ref`
+ * (path → files[] index), including the nested callers and type usages.
+ */
 function encodeBlastRow(b: any, ref: (p: string) => string | number): any {
   const out: any = {
     ...b,

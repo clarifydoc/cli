@@ -40,6 +40,7 @@ export interface ControlFlowRequest {
   line?: number;
 }
 
+/** The graphs drawn for one file plus the list of functions it could have drawn. */
 export interface ControlFlowFileResult {
   filePath: string;
   language: Language;
@@ -52,6 +53,11 @@ export interface ControlFlowFileResult {
   available: { functionName: string; line: number; endLine: number; complexity: number }[];
 }
 
+/**
+ * Thrown when no graph can be drawn for a file: its extension is unregistered,
+ * its language has no control-flow tables, or the file holds no code (a `.vue`
+ * without a `<script>` block). The message is written for the end user.
+ */
 export class ControlFlowUnavailableError extends Error {}
 
 /**
@@ -77,6 +83,14 @@ export interface ControlFlowCapabilities {
   approximate: string[];
 }
 
+/**
+ * Enumerate the languages and extensions that `controlFlowForFile` can serve.
+ *
+ * Loads every plugin whose manifest might carry a control-flow spec, so the
+ * first call is comparatively slow; the answer only changes when plugins do.
+ *
+ * @returns The drawable languages, their extensions and the approximate subset
+ */
 export async function controlFlowCapabilities(): Promise<ControlFlowCapabilities> {
   // `parsing` is on the eagerly-loaded manifest, so the formats with no code
   // at all are dropped before anything is loaded; the two control-flow specs
@@ -105,6 +119,7 @@ export async function controlFlowCapabilities(): Promise<ControlFlowCapabilities
   };
 }
 
+/** The registered language for a file's extension, or undefined. */
 function languageOf(filePath: string): Language | undefined {
   return EXTENSION_TO_LANGUAGE[extname(filePath).toLowerCase()];
 }
@@ -153,6 +168,19 @@ function selectRows(
   return [...chosen].sort((a, b) => a.endLine - a.line - (b.endLine - b.line));
 }
 
+/**
+ * Read one source file and build control-flow graphs for its functions.
+ *
+ * Selection: `functionName` picks by the name the complexity rows use
+ * (`Class.method` for methods), `line` picks every function whose body covers
+ * that line, innermost first; with neither, every function is drawn. Nothing
+ * is written to disk. Tree-sitter languages get exact graphs; regex-only
+ * languages get `approximate` ones with no complexity figures.
+ *
+ * @param request - The file and the optional selector
+ * @returns The selected graphs and every function available in the file
+ * @throws ControlFlowUnavailableError when the file cannot be drawn at all
+ */
 export async function controlFlowForFile(
   request: ControlFlowRequest,
 ): Promise<ControlFlowFileResult> {

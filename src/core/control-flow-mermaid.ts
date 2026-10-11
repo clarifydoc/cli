@@ -64,6 +64,7 @@ const CLASS_DEFS: readonly string[] = [
   "classDef cfCatch fill:#7a3f1f,stroke:#492512,color:#fff",
 ];
 
+/** A rendered Mermaid flowchart and a note about what the drawing leaves out. */
 export interface ControlFlowDiagram {
   /** Mermaid source, ready to render or paste into a Markdown fence. */
   text: string;
@@ -71,6 +72,7 @@ export interface ControlFlowDiagram {
   note: string;
 }
 
+/** Rendering switches for `toMermaidFlowchart`. */
 export interface MermaidOptions {
   /**
    * Emit the `classDef` colour table (default). A host with a theme of its own
@@ -134,6 +136,17 @@ function collapsibleMerges(cfg: Cfg): Map<string, string> {
   return skip;
 }
 
+/**
+ * Render a control-flow graph as a Mermaid `flowchart TD`.
+ *
+ * Empty merge nodes are spliced out, nodes beyond the drawing cap are dropped
+ * (the `note` says how many), and every node gets a `class` by kind so hosts
+ * can colour the categories.
+ *
+ * @param cfg - The graph from `buildControlFlow` or `buildRegexControlFlow`
+ * @param options - Whether to include the colour `classDef` table
+ * @returns The Mermaid source and a one-line note, possibly empty
+ */
 export function toMermaidFlowchart(cfg: Cfg, options: MermaidOptions = {}): ControlFlowDiagram {
   const collapsed = collapsibleMerges(cfg);
   const drawable = cfg.nodes.filter((n) => !collapsed.has(n.id));

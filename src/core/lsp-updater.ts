@@ -19,6 +19,7 @@ import {
 import { analyzeBlastRadius } from "./blast-radius.js";
 import { denormalizeProject, denormalizeFileAnalysis } from "./element-registry.js";
 
+/** Inputs to `updateLsp`: the analysis to enhance and the LSP run settings. */
 export interface UpdateLspOptions {
   /** Path to the existing analysis output directory (contains project-summary.json). */
   analysisDir: string;
@@ -32,6 +33,10 @@ export interface UpdateLspOptions {
   lspTimeout?: number;
 }
 
+/**
+ * What an LSP update produced: the enhancement file written, the language
+ * servers that answered, and how many links each query kind resolved.
+ */
 export interface UpdateLspResult {
   outputPath: string;
   serversUsed: string[];

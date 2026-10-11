@@ -40,6 +40,17 @@ interface Acc {
   byEndpoint: Map<string, number>;
 }
 
+/**
+ * Aggregate cross-sub-project edges — the Architecture Containers view.
+ *
+ * An `http` edge is built from every non-test, non-AMBIGUOUS api↔route link
+ * whose two ends live in different sub-projects, a `bus` edge from every
+ * queue (`mq`) symbol link between projects; each edge counts its links by confidence and lists its most-linked
+ * endpoints (capped at `PROJECT_DEPENDENCY_ENDPOINT_CAP`). When the
+ * deployment model declares the same edge, it is recorded as agreeing.
+ *
+ * @returns Edges sorted by source, target and kind
+ */
 export function buildProjectDependencies(input: {
   apiRouteLinks: readonly ApiRouteLink[];
   symbolLinks: readonly SymbolLink[];

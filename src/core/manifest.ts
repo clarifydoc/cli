@@ -11,6 +11,10 @@ import { join, resolve, sep } from "path";
  */
 export const EXTRACTOR_VERSION = "1.93.0";
 
+/**
+ * What the manifest remembers about one analyzed file, enough to tell
+ * whether its cached JSON can be reused.
+ */
 export interface ManifestEntry {
   /** Modification time as ms since epoch. Fast-path check before hashing. */
   mtime: number;
@@ -18,6 +22,10 @@ export interface ManifestEntry {
   sha256: string;
 }
 
+/**
+ * The on-disk `manifest.json`: one entry per analyzed file, stamped with the
+ * extractor version that produced them.
+ */
 export interface Manifest {
   version: 1;
   /** Bumping EXTRACTOR_VERSION invalidates the whole manifest. */
@@ -99,6 +107,10 @@ export async function loadManifestRaw(outputDir: string): Promise<Manifest | nul
   }
 }
 
+/**
+ * Whether a written analysis still describes the source tree, as judged by
+ * `assessFreshness` from the manifest alone (no re-analysis).
+ */
 export interface FreshnessReport {
   /**
    * `fresh` — every recorded file still matches.

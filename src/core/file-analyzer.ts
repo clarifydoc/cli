@@ -32,6 +32,11 @@ import {
 
 // ─── Per-file analysis task / result ─────────────────────────────────────
 
+/**
+ * One unit of per-file work, shaped so it can cross a worker-thread boundary:
+ * the file, the frameworks and sub-project it belongs to, and the output
+ * settings the analyzer would otherwise read from its own options.
+ */
 export interface FileTask {
   file: DiscoveredFile;
   frameworkIds: string[];
@@ -43,6 +48,11 @@ export interface FileTask {
   tsconfigAliases: Map<string, string>;
 }
 
+/**
+ * What `analyzeFile` hands back: the `FileAnalysis` plus the side channels the
+ * analyzer aggregates separately (complexity rows, security issues, and the raw
+ * source when a later pass needs it).
+ */
 export interface FileResult {
   analysis: FileAnalysis;
   rawSource: string | null; // non-null only for frontend route files
