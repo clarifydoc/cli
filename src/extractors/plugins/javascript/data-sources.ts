@@ -5,6 +5,7 @@ import type { ProjectContext } from "../../../types/project.js";
 import { resolveUrlBuilders } from "./url-builders.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { stripQuotes } from "../../shared/node-helpers.js";
+import { escapeRegex } from "../shared/path-utils.js";
 import { foldValue, toAppRelativeUrl } from "../../shared/value-resolver.js";
 import { astToValueExpr, buildScope } from "./value-capture.js";
 import { extractGqlOperationCalls } from "../shared/graphql-operations.js";
@@ -301,7 +302,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     if (value) return [...new Set(this.urlsOf(value))];
     const shorthand = obj.namedChildren.find((c) => c.type === "shorthand_property_identifier" && c.text === key);
     if (!shorthand) return [];
-    return [this.bindings()?.lookup(key, shorthand)?.url ?? `\${${key}}`];
+    return [this.bindings()?.lookup(key, shorthand)?.url ?? "${" + key + "}"];
   }
 
   private urlsOf(v: Node): string[] {
@@ -864,7 +865,7 @@ function declaresParam(fnNode: Node, name: string): boolean {
   const params = fnNode.childForFieldName("parameters") ?? fnNode.childForFieldName("parameter");
   if (!params) return false;
   if (params.type === "identifier") return params.text === name;
-  return new RegExp(`(^|[^\\w$])${name.replace(/\$/g, "\\$")}([^\\w$]|$)`).test(params.text);
+  return new RegExp(`(^|[^\\w$])${escapeRegex(name)}([^\\w$]|$)`).test(params.text);
 }
 
 /**
