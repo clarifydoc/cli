@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import fg from "fast-glob";
+import { globSync } from "tinyglobby";
 import { extractWithRegex } from "./regex-extractor.js";
 import { scanSecurity } from "./security-scanner.js";
 import { splitLines } from "../extractors/shared/source-lines.js";
@@ -39,7 +39,7 @@ const SAMPLES: Array<{ glob: string; language: Language }> = [
 
 describe("regex extraction is line-ending invariant", () => {
   for (const { glob, language } of SAMPLES) {
-    const files = fg.sync(glob, { cwd: REPO_ROOT }).slice(0, 12);
+    const files = globSync(glob, { cwd: REPO_ROOT }).slice(0, 12);
 
     it(`${language}: found fixture sources`, () => {
       expect(files.length).toBeGreaterThan(0);
@@ -60,8 +60,7 @@ describe("regex extraction is line-ending invariant", () => {
 
 describe("security scanning is line-ending invariant", () => {
   // Mixed tree-sitter and regex languages — the scanner is line-oriented for both.
-  const files = fg
-    .sync("test-fixtures/**/*.{ts,js,py,cs,go,rb,php,pm}", { cwd: REPO_ROOT })
+  const files = globSync("test-fixtures/**/*.{ts,js,py,cs,go,rb,php,pm}", { cwd: REPO_ROOT })
     .slice(0, 40);
 
   it("found fixture sources", () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import fg from "fast-glob";
+import { globSync } from "tinyglobby";
 import { byOrdinal, byOrdinalKey } from "./ordinal.js";
 
 const REPO_ROOT = resolve(__dirname, "..", "..");
@@ -34,7 +34,7 @@ describe("no locale-dependent ordering reaches the analysis output", () => {
   // sorts differently per machine — and file order seeds every page id in the
   // persisted artifacts. There is no eslint here (lint is `tsc --noEmit`), so
   // this test is the guard.
-  const files = fg.sync(["src/core/**/*.ts", "src/extractors/**/*.ts", "src/mcp/**/*.ts"], {
+  const files = globSync(["src/core/**/*.ts", "src/extractors/**/*.ts", "src/mcp/**/*.ts"], {
     cwd: REPO_ROOT,
     ignore: ["**/*.test.ts", "**/viewer-assets/**"],
   });

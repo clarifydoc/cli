@@ -1,8 +1,7 @@
 import { readFile } from "fs/promises";
 import { byOrdinal } from "./ordinal.js";
 import { resolve, join, dirname } from "path";
-import fg from "fast-glob";
-import { NO_SYMLINKS } from "./glob-safety.js";
+import { glob } from "./glob.js";
 import type {
   ExternalPackage,
   PackageEcosystem,
@@ -129,7 +128,7 @@ function parseGitmodules(text: string, declaredIn: string): DeclaredPackage[] {
 /** The packages one manifest format declares at one root (`rel`: the root, relative to the project). */
 async function readManifest(absRoot: string, rel: string, spec: PackageManifestSpec): Promise<DeclaredPackage[]> {
   const files = spec.glob
-    ? (await fg([...spec.files], { ...NO_SYMLINKS, cwd: absRoot, ignore: IGNORE, deep: spec.glob.deep, absolute: false }))
+    ? (await glob([...spec.files], { cwd: absRoot, ignore: IGNORE, deep: spec.glob.deep, absolute: false }))
         .slice(0, spec.glob.limit)
     : spec.files;
   const out: DeclaredPackage[] = [];

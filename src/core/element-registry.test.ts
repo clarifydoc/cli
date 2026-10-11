@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import fg from "fast-glob";
+import { globSync } from "tinyglobby";
 import {
   normalizeProject,
   denormalizeProject,
@@ -39,11 +39,11 @@ function load(relPath: string): unknown {
 }
 
 // Cover every language/framework sample once.
-const PROJECT_SUMMARIES = fg.sync("test-output/**/project-summary.json", {
+const PROJECT_SUMMARIES = globSync("test-output/**/project-summary.json", {
   cwd: REPO_ROOT,
 });
 
-const PER_FILE = fg.sync("test-output/**/*.json", {
+const PER_FILE = globSync("test-output/**/*.json", {
   cwd: REPO_ROOT,
   ignore: [
     "**/project-summary.json",

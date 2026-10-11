@@ -1,7 +1,6 @@
 import { readFile } from "fs/promises";
 import { join, resolve } from "path";
-import fg from "fast-glob";
-import { NO_SYMLINKS } from "./glob-safety.js";
+import { glob } from "./glob.js";
 import { isSensitive } from "./file-discovery.js";
 import { urlValue } from "./url-values.js";
 import { byOrdinal } from "./ordinal.js";
@@ -40,7 +39,7 @@ async function readIf(abs: string): Promise<string | null> {
 
 async function filesOf(absRoot: string, spec: ConfigSourceSpec | ProxySourceSpec): Promise<string[]> {
   if (!spec.glob) return [...spec.files];
-  const found = await fg([...spec.files], { ...NO_SYMLINKS, cwd: absRoot, ignore: IGNORE, deep: spec.glob.deep, absolute: false });
+  const found = await glob([...spec.files], { cwd: absRoot, ignore: IGNORE, deep: spec.glob.deep, absolute: false });
   return found.sort(byOrdinal).slice(0, spec.glob.limit);
 }
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import fg from "fast-glob";
+import { globSync } from "tinyglobby";
 import { extractWithRegex } from "../../../core/regex-extractor.js";
 import { pluginFor, PACKAGE_MANAGERS } from "../../registry.js";
 import type { FileAnalysis } from "../../../types/analysis.js";
@@ -190,7 +190,7 @@ describe("v.mod", () => {
 
 describe("V line endings", () => {
   const root = resolve(__dirname, "../../../..");
-  const files = fg.sync("test-fixtures/sample-v-app/**/*.{v,vsh}", { cwd: root });
+  const files = globSync("test-fixtures/sample-v-app/**/*.{v,vsh}", { cwd: root });
 
   it("found fixture sources", () => expect(files.length).toBeGreaterThan(0));
 

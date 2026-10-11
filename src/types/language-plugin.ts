@@ -67,7 +67,7 @@ export interface PackageManifestSpec {
   files: readonly string[];
   /** Read only the first of `files` that exists (`build.gradle.kts`, else `build.gradle`). */
   firstOnly?: boolean;
-  /** `files` are globs, searched `deep` directories down, at most `limit` files read. */
+  /** `files` are globs read at most `deep`-1 directories below the root (see `core/glob.ts`), at most `limit` files. */
   glob?: { deep: number; limit: number };
   parse(text: string, file: ManifestFileContext): DeclaredPackage[] | Promise<DeclaredPackage[]>;
   /**
