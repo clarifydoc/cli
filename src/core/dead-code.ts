@@ -10,6 +10,7 @@ import type {
 } from "../types/analysis.js";
 import type { ReachabilityModel } from "../types/language-plugin.js";
 import { byOrdinal } from "./ordinal.js";
+import { escapeRegex } from "../extractors/plugins/shared/path-utils.js";
 
 /**
  * Detect generated/library "barrel" roots and the unused files within them.
@@ -676,7 +677,7 @@ function normName(s: string): string {
  */
 function referencedOutsideDeclaration(source: string, name: string, exportLines: ReadonlySet<number>): boolean {
   if (name === "default" || !/^[A-Za-z_$][\w$]*$/.test(name)) return false;
-  const esc = name.replace(/\$/g, "\\$");
+  const esc = escapeRegex(name);
   const word = new RegExp(`(?<![\\w$.])${esc}(?![\\w$])`, "g");
   const decl = new RegExp(`\\b(?:const|let|var|function\\*?|class|interface|type|enum|namespace)\\s+${esc}(?![\\w$])`);
   const lines = source.split("\n");

@@ -17,6 +17,8 @@
  * never as a crash.
  */
 
+import { trimTrailingSlashes } from "../extractors/plugins/shared/path-utils.js";
+
 export interface CorpusRouteRow {
   path: string;
   httpMethod?: string | null;
@@ -165,7 +167,7 @@ export function startsWithHole(target: string | null | undefined): boolean {
 export function computeCorpusMetrics(summary: CorpusSummary, opts: CorpusMetricsOptions = {}): CorpusMetrics {
   const files = summary.files ?? [];
   const layer = summary.fileLayerMap ?? {};
-  const generatedRoots = (summary.generatedRoots ?? []).map((r) => r.replace(/\/+$/, "") + "/");
+  const generatedRoots = (summary.generatedRoots ?? []).map((r) => trimTrailingSlashes(r) + "/");
   const isGenerated = (f: string | undefined) => !!f && generatedRoots.some((root) => f.startsWith(root));
   const roleOf = (f: string | undefined): SourceRole =>
     isGenerated(f) ? "generated" : f && layer[f] === "test" ? "test" : "production";

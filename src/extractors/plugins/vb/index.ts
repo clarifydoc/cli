@@ -14,11 +14,11 @@ import {
 } from "./di.js";
 
 /** Inline `<Attr>` lists at the start of a declaration line, as a regex source. */
-const INLINE_ATTRS = String.raw`((?:<[^<>]*(?:"[^"]*"[^<>]*)*>\s*)*)`;
+const INLINE_ATTRS = String.raw`((?:<[^<>"]*(?:"[^"]*"[^<>"]*)*>\s*)*)`;
 
 /** The attributes of an inline `<A> <B("x")>` prefix, split one per entry. */
 function inlineAttributes(prefix: string): string[] {
-  return [...prefix.matchAll(/<([^<>]*(?:"[^"]*"[^<>]*)*)>/g)].flatMap((m) => splitVbAttributes(m[1]!));
+  return [...prefix.matchAll(/<([^<>"]*(?:"[^"]*"[^<>"]*)*)>/g)].flatMap((m) => splitVbAttributes(m[1]!));
 }
 
 /**
@@ -102,7 +102,7 @@ const vbBase: RegexLangSpec = {
   // A keyed service parameter (`<FromKeyedServices("sms")> n As INotifier`)
   // carries its key as the parameter's `qualifier`.
   parseParam: (p) => {
-    const trimmed = p.trim().replace(/^(?:<[^<>]*(?:"[^"]*"[^<>]*)*>\s*)+/, "");
+    const trimmed = p.trim().replace(/^(?:<[^<>"]*(?:"[^"]*"[^<>"]*)*>\s*)+/, "");
     if (!trimmed) return null;
     const m = trimmed.match(/^(?:(?:ByVal|ByRef|Optional|ParamArray)\s+)*(\w+)(\s+As\s+)?/i);
     if (!m) return null;
@@ -173,7 +173,7 @@ const vbBase: RegexLangSpec = {
       // Abstract (`MustOverride`) and interface members have no body; the
       // class post-pass below says so. VBScript and VB6 drop the empty
       // parentheses: `Sub Main`.
-      pattern: /^\s*(?:<[^<>]*(?:"[^"]*"[^<>]*)*>\s*)*(?:(?:Public|Private|Friend|Protected|Shared|Static|Overrides|Overridable|Overloads|NotOverridable|MustOverride|Shadows|Partial|Iterator|Async)\s+)*(?:Sub|Function)\s+\[?([A-Za-z_]\w*)\]?(?=\s*(?:\(|'|$))/i,
+      pattern: /^\s*(?:<[^<>"]*(?:"[^"]*"[^<>"]*)*>\s*)*(?:(?:Public|Private|Friend|Protected|Shared|Static|Overrides|Overridable|Overloads|NotOverridable|MustOverride|Shadows|Partial|Iterator|Async)\s+)*(?:Sub|Function)\s+\[?([A-Za-z_]\w*)\]?(?=\s*(?:\(|'|$))/i,
       isExported: (line) => !/\b(Private|Friend)\b/i.test(line),
       isAsync: (line) => /\bAsync\b/i.test(line),
     },

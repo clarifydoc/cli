@@ -5,6 +5,7 @@ import type {
   RouteInfo,
 } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
+import { stripAngleGroups } from "../shared/path-utils.js";
 
 /**
  * Prisma schema (`schema.prisma`) extraction. Prisma is its own file format —
@@ -313,10 +314,7 @@ function parseField(stmt: string): PrismaField | null {
   const isArray = /\[\]/.test(rawType);
   const isOptional = /\?/.test(rawType);
   // Strip array/optional markers, generic args (e.g. Json<T>), and parens.
-  let baseType = rawType
-    .replace(/\[\]/g, "")
-    .replace(/\?/g, "")
-    .replace(/<[^>]*>/g, "")
+  let baseType = stripAngleGroups(rawType.replace(/\[\]/g, "").replace(/\?/g, ""))
     .replace(/\([^)]*\)/g, "")
     .trim();
 

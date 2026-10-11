@@ -11,7 +11,7 @@ import type {
 } from "../types/analysis.js";
 import { createEmptyAnalysis } from "../types/analysis.js";
 import { binaryDfmToText, isBinaryDfm } from "./dfm-binary.js";
-import { extractSqlStringDataSources } from "../extractors/plugins/shared/sql-string-sources.js";
+import { asDoubleQuotedLiteral, extractSqlStringDataSources } from "../extractors/plugins/shared/sql-string-sources.js";
 import { extractDfmEntities } from "../extractors/plugins/pascal/dfm-entities.js";
 
 /** Map Delphi VCL/FMX component types to interactive element categories */
@@ -126,7 +126,7 @@ function dbSourcesFromObject(
       continue;
     }
     // SQL text (SQL.Strings list or CommandText scalar/list).
-    const asLine = `"${value.replace(/"/g, '\\"')}"`;
+    const asLine = asDoubleQuotedLiteral(value);
     for (const src of extractSqlStringDataSources([asLine])) {
       out.push({ ...src, name: `${obj.name}: ${src.name}`, line });
     }

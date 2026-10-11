@@ -15,7 +15,7 @@ import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 /** Rewrite `r#"..."#` / `r"..."` raw strings into per-line `"..."` fragments. */
 export function normalizeRawStrings(text: string): string {
   return text.replace(/r(#*)"([\s\S]*?)"\1/g, (_m, _hashes: string, body: string) => {
-    const escaped = body.replace(/"/g, '\\"');
+    const escaped = body.replace(/[\\"]/g, "\\$&");
     return '"' + escaped.replace(/\n/g, '"\n"') + '"';
   });
 }

@@ -1,6 +1,7 @@
 import type { CallInfo, ClassInfo, DiBinding, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { CallPattern } from "../shared/regex-base.js";
 import { blankStringLiterals, findEndLine, splitTopLevel } from "../shared/regex-base.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * Dependency injection as Ruby code spells it. Ruby declares no types, so the
@@ -521,7 +522,7 @@ export function dropDetachedMemberCalls(lines: readonly string[], fn: FunctionIn
 
 /** The first `name(` in the function's own text that is a call on self (not `.name(`). */
 function ownBareCall(lines: readonly string[], fn: FunctionInfo, name: string): { line: number; column: number } | null {
-  const re = new RegExp(String.raw`(?<![\w.@$:&])${name.replace(/[?!]/g, "\\$&")}\s*\(`);
+  const re = new RegExp(String.raw`(?<![\w.@$:&])${escapeRegex(name)}\s*\(`);
   for (let i = fn.line - 1; i < Math.min(fn.endLine, lines.length); i++) {
     const raw = lines[i]!;
     if (raw.trimStart().startsWith("#")) continue;

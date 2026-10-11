@@ -1,5 +1,5 @@
 import type { DataSourceInfo } from "../../../types/analysis.js";
-import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
+import { asDoubleQuotedLiteral, extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 
 /**
  * Raku data access the spec reads (strings intact, heredoc bodies blanked):
@@ -78,7 +78,7 @@ export function blankRakuProse(source: string): string | null {
  */
 export function extractRakuSqlSources(rawLines: string[]): DataSourceInfo[] {
   const lines = rawLines.map((l) =>
-    l.replace(/'((?:[^'\\]|\\.)*)'/g, (all, body: string) => (/\b(?:SELECT|INSERT|UPDATE|DELETE|MERGE)\b/i.test(body) ? `"${body.replace(/"/g, '\\"')}"` : all)),
+    l.replace(/'((?:[^'\\]|\\.)*)'/g, (all, body: string) => (/\b(?:SELECT|INSERT|UPDATE|DELETE|MERGE)\b/i.test(body) ? asDoubleQuotedLiteral(body) : all)),
   );
   for (const [start, end] of heredocSpans(rawLines)) {
     if (!isSqlHeredoc(rawLines, start, end)) continue;

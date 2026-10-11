@@ -53,7 +53,7 @@ const PAREN_CALL: CallPattern = {
 function parseVParam(raw: string): ParamInfo | null {
   const m = /^\s*(?:mut\s+|shared\s+)?([A-Za-z_]\w*)\s+(.+?)\s*$/s.exec(raw);
   if (!m) return null;
-  return { name: m[1]!, type: m[2]!.replace(/^\.\.\./, "...").replace(/\s+/g, " "), defaultValue: null };
+  return { name: m[1]!, type: m[2]!.replace(/^\.\.\.\s*/, "...").replace(/\s+/g, " "), defaultValue: null };
 }
 
 /**

@@ -1,3 +1,5 @@
+import { trimTrailingSlashes } from "../extractors/plugins/shared/path-utils.js";
+
 /**
  * Configuration and environment values that are addresses — the only values
  * the call-origin pass keeps from config files and deployment manifests.
@@ -10,7 +12,7 @@
 export function urlValue(raw: string): string | null {
   const v = raw.trim();
   if (!v || /\s/.test(v) || v.includes("${") || v.includes("{{")) return null;
-  const scheme = /^([a-z][a-z0-9+.-]*):\/\/(?:[^@/]*@)?([^/?#]+)(.*)$/i.exec(v);
+  const scheme = /^([a-z][a-z0-9+.-]*):\/\/(?:[^@/]*@)?([^/?#]+)([\s\S]*)$/i.exec(v);
   if (scheme) return `${scheme[1]!.toLowerCase()}://${scheme[2]}${scheme[3]}`;
   return /^[a-z0-9.-]+:\d{1,5}(?:\/\S*)?$/i.test(v) ? v : null;
 }
@@ -33,7 +35,7 @@ export function parseAddress(url: string): ParsedAddress | null {
   return {
     host: m[2].toLowerCase(),
     ...(port !== undefined ? { port } : {}),
-    path: (m[4] ?? "").replace(/\/+$/, ""),
+    path: trimTrailingSlashes(m[4] ?? ""),
     ...(scheme ? { scheme } : {}),
   };
 }

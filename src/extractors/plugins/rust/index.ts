@@ -108,7 +108,7 @@ export const rustSpec: RegexLangSpec = {
         const braces = m[1].match(/\{([^}]+)\}/);
         if (braces) return braces[1].split(",").map((s) => s.trim().split(" as ").pop()!.trim());
         const parts = m[1].replace(/;$/, "").split("::");
-        return [parts[parts.length - 1].replace(/\*/, "")].filter(Boolean);
+        return [parts[parts.length - 1].replace(/\*/g, "")].filter(Boolean);
       },
     },
   ],

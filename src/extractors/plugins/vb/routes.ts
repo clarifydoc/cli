@@ -53,7 +53,7 @@ function attributesAt(lines: string[], lineIdx: number, spec: RegexLangSpec): st
   const out = attributeLinesAbove(lines, lineIdx, spec).flatMap((d) => splitVbAttributes(d));
   let rest = lines[lineIdx] ?? "";
   let m: RegExpMatchArray | null;
-  while ((m = rest.match(/^\s*<([^<>]*(?:"[^"]*"[^<>]*)*)>\s*/))) {
+  while ((m = rest.match(/^\s*<([^<>"]*(?:"[^"]*"[^<>"]*)*)>\s*/))) {
     out.push(...splitVbAttributes(m[1]!));
     rest = rest.slice(m[0].length);
   }
@@ -148,7 +148,7 @@ function declaredParams(lines: string[], lineIdx: number, name: string): { attrs
     let param = piece.trim();
     const attrs: string[] = [];
     let a: RegExpMatchArray | null;
-    while ((a = param.match(/^<([^<>]*(?:"[^"]*"[^<>]*)*)>\s*/))) {
+    while ((a = param.match(/^<([^<>"]*(?:"[^"]*"[^<>"]*)*)>\s*/))) {
       attrs.push(...splitVbAttributes(a[1]!));
       param = param.slice(a[0].length);
     }

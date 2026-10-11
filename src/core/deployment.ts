@@ -314,8 +314,10 @@ const INFRA_FAMILIES: Array<{ re: RegExp; kind: DeployedServiceKind; family: str
 /** Last image path segment without registry/tag: `reg.io/org/rabbitmq:3.8` → `rabbitmq`. */
 function imageTail(image: string | undefined): string | undefined {
   if (!image) return undefined;
-  const noTag = image.split("@")[0].replace(/:[^/]*$/, "");
-  const seg = noTag.split("/").pop();
+  const noDigest = image.split("@")[0]!;
+  const last = noDigest.slice(noDigest.lastIndexOf("/") + 1);
+  const colon = last.indexOf(":");
+  const seg = colon < 0 ? last : last.slice(0, colon);
   return seg || undefined;
 }
 
@@ -341,7 +343,10 @@ function entryArtifact(entrypoint: string | undefined): string | undefined {
   if (!entrypoint) return undefined;
   for (const tok of entrypoint.split(/\s+/)) {
     const m = tok.match(/([^/\\]+)\.(dll|jar|war)$/i);
-    if (m) return m[1].replace(/-\d[\d.]*$/, "");
+    if (!m) continue;
+    // `app-1.2` → `app`: a version suffix is a dash, a digit, then digits and dots to the end.
+    const dash = m[1]!.lastIndexOf("-");
+    return dash >= 0 && /^\d[\d.]*$/.test(m[1]!.slice(dash + 1)) ? m[1]!.slice(0, dash) : m[1]!;
   }
   return undefined;
 }

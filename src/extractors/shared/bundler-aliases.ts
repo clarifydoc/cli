@@ -1,5 +1,6 @@
 import { readFileSync, existsSync, statSync } from "fs";
 import { dirname, join, resolve } from "path";
+import { escapeRegex } from "../plugins/shared/path-utils.js";
 
 /**
  * Import aliases a bundler config declares — Vite `resolve.alias`, webpack
@@ -134,7 +135,7 @@ function stringLiteral(expr: string): string | null {
 
 /** `const aliases = { … }` (optionally exported) in `code`. */
 function declaredObject(code: string, name: string): { text: string; dir: string } | null {
-  const re = new RegExp(`\\b(?:const|let|var)\\s+${name.replace(/\$/g, "\\$")}\\s*(?::[^=]+)?=\\s*`);
+  const re = new RegExp(`\\b(?:const|let|var)\\s+${escapeRegex(name)}\\s*(?::[^=]+)?=\\s*`);
   const m = re.exec(code);
   if (!m) return null;
   const text = valueAt(code, m.index + m[0].length);

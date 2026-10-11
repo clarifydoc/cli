@@ -1,17 +1,30 @@
 import { join, resolve } from "path";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { dirname } from "path";
 import { gzipSync } from "zlib";
 import { buildReportPayload, loadReportSummary, type ReportPayload } from "./report-payload.js";
 import { esc } from "./html-report/util.js";
 
+/**
+ * Where to read the analysis from and where to put the report.
+ * `outputPath` defaults to `report.html` inside the analysis directory;
+ * `openBrowser` defaults to true.
+ */
 export interface ReportOptions {
   analysisDir: string;
   outputPath?: string;
   openBrowser?: boolean;
 }
 
+/**
+ * Render `report.html` for a finished analysis and refresh `report-data.json`
+ * beside it, then open the report in the default browser unless told not to.
+ *
+ * @param options - Analysis directory, output path and browser flag
+ * @returns The path the report was written to
+ * @throws When the viewer template is missing (run `npm run build:viewer`)
+ */
 export async function generateHtmlReport(options: ReportOptions): Promise<string> {
   const dir = resolve(options.analysisDir);
   const summary = await loadReportSummary(dir);
@@ -31,11 +44,12 @@ export async function generateHtmlReport(options: ReportOptions): Promise<string
 }
 
 function openInBrowser(filePath: string): void {
-  const cmd =
-    process.platform === "win32" ? `start "" "${filePath}"` :
-    process.platform === "darwin" ? `open "${filePath}"` :
-    `xdg-open "${filePath}"`;
-  exec(cmd, () => {}); // fire and forget
+  // Argument vectors, never a shell string: the path is passed as-is.
+  const [file, args] =
+    process.platform === "win32" ? ["cmd", ["/c", "start", "", filePath]] :
+    process.platform === "darwin" ? ["open", [filePath]] :
+    ["xdg-open", [filePath]];
+  execFile(file, args, { windowsHide: true }, () => {}); // fire and forget
 }
 
 // ─── Template rendering (the React viewer, packaged as a single file) ────
@@ -68,6 +82,16 @@ function replaceToken(html: string, token: string, value: string): string {
   return html.replace(token, () => value);
 }
 
+/**
+ * Inject a payload into the committed viewer template.
+ *
+ * The template must contain each placeholder exactly once; the payload goes in
+ * gzip+base64 (see `encodeReportPayload`).
+ *
+ * @param payload - The viewer payload from `buildReportPayload`
+ * @returns The self-contained HTML document
+ * @throws When the template is missing or a placeholder count is not one
+ */
 export async function renderReportFromTemplate(payload: ReportPayload): Promise<string> {
   let template: string;
   try {

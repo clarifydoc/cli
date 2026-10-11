@@ -9,6 +9,30 @@ export function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** `s` without its trailing slashes (`a/b//` → `a/b`); a char scan, so a long run of slashes costs nothing. */
+export function trimTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47 /* / */) end--;
+  return end === s.length ? s : s.slice(0, end);
+}
+
+/**
+ * `s` with every balanced `<…>` group removed, nesting included
+ * (`Dictionary<string, List<int>>` → `Dictionary`); an unclosed `<` and
+ * everything after it is dropped too.
+ */
+export function stripAngleGroups(s: string): string {
+  if (!s.includes("<")) return s;
+  let out = "";
+  let depth = 0;
+  for (const ch of s) {
+    if (ch === "<") depth++;
+    else if (ch === ">" && depth > 0) depth--;
+    else if (depth === 0) out += ch;
+  }
+  return out;
+}
+
 /**
  * A relative module written as dots and a dotted name — Python's
  * `from .graph import x`, `from ..utils.text import y` — as the relative path

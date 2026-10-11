@@ -132,9 +132,11 @@ export function maskMarkup(lines: string[]): string[] {
       line = line.slice(end + 3);
       inComment = false;
     }
-    line = line.replace(/<!--[\s\S]*?-->/g, "");
-    const open = line.indexOf("<!--");
-    if (open >= 0) { line = line.slice(0, open); inComment = true; }
+    for (let open = line.indexOf("<!--"); open >= 0; open = line.indexOf("<!--")) {
+      const end = line.indexOf("-->", open + 4);
+      if (end < 0) { line = line.slice(0, open); inComment = true; break; }
+      line = line.slice(0, open) + line.slice(end + 3);
+    }
 
     // Inline <script>/<style> bodies (keep the opening tag, drop the body).
     const sb = line.match(/<(script|style)\b[^>]*>/i);
