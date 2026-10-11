@@ -1,5 +1,4 @@
-import fg from "fast-glob";
-import { NO_SYMLINKS } from "./glob-safety.js";
+import { glob } from "./glob.js";
 import { byOrdinal } from "./ordinal.js";
 import { readFile } from "fs/promises";
 import { join, resolve } from "path";
@@ -103,8 +102,7 @@ export async function detectSubProjects(
   >();
 
   for (const { pattern, kind } of MARKER_GLOBS) {
-    const found = await fg(pattern, {
-      ...NO_SYMLINKS,
+    const found = await glob(pattern, {
       cwd: root,
       ignore: MARKER_IGNORE,
       absolute: false,

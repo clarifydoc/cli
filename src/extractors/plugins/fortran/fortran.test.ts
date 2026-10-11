@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import fg from "fast-glob";
+import { globSync } from "tinyglobby";
 import { extractWithRegex } from "../../../core/regex-extractor.js";
 import { pluginFor } from "../../registry.js";
 import type { FileAnalysis } from "../../../types/analysis.js";
@@ -182,7 +182,7 @@ describe("Fortran derived types", () => {
 
 describe("Fortran line endings", () => {
   const root = resolve(__dirname, "../../../..");
-  const files = fg.sync("test-fixtures/sample-fortran-app/**/*.{f,f90}", { cwd: root });
+  const files = globSync("test-fixtures/sample-fortran-app/**/*.{f,f90}", { cwd: root });
 
   it("found fixture sources", () => expect(files.length).toBeGreaterThan(0));
 

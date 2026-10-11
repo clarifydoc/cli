@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import fg from "fast-glob";
+import { glob } from "tinyglobby";
 import { readFile } from "fs/promises";
 import { resolve } from "path";
 import type { Language } from "../types/analysis.js";
@@ -16,7 +16,7 @@ const REPO = resolve(__dirname, "../..");
 const FIXTURES = resolve(REPO, "test-fixtures");
 /**
  * Globs are relative to REPO and run with `cwd`: an absolute pattern built by
- * `resolve()` carries backslashes on Windows, which fast-glob reads as escapes,
+ * `resolve()` carries backslashes on Windows, which the glob engine reads as escapes,
  * and the corpus silently comes back empty.
  */
 const GLOB = { cwd: REPO, absolute: true } as const;
@@ -130,7 +130,7 @@ const CORPUS_TIMEOUT_MS = 120_000;
 
 describe.each(MEASURED)("regex tier agrees with the parser — $language", { timeout: CORPUS_TIMEOUT_MS }, (target) => {
   it("reads the same shape as the parse tree", async () => {
-    const files = await fg(target.globs, {
+    const files = await glob(target.globs, {
       ...GLOB,
       ignore: ["**/node_modules/**", "**/*.test.ts", "**/*.d.ts", "**/obj/**", "**/bin/**"],
     });
@@ -208,7 +208,7 @@ describe("regex tier — the languages that have only it", () => {
   it("never loops or runs away on real source", async () => {
     // A scanner must terminate whatever it is handed. Pathological nesting and
     // unbalanced delimiters are the two ways this kind of code hangs.
-    const files = await fg(
+    const files = await glob(
       ["test-fixtures/**/*.go", "test-fixtures/**/*.rs", "test-fixtures/**/*.c", "test-fixtures/**/*.dart"],
       { ...GLOB, ignore: ["**/node_modules/**"] },
     );

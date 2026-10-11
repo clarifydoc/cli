@@ -1,5 +1,4 @@
-import fg from "fast-glob";
-import { NO_SYMLINKS } from "./glob-safety.js";
+import { glob } from "./glob.js";
 import { urlValue } from "./url-values.js";
 import { byOrdinal } from "./ordinal.js";
 import { readFile } from "fs/promises";
@@ -502,14 +501,12 @@ export async function detectDeployment(
   options: DetectDeploymentOptions,
 ): Promise<DeploymentModel | undefined> {
   const absRoot = resolve(projectRoot);
-  const found = await fg(["**/*compose*.{yml,yaml}"], {
-    ...NO_SYMLINKS,
+  const found = await glob(["**/*compose*.{yml,yaml}"], {
     cwd: absRoot,
     ignore: IGNORE,
     absolute: false,
     caseSensitiveMatch: false,
     deep: 5,
-    suppressErrors: true,
   });
 
   const runtime = found

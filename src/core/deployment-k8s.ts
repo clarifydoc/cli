@@ -1,5 +1,4 @@
-import fg from "fast-glob";
-import { NO_SYMLINKS } from "./glob-safety.js";
+import { glob } from "./glob.js";
 import { readFile } from "fs/promises";
 import { join, resolve } from "path";
 import {
@@ -216,14 +215,12 @@ export async function collectK8sManifests(
   opts: { maxFiles?: number } = {},
 ): Promise<K8sManifests | undefined> {
   const absRoot = resolve(projectRoot);
-  const found = await fg(["**/*.{yml,yaml}"], {
-    ...NO_SYMLINKS,
+  const found = await glob(["**/*.{yml,yaml}"], {
     cwd: absRoot,
     ignore: [...IGNORE, "**/.github/**", "**/.gitlab/**", "**/.circleci/**"],
     absolute: false,
     caseSensitiveMatch: false,
     deep: 7,
-    suppressErrors: true,
   });
 
   // Chart roots first — a template file resolves values against its chart.

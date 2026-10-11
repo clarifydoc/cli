@@ -2,8 +2,7 @@ import { readFile } from "fs/promises";
 import { byOrdinal } from "./ordinal.js";
 import { existsSync } from "fs";
 import { resolve, join } from "path";
-import fg from "fast-glob";
-import { NO_SYMLINKS } from "./glob-safety.js";
+import { glob, type GlobOptions } from "./glob.js";
 import { loadIgnorePatterns, isIgnored } from "./clarifydoc-ignore.js";
 import type { FrameworkDetection } from "../types/analysis.js";
 import type { ProjectInfo } from "../types/plugin.js";
@@ -30,9 +29,9 @@ export async function gatherProjectInfo(
   const ignorePatterns = loadIgnorePatterns(root);
   const globFiles = async (
     patterns: string | string[],
-    options: Parameters<typeof fg>[1],
+    options: GlobOptions,
   ): Promise<string[]> => {
-    const found = await fg(patterns, { ...options, ...NO_SYMLINKS });
+    const found = await glob(patterns, options);
     if (ignorePatterns.length === 0) return found;
     return found.filter((rel) => !isIgnored(join(root, rel), root, ignorePatterns));
   };

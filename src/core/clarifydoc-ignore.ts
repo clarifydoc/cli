@@ -15,8 +15,8 @@ import { sep, posix, resolve, dirname } from "path";
  *   - Inline `#` comments, escape `\#` for literal hash
  *   - Trailing-space trimming unless escaped
  *
- * Hand-rolled fnmatch supports `*`, `**`, `?`, `[abc]` — fast-glob's transitive
- * micromatch is intentionally not used (avoids a fragile peer dep).
+ * Hand-rolled fnmatch supports `*`, `**`, `?`, `[abc]` — the glob engine's
+ * matcher is intentionally not used (avoids a fragile peer dep).
  */
 
 /**

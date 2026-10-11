@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import fg from "fast-glob";
+import { globSync } from "tinyglobby";
 import { STABLE_TIMESTAMP } from "./analyzer.js";
 
 /**
@@ -18,8 +18,8 @@ const REPO_ROOT = resolve(__dirname, "..", "..");
 
 // lsp-*.json come from Docker runs that the fixture script does not perform,
 // so they are not regenerated and are excluded from the gate.
-const SUMMARIES = fg.sync("test-output/**/project-summary.json", { cwd: REPO_ROOT });
-const ALL_JSON = fg.sync(["test-output/**/*.json"], {
+const SUMMARIES = globSync("test-output/**/project-summary.json", { cwd: REPO_ROOT });
+const ALL_JSON = globSync(["test-output/**/*.json"], {
   cwd: REPO_ROOT,
   ignore: ["**/lsp-*.json"],
 });

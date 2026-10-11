@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import fg from "fast-glob";
+import { globSync } from "tinyglobby";
 import { TOOL_VERSION } from "./version.js";
 import { EXTRACTOR_VERSION } from "./manifest.js";
 import { SCHEMA_VERSION } from "./element-registry.js";
@@ -24,7 +24,7 @@ describe("TOOL_VERSION", () => {
 });
 
 describe("every fixture records its provenance", () => {
-  const summaries = fg.sync("test-output/**/project-summary.json", { cwd: REPO_ROOT });
+  const summaries = globSync("test-output/**/project-summary.json", { cwd: REPO_ROOT });
 
   it("found fixtures", () => {
     expect(summaries.length).toBeGreaterThan(20);

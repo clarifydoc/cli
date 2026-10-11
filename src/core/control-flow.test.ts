@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import fg from "fast-glob";
+import { glob } from "tinyglobby";
 import { readFile } from "fs/promises";
 import { resolve } from "path";
 import type { Language } from "../types/analysis.js";
@@ -12,7 +12,7 @@ import { buildControlFlow, cyclomaticFromCfg, undrawnStructure } from "./control
 
 /**
  * Corpus globs are relative to the repository and run with `cwd`: an absolute
- * pattern built by `resolve()` carries backslashes on Windows, which fast-glob
+ * pattern built by `resolve()` carries backslashes on Windows, which the glob engine
  * reads as escapes, and the corpus silently comes back empty.
  */
 const REPO = resolve(__dirname, "../..");
@@ -477,7 +477,7 @@ const CORPORA: Corpus[] = [
 ];
 
 async function corpusSources(corpus: Corpus): Promise<{ file: string; source: string }[]> {
-  const files = await fg(corpus.globs, {
+  const files = await glob(corpus.globs, {
     cwd: REPO,
     absolute: true,
     ignore: [
