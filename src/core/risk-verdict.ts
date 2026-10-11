@@ -145,6 +145,10 @@ export interface FileRiskInput {
   abstractPattern: boolean;
 }
 
+/**
+ * Project-wide inputs to `attachRiskVerdicts`, from which the per-file
+ * `FileRiskInput` of each blast-radius row is assembled.
+ */
 export interface RiskVerdictInput {
   analyses: readonly FileAnalysis[];
   /** Denominator for the transitive share; defaults to `analyses.length`. */
@@ -360,6 +364,19 @@ function summarize(category: RiskCategory, level: Level, input: FileRiskInput): 
   }
 }
 
+/**
+ * Classify one file's change risk from its evidence.
+ *
+ * The rule arms are tried in cascade order (foundation, boundary, flow,
+ * shared, localized) and the first that fires names the category; the reasons
+ * keep every arm that fired, so the evidence below the winner is not lost.
+ * The level is then derived per category, and a cross-tier escalation already
+ * applied upstream is named explicitly.
+ *
+ * @param input - The file's blast radius and the classifying evidence
+ * @param config - Thresholds; defaults to `DEFAULT_RISK_VERDICT_CONFIG`
+ * @returns The verdict with its category, level, reasons and summary line
+ */
 export function classifyRiskVerdict(input: FileRiskInput, config?: RiskVerdictConfig): RiskVerdict {
   const cfg = config ?? DEFAULT_RISK_VERDICT_CONFIG;
   const arms = fireRules(input, cfg);
@@ -475,5 +492,6 @@ export const CATEGORY_LABELS: Record<RiskCategory, string> = {
   unknown: "unknown",
 };
 
+/** Reason ids → a comma-separated readable list (unknown ids pass through). */
 export const describeReasons = (ids: readonly string[]): string =>
   ids.map((r) => REASON_LABELS[r] ?? r).join(", ");

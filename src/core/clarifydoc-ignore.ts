@@ -169,6 +169,10 @@ export function isIgnored(
   return ignored;
 }
 
+/**
+ * Whether a posix path is covered by one ignore pattern, honouring whether the
+ * pattern is anchored to the directory of the ignore file that declared it.
+ */
 function matches(path: string, rootPosix: string, pattern: IgnorePattern): boolean {
   const anchorPosix = toPosix(pattern.anchor);
 
@@ -211,6 +215,12 @@ function relativeBelow(path: string, base: string): string | null {
   return null;
 }
 
+/**
+ * Walk up from `start` to the nearest directory holding a root marker (a
+ * VCS directory such as `.git`, or `.clarifydoc`). Stops at the filesystem root or the user's
+ * home directory, answering null, so a scan of a stray folder never inherits
+ * an ignore file from `~`.
+ */
 function findProjectRoot(start: string): string | null {
   let current = resolve(start);
   const home = process.env.HOME ?? process.env.USERPROFILE ?? null;
@@ -225,6 +235,7 @@ function findProjectRoot(start: string): string | null {
   }
 }
 
+/** Platform separators → `/`. */
 function toPosix(p: string): string {
   return p.split(sep).join("/");
 }
@@ -241,6 +252,13 @@ function toPosix(p: string): string {
  * of times for a normal repo scan.
  */
 const FNMATCH_CACHE = new Map<string, RegExp>();
+/**
+ * Test one path (or name) against a glob in the dialect documented above.
+ *
+ * @param name - The posix path or basename to test
+ * @param pattern - The glob pattern; its compiled regex is cached
+ * @returns Whether the whole of `name` matches
+ */
 export function fnmatch(name: string, pattern: string): boolean {
   let re = FNMATCH_CACHE.get(pattern);
   if (!re) {
@@ -250,6 +268,10 @@ export function fnmatch(name: string, pattern: string): boolean {
   return re.test(name);
 }
 
+/**
+ * Compile one glob (the dialect documented on `fnmatch`) to a regex source,
+ * without the `^`/`$` anchors.
+ */
 function globToRegex(pattern: string): string {
   let re = "";
   let i = 0;

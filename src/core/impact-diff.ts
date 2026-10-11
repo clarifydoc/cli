@@ -67,6 +67,21 @@ function normalizePath(p: string): string {
   return s;
 }
 
+/**
+ * Work out what a set of changed files reaches: dependent files (via the
+ * reversed component graph), the screens and API routes at the end of those
+ * chains, the entities and queues touched, the tests that cover them, and a
+ * risk level with its reasons.
+ *
+ * Paths are matched to the analysis exactly, then case-insensitively; files
+ * the analysis does not know are reported as `unknownFiles`. Lists are capped
+ * and `truncated` says so; counts stay exact.
+ *
+ * @param summary - A loaded `project-summary.json`
+ * @param changed - Changed paths, as git or the user spells them
+ * @param options - Removed paths, and a label for the base being compared
+ * @returns The impact report `renderImpactText`/`renderImpactMarkdown` print
+ */
 export function computeImpactDiff(
   summary: ProjectAnalysis,
   changed: string[],
@@ -264,6 +279,7 @@ function chainLine(c: ImpactDiffResult["chains"][number]): string {
   return `${[...c.path].reverse().join(" → ")}  [${c.endsAt}]`;
 }
 
+/** Render an impact report as plain text for the terminal. */
 export function renderImpactText(r: ImpactDiffResult): string {
   const lines: string[] = [];
   lines.push(`Impact of ${r.changedFiles.length} changed file(s)  [base: ${r.baseLabel}]`);
@@ -294,6 +310,7 @@ export function renderImpactText(r: ImpactDiffResult): string {
   return lines.join("\n");
 }
 
+/** Render an impact report as GitHub-flavoured Markdown, for a PR comment. */
 export function renderImpactMarkdown(r: ImpactDiffResult): string {
   const md: string[] = [];
   md.push(`### ClarifyDoc impact — **${r.risk.level.toUpperCase()}** risk`);

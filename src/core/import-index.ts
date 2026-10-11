@@ -296,6 +296,7 @@ function entitySegment(callName: string): string | null {
   return null;
 }
 
+/** A plain identifier that is not a known database-client root (`prisma`, `db`, `repo`, `session`, …). */
 function isIdentifier(s: string): boolean {
   return /^[A-Za-z_$][\w$]*$/.test(s) && !NON_ENTITY_ROOTS.has(s.toLowerCase());
 }
@@ -312,11 +313,13 @@ function isEntityCandidate(s: string): boolean {
   return true;
 }
 
+/** Whether an opened namespace belongs to a database/ORM package. */
 function matchesDbNamespace(ns: string): boolean {
   const lower = ns.toLowerCase();
   return DB_NAMESPACE_MARKERS.some((m) => lower.includes(m));
 }
 
+/** The leading identifier of a call chain (`prisma` from `prisma.user.findMany(`), or null. */
 function rootIdentifier(callName: string): string | null {
   if (!callName) return null;
   // Strip generic args, parens, etc. Use everything up to the first '.' or '('.
@@ -325,6 +328,18 @@ function rootIdentifier(callName: string): string | null {
   return /^[A-Za-z_$][\w$]*$/.test(head) ? head : null;
 }
 
+/**
+ * Index every file's imports so later passes can answer "what does this local
+ * name refer to" without re-reading the import lists.
+ *
+ * For each file it records the bound local names → module source, the module
+ * sources that resolve to project files, and the namespaces opened by
+ * wildcard/side-effect imports (which classify database calls through
+ * `DB_NAMESPACE_MARKERS`).
+ *
+ * @param analyses - Every file analysis
+ * @returns The index, keyed by file path
+ */
 export function buildImportIndex(analyses: FileAnalysis[]): ImportIndex {
   const knownFiles = new Set<string>(analyses.map((a) => a.filePath));
   const local = new Map<string, Map<string, string>>();
@@ -367,6 +382,9 @@ export function buildImportIndex(analyses: FileAnalysis[]): ImportIndex {
   };
 }
 
+/** Extension and index-file spellings tried, in order, for an extension-less specifier. */
+const PROJECT_PATH_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".vue", ".svelte", "/index.ts", "/index.tsx", "/index.js", "/index.vue"];
+
 /**
  * Resolve a relative/absolute module specifier (as written in source) to a
  * concrete project file path, trying the common JS/TS/Vue extension and
@@ -374,8 +392,6 @@ export function buildImportIndex(analyses: FileAnalysis[]): ImportIndex {
  * known file matches. Exported so consumers outside the import index (e.g. the
  * screen builder following a route's lazy component) can reuse it.
  */
-const PROJECT_PATH_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".vue", ".svelte", "/index.ts", "/index.tsx", "/index.js", "/index.vue"];
-
 export function resolveImportSource(
   importingFile: string,
   src: string,
@@ -477,6 +493,7 @@ function resolvePythonModule(
   return null;
 }
 
+/** Join a directory and a relative path, resolving `.` and `..` segments, posix-style. */
 function normalizeJoin(dir: string, rel: string): string {
   const parts = `${dir}/${rel}`.replace(/\\/g, "/").split("/");
   const out: string[] = [];

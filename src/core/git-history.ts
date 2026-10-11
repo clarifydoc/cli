@@ -31,12 +31,21 @@ export interface GitHistoryOptions {
   timeoutMs?: number;
 }
 
+/**
+ * Per-file churn over the history window, or the reason history was skipped
+ * (not a repository, shallow clone, git failure). A skip is never an error:
+ * the analysis simply goes without churn and hotspots.
+ */
 export type GitHistoryResult =
   | { churn: FileChurnInfo[]; commitCount: number }
   | { skipped: string };
 
 const TOP_AUTHORS = 3;
 
+/**
+ * Run one git command with a timeout and a large output buffer, never
+ * rejecting: failures come back as `ok: false` with the stderr text.
+ */
 function runGit(
   bin: string,
   args: string[],
@@ -53,6 +62,19 @@ function runGit(
   });
 }
 
+/**
+ * Collect per-file churn (commits, additions, deletions, top authors, last
+ * touch) from `git log --numstat` over the last `months`.
+ *
+ * Paths from git are matched to `currentFiles` exactly, then
+ * case-insensitively; history of files no longer present is dropped. Every git
+ * call is bounded by `timeoutMs`.
+ *
+ * @param projectRoot - Directory inside the repository
+ * @param currentFiles - Files in the analysis, as repo-relative posix paths
+ * @param options - Window, commit cap, timeout and git binary
+ * @returns Churn rows and the commit count, or a `skipped` reason
+ */
 export async function collectGitHistory(
   projectRoot: string,
   currentFiles: string[],

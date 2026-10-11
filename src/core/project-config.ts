@@ -31,6 +31,12 @@ export const PROJECT_CONFIG_RELATIVE_PATH = ".clarifydoc/config.json";
 /** Deep partial of a config shape — every leaf optional. */
 export type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] };
 
+/**
+ * The `refactorPressure` section of `.clarifydoc/config.json`: partial
+ * overrides of the weights, ceilings, bands and gates in
+ * `DEFAULT_REFACTOR_PRESSURE_CONFIG`. Unknown keys and bad numbers are
+ * warned about and ignored, never fatal.
+ */
 export interface RefactorPressureConfigInput {
   weights?: Partial<Record<"complexity" | "size" | "responsibility" | "coupling" | "churn", number>>;
   ceilings?: Partial<
@@ -60,6 +66,11 @@ export interface LayerRuleInput {
   description?: string;
 }
 
+/**
+ * The shape of `.clarifydoc/config.json`, a team's hand-written overrides for
+ * the quality analyses. Every section is optional; globs are project-relative
+ * (see the module comment for the dialect).
+ */
 export interface ProjectConfig {
   /** Free-form; ignored by the tool. Lets a team note why thresholds were changed. */
   $comment?: string;
@@ -84,6 +95,7 @@ const ARCH_LAYERS: ReadonlySet<string> = new Set<ArchLayer>([
   "ui", "components", "services", "data", "utils", "config", "test", "unknown",
 ]);
 
+/** A read config together with where it came from and what was wrong with it. */
 export interface LoadedProjectConfig {
   config: ProjectConfig;
   /** Absolute path of the file that was read, or null when none exists. */
@@ -149,6 +161,7 @@ export function loadProjectConfig(projectRoot: string): LoadedProjectConfig {
   return { config, path, warnings };
 }
 
+/** The non-blank strings of an array-valued config field; anything else → empty. */
 function stringList(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "") : [];
 }
@@ -160,6 +173,13 @@ export interface ArchitectureOverrides {
   generated: string[];
 }
 
+/**
+ * Normalize the config's layer, exempt and generated globs to posix form so
+ * the layer classifier and the generated-code filter can match them.
+ *
+ * @param config - A loaded (already validated) project config
+ * @returns The three glob lists, empty when the config has none
+ */
 export function resolveArchitectureOverrides(config: ProjectConfig): ArchitectureOverrides {
   return {
     layers: (config.layers ?? []).map((r) => ({ layer: r.layer, patterns: r.patterns.map(normalizeGlob) })),
@@ -200,6 +220,7 @@ export function matchesAnyGlob(filePath: string, patterns: readonly string[]): b
   return false;
 }
 
+/** Narrow an unknown JSON value to a non-array object. */
 export function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }

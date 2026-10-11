@@ -144,6 +144,7 @@ export interface NormComplexityFn {
   nestingDepth?: number;
   paramCount?: number;
 }
+/** Normalized FileComplexityInfo — the file is an element index, each function a `NormComplexityFn`; totals stay inline. */
 export interface NormFileComplexity {
   /** File element index (kind "file"). */
   file: number;
@@ -165,6 +166,7 @@ export interface NormClassGraphNode {
   inboundCount: number;
   outboundCount: number;
 }
+/** Normalized ClassGraphEdge — endpoints are indices into `NormClassGraph.nodes`, counts stay inline. */
 export interface NormClassGraphEdge {
   source: number;
   target: number;
@@ -172,6 +174,7 @@ export interface NormClassGraphEdge {
   total: number;
   category: "inheritance" | "data" | "function";
 }
+/** Normalized ClassGraph: nodes carry element indices, edges carry node indices. */
 export interface NormClassGraph {
   nodes: NormClassGraphNode[];
   edges: NormClassGraphEdge[];
@@ -204,6 +207,7 @@ export interface NormEntityGraphEdge {
   confidence?: Confidence;
   selfRef?: boolean;
 }
+/** Normalized EntityGraph: every node and edge endpoint is an element index. */
 export interface NormEntityGraph {
   nodes: NormEntityGraphNode[];
   edges: NormEntityGraphEdge[];
@@ -215,6 +219,7 @@ export interface NormCaller {
   ref: number;
   line: number;
 }
+/** Normalized BlastSymbolUsage — the symbol name stays inline, each caller is a file element index plus its line. */
 export interface NormBlastSymbolUsage {
   name: string;
   usedByCount: number;
@@ -226,12 +231,14 @@ export interface NormSite {
   line: number;
   kind: TypeUsageKind;
 }
+/** Normalized TypeUsageByFile — the file is an element index; its use-sites omit the file they are in. */
 export interface NormTypeUsageByFile {
   file: number;
   count: number;
   byKind: Partial<Record<TypeUsageKind, number>>;
   sites: NormSite[];
 }
+/** Normalized TypeUsageSummary — the type is an element index; `usedByFiles` is derived on denormalize. */
 export interface NormTypeUsageSummary {
   /** Type-declaration element index (carries definedAt line + isInterface). */
   type: number;
@@ -243,6 +250,10 @@ export interface NormTypeUsageSummary {
   level: "critical" | "high" | "medium" | "low";
   changeRisk: "safe" | "moderate" | "dangerous";
 }
+/**
+ * Normalized BlastRadiusInfo — every file path is an element index; the
+ * cross-tier and verdict sub-objects are carried verbatim (see their fields).
+ */
 export interface NormBlastRadiusInfo {
   /** Subject file element index. */
   file: number;
@@ -276,6 +287,7 @@ export interface NormDataAccessNode {
   inboundCount: number;
   outboundCount: number;
 }
+/** Normalized DataAccessEdge — endpoints are indices into `NormDataAccessGraph.nodes`. */
 export interface NormDataAccessEdge {
   source: number;
   target: number;
@@ -283,6 +295,7 @@ export interface NormDataAccessEdge {
   calls: DataAccessEdgeCall[];
   total: number;
 }
+/** Normalized DataAccessGraph: nodes carry element indices, edges carry node indices. */
 export interface NormDataAccessGraph {
   nodes: NormDataAccessNode[];
   edges: NormDataAccessEdge[];
@@ -550,6 +563,11 @@ function keyFromPage(files: string[], key: string): string {
   return key;
 }
 
+/** `{ [key]: value }` when the value is defined, `{}` otherwise — for optional fields in codec copies. */
+function optional<K extends string, V>(key: K, value: V | undefined): Partial<Record<K, V>> {
+  return value === undefined ? {} : ({ [key]: value } as Record<K, V>);
+}
+
 /**
  * Rewrite every page reference in an aggregate artifact, parameterized by the
  * per-value transform `ref` and per-key transform `key`. Used in BOTH directions
@@ -558,11 +576,6 @@ function keyFromPage(files: string[], key: string): string {
  * with fresh objects/arrays for every rewritten field — the input (and any shape
  * it shares with the caller's in-memory `ProjectAnalysis`) is never mutated.
  */
-/** `{ [key]: value }` when the value is defined, `{}` otherwise — for optional fields in codec copies. */
-function optional<K extends string, V>(key: K, value: V | undefined): Partial<Record<K, V>> {
-  return value === undefined ? {} : ({ [key]: value } as Record<K, V>);
-}
-
 function rewritePageRefs<T extends object>(
   src: T,
   ref: (v: unknown) => unknown,

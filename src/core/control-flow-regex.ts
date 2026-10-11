@@ -230,6 +230,15 @@ interface ScanLine {
   delta: number;
 }
 
+/**
+ * Turn the function's source into `ScanLine`s: comments and strings blanked
+ * for matching, and the nesting depth before and after each line inferred by
+ * counting the language's block openers and closers.
+ *
+ * @param source - The function's text
+ * @param firstRow - 0-based row of its first line within the file
+ * @param spec - The language's regex control-flow tables
+ */
 function scanLines(
   source: string,
   firstRow: number,
@@ -347,6 +356,11 @@ function splitInline(code: string): { head: string; tail: string } | null {
   return null;
 }
 
+/**
+ * Match one blanked line against the spec's statement rules, first hit wins.
+ * Returns the canonical node type and the captured head (condition), or null
+ * for a line no rule describes.
+ */
 function classify(code: string, spec: LanguageRegexControlFlowSpec): Matched | null {
   const trimmed = code.trim();
   if (trimmed === "") return null;
@@ -452,6 +466,10 @@ function blockEnd(lines: readonly ScanLine[], i: number, to: number): number {
   return j;
 }
 
+/**
+ * Make a synthetic node of `type` spanning `start`..`end`, labelled by the
+ * first line's raw text unless `text` is given.
+ */
 function node(type: string, start: ScanLine, end: ScanLine, text?: string): SynthNode {
   return new SynthNode(
     type,

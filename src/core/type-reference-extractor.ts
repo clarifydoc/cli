@@ -56,6 +56,10 @@ export function extractTypeReferences(a: FileAnalysis, language: Language): Type
   return refs;
 }
 
+/**
+ * Type references a class declaration makes: its base class, interfaces,
+ * property types and, through `emitFunctionRefs`, each method's signature.
+ */
 function emitClassRefs(cls: ClassInfo, filePath: string, language: Language, refs: TypeReference[]): void {
   const classSymbol = cls.name;
   const baseCtx: TypeRefContext = { filePath, language, line: cls.line, sourceSymbol: classSymbol, sourceClass: cls.name };
@@ -76,6 +80,9 @@ function emitClassRefs(cls: ClassInfo, filePath: string, language: Language, ref
   }
 }
 
+/**
+ * Type references in one function's signature: its parameter and return types.
+ */
 function emitFunctionRefs(
   fn: FunctionInfo,
   filePath: string,
@@ -121,6 +128,11 @@ export function parseAnnotation(typeStr: string | null | undefined, language: La
 const DOT_CALL = /^([A-Z][A-Za-z0-9_]*)\.[A-Za-z_]/;
 const COLON_CALL = /^((?:[A-Z][A-Za-z0-9_]*)(?:::[A-Z][A-Za-z0-9_]*)*?)::[A-Za-z_]/;
 
+/**
+ * A `Class.method(…)` or `Class::method(…)` call references `Class`; emitted
+ * once per type per symbol. One-level chains only, since `a.b.c` is usually
+ * an instance chain.
+ */
 function emitClassMethodCallRefs(
   calls: import("../types/analysis.js").CallInfo[] | undefined,
   language: Language,

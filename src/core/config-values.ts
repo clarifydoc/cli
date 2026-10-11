@@ -29,6 +29,7 @@ export interface ProjectConfigValue extends ConfigEntry {
 
 const IGNORE = ["**/node_modules/**", "**/dist/**", "**/.git/**", "**/bin/**", "**/obj/**", "**/vendor/**"];
 
+/** Read a file as UTF-8, or null when it cannot be read. */
 async function readIf(abs: string): Promise<string | null> {
   try {
     return await readFile(abs, "utf-8");
@@ -37,6 +38,10 @@ async function readIf(abs: string): Promise<string | null> {
   }
 }
 
+/**
+ * The config files a spec names under one root: its literal file names, or a
+ * bounded, sorted glob when the spec declares one.
+ */
 async function filesOf(absRoot: string, spec: ConfigSourceSpec | ProxySourceSpec): Promise<string[]> {
   if (!spec.glob) return [...spec.files];
   const found = await glob([...spec.files], { cwd: absRoot, ignore: IGNORE, deep: spec.glob.deep, absolute: false });

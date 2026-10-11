@@ -24,6 +24,12 @@ const HEARTBEAT_MS = 30_000;
 /** A lock whose heartbeat is older than this is assumed dead. 4× the beat. */
 const STALE_MS = 120_000;
 
+/**
+ * Identity of the process holding the lock, as written into the lock file.
+ *
+ * Read back by other processes to decide whether the holder is still alive
+ * (`pid` on the same `host`) and to tell the user who is blocking them.
+ */
 export interface LockOwner {
   pid: number;
   host: string;
@@ -32,6 +38,10 @@ export interface LockOwner {
   label?: string;
 }
 
+/**
+ * A held lock. Call `release()` when the analysis finishes (or fails) so the
+ * next writer does not have to wait for the heartbeat to go stale.
+ */
 export interface AnalysisLock {
   path: string;
   owner: LockOwner;
@@ -55,10 +65,17 @@ export class AnalysisLockedError extends Error {
   }
 }
 
+/**
+ * Path of the lock file inside an analysis directory.
+ *
+ * @param dir - The analysis output directory being guarded
+ * @returns The absolute path of its lock file
+ */
 export function lockPath(dir: string): string {
   return join(dir, LOCK_FILE);
 }
 
+/** `stat` that answers null instead of throwing for a missing path. */
 async function statOrNull(p: string) {
   try {
     return await stat(p);

@@ -52,7 +52,12 @@ import { collectK8sManifests } from "./deployment-k8s.js";
 // doesn't understand degrades to a missing key, never a crash. Anchors,
 // aliases and multi-line scalars are out of scope by design.
 
+/**
+ * A value in the YAML subset the compose parser understands: a scalar string,
+ * a sequence, or a nested map. Numbers and booleans stay strings.
+ */
 export type YamlValue = string | YamlValue[] | YamlMap;
+/** A YAML mapping in the parsed subset. */
 export interface YamlMap {
   [key: string]: YamlValue;
 }
@@ -62,6 +67,7 @@ interface YamlLine {
   text: string;
 }
 
+/** Cut a `#` comment off a YAML line, ignoring `#` inside quotes and inside a word. */
 function stripComment(raw: string): string {
   let inS = false;
   let inD = false;
@@ -76,6 +82,7 @@ function stripComment(raw: string): string {
   return raw;
 }
 
+/** Drop one pair of matching surrounding quotes, if present. */
 function unquote(s: string): string {
   const t = s.trim();
   if (t.length >= 2 && ((t[0] === '"' && t.endsWith('"')) || (t[0] === "'" && t.endsWith("'")))) {
@@ -100,6 +107,7 @@ function splitKeyValue(text: string): { key: string; value: string } | null {
   return null;
 }
 
+/** Parse an inline `[a, b]` sequence; null when the value is not one. */
 function parseInlineArray(v: string): YamlValue[] | null {
   const t = v.trim();
   if (!t.startsWith("[") || !t.endsWith("]")) return null;
@@ -108,6 +116,16 @@ function parseInlineArray(v: string): YamlValue[] | null {
   return inner.split(",").map((p) => unquote(p));
 }
 
+/**
+ * Parse the compose-file YAML subset described above.
+ *
+ * Comments are stripped (quote-aware), blank lines dropped, and nesting read
+ * from indentation. Constructs outside the subset degrade to a missing key
+ * rather than an error.
+ *
+ * @param text - YAML source
+ * @returns The top-level mapping, or an empty map when the document is not one
+ */
 export function parseSimpleYaml(text: string): YamlMap {
   const lines: YamlLine[] = [];
   for (const raw of text.split(/\r?\n/)) {
@@ -177,6 +195,10 @@ export function parseSimpleYaml(text: string): YamlMap {
 
 // ─── Compose discovery & raw services ───────────────────────────────────────
 
+/**
+ * Directories never searched for compose files: dependency and build output
+ * trees, which routinely vendor example stacks.
+ */
 export const IGNORE = [
   "**/node_modules/**", "**/dist/**", "**/.git/**", "**/bin/**", "**/obj/**",
   "**/vendor/**", "**/build/**", "**/out/**", "**/target/**",
@@ -192,6 +214,13 @@ export const NON_RUNTIME_RE = /(^|[^a-z0-9])(build|test|tests|ci|pr|example|exam
 /** Tokens that mark an environment variant — parsed, but after the base files. */
 const VARIANT_RE = /(^|[^a-z0-9])(local|macos|osx|windows|ports|override|dev)([^a-z0-9]|$)/i;
 
+/**
+ * One service as declared in one manifest, before deployment modelling.
+ *
+ * Shared by the compose parser and the Kubernetes translator so both feed the
+ * same merge: `file` is the manifest it came from, `env` the literal
+ * environment it sets, `dependsOn` the services it names.
+ */
 export interface RawService {
   name: string;
   file: string;
@@ -244,6 +273,7 @@ function serviceAliases(b: YamlMap): string[] {
   return out;
 }
 
+/** A scalar, a sequence or a map's keys as a string list; undefined → empty. */
 function asStringArray(v: YamlValue | undefined): string[] {
   if (v === undefined) return [];
   if (typeof v === "string") return v ? [v] : [];
@@ -271,6 +301,10 @@ function envMap(v: YamlValue | undefined): Record<string, string> {
   return out;
 }
 
+/**
+ * Every entry under `services:` of one compose document as a `RawService`
+ * (image, joined entrypoint + command, env, depends_on, ports, aliases).
+ */
 function collectRawServices(doc: YamlMap, file: string): RawService[] {
   const services = doc.services;
   if (!services || typeof services !== "object" || Array.isArray(services)) return [];
@@ -321,6 +355,10 @@ function imageTail(image: string | undefined): string | undefined {
   return seg || undefined;
 }
 
+/**
+ * Infra family of a service by its image name — or, when it has no image, by
+ * its service name — against `INFRA_FAMILIES`; everything else is an app.
+ */
 function classify(svc: RawService): { kind: DeployedServiceKind; family?: string } {
   // The image identifies infra; the service name alone is a weaker fallback
   // (an app service named `redis-admin-ui` must not become infra, so name
@@ -357,6 +395,10 @@ interface ProjectIndex {
   byNorm: Map<string, SubProject[]>;
 }
 
+/**
+ * Index sub-projects by exact and normalized name (and by the names of their
+ * project files) so a compose service can be matched to the code it runs.
+ */
 function indexProjects(subProjects: readonly SubProject[]): ProjectIndex {
   const byExact = new Map<string, SubProject[]>();
   const byNorm = new Map<string, SubProject[]>();
@@ -486,6 +528,7 @@ function externalNameFromVar(varName: string): string {
     .join(" ");
 }
 
+/** The host of the first `http(s)://` URL in a value, or undefined. */
 function hostOf(value: string): string | undefined {
   const m = value.match(/https?:\/\/([^/\s:;,'"]+)/i);
   return m ? m[1] : undefined;
@@ -493,6 +536,10 @@ function hostOf(value: string): string | undefined {
 
 // ─── Main entry ─────────────────────────────────────────────────────────────
 
+/**
+ * Inputs that let `detectDeployment` attach services to the sub-projects the
+ * analysis already found.
+ */
 export interface DetectDeploymentOptions {
   subProjects: SubProject[];
   /** Owning project per analyzed file — used to break project-match ties. */
@@ -501,6 +548,21 @@ export interface DetectDeploymentOptions {
   maxFiles?: number;
 }
 
+/**
+ * Build the deployment topology from the repo's compose and Kubernetes/Helm
+ * manifests.
+ *
+ * Compose files are found by name (`*compose*.yml`), non-runtime stacks are
+ * excluded by path token, base manifests are read before environment variants,
+ * and services are deduped by name as the module comment describes. Each
+ * service is matched to a sub-project (by build context, image or name) and
+ * classified as app, datastore, queue, …; `depends_on`, env URLs and
+ * ports become edges.
+ *
+ * @param projectRoot - Directory to search
+ * @param options - Sub-projects to match against, and the file cap
+ * @returns The model, or undefined when the repo declares no runtime services
+ */
 export async function detectDeployment(
   projectRoot: string,
   options: DetectDeploymentOptions,

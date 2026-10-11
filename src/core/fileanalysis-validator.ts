@@ -95,6 +95,10 @@ export function validateFileAnalysis(a: FileAnalysis): ExtractorWarning[] {
   return warnings;
 }
 
+/**
+ * Check a function's line range and recurse into its calls, appending a
+ * warning per violation (never throwing).
+ */
 function validateFunction(fn: FunctionInfo, path: string, warnings: ExtractorWarning[]): void {
   if (typeof fn.line !== "number" || fn.line < 1) {
     warnings.push({ field: `${path}.line`, message: `line must be >= 1, got ${fn.line}` });
@@ -110,6 +114,7 @@ function validateFunction(fn: FunctionInfo, path: string, warnings: ExtractorWar
   );
 }
 
+/** Check a class's line range and recurse into its methods. */
 function validateClass(cls: ClassInfo, path: string, warnings: ExtractorWarning[]): void {
   if (typeof cls.line !== "number" || cls.line < 1) {
     warnings.push({ field: `${path}.line`, message: `line must be >= 1, got ${cls.line}` });
@@ -125,6 +130,7 @@ function validateClass(cls: ClassInfo, path: string, warnings: ExtractorWarning[
   );
 }
 
+/** Check a call's `kind` is one of the known values and its line is positive. */
 function validateCall(call: CallInfo, path: string, warnings: ExtractorWarning[]): void {
   if (!VALID_CALL_KINDS.has(call.kind)) {
     warnings.push({

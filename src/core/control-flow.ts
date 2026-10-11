@@ -91,6 +91,10 @@ interface JumpFrame {
   breaks: Pending[];
 }
 
+/**
+ * The function to draw, identified the way the complexity analyzer lists it:
+ * by name and by the 1-based line range of its declaration.
+ */
 export interface FunctionRef {
   /** As reported by the complexity analyzer — `Class.method` for methods. */
   name: string;
@@ -98,12 +102,23 @@ export interface FunctionRef {
   endLine: number;
 }
 
+/** Whitespace-collapse a label and cut it at `MAX_LABEL` with an ellipsis. */
 function collapse(text: string): string {
   const one = text.replace(/\s+/g, " ").trim();
   if (one.length <= MAX_LABEL) return one;
   return `${one.slice(0, MAX_LABEL - 1)}…`;
 }
 
+/**
+ * Accumulates the nodes and edges of one function's graph while the statement
+ * walker visits its body.
+ *
+ * It owns the graph primitives (`add`, `connect`), the stack of open loops and
+ * switches that `break`/`continue` resolve against (`jumps`), the open
+ * `try`/`finally` regions that returns and throws must route through
+ * (`guards`), and the running counts the final `Cfg` reports: constructs the
+ * tables do not model and branches nothing reaches.
+ */
 class Builder {
   readonly nodes: CfgNode[] = [];
   readonly edges: CfgEdge[] = [];

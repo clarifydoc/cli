@@ -58,6 +58,7 @@ export interface LspGroundTruth {
   generatedAt: string;
 }
 
+/** Where per-file JSON and summaries are written, and whether to indent them. */
 export interface OutputOptions {
   outputDir: string;
   pretty?: boolean;

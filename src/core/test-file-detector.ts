@@ -33,6 +33,7 @@ const GENERIC_TEST_PATTERNS: readonly RegExp[] = [
 /** Per-language combined pattern lists, cached (generic ++ plugin-contributed). */
 const combinedCache = new Map<Language | "<none>", readonly RegExp[]>();
 
+/** The generic test-file patterns plus the language's own, merged once per language and cached. */
 function patternsFor(language?: Language): readonly RegExp[] {
   const key = language ?? "<none>";
   let combined = combinedCache.get(key);

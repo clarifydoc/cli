@@ -203,11 +203,16 @@ async function isCmakeProjectRoot(root: string, relPath: string): Promise<boolea
   }
 }
 
+/** The most specific kind among several markers in one directory, by `KIND_PRIORITY`. */
 function pickPrimaryKind(kinds: Set<SubProjectKind>): SubProjectKind {
   for (const k of KIND_PRIORITY) if (kinds.has(k)) return k;
   return "root";
 }
 
+/**
+ * A sub-project id from its relative path: separators and odd characters
+ * become dashes; the empty path is `root`.
+ */
 function slugify(p: string): string {
   const slug = p
     .replace(/\\/g, "/")

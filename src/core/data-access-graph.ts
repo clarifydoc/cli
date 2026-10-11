@@ -32,6 +32,13 @@ import { tableMatchKeys as entityMatchKeys } from "./entity-graph.js";
 /** Sentinel datastore/queue name for DB-shaped calls whose target could not be resolved. */
 export const UNKNOWN_TARGET = "(unresolved)";
 
+/**
+ * Build the file → datastore/entity/queue graph described in the module comment.
+ *
+ * @param analyses - Every file analysis; only database and queue data sources
+ *   contribute
+ * @returns Nodes and edges with their in/out counts, in a stable order
+ */
 export function buildDataAccessGraph(analyses: FileAnalysis[]): DataAccessGraph {
   const nodes = new Map<string, DataAccessNode>();
   const edges = new Map<string /* "src→tgt" */, DataAccessEdge>();
@@ -157,6 +164,7 @@ export function buildDataAccessGraph(analyses: FileAnalysis[]): DataAccessGraph 
   };
 }
 
+/** The last path segment, for either separator. */
 function fileBasename(p: string): string {
   const slash = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
   return slash >= 0 ? p.slice(slash + 1) : p;

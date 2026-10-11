@@ -26,6 +26,10 @@ const CONTEXT_HOPS = 2;
 /** ≈40 characters per source line at ≈4 characters per token. */
 const TOKENS_PER_LINE = 10;
 
+/**
+ * Optional inputs that refine the blast-radius figures without changing which
+ * files are affected.
+ */
 export interface BlastRadiusOptions {
   /** Physical line count per file (from `FileAnalysis.lineCount`); sizes the context burden. */
   lineCounts?: ReadonlyMap<string, number>;
@@ -68,6 +72,23 @@ function contextBurdenFor(
   };
 }
 
+/**
+ * Compute the blast radius of every file in the component graph.
+ *
+ * For each file this reports who depends on it (direct and transitive, via the
+ * reversed import graph), which of its symbols are called from other files
+ * and from where (via `symbolLinks`), what the file itself depends on, a
+ * change-risk class, and the context burden an editor carries to change it.
+ * Enumerated lists are capped (see the caps at the top of this module); the
+ * counts stay exact.
+ *
+ * @param componentGraph - file → files it imports
+ * @param symbolLinks - Resolved call→definition links, for per-symbol usage
+ * @param totalFiles - Project file count; accepted by the signature but not consulted
+ *   by the current classification
+ * @param options - Line counts for the context burden
+ * @returns One entry per file, in file order
+ */
 export function analyzeBlastRadius(
   componentGraph: Record<string, string[]>,
   symbolLinks: SymbolLink[],

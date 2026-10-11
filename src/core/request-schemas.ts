@@ -283,6 +283,15 @@ export function attachRequestSchemas(routes: RouteRow[], analyses: FileAnalysis[
   return attached;
 }
 
+/**
+ * Turns a type as written in a handler signature into a JSON-schema-like node
+ * by asking the plugin's `RequestSchemaHooks` what the type is (primitive,
+ * array, map, object, …) and flattening object types through their
+ * `extends` chain. Classes are looked up by name within the handler's own
+ * sub-project first. An unknown type, a type already being inlined (a cycle)
+ * or one past `MAX_DEPTH` is emitted as a bare `$ref`; an enum as its member
+ * names.
+ */
 class SchemaBuilder {
   /** Object types currently being inlined, to cut cycles (`Node.Children: List<Node>`). */
   private readonly inProgress = new Set<string>();

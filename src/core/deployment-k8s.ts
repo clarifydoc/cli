@@ -46,14 +46,17 @@ function asMap(v: YamlValue | undefined): YamlMap | undefined {
   return v && typeof v === "object" && !Array.isArray(v) ? v : undefined;
 }
 
+/** The value as a sequence, or an empty one. */
 function asList(v: YamlValue | undefined): YamlValue[] {
   return Array.isArray(v) ? v : [];
 }
 
+/** The value as a non-empty string, or undefined. */
 function asString(v: YamlValue | undefined): string | undefined {
   return typeof v === "string" && v ? v : undefined;
 }
 
+/** Follow a key path through nested maps; undefined as soon as a step is missing. */
 function dig(m: YamlMap | undefined, ...path: string[]): YamlValue | undefined {
   let cur: YamlValue | undefined = m;
   for (const key of path) {
@@ -65,6 +68,7 @@ function dig(m: YamlMap | undefined, ...path: string[]): YamlValue | undefined {
 
 // ─── Helm template rendering (best-effort) ──────────────────────────────────
 
+/** What a Helm template is rendered against: the chart's name and its values. */
 export interface ChartContext {
   /** Chart name from Chart.yaml — stands in for Release/fullname helpers. */
   name: string;
@@ -82,6 +86,10 @@ function valuesLookup(values: YamlMap, path: string): string {
   return typeof cur === "string" ? cur : "";
 }
 
+/**
+ * The text one `{{ … }}` expression renders to; see `renderHelmTemplate` for
+ * the handled forms. Anything else renders empty.
+ */
 function resolveHelmExpr(expr: string, chart: ChartContext | undefined): string {
   const e = expr.trim();
 
@@ -108,6 +116,19 @@ function resolveHelmExpr(expr: string, chart: ChartContext | undefined): string 
 /** Lines that are pure template control flow — no YAML content survives them. */
 const HELM_CONTROL_RE = /^\{\{-?\s*(if|else|end|range|with|define)\b[^}]*-?\}\}$/;
 
+/**
+ * Best-effort rendering of a Helm template into plain YAML.
+ *
+ * Lines that are only control flow (`{{ if }}`, `{{ range }}`, `{{ end }}`, …)
+ * are dropped; `{{ .Values.x }}` reads the values file (or the `| default`
+ * literal), `{{ include "x.fullname" . }}`/`.Release.Name`/`.Chart.Name` become
+ * the chart name, and anything else renders as an empty string. Good enough to
+ * recover images, env and ports; never a full Go-template engine.
+ *
+ * @param text - The template source
+ * @param chart - The chart context, or undefined when no Chart.yaml was found
+ * @returns YAML text for `parseSimpleYaml`
+ */
 export function renderHelmTemplate(text: string, chart: ChartContext | undefined): string {
   const out: string[] = [];
   for (const raw of text.split(/\r?\n/)) {
@@ -165,6 +186,10 @@ interface K8sDoc {
   doc: YamlMap;
 }
 
+/**
+ * Split a multi-document YAML file on `---` and parse every chunk that looks
+ * like a Kubernetes object (has `kind` and `metadata.name`).
+ */
 function docsOf(text: string): K8sDoc[] {
   const out: K8sDoc[] = [];
   for (const chunk of text.split(/^---\s*$/m)) {
@@ -192,6 +217,10 @@ function podLabels(kind: string, doc: YamlMap): YamlMap {
   return asMap(base) ?? {};
 }
 
+/**
+ * Everything the Kubernetes/Helm manifests of a repo contribute to the
+ * deployment model, translated into the compose-shaped `RawService` records.
+ */
 export interface K8sManifests {
   /** Repo-relative posix paths of every manifest that contributed. */
   files: string[];

@@ -23,6 +23,10 @@ import { glob as tinyGlob, globSync as tinyGlobSync, type GlobOptions as TinyGlo
 import { readdir, readdirSync, realpath, realpathSync, stat, statSync, type Dirent } from "fs";
 import { resolve } from "path";
 
+/**
+ * The options ClarifyDoc's glob wrapper accepts — the engine's own options
+ * never leak past this module, so swapping the engine is a one-file change.
+ */
 export interface GlobOptions {
   /** Directory the patterns and the results are relative to. */
   cwd: string;
@@ -80,6 +84,10 @@ export class LinkedFiles {
   }
 }
 
+/**
+ * Translate `GlobOptions` to the engine's options, pinning the behaviours the
+ * wrapper promises (no symlink following, no directory expansion).
+ */
 function toEngine({ cwd, ignore, absolute, dot, caseSensitiveMatch, deep, links }: GlobOptions): TinyGlobOptions {
   const options: TinyGlobOptions = {
     cwd,
@@ -95,10 +103,16 @@ function toEngine({ cwd, ignore, absolute, dot, caseSensitiveMatch, deep, links 
   return options;
 }
 
+/**
+ * Match `patterns` under `options.cwd` without following symbolic links.
+ *
+ * @returns Matching paths, relative to `cwd` unless `absolute` is set
+ */
 export function glob(patterns: string | readonly string[], options: GlobOptions): Promise<string[]> {
   return tinyGlob(patterns, toEngine(options));
 }
 
+/** Synchronous `glob`, for callers that cannot await. */
 export function globSync(patterns: string | readonly string[], options: GlobOptions): string[] {
   return tinyGlobSync(patterns, toEngine(options));
 }

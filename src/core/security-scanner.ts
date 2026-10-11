@@ -63,6 +63,12 @@ const GENERIC_RULES: SecurityRule[] = [
  * average line length.
  */
 const BUNDLE_MARKER_RE = /__webpack_require__|webpackJsonp|webpackChunk|\bparcelRequire\b|System\.register\(/;
+/**
+ * Whether a source text looks minified or bundled (see the signals above).
+ * Small texts are never flagged.
+ *
+ * @param sourceText - The whole file
+ */
 export function isMinifiedSource(sourceText: string): boolean {
   if (sourceText.length < 2000) return false;
   if (BUNDLE_MARKER_RE.test(sourceText)) return true;
@@ -91,6 +97,12 @@ export function isMinifiedSource(sourceText: string): boolean {
 const THIRD_PARTY_LICENSE_RE =
   /Permission is hereby granted|The MIT License|terms of the MIT License|opensource\.org\/licenses|You may use this code for any purpose|Released under the (?:MIT|BSD|Apache|GPL|LGPL|MPL)|Licensed under the (?:MIT|BSD|Apache|GPL|LGPL|MPL)/i;
 
+/**
+ * Whether the file opens with a third-party license header (first 4 KiB only).
+ * See the note above: honoured at aggregation, never as a per-file skip.
+ *
+ * @param sourceText - The whole file
+ */
 export function isVendoredSource(sourceText: string): boolean {
   return THIRD_PARTY_LICENSE_RE.test(sourceText.slice(0, 4096));
 }
@@ -113,6 +125,7 @@ export function vendoredMinoritySet(
 /** Merged generic + plugin rules per language, sorted by priority (cached). */
 const mergedRulesCache = new Map<Language, readonly SecurityRule[]>();
 
+/** The generic security rules plus the language's own, sorted by priority and cached per language. */
 function rulesFor(language: Language): readonly SecurityRule[] {
   let rules = mergedRulesCache.get(language);
   if (!rules) {

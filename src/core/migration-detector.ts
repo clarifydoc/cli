@@ -33,20 +33,28 @@ function orderKey(name: string): string {
   return m ? m[1]! : name;
 }
 
+/** The last path segment. */
 function baseName(p: string): string {
   const slash = p.lastIndexOf("/");
   return slash >= 0 ? p.slice(slash + 1) : p;
 }
 
+/** The file name without its extension (a leading dot is kept). */
 function stripExt(name: string): string {
   const dot = name.lastIndexOf(".");
   return dot > 0 ? name.slice(0, dot) : name;
 }
 
+/** Build a `MigrationInfo` with its sort key derived from the name. */
 function mk(filePath: string, ecosystem: MigrationInfo["ecosystem"], name: string): MigrationInfo {
   return { filePath, ecosystem, name, order: orderKey(name) };
 }
 
+/**
+ * Recognize a migration file by the path conventions of each ecosystem
+ * (Prisma, Diesel, Flyway, Rails, Django, Alembic, EF Core, Doctrine,
+ * GORM), in the order tried below. Null when the path matches none.
+ */
 function classify(p: string): MigrationInfo | null {
   let m: RegExpMatchArray | null;
 

@@ -127,6 +127,14 @@ import {
 } from "../types/analysis.js";
 import type { ReachabilityHooks, ReachabilityModel } from "../types/language-plugin.js";
 
+/**
+ * Everything `analyzeProject` needs to run one analysis.
+ *
+ * `projectRoot` is scanned, `outputDir` receives the per-file JSON and the
+ * summaries. `include`/`exclude` are globs relative to the root; `maxFiles`
+ * caps discovery for quick looks at huge repos. `lsp` turns on the layer-2
+ * Docker enhancement, bounded by `lspTimeout` seconds.
+ */
 export interface AnalyzeOptions {
   projectRoot: string;
   outputDir: string;
@@ -166,6 +174,13 @@ export interface AnalyzeOptions {
 /** Fixed timestamp written in place of the real one under `stableOutput`. */
 export const STABLE_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 
+/**
+ * What `analyzeProject` reports back to the CLI once the output is on disk.
+ *
+ * The counts are for the one-line summary the CLI prints; the per-file
+ * detail lives in `outputDir`. `changedFiles`/`removedFiles` are only filled
+ * by incremental runs that found a previous manifest to compare against.
+ */
 export interface AnalyzeResult {
   fileCount: number;
   files: string[];
@@ -360,6 +375,20 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   }
 }
 
+/**
+ * The whole pipeline, in order: discover files → detect sub-projects, load the
+ * plugins they need, detect frameworks, inventory packages and deployment →
+ * analyze every file (worker threads above the size threshold, cached JSON
+ * under `--incremental`) → post-analysis (graphs, route and symbol linking,
+ * origins, schemas) → optional LSP enhancement → advanced analysis (quality,
+ * topology, blast radius, dead code, health) → write per-file JSON, the
+ * summary, the viewer payload and the manifest.
+ *
+ * Called through the exported wrapper that holds the analysis lock; see the
+ * `Step` comments inside for where each pass lives.
+ *
+ * @returns The counts the CLI prints and the lists of changed/removed files
+ */
 async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const { projectRoot, outputDir, verbose, dryRun } = options;
   const progress = new ProgressReporter(!!verbose);

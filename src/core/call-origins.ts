@@ -294,10 +294,12 @@ export function resolveCallOrigins(input: {
   return resolved;
 }
 
+/** The path part of a call target: the query string and fragment dropped. */
 function pathOf(target: string): string {
   return target.split(/[?#]/)[0]!;
 }
 
+/** Whether `path` is `prefix` or lies beneath it; an empty prefix matches everything. */
 function prefixMatches(prefix: string, path: string): boolean {
   return prefix === "" || path === prefix || path.startsWith(prefix + "/");
 }

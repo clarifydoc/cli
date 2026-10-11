@@ -64,6 +64,7 @@ const MEMBER_RESOLVING = new Set<SymbolLinkStrategy>([
   "direct", "inheritance", "interface-redirect", "injection", "di-binding", "deep-qualified", "class-name",
 ]);
 
+/** Identity of one call site: file, line and the canonical call text. */
 function siteKey(file: string, line: number, callName: string): string {
   return `${file}\u0000${line}\u0000${canonicalCallText(callName)}`;
 }
