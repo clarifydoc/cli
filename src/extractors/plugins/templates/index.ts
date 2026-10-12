@@ -1,7 +1,7 @@
 import type { FileAnalysis, InteractiveElementInfo, ScreenComponentInfo, ScreenInfo, SubComponentInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractHtmlInteractiveElements } from "../html/index.js";
-import { materializeElementRequests } from "../shared/element-requests.js";
+import { literalPath, handlerOf, materializeElementRequests } from "../shared/element-requests.js";
 
 /**
  * Server templates — Handlebars, Liquid, Velocity, Razor — read by one
@@ -49,20 +49,6 @@ const attr = (attrs: string, name: string): string | undefined =>
   new RegExp(`(?:^|\\s)${name}\\s*=\\s*["']([^"']*)["']`, "i").exec(attrs)?.[1];
 
 /** `{{urlpath}}/admin`, `/admin?x=1`, `@Url.Content("~/x")` stays out → `/admin`; null when not an app path. */
-function literalPath(value: string | undefined): string | null {
-  if (!value) return null;
-  const stripped = value.replace(/^(?:\{\{[^}]*\}\}|\$\{?[\w.]+\}?)+/, "").trim();
-  // `{{url}}/#/login` is a route of the client app behind a fragment, not a request to the server.
-  if (/^\/?#/.test(stripped)) return null;
-  const v = stripped.replace(/[?#].*$/, "");
-  return v.startsWith("/") && !v.startsWith("//") ? v.replace(/\{\{[^}]*\}\}|\$\{?[\w.]+\}?/g, ":param") : null;
-}
-
-function handlerOf(method: string, target: string): string {
-  const base = target.replace(/^\/|^page:\//, "").replace(/:param/g, "x").replace(/[^\w]+/g, "_").replace(/^_|_$/g, "") || "root";
-  return method === "GET" ? base : `${method.toLowerCase()}_${base}`;
-}
-
 /** The view's controller, from `Views/<Ctl>/<Action>.cshtml`. */
 const viewController = (filePath: string): string | null => /(?:^|\/)Views\/([^/]+)\/[^/]+\.cshtml$/.exec(filePath)?.[1] ?? null;
 

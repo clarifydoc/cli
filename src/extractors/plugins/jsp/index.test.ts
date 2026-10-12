@@ -98,3 +98,26 @@ describe("jspSpec imports", () => {
     expect(sources).toContain("footer.jsp");
   });
 });
+
+describe("JSP form and link requests", () => {
+  it("hands form actions and action links to the route linker as calls in named pseudo-functions", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const src = `<%@ taglib prefix="html" uri="http://struts.apache.org/tags-html" %>
+<form action="\${pageContext.request.contextPath}/account/save.do" method="post">
+  <input type="submit" value="Save"/>
+</form>
+<html:form action="/account/delete">
+</html:form>
+<a href="<c:url value='/account/list.do'/>">List</a>
+<a href="/static/help.html">Help</a>`;
+    const a = extractWithRegex(src, "web/account/edit.jsp", "jsp");
+    const reqs = a.interactiveElements.filter((e) => e.request).map((e) => `${e.element}@${e.line} ${e.handler} ${e.request!.method} ${e.request!.target}`);
+    expect(reqs).toEqual([
+      "form@2 post_account_save_do POST /account/save.do",
+      "form@5 post_account_delete_do POST /account/delete.do",
+      "link@7 account_list_do GET /account/list.do",
+    ]);
+    expect(a.dataSources.map((d) => `${d.name}@${d.line}`)).toEqual(["POST /account/save.do@2", "POST /account/delete.do@5", "GET /account/list.do@7"]);
+    expect(a.functions.map((f) => f.name)).toEqual(expect.arrayContaining(["post_account_save_do", "account_list_do"]));
+  });
+});

@@ -38,3 +38,24 @@ export function materializeElementRequests(analysis: FileAnalysis): void {
     });
   }
 }
+
+/**
+ * The app path a form `action` / link `href` requests, its runtime prefix
+ * (`${ctx}`, `{{base}}`, `${pageContext.request.contextPath}`) dropped and
+ * runtime segments as `:param`; null when it is no app path.
+ */
+export function literalPath(value: string | undefined): string | null {
+  if (!value) return null;
+  const stripped = value.replace(/^(?:\{\{[^}]*\}\}|\$\{?[\w.]+\}?)+/, "").trim();
+  // `{{url}}/#/login` is a route of the client app behind a fragment, not a request to the server.
+  if (/^\/?#/.test(stripped)) return null;
+  const v = stripped.replace(/[?#].*$/, "");
+  return v.startsWith("/") && !v.startsWith("//") ? v.replace(/\{\{[^}]*\}\}|\$\{?[\w.]+\}?/g, ":param") : null;
+}
+
+/** `POST /admin/users` → `post_admin_users`, `GET /users` → `users`: a function name for the element's request. */
+export function handlerOf(method: string, target: string): string {
+  const base = target.replace(/^\/|^page:\//, "").replace(/:param/g, "x").replace(/[^\w]+/g, "_").replace(/^_|_$/g, "") || "root";
+  return method === "GET" ? base : `${method.toLowerCase()}_${base}`;
+}
+

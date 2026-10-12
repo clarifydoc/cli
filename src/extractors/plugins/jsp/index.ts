@@ -5,6 +5,7 @@ import type {
   ScreenInfo,
 } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
+import { handlerOf, literalPath } from "../shared/element-requests.js";
 import { attr, extractHtmlInteractiveElements, maskMarkup } from "../html/index.js";
 
 /**
@@ -124,8 +125,57 @@ function extractJspInteractiveElements(lines: string[]): InteractiveElementInfo[
       }
     }
   }
+  // Forms and links that request an app path: to the route linker (see `jspRequests`).
+  const requests = new Map(jspRequests(lines).map((r) => [r.line, r]));
   // Plain HTML controls too — a JSP is still an HTML page.
-  out.push(...extractHtmlInteractiveElements(lines));
+  for (const el of extractHtmlInteractiveElements(lines)) {
+    const req = (el.element === "form" || el.element === "link") ? requests.get(el.line) : undefined;
+    if (req) {
+      requests.delete(el.line);
+      out.push({ ...el, handler: req.handler, request: { method: req.method, target: req.target } });
+    } else out.push(el);
+  }
+  // Struts/Spring form tags the HTML reader does not see (`<html:form>`, `<form:form>`).
+  for (const req of requests.values()) {
+    out.push({ element: req.form ? "form" : "link", event: req.form ? "submit" : "click", handler: req.handler, line: req.line, request: { method: req.method, target: req.target } });
+  }
+  out.sort((a, b) => a.line - b.line);
+  return out;
+}
+
+/**
+ * The server requests a JSP makes by markup: `<form action="…/x.do" method="post">`,
+ * Struts `<html:form action="/x">` (an action path, served as `/x.do`) and Spring
+ * `<form:form action="${ctx}/x">`, and links to an action (`<a href="/x.do?id=1">`,
+ * `.action`, `.htm` — a link to a page or an asset is navigation, not a request). The
+ * context-path prefix (`${pageContext.request.contextPath}`, `<c:url value="/x"/>`)
+ * is dropped; a target that is not a literal app path is skipped. Each is
+ * handed to the route linker like a `fetch` (`materializeElementRequests`):
+ * an api-call row at the element's line inside a one-line pseudo-function
+ * named after the request (`post_account_save_do`).
+ */
+function jspRequests(lines: string[]): Array<{ line: number; method: string; target: string; handler: string; form: boolean }> {
+  const text = lines.join("\n");
+  if (!/<(?:\w+:)?form\b|<a\b/i.test(text)) return [];
+  const out: Array<{ line: number; method: string; target: string; handler: string; form: boolean }> = [];
+  const lineAt = (i: number) => text.slice(0, i).split("\n").length;
+  for (const t of text.matchAll(/<((?:html|form|s|sf):form|form|a)\b((?:[^>"']|"[^"]*"|'[^']*')*)>/gi)) {
+    const tag = t[1]!.toLowerCase();
+    const form = tag !== "a";
+    const attrs = t[2] ?? "";
+    let raw = attr(attrs, form ? "action" : "href");
+    if (!raw) continue;
+    // `<c:url value="/x"/>` inside the attribute.
+    raw = raw.replace(/<c:url\s+value\s*=\s*['"]([^'"]+)['"]\s*\/?>/i, "$1");
+    let target = literalPath(raw);
+    if (!target) continue;
+    // A Struts 1 action path is served under its `.do` mapping.
+    if (tag === "html:form" && !/\.\w+$/.test(target)) target += ".do";
+    // A link is a request to the app only when it names an action, not a page or an asset.
+    if (!form && !/\.(?:do|action|htm)$/.test(target)) continue;
+    const method = (attr(attrs, "method") ?? (form ? "post" : "get")).toUpperCase();
+    out.push({ line: lineAt(t.index!), method, target, handler: handlerOf(method, target), form });
+  }
   return out;
 }
 
@@ -220,4 +270,12 @@ export const jspSpec: RegexLangSpec = {
 
   extractScreens: (lines, filePath) => extractJspScreens(lines, filePath),
   extractInteractiveElements: extractJspInteractiveElements,
+  // Markup requests as calls the route linker joins (see `jspRequests`).
+  extractDataSources: (lines) =>
+    jspRequests(lines).map((r) => ({ kind: "api-call" as const, name: `${r.method} ${r.target}`, target: r.target, calls: [], line: r.line })),
+  postProcessFunctions: (lines, fns) => {
+    const named = new Set(fns.map((f) => f.name));
+    const extra = jspRequests(lines).filter((r) => !named.has(r.handler) && named.add(r.handler));
+    return [...fns, ...extra.map((r) => ({ name: r.handler, params: [], returnType: null, isAsync: false, isExported: false, decorators: [], calls: [], line: r.line, endLine: r.line }))];
+  },
 };
