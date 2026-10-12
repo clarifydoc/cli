@@ -104,6 +104,8 @@ export function extractWsdlRoutes(lines: string[]): RouteInfo[] {
   const inheritedGuards = securityGuards(tags);
   const routes: RouteInfo[] = [];
   let inPortType = false;
+  // The portType's name: the interface a JAX-WS implementor is generated against.
+  let portType: string | null = null;
   let current: RouteInfo | null = null;
   const seen = new Set<string>();
   for (const tag of tags) {
@@ -111,6 +113,7 @@ export function extractWsdlRoutes(lines: string[]): RouteInfo[] {
     // portType (WSDL 1.1) / interface (WSDL 2.0) both hold the operations.
     if (name === "portType" || name === "interface") {
       inPortType = !tag.close && !tag.selfClose ? true : tag.close ? false : inPortType;
+      if (inPortType && !tag.close) portType = attrOf(tag.attrs, "name") ?? null;
       current = null;
       continue;
     }
@@ -128,6 +131,7 @@ export function extractWsdlRoutes(lines: string[]): RouteInfo[] {
         calls: [],
         middleware: [],
         line: tag.line,
+        ...(portType ? { contract: { type: portType, method: opName } } : {}),
       };
       applyRouteMeta(current, { inheritedGuards });
       routes.push(current);

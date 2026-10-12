@@ -489,7 +489,7 @@ const SPEC_JOIN_CLASS_SUFFIX_RE = /(Test|Tests|Spec|IT)\.\w+$/;
  * Unique-or-nothing across non-test files; misses stay unlinked (no guess).
  */
 function specRouteHandlerLink(
-  route: { path: string; httpMethod: string | null; line: number; handler?: string | null },
+  route: { path: string; httpMethod: string | null; line: number; handler?: string | null; contract?: { type: string; method: string } },
   sourceFile: string,
   sourceSymbol: string,
   ctx: LinkContext,
@@ -519,6 +519,18 @@ function specRouteHandlerLink(
     ...(camel ? [camel] : []),
   ];
   if (candidates.length === 0) return null;
+  const link = (cand: string, file: string, def: SymbolDef): SymbolLink => ({
+    sourceFile,
+    sourceSymbol,
+    sourceLine: route.line,
+    callName: cand,
+    targetFile: file,
+    targetSymbol: def.name,
+    targetLine: def.line,
+    confidence: "INFERRED",
+    strategy: "spec-join",
+    relation: "calls",
+  });
   for (const cand of candidates) {
     // classNameIndex maps every dot-free symbol name to its defining files in
     // symbolIndex order — same uniqueness semantics as a full scan, O(hits).
@@ -526,20 +538,48 @@ function specRouteHandlerLink(
     if (files.length !== 1) continue;
     const def = ctx.symbolIndex.get(files[0]!)?.get(cand);
     if (!def) continue;
-    return {
-      sourceFile,
-      sourceSymbol,
-      sourceLine: route.line,
-      callName: cand,
-      targetFile: files[0]!,
-      targetSymbol: def.name,
-      targetLine: def.line,
-      confidence: "INFERRED",
-      strategy: "spec-join",
-      relation: "calls",
-    };
+    return link(cand, files[0]!, def);
+  }
+  // A class method implements it: the JAX-WS / JAX-RS class implementing the
+  // interface generated from the spec at build time (`IntegrationPropertyServiceImpl
+  // implements IntegrationPropertyServicePort`, the WSDL portType; `PetApiImpl
+  // implements PetApi`). The interface is not in the source, so the join is by
+  // the operation's name: an implementor of the route's contract type first,
+  // else the one method of that name — unique-or-nothing.
+  const contractType = route.contract?.type.split(".").pop();
+  for (const cand of candidates.slice(0, opId ? 2 : candidates.length)) {
+    const methods = methodLeafIndex(ctx).get(cand)?.filter((m) => !isExcluded(m.file) && !isApiContractLanguage(ctx.languageOf.get(m.file) as Language)) ?? [];
+    if (methods.length === 0) continue;
+    const implementors = contractType
+      ? methods.filter((m) => (ctx.classAt.get(memberKey(m.file, m.className))?.implements ?? []).some((t) => t.replace(/<.*$/, "").split(".").pop() === contractType))
+      : [];
+    const pick = implementors.length > 0 ? implementors : methods;
+    if (pick.length !== 1) continue;
+    const def = ctx.symbolIndex.get(pick[0]!.file)?.get(pick[0]!.symbol);
+    if (def) return link(cand, pick[0]!.file, def);
   }
   return null;
+}
+
+const methodLeafCache = new WeakMap<object, Map<string, Array<{ file: string; symbol: string; className: string }>>>();
+
+/** Class methods by their own name: `getUser` → every `X.getUser`, across the project. */
+function methodLeafIndex(ctx: LinkContext): Map<string, Array<{ file: string; symbol: string; className: string }>> {
+  let idx = methodLeafCache.get(ctx.symbolIndex);
+  if (idx) return idx;
+  idx = new Map();
+  for (const [file, syms] of ctx.symbolIndex) {
+    for (const name of syms.keys()) {
+      const dot = name.lastIndexOf(".");
+      if (dot <= 0) continue;
+      const className = name.slice(0, dot);
+      if (!ctx.classAt.has(memberKey(file, className))) continue;
+      const leaf = name.slice(dot + 1);
+      (idx.get(leaf) ?? idx.set(leaf, []).get(leaf)!).push({ file, symbol: name, className });
+    }
+  }
+  methodLeafCache.set(ctx.symbolIndex, idx);
+  return idx;
 }
 
 /**
