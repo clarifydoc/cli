@@ -128,10 +128,15 @@ function railsUnderscore(name: string): string {
     .toLowerCase();
 }
 
-/** Naive Rails inflector: `user_role` → `user_roles`, `category` → `categories`. */
+/**
+ * Naive Rails inflector: `user_role` → `user_roles`, `category` → `categories`.
+ * A word already ending in `s` stays (`user_diagnostics`, `settings`) — Rails'
+ * own rule — except `ss`/`us`/`is` endings (`address`, `status`, `analysis`).
+ */
 function railsPluralize(token: string): string {
   if (/[^aeiou]y$/.test(token)) return token.replace(/y$/, "ies");
-  if (/(s|x|z|ch|sh)$/.test(token)) return token + "es";
+  if (/(ss|us|is|x|z|ch|sh)$/.test(token)) return token + "es";
+  if (/s$/.test(token)) return token;
   return token + "s";
 }
 
@@ -852,10 +857,30 @@ export const rubySpec: RegexLangSpec = {
         continue;
       }
 
-      // get/post/put/patch/delete 'path' [=> 'ctrl#action' | to: 'ctrl#action']
-      const verbMatch = line.match(/^(get|post|put|patch|delete)\s+['"]([^'"]+)['"]/);
+      // `root to: 'dashboard#index'` / `root 'dashboard#index'`: GET on the enclosing prefix.
+      const rootMatch = line.match(/^root\b\s*(?:to:\s*|=>\s*)?['"]([^'"#]+)#(\w+)['"]/);
+      if (rootMatch) {
+        if (!FRAMEWORK_CONTROLLER_RE.test(rootMatch[1]!)) {
+          routes.push(withGuards({
+            path: currentPrefix() || "/",
+            httpMethod: "GET",
+            kind: "api",
+            handler: `${railsControllerClass(rootMatch[1]!, currentModules())}#${rootMatch[2]}`,
+            calls: [],
+            middleware: [],
+            line: i + 1,
+          }));
+        }
+        continue;
+      }
+
+      // get/post/put/patch/delete 'path' [=> 'ctrl#action' | to: 'ctrl#action'],
+      // or a symbol inside a resources block: `post :seed, on: :member`,
+      // `delete :avatar, on: :member, action: :destroy_avatar`.
+      const verbMatch = line.match(/^(get|post|put|patch|delete)\s+(?:['"]([^'"]+)['"]|:(\w+))/);
       if (verbMatch) {
-        const rawPath = verbMatch[2];
+        const rawPath = verbMatch[2] ?? verbMatch[3]!;
+        const explicitAction = verbMatch[3] ? line.match(/\baction:\s*:?['"]?(\w+)/)?.[1] : undefined;
         const target = line.match(/(?:=>|to:)\s*['"]([^'"#]+)#(\w+)['"]/);
         // Inside `resources :children do … end`: `on: :collection` hangs off
         // the collection (`/children/presence`), `on: :member` off one member
@@ -877,7 +902,7 @@ export const rubySpec: RegexLangSpec = {
             controller = segs.slice(0, -1).join("/");
           }
         } else if (resource) {
-          handler = `${resource.controllerClass}#${rawPath.replace(/^\//, "")}`;
+          handler = `${resource.controllerClass}#${explicitAction ?? rawPath.replace(/^\//, "")}`;
         }
 
         // Framework-internal controllers have no project code — skip the route.

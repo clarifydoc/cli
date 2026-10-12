@@ -3,7 +3,7 @@ export type Language =
   | "typescript" | "javascript" | "csharp" | "python" | "java" | "kotlin" | "pascal" | "dfm"
   | "go" | "rust" | "ruby" | "php" | "swift" | "lua" | "scala"
   | "perl" | "vb" | "sql" | "c" | "cpp" | "prisma" | "dart" | "elixir" | "erlang" | "objc"
-  | "haskell" | "clojure" | "blazor" | "html" | "qml" | "qtui" | "xaml" | "jsp" | "springxml" | "jsight"
+  | "haskell" | "clojure" | "blazor" | "html" | "erb" | "qml" | "qtui" | "xaml" | "jsp" | "springxml" | "jsight"
   | "openapi" | "graphql" | "wsdl" | "groovy" | "powershell" | "bash" | "batch" | "fsharp" | "coffeescript" | "r" | "julia" | "crystal" | "zig" | "ocaml" | "raku" | "racket" | "scheme" | "commonlisp"
   | "nim" | "dlang" | "vlang" | "fortran" | "haxe" | "mojo"
   | "scss" | "sass" | "less" | "autohotkey" | "autoit" | "applescript";
@@ -1355,6 +1355,13 @@ export interface InteractiveElementInfo {
    * without the tag, two children used in one template are indistinguishable.
    */
   component?: string;
+  /**
+   * The HTTP request the element sends when used — a server-rendered form, a
+   * `button_to`, a link: `method` and `target`, the target a literal app path
+   * (`/users/42/edit`) or the framework's route helper (`edit_user_path`) that a
+   * plugin resolver maps to a route. Absent for elements that run client code.
+   */
+  request?: { method: string; target: string };
 }
 
 export interface EventInfo {

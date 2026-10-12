@@ -186,3 +186,27 @@ describe("rubySpec.extractRoutes — controller convention", () => {
     expect(out).toEqual(["GET /users -> UsersController#index"]);
   });
 });
+
+describe("routes.rb: root, symbol member routes, singular plural resources", () => {
+  it("reads root inside a namespace, `post :seed, on: :member` and keeps an already-plural singular resource", async () => {
+    const { rubySpec } = await import("./index.js");
+    const lines = `Rails.application.routes.draw do
+  namespace :super_admin do
+    root to: 'dashboard#index'
+    resource :user_diagnostics, only: [:show]
+    resources :users, only: [:show] do
+      post :seed, on: :member
+      delete :avatar, on: :member, action: :destroy_avatar
+    end
+  end
+end`.split("\n");
+    const routes = rubySpec.extractRoutes!(lines, [], "config/routes.rb");
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`)).toEqual([
+      "GET /super_admin SuperAdmin::DashboardController#index",
+      "GET /super_admin/user_diagnostics SuperAdmin::UserDiagnosticsController#show",
+      "GET /super_admin/users/:id SuperAdmin::UsersController#show",
+      "POST /super_admin/users/:id/seed SuperAdmin::UsersController#seed",
+      "DELETE /super_admin/users/:id/avatar SuperAdmin::UsersController#destroy_avatar",
+    ]);
+  });
+});
