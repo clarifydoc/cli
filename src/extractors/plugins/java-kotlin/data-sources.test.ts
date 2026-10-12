@@ -332,3 +332,42 @@ class PostServiceImpl {
     ]);
   });
 });
+
+describe("Java JPA / Hibernate rows name their entity", () => {
+  const db = (rows: DataSourceInfo[]) => rows.filter((r) => r.kind === "database").map((r) => [r.name, r.entity ?? null]);
+
+  it("takes the entity from an instance argument's declared type, Optional unwrapped", async () => {
+    const rows = await sourcesOf(`
+    PersonAddress address = new PersonAddress();
+    Optional<Person> person = Optional.empty();
+    em.persist(address);
+    em.merge(person.get());
+    session.saveOrUpdate(address);
+    session.get(Order.class, id);
+    for (Category c : categories) { em.remove(c); }`, "java");
+    expect(db(rows)).toEqual([
+      ["persist", "PersonAddress"],
+      ["merge", "Person"],
+      ["saveOrUpdate", "PersonAddress"],
+      ["get", "Order"],
+      ["remove", "Category"],
+    ]);
+  });
+
+  it("counts a query chain once, on the query it builds", async () => {
+    const rows = await sourcesOf(`em.createNamedQuery("q", Unit.class).setParameter("a", id).getResultList();`, "java");
+    expect(db(rows)).toEqual([["createNamedQuery", "Unit"]]);
+  });
+
+  it("is not fooled by services, REST templates and HTTP sessions", async () => {
+    const rows = await sourcesOf(`
+    elementTemplateService.merge(template);
+    restTemplate.delete("/x");
+    request.getSession().get("k");
+    EntityManager entityManager = null;
+    entityManager.find(Person.class, id);
+    personCacheQueryService.findByHypernetId(id);`, "java");
+    // An EntityManager stays a handle although its type ends in "Manager".
+    expect(db(rows)).toEqual([["find", "Person"]]);
+  });
+});

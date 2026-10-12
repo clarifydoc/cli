@@ -71,8 +71,37 @@ const JDBC_METHODS = new Set([
   "update", "batchUpdate", "execute",
   "createQuery", "createNativeQuery", "createNamedQuery",
   "getResultList", "getSingleResult", "persist", "merge",
+  // EntityManager / Hibernate Session by instance or class literal.
+  "remove", "find", "getReference", "refresh", "detach",
+  "get", "load", "save", "saveOrUpdate", "delete", "createCriteria", "list", "uniqueResult",
 ]);
-const JDBC_RECEIVER_RE = /jdbc|template|entitymanager|^em$|session/i;
+/**
+ * A JDBC / JPA / Hibernate handle, read on the receiver's LAST segment:
+ * `jdbcTemplate`, `hibernateTemplate`, `entityManager`, `em`, `session`,
+ * `sessionFactory.getCurrentSession()`. A substring anywhere in the chain
+ * matched `elementTemplateService.merge(x)` — a service call — 362 times on one real codebase.
+ */
+const JDBC_RECEIVER_RE = /^(?:\w*jdbc\w*|\w*(?:hibernate|jpa|mongo|sqlsession|r2dbcentity)template|entitymanager\w*|em|\w*session|get(?:current)?session|getentitymanager|gethibernatetemplate|getjdbctemplate)$/i;
+/** Sessions that are not a database's: an HTTP or WebSocket session, a messaging one. */
+const NON_DB_SESSION_RE = /^(?:http|web|ws|websocket|stomp|jms|mail|ssh|sftp|user|client|browser)\w*session$/i;
+/** A receiver NAMED like a service-layer object is not a data store, whatever it is declared as. */
+const SERVICE_LAYER_NAME_RE = /(?:Service|ServiceImpl|Controller|Facade|Handler|Resource|Client|Gateway|Helper|Component)$/;
+
+/** The receiver's last segment with any call parentheses dropped: `a.getSession()` → `getSession`. */
+function receiverLeaf(receiver: string): string {
+  let depth = 0;
+  let k = receiver.length - 1;
+  for (; k >= 0; k--) {
+    const ch = receiver[k]!;
+    if (ch === ")") depth++;
+    else if (ch === "(") depth--;
+    else if (ch === "." && depth === 0) break;
+  }
+  return receiver.slice(k + 1).replace(/\(.*$/s, "").trim();
+}
+
+/** JPA calls whose argument IS the entity instance: its declared type names the entity. */
+const JPA_INSTANCE_METHODS = new Set(["persist", "merge", "remove", "refresh", "detach", "saveOrUpdate", "delete", "update", "save"]);
 
 /** An extension client's verbs (Halo `ReactiveExtensionClient`). */
 const EXTENSION_CLIENT_METHODS = new Set(["fetch", "get", "list", "listAll", "listBy", "pageBy", "create", "update", "delete", "watch"]);
@@ -95,8 +124,9 @@ const SPRING_DATA_ACCESS = dbVerbTable(
 );
 
 const JDBC_ACCESS = dbVerbTable(
-  ["query", "queryForObject", "queryForList", "queryForMap", "queryForRowSet", "getResultList", "getSingleResult"],
-  ["update", "batchUpdate", "persist", "merge"],
+  ["query", "queryForObject", "queryForList", "queryForMap", "queryForRowSet", "getResultList", "getSingleResult",
+    "find", "getReference", "get", "load", "createCriteria", "list", "uniqueResult"],
+  ["update", "batchUpdate", "persist", "merge", "remove", "save", "saveOrUpdate", "delete"],
 );
 
 /** Leading verb of a derived query or DAO method. */
@@ -396,7 +426,11 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // naming convention, the call then lands on a real repository node instead
     // of the shared "(unresolved)" bucket. A service-layer type is no store —
     // `userService.findAll()` in a controller merely shares Spring Data's verbs.
-    if (SPRING_DATA_EXACT.has(method) || SPRING_DATA_DERIVED.test(method)) {
+    if (
+      (SPRING_DATA_EXACT.has(method) || SPRING_DATA_DERIVED.test(method)) &&
+      // `session.save(order)` is Hibernate's, read below with its entity.
+      !(JDBC_METHODS.has(method) && this.isJdbcReceiver(node, receiver))
+    ) {
       const access = dbAccessFor(method, SPRING_DATA_ACCESS) ?? jvmVerbAccess(method);
       const seg = receiver.split(".").pop()?.trim() ?? "";
       const declared = /^[\w$]+$/.test(seg)
@@ -408,7 +442,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       // class, which the linker follows to its definition. Neither is a data
       // access here: emitting them put a target-less "database" row on two
       // thirds of one real codebase's service methods.
-      if (!seg || (declared && SERVICE_LAYER_TYPE_RE.test(declared))) return;
+      // A field inherited from a base class has no declaration here; its name still says service.
+      if (!seg || (declared ? SERVICE_LAYER_TYPE_RE.test(declared) : SERVICE_LAYER_NAME_RE.test(seg))) return;
       sources.push(this.ds({ kind: "database", name: method, target: declared, line, ...withAccess(access) }));
       return;
     }
@@ -418,8 +453,14 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // `createNamedQuery("…", Person.class)`, `createQuery(jpql, Person.class)`)
     // or the `from Person` of a JPQL/HQL string; a criteria query
     // (`createQuery(cq)`) names none.
-    if (JDBC_METHODS.has(method) && JDBC_RECEIVER_RE.test(receiver)) {
-      const entity = jpaEntityArg(node);
+    if (JDBC_METHODS.has(method) && this.isJdbcReceiver(node, receiver)) {
+      // `em.createNamedQuery("q", X.class).setParameter(…).getResultList()` is ONE access: the
+      // `createNamedQuery` row inside the chain carries it, with its entity.
+      if (/^(?:getResultList|getSingleResult|getResultStream|list|uniqueResult)$/.test(method) &&
+        /\.create(?:Named|Native)?Query\s*\(|\.createCriteria\s*\(/.test(receiver)) return;
+      const entity = jpaEntityArg(node)
+        // `em.merge(person)`, `session.saveOrUpdate(order)`: the instance's declared type.
+        ?? (JPA_INSTANCE_METHODS.has(method) ? this.instanceArgType(node, call.firstArg) : null);
       sources.push(this.ds({
         kind: "database",
         name: method,
@@ -487,6 +528,35 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
    * Non-`publishEvent` verbs require the EVENT_TYPE_RE suffix (`relaxed`
    * lifts that for constructor args of the unambiguous `publishEvent`).
    */
+  /** A JDBC/JPA handle by its last segment, unless it is named or declared as a service-layer object. */
+  private isJdbcReceiver(node: Node, receiver: string): boolean {
+    const leaf = receiverLeaf(receiver);
+    // A query chain on a handle (`em.createQuery(…).getResultList()`) is still that handle's.
+    if (!JDBC_RECEIVER_RE.test(leaf) && !/^(?:this\.)?(?:em|entityManager|session)\s*\./i.test(receiver)) return false;
+    if (SERVICE_LAYER_NAME_RE.test(leaf) || NON_DB_SESSION_RE.test(leaf)) return false;
+    // `request.getSession()` is the servlet's; Hibernate's `getSession()` has no request in front of it.
+    if (/\b\w*(?:request|req)\s*\.\s*getSession\s*\(/i.test(receiver)) return false;
+    const declared = /^\w+$/.test(leaf) ? (localDeclaredType(node, leaf) ?? this.fieldTypes.get(leaf) ?? null) : null;
+    // `EntityManager` ends like a service-layer `…Manager` but is the handle itself.
+    return !(declared && SERVICE_LAYER_TYPE_RE.test(declared) && !JDBC_RECEIVER_RE.test(declared));
+  }
+
+  /** The declared type of an instance argument: `person`, `this.order`, `opt.get()` on an `Optional<X>`. */
+  private instanceArgType(node: Node, arg: Node | null): string | null {
+    if (!arg) return null;
+    const text = arg.text.replace(/^this\./, "");
+    const opt = /^(\w+)\.(?:get|orElseThrow|orElse)\s*\(/.exec(text)?.[1];
+    const name = opt ?? (/^\w+$/.test(text) ? text : null);
+    if (!name) return null;
+    if (opt) {
+      const raw = localDeclaredType(node, name, true);
+      const inner = raw ? /^(?:java\.util\.)?Optional\s*<\s*([\w.]+)\s*>$/.exec(raw)?.[1] : null;
+      return inner ? simpleTypeName(inner) : null;
+    }
+    const type = localDeclaredType(node, name) ?? this.fieldTypes.get(name) ?? null;
+    return type && /^[A-Z]\w/.test(type) && !NOT_AN_ENTITY_LITERAL.has(type) ? type : null;
+  }
+
   private resolveEventArg(call: Node, relaxed: boolean): string | null {
     const args = callArguments(call);
     for (let i = args.length - 1; i >= 0; i--) {
@@ -544,9 +614,22 @@ export interface CallParts {
 /** The entity a JPA call names: a `X.class` argument, else `from X` inside a string argument. */
 function jpaEntityArg(node: Node): string | null {
   const args = node.childForFieldName("arguments") ?? node.children.find((c) => c.type === "call_suffix" || c.type === "value_arguments");
-  const text = args?.text ?? "";
-  const literal = /\b([A-Z]\w*)(?:\.class|::class(?:\.java)?)\b/.exec(text);
-  if (literal) return literal[1]!;
+  return jpaEntityText(args?.text ?? "");
+}
+
+/** Class literals that are a matcher's or a scalar result's, never an entity (`Unit` stays: Kotlin's is not Java's). */
+const NOT_AN_ENTITY_LITERAL = new Set([
+  "Class", "Object", "String", "Integer", "Long", "Short", "Byte", "Boolean", "Double", "Float", "Character",
+  "Number", "BigDecimal", "BigInteger", "Date", "LocalDate", "LocalDateTime", "Instant", "UUID", "Void",
+  "Map", "List", "Set", "Collection", "Tuple",
+]);
+
+function jpaEntityText(text: string): string | null {
+  // The first class literal naming a type of the program: `any(Class.class)` (a mock matcher) and
+  // `String.class` (a scalar result) name none.
+  for (const m of text.matchAll(/\b([A-Z]\w*)(?:\.class|::class(?:\.java)?)\b/g)) {
+    if (!NOT_AN_ENTITY_LITERAL.has(m[1]!)) return m[1]!;
+  }
   const jpql = /["']\s*(?:select\b[^"']*?)?\bfrom\s+([A-Z]\w*)\b/i.exec(text);
   return jpql && /^[A-Z]/.test(jpql[1]!) ? jpql[1]! : null;
 }
@@ -687,7 +770,8 @@ function callArguments(call: Node): Node[] {
  * `local_variable_declaration` / Kotlin typed local `property_declaration`,
  * or a parameter of the enclosing method. Returns a simple type name.
  */
-function localDeclaredType(node: Node, name: string): string | null {
+function localDeclaredType(node: Node, name: string, raw = false): string | null {
+  const simple = (t: string | null | undefined): string | null => (raw ? (t?.trim() || null) : simpleTypeName(t));
   let fn: Node | null = node.parent;
   while (fn && !/^(method_declaration|constructor_declaration|function_declaration|lambda_expression|lambda_literal)$/.test(fn.type)) {
     fn = fn.parent;
@@ -698,17 +782,20 @@ function localDeclaredType(node: Node, name: string): string | null {
     if (n.type === "local_variable_declaration") {
       for (const c of n.children) {
         if (c.type === "variable_declarator" && c.childForFieldName("name")?.text === name) {
-          return simpleTypeName(n.childForFieldName("type")?.text);
+          return simple(n.childForFieldName("type")?.text);
         }
       }
+    } else if (n.type === "enhanced_for_statement") {
+      // `for (UnitGroupRateCategory c : categories)`
+      if (n.childForFieldName("name")?.text === name) return simple(n.childForFieldName("type")?.text);
     } else if (n.type === "property_declaration") {
       const kt = kotlinNameAndType(n);
-      if (kt.name === name) return simpleTypeName(kt.type);
+      if (kt.name === name) return simple(kt.type);
     } else if (n.type === "formal_parameter" || n.type === "parameter") {
       const kt = kotlinNameAndType(n);
       const pName = n.childForFieldName("name")?.text ?? kt.name;
       if (pName === name) {
-        return simpleTypeName(n.childForFieldName("type")?.text ?? kt.type);
+        return simple(n.childForFieldName("type")?.text ?? kt.type);
       }
     }
     for (const child of n.children) {
