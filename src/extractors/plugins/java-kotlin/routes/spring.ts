@@ -4,6 +4,7 @@ import { stripQuotes, findChildByType, getNameFromNode } from "../../../shared/n
 import { extractCalls } from "../../../shared/call-graph.js";
 import { applyRouteMeta, type GuardAttr } from "../../../shared/route-metadata.js";
 import { guardsOn, routeParamsOf } from "./meta-annotations.js";
+import { customEndpointPrefix } from "./halo.js";
 
 /** Spring Boot mapping annotations */
 const SPRING_MAPPING_ANNOTATIONS: Record<string, string | null> = {
@@ -272,7 +273,7 @@ function walkForJavaKotlinRoutes(
         const ref = handlerArg?.type === "method_reference" ? handlerArg.text.split("::").pop() ?? null : null;
         const calls = handlerArg?.type === "lambda_expression" ? extractCalls(handlerArg, "java") : [];
         const route: RouteInfo = {
-          path: mergePrefix(classPrefix, functionalNestPrefix(node) + (path.startsWith("/") ? path : "/" + path)),
+          path: mergePrefix(classPrefix || functionalClassPrefix(node), functionalNestPrefix(node) + (path.startsWith("/") ? path : "/" + path)),
           httpMethod: verb,
           kind: "api",
           handler: ref,
@@ -297,6 +298,13 @@ const FUNCTIONAL_VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD
 export const FUNCTIONAL_ROUTER_GATE_RE = /\broute\s*\(\s*\)|\bRouterFunctions\b|\bSpringdocRouteBuilder\b/;
 /** A receiver chain rooted at a router builder, or a nest lambda's builder parameter. */
 const FUNCTIONAL_ROUTER_RE = new RegExp(`${FUNCTIONAL_ROUTER_GATE_RE.source}|\\b(?:builder|b|r|router|routes)$`);
+
+/** A prefix the enclosing class serves its functional routes under (a Halo `CustomEndpoint`'s group/version), or "". */
+function functionalClassPrefix(node: Node): string {
+  let cur: Node | null = node.parent;
+  while (cur && cur.type !== "class_declaration") cur = cur.parent;
+  return cur ? (customEndpointPrefix(cur.text) ?? "") : "";
+}
 
 /** Path prefix from enclosing `.nest(path("/api"), b -> …)` / `.path("/api", b -> …)` calls, outermost first. */
 function functionalNestPrefix(node: Node): string {
