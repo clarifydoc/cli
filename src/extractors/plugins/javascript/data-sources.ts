@@ -84,6 +84,44 @@ const VUE_MACROS = new Set([
  */
 const ORM_ROOTS = new Set(["prisma", "db", "client"]);
 
+/** An import of an ORM or database driver: the file's generic-verb calls may be database operations. */
+const ORM_IMPORT_RE =
+  /(?:from\s+|require\(\s*)['"](?:@prisma\/client|prisma|typeorm|sequelize(?:-typescript)?|mongoose|knex|drizzle-orm[^'"]*|kysely|objection|@mikro-orm\/[^'"]+|better-sqlite3|sqlite3?|pg|postgres|mysql2?|mssql|oracledb|mongodb|@supabase\/supabase-js|firebase-admin[^'"]*|@google-cloud\/firestore|dynamoose|@aws-sdk\/lib-dynamodb|redis|ioredis|typeorm[^'"]*|@nestjs\/(?:typeorm|mongoose|sequelize)|@vercel\/postgres|@neondatabase\/[^'"]+|@planetscale\/[^'"]+|@libsql\/[^'"]+)['"]/;
+
+function importedNames(src: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of src.matchAll(/import\s+(?:type\s+)?([^'"]*?)\s+from\s+['"]/g)) {
+    for (const n of m[1]!.replace(/[{}*]/g, ",").split(",")) {
+      const name = n.trim().split(/\s+as\s+/).pop()?.trim();
+      if (name && /^[A-Za-z_$][\w$]*$/.test(name)) out.add(name);
+    }
+  }
+  for (const m of src.matchAll(/(?:const|let|var)\s+(?:\{([^}]*)\}|([A-Za-z_$][\w$]*))\s*=\s*require\(/g)) {
+    if (m[2]) out.add(m[2]);
+    for (const n of (m[1] ?? "").split(",")) {
+      const name = n.trim().split(":").pop()?.trim();
+      if (name) out.add(name);
+    }
+  }
+  return out;
+}
+
+/** `import User from '../models/user'`, `const Order = require('./models/order')`, `class Account extends Model`. */
+function localModelNames(src: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of src.matchAll(/import\s+(?:\{([^}]*)\}|([A-Z]\w*))[^'"]*from\s+['"]([^'"]*\bmodels?\b[^'"]*)['"]/g)) {
+    if (m[2]) out.add(m[2]);
+    for (const n of (m[1] ?? "").split(",")) {
+      const name = n.trim().split(/\s+as\s+/).pop()?.trim();
+      if (name && /^[A-Z]/.test(name)) out.add(name);
+    }
+  }
+  for (const m of src.matchAll(/(?:const|let|var)\s+([A-Z]\w*)\s*=\s*require\(\s*['"]([^'"]*\bmodels?\b[^'"]*)['"]/g)) out.add(m[1]!);
+  for (const m of src.matchAll(/\bclass\s+([A-Z]\w*)\s+extends\s+(?:Model|BaseEntity|Entity)\b/g)) out.add(m[1]!);
+  for (const m of src.matchAll(/\b(?:const|let|var)\s+([A-Z]\w*)\s*=\s*(?:mongoose\.)?model\s*\(/g)) out.add(m[1]!);
+  return out;
+}
+
 /** Kysely query-builder clause verbs whose first argument names the table. */
 const KYSELY_TABLE_VERBS = new Set(["selectFrom", "insertInto", "updateTable", "deleteFrom", "replaceInto", "mergeInto"]);
 
@@ -188,6 +226,12 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   private gqlScanned = false;
   /** The file is an openapi-generator client (see generated-clients.ts). */
   private generatedClient = false;
+  /** The file imports an ORM or database driver (see {@link ORM_IMPORT_RE}). */
+  private ormEvidence = false;
+  /** Capitalized names the file imports from a `models/` path or declares as a class: local models. */
+  private localModels = new Set<string>();
+  /** Every name the file binds through an import or `require`. */
+  private importedNames = new Set<string>();
 
   override beginFile(tree: Tree, sourceText: string): void {
     this.root = tree.rootNode;
@@ -195,6 +239,33 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.generatedClient = sourceText.includes(GENERATED_CLIENT_MARKER);
     this.sourceText = sourceText;
     this.gqlScanned = false;
+    this.ormEvidence = ORM_IMPORT_RE.test(sourceText);
+    this.localModels = localModelNames(sourceText);
+    this.importedNames = importedNames(sourceText);
+  }
+
+  /**
+   * A generic verb (`create`, `update`, `remove`, `findAll`) is a database
+   * operation only with evidence for one: the file imports an ORM or driver, or
+   * the receiver chain is repository/model-shaped (`this.userRepository.save`,
+   * `ctx.prisma.user.create`), or its root is a model the file imports from a
+   * `models/` path or declares. Without it `wrapper.findAll` (vue-test-utils),
+   * `ContactAPI.create` (an API client) and `view.destroy` were database rows.
+   */
+  private hasOrmEvidence(chain: string): boolean {
+    if (this.ormEvidence) return true;
+    const parts = chain.split(".").map((p) => p.trim());
+    const root = parts[0]!.replace(/^this$/, parts[1] ?? "");
+    if (ORM_ROOTS.has(parts[0]!) || /Repository$/.test(parts[0]!)) return true;
+    if (parts.slice(0, -1).some((seg) => ORM_SEGMENT_RE.test(seg) || /^(?:db|knex|sequelize|mongoose|drizzle|kysely|orm)$/.test(seg))) return true;
+    if (this.localModels.has(root)) return true;
+    // A PascalCase root the file does not import is a model in scope (a global, an
+    // injected model, a test snippet); one imported from elsewhere (`ContactAPI`
+    // from '../api/contacts') or named like a client is not.
+    if (/^[A-Z]/.test(root) && !/(?:API|Api|Service|Client|Store|Helper|Utils?|Wrapper|View)$/.test(root)) {
+      return !this.importedNames.has(root);
+    }
+    return false;
   }
 
   override endFile(): void {
@@ -615,7 +686,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           !emittedApiCall &&
           ormChain &&
           isOrmCall(ormChain) &&
-          !(fnName === "find" && firstArgIsFunction(node))
+          !(fnName === "find" && firstArgIsFunction(node)) &&
+          this.hasOrmEvidence(ormChain)
         ) {
           const access = fnName ? ormAccessKind(fnName) : undefined;
           sources.push(this.ds({

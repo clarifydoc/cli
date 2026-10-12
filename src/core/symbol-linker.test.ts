@@ -525,3 +525,28 @@ describe("symbol-linker — imports that name a sibling sub-project by package",
     expect(buildSymbolLinks([handler, impls, other], subProjects).filter((l) => l.callName === "SiteView.read_local")).toEqual([]);
   });
 });
+
+describe("symbol-linker — an imported instance's inherited member", () => {
+  it("links `MonitorsAPI.update` to the base class when the subclass does not define it", () => {
+    const js = (f: FileAnalysis) => ({ ...f, language: "javascript" }) as FileAnalysis;
+    const base = js(file("api/ApiClient.js", "web", {
+      classes: [{ ...cls("ApiClient"), methods: [{ name: "update", line: 5, endLine: 7, params: [], calls: [] }] }],
+    }));
+    const sub = js({
+      ...file("api/monitors.js", "web", {
+        classes: [{ ...cls("MonitorsAPI"), extends: "ApiClient", methods: [{ name: "resume", line: 9, endLine: 11, params: [], calls: [] }] }],
+      }),
+      imports: [{ source: "./ApiClient", specifiers: ["ApiClient"], line: 1, isDefault: true }],
+    } as FileAnalysis);
+    const page = js({
+      ...file("pages/Monitor.vue", "web", {
+        functions: [fn("submit", [{ name: "MonitorsAPI.update", kind: "cross-file", target: "../api/monitors", line: 3 }])],
+      }),
+      imports: [{ source: "../api/monitors", specifiers: ["MonitorsAPI"], line: 1, isDefault: true }],
+    } as FileAnalysis);
+    const links = buildSymbolLinks([base, sub, page]);
+    const link = links.find((l) => l.callName === "MonitorsAPI.update");
+    expect(link?.targetFile).toBe("api/ApiClient.js");
+    expect(link?.strategy).toBe("inheritance");
+  });
+});

@@ -1875,6 +1875,24 @@ function resolveCallToDefinition(
     }
   }
 
+  // ── Strategy 3a: an imported class/instance's inherited member ──
+  // `MonitorsAPI.update(id)` where './monitors' declares `class MonitorsAPI
+  // extends ApiClient` (and exports its instance) without its own `update`:
+  // the member is the base class's.
+  if (!def && call.kind === "cross-file" && isQualified && parts.length === 2 && targetFile) {
+    const head = parts[0]!;
+    if (ctx.classAt.has(memberKey(targetFile, head))) {
+      let parentInfo = inheritanceMap.get(head);
+      const visited = new Set<string>();
+      while (parentInfo && !visited.has(parentInfo.parentClass)) {
+        visited.add(parentInfo.parentClass);
+        const parentDef = symbolIn(ctx, parentInfo.parentFile, `${parentInfo.parentClass}.${leafName}`);
+        if (parentDef) return mkLink(parentInfo.parentFile, parentDef.name, parentDef.line, "INFERRED", "inheritance");
+        parentInfo = inheritanceMap.get(parentInfo.parentClass);
+      }
+    }
+  }
+
   // ── Strategy 3b: factory fallback via the binding's provenance ──
   // The member doesn't exist in the target module — the receiver is a
   // library-made object (`const m = useAddLicenseMutation(...)` then
