@@ -1,6 +1,7 @@
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractClassesWithSpec } from "../shared/regex-base.js";
-import type { DataSourceInfo, ImportInfo } from "../../../types/analysis.js";
+import type { ClassInfo, DataSourceInfo, ImportInfo, ScreenInfo } from "../../../types/analysis.js";
+import { heexSigils, readHeex } from "./heex.js";
 import { attachEctoSchema, attachPatternKeys, extractEctoRelations, extractElixirRequestAccess, extractPhoenixRoutes } from "./phoenix.js";
 
 /** Last dotted segment of an Elixir module alias (`MyApp.Accounts.User` → `User`). */
@@ -152,12 +153,56 @@ export const elixirSpec: RegexLangSpec = {
     for (const cls of classes) {
       attachEctoSchema(lines, cls);
       attachPatternKeys(lines, cls.methods);
+      nameEventClauses(lines, cls);
     }
     return classes;
   },
+
+  /** `phx-*` events, links and forms in LiveView `~H"""` sigils (see heex.ts). */
+  extractInteractiveElements: (lines) => heexSigils(lines).flatMap((s) => readHeex(s.text, s.firstLine).elements),
+  /** A LiveView or LiveComponent module is a screen; its `~H` markup is the component tree. */
+  extractScreens: (lines, filePath, classes) => liveViewScreens(lines, filePath, classes),
 
   extractRoutes: (lines) => extractPhoenixRoutes(lines),
   extractDataSources: (lines) => extractElixirDataSources(lines),
   /** Ecto `belongs_to` / `has_many` / `has_one` / `many_to_many` → entity relations (see `phoenix.ts`). */
   extractEntityRelations: (lines, classes, imports) => extractEctoRelations(lines, classes, imports),
 };
+
+/**
+ * `def handle_event("save", params, socket)` — one function per event to
+ * Phoenix, which dispatches on the literal. Each clause is named
+ * `handle_event("save")` so a click on `phx-click="save"` reaches that clause's
+ * calls and not every other event's.
+ */
+function nameEventClauses(lines: string[], cls: ClassInfo): void {
+  for (const m of cls.methods) {
+    if (m.name !== "handle_event") continue;
+    const ev = /\bdef\s+handle_event\(\s*"([^"]+)"/.exec(lines[m.line - 1] ?? "")?.[1];
+    if (ev) m.name = `handle_event("${ev}")`;
+  }
+}
+
+const LIVE_MODULE_RE = /^\s*use\s+(?:Phoenix\.LiveView|Phoenix\.LiveComponent|[A-Z][\w.]*,\s*:(?:live_view|live_component))\b/;
+
+function liveViewScreens(lines: string[], filePath: string, classes: ClassInfo[]): ScreenInfo[] {
+  const sigils = heexSigils(lines);
+  const screens: ScreenInfo[] = [];
+  for (const cls of classes) {
+    const body = lines.slice(cls.line - 1, cls.endLine);
+    const use = body.find((l) => LIVE_MODULE_RE.test(l));
+    if (!use) continue;
+    const reads = sigils.filter((s) => s.startLine >= cls.line && s.startLine <= cls.endLine).map((s) => readHeex(s.text, s.firstLine));
+    screens.push({
+      name: cls.name,
+      formType: /live_component|LiveComponent/.test(use) ? "LiveComponent" : "LiveView",
+      caption: reads.find((r) => r.caption)?.caption ?? null,
+      dimensions: null,
+      components: reads.flatMap((r) => r.components),
+      filePath,
+      routePath: null,
+      navigatesTo: reads.flatMap((r) => r.elements.filter((e) => e.request?.method === "GET").map((e) => e.request!.target)),
+    });
+  }
+  return screens;
+}

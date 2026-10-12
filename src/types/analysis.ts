@@ -3,7 +3,7 @@ export type Language =
   | "typescript" | "javascript" | "csharp" | "python" | "java" | "kotlin" | "pascal" | "dfm"
   | "go" | "rust" | "ruby" | "php" | "swift" | "lua" | "scala"
   | "perl" | "vb" | "sql" | "c" | "cpp" | "prisma" | "dart" | "elixir" | "erlang" | "objc"
-  | "haskell" | "clojure" | "blazor" | "html" | "erb" | "qml" | "qtui" | "xaml" | "jsp" | "springxml" | "jsight"
+  | "haskell" | "clojure" | "blazor" | "html" | "erb" | "heex" | "qml" | "qtui" | "xaml" | "jsp" | "springxml" | "jsight"
   | "openapi" | "graphql" | "wsdl" | "groovy" | "powershell" | "bash" | "batch" | "fsharp" | "coffeescript" | "r" | "julia" | "crystal" | "zig" | "ocaml" | "raku" | "racket" | "scheme" | "commonlisp"
   | "nim" | "dlang" | "vlang" | "fortran" | "haxe" | "mojo"
   | "scss" | "sass" | "less" | "autohotkey" | "autoit" | "applescript";

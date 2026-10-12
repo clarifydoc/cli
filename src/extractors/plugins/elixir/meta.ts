@@ -5,6 +5,7 @@ import { hexPackages } from "./packages.js";
 import { elixirManifest } from "./manifest.js";
 import { elixirRequestSchema } from "./request-schema.js";
 import { elixirReachability } from "./reachability.js";
+import { PhoenixEventResolver } from "./phoenix-event-resolver.js";
 
 const ELIXIR_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -24,4 +25,6 @@ export const elixirMeta: LanguagePluginMeta = {
   apiCallRoots: ["HTTPoison", "Tesla", "Finch", "Req", "Mint"],
   dbCallRoots: ["Repo"],
   requestSchema: elixirRequestSchema,
+  dispatchResolvers: [new PhoenixEventResolver()],
+  dispatchLanguages: ["heex"],
 };
