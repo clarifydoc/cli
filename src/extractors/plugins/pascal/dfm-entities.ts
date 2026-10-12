@@ -1,4 +1,4 @@
-import type { ClassInfo, DataSourceInfo, EntityRelation, FileAnalysis, PropertyInfo } from "../../../types/analysis.js";
+import type { ClassInfo, DataSourceInfo, EntityRelation, FileAnalysis, FunctionInfo, PropertyInfo } from "../../../types/analysis.js";
 import { EntityExtractor, SYNTHETIC_ENTITY, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import { companionStem } from "./companion.js";
 
@@ -515,7 +515,8 @@ export class DfmEntityExtractor extends EntityExtractor {
   }
 
   override reconcileProject(analyses: FileAnalysis[]): void {
-    joinUnitAccessesToFormTables(analyses);
+    const tablesByForm = joinUnitAccessesToFormTables(analyses);
+    followDatasetParameters(analyses, tablesByForm);
     // Gather every DFM-derived entity, keyed by table name.
     const byTable = new Map<string, { analysis: FileAnalysis; cls: ClassInfo }[]>();
     for (const a of analyses) {
@@ -578,7 +579,7 @@ export const dfmEntityExtractor = new DfmEntityExtractor();
  * 4,200 Pascal accesses carried no entity). Only the companion form (same
  * path, `.dfm`) is consulted — a component name is local to its form.
  */
-function joinUnitAccessesToFormTables(analyses: FileAnalysis[]): void {
+function joinUnitAccessesToFormTables(analyses: FileAnalysis[]): Map<string, Map<string, string>> {
   const tablesByForm = new Map<string, Map<string, string>>();
   for (const a of analyses) {
     if (a.language !== "dfm") continue;
@@ -594,7 +595,7 @@ function joinUnitAccessesToFormTables(analyses: FileAnalysis[]): void {
     }
     tablesByForm.set(companionStem(a.filePath), byComponent);
   }
-  if (tablesByForm.size === 0) return;
+  if (tablesByForm.size === 0) return tablesByForm;
   for (const a of analyses) {
     if (a.language !== "pascal") continue;
     const form = tablesByForm.get(companionStem(a.filePath));
@@ -609,5 +610,117 @@ function joinUnitAccessesToFormTables(analyses: FileAnalysis[]): void {
       return { ...ds, entity: table };
     });
     if (changed) a.dataSources = next;
+  }
+  return tablesByForm;
+}
+
+/**
+ * A routine that takes a dataset (`procedure FillGrid(DataSet: TDataSet)`) reads
+ * `DataSet.FieldByName(…)` on whatever its callers pass — so those rows name no
+ * table of their own (team-desk: 1,400 rows on one `Report_DefineVars`). Follow the
+ * argument back: a call that passes a component (`FillGrid(qryPupils)`,
+ * `srcPupils.DataSet`) reads the table that component reads in its own form, and
+ * a local whose SQL the calling routine sets reads that SQL's table. Only when
+ * EVERY call site's argument resolves, all to the same table, do the routine's
+ * rows on that parameter take it: an in-memory dataset, a component of another
+ * form or a second table leaves them as they were. The callee is the one routine
+ * of the call's name whose parameter count admits the arguments (overloads by
+ * arity), the caller's own unit first.
+ */
+function followDatasetParameters(analyses: FileAnalysis[], tablesByForm: Map<string, Map<string, string>>): void {
+  interface Routine { analysis: FileAnalysis; fn: FunctionInfo; byParam: Map<number, DataSourceInfo[]> }
+  const routinesOf = (a: FileAnalysis): FunctionInfo[] => [...a.functions, ...a.classes.flatMap((c) => c.methods)];
+  const units = analyses.filter((a) => a.language === "pascal");
+  const byLeaf = new Map<string, Routine[]>();
+  for (const a of units) {
+    for (const fn of routinesOf(a)) {
+      if (fn.params.length === 0) continue;
+      const byParam = new Map<number, DataSourceInfo[]>();
+      for (const ds of a.dataSources) {
+        if (ds.kind !== "database" || ds.entity || ds.line < fn.line || ds.line > fn.endLine) continue;
+        const receiver = ds.name.slice(0, Math.max(0, ds.name.lastIndexOf("."))).toLowerCase();
+        const index = fn.params.findIndex((p) => p.name.toLowerCase() === receiver);
+        if (index < 0) continue;
+        (byParam.get(index) ?? byParam.set(index, []).get(index)!).push(ds);
+      }
+      if (byParam.size === 0) continue;
+      const leaf = fn.name.split(".").pop()!.toLowerCase();
+      (byLeaf.get(leaf) ?? byLeaf.set(leaf, []).get(leaf)!).push({ analysis: a, fn, byParam });
+    }
+  }
+  if (byLeaf.size === 0) return;
+
+  // A routine's parameter resolved in an earlier round (`LoadFromQuery(Query)` where
+  // `Query` is the caller's own dataset parameter): "file:line:name" → table.
+  const resolvedParam = new Map<string, string>();
+  const paramKey = (a: FileAnalysis, fn: FunctionInfo, name: string) => `${a.filePath}:${fn.line}:${fn.params.length}:${name.toLowerCase()}`;
+
+  /** The table an argument stands for, at a call in `routine` of `caller`, or null. */
+  const tableOf = (arg: string, caller: FileAnalysis, routine: FunctionInfo): string | null => {
+    const name = arg.replace(/\.DataSet$/i, "").toLowerCase();
+    if (!/^[a-z_]\w*$/.test(name)) return null;
+    const form = tablesByForm.get(companionStem(caller.filePath))?.get(name);
+    if (form) return form;
+    const viaParam = resolvedParam.get(paramKey(caller, routine, name));
+    if (viaParam) return viaParam;
+    // A local dataset the calling routine queries itself: the routine uses it as a
+    // dataset (`qry.Open`, `qry.SQL.Add(…)`) and selects from exactly one table.
+    const inRoutine = caller.dataSources.filter((ds) => ds.kind === "database" && ds.line >= routine.line && ds.line <= routine.endLine);
+    const usesArg = inRoutine.some((ds) => ds.name.toLowerCase().startsWith(`${name}.`));
+    const selected = new Set(inRoutine.filter((ds) => ds.entity && /^SELECT\b/i.test(ds.name)).map((ds) => ds.entity!));
+    const own = new Set(inRoutine.filter((ds) => ds.entity && (ds.target ?? "").split(".").pop()!.toLowerCase() === name).map((ds) => ds.entity!));
+    if (own.size === 1) return [...own][0]!;
+    return usesArg && selected.size === 1 ? [...selected][0]! : null;
+  };
+
+  // Callers are matched once; arguments are resolved per round, as a parameter
+  // resolved in one round can resolve its callers' arguments in the next.
+  interface Site { target: Routine; index: number; arg: string; caller: FileAnalysis; routine: FunctionInfo }
+  const sites: Site[] = [];
+  for (const caller of units) {
+    for (const routine of routinesOf(caller)) {
+      for (const call of routine.calls) {
+        if (!call.args) continue;
+        const candidates = (byLeaf.get(call.name.split(".").pop()!.toLowerCase()) ?? [])
+          .filter((r) => r.fn.params.length >= call.args!.length);
+        const own = candidates.filter((r) => r.analysis === caller);
+        const pool = own.length > 0 ? own : candidates;
+        const exact = pool.filter((r) => r.fn.params.length === call.args!.length);
+        const chosen = exact.length > 0 ? exact : pool;
+        if (new Set(chosen.map((r) => `${r.analysis.filePath}:${r.fn.line}:${r.fn.params.length}`)).size !== 1) continue;
+        const target = chosen[0]!;
+        for (const index of target.byParam.keys()) {
+          const arg = call.args[index];
+          if (arg !== undefined) sites.push({ target, index, arg, caller, routine });
+        }
+      }
+    }
+  }
+
+  const assign = new Map<DataSourceInfo, string>();
+  for (let round = 0; round < 4; round++) {
+    const passed = new Map<string, { routine: Routine; index: number; tables: Array<string | null> }>();
+    for (const site of sites) {
+      const key = `${site.target.analysis.filePath}:${site.target.fn.line}:${site.target.fn.params.length}:${site.index}`;
+      const entry = passed.get(key) ?? passed.set(key, { routine: site.target, index: site.index, tables: [] }).get(key)!;
+      entry.tables.push(tableOf(site.arg, site.caller, site.routine));
+    }
+    let grew = false;
+    for (const { routine, index, tables } of passed.values()) {
+      const distinct = new Set(tables);
+      if (distinct.size !== 1 || distinct.has(null)) continue;
+      const table = tables[0]!;
+      const key = paramKey(routine.analysis, routine.fn, routine.fn.params[index]!.name);
+      if (resolvedParam.get(key) === table) continue;
+      resolvedParam.set(key, table);
+      grew = true;
+      for (const ds of routine.byParam.get(index) ?? []) assign.set(ds, table);
+    }
+    if (!grew) break;
+  }
+  if (assign.size === 0) return;
+  for (const a of units) {
+    if (!a.dataSources.some((ds) => assign.has(ds))) continue;
+    a.dataSources = a.dataSources.map((ds) => (assign.has(ds) ? { ...ds, entity: assign.get(ds)! } : ds));
   }
 }

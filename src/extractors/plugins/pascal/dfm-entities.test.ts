@@ -382,3 +382,34 @@ end`,
     expect(analyses[0]!.classes.length).toBe(before);
   });
 });
+
+describe("DFM reconcile — a dataset passed to a routine", () => {
+  const unit = (filePath: string, functions: unknown[], dataSources: unknown[]): FileAnalysis =>
+    ({ filePath, language: "pascal", functions, classes: [], dataSources } as unknown as FileAnalysis);
+  const fn = (name: string, line: number, endLine: number, params: string[], calls: unknown[] = []) =>
+    ({ name, line, endLine, params: params.map((p) => ({ name: p, type: "TDataSet" })), calls });
+
+  it("names the table the callers' component reads, only when every caller agrees", () => {
+    const form = parseDfm(`object F: TF
+  object qryElever: TpFIBDataSet
+    SelectSQL.Strings = ('SELECT ID, NAME FROM TDRIVER')
+  end
+  object memKopi: TRxMemoryData
+  end
+end`, "Drivers.dfm");
+    const helper = unit("Helper.pas", [fn("FillGrid", 10, 20, ["ADataSet"]), fn("Print", 30, 40, ["ADataSet"])], [
+      { kind: "database", name: "ADataSet.FieldByName", target: "ADataSet", calls: [], line: 12 },
+      { kind: "database", name: "ADataSet.FieldByName", target: "ADataSet", calls: [], line: 32 },
+    ]);
+    const caller = unit("Drivers.pas", [
+      fn("TF.Show", 1, 8, [], [
+        { name: "FillGrid", kind: "cross-file", target: null, line: 3, args: ["qryElever"] },
+        { name: "Print", kind: "cross-file", target: null, line: 4, args: ["qryElever"] },
+        { name: "Print", kind: "cross-file", target: null, line: 5, args: ["memKopi"] },
+      ]),
+    ], []);
+    new DfmEntityExtractor().reconcileProject([form, helper, caller]);
+    // FillGrid only ever reads qryElever's table; Print also reads an in-memory copy, so it is left alone.
+    expect(helper.dataSources.map((d) => d.entity ?? null)).toEqual(["TDRIVER", null]);
+  });
+});
