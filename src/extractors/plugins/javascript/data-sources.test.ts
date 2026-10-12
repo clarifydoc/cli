@@ -102,6 +102,11 @@ userRoute.delete("/:id", removeUser);`;
     expect(await apiCallsOf(SRC)).toHaveLength(0);
   });
 
+  it("names the default instance of a generated SDK call on `(options?.client ?? client)`", async () => {
+    const calls = await apiCallsOf(`export const labelsList = (options) => (options?.client ?? client).get({ url: '/labels', ...options });`);
+    expect(calls.map((c) => [c.target, c.client])).toEqual([["/labels", "client"]]);
+  });
+
   it("still captures a genuine client call whose receiver isn't router-shaped", async () => {
     const calls = await apiCallsOf(`apiClient.get("/api/products");`);
     expect(calls.map((c) => c.target)).toContain("/api/products");

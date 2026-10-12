@@ -666,12 +666,17 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           (looksLikeUrl(url) || isParamHole(url, node)) &&
           REQUEST_KEYS.some((k) => hasProp(node, k));
         if (method || requestShaped) {
+          // The instance the descriptor is handed to (`apiClient.get({ url })`,
+          // hey-api's `(options?.client ?? client).get(…)`): its base is prepended later.
+          const callFn = node.parent?.type === "arguments" ? node.parent.parent?.childForFieldName("function") : null;
+          const client = callFn?.type === "member_expression" ? memberRoot(callFn) : null;
           sources.push(this.ds({
             kind: "api-call",
             name: method ?? "request",
             target: url,
             line: node.startPosition.row + 1,
             ...(urls.length > 1 ? { targetAlternatives: urls.slice(1) } : {}),
+            ...(client && !HTTP_ROOTS.has(client.toLowerCase()) && !GLOBAL_RECEIVERS.has(client) ? { client } : {}),
           }));
         }
       }
@@ -918,6 +923,7 @@ function directReceiver(fn: Node): string | null {
   const obj = fn.childForFieldName("object");
   if (!obj) return null;
   if (obj.type === "identifier") return obj.text;
+  if (obj.type === "parenthesized_expression") return defaultInstance(obj);
   if (obj.type === "member_expression" && obj.childForFieldName("object")?.type === "this") {
     return obj.childForFieldName("property")?.text ?? null;
   }
@@ -937,7 +943,21 @@ const HTTP_RECEIVER_RE = /^\$?(http|axios|ky|got|api|request|requests)(client|se
 function memberRoot(fn: Node): string | null {
   let obj = fn.childForFieldName("object");
   while (obj && obj.type === "member_expression") obj = obj.childForFieldName("object");
+  if (obj?.type === "parenthesized_expression") return defaultInstance(obj);
   return obj && obj.type === "identifier" ? obj.text : null;
+}
+
+/**
+ * `(options?.client ?? client)` — a generated SDK's call on the caller's client
+ * when one is passed, else on the module's own instance: that instance is the
+ * client the call states.
+ */
+function defaultInstance(paren: Node): string | null {
+  const inner = paren.namedChildren[0];
+  if (inner?.type !== "binary_expression") return null;
+  const op = inner.childForFieldName("operator")?.text;
+  const right = inner.childForFieldName("right");
+  return (op === "??" || op === "||") && right?.type === "identifier" ? right.text : null;
 }
 
 /** Leaf/callee name of a call's function node: `apiClient.post` → "post", `fetch` → "fetch". */

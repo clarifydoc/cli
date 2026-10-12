@@ -1,4 +1,4 @@
-import { createEmptyAnalysis, type FileAnalysis, type FunctionInfo, type Language } from "../types/analysis.js";
+import { createEmptyAnalysis, type FileAnalysis, type FunctionInfo, type Language, type RouteFact } from "../types/analysis.js";
 import { splitLines } from "../extractors/shared/source-lines.js";
 import {
   extractFunctionsWithSpec,
@@ -46,9 +46,11 @@ export function extractWithRegex(
   analysis.imports = spec.extractImports ? spec.extractImports(lines) : extractImportsWithSpec(lines, spec);
   analysis.exports = deriveExportsFromFnClasses(analysis.functions, analysis.classes);
   // Test files (unit/integration/e2e specs) never expose real routes.
+  const routeFacts: RouteFact[] = [];
   analysis.routes = isTestFile(filePath, language)
     ? []
-    : spec.extractRoutes?.(lines, analysis.classes, filePath, analysis.functions) ?? [];
+    : spec.extractRoutes?.(lines, analysis.classes, filePath, analysis.functions, routeFacts) ?? [];
+  if (routeFacts.length > 0) analysis.routeFacts = routeFacts;
   analysis.screens = spec.extractScreens?.(lines, filePath, analysis.classes) ?? [];
   // UI markup files (Blazor .razor) contribute component usage + interactive
   // elements the same way Vue/React do via AST hooks — the screen builder's flat

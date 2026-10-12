@@ -7,6 +7,7 @@ import { goManifest } from "./manifest.js";
 import { GoEntityExtractor } from "./entities.js";
 import { goRequestSchema } from "./request-schema.js";
 import { goReachability } from "./reachability.js";
+import { humaBaseResolver } from "./huma-resolver.js";
 
 const GO_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -19,6 +20,8 @@ const GO_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const goMeta: LanguagePluginMeta = {
+  // Huma operations get the base their API is served under (huma-resolver.ts).
+  routeResolvers: [humaBaseResolver],
   // Dead-code reachability (see reachability.ts).
   reachability: goReachability,
   // Go has no grammar here, so its control flow is read off the source. The

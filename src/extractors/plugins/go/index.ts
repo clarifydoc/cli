@@ -2,6 +2,7 @@ import type { ParamInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { extractGoRoutes } from "./routes.js";
+import { extractHumaRoutes } from "./huma.js";
 import { extractGoDataSources } from "./data-sources.js";
 import { extractGoRequestAccess } from "./request-access.js";
 import { extractGoClasses } from "./classes.js";
@@ -80,7 +81,7 @@ export const goSpec: RegexLangSpec = {
   importPatterns: [],
   extractImports: extractGoImports,
 
-  extractRoutes: (lines) => extractGoRoutes(lines),
+  extractRoutes: (lines, _classes, _file, _fns, facts) => [...extractGoRoutes(lines), ...extractHumaRoutes(lines, facts)],
   extractDataSources: (lines) => extractGoDataSources(lines),
   extractRequestAccess: extractGoRequestAccess,
 };
