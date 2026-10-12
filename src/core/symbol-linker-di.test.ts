@@ -760,3 +760,23 @@ describe("symbol-linker — structural interfaces", () => {
     expect(callsFrom(buildSymbolLinks([iface, impl, svc]), "src/svc.ts")[0]!.targetSymbol).toBe("IRepo.find");
   });
 });
+
+describe("spec join to an implementing class method (generated interface absent)", () => {
+  it("joins a WSDL operation to the method of the class implementing its portType", () => {
+    const wsdl = {
+      ...file("ws/IntegrationPropertyService.wsdl", [], { language: "wsdl" }),
+      routes: [
+        { path: "/getNoarkIntegrationParameters", httpMethod: null, kind: "api", handler: "getNoarkIntegrationParameters", calls: [], middleware: [], line: 88, contract: { type: "IntegrationPropertyServicePort", method: "getNoarkIntegrationParameters" } },
+      ],
+    } as unknown as FileAnalysis;
+    const impl = file("src/IntegrationPropertyServiceImpl.java", [
+      cls("IntegrationPropertyServiceImpl", { implements: ["IntegrationPropertyServicePort"], methods: [method("getNoarkIntegrationParameters", [], [], 68)] }),
+    ], { language: "java" });
+    // Another class with the same method name, implementing something else: the implementor wins.
+    const other = file("src/LegacyFacade.java", [cls("LegacyFacade", { methods: [method("getNoarkIntegrationParameters", [], [], 12)] })], { language: "java" });
+    const links = buildSymbolLinks([wsdl, impl, other]).filter((l) => l.strategy === "spec-join");
+    expect(links.map((l) => `${l.sourceSymbol} -> ${l.targetFile}::${l.targetSymbol}`)).toEqual([
+      "route:USE /getNoarkIntegrationParameters -> src/IntegrationPropertyServiceImpl.java::IntegrationPropertyServiceImpl.getNoarkIntegrationParameters",
+    ]);
+  });
+});
