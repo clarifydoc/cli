@@ -65,10 +65,9 @@ describe("controlFlowForFile", () => {
   });
 
   it("says so rather than guessing when a language has no control-flow tables", async () => {
-    // Ruby delimits blocks with `end`, which the line scanner cannot read
-    // reliably (a modifier `if` opens nothing), so it has neither tier.
+    // Clojure's control flow is forms (`(if …)`, `(cond …)`), not lines: neither tier reads it.
     await expect(
-      controlFlowForFile({ filePath: resolve(FIXTURES, "sample-ruby-web/app/models/user.rb") }),
+      controlFlowForFile({ filePath: resolve(FIXTURES, "sample-clojure-app/src/myapp/db.clj") }),
     ).rejects.toBeInstanceOf(ControlFlowUnavailableError);
   });
 

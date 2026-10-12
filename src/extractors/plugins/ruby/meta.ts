@@ -6,6 +6,7 @@ import { rubyManifest } from "./manifest.js";
 import { RubyEntityExtractor } from "./entities.js";
 import { rubyReachability } from "./reachability.js";
 import { railsRouteAnchor } from "./route-anchor.js";
+import { RUBY_REGEX_CONTROL_FLOW } from "./control-flow.js";
 
 export const rubyMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
@@ -24,6 +25,8 @@ export const rubyMeta: LanguagePluginMeta = {
     ]),
     logicalOps: new Set(["&&", "||", "and", "or"]),
   },
+  // Control flow from source: keyword-delimited blocks (see control-flow.ts).
+  regexControlFlow: RUBY_REGEX_CONTROL_FLOW,
   // Call node types for when a tree-sitter grammar is wired up.
   calls: { callNodeTypes: new Set(["call", "method_call"]) },
 };

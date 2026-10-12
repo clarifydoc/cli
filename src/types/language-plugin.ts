@@ -439,6 +439,24 @@ export interface LanguageRegexControlFlowSpec {
    * tier stops. Defaults to a broad C-family pattern.
    */
   nestedFunction?: RegExp;
+  /**
+   * Keyword-delimited blocks (`if … end`, `do … end`, `End If`, `Next`): what one
+   * blanked, trimmed line opens and closes. When set it replaces the counting of
+   * `blockOpen`/`blockClose`, which then only say which lines are bare closers.
+   * `open` names each block the line opens, innermost last; `leadingClose` is how
+   * many closers the line starts with; `middle` marks a line that continues the
+   * enclosing block at the block's own level (`else`, `elsif`, `rescue`, `Catch`).
+   * The scan keeps a stack of these names, which is how a modifier `if` (`return x
+   * if y`) is told from one that opens a block: only the hook knows, and it says.
+   */
+  blockDelta?: (code: string) => { open: readonly string[]; close: number; leadingClose: number; middle?: boolean };
+  /** Block names whose `middle` lines are arms of the block, not a step out of it (`else` in a Ruby `case`). */
+  armBlocks?: ReadonlySet<string>;
+  /**
+   * A guarded statement on one line that is not `if (cond) stmt`: Ruby's `stmt if
+   * cond`, VB's `If c Then s`. Returns the condition and the guarded statement.
+   */
+  inlineGuard?: (code: string) => { head: string; tail: string } | null;
 }
 
 /**

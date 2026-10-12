@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { computeRegexComplexity } from "./complexity-regex.js";
 import type { FileAnalysis } from "../types/analysis.js";
 import type { RegexLangSpec } from "../extractors/plugins/shared/regex-base.js";
+import { ensureLanguagesLoaded } from "../extractors/registry.js";
 
 const spec = { lineCommentPrefixes: ["//"] } as unknown as RegexLangSpec;
 const analysis = (functions: any[], classes: any[] = []): FileAnalysis => ({ functions, classes } as unknown as FileAnalysis);
@@ -36,4 +37,23 @@ End Class`.split("\n");
     const rows = computeRegexComplexity(src, analysis([], [{ name: "Svc", methods: [fn("Run", 2, 6)] }]), spec, true);
     expect(rows).toEqual([expect.objectContaining({ functionName: "Svc.Run", complexity: 4 })]);
   });
+
+  it("reads cognitive complexity and nesting depth off the regex control-flow structure", async () => {
+    await ensureLanguagesLoaded(["ruby"]);
+    const src = `def sync(items)
+  return if items.empty?
+  items.each do |i|
+    if i.ok? && i.fresh?
+      save(i)
+    elsif i.stale?
+      drop(i)
+    end
+  end
+end`.split("\n");
+    const a = { ...analysis([fn("sync", 1, 10)]), language: "ruby" } as FileAnalysis;
+    const [row] = computeRegexComplexity(src, a, spec, false);
+    // modifier if: 1; inside the block (nesting 1): if 1+1, && 1, elsif 1 → 5; deepest: block + if = 2
+    expect(row).toMatchObject({ functionName: "sync", cognitive: 5, nestingDepth: 2, approximate: true });
+  });
 });
+
