@@ -836,3 +836,12 @@ describe("linkApiCallsToRoutes — a runtime segment where the route has a versi
     expect(links.map((l) => [l.handler, l.matchedVia])).toEqual([["PerTenant", "exact"]]);
   });
 });
+
+describe("normalizeRoutePath — a hole glued to the last segment", () => {
+  it("drops a generated client's query-string hole but keeps a real path parameter", async () => {
+    const { normalizeRoutePath } = await import("./route-linker.js");
+    expect(normalizeRoutePath("/albums${QS.query(QS.explode({ assetId, id }))}")).toBe(normalizeRoutePath("/albums"));
+    expect(normalizeRoutePath("/albums/${encodeURIComponent(id)}${QS.query({ key })}")).toBe(normalizeRoutePath("/albums/{id}"));
+    expect(normalizeRoutePath("/users/${id}")).toBe(normalizeRoutePath("/users/:id"));
+  });
+});
