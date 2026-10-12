@@ -1313,7 +1313,23 @@ function buildMemberTypes(analyses: FileAnalysis[]): Map<string, Map<string, Inj
   // A duplicated class name (microservice repos: a LicenseService per
   // service/feature) resolves to the definition closest to the CONSUMING file
   // by shared directory prefix; ambiguous ties resolve to nothing.
+  // The consumer's own import of the type comes first: two same-named classes
+  // in sibling namespaces (`Auth\AuthenticationService`, `Subsonic\…`) tie on
+  // directory distance, and the `use` statement says which one is meant.
+  const analysisOf = new Map(analyses.map((a) => [a.filePath, a]));
+  let pathMap: Map<string, string> | null = null;
+  const importedDecl = (typeName: string, consumerFile: string): string | null => {
+    if ((classToFiles.get(typeName)?.length ?? 0) < 2) return null;
+    const imps = analysisOf.get(consumerFile)?.imports.filter((i) => i.specifiers.includes(typeName) || i.source.split(/[\\/.:]+/).pop() === typeName) ?? [];
+    for (const imp of imps) {
+      pathMap ??= buildFilePathMap(analyses);
+      const f = resolveTarget(imp.source, consumerFile, pathMap);
+      if (f && declAt.has(memberKey(f, typeName))) return f;
+    }
+    return null;
+  };
   const fileOf = (typeName: string, consumerFile: string): string | null =>
+    importedDecl(typeName, consumerFile) ??
     pickDefinition(typeName, classToFiles.get(typeName) ?? [], consumerFile, (f, n) => declAt.get(memberKey(f, n)), (f) => languageOfFile.get(f));
 
   // One type declared across several files of a directory — a Go struct
@@ -2799,6 +2815,18 @@ function scopedName(
  */
 function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, projectId: string): string | null {
   const declOf = (f: string, n: string) => ctx.classAt.get(memberKey(f, n));
+  // The file the source imports the type from, when that file declares it: two
+  // same-named classes in other namespaces (`Auth\AuthenticationService`,
+  // `Subsonic\AuthenticationService`) are told apart by the `use` that names one.
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const source = ctx.analysisByFile.get(sourceFile);
+  if (source) {
+    const named = source.imports.filter((i) => i.specifiers.includes(typeName) || i.source.split(/[\\/.:]+/).pop() === typeName);
+    for (const imp of named) {
+      const f = resolveTarget(imp.source, sourceFile, ctx.filePathMap);
+      if (f && f !== sourceFile && declOf(f, typeName)) return f;
+    }
+  }
   const languageOf = (f: string) => ctx.languageOf.get(f);
   const own = ctx.classByProject.get(`${projectId}\0${typeName}`);
   if (own) {
@@ -2992,7 +3020,10 @@ function findMethodInClass(
     if (promoted !== undefined) return promoted;
     const base = bareClassName(ctx.classAt.get(key)?.extends ?? baseOfSplitType(ctx, name, file));
     if (!base) return null;
-    const baseFile = locateClass(ctx, base, file, ctx.projectOf.get(file) ?? "root");
+    // A class extends a class: an interface of the same name (`Contracts\Repository`
+    // beside the abstract `Repository`) is no candidate when the name ties.
+    const baseFile = locateClass(ctx, base, file, ctx.projectOf.get(file) ?? "root")
+      ?? onlyConcrete(ctx, base, ctx.classAt.get(key)?.kind === "interface");
     if (!baseFile) return null;
     name = base;
     file = baseFile;
@@ -3070,6 +3101,13 @@ function methodBesideClass(
   if (hits.length !== 1) return null;
   const def = symbolIn(ctx, hits[0]!, qualified);
   return def ? { file: hits[0]!, symbol: def.name, line: def.line } : null;
+}
+
+/** The one non-interface declaration of `name` (an interface's base may be an interface). */
+function onlyConcrete(ctx: LinkContext, name: string, fromInterface: boolean): string | null {
+  if (fromInterface) return null;
+  const files = (ctx.classFiles.get(name) ?? []).filter((f) => ctx.classAt.get(memberKey(f, name))?.kind !== "interface");
+  return files.length === 1 ? files[0]! : null;
 }
 
 /** The base class another part of a split type (same directory) declares. */

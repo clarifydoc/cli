@@ -370,6 +370,18 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
     }
   }
 
+  // 4b. A PHP namespace (`App\\Services\\Auth\\AuthenticationService`): PSR-4 puts the
+  // class at the path its segments spell under some root (`app/Services/Auth/…`),
+  // so the longest unique path suffix; two same-named classes in other namespaces
+  // never collide this way.
+  if (importSource.includes("\\")) {
+    const segs = importSource.replace(/^\\+/, "").split("\\").filter(Boolean);
+    for (let k = segs.length; k >= 2; k--) {
+      const hit = uniqueSuffixMatch(segs.slice(segs.length - k).join("/"), filePathMap);
+      if (hit !== undefined) return hit;
+    }
+  }
+
   // 5. `::` namespace: "Shop::Orders" → "Shop/Orders"; else the longest unique
   // path suffix (`lemmy_api_crud::site::read` → `…/site/read.rs`, the crate name
   // being a directory the path does not spell); the last segment alone only

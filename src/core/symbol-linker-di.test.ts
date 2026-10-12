@@ -780,3 +780,21 @@ describe("spec join to an implementing class method (generated interface absent)
     ]);
   });
 });
+
+describe("two same-named classes, told apart by the consumer's import", () => {
+  it("types an injected member by the class its `use` names (PHP namespaces)", () => {
+    const ctl = {
+      ...file("app/Http/Controllers/API/Auth/LoginController.php", [
+        cls("LoginController", {
+          properties: [prop("auth", "AuthenticationService")],
+          methods: [method("__invoke", [call("this.auth.authenticate")])],
+        }),
+      ], { language: "php" }),
+      imports: [{ source: "App\\Services\\Auth\\AuthenticationService", specifiers: ["AuthenticationService"], isDefault: false, isNamespace: false, isType: true, line: 3 }],
+    } as unknown as FileAnalysis;
+    const auth = file("app/Services/Auth/AuthenticationService.php", [cls("AuthenticationService", { methods: [method("authenticate", [], [], 20)] })], { language: "php" });
+    const subsonic = file("app/Services/Subsonic/AuthenticationService.php", [cls("AuthenticationService", { methods: [method("authenticate", [], [], 9)] })], { language: "php" });
+    const links = buildSymbolLinks([ctl, auth, subsonic]).filter((l) => l.sourceSymbol === "LoginController.__invoke");
+    expect(links.map((l) => `${l.targetFile}::${l.targetSymbol}`)).toEqual(["app/Services/Auth/AuthenticationService.php::AuthenticationService.authenticate"]);
+  });
+});

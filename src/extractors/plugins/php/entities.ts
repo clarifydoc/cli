@@ -207,11 +207,22 @@ export class PhpEntityExtractor extends EntityExtractor {
       }
     }
     if (models.size === 0) return;
+    // Classes by short name (unique ones), for walking `extends` from a subclass.
+    // An interface of the same name (`Contracts\Repository`) is no `extends` target.
+    const classByName = new Map<string, ClassInfo | null>();
+    for (const x of php) for (const c of x.classes) {
+      if (c.kind === "interface") continue;
+      const short = c.name.split("\\").pop()!;
+      classByName.set(short, classByName.has(short) ? null : c);
+    }
     const relationEntity = (field: string): string | null => {
       const set = relationTargets.get(field);
       return set && set.size === 1 ? [...set][0]! : null;
     };
 
+    // Rows of a generic base repository (`$this->modelClass::query()->find($id)`):
+    // the model is the subclass's, so they are kept aside per method.
+    const generic = new Map<ClassInfo, Map<string, DataSourceInfo[]>>();
     for (const a of php) {
       let changed = false;
       const next: DataSourceInfo[] = [];
@@ -220,13 +231,22 @@ export class PhpEntityExtractor extends EntityExtractor {
           next.push(ds);
           continue;
         }
-        const entity = resolveEloquentEntity(ds, a, models, relationEntity);
+        const entity = resolveEloquentEntity(ds, a, models, relationEntity, classByName);
         changed = true;
         if (entity) next.push({ ...ds, entity, target: entity });
+        else if (GENERIC_MODEL_RE.test(ds.name)) {
+          const { cls, fn } = enclosing(a, ds.line);
+          if (cls && fn) {
+            const byMethod = generic.get(cls) ?? generic.set(cls, new Map()).get(cls)!;
+            (byMethod.get(fn.name) ?? byMethod.set(fn.name, []).get(fn.name)!).push(ds);
+          }
+        }
         // else: dropped — a verb-sharing non-model call.
       }
       if (changed) a.dataSources = next;
     }
+    if (generic.size > 0) inheritGenericRows(php, generic, models, classByName);
+    addRouteModelBindings(php, models);
   }
 
   // ─── Eloquent detection (inheritance chain) ───────────────────────────────
@@ -1011,11 +1031,77 @@ function enclosing(a: FileAnalysis, line: number): { cls: ClassInfo | null; fn: 
 /** `?User`, `User|null`, `App\\Models\\User` → `User` (the shared declared-type normalizer). */
 const shortType = (type: string | null | undefined): string | null => receiverTypeName(type, "php");
 
+/**
+ * Laravel route-model binding: a controller action's parameter typed with a
+ * model (`public function show(Song $song)`, `__invoke(Playlist $playlist)`)
+ * is loaded by the framework before the action runs — `Song::findOrFail($id)`
+ * the action never writes. That read is the action's: one row of that model at
+ * the action's line. Only public methods of `…Controller` classes, where the
+ * router does the binding.
+ */
+function addRouteModelBindings(php: FileAnalysis[], models: ReadonlySet<string>): void {
+  for (const a of php) {
+    for (const cls of a.classes) {
+      if (!/Controller$/.test(cls.name)) continue;
+      for (const m of cls.methods) {
+        if (m.name.startsWith("__") && m.name !== "__invoke") continue;
+        for (const p of m.params) {
+          const type = shortType(p.type);
+          if (!type || !models.has(type)) continue;
+          if (a.dataSources.some((d) => d.line === m.line && d.entity === type && d.name === "route-model-binding")) continue;
+          a.dataSources.push({ kind: "database", name: "route-model-binding", target: type, entity: type, access: "read", calls: [], line: m.line });
+        }
+      }
+    }
+  }
+}
+
+/** A row on the repository's model handle rather than a model: `$this->modelClass::query()`, `$this->model->…`, `static::$model`. */
+const GENERIC_MODEL_RE = /^(?:\$this\s*->\s*(?:modelClass|model|entityClass|entity)\b|static::\$model\b|\$this\s*->\s*getModel\(\))/;
+
+/**
+ * A generic repository base (`abstract class Repository { getOne($id) {
+ * return $this->modelClass::query()->findOrFail($id); } }`, the model guessed
+ * from the subclass's name — koel's, and Laravel repository packages') reads
+ * the table of whichever subclass it runs as. Its rows stay where they are,
+ * one per model a subclass named `<Model>Repository` (or `…Repo`) stands for:
+ * `Repository.getOne` reaches songs, albums, users — each table one of its
+ * subclasses reads through it. A base no such subclass extends keeps nothing.
+ */
+function inheritGenericRows(
+  php: FileAnalysis[],
+  generic: Map<ClassInfo, Map<string, DataSourceInfo[]>>,
+  models: ReadonlySet<string>,
+  classByName: ReadonlyMap<string, ClassInfo | null>,
+): void {
+  const modelsOf = new Map<ClassInfo, Set<string>>();
+  for (const a of php) {
+    for (const cls of a.classes) {
+      const model = /^(\w+?)(?:Repository|Repo)$/.exec(cls.name.split("\\").pop()!)?.[1];
+      if (!model || !models.has(model)) continue;
+      const seen = new Set<ClassInfo>();
+      for (let base = cls.extends ? classByName.get(cls.extends.split("\\").pop()!) : null; base && !seen.has(base); base = base.extends ? classByName.get(base.extends.split("\\").pop()!) : null) {
+        seen.add(base);
+        if (generic.has(base)) (modelsOf.get(base) ?? modelsOf.set(base, new Set()).get(base)!).add(model);
+      }
+    }
+  }
+  for (const a of php) {
+    for (const cls of a.classes) {
+      const rows = generic.get(cls);
+      const ms = modelsOf.get(cls);
+      if (!rows || !ms) continue;
+      for (const list of rows.values()) for (const r of list) for (const model of ms) a.dataSources.push({ ...r, entity: model, target: model });
+    }
+  }
+}
+
 function resolveEloquentEntity(
   ds: DataSourceInfo,
   a: FileAnalysis,
   models: ReadonlySet<string>,
   relationEntity: (field: string) => string | null,
+  classByName?: ReadonlyMap<string, ClassInfo | null>,
 ): string | null {
   const name = ds.name;
   // The last relation call in the chain is the table the terminal verb runs on
@@ -1039,10 +1125,18 @@ function resolveEloquentEntity(
   // `$this->prop->…`: the property's declared type, or the promoted constructor parameter's.
   const prop = /^\$this\s*->\s*(\w+)\s*->/.exec(name)?.[1];
   if (prop && cls) {
-    const declared = cls.properties.find((p) => p.name === prop || p.name === `$${prop}`)?.type
-      ?? cls.methods.find((m) => m.name === "__construct")?.params.find((p) => p.name === prop)?.type;
-    const type = shortType(declared);
-    if (type && models.has(type)) return type;
+    // The class, then its parents: a property or promoted constructor parameter
+    // a base class declares (`abstract class Repository { __construct(protected Song $model) }`).
+    const seen = new Set<ClassInfo>();
+    for (let c: ClassInfo | null | undefined = cls; c && !seen.has(c); c = c.extends ? classByName?.get(c.extends.split("\\").pop()!) : null) {
+      seen.add(c);
+      const declared = c.properties.find((p) => p.name === prop || p.name === `$${prop}`)?.type
+        ?? c.methods.find((m) => m.name === "__construct")?.params.find((p) => p.name === prop)?.type;
+      if (!declared) continue;
+      const type = shortType(declared);
+      if (type && models.has(type)) return type;
+      break;
+    }
   }
 
   // `$var->…`: a typed parameter or local of the enclosing function.
