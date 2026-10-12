@@ -9,7 +9,7 @@ import { join, resolve, sep } from "path";
  * stored in the manifest and this constant invalidates the whole cache so a
  * fixed extractor never leaves stale JSON behind.
  */
-export const EXTRACTOR_VERSION = "1.110.0";
+export const EXTRACTOR_VERSION = "1.111.0";
 
 /**
  * What the manifest remembers about one analyzed file, enough to tell

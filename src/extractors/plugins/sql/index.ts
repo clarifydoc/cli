@@ -316,24 +316,73 @@ function extractViewTables(lines: string[], startIdx: number, endIdx: number): s
   return [...tables];
 }
 
+/**
+ * The table a DML statement names, as the ER graph keys it: the last segment of
+ * `schema.table`, unquoted. `dual` and a SQL keyword caught by a partial match
+ * (`SELECT … FROM (subquery)` never reaches here) are not tables.
+ */
+function tableEntity(target: string, rest = "", local: ReadonlySet<string> = new Set()): string | null {
+  // System catalogs are not the application's tables.
+  if (/^(?:information_schema|pg_catalog|sys|mysql)\./i.test(target) || /^pg_/i.test(target)) return null;
+  // `[dbo].[Orders]`, `"public"."person"`: the quoted first part was captured, the rest follows it.
+  const parts = [...rest.matchAll(/\.(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|(\w+))/gy)].map((m) => m[1] ?? m[2] ?? m[3] ?? m[4]!);
+  const name = (parts.pop() ?? target.split(".").pop()!).replace(/^["`[]|["`\]]$/g, "");
+  if (!/^[A-Za-z_]\w*$/.test(name)) return null;
+  // `ON UPDATE CASCADE` wrapped onto its own line reads as an UPDATE statement.
+  if (/^(?:dual|select|set|values|where|only|lateral|unnest|cascade|restrict|no)$/i.test(name)) return null;
+  if (/^pg_/i.test(name) || local.has(name.toLowerCase())) return null;
+  return name;
+}
+
+/**
+ * Relations a file names but that are not tables: CTEs (`WITH q AS (`, `, deps AS (`),
+ * a trigger's transition tables (`REFERENCING OLD TABLE AS old_rows`) and the views it creates.
+ */
+function localRelations(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of text.matchAll(/(?:\bWITH(?:\s+RECURSIVE)?|,)\s*(\w+)\s*(?:\([^)]*\))?\s+AS\s*(?:NOT\s+)?(?:MATERIALIZED\s+)?\(/gi)) out.add(m[1]!.toLowerCase());
+  for (const m of text.matchAll(/\b(?:OLD|NEW)\s+TABLE\s+AS\s+(\w+)/gi)) out.add(m[1]!.toLowerCase());
+  // A view the file creates is its query, not a table of the data model.
+  for (const m of text.matchAll(/\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:MATERIALIZED\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?"?(\w+)/gi)) out.add(m[1]!.toLowerCase());
+  return out;
+}
+
+/** The statement starting at line `i`, up to its `;` (at most 30 lines), on one line. */
+function statementText(lines: string[], i: number): string {
+  const out: string[] = [];
+  for (let j = i; j < lines.length && j < i + 30; j++) {
+    const l = lines[j]!.replace(/--.*$/, "");
+    out.push(l);
+    if (/;\s*$/.test(l)) break;
+  }
+  return out.join(" ");
+}
+
 /** Pull DML statement targets — used by extractDataSources below. */
 function extractDmlStatements(lines: string[]): DataSourceInfo[] {
   const sources: DataSourceInfo[] = [];
+  const local = localRelations(lines.join("\n"));
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (/^\s*(--|#)/.test(line)) continue;
 
-    // SELECT ... FROM t / DELETE FROM t
-    const selectMatch = line.match(/^\s*SELECT\b[\s\S]*?\bFROM\s+(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))/i)
+    // SELECT ... FROM t / DELETE FROM t — a SELECT's FROM may sit on a later line of the statement.
+    const isSelect = /^\s*SELECT\b/i.test(line);
+    const selectText = isSelect && !/\bFROM\b/i.test(line) ? statementText(lines, i) : line;
+    const selectMatch = (isSelect ? selectText.match(/^\s*SELECT\b[\s\S]*?\bFROM\s+(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))(?![\w.]|\s*\()/i) : null)
       ?? line.match(/^\s*DELETE\s+FROM\s+(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))/i);
     if (selectMatch) {
       const target = selectMatch[1] ?? selectMatch[2] ?? selectMatch[3] ?? selectMatch[4]!;
       const verb = /^\s*DELETE/i.test(line) ? "DELETE" : "SELECT";
+      const src = isSelect ? selectText : line;
+      const entity = tableEntity(target, src.slice(selectMatch.index! + selectMatch[0].length), local);
       sources.push({
         kind: "database",
         name: verb,
         target,
+        ...(entity ? { entity } : {}),
+        access: verb === "SELECT" ? "read" : "write",
         calls: [],
         line: i + 1,
       });
@@ -347,10 +396,13 @@ function extractDmlStatements(lines: string[]): DataSourceInfo[] {
     if (writeMatch) {
       const verb = writeMatch[1]!.toUpperCase().replace(/\s+/g, " ");
       const target = writeMatch[2] ?? writeMatch[3] ?? writeMatch[4] ?? writeMatch[5]!;
+      const entity = tableEntity(target, line.slice(writeMatch.index! + writeMatch[0].length), local);
       sources.push({
         kind: "database",
         name: verb,
         target,
+        ...(entity ? { entity } : {}),
+        access: "write",
         calls: [],
         line: i + 1,
       });
