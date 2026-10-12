@@ -572,3 +572,23 @@ describe("openapi-generator wrappers", () => {
     expect(rows).toEqual([]);
   });
 });
+
+/**
+ * A generic verb is a database operation only with evidence: an ORM/driver
+ * import, a repository/model-shaped chain, or a model in scope. Chatwoot's
+ * Vuex actions, vue-test-utils wrappers and API clients were database rows.
+ */
+describe("JS ORM rows need ORM evidence", () => {
+  it("drops generic verbs on non-model receivers in a file with no ORM", async () => {
+    expect(await dbSourcesOf(`import ContactAPI from '../api/contacts';
+      export const actions = { async go() { await ContactAPI.create({}); } };`)).toHaveLength(0);
+    expect(await dbSourcesOf(`it('x', () => { const items = wrapper.findAll('li'); view.destroy(); });`)).toHaveLength(0);
+  });
+
+  it("keeps them when the file imports an ORM or a model", async () => {
+    expect((await dbSourcesOf(`import { Sequelize } from 'sequelize';
+      async function go() { await item.update({ a: 1 }); }`)).map((d) => d.name)).toContain("item.update");
+    expect((await dbSourcesOf(`import Article from '../models/article';
+      async function go() { await Article.findAll(); }`)).map((d) => d.name)).toContain("Article.findAll");
+  });
+});
