@@ -347,10 +347,13 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
 
     // EF Core / EF 6 — DbContext.Set<T>(), context.Entities.Where(), SaveChanges()
     if (EF_READ_METHODS.has(method) || EF_WRITE_METHODS.has(method)) {
-      const looksLikeEf =
-        DBCONTEXT_SUFFIX.test(root) ||
-        root === "_context" || root === "context" || root === "db" ||
-        root === "_db" || root === "dbContext" || root === "_dbContext";
+      const contextNamed = (seg: string) =>
+        DBCONTEXT_SUFFIX.test(seg) ||
+        seg === "_context" || seg === "context" || seg === "Context" || seg === "db" ||
+        seg === "_db" || seg === "dbContext" || seg === "_dbContext" || seg === "DbContext";
+      // The context may sit behind a member: `services.Context.CatalogItems…` (eShop's
+      // `[AsParameters] CatalogServices`), `this.uow.Db.Orders…`.
+      const looksLikeEf = contextNamed(root) || parts.slice(1, -2).some((seg) => contextNamed(seg.replace(/\(.*$/, "")));
       if (looksLikeEf || method === "SaveChanges" || method === "SaveChangesAsync" ||
           method === "FromSqlRaw" || method === "FromSqlInterpolated" || method === "FromSql" ||
           method === "ExecuteSqlRaw" || method === "ExecuteSqlInterpolated") {
@@ -592,9 +595,13 @@ const NON_DBSET_MEMBERS = new Set(["Database", "Model", "ChangeTracker", "Entry"
  */
 function resolveEfDbSet(fnNode: Node): string | null {
   let node: Node | null = fnNode.childForFieldName("expression") ?? null;
+  // The member to the right of the one being looked at: the DbSet when the
+  // base member is the context itself (`services.Context.CatalogItems`).
+  let right: string | null = null;
   while (node) {
     if (node.type === "invocation_expression") {
       node = node.childForFieldName("function");
+      right = null;
       continue;
     }
     if (node.type === "member_access_expression" || node.type === "member_expression") {
@@ -602,9 +609,12 @@ function resolveEfDbSet(fnNode: Node): string | null {
       const name = node.childForFieldName("name");
       if (!expr) return null;
       if (expr.type === "identifier" || expr.type === "identifier_name" || expr.type === "this_expression") {
-        // Base of the chain: `<root>.<member>`. The member is the DbSet.
+        // Base of the chain: `<root>.<member>`. The member is the DbSet — unless
+        // it is the context the root carries, and the DbSet is the next one.
+        if (right && /^(?:_?(?:db)?[Cc]ontext|\w+Context|Db)$/.test(name?.text ?? "")) return cleanEntityName(right);
         return cleanEntityName(name?.text ?? null);
       }
+      right = name?.text ?? null;
       node = expr; // descend further left
       continue;
     }
