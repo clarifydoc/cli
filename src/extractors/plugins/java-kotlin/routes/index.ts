@@ -4,6 +4,7 @@ import type { RouteExtractor } from "../../../routes/base.js";
 import { FUNCTIONAL_ROUTER_GATE_RE, extractSpringRoutes, extractSpringRoutesRegex } from "./spring.js";
 import { extractJaxrsMicronautRoutes } from "./jaxrs.js";
 import { extractKtorRoutes } from "./ktor.js";
+import { extractHaloExtensionRoutes } from "./halo.js";
 
 /**
  * Java / Kotlin route extraction — Spring (@GetMapping/@RequestMapping),
@@ -31,6 +32,9 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
     if (!isClientFile && /@(Path|Controller)\b/.test(sourceText)) {
       extractJaxrsMicronautRoutes(tree.rootNode, routes);
     }
+
+    // Halo extensions: CRUD routes generated from `@GVK` (see halo.ts).
+    extractHaloExtensionRoutes(sourceText, routes);
 
     // Ktor verbs are maximally generic (`get`), so the DSL walk only runs in
     // files that actually import io.ktor.

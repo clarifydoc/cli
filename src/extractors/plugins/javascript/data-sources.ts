@@ -400,7 +400,11 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
             const verb = optionsMethod(positional[1]);
             if (verb) callName = verb;
           }
-          const resolved = firstArg ? this.resolveUrlArg(firstArg) : null;
+          // openapi-generator's wrappers end `.then((request) => request(this.axios, this.basePath))`:
+          // the first argument is the HTTP client itself, not a URL — the request
+          // was already read where its creator builds `localVarPath`.
+          const clientArg = !!firstArg && /^(?:this\.)?(?:axios\w*|http(?:Client)?|client|instance)$/i.test(firstArg.text);
+          const resolved = firstArg && !clientArg ? this.resolveUrlArg(firstArg) : null;
           // A call-expression URL arg (a helper-built URL with no literal slash)
           // needs a STRICT HTTP signal — an exact client root (`fetch`/`axios`/…)
           // or a client member receiver (`axios.get`) — so a local data-fetcher

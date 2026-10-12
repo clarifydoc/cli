@@ -556,3 +556,14 @@ describe("JS fetch-style calls carry their verb in the options", () => {
     ]);
   });
 });
+
+describe("openapi-generator wrappers", () => {
+  it("does not read `request(this.axios, this.basePath)` as a request to the client", async () => {
+    const { parseSource } = await import("../../../parsers/parser-manager.js");
+    const { JavaScriptDataSourceExtractor } = await import("./data-sources.js");
+    const src = `class PostApi { getPost(name) { return PostApiFp(this.configuration).getPost(name).then((request) => request(this.axios, this.basePath)); } }`;
+    const tree = await parseSource(src, "typescript" as any, "post-api.ts");
+    const rows = new JavaScriptDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call");
+    expect(rows).toEqual([]);
+  });
+});

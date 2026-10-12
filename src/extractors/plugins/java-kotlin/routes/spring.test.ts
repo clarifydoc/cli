@@ -330,3 +330,47 @@ class PolicyEndpoint {
     expect(routes[2]!.calls.map((c) => c.name)).toContain("attachmentService.upload");
   });
 });
+
+describe("Halo runtime routes", () => {
+  it("prefixes a CustomEndpoint's functional routes with its group/version, Halo's default when not overridden", async () => {
+    const src = `package x;
+class PostEndpoint implements CustomEndpoint {
+  public RouterFunction<ServerResponse> endpoint() {
+    return SpringdocRouteBuilder.route().GET("/posts/{name}/content", this::fetchContent, b -> b.tag("t")).build();
+  }
+}
+class ThemeEndpoint implements CustomEndpoint {
+  public RouterFunction<ServerResponse> endpoint() {
+    return SpringdocRouteBuilder.route().GET("themes", this::list, b -> b.tag("t")).build();
+  }
+  @Override
+  public GroupVersion groupVersion() { return GroupVersion.parseAPIVersion("api.halo.run/v1alpha1"); }
+}`;
+    const tree = await parseSource(src, "java" as any, "E.java");
+    const routes: RouteInfo[] = [];
+    extractSpringRoutes(tree.rootNode, routes);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual([
+      "GET /apis/api.console.halo.run/v1alpha1/posts/{name}/content",
+      "GET /apis/api.halo.run/v1alpha1/themes",
+    ]);
+  });
+
+  it("generates CRUD routes from @GVK, resolving constants and the core group", async () => {
+    const { extractHaloExtensionRoutes } = await import("./halo.js");
+    const routes: RouteInfo[] = [];
+    extractHaloExtensionRoutes(`@GVK(group = GROUP, version = VERSION, kind = "Attachment", plural = "attachments", singular = "attachment")
+public class Attachment extends AbstractExtension {
+  public static final String GROUP = "storage.halo.run";
+  public static final String VERSION = "v1alpha1";
+}
+@GVK(group = "", version = "v1alpha1", kind = "Menu", plural = "menus", singular = "menu")
+class Menu {}`, routes);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual([
+      "GET /apis/storage.halo.run/v1alpha1/attachments", "POST /apis/storage.halo.run/v1alpha1/attachments",
+      "GET /apis/storage.halo.run/v1alpha1/attachments/{name}", "PUT /apis/storage.halo.run/v1alpha1/attachments/{name}",
+      "PATCH /apis/storage.halo.run/v1alpha1/attachments/{name}", "DELETE /apis/storage.halo.run/v1alpha1/attachments/{name}",
+      "GET /api/v1alpha1/menus", "POST /api/v1alpha1/menus", "GET /api/v1alpha1/menus/{name}", "PUT /api/v1alpha1/menus/{name}",
+      "PATCH /api/v1alpha1/menus/{name}", "DELETE /api/v1alpha1/menus/{name}",
+    ]);
+  });
+});
