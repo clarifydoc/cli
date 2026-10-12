@@ -89,6 +89,8 @@ const TOOL_LOADED: readonly Rule[] = [
   [/(?:^|\/)(?:gulpfile|gruntfile|jakefile)(?:\.babel)?\.[cm]?[jt]s$/i, "task-runner file"],
   [/(?:^|\/)\.storybook\//, "Storybook config"],
   [/\.stories\.[cm]?[jt]sx?$/, "Storybook story"],
+  [/\.story\.(?:vue|svelte|[cm]?[jt]sx?)$/, "Histoire story"],
+  [/(?:^|\/)histoire\.setup\.[cm]?[jt]s$/, "Histoire setup"],
   [/(?:^|\/)__mocks__\//, "test mock (loaded by the runner)"],
   [/(?:^|\/)(?:setupTests|setupProxy|reportWebVitals)\.[jt]sx?$/, "test/dev-server setup"],
   [/(?:^|\/)(?:jest|vitest|test|global)[.-]?(?:setup|teardown)\.[cm]?[jt]s$/i, "test setup"],
@@ -378,6 +380,26 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
       if (!registry || !/unplugin|typeof import\(/.test(registry)) continue;
       for (const m of registry.matchAll(/typeof import\(\s*["']([^"']+)["']\s*\)/g)) {
         for (const file of resolve(under(root, name), m[1]!) ?? []) manifestEntries.push({ file, reason: `${name} (auto-registered)` });
+      }
+    }
+    // @nuxtjs/i18n loads each locale's `file:` from `langDir` by name, lazily: no import names them.
+    for (const name of ["nuxt.config.ts", "nuxt.config.js", "nuxt.config.mjs"]) {
+      const config = await readText(join(ctx.projectRoot, root, name));
+      if (!config || !/\bi18n\b/.test(config)) continue;
+      const langDir = /\blangDir\s*:\s*["'`]([^"'`]+)["'`]/.exec(config)?.[1] ?? "locales";
+      // The directory's own trailing path: `./../app/lang/locales` → `app/lang/locales`.
+      const tail = langDir.split("/").filter((seg) => seg && seg !== "." && seg !== "..").join("/");
+      const names = new Set<string>();
+      for (const m of config.matchAll(/\bfiles?\s*:\s*(\[[^\]]*\]|["'`][^"'`]+["'`])/g)) {
+        for (const q of m[1]!.matchAll(/["'`]([^"'`]+)["'`]/g)) names.add(q[1]!);
+      }
+      const prefix = root ? `${root}/` : "";
+      for (const f of files) {
+        if (!f.startsWith(prefix)) continue;
+        const slash = f.lastIndexOf("/");
+        if (names.has(f.slice(slash + 1)) && (tail === "" || f.slice(0, slash).endsWith(tail))) {
+          manifestEntries.push({ file: f, reason: `${name} i18n locale` });
+        }
       }
     }
     for (const name of ["serverless.yml", "serverless.yaml"]) {

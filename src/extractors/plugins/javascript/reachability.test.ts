@@ -157,6 +157,32 @@ describe("JS reachability — entry points", () => {
   });
 });
 
+describe("JS reachability — tool-loaded files named by convention or config", () => {
+  it("keeps Histoire stories and their setup alive without anchoring them", async () => {
+    const m = await model([]);
+    const none = new Set<string>();
+    expect(m.passiveReason?.(analysis("src/Button.story.vue"), "src/Button.story.vue", none)).toBe("Histoire story");
+    expect(m.passiveReason?.(analysis("app/javascript/histoire.setup.ts"), "app/javascript/histoire.setup.ts", none)).toBe("Histoire setup");
+  });
+
+  it("anchors the locale files @nuxtjs/i18n loads from langDir (mealie)", async () => {
+    const m = await model(
+      ["frontend/app/lang/locales/en-US.ts", "frontend/app/lang/locales/da-DK.ts", "frontend/app/lang/locales/unused.ts", "frontend/app/other/en-US.ts"],
+      {
+        "frontend/nuxt.config.ts": `export default defineNuxtConfig({ i18n: {
+          locales: [{ code: "en-US", file: "en-US.ts" }, { code: "da-DK", file: "da-DK.ts" }],
+          langDir: "./../app/lang/locales",
+        } });`,
+      },
+      ["frontend"],
+    );
+    expect(m.manifestEntries).toEqual([
+      { file: "frontend/app/lang/locales/da-DK.ts", reason: "nuxt.config.ts i18n locale" },
+      { file: "frontend/app/lang/locales/en-US.ts", reason: "nuxt.config.ts i18n locale" },
+    ]);
+  });
+});
+
 describe("globToRegExp", () => {
   it("spans directories only with **, alternates braces", () => {
     expect(globToRegExp("src/*.ts").test("src/a.ts")).toBe(true);
