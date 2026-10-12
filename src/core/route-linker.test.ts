@@ -370,6 +370,16 @@ describe("linkApiCallsToRoutes — API version", () => {
     expect(multi).toMatchObject({ confidence: "AMBIGUOUS", matchedVia: "version-mismatch" });
   });
 
+  it("prefers the called version's parameter route over the other version's literal twin", () => {
+    const v1 = route("pkg/routes/routes.go", "GET", "/api/v1/migration/todoist/auth", "TodoistAuth");
+    const v2 = route("pkg/routes/api/v2/migration_oauth.go", "GET", "/api/v2/migration/{name}/auth", "migrationAuth");
+    const [link] = linkApiCallsToRoutes([call("/api/v2/migration/todoist/auth")], [v1, v2]);
+    expect(link).toMatchObject({ target: "pkg/routes/api/v2/migration_oauth.go", matchedVia: "exact" });
+    // Without a same-version parameter route the literal twin stays the flagged guess.
+    const [only] = linkApiCallsToRoutes([call("/api/v2/migration/todoist/auth")], [v1]);
+    expect(only).toMatchObject({ target: "pkg/routes/routes.go", matchedVia: "version-mismatch" });
+  });
+
   it("an unversioned route is unknown, not wrong: it wins only when no versioned twin serves the call", () => {
     const literal = route("Legacy/C.cs", "GET", "/api/v3/institution/{id}/leagues/myLeagues", "Old"); // literal version in the template, no [ApiVersion]
     const v5 = versioned("V5/C.cs", ["5"]);

@@ -6,14 +6,28 @@ import { jsBaseRefOf } from "./service-config.js";
  * HTTP client instances a file creates with a base URL —
  *   const apiClient = axios.create({ baseURL: import.meta.env.VITE_API_URL || "/api" })
  *   const api = ky.create({ prefixUrl: "https://host/v1" })   (also `.extend`)
- * → `{ apiClient: "/api", api: "/v1" }` (`FileAnalysis.httpClientBases`).
+ *   export const client = createClient(createConfig({ baseUrl: '/api/v2' }))   (hey-api, openapi-fetch)
+ * → `{ apiClient: "/api", api: "/v1", client: "/api/v2" }` (`FileAnalysis.httpClientBases`).
  *
  * Only what the source states: a string literal, or the literal fallback of
  * `env || "…"` / `env ?? "…"` (the dev default the app runs with when the
  * variable is unset). A base built any other way is unknown and recorded
  * nothing — guessing it would move every call through the client.
  */
-const CLIENT_FACTORY_RE = /\b(?:axios|ky|got)\.(?:create|extend)\s*\(/;
+const CLIENT_FACTORY_RE = /\b(?:(?:axios|ky|got)\.(?:create|extend)|createClient)\s*\(/;
+const BASE_KEYS = new Set(["baseURL", "baseUrl", "prefixUrl", "prefixURL"]);
+
+/** The config object a client factory call is given: `axios.create({…})`, `createClient(createConfig({…}))`. */
+function clientConfig(value: Node): Node | null {
+  const fn = value.childForFieldName("function")?.text.replace(/\s+/g, "") ?? "";
+  if (!/^(?:(?:axios|ky|got)\.(?:create|extend)|createClient)$/.test(fn)) return null;
+  let config = value.childForFieldName("arguments")?.namedChildren[0];
+  // hey-api: `createClient(createConfig<ClientOptions>({ baseUrl }))`.
+  if (config?.type === "call_expression" && /^createConfig\b/.test(config.childForFieldName("function")?.text ?? "")) {
+    config = config.childForFieldName("arguments")?.namedChildren[0];
+  }
+  return config?.type === "object" ? config : null;
+}
 
 export function extractHttpClientBases(tree: Tree, sourceText: string): Record<string, string> {
   if (!CLIENT_FACTORY_RE.test(sourceText)) return {};
@@ -22,14 +36,12 @@ export function extractHttpClientBases(tree: Tree, sourceText: string): Record<s
     const name = decl.childForFieldName("name");
     const value = decl.childForFieldName("value");
     if (name?.type !== "identifier" || value?.type !== "call_expression") continue;
-    const fn = value.childForFieldName("function")?.text.replace(/\s+/g, "") ?? "";
-    if (!/^(?:axios|ky|got)\.(?:create|extend)$/.test(fn)) continue;
-    const config = value.childForFieldName("arguments")?.namedChildren[0];
-    if (config?.type !== "object") continue;
+    const config = clientConfig(value);
+    if (!config) continue;
     for (const pair of config.namedChildren) {
       if (pair.type !== "pair") continue;
       const key = pair.childForFieldName("key")?.text.replace(/^['"]|['"]$/g, "");
-      if (key !== "baseURL" && key !== "prefixUrl" && key !== "prefixURL") continue;
+      if (!key || !BASE_KEYS.has(key)) continue;
       const base = basePath(pair.childForFieldName("value"));
       if (base !== null) out[name.text] = base;
     }
@@ -51,14 +63,12 @@ export function extractHttpClientRegistrations(tree: Tree, sourceText: string): 
     const name = decl.childForFieldName("name");
     const value = decl.childForFieldName("value");
     if (name?.type !== "identifier" || value?.type !== "call_expression") continue;
-    const fn = value.childForFieldName("function")?.text.replace(/\s+/g, "") ?? "";
-    if (!/^(?:axios|ky|got)\.(?:create|extend)$/.test(fn)) continue;
-    const config = value.childForFieldName("arguments")?.namedChildren[0];
-    if (config?.type !== "object") continue;
+    const config = clientConfig(value);
+    if (!config) continue;
     for (const pair of config.namedChildren) {
       if (pair.type !== "pair") continue;
       const key = pair.childForFieldName("key")?.text.replace(/^['"]|['"]$/g, "");
-      if (key !== "baseURL" && key !== "prefixUrl" && key !== "prefixURL") continue;
+      if (!key || !BASE_KEYS.has(key)) continue;
       const base = jsBaseRefOf(pair.childForFieldName("value")?.text ?? "");
       if (base) out.push({ client: name.text, scope: "file", base, line: pair.startPosition.row + 1 });
     }

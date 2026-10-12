@@ -19,6 +19,14 @@ const root = axios.create({ baseURL: \`/\` });
 `)).toEqual({ apiClient: "/api", v1: "/v1", root: "" });
   });
 
+  it("reads a generated SDK client's base (hey-api `createClient(createConfig({ baseUrl }))`, openapi-fetch)", async () => {
+    expect(await bases(`
+export const client: Client = createClient(createConfig<ClientOptions2>({ baseUrl: '/api/v2', throwOnError: true }));
+const fetcher = createClient<paths>({ baseUrl: "https://api.example.com/v1" });
+const redis = createClient({ url: "redis://localhost" });
+`)).toEqual({ client: "/api/v2", fetcher: "/v1" });
+  });
+
   it("records nothing for a base it cannot see", async () => {
     expect(await bases(`
 const a = axios.create({ baseURL: process.env.API });

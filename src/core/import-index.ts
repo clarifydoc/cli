@@ -435,6 +435,15 @@ export function resolveImportSource(
     const candidate = joined + ext;
     if (knownFiles.has(candidate)) return candidate;
   }
+  // TypeScript's ESM convention: `import { x } from "./client.gen.js"` names
+  // the emitted file, so the source beside it is `client.gen.ts`.
+  const emitted = /\.(m|c)?js(x)?$/.exec(joined);
+  if (emitted) {
+    const stem = joined.slice(0, emitted.index);
+    for (const ext of emitted[2] ? [".tsx"] : [`.${emitted[1] ?? ""}ts`, ".tsx"]) {
+      if (knownFiles.has(stem + ext)) return stem + ext;
+    }
+  }
   // Any other extension of the importer's own family: CoffeeScript's
   // `require './routes/orders'` names `orders.coffee`. A family whose
   // partials carry a prefix (Sass `_buttons.scss`) is tried with it too.

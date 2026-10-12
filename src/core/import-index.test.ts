@@ -147,3 +147,14 @@ describe("resolveImportSource — Python relative imports", () => {
     expect(resolveImportSource("pkg/cli.py", ".tools", known, "build")).toBe("pkg/tools/build.py");
   });
 });
+
+describe("resolveImportSource — TypeScript ESM specifiers", () => {
+  it("resolves `./x.js` to the `.ts` source beside it (and `.mjs` to `.mts`, `.jsx` to `.tsx`)", () => {
+    const known = new Set(["src/client/client.gen.ts", "src/lib/util.mts", "src/ui/Button.tsx", "src/plain.js"]);
+    expect(resolveImportSource("src/client/sdk.gen.ts", "./client.gen.js", known)).toBe("src/client/client.gen.ts");
+    expect(resolveImportSource("src/index.ts", "./lib/util.mjs", known)).toBe("src/lib/util.mts");
+    expect(resolveImportSource("src/index.ts", "./ui/Button.jsx", known)).toBe("src/ui/Button.tsx");
+    // A real `.js` file still wins.
+    expect(resolveImportSource("src/index.ts", "./plain.js", known)).toBe("src/plain.js");
+  });
+});

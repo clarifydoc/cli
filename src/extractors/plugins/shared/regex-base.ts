@@ -1,4 +1,4 @@
-import type { FunctionInfo, ClassInfo, CallInfo, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo, DiBinding, HttpClientRegistration } from "../../../types/analysis.js";
+import type { FunctionInfo, ClassInfo, CallInfo, RouteFact, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo, DiBinding, HttpClientRegistration } from "../../../types/analysis.js";
 
 import { holdNoiseCall } from "../../shared/call-graph.js";
 
@@ -156,8 +156,10 @@ export interface RegexLangSpec {
   extractRequestAccess?: (bodyLines: string[], fn: { name: string; params: ParamInfo[] }) => RouteParamInfo[];
   /** Extract routes. `filePath` is the project-relative path (needed by
    *  convention-routed/static formats — e.g. an HTML page's URL is its path).
-   *  `fns` are the file's top-level functions, already extracted. */
-  extractRoutes?: (lines: string[], classes: ClassInfo[], filePath?: string, fns?: FunctionInfo[]) => RouteInfo[];
+   *  `fns` are the file's top-level functions, already extracted. `facts`
+   *  collects what a project-level route resolver needs beyond the rows
+   *  (`FileAnalysis.routeFacts`), as on the tree-sitter path. */
+  extractRoutes?: (lines: string[], classes: ClassInfo[], filePath?: string, fns?: FunctionInfo[], facts?: RouteFact[]) => RouteInfo[];
   /** Override class extraction entirely (for languages like Perl where packages are file-scoped). */
   extractClasses?: (lines: string[], fns: FunctionInfo[]) => ClassInfo[];
   /** Extract UI screens/forms — analog of the Delphi DFM parser for languages with designer code. */
