@@ -18,6 +18,9 @@ export const rustManifest: LanguagePluginManifest = {
   extensions: [".rs"],
   // One type spans files here: `impl` blocks for a type can live in other files of its module.
   typesSpanFiles: true,
+  // `let m = upgrade_manager(x)?;` holds the `Ok` value: `?`/`.unwrap()` unwrap these
+  // as an await unwraps a task (`*Result` = a project alias such as `FlowyResult<T>`).
+  asyncResultTypes: ["Result", "Option", "*Result"],
   externalModulePrefixes: ["std::", "core::", "alloc::", "serde", "tokio", "actix", "rocket", "hyper", "reqwest", "diesel", "sqlx"],
   frameworkImportHints: { diesel: "diesel", sea_orm: "sea-orm", sqlx: "rust-sqlx" },
   frameworkRules: rustFrameworkRules,

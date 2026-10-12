@@ -71,6 +71,8 @@ export function extractWithRegex(
   if (pathRefs && pathRefs.length > 0) analysis.pathReferences = pathRefs;
   const diBindings = spec.extractDiBindings?.(lines, filePath);
   if (diBindings && diBindings.length > 0) analysis.diBindings = diBindings;
+  const messageHandlers = spec.extractMessageHandlers?.(lines);
+  if (messageHandlers && messageHandlers.length > 0) analysis.messageHandlers = messageHandlers;
   const clientRegistrations = spec.extractHttpClientRegistrations?.(lines, filePath);
   if (clientRegistrations && clientRegistrations.length > 0) analysis.httpClientRegistrations = clientRegistrations;
   if (spec.extractStringConstants) {

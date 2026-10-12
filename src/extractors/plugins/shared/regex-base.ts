@@ -203,6 +203,8 @@ export interface RegexLangSpec {
   extractDiBindings?: (lines: string[], filePath: string) => DiBinding[];
   /** HTTP clients and client proxies the file configures → `FileAnalysis.httpClientRegistrations`. */
   extractHttpClientRegistrations?: (lines: string[], filePath: string) => HttpClientRegistration[];
+  /** Handlers registered under a message name → `FileAnalysis.messageHandlers`. */
+  extractMessageHandlers?: (lines: string[]) => Array<{ message: string; handler: string; line: number }>;
   /**
    * Locals whose type the body states (`let r: Repo = …`, `r := &PgRepo{}`,
    * `final repo = getIt<Repo>()`) → `FunctionInfo.localTypes`. Called per

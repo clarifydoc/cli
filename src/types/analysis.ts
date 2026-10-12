@@ -427,6 +427,14 @@ export interface FileAnalysis {
    */
   storeModules?: Array<{ name: string; ref: string; line: number }>;
   /**
+   * Handlers this file registers under a message name — a command bus, an FFI
+   * event (`AFPlugin::new().event(FolderEvent::CreateView, create_view_handler)`),
+   * an IPC channel. `message` is written as the registration names it
+   * (`FolderEvent::CreateView`); `handler` is the function, as written. A
+   * dispatch resolver joins senders of the message to the handler.
+   */
+  messageHandlers?: Array<{ message: string; handler: string; line: number }>;
+  /**
    * HTTP clients configured with a base URL in this file, the host included
    * (`httpClientBases` keeps only the path): typed and named .NET clients,
    * `axios.create({ baseURL: process.env.X })`.

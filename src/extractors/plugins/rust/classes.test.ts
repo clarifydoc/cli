@@ -182,14 +182,25 @@ describe("Rust typed locals", () => {
     ]);
   });
 
-  it("does not type what is not plainly a construction", () => {
+  it("does not type what is not plainly a construction, but keeps a call initializer for the linker", () => {
     expect(locals(`
     let a = make_repo();
     let b = PgRepo::builder().build();
     let c = PgRepo::new().with_pool(p);
     let d = PgRepo { dsn }.into_shared();
     let e;
-`)).toEqual([]);
+    let m = upgrade_ai_manager(ai_manager)?;
+    let v = repo.find(id).await?;
+    let ai_manager = upgrade_ai_manager(ai_manager)?;
+`, [{ name: "ai_manager", type: "AFPluginState<Weak<AIManager>>", defaultValue: null }])).toEqual([
+      // Typed later through what the callee declares it returns (`?` unwraps a Result).
+      { name: "a", type: "", from: "make_repo()" },
+      // A chain through an intermediate call (\`builder().build()\`) is not followed.
+      { name: "m", type: "", from: "upgrade_ai_manager(ai_manager)", awaited: true },
+      { name: "v", type: "", from: "repo.find(id)", awaited: true },
+      // Shadowing the parameter it upgrades.
+      { name: "ai_manager", type: "", from: "upgrade_ai_manager(ai_manager)", awaited: true },
+    ]);
   });
 
   it("drops a name bound again with another or an unknown type", () => {

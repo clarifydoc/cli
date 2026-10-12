@@ -743,7 +743,9 @@ export interface LanguagePluginManifest {
    * local initialized by `await repo.FindAsync(id)` holds when `FindAsync`
    * declares `Task<User>` (C# `Task`/`ValueTask`, TS `Promise`, Dart
    * `Future`). Unset where an async function declares the awaited type
-   * itself (Python, Rust, Kotlin `suspend`).
+   * itself (Python, Kotlin `suspend`). Rust lists its `Result`/`Option` here:
+   * `?` and `.unwrap()` unwrap them the way an `await` unwraps a task. An
+   * entry `*Result` matches by suffix (a project's `type FlowyResult<T>`).
    */
   asyncResultTypes?: readonly string[];
   /**

@@ -2640,8 +2640,9 @@ function awaitedType(written: string, asyncTypes: readonly string[] | undefined)
   if (!asyncTypes?.length) return written;
   const open = written.indexOf("<");
   if (open <= 0 || !written.endsWith(">")) return written;
-  const name = written.slice(0, open).trim().split(".").pop() ?? "";
-  if (!asyncTypes.includes(name)) return written;
+  const name = written.slice(0, open).trim().split(/\.|::/).pop() ?? "";
+  // `*Result` names a family by suffix: Rust's `io::Result`, `anyhow::Result`, `FlowyResult`.
+  if (!asyncTypes.some((t) => (t.startsWith("*") ? name.endsWith(t.slice(1)) : t === name))) return written;
   const body = written.slice(open + 1, -1);
   let depth = 0;
   for (let i = 0; i < body.length; i++) {
