@@ -177,7 +177,7 @@ const PROVIDER_WIDGET_RE = /\b(Provider|ChangeNotifierProvider|ListenableProvide
 
 /** Riverpod providers whose `ref.read(p)` / `ref.watch(p)` is the created object itself. */
 const RIVERPOD_DECL_RE =
-  /^\s*(?:final|const|var)\s+([A-Za-z_$]\w*)\s*=\s*(Provider|ChangeNotifierProvider)((?:\s*\.\s*(?:autoDispose|family))*)\s*(?=[<(])/;
+  /^\s*(?:final|const|var)\s+([A-Za-z_$]\w*)\s*=\s*(Provider|ChangeNotifierProvider|StateNotifierProvider|NotifierProvider|AsyncNotifierProvider)((?:\s*\.\s*(?:autoDispose|family))*)\s*(?=[<(])/;
 
 /**
  * A call `<method><TypeArgs>(args)` at `at` (the method name's index): its
@@ -621,8 +621,10 @@ export const dartDiCallPatterns: CallPattern[] = [
     buildName: (m) => ({ name: `Provider.of<${strip(m[1]!)}>().${m[2]}`, leafName: m[2]!, receiverType: m[1]! }),
   },
   {
-    pattern: /\b([A-Za-z_$][\w$]*)\s*\.\s*(read|watch)\s*\(\s*([A-Za-z_$]\w*)\s*\)\s*[!?]?\s*\.\s*([A-Za-z_$]\w*)\s*\(/,
-    buildName: (m) => ({ name: `${m[1]}.${m[2]}(${m[3]}).${m[4]}`, leafName: m[4]!, receiverQualifier: m[3]! }),
+    // `ref.read(repoProvider).save()`, and a notifier's method through `ref.read(xProvider.notifier).start()`:
+    // the provider is the token either way (its binding is the object its factory builds).
+    pattern: /\b([A-Za-z_$][\w$]*)\s*\.\s*(read|watch)\s*\(\s*([A-Za-z_$]\w*)(\s*\.\s*notifier)?\s*\)\s*[!?]?\s*\.\s*([A-Za-z_$]\w*)\s*\(/,
+    buildName: (m) => ({ name: `${m[1]}.${m[2]}(${m[3]}${m[4] ? ".notifier" : ""}).${m[5]}`, leafName: m[5]!, receiverQualifier: m[3]! }),
   },
   {
     // A plain generic call. The type list admits only type characters, so a
