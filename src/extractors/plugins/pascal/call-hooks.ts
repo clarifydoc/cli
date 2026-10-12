@@ -6,6 +6,15 @@ import { pascalReceiverTypeOf } from "./di.js";
  *  never interesting call edges. */
 const PASCAL_STATEMENT_NOISE = new Set(["exit", "break", "continue", "halt", "abort"]);
 
+/**
+ * An argument that names a dataset: `X.DataSet`, or a component named the way
+ * Delphi names them (`qryPupils`, `dsAdresse`, `srcElever`, `IBDataset`,
+ * `cdsTemp`, `PersonQuery`). Only calls passing one keep their arguments — a
+ * routine called hundreds of times with constants (`LlDefineVariableExt('X', v,
+ * LL_TEXT)`) must stay one call.
+ */
+const DATASET_ARG = /^[A-Za-z_]\w*\.DataSet$|^(?:qry|query|ds|dts|src|cds|mem|tbl|table|sp|ib|fib|fd|ado|rx|zq|uni|sql)[A-Z_0-9]\w*$|^\w*(?:Query|Qry|DataSet|Dataset|Table|Tbl)$/;
+
 export const pascalCallHooks: CallExtractionHooks = {
   // Pascal calls procedures WITHOUT parentheses (`LoadTotals;`,
   // `qrySales.Open;`) — those parse as a bare identifier/exprDot directly
@@ -46,6 +55,18 @@ export const pascalCallHooks: CallExtractionHooks = {
         return null;
       },
     });
+  },
+
+  // A call passing a component by name (`Fill(qryPupils)`, `Print(srcPupils.DataSet)`)
+  // keeps its arguments, so the project pass can follow the dataset into the
+  // routine's parameter (dfm-entities.ts). Other calls keep none.
+  argsOf(node) {
+    if (node.type !== "exprCall") return null;
+    const list = node.children.find((c) => c.type === "exprArgs");
+    if (!list) return null;
+    const args = list.namedChildren.filter((c) => c && c.type !== "comment").map((c) => c!.text.replace(/\s+/g, ""));
+    if (args.length === 0 || args.length > 8) return null;
+    return args.some((a) => DATASET_ARG.test(a)) ? args : null;
   },
 
   // A container lookup chained into a call names its receiver's type:

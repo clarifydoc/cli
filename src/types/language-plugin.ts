@@ -679,6 +679,12 @@ export interface CallExtractionHooks {
    * Sets `CallInfo.key`.
    */
   keyOf?(node: Node): string | null;
+  /**
+   * The argument expressions a call passes, as written, or null. Called for every
+   * call node: bail out cheaply, and report only the calls a project pass needs
+   * (the output keeps them). Sets `CallInfo.args`.
+   */
+  argsOf?(node: Node): string[] | null;
 }
 
 /**

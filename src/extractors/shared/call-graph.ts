@@ -152,6 +152,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   const callTypes = hooks.callNodeTypes;
   const receiverTypeOf = hooks.receiverTypeOf;
   const keyOf = hooks.keyOf;
+  const argsOf = hooks.argsOf;
   const nested = NESTED_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const anonymous = ANONYMOUS_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
 
@@ -166,6 +167,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     name: string; line: number; column: number; isReference: boolean;
     receiver?: { type: string; qualifier?: string } | null;
     key?: string | null;
+    args?: string[] | null;
   }> = [];
   const boundHere = new Set<string>();
 
@@ -175,8 +177,9 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     isReference: boolean,
     receiver?: { type: string; qualifier?: string } | null,
     key?: string | null,
+    args?: string[] | null,
   ) => {
-    candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference, receiver, key });
+    candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference, receiver, key, args });
   };
   const addResult = (name: string, node: Node) => {
     if (name) push(name, node, false);
@@ -199,7 +202,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // Standard call expressions
     if (callTypes.has(node.type)) {
       const name = resolve(node);
-      if (name) push(name, node, false, receiverTypeOf?.(node), keyOf?.(node));
+      if (name) push(name, node, false, receiverTypeOf?.(node), keyOf?.(node), argsOf?.(node));
 
       // Detect callback arguments: fn(callback) — identifiers passed as args
       if (CALLBACK_ARG_NODE_TYPES.has(node.type)) {
@@ -232,9 +235,11 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   for (const c of candidates) {
     if (c.isReference && boundHere.has(c.name)) continue;
     // A keyed dispatch is one call per key: `dispatch('a/x')` and `dispatch('b/y')` reach different handlers.
-    const seenKey = c.key ? `${c.name}\0${c.key}` : c.name;
+    // So is a call reported with its arguments: `Fill(qryA)` and `Fill(qryB)` pass different datasets.
+    const seenKey = c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})` : c.name;
     if (seen.has(seenKey)) continue;
     const call: CallInfo = { name: c.name, kind: "internal", target: null, line: c.line, column: c.column };
+    if (c.args) call.args = c.args;
     if (c.key) {
       call.key = c.key;
       seen.add(seenKey);
@@ -251,7 +256,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
       if (!c.isReference && c.name.includes(".")) held.push({ index: results.length, call });
       continue;
     }
-    seen.add(c.name);
+    seen.add(seenKey);
     results.push(call);
   }
   if (held.length > 0) HELD_NOISE_CALLS.set(results, held);

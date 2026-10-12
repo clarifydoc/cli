@@ -609,6 +609,13 @@ export interface CallInfo {
    * `calls.keyOf` hook; calls of one name with different keys stay separate.
    */
   key?: string;
+  /**
+   * The call's arguments as written, when the plugin's `calls.argsOf` hook reports
+   * them — Delphi does, for a call that passes a component by name
+   * (`Fill(qryPupils)`), so a project pass can follow the dataset into the
+   * routine's parameter. Absent everywhere else.
+   */
+  args?: string[];
 }
 
 export interface FunctionInfo {
