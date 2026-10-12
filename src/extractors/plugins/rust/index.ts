@@ -5,6 +5,7 @@ import { extractRustRoutes } from "./routes.js";
 import { extractRustDataSources } from "./data-sources.js";
 import { extractRustModuleRefs } from "./reachability.js";
 import { extractRustClasses } from "./classes.js";
+import { extractEventRegistrations } from "./event-dispatch.js";
 import { extractRustLocalTypes } from "./locals.js";
 
 function parseRustReturnType(line: string): string | null {
@@ -114,5 +115,6 @@ export const rustSpec: RegexLangSpec = {
   ],
 
   extractRoutes: (lines) => extractRustRoutes(lines),
+  extractMessageHandlers: (lines) => extractEventRegistrations(lines),
   extractDataSources: (lines) => extractRustDataSources(lines),
 };

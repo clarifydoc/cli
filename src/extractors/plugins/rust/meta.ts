@@ -7,6 +7,7 @@ import { rustManifest } from "./manifest.js";
 import { RustEntityExtractor } from "./entities.js";
 import { rustRequestSchema } from "./request-schema.js";
 import { rustReachability } from "./reachability.js";
+import { AfDispatchResolver } from "./event-dispatch.js";
 
 const RUST_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -27,6 +28,9 @@ export const rustMeta: LanguagePluginMeta = {
   regexControlFlow: extendRegexControlFlow([], { quotes: ['"'] }),
   ...rustManifest,
   regexSpec: rustSpec,
+  // AppFlowy lib-dispatch: a Flutter call of a generated event class runs the Rust handler (event-dispatch.ts).
+  dispatchResolvers: [new AfDispatchResolver()],
+  dispatchLanguages: ["dart"],
   builtinTypes: RUST_BUILTINS,
   // Auto-deref: `self.repo.find()` on a `repo: Arc<dyn UserRepo>` calls the
   // trait's `find`. `RefCell`/`Mutex` are not listed — their calls go through

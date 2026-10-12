@@ -31,6 +31,8 @@ const DEREF_WRAPPERS = /^(?:std::(?:sync|rc)::|std::boxed::)?(?:Arc|Rc|Box)::new
 export function extractRustLocalTypes(bodyLines: string[], params: readonly ParamInfo[]): LocalTypes {
   const seen = new Map<string, Set<string>>();
   const unknown = new Set<string>();
+  // `let m = upgrade_manager(x)?;` — typed later through the callee's declared return type.
+  const fromCalls = new Map<string, Map<string, { from: string; awaited: boolean }>>();
   const record = (name: string, type: string | null): void => {
     if (name === "_" || name === "self") return;
     if (type === null) { unknown.add(name); return; }
@@ -45,7 +47,12 @@ export function extractRustLocalTypes(bodyLines: string[], params: readonly Para
     for (const statement of line.split(";")) {
       const m = LET_RE.exec(statement);
       if (m && !/\b(?:if|while)\s+let\b/.test(statement.slice(0, m.index + 3))) {
-        record(m[1]!, m[2] ? m[2].trim() : m[3] !== undefined ? initializerType(m[3]) : null);
+        const stated = m[2] ? m[2].trim() : m[3] !== undefined ? initializerType(m[3]) : null;
+        const call = !stated && m[3] !== undefined ? initializerCall(m[3]) : null;
+        if (call) {
+          const calls = fromCalls.get(m[1]!) ?? fromCalls.set(m[1]!, new Map()).get(m[1]!)!;
+          calls.set(`${call.awaited ? "?" : ""}${call.from}`, call);
+        } else record(m[1]!, stated);
       }
       for (const re of PATTERN_BINDINGS) {
         re.lastIndex = 0;
@@ -62,8 +69,16 @@ export function extractRustLocalTypes(bodyLines: string[], params: readonly Para
   }
 
   const out: LocalTypes = [];
+  for (const [name, calls] of fromCalls) {
+    // A stated type wins; a binding the walk could not type hides them all. A
+    // parameter it shadows does not (`let m = upgrade(m)?;` is how Rust rebinds
+    // a value to use it: the calls on the name come after).
+    if (seen.has(name) || unknown.has(name)) continue;
+    for (const c of calls.values()) out.push(c.awaited ? { name, type: "", from: c.from, awaited: true } : { name, type: "", from: c.from });
+  }
   for (const [name, types] of seen) {
-    if (unknown.has(name) || types.size !== 1) continue;
+    // Bound again by a call: which binding a later call sees cannot be told.
+    if (unknown.has(name) || types.size !== 1 || fromCalls.has(name)) continue;
     const type = [...types][0]!;
     const param = params.find((p) => p.name === name);
     if (param && param.type !== type) continue;
@@ -96,4 +111,23 @@ function closesAtEndOrNever(text: string, open: string, close: string): boolean 
     else if (text[i] === close && --depth === 0) return text.slice(i + 1).trim() === "";
   }
   return true;
+}
+
+/**
+ * An initializer that is a call, for `localTypes[].from`: `upgrade_manager(x)?`,
+ * `repo.find(id).await?`, `Store::open(&path).unwrap()`. The call is spelled
+ * with its arguments (core reads it as a receiver chain); `awaited` when `?`,
+ * `.unwrap()` or `.expect(…)` takes the `Ok`/`Some` value out.
+ */
+function initializerCall(rhs: string): { from: string; awaited: boolean } | null {
+  let text = rhs.trim().replace(/\s*;?\s*$/, "");
+  const unwrap = /(?:\?|\.unwrap\(\)|\.expect\([^()]*\))$/.exec(text);
+  if (unwrap) text = text.slice(0, unwrap.index).trim();
+  text = text.replace(/\.await$/, "").trim();
+  const m = /^((?:[A-Za-z_]\w*(?:::<[^>]*>)?(?:::|\.))*[A-Za-z_]\w*)\s*\((.*)\)$/s.exec(text);
+  if (!m || !closesAtEndOrNever(m[2]! + ")", "(", ")")) return null;
+  // A constructor is `initializerType`'s; a macro or a closure call is no initializer to type.
+  if (/^[A-Z]/.test(m[1]!) && !m[1]!.includes("::") && !m[1]!.includes(".")) return null;
+  // String literals arrive blanked (`"   "`): written as empty, not as runs of spaces.
+  return { from: `${m[1]}(${m[2]!.replace(/"\s*"/g, '""')})`, awaited: unwrap !== null };
 }
