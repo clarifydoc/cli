@@ -56,6 +56,7 @@ import { blazorManifest } from "./plugins/blazor/manifest.js";
 import { htmlManifest } from "./plugins/html/manifest.js";
 import { erbManifest } from "./plugins/erb/manifest.js";
 import { heexManifest } from "./plugins/heex/manifest.js";
+import { handlebarsManifest, liquidManifest, razorManifest, velocityManifest } from "./plugins/templates/manifest.js";
 import { qmlManifest } from "./plugins/qml/manifest.js";
 import { qtuiManifest } from "./plugins/qtui/manifest.js";
 import { xamlManifest } from "./plugins/xaml/manifest.js";
@@ -98,7 +99,7 @@ const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
   phpManifest,
   goManifest, rustManifest, rubyManifest, swiftManifest, luaManifest, scalaManifest, perlManifest,
   vbManifest, sqlManifest, cManifest, cppManifest, prismaManifest, dartManifest, elixirManifest, erlangManifest, objcManifest,
-  haskellManifest, clojureManifest, blazorManifest, htmlManifest, erbManifest, heexManifest, qmlManifest, qtuiManifest, xamlManifest,
+  haskellManifest, clojureManifest, blazorManifest, htmlManifest, erbManifest, heexManifest, handlebarsManifest, liquidManifest, velocityManifest, razorManifest, qmlManifest, qtuiManifest, xamlManifest,
   jspManifest, springxmlManifest, jsightManifest,
   openapiManifest, graphqlManifest, wsdlManifest,
   groovyManifest,
@@ -180,6 +181,7 @@ const LOADERS: readonly PluginLoader[] = [
   { languages: ["html"], load: () => import("./plugins/html/meta.js").then((m) => [m.htmlMeta]) },
   { languages: ["erb"], load: () => import("./plugins/erb/meta.js").then((m) => [m.erbMeta]) },
   { languages: ["heex"], load: () => import("./plugins/heex/meta.js").then((m) => [m.heexMeta]) },
+  { languages: ["handlebars", "liquid", "velocity", "razor"], load: () => import("./plugins/templates/meta.js").then((m) => [m.handlebarsMeta, m.liquidMeta, m.velocityMeta, m.razorMeta]) },
   { languages: ["qml"], load: () => import("./plugins/qml/meta.js").then((m) => [m.qmlMeta]) },
   { languages: ["qtui"], load: () => import("./plugins/qtui/meta.js").then((m) => [m.qtuiMeta]) },
   { languages: ["xaml"], load: () => import("./plugins/xaml/meta.js").then((m) => [m.xamlMeta]) },
