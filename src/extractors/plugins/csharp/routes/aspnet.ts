@@ -3,6 +3,7 @@ import type { RouteFact, RouteInfo, RouteParamBinding, RouteParamInfo } from "..
 import { findChildByType } from "../../../shared/node-helpers.js";
 import { buildAuth, splitList, type GuardAttr } from "../../../shared/route-metadata.js";
 import type { RouteExtractor } from "../../../routes/base.js";
+import { extractMinimalApiRoutes, MINIMAL_API_GATE } from "./minimal-api.js";
 import { attributeDefFact, attributeUse, type CsAttrUse } from "./aspnet-attributes.js";
 
 /**
@@ -626,11 +627,14 @@ export const csharpRouteExtractor: RouteExtractor = {
   languages: ["csharp"],
   extractRoutes(tree, sourceText, _filePath, facts) {
     // Cheap gate: skip the full-tree walk for files with no route attributes.
-    if (!ROUTE_ATTRIBUTE_GATE.test(sourceText) && !CONTROLLER_CLASS_GATE.test(sourceText) && !ATTRIBUTE_CLASS_GATE.test(sourceText)) {
+    const minimal = MINIMAL_API_GATE.test(sourceText);
+    if (!minimal && !ROUTE_ATTRIBUTE_GATE.test(sourceText) && !CONTROLLER_CLASS_GATE.test(sourceText) && !ATTRIBUTE_CLASS_GATE.test(sourceText)) {
       return [];
     }
     const routes: RouteInfo[] = [];
     extractAspnetRoutes(tree.rootNode, routes, facts);
+    // Minimal APIs (`app.MapGet("/x", Handler)`, see minimal-api.ts).
+    if (minimal) extractMinimalApiRoutes(tree.rootNode, routes);
     return routes;
   },
 };

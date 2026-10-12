@@ -169,3 +169,19 @@ describe("C# desktop I/O sinks — settings / clipboard / file storage", () => {
     expect(s).toHaveLength(0);
   });
 });
+
+describe("EF through a member holding the context", () => {
+  it("reads `services.Context.CatalogItems…` as the CatalogItems DbSet", async () => {
+    const { parseSource } = await import("../../../parsers/parser-manager.js");
+    const { CSharpDataSourceExtractor } = await import("./data-sources.js");
+    const src = `public static class CatalogApi {
+  public static async Task<CatalogItem?> GetItemById([AsParameters] CatalogServices services, int id)
+  {
+    return await services.Context.CatalogItems.Include(ci => ci.CatalogBrand).SingleOrDefaultAsync(ci => ci.Id == id);
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as never, "CatalogApi.cs");
+    const rows = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
+    expect(rows.map((d) => `${d.name} ${d.entity ?? "-"}`)).toEqual(expect.arrayContaining(["EF: SingleOrDefaultAsync CatalogItems"]));
+  });
+});
