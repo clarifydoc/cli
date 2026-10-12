@@ -311,3 +311,24 @@ class CustomerService {
     expect(s.some((d) => d.entity === "Customer")).toBe(true);
   });
 });
+
+describe("extension clients keyed by the entity class (Halo)", () => {
+  it("reads the class literal, else the declared type of the object handed over", async () => {
+    const java = `import run.halo.app.extension.ReactiveExtensionClient;
+class PostServiceImpl {
+  private final ReactiveExtensionClient client;
+  Mono<Post> getPost(String name) { return client.fetch(Post.class, name); }
+  Flux<Post> list() { return client.listAll(Post.class, options, sort); }
+  Mono<Post> save(Post post) { return client.update(post); }
+  Mono<Void> remove(String name, ExtensionClient other) { return client.delete(something); }
+}`;
+    const tree = await parseSource(java, "java", "PostServiceImpl.java");
+    const rows = new JavaKotlinDataSourceExtractor().extract(tree, java).filter((d) => d.kind === "database");
+    expect(rows.map((d) => `${d.name} ${d.entity ?? "-"} ${d.access}`)).toEqual([
+      "client.fetch Post read",
+      "client.listAll Post read",
+      "client.update Post write",
+      "client.delete - write",
+    ]);
+  });
+});

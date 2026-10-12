@@ -356,16 +356,63 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
     const lastSegment = importSource.split(".").pop()!;
     const segMatch = tryMatch(lastSegment, filePathMap, sourceFile);
     if (segMatch) return segMatch;
+
+    // A module named in CamelCase lives in a snake_case file (Elixir, Ruby):
+    // `Plausible.Stats.QueryRunner` → `…/plausible/stats/query_runner.ex`.
+    if (/[a-z][A-Z]/.test(importSource)) {
+      const snake = importSource.split(".").map(snakeCase);
+      for (let k = snake.length; k >= 2; k--) {
+        const hit = uniqueSuffixMatch(snake.slice(snake.length - k).join("/"), filePathMap);
+        if (hit !== undefined) return hit;
+      }
+      const snakeLast = tryMatch(snake[snake.length - 1]!, filePathMap, sourceFile);
+      if (snakeLast) return snakeLast;
+    }
   }
 
-  // 5. `::` namespace: "Shop::Orders" → "Shop/Orders", then "Orders".
+  // 5. `::` namespace: "Shop::Orders" → "Shop/Orders"; else the longest unique
+  // path suffix (`lemmy_api_crud::site::read` → `…/site/read.rs`, the crate name
+  // being a directory the path does not spell); the last segment alone only
+  // when one file in the project bears it — `read` names a dozen.
   if (importSource.includes("::")) {
     const asPath = importSource.replace(/::/g, "/");
-    const nsMatch = tryMatch(asPath, filePathMap, sourceFile) ?? tryMatch(importSource.split("::").pop()!, filePathMap, sourceFile);
-    if (nsMatch) return nsMatch;
+    const direct = tryMatch(asPath, filePathMap, sourceFile);
+    if (direct) return direct;
+    const segs = importSource.split("::").filter((x) => x && x !== "crate" && x !== "self" && x !== "super");
+    for (let k = segs.length; k >= 2; k--) {
+      const hit = uniqueSuffixMatch(segs.slice(segs.length - k).join("/"), filePathMap);
+      if (hit !== undefined) return hit;
+    }
+    const last = segs[segs.length - 1];
+    if (last) {
+      const candidates = getBasenameCandidates(filePathMap).get(last.toLowerCase()) ?? [];
+      if (candidates.length === 1) return candidates[0]!;
+      if (candidates.length === 0) return tryMatch(last, filePathMap, sourceFile);
+    }
   }
 
   return null;
+}
+
+/** `QueryRunner` → `query_runner`, `HTTPClient` → `http_client`. */
+function snakeCase(segment: string): string {
+  return segment.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2").toLowerCase();
+}
+
+/**
+ * The one file whose extension-stripped path ends with `/<suffix>` (or
+ * `/<suffix>/mod`), `null` when several do, `undefined` when none does.
+ */
+function uniqueSuffixMatch(suffix: string, filePathMap: Map<string, string>): string | null | undefined {
+  const lower = suffix.toLowerCase();
+  const base = lower.slice(lower.lastIndexOf("/") + 1);
+  const hits = new Set<string>();
+  for (const file of [...(getBasenameCandidates(filePathMap).get(base) ?? []), ...(getBasenameCandidates(filePathMap).get("mod") ?? [])]) {
+    const stripped = file.replace(requireRegistered(stripSourceExtensionReSlot), "").toLowerCase();
+    if (stripped.endsWith(`/${lower}`) || stripped === lower || stripped.endsWith(`/${lower}/mod`)) hits.add(file);
+  }
+  if (hits.size === 1) return [...hits][0]!;
+  return hits.size > 1 ? null : undefined;
 }
 
 const MATCH_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".java", ".kt", ".cs", ".pas", ".go", ".rs", ".rb", ".php", ".swift", ".lua", ".scala", ".pl", ".pm", ".vb", ".bas"];

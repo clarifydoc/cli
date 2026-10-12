@@ -104,7 +104,32 @@ export const javaCallHooks: CallExtractionHooks = {
   resolveCallName: resolveJvmCallName,
   qualifiedRootCandidates: capitalizedRoot,
   receiverTypeOf: javaReceiverType,
+  collectExtraCalls: javaMethodReference,
 };
+
+/**
+ * A method reference is a call the stream or reactive chain makes on the
+ * method's behalf: `.flatMap(postService::updatePost)` runs
+ * `postService.updatePost(…)`, `.map(PostVo::from)` runs `PostVo.from(…)`,
+ * `.map(Snapshot::new)` constructs a `Snapshot`. Without it a WebFlux handler
+ * — which is nearly all method references — called nothing (Halo).
+ */
+function javaMethodReference(node: Node, addResult: (name: string, node: Node) => void): void {
+  if (node.type !== "method_reference") return;
+  const parts = node.namedChildren;
+  const target = parts[0];
+  const member = parts[parts.length - 1];
+  if (!target || !member || target === member) {
+    // `Snapshot::new` — the grammar has no name node for `new`.
+    if (target && /::\s*new$/.test(node.text)) addResult(target.text.replace(/<.*>$/, ""), node);
+    return;
+  }
+  if (/::\s*new$/.test(node.text)) {
+    addResult(target.text.replace(/<.*>$/, ""), node);
+    return;
+  }
+  addResult(`${target.text.replace(/\s+/g, "")}.${member.text}`, node);
+}
 
 export const kotlinCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["call_expression"]),
