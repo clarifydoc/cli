@@ -396,8 +396,8 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
       const prefix = root ? `${root}/` : "";
       for (const f of files) {
         if (!f.startsWith(prefix)) continue;
-        const slash = f.lastIndexOf("/");
-        if (names.has(f.slice(slash + 1)) && (tail === "" || f.slice(0, slash).endsWith(tail))) {
+        const dir = dirOf(f);
+        if (names.has(f.slice(dir.length + (dir ? 1 : 0))) && (tail === "" || dir.endsWith(tail))) {
           manifestEntries.push({ file: f, reason: `${name} i18n locale` });
         }
       }

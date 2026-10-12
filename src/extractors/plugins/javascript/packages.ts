@@ -44,9 +44,10 @@ export const npmPackages: readonly KnownPackageRule[] = [
   // ── ORMs / query builders ──
   { names: ["prisma", "@prisma/client"], category: "orm" },
   { names: ["typeorm", "sequelize", "sequelize-typescript", "drizzle-orm", "@mikro-orm/core", "mongoose", "objection", "bookshelf"], category: "orm" },
-  { names: ["knex"], category: "orm" },
+  { names: ["knex", "kysely", "dynamoose", "@nestjs/typeorm", "@nestjs/mongoose", "@nestjs/sequelize"], category: "orm" },
   // ── Database drivers ──
-  { names: ["pg", "mysql", "mysql2", "sqlite3", "better-sqlite3", "redis", "ioredis", "mongodb", "@elastic/elasticsearch", "cassandra-driver"], category: "database" },
+  { names: ["pg", "postgres", "mysql", "mysql2", "mssql", "oracledb", "sqlite3", "better-sqlite3", "redis", "ioredis", "mongodb", "@elastic/elasticsearch", "cassandra-driver"], category: "database" },
+  { names: ["@supabase/supabase-js", "firebase-admin", "@google-cloud/firestore", "@aws-sdk/lib-dynamodb", "@vercel/postgres", "@neondatabase/serverless", "@planetscale/database", "@libsql/client"], category: "database" },
   // ── HTTP clients ──
   { names: ["axios", "got", "node-fetch", "ky", "superagent", "undici"], category: "http" },
   // ── State management ──

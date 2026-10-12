@@ -631,17 +631,19 @@ function followDatasetParameters(analyses: FileAnalysis[], tablesByForm: Map<str
   interface Routine { analysis: FileAnalysis; fn: FunctionInfo; byParam: Map<number, DataSourceInfo[]> }
   const routinesOf = (a: FileAnalysis): FunctionInfo[] => [...a.functions, ...a.classes.flatMap((c) => c.methods)];
   const units = analyses.filter((a) => a.language === "pascal");
+  const dbRows = new Map(units.map((a) => [a, a.dataSources.filter((ds) => ds.kind === "database")]));
   const byLeaf = new Map<string, Routine[]>();
   for (const a of units) {
+    const unnamed = dbRows.get(a)!.filter((ds) => !ds.entity);
+    if (unnamed.length === 0) continue;
     for (const fn of routinesOf(a)) {
       if (fn.params.length === 0) continue;
       const byParam = new Map<number, DataSourceInfo[]>();
-      for (const ds of a.dataSources) {
-        if (ds.kind !== "database" || ds.entity || ds.line < fn.line || ds.line > fn.endLine) continue;
+      for (const ds of unnamed) {
+        if (ds.line < fn.line || ds.line > fn.endLine) continue;
         const receiver = ds.name.slice(0, Math.max(0, ds.name.lastIndexOf("."))).toLowerCase();
         const index = fn.params.findIndex((p) => p.name.toLowerCase() === receiver);
-        if (index < 0) continue;
-        (byParam.get(index) ?? byParam.set(index, []).get(index)!).push(ds);
+        if (index >= 0) (byParam.get(index) ?? byParam.set(index, []).get(index)!).push(ds);
       }
       if (byParam.size === 0) continue;
       const leaf = fn.name.split(".").pop()!.toLowerCase();
@@ -651,47 +653,54 @@ function followDatasetParameters(analyses: FileAnalysis[], tablesByForm: Map<str
   if (byLeaf.size === 0) return;
 
   // A routine's parameter resolved in an earlier round (`LoadFromQuery(Query)` where
-  // `Query` is the caller's own dataset parameter): "file:line:name" → table.
-  const resolvedParam = new Map<string, string>();
-  const paramKey = (a: FileAnalysis, fn: FunctionInfo, name: string) => `${a.filePath}:${fn.line}:${fn.params.length}:${name.toLowerCase()}`;
-
+  // `Query` is the caller's own dataset parameter): routine → lowercased name → table.
+  const resolvedParam = new Map<FunctionInfo, Map<string, string>>();
+  // What does not change between rounds: the table a name reads within one routine
+  // through the caller's form or the routine's own query (null = none).
+  const localTables = new Map<FunctionInfo, Map<string, string | null>>();
+  const localTable = (name: string, caller: FileAnalysis, routine: FunctionInfo): string | null => {
+    const memo = localTables.get(routine) ?? localTables.set(routine, new Map()).get(routine)!;
+    if (memo.has(name)) return memo.get(name)!;
+    let table = tablesByForm.get(companionStem(caller.filePath))?.get(name) || null;
+    if (!table) {
+      // A local dataset the calling routine queries itself: the routine uses it as a
+      // dataset (`qry.Open`, `qry.SQL.Add(…)`) and selects from exactly one table.
+      const inRoutine = dbRows.get(caller)!.filter((ds) => ds.line >= routine.line && ds.line <= routine.endLine);
+      const own = new Set(inRoutine.filter((ds) => ds.entity && (ds.target ?? "").split(".").pop()!.toLowerCase() === name).map((ds) => ds.entity!));
+      const selected = new Set(inRoutine.filter((ds) => ds.entity && /^SELECT\b/i.test(ds.name)).map((ds) => ds.entity!));
+      const usesArg = inRoutine.some((ds) => ds.name.toLowerCase().startsWith(`${name}.`));
+      table = own.size === 1 ? [...own][0]! : usesArg && selected.size === 1 ? [...selected][0]! : null;
+    }
+    memo.set(name, table);
+    return table;
+  };
   /** The table an argument stands for, at a call in `routine` of `caller`, or null. */
-  const tableOf = (arg: string, caller: FileAnalysis, routine: FunctionInfo): string | null => {
-    const name = arg.replace(/\.DataSet$/i, "").toLowerCase();
-    if (!/^[a-z_]\w*$/.test(name)) return null;
-    const form = tablesByForm.get(companionStem(caller.filePath))?.get(name);
-    if (form) return form;
-    const viaParam = resolvedParam.get(paramKey(caller, routine, name));
-    if (viaParam) return viaParam;
-    // A local dataset the calling routine queries itself: the routine uses it as a
-    // dataset (`qry.Open`, `qry.SQL.Add(…)`) and selects from exactly one table.
-    const inRoutine = caller.dataSources.filter((ds) => ds.kind === "database" && ds.line >= routine.line && ds.line <= routine.endLine);
-    const usesArg = inRoutine.some((ds) => ds.name.toLowerCase().startsWith(`${name}.`));
-    const selected = new Set(inRoutine.filter((ds) => ds.entity && /^SELECT\b/i.test(ds.name)).map((ds) => ds.entity!));
-    const own = new Set(inRoutine.filter((ds) => ds.entity && (ds.target ?? "").split(".").pop()!.toLowerCase() === name).map((ds) => ds.entity!));
-    if (own.size === 1) return [...own][0]!;
-    return usesArg && selected.size === 1 ? [...selected][0]! : null;
+  const tableOf = (arg: string | null, caller: FileAnalysis, routine: FunctionInfo): string | null => {
+    const name = arg?.replace(/\.DataSet$/i, "").toLowerCase();
+    if (!name || !/^[a-z_]\w*$/.test(name)) return null;
+    return localTable(name, caller, routine) ?? resolvedParam.get(routine)?.get(name) ?? null;
   };
 
   // Callers are matched once; arguments are resolved per round, as a parameter
-  // resolved in one round can resolve its callers' arguments in the next.
-  interface Site { target: Routine; index: number; arg: string; caller: FileAnalysis; routine: FunctionInfo }
+  // resolved in one round can resolve its callers' arguments in the next. A call
+  // whose arguments were not reported (none looked like a dataset) still counts:
+  // as an argument that does not resolve.
+  interface Site { target: Routine; index: number; arg: string | null; caller: FileAnalysis; routine: FunctionInfo }
   const sites: Site[] = [];
   for (const caller of units) {
     for (const routine of routinesOf(caller)) {
       for (const call of routine.calls) {
-        if (!call.args) continue;
-        const candidates = (byLeaf.get(call.name.split(".").pop()!.toLowerCase()) ?? [])
-          .filter((r) => r.fn.params.length >= call.args!.length);
+        const all = byLeaf.get(call.name.split(".").pop()!.toLowerCase());
+        if (!all) continue;
+        const args = call.args;
+        const candidates = args ? all.filter((r) => r.fn.params.length >= args.length) : all;
         const own = candidates.filter((r) => r.analysis === caller);
         const pool = own.length > 0 ? own : candidates;
-        const exact = pool.filter((r) => r.fn.params.length === call.args!.length);
-        const chosen = exact.length > 0 ? exact : pool;
-        if (new Set(chosen.map((r) => `${r.analysis.filePath}:${r.fn.line}:${r.fn.params.length}`)).size !== 1) continue;
-        const target = chosen[0]!;
-        for (const index of target.byParam.keys()) {
-          const arg = call.args[index];
-          if (arg !== undefined) sites.push({ target, index, arg, caller, routine });
+        const exact = args ? pool.filter((r) => r.fn.params.length === args.length) : [];
+        const chosen = new Set(exact.length > 0 ? exact : pool);
+        if (args && chosen.size !== 1) continue;
+        for (const target of chosen) {
+          for (const index of target.byParam.keys()) sites.push({ target, index, arg: args?.[index] ?? null, caller, routine });
         }
       }
     }
@@ -699,22 +708,24 @@ function followDatasetParameters(analyses: FileAnalysis[], tablesByForm: Map<str
 
   const assign = new Map<DataSourceInfo, string>();
   for (let round = 0; round < 4; round++) {
-    const passed = new Map<string, { routine: Routine; index: number; tables: Array<string | null> }>();
+    const passed = new Map<Routine, Map<number, Array<string | null>>>();
     for (const site of sites) {
-      const key = `${site.target.analysis.filePath}:${site.target.fn.line}:${site.target.fn.params.length}:${site.index}`;
-      const entry = passed.get(key) ?? passed.set(key, { routine: site.target, index: site.index, tables: [] }).get(key)!;
-      entry.tables.push(tableOf(site.arg, site.caller, site.routine));
+      const byIndex = passed.get(site.target) ?? passed.set(site.target, new Map()).get(site.target)!;
+      (byIndex.get(site.index) ?? byIndex.set(site.index, []).get(site.index)!).push(tableOf(site.arg, site.caller, site.routine));
     }
     let grew = false;
-    for (const { routine, index, tables } of passed.values()) {
-      const distinct = new Set(tables);
-      if (distinct.size !== 1 || distinct.has(null)) continue;
-      const table = tables[0]!;
-      const key = paramKey(routine.analysis, routine.fn, routine.fn.params[index]!.name);
-      if (resolvedParam.get(key) === table) continue;
-      resolvedParam.set(key, table);
-      grew = true;
-      for (const ds of routine.byParam.get(index) ?? []) assign.set(ds, table);
+    for (const [routine, byIndex] of passed) {
+      for (const [index, tables] of byIndex) {
+        const distinct = new Set(tables);
+        if (distinct.size !== 1 || distinct.has(null)) continue;
+        const table = tables[0]!;
+        const resolved = resolvedParam.get(routine.fn) ?? resolvedParam.set(routine.fn, new Map()).get(routine.fn)!;
+        const name = routine.fn.params[index]!.name.toLowerCase();
+        if (resolved.get(name) === table) continue;
+        resolved.set(name, table);
+        grew = true;
+        for (const ds of routine.byParam.get(index) ?? []) assign.set(ds, table);
+      }
     }
     if (!grew) break;
   }

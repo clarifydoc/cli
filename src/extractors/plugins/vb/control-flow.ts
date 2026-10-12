@@ -1,4 +1,4 @@
-import type { LanguageRegexControlFlowSpec } from "../../../types/language-plugin.js";
+import type { BlockDelta, InlineGuard, LanguageRegexControlFlowSpec } from "../../../types/language-plugin.js";
 
 /**
  * Visual Basic (VB.NET, VB6, VBScript) closes every block with its own words:
@@ -10,27 +10,28 @@ import type { LanguageRegexControlFlowSpec } from "../../../types/language-plugi
  */
 
 const OPENER = /^(?:For|While|Do|Select\s+Case|Try|With|Using|SyncLock)\b/i;
-const CLOSER = /^(?:End\s+(?:If|Select|Try|While|With|Using|SyncLock|Sub|Function|Property|Operator|Get|Set|AddHandler|RemoveHandler|RaiseEvent)\b|Next\b|Loop\b|Wend\b)/i;
 /** A multi-line lambda: `Sub(x)` / `Function(x)` ending its line, closed by `End Sub` / `End Function`. */
 const LAMBDA = /\b(?:Sub|Function)\s*\([^)]*\)\s*$/i;
 const MEMBER = /^(?:(?:Public|Private|Protected|Friend|Shared|Overrides|Overridable|Overloads|NotOverridable|Async|Iterator|Static|Partial|Shadows|ReadOnly|WriteOnly|Default)\s+)*(?:Sub|Function|Property|Operator|Get|Set|AddHandler|RemoveHandler|RaiseEvent)\b/i;
 
-function vbBlockDelta(code: string): { open: string[]; close: number; leadingClose: number; middle?: boolean } {
+/** What a line opens; `End …`, `Next`, `Loop`, `Wend` close (`blockClose`). */
+const vbBlockDelta: BlockDelta = (code) => {
   const open: string[] = [];
   if (/^If\b.*\bThen\s*$/i.test(code)) open.push("if");
   const opener = OPENER.exec(code)?.[0];
   if (opener) open.push(/^select/i.test(opener) ? "case" : opener.toLowerCase());
   else if (MEMBER.test(code) && !/^(?:Declare|MustOverride)\b/i.test(code)) open.push("member");
   if (LAMBDA.test(code) && !MEMBER.test(code)) open.push("lambda");
-  const close = CLOSER.test(code) ? 1 : 0;
-  return { open, close, leadingClose: close, middle: /^(?:Else\b|ElseIf\b|Catch\b|Finally\b)/i.test(code) };
-}
+  return { open, middle: /^(?:Else\b|ElseIf\b|Catch\b|Finally\b)/i.test(code) };
+};
 
 /** `If cond Then stmt` (with an optional `Else other`). */
-function vbInlineGuard(code: string): { head: string; tail: string } | null {
-  const m = /^If\s+(.+?)\s+Then\s+(.+)$/i.exec(code);
+const ONE_LINE_IF = /^If\s+(.+?)\s+Then\s+(\S.*)$/i;
+
+const vbInlineGuard: InlineGuard = (code) => {
+  const m = ONE_LINE_IF.exec(code);
   return m ? { head: m[1]!, tail: m[2]!.replace(/\s+Else\b.*$/i, "") } : null;
-}
+};
 
 export const VB_REGEX_CONTROL_FLOW: LanguageRegexControlFlowSpec = {
   lineComments: ["'"],
@@ -42,7 +43,7 @@ export const VB_REGEX_CONTROL_FLOW: LanguageRegexControlFlowSpec = {
   inlineGuard: vbInlineGuard,
   nestedFunction: LAMBDA,
   statements: [
-    { match: /^If\s+(.+?)\s+Then\s+\S.*$/i, type: "if_statement" },
+    { match: ONE_LINE_IF, type: "if_statement" },
     { match: /^Return\b(.*)$/i, type: "return_statement" },
     { match: /^Exit\s+(?:Sub|Function|Property)\b/i, type: "return_statement" },
     { match: /^Exit\s+(?:For|Do|While|Select|Try)\b/i, type: "break_statement" },

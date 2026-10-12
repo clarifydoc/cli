@@ -56,4 +56,3 @@ end`.split("\n");
     expect(row).toMatchObject({ functionName: "sync", cognitive: 5, nestingDepth: 2, approximate: true });
   });
 });
-

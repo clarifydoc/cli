@@ -1,4 +1,4 @@
-import type { LanguageRegexControlFlowSpec } from "../../../types/language-plugin.js";
+import type { BlockDelta, InlineGuard, LanguageRegexControlFlowSpec } from "../../../types/language-plugin.js";
 
 /**
  * Ruby's blocks are delimited by keywords, and the same keyword opens a block
@@ -28,37 +28,35 @@ const LOOP_AT_START = /^(?:while|until|for)\b/;
  */
 const OPENS_AFTER = /(?:(?:[=(]|\|\||&&)[ \t]?(?:if|unless|case|begin|while|until)|\breturn\s+(?:case|begin))\b(?![:?!])/g;
 const TRAILING_DO = /\bdo\s*(?:\|[^|]*\|)?\s*$/;
-const END_TOKEN = /(?<![.:@$\w])end\b(?![?!:])/g;
-const LEADING_CLOSERS = /^(?:(?:(?<![.:@$\w])end\b(?![?!:])|\})\s*)+/;
+/** `end` that closes a block — not `x.end`, `:end` or `end?`. */
+const END_TOKEN = /(?<![.:@$\w])end\b(?![?!:])/;
 const MIDDLE = /^(?:else|elsif|rescue|ensure)\b/;
 /** `def name(args) = expr` (Ruby 3 endless method) opens nothing. */
 const ENDLESS_DEF = /^def\s+[\w.?!]+(?:\([^)]*\))?\s*=(?!=)/;
 
-function rubyBlockDelta(code: string): { open: string[]; close: number; leadingClose: number; middle?: boolean } {
+/** What a line opens; `end` and `}` close (`blockClose`), a closer before an opener first (`end.each do |x|`). */
+const rubyBlockDelta: BlockDelta = (code) => {
   const open: string[] = [];
   const start = OPENS_AT_START.exec(code)?.[0];
-  if (start && !ENDLESS_DEF.test(code)) open.push(start === "case" ? "case" : start);
+  if (start && !ENDLESS_DEF.test(code)) open.push(start);
   for (const m of code.matchAll(OPENS_AFTER)) open.push(/case\s*$/.test(m[0]) ? "case" : "expr");
   if (TRAILING_DO.test(code) && !LOOP_AT_START.test(code)) open.push("do");
   for (const _ of code.matchAll(/\{/g)) open.push("brace");
-  const ends = (code.match(END_TOKEN) ?? []).length;
-  const braces = (code.match(/\}/g) ?? []).length;
-  const lead = LEADING_CLOSERS.exec(code)?.[0] ?? "";
-  const leadingClose = (lead.match(END_TOKEN) ?? []).length + (lead.match(/\}/g) ?? []).length;
-  // A closer on a line that also opens (`end.each do |x|`, `}.map {`) closes first.
-  return { open, close: ends + braces, leadingClose, middle: MIDDLE.test(code) };
-}
-
-/** `stmt if cond` / `stmt unless cond` and the one-line `if cond then stmt end`. */
-function rubyInlineGuard(code: string): { head: string; tail: string } | null {
-  const oneLine = /^(?:if|unless)\s+(.+?)\s+then\s+(.+?)(?:\s*;)?\s*(?:end)?\s*$/.exec(code);
-  if (oneLine) return { head: oneLine[1]!, tail: oneLine[2]! };
-  const modifier = MODIFIER_IF.exec(code);
-  return modifier ? { head: modifier[2]!, tail: modifier[1]! } : null;
-}
+  return { open, middle: MIDDLE.test(code) };
+};
 
 /** A statement guarded by a trailing `if`/`unless` — never an `x = if …` expression opener. */
 const MODIFIER_IF = /^(?!(?:if|unless|while|until|elsif)\b)(.*?\S)\s+(?:if|unless)\s+(?!.*\bthen\b)(.+?)\s*$/;
+/** `if cond then stmt [end]` on one line. */
+const ONE_LINE_IF = /^(?:if|unless)\s+(.+?)\s+then\s+(.+?)(?:\s*;)?\s*(?:end)?\s*$/;
+
+/** `stmt if cond` / `stmt unless cond` and the one-line `if cond then stmt end`. */
+const rubyInlineGuard: InlineGuard = (code) => {
+  const oneLine = ONE_LINE_IF.exec(code);
+  if (oneLine) return { head: oneLine[1]!, tail: oneLine[2]! };
+  const modifier = MODIFIER_IF.exec(code);
+  return modifier ? { head: modifier[2]!, tail: modifier[1]! } : null;
+};
 
 export const RUBY_REGEX_CONTROL_FLOW: LanguageRegexControlFlowSpec = {
   lineComments: ["#"],
@@ -66,15 +64,16 @@ export const RUBY_REGEX_CONTROL_FLOW: LanguageRegexControlFlowSpec = {
   quotes: ['"', "'", "`"],
   regexLiterals: true,
   blockOpen: /(?!)/,
-  blockClose: /(?<![.:@$\w])end\b(?![?!:])|\}/,
+  blockClose: new RegExp(`${END_TOKEN.source}|\\}`),
   blockDelta: rubyBlockDelta,
   armBlocks: new Set(["case"]),
   inlineGuard: rubyInlineGuard,
-  nestedFunction: /\bdo\s*(?:\|[^|]*\|)?\s*$|\{\s*(?:\|[^|]*\|)?\s*$|\blambda\b|->\s*(?:\([^)]*\))?\s*(?:do|\{)/,
+  nestedFunction: new RegExp(`${TRAILING_DO.source}|\\{\\s*(?:\\|[^|]*\\|)?\\s*$|\\blambda\\b|->\\s*(?:\\([^)]*\\))?\\s*(?:do|\\{)`),
   statements: [
-    // A modifier first: `return x if y` is a branch guarding a return.
-    { match: /^(?!(?:if|unless|while|until|elsif)\b)(?:.*?\S)\s+(?:if|unless)\s+(?!.*\bthen\b)(.+?)\s*$/, type: "if_statement" },
-    { match: /^(?:if|unless)\s+(.+?)\s+then\s+.+$/, type: "if_statement" },
+    // A modifier first: `return x if y` is a branch guarding a return (its condition and
+    // statement come from `inlineGuard`).
+    { match: MODIFIER_IF, type: "if_statement" },
+    { match: ONE_LINE_IF, type: "if_statement" },
     { match: /^return\b(.*)$/, type: "return_statement" },
     { match: /^(?:raise|fail)\b(.*)$/, type: "throw_statement" },
     { match: /^break\b/, type: "break_statement" },

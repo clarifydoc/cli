@@ -59,11 +59,40 @@ const MAX_LINES = 4000;
 let nextId = 1;
 
 /**
- * Set while measuring (`regexStructureMetrics`): closures are descended into as
- * `nested_function` nodes rather than drawn as one step, because the parsed
- * tier's cognitive complexity counts what they contain, one level deeper.
+ * Marks a spec copy used for measuring (`regexStructureMetrics`): closures are
+ * descended into as `nested_function` nodes rather than drawn as one step,
+ * because the parsed tier's cognitive complexity counts what they contain, one
+ * level deeper. Carried on the spec every scan function already receives.
  */
-let descendClosures = false;
+const MEASURE = Symbol("measure");
+type ScanSpec = LanguageRegexControlFlowSpec & { [MEASURE]?: true };
+const MEASURING = new WeakMap<LanguageRegexControlFlowSpec, ScanSpec>();
+function measuring(spec: LanguageRegexControlFlowSpec): ScanSpec {
+  let copy = MEASURING.get(spec);
+  if (!copy) MEASURING.set(spec, (copy = { ...spec, [MEASURE]: true }));
+  return copy;
+}
+
+const DEFAULT_CATCH = /^\}?\s*(?:catch|rescue|except)\b/;
+const DEFAULT_FINALLY = /^\}?\s*(?:finally|ensure)\b/;
+
+/** Compiled variants of a spec's patterns, built once per pattern rather than per line. */
+const GLOBAL = new WeakMap<RegExp, RegExp>();
+const LEADING = new WeakMap<RegExp, RegExp>();
+
+/** The same pattern, global, keeping its other flags (VB's keywords are case-insensitive). */
+function globalOf(re: RegExp): RegExp {
+  let g = GLOBAL.get(re);
+  if (!g) GLOBAL.set(re, (g = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g")));
+  return g;
+}
+
+/** A run of `closer` at the start of a line. */
+function leadingOf(closer: RegExp): RegExp {
+  let l = LEADING.get(closer);
+  if (!l) LEADING.set(closer, (l = new RegExp(`^\\s*(?:${closer.source}\\s*)+`, closer.flags.replace("g", ""))));
+  return l;
+}
 
 /** A synthesized node. Carries only what the interpreter reads. */
 class SynthNode implements FlowNode {
@@ -130,8 +159,6 @@ export function blankNonCode(source: string, spec: LanguageRegexControlFlowSpec)
 
   let i = 0;
   while (i < source.length) {
-    const rest = source.slice(i, i + 4);
-
     // A block comment first: Lua's `--[[` begins with its line-comment token.
     if (blockComment[0] && source.startsWith(blockComment[0], i)) {
       const end = source.indexOf(blockComment[1], i + blockComment[0].length);
@@ -140,7 +167,7 @@ export function blankNonCode(source: string, spec: LanguageRegexControlFlowSpec)
       continue;
     }
 
-    const line = lineComments.find((token) => rest.startsWith(token));
+    const line = lineComments.find((token) => source.startsWith(token, i));
     if (line) {
       while (i < source.length && source[i] !== "\n") out[i++] = " ";
       continue;
@@ -265,8 +292,8 @@ function scanLines(
   let depth = 0;
   for (let i = 0; i < raws.length && i < MAX_LINES; i++) {
     const code = codes[i] ?? "";
-    const opens = (code.match(new RegExp(openers.source, "g")) ?? []).length;
-    const closes = (code.match(new RegExp(closers.source, "g")) ?? []).length;
+    const opens = (code.match(globalOf(openers)) ?? []).length;
+    const closes = (code.match(globalOf(closers)) ?? []).length;
     // A line that closes then reopens (`} else {`) belongs to the outer level,
     // so the depth recorded is the one before any of it ran, less the closes
     // it starts with.
@@ -285,7 +312,7 @@ function scanLines(
 
 /**
  * `scanLines` for keyword-delimited languages: the plugin's `blockDelta` says what
- * each line opens and closes, and a stack of block names decides whether a
+ * each line opens, `blockClose` what it closes, and a stack of block names decides whether a
  * `middle` line (`else`, `rescue`) steps out to its block's level or — inside an
  * `armBlocks` block such as a Ruby `case` — is one more arm at the arms' level.
  */
@@ -297,14 +324,17 @@ function scanKeywordLines(
 ): ScanLine[] {
   const lines: ScanLine[] = [];
   const stack: string[] = [];
+  const closer = spec.blockClose ?? /\}/;
   for (let i = 0; i < raws.length && i < MAX_LINES; i++) {
     const code = codes[i] ?? "";
     const trimmed = code.trim();
-    const delta = trimmed === "" ? { open: [], close: 0, leadingClose: 0 } : spec.blockDelta!(trimmed);
+    const delta = trimmed === "" ? { open: [] } : spec.blockDelta!(trimmed);
+    const close = trimmed === "" ? 0 : (trimmed.match(globalOf(closer)) ?? []).length;
+    const leadingClose = close === 0 ? 0 : countLeading(trimmed, closer);
     const depth = stack.length;
     const asArm = delta.middle && spec.armBlocks?.has(stack[stack.length - 1] ?? "");
-    const recorded = delta.middle && !asArm ? Math.max(0, depth - 1) : Math.max(0, depth - delta.leadingClose);
-    for (let k = 0; k < delta.close && stack.length > 0; k++) stack.pop();
+    const recorded = delta.middle && !asArm ? Math.max(0, depth - 1) : Math.max(0, depth - leadingClose);
+    for (let k = 0; k < close && stack.length > 0; k++) stack.pop();
     for (const name of delta.open) if (stack.length < MAX_DEPTH * 2) stack.push(name);
     lines.push({ row: firstRow + i, raw: raws[i] ?? "", code, depth: recorded, delta: stack.length - depth });
   }
@@ -313,10 +343,9 @@ function scanKeywordLines(
 
 /** How many closers the line starts with, before any other code. */
 function countLeading(code: string, closer: RegExp): number {
-  const single = new RegExp(`^\\s*(?:${closer.source}\\s*)+`);
-  const hit = single.exec(code);
+  const hit = leadingOf(closer).exec(code);
   if (!hit) return 0;
-  return (hit[0].match(new RegExp(closer.source, "g")) ?? []).length;
+  return (hit[0].match(globalOf(closer)) ?? []).length;
 }
 
 interface Matched {
@@ -356,6 +385,12 @@ function bodyRange(
     return { from: i + 2, end: blockEnd(lines, i + 1, to) };
   }
   return { from: i + 1, end: direct };
+}
+
+/** One statement written inline on `line` (`if x then return`, `when 1 then go`), classified in its own right. */
+function inlineStatement(text: string, line: ScanLine, spec: LanguageRegexControlFlowSpec): SynthNode {
+  const as = { ...line, code: text, raw: text, delta: 0 };
+  return node(classify(text, spec)?.type ?? "expression_statement", as, as);
 }
 
 /** Whether this construct leaves the enclosing statement sequence outright. */
@@ -450,7 +485,7 @@ function parseRange(
     // the function being drawn.
     const nested = spec.nestedFunction ?? DEFAULT_NESTED_FUNCTION;
     if (bodyEnd > i + 1 && nested.test(line.code) && !isJump(matched)) {
-      if (descendClosures) {
+      if ((spec as ScanSpec)[MEASURE]) {
         const closure = node("nested_function", line, lines[bodyEnd - 1]!);
         parseRange(lines, range.from, bodyEnd, spec, depth + 1, closure);
         into.add(closure);
@@ -491,11 +526,6 @@ function isPunctuationOnly(code: string, spec: LanguageRegexControlFlowSpec): bo
     .replace(globalOf(close), "")
     .replace(/[\s;,()\[\]]/g, "");
   return stripped === "";
-}
-
-/** The same pattern, global, keeping its other flags (VB's keywords are case-insensitive). */
-function globalOf(re: RegExp): RegExp {
-  return new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
 }
 
 /**
@@ -562,9 +592,7 @@ function emit(
       // line, does not quietly lose the `continue`.
       for (const part of inline.tail.split(";")) {
         const text = part.trim();
-        if (text === "") continue;
-        const as = { ...line, code: text, raw: text, delta: 0 };
-        block.add(node(classify(text, spec)?.type ?? "expression_statement", as, as));
+        if (text !== "") block.add(inlineStatement(text, line, spec));
       }
     } else {
       parseRange(lines, range.from, bodyEnd, spec, depth + 1, block);
@@ -681,8 +709,8 @@ function chainHandlers(
       if (index < 0 || index >= to) continue;
       const line = lines[index]!;
       const trimmed = line.code.trim();
-      const isCatch = (spec.catch ?? /^\}?\s*(?:catch|rescue|except)\b/).test(trimmed);
-      const isFinally = (spec.finally ?? /^\}?\s*(?:finally|ensure)\b/).test(trimmed);
+      const isCatch = (spec.catch ?? DEFAULT_CATCH).test(trimmed);
+      const isFinally = (spec.finally ?? DEFAULT_FINALLY).test(trimmed);
       if (!isCatch && !isFinally) continue;
 
       const { from, end } = bodyRange(lines, index, to, spec);
@@ -723,9 +751,12 @@ function switchBody(
     const line = lines[i]!;
     if (line.depth > (lines[from]?.depth ?? 0)) continue;
     const hit = label.exec(line.code.trim());
-    // A label that is only a string literal (`when 'Contact'`) was blanked to spaces: name it by the raw line.
+    if (!hit) continue;
+    // A label that is only a string literal (`when 'Contact'`) was blanked to spaces: read it from the raw line.
     // A second capture is the arm's statement on the label's own line (`{:error, e} -> raise e`, `when 1 then x`).
-    if (hit) starts.push({ index: i, text: hit[1] !== undefined && hit[1].trim() === "" ? line.raw.trim() : hit[1]?.trim(), inline: hit[2]?.trim() || undefined });
+    let text = hit[1]?.trim();
+    if (text === "") text = label.exec(line.raw.trim())?.[1]?.trim() || line.raw.trim();
+    starts.push({ index: i, text, inline: hit[2]?.trim() || undefined });
   }
 
   starts.forEach((start, n) => {
@@ -735,10 +766,7 @@ function switchBody(
     const isDefault = start.text === undefined;
     const arm = node(isDefault ? "switch_default" : "switch_case", line, lastLine, start.text ?? "default");
     if (!isDefault) arm.add(node("value", line, line, start.text!), "value");
-    if (start.inline) {
-      const as = { ...line, code: start.inline, raw: start.inline, delta: 0 };
-      arm.add(node(classify(start.inline, spec)?.type ?? "expression_statement", as, as));
-    }
+    if (start.inline) arm.add(inlineStatement(start.inline, line, spec));
     parseRange(lines, start.index + 1, end, spec, depth + 1, arm);
     body.add(arm);
   });
@@ -758,7 +786,8 @@ export function buildRegexControlFlow(
   fn: FunctionRef,
   filePath: string,
 ): Cfg | null {
-  const body = buildRegexBody(source, language, fn);
+  const spec = regexControlFlowFor(language);
+  const body = spec ? buildRegexBody(source.split("\n"), spec, fn) : null;
   if (!body) return null;
   return buildFromBody(body, {
     spec: DEFAULT_CONTROL_FLOW,
@@ -771,63 +800,70 @@ export function buildRegexControlFlow(
   });
 }
 
+/** A language's logical operators (its complexity table) as one global pattern. */
+const LOGICAL_BY_LANGUAGE = new Map<string, RegExp | null>();
+function logicalOpsOf(language: Language): RegExp | null {
+  if (LOGICAL_BY_LANGUAGE.has(language)) return LOGICAL_BY_LANGUAGE.get(language)!;
+  const ops = [...((complexityFor(language) ?? DEFAULT_COMPLEXITY).logicalOps ?? [])];
+  const re = ops.length === 0 ? null : new RegExp(
+    ops.map((op) => (/^\w+$/.test(op) ? `\\b${op}\\b` : op.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))).join("|"),
+    "g",
+  );
+  LOGICAL_BY_LANGUAGE.set(language, re);
+  return re;
+}
+
 /**
  * Cognitive complexity and nesting depth read off the same synthesized structure
  * the graph is drawn from — what a regex-path language had no way to report.
- * Cognitive follows the parsed tier's rules: a branch, loop, switch or `catch`
- * adds 1 plus its nesting; an `else`/`else if` continuation adds 1 without it; a
- * run of one logical operator in a condition adds 1. Closures the scan does not
- * descend into contribute nothing, as their bodies are their own functions.
+ * Cognitive follows the parsed tier's rules (`measureBody` in complexity-analyzer.ts):
+ * a branch, loop, switch or `catch` adds 1 plus its nesting; an `else`/`else if`
+ * continuation adds 1 without it; every logical operator adds 1; a closure deepens
+ * the nesting of what it contains. `lines` is the whole file, split once;
+ * `logical` is the language's operator pattern (default: its complexity table's).
  */
 export function regexStructureMetrics(
-  source: string,
+  lines: readonly string[],
   language: Language,
   fn: FunctionRef,
+  logical: RegExp | null = logicalOpsOf(language),
 ): { cognitive: number; nestingDepth: number } | null {
-  descendClosures = true;
-  let body: SynthNode | null;
-  try {
-    body = buildRegexBody(source, language, fn);
-  } finally {
-    descendClosures = false;
-  }
+  const spec = regexControlFlowFor(language);
+  const body = spec ? buildRegexBody(lines, measuring(spec), fn) : null;
   if (!body) return null;
   let cognitive = 0;
   let deepest = 0;
-  // Every logical operator adds 1, as in the parsed tier (Sonar would fold a run into one).
-  const LOGICAL = /&&|\|\||\?\?|\band\b|\bor\b|\bAndAlso\b|\bOrElse\b/g;
-  const logical = (cond: SynthNode | null): void => {
-    cognitive += (cond?.text.match(LOGICAL) ?? []).length;
+  const count = (n: SynthNode | null): void => {
+    if (n && logical) cognitive += (n.text.match(globalOf(logical)) ?? []).length;
+  };
+  /** A construct that adds 1 plus its nesting and deepens what it holds. */
+  const enter = (nesting: number): void => {
+    cognitive += 1 + nesting;
+    deepest = Math.max(deepest, nesting + 1);
   };
   const walk = (n: SynthNode, nesting: number): void => {
     switch (n.type) {
       case "nested_function":
-        logical(n);
+        count(n);
         for (const c of n.children) walk(c, nesting + 1);
         return;
       case "expression_statement":
       case "return_statement":
       case "throw_statement":
-        logical(n);
+        count(n);
         return;
       case "if_statement":
-        cognitive += 1 + nesting;
-        deepest = Math.max(deepest, nesting + 1);
+        enter(nesting);
         ifChain(n, nesting);
         return;
       case "while_statement":
       case "for_statement":
       case "do_statement":
       case "switch_statement":
-        cognitive += 1 + nesting;
-        deepest = Math.max(deepest, nesting + 1);
-        logical(n.childForFieldName("condition"));
-        for (const c of n.children) if (c.type !== "condition" && c.type !== "value") walk(c, nesting + 1);
-        return;
       case "catch_clause":
-        cognitive += 1 + nesting;
-        deepest = Math.max(deepest, nesting + 1);
-        for (const c of n.children) walk(c, nesting + 1);
+        enter(nesting);
+        count(n.childForFieldName("condition"));
+        for (const c of n.children) if (c.type !== "condition" && c.type !== "value") walk(c, nesting + 1);
         return;
       default:
         for (const c of n.children) walk(c, nesting);
@@ -835,7 +871,7 @@ export function regexStructureMetrics(
   };
   /** An `if` and its `else if` / `else` arms: the arms add 1 each, without a nesting penalty. */
   const ifChain = (n: SynthNode, nesting: number): void => {
-    logical(n.childForFieldName("condition"));
+    count(n.childForFieldName("condition"));
     const consequence = n.childForFieldName("consequence");
     if (consequence) walk(consequence, nesting + 1);
     const alt = n.childForFieldName("alternative");
@@ -851,12 +887,8 @@ export function regexStructureMetrics(
   return { cognitive, nestingDepth: deepest };
 }
 
-/** The function's body as synthesized statements, or null when the language has no regex spec. */
-function buildRegexBody(source: string, language: Language, fn: FunctionRef): SynthNode | null {
-  const spec = regexControlFlowFor(language);
-  if (!spec) return null;
-
-  const all = source.split("\n");
+/** The function's body (rows `fn.line`..`fn.endLine` of the file's `all` lines) as synthesized statements. */
+function buildRegexBody(all: readonly string[], spec: ScanSpec, fn: FunctionRef): SynthNode | null {
   const first = Math.max(0, fn.line - 1);
   const last = Math.min(all.length, fn.endLine);
   if (last <= first) return null;
@@ -895,17 +927,15 @@ function buildRegexBody(source: string, language: Language, fn: FunctionRef): Sy
     const inner = close > open ? code.slice(open + 1, close) : "";
     for (const part of inner.split(";")) {
       const text = part.trim();
-      if (text === "") continue;
-      const as = { ...lines[0]!, code: text, raw: text, delta: 0 };
-      root.add(node(classify(text, spec)?.type ?? "expression_statement", as, as));
+      if (text !== "") root.add(inlineStatement(text, lines[0]!, spec));
     }
     return root;
   }
   // `def x … rescue … ensure … end`: a handler at the function's own level makes
   // the whole body before it a protected block (Ruby, Elixir `def … rescue`).
   if (spec.blockDelta) {
-    const catchRe = spec.catch ?? /^\}?\s*(?:catch|rescue|except)\b/;
-    const finallyRe = spec.finally ?? /^\}?\s*(?:finally|ensure)\b/;
+    const catchRe = spec.catch ?? DEFAULT_CATCH;
+    const finallyRe = spec.finally ?? DEFAULT_FINALLY;
     const k = lines.findIndex((l, idx) => idx >= start && l.depth === 0 && (catchRe.test(l.code.trim()) || finallyRe.test(l.code.trim())));
     if (k > start) {
       const owner = node("try_statement", lines[start]!, lines[lines.length - 1]!, "");

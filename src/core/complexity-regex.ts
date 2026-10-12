@@ -34,13 +34,12 @@ export function computeRegexComplexity(lines: string[], analysis: FileAnalysis, 
     while (logical.exec(code)) n++;
     return n;
   };
-  let source: string | null = null;
   const measure = (fn: FunctionInfo, name: string): void => {
     if (!fn.endLine || fn.endLine < fn.line || fn.name === "<setup>") return;
     let n = 0;
     for (let i = fn.line; i < Math.min(fn.endLine, lines.length); i++) n += count(lines[i] ?? "");
-    source ??= lines.join("\n");
-    const structure = regexStructureMetrics(source, analysis.language, { name, line: fn.line, endLine: fn.endLine });
+    // Same operator vocabulary as the cyclomatic count above, so the two numbers agree on what an operator is.
+    const structure = regexStructureMetrics(lines, analysis.language, { name, line: fn.line, endLine: fn.endLine }, logical);
     out.push({
       functionName: name,
       complexity: 1 + n,

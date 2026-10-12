@@ -57,6 +57,9 @@ function dropEmbeddedColumns(ctx: EntityExtractContext, name: string): void {
   if (own) own.properties = own.properties.filter((p) => !p.decorators?.includes("embedded"));
 }
 
+/** A file's package: its directory, with the trailing slash. */
+const dirOf = (path: string): string => path.slice(0, path.lastIndexOf("/") + 1);
+
 export class GoEntityExtractor extends EntityExtractor {
   readonly languages: Language[] = ["go"];
 
@@ -201,10 +204,15 @@ export class GoEntityExtractor extends EntityExtractor {
   override reconcileProject(analyses: FileAnalysis[]): void {
     const go = analyses.filter((a) => a.language === "go");
     const entityOrm = new Map<string, string>();
+    // The entities each package (directory) declares, for the foreign-key pass below.
+    const byDir = new Map<string, string[]>();
     for (const a of go) {
       for (const cls of a.classes) {
         const i = cls.decorators.indexOf("entity");
-        if (i >= 0) entityOrm.set(cls.name, cls.decorators[i + 1] ?? "gorm");
+        if (i < 0) continue;
+        entityOrm.set(cls.name, cls.decorators[i + 1] ?? "gorm");
+        const dir = dirOf(a.filePath);
+        (byDir.get(dir) ?? byDir.set(dir, []).get(dir)!).push(cls.name);
       }
     }
     if (entityOrm.size < 2) return;
@@ -244,7 +252,7 @@ export class GoEntityExtractor extends EntityExtractor {
       }
       if (added.length > 0) a.entityRelations = [...(a.entityRelations ?? []), ...added];
     }
-    this.relationsByForeignKey(go, entityOrm);
+    this.relationsByForeignKey(go, entityOrm, byDir);
   }
 
   /**
@@ -256,18 +264,8 @@ export class GoEntityExtractor extends EntityExtractor {
    * (`BaseRepo` → `Repo`). A prefix two entities could stand for names neither.
    * Many-to-one, INFERRED; a relation already declared on the same key stays.
    */
-  private relationsByForeignKey(go: FileAnalysis[], entityOrm: Map<string, string>): void {
+  private relationsByForeignKey(go: FileAnalysis[], entityOrm: Map<string, string>, byDir: Map<string, string[]>): void {
     const names = [...entityOrm.keys()];
-    const dirOf = (path: string) => path.slice(0, path.lastIndexOf("/") + 1);
-    // The entities each package (directory) declares.
-    const byDir = new Map<string, string[]>();
-    for (const a of go) {
-      for (const cls of a.classes) {
-        if (!cls.decorators.includes("entity")) continue;
-        const list = byDir.get(dirOf(a.filePath)) ?? byDir.set(dirOf(a.filePath), []).get(dirOf(a.filePath))!;
-        list.push(cls.name);
-      }
-    }
     const memo = new Map<string, string | null>();
     const entityFor = (prefix: string, dir: string, self: string): string | null => {
       const key = `${dir}|${prefix}|${self}`;
@@ -287,6 +285,7 @@ export class GoEntityExtractor extends EntityExtractor {
     };
     for (const a of go) {
       const added: EntityRelation[] = [];
+      const dir = dirOf(a.filePath);
       for (const cls of a.classes) {
         const orm = cls.decorators.includes("entity") ? entityOrm.get(cls.name) : undefined;
         if (!orm) continue;
@@ -299,7 +298,7 @@ export class GoEntityExtractor extends EntityExtractor {
           const words = m[1]!.match(/[A-Z][a-z0-9]*/g) ?? [];
           let target: string | null = null;
           for (let k = 0; k < words.length && !target; k++) {
-            target = entityFor(words.slice(k).join(""), dirOf(a.filePath), cls.name);
+            target = entityFor(words.slice(k).join(""), dir, cls.name);
             // An entity's own `<Name>ID` is its key or a peer of the same kind (`Follow.FollowID` is a user).
             if (k === 0 && target === cls.name) target = null;
           }

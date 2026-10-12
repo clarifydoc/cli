@@ -321,9 +321,9 @@ function extractViewTables(lines: string[], startIdx: number, endIdx: number): s
  * `schema.table`, unquoted. `dual` and a SQL keyword caught by a partial match
  * (`SELECT … FROM (subquery)` never reaches here) are not tables.
  */
-function tableEntity(target: string, rest = "", local: ReadonlySet<string> = new Set()): string | null {
+function tableEntity(target: string, rest: string, local: ReadonlySet<string>): string | null {
   // System catalogs are not the application's tables.
-  if (/^(?:information_schema|pg_catalog|sys|mysql)\./i.test(target) || /^pg_/i.test(target)) return null;
+  if (/^(?:information_schema|sys|mysql)\./i.test(target) || /^pg_/i.test(target)) return null;
   // `[dbo].[Orders]`, `"public"."person"`: the quoted first part was captured, the rest follows it.
   const parts = [...rest.matchAll(/\.(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|(\w+))/gy)].map((m) => m[1] ?? m[2] ?? m[3] ?? m[4]!);
   const name = (parts.pop() ?? target.split(".").pop()!).replace(/^["`[]|["`\]]$/g, "");
@@ -347,15 +347,9 @@ function localRelations(text: string): Set<string> {
   return out;
 }
 
-/** The statement starting at line `i`, up to its `;` (at most 30 lines), on one line. */
+/** The statement starting at line `i`, up to its `;` (`findStatementEnd`), on one line, comments dropped. */
 function statementText(lines: string[], i: number): string {
-  const out: string[] = [];
-  for (let j = i; j < lines.length && j < i + 30; j++) {
-    const l = lines[j]!.replace(/--.*$/, "");
-    out.push(l);
-    if (/;\s*$/.test(l)) break;
-  }
-  return out.join(" ");
+  return lines.slice(i, findStatementEnd(lines, i)).map((l) => l.replace(/--.*$/, "")).join(" ");
 }
 
 /** Pull DML statement targets — used by extractDataSources below. */
@@ -375,8 +369,7 @@ function extractDmlStatements(lines: string[]): DataSourceInfo[] {
     if (selectMatch) {
       const target = selectMatch[1] ?? selectMatch[2] ?? selectMatch[3] ?? selectMatch[4]!;
       const verb = /^\s*DELETE/i.test(line) ? "DELETE" : "SELECT";
-      const src = isSelect ? selectText : line;
-      const entity = tableEntity(target, src.slice(selectMatch.index! + selectMatch[0].length), local);
+      const entity = tableEntity(target, selectText.slice(selectMatch.index! + selectMatch[0].length), local);
       sources.push({
         kind: "database",
         name: verb,

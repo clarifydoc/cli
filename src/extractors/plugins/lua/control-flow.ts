@@ -1,4 +1,4 @@
-import type { LanguageRegexControlFlowSpec } from "../../../types/language-plugin.js";
+import type { BlockDelta, InlineGuard, LanguageRegexControlFlowSpec } from "../../../types/language-plugin.js";
 
 /**
  * Lua's blocks: `function … end`, `if … then … end`, `while … do … end`,
@@ -8,26 +8,23 @@ import type { LanguageRegexControlFlowSpec } from "../../../types/language-plugi
  * functions (`pcall(function() … end)`) are closures the graph stops at.
  */
 
-const END_TOKEN = /(?<![.:\w])end\b/g;
-
-function luaBlockDelta(code: string): { open: string[]; close: number; leadingClose: number; middle?: boolean } {
+/** What a line opens; `end` and `until` close (`blockClose`). */
+const luaBlockDelta: BlockDelta = (code) => {
   const open: string[] = [];
   for (const _ of code.matchAll(/\bfunction\b/g)) open.push("function");
   if (/^if\b/.test(code)) open.push("if");
   for (const _ of code.matchAll(/\bdo\b/g)) open.push("do");
   if (/^repeat\b/.test(code)) open.push("repeat");
-  const ends = (code.match(END_TOKEN) ?? []).length;
-  const until = /^until\b/.test(code) ? 1 : 0;
-  const lead = /^(?:end\b[\s,);]*)+/.exec(code)?.[0] ?? "";
-  const leadingClose = (lead.match(END_TOKEN) ?? []).length + until;
-  return { open, close: ends + until, leadingClose, middle: /^(?:else|elseif)\b/.test(code) };
-}
+  return { open, middle: /^(?:else|elseif)\b/.test(code) };
+};
 
 /** `if cond then stmt end` on one line. */
-function luaInlineGuard(code: string): { head: string; tail: string } | null {
-  const m = /^if\s+(.+?)\s+then\s+(.+?)\s+end\s*;?$/.exec(code);
+const ONE_LINE_IF = /^if\s+(.+?)\s+then\s+(.+?)\s+end\s*;?$/;
+
+const luaInlineGuard: InlineGuard = (code) => {
+  const m = ONE_LINE_IF.exec(code);
   return m ? { head: m[1]!, tail: m[2]!.replace(/\s+else\b.*$/, "") } : null;
-}
+};
 
 export const LUA_REGEX_CONTROL_FLOW: LanguageRegexControlFlowSpec = {
   lineComments: ["--"],
@@ -39,7 +36,7 @@ export const LUA_REGEX_CONTROL_FLOW: LanguageRegexControlFlowSpec = {
   inlineGuard: luaInlineGuard,
   nestedFunction: /\bfunction\b/,
   statements: [
-    { match: /^if\s+(.+?)\s+then\s+.+\s+end\s*;?$/, type: "if_statement" },
+    { match: ONE_LINE_IF, type: "if_statement" },
     { match: /^return\b(.*)$/, type: "return_statement" },
     { match: /^error\s*\((.*)$/, type: "throw_statement" },
     { match: /^(?:break|goto)\b/, type: "break_statement" },
