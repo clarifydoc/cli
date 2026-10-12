@@ -1,4 +1,4 @@
-import type { FileAnalysis, FunctionInfo, RouteInfo } from "../../../types/analysis.js";
+import type { CallInfo, FileAnalysis, FunctionInfo, RouteInfo } from "../../../types/analysis.js";
 import type { ClassRef, ProjectContext } from "../../../types/project.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
 import { enclosingModules } from "./index.js";
@@ -83,7 +83,16 @@ export const railsRouteAnchor: RouteResolver = {
           continue;
         }
         const list = moved.get(target) ?? [];
-        list.push(withController(r, action.fn, guessOf.get(r.handler!)));
+        const row = withController(r, action.fn, guessOf.get(r.handler!));
+        // An action runs its `before_action` filters first: what they load
+        // (`@conversation ||= Current.account.conversations.find_by!(…)`) is the
+        // action's data too.
+        const filters = filterCalls(ref!, m![2]!, byName, qualified, modules, row.line);
+        if (filters.length > 0) {
+          row.calls = [...row.calls, ...filters];
+          if (action.file === ref!.filePath && !action.fn.calls.some((c) => filters.some((f) => f.name === c.name))) action.fn.calls.push(...filters);
+        }
+        list.push(row);
         moved.set(target, list);
       }
       if (kept.length !== a.routes.length) a.routes = kept;
@@ -160,4 +169,49 @@ function superOf(ref: ClassRef, byName: Map<string, ClassRef | null>, qualified:
   const written = ref.cls.extends?.replace(/^::/, "");
   if (!written) return null;
   return lookup(written, (qualified.get(ref) ?? ref.cls.name).split("::").slice(0, -1), byName);
+}
+
+/**
+ * The filter methods an action of `ref` runs, from its `before_action`
+ * decorators up the class chain (an ancestor's first; `skip_before_action`
+ * removes one), each as a call on the class that defines it.
+ */
+function filterCalls(
+  ref: ClassRef,
+  action: string,
+  byName: Map<string, ClassRef | null>,
+  qualified: Map<ClassRef, string>,
+  modules: Map<string, ClassRef | null>,
+  line: number,
+): CallInfo[] {
+  const chain: ClassRef[] = [];
+  const seen = new Set<ClassRef>();
+  for (let c: ClassRef | null | undefined = ref; c && !seen.has(c); c = superOf(c, byName, qualified)) {
+    seen.add(c);
+    chain.unshift(c);
+  }
+  const active: string[] = [];
+  for (const c of chain) {
+    for (const d of c.cls.decorators ?? []) {
+      const m = /^(skip_before_action|before_action) :(\w+[?!]?)(?: only: ([\w?!,]+))?(?: except: ([\w?!,]+))?$/.exec(d);
+      if (!m) continue;
+      const only = m[3] ? m[3].split(",") : null;
+      const except = m[4] ? m[4].split(",") : [];
+      if ((only && !only.includes(action)) || except.includes(action)) continue;
+      if (m[1] === "skip_before_action") {
+        const i = active.indexOf(m[2]!);
+        if (i >= 0) active.splice(i, 1);
+      } else if (!active.includes(m[2]!)) active.push(m[2]!);
+    }
+  }
+  const out: CallInfo[] = [];
+  for (const name of active) {
+    const def = definerOf(ref, name, byName, qualified, modules);
+    if (!def) continue;
+    const owner = [ref, ...chain].find((c) => c.filePath === def.file && c.cls.methods.includes(def.fn))
+      ?? [...modules.values()].find((c) => c?.filePath === def.file && c.cls.methods.includes(def.fn));
+    if (!owner) continue;
+    out.push({ name: `${owner.cls.name}.${name}`, kind: "internal", target: null, line });
+  }
+  return out;
 }

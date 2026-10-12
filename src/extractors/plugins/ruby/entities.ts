@@ -647,6 +647,26 @@ function resolveChainAccesses(analyses: FileAnalysis[]): void {
     }
   }
   const modelNames = new Set(models.values());
+  const direct = (before: string): string | null => {
+    const targets = associations.get(before);
+    const entity = targets && targets.size === 1 ? [...targets][0]! : models.get(before) ?? null;
+    return entity && modelNames.has(entity) ? entity : null;
+  };
+  const beforeOf = (chain: string): string | null => {
+    const segments = chain.replace(/\([^()]*\)/g, "").split(".");
+    if (segments.length < 2) return null;
+    // A scope between the association and the verb keeps its model:
+    // `Current.account.users.order_by_full_name.includes` is users' — the
+    // rightmost segment an association or model names, else the one before the verb.
+    for (let k = segments.length - 2; k >= 1; k--) {
+      const seg = segments[k]!.replace(/^(?:@{1,2}|\$)/, "");
+      if (direct(seg)) return seg;
+    }
+    return segments[segments.length - 2]!.replace(/^(?:@{1,2}|\$)/, "");
+  };
+
+  // First the rows an association or a model-named variable settles.
+  const pending: Array<{ a: FileAnalysis; ds: DataSourceInfo; before: string }> = [];
   for (const a of ruby) {
     let changed = false;
     const next: DataSourceInfo[] = [];
@@ -657,14 +677,91 @@ function resolveChainAccesses(analyses: FileAnalysis[]): void {
         next.push(ds);
         continue;
       }
-      const segments = ds.name.split(".");
       changed = true;
       if (models.size === 0) continue;
-      const before = segments[segments.length - 2]!.replace(/\(\)$/, "").replace(/^(?:@{1,2}|\$)/, "");
-      const targets = associations.get(before);
-      const entity = targets && targets.size === 1 ? [...targets][0]! : models.get(before) ?? null;
-      if (entity && modelNames.has(entity)) next.push({ ...ds, entity });
+      const before = beforeOf(ds.name) ?? "";
+      const entity = direct(before);
+      if (entity) next.push({ ...ds, entity });
+      else pending.push({ a, ds, before });
     }
     if (changed) a.dataSources = next;
+  }
+  if (pending.length === 0) return;
+
+  // Then the ones a memoizer or an instance variable settles: a method whose
+  // rows all name one model returns it (`def agents; @agents ||=
+  // Current.account.users…` → User), and an instance variable assigned from
+  // such a method or chain holds it (`@agent = agents.find(id)` → User) — so
+  // `@agent.update!` / `agents.find` in the controller and its subclasses are
+  // User rows. A name settling to two models settles nothing.
+  interface Owner { a: FileAnalysis; cls: ClassInfo }
+  const byClassName = new Map<string, Owner>();
+  for (const a of ruby) for (const cls of a.classes) if (!byClassName.has(cls.name)) byClassName.set(cls.name, { a, cls });
+  const ownerAt = (a: FileAnalysis, line: number): Owner | null => {
+    for (const cls of a.classes) if (cls.methods.some((m) => line >= m.line && line <= m.endLine)) return { a, cls };
+    return null;
+  };
+  const methodAt = (cls: ClassInfo, line: number) => cls.methods.find((m) => line >= m.line && line <= m.endLine);
+  const chainOf = (o: Owner): ClassInfo[] => {
+    const out: ClassInfo[] = [];
+    for (let c: ClassInfo | undefined = o.cls; c && !out.includes(c) && out.length < 8; ) {
+      out.push(c);
+      const sup = c.extends;
+      const scope = c.name.split("::").slice(0, -1);
+      let next: ClassInfo | undefined;
+      for (let k = scope.length; k >= 0 && !next; k--) next = sup ? byClassName.get([...scope.slice(0, k), sup].join("::"))?.cls : undefined;
+      c = next;
+    }
+    return out;
+  };
+  const memo = new Map<ClassInfo, Map<string, string | null>>(); // class → name (method or ivar) → model
+  const setMemo = (cls: ClassInfo, name: string, entity: string) => {
+    const m = memo.get(cls) ?? memo.set(cls, new Map()).get(cls)!;
+    const had = m.get(name);
+    m.set(name, had === undefined || had === entity ? entity : null);
+  };
+  const lookup = (classes: ClassInfo[], name: string): string | null => {
+    for (const c of classes) {
+      const hit = memo.get(c)?.get(name);
+      if (hit !== undefined) return hit;
+    }
+    return null;
+  };
+  for (let pass = 0; pass < 4; pass++) {
+    memo.clear();
+    // Methods by the models their rows name.
+    for (const a of ruby) {
+      for (const ds of a.dataSources) {
+        if (ds.kind !== "database" || !ds.entity) continue;
+        const o = ownerAt(a, ds.line);
+        const m = o ? methodAt(o.cls, ds.line) : undefined;
+        if (o && m) setMemo(o.cls, m.name, ds.entity);
+      }
+    }
+    // Instance variables by what they are assigned.
+    for (const o of byClassName.values()) {
+      for (const [ivar, rhsAll] of Object.entries(o.cls.fieldValues ?? {})) {
+        // Several assignments: the model the resolvable ones agree on.
+        const found = new Set<string>();
+        for (const rhs of rhsAll.split("\n")) {
+          const before = beforeOf(rhs);
+          const entity = before ? direct(before) ?? lookup(chainOf(o), before) : null;
+          if (entity) found.add(entity);
+        }
+        if (found.size === 1) setMemo(o.cls, ivar, [...found][0]!);
+      }
+    }
+    let progress = false;
+    for (let k = pending.length - 1; k >= 0; k--) {
+      const p = pending[k]!;
+      const o = ownerAt(p.a, p.ds.line);
+      if (!o) continue;
+      const entity = lookup(chainOf(o), p.before);
+      if (!entity || !modelNames.has(entity)) continue;
+      p.a.dataSources = [...p.a.dataSources, { ...p.ds, entity }];
+      pending.splice(k, 1);
+      progress = true;
+    }
+    if (!progress) break;
   }
 }

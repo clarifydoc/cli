@@ -709,7 +709,10 @@ export interface ClassInfo {
    * constructor's top-level `this.x = …` — rendered with `${…}` holes for
    * what is not literal (`baseUrl` → `${environment.apiUrl}`,
    * `resourceName` → `tags`). A field given two different values is absent.
-   * What a project pass needs to resolve `${this.baseUrl}` in a URL.
+   * What a project pass needs to resolve `${this.baseUrl}` in a URL. Ruby
+   * records the chain an instance variable is assigned (`@agent =
+   * agents.find(params[:id])` → `agent: "agents.find(params[:id])"`), which
+   * the entity pass reads to type `@agent.update!`.
    */
   fieldValues?: Record<string, string>;
   /**

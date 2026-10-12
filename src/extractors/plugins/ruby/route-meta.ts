@@ -125,7 +125,7 @@ const DEVISE_RE = /^authenticate_\w+!$/;
 
 const ANY_ACTION = null;
 
-interface FilterDecl {
+export interface FilterDecl {
   /** Filter method names on this macro line. */
   names: string[];
   /** As written, minus the `only:`/`except:` scoping. */
@@ -169,7 +169,7 @@ function guardForFilter(name: string, text: string): GuardAttr | null {
  * `load_and_authorize_resource`, Pundit's `verify_authorized`. Lines inside a
  * method body are ignored — the macros sit at class level.
  */
-function collectFilters(lines: string[], cls: ClassInfo): FilterDecl[] {
+export function collectFilters(lines: string[], cls: ClassInfo): FilterDecl[] {
   const inMethod = (idx: number): boolean => cls.methods.some((m) => idx + 1 >= m.line && idx + 1 < m.endLine);
   const decls: FilterDecl[] = [];
   for (let i = cls.line; i < Math.min(cls.endLine, lines.length); i++) {
@@ -398,4 +398,21 @@ export function extractSinatraRoutes(lines: string[]): RouteInfo[] {
     routes.push(route);
   }
   return routes;
+}
+
+/**
+ * A controller's filters as class decorators, written out whole:
+ * `before_action :conversation`, `before_action :set_user only: show,update`,
+ * `skip_before_action :authenticate except: index`. The project pass that puts
+ * a route on its action (rails-route-anchor) reads them up the class chain:
+ * an action runs its filters before its own body.
+ */
+export function filterDecorators(lines: string[], cls: ClassInfo): string[] {
+  const out: string[] = [];
+  for (const d of collectFilters(lines, cls)) {
+    if (d.kind === "macro" || d.names.length === 0) continue;
+    const scope = (d.only ? ` only: ${[...d.only].join(",")}` : "") + (d.except.size > 0 ? ` except: ${[...d.except].join(",")}` : "");
+    for (const name of d.names) out.push(`${d.kind === "skip" ? "skip_before_action" : "before_action"} :${name}${scope}`);
+  }
+  return out;
 }

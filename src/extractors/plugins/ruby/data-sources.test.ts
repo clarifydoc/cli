@@ -192,3 +192,24 @@ describe("rubySpec.extractDataSources — outbound HTTP (api-call)", () => {
     expect(apiCalls(`users = User.where(active: true).order(:name)`)).toHaveLength(0);
   });
 });
+
+describe("rubySpec.extractDataSources — a local holding a relation", () => {
+  it("names the chain the local was assigned, for the association join", () => {
+    const ds = dbSources(`
+  def fetch_contact
+    contact_scope = Current.account.contacts
+    contact_scope = contact_scope.includes(contact_inboxes: [:inbox]) if @include_contact_inboxes
+    @contact = contact_scope.find(params[:id])
+  end
+  def names
+    items = load_items
+    items.first
+  end
+    `);
+    // `items.first` stays out: `items` holds what a method returned, no relation the file can see.
+    expect(ds.map((d) => [d.name, d.access])).toEqual([
+      ["Current.account.contacts.includes", "read"],
+      ["Current.account.contacts.includes.find", "read"],
+    ]);
+  });
+});

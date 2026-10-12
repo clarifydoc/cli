@@ -64,3 +64,31 @@ end`;
     expect(out[1]!.routes.find((r) => r.path === "/api/labels/:id")?.middleware).toEqual(["before_action :authenticate_user!"]);
   });
 });
+
+describe("rails-route-anchor — before_action filters", () => {
+  it("gives an action the filters it runs, inherited ones first, honoring only:/skip", () => {
+    const router = `Rails.application.routes.draw do
+  namespace :api do
+    resources :messages, only: [:index, :destroy]
+  end
+end`;
+    const base = { ...cls("Api::BaseController", null, [["conversation", 6], ["authenticate", 10]]), decorators: ["before_action :authenticate", "before_action :conversation"] } as ClassInfo;
+    const msgs = {
+      ...cls("Api::MessagesController", "Api::BaseController", [["index", 4], ["destroy", 8], ["message", 12]]),
+      decorators: ["skip_before_action :authenticate only: index", "before_action :message only: destroy"],
+    } as ClassInfo;
+    const out = [
+      file("config/routes.rb", [], rubySpec.extractRoutes!(router.split("\n"), [], "config/routes.rb")),
+      file("app/controllers/api/base_controller.rb", [base]),
+      file("app/controllers/api/messages_controller.rb", [msgs]),
+    ];
+    const importIndex = buildImportIndex(out);
+    const ctx = { importIndex, classes: buildClassIndex(out, importIndex), resolveModule: () => null, fileOf: (p: string) => out.find((a) => a.filePath === p) } as ProjectContext;
+    reconcileProjectRoutes(out, ctx, [railsRouteAnchor]);
+    const callsOf = (path: string, method: string) => out[2]!.routes.find((r) => r.path === path && r.httpMethod === method)!.calls.map((c) => c.name);
+    expect(callsOf("/api/messages", "GET")).toEqual(["Api::BaseController.conversation"]);
+    expect(callsOf("/api/messages/:id", "DELETE")).toEqual(["Api::BaseController.authenticate", "Api::BaseController.conversation", "Api::MessagesController.message"]);
+    // The controller's own action method carries them too.
+    expect(msgs.methods.find((m) => m.name === "destroy")!.calls.map((c) => c.name)).toContain("Api::MessagesController.message");
+  });
+});
