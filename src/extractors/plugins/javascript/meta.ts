@@ -17,6 +17,7 @@ import { javascriptCallHooks } from "./call-hooks.js";
 import { extractJsVariableAliases } from "./variable-aliases.js";
 import { extractJsDiBindings } from "./di-bindings.js";
 import { extractHttpClientBases, extractHttpClientRegistrations } from "./http-clients.js";
+import { extractStoreModules, VuexDispatchResolver } from "./vuex.js";
 import { extractDevProxyRules } from "./dev-proxies.js";
 import { extractPathArgCalls } from "./path-arg-calls.js";
 import { extractModuleValues } from "./module-values.js";
@@ -35,7 +36,7 @@ import { JavaScriptDataSourceExtractor } from "./data-sources.js";
 import { JavaScriptMutationExtractor } from "./data-mutations.js";
 import { JavaScriptEntityExtractor } from "./entities.js";
 import { javascriptRouteExtractor } from "./routes/index.js";
-import { JsComponentEmitResolver } from "./dispatch.js";
+import { JsComponentEmitResolver, JsPropCallbackResolver } from "./dispatch.js";
 import { javascriptRequestSchema } from "./request-schema.js";
 import { javascriptReachability } from "./reachability.js";
 
@@ -150,6 +151,7 @@ function astHooks(language: Language): AstExtractorHooks {
     externalTemplate: (sourceText) => extractAngularTemplateUrl(sourceText),
     customElements: (sourceText) => extractCustomElements(sourceText),
     httpClientBases: extractHttpClientBases,
+    storeModules: extractStoreModules,
     httpClientRegistrations: extractHttpClientRegistrations,
     proxyRules: extractDevProxyRules,
     pathArgCalls: extractPathArgCalls,
@@ -167,7 +169,7 @@ const importsExports = new JavaScriptImportExportExtractor();
 const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
-const dispatchResolvers = [new JsComponentEmitResolver()];
+const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver()];
 
 export const typescriptMeta: LanguagePluginMeta = {
   ...typescriptManifest,

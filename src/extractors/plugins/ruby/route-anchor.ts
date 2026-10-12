@@ -26,6 +26,15 @@ export const railsRouteAnchor: RouteResolver = {
   resolve(analyses: FileAnalysis[], ctx: ProjectContext): void {
     const byName = new Map<string, ClassRef | null>();
     const qualified = new Map<ClassRef, string>();
+    // Modules a controller includes (`include LabelConcern`) may define its actions.
+    const modules = new Map<string, ClassRef | null>();
+    for (const a of analyses) {
+      for (const ref of ctx.classes.classesIn(a.filePath)) {
+        if (ref.cls.name.endsWith("Controller")) continue;
+        const name = [...enclosingModules(ref.cls, a.classes), ref.cls.name.split("::").pop()!].join("::");
+        modules.set(name, modules.has(name) ? null : ref);
+      }
+    }
     for (const a of analyses) {
       for (const ref of ctx.classes.classesIn(a.filePath)) {
         if (!ref.cls.name.endsWith("Controller")) continue;
@@ -67,7 +76,7 @@ export const railsRouteAnchor: RouteResolver = {
         }
         const m = r.handler ? HANDLER_RE.exec(r.handler) : null;
         const ref = m ? byName.get(m[1]!) : null;
-        const action = ref ? definerOf(ref, m![2]!, byName, qualified) : null;
+        const action = ref ? definerOf(ref, m![2]!, byName, qualified, modules) : null;
         const target = action ? byPath.get(action.file) : undefined;
         if (!action || !target || action.file === a.filePath) {
           kept.push(r);
@@ -119,12 +128,30 @@ function definerOf(
   action: string,
   byName: Map<string, ClassRef | null>,
   qualified: Map<ClassRef, string>,
+  modules: Map<string, ClassRef | null>,
 ): { file: string; fn: FunctionInfo } | null {
   const seen = new Set<ClassRef>();
   for (let c: ClassRef | null | undefined = ref; c && !seen.has(c); c = superOf(c, byName, qualified)) {
     seen.add(c);
     const fn = c.cls.methods.find((f) => f.name === action);
     if (fn) return { file: c.filePath, fn };
+    // Ruby looks in the included modules next, the last included first.
+    const scope = (qualified.get(c) ?? c.cls.name).split("::").slice(0, -1);
+    for (const written of [...(c.cls.implements ?? [])].reverse()) {
+      const mod = lookup(written, scope, modules);
+      const mfn = mod?.cls.methods.find((f) => f.name === action);
+      if (mfn) return { file: mod!.filePath, fn: mfn };
+    }
+  }
+  return null;
+}
+
+/** A constant as Ruby finds it from inside `scope`: innermost namespace first. */
+function lookup<T>(written: string, scope: string[], table: Map<string, T | null>): T | null {
+  const name = written.replace(/^::/, "");
+  for (let k = scope.length; k >= 0; k--) {
+    const hit = table.get([...scope.slice(0, k), name].join("::"));
+    if (hit) return hit;
   }
   return null;
 }
@@ -132,10 +159,5 @@ function definerOf(
 function superOf(ref: ClassRef, byName: Map<string, ClassRef | null>, qualified: Map<ClassRef, string>): ClassRef | null {
   const written = ref.cls.extends?.replace(/^::/, "");
   if (!written) return null;
-  const scope = (qualified.get(ref) ?? ref.cls.name).split("::").slice(0, -1);
-  for (let k = scope.length; k >= 0; k--) {
-    const hit = byName.get([...scope.slice(0, k), written].join("::"));
-    if (hit) return hit;
-  }
-  return null;
+  return lookup(written, (qualified.get(ref) ?? ref.cls.name).split("::").slice(0, -1), byName);
 }

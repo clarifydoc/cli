@@ -84,6 +84,107 @@ export class JsComponentEmitResolver implements DispatchResolver {
   }
 }
 
+/**
+ * React's emit: a callback handed down as a prop. `<AddNewMovie
+ * onMovieLookupChange={this.onMovieLookupChange} />` in the parent, and
+ * `this.props.onMovieLookupChange(value)` (or a destructured `onMovieLookupChange()`,
+ * or `onPress={onModalClose}` straight in the child's markup) in the child. The
+ * child calls a name it never defines; the parent bound it on the child's tag.
+ *
+ * The join is the emit resolver's, by prop name instead of event: the parent's
+ * element on the child's TAG binds prop `onX` to a handler → the tag's import
+ * resolves to the child's file → the child references `onX`. A parent handler
+ * that is itself a prop (drilled through) is followed up its own parents, up to
+ * four levels. Only `on[A-Z]…` props: React's convention for callbacks, which
+ * keeps data props out. One link per child function calling the prop (callName
+ * as written, so the report resolves `onPress={onModalClose}` through it), or
+ * from `<template>` when only the markup uses it.
+ */
+export class JsPropCallbackResolver implements DispatchResolver {
+  readonly id = "prop-callback";
+  readonly languages: Language[] = ["typescript", "javascript"];
+  readonly priority = 32;
+
+  resolve(analyses: FileAnalysis[]): SymbolLink[] {
+    const filePathMap = buildFilePathMap(analyses);
+    const byPath = new Map(analyses.map((a) => [a.filePath, a]));
+    // child file → prop → bindings in parents.
+    const bindings = new Map<string, Map<string, Array<{ parent: FileAnalysis; handler: string }>>>();
+    for (const parent of analyses) {
+      const els = (parent.interactiveElements ?? []).filter(
+        (el) => el.element === "custom" && el.component && el.handler && PROP_CALLBACK.test(el.event),
+      );
+      if (els.length === 0) continue;
+      const subByKey = new Map<string, string>();
+      for (const sub of parent.subComponents ?? []) if (sub.importSource) subByKey.set(tagKey(sub.name), sub.importSource);
+      for (const el of els) {
+        const src = subByKey.get(tagKey(el.component!));
+        const childFile = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
+        if (!childFile || !byPath.has(childFile)) continue;
+        const byProp = bindings.get(childFile) ?? bindings.set(childFile, new Map()).get(childFile)!;
+        const list = byProp.get(el.event) ?? byProp.set(el.event, []).get(el.event)!;
+        list.push({ parent, handler: el.handler! });
+      }
+    }
+    if (bindings.size === 0) return [];
+
+    const spanCache = new Map<FileAnalysis, SymbolSpan[]>();
+    const spans = (a: FileAnalysis) => spanCache.get(a) ?? spanCache.set(a, spansOf(a)).get(a)!;
+
+    /** The functions a prop of `file` reaches: each parent's bound handler, through drilled props. */
+    const targetsOf = (file: string, prop: string, depth: number, seen: Set<string>): Array<{ file: string; span: SymbolSpan }> => {
+      const key = `${file}#${prop}`;
+      if (depth > 4 || seen.has(key)) return [];
+      seen.add(key);
+      const out: Array<{ file: string; span: SymbolSpan }> = [];
+      for (const b of bindings.get(file)?.get(prop) ?? []) {
+        const name = cleanHandler(b.handler);
+        if (!name) continue;
+        const own = spans(b.parent).find((sp) => sp.symbol === name || sp.symbol.endsWith(`.${name}`));
+        if (own) out.push({ file: b.parent.filePath, span: own });
+        else if (PROP_CALLBACK.test(name)) out.push(...targetsOf(b.parent.filePath, name, depth + 1, seen));
+      }
+      return out.slice(0, 8);
+    };
+
+    const links: SymbolLink[] = [];
+    for (const [childFile, byProp] of bindings) {
+      const child = byPath.get(childFile)!;
+      const defined = new Set(spans(child).map((sp) => sp.symbol.split(".").pop()!));
+      for (const prop of byProp.keys()) {
+        if (defined.has(prop)) continue; // the child's own function of that name
+        const targets = targetsOf(childFile, prop, 0, new Set());
+        if (targets.length === 0) continue;
+        const callers: Array<{ symbol: string; line: number; callName: string }> = [];
+        for (const fn of [...child.functions, ...child.classes.flatMap((c) => c.methods.map((m) => ({ ...m, name: `${c.name}.${m.name}` })))]) {
+          const call = fn.calls.find((c) => c.name === prop || c.name === `props.${prop}` || c.name === `this.props.${prop}`);
+          if (call) callers.push({ symbol: fn.name, line: call.line, callName: call.name });
+        }
+        const inMarkup = (child.interactiveElements ?? []).find((el) => el.handler && cleanHandler(el.handler) === prop);
+        if (callers.length === 0 && inMarkup) callers.push({ symbol: "<template>", line: inMarkup.line, callName: prop });
+        for (const c of callers) {
+          for (const t of targets) {
+            links.push({
+              sourceFile: childFile,
+              sourceSymbol: c.symbol,
+              sourceLine: c.line,
+              callName: c.callName,
+              targetFile: t.file,
+              targetSymbol: t.span.symbol,
+              targetLine: t.span.line,
+              confidence: "INFERRED",
+            });
+          }
+        }
+      }
+    }
+    return links;
+  }
+}
+
+/** React's callback-prop convention: `onPress`, `onModalClose`. */
+const PROP_CALLBACK = /^on[A-Z]\w*$/;
+
 interface SymbolSpan {
   symbol: string;
   line: number;

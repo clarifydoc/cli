@@ -107,3 +107,29 @@ describe("JsComponentEmitResolver", () => {
     expect(links.map((l) => l.targetSymbol).sort()).toEqual(["onArchiveSave", "onSave"]);
   });
 });
+
+describe("JsPropCallbackResolver — React callback props", () => {
+  it("links a child's prop call to the parent's bound handler, through a drilled prop", async () => {
+    const { JsPropCallbackResolver } = await import("./dispatch.js");
+    const call = (name: string, line: number) => ({ name, kind: "internal" as const, target: null, line });
+    const grand = fa("src/AddMovie.js", {
+      functions: [{ ...fn("AddMovie.onLookup", 10, 14) }],
+      interactiveElements: [{ element: "custom", event: "onMovieLookupChange", handler: "this.onLookup", line: 20, component: "AddNewMovieConnector" }],
+      subComponents: [{ name: "AddNewMovieConnector", importSource: "./AddNewMovieConnector", props: [], line: 20 }],
+    });
+    const connector = fa("src/AddNewMovieConnector.js", {
+      // Drills the prop on: binds its own prop to the child's.
+      interactiveElements: [{ element: "custom", event: "onMovieLookupChange", handler: "onMovieLookupChange", line: 8, component: "AddNewMovie" }],
+      subComponents: [{ name: "AddNewMovie", importSource: "./AddNewMovie", props: [], line: 8 }],
+    });
+    const child = fa("src/AddNewMovie.js", {
+      functions: [{ ...fn("AddNewMovie.onSearchInputChange", 3, 5), calls: [call("this.props.onMovieLookupChange", 4)] }],
+      interactiveElements: [{ element: "custom", event: "onModalClose", handler: "onModalClose", line: 9, component: "Modal" }],
+    });
+    const links = new JsPropCallbackResolver().resolve([grand, connector, child]);
+    expect(links.map((l) => `${l.sourceFile}::${l.sourceSymbol} -${l.callName}-> ${l.targetFile}::${l.targetSymbol}`)).toEqual([
+      "src/AddNewMovieConnector.js::<template> -onMovieLookupChange-> src/AddMovie.js::AddMovie.onLookup",
+      "src/AddNewMovie.js::AddNewMovie.onSearchInputChange -this.props.onMovieLookupChange-> src/AddMovie.js::AddMovie.onLookup",
+    ]);
+  });
+});

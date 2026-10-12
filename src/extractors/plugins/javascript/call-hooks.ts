@@ -1,3 +1,4 @@
+import type { Node } from "web-tree-sitter";
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { receiverTypeOfCall } from "./di.js";
 
@@ -10,6 +11,7 @@ const VUE_COMPILER_MACROS = new Set([
 /** Shared by the typescript and javascript metas. */
 export const javascriptCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["call_expression", "new_expression"]),
+  keyOf: dispatchKeyOf,
   nestedScopeTypes: [
     "arrow_function",
     "function_expression",
@@ -69,3 +71,21 @@ export const javascriptCallHooks: CallExtractionHooks = {
   // `(this.gadget as GadgetService).buffGadget()`) names its receiver's type.
   receiverTypeOf: receiverTypeOfCall,
 };
+
+/**
+ * `store.dispatch('contacts/get')`, `this.$store.dispatch("x")`, `dispatch('x')`:
+ * Vuex routes an action by its name string, so the string is the call's key.
+ * Only a literal first argument counts; `dispatch(fetchMovies())` (Redux) is a
+ * call of the thunk creator and resolves by name like any other call.
+ */
+function dispatchKeyOf(node: Node): string | null {
+  if (node.type !== "call_expression") return null;
+  const fn = node.childForFieldName("function");
+  const leaf = fn?.type === "member_expression" ? fn.childForFieldName("property")?.text : fn?.type === "identifier" ? fn.text : null;
+  if (leaf !== "dispatch") return null;
+  const first = node.childForFieldName("arguments")?.namedChildren[0];
+  if (!first) return null;
+  if (first.type === "string") return first.text.slice(1, -1) || null;
+  if (first.type === "template_string" && !first.namedChildren.some((c) => c.type === "template_substitution")) return first.text.slice(1, -1) || null;
+  return null;
+}
