@@ -7,7 +7,7 @@ import type {
 } from "../../../types/analysis.js";
 import type { InteractiveElementInfo, PropertyInfo, ScreenInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
-import { extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
+import { extractCallsFromBody, extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
 import { applyRouteMeta, type GuardAttr } from "../../shared/route-metadata.js";
 import { extractDartRequestAccess, middlewareGuard } from "./request-schema.js";
 import {
@@ -504,6 +504,7 @@ function flutterElementAt(lines: string[], i: number): InteractiveElementInfo["e
 
 function extractFlutterInteractiveElements(lines: string[]): InteractiveElementInfo[] {
   const out: InteractiveElementInfo[] = [];
+  const closures = new Map(flutterClosureHandlers(lines).map((c) => [`${c.line}:${c.column}`, c.name]));
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     if (!line.includes("on")) continue;
@@ -512,11 +513,109 @@ function extractFlutterInteractiveElements(lines: string[]): InteractiveElementI
     while ((m = FLUTTER_EVENT_RE.exec(line)) !== null) {
       // A declaration (`final VoidCallback? onTap;`, `required this.onTap,`) is no handler.
       if (/\b(?:final|required|this\.|VoidCallback|Function)\b/.test(line.slice(0, m.index + 2))) continue;
-      out.push({ element: flutterElementAt(lines, i), event: m[1]!, handler: flutterHandlerName(m[2]!), line: i + 1 });
+      const handler = closures.get(`${i + 1}:${m.index}`) ?? flutterHandlerName(m[2]!);
+      out.push({ element: flutterElementAt(lines, i), event: m[1]!, handler, line: i + 1 });
     }
   }
   return out;
 }
+
+/** A closure handler: `onPressed: () => unawaited(ref.read(p.notifier).start())`, `onTap: () { … }`. */
+interface FlutterClosure {
+  /** 1-based line of the `onX:` argument, and its column. */
+  line: number;
+  column: number;
+  /** Pseudo-function name the element's handler names: `<onPressed@218>`. */
+  name: string;
+  /** 0-based [start, end] line span of the closure, and the columns it starts and ends at. */
+  start: number;
+  startCol: number;
+  end: number;
+  endCol: number;
+}
+
+/**
+ * The inline closures handed to widget events, as spans. A closure has no name
+ * of its own, so its element named only the first call in it — `unawaited`,
+ * `setState`, `ContextHelper` — and the trace stopped there. Each becomes a
+ * pseudo-function `<onPressed@218>` holding the closure's calls (see
+ * `flutterClosureFunctions`), the way an inline JS arrow's calls belong to it.
+ * A closure that only forwards to one named function (`() => _save(ctx)`)
+ * keeps that function as its handler.
+ */
+function flutterClosureHandlers(lines: string[]): FlutterClosure[] {
+  const out: FlutterClosure[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (!line.includes("on") || !/[=)]\s*(?:=>|\{|async)/.test(line)) continue;
+    FLUTTER_EVENT_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = FLUTTER_EVENT_RE.exec(line)) !== null) {
+      if (/\b(?:final|required|this\.|VoidCallback|Function)\b/.test(line.slice(0, m.index + 2))) continue;
+      const valueAt = m.index + m[0].length - m[2]!.length;
+      const head = line.slice(valueAt).trimStart();
+      const closure = /^\([^()]*\)\s*(?:async\s*)?(=>|\{)/.exec(head);
+      if (!closure) continue;
+      const headAt = valueAt + (line.slice(valueAt).length - head.length);
+      const span = closureEnd(lines, i, headAt);
+      if (!span) continue;
+      // `() => _save(ctx)` forwards to a named function: that name is the handler.
+      if (closure[1] === "=>" && span.line === i) {
+        const body = line.slice(headAt + closure[0].length, span.col).trim();
+        if (/^(?:await\s+)?_?[a-z]\w*\s*\([^()]*\)$/.test(body) && !/^(?:unawaited|setState|print)\b/.test(body)) continue;
+      }
+      out.push({ line: i + 1, column: m.index, name: `<${m[1]}@${i + 1}>`, start: i, startCol: valueAt, end: span.line, endCol: span.col });
+    }
+  }
+  return out;
+}
+
+/** Where the closure starting at `lines[line][col]` ends: the `,`/`)` closing its argument at depth 0, or its block's `}`. */
+function closureEnd(lines: string[], line: number, col: number): { line: number; col: number } | null {
+  let depth = 0;
+  let sawBlock = false;
+  for (let l = line; l < Math.min(lines.length, line + 200); l++) {
+    const text = lines[l]!;
+    for (let c = l === line ? col : 0; c < text.length; c++) {
+      const ch = text[c]!;
+      if (ch === "/" && text[c + 1] === "/") break;
+      if (ch === "'" || ch === '"') {
+        const close = text.indexOf(ch, c + 1);
+        c = close < 0 ? text.length : close;
+        continue;
+      }
+      if (ch === "(" || ch === "[" || ch === "{") {
+        if (ch === "{" && depth === 0 && !sawBlock) sawBlock = true;
+        depth++;
+      } else if (ch === ")" || ch === "]" || ch === "}") {
+        depth--;
+        if (depth < 0) return { line: l, col: c };
+        if (depth === 0 && ch === "}" && sawBlock) return { line: l, col: c + 1 };
+      } else if (ch === "," && depth === 0) return { line: l, col: c };
+    }
+  }
+  return null;
+}
+
+/** The closure handlers as pseudo-functions, each with the calls inside its span. */
+function flutterClosureFunctions(lines: string[]): FunctionInfo[] {
+  if (!lines.some((l) => FLUTTER_EVENT_HINT.test(l))) return [];
+  const out: FunctionInfo[] = [];
+  for (const c of flutterClosureHandlers(lines)) {
+    const span = lines.map((text, i) => {
+      if (i < c.start || i > c.end) return "";
+      const from = i === c.start ? c.startCol : 0;
+      const to = i === c.end ? c.endCol : text.length;
+      return " ".repeat(from) + text.slice(from, to);
+    });
+    const calls = extractCallsFromBody(span, c.start, c.end + 1, dartSpec.lineCommentPrefixes, dartSpec.callPatterns);
+    if (calls.length === 0) continue;
+    out.push({ name: c.name, params: [], returnType: null, isAsync: false, isExported: false, decorators: [], calls, line: c.line, endLine: c.end + 1 });
+  }
+  return out;
+}
+
+const FLUTTER_EVENT_HINT = /\bon(?:Pressed|Tap|LongPress|DoubleTap|Changed|Submitted|EditingComplete|Saved|Selected|FieldSubmitted|Toggle|Refresh|Dismissed)\s*:/;
 
 /** Widget base classes whose subclasses can be screens. */
 const FLUTTER_WIDGET_BASE_RE =
@@ -692,5 +791,12 @@ export const dartSpec: RegexLangSpec = {
   extractDataSources: (lines) => extractDartDataSources(lines),
   extractRoutes: (lines) => extractDartRoutes(lines),
   extractInteractiveElements: (lines) => extractFlutterInteractiveElements(lines),
+  // Inline closure handlers as functions of their own (see `flutterClosureFunctions`).
+  postProcessFunctions: (lines, fns) => {
+    const closures = flutterClosureFunctions(lines);
+    if (closures.length === 0) return fns;
+    if (lines.some((l) => l.includes("Provider") || l.includes("riverpod"))) applyProviderTypes(closures, riverpodProviderTypes(lines));
+    return [...fns, ...closures];
+  },
   extractScreens: (lines, filePath, classes) => extractFlutterScreens(lines, filePath, classes),
 };

@@ -201,3 +201,40 @@ describe("dartSpec — routes", () => {
     expect(r).toHaveLength(0);
   });
 });
+
+describe("Flutter closure handlers", () => {
+  it("names an inline closure handler and gives it the closure's calls; a forwarding closure keeps its target", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const src = `class BackupPage extends ConsumerWidget {
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Column(children: [
+      ElevatedButton(
+        onPressed: () => unawaited(ref.read(backupProvider.notifier).startBackup()),
+        child: Text('Start'),
+      ),
+      IconButton(onPressed: () => _save(context), icon: Icon(Icons.save)),
+      ListTile(
+        onTap: () {
+          setState(() => selected = true);
+          context.pushRoute(const SettingsRoute());
+        },
+      ),
+    ]);
+  }
+}`;
+    const a = extractWithRegex(src, "lib/backup.page.dart", "dart");
+    expect(a.interactiveElements.map((e) => `${e.event}@${e.line}=${e.handler}`)).toEqual([
+      "onPressed@5=<onPressed@5>",
+      "onPressed@8=_save",
+      "onTap@10=<onTap@10>",
+    ]);
+    const fn = (n: string) => a.functions.find((f) => f.name === n);
+    expect(fn("<onPressed@5>")?.calls.map((c) => [c.name, c.receiverQualifier ?? null])).toEqual(
+      expect.arrayContaining([
+        ["unawaited", null],
+        ["ref.read(backupProvider.notifier).startBackup", "backupProvider"],
+      ]),
+    );
+    expect(fn("<onTap@10>")?.calls.map((c) => c.name)).toContain("context.pushRoute");
+  });
+});
