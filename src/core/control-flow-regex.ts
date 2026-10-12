@@ -58,6 +58,13 @@ const MAX_LINES = 4000;
 
 let nextId = 1;
 
+/**
+ * Set while measuring (`regexStructureMetrics`): closures are descended into as
+ * `nested_function` nodes rather than drawn as one step, because the parsed
+ * tier's cognitive complexity counts what they contain, one level deeper.
+ */
+let descendClosures = false;
+
 /** A synthesized node. Carries only what the interpreter reads. */
 class SynthNode implements FlowNode {
   readonly id = nextId++;
@@ -125,16 +132,17 @@ export function blankNonCode(source: string, spec: LanguageRegexControlFlowSpec)
   while (i < source.length) {
     const rest = source.slice(i, i + 4);
 
-    const line = lineComments.find((token) => rest.startsWith(token));
-    if (line) {
-      while (i < source.length && source[i] !== "\n") out[i++] = " ";
-      continue;
-    }
-
-    if (blockComment[0] && rest.startsWith(blockComment[0])) {
+    // A block comment first: Lua's `--[[` begins with its line-comment token.
+    if (blockComment[0] && source.startsWith(blockComment[0], i)) {
       const end = source.indexOf(blockComment[1], i + blockComment[0].length);
       const stop = end === -1 ? source.length : end + blockComment[1].length;
       for (; i < stop; i++) if (source[i] !== "\n") out[i] = " ";
+      continue;
+    }
+
+    const line = lineComments.find((token) => rest.startsWith(token));
+    if (line) {
+      while (i < source.length && source[i] !== "\n") out[i++] = " ";
       continue;
     }
 
@@ -248,6 +256,8 @@ function scanLines(
   const raws = source.split("\n");
   const codes = blanked.split("\n");
 
+  if (spec.blockDelta) return scanKeywordLines(raws, codes, firstRow, spec);
+
   const openers = spec.blockOpen ?? /\{/g;
   const closers = spec.blockClose ?? /\}/g;
 
@@ -269,6 +279,34 @@ function scanLines(
       delta: opens - closes,
     });
     depth += opens - closes;
+  }
+  return lines;
+}
+
+/**
+ * `scanLines` for keyword-delimited languages: the plugin's `blockDelta` says what
+ * each line opens and closes, and a stack of block names decides whether a
+ * `middle` line (`else`, `rescue`) steps out to its block's level or — inside an
+ * `armBlocks` block such as a Ruby `case` — is one more arm at the arms' level.
+ */
+function scanKeywordLines(
+  raws: readonly string[],
+  codes: readonly string[],
+  firstRow: number,
+  spec: LanguageRegexControlFlowSpec,
+): ScanLine[] {
+  const lines: ScanLine[] = [];
+  const stack: string[] = [];
+  for (let i = 0; i < raws.length && i < MAX_LINES; i++) {
+    const code = codes[i] ?? "";
+    const trimmed = code.trim();
+    const delta = trimmed === "" ? { open: [], close: 0, leadingClose: 0 } : spec.blockDelta!(trimmed);
+    const depth = stack.length;
+    const asArm = delta.middle && spec.armBlocks?.has(stack[stack.length - 1] ?? "");
+    const recorded = delta.middle && !asArm ? Math.max(0, depth - 1) : Math.max(0, depth - delta.leadingClose);
+    for (let k = 0; k < delta.close && stack.length > 0; k++) stack.pop();
+    for (const name of delta.open) if (stack.length < MAX_DEPTH * 2) stack.push(name);
+    lines.push({ row: firstRow + i, raw: raws[i] ?? "", code, depth: recorded, delta: stack.length - depth });
   }
   return lines;
 }
@@ -412,7 +450,13 @@ function parseRange(
     // the function being drawn.
     const nested = spec.nestedFunction ?? DEFAULT_NESTED_FUNCTION;
     if (bodyEnd > i + 1 && nested.test(line.code) && !isJump(matched)) {
-      into.add(node("expression_statement", line, lines[bodyEnd - 1]!));
+      if (descendClosures) {
+        const closure = node("nested_function", line, lines[bodyEnd - 1]!);
+        parseRange(lines, range.from, bodyEnd, spec, depth + 1, closure);
+        into.add(closure);
+      } else {
+        into.add(node("expression_statement", line, lines[bodyEnd - 1]!));
+      }
       i = bodyEnd;
       continue;
     }
@@ -443,10 +487,15 @@ function isPunctuationOnly(code: string, spec: LanguageRegexControlFlowSpec): bo
   const open = spec.blockOpen ?? /\{/;
   const close = spec.blockClose ?? /\}/;
   const stripped = code
-    .replace(new RegExp(open.source, "g"), "")
-    .replace(new RegExp(close.source, "g"), "")
+    .replace(globalOf(open), "")
+    .replace(globalOf(close), "")
     .replace(/[\s;,()\[\]]/g, "");
   return stripped === "";
+}
+
+/** The same pattern, global, keeping its other flags (VB's keywords are case-insensitive). */
+function globalOf(re: RegExp): RegExp {
+  return new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
 }
 
 /**
@@ -497,7 +546,7 @@ function emit(
   // `if (cond) return;` — the construct and its whole body on one line, with
   // no block to descend into. Only consulted when no block was opened, so a
   // braced form is never second-guessed.
-  const inline = bodyEnd === i + 1 ? splitInline(line.code.trim()) : null;
+  const inline = bodyEnd === i + 1 ? (spec.inlineGuard?.(line.code.trim()) ?? splitInline(line.code.trim())) : null;
 
   const withBody = (type: string, field: string): SynthNode => {
     const head = inline?.head ?? matched.head;
@@ -669,12 +718,14 @@ function switchBody(
   );
   const label = spec.case ?? /^(?:case\s+([^:]*)|default)\s*:?/;
 
-  const starts: { index: number; text: string | undefined }[] = [];
+  const starts: { index: number; text: string | undefined; inline?: string }[] = [];
   for (let i = from; i < to; i++) {
     const line = lines[i]!;
     if (line.depth > (lines[from]?.depth ?? 0)) continue;
     const hit = label.exec(line.code.trim());
-    if (hit) starts.push({ index: i, text: hit[1]?.trim() });
+    // A label that is only a string literal (`when 'Contact'`) was blanked to spaces: name it by the raw line.
+    // A second capture is the arm's statement on the label's own line (`{:error, e} -> raise e`, `when 1 then x`).
+    if (hit) starts.push({ index: i, text: hit[1] !== undefined && hit[1].trim() === "" ? line.raw.trim() : hit[1]?.trim(), inline: hit[2]?.trim() || undefined });
   }
 
   starts.forEach((start, n) => {
@@ -684,6 +735,10 @@ function switchBody(
     const isDefault = start.text === undefined;
     const arm = node(isDefault ? "switch_default" : "switch_case", line, lastLine, start.text ?? "default");
     if (!isDefault) arm.add(node("value", line, line, start.text!), "value");
+    if (start.inline) {
+      const as = { ...line, code: start.inline, raw: start.inline, delta: 0 };
+      arm.add(node(classify(start.inline, spec)?.type ?? "expression_statement", as, as));
+    }
     parseRange(lines, start.index + 1, end, spec, depth + 1, arm);
     body.add(arm);
   });
@@ -703,6 +758,101 @@ export function buildRegexControlFlow(
   fn: FunctionRef,
   filePath: string,
 ): Cfg | null {
+  const body = buildRegexBody(source, language, fn);
+  if (!body) return null;
+  return buildFromBody(body, {
+    spec: DEFAULT_CONTROL_FLOW,
+    complexity: complexityFor(language) ?? DEFAULT_COMPLEXITY,
+    fields: { ...DEFAULT_CONTROL_FLOW_FIELDS } as Record<ControlFlowField, readonly string[]>,
+    language,
+    fn,
+    filePath,
+    approximate: true,
+  });
+}
+
+/**
+ * Cognitive complexity and nesting depth read off the same synthesized structure
+ * the graph is drawn from — what a regex-path language had no way to report.
+ * Cognitive follows the parsed tier's rules: a branch, loop, switch or `catch`
+ * adds 1 plus its nesting; an `else`/`else if` continuation adds 1 without it; a
+ * run of one logical operator in a condition adds 1. Closures the scan does not
+ * descend into contribute nothing, as their bodies are their own functions.
+ */
+export function regexStructureMetrics(
+  source: string,
+  language: Language,
+  fn: FunctionRef,
+): { cognitive: number; nestingDepth: number } | null {
+  descendClosures = true;
+  let body: SynthNode | null;
+  try {
+    body = buildRegexBody(source, language, fn);
+  } finally {
+    descendClosures = false;
+  }
+  if (!body) return null;
+  let cognitive = 0;
+  let deepest = 0;
+  // Every logical operator adds 1, as in the parsed tier (Sonar would fold a run into one).
+  const LOGICAL = /&&|\|\||\?\?|\band\b|\bor\b|\bAndAlso\b|\bOrElse\b/g;
+  const logical = (cond: SynthNode | null): void => {
+    cognitive += (cond?.text.match(LOGICAL) ?? []).length;
+  };
+  const walk = (n: SynthNode, nesting: number): void => {
+    switch (n.type) {
+      case "nested_function":
+        logical(n);
+        for (const c of n.children) walk(c, nesting + 1);
+        return;
+      case "expression_statement":
+      case "return_statement":
+      case "throw_statement":
+        logical(n);
+        return;
+      case "if_statement":
+        cognitive += 1 + nesting;
+        deepest = Math.max(deepest, nesting + 1);
+        ifChain(n, nesting);
+        return;
+      case "while_statement":
+      case "for_statement":
+      case "do_statement":
+      case "switch_statement":
+        cognitive += 1 + nesting;
+        deepest = Math.max(deepest, nesting + 1);
+        logical(n.childForFieldName("condition"));
+        for (const c of n.children) if (c.type !== "condition" && c.type !== "value") walk(c, nesting + 1);
+        return;
+      case "catch_clause":
+        cognitive += 1 + nesting;
+        deepest = Math.max(deepest, nesting + 1);
+        for (const c of n.children) walk(c, nesting + 1);
+        return;
+      default:
+        for (const c of n.children) walk(c, nesting);
+    }
+  };
+  /** An `if` and its `else if` / `else` arms: the arms add 1 each, without a nesting penalty. */
+  const ifChain = (n: SynthNode, nesting: number): void => {
+    logical(n.childForFieldName("condition"));
+    const consequence = n.childForFieldName("consequence");
+    if (consequence) walk(consequence, nesting + 1);
+    const alt = n.childForFieldName("alternative");
+    if (alt?.type === "if_statement") {
+      cognitive += 1;
+      ifChain(alt, nesting);
+    } else if (alt) {
+      cognitive += 1;
+      for (const c of alt.children) walk(c, nesting + 1);
+    }
+  };
+  walk(body, 0);
+  return { cognitive, nestingDepth: deepest };
+}
+
+/** The function's body as synthesized statements, or null when the language has no regex spec. */
+function buildRegexBody(source: string, language: Language, fn: FunctionRef): SynthNode | null {
   const spec = regexControlFlowFor(language);
   if (!spec) return null;
 
@@ -728,7 +878,12 @@ export function buildRegexControlFlow(
   for (let i = 0; i < Math.min(lines.length - 1, 12); i++) {
     const here = lines[i]!;
     const next = lines[i + 1]!;
-    if (here.depth === 0 && next.depth > here.depth) start = i + 1;
+    if (here.depth === 0 && next.depth > here.depth) {
+      start = i + 1;
+      // A keyword language's signature opens nothing of its own: the first opener
+      // is the body, and a later one at depth 0 is a `rescue` arm of it.
+      if (spec.blockDelta) break;
+    }
   }
   if (start === 0 && lines.length > 0 && lines[0]!.code.includes("{")) {
     // The whole method on one line — `public int getId() { return id; }`, which
@@ -744,21 +899,25 @@ export function buildRegexControlFlow(
       const as = { ...lines[0]!, code: text, raw: text, delta: 0 };
       root.add(node(classify(text, spec)?.type ?? "expression_statement", as, as));
     }
-    return finish(root);
+    return root;
+  }
+  // `def x … rescue … ensure … end`: a handler at the function's own level makes
+  // the whole body before it a protected block (Ruby, Elixir `def … rescue`).
+  if (spec.blockDelta) {
+    const catchRe = spec.catch ?? /^\}?\s*(?:catch|rescue|except)\b/;
+    const finallyRe = spec.finally ?? /^\}?\s*(?:finally|ensure)\b/;
+    const k = lines.findIndex((l, idx) => idx >= start && l.depth === 0 && (catchRe.test(l.code.trim()) || finallyRe.test(l.code.trim())));
+    if (k > start) {
+      const owner = node("try_statement", lines[start]!, lines[lines.length - 1]!, "");
+      const block = node("statement_block", lines[start]!, lines[k - 1]!, "");
+      parseRange(lines, start, k, spec, 1, block);
+      owner.add(block, "body");
+      root.add(owner);
+      const after = chainHandlers(lines, k, lines.length, spec, 0, owner);
+      parseRange(lines, after, lines.length, spec, 0, root);
+      return root;
+    }
   }
   parseRange(lines, start, lines.length, spec, 0, root);
-  return finish(root);
-
-  function finish(body: SynthNode): Cfg {
-    return buildFromBody(body, {
-      spec: DEFAULT_CONTROL_FLOW,
-      complexity: complexityFor(language) ?? DEFAULT_COMPLEXITY,
-      fields: { ...DEFAULT_CONTROL_FLOW_FIELDS } as Record<ControlFlowField, readonly string[]>,
-      language,
-      fn,
-      filePath,
-      approximate: true,
-    });
-  }
-
+  return root;
 }

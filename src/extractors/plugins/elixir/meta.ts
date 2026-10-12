@@ -6,6 +6,7 @@ import { elixirManifest } from "./manifest.js";
 import { elixirRequestSchema } from "./request-schema.js";
 import { elixirReachability } from "./reachability.js";
 import { PhoenixEventResolver } from "./phoenix-event-resolver.js";
+import { ELIXIR_REGEX_CONTROL_FLOW } from "./control-flow.js";
 
 const ELIXIR_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -20,6 +21,8 @@ export const elixirMeta: LanguagePluginMeta = {
   reachability: elixirReachability,
   ...elixirManifest,
   regexSpec: elixirSpec,
+  // Control flow from source: keyword-delimited blocks (see control-flow.ts).
+  regexControlFlow: ELIXIR_REGEX_CONTROL_FLOW,
   builtinTypes: ELIXIR_BUILTINS,
   knownPackages: hexPackages,
   apiCallRoots: ["HTTPoison", "Tesla", "Finch", "Req", "Mint"],

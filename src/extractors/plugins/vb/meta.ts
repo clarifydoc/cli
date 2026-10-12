@@ -4,6 +4,7 @@ import { vbSpec } from "./index.js";
 import { vbManifest } from "./manifest.js";
 import { vbRequestSchema } from "./request-schema.js";
 import { vbReachability } from "./reachability.js";
+import { VB_REGEX_CONTROL_FLOW } from "./control-flow.js";
 
 const VB_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -20,6 +21,8 @@ export const vbMeta: LanguagePluginMeta = {
   reachability: vbReachability,
   ...vbManifest,
   regexSpec: vbSpec,
+  // Control flow from source: keyword-delimited blocks (see control-flow.ts).
+  regexControlFlow: VB_REGEX_CONTROL_FLOW,
   builtinTypes: VB_BUILTINS,
   requestSchema: vbRequestSchema,
 };

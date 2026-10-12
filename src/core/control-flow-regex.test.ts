@@ -9,8 +9,10 @@ import { extractClasses, extractFunctions } from "../extractors/functions-classe
 import { parseSource, type TreeSitterLanguage } from "../parsers/parser-manager.js";
 import { computeComplexity } from "./complexity-analyzer.js";
 import { buildControlFlow } from "./control-flow.js";
-import { blankNonCode, buildRegexControlFlow } from "./control-flow-regex.js";
+import { blankNonCode, buildRegexControlFlow, regexStructureMetrics } from "./control-flow-regex.js";
 import { controlFlowForFile } from "./control-flow-file.js";
+import { Language as TSLanguage, Parser } from "web-tree-sitter";
+import type { Node } from "web-tree-sitter";
 
 const REPO = resolve(__dirname, "../..");
 const FIXTURES = resolve(REPO, "test-fixtures");
@@ -24,7 +26,7 @@ const GLOB = { cwd: REPO, absolute: true } as const;
 beforeAll(async () => {
   await ensureLanguagesLoaded([
     "typescript", "csharp", "java",
-    "go", "rust", "c", "cpp", "dart", "swift", "perl", "objc",
+    "go", "rust", "c", "cpp", "dart", "swift", "perl", "objc", "ruby", "lua", "elixir", "vb",
   ]);
 });
 
@@ -107,6 +109,9 @@ interface Measured {
   minFunctions: number;
   /** Lowest acceptable share of functions whose shape matches exactly. */
   minExact: number;
+  /** Lowest shares whose regex nesting depth / cognitive complexity equal the parser's. */
+  minNesting: number;
+  minCognitive: number;
 }
 
 const MEASURED: Measured[] = [
@@ -115,9 +120,13 @@ const MEASURED: Measured[] = [
     globs: ["src/**/*.ts"],
     minFunctions: 1200,
     minExact: 0.9,
+    // TypeScript's ternaries (and the `?` of its types) are invisible to a line
+    // scanner; it never takes this path in production, having a parser.
+    minNesting: 0.8,
+    minCognitive: 0.55,
   },
-  { language: "csharp", globs: ["test-fixtures/**/*.cs"], minFunctions: 20, minExact: 0.85 },
-  { language: "java", globs: ["test-fixtures/**/*.java"], minFunctions: 40, minExact: 0.9 },
+  { language: "csharp", globs: ["test-fixtures/**/*.cs"], minFunctions: 20, minExact: 0.85, minNesting: 0.93, minCognitive: 0.93 },
+  { language: "java", globs: ["test-fixtures/**/*.java"], minFunctions: 40, minExact: 0.9, minNesting: 0.95, minCognitive: 0.95 },
 ];
 
 /**
@@ -164,6 +173,192 @@ describe.each(MEASURED)("regex tier agrees with the parser — $language", { tim
 
     expect(compared).toBeGreaterThanOrEqual(target.minFunctions);
     expect(exact / compared).toBeGreaterThanOrEqual(target.minExact);
+  });
+});
+
+/**
+ * The gate for keyword-delimited languages. None of them has a parser in the
+ * product, so the ground truth comes from tree-sitter-ruby, a dev dependency
+ * used only here: what the parse tree says a method contains — branches
+ * (`if`/`unless`/`elsif` and their modifiers, each `case` and its arms), loops,
+ * returns, `raise`, jumps, `rescue` clauses — outside the blocks and lambdas
+ * both tiers treat as closures. Measured on chatwoot's 10,477 methods at 98.9%
+ * and ida's 4,704 at 98.0% when written; the threshold sits below that.
+ */
+describe("keyword-delimited regex tier agrees with tree-sitter-ruby", { timeout: CORPUS_TIMEOUT_MS }, () => {
+  const CLOSURE = new Set(["block", "do_block", "lambda", "method", "singleton_method", "class", "module", "singleton_class"]);
+  const truth = (method: Node) => {
+    const t = { decisions: 0, loops: 0, returns: 0, throws: 0, jumps: 0, catches: 0 };
+    const walk = (n: Node, top: boolean): void => {
+      if (!top && CLOSURE.has(n.type)) return;
+      switch (n.type) {
+        case "if": case "unless": case "elsif": case "if_modifier": case "unless_modifier": t.decisions++; break;
+        case "case": case "case_match":
+          t.decisions++;
+          for (const c of n.namedChildren) if (c && (c.type === "when" || c.type === "in_clause" || c.type === "else")) t.decisions++;
+          break;
+        case "while": case "until": case "for": case "while_modifier": case "until_modifier": t.loops++; break;
+        case "return": t.returns++; break;
+        case "break": case "next": case "redo": case "retry": t.jumps++; break;
+        case "rescue": t.catches++; break;
+        case "identifier": case "call": {
+          const name = n.type === "identifier" ? n.text : n.childForFieldName("method")?.text;
+          const receiver = n.type === "call" ? n.childForFieldName("receiver") : null;
+          if ((name === "raise" || name === "fail") && !receiver && (n.type === "call" || n.parent?.type !== "call")) t.throws++;
+          break;
+        }
+      }
+      for (const c of n.namedChildren) if (c) walk(c, false);
+    };
+    walk(method, true);
+    return t;
+  };
+
+  it("reads the same shape as the Ruby parse tree", async () => {
+    await parseSource("const x = 1;", "typescript", "init.ts"); // initializes the runtime
+    const parser = new Parser();
+    parser.setLanguage(await TSLanguage.load(resolve(REPO, "node_modules/tree-sitter-ruby/tree-sitter-ruby.wasm")));
+    const files = await glob(["test-fixtures/**/*.rb"], { ...GLOB, ignore: ["**/node_modules/**"] });
+    let compared = 0;
+    let exact = 0;
+    for (const file of files) {
+      const source = await readFile(file, "utf8");
+      const tree = parser.parse(source);
+      if (!tree) continue;
+      for (const m of tree.rootNode.descendantsOfType(["method", "singleton_method"])) {
+        if (!m) continue;
+        const ref = { name: m.childForFieldName("name")?.text ?? "?", line: m.startPosition.row + 1, endLine: m.endPosition.row + 1 };
+        const scanned = buildRegexControlFlow(source, "ruby", ref, file);
+        if (!scanned) continue;
+        compared++;
+        if (JSON.stringify(truth(m)) === JSON.stringify(shape(scanned))) exact++;
+      }
+    }
+    expect(compared).toBeGreaterThanOrEqual(50);
+    expect(exact / compared).toBeGreaterThanOrEqual(0.95);
+  });
+});
+
+describe("keyword-delimited languages — what each spec reads", () => {
+  const draw = (language: Language, source: string) => {
+    const lines = source.split("\n").length;
+    const cfg = buildRegexControlFlow(source, language, { name: "f", line: 1, endLine: lines }, `x.${language}`);
+    expect(cfg?.approximate).toBe(true);
+    return shape(cfg!);
+  };
+
+  it("Ruby: modifiers, case arms with string labels, def-level rescue, closures skipped", () => {
+    expect(draw("ruby", `def f(x)
+  return if x.nil?
+  raise ArgumentError, 'bad' unless x.valid?
+  case x.kind
+  when 'a' then go
+  when 'b'
+    stop
+  else
+    other
+  end
+  items.each do |i|
+    return i if i.ok?
+  end
+rescue StandardError => e
+  log(e)
+end`)).toMatchObject({ decisions: 6, returns: 1, throws: 1, catches: 1 });
+  });
+
+  it("Lua: if/elseif chains, loops, one-line guards, repeat-until", () => {
+    expect(draw("lua", `function M.f(t)
+  if not t then return nil end
+  for i = 1, #t do
+    if t[i] == 0 then
+      break
+    elseif t[i] < 0 then
+      error("negative")
+    end
+  end
+  repeat
+    t = step(t)
+  until done(t)
+  return t
+end`)).toMatchObject({ decisions: 3, loops: 2, returns: 2, throws: 1, jumps: 1 });
+  });
+
+  it("Elixir: case arms, keyword if, with/else, rescue, fn closures skipped", () => {
+    expect(draw("elixir", `def f(x) do
+  if x == nil, do: raise(ArgumentError)
+  case fetch(x) do
+    {:ok, v} -> v
+    {:error, e} -> raise e
+  end
+  Enum.map(x, fn y -> if y, do: 1 end)
+rescue
+  e -> log(e)
+end`)).toMatchObject({ decisions: 4, throws: 2, catches: 1 });
+  });
+
+  it("VB: block and one-line If, Select Case, Try/Catch, Exit Function, any casing", () => {
+    expect(draw("vb", `Public Function F(x As Integer) As Integer
+    If x < 0 Then Return -1
+    Select Case x
+        Case 0
+            Return 0
+        Case Else
+            x = x - 1
+    End Select
+    For Each i In items
+        If i Is Nothing Then
+            Exit For
+        ElseIf i.Bad Then
+            Throw New Exception("bad")
+        end if
+    Next
+    Try
+        Save()
+    Catch ex As Exception
+        Exit Function
+    End Try
+    Return x
+End Function`)).toMatchObject({ decisions: 6, loops: 1, returns: 4, throws: 1, jumps: 1, catches: 1 });
+  });
+});
+
+/**
+ * Cognitive complexity and nesting depth for the regex path come from the same
+ * synthesized structure, so they are gated the same way: on the languages with a
+ * parser, the regex numbers are compared with the parsed tier's.
+ */
+describe.each(MEASURED)("regex structure metrics agree with the parser — $language", { timeout: CORPUS_TIMEOUT_MS }, (target) => {
+  it("gives the same nesting depth and cognitive complexity", async () => {
+    const files = await glob(target.globs, {
+      ...GLOB,
+      ignore: ["**/node_modules/**", "**/*.test.ts", "**/*.d.ts", "**/obj/**", "**/bin/**"],
+    });
+    let compared = 0;
+    let nesting = 0;
+    let cognitive = 0;
+    for (const file of files) {
+      const source = await readFile(file, "utf8");
+      let tree;
+      try {
+        tree = await parseSource(source, target.language, file);
+      } catch {
+        continue;
+      }
+      const language = target.language as Language;
+      const functions = extractFunctions(tree, source, language);
+      const classes = extractClasses(tree, source, language);
+      for (const row of computeComplexity(tree, language, functions, classes)) {
+        if (row.cognitive === undefined || row.nestingDepth === undefined) continue;
+        const scanned = regexStructureMetrics(source, language, { name: row.functionName, line: row.line, endLine: row.endLine });
+        if (!scanned) continue;
+        compared++;
+        if (scanned.nestingDepth === row.nestingDepth) nesting++;
+        if (scanned.cognitive === row.cognitive) cognitive++;
+      }
+    }
+    expect(compared).toBeGreaterThanOrEqual(target.minFunctions);
+    expect(nesting / compared).toBeGreaterThanOrEqual(target.minNesting);
+    expect(cognitive / compared).toBeGreaterThanOrEqual(target.minCognitive);
   });
 });
 
