@@ -1,4 +1,4 @@
-import type { RouteInfo, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
+import type { CallInfo, RouteInfo, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractClassesWithSpec } from "../shared/regex-base.js";
 import type { GuardAttr } from "../../shared/route-metadata.js";
@@ -9,6 +9,7 @@ import {
   extractSinatraRoutes,
   isSinatraFile,
   propagateHelperAccess,
+  filterDecorators,
 } from "./route-meta.js";
 import {
   RUBY_DI_CALL_PATTERNS,
@@ -91,6 +92,47 @@ function railsControllerClass(controllerToken: string, modules: readonly string[
   const segs = controllerToken.split("/").filter(Boolean);
   const leaf = railsCamelize(segs.pop() ?? controllerToken) + "Controller";
   return [...modules, ...segs.map(railsCamelize), leaf].join("::");
+}
+
+/**
+ * Ruby calls a method without parentheses: in `agents.find(params[:id])` with
+ * no local or parameter named `agents`, `agents` is a call of the method (a
+ * memoizer like `def agents; @agents ||= …`). The chain alone recorded only
+ * `agents.find`, so the method — and what it loads — was never reached.
+ */
+const IMPLICIT_RECEIVER_SKIP = new Set(["self", "params", "request", "response", "session", "cookies", "flash", "headers", "super", "nil", "true", "false", "logger", "render", "redirect_to", "head", "it", "yield"]);
+function addImplicitReceiverCalls(lines: string[], fn: FunctionInfo): void {
+  const bound = new Set(fn.params.map((p) => p.name));
+  for (let i = fn.line; i < Math.min(fn.endLine, lines.length); i++) {
+    const code = (lines[i] ?? "").replace(/#.*$/, "");
+    for (const m of code.matchAll(/(?:^|[^\w.@:])([a-z_]\w*)\s*(?:\|\|)?=(?![=~>])/g)) bound.add(m[1]!);
+    for (const m of code.matchAll(/\|([^|]*)\|/g)) for (const n of m[1]!.split(",")) bound.add(n.trim().replace(/^[*&]/, ""));
+  }
+  const have = new Set(fn.calls.map((c) => c.name));
+  const extra: CallInfo[] = [];
+  for (const c of fn.calls) {
+    const root = /^([a-z_]\w*)\./.exec(c.name)?.[1];
+    if (!root || bound.has(root) || IMPLICIT_RECEIVER_SKIP.has(root) || have.has(root)) continue;
+    // Call names drop an instance variable's `@` (`@repo&.find` → `repo.find`): that is no method call.
+    if (new RegExp(`@${root}\\b`).test(lines[c.line - 1] ?? "")) continue;
+    have.add(root);
+    extra.push({ name: root, kind: "internal", target: null, line: c.line });
+  }
+  fn.calls.push(...extra);
+}
+
+/** `@x = a.b(…)` / `@x ||= A.b.c(…)` inside a class's methods → `{ x: "a.b(…)" }`, several chains one per line. */
+function ivarAssignedChains(lines: string[], cls: ClassInfo): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const m of cls.methods) {
+    for (let i = m.line; i < Math.min(m.endLine, lines.length); i++) {
+      const code = (lines[i] ?? "").replace(/#.*$/, "");
+      const a = /@([a-z_]\w*)\s*(?:\|\|)?=\s*((?:[A-Z][\w:]*|[a-z_]\w*)(?:\.[a-z_]\w*[?!]?(?:\([^)]*\))?)+)/.exec(code);
+      // Every chain assigned, one per line: the entity pass keeps the model they agree on.
+      if (a && !(out[a[1]!] ?? "").split("\n").includes(a[2]!)) out[a[1]!] = out[a[1]!] ? `${out[a[1]!]}\n${a[2]}` : a[2]!;
+    }
+  }
+  return out;
 }
 
 /** Naive Rails inflector, the other way: `duties` → `duty`, `children` → `child`, `statuses` → `status`. */
@@ -377,6 +419,23 @@ function extractRubyHttpCalls(lines: string[]): DataSourceInfo[] {
 /** A line worth the chain scan: it calls an AR verb (or any `find…` finder) through a dot. */
 const AR_VERB_GATE = new RegExp(`\\.(?:${[...AR_QUERY_METHODS, ...AR_WRITE_METHODS].map((v) => v.replace(/[!?]$/, "")).join("|")}|find\\w*)[!?]?(?=\\s*(?:\\(|$|\\s|[,)\\]}]))`);
 
+/** The chain a local was last assigned earlier in the same method: `scope = Current.account.contacts` → that, args dropped. */
+function localChainBefore(lines: string[], i: number, local: string): string | null {
+  for (let j = i - 1; j >= 0 && i - j <= 30; j--) {
+    const code = (lines[j] ?? "").replace(/#.*$/, "");
+    if (/^\s*def\s/.test(code)) return null;
+    const m = new RegExp(`^\\s*${local}\\s*=\\s*((?:[A-Z][\\w:]*|@?[a-z_]\\w*)(?:\\.[a-z_]\\w*[?!]?)+)\\s*(?:\\(|$|\\s+(?:if|unless)\\b)`).exec(code);
+    if (!m) continue;
+    // Narrowed from itself (`scope = scope.includes(…)`): what it held before, narrowed.
+    if (m[1]!.startsWith(`${local}.`)) {
+      const earlier = localChainBefore(lines, j, local);
+      return earlier ? earlier + m[1]!.slice(local.length) : null;
+    }
+    return m[1]!;
+  }
+  return null;
+}
+
 function extractRubyDataSources(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
   const seen = new Set<string>();
@@ -409,7 +468,18 @@ function extractRubyDataSources(lines: string[]): DataSourceInfo[] {
       const method = m[2]!;
       if (!isArQueryMethod(method)) continue;
       const chained = receiver.includes(".");
-      if (!chained && !AR_WRITE_METHODS.has(method)) continue;
+      // A local holding a relation (`scope = Current.account.contacts` … `scope.find(id)`):
+      // the row names the chain it was assigned, which the association join resolves.
+      if (!chained && !AR_WRITE_METHODS.has(method)) {
+        const rhs = /^[a-z_]\w*$/.test(receiver) ? localChainBefore(lines, i, receiver) : null;
+        if (!rhs) continue;
+        const name = `${rhs}.${method}`;
+        const key = `${name}@${i + 1}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ kind: "database", name, target: null, calls: [], line: i + 1, access: arAccessKind(method) });
+        continue;
+      }
       if (/^[A-Z]/.test(receiver) && !chained) continue; // `Model.verb` — the row above
       const name = `${receiver}.${method}`;
       const key = `${name}@${i + 1}`;
@@ -516,6 +586,15 @@ export const rubySpec: RegexLangSpec = {
       const injected = new Set(properties.map((p) => p.name));
       for (const p of collectIvarProperties(lines, cls, classes)) if (!injected.has(p.name)) properties.push(p);
       cls.properties.push(...properties);
+      // `agents.find(id)` with no local `agents` calls the method `agents` first.
+      for (const m of cls.methods) addImplicitReceiverCalls(lines, m);
+      // A controller's filters, for the project pass that runs them before each action.
+      if (/Controller$/.test(cls.name)) cls.decorators.push(...filterDecorators(lines, cls));
+      // What each instance variable is assigned from a call chain (`@agent = agents.find(id)`,
+      // `@conversation ||= Current.account.conversations.find_by!(…)`): the entity pass types
+      // `@agent.update!` through it (RubyEntityExtractor.reconcileProject).
+      const ivarChains = ivarAssignedChains(lines, cls);
+      if (Object.keys(ivarChains).length > 0) cls.fieldValues = { ...(cls.fieldValues ?? {}), ...ivarChains };
 
       // Scan the class body for include/extend/prepend statements.
       // Each one names a module that ought to count as a relationship for
