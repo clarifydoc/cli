@@ -544,16 +544,15 @@ function specRouteHandlerLink(
   // interface generated from the spec at build time (`IntegrationPropertyServiceImpl
   // implements IntegrationPropertyServicePort`, the WSDL portType; `PetApiImpl
   // implements PetApi`). The interface is not in the source, so the join is by
-  // the operation's name: an implementor of the route's contract type first,
-  // else the one method of that name — unique-or-nothing.
+  // the operation's name, among implementors of the route's contract type —
+  // unique-or-nothing.
+  // Only an implementor: a class of the same name is the generated CLIENT
+  // (`UsersApi.listUsers` in a TypeScript SDK), the caller, not the code.
   const contractType = route.contract?.type.split(".").pop();
-  for (const cand of candidates.slice(0, opId ? 2 : candidates.length)) {
+  if (!contractType || !opId) return null;
+  for (const cand of candidates.slice(0, 2)) {
     const methods = methodLeafIndex(ctx).get(cand)?.filter((m) => !isExcluded(m.file) && !isApiContractLanguage(ctx.languageOf.get(m.file) as Language)) ?? [];
-    if (methods.length === 0) continue;
-    const implementors = contractType
-      ? methods.filter((m) => (ctx.classAt.get(memberKey(m.file, m.className))?.implements ?? []).some((t) => t.replace(/<.*$/, "").split(".").pop() === contractType))
-      : [];
-    const pick = implementors.length > 0 ? implementors : methods;
+    const pick = methods.filter((m) => (ctx.classAt.get(memberKey(m.file, m.className))?.implements ?? []).some((t) => t.replace(/<.*$/, "").split(".").pop() === contractType));
     if (pick.length !== 1) continue;
     const def = ctx.symbolIndex.get(pick[0]!.file)?.get(pick[0]!.symbol);
     if (def) return link(cand, pick[0]!.file, def);
