@@ -389,6 +389,11 @@ export function extractOpenApiRoutes(lines: string[]): RouteInfo[] {
     for (const [method, opNode] of pathNode.children) {
       if (!HTTP_METHODS.has(method)) continue;
       const operationId = opNode.children.get("operationId")?.value ?? null;
+      // openapi-generator names the server interface after the operation's first
+      // tag (`users` → `UsersApi`): what an implementing class `implements`.
+      const tagNode = opNode.children.get("tags");
+      const tag = tagNode?.items?.[0]?.value ?? tagNode?.value?.replace(/^\[|\]$/g, "").split(",")[0]?.trim().replace(/^["']|["']$/g, "");
+      const apiInterface = tag ? `${tag.replace(/(^|[^A-Za-z0-9]+)([A-Za-z0-9])/g, (_m, _s, c: string) => c.toUpperCase())}Api` : null;
       const route: RouteInfo = {
         path: fullPath,
         httpMethod: method.toUpperCase(),
@@ -397,6 +402,7 @@ export function extractOpenApiRoutes(lines: string[]): RouteInfo[] {
         calls: [],
         middleware: [],
         line: opNode.line,
+        ...(operationId && apiInterface ? { contract: { type: apiInterface, method: operationId } } : {}),
       };
       const ownSecurity = opNode.children.get("security");
       const deprecated = opNode.children.get("deprecated")?.value === "true";
