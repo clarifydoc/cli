@@ -631,6 +631,13 @@ export interface FunctionInfo {
    */
   urlTemplate?: string;
   /**
+   * The expression `urlTemplate` started with before the extractor dropped it
+   * as a runtime base (`this.baseUrl()` in `` `${this.baseUrl()}/${this.resource}` ``).
+   * A getter read as `this.url` is substituted with it put back, so the base
+   * resolves through the class chain instead of being lost.
+   */
+  urlTemplateBase?: string;
+  /**
    * The helper's OTHER url templates, when its body returns a different URL
    * per branch (`isEmployee ? base + "/api/personale/" + p : base + "/api/" + p`
    * → `urlTemplate` `/api/personale/{p}`, alternatives `["/api/{p}"]`). Source
@@ -683,6 +690,14 @@ export interface ClassInfo {
    * What a project pass needs to resolve `${this.baseUrl}` in a URL.
    */
   fieldValues?: Record<string, string>;
+  /**
+   * The arguments the class's constructor passes to its superclass's
+   * (`super('contacts', { accountScoped: true })`), rendered as `fieldValues`
+   * are (`contacts`, `${{ accountScoped: true }}`): what a base-class field set
+   * from a constructor parameter (`this.resource = resource`) holds in THIS
+   * class. Absent when the constructor makes no such call.
+   */
+  superArgs?: string[];
   isExported: boolean;
   line: number;
   endLine: number;

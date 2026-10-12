@@ -197,6 +197,7 @@ describe("routes.rb: root, symbol member routes, singular plural resources", () 
     resources :users, only: [:show] do
       post :seed, on: :member
       delete :avatar, on: :member, action: :destroy_avatar
+      get 'presence', :on => :collection
     end
   end
 end`.split("\n");
@@ -207,6 +208,31 @@ end`.split("\n");
       "GET /super_admin/users/:id SuperAdmin::UsersController#show",
       "POST /super_admin/users/:id/seed SuperAdmin::UsersController#seed",
       "DELETE /super_admin/users/:id/avatar SuperAdmin::UsersController#destroy_avatar",
+      "GET /super_admin/users/presence SuperAdmin::UsersController#presence",
+    ]);
+  });
+});
+
+describe("routes.rb: controller modules a scope or a resources option names", () => {
+  it("puts controllers under `scope module:` and `resources …, module:` without changing the path", () => {
+    const out = routes(
+      draw(`  namespace :api do
+    resources :accounts, only: [:show] do
+      scope module: :accounts do
+        resources :labels, only: [:index]
+        resources :inboxes, only: [:index], module: :assignment_policies
+      end
+    end
+    scope module: 'profile' do
+      resource :profile, only: [:show]
+    end
+  end`),
+    ).map(sig);
+    expect(out).toEqual([
+      "GET /api/accounts/:id -> Api::AccountsController#show",
+      "GET /api/accounts/:account_id/labels -> Api::Accounts::LabelsController#index",
+      "GET /api/accounts/:account_id/inboxes -> Api::Accounts::AssignmentPolicies::InboxesController#index",
+      "GET /api/profile -> Api::Profile::ProfilesController#show",
     ]);
   });
 });
