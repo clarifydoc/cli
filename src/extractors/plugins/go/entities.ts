@@ -220,7 +220,9 @@ export class GoEntityExtractor extends EntityExtractor {
     for (const a of go) {
       const added: EntityRelation[] = [];
       for (const cls of a.classes) {
-        const orm = entityOrm.get(cls.name);
+        // The class itself must be the entity: xorm migrations redeclare a
+        // table's struct (`type User struct {…}` in `v*.go`) under the same name.
+        const orm = cls.decorators.includes("entity") ? entityOrm.get(cls.name) : undefined;
         if (!orm) continue;
         const have = new Set((a.entityRelations ?? []).filter((r) => r.fromEntity === cls.name).map((r) => r.fromField));
         const columns = new Set(cls.properties.map((p) => p.name));
@@ -235,6 +237,79 @@ export class GoEntityExtractor extends EntityExtractor {
             toEntity: r.ref,
             cardinality: r.slice ? "one-to-many" : "many-to-one",
             ...(fk ? { foreignKey: fk } : {}),
+            orm,
+            confidence: "INFERRED",
+          });
+        }
+      }
+      if (added.length > 0) a.entityRelations = [...(a.entityRelations ?? []), ...added];
+    }
+    this.relationsByForeignKey(go, entityOrm);
+  }
+
+  /**
+   * An integer `<X>ID` column names the entity it points at even when no
+   * `X *Entity` field sits beside it — gitea's `Comment.IssueID`,
+   * `Release.RepoID`, `Review.ReviewerID`. `X` is an entity's own name, or a
+   * name it abbreviates with lowercase letters only (`Repo` → `Repository`, never
+   * `RepoUnit`), tried on the whole prefix and then without its leading words
+   * (`BaseRepo` → `Repo`). A prefix two entities could stand for names neither.
+   * Many-to-one, INFERRED; a relation already declared on the same key stays.
+   */
+  private relationsByForeignKey(go: FileAnalysis[], entityOrm: Map<string, string>): void {
+    const names = [...entityOrm.keys()];
+    const dirOf = (path: string) => path.slice(0, path.lastIndexOf("/") + 1);
+    // The entities each package (directory) declares.
+    const byDir = new Map<string, string[]>();
+    for (const a of go) {
+      for (const cls of a.classes) {
+        if (!cls.decorators.includes("entity")) continue;
+        const list = byDir.get(dirOf(a.filePath)) ?? byDir.set(dirOf(a.filePath), []).get(dirOf(a.filePath))!;
+        list.push(cls.name);
+      }
+    }
+    const memo = new Map<string, string | null>();
+    const entityFor = (prefix: string, dir: string, self: string): string | null => {
+      const key = `${dir}|${prefix}|${self}`;
+      if (memo.has(key)) return memo.get(key)!;
+      let hit: string | null = null;
+      // The package's own entity first: in gitea's `actions`, `TaskID` is an `ActionTask`, not admin's `Task`.
+      const local = (byDir.get(dir) ?? []).filter((n) => n !== self);
+      const localHits = local.includes(prefix) ? [prefix] : local.filter((n) => n.length > prefix.length && n.endsWith(prefix));
+      if (localHits.length === 1) hit = localHits[0]!;
+      else if (localHits.length === 0 && entityOrm.has(prefix)) hit = prefix;
+      else if (localHits.length === 0 && prefix.length >= 3) {
+        const abbreviates = names.filter((n) => n.startsWith(prefix) && /^[a-z]+$/.test(n.slice(prefix.length)));
+        hit = abbreviates.length === 1 ? abbreviates[0]! : null;
+      }
+      memo.set(key, hit);
+      return hit;
+    };
+    for (const a of go) {
+      const added: EntityRelation[] = [];
+      for (const cls of a.classes) {
+        const orm = cls.decorators.includes("entity") ? entityOrm.get(cls.name) : undefined;
+        if (!orm) continue;
+        const own = (a.entityRelations ?? []).filter((r) => r.fromEntity === cls.name);
+        const keyed = new Set(own.flatMap((r) => [r.foreignKey, r.fromField].filter((x): x is string => !!x)));
+        for (const p of cls.properties) {
+          const m = /^([A-Z]\w*?)(?:ID|Id)$/.exec(p.name);
+          if (!m || keyed.has(p.name) || keyed.has(m[1]!)) continue;
+          if (!/^u?int(?:64|32)?$/.test((p.type ?? "").trim())) continue;
+          const words = m[1]!.match(/[A-Z][a-z0-9]*/g) ?? [];
+          let target: string | null = null;
+          for (let k = 0; k < words.length && !target; k++) {
+            target = entityFor(words.slice(k).join(""), dirOf(a.filePath), cls.name);
+            // An entity's own `<Name>ID` is its key or a peer of the same kind (`Follow.FollowID` is a user).
+            if (k === 0 && target === cls.name) target = null;
+          }
+          if (!target) continue;
+          added.push({
+            fromEntity: cls.name,
+            fromField: p.name,
+            toEntity: target,
+            cardinality: "many-to-one",
+            foreignKey: p.name,
             orm,
             confidence: "INFERRED",
           });

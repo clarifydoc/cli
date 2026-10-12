@@ -19,4 +19,35 @@ describe("Go entity relations across files", () => {
       { fromEntity: "Issue", fromField: "Labels", toEntity: "Label", cardinality: "one-to-many", orm: "xorm", confidence: "INFERRED" },
     ]);
   });
+
+  it("derives many-to-one relations from integer <X>ID columns with no typed field", () => {
+    const comment = file("models/issues/comment.go", [entity("Comment", "xorm", [
+      ["ID", "int64"], ["IssueID", "int64"], ["BaseRepoID", "int64"], ["RepoUnitID", "int64"], ["CommitID", "string"], ["PosterID", "int64"],
+    ])]);
+    const issue = file("models/issues/issue.go", [entity("Issue", "xorm", [["ID", "int64"]])]);
+    const repo = file("models/repo/repo.go", [entity("Repository", "xorm", [["ID", "int64"]]), entity("RepoUnit", "xorm", [["ID", "int64"]])]);
+    new GoEntityExtractor().reconcileProject([comment, issue, repo]);
+    expect(comment.entityRelations!.map((r) => [r.fromField, r.toEntity])).toEqual([
+      ["IssueID", "Issue"],
+      ["BaseRepoID", "Repository"],
+      ["RepoUnitID", "RepoUnit"],
+    ]);
+  });
+
+  it("prefers the package's own entity, never the referencing entity itself", () => {
+    const step = file("models/actions/task_step.go", [entity("ActionTaskStep", "xorm", [["TaskID", "int64"]])]);
+    const task = file("models/actions/task.go", [entity("ActionTask", "xorm", [["ID", "int64"]])]);
+    const adminTask = file("models/admin/task.go", [entity("Task", "xorm", [["ID", "int64"]])]);
+    const pi = file("models/project/issue.go", [entity("ProjectIssue", "xorm", [["IssueID", "int64"]])]);
+    const issue = file("models/issues/issue.go", [entity("Issue", "xorm", [["ID", "int64"]])]);
+    const follow = file("models/user/follow.go", [entity("Follow", "xorm", [["UserID", "int64"], ["FollowID", "int64"]])]);
+    const user = file("models/user/user.go", [entity("User", "xorm", [["ID", "int64"]])]);
+    const migration = file("models/migrations/v1.go", [{ ...entity("User", "xorm", [["SourceID", "int64"]]), decorators: [] }]);
+    const auth = file("models/auth/source.go", [entity("Source", "xorm", [["ID", "int64"]])]);
+    new GoEntityExtractor().reconcileProject([step, task, adminTask, pi, issue, follow, user, migration, auth]);
+    expect(step.entityRelations!.map((r) => r.toEntity)).toEqual(["ActionTask"]);
+    expect(pi.entityRelations!.map((r) => r.toEntity)).toEqual(["Issue"]);
+    expect(follow.entityRelations!.map((r) => [r.fromField, r.toEntity])).toEqual([["UserID", "User"]]);
+    expect(migration.entityRelations).toEqual([]);
+  });
 });
