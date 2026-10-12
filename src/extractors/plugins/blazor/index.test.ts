@@ -158,3 +158,45 @@ describe("Blazor page attribute layer (auth + params)", () => {
     expect(routes.flatMap((r) => r.params ?? []).some((p) => p.inferred)).toBe(false);
   });
 });
+
+describe("Blazor @code methods", () => {
+  it("declares the component's own methods, typed through its @inject services", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const src = `@page "/item/{itemId:int}"
+@inject BasketState Basket
+@inject NavigationManager Nav
+
+<form method="post" @onsubmit="AddToCartAsync">
+  <button type="submit">Add</button>
+</form>
+
+@code {
+    [Parameter] public int ItemId { get; set; }
+    private CatalogItem? item;
+
+    protected override async Task OnInitializedAsync()
+    {
+        item = await CatalogService.GetCatalogItem(ItemId);
+    }
+
+    private async Task AddToCartAsync()
+    {
+        if (item is null) return;
+        await Basket.AddAsync(item);
+        Nav.NavigateTo("cart");
+    }
+
+    private string Label(int n) => $"{n} items";
+}`;
+    const a = extractWithRegex(src, "src/WebApp/Components/Pages/Item/ItemPage.razor", "blazor");
+    expect(a.functions.map((f) => `${f.name}@${f.line}-${f.endLine}`)).toEqual([
+      "OnInitializedAsync@13-16",
+      "AddToCartAsync@18-23",
+      "Label@25-25",
+    ]);
+    const add = a.functions.find((f) => f.name === "AddToCartAsync")!;
+    expect(add.calls.map((c) => c.name)).toEqual(expect.arrayContaining(["Basket.AddAsync", "Nav.NavigateTo"]));
+    expect(add.localTypes).toEqual([{ name: "Basket", type: "BasketState" }, { name: "Nav", type: "NavigationManager" }]);
+    expect(a.interactiveElements.find((e) => e.event === "onsubmit")?.handler).toBe("AddToCartAsync");
+  });
+});

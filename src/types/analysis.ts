@@ -1454,6 +1454,12 @@ export interface ScreenInfo {
    * later on (the normal case).
    */
   startup?: "main" | "auto-created";
+  /**
+   * The type the view binds against, as written without its namespace prefix
+   * (XAML `x:DataType="viewmodels:BasketViewModel"` → `BasketViewModel`): where
+   * `{Binding CheckoutCommand}` and the other bindings of the view resolve.
+   */
+  viewModel?: string;
 }
 
 /**

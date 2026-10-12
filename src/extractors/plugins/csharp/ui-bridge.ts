@@ -58,8 +58,11 @@ export class CsharpUiBridgeResolver implements DispatchResolver {
         const base = a.filePath.replace(/\\/g, "/").split("/").pop()!.replace(/\.(axaml|xaml)$/i, "");
         const ownerName = a.screens?.[0]?.name ?? base;
         const candidates = byClass.get(ownerName) ?? [];
+        // `Command="{Binding CheckoutCommand}"` binds the view model's command (`x:DataType`).
+        const viewModel = a.screens?.[0]?.viewModel;
+        const vmCandidates = viewModel ? byClass.get(viewModel) ?? [] : [];
         for (const el of els) {
-          const hit = findHandler(candidates, el.handler, a.filePath);
+          const hit = findHandler(candidates, el.handler, a.filePath) ?? (el.event === "command" ? findCommand(vmCandidates, el.handler, a.filePath) : null);
           if (!hit) continue;
           add({
             sourceFile: a.filePath,
@@ -117,6 +120,37 @@ function findHandler(
   let bestScore = -1;
   for (const c of candidates) {
     const method = c.cls.methods.find((m) => m.name === handler);
+    if (!method) continue;
+    const score = commonPrefixLength(c.file, uiFile);
+    if (score > bestScore) {
+      bestScore = score;
+      best = { file: c.file, cls: c.cls, method };
+    }
+  }
+  return best;
+}
+
+/**
+ * The method behind a bound command: one named exactly so (an explicit
+ * command method), else the CommunityToolkit `[RelayCommand]` method the
+ * generator names it after — `CheckoutAsync` / `Checkout` / `OnCheckout` →
+ * `CheckoutCommand`.
+ */
+function findCommand(
+  candidates: { file: string; cls: ClassInfo }[],
+  handler: string | null,
+  uiFile: string,
+): { file: string; cls: ClassInfo; method: FunctionInfo } | null {
+  if (!handler || !/^[A-Za-z_]\w*Command$/.test(handler)) return null;
+  const exact = findHandler(candidates, handler, uiFile);
+  if (exact) return exact;
+  const base = handler.slice(0, -"Command".length);
+  let best: { file: string; cls: ClassInfo; method: FunctionInfo } | null = null;
+  let bestScore = -1;
+  for (const c of candidates) {
+    const method = c.cls.methods.find(
+      (m) => m.decorators.some((d) => /^\[?\s*RelayCommand\b/.test(d)) && m.name.replace(/Async$/, "").replace(/^On(?=[A-Z])/, "") === base,
+    );
     if (!method) continue;
     const score = commonPrefixLength(c.file, uiFile);
     if (score > bestScore) {
