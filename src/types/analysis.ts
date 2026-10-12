@@ -420,6 +420,13 @@ export interface FileAnalysis {
    */
   httpClientBases?: Record<string, string>;
   /**
+   * State-store modules this file registers by name (Vuex `modules: { contacts }`
+   * in `createStore({…})` or in a module's own definition): the namespace a
+   * dispatch key starts with → the identifier holding the module, as written.
+   * A dispatch resolver follows the identifier through the file's imports.
+   */
+  storeModules?: Array<{ name: string; ref: string; line: number }>;
+  /**
    * HTTP clients configured with a base URL in this file, the host included
    * (`httpClientBases` keeps only the path): typed and named .NET clients,
    * `axios.create({ baseURL: process.env.X })`.
@@ -587,6 +594,13 @@ export interface CallInfo {
   receiverType?: string;
   /** The DI token/key that lookup named, when it named one (`container.get(TYPES.Mailer)`). */
   receiverQualifier?: string;
+  /**
+   * The string a call dispatches by, when the callee routes on a name rather
+   * than calling it (`store.dispatch('contacts/get')`). A dispatch resolver
+   * joins it to the handler registered under that name. Set by the plugin's
+   * `calls.keyOf` hook; calls of one name with different keys stay separate.
+   */
+  key?: string;
 }
 
 export interface FunctionInfo {

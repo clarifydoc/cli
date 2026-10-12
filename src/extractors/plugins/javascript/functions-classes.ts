@@ -27,6 +27,8 @@ interface ScanContext {
   jsdoc: boolean;
   /** Same-file `InjectionToken<T>` constants (see `collectInjectionTokenTypes`). */
   tokenTypes: ReadonlyMap<string, string>;
+  /** Props `connect(…, mapDispatchToProps)` binds to action creators (see `dispatchPropsOf`). */
+  dispatchProps: ReadonlyMap<string, string>;
 }
 
 /**
@@ -627,17 +629,91 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
    * `extractClasses` are each called once per file, synchronously — the one
    * instance is shared by the typescript and javascript metas).
    */
-  private ctx: ScanContext = { jsdoc: false, tokenTypes: new Map() };
+  private ctx: ScanContext = { jsdoc: false, tokenTypes: new Map(), dispatchProps: new Map() };
   private ctxTree: Tree | null = null;
 
   override extractFunctions(tree: Tree, sourceText: string): FunctionInfo[] {
     this.beginFile(tree, sourceText);
-    return super.extractFunctions(tree, sourceText);
+    const functions = super.extractFunctions(tree, sourceText);
+    if (sourceText.includes("]:")) this.extractKeyedRegistry(tree.rootNode, functions);
+    if (this.ctx.dispatchProps.size > 0) for (const fn of functions) addDispatchPropCalls(fn, this.ctx.dispatchProps);
+    return functions;
+  }
+
+  /**
+   * A registry keyed by a constant, and the creators that name it — Radarr's
+   * thunks, and every Redux codebase built the same way:
+   *
+   *   export const fetchMovies = createThunk(FETCH_MOVIES);
+   *   handleThunks({ [FETCH_MOVIES]: createFetchHandler(section, '/movie') });
+   *
+   * `dispatch(fetchMovies())` runs the handler registered under the constant
+   * `fetchMovies` was made with; the two share nothing but that constant. Each
+   * `[KEY]: value` entry of an object handed to a call becomes a function named
+   * `[KEY]` (its value's calls; an inline handler's body), and a variable made
+   * by a call whose first argument is a constant registered in the same file
+   * becomes a function calling `[KEY]` — so the ordinary linker follows the
+   * creator to the handler and on to the request it makes.
+   */
+  private extractKeyedRegistry(root: Node, functions: FunctionInfo[]): void {
+    const keys = new Set<string>();
+    for (const pair of root.descendantsOfType("pair")) {
+      const key = pair.childForFieldName("key");
+      const ident = key?.type === "computed_property_name" ? key.namedChildren[0] : null;
+      const value = pair.childForFieldName("value");
+      if (ident?.type !== "identifier" || !value) continue;
+      // The object is a registration's argument: `handleThunks({ … })`.
+      if (pair.parent?.type !== "object" || pair.parent.parent?.type !== "arguments") continue;
+      const name = `[${ident.text}]`;
+      if (value.type === "arrow_function" || value.type === "function_expression") {
+        const fn = this.parseJsArrowOrExpr(name, value, false);
+        fn.line = pair.startPosition.row + 1;
+        functions.push(fn);
+      } else if (value.type === "call_expression" || value.type === "identifier") {
+        functions.push({
+          name,
+          params: [],
+          returnType: null,
+          isAsync: false,
+          isExported: false,
+          decorators: [],
+          calls: value.type === "identifier"
+            ? [{ name: value.text, kind: "internal", target: null, line: value.startPosition.row + 1, column: value.startPosition.column }]
+            : extractCalls(value, "typescript"),
+          line: pair.startPosition.row + 1,
+          endLine: pair.endPosition.row + 1,
+        });
+      } else continue;
+      keys.add(ident.text);
+    }
+    if (keys.size === 0) return;
+    const named = new Set(functions.map((f) => f.name));
+    for (const decl of root.descendantsOfType("variable_declarator")) {
+      const name = decl.childForFieldName("name");
+      const value = decl.childForFieldName("value");
+      if (name?.type !== "identifier" || value?.type !== "call_expression" || named.has(name.text)) continue;
+      const first = value.childForFieldName("arguments")?.namedChildren[0];
+      if (first?.type !== "identifier" || !keys.has(first.text)) continue;
+      const exported = decl.parent?.parent?.type === "export_statement";
+      functions.push({
+        name: name.text,
+        params: [],
+        returnType: null,
+        isAsync: false,
+        isExported: exported,
+        decorators: [],
+        calls: [{ name: `[${first.text}]`, kind: "internal", target: null, line: first.startPosition.row + 1, column: first.startPosition.column }],
+        line: decl.startPosition.row + 1,
+        endLine: decl.endPosition.row + 1,
+      });
+    }
   }
 
   override extractClasses(tree: Tree, sourceText: string): ClassInfo[] {
     this.beginFile(tree, sourceText);
-    return super.extractClasses(tree, sourceText);
+    const classes = super.extractClasses(tree, sourceText);
+    if (this.ctx.dispatchProps.size > 0) for (const c of classes) for (const m of c.methods) addDispatchPropCalls(m, this.ctx.dispatchProps);
+    return classes;
   }
 
   private beginFile(tree: Tree, sourceText: string): void {
@@ -647,6 +723,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     this.ctx = {
       jsdoc: JSDOC_TAG_RE.test(sourceText),
       tokenTypes: collectInjectionTokenTypes(tree.rootNode, sourceText),
+      dispatchProps: sourceText.includes("connect(") ? dispatchPropsOf(tree.rootNode) : new Map(),
     };
   }
 
@@ -1164,6 +1241,14 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           const field = this.parseField(member);
           properties.push(field);
           setValue(field.name, renderUrlExpr(member.childForFieldName("value")));
+          // `onSave = (e) => { … }` — a React class component's handler, bound as
+          // `onPress={this.onSave}`: a method in all but syntax.
+          const fieldValue = member.childForFieldName("value");
+          if (fieldValue && (fieldValue.type === "arrow_function" || fieldValue.type === "function_expression")) {
+            const fn = this.parseJsArrowOrExpr(field.name, fieldValue, false);
+            fn.line = member.startPosition.row + 1;
+            methods.push(fn);
+          }
         } else if (member.type === "class_static_block") {
           concreteMembers++;
         }
@@ -1359,4 +1444,47 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
 function knownFieldValues(values: ReadonlyMap<string, string | null>): { fieldValues?: Record<string, string> } {
   const known = [...values].filter((e): e is [string, string] => e[1] !== null).slice(0, 50);
   return known.length > 0 ? { fieldValues: Object.fromEntries(known) } : {};
+}
+
+/**
+ * react-redux `connect(mapStateToProps, mapDispatchToProps)`: an object of
+ * action creators, as a variable or inline — `{ lookupMovie, dispatchFetchX: fetchX }`
+ * → `lookupMovie → lookupMovie`, `dispatchFetchX → fetchX`. The component calls
+ * them as `this.props.lookupMovie()`, a name nothing defines.
+ */
+function dispatchPropsOf(root: Node): Map<string, string> {
+  const out = new Map<string, string>();
+  const objects = new Map<string, Node>();
+  for (const decl of root.descendantsOfType("variable_declarator")) {
+    const name = decl.childForFieldName("name");
+    const value = decl.childForFieldName("value");
+    if (name?.type === "identifier" && value?.type === "object") objects.set(name.text, value);
+  }
+  for (const call of root.descendantsOfType("call_expression")) {
+    if (call.childForFieldName("function")?.text !== "connect") continue;
+    const arg = call.childForFieldName("arguments")?.namedChildren[1];
+    const obj = arg?.type === "object" ? arg : arg?.type === "identifier" ? objects.get(arg.text) : undefined;
+    for (const entry of obj?.namedChildren ?? []) {
+      if (entry.type === "shorthand_property_identifier") out.set(entry.text, entry.text);
+      else if (entry.type === "pair") {
+        const key = objectKeyName(entry.childForFieldName("key"));
+        const value = entry.childForFieldName("value");
+        if (key && value?.type === "identifier") out.set(key, value.text);
+      }
+    }
+  }
+  return out;
+}
+
+/** `this.props.lookupMovie(…)` also calls the creator `connect` bound to it. */
+function addDispatchPropCalls(fn: FunctionInfo, props: ReadonlyMap<string, string>): void {
+  const extra: CallInfo[] = [];
+  for (const call of fn.calls) {
+    const m = /^(?:this\.)?props\.(\w+)$/.exec(call.name);
+    const creator = m ? props.get(m[1]!) : undefined;
+    if (creator && !fn.calls.some((c) => c.name === creator) && !extra.some((c) => c.name === creator)) {
+      extra.push({ name: creator, kind: "internal", target: null, line: call.line, ...(call.column !== undefined ? { column: call.column } : {}) });
+    }
+  }
+  fn.calls.push(...extra);
 }

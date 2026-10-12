@@ -484,6 +484,8 @@ export interface AstExtractorHooks {
   customElements?(sourceText: string): CustomElementDef[];
   /** HTTP client instances created with a base URL → `FileAnalysis.httpClientBases`. */
   httpClientBases?(tree: Tree, sourceText: string): Record<string, string>;
+  /** State-store module registrations → `FileAnalysis.storeModules`. */
+  storeModules?(tree: Tree, sourceText: string): Array<{ name: string; ref: string; line: number }>;
   /** HTTP clients configured with a base, host included → `FileAnalysis.httpClientRegistrations`. */
   httpClientRegistrations?(tree: Tree, sourceText: string): HttpClientRegistration[];
   /** Forwarding rules a code file declares (`vite.config.ts` `server.proxy`) → `FileAnalysis.proxyRules`. */
@@ -653,6 +655,12 @@ export interface CallExtractionHooks {
    * node type. Sets `CallInfo.receiverType` / `receiverQualifier`.
    */
   receiverTypeOf?(node: Node): { type: string; qualifier?: string } | null;
+  /**
+   * The name a dispatching call routes on (`dispatch('contacts/get')` →
+   * "contacts/get"), or null. Called for every call node: bail out cheaply.
+   * Sets `CallInfo.key`.
+   */
+  keyOf?(node: Node): string | null;
 }
 
 /**

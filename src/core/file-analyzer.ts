@@ -12,6 +12,7 @@ import { extractEntities, mergeEntities } from "../extractors/entities/index.js"
 import { classifyCalls, extractTopLevelCalls } from "../extractors/shared/call-graph.js";
 import { dirname } from "path";
 import { applyAliases, loadTsconfigAliasesForDir } from "../extractors/shared/tsconfig-aliases.js";
+import { applyWorkspacePackages, loadWorkspacePackages } from "../extractors/shared/workspace-packages.js";
 import { pluginFor, astHooksFor, inferFileFrameworks, ensureLanguagesLoaded, regexSpecFor } from "../extractors/registry.js";
 import { computeComplexity } from "./complexity-analyzer.js";
 import { scanSecurity, isMinifiedSource, isVendoredSource } from "./security-scanner.js";
@@ -98,9 +99,16 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // with them every cross-file link in those SPAs — unresolved.
     const nearest = loadTsconfigAliasesForDir(dirname(file.absolutePath));
     const aliases = nearest.size > 0 ? nearest : tsconfigAliases;
-    if (aliases.size === 0) return;
-    for (const imp of a.imports) {
-      imp.source = applyAliases(imp.source, aliases, projectRoot);
+    if (aliases.size > 0) {
+      for (const imp of a.imports) imp.source = applyAliases(imp.source, aliases, projectRoot);
+    }
+    // A package of this repository imported by its name (`@immich/sdk`) is a
+    // project file, not a dependency (workspace-packages.ts).
+    if (a.language === "typescript" || a.language === "javascript") {
+      const packages = loadWorkspacePackages(projectRoot);
+      if (packages.size > 0) {
+        for (const imp of a.imports) imp.source = applyWorkspacePackages(imp.source, file.absolutePath, packages, projectRoot);
+      }
     }
   };
 
@@ -343,6 +351,8 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // the project pass prepends the base to calls made through them.
     const clientBases = hooks?.httpClientBases?.(tree, sourceText);
     if (clientBases && Object.keys(clientBases).length > 0) analysis.httpClientBases = clientBases;
+    const storeModules = hooks?.storeModules?.(tree, sourceText);
+    if (storeModules && storeModules.length > 0) analysis.storeModules = storeModules;
     const clientRegistrations = hooks?.httpClientRegistrations?.(tree, sourceText);
     if (clientRegistrations && clientRegistrations.length > 0) analysis.httpClientRegistrations = clientRegistrations;
     const proxyRules = hooks?.proxyRules?.(tree, sourceText, file.relativePath);

@@ -151,6 +151,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   if (!hooks) return [];
   const callTypes = hooks.callNodeTypes;
   const receiverTypeOf = hooks.receiverTypeOf;
+  const keyOf = hooks.keyOf;
   const nested = NESTED_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const anonymous = ANONYMOUS_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
 
@@ -164,11 +165,18 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   const candidates: Array<{
     name: string; line: number; column: number; isReference: boolean;
     receiver?: { type: string; qualifier?: string } | null;
+    key?: string | null;
   }> = [];
   const boundHere = new Set<string>();
 
-  const push = (name: string, node: Node, isReference: boolean, receiver?: { type: string; qualifier?: string } | null) => {
-    candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference, receiver });
+  const push = (
+    name: string,
+    node: Node,
+    isReference: boolean,
+    receiver?: { type: string; qualifier?: string } | null,
+    key?: string | null,
+  ) => {
+    candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference, receiver, key });
   };
   const addResult = (name: string, node: Node) => {
     if (name) push(name, node, false);
@@ -191,7 +199,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // Standard call expressions
     if (callTypes.has(node.type)) {
       const name = resolve(node);
-      if (name) push(name, node, false, receiverTypeOf?.(node));
+      if (name) push(name, node, false, receiverTypeOf?.(node), keyOf?.(node));
 
       // Detect callback arguments: fn(callback) — identifiers passed as args
       if (CALLBACK_ARG_NODE_TYPES.has(node.type)) {
@@ -223,8 +231,16 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   const held: HeldCall[] = [];
   for (const c of candidates) {
     if (c.isReference && boundHere.has(c.name)) continue;
-    if (seen.has(c.name)) continue;
+    // A keyed dispatch is one call per key: `dispatch('a/x')` and `dispatch('b/y')` reach different handlers.
+    const seenKey = c.key ? `${c.name}\0${c.key}` : c.name;
+    if (seen.has(seenKey)) continue;
     const call: CallInfo = { name: c.name, kind: "internal", target: null, line: c.line, column: c.column };
+    if (c.key) {
+      call.key = c.key;
+      seen.add(seenKey);
+      results.push(call);
+      continue;
+    }
     if (c.receiver && (c.receiver.type || c.receiver.qualifier)) {
       // The expression names its receiver's type (or the key it was looked
       // up by) — a member call on a container lookup is never Array#find.
@@ -294,6 +310,7 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
   if (!hooks) return [];
   const callTypes = hooks.callNodeTypes;
   const receiverTypeOf = hooks.receiverTypeOf;
+  const keyOf = hooks.keyOf;
   const nested = NESTED_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
 
   const results: CallInfo[] = [];
@@ -311,7 +328,11 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
 
     if (callTypes.has(node.type)) {
       const name = resolveCallName(node, language);
-      if (name && !seen.has(name)) {
+      const key = name ? keyOf?.(node) : null;
+      if (name && key && !seen.has(`${name}\0${key}`)) {
+        seen.add(`${name}\0${key}`);
+        results.push({ name, kind: "internal", target: null, line: node.startPosition.row + 1, column: node.startPosition.column, key });
+      } else if (name && !key && !seen.has(name)) {
         seen.add(name);
         const call: CallInfo = {
           name,

@@ -539,6 +539,21 @@ describe("linkApiCallsToRoutes — method policy", () => {
     expect(links[0]).toMatchObject({ confidence: "INFERRED", matchedVia: "method-fallback" });
   });
 
+  it("reads a request descriptor without a method as a GET (Radarr createFetchHandler)", () => {
+    const routes = [route("MovieController.cs", "GET", "/movie", "AllMovie"), route("MovieController.cs", "POST", "/movie", "AddMovie")];
+    const [link] = linkApiCallsToRoutes([apiCall("web/movieActions.js", "request", "/movie")], routes);
+    expect(link).toMatchObject({ handler: "AllMovie", confidence: "EXTRACTED" });
+    // Two GETs on the path stay ambiguous.
+    const [twin] = linkApiCallsToRoutes(
+      [apiCall("web/movieActions.js", "request", "/movie")],
+      [...routes, route("Other/OtherController.cs", "GET", "/movie", "Other")],
+    );
+    expect(twin!.confidence).toBe("AMBIGUOUS");
+    // A path with no GET: the wrapper set the verb, the path decides.
+    const [post] = linkApiCallsToRoutes([apiCall("web/movieActions.js", "request", "/movie")], [route("MovieController.cs", "POST", "/movie", "AddMovie")]);
+    expect(post).toMatchObject({ handler: "AddMovie", confidence: "INFERRED" });
+  });
+
   it("serves HEAD with GET", () => {
     const links = linkApiCallsToRoutes([apiCall("web/a.js", "head", "/api/x")], [route("srv/x.ts", "GET", "/api/x", "x")]);
     expect(links[0]!.confidence).toBe("EXTRACTED");

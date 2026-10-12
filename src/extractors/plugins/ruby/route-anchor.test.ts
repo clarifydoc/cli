@@ -28,6 +28,7 @@ describe("rails-route-anchor", () => {
     resources :labels, only: [:index, :show]
     resources :teams, only: [:index]
     resources :ghosts, only: [:index]
+    resources :tags, only: [:index]
   end
 end`;
     const out = [
@@ -39,6 +40,8 @@ end`;
       ]),
       file("app/controllers/api/base_controller.rb", [cls("Api::BaseController", null, [["index", 3]])]),
       file("app/controllers/api/teams_controller.rb", [cls("Api::TeamsController", "Api::BaseController", [])]),
+      file("app/controllers/api/tags_controller.rb", [{ ...cls("Api::TagsController", "Api::BaseController", []), implements: ["LabelConcern"] } as ClassInfo]),
+      file("app/controllers/concerns/label_concern.rb", [cls("LabelConcern", null, [["index", 7]])]),
     ];
     const importIndex = buildImportIndex(out);
     const ctx = { importIndex, classes: buildClassIndex(out, importIndex), resolveModule: () => null, fileOf: (p: string) => out.find((a) => a.filePath === p) } as ProjectContext;
@@ -50,6 +53,8 @@ end`;
         "GET /api/labels/:id @ app/controllers/api/labels_controller.rb:9",
         "GET /api/labels/export @ app/controllers/api/labels_controller.rb:12",
         "GET /api/teams @ app/controllers/api/base_controller.rb:3",
+        // An included module's method comes before the superclass's.
+        "GET /api/tags @ app/controllers/concerns/label_concern.rb:7",
         // No controller declares GhostsController: the row stays where it was declared.
         "GET /api/ghosts @ config/routes.rb:5",
       ].sort(),
