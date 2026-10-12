@@ -134,7 +134,7 @@ interface HelperLookup {
   /** File-local helpers by their dotted name — a route table's `routes.tagsSlug`. */
   local: Map<string, Map<string, UrlBuilder>>;
   /** `this.m(…)`: the method of that name along the calling class's chain. */
-  method?: (file: string, line: number, name: string) => UrlBuilder | null;
+  method?: (file: string, line: number, name: string, getterOnly?: boolean) => UrlBuilder | null;
 }
 
 function buildIndex(analyses: FileAnalysis[]): Map<string, UrlBuilder | null> {
@@ -205,8 +205,18 @@ function lookupHelper(lookup: HelperLookup, site: CallSite, receiver: string, na
   return lookup.global.get(name) ?? null;
 }
 
+// `${this.url}` — a read of a getter (or no-argument method body) the calling class defines.
+const GETTER_READ_RE = /\$\{\s*this\s*\.\s*([A-Za-z_$][\w$]*)\s*\}/g;
+
 /** The first helper call in `text` that the index can resolve, or null. */
 function firstResolvable(text: string, lookup: HelperLookup, site: CallSite): HelperOccurrence | null {
+  if (lookup.method && text.includes("${this.")) {
+    for (const m of text.matchAll(GETTER_READ_RE)) {
+      const getter = lookup.method(site.file, site.line, m[1]!, true);
+      if (!getter || getter.params.length > 0) continue;
+      return { start: m.index!, end: m.index! + m[0].length, rewrites: getter.templates };
+    }
+  }
   for (const m of text.matchAll(HELPER_CALL_RE)) {
     const inTemplate = m[2] != null;
     const receiver = (inTemplate ? m[1] : m[4]) ?? "";
@@ -263,7 +273,8 @@ export function resolveUrlBuilders(apiCalls: ApiCall[], analyses: FileAnalysis[]
   let count = 0;
   for (const call of apiCalls) {
     if (call.kind !== "api-call" || !call.target) continue;
-    if (!call.target.includes("(")) continue; // a helper call always has `(`
+    // A helper call always has `(`; a getter read is `${this.x}`.
+    if (!call.target.includes("(") && !(lookup.method && call.target.includes("${this."))) continue;
     const [primary, ...rest] = resolveTargets(call.target, lookup, { file: call.filePath, line: call.line });
     if (primary !== undefined && primary !== call.target) {
       call.target = primary;
@@ -290,9 +301,16 @@ function localHelpers(analyses: FileAnalysis[]): Map<string, Map<string, UrlBuil
   return out;
 }
 
-/** `this.m(…)` → the first `m` along the calling class's chain, with its templates (or nothing when it has none). */
-function methodResolver(ctx: ProjectContext): (file: string, line: number, name: string) => UrlBuilder | null {
-  return (file, line, name) => {
+/**
+ * `this.m(…)` → the first `m` along the calling class's chain, with its
+ * templates (or nothing when it has none). A template whose leading runtime
+ * base the extractor dropped (`${this.baseUrl()}/${this.resource}`) gets that
+ * base back, so the next pass resolves it through the same chain instead of
+ * the URL losing its prefix. `getterOnly` answers a property read (`this.url`):
+ * only a getter is read that way.
+ */
+function methodResolver(ctx: ProjectContext): (file: string, line: number, name: string, getterOnly?: boolean) => UrlBuilder | null {
+  return (file, line, name, getterOnly) => {
     let cls: ClassRef | null = null;
     for (const ref of ctx.classes.classesIn(file)) {
       if (ref.cls.line <= line && line <= ref.cls.endLine && (!cls || ref.cls.line >= cls.cls.line)) cls = ref;
@@ -300,8 +318,14 @@ function methodResolver(ctx: ProjectContext): (file: string, line: number, name:
     if (!cls) return null;
     for (const c of [cls, ...ctx.classes.ancestors(cls).flatMap((s) => (s.ref ? [s.ref] : []))]) {
       const fn = c.cls.methods.find((m) => m.name === name);
-      if (!fn) continue;
-      const templates = templatesOf(fn);
+      if (!fn) {
+        // A field of that name shadows nothing further up for a property read.
+        if (getterOnly && c.cls.properties?.some((p) => p.name === name)) return null;
+        continue;
+      }
+      // No getter flag is kept; a property read of a method only makes sense for one.
+      if (getterOnly && fn.params.length > 0) return null;
+      const templates = templatesOf(fn).map((t) => (fn.urlTemplateBase ? `\${${fn.urlTemplateBase}}${t}` : t));
       return templates.length > 0 ? { templates, params: fn.params } : null;
     }
     return null;

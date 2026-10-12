@@ -285,21 +285,67 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     return best;
   };
 
-  const resolveHole = (expr: string, file: string, cls: ClassRef | null, depth: number): string | null => {
-    if (depth > 4) return null;
-    // `options.apiVersion || DEFAULT_API_VERSION`: the first side the project states.
-    const fallback = /^(.+?)\s*(?:\|\||\?\?)\s*(.+)$/.exec(expr);
-    if (fallback) return resolveHole(fallback[1]!.trim(), file, cls, depth) ?? resolveHole(fallback[2]!.trim(), file, cls, depth);
-    const field = /^this\.([\w$]+)$/.exec(expr);
-    if (field) {
-      if (!cls) return null;
-      const chain = [cls, ...ctx.classes.ancestors(cls).flatMap((s) => (s.ref ? [s.ref] : []))];
-      for (const c of chain) {
-        const v = c.cls.fieldValues?.[field[1]!];
-        if (v !== undefined) return resolveValue(v, c.filePath, c, depth + 1);
+  /** The class chain from `self` up, each with the class directly below it (the one whose `super(…)` reached it). */
+  const chainOf = (self: ClassRef): Array<{ c: ClassRef; below: ClassRef | null }> => {
+    const up = [self, ...ctx.classes.ancestors(self).flatMap((s) => (s.ref ? [s.ref] : []))];
+    return up.map((c, i) => ({ c, below: i > 0 ? up[i - 1]! : null }));
+  };
+  const CTOR = new Set(["constructor", "__init__", "__construct", "init", "new"]);
+
+  /**
+   * `this.x` seen from `self`: a field value along the chain — a base field set
+   * from a constructor parameter (`this.resource = resource`) holds what the
+   * subclass below passed to `super(…)`. Getters read as `this.url` are the
+   * URL-builder pass's (url-builders.ts), which runs first.
+   */
+  const ctorParamIndex = (c: ClassRef, value: string): number => {
+    const param = /^\$\{([\w$]+)\}$/.exec(value)?.[1];
+    const ctor = param ? c.cls.methods.find((m) => CTOR.has(m.name) || m.name === c.cls.name) : undefined;
+    return ctor ? ctor.params.findIndex((p) => p.name === param) : -1;
+  };
+
+  /** Does `target`, seen from `self`, still read a field only a subclass's `super(…)` would state? */
+  const awaitsSubclass = (target: string, self: ClassRef): boolean => {
+    for (const m of target.matchAll(/\$\{this\.([\w$]+)\}/g)) {
+      const owner = chainOf(self).find(({ c }) => c.cls.fieldValues?.[m[1]!] !== undefined)?.c;
+      if (owner && ctorParamIndex(owner, owner.cls.fieldValues![m[1]!]!) >= 0) return true;
+    }
+    return false;
+  };
+
+  const resolveMember = (member: string, self: ClassRef, depth: number): string | null => {
+    const chain = chainOf(self);
+    for (let k = 0; k < chain.length; k++) {
+      const { c } = chain[k]!;
+      const v = c.cls.fieldValues?.[member];
+      if (v === undefined) continue;
+      let index = ctorParamIndex(c, v);
+      if (index < 0) return resolveValue(v, c.filePath, self, depth + 1);
+      // Walk down to the class that states the argument: one that only
+      // forwards its own parameter (`super(resource, options)`) passes it on.
+      for (let j = k - 1; j >= 0; j--) {
+        const below = chain[j]!.c;
+        const passed = below.cls.superArgs?.[index];
+        if (passed === undefined) return null;
+        const next = ctorParamIndex(below, passed);
+        if (next < 0) return resolveValue(passed, below.filePath, self, depth + 1);
+        index = next;
       }
       return null;
     }
+    return null;
+  };
+
+  const resolveHole = (expr: string, file: string, cls: ClassRef | null, depth: number): string | null => {
+    if (depth > 6) return null;
+    // `options.apiVersion || DEFAULT_API_VERSION`: the first side the project states.
+    const fallback = /^(.+?)\s*(?:\|\||\?\?)\s*(.+)$/.exec(expr);
+    if (fallback) return resolveHole(fallback[1]!.trim(), file, cls, depth) ?? resolveHole(fallback[2]!.trim(), file, cls, depth);
+    // `'v1'` — the default a fallback names.
+    const literal = /^(['"`])([\w.\-/]*)\1$/.exec(expr);
+    if (literal) return literal[2]!;
+    const field = /^this\.([\w$]+)$/.exec(expr);
+    if (field) return cls ? resolveMember(field[1]!, cls, depth) : null;
     const name = /^([A-Za-z_$][\w$]*)((?:\.[\w$]+)*)$/.exec(expr);
     if (!name) return null;
     const source = ctx.importIndex.localFor(file, name[1]!) ?? file;
@@ -310,10 +356,46 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
   const resolveValue = (value: string, file: string, cls: ClassRef | null, depth: number): string =>
     value.replace(ANY_HOLE, (hole, expr: string) => resolveHole(expr.trim(), file, cls, depth) ?? hole);
 
+  /**
+   * A call in a base class whose URL reads `this` (`axios.get(this.url)` in
+   * `ApiClient.get`) requests a different URL for every subclass that inherits
+   * the method: one row per concrete subclass that does not override it, each
+   * resolved as seen from that subclass.
+   */
+  const perSubclass = (call: ApiCall, cls: ClassRef): Array<{ target: string; alternatives?: string[] }> => {
+    const method = cls.cls.methods.find((m) => m.line <= call.line && call.line <= m.endLine);
+    if (!method || ![call.target!, ...(call.targetAlternatives ?? [])].some((t) => /\$\{this\./.test(t))) return [];
+    const out: Array<{ target: string; alternatives?: string[] }> = [];
+    for (const d of ctx.classes.descendants(cls)) {
+      // The method `this.m()` dispatches to from `d`: the first definition up its chain.
+      const definer = chainOf(d).find(({ c }) => c.cls.methods.some((m) => m.name === method.name))?.c;
+      if (definer !== cls) continue;
+      const t = resolveValue(call.target!, call.filePath, d, 0);
+      // An abstract middle class (`CacheEnabledApiClient`) leaves a field its own
+      // subclasses state through `super(…)`: it requests nothing itself.
+      if (awaitsSubclass(t, d)) continue;
+      const alternatives = call.targetAlternatives?.map((a) => resolveValue(a, call.filePath, d, 0));
+      if (t === call.target && !alternatives?.some((a, i) => a !== call.targetAlternatives![i])) continue;
+      if (out.some((o) => o.target === t)) continue;
+      out.push({ target: t, ...(alternatives ? { alternatives } : {}) });
+    }
+    return out;
+  };
+
   let changed = 0;
+  const fanned: ApiCall[] = [];
   for (const call of calls) {
     if (call.kind !== "api-call" || !call.target?.includes("${")) continue;
     const cls = classAt(call.filePath, call.line);
+    const variants = cls ? perSubclass(call, cls) : [];
+    if (variants.length > 0) {
+      const [first, ...rest] = variants;
+      call.target = first!.target;
+      if (first!.alternatives) call.targetAlternatives = first!.alternatives;
+      for (const v of rest) fanned.push({ ...call, target: v.target, ...(v.alternatives ? { targetAlternatives: v.alternatives } : {}) });
+      changed++;
+      continue;
+    }
     const target = resolveValue(call.target, call.filePath, cls, 0);
     const alternatives = call.targetAlternatives?.map((alt) => resolveValue(alt, call.filePath, cls, 0));
     if (target === call.target && (alternatives ?? []).every((a, i) => a === call.targetAlternatives![i])) continue;
@@ -321,5 +403,6 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     if (alternatives) call.targetAlternatives = alternatives;
     changed++;
   }
+  calls.push(...fanned);
   return changed;
 }

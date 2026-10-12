@@ -5,6 +5,7 @@ import { rubygemsPackages } from "./packages.js";
 import { rubyManifest } from "./manifest.js";
 import { RubyEntityExtractor } from "./entities.js";
 import { rubyReachability } from "./reachability.js";
+import { railsRouteAnchor } from "./route-anchor.js";
 
 export const rubyMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
@@ -13,6 +14,8 @@ export const rubyMeta: LanguagePluginMeta = {
   regexSpec: rubySpec,
   knownPackages: rubygemsPackages,
   entities: new RubyEntityExtractor(),
+  // Rails routes move from config/routes.rb onto the action that serves them.
+  routeResolvers: [railsRouteAnchor],
   builtinTypes: new Set(COMMON_PRIMITIVES),
   complexity: {
     branchNodes: new Set([

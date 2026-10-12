@@ -69,6 +69,11 @@ function parseActionFilter(stmt: string): { only: Set<string> | null; except: Se
 const FRAMEWORK_CONTROLLER_RE = /^(rails|active_admin|action_cable|action_mailbox|active_storage)\b/;
 
 /** `supervision_time_schedules` / `reports/positions` → `SupervisionTimeSchedules` / `Positions` */
+/** `admin/billing` → `Admin::Billing` — a `module:` option names a module path. */
+function railsModule(path: string): string {
+  return path.split("/").filter(Boolean).map(railsCamelize).join("::");
+}
+
 function railsCamelize(token: string): string {
   return token
     .split(/[_/]/)
@@ -107,7 +112,7 @@ function railsSingularize(token: string): string {
  * controller.rb` serves `/staff/duties`, not `/duties`, and calling it
  * `DutiesController` collides with the top-level controller of the same name.
  */
-function enclosingModules(cls: ClassInfo, classes: readonly ClassInfo[]): string[] {
+export function enclosingModules(cls: ClassInfo, classes: readonly ClassInfo[]): string[] {
   const fromNesting = classes
     .filter((m) => m !== cls && m.line < cls.line && (m.endLine ?? 0) >= (cls.endLine ?? cls.line) && !/Controller$/.test(m.name))
     .sort((a, b) => a.line - b.line)
@@ -791,10 +796,13 @@ export const rubySpec: RegexLangSpec = {
         pushBlock("/" + nsMatch[1], null, railsCamelize(nsMatch[1]));
         continue;
       }
-      const scopeMatch = line.match(/^scope\s+['"]([^'"]+)['"]/);
-      if (scopeMatch && opensDoBlock) {
-        const p = scopeMatch[1].replace(/^\/?/, "/");
-        pushBlock(p === "/" ? "" : p);
+      // `scope '/x' do`, `scope path: '/x' do`, `scope module: :accounts do` — a
+      // path prefix, a controller module (`Accounts::`), or both.
+      if (/^scope\b/.test(line) && opensDoBlock) {
+        const raw = line.match(/^scope\s+['"]([^'"]+)['"]/)?.[1] ?? line.match(/\bpath:\s*['"]([^'"]+)['"]/)?.[1] ?? "";
+        const p = raw ? raw.replace(/^\/?/, "/") : "";
+        const module = line.match(/\bmodule:\s*:?['"]?([\w/]+)/)?.[1];
+        pushBlock(p === "/" ? "" : p, null, module ? railsModule(module) : null);
         continue;
       }
       // Devise: `authenticate :user do … end` / `authenticated :admin do … end`
@@ -821,7 +829,9 @@ export const rubySpec: RegexLangSpec = {
         const actionMap = singular ? SINGULAR_ACTION_MAP : RAILS_ACTION_MAP;
         const { only, except } = parseActionFilter(stmt);
         // Take the leading :symbol list, before any option (only:/except:/=>).
-        const beforeOpts = stmt.slice(resourcesMatch[1].length).split(/\b(?:only|except|controller)\b|=>/)[0];
+        const beforeOpts = stmt.slice(resourcesMatch[1].length).split(/\b(?:only|except|controller|module|path|as)\b|=>/)[0];
+        // `resources :inboxes, module: :assignment_policies` puts its controller in that module.
+        const optionModule = stmt.match(/\bmodule:\s*:?['"]?([\w/]+)/)?.[1];
         // `resources :children, controller: 'children'` names the class explicitly.
         const explicitController = stmt.match(/\bcontroller:\s*['"]([\w/]+)['"]/)?.[1] ?? null;
         let frame: ResourceFrame | null = null;
@@ -831,7 +841,7 @@ export const rubySpec: RegexLangSpec = {
           // Rails maps a singular `resource :session` to the plural SessionsController.
           const controllerClass = railsControllerClass(
             explicitController ?? (singular ? railsPluralize(name) : name),
-            currentModules(),
+            optionModule ? [...currentModules(), railsModule(optionModule)] : currentModules(),
           );
           const base = currentPrefix() + "/" + name;
           frame = { base, controllerClass };
@@ -842,15 +852,18 @@ export const rubySpec: RegexLangSpec = {
           for (const [action, info] of Object.entries(actionMap)) {
             if (only && !only.has(action)) continue;
             if (except.has(action)) continue;
-            routes.push(withGuards({
-              path: base + info.suffix,
-              httpMethod: info.method,
-              kind: "api",
-              handler: `${controllerClass}#${action}`,
-              calls: [],
-              middleware: [],
-              line: i + 1,
-            }));
+            // Rails routes `update` on PATCH and on PUT alike.
+            for (const method of action === "update" ? ["PATCH", info.method] : [info.method]) {
+              routes.push(withGuards({
+                path: base + info.suffix,
+                httpMethod: method,
+                kind: "api",
+                handler: `${controllerClass}#${action}`,
+                calls: [],
+                middleware: [],
+                line: i + 1,
+              }));
+            }
           }
         }
         if (opensDoBlock) pushBlock(nestedPrefix, null, null, frame); // `resources :x do` opens a nested block
@@ -880,13 +893,14 @@ export const rubySpec: RegexLangSpec = {
       const verbMatch = line.match(/^(get|post|put|patch|delete)\s+(?:['"]([^'"]+)['"]|:(\w+))/);
       if (verbMatch) {
         const rawPath = verbMatch[2] ?? verbMatch[3]!;
-        const explicitAction = verbMatch[3] ? line.match(/\baction:\s*:?['"]?(\w+)/)?.[1] : undefined;
+        const explicitAction = verbMatch[3] ? line.match(/(?:\baction:|:action\s*=>)\s*:?['"]?(\w+)/)?.[1] : undefined;
         const target = line.match(/(?:=>|to:)\s*['"]([^'"#]+)#(\w+)['"]/);
         // Inside `resources :children do … end`: `on: :collection` hangs off
         // the collection (`/children/presence`), `on: :member` off one member
         // (`/children/:id/presence`), and the handler is that resource's
         // controller unless the line names another.
-        const on = line.match(/\bon:\s*:(collection|member)\b/)?.[1] ?? null;
+        // `on: :collection` or the older `:on => :collection`.
+        const on = line.match(/(?:\bon:|:on\s*=>)\s*:(collection|member)\b/)?.[1] ?? null;
         const resource = innermostResource();
         let controller: string | null = null;
         let action: string | null = null;

@@ -188,3 +188,53 @@ export class TagsAPI {
     ).toEqual(["a.service.ts:2 get apiUri(path)"]);
   });
 });
+
+describe("resolveSymbolicTargets — a base client whose URL each subclass names through super()", () => {
+  it("resolves `this.url` through the getter with its base put back, and `this.resource` from each subclass's super()", async () => {
+    const rows = await project({
+      "api/ApiClient.js": `class ApiClient {
+  constructor(resource, options = {}) {
+    this.apiVersion = \`/api/\${options.apiVersion || 'v1'}\`;
+    this.options = options;
+    this.resource = resource;
+  }
+  get url() { return \`\${this.baseUrl()}/\${this.resource}\`; }
+  baseUrl() {
+    let url = this.apiVersion;
+    if (this.options.enterprise) url = \`/enterprise\${url}\`;
+    if (this.options.accountScoped && this.accountIdFromRoute) url = \`\${url}/accounts/\${this.accountIdFromRoute}\`;
+    return url;
+  }
+  get() { return axios.get(this.url); }
+  show(id) { return axios.get(\`\${this.url}/\${id}\`); }
+}
+export default ApiClient;`,
+      "api/contacts.js": `import ApiClient from './ApiClient';
+class ContactAPI extends ApiClient {
+  constructor() { super('contacts', { accountScoped: true }); }
+  get(page) { return axios.get(this.url, { params: { page } }); }
+}
+export default new ContactAPI();`,
+      "api/CacheEnabledApiClient.js": `import ApiClient from './ApiClient';
+class CacheEnabledApiClient extends ApiClient {
+  constructor(resource, options = {}) { super(resource, options); this.dataManager = null; }
+}
+export default CacheEnabledApiClient;`,
+      "api/labels.js": `import CacheEnabledApiClient from './CacheEnabledApiClient';
+class LabelsAPI extends CacheEnabledApiClient {
+  constructor() { super('labels', { accountScoped: true }); }
+}
+export default new LabelsAPI();`,
+    });
+    const targets = rows.map((r) => r[0]).sort();
+    // ApiClient.get is overridden by ContactAPI, so only LabelsAPI inherits it; show is inherited by both.
+    // The getter's base comes back as `this.baseUrl()`, whose guarded reassignments are its variants.
+    expect(targets).toEqual(["/api/v1/contacts", "/api/v1/contacts/${id}", "/api/v1/labels", "/api/v1/labels/${id}"]);
+    const contacts = rows.find((r) => r[0] === "/api/v1/contacts")!;
+    expect(contacts[2]).toEqual([
+      "/enterprise/api/v1/contacts",
+      "/api/v1/accounts/${this.accountIdFromRoute}/contacts",
+      "/enterprise/api/v1/accounts/${this.accountIdFromRoute}/contacts",
+    ]);
+  });
+});

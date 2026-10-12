@@ -258,10 +258,12 @@ function declaredLocal(
 export function extractUrlTemplates(
   body: Node | null,
   paramNames: ReadonlySet<string>,
+  /** Receives the leading expression a template starts with (`this.baseUrl()` in `${this.baseUrl()}/x`), when it is one. */
+  out?: { base?: string | null },
 ): string[] {
   if (!body) return [];
 
-  const locals: Locals = { values: new Map(), appends: new Map() };
+  const locals: Locals = { values: new Map(), appends: new Map(), reassigns: new Map() };
   const returns: Node[] = [];
   if (body.type === "statement_block") {
     collectReturns(body.namedChildren, locals, returns, 0, null, paramNames);
@@ -287,13 +289,33 @@ export function extractUrlTemplates(
       keepHole: resolvableHole,
     }).text;
   const templates: string[] = [];
-  const push = (text: string | null): boolean => {
+  // `bareMember`: a variant that is only a field of `this` (`let url = this.apiVersion`
+  // with no guard taken) is a URL the field holds, kept beside its siblings.
+  const push = (text: string | null, bareMember = false): boolean => {
     if (text == null) return false;
     const tpl = stripUrlBase(text);
-    if (tpl.includes("/") && !templates.includes(tpl)) templates.push(tpl);
+    const ok = tpl.includes("/") || (bareMember && /^\$\{this\.[\w$]+\}$/.test(tpl));
+    if (ok && !templates.includes(tpl)) templates.push(tpl);
     return templates.length >= MAX_URL_TEMPLATES;
   };
   for (const ret of returns) {
+    if (out && !out.base) out.base = leadingBaseText(ret.type === "identifier" ? locals.values.get(ret.text) ?? ret : ret);
+    // `let url = this.apiVersion; if (enterprise) url = `/enterprise${url}`; if (scoped) url = `${url}/accounts/${id}`; return url`
+    // — one template per combination of the guarded reassignments, fewest first.
+    const reassigned = ret.type === "identifier" ? locals.reassigns.get(ret.text) : undefined;
+    const start = ret.type === "identifier" ? locals.values.get(ret.text) : undefined;
+    if (reassigned && start) {
+      const guards = [...new Set(reassigned.map((r) => r.guard).filter((g): g is string => g !== null))].slice(0, 3);
+      const subsets: Set<string>[] = [];
+      for (let mask = 0; mask < 1 << guards.length; mask++) subsets.push(new Set(guards.filter((_, i) => mask & (1 << i))));
+      subsets.sort((a, b) => a.size - b.size);
+      for (const on of subsets) {
+        let cur = astToValueExpr(start);
+        for (const r of reassigned) if (r.guard === null || on.has(r.guard)) cur = replaceRef(astToValueExpr(r.expr), ret.text, cur);
+        if (push(fold(cur), true)) return templates;
+      }
+      continue;
+    }
     // `let url = base; if (id) url += `${id}/`; return url` — one template per
     // combination of the guarded appends, fewest first.
     const appended = ret.type === "identifier" ? locals.appends.get(ret.text) : undefined;
@@ -310,6 +332,34 @@ export function extractUrlTemplates(
     }
   }
   return templates;
+}
+
+/** `x` in `ref(x)` replaced by `by` throughout a value expression. */
+function replaceRef(expr: ValueExpr, name: string, by: ValueExpr): ValueExpr {
+  if (expr.kind === "ref" && expr.name === name) return by;
+  if (expr.kind === "concat" || expr.kind === "template" || expr.kind === "coalesce") return { ...expr, parts: expr.parts.map((p) => replaceRef(p, name, by)) };
+  return expr;
+}
+
+/**
+ * The expression a URL starts with when it is a call or member the folding
+ * turns into an anonymous base: `this.baseUrl()` in `` `${this.baseUrl()}/${x}` ``
+ * or `this.baseUrl() + "/x"`. Recorded so a caller substituting the template
+ * whole (a getter read as `this.url`) can put the base back and resolve it.
+ */
+function leadingBaseText(node: Node): string | null {
+  if (node.type === "template_string") {
+    const first = node.namedChildren[0];
+    if (first?.type === "template_substitution" && first.startIndex === node.startIndex + 1) {
+      const inner = first.namedChild(0);
+      return inner?.type === "call_expression" ? inner.text : null;
+    }
+    return null;
+  }
+  if (node.type === "binary_expression" && node.childForFieldName("operator")?.text === "+") {
+    return leadingBaseText(node.childForFieldName("left") ?? node) ?? (node.childForFieldName("left")?.type === "call_expression" ? node.childForFieldName("left")!.text : null);
+  }
+  return null;
 }
 
 /**
@@ -330,6 +380,8 @@ interface Locals {
   values: Map<string, Node>;
   /** `url += …` appends per local, each with the parameter whose truthiness guards it (`?` = some other condition). */
   appends: Map<string, Array<{ guard: string | null; expr: Node }>>;
+  /** `url = `/enterprise${url}`` — reassignments that read the local's previous value, in order, each with its guard. */
+  reassigns: Map<string, Array<{ guard: string | null; expr: Node }>>;
 }
 
 /** The appended expressions of every combination of guards, unconditional appends always in, fewest guards first. */
@@ -390,6 +442,16 @@ function collectReturns(
     } else if (stmt.type === "expression_statement") {
       // `url += `${id}/`` — appended under whatever guards this statement.
       const e = stmt.namedChild(0);
+      if (e?.type === "assignment_expression") {
+        const left = e.childForFieldName("left");
+        const right = e.childForFieldName("right");
+        // A reassignment that reads the local's own value builds on it (`url = `${url}/accounts/${id}``).
+        if (left?.type === "identifier" && right && locals.values.has(left.text) && new RegExp(`\\b${left.text}\\b`).test(right.text)) {
+          const list = locals.reassigns.get(left.text) ?? [];
+          list.push({ guard, expr: right });
+          locals.reassigns.set(left.text, list);
+        }
+      }
       if (e?.type === "augmented_assignment_expression" && e.childForFieldName("operator")?.text === "+=") {
         const left = e.childForFieldName("left");
         const right = e.childForFieldName("right");
@@ -404,7 +466,10 @@ function collectReturns(
       if (expr) out.push(expr);
     } else if (stmt.type === "if_statement") {
       const cond = stmt.childForFieldName("condition");
-      const inner = cond ? guardParam(cond, params) : "?";
+      // A condition on no parameter is still ONE condition: two such `if`s guard
+      // independent changes (`if (opts.enterprise) …; if (opts.accountScoped) …`).
+      const byParam = cond ? guardParam(cond, params) : "?";
+      const inner = byParam === "?" && cond ? `?${cond.text.replace(/\s+/g, "")}` : byParam;
       const cons = stmt.childForFieldName("consequence");
       if (cons) collectReturns(branchStatements(cons), locals, out, depth + 1, inner, params);
       const alt = stmt.childForFieldName("alternative")?.namedChild(0); // else_clause → body
@@ -1054,7 +1119,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           const paramNames = new Set(params.map((p) => p.name));
           // A URL-builder helper is as often a service-class method
           // (`configService.APIUrl(sub)`) as a free function.
-          const templates = extractUrlTemplates(methodBody, paramNames);
+          const stripped: { base?: string | null } = {};
+          const templates = extractUrlTemplates(methodBody, paramNames, stripped);
           const { calls, localTypes } = finishBody(extractCalls(methodBody, "typescript"), methodBody, paramNames, this.ctx);
           methods.push({
             name: methodName,
@@ -1068,6 +1134,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
             endLine: member.endPosition.row + 1,
             ...(localTypes ? { localTypes } : {}),
             ...urlTemplateFields(templates),
+            ...(templates.length > 0 && stripped.base ? { urlTemplateBase: stripped.base } : {}),
             ...(requestAccess ? { requestAccess } : {}),
           });
           // `constructor(public readonly id: number)` declares a property.
@@ -1103,6 +1170,13 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       }
     }
     if (ctor) this.constructorAssignments(ctor.body, ctor.params, properties, setValue);
+    let superArgs: string[] | undefined;
+    for (const stmt of ctor?.body.namedChildren ?? []) {
+      const call = stmt.type === "expression_statement" ? stmt.namedChild(0) : null;
+      if (call?.type !== "call_expression" || call.childForFieldName("function")?.type !== "super") continue;
+      superArgs = (call.childForFieldName("arguments")?.namedChildren ?? []).filter((a) => a.type !== "comment").map((a) => renderUrlExpr(a) ?? `\${${a.text}}`);
+      break;
+    }
 
     // An abstract class with nothing BUT abstract members is an interface in
     // all but name (the Angular/NestJS DI-token idiom `abstract class Logger
@@ -1128,6 +1202,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       endLine: node.endPosition.row + 1,
       ...(isInterface ? { kind: "interface" as const } : {}),
       ...knownFieldValues(fieldValues),
+      ...(superArgs && superArgs.length > 0 ? { superArgs } : {}),
     };
   }
 
