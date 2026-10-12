@@ -51,6 +51,12 @@ export interface ConventionSpec {
     declaration?: RegExp;
     /** Classes whose METHODS are called bare (C# `*Extensions`): their method names count too. */
     methodsOf?: RegExp;
+    /**
+     * Members the extractor cannot see, read from the source when `when` matches it
+     * (group 1 of `member` = the name): C# 14 `extension(IQueryable<T> q) { public … Foo(…) }`
+     * blocks, whose members are called on the extended value.
+     */
+    sourceMembers?: { when: RegExp; member: RegExp };
   };
   /** Function/method names that start a program. */
   mainFunctions?: RegExp;
@@ -246,6 +252,9 @@ async function loadConventionModel(ctx: ReachabilityLoadContext, spec: Conventio
       }
       if (names.stem) out.push(stemOf(analysis.filePath));
       if (names.declaration && source) for (const m of source.matchAll(names.declaration)) out.push(typeLeaf(m[1]!));
+      if (names.sourceMembers && source && names.sourceMembers.when.test(source)) {
+        for (const m of source.matchAll(names.sourceMembers.member)) out.push(leaf(m[1]!));
+      }
       return out.filter((n) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(n));
     };
   }

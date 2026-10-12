@@ -64,6 +64,25 @@ describe("reachability kit — names", () => {
     expect(m.declaredNames!(a, "class Missed {}")).toEqual(["StringExtensions", "Helper", "Slugify", "StringExtensions", "Missed"]);
   });
 
+  it("reads C# 14 extension-block members from the source (Kavita's filters)", async () => {
+    const { csharpReachability } = await import("../csharp/reachability.js");
+    const m = await csharpReachability.load({ projectRoot: "/nonexistent", roots: [], files: new Set<string>() });
+    const a = analysis("Filters/PersonFilter.cs", { classes: [cls("PersonFilter", { methods: [fn("extension")] })] } as never);
+    const src = `public static class PersonFilter
+{
+    extension(IQueryable<Person> queryable)
+    {
+        public IQueryable<Person> HasPersonName(bool condition, string q)
+        {
+            return queryable;
+        }
+        public static IQueryable<Person> Sorted<TKey>(IQueryable<Person> q) { return q; }
+    }
+}`;
+    expect(m.declaredNames!(a, src)).toEqual(expect.arrayContaining(["PersonFilter", "HasPersonName", "Sorted"]));
+    expect(m.declaredNames!(a, "public static class X { public void Plain() {} }")).not.toContain("Plain");
+  });
+
   it("strips namespaces and generics from type names", () => {
     expect(typeLeaf("Microsoft.AspNetCore.Mvc.ControllerBase")).toBe("ControllerBase");
     expect(typeLeaf("IRequestHandler<GetUser, User>")).toBe("IRequestHandler");
