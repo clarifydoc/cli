@@ -66,14 +66,16 @@ const SPRING_DATA_DERIVED =
  * receiver because the names (`query`, `update`, `execute`, `merge`, `remove`)
  * are otherwise far too generic.
  */
+const JDBC_READS = [
+  "query", "queryForObject", "queryForList", "queryForMap", "queryForRowSet", "getResultList", "getSingleResult",
+  // EntityManager / Hibernate Session by class literal.
+  "find", "getReference", "get", "load", "createCriteria", "list", "uniqueResult",
+];
+const JDBC_WRITES = ["update", "batchUpdate", "persist", "merge", "remove", "save", "saveOrUpdate", "delete"];
 const JDBC_METHODS = new Set([
-  "query", "queryForObject", "queryForList", "queryForMap", "queryForRowSet",
-  "update", "batchUpdate", "execute",
-  "createQuery", "createNativeQuery", "createNamedQuery",
-  "getResultList", "getSingleResult", "persist", "merge",
-  // EntityManager / Hibernate Session by instance or class literal.
-  "remove", "find", "getReference", "refresh", "detach",
-  "get", "load", "save", "saveOrUpdate", "delete", "createCriteria", "list", "uniqueResult",
+  ...JDBC_READS, ...JDBC_WRITES,
+  // Neither a read nor a write by name: the statement or the entity's state decides.
+  "execute", "createQuery", "createNativeQuery", "createNamedQuery", "refresh", "detach",
 ]);
 /**
  * A JDBC / JPA / Hibernate handle, read on the receiver's LAST segment:
@@ -123,11 +125,7 @@ const SPRING_DATA_ACCESS = dbVerbTable(
   ["save", "saveAll", "saveAndFlush", "deleteAll", "deleteAllInBatch", "deleteInBatch"],
 );
 
-const JDBC_ACCESS = dbVerbTable(
-  ["query", "queryForObject", "queryForList", "queryForMap", "queryForRowSet", "getResultList", "getSingleResult",
-    "find", "getReference", "get", "load", "createCriteria", "list", "uniqueResult"],
-  ["update", "batchUpdate", "persist", "merge", "remove", "save", "saveOrUpdate", "delete"],
-);
+const JDBC_ACCESS = dbVerbTable(JDBC_READS, JDBC_WRITES);
 
 /** Leading verb of a derived query or DAO method. */
 const JVM_READ_VERB_RE = /^(find|read|get|fetch|load|list|search|select|query|stream|count|exists|all)/i;
@@ -426,11 +424,9 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // naming convention, the call then lands on a real repository node instead
     // of the shared "(unresolved)" bucket. A service-layer type is no store —
     // `userService.findAll()` in a controller merely shares Spring Data's verbs.
-    if (
-      (SPRING_DATA_EXACT.has(method) || SPRING_DATA_DERIVED.test(method)) &&
-      // `session.save(order)` is Hibernate's, read below with its entity.
-      !(JDBC_METHODS.has(method) && this.isJdbcReceiver(node, receiver))
-    ) {
+    const jdbc = JDBC_METHODS.has(method) && this.isJdbcReceiver(node, receiver);
+    // `session.save(order)` is Hibernate's, read below with its entity.
+    if ((SPRING_DATA_EXACT.has(method) || SPRING_DATA_DERIVED.test(method)) && !jdbc) {
       const access = dbAccessFor(method, SPRING_DATA_ACCESS) ?? jvmVerbAccess(method);
       const seg = receiver.split(".").pop()?.trim() ?? "";
       const declared = /^[\w$]+$/.test(seg)
@@ -453,10 +449,10 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // `createNamedQuery("…", Person.class)`, `createQuery(jpql, Person.class)`)
     // or the `from Person` of a JPQL/HQL string; a criteria query
     // (`createQuery(cq)`) names none.
-    if (JDBC_METHODS.has(method) && this.isJdbcReceiver(node, receiver)) {
+    if (jdbc) {
       // `em.createNamedQuery("q", X.class).setParameter(…).getResultList()` is ONE access: the
       // `createNamedQuery` row inside the chain carries it, with its entity.
-      if (/^(?:getResultList|getSingleResult|getResultStream|list|uniqueResult)$/.test(method) &&
+      if (/^(?:getResultList|getSingleResult|list|uniqueResult)$/.test(method) &&
         /\.create(?:Named|Native)?Query\s*\(|\.createCriteria\s*\(/.test(receiver)) return;
       const entity = jpaEntityArg(node)
         // `em.merge(person)`, `session.saveOrUpdate(order)`: the instance's declared type.
@@ -520,14 +516,6 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     }
   }
 
-  /**
-   * Event type published by this call, scanning arguments right-to-left:
-   * `new AccountCreatedEvent(…)` → AccountCreatedEvent;
-   * `AccountUpdateMessage.newBuilder()…build()` → AccountUpdateMessage;
-   * a bare identifier → its declared local/parameter/field type.
-   * Non-`publishEvent` verbs require the EVENT_TYPE_RE suffix (`relaxed`
-   * lifts that for constructor args of the unambiguous `publishEvent`).
-   */
   /** A JDBC/JPA handle by its last segment, unless it is named or declared as a service-layer object. */
   private isJdbcReceiver(node: Node, receiver: string): boolean {
     const leaf = receiverLeaf(receiver);
@@ -546,17 +534,24 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     if (!arg) return null;
     const text = arg.text.replace(/^this\./, "");
     const opt = /^(\w+)\.(?:get|orElseThrow|orElse)\s*\(/.exec(text)?.[1];
-    const name = opt ?? (/^\w+$/.test(text) ? text : null);
-    if (!name) return null;
     if (opt) {
-      const raw = localDeclaredType(node, name, true);
+      const raw = localDeclaredType(node, opt, true);
       const inner = raw ? /^(?:java\.util\.)?Optional\s*<\s*([\w.]+)\s*>$/.exec(raw)?.[1] : null;
       return inner ? simpleTypeName(inner) : null;
     }
-    const type = localDeclaredType(node, name) ?? this.fieldTypes.get(name) ?? null;
+    if (!/^\w+$/.test(text)) return null;
+    const type = localDeclaredType(node, text) ?? this.fieldTypes.get(text) ?? null;
     return type && /^[A-Z]\w/.test(type) && !NOT_AN_ENTITY_LITERAL.has(type) ? type : null;
   }
 
+  /**
+   * Event type published by this call, scanning arguments right-to-left:
+   * `new AccountCreatedEvent(…)` → AccountCreatedEvent;
+   * `AccountUpdateMessage.newBuilder()…build()` → AccountUpdateMessage;
+   * a bare identifier → its declared local/parameter/field type.
+   * Non-`publishEvent` verbs require the EVENT_TYPE_RE suffix (`relaxed`
+   * lifts that for constructor args of the unambiguous `publishEvent`).
+   */
   private resolveEventArg(call: Node, relaxed: boolean): string | null {
     const args = callArguments(call);
     for (let i = args.length - 1; i >= 0; i--) {

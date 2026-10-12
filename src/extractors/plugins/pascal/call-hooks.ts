@@ -1,6 +1,6 @@
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
-import { pascalReceiverTypeOf } from "./di.js";
+import { callArgs, pascalReceiverTypeOf } from "./di.js";
 
 /** Control-transfer std procedures — statement-position identifiers that are
  *  never interesting call edges. */
@@ -62,11 +62,11 @@ export const pascalCallHooks: CallExtractionHooks = {
   // routine's parameter (dfm-entities.ts). Other calls keep none.
   argsOf(node) {
     if (node.type !== "exprCall") return null;
-    const list = node.children.find((c) => c.type === "exprArgs");
-    if (!list) return null;
-    const args = list.namedChildren.filter((c) => c && c.type !== "comment").map((c) => c!.text.replace(/\s+/g, ""));
+    const args = callArgs(node);
     if (args.length === 0 || args.length > 8) return null;
-    return args.some((a) => DATASET_ARG.test(a)) ? args : null;
+    // Only an identifier or a dotted name can be a dataset: read no other argument's text.
+    if (!args.some((a) => (a.type === "identifier" || a.type === "exprDot") && DATASET_ARG.test(a.text))) return null;
+    return args.map((a) => a.text.replace(/\s+/g, ""));
   },
 
   // A container lookup chained into a call names its receiver's type:

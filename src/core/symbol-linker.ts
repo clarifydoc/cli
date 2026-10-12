@@ -1879,18 +1879,9 @@ function resolveCallToDefinition(
   // `MonitorsAPI.update(id)` where './monitors' declares `class MonitorsAPI
   // extends ApiClient` (and exports its instance) without its own `update`:
   // the member is the base class's.
-  if (!def && call.kind === "cross-file" && isQualified && parts.length === 2 && targetFile) {
-    const head = parts[0]!;
-    if (ctx.classAt.has(memberKey(targetFile, head))) {
-      let parentInfo = inheritanceMap.get(head);
-      const visited = new Set<string>();
-      while (parentInfo && !visited.has(parentInfo.parentClass)) {
-        visited.add(parentInfo.parentClass);
-        const parentDef = symbolIn(ctx, parentInfo.parentFile, `${parentInfo.parentClass}.${leafName}`);
-        if (parentDef) return mkLink(parentInfo.parentFile, parentDef.name, parentDef.line, "INFERRED", "inheritance");
-        parentInfo = inheritanceMap.get(parentInfo.parentClass);
-      }
-    }
+  if (!def && call.kind === "cross-file" && isQualified && parts.length === 2 && targetFile && ctx.classAt.has(memberKey(targetFile, parts[0]!))) {
+    const inherited = findMethodInClass(ctx, parts[0]!, targetFile, leafName);
+    if (inherited) return mkLink(inherited.file, inherited.symbol, inherited.line, "INFERRED", "inheritance");
   }
 
   // ── Strategy 3b: factory fallback via the binding's provenance ──

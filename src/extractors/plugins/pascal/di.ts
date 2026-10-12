@@ -47,7 +47,7 @@ function fieldChildren(node: Node, field: string): Node[] {
 }
 
 /** The arguments of an `exprCall`, one node per argument. */
-function callArgs(call: Node): Node[] {
+export function callArgs(call: Node): Node[] {
   const args = call.childForFieldName("args");
   return args ? args.namedChildren.filter((n) => n.type !== "comment") : [];
 }

@@ -8,6 +8,7 @@ import { stripQuotes } from "../../shared/node-helpers.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { foldValue, toAppRelativeUrl } from "../../shared/value-resolver.js";
 import { astToValueExpr, buildScope } from "./value-capture.js";
+import { npmPackages } from "./packages.js";
 import { extractGqlOperationCalls } from "../shared/graphql-operations.js";
 import { GENERATED_CLIENT_MARKER, generatedClientCall } from "./generated-clients.js";
 
@@ -84,42 +85,55 @@ const VUE_MACROS = new Set([
  */
 const ORM_ROOTS = new Set(["prisma", "db", "client"]);
 
-/** An import of an ORM or database driver: the file's generic-verb calls may be database operations. */
-const ORM_IMPORT_RE =
-  /(?:from\s+|require\(\s*)['"](?:@prisma\/client|prisma|typeorm|sequelize(?:-typescript)?|mongoose|knex|drizzle-orm[^'"]*|kysely|objection|@mikro-orm\/[^'"]+|better-sqlite3|sqlite3?|pg|postgres|mysql2?|mssql|oracledb|mongodb|@supabase\/supabase-js|firebase-admin[^'"]*|@google-cloud\/firestore|dynamoose|@aws-sdk\/lib-dynamodb|redis|ioredis|typeorm[^'"]*|@nestjs\/(?:typeorm|mongoose|sequelize)|@vercel\/postgres|@neondatabase\/[^'"]+|@planetscale\/[^'"]+|@libsql\/[^'"]+)['"]/;
+/** The packages the plugin's catalog files as ORMs or database drivers: importing one is ORM evidence. */
+const ORM_PACKAGES = new Set(npmPackages.filter((r) => r.category === "orm" || r.category === "database").flatMap((r) => r.names ?? []));
 
-function importedNames(src: string): Set<string> {
-  const out = new Set<string>();
-  for (const m of src.matchAll(/import\s+(?:type\s+)?([^'"]*?)\s+from\s+['"]/g)) {
-    for (const n of m[1]!.replace(/[{}*]/g, ",").split(",")) {
-      const name = n.trim().split(/\s+as\s+/).pop()?.trim();
-      if (name && /^[A-Za-z_$][\w$]*$/.test(name)) out.add(name);
-    }
-  }
-  for (const m of src.matchAll(/(?:const|let|var)\s+(?:\{([^}]*)\}|([A-Za-z_$][\w$]*))\s*=\s*require\(/g)) {
-    if (m[2]) out.add(m[2]);
-    for (const n of (m[1] ?? "").split(",")) {
-      const name = n.trim().split(":").pop()?.trim();
-      if (name) out.add(name);
-    }
-  }
-  return out;
+/** `@scope/pkg/sub` → `@scope/pkg`, `drizzle-orm/pg-core` → `drizzle-orm`. */
+function packageOf(source: string): string {
+  const segs = source.split("/");
+  return source.startsWith("@") ? segs.slice(0, 2).join("/") : segs[0]!;
 }
 
-/** `import User from '../models/user'`, `const Order = require('./models/order')`, `class Account extends Model`. */
-function localModelNames(src: string): Set<string> {
-  const out = new Set<string>();
-  for (const m of src.matchAll(/import\s+(?:\{([^}]*)\}|([A-Z]\w*))[^'"]*from\s+['"]([^'"]*\bmodels?\b[^'"]*)['"]/g)) {
-    if (m[2]) out.add(m[2]);
-    for (const n of (m[1] ?? "").split(",")) {
-      const name = n.trim().split(/\s+as\s+/).pop()?.trim();
-      if (name && /^[A-Z]/.test(name)) out.add(name);
+/** What a file's imports tell the ORM-evidence gate, read once from its text. */
+interface ImportEvidence {
+  /** It imports an ORM or database driver. */
+  orm: boolean;
+  /** Every name an import or `require` binds. */
+  names: Set<string>;
+  /** Capitalized names imported from a `models/` path or declared as a model class: local models. */
+  models: Set<string>;
+}
+
+function importEvidence(src: string): ImportEvidence {
+  const evidence: ImportEvidence = { orm: false, names: new Set(), models: new Set() };
+  const bind = (list: string, source: string, separator: RegExp): void => {
+    if (ORM_PACKAGES.has(packageOf(source))) evidence.orm = true;
+    const fromModels = /\bmodels?\b/.test(source);
+    for (const part of list.replace(/[{}]|\*\s+as\s+/g, ",").split(",")) {
+      const name = part.trim().split(separator).pop()?.trim();
+      if (!name || !/^[A-Za-z_$][\w$]*$/.test(name)) continue;
+      evidence.names.add(name);
+      if (fromModels && /^[A-Z]/.test(name)) evidence.models.add(name);
     }
-  }
-  for (const m of src.matchAll(/(?:const|let|var)\s+([A-Z]\w*)\s*=\s*require\(\s*['"]([^'"]*\bmodels?\b[^'"]*)['"]/g)) out.add(m[1]!);
-  for (const m of src.matchAll(/\bclass\s+([A-Z]\w*)\s+extends\s+(?:Model|BaseEntity|Entity)\b/g)) out.add(m[1]!);
-  for (const m of src.matchAll(/\b(?:const|let|var)\s+([A-Z]\w*)\s*=\s*(?:mongoose\.)?model\s*\(/g)) out.add(m[1]!);
-  return out;
+  };
+  for (const m of src.matchAll(/\bimport\s+(?:type\s+)?([^'";]*?)\s+from\s+['"]([^'"]+)['"]/g)) bind(m[1]!, m[2]!, /\s+as\s+/);
+  for (const m of src.matchAll(/(?:const|let|var)\s+(\{[^}]*\}|[A-Za-z_$][\w$]*)\s*=\s*require\(\s*['"]([^'"]+)['"]/g)) bind(m[1]!, m[2]!, /:/);
+  for (const m of src.matchAll(/\bclass\s+([A-Z]\w*)\s+extends\s+(?:Model|BaseEntity|Entity)\b/g)) evidence.models.add(m[1]!);
+  for (const m of src.matchAll(/\b(?:const|let|var)\s+([A-Z]\w*)\s*=\s*(?:mongoose\.)?model\s*\(/g)) evidence.models.add(m[1]!);
+  return evidence;
+}
+
+/** A segment that names a database handle: `ctx.knex`, `this.orm`. */
+const ORM_HANDLE_SEGMENT = /^(?:db|knex|sequelize|mongoose|drizzle|kysely|orm)$/;
+
+/**
+ * ORM evidence in a receiver chain itself: a trusted root (`prisma`, `db`, a
+ * `*Repository`), or a repository/model/handle-shaped segment before the verb
+ * (`ctx.prisma.user`, `this.userRepo`, `ctx.knex`).
+ */
+function chainHasOrmEvidence(parts: readonly string[]): boolean {
+  if (ORM_ROOTS.has(parts[0]!) || /Repository$/.test(parts[0]!)) return true;
+  return parts.slice(0, -1).some((seg) => ORM_ROOTS.has(seg) || ORM_SEGMENT_RE.test(seg) || ORM_HANDLE_SEGMENT.test(seg));
 }
 
 /** Kysely query-builder clause verbs whose first argument names the table. */
@@ -226,12 +240,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   private gqlScanned = false;
   /** The file is an openapi-generator client (see generated-clients.ts). */
   private generatedClient = false;
-  /** The file imports an ORM or database driver (see {@link ORM_IMPORT_RE}). */
-  private ormEvidence = false;
-  /** Capitalized names the file imports from a `models/` path or declares as a class: local models. */
-  private localModels = new Set<string>();
-  /** Every name the file binds through an import or `require`. */
-  private importedNames = new Set<string>();
+  /** What the file's imports say about ORM use, read on first need (most files never ask). */
+  private imports: ImportEvidence | null = null;
 
   override beginFile(tree: Tree, sourceText: string): void {
     this.root = tree.rootNode;
@@ -239,9 +249,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.generatedClient = sourceText.includes(GENERATED_CLIENT_MARKER);
     this.sourceText = sourceText;
     this.gqlScanned = false;
-    this.ormEvidence = ORM_IMPORT_RE.test(sourceText);
-    this.localModels = localModelNames(sourceText);
-    this.importedNames = importedNames(sourceText);
+    this.imports = null;
   }
 
   /**
@@ -253,17 +261,17 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
    * `ContactAPI.create` (an API client) and `view.destroy` were database rows.
    */
   private hasOrmEvidence(chain: string): boolean {
-    if (this.ormEvidence) return true;
+    const imports = (this.imports ??= importEvidence(this.sourceText));
+    if (imports.orm) return true;
     const parts = chain.split(".").map((p) => p.trim());
+    if (chainHasOrmEvidence(parts)) return true;
     const root = parts[0]!.replace(/^this$/, parts[1] ?? "");
-    if (ORM_ROOTS.has(parts[0]!) || /Repository$/.test(parts[0]!)) return true;
-    if (parts.slice(0, -1).some((seg) => ORM_SEGMENT_RE.test(seg) || /^(?:db|knex|sequelize|mongoose|drizzle|kysely|orm)$/.test(seg))) return true;
-    if (this.localModels.has(root)) return true;
+    if (imports.models.has(root)) return true;
     // A PascalCase root the file does not import is a model in scope (a global, an
     // injected model, a test snippet); one imported from elsewhere (`ContactAPI`
     // from '../api/contacts') or named like a client is not.
-    if (/^[A-Z]/.test(root) && !/(?:API|Api|Service|Client|Store|Helper|Utils?|Wrapper|View)$/.test(root)) {
-      return !this.importedNames.has(root);
+    if (isModelLikeRoot(root) && !/(?:API|Api|Service|Client|Store|Helper|Utils?|Wrapper|View)$/.test(root)) {
+      return !imports.names.has(root);
     }
     return false;
   }
@@ -1173,8 +1181,7 @@ function isOrmCall(name: string): boolean {
   // segment (`ctx.prisma.user.delete`, `this.userRepo.delete`), or a model-like
   // static receiver (`User.delete(id)`).
   if (leaf === "delete") {
-    return trustedRoot || isModelLikeRoot(parts[parts.length - 2]!) ||
-      parts.slice(0, -1).some((seg) => ORM_ROOTS.has(seg) || ORM_SEGMENT_RE.test(seg));
+    return chainHasOrmEvidence(parts) || isModelLikeRoot(parts[parts.length - 2]!);
   }
   if (ORM_METHODS.has(leaf)) return true;
   // Bare `find` collides with `Array.prototype.find`, so it's a DB op only on a

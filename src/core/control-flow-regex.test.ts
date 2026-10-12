@@ -11,8 +11,7 @@ import { computeComplexity } from "./complexity-analyzer.js";
 import { buildControlFlow } from "./control-flow.js";
 import { blankNonCode, buildRegexControlFlow, regexStructureMetrics } from "./control-flow-regex.js";
 import { controlFlowForFile } from "./control-flow-file.js";
-import { Language as TSLanguage, Parser } from "web-tree-sitter";
-import type { Node } from "web-tree-sitter";
+import { Language as TSLanguage, Parser, type Node } from "web-tree-sitter";
 
 const REPO = resolve(__dirname, "../..");
 const FIXTURES = resolve(REPO, "test-fixtures");
@@ -347,9 +346,10 @@ describe.each(MEASURED)("regex structure metrics agree with the parser — $lang
       const language = target.language as Language;
       const functions = extractFunctions(tree, source, language);
       const classes = extractClasses(tree, source, language);
+      const sourceLines = source.split("\n");
       for (const row of computeComplexity(tree, language, functions, classes)) {
         if (row.cognitive === undefined || row.nestingDepth === undefined) continue;
-        const scanned = regexStructureMetrics(source, language, { name: row.functionName, line: row.line, endLine: row.endLine });
+        const scanned = regexStructureMetrics(sourceLines, language, { name: row.functionName, line: row.line, endLine: row.endLine });
         if (!scanned) continue;
         compared++;
         if (scanned.nestingDepth === row.nestingDepth) nesting++;
