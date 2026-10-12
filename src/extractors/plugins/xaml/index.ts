@@ -212,6 +212,7 @@ export function extractXamlScreens(lines: string[], filePath: string): ScreenInf
       filePath,
       routePath: null,
       navigatesTo: [],
+      ...(root.attrs["x:DataType"] ? { viewModel: root.attrs["x:DataType"].replace(/^\{x:Type\s+|\}$/g, "").split(":").pop()!.split(".").pop()! } : {}),
     },
   ];
 }

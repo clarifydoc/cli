@@ -1,4 +1,5 @@
 import type {
+  FunctionInfo,
   RouteInfo,
   RouteParamInfo,
   SubComponentInfo,
@@ -6,6 +7,7 @@ import type {
 } from "../../../types/analysis.js";
 import { applyRouteMeta, splitList, type GuardAttr } from "../../shared/route-metadata.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
+import { extractCallsFromBody } from "../shared/regex-base.js";
 
 /**
  * Blazor `.razor` markup extraction (regex path).
@@ -82,6 +84,96 @@ function markupOnly(lines: string[]): string[] {
     }
 
     out[i] = line;
+  }
+  return out;
+}
+
+/** The 0-based line spans of the file's `@code`/`@functions` bodies (inclusive). */
+function codeBlocks(lines: string[]): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = (lines[i] ?? "").replace(/@\*[\s\S]*?\*@/g, "");
+    if (depth > 0) {
+      depth += countChar(line, "{") - countChar(line, "}");
+      if (depth <= 0) {
+        out.push([start, i]);
+        depth = 0;
+      }
+      continue;
+    }
+    const m = line.match(/@(?:code|functions)\b/);
+    if (!m) continue;
+    const after = line.slice(m.index! + m[0].length);
+    depth = countChar(after, "{") - countChar(after, "}");
+    start = i;
+    if (depth <= 0 && countChar(after, "{") > 0) out.push([i, i]);
+  }
+  return out;
+}
+
+// C# member declarations: modifiers, a return type, the name, the parameter list.
+const CODE_METHOD_RE =
+  /^\s*(?:(?:public|private|protected|internal|static|async|override|virtual|sealed|new|partial|unsafe|extern)\s+)*(?!(?:if|for|foreach|while|switch|catch|using|lock|return|await|new|else|throw|var)\b)[A-Za-z_][\w<>,.?\[\]\s]*?\s+(?!(?:if|for|foreach|while|switch|catch|using|lock|nameof|typeof|return)\b)([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:\{|=>|$)/;
+/** `@inject BasketState Basket` — a service the component's code calls as `Basket.x()`. */
+const INJECT_RE = /^\s*@inject\s+([A-Za-z_][\w.<>,? ]*?)\s+([A-Za-z_]\w*)\s*$/;
+
+/**
+ * The methods of a component's own `@code` block, as functions of the `.razor`
+ * file — `@onclick="SendMessageAsync"` names one of them, and before this the
+ * file declared none, so no Blazor handler resolved (eShop: 0 of 13). Only
+ * methods: a component with a `.razor.cs` code-behind keeps its class there,
+ * and nothing here declares a second one. Each method knows the services the
+ * component injects (`@inject BasketState Basket` → `Basket: BasketState`), the
+ * receivers its calls go through.
+ */
+export function extractCodeBlockFunctions(lines: string[], commentPrefixes: string[]): FunctionInfo[] {
+  const blocks = codeBlocks(lines);
+  if (blocks.length === 0) return [];
+  const injected = lines.flatMap((l) => {
+    const m = INJECT_RE.exec(l);
+    return m ? [{ name: m[2]!, type: m[1]!.trim() }] : [];
+  });
+  const out: FunctionInfo[] = [];
+  for (const [start, end] of blocks) {
+    for (let i = start + 1; i <= end; i++) {
+      const m = CODE_METHOD_RE.exec(lines[i] ?? "");
+      if (!m) continue;
+      // The body: to the matching brace, or the expression to its `;`.
+      let depth = 0;
+      let opened = false;
+      let j = i;
+      for (; j <= end; j++) {
+        const text = lines[j] ?? "";
+        depth += countChar(text, "{") - countChar(text, "}");
+        if (countChar(text, "{") > 0) opened = true;
+        if (opened && depth <= 0) break;
+        if (!opened && /=>[^;]*;\s*$/.test(text)) break;
+      }
+      const params = m[2]!.split(",").map((p) => p.trim()).filter(Boolean).map((p) => {
+        const parts = p.replace(/=.*$/, "").trim().split(/\s+/);
+        const name = parts.pop()!;
+        return { name, type: parts.join(" ") || null, defaultValue: null };
+      });
+      // The signature is no call: read the calls with it blanked.
+      const body = lines.slice();
+      body[i] = " ".repeat(m[0].length) + (lines[i] ?? "").slice(m[0].length);
+      const calls = extractCallsFromBody(body, i, Math.min(j, end) + 1, commentPrefixes);
+      out.push({
+        name: m[1]!,
+        params,
+        returnType: null,
+        isAsync: /\basync\b/.test(lines[i]!),
+        isExported: false,
+        decorators: [],
+        calls,
+        line: i + 1,
+        endLine: Math.min(j, end) + 1,
+        ...(injected.length > 0 ? { localTypes: injected.map((x) => ({ ...x })) } : {}),
+      });
+      i = Math.min(j, end);
+    }
   }
   return out;
 }
@@ -341,4 +433,6 @@ export const blazorSpec: RegexLangSpec = {
   extractRoutes: (lines) => extractBlazorRoutes(lines),
   extractSubComponents: (lines) => extractBlazorSubComponents(lines),
   extractInteractiveElements: (lines) => extractBlazorInteractiveElements(lines),
+  // The component's own `@code` methods (see `extractCodeBlockFunctions`).
+  postProcessFunctions: (lines, fns) => [...fns, ...extractCodeBlockFunctions(lines, ["//"])],
 };
