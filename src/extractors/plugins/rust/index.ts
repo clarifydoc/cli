@@ -6,6 +6,7 @@ import { extractRustDataSources } from "./data-sources.js";
 import { extractRustModuleRefs } from "./reachability.js";
 import { extractRustClasses } from "./classes.js";
 import { extractEventRegistrations } from "./event-dispatch.js";
+import { extractRustImports } from "./imports.js";
 import { extractRustLocalTypes } from "./locals.js";
 
 function parseRustReturnType(line: string): string | null {
@@ -101,18 +102,9 @@ export const rustSpec: RegexLangSpec = {
   extractClasses: (lines, fns) => extractRustClasses(lines, fns, rustSpec),
   extractLocalTypes: (body, fn) => extractRustLocalTypes(body, fn.params),
 
-  importPatterns: [
-    {
-      pattern: /^\s*use\s+(.+);/,
-      getSource: (m) => m[1].replace(/::\{.*/, "").replace(/::\*$/, ""),
-      getSpecifiers: (m) => {
-        const braces = m[1].match(/\{([^}]+)\}/);
-        if (braces) return braces[1].split(",").map((s) => s.trim().split(" as ").pop()!.trim());
-        const parts = m[1].replace(/;$/, "").split("::");
-        return [parts[parts.length - 1].replace(/\*/g, "")].filter(Boolean);
-      },
-    },
-  ],
+  // Whole `use` declarations, multi-line and nested braces included (imports.ts).
+  importPatterns: [],
+  extractImports: (lines) => extractRustImports(lines),
 
   extractRoutes: (lines) => extractRustRoutes(lines),
   extractMessageHandlers: (lines) => extractEventRegistrations(lines),

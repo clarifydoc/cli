@@ -1,6 +1,7 @@
 import type { DataSourceInfo } from "../../../types/analysis.js";
 import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
+import { extractXormDataSources } from "./xorm.js";
 
 /**
  * Go data sources — raw SQL (database/sql, sqlx, pgx), GORM, HTTP clients,
@@ -157,6 +158,10 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
       });
     }
   }
+
+  // xorm sessions (gitea): the entity is the terminal verb's argument (xorm.ts).
+  const gormLines = new Set(sources.filter((d) => d.name.startsWith("GORM:")).map((d) => d.line));
+  for (const d of extractXormDataSources(lines)) if (!gormLines.has(d.line)) sources.push(d);
 
   return sources;
 }

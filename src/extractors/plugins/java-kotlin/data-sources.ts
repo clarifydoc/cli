@@ -74,6 +74,10 @@ const JDBC_METHODS = new Set([
 ]);
 const JDBC_RECEIVER_RE = /jdbc|template|entitymanager|^em$|session/i;
 
+/** An extension client's verbs (Halo `ReactiveExtensionClient`). */
+const EXTENSION_CLIENT_METHODS = new Set(["fetch", "get", "list", "listAll", "listBy", "pageBy", "create", "update", "delete", "watch"]);
+const EXTENSION_CLIENT_WRITES = new Set(["create", "update", "delete"]);
+
 /** `{ access }` when classified, `{}` when not — keeps the field absent rather than null. */
 function withAccess(a: "read" | "write" | undefined): { access?: "read" | "write" } {
   return a ? { access: a } : {};
@@ -360,6 +364,30 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
         ...withAccess(jvmVerbAccess(method)),
       }));
       return;
+    }
+
+    // 2b) An extension client keyed by the entity class (Halo, Kubernetes
+    // operators): `client.fetch(Post.class, name)`, `client.listBy(Post.class, …)`,
+    // `client.update(post)`. The entity is the class literal, else the declared
+    // type of the object handed over. A receiver declared as an
+    // `…ExtensionClient`, or a client-named one given a class literal.
+    if (EXTENSION_CLIENT_METHODS.has(method)) {
+      const seg = receiver.split(".").pop()?.trim() ?? "";
+      const declared = /^[\w$]+$/.test(seg) ? (localDeclaredType(node, seg) ?? this.fieldTypes.get(seg) ?? null) : null;
+      const literal = /^[A-Z]\w*(?:\.class|::class(?:\.java)?)$/.test(call.firstArg?.text ?? "") ? call.firstArg!.text.replace(/(?:\.class|::class(?:\.java)?)$/, "") : null;
+      if ((declared && /ExtensionClient$/.test(declared)) || (literal && /client$/i.test(seg))) {
+        const argName = call.firstArg?.type === "identifier" ? call.firstArg.text : null;
+        const entity = literal ?? (argName ? localDeclaredType(node, argName) : null);
+        sources.push(this.ds({
+          kind: "database",
+          name: `${seg || "client"}.${method}`,
+          target: entity,
+          ...(entity ? { entity } : {}),
+          line,
+          ...withAccess(EXTENSION_CLIENT_WRITES.has(method) ? "write" : "read"),
+        }));
+        return;
+      }
     }
 
     // 3) Spring Data / JPA repository methods.

@@ -1877,6 +1877,20 @@ function resolveCallToDefinition(
         declaredClass = matches[0]!.name;
       }
     }
+    // A dotted module called by its trailing names (`QueryBuilder.build` for
+    // `Plausible.Stats.SQL.QueryBuilder`, aliased through `alias Plausible.Stats.SQL`):
+    // the one module ending that way, or the one under a module the file imports.
+    if (!candidateFiles) {
+      let matches = ctx.dottedClassSuffixIndex.get(className) ?? [];
+      if (new Set(matches.map((m) => m.name)).size > 1) {
+        const prefixes = analysis.imports.map((i) => i.source + ".");
+        matches = matches.filter((m) => prefixes.some((p) => m.name.startsWith(p)));
+      }
+      if (matches.length > 0 && new Set(matches.map((m) => m.name)).size === 1) {
+        candidateFiles = matches.map((m) => m.file);
+        declaredClass = matches[0]!.name;
+      }
+    }
     // `P19LogHelper::P19Logger.log` where the class is declared NESTED —
     // `module P19LogHelper` … `class P19Logger` — under its simple name.
     if (!candidateFiles && className.includes("::")) {
@@ -1900,16 +1914,17 @@ function resolveCallToDefinition(
           (x, y) =>
             commonPrefixLength(y, sourceFile) - commonPrefixLength(x, sourceFile),
         );
+      const imported = candidateFiles.filter((f) => ctx.projectOf.get(f) !== analysis.projectId && importsFile(analysis, f, ctx));
+      // A type whose parts span files (a Rust struct in `source/x.rs`, its `impl`
+      // in `impls/x.rs`): the parts beside an imported one, in its sub-project.
+      const importedProjects = new Set(imported.filter((f) => typesSpanFiles(ctx.languageOf.get(f))).map((f) => ctx.projectOf.get(f)));
       const eligible =
         sameProject.length === candidateFiles.length
           ? sameProject
           : [
               ...sameProject,
-              ...candidateFiles.filter(
-                (f) =>
-                  ctx.projectOf.get(f) !== analysis.projectId &&
-                  importsFile(analysis, f, ctx),
-              ),
+              ...imported,
+              ...candidateFiles.filter((f) => !imported.includes(f) && ctx.projectOf.get(f) !== analysis.projectId && importedProjects.has(ctx.projectOf.get(f))),
             ];
       for (const filePath of eligible) {
         const syms = symbolIndex.get(filePath)!;

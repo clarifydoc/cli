@@ -99,3 +99,25 @@ fun plain(r: Row) {}`, "kotlin", "plain");
     expect(plain.params.some((p) => p.isReceiver)).toBe(false);
   });
 });
+
+describe("Java method references", () => {
+  it("records `postService::updatePost`, `PostVo::from` and `Snapshot::new` as calls", async () => {
+    const { parseSource } = await import("../../../parsers/parser-manager.js");
+    const { extractFunctions } = await import("../../functions-classes/index.js");
+    const { extractClasses } = await import("../../functions-classes/index.js");
+    const src = `class PostEndpoint {
+  Mono<ServerResponse> updatePost(ServerRequest request) {
+    return request.bodyToMono(PostRequest.class)
+      .flatMap(postService::updatePost)
+      .map(PostVo::from)
+      .map(Snapshot::new)
+      .flatMap(this::toResponse);
+  }
+}`;
+    const tree = await parseSource(src, "java" as never, "PostEndpoint.java");
+    void extractFunctions;
+    const [cls] = extractClasses(tree, src, "java" as never);
+    const calls = cls!.methods[0]!.calls.map((c) => c.name);
+    expect(calls).toEqual(expect.arrayContaining(["postService.updatePost", "PostVo.from", "Snapshot", "this.toResponse"]));
+  });
+});

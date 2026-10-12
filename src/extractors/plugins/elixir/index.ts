@@ -49,14 +49,25 @@ export function extractElixirImports(lines: string[]): ImportInfo[] {
 
 // ─── Ecto data access ──────────────────────────────────────────────────────
 
-const ECTO_REPO_RE = /\bRepo\.(all|get|get!|get_by|get_by!|one|one!|exists\?|aggregate|delete_all|update_all|preload)\s*\(\s*([A-Z][\w.]*)/g;
-const ECTO_FROM_RE = /\bfrom\s*\(\s*\w+\s+in\s+([A-Z][\w.]*)/g;
+// `Repo.`, and the project's other repos: `ClickhouseRepo.`, `Plausible.IngestRepo.`.
+const ECTO_REPO_RE = /\b(?:[A-Z]\w*\.)*\w*Repo\.(all|get|get!|get_by|get_by!|one|one!|exists\?|aggregate|delete_all|update_all|preload)\s*\(\s*([A-Z][\w.]*)/g;
+// `from(x in Schema, …)`, and a schemaless query over a table named as a string: `from(e in "events_v2", …)`.
+const ECTO_FROM_RE = /\bfrom\s*\(?\s*\w+\s+in\s+(?:([A-Z][\w.]*)|"([a-z_][\w]*)")/g;
+
+/** `Repo.insert(cs)`, `|> Repo.update!()`, `Repo.delete(%Site{…})`, `Repo.insert_all(Event, rows)`. */
+const ECTO_WRITE_RE = /\b\w*Repo\.(insert_all|insert_or_update!?|insert!?|update!?|delete!?)\s*\(\s*([^,)\n]*)/g;
+/** A read handed a query variable: `Repo.all(query)`, `|> Repo.one()`. */
+// The first argument: a variable (`Repo.all(query)`), or nothing / options (`|> Repo.all(query: q)`).
+const ECTO_VAR_READ_RE = /\b\w*Repo\.(all|one!?|exists\?|aggregate|stream)\s*\(\s*(?:([a-z_]\w*)\s*[,)]|[a-z_]\w*:|\))/g;
 
 /**
- * Ecto reads through `Repo.<verb>(Schema, …)` and `from(x in Schema, …)`. The
- * entity is the queried schema module's last segment (`MyApp.Accounts.User` →
- * `User`). Mutations (`insert`/`update`/`delete`) take changesets, not the
- * schema, so their table is unknowable here and they're intentionally skipped.
+ * Ecto data access. Reads through `Repo.<verb>(Schema, …)` and `from(x in
+ * Schema, …)` name their schema (`MyApp.Accounts.User` → `User`). Writes take a
+ * changeset or a struct: the schema is the `%Schema{}` the statement builds, the
+ * `Schema.changeset(…)` it pipes through, or `insert_all`'s first argument —
+ * else the row is a write of unknown entity, still a database access a trace
+ * reaches. A read handed a query variable is a read of unknown entity (the
+ * `from(…)` that built it has its own row).
  */
 function extractElixirDataSources(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
@@ -67,14 +78,46 @@ function extractElixirDataSources(lines: string[]): DataSourceInfo[] {
     const ln = i + 1;
     for (const m of line.matchAll(ECTO_REPO_RE)) {
       const entity = lastSeg(m[2]);
-      out.push({ kind: "database", name: `Repo.${m[1]}`, target: entity, calls: [], line: ln, entity });
+      out.push({ kind: "database", name: `Repo.${m[1]}`, target: entity, calls: [], line: ln, entity, access: m[1]!.endsWith("_all") && m[1] !== "all" ? "write" : "read" });
     }
     for (const m of line.matchAll(ECTO_FROM_RE)) {
-      const entity = lastSeg(m[1]);
-      out.push({ kind: "database", name: `from(${m[1]})`, target: entity, calls: [], line: ln, entity });
+      const entity = m[1] ? lastSeg(m[1]) : m[2]!;
+      out.push({ kind: "database", name: `from(${m[1] ?? `"${m[2]}"`})`, target: entity, calls: [], line: ln, entity });
+    }
+    for (const m of line.matchAll(ECTO_WRITE_RE)) {
+      const entity = writeEntity(m[1]!, m[2]!.trim(), lines, i);
+      out.push({ kind: "database", name: `Repo.${m[1]}`, target: entity, calls: [], line: ln, ...(entity ? { entity } : {}), access: "write" });
+    }
+    for (const m of line.matchAll(ECTO_VAR_READ_RE)) {
+      // `Repo.all(Site)` is ECTO_REPO_RE's; a variable or a piped query is this one.
+      if (m[2] && /^[A-Z]/.test(m[2])) continue;
+      if (!m[2] && !/\|>\s*(?:[A-Z]\w*\.)*\w*Repo\./.test(line)) continue;
+      out.push({ kind: "database", name: `Repo.${m[1]}`, target: null, calls: [], line: ln, access: "read" });
     }
   }
   return out;
+}
+
+/** The schema a write touches: `insert_all`'s module, a `%Schema{}` / `Schema.changeset(` in the statement or the pipeline feeding it. */
+function writeEntity(verb: string, arg: string, lines: string[], i: number): string | null {
+  if (verb === "insert_all") return /^([A-Z][\w.]*)$/.test(arg) ? lastSeg(arg) : null;
+  const fromText = (text: string): string | null => {
+    const struct = /%([A-Z][\w.]*)\s*\{/.exec(text);
+    if (struct) return lastSeg(struct[1]!);
+    const cs = /\b([A-Z][\w.]*)\.(?:changeset|\w+_changeset|create_changeset|update_changeset)\s*\(/.exec(text);
+    return cs ? lastSeg(cs[1]!) : null;
+  };
+  const own = fromText(lines[i] ?? "");
+  if (own) return own;
+  // A pipeline: `%Site{} |> Site.changeset(attrs) |> Repo.insert()` over lines.
+  if (/^\s*\|>/.test(lines[i] ?? "") || /\|>\s*(?:[A-Z]\w*\.)*\w*Repo\./.test(lines[i] ?? "")) {
+    for (let j = i - 1; j >= 0 && i - j <= 8; j--) {
+      const hit = fromText(lines[j] ?? "");
+      if (hit) return hit;
+      if (!/^\s*\|>/.test(lines[j] ?? "")) break;
+    }
+  }
+  return null;
 }
 
 /**
