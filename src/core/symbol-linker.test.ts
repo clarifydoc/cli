@@ -576,3 +576,41 @@ describe("symbol-linker — an imported instance's inherited member", () => {
     expect(link?.strategy).toBe("inheritance");
   });
 });
+
+describe("symbol-linker — overloads picked by argument count", () => {
+  const method = (name: string, line: number, params: Array<{ name: string; defaultValue?: string; variadic?: boolean }>, calls: CallInfo[] = []) =>
+    ({ name, line, endLine: line + 2, params: params.map((p) => ({ type: null, defaultValue: null, ...p })), calls } as any);
+
+  it("links each call to the overload whose arity accepts it, and leaves an undecided one alone", () => {
+    const svc = file("src/OrderService.java", "app", {
+      classes: [{
+        ...cls("OrderService"),
+        methods: [
+          method("save", 4, [{ name: "o" }]),
+          method("save", 8, [{ name: "o" }, { name: "flush" }, { name: "tag", defaultValue: "\"x\"" }]),
+          method("log", 12, [{ name: "level" }]),
+          method("log", 14, [{ name: "level" }, { name: "parts", variadic: true }]),
+          method("run", 20, [], [
+            { ...call("save", 21), argCount: 1 },
+            { ...call("log", 22), argCount: 5 },
+          ]),
+          method("again", 30, [], [{ ...call("save", 31), argCount: 2 }]),
+          method("unknown", 40, [], [{ ...call("log", 41), argCount: 1 }]),
+        ],
+      }],
+    });
+    const at = (from: string, name: string) =>
+      buildSymbolLinks([svc]).find((l) => l.sourceSymbol === from && l.callName === name)?.targetLine;
+    expect(at("OrderService.run", "save")).toBe(4);
+    expect(at("OrderService.again", "save")).toBe(8); // the third parameter has a default
+    expect(at("OrderService.run", "log")).toBe(14); // only the variadic one takes five
+    // One argument fits both `log`s (the variadic may get none): undecided, so
+    // the link keeps what the index gave it.
+    const { argCount: _, ...bare } = { ...call("log", 41), argCount: 1 };
+    const unpicked = file("src/OrderService.java", "app", {
+      classes: [{ ...cls("OrderService"), methods: [method("log", 12, [{ name: "level" }]), method("log", 14, [{ name: "level" }, { name: "parts", variadic: true }]), method("unknown", 40, [], [bare])] }],
+    });
+    const indexed = buildSymbolLinks([unpicked]).find((l) => l.sourceSymbol === "OrderService.unknown")?.targetLine;
+    expect(at("OrderService.unknown", "log")).toBe(indexed);
+  });
+});

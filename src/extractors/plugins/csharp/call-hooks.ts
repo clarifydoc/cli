@@ -43,4 +43,12 @@ export const csharpCallHooks: CallExtractionHooks = {
 
   // `sp.GetRequiredService<IPricing>().Quote(o)` → receiver typed IPricing.
   receiverTypeOf: csharpReceiverTypeOf,
+  argCountOf: csharpArgCount,
 };
+
+/** A C# call's argument count: the `argument_list`'s arguments (named ones included). */
+function csharpArgCount(node: Node): number | null {
+  const args = node.childForFieldName("arguments") ?? node.children.find((c) => c.type === "argument_list");
+  if (!args) return null;
+  return args.namedChildren.filter((c) => c.type === "argument").length;
+}

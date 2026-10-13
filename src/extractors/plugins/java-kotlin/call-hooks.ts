@@ -104,6 +104,7 @@ export const javaCallHooks: CallExtractionHooks = {
   resolveCallName: resolveJvmCallName,
   qualifiedRootCandidates: capitalizedRoot,
   receiverTypeOf: javaReceiverType,
+  argCountOf: javaArgCount,
   collectExtraCalls: javaMethodReference,
 };
 
@@ -145,4 +146,38 @@ export const kotlinCallHooks: CallExtractionHooks = {
   resolveCallName: resolveJvmCallName,
   qualifiedRootCandidates: capitalizedRoot,
   receiverTypeOf: kotlinReceiverType,
+  argCountOf: kotlinArgCount,
 };
+
+/** A Java call's argument count: the `argument_list`'s expressions. */
+function javaArgCount(node: Node): number | null {
+  const args = node.childForFieldName("arguments");
+  if (!args) return null;
+  return args.namedChildren.filter((c) => c.type !== "line_comment" && c.type !== "block_comment").length;
+}
+
+/**
+ * A Kotlin call's argument count: its `value_argument`s plus a trailing lambda.
+ * A spread (`*items`) passes any number, so it makes the count unknown.
+ */
+function kotlinArgCount(node: Node): number | null {
+  // `save(o) { … }` parses as a call of the call `save(o)` with the lambda:
+  // the outer node is that same call, and the inner one counts its lambda.
+  if (node.child(0)?.type === "call_expression") return null;
+  const suffixes = node.children.filter((c) => c.type === "call_suffix");
+  const outer = node.parent?.type === "call_expression" && node.parent.child(0)?.id === node.id ? node.parent : null;
+  for (const c of outer?.children ?? []) if (c.type === "call_suffix") suffixes.push(c);
+  if (suffixes.length === 0) return null;
+  let n = 0;
+  for (const part of suffixes.flatMap((s) => s.children)) {
+    if (part.type === "annotated_lambda") n++;
+    else if (part.type === "value_arguments") {
+      for (const arg of part.namedChildren) {
+        if (arg.type !== "value_argument") continue;
+        if (arg.text.trimStart().startsWith("*")) return null;
+        n++;
+      }
+    }
+  }
+  return n;
+}
