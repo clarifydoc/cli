@@ -75,8 +75,12 @@ export interface IgnorePattern {
  *     analysis it affects (patterns relative to the directory that holds
  *     `.clarifydoc/`), read second within each directory so it has the
  *     final say.
+ *
+ * `scanRoot` is the directory the user asked to analyze when `root` is a
+ * sub-root inside it; patterns that would ignore the scan root itself are
+ * dropped (see below).
  */
-export function loadIgnorePatterns(root: string): IgnorePattern[] {
+export function loadIgnorePatterns(root: string, scanRoot: string = root): IgnorePattern[] {
   const absRoot = resolve(root);
   const ceiling = findProjectRoot(absRoot) ?? absRoot;
 
@@ -99,7 +103,14 @@ export function loadIgnorePatterns(root: string): IgnorePattern[] {
     // Read second, so within one directory it wins on an equal match.
     readInto(patterns, posix.join(p, OUTPUT_DIR, OUTPUT_IGNORE_FILENAME), dir);
   }
-  return patterns;
+  // The scan root is what was asked for. An inherited pattern that covers it —
+  // the monorepo's `/others/` while analyzing `others/x` — would drop every
+  // file and answer an empty project, so it does not apply; the ancestor's
+  // patterns for paths below the scan root still do. A sub-root inside the
+  // scan stays covered by what covers it (`/Library/*` for `Library/x`).
+  const scanPosix = toPosix(resolve(scanRoot));
+  return patterns.filter((pattern) =>
+    pattern.negated || !coversSubtree(scanPosix, scanPosix, pattern));
 }
 
 /** Append every pattern in `file` (if it exists), anchored at `anchor`. */
