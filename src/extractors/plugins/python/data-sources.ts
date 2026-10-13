@@ -1,7 +1,8 @@
 import type { Node } from "web-tree-sitter";
-import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
+import { dbAccessFor, dbVerbTable, sqlVerbAccess } from "../shared/db-access.js";
 import type { DataSourceInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
+import { tableFrom } from "../shared/sql-string-sources.js";
 
 export class PythonDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["python"];
@@ -77,12 +78,27 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           PY_DB_LEAVES.has(leaf) ||
           (PY_GENERIC_DB_LEAVES.has(leaf) && (datastoreChain(fnName) || relatedManager(fnName, leaf)));
         if (fnName.includes(".") && (isQuery || isSessionWrite)) {
-          const access = isSessionWrite ? "write" : dbAccessFor(leaf, PY_DB_ACCESS);
+          let access = isSessionWrite ? "write" : dbAccessFor(leaf, PY_DB_ACCESS);
+          // Raw SQL (`cursor.execute(sql)`, `session.execute(text(q))`): the
+          // statement names the table and says whether it reads or writes —
+          // read from a literal or a local assigned one.
+          let table: string | null = null;
+          if (SQL_TEXT_LEAVES.has(leaf)) {
+            let arg = positional(node)[0];
+            if (arg?.type === "call" && /(?:^|\.)text$/.test(arg.childForFieldName("function")?.text ?? "")) arg = positional(arg)[0];
+            const sql = arg ? pyStringValue(arg, node) : null;
+            const hit = sql ? tableFrom(sql.replace(/\{[^}]*\}/g, "x")) : null;
+            if (hit) {
+              table = hit.table;
+              access ??= sqlVerbAccess(hit.verb);
+            }
+          }
           sources.push(this.ds({
             kind: "database",
             name: fnName,
-            target: null,
+            target: table,
             line: node.startPosition.row + 1,
+            ...(table ? { entity: table } : {}),
             ...(access ? { access } : {}),
           }));
         }
@@ -228,11 +244,11 @@ function httpCall(fn: Node, call: Node): { name: string; target: string | null }
   const recv = obj.type === "identifier" ? obj.text : obj.type === "attribute" ? obj.childForFieldName("attribute")?.text ?? "" : "";
 
   if (obj.type === "identifier" && PY_HTTP_MODULES.has(recv)) {
-    if (PY_HTTP_VERBS.has(leaf)) return { name: `${recv}.${leaf}`, target: pyStringLiteral(args[0]) };
+    if (PY_HTTP_VERBS.has(leaf)) return { name: `${recv}.${leaf}`, target: args[0] ? pyStringValue(args[0], call) : null };
     if (leaf === "request") {
       const method = pyStringLiteral(args[0]);
       return method && PY_HTTP_VERBS.has(method.toLowerCase())
-        ? { name: method.toLowerCase(), target: pyStringLiteral(args[1]) }
+        ? { name: method.toLowerCase(), target: args[1] ? pyStringValue(args[1], call) : null }
         : null;
     }
     return null;
@@ -249,4 +265,65 @@ function pyStringLiteral(node: Node | undefined): string | null {
   if (!node || node.type !== "string") return null;
   const m = /^[a-zA-Z]*("""|'''|"|')([\s\S]*)\1$/.exec(node.text);
   return m ? m[2]! : null;
+}
+
+/** DB-API / SQLAlchemy calls whose first argument is the SQL text. */
+const SQL_TEXT_LEAVES = new Set(["execute", "executemany", "executescript", "raw"]);
+
+/** A call's positional arguments, in order. */
+function positional(call: Node): Node[] {
+  return (call.childForFieldName("arguments")?.namedChildren ?? []).filter((a) => a.type !== "keyword_argument" && a.type !== "comment");
+}
+
+/**
+ * The text a string-valued expression holds, as far as the source says:
+ * a literal (an f-string keeps its `{holes}`), a `+` of literals and names (a
+ * name that resolves contributes its text, any other part a `{}` hole), or a
+ * local name assigned exactly once in the enclosing function from one of
+ * those (`url = f"{BASE}/users/{id}"; requests.get(url)`). Null when the
+ * expression carries no literal text at all.
+ */
+function pyStringValue(node: Node, at: Node, depth = 0): string | null {
+  if (depth > 3) return null;
+  if (node.type === "string") return pyStringLiteral(node);
+  if (node.type === "concatenated_string") {
+    const parts = node.namedChildren.map((c) => pyStringValue(c, at, depth + 1));
+    return parts.every((p) => p !== null) ? parts.join("") : null;
+  }
+  if (node.type === "parenthesized_expression" && node.namedChild(0)) return pyStringValue(node.namedChild(0)!, at, depth + 1);
+  if (node.type === "binary_operator" && node.childForFieldName("operator")?.text === "+") {
+    const l = node.childForFieldName("left");
+    const r = node.childForFieldName("right");
+    const lv = l ? pyStringValue(l, at, depth + 1) : null;
+    const rv = r ? pyStringValue(r, at, depth + 1) : null;
+    if (lv === null && rv === null) return null;
+    return `${lv ?? "{}"}${rv ?? "{}"}`;
+  }
+  if (node.type === "identifier") {
+    const value = singleAssignment(node.text, at);
+    return value ? pyStringValue(value, value, depth + 1) : null;
+  }
+  return null;
+}
+
+/** The value `name` is assigned in the function enclosing `at`, when it is assigned exactly once there (else null). */
+function singleAssignment(name: string, at: Node): Node | null {
+  let scope: Node | null = at.parent;
+  while (scope && scope.type !== "function_definition" && scope.type !== "module") scope = scope.parent;
+  if (!scope) return null;
+  let found: Node | null = null;
+  let count = 0;
+  const visit = (n: Node): void => {
+    if (count > 1) return;
+    if (n !== scope && (n.type === "function_definition" || n.type === "class_definition")) return;
+    if (n.type === "assignment" && n.childForFieldName("left")?.text === name) {
+      count++;
+      found = n.childForFieldName("right");
+    } else if ((n.type === "augmented_assignment" || n.type === "for_statement") && n.childForFieldName("left")?.text === name) {
+      count += 2;
+    }
+    for (const c of n.namedChildren) visit(c);
+  };
+  visit(scope);
+  return count === 1 ? found : null;
 }

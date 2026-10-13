@@ -97,3 +97,43 @@ describe("Python database calls", () => {
     ].join("\n"))).toEqual([]);
   });
 });
+
+describe("Python URLs and SQL held in locals", () => {
+  const rows = async (src: string) => {
+    const tree = await parseSource(src, "python" as never, "x.py");
+    return new PythonDataSourceExtractor().extract(tree, src).map((d) => [d.kind, d.target, d.entity ?? null, d.access ?? null]);
+  };
+
+  it("reads an HTTP call's URL from a local assigned once", async () => {
+    expect(await rows([
+      "def sync(user_id):",
+      '    url = f"{BASE}/users/{user_id}"',
+      "    requests.get(url)",
+      "    requests.post(BASE_URL + \"/users\")",
+    ].join("\n"))).toEqual([["api-call", "{BASE}/users/{user_id}", null, null], ["api-call", "{}/users", null, null]]);
+  });
+
+  it("reads the table and the verb from raw SQL, literal or local", async () => {
+    expect(await rows([
+      "def report(cursor, n):",
+      '    cursor.execute("SELECT id FROM orders WHERE total > %s", (n,))',
+      '    sql = "UPDATE customers SET flagged = 1 WHERE id = %s"',
+      "    cursor.execute(sql, (n,))",
+      '    session.execute(text("DELETE FROM sessions WHERE expired"))',
+    ].join("\n"))).toEqual([
+      ["database", "orders", "orders", "read"],
+      ["database", "customers", "customers", "write"],
+      ["database", "sessions", "sessions", "write"],
+    ]);
+  });
+
+  it("leaves a local assigned twice alone", async () => {
+    expect(await rows([
+      "def f(cursor, a):",
+      '    sql = "SELECT * FROM a"',
+      "    if a:",
+      '        sql = "SELECT * FROM b"',
+      "    cursor.execute(sql)",
+    ].join("\n"))).toEqual([["database", null, null, null]]);
+  });
+});
