@@ -186,6 +186,7 @@ export async function collectExternalPackages(
         // Prefer the strongest scope (prod beats dev/peer/optional).
         if (raw.scope === "prod") existing.scope = "prod";
         if (!existing.version && raw.version) existing.version = raw.version;
+        if (!existing.resolvedVersion && raw.resolvedVersion) existing.resolvedVersion = raw.resolvedVersion;
         if (raw.declaredIn !== existing.declaredIn || raw.version !== existing.version) {
           existing.declarations ??= [{ version: existing.version, declaredIn: existing.declaredIn, scope: existing.scope }];
           if (!existing.declarations.some((d) => d.declaredIn === raw.declaredIn && d.version === raw.version)) {

@@ -1,6 +1,7 @@
 import type { PackageScope } from "../../../types/analysis.js";
 import type { DeclaredPackage, PackageManagerSpec } from "../../../types/language-plugin.js";
 import { declared, tomlSectionValue } from "../shared/declared-package.js";
+import { parseTomlPackageLock, withLocked } from "../shared/lockfiles.js";
 
 /** Cargo: `Cargo.toml` dependency tables (flat lists and `[dependencies.foo]` tables). */
 function parseCargo(text: string, declaredIn: string): DeclaredPackage[] {
@@ -49,7 +50,10 @@ export const cargoPackageManager: PackageManagerSpec = {
   ecosystem: "cargo",
   manifests: [{
     files: ["Cargo.toml"],
-    parse: (text, file) => parseCargo(text, file.declaredIn),
+    async parse(text, file) {
+      const lock = await file.readSibling("Cargo.lock");
+      return withLocked(parseCargo(text, file.declaredIn), lock ? parseTomlPackageLock(lock) : null);
+    },
     // `[package] name = "x"` — not a workspace-only manifest's `[workspace.package]`.
     selfName: (text) => tomlSectionValue(text, ["package"], "name"),
   }],

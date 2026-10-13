@@ -40,6 +40,7 @@ program
   .option("--lsp-timeout <ms>", "Timeout for LSP server startup in ms", parseInt)
   .option("--html", "Generate an HTML report after analysis", false)
   .option("--sarif <file>", "Also write the security findings as SARIF 2.1.0 (GitHub code scanning)")
+  .option("--osv", "Check the installed package versions against OSV (api.osv.dev) — a network call", false)
   .option("--incremental", "Reuse cached per-file analysis for unchanged files (mtime + SHA-256)", false)
   .option("--no-git-history", "Skip git churn/hotspot collection")
   .option(
@@ -70,6 +71,7 @@ program
         lspTimeout: options.lspTimeout,
         incremental: options.incremental,
         gitHistory: options.gitHistory,
+        osv: options.osv,
         stableOutput: options.stableOutput,
       });
 

@@ -70,7 +70,11 @@ export const rubygemsPackageManager: PackageManagerSpec = {
         const lock = await file.readSibling("Gemfile.lock");
         if (lock) {
           const locked = parseGemfileLock(lock);
-          for (const g of gems) g.version ??= locked.get(g.name) ?? null;
+          for (const g of gems) {
+            g.version ??= locked.get(g.name) ?? null;
+            const exact = locked.get(g.name);
+            if (exact) g.resolvedVersion = exact;
+          }
         }
         return gems;
       },

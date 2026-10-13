@@ -1,6 +1,7 @@
 import type { PackageScope } from "../../../types/analysis.js";
 import type { DeclaredPackage, PackageManagerSpec } from "../../../types/language-plugin.js";
 import { declared, jsonObject } from "../shared/declared-package.js";
+import { parseComposerLock, withLocked } from "../shared/lockfiles.js";
 
 /** Composer: `composer.json` require / require-dev. */
 function parseComposer(text: string, declaredIn: string): DeclaredPackage[] {
@@ -61,7 +62,13 @@ async function loadComposerAutoload(readAtRoot: (rel: string) => Promise<string 
 
 export const composerPackageManager: PackageManagerSpec = {
   ecosystem: "composer",
-  manifests: [{ files: ["composer.json"], parse: (text, file) => parseComposer(text, file.declaredIn) }],
+  manifests: [{
+    files: ["composer.json"],
+    async parse(text, file) {
+      const lock = await file.readSibling("composer.lock");
+      return withLocked(parseComposer(text, file.declaredIn), lock ? parseComposerLock(lock) : null);
+    },
+  }],
   // The full namespace (`Illuminate\Support\Facades\Route`) — resolved to its
   // package through the installed autoload map.
   importKey: (s) => (s.startsWith(".") ? null : s.toLowerCase()),
