@@ -36,6 +36,7 @@ export const PHP_SECURITY_RULES: readonly SecurityRule[] = [
   },
   {
     category: "insecure-config",
+    cwe: "CWE-295",
     severity: "high",
     pattern: /CURLOPT_SSL_VERIFY(?:PEER|HOST)\s*(?:,|=>)\s*(?:false|0)\b/i,
     message: "cURL TLS certificate verification is turned off.",

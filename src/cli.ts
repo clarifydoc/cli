@@ -39,6 +39,7 @@ program
   .option("--no-lsp", "Disable LSP-based symbol resolution")
   .option("--lsp-timeout <ms>", "Timeout for LSP server startup in ms", parseInt)
   .option("--html", "Generate an HTML report after analysis", false)
+  .option("--sarif <file>", "Also write the security findings as SARIF 2.1.0 (GitHub code scanning)")
   .option("--incremental", "Reuse cached per-file analysis for unchanged files (mtime + SHA-256)", false)
   .option("--no-git-history", "Skip git churn/hotspot collection")
   .option(
@@ -98,6 +99,19 @@ program
           console.log(`  Suggestions: ${String(result.suggestionCount).padStart(4)}`);
         }
         console.log(`  Output: ${outputDir}`);
+
+        if (options.sarif) {
+          const [{ loadReportSummary }, { buildSarif }, { TOOL_VERSION }, { writeFile }] = await Promise.all([
+            import("./core/report-payload.js"),
+            import("./core/sarif.js"),
+            import("./core/version.js"),
+            import("fs/promises"),
+          ]);
+          const summary = await loadReportSummary(outputDir);
+          const sarif = buildSarif(summary.securityIssues ?? [], TOOL_VERSION);
+          await writeFile(resolve(options.sarif), JSON.stringify(sarif, null, 2));
+          console.log(`  SARIF:  ${resolve(options.sarif)} (${sarif.runs[0]!.results.length} result(s))`);
+        }
 
         if (options.html) {
           const { generateHtmlReport } = await import("./core/html-report.js");

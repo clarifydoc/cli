@@ -106,6 +106,7 @@ const SECURITY_RULES: readonly SecurityRule[] = [
   },
   {
     category: "insecure-config",
+    cwe: "CWE-942",
     severity: "high",
     multiline: true,
     pattern: /\bcors\s*\(\s*\{[^}]*\borigin\s*:\s*(?:['"`]\*['"`]|true)[^}]*\bcredentials\s*:\s*true|\bcors\s*\(\s*\{[^}]*\bcredentials\s*:\s*true[^}]*\borigin\s*:\s*(?:['"`]\*['"`]|true)/,
@@ -115,6 +116,7 @@ const SECURITY_RULES: readonly SecurityRule[] = [
   },
   {
     category: "insecure-config",
+    cwe: "CWE-295",
     severity: "high",
     pattern: /\brejectUnauthorized\s*:\s*false\b|NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['"]?0/,
     message: "TLS certificate verification is turned off.",
@@ -123,6 +125,7 @@ const SECURITY_RULES: readonly SecurityRule[] = [
   },
   {
     category: "insecure-config",
+    cwe: "CWE-1004",
     severity: "medium",
     pattern: /\bhttpOnly\s*:\s*false\b/,
     message: "A cookie readable from JavaScript (httpOnly: false): one XSS reads the session.",

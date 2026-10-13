@@ -5,6 +5,7 @@ import { CREDENTIAL_CONTEXT } from "../shared/security-context.js";
 export const GO_SECURITY_RULES: readonly SecurityRule[] = [
   {
     category: "insecure-config",
+    cwe: "CWE-295",
     severity: "high",
     pattern: /InsecureSkipVerify\s*:\s*true\b/,
     message: "TLS certificate verification is turned off (InsecureSkipVerify).",

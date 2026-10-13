@@ -84,6 +84,7 @@ const SECURITY_RULES: readonly SecurityRule[] = [
   },
   {
     category: "insecure-config",
+    cwe: "CWE-489",
     severity: "high",
     pattern: /^\s*DEBUG\s*=\s*True\b/,
     message: "Django runs with DEBUG = True: tracebacks, settings and SQL are shown to anyone who triggers an error.",
@@ -92,6 +93,7 @@ const SECURITY_RULES: readonly SecurityRule[] = [
   },
   {
     category: "insecure-config",
+    cwe: "CWE-489",
     severity: "high",
     pattern: /\.run\s*\([^)]*\bdebug\s*=\s*True/,
     message: "The app server runs in debug mode (an interactive debugger anyone can reach).",
@@ -100,6 +102,7 @@ const SECURITY_RULES: readonly SecurityRule[] = [
   },
   {
     category: "insecure-config",
+    cwe: "CWE-295",
     severity: "high",
     pattern: /\bverify\s*=\s*False\b|["']verify_signature["']\s*:\s*False\b|\bCERT_NONE\b/,
     message: "Certificate or signature verification is turned off (verify=False, verify_signature: False, CERT_NONE).",
@@ -110,6 +113,7 @@ const SECURITY_RULES: readonly SecurityRule[] = [
   },
   {
     category: "insecure-config",
+    cwe: "CWE-352",
     severity: "medium",
     pattern: /@csrf_exempt\b/,
     message: "CSRF protection is switched off for this view.",
