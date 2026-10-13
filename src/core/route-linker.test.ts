@@ -890,3 +890,19 @@ describe("linkApiCallsToRoutesDetailed — misses are listed, not only counted",
     ]);
   });
 });
+
+describe("linkApiCallsToRoutesDetailed — rows fanned out per subclass", () => {
+  it("links them when a route serves them, and never reports them as misses", () => {
+    const { links, stats } = linkApiCallsToRoutesDetailed(
+      [
+        { ...apiCall("web/base-clients.ts", "patch", "/api/foods/{}", 70), viaSubclass: "FoodsApi" },
+        { ...apiCall("web/base-clients.ts", "patch", "/api/units/{}", 70), viaSubclass: "UnitsApi" },
+      ],
+      [route("api/foods.py", "PATCH", "/api/foods/{item_id}", "patch_food")],
+    );
+    expect(links.map((l) => l.url)).toEqual(["/api/foods/{}"]);
+    expect(stats.misses).toBeUndefined();
+    expect(stats.unmatched + stats.refused.methodMismatch).toBe(0);
+  });
+});
+

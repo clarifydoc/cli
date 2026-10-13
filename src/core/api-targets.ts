@@ -353,8 +353,50 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     return v === undefined ? null : resolveValue(v, source, null, depth + 1);
   };
 
-  const resolveValue = (value: string, file: string, cls: ClassRef | null, depth: number): string =>
-    value.replace(ANY_HOLE, (hole, expr: string) => resolveHole(expr.trim(), file, cls, depth) ?? hole);
+  /**
+   * `this.m(args)` where, seen from `cls`, `m` is a field holding a URL helper
+   * (`itemRoute = routes.adminUsersId`, the helper `(id) => `${prefix}/admin/groups/${id}``)
+   * or a method with a URL template: that template with the call's arguments.
+   */
+  const resolveThisCall = (name: string, argsText: string, cls: ClassRef, depth: number): string | null => {
+    for (const { c } of chainOf(cls)) {
+      const field = c.cls.fieldValues?.[name];
+      let helper: FunctionInfo | undefined;
+      let helperFile = c.filePath;
+      if (field !== undefined) {
+        const ref = /^\$\{([A-Za-z_$][\w$.]*)\}$/.exec(field)?.[1];
+        if (!ref) return null;
+        const source = ctx.importIndex.localFor(c.filePath, ref.split(".")[0]!) ?? c.filePath;
+        helper = byFile.get(source)?.functions.find((f) => f.name === ref && f.urlTemplate);
+        helperFile = source;
+      } else {
+        const m = c.cls.methods.find((x) => x.name === name);
+        if (!m) continue;
+        helper = m.urlTemplate ? m : undefined;
+      }
+      if (!helper?.urlTemplate) return null;
+      const args = splitArgs(argsText);
+      let out = helper.urlTemplate;
+      helper.params.forEach((p, i) => {
+        const a = args[i]?.trim();
+        const lit = a ? /^(['"`])([^'"`]*)\1$/.exec(a)?.[2] : undefined;
+        out = out.split(`{${p.name}}`).join(lit ?? "{}");
+      });
+      return resolveValue(out, helperFile, cls, depth + 1);
+    }
+    return null;
+  };
+
+  const resolveValue = (value: string, file: string, cls: ClassRef | null, depth: number): string => {
+    let out = value;
+    if (cls && depth < 6 && out.includes("this.")) {
+      out = out.replace(THIS_CALL, (whole, n1: string | undefined, a1: string | undefined, n2: string | undefined, a2: string | undefined) => {
+        const r = resolveThisCall((n1 ?? n2)!, (n1 !== undefined ? a1 : a2) ?? "", cls, depth);
+        return r === null ? whole : r;
+      });
+    }
+    return out.replace(ANY_HOLE, (hole, expr: string) => resolveHole(expr.trim(), file, cls, depth) ?? hole);
+  };
 
   /**
    * A call in a base class whose URL reads `this` (`axios.get(this.url)` in
@@ -362,10 +404,10 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
    * the method: one row per concrete subclass that does not override it, each
    * resolved as seen from that subclass.
    */
-  const perSubclass = (call: ApiCall, cls: ClassRef): Array<{ target: string; alternatives?: string[] }> => {
+  const perSubclass = (call: ApiCall, cls: ClassRef): Array<{ target: string; alternatives?: string[]; subclass: string }> => {
     const method = cls.cls.methods.find((m) => m.line <= call.line && call.line <= m.endLine);
-    if (!method || ![call.target!, ...(call.targetAlternatives ?? [])].some((t) => /\$\{this\./.test(t))) return [];
-    const out: Array<{ target: string; alternatives?: string[] }> = [];
+    if (!method || ![call.target!, ...(call.targetAlternatives ?? [])].some((t) => /\$\{this\.|\bthis\.[\w$]+\s*\(/.test(t))) return [];
+    const out: Array<{ target: string; alternatives?: string[]; subclass: string }> = [];
     for (const d of ctx.classes.descendants(cls)) {
       // The method `this.m()` dispatches to from `d`: the first definition up its chain.
       const definer = chainOf(d).find(({ c }) => c.cls.methods.some((m) => m.name === method.name))?.c;
@@ -377,7 +419,7 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
       const alternatives = call.targetAlternatives?.map((a) => resolveValue(a, call.filePath, d, 0));
       if (t === call.target && !alternatives?.some((a, i) => a !== call.targetAlternatives![i])) continue;
       if (out.some((o) => o.target === t)) continue;
-      out.push({ target: t, ...(alternatives ? { alternatives } : {}) });
+      out.push({ target: t, ...(alternatives ? { alternatives } : {}), subclass: d.cls.name });
     }
     return out;
   };
@@ -385,14 +427,20 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
   let changed = 0;
   const fanned: ApiCall[] = [];
   for (const call of calls) {
-    if (call.kind !== "api-call" || !call.target?.includes("${")) continue;
+    // A field read as a helper's argument (`route(this.baseRoute, {…})`) is the
+    // same hole as `${this.baseRoute}`.
+    if (call.kind === "api-call" && call.target && /\bthis\.[\w$]+(?![\w$(])/.test(call.target) && !call.target.includes("${this.")) {
+      call.target = call.target.replace(/(?<![{\w$.])this\.([\w$]+)(?![\w$(])/g, "${this.$1}");
+    }
+    if (call.kind !== "api-call" || !call.target || !(call.target.includes("${") || /\bthis\.[\w$]+\s*\(/.test(call.target))) continue;
     const cls = classAt(call.filePath, call.line);
     const variants = cls ? perSubclass(call, cls) : [];
     if (variants.length > 0) {
       const [first, ...rest] = variants;
       call.target = first!.target;
       if (first!.alternatives) call.targetAlternatives = first!.alternatives;
-      for (const v of rest) fanned.push({ ...call, target: v.target, ...(v.alternatives ? { targetAlternatives: v.alternatives } : {}) });
+      call.viaSubclass = first!.subclass;
+      for (const v of rest) fanned.push({ ...call, target: v.target, viaSubclass: v.subclass, ...(v.alternatives ? { targetAlternatives: v.alternatives } : {}) });
       changed++;
       continue;
     }
@@ -404,5 +452,58 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     changed++;
   }
   calls.push(...fanned);
+  // A project helper that takes a URL first and states no template of its own
+  // (`route(rest, params)` adding a query string through `new URL`): the
+  // request goes to that URL.
+  const passThrough = passThroughHelpers(analyses);
+  if (passThrough.size > 0) {
+    for (const call of calls) {
+      for (const key of ["target"] as const) {
+        const t = call[key];
+        const m = t ? /^([A-Za-z_$][\w$]*)\(([\s\S]*)\)$/.exec(t.trim()) : null;
+        if (!m || !passThrough.has(m[1]!)) continue;
+        const first = splitArgs(m[2]!)[0]?.trim();
+        if (first && /^\/|^\$\{|^https?:/.test(first)) { call.target = first; changed++; }
+      }
+    }
+  }
   return changed;
+}
+
+/** `this.m(args)` in a URL, bare or as a whole `${…}` hole (args without nested parentheses). */
+const THIS_CALL = /\$\{\s*this\.([\w$]+)\s*\(([^()]*)\)\s*\}|\bthis\.([\w$]+)\s*\(([^()]*)\)/g;
+
+/** Top-level comma split of an argument list (brackets and quotes respected). */
+function splitArgs(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (quote) { if (c === "\\") i++; else if (c === quote) quote = null; continue; }
+    if (c === "'" || c === '"' || c === "`") quote = c;
+    else if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth--;
+    else if (c === "," && depth === 0) { out.push(text.slice(start, i)); start = i + 1; }
+  }
+  out.push(text.slice(start));
+  return out.filter((a) => a.trim() !== "");
+}
+
+/**
+ * Project functions whose first parameter is a URL (`url`, `path`, `rest`,
+ * `route`, `endpoint`…) and that state no URL template of their own: a call of
+ * one requests what it is given. Unique names only.
+ */
+function passThroughHelpers(analyses: readonly FileAnalysis[]): Set<string> {
+  const seen = new Map<string, boolean>();
+  for (const a of analyses) {
+    for (const fn of a.functions) {
+      if (fn.name.includes(".")) continue;
+      const ok = !fn.urlTemplate && /^(?:url|uri|path|pathname|rest|route|endpoint|href|resource)$/i.test(fn.params[0]?.name ?? "");
+      seen.set(fn.name, seen.has(fn.name) ? false : ok);
+    }
+  }
+  return new Set([...seen].filter(([, ok]) => ok).map(([n]) => n));
 }
