@@ -3,6 +3,7 @@ import {
   type ClassInfo,
   type DiBinding,
   type FileAnalysis,
+  type FunctionInfo,
   type Language,
   type SymbolLink,
   type SymbolLinkStrategy,
@@ -381,6 +382,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly
     }
   }
 
+  pickOverloads(deduped, analyses);
   return deduped;
 }
 
@@ -451,6 +453,66 @@ function buildSymbolIndex(
   }
 
   return index;
+}
+
+/**
+ * Point each link to an overloaded method at the overload the call can mean.
+ * The symbol index keys `Class.method` once, so every overload's call landed
+ * on the last one declared: with `save(Order)` and `save(Order, boolean)`,
+ * `svc.save(o)` showed the second body. The call's argument count
+ * (`CallInfo.argCount`) picks the one overload whose arity accepts it —
+ * required parameters up to all of them, any number past a variadic one;
+ * when none or several do, the link is left as it was. Parameter types are
+ * not compared: the arguments' types are not known here.
+ */
+function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): void {
+  type Overload = { line: number; min: number; max: number };
+  const overloads = new Map<string, Overload[]>();
+  const add = (file: string, name: string, fn: FunctionInfo): void => {
+    const params = fn.params.filter((p) => !p.isReceiver);
+    const variadic = params.some((p) => p.variadic);
+    const min = params.filter((p) => !p.variadic && p.defaultValue == null).length;
+    const key = `${file}\u0000${name}`;
+    let list = overloads.get(key);
+    if (!list) overloads.set(key, (list = []));
+    list.push({ line: fn.line, min, max: variadic ? Number.POSITIVE_INFINITY : params.length });
+  };
+  for (const a of analyses) {
+    for (const fn of a.functions) add(a.filePath, fn.name, fn);
+    for (const cls of a.classes) for (const m of cls.methods) add(a.filePath, `${cls.name}.${m.name}`, m);
+  }
+  for (const [key, list] of overloads) if (list.length < 2) overloads.delete(key);
+  if (overloads.size === 0) return;
+
+  // The argument count of each call site, read only when some link needs it.
+  let argCounts: Map<string, number> | null = null;
+  const argCountAt = (file: string, line: number, callName: string): number | undefined => {
+    if (!argCounts) {
+      argCounts = new Map();
+      const record = (file: string, calls: readonly CallInfo[]): void => {
+        for (const c of calls) if (c.argCount !== undefined) argCounts!.set(`${file}\u0000${c.line}\u0000${c.name}`, c.argCount);
+      };
+      for (const a of analyses) {
+        for (const fn of a.functions) record(a.filePath, fn.calls);
+        for (const cls of a.classes) for (const m of cls.methods) record(a.filePath, m.calls);
+      }
+    }
+    return argCounts.get(`${file}\u0000${line}\u0000${callName}`);
+  };
+
+  // The arguments describe the target only when the call IS to it: `svc.save(o)`
+  // → `save`, `new Builder(x)` → the `Builder` constructor — not a link a type
+  // argument made (`Assert.Throws<MyException>(…)` → `MyException`'s constructor).
+  const leafOf = (name: string): string =>
+    name.replace(/^new\s+/, "").replace(/<.*$/s, "").split(/\.|::/).pop() ?? "";
+  for (const link of links) {
+    const list = overloads.get(`${link.targetFile}\u0000${link.targetSymbol}`);
+    if (!list || leafOf(link.callName) !== leafOf(link.targetSymbol)) continue;
+    const n = argCountAt(link.sourceFile, link.sourceLine, link.callName);
+    if (n === undefined) continue;
+    const fits = list.filter((o) => n >= o.min && n <= o.max);
+    if (fits.length === 1) link.targetLine = fits[0]!.line;
+  }
 }
 
 /** A name's return type once another definition of it (an overload) is seen: kept only when both agree. */

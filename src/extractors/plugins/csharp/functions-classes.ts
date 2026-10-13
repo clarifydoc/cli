@@ -272,12 +272,25 @@ export class CSharpExtractor extends FunctionClassExtractor {
    */
   private parseCsharpParams(paramsNode: Node): ParamInfo[] {
     const params: ParamInfo[] = [];
-    for (const p of paramsNode.children) {
+    const kids = paramsNode.children;
+    for (let i = 0; i < kids.length; i++) {
+      const p = kids[i]!;
+      // `params string[] rest`: the grammar lays it out as loose tokens in the
+      // list (`params`, the type, the name), not as a `parameter` node.
+      if (p.type === "params") {
+        const type = kids[i + 1];
+        const name = kids[i + 2];
+        if (type && name?.type === "identifier") {
+          params.push({ name: name.text, type: type.text, defaultValue: null, variadic: true });
+          i += 2;
+        }
+        continue;
+      }
       if (p.type !== "parameter") continue;
       const param: ParamInfo = {
         name: p.childForFieldName("name")?.text ?? p.text,
         type: p.childForFieldName("type")?.text ?? null,
-        defaultValue: p.childForFieldName("default_value")?.text ?? null,
+        defaultValue: csharpDefaultValue(p),
       };
       if (p.firstChild?.type === "attribute_list") {
         const key = injectionKey(p, PARAM_KEY_ATTRIBUTES);
@@ -414,4 +427,15 @@ function storedName(value: Node): string | null {
 function noteKey(into: Map<string, string | null>, field: string, key: string): void {
   const prev = into.get(field);
   into.set(field, prev === undefined || prev === key ? key : null);
+}
+
+/**
+ * A parameter's default (`string tag = "x"`): the grammar names no field for
+ * it, so it is the node after the `=`. Older grammars called it `default_value`.
+ */
+function csharpDefaultValue(p: Node): string | null {
+  const field = p.childForFieldName("default_value");
+  if (field) return field.text;
+  const eq = p.children.findIndex((c) => c.type === "=");
+  return eq >= 0 ? p.children[eq + 1]?.text ?? null : null;
 }

@@ -572,6 +572,8 @@ export interface ParamInfo {
    * passes, and registrations never apply to it. Omitted otherwise.
    */
   injected?: boolean;
+  /** Takes any number of trailing arguments (Java `String... a`, C# `params T[] a`). */
+  variadic?: boolean;
 }
 
 /**
@@ -623,6 +625,12 @@ export interface CallInfo {
    * routine's parameter. Absent everywhere else.
    */
   args?: string[];
+  /**
+   * How many arguments the call passes, in a language with overloading (Java,
+   * Kotlin, C#) — the linker picks `save(Order)` or `save(Order, boolean)` by
+   * it. Absent elsewhere and where a spread argument hides the count.
+   */
+  argCount?: number;
 }
 
 export interface FunctionInfo {

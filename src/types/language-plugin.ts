@@ -690,6 +690,13 @@ export interface CallExtractionHooks {
    * (the output keeps them). Sets `CallInfo.args`.
    */
   argsOf?(node: Node): string[] | null;
+  /**
+   * How many arguments the call passes (a trailing lambda counts), for a
+   * language with overloading: the linker picks the overload whose arity
+   * accepts it. Null when it cannot be told (a spread argument). Sets
+   * `CallInfo.argCount`.
+   */
+  argCountOf?(node: Node): number | null;
 }
 
 /**

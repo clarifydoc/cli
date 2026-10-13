@@ -320,6 +320,8 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
         ) {
           const pName =
             p.childForFieldName("name")?.text ??
+            // `String... parts`: the name sits in the spread's declarator.
+            (p.type === "spread_parameter" ? this.findChildByType(p, "variable_declarator")?.childForFieldName("name")?.text : undefined) ??
             this.findChildByType(p, "simple_identifier")?.text ??
             this.findChildByType(p, "identifier")?.text ??
             p.text;
@@ -337,6 +339,8 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
           };
           const qualifier = pointQualifier(annotationNodes(p), pName, explicit);
           if (qualifier) param.qualifier = qualifier;
+          // `String... parts` / Kotlin `vararg parts: String`: any number of trailing arguments.
+          if (p.type === "spread_parameter" || p.previousSibling?.text.includes("vararg")) param.variadic = true;
           params.push(param);
         }
       }

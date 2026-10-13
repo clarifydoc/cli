@@ -153,6 +153,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   const receiverTypeOf = hooks.receiverTypeOf;
   const keyOf = hooks.keyOf;
   const argsOf = hooks.argsOf;
+  const argCountOf = hooks.argCountOf;
   const nested = NESTED_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const anonymous = ANONYMOUS_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
 
@@ -168,6 +169,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     receiver?: { type: string; qualifier?: string } | null;
     key?: string | null;
     args?: string[] | null;
+    argCount?: number | null;
   }> = [];
   const boundHere = new Set<string>();
 
@@ -178,8 +180,9 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     receiver?: { type: string; qualifier?: string } | null,
     key?: string | null,
     args?: string[] | null,
+    argCount?: number | null,
   ) => {
-    candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference, receiver, key, args });
+    candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference, receiver, key, args, argCount });
   };
   const addResult = (name: string, node: Node) => {
     if (name) push(name, node, false);
@@ -202,7 +205,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // Standard call expressions
     if (callTypes.has(node.type)) {
       const name = resolve(node);
-      if (name) push(name, node, false, receiverTypeOf?.(node), keyOf?.(node), argsOf?.(node));
+      if (name) push(name, node, false, receiverTypeOf?.(node), keyOf?.(node), argsOf?.(node), argCountOf?.(node));
 
       // Detect callback arguments: fn(callback) — identifiers passed as args
       if (CALLBACK_ARG_NODE_TYPES.has(node.type)) {
@@ -236,10 +239,13 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     if (c.isReference && boundHere.has(c.name)) continue;
     // A keyed dispatch is one call per key: `dispatch('a/x')` and `dispatch('b/y')` reach different handlers.
     // So is a call reported with its arguments: `Fill(qryA)` and `Fill(qryB)` pass different datasets.
-    const seenKey = c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})` : c.name;
+    // So is a call with another argument count: `save(o)` and `save(o, true)` may be two overloads.
+    const seenKey = c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})`
+      : c.argCount != null ? `${c.name}\0#${c.argCount}` : c.name;
     if (seen.has(seenKey)) continue;
     const call: CallInfo = { name: c.name, kind: "internal", target: null, line: c.line, column: c.column };
     if (c.args) call.args = c.args;
+    if (c.argCount != null) call.argCount = c.argCount;
     if (c.key) {
       call.key = c.key;
       seen.add(seenKey);
