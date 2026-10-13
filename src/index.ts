@@ -28,6 +28,12 @@ export { EXTRACTOR_VERSION, assessFreshness, type FreshnessReport } from "./core
 // The per-file index the MCP server answers from, so another consumer of a
 // stored analysis groups the same facts by file the same way.
 export { buildIndex, type AnalysisIndex, type FileFacts } from "./mcp/store.js";
+// What tells an agent when to use the MCP tools, and the named workflows it
+// can start from — for a host that installs the guidance or offers the
+// workflows outside an MCP client.
+export { AGENT_GUIDANCE } from "./mcp/guidance.js";
+export { WORKFLOW_PROMPTS } from "./mcp/prompts.js";
+export type { McpPrompt } from "./mcp/protocol.js";
 export {
   normalizeProject,
   denormalizeProject,
