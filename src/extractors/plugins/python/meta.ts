@@ -53,6 +53,18 @@ const SECURITY_RULES: readonly SecurityRule[] = [
     priority: 42,
   },
   {
+    // Strings are blanked before matching (`securityPreprocess`), so a SQL
+    // string built in place shows as a blank literal followed by `+`, `%` or
+    // `.format(` — or as a kept `f` prefix. A placeholder query
+    // (`execute("… %s", (uid,))`) passes the values separately and never matches.
+    category: "sql-injection",
+    severity: "high",
+    pattern: /\.(?:execute|executemany|executescript|raw|extra)\s*\(\s*(?:[rRbB]?[fF][rRbB]?\s|\s+(?:\+|%\s*[\w(]|\.\s*format\s*\())/,
+    message: "Possible SQL injection: the statement is built from values. Pass them as query parameters.",
+    priority: 39,
+    excludeTest: true,
+  },
+  {
     category: "bare-except",
     severity: "medium",
     pattern: /\bexcept\s*:/,
@@ -114,7 +126,7 @@ export const pythonMeta: LanguagePluginMeta = {
   securityRules: SECURITY_RULES,
   // Strip strings and comments first to avoid false positives.
   securityPreprocess: stripPythonNonCode,
-  apiCallRoots: ["requests", "httpx", "aiohttp", "urllib", "http.client"],
+  apiCallRoots: ["requests", "httpx", "aiohttp", "urllib.request", "urllib3", "http.client"],
   dbCallRoots: ["cursor", "session", "engine", "db", "connection", "pool"],
   ast: {
     typeReferences: extractPythonTypeReferences,

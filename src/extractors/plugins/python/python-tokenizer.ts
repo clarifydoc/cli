@@ -1,7 +1,8 @@
 /**
  * Strip Python string literals, docstrings, and comments from source code.
  * Preserves code structure and line positions — replaces removed content with spaces
- * (keeping newlines) so that line numbers remain accurate.
+ * (keeping newlines) so that line numbers remain accurate. An f-string's `f`
+ * prefix is kept.
  */
 export function stripPythonNonCode(content: string): string {
   const len = content.length;
@@ -52,7 +53,9 @@ export function stripPythonNonCode(content: string): string {
         i++;
       }
       if (i < len && chars[i] === q) i++;
-      blank(start, i);
+      // An f-string keeps its `f`: that it interpolates is the code's shape
+      // (`cursor.execute(f"… {uid}")`), not the string's content.
+      blank(chars[start] === "f" || chars[start] === "F" ? start + 1 : start, i);
       continue;
     }
 

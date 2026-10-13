@@ -24,11 +24,14 @@ const GENERIC_RULES: SecurityRule[] = [
     priority: 10,
     excludeTest: true,
   },
-  // SQL injection
+  // SQL injection: a statement literal concatenated with a value, as the first
+  // argument of a query call (`db.query("SELECT … id=" + id)`,
+  // `stmt.executeQuery("…" + id)`, `new SqlCommand("…" + id, conn)`). The
+  // literal must read as SQL; a placeholder query passes values separately.
   {
     category: "sql-injection",
     severity: "high",
-    pattern: /(?:query|execute)\s*\(\s*['"`][^'"`]*\s*\+/,
+    pattern: /\b(?:query|execute|executeQuery|executeUpdate|createQuery|createNativeQuery|prepareStatement|rawQuery|SqlCommand|FromSqlRaw|ExecuteSqlRaw)\s*\(\s*(["'`])(?=(?:\\.|(?!\1)[^\\])*?\b(?:SELECT|INSERT|UPDATE|DELETE|WHERE|FROM|INTO|VALUES|SET)\b)(?:\\.|(?!\1)[^\\])*\1\s*\+/i,
     message: "Possible SQL injection via string concatenation. Use parameterized queries.",
     priority: 11,
     excludeTest: true,
@@ -122,6 +125,22 @@ export function vendoredMinoritySet(
   );
 }
 
+/**
+ * The line a finding quotes, trimmed and capped. A hardcoded-secret line has
+ * its string values masked: the snippet travels into project-summary.json,
+ * report.html and MCP answers, and the report must not be how a credential
+ * leaves the repository. A long value keeps its first 4 characters (enough to
+ * tell an `AKIA…` key from a `ghp_…` token), a short one keeps none.
+ */
+function snippetOf(line: string, category: SecurityIssue["category"]): string {
+  let text = line.trim();
+  if (category === "hardcoded-secret") {
+    text = text.replace(/(['"`])((?:\\.|(?!\1)[^\\])+)\1/g, (_m, q: string, value: string) =>
+      `${q}${value.length >= 12 ? value.slice(0, 4) : ""}${"*".repeat(Math.min(8, Math.max(4, value.length - 4)))}${q}`);
+  }
+  return text.substring(0, 100);
+}
+
 /** Merged generic + plugin rules per language, sorted by priority (cached). */
 const mergedRulesCache = new Map<Language, readonly SecurityRule[]>();
 
@@ -189,7 +208,7 @@ export function scanSecurity(
           message: rule.message,
           filePath,
           line: i + 1,
-          snippet: (originalLines[i] ?? line).trim().substring(0, 100),
+          snippet: snippetOf(originalLines[i] ?? line, rule.category),
         });
       }
     }
