@@ -25,6 +25,13 @@ export { projectServesClosure } from "./core/project-dependencies.js";
 // What the app compares a stored analysis against: one made by an older
 // extractor lacks facts a newer one records (and links by).
 export { EXTRACTOR_VERSION, assessFreshness, type FreshnessReport } from "./core/manifest.js";
+// Projecting a set of changed files onto a stored analysis (what `impact`
+// prints), for a consumer that obtains the changed set some other way.
+export {
+  computeImpactDiff,
+  renderImpactMarkdown,
+  type ImpactDiffResult,
+} from "./core/impact-diff.js";
 // The per-file index the MCP server answers from, so another consumer of a
 // stored analysis groups the same facts by file the same way.
 export { buildIndex, type AnalysisIndex, type FileFacts } from "./mcp/store.js";
