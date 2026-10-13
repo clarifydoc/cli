@@ -245,6 +245,12 @@ export interface SecurityRule {
    * pattern anchored on something distinctive — it is run with the `g` flag.
    */
   multiline?: boolean;
+  /**
+   * Match the source as written, before the plugin's `securityPreprocess`
+   * (which may blank strings and comments), and in comments too — for
+   * credentials, which are leaked wherever they are written.
+   */
+  raw?: boolean;
 }
 
 /** Node types / operators that count toward cyclomatic complexity. */

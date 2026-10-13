@@ -215,3 +215,37 @@ function PopupWindow_getXYPosition() { document.all[x].innerHTML = y; }`;
     expect(vendoredMinoritySet(files(10, 0)).size).toBe(0);
   });
 });
+
+describe("scanSecurity — credentials by their format", () => {
+  const secrets = (src: string, file = "src/a.ts", lang: Parameters<typeof scanSecurity>[2] = "typescript") =>
+    scanSecurity(src, file, lang).filter((i) => i.category === "hardcoded-secret");
+  // Assembled at run time so no credential-shaped literal sits in the repository.
+  const aws = "AKIA" + "Q3EGRT7" + "LMNP4XYZA";
+  const stripe = "sk_" + "live_" + "4eC39HqLyjWDarjtT1zdp7dc";
+
+  it("finds keys whatever the variable is called, in Python too", () => {
+    expect(secrets(`const client = new Stripe("${stripe}");`)).toHaveLength(1);
+    expect(secrets(`AWS_KEY_ID = "${aws}"`, "app/settings.py", "python")).toHaveLength(1);
+    expect(secrets("-----BEGIN RSA PRIVATE KEY-----\nMIIEow...", "deploy/key.ts")).toHaveLength(1);
+    expect(secrets('const url = "postgres://admin:Pr0d-Hunter2@db.internal/app";')).toHaveLength(1);
+    // A key pasted into a comment has leaked all the same.
+    expect(secrets(`// old key: ${aws}`)).toHaveLength(1);
+  });
+
+  it("skips documentation values and placeholders", () => {
+    expect(secrets('const id = "AKIAIOSFODNN7EXAMPLE";')).toEqual([]);
+    expect(secrets('const url = "postgres://user:${DB_PASSWORD}@db/app";')).toEqual([]);
+    expect(secrets('const url = "mongodb://user:password@localhost/app";')).toEqual([]);
+    expect(secrets('const apiKey = "your-api-key-here";')).toEqual([]);
+    expect(secrets('const password = "changeme";')).toEqual([]);
+    expect(secrets('const token = "********";')).toEqual([]);
+    expect(secrets('@user.update(password: "#{SecureRandom.hex}")', "app/a.rb", "ruby")).toEqual([]);
+  });
+
+  it("never prints the credential in the snippet", () => {
+    const [comment] = secrets(`// old key: ${aws}`);
+    expect(comment!.snippet).not.toContain(aws);
+    const [url] = secrets('const url = "postgres://admin:Pr0d-Hunter2@db.internal/app";');
+    expect(url!.snippet).not.toContain("Hunter2");
+  });
+});
