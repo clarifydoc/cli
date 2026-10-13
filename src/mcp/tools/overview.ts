@@ -349,7 +349,8 @@ type HealthCategory =
   | "unused"
   | "dead-code"
   | "concerns"
-  | "pressure";
+  | "pressure"
+  | "dependencies";
 const HEALTH_CATEGORIES: readonly HealthCategory[] = [
   "security",
   "layers",
@@ -362,6 +363,7 @@ const HEALTH_CATEGORIES: readonly HealthCategory[] = [
   "dead-code",
   "concerns",
   "pressure",
+  "dependencies",
 ];
 
 /**
@@ -384,6 +386,7 @@ function categoryCounts(summary: ProjectAnalysis): Array<[HealthCategory, number
     ["dead-code", (summary.deadCode?.files.length ?? 0) + (summary.deadCode?.exports.length ?? 0)],
     ["concerns", (summary.responsibilityProfiles ?? []).filter((r) => r.concernCount >= 2).length],
     ["pressure", (summary.refactorPressure ?? []).length],
+    ["dependencies", (summary.externalPackages ?? []).filter((p) => p.versionSkew || p.used === false).length],
   ];
 }
 
@@ -657,6 +660,24 @@ export function healthTool(ctx: ToolContext): McpTool {
                     .join(", ") +
                   (g.occurrences.length > 4 ? ", …" : ""),
               ),
+            ]),
+          };
+        }
+        case "dependencies": {
+          // Packages whose manifests disagree on the version, then packages
+          // declared but imported nowhere (only where imports name packages).
+          const pkgs = (summary.externalPackages ?? []).filter((p) =>
+            !fileFilter || contains(p.declaredIn, fileFilter) || (p.declarations ?? []).some((d) => contains(d.declaredIn, fileFilter)));
+          const skewed = pkgs.filter((p) => p.versionSkew);
+          const unused = pkgs.filter((p) => p.used === false);
+          if (skewed.length === 0 && unused.length === 0) return { text: noFindings(summary, category, filters) };
+          return {
+            text: joinLines([
+              `# Dependencies — ${plural(skewed.length, "version skew")}, ${plural(unused.length, "unused package")}`,
+              ...(skewed.length ? ["", "## Declared with different versions", ...bulletList(skewed, limit, (p) =>
+                `${p.name} (${p.ecosystem}): ${(p.declarations ?? []).map((d) => `${d.version ?? "—"} in ${d.declaredIn}`).join(", ")}`)] : []),
+              ...(unused.length ? ["", "## Declared but imported by no analyzed file", ...bulletList(unused, limit, (p) =>
+                `${p.name}${p.version ? ` ${p.version}` : ""} (${p.ecosystem}, ${p.scope}) — ${p.declaredIn}`)] : []),
             ]),
           };
         }

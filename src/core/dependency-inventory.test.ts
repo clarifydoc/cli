@@ -570,3 +570,29 @@ describe("collectExternalPackages — vendored git submodules", () => {
     expect(git[0]!.version).toBeNull();
   });
 });
+
+describe("collectExternalPackages — one package, several manifests", () => {
+  let dir: string;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "revdoc-skew-"));
+    for (const [sub, deps] of [["web", { axios: "^0.21.1", react: "^18.2.0" }], ["admin", { axios: "^1.6.0", react: "^18.2.0" }]] as const) {
+      await mkdir(join(dir, sub));
+      await writeFile(join(dir, sub, "package.json"), JSON.stringify({ name: sub, dependencies: deps }));
+    }
+  });
+  afterAll(() => rm(dir, { recursive: true, force: true }));
+
+  it("keeps each declaration and flags versions that disagree", async () => {
+    const pkgs = await collectExternalPackages(dir, ["admin", "web"]);
+    const axios = pkgs.find((p) => p.name === "axios")!;
+    expect(axios.versionSkew).toBe(true);
+    expect(axios.declarations?.map((d) => [d.declaredIn, d.version])).toEqual([
+      ["admin/package.json", "^1.6.0"],
+      ["web/package.json", "^0.21.1"],
+    ]);
+    // The same version in both: listed where it is declared, no skew.
+    const react = pkgs.find((p) => p.name === "react")!;
+    expect(react.versionSkew).toBeUndefined();
+    expect(react.declarations?.map((d) => d.declaredIn)).toEqual(["admin/package.json", "web/package.json"]);
+  });
+});
