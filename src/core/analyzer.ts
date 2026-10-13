@@ -90,7 +90,7 @@ import { vendoredMinoritySet } from "./security-scanner.js";
 import { buildEntityGraph, reconcileEntityInheritance, propagateStiRelations, linkEntityModels, synthesizeReferencedTableEntities } from "./entity-graph.js";
 import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
-import { linkApiCallsToRoutesDetailed, dedupeRoutes, pairContractTwins } from "./route-linker.js";
+import { linkApiCallsToRoutesDetailed, dedupeRoutes, isJoinableRoutePath, pairContractTwins } from "./route-linker.js";
 import { buildProjectDependencies, projectServesClosure } from "./project-dependencies.js";
 import { readProjectConfig, readProjectProxies } from "./config-values.js";
 import { buildServiceAddresses } from "./service-addresses.js";
@@ -1071,6 +1071,29 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     if (isUnauthored(link.source)) link.sourceRole = "generated";
     else if (fileLayerMap[link.source] === "test") link.sourceRole = "test";
     apiRouteLinkStats.byRole[link.sourceRole ?? "production"]++;
+  }
+  // The other half of "which screen calls this endpoint": calls that reach no
+  // route (kept by the linker) and routes no call reaches. A route counts as
+  // uncalled only in a sub-project some production caller in the repository
+  // does call — a service only external clients use would list every route.
+  if (apiRouteLinkStats.misses) {
+    apiRouteLinkStats.misses = apiRouteLinkStats.misses.filter((m) => !isUnauthored(m.file));
+    if (apiRouteLinkStats.misses.length === 0) delete apiRouteLinkStats.misses;
+  }
+  {
+    const calledProjects = new Set<string>();
+    const reached = new Set<string>();
+    for (const link of apiRouteLinks) {
+      reached.add(`${link.target}\u0000${link.targetLine}`);
+      if ((link.sourceRole ?? "production") === "production" && link.targetProject !== undefined) calledProjects.add(link.targetProject);
+    }
+    const uncalled = allRoutes.filter((r) =>
+      r.kind === "api" && isJoinableRoutePath(r.path) && !isContractRoute(r) && !isUnauthored(r.filePath) &&
+      calledProjects.has(r.projectId ?? "") && !reached.has(`${r.filePath}\u0000${r.line}`));
+    if (uncalled.length > 0) {
+      apiRouteLinkStats.uncalledCount = uncalled.length;
+      apiRouteLinkStats.uncalled = uncalled.slice(0, 200).map((r) => ({ file: r.filePath, line: r.line, method: r.httpMethod ?? null, path: r.path }));
+    }
   }
 
   // Intra-file call structure: the edges exist in symbolLinks but nothing read

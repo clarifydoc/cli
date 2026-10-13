@@ -3,7 +3,7 @@
 import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
 import { describeReasons } from "../../core/risk-verdict.js";
 import type { McpTool } from "../protocol.js";
-import type { SymbolLink } from "../../types/analysis.js";
+import type { ApiCallMiss, ApiRouteLinkStats, SymbolLink } from "../../types/analysis.js";
 import { symbolKey, type FileFacts, type LoadedAnalysis, type RouteWithFile } from "../store.js";
 import {
   booleanArg,
@@ -75,6 +75,13 @@ export function routesTool(ctx: ToolContext): McpTool {
             "Include each route's request-body JSON schema (flattened from the bound parameter's class, " +
             "inheritance included) when one was derived. Implies `detail`. Default false; narrow with `path`/`file` first.",
         },
+        gaps: {
+          type: "boolean",
+          description:
+            "Instead of the routes: the calls in this repository that reach NO route (with why — no route at that " +
+            "path, wrong method, another service) and the API routes no in-repo call reaches. Finds a renamed or " +
+            "removed endpoint from both sides. `path`/`file` narrow it.",
+        },
         limit: { type: "number", description: "Max routes (default 40)." },
       },
       additionalProperties: false,
@@ -82,6 +89,9 @@ export function routesTool(ctx: ToolContext): McpTool {
     handler: async (args) => {
       const loaded = await requireAnalysis(ctx);
       const { summary } = loaded;
+      if (booleanArg(args, "gaps", false)) {
+        return { text: routeGaps(summary.apiRouteLinkStats, stringArg(args, "path"), stringArg(args, "file"), numberArg(args, "limit", 40, { max: 500 })) };
+      }
       const pathFilter = stringArg(args, "path");
       const methodFilter = stringArg(args, "method")?.toUpperCase();
       const kind = enumArg(args, "kind", ["api", "frontend"] as const);
@@ -256,6 +266,41 @@ export function routesTool(ctx: ToolContext): McpTool {
       };
     },
   };
+}
+
+const MISS_REASON: Record<ApiCallMiss["reason"], string> = {
+  unmatched: "no route at this path",
+  "method-mismatch": "the path exists, not for this method",
+  "origin-mismatch": "the service it calls has no such route",
+  "ambiguous-suffix": "several routes end with this path",
+};
+
+/** The `gaps` view of `clarifydoc_routes`: calls that reach no route, routes no call reaches. */
+function routeGaps(stats: ApiRouteLinkStats | undefined, pathFilter: string | undefined, fileFilter: string | undefined, limit: number): string {
+  const misses = (stats?.misses ?? []).filter((m) =>
+    (!pathFilter || contains(m.url, pathFilter)) && (!fileFilter || contains(m.file, fileFilter)));
+  const uncalled = (stats?.uncalled ?? []).filter((r) =>
+    (!pathFilter || contains(r.path, pathFilter)) && (!fileFilter || contains(r.file, fileFilter)));
+  if (misses.length === 0 && uncalled.length === 0) {
+    return noResults({
+      headline: pathFilter || fileFilter ? "No route gaps match the filter." : "No route gaps: every joinable call reaches a route, and every route of a called service is called.",
+      holds: stats
+        ? `${plural(stats.calls, "api call")}, ${stats.linked} linked; ${stats.uncalledCount ?? 0} uncalled route(s).`
+        : "The analysis holds no API calls.",
+      next: [(pathFilter || fileFilter) && "clarifydoc_routes gaps=true without `path`/`file`", "clarifydoc_routes kind=\"api\""],
+    });
+  }
+  const missed = stats ? stats.unmatched + stats.refused.methodMismatch + (stats.refused.originMismatch ?? 0) + stats.refused.ambiguousSuffix : 0;
+  return joinLines([
+    `# Route gaps`,
+    "",
+    `## Calls that reach no route (${misses.length}${missed > misses.length ? ` listed of ${missed}` : ""})`,
+    ...bulletList(misses, limit, (m) => `${m.method ?? "?"} ${m.url} — ${MISS_REASON[m.reason]} (${loc(m.file, m.line)})`),
+    "",
+    `## Routes no call in the repository reaches (${uncalled.length}${(stats?.uncalledCount ?? 0) > uncalled.length ? ` listed of ${stats!.uncalledCount}` : ""})`,
+    "Only services some in-repo client calls; an endpoint here may still be called from outside.",
+    ...bulletList(uncalled, limit, (r) => `${routeLabel(r.method, r.path)} (${loc(r.file, r.line)})`),
+  ]);
 }
 
 export function screensTool(ctx: ToolContext): McpTool {
