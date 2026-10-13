@@ -458,9 +458,15 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           // A client name as a METHOD counts only on a receiver that is itself
           // a client or a global (`$.ajax`, `window.fetch`, `api.request`):
           // `navigator.wakeLock.request("screen")` is not an HTTP call.
+          // A BARE `request(…)` / `http(…)` / `ajax(…)` is the library only when
+          // the file imports it: VueUse's `const { request } = useWakeLock()`
+          // makes `request("screen")` a wake lock, not an HTTP call. `fetch` is
+          // a global and `axios` is never anything else.
+          const bareLibrary = fn.type === "identifier" &&
+            (/^(?:fetch|axios)$/i.test(fnName) || (this.imports ??= importEvidence(this.sourceText)).names.has(fnName));
           const exactRoot =
             HTTP_ROOTS.has(fnName.toLowerCase()) &&
-            (fn.type === "identifier" || trustedReceiver || (!!recv && GLOBAL_RECEIVERS.has(recv)));
+            (bareLibrary || trustedReceiver || (!!recv && GLOBAL_RECEIVERS.has(recv)));
           const trusted = exactRoot || trustedReceiver;
           // `http.request('POST', url)` / `this.http.request('GET', url)`:
           // the verb comes first and the URL second.
