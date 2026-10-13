@@ -1772,6 +1772,21 @@ export interface DataFlowPath {
   resource: string;
   distance: number;
   confidence: Confidence;
+  /**
+   * The witness: the call path from the entry to the function that performs
+   * the effect, entry first, at most `distance + 1` hops. Each hop but the last
+   * carries `line`, the call in it that leads to the next. Absent on artifacts
+   * written before it was recorded.
+   */
+  via?: FlowHop[];
+}
+
+/** One function on a data flow's witness path (`DataFlowPath.via`). */
+export interface FlowHop {
+  file: string;
+  symbol: string;
+  /** The line in this function of the call that leads to the next hop. */
+  line?: number;
 }
 
 export interface LspStats {
