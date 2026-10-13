@@ -6,6 +6,7 @@ import {
   serveStdio,
   type JsonRpcResponse,
   type McpTool,
+  matchUriTemplate,
 } from "./protocol.js";
 
 const echoTool: McpTool = {
@@ -167,5 +168,51 @@ describe("serveStdio", () => {
     const responses = await session(['not json\n', '{"jsonrpc":"2.0","id":7,"method":"ping"}\n']);
     expect(responses[0].error?.code).toBe(-32700);
     expect(responses[1].id).toBe(7);
+  });
+});
+
+describe("McpServer — prompts and resource templates", () => {
+  const server = () => new McpServer({
+    name: "t",
+    version: "1",
+    tools: [],
+    resourceTemplates: [{
+      uriTemplate: "test://file/{path}",
+      name: "file",
+      description: "a file",
+      mimeType: "text/plain",
+      read: ({ path }) => (path === "nope" ? null : `file ${path}`),
+    }],
+    prompts: [{
+      name: "review",
+      description: "review a file",
+      arguments: [{ name: "file", description: "which", required: true }],
+      render: ({ file }) => `Review ${file}`,
+    }],
+  });
+
+  it("lists and fills a prompt, and names a missing argument", async () => {
+    const list = await request(server(), "prompts/list");
+    expect((list?.result as { prompts: Array<{ name: string }> }).prompts.map((p) => p.name)).toEqual(["review"]);
+    const got = await request(server(), "prompts/get", { name: "review", arguments: { file: "src/a.ts" } });
+    expect(got?.result).toEqual({
+      description: "review a file",
+      messages: [{ role: "user", content: { type: "text", text: "Review src/a.ts" } }],
+    });
+    const missing = await request(server(), "prompts/get", { name: "review", arguments: {} });
+    expect(missing?.error?.message).toContain("needs: file");
+  });
+
+  it("reads a template resource, its last variable taking the rest of the URI", async () => {
+    const read = await request(server(), "resources/read", { uri: "test://file/src/a%20b.ts" });
+    expect(read?.result).toEqual({ contents: [{ uri: "test://file/src/a%20b.ts", mimeType: "text/plain", text: "file src/a b.ts" }] });
+    expect((await request(server(), "resources/read", { uri: "test://file/nope" }))?.error?.code).toBe(-32602);
+    expect(matchUriTemplate("x://symbol/{symbol}/{path}", "x://symbol/Repo.save/src/repo.ts")).toEqual({ symbol: "Repo.save", path: "src/repo.ts" });
+    expect(matchUriTemplate("x://file/{path}", "x://other/a")).toBeNull();
+  });
+
+  it("advertises prompts in the capabilities", async () => {
+    const init = await request(server(), "initialize", { protocolVersion: LATEST_PROTOCOL_VERSION });
+    expect((init?.result as { capabilities: Record<string, unknown> }).capabilities).toMatchObject({ prompts: { listChanged: false }, resources: {} });
   });
 });

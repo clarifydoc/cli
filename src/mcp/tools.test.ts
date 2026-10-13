@@ -380,6 +380,15 @@ describe("clarifydoc MCP tools — react fixture", () => {
     expect(text).toContain("read-only");
   });
 
+  it("serves file facts through the resource template, and the workflow prompts", async () => {
+    const file = loaded.summary.files[0]!;
+    const res = await server.handleMessage({ jsonrpc: "2.0", id: 1, method: "resources/read", params: { uri: `clarifydoc://file/${file}` } });
+    expect((res?.result as { contents: Array<{ text: string }> }).contents[0].text).toContain(file);
+    const prompt = await server.handleMessage({ jsonrpc: "2.0", id: 2, method: "prompts/get", params: { name: "before-editing", arguments: { file } } });
+    const text = (prompt?.result as { messages: Array<{ content: { text: string } }> }).messages[0].content.text;
+    expect(text).toContain(`clarifydoc_blast_radius path="${file}"`);
+  });
+
   it("serves the status resource", async () => {
     const res = await server.handleMessage({
       jsonrpc: "2.0",

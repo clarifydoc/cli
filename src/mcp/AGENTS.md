@@ -9,11 +9,11 @@ write. That is what lets an external agent be configured as nothing but a comman
 
 | File | Purpose |
 |------|---------|
-| [protocol.ts](protocol.ts) | Dependency-free MCP over stdio: JSON-RPC framing, `initialize` negotiation, `tools/*`, `resources/*` |
+| [protocol.ts](protocol.ts) | Dependency-free MCP over stdio: JSON-RPC framing, `initialize` negotiation, `tools/*`, `resources/*` (incl. URI templates — the last variable takes the rest of the URI, so a project path needs no escaping), `prompts/*` |
 | [store.ts](store.ts) | Locates/loads/refreshes the analysis, cold-starts a project with none, and indexes it per file (`FileFacts`) |
 | [format.ts](format.ts) | Text shaping (capped lists, `path:line`) and argument coercion |
 | [empty.ts](empty.ts) | The shape of a result with no rows in it — miss, denominator, `Next:` |
-| [server.ts](server.ts) | Assembles store + tools + instructions into a servable `McpServer` |
+| [server.ts](server.ts) | Assembles store + tools + instructions into a servable `McpServer`, plus the resource templates (`clarifydoc://file/{path}`, `clarifydoc://symbol/{symbol}/{path}` — each the text of the tool that already says it) and the workflow prompts (`before-editing`, `trace-feature`, `endpoint-gaps`: the order of tool calls that answers one recurring question) |
 | [tools/](tools/) | The tools themselves — `context.ts` (shared), `overview.ts`, `code.ts` (routes, contract, screens, file, trace, blast), `extract.ts` (a function's source and its callees within a token budget — the one tool that reads source text, at the analyzed spans), `data.ts` |
 
 ## Rules that keep it working
