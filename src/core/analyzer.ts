@@ -1339,6 +1339,12 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // repo.ts:42" becomes "reachable from POST /search". Before suggestions,
   // which rank by it.
   const findingsWithEntries = attachFindingEntries(allSecurityIssues, allAnalyses, symbolLinks);
+  // Routes that waive authentication and write stored data.
+  const anonymousWrites = anonymousWriteFindings(allRoutes, dataFlows).filter((i) => !isUnauthored(i.filePath));
+  if (anonymousWrites.length > 0) {
+    allSecurityIssues.push(...anonymousWrites);
+    progress.detail(`  Anonymous routes that write data: ${anonymousWrites.length}`);
+  }
   if (findingsWithEntries > 0) progress.detail(`  Security findings reachable from a route: ${findingsWithEntries}`);
 
   const healthScore = computeHealthScore({
@@ -2479,7 +2485,7 @@ function filePathToRoute(filePath: string): string {
 }
 
 import type { ImportInfo, RouteInfo } from "../types/analysis.js";
-import { attachFindingEntries } from "./finding-entries.js";
+import { anonymousWriteFindings, attachFindingEntries } from "./finding-entries.js";
 
 /** Import source patterns → framework id */
 const IMPORT_FRAMEWORK_MAP: Record<string, string> = {

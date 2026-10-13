@@ -1,4 +1,4 @@
-import type { Confidence, FileAnalysis, SecurityIssue, SymbolLink } from "../types/analysis.js";
+import type { Confidence, DataFlowPath, FileAnalysis, RouteInfo, SecurityIssue, SymbolLink } from "../types/analysis.js";
 import { buildSymbolAdjacency, edgeKey, fileOf, keyOf } from "./symbol-graph.js";
 import { innermostAt, spansOf } from "./api-route-symbol-links.js";
 
@@ -85,4 +85,46 @@ export function attachFindingEntries(
     }
   }
   return attached;
+}
+
+/** Methods that change state. */
+const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/**
+ * API routes that explicitly waive authentication (`[AllowAnonymous]`,
+ * `permitAll`, `withoutMiddleware('auth')` — `RouteInfo.auth.anonymous`) with a
+ * mutating method, whose data flows write the database: anyone can change
+ * stored data through them. Some are meant to be public (sign-up, password
+ * reset, a webhook), which the message asks to confirm — a route with no
+ * declared auth at all is "unknown", never flagged.
+ */
+export function anonymousWriteFindings(
+  routes: ReadonlyArray<RouteInfo & { filePath: string }>,
+  dataFlows: readonly DataFlowPath[],
+): SecurityIssue[] {
+  const writes = new Map<string, Set<string>>();
+  for (const f of dataFlows) {
+    if (f.entryKind !== "route" || f.effect !== "db-write") continue;
+    const key = `${f.entryFile}\u0000${f.entryLabel}`;
+    (writes.get(key) ?? writes.set(key, new Set()).get(key)!).add(f.resource);
+  }
+  const out: SecurityIssue[] = [];
+  for (const r of routes) {
+    const method = (r.httpMethod ?? "").toUpperCase();
+    if (r.kind !== "api" || r.auth?.anonymous !== true || !MUTATING.has(method)) continue;
+    const label = `${method} ${r.path}`;
+    const tables = writes.get(`${r.filePath}\u0000${label}`);
+    if (!tables?.size) continue;
+    const named = [...tables].sort();
+    out.push({
+      category: "missing-auth",
+      severity: "medium",
+      message: `${label} allows anonymous callers and writes ${named.slice(0, 3).join(", ")}${named.length > 3 ? ` and ${named.length - 3} more` : ""}. Confirm it is meant to be public (sign-up, password reset, a webhook).`,
+      filePath: r.filePath,
+      line: r.line,
+      snippet: `${label}${r.handler ? ` → ${r.handler}` : ""}`,
+      cwe: "CWE-306",
+    });
+  }
+  return out;
 }

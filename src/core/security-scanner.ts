@@ -218,6 +218,7 @@ export const CATEGORY_CWE: Partial<Record<SecurityIssue["category"], string>> = 
   "weak-crypto": "CWE-327",
   "bare-except": "CWE-396",
   "insecure-config": "CWE-16",
+  "missing-auth": "CWE-306",
 };
 
 /** Text before a match that opens a comment on the same line. */
