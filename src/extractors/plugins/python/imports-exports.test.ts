@@ -133,4 +133,19 @@ from typing import Any
     // Any other module's absolute imports are its dependencies.
     expect(await reExports("src/app/services/api.py")).toEqual([]);
   });
+
+  it("narrows a module's exports to a literal __all__", async () => {
+    const { parseSource } = await import("../../../parsers/parser-manager.js");
+    const { PythonImportExportExtractor } = await import("./imports-exports.js");
+    const exportsOf = async (src: string) => {
+      const tree = await parseSource(src, "python" as any, "pkg/b.py");
+      return new PythonImportExportExtractor().extractExports(tree, src, "pkg/b.py").map((e) => e.name);
+    };
+    const body = "class Foo:\n    pass\n\ndef helper():\n    pass\n";
+    expect(await exportsOf(`__all__ = ["Foo"]\n${body}`)).toEqual(["Foo"]);
+    expect(await exportsOf(`__all__ = ("Foo",)\n__all__ += ["helper"]\n${body}`)).toEqual(["Foo", "helper"]);
+    // Not a literal: the full list is unknown, nothing is narrowed.
+    expect(await exportsOf(`__all__ = base.__all__ + ["Foo"]\n${body}`)).toEqual(["Foo", "helper"]);
+  });
 });
+

@@ -2396,12 +2396,22 @@ function forwardedDefinition(
     const target = resolveTarget(e.source, file, ctx.filePathMap);
     if (!target || target === file) continue;
     const d = symbolIn(ctx, target, inner);
-    const hit = d && d.name === inner ? { file: target, def: d } : forwardedDefinition(ctx, target, inner, depth + 1, seen);
+    // `export *` / `from m import *` forwards what the target EXPORTS: not a
+    // Python `_private` name, nor one its `__all__` leaves out. A module that
+    // declares no exports at all (CommonJS) still forwards its definitions.
+    const forwards = e.name !== "*" || starForwards(ctx.analysisByFile.get(target), inner);
+    const hit = forwards && d && d.name === inner ? { file: target, def: d } : forwardedDefinition(ctx, target, inner, depth + 1, seen);
     if (!hit) continue;
     if (found && (found.file !== hit.file || found.def.name !== hit.def.name)) return null;
     found = hit;
   }
   return found;
+}
+
+/** Whether a star re-export of `file` carries `name`: one of its own exports, or anything when it declares none. */
+function starForwards(target: FileAnalysis | undefined, name: string): boolean {
+  const own = (target?.exports ?? []).filter((x) => x.kind !== "re-export");
+  return own.length === 0 || own.some((x) => x.name === name);
 }
 
 /**

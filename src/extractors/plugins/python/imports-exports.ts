@@ -165,6 +165,7 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
   }
 
   protected collectExports(node: Node, exports: ExportInfo[]): void {
+    const start = exports.length;
     // In Python, top-level functions and classes are "exports"
     for (const child of node.children) {
       if (child.type === "import_from_statement") {
@@ -198,6 +199,14 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
           }
         }
       }
+    }
+    // `__all__` is the module's public API: what `from m import *` forwards
+    // and the names it means to export. A literal list narrows the exports to
+    // it (a re-export of a name it lists stays, under that name).
+    const all = dunderAll(node);
+    if (all) {
+      const keep = exports.slice(start).filter((e) => all.has(e.name));
+      exports.splice(start, exports.length - start, ...keep);
     }
   }
 }
@@ -250,4 +259,43 @@ function pushAliased(node: Node, specifiers: string[]): void {
   const alias = node.childForFieldName("alias")?.text;
   specifiers.push(alias ?? name ?? node.text);
   if (alias && name && alias !== name) specifiers.push(name);
+}
+
+/**
+ * The names a module-level `__all__` lists — `= [...]`, `= (...)`, `+= [...]`,
+ * and `+` of literals — or null when there is none or any part of it is not a
+ * literal (`__all__ = base.__all__ + [...]`: the full list is unknown).
+ */
+function dunderAll(module: Node): Set<string> | null {
+  let names: Set<string> | null = null;
+  for (const stmt of module.namedChildren) {
+    const a = stmt.type === "expression_statement" ? stmt.namedChild(0) : null;
+    if (!a || (a.type !== "assignment" && a.type !== "augmented_assignment")) continue;
+    if (a.childForFieldName("left")?.text !== "__all__") continue;
+    const literal = literalNames(a.childForFieldName("right"));
+    if (!literal) return null;
+    if (a.type === "assignment") names = new Set(literal);
+    else if (names) for (const n of literal) names.add(n);
+    else return null;
+  }
+  return names;
+}
+
+/** The strings of a list/tuple literal (or a `+` of them); null when anything else is in it. */
+function literalNames(node: Node | null | undefined): string[] | null {
+  if (!node) return null;
+  if (node.type === "binary_operator") {
+    const l = literalNames(node.childForFieldName("left"));
+    const r = literalNames(node.childForFieldName("right"));
+    return l && r ? [...l, ...r] : null;
+  }
+  if (node.type !== "list" && node.type !== "tuple" && node.type !== "parenthesized_expression") return null;
+  const out: string[] = [];
+  for (const item of node.namedChildren) {
+    if (item.type === "comment") continue;
+    if (item.type !== "string") return null;
+    const text = item.text.replace(/^[rbuRBU]*(['"]{1,3})([\s\S]*)\1$/, "$2");
+    out.push(text);
+  }
+  return out;
 }
