@@ -8,6 +8,7 @@ import { GoEntityExtractor } from "./entities.js";
 import { goRequestSchema } from "./request-schema.js";
 import { goReachability } from "./reachability.js";
 import { humaBaseResolver } from "./huma-resolver.js";
+import { GO_SECURITY_RULES } from "./security-rules.js";
 
 const GO_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -20,6 +21,7 @@ const GO_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const goMeta: LanguagePluginMeta = {
+  securityRules: GO_SECURITY_RULES,
   // Huma operations get the base their API is served under (huma-resolver.ts).
   routeResolvers: [humaBaseResolver],
   // Dead-code reachability (see reachability.ts).

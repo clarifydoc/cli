@@ -7,8 +7,10 @@ import { RubyEntityExtractor } from "./entities.js";
 import { rubyReachability } from "./reachability.js";
 import { railsRouteAnchor } from "./route-anchor.js";
 import { RUBY_REGEX_CONTROL_FLOW } from "./control-flow.js";
+import { RUBY_SECURITY_RULES } from "./security-rules.js";
 
 export const rubyMeta: LanguagePluginMeta = {
+  securityRules: RUBY_SECURITY_RULES,
   // Dead-code reachability (see reachability.ts).
   reachability: rubyReachability,
   ...rubyManifest,

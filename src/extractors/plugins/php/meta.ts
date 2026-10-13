@@ -14,6 +14,7 @@ import { phpRouteExtractor } from "./routes/index.js";
 import { phpRequestSchema } from "./request-schema.js";
 import { phpReachability } from "./reachability.js";
 import { phpDiBindings } from "./di.js";
+import { PHP_SECURITY_RULES } from "./security-rules.js";
 
 const PHP_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -26,6 +27,7 @@ const PHP_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const phpMeta: LanguagePluginMeta = {
+  securityRules: PHP_SECURITY_RULES,
   // Dead-code reachability (see reachability.ts).
   reachability: phpReachability,
   ...phpManifest,

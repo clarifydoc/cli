@@ -2015,7 +2015,8 @@ export type SecuritySeverity = "critical" | "high" | "medium" | "low";
 export type SecurityCategory =
   | "hardcoded-secret" | "sql-injection" | "xss" | "eval-exec"
   | "command-injection" | "debug-statement" | "todo-fixme"
-  | "pickle" | "subprocess-shell" | "bare-except";
+  | "pickle" | "subprocess-shell" | "bare-except"
+  | "deserialization" | "xxe" | "weak-crypto" | "insecure-config";
 
 export interface SecurityIssue {
   category: SecurityCategory;

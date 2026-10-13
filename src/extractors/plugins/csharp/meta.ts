@@ -23,8 +23,11 @@ import { extractCsharpDiBindings } from "./di-bindings.js";
 import { extractCsharpHttpClientRegistrations } from "./http-clients.js";
 import { extractCsharpTopLevelLocalTypes } from "./local-types.js";
 import { preprocessCsharpScript } from "./script.js";
+import { CSHARP_SECURITY_RULES, csharpSecurityPostScan } from "./security-rules.js";
 
 export const csharpMeta: LanguagePluginMeta = {
+  securityRules: CSHARP_SECURITY_RULES,
+  securityPostScan: csharpSecurityPostScan,
   // Dead-code reachability (see reachability.ts).
   reachability: csharpReachability,
   ...csharpManifest,

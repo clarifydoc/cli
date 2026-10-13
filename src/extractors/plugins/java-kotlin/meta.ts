@@ -20,6 +20,7 @@ import { javaKotlinReachability } from "./reachability.js";
 import { extractJvmDiBindings } from "./di-bindings.js";
 import { extractJavaClientProxies } from "./client-proxies.js";
 import { terminateAnnotatedDeclarations } from "./kotlin-preprocess.js";
+import { JVM_SECURITY_RULES, jvmSecurityPostScan } from "./security-rules.js";
 
 const JAVA_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -102,6 +103,8 @@ function jvmMeta(language: Language, opts: {
       ...(language === "java" ? { httpClientRegistrations: extractJavaClientProxies } : {}),
     },
     calls: opts.calls,
+    securityRules: JVM_SECURITY_RULES,
+    securityPostScan: jvmSecurityPostScan,
     // ONE instance for both members: core loads it once.
     reachability: javaKotlinReachability,
   };

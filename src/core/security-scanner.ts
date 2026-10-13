@@ -264,7 +264,7 @@ export function scanSecurity(
     const line = (rule.raw ? originalLines[i] : lines[i]) ?? "";
     // A credential is leaked wherever it is written, comments included; every
     // other rule is about code.
-    if (!rule.raw) {
+    if (!(rule.raw && rule.category === "hardcoded-secret")) {
       const trimmed = line.trimStart();
       if (trimmed.startsWith("//") || trimmed.startsWith("#") || trimmed.startsWith("*") || trimmed.startsWith("/*") || trimmed.startsWith("<!--")) {
         return;
@@ -303,6 +303,7 @@ export function scanSecurity(
   let rawLines: string[] | null = null;
   for (const rule of rulesFor(language)) {
     if (rule.excludeTest && isTest) continue;
+    if (rule.files && !rule.files.test(filePath)) continue;
     const text = rule.raw ? sourceText : effectiveSource;
     // Whole-text gate: a per-line match implies a whole-text match, so a
     // rule that matches nothing in the file skips the per-line loop.
