@@ -69,7 +69,14 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
         // and the file reported `writesState: false`.
         const isSessionWrite =
           PY_SESSION_WRITE_LEAVES.has(leaf) && PY_DB_RECEIVER_RE.test(receiver);
-        if (fnName.includes(".") && (PY_DB_LEAVES.has(leaf) || isSessionWrite)) {
+        // Generic verbs (`execute`, `find`, `filter`, `query`) are also every
+        // interpreter's, string's and ElementTree's: they need the chain to
+        // show a datastore — a session/cursor/collection receiver, a Django
+        // manager (`.objects`), a SQLAlchemy query (`.query(...)`).
+        const isQuery =
+          PY_DB_LEAVES.has(leaf) ||
+          (PY_GENERIC_DB_LEAVES.has(leaf) && (datastoreChain(fnName) || relatedManager(fnName, leaf)));
+        if (fnName.includes(".") && (isQuery || isSessionWrite)) {
           const access = isSessionWrite ? "write" : dbAccessFor(leaf, PY_DB_ACCESS);
           sources.push(this.ds({
             kind: "database",
@@ -84,13 +91,59 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
   }
 }
 
-/** Method leaves that indicate a DB op (SQLAlchemy / Django ORM / pymongo / DB-API). */
+/**
+ * Method leaves that indicate a DB op on any receiver (SQLAlchemy / Django ORM
+ * / pymongo / DB-API). `save` stays here: Django's `order.save()` is the write,
+ * and a project class's own `save` is dropped once the linker resolves it
+ * (`demoteProjectCallDataSources`).
+ */
 const PY_DB_LEAVES = new Set([
-  "query", "execute", "executemany", "find", "find_one", "find_many",
-  "filter", "filter_by", "all", "first", "get_or_create", "save",
+  "executemany", "find_one", "find_many", "filter_by", "get_or_create", "save",
   "insert_one", "insert_many", "update_one", "update_many",
-  "delete_one", "delete_many", "count_documents", "aggregate",
+  "delete_one", "delete_many", "count_documents",
 ]);
+
+/** DB verbs that are also ordinary method names — trusted only on a datastore-shaped chain. */
+const PY_GENERIC_DB_LEAVES = new Set(["query", "execute", "find", "filter", "all", "first", "aggregate"]);
+
+/** A receiver segment that names a datastore handle or an ORM query. */
+const PY_DATASTORE_SEGMENT_RE = /(^|_)(session|db|conn|connection|cursor|cur|engine|collection|coll|database|queryset|qs)$/i;
+
+/**
+ * A Django related manager queried — `user.orders.all()`,
+ * `self.items.filter(...)`: a set-returning verb on an attribute of an object
+ * (two or more plain names). A single receiver (`mask.all()`, `ast.filter`)
+ * is any other object's method.
+ */
+function relatedManager(fnName: string, leaf: string): boolean {
+  return (leaf === "all" || leaf === "first" || leaf === "filter") &&
+    /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*){2,}$/.test(fnName);
+}
+
+/**
+ * Does the receiver chain of `fnName` (leaf dropped) show a datastore? A
+ * segment shaped like a session/cursor/collection, a Django manager
+ * (`Order.objects.filter`), or a SQLAlchemy query (`session.query(User).first`,
+ * Flask-SQLAlchemy `User.query.filter_by`).
+ */
+function datastoreChain(fnName: string): boolean {
+  const segments: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < fnName.length; i++) {
+    const c = fnName[i]!;
+    if (c === "(" || c === "[") depth++;
+    else if (c === ")" || c === "]") depth--;
+    else if (c === "." && depth === 0) {
+      segments.push(fnName.slice(start, i));
+      start = i + 1;
+    }
+  }
+  return segments.some((seg) => {
+    const name = seg.replace(/[([].*$/s, "").trim();
+    return name === "objects" || name === "query" || PY_DATASTORE_SEGMENT_RE.test(name);
+  });
+}
 
 /**
  * Session/connection-mutating verbs. Plain English words, so they need a

@@ -54,3 +54,46 @@ describe("Python outbound HTTP calls", () => {
     expect(calls).toEqual([{ name: "requests.get", target: "/api/x", line: 1 }]);
   });
 });
+
+describe("Python database calls", () => {
+  const dbCallsOf = async (src: string) => {
+    const tree = await parseSource(src, "python" as never, "x.py");
+    return new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database").map((d) => d.name);
+  };
+
+  it("reads generic verbs on a datastore-shaped chain", async () => {
+    expect(await dbCallsOf([
+      'cursor.execute("SELECT 1")',
+      'self.conn.execute("DELETE FROM t")',
+      "Order.objects.filter(paid=True)",
+      "session.query(User).filter(User.id == 1).first()",
+      "User.query.filter_by(name=n)",
+      "db.users.find({})",
+      "user.orders.all()",
+      "order.save()",
+    ].join("\n"))).toEqual([
+      "cursor.execute",
+      "self.conn.execute",
+      "Order.objects.filter",
+      "session.query(User).filter(User.id == 1).first",
+      "session.query(User).filter",
+      "session.query",
+      "User.query.filter_by",
+      "db.users.find",
+      "user.orders.all",
+      "order.save",
+    ]);
+  });
+
+  it("leaves interpreters, strings, XML trees and arrays alone", async () => {
+    // code-scalpel: every one of these was a "database" access.
+    expect(await dbCallsOf([
+      "interp.execute(ir)",
+      "SymbolicInterpreter().execute(code)",
+      'line.find("TODO")',
+      'root.find("BugInstance")',
+      "ast.filter(javalang.tree.MethodDeclaration)",
+      "mask.all()",
+    ].join("\n"))).toEqual([]);
+  });
+});

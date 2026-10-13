@@ -22,11 +22,30 @@ export function registerCallPatterns(
   if (dbRoots) DB_ROOTS.set(language, dbRoots);
 }
 
-/** Method names that indicate an API/HTTP call */
+/**
+ * Method names that indicate an API/HTTP call on any receiver. Not `execute`:
+ * on an unknown receiver it is a statement far more often than a request —
+ * DB-API `cursor.execute(sql)`, JDBC `stmt.execute(sql)`, a command object's
+ * `Execute()` — and an HTTP client spelled that way is named by its root.
+ */
 const API_METHODS = new Set([
   "exchange", "getForObject", "getForEntity", "postForObject", "postForEntity",
-  "execute", "send", "request",
+  "send", "request",
 ]);
+
+/**
+ * Does `name`'s receiver root match one of `roots`? A dotted root
+ * (`http.client`, `urllib.request`, `clj-http.client`) names a module path and
+ * matches as a prefix of the call, so `urllib.parse.quote` is not `urllib.request`.
+ */
+function matchesRoot(name: string, roots: readonly string[]): boolean {
+  const rootObj = name.split(".")[0]!.toLowerCase();
+  const lower = name.toLowerCase();
+  return roots.some((r) => {
+    const root = r.toLowerCase();
+    return root.includes(".") ? lower === root || lower.startsWith(root + ".") : rootObj === root;
+  });
+}
 
 /** Method names that indicate database operations */
 const DB_METHODS = new Set([
@@ -58,8 +77,7 @@ export function isApiCall(name: string, language: Language): boolean {
   if (!roots) return false;
 
   // Check if the root object is a known API client
-  const rootObj = name.split(".")[0]!;
-  if (roots.some(r => rootObj === r || rootObj.toLowerCase() === r.toLowerCase())) return true;
+  if (matchesRoot(name, roots)) return true;
 
   // Check if the method is a known API method on a qualified call
   if (name.includes(".")) {
@@ -84,16 +102,15 @@ export function isDatabaseCall(name: string, language: Language, byMethodName = 
   if (!roots) return false;
 
   // Check if the root object is a known DB client/ORM
-  const rootObj = name.split(".")[0]!;
-  if (roots.some(r => rootObj === r || rootObj.toLowerCase() === r.toLowerCase())) {
-    // Must also have a method call (not just "db" by itself)
-    if (name.includes(".")) return true;
-  }
+  // (must also have a method call — not just "db" by itself)
+  if (name.includes(".") && matchesRoot(name, roots)) return true;
 
-  if (!byMethodName) return false;
+  // A bare call (`sum(xs)`, `count(…)`) is a function, not a method on a
+  // datastore: its name alone is no evidence.
+  if (!byMethodName || !name.includes(".")) return false;
 
   // Check if the method name matches DB patterns
-  const method = name.includes(".") ? name.split(".").pop()! : name;
+  const method = name.split(".").pop()!;
   if (DB_METHODS.has(method)) return true;
 
   // Java-style Spring Data patterns: findBy*, deleteBy*, countBy*, existsBy*
