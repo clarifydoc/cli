@@ -457,6 +457,13 @@ describe("JS request descriptors and positional request()", () => {
     ]);
   });
 
+  it("reads a bare request(…) as HTTP only when the file imports it", async () => {
+    // VueUse: \`request\` is the wake lock's own function.
+    expect(await apiCallsOf(`const { request } = useWakeLock();\nasync function lock() { await request("screen"); }`)).toEqual([]);
+    const lib = await apiCallsOf(`import request from "request";\nrequest("https://api.example.com/v1/items");\nrequest("items");`);
+    expect(lib.map((c) => c.target)).toEqual(["https://api.example.com/v1/items", "items"]);
+  });
+
   it("unwraps a .replace() on a literal path, keeping its parameter", async () => {
     const calls = await apiCallsOf(`axios({ method: 'GET', url: '/users/{id}'.replace('{id}', String(id)) });`);
     expect(calls.map((c) => c.target)).toEqual(["/users/{id}"]);
