@@ -66,7 +66,7 @@ import { isGeneratedFile } from "./generated-file-detector.js";
 import { TOOL_VERSION } from "./version.js";
 import { SCHEMA_VERSION } from "./element-registry.js";
 import { detectDuplicates } from "./duplication-detector.js";
-import { classifyFileLayers, detectLayerViolations } from "./layer-analyzer.js";
+import { classifyFileLayers, detectLayerViolations, detectRuleViolations } from "./layer-analyzer.js";
 import { analyzeBlastRadius } from "./blast-radius.js";
 import { attachTraceImpact } from "./trace-impact.js";
 import { attachRiskVerdicts } from "./risk-verdict.js";
@@ -1058,7 +1058,11 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     allAnalyses.map((a) => ({ path: a.filePath, language: a.language })),
     architecture,
   );
-  const layerViolations = detectLayerViolations(allAnalyses, componentGraph, fileLayerMap).filter(
+  const layerViolations = [
+    ...detectLayerViolations(allAnalyses, componentGraph, fileLayerMap),
+    // The team's own rules (`.clarifydoc/config.json` `rules`), beside the built-in order.
+    ...detectRuleViolations(allAnalyses, componentGraph, fileLayerMap, architecture.rules),
+  ].filter(
     (v) => !isUnauthored(v.sourceFile) && !isUnauthored(v.targetFile),
   );
 

@@ -278,3 +278,18 @@ describe("classifyFileLayers — language-aware test detection", () => {
     expect(classifyFileLayers([{ path: "pkg/handlers/server.go", language: "go" as never }])["pkg/handlers/server.go"]).toBe("services");
   });
 });
+
+describe("detectRuleViolations — the team's own import rules", () => {
+  it("reports an import a rule forbids, with the rule's name, and honours except", async () => {
+    const { detectRuleViolations } = await import("./layer-analyzer.js");
+    const graph = {
+      "features/billing/invoice.ts": ["features/payroll/salary.ts", "features/payroll/shared/money.ts", "lib/date.ts"],
+      "features/payroll/salary.ts": ["features/billing/invoice.ts"],
+    };
+    const rules = [{ name: "billing ↛ payroll", from: ["features/billing/**"], to: ["features/payroll/**"], except: ["**/shared/**"], severity: "error" as const }];
+    const v = detectRuleViolations([], graph, {}, rules);
+    expect(v.map((x) => [x.sourceFile, x.targetFile, x.rule, x.severity])).toEqual([
+      ["features/billing/invoice.ts", "features/payroll/salary.ts", "billing ↛ payroll", "error"],
+    ]);
+  });
+});

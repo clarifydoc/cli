@@ -67,6 +67,22 @@ export interface LayerRuleInput {
 }
 
 /**
+ * A team's own dependency rule: files matching `from` must not import files
+ * matching `to` (`features/billing/**` must not import `features/payroll/**`).
+ * `except` lifts it for the files it names on either side.
+ */
+export interface DependencyRuleInput {
+  name: string;
+  from: string[];
+  to: string[];
+  except?: string[];
+  /** How a breach is reported; `error` by default. */
+  severity?: "error" | "warn";
+  /** Optional note for the team; ignored by the tool. */
+  description?: string;
+}
+
+/**
  * The shape of `.clarifydoc/config.json`, a team's hand-written overrides for
  * the quality analyses. Every section is optional; globs are project-relative
  * (see the module comment for the dialect).
@@ -85,10 +101,12 @@ export interface ProjectConfig {
   exempt?: string[];
   /** Generated code: excluded from every quality signal (patterns, duplicates, violations, pressure, health). */
   generated?: string[];
+  /** The team's own import rules, checked over the dependency graph and reported as layer violations. */
+  rules?: DependencyRuleInput[];
 }
 
 const KNOWN_SECTIONS: ReadonlySet<string> = new Set([
-  "$comment", "$schema", "refactorPressure", "layers", "exempt", "generated",
+  "$comment", "$schema", "refactorPressure", "layers", "exempt", "generated", "rules",
 ]);
 
 const ARCH_LAYERS: ReadonlySet<string> = new Set<ArchLayer>([
@@ -150,6 +168,33 @@ export function loadProjectConfig(projectRoot: string): LoadedProjectConfig {
       config.layers = rules;
     }
   }
+  if (parsed.rules !== undefined) {
+    if (!Array.isArray(parsed.rules)) {
+      warnings.push(`${PROJECT_CONFIG_RELATIVE_PATH}: "rules" must be an array; ignored`);
+    } else {
+      const rules: DependencyRuleInput[] = [];
+      parsed.rules.forEach((rule, i) => {
+        const globs = (v: unknown): string[] => (typeof v === "string" && v.trim() ? [v] : stringList(v));
+        if (!isPlainObject(rule) || typeof rule.name !== "string" || !rule.name.trim()) {
+          warnings.push(`${PROJECT_CONFIG_RELATIVE_PATH}: rules[${i}] needs a "name"; ignored`);
+          return;
+        }
+        const from = globs(rule.from);
+        const to = globs(rule.to);
+        if (from.length === 0 || to.length === 0) {
+          warnings.push(`${PROJECT_CONFIG_RELATIVE_PATH}: rules[${i}] (${rule.name}) needs "from" and "to" globs; ignored`);
+          return;
+        }
+        const severity = rule.severity === "warn" ? "warn" : "error";
+        if (rule.severity !== undefined && rule.severity !== "warn" && rule.severity !== "error") {
+          warnings.push(`${PROJECT_CONFIG_RELATIVE_PATH}: rules[${i}] (${rule.name}) severity must be "error" or "warn"; using "error"`);
+        }
+        const except = globs(rule.except);
+        rules.push({ name: rule.name, from, to, ...(except.length ? { except } : {}), severity });
+      });
+      config.rules = rules;
+    }
+  }
   for (const key of ["exempt", "generated"] as const) {
     if (parsed[key] === undefined) continue;
     const list = stringList(parsed[key]);
@@ -171,6 +216,7 @@ export interface ArchitectureOverrides {
   layers: Array<{ layer: ArchLayer; patterns: string[] }>;
   exempt: string[];
   generated: string[];
+  rules: Array<Required<Pick<DependencyRuleInput, "name" | "from" | "to" | "severity">> & { except: string[] }>;
 }
 
 /**
@@ -185,6 +231,13 @@ export function resolveArchitectureOverrides(config: ProjectConfig): Architectur
     layers: (config.layers ?? []).map((r) => ({ layer: r.layer, patterns: r.patterns.map(normalizeGlob) })),
     exempt: (config.exempt ?? []).map(normalizeGlob),
     generated: (config.generated ?? []).map(normalizeGlob),
+    rules: (config.rules ?? []).map((r) => ({
+      name: r.name,
+      from: r.from.map(normalizeGlob),
+      to: r.to.map(normalizeGlob),
+      except: (r.except ?? []).map(normalizeGlob),
+      severity: r.severity ?? "error",
+    })),
   };
 }
 

@@ -348,6 +348,10 @@ Optional, committed with the code: `.clarifydoc/config.json` (next to `.clarifyd
   ],
   "exempt":    ["tools/**", "prototypes/**"],
   "generated": ["**/*.generated.*", "src/api/gen/**"],
+  "rules": [
+    { "name": "billing stays out of payroll", "from": "features/billing/**", "to": "features/payroll/**", "except": ["**/shared/**"] },
+    { "name": "domain is pure", "from": "src/Domain/**", "to": "src/Infrastructure/**", "severity": "warn" }
+  ],
   "refactorPressure": {
     "weights":  { "complexity": 0.25, "size": 0.1, "responsibility": 0.2, "coupling": 0.2, "churn": 0.25 },
     "ceilings": { "maxCognitive": 50, "loc": 800, "concerns": 4, "fanIn": 15, "fanOut": 15, "commits": 30 },
@@ -358,6 +362,8 @@ Optional, committed with the code: `.clarifydoc/config.json` (next to `.clarifyd
 ```
 
 `layers` assigns architecture layers by glob (`ui`, `components`, `services`, `data`, `utils`, `config`), checked in order **before** the built-in path heuristics — the way to fix a layer the heuristics get wrong for your repo (an `adapters/` folder that is infrastructure here and UI glue there). `exempt` marks trees outside the layered application (tooling, scripts, prototypes) so they are never a layer-violation source or target; tests are always exempt. `generated` marks generated code by glob; it is excluded from every quality signal (patterns, duplicates, violations, refactor pressure, the health grade), extending the automatic detection of generated barrel trees. Globs use the ignore-file dialect (`*`, `**`, `?`) and match the posix project-relative path. Anchoring follows gitignore: a pattern carrying a `/` (`/dist`, `src/db/**`) is fixed to the project root, while a slash-less one (`dist`, `*.generated.ts`) also matches a bare file name anywhere.
+
+`rules` are your own import rules: a file matching `from` must not import a file matching `to` (one glob or a list on each side; `except` lifts the rule for the files it names on either end; `severity` is `error` unless it says `warn`). Each breach is reported among the layer violations with the rule's name — the Health tab and `clarifydoc_health` category `layers`.
 
 `refactorPressure` tunes the composite **refactor pressure** score (`project-summary.json` → `refactorPressure`, MCP `clarifydoc_health` category `pressure`): each file's cognitive complexity, size, mixed concerns, coupling and git churn are normalized against the `ceilings`, combined with the `weights`, and cut into `bands`. `gates` fire regardless of the score. Every row lists the drivers behind it and a `confidence` equal to the share of signal that was available, so a run without git history says so instead of scoring lower.
 

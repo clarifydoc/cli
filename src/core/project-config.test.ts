@@ -104,3 +104,25 @@ describe("resolveArchitectureOverrides / matchesAnyGlob", () => {
     expect(matchesAnyGlob("vendor/gen.ts", ["/vendor/**"])).toBe(true);
   });
 });
+
+describe("loadProjectConfig — dependency rules", () => {
+  it("reads rules, accepts a single glob for a side, and drops malformed ones", () => {
+    write(JSON.stringify({
+      rules: [
+        { name: "billing ↛ payroll", from: "features/billing/**", to: ["features/payroll/**"], except: ["**/shared/**"] },
+        { name: "domain is pure", from: ["Domain/**"], to: ["Infrastructure/**"], severity: "warn" },
+        { name: "no target", from: ["a/**"] },
+        { from: ["a/**"], to: ["b/**"] },
+      ],
+    }));
+    const r = loadProjectConfig(root);
+    expect(r.config.rules).toEqual([
+      { name: "billing ↛ payroll", from: ["features/billing/**"], to: ["features/payroll/**"], except: ["**/shared/**"], severity: "error" },
+      { name: "domain is pure", from: ["Domain/**"], to: ["Infrastructure/**"], severity: "warn" },
+    ]);
+    expect(r.warnings).toEqual([
+      expect.stringMatching(/rules\[2\] \(no target\) needs "from" and "to"/),
+      expect.stringMatching(/rules\[3\] needs a "name"/),
+    ]);
+  });
+});
