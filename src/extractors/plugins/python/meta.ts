@@ -59,6 +59,7 @@ const SECURITY_RULES: readonly SecurityRule[] = [
     // (`execute("… %s", (uid,))`) passes the values separately and never matches.
     category: "sql-injection",
     severity: "high",
+    multiline: true,
     pattern: /\.(?:execute|executemany|executescript|raw|extra)\s*\(\s*(?:[rRbB]?[fF][rRbB]?\s|\s+(?:\+|%\s*[\w(]|\.\s*format\s*\())/,
     message: "Possible SQL injection: the statement is built from values. Pass them as query parameters.",
     priority: 39,

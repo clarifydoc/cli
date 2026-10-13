@@ -31,6 +31,7 @@ const GENERIC_RULES: SecurityRule[] = [
   {
     category: "sql-injection",
     severity: "high",
+    multiline: true,
     pattern: /\b(?:query|execute|executeQuery|executeUpdate|createQuery|createNativeQuery|prepareStatement|rawQuery|SqlCommand|FromSqlRaw|ExecuteSqlRaw)\s*\(\s*(["'`])(?=(?:\\.|(?!\1)[^\\])*?\b(?:SELECT|INSERT|UPDATE|DELETE|WHERE|FROM|INTO|VALUES|SET)\b)(?:\\.|(?!\1)[^\\])*\1\s*\+/i,
     message: "Possible SQL injection via string concatenation. Use parameterized queries.",
     priority: 11,
@@ -141,6 +142,31 @@ function snippetOf(line: string, category: SecurityIssue["category"]): string {
   return text.substring(0, 100);
 }
 
+/** Text before a match that opens a comment on the same line. */
+const TRAILING_COMMENT_RE = /(?:^|\s)(?:\/\/|#(?=\s|$)|<!--)/;
+/** Inline suppressions: our own, Bandit's and Sonar's. */
+const SUPPRESS_RE = /\b(?:clarifydoc-ignore(?!-next-line)|nosec|NOSONAR)\b/;
+const SUPPRESS_NEXT_RE = /\bclarifydoc-ignore-next-line\b/;
+
+/** Offset of each line's first character. */
+function startsOfLines(text: string): number[] {
+  const out = [0];
+  for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) out.push(i + 1);
+  return out;
+}
+
+/** The 0-based line holding `offset` (binary search over `startsOfLines`). */
+function lineIndexAt(starts: readonly number[], offset: number): number {
+  let lo = 0;
+  let hi = starts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (starts[mid]! <= offset) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
 /** Merged generic + plugin rules per language, sorted by priority (cached). */
 const mergedRulesCache = new Map<Language, readonly SecurityRule[]>();
 
@@ -176,41 +202,66 @@ export function scanSecurity(
   let originalLines: string[] | null = null; // for snippets, split on first hit
   const isTest = isTestFile(filePath, language);
 
+  // A finding at line `i` (0-based) whose match starts at column `col`, unless
+  // the line says it is not one: a comment, a suppression, a secret read
+  // from configuration rather than written into the code.
+  const report = (rule: SecurityRule, i: number, col: number): void => {
+    const line = lines[i] ?? "";
+    const trimmed = line.trimStart();
+    if (trimmed.startsWith("//") || trimmed.startsWith("#") || trimmed.startsWith("*") || trimmed.startsWith("/*") || trimmed.startsWith("<!--")) {
+      return;
+    }
+    // A trailing comment (`x = 1; // token="…"`, `<!-- … -->`): the match is not code.
+    if (TRAILING_COMMENT_RE.test(line.slice(0, col))) return;
+    originalLines ??= splitLines(sourceText);
+    // Suppressed on the line (`nosec`, `NOSONAR`, `clarifydoc-ignore`) or by the
+    // line before (`clarifydoc-ignore-next-line`). Read from the source as
+    // written: a plugin's pre-filter may have blanked its comments.
+    if (SUPPRESS_RE.test(originalLines[i] ?? "") || SUPPRESS_NEXT_RE.test(originalLines[i - 1] ?? "")) return;
+    if (rule.category === "hardcoded-secret") {
+      // Env reads and KEY_* constants — an identifier NAMED `KEY_PASSWORD`
+      // holds a settings-store key name, not a secret
+      // (`const val KEY_PASSWORD = "istDpPassword"`). A value read FROM
+      // config after the match is no literal secret either; `config.dbPassword
+      // = "…"` (config written to) still is.
+      const after = line.slice(col);
+      if (line.includes("process.env") || line.includes("os.environ") ||
+        after.includes("config.") || after.includes("settings.") ||
+        /(?:^|[^\w])KEY_\w*\s*[=:]/.test(line)) return;
+    }
+    issues.push({
+      category: rule.category,
+      severity: rule.severity,
+      message: rule.message,
+      filePath,
+      line: i + 1,
+      snippet: snippetOf(originalLines[i] ?? line, rule.category),
+    });
+  };
+
   // Apply regex rules
+  let lineStarts: number[] | null = null;
   for (const rule of rulesFor(language)) {
     if (rule.excludeTest && isTest) continue;
     // Whole-text gate: a per-line match implies a whole-text match, so a
     // rule that matches nothing in the file skips the per-line loop.
     if (!rule.pattern.test(effectiveSource)) continue;
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (rule.pattern.test(line)) {
-        // Skip if line is a comment
-        const trimmed = line.trimStart();
-        if (trimmed.startsWith("//") || trimmed.startsWith("#") || trimmed.startsWith("*") || trimmed.startsWith("/*")) {
-          continue;
-        }
-        // Skip env variable references, and KEY_* constants — an identifier
-        // NAMED `KEY_PASSWORD` holds a settings-store key name, not a secret
-        // (`const val KEY_PASSWORD = "istDpPassword"`).
-        if (rule.category === "hardcoded-secret" && (
-          line.includes("process.env") || line.includes("os.environ") ||
-          line.includes("config.") || line.includes("settings.") ||
-          /(?:^|[^\w])KEY_\w*\s*[=:]/.test(line)
-        )) {
-          continue;
-        }
-        originalLines ??= splitLines(sourceText);
-        issues.push({
-          category: rule.category,
-          severity: rule.severity,
-          message: rule.message,
-          filePath,
-          line: i + 1,
-          snippet: snippetOf(originalLines[i] ?? line, rule.category),
-        });
+    if (rule.multiline) {
+      // A statement formatted across lines (`db.query(\n  "SELECT …" +\n  id)`):
+      // match the whole text, report at the line the match starts on.
+      lineStarts ??= startsOfLines(effectiveSource);
+      const re = new RegExp(rule.pattern.source, rule.pattern.flags.includes("g") ? rule.pattern.flags : `${rule.pattern.flags}g`);
+      for (let m = re.exec(effectiveSource); m; m = re.exec(effectiveSource)) {
+        const i = lineIndexAt(lineStarts, m.index);
+        report(rule, i, m.index - lineStarts[i]!);
+        if (m[0].length === 0) re.lastIndex++;
       }
+      continue;
+    }
+    for (let i = 0; i < lines.length; i++) {
+      const m = rule.pattern.exec(lines[i]!);
+      if (m) report(rule, i, m.index);
     }
   }
 
