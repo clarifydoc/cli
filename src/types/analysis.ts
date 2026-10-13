@@ -2027,6 +2027,12 @@ export interface SecurityIssue {
   snippet: string;
   /** The weakness it is an instance of (`CWE-89`), when one applies. */
   cwe?: string;
+  /**
+   * The API routes whose handlers reach the function this input-sink finding
+   * sits in (`POST /search`, 2 hops), nearest first, over resolved calls.
+   * Reachability, not taint. Absent when no route reaches it.
+   */
+  entries?: Array<{ route: string; file: string; distance: number; confidence: Confidence }>;
 }
 
 export interface DuplicateGroup {

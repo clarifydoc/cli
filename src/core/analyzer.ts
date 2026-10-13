@@ -1335,6 +1335,12 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     progress.detail(`  Refactor pressure: ${refactorPressure.length} file(s) scored, ${pressing} strong/urgent`);
   }
 
+  // Which API routes reach each input-sink finding: "SQL injection at
+  // repo.ts:42" becomes "reachable from POST /search". Before suggestions,
+  // which rank by it.
+  const findingsWithEntries = attachFindingEntries(allSecurityIssues, allAnalyses, symbolLinks);
+  if (findingsWithEntries > 0) progress.detail(`  Security findings reachable from a route: ${findingsWithEntries}`);
+
   const healthScore = computeHealthScore({
     analyses: allAnalyses,
     componentGraph,
@@ -2473,6 +2479,7 @@ function filePathToRoute(filePath: string): string {
 }
 
 import type { ImportInfo, RouteInfo } from "../types/analysis.js";
+import { attachFindingEntries } from "./finding-entries.js";
 
 /** Import source patterns → framework id */
 const IMPORT_FRAMEWORK_MAP: Record<string, string> = {

@@ -89,12 +89,20 @@ export function generateSuggestions(input: SuggestionInput): Suggestion[] {
   const suggestions: Suggestion[] = [];
 
   // ── Critical: Security issues ──
-  const critSec = input.securityIssues.filter((s) => s.severity === "critical" || s.severity === "high");
+  // A finding an API route reaches comes first: it is the one a request can feed.
+  const critSec = input.securityIssues
+    .filter((s) => s.severity === "critical" || s.severity === "high")
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => (b.s.entries?.length ? 1 : 0) - (a.s.entries?.length ? 1 : 0) || a.i - b.i)
+    .map(({ s }) => s);
   for (const issue of critSec.slice(0, 10)) {
+    const entry = issue.entries?.[0];
     suggestions.push({
       priority: "critical",
       category: "Security",
-      message: `${issue.message}`,
+      message: entry
+        ? `${issue.message} Reachable from ${entry.route}${issue.entries!.length > 1 ? ` and ${issue.entries!.length - 1} more route(s)` : ""}.`
+        : `${issue.message}`,
       filePath: issue.filePath,
       actionable: `Fix ${issue.category} issue at line ${issue.line}`,
     });
