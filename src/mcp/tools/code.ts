@@ -734,6 +734,13 @@ export function traceTool(ctx: ToolContext): McpTool {
         },
         depth: { type: "number", description: "Hops to follow, 1-4 (default 2)." },
         limit: { type: "number", description: "Max rows per level (default 20)." },
+        minConfidence: {
+          type: "string",
+          enum: ["EXTRACTED", "INFERRED", "AMBIGUOUS"],
+          description:
+            "Follow only edges at least this sure: EXTRACTED (stated by the source), INFERRED (typed or resolved " +
+            "receivers too), AMBIGUOUS (default — name guesses too).",
+        },
       },
       additionalProperties: false,
     },
@@ -744,12 +751,16 @@ export function traceTool(ctx: ToolContext): McpTool {
       const direction = enumArg(args, "direction", ["callers", "callees", "both"] as const) ?? "both";
       const depth = numberArg(args, "depth", 2, { min: 1, max: 4 });
       const limit = numberArg(args, "limit", 20, { max: 200 });
+      const minConfidence = enumArg(args, "minConfidence", ["EXTRACTED", "INFERRED", "AMBIGUOUS"] as const) ?? "AMBIGUOUS";
       if (!symbol && !fileArg) {
         throw new Error("Pass `symbol`, `file`, or both.");
       }
       const file = fileArg ? mustResolveFile(loaded, fileArg) : undefined;
 
-      const all = loaded.summary.symbolLinks ?? [];
+      const everything = loaded.summary.symbolLinks ?? [];
+      const all = minConfidence === "AMBIGUOUS"
+        ? everything
+        : everything.filter((l) => CONFIDENCE_RANK[l.confidence ?? "INFERRED"] >= CONFIDENCE_RANK[minConfidence]);
       const seeds = all.filter((l) =>
         matchesSeed(l, symbol, file, "source") || matchesSeed(l, symbol, file, "target"),
       );
@@ -773,7 +784,7 @@ export function traceTool(ctx: ToolContext): McpTool {
       }
 
       const blocks: string[][] = [
-        [`# Call trace — ${facts([["symbol", symbol], ["file", file]])}`, ""],
+        [`# Call trace — ${facts([["symbol", symbol], ["file", file], ["minConfidence", minConfidence === "AMBIGUOUS" ? undefined : minConfidence]])}`, ""],
       ];
 
       if (direction === "callers" || direction === "both") {
@@ -876,6 +887,11 @@ function walk(
   const seedList = [...frontier];
   lines.push(...bulletList(seedList, limit, (k) => `seed: ${labels.get(k) ?? k}`));
 
+  // How many edges lead on from a node, the way this walk goes — a hub's
+  // count is shown so a caller knows not to expand it.
+  const fanOf = (key: string): number =>
+    (direction === "callers" ? byTarget.get(key) : bySource.get(key))?.length ?? 0;
+  const notes: string[] = [];
   let current = seedList;
   for (let level = 1; level <= depth; level++) {
     const next: string[] = [];
@@ -891,10 +907,13 @@ function walk(
         visited.add(key);
         next.push(key);
         labels.set(key, `${otherSymbol}() (${otherFile})`);
+        const fan = fanOf(key);
         rows.push(
           `${otherSymbol}() ${loc(otherFile, otherLine)} — ${
             direction === "callers" ? "calls" : "called from"
-          } ${edge.callName}${confidenceNote(edge.confidence, edge.resolvedBy, edge.strategy)}`,
+          } ${edge.callName}${confidenceNote(edge.confidence, edge.resolvedBy, edge.strategy)}${
+            fan >= HUB_FAN ? ` [hub: ${fan} ${direction}]` : ""
+          }`,
         );
       }
     }
@@ -902,10 +921,30 @@ function walk(
     const indent = "  ".repeat(level);
     lines.push(`${indent}hop ${level} (${rows.length}):`);
     lines.push(...bulletList(rows, limit, (r) => r, { indent }));
-    current = next.slice(0, limit * 2);
+    // Only so many nodes of a hop are walked on; say so rather than letting
+    // the next hop look complete.
+    const expand = limit * 2;
+    if (level < depth && next.length > expand) {
+      notes.push(`hop ${level}: ${next.length - expand} of ${next.length} nodes not walked further — narrow with \`file\` or re-call from one of them`);
+    }
+    current = next.slice(0, expand);
+    if (level === depth) {
+      const onward = current.filter((k) => (direction === "callers" ? byTarget.get(k) : bySource.get(k))?.some((e) =>
+        !visited.has(direction === "callers" ? symbolKey(e.sourceFile, e.sourceSymbol) : symbolKey(e.targetFile, e.targetSymbol))));
+      if (onward.length > 0) {
+        notes.push(`depth ${depth} reached: ${plural(onward.length, "node")} at the last hop ${onward.length === 1 ? "has" : "have"} further ${direction} — raise \`depth\` (max 4) or re-call from one`);
+      }
+    }
   }
+  if (notes.length) lines.push(...notes.map((n) => `(${n})`));
   return lines;
 }
+
+/** Edges from one node, in the walk's direction, at which it is marked a hub. */
+const HUB_FAN = 25;
+
+/** Ordering for `minConfidence`: an edge passes when it is at least as sure. */
+const CONFIDENCE_RANK: Record<string, number> = { AMBIGUOUS: 0, INFERRED: 1, EXTRACTED: 2 };
 
 function push<T>(map: Map<string, T[]>, key: string, value: T): void {
   const list = map.get(key);
