@@ -3,6 +3,7 @@
 import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
 import { describeReasons } from "../../core/risk-verdict.js";
 import type { McpTool } from "../protocol.js";
+import { byOrdinal } from "../../core/ordinal.js";
 import type { ApiCallMiss, ApiRouteLinkStats, SymbolLink } from "../../types/analysis.js";
 import { symbolKey, type FileFacts, type LoadedAnalysis, type RouteWithFile } from "../store.js";
 import {
@@ -792,6 +793,27 @@ export function traceTool(ctx: ToolContext): McpTool {
       }
 
       const to = stringArg(args, "to");
+      // A bare name several definitions share (`create_one` in 25 controllers):
+      // a walk from all of them at once answers nobody's question. Name them,
+      // each as the call that picks it.
+      if (symbol && !file && !to) {
+        const want = symbol.toLowerCase();
+        const defs = new Map<string, { file: string; symbol: string; line: number }>();
+        for (const l of all) {
+          const s = l.targetSymbol.toLowerCase();
+          if (s === want || s.endsWith(`.${want}`)) defs.set(symbolKey(l.targetFile, l.targetSymbol), { file: l.targetFile, symbol: l.targetSymbol, line: l.targetLine });
+        }
+        if (defs.size > 1) {
+          const rows = [...defs.values()].sort((a, b) => byOrdinal(a.file, b.file) || a.line - b.line);
+          return {
+            text: joinLines([
+              `# \`${symbol}\` names ${plural(rows.length, "definition")} — pick one`,
+              ...bulletList(rows, AMBIGUOUS_LISTED, (d) =>
+                `${d.symbol}() ${loc(d.file, d.line)} → clarifydoc_trace symbol="${d.symbol}" file="${d.file}"`),
+            ]),
+          };
+        }
+      }
       if (to) {
         const toFileArg = stringArg(args, "toFile");
         const toFile = toFileArg ? mustResolveFile(loaded, toFileArg) : undefined;
@@ -954,6 +976,9 @@ function walk(
   if (notes.length) lines.push(...notes.map((n) => `(${n})`));
   return lines;
 }
+
+/** Definitions listed when a traced name is ambiguous. */
+const AMBIGUOUS_LISTED = 12;
 
 /** Longest call path `to` searches for. */
 const PATH_MAX_HOPS = 8;
