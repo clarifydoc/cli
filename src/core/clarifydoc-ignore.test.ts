@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { loadIgnorePatterns, isIgnored, fnmatch } from "./clarifydoc-ignore.js";
+import { loadIgnorePatterns, isIgnored, fnmatch, ignoredDirectories } from "./clarifydoc-ignore.js";
+import { discoverFiles } from "./file-discovery.js";
+import { glob } from "./glob.js";
 
 let root: string;
 
@@ -208,4 +210,54 @@ describe("fnmatch — `**` respects path separators", () => {
       expect(fnmatch(path, pattern)).toBe(expected);
     });
   }
+});
+
+describe("ignoredDirectories — what a walk may skip", () => {
+  const pruned = (rel: string) => ignoredDirectories(root, loadIgnorePatterns(root))?.(join(root, rel)) ?? false;
+
+  it("prunes anchored and unanchored directories, and only those", () => {
+    outputIgnore("/cache/.runs/\nscratch\n");
+    expect(pruned("cache/.runs")).toBe(true);
+    expect(pruned("cache/.runs/repo/src")).toBe(true);
+    expect(pruned("pkg/scratch")).toBe(true);
+    expect(pruned("cache")).toBe(false);
+    expect(pruned("src/cache/.runs")).toBe(false);
+  });
+
+  it("never prunes where a later `!` could re-include a file", () => {
+    outputIgnore("src/**\n!src/important.ts\nlogs/\n");
+    expect(pruned("src")).toBe(false);
+    // After the last negation nothing can re-include, so pruning resumes.
+    expect(pruned("logs")).toBe(true);
+  });
+
+  it("does not prune on a whole-path `**` match a deeper path would not repeat", () => {
+    outputIgnore("a**b\n");
+    expect(ignored("a/b")).toBe(true);
+    expect(ignored("a/b/f.ts")).toBe(false);
+    expect(pruned("a/b")).toBe(false);
+  });
+
+  it("is undefined when there is nothing to prune", () => {
+    expect(ignoredDirectories(root, loadIgnorePatterns(root))).toBeUndefined();
+    outputIgnore("x\n!y\n");
+    expect(ignoredDirectories(root, loadIgnorePatterns(root))).toBeUndefined();
+  });
+
+  it("discovery finds the same files without listing an ignored tree", async () => {
+    for (const rel of ["src/app.ts", "data/scan1/x.ts", "data/scan1/deep/y.ts", "keep/z.ts"]) {
+      mkdirSync(join(root, rel, ".."), { recursive: true });
+      writeFileSync(join(root, rel), "export const a = 1;\n");
+    }
+    writeFileSync(join(root, ".clarifydocignore"), "/data/\n");
+    const found = (await discoverFiles(root)).files.map((f) => f.relativePath);
+    expect(found).toEqual(["keep/z.ts", "src/app.ts"]);
+
+    // The walk asks about `data` once and never lists what is below it.
+    const prune = ignoredDirectories(root, loadIgnorePatterns(root))!;
+    const asked: string[] = [];
+    await glob("**/*.ts", { cwd: root, prune: (d) => (asked.push(d.slice(root.length + 1).split("\\").join("/")), prune(d)) });
+    expect(asked).toContain("data");
+    expect(asked.filter((d) => d.startsWith("data/"))).toEqual([]);
+  });
 });

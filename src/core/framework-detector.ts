@@ -3,7 +3,7 @@ import { byOrdinal } from "./ordinal.js";
 import { existsSync } from "fs";
 import { resolve, join } from "path";
 import { glob, type GlobOptions } from "./glob.js";
-import { loadIgnorePatterns, isIgnored } from "./clarifydoc-ignore.js";
+import { loadIgnorePatterns, isIgnored, ignoredDirectories } from "./clarifydoc-ignore.js";
 import type { FrameworkDetection } from "../types/analysis.js";
 import type { ProjectInfo } from "../types/plugin.js";
 import { FRAMEWORK_RULES, FRAMEWORK_MARKER_CANDIDATES, PACKAGE_MANAGERS } from "../extractors/registry.js";
@@ -27,11 +27,12 @@ export async function gatherProjectInfo(
   // into the tree, and their demos drag in whole stacks the project never uses
   // — FireMonkey, Lazarus and Qt were all reported from vendored samples.
   const ignorePatterns = loadIgnorePatterns(root);
+  const prune = ignoredDirectories(root, ignorePatterns);
   const globFiles = async (
     patterns: string | string[],
     options: GlobOptions,
   ): Promise<string[]> => {
-    const found = await glob(patterns, options);
+    const found = await glob(patterns, { prune, ...options });
     if (ignorePatterns.length === 0) return found;
     return found.filter((rel) => !isIgnored(join(root, rel), root, ignorePatterns));
   };

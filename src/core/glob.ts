@@ -41,6 +41,11 @@ export interface GlobOptions {
   deep?: number;
   /** List symbolic links as if they were files, and record them here. */
   links?: LinkedFiles;
+  /**
+   * Directories not to enter, by absolute path — asked of each directory as
+   * it is listed, so a pruned tree costs one call instead of a walk.
+   */
+  prune?: (absoluteDir: string) => boolean;
 }
 
 /**
@@ -52,30 +57,18 @@ export interface GlobOptions {
  */
 export class LinkedFiles {
   private readonly paths = new Set<string>();
-  /** The file-system adapter the walk runs on. */
-  readonly fs: NonNullable<TinyGlobOptions["fs"]>;
 
-  constructor() {
-    const record = (dir: string, entries: Dirent[]): Dirent[] =>
-      entries.map((entry) => {
-        if (!entry.isSymbolicLink()) return entry;
-        this.paths.add(resolve(dir, entry.name));
-        return Object.create(entry, {
-          isSymbolicLink: { value: () => false },
-          isFile: { value: () => true },
-          isDirectory: { value: () => false },
-        }) as Dirent;
-      });
-    this.fs = {
-      stat,
-      statSync,
-      realpath,
-      realpathSync,
-      readdir: ((dir: string, options: { withFileTypes: true }, cb: (err: NodeJS.ErrnoException | null, entries: Dirent[]) => void) =>
-        readdir(dir, options, (err, entries) => cb(err, err ? [] : record(dir, entries)))) as typeof readdir,
-      readdirSync: ((dir: string, options: { withFileTypes: true }) =>
-        record(dir, readdirSync(dir, options))) as typeof readdirSync,
-    };
+  /** Report each link in one directory listing as a file, recording it. */
+  record(dir: string, entries: Dirent[]): Dirent[] {
+    return entries.map((entry) => {
+      if (!entry.isSymbolicLink()) return entry;
+      this.paths.add(resolve(dir, entry.name));
+      return Object.create(entry, {
+        isSymbolicLink: { value: () => false },
+        isFile: { value: () => true },
+        isDirectory: { value: () => false },
+      }) as Dirent;
+    });
   }
 
   /** Whether `absolutePath` was listed as a link. */
@@ -85,10 +78,34 @@ export class LinkedFiles {
 }
 
 /**
+ * The file-system adapter a walk runs on when it records links or prunes
+ * directories: every listing passes through here before fdir sees it.
+ */
+function walkFs(
+  links: LinkedFiles | undefined,
+  prune: ((absoluteDir: string) => boolean) | undefined,
+): NonNullable<TinyGlobOptions["fs"]> {
+  const filter = (dir: string, entries: Dirent[]): Dirent[] => {
+    const kept = prune ? entries.filter((e) => !(e.isDirectory() && prune(resolve(dir, e.name)))) : entries;
+    return links ? links.record(dir, kept) : kept;
+  };
+  return {
+    stat,
+    statSync,
+    realpath,
+    realpathSync,
+    readdir: ((dir: string, options: { withFileTypes: true }, cb: (err: NodeJS.ErrnoException | null, entries: Dirent[]) => void) =>
+      readdir(dir, options, (err, entries) => cb(err, err ? [] : filter(dir, entries)))) as typeof readdir,
+    readdirSync: ((dir: string, options: { withFileTypes: true }) =>
+      filter(dir, readdirSync(dir, options))) as typeof readdirSync,
+  };
+}
+
+/**
  * Translate `GlobOptions` to the engine's options, pinning the behaviours the
  * wrapper promises (no symlink following, no directory expansion).
  */
-function toEngine({ cwd, ignore, absolute, dot, caseSensitiveMatch, deep, links }: GlobOptions): TinyGlobOptions {
+function toEngine({ cwd, ignore, absolute, dot, caseSensitiveMatch, deep, links, prune }: GlobOptions): TinyGlobOptions {
   const options: TinyGlobOptions = {
     cwd,
     followSymbolicLinks: false,
@@ -99,7 +116,7 @@ function toEngine({ cwd, ignore, absolute, dot, caseSensitiveMatch, deep, links 
   };
   if (ignore) options.ignore = [...ignore];
   if (deep !== undefined) options.deep = deep - 1;
-  if (links) options.fs = links.fs;
+  if (links || prune) options.fs = walkFs(links, prune);
   return options;
 }
 
