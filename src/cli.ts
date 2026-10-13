@@ -308,6 +308,7 @@ program
   .option("-f, --function <name>", "Function to draw (`Class.method` or the bare method name)")
   .option("-l, --line <n>", "Draw the function whose body covers this 1-based line", parseInt)
   .option("--format <format>", "mermaid | markdown | json", "mermaid")
+  .option("--slice <line>", "Instead of the graph: the statements that can affect the values used at this line (backward slice)", parseInt)
   .option(
     "--no-styled",
     "Leave the colour table out of the Mermaid, keeping only the category classes — for a host that themes the diagram itself",
@@ -351,6 +352,37 @@ program
         );
         listFunctions();
         process.exitCode = 1;
+        return;
+      }
+
+      if (Number.isFinite(options.slice)) {
+        const sliceLine = options.slice as number;
+        const cfg = result.cfgs.find((c) => c.line <= sliceLine && sliceLine <= c.endLine) ?? (result.cfgs.length === 1 ? result.cfgs[0] : undefined);
+        if (!cfg) {
+          console.error(`Line ${sliceLine} is in none of the functions drawn — name the one it is in with --function or --line.`);
+          listFunctions();
+          process.exitCode = 1;
+          return;
+        }
+        const { backwardSlice } = await import("./core/control-flow-slice.js");
+        const { readFile } = await import("fs/promises");
+        const slice = backwardSlice(cfg, (await readFile(target, "utf-8")).split(/\r?\n/), sliceLine);
+        if (!slice) {
+          console.error(`No statement of ${cfg.functionName} covers line ${sliceLine}.`);
+          process.exitCode = 1;
+          return;
+        }
+        if (options.format === "json") {
+          console.log(JSON.stringify({ filePath: result.filePath, functionName: cfg.functionName, approximate: cfg.approximate === true, ...slice }, null, 2));
+          return;
+        }
+        console.log(`Backward slice of ${cfg.functionName} at line ${sliceLine}${slice.variables.length ? ` — values: ${slice.variables.join(", ")}` : ""}${cfg.approximate ? " (approximate graph)" : ""}`);
+        const width = String(Math.max(...slice.statements.map((s) => s.line), 1)).length;
+        for (const s of slice.statements) {
+          const first = s.text.split("\n")[0]!;
+          console.log(`  ${String(s.line).padStart(width)}  ${first}${s.text.includes("\n") ? " …" : ""}  (${s.why})`);
+        }
+        if (slice.fromOutside.length) console.log(`From parameters or the enclosing scope: ${slice.fromOutside.join(", ")}`);
         return;
       }
 
