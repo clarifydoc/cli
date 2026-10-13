@@ -303,6 +303,22 @@ describe("clarifydoc MCP tools — react fixture", () => {
     expect(miss.text).toContain("No function or method named");
   });
 
+  it("trace names the definitions of an ambiguous name instead of merging them", async () => {
+    const links = loaded.summary.symbolLinks;
+    // A leaf name two different definitions share, if the fixture has one.
+    const byLeaf = new Map<string, Set<string>>();
+    for (const l of links) {
+      const leaf = l.targetSymbol.split(".").pop()!;
+      if (!byLeaf.has(leaf)) byLeaf.set(leaf, new Set());
+      byLeaf.get(leaf)!.add(`${l.targetFile}::${l.targetSymbol}`);
+    }
+    const shared = [...byLeaf].find(([leaf, defs]) => defs.size > 1 && /^\w+$/.test(leaf));
+    if (!shared) return;
+    const { text } = await call(server, "clarifydoc_trace", { symbol: shared[0] });
+    expect(text).toMatch(/names \d+ definitions — pick one/);
+    expect(text).toContain('clarifydoc_trace symbol="');
+  });
+
   it("trace requires a seed and says so when nothing resolves", async () => {
     const noSeed = await call(server, "clarifydoc_trace", {});
     expect(noSeed.isError).toBe(true);
