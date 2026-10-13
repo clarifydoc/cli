@@ -459,11 +459,15 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           // a client or a global (`$.ajax`, `window.fetch`, `api.request`):
           // `navigator.wakeLock.request("screen")` is not an HTTP call.
           // A BARE `request(…)` / `http(…)` / `ajax(…)` is the library only when
-          // the file imports it: VueUse's `const { request } = useWakeLock()`
-          // makes `request("screen")` a wake lock, not an HTTP call. `fetch` is
-          // a global and `axios` is never anything else.
+          // the file imports it, or the call has the shape of one
+          // (`request('POST', url)` — a project's own XHR wrapper): VueUse's
+          // `const { request } = useWakeLock()` makes `request("screen")` a
+          // wake lock, not an HTTP call. `fetch` is a global and `axios` is
+          // never anything else.
+          const firstLiteral = node.childForFieldName("arguments")?.namedChildren.find((a) => a.type !== "comment");
+          const verbFirst = firstLiteral?.type === "string" && HTTP_VERBS.has(stripQuotes(firstLiteral.text).toLowerCase());
           const bareLibrary = fn.type === "identifier" &&
-            (/^(?:fetch|axios)$/i.test(fnName) || (this.imports ??= importEvidence(this.sourceText)).names.has(fnName));
+            (/^(?:fetch|axios)$/i.test(fnName) || verbFirst || (this.imports ??= importEvidence(this.sourceText)).names.has(fnName));
           const exactRoot =
             HTTP_ROOTS.has(fnName.toLowerCase()) &&
             (bareLibrary || trustedReceiver || (!!recv && GLOBAL_RECEIVERS.has(recv)));
