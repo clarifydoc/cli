@@ -408,7 +408,14 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
 
     // Advanced per-file analysis: complexity and security
     const fileComplexities = computeComplexity(tree, language, analysis.functions, analysis.classes);
-    const fileSecurityIssues = scanSecurity(sourceText, file.relativePath, language);
+    let fileSecurityIssues = scanSecurity(sourceText, file.relativePath, language);
+    // Request input followed to a sink inside each handler; it says more than
+    // the regex finding of the same kind on the same line, which it replaces.
+    const tainted = isTest || isMinifiedSource(sourceText) ? [] : hooks?.taint?.(tree, sourceText, file.relativePath) ?? [];
+    if (tainted.length > 0) {
+      const covered = new Set(tainted.map((t) => `${t.line}\u0000${t.category}`));
+      fileSecurityIssues = [...fileSecurityIssues.filter((i) => !covered.has(`${i.line}\u0000${i.category}`)), ...tainted];
+    }
 
     // Attach to the analysis itself so an incremental run can read both back
     // from disk and reconstruct the project-level aggregates without re-parsing.

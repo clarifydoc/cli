@@ -17,6 +17,7 @@ import { pythonRequestSchema } from "./request-schema.js";
 import { pythonReachability, extractPythonPathReferences } from "./reachability.js";
 import { extractPythonDiBindings } from "./di.js";
 import { CREDENTIAL_CONTEXT } from "../shared/security-context.js";
+import { pythonTaint } from "./taint.js";
 
 const PYTHON_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -185,6 +186,7 @@ export const pythonMeta: LanguagePluginMeta = {
   apiCallRoots: ["requests", "httpx", "aiohttp", "urllib.request", "urllib3", "http.client"],
   dbCallRoots: ["cursor", "session", "engine", "db", "connection", "pool"],
   ast: {
+    taint: pythonTaint,
     typeReferences: extractPythonTypeReferences,
     // `__main__` guards, dotted module strings, `.py` paths — what
     // reachability follows besides imports (see reachability.ts).

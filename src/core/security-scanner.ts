@@ -219,6 +219,9 @@ export const CATEGORY_CWE: Partial<Record<SecurityIssue["category"], string>> = 
   "bare-except": "CWE-396",
   "insecure-config": "CWE-16",
   "missing-auth": "CWE-306",
+  "path-traversal": "CWE-22",
+  ssrf: "CWE-918",
+  "open-redirect": "CWE-601",
 };
 
 /** Text before a match that opens a comment on the same line. */

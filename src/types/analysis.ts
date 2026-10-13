@@ -2016,7 +2016,8 @@ export type SecurityCategory =
   | "hardcoded-secret" | "sql-injection" | "xss" | "eval-exec"
   | "command-injection" | "debug-statement" | "todo-fixme"
   | "pickle" | "subprocess-shell" | "bare-except"
-  | "deserialization" | "xxe" | "weak-crypto" | "insecure-config" | "missing-auth";
+  | "deserialization" | "xxe" | "weak-crypto" | "insecure-config" | "missing-auth"
+  | "path-traversal" | "ssrf" | "open-redirect";
 
 export interface SecurityIssue {
   category: SecurityCategory;

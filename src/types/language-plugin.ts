@@ -487,6 +487,12 @@ export type InlineGuard = (code: string) => { head: string; tail: string } | nul
  * they didn't understand.
  */
 export interface AstExtractorHooks {
+  /**
+   * Request input followed to a dangerous call inside each request handler
+   * (shared/handler-taint.ts). Merged with the regex findings; a finding of
+   * the same category on the same line replaces the regex one.
+   */
+  taint?(tree: Tree, sourceText: string, filePath: string): import("./analysis.js").SecurityIssue[];
   /** Type-position references from the raw AST (params, casts, new-expressions). */
   typeReferences?(tree: Tree, filePath: string): TypeReference[];
   /** Interactive UI elements (buttons, inputs with handlers) from the AST. */

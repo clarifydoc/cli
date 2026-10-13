@@ -5,7 +5,7 @@ import { innermostAt, spansOf } from "./api-route-symbol-links.js";
 /** Findings about what is done with input — the ones a request can feed. */
 const INPUT_SINKS: ReadonlySet<SecurityIssue["category"]> = new Set([
   "sql-injection", "command-injection", "subprocess-shell", "eval-exec", "xss",
-  "deserialization", "pickle", "xxe",
+  "deserialization", "pickle", "xxe", "path-traversal", "ssrf", "open-redirect",
 ]);
 /** Longest call chain followed back from a finding. */
 const MAX_HOPS = 8;

@@ -40,6 +40,7 @@ import { JsComponentEmitResolver, JsPropCallbackResolver } from "./dispatch.js";
 import { javascriptRequestSchema } from "./request-schema.js";
 import { javascriptReachability } from "./reachability.js";
 import { CREDENTIAL_CONTEXT } from "../shared/security-context.js";
+import { javascriptTaint } from "./taint.js";
 
 const TS_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -173,6 +174,7 @@ const DB_CALL_ROOTS = [
 
 function astHooks(language: Language): AstExtractorHooks {
   return {
+    taint: javascriptTaint,
     typeReferences: (tree, filePath) => extractTsTypeReferences(tree, language, filePath),
     interactiveElements: (tree, sourceText) => [
       ...extractInteractiveElements(tree, sourceText, language),
