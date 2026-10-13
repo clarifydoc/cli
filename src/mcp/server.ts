@@ -10,7 +10,7 @@
 
 import { basename, dirname, join, resolve } from "path";
 import { existsSync } from "fs";
-import { McpServer, serveStdio, type McpPrompt, type McpResource, type McpResourceTemplate, type McpTool } from "./protocol.js";
+import { McpServer, serveStdio, type McpResource, type McpResourceTemplate, type McpTool } from "./protocol.js";
 import { TOOL_VERSION } from "../core/version.js";
 import { AnalysisStore, type AnalyzeSettings } from "./store.js";
 import { statusReport, type ToolContext } from "./tools/context.js";
@@ -18,6 +18,8 @@ import { analyzeTool, healthTool, impactTool, searchTool, servicesTool, statusTo
 import { blastRadiusTool, contractTool, fileTool, routesTool, screensTool, traceTool } from "./tools/code.js";
 import { extractTool } from "./tools/extract.js";
 import { dataFlowsTool, dataModelTool } from "./tools/data.js";
+import { INSTRUCTIONS } from "./guidance.js";
+import { WORKFLOW_PROMPTS } from "./prompts.js";
 
 export const MCP_SERVER_NAME = "clarifydoc";
 
@@ -87,26 +89,6 @@ export function defaultAnalysisDir(projectRoot: string, outputBase = ".clarifydo
   return resolve(root, outputBase, basename(root));
 }
 
-const INSTRUCTIONS = `ClarifyDoc maps this codebase from its source — frontend route to API endpoint to database
-table — with static analysis (tree-sitter/regex), not guesses. Use it to orient in unfamiliar code and to check
-what a change touches, instead of grepping around.
-
-Suggested order:
-1. clarifydoc_status — what has been mapped, and how stale it is.
-2. clarifydoc_search — find a route, screen, symbol, table or file by name.
-3. clarifydoc_file / clarifydoc_trace / clarifydoc_blast_radius — what a file contains, who calls it, what breaks
-   if it changes.
-4. clarifydoc_routes / clarifydoc_screens / clarifydoc_data_model / clarifydoc_data_flows — the cross-tier chain:
-   which screen calls which endpoint, and which table that endpoint writes. Routes carry who may call them
-   (policy, roles, scheme, or anonymous), which API versions they serve, and each parameter's binding; filter by
-   those, and use clarifydoc_contract for one endpoint's full request shape before calling it.
-   clarifydoc_services lifts the same links to sub-projects: which frontend, service or worker calls which.
-5. clarifydoc_health and clarifydoc_impact — findings, and the effect of the current git diff.
-
-Facts are extracted, not inferred, but cross-file links can be heuristic: rows tagged \`inferred\` or \`ambiguous\`
-are lower-confidence and worth verifying in the source before acting on them. Paths are project-relative, with
-\`path:line\` for anything you may want to open. If results look stale after edits, call clarifydoc_analyze
-(incremental, cheap).`;
 
 export interface BuiltMcpServer {
   server: McpServer;
@@ -258,55 +240,3 @@ export async function startMcpServer(config: McpServerConfig = {}): Promise<void
   });
 }
 
-/**
- * Workflows a client can offer by name: each fills in the order of tool calls
- * that answers one recurring question, so the model does not have to discover
- * it from the tool descriptions.
- */
-const WORKFLOW_PROMPTS: McpPrompt[] = [
-  {
-    name: "before-editing",
-    title: "Before editing a file",
-    description: "What to know before changing a file (and optionally one function in it): what it is, who depends on it, what breaks.",
-    arguments: [
-      { name: "file", description: "Project-relative path of the file to change.", required: true },
-      { name: "symbol", description: "The function or method to change, if one." },
-    ],
-    render: ({ file, symbol }) => [
-      `I am about to change \`${file}\`${symbol ? ` — specifically \`${symbol}\`` : ""}. Using the ClarifyDoc tools, in this order:`,
-      `1. clarifydoc_file path="${file}" — what the file declares, its routes/screens/data access and its layer.`,
-      `2. clarifydoc_blast_radius path="${file}" — what kind of file it is, who depends on it, and the screens and routes whose execution passes through it.`,
-      ...(symbol ? [
-        `3. clarifydoc_extract symbol="${symbol}" file="${file}" — its source and the functions it calls.`,
-        `4. clarifydoc_trace symbol="${symbol}" file="${file}" direction="callers" — who calls it, with file:line.`,
-      ] : []),
-      `${symbol ? 5 : 3}. clarifydoc_impact files=["${file}"] — the tests to run and the risk level.`,
-      "Then summarize: what the change can break, which callers must be checked, and which tests to run.",
-    ].join("\n"),
-  },
-  {
-    name: "trace-feature",
-    title: "Trace a feature end to end",
-    description: "Follow one feature from the screen through the API to the data it reads and writes.",
-    arguments: [{ name: "feature", description: "A word for the feature: a screen, an endpoint, an entity (e.g. \"checkout\").", required: true }],
-    render: ({ feature }) => [
-      `Trace the "${feature}" feature end to end with the ClarifyDoc tools:`,
-      `1. clarifydoc_search query="${feature}" — the screens, routes, symbols and entities it names.`,
-      `2. clarifydoc_screens / clarifydoc_routes path="${feature}" — the entry points, the API calls a screen makes and the frontend files that call a route.`,
-      `3. clarifydoc_data_flows — which of those entry points reach which tables and queues, with the call path (via).`,
-      `4. clarifydoc_trace symbol=<the handler> to=<the repository or service method> — the exact call path, hop by hop, where one is unclear.`,
-      "Then describe the flow as: screen → API call → route handler → services → data, naming file:line at each step and flagging any hop marked inferred or ambiguous.",
-    ].join("\n"),
-  },
-  {
-    name: "endpoint-gaps",
-    title: "Find broken or unused endpoints",
-    description: "Frontend calls that reach no backend route, and routes nothing in the repository calls.",
-    arguments: [{ name: "path", description: "Narrow to URLs/routes containing this (optional)." }],
-    render: ({ path }) => [
-      `Use clarifydoc_routes gaps=true${path ? ` path="${path}"` : ""} to list the calls that reach no route and the routes no call reaches.`,
-      "For each call that reaches no route, check whether the backend renamed or removed the endpoint (clarifydoc_routes path=<a segment of the URL>) and say which.",
-      "For uncalled routes, remember an endpoint may be called from outside the repository; only call one dead when nothing in the repository and no external client plausibly uses it.",
-    ].join("\n"),
-  },
-];
