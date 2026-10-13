@@ -2837,6 +2837,12 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
     }
   }
   const languageOf = (f: string) => ctx.languageOf.get(f);
+  // The source file's own class of that name is the one the name means there:
+  // three test modules each declaring a `SymbolicInterpreter` helper are three
+  // classes, and each module's `interp = SymbolicInterpreter()` is its own.
+  // Not where one type spans files (partial classes): there the richest
+  // declaration below stands for the type.
+  if (declOf(sourceFile, typeName) && !typesSpanFiles(languageOf(sourceFile))) return sourceFile;
   const own = ctx.classByProject.get(`${projectId}\0${typeName}`);
   if (own) {
     const pick = own.files.length === 1 ? own.file : pickDefinition(typeName, own.files, sourceFile, declOf, languageOf);
