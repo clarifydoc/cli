@@ -14,7 +14,7 @@ write. That is what lets an external agent be configured as nothing but a comman
 | [format.ts](format.ts) | Text shaping (capped lists, `path:line`) and argument coercion |
 | [empty.ts](empty.ts) | The shape of a result with no rows in it — miss, denominator, `Next:` |
 | [server.ts](server.ts) | Assembles store + tools + instructions into a servable `McpServer` |
-| [tools/](tools/) | The tools themselves — `context.ts` (shared), `overview.ts`, `code.ts` (routes, contract, screens, file, trace, blast), `data.ts` |
+| [tools/](tools/) | The tools themselves — `context.ts` (shared), `overview.ts`, `code.ts` (routes, contract, screens, file, trace, blast), `extract.ts` (a function's source and its callees within a token budget — the one tool that reads source text, at the analyzed spans), `data.ts` |
 
 ## Rules that keep it working
 
