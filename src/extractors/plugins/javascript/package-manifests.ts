@@ -1,6 +1,7 @@
 import type { PackageScope } from "../../../types/analysis.js";
 import type { DeclaredPackage, PackageManagerSpec } from "../../../types/language-plugin.js";
 import { declared, jsonObject } from "../shared/declared-package.js";
+import { parsePackageLock, parsePnpmLock, parseYarnLock, withLocked } from "../shared/lockfiles.js";
 
 /** npm: `package.json`'s dependency sections. */
 function parseNpm(text: string, declaredIn: string): DeclaredPackage[] {
@@ -27,7 +28,15 @@ export const npmPackageManager: PackageManagerSpec = {
   ecosystem: "npm",
   manifests: [{
     files: ["package.json"],
-    parse: (text, file) => parseNpm(text, file.declaredIn),
+    async parse(text, file) {
+      const pkgs = parseNpm(text, file.declaredIn);
+      const npmLock = await file.readSibling("package-lock.json");
+      if (npmLock) return withLocked(pkgs, parsePackageLock(npmLock));
+      const yarn = await file.readSibling("yarn.lock");
+      if (yarn) return withLocked(pkgs, parseYarnLock(yarn));
+      const pnpm = await file.readSibling("pnpm-lock.yaml");
+      return pnpm ? withLocked(pkgs, parsePnpmLock(pnpm)) : pkgs;
+    },
     selfName: (text) => { const name = jsonObject(text)?.name; return typeof name === "string" && name ? name : null; },
   }],
   // `@scope/pkg/sub` → `@scope/pkg`, `lodash/fp` → `lodash`; relative paths

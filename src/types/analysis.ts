@@ -2760,6 +2760,18 @@ export interface ExternalPackage {
   /** Manifest the dependency was declared in, relative to the project root. */
   declaredIn: string;
   /**
+   * The version the package manager installed, read from the lockfile beside
+   * the manifest (package-lock.json, yarn.lock, poetry.lock, uv.lock,
+   * Pipfile.lock, Cargo.lock, composer.lock, Gemfile.lock) — exact, where
+   * `version` is the declared range. Absent without a lockfile.
+   */
+  resolvedVersion?: string;
+  /**
+   * Known vulnerabilities of `resolvedVersion` (or an exact `version`), from
+   * OSV — only when the analysis ran with `--osv`.
+   */
+  advisories?: Array<{ id: string; summary?: string; severity?: string; aliases?: string[] }>;
+  /**
    * Every manifest declaring it, when there are several (`web/package.json`
    * and `admin/package.json`), each with its own version spec — `version` and
    * `declaredIn` are the first. Absent for a package declared once.

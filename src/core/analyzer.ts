@@ -158,6 +158,12 @@ export interface AnalyzeOptions {
    */
   gitHistory?: boolean;
   /**
+   * Ask OSV (api.osv.dev) about the installed packages' known vulnerabilities
+   * (`ExternalPackage.advisories`). The one network call an analysis makes —
+   * off unless asked.
+   */
+  osv?: boolean;
+  /**
    * Write machine-independent artifacts: a sentinel `analyzedAt` and a
    * cwd-relative `projectRoot`. For committed fixtures only.
    *
@@ -1424,6 +1430,13 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Cross-reference the dependency inventory against the imports we extracted,
   // marking each package used/unused (where the ecosystem mapping is reliable).
   attachPackageUsage(externalPackages, allAnalyses, { installedOwners });
+  if (options.osv) {
+    progress.step("Checking packages against OSV...");
+    const osv = await attachOsvAdvisories(externalPackages);
+    progress.detail(osv.error
+      ? `  OSV: not reached (${osv.error}); packages left unchecked`
+      : `  OSV: ${osv.asked} package version(s) checked, ${osv.vulnerable} with known advisories`);
+  }
 
   // Step 5: Write project summary
   const summary: ProjectAnalysis = {
@@ -2486,6 +2499,7 @@ function filePathToRoute(filePath: string): string {
 
 import type { ImportInfo, RouteInfo } from "../types/analysis.js";
 import { anonymousWriteFindings, attachFindingEntries } from "./finding-entries.js";
+import { attachOsvAdvisories } from "./osv.js";
 
 /** Import source patterns → framework id */
 const IMPORT_FRAMEWORK_MAP: Record<string, string> = {

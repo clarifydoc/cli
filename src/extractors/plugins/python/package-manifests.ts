@@ -1,6 +1,7 @@
 import type { PackageScope } from "../../../types/analysis.js";
 import type { DeclaredPackage, PackageManagerSpec } from "../../../types/language-plugin.js";
 import { declared, tomlSectionValue } from "../shared/declared-package.js";
+import { parsePipfileLock, parseTomlPackageLock, withLocked } from "../shared/lockfiles.js";
 
 /** requirements.txt-style lines (also each entry of a pyproject dependency array). */
 function parseRequirements(text: string, declaredIn: string, isDev: boolean): DeclaredPackage[] {
@@ -96,11 +97,21 @@ export const pypiPackageManager: PackageManagerSpec = {
   manifests: [
     {
       files: ["pyproject.toml"],
-      parse: (text, file) => parsePyproject(text, file.declaredIn),
+      async parse(text, file) {
+        const pkgs = parsePyproject(text, file.declaredIn);
+        const lock = (await file.readSibling("poetry.lock")) ?? (await file.readSibling("uv.lock"));
+        return lock ? withLocked(pkgs, parseTomlPackageLock(lock)) : pkgs;
+      },
       // `[project] name` (PEP 621) or Poetry's `[tool.poetry] name`.
       selfName: (text) => tomlSectionValue(text, ["project", "tool.poetry"], "name"),
     },
-    { files: ["Pipfile"], parse: (text, file) => parsePipfile(text, file.declaredIn) },
+    {
+      files: ["Pipfile"],
+      async parse(text, file) {
+        const lock = await file.readSibling("Pipfile.lock");
+        return withLocked(parsePipfile(text, file.declaredIn), lock ? parsePipfileLock(lock) : null);
+      },
+    },
     {
       files: ["requirements*.txt", "**/requirements*.txt"],
       glob: { deep: 2, limit: 20 },

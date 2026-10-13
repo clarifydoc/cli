@@ -386,7 +386,7 @@ function categoryCounts(summary: ProjectAnalysis): Array<[HealthCategory, number
     ["dead-code", (summary.deadCode?.files.length ?? 0) + (summary.deadCode?.exports.length ?? 0)],
     ["concerns", (summary.responsibilityProfiles ?? []).filter((r) => r.concernCount >= 2).length],
     ["pressure", (summary.refactorPressure ?? []).length],
-    ["dependencies", (summary.externalPackages ?? []).filter((p) => p.versionSkew || p.used === false).length],
+    ["dependencies", (summary.externalPackages ?? []).filter((p) => p.advisories?.length || p.versionSkew || p.used === false).length],
   ];
 }
 
@@ -675,10 +675,17 @@ export function healthTool(ctx: ToolContext): McpTool {
             !fileFilter || contains(p.declaredIn, fileFilter) || (p.declarations ?? []).some((d) => contains(d.declaredIn, fileFilter)));
           const skewed = pkgs.filter((p) => p.versionSkew);
           const unused = pkgs.filter((p) => p.used === false);
-          if (skewed.length === 0 && unused.length === 0) return { text: noFindings(summary, category, filters) };
+          // Advisories first, those in shipped code before dev-only or unused packages.
+          const vulnerable = pkgs.filter((p) => p.advisories?.length)
+            .sort((a, b) => Number(a.scope === "dev" || a.used === false) - Number(b.scope === "dev" || b.used === false));
+          if (skewed.length === 0 && unused.length === 0 && vulnerable.length === 0) return { text: noFindings(summary, category, filters) };
           return {
             text: joinLines([
-              `# Dependencies — ${plural(skewed.length, "version skew")}, ${plural(unused.length, "unused package")}`,
+              `# Dependencies — ${plural(vulnerable.length, "package")} with advisories, ${plural(skewed.length, "version skew")}, ${plural(unused.length, "unused package")}`,
+              ...(vulnerable.length ? ["", "## Known vulnerabilities (OSV)", ...bulletList(vulnerable, limit, (p) =>
+                `${p.name} ${p.resolvedVersion ?? p.version ?? ""} (${p.ecosystem}${p.scope !== "prod" ? `, ${p.scope}` : ""}${p.used === false ? ", unused" : ""}): ${
+                  p.advisories!.slice(0, 4).map((a) => `${a.id}${a.severity ? ` [${a.severity.toLowerCase()}]` : ""}${a.summary ? ` ${a.summary}` : ""}`).join("; ")
+                }${p.advisories!.length > 4 ? ` … +${p.advisories!.length - 4}` : ""}`)] : []),
               ...(skewed.length ? ["", "## Declared with different versions", ...bulletList(skewed, limit, (p) =>
                 `${p.name} (${p.ecosystem}): ${(p.declarations ?? []).map((d) => `${d.version ?? "—"} in ${d.declaredIn}`).join(", ")}`)] : []),
               ...(unused.length ? ["", "## Declared but imported by no analyzed file", ...bulletList(unused, limit, (p) =>
