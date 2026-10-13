@@ -97,7 +97,7 @@ describe(".clarifydoc/ignore", () => {
     outputIgnore("/Library/*\n");
     const sub = join(root, "Library", "DCPcrypt");
     mkdirSync(sub, { recursive: true });
-    expect(isIgnored(join(sub, "DCPsha1.pas"), sub, loadIgnorePatterns(sub))).toBe(true);
+    expect(isIgnored(join(sub, "DCPsha1.pas"), sub, loadIgnorePatterns(sub, root))).toBe(true);
   });
 
   it("is inherited by a scan rooted below it", () => {
@@ -106,7 +106,7 @@ describe(".clarifydoc/ignore", () => {
     outputIgnore("/Library/*\n");
     const sub = join(root, "Library", "mORMot-master");
     mkdirSync(sub, { recursive: true });
-    const patterns = loadIgnorePatterns(sub);
+    const patterns = loadIgnorePatterns(sub, root);
     expect(isIgnored(join(sub, "SynCommons.pas"), sub, patterns)).toBe(true);
   });
 
@@ -210,6 +210,21 @@ describe("fnmatch — `**` respects path separators", () => {
       expect(fnmatch(path, pattern)).toBe(expected);
     });
   }
+});
+
+describe("ignore files above the scan root", () => {
+  it("never ignores the scan root itself", async () => {
+    // The monorepo ignores a tree of other repositories; analyzing one of
+    // them directly must still see its files.
+    writeFileSync(join(root, ".clarifydocignore"), "/others/\n*.gen.ts\n");
+    const sub = join(root, "others", "tool");
+    mkdirSync(join(sub, "src"), { recursive: true });
+    writeFileSync(join(sub, "src", "a.ts"), "export const a = 1;\n");
+    writeFileSync(join(sub, "src", "b.gen.ts"), "export const b = 1;\n");
+    const found = (await discoverFiles(sub)).files.map((f) => f.relativePath);
+    // `/others/` names the root and is dropped; `*.gen.ts` still applies below it.
+    expect(found).toEqual(["src/a.ts"]);
+  });
 });
 
 describe("ignoredDirectories — what a walk may skip", () => {

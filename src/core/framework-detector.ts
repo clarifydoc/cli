@@ -18,6 +18,7 @@ import { FRAMEWORK_RULES, FRAMEWORK_MARKER_CANDIDATES, PACKAGE_MANAGERS } from "
 /** Gather project info from manifest files */
 export async function gatherProjectInfo(
   projectRoot: string,
+  scanRoot: string = projectRoot,
 ): Promise<ProjectInfo> {
   const root = resolve(projectRoot);
 
@@ -26,7 +27,7 @@ export async function gatherProjectInfo(
   // reporting frameworks either. A Delphi repo vendors its component libraries
   // into the tree, and their demos drag in whole stacks the project never uses
   // — FireMonkey, Lazarus and Qt were all reported from vendored samples.
-  const ignorePatterns = loadIgnorePatterns(root);
+  const ignorePatterns = loadIgnorePatterns(root, scanRoot);
   const prune = ignoredDirectories(root, ignorePatterns);
   const globFiles = async (
     patterns: string | string[],
@@ -319,7 +320,7 @@ export async function detectFrameworksAcrossRoots(
   const byRoot = new Map<string, FrameworkDetection[]>();
   const merged = new Map<string, FrameworkDetection>();
   for (const rel of roots) {
-    const info = await gatherProjectInfo(rel ? resolve(projectRoot, rel) : projectRoot);
+    const info = await gatherProjectInfo(rel ? resolve(projectRoot, rel) : projectRoot, projectRoot);
     const fws = detectFrameworks(info);
     byRoot.set(rel, fws);
     for (const f of fws) if (!merged.has(f.id)) merged.set(f.id, f);
