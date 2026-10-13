@@ -37,6 +37,36 @@ describe("scanSecurity — sql-injection template rule", () => {
 // Static literals can't inject; comparisons don't assign (tessa FPs:
 // `document.body.innerHTML = ''` in a spec, static fallback markup in main.ts).
 
+describe("scanSecurity — sql-injection concatenation rule", () => {
+  const at = (src: string, file: string, lang: Parameters<typeof scanSecurity>[2]) =>
+    scanSecurity(src, file, lang).filter((i) => i.category === "sql-injection").map((i) => i.line);
+
+  it("flags a SQL literal concatenated with a value", () => {
+    // The rule once required the `+` INSIDE the string, so none of these fired.
+    expect(at('db.query("SELECT * FROM u WHERE id=" + id);', "src/a.ts", "typescript")).toEqual([1]);
+    expect(at('rs = stmt.executeQuery("SELECT a FROM t WHERE x=" + n);', "src/A.java", "java")).toEqual([1]);
+    expect(at('var c = new SqlCommand("DELETE FROM t WHERE id=" + id, conn);', "src/A.cs", "csharp")).toEqual([1]);
+  });
+
+  it("leaves placeholders, plain literals and non-SQL strings alone", () => {
+    expect(at('db.query("SELECT * FROM u WHERE id = ?", [id]);', "src/a.ts", "typescript")).toEqual([]);
+    expect(at('db.query("SELECT 1");', "src/a.ts", "typescript")).toEqual([]);
+    expect(at('api.query("hello " + name);', "src/a.ts", "typescript")).toEqual([]);
+  });
+
+  it("reads Python's built statements through its blanked strings", () => {
+    const src = [
+      'cursor.execute("SELECT * FROM u WHERE id=" + uid)',
+      'cursor.execute(f"SELECT * FROM u WHERE id={uid}")',
+      'cursor.execute("SELECT * FROM u WHERE id=%s" % uid)',
+      'cursor.execute("SELECT * FROM u WHERE id={}".format(uid))',
+      'cursor.execute("SELECT * FROM u WHERE id=%s", (uid,))',
+      "cursor.execute(query)",
+    ].join("\n");
+    expect(at(src, "app/db.py", "python")).toEqual([1, 2, 3, 4]);
+  });
+});
+
 describe("scanSecurity — xss innerHTML rule", () => {
   it("does not flag static-literal assignments or comparisons", () => {
     expect(cats("document.body.innerHTML = '';")).not.toContain("xss");
@@ -89,6 +119,16 @@ describe("scanSecurity — hardcoded-secret rule", () => {
 });
 
 // ─── Minified/bundled artifacts are skipped wholesale (spsflow FPs) ──────────
+
+describe("scanSecurity — secret snippets", () => {
+  it("never quotes the secret itself", () => {
+    const [short] = scanSecurity('const dbPassword = "Pr0d-Hunter2!";', "src/db.ts", "typescript");
+    expect(short!.snippet).not.toContain("Hunter2");
+    expect(short!.snippet).toMatch(/^const dbPassword = "Pr0d\*+";$/);
+    const [tiny] = scanSecurity("const token = 'abc123';", "src/db.ts", "typescript");
+    expect(tiny!.snippet).toBe("const token = '****';");
+  });
+});
 
 describe("scanSecurity — minified/bundle skip", () => {
   it("skips a file with an enormous minified line", () => {
