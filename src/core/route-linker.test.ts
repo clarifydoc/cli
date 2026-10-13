@@ -655,6 +655,7 @@ describe("linkApiCallsToRoutesDetailed — stats", () => {
       crossProject: 0,
       otherHost: 1,
       unresolvedBase: 0,
+      misses: [{ file: "web/a.js", line: 1, method: "GET", url: "/nothing/here", reason: "unmatched" }],
     });
   });
 
@@ -868,5 +869,24 @@ describe("normalizeRoutePath — a hole glued to the last segment", () => {
     expect(normalizeRoutePath("/albums${QS.query(QS.explode({ assetId, id }))}")).toBe(normalizeRoutePath("/albums"));
     expect(normalizeRoutePath("/albums/${encodeURIComponent(id)}${QS.query({ key })}")).toBe(normalizeRoutePath("/albums/{id}"));
     expect(normalizeRoutePath("/users/${id}")).toBe(normalizeRoutePath("/users/:id"));
+  });
+});
+
+describe("linkApiCallsToRoutesDetailed — misses are listed, not only counted", () => {
+  it("names each call that reached no route, with why", () => {
+    const { stats } = linkApiCallsToRoutesDetailed(
+      [
+        apiCall("web/orders.ts", "get", "/api/orders", 3),
+        apiCall("web/backups.ts", "get", "/api/backups/available", 7),
+        apiCall("web/orders.ts", "delete", "/api/orders", 9),
+        apiCall("web/x.ts", "get", "route(`${base}/x`)", 11),
+      ],
+      [route("api/orders.py", "GET", "/api/orders", "list_orders")],
+    );
+    expect(stats.linked).toBe(1);
+    expect(stats.misses).toEqual([
+      { file: "web/backups.ts", line: 7, method: "GET", url: "/api/backups/available", reason: "unmatched" },
+      { file: "web/orders.ts", line: 9, method: "DELETE", url: "/api/orders", reason: "method-mismatch" },
+    ]);
   });
 });

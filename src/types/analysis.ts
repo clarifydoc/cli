@@ -1024,6 +1024,29 @@ export interface ApiRouteLinkStats {
   unresolvedBase?: number;
   /** Links by the role of the calling file. */
   byRole?: { production: number; test: number; generated: number };
+  /**
+   * The joinable calls that reached no route, each with why — the list behind
+   * `unmatched` and `refused` (capped; the counts stay exact). A backend that
+   * renamed `/invoices/export` to `/invoices/download` shows up here as the
+   * frontend call that still asks for the old path.
+   */
+  misses?: ApiCallMiss[];
+  /**
+   * API routes no call in the repository reaches, in the sub-projects some
+   * in-repo client does call (a service only external clients call would list
+   * every route). Capped; `uncalledCount` is exact.
+   */
+  uncalled?: Array<{ file: string; line: number; method: string | null; path: string }>;
+  uncalledCount?: number;
+}
+
+/** A call the route linker could not join (`ApiRouteLinkStats.misses`). */
+export interface ApiCallMiss {
+  file: string;
+  line: number;
+  method: string | null;
+  url: string;
+  reason: "unmatched" | "method-mismatch" | "origin-mismatch" | "ambiguous-suffix";
 }
 
 /**
