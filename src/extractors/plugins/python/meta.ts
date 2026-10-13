@@ -16,6 +16,7 @@ import { djangoUrlconfResolver } from "./django/resolver.js";
 import { pythonRequestSchema } from "./request-schema.js";
 import { pythonReachability, extractPythonPathReferences } from "./reachability.js";
 import { extractPythonDiBindings } from "./di.js";
+import { CREDENTIAL_CONTEXT } from "../shared/security-context.js";
 
 const PYTHON_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -63,6 +64,56 @@ const SECURITY_RULES: readonly SecurityRule[] = [
     pattern: /\.(?:execute|executemany|executescript|raw|extra)\s*\(\s*(?:[rRbB]?[fF][rRbB]?\s|\s+(?:\+|%\s*[\w(]|\.\s*format\s*\())/,
     message: "Possible SQL injection: the statement is built from values. Pass them as query parameters.",
     priority: 39,
+    excludeTest: true,
+  },
+  {
+    category: "deserialization",
+    severity: "high",
+    pattern: /\byaml\.(?:load|load_all|unsafe_load)\s*\((?![^)]*Loader\s*=\s*(?:yaml\.)?C?SafeLoader)|\b(?:shelve\.open|jsonpickle\.decode|dill\.loads?)\s*\(/,
+    message: "This loader can instantiate arbitrary objects from its input. Use yaml.safe_load / JSON for anything not fully trusted.",
+    priority: 45,
+    excludeTest: true,
+  },
+  {
+    category: "weak-crypto",
+    severity: "medium",
+    pattern: new RegExp(String.raw`\bhashlib\.(?:md5|sha1)\s*\((?![^)]*usedforsecurity\s*=\s*False)(?=.*${CREDENTIAL_CONTEXT})|\bDES3?\.new\s*\(|\bARC4\.new\s*\(|\bMODE_ECB\b`),
+    message: "Broken or weak cryptography (MD5/SHA-1, DES/RC4, ECB). Use SHA-256+ and AES-GCM; pass usedforsecurity=False for a non-security checksum.",
+    priority: 46,
+    excludeTest: true,
+  },
+  {
+    category: "insecure-config",
+    severity: "high",
+    pattern: /^\s*DEBUG\s*=\s*True\b/,
+    message: "Django runs with DEBUG = True: tracebacks, settings and SQL are shown to anyone who triggers an error.",
+    priority: 47,
+    files: /(?:^|\/)settings(?:\/[^/]+|[^/]*)\.py$/,
+  },
+  {
+    category: "insecure-config",
+    severity: "high",
+    pattern: /\.run\s*\([^)]*\bdebug\s*=\s*True/,
+    message: "The app server runs in debug mode (an interactive debugger anyone can reach).",
+    priority: 48,
+    excludeTest: true,
+  },
+  {
+    category: "insecure-config",
+    severity: "high",
+    pattern: /\bverify\s*=\s*False\b|["']verify_signature["']\s*:\s*False\b|\bCERT_NONE\b/,
+    message: "Certificate or signature verification is turned off (verify=False, verify_signature: False, CERT_NONE).",
+    priority: 49,
+    excludeTest: true,
+    // The `"verify_signature": False` key is a string, which the pre-filter blanks.
+    raw: true,
+  },
+  {
+    category: "insecure-config",
+    severity: "medium",
+    pattern: /@csrf_exempt\b/,
+    message: "CSRF protection is switched off for this view.",
+    priority: 50,
     excludeTest: true,
   },
   {

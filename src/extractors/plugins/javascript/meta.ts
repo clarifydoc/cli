@@ -39,6 +39,7 @@ import { javascriptRouteExtractor } from "./routes/index.js";
 import { JsComponentEmitResolver, JsPropCallbackResolver } from "./dispatch.js";
 import { javascriptRequestSchema } from "./request-schema.js";
 import { javascriptReachability } from "./reachability.js";
+import { CREDENTIAL_CONTEXT } from "../shared/security-context.js";
 
 const TS_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -102,6 +103,39 @@ const SECURITY_RULES: readonly SecurityRule[] = [
     pattern: /child_process/,
     message: "Shell command execution detected. Ensure input is sanitized.",
     priority: 32,
+  },
+  {
+    category: "insecure-config",
+    severity: "high",
+    multiline: true,
+    pattern: /\bcors\s*\(\s*\{[^}]*\borigin\s*:\s*(?:['"`]\*['"`]|true)[^}]*\bcredentials\s*:\s*true|\bcors\s*\(\s*\{[^}]*\bcredentials\s*:\s*true[^}]*\borigin\s*:\s*(?:['"`]\*['"`]|true)/,
+    message: "CORS reflects any origin together with credentials: any site can make authenticated requests on a user's behalf.",
+    priority: 33,
+    excludeTest: true,
+  },
+  {
+    category: "insecure-config",
+    severity: "high",
+    pattern: /\brejectUnauthorized\s*:\s*false\b|NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['"]?0/,
+    message: "TLS certificate verification is turned off.",
+    priority: 34,
+    excludeTest: true,
+  },
+  {
+    category: "insecure-config",
+    severity: "medium",
+    pattern: /\bhttpOnly\s*:\s*false\b/,
+    message: "A cookie readable from JavaScript (httpOnly: false): one XSS reads the session.",
+    priority: 35,
+    excludeTest: true,
+  },
+  {
+    category: "weak-crypto",
+    severity: "medium",
+    pattern: new RegExp(String.raw`\bcreateHash\s*\(\s*['"\x60](?:md5|sha1|MD5|SHA1)['"\x60](?=.*${CREDENTIAL_CONTEXT})|\bcreateCipheriv?\s*\(\s*['"\x60](?:des|rc4|bf|DES|RC4|BF|[\w-]*-ecb)`),
+    message: "Broken or weak cryptography (MD5/SHA-1, DES/RC4, ECB). Use SHA-256+ and AES-GCM.",
+    priority: 36,
+    excludeTest: true,
   },
   {
     category: "debug-statement",

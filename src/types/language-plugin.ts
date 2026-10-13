@@ -251,6 +251,8 @@ export interface SecurityRule {
    * credentials, which are leaked wherever they are written.
    */
   raw?: boolean;
+  /** Only files whose project-relative path matches (Django's `DEBUG = True` means something only in settings). */
+  files?: RegExp;
 }
 
 /** Node types / operators that count toward cyclomatic complexity. */
