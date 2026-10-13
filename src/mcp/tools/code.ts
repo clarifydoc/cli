@@ -734,6 +734,14 @@ export function traceTool(ctx: ToolContext): McpTool {
         },
         depth: { type: "number", description: "Hops to follow, 1-4 (default 2)." },
         limit: { type: "number", description: "Max rows per level (default 20)." },
+        to: {
+          type: "string",
+          description:
+            "Instead of the walk: the shortest call paths from the seed to this symbol (e.g. \"PaymentGateway.charge\"), " +
+            "each hop with its call site and confidence, rated by its weakest link. Answers 'how does this screen " +
+            "reach that table/service'. `toFile` narrows the target.",
+        },
+        toFile: { type: "string", description: "With `to`: the target's file (project-relative path)." },
         minConfidence: {
           type: "string",
           enum: ["EXTRACTED", "INFERRED", "AMBIGUOUS"],
@@ -781,6 +789,13 @@ export function traceTool(ctx: ToolContext): McpTool {
             ],
           }),
         };
+      }
+
+      const to = stringArg(args, "to");
+      if (to) {
+        const toFileArg = stringArg(args, "toFile");
+        const toFile = toFileArg ? mustResolveFile(loaded, toFileArg) : undefined;
+        return { text: pathReport(all, { symbol, file }, { symbol: to, file: toFile }, limit, minConfidence) };
       }
 
       const blocks: string[][] = [
@@ -938,6 +953,147 @@ function walk(
   }
   if (notes.length) lines.push(...notes.map((n) => `(${n})`));
   return lines;
+}
+
+/** Longest call path `to` searches for. */
+const PATH_MAX_HOPS = 8;
+/** Paths of the shortest length listed by `to`. */
+const PATH_MAX_LISTED = 5;
+
+/**
+ * `clarifydoc_trace to=…`: the shortest call paths from the seed to the
+ * target, over the resolved call graph. A breadth-first search from every
+ * seed keeps, per node, every predecessor at the previous distance, so all
+ * shortest paths can be rebuilt (capped); each hop names the call that makes
+ * it, and a path is only as sure as its weakest edge. When the call graph
+ * leads the other way (the target calls the seed), that is said instead of
+ * "no path".
+ */
+function pathReport(
+  links: SymbolLink[],
+  from: { symbol?: string; file?: string },
+  target: { symbol: string; file?: string },
+  limit: number,
+  minConfidence: string,
+): string {
+  const search = (src: { symbol?: string; file?: string }, dst: { symbol?: string; file?: string }) => {
+    const out = new Map<string, SymbolLink[]>();
+    for (const l of links) push(out, symbolKey(l.sourceFile, l.sourceSymbol), l);
+    // Ends match by the symbol's own name — not by a call's name, which would
+    // make the CALLER of `create_group` count as `create_group` itself.
+    const named = (q: { symbol?: string; file?: string }, f: string, s: string): boolean => {
+      if (q.file && f !== q.file) return false;
+      if (!q.symbol) return true;
+      const want = q.symbol.toLowerCase();
+      const have = s.toLowerCase();
+      return have === want || have.endsWith(`.${want}`);
+    };
+    const seeds = new Set<string>();
+    const targets = new Set<string>();
+    for (const l of links) {
+      for (const [f, s] of [[l.sourceFile, l.sourceSymbol], [l.targetFile, l.targetSymbol]] as const) {
+        if (named(src, f, s)) seeds.add(symbolKey(f, s));
+        if (named(dst, f, s)) targets.add(symbolKey(f, s));
+      }
+    }
+    // node → the edges that reach it at its shortest distance.
+    const via = new Map<string, SymbolLink[]>();
+    const dist = new Map<string, number>();
+    let frontier = [...seeds];
+    for (const s of frontier) dist.set(s, 0);
+    let found: string[] = [];
+    for (let d = 1; d <= PATH_MAX_HOPS && frontier.length > 0 && found.length === 0; d++) {
+      const next: string[] = [];
+      for (const node of frontier) {
+        for (const e of out.get(node) ?? []) {
+          const t = symbolKey(e.targetFile, e.targetSymbol);
+          const seen = dist.get(t);
+          if (seen !== undefined && seen < d) continue;
+          if (seen === undefined) { dist.set(t, d); next.push(t); }
+          push(via, t, e);
+        }
+      }
+      found = next.filter((n) => targets.has(n) && !seeds.has(n));
+      frontier = next;
+    }
+    return { found, via, dist, seeds, targets };
+  };
+
+  // Rebuild the shortest paths into `end`, edge lists from a seed.
+  const rebuild = (end: string, via: Map<string, SymbolLink[]>, dist: Map<string, number>, cap: number): SymbolLink[][] => {
+    const out: SymbolLink[][] = [];
+    const step = (node: string, tail: SymbolLink[]): void => {
+      if (out.length >= cap) return;
+      if ((dist.get(node) ?? 0) === 0) { out.push(tail); return; }
+      for (const e of via.get(node) ?? []) {
+        const prev = symbolKey(e.sourceFile, e.sourceSymbol);
+        if (dist.get(prev) !== (dist.get(node) ?? 0) - 1) continue;
+        step(prev, [e, ...tail]);
+        if (out.length >= cap) return;
+      }
+    };
+    step(end, []);
+    return out;
+  };
+
+  const rank: Record<string, number> = { AMBIGUOUS: 0, INFERRED: 1, EXTRACTED: 2 };
+  const weakestOf = (path: SymbolLink[]): string =>
+    path.reduce<string>((w, e) => (rank[e.confidence ?? "INFERRED"]! < rank[w]! ? e.confidence ?? "INFERRED" : w), "EXTRACTED");
+  const render = (path: SymbolLink[]): string[] => {
+    const head = path[0]!;
+    const lines = [`- ${weakestOf(path).toLowerCase()} · ${plural(path.length, "hop")}`, `    ${head.sourceSymbol}() (${head.sourceFile})`];
+    for (const e of path) {
+      lines.push(`    → ${e.targetSymbol}() (${loc(e.targetFile, e.targetLine)}) — ${e.callName} at ${loc(e.sourceFile, e.sourceLine)}${confidenceNote(e.confidence, e.resolvedBy, e.strategy)}`);
+    }
+    return lines;
+  };
+
+  const title = `# Call paths — ${facts([["from", from.symbol ?? from.file], ["to", target.symbol], ["minConfidence", minConfidence === "AMBIGUOUS" ? undefined : minConfidence]])}`;
+  const fwd = search(from, target);
+  if (fwd.seeds.size === 0 || fwd.targets.size === 0) {
+    return noResults({
+      headline: fwd.seeds.size === 0 ? `No call-graph edges match the seed (${from.symbol ?? from.file}).` : `No call-graph edges match \`to\` (${target.symbol}).`,
+      holds: `The analysis holds ${plural(links.length, "resolved call")}${minConfidence !== "AMBIGUOUS" ? ` at ${minConfidence} or surer` : ""}.`,
+      next: [
+        `clarifydoc_search query="${fwd.seeds.size === 0 ? from.symbol ?? from.file : target.symbol}" kinds=["symbol"] — check the spelling`,
+        minConfidence !== "AMBIGUOUS" && "clarifydoc_trace without `minConfidence`",
+      ],
+    });
+  }
+  if (fwd.found.length > 0) {
+    const paths = fwd.found.flatMap((end) => rebuild(end, fwd.via, fwd.dist, PATH_MAX_LISTED));
+    paths.sort((a, b) => rank[weakestOf(b)]! - rank[weakestOf(a)]!);
+    const { shown, hidden } = cap(paths, Math.min(limit, PATH_MAX_LISTED));
+    return joinLines([
+      title,
+      `${plural(paths.length, "shortest path")} of ${plural(paths[0]!.length, "hop")}, surest first:`,
+      "",
+      ...shown.flatMap(render),
+      hidden ? `  … ${hidden} more of the same length` : "",
+    ]);
+  }
+  // Nothing forward: does the target lead to the seed instead?
+  const back = search(target, from);
+  if (back.found.length > 0) {
+    const path = rebuild(back.found[0]!, back.via, back.dist, 1)[0]!;
+    return joinLines([
+      title,
+      `No call path from the seed to \`${target.symbol}\` within ${PATH_MAX_HOPS} hops — the call graph runs the other way:`,
+      "",
+      ...render(path),
+    ]);
+  }
+  return noResults({
+    headline: `No call path between them within ${PATH_MAX_HOPS} hops, in either direction.`,
+    holds: [
+      "Paths run over resolved calls; an HTTP hop counts only where a call was joined to its route.",
+      minConfidence !== "AMBIGUOUS" ? `Only edges at ${minConfidence} or surer were followed.` : "",
+    ],
+    next: [
+      minConfidence !== "AMBIGUOUS" && "clarifydoc_trace without `minConfidence`",
+      `clarifydoc_trace symbol="${target.symbol}" direction="callers" — what does reach it`,
+    ],
+  });
 }
 
 /** Edges from one node, in the walk's direction, at which it is marked a hub. */
