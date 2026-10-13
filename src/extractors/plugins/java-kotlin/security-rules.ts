@@ -32,6 +32,7 @@ export const JVM_SECURITY_RULES: readonly SecurityRule[] = [
   },
   {
     category: "insecure-config",
+    cwe: "CWE-352",
     severity: "high",
     pattern: /\.csrf\s*\(\s*\)\s*\.\s*disable\s*\(|\bcsrf\s*\(\s*(?:AbstractHttpConfigurer::disable|\w+\s*->\s*\w+\.disable\(\))|\bcsrf\s*\{\s*(?:it\.)?disable\(\)/,
     message: "CSRF protection is disabled. Keep it on for any endpoint a browser session can reach.",
@@ -40,6 +41,7 @@ export const JVM_SECURITY_RULES: readonly SecurityRule[] = [
   },
   {
     category: "insecure-config",
+    cwe: "CWE-284",
     severity: "medium",
     pattern: /["']\/\*\*["']\s*\)\s*\.\s*permitAll\s*\(/,
     message: "Every path is permitted without authentication (\"/**\").permitAll().",
@@ -48,6 +50,7 @@ export const JVM_SECURITY_RULES: readonly SecurityRule[] = [
   },
   {
     category: "insecure-config",
+    cwe: "CWE-295",
     severity: "high",
     pattern: /\b(?:ALLOW_ALL_HOSTNAME_VERIFIER|NoopHostnameVerifier|TrustAllStrategy)\b|setHostnameVerifier\s*\(\s*\([^)]*\)\s*->\s*true/,
     message: "TLS certificate or hostname verification is turned off.",

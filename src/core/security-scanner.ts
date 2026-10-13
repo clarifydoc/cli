@@ -38,6 +38,9 @@ export function isPlaceholderSecret(text: string): boolean {
   // Template holes in any dialect: `${x}`, `{{x}}`, Ruby `#{x}`, ERB/JSP `<%= x %>`, `<x>`, `%(x)s`.
   if (/\$\{|\{\{|#\{|<%|<[^>]*>|%\(|%s\b/.test(secret)) return true;
   if (/^(?:\*+|x+|\.+|-+|_+|0+|1234\d*)$/i.test(secret)) return true;
+  // A counting run no generator produces: a test value typed by hand
+  // (`AKIA1234567890…`, `ghp_1234567890abcdefghij…`).
+  if (/0123456789|1234567890|abcdefghij|ABCDEFGHIJ/.test(secret)) return true;
   return /example|placeholder|changeme|change[-_]me|your[-_ ]|dummy|sample|redacted|replace[-_]?me|^pass(?:word)?$|^secret$|^(?:test|fake|todo|none|null|undefined)$|here$/i.test(secret);
 }
 
@@ -196,6 +199,27 @@ function snippetOf(line: string, category: SecurityIssue["category"]): string {
   return text.substring(0, 100);
 }
 
+/**
+ * The CWE each category is an instance of by default. `insecure-config`
+ * rules name their own (TLS off, CSRF off, CORS, debug mode differ); `todo-fixme`
+ * is no weakness.
+ */
+export const CATEGORY_CWE: Partial<Record<SecurityIssue["category"], string>> = {
+  "hardcoded-secret": "CWE-798",
+  "sql-injection": "CWE-89",
+  xss: "CWE-79",
+  "eval-exec": "CWE-95",
+  "command-injection": "CWE-78",
+  "subprocess-shell": "CWE-78",
+  "debug-statement": "CWE-489",
+  pickle: "CWE-502",
+  deserialization: "CWE-502",
+  xxe: "CWE-611",
+  "weak-crypto": "CWE-327",
+  "bare-except": "CWE-396",
+  "insecure-config": "CWE-16",
+};
+
 /** Text before a match that opens a comment on the same line. */
 const TRAILING_COMMENT_RE = /(?:^|\s)(?:\/\/|#(?=\s|$)|<!--)/;
 /** Inline suppressions: our own, Bandit's and Sonar's. */
@@ -288,14 +312,16 @@ export function scanSecurity(
         after.includes("config.") || after.includes("settings.") ||
         /(?:^|[^\w])KEY_\w*\s*[=:]/.test(line)) return;
     }
-    issues.push({
+    const issue: SecurityIssue = {
       category: rule.category,
       severity: rule.severity,
       message: rule.message,
       filePath,
       line: i + 1,
       snippet: snippetOf(originalLines[i] ?? line, rule.category),
-    });
+    };
+    if (rule.cwe) issue.cwe = rule.cwe;
+    issues.push(issue);
   };
 
   // Apply regex rules
@@ -354,5 +380,9 @@ export function scanSecurity(
     });
   }
 
+  // The weakness each finding is an instance of, where its rule named none.
+  for (const issue of issues) {
+    if (!issue.cwe && CATEGORY_CWE[issue.category]) issue.cwe = CATEGORY_CWE[issue.category];
+  }
   return issues;
 }

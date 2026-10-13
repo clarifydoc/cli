@@ -239,6 +239,7 @@ describe("scanSecurity — credentials by their format", () => {
     expect(secrets('const apiKey = "your-api-key-here";')).toEqual([]);
     expect(secrets('const password = "changeme";')).toEqual([]);
     expect(secrets('const token = "********";')).toEqual([]);
+    expect(secrets('API_KEY = "AKIA1234567890ABCDEF"')).toEqual([]);
     expect(secrets('@user.update(password: "#{SecureRandom.hex}")', "app/a.rb", "ruby")).toEqual([]);
   });
 

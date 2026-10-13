@@ -113,6 +113,7 @@ the analysis instead, so teammates and CI agents get the map without scanning; i
 | `--no-git-history` | Skip git churn/hotspot collection | history on |
 | `--stable-output` | Fixed timestamp + relative root, for byte-identical committed analyses | false |
 | `--html` | Generate + open an HTML report afterwards | false |
+| `--sarif <file>` | Also write the security findings as SARIF 2.1.0 (one rule per category, tagged with its CWEs) — for GitHub code scanning | — |
 
 All options, with examples: [CLI reference → analyze](docs/cli-reference.md#analyze).
 

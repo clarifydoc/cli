@@ -17,6 +17,7 @@ export const RUBY_SECURITY_RULES: readonly SecurityRule[] = [
   },
   {
     category: "insecure-config",
+    cwe: "CWE-295",
     severity: "high",
     pattern: /verify_mode\s*(?:=|:|=>)\s*OpenSSL::SSL::VERIFY_NONE/,
     message: "TLS certificate verification is turned off (VERIFY_NONE).",

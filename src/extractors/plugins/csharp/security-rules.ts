@@ -34,6 +34,7 @@ export const CSHARP_SECURITY_RULES: readonly SecurityRule[] = [
   },
   {
     category: "insecure-config",
+    cwe: "CWE-295",
     severity: "high",
     pattern: /(?:ServerCertificateCustomValidationCallback|ServerCertificateValidationCallback|RemoteCertificateValidationCallback)\s*\+?=\s*(?:\([^)]*\)|\w+)\s*=>\s*true\b|DangerousAcceptAnyServerCertificateValidator/,
     message: "TLS certificate validation is turned off (the callback always returns true).",
@@ -42,6 +43,7 @@ export const CSHARP_SECURITY_RULES: readonly SecurityRule[] = [
   },
   {
     category: "insecure-config",
+    cwe: "CWE-352",
     severity: "medium",
     pattern: /\[\s*IgnoreAntiforgeryToken\b/,
     message: "Antiforgery validation is switched off for this action/controller (CSRF).",
@@ -63,6 +65,7 @@ export function csharpSecurityPostScan(lines: string[], filePath: string): Secur
   if (i < 0) return [];
   return [{
     category: "insecure-config",
+    cwe: "CWE-942",
     severity: "high",
     message: "CORS allows any origin together with credentials: any site can make authenticated requests on a user's behalf.",
     filePath,

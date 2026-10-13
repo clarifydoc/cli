@@ -253,6 +253,8 @@ export interface SecurityRule {
   raw?: boolean;
   /** Only files whose project-relative path matches (Django's `DEBUG = True` means something only in settings). */
   files?: RegExp;
+  /** The CWE a finding is an instance of, when the category's default is not it (`CWE-295` for TLS turned off). */
+  cwe?: string;
 }
 
 /** Node types / operators that count toward cyclomatic complexity. */

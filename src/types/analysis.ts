@@ -2025,6 +2025,8 @@ export interface SecurityIssue {
   filePath: string;
   line: number;
   snippet: string;
+  /** The weakness it is an instance of (`CWE-89`), when one applies. */
+  cwe?: string;
 }
 
 export interface DuplicateGroup {
