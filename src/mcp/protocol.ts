@@ -66,6 +66,27 @@ export interface McpResource {
   read: () => Promise<string> | string;
 }
 
+/**
+ * A parameterized resource (`clarifydoc://file/{path}`): `read` gets the
+ * template's variables, decoded, or returns null when they name nothing.
+ */
+export interface McpResourceTemplate {
+  uriTemplate: string;
+  name: string;
+  description: string;
+  mimeType: string;
+  read: (vars: Record<string, string>) => Promise<string | null> | string | null;
+}
+
+/** A workflow the user can pick in a client: a filled-in instruction for the model. */
+export interface McpPrompt {
+  name: string;
+  title?: string;
+  description: string;
+  arguments: Array<{ name: string; description: string; required?: boolean }>;
+  render: (args: Record<string, string>) => string;
+}
+
 export interface McpServerOptions {
   name: string;
   version: string;
@@ -73,6 +94,8 @@ export interface McpServerOptions {
   instructions?: string;
   tools: McpTool[];
   resources?: McpResource[];
+  resourceTemplates?: McpResourceTemplate[];
+  prompts?: McpPrompt[];
   /** Diagnostics sink. Never stdout. */
   log?: (message: string) => void;
 }
@@ -86,6 +109,8 @@ const INTERNAL_ERROR = -32603;
 export class McpServer {
   private readonly tools = new Map<string, McpTool>();
   private readonly resources = new Map<string, McpResource>();
+  private readonly templates: McpResourceTemplate[];
+  private readonly prompts = new Map<string, McpPrompt>();
   private readonly log: (message: string) => void;
   /** Set once the client's `initialize` has been answered. */
   private negotiatedVersion: string | null = null;
@@ -93,6 +118,8 @@ export class McpServer {
   constructor(private readonly options: McpServerOptions) {
     for (const tool of options.tools) this.tools.set(tool.name, tool);
     for (const resource of options.resources ?? []) this.resources.set(resource.uri, resource);
+    this.templates = options.resourceTemplates ?? [];
+    for (const prompt of options.prompts ?? []) this.prompts.set(prompt.name, prompt);
     this.log = options.log ?? (() => {});
   }
 
@@ -152,11 +179,27 @@ export class McpServer {
           })),
         };
       case "resources/templates/list":
-        return { resourceTemplates: [] };
+        return {
+          resourceTemplates: this.templates.map((t) => ({
+            uriTemplate: t.uriTemplate,
+            name: t.name,
+            description: t.description,
+            mimeType: t.mimeType,
+          })),
+        };
       case "resources/read":
         return this.readResource(params);
       case "prompts/list":
-        return { prompts: [] };
+        return {
+          prompts: [...this.prompts.values()].map((p) => ({
+            name: p.name,
+            ...(p.title ? { title: p.title } : {}),
+            description: p.description,
+            arguments: p.arguments,
+          })),
+        };
+      case "prompts/get":
+        return this.getPrompt(params);
       default:
         throw rpcError(METHOD_NOT_FOUND, `Method not found: ${method}`);
     }
@@ -180,7 +223,8 @@ export class McpServer {
       protocolVersion: version,
       capabilities: {
         tools: { listChanged: false },
-        ...(this.resources.size > 0 ? { resources: { listChanged: false, subscribe: false } } : {}),
+        ...(this.resources.size > 0 || this.templates.length > 0 ? { resources: { listChanged: false, subscribe: false } } : {}),
+        ...(this.prompts.size > 0 ? { prompts: { listChanged: false } } : {}),
       },
       serverInfo: { name: this.options.name, version: this.options.version },
       ...(this.options.instructions ? { instructions: this.options.instructions } : {}),
@@ -215,10 +259,55 @@ export class McpServer {
     const uri = params.uri;
     if (typeof uri !== "string") throw rpcError(INVALID_PARAMS, "resources/read requires a string `uri`");
     const resource = this.resources.get(uri);
-    if (!resource) throw rpcError(INVALID_PARAMS, `Unknown resource: ${uri}`);
-    const text = await resource.read();
-    return { contents: [{ uri, mimeType: resource.mimeType, text }] };
+    if (resource) {
+      const text = await resource.read();
+      return { contents: [{ uri, mimeType: resource.mimeType, text }] };
+    }
+    for (const t of this.templates) {
+      const vars = matchUriTemplate(t.uriTemplate, uri);
+      if (!vars) continue;
+      const text = await t.read(vars);
+      if (text === null) break;
+      return { contents: [{ uri, mimeType: t.mimeType, text }] };
+    }
+    throw rpcError(INVALID_PARAMS, `Unknown resource: ${uri}`);
   }
+
+  private getPrompt(params: Record<string, unknown>): unknown {
+    const name = params.name;
+    if (typeof name !== "string") throw rpcError(INVALID_PARAMS, "prompts/get requires a string `name`");
+    const prompt = this.prompts.get(name);
+    if (!prompt) throw rpcError(INVALID_PARAMS, `Unknown prompt: ${name}`);
+    const raw = (params.arguments as Record<string, unknown> | undefined) ?? {};
+    const args: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw)) if (typeof v === "string" && v.trim()) args[k] = v.trim();
+    const missing = prompt.arguments.filter((a) => a.required && !args[a.name]).map((a) => a.name);
+    if (missing.length) throw rpcError(INVALID_PARAMS, `Prompt ${name} needs: ${missing.join(", ")}`);
+    return {
+      description: prompt.description,
+      messages: [{ role: "user", content: { type: "text", text: prompt.render(args) } }],
+    };
+  }
+}
+
+/**
+ * The variables of a level-1 URI template (`clarifydoc://file/{path}`) in
+ * `uri`, or null when it does not match. The last variable takes the rest of
+ * the URI, slashes included, so a project path needs no escaping.
+ */
+export function matchUriTemplate(template: string, uri: string): Record<string, string> | null {
+  const names: string[] = [];
+  const source = template.split(/(\{[^}]+\})/).map((part, i, all) => {
+    const m = /^\{([^}]+)\}$/.exec(part);
+    if (!m) return part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    names.push(m[1]!);
+    return i === all.length - 2 && all[all.length - 1] === "" ? "(.+)" : "([^/]+)";
+  }).join("");
+  const match = new RegExp(`^${source}$`).exec(uri);
+  if (!match) return null;
+  const vars: Record<string, string> = {};
+  names.forEach((n, i) => { vars[n] = decodeURIComponent(match[i + 1]!); });
+  return vars;
 }
 
 function describeTool(tool: McpTool) {
