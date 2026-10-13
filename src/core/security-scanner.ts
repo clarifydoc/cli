@@ -10,6 +10,37 @@ import { isTestFile } from "./test-file-detector.js";
  * two sets deterministically (lower runs first), which also fixes the order
  * issues are reported in.
  */
+/** Credential formats with a fixed shape (names for the message). */
+const SECRET_FORMATS: ReadonlyArray<readonly [string, RegExp]> = [
+  ["AWS access key", /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/],
+  ["GitHub token", /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,})\b/],
+  ["GitLab token", /\bglpat-[A-Za-z0-9_-]{20,}\b/],
+  ["Stripe live key", /\b[sr]k_live_[A-Za-z0-9]{20,}\b/],
+  ["Slack token", /\bxox[abposr]-[A-Za-z0-9-]{10,}\b/],
+  ["Google API key", /\bAIza[0-9A-Za-z_-]{35}\b/],
+  ["private key", /-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED |PGP )?PRIVATE KEY(?: BLOCK)?-----/],
+  ["database password in a connection URL", /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|rediss|amqps?|mssql|sqlserver):\/\/[^\s:@/'"`]+:[^\s@/'"`]{3,}@/],
+];
+
+/**
+ * A matched secret that is a placeholder, not a credential: documentation
+ * values (`AKIAIOSFODNN7EXAMPLE`, `your-api-key-here`), template holes
+ * (`${PASSWORD}`, `{{token}}`, `<password>`), masks (`****`, `xxxx`) and the
+ * words people type when they mean "fill this in" (`changeme`, `dummy`).
+ */
+export function isPlaceholderSecret(text: string): boolean {
+  // The value: the quoted literal of a `name = "value"` match, else all of it.
+  const quoted = /['"`]([^'"`]*)['"`]\s*$/.exec(text);
+  const value = (quoted ? quoted[1]! : text).trim();
+  // A connection URL's password is the part between `:` and `@`.
+  const url = /:\/\/[^:@\s]+:([^@\s]+)@/.exec(value);
+  const secret = url ? url[1]! : value;
+  // Template holes in any dialect: `${x}`, `{{x}}`, Ruby `#{x}`, ERB/JSP `<%= x %>`, `<x>`, `%(x)s`.
+  if (/\$\{|\{\{|#\{|<%|<[^>]*>|%\(|%s\b/.test(secret)) return true;
+  if (/^(?:\*+|x+|\.+|-+|_+|0+|1234\d*)$/i.test(secret)) return true;
+  return /example|placeholder|changeme|change[-_]me|your[-_ ]|dummy|sample|redacted|replace[-_]?me|^pass(?:word)?$|^secret$|^(?:test|fake|todo|none|null|undefined)$|here$/i.test(secret);
+}
+
 const GENERIC_RULES: SecurityRule[] = [
   // Hardcoded secrets. The value must not start with `/` (a URL path —
   // `resetPassword = '/passwordReset'` is a route constant, not a credential)
@@ -24,6 +55,20 @@ const GENERIC_RULES: SecurityRule[] = [
     priority: 10,
     excludeTest: true,
   },
+  // Credentials recognisable by their FORMAT, whatever the variable is called:
+  // `new Stripe("sk_live_…")`, `AWS_ACCESS_KEY_ID = "AKIA…"`, a pasted PEM key,
+  // a connection URL carrying its password. Matched on the raw text (a
+  // language pre-filter may blank strings) and in comments too: a key in a
+  // comment has leaked just the same.
+  ...SECRET_FORMATS.map(([name, pattern], k): SecurityRule => ({
+    category: "hardcoded-secret",
+    severity: "high",
+    pattern,
+    message: `Hardcoded ${name}. Revoke it, and load it from the environment or a secrets manager.`,
+    priority: 10.1 + k / 100,
+    excludeTest: true,
+    raw: true,
+  })),
   // SQL injection: a statement literal concatenated with a value, as the first
   // argument of a query call (`db.query("SELECT … id=" + id)`,
   // `stmt.executeQuery("…" + id)`, `new SqlCommand("…" + id, conn)`). The
@@ -136,8 +181,17 @@ export function vendoredMinoritySet(
 function snippetOf(line: string, category: SecurityIssue["category"]): string {
   let text = line.trim();
   if (category === "hardcoded-secret") {
+    const mask = (value: string): string =>
+      `${value.length >= 12 ? value.slice(0, 4) : ""}${"*".repeat(Math.min(8, Math.max(4, value.length - 4)))}`;
+    // A connection URL's password, then any credential by its format (quoted
+    // or not), then every remaining string literal on the line.
+    text = text.replace(/(:\/\/[^\s:@/'"`]+:)([^\s@/'"`]+)@/g, (_m, head: string, pass: string) => `${head}${mask(pass)}@`);
+    for (const [, re] of SECRET_FORMATS) {
+      if (re.source.startsWith("-----")) continue;
+      text = text.replace(new RegExp(re.source, "g"), (m) => mask(m));
+    }
     text = text.replace(/(['"`])((?:\\.|(?!\1)[^\\])+)\1/g, (_m, q: string, value: string) =>
-      `${q}${value.length >= 12 ? value.slice(0, 4) : ""}${"*".repeat(Math.min(8, Math.max(4, value.length - 4)))}${q}`);
+      value.includes("****") ? `${q}${value}${q}` : `${q}${mask(value)}${q}`);
   }
   return text.substring(0, 100);
 }
@@ -202,18 +256,23 @@ export function scanSecurity(
   let originalLines: string[] | null = null; // for snippets, split on first hit
   const isTest = isTestFile(filePath, language);
 
-  // A finding at line `i` (0-based) whose match starts at column `col`, unless
-  // the line says it is not one: a comment, a suppression, a secret read
-  // from configuration rather than written into the code.
-  const report = (rule: SecurityRule, i: number, col: number): void => {
-    const line = lines[i] ?? "";
-    const trimmed = line.trimStart();
-    if (trimmed.startsWith("//") || trimmed.startsWith("#") || trimmed.startsWith("*") || trimmed.startsWith("/*") || trimmed.startsWith("<!--")) {
-      return;
-    }
-    // A trailing comment (`x = 1; // token="…"`, `<!-- … -->`): the match is not code.
-    if (TRAILING_COMMENT_RE.test(line.slice(0, col))) return;
+  // A finding at line `i` (0-based) whose match `text` starts at column `col`,
+  // unless the line says it is not one: a comment, a suppression, a secret
+  // read from configuration rather than written into the code, a placeholder.
+  const report = (rule: SecurityRule, i: number, col: number, text: string): void => {
     originalLines ??= splitLines(sourceText);
+    const line = (rule.raw ? originalLines[i] : lines[i]) ?? "";
+    // A credential is leaked wherever it is written, comments included; every
+    // other rule is about code.
+    if (!rule.raw) {
+      const trimmed = line.trimStart();
+      if (trimmed.startsWith("//") || trimmed.startsWith("#") || trimmed.startsWith("*") || trimmed.startsWith("/*") || trimmed.startsWith("<!--")) {
+        return;
+      }
+      // A trailing comment (`x = 1; // token="…"`, `<!-- … -->`): the match is not code.
+      if (TRAILING_COMMENT_RE.test(line.slice(0, col))) return;
+    }
+    if (rule.category === "hardcoded-secret" && isPlaceholderSecret(text)) return;
     // Suppressed on the line (`nosec`, `NOSONAR`, `clarifydoc-ignore`) or by the
     // line before (`clarifydoc-ignore-next-line`). Read from the source as
     // written: a plugin's pre-filter may have blanked its comments.
@@ -241,27 +300,31 @@ export function scanSecurity(
 
   // Apply regex rules
   let lineStarts: number[] | null = null;
+  let rawLines: string[] | null = null;
   for (const rule of rulesFor(language)) {
     if (rule.excludeTest && isTest) continue;
+    const text = rule.raw ? sourceText : effectiveSource;
     // Whole-text gate: a per-line match implies a whole-text match, so a
     // rule that matches nothing in the file skips the per-line loop.
-    if (!rule.pattern.test(effectiveSource)) continue;
+    if (!rule.pattern.test(text)) continue;
 
     if (rule.multiline) {
       // A statement formatted across lines (`db.query(\n  "SELECT …" +\n  id)`):
       // match the whole text, report at the line the match starts on.
+      if (rule.raw) throw new Error("a security rule is raw or multiline, not both");
       lineStarts ??= startsOfLines(effectiveSource);
       const re = new RegExp(rule.pattern.source, rule.pattern.flags.includes("g") ? rule.pattern.flags : `${rule.pattern.flags}g`);
       for (let m = re.exec(effectiveSource); m; m = re.exec(effectiveSource)) {
         const i = lineIndexAt(lineStarts, m.index);
-        report(rule, i, m.index - lineStarts[i]!);
+        report(rule, i, m.index - lineStarts[i]!, m[0]);
         if (m[0].length === 0) re.lastIndex++;
       }
       continue;
     }
-    for (let i = 0; i < lines.length; i++) {
-      const m = rule.pattern.exec(lines[i]!);
-      if (m) report(rule, i, m.index);
+    const scanned = rule.raw ? (rawLines ??= splitLines(sourceText)) : lines;
+    for (let i = 0; i < scanned.length; i++) {
+      const m = rule.pattern.exec(scanned[i]!);
+      if (m) report(rule, i, m.index, m[0]);
     }
   }
 
