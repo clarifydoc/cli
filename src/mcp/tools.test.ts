@@ -261,6 +261,30 @@ describe("clarifydoc MCP tools — react fixture", () => {
     expect(text).toContain(link.sourceFile);
   });
 
+  it("trace `to` names the call path between two symbols, hop by hop", async () => {
+    // A two-hop chain from the fixture itself: a → b → c.
+    const links = loaded.summary.symbolLinks;
+    const key = (f: string, s: string) => `${f}::${s}`;
+    let chain: [typeof links[number], typeof links[number]] | undefined;
+    for (const first of links) {
+      const second = links.find((l) =>
+        key(l.sourceFile, l.sourceSymbol) === key(first.targetFile, first.targetSymbol) &&
+        key(l.targetFile, l.targetSymbol) !== key(first.sourceFile, first.sourceSymbol) &&
+        !links.some((d) => key(d.sourceFile, d.sourceSymbol) === key(first.sourceFile, first.sourceSymbol) &&
+          key(d.targetFile, d.targetSymbol) === key(l.targetFile, l.targetSymbol)));
+      if (second && !first.sourceSymbol.includes(" ") && !second.targetSymbol.includes(" ")) { chain = [first, second]; break; }
+    }
+    expect(chain, "fixture has a two-hop call chain").toBeDefined();
+    const [first, second] = chain!;
+    const { text } = await call(server, "clarifydoc_trace", {
+      symbol: first.sourceSymbol, file: first.sourceFile, to: second.targetSymbol, toFile: second.targetFile,
+    });
+    expect(text).toContain("# Call paths");
+    expect(text).toMatch(/2 hops/);
+    expect(text).toContain(`→ ${first.targetSymbol}()`);
+    expect(text).toContain(`→ ${second.targetSymbol}()`);
+  });
+
   it("trace requires a seed and says so when nothing resolves", async () => {
     const noSeed = await call(server, "clarifydoc_trace", {});
     expect(noSeed.isError).toBe(true);
