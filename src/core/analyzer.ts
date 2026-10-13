@@ -84,7 +84,7 @@ import { buildDataAccessGraph, attributeDataAccessToSymbols } from "./data-acces
 import {
   attributeApiCallsToSymbols,
   computeDataFlows,
-  computeSymbolReach,
+  computeSymbolReachWithWitness,
 } from "./data-flow-reach.js";
 import { vendoredMinoritySet } from "./security-scanner.js";
 import { buildEntityGraph, reconcileEntityInheritance, propagateStiRelations, linkEntityModels, synthesizeReferencedTableEntities } from "./entity-graph.js";
@@ -1261,13 +1261,14 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
         if (m.kind === "db-write") dbAccessByLine.set(`${a.filePath}::${m.line}`, "write");
       }
     }
-    symbolReach = computeSymbolReach({
+    const reached = computeSymbolReachWithWitness({
       symbolLinks,
       symbolDataAccess,
       apiCallAccess: attributeApiCallsToSymbols(allAnalyses),
       dbAccessByLine,
     });
-    dataFlows = computeDataFlows(symbolReach, allRoutes, allAnalyses, allScreens);
+    symbolReach = reached.reach;
+    dataFlows = computeDataFlows(symbolReach, allRoutes, allAnalyses, allScreens, reached.witness);
     if (symbolReach.length > 0) {
       progress.detail(
         `  Data-flow reach: ${symbolReach.length} symbol(s), ${dataFlows.length} route/screen→data flow(s)`,

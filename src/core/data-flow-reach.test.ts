@@ -366,3 +366,27 @@ describe("computeSymbolReach — a path is as sure as its weakest link", () => {
     expect(effectOf(reach, "h.ts", "handler")).toMatchObject({ distance: 2, confidence: "INFERRED" });
   });
 });
+
+describe("computeDataFlows — witness paths", () => {
+  it("names every function between the route and the effect, with the call lines", async () => {
+    const { computeSymbolReachWithWitness } = await import("./data-flow-reach.js");
+    const at = (l: SymbolLink, line: number): SymbolLink => ({ ...l, sourceLine: line });
+    const { reach, witness } = computeSymbolReachWithWitness({
+      symbolLinks: [
+        at(link("routes.ts", "route:POST /orders", "ctl.ts", "OrderController.create"), 3),
+        at(link("ctl.ts", "OrderController.create", "svc.ts", "OrderService.place"), 12),
+        at(link("svc.ts", "OrderService.place", "repo.ts", "OrderRepo.save"), 40),
+      ],
+      symbolDataAccess: [dbRow("repo.ts", "OrderRepo.save", "orders")],
+    });
+    const flows = computeDataFlows(reach, [route("routes.ts", "/orders", "POST", null, 3)], [], [], witness);
+    expect(flows).toHaveLength(1);
+    expect(flows[0]).toMatchObject({ distance: 3 });
+    expect(flows[0]!.via).toEqual([
+      { file: "routes.ts", symbol: "route:POST /orders", line: 3 },
+      { file: "ctl.ts", symbol: "OrderController.create", line: 12 },
+      { file: "svc.ts", symbol: "OrderService.place", line: 40 },
+      { file: "repo.ts", symbol: "OrderRepo.save" },
+    ]);
+  });
+});

@@ -625,7 +625,13 @@ function rewritePageRefs<T extends object>(
       ? (s.effects as Record<string, unknown>[]).map((e) => ({ ...e, originFile: ref(e.originFile) }))
       : s.effects,
   }));
-  arr("dataFlows", (f) => ({ ...f, entryFile: ref(f.entryFile) }));
+  arr("dataFlows", (f) => ({
+    ...f,
+    entryFile: ref(f.entryFile),
+    ...optional("via", Array.isArray(f.via)
+      ? (f.via as Record<string, unknown>[]).map((h) => ({ ...h, file: ref(h.file) }))
+      : undefined),
+  }));
   arr("fileChurn", (c) => ({ ...c, file: ref(c.file) }));
   arr("hotspots", (h) => ({ ...h, file: ref(h.file) }));
   arr("componentLaunches", (c) => ({ ...c, sourceFile: ref(c.sourceFile), targetFile: ref(c.targetFile) }));

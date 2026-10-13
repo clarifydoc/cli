@@ -216,7 +216,7 @@ function describeEntity(
           flows,
           limit,
           (f) =>
-            `${f.entryKind} ${f.entryLabel} → ${f.effect}${f.distance > 0 ? ` (${f.distance} hops)` : ""} (${f.entryFile})${confidenceNote(f.confidence)}`,
+            `${f.entryKind} ${f.entryLabel} → ${f.effect}${f.distance > 0 ? ` (${f.distance} hops)` : ""} (${f.entryFile})${confidenceNote(f.confidence)}${viaText(f.via)}`,
         ),
       ),
     );
@@ -226,6 +226,21 @@ function describeEntity(
 }
 
 const EFFECTS = ["db", "db-read", "db-write", "queue-publish", "queue-consume", "api-call"] as const;
+
+/**
+ * A flow's witness path after the entry: `via Repo.save (repo.ts) ← svc.ts:14`
+ * reads as "the entry calls … which calls …". Each hop names its symbol and
+ * the call site that leads to it, so the path can be checked line by line.
+ */
+function viaText(via: DataFlowPath["via"]): string {
+  if (!via || via.length < 2) return "";
+  const hops = via.slice(1).map((h, i) => {
+    const from = via[i]!;
+    const at = from.line !== undefined ? `${from.file}:${from.line}` : from.file;
+    return `${h.symbol} (called at ${at})`;
+  });
+  return `\n      via ${hops.join(" → ")}`;
+}
 
 export function dataFlowsTool(ctx: ToolContext): McpTool {
   return {
@@ -331,7 +346,7 @@ export function dataFlowsTool(ctx: ToolContext): McpTool {
           [...group].sort((a, b) => a.distance - b.distance),
           10,
           (f) =>
-            `${f.effect} ${f.resource}${f.distance > 0 ? ` — ${f.distance} hops` : " — direct"}${confidenceNote(f.confidence)}`,
+            `${f.effect} ${f.resource}${f.distance > 0 ? ` — ${f.distance} hops` : " — direct"}${confidenceNote(f.confidence)}${viaText(f.via)}`,
           { indent: "  " },
         );
         return [head, ...effects].join("\n");

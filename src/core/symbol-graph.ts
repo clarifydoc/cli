@@ -29,6 +29,8 @@ export interface SymbolAdjacency {
    * `unique-global*`, `route-scan`) asks it per edge.
    */
   confidence: Map<string, Confidence>;
+  /** `edgeKey(caller, callee)` → the line in the caller of its first call to the callee. */
+  callLine: Map<string, number>;
 }
 
 /** Key of the directed edge caller → callee in `SymbolAdjacency.confidence`. */
@@ -62,6 +64,7 @@ export function buildSymbolAdjacency(symbolLinks: readonly SymbolLink[]): Symbol
   };
   const edgeSeen = new Set<string>();
   const confidence = new Map<string, Confidence>();
+  const callLine = new Map<string, number>();
   for (const l of symbolLinks) {
     const src = keyOf(l.sourceFile, l.sourceSymbol);
     const tgt = keyOf(l.targetFile, l.targetSymbol);
@@ -70,6 +73,7 @@ export function buildSymbolAdjacency(symbolLinks: readonly SymbolLink[]): Symbol
     const ck = edgeKey(src, tgt);
     const prev = confidence.get(ck);
     const conf = l.confidence ?? "INFERRED";
+    if (!callLine.has(ck)) callLine.set(ck, l.sourceLine);
     if (prev === undefined) confidence.set(ck, conf);
     else if (strongerFirst(conf, prev) < 0) confidence.set(ck, conf);
     // NUL separator (`edgeKey`): file paths/symbols may contain spaces but
@@ -83,7 +87,7 @@ export function buildSymbolAdjacency(symbolLinks: readonly SymbolLink[]): Symbol
     if (!r) reverse.set(tgt, (r = []));
     r.push(src);
   }
-  return { forward, reverse, symbolsByFile, confidence };
+  return { forward, reverse, symbolsByFile, confidence, callLine };
 }
 
 /**
