@@ -237,4 +237,41 @@ export default new LabelsAPI();`,
       "/enterprise/api/v1/accounts/${this.accountIdFromRoute}/contacts",
     ]);
   });
+
+  it("fans a generic CRUD client's calls out to each subclass's route fields (mealie)", async () => {
+    const targets = await project({
+      "src/base/route.ts": `export function route(rest: string, params: Record<string, string> | null = null): string {
+  const url = new URL(parts.prefix + rest, parts.host);
+  return url.toString();
+}`,
+      "src/base/base-clients.ts": `
+import { route } from "./route";
+export abstract class BaseCRUDAPI {
+  public baseRoute: string;
+  itemRoute(itemId: string): string { return this.itemRouteFn(itemId); }
+  async getAll(page = 1) { return await this.requests.get(route(this.baseRoute, { page })); }
+  async createOne(payload: unknown) { return await this.requests.post(this.baseRoute, payload); }
+  async deleteOne(itemId: string) { return await this.requests.delete(this.itemRoute(itemId)); }
+  async duplicateOne(itemId: string) { return await this.requests.post(\`\${this.itemRoute(itemId)}/duplicate\`, {}); }
+}`,
+      "src/admin/admin-groups.ts": `
+import { BaseCRUDAPI } from "../base/base-clients";
+const prefix = "/api";
+const routes = {
+  adminGroups: \`\${prefix}/admin/groups\`,
+  adminGroupsId: (id: string) => \`\${prefix}/admin/groups/\${id}\`,
+};
+export class AdminGroupsApi extends BaseCRUDAPI {
+  baseRoute: string = routes.adminGroups;
+  itemRoute = routes.adminGroupsId;
+}`,
+    });
+    expect(targets.map((t) => t[0]).sort()).toEqual([
+      "/api/admin/groups",
+      "/api/admin/groups",
+      "/api/admin/groups/{}",
+      "/api/admin/groups/{}/duplicate",
+    ]);
+  });
 });
+

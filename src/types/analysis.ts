@@ -1132,6 +1132,14 @@ export interface DataSourceInfo {
    * (see `FunctionInfo.urlTemplateAlternatives`). `target` is the first branch;
    * the route join tries these in order when `target` matches no route.
    */
+  /**
+   * The subclass this row's URL was resolved for, when a base-class method's
+   * call (`this.requests.patch(this.itemRoute(id))` in a generic CRUD client)
+   * was fanned out per concrete subclass. Such a row is what the client CAN
+   * request; one that reaches no route is not reported as a miss — the method
+   * is inherited, not necessarily called.
+   */
+  viaSubclass?: string;
   targetAlternatives?: string[];
   /**
    * For `kind === "database"`: whether the op reads or writes, when the plugin's
