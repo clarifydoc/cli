@@ -103,7 +103,12 @@ function endsStatement(line: string): boolean {
   return /;/.test(line.replace(/"(?:[^"\\]|\\.)*"/g, ""));
 }
 
-function tableFrom(stmt: string): { verb: string; table: string } | null {
+/**
+ * The statement's verb and the table it reads or writes, or null when the
+ * text is not SQL with a table (also used by plugins that resolve a query's
+ * text from a call argument rather than scanning every literal).
+ */
+export function tableFrom(stmt: string): { verb: string; table: string } | null {
   const start = stmt.match(SQL_START_RE);
   if (!start) return null;
   const sql = stmt.slice(start.index!);
