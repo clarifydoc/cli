@@ -38,6 +38,12 @@ export interface ControlFlowRequest {
   functionName?: string;
   /** Select the function whose body covers this 1-based line. */
   line?: number;
+  /**
+   * The file's text, when it is not what is on disk — an editor's unsaved
+   * buffer. `filePath` still names the language and the file; without this the
+   * file is read from `filePath`.
+   */
+  source?: string;
 }
 
 /** The graphs drawn for one file plus the list of functions it could have drawn. */
@@ -184,7 +190,7 @@ function selectRows(
 export async function controlFlowForFile(
   request: ControlFlowRequest,
 ): Promise<ControlFlowFileResult> {
-  const { filePath, displayPath = filePath, functionName, line } = request;
+  const { filePath, displayPath = filePath, functionName, line, source: given } = request;
 
   const language = languageOf(filePath);
   if (!language) {
@@ -196,14 +202,14 @@ export async function controlFlowForFile(
   // No parse tree for this language: read the control flow off the text
   // instead. An approximation, marked as one everywhere it surfaces.
   if (plugin?.parsing !== "tree-sitter") {
-    return regexFallback(filePath, displayPath, language, functionName, line);
+    return regexFallback(filePath, displayPath, language, functionName, line, given);
   }
   if (!controlFlowFor(language)) {
     throw new ControlFlowUnavailableError(
       `${language} has no control-flow tables yet — its complexity numbers are computed, but not explained. See meta.controlFlow in the language plugin.`,
     );
   }
-  const raw = await readFile(filePath, plugin.sourceEncoding ?? "utf-8");
+  const raw = given ?? (await readFile(filePath, plugin.sourceEncoding ?? "utf-8"));
 
   // Container formats (a Vue or Svelte SFC) carry their code in a `<script>`
   // block, and the whole pipeline reads them through this hook. Skipping it
@@ -266,6 +272,7 @@ async function regexFallback(
   language: Language,
   functionName: string | undefined,
   line: number | undefined,
+  given: string | undefined,
 ): Promise<ControlFlowFileResult> {
   if (!regexControlFlowFor(language)) {
     throw new ControlFlowUnavailableError(
@@ -273,7 +280,7 @@ async function regexFallback(
     );
   }
 
-  const source = await readFile(filePath, pluginFor(language)?.sourceEncoding ?? "utf-8");
+  const source = given ?? (await readFile(filePath, pluginFor(language)?.sourceEncoding ?? "utf-8"));
   const analysis = extractWithRegex(source, displayPath, language);
 
   const rows = [
