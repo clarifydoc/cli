@@ -462,6 +462,9 @@ describe("JS request descriptors and positional request()", () => {
     expect(await apiCallsOf(`const { request } = useWakeLock();\nasync function lock() { await request("screen"); }`)).toEqual([]);
     const lib = await apiCallsOf(`import request from "request";\nrequest("https://api.example.com/v1/items");\nrequest("items");`);
     expect(lib.map((c) => c.target)).toEqual(["https://api.example.com/v1/items", "items"]);
+    // A project's own XHR wrapper, called verb first.
+    const own = await apiCallsOf(`const request = (method, url) => new XMLHttpRequest();\nrequest('POST', \`api/\${url}\`);`);
+    expect(own.map((c) => [c.name, c.target])).toEqual([["post", "api/${url}"]]);
   });
 
   it("unwraps a .replace() on a literal path, keeping its parameter", async () => {
