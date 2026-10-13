@@ -39,7 +39,7 @@ language-specific comes from each plugin's `meta.calls`
 - Variable alias lookup (`const s = useStore()` then `s.x.y`) → `cross-file` (the alias walker is a JS plugin `ast.variableAliases` hook)
 - Plugin `qualifiedRootCandidates` transforms → `cross-file` (INFERRED)
 - Root names one of the file's own definitions (`localSymbols`: functions, dotted-name roots like `requests` of `requests.get`, classes) → stays `internal`, before any name heuristic. `api-call`/`database` calls are skipped by both the symbol linker and the LSP enhancer, so a wrong label there is a link that can never form.
-- Pattern match on `isApiCall` / `isDatabaseCall` → `api-call` / `database`. A `this.`/`self.` receiver is never `database` by its method name alone (`isDatabaseCall(…, byMethodName = false)`); a known DB client root still is.
+- Pattern match on `isApiCall` / `isDatabaseCall` → `api-call` / `database`. A `this.`/`self.` receiver is never `database` by its method name alone (`isDatabaseCall(…, byMethodName = false)`); a known DB client root still is. A bare call (`sum(xs)`) is never `database` by name, and `execute` is not an HTTP method name (`cursor.execute`, JDBC `stmt.execute`). A dotted root in a plugin's list (`http.client`, `urllib.request`) matches as a module-path prefix, not by its first segment.
 
 ## link-scoring.ts — file dependency graph
 
