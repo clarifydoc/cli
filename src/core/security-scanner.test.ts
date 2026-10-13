@@ -130,6 +130,34 @@ describe("scanSecurity — secret snippets", () => {
   });
 });
 
+describe("scanSecurity — what a line says about itself", () => {
+  const found = (src: string, file = "src/a.ts", lang: Parameters<typeof scanSecurity>[2] = "typescript") =>
+    scanSecurity(src, file, lang).filter((i) => i.category !== "todo-fixme" && i.category !== "debug-statement").map((i) => [i.category, i.line]);
+
+  it("matches a SQL statement formatted across lines, at the line it starts", () => {
+    expect(found(["const r = await db.query(", '  "SELECT * FROM users WHERE id = " +', "  id,", ");"].join("\n"))).toEqual([["sql-injection", 1]]);
+    expect(found(["cursor.execute(", '    "SELECT * FROM t WHERE id = %s"', "    % uid", ")"].join("\n"), "app/db.py", "python")).toEqual([["sql-injection", 1]]);
+  });
+
+  it("reports a secret written into config, not one read from it", () => {
+    expect(found('config.dbPassword = "S3cret-value!";')).toEqual([["hardcoded-secret", 1]]);
+    expect(found('const password = "fallback-x" || settings.password;')).toEqual([]);
+  });
+
+  it("skips matches inside a trailing comment", () => {
+    expect(found('const a = 1; // password = "hunter2-old"')).toEqual([]);
+    expect(found('<div></div> <!-- token: "abcd-efgh" -->', "src/a.html", "html")).toEqual([]);
+  });
+
+  it("honours inline suppressions", () => {
+    expect(found('const password = "fixture-only"; // nosec')).toEqual([]);
+    expect(found('const token = "known-public-token"; // NOSONAR')).toEqual([]);
+    expect(found(['// clarifydoc-ignore-next-line', 'const secret = "documented-example";'].join("\n"))).toEqual([]);
+    // Python blanks comments before matching; the suppression is still read.
+    expect(found('cursor.execute(f"SELECT * FROM t WHERE id={uid}")  # nosec B608', "app/db.py", "python")).toEqual([]);
+  });
+});
+
 describe("scanSecurity — minified/bundle skip", () => {
   it("skips a file with an enormous minified line", () => {
     const minified = "var a=1;" + "el.innerHTML = userInput;".repeat(300);

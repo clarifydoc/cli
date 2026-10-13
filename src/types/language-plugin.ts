@@ -239,6 +239,12 @@ export interface SecurityRule {
   priority: number;
   /** Skip this rule in test files. */
   excludeTest?: boolean;
+  /**
+   * Match the whole text rather than line by line, for a statement formatted
+   * across lines; reported at the line the match starts on. Keep such a
+   * pattern anchored on something distinctive — it is run with the `g` flag.
+   */
+  multiline?: boolean;
 }
 
 /** Node types / operators that count toward cyclomatic complexity. */
