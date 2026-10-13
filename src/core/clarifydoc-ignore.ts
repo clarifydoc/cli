@@ -205,7 +205,49 @@ function matchesAnchored(rel: string, glob: string): boolean {
 /** Unanchored: any single segment, so the name may sit at any depth. */
 function matchesUnanchored(rel: string, glob: string): boolean {
   if (fnmatch(rel, glob)) return true; // a `**` glob that spans separators
+  return matchesSegment(rel, glob);
+}
+
+function matchesSegment(rel: string, glob: string): boolean {
   return rel.split("/").some((part) => fnmatch(part, glob));
+}
+
+/**
+ * The directories a walk need not enter, as a predicate on absolute paths:
+ * those a pattern ignores in a way every path below inherits — an anchored
+ * pattern matching the directory or one of its parents, an unanchored one
+ * matching one of its names — and that no later `!` pattern could re-include
+ * anything from. `isIgnored` drops every file below such a directory anyway;
+ * walking it first is pure cost, and one gitignored tree of cloned
+ * repositories held 1.1M files. Undefined when no pattern can prune.
+ */
+export function ignoredDirectories(
+  root: string,
+  patterns: readonly IgnorePattern[],
+): ((absDir: string) => boolean) | undefined {
+  let lastNegated = -1;
+  patterns.forEach((p, i) => { if (p.negated) lastNegated = i; });
+  const final = patterns.slice(lastNegated + 1);
+  if (final.length === 0) return undefined;
+  const rootPosix = toPosix(resolve(root));
+  return (absDir) => {
+    const path = toPosix(absDir);
+    return final.some((pattern) => coversSubtree(path, rootPosix, pattern));
+  };
+}
+
+/** `matches`, minus the whole-path `**` match a path below may not repeat. */
+function coversSubtree(path: string, rootPosix: string, pattern: IgnorePattern): boolean {
+  const anchorPosix = toPosix(pattern.anchor);
+  if (pattern.anchored) {
+    const rel = relativeBelow(path, anchorPosix);
+    return rel !== null && matchesAnchored(rel, pattern.glob);
+  }
+  const rel = relativeBelow(path, rootPosix);
+  if (rel !== null && matchesSegment(rel, pattern.glob)) return true;
+  if (anchorPosix === rootPosix) return false;
+  const relAnchor = relativeBelow(path, anchorPosix);
+  return relAnchor !== null && matchesSegment(relAnchor, pattern.glob);
 }
 
 /** Return path relative to base if path is at or below base; null otherwise. */

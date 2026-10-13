@@ -5,7 +5,7 @@ import { glob, LinkedFiles } from "./glob.js";
 import type { Language } from "../types/analysis.js";
 import { EXTENSION_TO_LANGUAGE, getLanguageForFile } from "../parsers/language-map.js";
 import { NAMED_FILE_LANGUAGE, SOURCE_DIRS } from "../extractors/registry.js";
-import { loadIgnorePatterns, isIgnored } from "./clarifydoc-ignore.js";
+import { loadIgnorePatterns, isIgnored, ignoredDirectories } from "./clarifydoc-ignore.js";
 
 /**
  * Files that may contain secrets — skipped silently and reported separately.
@@ -115,6 +115,8 @@ export async function discoverFiles(
   ];
   const patterns = options.include?.length ? options.include : sourcePatterns;
   const ignore = [...DEFAULT_IGNORE, ...(options.exclude ?? [])];
+  const ignorePatterns = loadIgnorePatterns(root);
+  const prune = ignoredDirectories(root, ignorePatterns);
 
   // Not following links, the walk would drop every linked file; list them
   // and decide per link below.
@@ -126,6 +128,7 @@ export async function discoverFiles(
     // match extensions case-insensitively or a third of such repos vanishes.
     caseSensitiveMatch: false,
     links,
+    prune,
   });
 
   // A skipped directory a plugin says holds source (`bin/` with a `dune`
@@ -137,6 +140,7 @@ export async function discoverFiles(
       const markers = await glob(`**/${marker}`, {
         cwd: root,
         ignore: ignore.filter((p) => !marker.startsWith(p.replace(/^\*\*\//, "").replace(/\/\*\*$/, "") + "/")),
+        prune,
       });
       for (const m of markers) {
         const parent = m.slice(0, m.length - marker.length).replace(/\/$/, "");
@@ -144,14 +148,13 @@ export async function discoverFiles(
       }
     }
     for (const dir of dirs) {
-      const inner = await glob(patterns, { cwd: resolve(root, dir), ignore, caseSensitiveMatch: false, links });
+      const inner = await glob(patterns, { cwd: resolve(root, dir), ignore, caseSensitiveMatch: false, links, prune });
       for (const e of inner) {
         const path = `${dir}/${e}`;
         if (!seen.has(path)) { seen.add(path); entries.push(path); }
       }
     }
   }
-  const ignorePatterns = loadIgnorePatterns(root);
 
   let results: DiscoveredFile[] = [];
   const skippedSensitive: string[] = [];

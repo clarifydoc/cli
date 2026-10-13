@@ -3,7 +3,7 @@ import { byOrdinal } from "./ordinal.js";
 import { readFile } from "fs/promises";
 import { join, resolve } from "path";
 import type { PackageEcosystem, SubProject, SubProjectKind } from "../types/analysis.js";
-import { loadIgnorePatterns, isIgnored } from "./clarifydoc-ignore.js";
+import { loadIgnorePatterns, isIgnored, ignoredDirectories } from "./clarifydoc-ignore.js";
 import { PACKAGE_MANAGERS } from "../extractors/registry.js";
 
 /**
@@ -95,6 +95,7 @@ export async function detectSubProjects(
   // full of package/project files (77 of them under one Delphi repo's
   // `Library/`), and each one otherwise becomes its own scanned root.
   const ignorePatterns = loadIgnorePatterns(root);
+  const prune = ignoredDirectories(root, ignorePatterns);
 
   const byDir = new Map<
     string,
@@ -109,6 +110,7 @@ export async function detectSubProjects(
       dot: false,
       // Legacy Windows repos ship PROJECT.DPR / MAKEFILE-cased markers.
       caseSensitiveMatch: false,
+      prune,
     });
     const matches = ignorePatterns.length === 0
       ? found
