@@ -7,6 +7,7 @@ import {
   detectFrameworksAcrossRoots,
 } from "./core/framework-detector.js";
 import { detectSubProjects } from "./core/project-detector.js";
+import { EXTENSION_TO_LANGUAGE, NAMED_FILE_LANGUAGE } from "./extractors/registry.js";
 import { gitChangedFiles } from "./core/git-changed-files.js";
 import {
   controlFlowForFile,
@@ -238,9 +239,29 @@ program
 
 program
   .command("detect")
-  .description("Detect languages and frameworks in a project")
-  .argument("<path>", "Path to project root")
-  .action(async (path: string) => {
+  .description(
+    "Detect languages and frameworks in a project. With --json and no path, print only " +
+      "what the analyzer can read (its file extensions and extension-less file names), without scanning",
+  )
+  .argument("[path]", "Path to project root")
+  .option("--json", "Print JSON instead of text")
+  .action(async (path: string | undefined, opts: { json?: boolean }) => {
+    // What discovery picks up — the same tables it globs by — so a caller that
+    // watches for changes (the VS Code extension) never keeps its own list.
+    const analyzable = {
+      analyzableExtensions: Object.keys(EXTENSION_TO_LANGUAGE).sort(),
+      namedFiles: [...NAMED_FILE_LANGUAGE.keys()].sort(),
+    };
+    if (path === undefined) {
+      if (!opts.json) {
+        console.error("detect: a project path is required (or pass --json for the analyzable file types).");
+        process.exitCode = 1;
+        return;
+      }
+      console.log(JSON.stringify(analyzable, null, 2));
+      return;
+    }
+
     const projectRoot = resolve(path);
     const info = await gatherProjectInfo(projectRoot);
 
@@ -253,6 +274,22 @@ program
       projectRoot,
       subProjects.map((s) => s.root),
     );
+
+    if (opts.json) {
+      console.log(
+        JSON.stringify(
+          {
+            root: projectRoot,
+            fileExtensions: [...info.fileExtensions].sort(),
+            frameworks: frameworks.map((fw) => ({ name: fw.name, detectedVia: fw.detectedVia })),
+            ...analyzable,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
 
     console.log("Project info:");
     console.log(`  Root: ${projectRoot}`);
