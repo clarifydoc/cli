@@ -594,7 +594,11 @@ export function healthTool(ctx: ToolContext): McpTool {
               ...bulletList(
                 issues,
                 limit,
-                (i) => `[${i.severity}] ${i.category}: ${i.message} (${loc(i.filePath, i.line)})`,
+                (i) => `[${i.severity}] ${i.category}: ${i.message} (${loc(i.filePath, i.line)})${
+                  i.entries?.length
+                    ? `\n    reachable from ${i.entries.map((e) => `${e.route}${e.distance ? ` (${e.distance} hops)` : ""}`).join(", ")}`
+                    : ""
+                }`,
               ),
             ]),
           };
