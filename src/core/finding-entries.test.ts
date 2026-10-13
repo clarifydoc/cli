@@ -32,3 +32,20 @@ describe("attachFindingEntries", () => {
     expect(issues[1]!.entries).toBeUndefined();
   });
 });
+
+describe("anonymousWriteFindings", () => {
+  const route = (method: string, path: string, anonymous: boolean | undefined) =>
+    ({ path, httpMethod: method, kind: "api", handler: "h", line: 5, calls: [], middleware: [], filePath: "Ctl.cs",
+       ...(anonymous === undefined ? {} : { auth: { policies: [], roles: [], schemes: [], anonymous } }) }) as never;
+  const flow = (label: string, effect: string) =>
+    ({ entryKind: "route", entryLabel: label, entryFile: "Ctl.cs", effect, resource: "Orders", distance: 2, confidence: "INFERRED" }) as never;
+
+  it("flags an anonymous mutating route that writes, and nothing else", async () => {
+    const { anonymousWriteFindings } = await import("./finding-entries.js");
+    const found = anonymousWriteFindings(
+      [route("POST", "/orders", true), route("GET", "/orders", true), route("DELETE", "/orders/{id}", false), route("PUT", "/orders/{id}", undefined)],
+      [flow("POST /orders", "db-write"), flow("GET /orders", "db-read"), flow("DELETE /orders/{id}", "db-write"), flow("PUT /orders/{id}", "db-write")],
+    );
+    expect(found.map((f) => [f.category, f.snippet, f.cwe])).toEqual([["missing-auth", "POST /orders → h", "CWE-306"]]);
+  });
+});

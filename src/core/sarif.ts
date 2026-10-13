@@ -86,6 +86,7 @@ const TITLES: Partial<Record<SecurityIssue["category"], string>> = {
   "weak-crypto": "Broken or weak cryptography",
   "bare-except": "Exception swallowed",
   "insecure-config": "Insecure configuration",
+  "missing-auth": "Unauthenticated write",
 };
 
 type SarifLevel = "error" | "warning" | "note";
