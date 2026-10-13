@@ -331,3 +331,38 @@ describe("attributeApiCallsToSymbols", () => {
     expect(attributeApiCallsToSymbols([analysis])).toEqual([]);
   });
 });
+
+describe("computeSymbolReach — a path is as sure as its weakest link", () => {
+  const guess = (sf: string, ss: string, tf: string, ts: string): SymbolLink => ({
+    ...link(sf, ss, tf, ts), confidence: "AMBIGUOUS", strategy: "unique-global-blind",
+  });
+  const effectOf = (reach: SymbolReachSummary[], file: string, symbol: string) =>
+    reach.find((r) => r.file === file && r.symbol === symbol)?.effects[0];
+
+  it("marks a caller that reaches an effect only across a guessed link AMBIGUOUS", () => {
+    const reach = computeSymbolReach({
+      symbolLinks: [
+        guess("a.ts", "report", "repo.ts", "Repo.save"),
+        link("b.ts", "handler", "a.ts", "report"),
+        link("c.ts", "checkout", "repo.ts", "Repo.save"),
+      ],
+      symbolDataAccess: [dbRow("repo.ts", "Repo.save", "orders")],
+    });
+    expect(effectOf(reach, "c.ts", "checkout")).toMatchObject({ distance: 1, confidence: "INFERRED" });
+    expect(effectOf(reach, "a.ts", "report")).toMatchObject({ distance: 1, confidence: "AMBIGUOUS" });
+    // Everything above a guess inherits it.
+    expect(effectOf(reach, "b.ts", "handler")).toMatchObject({ distance: 2, confidence: "AMBIGUOUS" });
+  });
+
+  it("prefers a longer resolved path over a shorter guessed one", () => {
+    const reach = computeSymbolReach({
+      symbolLinks: [
+        guess("h.ts", "handler", "repo.ts", "Repo.save"),
+        link("h.ts", "handler", "s.ts", "Service.run"),
+        link("s.ts", "Service.run", "repo.ts", "Repo.save"),
+      ],
+      symbolDataAccess: [dbRow("repo.ts", "Repo.save", "orders")],
+    });
+    expect(effectOf(reach, "h.ts", "handler")).toMatchObject({ distance: 2, confidence: "INFERRED" });
+  });
+});

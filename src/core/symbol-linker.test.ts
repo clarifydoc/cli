@@ -226,6 +226,32 @@ describe("symbol-linker — route-handler fallback guards (spsflow FPs)", () => 
     expect(links).toEqual([]);
   });
 
+  it("grades a route-scan link by whether the route states its target", () => {
+    const php = (path: string, opts: Parameters<typeof file>[2]) =>
+      ({ ...file(path, "web", opts), language: "php" }) as unknown as FileAnalysis;
+    const routes = {
+      ...php("routes/api.php", {}),
+      routes: [route("/api/user", "UserController#index"), route("/api/health", "ping")],
+    } as unknown as FileAnalysis;
+    const controller = php("app/Http/Controllers/UserController.php", {
+      classes: [{ ...cls("UserController"), methods: [fn("index", [])] }],
+    });
+    const helpers = php("app/helpers.php", { functions: [fn("ping", [])] });
+    const graded = (files: FileAnalysis[]) =>
+      buildSymbolLinks(files).filter((l) => l.sourceSymbol.startsWith("route:")).map((l) => [l.callName, l.confidence]);
+    // The one `UserController.index`: named by the route, only the import is missing.
+    // A bare handler name found by search stays a guess.
+    expect(graded([routes, controller, helpers])).toEqual([
+      ["UserController#index", "INFERRED"],
+      ["ping", "AMBIGUOUS"],
+    ]);
+    // Two controllers of that name: whichever is linked is a guess.
+    const other = php("legacy/UserController.php", {
+      classes: [{ ...cls("UserController"), methods: [fn("index", [])] }],
+    });
+    expect(graded([routes, controller, other])[0]).toEqual(["UserController#index", "AMBIGUOUS"]);
+  });
+
   it("keeps a `Class.method` handler whose class is namespaced on the target side (Phoenix)", () => {
     const router = {
       ...file("lib/app_web/router.ex", "app", {}),
