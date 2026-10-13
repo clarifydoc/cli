@@ -113,4 +113,24 @@ def helper():
       ["*", "mealie.schema", undefined],
     ]);
   });
+
+  it("forwards a package __init__'s absolute imports of its own tree", async () => {
+    const { parseSource } = await import("../../../parsers/parser-manager.js");
+    const { PythonImportExportExtractor } = await import("./imports-exports.js");
+    const src = `from app.services.user import UserService
+from app.services.order import OrderService as Orders
+from typing import Any
+`;
+    const reExports = async (path: string) => {
+      const tree = await parseSource(src, "python" as any, path);
+      return new PythonImportExportExtractor().extractExports(tree, src, path)
+        .filter((e) => e.kind === "re-export").map((e) => [e.name, e.source, e.sourceName]);
+    };
+    expect(await reExports("src/app/services/__init__.py")).toEqual([
+      ["UserService", "app.services.user", undefined],
+      ["Orders", "app.services.order", "OrderService"],
+    ]);
+    // Any other module's absolute imports are its dependencies.
+    expect(await reExports("src/app/services/api.py")).toEqual([]);
+  });
 });

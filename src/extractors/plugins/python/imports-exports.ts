@@ -1,4 +1,4 @@
-import type { Node } from "web-tree-sitter";
+import type { Node, Tree } from "web-tree-sitter";
 import { ImportExportExtractor } from "../../imports-exports/base.js";
 import type { ImportInfo, ExportInfo, Language } from "../../imports-exports/base.js";
 
@@ -146,11 +146,29 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
     });
   }
 
+  /**
+   * When the file being read is a package's `__init__.py`, the directories on
+   * its path — the package names an absolute import of its own tree starts
+   * with (set per `extractExports` call).
+   */
+  private packageDirs: ReadonlySet<string> | null = null;
+
+  override extractExports(tree: Tree, sourceText: string, filePath?: string): ExportInfo[] {
+    this.packageDirs = filePath && /(?:^|\/)__init__\.pyi?$/.test(filePath)
+      ? new Set(filePath.split("/").slice(0, -1))
+      : null;
+    try {
+      return super.extractExports(tree, sourceText, filePath);
+    } finally {
+      this.packageDirs = null;
+    }
+  }
+
   protected collectExports(node: Node, exports: ExportInfo[]): void {
     // In Python, top-level functions and classes are "exports"
     for (const child of node.children) {
       if (child.type === "import_from_statement") {
-        reExportsOf(child, exports);
+        reExportsOf(child, exports, this.packageDirs);
         continue;
       }
 
@@ -189,9 +207,13 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
  * publishing its modules (`from .dependencies import *`, `from .user import
  * User as Account`) — the names a caller importing the package finds there.
  * Relative imports name the package's own modules; `import *` forwards
- * whatever it imports. Recorded as `re-export` exports with their `source`.
+ * whatever it imports. A package's `__init__.py` also publishes what it names
+ * absolutely from its own tree (`from app.services.user import UserService`
+ * in `app/services/__init__.py` — the module's root is a directory on the
+ * file's path; `from typing import Any` is a dependency, not its API).
+ * Recorded as `re-export` exports with their `source`.
  */
-function reExportsOf(stmt: Node, exports: ExportInfo[]): void {
+function reExportsOf(stmt: Node, exports: ExportInfo[], packageDirs: ReadonlySet<string> | null): void {
   const module = stmt.childForFieldName("module_name")?.text ?? "";
   if (!module) return;
   const line = stmt.startPosition.row + 1;
@@ -200,7 +222,7 @@ function reExportsOf(stmt: Node, exports: ExportInfo[]): void {
     exports.push({ name: "*", kind: "re-export", line, source: module });
     return;
   }
-  if (!module.startsWith(".")) return;
+  if (!module.startsWith(".") && !packageDirs?.has(module.split(".")[0]!)) return;
   const moduleNode = stmt.childForFieldName("module_name");
   const inModule = (n: Node): boolean => !!moduleNode && n.startIndex >= moduleNode.startIndex && n.endIndex <= moduleNode.endIndex;
   for (const part of stmt.descendantsOfType(["dotted_name", "aliased_import"])) {
