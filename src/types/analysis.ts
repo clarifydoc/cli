@@ -2041,6 +2041,13 @@ export interface LayerViolation {
   targetLayer: ArchLayer;
   importSpecifier: string;
   line: number;
+  /**
+   * The team rule this import breaks (`.clarifydoc/config.json` `rules`), when
+   * it is one — absent for the built-in layer-order check.
+   */
+  rule?: string;
+  /** The rule's severity (`error` unless the rule says `warn`). */
+  severity?: "error" | "warn";
 }
 
 export interface BlastSymbolUsage {

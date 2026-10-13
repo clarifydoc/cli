@@ -217,12 +217,7 @@ export function detectLayerViolations(
       // Allow 1-level proximity (e.g., services importing from components is ok)
       // Only flag 2+ level jumps (e.g., data importing from ui)
       if (sourceLevel < targetLevel && (targetLevel - sourceLevel) > 1) {
-        // Find the import line
-        const analysis = analyses.find((a) => a.filePath === sourceFile);
-        const importLine = analysis?.imports.find((imp) => {
-          // Check if this import resolves to the target file
-          return imp.source.includes(targetFile.replace(/\.[^.]+$/, "").split("/").pop()!);
-        })?.line ?? 0;
+        const importLine = importLineOf(analyses, sourceFile, targetFile);
 
         violations.push({
           sourceFile,
@@ -237,4 +232,47 @@ export function detectLayerViolations(
   }
 
   return violations;
+}
+
+/** The line of the import in `sourceFile` that names `targetFile` (its base name), or 0. */
+function importLineOf(analyses: readonly FileAnalysis[], sourceFile: string, targetFile: string): number {
+  const analysis = analyses.find((a) => a.filePath === sourceFile);
+  const base = targetFile.replace(/\.[^.]+$/, "").split("/").pop()!;
+  return analysis?.imports.find((imp) => imp.source.includes(base))?.line ?? 0;
+}
+
+/**
+ * The team's own import rules (`.clarifydoc/config.json` `rules`), checked over
+ * the dependency graph: an edge from a file matching `from` to one matching
+ * `to` breaks the rule unless `except` names either end. Reported as layer
+ * violations that carry the rule's name, so the Health tab and MCP list them
+ * beside the built-in layer-order check.
+ */
+export function detectRuleViolations(
+  analyses: readonly FileAnalysis[],
+  componentGraph: Record<string, string[]>,
+  fileLayerMap: Record<string, ArchLayer>,
+  rules: ReadonlyArray<{ name: string; from: string[]; to: string[]; except: string[]; severity: "error" | "warn" }>,
+): LayerViolation[] {
+  if (rules.length === 0) return [];
+  const out: LayerViolation[] = [];
+  for (const [sourceFile, targets] of Object.entries(componentGraph)) {
+    for (const rule of rules) {
+      if (!matchesAnyGlob(sourceFile, rule.from) || matchesAnyGlob(sourceFile, rule.except)) continue;
+      for (const targetFile of targets) {
+        if (targetFile === sourceFile || !matchesAnyGlob(targetFile, rule.to) || matchesAnyGlob(targetFile, rule.except)) continue;
+        out.push({
+          sourceFile,
+          sourceLayer: fileLayerMap[sourceFile] ?? "unknown",
+          targetFile,
+          targetLayer: fileLayerMap[targetFile] ?? "unknown",
+          importSpecifier: targetFile.split("/").pop() ?? targetFile,
+          line: importLineOf(analyses, sourceFile, targetFile),
+          rule: rule.name,
+          severity: rule.severity,
+        });
+      }
+    }
+  }
+  return out;
 }

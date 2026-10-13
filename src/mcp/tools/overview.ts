@@ -607,14 +607,15 @@ export function healthTool(ctx: ToolContext): McpTool {
           return {
             text: joinLines([
               `# Layer violations (${violations.length})`,
-              "A violation is an import that crosses the architecture layers the wrong way.",
+              "A violation is an import that crosses the architecture layers the wrong way, or breaks one of the " +
+                "team's own rules in .clarifydoc/config.json.",
               "",
               ...bulletList(
                 violations,
                 limit,
                 (v) =>
-                  `${v.sourceLayer} → ${v.targetLayer}: ${loc(v.sourceFile, v.line)} imports ` +
-                  `${v.importSpecifier} (${v.targetFile})`,
+                  `${v.rule ? `rule "${v.rule}"${v.severity === "warn" ? " (warn)" : ""}` : `${v.sourceLayer} → ${v.targetLayer}`}: ` +
+                  `${loc(v.sourceFile, v.line)} imports ${v.importSpecifier} (${v.targetFile})`,
               ),
             ]),
           };
