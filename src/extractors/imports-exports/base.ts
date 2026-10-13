@@ -58,8 +58,8 @@ export abstract class ImportExportExtractor {
     throw new Error("importFromCapture not implemented");
   }
 
-  /** Extract all exports from the AST */
-  extractExports(tree: Tree, _sourceText: string): ExportInfo[] {
+  /** Extract all exports from the AST. `_filePath` (posix, relative) for extractors whose exports depend on the file's role. */
+  extractExports(tree: Tree, _sourceText: string, _filePath?: string): ExportInfo[] {
     const exports: ExportInfo[] = [];
     this.collectExports(tree.rootNode, exports);
     return exports;

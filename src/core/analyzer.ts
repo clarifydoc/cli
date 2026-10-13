@@ -981,10 +981,11 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   }
   const isConfiguredGenerated = (f: string): boolean => matchesAnyGlob(f, architecture.generated);
   // Language-idiomatic codegen that names FILES rather than folders
-  // (`Form1.Designer.cs`, `user.pb.go`) — invisible to the directory-based
-  // detection, so its size and repetition counted against the team.
+  // (`Form1.Designer.cs`, `user.pb.go`) or says so in its header (`// Code
+  // generated … DO NOT EDIT.`) — invisible to the directory-based detection,
+  // so its size and repetition counted against the team.
   const pluginGenerated = new Set(
-    allAnalyses.filter((a) => isGeneratedFile(a.filePath, a.language)).map((a) => a.filePath),
+    allAnalyses.filter((a) => a.generated || isGeneratedFile(a.filePath, a.language)).map((a) => a.filePath),
   );
   if (pluginGenerated.size > 0) {
     progress.detail(`  Generated (by convention): ${pluginGenerated.size} file(s) excluded from quality signals`);

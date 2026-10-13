@@ -16,6 +16,7 @@ import { applyWorkspacePackages, loadWorkspacePackages } from "../extractors/sha
 import { pluginFor, astHooksFor, inferFileFrameworks, ensureLanguagesLoaded, regexSpecFor } from "../extractors/registry.js";
 import { computeComplexity } from "./complexity-analyzer.js";
 import { scanSecurity, isMinifiedSource, isVendoredSource } from "./security-scanner.js";
+import { isGeneratedSource } from "./generated-file-detector.js";
 import { extractTypeReferences } from "./type-reference-extractor.js";
 import { enrichFileDataSources } from "./import-index.js";
 import type { VariableAliasBinding } from "../types/language-plugin.js";
@@ -123,6 +124,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // the analysis so project-level detectors can exclude these files.
     const minified = isMinifiedSource(rawSource);
     const vendored = isVendoredSource(rawSource);
+    const generated = isGeneratedSource(rawSource);
 
     // Formats with their own dedicated parser (e.g. Delphi .dfm — no tree-sitter)
     if (filePlugin?.customParse) {
@@ -132,6 +134,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       analysis.lineCount = countLines(rawSource);
       if (minified) analysis.minified = true;
       if (vendored) analysis.vendored = true;
+      if (generated) analysis.generated = true;
       applyTsconfigAliasesToImports(analysis);
       const customTypeRefs = extractTypeReferences(analysis, file.language);
       if (customTypeRefs.length > 0) analysis.typeReferences = customTypeRefs;
@@ -161,6 +164,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       analysis.lineCount = countLines(rawSource);
       if (minified) analysis.minified = true;
       if (vendored) analysis.vendored = true;
+      if (generated) analysis.generated = true;
       applyTsconfigAliasesToImports(analysis);
       const fileSecurityIssues = scanSecurity(rawSource, file.relativePath, file.language);
       if (fileSecurityIssues.length > 0) analysis.securityIssues = fileSecurityIssues;
@@ -215,6 +219,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       analysis.lineCount = countLines(rawSource);
       if (minified) analysis.minified = true;
       if (vendored) analysis.vendored = true;
+      if (generated) analysis.generated = true;
       applyTsconfigAliasesToImports(analysis);
       const fileSecurityIssues = scanSecurity(rawSource, file.relativePath, file.language);
       if (fileSecurityIssues.length > 0) analysis.securityIssues = fileSecurityIssues;
@@ -229,6 +234,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     analysis.lineCount = countLines(rawSource);
     if (minified) analysis.minified = true;
       if (vendored) analysis.vendored = true;
+      if (generated) analysis.generated = true;
 
     // Language-specific AST hooks (looked up for the effective language —
     // for .vue files that's the <script> block's language).
@@ -239,7 +245,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // Rewrite tsconfig path aliases (e.g. "@/utils/foo" → "src/utils/foo")
     // BEFORE classifyCalls so the importMap it builds uses resolved paths.
     applyTsconfigAliasesToImports(analysis);
-    analysis.exports = extractExports(tree, sourceText, language);
+    analysis.exports = extractExports(tree, sourceText, language, file.relativePath);
     analysis.functions = extractFunctions(tree, sourceText, language);
     analysis.classes = extractClasses(tree, sourceText, language);
     // Test files (unit/integration/e2e specs) never expose real routes — a

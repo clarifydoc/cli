@@ -23,10 +23,11 @@ export function extractExports(
   tree: Tree,
   sourceText: string,
   language: Language,
+  filePath?: string,
 ): ExportInfo[] {
   const extractor = pluginFor(language)?.importsExports;
   if (!extractor) return [];
-  return extractor.extractExports(tree, sourceText);
+  return extractor.extractExports(tree, sourceText, filePath);
 }
 
 export { ImportExportExtractor } from "./base.js";
