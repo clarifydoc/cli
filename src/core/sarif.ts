@@ -87,6 +87,9 @@ const TITLES: Partial<Record<SecurityIssue["category"], string>> = {
   "bare-except": "Exception swallowed",
   "insecure-config": "Insecure configuration",
   "missing-auth": "Unauthenticated write",
+  "path-traversal": "Path traversal",
+  ssrf: "Server-side request forgery",
+  "open-redirect": "Open redirect",
 };
 
 type SarifLevel = "error" | "warning" | "note";
