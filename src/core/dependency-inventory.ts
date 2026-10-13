@@ -165,6 +165,9 @@ async function collectAtRoot(absRoot: string, rel: string): Promise<DeclaredPack
  * analyzed root and each sub-project root. Dedup key is `<ecosystem> <name>`
  * (a space can't appear in either half); first declaration wins for
  * version/location, scope upgrades dev→prod if it appears as a prod dep anywhere.
+ * A package declared in several manifests keeps each declaration, and is
+ * marked `versionSkew` when they name different versions — the inventory used
+ * to show one version where two sub-projects disagreed.
  */
 export async function collectExternalPackages(
   projectRoot: string,
@@ -183,6 +186,12 @@ export async function collectExternalPackages(
         // Prefer the strongest scope (prod beats dev/peer/optional).
         if (raw.scope === "prod") existing.scope = "prod";
         if (!existing.version && raw.version) existing.version = raw.version;
+        if (raw.declaredIn !== existing.declaredIn || raw.version !== existing.version) {
+          existing.declarations ??= [{ version: existing.version, declaredIn: existing.declaredIn, scope: existing.scope }];
+          if (!existing.declarations.some((d) => d.declaredIn === raw.declaredIn && d.version === raw.version)) {
+            existing.declarations.push({ version: raw.version, declaredIn: raw.declaredIn, scope: raw.scope });
+          }
+        }
         continue;
       }
       const { category } = classify(raw.name);
@@ -190,6 +199,12 @@ export async function collectExternalPackages(
     }
   }
 
+  for (const pkg of byKey.values()) {
+    if (!pkg.declarations) continue;
+    if (pkg.declarations.length < 2) { delete pkg.declarations; continue; }
+    const versions = new Set(pkg.declarations.map((d) => d.version?.trim()).filter((v): v is string => !!v));
+    if (versions.size > 1) pkg.versionSkew = true;
+  }
   return [...byKey.values()].sort(
     (a, b) => byOrdinal(a.ecosystem, b.ecosystem) || byOrdinal(a.name, b.name),
   );

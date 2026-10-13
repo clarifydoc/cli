@@ -2742,6 +2742,14 @@ export interface ExternalPackage {
   usageCount?: number;
   /** Manifest the dependency was declared in, relative to the project root. */
   declaredIn: string;
+  /**
+   * Every manifest declaring it, when there are several (`web/package.json`
+   * and `admin/package.json`), each with its own version spec — `version` and
+   * `declaredIn` are the first. Absent for a package declared once.
+   */
+  declarations?: Array<{ version: string | null; declaredIn: string; scope: PackageScope }>;
+  /** The declarations name different versions: `web/` axios ^0.21, `admin/` axios ^1.6. */
+  versionSkew?: boolean;
 }
 
 /** Create an empty FileAnalysis for a given file */
