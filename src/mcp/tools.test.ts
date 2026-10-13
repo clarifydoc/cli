@@ -66,6 +66,7 @@ describe("clarifydoc MCP tools — react fixture", () => {
       "clarifydoc_screens",
       "clarifydoc_file",
       "clarifydoc_trace",
+      "clarifydoc_extract",
       "clarifydoc_blast_radius",
       "clarifydoc_data_model",
       "clarifydoc_data_flows",
@@ -283,6 +284,23 @@ describe("clarifydoc MCP tools — react fixture", () => {
     expect(text).toMatch(/2 hops/);
     expect(text).toContain(`→ ${first.targetSymbol}()`);
     expect(text).toContain(`→ ${second.targetSymbol}()`);
+  });
+
+  it("extract returns a function's source and its callees within the budget", async () => {
+    // A call into a function or method the fixture defines.
+    const link = loaded.summary.symbolLinks.find((l) => (l.relation ?? "calls") === "calls" && l.sourceFile !== l.targetFile && !l.sourceSymbol.includes(" ") && !l.sourceSymbol.startsWith("<"));
+    expect(link, "fixture has a cross-file call").toBeDefined();
+    const { text } = await call(server, "clarifydoc_extract", { symbol: link!.sourceSymbol, file: link!.sourceFile, depth: 1 });
+    expect(text).toContain(`## ${link!.sourceSymbol}() — ${link!.sourceFile}:`);
+    expect(text).toContain("```");
+    expect(text).toMatch(new RegExp(`${link!.targetSymbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\(\\).*hop 1`));
+
+    const tight = await call(server, "clarifydoc_extract", { symbol: link!.sourceSymbol, file: link!.sourceFile, depth: 1, maxTokens: 200 });
+    expect(tight.text).toMatch(/Withheld|hop 1/);
+
+    const miss = await call(server, "clarifydoc_extract", { symbol: "zzzNoSuchFunction" });
+    expect(miss.isError).toBe(false);
+    expect(miss.text).toContain("No function or method named");
   });
 
   it("trace requires a seed and says so when nothing resolves", async () => {

@@ -16,6 +16,7 @@ import { AnalysisStore, type AnalyzeSettings } from "./store.js";
 import { statusReport, type ToolContext } from "./tools/context.js";
 import { analyzeTool, healthTool, impactTool, searchTool, servicesTool, statusTool } from "./tools/overview.js";
 import { blastRadiusTool, contractTool, fileTool, routesTool, screensTool, traceTool } from "./tools/code.js";
+import { extractTool } from "./tools/extract.js";
 import { dataFlowsTool, dataModelTool } from "./tools/data.js";
 
 export const MCP_SERVER_NAME = "clarifydoc";
@@ -140,6 +141,7 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
     screensTool(ctx),
     fileTool(ctx),
     traceTool(ctx),
+    extractTool(ctx),
     blastRadiusTool(ctx),
     dataModelTool(ctx),
     dataFlowsTool(ctx),
