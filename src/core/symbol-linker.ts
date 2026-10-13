@@ -261,9 +261,19 @@ export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly
             // Dart widget): candidates must be in the route file's language
             // family, and a qualified handler's class must be evidenced in the
             // candidate (a same-named symbol or the file's basename).
+            //
+            // The first candidate is linked. It is a guess (AMBIGUOUS) unless
+            // the handler names its class and exactly one file defines that
+            // class's method (`UserController#index` → the one
+            // `UserController.index`): then the route states its target and
+            // only the import is missing (INFERRED), and reach through it is
+            // not a guess either.
             const srcFamily = extensionFamily(sourceFile);
             const qualParts = route.handler.split(/[#.]/).filter(Boolean);
             const classPart = qualParts.length > 1 ? qualParts[qualParts.length - 2]! : null;
+            let first: { filePath: string; def: { name: string; line: number } } | null = null;
+            let candidates = 0;
+            let exact = 0;
             for (const [filePath, syms] of symbolIndex) {
               const def = syms.get(handlerName);
               if (!def) continue;
@@ -272,9 +282,14 @@ export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly
               if (classPart) {
                 const base = filePath.split("/").pop()!.replace(/\.\w+$/, "");
                 if (!syms.has(classPart) && !syms.has(`${classPart}.${handlerName}`) && base !== classPart) continue;
+                if (def.name === `${classPart}.${handlerName}`) exact++;
               }
-              pushRouteLink(filePath, def, "AMBIGUOUS", "route-scan");
-              break;
+              candidates++;
+              first ??= { filePath, def };
+            }
+            if (first) {
+              const stated = classPart !== null && candidates === 1 && exact === 1;
+              pushRouteLink(first.filePath, first.def, stated ? "INFERRED" : "AMBIGUOUS", "route-scan");
             }
           }
         }
