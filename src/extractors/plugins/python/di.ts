@@ -1,5 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { DiBinding, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
+import { callChainText } from "../../shared/call-graph.js";
 
 /**
  * Dependency injection as Python code spells it — the facts the symbol linker
@@ -444,10 +445,18 @@ function paramFact(p: ParamInfo | undefined): Fact {
  * container.repo()` (the provider's token), `x = cast(UserRepo, y)`. A name
  * reassigned from anything the source does not type, or rebound by a loop or
  * `with … as`, is left out; parameters are never re-typed here.
+ *
+ * A name assigned only from calls that state no type (`p =
+ * Patcher.from_file(path)`, `repo = await make_repo()`) carries those calls
+ * as `from` — one entry per distinct initializer — and the linker types it
+ * through the callee's declared return type.
  */
 export function collectLocalTypes(body: Node, params: readonly ParamInfo[], typeComments: boolean): LocalType[] {
   const table = new FactTable();
   const paramNames = new Set(params.map((p) => p.name));
+  const fromCalls = new Map<string, Map<string, { from: string; awaited: boolean }>>();
+  // Also assigned something other than a call (or `None`): hides its `from` calls.
+  const untyped = new Set<string>();
   const scope = (name: string): Fact => {
     if (paramNames.has(name)) return paramFact(params.find((p) => p.name === name));
     return table.get(name) ?? UNKNOWN;
@@ -460,7 +469,7 @@ export function collectLocalTypes(body: Node, params: readonly ParamInfo[], type
       if (!left) return;
       if (left.type !== "identifier") {
         if (left.type === "pattern_list" || left.type === "tuple_pattern" || left.type === "list_pattern") {
-          boundNames(left, (n) => table.assign(n, UNKNOWN));
+          boundNames(left, (n) => { table.assign(n, UNKNOWN); untyped.add(n); });
         }
         return;
       }
@@ -476,22 +485,61 @@ export function collectLocalTypes(body: Node, params: readonly ParamInfo[], type
         return;
       }
       const right = a.childForFieldName("right");
-      table.assign(name, right ? valueFact(right, scope) : UNKNOWN);
+      const fact = right ? valueFact(right, scope) : UNKNOWN;
+      table.assign(name, fact);
+      if (fact !== UNKNOWN) {
+        // A construction beside a call: the two disagree and neither types it.
+        if (fact !== NONE) untyped.add(name);
+        return;
+      }
+      const call = right ? initializerCall(right) : null;
+      if (!call) { untyped.add(name); return; }
+      const calls = fromCalls.get(name) ?? fromCalls.set(name, new Map()).get(name)!;
+      calls.set(`${call.awaited ? "await " : ""}${call.from}`, call);
     },
     rebind(name) {
       table.assign(name, UNKNOWN);
+      untyped.add(name);
     },
   });
   const out: LocalType[] = [];
   for (const name of table.names()) {
     if (paramNames.has(name)) continue;
     const fact = table.get(name);
-    if (!fact) continue;
+    if (!fact) {
+      // A stated type wins (handled above); only calls, or calls and `None`, remain.
+      const calls = fromCalls.get(name);
+      if (!calls || untyped.has(name)) continue;
+      for (const c of calls.values()) out.push(c.awaited ? { name, type: "", from: c.from, awaited: true } : { name, type: "", from: c.from });
+      continue;
+    }
     const local: LocalType = { name, type: fact.type };
     if (fact.qualifier) local.qualifier = fact.qualifier;
     out.push(local);
   }
   return out;
+}
+
+/** Builtins whose result the project never declares — no point carrying them as initializers. */
+const PY_BUILTIN_CALLS: ReadonlySet<string> = new Set([
+  "len", "str", "int", "float", "bool", "bytes", "list", "dict", "set", "tuple", "frozenset",
+  "sorted", "reversed", "range", "enumerate", "zip", "map", "filter", "open", "repr", "type",
+  "getattr", "isinstance", "sum", "min", "max", "abs", "round", "any", "all", "iter", "next",
+  "vars", "dir", "id", "hash", "format", "super", "print", "input", "object",
+]);
+
+/** An initializer that is a call (optionally awaited), spelled for `localTypes[].from`. */
+function initializerCall(right: Node): { from: string; awaited: boolean } | null {
+  let node: Node | null = right;
+  let awaited = false;
+  if (node.type === "await") {
+    awaited = true;
+    node = node.namedChild(0);
+  }
+  if (node?.type !== "call") return null;
+  const from = callChainText(node, "python");
+  if (!from || PY_BUILTIN_CALLS.has(from.slice(0, -2))) return null;
+  return { from, awaited };
 }
 
 // ─── Instance attributes ─────────────────────────────────────────────────────

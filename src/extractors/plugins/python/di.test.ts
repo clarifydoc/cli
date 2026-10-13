@@ -109,6 +109,32 @@ def run(container: Container, x):
       { name: "h", type: "", qualifier: "Container.repo" },
       { name: "i", type: "UserRepo" },
       { name: "j", type: "models.Account" },
+      // Typed later through `make`'s declared return type.
+      { name: "k", type: "", from: "make()" },
+    ]);
+  });
+
+  it("carries untyped call initializers as `from`, one per distinct call", async () => {
+    const { functions } = await extract(`
+async def run(path, items):
+    p = Patcher.from_file(path)
+    q = await load_repo()
+    r = build_a()
+    r = build_b()
+    r = None
+    s = build_a()
+    s = items[0]
+    t = len(items)
+    u = build_a()
+    u = SqlUserRepo()
+`);
+    expect(functions[0]!.localTypes).toEqual([
+      { name: "p", type: "", from: "Patcher.from_file()" },
+      { name: "q", type: "", from: "load_repo()", awaited: true },
+      { name: "r", type: "", from: "build_a()" },
+      { name: "r", type: "", from: "build_b()" },
+      // \`s\` is also assigned something untyped, \`t\` from a builtin, and \`u\`
+      // from a call and a construction that disagree: none is typed.
     ]);
   });
 
@@ -127,7 +153,11 @@ def run(other, repos, cm, param: UserRepo):
     d = foo.get(UserRepo)
     e = SqlUserRepo()
 `);
-    expect(functions[0]!.localTypes).toEqual([{ name: "e", type: "SqlUserRepo" }]);
+    expect(functions[0]!.localTypes).toEqual([
+      // A container lookup the plugin does not recognise is an untyped call.
+      { name: "d", type: "", from: "foo.get()" },
+      { name: "e", type: "SqlUserRepo" },
+    ]);
   });
 
   it("an annotation declares the type whatever is assigned later", async () => {
