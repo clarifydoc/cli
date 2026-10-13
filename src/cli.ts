@@ -16,6 +16,13 @@ import {
 } from "./core/control-flow-file.js";
 import { toMermaidFlowchart, toMarkdown } from "./core/control-flow-mermaid.js";
 
+/** All of stdin, as UTF-8 text. */
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf-8");
+}
+
 const program = new Command();
 
 program
@@ -346,6 +353,7 @@ program
   .option("-l, --line <n>", "Draw the function whose body covers this 1-based line", parseInt)
   .option("--format <format>", "mermaid | markdown | json", "mermaid")
   .option("--slice <line>", "Instead of the graph: the statements that can affect the values used at this line (backward slice)", parseInt)
+  .option("--stdin", "Read the file's text from stdin (an editor's unsaved buffer); <file> still names the file and its language")
   .option(
     "--no-styled",
     "Leave the colour table out of the Mermaid, keeping only the category classes — for a host that themes the diagram itself",
@@ -365,12 +373,14 @@ program
       return;
     }
     const target = resolve(file);
+    const source = options.stdin ? await readStdin() : undefined;
     try {
       const result = await controlFlowForFile({
         filePath: target,
         displayPath: relative(process.cwd(), target) || file,
         functionName: options.function,
         line: Number.isFinite(options.line) ? options.line : undefined,
+        source,
       });
 
       const listFunctions = (): void => {
@@ -403,7 +413,7 @@ program
         }
         const { backwardSlice } = await import("./core/control-flow-slice.js");
         const { readFile } = await import("fs/promises");
-        const slice = backwardSlice(cfg, (await readFile(target, "utf-8")).split(/\r?\n/), sliceLine);
+        const slice = backwardSlice(cfg, (source ?? (await readFile(target, "utf-8"))).split(/\r?\n/), sliceLine);
         if (!slice) {
           console.error(`No statement of ${cfg.functionName} covers line ${sliceLine}.`);
           process.exitCode = 1;

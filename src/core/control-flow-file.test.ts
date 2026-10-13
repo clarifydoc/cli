@@ -77,3 +77,28 @@ describe("controlFlowForFile", () => {
     ).rejects.toBeInstanceOf(ControlFlowUnavailableError);
   });
 });
+
+describe("controlFlowForFile with the text given", () => {
+  it("draws the text it is given, not the file on disk", async () => {
+    // An unsaved edit: one more branch than the saved userService.ts has.
+    const filePath = resolve(FIXTURES, "sample-backend/services/userService.ts");
+    const source = [
+      "export function pick(a: number, b: number): number {",
+      "  if (a > b) return a;",
+      "  if (a < b) return b;",
+      "  return 0;",
+      "}",
+    ].join("\n");
+    const result = await controlFlowForFile({ filePath, source, functionName: "pick" });
+    expect(result.cfgs.map((c) => c.functionName)).toEqual(["pick"]);
+    expect(result.available.map((f) => f.functionName)).toEqual(["pick"]);
+    expect(result.available[0]!.complexity).toBe(3);
+  });
+
+  it("reads the text for the regex tier too", async () => {
+    const filePath = resolve(FIXTURES, "sample-go-api/main.go");
+    const source = "package main\n\nfunc twice(n int) int {\n\tif n > 0 {\n\t\treturn n * 2\n\t}\n\treturn 0\n}\n";
+    const result = await controlFlowForFile({ filePath, source });
+    expect(result.available.map((f) => f.functionName)).toEqual(["twice"]);
+  });
+});
