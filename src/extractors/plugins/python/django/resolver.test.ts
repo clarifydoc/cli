@@ -160,6 +160,87 @@ describe("django-urlconf", () => {
   });
 });
 
+describe("django-urlconf: Django's own guards", () => {
+  const files = {
+    "config/settings.py": `ROOT_URLCONF = "config.urls"\n`,
+    "config/urls.py": `
+from django.urls import path
+from accounts import views
+from accounts.views import public_page, OrdersView, ReportView, OpenView
+
+urlpatterns = [
+    path("profile/", views.profile),
+    path("staff/", views.staff_only),
+    path("public/", public_page),
+    path("orders/", OrdersView.as_view()),
+    path("reports/", ReportView.as_view()),
+    path("open/", OpenView.as_view()),
+    path("api/stats/", views.stats),
+]
+`,
+    "accounts/views.py": `
+from django.contrib.auth.decorators import login_required, permission_required
+from django.contrib.auth.mixins import LoginRequiredMixin
+from django.utils.decorators import method_decorator
+from django.views import View
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAdminUser
+
+@login_required
+def profile(request):
+    return None
+
+@permission_required("shop.view_report", raise_exception=True)
+def staff_only(request):
+    return None
+
+def public_page(request):
+    return None
+
+class OrdersView(LoginRequiredMixin, View):
+    def get(self, request):
+        return None
+
+@method_decorator(login_required, name="dispatch")
+class ReportView(View):
+    def get(self, request):
+        return None
+
+class OpenView(View):
+    def get(self, request):
+        return None
+
+@api_view(["GET"])
+@permission_classes([IsAdminUser])
+def stats(request):
+    return None
+`,
+  };
+
+  const guards = async () =>
+    Object.fromEntries(
+      (await analyze(files))
+        .flatMap((a) => a.routes)
+        .filter((r) => r.kind === "api")
+        .map((r) => [r.path, r.auth ? `${r.auth.anonymous ? "anonymous" : r.auth.policies.join("+")}` : "-"]),
+    );
+
+  it("reads login_required, permission_required and DRF permission_classes off a function view", async () => {
+    const g = await guards();
+    expect(g["/profile/"]).toBe("login_required");
+    expect(g["/staff/"]).toBe('permission_required("shop.view_report", raise_exception=True)');
+    expect(g["/api/stats/"]).toBe("IsAdminUser");
+    expect(g["/public/"]).toBe("-");
+  });
+
+  it("reads an auth mixin or a method_decorator on a class-based view", async () => {
+    const g = await guards();
+    expect(g["/orders/"]).toBe("LoginRequiredMixin");
+    expect(g["/reports/"]).toBe("login_required");
+    expect(g["/open/"]).toBe("-");
+  });
+});
+
 describe("parseAction", () => {
   it("reads detail, methods and url_path, with DRF's defaults", () => {
     expect(parseAction('action(detail=True, methods=["get", "post"], url_path="notes")')).toEqual({

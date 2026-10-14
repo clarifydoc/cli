@@ -158,13 +158,38 @@ export const djangoUrlconfResolver: RouteResolver = {
       const a = ctx.fileOf(m.owner.filePath);
       return a ? { analysis: a, line: m.fn.line } : null;
     };
-    const authOf = (fact: DjViewClassFact): Partial<Pick<RouteInfo, "auth" | "middleware">> => {
+    /**
+     * DRF's `permission_classes` first (the class says it outright); else
+     * Django's own guards: an auth mixin among the external bases
+     * (`LoginRequiredMixin`), or a `method_decorator(login_required)` on the
+     * class or its `dispatch`.
+     */
+    const authOf = (fact: DjViewClassFact, ref?: ClassRef): Partial<Pick<RouteInfo, "auth" | "middleware">> => {
       const perms = fact.permissionClasses;
-      if (!perms) return {};
-      return {
-        middleware: perms,
-        auth: { policies: perms, roles: [], schemes: [], anonymous: perms.length === 0 || perms.includes("AllowAny"), inherited: true },
-      };
+      if (perms) {
+        return {
+          middleware: perms,
+          auth: { policies: perms, roles: [], schemes: [], anonymous: perms.length === 0 || perms.includes("AllowAny"), inherited: true },
+        };
+      }
+      if (!ref) return {};
+      const mixins = externalBases(ref).filter((b) => AUTH_MIXINS.has(b));
+      const decorators = classChain(ref).flatMap((c) => [
+        ...(c.cls.decorators ?? []),
+        ...(c.cls.methods.find((m) => m.name === "dispatch")?.decorators ?? []),
+      ]);
+      return guardAuth([...mixins, ...decoratorGuards(decorators)], true);
+    };
+
+    /** A function view's guards, read off its decorators wherever the urlconf imports it from. */
+    const funcAuth = (urlconfFile: string, name: string): Partial<Pick<RouteInfo, "auth" | "middleware">> => {
+      const parts = name.split(".");
+      const fn = parts.pop()!;
+      const file = parts.length > 0
+        ? (ctx.importIndex.localFor(urlconfFile, parts[0]!) ?? ctx.resolveModule(urlconfFile, parts.join(".")))
+        : (ctx.importIndex.localFor(urlconfFile, fn) ?? urlconfFile);
+      const def = file ? ctx.fileOf(file)?.functions.find((f) => f.name === fn) : undefined;
+      return def ? guardAuth(decoratorGuards(def.decorators ?? []), false) : {};
     };
 
     const emitView = (file: string, path: string, view: ViewRef, line: number, marker: string | undefined) => {
@@ -174,10 +199,11 @@ export const djangoUrlconfResolver: RouteResolver = {
       const extra = marker ? { prefixUnresolved: marker } : {};
       if (!ref) {
         // A function view, or a class we cannot see: a route at that path, any method.
-        emit({ analysis: urlconf, line }, { path, httpMethod: null, kind: "api", handler: view.name, ...extra });
+        const auth = view.kind === "func" ? funcAuth(file, view.name) : {};
+        emit({ analysis: urlconf, line }, { path, httpMethod: null, kind: "api", handler: view.name, ...auth, ...extra });
         return;
       }
-      const auth = authOf(nearestFact(ref));
+      const auth = authOf(nearestFact(ref), ref);
       if (view.kind === "class" && view.actions) {
         for (const [verb, action] of Object.entries(view.actions)) {
           const m = methodOf(ref, action);
@@ -217,7 +243,7 @@ export const djangoUrlconfResolver: RouteResolver = {
       const lookup = fact.lookupUrlKwarg ?? fact.lookupField ?? "pk";
       const detailPath = joinDjango(base, prefix, `/{${lookup}}`, ts);
       const allowed = fact.httpMethodNames ? new Set(fact.httpMethodNames.map((m) => m.toUpperCase())) : null;
-      const auth = authOf(fact);
+      const auth = authOf(fact, ref);
       const provided = new Set(externalBases(ref).flatMap((b) => BASE_ACTIONS[b] ?? []));
       const route = (path: string, method: string, action: string) => {
         if (allowed && !allowed.has(method)) return;
@@ -343,4 +369,42 @@ export function parseAction(decorator: string): { detail: boolean; methods: stri
     : ["GET"];
   const urlPath = /url_path\s*=\s*[rbu]*(["'])(.*?)\1/.exec(text)?.[2] ?? null;
   return { detail, methods: methods.length ? methods : ["GET"], urlPath };
+}
+
+/** Django's auth mixins: a class-based view with one in its bases requires a signed-in user. */
+const AUTH_MIXINS = new Set(["LoginRequiredMixin", "PermissionRequiredMixin", "UserPassesTestMixin"]);
+
+/** View decorators that guard a view (`login_not_required`, Django 5.1, opens one under LoginRequiredMiddleware). */
+const GUARD_DECORATOR = /^(?:[\w.]+\.)?(login_required|permission_required|user_passes_test|staff_member_required|superuser_required|login_not_required|permission_classes)\b(\([^)]*\))?/;
+
+/**
+ * The guards a list of decorators states, as written (`login_required`,
+ * `permission_required("shop.change_order")`, DRF's
+ * `permission_classes([IsAuthenticated])` → `IsAuthenticated`), unwrapping
+ * `method_decorator(…)`. `login_not_required` comes back as itself.
+ */
+function decoratorGuards(decorators: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const raw of decorators) {
+    const text = raw.replace(/^@/, "").replace(/^(?:[\w.]+\.)?method_decorator\(\s*/, "");
+    const m = GUARD_DECORATOR.exec(text);
+    if (!m) continue;
+    if (m[1] === "permission_classes") {
+      const inner = /\[([^\]]*)\]|\(([^)]*)\)/.exec(m[2] ?? "");
+      out.push(...(inner?.[1] ?? inner?.[2] ?? "").split(",").map((p) => p.trim().replace(/^[[(]|[\])]$/g, "")).filter(Boolean));
+    } else {
+      out.push(m[1] === "login_required" || m[1] === "login_not_required" ? m[1] : `${m[1]}${m[2] ?? ""}`);
+    }
+  }
+  return out;
+}
+
+/** Guards as a route's `auth` + `middleware`; nothing when there are none. */
+function guardAuth(guards: string[], inherited: boolean): Partial<Pick<RouteInfo, "auth" | "middleware">> {
+  if (guards.length === 0) return {};
+  const policies = guards.filter((g) => g !== "login_not_required" && g !== "AllowAny");
+  return {
+    middleware: guards,
+    auth: { policies, roles: [], schemes: [], anonymous: policies.length === 0, inherited },
+  };
 }
