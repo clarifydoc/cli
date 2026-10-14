@@ -602,3 +602,63 @@ describe("JS ORM rows need ORM evidence", () => {
       async function go() { await Article.findAll(); }`)).map((d) => d.name)).toContain("Article.findAll");
   });
 });
+
+describe("SWR keys are the request", () => {
+  it("reads useSWR's key as a GET of that URL — string, template, or the first element of an array key", async () => {
+    const calls = await apiCallsOf(`
+      const fetcher = (url: string) => fetch(url).then((r) => r.json());
+      export function Profile({ id, token }) {
+        const { data } = useSWR("/api/user", fetcher);
+        const { data: orders } = useSWR(\`/api/users/\${id}/orders\`, fetcher);
+        const { data: me } = useSWRImmutable(["/api/me", token], fetcher);
+        return null;
+      }
+    `);
+    expect(calls.filter((c) => c.name === "GET").map((c) => c.target)).toEqual([
+      "/api/user",
+      "/api/users/${id}/orders",
+      "/api/me",
+    ]);
+  });
+
+  it("leaves a react-query cache key alone — it labels the cache, it is not a URL", async () => {
+    const calls = await apiCallsOf(`
+      export function Todos() {
+        const q = useQuery({ queryKey: ["todos"], queryFn: () => listTodos() });
+        const s = useSWR(shouldFetch ? null : undefined, fetcher);
+        return null;
+      }
+    `);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("raw SQL handed to a driver", () => {
+  it("records the table any receiver's query names, read or write", async () => {
+    const ds = await dbOf(`
+      export async function f(id: number) {
+        await pool.query("SELECT id FROM todos WHERE id = $1", [id]);
+        await client.query(\`UPDATE todos SET done = true WHERE id = \${id}\`);
+        db.prepare("INSERT INTO audit_log (msg) VALUES (?)").run("x");
+        await sql.unsafe("DELETE FROM sessions");
+      }
+    `);
+    expect(ds.filter((d) => d.target).map((d) => `${d.access} ${d.target}`)).toEqual([
+      "read todos",
+      "write todos",
+      "write audit_log",
+      "write sessions",
+    ]);
+  });
+
+  it("never reads prose or a non-SQL first argument as a table", async () => {
+    const ds = await dbOf(`
+      export function g(map: Map<string, string>) {
+        map.get("Select a file from the list");
+        router.all("/select from here", h);
+        cache.query({ where: "users" });
+      }
+    `);
+    expect(ds.filter((d) => d.target)).toEqual([]);
+  });
+});

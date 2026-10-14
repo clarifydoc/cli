@@ -50,7 +50,7 @@ const CONTEXT_HOOKS = new Set(["useContext"]);
 const STORE_HOOKS = new Set([
   "useSelector", "useStore", "useDispatch",
   "useRecoilValue", "useAtom",
-  "useQuery", "useSWR", "useInfiniteQuery", "useMutation",
+  "useQuery", "useSWR", "useSWRImmutable", "useInfiniteQuery", "useMutation",
   // Pinia / Vuex
   "defineStore", "storeToRefs",
 ]);
@@ -142,14 +142,15 @@ function chainHasOrmEvidence(parts: readonly string[]): boolean {
  * Driver methods that take raw SQL as their first argument: node-postgres and
  * mysql2 (`query`, `execute`), better-sqlite3 / sqlite (`prepare`, `exec`,
  * `run`, `all`, `get`), pg-promise (`any`, `one`, `oneOrNone`, `many`,
- * `none`, `manyOrNone`), Knex/Sequelize/Prisma escapes (`raw`, `$queryRaw…`).
+ * `none`, `manyOrNone`), Knex/Sequelize/Prisma escapes (`raw`, `$queryRaw…`),
+ * postgres.js (`sql.unsafe`).
  * The verb alone proves nothing (`Map.get`, `router.all`); the SQL literal it
  * is handed does.
  */
 const RAW_SQL_VERBS = new Set([
   "query", "execute", "exec", "prepare", "run", "all", "get",
   "any", "one", "oneOrNone", "many", "manyOrNone", "none",
-  "raw", "$queryRaw", "$queryRawUnsafe", "$executeRaw", "$executeRawUnsafe",
+  "raw", "unsafe", "$queryRaw", "$queryRawUnsafe", "$executeRaw", "$executeRawUnsafe",
 ]);
 
 /** The literal must OPEN with a statement — `tableFrom` alone would read "Select a file from the list". */
@@ -663,6 +664,24 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
             target: null,
             line: node.startPosition.row + 1,
           }));
+          // SWR's key IS the request: `useSWR('/api/user', fetcher)` hands the
+          // key to a fetcher that takes it as a parameter, so the URL is only
+          // ever visible here. (A react-query key is a cache label, not a URL —
+          // its request is in `queryFn`, which the call graph already follows.)
+          if (fnName === "useSWR" || fnName === "useSWRImmutable") {
+            let key = node.childForFieldName("arguments")?.namedChildren[0] ?? null;
+            if (key?.type === "array") key = key.namedChildren[0] ?? null; // useSWR(['/api/x', token], …)
+            const resolved = key ? this.resolveUrlArg(key) : null;
+            if (resolved && looksLikeUrl(resolved.url)) {
+              sources.push(this.ds({
+                kind: "api-call",
+                name: "GET",
+                target: resolved.url,
+                line: node.startPosition.row + 1,
+                ...(resolved.baseEnv ? { baseEnv: resolved.baseEnv } : {}),
+              }));
+            }
+          }
         }
 
         // Vue Composition API reactive sources

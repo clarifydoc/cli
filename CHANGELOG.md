@@ -34,6 +34,13 @@ recorded in the git history only.
   `@Select`/`@Insert`/… record a read or write on the annotated method. Room's SQL-less
   `@Insert`/`@Update`/`@Delete`/`@Upsert` write the entity their parameter takes. JPQL's `FROM Order o`
   now reads `Order` as the entity rather than the keyword.
+- **`useSWR('/api/user', fetcher)` is a GET of `/api/user`.** SWR hands its key to a fetcher that takes the
+  URL as a parameter, so the URL is only visible in the hook — the call now links to its route.
+  (A react-query key is a cache label and stays one.) postgres.js `sql.unsafe("…")` reads as raw SQL.
+- **Django's own guards.** `@login_required`, `@permission_required(…)`, `@user_passes_test`,
+  `@staff_member_required` and DRF's `@permission_classes([…])` on a function view, and `LoginRequiredMixin`
+  / `PermissionRequiredMixin` / `UserPassesTestMixin` or a `method_decorator(login_required)` on a
+  class-based view, become the route's `auth`. Only DRF `permission_classes` attributes were read before.
 - **Data access in an inline route handler belongs to its route.** `app.get("/x", async (req, res) => …)`
   has no function to attribute a query to; it now goes to the route, so the route — and every screen
   that calls it — reaches the table.
