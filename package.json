@@ -14,7 +14,9 @@
     "dev": "tsdown --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "pack:standalone": "node scripts/pack-standalone.mjs",
+    "smoke:tarball": "node scripts/smoke-tarball.mjs"
   },
   "keywords": [
     "code-analysis",
