@@ -22,6 +22,11 @@ import { enrichFileDataSources } from "./import-index.js";
 import type { VariableAliasBinding } from "../types/language-plugin.js";
 import type { FunctionInfo, RouteFact } from "../types/analysis.js";
 import { isTestFile } from "./test-file-detector.js";
+import {
+  inferExpoRouterRoutes,
+  inferFileBasedRoute,
+  inferSvelteKitRoutes,
+} from "../extractors/plugins/javascript/routes/file-routes.js";
 import { restoreTypedReceiverCalls } from "./typed-receivers.js";
 import {
   createEmptyAnalysis,
@@ -48,6 +53,13 @@ export interface FileTask {
   projectRoot: string;
   /** tsconfig.json paths-style aliases for the project (may be empty). */
   tsconfigAliases: Map<string, string>;
+  /**
+   * Where file-based routing reads from: the file's path relative to its own
+   * sub-project's root, and that sub-project's frameworks. An Expo app in
+   * `mobile/` routes `mobile/app/x.tsx` as `app/x.tsx`, and a Next.js web app
+   * beside it does not switch Expo routing off. Absent: the analyzed root's.
+   */
+  routeScope?: { relativePath: string; frameworkIds: string[] };
 }
 
 /**
@@ -91,6 +103,7 @@ export function countLines(source: string): number {
  */
 export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
   const { file, frameworkIds, projectId, outputOpts, verbose, projectRoot, tsconfigAliases } = task;
+  const routeScope = task.routeScope ?? { relativePath: file.relativePath, frameworkIds };
 
   const applyTsconfigAliasesToImports = (a: FileAnalysis): void => {
     if (a.imports.length === 0) return; // nothing to rewrite — skip the tsconfig lookup
@@ -388,19 +401,17 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // Merge container-format data back in (e.g. Vue template elements/components)
     postExtract?.(analysis, rawSource);
 
-    // Next.js / Nuxt file-based routing: infer route from file path
-    // (skipped for test files, same as AST-extracted routes).
-    const fileRoute = isTest ? null : inferFileBasedRoute(file.relativePath, frameworkIds);
-    if (fileRoute) {
-      analysis.routes.push(fileRoute);
-    }
-    // SvelteKit file-based routing (`src/routes/**/+page.svelte`,
-    // `+server.ts`) — a `+server` endpoint yields one api route per exported
-    // HTTP-method handler, so needs the analysis, not just the path.
+    // File-based routing (Next.js, Nuxt, SvelteKit, Expo Router): the route
+    // comes from where the file sits. Skipped for test files, same as
+    // AST-extracted routes. API endpoints read the file's exported handlers.
     if (!isTest) {
-      for (const r of inferSvelteKitRoutes(file.relativePath, analysis, frameworkIds)) {
-        analysis.routes.push(r);
-      }
+      const { relativePath: routePath, frameworkIds: routeFrameworks } = routeScope;
+      const fileRoute = inferFileBasedRoute(routePath, routeFrameworks);
+      if (fileRoute) analysis.routes.push(fileRoute);
+      analysis.routes.push(
+        ...inferSvelteKitRoutes(routePath, analysis, routeFrameworks),
+        ...inferExpoRouterRoutes(routePath, analysis, routeFrameworks),
+      );
     }
 
     // Detect React directives: 'use client' / 'use server'
@@ -484,177 +495,6 @@ function mergeTypeRefs(
     out.push(r);
   }
   return out;
-}
-
-/**
- * Infer a frontend route from file path for file-based routing frameworks.
- * Supports Next.js (pages/, app/) and Nuxt (pages/). Exported for unit tests.
- */
-export function inferFileBasedRoute(
-  relativePath: string,
-  frameworkIds: string[],
-): RouteInfo | null {
-  // Each convention only under its own framework. This used to read "Vue or
-  // vue-router means Nuxt" and ran the Next.js patterns for either, so every
-  // `pages/` file of a plain React Router or Vue app — a folder name, not a
-  // router — got an invented route named after the file (`/UserEditPage`)
-  // beside, or instead of, the route its router actually declares.
-  const isNextjs = frameworkIds.includes("nextjs");
-  const isNuxt = frameworkIds.includes("nuxt");
-
-  if (!isNextjs && !isNuxt) return null;
-
-  const normalized = relativePath.replace(/\\/g, "/");
-  let match: RegExpMatchArray | null;
-
-  if (isNuxt) {
-    // Nuxt pages/ directory
-    match = normalized.match(/^pages\/(.+)\.vue$/);
-    if (match) {
-      return {
-        path: filePathToRoute(match[1]),
-        httpMethod: null,
-        kind: "frontend",
-        handler: null,
-        calls: [],
-        middleware: [],
-        line: 1,
-      };
-    }
-  }
-  if (!isNextjs) return null;
-
-  // Next.js pages/ directory
-  match = normalized.match(/^(?:src\/)?pages\/(.+)\.(tsx?|jsx?)$/);
-  if (match) {
-    const route = filePathToRoute(match[1]);
-    if (route === "/_app" || route === "/_document" || route === "/api") return null;
-    return {
-      path: route,
-      httpMethod: null,
-      kind: route.startsWith("/api/") ? "api" : "frontend",
-      handler: null,
-      calls: [],
-      middleware: [],
-      line: 1,
-    };
-  }
-
-  // Next.js app/ directory (page.tsx)
-  match = normalized.match(/^(?:src\/)?app\/(.+)\/page\.(tsx?|jsx?)$/);
-  if (match) {
-    return {
-      path: filePathToRoute(match[1]),
-      httpMethod: null,
-      kind: "frontend",
-      handler: null,
-      calls: [],
-      middleware: [],
-      line: 1,
-    };
-  }
-
-  // Next.js app/ route handlers (route.ts)
-  match = normalized.match(/^(?:src\/)?app\/(.+)\/route\.(tsx?|jsx?)$/);
-  if (match) {
-    return {
-      path: filePathToRoute(match[1]),
-      httpMethod: null,
-      kind: "api",
-      handler: null,
-      calls: [],
-      middleware: [],
-      line: 1,
-    };
-  }
-
-  return null;
-}
-
-const SVELTEKIT_HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
-
-/**
- * SvelteKit file-based routing under `src/routes/`:
- *   - `**​/+page.svelte`        → a frontend route (the page component)
- *   - `**​/+server.{ts,js}`      → an API endpoint; each exported HTTP-method
- *                                 function (`export function GET`, `export const
- *                                 POST = …`) becomes one `api` route, handler =
- *                                 the method name, so the endpoint's data calls
- *                                 join into the trace like any other route.
- *
- * Path derivation mirrors SvelteKit's: route groups `(auth)` are dropped from
- * the URL, `[id]`→`:id`, `[...rest]`→`*`, `[[opt]]`→`:opt?`.
- */
-function inferSvelteKitRoutes(
-  relativePath: string,
-  analysis: FileAnalysis,
-  frameworkIds: string[],
-): RouteInfo[] {
-  if (!frameworkIds.includes("sveltekit")) return [];
-  const normalized = relativePath.replace(/\\/g, "/");
-
-  const page = normalized.match(/^(?:src\/)?routes\/(.*)\+page\.svelte$/);
-  if (page) {
-    return [{
-      path: svelteKitRoutePath(page[1]!),
-      httpMethod: null,
-      kind: "frontend",
-      handler: null,
-      componentPath: null,
-      calls: [],
-      middleware: [],
-      line: 1,
-    }];
-  }
-
-  const server = normalized.match(/^(?:src\/)?routes\/(.*)\+server\.(?:tsx?|jsx?)$/);
-  if (server) {
-    const path = svelteKitRoutePath(server[1]!);
-    // Exported HTTP-method handlers appear as functions or exported consts.
-    const methods = new Set<string>();
-    for (const fn of analysis.functions) {
-      if (SVELTEKIT_HTTP_METHODS.has(fn.name)) methods.add(fn.name);
-    }
-    for (const exp of analysis.exports) {
-      if (SVELTEKIT_HTTP_METHODS.has(exp.name)) methods.add(exp.name);
-    }
-    return [...methods].map((method) => ({
-      path,
-      httpMethod: method,
-      kind: "api" as const,
-      handler: method,
-      calls: [],
-      middleware: [],
-      line: analysis.functions.find((f) => f.name === method)?.line ?? 1,
-    }));
-  }
-
-  return [];
-}
-
-/** SvelteKit route dir → URL path (drops `(groups)`, maps `[param]` forms). */
-function svelteKitRoutePath(dir: string): string {
-  const segments = dir
-    .split("/")
-    .filter((s) => s.length > 0 && !/^\(.*\)$/.test(s)) // drop route groups
-    .map((s) =>
-      s
-        .replace(/\[\.\.\.(\w+)\]/g, "*") // [...rest] -> *
-        .replace(/\[\[(\w+)\]\]/g, ":$1?") // [[opt]] -> :opt?
-        .replace(/\[(\w+)\]/g, ":$1"), // [id] -> :id
-    );
-  return "/" + segments.join("/");
-}
-
-/** Convert file path segments to a route path */
-function filePathToRoute(filePath: string): string {
-  return (
-    "/" +
-    filePath
-      .replace(/\/index$/, "") // index.tsx -> /
-      .replace(/\[\.\.\.(\w+)\]/g, "*") // [...slug] -> *
-      .replace(/\[(\w+)\]/g, ":$1") // [id] -> :id
-  );
 }
 
 /** Detect 'use client' / 'use server' directives (React Server Components) */

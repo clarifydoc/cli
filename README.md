@@ -283,7 +283,7 @@ updates. See [clarifydoc/vscode](https://github.com/clarifydoc/vscode).
 
 ### Frameworks
 
-**Web / app**: React, React Router, Next.js, Vue, Vue Router, Nuxt, Svelte, Angular, Express, NestJS, Fastify, FastAPI, Django, Flask, ASP.NET, Blazor, Spring Boot/Web, Ktor, Android, CodeIgniter, Flutter, Pinia, Vuex, Redux, React Query.
+**Web / app**: React, React Router, Next.js, Expo Router, Vue, Vue Router, Nuxt, Svelte, SvelteKit, Angular, Express, NestJS, Fastify, FastAPI, Django, Flask, ASP.NET, Blazor, Spring Boot/Web, Ktor, Android, CodeIgniter, Flutter, Pinia, Vuex, Redux, React Query.
 
 **Message queues** (surface as publish/consume data sources and queue nodes in the data-access graph): RabbitMQ (`RabbitMQ.Client`, amqplib, pika, php-amqplib, Spring AMQP), Kafka (kafkajs, Spring Kafka).
 
@@ -306,7 +306,7 @@ Detection reads `package.json`, `.csproj` `PackageReference`, `go.mod`, `Cargo.t
 
 ### Routes
 
-Express/Fastify (`app.get("/path", h)`), decorators/annotations (`@Get()`, `@RequestMapping`, `@app.route`), React Router (`<Route path=… />`, including nested-route prefix composition), Vue Router config objects, Next.js & Nuxt file-based routing, Spring (`@GetMapping`/`@PostMapping`), Ktor DSL, ASP.NET attributes, Blazor `@page`, CodeIgniter convention routing (controller file + public method → URL), Dart `shelf_router` + Flutter GoRouter, and plain multi-page HTML sites (each page becomes a frontend route with its links and forms).
+Express/Fastify (`app.get("/path", h)`), decorators/annotations (`@Get()`, `@RequestMapping`, `@app.route`), React Router (`<Route path=… />`, including nested-route prefix composition), Vue Router config objects, Next.js, Nuxt, SvelteKit & Expo Router file-based routing (also when the app sits in a sub-folder), Spring (`@GetMapping`/`@PostMapping`), Ktor DSL, ASP.NET attributes, Blazor `@page`, CodeIgniter convention routing (controller file + public method → URL), Dart `shelf_router` + Flutter GoRouter, and plain multi-page HTML sites (each page becomes a frontend route with its links and forms).
 
 ### SQL / DDL
 

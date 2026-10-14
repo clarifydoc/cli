@@ -27,6 +27,12 @@ export const javascriptFrameworkRules: readonly FrameworkRule[] = [
     detectedVia: "package.json dependency",
   },
   {
+    id: "expo-router",
+    name: "Expo Router",
+    check: (info) => hasDep(info, "expo-router"),
+    detectedVia: "package.json dependency",
+  },
+  {
     id: "vue",
     name: "Vue",
     check: (info) => hasDep(info, "vue"),
