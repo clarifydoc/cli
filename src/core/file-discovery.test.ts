@@ -4,8 +4,8 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { discoverFiles } from "./file-discovery.js";
 
-// A scanned repository controls its own symlinks: the app server analyzes
-// whatever a git URL checks out. Discovery must neither read through a link out
+// A scanned repository controls its own symlinks: an analysis of a clone runs
+// on whatever a git URL checks out. Discovery must neither read through a link out
 // of the tree nor multiply a self-referencing one.
 describe.skipIf(process.platform === "win32")("discoverFiles — symlinks", () => {
   let base: string;

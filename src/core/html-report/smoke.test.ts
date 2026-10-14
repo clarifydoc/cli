@@ -8,7 +8,7 @@ import { DEFERRED_FIELDS, buildReportPayload } from "../report-payload.js";
 import type { ProjectAnalysis } from "../../types/analysis.js";
 
 // End-to-end smoke test for the standalone report: the React viewer template
-// (built by `npm run build:viewer`, committed under html-report/viewer-assets/)
+// (prebuilt, committed under html-report/viewer-assets/)
 // with the payload injected as gzip+base64 into the #clarifydoc-data tag.
 
 const MINIMAL_SUMMARY = {

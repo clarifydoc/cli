@@ -307,7 +307,7 @@ function prefixMatches(prefix: string, path: string): boolean {
 /**
  * The path a request takes once `rule` forwards it to a base carrying
  * `basePath`: the rule's prefix replaced by its rewrite. A target the rule
- * does not cover is returned as is. Exported for the app, which forwards
+ * does not cover is returned as is. Exported for callers that forward
  * across analyses with the same semantics.
  */
 export function forwardPath(rule: ProxyRule, target: string, basePath: string): string {
@@ -315,7 +315,7 @@ export function forwardPath(rule: ProxyRule, target: string, basePath: string): 
   return rebase((rule.rewriteTo ?? rule.pathPrefix) + target.slice(rule.pathPrefix.length), basePath);
 }
 
-/** The rule with the longest prefix the path falls under. Exported for the app. */
+/** The rule with the longest prefix the path falls under. Exported for callers that join analyses. */
 export function matchProxyRule(rules: ReadonlyArray<ProxyRule>, target: string): ProxyRule | undefined {
   const path = pathOf(target);
   let best: ProxyRule | undefined;

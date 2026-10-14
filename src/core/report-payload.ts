@@ -72,9 +72,9 @@ export interface ReportPayload {
   /** Shared string table for tuple-encoded fields (symbol names, call names,
    * link reasons) — see the wire-encoding note on buildReportPayload. */
   wireStrings?: string[];
-  /** The DEFERRED_FIELDS list, carried in the data so serve-time consumers
-   * (application/server/report-cache.ts) slice on the producer's list instead
-   * of a hand-synced copy. */
+  /** The DEFERRED_FIELDS list, carried in the data so a consumer that serves
+   * the payload in slices slices on the producer's list instead of a
+   * hand-synced copy. */
   deferredFields: string[];
 }
 
@@ -96,7 +96,7 @@ export const DEFERRED_FIELDS = ["blastRadius", "complexity", "classGraph"] as co
  * as `files[]` INDICES instead of repeated path strings — a 5k-file corpus
  * carried 200k+ path copies in symbolLinks/linkGraph/blastRadius alone, most
  * of the payload's bytes and parse time. The viewer decodes them back to
- * strings in ONE pass right after load (application/spa/src/report/decode.ts),
+ * strings in ONE pass right after load (the viewer's `report/decode.ts`),
  * so tab code keeps reading plain paths. A path that isn't a files[] member
  * stays a verbatim string, and the decoder passes strings through — old
  * artifacts and new viewers stay mutually compatible in both directions.
@@ -145,9 +145,9 @@ function stringTable() {
  * Reordering it silently rewrites the provenance of every previously published
  * report, because position IS the encoding.
  *
- * The inverse lives in `application/spa/src/report/decode.ts`, in a separate
- * package that cannot import this one. `report-payload.test.ts` decodes with
- * that very file to prove the two stay in lockstep.
+ * The inverse lives in the viewer's `report/decode.ts`, in a separate package
+ * that cannot import this one, and is tested against this encoder there.
+ * Append, never reorder.
  */
 const RESOLVED_ENUM: Record<string, number> = { text: 1, lsp: 2 };
 const CONF_ENUM: Record<string, number> = { EXTRACTED: 1, INFERRED: 2, AMBIGUOUS: 3 };

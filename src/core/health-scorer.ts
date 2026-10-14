@@ -100,8 +100,8 @@ export type HealthDimensionId =
  * basis N = max(minBasis, authored non-test files) — so the same density of
  * problems costs the same in a 60-file service and a 6,000-file monorepo,
  * and points follow `cap · r / (r + rHalf)`: smooth, no cliffs, never more
- * than the cap, half the cap at `rHalf`. `rHalf` is calibrated on the 22-repo
- * OSS corpus (`eval/corpus/oss-22.json`) at twice the median rate, rounded to
+ * than the cap, half the cap at `rHalf`. `rHalf` is calibrated on a corpus of
+ * 22 open-source repositories at twice the median rate, rounded to
  * 1-2-5, so a typical well-kept repo loses about a third of each cap.
  */
 export const HEALTH_MODEL = {

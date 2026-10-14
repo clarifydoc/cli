@@ -10,7 +10,7 @@ const src = join(root, "src", "core", "html-report", "viewer-assets", "report-te
 const dest = join(root, "dist", "html-report", "viewer-assets", "report-template.html");
 
 if (!existsSync(src)) {
-  console.error(`copy-viewer-asset: missing ${src} — run "npm run build:viewer" first`);
+  console.error(`copy-viewer-asset: missing ${src} — the viewer template is committed there; restore it from git`);
   process.exit(1);
 }
 mkdirSync(dirname(dest), { recursive: true });

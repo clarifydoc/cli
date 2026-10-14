@@ -393,21 +393,21 @@ Files whose names look like credentials (`.env`, key/secret-like names) are skip
 
 ClarifyDoc is measured on real repositories checked out at pinned commits: it analyzes them, serves the result over
 the MCP server and scores it against labels **written by hand from the source** — never against
-ClarifyDoc's own output. At the time of writing, over two pinned
-corpus entries:
+ClarifyDoc's own output. Over seven pinned repositories (Rails + Vue, ASP.NET + Angular, Django + Angular, FastAPI + Nuxt,
+Go + Vue, Express + React, FastAPI), as of extractor 1.117:
 
 | | |
 |---|---|
-| Cross-tier links (frontend call → backend route) | precision **1.000**, recall **1.000** |
-| Data access (file → table) | precision **1.000**, recall **1.000** |
+| Cross-tier links (frontend call → backend route), sampled calls on five repos | precision **0.993**, recall **0.953** |
+| Data access (file → table) | F1 **1.000** |
 | Route paths, as a caller would request them | F1 **1.000** |
 | Route declaration sites found | F1 **1.000** |
-| Search (Mean Reciprocal Rank) | **0.845** — the answer is usually first, sometimes second |
-| Answering through the map vs. reading the files | **77%** fewer tokens |
+| Search (Mean Reciprocal Rank) | **1.000** |
+| Answering through the map vs. reading the files | **69%** fewer tokens |
 
 Bad numbers get published too: a corpus picked to flatter the tool measures nothing. The first run
 scored route paths at 0.000 on FastAPI and missed every DELETE call in the RealWorld frontend.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE). Security reports: [SECURITY.md](SECURITY.md).

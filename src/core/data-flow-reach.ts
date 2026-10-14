@@ -361,7 +361,7 @@ export function computeDataFlows(
     // (`router.get("/articles", auth.optional, async (req, res) => …)`, the
     // ordinary Express style) resolved to nothing at all: there is no function
     // span at the route's line and `handler` holds the middleware's name, so
-    // both fallbacks below miss. The accuracy eval caught that as
+    // both fallbacks below miss. That showed up as
     // `clarifydoc_data_flows` returning "no data flows" on a repository whose
     // reach summary already carried the effects, one lookup away.
     let key: string | null = null;

@@ -1,54 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "fs";
-import { resolve } from "path";
 import { mermaidLabel, idFactory } from "./mermaid-text.js";
-
-const REPO_ROOT = resolve(__dirname, "..", "..");
-const SERVER_COPY = resolve(REPO_ROOT, "application/server/src/export/text.ts");
-
-/**
- * Pull one exported function's source out of a module, by brace matching from
- * its signature. Enough for two hand-written functions; deliberately not a
- * parser.
- */
-function functionSource(source: string, name: string): string {
-  const start = source.indexOf(`export function ${name}(`);
-  if (start === -1) throw new Error(`${name} is not exported from the file under test`);
-  let depth = 0;
-  let seen = false;
-  for (let i = start; i < source.length; i++) {
-    if (source[i] === "{") {
-      depth++;
-      seen = true;
-    } else if (source[i] === "}") {
-      depth--;
-      if (seen && depth === 0) return source.slice(start, i + 1).replace(/\s+/g, " ");
-    }
-  }
-  throw new Error(`could not find the end of ${name}`);
-}
-
-/**
- * `application/server` is built and shipped on its own and cannot import the
- * engine (see `export/summary-source.ts`), so the two copies of the Mermaid
- * escaper are a structural duplication rather than an oversight. This is the
- * gate that keeps them one behaviour: change either and the build fails,
- * naming the other.
- *
- * Comparing source rather than behaviour is deliberate — a behavioural check
- * can only test the inputs someone thought of, and every escaping defect in
- * the graph export so far was a character nobody thought of.
- */
-describe("the two Mermaid escapers are the same code", () => {
-  const serverSource = readFileSync(SERVER_COPY, "utf8");
-  const engineSource = readFileSync(resolve(__dirname, "mermaid-text.ts"), "utf8");
-
-  for (const name of ["mermaidLabel", "idFactory"]) {
-    it(`${name} is character-for-character identical in both packages`, () => {
-      expect(functionSource(engineSource, name)).toBe(functionSource(serverSource, name));
-    });
-  }
-});
 
 describe("mermaidLabel", () => {
   it("escapes every character Mermaid reads as syntax inside a label", () => {

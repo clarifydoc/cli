@@ -17,7 +17,7 @@ import { joinRoutePath } from "./route-paths.js";
  * On FastAPI it is worse than a cosmetic truncation: several routers each
  * declare `@router.get("")`, so once the prefix is gone they are all literally
  * `GET ""` and `dedupeRoutes` — which keys on method+path — collapses five
- * distinct endpoints into one. The accuracy eval measured route-path F1 at
+ * distinct endpoints into one. Against hand labels, route-path F1 measured
  * 0.000 with declaration-site F1 at 0.848, which is exactly that shape: the
  * declarations were found, the paths were wrong, and the collisions ate the
  * rest.

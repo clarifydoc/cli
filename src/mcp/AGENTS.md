@@ -40,9 +40,9 @@ write. That is what lets an external agent be configured as nothing but a comman
   derived from what the caller asked earlier.
 - **Search ranks across kinds, not within them.** `clarifydoc_search` flattens every source into one
   `Candidate` list ([search-rank.ts](search-rank.ts)) and prints one ranked list, because whatever prints first
-  IS the rank — for a model reading top-down and for the search-MRR benchmark alike. A new searchable kind
+  IS the rank — for a model reading top-down and for a search benchmark alike. A new searchable kind
   contributes `Candidate`s; it must not print a section of its own. The tiers and tie-breaks are tuned against
-  `eval/`, never against the tool's own output, and every one of them is pinned by a case in `search-rank.test.ts`.
+  hand-labelled queries on real repositories, never against the tool's own output, and every one of them is pinned by a case in `search-rank.test.ts`.
 - **Tool failures are results, not transport errors.** A thrown handler is turned into `isError: true` content by
   `McpServer.callTool`, so the model reads the message. Throw with the fix in the text (candidate paths, the tool to
   call next).

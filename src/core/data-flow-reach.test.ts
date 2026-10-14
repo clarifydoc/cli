@@ -258,7 +258,7 @@ describe("computeDataFlows", () => {
     // the name-based fallbacks miss and the route used to resolve to nothing.
     // `symbol-linker` already mints `route:GET /orders` and links it onward, so
     // the effects were sitting in the reach summary one lookup away — which is
-    // how the accuracy eval found `clarifydoc_data_flows` reporting "no data
+    // how `clarifydoc_data_flows` came to report "no data
     // flows" on a repo with 19 cross-tier links and 5 file→table edges.
     const reach = computeSymbolReach({
       symbolLinks: [

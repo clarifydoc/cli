@@ -6,11 +6,10 @@
  * Every release-blocking defect in the graph export was an escaping bug, so
  * there is exactly one set of rules and both producers use it.
  *
- * `application/server/src/export/text.ts` carries the same two functions: that
- * package is built and shipped on its own and cannot import the engine, so the
- * duplication is structural rather than accidental. `mermaid-text.test.ts`
- * imports both and asserts they agree character for character — if one is
- * changed alone, the build fails.
+ * Consumers that are built and shipped on their own, and cannot import the
+ * engine, carry a copy of these two functions. The duplication is structural
+ * rather than accidental, and those consumers check their copy against this
+ * file character for character — change the rules here, change them there.
  */
 
 /**
