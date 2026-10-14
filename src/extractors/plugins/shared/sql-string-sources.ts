@@ -76,6 +76,18 @@ const NOT_A_TABLE = new Set([
   "A", "AN", "THE", "ALL", "ANY", "YOUR", "THIS", "THESE", "ONE", "EACH",
 ]);
 
+/**
+ * `ORDER` and `GROUP` are keywords, but `Order` and `Group` are among the most
+ * common entity names, and JPQL/HQL (`SELECT o FROM Order o`) spell the entity
+ * exactly so. A keyword is never written in that capitalization; prose words
+ * (`The`, `Your`) get no such pass.
+ */
+const ENTITY_SPELLING = new Set(["Order", "Group"]);
+
+function notATable(t: string): boolean {
+  return NOT_A_TABLE.has(t.toUpperCase()) && !ENTITY_SPELLING.has(t);
+}
+
 interface PendingStatement {
   text: string;
   line: number;
@@ -116,7 +128,7 @@ export function tableFrom(stmt: string): { verb: string; table: string } | null 
 
   const pick = (m: RegExpMatchArray | null): string | null => {
     const t = m ? (m[2] ?? m[3] ?? m[4] ?? m[5] ?? null) : null;
-    return t && !NOT_A_TABLE.has(t.toUpperCase()) ? t : null;
+    return t && !notATable(t) ? t : null;
   };
 
   if (verb === "SELECT") {
@@ -126,7 +138,7 @@ export function tableFrom(stmt: string): { verb: string; table: string } | null 
     while ((m = FROM_JOIN_RE.exec(sql)) !== null) {
       if (m[5]) continue; // `NAME(` — a table-valued function, not a table
       const t = m[1] ?? m[2] ?? m[3] ?? m[4];
-      if (t && !NOT_A_TABLE.has(t.toUpperCase())) return { verb, table: t };
+      if (t && !notATable(t)) return { verb, table: t };
     }
     return null;
   }
