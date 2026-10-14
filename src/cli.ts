@@ -176,6 +176,7 @@ program
   .description("Generate an HTML report from an existing analysis")
   .argument("<analysis-dir>", "Path to analysis output directory (contains project-summary.json)")
   .option("--no-open", "Don't auto-open the report in the browser")
+  .option("--editor-scheme <scheme>", "URL scheme file links open in: vscode (default), cursor, windsurf, vscodium, …")
   .action(async (analysisDir: string, options) => {
     const dir = resolve(analysisDir);
     try {
@@ -183,6 +184,7 @@ program
       const reportPath = await generateHtmlReport({
         analysisDir: dir,
         openBrowser: options.open !== false,
+        editorScheme: options.editorScheme,
       });
       console.log(`Report generated: ${reportPath}`);
     } catch (err) {
