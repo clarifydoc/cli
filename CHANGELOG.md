@@ -14,6 +14,11 @@ recorded in the git history only.
 
 ### Added
 
+- **A package that installs anywhere.** `npm run pack:standalone` builds the npm tarball with its
+  dependencies bundled — grammars as WASM only, no install scripts — so `npm install clarifydoc` will
+  compile nothing and need no Docker; `npm run smoke:tarball` installs it into an empty directory and
+  checks every grammar and the MCP server. A release workflow packs and smoke-tests on a `v*` tag and
+  publishes that tarball after a person approves.
 - **Expo Router screens.** In a project that depends on `expo-router`, every component file under `app/` is a
   screen at its path (`(group)` folders and `index` dropped, `[id]` → `:id`). `_layout` and `+not-found`
   are not routes. `name+api.ts` serves `/name` once per exported HTTP-method handler.

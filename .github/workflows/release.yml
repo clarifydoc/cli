@@ -1,0 +1,80 @@
+name: Release to npm
+
+# Push a tag `vX.Y.Z` (X.Y.Z = package.json's version, with a `## X.Y.Z`
+# entry in CHANGELOG.md). The `package` job builds the self-contained tarball
+# (scripts/pack-standalone.mjs) and installs it into an empty directory to
+# prove it works there (scripts/smoke-tarball.mjs). The `publish` job uploads
+# that exact tarball — it runs in the `npm` environment, which should have a
+# required reviewer, so a person approves every publish.
+#
+# Needs, in the repository settings: an environment named `npm` with required
+# reviewers, holding the secret NPM_TOKEN (an npm automation token).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: # package and smoke-test without publishing
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # Refuse rather than skip: a tag that does not match what would ship is a
+      # mistake to fix, not a release to quietly not make.
+      - name: Tag, version and changelog agree
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json version ${version}"
+            exit 1
+          fi
+          if ! grep -q "^## ${version}\b" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## ${version}' entry"
+            exit 1
+          fi
+
+      - run: npm ci
+      # Pascal and Kotlin ship C sources, not a .wasm: compiled here (Docker + emscripten).
+      - run: npm run setup
+      - run: npm run lint
+      - run: npm run build
+      - name: Pack
+        run: echo "TARBALL=$(node scripts/pack-standalone.mjs --out "$RUNNER_TEMP")" >> "$GITHUB_ENV"
+      - name: Install it into an empty directory and use it
+        run: node scripts/smoke-tarball.mjs "$TARBALL"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball
+          path: ${{ env.TARBALL }}
+          if-no-files-found: error
+
+  publish:
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # npm provenance: the tarball is linked to this public workflow run
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          name: tarball
+      - name: Publish the tarball that was smoke-tested
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish ./clarifydoc-*.tgz --provenance --access public

@@ -58,7 +58,7 @@ Once the package is published to npm, no install or clone is needed at all:
 
 ```bash
 npx clarifydoc analyze ./my-app --html   # always the latest published version
-npx clarifydoc@0.5.0 analyze ./my-app    # pin a version (recommended in CI)
+npx clarifydoc@0.7.0 analyze ./my-app    # pin a version (recommended in CI)
 npx --yes clarifydoc report ./.clarifydoc/my-app   # --yes skips the install prompt in CI
 ```
 
@@ -71,6 +71,11 @@ npx . analyze ./my-app --html
 # from anywhere, using the path to the clone
 npx /path/to/clarifydoc analyze ./my-app --html
 ```
+
+The published package bundles its dependencies — grammars as WASM only, with no install scripts — so
+installing it compiles nothing and needs no Docker. `npm run pack:standalone` builds that tarball from a
+checkout (after `setup` and `build`), and `npm run smoke:tarball -- <file.tgz>` installs it into an empty
+directory and checks that every grammar loads and the MCP server answers.
 
 For a persistent `clarifydoc` command on your PATH during development, use a link instead of npx:
 
