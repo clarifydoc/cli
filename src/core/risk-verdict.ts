@@ -433,8 +433,11 @@ export function attachRiskVerdicts(blastRadius: BlastRadiusInfo[], input: RiskVe
   const analysisByFile = new Map(input.analyses.map((a) => [a.filePath, a]));
   const profileByFile = new Map((input.responsibilityProfiles ?? []).map((p) => [p.filePath, p]));
 
+  // Files that DECLARE an entity. A table seen only in a query is synthesized
+  // as an `inferred` node keyed on the file that queries it — that file is a
+  // datastore boundary, not where the data model is defined.
   const entityFiles = new Set<string>();
-  for (const n of input.entityGraph?.nodes ?? []) entityFiles.add(n.filePath);
+  for (const n of input.entityGraph?.nodes ?? []) if (n.orm !== "inferred") entityFiles.add(n.filePath);
 
   const abstractFiles = new Set<string>();
   for (const p of input.patterns ?? []) {

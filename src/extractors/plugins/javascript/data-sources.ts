@@ -11,6 +11,8 @@ import { astToValueExpr, buildScope } from "./value-capture.js";
 import { npmPackages } from "./packages.js";
 import { extractGqlOperationCalls } from "../shared/graphql-operations.js";
 import { GENERATED_CLIENT_MARKER, generatedClientCall } from "./generated-clients.js";
+import { tableFrom } from "../shared/sql-string-sources.js";
+import { sqlVerbAccess } from "../shared/db-access.js";
 
 /** A resolved api-call URL: the app-relative path plus recovered provenance. */
 interface ResolvedUrl {
@@ -134,6 +136,38 @@ const ORM_HANDLE_SEGMENT = /^(?:db|knex|sequelize|mongoose|drizzle|kysely|orm)$/
 function chainHasOrmEvidence(parts: readonly string[]): boolean {
   if (ORM_ROOTS.has(parts[0]!) || /Repository$/.test(parts[0]!)) return true;
   return parts.slice(0, -1).some((seg) => ORM_ROOTS.has(seg) || ORM_SEGMENT_RE.test(seg) || ORM_HANDLE_SEGMENT.test(seg));
+}
+
+/**
+ * Driver methods that take raw SQL as their first argument: node-postgres and
+ * mysql2 (`query`, `execute`), better-sqlite3 / sqlite (`prepare`, `exec`,
+ * `run`, `all`, `get`), pg-promise (`any`, `one`, `oneOrNone`, `many`,
+ * `none`, `manyOrNone`), Knex/Sequelize/Prisma escapes (`raw`, `$queryRaw…`).
+ * The verb alone proves nothing (`Map.get`, `router.all`); the SQL literal it
+ * is handed does.
+ */
+const RAW_SQL_VERBS = new Set([
+  "query", "execute", "exec", "prepare", "run", "all", "get",
+  "any", "one", "oneOrNone", "many", "manyOrNone", "none",
+  "raw", "$queryRaw", "$queryRawUnsafe", "$executeRaw", "$executeRawUnsafe",
+]);
+
+/** The literal must OPEN with a statement — `tableFrom` alone would read "Select a file from the list". */
+const SQL_OPENER = /^\s*\(?\s*(?:SELECT|INSERT|UPDATE|DELETE|WITH|REPLACE|MERGE|TRUNCATE)\b/i;
+
+/**
+ * The table and access of raw SQL handed to a driver call, or null. A template
+ * literal's substitutions become `?` (only the SQL around them matters).
+ */
+function rawSqlAccess(firstArg: Node | null): { table: string; access?: "read" | "write" } | null {
+  if (!firstArg || (firstArg.type !== "string" && firstArg.type !== "template_string")) return null;
+  const text = stripQuotes(firstArg.type === "template_string" ? firstArg.text.replace(/\$\{[^}]*\}/g, "?") : firstArg.text);
+  if (!SQL_OPENER.test(text)) return null;
+  const found = tableFrom(text);
+  if (!found) return null;
+  const table = found.table.split(".").pop()!;
+  const access = sqlVerbAccess(found.verb);
+  return { table, ...(access ? { access } : {}) };
 }
 
 /** Kysely query-builder clause verbs whose first argument names the table. */
@@ -690,7 +724,22 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         // table literal is the evidence.
         const kyselyArg = fnName && KYSELY_TABLE_VERBS.has(fnName) ? literalString(node.childForFieldName("arguments")?.namedChildren[0] ?? null) : null;
         const kysely = kyselyArg ? /^([A-Za-z_]\w*(?:\.\w+)*)(?:\s+as\s+\w+)?$/.exec(kyselyArg) : null;
-        if (!emittedApiCall && kysely) {
+        // Raw SQL to a driver: `pool.query("SELECT … FROM todos")`. The
+        // statement names the table, whatever the receiver is called.
+        const rawSql = !emittedApiCall && fnName && RAW_SQL_VERBS.has(fnName)
+          ? rawSqlAccess(node.childForFieldName("arguments")?.namedChildren[0] ?? null)
+          : null;
+        if (rawSql) {
+          sources.push(this.ds({
+            kind: "database",
+            // A chain split over lines (`db\n  .prepare(…)`) reads as one name.
+            name: (ormChain ?? fnName!).replace(/\s+/g, ""),
+            target: rawSql.table,
+            entity: rawSql.table,
+            line: node.startPosition.row + 1,
+            ...(rawSql.access ? { access: rawSql.access } : {}),
+          }));
+        } else if (!emittedApiCall && kysely) {
           const table = kysely[1]!.split(".").pop()!;
           sources.push(this.ds({
             kind: "database",

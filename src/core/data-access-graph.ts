@@ -225,7 +225,19 @@ export function attributeDataAccessToSymbols(
         fns.push({ symbol: `${cls.name}.${m.name}`, line: m.line, endLine: m.endLine });
       }
     }
-    if (fns.length === 0) continue;
+    // An inline route handler (`app.get("/x", async (req, res) => …)`) is no
+    // function, but its calls are the route's own, line by line: an access on
+    // one of those lines belongs to the route's `route:<METHOD> <path>`
+    // symbol — the anchor the symbol linker mints and the reach pass starts from.
+    const inlineRouteAt = new Map<number, { symbol: string; line: number }>();
+    for (const r of a.routes ?? []) {
+      for (const c of r.calls ?? []) {
+        if (typeof c.line === "number" && !inlineRouteAt.has(c.line)) {
+          inlineRouteAt.set(c.line, { symbol: `route:${r.httpMethod ?? "USE"} ${r.path}`, line: r.line });
+        }
+      }
+    }
+    if (fns.length === 0 && inlineRouteAt.size === 0) continue;
 
     for (const ds of a.dataSources ?? []) {
       const isQueue = ds.kind === "queue-publish" || ds.kind === "queue-consume";
@@ -242,6 +254,9 @@ export function attributeDataAccessToSymbols(
           }
         }
       }
+      // Only the file's top-level `<setup>` contains it (or nothing does): an
+      // inline route handler's call on that line is the better owner.
+      if (!best || best.symbol === "<setup>") best = inlineRouteAt.get(ds.line) ?? best;
       if (!best) continue;
 
       const raw = (ds.entity ?? "").trim();

@@ -554,6 +554,19 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // manifest classification / cache reads while every worker stays busy.
   const fileConcurrency = pool ? poolSize + 2 : 8;
 
+  // File-based routes are read relative to the file's own sub-project, under
+  // that sub-project's frameworks (see FileTask.routeScope).
+  const subProjectById = new Map(subProjects.map((sp) => [sp.id, sp]));
+  const routeScopeOf = (relativePath: string, projectId: string): FileTask["routeScope"] => {
+    const sp = subProjectById.get(projectId);
+    if (!sp?.root) return undefined;
+    const root = sp.root.replace(/\\/g, "/").replace(/\/+$/, "");
+    const rel = relativePath.replace(/\\/g, "/");
+    if (!rel.startsWith(root + "/")) return undefined;
+    const own = sp.frameworks?.map((f) => f.id);
+    return { relativePath: rel.slice(root.length + 1), frameworkIds: own?.length ? own : frameworkIds };
+  };
+
   let results: (FileResult | null)[];
   try {
     results = await runWithConcurrency(
@@ -582,7 +595,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
 
         const result = await runTask({
           file, frameworkIds, projectId, outputOpts, verbose: !!verbose,
-          projectRoot, tsconfigAliases,
+          projectRoot, tsconfigAliases, routeScope: routeScopeOf(file.relativePath, projectId),
         });
         if (result === null) {
           // Skipped (preprocess {skip}: generated API docs, foreign-format
@@ -2408,93 +2421,6 @@ export function enrichLinkGraphFromComponentGraph(
       }
     }
   }
-}
-
-/**
- * Infer a frontend route from file path for file-based routing frameworks.
- * Supports Next.js (pages/, app/) and Nuxt (pages/).
- */
-function inferFileBasedRoute(
-  relativePath: string,
-  frameworkIds: string[],
-): RouteInfo | null {
-  const isNextjs = frameworkIds.includes("nextjs");
-  const isNuxt = frameworkIds.includes("vue") || frameworkIds.includes("vue-router");
-
-  if (!isNextjs && !isNuxt) return null;
-
-  const normalized = relativePath.replace(/\\/g, "/");
-
-  // Next.js pages/ directory
-  let match = normalized.match(/^(?:src\/)?pages\/(.+)\.(tsx?|jsx?)$/);
-  if (match) {
-    const route = filePathToRoute(match[1]);
-    if (route === "/_app" || route === "/_document" || route === "/api") return null;
-    return {
-      path: route,
-      httpMethod: null,
-      kind: route.startsWith("/api/") ? "api" : "frontend",
-      handler: null,
-      calls: [],
-      middleware: [],
-      line: 1,
-    };
-  }
-
-  // Next.js app/ directory (page.tsx)
-  match = normalized.match(/^(?:src\/)?app\/(.+)\/page\.(tsx?|jsx?)$/);
-  if (match) {
-    return {
-      path: filePathToRoute(match[1]),
-      httpMethod: null,
-      kind: "frontend",
-      handler: null,
-      calls: [],
-      middleware: [],
-      line: 1,
-    };
-  }
-
-  // Next.js app/ route handlers (route.ts)
-  match = normalized.match(/^(?:src\/)?app\/(.+)\/route\.(tsx?|jsx?)$/);
-  if (match) {
-    return {
-      path: filePathToRoute(match[1]),
-      httpMethod: null,
-      kind: "api",
-      handler: null,
-      calls: [],
-      middleware: [],
-      line: 1,
-    };
-  }
-
-  // Nuxt pages/ directory
-  match = normalized.match(/^pages\/(.+)\.vue$/);
-  if (match) {
-    return {
-      path: filePathToRoute(match[1]),
-      httpMethod: null,
-      kind: "frontend",
-      handler: null,
-      calls: [],
-      middleware: [],
-      line: 1,
-    };
-  }
-
-  return null;
-}
-
-/** Convert file path segments to a route path */
-function filePathToRoute(filePath: string): string {
-  return (
-    "/" +
-    filePath
-      .replace(/\/index$/, "") // index.tsx -> /
-      .replace(/\[\.\.\.(\w+)\]/g, "*") // [...slug] -> *
-      .replace(/\[(\w+)\]/g, ":$1") // [id] -> :id
-  );
 }
 
 import type { ImportInfo, RouteInfo } from "../types/analysis.js";
