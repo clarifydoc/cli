@@ -11,7 +11,8 @@
  */
 
 import { readFile, stat } from "fs/promises";
-import { join, resolve } from "path";
+import { homedir } from "os";
+import { dirname, join, resolve } from "path";
 import {
   AnalysisLockedError,
   currentLockHolder,
@@ -124,8 +125,27 @@ export interface AnalysisStoreOptions {
    * one run from colliding with the editor's.
    */
   allowColdStart?: boolean;
+  /**
+   * Set when the first analysis must not run even though cold start is on: the
+   * root is a fallback rather than a project (no marker above the working
+   * directory). The home directory and a filesystem root are refused without
+   * it. Asking explicitly (`clarifydoc_analyze`) still works.
+   */
+  coldStartRefusal?: string;
   analyzeSettings?: AnalyzeSettings;
   log?: (message: string) => void;
+}
+
+/**
+ * Why `root` must not be analyzed unasked, or null. A user-scope client config
+ * started from `$HOME` would otherwise scan the whole home directory before
+ * answering its first tool call.
+ */
+export function unsafeColdStartRoot(root: string): string | null {
+  const abs = resolve(root);
+  if (abs === resolve(homedir())) return `${abs} is your home directory, not a project`;
+  if (dirname(abs) === abs) return `${abs} is a filesystem root, not a project`;
+  return null;
 }
 
 export class MissingAnalysisError extends Error {}
@@ -230,6 +250,14 @@ export class AnalysisStore {
 
     const holder = await currentLockHolder(this.options.analysisDir);
     if (holder) return this.awaitOtherRun(holder);
+
+    const refusal = this.options.coldStartRefusal ?? unsafeColdStartRoot(this.options.projectRoot);
+    if (refusal) {
+      throw new MissingAnalysisError(
+        `Not analyzing automatically: ${refusal}. Start the server with the project's path ` +
+          `(\`clarifydoc mcp <path>\`), or analyze it first (\`clarifydoc analyze <path>\`).`,
+      );
+    }
 
     this.log("no analysis on disk — running one now");
     try {

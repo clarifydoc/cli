@@ -316,31 +316,10 @@ program
 
 program
   .command("schema")
-  .description("Print the JSON output schema")
-  .action(() => {
-    console.log(
-      JSON.stringify(
-        {
-          $schema: "FileAnalysis",
-          fields: [
-            "filePath",
-            "language",
-            "frameworks",
-            "imports",
-            "exports",
-            "functions",
-            "classes",
-            "routes",
-            "dataSources",
-            "dataMutations",
-            "subComponents",
-            "interactiveElements",
-          ],
-        },
-        null,
-        2,
-      ),
-    );
+  .description("Print the fields of the per-file JSON and of project-summary.json")
+  .action(async () => {
+    const { outputSchema } = await import("./core/output-schema.js");
+    console.log(JSON.stringify(outputSchema(), null, 2));
   });
 
 program
@@ -510,12 +489,17 @@ program
   .option("--exclude <globs...>", "Additional file patterns to exclude")
   .action(async (path: string, options) => {
     // Nothing may write to stdout from here on — it is the JSON-RPC wire.
-    const { startMcpServer, findProjectRoot } = await import("./mcp/server.js");
+    const { startMcpServer, locateProjectRoot } = await import("./mcp/server.js");
+    // With no path given, serve the project the working directory sits in, so
+    // an argument-free client config works from anywhere inside it. With no
+    // project around it either, serve the directory but never scan it unasked.
+    const located = path ? { root: resolve(path), marked: true } : locateProjectRoot(process.cwd());
     try {
       await startMcpServer({
-        // With no path given, serve the project the working directory sits in,
-        // so an argument-free client config works from anywhere inside it.
-        projectRoot: path ? resolve(path) : findProjectRoot(process.cwd()),
+        projectRoot: located.root,
+        coldStartRefusal: located.marked
+          ? undefined
+          : `${located.root} is not inside a project (no .git, package.json or other project marker above it)`,
         analysisDir: options.analysisDir,
         outputBase: options.output,
         allowAnalyze: options.autoAnalyze !== false,

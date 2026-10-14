@@ -51,6 +51,10 @@ write. That is what lets an external agent be configured as nothing but a comman
 - **Read-only must still not dead-end.** `--no-auto-analyze` blocks re-analysis on request, but a project with no
   analysis at all is still analyzed once (`AnalysisStore.coldStart`) — otherwise every tool call would answer "run it
   from the editor" and the agent could do nothing. `--no-cold-start` forbids even that, which is what the tests use.
+  A cold start never runs on the home directory or a filesystem root, nor when `clarifydoc mcp` got no path and
+  found no project marker above the working directory (`coldStartRefusal`) — a user-scope client config started
+  from `$HOME` would otherwise scan the whole home directory before its first answer. `clarifydoc_analyze` still
+  works there: refusing the unasked-for scan is the point, not refusing the user.
 - **One writer per analysis directory.** The CLI, the extension and a cold start now share `.clarifydoc/`, so
   `analyze()` holds an advisory lock ([../core/analysis-lock.ts](../core/analysis-lock.ts)). A store that finds the
   lock held waits for the other run's summary instead of starting a competing scan; the lock heartbeats, so a long

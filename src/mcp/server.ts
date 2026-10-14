@@ -39,6 +39,11 @@ export interface McpServerConfig {
   allowAnalyze?: boolean;
   /** When false the server will not even run the first analysis for a project with none. */
   allowColdStart?: boolean;
+  /**
+   * Why the first analysis must not run here, when the caller knows — e.g. the
+   * root was a fallback, not a project. See `AnalysisStoreOptions.coldStartRefusal`.
+   */
+  coldStartRefusal?: string;
   analyzeSettings?: AnalyzeSettings;
   /** Reported in `serverInfo.version`. */
   version?: string;
@@ -74,11 +79,16 @@ const ROOT_MARKERS = [
  * the project. Falls back to `startDir` when nothing matches.
  */
 export function findProjectRoot(startDir: string): string {
+  return locateProjectRoot(startDir).root;
+}
+
+/** `findProjectRoot`, also saying whether a marker was found or `root` is the fallback. */
+export function locateProjectRoot(startDir: string): { root: string; marked: boolean } {
   let dir = resolve(startDir);
   for (;;) {
-    if (ROOT_MARKERS.some((marker) => existsSync(join(dir, marker)))) return dir;
+    if (ROOT_MARKERS.some((marker) => existsSync(join(dir, marker)))) return { root: dir, marked: true };
     const parent = dirname(dir);
-    if (parent === dir) return resolve(startDir);
+    if (parent === dir) return { root: resolve(startDir), marked: false };
     dir = parent;
   }
 }
@@ -109,6 +119,7 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
     analysisDir,
     allowAnalyze: config.allowAnalyze,
     allowColdStart: config.allowColdStart,
+    coldStartRefusal: config.coldStartRefusal,
     analyzeSettings: config.analyzeSettings,
     log,
   });

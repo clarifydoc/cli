@@ -24,13 +24,9 @@ Optional enhancement that starts language servers in Docker containers and queri
 
 ## Ground truth export
 
-Every query and its raw answer is recorded (`LspDefinitionRecord` / `LspReferenceRecord` in `types/analysis.ts`) and written to `lsp-ground-truth.json` next to `project-summary.json` — by both `analyze` (LSP enabled) and `lsp-update`. Unlike `lsp-enhancement.json` (merged links), it keeps **unresolved queries** (`target: null`) and **pre-redirect targets** (`redirectedTarget` holds the rewrite), so the text linker can be measured against what LSP resolved without re-running Docker:
-
-```
-npm run update-lsp                  # once: saves ground truth per fixture
-<improve text linker>, update-fixtures
-node scripts/lsp-compare.mjs        # Matched / Conflict / Missed per fixture (--details lists calls)
-```
+Every query and its raw answer is recorded (`LspDefinitionRecord` / `LspReferenceRecord` in `types/analysis.ts`) and written to `lsp-ground-truth.json` next to `project-summary.json` — by both `analyze` (LSP enabled) and `lsp-update`. Unlike `lsp-enhancement.json` (merged links), it keeps **unresolved queries** (`target: null`) and **pre-redirect targets** (`redirectedTarget` holds the rewrite), so the text linker can be measured against what LSP resolved without re-running Docker: capture the ground truth
+once, improve the text linker, re-run the text analysis, and bucket each LSP-resolved call as matched, conflicting
+or missed by the text linker.
 
 Docker containers are tagged `clarifydoc-lsp-<lang>`. Images are cached between runs. Cleanup handlers stop containers on SIGINT/SIGTERM.
 
