@@ -197,8 +197,8 @@ export class LspManager {
     // only knows about servers that reached `this.servers`. Anything that
     // throws in between would strand it: the `docker run` child outlives the
     // analysis and holds Node's event loop open, so `clarifydoc analyze`
-    // finishes all its work and then hangs forever instead of exiting. The
-    // accuracy eval walked straight into this on a repository with no
+    // finishes all its work and then hangs forever instead of exiting. A
+    // benchmark run walked straight into this on a repository with no
     // TypeScript installed, where `initialize` rejects — `start()` above
     // catches that and merely logs a warning, which made a leaked process look
     // like a successful run that never ended.

@@ -85,39 +85,6 @@ export { classifyFileLayers, detectLayerViolations } from "./core/layer-analyzer
 export { analyzeBlastRadius } from "./core/blast-radius.js";
 export { computeHealthScore } from "./core/health-scorer.js";
 export { generateSuggestions } from "./core/suggestions-engine.js";
-/**
- * Scoring math for the accuracy eval (`eval/`). Exported so the harness scripts
- * can import it from the built bundle and so it is typechecked and unit-tested
- * by the same gate as everything else — see src/eval/scorer.ts.
- */
-export {
-  scoreSet,
-  rankOf,
-  meanReciprocalRank,
-  scoreTokens,
-  estimateTokens,
-  mean,
-  poolSetScores,
-  scoreSampledLinks,
-  type SetScore,
-  type SampledCallLabel,
-  type SampledLinkScore,
-  type PredictedLink,
-  type RankResult,
-  type TokenScore,
-} from "./eval/scorer.js";
-/** Corpus-wide link and health counts, run against run — see src/eval/corpus-metrics.ts. */
-export {
-  computeCorpusMetrics,
-  linkRecords,
-  diffCorpusLinks,
-  isJoinableTarget,
-  startsWithHole,
-  type CorpusMetrics,
-  type CorpusSummary,
-  type LinkRecord,
-  type LinkDiff,
-} from "./eval/corpus-metrics.js";
 export type * from "./types/analysis.js";
 export type * from "./types/plugin.js";
 export type * from "./types/language-plugin.js";

@@ -23,7 +23,7 @@ export interface ReportOptions {
  *
  * @param options - Analysis directory, output path and browser flag
  * @returns The path the report was written to
- * @throws When the viewer template is missing (run `npm run build:viewer`)
+ * @throws When the viewer template is missing or damaged
  */
 export async function generateHtmlReport(options: ReportOptions): Promise<string> {
   const dir = resolve(options.analysisDir);
@@ -54,9 +54,9 @@ function openInBrowser(filePath: string): void {
 }
 
 // ─── Template rendering (the React viewer, packaged as a single file) ────
-// The template is the SPA report viewer built by `npm run build:viewer`
-// (application/spa/vite.standalone.config.ts → vite-plugin-singlefile), committed
-// at src/core/html-report/viewer-assets/ and mirrored into dist/ by tsdown's
+// The template is the React report viewer built as one self-contained file
+// (vite-plugin-singlefile), committed at
+// src/core/html-report/viewer-assets/ and mirrored into dist/ by tsdown's
 // onSuccess hook — the same relative path resolves in both layouts.
 
 const TEMPLATE_URL = new URL("./html-report/viewer-assets/report-template.html", import.meta.url);
@@ -80,7 +80,7 @@ function replaceToken(html: string, token: string, value: string): string {
   const count = html.split(token).length - 1;
   if (count !== 1) {
     throw new Error(
-      `report template: expected exactly 1 ${token}, found ${count} — rebuild it with "npm run build:viewer"`,
+      `report template: expected exactly 1 ${token}, found ${count} — the committed template is damaged`,
     );
   }
   // Replacer function: passing `value` directly would expand $&, $' and friends
@@ -104,7 +104,7 @@ export async function renderReportFromTemplate(payload: ReportPayload): Promise<
     template = await readFile(TEMPLATE_URL, "utf-8");
   } catch {
     throw new Error(
-      `report viewer template not found at ${TEMPLATE_URL} — run "npm run build:viewer" to build it`,
+      `report viewer template not found at ${TEMPLATE_URL} — it is committed under src/core/html-report/viewer-assets/ and copied into dist/ by the build`,
     );
   }
   const html = replaceToken(template, "__CLARIFYDOC_TITLE__", esc(`ClarifyDoc — ${payload.projectName}`));

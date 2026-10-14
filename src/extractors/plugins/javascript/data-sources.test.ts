@@ -304,7 +304,7 @@ describe("JS api-call call-expression URL arg", () => {
 describe("JS api-call — `del` is the DELETE verb", () => {
   // `delete` is a reserved word, so superagent, koa-route and the clients that
   // wrap them expose DELETE as `del`. Leaving it out of the verb set dropped
-  // every DELETE call in a codebase silently: the accuracy eval found all four
+  // every DELETE call in a codebase silently: hand-labelling found all four
   // of the RealWorld frontend's DELETEs missing while `get`/`post`/`put`
   // resolved, at precision 1.000 — a pure blind spot, not a wrong answer.
   it("captures a del() call with a URL-shaped argument", async () => {

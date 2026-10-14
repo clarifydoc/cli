@@ -451,9 +451,8 @@ function matchProject(
 
 /**
  * The ONE sub-project a deployed service runs, among `subProjects` — for a
- * caller holding services and projects from separate analyses (the app
- * linking repositories: an infra repo's compose service, another repo's
- * project). Unlike the in-analysis match, a tie between candidates matches
+ * caller holding services and projects from separate analyses (linking
+ * repositories: an infra repo's compose service, another repo's project). Unlike the in-analysis match, a tie between candidates matches
  * nothing: across repositories there is no file count to break it with.
  */
 export function matchServiceToProject(

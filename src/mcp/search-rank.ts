@@ -22,8 +22,8 @@
  *
  * Everything here is pure and free of analysis types — the caller flattens its
  * sources into `Candidate`s and supplies the usefulness prior — so the tiers can
- * be unit-tested without a fixture. They are tuned against the search-MRR
- * benchmark in `eval/`, never against this tool's own output.
+ * be unit-tested without a fixture. They are tuned against hand-labelled
+ * queries on real repositories, never against this tool's own output.
  */
 
 import { byOrdinal } from "../core/ordinal.js";

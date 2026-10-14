@@ -104,7 +104,7 @@ export function loadIgnorePatterns(root: string, scanRoot: string = root): Ignor
     readInto(patterns, posix.join(p, OUTPUT_DIR, OUTPUT_IGNORE_FILENAME), dir);
   }
   // The scan root is what was asked for. An inherited pattern that covers it —
-  // the monorepo's `/others/` while analyzing `others/x` — would drop every
+  // a parent's `/checkouts/` while analyzing `checkouts/x` — would drop every
   // file and answer an empty project, so it does not apply; the ancestor's
   // patterns for paths below the scan root still do. A sub-root inside the
   // scan stays covered by what covers it (`/Library/*` for `Library/x`).

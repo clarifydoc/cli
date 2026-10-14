@@ -6,9 +6,9 @@
  *   repository read outside itself (`src/leak.py -> /etc/passwd`, a linked
  *   directory) and turns one self-referencing link (`src/loop -> ..`) into
  *   every file repeated at each of ~32 nesting levels until the OS refuses the
- *   path — exponentially more with two such links. The app server analyzes
- *   repositories it cloned from a URL, so both are reachable by whoever
- *   controls that repository. A walk that wants a linked FILE asks for the
+ *   path — exponentially more with two such links. A repository analyzed
+ *   after cloning it from a URL is controlled by whoever controls that URL,
+ *   so both are reachable by them. A walk that wants a linked FILE asks for the
  *   links (`LinkedFiles`) and decides per link, by resolving it and checking
  *   it stays inside the root (see `discoverFiles`).
  * - **`deep` counts as the walks were written against:** `deep: n` reads a

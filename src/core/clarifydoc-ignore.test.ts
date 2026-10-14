@@ -214,15 +214,15 @@ describe("fnmatch — `**` respects path separators", () => {
 
 describe("ignore files above the scan root", () => {
   it("never ignores the scan root itself", async () => {
-    // The monorepo ignores a tree of other repositories; analyzing one of
+    // A parent folder ignores a tree of other repositories; analyzing one of
     // them directly must still see its files.
-    writeFileSync(join(root, ".clarifydocignore"), "/others/\n*.gen.ts\n");
-    const sub = join(root, "others", "tool");
+    writeFileSync(join(root, ".clarifydocignore"), "/checkouts/\n*.gen.ts\n");
+    const sub = join(root, "checkouts", "tool");
     mkdirSync(join(sub, "src"), { recursive: true });
     writeFileSync(join(sub, "src", "a.ts"), "export const a = 1;\n");
     writeFileSync(join(sub, "src", "b.gen.ts"), "export const b = 1;\n");
     const found = (await discoverFiles(sub)).files.map((f) => f.relativePath);
-    // `/others/` names the root and is dropped; `*.gen.ts` still applies below it.
+    // `/checkouts/` names the root and is dropped; `*.gen.ts` still applies below it.
     expect(found).toEqual(["src/a.ts"]);
   });
 });
