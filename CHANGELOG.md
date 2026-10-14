@@ -21,6 +21,8 @@ recorded in the git history only.
 - The MCP server no longer analyzes a folder unasked when it is the home directory, a filesystem root, or —
   started without a path — a directory with no project marker above it. It says why and how to point it
   at the project; `clarifydoc_analyze` still works there.
+- `clarifydoc report --editor-scheme <scheme>`: file links in the report open in that editor (`cursor`,
+  `windsurf`, `vscodium`, …) instead of VS Code.
 - `LICENSE` (MIT), `SECURITY.md` — how to report a vulnerability, and exactly what network access the CLI
   makes — and this changelog.
 

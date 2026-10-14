@@ -106,4 +106,13 @@ describe("encodeReportPayload — hostile payload content", () => {
     const embedded = extractPayload(html) as { files: string[] };
     expect(embedded.files).toEqual(payload.files);
   });
+
+  it("names the editor file links open in, and only a real URL scheme", async () => {
+    const payload = buildReportPayload({ ...MINIMAL_SUMMARY, projectRoot: "/tmp/demo" } as unknown as ProjectAnalysis);
+    expect(await renderReportFromTemplate(payload)).not.toContain('<meta name="clarifydoc-editor"');
+    const html = await renderReportFromTemplate(payload, { editorScheme: "Cursor" });
+    expect(html).toContain('<meta name="clarifydoc-editor" content="cursor" />');
+    expect(html.indexOf('<meta name="clarifydoc-editor"')).toBeLessThan(html.indexOf("</head>"));
+    await expect(renderReportFromTemplate(payload, { editorScheme: '"><script>' })).rejects.toThrow(/not a URL scheme/);
+  });
 });

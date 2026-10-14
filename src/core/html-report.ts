@@ -15,7 +15,16 @@ export interface ReportOptions {
   analysisDir: string;
   outputPath?: string;
   openBrowser?: boolean;
+  /**
+   * URL scheme of the editor that file links should open — `vscode` (the
+   * default), `cursor`, `windsurf`, `vscodium`, `vscode-insiders`. A report
+   * opened in a browser has no other way to know which editor sent it there.
+   */
+  editorScheme?: string;
 }
+
+/** A URL scheme: letters first, then letters, digits, `+`, `-`, `.` (RFC 3986). */
+const SCHEME = /^[a-z][a-z0-9+.-]{0,31}$/i;
 
 /**
  * Render `report.html` for a finished analysis and refresh `report-data.json`
@@ -29,7 +38,7 @@ export async function generateHtmlReport(options: ReportOptions): Promise<string
   const dir = resolve(options.analysisDir);
   const summary = await loadReportSummary(dir);
   const payload = buildReportPayload(summary);
-  const html = await renderReportFromTemplate(payload);
+  const html = await renderReportFromTemplate(payload, { editorScheme: options.editorScheme });
   const outPath = options.outputPath ?? join(dir, "report.html");
   await mkdir(dirname(outPath), { recursive: true });
   await writeFile(outPath, html, "utf-8");
@@ -98,7 +107,10 @@ function replaceToken(html: string, token: string, value: string): string {
  * @returns The self-contained HTML document
  * @throws When the template is missing or a placeholder count is not one
  */
-export async function renderReportFromTemplate(payload: ReportPayload): Promise<string> {
+export async function renderReportFromTemplate(
+  payload: ReportPayload,
+  opts: { editorScheme?: string } = {},
+): Promise<string> {
   let template: string;
   try {
     template = await readFile(TEMPLATE_URL, "utf-8");
@@ -107,6 +119,12 @@ export async function renderReportFromTemplate(payload: ReportPayload): Promise<
       `report viewer template not found at ${TEMPLATE_URL} — it is committed under src/core/html-report/viewer-assets/ and copied into dist/ by the build`,
     );
   }
-  const html = replaceToken(template, "__CLARIFYDOC_TITLE__", esc(`ClarifyDoc — ${payload.projectName}`));
+  let html = replaceToken(template, "__CLARIFYDOC_TITLE__", esc(`ClarifyDoc — ${payload.projectName}`));
+  if (opts.editorScheme !== undefined) {
+    if (!SCHEME.test(opts.editorScheme)) throw new Error(`not a URL scheme: ${JSON.stringify(opts.editorScheme)}`);
+    // The viewer reads this to build its open-in-editor links.
+    const meta = `<meta name="clarifydoc-editor" content="${opts.editorScheme.toLowerCase()}" />\n  `;
+    html = html.replace("</head>", () => `${meta}</head>`);
+  }
   return replaceToken(html, "__CLARIFYDOC_PAYLOAD__", encodeReportPayload(payload));
 }
