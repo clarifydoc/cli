@@ -39,6 +39,9 @@ export { buildIndex, type AnalysisIndex, type FileFacts } from "./mcp/store.js";
 // can start from — for a host that installs the guidance or offers the
 // workflows outside an MCP client.
 export { AGENT_GUIDANCE } from "./mcp/guidance.js";
+// The MCP server without its stdio transport — for a host that carries the
+// same JSON-RPC messages over another one (an HTTP endpoint).
+export { buildMcpServer, type McpServerConfig, type BuiltMcpServer } from "./mcp/server.js";
 export { WORKFLOW_PROMPTS } from "./mcp/prompts.js";
 export type { McpPrompt } from "./mcp/protocol.js";
 export {
