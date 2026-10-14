@@ -37,7 +37,7 @@ export interface LspEnhancement {
 /**
  * Raw LSP query/answer log — written as a SEPARATE file from the merged links
  * so the text-based linker can be optimized against it: re-run text analysis,
- * then compare its links to these records (scripts/lsp-compare.mjs). Unlike
+ * then compare its links to these records. Unlike
  * `lsp-enhancement.json`, this keeps pre-redirect targets and unresolved
  * queries, which the merged output loses.
  */

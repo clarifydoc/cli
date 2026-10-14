@@ -15,6 +15,8 @@
  * `startMcpServer` redirects console output to stderr for exactly that reason.
  */
 
+import { validateArguments } from "./validate.js";
+
 /** Protocol revisions we can speak, newest first. */
 export const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
 export const LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0];
@@ -237,6 +239,15 @@ export class McpServer {
     const tool = this.tools.get(name);
     if (!tool) throw rpcError(INVALID_PARAMS, `Unknown tool: ${name}`);
     const args = (params.arguments as Record<string, unknown> | undefined) ?? {};
+
+    // Rejected in-band, like a handler error: the model reads the message and
+    // retries with the right spelling, instead of getting unfiltered rows for a
+    // filter it misspelt.
+    const problems = validateArguments(tool.inputSchema, args);
+    if (problems.length) {
+      this.log(`tools/call ${name} rejected: ${problems.join(" ")}`);
+      return { content: [{ type: "text", text: `Invalid arguments for ${name}:\n${problems.map((p) => `- ${p}`).join("\n")}` }], isError: true };
+    }
 
     const started = Date.now();
     try {

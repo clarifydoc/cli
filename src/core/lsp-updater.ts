@@ -140,7 +140,7 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
   const outputPath = await writeLspEnhancement(enhancement, outputOpts);
 
   // 6. Export the raw query/answer log alongside the merged enhancement, so
-  // the text linker can be optimized against it (scripts/lsp-compare.mjs).
+  // the text linker can be optimized against it.
   if (lspResult.serversUsed.length > 0) {
     await writeLspGroundTruth(projectRoot, lspResult, outputOpts);
   }

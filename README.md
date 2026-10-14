@@ -138,7 +138,7 @@ clarifydoc report <analysis-dir>       # (Re)generate the HTML report from proje
 clarifydoc cfg <file> -f <function>    # Draw one function's control flow as Mermaid
 clarifydoc cfg <file> --slice <line>   # What can affect the values used at that line (backward slice)
 clarifydoc detect <path>               # Print detected languages + frameworks only
-clarifydoc schema                      # Print the FileAnalysis output schema
+clarifydoc schema                      # Print every field of the per-file JSON and project-summary.json
 clarifydoc mcp [path]                  # Serve the analysis to an AI agent over MCP (stdio)
 ```
 
