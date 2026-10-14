@@ -1,5 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
-import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
+import { dbAccessFor, dbVerbTable, sqlVerbAccess } from "../shared/db-access.js";
+import { tableFrom } from "../shared/sql-string-sources.js";
 import type { DataSourceInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { simpleTypeName } from "../../shared/type-parser.js";
@@ -253,6 +254,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
    * `String.join(SOME_CONSTANT, …)` as a query on table SOME_CONSTANT.
    */
   private isJooqFile = false;
+  /** File imports Room: a SQL-less `@Insert`/`@Update`/`@Delete` writes its parameter's entity. */
+  private isRoomFile = false;
   /**
    * Declared field/constructor-parameter types (`accountJpaRepository` →
    * `AccountJpaRepository`). The TYPE names the entity more reliably than the
@@ -270,6 +273,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       ? (text.match(/@FeignClient\s*\(([^)]*)\)/)?.[1]?.match(/path\s*=\s*"([^"]+)"/)?.[1] ?? null)
       : null;
     this.isJooqFile = /jooq/i.test(text);
+    this.isRoomFile = /\bandroidx\.room\b/.test(text);
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
@@ -316,6 +320,26 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
             name: `@${evtListener[1]}`,
             target,
             line: node.startPosition.row + 1,
+          }));
+        }
+      }
+
+      // A repository method whose SQL is its annotation — Spring Data / Room
+      // `@Query("SELECT … FROM users")`, `@NativeQuery`, JDBI `@SqlQuery` /
+      // `@SqlUpdate`, MyBatis `@Select`/`@Insert`/…: the statement names the
+      // table (JPQL names the entity, which is what the ER model calls it).
+      // Room's SQL-less `@Insert fun add(user: User)` writes its parameter's.
+      const sqlAnn = text.match(SQL_ANNOTATION_RE);
+      if (sqlAnn) {
+        const access = annotatedSqlAccess(node, text, sqlAnn[1]!, this.isRoomFile);
+        if (access) {
+          sources.push(this.ds({
+            kind: "database",
+            name: `@${sqlAnn[1]}`,
+            target: access.table,
+            entity: access.table,
+            line: access.line,
+            ...(access.access ? { access: access.access } : {}),
           }));
         }
       }
@@ -800,6 +824,50 @@ function localDeclaredType(node: Node, name: string, raw = false): string | null
     return null;
   };
   return scan(fn);
+}
+
+/** Annotations whose string argument is the method's SQL (or, for Room's write verbs, none). */
+const SQL_ANNOTATION_RE = /^@(?:[\w.]+\.)?(Query|NativeQuery|SqlQuery|SqlUpdate|Select|Insert|Update|Delete|Upsert)\b/;
+
+/** Room's write annotations, which take the entity as the method's parameter instead of SQL. */
+const ROOM_WRITE_ANNOTATIONS = new Set(["Insert", "Update", "Delete", "Upsert"]);
+
+/** Java/Kotlin string literals and text blocks inside an annotation's text. */
+const ANN_STRING_RE = /"""([\s\S]*?)"""|"((?:[^"\\]|\\.)*)"/g;
+
+/**
+ * The table an SQL-carrying annotation reads or writes, on the line of the
+ * method it decorates (so the access belongs to that method, not to whatever
+ * precedes it). Concatenated literals (`"SELECT … " + "FROM t"`) are joined.
+ */
+function annotatedSqlAccess(
+  ann: Node,
+  text: string,
+  name: string,
+  isRoomFile: boolean,
+): { table: string; access?: "read" | "write"; line: number } | null {
+  let holder: Node | null = ann.parent;
+  if (holder && holder.type === "modifiers") holder = holder.parent;
+  if (!holder || !/^(method_declaration|function_declaration)$/.test(holder.type)) return null;
+  const nameNode = holder.childForFieldName("name") ?? holder.children.find((c) => c.type === "simple_identifier") ?? null;
+  const line = (nameNode ?? holder).startPosition.row + 1;
+
+  const sql = [...text.matchAll(ANN_STRING_RE)].map((m) => m[1] ?? m[2] ?? "").join(" ").trim();
+  if (sql) {
+    const found = tableFrom(sql);
+    if (!found) return null;
+    const access = sqlVerbAccess(found.verb);
+    return { table: found.table.split(".").pop()!, ...(access ? { access } : {}), line };
+  }
+  if (isRoomFile && ROOM_WRITE_ANNOTATIONS.has(name)) {
+    const params = holder.childForFieldName("parameters") ?? holder.children.find((c) => c.type === "function_value_parameters");
+    const first = params?.children.find((c) => c.type === "formal_parameter" || c.type === "parameter");
+    const raw = first ? (first.childForFieldName("type")?.text ?? kotlinNameAndType(first).type) : null;
+    // `insertAll(users: List<User>)`, `vararg users: User`: the element type is the entity.
+    const element = simpleTypeName(raw?.replace(/^\s*(?:List|Set|Collection|Array|Iterable|MutableList)\s*<\s*(.+?)\s*>\s*$/, "$1"));
+    return element ? { table: element, access: "write", line } : null;
+  }
+  return null;
 }
 
 /**
