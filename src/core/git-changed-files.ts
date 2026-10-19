@@ -36,3 +36,13 @@ export async function gitChangedFiles(
   const untracked = await run(["ls-files", "--others", "--exclude-standard"]);
   return { files: [...split(tracked), ...split(untracked)], label: base };
 }
+
+/** `git config user.name` at a path, or undefined when it is unset or git is missing. */
+export async function gitUserName(cwd: string): Promise<string | undefined> {
+  return new Promise((res) => {
+    execFile(process.env.CLARIFYDOC_GIT ?? "git", ["-C", cwd, "config", "user.name"], { timeout: 5000, windowsHide: true }, (err, out) => {
+      const name = (out ?? "").trim();
+      res(err || !name ? undefined : name);
+    });
+  });
+}

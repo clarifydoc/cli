@@ -2568,6 +2568,8 @@ export interface ProjectAnalysis {
   fileChurn?: FileChurnInfo[];
   /** Files that change together in history (see `CoChangePair`), strongest first, capped at 500. */
   coChange?: CoChangePair[];
+  /** The project's CODEOWNERS rules, in file order (the last match wins). */
+  codeOwners?: { file: string; rules: Array<{ pattern: string; owners: string[] }> };
   /** Top churn × complexity hotspots (derived from fileChurn + complexity). */
   hotspots?: HotspotInfo[];
   /** Per-file boundary/concern profile for files that touch at least one

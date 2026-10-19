@@ -8,7 +8,7 @@ import {
 } from "./core/framework-detector.js";
 import { detectSubProjects } from "./core/project-detector.js";
 import { EXTENSION_TO_LANGUAGE, NAMED_FILE_LANGUAGE } from "./extractors/registry.js";
-import { gitChangedFiles } from "./core/git-changed-files.js";
+import { gitChangedFiles, gitUserName } from "./core/git-changed-files.js";
 import {
   controlFlowForFile,
   controlFlowCapabilities,
@@ -217,6 +217,7 @@ program
   .option("--files <files...>", "Explicit changed-file list, project-relative (skips git)")
   .option("--json", "Print the raw JSON result", false)
   .option("--md", "Print a markdown summary (PR-comment ready)", false)
+  .option("--author <name>", "The change's author, left out of the suggested reviewers (default: git config user.name)")
   .action(async (path: string, options) => {
     const projectRoot = resolve(path);
     const projectName = projectRoot.replace(/\\/g, "/").split("/").pop()!;
@@ -248,7 +249,8 @@ program
       const { computeImpactDiff, renderImpactText, renderImpactMarkdown } = await import(
         "./core/impact-diff.js"
       );
-      const impact = computeImpactDiff(summary, changed, { baseLabel: label });
+      const author = options.author ?? (options.files?.length ? undefined : await gitUserName(projectRoot));
+      const impact = computeImpactDiff(summary, changed, { baseLabel: label, ...(author ? { author } : {}) });
       if (options.json) console.log(JSON.stringify(impact, null, 2));
       else if (options.md) console.log(renderImpactMarkdown(impact));
       else console.log(renderImpactText(impact));

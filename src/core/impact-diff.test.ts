@@ -194,3 +194,20 @@ describe("computeImpactDiff — usually changed with", () => {
     expect(renderImpactMarkdown(r)).toContain("Usually changed with");
   });
 });
+
+describe("computeImpactDiff — owners and reviewers", () => {
+  it("names CODEOWNERS owners and the changed files' authors, the author left out", () => {
+    const s = {
+      ...summary,
+      codeOwners: { file: "CODEOWNERS", rules: [{ pattern: "/srv/", owners: ["@backend"] }] },
+      fileChurn: [
+        { file: "srv/service.ts", commits: 9, additions: 0, deletions: 0, lastTouched: "", authors: [], authorCount: 3, authorShares: [{ name: "Me", commits: 5 }, { name: "Ana", commits: 3 }, { name: "Bo", commits: 1 }] },
+        { file: "srv/util.ts", commits: 2, additions: 0, deletions: 0, lastTouched: "", authors: [], authorCount: 1, authorShares: [{ name: "Bo", commits: 2 }] },
+      ],
+    } as unknown as ProjectAnalysis;
+    const r = computeImpactDiff(s, ["srv/service.ts", "srv/util.ts"], { author: "me" });
+    expect(r.owners).toEqual([{ owner: "@backend", files: 2 }]);
+    // Equal commits: the one who knows more of the changed files first.
+    expect(r.reviewers).toEqual([{ name: "Bo", files: 2, commits: 3 }, { name: "Ana", files: 1, commits: 3 }]);
+  });
+});

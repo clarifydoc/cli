@@ -63,6 +63,7 @@ import { computeRefactorPressure, resolveRefactorPressureConfig } from "./refact
 import { loadProjectConfig, matchesAnyGlob, resolveArchitectureOverrides } from "./project-config.js";
 import { isTestFile } from "./test-file-detector.js";
 import { checkContracts } from "./contract-check.js";
+import { loadCodeOwners } from "./code-owners.js";
 import { isGeneratedFile } from "./generated-file-detector.js";
 import { TOOL_VERSION } from "./version.js";
 import { SCHEMA_VERSION } from "./element-registry.js";
@@ -1037,6 +1038,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   let fileChurn: FileChurnInfo[] | undefined;
   let hotspots: HotspotInfo[] | undefined;
   let coChange: CoChangePair[] | undefined;
+  const codeOwners = loadCodeOwners(projectRoot) ?? undefined;
   let gitSignal: "applied" | "disabled" | "skipped" = gitHistoryPromise ? "skipped" : "disabled";
   let gitSkipReason: string | undefined;
   if (gitHistoryPromise) {
@@ -1506,6 +1508,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     suggestions,
     fileChurn,
     ...(coChange ? { coChange } : {}),
+    ...(codeOwners ? { codeOwners } : {}),
     hotspots,
     provenance: {
       extractorVersion: EXTRACTOR_VERSION,

@@ -93,6 +93,7 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   suggestions: "optional",
   fileChurn: "optional",
   coChange: "optional",
+  codeOwners: "optional",
   hotspots: "optional",
   responsibilityProfiles: "optional",
   refactorPressure: "optional",

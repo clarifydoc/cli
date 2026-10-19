@@ -1,3 +1,4 @@
+import { ownersOf } from "./code-owners.js";
 import type {
   ProjectAnalysis,
   RiskVerdict,
@@ -59,6 +60,13 @@ export interface ImpactDiffResult {
    * Absent without git history.
    */
   missingCoChanges?: Array<{ file: string; with: string; count: number; score: number; hidden?: boolean }>;
+  /** CODEOWNERS owners of the changed files, with how many changed files each owns. */
+  owners?: Array<{ owner: string; files: number }>;
+  /**
+   * Who knows the changed files best: their authors by commits to them,
+   * the change's own author left out. At most three. Absent without history.
+   */
+  reviewers?: Array<{ name: string; files: number; commits: number }>;
   risk: { level: "low" | "moderate" | "high"; reasons: string[] };
 }
 
@@ -91,7 +99,7 @@ function normalizePath(p: string): string {
 export function computeImpactDiff(
   summary: ProjectAnalysis,
   changed: string[],
-  options?: { removedFiles?: string[]; baseLabel?: string },
+  options?: { removedFiles?: string[]; baseLabel?: string; author?: string },
 ): ImpactDiffResult {
   // Canonical path index — exact first, case-insensitive fallback (Delphi
   // corpora drift between UNIT1.PAS and Unit1.pas across git and disk).
@@ -239,6 +247,26 @@ export function computeImpactDiff(
   }
   const missingCoChanges = [...missing.values()].sort((x, y) => y.score - x.score || y.count - x.count || byOrdinal(x.file, y.file)).slice(0, 10);
 
+  // ── Owners and reviewers ──
+  const ownerFiles = new Map<string, number>();
+  for (const f of changedFiles) {
+    for (const o of summary.codeOwners ? ownersOf(summary.codeOwners.rules, f) : []) ownerFiles.set(o, (ownerFiles.get(o) ?? 0) + 1);
+  }
+  const owners = [...ownerFiles.entries()].map(([owner, files]) => ({ owner, files })).sort((a, b) => b.files - a.files || byOrdinal(a.owner, b.owner));
+  const self = options?.author?.trim().toLowerCase();
+  const byAuthor = new Map<string, { name: string; files: number; commits: number }>();
+  const churnOf = new Map((summary.fileChurn ?? []).map((c) => [c.file, c]));
+  for (const f of changedFiles) {
+    for (const s of churnOf.get(f)?.authorShares ?? []) {
+      if (self && s.name.trim().toLowerCase() === self) continue;
+      const key = s.name.toLowerCase();
+      const acc = byAuthor.get(key) ?? byAuthor.set(key, { name: s.name, files: 0, commits: 0 }).get(key)!;
+      acc.files++;
+      acc.commits += s.commits;
+    }
+  }
+  const reviewers = [...byAuthor.values()].sort((a, b) => b.commits - a.commits || b.files - a.files || byOrdinal(a.name, b.name)).slice(0, 3);
+
   // ── Risk rollup ──
   const reasons: string[] = [];
   if (topVerdict) {
@@ -288,6 +316,8 @@ export function computeImpactDiff(
     testCount: tests.length,
     chains,
     ...(missingCoChanges.length > 0 ? { missingCoChanges } : {}),
+    ...(owners.length > 0 ? { owners } : {}),
+    ...(reviewers.length > 0 ? { reviewers } : {}),
     risk: { level, reasons },
   };
   return result;
@@ -329,6 +359,8 @@ export function renderImpactText(r: ImpactDiffResult): string {
     lines.push("", "Usually changed with, not in this change:");
     for (const m of r.missingCoChanges) lines.push(`  ${m.file}  — with ${m.with} in ${m.count} commits (${Math.round(m.score * 100)}%)${m.hidden ? ", no import joins them" : ""}`);
   }
+  if (r.owners?.length) lines.push("", `Owners (CODEOWNERS): ${r.owners.map((o) => `${o.owner} (${o.files})`).join(", ")}`);
+  if (r.reviewers?.length) lines.push(`Suggested reviewers: ${r.reviewers.map((x) => `${x.name} (${x.commits} commits to ${x.files} of these files)`).join(", ")}`);
   lines.push("", `Dependent files: ${r.dependentCount}`);
   if (r.chains.length > 0) {
     lines.push("", "Chains:");
@@ -367,6 +399,8 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
   if (r.missingCoChanges?.length) {
     row("Usually changed with", r.missingCoChanges.map((m) => `\`${m.file}\` (${Math.round(m.score * 100)}% with \`${m.with}\`)`).join(", "));
   }
+  if (r.owners?.length) row("Owners", r.owners.map((o) => `${o.owner} (${o.files})`).join(", "));
+  if (r.reviewers?.length) row("Suggested reviewers", r.reviewers.map((x) => `${x.name} (${x.commits} commits)`).join(", "));
   row("Dependents", String(r.dependentCount));
   if (r.chains.length > 0) {
     md.push("");
