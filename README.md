@@ -119,7 +119,8 @@ the analysis instead, so teammates and CI agents get the map without scanning; i
 | `--stable-output` | Fixed timestamp + relative root, for byte-identical committed analyses | false |
 | `--html` | Generate + open an HTML report afterwards | false |
 | `--osv` | Check each installed package version (from its lockfile, or an exact declared version) against [OSV](https://osv.dev) and record known advisories — the analysis's only network call | off |
-| `--sarif <file>` | Also write the security findings as SARIF 2.1.0 (one rule per category, tagged with its CWEs) — for GitHub code scanning | — |
+| `--sarif <file>` | Also write the findings as SARIF 2.1.0 — for GitHub code scanning: security (one rule per category, tagged with its CWEs), API calls that reach no route (a refused method is an error, and the message names the route that does exist), and imports a team rule or the layer order forbids | — |
+| `--fail-on <level>` | Exit with code 2 when a finding at or above `error`, `warning` or `note` exists — the CI gate | — |
 
 All options, with examples: [CLI reference → analyze](docs/cli-reference.md#analyze).
 

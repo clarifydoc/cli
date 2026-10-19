@@ -36,3 +36,29 @@ describe("buildSarif", () => {
     expect(moved["clarifydocFinding/v1"]).toBe(fp[0]);
   });
 });
+
+describe("buildSarif — structural findings", () => {
+  it("adds calls that reach no route and forbidden imports as their own rules", async () => {
+    const { structuralFindings, resultsAtLeast } = await import("./sarif.js");
+    const extra = structuralFindings({
+      apiRouteLinkStats: {
+        misses: [
+          { file: "web/a.ts", line: 3, method: "DELETE", url: "/api/orders", reason: "method-mismatch", existing: [{ method: "GET", path: "/api/orders", file: "api/o.py", line: 9 }] },
+          { file: "web/b.ts", line: 5, method: "GET", url: "/api/nope", reason: "unmatched" },
+        ],
+      } as never,
+      layerViolations: [{ sourceFile: "src/ui/x.ts", sourceLayer: "ui", targetFile: "src/db/y.ts", targetLayer: "data", importSpecifier: "../db/y", line: 2, rule: "ui-no-db", severity: "error" }] as never,
+    });
+    const log = buildSarif([], "1.0.0", extra);
+    const run = log.runs[0]!;
+    expect(run.tool.driver.rules.map((r) => r.id)).toEqual(["clarifydoc/route-method-mismatch", "clarifydoc/route-unmatched", "clarifydoc/import-rule"]);
+    expect(run.results.map((r) => [r.ruleId, r.level])).toEqual([
+      ["clarifydoc/route-method-mismatch", "error"],
+      ["clarifydoc/route-unmatched", "warning"],
+      ["clarifydoc/import-rule", "error"],
+    ]);
+    expect(run.results[0]!.message.text).toContain("served as GET /api/orders (api/o.py:9)");
+    expect(resultsAtLeast(log, "error")).toBe(2);
+    expect(resultsAtLeast(log, "warning")).toBe(3);
+  });
+});

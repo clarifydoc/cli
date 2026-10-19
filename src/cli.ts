@@ -47,7 +47,8 @@ program
   .option("--no-lsp", "Disable LSP-based symbol resolution")
   .option("--lsp-timeout <ms>", "Timeout for LSP server startup in ms", parseInt)
   .option("--html", "Generate an HTML report after analysis", false)
-  .option("--sarif <file>", "Also write the security findings as SARIF 2.1.0 (GitHub code scanning)")
+  .option("--sarif <file>", "Also write the findings as SARIF 2.1.0 (GitHub code scanning): security, calls that reach no route, forbidden imports")
+  .option("--fail-on <level>", "Exit with code 2 when a finding at or above this level exists: error | warning | note")
   .option("--osv", "Check the installed package versions against OSV (api.osv.dev) — a network call", false)
   .option("--incremental", "Reuse cached per-file analysis for unchanged files (mtime + SHA-256)", false)
   .option("--no-git-history", "Skip git churn/hotspot collection")
@@ -110,17 +111,26 @@ program
         }
         console.log(`  Output: ${outputDir}`);
 
-        if (options.sarif) {
-          const [{ loadReportSummary }, { buildSarif }, { TOOL_VERSION }, { writeFile }] = await Promise.all([
+        let failed = 0;
+        if (options.sarif || options.failOn) {
+          const [{ loadReportSummary }, { buildSarif, structuralFindings, resultsAtLeast }, { TOOL_VERSION }, { writeFile }] = await Promise.all([
             import("./core/report-payload.js"),
             import("./core/sarif.js"),
             import("./core/version.js"),
             import("fs/promises"),
           ]);
           const summary = await loadReportSummary(outputDir);
-          const sarif = buildSarif(summary.securityIssues ?? [], TOOL_VERSION);
-          await writeFile(resolve(options.sarif), JSON.stringify(sarif, null, 2));
-          console.log(`  SARIF:  ${resolve(options.sarif)} (${sarif.runs[0]!.results.length} result(s))`);
+          const sarif = buildSarif(summary.securityIssues ?? [], TOOL_VERSION, structuralFindings(summary));
+          if (options.sarif) {
+            await writeFile(resolve(options.sarif), JSON.stringify(sarif, null, 2));
+            console.log(`  SARIF:  ${resolve(options.sarif)} (${sarif.runs[0]!.results.length} result(s))`);
+          }
+          if (options.failOn) {
+            const level = String(options.failOn).toLowerCase();
+            if (level !== "error" && level !== "warning" && level !== "note") throw new Error(`--fail-on takes error, warning or note, not "${options.failOn}"`);
+            failed = resultsAtLeast(sarif, level);
+            console.log(`  Fail-on: ${failed} finding(s) at ${level} or above`);
+          }
         }
 
         if (options.html) {
@@ -131,6 +141,8 @@ program
           });
           console.log(`  Report: ${reportPath}`);
         }
+        // 2, not 1: a gate that tripped, as opposed to an analysis that failed.
+        if (failed > 0) process.exitCode = 2;
       }
     } catch (err) {
       console.error("Error:", (err as Error).message);
