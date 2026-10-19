@@ -67,6 +67,8 @@ export interface ReportPayload {
   blastRadius: any[];
   fileChurn: any[];
   hotspots: any[];
+  /** Why there is no churn: git history was turned off, or skipped (a shallow clone, not a repository). */
+  gitHistorySkipped?: string;
   godNodes: any[];
   surprisingConnections: any[];
   suggestedQuestions: any[];
@@ -388,6 +390,11 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
     blastRadius: (summary.blastRadius ?? []).map((b) => encodeBlastRow(b, ref)),
     fileChurn: (summary.fileChurn ?? []).map((c) => ({ ...c, file: ref(c.file) })),
     hotspots: (summary.hotspots ?? []).map((h) => ({ ...h, file: ref(h.file) })),
+    ...(summary.provenance?.signals?.gitHistory === "disabled"
+      ? { gitHistorySkipped: "git history was turned off for this analysis" }
+      : summary.provenance?.signals?.gitHistory === "skipped"
+        ? { gitHistorySkipped: summary.provenance.signals.gitSkipReason ?? "git history was not available" }
+        : {}),
     godNodes: summary.godNodes ?? [],
     surprisingConnections: summary.surprisingConnections ?? [],
     suggestedQuestions: summary.suggestedQuestions ?? [],
