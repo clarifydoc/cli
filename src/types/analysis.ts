@@ -2627,6 +2627,12 @@ export interface ProjectAnalysis {
   sourceRevision?: { commit: string; branch: string | null; dirty: number };
   /** How much of the code was read: parse errors, local imports that resolved, frameworks that yielded nothing (core/coverage.ts). */
   coverage?: import("../core/coverage.js").AnalysisCoverage;
+  /**
+   * Edges of `componentGraph` that only type-only imports state and no call
+   * goes along (core/import-kinds.ts): no runtime dependency, so cycles are
+   * judged without them.
+   */
+  typeOnlyEdges?: Record<string, string[]>;
   /** Test coverage from the reports a test run wrote (core/test-coverage.ts) — per file and per function. */
   testCoverage?: import("../core/test-coverage.js").TestCoverageReport;
   /** Other tools' SARIF this analysis joined (`--import-sarif`): results read, and how many landed on analyzed files. */
@@ -2656,6 +2662,8 @@ export interface ProjectAnalysis {
   /** Files with measurable refactor pressure, highest first (refactor-pressure.ts). Omitted when empty. */
   refactorPressure?: RefactorPressureInfo[];
   fileLayerMap?: Record<string, ArchLayer>;
+  /** Why each file is in its layer: its name, its folder, a config rule, or what it does (it declares routes, defines entities…). */
+  fileLayerReasons?: Record<string, string>;
   /** What produced this analysis and what it could see. Omitted on old artifacts. */
   provenance?: AnalysisProvenance;
   /** Auto-detected generated/library barrel roots (e.g. kubb output dirs). */

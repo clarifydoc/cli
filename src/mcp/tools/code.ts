@@ -510,7 +510,7 @@ export function fileTool(ctx: ToolContext): McpTool {
         blocks.push([
           facts([
             ["sub-project", project ? `${project.name} [${project.kind}]` : f.projectId],
-            ["layer", f.layer],
+            ["layer", f.layer ? `${f.layer}${loaded.summary.fileLayerReasons?.[path] ? ` — ${loaded.summary.fileLayerReasons[path]}` : ""}` : undefined],
             ["complexity", f.complexity ? `total ${f.complexity.totalComplexity}, max ${f.complexity.maxComplexity}` : undefined],
             ["functions", f.complexity?.functions.length],
             ["test coverage", testCoverageLine(loaded.summary.testCoverage, path)],

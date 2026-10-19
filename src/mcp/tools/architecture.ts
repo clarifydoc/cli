@@ -1,5 +1,6 @@
 import { byOrdinal } from "../../core/ordinal.js";
 import { findCircularDeps } from "../../core/health-scorer.js";
+import { runtimeGraph } from "../../core/import-kinds.js";
 import type { McpTool } from "../protocol.js";
 import { bulletList, contains, enumArg, joinLines, numberArg, plural, stringArg } from "../format.js";
 import { noResults } from "../empty.js";
@@ -48,7 +49,13 @@ export function architectureTool(ctx: ToolContext): McpTool {
       const cohesion = summary.cohesion ?? {};
       const names = (fs: readonly string[]) => (file ? fs.some((f) => contains(f, file)) : true);
 
-      const cycles = () => findCircularDeps(graph).filter(names).sort((a, b) => a.length - b.length || byOrdinal(a[0] ?? "", b[0] ?? ""));
+      const order = (a: string[], b: string[]) => a.length - b.length || byOrdinal(a[0] ?? "", b[0] ?? "");
+      // Runtime cycles; a cycle only type imports close is listed apart, never counted.
+      const cycles = () => findCircularDeps(runtimeGraph(graph, summary.typeOnlyEdges)).filter(names).sort(order);
+      const typeOnlyCycles = () => {
+        const runtime = new Set(cycles().map((c) => [...c].sort().join("\u0000")));
+        return findCircularDeps(graph).filter(names).filter((c) => !runtime.has([...c].sort().join("\u0000"))).sort(order);
+      };
 
       switch (view) {
         case "overview": {
@@ -132,8 +139,12 @@ export function architectureTool(ctx: ToolContext): McpTool {
         }
         case "cycles": {
           const rows = cycles();
-          if (rows.length === 0) return { text: noResults({ headline: file ? "No import cycle names that file." : "No import cycles.", holds: `${plural(Object.keys(graph).length, "file")} with imports.`, next: [] }) };
-          return { text: joinLines([`# Import cycles (${rows.length})`, ...bulletList(rows, limit, (c) => `${c.join(" → ")} → ${c[0]}`)]) };
+          const typeOnly = typeOnlyCycles();
+          const typeLines = typeOnly.length
+            ? ["", `## Through type-only imports (${typeOnly.length})`, "Closed only by `import type`: no runtime cycle, not counted.", ...bulletList(typeOnly, limit, (c) => `${c.join(" → ")} → ${c[0]}`)]
+            : [];
+          if (rows.length === 0 && typeOnly.length === 0) return { text: noResults({ headline: file ? "No import cycle names that file." : "No import cycles.", holds: `${plural(Object.keys(graph).length, "file")} with imports.`, next: [] }) };
+          return { text: joinLines([`# Import cycles (${rows.length})`, ...bulletList(rows, limit, (c) => `${c.join(" → ")} → ${c[0]}`), ...typeLines]) };
         }
         case "surprises": {
           const rows = (summary.surprisingConnections ?? []).filter((s) => !file || contains(s.source, file) || contains(s.target, file));

@@ -3,10 +3,13 @@ import type {
   DuplicateGroup, LayerViolation, HealthScore,
 } from "../types/analysis.js";
 import { vendoredMinoritySet } from "./security-scanner.js";
+import { runtimeGraph } from "./import-kinds.js";
 
 interface HealthInput {
   analyses: FileAnalysis[];
   componentGraph: Record<string, string[]>;
+  /** Import edges only `import type` states (import-kinds.ts): cycles through them are no runtime cycles. */
+  typeOnlyEdges?: Record<string, string[]>;
   patterns: PatternInfo[];
   securityIssues: SecurityIssue[];
   duplicates: DuplicateGroup[];
@@ -182,7 +185,7 @@ export function computeHealthScore(input: HealthInput): HealthScore {
     if (!graded(src)) continue;
     appGraph[src] = targets.filter(graded);
   }
-  const cycles = findCircularDeps(appGraph);
+  const cycles = findCircularDeps(runtimeGraph(appGraph, input.typeOnlyEdges));
   const cycleFiles = new Set(cycles.flat()).size;
   grade("cycles", cycleFiles, [{ reason: `${cycles.length} circular dependency cycle(s) across ${cycleFiles} file(s)`, share: 1 }]);
 

@@ -3,6 +3,7 @@ import type {
   DuplicateGroup, LayerViolation, BlastRadiusInfo, HealthScore, Suggestion,
   RefactorPressureInfo, DeadCodeReport,
 } from "../types/analysis.js";
+import { runtimeGraph } from "./import-kinds.js";
 import { findCircularDeps } from "./health-scorer.js";
 import { describeDrivers, describeGates } from "./refactor-pressure.js";
 
@@ -46,6 +47,8 @@ interface SuggestionInput {
   layerViolations: LayerViolation[];
   blastRadius: BlastRadiusInfo[];
   componentGraph: Record<string, string[]>;
+  /** Import edges only `import type` states: a cycle through them is no runtime cycle. */
+  typeOnlyEdges?: Record<string, string[]>;
   /** Files under a generated/library tree that nothing outside imports (dead code). */
   unusedFiles?: string[];
   /** Authored code no entry point reaches, and unused exports (dead-code.ts). */
@@ -109,7 +112,7 @@ export function generateSuggestions(input: SuggestionInput): Suggestion[] {
   }
 
   // ── Critical: Circular dependencies (reuse Tarjan SCC from health-scorer) ──
-  const cycles = findCircularDeps(input.componentGraph);
+  const cycles = findCircularDeps(runtimeGraph(input.componentGraph, input.typeOnlyEdges));
   for (const cycle of cycles.slice(0, 5)) {
     // Disambiguate same-basename members (e.g. one `InternalsController.cs` per
     // microservice) so the message doesn't read as a file depending on itself.

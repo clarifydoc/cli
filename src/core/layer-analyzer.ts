@@ -128,6 +128,13 @@ const LAYER_LEVEL: Record<ArchLayer, number> = {
 export function classifyFileLayers(
   files: ReadonlyArray<string | { path: string; language?: Language }>,
   overrides?: Pick<ArchitectureOverrides, "layers" | "exempt">,
+  /**
+   * Last tier, for a file no path rule places: what it does — the routes it
+   * declares, the entities it defines, the database it touches.
+   */
+  evidence?: (path: string) => { layer: ArchLayer; reason: string } | null,
+  /** Filled with why each file got its layer. */
+  reasonsOut?: Record<string, string>,
 ): Record<string, ArchLayer> {
   const result: Record<string, ArchLayer> = {};
   const rules = overrides?.layers ?? [];
@@ -143,6 +150,7 @@ export function classifyFileLayers(
     const language = typeof entry === "string" ? undefined : entry.language;
     const normalized = fp.replace(/\\/g, "/");
     let assigned: ArchLayer = "unknown";
+    let reason = "no path rule or file fact places it";
 
     // Test conventions trump directory tokens — a spec that lives in `utils/`
     // is still a test, and tests are exempt from layer violations. Tooling
@@ -150,12 +158,16 @@ export function classifyFileLayers(
     const overridden = rules.find((r) => matchesAnyGlob(normalized, r.patterns));
     if (isTestFile(normalized, language) || TEST_SEGMENT_RE.test(normalized)) {
       assigned = "test";
+      reason = "a test file by its name or folder";
     } else if (matchesAnyGlob(normalized, exempt)) {
       assigned = "unknown";
+      reason = "exempt in .clarifydoc/config.json";
     } else if (overridden) {
       assigned = overridden.layer;
+      reason = `a layers rule in .clarifydoc/config.json (${overridden.patterns.join(", ")})`;
     } else if (TOOLING_SEGMENT_RE.test(normalized)) {
       assigned = "unknown";
+      reason = "a tooling or script tree, outside the layered app";
     } else {
       // Strip only the final extension: Angular-style compound names
       // (`user.service.ts`) carry the layer in their second segment.
@@ -165,20 +177,31 @@ export function classifyFileLayers(
         if (applies && !applies(isJvmFile)) continue;
         if (pattern.test(baseName)) {
           assigned = layer;
+          reason = `its file name (${baseName})`;
           break;
         }
       }
       if (assigned === "unknown") {
         for (const [pattern, layer] of LAYER_PATTERNS) {
-          if (pattern.test(normalized)) {
+          const m = pattern.exec(normalized);
+          if (m) {
             assigned = layer;
+            reason = `its folder (${m[0].replace(/^[/\\.]/, "")})`;
             break;
           }
+        }
+      }
+      if (assigned === "unknown") {
+        const e = evidence?.(fp);
+        if (e) {
+          assigned = e.layer;
+          reason = e.reason;
         }
       }
     }
 
     result[fp] = assigned;
+    if (reasonsOut) reasonsOut[fp] = reason;
   }
 
   return result;

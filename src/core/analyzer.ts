@@ -66,6 +66,7 @@ import { computeRefactorPressure, resolveRefactorPressureConfig } from "./refact
 import { loadProjectConfig, matchesAnyGlob, resolveArchitectureOverrides } from "./project-config.js";
 import { applySecurityRules } from "./security-rules.js";
 import { externalServices } from "./external-services.js";
+import { typeOnlyEdges } from "./import-kinds.js";
 import { buildTestCoverage, COVERAGE_CANDIDATES, parseCoverage } from "./test-coverage.js";
 import { isTestFile } from "./test-file-detector.js";
 import { checkContracts } from "./contract-check.js";
@@ -117,6 +118,7 @@ import { demoteProjectCallDataSources } from "./project-call-data-sources.js";
 import { denormalizeFileAnalysis } from "./element-registry.js";
 import {
   UNUSED_IMPORTS_LIMIT,
+  type ArchLayer,
   type FileAnalysis,
   type Language,
   type ProjectAnalysis,
@@ -862,7 +864,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   }
 
   progress.step("Building dependency graph...");
-  const componentGraph = buildComponentGraph(allAnalyses);
+  // Edges only `import type` states, refined once the call links are known (import-kinds.ts).
+  const typeOnlyImports: Record<string, string[]> = {};
+  const componentGraph = buildComponentGraph(allAnalyses, typeOnlyImports);
   progress.status("Building link graph...");
   const linkGraph = buildLinkGraph(allAnalyses);
   progress.status("Resolving cross-file symbols...");
@@ -1220,9 +1224,13 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const duplicates = detectDuplicates(allAnalyses).filter(
     (d) => !d.occurrences.every((o) => isUnauthored(o.filePath)),
   );
+  const fileLayerReasons: Record<string, string> = {};
+  const analysisOf = new Map(allAnalyses.map((a) => [a.filePath, a]));
   const fileLayerMap = classifyFileLayers(
     allAnalyses.map((a) => ({ path: a.filePath, language: a.language })),
     architecture,
+    (f) => layerEvidence(analysisOf.get(f)),
+    fileLayerReasons,
   );
   const layerViolations = [
     ...detectLayerViolations(allAnalyses, componentGraph, fileLayerMap),
@@ -1550,9 +1558,11 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // The route-level findings above are ours too: the same rule ids and settings (idempotent over the rest).
   allSecurityIssues.splice(0, allSecurityIssues.length, ...applySecurityRules(allSecurityIssues, projectConfig.config.security).issues);
 
+  const typeOnly = typeOnlyEdges(typeOnlyImports, symbolLinks);
   const healthScore = computeHealthScore({
     analyses: allAnalyses,
     componentGraph,
+    typeOnlyEdges: typeOnly,
     patterns,
     // The grade is about this analysis: another tool's findings stay out of it.
     securityIssues: allSecurityIssues.filter((i) => !i.tool),
@@ -1611,6 +1621,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
 
   progress.status("Generating suggestions...");
   const suggestions = generateSuggestions({
+    typeOnlyEdges: typeOnly,
     analyses: allAnalyses,
     healthScore,
     patterns,
@@ -1658,6 +1669,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     fileProjects,
     files: allAnalyses.map((a) => a.filePath),
     componentGraph,
+    ...(Object.keys(typeOnly).length ? { typeOnlyEdges: typeOnly } : {}),
     linkGraph,
     interactiveElements: allInteractiveElements,
     componentUsage: allComponentUsage,
@@ -1718,6 +1730,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     responsibilityProfiles: responsibilityProfiles.length > 0 ? responsibilityProfiles : undefined,
     refactorPressure: refactorPressure.length > 0 ? refactorPressure : undefined,
     fileLayerMap,
+    fileLayerReasons,
     confidenceCounts,
     skippedSensitive: skippedSensitive.length > 0 ? skippedSensitive : undefined,
     skippedSymlinks: skippedSymlinks.length > 0 ? skippedSymlinks : undefined,
@@ -2238,6 +2251,8 @@ function treeToComponents(
 /** Build a graph of file -> files it imports */
 export function buildComponentGraph(
   analyses: FileAnalysis[],
+  /** Filled with each file's edges that only type-only imports state (`import type`): no runtime dependency. */
+  typeOnlyOut?: Record<string, string[]>,
 ): Record<string, string[]> {
   const graph: Record<string, string[]> = {};
 
@@ -2434,6 +2449,8 @@ export function buildComponentGraph(
 
   for (const a of analyses) {
     const refSet = new Set<string>();
+    /** Targets some non-type import reaches; an edge outside it is type-only. */
+    const valueRefs = new Set<string>();
 
     // Symbols this file actually uses — type-position references plus called
     // names. Gates the bare-namespace fallback (step 3) so a leftover
@@ -2459,6 +2476,11 @@ export function buildComponentGraph(
     const usedLeaves = dirImports ? new Set([...usedNames].map((n) => n.slice(n.lastIndexOf(".") + 1))) : usedNames;
 
     for (const imp of a.imports) {
+      // A type-only import (`import type`) is no runtime dependency: its edge is noted as such.
+      const addRef = (target: string) => {
+        refSet.add(target);
+        if (!imp.isType) valueRefs.add(target);
+      };
       // 1. Resolve relative imports (JS/TS/Vue) via pre-built path map.
       // Strip a trailing source extension so extension-bearing specifiers — as
       // dynamic imports tend to be (`import("./main.vue")`) — match the
@@ -2468,7 +2490,7 @@ export function buildComponentGraph(
         // Another family's file only when the import names it, extension and
         // all: a component's `import "./app.scss"` is that stylesheet.
         const named = match !== undefined && imp.source.toLowerCase().endsWith(match.slice(match.lastIndexOf(".")).toLowerCase());
-        if (match && match !== a.filePath && (familyCompatible(a.filePath, match) || named)) refSet.add(match);
+        if (match && match !== a.filePath && (familyCompatible(a.filePath, match) || named)) addRef(match);
         continue;
       }
 
@@ -2479,7 +2501,7 @@ export function buildComponentGraph(
       if (!STRIP_SOURCE_EXTENSION_RE.test(imp.source)) {
         const exact = strippedPathToFile.get(imp.source.replace(/\/index$/, ""));
         if (exact) {
-          if (exact !== a.filePath) refSet.add(exact);
+          if (exact !== a.filePath) addRef(exact);
           continue;
         }
       }
@@ -2521,7 +2543,7 @@ export function buildComponentGraph(
           // Self is dropped BEFORE the pick (an import never targets its own
           // file) so a same-named import from elsewhere can still resolve.
           const target = pickScoped(candidates, a.filePath);
-          if (target) refSet.add(target);
+          if (target) addRef(target);
         }
       }
 
@@ -2535,7 +2557,7 @@ export function buildComponentGraph(
         const candidates = fileNameToFiles.get(fileName.toLowerCase());
         const target = candidates ? pickScoped(candidates, a.filePath) : null;
         if (target) {
-          refSet.add(target);
+          addRef(target);
           continue;
         }
       }
@@ -2551,7 +2573,7 @@ export function buildComponentGraph(
           : [];
         if (files.length > 0) {
           const used = files.filter((f) => [...declaredIn(f)].some((n) => usedLeaves.has(n)));
-          for (const target of used.length > 0 ? used : files) refSet.add(target);
+          for (const target of used.length > 0 ? used : files) addRef(target);
           continue;
         }
       }
@@ -2568,7 +2590,7 @@ export function buildComponentGraph(
           // the matched file. A named import (specifiers) is a direct reference,
           // so keep it unconditionally.
           if (imp.specifiers.length > 0 || usedNames.has(lastSegment)) {
-            refSet.add(target);
+            addRef(target);
           }
         }
       }
@@ -2580,7 +2602,10 @@ export function buildComponentGraph(
       if (comp.importSource) {
         const candidate = comp.importSource.replace(/^\.\//, "");
         const match = scanForSubComponent(candidate);
-        if (match && match !== a.filePath && familyCompatible(a.filePath, match)) refSet.add(match);
+        if (match && match !== a.filePath && familyCompatible(a.filePath, match)) {
+          refSet.add(match);
+          valueRefs.add(match); // a rendered component is a runtime dependency
+        }
       }
     }
 
@@ -2600,12 +2625,17 @@ export function buildComponentGraph(
         const files = customElToFiles.get(normTag(name));
         if (!files) continue;
         const target = pickByPathAffinity(files.filter((f) => f !== a.filePath), (c) => c, a.filePath);
-        if (target) refSet.add(target);
+        if (target) {
+          refSet.add(target);
+          valueRefs.add(target);
+        }
       }
     }
 
     if (refSet.size > 0) {
       graph[a.filePath] = [...refSet];
+      const typeOnly = [...refSet].filter((t) => !valueRefs.has(t));
+      if (typeOnly.length && typeOnlyOut) typeOnlyOut[a.filePath] = typeOnly;
     }
   }
 
@@ -2895,4 +2925,25 @@ async function readTestCoverage(files: readonly string[], analyses: readonly Fil
     });
   }
   return reports.length ? buildTestCoverage(reports, analyses, projectRoot) : undefined;
+}
+
+/**
+ * A file's layer from what it does, for one no path rule places: the routes
+ * it declares, the entities it defines, the template it renders — first fact
+ * wins, in that order. A file declaring routes sits where a routes folder
+ * does, at the top of the stack (`ui`), so the server wiring that mounts route
+ * modules never reads as an upward import. Database access is not evidence
+ * on its own: entry and wiring files touch it too.
+ */
+function layerEvidence(a: FileAnalysis | undefined): { layer: ArchLayer; reason: string } | null {
+  // An API contract (OpenAPI, …) declares routes it does not serve: it is no layer of the application.
+  if (!a || isApiContractLanguage(a.language)) return null;
+  const n = (k: number, word: string) => `${k} ${word}${k === 1 ? "" : "s"}`;
+  const api = a.routes.filter((r) => r.kind === "api").length;
+  const pages = a.routes.length - api;
+  if (api || pages) return { layer: "ui", reason: `it declares ${api ? n(api, "API route") : n(pages, "frontend route")} — the top of the stack, as a routes folder is` };
+  const entities = a.classes.filter((c) => c.decorators?.includes("entity")).map((c) => c.name);
+  if (entities.length) return { layer: "data", reason: `it defines the ${entities.length === 1 ? "entity" : "entities"} ${entities.slice(0, 3).join(", ")}` };
+  if ((a.templateTree?.length ?? 0) > 0) return { layer: "components", reason: "it renders a template" };
+  return null;
 }
