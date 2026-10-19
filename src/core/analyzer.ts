@@ -1,5 +1,5 @@
 import { readFile } from "fs/promises";
-import { resolve as pathResolve, join, relative, sep } from "path";
+import { resolve as pathResolve, join, relative, sep, basename } from "path";
 import { existsSync, readFileSync } from "fs";
 import { discoverFiles, type DiscoveryOptions, type DiscoveredFile } from "./file-discovery.js";
 import {
@@ -160,6 +160,8 @@ export interface AnalyzeOptions {
    * and shallow clones; set false to keep outputs history-free (fixtures).
    */
   gitHistory?: boolean;
+  /** Other tools' SARIF files whose findings join the map (each gets the routes that reach it). */
+  importSarif?: string[];
   /**
    * Ask OSV (api.osv.dev) about the installed packages' known vulnerabilities
    * (`ExternalPackage.advisories`). The one network call an analysis makes —
@@ -1378,6 +1380,19 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     progress.detail(`  Refactor pressure: ${refactorPressure.length} file(s) scored, ${pressing} strong/urgent`);
   }
 
+  // Other tools' findings, on the files this analysis read.
+  const importedFindings: NonNullable<ProjectAnalysis["importedFindings"]> = [];
+  for (const source of options.importSarif ?? []) {
+    try {
+      const got = importSarif(await readFile(source, "utf-8"), projectRoot, new Set(allAnalyses.map((a) => a.filePath)));
+      allSecurityIssues.push(...got.issues);
+      for (const t of got.tools) importedFindings.push({ source: basename(source), ...t });
+      progress.detail(`  Imported SARIF ${basename(source)}: ${got.tools.map((t) => `${t.tool} ${t.matched}/${t.results}`).join(", ")}`);
+    } catch (e) {
+      progress.detail(`  Could not import ${source}: ${(e as Error).message}`);
+    }
+  }
+
   // Which API routes reach each input-sink finding: "SQL injection at
   // repo.ts:42" becomes "reachable from POST /search". Before suggestions,
   // which rank by it.
@@ -1400,7 +1415,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     analyses: allAnalyses,
     componentGraph,
     patterns,
-    securityIssues: allSecurityIssues,
+    // The grade is about this analysis: another tool's findings stay out of it.
+    securityIssues: allSecurityIssues.filter((i) => !i.tool),
     duplicates,
     complexity,
     layerViolations,
@@ -1503,6 +1519,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     lspStats,
     analyzedAt: options.stableOutput ? STABLE_TIMESTAMP : new Date().toISOString(),
     ...(sourceRevision ? { sourceRevision } : {}),
+    ...(importedFindings.length ? { importedFindings } : {}),
     complexity,
     patterns,
     securityIssues: allSecurityIssues,
@@ -2496,6 +2513,7 @@ import type { ImportInfo, RouteInfo } from "../types/analysis.js";
 import { anonymousWriteFindings, attachFindingEntries, safeMethodWriteFindings } from "./finding-entries.js";
 import { attachOsvAdvisories } from "./osv.js";
 import { readSourceRevision } from "./source-revision.js";
+import { importSarif } from "./sarif-import.js";
 
 /** Import source patterns → framework id */
 const IMPORT_FRAMEWORK_MAP: Record<string, string> = {

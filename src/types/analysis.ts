@@ -2115,7 +2115,9 @@ export type SecurityCategory =
   | "command-injection" | "debug-statement" | "todo-fixme"
   | "pickle" | "subprocess-shell" | "bare-except"
   | "deserialization" | "xxe" | "weak-crypto" | "insecure-config" | "missing-auth"
-  | "path-traversal" | "ssrf" | "open-redirect" | "safe-method-write";
+  | "path-traversal" | "ssrf" | "open-redirect" | "safe-method-write"
+  /** A finding another tool reported (`analyze --import-sarif`) whose weakness has no category here. */
+  | "external";
 
 export interface SecurityIssue {
   category: SecurityCategory;
@@ -2132,6 +2134,10 @@ export interface SecurityIssue {
    * Reachability, not taint. Absent when no route reaches it.
    */
   entries?: Array<{ route: string; file: string; distance: number; confidence: Confidence }>;
+  /** The tool that reported it, for a finding imported from another tool's SARIF (`semgrep`, `CodeQL`). */
+  tool?: string;
+  /** That tool's rule id. */
+  ruleId?: string;
 }
 
 export interface DuplicateGroup {
@@ -2574,6 +2580,8 @@ export interface ProjectAnalysis {
   analyzedAt: string;
   /** The commit the source was at (git work trees, when git history is read). */
   sourceRevision?: { commit: string; branch: string | null; dirty: number };
+  /** Other tools' SARIF this analysis joined (`--import-sarif`): results read, and how many landed on analyzed files. */
+  importedFindings?: Array<{ source: string; tool: string; results: number; matched: number }>;
 
   // Advanced analysis (optional)
   complexity?: FileComplexityInfo[];

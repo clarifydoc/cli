@@ -10,7 +10,8 @@ import type { ApiRouteLinkStats, ContractFinding, LayerViolation, SecurityIssue 
  * notes are not findings and are left out.
  */
 export function buildSarif(issues: readonly SecurityIssue[], toolVersion: string, extra: readonly StructuralFinding[] = []): SarifLog {
-  const kept = issues.filter((i) => i.category !== "todo-fixme");
+  // A finding imported from another tool's SARIF is that tool's to report.
+  const kept = issues.filter((i) => i.category !== "todo-fixme" && !i.tool);
   const rules = new Map<string, SarifRule>();
   for (const issue of kept) {
     const id = ruleIdOf(issue);

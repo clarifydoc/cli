@@ -28,7 +28,8 @@ export function attachFindingEntries(
   analyses: readonly FileAnalysis[],
   symbolLinks: readonly SymbolLink[],
 ): number {
-  const sinks = issues.filter((i) => INPUT_SINKS.has(i.category));
+  // Another tool's finding asks the same question whatever it is about.
+  const sinks = issues.filter((i) => INPUT_SINKS.has(i.category) || i.tool);
   if (sinks.length === 0) return 0;
   const { reverse, confidence } = buildSymbolAdjacency(symbolLinks);
   // API routes only, by their synthetic symbol: a frontend router path is a

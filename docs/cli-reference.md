@@ -58,6 +58,7 @@ sub-projects, and writes the analysis.
 | `--lsp-timeout <ms>` | 60000 per server | How long to wait for a language server to start. |
 | `--no-git-history` | history on | Skip reading `git log` (24 months). Without it there is no churn, no hotspots, and refactor pressure scores without its churn component. |
 | `--html` | off | After the analysis, build `report.html` and open it in the browser. |
+| `--import-sarif <files...>` | — | Join other tools' SARIF 2.1 findings (Semgrep, CodeQL, gosec, Bandit, Checkov…) to the map. Each result on an analyzed file becomes a finding tagged with its tool and rule, mapped to a category by its CWE, and gets the API routes that reach it. Results on files the analysis did not read are counted in `importedFindings`, not kept. They stay out of `--sarif` (the tool reported them) and out of the health grade. |
 | `--pretty` / `--no-pretty` | `--pretty` | Indented or compact JSON. Compact is roughly 40% smaller. |
 | `--stable-output` | off | Write a fixed timestamp and a relative project root, so two runs over the same source produce byte-identical files. For analyses you commit and diff. |
 | `--dry-run` | off | List the files that would be analyzed and stop. Writes nothing. |

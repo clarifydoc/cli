@@ -49,6 +49,7 @@ program
   .option("--html", "Generate an HTML report after analysis", false)
   .option("--sarif <file>", "Also write the findings as SARIF 2.1.0 (GitHub code scanning): security, calls that reach no route, forbidden imports")
   .option("--fail-on <level>", "Exit with code 2 when a finding at or above this level exists: error | warning | note")
+  .option("--import-sarif <files...>", "Join other tools' SARIF findings (Semgrep, CodeQL, gosec…) to the map: each gets the routes that reach it")
   .option("--osv", "Check the installed package versions against OSV (api.osv.dev) — a network call", false)
   .option("--incremental", "Reuse cached per-file analysis for unchanged files (mtime + SHA-256)", false)
   .option("--no-git-history", "Skip git churn/hotspot collection")
@@ -80,6 +81,7 @@ program
         lspTimeout: options.lspTimeout,
         incremental: options.incremental,
         gitHistory: options.gitHistory,
+        ...(options.importSarif ? { importSarif: (options.importSarif as string[]).map((f) => resolve(f)) } : {}),
         osv: options.osv,
         stableOutput: options.stableOutput,
       });
