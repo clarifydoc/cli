@@ -143,6 +143,8 @@ export interface FileRiskInput {
   declaresEntity: boolean;
   /** A `dataclass` or `abc` pattern was detected here. */
   abstractPattern: boolean;
+  /** The file's test coverage, when a report covered it: lines counted and lines a test ran. */
+  testCoverage?: { total: number; covered: number };
 }
 
 /**
@@ -157,6 +159,8 @@ export interface RiskVerdictInput {
   fileLayerMap?: Record<string, ArchLayer>;
   patterns?: readonly PatternInfo[];
   entityGraph?: EntityGraph;
+  /** Per-file test coverage from the reports a test run wrote. */
+  testCoverage?: ReadonlyMap<string, { total: number; covered: number }>;
   config?: RiskVerdictConfig;
 }
 
@@ -394,6 +398,9 @@ export function classifyRiskVerdict(input: FileRiskInput, config?: RiskVerdictCo
     if (e.risk !== null || e.level !== null) reasons.push("cross_tier_escalation");
   }
 
+  // A test report covered the file and ran none of it: whatever breaks, no test will say so.
+  if (input.testCoverage && input.testCoverage.total > 0 && input.testCoverage.covered === 0) reasons.push("uncovered");
+
   const level = levelFor(category, input, cfg);
   if (category === "unknown") {
     // Nothing fired, and nothing can have: any cross-tier reach large enough
@@ -455,6 +462,7 @@ export function attachRiskVerdicts(blastRadius: BlastRadiusInfo[], input: RiskVe
         layer: input.fileLayerMap?.[blast.filePath],
         declaresEntity: entityFiles.has(blast.filePath),
         abstractPattern: abstractFiles.has(blast.filePath),
+        testCoverage: input.testCoverage?.get(blast.filePath),
       },
       cfg,
     );
@@ -483,6 +491,7 @@ export const REASON_LABELS: Record<string, string> = {
   cross_tier_escalation: "risk raised by its cross-tier reach",
   no_classifying_evidence: "no classifying evidence",
   fallback_to_import_graph_level: "level taken from the import graph",
+  uncovered: "no test runs any of it",
 };
 
 /** Short, stable wording per category — the noun the report and MCP both use. */

@@ -61,6 +61,12 @@ export interface ImpactDiffResult {
    * Absent without git history.
    */
   missingCoChanges?: Array<{ file: string; with: string; count: number; score: number; hidden?: boolean }>;
+  /**
+   * What the change touches that no test runs, by the analysis's coverage
+   * reports: the changed functions (or, without the diff's lines, the changed
+   * files) with counted lines and none run. Absent without a coverage report.
+   */
+  untested?: Array<{ file: string; symbol?: string; line?: number; lines: number }>;
   /** CODEOWNERS owners of the changed files, with how many changed files each owns. */
   owners?: Array<{ owner: string; files: number }>;
   /**
@@ -303,6 +309,24 @@ export function computeImpactDiff(
     };
   }
 
+  // ── What no test runs, by the coverage reports ──
+  let untested: ImpactDiffResult["untested"];
+  if (summary.testCoverage) {
+    const cov = new Map(summary.testCoverage.files.map((f) => [f.file, f]));
+    untested = [];
+    if (options?.symbols?.changed.length) {
+      for (const s of options.symbols.changed) {
+        const fn = cov.get(s.file)?.functions?.find((f) => f.line === s.line || (s.line >= f.line && s.endLine <= f.endLine && f.name.endsWith(s.symbol.split(".").pop()!)));
+        if (fn && fn.total > 0 && fn.covered === 0) untested.push({ file: s.file, symbol: s.symbol, line: s.line, lines: fn.total });
+      }
+    } else {
+      for (const f of changedFiles) {
+        const c = cov.get(f);
+        if (c && c.total > 0 && c.covered === 0) untested.push({ file: f, lines: c.total });
+      }
+    }
+  }
+
   // ── Owners and reviewers ──
   const ownerFiles = new Map<string, number>();
   for (const f of changedFiles) {
@@ -339,6 +363,7 @@ export function computeImpactDiff(
   if (tests.length === 0 && dependents.size >= 3) {
     reasons.push(`no test files among ${dependents.size} dependents`);
   }
+  if (untested?.length) reasons.push(`no test runs ${untested.length === 1 ? (untested[0]!.symbol ?? untested[0]!.file) : `${untested.length} of the changed ${untested[0]!.symbol ? "functions" : "files"}`}`);
   const breaking = symbolImpact?.signatureChanges?.filter((c) => c.breaking) ?? [];
   if (breaking.length > 0) {
     reasons.push(`breaks the callers of ${breaking.slice(0, 3).map((c) => `${c.symbol} (${c.kind === "removed" ? "removed" : `${c.before} → ${c.after} required parameters`})`).join(", ")}`);
@@ -379,6 +404,7 @@ export function computeImpactDiff(
     ...(owners.length > 0 ? { owners } : {}),
     ...(symbolImpact ? { symbolImpact } : {}),
     ...(reviewers.length > 0 ? { reviewers } : {}),
+    ...(untested?.length ? { untested } : {}),
     risk: { level, reasons },
   };
   return result;
@@ -415,6 +441,10 @@ export function renderImpactText(r: ImpactDiffResult): string {
   if (r.testCount > 0) {
     lines.push("", `Tests to run (${r.testCount}):`);
     for (const t of r.tests) lines.push(`  ${t}`);
+    if (r.untested?.length) {
+      lines.push("", `Untested — no test runs these (${r.untested.length}):`);
+      for (const u of r.untested) lines.push(`  ${u.symbol ? `${u.symbol} (${u.file}:${u.line})` : u.file}`);
+    }
   }
   if (r.missingCoChanges?.length) {
     lines.push("", "Usually changed with, not in this change:");
@@ -480,6 +510,7 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
   row(`Data (${geq(r)}${r.entityCount})`, r.entities.map((e) => `\`${e}\``).join(", ") || "—");
   if (r.queueCount > 0) row(`Queues (${geq(r)}${r.queueCount})`, r.queues.map((q) => `\`${q}\``).join(", "));
   row(`Tests to run (${r.testCount})`, r.tests.map((t) => `\`${t}\``).join(", ") || "—");
+  if (r.untested?.length) row(`Untested (${r.untested.length})`, r.untested.map((u) => `\`${u.symbol ?? u.file}\``).join(", "));
   if (r.missingCoChanges?.length) {
     row("Usually changed with", r.missingCoChanges.map((m) => `\`${m.file}\` (${Math.round(m.score * 100)}% with \`${m.with}\`)`).join(", "));
   }

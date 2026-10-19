@@ -74,6 +74,7 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   routeMap: "required",
   apiCalls: "required",
   externalServices: "optional",
+  testCoverage: "optional",
   screens: "required",
   apiRouteLinks: "optional",
   apiRouteLinkStats: "optional",

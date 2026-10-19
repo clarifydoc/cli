@@ -143,6 +143,9 @@ export async function statusReport(loaded: LoadedAnalysis, store: AnalysisStore)
       ["commit", summary.sourceRevision ? `${summary.sourceRevision.commit.slice(0, 12)}${summary.sourceRevision.branch ? ` on ${summary.sourceRevision.branch}` : ""}${summary.sourceRevision.dirty ? `, ${plural(summary.sourceRevision.dirty, "uncommitted file")}` : ""}` : undefined],
       ["source", await sourceFreshness(store)],
       ["read", coverageLine(summary.coverage)],
+      ["tests run", summary.testCoverage?.total
+        ? `${Math.round((summary.testCoverage.covered / summary.testCoverage.total) * 100)}% of ${summary.testCoverage.total} counted lines in ${plural(summary.testCoverage.files.length, "file")}, from ${summary.testCoverage.sources.map((x) => `${x.file}${x.stale ? " (older than the sources)" : ""}`).join(", ")}`
+        : undefined],
       ["files", summary.files.length],
       ["health", health ? `${health.score}/100 (${health.grade})` : undefined],
     ]),

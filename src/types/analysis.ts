@@ -2627,6 +2627,8 @@ export interface ProjectAnalysis {
   sourceRevision?: { commit: string; branch: string | null; dirty: number };
   /** How much of the code was read: parse errors, local imports that resolved, frameworks that yielded nothing (core/coverage.ts). */
   coverage?: import("../core/coverage.js").AnalysisCoverage;
+  /** Test coverage from the reports a test run wrote (core/test-coverage.ts) — per file and per function. */
+  testCoverage?: import("../core/test-coverage.js").TestCoverageReport;
   /** Other tools' SARIF this analysis joined (`--import-sarif`): results read, and how many landed on analyzed files. */
   importedFindings?: Array<{ source: string; tool: string; results: number; matched: number }>;
 

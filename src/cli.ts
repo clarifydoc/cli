@@ -51,6 +51,7 @@ program
   .option("--fail-on <level>", "Exit with code 2 when a finding at or above this level exists: error | warning | note")
   .option("--import-sarif <files...>", "Join other tools' SARIF findings (Semgrep, CodeQL, gosec…) to the map: each gets the routes that reach it")
   .option("--spec <files...>", "API specs outside the tree (an OpenAPI document the backend publishes) to check the code's calls against")
+  .option("--coverage <files...>", "Test coverage reports (lcov, Cobertura, JaCoCo, Clover, Go coverprofile); without it the usual report paths are tried")
   .option("--osv", "Check the installed package versions against OSV (api.osv.dev) — a network call", false)
   .option("--incremental", "Reuse cached per-file analysis for unchanged files (mtime + SHA-256)", false)
   .option("--no-git-history", "Skip git churn/hotspot collection")
@@ -84,6 +85,7 @@ program
         gitHistory: options.gitHistory,
         ...(options.importSarif ? { importSarif: (options.importSarif as string[]).map((f) => resolve(f)) } : {}),
         ...(options.spec ? { specs: (options.spec as string[]).map((f) => resolve(f)) } : {}),
+        ...(options.coverage ? { coverage: (options.coverage as string[]).map((f) => resolve(f)) } : {}),
         osv: options.osv,
         stableOutput: options.stableOutput,
       });

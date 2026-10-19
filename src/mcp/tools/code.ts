@@ -1,6 +1,7 @@
 /** Code-navigation tools: routes, screens, per-file facts, call traces, blast radius. */
 
 import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
+import type { TestCoverageReport } from "../../core/test-coverage.js";
 import { describeReasons } from "../../core/risk-verdict.js";
 import type { McpTool } from "../protocol.js";
 import { byOrdinal } from "../../core/ordinal.js";
@@ -512,6 +513,7 @@ export function fileTool(ctx: ToolContext): McpTool {
             ["layer", f.layer],
             ["complexity", f.complexity ? `total ${f.complexity.totalComplexity}, max ${f.complexity.maxComplexity}` : undefined],
             ["functions", f.complexity?.functions.length],
+            ["test coverage", testCoverageLine(loaded.summary.testCoverage, path)],
             ["called in from", f.inbound.length ? `${new Set(f.inbound.map((l) => l.sourceFile)).size} files` : undefined],
             ["calls out to", f.outbound.length ? `${new Set(f.outbound.map((l) => l.targetFile)).size} files` : undefined],
             [
@@ -1503,4 +1505,13 @@ export function contractTool(ctx: ToolContext): McpTool {
       };
     },
   };
+}
+
+/** One file's test coverage, with the functions no test runs — from the reports the analysis read. */
+function testCoverageLine(report: TestCoverageReport | undefined, path: string): string | undefined {
+  const f = report?.files.find((x) => x.file === path);
+  if (!f || f.total === 0) return undefined;
+  const untested = (f.functions ?? []).filter((fn) => fn.covered === 0).map((fn) => fn.name);
+  const stale = report!.sources.some((s) => s.stale) ? " (a report is older than the sources)" : "";
+  return `${Math.round((f.covered / f.total) * 100)}% of ${f.total} lines${untested.length ? `; untested: ${untested.slice(0, 6).join(", ")}${untested.length > 6 ? ` … +${untested.length - 6}` : ""}` : ""}${stale}`;
 }

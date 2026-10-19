@@ -1,6 +1,6 @@
 import { readFile } from "fs/promises";
 import { resolve as pathResolve, join, relative, sep, basename, extname } from "path";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, statSync } from "fs";
 import { discoverFiles, type DiscoveryOptions, type DiscoveredFile } from "./file-discovery.js";
 import { seedFromMainWorktree } from "./worktree-seed.js";
 import { runFingerprint } from "./run-fingerprint.js";
@@ -66,6 +66,7 @@ import { computeRefactorPressure, resolveRefactorPressureConfig } from "./refact
 import { loadProjectConfig, matchesAnyGlob, resolveArchitectureOverrides } from "./project-config.js";
 import { applySecurityRules } from "./security-rules.js";
 import { externalServices } from "./external-services.js";
+import { buildTestCoverage, COVERAGE_CANDIDATES, parseCoverage } from "./test-coverage.js";
 import { isTestFile } from "./test-file-detector.js";
 import { checkContracts } from "./contract-check.js";
 import { loadCodeOwners } from "./code-owners.js";
@@ -175,6 +176,12 @@ export interface AnalyzeOptions {
    * analysis under `@spec/`; `.clarifydoc/config.json` `specs` adds more.
    */
   specs?: string[];
+  /**
+   * Test coverage reports (lcov, Cobertura, JaCoCo, Clover, Go coverprofile)
+   * to join to the map. Without any, the usual report paths at the root and
+   * each sub-project root are tried (`coverage/lcov.info`, `coverage.xml`, …).
+   */
+  coverage?: string[];
   /**
    * Ask OSV (api.osv.dev) about the installed packages' known vulnerabilities
    * (`ExternalPackage.advisories`). The one network call an analysis makes —
@@ -513,6 +520,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // so framework detection can scan each sub-project's own (often nested) manifests.
   progress.step("Detecting sub-projects...");
   const subProjects = await detectSubProjects(projectRoot);
+  // Coverage reports: named, or found where test runners write them. Part of the run fingerprint.
+  const coverageFiles = findCoverageReports(projectRoot, subProjects.map((sp) => sp.root), options.coverage ?? []);
 
   // Step 2a: Lazily load the language plugins this project actually needs —
   // the languages of the discovered files, plus ecosystems whose build
@@ -635,7 +644,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
           // A file added or removed — even one a plugin skips, which has no manifest entry.
           files: files.map((f) => normalizeManifestKey(f.relativePath)).sort(),
         },
-        extraFiles: [...(options.importSarif ?? []).map((f) => pathResolve(f)), ...externalSpecs.map((s) => s.absolutePath), join(projectRoot, ".clarifydoc", "config.json")],
+        extraFiles: [...(options.importSarif ?? []).map((f) => pathResolve(f)), ...externalSpecs.map((s) => s.absolutePath), ...coverageFiles, join(projectRoot, ".clarifydoc", "config.json")],
       }).catch(() => null)
     : null;
   if (fingerprint && prevManifest?.fingerprint === fingerprint && existsSync(join(outputDir, "project-summary.json"))) {
@@ -1420,12 +1429,19 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // change is for that kind, and which rules said so. Runs after the two
   // passes above because it reads `typeUsages` and `traceImpact`, and it is
   // additive — `changeRisk` and `level` are left exactly as they are.
+  // Test coverage, from the reports a test run wrote.
+  const testCoverage = await readTestCoverage(coverageFiles, allAnalyses, projectRoot);
+  if (testCoverage) {
+    const pct = testCoverage.total ? Math.round((testCoverage.covered / testCoverage.total) * 100) : 0;
+    progress.detail(`  Test coverage: ${pct}% of ${testCoverage.total} lines in ${testCoverage.files.length} file(s) from ${testCoverage.sources.map((s) => `${s.file} (${s.format}${s.stale ? ", older than the sources" : ""})`).join(", ")}`);
+  }
   const verdictCount = attachRiskVerdicts(blastRadius, {
     analyses: allAnalyses,
     responsibilityProfiles,
     fileLayerMap,
     patterns,
     entityGraph,
+    ...(testCoverage ? { testCoverage: new Map(testCoverage.files.map((f) => [f.file, { total: f.total, covered: f.covered }])) } : {}),
   });
   if (verdictCount > 0) {
     progress.detail(`  Risk verdicts: ${verdictCount} of ${blastRadius.length} file(s) classified`);
@@ -1726,6 +1742,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     generatedRoots: generatedRoots.length > 0 ? generatedRoots : undefined,
     unusedFiles: unusedFiles.length > 0 ? unusedFiles : undefined,
     deadCode,
+    ...(testCoverage ? { testCoverage } : {}),
     deployment,
   };
 
@@ -2835,4 +2852,47 @@ function resolveExternalSpecs(projectRoot: string, given: readonly string[]): Ar
     out.push({ absolutePath: p, relativePath: `@spec/${name}`, language });
   }
   return out;
+}
+
+/** Coverage reports to read: the named ones, else those found at the usual paths under the root and each sub-project. */
+function findCoverageReports(projectRoot: string, projectRoots: readonly string[], given: readonly string[]): string[] {
+  if (given.length) return [...new Set(given.map((g) => pathResolve(g)))].filter((p) => existsSync(p));
+  const out: string[] = [];
+  for (const root of new Set(["", ...projectRoots])) {
+    for (const c of COVERAGE_CANDIDATES) {
+      const p = join(projectRoot, root, c);
+      if (existsSync(p) && !out.includes(p)) out.push(p);
+    }
+  }
+  return out;
+}
+
+/** Parse each report and join it to the analyzed files; a report older than a source it covers is stale. */
+async function readTestCoverage(files: readonly string[], analyses: readonly FileAnalysis[], projectRoot: string): Promise<ProjectAnalysis["testCoverage"]> {
+  const reports: Parameters<typeof buildTestCoverage>[0][number][] = [];
+  for (const file of files) {
+    let text: string;
+    let written: number;
+    try {
+      text = await readFile(file, "utf-8");
+      written = statSync(file).mtimeMs;
+    } catch {
+      continue;
+    }
+    const parsed = parseCoverage(text);
+    if (!parsed) continue;
+    reports.push({
+      file: relative(projectRoot, file).split(sep).join("/") || basename(file),
+      format: parsed.format,
+      hits: parsed.hits,
+      stale: (matched) => matched.some((f) => {
+        try {
+          return statSync(join(projectRoot, f)).mtimeMs > written;
+        } catch {
+          return false;
+        }
+      }),
+    });
+  }
+  return reports.length ? buildTestCoverage(reports, analyses, projectRoot) : undefined;
 }

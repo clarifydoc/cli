@@ -123,6 +123,7 @@ the analysis instead, so teammates and CI agents get the map without scanning; i
 | `--fail-on <level>` | Exit with code 2 when a finding at or above `error`, `warning` or `note` exists — the CI gate | — |
 | `--import-sarif <files...>` | Join other tools' SARIF (Semgrep, CodeQL, gosec, Bandit…) to the map: each finding on an analyzed file gets the routes that reach it; they stay out of `--sarif` and the health grade | — |
 | `--spec <files...>` | API specs outside the tree — an OpenAPI document the backend publishes — read beside the code (as `@spec/<name>`), so a frontend-only repository's calls link to the operations they reach and the rest show as gaps. `specs` in `.clarifydoc/config.json` adds more | — |
+| `--coverage <files...>` | Test coverage reports to join to the map — lcov, Cobertura (and coverage.py's XML), JaCoCo, Clover, Go coverprofile — matched to the analyzed files by path suffix, so a report written in CI joins. Without it, the usual paths are tried at the root and each sub-project (`coverage/lcov.info`, `coverage.xml`, `target/site/jacoco/jacoco.xml`, `coverage.out`, …). Per file and function in `testCoverage`; a file no test runs gets an `uncovered` risk reason, and `impact` lists the changed functions no test runs | auto |
 
 All options, with examples: [CLI reference → analyze](docs/cli-reference.md#analyze).
 
