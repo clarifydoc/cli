@@ -19,6 +19,8 @@ export const phpManifest: LanguagePluginManifest = {
   explicitSelfMembers: true,
   // `$this->writeUTF()` calls the declared `writeUtf`; `$Repo` is still not `$repo`.
   caseInsensitiveCallables: true,
+  // `require 'lib/db.php'` puts the included file's functions in scope.
+  importsShareScope: true,
   grammar: { variants: { php: { pkg: "tree-sitter-php", wasm: "tree-sitter-php.wasm" } } },
   testFilePatterns: [/(Test|TestCase)\.php$/],
   externalModulePrefixes: ["Illuminate\\", "Symfony\\", "Doctrine\\", "Laravel\\"],

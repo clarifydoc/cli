@@ -37,6 +37,13 @@ describe("JS reachability — module resolution", () => {
     expect(m.resolve("src/main.ts", "./styles.css")).toEqual([]);
   });
 
+  it("keeps every React Native platform variant of a module alive", async () => {
+    const m = await model(["src/Button.ios.tsx", "src/Button.android.tsx", "src/track.ts", "src/track.native.ts", "src/x.web.ts"]);
+    expect(m.resolve("src/App.tsx", "./Button")?.sort()).toEqual(["src/Button.android.tsx", "src/Button.ios.tsx"]);
+    expect(m.resolve("src/App.tsx", "./track")?.sort()).toEqual(["src/track.native.ts", "src/track.ts"]);
+    expect(m.resolve("src/App.tsx", "./x")).toEqual(["src/x.web.ts"]);
+  });
+
   it("resolves root-relative paths per project and tsconfig-rewritten paths", async () => {
     const m = await model(["web/src/main.ts", "src/lib/x.ts"], {}, ["web"]);
     expect(m.resolve("web/index.html", "/src/main.ts")).toEqual(["web/src/main.ts"]);

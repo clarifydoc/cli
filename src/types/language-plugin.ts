@@ -938,6 +938,13 @@ export interface LanguagePluginManifest {
    */
   partialPrefix?: string;
   /**
+   * Infixes a bundler picks between per target platform: React Native loads
+   * `Button.ios.tsx` or `Button.android.tsx` for `./Button`. A file so named
+   * also answers to the plain name when no plain file exists (the first
+   * suffix listed wins), and dead-code resolution keeps every variant alive.
+   */
+  platformSuffixes?: readonly string[];
+  /**
    * OTHER languages this plugin's `dispatchResolvers` act on (beyond its own).
    * Discovering any of them lazy-loads this plugin too, so a cross-language
    * resolver still runs when its owner's language is absent — e.g. csharp's

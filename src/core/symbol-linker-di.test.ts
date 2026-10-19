@@ -628,6 +628,60 @@ describe("symbol-linker — typed receivers", () => {
     expect(made.map((l) => [l.targetSymbol, l.strategy, l.relation])).toEqual([["UnitConverter.__init__", "constructor", "instantiates"]]);
   });
 
+  it("follows a NAMED re-export past the barrel, keeping the barrel only when it leads outside the project", () => {
+    const withIo = (a: FileAnalysis, extra: Record<string, unknown>) => ({ ...a, ...extra }) as unknown as FileAnalysis;
+    const impl = file("app/pkg/impl.py", [cls("Service", { methods: [method("__init__", [], [], 4)] })], { language: "python" });
+    const helpers = file("app/pkg/helpers.py", [], { language: "python", functions: [method("make_thing", [], [], 1)] });
+    // `from .impl import Service` / `from app.pkg.helpers import make_thing as make` /
+    // `from vendored_lib import connect` — the last names no project file.
+    const init = withIo(file("app/pkg/__init__.py", [], { language: "python" }), { exports: [
+      { name: "Service", kind: "re-export", line: 1, source: ".impl" },
+      { name: "make", kind: "re-export", line: 2, source: "app.pkg.helpers", sourceName: "make_thing" },
+      { name: "connect", kind: "re-export", line: 3, source: "vendored_lib" },
+    ] });
+    const main = file("app/main.py", [], { language: "python", functions: [method("main", [
+      call("Service", { kind: "cross-file", target: "app.pkg" }),
+      call("make", { kind: "cross-file", target: "app.pkg" }),
+      call("connect", { kind: "cross-file", target: "app.pkg" }),
+    ])] });
+    const out = callsFrom(buildSymbolLinks([impl, helpers, init, main]), "app/main.py");
+    expect(out.map((l) => [l.callName, l.targetFile, l.targetSymbol])).toEqual([
+      ["Service", "app/pkg/impl.py", "Service.__init__"],
+      ["make", "app/pkg/helpers.py", "make_thing"],
+      ["connect", "app/pkg/__init__.py", "connect"],
+    ]);
+  });
+
+  it("resolves a bare call through a wildcard import, to what the module exports", () => {
+    const withIo = (a: FileAnalysis, extra: Record<string, unknown>) => ({ ...a, ...extra }) as unknown as FileAnalysis;
+    // `__all__ = ["system_job"]` — `_helper` is not exported.
+    const jobs = withIo(file("netbox/jobs.py", [], { language: "python", functions: [method("system_job", [], [], 44), method("_helper", [], [], 60)] }), {
+      exports: [{ name: "system_job", kind: "function", line: 44 }],
+    });
+    const test = withIo(file("netbox/tests/test_jobs.py", [], { language: "python", functions: [method("<setup>", [call("system_job"), call("_helper")])] }), {
+      imports: [{ source: "..jobs", specifiers: [], isDefault: false, isNamespace: true, isType: false, line: 19 }],
+    });
+    const out = callsFrom(buildSymbolLinks([jobs, test]), "netbox/tests/test_jobs.py");
+    expect(out.map((l) => [l.callName, l.targetFile, l.strategy])).toEqual([["system_job", "netbox/jobs.py", "import-file"]]);
+  });
+
+  it("resolves a bare PHP call to the one included file that defines it", () => {
+    const withIo = (a: FileAnalysis, extra: Record<string, unknown>) => ({ ...a, ...extra }) as unknown as FileAnalysis;
+    const db = file("site/inc/db.php", [], { language: "php", functions: [method("find_user", [], [], 2)] });
+    const header = file("site/inc/header.php", [], { language: "php", functions: [method("render_header", [], [], 3)] });
+    const inc = (source: string, line: number) => ({ source, specifiers: [], isDefault: false, isNamespace: false, isType: false, line });
+    // `require_once __DIR__ . '/inc/db.php'` and `include 'inc/header.php'`
+    // (from the site's root, a folder below the repository's).
+    const index = withIo(file("site/index.php", [], { language: "php", functions: [method("<setup>", [call("find_user"), call("render_header"), call("mysqli_query")])] }), {
+      imports: [inc("./inc/db.php", 2), inc("inc/header.php", 3)],
+    });
+    const out = callsFrom(buildSymbolLinks([db, header, index]), "site/index.php");
+    expect(out.map((l) => [l.callName, l.targetFile, l.strategy])).toEqual([
+      ["find_user", "site/inc/db.php", "import-file"],
+      ["render_header", "site/inc/header.php", "import-file"],
+    ]);
+  });
+
   it("types a Delphi form variable past its .dfm and links `TFoo.Create` to the constructor", () => {
     const unit = file("Players.pas", [{ ...cls("TfrmPlayers", {
       extends: "TBaseForm",
@@ -656,7 +710,8 @@ describe("symbol-linker — typed receivers", () => {
       methods: [method("writeUtf", [], [], 3), method("serialize", [call("this.writeUTF"), call("writeUTF")], [], 8)],
     })], { language });
     const php = callsFrom(buildSymbolLinks([serializer("lib/Serializer.php", "php")]), "lib/Serializer.php");
-    expect(php.map((l) => [l.callName, l.targetSymbol])).toEqual([["this.writeUTF", "Serializer.writeUtf"], ["writeUTF", "Serializer.writeUtf"]]);
+    // A bare `writeUTF()` is a function in PHP — a method is reached through `$this->` only.
+    expect(php.map((l) => [l.callName, l.targetSymbol])).toEqual([["this.writeUTF", "Serializer.writeUtf"]]);
     expect(callsFrom(buildSymbolLinks([serializer("lib/Serializer.java", "java")]), "lib/Serializer.java")).toEqual([]);
   });
 

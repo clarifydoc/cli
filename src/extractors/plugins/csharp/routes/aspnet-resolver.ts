@@ -4,6 +4,7 @@ import type { RouteResolver } from "../../../route-resolvers/base.js";
 import { buildAuth, type GuardAttr } from "../../../shared/route-metadata.js";
 import { buildPath, rebindParams, CS_CONTROLLER_FACT, type CsControllerFact, type CsActionFact } from "./aspnet.js";
 import { CustomAttributes } from "./aspnet-attributes.js";
+import { areaOfPath, conventionalPath, webApiVerb, CS_CONVENTIONAL_ROUTE_FACT, type CsConventionalPattern } from "./aspnet-conventional.js";
 
 /** Bases ASP.NET itself provides — reaching one means the chain is fully known. */
 const FRAMEWORK_CONTROLLER_BASES = new Set(["Controller", "ControllerBase", "ODataController", "ApiController"]);
@@ -19,6 +20,8 @@ interface InheritedScope {
   unresolvedBase: string | null;
   /** A project routing attribute whose template could not be evaluated. */
   unresolvedAttr: string | null;
+  /** The framework base the chain ends at (`Controller`, Web API 2's `ApiController`). */
+  frameworkBase: string | null;
 }
 
 /** A controller fact with the project's own routing attributes applied. */
@@ -116,6 +119,7 @@ export const aspnetControllerInheritance: RouteResolver = {
         guards: [],
         unresolvedBase: null,
         unresolvedAttr: c.fact.unresolvedAttr,
+        frameworkBase: null,
       };
       // Walk the `extends` chain only: implemented interfaces carry no routing.
       let cur: ClassRef = c.ref;
@@ -124,7 +128,8 @@ export const aspnetControllerInheritance: RouteResolver = {
         const st = ctx.classes.supertypes(cur).find((s) => s.written === cur.cls.extends);
         if (!st) break;
         if (!st.ref) {
-          if (!FRAMEWORK_CONTROLLER_BASES.has(st.name) && scope.template === null) scope.unresolvedBase = st.name;
+          if (FRAMEWORK_CONTROLLER_BASES.has(st.name)) scope.frameworkBase = st.name;
+          else if (scope.template === null) scope.unresolvedBase = st.name;
           break;
         }
         if (seen.has(st.ref)) break;
@@ -236,5 +241,99 @@ export const aspnetControllerInheritance: RouteResolver = {
       base.analysis.routes = base.analysis.routes.filter((r) => r.owner !== base.ref.cls.name);
     }
     for (const [analysis, rows] of inheritedRows) analysis.routes = [...analysis.routes, ...rows];
+
+    // 4. Controllers no attribute routes: the startup's conventional route table.
+    applyConventionalRoutes(analyses, controllers.values(), scopeOf);
   },
 };
+
+/** One registered pattern, with where it was registered. */
+interface Registered extends CsConventionalPattern {
+  file: string;
+}
+
+/**
+ * ASP.NET conventional routing. A controller that neither it nor an ancestor
+ * attribute-routes (no class template, no `[ApiController]`) is reached
+ * through the patterns its sub-project registers, tried in order — the first
+ * that serves the controller's area (`[Area]`, or an MVC 5 `Areas/X/` folder)
+ * names the path. Its public actions become rows (any verb, unless a verb
+ * attribute narrows it; Web API 2 takes the verb the name starts with), and a
+ * verb-attributed action the extractor could only place at `/` moves to its
+ * conventional path. No registered pattern: nothing is invented.
+ */
+function applyConventionalRoutes(
+  analyses: FileAnalysis[],
+  controllers: Iterable<Controller>,
+  scopeOf: (c: Controller) => InheritedScope,
+): void {
+  const byProject = new Map<string, Registered[]>();
+  for (const a of analyses) {
+    for (const f of a.routeFacts ?? []) {
+      if (f.kind !== CS_CONVENTIONAL_ROUTE_FACT) continue;
+      const list = byProject.get(a.projectId) ?? [];
+      list.push({ ...(f.data as CsConventionalPattern), file: a.filePath });
+      byProject.set(a.projectId, list);
+    }
+  }
+  if (byProject.size === 0) return;
+
+  for (const c of controllers) {
+    const patterns = byProject.get(c.analysis.projectId);
+    if (!patterns || c.fact.abstract) continue;
+    const scope = scopeOf(c);
+    if (scope.template !== null || scope.unresolvedAttr !== null || scope.apiController) continue;
+    const webApi = scope.frameworkBase === "ApiController";
+    const area = c.raw.area ?? areaOfPath(c.analysis.filePath);
+    const pattern = patterns.find((p) => !!p.webApi === webApi && servesArea(p, area));
+    if (!pattern) continue;
+    const controllerToken = c.ref.cls.name.replace(/Controller$/, "");
+    const paramsOf = (handler: string | null): string[] =>
+      c.ref.cls.methods.find((m) => m.name === handler)?.params.map((p) => p.name) ?? [];
+    const classGuards = [...scope.guards, ...c.fact.guards];
+
+    // Verb-attributed actions with no template of their own.
+    c.analysis.routes = c.analysis.routes.map((r) => {
+      if (r.owner !== c.ref.cls.name) return r;
+      const action = c.fact.actions.find((a) => a.line === r.line && a.verb === r.httpMethod);
+      if (!action || action.template !== null) return r;
+      const path = conventionalPath(pattern, controllerToken, action.action ?? action.handler, area, paramsOf(action.handler));
+      if (!path) return r;
+      const row: RouteInfo = { ...r, path };
+      if (r.params) row.params = rebindParams(r.params, path, false);
+      return row;
+    });
+
+    // Plain public actions: no row yet (an overload of the same name may have
+    // one — MVC's GET form and its [HttpPost] submit are two actions).
+    const added: RouteInfo[] = [];
+    for (const action of c.raw.conventional ?? []) {
+      if (c.fact.synthetic.some((s) => s.handler === action.handler)) continue;
+      const path = conventionalPath(pattern, controllerToken, webApi ? null : action.action, area, paramsOf(action.handler));
+      if (!path) continue;
+      const row: RouteInfo = {
+        path,
+        httpMethod: webApi ? webApiVerb(action.handler) : null,
+        kind: "api",
+        handler: action.handler,
+        calls: [],
+        middleware: [...classGuards, ...action.guards].map((g) => g.text),
+        line: action.line,
+        owner: c.ref.cls.name,
+      };
+      const auth = buildAuth(classGuards, action.guards);
+      if (auth) row.auth = auth;
+      if (action.params) row.params = rebindParams(action.params, path, false);
+      added.push(row);
+    }
+    if (added.length > 0) c.analysis.routes = [...c.analysis.routes, ...added];
+  }
+}
+
+/** A pattern serves a controller of `area` (null: none) — by its area name, an `{area}` token, or the `Areas/X/` folder it is registered in. */
+function servesArea(p: Registered, area: string | null): boolean {
+  const own = p.area ?? areaOfPath(p.file);
+  const token = /\{area\b/i.test(p.pattern);
+  if (area) return token || (own !== null && own.toLowerCase() === area.toLowerCase());
+  return !token && own === null;
+}

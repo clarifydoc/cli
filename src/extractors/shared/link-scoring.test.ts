@@ -118,3 +118,42 @@ describe("resolveTarget — Python relative modules", () => {
     expect(resolveTarget("./api", "web/src/page.ts", map)).toBe("web/src/api.ts");
   });
 });
+
+describe("resolveTarget — a file path written without ./", () => {
+  const map = buildFilePathMap([
+    { filePath: "site/index.php", language: "php" },
+    { filePath: "site/inc/db.php", language: "php" },
+    { filePath: "site/inc/header.php", language: "php" },
+    { filePath: "other/inc/db.php", language: "php" },
+    { filePath: "tools/lib/common.sh", language: "bash" },
+  ] as any);
+
+  it("tries the project root, then beside the importer, then a unique path suffix", () => {
+    // `require 'tools/lib/common.sh'` run from the repository root.
+    expect(resolveTarget("tools/lib/common.sh", "tools/build.sh", map)).toBe("tools/lib/common.sh");
+    // `include 'inc/header.php'` from the site's own front controller.
+    expect(resolveTarget("inc/header.php", "site/index.php", map)).toBe("site/inc/header.php");
+    // `require_once 'inc/header.php'` from a file inside inc/ — the include
+    // path is the site's, not the includer's directory; one file ends so.
+    expect(resolveTarget("inc/header.php", "site/inc/db.php", map)).toBe("site/inc/header.php");
+  });
+
+  it("refuses a suffix two files share", () => {
+    expect(resolveTarget("inc/db.php", "site/admin/page.php", map)).toBeNull();
+  });
+});
+
+describe("buildFilePathMap — platform files", () => {
+  const map = buildFilePathMap([
+    { filePath: "src/Button.ios.tsx", language: "typescript" },
+    { filePath: "src/Button.android.tsx", language: "typescript" },
+    { filePath: "src/track.native.ts", language: "typescript" },
+    { filePath: "src/track.ts", language: "typescript" },
+    { filePath: "src/App.tsx", language: "typescript" },
+  ] as any);
+
+  it("answers the plain name with a platform file only when no plain file exists", () => {
+    expect(resolveTarget("./Button", "src/App.tsx", map)).toBe("src/Button.ios.tsx");
+    expect(resolveTarget("./track", "src/App.tsx", map)).toBe("src/track.ts");
+  });
+});

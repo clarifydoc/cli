@@ -87,6 +87,9 @@ const NPM_FRAMEWORK_HINTS: Readonly<Record<string, string>> = {
   "kysely": "kysely",
 };
 
+/** React Native's platform files (`Button.ios.tsx`), react-native-web's `.web`. */
+export const JS_PLATFORM_SUFFIXES = [".native", ".ios", ".android", ".web"] as const;
+
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
  * EAGERLY (extensions, grammar location, framework rules, …). The heavy
@@ -104,6 +107,7 @@ export const typescriptManifest: LanguagePluginManifest = {
   extensions: [".ts", ".tsx", ".vue", ".svelte"],
   // A field is only reached through the instance (`this.x`); a bare name never is one.
   explicitSelfMembers: true,
+  platformSuffixes: JS_PLATFORM_SUFFIXES,
   grammar: {
     variants: { typescript: { pkg: "tree-sitter-typescript", wasm: "tree-sitter-typescript.wasm" }, tsx: { pkg: "tree-sitter-typescript", wasm: "tree-sitter-tsx.wasm" } },
     keyForFile: (filePath) =>
@@ -128,6 +132,7 @@ export const javascriptManifest: LanguagePluginManifest = {
   extensions: [".js", ".jsx", ".mjs", ".cjs"],
   // A field is only reached through the instance (`this.x`); a bare name never is one.
   explicitSelfMembers: true,
+  platformSuffixes: JS_PLATFORM_SUFFIXES,
   grammar: { variants: { javascript: { pkg: "tree-sitter-javascript", wasm: "tree-sitter-javascript.wasm" } } },
   testFilePatterns: JS_TEST_PATTERNS,
   builtinMembers: JS_BUILTIN_MEMBERS,

@@ -1180,6 +1180,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     let concreteMembers = 0;
     let abstractMembers = 0;
     let ctor: { params: ParamInfo[]; body: Node } | null = null;
+    const instanceBodies: Node[] = [];
 
     if (body) {
       for (const member of body.children) {
@@ -1218,6 +1219,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           if (methodName === "constructor") {
             properties.push(...this.parameterProperties(paramsNode, params));
             if (methodBody) ctor = { params, body: methodBody };
+          } else if (methodBody && !member.children.some((c) => c.type === "static")) {
+            instanceBodies.push(methodBody);
           }
         } else if (member.type === "abstract_method_signature") {
           // `abstract fetchValue(key: string): string;` — a member every
@@ -1255,6 +1258,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       }
     }
     if (ctor) this.constructorAssignments(ctor.body, ctor.params, properties, setValue);
+    methodAssignedTypes(instanceBodies, ctor?.body ?? null, properties, this.ctx.tokenTypes);
     let superArgs: string[] | undefined;
     for (const stmt of ctor?.body.namedChildren ?? []) {
       const call = stmt.type === "expression_statement" ? stmt.namedChild(0) : null;
@@ -1441,6 +1445,61 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
 }
 
 /** The field values that were stated once, for `ClassInfo.fieldValues`; nothing when there are none. */
+/** Nodes whose `this` is not the instance's: a nested function or class. */
+const OWN_THIS_SCOPES = new Set(["function_expression", "function_declaration", "generator_function", "generator_function_declaration", "class", "class_declaration"]);
+
+/**
+ * Fields a method other than the constructor creates: `init() { this.repo =
+ * new UserRepo(); }`, a lazy `if (!this.db) this.db = new Db()`. A field that
+ * neither its declaration nor the constructor typed takes the type every such
+ * construction agrees on; two that disagree state nothing, and neither does
+ * one the constructor sets from a value of unknown type. A method's reset to
+ * `null`, or its assignment from an untyped value, says nothing either way.
+ */
+function methodAssignedTypes(bodies: readonly Node[], ctorBody: Node | null, properties: PropertyInfo[], tokenTypes: ReadonlyMap<string, string>): void {
+  const assigned = new Map<string, InjectedType | null>();
+  const visit = (n: Node, inCtor: boolean): void => {
+    if (n.type === "assignment_expression") {
+      const left = n.childForFieldName("left");
+      const right = n.childForFieldName("right");
+      const field = left?.type === "member_expression" && left.childForFieldName("object")?.type === "this"
+        ? left.childForFieldName("property")?.text
+        : undefined;
+      const found = field && right ? initializerType(right, tokenTypes) : null;
+      if (field && found && (found.type || found.qualifier)) {
+        const prev = assigned.get(field);
+        if (prev === undefined) assigned.set(field, found);
+        else if (prev && (prev.type !== found.type || prev.qualifier !== found.qualifier)) assigned.set(field, null);
+      } else if (field && inCtor && right && right.type !== "null" && right.type !== "undefined") {
+        assigned.set(field, null);
+      }
+    }
+    for (const c of n.namedChildren) if (!OWN_THIS_SCOPES.has(c.type)) visit(c, inCtor);
+  };
+  if (ctorBody) visit(ctorBody, true);
+  for (const body of bodies) visit(body, false);
+
+  for (const [field, found] of assigned) {
+    if (!found) continue;
+    const existing = properties.find((p) => p.name === field);
+    if (existing) {
+      if (!existing.type && !existing.qualifier) {
+        if (found.type) existing.type = found.type;
+        if (found.qualifier) existing.qualifier = found.qualifier;
+      }
+      continue;
+    }
+    properties.push({
+      name: field,
+      type: found.type || null,
+      visibility: field.startsWith("#") ? "private" : null,
+      isStatic: false,
+      isReadonly: false,
+      ...(found.qualifier ? { qualifier: found.qualifier } : {}),
+    });
+  }
+}
+
 function knownFieldValues(values: ReadonlyMap<string, string | null>): { fieldValues?: Record<string, string> } {
   const known = [...values].filter((e): e is [string, string] => e[1] !== null).slice(0, 50);
   return known.length > 0 ? { fieldValues: Object.fromEntries(known) } : {};

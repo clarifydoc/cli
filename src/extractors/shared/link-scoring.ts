@@ -12,16 +12,20 @@ let externalModulePrefixes: readonly string[] | null = null;
 let stripSourceExtensionReSlot: RegExp | null = null;
 /** Language → its partials' prefix (`_` for Sass) — see `LanguagePluginManifest.partialPrefix`. */
 let partialPrefixByLanguage: ReadonlyMap<string, string> = new Map();
+/** Language → its platform infixes (`.ios`, `.android`) — see `LanguagePluginManifest.platformSuffixes`. */
+let platformSuffixesByLanguage: ReadonlyMap<string, readonly string[]> = new Map();
 
 /** Called once by the registry after aggregating every plugin's data. */
 export function registerLinkScoringData(
   prefixes: readonly string[],
   stripRe: RegExp,
   partialPrefixes: ReadonlyMap<string, string> = new Map(),
+  platformSuffixes: ReadonlyMap<string, readonly string[]> = new Map(),
 ): void {
   externalModulePrefixes = prefixes;
   stripSourceExtensionReSlot = stripRe;
   partialPrefixByLanguage = partialPrefixes;
+  platformSuffixesByLanguage = platformSuffixes;
 }
 
 function requireRegistered<T>(value: T | null): T {
@@ -290,6 +294,21 @@ export function buildFilePathMap(analyses: FileAnalysis[]): Map<string, string> 
     // index in tryMatch — a single basename key here would pick an arbitrary
     // winner when several projects in one repo share a unit/module name.
   }
+  // `Button.ios.tsx` answers to `Button` once every plain file is in: a plain
+  // `Button.tsx` keeps the name, else the first suffix the manifest lists.
+  const platformKeys = new Map<string, { rank: number; file: string }>();
+  for (const a of analyses) {
+    const suffixes = platformSuffixesByLanguage.get(a.language);
+    if (!suffixes) continue;
+    const base = a.filePath.replace(requireRegistered(stripSourceExtensionReSlot), "");
+    const rank = suffixes.findIndex((s) => base.endsWith(s));
+    if (rank < 0) continue;
+    const plain = base.slice(0, -suffixes[rank]!.length);
+    if (map.has(plain)) continue;
+    const prev = platformKeys.get(plain);
+    if (!prev || rank < prev.rank) platformKeys.set(plain, { rank, file: a.filePath });
+  }
+  for (const [plain, { file }] of platformKeys) map.set(plain, file);
   projectOfCache.set(map, projectOf);
   return map;
 }
@@ -341,6 +360,24 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
 
   // 2. Skip well-known external packages/standard libraries
   if (isExternalPackage(importSource)) return null;
+
+  // 2b. A file path with the importer's own extension, written without `./`
+  // (`include 'inc/header.php'`, `source lib/x.sh`): the language looks it up
+  // from where the program runs, then (PHP) beside the importer. The project
+  // root stands in for the working directory, then beside the importer, then
+  // wherever exactly one file's path ends so — a site rarely runs from the
+  // repository root.
+  const ext = posix.extname(sourceFile);
+  if (ext && importSource.includes("/") && importSource.endsWith(ext)) {
+    const fromRoot = filePathMap.get(posix.normalize(importSource));
+    if (fromRoot) return fromRoot;
+    const beside = filePathMap.get(posix.normalize(posix.join(posix.dirname(sourceFile), importSource)));
+    if (beside) return beside;
+    if (!importSource.startsWith("../")) {
+      const hit = uniqueSuffixMatch(posix.normalize(importSource).slice(0, -ext.length), filePathMap);
+      if (hit) return hit;
+    }
+  }
 
   // 3. Bare unit name: "UserModel" → try matching against file basenames
   const bareMatch = tryMatch(importSource, filePathMap, sourceFile);

@@ -5,6 +5,7 @@ import { buildAuth, splitList, type GuardAttr } from "../../../shared/route-meta
 import type { RouteExtractor } from "../../../routes/base.js";
 import { extractMinimalApiRoutes, MINIMAL_API_GATE } from "./minimal-api.js";
 import { attributeDefFact, attributeUse, type CsAttrUse } from "./aspnet-attributes.js";
+import { CONVENTIONAL_ROUTE_GATE, extractConventionalPatterns, webApiVerb } from "./aspnet-conventional.js";
 
 /**
  * ASP.NET attribute routing.
@@ -52,6 +53,8 @@ interface ControllerScope {
   /** Class-level `[ApiVersion]` set (version → deprecated). */
   versions: Map<string, boolean>;
   versionNeutral: boolean;
+  /** The file is Web API 2 (`using System.Web.Http`): an action without a verb attribute takes the verb its name starts with. */
+  webApi: boolean;
 }
 
 const EMPTY_SCOPE: ControllerScope = {
@@ -62,6 +65,7 @@ const EMPTY_SCOPE: ControllerScope = {
   guards: [],
   versions: new Map(),
   versionNeutral: false,
+  webApi: false,
 };
 
 /**
@@ -86,6 +90,23 @@ export interface CsControllerFact {
   attrs?: CsAttrUse[];
   /** Methods routed, if at all, only by such attributes (`[RestPutById]`). */
   candidates?: CsCandidateFact[];
+  /** `[Area("Admin")]`: the `{area}` a conventional route serves it under. */
+  area?: string;
+  /**
+   * Public actions with no route attribute of their own, on a class with no
+   * class template: reached, if at all, through a conventional route the
+   * startup registers (`{controller}/{action}/{id?}`) — the resolver decides.
+   */
+  conventional?: CsConventionalAction[];
+}
+
+export interface CsConventionalAction {
+  handler: string;
+  /** `[ActionName("Delete")]`, else the method's name. */
+  action: string;
+  line: number;
+  guards: GuardAttr[];
+  params?: RouteParamInfo[];
 }
 
 /** A method whose only routing could come from project attributes; the resolver decides. */
@@ -101,8 +122,11 @@ export interface CsCandidateFact {
 
 export interface CsActionFact {
   line: number;
-  verb: string;
+  /** Null: any verb (a method-level `[Route]` alone). */
+  verb: string | null;
   handler: string | null;
+  /** `[ActionName("Delete")]` — the `[action]` / `{action}` it answers to, when not the method's name. */
+  action?: string;
   template: string | null;
   guards: GuardAttr[];
 }
@@ -110,8 +134,10 @@ export interface CsActionFact {
 export const CS_CONTROLLER_FACT = "cs:controller";
 
 /** C#: [HttpGet("path")] / [Route("path")] with class-level prefix merging. */
-export function extractAspnetRoutes(root: Node, routes: RouteInfo[], facts?: RouteFact[]): void {
-  walkForCsharpRoutes(root, routes, EMPTY_SCOPE, facts);
+export function extractAspnetRoutes(root: Node, routes: RouteInfo[], facts?: RouteFact[], sourceText = ""): void {
+  const scope = /^\s*using\s+System\.Web\.Http\s*;/m.test(sourceText) ? { ...EMPTY_SCOPE, webApi: true } : EMPTY_SCOPE;
+  walkForCsharpRoutes(root, routes, scope, facts);
+  if (facts) extractConventionalPatterns(root, sourceText, facts);
 }
 
 function walkForCsharpRoutes(
@@ -122,6 +148,7 @@ function walkForCsharpRoutes(
   /** The enclosing class's routed actions, collected for its fact. */
   actions?: CsActionFact[],
   candidates?: CsCandidateFact[],
+  conventional?: CsConventionalAction[],
 ) {
   if (node.type === "class_declaration") {
     const name = node.childForFieldName("name")?.text ?? null;
@@ -139,11 +166,18 @@ function walkForCsharpRoutes(
       guards: [...scope.guards, ...ownGuards],
       versions: apiVersionsOf(attrs, scope.versions),
       versionNeutral: scope.versionNeutral || attrs.some((a) => attributeName(a) === "ApiVersionNeutral"),
+      webApi: scope.webApi,
     };
     const own: CsActionFact[] = [];
     const ownCandidates: CsCandidateFact[] = [];
+    const isAbstract = node.children.some((c) => c.type === "modifier" && c.text === "abstract");
+    // Attribute routing and conventional routing never mix on one controller:
+    // only a class with no template of its own (nor [ApiController], which
+    // demands attribute routes) offers its plain actions to the route table.
+    const ownConventional: CsConventionalAction[] | undefined =
+      ownTemplate === null && !ownApiController && !isAbstract && /Controller$/.test(name ?? "") ? [] : undefined;
     for (const child of node.children) {
-      walkForCsharpRoutes(child, routes, inner, facts, own, ownCandidates);
+      walkForCsharpRoutes(child, routes, inner, facts, own, ownCandidates, ownConventional);
     }
     const controllerish =
       own.length > 0 ||
@@ -154,7 +188,7 @@ function walkForCsharpRoutes(
     if (facts && name && controllerish) {
       const data: CsControllerFact = {
         base: firstBaseType(node),
-        abstract: node.children.some((c) => c.type === "modifier" && c.text === "abstract"),
+        abstract: isAbstract,
         template: ownTemplate,
         apiController: ownApiController,
         guards: ownGuards,
@@ -163,18 +197,22 @@ function walkForCsharpRoutes(
       const custom = customAttributes(attrs);
       if (custom.length > 0) data.attrs = custom;
       if (ownCandidates.length > 0) data.candidates = ownCandidates;
+      const area = attrs.find((a) => attributeName(a) === "Area");
+      const areaName = area ? positionalString(area) : null;
+      if (areaName) data.area = areaName;
+      if (ownConventional && ownConventional.length > 0) data.conventional = ownConventional;
       facts.push({ kind: CS_CONTROLLER_FACT, line: node.startPosition.row + 1, owner: name, data });
     }
     return;
   }
 
   if (node.type === "method_declaration") {
-    parseMethodRoutes(node, routes, scope, actions, candidates);
+    parseMethodRoutes(node, routes, scope, actions, candidates, conventional);
     return;
   }
 
   for (const child of node.children) {
-    walkForCsharpRoutes(child, routes, scope, facts, actions, candidates);
+    walkForCsharpRoutes(child, routes, scope, facts, actions, candidates, conventional);
   }
 }
 
@@ -250,6 +288,7 @@ function parseMethodRoutes(
   scope: ControllerScope,
   actions?: CsActionFact[],
   candidates?: CsCandidateFact[],
+  conventional?: CsConventionalAction[],
 ) {
   const methodName = methodNode.childForFieldName("name")?.text ?? null;
   const attrs = attributesOf(methodNode);
@@ -257,13 +296,20 @@ function parseMethodRoutes(
   // First pass: a method-level [Route("…")] supplies the template for an
   // [HttpGet] that carries no template of its own (`[HttpGet][Route("x")]`).
   let routeAttrTemplate: string | null = null;
-  const verbAttrs: { verb: string; template: string | null; line: number }[] = [];
+  let routeAttrLine = 0;
+  let actionName: string | null = null;
+  const verbAttrs: { verb: string | null; template: string | null; line: number }[] = [];
   const mapToVersions: string[] = [];
 
   for (const attr of attrs) {
     const name = attributeName(attr);
     if (name === "Route") {
-      routeAttrTemplate ??= attributeRouteTemplate(attr);
+      if (routeAttrTemplate === null) {
+        routeAttrTemplate = attributeRouteTemplate(attr);
+        routeAttrLine = attr.startPosition.row + 1;
+      }
+    } else if (name === "ActionName") {
+      actionName = positionalString(attr);
     } else if (name && CSHARP_HTTP_ATTRIBUTES[name]) {
       verbAttrs.push({
         verb: CSHARP_HTTP_ATTRIBUTES[name]!,
@@ -275,7 +321,17 @@ function parseMethodRoutes(
       if (v !== null) mapToVersions.push(v);
     }
   }
+  // `[Route("x")]` alone routes every verb — Web API 2 picks the one the name starts with.
+  if (verbAttrs.length === 0 && routeAttrTemplate !== null) {
+    verbAttrs.push({ verb: scope.webApi && methodName ? webApiVerb(methodName) : null, template: routeAttrTemplate, line: routeAttrLine });
+  }
   if (verbAttrs.length === 0) {
+    if (conventional && methodName && isPlainAction(methodNode, attrs)) {
+      const action: CsConventionalAction = { handler: methodName, action: actionName ?? methodName, line: methodNode.startPosition.row + 1, guards: guardAttributes(attrs) };
+      const params = parameterBindings(methodNode, "", false);
+      if (params.length > 0) action.params = params;
+      conventional.push(action);
+    }
     // Routed, if at all, by a project attribute declared elsewhere (`[RestPutById]`).
     if (!candidates || attrs.some((a) => attributeName(a) === "NonAction")) return;
     const custom = customAttributes(attrs);
@@ -298,8 +354,8 @@ function parseMethodRoutes(
   const versions = resolveVersions(scope, mapToVersions);
 
   for (const { verb, template: own, line } of verbAttrs) {
-    actions?.push({ line, verb, handler: methodName, template: own ?? routeAttrTemplate, guards: methodGuards });
-    const path = buildPath(scope.prefix, own ?? routeAttrTemplate, scope.controllerName, methodName);
+    actions?.push({ line, verb, handler: methodName, template: own ?? routeAttrTemplate, guards: methodGuards, ...(actionName ? { action: actionName } : {}) });
+    const path = buildPath(scope.prefix, own ?? routeAttrTemplate, scope.controllerName, actionName ?? methodName);
     const params = parameterBindings(methodNode, path, scope.apiController);
     const route: RouteInfo = {
       path,
@@ -319,6 +375,19 @@ function parseMethodRoutes(
     if (params.length > 0) route.params = params;
     routes.push(route);
   }
+}
+
+/**
+ * A method ASP.NET treats as an action: public, an instance method of its
+ * own (not an override of a framework hook like `OnActionExecuting`), not
+ * generic, not `[NonAction]`.
+ */
+function isPlainAction(methodNode: Node, attrs: Node[]): boolean {
+  const mods = methodNode.children.filter((c) => c.type === "modifier").map((c) => c.text);
+  if (!mods.includes("public") || mods.some((m) => m === "static" || m === "override" || m === "abstract" || m === "extern")) return false;
+  if (methodNode.childForFieldName("type_parameters") || findChildByType(methodNode, "type_parameter_list")) return false;
+  if (attrs.some((a) => attributeName(a) === "NonAction")) return false;
+  return methodNode.childForFieldName("name")?.text !== "Dispose";
 }
 
 // ─── Auth: [Authorize] / [AllowAnonymous] ──────────────────────────────────
@@ -628,11 +697,17 @@ export const csharpRouteExtractor: RouteExtractor = {
   extractRoutes(tree, sourceText, _filePath, facts) {
     // Cheap gate: skip the full-tree walk for files with no route attributes.
     const minimal = MINIMAL_API_GATE.test(sourceText);
-    if (!minimal && !ROUTE_ATTRIBUTE_GATE.test(sourceText) && !CONTROLLER_CLASS_GATE.test(sourceText) && !ATTRIBUTE_CLASS_GATE.test(sourceText)) {
+    if (
+      !minimal &&
+      !ROUTE_ATTRIBUTE_GATE.test(sourceText) &&
+      !CONTROLLER_CLASS_GATE.test(sourceText) &&
+      !ATTRIBUTE_CLASS_GATE.test(sourceText) &&
+      !CONVENTIONAL_ROUTE_GATE.test(sourceText)
+    ) {
       return [];
     }
     const routes: RouteInfo[] = [];
-    extractAspnetRoutes(tree.rootNode, routes, facts);
+    extractAspnetRoutes(tree.rootNode, routes, facts, sourceText);
     // Minimal APIs (`app.MapGet("/x", Handler)`, see minimal-api.ts).
     if (minimal) extractMinimalApiRoutes(tree.rootNode, routes);
     return routes;

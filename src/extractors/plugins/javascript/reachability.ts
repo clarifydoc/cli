@@ -7,6 +7,7 @@ import type {
   ReachabilityModel,
 } from "../../../types/language-plugin.js";
 import { stripJsonc } from "../../shared/tsconfig-aliases.js";
+import { JS_PLATFORM_SUFFIXES } from "./manifest.js";
 import { findShebangScripts, SCRIPT_DIRS } from "../shared/shebang-scripts.js";
 
 /**
@@ -166,6 +167,14 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
   }
 
   // ── Module resolution ──
+  // React Native's platform files: `./Button` loads `Button.ios.tsx` on one
+  // platform and `Button.android.tsx` on the other — every variant is live.
+  const platformVariants = new Map<string, string[]>();
+  for (const f of files) {
+    const stripped = f.replace(STRIP_EXT_RE, "");
+    const suffix = JS_PLATFORM_SUFFIXES.find((s) => stripped.endsWith(s));
+    if (suffix) push(platformVariants, stripped.slice(0, -suffix.length), f);
+  }
   const probe = (base: string): string | null => {
     const b = normalize(base);
     if (files.has(b) && !/\/$/.test(b)) return b;
@@ -176,7 +185,18 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
       const stem = b.slice(0, emitted.index);
       for (const ext of TS_EXTS) if (files.has(stem + ext)) return stem + ext;
     }
-    return null;
+    return platformVariants.get(b)?.[0] ?? null;
+  };
+  /** A resolved module with its platform siblings: `Button.tsx` → also `Button.ios.tsx`. */
+  const withPlatformVariants = (hits: string[] | null): string[] | null => {
+    if (!hits || hits.length === 0 || platformVariants.size === 0) return hits;
+    const out = new Set(hits);
+    for (const h of hits) {
+      const stripped = h.replace(STRIP_EXT_RE, "");
+      const suffix = JS_PLATFORM_SUFFIXES.find((s) => stripped.endsWith(s));
+      for (const v of platformVariants.get(suffix ? stripped.slice(0, -suffix.length) : stripped) ?? []) out.add(v);
+    }
+    return out.size === hits.length ? hits : [...out];
   };
 
   // Path-suffix index for aliases nobody declared: "components/Button" →
@@ -229,7 +249,7 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
     const key = `${source.startsWith(".") ? dir : root}\0${source}`;
     const cached = resolveCache.get(key);
     if (cached !== undefined) return cached;
-    const result = resolveUncached(source, dir, root);
+    const result = withPlatformVariants(resolveUncached(source, dir, root));
     resolveCache.set(key, result);
     return result;
   };

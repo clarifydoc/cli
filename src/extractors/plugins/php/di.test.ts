@@ -245,8 +245,6 @@ class Svc {
     ]);
   });
 
-  // (PHP's call extraction records member and static calls only — bare
-  // function calls and `new X` are not calls in its output.)
   it("gives an inline lookup's call its receiver type, and keeps nullsafe calls", async () => {
     const t = await tree(`<?php function f($x) {
   app(Mailer::class)->send('hi');
@@ -257,7 +255,9 @@ class Svc {
     const calls = extractCalls(body, "php");
     expect(calls.map((c) => [c.name, c.receiverType ?? null])).toEqual([
       ["app(Mailer::class).send", "Mailer"],
+      ["app", null],
       ["(new Report()).render", "Report"],
+      ["new Report", null],
       ["x.notify", null],
     ]);
   });

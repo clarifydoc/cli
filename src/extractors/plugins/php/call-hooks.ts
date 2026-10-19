@@ -32,7 +32,14 @@ export const phpCallHooks: CallExtractionHooks = {
   // dotted form `this.prop.method` so the symbol-linker's injection/property
   // tracking (which keys on `this.<name>`) can match it.
   resolveCallName: (node) => genericResolveCallName(node, {
-    extraCallee(_callee, n) {
+    extraCallee(callee, n) {
+      // An unqualified `helper()` is a bare `name` node — not an identifier.
+      if (n.type === "function_call_expression" && callee.type === "name") return callee.text;
+      // `new Report()` names its class in an unlabelled child.
+      if (n.type === "object_creation_expression") {
+        const cls = n.namedChildren.find((c) => c.type === "name" || c.type === "qualified_name");
+        return cls ? `new ${cls.text}` : null;
+      }
       if (n.type === "member_call_expression" || n.type === "nullsafe_member_call_expression") {
         const obj = n.childForFieldName("object");
         const name = n.childForFieldName("name");

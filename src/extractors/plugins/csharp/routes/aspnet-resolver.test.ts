@@ -303,3 +303,84 @@ public class ThingController : ControllerBase
   });
 });
 
+
+describe("conventional routing", () => {
+  const rows = (analyses: FileAnalysis[]) =>
+    analyses.flatMap((a) => a.routes.map((r) => `${r.httpMethod ?? "ANY"} ${r.path} ${r.owner}.${r.handler}`)).sort();
+
+  it("serves an MVC controller's plain actions through the registered pattern, overloads and areas included", async () => {
+    const out = await analyze({
+      "Web/Program.cs": `
+var app = builder.Build();
+app.MapControllerRoute(name: "areas", pattern: "{area:exists}/{controller=Home}/{action=Index}/{id?}");
+app.MapControllerRoute("default", "{controller=Home}/{action=Index}/{id?}");`,
+      "Web/Controllers/HomeController.cs": `
+public class HomeController : Controller {
+  public IActionResult Index() => View();
+  public IActionResult Edit(int id) => View();
+  [HttpPost] public IActionResult Edit(int id, EditModel m) => Ok();
+  [ActionName("Remove")] [HttpPost] public IActionResult Delete(int id) => Ok();
+  [NonAction] public void Helper() {}
+  private void Hidden() {}
+  public static void Util() {}
+  protected override void Dispose(bool disposing) {}
+}`,
+      "Web/Areas/Admin/Controllers/UsersController.cs": `
+[Area("Admin")]
+public class UsersController : Controller { public IActionResult List() => View(); }`,
+      "Web/Controllers/ApiThingController.cs": `
+[ApiController] [Route("api/things")]
+public class ApiThingController : ControllerBase { [HttpGet] public int Get() => 1; public int NotRouted() => 2; }`,
+    });
+    expect(rows(out)).toEqual([
+      "ANY /Admin/Users/List UsersController.List",
+      "ANY /Home/Edit/{id} HomeController.Edit",
+      "ANY /Home/Index HomeController.Index",
+      "GET /api/things ApiThingController.Get",
+      "POST /Home/Edit/{id} HomeController.Edit",
+      "POST /Home/Remove/{id} HomeController.Delete",
+    ]);
+  });
+
+  it("reads MVC 5 MapRoute defaults and area registrations, and Web API 2 verbs by name", async () => {
+    const out = await analyze({
+      "Site/App_Start/RouteConfig.cs": `
+public class RouteConfig { public static void RegisterRoutes(RouteCollection routes) {
+  routes.MapRoute(name: "Default", url: "{controller}/{action}/{id}", defaults: new { controller = "Home", action = "Index", id = UrlParameter.Optional });
+} }`,
+      "Site/App_Start/WebApiConfig.cs": `
+public static class WebApiConfig { public static void Register(HttpConfiguration config) {
+  config.Routes.MapHttpRoute("DefaultApi", "api/{controller}/{id}", new { id = RouteParameter.Optional });
+} }`,
+      "Site/Areas/Shop/ShopAreaRegistration.cs": `
+public class ShopAreaRegistration : AreaRegistration { public override void RegisterArea(AreaRegistrationContext context) {
+  context.MapRoute("Shop_default", "Shop/{controller}/{action}/{id}", new { action = "Index", id = UrlParameter.Optional });
+} }`,
+      "Site/Areas/Shop/Controllers/CartController.cs": `public class CartController : Controller { public ActionResult Add(int id) { return View(); } }`,
+      "Site/Controllers/OrdersController.cs": `public class OrdersController : Controller { public ActionResult Index() { return View(); } }`,
+      "Site/Controllers/ProductsController.cs": `
+using System.Web.Http;
+public class ProductsController : ApiController {
+  public string GetProduct(int id) { return null; }
+  public void PostProduct(string p) { }
+  [HttpDelete] public void Remove(int id) { }
+  [Route("api/products/{id}/stock")] public int Stock(int id) { return 0; }
+}`,
+    });
+    expect(rows(out)).toEqual([
+      "ANY /Orders/Index OrdersController.Index",
+      "ANY /Shop/Cart/Add/{id} CartController.Add",
+      "DELETE /api/Products/{id} ProductsController.Remove",
+      "GET /api/Products/{id} ProductsController.GetProduct",
+      "POST /api/Products ProductsController.PostProduct",
+      "POST /api/products/{id}/stock ProductsController.Stock",
+    ]);
+  });
+
+  it("invents nothing without a registered pattern", async () => {
+    const out = await analyze({
+      "Web/Controllers/HomeController.cs": `public class HomeController : Controller { public IActionResult Index() => View(); }`,
+    });
+    expect(rows(out)).toEqual([]);
+  });
+});

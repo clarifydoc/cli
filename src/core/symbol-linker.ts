@@ -31,6 +31,8 @@ interface SymbolDef {
    * different ones: the arguments would have to pick, and nothing here does.
    */
   returnType?: string | null;
+  /** Only a re-export names it here (`from .impl import Service` in `__init__`): the definition is elsewhere. */
+  reexport?: boolean;
 }
 
 /**
@@ -150,7 +152,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly
         const handlerLink = resolveCallToDefinition(
           sourceFile, sourceSymbol,
           { name: route.handler, kind: "internal", target: null, line: route.line },
-          analysis, ctx,
+          analysis, ctx, true,
         ) ?? resolveDottedOwnerHandler(sourceFile, sourceSymbol, route.handler, route.line, analysis, ctx);
         // A handler named by its class (`BookController.create`, Play's
         // `OrderController.list`) is that class's method or nothing: a
@@ -445,6 +447,7 @@ function buildSymbolIndex(
           name: exp.name,
           line: exp.line,
           endLine: exp.line,
+          ...(exp.kind === "re-export" ? { reexport: true } : {}),
         });
       }
     }
@@ -1771,6 +1774,8 @@ function resolveCallToDefinition(
   call: CallInfo,
   analysis: FileAnalysis,
   ctx: LinkContext,
+  /** A name that REFERS to a callable (a route's handler), not a call written in a body. */
+  reference = false,
 ): SymbolLink | null {
   const { filePathMap, symbolIndex, inheritanceMap, classCatalog, leafCatalog, classNameIndex } = ctx;
 
@@ -1778,6 +1783,10 @@ function resolveCallToDefinition(
   const parts = call.name.split(".");
   const isQualified = parts.length > 1;
   const leafName = parts[parts.length - 1]!;
+  // Where members need `this.`/`self.`/`$this->` (JS/TS, Python, PHP), a bare
+  // call in a body is a function — `redirect()` in a PHP controller is the
+  // helper, never the controller's own `redirect` method.
+  const bareIsFunction = !isQualified && !reference && pluginFor(analysis.language)?.explicitSelfMembers === true;
 
   const mkLink: MkLink = (
     linkTargetFile: string,
@@ -1835,17 +1844,20 @@ function resolveCallToDefinition(
   // Case folds only on a callable's own name — never on a receiver
   // (`handler.render` is not `Handler.render`).
   let def = isQualified ? fileSymbols.get(call.name) : symbolIn(ctx, targetFile, call.name);
+  if (bareIsFunction && def?.name.includes(".")) def = undefined;
   // Which strategy found `def`. The default path at the bottom is reached from
   // two places — this plain lookup and Strategy 3's suffix match — and they were
   // previously distinguishable only by `linkConfidence`, which is a different
   // question. Whoever sets `def` sets this.
   let defStrategy: SymbolLinkStrategy = "direct";
-  if (!def && !isQualified) {
+  if (!def && !isQualified && !bareIsFunction) {
     def = symbolIn(ctx, targetFile, leafName);
   }
   // A barrel / package `__init__` that forwards the name (`export * from
-  // "./x"`, `from .x import *`): the definition is where the re-export leads.
-  if (!def && call.kind === "cross-file" && parts.length <= 2) {
+  // "./x"`, `from .x import *`, `from .impl import Service`): the definition
+  // is where the re-export leads. A named re-export stays the target only
+  // when it leads nowhere in the project (a third-party package).
+  if ((!def || def.reexport) && call.kind === "cross-file" && parts.length <= 2) {
     const head = parts[0]!;
     // `import * as utils from "./utils"; utils.format()` — the member by its own name.
     const viaNamespace = isQualified && analysis.imports.some((i) => i.isNamespace && i.specifiers.includes(head));
@@ -1896,7 +1908,7 @@ function resolveCallToDefinition(
   // Only for a call on the instance itself — `foo()`, `this.foo()`,
   // `super.foo()`: `this.repo.find()` calls the FIELD's `find`, and a base
   // class's own `find` must not capture it (Strategy 2 follows the field).
-  const onSelf = !isQualified || (parts.length === 2 && (SELF_HEADS.has(parts[0]!) || SUPER_HEADS.has(parts[0]!.replace(/\(.*\)$/, ""))));
+  const onSelf = (!isQualified && !bareIsFunction) || (parts.length === 2 && (SELF_HEADS.has(parts[0]!) || SUPER_HEADS.has(parts[0]!.replace(/\(.*\)$/, ""))));
   if (!def && call.kind === "internal" && onSelf) {
     const currentClasses = analysis.classes;
     for (const cls of currentClasses) {
@@ -2161,16 +2173,25 @@ function resolveCallToDefinition(
   // file's top-level functions in scope without naming them: `Write-Log "x"`
   // after `. ./lib/Common.ps1` is Common's `Write-Log`. Only for languages
   // that say so (`importsShareScope`) — a JS or Python module's names are in
-  // scope only when imported by name. Exactly one imported file may define it.
-  if (!def && !isQualified && call.kind === "internal" && importsShareScope(analysis.language)) {
+  // scope only when imported by name — or by a wildcard (`from .jobs import *`),
+  // which brings in what the module exports. Exactly one imported file may define it.
+  const sharesScope = importsShareScope(analysis.language);
+  if (!def && !isQualified && call.kind === "internal" && (sharesScope || analysis.imports.some(isWildcardImport))) {
     const hits = new Map<string, SymbolDef>();
     for (const imp of analysis.imports) {
       // A script it RUNS shares no names with it.
       if (imp.executes) continue;
+      const wildcard = isWildcardImport(imp);
+      if (!sharesScope && !wildcard) continue;
       const impFile = resolveTarget(imp.source, sourceFile, filePathMap);
       if (!impFile || impFile === sourceFile || hits.has(impFile)) continue;
       const d = symbolIn(ctx, impFile, call.name);
-      if (d && !d.name.includes(".")) hits.set(impFile, d);
+      if (!d || d.name.includes(".")) continue;
+      if (wildcard && !sharesScope) {
+        ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+        if (!starForwards(ctx.analysisByFile.get(impFile), d.name)) continue;
+      }
+      hits.set(impFile, d);
     }
     if (hits.size === 1) {
       const [[file, d]] = [...hits];
@@ -2406,6 +2427,11 @@ function forwardedDefinition(
     found = hit;
   }
   return found;
+}
+
+/** `from m import *` — every exported name, none spelled out. */
+function isWildcardImport(imp: { isNamespace: boolean; specifiers: readonly string[] }): boolean {
+  return imp.isNamespace && imp.specifiers.length === 0;
 }
 
 /** Whether a star re-export of `file` carries `name`: one of its own exports, or anything when it declares none. */

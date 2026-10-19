@@ -145,6 +145,34 @@ describe("injection points — fields", () => {
     // Two top-level assignments that disagree state nothing.
     expect(prop(c, "twice")).toBeUndefined();
   });
+
+  it("types a field another method constructs, unless the constructions disagree or the constructor sets it otherwise", async () => {
+    const r = await extract(`
+      class Svc {
+        private repo;
+        private audit: AuditRepo | undefined;
+        static shared;
+        constructor(dep) { this.injected = dep; this.cache = null; }
+        init() {
+          this.repo = new UserRepo();
+          if (!this.cache) this.cache = new Cache();
+          this.mixed = new A();
+          this.injected = new Replacement();
+          const later = function () { this.notMine = new Other(); };
+        }
+        reset() { this.repo = null; this.mixed = new B(); }
+        static boot() { this.shared = new Shared(); }
+      }`);
+    const c = cls(r, "Svc");
+    expect(prop(c, "repo")?.type).toBe("UserRepo");
+    expect(prop(c, "cache")?.type).toBe("Cache");
+    // Its own declaration wins.
+    expect(prop(c, "audit")?.type).toBe("AuditRepo | undefined");
+    expect(prop(c, "mixed")).toBeUndefined();
+    expect(prop(c, "injected")).toBeUndefined();
+    expect(prop(c, "notMine")).toBeUndefined();
+    expect(prop(c, "shared")?.type ?? null).toBeNull();
+  });
 });
 
 describe("abstract classes", () => {

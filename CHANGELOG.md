@@ -55,9 +55,37 @@ recorded in the git history only.
   `windsurf`, `vscodium`, …) instead of VS Code.
 - `LICENSE` (MIT), `SECURITY.md` — how to report a vulnerability, and exactly what network access the CLI
   makes — and this changelog.
+- **ASP.NET conventional routing.** The route table a startup registers — `MapControllerRoute`,
+  `MapDefaultControllerRoute`, `MapAreaControllerRoute`, MVC 5 `routes.MapRoute` (with its `defaults`) and
+  Web API 2 `MapHttpRoute` — now routes the controllers no attribute routes: every public action becomes a
+  row at `/{Controller}/{Action}`, under its `[Area]` or `Areas/X/` folder, keeping an optional `{id}` when
+  the action takes one. Web API 2 actions answer the verb their name starts with. An MVC action with only
+  `[HttpPost]` used to come out as `POST /`, and the unattributed GET form beside it not at all. A
+  method-level `[Route("x")]` with no verb attribute is now a route (any verb). Without a registered
+  pattern nothing is invented.
+- **PHP includes.** `require`/`include` (and `_once`) of a path the file spells statically —
+  `__DIR__ . '/lib/db.php'`, `dirname(__FILE__)`, a plain `'inc/header.php'` — are imports, and the
+  functions an included file defines resolve from bare calls. Bare function calls and `new X` were not
+  recorded as calls at all before, so legacy PHP had almost no call graph.
+- **React Native platform files.** `./Button` resolves to `Button.ios.tsx` / `Button.android.tsx` /
+  `.native` / `.web` when no plain file exists, and dead-code analysis keeps every platform variant of a
+  module alive instead of reporting them unreachable.
 
 ### Changed
 
+- **A call through a barrel lands on the definition.** A named re-export (`export { fmt } from "./dates"`,
+  Python `from .impl import Service` in a package `__init__`, with or without `as`) is followed to the
+  function or class it forwards; the barrel stays the target only when the name comes from outside the
+  project.
+- A TypeScript/JavaScript field that only a method other than the constructor creates (`init() {
+  this.repo = new UserRepo() }`, a lazy `this.db ??= new Db()`) is typed by that construction, so calls on
+  it resolve. Constructions that disagree, or a constructor that sets the field from an untyped value,
+  still state nothing.
+- Dead code: a `WebApplicationInitializer` (and Spring's dispatcher/security initializer bases) and a
+  `@GlideModule` / `AppGlideModule` are loaded by the servlet container or Glide's generated code, and
+  are no longer reported unreachable.
+- An include path written without `./` (`include 'inc/header.php'`, `source lib/x.sh`) resolves from the
+  project root, then beside the including file, then by a path suffix exactly one file has.
 - **Next.js App Router paths.** Route groups `(shop)` and parallel-route slots `@modal` are left out of the
   URL, a root `app/page.tsx` / `app/route.ts` serves `/`, `[[...slug]]` is a catch-all and `[[id]]` an
   optional parameter, and `pages/_error` is not a page.
