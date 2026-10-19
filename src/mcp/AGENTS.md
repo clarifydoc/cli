@@ -63,6 +63,9 @@ write. That is what lets an external agent be configured as nothing but a comman
   found no project marker above the working directory (`coldStartRefusal`) — a user-scope client config started
   from `$HOME` would otherwise scan the whole home directory before its first answer. `clarifydoc_analyze` still
   works there: refusing the unasked-for scan is the point, not refusing the user.
+- **The up-front cost has a budget.** `tools/list` plus the instructions must stay under `BUDGET_BYTES`
+  ([budget.test.ts](budget.test.ts)); a description that pushes past it is argued for in the commit that raises it.
+  `CLARIFYDOC_MCP_LOG=<file>` logs each call locally (JSONL: tool, cut arguments, size, time, error, empty).
 - **No call outlives the client's deadline.** An analysis a call waits for — `clarifydoc_analyze`, or a cold
   start — gets `waitMs` (20 s, `CLARIFYDOC_MCP_WAIT_MS`); past it the call answers that the run is still going,
   with its stage and file count (`describeRun`, read off the analyzer's own progress line), and the run goes on.

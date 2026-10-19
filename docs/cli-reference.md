@@ -413,6 +413,8 @@ nothing. With no option it writes the Claude Code MCP entry (`.mcp.json`).
 | `CLARIFYDOC_WORKERS=<n>` | Worker threads for per-file extraction. They start at 200 files or more, at most 8 by default; `0` keeps everything in one thread. |
 | `CLARIFYDOC_GIT=<path>` | The git binary used to read history. |
 | `CLARIFYDOC_LSP_DEBUG=1` | Log raw language-server answers and failed queries. |
+| `CLARIFYDOC_MCP_LOG=<file>` | Append one JSON line per MCP tool call — tool, arguments (long values cut), answer length, time, error, empty — to a local file. Sent nowhere. |
+| `CLARIFYDOC_MCP_WAIT_MS=<ms>` | How long an MCP call waits for an analysis before answering that it is still running (default 20000). |
 
 ## Exit codes
 

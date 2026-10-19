@@ -15,6 +15,7 @@
  * `startMcpServer` redirects console output to stderr for exactly that reason.
  */
 
+import { appendFileSync } from "fs";
 import { validateArguments } from "./validate.js";
 
 /** Protocol revisions we can speak, newest first. */
@@ -285,6 +286,7 @@ export class McpServer {
     try {
       const result = await tool.handler(args, extras);
       this.log(`tools/call ${name} -> ${result.text.length} chars in ${Date.now() - started}ms`);
+      logCall(name, args, result, Date.now() - started);
       const note = this.options.annotate ? await this.options.annotate(name).catch(() => null) : null;
       return {
         content: [{ type: "text", text: note ? `${result.text}\n\n${note}` : result.text }],
@@ -294,6 +296,7 @@ export class McpServer {
       // A thrown handler is still a *tool* error: report it in-band so the model
       // sees the message instead of an opaque transport failure.
       const msg = e instanceof Error ? e.message : String(e);
+      logCall(name, args, { text: msg, isError: true }, Date.now() - started);
       this.log(`tools/call ${name} failed: ${msg}`);
       return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
     }
@@ -365,6 +368,30 @@ function describeTool(tool: McpTool) {
       openWorldHint: false,
     },
   };
+}
+
+/**
+ * `CLARIFYDOC_MCP_LOG=<file>`: one JSON line per tool call — the tool, its
+ * arguments (long values cut), how long the answer was and took, whether it
+ * was an error or an empty result (a miss ends in `Next: …`). Local only: it
+ * shows which descriptions send an agent the wrong way in a real session,
+ * and is sent nowhere. A write that fails is dropped.
+ */
+function logCall(tool: string, args: Record<string, unknown>, result: ToolResult, ms: number): void {
+  const file = process.env.CLARIFYDOC_MCP_LOG;
+  if (!file) return;
+  const short = Object.fromEntries(
+    Object.entries(args).map(([k, v]) => {
+      const text = typeof v === "string" ? v : JSON.stringify(v);
+      return [k, text && text.length > 200 ? `${text.slice(0, 200)}… (${text.length} chars)` : v];
+    }),
+  );
+  const line = { at: new Date().toISOString(), tool, args: short, chars: result.text.length, ms, isError: result.isError === true, empty: /(?:^|\n)Next: [^\n]*$/.test(result.text) };
+  try {
+    appendFileSync(file, JSON.stringify(line) + "\n");
+  } catch {
+    // Logging must never fail a call.
+  }
 }
 
 interface RpcError extends Error {
