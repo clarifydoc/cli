@@ -348,6 +348,25 @@ clarifydoc ask impact files='["src/orders.ts"]' > impact.md
 
 Exits `1` when the tool answers with an error (an unknown tool, a bad argument), so a script can test it.
 
+## `install`
+
+```bash
+clarifydoc install [path] [options]
+```
+
+Wires ClarifyDoc into the tools around a project. Every write merges into what is there and a re-run changes
+nothing. With no option it writes the Claude Code MCP entry (`.mcp.json`).
+
+| Option | What it writes |
+|--------|----------------|
+| `--client <names...>` | The MCP server entry for `claude-code`, `cursor`, `vscode`, `windsurf`, `gemini` or `codex`, started the way this CLI was. |
+| `--hooks` | Claude Code hooks in `.claude/settings.json`: what the map knows before a search, who depends on a file after an edit, what it covers at session start (`clarifydoc hook <event>`, never blocking). |
+| `--skills` | `.claude/skills/clarifydoc-*`, one per MCP workflow prompt. |
+| `--guidance [file]` | A marked ClarifyDoc section of `AGENTS.md` (or the file named), with this project's hub files and gaps when an analysis exists. |
+| `--git-hooks` | `post-commit`, `post-merge` and `post-checkout` (branch switches only) in this repository's hooks directory (`core.hooksPath` when set). Each starts an incremental analysis in the background, so git never waits on it. The block sits between `# clarifydoc:start` / `# clarifydoc:end` after the shebang; an existing hook keeps its lines. Set `CLARIFYDOC_NO_GIT_HOOK=1` to skip it for one command. Alone, it writes no MCP entry. |
+| `-o, --output <dir>` | Where the analysis lives (default `.clarifydoc`): the facts for `--guidance`, the output of `--git-hooks`. |
+| `--print` | Show what would be written instead. |
+
 ## Environment variables
 
 | Variable | Effect |

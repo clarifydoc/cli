@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { execFileSync } from "child_process";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join, resolve } from "path";
 import { WORKFLOW_PROMPTS } from "../mcp/prompts.js";
@@ -27,6 +28,8 @@ export function selfCommand(argv?: string): { command: string; args: string[] } 
 interface Planned {
   file: string;
   content: string;
+  /** File mode to set after writing (an executable hook). */
+  mode?: number;
 }
 
 function readJson(path: string): Record<string, unknown> {
@@ -95,6 +98,53 @@ export function planClaudeHooks(root: string, self = selfCommand()): Planned {
   return { file, content: pretty({ ...json, hooks }) };
 }
 
+const HOOK_START = "# clarifydoc:start";
+const HOOK_END = "# clarifydoc:end";
+
+/** The git events that move the working tree, and when each should refresh. */
+const GIT_EVENTS: Array<{ name: string; when?: string }> = [
+  { name: "post-commit" },
+  { name: "post-merge" },
+  // `$3` is 1 for a branch checkout, 0 for a file checkout.
+  { name: "post-checkout", when: '[ "$3" = "1" ]' },
+];
+
+/** Where this repository's hooks live: `core.hooksPath` when set, else `.git/hooks` (worktrees included). */
+export function gitHooksDir(root: string): string {
+  const out = execFileSync("git", ["rev-parse", "--git-path", "hooks"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  return resolve(root, out);
+}
+
+/**
+ * Git hooks that refresh the analysis after a commit, a merge or a branch
+ * checkout: an incremental analysis in the background, so git never waits
+ * and a failure never fails git. Only this repository's hooks directory is
+ * touched, never global config. The block sits between markers right after
+ * the shebang, so a re-run replaces it and an existing hook keeps its own
+ * lines; setting CLARIFYDOC_NO_GIT_HOOK skips it.
+ */
+export function planGitHooks(root: string, opts: { output?: string; hooksDir?: string } = {}, self = selfCommand()): Planned[] {
+  const dir = opts.hooksDir ?? gitHooksDir(root);
+  const q = (p: string) => `'${p.replace(/'/g, `'\\''`)}'`;
+  const run = [self.command, ...self.args].map(q).join(" ");
+  return GIT_EVENTS.map(({ name, when }) => {
+    const file = join(dir, name);
+    const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
+    const refresh = `(cd ${q(root)} && ${run} analyze . -o ${q(opts.output ?? ".clarifydoc")} --incremental --no-lsp --no-pretty </dev/null >/dev/null 2>&1 &)`;
+    const body = when ? `if ${when}; then\n  ${refresh}\nfi` : refresh;
+    const block = `${HOOK_START}\n# Refresh the ClarifyDoc analysis in the background (clarifydoc install --git-hooks).\nif [ -z "$CLARIFYDOC_NO_GIT_HOOK" ]; then\n${body.split("\n").map((l) => `  ${l}`).join("\n")}\nfi\n${HOOK_END}\n`;
+    const i = existing.indexOf(HOOK_START);
+    const j = existing.indexOf(HOOK_END);
+    let content: string;
+    if (i >= 0 && j > i) content = `${existing.slice(0, i)}${block}${existing.slice(j + HOOK_END.length).replace(/^\n/, "")}`;
+    else if (existing.startsWith("#!")) {
+      const nl = existing.indexOf("\n");
+      content = nl < 0 ? `${existing}\n${block}` : `${existing.slice(0, nl + 1)}${block}${existing.slice(nl + 1)}`;
+    } else content = `#!/bin/sh\n${block}${existing}`;
+    return { file, content, mode: 0o755 };
+  });
+}
+
 /** One skill per MCP workflow prompt, under `.claude/skills/clarifydoc-<name>/SKILL.md`. */
 export function planSkills(root: string): Planned[] {
   return WORKFLOW_PROMPTS.map((p) => {
@@ -156,6 +206,7 @@ export function applyPlans(plans: readonly Planned[], print: boolean): string[] 
     }
     mkdirSync(dirname(p.file), { recursive: true });
     writeFileSync(p.file, p.content);
+    if (p.mode !== undefined) chmodSync(p.file, p.mode);
     out.push(`wrote ${p.file}`);
   }
   return out;

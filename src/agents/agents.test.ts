@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, statSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { editedFile, searchTerm } from "./hooks.js";
-import { applyPlans, planClaudeHooks, planGuidance, planMcpConfig, planSkills, projectFacts } from "./install.js";
+import { applyPlans, planClaudeHooks, planGitHooks, planGuidance, planMcpConfig, planSkills, projectFacts } from "./install.js";
 
 describe("hook payloads", () => {
   it("finds the name a search is after, and skips noise", () => {
@@ -69,5 +69,33 @@ describe("install plans", () => {
     const first = skills.find((s) => s.file.endsWith("clarifydoc-before-editing/SKILL.md"))!;
     expect(first.content).toMatch(/^---\nname: clarifydoc-before-editing\ndescription: /);
     expect(first.content).toContain('clarifydoc_file path="<file>"');
+  });
+});
+
+describe("git hooks", () => {
+  const self = { command: "clarifydoc", args: [] };
+  it("refresh in the background after commit, merge and branch checkout, keeping a hook's own lines", () => {
+    const root = mkdtempSync(join(tmpdir(), "githooks-"));
+    const hooksDir = join(root, "hooks");
+    try {
+      mkdirSync(hooksDir);
+      writeFileSync(join(hooksDir, "post-merge"), "#!/bin/bash\necho mine\n");
+      const first = planGitHooks(root, { hooksDir }, self);
+      expect(first.map((p) => p.file.split("/").pop())).toEqual(["post-commit", "post-merge", "post-checkout"]);
+      applyPlans(first, false);
+      const commit = readFileSync(join(hooksDir, "post-commit"), "utf8");
+      expect(commit.startsWith("#!/bin/sh\n# clarifydoc:start")).toBe(true);
+      expect(commit).toContain(`'clarifydoc' analyze . -o '.clarifydoc' --incremental --no-lsp --no-pretty </dev/null >/dev/null 2>&1 &`);
+      expect(statSync(join(hooksDir, "post-commit")).mode & 0o111).toBeTruthy();
+      // The block goes after the hook's shebang, before its own lines.
+      expect(readFileSync(join(hooksDir, "post-merge"), "utf8")).toMatch(/^#!\/bin\/bash\n# clarifydoc:start[\s\S]*# clarifydoc:end\necho mine\n$/);
+      // A file checkout does not refresh.
+      expect(readFileSync(join(hooksDir, "post-checkout"), "utf8")).toContain('if [ "$3" = "1" ]; then');
+      // A second install replaces its block and nothing else.
+      const again = planGitHooks(root, { hooksDir }, self);
+      expect(again.map((p) => p.content)).toEqual(first.map((p) => readFileSync(p.file, "utf8")));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

@@ -151,6 +151,7 @@ clarifydoc export <path>               # The analysis as ARCHITECTURE.md, DATA-M
 clarifydoc mcp [path]                  # Serve the analysis to an AI agent over MCP (stdio)
 clarifydoc ask routes path=/api/users  # Call one MCP tool from a shell or CI (--list for all)
 clarifydoc install --hooks --skills    # Wire ClarifyDoc into agent hosts (MCP entry, hooks, skills)
+clarifydoc install --git-hooks         # Refresh the analysis in the background after commit, merge, checkout
 ```
 
 `lsp-update` writes `lsp-enhancement.json` alongside `project-summary.json` (`--emit-queries <file>` writes the

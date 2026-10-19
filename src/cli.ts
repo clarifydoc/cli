@@ -628,11 +628,12 @@ program
   .option("--hooks", "Also add Claude Code hooks (.claude/settings.json): context before searches, after edits, at session start", false)
   .option("--skills", "Also write .claude/skills/clarifydoc-* from the MCP workflow prompts", false)
   .option("--guidance [file]", "Also add or update the ClarifyDoc section of AGENTS.md (or the file named)")
+  .option("--git-hooks", "Also add git hooks (post-commit, post-merge, post-checkout) that refresh the analysis in the background", false)
   .option("-o, --output <dir>", "Analysis output directory, for the project facts in the guidance", ".clarifydoc")
   .option("--print", "Print what would be written instead of writing it", false)
   .action(async (path: string, options) => {
     const root = resolve(path);
-    const { CLIENTS, applyPlans, planClaudeHooks, planGuidance, planMcpConfig, planSkills, projectFacts } = await import("./agents/install.js");
+    const { CLIENTS, applyPlans, planClaudeHooks, planGitHooks, planGuidance, planMcpConfig, planSkills, projectFacts } = await import("./agents/install.js");
     const clients = (options.client as string[] | undefined) ?? ["claude-code"];
     const unknown = clients.filter((c) => !(CLIENTS as readonly string[]).includes(c));
     if (unknown.length) {
@@ -640,9 +641,20 @@ program
       process.exitCode = 1;
       return;
     }
-    const plans = clients.map((c) => planMcpConfig(c as never, root));
+    // `install --git-hooks` alone is about git, not an agent host: no MCP entry unless a client is named.
+    const gitOnly = options.gitHooks && !options.client && !options.hooks && !options.skills && !options.guidance;
+    const plans = gitOnly ? [] : clients.map((c) => planMcpConfig(c as never, root));
     if (options.hooks) plans.push(planClaudeHooks(root));
     if (options.skills) plans.push(...planSkills(root));
+    if (options.gitHooks) {
+      try {
+        plans.push(...planGitHooks(root, { output: options.output }));
+      } catch {
+        console.error(`${root} is not a git repository: --git-hooks needs one.`);
+        process.exitCode = 1;
+        return;
+      }
+    }
     if (options.guidance) {
       let facts: string[] = [];
       try {
