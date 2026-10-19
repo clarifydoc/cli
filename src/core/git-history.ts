@@ -1,6 +1,6 @@
 import { execFile } from "child_process";
 import { byOrdinal } from "./ordinal.js";
-import type { FileChurnInfo, FileComplexityInfo, HotspotInfo } from "../types/analysis.js";
+import type { CoChangePair, FileChurnInfo, FileComplexityInfo, HotspotInfo } from "../types/analysis.js";
 
 /**
  * Git-history signals: per-file churn (commits, line deltas, recency, authors)
@@ -11,8 +11,11 @@ import type { FileChurnInfo, FileComplexityInfo, HotspotInfo } from "../types/an
  *  - Graceful everywhere: not a repo, git missing, shallow clone (the
  *    application server clones `--depth 1` by default), or a timeout all
  *    yield a `skipped` result — never an analysis failure.
- *  - `--no-renames` keeps parsing trivial; a renamed file's history restarts
- *    at the rename, which is acceptable for a hotspot signal.
+ *  - Renames are followed: walking newest-first, a commit that renames
+ *    `old` to `new` makes every older mention of `old` count for `new`.
+ *  - The window ends at HEAD's commit date, not today: an old checkout
+ *    still has its history.
+ *  - Authors are mailmap-aware (`%aN`): one identity per resolved name.
  *  - numstat paths are REPO-root-relative; when the analyzed root sits below
  *    the repo root (`--show-prefix` non-empty) the prefix is stripped so
  *    paths line up with the analysis' project-relative files[].
@@ -37,8 +40,14 @@ export interface GitHistoryOptions {
  * the analysis simply goes without churn and hotspots.
  */
 export type GitHistoryResult =
-  | { churn: FileChurnInfo[]; commitCount: number }
+  | { churn: FileChurnInfo[]; commitCount: number; coChange: CoChangePair[] }
   | { skipped: string };
+
+/** Commits touching more analyzed files than this are not co-change evidence. */
+const MEGA_COMMIT = 20;
+const CO_CHANGE_MIN_COUNT = 3;
+const CO_CHANGE_MIN_SCORE = 0.3;
+const CO_CHANGE_CAP = 500;
 
 const TOP_AUTHORS = 3;
 
@@ -95,11 +104,13 @@ export async function collectGitHistory(
   const prefixRes = await g(["rev-parse", "--show-prefix"]);
   const prefix = prefixRes.ok ? prefixRes.out.trim().replace(/\\/g, "/") : "";
 
-  const since = new Date(Date.now() - months * 30 * 86_400_000).toISOString().slice(0, 10);
+  const head = await g(["log", "-1", "--format=%cI"]);
+  const headTime = head.ok && head.out.trim() ? Date.parse(head.out.trim()) : NaN;
+  const since = new Date((Number.isFinite(headTime) ? headTime : Date.now()) - months * 30 * 86_400_000).toISOString().slice(0, 10);
   // \x01 record marker — never appears in author names or hashes.
   const log = await g([
-    "log", "--numstat", "--no-renames", `--max-count=${maxCommits}`, `--since=${since}`,
-    "--pretty=format:%x01%H%x01%an%x01%aI", "--", ".",
+    "log", "--numstat", "-M", `--max-count=${maxCommits}`, `--since=${since}`,
+    "--pretty=format:%x01%H%x01%aN%x01%aI%x01%aE", "--", ".",
   ]);
   if (!log.ok) return { skipped: `git log failed: ${log.err}` };
 
@@ -120,6 +131,28 @@ export async function collectGitHistory(
     authors: Map<string, number>;
   }
   const byFile = new Map<string, Acc>();
+  /** Identity (email) → the name it is shown by. */
+  const names = new Map<string, string>();
+  /** Older path → the path it was renamed to (followed to the newest). */
+  const renamedTo = new Map<string, string>();
+  const follow = (p: string): string => {
+    let cur = p;
+    for (let i = 0; i < 50 && renamedTo.has(cur); i++) cur = renamedTo.get(cur)!;
+    return cur;
+  };
+  const pairs = new Map<string, number>();
+  let commitFiles: string[] = [];
+  const flushCommit = () => {
+    const unique = [...new Set(commitFiles)].sort(byOrdinal);
+    commitFiles = [];
+    if (unique.length < 2 || unique.length > MEGA_COMMIT) return;
+    for (let i = 0; i < unique.length; i++) {
+      for (let j = i + 1; j < unique.length; j++) {
+        const key = `${unique[i]}\u0000${unique[j]}`;
+        pairs.set(key, (pairs.get(key) ?? 0) + 1);
+      }
+    }
+  };
   let commitCount = 0;
   let author = "";
   let date = "";
@@ -127,8 +160,14 @@ export async function collectGitHistory(
   // shown with default settings lists none — nothing to guard there.
   for (const line of log.out.split("\n")) {
     if (line.startsWith("\x01")) {
+      flushCommit();
       const parts = line.split("\x01");
-      author = parts[2] ?? "";
+      // The mailmap-resolved name is the identity; the email only stands in
+      // for a commit with no name.
+      const name = parts[2] ?? "";
+      const email = (parts[4] ?? "").trim().toLowerCase();
+      author = name.trim().toLowerCase() || email;
+      if (!names.has(author)) names.set(author, name || email);
       date = parts[3]?.trim() ?? "";
       commitCount++;
       continue;
@@ -138,6 +177,16 @@ export async function collectGitHistory(
     let path = m[3]!;
     // C-style quoting for unusual characters — strip the quotes, keep the rest.
     if (path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1);
+    // A rename: `src/{old => new}/x.ts` or `old.ts => new.ts`. This and every
+    // older commit's mention of the old path count for the newest name.
+    const renamed = renamePaths(path);
+    if (renamed) {
+      const [from, to] = renamed;
+      path = follow(to);
+      if (from !== path) renamedTo.set(from, path);
+    } else {
+      path = follow(path);
+    }
     if (prefix) {
       if (!path.startsWith(prefix)) continue;
       path = path.slice(prefix.length);
@@ -150,28 +199,67 @@ export async function collectGitHistory(
       byFile.set(file, (acc = { commits: 0, additions: 0, deletions: 0, lastTouched: date, authors: new Map() }));
     }
     acc.commits++;
+    commitFiles.push(file);
     if (m[1] !== "-") acc.additions += Number(m[1]);
     if (m[2] !== "-") acc.deletions += Number(m[2]);
     // git log is newest-first, so the first sighting is the most recent touch.
     acc.authors.set(author, (acc.authors.get(author) ?? 0) + 1);
   }
 
+  flushCommit();
   const churn: FileChurnInfo[] = [...byFile.entries()]
-    .map(([file, acc]) => ({
-      file,
-      commits: acc.commits,
-      additions: acc.additions,
-      deletions: acc.deletions,
-      lastTouched: acc.lastTouched,
-      authors: [...acc.authors.entries()]
-        .sort((a, b) => b[1] - a[1] || byOrdinal(a[0], b[0]))
-        .slice(0, TOP_AUTHORS)
-        .map(([name]) => name),
-      authorCount: acc.authors.size,
-    }))
+    .map(([file, acc]) => {
+      const ranked = [...acc.authors.entries()]
+        .map(([id, n]) => [names.get(id) ?? id, n] as const)
+        .sort((a, b) => b[1] - a[1] || byOrdinal(a[0], b[0]));
+      let covered = 0;
+      let busFactor = 0;
+      for (const [, n] of ranked) {
+        busFactor++;
+        covered += n;
+        if (covered * 2 > acc.commits) break;
+      }
+      return {
+        file,
+        commits: acc.commits,
+        additions: acc.additions,
+        deletions: acc.deletions,
+        lastTouched: acc.lastTouched,
+        authors: ranked.slice(0, TOP_AUTHORS).map(([name]) => name),
+        authorCount: acc.authors.size,
+        authorShares: ranked.slice(0, 5).map(([name, commits]) => ({ name, commits })),
+        busFactor,
+      };
+    })
     .sort((a, b) => b.commits - a.commits || byOrdinal(a.file, b.file));
 
-  return { churn, commitCount };
+  const commitsOf = new Map(churn.map((c) => [c.file, c.commits]));
+  const coChange: CoChangePair[] = [];
+  for (const [key, count] of pairs) {
+    if (count < CO_CHANGE_MIN_COUNT) continue;
+    const [a, b] = key.split("\u0000") as [string, string];
+    const score = count / Math.min(commitsOf.get(a) ?? count, commitsOf.get(b) ?? count);
+    if (score < CO_CHANGE_MIN_SCORE) continue;
+    coChange.push({ a, b, count, score: Math.round(Math.min(1, score) * 100) / 100 });
+  }
+  coChange.sort((x, y) => y.score - x.score || y.count - x.count || byOrdinal(x.a, y.a) || byOrdinal(x.b, y.b));
+
+  return { churn, commitCount, coChange: coChange.slice(0, CO_CHANGE_CAP) };
+}
+
+/**
+ * The two paths of a numstat rename entry: `src/{a => b}/x.ts` → `src/a/x.ts`,
+ * `src/b/x.ts`; `old.ts => new.ts`; `{ => sub}/x.ts`. Null for a plain path.
+ */
+export function renamePaths(entry: string): [string, string] | null {
+  const brace = /^(.*)\{(.*) => (.*)\}(.*)$/.exec(entry);
+  if (brace) {
+    const [, pre, from, to, post] = brace;
+    const join = (mid: string) => `${pre}${mid}${post}`.replace(/\/\//g, "/").replace(/^\//, "");
+    return [join(from!), join(to!)];
+  }
+  const plain = /^(.*) => (.*)$/.exec(entry);
+  return plain ? [plain[1]!, plain[2]!] : null;
 }
 
 /**

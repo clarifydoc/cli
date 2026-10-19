@@ -120,6 +120,7 @@ import {
   type TemplateComponentNode,
   type EntityGraph,
   type DataAccessGraph,
+  type CoChangePair,
   type FileChurnInfo,
   type HotspotInfo,
   type SymbolReachSummary,
@@ -1035,6 +1036,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // shallow clone, git missing) are silent unless verbose — never an error.
   let fileChurn: FileChurnInfo[] | undefined;
   let hotspots: HotspotInfo[] | undefined;
+  let coChange: CoChangePair[] | undefined;
   let gitSignal: "applied" | "disabled" | "skipped" = gitHistoryPromise ? "skipped" : "disabled";
   let gitSkipReason: string | undefined;
   if (gitHistoryPromise) {
@@ -1042,6 +1044,13 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     if ("churn" in gh && gh.churn.length > 0) {
       fileChurn = gh.churn;
       hotspots = computeHotspots(gh.churn, complexity);
+      if (gh.coChange.length > 0) {
+        // Coupling the imports do not show is the part worth reading.
+        coChange = gh.coChange.map((p) => {
+          const joined = (componentGraph[p.a] ?? []).includes(p.b) || (componentGraph[p.b] ?? []).includes(p.a);
+          return joined ? p : { ...p, hidden: true };
+        });
+      }
       gitSignal = "applied";
       progress.detail(
         `  Git history: ${gh.churn.length} file(s) across ${gh.commitCount} commit(s), ${hotspots.length} hotspot(s)`,
@@ -1496,6 +1505,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     healthScore,
     suggestions,
     fileChurn,
+    ...(coChange ? { coChange } : {}),
     hotspots,
     provenance: {
       extractorVersion: EXTRACTOR_VERSION,

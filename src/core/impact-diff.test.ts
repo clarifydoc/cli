@@ -174,3 +174,23 @@ describe("impact renderers", () => {
     expect(md).toContain("`POST /api/orders`");
   });
 });
+
+describe("computeImpactDiff — usually changed with", () => {
+  it("lists the co-change partners a diff leaves out, strongest first", () => {
+    const withHistory = {
+      ...summary,
+      coChange: [
+        { a: "srv/service.ts", b: "web/api.ts", count: 6, score: 0.8, hidden: true },
+        { a: "srv/routes.ts", b: "srv/service.ts", count: 3, score: 0.4 },
+        { a: "srv/util.ts", b: "web/Orders.vue", count: 3, score: 0.5 },
+      ],
+    } as unknown as ProjectAnalysis;
+    const r = computeImpactDiff(withHistory, ["srv/service.ts"]);
+    expect(r.missingCoChanges).toEqual([
+      { file: "web/api.ts", with: "srv/service.ts", count: 6, score: 0.8, hidden: true },
+      { file: "srv/routes.ts", with: "srv/service.ts", count: 3, score: 0.4 },
+    ]);
+    expect(r.risk.reasons.some((x) => x.includes("usually changed with it (web/api.ts)"))).toBe(true);
+    expect(renderImpactMarkdown(r)).toContain("Usually changed with");
+  });
+});

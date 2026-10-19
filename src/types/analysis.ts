@@ -1971,9 +1971,33 @@ export interface FileChurnInfo {
   deletions: number;
   /** ISO timestamp of the most recent commit touching the file. */
   lastTouched: string;
-  /** Top contributors by commit count (max 3). */
+  /** Top contributors by commit count (max 3), mailmap-aware names. */
   authors: string[];
   authorCount: number;
+  /** The top contributors' commit counts (max 5), most first — `authors` with their weight. */
+  authorShares?: Array<{ name: string; commits: number }>;
+  /**
+   * How many authors together made more than half of the file's commits: 1
+   * means one person holds most of what is known about it.
+   */
+  busFactor?: number;
+}
+
+/**
+ * Two files that change together in history — committed together in at least
+ * three small commits, in at least 30% of the commits of the less-changed one.
+ * Commits touching more than 20 analyzed files (merges of branches, mass
+ * renames, formatting) are not counted.
+ */
+export interface CoChangePair {
+  a: string;
+  b: string;
+  /** Commits touching both. */
+  count: number;
+  /** count ÷ commits of the less-changed file, (0..1], 2 decimals. */
+  score: number;
+  /** No import edge joins the two, in either direction: coupling the code does not show. */
+  hidden?: boolean;
 }
 
 /** Churn × complexity hotspot — where the codebase actually hurts. */
@@ -2542,6 +2566,8 @@ export interface ProjectAnalysis {
   /** Per-file git activity in the history window; absent for non-repos,
    *  shallow clones, or `--no-git-history` runs. */
   fileChurn?: FileChurnInfo[];
+  /** Files that change together in history (see `CoChangePair`), strongest first, capped at 500. */
+  coChange?: CoChangePair[];
   /** Top churn × complexity hotspots (derived from fileChurn + complexity). */
   hotspots?: HotspotInfo[];
   /** Per-file boundary/concern profile for files that touch at least one

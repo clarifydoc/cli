@@ -53,6 +53,12 @@ export interface ImpactDiffResult {
   testCount: number;
   /** Sample reverse-import chains: changed file → … → screen/route file. */
   chains: Array<{ path: string[]; endsAt: "screen" | "route" }>;
+  /**
+   * Files history changes together with a changed file, that this change
+   * leaves out — "usually changed with": the strongest first, at most ten.
+   * Absent without git history.
+   */
+  missingCoChanges?: Array<{ file: string; with: string; count: number; score: number; hidden?: boolean }>;
   risk: { level: "low" | "moderate" | "high"; reasons: string[] };
 }
 
@@ -221,6 +227,18 @@ export function computeImpactDiff(
     }
   }
 
+  // ── Usually changed together, left out of this change ──
+  const missing = new Map<string, NonNullable<ImpactDiffResult["missingCoChanges"]>[number]>();
+  for (const p of summary.coChange ?? []) {
+    const inA = changedSet.has(p.a);
+    const inB = changedSet.has(p.b);
+    if (inA === inB) continue;
+    const file = inA ? p.b : p.a;
+    const prev = missing.get(file);
+    if (!prev || p.score > prev.score) missing.set(file, { file, with: inA ? p.a : p.b, count: p.count, score: p.score, ...(p.hidden ? { hidden: true } : {}) });
+  }
+  const missingCoChanges = [...missing.values()].sort((x, y) => y.score - x.score || y.count - x.count || byOrdinal(x.file, y.file)).slice(0, 10);
+
   // ── Risk rollup ──
   const reasons: string[] = [];
   if (topVerdict) {
@@ -236,6 +254,10 @@ export function computeImpactDiff(
   if (queues.size > 0) reasons.push(`involves queue(s) ${[...queues].slice(0, 3).join(", ")}`);
   if (tests.length === 0 && dependents.size >= 3) {
     reasons.push(`no test files among ${dependents.size} dependents`);
+  }
+  const strongMissing = missingCoChanges.filter((m) => m.score >= 0.6);
+  if (strongMissing.length > 0) {
+    reasons.push(`leaves out ${strongMissing.length} file(s) usually changed with it (${strongMissing.slice(0, 2).map((m) => m.file).join(", ")})`);
   }
   let level: ImpactDiffResult["risk"]["level"] = "low";
   if (dangerous || screens.size >= 8 || (screens.size >= 1 && entities.size >= 3)) {
@@ -265,6 +287,7 @@ export function computeImpactDiff(
     tests,
     testCount: tests.length,
     chains,
+    ...(missingCoChanges.length > 0 ? { missingCoChanges } : {}),
     risk: { level, reasons },
   };
   return result;
@@ -302,6 +325,10 @@ export function renderImpactText(r: ImpactDiffResult): string {
     lines.push("", `Tests to run (${r.testCount}):`);
     for (const t of r.tests) lines.push(`  ${t}`);
   }
+  if (r.missingCoChanges?.length) {
+    lines.push("", "Usually changed with, not in this change:");
+    for (const m of r.missingCoChanges) lines.push(`  ${m.file}  — with ${m.with} in ${m.count} commits (${Math.round(m.score * 100)}%)${m.hidden ? ", no import joins them" : ""}`);
+  }
   lines.push("", `Dependent files: ${r.dependentCount}`);
   if (r.chains.length > 0) {
     lines.push("", "Chains:");
@@ -337,6 +364,9 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
   row(`Data (${geq(r)}${r.entityCount})`, r.entities.map((e) => `\`${e}\``).join(", ") || "—");
   if (r.queueCount > 0) row(`Queues (${geq(r)}${r.queueCount})`, r.queues.map((q) => `\`${q}\``).join(", "));
   row(`Tests to run (${r.testCount})`, r.tests.map((t) => `\`${t}\``).join(", ") || "—");
+  if (r.missingCoChanges?.length) {
+    row("Usually changed with", r.missingCoChanges.map((m) => `\`${m.file}\` (${Math.round(m.score * 100)}% with \`${m.with}\`)`).join(", "));
+  }
   row("Dependents", String(r.dependentCount));
   if (r.chains.length > 0) {
     md.push("");

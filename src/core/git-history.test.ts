@@ -114,6 +114,10 @@ describe("collectGitHistory", () => {
     git(repo(), ["add", "-A"]);
     commit("ancient", "carol", "2020-01-01T12:00:00");
 
+    // The window ends at HEAD's date: a recent commit after the ancient one.
+    writeFileSync(join(repo(), "sub", "b.ts"), "b2\n");
+    git(repo(), ["add", "-A"]);
+    commit("recent", "bob");
     const res = await collectGitHistory(repo(), ["old.ts"], { months: 1 });
     const { churn } = res as { churn: FileChurnInfo[] };
     expect(churn.some((c) => c.file === "old.ts")).toBe(false);
@@ -172,5 +176,43 @@ describe("computeHotspots", () => {
     const hs = computeHotspots(churn, cx, 50);
     expect(hs).toHaveLength(50);
     expect(hs[0]!.file).toBe("f59.ts");
+  });
+});
+
+describe("collectGitHistory — renames, ownership, co-change", () => {
+  let dir: string;
+  const run = (args: string[], env: Record<string, string> = {}) =>
+    execFileSync("git", args, { cwd: dir, stdio: "pipe", env: { ...process.env, GIT_AUTHOR_EMAIL: "x@x", GIT_COMMITTER_EMAIL: "x@x", ...env } });
+  const save = (msg: string, author: string) => { run(["add", "-A"]); run(["commit", "-q", "-m", msg, "--author", `${author} <${author}@x>`]); };
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "rvd-git-cochange-"));
+    run(["init", "-q"]);
+    run(["config", "user.name", "t"]);
+    run(["config", "user.email", "t@t"]);
+    writeFileSync(join(dir, "api.ts"), "a1\n");
+    writeFileSync(join(dir, "client.ts"), "c1\n");
+    writeFileSync(join(dir, "old-name.ts"), "o1\nshared body that git can follow\nline three\nline four\n");
+    save("one", "ann");
+    for (let i = 2; i <= 4; i++) {
+      writeFileSync(join(dir, "api.ts"), `a${i}\n`);
+      writeFileSync(join(dir, "client.ts"), `c${i}\n`);
+      save(`pair ${i}`, i === 4 ? "ben" : "ann");
+    }
+    run(["mv", "old-name.ts", "new-name.ts"]);
+    save("rename", "ann");
+    writeFileSync(join(dir, "new-name.ts"), "o2\nshared body that git can follow\nline three\nline four\n");
+    save("edit after rename", "ann");
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("follows a rename, shares and bus factor, and pairs files committed together", async () => {
+    const res = await collectGitHistory(dir, ["api.ts", "client.ts", "new-name.ts"]);
+    const { churn, coChange } = res as { churn: FileChurnInfo[]; coChange: Array<{ a: string; b: string; count: number; score: number }> };
+    // The commit before the rename counts for the file's current name.
+    expect(churn.find((c) => c.file === "new-name.ts")!.commits).toBe(3);
+    const api = churn.find((c) => c.file === "api.ts")!;
+    expect(api.authorShares).toEqual([{ name: "ann", commits: 3 }, { name: "ben", commits: 1 }]);
+    expect(api.busFactor).toBe(1);
+    expect(coChange).toEqual([{ a: "api.ts", b: "client.ts", count: 4, score: 1 }]);
   });
 });

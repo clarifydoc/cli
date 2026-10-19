@@ -92,6 +92,7 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   healthScore: "optional",
   suggestions: "optional",
   fileChurn: "optional",
+  coChange: "optional",
   hotspots: "optional",
   responsibilityProfiles: "optional",
   refactorPressure: "optional",
