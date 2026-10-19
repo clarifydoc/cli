@@ -267,7 +267,7 @@ export function dataFlowsTool(ctx: ToolContext): McpTool {
         },
         resource: { type: "string", description: "Only flows touching this table/queue/endpoint (substring)." },
         entry: { type: "string", description: "Only flows from this entry point (route path, screen name or file)." },
-        entryKind: { type: "string", enum: ["route", "screen"], description: "Only route or only screen entries." },
+        entryKind: { type: "string", enum: ["route", "screen", "command"], description: "Only route, screen, or command (MCP tool, editor or CLI command) entries." },
         limit: { type: "number", description: "Max entry points (default 25)." },
         offset: OFFSET_SCHEMA,
       },
@@ -294,7 +294,7 @@ export function dataFlowsTool(ctx: ToolContext): McpTool {
       const effect = enumArg(args, "effect", EFFECTS);
       const resource = stringArg(args, "resource");
       const entry = stringArg(args, "entry");
-      const entryKind = enumArg(args, "entryKind", ["route", "screen"] as const);
+      const entryKind = enumArg(args, "entryKind", ["route", "screen", "command"] as const);
       const limit = numberArg(args, "limit", 25, { max: 200 });
       const offset = offsetArg(args);
 

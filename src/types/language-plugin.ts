@@ -1,5 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type {
+  EntryPointInfo,
   Language,
   SecurityCategory,
   SecuritySeverity,
@@ -538,6 +539,8 @@ export interface AstExtractorHooks {
   storeModules?(tree: Tree, sourceText: string): Array<{ name: string; ref: string; line: number }>;
   /** HTTP clients configured with a base, host included → `FileAnalysis.httpClientRegistrations`. */
   httpClientRegistrations?(tree: Tree, sourceText: string): HttpClientRegistration[];
+  /** Entry points that are not routes — MCP tools, editor commands, CLI commands → `FileAnalysis.entryPoints`. */
+  entryPoints?(tree: Tree, sourceText: string): EntryPointInfo[];
   /** Forwarding rules a code file declares (`vite.config.ts` `server.proxy`) → `FileAnalysis.proxyRules`. */
   proxyRules?(tree: Tree, sourceText: string, filePath: string): ProxyRule[];
   /** Calls handing a path literal to a project function → `FileAnalysis.pathArgCalls`. */

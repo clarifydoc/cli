@@ -1,3 +1,4 @@
+import { extractPythonEntryPoints } from "./entry-points.js";
 import type { LanguagePluginMeta, SecurityRule } from "../../../types/language-plugin.js";
 import { extendControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
@@ -197,6 +198,7 @@ export const pythonMeta: LanguagePluginMeta = {
     // Container registrations: FastAPI dependency functions, dependency-injector
     // providers, `injector` bindings (see di.ts).
     diBindings: (tree, sourceText) => extractPythonDiBindings(tree, sourceText),
+    entryPoints: (tree, sourceText) => extractPythonEntryPoints(tree, sourceText),
   },
   calls: pythonCallHooks,
   requestSchema: pythonRequestSchema,

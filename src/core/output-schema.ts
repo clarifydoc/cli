@@ -57,6 +57,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   httpClientBases: "optional",
   storeModules: "optional",
   messageHandlers: "optional",
+  entryPoints: "optional",
   httpClientRegistrations: "optional",
   proxyRules: "optional",
 };
@@ -74,6 +75,7 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   routeMap: "required",
   apiCalls: "required",
   externalServices: "optional",
+  entryPoints: "optional",
   testCoverage: "optional",
   typeOnlyEdges: "optional",
   fileLayerReasons: "optional",

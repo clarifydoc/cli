@@ -1,3 +1,4 @@
+import { extractEntryPoints } from "./entry-points.js";
 import type { Language, SecurityIssue } from "../../../types/analysis.js";
 import type { LanguagePluginMeta, SecurityRule, AstExtractorHooks } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
@@ -207,6 +208,7 @@ function astHooks(language: Language): AstExtractorHooks {
     httpClientBases: extractHttpClientBases,
     storeModules: extractStoreModules,
     httpClientRegistrations: extractHttpClientRegistrations,
+    entryPoints: extractEntryPoints,
     proxyRules: extractDevProxyRules,
     pathArgCalls: extractPathArgCalls,
     moduleValues: extractModuleValues,

@@ -147,6 +147,9 @@ export async function statusReport(loaded: LoadedAnalysis, store: AnalysisStore)
         ? `${Math.round((summary.testCoverage.covered / summary.testCoverage.total) * 100)}% of ${summary.testCoverage.total} counted lines in ${plural(summary.testCoverage.files.length, "file")}, from ${summary.testCoverage.sources.map((x) => `${x.file}${x.stale ? " (older than the sources)" : ""}`).join(", ")}`
         : undefined],
       ["files", summary.files.length],
+      ["entry points", summary.entryPoints?.length
+        ? Object.entries(summary.entryPoints.reduce<Record<string, number>>((m, e) => ({ ...m, [e.kind]: (m[e.kind] ?? 0) + 1 }), {})).map(([k, n]) => `${n} ${k}`).join(", ")
+        : undefined],
       ["health", health ? `${health.score}/100 (${health.grade})` : undefined],
     ]),
     "",

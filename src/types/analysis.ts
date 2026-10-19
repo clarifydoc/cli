@@ -470,6 +470,8 @@ export interface FileAnalysis {
    * (`httpClientBases` keeps only the path): typed and named .NET clients,
    * `axios.create({ baseURL: process.env.X })`.
    */
+  /** Entry points that are not routes: MCP tools, editor and CLI commands (`EntryPointInfo`). */
+  entryPoints?: EntryPointInfo[];
   httpClientRegistrations?: HttpClientRegistration[];
   /** Forwarding rules this file declares (a `vite.config.ts` `server.proxy`, `setupProxy.js`). */
   proxyRules?: ProxyRule[];
@@ -550,6 +552,21 @@ export interface ImportInfo {
    * or when the file holds markup (a Vue / Svelte template) the check cannot read.
    */
   unused?: string[];
+}
+
+/**
+ * Something invoked by name that is not an HTTP route: an MCP tool an agent
+ * calls, an editor command, a language-model tool, a CLI subcommand.
+ */
+export interface EntryPointInfo {
+  kind: "mcp-tool" | "editor-command" | "lm-tool" | "cli-command";
+  /** As it is invoked: the tool name, the command id, the subcommand. */
+  name: string;
+  /** The function that runs, when the registration names one (an inline handler has none). */
+  handler?: string;
+  line: number;
+  /** What registers it: `mcp`, `vscode`, `commander`, `yargs`, `click`, `typer`, … */
+  framework?: string;
 }
 
 export interface ExportInfo {
@@ -1888,7 +1905,7 @@ export interface SymbolReachSummary {
  * existing call graph, not a taint engine.
  */
 export interface DataFlowPath {
-  entryKind: "route" | "screen";
+  entryKind: "route" | "screen" | "command";
   /** "POST /api/orders" for a route, or the screen name. */
   entryLabel: string;
   entryFile: string;
@@ -2593,6 +2610,8 @@ export interface ProjectAnalysis {
    * by the host when it is not a known one (core/external-services.ts).
    */
   externalServices?: Array<{ name: string; known: boolean; hosts: string[]; calls: number; files: string[] }>;
+  /** MCP tools, editor and CLI commands the code registers: entry points that are not routes. */
+  entryPoints?: Array<EntryPointInfo & { filePath: string; projectId?: string }>;
   screens: ScreenInfo[];
   /**
    * Resolved frontend→backend links: each outbound `api-call` matched to the

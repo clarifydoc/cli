@@ -1,4 +1,4 @@
-import type {
+import type { EntryPointInfo,
   DataEffectKind,
   DataFlowPath,
   FileAnalysis,
@@ -300,12 +300,22 @@ const FLOWS_CAP = 2000;
  * line, else the handler name in the declaring file, else a project-wide
  * unique-or-nothing name lookup.
  */
+/** How an entry point reads in a data flow's label. */
+const ENTRY_LABEL: Record<EntryPointInfo["kind"], string> = {
+  "mcp-tool": "MCP tool",
+  "editor-command": "command",
+  "lm-tool": "LM tool",
+  "cli-command": "CLI",
+};
+
 export function computeDataFlows(
   reach: SymbolReachSummary[],
   routes: Array<RouteInfo & { filePath: string }>,
   analyses: FileAnalysis[],
   screens: readonly Pick<ScreenInfo, "name" | "filePath" | "routePath">[] = [],
   witness?: ReachWitness,
+  /** MCP tools, editor and CLI commands (`ProjectAnalysis.entryPoints`): entries when they name their handler. */
+  entryPoints: ReadonlyArray<EntryPointInfo & { filePath: string }> = [],
 ): DataFlowPath[] {
   // The hop list when it says more than the entry itself (distance ≥ 1).
   const viaOf = (key: string, e: ReachedEffect): { via?: FlowHop[] } => {
@@ -438,6 +448,23 @@ export function computeDataFlows(
         confidence: e.confidence,
         ...viaOf(key, e),
       });
+      if (out.length >= FLOWS_CAP) return sortFlows(out);
+    }
+  }
+  // Commands and tools: what an agent's tool call or a CLI subcommand ends up writing. Only a
+  // registration that names its handler: an inline one's calls belong to the function around it.
+  for (const ep of entryPoints) {
+    if (!ep.handler) continue;
+    const local = byName(spansFor(ep.filePath), ep.handler);
+    const key = local.length >= 1 ? keyOf(ep.filePath, local[0]!.symbol) : globalLookup(ep.handler);
+    const r = key ? reachByKey.get(key) : undefined;
+    if (!key || !r) continue;
+    const entryLabel = `${ENTRY_LABEL[ep.kind]} ${ep.name}`;
+    for (const e of r.effects) {
+      const dk = `${ep.filePath} command ${entryLabel} ${e.kind} ${e.resource}`;
+      if (seen.has(dk)) continue;
+      seen.add(dk);
+      out.push({ entryKind: "command", entryLabel, entryFile: ep.filePath, effect: e.kind, resource: e.resource, distance: e.distance, confidence: e.confidence, ...viaOf(key, e) });
       if (out.length >= FLOWS_CAP) return sortFlows(out);
     }
   }

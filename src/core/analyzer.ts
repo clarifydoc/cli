@@ -1013,6 +1013,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   });
   if (originCount > 0) progress.detail(`  Call origins resolved: ${originCount}`);
   const thirdParty = externalServices(allApiCalls);
+  // MCP tools, editor and CLI commands: entry points that are not routes.
+  const allEntryPoints = allAnalyses.flatMap((a) => (a.entryPoints ?? []).map((e) => ({ ...e, filePath: a.filePath, ...(a.projectId ? { projectId: a.projectId } : {}) })));
+  if (allEntryPoints.length > 0) progress.detail(`  Entry points: ${allEntryPoints.length} (${[...new Set(allEntryPoints.map((e) => e.kind))].join(", ")})`);
   if (thirdParty.length > 0) progress.detail(`  External services: ${thirdParty.map((s) => `${s.name} (${s.calls})`).join(", ")}`);
   if (resolvedUrlCount > 0 && verbose) {
     progress.detail(`  URL-builder calls resolved: ${resolvedUrlCount}`);
@@ -1485,7 +1488,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       dbAccessByLine,
     });
     symbolReach = reached.reach;
-    dataFlows = computeDataFlows(symbolReach, allRoutes, allAnalyses, allScreens, reached.witness);
+    dataFlows = computeDataFlows(symbolReach, allRoutes, allAnalyses, allScreens, reached.witness, allEntryPoints);
     if (symbolReach.length > 0) {
       progress.detail(
         `  Data-flow reach: ${symbolReach.length} symbol(s), ${dataFlows.length} route/screen→data flow(s)`,
@@ -1677,6 +1680,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     routeMap: allRoutes,
     apiCalls: allApiCalls,
     ...(thirdParty.length ? { externalServices: thirdParty } : {}),
+    ...(allEntryPoints.length ? { entryPoints: allEntryPoints } : {}),
     screens: allScreens,
     symbolLinks,
     componentLaunches: componentLaunches.length ? componentLaunches : undefined,
