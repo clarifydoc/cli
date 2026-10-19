@@ -11,6 +11,7 @@ Optional enhancement that starts language servers in Docker containers and queri
 | [lsp-client.ts](lsp-client.ts) | Minimal LSP JSON-RPC client — sends requests, parses responses |
 | [lsp-configs.ts](lsp-configs.ts) | Per-language Docker image + server config |
 | [docker-runner.ts](docker-runner.ts) | Spawns `docker build`, `docker run`; tracks running containers for cleanup |
+| [answers-source.ts](answers-source.ts) | A `DefinitionSource` that replays answers computed elsewhere (an editor's language servers) |
 
 ## Flow
 
@@ -21,6 +22,16 @@ Optional enhancement that starts language servers in Docker containers and queri
 5. `LspManager.shutdownAll()` — stops containers
 
 **Query positions matter.** LSP answers "the symbol at this exact position", so both phases re-read the source line to aim at the right token (`SourceLineCache` + `findTokenColumn` in [lsp-enhancer.ts](lsp-enhancer.ts)): definitions target the *leaf* identifier of the call (`svc.ListUsers` → `ListUsers`; at the expression's start column servers resolve the receiver and answer with its field/param/import declaration), references target the symbol's name on its declaration line (column 0 is a keyword like `func`/`public` — most servers return nothing there). Out-of-project answers (stdlib/framework) are dropped by `toHostPath`, so external calls record `target: null` in the ground truth. Set `CLARIFYDOC_LSP_DEBUG=1` to log raw definition responses and per-query failures.
+
+## Definition sources
+
+The passes ask a `DefinitionSource` (`initialize` → `clientFor(language)` → `shutdown`), never `LspManager` directly. `dockerDefinitionSource` is the default. An editor already runs the same servers, so it can stand in without Docker:
+
+1. `lsp-update <dir> --emit-queries q.json` — `planDefinitionQueries` writes Phase A's questions (file, 1-based line, 0-based column at the leaf token, call name, language) and starts nothing.
+2. The editor answers each with its own definition provider and writes `{ source: "editor", servers, answers: [{ file, line, column, targets: [{ file, line }] }] }` — every location it got, project-relative, `[]` for none; questions it did not get to are left out.
+3. `lsp-update <dir> --answers a.json` — `answersDefinitionSource` replays them. More than one distinct target **abstains** (two providers, an overload set: layer 2 only adds links it can stand behind); a question left out is skipped, not a miss; paths outside the project are dropped on read. The source answers no references, so Phase B does not run.
+
+Links stay `resolvedBy: "lsp"`, `strategy: "lsp-definition"` — it is a language server's answer either way, and `lsp-compare` grades them alike; `lspStats.source` says where they came from. Only the Docker source writes `lsp-ground-truth.json`: an editor run is budgeted and must not overwrite a complete capture.
 
 ## Ground truth export
 

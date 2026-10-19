@@ -159,6 +159,8 @@ program
   .option("--verbose", "Show progress and debug info", false)
   .option("--lsp-timeout <ms>", "Timeout for LSP server startup in ms", parseInt)
   .option("--project-root <path>", "Override projectRoot (otherwise read from summary)")
+  .option("--emit-queries <file>", "Write the definition questions to <file> and stop (no server starts) — for an editor to answer")
+  .option("--answers <file>", "Take definitions from <file> (answers to --emit-queries) instead of the Docker servers")
   .action(async (analysisDir: string, options) => {
     try {
       const { updateLsp } = await import("./core/lsp-updater.js");
@@ -170,8 +172,15 @@ program
         pretty: options.pretty,
         verbose: options.verbose,
         lspTimeout: options.lspTimeout,
+        ...(options.emitQueries ? { emitQueries: options.emitQueries } : {}),
+        ...(options.answers ? { answers: options.answers } : {}),
       });
+      if (result.source === "queries") {
+        console.log(`Done. ${result.queryCount} definition queries written to ${result.outputPath}`);
+        return;
+      }
       console.log(`Done. LSP enhancement written.`);
+      console.log(`  Source:  ${result.source}${result.abstained ? ` (${result.abstained} ambiguous answers abstained)` : ""}`);
       console.log(`  Servers: ${result.serversUsed.join(", ") || "(none)"}`);
       console.log(`  +Defs:   ${result.lspResolvedCount}`);
       console.log(`  +Refs:   ${result.referenceLinksCount}`);

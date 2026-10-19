@@ -1876,6 +1876,8 @@ export interface FlowHop {
 }
 
 export interface LspStats {
+  /** Where the answers came from: `docker` (our language-server images) or `editor` (the editor's own). Absent = docker. */
+  source?: string;
   serversUsed: string[];
   lspResolvedCount: number;
   referenceLinksCount: number;

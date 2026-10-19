@@ -12,6 +12,7 @@ import type {
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
 import type { DiscoveredFile } from "../core/file-discovery.js";
 import { LspManager } from "./lsp-manager.js";
+import type { DefinitionResult, ReferenceResult } from "./lsp-client.js";
 import { buildInterfaceImplMap, closestByDir, type InterfaceImplInfo } from "../core/symbol-linker.js";
 
 export interface LspEnhancerOptions {
@@ -21,10 +22,53 @@ export interface LspEnhancerOptions {
   files: DiscoveredFile[];
   verbose: boolean;
   timeout?: number;
+  /** Where definitions come from. Default: the Docker language servers (`dockerDefinitionSource`). */
+  source?: DefinitionSource;
+}
+
+/**
+ * What layer 2 asks of a language server, at a 0-based position in a
+ * project-relative file. Answers are project-relative too; a location outside
+ * the project is left out by the source, not reported.
+ */
+export interface DefinitionClient {
+  getDefinition(filePath: string, line: number, character: number): Promise<DefinitionResult[]>;
+  getReferences(filePath: string, line: number, character: number): Promise<ReferenceResult[]>;
+  readonly supportsReferences: boolean;
+  /** False when the source never put this question (a budget ran out): no record, not a miss. Absent = always asked. */
+  asked?(filePath: string, line: number, character: number): boolean;
+}
+
+/**
+ * Where the layer-2 pass gets its answers. The Docker language servers are
+ * one source; an editor that already runs the same servers is another — it
+ * answers the queries `planDefinitionQueries` lists and hands them back
+ * through `answersDefinitionSource`.
+ */
+export interface DefinitionSource {
+  /** Recorded as `lspStats.source`: `docker`, `editor`, … */
+  readonly kind: string;
+  /** Start what is needed; returns the servers that will answer (`lspStats.serversUsed`). */
+  initialize(languages: Set<Language>, files: DiscoveredFile[]): Promise<string[]>;
+  clientFor(language: Language): DefinitionClient | null;
+  shutdown(): Promise<void>;
+}
+
+/** The Docker language servers (`lsp/lsp-manager.ts`). */
+export function dockerDefinitionSource(opts: { projectRoot: string; verbose: boolean; timeout: number }): DefinitionSource {
+  const manager = new LspManager(opts);
+  return {
+    kind: "docker",
+    initialize: (languages, files) => manager.initialize(languages, files),
+    clientFor: (language) => manager.getClientForLanguage(language),
+    shutdown: () => manager.shutdownAll(),
+  };
 }
 
 export interface LspEnhancementResult {
   enhancedLinks: SymbolLink[];
+  /** The definition source's kind (`docker`, `editor`). */
+  source: string;
   serversUsed: string[];
   lspResolvedCount: number;
   referenceLinksCount: number;
@@ -169,7 +213,8 @@ async function findQueryPosition(
  */
 export async function enhanceWithLsp(options: LspEnhancerOptions): Promise<LspEnhancementResult> {
   const startTime = Date.now();
-  const { projectRoot, analyses, existingLinks, files, verbose, timeout = 60000 } = options;
+  const { projectRoot, analyses, existingLinks, files, verbose } = options;
+  const timeout = options.timeout ?? 60000;
 
   // Collect all languages present in the analyses
   const languages = new Set<Language>();
@@ -178,15 +223,16 @@ export async function enhanceWithLsp(options: LspEnhancerOptions): Promise<LspEn
   }
 
   // Initialize LSP servers
-  const manager = new LspManager({ projectRoot, verbose, timeout });
+  const source = options.source ?? dockerDefinitionSource({ projectRoot, verbose, timeout });
   let serversUsed: string[] = [];
 
   try {
-    serversUsed = await manager.initialize(languages, files);
+    serversUsed = await source.initialize(languages, files);
 
     if (serversUsed.length === 0) {
       return {
         enhancedLinks: existingLinks,
+        source: source.kind,
         serversUsed: [],
         lspResolvedCount: 0,
         referenceLinksCount: 0,
@@ -196,14 +242,14 @@ export async function enhanceWithLsp(options: LspEnhancerOptions): Promise<LspEn
       };
     }
 
-    console.log(`  LSP servers started: ${serversUsed.join(", ")}`);
+    console.log(`  LSP servers ${source.kind === "docker" ? "started" : `(${source.kind})`}: ${serversUsed.join(", ")}`);
 
     const sourceLines = new SourceLineCache(projectRoot);
 
     // Phase A: Resolve unresolved calls. Records keep every query + raw answer
     // (including misses) so the run can be exported as ground truth.
     const definitionRecords = await resolveUnresolvedCalls(
-      analyses, existingLinks, manager, sourceLines, verbose,
+      analyses, existingLinks, source, sourceLines, verbose,
     );
 
     // Derive links from the resolved records, keeping each link paired with
@@ -231,10 +277,10 @@ export async function enhanceWithLsp(options: LspEnhancerOptions): Promise<LspEn
     const definitionLinks = resolved.map((p) => p.link);
     const resolvedCount = definitionLinks.length;
 
-    // Phase B: Find references for exported symbols
-    const { referenceLinks, referenceRecords } = await findReferences(
-      analyses, existingLinks, definitionLinks, manager, sourceLines, verbose,
-    );
+    // Phase B: Find references for exported symbols — when the source can answer them.
+    const { referenceLinks, referenceRecords } = [...languages].some((l) => source.clientFor(l)?.supportsReferences)
+      ? await findReferences(analyses, existingLinks, definitionLinks, source, sourceLines, verbose)
+      : { referenceLinks: [], referenceRecords: [] };
 
     // Redirect LSP-resolved interface/field targets to the concrete implementation
     // when there's exactly one. C# OmniSharp's textDocument/definition for a call
@@ -269,6 +315,7 @@ export async function enhanceWithLsp(options: LspEnhancerOptions): Promise<LspEn
 
     return {
       enhancedLinks: deduped,
+      source: source.kind,
       serversUsed,
       lspResolvedCount: resolvedCount,
       referenceLinksCount: referenceLinks.length,
@@ -277,7 +324,7 @@ export async function enhanceWithLsp(options: LspEnhancerOptions): Promise<LspEn
       referenceRecords,
     };
   } finally {
-    await manager.shutdownAll();
+    await source.shutdown();
   }
 }
 
@@ -290,13 +337,8 @@ interface UnresolvedCall {
   language: Language;
 }
 
-async function resolveUnresolvedCalls(
-  analyses: FileAnalysis[],
-  existingLinks: SymbolLink[],
-  manager: LspManager,
-  sourceLines: SourceLineCache,
-  verbose: boolean,
-): Promise<LspDefinitionRecord[]> {
+/** The calls the text linker left unresolved, in a stable order. */
+function collectUnresolvedCalls(analyses: FileAnalysis[], existingLinks: SymbolLink[]): UnresolvedCall[] {
   // Build set of already-resolved calls
   const resolvedSet = new Set<string>();
   for (const link of existingLinks) {
@@ -366,6 +408,45 @@ async function resolveUnresolvedCalls(
     }
   }
 
+  return unresolved;
+}
+
+/** One position the layer-2 pass would ask a definition for (1-based line, 0-based column, as in the records). */
+export interface DefinitionQuery {
+  file: string;
+  line: number;
+  column: number;
+  callName: string;
+  language: Language;
+}
+
+/**
+ * The definition questions layer 2 would put to a language server for this
+ * analysis — for a source that answers them elsewhere (the editor) and hands
+ * the answers back through `answersDefinitionSource`. Starts nothing.
+ */
+export async function planDefinitionQueries(projectRoot: string, analyses: FileAnalysis[], existingLinks: SymbolLink[]): Promise<DefinitionQuery[]> {
+  const sourceLines = new SourceLineCache(projectRoot);
+  const out: DefinitionQuery[] = [];
+  const seen = new Set<string>();
+  for (const item of collectUnresolvedCalls(analyses, existingLinks)) {
+    const pos = await findQueryPosition(sourceLines, item.sourceFile, item.call);
+    const key = `${item.sourceFile}:${pos.line}:${pos.column}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ file: item.sourceFile, line: pos.line, column: pos.column, callName: item.call.name, language: item.language });
+  }
+  return out;
+}
+
+async function resolveUnresolvedCalls(
+  analyses: FileAnalysis[],
+  existingLinks: SymbolLink[],
+  source: DefinitionSource,
+  sourceLines: SourceLineCache,
+  verbose: boolean,
+): Promise<LspDefinitionRecord[]> {
+  const unresolved = collectUnresolvedCalls(analyses, existingLinks);
   console.log(`  LSP: ${unresolved.length} unresolved calls to query`);
 
   // Query LSP for each unresolved call (with concurrency limit). Records are
@@ -382,7 +463,7 @@ async function resolveUnresolvedCalls(
     while (nextIndex < unresolved.length) {
       const idx = nextIndex++;
       const item = unresolved[idx]!;
-      const client = manager.getClientForLanguage(item.language);
+      const client = source.clientFor(item.language);
       if (!client) {
         ticker.tick();
         continue;
@@ -392,6 +473,10 @@ async function resolveUnresolvedCalls(
       // at the expression's start column servers resolve the RECEIVER token and
       // answer with its field/param/import declaration instead of the method.
       const pos = await findQueryPosition(sourceLines, item.sourceFile, item.call);
+      if (client.asked && !client.asked(item.sourceFile, pos.line - 1, pos.column)) {
+        ticker.tick();
+        continue;
+      }
 
       const record: LspDefinitionRecord = {
         sourceFile: item.sourceFile,
@@ -446,7 +531,7 @@ async function findReferences(
   analyses: FileAnalysis[],
   existingLinks: SymbolLink[],
   definitionLinks: SymbolLink[],
-  manager: LspManager,
+  source: DefinitionSource,
   sourceLines: SourceLineCache,
   verbose: boolean,
 ): Promise<{ referenceLinks: SymbolLink[]; referenceRecords: LspReferenceRecord[] }> {
@@ -516,7 +601,7 @@ async function findReferences(
     while (nextIndex < symbols.length) {
       const idx = nextIndex++;
       const sym = symbols[idx]!;
-      const client = manager.getClientForLanguage(sym.language);
+      const client = source.clientFor(sym.language);
       if (!client || !client.supportsReferences) {
         ticker.tick();
         continue;

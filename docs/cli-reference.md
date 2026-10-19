@@ -177,6 +177,11 @@ reported as stale and left out; run `lsp-update` again.
 | `--lsp-timeout <ms>` | 60000 per server | Language-server startup timeout. |
 | `--pretty` / `--no-pretty` | `--pretty` | JSON formatting. |
 | `--verbose` | off | Progress and debug output. |
+| `--emit-queries <file>` | — | Write the definition questions (file, line, column at the called name, language) to `<file>` and stop. No server starts. |
+| `--answers <file>` | — | Take the definitions from `<file>` instead of Docker: `{ "source": "editor", "answers": [{ "file", "line", "column", "targets": [{ "file", "line" }] }] }`. An answer with more than one distinct target is left out, as are targets outside the project. References are not asked, and `lsp-ground-truth.json` is not written. |
+
+The last two let an editor that already runs the project's language servers stand in for Docker: it answers
+the emitted questions with its own definition provider and hands them back.
 
 Servers exist for TypeScript/JavaScript, Python, Java, Kotlin, C# and VB.NET, Go, Rust, Ruby, PHP and
 Pascal/Delphi. Images build on first use and are cached; the first run of a language is slow.

@@ -84,6 +84,10 @@ export { scanSecurity, maskSecrets } from "./core/security-scanner.js";
 // holds an analysis and should not re-run one to export its findings.
 export { buildSarif, type SarifLog } from "./core/sarif.js";
 export { TOOL_VERSION } from "./core/version.js";
+// Layer 2 with another definition source (an editor's language servers).
+export { enhanceWithLsp, dockerDefinitionSource, planDefinitionQueries, type DefinitionSource, type DefinitionClient, type DefinitionQuery } from "./lsp/lsp-enhancer.js";
+export { answersDefinitionSource, readDefinitionAnswers, type DefinitionAnswerFile, type DefinitionAnswer } from "./lsp/answers-source.js";
+export { updateLsp, type UpdateLspOptions, type UpdateLspResult } from "./core/lsp-updater.js";
 export { detectPatterns } from "./core/pattern-detector.js";
 export { detectDuplicates } from "./core/duplication-detector.js";
 export { classifyFileLayers, detectLayerViolations } from "./core/layer-analyzer.js";

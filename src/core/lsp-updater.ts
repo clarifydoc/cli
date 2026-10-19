@@ -1,4 +1,4 @@
-import { readFile } from "fs/promises";
+import { readFile, writeFile } from "fs/promises";
 import { resolve, join } from "path";
 import type {
   FileAnalysis,
@@ -31,6 +31,13 @@ export interface UpdateLspOptions {
   pretty?: boolean;
   verbose?: boolean;
   lspTimeout?: number;
+  /**
+   * Write the definition questions layer 2 would ask to this file and stop —
+   * no server starts. An editor answers them with its own language servers.
+   */
+  emitQueries?: string;
+  /** Answer from this file (`DefinitionAnswerFile`) instead of starting the Docker servers. */
+  answers?: string;
 }
 
 /**
@@ -39,6 +46,12 @@ export interface UpdateLspOptions {
  */
 export interface UpdateLspResult {
   outputPath: string;
+  /** Where the answers came from: `docker`, `editor`, … (`queries` for `emitQueries`). */
+  source: string;
+  /** Questions the source declined because its answers disagreed. */
+  abstained?: number;
+  /** Questions written (`emitQueries`). */
+  queryCount?: number;
   serversUsed: string[];
   lspResolvedCount: number;
   referenceLinksCount: number;
@@ -91,8 +104,19 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
   }));
 
   // 3. Run LSP enhancement
-  const { enhanceWithLsp } = await import("../lsp/lsp-enhancer.js");
+  const { enhanceWithLsp, planDefinitionQueries } = await import("../lsp/lsp-enhancer.js");
   const existingLinks = summary.symbolLinks ?? [];
+  if (options.emitQueries) {
+    const queries = await planDefinitionQueries(projectRoot, perFileAnalyses, existingLinks);
+    const outputPath = resolve(options.emitQueries);
+    await writeFile(outputPath, JSON.stringify({ projectRoot, queries }, null, options.pretty ? 2 : undefined));
+    return { outputPath, source: "queries", serversUsed: [], lspResolvedCount: 0, referenceLinksCount: 0, elapsedMs: Date.now() - startTime, queryCount: queries.length };
+  }
+  let answers: (import("../lsp/lsp-enhancer.js").DefinitionSource & { abstained(): number }) | undefined;
+  if (options.answers) {
+    const { answersDefinitionSource, readDefinitionAnswers } = await import("../lsp/answers-source.js");
+    answers = answersDefinitionSource(await readDefinitionAnswers(resolve(options.answers)));
+  }
   const lspResult = await enhanceWithLsp({
     projectRoot,
     analyses: perFileAnalyses,
@@ -100,6 +124,7 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
     files: discoveredFiles,
     verbose,
     timeout: options.lspTimeout,
+    ...(answers ? { source: answers } : {}),
   });
 
   // 4. Re-derive LSP-dependent fields
@@ -128,6 +153,7 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
     linkGraph,
     blastRadius,
     lspStats: {
+      source: lspResult.source,
       serversUsed: lspResult.serversUsed,
       lspResolvedCount: lspResult.lspResolvedCount,
       referenceLinksCount: lspResult.referenceLinksCount,
@@ -140,13 +166,17 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
   const outputPath = await writeLspEnhancement(enhancement, outputOpts);
 
   // 6. Export the raw query/answer log alongside the merged enhancement, so
-  // the text linker can be optimized against it.
-  if (lspResult.serversUsed.length > 0) {
+  // the text linker can be optimized against it. Only the Docker servers'
+  // log: another source's answers are budgeted and editor-dependent, and must
+  // not overwrite a complete capture.
+  if (lspResult.serversUsed.length > 0 && lspResult.source === "docker") {
     await writeLspGroundTruth(projectRoot, lspResult, outputOpts);
   }
 
   return {
     outputPath,
+    source: lspResult.source,
+    ...(answers ? { abstained: answers.abstained() } : {}),
     serversUsed: lspResult.serversUsed,
     lspResolvedCount: lspResult.lspResolvedCount,
     referenceLinksCount: lspResult.referenceLinksCount,

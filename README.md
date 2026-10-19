@@ -148,7 +148,9 @@ clarifydoc schema                      # Print every field of the per-file JSON 
 clarifydoc mcp [path]                  # Serve the analysis to an AI agent over MCP (stdio)
 ```
 
-`lsp-update` writes `lsp-enhancement.json` alongside `project-summary.json`; `report` reads the summary and emits `report.html`.
+`lsp-update` writes `lsp-enhancement.json` alongside `project-summary.json` (`--emit-queries <file>` writes the
+definition questions instead, for an editor's language servers to answer; `--answers <file>` merges those answers
+without Docker); `report` reads the summary and emits `report.html`.
 Every command's options are in the [CLI reference](docs/cli-reference.md).
 
 ## Supported languages
