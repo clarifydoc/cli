@@ -218,10 +218,11 @@ program
   .option("--json", "Print the raw JSON result", false)
   .option("--md", "Print a markdown summary (PR-comment ready)", false)
   .option("--author <name>", "The change's author, left out of the suggested reviewers (default: git config user.name)")
+  .option("--analysis-dir <dir>", "Exact directory containing project-summary.json (overrides --output)")
   .action(async (path: string, options) => {
     const projectRoot = resolve(path);
     const projectName = projectRoot.replace(/\\/g, "/").split("/").pop()!;
-    const analysisDir = resolve(options.output, projectName);
+    const analysisDir = options.analysisDir ? resolve(options.analysisDir) : resolve(options.output, projectName);
     try {
       const { loadReportSummary } = await import("./core/report-payload.js");
       let summary;
@@ -503,6 +504,7 @@ program
   .description("Render an analysis as committed artifacts: ARCHITECTURE.md, DATA-MODEL.md, FLOWS.md, Mermaid diagrams, GraphML, Cypher")
   .argument("<path>", "Path to project root")
   .option("-o, --output <dir>", "Analysis output directory (same value as `analyze -o`)", ".clarifydoc")
+  .option("--analysis-dir <dir>", "Exact directory containing project-summary.json (overrides --output)")
   .option("--format <names...>", "Formats to render (file names, e.g. ARCHITECTURE.md er.mmd files.graphml); default: the three Markdown documents")
   .option("--out-dir <dir>", "Write the files here (default: print one format to stdout, or write several to the current directory)")
   .option("--list", "List the formats", false)
@@ -514,7 +516,7 @@ program
     }
     const projectRoot = resolve(path);
     const projectName = projectRoot.replace(/\\/g, "/").split("/").pop()!;
-    const analysisDir = resolve(options.output, projectName);
+    const analysisDir = options.analysisDir ? resolve(options.analysisDir) : resolve(options.output, projectName);
     try {
       const { loadReportSummary } = await import("./core/report-payload.js");
       let summary;
