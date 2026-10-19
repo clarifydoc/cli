@@ -159,3 +159,21 @@ def embed(text):
     ]);
   });
 });
+
+describe("Python api-call — the json body", () => {
+  it("types a json= dict literal or a local bound to one", async () => {
+    const src = `import requests
+
+def create(name):
+    payload = {"title": "t", "count": 2, **extra}
+    requests.post("/api/items", json={"name": name, "price": 9.5, "tags": ["a"], "active": True})
+    requests.put("/api/items/1", json=payload)
+`;
+    const tree = await parseSource(src, "python" as never, "x.py");
+    const calls = new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call");
+    expect(calls.map((c) => c.requestBody)).toEqual([
+      { type: "object", properties: { name: {}, price: { type: "number" }, tags: { type: "array", items: { type: "string" } }, active: { type: "boolean" } } },
+      { type: "object", properties: { title: { type: "string" }, count: { type: "integer" } }, additionalProperties: true },
+    ]);
+  });
+});

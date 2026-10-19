@@ -1,6 +1,6 @@
 import type { Node } from "web-tree-sitter";
 import { dbAccessFor, dbVerbTable, sqlVerbAccess } from "../shared/db-access.js";
-import type { DataSourceInfo, Language } from "../../../types/analysis.js";
+import type { DataSourceInfo, JsonSchemaNode, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { tableFrom } from "../shared/sql-string-sources.js";
 
@@ -72,11 +72,13 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
         // requests.get(url), httpx.post(url), session.get("/api/x")
         const http = httpCall(fn!, node);
         if (http) {
+          const body = jsonBody(node);
           sources.push(this.ds({
             kind: "api-call",
             name: http.name,
             target: http.target,
             line: node.startPosition.row + 1,
+            ...(body ? { requestBody: body } : {}),
           }));
         }
 
@@ -294,6 +296,62 @@ function httpCall(fn: Node, call: Node): { name: string; target: string | null }
     if (target && (target.includes("/") || /^https?:/i.test(target))) return { name: leaf, target };
   }
   return null;
+}
+
+/**
+ * The body a `requests`/`httpx` call states as `json={...}` (a dict literal,
+ * or a name bound to one in the enclosing function), typed by literal values.
+ */
+function jsonBody(call: Node): JsonSchemaNode | null {
+  let value: Node | null = null;
+  for (const a of call.childForFieldName("arguments")?.namedChildren ?? []) {
+    if (a.type === "keyword_argument" && a.childForFieldName("name")?.text === "json") value = a.childForFieldName("value");
+  }
+  if (value?.type === "identifier") value = pyLocalValue(value);
+  return value?.type === "dictionary" ? dictSchema(value, 0) : null;
+}
+
+function dictSchema(d: Node, depth: number): JsonSchemaNode {
+  const properties: Record<string, JsonSchemaNode> = {};
+  let open = false;
+  for (const c of d.namedChildren) {
+    if (c.type === "pair") {
+      const key = pyStringLiteral(c.childForFieldName("key") ?? undefined);
+      if (key !== null) properties[key] = pyValueSchema(c.childForFieldName("value"), depth);
+      else open = true;
+    } else if (c.type === "dictionary_splat") open = true;
+  }
+  return { type: "object", properties, ...(open ? { additionalProperties: true } : {}) };
+}
+
+function pyValueSchema(v: Node | null, depth: number): JsonSchemaNode {
+  if (!v || depth > 4) return {};
+  switch (v.type) {
+    case "string": return { type: "string" };
+    case "integer": return { type: "integer" };
+    case "float": return { type: "number" };
+    case "true": case "false": return { type: "boolean" };
+    case "none": return { nullable: true };
+    case "list": { const f = v.namedChildren[0]; return { type: "array", ...(f ? { items: pyValueSchema(f, depth + 1) } : {}) }; }
+    case "dictionary": return dictSchema(v, depth + 1);
+    default: return {};
+  }
+}
+
+/** The value last assigned to a bare name earlier in the enclosing function (or module). */
+function pyLocalValue(name: Node): Node | null {
+  let scope: Node | null = name.parent;
+  while (scope && scope.type !== "function_definition" && scope.type !== "module") scope = scope.parent;
+  if (!scope) return null;
+  let found: Node | null = null;
+  const visit = (n: Node): void => {
+    if (n.startIndex >= name.startIndex) return;
+    if (n !== scope && n.type === "function_definition") return;
+    if (n.type === "assignment" && n.childForFieldName("left")?.text === name.text) found = n.childForFieldName("right");
+    for (const c of n.namedChildren) visit(c);
+  };
+  visit(scope);
+  return found;
 }
 
 /** Content of a string literal or f-string (`{holes}` kept), else null. */

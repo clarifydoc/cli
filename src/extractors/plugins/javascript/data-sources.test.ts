@@ -784,3 +784,27 @@ async function health() {
     expect(calls.map((c) => c.target)).toEqual(["${path}", "/api/health"]);
   });
 });
+
+describe("JS api-call — the body a call sends", () => {
+  it("types an object literal body from its values, through JSON.stringify and a local const", async () => {
+    const calls = await apiCallsOf(`
+async function save(name: string, extra: object) {
+  await axios.post("/api/users", { name, age: 3, score: 1.5, admin: false, tags: ["a"], address: { city: "x" } });
+  const dto = { title: "t", ...extra };
+  await fetch("/api/posts", { method: "POST", body: JSON.stringify(dto) });
+  await axios.get("/api/users", { params: { q: 1 } });
+  await http.request({ method: "PUT", url: "/api/items/1", data: { qty: 2 } });
+}`);
+    const body = Object.fromEntries(calls.map((c) => [`${c.name} ${c.target}`, c.requestBody]));
+    expect(body["post /api/users"]).toEqual({
+      type: "object",
+      properties: {
+        name: {}, age: { type: "integer" }, score: { type: "number" }, admin: { type: "boolean" },
+        tags: { type: "array", items: { type: "string" } }, address: { type: "object", properties: { city: { type: "string" } } },
+      },
+    });
+    expect(body["post /api/posts"]).toEqual({ type: "object", properties: { title: { type: "string" } }, additionalProperties: true });
+    expect(body["get /api/users"]).toBeUndefined();
+    expect(body["put /api/items/1"]).toEqual({ type: "object", properties: { qty: { type: "integer" } } });
+  });
+});

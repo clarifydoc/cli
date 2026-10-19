@@ -1,5 +1,5 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { Confidence, DataSourceInfo, CallInfo, FileAnalysis, Language } from "../../../types/analysis.js";
+import type { Confidence, DataSourceInfo, CallInfo, FileAnalysis, JsonSchemaNode, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor, type ProjectApiCall } from "../../data-sources/base.js";
 import type { ProjectContext } from "../../../types/project.js";
 import { resolveUrlBuilders } from "./url-builders.js";
@@ -655,6 +655,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
               ...(resolved.confidence === "AMBIGUOUS"
                 ? { targetConfidence: resolved.confidence }
                 : {}),
+              ...bodyOf(callName, positional, firstArg),
             }));
             emittedApiCall = true;
           }
@@ -958,11 +959,14 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           // hey-api's `(options?.client ?? client).get(…)`): its base is prepended later.
           const callFn = node.parent?.type === "arguments" ? node.parent.parent?.childForFieldName("function") : null;
           const client = callFn?.type === "member_expression" ? memberRoot(callFn) : null;
+          const descriptorBody = objectPropValue(node, "data") ?? objectPropValue(node, "json") ?? objectPropValue(node, "body");
+          const descriptorSchema = descriptorBody ? bodySchema(descriptorBody) : null;
           sources.push(this.ds({
             kind: "api-call",
             name: method ?? "request",
             target: url,
             line: node.startPosition.row + 1,
+            ...(descriptorSchema ? { requestBody: descriptorSchema } : {}),
             ...(urls.length > 1 ? { targetAlternatives: urls.slice(1) } : {}),
             ...(client && !HTTP_ROOTS.has(client.toLowerCase()) && !GLOBAL_RECEIVERS.has(client) ? { client } : {}),
           }));
@@ -1029,6 +1033,108 @@ function literalString(node: Node | null): string | null {
  * The literal HTTP verb in a request's options argument — an object, or a
  * helper call wrapping one (`json({ ...opts, method: "POST" })`) — else null.
  */
+/** Verbs whose second argument is the body (`axios.post(url, data)`); `get`/`delete` take config there. */
+const BODY_VERBS = new Set(["post", "put", "patch"]);
+
+/**
+ * The body a call states: the second argument of a body verb on a client
+ * (`axios.post(url, data, config)`), or `body`/`data`/`json` in fetch-style
+ * options (`fetch(url, { method: "POST", body: JSON.stringify(dto) })`).
+ */
+function bodyOf(verb: string, positional: readonly Node[], urlArg: Node | null): { requestBody?: JsonSchemaNode } {
+  // Node wrappers are fresh per access: compare positions, not identity.
+  const i = urlArg ? positional.findIndex((p) => p.startIndex === urlArg.startIndex) : 0;
+  const after = positional[i + 1];
+  if (!after) return {};
+  let value: Node | null = null;
+  if (BODY_VERBS.has(verb.toLowerCase()) && !isOptionsObject(after)) value = after;
+  else if (after.type === "object") value = objectPropValue(after, "body") ?? objectPropValue(after, "data") ?? objectPropValue(after, "json");
+  const schema = value ? bodySchema(value) : null;
+  return schema ? { requestBody: schema } : {};
+}
+
+/** A fetch-style options object (`{ method, headers, body }`) rather than a body. */
+function isOptionsObject(n: Node): boolean {
+  return n.type === "object" && ["method", "headers", "body", "credentials", "signal"].some((k) => hasProp(n, k)) && !hasProp(n, "data");
+}
+
+/**
+ * A request body's schema from what the source states: an object literal
+ * (through `JSON.stringify(…)`, a local `const` initializer, `as` casts),
+ * typed by its literal values; anything else yields null. A spread makes the
+ * object open; a value that cannot be typed is `{}`.
+ */
+function bodySchema(n: Node, depth = 0): JsonSchemaNode | null {
+  if (depth > 4) return {};
+  let v: Node = n;
+  while (v.type === "parenthesized_expression" || v.type === "as_expression" || v.type === "satisfies_expression" || v.type === "non_null_expression") {
+    v = v.namedChild(0) ?? v;
+    if (v === n) break;
+  }
+  if (v.type === "call_expression" && v.childForFieldName("function")?.text === "JSON.stringify") {
+    const inner = v.childForFieldName("arguments")?.namedChildren[0];
+    return inner ? bodySchema(inner, depth + 1) : null;
+  }
+  if (v.type === "identifier") {
+    const init = localInitializer(v);
+    return init && init.type === "object" ? bodySchema(init, depth + 1) : null;
+  }
+  if (v.type !== "object") return null;
+  const properties: Record<string, JsonSchemaNode> = {};
+  let open = false;
+  for (const c of v.namedChildren) {
+    if (c.type === "shorthand_property_identifier") properties[c.text] = typeOfValue(localInitializer(c), depth);
+    else if (c.type === "pair") {
+      const k = c.childForFieldName("key");
+      const key = k ? (k.type === "string" ? stripQuotes(k.text) : k.type === "property_identifier" ? k.text : null) : null;
+      if (key) properties[key] = typeOfValue(c.childForFieldName("value"), depth);
+      else open = true;
+    } else if (c.type === "spread_element") open = true;
+  }
+  return { type: "object", properties, ...(open ? { additionalProperties: true } : {}) };
+}
+
+/** A literal value's schema; `{}` for what the source does not type. */
+function typeOfValue(v: Node | null, depth: number): JsonSchemaNode {
+  if (!v) return {};
+  switch (v.type) {
+    case "string":
+    case "template_string":
+      return { type: "string" };
+    case "number":
+      return /[.eE]/.test(v.text) ? { type: "number" } : { type: "integer" };
+    case "true":
+    case "false":
+      return { type: "boolean" };
+    case "null":
+      return { nullable: true };
+    case "array": {
+      const first = v.namedChildren[0];
+      return { type: "array", ...(first ? { items: typeOfValue(first, depth + 1) } : {}) };
+    }
+    case "object":
+      return bodySchema(v, depth + 1) ?? {};
+    default:
+      return {};
+  }
+}
+
+/** The initializer of a `const`/`let` of this name declared in an enclosing scope before `at`. */
+function localInitializer(at: Node): Node | null {
+  const name = at.text;
+  for (let p: Node | null = at.parent; p; p = p.parent) {
+    if (!FUNCTION_SCOPES.has(p.type) && p.type !== "program" && p.type !== "statement_block") continue;
+    for (const stmt of p.type === "statement_block" || p.type === "program" ? p.namedChildren : p.childForFieldName("body")?.namedChildren ?? []) {
+      if (stmt.startIndex >= at.startIndex) break;
+      if (stmt.type !== "lexical_declaration" && stmt.type !== "variable_declaration") continue;
+      for (const d of stmt.namedChildren) {
+        if (d.type === "variable_declarator" && d.childForFieldName("name")?.text === name) return d.childForFieldName("value");
+      }
+    }
+  }
+  return null;
+}
+
 function optionsMethod(arg: Node | undefined): string | null {
   let obj = arg ?? null;
   if (obj?.type === "call_expression") obj = obj.childForFieldName("arguments")?.namedChildren[0] ?? null;

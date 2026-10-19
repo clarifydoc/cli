@@ -1176,6 +1176,14 @@ export interface DataSourceInfo {
    */
   targetConfidence?: Confidence;
   /**
+   * For `api-call`: the body the call sends, as far as the call site states it
+   * — an object literal or a local constant holding one (`axios.post(url,
+   * { name, email })`, `fetch(url, { body: JSON.stringify(dto) })`). Property
+   * types come from literal values; a value the extractor cannot type is an
+   * empty schema. `additionalProperties: true` when a spread may add more.
+   */
+  requestBody?: JsonSchemaNode;
+  /**
    * For an api-call: the URL's leading base was a runtime value no pass could
    * resolve (`this.baseUrl`, `environment.apiBaseUrl`, a client's base), so it
    * was split off and `target` holds the app-relative rest (`/series/{}`). The
