@@ -286,6 +286,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.gqlScanned = false;
     this.imports = null;
     this.collectionReceivers = null;
+    this.routerReceivers = null;
     this.clientKinds = null;
   }
 
@@ -513,6 +514,19 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     return this.collectionReceivers.has(name);
   }
 
+  /** Receivers this file makes a server router or app: `const reports = Router()`, `const app = new Hono()`. */
+  private routerReceivers: Set<string> | null = null;
+
+  private serverRouterReceivers(): Set<string> {
+    if (!this.routerReceivers) {
+      this.routerReceivers = new Set();
+      if (/Router|express|Hono|Koa|fastify|Elysia/.test(this.sourceText)) {
+        for (const m of this.sourceText.matchAll(SERVER_ROUTER_INIT_RE)) this.routerReceivers.add(m[1]!);
+      }
+    }
+    return this.routerReceivers;
+  }
+
   /** Whether an object literal is an argument of a call to an HTTP client (`http.request({…})`, `axios({…})`). */
   private passedToHttpClient(obj: Node): boolean {
     if (obj.parent?.type !== "arguments") return false;
@@ -569,7 +583,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         // `app.get("/x", handler)` / `router.post(...)` are inbound route
         // definitions (already captured as routes), not outbound calls — exclude.
         // So is a route decorator: NestJS `@Get('public/:id')` is a call too.
-        if ((isRoot || isVerb) && fn && !isServerRouteDef(fn, node) && node.parent?.type !== "decorator") {
+        if ((isRoot || isVerb) && fn && !isServerRouteDef(fn, node, this.serverRouterReceivers()) && node.parent?.type !== "decorator") {
           const args = node.childForFieldName("arguments");
           let firstArg = args && args.childCount > 1 ? args.child(1) : null;
           // Bare HTTP verbs (`get`/`post`/...) collide with `Map.get`,
@@ -1416,16 +1430,19 @@ function calleeLeaf(fn: Node | null): string | null {
 /** Object names that denote a server router, not an HTTP client. */
 const SERVER_ROUTER_OBJECTS = new Set(["app", "router", "route", "server", "Router"]);
 
+/** `const x = Router()`, `express.Router()`, `new Router()`, `express()`, `new Hono()`, `new Koa()`, `fastify()`, `new Elysia()`. */
+const SERVER_ROUTER_INIT_RE = /(?:^|[\s,;({])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;\n]+)?=\s*(?:new\s+)?(?:(?:express|koa|Koa)\s*\.\s*)?(?:Router|express|Hono|Koa|fastify|Fastify|Elysia)\s*(?:<[^>\n]*>)?\s*\(/g;
+
 /**
  * Whether a verb call is a server-side route/middleware registration
  * (`app.get("/x", handler)`, `router.post(...)`) rather than an outbound call.
  * Signals: the receiver is a known router object, or a handler function is
  * passed as an argument (route handler / middleware).
  */
-function isServerRouteDef(fn: Node, callNode: Node): boolean {
+function isServerRouteDef(fn: Node, callNode: Node, routers: Set<string>): boolean {
   if (fn.type !== "member_expression") return false;
-  const objRoot = (fn.childForFieldName("object")?.text ?? "").split(/[.[]/)[0];
-  if (SERVER_ROUTER_OBJECTS.has(objRoot)) return true;
+  const objRoot = (fn.childForFieldName("object")?.text ?? "").split(/[.[]/)[0]!;
+  if (SERVER_ROUTER_OBJECTS.has(objRoot) || routers.has(objRoot)) return true;
   // A receiver named like an Express router/route (`productRouter.post(...)`,
   // `userRoute.get(...)`, `apiRoutes.delete(...)`) is an inbound route
   // registration even when the handler is an imported identifier
@@ -1436,16 +1453,16 @@ function isServerRouteDef(fn: Node, callNode: Node): boolean {
   const args = callNode.childForFieldName("arguments");
   if (args) {
     for (const a of args.namedChildren) {
-      if (
-        a.type === "arrow_function" ||
-        a.type === "function_expression" ||
-        a.type === "function"
-      ) {
-        return true;
-      }
+      if (isFunctionNode(a)) return true;
+      // A wrapped handler: `asyncHandler(async (req, res) => …)`, `catchAsync(function (…) {…})`.
+      if (a.type === "call_expression" && (a.childForFieldName("arguments")?.namedChildren ?? []).some(isFunctionNode)) return true;
     }
   }
   return false;
+}
+
+function isFunctionNode(n: Node): boolean {
+  return n.type === "arrow_function" || n.type === "function_expression" || n.type === "function";
 }
 
 /** Packages whose clients call an API (LLM, payment, cloud, chat), never a database. */

@@ -102,6 +102,19 @@ userRoute.delete("/:id", removeUser);`;
     expect(await apiCallsOf(SRC)).toHaveLength(0);
   });
 
+  it("does not treat a verb on a router the file makes, or a wrapped handler, as an outbound call", async () => {
+    // \`const reports = Router()\` names no router, and \`asyncHandler(async …)\`
+    // passes no function directly: both were read as a GET to "/summary".
+    const SRC = `const reports = Router();
+const app = new Hono<Env>();
+reports.get('/summary', asyncHandler(async (req, res) => res.json({})));
+app.get('/health', (c) => c.text('ok'));
+items.get('/list', catchAsync(function (req, res) { res.end(); }));
+const api = axios.create({ baseURL: '/api' });
+api.get('/orders');`;
+    expect((await apiCallsOf(SRC)).map((c) => c.target)).toEqual(["/orders"]);
+  });
+
   it("names the default instance of a generated SDK call on `(options?.client ?? client)`", async () => {
     const calls = await apiCallsOf(`export const labelsList = (options) => (options?.client ?? client).get({ url: '/labels', ...options });`);
     expect(calls.map((c) => [c.target, c.client])).toEqual([["/labels", "client"]]);
