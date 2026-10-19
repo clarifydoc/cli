@@ -16,6 +16,11 @@ interface ReachRule {
 
 const REACH_FOR: ReachRule[] = [
   {
+    question: "What do I need to know before changing this route, screen or function?",
+    tools: "clarifydoc_explain",
+    why: "one call packs its contract, callers, the data it reaches, its source and its blast radius into a token budget, and names the calls for what did not fit",
+  },
+  {
     question: "Who calls this endpoint, and from which screen?",
     tools: "clarifydoc_routes",
     why: "it follows calls across the HTTP boundary — through client base URLs, proxies and gateways — where grep sees `\"/owners\"` and `[Route(\"[controller]\")]` as unrelated strings",

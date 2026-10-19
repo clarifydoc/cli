@@ -74,6 +74,7 @@ describe("clarifydoc MCP tools — react fixture", () => {
       "clarifydoc_architecture",
       "clarifydoc_impact",
       "clarifydoc_analyze",
+      "clarifydoc_explain",
     ]);
     expect(tools.filter((t) => !t.annotations.readOnlyHint).map((t) => t.name)).toEqual([
       "clarifydoc_analyze",
@@ -617,5 +618,43 @@ describe("clarifydoc MCP tools — delphi fixture (entry forms)", () => {
     expect(listed.map((s) => s.filePath).sort()).toEqual(startup.map((s) => s.filePath).sort());
     expect(text.indexOf(`(${main.filePath})`)).toBeLessThan(Math.min(...listed.filter((s) => s !== main).map((s) => text.indexOf(`(${s.filePath})`)), Infinity));
     expect(text).toContain("startup: main");
+  });
+});
+
+describe("clarifydoc_explain — backend fixture", () => {
+  const { server } = serverFor("sample-backend");
+
+  it("packs a route's contract, what it reaches and its risk, in that order", async () => {
+    const r = await call(server, "clarifydoc_explain", { subject: "GET /api/users/:id" });
+    expect(r.isError).toBe(false);
+    expect(r.text).toMatch(/^# GET \/api\/users\/:id — /);
+    const order = ["## Contract and callers", "## What it reaches", "## Risk"].map((h) => r.text.indexOf(h));
+    expect(order.every((i) => i > 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(r.text).not.toMatch(/^Next: /m);
+  });
+
+  it("asks which route when a path names several, and names what did not fit", async () => {
+    const many = await call(server, "clarifydoc_explain", { subject: "/api/users" });
+    expect(many.text).toMatch(/matches \d+ routes — pick one/);
+    expect(many.text).toContain('clarifydoc_explain subject="GET /api/users"');
+    const reaches = await call(server, "clarifydoc_explain", { subject: "GET /api/users/:id" });
+    expect(reaches.text).toMatch(/## What it reaches\n\n(?!No call-graph)/);
+  });
+
+  it("explains a function by its source and callers", async () => {
+    const r = await call(server, "clarifydoc_explain", { subject: "getUserById" });
+    expect(r.text).toMatch(/## Source/);
+    expect(r.text).toMatch(/## Callers/);
+  });
+});
+
+describe("clarifydoc_explain — a budget it overflows", () => {
+  const { server } = serverFor("sample-fullstack-cqrs");
+
+  it("cuts to maxTokens and names the calls for the rest", async () => {
+    const r = await call(server, "clarifydoc_explain", { subject: "GET /Owners", maxTokens: 500 });
+    expect(Math.ceil(r.text.length / 4)).toBeLessThanOrEqual(500 + 120);
+    expect(r.text).toMatch(/Next \(did not fit maxTokens=500\):\n- clarifydoc_/);
   });
 });

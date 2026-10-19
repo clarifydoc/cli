@@ -280,6 +280,7 @@ instead of interleaving with it.
 | `clarifydoc_data_flows` | Route/screen → data effect rows (e.g. which endpoints reach a DB write) |
 | `clarifydoc_health` | Score plus security, layer violations, complexity, duplicates, hotspots, dead code, refactor pressure |
 | `clarifydoc_architecture` | Folder dependencies with instability, communities, hub files, import cycles, surprising links, files that change together |
+| `clarifydoc_explain` | One route, screen, function or file packed into a token budget: contract and callers, what it reaches, source, blast radius |
 | `clarifydoc_impact` | Impact of the current git diff: screens, routes, entities, tests to run; the changed functions and their callers, signature breaks, owners and reviewers, files usually changed with it |
 | `clarifydoc_analyze` | Re-run the analysis (incremental). The only tool that writes anything |
 

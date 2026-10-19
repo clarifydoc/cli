@@ -21,6 +21,7 @@ import { extractTool } from "./tools/extract.js";
 import { dataFlowsTool, dataModelTool } from "./tools/data.js";
 import { INSTRUCTIONS } from "./guidance.js";
 import { WORKFLOW_PROMPTS } from "./prompts.js";
+import { explainTool } from "./tools/explain.js";
 
 export const MCP_SERVER_NAME = "clarifydoc";
 
@@ -145,6 +146,8 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
     impactTool(ctx),
     analyzeTool(ctx),
   ];
+  // Composed from the tools above, so it says nothing they would not.
+  tools.push(explainTool(ctx, tools));
 
   const resources: McpResource[] = [
     {
