@@ -499,6 +499,50 @@ program
   });
 
 program
+  .command("export")
+  .description("Render an analysis as committed artifacts: ARCHITECTURE.md, DATA-MODEL.md, FLOWS.md, Mermaid diagrams, GraphML, Cypher")
+  .argument("<path>", "Path to project root")
+  .option("-o, --output <dir>", "Analysis output directory (same value as `analyze -o`)", ".clarifydoc")
+  .option("--format <names...>", "Formats to render (file names, e.g. ARCHITECTURE.md er.mmd files.graphml); default: the three Markdown documents")
+  .option("--out-dir <dir>", "Write the files here (default: print one format to stdout, or write several to the current directory)")
+  .option("--list", "List the formats", false)
+  .action(async (path: string, options) => {
+    const { EXPORT_FORMATS, renderExport } = await import("./export/index.js");
+    if (options.list) {
+      for (const f of EXPORT_FORMATS) console.log(`${f.name.padEnd(22)} ${f.description}`);
+      return;
+    }
+    const projectRoot = resolve(path);
+    const projectName = projectRoot.replace(/\\/g, "/").split("/").pop()!;
+    const analysisDir = resolve(options.output, projectName);
+    try {
+      const { loadReportSummary } = await import("./core/report-payload.js");
+      let summary;
+      try {
+        summary = await loadReportSummary(analysisDir);
+      } catch {
+        throw new Error(`No analysis found at ${analysisDir}.\nRun first: clarifydoc analyze ${path} -o ${options.output}`);
+      }
+      const names: string[] = options.format ?? ["ARCHITECTURE.md", "DATA-MODEL.md", "FLOWS.md"];
+      if (names.length === 1 && !options.outDir) {
+        process.stdout.write(renderExport(names[0]!, summary));
+        return;
+      }
+      const { mkdir, writeFile } = await import("fs/promises");
+      const dir = resolve(options.outDir ?? ".");
+      await mkdir(dir, { recursive: true });
+      for (const name of names) {
+        const file = resolve(dir, name);
+        await writeFile(file, renderExport(name, summary));
+        console.log(`wrote ${file}`);
+      }
+    } catch (err) {
+      console.error("Error:", (err as Error).message);
+      process.exitCode = 1;
+    }
+  });
+
+program
   .command("hook")
   .description("Agent-host hook (Claude Code protocol): reads the hook payload on stdin, prints context from the analysis. Wired by `clarifydoc install --hooks`")
   .argument("<event>", "pre-search | post-edit | session-start")

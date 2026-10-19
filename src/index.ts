@@ -77,6 +77,7 @@ export {
   type ControlFlowDiagram,
 } from "./core/control-flow-mermaid.js";
 export { mermaidLabel, idFactory } from "./core/mermaid-text.js";
+export { EXPORT_FORMATS, findExportFormat, renderExport, type ExportFormat } from "./export/index.js";
 export type * from "./types/control-flow.js";
 export { scanSecurity } from "./core/security-scanner.js";
 // The SARIF 2.1.0 log `analyze --sarif` writes, for a consumer that already
