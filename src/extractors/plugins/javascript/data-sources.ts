@@ -350,6 +350,14 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
    */
   private resolveUrlArg(arg: Node): ResolvedUrl | null {
     if (arg.type === "string") return { url: stripQuotes(arg.text), confidence: "EXTRACTED" };
+    // `fetch(url.toString())`, `fetch(url.href)`, `fetch(url)` with `const url = new URL(path, origin)`:
+    // the request is the URL's path argument — a parameter of a request factory
+    // stays a `${path}` hole for the factory expansion to fill per call site.
+    const built = urlObjectPath(arg);
+    if (built) {
+      if (built.type === "identifier" && declaredParamInScope(built.text, arg)) return { url: `\${${built.text}}`, confidence: "INFERRED" };
+      return this.resolveUrlArg(built);
+    }
     if (arg.type === "template_string") {
       const url = resolveTemplateUrl(arg, (name) => this.bindings()?.lookup(name, arg) ?? null);
       // A leftover `${…}` means the template couldn't be fully resolved.
@@ -1137,6 +1145,55 @@ class UrlBindings {
     this.folded.set(b.start, out);
     return out;
   }
+}
+
+/**
+ * The path argument of the `URL` object a fetch argument stands for:
+ * `url.toString()` / `url.href` / `String(url)` / `url` itself, where `url` is
+ * declared in an enclosing function as `new URL(path, base)`. Null otherwise.
+ */
+function urlObjectPath(arg: Node): Node | null {
+  let name: Node | null = null;
+  if (arg.type === "identifier") name = arg;
+  else if (arg.type === "member_expression" && arg.childForFieldName("property")?.text === "href") name = arg.childForFieldName("object");
+  else if (arg.type === "call_expression") {
+    const fn = arg.childForFieldName("function");
+    if (fn?.type === "member_expression" && fn.childForFieldName("property")?.text === "toString") name = fn.childForFieldName("object");
+    else if (fn?.type === "identifier" && fn.text === "String") name = arg.childForFieldName("arguments")?.namedChildren[0] ?? null;
+  }
+  if (name?.type !== "identifier") return null;
+  for (let p: Node | null = arg.parent; p; p = p.parent) {
+    if (!FUNCTION_SCOPES.has(p.type) && p.type !== "program") continue;
+    const found = findUrlConstruction(p, name.text, arg.startIndex);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** `const <name> = new URL(<path>, …)` declared in `scope` before `before`: its path node. */
+function findUrlConstruction(scope: Node, name: string, before: number): Node | null {
+  let out: Node | null = null;
+  const visit = (n: Node): void => {
+    if (n.startIndex >= before) return;
+    if (n !== scope && FUNCTION_SCOPES.has(n.type)) return;
+    if (n.type === "variable_declarator" && n.childForFieldName("name")?.text === name) {
+      const v = n.childForFieldName("value");
+      if (v?.type === "new_expression" && v.childForFieldName("constructor")?.text === "URL") {
+        out = v.childForFieldName("arguments")?.namedChildren[0] ?? null;
+      }
+    }
+    for (const c of n.namedChildren) visit(c);
+  };
+  visit(scope);
+  return out;
+}
+
+/** Whether `name` is a parameter of a function enclosing `at`. */
+function declaredParamInScope(name: string, at: Node): boolean {
+  for (let p: Node | null = at.parent; p; p = p.parent) {
+    if (FUNCTION_SCOPES.has(p.type) && declaresParam(p, name)) return true;
+  }
+  return false;
 }
 
 /** `${url}`… where `url` is a parameter of a function enclosing `at` — a request factory's URL. */

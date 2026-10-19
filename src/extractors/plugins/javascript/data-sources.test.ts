@@ -768,3 +768,19 @@ export async function index(collectionName: string) {
     expect(ds.map((d) => [d.name, d.access])).toEqual([["qdrant.upsert", "write"]]);
   });
 });
+
+describe("JS api-call — a URL object built from a path", () => {
+  it("reads the path a fetch's new URL(path, origin) was built from", async () => {
+    const calls = await apiCallsOf(`
+async function getJson(path: string) {
+  const url = new URL(path, window.location.origin);
+  url.searchParams.set("x", "1");
+  return fetch(url.toString(), { headers: {} });
+}
+async function health() {
+  const u = new URL("/api/health", base);
+  return fetch(u.href);
+}`);
+    expect(calls.map((c) => c.target)).toEqual(["${path}", "/api/health"]);
+  });
+});
