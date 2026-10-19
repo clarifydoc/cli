@@ -80,6 +80,7 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   docDrift: "optional",
   historySecrets: "optional",
   typeOnlyEdges: "optional",
+  communityNames: "optional",
   fileLayerReasons: "optional",
   screens: "required",
   apiRouteLinks: "optional",

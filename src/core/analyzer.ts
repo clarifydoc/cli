@@ -74,6 +74,7 @@ import { typeOnlyEdges } from "./import-kinds.js";
 import { checkDocReferences, docReferences, type DocReference } from "./doc-drift.js";
 import { scanHistorySecrets } from "./history-secrets.js";
 import { findBlockingInAsync, findQueriesInLoops } from "./query-in-loop.js";
+import { nameCommunities } from "./community-names.js";
 import { buildTestCoverage, COVERAGE_CANDIDATES, parseCoverage } from "./test-coverage.js";
 import { isTestFile } from "./test-file-detector.js";
 import { checkContracts } from "./contract-check.js";
@@ -1765,6 +1766,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     skippedSensitive: skippedSensitive.length > 0 ? skippedSensitive : undefined,
     skippedSymlinks: skippedSymlinks.length > 0 ? skippedSymlinks : undefined,
     communities: Object.keys(communities).length > 0 ? communities : undefined,
+    ...(Object.keys(communities).length > 0 ? { communityNames: nameCommunities(communities, { fileProjects, projects: subProjects }) } : {}),
     cohesion: Object.keys(cohesion).length > 0 ? cohesion : undefined,
     godNodes: godNodes.length > 0 ? godNodes : undefined,
     surprisingConnections: surprisingConnections.length > 0 ? surprisingConnections : undefined,

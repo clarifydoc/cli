@@ -67,7 +67,7 @@ export function architectureTool(ctx: ToolContext): McpTool {
               `${plural(summary.files.length, "file")}, ${plural(Object.values(graph).reduce((n, d) => n + d.length, 0), "import edge")}, ${plural(communities.length, "community", "communities")}, ${plural(cyc.length, "import cycle")}.`,
               "",
               "## Largest communities",
-              ...bulletList(largest, 5, ([id, fs]) => `${id}: ${plural(fs.length, "file")}${cohesion[id] !== undefined ? `, cohesion ${cohesion[id]!.toFixed(2)}` : ""} — e.g. ${fs.slice(0, 3).join(", ")}`),
+              ...bulletList(largest, 5, ([id, fs]) => `${summary.communityNames?.[id]?.name ?? id}: ${plural(fs.length, "file")}${cohesion[id] !== undefined ? `, cohesion ${cohesion[id]!.toFixed(2)}` : ""} — e.g. ${fs.slice(0, 3).join(", ")}`),
               "",
               "## Hubs",
               ...bulletList(summary.godNodes ?? [], 5, (g) => `${g.file} (degree ${g.degree})`),
@@ -125,11 +125,24 @@ export function architectureTool(ctx: ToolContext): McpTool {
         case "communities": {
           const rows = communities.filter(([, fs]) => names(fs));
           if (rows.length === 0) return { text: noResults({ headline: "No community matches.", holds: `${plural(communities.length, "community", "communities")} in the analysis.`, next: ['clarifydoc_architecture view="communities" without `file`'] }) };
+          const named = summary.communityNames ?? {};
+          const label = (id: string) => {
+            const n = named[id];
+            return n ? `${n.name}${n.system ? ` [${n.system}]` : ""}` : `#${id}`;
+          };
+          // A one-file community is an isolate, not a cluster: counted, not listed.
+          const clusters = rows.filter(([, fs]) => fs.length > 1).sort((a, b) => b[1].length - a[1].length);
+          const isolates = rows.length - clusters.length;
+          const groupOf = (id: string) => {
+            const n = named[id];
+            return n && !n.name.startsWith(n.subsystem) ? ` (in ${n.system ? `${n.system} / ` : ""}${n.subsystem})` : "";
+          };
           return {
             text: joinLines([
-              `# Communities (${rows.length})`,
-              "Clusters of files more connected to each other than to the rest (Louvain over the import graph).",
-              ...bulletList(rows, limit, ([id, fs]) => `${id}: ${plural(fs.length, "file")}${cohesion[id] !== undefined ? `, cohesion ${cohesion[id]!.toFixed(2)}` : ""} — ${fs.slice(0, 8).join(", ")}${fs.length > 8 ? ` … +${fs.length - 8}` : ""}`),
+              `# Communities (${rows.length - isolates} of two or more files)`,
+              "Clusters of files more connected to each other than to the rest (Louvain over the import graph), named by the folder most of their files share.",
+              ...bulletList(clusters, limit, ([id, fs]) => `${label(id)}${groupOf(id)}: ${plural(fs.length, "file")}${cohesion[id] !== undefined ? `, cohesion ${cohesion[id]!.toFixed(2)}` : ""} — ${fs.slice(0, 6).join(", ")}${fs.length > 6 ? ` … +${fs.length - 6}` : ""}`),
+              isolates ? `${plural(isolates, "file")} with no import ties are communities of one, not listed.` : "",
             ]),
           };
         }

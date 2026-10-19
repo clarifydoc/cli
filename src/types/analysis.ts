@@ -2715,6 +2715,12 @@ export interface ProjectAnalysis {
   skippedSymlinks?: string[];
   /** Louvain-detected communities (community ID → file paths). Largest first. */
   communities?: Record<string, string[]>;
+  /**
+   * Each community's name — the folder most of its files share, relative to
+   * its sub-project — with the subsystem and system above it and a slug that
+   * survives renumbering (core/community-names.ts).
+   */
+  communityNames?: Record<string, import("../core/community-names.js").CommunityName>;
   /** Cohesion ∈ [0, 1] for each community ID — intra-community edges / max possible. */
   cohesion?: Record<string, number>;
   /** Top files by combined in+out degree — the structural core of the project. */

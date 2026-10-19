@@ -380,6 +380,7 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
     generatedRoots: summary.generatedRoots ?? [],
     unusedFiles: summary.unusedFiles ?? [],
     deadCode: summary.deadCode ?? null,
+    ...(summary.communityNames ? { communityNames: summary.communityNames } : {}),
     // The viewer counts cycles as the health score does: without these.
     ...(summary.typeOnlyEdges ? { typeOnlyEdges: summary.typeOnlyEdges } : {}),
     healthScore: summary.healthScore ?? null,
