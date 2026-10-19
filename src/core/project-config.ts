@@ -1,3 +1,4 @@
+import { parseSecurityConfig, type SecurityConfig } from "./security-rules.js";
 import { validateExtract, type ExtractPatterns } from "./config-patterns.js";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
@@ -106,10 +107,12 @@ export interface ProjectConfig {
   rules?: DependencyRuleInput[];
   /** What the team's own wrappers mean: HTTP clients, route registrars, database helpers (core/config-patterns.ts). */
   extract?: ExtractPatterns;
+  /** Security rules turned off or re-graded, by rule id (core/security-rules.ts). */
+  security?: SecurityConfig;
 }
 
 const KNOWN_SECTIONS: ReadonlySet<string> = new Set([
-  "$comment", "$schema", "refactorPressure", "layers", "exempt", "generated", "rules", "extract",
+  "$comment", "$schema", "refactorPressure", "layers", "exempt", "generated", "rules", "extract", "security",
 ]);
 
 const ARCH_LAYERS: ReadonlySet<string> = new Set<ArchLayer>([
@@ -170,6 +173,11 @@ export function loadProjectConfig(projectRoot: string): LoadedProjectConfig {
       });
       config.layers = rules;
     }
+  }
+  if (parsed.security !== undefined) {
+    const got = parseSecurityConfig(parsed.security, PROJECT_CONFIG_RELATIVE_PATH);
+    config.security = got.config;
+    warnings.push(...got.warnings);
   }
   if (parsed.rules !== undefined) {
     if (!Array.isArray(parsed.rules)) {

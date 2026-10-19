@@ -430,6 +430,17 @@ database access (the table read from the SQL, or named), exactly as for a framew
 `pathArg` default to the first argument; a `db` entry needs `tableArg` or `sqlArg`. An access the config declares
 counts even when the call resolves into your own code.
 
+`security` turns a security rule off or changes its severity, by its id — the `ruleId` every finding carries
+(`clarifydoc/sql-injection`; the `clarifydoc/` prefix may be left out):
+
+```json
+{ "security": { "rules": { "todo-fixme": "off", "debug-statement": "low", "weak-crypto": "high" } } }
+```
+
+On one line, `clarifydoc-ignore` silences a finding; followed by rule ids (`// clarifydoc-ignore eval-exec`) it
+silences only those. `clarifydoc-ignore-next-line [rules…]` does the same for the line below, and `nosec` /
+`NOSONAR` silence every rule. Words after the marker that are not rule ids are a comment, not a list.
+
 ## Default ignores
 
 Always excluded:

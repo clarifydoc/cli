@@ -18,6 +18,7 @@ import { applyWorkspacePackages, loadWorkspacePackages } from "../extractors/sha
 import { pluginFor, astHooksFor, inferFileFrameworks, ensureLanguagesLoaded, regexSpecFor } from "../extractors/registry.js";
 import { computeComplexity } from "./complexity-analyzer.js";
 import { scanSecurity, isMinifiedSource, isVendoredSource } from "./security-scanner.js";
+import { isSuppressed } from "./security-rules.js";
 import { isGeneratedSource } from "./generated-file-detector.js";
 import { extractTypeReferences } from "./type-reference-extractor.js";
 import { enrichFileDataSources } from "./import-index.js";
@@ -462,7 +463,16 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     let fileSecurityIssues = scanSecurity(sourceText, file.relativePath, language);
     // Request input followed to a sink inside each handler; it says more than
     // the regex finding of the same kind on the same line, which it replaces.
-    const tainted = isTest || isMinifiedSource(sourceText) ? [] : hooks?.taint?.(tree, sourceText, file.relativePath) ?? [];
+    const rawTainted = isTest || isMinifiedSource(sourceText) ? [] : hooks?.taint?.(tree, sourceText, file.relativePath) ?? [];
+    // A suppression on the sink's line (or the line before) holds for the taint finding too.
+    let sourceLines: string[] | null = null;
+    const tainted = rawTainted.filter((t) => {
+      sourceLines ??= sourceText.split(/\r?\n/);
+      return !isSuppressed(t.category, sourceLines[t.line - 1] ?? "", sourceLines[t.line - 2] ?? "");
+    });
+    // A finding suppressed as taint must not come back as the regex finding it replaces.
+    const silenced = new Set(rawTainted.filter((t) => !tainted.includes(t)).map((t) => `${t.line}\u0000${t.category}`));
+    if (silenced.size) fileSecurityIssues = fileSecurityIssues.filter((i) => !silenced.has(`${i.line}\u0000${i.category}`));
     if (tainted.length > 0) {
       const covered = new Set(tainted.map((t) => `${t.line}\u0000${t.category}`));
       fileSecurityIssues = [...fileSecurityIssues.filter((i) => !covered.has(`${i.line}\u0000${i.category}`)), ...tainted];

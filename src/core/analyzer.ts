@@ -63,6 +63,7 @@ import { buildSiblingGraph, sameFileLinksByFile } from "./sibling-graph.js";
 import { buildResponsibilityProfiles } from "./responsibility-profile.js";
 import { computeRefactorPressure, resolveRefactorPressureConfig } from "./refactor-pressure.js";
 import { loadProjectConfig, matchesAnyGlob, resolveArchitectureOverrides } from "./project-config.js";
+import { applySecurityRules } from "./security-rules.js";
 import { isTestFile } from "./test-file-detector.js";
 import { checkContracts } from "./contract-check.js";
 import { loadCodeOwners } from "./code-owners.js";
@@ -1097,6 +1098,13 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // analyzing from an editor or through MCP, which is most users of the config.
   const configWarnings: string[] = [...projectConfig.warnings];
   for (const w of projectConfig.warnings) progress.detail(`  Config: ${w}`);
+  // Rule ids on every finding of ours, and the team's rule settings applied — to copies, so the
+  // cached per-file results stay what the source says.
+  {
+    const ruled = applySecurityRules(allSecurityIssues, projectConfig.config.security);
+    allSecurityIssues.splice(0, allSecurityIssues.length, ...ruled.issues);
+    if (ruled.dropped > 0) progress.detail(`  Security rules: ${ruled.dropped} finding(s) of rules the config turns off`);
+  }
   const architecture = resolveArchitectureOverrides(projectConfig.config);
   if (projectConfig.path && verbose) {
     progress.detail(
@@ -1507,6 +1515,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     progress.detail(`  GET/HEAD routes that write data: ${safeWrites.length}`);
   }
   if (findingsWithEntries > 0) progress.detail(`  Security findings reachable from a route: ${findingsWithEntries}`);
+  // The route-level findings above are ours too: the same rule ids and settings (idempotent over the rest).
+  allSecurityIssues.splice(0, allSecurityIssues.length, ...applySecurityRules(allSecurityIssues, projectConfig.config.security).issues);
 
   const healthScore = computeHealthScore({
     analyses: allAnalyses,

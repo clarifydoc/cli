@@ -1,3 +1,4 @@
+import { isSuppressed } from "./security-rules.js";
 import type { SecurityIssue, Language } from "../types/analysis.js";
 import { splitLines } from "../extractors/shared/source-lines.js";
 import type { SecurityRule } from "../types/language-plugin.js";
@@ -249,9 +250,6 @@ const TODO_IN_COMMENT_RE = /(?:\/\/|\/\*|(?:^|\s)#|<!--|(?:^|\s)--|^\s*\*|^\s*;|
 
 /** Text before a match that opens a comment on the same line. */
 const TRAILING_COMMENT_RE = /(?:^|\s)(?:\/\/|#(?=\s|$)|<!--)/;
-/** Inline suppressions: our own, Bandit's and Sonar's. */
-const SUPPRESS_RE = /\b(?:clarifydoc-ignore(?!-next-line)|nosec|NOSONAR)\b/;
-const SUPPRESS_NEXT_RE = /\bclarifydoc-ignore-next-line\b/;
 
 /** Offset of each line's first character. */
 function startsOfLines(text: string): number[] {
@@ -324,10 +322,11 @@ export function scanSecurity(
       if (TRAILING_COMMENT_RE.test(line.slice(0, col))) return;
     }
     if (rule.category === "hardcoded-secret" && isPlaceholderSecret(text)) return;
-    // Suppressed on the line (`nosec`, `NOSONAR`, `clarifydoc-ignore`) or by the
-    // line before (`clarifydoc-ignore-next-line`). Read from the source as
-    // written: a plugin's pre-filter may have blanked its comments.
-    if (SUPPRESS_RE.test(originalLines[i] ?? "") || SUPPRESS_NEXT_RE.test(originalLines[i - 1] ?? "")) return;
+    // Suppressed on the line (`nosec`, `NOSONAR`, `clarifydoc-ignore [rule…]`) or by
+    // the line before (`clarifydoc-ignore-next-line [rule…]`), every rule or the
+    // ones named. Read from the source as written: a plugin's pre-filter may
+    // have blanked its comments.
+    if (isSuppressed(rule.category, originalLines[i] ?? "", originalLines[i - 1] ?? "")) return;
     if (rule.category === "hardcoded-secret") {
       // Env reads and KEY_* constants — an identifier NAMED `KEY_PASSWORD`
       // holds a settings-store key name, not a secret

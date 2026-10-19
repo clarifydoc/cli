@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
-import type { ApiRouteLinkStats, ContractFinding, LayerViolation, SecurityIssue } from "../types/analysis.js";
+import type { ApiRouteLinkStats, ContractFinding, LayerViolation, SecurityCategory, SecurityIssue } from "../types/analysis.js";
+import { ruleIdOf as ruleIdFor } from "./security-rules.js";
 
 /**
  * Security findings as SARIF 2.1.0 — what GitHub code scanning and most CI
@@ -93,7 +94,7 @@ export function buildSarif(issues: readonly SecurityIssue[], toolVersion: string
   };
 }
 
-const ruleIdOf = (issue: SecurityIssue): string => `clarifydoc/${issue.category}`;
+const ruleIdOf = (issue: SecurityIssue): string => ruleIdFor(issue.category as SecurityCategory);
 
 /** A finding of the map rather than of the code's security: a call that reaches no route, an import a rule forbids. */
 export interface StructuralFinding {
