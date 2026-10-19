@@ -2,6 +2,7 @@ import type { McpTool } from "../protocol.js";
 import type { ProjectAnalysis, RouteInfo } from "../../types/analysis.js";
 import { numberArg, requiredStringArg, stringArg } from "../format.js";
 import { requireAnalysis, type ToolContext } from "./context.js";
+import { findRoutes, routeAnchor } from "../../core/sequence.js";
 
 type Row = ProjectAnalysis["routeMap"][number];
 type ToolText = (args: Record<string, unknown>) => Promise<string | null>;
@@ -143,34 +144,6 @@ async function toolText(tools: McpTool[], name: string, args: Record<string, unk
 
 function label(r: Row | RouteInfo): string {
   return `${r.httpMethod ? `${r.httpMethod.toUpperCase()} ` : ""}${r.path}`;
-}
-
-/**
- * The call-graph anchor of a route: the linker names it by the path its own
- * file declares (`route:GET /:id`), which a mount later prefixes
- * (`/api/users/:id`). The anchor in the route's file with its method whose
- * path the composed one ends with — exact first, then the longest.
- */
-function routeAnchor(r: Row, links: ProjectAnalysis["symbolLinks"]): string | null {
-  const method = (r.httpMethod ?? "USE").toUpperCase();
-  const prefix = `route:${method} `;
-  const paths = [...new Set(links.filter((l) => l.sourceFile === r.filePath && l.sourceSymbol.startsWith(prefix)).map((l) => l.sourceSymbol.slice(prefix.length)))];
-  if (paths.includes(r.path)) return prefix + r.path;
-  const suffix = paths.filter((p) => p !== "/" && r.path.endsWith(p)).sort((a, b) => b.length - a.length)[0];
-  if (suffix) return prefix + suffix;
-  return paths.includes("/") && !paths.some((p) => p !== "/" && r.path.endsWith(p)) ? `${prefix}/` : null;
-}
-
-/** The routes a subject names: `GET /x` by method and path, else by path; exact first, then a unique substring. */
-function findRoutes(routes: readonly Row[], subject: string, file?: string): Row[] {
-  const verb = VERB.exec(subject)?.[1]?.toUpperCase();
-  const path = subject.replace(VERB, "").trim();
-  const pool = routes.filter((r) => (!verb || (r.httpMethod ?? "").toUpperCase() === verb) && (!file || (r.filePath ?? "").includes(file)));
-  const exact = pool.filter((r) => r.path === path);
-  if (exact.length) return exact;
-  const norm = (p: string) => p.replace(/\{[^}]+\}|:[\w]+/g, "{}").replace(/\/+$/, "").toLowerCase();
-  const same = pool.filter((r) => norm(r.path) === norm(path));
-  return same.length ? same : pool.filter((r) => r.path.toLowerCase().includes(path.toLowerCase()));
 }
 
 function guessKind(subject: string, summary: ProjectAnalysis): "route" | "screen" | "symbol" | "file" {

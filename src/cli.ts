@@ -511,6 +511,51 @@ program
   });
 
 program
+  .command("seq")
+  .description("Draw what a route (or a function) does, in order, as a Mermaid sequence diagram: calls, data access, HTTP hops to other tiers")
+  .argument("<path>", "Path to project root")
+  .option("--route <route>", 'The route, e.g. "POST /api/orders" (a path alone when it is unique)')
+  .option("--symbol <symbol>", 'A function or method instead, e.g. "OrderService.create"')
+  .option("--file <file>", "The file that declares the route or symbol, when the name is not unique")
+  .option("--depth <n>", "Hops of calls to follow (default 8)", parseInt)
+  .option("-o, --output <dir>", "Analysis output directory (same value as `analyze -o`)", ".clarifydoc")
+  .option("--analysis-dir <dir>", "Exact directory containing project-summary.json (overrides --output)")
+  .action(async (path: string, options) => {
+    const projectRoot = resolve(path);
+    const projectName = projectRoot.replace(/\\/g, "/").split("/").pop()!;
+    const analysisDir = options.analysisDir ? resolve(options.analysisDir) : resolve(options.output, projectName);
+    try {
+      const { loadReportSummary } = await import("./core/report-payload.js");
+      const { buildSequence, findRoutes, routeAnchor } = await import("./core/sequence.js");
+      let summary;
+      try {
+        summary = await loadReportSummary(analysisDir);
+      } catch {
+        throw new Error(`No analysis found at ${analysisDir}.\nRun first: clarifydoc analyze ${path} -o ${options.output}`);
+      }
+      const depth = options.depth ? { depth: options.depth as number } : {};
+      if (options.route) {
+        const found = findRoutes(summary.routeMap ?? [], options.route, options.file);
+        if (found.length !== 1) {
+          throw new Error(found.length === 0 ? `No route matches "${options.route}"` : `"${options.route}" matches ${found.length} routes — pass the method, or --file:\n${found.slice(0, 15).map((r) => `  ${r.httpMethod ?? ""} ${r.path}  (${r.filePath}:${r.line})`).join("\n")}`);
+        }
+        const r = found[0]!;
+        const anchor = routeAnchor(r, summary.symbolLinks ?? []);
+        if (!anchor) throw new Error(`${r.httpMethod ?? ""} ${r.path} calls nothing the analysis resolved`);
+        process.stdout.write(buildSequence(summary, { file: r.filePath!, symbol: anchor, title: `${r.httpMethod ? `${r.httpMethod.toUpperCase()} ` : ""}${r.path}` }, depth));
+        return;
+      }
+      if (!options.symbol) throw new Error("Pass --route or --symbol");
+      const defs = [...new Set((summary.symbolLinks ?? []).filter((l) => l.sourceSymbol === options.symbol && (!options.file || l.sourceFile.includes(options.file))).map((l) => l.sourceFile))];
+      if (defs.length !== 1) throw new Error(defs.length === 0 ? `${options.symbol} calls nothing the analysis resolved` : `${options.symbol} is declared in ${defs.length} files — pass --file:\n${defs.map((f) => `  ${f}`).join("\n")}`);
+      process.stdout.write(buildSequence(summary, { file: defs[0]!, symbol: options.symbol, title: options.symbol }, depth));
+    } catch (err) {
+      console.error("Error:", (err as Error).message);
+      process.exitCode = 1;
+    }
+  });
+
+program
   .command("export")
   .description("Render an analysis as committed artifacts: ARCHITECTURE.md, DATA-MODEL.md, FLOWS.md, Mermaid diagrams, GraphML, Cypher")
   .argument("<path>", "Path to project root")

@@ -143,6 +143,7 @@ clarifydoc impact <path>               # What changed files reach: screens, rout
 clarifydoc lsp-update <analysis-dir>   # Run layer-2 LSP enhancement on an existing analysis
 clarifydoc report <analysis-dir>       # (Re)generate the HTML report from project-summary.json
 clarifydoc cfg <file> -f <function>    # Draw one function's control flow as Mermaid
+clarifydoc seq <path> --route "POST /x" # Draw what a route does, in order, as a Mermaid sequence diagram
 clarifydoc cfg <file> --slice <line>   # What can affect the values used at that line (backward slice)
 clarifydoc detect <path>               # Print detected languages + frameworks only
 clarifydoc schema                      # Print every field of the per-file JSON and project-summary.json

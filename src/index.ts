@@ -85,6 +85,7 @@ export { scanSecurity, maskSecrets } from "./core/security-scanner.js";
 export { buildSarif, type SarifLog } from "./core/sarif.js";
 export { TOOL_VERSION } from "./core/version.js";
 export { ownersOf, type CodeOwnersRule } from "./core/code-owners.js";
+export { buildSequence, findRoutes, routeAnchor, type SequenceOptions } from "./core/sequence.js";
 // Layer 2 with another definition source (an editor's language servers).
 export { enhanceWithLsp, dockerDefinitionSource, planDefinitionQueries, type DefinitionSource, type DefinitionClient, type DefinitionQuery } from "./lsp/lsp-enhancer.js";
 export { answersDefinitionSource, readDefinitionAnswers, type DefinitionAnswerFile, type DefinitionAnswer } from "./lsp/answers-source.js";

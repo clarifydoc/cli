@@ -9,6 +9,7 @@ clarifydoc impact <path>              What a set of changed files reaches: scree
 clarifydoc report <analysis-dir>      (Re)build report.html from an existing analysis
 clarifydoc lsp-update <analysis-dir>  Add the LSP layer (Docker) to an existing analysis
 clarifydoc cfg <file>                 Draw one function's control flow as Mermaid
+clarifydoc seq <path> --route <route> Draw what a route does, in order, as a Mermaid sequence diagram
 clarifydoc detect <path>              Print detected file types and frameworks; writes nothing
 clarifydoc schema                     Print the top-level fields of a per-file analysis
 clarifydoc mcp [path]                 Serve the analysis to an AI agent over MCP (stdio)
@@ -187,6 +188,27 @@ the emitted questions with its own definition provider and hands them back.
 
 Servers exist for TypeScript/JavaScript, Python, Java, Kotlin, C# and VB.NET, Go, Rust, Ruby, PHP and
 Pascal/Delphi. Images build on first use and are cached; the first run of a language is slow.
+
+## `seq`
+
+```bash
+clarifydoc seq <path> --route "POST /api/orders" [--file <file>] [--depth <n>]
+clarifydoc seq <path> --symbol OrderService.create [--file <file>]
+```
+
+What an endpoint (or a function) does, in order, as a Mermaid `sequenceDiagram`: its handler, then every
+call it makes depth-first in source order, each followed by its return; the tables it reads and writes and
+the queues it publishes to; and the HTTP calls it makes to another tier, into the handler that serves them.
+Lanes are classes, else files. A call the linker only guessed is drawn with an open arrow and a `?`; a
+recursion is marked, not followed. Reads a written analysis (`-o` / `--analysis-dir`, as `export`), writes
+nothing, prints to stdout.
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `--route <route>` | — | `METHOD /path`, or a path alone when it is unique. |
+| `--symbol <symbol>` | — | A function or method instead of a route. |
+| `--file <file>` | — | The declaring file, when the route or name is not unique. |
+| `--depth <n>` | 8 | Hops of calls to follow. |
 
 ## `cfg`
 
