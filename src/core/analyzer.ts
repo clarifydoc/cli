@@ -113,6 +113,7 @@ import { buildImportIndex, resolveImportSource, resolveDataSourceStringConstants
 import { demoteProjectCallDataSources } from "./project-call-data-sources.js";
 import { denormalizeFileAnalysis } from "./element-registry.js";
 import {
+  UNUSED_IMPORTS_LIMIT,
   type FileAnalysis,
   type Language,
   type ProjectAnalysis,
@@ -1559,6 +1560,18 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       }
     },
   });
+  // Import bindings nothing in their own file mentions, as the plugins reported them.
+  if (deadCode) {
+    const rows = allAnalyses
+      .filter((a) => !isUnauthored(a.filePath) && !isTestFile(a.filePath, a.language))
+      .flatMap((a) => a.imports.filter((i) => i.unused?.length).map((i) => ({ filePath: a.filePath, line: i.line, source: i.source, names: i.unused! })))
+      .sort((x, y) => (x.filePath < y.filePath ? -1 : x.filePath > y.filePath ? 1 : x.line - y.line));
+    if (rows.length) {
+      deadCode.unusedImports = rows.slice(0, UNUSED_IMPORTS_LIMIT);
+      deadCode.unusedImportCount = rows.length;
+      progress.detail(`  Unused imports: ${rows.length} in ${new Set(rows.map((r) => r.filePath)).size} file(s)`);
+    }
+  }
   if (deadCode && (deadCode.files.length > 0 || deadCode.exports.length > 0)) {
     progress.detail(
       `  Dead code: ${deadCode.files.length} unreachable file(s), ${deadCode.exports.length} unused export(s) of ${deadCode.judgedFiles} judged file(s)`,

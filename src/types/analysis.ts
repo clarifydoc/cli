@@ -544,6 +544,12 @@ export interface ImportInfo {
    * into the importer's scope. Absent for a real import.
    */
   executes?: true;
+  /**
+   * The names this import binds that nothing else in the file mentions, for a
+   * language whose plugin can tell (JS/TS). Absent when every name is used,
+   * or when the file holds markup (a Vue / Svelte template) the check cannot read.
+   */
+  unused?: string[];
 }
 
 export interface ExportInfo {
@@ -2470,7 +2476,17 @@ export interface DeadCodeReport {
   unresolvedImports?: number;
   files: UnreachableFile[];
   exports: UnusedExport[];
+  /**
+   * Import bindings nothing in their file mentions (`ImportInfo.unused`), in
+   * authored non-test files — for the languages whose plugin reports them.
+   * Capped at {@link UNUSED_IMPORTS_LIMIT} rows; `unusedImportCount` is the total.
+   */
+  unusedImports?: Array<{ filePath: string; line: number; source: string; names: string[] }>;
+  unusedImportCount?: number;
 }
+
+/** Rows of `DeadCodeReport.unusedImports` kept in the summary. */
+export const UNUSED_IMPORTS_LIMIT = 500;
 
 export interface UnreachableFile {
   filePath: string;

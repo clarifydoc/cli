@@ -24,6 +24,7 @@ export function vuePreprocess(
     // are absolute to the .vue file (not relative to a sliced-out script).
     sourceText: blankExceptScripts(rawSource),
     language: sfc.scriptLang,
+    embedded: true,
     postExtract(analysis, raw) {
       // A `<script setup>` SFC has no literal `export default`, but the file IS
       // a component with an implicit default export. Record it so dynamic

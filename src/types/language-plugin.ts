@@ -611,6 +611,12 @@ export interface PreprocessOutcome {
   language: Language;
   /** Run after extraction to merge container data back in (e.g. Vue template elements). */
   postExtract?(analysis: FileAnalysis, rawSource: string): void;
+  /**
+   * The source is one block of a larger file (a Vue / Svelte `<script>`): the
+   * rest — a template — may use what the block imports, so no import of it is
+   * judged unused.
+   */
+  embedded?: true;
 }
 
 /**

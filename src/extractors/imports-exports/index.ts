@@ -10,10 +10,12 @@ export function extractImports(
   tree: Tree,
   sourceText: string,
   language: Language,
+  /** The tree is one block of a larger file (a Vue / Svelte `<script>`): see `PreprocessOutcome.embedded`. */
+  embedded = false,
 ): ImportInfo[] {
   const extractor = pluginFor(language)?.importsExports;
   if (!extractor) return [];
-  return extractor.extractImports(tree, sourceText);
+  return extractor.extractImports(tree, sourceText, { embedded });
 }
 
 /**

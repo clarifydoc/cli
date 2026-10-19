@@ -58,15 +58,84 @@ function collectPatternNames(node: Node, out: string[]): void {
   }
 }
 
+/** One static import: what it binds, and where the statement is written. */
+export interface ImportBindings {
+  info: ImportInfo;
+  names: string[];
+  /** 0-based row of the statement's first line. */
+  row: number;
+  text: string;
+}
+
+/** The names an `import` statement binds in the file: default, named (by alias), namespace. */
+function localBindings(stmt: Node): string[] {
+  const out: string[] = [];
+  for (const part of stmt.children) {
+    if (part.type !== "import_clause") continue;
+    for (const clause of part.children) {
+      if (clause.type === "identifier") out.push(clause.text);
+      else if (clause.type === "named_imports") {
+        for (const spec of clause.children) {
+          if (spec.type !== "import_specifier") continue;
+          const local = spec.childForFieldName("alias") ?? spec.childForFieldName("name");
+          if (local) out.push(local.text);
+        }
+      } else if (clause.type === "namespace_import") {
+        const ids = clause.children.filter((c) => c.type === "identifier");
+        const alias = ids[ids.length - 1];
+        if (alias) out.push(alias.text);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Mark the bindings nothing else in the file mentions. Read off the text with
+ * the import statements blanked, so a name counts as used wherever it is
+ * written — a comment or a string included: an unused import is an
+ * accusation, and this errs toward withholding it. `x.Name` is a property,
+ * not the binding; `...Name` is the binding. A file with JSX uses `React`
+ * (the classic runtime), and a `@jsx` pragma uses the factory it names.
+ */
+export function markUnusedBindings(sourceText: string, imports: ImportBindings[]): void {
+  // Each statement found by its own text from the start of its row: rows are lines in any encoding.
+  const lineStarts = [0];
+  for (let i = 0; i < sourceText.length; i++) if (sourceText.charCodeAt(i) === 10) lineStarts.push(i + 1);
+  let text = sourceText;
+  for (const b of imports) {
+    const at = text.indexOf(b.text, lineStarts[b.row] ?? 0);
+    if (at >= 0) text = text.slice(0, at) + b.text.replace(/[^\n]/g, " ") + text.slice(at + b.text.length);
+  }
+  const hasJsx = /<\/|\/>/.test(text);
+  const pragma = /@jsx(?:Frag)?\s+([\w$.]+)/.exec(sourceText)?.[1]?.split(".")[0];
+  for (const b of imports) {
+    const unused = b.names.filter((name) => {
+      if ((name === "React" && hasJsx) || name === pragma) return false;
+      const escaped = name.replace(/[$]/g, "\\$");
+      return !new RegExp(`(?<![\\w$])(?<!(?<!\\.)\\.)${escaped}(?![\\w$])`).test(text);
+    });
+    if (unused.length) b.info.unused = unused;
+  }
+}
+
 export class JavaScriptImportExportExtractor extends ImportExportExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
 
   // Set per extractImports() call (synchronous), consumed by collectImports.
   private mayHaveDynamicImport = true;
 
-  extractImports(tree: Tree, sourceText: string): ImportInfo[] {
+  /** Each static import's local bindings and the statement's text range, for the unused check. */
+  private bindings: ImportBindings[] = [];
+
+  extractImports(tree: Tree, sourceText: string, opts: { embedded?: boolean } = {}): ImportInfo[] {
     this.mayHaveDynamicImport = sourceText.includes("import(");
-    return super.extractImports(tree, sourceText);
+    this.bindings = [];
+    const imports = super.extractImports(tree, sourceText, opts);
+    // A template beside the script (Vue, Svelte) uses imports the script never mentions.
+    if (!opts.embedded && this.bindings.length) markUnusedBindings(sourceText, this.bindings);
+    this.bindings = [];
+    return imports;
   }
 
   protected collectImports(node: Node, imports: ImportInfo[]): void {
@@ -74,7 +143,10 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
 
       // Static: import ... from "module"
       if (child.type === "import_statement") {
-        imports.push(this.parseImportStatement(child));
+        const info = this.parseImportStatement(child);
+        imports.push(info);
+        const names = localBindings(child);
+        if (names.length) this.bindings.push({ info, names, row: child.startPosition.row, text: child.text });
         continue;
       }
 

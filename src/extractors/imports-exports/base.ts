@@ -24,8 +24,13 @@ export abstract class ImportExportExtractor {
    */
   protected importQuery: string | null = null;
 
-  /** Extract all imports from the AST */
-  extractImports(tree: Tree, _sourceText: string): ImportInfo[] {
+  /**
+   * Extract all imports from the AST.
+   *
+   * `opts.embedded`: the tree is one block of a file in another language (a
+   * Vue/Svelte `<script>`), so the rest of the file may use what it imports.
+   */
+  extractImports(tree: Tree, _sourceText: string, _opts: { embedded?: boolean } = {}): ImportInfo[] {
     const imports: ImportInfo[] = [];
     this.collectImports(tree.rootNode, imports);
     return imports;

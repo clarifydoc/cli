@@ -398,7 +398,7 @@ function categoryCounts(summary: ProjectAnalysis): Array<[HealthCategory, number
     ["suggestions", (summary.suggestions ?? []).length],
     ["patterns", (summary.patterns ?? []).length],
     ["unused", (summary.unusedFiles ?? []).length],
-    ["dead-code", (summary.deadCode?.files.length ?? 0) + (summary.deadCode?.exports.length ?? 0)],
+    ["dead-code", (summary.deadCode?.files.length ?? 0) + (summary.deadCode?.exports.length ?? 0) + (summary.deadCode?.unusedImportCount ?? 0)],
     ["concerns", (summary.responsibilityProfiles ?? []).filter((r) => r.concernCount >= 2).length],
     ["pressure", (summary.refactorPressure ?? []).length],
     ["dependencies", (summary.externalPackages ?? []).filter((p) => p.advisories?.length || p.versionSkew || p.used === false).length],
@@ -818,7 +818,8 @@ export function healthTool(ctx: ToolContext): McpTool {
           const dead = summary.deadCode;
           const files = (dead?.files ?? []).filter((f) => inFile(f.filePath));
           const exports = (dead?.exports ?? []).filter((e) => inFile(e.filePath));
-          if (!dead || (files.length + exports.length === 0 && fileFilter)) return { text: noFindings(summary, category, filters) };
+          const imports = (dead?.unusedImports ?? []).filter((i) => inFile(i.filePath));
+          if (!dead || (files.length + exports.length + imports.length === 0 && fileFilter)) return { text: noFindings(summary, category, filters) };
           const scope = [
             dead.judgedFiles > 0
               ? `Judged ${plural(dead.judgedFiles, "file")} (${dead.languages.join(", ")}) from ${plural(dead.entryFiles, "entry point")}.`
@@ -828,9 +829,13 @@ export function healthTool(ctx: ToolContext): McpTool {
             dead.unresolvedImports &&
               `${plural(dead.unresolvedImports, "local-looking import")} named nothing analyzed; unreachable files beside them are [ambiguous].`,
           ].filter(Boolean) as string[];
-          const lines = [`# Dead code — ${plural(files.length, "unreachable file")}, ${plural(exports.length, "unused export")}`, ...scope];
+          const importCount = fileFilter ? imports.length : (dead.unusedImportCount ?? imports.length);
+          const lines = [
+            `# Dead code — ${plural(files.length, "unreachable file")}, ${plural(exports.length, "unused export")}${importCount ? `, ${plural(importCount, "unused import")}` : ""}`,
+            ...scope,
+          ];
           // Nothing found is an answer when files were judged; say what was covered.
-          if (files.length + exports.length === 0) {
+          if (files.length + exports.length + imports.length === 0) {
             if (dead.judgedFiles > 0) lines.push("", "Every judged file is reachable and every judged export is imported.");
             return { text: joinLines(lines) };
           }
@@ -859,6 +864,14 @@ export function healthTool(ctx: ToolContext): McpTool {
                 (e) => `${loc(e.filePath, e.line)} ${e.name} (${e.kind}) — ${e.usedInFile ? "used in its own file: drop `export`" : "unused: delete"}`,
                 { offset },
               ),
+            );
+          }
+          if (imports.length > 0) {
+            lines.push(
+              "",
+              `## Unused imports (${importCount})`,
+              "Names an import binds that nothing else in its file mentions.",
+              ...bulletList(imports, limit, (i) => `${loc(i.filePath, i.line)} ${i.names.join(", ")} from ${i.source}`, { offset }),
             );
           }
           return { text: joinLines(lines) };

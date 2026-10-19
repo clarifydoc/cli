@@ -372,10 +372,10 @@ describe("clarifydoc MCP tools — react fixture", () => {
     expect(complexity.text).toContain("# Most complex functions");
   });
 
-  it("health lists dead code: unreachable files first, then unused exports", async () => {
+  it("health lists dead code: unreachable files first, then unused exports and imports", async () => {
     const dead = loaded.summary.deadCode!;
     expect(dead.files.length).toBeGreaterThan(0);
-    const total = dead.files.length + dead.exports.length;
+    const total = dead.files.length + dead.exports.length + (dead.unusedImportCount ?? 0);
     const summary = await call(server, "clarifydoc_health");
     expect(summary.text).toContain(`dead-code: ${total} — call with category="dead-code"`);
 
@@ -384,6 +384,7 @@ describe("clarifydoc MCP tools — react fixture", () => {
     expect(text).toContain(`## Unreachable files (${dead.files.length})`);
     expect(text).toContain(dead.files[0]!.filePath);
     if (dead.exports.length > 0) expect(text).toContain(`## Unused exports (${dead.exports.length})`);
+    if (dead.unusedImportCount) expect(text).toContain(`## Unused imports (${dead.unusedImportCount})`);
     // Capped, and says so.
     if (dead.files.length > 2) expect(text).not.toContain(dead.files[2]!.filePath);
   });

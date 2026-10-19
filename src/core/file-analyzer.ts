@@ -232,6 +232,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     let sourceText: string = rawSource;
     let language: Language = file.language;
     let postExtract: ((analysis: FileAnalysis, raw: string) => void) | undefined;
+    let embedded = false;
     const pre = filePlugin?.preprocess?.(rawSource, file.relativePath);
     if (pre) {
       if ("skip" in pre) {
@@ -241,6 +242,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       sourceText = pre.sourceText;
       language = pre.language;
       postExtract = pre.postExtract;
+      embedded = pre.embedded === true;
       // The effective language can differ from the file's (Vue SFC → its
       // <script> block); make sure ITS plugin is loaded too.
       await ensureLanguagesLoaded([language]);
@@ -288,7 +290,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     const hooks = astHooksFor(language);
 
     // Run all extractors
-    analysis.imports = extractImports(tree, sourceText, language);
+    analysis.imports = extractImports(tree, sourceText, language, embedded);
     // Rewrite tsconfig path aliases (e.g. "@/utils/foo" → "src/utils/foo")
     // BEFORE classifyCalls so the importMap it builds uses resolved paths.
     applyTsconfigAliasesToImports(analysis);

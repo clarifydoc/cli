@@ -27,6 +27,7 @@ export function sveltePreprocess(
     // are absolute to the .svelte file (not relative to a sliced-out script).
     sourceText: blankExceptScripts(rawSource),
     language: sfc.scriptLang,
+    embedded: true,
     postExtract(analysis) {
       // A .svelte file is a component with an implicit default export.
       if (!analysis.exports.some((e) => e.name === "default")) {
