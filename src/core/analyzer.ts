@@ -2229,6 +2229,18 @@ export function buildComponentGraph(
         continue;
       }
 
+      // 1b. A project path, as workspace-package and tsconfig-alias imports are
+      // rewritten (`packages/ui/src/index`): exactly that file. The name
+      // heuristics below would also match its last segment — `index` — against
+      // every other `index.ts` in the repository.
+      if (!STRIP_SOURCE_EXTENSION_RE.test(imp.source)) {
+        const exact = strippedPathToFile.get(imp.source.replace(/\/index$/, ""));
+        if (exact) {
+          if (exact !== a.filePath) refSet.add(exact);
+          continue;
+        }
+      }
+
       // A non-relative specifier that resolves to a known external package
       // (npm package, framework namespace root) never references local files —
       // skip all the name-collision heuristics below. e.g. `import … from "axios"`

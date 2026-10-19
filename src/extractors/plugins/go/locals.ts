@@ -27,6 +27,8 @@ const ANY_SHORT_DECL_RE = /([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*:=/g;
  *   var r UserRepo    var r UserRepo = …                  → UserRepo (the declared type wins)
  *   var r = &PgRepo{…}                                    → *PgRepo
  *   r := NewPgRepo()  r, err := NewRepo(cfg)              → the same-file constructor's result
+ *   u, err := repo.Find(id)   r := store.NewRepo()        → `from` that call: core types it by
+ *                                                          the callee's declared (first) result
  *
  * Types are kept as written (`*PgRepo`, `repo.UserRepo`); the linker bares
  * them. A name declared more than once with different or unknown types
@@ -43,6 +45,7 @@ export function extractGoLocalTypes(
 ): LocalTypes {
   const seen = new Map<string, Set<string>>();
   const unknown = new Set<string>();
+  const fromCalls = new Map<string, Set<string>>();
   const record = (name: string, type: string | null): void => {
     if (name === "_") return;
     declared?.add(name);
@@ -50,6 +53,16 @@ export function extractGoLocalTypes(
     let set = seen.get(name);
     if (!set) seen.set(name, (set = new Set()));
     set.add(type.replace(/\s+/g, ""));
+  };
+  /** A stated type, else — for the first variable — the one call it is initialised from. */
+  const recordInit = (name: string, rhs: string, index: number, count: number): void => {
+    const type = initializerType(rhs, index, count, constructors);
+    const call = type === null && index === 0 ? singleCall(rhs) : null;
+    if (call === null || name === "_") { record(name, type); return; }
+    declared?.add(name);
+    let set = fromCalls.get(name);
+    if (!set) fromCalls.set(name, (set = new Set()));
+    set.add(call);
   };
 
   for (const raw of bodyLines) {
@@ -60,7 +73,7 @@ export function extractGoLocalTypes(
       const short = SHORT_DECL_RE.exec(statement);
       if (short && !/^\s*(?:if|for|switch|select|go|defer|return|case)\b/.test(statement)) {
         const names = splitNames(short[1]!);
-        names.forEach((n, i) => record(n, initializerType(short[2]!, i, names.length, constructors)));
+        names.forEach((n, i) => recordInit(n, short[2]!, i, names.length));
         rest = short[2]!;
       } else {
         const v = VAR_DECL_RE.exec(statement);
@@ -68,7 +81,7 @@ export function extractGoLocalTypes(
           const names = splitNames(v[1]!);
           const tail = v[2]!.trim();
           if (tail.startsWith("=")) {
-            names.forEach((n, i) => record(n, initializerType(tail.slice(1), i, names.length, constructors)));
+            names.forEach((n, i) => recordInit(n, tail.slice(1), i, names.length));
           } else {
             const type = tail.split("=")[0]!.trim();
             for (const n of names) record(n, type && !type.startsWith("(") ? type : null);
@@ -88,13 +101,25 @@ export function extractGoLocalTypes(
 
   const out: LocalTypes = [];
   for (const [name, types] of seen) {
-    if (unknown.has(name) || types.size !== 1) continue;
+    if (unknown.has(name) || types.size !== 1 || fromCalls.has(name)) continue;
     const type = [...types][0]!;
     const param = params.find((p) => p.name === name);
     if (param && (param.type ?? "").replace(/^\*/, "") !== type.replace(/^[*&]/, "")) continue;
     out.push({ name, type });
   }
+  for (const [name, calls] of fromCalls) {
+    if (unknown.has(name) || seen.has(name) || params.some((p) => p.name === name)) continue;
+    for (const from of calls) out.push({ name, type: "", from });
+  }
   return out;
+}
+
+/** `repo.Find(id)` / `store.NewRepo()` — the whole expression is ONE call: its chain as a call names it, `repo.Find()`. */
+function singleCall(rhs: string): string | null {
+  const text = rhs.trim().replace(/;\s*$/, "");
+  const m = /^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*\(/.exec(text);
+  if (!m || GO_TYPE_KEYWORDS.has(m[1]!) || /^(?:make|new|len|cap|append|string|int|float64|byte|rune)$/.test(m[1]!)) return null;
+  return matchingClose(text, m[0].length - 1) === text.length - 1 ? `${m[1]}()` : null;
 }
 
 /**

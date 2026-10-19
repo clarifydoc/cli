@@ -505,6 +505,12 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
           }
         }
 
+        // A class written on one line (`class UserRepo { func save() -> Int { 1 } }`):
+        // its methods sit on the header line itself, after the body's `{`.
+        if (methods.length === 0 && endLine === i + 1 && resolveBlockStyle(spec) === "brace") {
+          methods.push(...headerLineMethods(lines[i]!, i, spec));
+        }
+
         // Extract properties (typed fields). A wrapped header (`class A extends B`
         // / `    implements C {`, a Scala constructor list over several lines)
         // opens its body on a LATER line: scan from there, or that `{` puts
@@ -901,4 +907,45 @@ export function extractCallsFromBody(
     scanLine(line, i, 0);
   }
   return calls;
+}
+
+/**
+ * Methods declared on a one-line class's own header line, after its `{`:
+ * each function pattern match starts a method whose body runs to the next
+ * match (or the line's end), and whose calls are read from that span.
+ */
+function headerLineMethods(line: string, row: number, spec: RegexLangSpec): FunctionInfo[] {
+  const open = line.indexOf("{");
+  if (open < 0) return [];
+  const starts: Array<{ at: number; name: string; pat: (typeof spec.functionPatterns)[number] }> = [];
+  for (let from = open + 1; from < line.length; ) {
+    let best: { at: number; end: number; name: string; pat: (typeof spec.functionPatterns)[number] } | null = null;
+    for (const pat of spec.functionPatterns) {
+      const m = line.slice(from).match(pat.pattern);
+      if (!m || !m[1] || isControlFlowKeyword(m[1]) || m.index === undefined) continue;
+      const at = from + m.index;
+      if (!best || at < best.at) best = { at, end: at + m[0].length, name: m[1], pat };
+    }
+    if (!best) break;
+    starts.push(best);
+    from = best.end;
+  }
+  return starts.map((s, k) => {
+    const segment = line.slice(s.at, starts[k + 1]?.at ?? line.length);
+    const inline = inlineBodyColumn(segment, segment.indexOf(s.name) + s.name.length);
+    const calls = inline >= 0
+      ? extractCallsFromBody([segment], 1, 1, spec.lineCommentPrefixes, spec.callPatterns, { line: 0, column: inline }).map((c) => ({ ...c, line: row + 1 }))
+      : [];
+    return {
+      name: s.name,
+      params: extractParamsFromDeclaration([segment], 0, s.name, spec.parseParam),
+      returnType: spec.parseReturnType?.(segment) ?? null,
+      isAsync: s.pat.isAsync?.(segment) ?? false,
+      isExported: s.pat.isExported?.(segment, s.name) ?? true,
+      decorators: [],
+      calls,
+      line: row + 1,
+      endLine: row + 1,
+    };
+  });
 }

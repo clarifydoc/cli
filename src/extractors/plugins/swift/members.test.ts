@@ -63,3 +63,11 @@ describe("swift members", () => {
     expect(functions("    required convenience init?(raw: String) {\n    }").map((f) => f.name)).toEqual(["init"]);
   });
 });
+
+describe("swift one-line types and main.swift", () => {
+  it("reads the methods of a type written on one line", () => {
+    const [repo, order] = classes("class UserRepo { func save() -> Int { return helper() } }\nstruct OrderRepo { func save() -> Int { 2 }; func load() -> Int { 3 } }");
+    expect(repo!.methods.map((m) => [m.name, m.calls.map((c) => c.name)])).toEqual([["save", ["helper"]]]);
+    expect(order!.methods.map((m) => m.name)).toEqual(["save", "load"]);
+  });
+});

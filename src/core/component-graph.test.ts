@@ -162,3 +162,17 @@ describe("buildComponentGraph — package-directory imports (Go)", () => {
     expect(graph["tools/gen.go"]).toBeUndefined();
   });
 });
+
+describe("buildComponentGraph — a rewritten project path", () => {
+  it("is exactly the file it names, never every other `index` as well", () => {
+    const graph = buildComponentGraph([
+      file("packages/ui/src/index.ts", { language: "typescript", exports: ["button"] }),
+      file("packages/core/src/index.ts", { language: "typescript", exports: ["formatDate"] }),
+      // `import { button } from "@ws/ui"`, rewritten to the workspace package's entry.
+      file("apps/web/src/pages/home.ts", { language: "typescript", imports: [{ source: "packages/ui/src/index", specifiers: ["button"], isNamespace: false }] }),
+      file("apps/web/src/main.ts", { language: "typescript", imports: [{ source: "packages/core/src", specifiers: ["formatDate"], isNamespace: false }] }),
+    ]);
+    expect(graph["apps/web/src/pages/home.ts"]).toEqual(["packages/ui/src/index.ts"]);
+    expect(graph["apps/web/src/main.ts"]).toEqual(["packages/core/src/index.ts"]);
+  });
+});

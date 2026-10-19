@@ -2739,6 +2739,26 @@ function chainPoint(
       const typeFile = typeFileFor(ctx, head.name, sourceFile, analysis.projectId);
       if (typeFile) point = { typeName: head.name, typeFile, member: "", consumer, container: false };
     }
+    // `store.NewRepo()` — a function reached through an imported package or
+    // module: the chain goes on from what that function is declared to return.
+    // Guarded: `db := db.GetEngine(ctx)` names a local after the package it
+    // calls, and resolving the call would type the local by itself again.
+    const guard = `${sourceFile}\0${sourceSymbol}\0${head.name}.${rest[0]?.name ?? ""}`;
+    if (!point && rest[0]?.call && !resolvingPackageCalls.has(guard) && analysis.imports.some((i) => i.specifiers.includes(head.name) || i.source.split(/[./\\:]/).pop() === head.name)) {
+      const name = `${head.name}.${rest[0].name}`;
+      const written = findEnclosingCallable(analysis, sourceSymbol)?.calls.find((c) => c.name === name);
+      resolvingPackageCalls.add(guard);
+      let link: SymbolLink | null;
+      try {
+        link = resolveCallToDefinition(sourceFile, sourceSymbol, written ?? { name, kind: "internal", target: null, line: 0 }, analysis, ctx);
+      } finally {
+        resolvingPackageCalls.delete(guard);
+      }
+      if (link && link.relation === "calls") {
+        point = returnedPoint(ctx, symbolIn(ctx, link.targetFile, link.targetSymbol)?.returnType, link.targetFile, { typeName: "", typeFile: null, consumer });
+        rest = rest.slice(1);
+      }
+    }
   }
   for (let i = 0; i < rest.length; i++) {
     const seg = rest[i]!;
@@ -2749,6 +2769,9 @@ function chainPoint(
   }
   return point;
 }
+
+/** Package-function calls being resolved to type a chain head — re-entry would recurse without end. */
+const resolvingPackageCalls = new Set<string>();
 
 /** Longest run of initializer calls followed to type one local (`a = f(); b = a.g(); b.h()`). */
 const MAX_INITIALIZER_DEPTH = 3;

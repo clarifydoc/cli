@@ -228,11 +228,20 @@ describe("Go typed locals", () => {
 	s := NewSvc()
 	t := NewSvc().With(x)
 	u := other.NewSvc()
-`, ctors)).toEqual([{ name: "r", type: "*PgRepo" }, { name: "err", type: "error" }, { name: "s", type: "*Svc" }]);
+`, ctors)).toEqual([
+      { name: "r", type: "*PgRepo" },
+      { name: "err", type: "error" },
+      { name: "s", type: "*Svc" },
+      // Another package's function: core types it by its declared result.
+      { name: "u", type: "", from: "other.NewSvc()" },
+    ]);
   });
 
-  it("does not type a local from a constructor it cannot see", () => {
-    expect(locals(`	a := NewConcRepo()`)).toEqual([]);
+  it("hands a call it cannot type to core as the local's initializer — the first result only", () => {
+    expect(locals(`	a := NewConcRepo()`)).toEqual([{ name: "a", type: "", from: "NewConcRepo()" }]);
+    expect(locals(`	u, err := repo.Find(id)
+	n := len(xs)
+	c := svc.Open().Conn()`)).toEqual([{ name: "u", type: "", from: "repo.Find()" }]);
   });
 
   it("drops a name declared again with another or an unknown type", () => {

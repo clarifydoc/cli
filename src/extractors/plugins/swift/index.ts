@@ -103,6 +103,9 @@ export const swiftSpec: RegexLangSpec = {
   indentBased: false,
   lineCommentPrefixes: ["//"],
   parseParam: parseSwiftParam,
+  // `main.swift` is the one file whose top-level statements run (the
+  // program's entry, as a script's are).
+  topLevelCalls: /(?:^|\/)main\.swift$/,
 
   functionPatterns: [
     {

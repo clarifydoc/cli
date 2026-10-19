@@ -703,6 +703,37 @@ describe("symbol-linker — typed receivers", () => {
     expect(callsFrom(buildSymbolLinks([java]), "D.java").map((l) => l.targetSymbol)).toEqual(["A.hello"]);
   });
 
+  it("types a local by what a function of an imported package returns (`repo := store.NewRepo()`)", () => {
+    const withIo = (a: FileAnalysis, extra: Record<string, unknown>) => ({ ...a, ...extra }) as unknown as FileAnalysis;
+    const store = file("store/store.go", [
+      cls("Repo", { methods: [{ ...method("Find", [], [], 11), returnType: "User" }] }),
+      cls("User", { methods: [method("Save", [], [], 5)] }),
+      cls("Other", { methods: [{ ...method("Find", [], [], 20), returnType: "User" }, method("Save", [], [], 21)] }),
+    ], { language: "go", functions: [{ ...method("NewRepo", [], [], 9), returnType: "Repo" }] });
+    const svc = withIo(file("svc/svc.go", [], { language: "go", functions: [{
+      ...method("Run", [call("store.NewRepo"), call("repo.Find"), call("u.Save")]),
+      localTypes: [{ name: "repo", type: "", from: "store.NewRepo()" }, { name: "u", type: "", from: "repo.Find()" }],
+    }] }), { imports: [{ source: "example.com/app/store", specifiers: ["store"], isDefault: false, isNamespace: false, isType: false, line: 3 }] });
+    const out = callsFrom(buildSymbolLinks([store, svc]), "svc/svc.go");
+    expect(out.filter((l) => l.callName !== "store.NewRepo").map((l) => [l.callName, l.targetSymbol, l.strategy])).toEqual([
+      ["repo.Find", "Repo.Find", "injection"],
+      ["u.Save", "User.Save", "injection"],
+    ]);
+  });
+
+  it("survives a local named after the package it is made from (`db := db.GetEngine(ctx)`)", () => {
+    const withIo = (a: FileAnalysis, extra: Record<string, unknown>) => ({ ...a, ...extra }) as unknown as FileAnalysis;
+    const dbPkg = file("models/db/engine.go", [cls("Engine", { methods: [method("Where", [], [], 8)] })], {
+      language: "go", functions: [{ ...method("GetEngine", [], [], 3), returnType: "Engine" }],
+    });
+    const user = withIo(file("models/user.go", [], { language: "go", functions: [{
+      ...method("Find", [call("db.GetEngine"), call("db.Where")]),
+      localTypes: [{ name: "db", type: "", from: "db.GetEngine()" }],
+    }] }), { imports: [{ source: "example.com/app/models/db", specifiers: ["db"], isDefault: false, isNamespace: false, isType: false, line: 3 }] });
+    const out = callsFrom(buildSymbolLinks([dbPkg, user]), "models/user.go");
+    expect(out.some((l) => l.callName === "db.Where" && l.targetSymbol === "Engine.Where")).toBe(true);
+  });
+
   it("resolves a bare PHP call to the one included file that defines it", () => {
     const withIo = (a: FileAnalysis, extra: Record<string, unknown>) => ({ ...a, ...extra }) as unknown as FileAnalysis;
     const db = file("site/inc/db.php", [], { language: "php", functions: [method("find_user", [], [], 2)] });

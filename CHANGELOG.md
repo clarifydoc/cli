@@ -67,6 +67,13 @@ recorded in the git history only.
   `__DIR__ . '/lib/db.php'`, `dirname(__FILE__)`, a plain `'inc/header.php'` — are imports, and the
   functions an included file defines resolve from bare calls. Bare function calls and `new X` were not
   recorded as calls at all before, so legacy PHP had almost no call graph.
+- **Go locals typed by the calls that make them.** `repo := store.NewRepo()` and `u, err := repo.Find(id)`
+  type `repo` and `u` by the declared (first) result of the function or method called, so `u.Save()`
+  resolves on `User` instead of by a unique method name. A function reached through an imported package
+  or module (`store.NewRepo()`, Python `module.make()`) now types a call chain in every language.
+- **`main.swift` runs.** Its top-level statements are the program's `<setup>`, with their typed locals; and
+  a type written on one line (`class UserRepo { func save() -> Int { … } }`) keeps its methods. In every
+  script-style regex language, `<setup>` now carries the typed locals of the top-level code.
 - **Nested classes.** A class declared inside another — a Java `static class Builder`, a JUnit `@Nested`
   class, a Kotlin `class Inner`, a C# nested handler or record, a Python nested class with methods — is a
   class of its own with its methods. They used to be dropped entirely, methods and calls included. (A
@@ -98,6 +105,11 @@ recorded in the git history only.
   this.repo = new UserRepo() }`, a lazy `this.db ??= new Db()`) is typed by that construction, so calls on
   it resolve. Constructions that disagree, or a constructor that sets the field from an untyped value,
   still state nothing.
+- A workspace-package or tsconfig-alias import (rewritten to `packages/ui/src/index`) is an edge to exactly
+  that file. Its last segment, `index`, also matched whichever other `index.ts` sat closest, which added
+  a false dependency to nearly every importer in a monorepo.
+- Dead code: PowerShell cmdlets (`[Cmdlet]`, `PSCmdlet`) and Roslyn source generators, analyzers and code
+  fixes are loaded by their host and no longer reported unreachable.
 - `this.save()` / `self.save()` resolves on the enclosing class and its bases first — not on whichever
   class in the file happens to define a `save`.
 - Dead code: a Java/Kotlin declaration under `@Suppress("unused")` / `@SuppressWarnings("unused")` is kept

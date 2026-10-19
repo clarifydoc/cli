@@ -120,5 +120,9 @@ function topLevelSetup(lines: string[], analysis: FileAnalysis, spec: RegexLangS
   if (attribute) for (let i = 0; i < outside.length; i++) if (attribute.test(outside[i]!)) outside[i] = "";
   const calls = extractCallsFromBody(outside, 0, outside.length, spec.lineCommentPrefixes, spec.callPatterns);
   if (calls.length === 0) return null;
-  return { name: "<setup>", params: [], returnType: null, isAsync: false, isExported: false, decorators: [], calls, line: 1, endLine: 1 };
+  const setup: FunctionInfo = { name: "<setup>", params: [], returnType: null, isAsync: false, isExported: false, decorators: [], calls, line: 1, endLine: 1 };
+  // `let repo = UserRepo()` at the top of a script types `repo.save()` below it.
+  const locals = spec.extractLocalTypes?.(outside, setup) ?? [];
+  if (locals.length > 0) setup.localTypes = locals;
+  return setup;
 }
