@@ -177,3 +177,60 @@ describe("Express routes — inline handler params", () => {
     expect(r!.params).toBeUndefined();
   });
 });
+
+describe("Express routes — wrapped handlers", () => {
+  it("reads the function an async/error adapter wraps", async () => {
+    const routes = await fullRoutesOf(`
+      app.get('/a', asyncHandler(async (req, res) => { res.json(await svc.list()); }));
+      app.post('/b', requireAuth, catchAsync(createThing));
+      app.get('/c', wrap(ctrl.show));
+      app.get('/d', passport.authenticate('jwt'));`);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler ?? "<inline>"}`)).toEqual([
+      "GET /a <inline>",
+      "POST /b createThing",
+      "GET /c ctrl.show",
+    ]);
+    expect(routes[0]!.calls.map((c) => c.name)).toContain("svc.list");
+    expect(routes[1]!.middleware).toEqual(["requireAuth"]);
+  });
+});
+
+describe("Express routes — routers mounted in their own file", () => {
+  it("prefixes a local router's routes and drops the mount row", async () => {
+    const routes = await fullRoutesOf(`
+      const app = express();
+      const api = express.Router();
+      const admin = express.Router();
+      api.get('/users', listUsers);
+      api.post('/users', createUser);
+      admin.delete('/users/:id', removeUser);
+      api.use('/admin', requireAdmin, admin);
+      app.use('/api', api);
+      app.get('/health', (req, res) => res.send('ok'));`);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path}`).sort()).toEqual([
+      "DELETE /api/admin/users/:id",
+      "GET /api/users",
+      "GET /health",
+      "POST /api/users",
+    ]);
+    const del = routes.find((r) => r.httpMethod === "DELETE")!;
+    expect(del.middleware).toEqual(["requireAdmin"]);
+    expect(del.auth?.inherited).toBe(true);
+  });
+
+  it("leaves a mount of an imported router for the project pass", async () => {
+    const routes = await fullRoutesOf(`import users from './users'; app.use('/users', users); app.get('/x', h);`);
+    expect(routes.filter((r) => r.mount).map((r) => r.path)).toEqual(["/users"]);
+  });
+});
+
+describe("Express routes — a router that only mounts routers", () => {
+  it("composes the whole chain", async () => {
+    const routes = await fullRoutesOf(`
+      const app = express(); const apiRouter = express.Router(); const usersRouter = express.Router();
+      usersRouter.get('/:id', (req, res) => res.json({}));
+      apiRouter.use('/users', usersRouter);
+      app.use('/api/v1', apiRouter);`);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /api/v1/users/:id"]);
+  });
+});

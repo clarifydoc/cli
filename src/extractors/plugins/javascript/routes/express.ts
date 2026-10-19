@@ -156,6 +156,8 @@ interface ExpressRouteMeta {
   receiver: string | null;
   guards: GuardAttr[];
   params: RouteParamInfo[];
+  /** Guards on the same-file mounts this route was composed through (`app.use("/admin", requireAdmin, admin)`). */
+  mountGuards?: GuardAttr[];
 }
 const routeMeta = new WeakMap<RouteInfo, ExpressRouteMeta>();
 
@@ -209,6 +211,10 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
               if (arg.type === "array") rest.push(...arg.namedChildren);
               else rest.push(arg);
             }
+            // A handler wrapped in an error/async adapter — `asyncHandler(async (req, res) => …)`,
+            // `wrap(getUsers)`, `catchAsync(ctrl.list)` — is the function it wraps.
+            const wrapped = rest.length > 0 ? unwrapHandler(rest[rest.length - 1]!) : null;
+            if (wrapped) rest[rest.length - 1] = wrapped;
             const last = rest[rest.length - 1];
             const lastArgIsFn = !!last && FUNCTION_NODE_TYPES.has(last.type);
 
@@ -286,6 +292,7 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
  * is deliberately not inherited: it says nothing about access.
  */
 export function applyRouterLevelGuards(root: Node, routes: RouteInfo[]): void {
+  composeLocalMounts(routes);
   const routerGuards: Array<{ receiver: string; line: number; guard: GuardAttr }> = [];
   for (const stmt of root.namedChildren) {
     const call = stmt.type === "expression_statement" ? stmt.namedChildren[0] : null;
@@ -313,8 +320,111 @@ export function applyRouterLevelGuards(root: Node, routes: RouteInfo[]): void {
     // arguments as written), so `applyRouteMeta` is used only for params; the
     // auth merge is the same `buildAuth` it would call.
     if (inherited.length > 0) route.middleware = [...inherited.map((g) => g.text), ...route.middleware];
-    const auth = buildAuth(inherited, meta.guards);
+    const auth = buildAuth([...(meta.mountGuards ?? []), ...inherited], meta.guards);
     if (auth) route.auth = auth;
     applyRouteMeta(route, { params: meta.params });
   }
+}
+
+/** Names of the adapters a handler is commonly wrapped in: `asyncHandler`, `catchAsync`, `wrap`, `tryCatch`. */
+const HANDLER_WRAPPER = /handler|wrap|async|catch|safe|try|controller|route/i;
+
+/**
+ * The function a wrapped handler stands for: the inline function of
+ * `asyncHandler(async (req, res) => …)`, or the identifier of `wrap(getUsers)`
+ * when the wrapper is named like one. A call that wraps nothing — a guard
+ * factory such as `passport.authenticate('jwt')` — is returned as null.
+ */
+function unwrapHandler(node: Node): Node | null {
+  if (node.type !== "call_expression") return null;
+  const callee = node.childForFieldName("function");
+  const name = callee?.type === "member_expression" ? callee.childForFieldName("property")?.text : callee?.text;
+  const args = node.childForFieldName("arguments")?.namedChildren.filter((a) => a.type !== "comment") ?? [];
+  if (args.length !== 1) return null;
+  const inner = args[0]!;
+  if (FUNCTION_NODE_TYPES.has(inner.type)) return inner;
+  if ((inner.type === "identifier" || inner.type === "member_expression") && !!name && HANDLER_WRAPPER.test(name)) return inner;
+  if (inner.type === "call_expression") return unwrapHandler(inner);
+  return null;
+}
+
+/**
+ * Routers mounted in the file that declares them: `const api = Router();
+ * api.get("/users", …); app.use("/api", api)`. The project mount pass joins a
+ * router across files only, so a same-file mount used to stay a method-less row
+ * while its routes kept their unprefixed paths. Here each route declared on a
+ * locally mounted receiver takes the mount's prefix (through any chain of
+ * local mounts) and its guards, and the mount row goes.
+ */
+function composeLocalMounts(routes: RouteInfo[]): void {
+  const receivers = new Set<string>();
+  // A receiver is a local router when routes OR mounts are registered on it:
+  // `apiRouter.use("/users", usersRouter)` makes `apiRouter` one even with no route of its own.
+  for (const r of routes) {
+    const recv = routeMeta.get(r)?.receiver;
+    if (recv) receivers.add(recv);
+  }
+  const byTarget = new Map<string, RouteInfo[]>();
+  for (const r of routes) {
+    if (!r.mount || !r.handler || !/^[A-Za-z_$][\w$]*$/.test(r.handler)) continue;
+    const target = r.handler.toLowerCase();
+    if (!receivers.has(target) || target === routeMeta.get(r)?.receiver) continue;
+    (byTarget.get(target) ?? byTarget.set(target, []).get(target)!).push(r);
+  }
+  if (byTarget.size === 0) return;
+
+  interface Base { prefix: string; middleware: string[]; guards: GuardAttr[] }
+  const memo = new Map<string, Base[]>();
+  const onStack = new Set<string>();
+  const effective = (recv: string): Base[] => {
+    const cached = memo.get(recv);
+    if (cached) return cached;
+    const incoming = byTarget.get(recv);
+    if (!incoming || onStack.has(recv)) return [{ prefix: "", middleware: [], guards: [] }];
+    onStack.add(recv);
+    const out: Base[] = [];
+    for (const m of incoming) {
+      const meta = routeMeta.get(m);
+      for (const base of effective(meta?.receiver ?? "")) {
+        out.push({
+          prefix: joinPrefix(base.prefix, m.path),
+          middleware: [...base.middleware, ...m.middleware],
+          guards: [...base.guards, ...(meta?.guards ?? [])],
+        });
+      }
+    }
+    onStack.delete(recv);
+    memo.set(recv, out);
+    return out;
+  };
+
+  const composed = new Set([...byTarget.values()].flat());
+  const next: RouteInfo[] = [];
+  for (const r of routes) {
+    if (composed.has(r)) {
+      routeMeta.delete(r);
+      continue;
+    }
+    const meta = routeMeta.get(r);
+    if (!meta?.receiver || !byTarget.has(meta.receiver) || r.mount) {
+      next.push(r);
+      continue;
+    }
+    for (const base of effective(meta.receiver)) {
+      const copy: RouteInfo = { ...r, path: joinPrefix(base.prefix, r.path), middleware: [...base.middleware, ...r.middleware] };
+      routeMeta.set(copy, { ...meta, mountGuards: [...base.guards, ...(meta.mountGuards ?? [])] });
+      next.push(copy);
+    }
+    routeMeta.delete(r);
+  }
+  routes.splice(0, routes.length, ...next);
+}
+
+/** `"/api"` + `"/users"` → `"/api/users"`; `"/api"` + `"/"` → `"/api"`. */
+function joinPrefix(prefix: string, path: string): string {
+  if (!prefix) return path;
+  const head = prefix.replace(/\/+$/, "");
+  if (path === "/" || path === "") return head || "/";
+  if (path === "*") return `${head}/*`;
+  return `${head}/${path.replace(/^\/+/, "")}`;
 }

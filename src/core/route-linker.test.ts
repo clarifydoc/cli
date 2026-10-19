@@ -906,3 +906,11 @@ describe("linkApiCallsToRoutesDetailed — rows fanned out per subclass", () => 
   });
 });
 
+
+describe("linkApiCallsToRoutes — an unresolved mount is not an endpoint", () => {
+  it("never links a call to a mount row", () => {
+    const mount = { ...route("server.ts", "", "/static", "serveStatic"), httpMethod: null, mount: true as const };
+    const links = linkApiCallsToRoutes([apiCall("web/a.ts", "get", "/static")], [mount]);
+    expect(links).toEqual([]);
+  });
+});
