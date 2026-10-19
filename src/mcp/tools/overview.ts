@@ -624,9 +624,16 @@ export function healthTool(ctx: ToolContext): McpTool {
             .filter((i) => inFile(i.filePath))
             .filter((i) => !severity || rank[i.severity] <= rank[severity])
             .sort((a, b) => rank[a.severity] - rank[b.severity]);
-          if (issues.length === 0) return { text: noFindings(summary, category, filters) };
+          // Credentials only history still holds: deleted from the tree, leaked all the same.
+          const pastSecrets = (summary.historySecrets?.findings ?? []).filter((h) => !h.inTree && inFile(h.file));
+          const historyLines = pastSecrets.length
+            ? ["", `## In git history only (${pastSecrets.length}) — deleted from the tree, still readable in every clone: rotate them`, ...bulletList(pastSecrets, limit, (h) => `${h.format} — ${loc(h.file, h.line)} in ${h.commit} (${h.date}): ${h.snippet}`)]
+            : [];
+          if (issues.length === 0 && historyLines.length === 0) return { text: noFindings(summary, category, filters) };
           return {
             text: joinLines([
+              ...historyLines.slice(1),
+              ...(historyLines.length ? [""] : []),
               `# Security issues (${issues.length})`,
               ...bulletList(
                 issues,

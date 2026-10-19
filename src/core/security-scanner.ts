@@ -12,7 +12,7 @@ import { isTestFile } from "./test-file-detector.js";
  * issues are reported in.
  */
 /** Credential formats with a fixed shape (names for the message). */
-const SECRET_FORMATS: ReadonlyArray<readonly [string, RegExp]> = [
+export const SECRET_FORMATS: ReadonlyArray<readonly [string, RegExp]> = [
   ["AWS access key", /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/],
   ["GitHub token", /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,})\b/],
   ["GitLab token", /\bglpat-[A-Za-z0-9_-]{20,}\b/],

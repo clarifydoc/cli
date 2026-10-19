@@ -72,6 +72,7 @@ import { applySecurityRules } from "./security-rules.js";
 import { externalServices } from "./external-services.js";
 import { typeOnlyEdges } from "./import-kinds.js";
 import { checkDocReferences, docReferences, type DocReference } from "./doc-drift.js";
+import { scanHistorySecrets } from "./history-secrets.js";
 import { buildTestCoverage, COVERAGE_CANDIDATES, parseCoverage } from "./test-coverage.js";
 import { isTestFile } from "./test-file-detector.js";
 import { checkContracts } from "./contract-check.js";
@@ -189,6 +190,8 @@ export interface AnalyzeOptions {
    * each sub-project root are tried (`coverage/lcov.info`, `coverage.xml`, …).
    */
   coverage?: string[];
+  /** Read every commit's added lines for credentials (cloud keys, tokens, private keys) — opt-in: it walks all of history. */
+  historySecrets?: boolean;
   /**
    * Ask OSV (api.osv.dev) about the installed packages' known vulnerabilities
    * (`ExternalPackage.advisories`). The one network call an analysis makes —
@@ -648,6 +651,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
           gitHistory: options.gitHistory !== false,
           stableOutput: options.stableOutput === true,
           importSarif: (options.importSarif ?? []).map((f) => pathResolve(f)),
+          historySecrets: options.historySecrets === true,
           // A file added or removed — even one a plugin skips, which has no manifest entry.
           files: files.map((f) => normalizeManifestKey(f.relativePath)).sort(),
         },
@@ -1587,6 +1591,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // imports. Only languages whose plugin declares a reachability model are
   // judged; the plugin reads its toolchain's entry points (package.json, …).
   progress.status("Finding unreachable code...");
+  // Credentials history holds, opted into: the whole log, read once.
+  const historySecrets = options.historySecrets ? await scanHistorySecrets(projectRoot).catch(() => undefined) : undefined;
+  if (historySecrets) progress.detail(`  History secrets: ${historySecrets.findings.length} credential(s) in ${historySecrets.commits} commit(s), ${historySecrets.findings.filter((f) => !f.inTree).length} no longer in the tree`);
   // What the project's Markdown names that the tree no longer bears out.
   const docDrift = await computeDocDrift(projectRoot, allAnalyses, allRoutes, options.gitHistory !== false).catch(() => undefined);
   if (docDrift?.findings.length) progress.detail(`  Doc drift: ${docDrift.findings.length} reference(s) in ${new Set(docDrift.findings.map((f) => f.doc)).size} doc(s) the tree does not bear out`);
@@ -1769,6 +1776,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     deadCode,
     ...(testCoverage ? { testCoverage } : {}),
     ...(docDrift ? { docDrift } : {}),
+    ...(historySecrets ? { historySecrets } : {}),
     deployment,
   };
 
