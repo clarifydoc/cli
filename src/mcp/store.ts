@@ -134,7 +134,29 @@ export interface AnalysisStoreOptions {
   coldStartRefusal?: string;
   analyzeSettings?: AnalyzeSettings;
   log?: (message: string) => void;
+  /**
+   * How long a tool call waits for an analysis before answering that it is
+   * still running (default 20 s, or `CLARIFYDOC_MCP_WAIT_MS`). Clients give
+   * a call a deadline; the run itself goes on, and the next call joins it.
+   */
+  waitMs?: number;
 }
+
+/** Where a running analysis is: its stage, the files parsed so far, how long it has run. */
+export interface AnalysisRunState {
+  stage: string;
+  done?: number;
+  total?: number;
+  elapsedMs: number;
+}
+
+/** "parsing files 120/450, 14s" */
+export function describeRun(state: AnalysisRunState): string {
+  const count = state.total ? ` ${state.done ?? 0}/${state.total}` : "";
+  return `${state.stage}${count}, ${Math.round(state.elapsedMs / 1000)}s so far`;
+}
+
+const DEFAULT_WAIT_MS = 20_000;
 
 /**
  * Why `root` must not be analyzed unasked, or null. A user-scope client config
@@ -158,6 +180,8 @@ export class AnalysisStore {
   private cacheKey = "";
   /** In-flight analysis, so two concurrent tool calls never scan twice. */
   private running: Promise<AnalyzeResult> | null = null;
+  /** Where the in-flight analysis is, read off its own progress line. */
+  private runProgress: { startedAt: number; stage: string; done?: number; total?: number } | null = null;
   /** In-flight load, so a burst of tool calls parses the summary once. */
   private loading: { key: string; promise: Promise<LoadedAnalysis> } | null = null;
   private readonly log: (message: string) => void;
@@ -186,6 +210,50 @@ export class AnalysisStore {
    */
   get allowColdStart(): boolean {
     return this.options.allowColdStart !== false;
+  }
+
+  /** The in-flight analysis's progress, or null when none runs in this process. */
+  runState(): AnalysisRunState | null {
+    const p = this.runProgress;
+    return p ? { stage: p.stage, ...(p.total ? { done: p.done ?? 0, total: p.total } : {}), elapsedMs: Date.now() - p.startedAt } : null;
+  }
+
+  private get waitMs(): number {
+    const env = Number(process.env.CLARIFYDOC_MCP_WAIT_MS);
+    return this.options.waitMs ?? (Number.isFinite(env) && env > 0 ? env : DEFAULT_WAIT_MS);
+  }
+
+  /**
+   * Wait for a run up to the call deadline, telling `onTick` where it is each
+   * second. The run is never abandoned: past the deadline this answers
+   * `pending`, and a later call joins the same run.
+   */
+  private async within<T>(run: Promise<T>, onTick?: (state: AnalysisRunState) => void): Promise<{ done: T } | { pending: AnalysisRunState }> {
+    // Settled later by the caller who waits; never an unhandled rejection meanwhile.
+    run.catch(() => {});
+    let timer: NodeJS.Timeout | undefined;
+    let ticker: NodeJS.Timeout | undefined;
+    const deadline = new Promise<"late">((res) => (timer = setTimeout(() => res("late"), this.waitMs)));
+    if (onTick) {
+      ticker = setInterval(() => {
+        const st = this.runState();
+        if (st) onTick(st);
+      }, 1000);
+    }
+    try {
+      const first = await Promise.race([run.then((v) => ({ v })), deadline]);
+      if (first === "late") return { pending: this.runState() ?? { stage: "analyzing", elapsedMs: this.waitMs } };
+      return { done: first.v };
+    } finally {
+      clearTimeout(timer);
+      clearInterval(ticker);
+    }
+  }
+
+  /** `refresh`, answering `pending` instead when the run outlasts the call deadline. */
+  async refreshWithin(opts: { full?: boolean } = {}, onTick?: (state: AnalysisRunState) => void): Promise<{ done: AnalyzeResult } | { pending: AnalysisRunState }> {
+    // Joining a run already going: a second `full` would not make it full.
+    return this.within(this.refresh(opts), onTick);
   }
 
   /** Absolute path of the summary this store reads. */
@@ -259,9 +327,15 @@ export class AnalysisStore {
       );
     }
 
-    this.log("no analysis on disk — running one now");
+    if (!this.running) this.log("no analysis on disk — running one now");
     try {
-      await this.runAnalysis({ full: false });
+      const r = await this.within(this.runAnalysis({ full: false }));
+      if ("pending" in r) {
+        throw new MissingAnalysisError(
+          `The first analysis of this project is running (${describeRun(r.pending)}). ` +
+            `Call again in a few seconds — it goes on in the background, and the next call waits for it.`,
+        );
+      }
     } catch (err) {
       // Lost the race between the check above and the lock: wait it out.
       if (err instanceof AnalysisLockedError) return this.awaitOtherRun(err.owner);
@@ -305,6 +379,22 @@ export class AnalysisStore {
       return this.running;
     }
     const settings = this.options.analyzeSettings ?? {};
+    const progress = { startedAt: Date.now(), stage: "starting" } as { startedAt: number; stage: string; done?: number; total?: number };
+    this.runProgress = progress;
+    const onLine = (text: string) => {
+      const m = /Analyzing \[(\d+)\/(\d+)\]/.exec(text);
+      if (m) {
+        progress.stage = "parsing files";
+        progress.done = Number(m[1]);
+        progress.total = Number(m[2]);
+        return;
+      }
+      const t = text.replace(/\s+/g, " ").trim().replace(/\.{3}$/, "");
+      if (t && t.length < 80 && !/^\[/.test(t)) {
+        progress.stage = t.charAt(0).toLowerCase() + t.slice(1);
+        progress.total = undefined;
+      }
+    };
     const run = withStdoutProtected(this.log, () =>
       analyze({
         projectRoot: this.options.projectRoot,
@@ -319,6 +409,7 @@ export class AnalysisStore {
         pretty: false,
         verbose: false,
       }),
+      onLine,
     );
     this.running = run;
     try {
@@ -332,6 +423,7 @@ export class AnalysisStore {
       return result;
     } finally {
       this.running = null;
+      if (this.runProgress === progress) this.runProgress = null;
     }
   }
 
@@ -543,6 +635,8 @@ async function statOrNull(path: string) {
 export async function withStdoutProtected<T>(
   log: (message: string) => void,
   task: () => Promise<T>,
+  /** The progress line's latest text, each time it is redrawn (`\r`-separated parts, last one). */
+  onLine?: (text: string) => void,
 ): Promise<T> {
   const original = {
     log: console.log,
@@ -562,10 +656,14 @@ export async function withStdoutProtected<T>(
   console.warn = divert("warn");
   console.debug = divert("debug");
   process.stdout.write = ((
-    _chunk: unknown,
+    chunk: unknown,
     encoding?: unknown,
     callback?: unknown,
   ): boolean => {
+    if (onLine) {
+      const parts = String(chunk).split(/[\r\n]+/).filter((x) => x.trim());
+      if (parts.length) onLine(parts[parts.length - 1]!);
+    }
     // Honour whichever of the two optional-argument shapes the caller used.
     const done = typeof encoding === "function" ? encoding : callback;
     if (typeof done === "function") (done as () => void)();

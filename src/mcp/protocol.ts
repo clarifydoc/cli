@@ -48,6 +48,16 @@ export interface ToolResult {
   isError?: boolean;
 }
 
+/** What a handler may use besides its arguments. */
+export interface ToolExtras {
+  /**
+   * Report progress on a long call — sent as `notifications/progress` when the
+   * client asked for it (a `progressToken` in the request's `_meta`), a no-op
+   * otherwise.
+   */
+  progress?(message: string, done?: number, total?: number): void;
+}
+
 export interface McpTool {
   name: string;
   /** Human-readable name for UIs that show one (`annotations.title`). */
@@ -57,7 +67,7 @@ export interface McpTool {
   inputSchema: Record<string, unknown>;
   /** Defaults to true; set false for tools that mutate state (running a scan). */
   readOnly?: boolean;
-  handler: (args: Record<string, unknown>) => Promise<ToolResult> | ToolResult;
+  handler: (args: Record<string, unknown>, extras?: ToolExtras) => Promise<ToolResult> | ToolResult;
 }
 
 export interface McpResource {
@@ -118,6 +128,8 @@ export class McpServer {
   private readonly log: (message: string) => void;
   /** Set once the client's `initialize` has been answered. */
   private negotiatedVersion: string | null = null;
+  /** Writes a notification to the client (the transport sets it). */
+  private notifier: ((message: Record<string, unknown>) => void) | null = null;
 
   constructor(private readonly options: McpServerOptions) {
     for (const tool of options.tools) this.tools.set(tool.name, tool);
@@ -125,6 +137,11 @@ export class McpServer {
     this.templates = options.resourceTemplates ?? [];
     for (const prompt of options.prompts ?? []) this.prompts.set(prompt.name, prompt);
     this.log = options.log ?? (() => {});
+  }
+
+  /** How notifications reach the client; a transport without them leaves it unset. */
+  setNotifier(notify: ((message: Record<string, unknown>) => void) | null): void {
+    this.notifier = notify;
   }
 
   /** Negotiated protocol revision (null until `initialize`). */
@@ -252,8 +269,21 @@ export class McpServer {
     }
 
     const started = Date.now();
+    const token = (params._meta as { progressToken?: unknown } | undefined)?.progressToken;
+    const notify = this.notifier;
+    let step = 0;
+    const extras: ToolExtras =
+      notify && (typeof token === "string" || typeof token === "number")
+        ? {
+            progress: (message, done, total) => {
+              // The spec wants `progress` to grow with every notification.
+              step = Math.max(step + 1, done ?? 0);
+              notify({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: token, progress: step, ...(total ? { total: Math.max(total, step) } : {}), message } });
+            },
+          }
+        : {};
     try {
-      const result = await tool.handler(args);
+      const result = await tool.handler(args, extras);
       this.log(`tools/call ${name} -> ${result.text.length} chars in ${Date.now() - started}ms`);
       const note = this.options.annotate ? await this.options.annotate(name).catch(() => null) : null;
       return {
@@ -392,6 +422,7 @@ export function serveStdio(server: McpServer, options: StdioOptions = {}): Promi
     const write = (response: JsonRpcResponse) => {
       emit(JSON.stringify(response) + "\n");
     };
+    server.setNotifier((message) => emit(JSON.stringify(message) + "\n"));
 
     const handleLine = (line: string) => {
       const trimmed = line.trim();

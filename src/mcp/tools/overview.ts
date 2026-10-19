@@ -4,7 +4,7 @@ import { describeDrivers, describeGates } from "../../core/refactor-pressure.js"
 import { byOrdinal } from "../../core/ordinal.js";
 import { normalize, rankCandidates, type Candidate, type SearchKind } from "../search-rank.js";
 import type { McpTool } from "../protocol.js";
-import type { LoadedAnalysis } from "../store.js";
+import { describeRun, type LoadedAnalysis } from "../store.js";
 import type { ProjectAnalysis, ProjectDependency } from "../../types/analysis.js";
 import {
   ago,
@@ -75,10 +75,19 @@ export function analyzeTool(ctx: ToolContext): McpTool {
       additionalProperties: false,
     },
     readOnly: false,
-    handler: async (args) => {
+    handler: async (args, extras) => {
       const full = booleanArg(args, "full");
       const started = Date.now();
-      const result = await ctx.store.refresh({ full });
+      const outcome = await ctx.store.refreshWithin({ full }, (st) => extras?.progress?.(describeRun(st), st.done, st.total));
+      if ("pending" in outcome) {
+        return {
+          text:
+            `The analysis is still running (${describeRun(outcome.pending)}). It goes on in the background: ` +
+            `call clarifydoc_analyze again to wait for this same run (it will not start another), or use the other ` +
+            `tools meanwhile — they read the previous analysis until this one is written.`,
+        };
+      }
+      const result = outcome.done;
       const loaded = await requireAnalysis(ctx);
       return {
         text: joinLines([
