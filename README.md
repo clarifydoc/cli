@@ -405,6 +405,24 @@ Optional, committed with the code: `.clarifydoc/config.json` (next to `.clarifyd
 
 `refactorPressure` tunes the composite **refactor pressure** score (`project-summary.json` → `refactorPressure`, MCP `clarifydoc_health` category `pressure`): each file's cognitive complexity, size, mixed concerns, coupling and git churn are normalized against the `ceilings`, combined with the `weights`, and cut into `bands`. `gates` fire regardless of the score. Every row lists the drivers behind it and a `confidence` equal to the share of signal that was available, so a run without git history says so instead of scoring lower.
 
+`extract` tells the analysis what your own wrappers mean, without writing a plugin: an in-house HTTP client, a
+route registrar, a database helper.
+
+```json
+{
+  "extract": {
+    "httpCalls": [{ "call": "apiGet", "method": "GET" }, { "call": "http.send", "methodArg": 0, "urlArg": 1 }],
+    "routes": [{ "call": "registerRoute", "methodArg": 0, "pathArg": 1 }],
+    "db": [{ "call": "db.exec", "sqlArg": 0 }, { "call": "ledger.write", "tableArg": 0, "access": "write" }]
+  }
+}
+```
+
+Each call site whose argument is a literal becomes an API call (linked to the route that serves it), a route, or a
+database access (the table read from the SQL, or named), exactly as for a framework a plugin knows. `urlArg` and
+`pathArg` default to the first argument; a `db` entry needs `tableArg` or `sqlArg`. An access the config declares
+counts even when the call resolves into your own code.
+
 ## Default ignores
 
 Always excluded:

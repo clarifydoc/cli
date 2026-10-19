@@ -703,6 +703,14 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     progress.detail(`  angular external templates: ${angularTplCount}`);
   }
 
+  // A team's own wrappers, declared in .clarifydoc/config.json: their call
+  // sites become api-calls, routes and database accesses before anything links them.
+  const extractPatterns = loadProjectConfig(projectRoot).config.extract;
+  if (extractPatterns) {
+    const got = await applyExtractPatterns(allAnalyses, projectRoot, extractPatterns);
+    progress.detail(`  Config patterns: ${got.httpCalls} HTTP call(s), ${got.routes} route(s), ${got.db} database access(es)`);
+  }
+
   // Step 4: Post-analysis
 
   // One project-wide import index, shared across the router mount resolver and
@@ -2524,6 +2532,7 @@ import { attachOsvAdvisories } from "./osv.js";
 import { readSourceRevision } from "./source-revision.js";
 import { importSarif } from "./sarif-import.js";
 import { assessCoverage } from "./coverage.js";
+import { applyExtractPatterns } from "./config-patterns.js";
 
 /** Import source patterns → framework id */
 const IMPORT_FRAMEWORK_MAP: Record<string, string> = {

@@ -1246,6 +1246,12 @@ export interface DataSourceInfo {
    * the project's aggregated rows. Absent when nothing states where it goes.
    */
   origin?: CallOrigin;
+  /**
+   * The team declared this call a data access (`.clarifydoc/config.json`
+   * `extract`): kept even where the call resolves into the project's own
+   * code, which otherwise reads as a call, not an access.
+   */
+  declared?: true;
 }
 
 /** Where a call's base URL comes from, as the source states it. */

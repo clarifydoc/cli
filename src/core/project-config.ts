@@ -1,3 +1,4 @@
+import { validateExtract, type ExtractPatterns } from "./config-patterns.js";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import type { ArchLayer } from "../types/analysis.js";
@@ -103,10 +104,12 @@ export interface ProjectConfig {
   generated?: string[];
   /** The team's own import rules, checked over the dependency graph and reported as layer violations. */
   rules?: DependencyRuleInput[];
+  /** What the team's own wrappers mean: HTTP clients, route registrars, database helpers (core/config-patterns.ts). */
+  extract?: ExtractPatterns;
 }
 
 const KNOWN_SECTIONS: ReadonlySet<string> = new Set([
-  "$comment", "$schema", "refactorPressure", "layers", "exempt", "generated", "rules",
+  "$comment", "$schema", "refactorPressure", "layers", "exempt", "generated", "rules", "extract",
 ]);
 
 const ARCH_LAYERS: ReadonlySet<string> = new Set<ArchLayer>([
@@ -195,6 +198,8 @@ export function loadProjectConfig(projectRoot: string): LoadedProjectConfig {
       config.rules = rules;
     }
   }
+  const extract = validateExtract(parsed.extract, (m) => warnings.push(`${PROJECT_CONFIG_RELATIVE_PATH}: ${m}`));
+  if (extract) config.extract = extract;
   for (const key of ["exempt", "generated"] as const) {
     if (parsed[key] === undefined) continue;
     const list = stringList(parsed[key]);

@@ -57,10 +57,11 @@ describe("every fixture records its provenance", () => {
     }
   });
 
-  it("carries no config, since no fixture ships one", () => {
+  it("carries a config only where the fixture ships one, and no warnings", () => {
+    // sample-config-patterns ships .clarifydoc/config.json (its `extract` section is what it tests).
     for (const rel of summaries) {
       const p = JSON.parse(readFileSync(resolve(REPO_ROOT, rel), "utf-8")).provenance;
-      expect(p.config.present, rel).toBe(false);
+      expect(p.config.present, rel).toBe(rel.includes("sample-config-patterns"));
       expect(p.config.warnings, rel).toEqual([]);
     }
   });

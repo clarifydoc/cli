@@ -44,7 +44,7 @@ export function demoteProjectCallDataSources(
   for (const a of analyses) {
     if (!a.dataSources?.some((ds) => ds.kind === "database")) continue;
     a.dataSources = a.dataSources.filter((ds) => {
-      if (ds.kind !== "database") return true;
+      if (ds.kind !== "database" || ds.declared) return true;
       const link = linkAt.get(siteKey(a.filePath, ds.line, ds.name));
       if (!link || isPersistenceBoundary(byFile.get(link.targetFile), link.targetSymbol)) return true;
       dropped++;
