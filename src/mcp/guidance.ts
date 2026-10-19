@@ -41,6 +41,11 @@ const REACH_FOR: ReachRule[] = [
     why: "each flow carries the call path from the entry point to the data",
   },
   {
+    question: "How is this codebase organized, and what is coupled to what?",
+    tools: "clarifydoc_architecture",
+    why: "it gives folder dependencies with instability, communities, hub files, import cycles and files that change together in history — what reading files one by one cannot show",
+  },
+  {
     question: "What does this endpoint accept, and who may call it?",
     tools: "clarifydoc_contract",
     why: "it gives the request body's shape, the parameters' bindings and the auth policy as declared in code",

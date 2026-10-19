@@ -266,15 +266,19 @@ instead of interleaving with it.
 |------|---------|
 | `clarifydoc_status` | What has been mapped, how stale it is, how much of each dimension exists |
 | `clarifydoc_search` | Find a route / screen / symbol / entity / file by name — one list, ranked, terms matched independently |
-| `clarifydoc_routes` | API + frontend routes, their handlers, their frontend callers, what they reach |
+| `clarifydoc_routes` | API + frontend routes, their handlers, their frontend callers, what they reach; `gaps=true` for calls that reach no route, routes nothing calls, and request bodies that disagree with their route |
+| `clarifydoc_contract` | One endpoint's request shape, parameter bindings and auth, as an OpenAPI-like operation |
+| `clarifydoc_services` | Sub-project → sub-project dependencies (HTTP and messaging) with their endpoints |
 | `clarifydoc_screens` | Screens/pages, their routes, the endpoints they call, the dialogs they open |
 | `clarifydoc_file` | Everything about one file: functions, complexity, data access, callers, findings |
-| `clarifydoc_trace` | Callers/callees of a symbol, N hops, plus the data effects it reaches |
+| `clarifydoc_trace` | Callers/callees of a symbol, N hops, plus the data effects it reaches; `to=` for the path between two symbols |
+| `clarifydoc_extract` | One function's source and the functions it calls, cut to a token budget |
 | `clarifydoc_blast_radius` | What breaks if a file changes — dependents, screens/routes/entities reached |
 | `clarifydoc_data_model` | Entities/tables, columns, relations, and the functions that read/write them |
 | `clarifydoc_data_flows` | Route/screen → data effect rows (e.g. which endpoints reach a DB write) |
-| `clarifydoc_health` | Score plus security, layer violations, complexity, duplicates, hotspots |
-| `clarifydoc_impact` | Impact of the current git diff: screens, routes, entities, tests to run |
+| `clarifydoc_health` | Score plus security, layer violations, complexity, duplicates, hotspots, dead code, refactor pressure |
+| `clarifydoc_architecture` | Folder dependencies with instability, communities, hub files, import cycles, surprising links, files that change together |
+| `clarifydoc_impact` | Impact of the current git diff: screens, routes, entities, tests to run; the changed functions and their callers, signature breaks, owners and reviewers, files usually changed with it |
 | `clarifydoc_analyze` | Re-run the analysis (incremental). The only tool that writes anything |
 
 Flags: `--analysis-dir <dir>` to read an exact analysis directory, `--no-auto-analyze` to forbid re-analysis on

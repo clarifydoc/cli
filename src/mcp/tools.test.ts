@@ -71,12 +71,24 @@ describe("clarifydoc MCP tools — react fixture", () => {
       "clarifydoc_data_model",
       "clarifydoc_data_flows",
       "clarifydoc_health",
+      "clarifydoc_architecture",
       "clarifydoc_impact",
       "clarifydoc_analyze",
     ]);
     expect(tools.filter((t) => !t.annotations.readOnlyHint).map((t) => t.name)).toEqual([
       "clarifydoc_analyze",
     ]);
+  });
+
+  it("architecture lists modules with instability, hubs and communities", async () => {
+    const call = async (args: Record<string, unknown>) => {
+      const res = await server.handleMessage({ jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "clarifydoc_architecture", arguments: args } });
+      return ((res?.result as { content: Array<{ text: string }> }).content[0]!.text);
+    };
+    expect(await call({})).toMatch(/^# Architecture — /);
+    expect(await call({ view: "modules", depth: 1 })).toMatch(/instability \d\.\d\d/);
+    expect(await call({ view: "hubs" })).toMatch(/degree \d+/);
+    expect(await call({ view: "cochange" })).toMatch(/co-change|change together/i);
   });
 
   it("status reports the project, its counts and the analysis directory", async () => {
