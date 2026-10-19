@@ -4,6 +4,8 @@ import { existsSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { updateLsp } from "../core/lsp-updater.js";
+import { analyze } from "../core/analyzer.js";
+import { loadReportSummary } from "../core/report-payload.js";
 import type { DefinitionQuery } from "./lsp-enhancer.js";
 import type { DefinitionAnswerFile } from "./answers-source.js";
 
@@ -72,4 +74,48 @@ describe.skipIf(!existsSync(join(analysis, "project-summary.json")))("lsp-update
     // A budgeted editor run never overwrites a full Docker capture.
     expect(existsSync(join(dir, "an", "lsp-ground-truth.json"))).toBe(false);
   });
+});
+
+/**
+ * Layer 2 survives a re-analysis: the links it added between files that have
+ * not changed are kept; a link out of an edited file is not.
+ */
+describe.skipIf(!existsSync(fixture))("layer 2 across an incremental re-analysis", () => {
+  let dir: string;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-l2-carry-"));
+    await cp(fixture, join(dir, "src"), { recursive: true });
+  });
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("carries the links whose files still hash the same", async () => {
+    const root = join(dir, "src");
+    const out = join(dir, "out");
+    await analyze({ projectRoot: root, outputDir: out, lsp: false, gitHistory: false, incremental: true });
+    await updateLsp({ analysisDir: out, emitQueries: join(dir, "q.json") });
+    const queries: DefinitionQuery[] = JSON.parse(await readFile(join(dir, "q.json"), "utf-8")).queries;
+    const inAuth = queries.find((q) => q.file === "middleware/auth.ts")!;
+    const inOther = queries.find((q) => q.file !== "middleware/auth.ts" && q.file !== "routes/users.ts")!;
+    const answers: DefinitionAnswerFile = {
+      source: "editor",
+      answers: [
+        { ...inAuth, targets: [{ file: "routes/users.ts", line: 14 }] },
+        { ...inOther, targets: [{ file: "routes/users.ts", line: 14 }] },
+      ],
+    };
+    await writeFile(join(dir, "a.json"), JSON.stringify(answers));
+    await updateLsp({ analysisDir: out, answers: join(dir, "a.json") });
+
+    // An edit to one of the two calling files, then the incremental re-run.
+    await new Promise((r) => setTimeout(r, 20));
+    await writeFile(join(root, "middleware/auth.ts"), (await readFile(join(root, "middleware/auth.ts"), "utf-8")) + "\n// edited\n");
+    await analyze({ projectRoot: root, outputDir: out, lsp: false, gitHistory: false, incremental: true });
+
+    const summary = await loadReportSummary(out);
+    expect(summary.lspStats).toMatchObject({ stale: true, carried: 1 });
+    const lsp = summary.symbolLinks.filter((l) => l.resolvedBy === "lsp").map((l) => `${l.sourceFile}:${l.sourceLine}`);
+    expect(lsp).toEqual([`${inOther.file}:${inOther.line}`]);
+  }, 120_000);
 });

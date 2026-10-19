@@ -1905,6 +1905,8 @@ export interface LspStats {
    * to refresh it.
    */
   stale?: boolean;
+  /** Of a stale delta, the links carried over because the files they join have not changed since. */
+  carried?: number;
 }
 
 /**

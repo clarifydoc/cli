@@ -32,6 +32,13 @@ export interface LspEnhancement {
   lspStats: LspStats;
   /** ISO timestamp of when the enhancement was produced. */
   enhancedAt: string;
+  /**
+   * The links layer 2 added, and the content hash (manifest SHA-256) of every
+   * file they touch, as of this run. When the summary is re-analyzed after the
+   * delta, the links whose files still hash the same carry over; the rest of
+   * the delta describes code that has since changed and is left out.
+   */
+  added?: { links: SymbolLink[]; files: Record<string, string> };
 }
 
 /**

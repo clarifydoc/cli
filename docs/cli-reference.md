@@ -169,7 +169,8 @@ Runs the optional second layer on an analysis that already exists: real language
 `textDocument/definition` and `references` for the calls the text linker could not resolve. Writes
 `lsp-enhancement.json` beside the summary, plus `lsp-ground-truth.json`, the raw log of every query. `report`
 and `mcp` merge the enhancement automatically — unless it is older than the summary, in which case it is
-reported as stale and left out; run `lsp-update` again.
+reported as stale and left out, except for the links it added between files that have not changed since
+(after an `--incremental` run, which keeps the file hashes); run `lsp-update` again for the rest.
 
 | Option | Default | What it does |
 |--------|---------|--------------|

@@ -18,6 +18,7 @@ import {
 } from "./analyzer.js";
 import { analyzeBlastRadius } from "./blast-radius.js";
 import { denormalizeProject, denormalizeFileAnalysis } from "./element-registry.js";
+import { loadManifestRaw } from "./manifest.js";
 
 /** Inputs to `updateLsp`: the analysis to enhance and the LSP run settings. */
 export interface UpdateLspOptions {
@@ -170,6 +171,20 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
     },
     enhancedAt: new Date().toISOString(),
   };
+  // What a later re-analysis may keep: the added links, keyed by the hashes of
+  // the files they join (only with a manifest — an incremental run's).
+  const manifest = await loadManifestRaw(dir);
+  if (manifest) {
+    const links = lspResult.enhancedLinks.filter((l) => l.resolvedBy === "lsp");
+    const files: Record<string, string> = {};
+    for (const l of links) {
+      for (const f of [l.sourceFile, l.targetFile]) {
+        const sha = manifest.entries[f]?.sha256;
+        if (sha) files[f] = sha;
+      }
+    }
+    enhancement.added = { links, files };
+  }
 
   const outputOpts: OutputOptions = { outputDir: dir, pretty: options.pretty };
   const outputPath = await writeLspEnhancement(enhancement, outputOpts);

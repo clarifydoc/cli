@@ -33,6 +33,10 @@ The passes ask a `DefinitionSource` (`initialize` → `clientFor(language)` → 
 
 Links stay `resolvedBy: "lsp"`, `strategy: "lsp-definition"` — it is a language server's answer either way, and `lsp-compare` grades them alike; `lspStats.source` says where they came from. Only the Docker source writes `lsp-ground-truth.json`: an editor run is budgeted and must not overwrite a complete capture.
 
+## Surviving a re-analysis
+
+`analyze` never rewrites `lsp-enhancement.json`, and a delta older than the summary is not merged — its graphs describe code that has changed. It also records the links layer 2 added and the manifest SHA-256 of each file they join (`added`, written when the analysis has a manifest, i.e. an incremental run). `loadReportSummary` carries over the added links whose two files still hash the same into the fresh `symbolLinks` (`lspStats.carried`); the derived graphs wait for the next `lsp-update`.
+
 ## Ground truth export
 
 Every query and its raw answer is recorded (`LspDefinitionRecord` / `LspReferenceRecord` in `types/analysis.ts`) and written to `lsp-ground-truth.json` next to `project-summary.json` — by both `analyze` (LSP enabled) and `lsp-update`. Unlike `lsp-enhancement.json` (merged links), it keeps **unresolved queries** (`target: null`) and **pre-redirect targets** (`redirectedTarget` holds the rewrite), so the text linker can be measured against what LSP resolved without re-running Docker: capture the ground truth

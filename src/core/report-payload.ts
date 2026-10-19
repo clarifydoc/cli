@@ -2,6 +2,7 @@ import { readFile } from "fs/promises";
 import { join, resolve, basename } from "path";
 import type { ApiRouteLink, ProjectAnalysis, BlastRadiusInfo, LspStats, DeadCodeReport } from "../types/analysis.js";
 import { denormalizeProject } from "./element-registry.js";
+import { loadManifestRaw } from "./manifest.js";
 
 /**
  * The curated, denormalized data object the report client (report.html) and the
@@ -470,6 +471,7 @@ export async function loadReportSummary(dir: string): Promise<ProjectAnalysis> {
       blastRadius?: unknown[];
       lspStats?: unknown;
       enhancedAt?: string;
+      added?: { links: ProjectAnalysis["symbolLinks"]; files: Record<string, string> };
     };
 
     // Age guard. `analyze` neither refreshes nor removes the delta, so a plain
@@ -482,6 +484,23 @@ export async function loadReportSummary(dir: string): Promise<ProjectAnalysis> {
     const enhancedAt = Date.parse(lsp.enhancedAt ?? "");
     const analyzedAt = Date.parse(summary.analyzedAt ?? "");
     if (Number.isFinite(enhancedAt) && Number.isFinite(analyzedAt) && enhancedAt < analyzedAt) {
+      // What survives the re-analysis: the links layer 2 added between files
+      // whose contents still hash the same. The graphs derived from them are
+      // left to the next `lsp-update`; the links themselves are what callers,
+      // traces and the editor read.
+      let carried = 0;
+      const manifest = lsp.added ? await loadManifestRaw(abs) : null;
+      if (lsp.added && manifest) {
+        const same = (f: string) => !!lsp.added!.files[f] && manifest.entries[f]?.sha256 === lsp.added!.files[f];
+        const key = (l: ProjectAnalysis["symbolLinks"][number]) => `${l.sourceFile}\0${l.sourceLine}\0${l.callName}\0${l.targetFile}\0${l.targetSymbol}`;
+        const have = new Set(summary.symbolLinks.map(key));
+        for (const l of lsp.added.links) {
+          if (!same(l.sourceFile) || !same(l.targetFile) || have.has(key(l))) continue;
+          summary.symbolLinks.push(l);
+          have.add(key(l));
+          carried++;
+        }
+      }
       summary.lspStats = {
         ...((lsp.lspStats as ProjectAnalysis["lspStats"]) ?? {
           serversUsed: [],
@@ -491,6 +510,7 @@ export async function loadReportSummary(dir: string): Promise<ProjectAnalysis> {
         }),
         enhancedAt: lsp.enhancedAt,
         stale: true,
+        ...(carried ? { carried } : {}),
       };
       return summary;
     }
