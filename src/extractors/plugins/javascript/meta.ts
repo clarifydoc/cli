@@ -1,3 +1,4 @@
+import { trpcRouterResolver } from "./routes/trpc.js";
 import { extractEntryPoints } from "./entry-points.js";
 import type { Language, SecurityIssue } from "../../../types/analysis.js";
 import type { LanguagePluginMeta, SecurityRule, AstExtractorHooks } from "../../../types/language-plugin.js";
@@ -226,7 +227,7 @@ const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
 const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver()];
-const routeResolvers = [reactRouterResolver];
+const routeResolvers = [reactRouterResolver, trpcRouterResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {
   ...typescriptManifest,

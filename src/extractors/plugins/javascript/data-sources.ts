@@ -248,6 +248,13 @@ const SOCKET_IO_RESERVED = new Set([
   "reconnect_attempt", "reconnect_error", "reconnect_failed", "reconnecting", "ping", "pong", "newListener", "removeListener",
 ]);
 
+/** A tRPC client call's verb → the HTTP method its link sends (subscriptions go over a socket). */
+const TRPC_CLIENT_VERBS = new Map<string, string>([
+  ...["query", "useQuery", "useSuspenseQuery", "useInfiniteQuery", "useSuspenseInfiniteQuery", "queryOptions", "infiniteQueryOptions",
+    "fetch", "prefetch", "fetchInfinite", "prefetchInfinite", "ensureData"].map((v) => [v, "GET"] as const),
+  ...["mutate", "mutateAsync", "useMutation", "mutationOptions"].map((v) => [v, "POST"] as const),
+]);
+
 interface MqEvidence {
   /** Queue name by the receiver holding it; null when the file does not import Bull/BullMQ. */
   bullQueues: Map<string, string> | null;
@@ -314,6 +321,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   private imports: ImportEvidence | null = null;
   /** What the file's imports say about job queues and Socket.IO, read on first need. */
   private mq: MqEvidence | null = null;
+  /** The file names tRPC (its client import), so `x.y.useQuery()` chains are procedure calls. */
+  private trpcClient: boolean | null = null;
 
   override beginFile(tree: Tree, sourceText: string): void {
     this.root = tree.rootNode;
@@ -323,6 +332,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.gqlScanned = false;
     this.imports = null;
     this.mq = null;
+    this.trpcClient = null;
     this.collectionReceivers = null;
     this.routerReceivers = null;
     this.clientKinds = null;
@@ -625,6 +635,18 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       // database op: `apiClient.get("/owners")` is HTTP, but its leaf `get`
       // collides with Drizzle's `.get()` in ORM_METHODS.
       let emittedApiCall = false;
+
+      // tRPC client: `trpc.post.byId.useQuery(…)`, `api.post.create.useMutation()`,
+      // `utils.post.byId.fetch()` request the procedure's path (see routes/trpc.ts).
+      if (fnName && fn?.type === "member_expression" && TRPC_CLIENT_VERBS.has(fnName) && (this.trpcClient ??= /trpc/i.test(this.sourceText))) {
+        const chain = fn.text.replace(/\s+/g, "");
+        const parts = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*){2,}$/.test(chain) ? chain.split(".") : [];
+        const path = parts.slice(1, -1).filter((p, i) => !(i === 0 && p === "client"));
+        if (parts.length && parts[0] !== "this" && path.length) {
+          sources.push(this.ds({ kind: "api-call", name: TRPC_CLIENT_VERBS.get(fnName)!, target: `/trpc/${path.join(".")}`, line: node.startPosition.row + 1 }));
+          return;
+        }
+      }
 
       if (fnName) {
         // HTTP call: fetch("/api/x"), axios.get("/api/x"), apiClient.post("/x").
@@ -1011,10 +1033,12 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           this.hasOrmEvidence(ormChain)
         ) {
           const access = fnName ? ormAccessKind(fnName) : undefined;
+          const table = drizzleTable(node, fnName);
           sources.push(this.ds({
             kind: "database",
             name: ormChain,
             target: null,
+            ...(table ? { entity: table } : {}),
             line: node.startPosition.row + 1,
             ...(access ? { access } : {}),
           }));
@@ -1724,6 +1748,20 @@ function isOrmCall(name: string): boolean {
   }
   if (trustedRoot) return true;
   return false;
+}
+
+/**
+ * Drizzle names the table as the verb's argument — `db.insert(posts).values(…)`,
+ * `db.update(schema.posts).set(…)`, `db.delete(posts).where(…)` — and the call
+ * goes on as only Drizzle's does. Knex's `insert(rows)` never chains `.values`.
+ */
+function drizzleTable(node: Node, fnName: string | null): string | null {
+  if (fnName !== "insert" && fnName !== "update" && fnName !== "delete") return null;
+  const next = node.parent?.type === "member_expression" ? node.parent.childForFieldName("property")?.text : undefined;
+  if (next !== "values" && next !== "set" && next !== "where" && next !== "returning") return null;
+  const arg = node.childForFieldName("arguments")?.namedChildren[0];
+  if (!arg || (arg.type !== "identifier" && arg.type !== "member_expression")) return null;
+  return arg.text.split(".").pop()!;
 }
 
 /** Extract calls from the first callback argument of a call_expression node */

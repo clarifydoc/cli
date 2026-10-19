@@ -383,3 +383,46 @@ def other():
     expect(brief(s)).toEqual([]);
   });
 });
+
+describe("JS tRPC client calls", () => {
+  it("a procedure chain ending in a query or mutation verb requests its path", async () => {
+    const s = await jsSourcesOf(`import { api } from "~/trpc/react";
+export function Page() {
+  const latest = api.post.latest.useQuery();
+  const create = api.post.create.useMutation();
+  const utils = api.useUtils();
+  utils.post.invalidate();
+  void utils.post.byId.fetch(1);
+  create.mutate({ title: "x" });
+  useQuery(trpc.user.admin.list.queryOptions());
+  return null;
+}`);
+    expect(s.filter((d) => d.kind === "api-call").map((d) => `${d.name} ${d.target}`)).toEqual([
+      "GET /trpc/post.latest",
+      "POST /trpc/post.create",
+      "GET /trpc/post.byId",
+      "GET /trpc/user.admin.list",
+    ]);
+  });
+
+  it("needs a file that names tRPC", async () => {
+    const s = await jsSourcesOf(`export function f() { return store.items.list.query(); }`);
+    expect(s.filter((d) => d.kind === "api-call")).toEqual([]);
+  });
+});
+
+describe("JS Drizzle write targets", () => {
+  it("names the table a Drizzle insert/update/delete takes, not knex's rows", async () => {
+    const s = await jsSourcesOf(`import { db } from "./db";
+export async function f(input) {
+  await db.insert(Post).values(input);
+  await db.update(schema.users).set({ name: "x" }).where(eq(users.id, 1));
+  await db.delete(Post).where(eq(Post.id, 1));
+  await db.insert(rows);
+}`);
+    // The chained segments on a trusted `db` root are rows of their own; the verbs name the table.
+    expect(s.filter((d) => d.kind === "database" && !d.name.includes("(")).map((d) => `${d.name} ${d.entity ?? "-"}`)).toEqual([
+      "db.insert Post", "db.update users", "db.delete Post", "db.insert -",
+    ]);
+  });
+});
