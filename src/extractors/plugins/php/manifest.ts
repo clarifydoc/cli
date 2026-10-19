@@ -1,3 +1,4 @@
+import { phpTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { phpFrameworkRules, phpMarkerCandidates } from "./frameworks.js";
 import { composerPackageManager } from "./package-manifests.js";
@@ -9,6 +10,7 @@ import { composerPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const phpManifest: LanguagePluginManifest = {
+  testCommand: phpTestCommand,
   language: "php",
   family: "php",
   packageManagers: [composerPackageManager],

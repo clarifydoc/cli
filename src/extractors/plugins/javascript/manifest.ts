@@ -1,3 +1,4 @@
+import { jsTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { NOISE_CALLS } from "../../shared/call-graph.js";
 import { javascriptFrameworkRules } from "./frameworks.js";
@@ -97,6 +98,7 @@ export const JS_PLATFORM_SUFFIXES = [".native", ".ios", ".android", ".web"] as c
  * this module must stay a leaf: types, frameworks.ts, package-manifests.ts and service-config.ts only.
  */
 export const typescriptManifest: LanguagePluginManifest = {
+  testCommand: jsTestCommand,
   language: "typescript",
   family: "script",
   packageManagers: [npmPackageManager],
@@ -123,6 +125,7 @@ export const typescriptManifest: LanguagePluginManifest = {
 };
 
 export const javascriptManifest: LanguagePluginManifest = {
+  testCommand: jsTestCommand,
   language: "javascript",
   family: "script",
   // A package's `bin/` scripts, when its package.json declares `bin`.

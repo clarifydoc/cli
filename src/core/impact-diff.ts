@@ -1,6 +1,9 @@
+import { EXTENSION_TO_LANGUAGE, manifestFor } from "../extractors/registry.js";
+import type { TestTarget } from "../types/language-plugin.js";
 import { ownersOf } from "./code-owners.js";
 import { reverseSymbolReach, type ChangedSymbol, type SignatureChange, type SymbolCaller } from "./changed-symbols.js";
 import type {
+  Language,
   ProjectAnalysis,
   RiskVerdict,
   TraceImpactRoute,
@@ -53,6 +56,14 @@ export interface ImpactDiffResult {
   /** Test files among changed ∪ dependents — the "tests to run" set. */
   tests: string[];
   testCount: number;
+  /**
+   * The test functions that call a changed function, directly or through
+   * others (with the diff's lines only) — the tests that exercise the change,
+   * not just the ones that import its file.
+   */
+  testCallers?: Array<{ file: string; symbol: string; line: number; depth: number }>;
+  /** Commands that run the tests, per language, by its plugin's runner (`pytest a.py::test_x`, `go test ./pkg -run …`). */
+  testCommands?: Array<{ language: string; command: string }>;
   /** Sample reverse-import chains: changed file → … → screen/route file. */
   chains: Array<{ path: string[]; endsAt: "screen" | "route" }>;
   /**
@@ -309,6 +320,20 @@ export function computeImpactDiff(
     };
   }
 
+  // ── The tests that exercise the change, and how to run them ──
+  const testCallers = options?.symbols
+    ? reverseSymbolReach(summary.symbolLinks ?? [], options.symbols.changed, 6)
+        .filter((c) => !c.symbol.startsWith("route:") && (summary.fileLayerMap?.[c.file] === "test" || isTestFile(c.file)))
+        .map((c) => ({ file: c.file, symbol: c.symbol, line: c.line, depth: c.depth }))
+        .sort((a, b) => a.depth - b.depth || byOrdinal(a.file, b.file) || a.line - b.line)
+    : [];
+  const targets = new Map<string, Set<string>>();
+  for (const t of testCallers.length ? testCallers : tests.map((file) => ({ file, symbol: "" }))) {
+    const names = targets.get(t.file) ?? targets.set(t.file, new Set()).get(t.file)!;
+    if (t.symbol) names.add(t.symbol);
+  }
+  const testCommands = testCommandsFor(summary, [...targets].map(([file, names]) => ({ file, names: [...names] })));
+
   // ── What no test runs, by the coverage reports ──
   let untested: ImpactDiffResult["untested"];
   if (summary.testCoverage) {
@@ -405,6 +430,8 @@ export function computeImpactDiff(
     ...(symbolImpact ? { symbolImpact } : {}),
     ...(reviewers.length > 0 ? { reviewers } : {}),
     ...(untested?.length ? { untested } : {}),
+    ...(testCallers.length ? { testCallers: testCallers.slice(0, 50) } : {}),
+    ...(testCommands.length ? { testCommands } : {}),
     risk: { level, reasons },
   };
   return result;
@@ -441,6 +468,11 @@ export function renderImpactText(r: ImpactDiffResult): string {
   if (r.testCount > 0) {
     lines.push("", `Tests to run (${r.testCount}):`);
     for (const t of r.tests) lines.push(`  ${t}`);
+    if (r.testCallers?.length) {
+      lines.push("", `Tests that call the changed functions (${r.testCallers.length}):`);
+      for (const t of r.testCallers.slice(0, 20)) lines.push(`  ${t.symbol} (${t.file}:${t.line})${t.depth > 1 ? ` — ${t.depth} calls away` : ""}`);
+    }
+    for (const c of r.testCommands ?? []) lines.push(`  run: ${c.command}`);
     if (r.untested?.length) {
       lines.push("", `Untested — no test runs these (${r.untested.length}):`);
       for (const u of r.untested) lines.push(`  ${u.symbol ? `${u.symbol} (${u.file}:${u.line})` : u.file}`);
@@ -510,6 +542,7 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
   row(`Data (${geq(r)}${r.entityCount})`, r.entities.map((e) => `\`${e}\``).join(", ") || "—");
   if (r.queueCount > 0) row(`Queues (${geq(r)}${r.queueCount})`, r.queues.map((q) => `\`${q}\``).join(", "));
   row(`Tests to run (${r.testCount})`, r.tests.map((t) => `\`${t}\``).join(", ") || "—");
+  if (r.testCommands?.length) row("Run", r.testCommands.map((c) => `\`${c.command}\``).join("<br>"));
   if (r.untested?.length) row(`Untested (${r.untested.length})`, r.untested.map((u) => `\`${u.symbol ?? u.file}\``).join(", "));
   if (r.missingCoChanges?.length) {
     row("Usually changed with", r.missingCoChanges.map((m) => `\`${m.file}\` (${Math.round(m.score * 100)}% with \`${m.with}\`)`).join(", "));
@@ -534,4 +567,25 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
     md.push("</details>");
   }
   return md.join("\n");
+}
+
+/** Each language's command for these tests, from its plugin (`LanguagePluginManifest.testCommand`). */
+function testCommandsFor(summary: ProjectAnalysis, tests: readonly TestTarget[]): Array<{ language: string; command: string }> {
+  if (!tests.length) return [];
+  const ctx = {
+    packages: new Set((summary.externalPackages ?? []).map((p) => p.name)),
+    manifests: new Set((summary.externalPackages ?? []).map((p) => p.declaredIn.slice(p.declaredIn.lastIndexOf("/") + 1))),
+  };
+  const byLanguage = new Map<string, TestTarget[]>();
+  for (const t of tests) {
+    const language = EXTENSION_TO_LANGUAGE[t.file.slice(t.file.lastIndexOf(".")).toLowerCase()];
+    if (!language) continue;
+    (byLanguage.get(language) ?? byLanguage.set(language, []).get(language)!).push(t);
+  }
+  const out: Array<{ language: string; command: string }> = [];
+  for (const [language, list] of [...byLanguage].sort((a, b) => byOrdinal(a[0], b[0]))) {
+    const command = manifestFor(language as Language)?.testCommand?.(list, ctx);
+    if (command) out.push({ language, command });
+  }
+  return out;
 }

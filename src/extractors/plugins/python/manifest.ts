@@ -1,3 +1,4 @@
+import { pythonTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { pythonFrameworkRules } from "./frameworks.js";
 import { pypiPackageManager } from "./package-manifests.js";
@@ -9,6 +10,7 @@ import { pypiPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const pythonManifest: LanguagePluginManifest = {
+  testCommand: pythonTestCommand,
   language: "python",
   family: "python",
   packageManagers: [pypiPackageManager],

@@ -1,3 +1,4 @@
+import { dotnetTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { csharpFrameworkRules } from "./frameworks.js";
 import { nugetPackageManager } from "./package-manifests.js";
@@ -10,6 +11,7 @@ import { csharpServiceConfig } from "./service-config.js";
  * this module must stay a leaf: types, frameworks.ts, package-manifests.ts and service-config.ts only.
  */
 export const csharpManifest: LanguagePluginManifest = {
+  testCommand: dotnetTestCommand,
   language: "csharp",
   family: "dotnet",
   // `var u = await repo.FindAsync(id)` holds the `User` a declared `Task<User>` resolves to.

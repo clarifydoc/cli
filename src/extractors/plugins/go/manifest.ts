@@ -1,3 +1,4 @@
+import { goTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { goFrameworkRules } from "./frameworks.js";
 import { goPackageManager } from "./package-manifests.js";
@@ -9,6 +10,7 @@ import { goPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const goManifest: LanguagePluginManifest = {
+  testCommand: goTestCommand,
   language: "go",
   family: "go",
   // A package is its directory: a bare call reaches the function a sibling file declares.

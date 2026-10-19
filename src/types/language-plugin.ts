@@ -744,8 +744,29 @@ export interface CallExtractionHooks {
  * belongs on `LanguagePluginMeta`, whose module is loaded lazily per language
  * via `ensureLanguagesLoaded`.
  */
+/** Tests to run: a test file, and the test functions in it a change reaches (empty = the whole file). */
+export interface TestTarget {
+  file: string;
+  /** As the symbol linker spells them: `test_total`, `OrdersTest.createsOrder`, `TestParse`. */
+  names: string[];
+}
+
+/** What a test command is built from besides the tests: the project's packages and the manifests declaring them. */
+export interface TestCommandContext {
+  /** Every declared package name (`vitest`, `pytest`, `rspec`). */
+  packages: ReadonlySet<string>;
+  /** Basenames of the manifests packages are declared in (`pom.xml`, `build.gradle.kts`, `package.json`). */
+  manifests: ReadonlySet<string>;
+}
+
 export interface LanguagePluginManifest {
   language: Language;
+  /**
+   * The command that runs these tests with the language's usual runner — by
+   * test function where the runner can filter by name, else by file. Null
+   * when it cannot say. Used by the impact report ("tests to run").
+   */
+  testCommand?(tests: readonly TestTarget[], ctx: TestCommandContext): string | null;
   /** How files of this language are parsed. */
   parsing: "tree-sitter" | "regex" | "custom";
   /**

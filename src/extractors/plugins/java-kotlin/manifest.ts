@@ -1,3 +1,4 @@
+import { jvmTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { javaKotlinFrameworkRules } from "./frameworks.js";
 import { mavenPackageManager, gradlePackageManager } from "./package-manifests.js";
@@ -83,6 +84,7 @@ const JVM_BUILTIN_MEMBERS = [
 ];
 
 export const javaManifest: LanguagePluginManifest = {
+  testCommand: jvmTestCommand,
   language: "java",
   family: "jvm",
   packageManagers: [mavenPackageManager, gradlePackageManager],
@@ -102,6 +104,7 @@ export const javaManifest: LanguagePluginManifest = {
 };
 
 export const kotlinManifest: LanguagePluginManifest = {
+  testCommand: jvmTestCommand,
   language: "kotlin",
   family: "jvm",
   // A package's top-level functions need no import in its other files.

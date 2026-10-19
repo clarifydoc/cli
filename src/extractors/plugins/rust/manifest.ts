@@ -1,3 +1,4 @@
+import { rustTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { rustFrameworkRules } from "./frameworks.js";
 import { cargoPackageManager } from "./package-manifests.js";
@@ -9,6 +10,7 @@ import { cargoPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const rustManifest: LanguagePluginManifest = {
+  testCommand: rustTestCommand,
   language: "rust",
   family: "rust",
   // Each file in `src/bin/` is a binary crate root; the default `**/bin/**`

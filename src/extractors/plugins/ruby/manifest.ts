@@ -1,3 +1,4 @@
+import { rubyTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { rubyFrameworkRules } from "./frameworks.js";
 import { rubygemsPackageManager } from "./package-manifests.js";
@@ -9,6 +10,7 @@ import { rubygemsPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const rubyManifest: LanguagePluginManifest = {
+  testCommand: rubyTestCommand,
   language: "ruby",
   family: "ruby",
   // `Foo.new(…)` runs `initialize`.
