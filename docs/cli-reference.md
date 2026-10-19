@@ -58,7 +58,7 @@ sub-projects, and writes the analysis.
 | `--include <globs...>` | every supported extension | Analyze **only** files matching these globs. Replaces the default file set; the default ignores still apply. |
 | `--exclude <globs...>` | — | Skip files matching these globs, on top of the default ignores and `.clarifydocignore`. |
 | `--max-files <n>` | unlimited | Analyze at most the first `n` discovered files. For a quick look at a huge repo, not for real results — links to the files left out are lost. |
-| `--incremental` | off | Reuse the per-file results of files whose content is unchanged since the last run (SHA-256, with an mtime fast path). Writes `manifest.json`, and from the second run on `impact-latest.json`. |
+| `--incremental` | off | Reuse the per-file results of files whose content is unchanged since the last run (SHA-256, with an mtime fast path). Writes `manifest.json`, and from the second run on `impact-latest.json`. The first run in a linked git worktree starts from the main checkout's analysis (same `-o` layout, same extractor version) and reparses only the files that differ. |
 | `--no-lsp` | LSP on | Skip the LSP layer. It needs Docker; without Docker it is skipped anyway, with a note under `--verbose`. |
 | `--lsp-timeout <ms>` | 60000 per server | How long to wait for a language server to start. |
 | `--no-git-history` | history on | Skip reading `git log` (24 months). Without it there is no churn, no hotspots, and refactor pressure scores without its churn component. |

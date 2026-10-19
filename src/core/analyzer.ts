@@ -2,6 +2,7 @@ import { readFile } from "fs/promises";
 import { resolve as pathResolve, join, relative, sep, basename } from "path";
 import { existsSync, readFileSync } from "fs";
 import { discoverFiles, type DiscoveryOptions, type DiscoveredFile } from "./file-discovery.js";
+import { seedFromMainWorktree } from "./worktree-seed.js";
 import {
   EXTRACTOR_VERSION,
   loadManifest,
@@ -542,6 +543,11 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // The commit the source is at — provenance, and what freshness compares HEAD to.
   const revisionPromise = options.gitHistory === false ? null : readSourceRevision(projectRoot).catch(() => null);
 
+  // A fresh git worktree starts from the main checkout's analysis.
+  if (options.incremental && !dryRun) {
+    const seed = await seedFromMainWorktree(projectRoot, outputDir).catch(() => null);
+    if (seed) progress.detail(`  Seeded ${seed.files} cached file(s) from the main worktree's analysis (${seed.from})`);
+  }
   const prevManifest = options.incremental ? await loadManifest(outputDir) : null;
   const newManifestEntries: Record<string, { mtime: number; sha256: string }> = {};
   let unchangedCount = 0;
