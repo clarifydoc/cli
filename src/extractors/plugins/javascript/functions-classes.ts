@@ -1,3 +1,4 @@
+import { extractZodSchemas } from "./zod-schemas.js";
 import type { Node, Tree } from "web-tree-sitter";
 import { renderUrlExpr } from "./url-expr.js";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
@@ -713,6 +714,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     this.beginFile(tree, sourceText);
     const classes = super.extractClasses(tree, sourceText);
     if (this.ctx.dispatchProps.size > 0) for (const c of classes) for (const m of c.methods) addDispatchPropCalls(m, this.ctx.dispatchProps);
+    // Named zod schemas, as the request types a route validates with (zod-schemas.ts).
+    classes.push(...extractZodSchemas(tree.rootNode, sourceText));
     return classes;
   }
 

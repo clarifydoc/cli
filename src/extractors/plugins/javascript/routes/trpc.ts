@@ -42,20 +42,26 @@ const keyOf = (pair: Node): string | null => {
   return k.type === "string" ? stripQuotes(k.text) : k.text;
 };
 
-/** `x.input(…).use(…).query(fn)` → the verb, the handler and the builder the chain starts on. */
-function procedureOf(value: Node): { verb: string; handler: Node | null; builder: string } | null {
+/** `x.input(…).use(…).query(fn)` → the verb, the handler, the builder the chain starts on, and a named `.input(schema)`. */
+function procedureOf(value: Node): { verb: string; handler: Node | null; builder: string; input: string | null } | null {
   if (value.type !== "call_expression") return null;
   const fn = value.childForFieldName("function");
   if (fn?.type !== "member_expression") return null;
   const verb = fn.childForFieldName("property")?.text ?? "";
   if (!(verb in PROCEDURE_VERBS)) return null;
   let root: Node | null = fn.childForFieldName("object");
+  let input: string | null = null;
   while (root && (root.type === "call_expression" || root.type === "member_expression")) {
+    if (root.type === "call_expression") {
+      const f = root.childForFieldName("function");
+      const arg = root.childForFieldName("arguments")?.namedChildren[0];
+      if (f?.type === "member_expression" && f.childForFieldName("property")?.text === "input" && arg?.type === "identifier") input = arg.text;
+    }
     root = root.type === "call_expression" ? root.childForFieldName("function") : root.childForFieldName("object");
   }
   const builder = root?.type === "identifier" ? root.text : "";
   const handler = value.childForFieldName("arguments")?.namedChildren[0] ?? null;
-  return { verb, handler: handler && /function|arrow_function/.test(handler.type) ? handler : null, builder };
+  return { verb, handler: handler && /function|arrow_function/.test(handler.type) ? handler : null, builder, input };
 }
 
 /** Collect the procedures and mounts of one router object, recursing into nested routers. */
@@ -76,6 +82,8 @@ function collectRouter(obj: Node, owner: string, prefix: string, routes: RouteIn
         middleware: proc.builder && !PLAIN_BUILDERS.has(proc.builder) ? [proc.builder] : [],
         line: pair.startPosition.row + 1,
         owner,
+        // `.input(createPost)`: the request is the schema's type (a zod schema is a class, zod-schemas.ts).
+        ...(proc.input ? { params: [{ name: "input", type: proc.input, binding: "body" as const, inferred: true }] } : {}),
       });
       continue;
     }

@@ -130,6 +130,35 @@ function requestParamName(fn: Node): string | null {
   return ident?.type === "identifier" ? ident.text : null;
 }
 
+const VALIDATOR_RE = /valid|zod|schema|celebrate/i;
+const BODY_PARTS = new Set(["json", "form", "body"]);
+
+/**
+ * The schema a validating middleware checks the body against:
+ * `validate(createUser)`, `validateBody(schema)`, Hono's
+ * `zValidator("json", schema)`, `validateRequest({ body: schema })`.
+ */
+function validatedBody(m: Node): string | null {
+  if (m.type !== "call_expression") return null;
+  const callee = m.childForFieldName("function")?.text ?? "";
+  if (!VALIDATOR_RE.test(callee.split(".").pop() ?? "")) return null;
+  const args = m.childForFieldName("arguments")?.namedChildren ?? [];
+  const [a, b] = args;
+  if (a?.type === "identifier" && args.length === 1) return a.text;
+  if (a?.type === "string" && BODY_PARTS.has(stripQuotes(a.text)) && b?.type === "identifier") return b.text;
+  if (a?.type === "object") {
+    for (const pair of a.namedChildren) {
+      if (pair.type === "pair" && pair.childForFieldName("key")?.text === "body" && pair.childForFieldName("value")?.type === "identifier") return pair.childForFieldName("value")!.text;
+    }
+  }
+  return null;
+}
+
+/** `schema.parse(req.body)` (or `safeParse`, `parseAsync`, `await c.req.json()`) in the handler: the body's schema. */
+function parsedBody(fn: Node): string | null {
+  return /\b([A-Za-z_$][\w$]*)\.(?:parse|safeParse|parseAsync|safeParseAsync)\(\s*(?:await\s+)?(?:req|request|ctx\.request|c\.req)\.(?:body\b|json\(\s*\))/.exec(fn.text)?.[1] ?? null;
+}
+
 /**
  * Parameters of an inline handler: the path's tokens (`/:id` → route), then
  * whatever the body reads off the request object, then multer form fields.
@@ -252,6 +281,12 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
             if (lastArgIsFn) {
               calls = collectCallNames(last!);
               params = inlineHandlerParams(path, last!, formFields);
+            }
+            // The schema the body is validated with names its type (a zod schema, a DTO).
+            const bodySchema = middlewareNodes.map(validatedBody).find(Boolean) ?? (lastArgIsFn ? parsedBody(last!) : null);
+            if (bodySchema) {
+              if (params.length === 0) params = [...pathParamNames(path)].map((name) => ({ name, type: null, binding: "route" as const, inferred: true }));
+              params = [{ name: "body", type: bodySchema, binding: "body", inferred: true }, ...params.filter((p) => !(p.binding === "body" && p.name === "body"))];
             }
 
             // A real Express/router registration always supplies a handler — a

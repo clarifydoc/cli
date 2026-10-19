@@ -31,6 +31,11 @@ describe.skipIf(!existsSync(fixture))("sample-trpc", () => {
       "POST /trpc/post.create src/server/api/routers/post.ts",
     ]);
     expect(s.routeMap.find((r) => r.path === "/trpc/post.create")?.middleware).toEqual(["protectedProcedure"]);
+    expect(s.routeMap.find((r) => r.path === "/trpc/post.create")?.requestSchema).toEqual({
+      type: "object",
+      properties: { title: { type: "string" }, tags: { type: "array", items: { type: "string" } } },
+      required: ["title"],
+    });
   });
 
   it("links each client hook to its procedure, and the screen through it to the table", async () => {
