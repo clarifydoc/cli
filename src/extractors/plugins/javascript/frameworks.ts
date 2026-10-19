@@ -21,6 +21,19 @@ export const javascriptFrameworkRules: readonly FrameworkRule[] = [
     detectedVia: "package.json dependency",
   },
   {
+    id: "remix",
+    name: "Remix",
+    check: (info) => hasDep(info, "@remix-run/react") || hasDep(info, "@remix-run/node") || hasDep(info, "@remix-run/dev"),
+    detectedVia: "package.json dependency",
+  },
+  {
+    // React Router 7's framework mode (the Remix successor): routes come from app/routes.ts.
+    id: "react-router-framework",
+    name: "React Router (framework mode)",
+    check: (info) => hasDep(info, "@react-router/dev"),
+    detectedVia: "package.json dependency",
+  },
+  {
     id: "nextjs",
     name: "Next.js",
     check: (info) => hasDep(info, "next"),

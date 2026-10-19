@@ -80,3 +80,47 @@ describe("Expo Router", () => {
     expect(expo("components/Button.tsx")).toEqual([]);
   });
 });
+
+describe("Remix / React Router flat routes", () => {
+  it("maps a flat-routes file name to the URL it serves", async () => {
+    const { flatRoutePath } = await import("../extractors/plugins/javascript/routes/file-routes.js");
+    const cases: Array<[string, string]> = [
+      ["_index", "/"],
+      ["about", "/about"],
+      ["concerts.$city", "/concerts/:city"],
+      ["concerts._index", "/concerts"],
+      ["concerts_.mine", "/concerts/mine"],
+      ["_auth.login", "/login"],
+      ["($lang).docs", "/:lang?/docs"],
+      ["(en).docs", "/en?/docs"],
+      ["files.$", "/files/*"],
+      ["sitemap[.]xml", "/sitemap.xml"],
+    ];
+    for (const [name, path] of cases) expect(flatRoutePath(name), name).toBe(path);
+  });
+
+  it("reads React Router 7's route config, nested, with its pages", async () => {
+    const { inferReactRouterConfig } = await import("../extractors/plugins/javascript/routes/file-routes.js");
+    const src = [
+      'import { index, layout, prefix, route } from "@react-router/dev/routes";',
+      "export default [",
+      '  index("routes/home.tsx"),',
+      '  layout("routes/shell.tsx", [route("login", "routes/login.tsx")]),',
+      '  ...prefix("concerts", [index("routes/c/home.tsx"), route(":city", "routes/c/city.tsx", { id: "x" })]),',
+      '  route("/abs", "routes/abs.tsx", [route("child", "routes/child.tsx")]),',
+      "] satisfies RouteConfig;",
+    ].join("\n");
+    const out = inferReactRouterConfig("app/routes.ts", src, ["react-router-framework"]);
+    expect(out.routes.map((r) => [r.path, r.componentPath, r.line])).toEqual([
+      ["/", "./routes/home.tsx", 3],
+      ["/login", "./routes/login.tsx", 4],
+      ["/concerts", "./routes/c/home.tsx", 5],
+      ["/concerts/:city", "./routes/c/city.tsx", 5],
+      ["/abs", "./routes/abs.tsx", 6],
+      ["/abs/child", "./routes/child.tsx", 6],
+    ]);
+    expect(out.flatRoutes).toBe(false);
+    expect(inferReactRouterConfig("app/routes.ts", src, ["react-router"]).routes).toEqual([]);
+    expect(inferReactRouterConfig("app/routes.ts", "export default flatRoutes() satisfies RouteConfig;", ["react-router-framework"]).flatRoutes).toBe(true);
+  });
+});

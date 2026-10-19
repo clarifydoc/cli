@@ -5,6 +5,8 @@
  *   - `import.meta.glob("./pages/*.vue")` / `import.meta.globEager([...])` (Vite)
  *   - `require.context("./modules", true, /\.js$/)` (webpack) — kept as a
  *     directory glob; the filter regex is ignored, over-including on purpose
+ *   - the route modules a React Router config names (`route("about",
+ *     "routes/about.tsx")`), which are relative to the config's own folder
  *   - a string literal naming a script: `new Worker(new URL("./worker.ts",
  *     import.meta.url))`, `fork("./child.js")`, `path.join(__dirname,
  *     "preload.js")`, a jest config's `"<rootDir>/setupTests.ts"`, webpack's
@@ -18,9 +20,12 @@
  * A spec that names no project file is simply dropped by the resolver.
  */
 
-const GLOB_CALL_RE = /import\.meta\.glob(?:Eager)?\s*(?:<[^>]*>)?\s*\(\s*(\[[^\]]*\]|(["'`])[^"'`\n]*\2)/g;
+// The type argument may hold an arrow type or a nested generic: `<{ default: () => ReactNode }>`, `<Record<string, M>>`.
+const GLOB_CALL_RE = /import\.meta\.glob(?:Eager)?\s*(?:<(?:=>|[^<>]|<[^<>]*>)*>)?\s*\(\s*(\[[^\]]*\]|(["'`])[^"'`\n]*\2)/g;
 const REQUIRE_CONTEXT_RE = /require\.context\(\s*(["'`])([^"'`\n]+)\1\s*(?:,\s*(true|false))?/g;
 const QUOTED_RE = /(["'`])([^"'`\n]*)\1/g;
+/** The module argument of a React Router config call: `route("x", "routes/x.tsx")`, `index("routes/home.tsx")`. */
+const ROUTE_MODULE_RE = /\b(?:route|index|layout)\s*\(\s*(?:(["'`])[^"'`\n]*\1\s*,\s*)?(["'`])([^"'`\n]+\.(?:[cm]?[jt]sx?|mdx?))\2/g;
 /**
  * A quoted script path: optional `<rootDir>/`, `./`, `../` or `/` prefix, no
  * glob characters — and not the source of an import, re-export or `require`,
@@ -48,6 +53,14 @@ export function extractPathReferences(sourceText: string): string[] {
       const dir = m[2]!.replace(/\/+$/, "");
       // The second argument defaults to recursive.
       out.add(`${dir}/${m[3] === "false" ? "*" : "**/*"}`);
+    }
+  }
+
+  // React Router 7 framework mode: route modules are named relative to the config's folder.
+  if (sourceText.includes("@react-router/dev/routes")) {
+    for (const m of sourceText.matchAll(ROUTE_MODULE_RE)) {
+      const file = m[3]!;
+      out.add(file.startsWith(".") || file.startsWith("/") ? file : `./${file}`);
     }
   }
 

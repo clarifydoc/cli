@@ -32,3 +32,14 @@ describe("JS path references (strings the toolchain loads as modules)", () => {
     ]);
   });
 });
+
+describe("path references — typed globs and route configs", () => {
+  it("reads a glob whose type argument holds an arrow type or a nested generic", () => {
+    expect(extractPathReferences("const m = import.meta.glob<{ meta: M; default: () => ReactNode }>('./posts/*.tsx', { eager: true });")).toEqual(["./posts/*.tsx"]);
+    expect(extractPathReferences("const m = import.meta.glob<Record<string, M>>('./a/*.ts');")).toEqual(["./a/*.ts"]);
+  });
+  it("names a React Router config's route modules relative to the config", () => {
+    const src = 'import { index, route, layout } from "@react-router/dev/routes";\nexport default [layout("components/Layout.tsx", [index("pages/Home.tsx"), route("blog/:slug", "pages/Post.tsx", { id: "p" })])];';
+    expect(extractPathReferences(src).sort()).toEqual(["./components/Layout.tsx", "./pages/Home.tsx", "./pages/Post.tsx", "components/Layout.tsx", "pages/Home.tsx", "pages/Post.tsx"].sort());
+  });
+});

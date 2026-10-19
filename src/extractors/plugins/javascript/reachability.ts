@@ -119,6 +119,11 @@ const FRAMEWORK_ENTRIES: Readonly<Record<string, readonly Rule[]>> = {
   ],
   remix: [[/^app\/routes\//, "Remix route module"]],
   "react-router": [[/^app\/routes\//, "React Router route module"]],
+  "react-router-framework": [
+    [/^(?:app|src)\/(?:routes|root)\.[cm]?[jt]sx?$/, "React Router route config / root"],
+    [/^(?:app|src)\/entry\.(?:client|server)\.[jt]sx?$/, "React Router entry"],
+    [/^react-router\.config\.[cm]?[jt]s$/, "React Router config"],
+  ],
   gatsby: [[/^src\/(?:pages|templates|api)\//, "Gatsby page"]],
   astro: [
     [/^src\/pages\//, "Astro page/endpoint"],

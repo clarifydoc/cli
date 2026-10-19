@@ -1,3 +1,4 @@
+import { readFileSync, statSync } from "fs";
 import { parseErrorsOf } from "./coverage.js";
 import { readFile } from "fs/promises";
 import { computeRegexComplexity } from "./complexity-regex.js";
@@ -26,6 +27,8 @@ import { isTestFile } from "./test-file-detector.js";
 import {
   inferExpoRouterRoutes,
   inferFileBasedRoute,
+  inferFlatRoutes,
+  inferReactRouterConfig,
   inferSvelteKitRoutes,
 } from "../extractors/plugins/javascript/routes/file-routes.js";
 import { restoreTypedReceiverCalls } from "./typed-receivers.js";
@@ -37,6 +40,33 @@ import {
   type SecurityIssue,
   type RouteInfo,
 } from "../types/analysis.js";
+
+/** Whether a React Router 7 project's `app/routes.ts` delegates to `flatRoutes()`, per sub-project root. */
+const flatRoutesByRoot = new Map<string, boolean>();
+function usesFlatRoutes(absolutePath: string, routePath: string): boolean {
+  const abs = absolutePath.replace(/\\/g, "/");
+  const rel = routePath.replace(/\\/g, "/");
+  if (!abs.endsWith(rel)) return false;
+  const root = abs.slice(0, abs.length - rel.length);
+  // Keyed by the config's mtime too: a long-lived process (the MCP server) sees an edit.
+  const dir = rel.split("/")[0];
+  for (const ext of ["ts", "js", "mts", "mjs"]) {
+    const config = `${root}${dir}/routes.${ext}`;
+    let key: string;
+    try {
+      key = `${config}:${statSync(config).mtimeMs}`;
+    } catch {
+      continue;
+    }
+    let hit = flatRoutesByRoot.get(key);
+    if (hit === undefined) {
+      hit = /\bflatRoutes\s*\(/.test(readFileSync(config, "utf-8"));
+      flatRoutesByRoot.set(key, hit);
+    }
+    return hit;
+  }
+  return false;
+}
 
 // ─── Per-file analysis task / result ─────────────────────────────────────
 
@@ -417,6 +447,10 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       analysis.routes.push(
         ...inferSvelteKitRoutes(routePath, analysis, routeFrameworks),
         ...inferExpoRouterRoutes(routePath, analysis, routeFrameworks),
+        ...inferReactRouterConfig(routePath, sourceText, routeFrameworks).routes,
+        ...inferFlatRoutes(routePath, analysis, routeFrameworks, {
+          flatRoutes: routeFrameworks.includes("react-router-framework") && /^(?:app|src)\/routes\//.test(routePath.replace(/\\/g, "/")) && usesFlatRoutes(file.absolutePath, routePath),
+        }),
       );
     }
 
