@@ -274,3 +274,23 @@ describe("scanSecurity — what is not a finding", () => {
     expect(scanSecurity("x = 1  # FIXME later\n", "a.py", "python").map((i) => i.category)).toContain("todo-fixme");
   });
 });
+
+describe("maskSecrets", () => {
+  it("masks credential formats and credential-named values, and keeps placeholders and lines", async () => {
+    const { maskSecrets } = await import("./security-scanner.js");
+    const text = [
+      'const key = "AKIAABCDEFGHIJKLMNOP";',
+      'const db = "postgres://app:s3cr3tpass@db:5432/x";',
+      'password = "hunter22"',
+      'apiKey: "your-api-key-here"',
+      "-----BEGIN RSA PRIVATE KEY-----",
+    ].join("\n");
+    const out = maskSecrets(text);
+    expect(out.split("\n")).toHaveLength(5);
+    expect(out).not.toContain("AKIAABCDEFGHIJKLMNOP");
+    expect(out).toContain("postgres://app:«redacted»@db:5432/x");
+    expect(out).toContain('password = "«redacted»"');
+    expect(out).toContain('apiKey: "your-api-key-here"');
+    expect(out).not.toMatch(/PRIVATE KEY-----$/m);
+  });
+});

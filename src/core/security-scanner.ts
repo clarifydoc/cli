@@ -22,6 +22,24 @@ const SECRET_FORMATS: ReadonlyArray<readonly [string, RegExp]> = [
   ["database password in a connection URL", /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|rediss|amqps?|mssql|sqlserver):\/\/[^\s:@/'"`]+:[^\s@/'"`]{3,}@/],
 ];
 
+/** An assignment of a credential-named value: `password = "…"`, `apiKey: '…'`. */
+const SECRET_ASSIGNMENT = /\b((?:password|passwd|pwd|secret|api[_-]?key|apikey|token|auth[_-]?token|private[_-]?key|client[_-]?secret)\w*\s*[=:]\s*)(['"`])([^'"`\n]{4,})\2/gi;
+
+/**
+ * Text with every credential it carries masked: the fixed-shape formats the
+ * scanner knows (cloud keys, tokens, private key blocks, a password in a
+ * connection URL) and the value of a credential-named assignment that is not
+ * a placeholder. For text that leaves the machine; line structure is kept.
+ */
+export function maskSecrets(text: string): string {
+  let out = text;
+  for (const [, re] of SECRET_FORMATS) {
+    const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
+    out = out.replace(g, (m) => (/BEGIN .*PRIVATE KEY/.test(m) ? m.replace(/PRIVATE KEY.*$/, "PRIVATE KEY«redacted»") : m.replace(/(:\/\/[^:@\s]+:)[^@\s]+@/, "$1«redacted»@").replace(/^(?!.*«redacted»).+$/, "«redacted»")));
+  }
+  return out.replace(SECRET_ASSIGNMENT, (m, lhs: string, q: string, value: string) => (isPlaceholderSecret(`${lhs}${q}${value}${q}`) ? m : `${lhs}${q}«redacted»${q}`));
+}
+
 /**
  * A matched secret that is a placeholder, not a credential: documentation
  * values (`AKIAIOSFODNN7EXAMPLE`, `your-api-key-here`), template holes
