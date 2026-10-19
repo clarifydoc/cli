@@ -6,6 +6,7 @@ Every `clarifydoc` command and option. For what the files it writes contain and 
 ```text
 clarifydoc analyze <path>             Analyze a codebase → per-file JSON, project-summary.json, report-data.json
 clarifydoc impact <path>              What a set of changed files reaches: screens, routes, entities, tests
+clarifydoc diff <base> <head>         What changed in the API surface between two analyses, and what breaks
 clarifydoc report <analysis-dir>      (Re)build report.html from an existing analysis
 clarifydoc lsp-update <analysis-dir>  Add the LSP layer (Docker) to an existing analysis
 clarifydoc cfg <file>                 Draw one function's control flow as Mermaid
@@ -130,6 +131,7 @@ keeps that cheap), or the answer describes the code as it was at the last run.
 | `--files <files...>` | — | Give the changed files yourself, project-relative. Skips git entirely. |
 | `--json` | off | Print the full result as JSON. |
 | `--md` | off | Print a Markdown summary, ready to paste into a pull-request comment. |
+| `--baseline <dir>` | — | An analysis of the base — another checkout's, or a worktree's — to diff the API surface against as well (see [`diff`](#diff)). It appears as `surface` in `--json` and as its own section otherwise. |
 
 ```bash
 clarifydoc impact . --base origin/main --md
@@ -153,6 +155,42 @@ Dependent files: 0
 
 [Reading the output → impact](reading-the-output.md#impact-latestjson-and-impact---json) explains every field
 of the JSON form.
+
+## `diff`
+
+```bash
+clarifydoc diff <base> <head> [options]
+```
+
+Compares the API surface of two analyses of one project, the base and the head, and says what breaks a
+caller. Each argument is a directory holding `project-summary.json`, or a project root whose `-o` analysis is
+used. Analyze the base in a git worktree with `--incremental`: it starts from the main checkout's analysis and
+reparses only the files that differ.
+
+| Change | Breaking when |
+|--------|---------------|
+| route removed, moved (same handler, or the same declaration line, with another method or path) | an API route; a frontend page is a change |
+| parameter binds from elsewhere (query → body) | always |
+| request body | a new required field, a field made required, or a field's type changed. An optional field added or one dropped is a change |
+| guard added (middleware, policy, role, scheme; anonymous access removed) | always: callers without it are refused |
+| guard lost (or the route now allows anonymous callers) | never, but **risky** |
+| API version removed / deprecated | removed |
+| a call that reached a route no longer reaches any, while the call is still made | always |
+| a call reaching another route, a newly linked call, the tables a route reaches | never |
+
+```bash
+git worktree add ../base origin/main
+clarifydoc analyze ../base --incremental
+clarifydoc analyze . --incremental
+clarifydoc diff ../base . --md --fail-on breaking
+```
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `-o, --output <dir>` | `.clarifydoc` | For a project-root argument: where its analysis lives. |
+| `--json` | off | Print the changes and counts as JSON. |
+| `--md` | off | Print a Markdown table, ready for a pull-request comment. |
+| `--fail-on <level>` | — | `breaking`, or `risky` (breaking or risky): exit with code `2` when such a change exists. |
 
 ## `report`
 
@@ -378,6 +416,7 @@ nothing. With no option it writes the Claude Code MCP entry (`.mcp.json`).
 ## Exit codes
 
 `0` on success. `1` when a command fails — the message goes to stderr — including `impact` with no analysis
-to read and `cfg` when no single function matched. A run that finds problems in your code (security issues,
-a low health grade) still exits `0`: gate on the JSON (see
-[Reading the output → recipes](reading-the-output.md#recipes)), not the exit code.
+to read and `cfg` when no single function matched, and `ask` when the tool answers with an error. A run that
+finds problems in your code (security issues, a low health grade) still exits `0` unless you ask:
+`analyze --fail-on <level>` and `diff --fail-on <level>` exit `2` when a finding or change at that level
+exists. For anything finer, gate on the JSON (see [Reading the output → recipes](reading-the-output.md#recipes)).

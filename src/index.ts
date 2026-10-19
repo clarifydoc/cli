@@ -32,6 +32,17 @@ export {
   renderImpactMarkdown,
   type ImpactDiffResult,
 } from "./core/impact-diff.js";
+// What changed in the API surface between two analyses, and whether it breaks
+// a caller (what `diff` prints).
+export {
+  diffSurface,
+  guardsOf,
+  renderSurfaceMarkdown,
+  renderSurfaceText,
+  type SurfaceChange,
+  type SurfaceChangeKind,
+  type SurfaceDiff,
+} from "./core/surface-diff.js";
 // Which files are tests, by the per-language rules the analysis itself uses —
 // for a consumer that tells test callers from production ones.
 export { isTestFile } from "./core/test-file-detector.js";

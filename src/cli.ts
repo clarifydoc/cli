@@ -232,6 +232,7 @@ program
   .option("--md", "Print a markdown summary (PR-comment ready)", false)
   .option("--author <name>", "The change's author, left out of the suggested reviewers (default: git config user.name)")
   .option("--analysis-dir <dir>", "Exact directory containing project-summary.json (overrides --output)")
+  .option("--baseline <dir>", "An analysis of the base (another checkout's or worktree's): also diff the API surface against it")
   .action(async (path: string, options) => {
     const projectRoot = resolve(path);
     const projectName = projectRoot.replace(/\\/g, "/").split("/").pop()!;
@@ -281,9 +282,12 @@ program
         }
       }
       const impact = computeImpactDiff(summary, changed, { baseLabel: label, ...(author ? { author } : {}), ...(symbols ? { symbols } : {}) });
-      if (options.json) console.log(JSON.stringify(impact, null, 2));
-      else if (options.md) console.log(renderImpactMarkdown(impact));
-      else console.log(renderImpactText(impact));
+      let surface: import("./core/surface-diff.js").SurfaceDiff | undefined;
+      const sd = options.baseline ? await import("./core/surface-diff.js") : null;
+      if (sd) surface = sd.diffSurface(await loadAnalysisAt(options.baseline, options.output), summary);
+      if (options.json) console.log(JSON.stringify(surface ? { ...impact, surface } : impact, null, 2));
+      else if (options.md) console.log(renderImpactMarkdown(impact) + (surface ? `\n${sd!.renderSurfaceMarkdown(surface, { base: "baseline", head: "working tree" })}` : ""));
+      else console.log(renderImpactText(impact) + (surface ? `\n${sd!.renderSurfaceText(surface)}` : ""));
     } catch (err) {
       console.error("Error:", (err as Error).message);
       process.exit(1);
@@ -670,6 +674,31 @@ program
   });
 
 program
+  .command("diff")
+  .description("Diff the API surface of two analyses: routes, parameters, request bodies, guards, versions, cross-tier links, data reached")
+  .argument("<base>", "The base analysis: a directory holding project-summary.json, or a project root (its -o analysis is used)")
+  .argument("<head>", "The head analysis, the same way")
+  .option("-o, --output <dir>", "Analysis output directory for a project-root argument (same value as `analyze -o`)", ".clarifydoc")
+  .option("--json", "Print the raw JSON result", false)
+  .option("--md", "Print markdown (PR-comment ready)", false)
+  .option("--fail-on <level>", "Exit with code 2 when a change at this level exists: breaking | risky")
+  .action(async (base: string, head: string, options) => {
+    try {
+      if (options.failOn && options.failOn !== "breaking" && options.failOn !== "risky") throw new Error("--fail-on is breaking or risky");
+      const { diffSurface, renderSurfaceMarkdown, renderSurfaceText } = await import("./core/surface-diff.js");
+      const d = diffSurface(await loadAnalysisAt(base, options.output), await loadAnalysisAt(head, options.output));
+      if (options.json) console.log(JSON.stringify(d, null, 2));
+      else if (options.md) process.stdout.write(renderSurfaceMarkdown(d, { base, head }));
+      else process.stdout.write(renderSurfaceText(d));
+      if (options.failOn === "breaking" && d.counts.breaking > 0) process.exitCode = 2;
+      if (options.failOn === "risky" && d.counts.breaking + d.counts.risky > 0) process.exitCode = 2;
+    } catch (err) {
+      console.error("Error:", (err as Error).message);
+      process.exitCode = 1;
+    }
+  });
+
+program
   .command("ask")
   .description("Call one MCP tool from a shell or CI and print its answer: clarifydoc ask routes path=/api/users")
   .argument("[tool]", "Tool name, with or without the clarifydoc_ prefix (routes, trace, impact, …)")
@@ -774,3 +803,15 @@ program
 // node-shaped. Without this, that fallback fails with "unknown command
 // '…/cli.js'".
 program.parse(process.argv, { from: "node" });
+
+/** An analysis by its directory (holding project-summary.json) or by its project root (`<root>/<output>/<name>`). */
+async function loadAnalysisAt(arg: string, output = ".clarifydoc") {
+  const { existsSync } = await import("fs");
+  const { join } = await import("path");
+  const { loadReportSummary } = await import("./core/report-payload.js");
+  const dir = resolve(arg);
+  const candidates = [dir, join(dir, output, dir.replace(/\\/g, "/").split("/").pop()!)];
+  const found = candidates.find((d) => existsSync(join(d, "project-summary.json")));
+  if (!found) throw new Error(`No analysis at ${arg} (looked for project-summary.json in ${candidates.join(" and ")})`);
+  return loadReportSummary(found);
+}
