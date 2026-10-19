@@ -276,6 +276,12 @@ const MISS_REASON: Record<ApiCallMiss["reason"], string> = {
   "ambiguous-suffix": "several routes end with this path",
 };
 
+/** "; served as PUT /api/x (api/x.py:12)" — the routes a miss was refused against. */
+function missExisting(m: ApiCallMiss): string {
+  if (!m.existing?.length) return "";
+  return `; ${m.reason === "origin-mismatch" ? "served elsewhere" : "served"} as ${m.existing.map((r) => `${routeLabel(r.method, r.path)} (${loc(r.file, r.line)})`).join(", ")}`;
+}
+
 /** The `gaps` view of `clarifydoc_routes`: calls that reach no route, routes no call reaches. */
 function routeGaps(stats: ApiRouteLinkStats | undefined, pathFilter: string | undefined, fileFilter: string | undefined, limit: number): string {
   const misses = (stats?.misses ?? []).filter((m) =>
@@ -296,7 +302,7 @@ function routeGaps(stats: ApiRouteLinkStats | undefined, pathFilter: string | un
     `# Route gaps`,
     "",
     `## Calls that reach no route (${misses.length}${missed > misses.length ? ` listed of ${missed}` : ""})`,
-    ...bulletList(misses, limit, (m) => `${m.method ?? "?"} ${m.url} — ${MISS_REASON[m.reason]} (${loc(m.file, m.line)})`),
+    ...bulletList(misses, limit, (m) => `${m.method ?? "?"} ${m.url} — ${MISS_REASON[m.reason]} (${loc(m.file, m.line)})${missExisting(m)}`),
     "",
     `## Routes no call in the repository reaches (${uncalled.length}${(stats?.uncalledCount ?? 0) > uncalled.length ? ` listed of ${stats!.uncalledCount}` : ""})`,
     "Only services some in-repo client calls; an endpoint here may still be called from outside.",

@@ -886,7 +886,11 @@ describe("linkApiCallsToRoutesDetailed — misses are listed, not only counted",
     expect(stats.linked).toBe(1);
     expect(stats.misses).toEqual([
       { file: "web/backups.ts", line: 7, method: "GET", url: "/api/backups/available", reason: "unmatched" },
-      { file: "web/orders.ts", line: 9, method: "DELETE", url: "/api/orders", reason: "method-mismatch" },
+      {
+        file: "web/orders.ts", line: 9, method: "DELETE", url: "/api/orders", reason: "method-mismatch",
+        // The route that does serve the path, so the miss says "the backend accepts GET".
+        existing: [{ method: "GET", path: "/api/orders", file: "api/orders.py", line: 1 }],
+      },
     ]);
   });
 });

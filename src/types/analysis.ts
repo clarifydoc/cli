@@ -1061,6 +1061,12 @@ export interface ApiCallMiss {
   method: string | null;
   url: string;
   reason: "unmatched" | "method-mismatch" | "origin-mismatch" | "ambiguous-suffix";
+  /**
+   * The routes that DO serve this path, refused for the reason given: the
+   * other methods of a `method-mismatch` ("the backend accepts PUT"), another
+   * service's routes for an `origin-mismatch`. At most three.
+   */
+  existing?: Array<{ method: string | null; path: string; file: string; line: number }>;
 }
 
 /**
