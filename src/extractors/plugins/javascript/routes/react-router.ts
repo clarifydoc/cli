@@ -1,7 +1,8 @@
 import type { Node } from "web-tree-sitter";
-import type { RouteInfo } from "../../../../types/analysis.js";
+import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
 import { joinRoutePath } from "../../../shared/route-paths.js";
+import { literalPath, pathHole } from "./vue-router.js";
 
 /** React Router: <Route path="/dashboard" component={X} /> */
 export function extractReactRouterRoutes(root: Node, routes: RouteInfo[]): void {
@@ -15,15 +16,113 @@ function walkForJsxRoutes(node: Node, routes: RouteInfo[]) {
   }
 }
 
+/** A `<Route>` rendered per element of an array: `appRoutes.map((r) => <Route path={r.path} element={<r.view />} />)`. */
+export interface RouteMapFact {
+  array: string;
+  /** Literal text written before the element's path: `'/' + r.path`, `` `/api/${r.path}` ``. */
+  head: string;
+  pathProp: string;
+  /** The element property that names the page (`view` above), or null when none can be read. */
+  componentProp: string | null;
+  /** The enclosing `<Route>` paths, composed. */
+  prefix: string | null;
+}
+
+/** A top-level array of route-shaped objects, for a `.map` elsewhere (or here) to render. */
+export interface RouteArrayFact {
+  name: string;
+  items: Array<{ path: string; line: number; props: Record<string, { name: string; specifier: string }> }>;
+  /** Arrays spread into this one (`[...partnerRoutes, …]`), by local name. */
+  spreads?: string[];
+}
+
+/**
+ * The path a `<Route>` declares: a string, a template, a constant this file
+ * declares, or a `${name}` hole for one it imports (see `pathHole`). Null for
+ * any other expression — `path={someCall()}` is not a path to report.
+ */
+function routePathOf(openingEl: Node): string | null {
+  const value = routeAttrValue(openingEl, "path");
+  if (!value) return null;
+  if (value.type === "string") return stripQuotes(value.text);
+  const inner = value.type === "jsx_expression" ? value.namedChildren[0] : null;
+  if (!inner) return null;
+  return literalPath(inner) ?? pathHole(inner);
+}
+
+/** The member read and any literal head: `r.path`, `'/' + r.path`, `` `/api/${r.path}` ``. */
+function memberWithHead(expr: Node): { member: Node; head: string } | null {
+  if (expr.type === "member_expression") return { member: expr, head: "" };
+  if (expr.type === "binary_expression" && expr.childForFieldName("operator")?.text === "+") {
+    const left = expr.childForFieldName("left");
+    const right = expr.childForFieldName("right");
+    if (left?.type === "string" && right?.type === "member_expression") return { member: right, head: stripQuotes(left.text) };
+    return null;
+  }
+  if (expr.type === "template_string") {
+    const subs = expr.namedChildren.filter((c) => c.type === "template_substitution");
+    const inner = subs.length === 1 ? subs[0]!.namedChildren[0] : null;
+    if (inner?.type !== "member_expression" || !expr.text.endsWith(`${subs[0]!.text}\``)) return null;
+    return { member: inner, head: expr.text.slice(1, expr.text.length - 1 - subs[0]!.text.length) };
+  }
+  return null;
+}
+
+/** `r.path` inside `X.map((r) => <Route …/>)`: the array, the callback's parameter, the property read and its literal head. */
+function mappedPath(openingEl: Node): { array: string; param: string; prop: string; head: string } | null {
+  const inner = routeAttrValue(openingEl, "path");
+  const raw = inner?.type === "jsx_expression" ? inner.namedChildren[0] : null;
+  const read = raw ? memberWithHead(raw) : null;
+  if (!read) return null;
+  const expr = read.member;
+  const obj = expr.childForFieldName("object");
+  const prop = expr.childForFieldName("property")?.text;
+  if (obj?.type !== "identifier" || !prop) return null;
+  for (let n: Node | null = openingEl.parent; n; n = n.parent) {
+    if (n.type !== "arrow_function" && n.type !== "function_expression") continue;
+    const params = n.childForFieldName("parameters") ?? n.childForFieldName("parameter");
+    const first = params?.type === "identifier" ? params : params?.namedChildren[0];
+    const param = first?.type === "required_parameter" ? first.namedChildren[0] : first;
+    if (param?.type !== "identifier" || param.text !== obj.text) return null;
+    const call = n.parent?.type === "arguments" ? n.parent.parent : null;
+    const fn = call?.type === "call_expression" ? call.childForFieldName("function") : null;
+    if (fn?.type !== "member_expression" || fn.childForFieldName("property")?.text !== "map") return null;
+    const array = fn.childForFieldName("object");
+    return array?.type === "identifier" ? { array: array.text, param: param.text, prop, head: read.head } : null;
+  }
+  return null;
+}
+
+/** Which property of the mapped element names the page: `element={<r.view />}`, `Component={r.page}`, `element={r.element}`. */
+function mappedComponentProp(openingEl: Node, param: string): string | null {
+  for (const attr of RENDER_ATTRIBUTES) {
+    const value = routeAttrValue(openingEl, attr);
+    const inner = value?.type === "jsx_expression" ? value.namedChildren[0] : value;
+    if (!inner) continue;
+    const tag = inner.type === "jsx_self_closing_element" ? tagOf(inner) : inner.type === "jsx_element" ? tagOf(inner) : inner.type === "member_expression" ? inner.text : undefined;
+    const m = tag ? new RegExp(`^${param.replace(/\$/g, "\\$")}\\.([\\w$]+)$`).exec(tag) : null;
+    if (m) return m[1]!;
+  }
+  return null;
+}
+
 /** Inspect a single node for a React Router `<Route …>` element. */
-export function visitReactRouterRoute(node: Node, routes: RouteInfo[]): void {
+export function visitReactRouterRoute(node: Node, routes: RouteInfo[], facts?: RouteFact[]): void {
   if (
     node.type === "jsx_opening_element" ||
     node.type === "jsx_self_closing_element"
   ) {
     const nameNode = node.childForFieldName("name") ?? node.child(1);
     if (nameNode?.text === "Route") {
-      let path = routeAttr(node, "path");
+      const mapped = mappedPath(node);
+      if (mapped) {
+        const data: RouteMapFact = { array: mapped.array, head: mapped.head, pathProp: mapped.prop, componentProp: mappedComponentProp(node, mapped.param), prefix: ancestorRoutePrefix(node) };
+        facts?.push({ kind: "react-router-map", line: node.startPosition.row + 1, data });
+        return;
+      }
+      let path = routePathOf(node);
+      // `<Route index element={<Home />} />` renders at its parent's path.
+      if (path === null && hasAttr(node, "index")) path = ancestorRoutePrefix(node) ?? "/";
       const handlerRaw = routeAttrRaw(node, "component") ?? routeAttrRaw(node, "element");
       const rendered = renderedComponent(node);
       const handler = rendered?.name ?? (handlerRaw != null ? handlerRaw.replace(/[{}< />]/g, "").trim() : null);
@@ -86,7 +185,7 @@ function renderedComponent(openingEl: Node): { name: string; specifier: string }
   return element?.type === "jsx_element" ? onlyChildComponent(element) : null;
 }
 
-function componentOf(node: Node): { name: string; specifier: string } | null {
+export function componentOf(node: Node): { name: string; specifier: string } | null {
   switch (node.type) {
     case "jsx_expression":
     case "parenthesized_expression": {
@@ -151,6 +250,18 @@ function componentNamed(tag: string | undefined): { name: string; specifier: str
   return { name: tag, specifier: tag };
 }
 
+/** Whether a JSX opening element carries an attribute (`index`, `index={true}`). */
+function hasAttr(openingEl: Node, name: string): boolean {
+  for (const attr of openingEl.children) {
+    if (attr.type !== "jsx_attribute") continue;
+    if ((attr.childForFieldName("name")?.text ?? attr.child(0)?.text) === name) {
+      const v = attr.child(2);
+      return !v || v.text !== "{false}";
+    }
+  }
+  return false;
+}
+
 /** The value node of a named attribute on a JSX opening element. */
 function routeAttrValue(openingEl: Node, name: string): Node | null {
   for (const attr of openingEl.children) {
@@ -190,7 +301,7 @@ function ancestorRoutePrefix(openingEl: Node): string | null {
       if (opener && opener.id !== openingEl.id && opener.type === "jsx_opening_element") {
         const tag = opener.childForFieldName("name") ?? opener.child(1);
         if (tag?.text === "Route") {
-          const p = routeAttr(opener, "path");
+          const p = routePathOf(opener);
           if (p) {
             segments.unshift(p);
             // An absolute ancestor is the composition root — stop climbing.
@@ -202,4 +313,53 @@ function ancestorRoutePrefix(openingEl: Node): string | null {
     n = n.parent;
   }
   return segments.length > 0 ? segments.reduce((acc, s) => joinRoutePath(acc, s)) : null;
+}
+
+/**
+ * Top-level arrays of route-shaped objects (`export const appRoutes = [{
+ * path: "/menu", view: MenuPage }]`): what a `.map` into `<Route>` renders,
+ * or a route's `children: appRoutes` holds — possibly from another file. Each
+ * item keeps its line and the components its properties name; which property
+ * is the page, only the `.map` site says. Only arrays another file can reach
+ * (exported) or this file maps into a `<Route>` are kept.
+ */
+export function collectRouteArrays(root: Node, sourceText: string, facts: RouteFact[]): void {
+  for (const stmt of root.namedChildren) {
+    const decl = stmt.type === "export_statement" ? stmt.namedChildren.find((c) => c.type === "lexical_declaration") : stmt;
+    if (decl?.type !== "lexical_declaration") continue;
+    for (const d of decl.namedChildren) {
+      if (d.type !== "variable_declarator") continue;
+      const name = d.childForFieldName("name");
+      let value = d.childForFieldName("value");
+      while (value && (value.type === "as_expression" || value.type === "satisfies_expression" || value.type === "parenthesized_expression")) value = value.namedChildren[0] ?? null;
+      if (name?.type !== "identifier" || (value?.type !== "array" && value?.type !== "object")) continue;
+      // A route object of its own (`export const ordersRoute = { path, element }`) is an array of one.
+      if (value.type === "object" && !/\bpath\s*:/.test(value.text.slice(0, 2000))) continue;
+      if (value.type === "object" ? stmt.type !== "export_statement" && sourceText.split(name.text).length < 3 : stmt.type !== "export_statement" && !(sourceText.includes("<Route") && new RegExp(`\\b${name.text.replace(/\$/g, "\\$")}\\s*\\.\\s*map\\s*\\(`).test(sourceText))) continue;
+      const items: RouteArrayFact["items"] = [];
+      const spreads: string[] = [];
+      for (const el of value.type === "object" ? [value] : value.namedChildren) {
+        if (el.type === "spread_element" && el.namedChildren[0]?.type === "identifier") spreads.push(el.namedChildren[0].text);
+        if (el.type !== "object") continue;
+        let path: string | null = null;
+        const props: RouteArrayFact["items"][number]["props"] = {};
+        for (const pair of el.namedChildren) {
+          if (pair.type !== "pair") continue;
+          const key = pair.childForFieldName("key")?.text;
+          const v = pair.childForFieldName("value");
+          if (!key || !v) continue;
+          if (key === "path") path = literalPath(v) ?? pathHole(v);
+          else if (v.type === "identifier" && /^[A-Z]/.test(v.text)) props[key] = { name: v.text, specifier: v.text };
+          else {
+            const c = v.type === "jsx_element" || v.type === "jsx_self_closing_element" || v.type === "arrow_function" || v.type === "call_expression" ? componentOf(v) : null;
+            if (c) props[key] = c;
+          }
+        }
+        if (path !== null) items.push({ path, line: el.startPosition.row + 1, props });
+      }
+      if (items.length > 0 || spreads.length > 0) {
+        facts.push({ kind: "react-router-array", line: d.startPosition.row + 1, data: { name: name.text, items, ...(spreads.length ? { spreads } : {}) } satisfies RouteArrayFact });
+      }
+    }
+  }
 }

@@ -41,6 +41,7 @@ import { javascriptRequestSchema } from "./request-schema.js";
 import { javascriptReachability } from "./reachability.js";
 import { CREDENTIAL_CONTEXT } from "../shared/security-context.js";
 import { javascriptTaint } from "./taint.js";
+import { reactRouterResolver } from "./routes/react-router-resolver.js";
 
 const TS_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -223,6 +224,7 @@ const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
 const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver()];
+const routeResolvers = [reactRouterResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {
   ...typescriptManifest,
@@ -233,6 +235,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   dataMutations,
   entities,
   dispatchResolvers,
+  routeResolvers,
   // .vue/.svelte files map to typescript; the SFC preprocess swaps in the
   // <script> block (dispatched by extension).
   preprocess: (raw, path) => vuePreprocess(raw, path) ?? sveltePreprocess(raw, path),
@@ -260,6 +263,7 @@ export const javascriptMeta: LanguagePluginMeta = {
   dataMutations,
   entities,
   dispatchResolvers,
+  routeResolvers,
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
   controlFlow: CONTROL_FLOW,

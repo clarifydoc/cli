@@ -1,8 +1,8 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { RouteInfo } from "../../../../types/analysis.js";
+import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { RouteExtractor } from "../../../routes/base.js";
 import { visitExpressRoute, applyRouterLevelGuards } from "./express.js";
-import { visitReactRouterRoute } from "./react-router.js";
+import { collectRouteArrays, visitReactRouterRoute } from "./react-router.js";
 import { visitNestjsRoute } from "./nestjs.js";
 import { visitVueRouterRoute } from "./vue-router.js";
 
@@ -15,7 +15,7 @@ import { visitVueRouterRoute } from "./vue-router.js";
 export const javascriptRouteExtractor: RouteExtractor = {
   languages: ["typescript", "javascript"],
 
-  extractRoutes(tree: Tree, _sourceText: string): RouteInfo[] {
+  extractRoutes(tree: Tree, sourceText: string, _filePath?: string, facts?: RouteFact[]): RouteInfo[] {
     const express: RouteInfo[] = [];
     const reactRouter: RouteInfo[] = [];
     const nestjs: RouteInfo[] = [];
@@ -23,9 +23,9 @@ export const javascriptRouteExtractor: RouteExtractor = {
 
     const walk = (node: Node): void => {
       visitExpressRoute(node, express);
-      visitReactRouterRoute(node, reactRouter);
+      visitReactRouterRoute(node, reactRouter, facts);
       visitNestjsRoute(node, nestjs);
-      visitVueRouterRoute(node, vueRouter);
+      visitVueRouterRoute(node, vueRouter, facts);
       for (const child of node.children) walk(child);
     };
     walk(tree.rootNode);
@@ -33,6 +33,8 @@ export const javascriptRouteExtractor: RouteExtractor = {
     // apply to every later route on it — a file-level fact the per-node
     // visitor cannot see, so it is written after the walk.
     applyRouterLevelGuards(tree.rootNode, express);
+    // Route arrays another file may `.map` into <Route> (react-router-resolver.ts).
+    if (facts && /\bpath\s*:/.test(sourceText)) collectRouteArrays(tree.rootNode, sourceText, facts);
 
     return [...express, ...reactRouter, ...nestjs, ...vueRouter];
   },

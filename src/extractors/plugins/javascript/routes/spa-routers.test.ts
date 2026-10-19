@@ -151,6 +151,52 @@ const items = list.map((r) => ({ path: '/' + r.path, component: Page }));`;
   });
 });
 
+describe("React Router data routers", () => {
+  it("reads createBrowserRouter objects: element, Component, lazy, index, pathless layouts", async () => {
+    const src = `import { createBrowserRouter } from "react-router-dom";
+import { Home } from "./pages/Home";
+const router = createBrowserRouter([
+  {
+    element: <AppLayout />,
+    children: [
+      { index: true, element: <Home /> },
+      { path: "/orders", Component: Orders, loader: ordersLoader },
+      { path: "/orders/:id", lazy: () => import("./pages/OrderDetail") },
+      { path: "/admin", element: <RequireAdmin><AdminLayout /></RequireAdmin>, children: [
+        { index: true, element: <AdminHome /> },
+        { path: "users", element: <Users /> },
+      ] },
+    ],
+  },
+]);`;
+    const rows = (await routesOf(src, "router.tsx")).map((r) => [r.path, r.handler, r.componentPath]);
+    expect(rows).toEqual(expect.arrayContaining([
+      ["/", "Home", "Home"],
+      ["/orders", "Orders", "Orders"],
+      ["/orders/:id", "OrderDetail", "./pages/OrderDetail"],
+      ["/admin", "AdminLayout", "AdminLayout"],
+      ["/admin", "AdminHome", "AdminHome"],
+      ["/admin/users", "Users", "Users"],
+    ]));
+    expect(rows.map((r) => r[0])).not.toContain("users");
+  });
+
+  it("resolves path constants the file declares, and ignores look-alikes", async () => {
+    const src = `export const ROUTES = { home: "/", orders: { list: "/orders" } } as const;
+const BASE = "/shop";
+export const routes = [
+  { path: ROUTES.orders.list, element: <Orders /> },
+  { path: \`\${BASE}/cart\`, element: <Cart /> },
+  { path: ROUTES.missing, element: <Lost /> },
+];
+const menu = [{ path: "/docs", element: someNode }, { path: "/x", Component: "Button" }];`;
+    const paths = (await routesOf(src, "routes.tsx")).map((r) => r.path);
+    // A name this file does not declare stays a hole for the project pass
+    // (react-router-resolver.ts), which fills it from an import or drops it.
+    expect(paths).toEqual(["/orders", "/shop/cart", "${ROUTES.missing}"]);
+  });
+});
+
 describe("Angular Router route configs", () => {
   it("extracts { path, component } eager routes", async () => {
     const src = `export const routes = [
