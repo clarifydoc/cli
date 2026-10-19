@@ -293,6 +293,12 @@ export interface FileAnalysis {
    */
   lineCount?: number;
 
+  /**
+   * Package names the file uses by path without importing them — Rust's
+   * `serde_json::to_string(…)` with no `use serde_json`. Counted as uses by the
+   * package inventory only; they name no file and add no edge.
+   */
+  packageReferences?: string[];
   imports: ImportInfo[];
   exports: ExportInfo[];
   functions: FunctionInfo[];
@@ -2773,6 +2779,12 @@ export interface ExternalPackage {
   used?: boolean;
   /** Number of analyzed files importing it (only set when `used` is known). */
   usageCount?: number;
+  /**
+   * Used without being imported: run by a manifest script (`"build": "tsc"`),
+   * named in a tool's config (`loader: "ts-loader"`, a Babel preset), or the
+   * types of an imported package (`@types/react`). Such a package is `used`.
+   */
+  usedBy?: Array<"script" | "config" | "types">;
   /** Manifest the dependency was declared in, relative to the project root. */
   declaredIn: string;
   /**

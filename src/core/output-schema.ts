@@ -22,6 +22,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   extraction: "optional",
   lineCount: "optional",
   imports: "required",
+  packageReferences: "optional",
   exports: "required",
   functions: "required",
   classes: "required",

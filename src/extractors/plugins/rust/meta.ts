@@ -9,7 +9,7 @@ import { rustRequestSchema } from "./request-schema.js";
 import { rustReachability } from "./reachability.js";
 import { AfDispatchResolver } from "./event-dispatch.js";
 import { splitLines } from "../../shared/source-lines.js";
-import { blankRustMultilineStrings } from "./source.js";
+import { blankRustMultilineStrings, rustPathHeads } from "./source.js";
 import { extractRustDataSources } from "./data-sources.js";
 
 const RUST_BUILTINS: ReadonlySet<string> = new Set<string>([
@@ -35,12 +35,14 @@ export const rustMeta: LanguagePluginMeta = {
   // functions; the data sources (SQL in `r#"…"#`, URLs) come from the raw source.
   preprocess(rawSource) {
     const sourceText = blankRustMultilineStrings(rawSource);
-    if (sourceText === rawSource) return null;
+    const blanked = sourceText !== rawSource;
     return {
       sourceText,
       language: "rust",
       postExtract(analysis, raw) {
-        analysis.dataSources = extractRustDataSources(splitLines(raw));
+        if (blanked) analysis.dataSources = extractRustDataSources(splitLines(raw));
+        const refs = rustPathHeads(sourceText, analysis.imports);
+        if (refs.length > 0) analysis.packageReferences = refs;
       },
     };
   },

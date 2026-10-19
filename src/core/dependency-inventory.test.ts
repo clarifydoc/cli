@@ -596,3 +596,36 @@ describe("collectExternalPackages — one package, several manifests", () => {
     expect(react.declarations?.map((d) => d.declaredIn)).toEqual(["admin/package.json", "web/package.json"]);
   });
 });
+
+describe("npm tooling is used without being imported", () => {
+  let dir: string;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "revdoc-npm-tools-"));
+    await writeFile(join(dir, "package.json"), JSON.stringify({
+      scripts: { build: "tsc -p . && vite build", lint: "npx eslint src", test: "cross-env CI=1 vitest run", fmt: "prettier --write ." },
+      dependencies: { react: "^18.0.0" },
+      devDependencies: {
+        typescript: "^5", vite: "^5", eslint: "^9", vitest: "^2", prettier: "^3", "cross-env": "^7",
+        "eslint-plugin-react": "^7", "ts-loader": "^9", "@babel/preset-env": "^7",
+        "@types/react": "^18", "@types/node": "^20", "left-pad": "^1",
+      },
+    }));
+    await writeFile(join(dir, ".eslintrc.json"), JSON.stringify({ extends: ["plugin:react/recommended"], env: { node: true } }));
+    await writeFile(join(dir, "webpack.config.js"), "module.exports = { module: { rules: [{ test: /\\.tsx?$/, loader: 'ts-loader' }] } };");
+    await writeFile(join(dir, ".babelrc"), JSON.stringify({ presets: ["@babel/preset-env"] }));
+  });
+  afterAll(async () => rm(dir, { recursive: true, force: true }));
+
+  it("marks script commands, config mentions and imported types as used", async () => {
+    const pkgs = await collectExternalPackages(dir, []);
+    attachPackageUsage(pkgs, [{ language: "typescript", imports: [{ source: "react" }] } as unknown as FileAnalysis]);
+    const used = Object.fromEntries(pkgs.map((p) => [p.name, p.used]));
+    expect(used).toMatchObject({
+      typescript: true, vite: true, eslint: true, vitest: true, prettier: true, "cross-env": true,
+      "eslint-plugin-react": true, "ts-loader": true, "@babel/preset-env": true,
+      "@types/react": true, "@types/node": true, "left-pad": false,
+    });
+    expect(pkgs.find((p) => p.name === "@types/react")!.usedBy).toEqual(["types"]);
+    expect(pkgs.find((p) => p.name === "typescript")!.usedBy).toEqual(["script"]);
+  });
+});

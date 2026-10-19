@@ -142,6 +142,13 @@ export function analyzeUnusedCode(
     }
     if (outside.size >= AUTHORED_MIN_OUTSIDE_DEPS) barrelDirs.delete(dir);
   }
+  // Self-contained is not enough: an authored `src/shared` utility folder is
+  // self-contained too. A generator says so in its output's header ("Generated
+  // by Kubb", "Do not edit") — the analysis flags those files `generated` — so
+  // a barrel root needs at least one such file under it.
+  for (const dir of [...barrelDirs]) {
+    if (!analyses.some((a) => a.generated && a.filePath.startsWith(dir + "/"))) barrelDirs.delete(dir);
+  }
 
   // Merge barrel roots with convention-marked dirs (generated/, vendor/,
   // public/**/plugins/, …), keep only the shallowest — drop nested dirs.

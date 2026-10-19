@@ -90,3 +90,33 @@ function blockCommentEnd(source: string, start: number): number {
   }
   return source.length;
 }
+
+/** Path heads that are the language, the crate itself or a scope keyword, never a dependency. */
+const NOT_A_CRATE = new Set(["std", "core", "alloc", "crate", "self", "super", "proc_macro", "test"]);
+
+/**
+ * Crates a file uses by path without a `use`: `serde_json::to_string(&x)`,
+ * `#[derive(serde::Serialize)]`, `tokio::spawn(…)`. A head the file declares
+ * itself (`mod models;`, `use x as models`) or imports is left out — the
+ * imports already count. Comments are skipped; strings are already blank.
+ */
+export function rustPathHeads(source: string, imports: readonly { source: string; specifiers?: readonly string[] }[]): string[] {
+  if (!source.includes("::")) return [];
+  const local = new Set<string>();
+  for (const m of source.matchAll(/\bmod\s+([a-z_][a-z0-9_]*)/g)) local.add(m[1]!);
+  for (const m of source.matchAll(/\bas\s+([a-z_][a-z0-9_]*)\s*[;,}]/g)) local.add(m[1]!);
+  for (const m of source.matchAll(/\b(?:let|fn|const|static|enum|struct|trait|type)\s+(?:mut\s+)?([a-z_][a-z0-9_]*)/g)) local.add(m[1]!);
+  // An import's crate and every name it brings into scope (`use axum::{routing, extract}`).
+  const imported = new Set(imports.flatMap((i) => [i.source.split("::")[0]!, i.source.split("::").pop()!, ...(i.specifiers ?? [])]));
+  const out = new Set<string>();
+  const code = source.replace(/\/\/[^\n]*/g, "");
+  for (const m of code.matchAll(/(?<![\w:])([a-z_][a-z0-9_]*)::(?=[A-Za-z_{<*])/g)) {
+    const head = m[1]!;
+    if (NOT_A_CRATE.has(head) || local.has(head) || imported.has(head)) continue;
+    // A `use` line is an import, not a path use.
+    const lineStart = code.lastIndexOf("\n", m.index) + 1;
+    if (/^\s*(?:pub(?:\([^)]*\))?\s+)?use\s/.test(code.slice(lineStart, m.index))) continue;
+    out.add(head);
+  }
+  return [...out].sort();
+}

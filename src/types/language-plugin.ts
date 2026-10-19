@@ -176,6 +176,11 @@ export interface PackageManagerSpec {
    */
   assertsUnused?: boolean;
   /**
+   * The import key whose use implies this package is used too (`@types/react`
+   * → `react`, `@types/babel__core` → `@babel/core`); null when none.
+   */
+  impliedBy?(name: string): string | null;
+  /**
    * Import keys resolved to their package through what the package manager
    * INSTALLED (Composer's `vendor/composer/installed.json` lists each
    * package's autoload namespaces): `load` reads a root's metadata into import

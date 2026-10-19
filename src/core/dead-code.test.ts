@@ -324,7 +324,7 @@ describe("analyzeUnusedCode — barrels that are not codegen", () => {
   const leaf = (filePath: string): FileAnalysis => ({ filePath, imports: [], exports: [] }) as unknown as FileAnalysis;
 
   it("keeps a package's public entry barrel and a project-wired feature folder authored", () => {
-    const analyses = [barrel("src"), barrel("src/feature"), leaf("src/feature/a.ts"), barrel("src/gen"), leaf("src/gen/a.ts")];
+    const analyses = [barrel("src"), barrel("src/feature"), leaf("src/feature/a.ts"), barrel("src/gen"), { ...leaf("src/gen/a.ts"), generated: true } as FileAnalysis];
     const graph = {
       // The feature folder reaches across the project; the generated tree only
       // into its own files and one custom client.
@@ -333,5 +333,13 @@ describe("analyzeUnusedCode — barrels that are not codegen", () => {
     };
     const { generatedRoots } = analyzeUnusedCode(analyses, graph, new Set(["src/index.ts"]));
     expect(generatedRoots).toEqual(["src/gen"]);
+  });
+
+  it("does not take a self-contained authored barrel for codegen", () => {
+    // `src/shared` re-exports its own utilities and depends on nothing else —
+    // shaped like codegen output, but no file under it says it was generated.
+    const analyses = [barrel("src/shared"), leaf("src/shared/a.ts"), leaf("src/app.ts")];
+    const graph = { "src/shared/a.ts": ["src/shared/b.ts"], "src/app.ts": ["src/shared/index.ts"] };
+    expect(analyzeUnusedCode(analyses, graph).generatedRoots).toEqual([]);
   });
 });

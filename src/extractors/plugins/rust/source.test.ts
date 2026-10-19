@@ -49,3 +49,23 @@ describe("Rust analysis — code inside strings is not code", () => {
     expect(a.dataSources.some((d: { target?: string | null; entity?: string }) => (d.entity ?? d.target) === "accounts")).toBe(true);
   });
 });
+
+describe("rustPathHeads", () => {
+  it("lists crates used by path, not std, local modules, bindings or imports", async () => {
+    const { rustPathHeads } = await import("./source.js");
+    const src = [
+      "use tokio::sync::Mutex;",
+      "mod models;",
+      "#[derive(serde::Serialize)]",
+      "struct S;",
+      "fn f() {",
+      "    let v = serde_json::to_string(&S).unwrap();",
+      "    let m = models::User::new();",
+      "    std::fs::read(\"x\");",
+      "    tokio::spawn(async {});",
+      "    // anyhow::bail!",
+      "}",
+    ].join("\n");
+    expect(rustPathHeads(src, [{ source: "tokio::sync" }])).toEqual(["serde", "serde_json"]);
+  });
+});

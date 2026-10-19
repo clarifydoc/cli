@@ -268,8 +268,7 @@ export function attachPackageUsage(
   for (const fa of analyses) {
     const ecos = packageEcosystemsFor(fa.language);
     if (ecos.length === 0) continue;
-    for (const imp of fa.imports) {
-      const source = imp.source.trim();
+    for (const source of [...fa.imports.map((imp) => imp.source.trim()), ...(fa.packageReferences ?? [])]) {
       if (!source) continue;
       for (const eco of ecos) {
         const key = packageMatchingFor(eco)?.importKey?.(source);
@@ -322,9 +321,18 @@ export function attachPackageUsage(
       count = bucket?.get(spec?.packageKey?.(pkg.name) ?? name) ?? 0;
     }
 
+    // Types for a package that is imported: `@types/react` with `react`.
+    const implied = count === 0 ? spec?.impliedBy?.(pkg.name) : null;
+    const impliedUse = implied ? (bucket?.get(implied) ?? 0) + matchCount(bucket, (k) => k.startsWith(implied + "/")) : 0;
+    if (impliedUse > 0) pkg.usedBy = [...new Set([...(pkg.usedBy ?? []), "types" as const])];
+
     if (count > 0) {
       pkg.used = true;
       pkg.usageCount = count;
+    } else if (impliedUse > 0 || (pkg.usedBy?.length ?? 0) > 0) {
+      // Run by a script, loaded by a tool's config, or the types of an import.
+      pkg.used = true;
+      pkg.usageCount = 0;
     } else if (spec?.assertsUnused) {
       pkg.used = false;
       pkg.usageCount = 0;
