@@ -442,7 +442,7 @@ export function servicesTool(ctx: ToolContext): McpTool {
       "and another, a publisher and the worker consuming its messages. Each edge lists the endpoints (or broker " +
       "destinations) that cross it, and whether a deployment manifest (docker-compose, k8s) states it too. An edge " +
       "with 0 links is stated by deployment only — no call was found in code. Name a `project` for what it calls " +
-      "and what calls it; then clarifydoc_routes for one endpoint's callers.",
+      "and what calls it; then clarifydoc_routes for one endpoint's callers. Also: external services called.",
     inputSchema: {
       type: "object",
       properties: {
@@ -463,7 +463,23 @@ export function servicesTool(ctx: ToolContext): McpTool {
       const name = (id: string) => nameOf.get(id) ?? id;
       const isProject = (id: string) => !!projectFilter && (contains(id, projectFilter) || contains(nameOf.get(id), projectFilter));
 
+      // The hosts outside the analysis the code calls, by the service they belong to.
+      const external = (summary.externalServices ?? []).filter((e) => !projectFilter || e.files.some((f) => {
+        const p = summary.fileProjects?.[f];
+        return !!p && isProject(p);
+      }));
+      const externalLines = external.length && kind !== "bus"
+        ? [
+            "",
+            `## External services (${external.length})`,
+            ...bulletList(external, limit, (e) => `${e.name}${e.known ? "" : " (host)"} — ${plural(e.calls, "call")} from ${plural(e.files.length, "file")}${e.known ? ` · ${e.hosts.join(", ")}` : ""}${e.files.length <= 3 ? ` · ${e.files.join(", ")}` : ""}`),
+          ]
+        : [];
+
       if (subProjects.length < 2 && all.length === 0) {
+        if (externalLines.length) {
+          return { text: joinLines([`# One project — nothing crosses between projects`, ...externalLines]) };
+        }
         return {
           text: noResults({
             headline: "This analysis holds one project, so nothing crosses between projects.",
@@ -523,6 +539,7 @@ export function servicesTool(ctx: ToolContext): McpTool {
           countMap(tally(deps, (d) => d.kind)),
           "",
           ...bulletList(ordered, limit, render),
+          ...externalLines,
         ]),
       };
     },

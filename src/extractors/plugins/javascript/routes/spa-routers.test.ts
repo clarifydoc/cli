@@ -236,3 +236,43 @@ describe("ESM-TS .js specifier resolution", () => {
     expect(resolveTarget("./legacy.js", "src/app.ts", map)).toBe("src/legacy.js");
   });
 });
+
+describe("redirect-only routes", () => {
+  const rows = async (src: string) =>
+    (await routesOf(src)).map((r) => `${r.path} ${r.componentPath ?? "-"} ${r.redirectTo === undefined ? "page" : `→ ${r.redirectTo || "(computed)"}`}`);
+
+  it("React Router: <Navigate> and <Redirect> are redirects, in JSX and in object routes", async () => {
+    expect(await rows(`export const App = () => (
+  <Routes>
+    <Route path="/" element={<Navigate to="/home" replace />} />
+    <Route path="/home" element={<Home />} />
+    <Route path="/v5" render={() => <Redirect to={next} />} />
+  </Routes>
+);
+export const router = createBrowserRouter([
+  { path: "/old", element: <Navigate to="/home" /> },
+  { path: "/start", element: <Home /> },
+]);`)).toEqual([
+      "/ - → /home",
+      "/home Home page",
+      "/v5 - → (computed)",
+      "/old - → /home",
+      "/start Home page",
+    ]);
+  });
+
+  it("Vue and Angular: a bare redirect is wiring, a component with a default-child redirect is a page", async () => {
+    expect(await rows(`export default createRouter({ routes: [
+  { path: "/", redirect: "/home" },
+  { path: "/legacy/:id", redirect: (to) => ({ path: "/home" }) },
+  { path: "/settings", component: Settings, redirect: "/settings/profile" },
+] });
+export const routes: Routes = [{ path: "", redirectTo: "home", pathMatch: "full" }, { path: "home", component: HomeComponent }];`)).toEqual([
+      "/ - → /home",
+      "/legacy/:id - → (computed)",
+      "/settings Settings page",
+      " - → home",
+      "home HomeComponent page",
+    ]);
+  });
+});

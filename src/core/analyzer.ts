@@ -64,6 +64,7 @@ import { buildResponsibilityProfiles } from "./responsibility-profile.js";
 import { computeRefactorPressure, resolveRefactorPressureConfig } from "./refactor-pressure.js";
 import { loadProjectConfig, matchesAnyGlob, resolveArchitectureOverrides } from "./project-config.js";
 import { applySecurityRules } from "./security-rules.js";
+import { externalServices } from "./external-services.js";
 import { isTestFile } from "./test-file-detector.js";
 import { checkContracts } from "./contract-check.js";
 import { loadCodeOwners } from "./code-owners.js";
@@ -986,6 +987,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     proxyRules,
   });
   if (originCount > 0) progress.detail(`  Call origins resolved: ${originCount}`);
+  const thirdParty = externalServices(allApiCalls);
+  if (thirdParty.length > 0) progress.detail(`  External services: ${thirdParty.map((s) => `${s.name} (${s.calls})`).join(", ")}`);
   if (resolvedUrlCount > 0 && verbose) {
     progress.detail(`  URL-builder calls resolved: ${resolvedUrlCount}`);
   }
@@ -1633,6 +1636,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     events: allEvents,
     routeMap: allRoutes,
     apiCalls: allApiCalls,
+    ...(thirdParty.length ? { externalServices: thirdParty } : {}),
     screens: allScreens,
     symbolLinks,
     componentLaunches: componentLaunches.length ? componentLaunches : undefined,
@@ -1884,7 +1888,8 @@ function buildScreensFromRoutes(
   const inline: Array<{ analysis: FileAnalysis; route: RouteInfo }> = [];
 
   for (const analysis of allAnalyses) {
-    const frontendRoutes = analysis.routes.filter((r) => r.kind === "frontend");
+    // A redirect renders no page: it neither leads to a screen nor makes its file one.
+    const frontendRoutes = analysis.routes.filter((r) => r.kind === "frontend" && r.redirectTo === undefined);
     if (frontendRoutes.length === 0) continue;
 
     let resolvedAny = false;

@@ -821,6 +821,13 @@ export interface RouteInfo {
    * could be identified.
    */
   componentPath?: string | null;
+  /**
+   * Frontend routes only: the route renders no page of its own but sends the
+   * reader on — Vue `redirect`, Angular `redirectTo`, React Router
+   * `<Navigate to>` — to this path ("" when the target is computed). Such a
+   * route is wiring, never a screen.
+   */
+  redirectTo?: string;
   calls: CallInfo[];
   /**
    * Guards and filters applied to the route, as readable strings: Express
@@ -1346,6 +1353,8 @@ export interface CallOrigin {
   project?: string;
   /** The host is not one of this analysis's services. */
   external?: boolean;
+  /** The third-party service an external host belongs to (`Stripe` for `api.stripe.com`), when it is a known one. */
+  service?: string;
   /**
    * The environment variables that would set the base (an `env` reference's
    * own name, or what overrides a `config` key) — kept when nothing in this
@@ -2578,6 +2587,12 @@ export interface ProjectAnalysis {
    * Aggregated from each file's `dataSources` where `kind === "api-call"`.
    */
   apiCalls: (DataSourceInfo & { filePath: string })[];
+  /**
+   * The hosts outside this analysis the code calls, grouped by the
+   * third-party service each belongs to (`Stripe` for `api.stripe.com`), or
+   * by the host when it is not a known one (core/external-services.ts).
+   */
+  externalServices?: Array<{ name: string; known: boolean; hosts: string[]; calls: number; files: string[] }>;
   screens: ScreenInfo[];
   /**
    * Resolved frontend→backend links: each outbound `api-call` matched to the

@@ -434,6 +434,8 @@ function withRoutes(summary: ProjectAnalysis): Array<Record<string, unknown>> {
   }
   return (summary.apiCalls ?? []).map((c) => {
     const row: Record<string, unknown> = { name: c.name, target: c.target, filePath: c.filePath, line: c.line };
+    // Only what the Routes tab reads of an external origin: the host, and the service it belongs to.
+    if (c.origin?.external && c.origin.host) row.origin = { host: c.origin.host, external: true, ...(c.origin.service ? { service: c.origin.service } : {}) };
     const here = byLine.get(`${c.filePath}\u0000${c.line}`) ?? [];
     const urls = [c.target, ...(c.targetAlternatives ?? [])];
     const link = here.find((l) => urls.includes(l.url)) ?? (here.length === 1 ? here[0] : undefined);

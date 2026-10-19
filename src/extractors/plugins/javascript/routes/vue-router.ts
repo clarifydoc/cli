@@ -1,7 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
-import { componentOf } from "./react-router.js";
+import { componentOf, redirectTargetOf } from "./react-router.js";
 import { isTanstackRouteOptions } from "./tanstack-router.js";
 
 /** Vue Router: routes array config { path: "/foo", component: Bar } */
@@ -211,6 +211,8 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[], facts?: Rou
     let componentPath: string | null = null;
     let isRouteConfig = false;
     let index = false;
+    /** Where a redirect-only record sends the reader ("" when computed): Vue `redirect`, Angular `redirectTo`, `element: <Navigate>`. */
+    let redirectTo: string | null = null;
 
     for (const prop of node.children) {
       if (prop.type === "pair" || prop.type === "property_assignment") {
@@ -226,6 +228,10 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[], facts?: Rou
           // instead of a bare `component` identifier — same join target.
           handler = componentHandler(value);
           componentPath = componentSpecifier(value);
+        } else if ((keyText === "redirect" || keyText === "redirectTo") && value) {
+          redirectTo = value.type === "string" ? stripQuotes(value.text) : "";
+        } else if (keyText === "element" && value && isJsxValue(value) && redirectTargetOf(value) !== null) {
+          redirectTo = redirectTargetOf(value);
         } else if (keyText === "element" && value && isJsxValue(value)) {
           // React Router data routers: `element: <Page />` — the page, as the JSX <Route> reads it.
           const c = componentOf(value);
@@ -262,12 +268,16 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[], facts?: Rou
     if (path !== null && isRouteConfig) {
       const above = index ? null : parentPath(node);
       if (above !== null) path = joinChild(above, path);
+      // A record that renders something AND redirects (a Vue parent with `component` and a
+      // default-child `redirect`) is a page; only a bare redirect is wiring.
+      const onlyRedirect = redirectTo !== null && componentPath === null;
       routes.push({
         path,
         httpMethod: null,
         kind: "frontend",
         handler,
         componentPath,
+        ...(onlyRedirect ? { redirectTo: redirectTo! } : {}),
         calls: [],
         middleware: [],
         line: node.startPosition.row + 1,

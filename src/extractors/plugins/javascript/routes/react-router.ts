@@ -137,12 +137,15 @@ export function visitReactRouterRoute(node: Node, routes: RouteInfo[], facts?: R
           const prefix = ancestorRoutePrefix(node);
           if (prefix) path = joinRoutePath(prefix, path);
         }
+        const redirect = RENDER_ATTRIBUTES.map((a) => routeAttrValue(node, a)).map((v) => (v ? redirectTargetOf(v) : null)).find((r) => r !== null) ?? null;
         routes.push({
           path,
           httpMethod: null,
           kind: "frontend",
           handler,
-          componentPath: rendered?.specifier ?? null,
+          // A redirect renders no page of its own: there is no component to follow.
+          componentPath: redirect !== null ? null : (rendered?.specifier ?? null),
+          ...(redirect !== null ? { redirectTo: redirect } : {}),
           calls: [],
           middleware: [],
           line: node.startPosition.row + 1,
@@ -270,6 +273,28 @@ function routeAttrValue(openingEl: Node, name: string): Node | null {
     if (attrName === name) return attr.child(2) ?? null;
   }
   return null;
+}
+
+/** React Router's redirect elements: v6+ `<Navigate to>`, v5 `<Redirect to>`. */
+const REDIRECT_TAGS = new Set(["Navigate", "Redirect"]);
+
+/**
+ * Where a route's rendered value sends the reader when it only redirects —
+ * `element={<Navigate to="/home" replace />}` — or null when it renders
+ * something. "" when the target is computed rather than written.
+ */
+export function redirectTargetOf(value: Node): string | null {
+  let v: Node | null = value;
+  // `{…}`, `(…)` and `render={() => <Redirect …/>}` wrap the element.
+  while (v && (v.type === "jsx_expression" || v.type === "parenthesized_expression" || v.type === "arrow_function")) {
+    v = v.type === "arrow_function" ? v.childForFieldName("body") : (v.namedChildren[0] ?? null);
+  }
+  if (!v) return null;
+  const opener = v.type === "jsx_element" ? v.child(0) : v.type === "jsx_self_closing_element" ? v : null;
+  const tag = opener ? (opener.childForFieldName("name") ?? opener.child(1))?.text : undefined;
+  if (!opener || !tag || !REDIRECT_TAGS.has(tag)) return null;
+  const to = routeAttrValue(opener, "to");
+  return to?.type === "string" ? to.text.slice(1, -1) : "";
 }
 
 /** The raw value text of a named attribute on a JSX opening element. */

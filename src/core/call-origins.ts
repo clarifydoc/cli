@@ -8,6 +8,7 @@ import type {
   ProxyRule,
   ServiceAddress,
 } from "../types/analysis.js";
+import { serviceForHost } from "./external-services.js";
 import type { ImportIndex } from "../types/project.js";
 import type { ProjectConfigValue } from "./config-values.js";
 import { serviceConfigFor } from "../extractors/registry.js";
@@ -288,6 +289,10 @@ export function resolveCallOrigins(input: {
       arrival = r.project;
     }
     if (!origin) continue;
+    if (origin.external && origin.host) {
+      const service = serviceForHost(origin.host);
+      if (service) origin.service = service;
+    }
     call.origin = origin;
     resolved++;
   }
