@@ -290,6 +290,7 @@ instead of interleaving with it.
 | `clarifydoc_architecture` | Folder dependencies with instability, communities, hub files, import cycles, surprising links, files that change together |
 | `clarifydoc_explain` | One route, screen, function or file packed into a token budget: contract and callers, what it reaches, source, blast radius |
 | `clarifydoc_impact` | Impact of the current git diff: screens, routes, entities, tests to run; the changed functions and their callers, signature breaks, owners and reviewers, files usually changed with it; with `proposed` (a file's new content) the same for an edit not made yet |
+| `clarifydoc_control_flow` | One function's control flow as Mermaid, or the backward slice at a line: the statements that can affect the values used there |
 | `clarifydoc_analyze` | Re-run the analysis (incremental). The only tool that writes anything |
 
 Flags: `--analysis-dir <dir>` to read an exact analysis directory, `--no-auto-analyze` to forbid re-analysis on

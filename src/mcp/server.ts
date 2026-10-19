@@ -8,6 +8,7 @@
  *     Copilot's agent mode gets the tools with no configuration at all.
  */
 
+import { controlFlowTool } from "./tools/flow.js";
 import { architectureTool } from "./tools/architecture.js";
 import { basename, dirname, join, resolve } from "path";
 import { existsSync } from "fs";
@@ -144,6 +145,7 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
     healthTool(ctx),
     architectureTool(ctx),
     impactTool(ctx),
+    controlFlowTool(ctx),
     analyzeTool(ctx),
   ];
   // Composed from the tools above, so it says nothing they would not.

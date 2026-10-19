@@ -7,7 +7,7 @@ import { buildMcpServer } from "./server.js";
 /**
  * What every session pays before its first question: the tool list and the
  * server instructions. 17,645 + 2,768 bytes when this budget was set out,
- * 21,549 + 3,328 with seventeen tools. A description that grows the total
+ * 22,341 + 3,328 with eighteen tools. A description that grows the total
  * past the budget has to be argued for in the commit that raises it.
  */
 const BUDGET_BYTES = 26_000;

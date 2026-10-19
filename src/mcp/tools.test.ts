@@ -73,6 +73,7 @@ describe("clarifydoc MCP tools — react fixture", () => {
       "clarifydoc_health",
       "clarifydoc_architecture",
       "clarifydoc_impact",
+      "clarifydoc_control_flow",
       "clarifydoc_analyze",
       "clarifydoc_explain",
     ]);

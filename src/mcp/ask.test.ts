@@ -51,6 +51,16 @@ describe.skipIf(!existsSync(join(analysisDir, "project-summary.json")))("askTool
     expect(bad.isError).toBe(true);
   });
 
+  it("draws a function's control flow, and slices backward from a line", async () => {
+    const pick = await askTool(config, "control_flow", { file: "middleware/auth.ts" });
+    expect(pick.text).toMatch(/has 2 functions[\s\S]*requireAuth \(lines 9-22, complexity 3\)/);
+    const drawn = await askTool(config, "control_flow", { file: "middleware/auth.ts", function: "requireAuth" });
+    expect(drawn.text).toMatch(/```mermaid\nflowchart TD/);
+    const slice = await askTool(config, "control_flow", { file: "middleware/auth.ts", slice: 18 });
+    expect(slice.text).toMatch(/middleware\/auth\.ts:11 {2}if \(!header\?\.startsWith\('Bearer '\)\) \{ {2}\(control\)/);
+    expect((await askTool(config, "control_flow", { file: "middleware/auth.ts", function: "nope" })).text).toMatch(/No function in middleware\/auth\.ts matches "nope"/);
+  });
+
   it("lists every tool with its arguments", () => {
     const tools = listTools(config);
     expect(tools.find((t) => t.name === "clarifydoc_contract")?.args).toContain("path");
