@@ -561,6 +561,8 @@ export interface AstExtractorHooks {
    * this file registers.
    */
   diBindings?(tree: Tree, sourceText: string, filePath: string): import("./analysis.js").DiBinding[];
+  /** The namespace the file's free functions live in → `FileAnalysis.declaredNamespace` (PHP `namespace X;`). */
+  declaredNamespace?(tree: Tree, sourceText: string): string | null;
   /**
    * Typed locals of the file's TOP-LEVEL statements (C# `Program.cs`,
    * a script body) → the `<setup>` pseudo-function's `localTypes`, so
@@ -814,6 +816,12 @@ export interface LanguagePluginManifest {
    * explicitly (JS, Python, Java), where such a call names something else.
    */
   importsShareScope?: boolean;
+  /**
+   * A class lists several bases that are all classes (Python `class D(B, C)`):
+   * its `extends` and `implements` together, in order, are its bases, and a
+   * member is looked up along the C3 method resolution order.
+   */
+  multipleInheritance?: boolean;
   /**
    * Every file of a directory shares one top-level scope (Go: a package IS
    * its directory; Kotlin and Swift files of one package/module): a bare call

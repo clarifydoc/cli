@@ -70,6 +70,9 @@ export class CSharpExtractor extends FunctionClassExtractor {
         child.type === "struct_declaration"
       ) {
         classes.push(this.parseCsharpClass(child, "class"));
+        // Nested types are types of their own (`Outer.Handler` is referred to as `Handler`).
+        const body = child.childForFieldName("body");
+        if (body) this.extractCsharpClasses(body, classes);
       } else if (child.type === "interface_declaration") {
         classes.push(this.parseCsharpClass(child, "interface"));
       } else if (child.type === "enum_declaration") {

@@ -67,6 +67,23 @@ recorded in the git history only.
   `__DIR__ . '/lib/db.php'`, `dirname(__FILE__)`, a plain `'inc/header.php'` — are imports, and the
   functions an included file defines resolve from bare calls. Bare function calls and `new X` were not
   recorded as calls at all before, so legacy PHP had almost no call graph.
+- **Nested classes.** A class declared inside another — a Java `static class Builder`, a JUnit `@Nested`
+  class, a Kotlin `class Inner`, a C# nested handler or record, a Python nested class with methods — is a
+  class of its own with its methods. They used to be dropped entirely, methods and calls included. (A
+  Python nested class without methods, like Django's `class Meta`, is configuration and stays out; a
+  Kotlin `object` / companion is still folded into its class.) TypeScript `namespace` blocks are read the
+  same way.
+- **pytest fixtures.** A test's parameter is the fixture of that name — in its own module, else the
+  nearest `conftest.py` — so `def test_save(user): user.save()` links to the method of the class the
+  fixture returns (its annotation, `Iterator[T]` included, or the one class it returns or yields).
+- **PHP namespaced functions.** `use function App\money;`, `\App\money()` and a bare `money()` inside
+  `namespace App` resolve to the function declared in that namespace (then the global one, as PHP does),
+  with no `require` needed — Composer's `files` autoload. `new App\Invoice()` links to its constructor.
+- **Python C3 method resolution.** For `class D(B, C)` a member is looked up in C3 order, so
+  `D().hello()` reaches `C.hello` before `A.hello`, as Python does.
+- **Kotlin `typealias`.** A call on a value typed by an alias (`typealias Users = UserRepository`)
+  resolves on the class it names.
+- Web API 2 `[RoutePrefix("api/orders")]` is the controller's template; its routes used to come out at `/`.
 - **React Native platform files.** `./Button` resolves to `Button.ios.tsx` / `Button.android.tsx` /
   `.native` / `.web` when no plain file exists, and dead-code analysis keeps every platform variant of a
   module alive instead of reporting them unreachable.
@@ -81,6 +98,10 @@ recorded in the git history only.
   this.repo = new UserRepo() }`, a lazy `this.db ??= new Db()`) is typed by that construction, so calls on
   it resolve. Constructions that disagree, or a constructor that sets the field from an untyped value,
   still state nothing.
+- `this.save()` / `self.save()` resolves on the enclosing class and its bases first — not on whichever
+  class in the file happens to define a `save`.
+- Dead code: a Java/Kotlin declaration under `@Suppress("unused")` / `@SuppressWarnings("unused")` is kept
+  alive — the author's word that it is reached reflectively.
 - Dead code: a `WebApplicationInitializer` (and Spring's dispatcher/security initializer bases) and a
   `@GlideModule` / `AppGlideModule` are loaded by the servlet container or Glide's generated code, and
   are no longer reported unreachable.

@@ -419,6 +419,14 @@ export interface FileAnalysis {
    */
   diBindings?: DiBinding[];
   /**
+   * The namespace the file's free functions are declared in, as the language
+   * writes it (PHP `namespace App\Support;` → `App\Support`). A call reaching
+   * a function by its qualified name (`use function App\Support\money`,
+   * `\App\Support\money()`, or a bare `money()` inside that namespace) is
+   * joined on it. Omitted for the global namespace.
+   */
+  declaredNamespace?: string;
+  /**
    * HTTP client instances this file creates with a base URL, by variable name
    * → the base's PATH (`const apiClient = axios.create({ baseURL: "/api" })`
    * → `{ apiClient: "/api" }`; a full URL keeps only its path). Calls through

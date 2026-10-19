@@ -102,6 +102,13 @@ export class PythonExtractor extends FunctionClassExtractor {
         if (funcDef) {
           const parsed = this.parsePythonFunction(funcDef);
           parsed.fn.decorators = decorators;
+          // An unannotated pytest fixture is typed by what it returns or yields
+          // (`return User()`): what a test receives as the parameter of that name.
+          if (!parsed.fn.returnType && decorators.some((d) => FIXTURE_DECORATOR.test(d))) {
+            const body = funcDef.childForFieldName("body");
+            const made = body ? producedClass(body) : null;
+            if (made) parsed.fn.returnType = made;
+          }
           out.push(parsed);
         }
       } else if (child.type === "function_definition") {
@@ -175,11 +182,26 @@ export class PythonExtractor extends FunctionClassExtractor {
             if (m && !cls.implements.includes(m[1]!)) cls.implements.push(m[1]!);
           }
           classes.push(cls);
+          this.extractNestedPythonClasses(classDef, classes);
         }
       } else if (child.type === "class_definition") {
         classes.push(this.parsePythonClass(child));
+        this.extractNestedPythonClasses(child, classes);
       }
     }
+  }
+
+  /**
+   * A class defined in a class body that has behaviour of its own
+   * (`Outer.Inner().go()`). One with no methods — Django's `class Meta`,
+   * pydantic's `class Config` — is configuration, not a type anyone calls.
+   */
+  private extractNestedPythonClasses(owner: Node, classes: ClassInfo[]): void {
+    const body = owner.childForFieldName("body");
+    if (!body) return;
+    const nested: ClassInfo[] = [];
+    this.extractPythonClasses(body, nested);
+    for (const cls of nested) if (cls.methods.length > 0) classes.push(cls);
   }
 
   private parsePythonClass(node: Node): ClassInfo {
@@ -427,4 +449,32 @@ function collectEnumMembers(body: Node, enumName: string, out: PropertyInfo[]): 
     if (!left || left.type !== "identifier" || left.text.startsWith("_")) continue;
     out.push({ name: left.text, type: enumName, visibility: "public", isStatic: true, isReadonly: true });
   }
+}
+
+/** `@pytest.fixture`, `@fixture`, `@pytest.fixture(scope="module")`. */
+export const FIXTURE_DECORATOR = /^(?:pytest\.)?fixture\b/;
+
+/**
+ * The class a function body hands back: every `return` / `yield` value is a
+ * construction of the same class (`User(...)`, `models.User(...)`). Null when
+ * they differ or any is something else. Nested functions and classes are not
+ * this body.
+ */
+function producedClass(body: Node): string | null {
+  const made = new Set<string>();
+  let other = false;
+  const visit = (n: Node): void => {
+    if (n.type === "function_definition" || n.type === "class_definition" || n.type === "lambda") return;
+    if (n.type === "return_statement" || n.type === "yield") {
+      const value = n.namedChildren[0];
+      const callee = value?.type === "call" ? value.childForFieldName("function") : null;
+      const name = callee && (callee.type === "identifier" || callee.type === "attribute") ? callee.text : null;
+      if (name && /^[A-Z]/.test(name.split(".").pop()!)) made.add(name);
+      else if (value) other = true;
+      if (!value) return;
+    }
+    for (const c of n.namedChildren) visit(c);
+  };
+  visit(body);
+  return !other && made.size === 1 ? [...made][0]! : null;
 }

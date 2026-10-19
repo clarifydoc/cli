@@ -377,6 +377,24 @@ public class ProductsController : ApiController {
     ]);
   });
 
+  it("reads Web API 2 [RoutePrefix] as the class template", async () => {
+    const out = await analyze({
+      "Site/Controllers/OrdersController.cs": `
+using System.Web.Http;
+[RoutePrefix("api/orders")]
+public class OrdersController : ApiController {
+  [Route("")] public IHttpActionResult GetAll() { return Ok(); }
+  [Route("{id:int}")] [HttpGet] public IHttpActionResult Get(int id) { return Ok(); }
+  [Route("~/api/legacy/orders")] public IHttpActionResult PostLegacy() { return Ok(); }
+}`,
+    });
+    expect(rows(out)).toEqual([
+      "GET /api/orders OrdersController.GetAll",
+      "GET /api/orders/{id} OrdersController.Get",
+      "POST /api/legacy/orders OrdersController.PostLegacy",
+    ]);
+  });
+
   it("invents nothing without a registered pattern", async () => {
     const out = await analyze({
       "Web/Controllers/HomeController.cs": `public class HomeController : Controller { public IActionResult Index() => View(); }`,

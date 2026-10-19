@@ -665,6 +665,44 @@ describe("symbol-linker — typed receivers", () => {
     expect(out.map((l) => [l.callName, l.targetFile, l.strategy])).toEqual([["system_job", "netbox/jobs.py", "import-file"]]);
   });
 
+  it("resolves a PHP function by its namespace: imported, fully qualified, or the caller's own namespace first", () => {
+    const withIo = (a: FileAnalysis, extra: Record<string, unknown>) => ({ ...a, ...extra }) as unknown as FileAnalysis;
+    const helpers = withIo(file("src/helpers.php", [], { language: "php", functions: [method("money", [], [], 3)] }), { declaredNamespace: "App" });
+    const legacy = withIo(file("src/legacy.php", [], { language: "php", functions: [method("money", [], [], 9)] }), { declaredNamespace: "Legacy" });
+    const invoice = withIo(file("src/Invoice.php", [cls("Invoice", { methods: [method("total", [call("money"), call("\\App\\money"), call("new \\Legacy\\Thing")])] })], { language: "php" }), { declaredNamespace: "App" });
+    const thing = withIo(file("src/Thing.php", [cls("Thing")], { language: "php" }), { declaredNamespace: "Legacy" });
+    const page = withIo(file("page.php", [], { language: "php", functions: [method("<setup>", [call("money", { kind: "cross-file", target: "Legacy\\money" })])] }), {});
+    const out = buildSymbolLinks([helpers, legacy, invoice, thing, page]);
+    expect(callsFrom(out, "src/Invoice.php").map((l) => [l.callName, l.targetFile])).toEqual([
+      ["money", "src/helpers.php"],
+      ["\\App\\money", "src/helpers.php"],
+      ["new \\Legacy\\Thing", "src/Thing.php"],
+    ]);
+    expect(callsFrom(out, "page.php").map((l) => [l.callName, l.targetFile])).toEqual([["money", "src/legacy.php"]]);
+  });
+
+  it("looks a member up along the C3 order where classes have several bases, and on the enclosing class first", () => {
+    // class A: hello / class B(A) / class C(A): hello / class D(B, C)
+    const models = file("app/models.py", [
+      cls("A", { methods: [method("hello", [], [], 2)] }),
+      cls("B", { extends: "A" }),
+      cls("C", { extends: "A", methods: [method("hello", [], [], 7)] }),
+      cls("D", { extends: "B", implements: ["C"], methods: [method("run", [call("self.hello")], [], 10)] }),
+    ], { language: "python" });
+    const main = file("app/main.py", [], { language: "python", functions: [{ ...method("main", [call("d.hello")]), localTypes: [{ name: "d", type: "D" }] }] });
+    const out = buildSymbolLinks([models, main]);
+    expect(callsFrom(out, "app/models.py").map((l) => [l.callName, l.targetSymbol])).toEqual([["self.hello", "C.hello"]]);
+    expect(callsFrom(out, "app/main.py").map((l) => [l.callName, l.targetSymbol])).toEqual([["d.hello", "C.hello"]]);
+    // The same layout in a language whose second base is an interface keeps the first-base chain.
+    const java = file("D.java", [
+      cls("A", { methods: [method("hello", [], [], 2)] }),
+      cls("B", { extends: "A" }),
+      cls("C", { kind: "interface", methods: [method("hello", [], [], 7)] }),
+      cls("D", { extends: "B", implements: ["C"], methods: [method("run", [call("this.hello")], [], 10)] }),
+    ], { language: "java" });
+    expect(callsFrom(buildSymbolLinks([java]), "D.java").map((l) => l.targetSymbol)).toEqual(["A.hello"]);
+  });
+
   it("resolves a bare PHP call to the one included file that defines it", () => {
     const withIo = (a: FileAnalysis, extra: Record<string, unknown>) => ({ ...a, ...extra }) as unknown as FileAnalysis;
     const db = file("site/inc/db.php", [], { language: "php", functions: [method("find_user", [], [], 2)] });

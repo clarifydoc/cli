@@ -271,3 +271,31 @@ class C @Inject constructor()`, "kotlin");
     for (const c of classes) expect(c.methods.some((m) => m.name === "constructor")).toBe(false);
   });
 });
+
+describe("nested types and aliases", () => {
+  it("extracts Java nested classes with their own methods", async () => {
+    const classes = await classesOf(`
+package a;
+public class Order {
+  public static class Builder { public Order build() { return new Order(); } }
+  @Nested class WhenEmpty { void rejects() {} }
+  enum Status { OPEN, CLOSED }
+}`, "java");
+    expect(classes.map((c) => `${c.name}[${c.methods.map((m) => m.name)}]`)).toEqual(["Order[]", "Builder[build]", "WhenEmpty[rejects]", "Status[]"]);
+  });
+
+  it("extracts Kotlin nested classes, keeps objects folded into their class, and reads a typealias as the class it names", async () => {
+    const classes = await classesOf(`
+package a
+class Outer {
+  class Inner { fun go() = 1 }
+  companion object { fun make() = Outer() }
+}
+typealias Users = UserRepository
+private typealias Handler<T> = (T) -> Unit
+`, "kotlin");
+    expect(classes.map((c) => `${c.name}[${c.methods.map((m) => m.name)}]`)).toEqual(["Outer[make]", "Inner[go]", "Users[]"]);
+    const alias = classes.find((c) => c.name === "Users")!;
+    expect([alias.extends, alias.decorators]).toEqual(["UserRepository", ["typealias"]]);
+  });
+});

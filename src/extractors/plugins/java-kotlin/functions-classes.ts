@@ -47,10 +47,35 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
         child.type === "record_declaration"
       ) {
         classes.push(this.parseClass(child, lang));
+        this.walkNestedClasses(child, classes, lang);
+      } else if (child.type === "type_alias") {
+        const alias = typeAliasClass(child);
+        if (alias) classes.push(alias);
       }
 
       if (child.type === "program" || child.type === "source_file") {
         this.walkClasses(child, classes, lang);
+      }
+    }
+  }
+
+  /**
+   * Types declared inside a class body (`static class Builder`, a JUnit
+   * `@Nested` class, Kotlin `class Inner`) are classes of their own, named as
+   * code refers to them (`Builder`). A Kotlin `object` / companion is not: its
+   * members are folded onto the enclosing class.
+   */
+  private walkNestedClasses(owner: Node, classes: ClassInfo[], lang: JkLang): void {
+    const body = owner.childForFieldName("body") ?? this.findChildByType(owner, "class_body") ?? this.findChildByType(owner, "enum_class_body");
+    for (const member of body?.children ?? []) {
+      if (
+        member.type === "class_declaration" ||
+        member.type === "interface_declaration" ||
+        member.type === "enum_declaration" ||
+        member.type === "record_declaration"
+      ) {
+        classes.push(this.parseClass(member, lang));
+        this.walkNestedClasses(member, classes, lang);
       }
     }
   }
@@ -707,4 +732,29 @@ function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
   visit(body);
   for (const [name, froms] of fromCalls) if (!seen.has(name)) for (const from of froms) out.push({ name, type: "", from });
   return out;
+}
+
+/**
+ * Kotlin `typealias Users = UserRepository`: the alias answers every member of
+ * the class it names, which is exactly what a member-less class extending it
+ * says — so `users.save()` on a `Users` resolves to `UserRepository.save`.
+ * Marked by its `typealias` decorator. A function-type alias names no class.
+ */
+function typeAliasClass(node: Node): ClassInfo | null {
+  const name = node.children.find((c) => c.type === "type_identifier")?.text;
+  const target = node.children.find((c) => c.type === "user_type");
+  if (!name || !target) return null;
+  const vis = node.descendantsOfType("visibility_modifier")[0]?.text;
+  return {
+    name,
+    kind: "class",
+    extends: target.text.replace(/\s+/g, ""),
+    implements: [],
+    decorators: ["typealias"],
+    methods: [],
+    properties: [],
+    isExported: vis !== "private",
+    line: node.startPosition.row + 1,
+    endLine: node.endPosition.row + 1,
+  };
 }

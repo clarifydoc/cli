@@ -74,6 +74,11 @@ export const phpMeta: LanguagePluginMeta = {
     interactiveElements: (_tree, sourceText) => extractBladeInteractiveElements(sourceText),
     // Laravel / Symfony / PHP-DI container registrations (see di.ts).
     diBindings: (tree, sourceText) => phpDiBindings(tree, sourceText),
+    // `namespace App\Support;` — where `money()` and `use function …\money` look.
+    declaredNamespace: (tree) => {
+      const ns = tree.rootNode.namedChildren.find((c) => c.type === "namespace_definition");
+      return ns?.childForFieldName("name")?.text ?? ns?.namedChildren.find((c) => c.type === "namespace_name")?.text ?? null;
+    },
   },
   calls: phpCallHooks,
 };

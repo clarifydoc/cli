@@ -229,7 +229,7 @@ function baseTypes(cls: Node): string[] {
  * project's own routing attribute and is recorded for the resolver.
  */
 const KNOWN_ATTRIBUTES = new Set([
-  "Route", ...Object.keys(CSHARP_HTTP_ATTRIBUTES), "AcceptVerbs", "ApiController", "Controller", "NonController", "NonAction",
+  "Route", "RoutePrefix", ...Object.keys(CSHARP_HTTP_ATTRIBUTES), "AcceptVerbs", "ApiController", "Controller", "NonController", "NonAction",
   "Authorize", "AllowAnonymous", "ApiVersion", "ApiVersionNeutral", "MapToApiVersion", "Area",
   "Produces", "ProducesResponseType", "ProducesDefaultResponseType", "ProducesErrorResponseType", "Consumes",
   "ApiExplorerSettings", "Obsolete", "ResponseCache", "RequestSizeLimit", "DisableRequestSizeLimit", "RequestFormLimits",
@@ -270,10 +270,11 @@ function attributesOf(decl: Node): Node[] {
   return out;
 }
 
-/** First `[Route("…")]` template among a declaration's attributes (raw, tokens unresolved). */
+/** First `[Route("…")]` — or Web API 2's `[RoutePrefix("…")]` — template among a declaration's attributes (raw, tokens unresolved). */
 function classRoutePrefix(attrs: Node[]): string | null {
   for (const attr of attrs) {
-    if (attributeName(attr) === "Route") {
+    const name = attributeName(attr);
+    if (name === "Route" || name === "RoutePrefix") {
       const tmpl = attributeRouteTemplate(attr);
       if (tmpl !== null) return tmpl;
     }

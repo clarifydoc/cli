@@ -265,3 +265,15 @@ void Local() { var z = new D(); }`)).toEqual([{ name: "y", type: "C" }]);
     expect(await localsOf(`sp.GetRequiredService<IPricing>().Quote(o);`)).toBeUndefined();
   });
 });
+
+describe("nested types", () => {
+  it("extracts nested classes and records with their own members", async () => {
+    const classes = await classesOf(`
+namespace App;
+public class Orders {
+  public record Command(int Id);
+  public class Handler { public int Handle(Command c) => c.Id; }
+}`);
+    expect(classes.map((c) => `${c.name}[${c.methods.map((m) => m.name)}]`)).toEqual(["Orders[]", "Command[Command]", "Handler[Handle]"]);
+  });
+});

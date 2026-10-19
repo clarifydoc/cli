@@ -17,6 +17,8 @@ export const pythonManifest: LanguagePluginManifest = {
   extensions: [".py", ".pyw"],
   // A field is only reached through the instance (`this.x`); a bare name never is one.
   explicitSelfMembers: true,
+  // `class D(B, C)`: bases are classes, searched in C3 order.
+  multipleInheritance: true,
   grammar: { variants: { python: { pkg: "tree-sitter-python", wasm: "tree-sitter-python.wasm" } } },
   testFilePatterns: [/(^|[\\/])test_[^\\/]*\.py$/, /_test\.py$/, /(^|[\\/])conftest\.py$/],
   builtinMembers: ["append", "extend", "insert", "remove", "pop", "clear", "index", "count", "sort", "reverse", "copy", "items", "keys", "values", "update", "setdefault", "strip", "lstrip", "rstrip", "lower", "upper", "title", "capitalize", "startswith", "endswith", "split", "rsplit", "splitlines", "join", "format", "replace", "encode", "decode", "find", "rfind", "isdigit", "isalpha", "read", "readline", "readlines", "write", "writelines", "close", "flush", "seek", "tell", "open", "connect", "login", "sendmail", "quit", "send", "recv", "bind", "listen", "accept", "get", "add", "discard", "union", "intersection", "difference"],

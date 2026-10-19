@@ -1013,6 +1013,8 @@ interface LinkContext {
   directoryFiles?: Map<string, string[]>;
   /** Analyses by path, built on first use (re-export following). */
   analysisByFile?: Map<string, FileAnalysis>;
+  /** Free functions by language + namespace-qualified name (lowercased), built on first use. */
+  namespacedFunctions?: Map<string, Array<{ file: string; def: SymbolDef }>>;
   symbolIndex: Map<string, Map<string, SymbolDef>>;
   inheritanceMap: Map<string, { parentClass: string; parentFile: string }>;
   /** `${file}\0${class}` → member → declared type (own + inherited). */
@@ -1823,7 +1825,12 @@ function resolveCallToDefinition(
     targetFile = resolveTarget(call.target, sourceFile, filePathMap);
     // An import naming a module by its DECLARED name rather than a path
     // (Elixir `alias MyApp.Accounts.User`): `User.get(…)` is that module's.
-    if (!targetFile) return declaredModuleMember(ctx, analysis, call.target, parts, mkLink) ?? throughDeclaredType();
+    if (!targetFile) {
+      // `use function App\Support\money;` — the import names a function, not a file.
+      const fn = !isQualified && call.target.includes("\\") ? namespacedFunction(ctx, analysis, [call.target.replace(/^\\/, "")]) : null;
+      if (fn) return mkLink(fn.file, fn.def.name, fn.def.line, "EXTRACTED", "direct");
+      return declaredModuleMember(ctx, analysis, call.target, parts, mkLink) ?? throughDeclaredType();
+    }
   } else if (call.kind === "internal") {
     // Internal calls resolve within the same file
     targetFile = sourceFile;
@@ -1886,7 +1893,15 @@ function resolveCallToDefinition(
   if (!def && isQualified && call.kind === "internal" && targetFile === sourceFile && parts.length === 2) {
     const head = parts[0]!;
     if (head === "self" || head === "Self" || head === "this") {
-      def = symbolIn(ctx, targetFile, leafName);
+      // The ENCLOSING class's own member, else the one its bases provide —
+      // not whichever class of the file happens to define the name first.
+      const dot = sourceSymbol.indexOf(".");
+      const consumer = dot > 0 && !sourceSymbol.startsWith("route:") ? sourceSymbol.slice(0, dot) : "";
+      const hit = consumer && ctx.classAt.has(memberKey(sourceFile, consumer)) ? findMethodInClass(ctx, consumer, sourceFile, leafName) : null;
+      if (hit && (hit.file !== sourceFile || !hit.symbol.startsWith(`${consumer}.`))) {
+        return mkLink(hit.file, hit.symbol, hit.line, "INFERRED", "inheritance");
+      }
+      def = hit ? symbolIn(ctx, sourceFile, hit.symbol) : symbolIn(ctx, targetFile, leafName);
     }
   }
 
@@ -2107,9 +2122,10 @@ function resolveCallToDefinition(
   // — where the class lives in another file. Same-namespace languages need no
   // import at the call site, so resolve via the (unique) global class name.
   if (!def) {
-    const ctorMatch = call.name.match(/^[Nn]ew\s+([\w.]+)$/);
+    // `new App\Invoice` qualifies with PHP's `\` as `new a.b.C` does with `.`.
+    const ctorMatch = call.name.match(/^[Nn]ew\s+\\?([\w.\\]+)$/);
     const className = ctorMatch
-      ? ctorMatch[1]!.split(".").pop()!
+      ? ctorMatch[1]!.split(/[.\\]/).pop()!
       : !isQualified
         ? call.name
         : null;
@@ -2165,6 +2181,23 @@ function resolveCallToDefinition(
           return mkLink(found.file, found.def.name, found.def.line, "INFERRED", "import-dir");
         }
       }
+    }
+  }
+
+  // ── Strategy 6a: a function by its namespace-qualified name ──
+  // PHP looks `money()` up in the file's own namespace, then the global one;
+  // `\App\money()` is absolute and `Sub\money()` relative to the namespace.
+  if (!def && !isQualified && call.kind === "internal" && (analysis.declaredNamespace || call.name.includes("\\"))) {
+    const ns = analysis.declaredNamespace;
+    const name = call.name;
+    const candidates = name.startsWith("\\")
+      ? [name.slice(1)]
+      : name.includes("\\")
+        ? [ns ? `${ns}\\${name}` : name]
+        : ns ? [`${ns}\\${name}`, name] : [name];
+    const fn = namespacedFunction(ctx, analysis, candidates);
+    if (fn && !(fn.file === sourceFile && fn.def.name === sourceSymbol)) {
+      return mkLink(fn.file, fn.def.name, fn.def.line, fn.file === sourceFile ? "EXTRACTED" : "INFERRED", "direct");
     }
   }
 
@@ -2427,6 +2460,42 @@ function forwardedDefinition(
     found = hit;
   }
   return found;
+}
+
+/**
+ * The one free function a namespace-qualified name (`App\Support\money`)
+ * names, among files of the caller's language that declare namespaces —
+ * candidates tried in order, the first that names any decides; two
+ * definitions of one name decide nothing.
+ */
+function namespacedFunction(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  candidates: readonly string[],
+): { file: string; def: SymbolDef } | null {
+  if (!ctx.namespacedFunctions) {
+    const index = new Map<string, Array<{ file: string; def: SymbolDef }>>();
+    const languages = new Set(ctx.analyses.filter((a) => a.declaredNamespace).map((a) => a.language));
+    for (const a of ctx.analyses) {
+      if (!languages.has(a.language)) continue;
+      const symbols = ctx.symbolIndex.get(a.filePath);
+      for (const fn of a.functions) {
+        if (fn.name === "<setup>" || fn.name.includes(".")) continue;
+        const def = symbols?.get(fn.name);
+        if (!def) continue;
+        const key = `${a.language}\0${(a.declaredNamespace ? `${a.declaredNamespace}\\${fn.name}` : fn.name).toLowerCase()}`;
+        const list = index.get(key);
+        if (list) list.push({ file: a.filePath, def });
+        else index.set(key, [{ file: a.filePath, def }]);
+      }
+    }
+    ctx.namespacedFunctions = index;
+  }
+  for (const c of candidates) {
+    const hits = ctx.namespacedFunctions.get(`${analysis.language}\0${c.toLowerCase()}`);
+    if (hits) return hits.length === 1 ? hits[0]! : null;
+  }
+  return null;
 }
 
 /** `from m import *` — every exported name, none spelled out. */
@@ -3133,6 +3202,17 @@ function findMethodInClass(
   classFile: string,
   method: string,
 ): { file: string; symbol: string; line: number } | null {
+  // Several class bases (Python): the C3 method resolution order decides.
+  if (pluginFor(ctx.languageOf.get(classFile) as Language)?.multipleInheritance && ctx.classAt.get(memberKey(classFile, className))?.implements.length) {
+    const mro = methodResolutionOrder(ctx, className, classFile);
+    if (mro) {
+      for (const c of mro) {
+        const def = symbolIn(ctx, c.file, `${c.name}.${method}`);
+        if (def) return { file: c.file, symbol: def.name, line: def.line };
+      }
+      return null;
+    }
+  }
   let name = className;
   let file = classFile;
   const seen = new Set<string>();
@@ -3157,6 +3237,43 @@ function findMethodInClass(
     file = baseFile;
   }
   return null;
+}
+
+/**
+ * C3 linearization of a class whose bases are all classes (`class D(B, C)`):
+ * the class, then its bases merged so each comes before its own bases and
+ * the declared order is kept. Bases outside the project (`object`,
+ * `models.Model`) are left out. Null when the hierarchy has no consistent order.
+ */
+function methodResolutionOrder(ctx: LinkContext, name: string, file: string, depth = 0, seen = new Set<string>()): Array<{ name: string; file: string }> | null {
+  const key = memberKey(file, name);
+  if (depth > MAX_BASE_DEPTH || seen.has(key)) return null;
+  const cls = ctx.classAt.get(key);
+  const self = { name, file };
+  if (!cls) return [self];
+  const inner = new Set(seen).add(key);
+  const bases: Array<{ name: string; file: string }> = [];
+  for (const written of [cls.extends, ...cls.implements]) {
+    const base = bareClassName(written);
+    const baseFile = base ? locateClass(ctx, base, file, ctx.projectOf.get(file) ?? "root") : null;
+    if (base && baseFile) bases.push({ name: base, file: baseFile });
+  }
+  const lists: Array<Array<{ name: string; file: string }>> = [];
+  for (const b of bases) {
+    const l = methodResolutionOrder(ctx, b.name, b.file, depth + 1, inner);
+    if (!l) return null;
+    lists.push(l);
+  }
+  lists.push([...bases]);
+  const id = (c: { name: string; file: string }) => memberKey(c.file, c.name);
+  const out = [self];
+  while (lists.some((l) => l.length > 0)) {
+    const head = lists.find((l) => l.length > 0 && !lists.some((o) => o.slice(1).some((c) => id(c) === id(l[0]!))))?.[0];
+    if (!head) return null;
+    out.push(head);
+    for (const l of lists) if (l.length > 0 && id(l[0]!) === id(head)) l.shift();
+  }
+  return out;
 }
 
 /** A symbol of `file` by name — case-insensitively where the file's language names callables so. */

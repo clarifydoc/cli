@@ -1061,6 +1061,14 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
    * unless interfaces reach `analysis.classes` with `kind: "interface"`.
    */
   private collectJsClassLike(node: Node, classes: ClassInfo[], isExported: boolean): void {
+    // `namespace Billing { export class Invoice {} }` (a statement on its own
+    // or exported) holds classes like a module does.
+    const ns = node.type === "expression_statement" && node.namedChild(0)?.type === "internal_module" ? node.namedChild(0)! : node;
+    if (ns.type === "internal_module" || ns.type === "module") {
+      const body = ns.childForFieldName("body");
+      if (body) this.extractJsClasses(body, classes);
+      return;
+    }
     if (node.type === "class_declaration" || node.type === "abstract_class_declaration") {
       classes.push(this.parseJsClass(node, isExported));
     } else if (node.type === "interface_declaration") {

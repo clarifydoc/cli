@@ -7,7 +7,9 @@ import { conventionReachability } from "../shared/reachability-kit.js";
  * manifest declares — AndroidManifest components, `web.xml` servlets,
  * `META-INF/services` providers, layouts naming custom views. A servlet
  * container finds a `WebApplicationInitializer` on the classpath, and Glide's
- * annotation processor generates the code that loads a `@GlideModule`. What Spring,
+ * annotation processor generates the code that loads a `@GlideModule`.
+ * `@Suppress("unused")` / `@SuppressWarnings("unused")` is the author saying
+ * it is reached in a way the compiler cannot see (reflection, a framework). What Spring,
  * Jakarta EE, Quarkus/Micronaut, Hilt and test runners discover by
  * annotation or base type is kept alive but anchors nothing.
  */
@@ -23,7 +25,7 @@ export const javaKotlinReachability = conventionReachability({
   mainFunctions: /^main$/,
   routesAreEntries: true,
   entryDecorators:
-    /^(?:SpringBootApplication|Component|Service|Repository|Controller|RestController|ControllerAdvice|RestControllerAdvice|Configuration|AutoConfiguration|Bean|Entity|Embeddable|MappedSuperclass|Converter|Aspect|WebServlet|WebFilter|WebListener|Path|Provider|ApplicationScoped|RequestScoped|SessionScoped|Singleton|Named|Dependent|Startup|QuarkusMain|MicronautApplication|Factory|Introspected|Module|InstallIn|HiltAndroidApp|AndroidEntryPoint|HiltViewModel|HiltWorker|Preview|Mapper|ConfigurationProperties|Scheduled|KafkaListener|RabbitListener|JmsListener|SqsListener|EventListener|StreamListener|ServerEndpoint|ClientEndpoint|Endpoint|Plugin|Mojo|AutoService|GlideModule|GlideExtension|Route|ShellComponent|Database|Dao|SpringBootTest|Test)\b/,
+    /^(?:SpringBootApplication|Component|Service|Repository|Controller|RestController|ControllerAdvice|RestControllerAdvice|Configuration|AutoConfiguration|Bean|Entity|Embeddable|MappedSuperclass|Converter|Aspect|WebServlet|WebFilter|WebListener|Path|Provider|ApplicationScoped|RequestScoped|SessionScoped|Singleton|Named|Dependent|Startup|QuarkusMain|MicronautApplication|Factory|Introspected|Module|InstallIn|HiltAndroidApp|AndroidEntryPoint|HiltViewModel|HiltWorker|Preview|Mapper|ConfigurationProperties|Scheduled|KafkaListener|RabbitListener|JmsListener|SqsListener|EventListener|StreamListener|ServerEndpoint|ClientEndpoint|Endpoint|Plugin|Mojo|AutoService|GlideModule|GlideExtension|Route|ShellComponent|Database|Dao|SpringBootTest|Test|Suppress(?:Warnings)?\([^)]*"unused)\b/,
   entryBaseTypes:
     /^(?:Activity|AppCompatActivity|ComponentActivity|FragmentActivity|Fragment|DialogFragment|BottomSheetDialogFragment|PreferenceFragmentCompat|Service|IntentService|LifecycleService|JobService|JobIntentService|FirebaseMessagingService|BroadcastReceiver|ContentProvider|Application|MultiDexApplication|Worker|CoroutineWorker|ListenableWorker|AccessibilityService|TileService|WallpaperService|InputMethodService|AppWidgetProvider|HttpServlet|GenericServlet|SpringBootServletInitializer|WebApplicationInitializer|AbstractAnnotationConfigDispatcherServletInitializer|AbstractDispatcherServletInitializer|AbstractSecurityWebApplicationInitializer|AppGlideModule|LibraryGlideModule|WebMvcConfigurer|ApplicationRunner|CommandLineRunner|ServletContextListener|AbstractMojo|DefaultTask|TestCase|RoomDatabase)$/,
   passiveFiles: [

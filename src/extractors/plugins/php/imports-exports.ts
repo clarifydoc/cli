@@ -81,6 +81,10 @@ export class PhpImportExportExtractor extends ImportExportExtractor {
     // First name-shaped child = the qualified path.
     let pathText = "";
     let alias: string | null = null;
+    // tree-sitter-php ≥0.23 puts `function`/`const` inside each clause
+    // (`use App\{Models\User, function helpers\fmt}` mixes them).
+    const own = clause.children.find((c) => c.type === "function" || c.type === "const")?.type as "function" | "const" | undefined;
+    if (own) useType = own;
     for (const c of clause.children) {
       if (
         !pathText &&

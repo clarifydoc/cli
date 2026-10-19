@@ -323,6 +323,8 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // linking joins them to injection points).
     const diBindings = hooks?.diBindings?.(tree, sourceText, file.relativePath);
     if (diBindings && diBindings.length > 0) analysis.diBindings = diBindings;
+    const declaredNamespace = hooks?.declaredNamespace?.(tree, sourceText);
+    if (declaredNamespace) analysis.declaredNamespace = declaredNamespace;
 
     // Classify calls using import context, language patterns, and variable
     // aliases — and what this file defines itself, so a call into the file's

@@ -304,3 +304,13 @@ export default connect(createMapStateToProps, mapDispatchToProps)(AddNewMovieCon
     ]);
   });
 });
+
+describe("TypeScript namespaces", () => {
+  it("extracts the classes a namespace block holds, nested or exported", async () => {
+    const classes = await classesOf(`
+export namespace NS { export class InNs { run() { return 1; } } }
+namespace Billing.Core { export class Invoice { total() { return 2; } } }
+export class Top {}`);
+    expect(classes.map((c: { name: string; methods: { name: string }[] }) => `${c.name}[${c.methods.map((m) => m.name)}]`).sort()).toEqual(["InNs[run]", "Invoice[total]", "Top[]"]);
+  });
+});

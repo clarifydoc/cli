@@ -98,3 +98,49 @@ class User(Base):
     expect(classes[0]!.properties.map((p) => p.name)).toEqual(["nickname"]);
   });
 });
+
+describe("nested classes and fixtures", () => {
+  it("extracts a nested class with methods, never a configuration class", async () => {
+    const { classes } = await extract(`
+class Outer:
+    class Inner:
+        def go(self):
+            return 2
+    class Meta:
+        ordering = ["id"]
+    def make(self):
+        return Outer.Inner()
+`);
+    expect(classes.map((c) => `${c.name}[${c.methods.map((m) => m.name)}]`)).toEqual(["Outer[make]", "Inner[go]"]);
+  });
+
+  it("types an unannotated fixture by the one class it returns or yields", async () => {
+    const { functions } = await extract(`
+import pytest
+
+@pytest.fixture
+def user():
+    return User(name="a")
+
+@pytest.fixture(scope="module")
+def db():
+    conn = models.Database()
+    yield models.Database()
+
+@pytest.fixture
+def mixed(flag):
+    if flag:
+        return User()
+    return Admin()
+
+@pytest.fixture
+def typed() -> Account:
+    return make()
+
+def not_a_fixture():
+    return User()
+`);
+    const rt = Object.fromEntries(functions.map((f) => [f.name, f.returnType]));
+    expect(rt).toEqual({ user: "User", db: "models.Database", mixed: null, typed: "Account", not_a_fixture: null });
+  });
+});

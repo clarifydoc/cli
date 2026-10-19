@@ -50,6 +50,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   entityRelations: "optional",
   railsSchemaTables: "optional",
   diBindings: "optional",
+  declaredNamespace: "optional",
   httpClientBases: "optional",
   storeModules: "optional",
   messageHandlers: "optional",

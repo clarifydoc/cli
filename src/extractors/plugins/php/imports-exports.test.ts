@@ -47,6 +47,25 @@ require_once __DIR__ . '/helpers.php';
   });
 });
 
+describe("PHP use declarations", () => {
+  it("tells a function or constant import from a type import, in groups too", async () => {
+    const tree = await parseSource(`<?php
+use function App\\money;
+use const App\\RATE;
+use App\\Models\\User;
+use App\\{Models\\Post, function helpers\\fmt};
+`, "php" as never, "a.php");
+    const out = new PhpImportExportExtractor().extractImports(tree, "").map((i) => [i.source, i.specifiers[0], i.isType]);
+    expect(out).toEqual([
+      ["App\\money", "money", false],
+      ["App\\RATE", "RATE", false],
+      ["App\\Models\\User", "User", true],
+      ["App\\Models\\Post", "Post", true],
+      ["App\\helpers\\fmt", "fmt", false],
+    ]);
+  });
+});
+
 describe("PHP calls", () => {
   it("records an unqualified function call and a construction", async () => {
     const tree = await parseSource(`<?php function f() { $u = find_user(1); $r = new Report(); return \\App\\fmt($u); }`, "php" as never, "a.php");

@@ -16,3 +16,12 @@ describe("Java/Kotlin reachability — what a container or a code generator load
     expect(passive(analysis("Orphan.java", { name: "Orphan" }))).toBeNull();
   });
 });
+
+describe("Java/Kotlin reachability — the author's own word", () => {
+  it("keeps a declaration suppressed as unused alive", async () => {
+    const m = await javaKotlinReachability.load({ projectRoot: "/nonexistent", roots: [], files: new Set<string>() });
+    expect(m.passiveReason!(analysis("K.kt", { name: "K", decorators: ['Suppress("unused")'] }), "K.kt", none)).not.toBeNull();
+    expect(m.passiveReason!(analysis("J.java", { name: "J", decorators: ['SuppressWarnings({"unused", "rawtypes"})'] }), "J.java", none)).not.toBeNull();
+    expect(m.passiveReason!(analysis("U.java", { name: "U", decorators: ['SuppressWarnings("unchecked")'] }), "U.java", none)).toBeNull();
+  });
+});
