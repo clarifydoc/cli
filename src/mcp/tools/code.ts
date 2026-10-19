@@ -2,6 +2,7 @@
 
 import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
 import type { TestCoverageReport } from "../../core/test-coverage.js";
+import { routeOperation } from "../../core/openapi-export.js";
 import { describeReasons } from "../../core/risk-verdict.js";
 import type { McpTool } from "../protocol.js";
 import { byOrdinal } from "../../core/ordinal.js";
@@ -1349,19 +1350,6 @@ function routeAt(summary: LoadedAnalysis["summary"], file: string | null | undef
 }
 
 /** The JSON schema of one route parameter from its declared type text, or a marker carrying the text. */
-function paramSchema(type: string | null): Record<string, unknown> {
-  if (!type) return {};
-  const t = type.replace(/\?$/, "").replace(/^System\./, "");
-  const scalar: Record<string, Record<string, unknown>> = {
-    string: { type: "string" }, String: { type: "string" }, str: { type: "string" },
-    int: { type: "integer" }, Integer: { type: "integer" }, Int: { type: "integer" }, long: { type: "integer" }, Long: { type: "integer" },
-    number: { type: "number" }, float: { type: "number" }, double: { type: "number" }, Double: { type: "number" }, decimal: { type: "number" },
-    bool: { type: "boolean" }, boolean: { type: "boolean" }, Boolean: { type: "boolean" },
-    Guid: { type: "string", format: "uuid" }, UUID: { type: "string", format: "uuid" },
-    DateTime: { type: "string", format: "date-time" }, Date: { type: "string", format: "date-time" },
-  };
-  return scalar[t] ?? { "x-type": type };
-}
 
 export function contractTool(ctx: ToolContext): McpTool {
   return {
@@ -1436,53 +1424,7 @@ export function contractTool(ctx: ToolContext): McpTool {
 
       const route = routes[0]!;
       const a = route.auth;
-      const security = a
-        ? a.anonymous
-          ? []
-          : a.schemes.length
-            ? [Object.fromEntries(a.schemes.map((s) => [s, a.roles]))]
-            : a.roles.length || a.policies.length
-              ? [{ authenticated: a.roles }]
-              : []
-        : undefined;
-      const inOf: Record<string, string> = { route: "path", query: "query", header: "header" };
-      const parameters = (route.params ?? [])
-        .filter((p) => p.binding && inOf[p.binding])
-        .map((p) => ({
-          name: p.name,
-          in: inOf[p.binding!],
-          required: p.binding === "route" ? true : undefined,
-          schema: paramSchema(p.type),
-          ...(p.inferred ? { "x-inferred": true } : {}),
-        }));
-      const bodyParams = (route.params ?? []).filter((p) => p.binding === "body");
-      const formParams = (route.params ?? []).filter((p) => p.binding === "form");
-      const requestBody: Record<string, unknown> = {};
-      if (route.requestSchema) {
-        requestBody["application/json"] = { schema: route.requestSchema };
-      } else if (bodyParams.length) {
-        const typed = bodyParams.find((p) => p.type);
-        requestBody["application/json"] = {
-          schema: typed ? { "x-type": typed.type } : { type: "object", properties: Object.fromEntries(bodyParams.map((p) => [p.name, {}])) },
-        };
-      }
-      if (formParams.length) {
-        requestBody["multipart/form-data"] = {
-          schema: { type: "object", properties: Object.fromEntries(formParams.map((p) => [p.name, paramSchema(p.type)])) },
-        };
-      }
-      const operation: Record<string, unknown> = {
-        operationId: route.handler ?? undefined,
-        ...(route.deprecatedVersions?.length && route.versions?.every((v) => route.deprecatedVersions!.includes(v))
-          ? { deprecated: true }
-          : {}),
-        ...(security !== undefined ? { security } : {}),
-        ...(a?.policies.length ? { "x-policies": a.policies } : {}),
-        ...(route.versions?.length ? { "x-api-versions": route.versions } : {}),
-        ...(route.deprecatedVersions?.length ? { "x-deprecated-versions": route.deprecatedVersions } : {}),
-        ...(parameters.length ? { parameters } : {}),
-        ...(Object.keys(requestBody).length ? { requestBody: { content: requestBody } } : {}),
-      };
+      const operation = routeOperation(route);
 
       const callers = (summary.apiRouteLinks ?? [])
         .filter((l) => l.target === route.filePath && l.targetLine === route.line)
@@ -1498,7 +1440,7 @@ export function contractTool(ctx: ToolContext): McpTool {
           "```json",
           JSON.stringify(operation, null, 2),
           "```",
-          !route.requestSchema && bodyParams.length
+          !route.requestSchema && (route.params ?? []).some((p) => p.binding === "body")
             ? "(body type not resolved to a class in this project — see clarifydoc_search for the type name)"
             : "",
         ]),

@@ -4,6 +4,7 @@ import { toCypher } from "./cypher.js";
 import { buildDiagram, toMermaidFile, DIAGRAM_KINDS, type DiagramKind } from "./mermaid.js";
 import { architectureDoc, dataModelDoc, flowsDoc, projectName } from "./markdown.js";
 import type { Summary } from "./types.js";
+import { buildOpenApi } from "../core/openapi-export.js";
 
 /**
  * The export catalogue: every artifact an analysis's graph can leave the tool
@@ -54,6 +55,12 @@ function catalogue(): ExportFormat[] {
       contentType: MARKDOWN,
       description: "Entities with their columns and relationships, and the functions that read or write each one.",
       render: dataModelDoc,
+    },
+    {
+      name: "openapi.json",
+      contentType: "application/json; charset=utf-8",
+      description: "OpenAPI 3.1 — every API route the code declares, with its parameters, request body schema and security.",
+      render: (summary) => JSON.stringify(buildOpenApi(summary as never, { title: projectName(summary) }), null, 2) + "\n",
     },
     {
       name: "FLOWS.md",
