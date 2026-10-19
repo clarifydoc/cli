@@ -658,6 +658,50 @@ program
   });
 
 program
+  .command("ask")
+  .description("Call one MCP tool from a shell or CI and print its answer: clarifydoc ask routes path=/api/users")
+  .argument("[tool]", "Tool name, with or without the clarifydoc_ prefix (routes, trace, impact, …)")
+  .argument("[args...]", "Arguments as key=value (a value that reads as JSON — 3, true, [..] — is taken as such)")
+  .option("-p, --project <path>", "Project root (default: the project containing the working directory)")
+  .option("-o, --output <dir>", "Analysis output directory (same value as `analyze -o`)", ".clarifydoc")
+  .option("--analysis-dir <dir>", "Exact directory containing project-summary.json (overrides --output)")
+  .option("--args <json>", "Arguments as one JSON object (merged before the key=value pairs)")
+  .option("--analyze", "Allow the call to run an analysis when there is none or it is stale (default: read-only)", false)
+  .option("--list", "List the tools and their arguments", false)
+  .action(async (tool: string | undefined, pairs: string[], options) => {
+    const { askTool, listTools, parseAskArgs } = await import("./mcp/ask.js");
+    const { locateProjectRoot } = await import("./mcp/server.js");
+    const root = options.project ? resolve(options.project) : locateProjectRoot(process.cwd()).root;
+    const config = {
+      projectRoot: root,
+      analysisDir: options.analysisDir,
+      outputBase: options.output,
+      allowAnalyze: options.analyze === true,
+      allowColdStart: options.analyze === true,
+      version: program.version() ?? undefined,
+    };
+    if (options.list || !tool) {
+      for (const t of listTools(config)) {
+        console.log(`${t.name.replace(/^clarifydoc_/, "").padEnd(14)} ${t.args.join(" ")}`);
+        console.log(`${"".padEnd(14)} ${t.description.split(/(?<=\.)\s/)[0]}`);
+      }
+      return;
+    }
+    try {
+      const args = parseAskArgs(options.args, pairs);
+      // stdout carries only the answer; an analysis this call runs logs to stderr.
+      const out = process.stdout.write.bind(process.stdout);
+      console.log = (...a: unknown[]) => process.stderr.write(a.map(String).join(" ") + "\n");
+      const r = await askTool(config, tool, args);
+      out(r.text.endsWith("\n") ? r.text : r.text + "\n");
+      if (r.isError) process.exitCode = 1;
+    } catch (err) {
+      console.error("Error:", (err as Error).message);
+      process.exitCode = 1;
+    }
+  });
+
+program
   .command("mcp")
   .description(
     "Serve the analysis to an AI agent over the Model Context Protocol (stdio). Used by the VS Code extension and by any MCP client.",

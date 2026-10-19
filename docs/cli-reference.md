@@ -12,7 +12,11 @@ clarifydoc cfg <file>                 Draw one function's control flow as Mermai
 clarifydoc seq <path> --route <route> Draw what a route does, in order, as a Mermaid sequence diagram
 clarifydoc detect <path>              Print detected file types and frameworks; writes nothing
 clarifydoc schema                     Print the top-level fields of a per-file analysis
+clarifydoc export <path>              Render the analysis as ARCHITECTURE.md, DATA-MODEL.md, FLOWS.md, Mermaid, GraphML, Cypher
 clarifydoc mcp [path]                 Serve the analysis to an AI agent over MCP (stdio)
+clarifydoc ask <tool> [key=value…]    Call one MCP tool from a shell or CI and print its answer
+clarifydoc install [path]             Wire ClarifyDoc into agent hosts: MCP entry, hooks, skills, AGENTS.md section
+clarifydoc hook <event>               The agent-host hook `install --hooks` registers (reads the payload on stdin)
 ```
 
 `clarifydoc --version` prints the version; `clarifydoc help <command>` (or `<command> --help`) prints a
@@ -314,6 +318,35 @@ analysis itself if there is none. Setup and the tool list are in the [README](..
 | `--no-cold-start` | cold start allowed | Never analyze, not even the first time. |
 | `--lsp` | off | Allow the LSP layer in the analyses this server runs. |
 | `--no-git-history`, `--max-files`, `--include`, `--exclude` | as `analyze` | Apply to the analyses this server runs (always incremental). |
+
+## `ask`
+
+```bash
+clarifydoc ask <tool> [key=value ...] [options]
+clarifydoc ask --list
+```
+
+Calls one MCP tool and prints its answer: the same tools, validation and caps an agent gets, with no client.
+The tool is named with or without its `clarifydoc_` prefix (`routes`, `blast-radius`). A `key=value` value that
+reads as JSON (`3`, `true`, `["route"]`) is taken as JSON, else as a string. Read-only by default: with no
+analysis, or a stale one, it answers what the tool would say to an agent that may not re-analyze.
+
+```bash
+clarifydoc ask routes path=/api/users method=POST
+clarifydoc ask trace --args '{"symbol":"createOrder","direction":"callees","depth":4}'
+clarifydoc ask impact files='["src/orders.ts"]' > impact.md
+```
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `-p, --project <path>` | the project containing the working directory | The project root. |
+| `-o, --output <dir>` | `.clarifydoc` | Same value you gave `analyze`. |
+| `--analysis-dir <dir>` | — | The exact directory holding `project-summary.json`; overrides `-o`. |
+| `--args <json>` | — | Arguments as one JSON object, merged before the `key=value` pairs. |
+| `--analyze` | off | Let the call run an analysis when there is none or it is stale. Its progress goes to stderr. |
+| `--list` | — | Each tool with its arguments (`?` marks optional ones). |
+
+Exits `1` when the tool answers with an error (an unknown tool, a bad argument), so a script can test it.
 
 ## Environment variables
 
