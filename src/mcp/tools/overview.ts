@@ -911,7 +911,22 @@ export function impactTool(ctx: ToolContext): McpTool {
         };
       }
       const { computeImpactDiff, renderImpactMarkdown } = await import("../../core/impact-diff.js");
-      const impact = computeImpactDiff(loaded.summary, changed, { baseLabel: label });
+      // From git, the diff's lines too: the change judged function by function.
+      let symbols: { changed: import("../../core/changed-symbols.js").ChangedSymbol[]; moduleLevel: string[] } | undefined;
+      if (!explicit.length) {
+        try {
+          const [{ gitChangedHunks }, { symbolsInHunks, loadFileAnalyses }] = await Promise.all([
+            import("../../core/git-changed-files.js"),
+            import("../../core/changed-symbols.js"),
+          ]);
+          const hunks = await gitChangedHunks(ctx.store.projectRoot, { base: stringArg(args, "base"), staged: booleanArg(args, "staged") });
+          const found = symbolsInHunks(await loadFileAnalyses(ctx.store.analysisDir, [...hunks.keys()]), hunks);
+          symbols = { changed: found.symbols, moduleLevel: found.moduleLevel };
+        } catch {
+          // Without line ranges the file-level projection stands alone.
+        }
+      }
+      const impact = computeImpactDiff(loaded.summary, changed, { baseLabel: label, ...(symbols ? { symbols } : {}) });
       return {
         text: joinLines([
           renderImpactMarkdown(impact),

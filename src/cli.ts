@@ -8,7 +8,7 @@ import {
 } from "./core/framework-detector.js";
 import { detectSubProjects } from "./core/project-detector.js";
 import { EXTENSION_TO_LANGUAGE, NAMED_FILE_LANGUAGE } from "./extractors/registry.js";
-import { gitChangedFiles, gitUserName } from "./core/git-changed-files.js";
+import { gitChangedFiles, gitChangedHunks, gitUserName } from "./core/git-changed-files.js";
 import {
   controlFlowForFile,
   controlFlowCapabilities,
@@ -250,7 +250,20 @@ program
         "./core/impact-diff.js"
       );
       const author = options.author ?? (options.files?.length ? undefined : await gitUserName(projectRoot));
-      const impact = computeImpactDiff(summary, changed, { baseLabel: label, ...(author ? { author } : {}) });
+      // The diff's lines, so the change is also judged function by function.
+      let symbols: { changed: import("./core/changed-symbols.js").ChangedSymbol[]; moduleLevel: string[] } | undefined;
+      if (!options.files?.length) {
+        try {
+          const { symbolsInHunks, loadFileAnalyses } = await import("./core/changed-symbols.js");
+          const hunks = await gitChangedHunks(projectRoot, { base: options.base, staged: options.staged });
+          const found = symbolsInHunks(await loadFileAnalyses(analysisDir, [...hunks.keys()]), hunks);
+          symbols = { changed: found.symbols, moduleLevel: found.moduleLevel };
+        } catch (e) {
+          // No line ranges: the file-level impact stands alone.
+          if (process.env.CLARIFYDOC_DEBUG) console.error(e);
+        }
+      }
+      const impact = computeImpactDiff(summary, changed, { baseLabel: label, ...(author ? { author } : {}), ...(symbols ? { symbols } : {}) });
       if (options.json) console.log(JSON.stringify(impact, null, 2));
       else if (options.md) console.log(renderImpactMarkdown(impact));
       else console.log(renderImpactText(impact));

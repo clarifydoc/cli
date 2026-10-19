@@ -1,4 +1,5 @@
 import { ownersOf } from "./code-owners.js";
+import { reverseSymbolReach, type ChangedSymbol, type SymbolCaller } from "./changed-symbols.js";
 import type {
   ProjectAnalysis,
   RiskVerdict,
@@ -67,6 +68,24 @@ export interface ImpactDiffResult {
    * the change's own author left out. At most three. Absent without history.
    */
   reviewers?: Array<{ name: string; files: number; commits: number }>;
+  /**
+   * The change at the level of functions, when the diff's lines were known:
+   * the functions and methods it touched, their callers (direct, and 2–4
+   * hops away with the weakest-link confidence), the API routes and screens
+   * those callers belong to, and the files that import a changed file
+   * without calling a changed function — read them, nothing breaks there
+   * by call. Files changed outside any function are in `moduleLevel`, where
+   * the file-level impact above is the answer.
+   */
+  symbolImpact?: {
+    changed: ChangedSymbol[];
+    moduleLevel: string[];
+    direct: SymbolCaller[];
+    transitive: SymbolCaller[];
+    routes: Array<{ route: string; file: string; line: number; depth: number; confidence: string }>;
+    screens: Array<{ name: string; file: string; depth: number }>;
+    reviewOnly: string[];
+  };
   risk: { level: "low" | "moderate" | "high"; reasons: string[] };
 }
 
@@ -99,7 +118,13 @@ function normalizePath(p: string): string {
 export function computeImpactDiff(
   summary: ProjectAnalysis,
   changed: string[],
-  options?: { removedFiles?: string[]; baseLabel?: string; author?: string },
+  options?: {
+    removedFiles?: string[];
+    baseLabel?: string;
+    author?: string;
+    /** The changed functions (from `symbolsInHunks`), when the diff's lines are known. */
+    symbols?: { changed: ChangedSymbol[]; moduleLevel: string[] };
+  },
 ): ImpactDiffResult {
   // Canonical path index — exact first, case-insensitive fallback (Delphi
   // corpora drift between UNIT1.PAS and Unit1.pas across git and disk).
@@ -247,6 +272,34 @@ export function computeImpactDiff(
   }
   const missingCoChanges = [...missing.values()].sort((x, y) => y.score - x.score || y.count - x.count || byOrdinal(x.file, y.file)).slice(0, 10);
 
+  // ── Function-level: callers of what changed ──
+  let symbolImpact: ImpactDiffResult["symbolImpact"];
+  if (options?.symbols) {
+    const callers = reverseSymbolReach(summary.symbolLinks ?? [], options.symbols.changed);
+    const screenByFile = new Map((summary.screens ?? []).map((s) => [s.filePath, s.name]));
+    const routes = callers.filter((c) => c.symbol.startsWith("route:")).map((c) => ({ route: c.symbol.slice("route:".length), file: c.file, line: c.line, depth: c.depth, confidence: c.confidence }));
+    const screenSeen = new Map<string, { name: string; file: string; depth: number }>();
+    for (const c of [...options.symbols.changed.map((s) => ({ file: s.file, depth: 0 })), ...callers]) {
+      const name = screenByFile.get(c.file);
+      if (name && !screenSeen.has(c.file)) screenSeen.set(c.file, { name, file: c.file, depth: c.depth });
+    }
+    const callerFiles = new Set(callers.map((c) => c.file));
+    const symbolFiles = new Set(options.symbols.changed.map((s) => s.file));
+    const reviewOnly = [...new Set(Object.entries(summary.componentGraph ?? {})
+      .filter(([from, deps]) => !symbolFiles.has(from) && !callerFiles.has(from) && deps.some((d) => symbolFiles.has(d)))
+      .map(([from]) => from))].sort(byOrdinal);
+    const nonRoute = callers.filter((c) => !c.symbol.startsWith("route:"));
+    symbolImpact = {
+      changed: options.symbols.changed,
+      moduleLevel: options.symbols.moduleLevel,
+      direct: nonRoute.filter((c) => c.depth === 1).slice(0, 50),
+      transitive: nonRoute.filter((c) => c.depth > 1).slice(0, 50),
+      routes: routes.slice(0, 50),
+      screens: [...screenSeen.values()].sort((a, b) => a.depth - b.depth || byOrdinal(a.name, b.name)),
+      reviewOnly: reviewOnly.slice(0, DEP_LIST_CAP),
+    };
+  }
+
   // ── Owners and reviewers ──
   const ownerFiles = new Map<string, number>();
   for (const f of changedFiles) {
@@ -317,6 +370,7 @@ export function computeImpactDiff(
     chains,
     ...(missingCoChanges.length > 0 ? { missingCoChanges } : {}),
     ...(owners.length > 0 ? { owners } : {}),
+    ...(symbolImpact ? { symbolImpact } : {}),
     ...(reviewers.length > 0 ? { reviewers } : {}),
     risk: { level, reasons },
   };
@@ -359,6 +413,22 @@ export function renderImpactText(r: ImpactDiffResult): string {
     lines.push("", "Usually changed with, not in this change:");
     for (const m of r.missingCoChanges) lines.push(`  ${m.file}  — with ${m.with} in ${m.count} commits (${Math.round(m.score * 100)}%)${m.hidden ? ", no import joins them" : ""}`);
   }
+  if (r.symbolImpact) {
+    const si = r.symbolImpact;
+    lines.push("", `Changed functions (${si.changed.length}):`);
+    for (const s of si.changed) lines.push(`  ${s.symbol}  (${s.file}:${s.line})`);
+    if (si.moduleLevel.length) lines.push(`  outside any function: ${si.moduleLevel.join(", ")}`);
+    if (si.routes.length) {
+      lines.push("", `Routes whose handlers reach them (${si.routes.length}):`);
+      for (const rt of si.routes) lines.push(`  ${rt.route}  (${rt.file}:${rt.line}, ${rt.depth} hop${rt.depth === 1 ? "" : "s"}, ${rt.confidence.toLowerCase()})`);
+    }
+    if (si.direct.length) {
+      lines.push("", `Direct callers (${si.direct.length}):`);
+      for (const c of si.direct) lines.push(`  ${c.symbol}  (${c.file}:${c.line}, ${c.confidence.toLowerCase()})`);
+    }
+    if (si.transitive.length) lines.push(`Callers 2–4 hops away: ${si.transitive.length}`);
+    if (si.reviewOnly.length) lines.push(`Import a changed file but call nothing changed: ${si.reviewOnly.join(", ")}`);
+  }
   if (r.owners?.length) lines.push("", `Owners (CODEOWNERS): ${r.owners.map((o) => `${o.owner} (${o.files})`).join(", ")}`);
   if (r.reviewers?.length) lines.push(`Suggested reviewers: ${r.reviewers.map((x) => `${x.name} (${x.commits} commits to ${x.files} of these files)`).join(", ")}`);
   lines.push("", `Dependent files: ${r.dependentCount}`);
@@ -398,6 +468,12 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
   row(`Tests to run (${r.testCount})`, r.tests.map((t) => `\`${t}\``).join(", ") || "—");
   if (r.missingCoChanges?.length) {
     row("Usually changed with", r.missingCoChanges.map((m) => `\`${m.file}\` (${Math.round(m.score * 100)}% with \`${m.with}\`)`).join(", "));
+  }
+  if (r.symbolImpact) {
+    const si = r.symbolImpact;
+    row(`Changed functions (${si.changed.length})`, si.changed.map((s) => `\`${s.symbol}\``).join(", ") || "—");
+    if (si.routes.length) row(`Routes reached by call (${si.routes.length})`, si.routes.map((rt) => `\`${rt.route}\``).join(", "));
+    row(`Callers (${si.direct.length} direct, ${si.transitive.length} further)`, si.direct.slice(0, 10).map((c) => `\`${c.symbol}\``).join(", ") || "—");
   }
   if (r.owners?.length) row("Owners", r.owners.map((o) => `${o.owner} (${o.files})`).join(", "));
   if (r.reviewers?.length) row("Suggested reviewers", r.reviewers.map((x) => `${x.name} (${x.commits} commits)`).join(", "));

@@ -46,3 +46,17 @@ export async function gitUserName(cwd: string): Promise<string | undefined> {
     });
   });
 }
+
+/**
+ * The changed line ranges of the same diff `gitChangedFiles` lists, from
+ * `git diff -U0`; an untracked file is wholly new (no ranges, so every
+ * function in it counts as changed by the caller's file-level rule).
+ */
+export async function gitChangedHunks(root: string, opts: { base?: string; staged?: boolean } = {}): Promise<Map<string, Array<[number, number]>>> {
+  const { parseUnifiedHunks } = await import("./changed-symbols.js");
+  const out = await new Promise<string>((res, rej) => {
+    const args = ["-C", root, "diff", "-U0", "--no-color", "--relative", ...(opts.staged ? ["--cached"] : [opts.base ?? "HEAD"])];
+    execFile("git", args, { maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => (err ? rej(new Error((stderr || err.message).trim())) : res(stdout)));
+  });
+  return parseUnifiedHunks(out);
+}
