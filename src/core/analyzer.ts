@@ -1474,6 +1474,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     patterns,
     entityGraph,
     ...(testCoverage ? { testCoverage: new Map(testCoverage.files.map((f) => [f.file, { total: f.total, covered: f.covered }])) } : {}),
+    ...(fileChurn?.some((c) => c.fixes) ? { history: new Map(fileChurn.map((c) => [c.file, { commits: c.commits, fixes: c.fixes ?? 0 }])) } : {}),
   });
   if (verdictCount > 0) {
     progress.detail(`  Risk verdicts: ${verdictCount} of ${blastRadius.length} file(s) classified`);

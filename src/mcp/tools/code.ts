@@ -519,7 +519,10 @@ export function fileTool(ctx: ToolContext): McpTool {
             ["calls out to", f.outbound.length ? `${new Set(f.outbound.map((l) => l.targetFile)).size} files` : undefined],
             [
               "git",
-              f.churn ? `${f.churn.commits} commits, last ${f.churn.lastTouched.slice(0, 10)}, authors ${f.churn.authorCount}` : undefined,
+              f.churn
+                ? `${f.churn.commits} commits, last ${f.churn.lastTouched.slice(0, 10)}, authors ${f.churn.authorCount}` +
+                  (f.churn.fixes ? `, ${f.churn.fixes} fix commits (last ${f.churn.lastFix?.slice(0, 10) ?? "?"})` : "")
+                : undefined,
             ],
             [
               "concerns",

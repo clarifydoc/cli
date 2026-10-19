@@ -110,7 +110,7 @@ export async function collectGitHistory(
   // \x01 record marker — never appears in author names or hashes.
   const log = await g([
     "log", "--numstat", "-M", `--max-count=${maxCommits}`, `--since=${since}`,
-    "--pretty=format:%x01%H%x01%aN%x01%aI%x01%aE", "--", ".",
+    "--pretty=format:%x01%H%x01%aN%x01%aI%x01%aE%x01%s", "--", ".",
   ]);
   if (!log.ok) return { skipped: `git log failed: ${log.err}` };
 
@@ -129,6 +129,9 @@ export async function collectGitHistory(
     deletions: number;
     lastTouched: string;
     authors: Map<string, number>;
+    /** Commits that fixed something (`isFixCommit`), and the newest one's date. */
+    fixes: number;
+    lastFix?: string;
   }
   const byFile = new Map<string, Acc>();
   /** Identity (email) → the name it is shown by. */
@@ -156,6 +159,7 @@ export async function collectGitHistory(
   let commitCount = 0;
   let author = "";
   let date = "";
+  let fix = false;
   // Dedup guard: numstat lists each path once per commit, but a merge commit
   // shown with default settings lists none — nothing to guard there.
   for (const line of log.out.split("\n")) {
@@ -169,6 +173,7 @@ export async function collectGitHistory(
       author = name.trim().toLowerCase() || email;
       if (!names.has(author)) names.set(author, name || email);
       date = parts[3]?.trim() ?? "";
+      fix = isFixCommit(parts[5] ?? "");
       commitCount++;
       continue;
     }
@@ -196,9 +201,13 @@ export async function collectGitHistory(
 
     let acc = byFile.get(file);
     if (!acc) {
-      byFile.set(file, (acc = { commits: 0, additions: 0, deletions: 0, lastTouched: date, authors: new Map() }));
+      byFile.set(file, (acc = { commits: 0, additions: 0, deletions: 0, lastTouched: date, authors: new Map(), fixes: 0 }));
     }
     acc.commits++;
+    if (fix) {
+      acc.fixes++;
+      acc.lastFix ??= date;
+    }
     commitFiles.push(file);
     if (m[1] !== "-") acc.additions += Number(m[1]);
     if (m[2] !== "-") acc.deletions += Number(m[2]);
@@ -229,6 +238,7 @@ export async function collectGitHistory(
         authorCount: acc.authors.size,
         authorShares: ranked.slice(0, 5).map(([name, commits]) => ({ name, commits })),
         busFactor,
+        ...(acc.fixes ? { fixes: acc.fixes, ...(acc.lastFix ? { lastFix: acc.lastFix } : {}) } : {}),
       };
     })
     .sort((a, b) => b.commits - a.commits || byOrdinal(a.file, b.file));
@@ -251,6 +261,17 @@ export async function collectGitHistory(
  * The two paths of a numstat rename entry: `src/{a => b}/x.ts` → `src/a/x.ts`,
  * `src/b/x.ts`; `old.ts => new.ts`; `{ => sub}/x.ts`. Null for a plain path.
  */
+/**
+ * A commit that fixed something, by its subject: a conventional `fix:` /
+ * `fix(scope):` / `bugfix:` / `hotfix:`, a revert, "fix #12" / "fixes #12" /
+ * "fixed #12", or a subject that starts with "Fix" — the defect history of
+ * the files it touched.
+ */
+export function isFixCommit(subject: string): boolean {
+  const s = subject.trim();
+  return /^(?:fix|bugfix|hotfix)(?:\([^)]*\))?!?:/i.test(s) || /^revert\b/i.test(s) || /\bfix(?:e[sd])?\s+#\d+/i.test(s) || /^fix(?:e[sd])?\b/i.test(s);
+}
+
 export function renamePaths(entry: string): [string, string] | null {
   const brace = /^(.*)\{(.*) => (.*)\}(.*)$/.exec(entry);
   if (brace) {

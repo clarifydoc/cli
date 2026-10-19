@@ -2040,6 +2040,9 @@ export interface FileChurnInfo {
    * means one person holds most of what is known about it.
    */
   busFactor?: number;
+  /** Commits touching it that fixed something (a `fix:` commit, a revert, "fixes #12"), and the newest one's date. */
+  fixes?: number;
+  lastFix?: string;
 }
 
 /**

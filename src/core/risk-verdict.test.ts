@@ -379,3 +379,12 @@ describe("describeReasons", () => {
     );
   });
 });
+
+describe("classifyRiskVerdict — defect history", () => {
+  it("names a file fixed again and again, not one fixed once", () => {
+    expect(classifyRiskVerdict(input({ history: { commits: 8, fixes: 4 } })).reasons).toContain("fix_prone");
+    expect(classifyRiskVerdict(input({ history: { commits: 8, fixes: 1 } })).reasons).not.toContain("fix_prone");
+    // Three fixes in a hundred commits is a busy file, not a fragile one.
+    expect(classifyRiskVerdict(input({ history: { commits: 100, fixes: 3 } })).reasons).not.toContain("fix_prone");
+  });
+});

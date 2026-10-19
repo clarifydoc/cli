@@ -145,6 +145,8 @@ export interface FileRiskInput {
   abstractPattern: boolean;
   /** The file's test coverage, when a report covered it: lines counted and lines a test ran. */
   testCoverage?: { total: number; covered: number };
+  /** Its history: commits, and the ones that fixed something. */
+  history?: { commits: number; fixes: number };
 }
 
 /**
@@ -161,6 +163,8 @@ export interface RiskVerdictInput {
   entityGraph?: EntityGraph;
   /** Per-file test coverage from the reports a test run wrote. */
   testCoverage?: ReadonlyMap<string, { total: number; covered: number }>;
+  /** Per-file commits and fix commits, from git history. */
+  history?: ReadonlyMap<string, { commits: number; fixes: number }>;
   config?: RiskVerdictConfig;
 }
 
@@ -400,6 +404,8 @@ export function classifyRiskVerdict(input: FileRiskInput, config?: RiskVerdictCo
 
   // A test report covered the file and ran none of it: whatever breaks, no test will say so.
   if (input.testCoverage && input.testCoverage.total > 0 && input.testCoverage.covered === 0) reasons.push("uncovered");
+  // Fixed again and again: what broke here before is likely to break again.
+  if (input.history && input.history.fixes >= 3 && input.history.fixes / input.history.commits >= 0.3) reasons.push("fix_prone");
 
   const level = levelFor(category, input, cfg);
   if (category === "unknown") {
@@ -463,6 +469,7 @@ export function attachRiskVerdicts(blastRadius: BlastRadiusInfo[], input: RiskVe
         declaresEntity: entityFiles.has(blast.filePath),
         abstractPattern: abstractFiles.has(blast.filePath),
         testCoverage: input.testCoverage?.get(blast.filePath),
+        history: input.history?.get(blast.filePath),
       },
       cfg,
     );
@@ -492,6 +499,7 @@ export const REASON_LABELS: Record<string, string> = {
   no_classifying_evidence: "no classifying evidence",
   fallback_to_import_graph_level: "level taken from the import graph",
   uncovered: "no test runs any of it",
+  fix_prone: "fixed again and again in its history",
 };
 
 /** Short, stable wording per category — the noun the report and MCP both use. */

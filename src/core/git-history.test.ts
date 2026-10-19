@@ -3,7 +3,7 @@ import { execFileSync } from "child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { collectGitHistory, computeHotspots } from "./git-history.js";
+import { collectGitHistory, computeHotspots, isFixCommit } from "./git-history.js";
 import type { FileChurnInfo, FileComplexityInfo } from "../types/analysis.js";
 
 /**
@@ -214,5 +214,41 @@ describe("collectGitHistory — renames, ownership, co-change", () => {
     expect(api.authorShares).toEqual([{ name: "ann", commits: 3 }, { name: "ben", commits: 1 }]);
     expect(api.busFactor).toBe(1);
     expect(coChange).toEqual([{ a: "api.ts", b: "client.ts", count: 4, score: 1 }]);
+  });
+});
+
+describe("isFixCommit", () => {
+  it("reads conventional fixes, reverts and issue-closing subjects", () => {
+    for (const s of ["fix: null check", "fix(api)!: drop field", "bugfix: x", "Hotfix: y", 'Revert "feat: z"', "Fixes #12 in parser", "closes and fixed #9", "Fix crash on empty list"]) {
+      expect(isFixCommit(s), s).toBe(true);
+    }
+    for (const s of ["feat: prefix fixture", "fixture data", "refactor: prefix", "add fix-ups doc", "suffix: nothing"]) {
+      expect(isFixCommit(s), s).toBe(false);
+    }
+  });
+
+  it("counts a file's fix commits and the newest one's date", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rvd-git-fixes-"));
+    try {
+      git(dir, ["init", "-q"]);
+      const step = (file: string, body: string, msg: string, date: string) => {
+        writeFileSync(join(dir, file), body);
+        git(dir, ["add", file]);
+        git(dir, ["commit", "-q", "-m", msg, "--author", "a <t@t>"], { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date, GIT_COMMITTER_NAME: "a", GIT_AUTHOR_NAME: "a" });
+      };
+      const now = Date.now();
+      const d = (daysAgo: number) => new Date(now - daysAgo * 86_400_000).toISOString();
+      step("p.ts", "1\n", "feat: parser", d(5));
+      step("p.ts", "2\n", "fix: off by one", d(4));
+      step("q.ts", "1\n", "feat: q", d(3));
+      step("p.ts", "3\n", "fix(parser): empty input", d(2));
+      const res = (await collectGitHistory(dir, ["p.ts", "q.ts"])) as { churn: FileChurnInfo[] };
+      const p = res.churn.find((c) => c.file === "p.ts")!;
+      expect(p.fixes).toBe(2);
+      expect(p.lastFix!.slice(0, 10)).toBe(d(2).slice(0, 10));
+      expect(res.churn.find((c) => c.file === "q.ts")!.fixes).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
