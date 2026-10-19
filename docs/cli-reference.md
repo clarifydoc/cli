@@ -404,6 +404,8 @@ nothing. With no option it writes the Claude Code MCP entry (`.mcp.json`).
 | `--guidance [file]` | A marked ClarifyDoc section of `AGENTS.md` (or the file named), with this project's hub files and gaps when an analysis exists. |
 | `--git-hooks` | `post-commit`, `post-merge` and `post-checkout` (branch switches only) in this repository's hooks directory (`core.hooksPath` when set). Each starts an incremental analysis in the background, so git never waits on it. The block sits between `# clarifydoc:start` / `# clarifydoc:end` after the shebang; an existing hook keeps its lines. Set `CLARIFYDOC_NO_GIT_HOOK=1` to skip it for one command. Alone, it writes no MCP entry. |
 | `-o, --output <dir>` | Where the analysis lives (default `.clarifydoc`): the facts for `--guidance`, the output of `--git-hooks`. |
+| `--no-mcp` | Write no MCP server entry: only the hooks, skills, guidance or git hooks asked for. |
+| `--command <launcher>` | The command the entries and hooks start ClarifyDoc with — a launcher that outlives this install, such as an editor's stable shim. Default: the way this CLI was started. |
 | `--print` | Show what would be written instead. |
 
 ## Environment variables
