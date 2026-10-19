@@ -34,6 +34,17 @@ export interface ReportPayload {
    * then falls back to comparing paths.
    */
   apiCallsLinked?: boolean;
+  /**
+   * Calls that reach no route (with why, and the route that does exist) and
+   * routes no in-repo call reaches — the linker's `apiRouteLinkStats` lists,
+   * plain paths, capped as the summary caps them. Absent on old artifacts.
+   */
+  routeGaps?: {
+    misses: any[];
+    missedCount: number;
+    uncalled: any[];
+    uncalledCount: number;
+  };
   /** Sub-project → sub-project runtime dependencies (`ProjectDependency[]`); small, plain paths. */
   projectDependencies: any[];
   /** Wire form: `[fileRef, depRef[]][]` (decoded back to a Record client-side). */
@@ -353,6 +364,7 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
     /** Outbound HTTP calls — surfaced alongside routes in the Routes tab, each with the route it reaches. */
     apiCalls: withRoutes(summary),
     apiCallsLinked: true,
+    ...(s.apiRouteLinkStats ? { routeGaps: routeGapsOf(s.apiRouteLinkStats) } : {}),
     projectDependencies: s.projectDependencies ?? [],
     componentGraph: Object.entries(summary.componentGraph ?? {}).map(([f, deps]) => [
       ref(f),
@@ -542,4 +554,15 @@ export async function loadReportSummary(dir: string): Promise<ProjectAnalysis> {
  */
 export async function loadReportPayload(dir: string): Promise<ReportPayload> {
   return buildReportPayload(await loadReportSummary(dir));
+}
+
+/** The viewer's route-gap lists from the linker's stats (see `ReportPayload.routeGaps`). */
+function routeGapsOf(stats: any): NonNullable<ReportPayload["routeGaps"]> {
+  const refused = stats.refused ?? {};
+  return {
+    misses: stats.misses ?? [],
+    missedCount: (stats.unmatched ?? 0) + (refused.methodMismatch ?? 0) + (refused.originMismatch ?? 0) + (refused.ambiguousSuffix ?? 0),
+    uncalled: stats.uncalled ?? [],
+    uncalledCount: stats.uncalledCount ?? (stats.uncalled?.length ?? 0),
+  };
 }
