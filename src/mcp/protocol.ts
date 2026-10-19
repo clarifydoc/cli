@@ -100,6 +100,8 @@ export interface McpServerOptions {
   prompts?: McpPrompt[];
   /** Diagnostics sink. Never stdout. */
   log?: (message: string) => void;
+  /** A line to end a tool's answer with (a freshness warning), or null for none. */
+  annotate?: (tool: string) => Promise<string | null>;
 }
 
 const PARSE_ERROR = -32700;
@@ -253,8 +255,9 @@ export class McpServer {
     try {
       const result = await tool.handler(args);
       this.log(`tools/call ${name} -> ${result.text.length} chars in ${Date.now() - started}ms`);
+      const note = this.options.annotate ? await this.options.annotate(name).catch(() => null) : null;
       return {
-        content: [{ type: "text", text: result.text }],
+        content: [{ type: "text", text: note ? `${result.text}\n\n${note}` : result.text }],
         ...(result.isError ? { isError: true } : {}),
       };
     } catch (e) {

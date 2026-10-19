@@ -1,7 +1,7 @@
 /** Shared plumbing for the tool implementations. */
 
 import type { ProjectAnalysis } from "../../types/analysis.js";
-import { assessFreshness } from "../../core/manifest.js";
+import { assessFreshness, type FreshnessReport } from "../../core/manifest.js";
 import { AnalysisStore, resolveFilePath, type LoadedAnalysis } from "../store.js";
 import { ago, countMap, facts, plural, tally } from "../format.js";
 import { STATUS_HINT } from "../empty.js";
@@ -50,14 +50,10 @@ async function sourceFreshness(store: AnalysisStore): Promise<string | undefined
   const f = await assessFreshness(store.analysisDir, store.projectRoot);
   switch (f.state) {
     case "fresh":
-      return `unchanged since the analysis (${f.checked} files checked)`;
+      return `unchanged since the analysis (${f.checked} files checked${f.head ? `; HEAD moved to ${f.head.now.slice(0, 8)} without touching them` : ""})`;
     case "changed": {
-      const parts = [
-        f.changed.length ? `${f.changed.length} changed` : "",
-        f.removed.length ? `${f.removed.length} removed` : "",
-      ].filter(Boolean);
-      const eg = [...f.changed, ...f.removed].slice(0, 3).join(", ");
-      return `${parts.join(", ")} since the analysis${eg ? ` (e.g. ${eg})` : ""}${f.sampled ? ", sampled" : ""} — call clarifydoc_analyze`;
+      const eg = [...f.changed, ...f.added, ...f.removed].slice(0, 3).join(", ");
+      return `${changeSummary(f)} since the analysis${eg ? ` (e.g. ${eg})` : ""}${f.sampled ? ", sampled" : ""} — call clarifydoc_analyze`;
     }
     case "extractor-changed":
       return "the extractor changed since this analysis — call clarifydoc_analyze with full=true";
@@ -87,10 +83,42 @@ export async function stalenessHint(store: AnalysisStore): Promise<string> {
     return "clarifydoc_analyze full=true — the extractor changed since this analysis";
   }
   if (report.state === "changed") {
-    const n = report.changed.length + report.removed.length;
-    return `clarifydoc_analyze — ${plural(n, "file")} changed since the analysis${report.sampled ? " (sampled)" : ""}`;
+    return `clarifydoc_analyze — ${changeSummary(report)} since the analysis${report.sampled ? " (sampled)" : ""}`;
   }
   return STATUS_HINT;
+}
+
+/** "3 changed, 1 added, 2 removed" — the parts that are non-zero, HEAD's move last. */
+export function changeSummary(f: FreshnessReport): string {
+  return [
+    f.changed.length ? `${f.changed.length} changed` : "",
+    f.added.length ? `${f.added.length} added` : "",
+    f.removed.length ? `${f.removed.length} removed` : "",
+    f.head ? `HEAD ${f.head.analyzed.slice(0, 8)} → ${f.head.now.slice(0, 8)}` : "",
+  ].filter(Boolean).join(", ");
+}
+
+/**
+ * The line every answer ends with while the analysis no longer describes the
+ * source: what moved, and how to refresh. Null while it is fresh, or when
+ * nothing can be compared (no manifest). Checked at most every few seconds,
+ * so a burst of calls costs one stat pass.
+ */
+export function freshnessBanner(store: AnalysisStore, ttlMs = 10_000): () => Promise<string | null> {
+  let at = 0;
+  let last: Promise<string | null> = Promise.resolve(null);
+  return () => {
+    if (Date.now() - at < ttlMs) return last;
+    at = Date.now();
+    last = assessFreshness(store.analysisDir, store.projectRoot, { maxStats: 2000 })
+      .then((f) => {
+        if (f.state === "extractor-changed") return `⚠ Stale: the extractor changed since this analysis — ${store.allowAnalyze ? "clarifydoc_analyze full=true" : "re-run `clarifydoc analyze`"} refreshes it.`;
+        if (f.state !== "changed") return null;
+        return `⚠ Stale: ${changeSummary(f)} since this analysis — ${store.allowAnalyze ? "clarifydoc_analyze" : "re-run `clarifydoc analyze --incremental`"} refreshes it.`;
+      })
+      .catch(() => null);
+    return last;
+  };
 }
 
 /**
@@ -112,6 +140,7 @@ export async function statusReport(loaded: LoadedAnalysis, store: AnalysisStore)
     facts([
       ["root", summary.projectRoot],
       ["analyzed", `${summary.analyzedAt} (${ago(summary.analyzedAt)})`],
+      ["commit", summary.sourceRevision ? `${summary.sourceRevision.commit.slice(0, 12)}${summary.sourceRevision.branch ? ` on ${summary.sourceRevision.branch}` : ""}${summary.sourceRevision.dirty ? `, ${plural(summary.sourceRevision.dirty, "uncommitted file")}` : ""}` : undefined],
       ["source", await sourceFreshness(store)],
       ["files", summary.files.length],
       ["health", health ? `${health.score}/100 (${health.grade})` : undefined],

@@ -537,6 +537,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
           (e): GitHistoryResult => ({ skipped: (e as Error).message }),
         );
 
+  // The commit the source is at — provenance, and what freshness compares HEAD to.
+  const revisionPromise = options.gitHistory === false ? null : readSourceRevision(projectRoot).catch(() => null);
+
   const prevManifest = options.incremental ? await loadManifest(outputDir) : null;
   const newManifestEntries: Record<string, { mtime: number; sha256: string }> = {};
   let unchangedCount = 0;
@@ -1479,6 +1482,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   }
 
   // Step 5: Write project summary
+  const sourceRevision = revisionPromise ? await revisionPromise : null;
   const summary: ProjectAnalysis = {
     projectRoot: options.stableOutput ? stableRoot(projectRoot) : projectRoot,
     detectedFrameworks: frameworks,
@@ -1498,6 +1502,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     componentLaunches: componentLaunches.length ? componentLaunches : undefined,
     lspStats,
     analyzedAt: options.stableOutput ? STABLE_TIMESTAMP : new Date().toISOString(),
+    ...(sourceRevision ? { sourceRevision } : {}),
     complexity,
     patterns,
     securityIssues: allSecurityIssues,
@@ -1597,6 +1602,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       version: 1,
       extractorVersion: EXTRACTOR_VERSION,
       entries: newManifestEntries,
+      ...(sourceRevision ? { revision: { commit: sourceRevision.commit, branch: sourceRevision.branch } } : {}),
     };
     await saveManifest(outputDir, manifest);
     // Remove per-file JSON for sources that disappeared since the last run so
@@ -2489,6 +2495,7 @@ export function enrichLinkGraphFromComponentGraph(
 import type { ImportInfo, RouteInfo } from "../types/analysis.js";
 import { anonymousWriteFindings, attachFindingEntries, safeMethodWriteFindings } from "./finding-entries.js";
 import { attachOsvAdvisories } from "./osv.js";
+import { readSourceRevision } from "./source-revision.js";
 
 /** Import source patterns → framework id */
 const IMPORT_FRAMEWORK_MAP: Record<string, string> = {

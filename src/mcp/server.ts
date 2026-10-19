@@ -14,7 +14,7 @@ import { existsSync } from "fs";
 import { McpServer, serveStdio, type McpResource, type McpResourceTemplate, type McpTool } from "./protocol.js";
 import { TOOL_VERSION } from "../core/version.js";
 import { AnalysisStore, type AnalyzeSettings } from "./store.js";
-import { statusReport, type ToolContext } from "./tools/context.js";
+import { freshnessBanner, statusReport, type ToolContext } from "./tools/context.js";
 import { analyzeTool, healthTool, impactTool, searchTool, servicesTool, statusTool } from "./tools/overview.js";
 import { blastRadiusTool, contractTool, fileTool, routesTool, screensTool, traceTool } from "./tools/code.js";
 import { extractTool } from "./tools/extract.js";
@@ -125,6 +125,7 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
     log,
   });
   const ctx: ToolContext = { store };
+  const banner = freshnessBanner(store);
 
   const tools: McpTool[] = [
     statusTool(ctx),
@@ -192,6 +193,9 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
     resourceTemplates,
     prompts: WORKFLOW_PROMPTS,
     log,
+    // Every answer says when the analysis no longer describes the source —
+    // except the two that are about exactly that.
+    annotate: async (tool) => (tool === "clarifydoc_status" || tool === "clarifydoc_analyze" ? null : banner()),
   });
 
   return { server, store, tools };

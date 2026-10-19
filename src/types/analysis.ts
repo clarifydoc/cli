@@ -2572,6 +2572,8 @@ export interface ProjectAnalysis {
   componentLaunches?: ComponentLaunch[];
   lspStats?: LspStats;
   analyzedAt: string;
+  /** The commit the source was at (git work trees, when git history is read). */
+  sourceRevision?: { commit: string; branch: string | null; dirty: number };
 
   // Advanced analysis (optional)
   complexity?: FileComplexityInfo[];

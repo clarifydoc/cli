@@ -38,6 +38,12 @@ write. That is what lets an external agent be configured as nothing but a comman
   than no next step, and a hint carrying a number is the difference between "try a looser filter" and a call that
   lands. Hints are **stateless by design**: a stdio server's "session" is not reliably one agent, so nothing is
   derived from what the caller asked earlier.
+- **Every answer says when it is stale.** `McpServerOptions.annotate` ends each tool's text with
+  `freshnessBanner` (tools/context.ts) while the analysis no longer describes the source — files changed, removed
+  or added since (`assessFreshness`: added files come from `git ls-files`, in directories the analysis covers,
+  written after its manifest), and HEAD against the commit it was made at (`sourceRevision`, also in the
+  manifest). One stat pass per ten seconds, however many calls; `clarifydoc_status` and `clarifydoc_analyze` are
+  left alone, since they are about exactly that.
 - **Search ranks across kinds, not within them.** `clarifydoc_search` flattens every source into one
   `Candidate` list ([search-rank.ts](search-rank.ts)) and prints one ranked list, because whatever prints first
   IS the rank — for a model reading top-down and for a search benchmark alike. A new searchable kind

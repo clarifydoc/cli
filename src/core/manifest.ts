@@ -2,6 +2,8 @@ import { readFile, writeFile, stat, mkdir, rename, unlink } from "fs/promises";
 import { createReadStream, existsSync } from "fs";
 import { createHash } from "crypto";
 import { join, resolve, sep } from "path";
+import { getLanguageForFile } from "../parsers/language-map.js";
+import { headCommit, listGitFiles } from "./source-revision.js";
 
 /**
  * Bump whenever extractor logic changes in a way that would produce different
@@ -32,6 +34,8 @@ export interface Manifest {
   extractorVersion: string;
   /** Keys are POSIX relative paths. */
   entries: Record<string, ManifestEntry>;
+  /** The commit the analysis was made at, when known — what freshness compares HEAD to. */
+  revision?: { commit: string; branch: string | null };
 }
 
 const MANIFEST_NAME = "manifest.json";
@@ -123,6 +127,13 @@ export interface FreshnessReport {
   state: "fresh" | "changed" | "extractor-changed" | "unknown";
   changed: string[];
   removed: string[];
+  /**
+   * Source files git lists that the analysis has not seen and that appeared
+   * after it — in a directory it covers, in a language it reads (capped).
+   */
+  added: string[];
+  /** The commit the analysis was made at, and HEAD now, when they differ. */
+  head?: { analyzed: string; now: string };
   /** How many manifest entries were examined. */
   checked: number;
   /** True when `maxStats` capped the check, so `changed`/`removed` may be short. */
@@ -140,19 +151,21 @@ const FRESHNESS_STAT_CAP = 5000;
  * an mtime and a SHA-256 per file, so the answer is a stat per entry and a hash
  * only where the mtime shifted.
  *
- * Added files are deliberately out of scope: finding them means re-running
- * discovery with the caller's include/exclude settings, which is most of an
- * analysis. This answers "is what I already know still true".
+ * Added files come from git, not from re-running discovery (most of an
+ * analysis): a file git lists, in a directory the analysis covers and a
+ * language it reads, written after the manifest was — so a file discovery
+ * skipped on purpose (a non-source XML, an excluded path) never reads as new.
+ * `git: false` skips that and the HEAD comparison.
  */
 export async function assessFreshness(
   outputDir: string,
   projectRoot: string,
-  opts: { maxStats?: number } = {},
+  opts: { maxStats?: number; git?: boolean } = {},
 ): Promise<FreshnessReport> {
   const manifest = await loadManifestRaw(outputDir);
-  if (!manifest) return { state: "unknown", changed: [], removed: [], checked: 0, sampled: false };
+  if (!manifest) return { state: "unknown", changed: [], removed: [], added: [], checked: 0, sampled: false };
   if (manifest.extractorVersion !== EXTRACTOR_VERSION) {
-    return { state: "extractor-changed", changed: [], removed: [], checked: 0, sampled: false };
+    return { state: "extractor-changed", changed: [], removed: [], added: [], checked: 0, sampled: false };
   }
 
   const cap = opts.maxStats ?? FRESHNESS_STAT_CAP;
@@ -173,14 +186,39 @@ export async function assessFreshness(
     }
   }
 
+  const added: string[] = [];
+  let head: FreshnessReport["head"];
+  if (opts.git !== false) {
+    const now = manifest.revision ? await headCommit(projectRoot) : null;
+    if (manifest.revision && now && now !== manifest.revision.commit) head = { analyzed: manifest.revision.commit, now };
+    const listed = await listGitFiles(projectRoot);
+    const written = listed ? await stat(join(outputDir, MANIFEST_NAME)).then((x) => x.mtimeMs, () => Infinity) : Infinity;
+    if (listed && Number.isFinite(written)) {
+      const dirs = new Set(keys.map((k) => k.slice(0, k.lastIndexOf("/") + 1)));
+      let stats = 0;
+      for (const rel of listed) {
+        if (added.length >= ADDED_CAP || stats >= cap) break;
+        if (manifest.entries[rel] || !dirs.has(rel.slice(0, rel.lastIndexOf("/") + 1)) || !getLanguageForFile(rel)) continue;
+        stats++;
+        const m = await stat(join(resolve(projectRoot), rel)).then((x) => x.mtimeMs, () => 0);
+        if (m > written) added.push(rel);
+      }
+    }
+  }
+
   return {
-    state: changed.length + removed.length > 0 ? "changed" : "fresh",
+    state: changed.length + removed.length + added.length > 0 ? "changed" : "fresh",
     changed,
     removed,
+    added,
+    ...(head ? { head } : {}),
     checked: examined.length,
     sampled,
   };
 }
+
+/** Added files reported before the list stops. */
+const ADDED_CAP = 200;
 
 /**
  * Determine the cache state of a file relative to a previous manifest entry.

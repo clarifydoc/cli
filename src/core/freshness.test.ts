@@ -81,3 +81,41 @@ describe("assessFreshness", () => {
     expect(f.sampled).toBe(true);
   });
 });
+
+describe("assessFreshness through git", () => {
+  const git = async (...args: string[]) => {
+    const { execFileSync } = await import("child_process");
+    return execFileSync("git", ["-C", root, "-c", "user.email=t@example.com", "-c", "user.name=t", ...args]).toString().trim();
+  };
+
+  it("names a file added after the analysis, never one discovery passed over, and a moved HEAD", async () => {
+    await git("init", "-q");
+    writeFileSync(join(root, ".gitignore"), ".clarifydoc/\n");
+    // Present before the analysis but not in its manifest (a plugin skipped it).
+    writeFileSync(join(root, "src/legacy.xml"), "<project/>\n");
+    await seed({ "src/a.ts": "export const a = 1;\n" });
+    await git("add", "-A");
+    await git("commit", "-qm", "one");
+    const analyzed = await git("rev-parse", "HEAD");
+    const { loadManifestRaw } = await import("./manifest.js");
+    const m = (await loadManifestRaw(out))!;
+    await saveManifest(out, { ...m, revision: { commit: analyzed, branch: null } });
+
+    await new Promise((r) => setTimeout(r, 30));
+    writeFileSync(join(root, "src/b.ts"), "export const b = 2;\n");
+    mkdirSync(join(root, "docs"), { recursive: true });
+    writeFileSync(join(root, "docs/c.ts"), "export const c = 3;\n"); // a directory the analysis never covered
+    await git("add", "-A");
+    await git("commit", "-qm", "two");
+
+    const f = await assessFreshness(out, root);
+    expect(f.state).toBe("changed");
+    expect(f.added).toEqual(["src/b.ts"]);
+    expect(f.head).toEqual({ analyzed, now: await git("rev-parse", "HEAD") });
+
+    const { freshnessBanner } = await import("../mcp/tools/context.js");
+    const banner = await freshnessBanner({ analysisDir: out, projectRoot: root, allowAnalyze: true } as never)();
+    expect(banner).toMatch(/^⚠ Stale: 1 added, HEAD [0-9a-f]{8} → [0-9a-f]{8} since this analysis — clarifydoc_analyze refreshes it\.$/);
+    expect((await assessFreshness(out, root, { git: false })).added).toEqual([]);
+  });
+});
