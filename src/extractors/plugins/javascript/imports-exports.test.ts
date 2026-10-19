@@ -64,6 +64,14 @@ describe("JS/TS export extraction", () => {
     ]);
   });
 
+  it("names a renamed local export by what it exports, a reserved word included", async () => {
+    const out = await exportsOf(`
+      const del = 1, get = 2;
+      export { del as delete, get as fetchOne };
+    `, "javascript");
+    expect(out.map(brief)).toEqual(["delete re-export del", "fetchOne re-export get"]);
+  });
+
   it("covers declaration kinds, ambient declarations and plain JS", async () => {
     const ts = await exportsOf(`
       export abstract class Base {}

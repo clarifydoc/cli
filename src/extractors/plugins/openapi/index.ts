@@ -51,7 +51,7 @@ const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "
 // parser avoids a YAML dependency (and the perf cost of one on every sniffed
 // yaml). JSON specs are parsed with JSON.parse and folded into the same shape.
 
-interface SpecNode {
+export interface SpecNode {
   value: string | null;
   line: number;
   children: Map<string, SpecNode>;

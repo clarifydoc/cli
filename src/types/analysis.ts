@@ -5,7 +5,7 @@ export type Language =
   | "perl" | "vb" | "sql" | "c" | "cpp" | "prisma" | "dart" | "elixir" | "erlang" | "objc"
   | "haskell" | "clojure" | "blazor" | "html" | "erb" | "heex" | "handlebars" | "liquid" | "velocity" | "razor" | "qml" | "qtui" | "xaml" | "jsp" | "springxml" | "jsight"
   | "openapi" | "graphql" | "wsdl" | "groovy" | "powershell" | "bash" | "batch" | "fsharp" | "coffeescript" | "r" | "julia" | "crystal" | "zig" | "ocaml" | "raku" | "racket" | "scheme" | "commonlisp"
-  | "nim" | "dlang" | "vlang" | "fortran" | "haxe" | "mojo"
+  | "nim" | "dlang" | "vlang" | "fortran" | "haxe" | "mojo" | "serverless"
   | "scss" | "sass" | "less" | "autohotkey" | "autoit" | "applescript";
 
 export interface ExtractorWarning {
@@ -588,7 +588,10 @@ export interface ExportInfo {
    * "re-export" but forwards nothing.
    */
   source?: string;
-  /** Re-exports only: the name inside `source`, when the re-export renames it (`export { a as b } from` → "a"). */
+  /**
+   * The name inside `source` when the re-export renames it (`export { a as b } from` → "a"), or the
+   * local binding a renamed local export stands for (`export { del as delete }` → "del").
+   */
   sourceName?: string;
 }
 

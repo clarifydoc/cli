@@ -373,15 +373,19 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
       const source = sourceNode ? stripQuotes(sourceNode.text) : undefined;
       for (const part of kids) {
         if (part.type === "export_clause") {
-          for (const spec of part.children) {
+          const specs = part.children;
+          for (let i = 0; i < specs.length; i++) {
+            const spec = specs[i]!;
             if (spec.type !== "export_specifier") continue;
             const original = spec.childForFieldName("name")?.text ?? spec.text;
-            const alias = spec.childForFieldName("alias")?.text;
+            // A reserved word as the exported name (`export { del as delete }`) parses
+            // as an ERROR node after the specifier; its last token is the name.
+            const next = specs[i + 1];
+            const reserved = next?.type === "ERROR" && next.childCount === 2 && next.child(0)?.type === "as" ? next.child(1)?.text : undefined;
+            const alias = spec.childForFieldName("alias")?.text ?? reserved;
             const info: ExportInfo = { name: alias ?? original, kind: "re-export", line };
-            if (source !== undefined) {
-              info.source = source;
-              if (alias && alias !== original) info.sourceName = original;
-            }
+            if (source !== undefined) info.source = source;
+            if (alias && alias !== original) info.sourceName = original;
             exports.push(info);
           }
         } else if (part.type === "namespace_export" && source !== undefined) {
