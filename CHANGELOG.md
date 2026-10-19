@@ -51,6 +51,19 @@ recorded in the git history only.
 - The MCP server no longer analyzes a folder unasked when it is the home directory, a filesystem root, or —
   started without a path — a directory with no project marker above it. It says why and how to point it
   at the project; `clarifydoc_analyze` still works there.
+- **Report: one search box across the report.** Routes by URL, screens, tables and files, opened in the tab
+  that shows them; `/` focuses it from anywhere.
+- **Report: why an architecture edge exists.** Clicking a C4 edge lists the file pairs behind it, grouped
+  by the calling file — at every level, with its HTTP calls beside them where it is one.
+- **Report: churn × complexity.** With git history, the Complexity tab plots every file by commits and
+  total complexity; the top quarter for both — changed often and complex — is marked as the place to
+  refactor first, and a dot opens its file's row.
+- **Report: knowledge risk.** With git history and more than one author, Insights lists the files only one
+  person has ever changed, ranked by the routes and entities they carry (migrations left out), and who is
+  sole owner of how much.
+- Report graphs open no smaller than a scale at which their labels can be read; Fit still shows all.
+- `isTestFile(path, language)` and `getLanguageForFile(path)` are exported, so a consumer of a stored
+  analysis tells test files from production ones by the analyzer's own per-language rules.
 - `clarifydoc report --editor-scheme <scheme>`: file links in the report open in that editor (`cursor`,
   `windsurf`, `vscodium`, …) instead of VS Code.
 - `LICENSE` (MIT), `SECURITY.md` — how to report a vulnerability, and exactly what network access the CLI

@@ -32,6 +32,10 @@ export {
   renderImpactMarkdown,
   type ImpactDiffResult,
 } from "./core/impact-diff.js";
+// Which files are tests, by the per-language rules the analysis itself uses —
+// for a consumer that tells test callers from production ones.
+export { isTestFile } from "./core/test-file-detector.js";
+export { getLanguageForFile } from "./parsers/language-map.js";
 // The per-file index the MCP server answers from, so another consumer of a
 // stored analysis groups the same facts by file the same way.
 export { buildIndex, type AnalysisIndex, type FileFacts } from "./mcp/store.js";
