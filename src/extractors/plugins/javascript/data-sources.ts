@@ -233,6 +233,41 @@ const MQ_CHANNEL_RECEIVER_RE = /^ch$|channel/i;
 const MQ_PRODUCER_RECEIVER_RE = /producer/i;
 const MQ_CONSUMER_RECEIVER_RE = /consumer/i;
 
+// ─── Job queues (BullMQ / Bull) and Socket.IO events ───────────────────────
+// Both are gated on the file importing the library. A BullMQ `add` is a
+// publish only on a receiver the file binds to a queue (`new Queue("emails")`,
+// NestJS `@InjectQueue("audio") private audio: Queue`), which also names the
+// queue; Socket.IO `emit`/`on` only on a socket-shaped receiver, and never for
+// the library's own lifecycle events.
+
+const BULL_IMPORT_RE = /(?:from\s*|require\(\s*)['"](?:bullmq|bull|@nestjs\/bullmq|@nestjs\/bull)['"]/;
+const SOCKET_IO_IMPORT_RE = /(?:from\s*|require\(\s*)['"]socket\.io(?:-client)?['"]/;
+const SOCKET_RECEIVER_RE = /socket|^io$|^client$|^server$|^nsp$|namespace/i;
+const SOCKET_IO_RESERVED = new Set([
+  "connect", "connection", "connect_error", "disconnect", "disconnecting", "error", "reconnect",
+  "reconnect_attempt", "reconnect_error", "reconnect_failed", "reconnecting", "ping", "pong", "newListener", "removeListener",
+]);
+
+interface MqEvidence {
+  /** Queue name by the receiver holding it; null when the file does not import Bull/BullMQ. */
+  bullQueues: Map<string, string> | null;
+  socketIo: boolean;
+}
+
+function mqEvidence(src: string): MqEvidence {
+  let bullQueues: Map<string, string> | null = null;
+  if (BULL_IMPORT_RE.test(src)) {
+    bullQueues = new Map();
+    for (const m of src.matchAll(/(?:^|[\s,;({])(?:this\.)?([A-Za-z_$][\w$]*)\s*(?:[?!]?:\s*[\w$.<>]+\s*)?=\s*(?:new\s+)?(?:Queue|Bull)\s*(?:<[^>]*>)?\s*\(\s*['"`]([^'"`]+)['"`]/g)) {
+      bullQueues.set(m[1]!, m[2]!);
+    }
+    for (const m of src.matchAll(/@InjectQueue\(\s*['"`]([^'"`]+)['"`]\s*\)\s*(?:(?:private|protected|public|readonly)\s+)*([A-Za-z_$][\w$]*)/g)) {
+      bullQueues.set(m[2]!, m[1]!);
+    }
+  }
+  return { bullQueues, socketIo: SOCKET_IO_IMPORT_RE.test(src) };
+}
+
 /** Method names that are chaining noise, not meaningful calls */
 const NOISE_METHODS = new Set([
   "then", "catch", "finally", "json", "text", "blob", "arrayBuffer", "formData",
@@ -277,6 +312,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   private generatedClient = false;
   /** What the file's imports say about ORM use, read on first need (most files never ask). */
   private imports: ImportEvidence | null = null;
+  /** What the file's imports say about job queues and Socket.IO, read on first need. */
+  private mq: MqEvidence | null = null;
 
   override beginFile(tree: Tree, sourceText: string): void {
     this.root = tree.rootNode;
@@ -285,6 +322,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.sourceText = sourceText;
     this.gqlScanned = false;
     this.imports = null;
+    this.mq = null;
     this.collectionReceivers = null;
     this.routerReceivers = null;
     this.clientKinds = null;
@@ -455,7 +493,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   /**
    * What the client a chain starts on talks to, when the file builds it from a
    * known SDK (`const client = new OpenAI()`, `new Client(…)` from the MCP
-   * SDK, `new QdrantClient(…)`): an API, or a vector store. Null for anything
+   * SDK, `new QdrantClient(…)`, `axios.create(…)`): an API, or a vector store. Null for anything
    * else, including every database client.
    */
   private clientKind(chain: string): "sdk" | "vector" | null {
@@ -482,6 +520,10 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       for (const m of this.sourceText.matchAll(/(?:^|[\s,;({])(?:this\.)?([A-Za-z_$][\w$]*)\s*[?!]?:\s*([A-Za-z_$][\w$]*)\b/g)) {
         const kind = kindOfClass(m[2]!);
         if (kind) this.clientKinds.set(m[1]!, kind);
+      }
+      // An HTTP client instance (`const client = axios.create({ baseURL })`) talks to an API, never a database.
+      for (const m of this.sourceText.matchAll(/(?:^|[\s,;({])(?:this\.)?([A-Za-z_$][\w$]*)\s*(?:[?!]?:\s*[\w$.<>]+\s*)?=\s*(?:axios|ky|got|wretch|ofetch)\.(?:create|extend)\s*\(/g)) {
+        this.clientKinds.set(m[1]!, "sdk");
       }
       const factories = new Map<string, "sdk" | "vector">();
       for (const m of this.sourceText.matchAll(/function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*:\s*(?:Promise\s*<\s*)?([A-Za-z_$][\w$]*)/g)) {
@@ -544,6 +586,26 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
     // One-time gql-operation scan (no whole-file hook exists in the fused walk).
     if (!this.gqlScanned) this.scanGql(sources);
+
+    // BullMQ: `new Worker("emails", processor)` consumes the queue it names.
+    if (node.type === "new_expression" && node.childForFieldName("constructor")?.text === "Worker") {
+      const mq = (this.mq ??= mqEvidence(this.sourceText));
+      const queue = mq.bullQueues ? literalString(node.childForFieldName("arguments")?.namedChildren[0] ?? null) : null;
+      if (queue) sources.push(this.ds({ kind: "queue-consume", name: "BullMQ: Worker", target: queue, line: node.startPosition.row + 1 }));
+      return;
+    }
+    // NestJS: `@Processor("audio") class AudioConsumer { process(job) }` consumes the queue; the row sits on `process`.
+    if (node.type === "call_expression" && node.parent?.type === "decorator" && node.childForFieldName("function")?.text === "Processor") {
+      const queue = (this.mq ??= mqEvidence(this.sourceText)).bullQueues ? literalString(node.childForFieldName("arguments")?.namedChildren[0] ?? null) : null;
+      if (queue) {
+        const holder = node.parent.parent;
+        const cls = holder?.type === "export_statement" ? holder.childForFieldName("declaration") : holder;
+        const body = cls?.childForFieldName("body");
+        const process = body?.namedChildren.find((m) => m.type === "method_definition" && m.childForFieldName("name")?.text === "process");
+        sources.push(this.ds({ kind: "queue-consume", name: "BullMQ: Processor", target: queue, line: (process ?? node).startPosition.row + 1 }));
+      }
+      return;
+    }
 
     if (node.type === "call_expression") {
       let fn = node.childForFieldName("function");
@@ -704,6 +766,37 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
               line,
             }));
             return;
+          }
+
+          // BullMQ / Bull: queue.add("job", data) publishes; Bull's queue.process(fn) consumes.
+          if (fnName === "add" || fnName === "addBulk" || fnName === "process") {
+            const mq = (this.mq ??= mqEvidence(this.sourceText));
+            const queue = mq.bullQueues && recv ? mq.bullQueues.get(recv.replace(/^this\./, "")) : undefined;
+            if (queue) {
+              const job = fnName === "add" ? literalString(mqArgs[0] ?? null) : null;
+              sources.push(this.ds({
+                kind: fnName === "process" ? "queue-consume" : "queue-publish",
+                name: `BullMQ: ${fnName}`,
+                target: queue,
+                ...(job ? { entity: job } : {}),
+                line,
+              }));
+              return;
+            }
+          }
+          // Socket.IO: socket.emit("event", …) publishes; socket.on("event", handler) consumes.
+          if (fnName === "emit" || fnName === "on" || fnName === "once") {
+            const root = memberRoot(fn);
+            const event = literalString(mqArgs[0] ?? null);
+            if (root && event && SOCKET_RECEIVER_RE.test(root) && !SOCKET_IO_RESERVED.has(event) && (this.mq ??= mqEvidence(this.sourceText)).socketIo) {
+              sources.push(this.ds({
+                kind: fnName === "emit" ? "queue-publish" : "queue-consume",
+                name: `Socket.IO: ${fnName}`,
+                target: event,
+                line,
+              }));
+              return;
+            }
           }
 
           // kafkajs: producer.send({ topic, messages }) /

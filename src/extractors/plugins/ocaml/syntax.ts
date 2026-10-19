@@ -29,10 +29,16 @@ export function labeledArg(app: Node, label: string): Node | null {
   return null;
 }
 
-/** A `let` that defines a function: it takes parameters, or binds `fun`/`function`. */
+/**
+ * A `let` that defines a function: it takes parameters, binds `fun`/`function`,
+ * or binds a `[%rapper …]` query, which ppx_rapper expands into one.
+ */
 export function isFunctionBinding(binding: Node): boolean {
   if (binding.type !== "let_binding" || binding.childForFieldName("pattern")?.type !== "value_name") return false;
   if (binding.namedChildren.some((c) => c.type === "parameter")) return true;
   const body = binding.childForFieldName("body");
-  return body?.type === "fun_expression" || body?.type === "function_expression";
+  if (body?.type === "fun_expression" || body?.type === "function_expression") return true;
+  // `[%rapper get_many {sql| … |sql} record_out]`, or the same applied to `()`.
+  const query = body?.type === "application_expression" ? body.namedChildren[0] : body;
+  return query?.type === "extension" && /^\[%rapper\b/.test(query.text);
 }

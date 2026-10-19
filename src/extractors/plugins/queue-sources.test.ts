@@ -143,6 +143,55 @@ describe("JS amqplib + kafkajs extraction", () => {
   });
 });
 
+const brief = (s: DataSourceInfo[]) => s.filter((d) => d.kind.startsWith("queue-")).map((d) => `${d.kind} ${d.name} ${d.target}${d.entity ? ` ${d.entity}` : ""} @${d.line}`);
+
+describe("JS BullMQ / Bull extraction", () => {
+  it("publishes on a receiver bound to a queue, consumes in a Worker, and names the queue", async () => {
+    const s = await jsSourcesOf(`import { Queue, Worker } from "bullmq";
+const emailQueue = new Queue("emails", { connection });
+export async function signup(user) { await emailQueue.add("welcome", { id: user.id }); }
+new Worker("emails", async (job) => send(job.data));
+const other = { add: (x) => x };
+other.add("welcome");`);
+    expect(brief(s)).toEqual(["queue-publish BullMQ: add emails welcome @3", "queue-consume BullMQ: Worker emails @4"]);
+  });
+
+  it("reads NestJS @InjectQueue receivers and @Processor classes, anchored on process()", async () => {
+    const s = await jsSourcesOf(`import { InjectQueue, Processor, WorkerHost } from "@nestjs/bullmq";
+export class AudioService {
+  constructor(@InjectQueue("audio") private readonly audioQueue: Queue) {}
+  transcode() { return this.audioQueue.add("transcode", { file: "a.mp3" }); }
+}
+@Processor("audio")
+export class AudioConsumer extends WorkerHost {
+  async process(job) { return job.data; }
+}`);
+    expect(brief(s)).toEqual(["queue-publish BullMQ: add audio transcode @4", "queue-consume BullMQ: Processor audio @8"]);
+  });
+
+  it("leaves add/Worker alone in a file that does not import Bull", async () => {
+    const s = await jsSourcesOf(`const q = new Queue("x"); q.add("y"); new Worker("x");`);
+    expect(brief(s)).toEqual([]);
+  });
+});
+
+describe("JS Socket.IO extraction", () => {
+  it("emits publish and handlers consume, skipping lifecycle events", async () => {
+    const s = await jsSourcesOf(`import { Server } from "socket.io";
+const io = new Server(3000);
+io.on("connection", (socket) => {
+  socket.on("chat message", (msg) => io.emit("chat message", msg));
+  socket.on("disconnect", () => {});
+});`);
+    expect(brief(s)).toEqual(["queue-consume Socket.IO: on chat message @4", "queue-publish Socket.IO: emit chat message @4"]);
+  });
+
+  it("needs the import: an EventEmitter's emit is not Socket.IO", async () => {
+    const s = await jsSourcesOf(`const socket = new EventEmitter(); socket.emit("chat message", 1);`);
+    expect(brief(s)).toEqual([]);
+  });
+});
+
 // ─── Python ──────────────────────────────────────────────────────────────────
 
 async function pySourcesOf(body: string): Promise<DataSourceInfo[]> {
@@ -274,5 +323,63 @@ describe("PHP curl session collapse (photo-booth noise fix)", () => {
     expect(api(url)).toHaveLength(1);
     const file = await phpSourcesOf(`    $b = file_get_contents('/home/certs/swish.pem');`);
     expect(api(file)).toHaveLength(0);
+  });
+});
+
+async function pyFileSourcesOf(src: string): Promise<DataSourceInfo[]> {
+  const tree = await parseSource(src, "python" as any, "x.py");
+  return new PythonDataSourceExtractor().extract(tree, src);
+}
+
+describe("Python Celery extraction", () => {
+  it("a task consumes its own name; .delay, .apply_async and send_task publish to it", async () => {
+    const s = await pyFileSourcesOf(`from celery import Celery, shared_task
+app = Celery("proj")
+
+@app.task(bind=True, name="proj.tasks.send_email")
+def send_email(self, to):
+    pass
+
+@shared_task
+def resize(path):
+    pass
+
+def signup(user):
+    send_email.delay(user.email)
+    tasks.resize.apply_async(args=[user.avatar])
+    app.send_task("proj.tasks.resize", args=[1])
+    self.delay(1)
+`);
+    expect(brief(s)).toEqual([
+      "queue-consume Celery: task send_email @5",
+      "queue-consume Celery: task resize @9",
+      "queue-publish Celery: delay send_email @13",
+      "queue-publish Celery: apply_async resize @14",
+      "queue-publish Celery: send_task resize @15",
+    ]);
+  });
+
+  it("a signature kept in a local publishes to the task it signs", async () => {
+    const s = await pyFileSourcesOf(`from .tasks import consume_file
+
+def merge(docs):
+    consume_task = consume_file.s(docs)
+    consume_task.apply_async()
+`);
+    expect(brief(s)).toEqual(["queue-publish Celery: apply_async consume_file @5"]);
+  });
+
+  it("a bare @task (Invoke, Prefect) in a file without Celery is not a task", async () => {
+    const s = await pyFileSourcesOf(`from invoke import task
+
+@task
+def build(c):
+    pass
+
+@flow.task
+def other():
+    pass
+`);
+    expect(brief(s)).toEqual([]);
   });
 });

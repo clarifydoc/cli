@@ -9,9 +9,23 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
 
   /** Names this file binds to a vector-store client: `qdrant = QdrantClient(…)`, `self.db = chromadb.Client()`. */
   private vectorClients = new Set<string>();
+  /** The file names Celery (an import, an app, `shared_task`): its `@x.task` functions are tasks. */
+  private celery = false;
+  /** Locals holding a Celery signature: `consume_task = consume_file.s(…)` → consume_task → consume_file. */
+  private signatures = new Map<string, string>();
 
   override beginFile(_tree: unknown, sourceText: string): void {
     this.vectorClients = new Set();
+    this.celery = /\bcelery\b|\bshared_task\b/i.test(sourceText);
+    this.signatures = new Map();
+    if (sourceText.includes(".s(") || sourceText.includes(".si(") || sourceText.includes(".signature(")) {
+      for (const m of sourceText.matchAll(/^[ \t]*([A-Za-z_]\w*)\s*=\s*(?:[A-Za-z_]\w*\.)*([A-Za-z_]\w*)\.(?:s|si|signature)\(/gm)) {
+        // Two assignments of one name to different tasks: refuse to choose.
+        const prev = this.signatures.get(m[1]!);
+        this.signatures.set(m[1]!, prev === undefined || prev === m[2]! ? m[2]! : "");
+      }
+      for (const [k, v] of this.signatures) if (!v) this.signatures.delete(k);
+    }
     if (!/QdrantClient|chromadb|Pinecone|MilvusClient|weaviate/.test(sourceText)) return;
     for (const m of sourceText.matchAll(/(?:^|\s)(?:self\.)?([A-Za-z_]\w*)\s*(?::\s*[\w.\[\]]+\s*)?=\s*(?:await\s+)?(?:[\w.]+\.)?(?:QdrantClient|AsyncQdrantClient|PersistentClient|HttpClient|Client|Pinecone|MilvusClient|WeaviateClient|connect_to_\w+)\s*\(/gm)) {
       // `chromadb.Client()` / `HttpClient()` only from chromadb itself.
@@ -21,6 +35,25 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
+    // Celery: a `@app.task` / `@shared_task` function consumes the task queue
+    // named after it (or the decorator's `name=`); `.delay`/`.apply_async`
+    // and `send_task` publish to it.
+    if (node.type === "decorated_definition" && this.celery) {
+      const def = node.childForFieldName("definition");
+      const task = node.children.find((d) => d.type === "decorator" && CELERY_TASK_RE.test(d.text));
+      const name = def?.type === "function_definition" ? def.childForFieldName("name")?.text : undefined;
+      if (task && def && name) {
+        const call = task.namedChildren.find((c) => c.type === "call");
+        const declared = call ? pyArg(call, "name", -1) : null;
+        sources.push(this.ds({
+          kind: "queue-consume",
+          name: "Celery: task",
+          target: declared ? declared.split(".").pop()! : name,
+          line: def.startPosition.row + 1,
+        }));
+      }
+      return;
+    }
     if (node.type === "call") {
       const fn = node.childForFieldName("function");
       const fnName = fn?.text;
@@ -40,6 +73,22 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
             line: node.startPosition.row + 1,
           }));
           return;
+        }
+        if ((leaf === "delay" || leaf === "apply_async") && /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\.(?:delay|apply_async)$/.test(fnName)) {
+          const held = fnName.split(".").slice(-2, -1)[0]!;
+          // A signature kept in a local (`consume_task = consume_file.s(…)`) is the task it signs.
+          const task = (fnName === `${held}.${leaf}` ? this.signatures.get(held) : undefined) ?? held;
+          if (task !== "self" && task !== "cls") {
+            sources.push(this.ds({ kind: "queue-publish", name: `Celery: ${leaf}`, target: task, line: node.startPosition.row + 1 }));
+            return;
+          }
+        }
+        if (leaf === "send_task" && fnName.includes(".")) {
+          const task = pyArg(node, "name", 0);
+          if (task && /^[\w.]+$/.test(task)) {
+            sources.push(this.ds({ kind: "queue-publish", name: "Celery: send_task", target: task.split(".").pop()!, line: node.startPosition.row + 1 }));
+            return;
+          }
         }
         if (leaf === "basic_consume") {
           sources.push(this.ds({
@@ -230,6 +279,9 @@ const PY_DB_ACCESS = dbVerbTable(
 /** Vector-store client calls that read or write a collection (Qdrant, Chroma, Pinecone, Milvus). */
 const PY_VECTOR_READS = /^(?:search|search_batch|query|query_points|query_batch_points|retrieve|scroll|count|recommend|discover|get_collection|get|collection_exists|get_or_create_collection|get_collection|facet)$/;
 const PY_VECTOR_WRITES = /^(?:upsert|delete|create_collection|recreate_collection|delete_collection|update_collection|set_payload|overwrite_payload|delete_payload|clear_payload|update_vectors|delete_vectors|batch_update_points|create_payload_index|add|insert|update)$/;
+
+/** `@app.task`, `@celery.task(bind=True)`, `@shared_task` — not a bare `@task` (Invoke, Prefect). */
+const CELERY_TASK_RE = /^@\s*(?:[A-Za-z_]\w*\.)+task\b|^@\s*shared_task\b/;
 
 function pyArg(call: Node, keyword: string, index: number): string | null {
   const args = call.childForFieldName("arguments");

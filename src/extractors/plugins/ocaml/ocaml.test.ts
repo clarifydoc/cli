@@ -91,6 +91,16 @@ describe("OCaml routes and data access", () => {
 });
 
 describe("OCaml packages", () => {
+  it("a [%rapper …] binding is a function, applied to () or not", async () => {
+    const a = await analyze([
+      "let open_orders =",
+      "  [%rapper get_many {sql| SELECT @int{id} FROM orders |sql} record_out] ()",
+      "let one = [%rapper get_one {sql| SELECT @int{id} FROM orders WHERE id = %int{id} |sql}]",
+      "let limit = 10",
+    ].join("\n"), "lib/db.ml");
+    expect(a.classes[0]!.methods.map((m) => m.name)).toEqual(["open_orders", "one"]);
+  });
+
   it("reads opam and dune-project dependencies", async () => {
     const { opamPackageManager } = await import("./package-manifests.js");
     const opam = 'opam-version: "2.0"\ndepends: [\n  "ocaml" {>= "4.14"}\n  "dream" {>= "1.0.0~alpha5"}\n  "caqti-lwt"\n  "alcotest" {with-test}\n]\n';

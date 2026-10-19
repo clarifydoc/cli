@@ -187,9 +187,9 @@ function fileBasename(p: string): string {
  *
  * Symbol names mirror the call-graph convention (`fn.name` for top-level
  * functions, `Class.method` for methods) so the keys line up with
- * `SymbolLink.sourceSymbol` and light up the existing trace index. DB calls
- * outside any function (module top-level) are dropped — they have no trace
- * symbol to attach to.
+ * `SymbolLink.sourceSymbol` and light up the existing trace index. A call
+ * outside any function belongs to the file's `<setup>` when the plugin made
+ * one (module-level code), and is dropped otherwise.
  */
 export function attributeDataAccessToSymbols(
   analyses: FileAnalysis[],
@@ -238,6 +238,8 @@ export function attributeDataAccessToSymbols(
       }
     }
     if (fns.length === 0 && inlineRouteAt.size === 0) continue;
+    const setupFn = (a.functions ?? []).find((f) => f.name === "<setup>");
+    const setup = setupFn ? { symbol: "<setup>", line: setupFn.line } : null;
 
     for (const ds of a.dataSources ?? []) {
       const isQueue = ds.kind === "queue-publish" || ds.kind === "queue-consume";
@@ -257,6 +259,9 @@ export function attributeDataAccessToSymbols(
       // Only the file's top-level `<setup>` contains it (or nothing does): an
       // inline route handler's call on that line is the better owner.
       if (!best || best.symbol === "<setup>") best = inlineRouteAt.get(ds.line) ?? best;
+      // Module-level code (a `new Worker("q", async (job) => …)` at the top of
+      // the file) is the file's `<setup>`, the symbol the call graph gives it.
+      if (!best && setup) best = setup;
       if (!best) continue;
 
       const raw = (ds.entity ?? "").trim();
