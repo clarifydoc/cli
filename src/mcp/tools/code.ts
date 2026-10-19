@@ -4,7 +4,7 @@ import { describeDrivers, describeGates } from "../../core/refactor-pressure.js"
 import { describeReasons } from "../../core/risk-verdict.js";
 import type { McpTool } from "../protocol.js";
 import { byOrdinal } from "../../core/ordinal.js";
-import type { ApiCallMiss, ApiRouteLinkStats, SymbolLink } from "../../types/analysis.js";
+import type { ApiCallMiss, ApiRouteLinkStats, ContractFinding, SymbolLink } from "../../types/analysis.js";
 import { symbolKey, type FileFacts, type LoadedAnalysis, type RouteWithFile } from "../store.js";
 import {
   booleanArg,
@@ -80,8 +80,9 @@ export function routesTool(ctx: ToolContext): McpTool {
           type: "boolean",
           description:
             "Instead of the routes: the calls in this repository that reach NO route (with why — no route at that " +
-            "path, wrong method, another service) and the API routes no in-repo call reaches. Finds a renamed or " +
-            "removed endpoint from both sides. `path`/`file` narrow it.",
+            "path, wrong method, another service), the API routes no in-repo call reaches, and the request bodies " +
+            "that disagree with their route (a required field not sent, an undeclared one sent, a wrong type). Finds a " +
+            "renamed or removed endpoint, and a broken contract, from both sides. `path`/`file` narrow it.",
         },
         limit: { type: "number", description: "Max routes (default 40)." },
       },
@@ -91,7 +92,7 @@ export function routesTool(ctx: ToolContext): McpTool {
       const loaded = await requireAnalysis(ctx);
       const { summary } = loaded;
       if (booleanArg(args, "gaps", false)) {
-        return { text: routeGaps(summary.apiRouteLinkStats, stringArg(args, "path"), stringArg(args, "file"), numberArg(args, "limit", 40, { max: 500 })) };
+        return { text: routeGaps(summary.apiRouteLinkStats, stringArg(args, "path"), stringArg(args, "file"), numberArg(args, "limit", 40, { max: 500 }), summary.contractFindings) };
       }
       const pathFilter = stringArg(args, "path");
       const methodFilter = stringArg(args, "method")?.toUpperCase();
@@ -283,12 +284,13 @@ function missExisting(m: ApiCallMiss): string {
 }
 
 /** The `gaps` view of `clarifydoc_routes`: calls that reach no route, routes no call reaches. */
-function routeGaps(stats: ApiRouteLinkStats | undefined, pathFilter: string | undefined, fileFilter: string | undefined, limit: number): string {
+function routeGaps(stats: ApiRouteLinkStats | undefined, pathFilter: string | undefined, fileFilter: string | undefined, limit: number, contracts: readonly ContractFinding[] = []): string {
+  const contractRows = contracts.filter((c) => (!pathFilter || contains(c.url, pathFilter) || contains(c.route.path, pathFilter)) && (!fileFilter || contains(c.file, fileFilter)));
   const misses = (stats?.misses ?? []).filter((m) =>
     (!pathFilter || contains(m.url, pathFilter)) && (!fileFilter || contains(m.file, fileFilter)));
   const uncalled = (stats?.uncalled ?? []).filter((r) =>
     (!pathFilter || contains(r.path, pathFilter)) && (!fileFilter || contains(r.file, fileFilter)));
-  if (misses.length === 0 && uncalled.length === 0) {
+  if (misses.length === 0 && uncalled.length === 0 && contractRows.length === 0) {
     return noResults({
       headline: pathFilter || fileFilter ? "No route gaps match the filter." : "No route gaps: every joinable call reaches a route, and every route of a called service is called.",
       holds: stats
@@ -307,6 +309,15 @@ function routeGaps(stats: ApiRouteLinkStats | undefined, pathFilter: string | un
     `## Routes no call in the repository reaches (${uncalled.length}${(stats?.uncalledCount ?? 0) > uncalled.length ? ` listed of ${stats!.uncalledCount}` : ""})`,
     "Only services some in-repo client calls; an endpoint here may still be called from outside.",
     ...bulletList(uncalled, limit, (r) => `${routeLabel(r.method, r.path)} (${loc(r.file, r.line)})`),
+    ...(contractRows.length > 0
+      ? [
+        "",
+        `## Request bodies that disagree with their route (${contractRows.length})`,
+        "Certain links only; judged where both the call and the route state the field.",
+        ...bulletList(contractRows, limit, (c) =>
+          `${c.method ?? "?"} ${c.url} — ${c.kind === "missing-field" ? `does not send required "${c.field}"` : c.kind === "unknown-field" ? `sends undeclared "${c.field}"` : `sends "${c.field}" as ${c.actual}, route declares ${c.expected}`} (${loc(c.file, c.line)} → ${loc(c.route.file, c.route.line)})`),
+      ]
+      : []),
   ]);
 }
 

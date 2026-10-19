@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import type { ApiRouteLinkStats, LayerViolation, SecurityIssue } from "../types/analysis.js";
+import type { ApiRouteLinkStats, ContractFinding, LayerViolation, SecurityIssue } from "../types/analysis.js";
 
 /**
  * Security findings as SARIF 2.1.0 — what GitHub code scanning and most CI
@@ -114,8 +114,27 @@ export interface StructuralFinding {
  * serve; the rest are warnings) and imports a team rule or the layer order
  * forbids. Calls are listed up to the summary's own cap.
  */
-export function structuralFindings(summary: { apiRouteLinkStats?: ApiRouteLinkStats; layerViolations?: readonly LayerViolation[] }): StructuralFinding[] {
+export function structuralFindings(summary: { apiRouteLinkStats?: ApiRouteLinkStats; layerViolations?: readonly LayerViolation[]; contractFindings?: readonly ContractFinding[] }): StructuralFinding[] {
   const out: StructuralFinding[] = [];
+  for (const c of summary.contractFindings ?? []) {
+    const call = `${c.method ?? "?"} ${c.url}`;
+    const route = `${c.route.path} (${c.route.file}:${c.route.line})`;
+    out.push({
+      ruleId: `clarifydoc/contract-${c.kind}`,
+      title: CONTRACT_TITLES[c.kind],
+      // A missing required field or a mistyped one fails the request; an extra one is ignored or rejected.
+      level: c.kind === "unknown-field" ? "warning" : "error",
+      message: c.kind === "missing-field"
+        ? `${call} does not send "${c.field}", which ${route} requires.`
+        : c.kind === "unknown-field"
+          ? `${call} sends "${c.field}", which ${route} does not declare.`
+          : `${call} sends "${c.field}" as ${c.actual}; ${route} declares ${c.expected}.`,
+      file: c.file,
+      line: c.line,
+      fingerprint: `${call} ${c.kind} ${c.field}`,
+      tags: ["api-contract"],
+    });
+  }
   for (const m of summary.apiRouteLinkStats?.misses ?? []) {
     const call = `${m.method ?? "?"} ${m.url}`;
     const served = m.existing?.length ? ` — served as ${m.existing.map((r) => `${r.method ?? "*"} ${r.path} (${r.file}:${r.line})`).join(", ")}` : "";
@@ -146,6 +165,12 @@ export function structuralFindings(summary: { apiRouteLinkStats?: ApiRouteLinkSt
   }
   return out;
 }
+
+const CONTRACT_TITLES: Record<ContractFinding["kind"], string> = {
+  "missing-field": "Request body misses a required field",
+  "unknown-field": "Request body sends a field the route does not declare",
+  "type-mismatch": "Request body field has the wrong type",
+};
 
 const ROUTE_MISS_TITLES: Record<NonNullable<ApiRouteLinkStats["misses"]>[number]["reason"], string> = {
   unmatched: "API call reaches no route",

@@ -62,6 +62,7 @@ import { buildResponsibilityProfiles } from "./responsibility-profile.js";
 import { computeRefactorPressure, resolveRefactorPressureConfig } from "./refactor-pressure.js";
 import { loadProjectConfig, matchesAnyGlob, resolveArchitectureOverrides } from "./project-config.js";
 import { isTestFile } from "./test-file-detector.js";
+import { checkContracts } from "./contract-check.js";
 import { isGeneratedFile } from "./generated-file-detector.js";
 import { TOOL_VERSION } from "./version.js";
 import { SCHEMA_VERSION } from "./element-registry.js";
@@ -1119,6 +1120,15 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     }
   }
 
+  // Request contracts: the body each certain call sends against the body its
+  // route declares (production callers only — a test may send anything).
+  const contractFindings = checkContracts(
+    apiRouteLinks.filter((l) => (l.sourceRole ?? "production") === "production"),
+    allApiCalls,
+    allRoutes,
+  );
+  if (contractFindings.length > 0) progress.detail(`  request contracts: ${contractFindings.length} finding(s)`);
+
   // Intra-file call structure: the edges exist in symbolLinks but nothing read
   // them, so "20 functions" was all the god-object check ever knew.
   const sameFileLinks = sameFileLinksByFile(symbolLinks);
@@ -1522,6 +1532,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     migrations: migrations.length > 0 ? migrations : undefined,
     apiRouteLinks: apiRouteLinks.length > 0 ? apiRouteLinks : undefined,
     apiRouteLinkStats: apiRouteLinkStats.calls > 0 ? apiRouteLinkStats : undefined,
+    ...(contractFindings.length > 0 ? { contractFindings } : {}),
     projectDependencies: projectDependencies.length > 0 ? projectDependencies : undefined,
     serviceAddresses: serviceAddresses.length > 0 ? serviceAddresses : undefined,
     proxyRules: proxyRules.length > 0 ? proxyRules : undefined,

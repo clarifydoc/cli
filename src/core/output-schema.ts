@@ -74,6 +74,7 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   screens: "required",
   apiRouteLinks: "optional",
   apiRouteLinkStats: "optional",
+  contractFindings: "optional",
   projectDependencies: "optional",
   serviceAddresses: "optional",
   proxyRules: "optional",

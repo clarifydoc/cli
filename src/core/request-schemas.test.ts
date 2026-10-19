@@ -138,11 +138,13 @@ describe("attachRequestSchemas", () => {
     expect(route.requestSchema).toEqual({
       type: "object",
       properties: { name: { type: "string" }, age: { type: "integer", format: "int32", nullable: true }, note: {} },
+      // Only the fields the handler names: the body may carry more.
+      additionalProperties: true,
     });
     // A single scalar body FIELD is a property, never the whole schema.
     const scalar = { ...bodyRoute("x"), params: [{ name: "name", type: "string", binding: "body" as const }] };
     attachRequestSchemas([scalar], analyses);
-    expect(scalar.requestSchema).toEqual({ type: "object", properties: { name: { type: "string" } } });
+    expect(scalar.requestSchema).toEqual({ type: "object", properties: { name: { type: "string" } }, additionalProperties: true });
     // Only the opaque whole-body marker: nothing to say.
     const opaque = { ...bodyRoute("x"), params: [{ name: "body", type: null, binding: "body" as const }] };
     expect(attachRequestSchemas([opaque], analyses)).toBe(0);

@@ -1054,6 +1054,25 @@ export interface ApiRouteLinkStats {
   uncalledCount?: number;
 }
 
+/**
+ * A disagreement between the body a call sends and the body its route
+ * declares (see `checkContracts`), on an EXTRACTED link. `field` is dotted
+ * for a nested field (`address.city`).
+ */
+export interface ContractFinding {
+  file: string;
+  line: number;
+  method: string | null;
+  url: string;
+  route: { file: string; line: number; path: string };
+  kind: "missing-field" | "unknown-field" | "type-mismatch";
+  field: string;
+  /** The declared type (`type-mismatch`). */
+  expected?: string;
+  /** The type the call sends (`type-mismatch`). */
+  actual?: string;
+}
+
 /** A call the route linker could not join (`ApiRouteLinkStats.misses`). */
 export interface ApiCallMiss {
   file: string;
@@ -2489,6 +2508,8 @@ export interface ProjectAnalysis {
   apiRouteLinks?: ApiRouteLink[];
   /** What the cross-tier linker did with every call — links, refusals, unmatched, by caller role. */
   apiRouteLinkStats?: ApiRouteLinkStats;
+  /** Request bodies that disagree with the route they reach (EXTRACTED links only). */
+  contractFindings?: ContractFinding[];
   /**
    * Sub-project → sub-project runtime dependencies: HTTP calls and broker
    * messages that cross between them, with the endpoints behind each and the

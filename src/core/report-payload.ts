@@ -45,6 +45,8 @@ export interface ReportPayload {
     uncalled: any[];
     uncalledCount: number;
   };
+  /** Request bodies that disagree with their route (`ProjectAnalysis.contractFindings`); plain paths. */
+  contractFindings?: any[];
   /** Sub-project → sub-project runtime dependencies (`ProjectDependency[]`); small, plain paths. */
   projectDependencies: any[];
   /** Wire form: `[fileRef, depRef[]][]` (decoded back to a Record client-side). */
@@ -365,6 +367,7 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
     apiCalls: withRoutes(summary),
     apiCallsLinked: true,
     ...(s.apiRouteLinkStats ? { routeGaps: routeGapsOf(s.apiRouteLinkStats) } : {}),
+    ...(s.contractFindings?.length ? { contractFindings: s.contractFindings } : {}),
     projectDependencies: s.projectDependencies ?? [],
     componentGraph: Object.entries(summary.componentGraph ?? {}).map(([f, deps]) => [
       ref(f),

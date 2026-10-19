@@ -275,7 +275,8 @@ export function attachRequestSchemas(routes: RouteRow[], analyses: FileAnalysis[
         const s = f.type ? builder.schemaFor(f.type, 1) : {};
         properties[f.name] = s.$ref && Object.keys(s).length === 1 && !f.type ? {} : s;
       }
-      schema = { type: "object", properties };
+      // Only the fields the handler names: the body has at least these.
+      schema = { type: "object", properties, additionalProperties: true };
     }
     route.requestSchema = schema;
     attached++;
