@@ -37,6 +37,20 @@ describe.skipIf(!existsSync(join(analysisDir, "project-summary.json")))("askTool
     const bad = await askTool(config, "routes", { limit: "many" });
     expect(bad.isError).toBe(true);
   });
+  it("projects an edit not made yet: proposed content, nothing written", async () => {
+    const { readFile } = await import("fs/promises");
+    const file = join(config.projectRoot, "services", "userService.ts");
+    const now = await readFile(file, "utf8");
+    const content = now.replace("export async function getUserById(id: number) {", "export async function getUserById(id: number, withPosts: boolean) {");
+    const r = await askTool(config, "impact", { proposed: [{ file: "services/userService.ts", content }] });
+    expect(r.isError).toBe(false);
+    expect(r.text).toMatch(/base: proposed edit/);
+    expect(r.text).toMatch(/\*\*breaking\*\* `getUserById` 1→2 required/);
+    expect(await readFile(file, "utf8")).toBe(now);
+    const bad = await askTool(config, "impact", { proposed: [{ file: "../etc/passwd", content: "" }] });
+    expect(bad.isError).toBe(true);
+  });
+
   it("lists every tool with its arguments", () => {
     const tools = listTools(config);
     expect(tools.find((t) => t.name === "clarifydoc_contract")?.args).toContain("path");

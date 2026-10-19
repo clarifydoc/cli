@@ -851,6 +851,37 @@ export function healthTool(ctx: ToolContext): McpTool {
   };
 }
 
+/** The impact of an edit not made yet: its content parsed in memory, its lines judged against the analysis. */
+async function proposedImpact(ctx: ToolContext, summary: Parameters<typeof import("../../core/impact-diff.js").computeImpactDiff>[0], proposed: Array<{ file?: unknown; content?: unknown }>) {
+  if (proposed.length > 20) return { text: "proposed: at most 20 files.", isError: true };
+  const contents = new Map<string, string | null>();
+  for (const p of proposed) {
+    const file = typeof p.file === "string" ? p.file.replace(/\\/g, "/").replace(/^\.\//, "") : "";
+    if (!file || file.startsWith("/") || /^[A-Za-z]:/.test(file) || file.split("/").includes("..")) return { text: `proposed: "${String(p.file)}" is not a project-relative path.`, isError: true };
+    if (p.content !== null && typeof p.content !== "string") return { text: `proposed: ${file} needs content (a string, or null to delete it).`, isError: true };
+    if (typeof p.content === "string" && p.content.length > 1_000_000) return { text: `proposed: ${file} is over 1 MB.`, isError: true };
+    contents.set(file, p.content as string | null);
+  }
+  const [{ computeImpactDiff, renderImpactMarkdown }, cs] = await Promise.all([import("../../core/impact-diff.js"), import("../../core/changed-symbols.js")]);
+  const files = [...contents.keys()];
+  const hunks = await cs.proposedHunks(ctx.store.projectRoot, contents);
+  const before = await cs.loadFileAnalyses(ctx.store.analysisDir, files);
+  const found = cs.symbolsInHunks(before, hunks);
+  const after = await cs.analyzeWorkingFiles(ctx.store.projectRoot, files, contents);
+  const impact = computeImpactDiff(summary, files, {
+    baseLabel: "proposed edit",
+    symbols: { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: cs.signatureChanges(before, after, summary.symbolLinks ?? []) },
+  });
+  return {
+    text: joinLines([
+      renderImpactMarkdown(impact),
+      "",
+      "Nothing was written: this is the analysis's answer for the content you proposed.",
+      impact.unknownFiles.length ? `New to the analysis: ${cap(impact.unknownFiles, 10).shown.join(", ")}` : "",
+    ]),
+  };
+}
+
 export function impactTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_impact",
@@ -858,7 +889,9 @@ export function impactTool(ctx: ToolContext): McpTool {
     description:
       "Project a set of changed files onto the analysis: which screens and API routes are affected, which ORM " +
       "entities and queues are touched, which files transitively import the changes, which tests to run, and a " +
-      "risk level. Defaults to the working tree vs HEAD (git); pass `files` to skip git entirely.",
+      "risk level. Defaults to the working tree vs HEAD (git); pass `files` to skip git entirely. Before an edit, " +
+      "pass `proposed` — each file's full new content — to see what it would break: the functions it changes, " +
+      "their callers, the routes above them, and signatures that would no longer fit their callers.",
     inputSchema: {
       type: "object",
       properties: {
@@ -869,11 +902,23 @@ export function impactTool(ctx: ToolContext): McpTool {
         },
         base: { type: "string", description: "Git ref to diff the working tree against (default HEAD)." },
         staged: { type: "boolean", description: "Use staged changes only (git diff --cached)." },
+        proposed: {
+          type: "array",
+          description: "An edit not made yet: each file's complete new content (null deletes it). At most 20 files of 1 MB.",
+          items: {
+            type: "object",
+            properties: { file: { type: "string", description: "Project-relative path." }, content: { type: ["string", "null"] } },
+            required: ["file", "content"],
+            additionalProperties: false,
+          },
+        },
       },
       additionalProperties: false,
     },
     handler: async (args) => {
       const loaded = await requireAnalysis(ctx);
+      const proposedArg = Array.isArray(args.proposed) ? (args.proposed as Array<{ file?: unknown; content?: unknown }>) : [];
+      if (proposedArg.length) return proposedImpact(ctx, loaded.summary, proposedArg);
       const explicit = stringArrayArg(args, "files");
       let changed: string[];
       let label: string;

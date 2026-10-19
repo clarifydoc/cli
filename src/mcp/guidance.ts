@@ -79,7 +79,7 @@ Suggested order:
    (policy, roles, scheme, or anonymous), which API versions they serve, and each parameter's binding; filter by
    those, and use clarifydoc_contract for one endpoint's full request shape before calling it.
    clarifydoc_services lifts the same links to sub-projects: which frontend, service or worker calls which.
-5. clarifydoc_health and clarifydoc_impact — findings, and the effect of the current git diff.
+5. clarifydoc_health and clarifydoc_impact — findings, and the effect of the current git diff (or, with proposed, of an edit before you make it).
 
 ${CAVEAT} Paths are project-relative, with \`path:line\` for anything you may want to open. If results look stale
 after edits, call clarifydoc_analyze (incremental, cheap).`;

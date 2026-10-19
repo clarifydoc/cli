@@ -1,5 +1,5 @@
 import { readFile } from "fs/promises";
-import { join } from "path";
+import { dirname, join } from "path";
 import { byOrdinal } from "./ordinal.js";
 import type { Confidence, FileAnalysis, SymbolLink } from "../types/analysis.js";
 
@@ -7,11 +7,14 @@ import type { Confidence, FileAnalysis, SymbolLink } from "../types/analysis.js"
 export type ChangedHunks = Map<string, Array<[number, number]>>;
 
 /**
- * Parse `git diff -U0` output into changed line ranges of the NEW side. A pure
- * deletion (`+12,0`) marks the line it was deleted before, so the function it
- * sat in still counts as changed.
+ * Parse `git diff -U0` output into changed line ranges of the NEW side (or,
+ * with `side: "old"`, of the old one — for an edit not made yet, judged
+ * against the analysis of the file as it is). A pure deletion (`+12,0`)
+ * marks the line it was deleted before, so the function it sat in still
+ * counts as changed; a pure insertion on the old side marks the line it
+ * follows.
  */
-export function parseUnifiedHunks(diff: string): ChangedHunks {
+export function parseUnifiedHunks(diff: string, side: "new" | "old" = "new"): ChangedHunks {
   const out: ChangedHunks = new Map();
   let file: string | null = null;
   for (const line of diff.split("\n")) {
@@ -20,10 +23,11 @@ export function parseUnifiedHunks(diff: string): ChangedHunks {
       file = p === "/dev/null" ? null : p.replace(/^b\//, "");
       continue;
     }
-    const m = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+    const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
     if (!m || !file) continue;
-    const start = Number(m[1]);
-    const count = m[2] === undefined ? 1 : Number(m[2]);
+    const start = Number(side === "old" ? m[1] : m[3]);
+    const countText = side === "old" ? m[2] : m[4];
+    const count = countText === undefined ? 1 : Number(countText);
     const range: [number, number] = count === 0 ? [Math.max(1, start), Math.max(1, start)] : [start, start + count - 1];
     (out.get(file) ?? out.set(file, []).get(file)!).push(range);
   }
@@ -215,8 +219,8 @@ export function signatureChanges(
  * analysis did — the "after" side of `signatureChanges`. Files the analysis
  * cannot read are skipped.
  */
-export async function analyzeWorkingFiles(projectRoot: string, files: readonly string[]): Promise<Map<string, Spans>> {
-  const [{ analyzeFile }, { getLanguageForFile }, { mkdtemp, rm }, { tmpdir }] = await Promise.all([
+export async function analyzeWorkingFiles(projectRoot: string, files: readonly string[], contents?: ReadonlyMap<string, string | null>): Promise<Map<string, Spans>> {
+  const [{ analyzeFile }, { getLanguageForFile }, { mkdtemp, rm, mkdir, writeFile }, { tmpdir }] = await Promise.all([
     import("./file-analyzer.js"),
     import("../parsers/language-map.js"),
     import("fs/promises"),
@@ -228,8 +232,20 @@ export async function analyzeWorkingFiles(projectRoot: string, files: readonly s
     for (const f of files) {
       const language = getLanguageForFile(f);
       if (!language) continue;
+      // Proposed content is parsed from a scratch copy; null proposes deleting the file.
+      let absolutePath = join(projectRoot, f);
+      if (contents?.has(f)) {
+        const text = contents.get(f);
+        if (text === null || text === undefined) {
+          out.set(f, { functions: [], classes: [] });
+          continue;
+        }
+        absolutePath = join(scratch, "proposed", f);
+        await mkdir(dirname(absolutePath), { recursive: true });
+        await writeFile(absolutePath, text);
+      }
       const res = await analyzeFile({
-        file: { absolutePath: join(projectRoot, f), relativePath: f, language },
+        file: { absolutePath, relativePath: f, language },
         frameworkIds: [],
         projectId: "root",
         outputOpts: { outputDir: scratch, pretty: false },
@@ -240,6 +256,63 @@ export async function analyzeWorkingFiles(projectRoot: string, files: readonly s
       if (res) out.set(f, { functions: res.analysis.functions, classes: res.analysis.classes });
       // A file the change deleted: every function it had is gone.
       else if (!(await import("fs")).existsSync(join(projectRoot, f))) out.set(f, { functions: [], classes: [] });
+    }
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+  return out;
+}
+
+/**
+ * The lines an edit not made yet would change, in the coordinates of the
+ * file as it is now — what the stored analysis describes. From
+ * `git diff --no-index -U0` when git is there; else the span between the
+ * common prefix and suffix (one region: an over-approximation for several
+ * separate edits, never an under-one). A missing current file is all new.
+ */
+export async function proposedHunks(projectRoot: string, proposals: ReadonlyMap<string, string | null>): Promise<ChangedHunks> {
+  const [{ execFile }, { mkdtemp, rm, writeFile: write }, { tmpdir }, { existsSync }] = await Promise.all([
+    import("child_process"),
+    import("fs/promises"),
+    import("os"),
+    import("fs"),
+  ]);
+  const out: ChangedHunks = new Map();
+  const scratch = await mkdtemp(join(tmpdir(), "clarifydoc-edit-"));
+  try {
+    for (const [file, next] of proposals) {
+      const path = join(projectRoot, file);
+      const before = existsSync(path) ? await readFile(path, "utf-8") : null;
+      if (before === null) continue;
+      const lines = before.split("\n").length;
+      if (next === null) {
+        out.set(file, [[1, lines]]);
+        continue;
+      }
+      if (next === before) continue;
+      const a = join(scratch, "a");
+      const b = join(scratch, "b");
+      await write(a, before);
+      await write(b, next);
+      const diff = await new Promise<string | null>((res) =>
+        execFile("git", ["diff", "--no-index", "-U0", "--no-color", a, b], { maxBuffer: 64 * 1024 * 1024 }, (err, stdout) =>
+          // Exit 1 means "they differ" — the answer, not a failure.
+          res(err && (err as { code?: number }).code !== 1 ? null : stdout),
+        ),
+      );
+      const ranges = diff !== null ? [...parseUnifiedHunks(diff.replace(/^\+\+\+ .*$/m, `+++ b/${file}`), "old").get(file) ?? []] : null;
+      if (ranges && ranges.length) {
+        out.set(file, ranges);
+        continue;
+      }
+      const x = before.split("\n");
+      const y = next.split("\n");
+      let p = 0;
+      while (p < x.length && p < y.length && x[p] === y[p]) p++;
+      let q = 0;
+      while (q < x.length - p && q < y.length - p && x[x.length - 1 - q] === y[y.length - 1 - q]) q++;
+      const start = Math.min(p + 1, lines);
+      out.set(file, [[start, Math.max(start, x.length - q)]]);
     }
   } finally {
     await rm(scratch, { recursive: true, force: true });

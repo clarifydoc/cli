@@ -64,3 +64,32 @@ describe("signatureChanges", () => {
     ]);
   });
 });
+
+describe("an edit not made yet", () => {
+  it("reads old-side ranges, a pure insertion as the line it follows", () => {
+    const diff = ["--- a/src/a.ts", "+++ b/src/a.ts", "@@ -3,2 +3,4 @@", "@@ -9,0 +12,3 @@", "@@ -20 +24 @@"].join("\n");
+    expect([...parseUnifiedHunks(diff, "old")]).toEqual([["src/a.ts", [[3, 4], [9, 9], [20, 20]]]]);
+  });
+
+  it("judges proposed content against the file as it is: its changed lines and its parsed signatures", async () => {
+    const { mkdtemp, rm, writeFile, mkdir } = await import("fs/promises");
+    const { tmpdir } = await import("os");
+    const { join } = await import("path");
+    const { proposedHunks, analyzeWorkingFiles } = await import("./changed-symbols.js");
+    const root = await mkdtemp(join(tmpdir(), "clarifydoc-proposed-"));
+    try {
+      await mkdir(join(root, "src"));
+      const now = ["export function a(x: number) {", "  return x;", "}", "", "export function b() {", "  return 2;", "}", ""].join("\n");
+      await writeFile(join(root, "src", "m.ts"), now);
+      const next = now.replace("  return 2;", "  return 3;").replace("export function a(x: number) {", "export function a(x: number, y: number) {");
+      const hunks = await proposedHunks(root, new Map([["src/m.ts", next], ["src/new.ts", "export const n = 1;\n"]]));
+      // Two separate edits, in today's line numbers; a file that does not exist yet has none.
+      expect([...hunks]).toEqual([["src/m.ts", [[1, 1], [6, 6]]]]);
+      const after = await analyzeWorkingFiles(root, ["src/m.ts", "src/gone.ts"], new Map([["src/m.ts", next], ["src/gone.ts", null]]));
+      expect(after.get("src/m.ts")!.functions.find((f) => f.name === "a")!.params.map((p) => p.name)).toEqual(["x", "y"]);
+      expect(after.get("src/gone.ts")).toEqual({ functions: [], classes: [] });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
