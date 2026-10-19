@@ -1,10 +1,11 @@
 import type { Tree } from "web-tree-sitter";
-import type { RouteInfo } from "../../../../types/analysis.js";
+import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { RouteExtractor } from "../../../routes/base.js";
 import { FUNCTIONAL_ROUTER_GATE_RE, extractSpringRoutes, extractSpringRoutesRegex } from "./spring.js";
 import { extractJaxrsMicronautRoutes } from "./jaxrs.js";
 import { extractKtorRoutes } from "./ktor.js";
 import { extractHaloExtensionRoutes } from "./halo.js";
+import { collectSecurityRules } from "./security-dsl.js";
 
 /**
  * Java / Kotlin route extraction — Spring (@GetMapping/@RequestMapping),
@@ -15,7 +16,7 @@ import { extractHaloExtensionRoutes } from "./halo.js";
 export const javaKotlinRouteExtractor: RouteExtractor = {
   languages: ["java", "kotlin"],
 
-  extractRoutes(tree: Tree, sourceText: string, filePath?: string): RouteInfo[] {
+  extractRoutes(tree: Tree, sourceText: string, filePath?: string, facts?: RouteFact[]): RouteInfo[] {
     const routes: RouteInfo[] = [];
 
     // Annotation routes name a `*Mapping`; functional endpoints build on `route()`.
@@ -41,6 +42,9 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
     if (sourceText.includes("io.ktor")) {
       extractKtorRoutes(tree.rootNode, routes);
     }
+
+    // Spring Security's URL rules, applied to every route by springSecurityResolver.
+    collectSecurityRules(sourceText, facts);
 
     return routes;
   },

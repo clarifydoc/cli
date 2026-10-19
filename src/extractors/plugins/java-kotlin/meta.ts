@@ -1,3 +1,4 @@
+import { springSecurityResolver } from "./routes/security-dsl.js";
 import type { Language } from "../../../types/analysis.js";
 import { jvmRequestSchema } from "./request-schema.js";
 import {
@@ -78,6 +79,8 @@ function jvmMeta(language: Language, opts: {
     ...(language === "java" ? javaManifest : kotlinManifest),
     ...(opts.preprocess ? { preprocess: opts.preprocess } : {}),
     routes: javaKotlinRouteExtractor,
+    // Spring Security's authorizeHttpRequests rules, on the routes they match.
+    routeResolvers: [springSecurityResolver],
     functionsClasses: jvmFunctionsClasses,
     requestSchema: jvmRequestSchema,
     importsExports: jvmImportsExports,
