@@ -5,6 +5,8 @@ import {
   DJ_ROOT_URLCONF,
   DJ_URLPATTERNS,
   DJ_VIEW_CLASS,
+  DRF_SETTINGS,
+  type DrfSettingsFact,
   DRF_REGISTER,
   DRF_ROUTER,
   type DjViewClassFact,
@@ -87,6 +89,8 @@ export const djangoUrlconfResolver: RouteResolver = {
     const routers = new Map<string, Map<string, { router?: DrfRouterFact; registers: Array<DrfRegisterFact & { line: number }> }>>();
     const viewFacts = new Map<string, DjViewClassFact>(); // `${file}::${class}`
     const roots: string[] = [];
+    // DRF's DEFAULT_PERMISSION_CLASSES per sub-project — null where settings files disagree.
+    const drfDefaults = new Map<string, string[] | null>();
     let any = false;
     for (const a of analyses) {
       for (const f of a.routeFacts ?? []) {
@@ -104,6 +108,10 @@ export const djangoUrlconfResolver: RouteResolver = {
           routers.set(a.filePath, byVar);
         } else if (f.kind === DJ_VIEW_CLASS && f.owner) {
           viewFacts.set(`${a.filePath}::${f.owner}`, f.data as DjViewClassFact);
+        } else if (f.kind === DRF_SETTINGS && !/(?:^|[/_])tests?(?:[/_.]|$)/.test(a.filePath)) {
+          const perms = (f.data as DrfSettingsFact).permissionClasses;
+          const prev = drfDefaults.get(a.projectId);
+          drfDefaults.set(a.projectId, prev === undefined || (prev && prev.join() === perms.join()) ? perms : null);
         } else if (f.kind === DJ_ROOT_URLCONF) {
           const file = ctx.resolveModule(a.filePath, (f.data as { module: string }).module);
           if (file) roots.push(file);
@@ -164,21 +172,27 @@ export const djangoUrlconfResolver: RouteResolver = {
      * (`LoginRequiredMixin`), or a `method_decorator(login_required)` on the
      * class or its `dispatch`.
      */
+    const permsAuth = (perms: string[]): Partial<Pick<RouteInfo, "auth" | "middleware">> => ({
+      middleware: perms,
+      auth: { policies: perms, roles: [], schemes: [], anonymous: perms.length === 0 || perms.includes("AllowAny"), inherited: true },
+    });
+    /** The settings' DEFAULT_PERMISSION_CLASSES, for a DRF view that states none, in the urlconf's sub-project. */
+    const drfDefault = (projectId: string): Partial<Pick<RouteInfo, "auth" | "middleware">> => {
+      const perms = drfDefaults.get(projectId);
+      return perms ? permsAuth(perms) : {};
+    };
     const authOf = (fact: DjViewClassFact, ref?: ClassRef): Partial<Pick<RouteInfo, "auth" | "middleware">> => {
       const perms = fact.permissionClasses;
-      if (perms) {
-        return {
-          middleware: perms,
-          auth: { policies: perms, roles: [], schemes: [], anonymous: perms.length === 0 || perms.includes("AllowAny"), inherited: true },
-        };
-      }
+      if (perms) return permsAuth(perms);
       if (!ref) return {};
       const mixins = externalBases(ref).filter((b) => AUTH_MIXINS.has(b));
       const decorators = classChain(ref).flatMap((c) => [
         ...(c.cls.decorators ?? []),
         ...(c.cls.methods.find((m) => m.name === "dispatch")?.decorators ?? []),
       ]);
-      return guardAuth([...mixins, ...decoratorGuards(decorators)], true);
+      const own = guardAuth([...mixins, ...decoratorGuards(decorators)], true);
+      if (own.auth) return own;
+      return externalBases(ref).some((b) => DRF_VIEW_BASE.test(b)) ? drfDefault(ref.projectId) : own;
     };
 
     /** A function view's guards, read off its decorators wherever the urlconf imports it from. */
@@ -189,7 +203,11 @@ export const djangoUrlconfResolver: RouteResolver = {
         ? (ctx.importIndex.localFor(urlconfFile, parts[0]!) ?? ctx.resolveModule(urlconfFile, parts.join(".")))
         : (ctx.importIndex.localFor(urlconfFile, fn) ?? urlconfFile);
       const def = file ? ctx.fileOf(file)?.functions.find((f) => f.name === fn) : undefined;
-      return def ? guardAuth(decoratorGuards(def.decorators ?? []), false) : {};
+      if (!def) return {};
+      const own = guardAuth(decoratorGuards(def.decorators ?? []), false);
+      // An `@api_view` function with no `@permission_classes` gets the settings' default.
+      if (own.auth || !(def.decorators ?? []).some((d) => /^@?(?:[\w.]+\.)?api_view\b/.test(d))) return own;
+      return drfDefault(ctx.fileOf(file!)?.projectId ?? "");
     };
 
     const emitView = (file: string, path: string, view: ViewRef, line: number, marker: string | undefined) => {
@@ -370,6 +388,9 @@ export function parseAction(decorator: string): { detail: boolean; methods: stri
   const urlPath = /url_path\s*=\s*[rbu]*(["'])(.*?)\1/.exec(text)?.[2] ?? null;
   return { detail, methods: methods.length ? methods : ["GET"], urlPath };
 }
+
+/** DRF's view bases (`APIView`, `ListCreateAPIView`, `ModelViewSet`, `GenericViewSet`): their permissions default to the settings'. */
+const DRF_VIEW_BASE = /APIView$|ViewSet$/;
 
 /** Django's auth mixins: a class-based view with one in its bases requires a signed-in user. */
 const AUTH_MIXINS = new Set(["LoginRequiredMixin", "PermissionRequiredMixin", "UserPassesTestMixin"]);

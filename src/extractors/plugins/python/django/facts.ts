@@ -18,6 +18,8 @@ export const DJ_ROOT_URLCONF = "dj:root-urlconf";
 export const DRF_ROUTER = "drf:router";
 export const DRF_REGISTER = "drf:register";
 export const DJ_VIEW_CLASS = "dj:view-class";
+/** `REST_FRAMEWORK = {"DEFAULT_PERMISSION_CLASSES": [...]}` in settings: what a DRF view states nothing of. */
+export const DRF_SETTINGS = "drf:settings";
 
 /** A view a urlconf entry names, as written. */
 export type ViewRef =
@@ -47,6 +49,10 @@ export interface DrfRegisterFact {
   viewset: string;
 }
 
+export interface DrfSettingsFact {
+  permissionClasses: string[];
+}
+
 /** Class attributes DRF reads at runtime, which the class extractor does not keep. */
 export interface DjViewClassFact {
   lookupField?: string;
@@ -56,7 +62,7 @@ export interface DjViewClassFact {
 }
 
 /** Cheap text gate: only files mentioning one of these get walked. */
-export const DJANGO_GATE = /urlpatterns|\.register\(|ROOT_URLCONF|lookup_field|lookup_url_kwarg|http_method_names|permission_classes/;
+export const DJANGO_GATE = /urlpatterns|\.register\(|ROOT_URLCONF|lookup_field|lookup_url_kwarg|http_method_names|permission_classes|REST_FRAMEWORK/;
 
 const URL_FUNCS = new Set(["path", "re_path", "url"]);
 
@@ -81,6 +87,11 @@ export function collectDjangoFacts(root: Node, facts: RouteFact[]): void {
       const right = expr.childForFieldName("right");
       if (left?.type !== "identifier" || !right) continue;
       const name = left.text;
+      if (name === "REST_FRAMEWORK" && right.type === "dictionary") {
+        const perms = dictList(right, "DEFAULT_PERMISSION_CLASSES");
+        if (perms) facts.push({ kind: DRF_SETTINGS, line, data: { permissionClasses: perms } satisfies DrfSettingsFact });
+        continue;
+      }
       if (name === "ROOT_URLCONF" && right.type === "string") {
         facts.push({ kind: DJ_ROOT_URLCONF, line, data: { module: pyString(right.text) } });
         continue;
@@ -267,6 +278,18 @@ function classFact(cls: Node, facts: RouteFact[]): void {
   if (Object.keys(data).length > 0) {
     facts.push({ kind: DJ_VIEW_CLASS, line: cls.startPosition.row + 1, owner: name, data });
   }
+}
+
+/** A dictionary's list of dotted class paths under `key`, as class names (`rest_framework.permissions.IsAuthenticated` → `IsAuthenticated`). */
+function dictList(dict: Node, key: string): string[] | null {
+  for (const pair of dict.namedChildren) {
+    if (pair.type !== "pair") continue;
+    const k = pair.childForFieldName("key");
+    const v = pair.childForFieldName("value");
+    if (k?.type !== "string" || pyString(k.text) !== key || !v || (v.type !== "list" && v.type !== "tuple")) continue;
+    return v.namedChildren.filter((c) => c.type === "string").map((c) => pyString(c.text).split(".").pop()!);
+  }
+  return null;
 }
 
 function positional(call: Node): Node[] {

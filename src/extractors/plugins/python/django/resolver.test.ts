@@ -241,6 +241,68 @@ def stats(request):
   });
 });
 
+describe("django-urlconf: DRF's DEFAULT_PERMISSION_CLASSES", () => {
+  const files = (settings: Record<string, string>) => ({
+    ...settings,
+    "config/urls.py": `
+from django.urls import path
+from api.views import ListView, OpenView, PlainView, stats, health
+
+urlpatterns = [
+    path("items/", ListView.as_view()),
+    path("open/", OpenView.as_view()),
+    path("plain/", PlainView.as_view()),
+    path("stats/", stats),
+    path("health/", health),
+]
+`,
+    "api/views.py": `
+from django.views import View
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.generics import ListAPIView
+from rest_framework.permissions import AllowAny
+from rest_framework.views import APIView
+
+class ListView(ListAPIView):
+    pass
+
+class OpenView(APIView):
+    permission_classes = [AllowAny]
+
+class PlainView(View):
+    pass
+
+@api_view(["GET"])
+def stats(request):
+    return None
+
+def health(request):
+    return None
+`,
+  });
+  const guards = async (settings: Record<string, string>) =>
+    Object.fromEntries(
+      (await analyze(files(settings))).flatMap((a) => a.routes).filter((r) => r.kind === "api")
+        .map((r) => [r.path, r.auth ? `${r.auth.anonymous ? "anonymous" : r.auth.policies.join("+")}` : "-"]),
+    );
+  const SETTINGS = `ROOT_URLCONF = "config.urls"
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
+    "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
+}
+`;
+
+  it("applies to DRF views and @api_view functions that state none, never to plain Django views", async () => {
+    const g = await guards({ "config/settings.py": SETTINGS, "config/test_settings.py": `REST_FRAMEWORK = {"DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"]}\n` });
+    expect(g).toEqual({ "/items/": "IsAuthenticated", "/open/": "anonymous", "/plain/": "-", "/stats/": "IsAuthenticated", "/health/": "-" });
+  });
+
+  it("is no default when two settings files disagree", async () => {
+    const g = await guards({ "config/settings.py": SETTINGS, "config/prod.py": `REST_FRAMEWORK = {"DEFAULT_PERMISSION_CLASSES": ["x.IsStaff"]}\n` });
+    expect(g["/items/"]).toBe("-");
+  });
+});
+
 describe("parseAction", () => {
   it("reads detail, methods and url_path, with DRF's defaults", () => {
     expect(parseAction('action(detail=True, methods=["get", "post"], url_path="notes")')).toEqual({
