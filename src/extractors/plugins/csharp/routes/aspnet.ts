@@ -174,8 +174,9 @@ function walkForCsharpRoutes(
     // Attribute routing and conventional routing never mix on one controller:
     // only a class with no template of its own (nor [ApiController], which
     // demands attribute routes) offers its plain actions to the route table.
+    // An abstract base's are kept too: every controller deriving from it serves them.
     const ownConventional: CsConventionalAction[] | undefined =
-      ownTemplate === null && !ownApiController && !isAbstract && /Controller$/.test(name ?? "") ? [] : undefined;
+      ownTemplate === null && !ownApiController && /Controller$/.test(name ?? "") ? [] : undefined;
     for (const child of node.children) {
       walkForCsharpRoutes(child, routes, inner, facts, own, ownCandidates, ownConventional);
     }
@@ -378,17 +379,21 @@ function parseMethodRoutes(
   }
 }
 
+/** The controller base classes' own virtual hooks — overriding one makes no action. */
+const CONTROLLER_HOOKS = /^(?:On[A-Z]\w*|Dispose|Initialize|Execute\w*|BeginExecute\w*|EndExecute\w*|HandleUnknownAction|CreateActionInvoker|Create\w*Provider)$/;
+
 /**
- * A method ASP.NET treats as an action: public, an instance method of its
- * own (not an override of a framework hook like `OnActionExecuting`), not
- * generic, not `[NonAction]`.
+ * A method ASP.NET treats as an action: public, an instance method (an
+ * override of a virtual action is one; of a framework hook like
+ * `OnActionExecuting`, not), not generic, not `[NonAction]`.
  */
 function isPlainAction(methodNode: Node, attrs: Node[]): boolean {
   const mods = methodNode.children.filter((c) => c.type === "modifier").map((c) => c.text);
-  if (!mods.includes("public") || mods.some((m) => m === "static" || m === "override" || m === "abstract" || m === "extern")) return false;
+  if (!mods.includes("public") || mods.some((m) => m === "static" || m === "abstract" || m === "extern")) return false;
   if (methodNode.childForFieldName("type_parameters") || findChildByType(methodNode, "type_parameter_list")) return false;
   if (attrs.some((a) => attributeName(a) === "NonAction")) return false;
-  return methodNode.childForFieldName("name")?.text !== "Dispose";
+  const name = methodNode.childForFieldName("name")?.text ?? "";
+  return !(CONTROLLER_HOOKS.test(name) && (mods.includes("override") || name === "Dispose"));
 }
 
 // ─── Auth: [Authorize] / [AllowAnonymous] ──────────────────────────────────

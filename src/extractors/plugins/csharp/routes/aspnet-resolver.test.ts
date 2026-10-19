@@ -377,6 +377,33 @@ public class ProductsController : ApiController {
     ]);
   });
 
+  it("serves a base controller's actions under each subclass, its overrides included", async () => {
+    const out = await analyze({
+      "Web/Program.cs": `app.MapControllerRoute("default", "{controller=Home}/{action=Index}/{id?}");`,
+      "Web/Controllers/CrudController.cs": `
+public abstract class CrudController : Controller {
+  public IActionResult List() => View();
+  public virtual IActionResult Details(int id) => View();
+  [HttpPost] public IActionResult Delete(int id) => Ok();
+  public override void OnActionExecuting(ActionExecutingContext c) { }
+}
+public class ProductsController : CrudController {
+  public override IActionResult Details(int id) => View("Product");
+  public IActionResult Export() => File(new byte[0], "text/csv");
+}
+public class OrdersController : CrudController { }`,
+    });
+    expect(rows(out)).toEqual([
+      "ANY /Orders/Details/{id} OrdersController.Details",
+      "ANY /Orders/List OrdersController.List",
+      "ANY /Products/Details/{id} ProductsController.Details",
+      "ANY /Products/Export ProductsController.Export",
+      "ANY /Products/List ProductsController.List",
+      "POST /Orders/Delete/{id} OrdersController.Delete",
+      "POST /Products/Delete/{id} ProductsController.Delete",
+    ]);
+  });
+
   it("reads Web API 2 [RoutePrefix] as the class template", async () => {
     const out = await analyze({
       "Site/Controllers/OrdersController.cs": `

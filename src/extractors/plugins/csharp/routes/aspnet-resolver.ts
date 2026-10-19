@@ -243,7 +243,22 @@ export const aspnetControllerInheritance: RouteResolver = {
     for (const [analysis, rows] of inheritedRows) analysis.routes = [...analysis.routes, ...rows];
 
     // 4. Controllers no attribute routes: the startup's conventional route table.
-    applyConventionalRoutes(analyses, controllers.values(), scopeOf);
+    /** The controller's project base controllers, nearest first. */
+    const ancestorsOf = (c: Controller): Controller[] => {
+      const out: Controller[] = [];
+      let cur: ClassRef = c.ref;
+      const seen = new Set<ClassRef>([cur]);
+      for (let depth = 0; depth < 8; depth++) {
+        const st = ctx.classes.supertypes(cur).find((s) => s.written === cur.cls.extends);
+        if (!st?.ref || seen.has(st.ref)) break;
+        seen.add(st.ref);
+        const base = controllers.get(st.ref);
+        if (base) out.push(base);
+        cur = st.ref;
+      }
+      return out;
+    };
+    applyConventionalRoutes(analyses, controllers.values(), scopeOf, ancestorsOf);
   },
 };
 
@@ -266,6 +281,7 @@ function applyConventionalRoutes(
   analyses: FileAnalysis[],
   controllers: Iterable<Controller>,
   scopeOf: (c: Controller) => InheritedScope,
+  ancestorsOf: (c: Controller) => Controller[],
 ): void {
   const byProject = new Map<string, Registered[]>();
   for (const a of analyses) {
@@ -288,45 +304,55 @@ function applyConventionalRoutes(
     const pattern = patterns.find((p) => !!p.webApi === webApi && servesArea(p, area));
     if (!pattern) continue;
     const controllerToken = c.ref.cls.name.replace(/Controller$/, "");
-    const paramsOf = (handler: string | null): string[] =>
-      c.ref.cls.methods.find((m) => m.name === handler)?.params.map((p) => p.name) ?? [];
+    const owner = c.ref.cls.name;
     const classGuards = [...scope.guards, ...c.fact.guards];
 
-    // Verb-attributed actions with no template of their own.
-    c.analysis.routes = c.analysis.routes.map((r) => {
-      if (r.owner !== c.ref.cls.name) return r;
-      const action = c.fact.actions.find((a) => a.line === r.line && a.verb === r.httpMethod);
-      if (!action || action.template !== null) return r;
-      const path = conventionalPath(pattern, controllerToken, action.action ?? action.handler, area, paramsOf(action.handler));
-      if (!path) return r;
-      const row: RouteInfo = { ...r, path };
-      if (r.params) row.params = rebindParams(r.params, path, false);
-      return row;
-    });
+    // Its own actions, then each base controller's it does not override —
+    // served at ITS route, the rows living where the handler code is.
+    const sources = [c, ...ancestorsOf(c)];
+    for (let k = 0; k < sources.length; k++) {
+      const src = sources[k]!;
+      const hidden = new Set(sources.slice(0, k).flatMap((s) => s.ref.cls.methods.map((m) => m.name)));
+      const paramsOf = (handler: string | null): string[] =>
+        src.ref.cls.methods.find((m) => m.name === handler)?.params.map((p) => p.name) ?? [];
 
-    // Plain public actions: no row yet (an overload of the same name may have
-    // one — MVC's GET form and its [HttpPost] submit are two actions).
-    const added: RouteInfo[] = [];
-    for (const action of c.raw.conventional ?? []) {
-      if (c.fact.synthetic.some((s) => s.handler === action.handler)) continue;
-      const path = conventionalPath(pattern, controllerToken, webApi ? null : action.action, area, paramsOf(action.handler));
-      if (!path) continue;
-      const row: RouteInfo = {
-        path,
-        httpMethod: webApi ? webApiVerb(action.handler) : null,
-        kind: "api",
-        handler: action.handler,
-        calls: [],
-        middleware: [...classGuards, ...action.guards].map((g) => g.text),
-        line: action.line,
-        owner: c.ref.cls.name,
-      };
-      const auth = buildAuth(classGuards, action.guards);
-      if (auth) row.auth = auth;
-      if (action.params) row.params = rebindParams(action.params, path, false);
-      added.push(row);
+      // Verb-attributed actions with no template of their own (step 1 already
+      // copied a base's under this controller, still at `/`).
+      src.analysis.routes = src.analysis.routes.map((r) => {
+        if (r.owner !== owner) return r;
+        const action = src.fact.actions.find((a) => a.line === r.line && a.verb === r.httpMethod);
+        if (!action || action.template !== null) return r;
+        const path = conventionalPath(pattern, controllerToken, action.action ?? action.handler, area, paramsOf(action.handler));
+        if (!path) return r;
+        const row: RouteInfo = { ...r, path };
+        if (r.params) row.params = rebindParams(r.params, path, false);
+        return row;
+      });
+
+      // Plain public actions: no row yet (an overload of the same name may have
+      // one — MVC's GET form and its [HttpPost] submit are two actions).
+      const added: RouteInfo[] = [];
+      for (const action of src.raw.conventional ?? []) {
+        if ((k > 0 && hidden.has(action.handler)) || src.fact.synthetic.some((s) => s.handler === action.handler)) continue;
+        const path = conventionalPath(pattern, controllerToken, webApi ? null : action.action, area, paramsOf(action.handler));
+        if (!path) continue;
+        const row: RouteInfo = {
+          path,
+          httpMethod: webApi ? webApiVerb(action.handler) : null,
+          kind: "api",
+          handler: action.handler,
+          calls: [],
+          middleware: [...classGuards, ...action.guards].map((g) => g.text),
+          line: action.line,
+          owner,
+        };
+        const auth = buildAuth(classGuards, action.guards);
+        if (auth) row.auth = auth;
+        if (action.params) row.params = rebindParams(action.params, path, false);
+        added.push(row);
+      }
+      if (added.length > 0) src.analysis.routes = [...src.analysis.routes, ...added];
     }
-    if (added.length > 0) c.analysis.routes = [...c.analysis.routes, ...added];
   }
 }
 

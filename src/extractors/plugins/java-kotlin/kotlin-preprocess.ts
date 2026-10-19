@@ -89,7 +89,14 @@ export function terminateAnnotatedDeclarations(src: string): string | null {
       if (at < 0) return null;
       const decl = c === "\n" && continues(last, beforeLast) ? null : declarationAt(src, at);
       if (decl) {
-        if (decl.annotated) edits.push(joinRun(src, at, decl.keyword, pending));
+        if (decl.annotated) {
+          edits.push(joinRun(src, at, decl.keyword, pending));
+          // `@A("x") class K { fun x() = 1 }`: a body that opens and closes on
+          // the keyword's line is still read as a lambda; a `;` before its
+          // closing brace makes it a class body.
+          const close = oneLineBodyClose(src, decl.keyword);
+          if (close >= 0) edits.push({ at: close, del: 0, text: ";" });
+        }
         else if (pending) edits.push({ at, del: 0, text: ";" });
         pending = decl.annotated;
         last = beforeLast = "";
@@ -186,6 +193,34 @@ function joinRun(src: string, start: number, keyword: number, terminate: boolean
     i++;
   }
   return { at: start, del: keyword - start, text: "\n".repeat(breaks) + (terminate ? ";" : "") + joined + " " };
+}
+
+/**
+ * The closing `}` of a class / object / interface body that opens and closes
+ * on the keyword's own line and holds something not already ended by `;`;
+ * -1 otherwise.
+ */
+function oneLineBodyClose(src: string, keyword: number): number {
+  const word = wordAt(src, keyword);
+  if (word !== "class" && word !== "interface" && word !== "object") return -1;
+  let parens = 0;
+  for (let i = keyword; i < src.length; ) {
+    const skipped = skipNonCode(src, i);
+    if (skipped < 0) return -1;
+    if (skipped > i) { i = skipped; continue; }
+    const c = src[i]!;
+    if (c === "\n") return -1;
+    if (c === "(") parens++;
+    else if (c === ")") parens--;
+    else if (c === "{" && parens === 0) {
+      const close = matchClose(src, i, "{", "}");
+      if (close < 0 || src.slice(i, close).includes("\n")) return -1;
+      const inner = src.slice(i + 1, close).trim();
+      return inner && !inner.endsWith(";") ? close : -1;
+    }
+    i++;
+  }
+  return -1;
 }
 
 function countBreaks(s: string): number {

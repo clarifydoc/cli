@@ -62,7 +62,9 @@ recorded in the git history only.
   the action takes one. Web API 2 actions answer the verb their name starts with. An MVC action with only
   `[HttpPost]` used to come out as `POST /`, and the unattributed GET form beside it not at all. A
   method-level `[Route("x")]` with no verb attribute is now a route (any verb). Without a registered
-  pattern nothing is invented.
+  pattern nothing is invented. A base controller's public actions are served under every controller
+  deriving from it (`/Orders/List` from `CrudController.List`), and an override of a virtual action is
+  an action of its own.
 - **PHP includes.** `require`/`include` (and `_once`) of a path the file spells statically —
   `__DIR__ . '/lib/db.php'`, `dirname(__FILE__)`, a plain `'inc/header.php'` — are imports, and the
   functions an included file defines resolve from bare calls. Bare function calls and `new X` were not
@@ -114,6 +116,9 @@ recorded in the git history only.
   a false dependency to nearly every importer in a monorepo.
 - Dead code: PowerShell cmdlets (`[Cmdlet]`, `PSCmdlet`) and Roslyn source generators, analyzers and code
   fixes are loaded by their host and no longer reported unreachable.
+- Kotlin: an annotated class, object or interface whose body opens and closes on one line
+  (`@Suppress("unused") class K { fun x() = 1 }`) was misread by the grammar as an expression and lost; a
+  `;` before its closing brace now keeps it, members and annotation included.
 - `this.save()` / `self.save()` resolves on the enclosing class and its bases first — not on whichever
   class in the file happens to define a `save`.
 - Dead code: a Java/Kotlin declaration under `@Suppress("unused")` / `@SuppressWarnings("unused")` is kept

@@ -120,3 +120,17 @@ fun Application.configureRouting() {}
     expect(terminateAnnotatedDeclarations(`@A\n@B\nclass X {\n  val s = """x\n}\n`)).toBeNull();
   });
 });
+
+describe("an annotated declaration with a one-line body", () => {
+  it("keeps the class, its members and its annotation, on their own lines", async () => {
+    const raw = `package app\n\n@Suppress("unused")\nclass K { fun x() = 1 }\n@Keep object O { fun y() = "}" }\n`;
+    const src = terminateAnnotatedDeclarations(raw)!;
+    expect(src.split("\n").length).toBe(raw.split("\n").length);
+    const tree = await parseSource(src, "kotlin" as any, "X.kt");
+    const classes = new JavaKotlinExtractor().extractClasses(tree, src);
+    expect(classes.map((c) => [c.name, c.line, c.methods.map((m) => m.name), c.decorators])).toEqual([
+      ["K", 4, ["x"], ['Suppress("unused")']],
+      ["O", 5, ["y"], ["Keep"]],
+    ]);
+  });
+});
