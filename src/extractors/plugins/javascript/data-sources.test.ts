@@ -662,3 +662,58 @@ describe("raw SQL handed to a driver", () => {
     expect(ds.filter((d) => d.target)).toEqual([]);
   });
 });
+
+describe("JS api-call — a verb on an untrusted receiver needs a request path", () => {
+  it("drops collection lookups whose key merely contains a slash", async () => {
+    const calls = await apiCallsOf(`
+      const cache = new Map<string, number>();
+      class Store { private seen: Set<string> = new Set(); has(k: string) { return this.seen.delete(\`a/\${k}\`); } }
+      function f(id: string) {
+        cache.get("user/1");
+        cy.get("[data-test=a/b]");
+        searchParams.get("next/page");
+      }`);
+    expect(calls).toEqual([]);
+  });
+
+  it("drops a slash-containing non-path argument on an unknown receiver", async () => {
+    const calls = await apiCallsOf(`function f(svc: any) { return svc.get("tools/call"); }`);
+    expect(calls).toEqual([]);
+  });
+
+  it("keeps rooted, absolute and base-prefixed paths on an unknown receiver", async () => {
+    const calls = await apiCallsOf(`
+      function f(svc: any, base: string) {
+        svc.get("/api/users");
+        svc.post("https://example.com/hook");
+        svc.delete(\`\${base}/items/1\`);
+      }`);
+    expect(calls.map((c) => c.name).sort()).toEqual(["delete", "get", "post"]);
+  });
+
+  it("keeps a relative path on a trusted client receiver", async () => {
+    const calls = await apiCallsOf(`function f() { return apiClient.get("users/1"); }`);
+    expect(calls.map((c) => c.target)).toEqual(["users/1"]);
+  });
+});
+
+describe("JS api-call — path descriptors count only when handed to a client", () => {
+  it("does not read route tables and mocks as requests", async () => {
+    const calls = await apiCallsOf(`
+      export const routes = [{ method: "GET", path: "/users" }, { path: "/items/:id", type: "delete" }];
+      register({ method: "POST", path: "/hooks" });`);
+    expect(calls).toEqual([]);
+  });
+
+  it("keeps Node's http.request({ method, path })", async () => {
+    const calls = await apiCallsOf(`import http from "node:http"; http.request({ method: "POST", path: "/api/jobs", host: "x" });`);
+    expect(calls.map((c) => c.target)).toEqual(["/api/jobs"]);
+  });
+});
+
+describe("JS api-call — an aliased Node request takes a path descriptor", () => {
+  it("keeps httpRequest({ method, path }) imported from node:http", async () => {
+    const calls = await apiCallsOf(`import { request as httpRequest } from "node:http"; httpRequest({ host: "127.0.0.1", path: "/rpc", method: "POST" });`);
+    expect(calls.map((c) => c.target)).toEqual(["/rpc"]);
+  });
+});

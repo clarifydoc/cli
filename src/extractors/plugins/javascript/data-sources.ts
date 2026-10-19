@@ -285,6 +285,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.sourceText = sourceText;
     this.gqlScanned = false;
     this.imports = null;
+    this.collectionReceivers = null;
   }
 
   /**
@@ -438,6 +439,34 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     return lit === null ? [] : [lit];
   }
 
+  /** Receivers this file declares as a collection: `const cache = new Map()`, `private seen: Set<string>`. */
+  private collectionReceivers: Set<string> | null = null;
+
+  private isCollectionReceiver(name: string): boolean {
+    if (NON_HTTP_RECEIVERS.has(name)) return true;
+    if (!this.collectionReceivers) {
+      this.collectionReceivers = new Set();
+      const kinds = "(?:Map|Set|WeakMap|WeakSet|URLSearchParams|Headers|FormData)";
+      const re = new RegExp(String.raw`(?:^|[\s,;({])(?:this\.)?([A-Za-z_$][\w$]*)\s*(?:[?!]?:\s*(?:Readonly)?${kinds}\b[^=;\n]*)?=\s*new\s+${kinds}\b|(?:^|[\s,;({])([A-Za-z_$][\w$]*)\s*[?!]?:\s*(?:Readonly)?${kinds}\s*<`, "g");
+      for (const m of this.sourceText.matchAll(re)) this.collectionReceivers.add((m[1] ?? m[2])!);
+    }
+    return this.collectionReceivers.has(name);
+  }
+
+  /** Whether an object literal is an argument of a call to an HTTP client (`http.request({…})`, `axios({…})`). */
+  private passedToHttpClient(obj: Node): boolean {
+    if (obj.parent?.type !== "arguments") return false;
+    const fn = obj.parent.parent?.childForFieldName("function") ?? null;
+    if (!fn) return false;
+    const leaf = calleeLeaf(fn);
+    if (!leaf) return false;
+    if (fn.type === "identifier") return isHttpRoot(leaf); // `request`, `http`, an imported `httpRequest` alias
+    if (fn.type !== "member_expression") return false;
+    const recv = directReceiver(fn) ?? memberRoot(fn);
+    const clientRecv = !!recv && (HTTP_RECEIVER_RE.test(recv) || /client$/i.test(recv) || /^https?$/i.test(recv));
+    return clientRecv && (HTTP_ROOTS.has(leaf.toLowerCase()) || HTTP_VERBS.has(leaf.toLowerCase()));
+  }
+
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
     // One-time gql-operation scan (no whole-file hook exists in the fused walk).
     if (!this.gqlScanned) this.scanGql(sources);
@@ -536,9 +565,16 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           // as an HTTP call to a non-URL argument.
           const argIsCall = firstArg?.type === "call_expression";
           const strictHttp = exactRoot || trustedReceiver;
+          // An untrusted verb call (`cache.get(k)`, `cy.get(sel)`, a local
+          // `put(…)` helper) has only its argument to go on, so the argument
+          // must be a request path — not merely contain a slash — and the
+          // receiver must not be a collection the file builds itself.
+          const urlEvidence = trusted
+            ? !!resolved && looksLikeUrl(resolved.url)
+            : !!resolved && urlShaped(resolved.url) && !(recv && this.isCollectionReceiver(recv));
           if (
             resolved != null &&
-            (looksLikeUrl(resolved.url) || (trusted && (!argIsCall || strictHttp)))
+            (urlEvidence || (trusted && (!argIsCall || strictHttp)))
           ) {
             sources.push(this.ds({
               kind: "api-call",
@@ -807,7 +843,10 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       // `path` is Node's `http.request({ method, path })` — trusted only beside a
       // verb, because a router location (`router.push({ path, params })`) has one too.
       const urls = this.descriptorUrls(node, "url");
-      if (urls.length === 0 && method) urls.push(...this.descriptorUrls(node, "path"));
+      // A `path` descriptor (`{ method, path }`, `{ path, type: "delete" }`) is
+      // also a route table entry, a mock or a menu item; it is a request only
+      // when it is handed to an HTTP client (`http.request({ method, path })`).
+      if (urls.length === 0 && method && this.passedToHttpClient(node)) urls.push(...this.descriptorUrls(node, "path"));
       const url = urls[0] ?? null;
       // A `method` sibling distinguishes a real request descriptor
       // (`{ method, url }`) from query/mutation cache keys and other metadata
@@ -1177,6 +1216,23 @@ function isHttpRoot(name: string): boolean {
 function looksLikeUrl(s: string): boolean {
   return s.includes("/") || /^https?:/i.test(s);
 }
+
+/**
+ * The stricter test for a call whose receiver says nothing about HTTP: the
+ * argument must BE a request path — rooted (`/api/x`, `./x`), absolute
+ * (`https://…`, `//host/x`) or a template hole in path position
+ * (`${base}/users`) — not merely contain a slash. `cy.get("[data-x=a/b]")`,
+ * `cache.get("user/1")` and `request("tools/call")` are not requests.
+ */
+function urlShaped(s: string): boolean {
+  return /^(?:\.{0,2}\/|[a-z][\w+.-]*:\/\/|\$\{[^}]+\}\/)/i.test(s);
+}
+
+/** Receivers that are never HTTP clients, whatever their verb: Cypress, URL/query helpers, caches. */
+const NON_HTTP_RECEIVERS = new Set([
+  "cy", "searchParams", "params", "query", "headers", "formData", "map", "cache", "store",
+  "localStorage", "sessionStorage", "storage", "registry", "seen", "visited",
+]);
 
 /**
  * DOM / JS-builtin receiver segments that share method names with ORM verbs
