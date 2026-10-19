@@ -330,7 +330,9 @@ function collectRawServices(doc: YamlMap, file: string): RawService[] {
 // ─── Service classification ─────────────────────────────────────────────────
 
 const INFRA_FAMILIES: Array<{ re: RegExp; kind: DeployedServiceKind; family: string }> = [
-  { re: /postgres|pgsql|timescale|cockroach/i, kind: "datastore", family: "postgres" },
+  { re: /postgres|pgsql|pgvector|timescale|cockroach/i, kind: "datastore", family: "postgres" },
+  // Vector databases: an embedding store is the datastore of a RAG service.
+  { re: /qdrant|weaviate|milvus|chroma(?:db)?(?![a-z])|vespa|marqo/i, kind: "datastore", family: "vector" },
   { re: /mysql|mariadb/i, kind: "datastore", family: "mysql" },
   { re: /mssql|sqlserver|sql-server/i, kind: "datastore", family: "sqlserver" },
   { re: /mongo/i, kind: "datastore", family: "mongodb" },

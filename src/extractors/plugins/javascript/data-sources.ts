@@ -286,6 +286,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.gqlScanned = false;
     this.imports = null;
     this.collectionReceivers = null;
+    this.clientKinds = null;
   }
 
   /**
@@ -437,6 +438,57 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     }
     const lit = literalString(n);
     return lit === null ? [] : [lit];
+  }
+
+  /** Receivers this file builds from an SDK client class, by what that client talks to. */
+  private clientKinds: Map<string, "sdk" | "vector"> | null = null;
+
+  /**
+   * What the client a chain starts on talks to, when the file builds it from a
+   * known SDK (`const client = new OpenAI()`, `new Client(…)` from the MCP
+   * SDK, `new QdrantClient(…)`): an API, or a vector store. Null for anything
+   * else, including every database client.
+   */
+  private clientKind(chain: string): "sdk" | "vector" | null {
+    if (!this.clientKinds) {
+      this.clientKinds = new Map();
+      const from = new Map<string, string>();
+      for (const m of this.sourceText.matchAll(/import\s+(?:type\s+)?(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\{([^}]*)\})?\s*from\s*['"]([^'"]+)['"]/g)) {
+        if (m[1]) from.set(m[1], m[3]!);
+        for (const part of (m[2] ?? "").split(",")) {
+          const local = part.trim().split(/\s+as\s+/).pop()?.trim();
+          if (local) from.set(local, m[3]!);
+        }
+      }
+      const kindOfClass = (cls: string): "sdk" | "vector" | null => {
+        const pkg = from.get(cls) ?? "";
+        return VECTOR_SDK_RE.test(pkg) || VECTOR_CLIENT_CLASS_RE.test(cls) ? "vector" : API_SDK_RE.test(pkg) ? "sdk" : null;
+      };
+      // `x = new QdrantClient(…)`, `x: QdrantClient`, and a local factory's
+      // product: `function getClient(): QdrantClient` … `const q = getClient()`.
+      for (const m of this.sourceText.matchAll(/(?:^|[\s,;({])(?:this\.)?([A-Za-z_$][\w$]*)\s*(?:[?!]?:\s*[\w$.<>]+\s*)?=\s*new\s+([A-Za-z_$][\w$]*)\s*\(/g)) {
+        const kind = kindOfClass(m[2]!);
+        if (kind) this.clientKinds.set(m[1]!, kind);
+      }
+      for (const m of this.sourceText.matchAll(/(?:^|[\s,;({])(?:this\.)?([A-Za-z_$][\w$]*)\s*[?!]?:\s*([A-Za-z_$][\w$]*)\b/g)) {
+        const kind = kindOfClass(m[2]!);
+        if (kind) this.clientKinds.set(m[1]!, kind);
+      }
+      const factories = new Map<string, "sdk" | "vector">();
+      for (const m of this.sourceText.matchAll(/function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*:\s*(?:Promise\s*<\s*)?([A-Za-z_$][\w$]*)/g)) {
+        const kind = kindOfClass(m[2]!);
+        if (kind) factories.set(m[1]!, kind);
+      }
+      if (factories.size > 0) {
+        for (const m of this.sourceText.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(/g)) {
+          const kind = factories.get(m[2]!);
+          if (kind) this.clientKinds.set(m[1]!, kind);
+        }
+      }
+    }
+    const parts = chain.split(".").map((p) => p.trim());
+    const root = parts[0] === "this" ? parts[1] ?? "" : parts[0]!;
+    return this.clientKinds.get(root) ?? null;
   }
 
   /** Receivers this file declares as a collection: `const cache = new Map()`, `private seen: Set<string>`. */
@@ -784,6 +836,25 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         const rawSql = !emittedApiCall && fnName && RAW_SQL_VERBS.has(fnName)
           ? rawSqlAccess(node.childForFieldName("arguments")?.namedChildren[0] ?? null)
           : null;
+        // A client built from an SDK: a vector store's collection operations
+        // are its data access; any other SDK (`openai.embeddings.create`, an
+        // MCP `client.callTool`) is not a database, whatever its verbs.
+        const sdk = !emittedApiCall && fn?.type === "member_expression" && ormChain ? this.clientKind(ormChain) : null;
+        if (sdk === "vector") {
+          const op = vectorStoreAccess(fnName, node);
+          if (op) {
+            sources.push(this.ds({
+              kind: "database",
+              name: ormChain!,
+              target: op.collection,
+              ...(op.collection ? { entity: op.collection } : {}),
+              line: node.startPosition.row + 1,
+              access: op.access,
+            }));
+          }
+          return;
+        }
+        if (sdk === "sdk") return;
         // Supabase: `supabase.from("posts").select(…)` — the table is the
         // argument, the access the verb chained after it.
         const supabase = !emittedApiCall && !rawSql && fnName === "from" ? supabaseTable(node, fn) : null;
@@ -1212,6 +1283,28 @@ function isServerRouteDef(fn: Node, callNode: Node): boolean {
     }
   }
   return false;
+}
+
+/** Packages whose clients call an API (LLM, payment, cloud, chat), never a database. */
+const API_SDK_RE = /^(?:openai|@anthropic-ai\/|@modelcontextprotocol\/|stripe|@aws-sdk\/client-(?!dynamodb|rds|s3\b)|twilio|@slack\/|googleapis|@google\/genai|@google-cloud\/(?!firestore|spanner|bigquery|datastore)|@octokit\/|octokit|@sendgrid\/|resend|ollama|cohere-ai|@mistralai\/|groq-sdk|@huggingface\/|replicate)/;
+/** Vector-store client packages and classes: their collections are data. */
+const VECTOR_SDK_RE = /^(?:@qdrant\/|chromadb|weaviate-client|weaviate-ts-client|@pinecone-database\/|@zilliz\/milvus)/;
+const VECTOR_CLIENT_CLASS_RE = /^(?:QdrantClient|ChromaClient|Pinecone|MilvusClient|WeaviateClient)$/;
+
+/** Collection reads and writes of a vector-store client: `client.search("docs", …)`, `client.upsert("docs", …)`. */
+const VECTOR_READS = /^(?:search|searchBatch|query|queryPoints|queryBatch|retrieve|scroll|count|recommend|discover|getCollection|get|collectionExists|facet)$/;
+const VECTOR_WRITES = /^(?:upsert|delete|deletePoints|createCollection|recreateCollection|deleteCollection|updateCollection|setPayload|overwritePayload|deletePayload|clearPayload|updateVectors|deleteVectors|batchUpdate|createPayloadIndex|deletePayloadIndex|insert|add|update)$/;
+
+function vectorStoreAccess(verb: string | null, call: Node): { collection: string | null; access: "read" | "write" } | null {
+  if (!verb) return null;
+  const access = VECTOR_READS.test(verb) ? "read" : VECTOR_WRITES.test(verb) ? "write" : null;
+  if (!access) return null;
+  const first = call.childForFieldName("arguments")?.namedChildren[0];
+  let collection: string | null = null;
+  if (first && (first.type === "string" || first.type === "template_string")) collection = stripQuotes(first.text);
+  else if (first?.type === "object") collection = literalString(objectPropValue(first, "collection_name") ?? objectPropValue(first, "collectionName") ?? objectPropValue(first, "name"));
+  if (collection && !/^[\w.-]+$/.test(collection)) collection = null;
+  return { collection, access };
 }
 
 /**

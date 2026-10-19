@@ -258,3 +258,27 @@ describe("detectDeployment", () => {
     }
   });
 });
+
+describe("detectDeployment — vector stores", () => {
+  it("classifies a vector database as a datastore", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "clarifydoc-vector-"));
+    try {
+      await writeFile(join(dir, "docker-compose.yml"), [
+        "services:",
+        "  qdrant:",
+        "    image: qdrant/qdrant:v1.17.0",
+        "  chroma:",
+        "    image: chromadb/chroma:latest",
+        "  app:",
+        "    build: .",
+        "",
+      ].join("\n"));
+      const dep = await detectDeployment(dir, { subProjects: [] });
+      const byName = new Map(dep!.services.map((s) => [s.name, s]));
+      expect(byName.get("qdrant")).toMatchObject({ kind: "datastore", family: "vector" });
+      expect(byName.get("chroma")).toMatchObject({ kind: "datastore", family: "vector" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

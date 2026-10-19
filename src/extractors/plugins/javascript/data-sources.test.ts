@@ -727,3 +727,44 @@ describe("JS database — Supabase tables", () => {
     expect(ds.map((d) => [d.entity, d.access])).toEqual([["posts", "read"], ["comments", "write"]]);
   });
 });
+
+describe("JS database — SDK clients and vector stores", () => {
+  it("does not read an API SDK's calls as database access", async () => {
+    const ds = await dbOf(`import OpenAI from "openai";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { PrismaClient } from "@prisma/client";
+const client = new OpenAI();
+const mcp = new Client({ name: "x", version: "1" });
+const prisma = new PrismaClient();
+async function f() {
+  await client.embeddings.create({ model: "m", input: "x" });
+  await mcp.callTool({ name: "t" });
+  await prisma.user.create({ data: {} });
+}`);
+    expect(ds.map((d) => d.name)).toEqual(["prisma.user.create"]);
+  });
+
+  it("reads a Qdrant client's collection operations", async () => {
+    const ds = await dbOf(`import { QdrantClient } from "@qdrant/js-client-rest";
+const client = new QdrantClient({ url: "http://qdrant:6333" });
+async function f() {
+  await client.upsert("chunks", { points });
+  await client.search("chunks", { vector, limit: 5 });
+  await client.createCollection("files", { vectors: { size: 768, distance: "Cosine" } });
+}`);
+    expect(ds.map((d) => [d.entity, d.access])).toEqual([["chunks", "write"], ["chunks", "read"], ["files", "write"]]);
+  });
+});
+
+describe("JS database — a vector client returned by a factory", () => {
+  it("follows a typed factory to the client it returns", async () => {
+    const ds = await dbOf(`import { QdrantClient } from "@qdrant/js-client-rest";
+let client: QdrantClient | null = null;
+export function getClient(): QdrantClient { return (client ??= new QdrantClient({ url })); }
+export async function index(collectionName: string) {
+  const qdrant = getClient();
+  await qdrant.upsert(collectionName, { points: [] });
+}`);
+    expect(ds.map((d) => [d.name, d.access])).toEqual([["qdrant.upsert", "write"]]);
+  });
+});

@@ -7,6 +7,19 @@ import { tableFrom } from "../shared/sql-string-sources.js";
 export class PythonDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["python"];
 
+  /** Names this file binds to a vector-store client: `qdrant = QdrantClient(…)`, `self.db = chromadb.Client()`. */
+  private vectorClients = new Set<string>();
+
+  override beginFile(_tree: unknown, sourceText: string): void {
+    this.vectorClients = new Set();
+    if (!/QdrantClient|chromadb|Pinecone|MilvusClient|weaviate/.test(sourceText)) return;
+    for (const m of sourceText.matchAll(/(?:^|\s)(?:self\.)?([A-Za-z_]\w*)\s*(?::\s*[\w.\[\]]+\s*)?=\s*(?:await\s+)?(?:[\w.]+\.)?(?:QdrantClient|AsyncQdrantClient|PersistentClient|HttpClient|Client|Pinecone|MilvusClient|WeaviateClient|connect_to_\w+)\s*\(/gm)) {
+      // `chromadb.Client()` / `HttpClient()` only from chromadb itself.
+      if (/^(?:Client|HttpClient|PersistentClient)$/.test(m[0]!.match(/(\w+)\s*\($/)![1]!) && !/\bchromadb\b/.test(m[0]!) && !/from\s+chromadb\b/.test(sourceText)) continue;
+      this.vectorClients.add(m[1]!);
+    }
+  }
+
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
     if (node.type === "call") {
       const fn = node.childForFieldName("function");
@@ -37,6 +50,25 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           }));
           return;
         }
+        // A vector store's collection operations: `qdrant.upsert(collection_name="chunks", …)`.
+        const recv = fnName.split(".").slice(0, -1).filter((p) => p !== "self").pop() ?? "";
+        if (this.vectorClients.has(recv)) {
+          const access = PY_VECTOR_READS.test(leaf) ? "read" : PY_VECTOR_WRITES.test(leaf) ? "write" : null;
+          if (access) {
+            const collection = pyArg(node, "collection_name", 0) ?? pyArg(node, "name", 0);
+            const named = collection && /^[\w.-]+$/.test(collection) ? collection : null;
+            sources.push(this.ds({
+              kind: "database",
+              name: fnName,
+              target: named,
+              ...(named ? { entity: named } : {}),
+              line: node.startPosition.row + 1,
+              access,
+            }));
+          }
+          return;
+        }
+
         // requests.get(url), httpx.post(url), session.get("/api/x")
         const http = httpCall(fn!, node);
         if (http) {
@@ -193,6 +225,10 @@ const PY_DB_ACCESS = dbVerbTable(
  * (`config.EXCHANGE` — still a usable join label). Empty-string literals
  * (pika's default exchange) return null.
  */
+/** Vector-store client calls that read or write a collection (Qdrant, Chroma, Pinecone, Milvus). */
+const PY_VECTOR_READS = /^(?:search|search_batch|query|query_points|query_batch_points|retrieve|scroll|count|recommend|discover|get_collection|get|collection_exists|get_or_create_collection|get_collection|facet)$/;
+const PY_VECTOR_WRITES = /^(?:upsert|delete|create_collection|recreate_collection|delete_collection|update_collection|set_payload|overwrite_payload|delete_payload|clear_payload|update_vectors|delete_vectors|batch_update_points|create_payload_index|add|insert|update)$/;
+
 function pyArg(call: Node, keyword: string, index: number): string | null {
   const args = call.childForFieldName("arguments");
   if (!args) return null;

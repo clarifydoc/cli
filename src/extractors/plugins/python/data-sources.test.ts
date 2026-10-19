@@ -137,3 +137,25 @@ describe("Python URLs and SQL held in locals", () => {
     ].join("\n"))).toEqual([["database", null, null, null]]);
   });
 });
+
+describe("Python data access — vector stores", () => {
+  it("reads a Qdrant client's collection operations and nothing from an API SDK", async () => {
+    const src = `from openai import OpenAI
+from qdrant_client import QdrantClient
+
+client = OpenAI()
+qdrant = QdrantClient(url="http://qdrant:6333")
+
+def embed(text):
+    r = client.embeddings.create(model="m", input=text)
+    qdrant.upsert(collection_name="chunks", points=[])
+    return qdrant.search(collection_name="chunks", query_vector=r, limit=5)
+`;
+    const tree = await parseSource(src, "python" as never, "x.py");
+    const ds = new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
+    expect(ds.map((d) => [d.name, d.entity, d.access])).toEqual([
+      ["qdrant.upsert", "chunks", "write"],
+      ["qdrant.search", "chunks", "read"],
+    ]);
+  });
+});
