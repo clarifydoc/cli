@@ -54,13 +54,19 @@ export async function readDefinitionAnswers(path: string): Promise<DefinitionAns
 
 /**
  * A definition source that replays answers. A question with more than one
- * distinct target is abstained on — the editor's providers can disagree (two
- * extensions for one language, an overload set), and layer 2 only adds links
- * it can stand behind. A question that was never put (the editor's budget ran
- * out) is skipped, not counted as a miss. There are no reference answers, so
- * Phase B does not run.
+ * distinct target keeps the one that lands on a definition the analysis
+ * knows (`isDefinition`) when exactly one does — a TypeScript alias answers
+ * with both the property and the function it names — and is otherwise
+ * abstained on: the editor's providers can disagree (two extensions for one
+ * language, an overload set), and layer 2 only adds links it can stand
+ * behind. A question that was never put (the editor's budget ran out) is
+ * skipped, not counted as a miss. There are no reference answers, so Phase B
+ * does not run.
  */
-export function answersDefinitionSource(file: DefinitionAnswerFile): DefinitionSource & { abstained(): number } {
+export function answersDefinitionSource(
+  file: DefinitionAnswerFile,
+  isDefinition: (file: string, line: number) => boolean = () => false,
+): DefinitionSource & { abstained(): number } {
   const byPos = new Map<string, DefinitionAnswer>();
   for (const a of file.answers) byPos.set(`${a.file}:${a.line}:${a.column}`, a);
   let abstained = 0;
@@ -70,12 +76,13 @@ export function answersDefinitionSource(file: DefinitionAnswerFile): DefinitionS
     async getDefinition(f, line, col): Promise<DefinitionResult[]> {
       const a = byPos.get(`${f}:${line + 1}:${col}`);
       if (!a || a.targets.length === 0) return [];
-      const distinct = new Map(a.targets.map((t) => [`${t.file}:${t.line}`, t]));
-      if (distinct.size > 1) {
+      let distinct = [...new Map(a.targets.map((t) => [`${t.file}:${t.line}`, t])).values()];
+      if (distinct.length > 1) distinct = distinct.filter((t) => isDefinition(t.file, t.line));
+      if (distinct.length !== 1) {
         abstained++;
         return [];
       }
-      const t = [...distinct.values()][0]!;
+      const t = distinct[0]!;
       return [{ uri: t.file, line: t.line - 1, character: 0 }];
     },
     getReferences: async () => [],

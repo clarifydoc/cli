@@ -115,7 +115,16 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
   let answers: (import("../lsp/lsp-enhancer.js").DefinitionSource & { abstained(): number }) | undefined;
   if (options.answers) {
     const { answersDefinitionSource, readDefinitionAnswers } = await import("../lsp/answers-source.js");
-    answers = answersDefinitionSource(await readDefinitionAnswers(resolve(options.answers)));
+    // The lines where the analysis declares something: what a disagreeing answer is narrowed to.
+    const declared = new Set<string>();
+    for (const fa of perFileAnalyses) {
+      for (const fn of fa.functions) declared.add(`${fa.filePath}:${fn.line}`);
+      for (const cls of fa.classes) {
+        declared.add(`${fa.filePath}:${cls.line}`);
+        for (const m of cls.methods) declared.add(`${fa.filePath}:${m.line}`);
+      }
+    }
+    answers = answersDefinitionSource(await readDefinitionAnswers(resolve(options.answers)), (f, line) => declared.has(`${f}:${line}`));
   }
   const lspResult = await enhanceWithLsp({
     projectRoot,

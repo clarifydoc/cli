@@ -44,23 +44,31 @@ describe.skipIf(!existsSync(join(analysis, "project-summary.json")))("lsp-update
   });
 
   it("links an unambiguous answer, abstains on a disagreement, drops paths outside the project", async () => {
-    const [one, two, three] = queries;
+    const [one, two, three, four] = queries;
+    const summary = JSON.parse(await readFile(join(analysis, "services", "userService.ts.json"), "utf-8"));
+    const FN_LINE: number = summary.functions[0].line;
     const answers: DefinitionAnswerFile = {
       source: "editor",
       servers: ["typescript"],
       answers: [
         { ...one!, targets: [{ file: "routes/users.ts", line: 14 }, { file: "routes/users.ts", line: 14 }] },
         { ...two!, targets: [{ file: "routes/users.ts", line: 14 }, { file: "routes/auth.ts", line: 9 }] },
+        // An alias: the property and the function it names — only the function is a declaration.
+        { ...four!, targets: [{ file: "middleware/auth.ts", line: 3 }, { file: "services/userService.ts", line: FN_LINE }] },
         { ...three!, targets: [{ file: "../outside.ts", line: 1 }] },
       ],
     };
     await writeFile(join(dir, "a.json"), JSON.stringify(answers));
     const r = await updateLsp({ analysisDir: join(dir, "an"), projectRoot: fixture, answers: join(dir, "a.json") });
-    expect(r).toMatchObject({ source: "editor", serversUsed: ["typescript"], lspResolvedCount: 1, referenceLinksCount: 0, abstained: 1 });
+    expect(r).toMatchObject({ source: "editor", serversUsed: ["typescript"], lspResolvedCount: 2, referenceLinksCount: 0, abstained: 1 });
     const enh = JSON.parse(await readFile(join(dir, "an", "lsp-enhancement.json"), "utf-8"));
     expect(enh.lspStats.source).toBe("editor");
     const added = enh.symbolLinks.filter((l: { resolvedBy?: string }) => l.resolvedBy === "lsp");
-    expect(added).toEqual([expect.objectContaining({ sourceFile: one!.file, sourceLine: one!.line, targetFile: "routes/users.ts", targetLine: 14, strategy: "lsp-definition" })]);
+    expect(added).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceFile: one!.file, sourceLine: one!.line, targetFile: "routes/users.ts", targetLine: 14, strategy: "lsp-definition" }),
+      expect.objectContaining({ sourceFile: four!.file, sourceLine: four!.line, targetFile: "services/userService.ts", targetLine: FN_LINE }),
+    ]));
+    expect(added).toHaveLength(2);
     // A budgeted editor run never overwrites a full Docker capture.
     expect(existsSync(join(dir, "an", "lsp-ground-truth.json"))).toBe(false);
   });
