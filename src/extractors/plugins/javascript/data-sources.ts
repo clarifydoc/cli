@@ -1,3 +1,4 @@
+import { resolveRtkHooks } from "./rtk-query.js";
 import type { Node, Tree } from "web-tree-sitter";
 import type { Confidence, DataSourceInfo, CallInfo, FileAnalysis, JsonSchemaNode, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor, type ProjectApiCall } from "../../data-sources/base.js";
@@ -248,6 +249,23 @@ const SOCKET_IO_RESERVED = new Set([
   "reconnect_attempt", "reconnect_error", "reconnect_failed", "reconnecting", "ping", "pong", "newListener", "removeListener",
 ]);
 
+/** An RTK Query API slice: the file builds one, and the base its `fetchBaseQuery` names. */
+function rtkEvidence(src: string): { slice: boolean; base: string } {
+  const slice = /\bcreateApi\s*\(|\.injectEndpoints\s*\(/.test(src);
+  const base = slice ? /fetchBaseQuery\s*\(\s*\{[^}]*?\bbaseUrl\s*:\s*['"`]([^'"`$]*)['"`]/.exec(src)?.[1] ?? "" : "";
+  return { slice, base };
+}
+
+/** What an arrow function returns: its expression body, or a block's single `return`. */
+function arrowResult(fn: Node): Node | null {
+  const body = fn.childForFieldName("body");
+  if (!body) return null;
+  if (body.type === "parenthesized_expression") return body.namedChild(0);
+  if (body.type !== "statement_block") return body;
+  const ret = body.namedChildren.filter((c) => c.type === "return_statement");
+  return ret.length === 1 ? ret[0]!.namedChild(0) : null;
+}
+
 /** A tRPC client call's verb → the HTTP method its link sends (subscriptions go over a socket). */
 const TRPC_CLIENT_VERBS = new Map<string, string>([
   ...["query", "useQuery", "useSuspenseQuery", "useInfiniteQuery", "useSuspenseInfiniteQuery", "queryOptions", "infiniteQueryOptions",
@@ -293,7 +311,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
    * cross-tier linker can join.
    */
   override resolveProject(calls: ProjectApiCall[], analyses: FileAnalysis[], ctx: ProjectContext): number {
-    return resolveUrlBuilders(calls, analyses, ctx);
+    return resolveRtkHooks(calls, analyses, ctx) + resolveUrlBuilders(calls, analyses, ctx);
   }
 
   /**
@@ -323,6 +341,63 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   private mq: MqEvidence | null = null;
   /** The file names tRPC (its client import), so `x.y.useQuery()` chains are procedure calls. */
   private trpcClient: boolean | null = null;
+  /** RTK Query: whether the file defines an API slice, and the slice's `fetchBaseQuery` base. */
+  private rtk: { slice: boolean; base: string } | null = null;
+
+  /**
+   * RTK Query. In an API slice (`createApi` / `injectEndpoints`), each
+   * `build.query({ query: … })` / `build.mutation(…)` endpoint is an api-call
+   * at the slice's base URL plus the path its `query` returns (a string, or
+   * `{ url, method }`), tagged with the endpoint's name. Elsewhere, a generated
+   * hook (`useGetPostsQuery`, `useLazyGetPostsQuery`, `useAddPostMutation`) or
+   * `api.endpoints.getPosts.initiate()` is a call to that endpoint, whose
+   * method and URL the project pass fills from the slice the hook is imported
+   * from (`resolveRtkHooks`).
+   */
+  /** The object is what an RTK Query endpoint's `query` returns. */
+  private inRtkQuery(node: Node): boolean {
+    if (!(this.rtk ??= rtkEvidence(this.sourceText)).slice) return false;
+    let n: Node | null = node.parent;
+    for (let i = 0; n && i < 6; i++, n = n.parent) {
+      if ((n.type === "pair" || n.type === "method_definition") && (n.childForFieldName("key") ?? n.childForFieldName("name"))?.text === "query") return true;
+    }
+    return false;
+  }
+
+  private rtkCall(node: Node, fn: Node | null, fnName: string, sources: DataSourceInfo[]): boolean {
+    const line = node.startPosition.row + 1;
+    if (fn?.type === "member_expression" && (fnName === "query" || fnName === "mutation" || fnName === "infiniteQuery")) {
+      const rtk = (this.rtk ??= rtkEvidence(this.sourceText));
+      const pair = node.parent?.type === "pair" ? node.parent : null;
+      const endpoint = pair?.childForFieldName("key")?.text;
+      if (!rtk.slice || !endpoint || fn.childForFieldName("object")?.type !== "identifier") return false;
+      const def = node.childForFieldName("arguments")?.namedChildren[0];
+      // `query: (id) => …`, or the method shorthand `query(id) { return … }`.
+      const query = def?.type === "object"
+        ? objectPropValue(def, "query") ?? def.namedChildren.find((m) => m.type === "method_definition" && m.childForFieldName("name")?.text === "query") ?? null
+        : null;
+      const returned = query && /arrow_function|function|method_definition/.test(query.type) ? arrowResult(query) : null;
+      const spec = returned?.type === "object" ? returned : null;
+      const path = spec ? literalString(objectPropValue(spec, "url")) : returned ? literalString(returned) : null;
+      if (path === null) return false;
+      const method = (spec ? literalString(objectPropValue(spec, "method")) : null)?.toUpperCase() ?? (fnName === "mutation" ? "POST" : "GET");
+      const target = rtk.base ? `${rtk.base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}` : path.startsWith("/") ? path : `/${path}`;
+      sources.push(this.ds({ kind: "api-call", name: method, target, line, endpoint: stripQuotes(endpoint) }));
+      return true;
+    }
+    // `useGetPostsQuery(…)` imported from a slice; `api.endpoints.getPosts.initiate(…)`.
+    const hook = fn?.type === "identifier" ? /^use(?:Lazy)?([A-Z][\w$]*?)(?:Query|Mutation|InfiniteQuery|QueryState)$/.exec(fnName) : null;
+    const initiate = fn?.type === "member_expression" && fnName === "initiate" ? /\.endpoints\.([\w$]+)\.initiate$/.exec(fn.text.replace(/\s+/g, "")) : null;
+    if (hook && (this.imports ??= importEvidence(this.sourceText)).names.has(fnName)) {
+      sources.push(this.ds({ kind: "api-call", name: fnName, target: null, line, endpoint: hook[1]![0]!.toLowerCase() + hook[1]!.slice(1) }));
+      return true;
+    }
+    if (initiate) {
+      sources.push(this.ds({ kind: "api-call", name: fn!.text.replace(/\s+/g, "").split(".")[0]!, target: null, line, endpoint: initiate[1]! }));
+      return true;
+    }
+    return false;
+  }
 
   override beginFile(tree: Tree, sourceText: string): void {
     this.root = tree.rootNode;
@@ -333,6 +408,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.imports = null;
     this.mq = null;
     this.trpcClient = null;
+    this.rtk = null;
     this.collectionReceivers = null;
     this.routerReceivers = null;
     this.clientKinds = null;
@@ -635,6 +711,9 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       // database op: `apiClient.get("/owners")` is HTTP, but its leaf `get`
       // collides with Drizzle's `.get()` in ORM_METHODS.
       let emittedApiCall = false;
+
+      // RTK Query: an endpoint definition in an API slice, or a component's generated hook.
+      if (fnName && this.rtkCall(node, fn, fnName, sources)) return;
 
       // tRPC client: `trpc.post.byId.useQuery(…)`, `api.post.create.useMutation()`,
       // `utils.post.byId.fetch()` request the procedure's path (see routes/trpc.ts).
@@ -1079,7 +1158,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       // a GET by jQuery's default, left unnamed so the linker matches on path.
       // A `handler` makes it the opposite: an inbound route config
       // (`fastify.route({ method, url, handler })`).
-      if (url && !hasProp(node, "handler")) {
+      // An RTK Query endpoint's `{ url, method }` is the endpoint's own row (rtkCall).
+      if (url && !hasProp(node, "handler") && !this.inRtkQuery(node)) {
         const requestShaped =
           !method &&
           node.parent?.type === "arguments" &&

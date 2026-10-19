@@ -1209,6 +1209,12 @@ export interface DataSourceInfo {
    */
   baseEnv?: string;
   /**
+   * For `api-call`: the named endpoint the call is declared as or invokes (RTK
+   * Query `getPosts`). A call through a generated hook states only the name;
+   * the project pass fills its method and URL from the endpoint's definition.
+   */
+  endpoint?: string;
+  /**
    * For `api-call`: the client INSTANCE the request goes through, when it is
    * a plain variable (`apiClient` in `apiClient.get("/users")`). A project
    * pass prepends that client's base URL (`FileAnalysis.httpClientBases`, in
