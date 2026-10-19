@@ -2072,7 +2072,7 @@ export type SecurityCategory =
   | "command-injection" | "debug-statement" | "todo-fixme"
   | "pickle" | "subprocess-shell" | "bare-except"
   | "deserialization" | "xxe" | "weak-crypto" | "insecure-config" | "missing-auth"
-  | "path-traversal" | "ssrf" | "open-redirect";
+  | "path-traversal" | "ssrf" | "open-redirect" | "safe-method-write";
 
 export interface SecurityIssue {
   category: SecurityCategory;

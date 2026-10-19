@@ -49,3 +49,23 @@ describe("anonymousWriteFindings", () => {
     expect(found.map((f) => [f.category, f.snippet, f.cwe])).toEqual([["missing-auth", "POST /orders → h", "CWE-306"]]);
   });
 });
+
+describe("safeMethodWriteFindings", () => {
+  const route = (method: string, path: string) =>
+    ({ path, httpMethod: method, kind: "api", handler: "h", line: 5, calls: [], middleware: [], filePath: "Ctl.cs" }) as never;
+  const flow = (label: string, effect: string, resource = "Orders") =>
+    ({ entryKind: "route", entryLabel: label, entryFile: "Ctl.cs", effect, resource, distance: 2, confidence: "INFERRED" }) as never;
+
+  it("flags a GET or HEAD that writes, naming the tables, and no other method", async () => {
+    const { safeMethodWriteFindings } = await import("./finding-entries.js");
+    const found = safeMethodWriteFindings(
+      [route("GET", "/orders/{id}/confirm"), route("GET", "/orders"), route("POST", "/orders"), route("HEAD", "/ping")],
+      [flow("GET /orders/{id}/confirm", "db-write"), flow("GET /orders/{id}/confirm", "db-write", "AuditLog"), flow("GET /orders", "db-read"), flow("POST /orders", "db-write"), flow("HEAD /ping", "db-write", "Visits")],
+    );
+    expect(found.map((f) => [f.category, f.snippet, f.cwe])).toEqual([
+      ["safe-method-write", "GET /orders/{id}/confirm → h", "CWE-650"],
+      ["safe-method-write", "HEAD /ping → h", "CWE-650"],
+    ]);
+    expect(found[0]!.message).toContain("writes AuditLog, Orders");
+  });
+});

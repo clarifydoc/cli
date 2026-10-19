@@ -98,6 +98,42 @@ const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
  * reset, a webhook), which the message asks to confirm — a route with no
  * declared auth at all is "unknown", never flagged.
  */
+/**
+ * A GET or HEAD route whose data flow writes a table: a safe method that
+ * changes state can be triggered by a link, a prefetch or a crawler, and no
+ * CSRF defence covers it. The finding names the tables written.
+ */
+export function safeMethodWriteFindings(
+  routes: ReadonlyArray<RouteInfo & { filePath: string }>,
+  dataFlows: readonly DataFlowPath[],
+): SecurityIssue[] {
+  const writes = new Map<string, Set<string>>();
+  for (const f of dataFlows) {
+    if (f.entryKind !== "route" || f.effect !== "db-write") continue;
+    const key = `${f.entryFile}\u0000${f.entryLabel}`;
+    (writes.get(key) ?? writes.set(key, new Set()).get(key)!).add(f.resource);
+  }
+  const out: SecurityIssue[] = [];
+  for (const r of routes) {
+    const method = (r.httpMethod ?? "").toUpperCase();
+    if (r.kind !== "api" || (method !== "GET" && method !== "HEAD")) continue;
+    const label = `${method} ${r.path}`;
+    const tables = writes.get(`${r.filePath}\u0000${label}`);
+    if (!tables?.size) continue;
+    const named = [...tables].sort();
+    out.push({
+      category: "safe-method-write",
+      severity: "medium",
+      message: `${label} writes ${named.slice(0, 3).join(", ")}${named.length > 3 ? ` and ${named.length - 3} more` : ""}: a ${method} can be sent by a link, a prefetch or a crawler, and CSRF defences do not cover it. Use POST/PUT/DELETE for a change.`,
+      filePath: r.filePath,
+      line: r.line,
+      snippet: `${label}${r.handler ? ` → ${r.handler}` : ""}`,
+      cwe: "CWE-650",
+    });
+  }
+  return out;
+}
+
 export function anonymousWriteFindings(
   routes: ReadonlyArray<RouteInfo & { filePath: string }>,
   dataFlows: readonly DataFlowPath[],

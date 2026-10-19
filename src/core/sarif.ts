@@ -208,6 +208,7 @@ const TITLES: Partial<Record<SecurityIssue["category"], string>> = {
   "path-traversal": "Path traversal",
   ssrf: "Server-side request forgery",
   "open-redirect": "Open redirect",
+  "safe-method-write": "GET that writes",
 };
 
 export type SarifLevel = "error" | "warning" | "note";

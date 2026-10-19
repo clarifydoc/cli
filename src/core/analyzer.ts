@@ -1374,6 +1374,12 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     allSecurityIssues.push(...anonymousWrites);
     progress.detail(`  Anonymous routes that write data: ${anonymousWrites.length}`);
   }
+  // Safe methods that change state.
+  const safeWrites = safeMethodWriteFindings(allRoutes, dataFlows).filter((i) => !isUnauthored(i.filePath));
+  if (safeWrites.length > 0) {
+    allSecurityIssues.push(...safeWrites);
+    progress.detail(`  GET/HEAD routes that write data: ${safeWrites.length}`);
+  }
   if (findingsWithEntries > 0) progress.detail(`  Security findings reachable from a route: ${findingsWithEntries}`);
 
   const healthScore = computeHealthScore({
@@ -2468,7 +2474,7 @@ export function enrichLinkGraphFromComponentGraph(
 }
 
 import type { ImportInfo, RouteInfo } from "../types/analysis.js";
-import { anonymousWriteFindings, attachFindingEntries } from "./finding-entries.js";
+import { anonymousWriteFindings, attachFindingEntries, safeMethodWriteFindings } from "./finding-entries.js";
 import { attachOsvAdvisories } from "./osv.js";
 
 /** Import source patterns → framework id */
