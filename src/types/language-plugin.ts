@@ -937,8 +937,10 @@ export interface LanguagePluginManifest {
    * executables there), `{ dir: "bin", marker: "META6.json" }` (a Raku
    * distribution's scripts). The marker path is relative to the directory's
    * parent; the directory is read with the default ignores below it.
+   * `markerMatches` narrows it to markers whose text matches (`package.json`
+   * declaring `"bin"`).
    */
-  sourceDirs?: ReadonlyArray<{ dir: string; marker: string }>;
+  sourceDirs?: ReadonlyArray<{ dir: string; marker: string; markerMatches?: RegExp }>;
   /**
    * A file named with this prefix is also importable without it — Sass's
    * partials: `@use "buttons"` loads `_buttons.scss` (and `@use "theme"`

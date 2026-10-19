@@ -125,6 +125,8 @@ export const typescriptManifest: LanguagePluginManifest = {
 export const javascriptManifest: LanguagePluginManifest = {
   language: "javascript",
   family: "script",
+  // A package's `bin/` scripts, when its package.json declares `bin`.
+  sourceDirs: [{ dir: "bin", marker: "package.json", markerMatches: /"bin"\s*:/ }],
   packageEcosystems: ["npm"],
   // `process.env.X` / `import.meta.env.X` bases; `.env` files are never read.
   serviceConfig: jsServiceConfig,

@@ -11,6 +11,9 @@ import { cargoPackageManager } from "./package-manifests.js";
 export const rustManifest: LanguagePluginManifest = {
   language: "rust",
   family: "rust",
+  // Each file in `src/bin/` is a binary crate root; the default `**/bin/**`
+  // ignore (a .NET build-output directory) would otherwise skip them.
+  sourceDirs: [{ dir: "src/bin", marker: "Cargo.toml" }],
   importsNameDirectories: true,
   packageManagers: [cargoPackageManager],
   packageEcosystems: ["cargo"],

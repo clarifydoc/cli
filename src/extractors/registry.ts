@@ -346,7 +346,14 @@ export function importsNameDirectories(language: string): boolean {
 }
 
 /** Every manifest's `sourceDirs` (`bin/` beside a `META6.json`, …): skipped directories that are source. */
-export const SOURCE_DIRS: ReadonlyArray<{ dir: string; marker: string }> = ALL_MANIFESTS.flatMap((m) => m.sourceDirs ?? []);
+export const SOURCE_DIRS: ReadonlyArray<{ dir: string; marker: string; markerMatches?: RegExp }> = ALL_MANIFESTS.flatMap((m) => m.sourceDirs ?? []);
+
+/**
+ * Languages whose manifest names a family — programming languages, as opposed
+ * to the data and markup formats (SQL, OpenAPI, Spring XML, HTML…) that have
+ * none. Discovery reads a file of a code language whatever its name says.
+ */
+export const CODE_LANGUAGES: ReadonlySet<Language> = new Set(ALL_MANIFESTS.filter((m) => m.family).map((m) => m.language));
 
 /**
  * Lowercased key (extension, basename) → the ONE language that claims it. A

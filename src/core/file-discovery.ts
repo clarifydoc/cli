@@ -1,35 +1,48 @@
-import { realpathSync, statSync } from "fs";
+import { readFileSync, realpathSync, statSync } from "fs";
 import { byOrdinal } from "./ordinal.js";
 import { resolve, sep } from "path";
 import { glob, LinkedFiles } from "./glob.js";
 import type { Language } from "../types/analysis.js";
 import { EXTENSION_TO_LANGUAGE, getLanguageForFile } from "../parsers/language-map.js";
-import { NAMED_FILE_LANGUAGE, SOURCE_DIRS } from "../extractors/registry.js";
+import { CODE_LANGUAGES, NAMED_FILE_LANGUAGE, SOURCE_DIRS } from "../extractors/registry.js";
 import { loadIgnorePatterns, isIgnored, ignoredDirectories } from "./clarifydoc-ignore.js";
 
 /**
- * Files that may contain secrets — skipped silently and reported separately.
- * Ported from graphify-7 (detect.py:38-46): basename-targeted regexes so a key
- * file deep in the tree is still excluded.
+ * Files that hold secrets by their kind — skipped silently and reported
+ * separately. Basename-targeted regexes, so a key file deep in the tree is
+ * still excluded.
  */
-const SENSITIVE_PATTERNS: ReadonlyArray<RegExp> = [
+const SENSITIVE_FILES: ReadonlyArray<RegExp> = [
   /(^|[\\/])\.(env|envrc)(\.|$)/i,
   /\.(pem|key|p12|pfx|cert|crt|der|p8)$/i,
-  /\b(credential|secret|passwd|password|token|private_key)s?\b/i,
   /(id_rsa|id_dsa|id_ecdsa|id_ed25519)(\.pub)?$/,
   /(\.netrc|\.pgpass|\.htpasswd)$/i,
+];
+
+/**
+ * Words that make a DATA file suspect (`secrets.yaml`, `credentials.json`,
+ * `token.xml`). Not applied to code: `password-reset.controller.ts` and
+ * `token-count-utils.ts` are source, and a hardcoded secret inside source is
+ * the security scanner's to find (and mask), not a reason to hide the file.
+ */
+const SENSITIVE_NAMES: ReadonlyArray<RegExp> = [
+  /\b(credential|secret|passwd|password|token|private_key)s?\b/i,
   /(aws_credentials|gcloud_credentials|service.account)/i,
 ];
 
 /**
- * Whether a path looks like it holds a credential (`.env`, a key or
- * certificate, anything named `secret`/`password`/`token`, …). Such files are
- * never read, whatever their extension.
+ * Whether a path looks like it holds a credential. A `.env`, a key or a
+ * certificate never is read, whatever it is; a file named `secret`/`password`/
+ * `token`/… is skipped only when it is data, not code (see {@link SENSITIVE_NAMES}).
+ * Without a language the name rule always applies.
  *
  * @param relativePath - Posix path relative to the project root
+ * @param language - The language discovery mapped the file to
  */
-export function isSensitive(relativePath: string): boolean {
-  return SENSITIVE_PATTERNS.some((p) => p.test(relativePath));
+export function isSensitive(relativePath: string, language?: Language): boolean {
+  if (SENSITIVE_FILES.some((p) => p.test(relativePath))) return true;
+  if (language && CODE_LANGUAGES.has(language)) return false;
+  return SENSITIVE_NAMES.some((p) => p.test(relativePath));
 }
 
 
@@ -136,13 +149,14 @@ export async function discoverFiles(
   if (!options.include?.length && SOURCE_DIRS.length > 0) {
     const seen = new Set(entries);
     const dirs = new Set<string>();
-    for (const { dir, marker } of SOURCE_DIRS) {
+    for (const { dir, marker, markerMatches } of SOURCE_DIRS) {
       const markers = await glob(`**/${marker}`, {
         cwd: root,
         ignore: ignore.filter((p) => !marker.startsWith(p.replace(/^\*\*\//, "").replace(/\/\*\*$/, "") + "/")),
         prune,
       });
       for (const m of markers) {
+        if (markerMatches && !markerMatches.test(readText(resolve(root, m)))) continue;
         const parent = m.slice(0, m.length - marker.length).replace(/\/$/, "");
         dirs.add(parent ? `${parent}/${dir}` : dir);
       }
@@ -174,7 +188,7 @@ export async function discoverFiles(
     const language = getLanguageForFile(relativePath);
     if (!language) continue;
 
-    if (isSensitive(relativePath)) {
+    if (isSensitive(relativePath, language)) {
       skippedSensitive.push(relativePath);
       continue;
     }
@@ -198,6 +212,14 @@ export async function discoverFiles(
   }
 
   return { files: results, skippedSensitive, skippedSymlinks };
+}
+
+function readText(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
 }
 
 /** True when `linkPath` resolves to a regular file under `realRoot` (itself resolved). */

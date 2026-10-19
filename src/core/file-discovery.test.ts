@@ -65,3 +65,42 @@ describe.skipIf(process.platform === "win32")("discoverFiles — symlinks", () =
     expect(r.skippedSymlinks).toEqual(["src/leak.py"]);
   });
 });
+
+describe("discoverFiles — secret-looking names and skipped source directories", () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "clarifydoc-discovery-names-"));
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+  const write = (rel: string, text = "x\n") => {
+    mkdirSync(join(root, rel, ".."), { recursive: true });
+    writeFileSync(join(root, rel), text);
+  };
+
+  it("reads code named like a secret, and still skips data and key files", async () => {
+    write("src/password-reset.controller.ts", "export class C {}\n");
+    write("src/internal/token/count.go", "package token\n");
+    write("config/secrets.yaml", "openapi: 3.0.0\n");
+    write(".env.local", "A=1\n");
+    write("certs/server.key", "k\n");
+    const r = await discoverFiles(root);
+    expect(r.files.map((f) => f.relativePath)).toEqual(["src/internal/token/count.go", "src/password-reset.controller.ts"]);
+    expect(r.skippedSensitive).toContain("config/secrets.yaml");
+  });
+
+  it("reads a Rust crate's src/bin and a package's declared bin/, not other bin/ folders", async () => {
+    write("server/Cargo.toml", "[package]\nname = \"s\"\n");
+    write("server/src/main.rs", "fn main() {}\n");
+    write("server/src/bin/admin.rs", "fn main() {}\n");
+    write("tool/package.json", '{ "name": "t", "bin": { "t": "bin/t.js" } }\n');
+    write("tool/bin/t.js", "console.log(1)\n");
+    write("lib/package.json", '{ "name": "l" }\n');
+    write("lib/bin/build-output.js", "x\n");
+    write("App/bin/Debug/Gen.cs", "class G {}\n");
+    const files = (await discoverFiles(root)).files.map((f) => f.relativePath);
+    expect(files).toContain("server/src/bin/admin.rs");
+    expect(files).toContain("tool/bin/t.js");
+    expect(files).not.toContain("lib/bin/build-output.js");
+    expect(files).not.toContain("App/bin/Debug/Gen.cs");
+  });
+});
