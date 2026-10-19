@@ -289,6 +289,26 @@ Inside VS Code the extension publishes this server for you, per workspace folder
 an AI Agent…** writes the config for Claude Code, Cursor or Windsurf — pointed at a launcher that survives extension
 updates. See [clarifydoc/vscode](https://github.com/clarifydoc/vscode).
 
+### Wiring it into an agent host
+
+`clarifydoc install [path]` writes the MCP server entry for one or more clients — `--client claude-code` (the
+default, `.mcp.json`), `cursor` (`.cursor/mcp.json`), `vscode` (`.vscode/mcp.json`), `gemini`
+(`.gemini/settings.json`), `windsurf` and `codex` (their user-level files) — merged into what is there.
+`--hooks` adds Claude Code hooks to `.claude/settings.json`; `--skills` writes `.claude/skills/clarifydoc-*`
+from the MCP workflow prompts; `--guidance` adds or updates a marked ClarifyDoc section of `AGENTS.md` (or the
+file named), with what this project's analysis says an agent should know first. `--print` shows it all instead.
+
+The hooks run `clarifydoc hook <event>`, which reads the host's JSON payload on stdin and answers with
+`additionalContext` from the last analysis, or with nothing:
+
+| Event | When | What the agent is told |
+|---|---|---|
+| `pre-search` | before Grep/Glob | what the map knows about the name being searched for, and where |
+| `post-edit` | after Edit/Write | who depends on the file just changed, and what to run before finishing |
+| `session-start` | a new session | what the map covers and how fresh it is |
+
+A hook never blocks a tool call, never analyzes, and stays silent on any error.
+
 ## Detection details
 
 ### Frameworks

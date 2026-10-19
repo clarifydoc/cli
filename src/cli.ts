@@ -499,6 +499,61 @@ program
   });
 
 program
+  .command("hook")
+  .description("Agent-host hook (Claude Code protocol): reads the hook payload on stdin, prints context from the analysis. Wired by `clarifydoc install --hooks`")
+  .argument("<event>", "pre-search | post-edit | session-start")
+  .action(async (event: string) => {
+    // A hook must never stand in the agent's way: any failure is silence.
+    try {
+      const { HOOK_EVENTS, runHook, readHookInput } = await import("./agents/hooks.js");
+      if (!(HOOK_EVENTS as readonly string[]).includes(event)) return;
+      const timer = setTimeout(() => process.exit(0), 8000);
+      const out = await runHook(event as never, readHookInput());
+      clearTimeout(timer);
+      if (out) process.stdout.write(out + "\n");
+    } catch {
+      /* silent */
+    }
+  });
+
+program
+  .command("install")
+  .description("Wire ClarifyDoc into agent hosts: the MCP server entry, Claude Code hooks, skills, and the AGENTS.md section")
+  .argument("[path]", "Project root", ".")
+  .option("--client <names...>", "claude-code | cursor | vscode | windsurf | gemini | codex (default claude-code)")
+  .option("--hooks", "Also add Claude Code hooks (.claude/settings.json): context before searches, after edits, at session start", false)
+  .option("--skills", "Also write .claude/skills/clarifydoc-* from the MCP workflow prompts", false)
+  .option("--guidance [file]", "Also add or update the ClarifyDoc section of AGENTS.md (or the file named)")
+  .option("-o, --output <dir>", "Analysis output directory, for the project facts in the guidance", ".clarifydoc")
+  .option("--print", "Print what would be written instead of writing it", false)
+  .action(async (path: string, options) => {
+    const root = resolve(path);
+    const { CLIENTS, applyPlans, planClaudeHooks, planGuidance, planMcpConfig, planSkills, projectFacts } = await import("./agents/install.js");
+    const clients = (options.client as string[] | undefined) ?? ["claude-code"];
+    const unknown = clients.filter((c) => !(CLIENTS as readonly string[]).includes(c));
+    if (unknown.length) {
+      console.error(`Unknown client(s): ${unknown.join(", ")}. Known: ${CLIENTS.join(", ")}.`);
+      process.exitCode = 1;
+      return;
+    }
+    const plans = clients.map((c) => planMcpConfig(c as never, root));
+    if (options.hooks) plans.push(planClaudeHooks(root));
+    if (options.skills) plans.push(...planSkills(root));
+    if (options.guidance) {
+      let facts: string[] = [];
+      try {
+        const { loadReportSummary } = await import("./core/report-payload.js");
+        const name = root.replace(/\\/g, "/").split("/").pop()!;
+        facts = projectFacts(await loadReportSummary(resolve(root, options.output, name)));
+      } catch {
+        // No analysis yet: the generic section alone.
+      }
+      plans.push(planGuidance(root, typeof options.guidance === "string" ? options.guidance : "AGENTS.md", facts));
+    }
+    for (const line of applyPlans(plans, options.print)) console.log(line);
+  });
+
+program
   .command("mcp")
   .description(
     "Serve the analysis to an AI agent over the Model Context Protocol (stdio). Used by the VS Code extension and by any MCP client.",
