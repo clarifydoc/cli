@@ -2,6 +2,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
 import { componentOf } from "./react-router.js";
+import { isTanstackRouteOptions } from "./tanstack-router.js";
 
 /** Vue Router: routes array config { path: "/foo", component: Bar } */
 export function extractVueRouterRoutes(root: Node, routes: RouteInfo[]): void {
@@ -203,7 +204,8 @@ function joinChild(parent: string, child: string): string {
 
 /** Inspect a single node for a Vue Router route config object. */
 export function visitVueRouterRoute(node: Node, routes: RouteInfo[], facts?: RouteFact[]): void {
-  if (node.type === "object") {
+  // TanStack's `createRoute({ path })` is relative to a parent; its own pass joins the chain.
+  if (node.type === "object" && !isTanstackRouteOptions(node)) {
     let path: string | null = null;
     let handler: string | null = null;
     let componentPath: string | null = null;

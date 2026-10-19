@@ -34,6 +34,13 @@ export const javascriptFrameworkRules: readonly FrameworkRule[] = [
     detectedVia: "package.json dependency",
   },
   {
+    // File routes (`createFileRoute`) and code routes (`createRoute`): routes/tanstack-router.ts.
+    id: "tanstack-router",
+    name: "TanStack Router",
+    check: (info) => hasDep(info, "@tanstack/react-router") || hasDep(info, "@tanstack/solid-router") || hasDep(info, "@tanstack/react-start"),
+    detectedVia: "package.json dependency",
+  },
+  {
     id: "nextjs",
     name: "Next.js",
     check: (info) => hasDep(info, "next"),

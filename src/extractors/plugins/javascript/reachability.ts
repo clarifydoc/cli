@@ -124,6 +124,9 @@ const FRAMEWORK_ENTRIES: Readonly<Record<string, readonly Rule[]>> = {
     [/^(?:app|src)\/entry\.(?:client|server)\.[jt]sx?$/, "React Router entry"],
     [/^react-router\.config\.[cm]?[jt]s$/, "React Router config"],
   ],
+  // The router's generator builds routeTree.gen.ts from this directory — often gitignored, so the
+  // route files' one importer may be missing from the analysis.
+  "tanstack-router": [[/^(?:src|app)\/routes\//, "TanStack Router route file"]],
   gatsby: [[/^src\/(?:pages|templates|api)\//, "Gatsby page"]],
   astro: [
     [/^src\/pages\//, "Astro page/endpoint"],
