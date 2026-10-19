@@ -31,6 +31,8 @@ The passes ask a `DefinitionSource` (`initialize` → `clientFor(language)` → 
 2. The editor answers each with its own definition provider and writes `{ source: "editor", servers, answers: [{ file, line, column, targets: [{ file, line }] }] }` — every location it got, project-relative, `[]` for none; questions it did not get to are left out.
 3. `lsp-update <dir> --answers a.json` — `answersDefinitionSource` replays them. More than one distinct target **abstains** (two providers, an overload set: layer 2 only adds links it can stand behind); a question left out is skipped, not a miss; paths outside the project are dropped on read. The source answers no references, so Phase B does not run.
 
+A SCIP index answers the same questions without a server (`lsp-update <dir> --scip index.scip`, [scip.ts](scip.ts)): the occurrence at a question's position names a symbol, and the occurrence that DEFINES it is the target — `local N` symbols within their document, a symbol only a dependency defines gives none. The protobuf is read by hand (the few fields used; a truncated index throws), and `scipPathMapper` adds or strips the directory prefix that names the most analysis files when the index was built at another root. The result goes through `answersDefinitionSource`, so the same abstention and in-project rules hold; `lspStats.source` is `scip`, the servers the indexer's name.
+
 Links stay `resolvedBy: "lsp"`, `strategy: "lsp-definition"` — it is a language server's answer either way, and `lsp-compare` grades them alike; `lspStats.source` says where they came from. Only the Docker source writes `lsp-ground-truth.json`: an editor run is budgeted and must not overwrite a complete capture.
 
 ## Surviving a re-analysis

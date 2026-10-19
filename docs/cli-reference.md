@@ -182,9 +182,11 @@ reported as stale and left out, except for the links it added between files that
 | `--verbose` | off | Progress and debug output. |
 | `--emit-queries <file>` | — | Write the definition questions (file, line, column at the called name, language) to `<file>` and stop. No server starts. |
 | `--answers <file>` | — | Take the definitions from `<file>` instead of Docker: `{ "source": "editor", "answers": [{ "file", "line", "column", "targets": [{ "file", "line" }] }] }`. An answer with more than one distinct target is left out, as are targets outside the project. References are not asked, and `lsp-ground-truth.json` is not written. |
+| `--scip <file>` | — | Take the definitions from a SCIP index (`index.scip`, as scip-typescript, scip-java, scip-python or rust-analyzer write it) instead of Docker. Each unresolved call is looked up at its position in the index; the symbol's defining occurrence is the target. An index built in a parent or child directory of the project is mapped by its path prefix. Same rules as `--answers`. |
 
-The last two let an editor that already runs the project's language servers stand in for Docker: it answers
-the emitted questions with its own definition provider and hands them back.
+`--emit-queries` and `--answers` let an editor that already runs the project's language servers stand in for
+Docker: it answers the emitted questions with its own definition provider and hands them back. `--scip` does
+the same from an index a CI job already builds, with no server at all.
 
 Servers exist for TypeScript/JavaScript, Python, Java, Kotlin, C# and VB.NET, Go, Rust, Ruby, PHP and
 Pascal/Delphi. Images build on first use and are cached; the first run of a language is slow.

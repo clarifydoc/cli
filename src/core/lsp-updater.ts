@@ -39,6 +39,8 @@ export interface UpdateLspOptions {
   emitQueries?: string;
   /** Answer from this file (`DefinitionAnswerFile`) instead of starting the Docker servers. */
   answers?: string;
+  /** Take definitions from a SCIP index (`index.scip`) instead of the Docker servers. */
+  scip?: string;
 }
 
 /**
@@ -114,7 +116,7 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
     return { outputPath, source: "queries", serversUsed: [], lspResolvedCount: 0, referenceLinksCount: 0, elapsedMs: Date.now() - startTime, queryCount: queries.length };
   }
   let answers: (import("../lsp/lsp-enhancer.js").DefinitionSource & { abstained(): number }) | undefined;
-  if (options.answers) {
+  if (options.answers || options.scip) {
     const { answersDefinitionSource, readDefinitionAnswers } = await import("../lsp/answers-source.js");
     // The lines where the analysis declares something: what a disagreeing answer is narrowed to.
     const declared = new Set<string>();
@@ -125,7 +127,15 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
         for (const m of cls.methods) declared.add(`${fa.filePath}:${m.line}`);
       }
     }
-    answers = answersDefinitionSource(await readDefinitionAnswers(resolve(options.answers)), (f, line) => declared.has(`${f}:${line}`));
+    let file: import("../lsp/answers-source.js").DefinitionAnswerFile;
+    if (options.scip) {
+      const { decodeScip, scipAnswers, scipPathMapper } = await import("../lsp/scip.js");
+      const index = decodeScip(await readFile(resolve(options.scip)));
+      const queries = await planDefinitionQueries(projectRoot, perFileAnalyses, existingLinks);
+      file = scipAnswers(index, queries, scipPathMapper(index.documents, new Set(perFileAnalyses.map((a) => a.filePath))));
+      if (verbose) console.log(`  SCIP: ${index.documents.length} documents, ${file.answers.length}/${queries.length} questions answered`);
+    } else file = await readDefinitionAnswers(resolve(options.answers!));
+    answers = answersDefinitionSource(file, (f, line) => declared.has(`${f}:${line}`));
   }
   const lspResult = await enhanceWithLsp({
     projectRoot,

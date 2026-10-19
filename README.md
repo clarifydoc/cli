@@ -152,7 +152,8 @@ clarifydoc mcp [path]                  # Serve the analysis to an AI agent over 
 
 `lsp-update` writes `lsp-enhancement.json` alongside `project-summary.json` (`--emit-queries <file>` writes the
 definition questions instead, for an editor's language servers to answer; `--answers <file>` merges those answers
-without Docker); `report` reads the summary and emits `report.html`.
+without Docker; `--scip index.scip` takes them from a SCIP index — scip-typescript, scip-java, scip-python,
+rust-analyzer — that CI already builds); `report` reads the summary and emits `report.html`.
 Every command's options are in the [CLI reference](docs/cli-reference.md).
 
 ## Supported languages
