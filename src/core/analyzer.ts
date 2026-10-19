@@ -3,6 +3,7 @@ import { resolve as pathResolve, join, relative, sep, basename } from "path";
 import { existsSync, readFileSync } from "fs";
 import { discoverFiles, type DiscoveryOptions, type DiscoveredFile } from "./file-discovery.js";
 import { seedFromMainWorktree } from "./worktree-seed.js";
+import { runFingerprint } from "./run-fingerprint.js";
 import {
   EXTRACTOR_VERSION,
   loadManifest,
@@ -37,7 +38,7 @@ import {
   type OutputOptions,
 } from "./output-writer.js";
 import { acquireAnalysisLock, readLockOwner, AnalysisLockedError } from "./analysis-lock.js";
-import { buildReportPayload } from "./report-payload.js";
+import { buildReportPayload, loadReportSummary } from "./report-payload.js";
 import { analyzeFile, type FileTask, type FileResult } from "./file-analyzer.js";
 import { AnalysisWorkerPool } from "./worker-pool.js";
 import { loadTsconfigAliases } from "../extractors/shared/tsconfig-aliases.js";
@@ -211,6 +212,11 @@ export interface AnalyzeResult {
   changedFiles?: string[];
   /** Files present in the previous manifest but gone now (same condition). */
   removedFiles?: string[];
+  /**
+   * Nothing changed since the last incremental run — no file, option, config
+   * or git state — so the previous artifacts stand and nothing was rebuilt.
+   */
+  upToDate?: boolean;
 }
 
 /** Project root as a posix path relative to the working directory, for stable fixtures. */
@@ -300,6 +306,33 @@ async function loadCachedFileResult(
   return { analysis, rawSource, complexities, securityIssues };
 }
 
+/**
+ * The result of a run that found nothing changed: the previous artifacts
+ * stand, and only the latest impact is rewritten — to say the last run
+ * changed nothing.
+ */
+async function upToDateResult(outputDir: string, outputOpts: OutputOptions): Promise<AnalyzeResult> {
+  const summary = await loadReportSummary(outputDir);
+  await writeImpactDiff(computeImpactDiff(summary, [], { removedFiles: [], baseLabel: "previous analysis run" }), outputOpts);
+  return {
+    fileCount: summary.files.length,
+    files: [...summary.files],
+    outputDir,
+    interactiveElementCount: summary.interactiveElements?.length ?? 0,
+    routeCount: summary.routeMap?.length ?? 0,
+    linkCount: summary.linkGraph?.length ?? 0,
+    screenCount: summary.screens?.length ?? 0,
+    symbolLinkCount: summary.symbolLinks?.length ?? 0,
+    ...(summary.healthScore?.grade ? { healthGrade: summary.healthScore.grade } : {}),
+    patternCount: summary.patterns?.length ?? 0,
+    securityIssueCount: summary.securityIssues?.length ?? 0,
+    suggestionCount: summary.suggestions?.length ?? 0,
+    changedFiles: [],
+    removedFiles: [],
+    upToDate: true,
+  };
+}
+
 // ─── Progress reporter ──────────────────────────────────────────────────
 
 /**
@@ -310,13 +343,35 @@ class ProgressReporter {
   private verbose: boolean;
   private active = false;
   private lastLine = "";
+  private stage: { name: string; start: number } | null = null;
+  private readonly times: Array<{ stage: string; ms: number }> = [];
 
   constructor(verbose: boolean) {
     this.verbose = verbose;
   }
 
+  /** A stage boundary: the stage that was running gets its time. Per-file ticks are not stages. */
+  private mark(message: string): void {
+    const name = message.replace(/\.{3}$/, "").replace(/^Analyzing \d+ files$/, "Analyzing files").trim();
+    if (this.stage?.name === name) return;
+    this.close();
+    this.stage = { name, start: Date.now() };
+  }
+
+  private close(): void {
+    if (this.stage) this.times.push({ stage: this.stage.name, ms: Date.now() - this.stage.start });
+    this.stage = null;
+  }
+
+  /** The stages so far with their times (closes the running one). */
+  timings(): Array<{ stage: string; ms: number }> {
+    this.close();
+    return [...this.times];
+  }
+
   /** Show a top-level pipeline step (e.g. "Discovering files"). */
   step(message: string): void {
+    this.mark(message);
     if (this.verbose) {
       console.log(message);
     } else {
@@ -326,6 +381,7 @@ class ProgressReporter {
 
   /** Update the current status line (non-verbose only). */
   status(message: string): void {
+    if (!/^Analyzing \[/.test(message)) this.mark(message);
     if (!this.verbose) this.writeStatus(message);
   }
 
@@ -549,6 +605,33 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     if (seed) progress.detail(`  Seeded ${seed.files} cached file(s) from the main worktree's analysis (${seed.from})`);
   }
   const prevManifest = options.incremental ? await loadManifest(outputDir) : null;
+  // What the run is made from besides the files; OSV answers change on their own, so never "up to date" with it.
+  const fingerprint = options.incremental && !dryRun && !options.osv
+    ? await runFingerprint(projectRoot, {
+        options: {
+          extractor: EXTRACTOR_VERSION,
+          include: options.include ?? [],
+          exclude: options.exclude ?? [],
+          maxFiles: options.maxFiles ?? null,
+          lsp: options.lsp === true,
+          gitHistory: options.gitHistory !== false,
+          stableOutput: options.stableOutput === true,
+          importSarif: (options.importSarif ?? []).map((f) => pathResolve(f)),
+          // A file added or removed — even one a plugin skips, which has no manifest entry.
+          files: files.map((f) => normalizeManifestKey(f.relativePath)).sort(),
+        },
+        extraFiles: [...(options.importSarif ?? []).map((f) => pathResolve(f)), join(projectRoot, ".clarifydoc", "config.json")],
+      }).catch(() => null)
+    : null;
+  if (fingerprint && prevManifest?.fingerprint === fingerprint && existsSync(join(outputDir, "project-summary.json"))) {
+    // Every file the last run kept is unchanged (the fingerprint covers the file list and git's view of the rest).
+    const kept = files.filter((f) => normalizeManifestKey(f.relativePath) in prevManifest.entries);
+    const states = await Promise.all(kept.map((f) => classifyFileForCache(f.absolutePath, prevManifest.entries[normalizeManifestKey(f.relativePath)]).then((c) => c.state).catch(() => "changed")));
+    if (kept.length === Object.keys(prevManifest.entries).length && states.every((st) => st === "unchanged")) {
+      progress.detail("  Up to date: no file, option, config or git state changed since the last run");
+      return upToDateResult(outputDir, outputOpts);
+    }
+  }
   const newManifestEntries: Record<string, { mtime: number; sha256: string }> = {};
   let unchangedCount = 0;
   let reparsedCount = 0;
@@ -1568,6 +1651,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
         ...(gitSkipReason ? { gitSkipReason } : {}),
       },
       extractorWarningFiles: allAnalyses.filter((a) => (a.extractorWarnings?.length ?? 0) > 0).length,
+      ...(options.stableOutput ? {} : { stageTimings: progress.timings() }),
       ...(parseFallbacks.length > 0
         ? {
             parseFallbacks: Object.fromEntries(
@@ -1643,6 +1727,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       extractorVersion: EXTRACTOR_VERSION,
       entries: newManifestEntries,
       ...(sourceRevision ? { revision: { commit: sourceRevision.commit, branch: sourceRevision.branch } } : {}),
+      ...(fingerprint ? { fingerprint } : {}),
     };
     await saveManifest(outputDir, manifest);
     // Remove per-file JSON for sources that disappeared since the last run so
@@ -1657,6 +1742,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     }
   }
 
+  if (verbose) {
+    const t = progress.timings().filter((x) => x.ms >= 1);
+    if (t.length) progress.detail(`  Timings: ${t.map((x) => `${x.stage} ${x.ms}ms`).join(" · ")}`);
+  }
   progress.clear();
 
   return {

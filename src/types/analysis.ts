@@ -2531,6 +2531,12 @@ export interface AnalysisProvenance {
   extractorWarningFiles: number;
   /** Files whose tree-sitter parse failed and fell back to regex, by language. */
   parseFallbacks?: Record<string, number>;
+  /**
+   * Wall-clock milliseconds per pipeline stage, in order — where a run spends
+   * its time, so the expensive incremental passes can be found. Left out of
+   * `--stable-output` artifacts (it differs every run).
+   */
+  stageTimings?: Array<{ stage: string; ms: number }>;
 }
 
 export interface ProjectAnalysis {

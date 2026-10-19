@@ -92,7 +92,7 @@ program
           console.log(`  ${f}`);
         }
       } else {
-        console.log("Done. Analysis complete.");
+        console.log(result.upToDate ? "Up to date: nothing changed since the last run, so nothing was rebuilt." : "Done. Analysis complete.");
         console.log(`  Files:       ${String(result.fileCount).padStart(4)}`);
         console.log(`  Elements:    ${String(result.interactiveElementCount).padStart(4)} interactive`);
         console.log(`  Screens:     ${String(result.screenCount).padStart(4)}`);

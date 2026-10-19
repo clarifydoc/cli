@@ -95,9 +95,9 @@ export function analyzeTool(ctx: ToolContext): McpTool {
       const loaded = await requireAnalysis(ctx);
       return {
         text: joinLines([
-          `Analysis complete in ${((Date.now() - started) / 1000).toFixed(1)}s (${
-            full ? "full re-scan" : "incremental"
-          }): ${result.fileCount} files.`,
+          result.upToDate
+            ? `Already up to date (checked in ${((Date.now() - started) / 1000).toFixed(1)}s): no file, option or git state changed since the last analysis of ${result.fileCount} files.`
+            : `Analysis complete in ${((Date.now() - started) / 1000).toFixed(1)}s (${full ? "full re-scan" : "incremental"}): ${result.fileCount} files.`,
           "",
           await statusReport(loaded, ctx.store),
         ]),

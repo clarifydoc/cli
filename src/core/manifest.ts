@@ -36,6 +36,8 @@ export interface Manifest {
   entries: Record<string, ManifestEntry>;
   /** The commit the analysis was made at, when known — what freshness compares HEAD to. */
   revision?: { commit: string; branch: string | null };
+  /** What the run was made from besides the files (`runFingerprint`): equal next time, with no file changed, means up to date. */
+  fingerprint?: string;
 }
 
 const MANIFEST_NAME = "manifest.json";
