@@ -784,7 +784,19 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         const rawSql = !emittedApiCall && fnName && RAW_SQL_VERBS.has(fnName)
           ? rawSqlAccess(node.childForFieldName("arguments")?.namedChildren[0] ?? null)
           : null;
-        if (rawSql) {
+        // Supabase: `supabase.from("posts").select(…)` — the table is the
+        // argument, the access the verb chained after it.
+        const supabase = !emittedApiCall && !rawSql && fnName === "from" ? supabaseTable(node, fn) : null;
+        if (supabase) {
+          sources.push(this.ds({
+            kind: "database",
+            name: `supabase.from.${supabase.verb ?? "query"}`,
+            target: supabase.table,
+            entity: supabase.table,
+            line: node.startPosition.row + 1,
+            ...(supabase.access ? { access: supabase.access } : {}),
+          }));
+        } else if (rawSql) {
           sources.push(this.ds({
             kind: "database",
             // A chain split over lines (`db\n  .prepare(…)`) reads as one name.
@@ -1200,6 +1212,24 @@ function isServerRouteDef(fn: Node, callNode: Node): boolean {
     }
   }
   return false;
+}
+
+/**
+ * `supabase.from("posts").select()` on a Supabase client — a receiver named
+ * for it, or `createClient(…)` from `@supabase/supabase-js` in the same chain.
+ * The verb chained after `from` says read or write.
+ */
+function supabaseTable(call: Node, fn: Node | null): { table: string; verb: string | null; access?: "read" | "write" } | null {
+  if (fn?.type !== "member_expression") return null;
+  const recv = fn.childForFieldName("object")?.text ?? "";
+  if (!/supabase/i.test(recv)) return null;
+  const arg = call.childForFieldName("arguments")?.namedChildren[0];
+  if (!arg || (arg.type !== "string" && arg.type !== "template_string")) return null;
+  const table = stripQuotes(arg.text);
+  if (!/^[A-Za-z_][\w.]*$/.test(table)) return null;
+  const next = call.parent?.type === "member_expression" ? call.parent.childForFieldName("property")?.text ?? null : null;
+  const access = next === "select" ? "read" : next && /^(?:insert|update|upsert|delete)$/.test(next) ? "write" : undefined;
+  return { table, verb: next, ...(access ? { access } : {}) };
 }
 
 /** A named HTTP client: fetch, axios, http(Client), request, ajax, or a fetchX/httpX helper. */

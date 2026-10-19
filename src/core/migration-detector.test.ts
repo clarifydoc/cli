@@ -26,3 +26,10 @@ describe("detectMigrations — EF Core dedup", () => {
     expect(detectMigrations(files).map((m) => m.ecosystem).sort()).toEqual(["prisma", "rails"]);
   });
 });
+
+describe("detectMigrations — version order", () => {
+  it("orders Flyway versions numerically, segment by segment", () => {
+    const files = ["db/migration/V10__add_index.sql", "db/migration/V2__users.sql", "db/migration/V1_10__b.sql", "db/migration/V1_2__a.sql", "db/migration/V1__init.sql"];
+    expect(detectMigrations(files).map((m) => m.name)).toEqual(["V1__init", "V1_2__a", "V1_10__b", "V2__users", "V10__add_index"]);
+  });
+});

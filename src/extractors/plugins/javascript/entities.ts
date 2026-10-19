@@ -61,6 +61,11 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
     } catch {
       /* keep what we have */
     }
+    try {
+      if (/\b(?:pg|mysql|sqlite|singlestore)Table\s*\(/.test(ctx.sourceText)) this.extractDrizzle(ctx, entities, relations);
+    } catch {
+      /* keep what we have */
+    }
 
     return { entities, relations };
   }
@@ -776,6 +781,48 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
   }
 
   /** Return the balanced `{ ... }` block beginning at `openIdx` (inclusive braces). */
+  // ─── Drizzle ─────────────────────────────────────────────────────────────
+
+  /**
+   * `export const posts = pgTable("posts", { id: serial("id").primaryKey(),
+   * authorId: integer("author_id").references(() => users.id) })` (and
+   * `mysqlTable`/`sqliteTable`): the variable is the entity — queries name it
+   * (`db.select().from(posts)`) — each property a column typed by its builder,
+   * and `.references(() => users.id)` a many-to-one to the table it names.
+   */
+  private extractDrizzle(ctx: EntityExtractContext, entities: ClassInfo[], relations: EntityRelation[]): void {
+    const logical = this.logicalLines(ctx.lines, { lineComment: SLASH_COMMENT });
+    const TABLE_RE = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:pg|mysql|sqlite|singlestore)Table\s*\(\s*["'`]([^"'`]+)["'`]\s*,\s*\{/;
+    for (const stmt of logical) {
+      const m = TABLE_RE.exec(stmt.text);
+      if (!m) continue;
+      const name = m[1]!;
+      const block = this.balancedBlock(stmt.text, stmt.text.indexOf("{", m.index + m[0].length - 1));
+      const properties: PropertyInfo[] = [];
+      const targets = new Set<string>();
+      for (const field of splitTopLevel(block.slice(1, -1))) {
+        const f = /^\s*["']?([A-Za-z_$][\w$]*)["']?\s*:\s*([A-Za-z_$][\w$]*)\s*\(/.exec(field);
+        if (!f) continue;
+        properties.push(this.column(f[1]!, f[2]!));
+        const ref = /\.references\s*\(\s*\(\s*\)\s*(?::\s*[\w.<>]+\s*)?=>\s*([A-Za-z_$][\w$]*)\s*\./.exec(field);
+        if (ref && ref[1] !== name) {
+          relations.push({
+            fromEntity: name,
+            fromField: f[1]!,
+            toEntity: ref[1]!,
+            cardinality: "many-to-one",
+            // The property holding the key (its column name is the builder's argument).
+            foreignKey: f[1]!,
+            orm: "drizzle",
+            confidence: "EXTRACTED",
+          });
+          targets.add(ref[1]!);
+        }
+      }
+      entities.push(this.entity({ name, orm: "drizzle", properties, implementsList: [...targets], line: stmt.line + 1 }));
+    }
+  }
+
   private balancedBlock(text: string, openIdx: number): string {
     if (openIdx < 0) return "{}";
     const close = this.matchBracket(text, openIdx);
@@ -833,4 +880,29 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
   private escape(s: string): string {
     return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
+}
+
+/** Split an object literal's interior on its top-level commas (brackets and strings respected). */
+function splitTopLevel(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") quote = c;
+    else if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === "," && depth === 0) {
+      out.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  if (text.slice(start).trim()) out.push(text.slice(start));
+  return out;
 }

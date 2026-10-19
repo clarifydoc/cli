@@ -154,6 +154,56 @@ export function extractAnnotationPath(argsNode: Node): string | null {
   return named ?? positional;
 }
 
+/** Every string literal under a node, in source order. */
+function allStringLiterals(node: Node, out: string[] = []): string[] {
+  if (node.type === "string" || node.type === "string_literal") {
+    out.push(stripQuotes(node.text));
+    return out;
+  }
+  for (const child of node.children) allStringLiterals(child, out);
+  return out;
+}
+
+/**
+ * Every route path an annotation maps: `@GetMapping({"/featured", "/pinned"})`
+ * and `@GetMapping(value = ["/a", "/b"])` are two endpoints with one handler.
+ * The named `value`/`path` attribute wins over positional strings.
+ */
+export function extractAnnotationPaths(argsNode: Node): string[] {
+  let positional: string[] | null = null;
+  let named: string[] | null = null;
+  for (const arg of argsNode.children) {
+    switch (arg.type) {
+      case "string":
+      case "string_literal":
+        positional ??= [stripQuotes(arg.text)];
+        break;
+      case "element_value_array_initializer":
+        positional ??= allStringLiterals(arg);
+        break;
+      case "value_argument": {
+        const key = kotlinArgKey(arg);
+        const strs = allStringLiterals(arg);
+        if (strs.length === 0) break;
+        if (key === null) positional ??= strs;
+        else if (key === "value" || key === "path") named ??= strs;
+        break;
+      }
+      case "element_value_pair":
+      case "assignment_expression": {
+        const key = (arg.childForFieldName("key") ?? arg.child(0))?.text;
+        const valueNode = arg.childForFieldName("value") ?? arg.child(2);
+        if ((key === "value" || key === "path") && valueNode) {
+          const strs = allStringLiterals(valueNode);
+          if (strs.length > 0) named ??= strs;
+        }
+        break;
+      }
+    }
+  }
+  return named ?? positional ?? [];
+}
+
 /**
  * Every HTTP method named in a `@RequestMapping(method = ...)` attribute, across
  * both grammars and both single (`RequestMethod.GET`) and array
@@ -368,7 +418,8 @@ function parseSpringAnnotation(
 
   const args = annotationArgsNode(node);
   // `|| "/"` (not `??`) so an explicit empty path "" also falls back to the prefix.
-  const path = mergePrefix(classPrefix, (args ? extractAnnotationPath(args) : null) || "/");
+  const declared = args ? extractAnnotationPaths(args) : [];
+  const paths = [...new Set((declared.length > 0 ? declared : [""]).map((p) => mergePrefix(classPrefix, p || "/")))];
 
   let methods: string[];
   if (httpMethod === null) {
@@ -379,7 +430,7 @@ function parseSpringAnnotation(
     methods = [httpMethod];
   }
 
-  return methods.map((m) => ({
+  return methods.flatMap((m) => paths.map((path) => ({
     path,
     httpMethod: m,
     kind: "api" as const,
@@ -387,7 +438,7 @@ function parseSpringAnnotation(
     calls,
     middleware: [],
     line: node.startPosition.row + 1,
-  }));
+  })));
 }
 
 // ─── Regex fallback (degraded ASTs) ───────────────────────────────────────

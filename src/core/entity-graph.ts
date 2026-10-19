@@ -197,6 +197,7 @@ export function propagateStiRelations(analyses: FileAnalysis[]): void {
 export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
   const nodes = new Map<string, EntityGraphNode>();
   const nameToIds = new Map<string, string[]>();
+  const projectOf = new Map<string, string>();
 
   // ── Pass 1: nodes (entities / tables / enums) ──
   for (const a of analyses) {
@@ -208,6 +209,7 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
 
       const id = `${a.filePath}::${cls.name}`;
       if (nodes.has(id)) continue;
+      projectOf.set(id, a.projectId ?? "root");
 
       // The ORM tag is the decorator our entity extractor places immediately
       // after the lowercase `entity`/`table`/`enum` marker (e.g. ["Entity()",
@@ -242,11 +244,30 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
     }
   }
 
-  /** Resolve a relation's target entity name to a node id, preferring same-file. */
-  function resolveTarget(name: string, fromFile: string): string | null {
+  /**
+   * Resolve a relation's target entity name to a node id: the same file, then
+   * the one entity of that name in the declaring file's sub-project (or the
+   * one of the relation's ORM there), then the one in the whole repository.
+   * Several candidates and no way to choose is a refusal: a JPA `Comment`
+   * used to attach to whichever `Comment` came first — another service's
+   * Django model.
+   */
+  function resolveTarget(name: string, fromFile: string, fromProject: string, orm?: string | null): string | null {
     const ids = nameToIds.get(name);
     if (!ids || ids.length === 0) return null;
-    return ids.find((id) => id.startsWith(`${fromFile}::`)) ?? ids[0]!;
+    const sameFile = ids.find((id) => id.startsWith(`${fromFile}::`));
+    if (sameFile) return sameFile;
+    const pick = (cands: string[]): string | null => {
+      if (cands.length === 1) return cands[0]!;
+      if (cands.length > 1 && orm) {
+        const sameOrm = cands.filter((id) => nodes.get(id)?.orm === orm);
+        if (sameOrm.length === 1) return sameOrm[0]!;
+      }
+      return null;
+    };
+    const local = ids.filter((id) => projectOf.get(id) === fromProject);
+    if (local.length > 0) return pick(local);
+    return pick(ids);
   }
 
   // ── Pass 2: edges (mirror pairs merged into one relationship) ──
@@ -271,9 +292,10 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
       // file as its `fromEntity`, but jOOQ centralizes every FK in `Keys.java`,
       // so the owning table is defined elsewhere.
       const sameFileSrc = `${a.filePath}::${r.fromEntity}`;
-      const srcId = nodes.has(sameFileSrc) ? sameFileSrc : resolveTarget(r.fromEntity, a.filePath);
+      const fromProject = a.projectId ?? "root";
+      const srcId = nodes.has(sameFileSrc) ? sameFileSrc : resolveTarget(r.fromEntity, a.filePath, fromProject, r.orm);
       if (!srcId) continue;
-      const tgtId = resolveTarget(r.toEntity, a.filePath);
+      const tgtId = resolveTarget(r.toEntity, a.filePath, fromProject, r.orm);
       if (!tgtId) continue;
 
       if (r.foreignKey) {

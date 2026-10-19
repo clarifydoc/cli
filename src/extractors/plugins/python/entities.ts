@@ -162,6 +162,18 @@ export class PythonEntityExtractor extends EntityExtractor {
       return { id: "pony-orm" };
     }
 
+    // The declarative base itself (`class Base(DeclarativeBase): pass`) maps no
+    // table — it is what the entities extend.
+    if (/^(?:DeclarativeBase|DeclarativeBaseNoMeta|AsyncAttrs|MappedAsDataclass)$/.test(lastBaseSeg) &&
+      !/\b__tablename__\s*=|\bmapped_column\s*\(|=\s*(?:\w+\.)?Column\s*\(|\bMapped\s*\[/.test(bodyText)) {
+      return null;
+    }
+
+    // Flask-SQLAlchemy: `class User(db.Model)` with `db.Column(...)` fields.
+    if (/\bdb\.Model\b/.test(base) || /=\s*(?:db|sa)\.Column\s*\(/.test(bodyText)) {
+      return { id: "sqlalchemy" };
+    }
+
     // `models.Model` is shared by Django and Tortoise — disambiguate via imports.
     if (/\bmodels\.Model\b/.test(base) || /\bmodels\.Model\b/.test(declLine)) {
       return flags.hasTortoise ? { id: "tortoise-orm" } : { id: "django" };
@@ -284,7 +296,9 @@ export class PythonEntityExtractor extends EntityExtractor {
       if (!m) continue;
       const field = m[1]!;
       const annotation = (m[2] ?? "").trim();
-      const rhs = (m[3] ?? "").trim();
+      // `db.Column(db.Integer, db.ForeignKey("users.id"))` (Flask-SQLAlchemy) and
+      // `sa.Column(sa.String)` read as their bare SQLAlchemy names.
+      const rhs = (m[3] ?? "").trim().replace(/\b(?:db|sa|sqlalchemy|orm)\.(?=[A-Za-z_])/g, "");
 
       // ── relationship(...) ── (classic or 2.0 `Mapped[...] = relationship(...)`)
       const relM = rhs.match(/^relationship\s*\(([\s\S]*)\)\s*$/);

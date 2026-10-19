@@ -374,3 +374,20 @@ class Menu {}`, routes);
     ]);
   });
 });
+
+describe("Spring routes — several paths on one mapping", () => {
+  it("emits one route per path, in Java and Kotlin", async () => {
+    const java = await routesOf(`@RestController @RequestMapping("/posts")
+class C {
+  @GetMapping({"/featured", "/pinned"}) List<Post> top() { return s.top(); }
+  @RequestMapping(value = {"/a", "/b"}, method = {RequestMethod.GET, RequestMethod.POST}) void ab() {}
+}`, "java");
+    expect(java.sort()).toEqual(["GET /posts/a", "GET /posts/b", "GET /posts/featured", "GET /posts/pinned", "POST /posts/a", "POST /posts/b"]);
+    const kotlin = await routesOf(`@RestController
+class K {
+  @GetMapping(value = ["/x", "/y"])
+  fun xy(): String { return "" }
+}`, "kotlin");
+    expect(kotlin.sort()).toEqual(["GET /x", "GET /y"]);
+  });
+});

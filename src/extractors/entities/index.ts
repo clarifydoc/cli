@@ -15,7 +15,7 @@ const EMPTY_RESULT: EntityExtractResult = { entities: [], relations: [] };
  * exercise every ORM) are the completeness check.
  */
 const JS_MARKERS =
-  /@(?:Entity|Embeddable|Column|Property|PrimaryGeneratedColumn|PrimaryColumn|ObjectIdColumn|CreateDateColumn|UpdateDateColumn|DeleteDateColumn|VersionColumn|OneToMany|ManyToOne|OneToOne|ManyToMany|JoinColumn|JoinTable|Enum|Embedded|RelationId)\b|\bsequelize\b|\bDataTypes\b|\bmongoose\b|\bnew\s+(?:[\w$]+\.)?Schema\s*\(/;
+  /@(?:Entity|Embeddable|Column|Property|PrimaryGeneratedColumn|PrimaryColumn|ObjectIdColumn|CreateDateColumn|UpdateDateColumn|DeleteDateColumn|VersionColumn|OneToMany|ManyToOne|OneToOne|ManyToMany|JoinColumn|JoinTable|Enum|Embedded|RelationId)\b|\bsequelize\b|\bDataTypes\b|\bmongoose\b|\bnew\s+(?:[\w$]+\.)?Schema\s*\(|\b(?:pg|mysql|sqlite|singlestore)Table\s*\(/;
 const JAVA_MARKERS =
   /@(?:Entity|Table|MappedSuperclass|Column|Id|ManyToOne|OneToMany|OneToOne|ManyToMany|JoinColumn|JoinTable|Embeddable|Embedded|ElementCollection|Inheritance|DiscriminatorColumn|DiscriminatorValue|MappedCollection)\b|\bTableImpl\b|\bcreateField\s*\(|\bcreateForeignKey\b/;
 const LANGUAGE_MARKERS: Partial<Record<Language, RegExp>> = {

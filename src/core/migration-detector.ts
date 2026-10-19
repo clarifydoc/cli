@@ -21,10 +21,33 @@ export function detectMigrations(filePaths: string[]): MigrationInfo[] {
   out.sort(
     (a, b) =>
       byOrdinal(a.ecosystem, b.ecosystem) ||
-      byOrdinal(a.order, b.order) ||
+      byVersion(a.order, b.order) ||
       byOrdinal(a.filePath, b.filePath),
   );
   return out;
+}
+
+/**
+ * Migration order: by the version numbers the key starts with, segment by
+ * segment (`V2__x` < `V10__x`, `V1.2` < `V1.10`, a 14-digit timestamp as one
+ * number), then as text. Text alone put Flyway's V10 before V2.
+ */
+export function byVersion(a: string, b: string): number {
+  const va = versionOf(a);
+  const vb = versionOf(b);
+  if (va && vb) {
+    for (let i = 0; i < Math.max(va.length, vb.length); i++) {
+      const x = va[i] ?? -1n;
+      const y = vb[i] ?? -1n;
+      if (x !== y) return x < y ? -1 : 1;
+    }
+  }
+  return byOrdinal(a, b);
+}
+
+function versionOf(key: string): bigint[] | null {
+  const m = /^[A-Za-z]?(\d+(?:[._]\d+)*)(?![\d])/.exec(key);
+  return m ? m[1]!.split(/[._]/).map((d) => BigInt(d)) : null;
 }
 
 /** Leading digit run of a name (timestamp / version), else the whole name. */

@@ -717,3 +717,13 @@ describe("JS api-call — an aliased Node request takes a path descriptor", () =
     expect(calls.map((c) => c.target)).toEqual(["/rpc"]);
   });
 });
+
+describe("JS database — Supabase tables", () => {
+  it("reads the table and the access of supabase.from(…)", async () => {
+    const ds = await dbOf(`
+      const { data } = await supabase.from("posts").select("*").eq("id", id);
+      await supabase.from('comments').insert({ body });
+      const rows = list.from("x");`);
+    expect(ds.map((d) => [d.entity, d.access])).toEqual([["posts", "read"], ["comments", "write"]]);
+  });
+});
