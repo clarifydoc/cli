@@ -2,6 +2,7 @@ import type { CallInfo, FunctionInfo, RouteInfo, RouteParamInfo } from "../../..
 import { applyRouteMeta, splitList, type GuardAttr } from "../../shared/route-metadata.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractSpringClientProxies } from "./client-proxies.js";
+import { mapperDataSources, mapperFunctions } from "./mybatis.js";
 
 /**
  * Spring XML definitions — the declarative wiring tier of classic Java web
@@ -318,7 +319,9 @@ export const springxmlSpec: RegexLangSpec = {
   classPatterns: [],
   importPatterns: [],
 
-  postProcessFunctions: (lines) => extractFlowFunctions(lines),
+  postProcessFunctions: (lines) => [...extractFlowFunctions(lines), ...mapperFunctions(lines)],
+  // MyBatis mapper statements: the table each one reads or writes (mybatis.ts).
+  extractDataSources: (lines) => mapperDataSources(lines),
   extractRoutes: (lines, _classes, filePath) => extractFlowRoutes(lines, filePath),
   extractStringConstants: extractBeanConstants,
   // REST client proxies the beans build (factory beans, `<jaxrs:client>`).
