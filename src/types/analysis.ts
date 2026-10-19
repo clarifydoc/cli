@@ -2971,6 +2971,12 @@ export interface ExternalPackage {
    */
   resolvedVersion?: string;
   /**
+   * The licence the lockfile records for the installed package (SPDX, as
+   * written: `MIT`, `Apache-2.0`, `(MIT OR Apache-2.0)`). Absent where the
+   * ecosystem's lockfile carries none.
+   */
+  license?: string;
+  /**
    * Known vulnerabilities of `resolvedVersion` (or an exact `version`), from
    * OSV — only when the analysis ran with `--osv`.
    */

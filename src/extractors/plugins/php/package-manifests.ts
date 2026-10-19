@@ -1,7 +1,7 @@
 import type { PackageScope } from "../../../types/analysis.js";
 import type { DeclaredPackage, PackageManagerSpec } from "../../../types/language-plugin.js";
 import { declared, jsonObject } from "../shared/declared-package.js";
-import { parseComposerLock, withLocked } from "../shared/lockfiles.js";
+import { composerLockLicenses, withLicenses, parseComposerLock, withLocked } from "../shared/lockfiles.js";
 
 /** Composer: `composer.json` require / require-dev. */
 function parseComposer(text: string, declaredIn: string): DeclaredPackage[] {
@@ -66,7 +66,7 @@ export const composerPackageManager: PackageManagerSpec = {
     files: ["composer.json"],
     async parse(text, file) {
       const lock = await file.readSibling("composer.lock");
-      return withLocked(parseComposer(text, file.declaredIn), lock ? parseComposerLock(lock) : null);
+      return withLicenses(withLocked(parseComposer(text, file.declaredIn), lock ? parseComposerLock(lock) : null), lock ? composerLockLicenses(lock) : null);
     },
   }],
   // The full namespace (`Illuminate\Support\Facades\Route`) — resolved to its

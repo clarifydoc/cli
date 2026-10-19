@@ -18,6 +18,46 @@ export function withLocked(pkgs: DeclaredPackage[], locked: ReadonlyMap<string, 
   return pkgs;
 }
 
+/** Set each package's `license` from a name → licence map read off its lockfile. */
+export function withLicenses(pkgs: DeclaredPackage[], licenses: ReadonlyMap<string, string> | null): DeclaredPackage[] {
+  if (!licenses || licenses.size === 0) return pkgs;
+  for (const p of pkgs) {
+    const l = licenses.get(p.name.toLowerCase());
+    if (l) p.license = l;
+  }
+  return pkgs;
+}
+
+/** The licences npm writes into `package-lock.json` (v2+: `packages["node_modules/x"].license`). */
+export function packageLockLicenses(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  try {
+    const lock = JSON.parse(text) as { packages?: Record<string, { license?: unknown }> };
+    for (const [path, entry] of Object.entries(lock.packages ?? {})) {
+      const m = /^node_modules\/((?:@[^/]+\/)?[^/]+)$/.exec(path);
+      if (m && typeof entry?.license === "string") out.set(m[1]!.toLowerCase(), entry.license);
+    }
+  } catch {
+    /* not JSON: no licences */
+  }
+  return out;
+}
+
+/** The licences in `composer.lock` (`packages[].license: ["MIT"]`), several joined with OR. */
+export function composerLockLicenses(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  try {
+    const lock = JSON.parse(text) as { packages?: Array<{ name?: unknown; license?: unknown }>; "packages-dev"?: Array<{ name?: unknown; license?: unknown }> };
+    for (const p of [...(lock.packages ?? []), ...(lock["packages-dev"] ?? [])]) {
+      const ls = Array.isArray(p.license) ? p.license.filter((x): x is string => typeof x === "string") : [];
+      if (typeof p.name === "string" && ls.length) out.set(p.name.toLowerCase(), ls.length === 1 ? ls[0]! : `(${ls.join(" OR ")})`);
+    }
+  } catch {
+    /* not JSON: no licences */
+  }
+  return out;
+}
+
 /** `[[package]] name = "x" version = "y"` blocks: Cargo.lock, poetry.lock, uv.lock. */
 export function parseTomlPackageLock(text: string): Map<string, string> {
   const out = new Map<string, string>();

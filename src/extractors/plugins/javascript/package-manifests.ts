@@ -1,7 +1,7 @@
 import type { PackageScope } from "../../../types/analysis.js";
 import type { DeclaredPackage, PackageManagerSpec } from "../../../types/language-plugin.js";
 import { declared, jsonObject } from "../shared/declared-package.js";
-import { parsePackageLock, parsePnpmLock, parseYarnLock, withLocked } from "../shared/lockfiles.js";
+import { packageLockLicenses, parsePackageLock, parsePnpmLock, parseYarnLock, withLicenses, withLocked } from "../shared/lockfiles.js";
 
 /** npm: `package.json`'s dependency sections. */
 function parseNpm(text: string, declaredIn: string): DeclaredPackage[] {
@@ -147,7 +147,7 @@ export const npmPackageManager: PackageManagerSpec = {
       const json = jsonObject(text);
       if (json) await markToolUsage(pkgs, json, (n) => file.readSibling(n));
       const npmLock = await file.readSibling("package-lock.json");
-      if (npmLock) return withLocked(pkgs, parsePackageLock(npmLock));
+      if (npmLock) return withLicenses(withLocked(pkgs, parsePackageLock(npmLock)), packageLockLicenses(npmLock));
       const yarn = await file.readSibling("yarn.lock");
       if (yarn) return withLocked(pkgs, parseYarnLock(yarn));
       const pnpm = await file.readSibling("pnpm-lock.yaml");

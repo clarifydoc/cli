@@ -5,6 +5,7 @@ import { buildDiagram, toMermaidFile, DIAGRAM_KINDS, type DiagramKind } from "./
 import { architectureDoc, dataModelDoc, flowsDoc, projectName } from "./markdown.js";
 import type { Summary } from "./types.js";
 import { buildOpenApi } from "../core/openapi-export.js";
+import { toCycloneDx } from "./sbom.js";
 
 /**
  * The export catalogue: every artifact an analysis's graph can leave the tool
@@ -61,6 +62,12 @@ function catalogue(): ExportFormat[] {
       contentType: "application/json; charset=utf-8",
       description: "OpenAPI 3.1 — every API route the code declares, with its parameters, request body schema and security.",
       render: (summary) => JSON.stringify(buildOpenApi(summary as never, { title: projectName(summary) }), null, 2) + "\n",
+    },
+    {
+      name: "sbom.cdx.json",
+      contentType: "application/vnd.cyclonedx+json; charset=utf-8",
+      description: "CycloneDX 1.5 SBOM — the declared dependencies with purls, installed versions, licences and scope.",
+      render: (summary) => JSON.stringify(toCycloneDx(summary, projectName(summary)), null, 2) + "\n",
     },
     {
       name: "FLOWS.md",

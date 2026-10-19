@@ -151,7 +151,7 @@ clarifydoc seq <path> --route "POST /x" # Draw what a route does, in order, as a
 clarifydoc cfg <file> --slice <line>   # What can affect the values used at that line (backward slice)
 clarifydoc detect <path>               # Print detected languages + frameworks only
 clarifydoc schema                      # Print every field of the per-file JSON and project-summary.json
-clarifydoc export <path>               # The analysis as ARCHITECTURE.md, DATA-MODEL.md, FLOWS.md, openapi.json, Mermaid, GraphML, Cypher
+clarifydoc export <path>               # The analysis as ARCHITECTURE.md, DATA-MODEL.md, FLOWS.md, openapi.json, sbom.cdx.json, Mermaid, GraphML, Cypher
 clarifydoc mcp [path]                  # Serve the analysis to an AI agent over MCP (stdio)
 clarifydoc ask routes path=/api/users  # Call one MCP tool from a shell or CI (--list for all)
 clarifydoc install --hooks --skills    # Wire ClarifyDoc into agent hosts (MCP entry, hooks, skills)
