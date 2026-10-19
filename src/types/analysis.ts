@@ -2138,7 +2138,11 @@ export interface ResponsibilityProfile {
 export type PatternKind =
   | "singleton" | "factory" | "observer" | "custom-hook" | "hoc"
   | "context-provider" | "dataclass" | "abc" | "middleware"
-  | "god-object" | "long-file";
+  | "god-object" | "long-file"
+  /** Database work once per loop pass (core/query-in-loop.ts). */
+  | "query-in-loop"
+  /** A blocking call inside an async function (`blockingCalls` on the plugin manifest). */
+  | "blocking-in-async";
 
 export interface PatternInfo {
   kind: PatternKind;

@@ -770,6 +770,12 @@ export interface LanguagePluginManifest {
    * when it cannot say. Used by the impact report ("tests to run").
    */
   testCommand?(tests: readonly TestTarget[], ctx: TestCommandContext): string | null;
+  /**
+   * Calls that block the thread they run on — matched against a call's
+   * `receiver.name` and its bare name. An async function calling one stalls
+   * every caller (`readFileSync`, `time.sleep`, `requests.get`).
+   */
+  blockingCalls?: RegExp;
   /** How files of this language are parsed. */
   parsing: "tree-sitter" | "regex" | "custom";
   /**

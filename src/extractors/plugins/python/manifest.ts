@@ -10,6 +10,7 @@ import { pypiPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const pythonManifest: LanguagePluginManifest = {
+  blockingCalls: /^(?:time\.sleep|requests\.(?:get|post|put|patch|delete|head|request)|urllib\.request\.urlopen|urlopen|subprocess\.(?:run|call|check_call|check_output))$/,
   testCommand: pythonTestCommand,
   language: "python",
   family: "python",

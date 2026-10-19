@@ -73,6 +73,7 @@ import { externalServices } from "./external-services.js";
 import { typeOnlyEdges } from "./import-kinds.js";
 import { checkDocReferences, docReferences, type DocReference } from "./doc-drift.js";
 import { scanHistorySecrets } from "./history-secrets.js";
+import { findBlockingInAsync, findQueriesInLoops } from "./query-in-loop.js";
 import { buildTestCoverage, COVERAGE_CANDIDATES, parseCoverage } from "./test-coverage.js";
 import { isTestFile } from "./test-file-detector.js";
 import { checkContracts } from "./contract-check.js";
@@ -1412,6 +1413,16 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Broker hop for Call Traces: a publish and a consume naming the same
   // destination become a publisher→consumer edge, so a trace follows the
   // message across the queue the way apiSymbolLinks follow HTTP.
+  // Database work once per loop pass, and blocking calls inside async functions.
+  {
+    // Migrations and seeds run once, by a tool: a query per row there is no N+1.
+    const runOnce = /(?:^|\/)(?:migrations?|migrate|alembic|seeds?|seeders|fixtures)\//i;
+    const skip = (f: string) => isUnauthored(f) || fileLayerMap[f] === "test" || runOnce.test(f);
+    const loops = await findQueriesInLoops({ projectRoot, dataAccess: symbolDataAccess, symbolLinks, skip }).catch(() => []);
+    const blocking = findBlockingInAsync(allAnalyses, skip);
+    patterns.push(...loops, ...blocking);
+    if (loops.length || blocking.length) progress.detail(`  Performance patterns: ${loops.length} query-in-loop, ${blocking.length} blocking-in-async`);
+  }
   const queueSymbolLinks = synthesizeQueueSymbolLinks(symbolDataAccess);
   if (queueSymbolLinks.length > 0) {
     symbolLinks = dedupSymbolLinks([...symbolLinks, ...queueSymbolLinks]);

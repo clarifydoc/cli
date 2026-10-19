@@ -98,6 +98,7 @@ export const JS_PLATFORM_SUFFIXES = [".native", ".ios", ".android", ".web"] as c
  * this module must stay a leaf: types, frameworks.ts, package-manifests.ts and service-config.ts only.
  */
 export const typescriptManifest: LanguagePluginManifest = {
+  blockingCalls: /^(?:(?:fs|child_process)\.)?(?:readFileSync|writeFileSync|appendFileSync|readdirSync|statSync|existsSync|mkdirSync|copyFileSync|execSync|execFileSync|spawnSync)$/,
   testCommand: jsTestCommand,
   language: "typescript",
   family: "script",
@@ -125,6 +126,7 @@ export const typescriptManifest: LanguagePluginManifest = {
 };
 
 export const javascriptManifest: LanguagePluginManifest = {
+  blockingCalls: /^(?:(?:fs|child_process)\.)?(?:readFileSync|writeFileSync|appendFileSync|readdirSync|statSync|existsSync|mkdirSync|copyFileSync|execSync|execFileSync|spawnSync)$/,
   testCommand: jsTestCommand,
   language: "javascript",
   family: "script",
