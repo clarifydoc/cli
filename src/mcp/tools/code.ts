@@ -27,6 +27,10 @@ import {
   stringArrayArg,
   tally,
   versionNote,
+  OFFSET_SCHEMA,
+  offsetArg,
+  page,
+  pageFooter,
 } from "../format.js";
 import { mustResolveFile, requireAnalysis, stalenessHint, type ToolContext } from "./context.js";
 import { filterToDrop, missHeadline, noResults, type DroppableFilter } from "../empty.js";
@@ -85,6 +89,7 @@ export function routesTool(ctx: ToolContext): McpTool {
             "renamed or removed endpoint, and a broken contract, from both sides. `path`/`file` narrow it.",
         },
         limit: { type: "number", description: "Max routes (default 40)." },
+        offset: OFFSET_SCHEMA,
       },
       additionalProperties: false,
     },
@@ -102,6 +107,7 @@ export function routesTool(ctx: ToolContext): McpTool {
       const withSchema = booleanArg(args, "schema", false);
       const detailArg = booleanArg(args, "detail", false);
       const limit = numberArg(args, "limit", 40, { max: 500 });
+      const offset = offsetArg(args);
       const policyFilter = stringArg(args, "policy");
       const roleFilter = stringArg(args, "role");
       const schemeFilter = stringArg(args, "scheme");
@@ -208,7 +214,8 @@ export function routesTool(ctx: ToolContext): McpTool {
         effects.set(key, list);
       }
 
-      const { shown, hidden } = cap(routes, limit);
+      const pg = page(routes, offset, limit);
+      const { shown } = pg;
       // Parameters are per-route detail: on a narrowed result they are the
       // answer, on a 200-route listing they double the tokens for nothing.
       const showParams = withSchema || detailArg || shown.length <= 10;
@@ -263,7 +270,7 @@ export function routesTool(ctx: ToolContext): McpTool {
         text: joinLines([
           `# Routes (${routes.length} match${routes.length === 1 ? "" : "es"})`,
           ...rows,
-          hidden ? `  … ${hidden} more (raise \`limit\` or narrow with \`path\`/\`method\`)` : "",
+          pageFooter(pg, routes.length, "more", "or narrow with `path`/`method`"),
         ]),
       };
     },
@@ -345,6 +352,7 @@ export function screensTool(ctx: ToolContext): McpTool {
           description: "Include each screen's component list and navigation detail (default false).",
         },
         limit: { type: "number", description: "Max screens (default 30)." },
+        offset: OFFSET_SCHEMA,
       },
       additionalProperties: false,
     },
@@ -356,6 +364,7 @@ export function screensTool(ctx: ToolContext): McpTool {
       const entry = booleanArg(args, "entry");
       const detail = booleanArg(args, "detail");
       const limit = numberArg(args, "limit", 30, { max: 300 });
+      const offset = offsetArg(args);
 
       let screens = summary.screens ?? [];
       if (query) {
@@ -393,7 +402,8 @@ export function screensTool(ctx: ToolContext): McpTool {
         };
       }
 
-      const { shown, hidden } = cap(screens, limit);
+      const pg = page(screens, offset, limit);
+      const { shown } = pg;
       const rows = shown.map((screen) => {
         const f = index.byFile.get(screen.filePath);
         const head = `- ${screen.name}${screen.caption ? ` — "${screen.caption}"` : ""}${
@@ -435,7 +445,7 @@ export function screensTool(ctx: ToolContext): McpTool {
         text: joinLines([
           `# Screens (${screens.length} match${screens.length === 1 ? "" : "es"})`,
           ...rows,
-          hidden ? `  … ${hidden} more (raise \`limit\`)` : "",
+          pageFooter(pg, screens.length),
         ]),
       };
     },

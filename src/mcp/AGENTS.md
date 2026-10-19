@@ -26,7 +26,9 @@ write. That is what lets an external agent be configured as nothing but a comman
 - **One source of truth.** Every answer comes from `loadReportSummary` — the same denormalized, LSP-merged
   `ProjectAnalysis` the HTML report renders — so an MCP answer and the report can never disagree. Per-file detail
   (imports/exports) comes from the per-file JSON via `AnalysisStore.fileAnalysis`.
-- **Tool output is for a context window.** Cap every list and say how many rows were withheld (`bulletList`), emit
+- **Tool output is for a context window.** Cap every list and say how many rows were withheld (`bulletList`). A
+  tool's main list also pages: `offset` (`OFFSET_SCHEMA`, `offsetArg`, `page`, `pageFooter`) with a footer naming the
+  next offset — routes, screens, search, data_flows, health and data_model; caps stay as they are. Emit
   `path:line` for anything worth opening, and never silently return nothing — a miss explains what exists instead
   (`"No routes match … the analysis holds N routes"`), which is what stops an agent from re-guessing.
 - **An empty result names the call that would have data.** Every miss goes through `noResults` ([empty.ts](empty.ts))

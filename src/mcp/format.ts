@@ -83,16 +83,47 @@ export function cap<T>(items: T[], limit: number): { shown: T[]; hidden: number 
   return { shown: items.slice(0, limit), hidden: items.length - limit };
 }
 
-/** Render a capped list as bullet lines plus a "… N more" tail. */
+/** The `offset` argument of a paged list tool (0 when absent). */
+export function offsetArg(args: Record<string, unknown>): number {
+  return numberArg(args, "offset", 0, { min: 0, max: 1_000_000 });
+}
+
+/** The schema of `offset`, shared by every paged tool. */
+export const OFFSET_SCHEMA = { type: "number", description: "Skip this many rows — the next page (the footer says which offset comes next)." } as const;
+
+/** One page of a list: the rows from `offset`, and how many are left after them. */
+export function page<T>(items: T[], offset: number, limit: number): { shown: T[]; hidden: number; offset: number; requested: number } {
+  const start = Math.min(offset, items.length);
+  const shown = items.slice(start, start + limit);
+  return { shown, hidden: items.length - start - shown.length, offset: start, requested: offset };
+}
+
+/**
+ * The line under a page: what is left and the offset that shows it, or that
+ * the offset ran past the end. Empty when the list was shown whole.
+ */
+export function pageFooter(p: { shown: unknown[]; hidden: number; offset: number; requested?: number }, total: number, noun = "more", hint = ""): string {
+  if (p.shown.length === 0 && (p.requested ?? p.offset) > 0) return `  (offset ${p.requested ?? p.offset} is past the end: ${total} in all — start again at offset=0)`;
+  const range = `${p.offset + 1}–${p.offset + p.shown.length} of ${total}`;
+  if (p.hidden > 0) return `  … ${p.hidden} ${noun}${p.offset > 0 ? ` (showing ${range})` : ""} — next page: \`offset=${p.offset + p.shown.length}\`${hint ? `, ${hint}` : ""}`;
+  return p.offset > 0 ? `  (end of the list: ${range})` : "";
+}
+
+/**
+ * Render a capped list as bullet lines plus a "… N more" tail. A list the
+ * tool pages (`offset` given) says which offset shows the rest; a nested,
+ * fixed-cap one only how many it left out.
+ */
 export function bulletList<T>(
   items: T[],
   limit: number,
   render: (item: T) => string,
-  { indent = "" }: { indent?: string } = {},
+  { indent = "", offset }: { indent?: string; offset?: number } = {},
 ): string[] {
-  const { shown, hidden } = cap(items, limit);
-  const lines = shown.map((item) => `${indent}- ${render(item)}`);
-  if (hidden > 0) lines.push(`${indent}  … ${hidden} more (raise \`limit\` to see them)`);
+  const p = page(items, offset ?? 0, limit);
+  const lines = p.shown.map((item) => `${indent}- ${render(item)}`);
+  const footer = offset !== undefined ? pageFooter(p, items.length) : p.hidden > 0 ? `  … ${p.hidden} more (raise \`limit\` to see them)` : "";
+  if (footer) lines.push(`${indent}${footer}`);
   return lines;
 }
 

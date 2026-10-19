@@ -25,6 +25,10 @@ import {
   countMap,
   booleanArg,
   plural, routeGuardNote,
+  OFFSET_SCHEMA,
+  offsetArg,
+  page,
+  pageFooter,
 } from "../format.js";
 import { projectName, requireAnalysis, stalenessHint, statusReport, type ToolContext } from "./context.js";
 import { filterToDrop, missHeadline, noResults, termDiagnosis } from "../empty.js";
@@ -279,6 +283,7 @@ export function searchTool(ctx: ToolContext): McpTool {
           description: "Restrict the search to these kinds. Default: all.",
         },
         limit: { type: "number", description: "Max results in total, best first (default 12)." },
+        offset: OFFSET_SCHEMA,
       },
       required: ["query"],
       additionalProperties: false,
@@ -286,6 +291,7 @@ export function searchTool(ctx: ToolContext): McpTool {
     handler: async (args) => {
       const query = requiredStringArg(args, "query");
       const limit = numberArg(args, "limit", 12, { max: 100 });
+      const offset = offsetArg(args);
       const requested = stringArrayArg(args, "kinds")
         .map((k) => k.toLowerCase())
         .filter((k): k is SearchKind => (SEARCH_KINDS as readonly string[]).includes(k));
@@ -340,7 +346,7 @@ export function searchTool(ctx: ToolContext): McpTool {
           header,
           "",
           ...note,
-          bulletList(ranked, limit, (hit) => `${kindTag(hit.kind)} ${hit.text}`),
+          bulletList(ranked, limit, (hit) => `${kindTag(hit.kind)} ${hit.text}`, { offset }),
         ]),
       };
     },
@@ -549,6 +555,7 @@ export function healthTool(ctx: ToolContext): McpTool {
         },
         file: { type: "string", description: "Restrict findings to one file (project-relative path substring)." },
         limit: { type: "number", description: "Max rows (default 25)." },
+        offset: OFFSET_SCHEMA,
       },
       additionalProperties: false,
     },
@@ -557,6 +564,7 @@ export function healthTool(ctx: ToolContext): McpTool {
       const { summary } = loaded;
       const category = enumArg(args, "category", HEALTH_CATEGORIES);
       const limit = numberArg(args, "limit", 25, { max: 300 });
+      const offset = offsetArg(args);
       const fileFilter = stringArg(args, "file");
       const severity = enumArg(args, "severity", ["critical", "high", "medium", "low"] as const);
       const rank = { critical: 0, high: 1, medium: 2, low: 3 } as const;
@@ -608,6 +616,7 @@ export function healthTool(ctx: ToolContext): McpTool {
                     ? `\n    reachable from ${i.entries.map((e) => `${e.route}${e.distance ? ` (${e.distance} hops)` : ""}`).join(", ")}`
                     : ""
                 }`,
+                { offset },
               ),
             ]),
           };
@@ -629,6 +638,7 @@ export function healthTool(ctx: ToolContext): McpTool {
                 (v) =>
                   `${v.rule ? `rule "${v.rule}"${v.severity === "warn" ? " (warn)" : ""}` : `${v.sourceLayer} → ${v.targetLayer}`}: ` +
                   `${loc(v.sourceFile, v.line)} imports ${v.importSpecifier} (${v.targetFile})`,
+                { offset },
               ),
             ]),
           };
@@ -651,6 +661,7 @@ export function healthTool(ctx: ToolContext): McpTool {
                   `cyclomatic ${fn.complexity}` +
                   (fn.cognitive !== undefined ? `, cognitive ${fn.cognitive}, nesting ${fn.nestingDepth ?? 0}` : "") +
                   ` — ${fn.functionName}() (${loc(fn.filePath, fn.line)})`,
+                { offset },
               ),
             ]),
           };
@@ -673,6 +684,7 @@ export function healthTool(ctx: ToolContext): McpTool {
                     .map((o) => loc(o.filePath, o.line))
                     .join(", ") +
                   (g.occurrences.length > 4 ? ", …" : ""),
+                { offset },
               ),
             ]),
           };
@@ -694,11 +706,11 @@ export function healthTool(ctx: ToolContext): McpTool {
               ...(vulnerable.length ? ["", "## Known vulnerabilities (OSV)", ...bulletList(vulnerable, limit, (p) =>
                 `${p.name} ${p.resolvedVersion ?? p.version ?? ""} (${p.ecosystem}${p.scope !== "prod" ? `, ${p.scope}` : ""}${p.used === false ? ", unused" : ""}): ${
                   p.advisories!.slice(0, 4).map((a) => `${a.id}${a.severity ? ` [${a.severity.toLowerCase()}]` : ""}${a.summary ? ` ${a.summary}` : ""}`).join("; ")
-                }${p.advisories!.length > 4 ? ` … +${p.advisories!.length - 4}` : ""}`)] : []),
+                }${p.advisories!.length > 4 ? ` … +${p.advisories!.length - 4}` : ""}`, { offset })] : []),
               ...(skewed.length ? ["", "## Declared with different versions", ...bulletList(skewed, limit, (p) =>
-                `${p.name} (${p.ecosystem}): ${(p.declarations ?? []).map((d) => `${d.version ?? "—"} in ${d.declaredIn}`).join(", ")}`)] : []),
+                `${p.name} (${p.ecosystem}): ${(p.declarations ?? []).map((d) => `${d.version ?? "—"} in ${d.declaredIn}`).join(", ")}`, { offset })] : []),
               ...(unused.length ? ["", "## Declared but imported by no analyzed file", ...bulletList(unused, limit, (p) =>
-                `${p.name}${p.version ? ` ${p.version}` : ""} (${p.ecosystem}, ${p.scope}) — ${p.declaredIn}`)] : []),
+                `${p.name}${p.version ? ` ${p.version}` : ""} (${p.ecosystem}, ${p.scope}) — ${p.declaredIn}`, { offset })] : []),
             ]),
           };
         }
@@ -719,6 +731,7 @@ export function healthTool(ctx: ToolContext): McpTool {
                   `${p.score} ${p.band} (conf ${p.confidence}) — ${p.filePath}` +
                   (p.drivers.length ? `: ${describeDrivers(p.drivers)}` : "") +
                   (p.gates.length ? ` [${describeGates(p.gates)}]` : ""),
+                { offset },
               ),
             ]),
           };
@@ -745,6 +758,7 @@ export function healthTool(ctx: ToolContext): McpTool {
                   (r.emitsEvents ? " publishes" : "") +
                   (r.servesRequests ? " serves" : "") +
                   (r.callsExternal ? " calls-out" : ""),
+                { offset },
               ),
             ]),
           };
@@ -759,6 +773,7 @@ export function healthTool(ctx: ToolContext): McpTool {
                 rows,
                 limit,
                 (h) => `${h.score} — ${h.file} (${h.commits} commits, complexity ${h.totalComplexity})`,
+                { offset },
               ),
             ]),
           };
@@ -779,6 +794,7 @@ export function healthTool(ctx: ToolContext): McpTool {
                   `[${s.priority}] ${s.category}: ${s.message}${s.filePath ? ` (${s.filePath})` : ""}\n    → ${
                     s.actionable
                   }`,
+                { offset },
               ),
             ]),
           };
@@ -793,6 +809,7 @@ export function healthTool(ctx: ToolContext): McpTool {
                 rows,
                 limit,
                 (p) => `${p.kind}: ${p.name} (${loc(p.filePath, p.line)}) [${p.confidence}] ${p.detail}`,
+                { offset },
               ),
             ]),
           };
@@ -826,7 +843,9 @@ export function healthTool(ctx: ToolContext): McpTool {
                 const where = f.deadImporters === 0 ? "top of a dead cluster" : `imported only by ${plural(f.deadImporters, "dead file")}`;
                 const size = f.lineCount !== undefined ? `, ${plural(f.lineCount, "line")}` : "";
                 return `${f.filePath} — ${where}${size}${f.confidence === "AMBIGUOUS" ? " [ambiguous]" : ""}`;
-              }),
+              },
+                { offset },
+              ),
             );
           }
           if (exports.length > 0) {
@@ -838,6 +857,7 @@ export function healthTool(ctx: ToolContext): McpTool {
                 exports,
                 limit,
                 (e) => `${loc(e.filePath, e.line)} ${e.name} (${e.kind}) — ${e.usedInFile ? "used in its own file: drop `export`" : "unused: delete"}`,
+                { offset },
               ),
             );
           }
@@ -851,7 +871,7 @@ export function healthTool(ctx: ToolContext): McpTool {
               `# Unused generated files (${rows.length})`,
               "Files under a detected generated/barrel root that nothing outside that tree imports.",
               "",
-              ...bulletList(rows, limit, (f) => f),
+              ...bulletList(rows, limit, (f) => f, { offset }),
             ]),
           };
         }

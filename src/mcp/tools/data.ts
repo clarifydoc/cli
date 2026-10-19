@@ -18,6 +18,10 @@ import {
   section,
   stringArg,
   tally,
+  OFFSET_SCHEMA,
+  offsetArg,
+  page,
+  pageFooter,
 } from "../format.js";
 import { requireAnalysis, stalenessHint, type ToolContext } from "./context.js";
 import { filterToDrop, missHeadline, noResults, type DroppableFilter } from "../empty.js";
@@ -39,6 +43,7 @@ export function dataModelTool(ctx: ToolContext): McpTool {
         entity: { type: "string", description: "Entity/table name (case-insensitive) to describe in full." },
         query: { type: "string", description: "Substring filter for the inventory listing." },
         limit: { type: "number", description: "Max rows per list (default 30)." },
+        offset: OFFSET_SCHEMA,
       },
       additionalProperties: false,
     },
@@ -47,6 +52,7 @@ export function dataModelTool(ctx: ToolContext): McpTool {
       const { summary, index } = loaded;
       const graph = summary.entityGraph;
       const limit = numberArg(args, "limit", 30, { max: 300 });
+      const offset = offsetArg(args);
       if (!graph || graph.nodes.length === 0) {
         return {
           text: noResults({
@@ -83,6 +89,7 @@ export function dataModelTool(ctx: ToolContext): McpTool {
               (n) =>
                 `${n.name} [${n.kind}${n.orm ? `, ${n.orm}` : ""}] — ${plural(n.columns.length, "column")}, ` +
                 `${plural(relationCount.get(n.id) ?? 0, "relation")} (${loc(n.filePath, n.line)})`,
+              { offset },
             ),
           ]),
         };
@@ -262,6 +269,7 @@ export function dataFlowsTool(ctx: ToolContext): McpTool {
         entry: { type: "string", description: "Only flows from this entry point (route path, screen name or file)." },
         entryKind: { type: "string", enum: ["route", "screen"], description: "Only route or only screen entries." },
         limit: { type: "number", description: "Max entry points (default 25)." },
+        offset: OFFSET_SCHEMA,
       },
       additionalProperties: false,
     },
@@ -288,6 +296,7 @@ export function dataFlowsTool(ctx: ToolContext): McpTool {
       const entry = stringArg(args, "entry");
       const entryKind = enumArg(args, "entryKind", ["route", "screen"] as const);
       const limit = numberArg(args, "limit", 25, { max: 200 });
+      const offset = offsetArg(args);
 
       let rows = flows;
       if (effect) rows = rows.filter((f) => f.effect === effect);
@@ -338,7 +347,8 @@ export function dataFlowsTool(ctx: ToolContext): McpTool {
         else grouped.set(key, { kind: row.entryKind, label: row.entryLabel, file: row.entryFile, rows: [row] });
       }
       const entries = [...grouped.values()].sort((a, b) => b.rows.length - a.rows.length);
-      const { shown, hidden } = cap(entries, limit);
+      const pg = page(entries, offset, limit);
+      const { shown } = pg;
 
       const body = shown.map(({ kind, label, file, rows: group }) => {
         const head = `- ${kind} ${label} (${file})`;
@@ -358,7 +368,7 @@ export function dataFlowsTool(ctx: ToolContext): McpTool {
           `effects: ${countMap(tally(rows, (f) => f.effect))}`,
           "",
           ...body,
-          hidden ? `  … ${hidden} more entry points (raise \`limit\` or filter)` : "",
+          pageFooter(pg, entries.length, "more entry points", "or filter"),
         ]),
       };
     },
