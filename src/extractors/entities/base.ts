@@ -5,6 +5,7 @@ import type {
   Language,
   PropertyInfo,
   RailsSchemaTable,
+  SchemaOp,
 } from "../../types/analysis.js";
 
 /**
@@ -36,6 +37,8 @@ export interface EntityExtractResult {
    * project-level join can attach columns to model entities defined elsewhere.
    */
   schemaTables?: RailsSchemaTable[];
+  /** The schema changes this file states, carried to `FileAnalysis.schemaOps` for a migration replay. */
+  schemaOps?: SchemaOp[];
 }
 
 /**

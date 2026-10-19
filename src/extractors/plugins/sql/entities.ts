@@ -1,0 +1,311 @@
+import type { ClassInfo, EntityRelation, FileAnalysis, PropertyInfo, SchemaOp } from "../../../types/analysis.js";
+import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
+
+/**
+ * SQL migrations replayed into one schema.
+ *
+ * Per file, the tables come from the spec's CREATE TABLE classes; this pass
+ * adds what the file then does to them (`FileAnalysis.schemaOps`): ALTER
+ * TABLE … ADD / DROP / RENAME COLUMN, MySQL CHANGE, ADD … FOREIGN KEY …
+ * REFERENCES, RENAME TO, RENAME TABLE, DROP TABLE.
+ *
+ * Project-wide, a directory of versioned migrations — Flyway `V2__x.sql`,
+ * `0002_x.sql`, golang-migrate `000002_x.up.sql`, timestamped
+ * `20240101120000_x.sql` — is replayed in version order (`V10` after `V2`;
+ * down / undo scripts and Flyway repeatables never) into the schema it ends
+ * with: an ALTER-added column joins its table, a FK added later is an edge,
+ * a dropped table is gone, a table dropped and created again is one node —
+ * declared where its current form was created.
+ */
+export class SqlMigrationEntities extends EntityExtractor {
+  readonly languages = ["sql" as const];
+
+  extract(ctx: EntityExtractContext): EntityExtractResult {
+    const schemaOps = schemaOpsOf(ctx.lines);
+    // Every foreign key the file states is a many-to-one edge; a replayed
+    // chain rebuilds them from the schema it ends with.
+    const relations = schemaOps.filter((o) => o.op === "add-foreign-key" && o.column && o.to).map((o) => fkRelation(o.table, o.column!, o.to!));
+    return { entities: [], relations, ...(schemaOps.length ? { schemaOps } : {}) };
+  }
+
+  reconcileProject(analyses: FileAnalysis[]): void {
+    const byDir = new Map<string, Array<{ a: FileAnalysis; version: bigint[] }>>();
+    const alone: FileAnalysis[] = [];
+    for (const a of analyses) {
+      if (a.language !== "sql" || !a.schemaOps?.length) continue;
+      const slot = migrationSlot(a.filePath);
+      if (!slot) {
+        alone.push(a);
+        continue;
+      }
+      (byDir.get(slot.chain) ?? byDir.set(slot.chain, []).get(slot.chain)!).push({ a, version: slot.version });
+    }
+    for (const chain of byDir.values()) {
+      chain.sort((x, y) => compareVersions(x.version, y.version) || (x.a.filePath < y.a.filePath ? -1 : 1));
+      replay(chain.map((c) => c.a));
+    }
+    // A script that alters what it creates (`schema.sql` with a trailing
+    // ALTER TABLE … ADD COLUMN) ends with that schema too.
+    for (const a of alone) replay([a]);
+  }
+}
+
+// ─── Per file: the schema changes a script states ───────────────────────────
+
+const IDENT = String.raw`(?:\[[^\]]+\]|"[^"]+"|` + "`[^`]+`" + String.raw`|[\w.$]+)`;
+const unquote = (s: string): string => s.replace(/^[[\]"`]|[[\]"`]$/g, "").replace(/^\[|\]$/g, "");
+
+/** Statements with their first line: `;`-terminated, comments blanked. */
+function statements(lines: string[]): Array<{ text: string; line: number }> {
+  const out: Array<{ text: string; line: number }> = [];
+  let buf = "";
+  let start = 0;
+  let inBlock = false;
+  lines.forEach((raw, i) => {
+    let l = raw;
+    if (inBlock) {
+      const end = l.indexOf("*/");
+      if (end < 0) return;
+      l = l.slice(end + 2);
+      inBlock = false;
+    }
+    l = l.replace(/\/\*.*?\*\//g, " ");
+    const open = l.indexOf("/*");
+    if (open >= 0) {
+      l = l.slice(0, open);
+      inBlock = true;
+    }
+    l = l.replace(/--.*$/, "");
+    if (!buf.trim()) start = i + 1;
+    for (const ch of l) {
+      if (ch === ";") {
+        if (buf.trim()) out.push({ text: buf.trim(), line: start });
+        buf = "";
+        start = i + 1;
+      } else buf += ch;
+    }
+    buf += "\n";
+  });
+  if (buf.trim()) out.push({ text: buf.trim(), line: start });
+  return out;
+}
+
+function matchingParen(text: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === "(") depth++;
+    else if (text[i] === ")" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/** Split an ALTER TABLE's actions (or a CREATE's columns) at top-level commas. */
+function actions(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of text) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "," && depth === 0) {
+      out.push(cur.trim());
+      cur = "";
+    } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
+const NOT_A_COLUMN = /^(?:CONSTRAINT|PRIMARY|FOREIGN|UNIQUE|CHECK|INDEX|KEY|FULLTEXT|SPATIAL|EXCLUDE|PERIOD)\b/i;
+
+export function schemaOpsOf(lines: string[]): SchemaOp[] {
+  const ops: SchemaOp[] = [];
+  for (const { text, line } of statements(lines)) {
+    const create = new RegExp(String.raw`^CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:GLOBAL\s+)?(?:TEMPORARY|TEMP)\s+|UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(${IDENT})`, "i").exec(text);
+    if (create) {
+      const table = unquote(create[1]!);
+      ops.push({ op: "create-table", table, line });
+      const open = text.indexOf("(", create[0].length);
+      const close = open >= 0 ? matchingParen(text, open) : -1;
+      for (const el of open >= 0 && close > open ? actions(text.slice(open + 1, close)) : []) {
+        const e = el.replace(/\s+/g, " ").trim();
+        const ref = new RegExp(String.raw`\bREFERENCES\s+(${IDENT})`, "i").exec(e);
+        if (!ref) continue;
+        const tableFk = new RegExp(String.raw`^(?:CONSTRAINT\s+${IDENT}\s+)?FOREIGN\s+KEY\s*\(\s*(${IDENT})`, "i").exec(e);
+        const col = tableFk ? tableFk[1]! : NOT_A_COLUMN.test(e) ? null : new RegExp(String.raw`^(${IDENT})`).exec(e)?.[1];
+        if (col) ops.push({ op: "add-foreign-key", table, column: unquote(col), to: unquote(ref[1]!), line });
+      }
+      continue;
+    }
+    const drop = /^DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([^;]+?)(?:\s+(?:CASCADE|RESTRICT))?\s*$/i.exec(text);
+    if (drop) {
+      for (const t of drop[1]!.split(",")) ops.push({ op: "drop-table", table: unquote(t.trim()), line });
+      continue;
+    }
+    const renameTable = new RegExp(String.raw`^RENAME\s+TABLE\s+(${IDENT})\s+TO\s+(${IDENT})`, "i").exec(text);
+    if (renameTable) {
+      ops.push({ op: "rename-table", table: unquote(renameTable[1]!), to: unquote(renameTable[2]!), line });
+      continue;
+    }
+    const alter = new RegExp(String.raw`^ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(${IDENT})\s+([\s\S]+)$`, "i").exec(text);
+    if (!alter) continue;
+    const table = unquote(alter[1]!);
+    for (const act of actions(alter[2]!)) {
+      const a = act.replace(/\s+/g, " ").trim();
+      let m: RegExpExecArray | null;
+      if ((m = new RegExp(String.raw`^RENAME\s+TO\s+(${IDENT})`, "i").exec(a))) {
+        ops.push({ op: "rename-table", table, to: unquote(m[1]!), line });
+      } else if ((m = new RegExp(String.raw`^RENAME\s+(?:COLUMN\s+)?(${IDENT})\s+TO\s+(${IDENT})`, "i").exec(a))) {
+        ops.push({ op: "rename-column", table, column: unquote(m[1]!), to: unquote(m[2]!), line });
+      } else if ((m = new RegExp(String.raw`^CHANGE\s+(?:COLUMN\s+)?(${IDENT})\s+(${IDENT})`, "i").exec(a))) {
+        if (unquote(m[1]!) !== unquote(m[2]!)) ops.push({ op: "rename-column", table, column: unquote(m[1]!), to: unquote(m[2]!), line });
+      } else if ((m = new RegExp(String.raw`^ADD\s+(?:CONSTRAINT\s+${IDENT}\s+)?FOREIGN\s+KEY\s*\(\s*(${IDENT})[^)]*\)\s*REFERENCES\s+(${IDENT})`, "i").exec(a))) {
+        ops.push({ op: "add-foreign-key", table, column: unquote(m[1]!), to: unquote(m[2]!), line });
+      } else if ((m = /^ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(.+)$/i.exec(a)) && !NOT_A_COLUMN.test(m[1]!)) {
+        const def = new RegExp(String.raw`^(${IDENT})\s*([^\s(]+(?:\([^)]*\))?)?`).exec(m[1]!.replace(/^\(\s*|\s*\)$/g, ""));
+        if (!def) continue;
+        const column = unquote(def[1]!);
+        ops.push({ op: "add-column", table, column, type: def[2] ?? null, line });
+        const ref = new RegExp(String.raw`\bREFERENCES\s+(${IDENT})`, "i").exec(m[1]!);
+        if (ref) ops.push({ op: "add-foreign-key", table, column, to: unquote(ref[1]!), line });
+      } else if ((m = new RegExp(String.raw`^DROP\s+(?:COLUMN\s+)?(?:IF\s+EXISTS\s+)?(${IDENT})`, "i").exec(a)) && !/^DROP\s+(?:CONSTRAINT|INDEX|KEY|PRIMARY|FOREIGN|DEFAULT|CHECK)\b/i.test(a)) {
+        ops.push({ op: "drop-column", table, column: unquote(m[1]!), line });
+      }
+    }
+  }
+  return ops;
+}
+
+// ─── Project: replay a chain ─────────────────────────────────────────────────
+
+/**
+ * The version a migration file's name states, or null for a file that is not
+ * a versioned migration (a schema dump, a seed, a down / undo script, a
+ * Flyway repeatable `R__`).
+ */
+export function migrationVersion(filePath: string): bigint[] | null {
+  return migrationSlot(filePath)?.version ?? null;
+}
+
+/**
+ * Where a migration sits in its chain: the chain (the directory holding the
+ * versioned scripts) and its version. Prisma keeps one script per directory,
+ * versioned by the directory (`migrations/20230101000000_init/migration.sql`).
+ */
+function migrationSlot(filePath: string): { chain: string; version: bigint[] } | null {
+  const parts = filePath.split("/");
+  const base = parts[parts.length - 1]!;
+  if (base === "migration.sql" && parts.length >= 3) {
+    const dir = /^(\d+)_/.exec(parts[parts.length - 2]!);
+    return dir ? { chain: parts.slice(0, -2).join("/") + "/", version: [BigInt(dir[1]!)] } : null;
+  }
+  const version = fileVersion(base);
+  return version ? { chain: parts.slice(0, -1).join("/") + "/", version } : null;
+}
+
+function fileVersion(base: string): bigint[] | null {
+  if (/\.down\.sql$|_down\.sql$|^U\d/i.test(base) || /^R__/i.test(base)) return null;
+  const flyway = /^V(\d+(?:[._]\d+)*)__/i.exec(base);
+  const plain = flyway ? null : /^(\d+)[_.-]/.exec(base);
+  const digits = flyway ? flyway[1]!.split(/[._]/) : plain ? [plain[1]!] : null;
+  return digits ? digits.map((d) => BigInt(d)) : null;
+}
+
+function compareVersions(a: bigint[], b: bigint[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] ?? 0n;
+    const y = b[i] ?? 0n;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
+interface TableState {
+  /** The class the table's current CREATE produced, and the file it is in. */
+  origin: ClassInfo;
+  file: FileAnalysis;
+  /** What the chain makes of it. */
+  cls: ClassInfo;
+  /** Foreign keys: column (lower case) → the column as written and the table it references. */
+  fks: Map<string, { column: string; to: string }>;
+}
+
+function fkRelation(table: string, column: string, to: string): EntityRelation {
+  return { fromEntity: table, fromField: column, toEntity: to, cardinality: "many-to-one", foreignKey: column, orm: "sql", confidence: "EXTRACTED" };
+}
+
+const keyOf = (name: string): string => name.split(".").pop()!.toLowerCase();
+
+function replay(chain: FileAnalysis[]): void {
+  const state = new Map<string, TableState>();
+  const touched = new Set<ClassInfo>();
+  for (const file of chain) {
+    for (const op of file.schemaOps ?? []) {
+      const key = keyOf(op.table);
+      const st = state.get(key);
+      switch (op.op) {
+        case "create-table": {
+          const cls = file.classes.find((c) => c.decorators.includes("table") && keyOf(c.name) === key && c.line === op.line)
+            ?? file.classes.find((c) => c.decorators.includes("table") && keyOf(c.name) === key);
+          if (!cls) break;
+          touched.add(cls);
+          state.set(key, { origin: cls, file, cls: { ...cls, properties: [...cls.properties], implements: [...cls.implements] }, fks: new Map() });
+          break;
+        }
+        case "drop-table":
+          state.delete(key);
+          break;
+        case "rename-table":
+          if (st && op.to) {
+            state.delete(key);
+            st.cls.name = op.to;
+            state.set(keyOf(op.to), st);
+          }
+          break;
+        case "add-column":
+          if (st && op.column && !st.cls.properties.some((p) => p.name.toLowerCase() === op.column!.toLowerCase())) {
+            st.cls.properties.push(column(op.column, op.type ?? null));
+          }
+          break;
+        case "drop-column":
+          if (st && op.column) {
+            st.cls.properties = st.cls.properties.filter((p) => p.name.toLowerCase() !== op.column!.toLowerCase());
+            st.fks.delete(op.column.toLowerCase());
+          }
+          break;
+        case "rename-column":
+          if (st && op.column && op.to) {
+            st.cls.properties = st.cls.properties.map((p) => (p.name.toLowerCase() === op.column!.toLowerCase() ? { ...p, name: op.to! } : p));
+            const fk = st.fks.get(op.column.toLowerCase());
+            if (fk) {
+              st.fks.delete(op.column.toLowerCase());
+              st.fks.set(op.to.toLowerCase(), { column: op.to, to: fk.to });
+            }
+          }
+          break;
+        case "add-foreign-key":
+          if (st && op.to) {
+            if (!st.cls.implements.some((t) => keyOf(t) === keyOf(op.to!))) st.cls.implements.push(op.to);
+            if (op.column) st.fks.set(op.column.toLowerCase(), { column: op.column, to: op.to });
+          }
+          break;
+      }
+    }
+  }
+  // Every CREATE the chain made is replaced by what the chain ends with: the
+  // table's current form, in the file whose CREATE made it.
+  const finals = new Map([...state.values()].map((st) => [st.origin, st.cls]));
+  for (const file of chain) {
+    file.classes = file.classes.flatMap((c) => (!touched.has(c) ? [c] : finals.has(c) ? [finals.get(c)!] : []));
+    // The chain's foreign keys are the ones its final schema holds, each in
+    // the file that declares its table.
+    const kept = (file.entityRelations ?? []).filter((r) => r.orm !== "sql");
+    const own = [...state.values()].filter((st) => st.file === file).flatMap((st) => [...st.fks.values()].map((fk) => fkRelation(st.cls.name, fk.column, fk.to)));
+    if (kept.length || own.length) file.entityRelations = [...kept, ...own];
+    else delete file.entityRelations;
+  }
+}
+
+function column(name: string, type: string | null): PropertyInfo {
+  return { name, type, visibility: "public", isStatic: false, isReadonly: false };
+}

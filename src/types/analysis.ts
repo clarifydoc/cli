@@ -418,6 +418,12 @@ export interface FileAnalysis {
    */
   railsSchemaTables?: RailsSchemaTable[];
   /**
+   * Schema changes this file states, in source order — a migration's CREATE /
+   * ALTER / DROP / RENAME. The plugin's project pass replays a migration chain
+   * from them into one schema (see `SchemaOp`).
+   */
+  schemaOps?: SchemaOp[];
+  /**
    * Dependency-injection container registrations made in this file
    * (`services.AddScoped<IRepo, SqlRepo>()`, `$this->app->bind(I::class,
    * Impl::class)`, `{ provide: TOKEN, useClass: Impl }`, a Spring `@Service`
@@ -2906,4 +2912,16 @@ export function createEmptyAnalysis(
     events: [],
     screens: [],
   };
+}
+
+/** One schema change a migration states. Tables and columns as written, unquoted. */
+export interface SchemaOp {
+  op: "create-table" | "drop-table" | "rename-table" | "add-column" | "drop-column" | "rename-column" | "add-foreign-key";
+  table: string;
+  column?: string;
+  /** The new name (rename-table, rename-column), or the referenced table (add-foreign-key). */
+  to?: string;
+  /** The column's type (add-column), as written. */
+  type?: string | null;
+  line: number;
 }

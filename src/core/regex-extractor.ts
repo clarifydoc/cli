@@ -92,6 +92,7 @@ export function extractWithRegex(
   if (entityResult.schemaTables && entityResult.schemaTables.length > 0) {
     analysis.railsSchemaTables = entityResult.schemaTables;
   }
+  if (entityResult.schemaOps && entityResult.schemaOps.length > 0) analysis.schemaOps = entityResult.schemaOps;
 
   return analysis;
 }

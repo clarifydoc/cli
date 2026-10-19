@@ -289,6 +289,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     if (entityResult.schemaTables && entityResult.schemaTables.length > 0) {
       analysis.railsSchemaTables = entityResult.schemaTables;
     }
+    if (entityResult.schemaOps && entityResult.schemaOps.length > 0) analysis.schemaOps = entityResult.schemaOps;
     analysis.dataMutations = dataAccess.dataMutations;
     analysis.events = hooks?.events?.(sourceText) ?? [];
     analysis.subComponents = hooks?.subComponents?.(tree, sourceText, analysis.imports) ?? [];

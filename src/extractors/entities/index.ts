@@ -32,6 +32,7 @@ const LANGUAGE_MARKERS: Partial<Record<Language, RegExp>> = {
   rust: /\btable!\s*\{|\bdiesel\b|\bQueryable\b|\bInsertable\b|\bDeriveEntityModel\b|\bsea_orm\b/,
   php:
     /\bextends\s+(?:Model|Authenticatable|Pivot)\b|@ORM\\|#\[\s*ORM\\|->\s*(?:hasMany|belongsTo|hasOne|belongsToMany|morph\w*|hasManyThrough|hasOneThrough)\s*\(|\b(?:hasMany|belongsTo|hasOne|belongsToMany)\s*\(|->\s*join\s*\(\s*['"]/,
+  sql: /\b(?:CREATE|ALTER|DROP|RENAME)\s+(?:(?:GLOBAL\s+)?(?:TEMPORARY|TEMP|UNLOGGED)\s+)?TABLE\b/i,
   ruby:
     /<\s*(?:ApplicationRecord|ActiveRecord::Base)\b|\bhas_many\b|\bbelongs_to\b|\bhas_one\b|\bhas_and_belongs_to_many\b|self\.table_name|ActiveRecord::Schema\b/,
 };
