@@ -64,6 +64,7 @@ import { jspManifest } from "./plugins/jsp/manifest.js";
 import { springxmlManifest } from "./plugins/springxml/manifest.js";
 import { jsightManifest } from "./plugins/jsight/manifest.js";
 import { serverlessManifest } from "./plugins/serverless/manifest.js";
+import { protobufManifest } from "./plugins/protobuf/manifest.js";
 import { openapiManifest } from "./plugins/openapi/manifest.js";
 import { graphqlManifest } from "./plugins/graphql/manifest.js";
 import { wsdlManifest } from "./plugins/wsdl/manifest.js";
@@ -101,7 +102,7 @@ const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
   goManifest, rustManifest, rubyManifest, swiftManifest, luaManifest, scalaManifest, perlManifest,
   vbManifest, sqlManifest, cManifest, cppManifest, prismaManifest, dartManifest, elixirManifest, erlangManifest, objcManifest,
   haskellManifest, clojureManifest, blazorManifest, htmlManifest, erbManifest, heexManifest, handlebarsManifest, liquidManifest, velocityManifest, razorManifest, qmlManifest, qtuiManifest, xamlManifest,
-  jspManifest, springxmlManifest, jsightManifest, serverlessManifest,
+  jspManifest, springxmlManifest, jsightManifest, serverlessManifest, protobufManifest,
   openapiManifest, graphqlManifest, wsdlManifest,
   groovyManifest,
   powershellManifest,
@@ -190,6 +191,7 @@ const LOADERS: readonly PluginLoader[] = [
   { languages: ["springxml"], load: () => import("./plugins/springxml/meta.js").then((m) => [m.springxmlMeta]) },
   { languages: ["jsight"], load: () => import("./plugins/jsight/meta.js").then((m) => [m.jsightMeta]) },
   { languages: ["serverless"], load: () => import("./plugins/serverless/meta.js").then((m) => [m.serverlessMeta]) },
+  { languages: ["protobuf"], load: () => import("./plugins/protobuf/meta.js").then((m) => [m.protobufMeta]) },
   { languages: ["openapi"], load: () => import("./plugins/openapi/meta.js").then((m) => [m.openapiMeta]) },
   { languages: ["graphql"], load: () => import("./plugins/graphql/meta.js").then((m) => [m.graphqlMeta]) },
   { languages: ["wsdl"], load: () => import("./plugins/wsdl/meta.js").then((m) => [m.wsdlMeta]) },
