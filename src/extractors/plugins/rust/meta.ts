@@ -8,6 +8,9 @@ import { RustEntityExtractor } from "./entities.js";
 import { rustRequestSchema } from "./request-schema.js";
 import { rustReachability } from "./reachability.js";
 import { AfDispatchResolver } from "./event-dispatch.js";
+import { splitLines } from "../../shared/source-lines.js";
+import { blankRustMultilineStrings } from "./source.js";
+import { extractRustDataSources } from "./data-sources.js";
 
 const RUST_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -28,6 +31,19 @@ export const rustMeta: LanguagePluginMeta = {
   regexControlFlow: extendRegexControlFlow([], { quotes: ['"'] }),
   ...rustManifest,
   regexSpec: rustSpec,
+  // Multi-line strings are blanked so their code-shaped text is not read as
+  // functions; the data sources (SQL in `r#"…"#`, URLs) come from the raw source.
+  preprocess(rawSource) {
+    const sourceText = blankRustMultilineStrings(rawSource);
+    if (sourceText === rawSource) return null;
+    return {
+      sourceText,
+      language: "rust",
+      postExtract(analysis, raw) {
+        analysis.dataSources = extractRustDataSources(splitLines(raw));
+      },
+    };
+  },
   // AppFlowy lib-dispatch: a Flutter call of a generated event class runs the Rust handler (event-dispatch.ts).
   dispatchResolvers: [new AfDispatchResolver()],
   dispatchLanguages: ["dart"],

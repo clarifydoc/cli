@@ -250,3 +250,27 @@ describe("scanSecurity — credentials by their format", () => {
     expect(url!.snippet).not.toContain("Hunter2");
   });
 });
+
+describe("scanSecurity — shell commands are judged at the call", () => {
+  it("does not flag the child_process import or a call without a shell", () => {
+    expect(cats(`import { execFileSync, exec } from "child_process";\nexecFileSync("git", ["log", ref]);\nconst m = /x/.exec(s);`)).not.toContain("command-injection");
+  });
+
+  it("flags an interpolated command and a spawn through a shell", () => {
+    expect(cats("exec(`git log ${ref}`, cb);")).toContain("command-injection");
+    expect(cats('child_process.execSync("rm -rf " + dir);')).toContain("command-injection");
+    expect(cats('spawn(cmd, args, {\n  cwd: root,\n  shell: true,\n});')).toContain("command-injection");
+  });
+});
+
+describe("scanSecurity — what is not a finding", () => {
+  it("reads a shell substitution as a placeholder, not a secret", () => {
+    expect(cats('const token = "$(gh auth token)";')).not.toContain("hardcoded-secret");
+  });
+
+  it("counts TODO markers in comments only", () => {
+    expect(cats('const status = "TODO";\nconst cols = ["TODO", "DONE"];')).not.toContain("todo-fixme");
+    expect(cats("const a = 1; // TODO: remove")).toContain("todo-fixme");
+    expect(scanSecurity("x = 1  # FIXME later\n", "a.py", "python").map((i) => i.category)).toContain("todo-fixme");
+  });
+});

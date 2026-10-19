@@ -36,7 +36,8 @@ export function isPlaceholderSecret(text: string): boolean {
   const url = /:\/\/[^:@\s]+:([^@\s]+)@/.exec(value);
   const secret = url ? url[1]! : value;
   // Template holes in any dialect: `${x}`, `{{x}}`, Ruby `#{x}`, ERB/JSP `<%= x %>`, `<x>`, `%(x)s`.
-  if (/\$\{|\{\{|#\{|<%|<[^>]*>|%\(|%s\b/.test(secret)) return true;
+  // A shell substitution (`$(gh auth token)`) reads the secret at run time.
+  if (/\$\{|\$\(|\{\{|#\{|<%|<[^>]*>|%\(|%s\b/.test(secret)) return true;
   if (/^(?:\*+|x+|\.+|-+|_+|0+|1234\d*)$/i.test(secret)) return true;
   // A counting run no generator produces: a test value typed by hand
   // (`AKIA1234567890…`, `ghp_1234567890abcdefghij…`).
@@ -224,6 +225,9 @@ export const CATEGORY_CWE: Partial<Record<SecurityIssue["category"], string>> = 
   "open-redirect": "CWE-601",
 };
 
+/** A TODO/FIXME/HACK/XXX marker after a comment opener on its line, or on a block-comment continuation line. */
+const TODO_IN_COMMENT_RE = /(?:\/\/|\/\*|(?:^|\s)#|<!--|(?:^|\s)--|^\s*\*|^\s*;|^\s*'|\(\*)[^\n]*?\b(?:TODO|FIXME|HACK|XXX)\b/;
+
 /** Text before a match that opens a comment on the same line. */
 const TRAILING_COMMENT_RE = /(?:^|\s)(?:\/\/|#(?=\s|$)|<!--)/;
 /** Inline suppressions: our own, Bandit's and Sonar's. */
@@ -364,11 +368,14 @@ export function scanSecurity(
     issues.push(...plugin.securityPostScan(lines, filePath));
   }
 
-  // Check for TODO/FIXME/HACK
+  // Check for TODO/FIXME/HACK — in comments: `"TODO"` in a string is data
+  // (a status value, a column name), not a note to the author. The source as
+  // written, since a plugin's preprocess may already have blanked comments.
   const todoMatches: number[] = [];
-  if (/\b(TODO|FIXME|HACK|XXX)\b/.test(effectiveSource)) {
-    for (let i = 0; i < lines.length; i++) {
-      if (/\b(TODO|FIXME|HACK|XXX)\b/.test(lines[i])) {
+  if (/\b(TODO|FIXME|HACK|XXX)\b/.test(sourceText)) {
+    originalLines ??= splitLines(sourceText);
+    for (let i = 0; i < originalLines.length; i++) {
+      if (TODO_IN_COMMENT_RE.test(originalLines[i]!)) {
         todoMatches.push(i);
       }
     }
@@ -380,7 +387,7 @@ export function scanSecurity(
       message: `${todoMatches.length} TODO/FIXME comments found.`,
       filePath,
       line: todoMatches[0] + 1,
-      snippet: lines[todoMatches[0]].trim().substring(0, 100),
+      snippet: originalLines![todoMatches[0]]!.trim().substring(0, 100),
     });
   }
 

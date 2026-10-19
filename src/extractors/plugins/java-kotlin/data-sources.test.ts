@@ -371,3 +371,22 @@ describe("Java JPA / Hibernate rows name their entity", () => {
     expect(db(rows)).toEqual([["find", "Person"]]);
   });
 });
+
+describe("JVM HTTP — requests are read where they are built", () => {
+  const api = (ds: DataSourceInfo[]) => ds.filter((d) => d.kind === "api-call").map((d) => `${d.name} ${d.target}`);
+
+  it("reads an OkHttp request URL and verb, and no call from client configuration", async () => {
+    const ds = await sourcesOf(`
+    val client = OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).readTimeout(5, TimeUnit.SECONDS).build()
+    val req = Request.Builder().url("https://api.example.com/v1/orders").post(body).build()
+    val get = Request.Builder().url("/api/health").build()`, "kotlin");
+    expect(api(ds)).toEqual(["POST https://api.example.com/v1/orders", "GET /api/health"]);
+  });
+
+  it("reads java.net.http requests", async () => {
+    const ds = await sourcesOf(`
+    HttpRequest r = HttpRequest.newBuilder(URI.create("https://svc/api/items")).PUT(body).build();
+    HttpRequest q = HttpRequest.newBuilder().uri(URI.create("/api/users")).GET().build();`, "java");
+    expect(api(ds)).toEqual(["PUT https://svc/api/items", "GET /api/users"]);
+  });
+});

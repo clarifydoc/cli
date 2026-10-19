@@ -153,6 +153,33 @@ const HTTP_METHODS = new Set([
   "retrieve",
 ]);
 
+/** The calls that send a request on an HTTP client object. */
+const HTTP_SEND_METHODS = new Set(["execute", "enqueue", "send", "sendAsync", "get", "post", "put", "delete", "patch", "head"]);
+
+/** The URL literal a request builder is given, when this call is that step. */
+function builtRequestUrl(node: Node, call: CallParts): string | null {
+  const { method, receiver } = call;
+  let arg: Node | null = null;
+  if (method === "url" && /\bRequest\s*\.\s*Builder\s*\(/.test(receiver)) arg = call.firstArg;
+  else if ((method === "newBuilder" && /\bHttpRequest\b/.test(receiver)) || (method === "uri" && /\bHttpRequest\b/.test(receiver))) {
+    arg = call.firstArg;
+    const create = arg?.text.match(/^URI\s*\.\s*create\s*\(\s*("(?:[^"\\]|\\.)*")\s*\)$/);
+    if (create) return JSON.parse(create[1]!) as string;
+  }
+  const url = stringLiteralValue(arg);
+  return url && /^(?:https?:\/\/|\/)/.test(url) ? url : null;
+}
+
+/** The verb of the request chain a builder step belongs to: `.post(body)`, `.method("PUT", …)`, else GET. */
+function requestChainVerb(node: Node): string {
+  let top = node;
+  while (top.parent && /^(?:method_invocation|navigation_expression|navigation_suffix|call_expression|call_suffix)$/.test(top.parent.type)) top = top.parent;
+  const after = top.text.slice(node.endIndex - top.startIndex);
+  const verb = /\.\s*(post|put|delete|patch|head)\s*\(/i.exec(after)?.[1] ?? /\.\s*method\s*\(\s*"(\w+)"/.exec(after)?.[1];
+  const builtVerb = /\.\s*(POST|PUT|DELETE|GET)\s*\(/.exec(after)?.[1];
+  return (verb ?? builtVerb ?? "GET").toUpperCase();
+}
+
 /** A jOOQ-style table reference: an ALL-CAPS generated constant (`STUDENT`, `US2000JOB`). */
 const TABLE_CONST_RE = /^[A-Z][A-Z0-9_]*$/;
 
@@ -528,8 +555,17 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       }
     }
 
-    // 6) HTTP client calls.
-    if (HTTP_METHODS.has(method) || HTTP_HINT_RE.test(node.text)) {
+    // 6) HTTP client calls. A request URL is read where the request is built
+    // — OkHttp `Request.Builder().url("…")`, `HttpRequest.newBuilder(URI.create("…"))`
+    // / `.uri(URI.create("…"))` — and its verb from the rest of the chain.
+    const built = builtRequestUrl(node, call);
+    if (built) {
+      sources.push(this.ds({ kind: "api-call", name: requestChainVerb(node), target: built, line }));
+      return;
+    }
+    // Otherwise only a call that SENDS on a client named as one: a builder's
+    // configuration (`OkHttpClient.Builder().connectTimeout(…)`) sends nothing.
+    if (HTTP_METHODS.has(method) || (HTTP_SEND_METHODS.has(method) && HTTP_HINT_RE.test(receiver))) {
       sources.push(this.ds({ kind: "api-call", name: method, target: null, line }));
       return;
     }

@@ -78,6 +78,19 @@ describe("Bash data access", () => {
     ]);
   });
 
+  it("skips the value of a flag that takes one", async () => {
+    const a = await analyze([
+      'curl -s -o /dev/null -w "%{http_code}" -H "Accept: application/json" "$API/api/health"',
+      "wget -O /tmp/out.json https://example.com/api/export",
+      "curl -O https://example.com/files/a.tgz",
+    ].join("\n"));
+    expect(a.dataSources.map((d) => d.name)).toEqual([
+      "GET /api/health",
+      "GET https://example.com/api/export",
+      "GET https://example.com/files/a.tgz",
+    ]);
+  });
+
   it("reads SQL given to database clients — operands, here-documents, through docker — and no prose", async () => {
     const a = await analyze([
       'psql "$DATABASE_URL" -c "INSERT INTO deploys (env) VALUES (\'prod\')"',

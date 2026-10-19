@@ -74,6 +74,17 @@ function sqlSources(text: string, firstLine: number): DataSourceInfo[] {
 
 const literal = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').trim()}";`;
 
+/** curl / wget / httpie flags whose value is the next word. */
+const VALUE_FLAGS = new Set([
+  "-o", "--output", "--output-document", "-H", "--header", "-u", "--user", "-A", "--user-agent",
+  "-e", "--referer", "-b", "--cookie", "-c", "--cookie-jar", "-w", "--write-out", "-T", "--upload-file",
+  "--cacert", "--cert", "-E", "--key", "-x", "--proxy", "-m", "--max-time", "--connect-timeout",
+  "--retry", "--retry-delay", "-r", "--range", "-K", "--config", "--resolve", "-P", "--directory-prefix",
+  "--header-file", "--auth", "--output-file", "--timeout",
+]);
+/** wget's spellings that curl uses without a value (`curl -O` saves under the remote name). */
+const WGET_VALUE_FLAGS = new Set(["-O", "-a"]);
+
 function httpCall(node: Node, client: string): DataSourceInfo | null {
   const args = commandArgs(node).map(operandText);
   let method: string | null = null;
@@ -88,6 +99,9 @@ function httpCall(node: Node, client: string): DataSourceInfo | null {
     if (/^(?:-d|--data(?:-raw|-binary|-urlencode)?|-F|--form|--json|--post-data|--post-file)(?:=|$)/.test(a)) { sendsData = true; if (!a.includes("=")) i++; continue; }
     if (/^(?:-I|--head)$/.test(a)) { method = "HEAD"; continue; }
     if (client.startsWith("http") && /^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/.test(a)) { method = a; continue; }
+    // A flag that takes a value consumes the next word: `-o /dev/null` is
+    // where the body goes, `-H 'Accept: …'` a header — neither is the URL.
+    if (VALUE_FLAGS.has(a) || (client === "wget" && WGET_VALUE_FLAGS.has(a))) { i++; continue; }
     if (/^-/.test(a)) continue;
     if (!url && /^(?:https?:\/\/|\$\{?\w+|\/)/.test(a)) url = a;
   }

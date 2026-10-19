@@ -98,12 +98,26 @@ const SECURITY_RULES: readonly SecurityRule[] = [
     message: "Function constructor is similar to eval(). Consider alternatives.",
     priority: 31,
   },
+  // A shell command built from values: `exec(\`git log ${ref}\`)`,
+  // `execSync("rm -rf " + dir)`. The rule used to fire on every
+  // `child_process` import line, `execFileSync` (no shell) and tests included.
+  // `.exec(` on any other receiver is a RegExp or a query builder.
+  {
+    category: "command-injection",
+    severity: "high",
+    pattern: /(?:(?<![.\w$])|\b(?:child_process|childProcess|cp|proc|shell)\.)(?:exec|execSync)\s*\(\s*(?:`[^`]*\$\{|['"][^'"\n]*['"]\s*\+|[A-Za-z_$][\w$.]*\s*\+)/,
+    message: "A shell command built from values: anything that reaches them can run commands. Pass arguments to execFile/spawn instead.",
+    priority: 32,
+    excludeTest: true,
+  },
   {
     category: "command-injection",
     severity: "medium",
-    pattern: /child_process/,
-    message: "Shell command execution detected. Ensure input is sanitized.",
+    multiline: true,
+    pattern: /\b(?:spawn|spawnSync|execFile|execFileSync)\s*\([^;]*?\bshell\s*:\s*true\b/,
+    message: "A process started through a shell (shell: true): its arguments are parsed by the shell. Drop the shell or quote every value.",
     priority: 32,
+    excludeTest: true,
   },
   {
     category: "insecure-config",
