@@ -12,7 +12,7 @@ import { AGENT_GUIDANCE } from "../mcp/guidance.js";
  * is there — other servers, hooks and text are kept — and is idempotent;
  * `--print` shows the result instead of writing it.
  */
-export const CLIENTS = ["claude-code", "cursor", "vscode", "windsurf", "gemini", "codex"] as const;
+export const CLIENTS = ["claude-code", "cursor", "vscode", "windsurf", "gemini", "codex", "claude-desktop"] as const;
 export type Client = (typeof CLIENTS)[number];
 
 /** How this CLI is started: the global/npx binary when it runs as one, else node + this script. */
@@ -43,6 +43,39 @@ function readJson(path: string): Record<string, unknown> {
 
 const pretty = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
 
+/** Where Claude Desktop reads its MCP servers on this platform. */
+function claudeDesktopConfig(): string {
+  if (process.platform === "darwin") return join(homedir(), "Library", "Application Support", "Claude", "claude_desktop_config.json");
+  if (process.platform === "win32") return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "Claude", "claude_desktop_config.json");
+  return join(homedir(), ".config", "Claude", "claude_desktop_config.json");
+}
+
+/**
+ * Just the ClarifyDoc entry for one client, in that client's format, and the
+ * file it belongs in — to paste by hand (`mcp --print-config`). Nothing is
+ * read or written.
+ */
+export function mcpSnippet(client: Client, root: string, self = selfCommand()): { file: string; snippet: string } {
+  const server = { command: self.command, args: [...self.args, "mcp"] };
+  const withRoot = { ...server, args: [...server.args, root] };
+  switch (client) {
+    case "claude-code":
+      return { file: join(root, ".mcp.json"), snippet: pretty({ mcpServers: { clarifydoc: server } }) };
+    case "cursor":
+      return { file: join(root, ".cursor", "mcp.json"), snippet: pretty({ mcpServers: { clarifydoc: server } }) };
+    case "gemini":
+      return { file: join(root, ".gemini", "settings.json"), snippet: pretty({ mcpServers: { clarifydoc: server } }) };
+    case "vscode":
+      return { file: join(root, ".vscode", "mcp.json"), snippet: pretty({ servers: { clarifydoc: { type: "stdio", ...server } } }) };
+    case "windsurf":
+      return { file: join(homedir(), ".codeium", "windsurf", "mcp_config.json"), snippet: pretty({ mcpServers: { clarifydoc: withRoot } }) };
+    case "claude-desktop":
+      return { file: claudeDesktopConfig(), snippet: pretty({ mcpServers: { clarifydoc: withRoot } }) };
+    case "codex":
+      return { file: join(homedir(), ".codex", "config.toml"), snippet: `[mcp_servers.clarifydoc]\ncommand = ${JSON.stringify(server.command)}\nargs = ${JSON.stringify(withRoot.args)}\n` };
+  }
+}
+
 /** The MCP server entry for one client, merged into its config file. */
 export function planMcpConfig(client: Client, root: string, self = selfCommand()): Planned {
   const server = { command: self.command, args: [...self.args, "mcp"] };
@@ -63,6 +96,13 @@ export function planMcpConfig(client: Client, root: string, self = selfCommand()
     }
     case "windsurf": {
       const file = join(homedir(), ".codeium", "windsurf", "mcp_config.json");
+      const json = readJson(file);
+      // A user-level file: the project is passed explicitly.
+      const servers = { ...((json.mcpServers as Record<string, unknown>) ?? {}), clarifydoc: { ...server, args: [...server.args, root] } };
+      return { file, content: pretty({ ...json, mcpServers: servers }) };
+    }
+    case "claude-desktop": {
+      const file = claudeDesktopConfig();
       const json = readJson(file);
       // A user-level file: the project is passed explicitly.
       const servers = { ...((json.mcpServers as Record<string, unknown>) ?? {}), clarifydoc: { ...server, args: [...server.args, root] } };

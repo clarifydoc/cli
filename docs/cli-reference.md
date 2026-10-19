@@ -356,6 +356,7 @@ analysis itself if there is none. Setup and the tool list are in the [README](..
 | `--no-cold-start` | cold start allowed | Never analyze, not even the first time. |
 | `--lsp` | off | Allow the LSP layer in the analyses this server runs. |
 | `--no-git-history`, `--max-files`, `--include`, `--exclude` | as `analyze` | Apply to the analyses this server runs (always incremental). |
+| `--print-config <client>` | — | Print the server's entry for `claude-code`, `cursor`, `vscode`, `windsurf`, `gemini`, `codex`, `claude-desktop` or `all`, with the file it goes in, and exit. Writes nothing; `install --client` merges it for you. |
 
 ## `ask`
 
@@ -397,7 +398,7 @@ nothing. With no option it writes the Claude Code MCP entry (`.mcp.json`).
 
 | Option | What it writes |
 |--------|----------------|
-| `--client <names...>` | The MCP server entry for `claude-code`, `cursor`, `vscode`, `windsurf`, `gemini` or `codex`, started the way this CLI was. |
+| `--client <names...>` | The MCP server entry for `claude-code`, `cursor`, `vscode`, `windsurf`, `gemini`, `codex` or `claude-desktop`, started the way this CLI was. |
 | `--hooks` | Claude Code hooks in `.claude/settings.json`: what the map knows before a search, who depends on a file after an edit, what it covers at session start (`clarifydoc hook <event>`, never blocking). |
 | `--skills` | `.claude/skills/clarifydoc-*`, one per MCP workflow prompt. |
 | `--guidance [file]` | A marked ClarifyDoc section of `AGENTS.md` (or the file named), with this project's hub files and gaps when an analysis exists. |

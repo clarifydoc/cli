@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, statSync }
 import { tmpdir } from "os";
 import { join } from "path";
 import { editedFile, searchTerm } from "./hooks.js";
-import { applyPlans, planClaudeHooks, planGitHooks, planGuidance, planMcpConfig, planSkills, projectFacts } from "./install.js";
+import { CLIENTS, applyPlans, mcpSnippet, planClaudeHooks, planGitHooks, planGuidance, planMcpConfig, planSkills, projectFacts } from "./install.js";
 
 describe("hook payloads", () => {
   it("finds the name a search is after, and skips noise", () => {
@@ -97,5 +97,19 @@ describe("git hooks", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("mcp --print-config", () => {
+  const self = { command: "clarifydoc", args: [] };
+  it("prints each client's entry in its own format, a user-level one naming the project", () => {
+    const all = Object.fromEntries(CLIENTS.map((c) => [c, mcpSnippet(c, "/repo", self)]));
+    expect(JSON.parse(all["claude-code"]!.snippet)).toEqual({ mcpServers: { clarifydoc: { command: "clarifydoc", args: ["mcp"] } } });
+    expect(all["claude-code"]!.file).toBe(join("/repo", ".mcp.json"));
+    expect(JSON.parse(all.vscode!.snippet).servers.clarifydoc.type).toBe("stdio");
+    expect(JSON.parse(all["claude-desktop"]!.snippet).mcpServers.clarifydoc.args).toEqual(["mcp", "/repo"]);
+    expect(all.codex!.snippet).toBe('[mcp_servers.clarifydoc]\ncommand = "clarifydoc"\nargs = ["mcp","/repo"]\n');
+    // The same entry install would merge in.
+    expect(JSON.parse(planMcpConfig("cursor", mkdtempSync(join(tmpdir(), "pc-")), self).content).mcpServers.clarifydoc).toEqual(JSON.parse(all.cursor!.snippet).mcpServers.clarifydoc);
   });
 });

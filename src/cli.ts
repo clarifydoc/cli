@@ -628,7 +628,7 @@ program
   .command("install")
   .description("Wire ClarifyDoc into agent hosts: the MCP server entry, Claude Code hooks, skills, and the AGENTS.md section")
   .argument("[path]", "Project root", ".")
-  .option("--client <names...>", "claude-code | cursor | vscode | windsurf | gemini | codex (default claude-code)")
+  .option("--client <names...>", "claude-code | cursor | vscode | windsurf | gemini | codex | claude-desktop (default claude-code)")
   .option("--hooks", "Also add Claude Code hooks (.claude/settings.json): context before searches, after edits, at session start", false)
   .option("--skills", "Also write .claude/skills/clarifydoc-* from the MCP workflow prompts", false)
   .option("--guidance [file]", "Also add or update the ClarifyDoc section of AGENTS.md (or the file named)")
@@ -763,7 +763,25 @@ program
   .option("--max-files <n>", "Maximum number of files to analyze", parseInt)
   .option("--include <globs...>", "Additional file patterns to include")
   .option("--exclude <globs...>", "Additional file patterns to exclude")
+  .option("--print-config <client>", "Print the MCP entry for a client and exit, without serving: claude-code | cursor | vscode | windsurf | gemini | codex | claude-desktop | all")
   .action(async (path: string, options) => {
+    if (options.printConfig) {
+      const { CLIENTS, mcpSnippet } = await import("./agents/install.js");
+      const { locateProjectRoot: locate } = await import("./mcp/server.js");
+      const root = path ? resolve(path) : locate(process.cwd()).root;
+      const wanted = options.printConfig === "all" ? [...CLIENTS] : [options.printConfig];
+      const unknown = wanted.filter((c) => !(CLIENTS as readonly string[]).includes(c));
+      if (unknown.length) {
+        console.error(`Unknown client: ${unknown.join(", ")}. Known: ${CLIENTS.join(", ")}, all.`);
+        process.exitCode = 1;
+        return;
+      }
+      for (const c of wanted) {
+        const { file, snippet } = mcpSnippet(c as (typeof CLIENTS)[number], root);
+        console.log(`# ${c} — add to ${file} (or: clarifydoc install --client ${c})\n${snippet}`);
+      }
+      return;
+    }
     // Nothing may write to stdout from here on — it is the JSON-RPC wire.
     const { startMcpServer, locateProjectRoot } = await import("./mcp/server.js");
     // With no path given, serve the project the working directory sits in, so
