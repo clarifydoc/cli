@@ -142,6 +142,7 @@ export async function statusReport(loaded: LoadedAnalysis, store: AnalysisStore)
       ["analyzed", `${summary.analyzedAt} (${ago(summary.analyzedAt)})`],
       ["commit", summary.sourceRevision ? `${summary.sourceRevision.commit.slice(0, 12)}${summary.sourceRevision.branch ? ` on ${summary.sourceRevision.branch}` : ""}${summary.sourceRevision.dirty ? `, ${plural(summary.sourceRevision.dirty, "uncommitted file")}` : ""}` : undefined],
       ["source", await sourceFreshness(store)],
+      ["read", coverageLine(summary.coverage)],
       ["files", summary.files.length],
       ["health", health ? `${health.score}/100 (${health.grade})` : undefined],
     ]),
@@ -234,4 +235,22 @@ export async function statusReport(loaded: LoadedAnalysis, store: AnalysisStore)
   lines.push("", `analysis dir: ${store.analysisDir}`);
   // A project with no frameworks or sub-projects would otherwise leave a gap.
   return lines.filter((line, i) => line !== "" || lines[i - 1] !== "").join("\n");
+}
+
+/**
+ * How much was actually read, when something was not: files the parser
+ * recovered from, local imports that resolve nowhere, and frameworks a
+ * sub-project depends on that yielded no route or screen — so an empty
+ * answer is not taken for an empty project.
+ */
+export function coverageLine(c: ProjectAnalysis["coverage"]): string | undefined {
+  if (!c) return undefined;
+  const parts: string[] = [];
+  if (c.parseErrors.files) {
+    const w = c.parseErrors.worst[0]!;
+    parts.push(`${plural(c.parseErrors.files, "file")} parsed with syntax errors (worst ${w.file}, ${Math.round(w.ratio * 100)}% unread)`);
+  }
+  if (c.imports.local && c.imports.resolved < c.imports.local) parts.push(`${c.imports.resolved}/${c.imports.local} relative imports resolved`);
+  for (const g of c.gaps.slice(0, 3)) parts.push(`${g.dependencies.slice(0, 2).join(", ")} in ${g.project || "the project"} yet no ${g.kind === "routes" ? "API route" : "screen"} found`);
+  return parts.length ? parts.join(" · ") : `every file parsed cleanly${c.imports.local ? `, ${c.imports.local} relative imports resolved` : ""}`;
 }

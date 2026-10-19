@@ -1,3 +1,4 @@
+import { parseErrorsOf } from "./coverage.js";
 import { readFile } from "fs/promises";
 import { computeRegexComplexity } from "./complexity-regex.js";
 import { splitLines } from "../extractors/shared/source-lines.js";
@@ -245,6 +246,8 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     const analysis = createEmptyAnalysis(file.relativePath, language);
     analysis.projectId = projectId;
     analysis.lineCount = countLines(rawSource);
+    const parseErrors = parseErrorsOf(tree, sourceText.length);
+    if (parseErrors) analysis.parseErrors = parseErrors;
     if (minified) analysis.minified = true;
       if (vendored) analysis.vendored = true;
       if (generated) analysis.generated = true;

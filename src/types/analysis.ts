@@ -294,6 +294,8 @@ export interface FileAnalysis {
    * written before extractor 1.50.
    */
   lineCount?: number;
+  /** Syntax errors the parser recovered from — the file was read only in part. Absent for a clean parse. */
+  parseErrors?: { nodes: number; missing: number; ratio: number };
 
   /**
    * Package names the file uses by path without importing them — Rust's
@@ -2580,6 +2582,8 @@ export interface ProjectAnalysis {
   analyzedAt: string;
   /** The commit the source was at (git work trees, when git history is read). */
   sourceRevision?: { commit: string; branch: string | null; dirty: number };
+  /** How much of the code was read: parse errors, local imports that resolved, frameworks that yielded nothing (core/coverage.ts). */
+  coverage?: import("../core/coverage.js").AnalysisCoverage;
   /** Other tools' SARIF this analysis joined (`--import-sarif`): results read, and how many landed on analyzed files. */
   importedFindings?: Array<{ source: string; tool: string; results: number; matched: number }>;
 

@@ -1520,6 +1520,15 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     analyzedAt: options.stableOutput ? STABLE_TIMESTAMP : new Date().toISOString(),
     ...(sourceRevision ? { sourceRevision } : {}),
     ...(importedFindings.length ? { importedFindings } : {}),
+    coverage: assessCoverage({
+      analyses: allAnalyses,
+      resolveModule: projectContext.resolveModule,
+      packages: externalPackages,
+      subProjects,
+      routeMap: allRoutes,
+      screens: allScreens,
+      fileProjects,
+    }),
     complexity,
     patterns,
     securityIssues: allSecurityIssues,
@@ -2514,6 +2523,7 @@ import { anonymousWriteFindings, attachFindingEntries, safeMethodWriteFindings }
 import { attachOsvAdvisories } from "./osv.js";
 import { readSourceRevision } from "./source-revision.js";
 import { importSarif } from "./sarif-import.js";
+import { assessCoverage } from "./coverage.js";
 
 /** Import source patterns → framework id */
 const IMPORT_FRAMEWORK_MAP: Record<string, string> = {
