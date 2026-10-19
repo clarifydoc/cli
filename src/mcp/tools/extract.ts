@@ -3,7 +3,7 @@ import { join } from "path";
 import type { McpTool } from "../protocol.js";
 import type { FileAnalysis, SymbolLink } from "../../types/analysis.js";
 import { symbolKey } from "../store.js";
-import { confidenceNote, joinLines, loc, numberArg, plural, requiredStringArg, stringArg } from "../format.js";
+import { confidenceNote, fenced, joinLines, loc, numberArg, plural, requiredStringArg, stringArg } from "../format.js";
 import { mustResolveFile, requireAnalysis, stalenessHint, type ToolContext } from "./context.js";
 import { noResults } from "../empty.js";
 
@@ -178,9 +178,7 @@ export function extractTool(ctx: ToolContext): McpTool {
           : "";
         blocks.push(
           `## ${span.symbol}() — ${span.file}:${span.line}-${span.endLine}${span.depth ? ` (hop ${span.depth})` : ""}${how}`,
-          "```",
-          span.depth === 0 && tokens > maxTokens ? `${body.slice(0, maxTokens * CHARS_PER_TOKEN)}\n… (cut at the budget)` : body,
-          "```",
+          fenced(span.depth === 0 && tokens > maxTokens ? `${body.slice(0, maxTokens * CHARS_PER_TOKEN)}\n… (cut at the budget)` : body),
           "",
         );
       }

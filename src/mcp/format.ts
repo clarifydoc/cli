@@ -257,3 +257,28 @@ export function routeGuardNote(route: {
 export function versionNote(link: { matchedVia?: string }): string {
   return link.matchedVia === "version-mismatch" ? " (version-mismatch)" : "";
 }
+
+/**
+ * A Markdown code fence around repository text that the text cannot close:
+ * a run of backticks longer than any inside it, so a file holding "```"
+ * stays inside its block instead of writing outside it.
+ */
+export function fenced(text: string, lang = ""): string {
+  const longest = Math.max(2, ...[...text.matchAll(/`+/g)].map((m) => m[0].length));
+  const fence = "`".repeat(longest + 1);
+  return `${fence}${lang}\n${text.replace(/\n$/, "")}\n${fence}`;
+}
+
+/**
+ * Repository text is data, and some of it is built to be read as something
+ * else. Control characters a terminal or a model would act on are dropped
+ * (tab and newline stay), and the bidirectional overrides that make code
+ * read differently than it runs ("Trojan source") are shown as `‮`
+ * escapes instead of applied.
+ */
+export function sanitizeOutput(text: string): string {
+  return text
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0080-\u009f]/g, "")
+    .replace(/[‪-‮⁦-⁩‎‏؜]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}

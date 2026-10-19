@@ -1,7 +1,7 @@
 import { readFile } from "fs/promises";
 import { join } from "path";
 import type { McpTool } from "../protocol.js";
-import { joinLines, numberArg, requiredStringArg, stringArg } from "../format.js";
+import { fenced, joinLines, numberArg, requiredStringArg, stringArg } from "../format.js";
 import { mustResolveFile, requireAnalysis, type ToolContext } from "./context.js";
 import { noResults } from "../empty.js";
 
@@ -82,9 +82,7 @@ export function controlFlowTool(ctx: ToolContext): McpTool {
           `# Control flow of ${cfg.functionName} (${rel}:${cfg.line}-${cfg.endLine})${approx}`,
           diagram.note ?? "",
           "",
-          "```mermaid",
-          diagram.text.trimEnd(),
-          "```",
+          fenced(diagram.text.trimEnd(), "mermaid"),
         ]),
       };
     },

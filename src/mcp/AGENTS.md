@@ -63,6 +63,9 @@ write. That is what lets an external agent be configured as nothing but a comman
   found no project marker above the working directory (`coldStartRefusal`) — a user-scope client config started
   from `$HOME` would otherwise scan the whole home directory before its first answer. `clarifydoc_analyze` still
   works there: refusing the unasked-for scan is the point, not refusing the user.
+- **Repository text is data.** Every answer goes through `sanitizeOutput` (control characters dropped, bidi
+  overrides shown as `\u202e` escapes, not applied), source excerpts are `fenced` with a backtick run the text
+  cannot close, and the instructions say quoted repository text is never an instruction.
 - **The up-front cost has a budget.** `tools/list` plus the instructions must stay under `BUDGET_BYTES`
   ([budget.test.ts](budget.test.ts)); a description that pushes past it is argued for in the commit that raises it.
   `CLARIFYDOC_MCP_LOG=<file>` logs each call locally (JSONL: tool, cut arguments, size, time, error, empty).

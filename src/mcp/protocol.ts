@@ -17,6 +17,7 @@
 
 import { appendFileSync } from "fs";
 import { validateArguments } from "./validate.js";
+import { sanitizeOutput } from "./format.js";
 
 /** Protocol revisions we can speak, newest first. */
 export const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
@@ -289,7 +290,7 @@ export class McpServer {
       logCall(name, args, result, Date.now() - started);
       const note = this.options.annotate ? await this.options.annotate(name).catch(() => null) : null;
       return {
-        content: [{ type: "text", text: note ? `${result.text}\n\n${note}` : result.text }],
+        content: [{ type: "text", text: sanitizeOutput(note ? `${result.text}\n\n${note}` : result.text) }],
         ...(result.isError ? { isError: true } : {}),
       };
     } catch (e) {
