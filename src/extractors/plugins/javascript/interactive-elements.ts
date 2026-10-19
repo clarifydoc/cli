@@ -117,24 +117,37 @@ function extractCallFromArrow(funcNode: Node): string | null {
   const body = funcNode.childForFieldName("body");
   if (!body) return null;
 
-  // Single expression: () => handleClick()
-  if (body.type === "call_expression") {
-    return getCalleeIdentifier(body);
-  }
-
-  // Block body: () => { handleClick(); }
+  // () => handleClick(), or a block: () => { e.stopPropagation(); handleClick(); }
   return findFirstCall(body);
 }
 
+/**
+ * Calls an inline handler makes on the way to the real one: event plumbing
+ * (`e.stopPropagation()`), conversions (`Number(v)`) and logging. Naming the
+ * element after one of them hid the handler it actually runs.
+ */
+const NOISE_CALLS = new Set([
+  "stopPropagation", "preventDefault", "stopImmediatePropagation", "persist",
+  "Number", "String", "Boolean", "parseInt", "parseFloat", "trim", "toString",
+  "log", "warn", "error", "debug", "info",
+]);
+
+/** The first call in source order that is not plumbing (see {@link NOISE_CALLS}). */
 function findFirstCall(node: Node): string | null {
-  if (node.type === "call_expression") {
-    return getCalleeIdentifier(node);
-  }
-  for (const child of node.children) {
-    const result = findFirstCall(child);
-    if (result) return result;
-  }
-  return null;
+  let fallback: string | null = null;
+  const visit = (n: Node): string | null => {
+    if (n.type === "call_expression") {
+      const name = getCalleeIdentifier(n);
+      if (name && !NOISE_CALLS.has(name)) return name;
+      fallback ??= name;
+    }
+    for (const child of n.children) {
+      const result = visit(child);
+      if (result) return result;
+    }
+    return null;
+  };
+  return visit(node) ?? fallback;
 }
 
 function getCalleeIdentifier(callNode: Node): string | null {

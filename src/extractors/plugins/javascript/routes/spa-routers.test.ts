@@ -127,7 +127,27 @@ export const sidebarLinks = [
   { path: "/shop", children: [{ path: "cart", component: Cart }] },
 ];`;
     const paths = (await routesOf(src, "router.ts")).map((r) => r.path);
-    expect(paths).toEqual(expect.arrayContaining(["/", "/old", "/shop", "cart"]));
+    expect(paths).toEqual(expect.arrayContaining(["/", "/old", "/shop", "/shop/cart"]));
+  });
+
+  it("ignores trees, docs entries and computed paths that only look like routes", async () => {
+    const src = `export const menu = [{ path: "/docs", children: [{ path: "intro", label: "Intro" }] }];
+export const catalog = [{ path: "/button", component: "Button" }];
+const items = list.map((r) => ({ path: '/' + r.path, component: Page }));`;
+    expect(await routesOf(src, "data.ts")).toHaveLength(0);
+  });
+
+  it("composes nested children under their parent's path", async () => {
+    const src = `export const routes = [
+  { path: "/user/:id", component: User, children: [
+    { path: "profile", component: Profile },
+    { path: "/absolute", component: Abs },
+    { path: "settings", children: [{ path: "email", component: Email }] },
+  ] },
+  { path: "", component: Layout, children: [{ path: "dashboard", component: Dash }] },
+];`;
+    const paths = (await routesOf(src, "router.ts")).map((r) => r.path);
+    expect(paths).toEqual(expect.arrayContaining(["/user/:id/profile", "/absolute", "/user/:id/settings/email", "dashboard"]));
   });
 });
 

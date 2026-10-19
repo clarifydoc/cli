@@ -28,9 +28,75 @@ function walkForVueRouterConfig(node: Node, routes: RouteInfo[]) {
  * with no risk of double-emitting the shared `{ path, component }` shape.
  */
 const ROUTE_CONFIG_KEYS = new Set([
-  "component", "components", "children", "redirect", "beforeEnter",
+  "component", "components", "redirect", "beforeEnter",
   "loadComponent", "loadChildren", "redirectTo", "canActivate",
 ]);
+
+/** Literal values a real `component` never has: `{ component: "Button" }` is a docs or data entry. */
+const NON_COMPONENT_VALUES = new Set(["string", "number", "true", "false", "null", "undefined", "object", "array"]);
+
+/** The property value of `key` in an object literal. */
+function propValue(obj: Node, key: string): Node | null {
+  for (const prop of obj.namedChildren) {
+    if (prop.type !== "pair" && prop.type !== "property_assignment") continue;
+    if (prop.childForFieldName("key")?.text === key) return prop.childForFieldName("value");
+  }
+  return null;
+}
+
+/**
+ * Whether an object is a router record: it renders or forwards something
+ * (see {@link ROUTE_CONFIG_KEYS}), or it is a component-less parent whose
+ * `children` are router records (Angular `{ path: "admin", children: [...] }`).
+ * A `children` array alone is every tree-shaped data structure.
+ */
+function isRouteRecord(obj: Node, depth = 0): boolean {
+  for (const key of ROUTE_CONFIG_KEYS) {
+    const value = propValue(obj, key);
+    if (!value) continue;
+    if ((key === "component" || key === "components") && NON_COMPONENT_VALUES.has(value.type)) continue;
+    return true;
+  }
+  const children = propValue(obj, "children");
+  if (children?.type !== "array" || depth > 8) return false;
+  return children.namedChildren.some((c) => c.type === "object" && isRouteRecord(c, depth + 1));
+}
+
+/** A literal path (`"/x"`, `'x'`, a template with no logic around it); null for an expression (`'/' + r.path`). */
+function literalPath(value: Node): string | null {
+  if (value.type === "string") return stripQuotes(value.text);
+  if (value.type === "template_string") return stripQuotes(value.text);
+  return null;
+}
+
+/**
+ * The path of the route record whose `children` hold `obj`, composed up the
+ * chain, so a nested `{ path: "profile" }` under `{ path: "/user/:id" }`
+ * reads `/user/:id/profile`. An absolute child path (`/x`) stands alone.
+ */
+function parentPath(obj: Node): string | null {
+  const array = obj.parent;
+  const pair = array?.type === "array" ? array.parent : null;
+  if (!pair || (pair.type !== "pair" && pair.type !== "property_assignment") || pair.childForFieldName("key")?.text !== "children") return null;
+  const parent = pair.parent;
+  if (parent?.type !== "object") return null;
+  const value = propValue(parent, "path");
+  const own = value ? literalPath(value) : null;
+  if (own === null) return null;
+  if (own.startsWith("/")) return own;
+  const above = parentPath(parent);
+  return above === null ? own : joinChild(above, own);
+}
+
+function joinChild(parent: string, child: string): string {
+  if (child.startsWith("/")) return child;
+  const head = parent.replace(/\/+$/, "");
+  if (child === "") return parent;
+  // Under a component-less root (`path: ""`) a child keeps its own spelling,
+  // like a top-level Angular path (`"dashboard"`).
+  if (head === "") return parent === "/" ? `/${child}` : child;
+  return `${head}/${child}`;
+}
 
 /** Inspect a single node for a Vue Router route config object. */
 export function visitVueRouterRoute(node: Node, routes: RouteInfo[]): void {
@@ -46,9 +112,8 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[]): void {
         const value = prop.childForFieldName("value");
         const keyText = key?.text;
 
-        if (keyText && ROUTE_CONFIG_KEYS.has(keyText)) isRouteConfig = true;
         if (keyText === "path" && value) {
-          path = stripQuotes(value.text);
+          path = literalPath(value);
         } else if ((keyText === "component" || keyText === "loadComponent" || keyText === "loadChildren") && value) {
           // Angular lazy routes carry the target in a `loadComponent`/
           // `loadChildren` thunk (`() => import('./x').then(m => m.XComponent)`)
@@ -63,7 +128,10 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[]): void {
       }
     }
 
+    isRouteConfig = path !== null && isRouteRecord(node);
     if (path !== null && isRouteConfig) {
+      const above = parentPath(node);
+      if (above !== null) path = joinChild(above, path);
       routes.push({
         path,
         httpMethod: null,

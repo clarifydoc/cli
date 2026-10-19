@@ -1775,6 +1775,9 @@ function buildScreensFromComponents(
   const screens: ScreenInfo[] = [];
   for (const analysis of allAnalyses) {
     if (alreadyScreened.has(analysis.filePath)) continue;
+    // A test renders a component; it is not one. Stories and fixtures are
+    // caught by the same per-language test patterns.
+    if (isTestFile(analysis.filePath, analysis.language)) continue;
     // Frontend SFC/JSX files, OR any file that yielded a component tree (e.g. an
     // Angular `.ts` component with an inline `@Component` template).
     const hasTree = (analysis.templateTree?.length ?? 0) > 0;
@@ -1797,11 +1800,23 @@ function buildScreensFromComponents(
 /** Screen name fallback when a route carries no usable handler: prefer a named
  *  function/class export, then an exported function, then the file's base name. */
 function screenNameFromFile(analysis: FileAnalysis): string {
+  const fileBaseName = analysis.filePath.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "");
+  // A single-file component IS its file: `UserCard.vue` is `UserCard`.
+  if (/\.(vue|svelte|razor)$/.test(analysis.filePath)) return fileBaseName;
   const namedExport = analysis.exports.find(
     (e) => e.name !== "default" && (e.kind === "function" || e.kind === "class"),
   );
+  // A JSX module is named after its component, not its first export: one that
+  // exports a helper (`getHubBorderWidth`) before its component (`FileNode`)
+  // used to be named after the helper. Components are capitalized.
+  if (/\.[jt]sx$/.test(analysis.filePath)) {
+    const component =
+      analysis.exports.find((e) => e.name !== "default" && (e.kind === "function" || e.kind === "class") && /^[A-Z]/.test(e.name))?.name ??
+      analysis.functions.find((f) => f.isExported && /^[A-Z]/.test(f.name))?.name ??
+      analysis.classes.find((c) => c.isExported && c.kind !== "interface" && /^[A-Z]/.test(c.name))?.name;
+    if (component) return component;
+  }
   const defaultFn = analysis.functions.find((f) => f.isExported && f.name !== "default");
-  const fileBaseName = analysis.filePath.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "");
   return namedExport?.name ?? defaultFn?.name ?? fileBaseName;
 }
 
