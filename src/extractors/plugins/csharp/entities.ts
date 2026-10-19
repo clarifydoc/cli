@@ -85,6 +85,8 @@ export class CSharpEntityExtractor extends EntityExtractor {
             implementsList: uniqueStrings(relationTargets),
             line: cls.line,
             endLine: cls.endLine,
+            // `[Table("owners")]`, `[Table("owners", Schema = "dbo")]`.
+            tableName: cls.decorators.map((d) => /^\[?\s*(?:[\w.]+\.)?Table(?:Attribute)?\s*\(\s*"([^"]+)"/.exec(d)?.[1]).find(Boolean) ?? null,
           }),
         );
       }

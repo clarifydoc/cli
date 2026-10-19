@@ -115,6 +115,7 @@ export class RubyEntityExtractor extends EntityExtractor {
           line: cls.line,
           endLine: cls.endLine,
           extraDecorators: tableName ? [`table:${tableName}`] : undefined,
+          tableName,
         }),
       );
     }

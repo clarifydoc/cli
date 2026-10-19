@@ -9,7 +9,7 @@ import type {
 import { byOrdinal } from "./ordinal.js";
 // One shared key derivation with the ER-graph node dedupe — an access name
 // must reach the same node `synthesizeReferencedTableEntities` deduped against.
-import { tableMatchKeys as entityMatchKeys } from "./entity-graph.js";
+import { nodeMatchKeys, tableMatchKeys as entityMatchKeys } from "./entity-graph.js";
 
 /**
  * Build the project-wide data-access graph rendered in the Architecture
@@ -198,7 +198,7 @@ export function attributeDataAccessToSymbols(
   // Canonical entity lookup: match key → ER node name.
   const entityByKey = new Map<string, string>();
   for (const n of entityGraph.nodes) {
-    for (const k of entityMatchKeys(n.name)) {
+    for (const k of nodeMatchKeys(n)) {
       if (!entityByKey.has(k)) entityByKey.set(k, n.name);
     }
   }

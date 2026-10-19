@@ -134,6 +134,7 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
               line: cls.line,
               endLine: cls.endLine,
               extraDecorators,
+              tableName: jpaTableName(cls.decorators),
             }),
           );
         } catch {
@@ -834,4 +835,15 @@ function toSnake(name: string): string {
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
     .toLowerCase();
+}
+
+/** `@Table(name = "app_users")`, `@Table("app_users")` (Spring Data JDBC), `@Table(schema = "s", name = "t")`. */
+function jpaTableName(decorators: readonly string[]): string | null {
+  for (const d of decorators) {
+    const m = /^@?(?:[\w.]+\.)?Table\s*\(([\s\S]*)\)\s*$/.exec(d.trim());
+    if (!m) continue;
+    const named = /\b(?:name|value)\s*=\s*"([^"]+)"/.exec(m[1]!) ?? /^\s*"([^"]+)"/.exec(m[1]!);
+    if (named) return named[1]!;
+  }
+  return null;
 }

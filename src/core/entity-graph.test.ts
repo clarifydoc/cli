@@ -57,6 +57,13 @@ describe("synthesizeReferencedTableEntities", () => {
     expect(added).toEqual(["photos"]);
   });
 
+  it("matches a query on the physical table an entity maps to, not only its class name", () => {
+    const g = graph(["User"]);
+    g.nodes[0]!.table = "app_users"; // `@Table(name = "app_users") class User`
+    synthesizeReferencedTableEntities([analysis("UserMapper.xml", ["app_users", "audit_log"])], g);
+    expect(g.nodes.filter((n) => n.orm === "inferred").map((n) => n.name)).toEqual(["audit_log"]);
+  });
+
   it("rejects non-table noise (template/var names) and empty entities", async () => {
     const g = graph([]);
     synthesizeReferencedTableEntities(

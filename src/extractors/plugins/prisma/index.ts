@@ -550,6 +550,7 @@ export function extractPrismaModels(lines: string[]): ClassInfo[] {
 
     classes.push({
       name: model.name,
+      ...(model.dbTable && model.dbTable.toLowerCase() !== model.name.toLowerCase() ? { tableName: model.dbTable } : {}),
       extends: null,
       implements: implementsList,
       decorators: extraDecorators,

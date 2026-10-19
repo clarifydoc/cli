@@ -79,9 +79,13 @@ export abstract class EntityExtractor {
     line?: number;
     endLine?: number;
     extraDecorators?: string[];
+    /** The physical table, when the code names one (`@Table(name = "…")`, `__tablename__`). */
+    tableName?: string | null;
   }): ClassInfo {
     return {
       name: opts.name,
+      // A table differing only in case (`Employee` → `employee`) says nothing new.
+      ...(opts.tableName && opts.tableName.toLowerCase() !== opts.name.toLowerCase() ? { tableName: opts.tableName } : {}),
       extends: opts.extends ?? null,
       implements: opts.implementsList ?? [],
       decorators: ["entity", opts.orm, ...(opts.extraDecorators ?? [])],

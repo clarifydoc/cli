@@ -414,6 +414,8 @@ export class PhpEntityExtractor extends EntityExtractor {
         extends: cls.extends,
         line: cls.line,
         endLine: cls.endLine,
+        // `protected $table = 'app_users';`
+        tableName: /\$table\s*=\s*["']([^"']+)["']/.exec(body.join("\n"))?.[1] ?? null,
       }),
     );
   }
@@ -647,6 +649,8 @@ export class PhpEntityExtractor extends EntityExtractor {
         extends: cls.extends,
         line: cls.line,
         endLine: cls.endLine,
+        // `#[ORM\Table(name: 'app_users')]`, `@ORM\Table(name="app_users")`.
+        tableName: cls.decorators.map((d) => /Table\s*\([^)]*?\bname\s*[:=]\s*["']([^"']+)["']/.exec(d)?.[1]).find(Boolean) ?? null,
       }),
     );
   }

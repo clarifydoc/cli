@@ -107,6 +107,7 @@ export function mergeEntities(analysis: FileAnalysis, result: EntityExtractResul
       for (const im of e.implements) {
         if (!existing.implements.includes(im)) existing.implements.push(im);
       }
+      if (e.tableName && !existing.tableName) existing.tableName = e.tableName;
     } else {
       analysis.classes.push(e);
     }

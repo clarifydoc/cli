@@ -189,6 +189,8 @@ export interface NormEntityModelRef {
 }
 /** Normalized EntityGraphNode — identity (id, kind, line) → element; everything else inline verbatim. */
 export interface NormEntityGraphNode {
+  /** The physical table (EntityGraphNode.table). */
+  table?: string;
   ref: number;
   orm: string | null;
   columns: EntityGraphColumn[];
@@ -835,7 +837,7 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
   if (egRaw) {
     out.entityGraph = {
       nodes: egRaw.nodes.map(({ node, idx, rms }) => {
-        const nn: NormEntityGraphNode = { ref: remap[idx], orm: node.orm, columns: node.columns };
+        const nn: NormEntityGraphNode = { ref: remap[idx], orm: node.orm, columns: node.columns, ...(node.table ? { table: node.table } : {}) };
         if (node.referencingModels !== undefined) {
           nn.referencingModels = rms!.map(({ rm, idx: rIdx }) => ({
             ref: remap[rIdx],
@@ -1049,6 +1051,7 @@ export function denormalizeProject(obj: unknown): ProjectAnalysis {
           columns: nn.columns,
           line: el?.line ?? 0,
         };
+        if (nn.table !== undefined) node.table = nn.table;
         if (nn.referencingModels !== undefined) {
           node.referencingModels = nn.referencingModels.map((r): EntityModelRef => {
             const rel = elements[r.ref];

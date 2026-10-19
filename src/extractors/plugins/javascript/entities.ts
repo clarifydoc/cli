@@ -115,6 +115,8 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
           extends: cls.extends ?? null,
           line: cls.line,
           endLine: cls.endLine,
+          // TypeORM `@Entity("app_users")`, `@Entity({ name: "app_users" })`; MikroORM `{ tableName }`.
+          tableName: cls.decorators.map((d) => /^@?Entity\s*\(\s*(?:["'`]([^"'`]+)["'`]|\{[^}]*?\b(?:name|tableName)\s*:\s*["'`]([^"'`]+)["'`])/.exec(d)).map((m) => m?.[1] ?? m?.[2]).find(Boolean) ?? null,
         }),
       );
     }
@@ -501,7 +503,7 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
       const props = this.parseFieldColumns(text, openIdx);
       if (!known.has(name)) {
         entities.push(
-          this.entity({ name, orm: "sequelize", properties: props, line: stmt.line + 1 }),
+          this.entity({ name, orm: "sequelize", properties: props, line: stmt.line + 1, tableName: sequelizeTableName(text) }),
         );
         known.add(name);
       }
@@ -524,6 +526,7 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
             extends: cls?.extends ?? null,
             line: cls?.line ?? stmt.line + 1,
             endLine: cls?.endLine,
+            tableName: sequelizeTableName(text),
           }),
         );
         known.add(name);
@@ -819,7 +822,7 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
           targets.add(ref[1]!);
         }
       }
-      entities.push(this.entity({ name, orm: "drizzle", properties, implementsList: [...targets], line: stmt.line + 1 }));
+      entities.push(this.entity({ name, orm: "drizzle", properties, implementsList: [...targets], line: stmt.line + 1, tableName: m[2]! }));
     }
   }
 
@@ -905,4 +908,9 @@ function splitTopLevel(text: string): string[] {
   }
   if (text.slice(start).trim()) out.push(text.slice(start));
   return out;
+}
+
+/** Sequelize's `{ tableName: "app_users" }` option (`define(…, {…}, { tableName })`, `init({…}, { sequelize, tableName })`). */
+function sequelizeTableName(text: string): string | null {
+  return /\btableName\s*:\s*["'`]([^"'`]+)["'`]/.exec(text)?.[1] ?? null;
 }

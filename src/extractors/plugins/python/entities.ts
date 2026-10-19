@@ -114,6 +114,7 @@ export class PythonEntityExtractor extends EntityExtractor {
             implementsList: [...targets],
             line: cls.line,
             endLine: cls.endLine,
+            tableName: pythonTableName(body.join("\n")),
           }),
         );
         for (const rel of classRelations) relations.push(rel);
@@ -803,3 +804,16 @@ const PY_REPOSITORY_KNOBS: RepositoryAccessKnobs = {
   verbs: /^(get|find|fetch|create|update|delete|patch|save|add|remove|insert|upsert|list|page|count|exists|query|all|first|by_|search)\w*$/,
   writeVerbs: /^(create|update|delete|patch|save|add|remove|insert|upsert)/,
 };
+
+/**
+ * The table a model names: SQLAlchemy `__tablename__ = "…"`, Django's
+ * `class Meta: db_table = "…"`, peewee `table_name`, tortoise `table`, Pony
+ * `_table_`. The Meta forms only inside a nested `class Meta`.
+ */
+function pythonTableName(body: string): string | null {
+  const direct = /^\s*(?:__tablename__|_table_)\s*(?::\s*\w+\s*)?=\s*["']([^"']+)["']/m.exec(body);
+  if (direct) return direct[1]!;
+  const meta = /^([ \t]*)class[ \t]+Meta\b[^\n]*:[ \t]*\n((?:\1[ \t]+[^\n]*(?:\n|$))*)/m.exec(body);
+  const inMeta = meta ? /^\s*(?:db_table|table_name|table)\s*=\s*["']([^"']+)["']/m.exec(meta[2]!) : null;
+  return inMeta?.[1] ?? null;
+}

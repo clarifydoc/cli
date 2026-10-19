@@ -180,6 +180,8 @@ export interface EntityGraphNode {
   /** `${filePath}::${name}` — unique even when two files define the same name. */
   id: string;
   name: string;
+  /** The physical table, when the ORM names one other than `name` (ClassInfo.tableName). */
+  table?: string;
   /** Originating ORM / source, e.g. "prisma" | "typeorm" | "sql". */
   orm: string | null;
   kind: "entity" | "enum";
@@ -735,6 +737,13 @@ export interface PropertyInfo {
 
 export interface ClassInfo {
   name: string;
+  /**
+   * The physical table an ORM entity maps to, where the code names one that
+   * differs from the class (`@Table(name = "app_users")`, `__tablename__`,
+   * `@@map`, `db_table`, `[Table("…")]`, `self.table_name`). Raw SQL names the
+   * table, so access matching tries it beside the class name.
+   */
+  tableName?: string;
   extends: string | null;
   implements: string[];
   decorators: string[];

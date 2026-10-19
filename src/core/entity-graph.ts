@@ -227,6 +227,7 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
       nodes.set(id, {
         id,
         name: cls.name,
+        ...(cls.tableName ? { table: cls.tableName } : {}),
         orm,
         kind: isEnum ? "enum" : "entity",
         filePath: a.filePath,
@@ -485,6 +486,11 @@ export function linkEntityModels(entityGraph: EntityGraph, classGraph: ClassGrap
  * `attributeDataAccessToSymbols` (data-access-graph.ts) so an access matches
  * a real node instead of spawning a duplicate "inferred" one.
  */
+/** A node's match keys: its name's and, where the ORM names one, its physical table's. */
+export function nodeMatchKeys(node: { name: string; table?: string }): string[] {
+  return node.table ? [...new Set([...tableMatchKeys(node.name), ...tableMatchKeys(node.table)])] : tableMatchKeys(node.name);
+}
+
 export function tableMatchKeys(name: string): string[] {
   // The last segment of a namespaced name — Ruby `Ns::Model`, an Elixir module
   // `Plausible.Site`, a schema-qualified table `shop.orders` — is how code
@@ -524,7 +530,7 @@ export function synthesizeReferencedTableEntities(
   // Keys already represented by a node — seeded from real entities, then grown
   // as we synthesize so a singular/plural variant never makes a second node.
   const covered = new Set<string>();
-  for (const n of graph.nodes) for (const k of tableMatchKeys(n.name)) covered.add(k);
+  for (const n of graph.nodes) for (const k of nodeMatchKeys(n)) covered.add(k);
 
   for (const a of analyses) {
     for (const ds of a.dataSources ?? []) {
@@ -562,7 +568,7 @@ export function synthesizeReferencedTableEntities(
   // sorted by id with cardinalities tracking the orientation, mirroring
   // buildEntityGraph so the diagram renders these identically to declared edges.
   const idByKey = new Map<string, string>();
-  for (const n of graph.nodes) for (const k of tableMatchKeys(n.name)) {
+  for (const n of graph.nodes) for (const k of nodeMatchKeys(n)) {
     if (!idByKey.has(k)) idByKey.set(k, n.id);
   }
   const resolveId = (name: string): string | null => {
