@@ -77,6 +77,7 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   externalServices: "optional",
   entryPoints: "optional",
   testCoverage: "optional",
+  docDrift: "optional",
   typeOnlyEdges: "optional",
   fileLayerReasons: "optional",
   screens: "required",

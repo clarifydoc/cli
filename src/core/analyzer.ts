@@ -1,6 +1,10 @@
 import { readFile } from "fs/promises";
 import { resolve as pathResolve, join, relative, sep, basename, extname } from "path";
-import { existsSync, readFileSync, statSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "fs";
+import { execFileSync } from "child_process";
+import { glob } from "./glob.js";
+import { DEFAULT_IGNORE } from "./file-discovery.js";
+import { normalizeRoutePath } from "./route-linker.js";
 import { discoverFiles, type DiscoveryOptions, type DiscoveredFile } from "./file-discovery.js";
 import { seedFromMainWorktree } from "./worktree-seed.js";
 import { runFingerprint } from "./run-fingerprint.js";
@@ -67,6 +71,7 @@ import { loadProjectConfig, matchesAnyGlob, resolveArchitectureOverrides } from 
 import { applySecurityRules } from "./security-rules.js";
 import { externalServices } from "./external-services.js";
 import { typeOnlyEdges } from "./import-kinds.js";
+import { checkDocReferences, docReferences, type DocReference } from "./doc-drift.js";
 import { buildTestCoverage, COVERAGE_CANDIDATES, parseCoverage } from "./test-coverage.js";
 import { isTestFile } from "./test-file-detector.js";
 import { checkContracts } from "./contract-check.js";
@@ -1582,6 +1587,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // imports. Only languages whose plugin declares a reachability model are
   // judged; the plugin reads its toolchain's entry points (package.json, …).
   progress.status("Finding unreachable code...");
+  // What the project's Markdown names that the tree no longer bears out.
+  const docDrift = await computeDocDrift(projectRoot, allAnalyses, allRoutes, options.gitHistory !== false).catch(() => undefined);
+  if (docDrift?.findings.length) progress.detail(`  Doc drift: ${docDrift.findings.length} reference(s) in ${new Set(docDrift.findings.map((f) => f.doc)).size} doc(s) the tree does not bear out`);
   const deadCode = analyzeReachability({
     analyses: allAnalyses,
     componentGraph,
@@ -1760,6 +1768,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     unusedFiles: unusedFiles.length > 0 ? unusedFiles : undefined,
     deadCode,
     ...(testCoverage ? { testCoverage } : {}),
+    ...(docDrift ? { docDrift } : {}),
     deployment,
   };
 
@@ -2950,4 +2959,78 @@ function layerEvidence(a: FileAnalysis | undefined): { layer: ArchLayer; reason:
   if (entities.length) return { layer: "data", reason: `it defines the ${entities.length === 1 ? "entity" : "entities"} ${entities.slice(0, 3).join(", ")}` };
   if ((a.templateTree?.length ?? 0) > 0) return { layer: "components", reason: "it renders a template" };
   return null;
+}
+
+/**
+ * Read the project's Markdown and check what it names against the tree, the
+ * route map and the classes (doc-drift.ts). Changelogs are left out: they
+ * record what used to be. History guards each missing path when git is on.
+ */
+async function computeDocDrift(
+  projectRoot: string,
+  analyses: readonly FileAnalysis[],
+  routes: ReadonlyArray<{ kind?: string; httpMethod?: string | null; path: string }>,
+  useGit: boolean,
+): Promise<ProjectAnalysis["docDrift"]> {
+  const docs = (await glob("**/*.{md,markdown}", { cwd: projectRoot, ignore: DEFAULT_IGNORE, caseSensitiveMatch: false }))
+    .filter((d) => !/(?:^|\/)(?:CHANGELOG|CHANGES|HISTORY|RELEASES?|NEWS)[^/]*$/i.test(d))
+    .sort()
+    .slice(0, 400);
+  if (docs.length === 0) return undefined;
+  const refs: DocReference[] = [];
+  for (const doc of docs) {
+    try {
+      const text = await readFile(join(projectRoot, doc), "utf-8");
+      if (text.length <= 2_000_000) refs.push(...docReferences(doc.split(sep).join("/"), text));
+    } catch {
+      /* unreadable: nothing to check */
+    }
+  }
+  if (refs.length === 0) return { docs: docs.length, references: 0, findings: [] };
+  const api = routes.filter((r) => r.kind === "api" && r.httpMethod);
+  const classMembers = new Map<string, Set<string> | null>();
+  for (const a of analyses) {
+    for (const c of a.classes) {
+      const names = [...(c.methods ?? []).map((m) => m.name.split(".").pop()!), ...(c.properties ?? []).map((p) => p.name)];
+      const prev = classMembers.get(c.name);
+      // A class whose members the analysis did not read is not judged.
+      if (names.length === 0) classMembers.set(c.name, prev ?? null);
+      else classMembers.set(c.name, new Set([...(prev ?? []), ...names]));
+    }
+  }
+  const history = useGit ? gitPathHistory(projectRoot) : undefined;
+  const findings = checkDocReferences(refs, {
+    exists: (p) => existsSync(join(projectRoot, p)),
+    topLevel: new Set(readdirSync(projectRoot)),
+    routes: new Set(api.map((r) => `${r.httpMethod!.toUpperCase()} ${normalizeRoutePath(r.path)}`)),
+    routeHeads: new Set(api.map((r) => r.path.split("/").filter(Boolean)[0]?.toLowerCase()).filter((h): h is string => !!h)),
+    normalize: normalizeRoutePath,
+    classMembers,
+    ...(history ? { history } : {}),
+  });
+  return { docs: docs.length, references: refs.length, findings: findings.slice(0, 500) };
+}
+
+/**
+ * What git knows of a missing path: the commit that removed it and, when that
+ * commit renamed it, the new name — read from the whole commit with rename
+ * detection, since a path filter hides the new side of a rename.
+ */
+function gitPathHistory(root: string): (path: string) => { deletedIn?: string; renamedTo?: string } | null {
+  const run = (args: string[]) =>
+    execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }).trim();
+  return (path) => {
+    try {
+      const head = run(["log", "-1", "--diff-filter=D", "--format=%h %cs", "--", path]);
+      if (!head) return null;
+      const [commit, date] = head.split(" ");
+      for (const line of run(["show", "-M", "--name-status", "--format=", commit!]).split("\n")) {
+        const cols = line.split("\t");
+        if (cols[0]?.startsWith("R") && cols[1] === path && cols[2]) return { renamedTo: cols[2] };
+      }
+      return { deletedIn: date ? `${commit} (${date})` : commit };
+    } catch {
+      return null;
+    }
+  };
 }

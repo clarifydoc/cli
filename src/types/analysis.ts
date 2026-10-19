@@ -2652,6 +2652,8 @@ export interface ProjectAnalysis {
    * judged without them.
    */
   typeOnlyEdges?: Record<string, string[]>;
+  /** What the project's Markdown names — paths, routes, class members — that the tree no longer bears out (core/doc-drift.ts). */
+  docDrift?: import("../core/doc-drift.js").DocDriftReport;
   /** Test coverage from the reports a test run wrote (core/test-coverage.ts) — per file and per function. */
   testCoverage?: import("../core/test-coverage.js").TestCoverageReport;
   /** Other tools' SARIF this analysis joined (`--import-sarif`): results read, and how many landed on analyzed files. */

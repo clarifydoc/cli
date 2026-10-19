@@ -46,7 +46,7 @@ export function isSensitive(relativePath: string, language?: Language): boolean 
 }
 
 
-const DEFAULT_IGNORE = [
+export const DEFAULT_IGNORE = [
   "**/node_modules/**",
   // ClarifyDoc's own output, when it is written into the project.
   "**/.clarifydoc/**",

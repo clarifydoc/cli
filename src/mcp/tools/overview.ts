@@ -365,7 +365,8 @@ type HealthCategory =
   | "dead-code"
   | "concerns"
   | "pressure"
-  | "dependencies";
+  | "dependencies"
+  | "docs";
 const HEALTH_CATEGORIES: readonly HealthCategory[] = [
   "security",
   "layers",
@@ -379,6 +380,7 @@ const HEALTH_CATEGORIES: readonly HealthCategory[] = [
   "concerns",
   "pressure",
   "dependencies",
+  "docs",
 ];
 
 /**
@@ -402,6 +404,7 @@ function categoryCounts(summary: ProjectAnalysis): Array<[HealthCategory, number
     ["concerns", (summary.responsibilityProfiles ?? []).filter((r) => r.concernCount >= 2).length],
     ["pressure", (summary.refactorPressure ?? []).length],
     ["dependencies", (summary.externalPackages ?? []).filter((p) => p.advisories?.length || p.versionSkew || p.used === false).length],
+    ["docs", (summary.docDrift?.findings ?? []).length],
   ];
 }
 
@@ -892,6 +895,18 @@ export function healthTool(ctx: ToolContext): McpTool {
             );
           }
           return { text: joinLines(lines) };
+        }
+        case "docs": {
+          const rows = (summary.docDrift?.findings ?? []).filter((f) => inFile(f.doc));
+          if (rows.length === 0) return { text: noFindings(summary, category, filters) };
+          return {
+            text: joinLines([
+              `# Doc drift (${rows.length}) — what the docs name that the tree no longer bears out`,
+              `Read ${plural(summary.docDrift!.docs, "Markdown file")}, ${plural(summary.docDrift!.references, "reference")}. [inferred]: no history says the path ever existed — perhaps a plan.`,
+              "",
+              ...bulletList(rows, limit, (f) => `${loc(f.doc, f.line)} \`${f.text}\` — ${f.reason}${f.confidence !== "EXTRACTED" ? " [inferred]" : ""}`, { offset }),
+            ]),
+          };
         }
         case "unused": {
           const rows = (summary.unusedFiles ?? []).filter((f) => inFile(f));
