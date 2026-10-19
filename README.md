@@ -122,6 +122,7 @@ the analysis instead, so teammates and CI agents get the map without scanning; i
 | `--sarif <file>` | Also write the findings as SARIF 2.1.0 — for GitHub code scanning: security (one rule per category, tagged with its CWEs), API calls that reach no route (a refused method is an error, and the message names the route that does exist), and imports a team rule or the layer order forbids | — |
 | `--fail-on <level>` | Exit with code 2 when a finding at or above `error`, `warning` or `note` exists — the CI gate | — |
 | `--import-sarif <files...>` | Join other tools' SARIF (Semgrep, CodeQL, gosec, Bandit…) to the map: each finding on an analyzed file gets the routes that reach it; they stay out of `--sarif` and the health grade | — |
+| `--spec <files...>` | API specs outside the tree — an OpenAPI document the backend publishes — read beside the code (as `@spec/<name>`), so a frontend-only repository's calls link to the operations they reach and the rest show as gaps. `specs` in `.clarifydoc/config.json` adds more | — |
 
 All options, with examples: [CLI reference → analyze](docs/cli-reference.md#analyze).
 
@@ -429,6 +430,9 @@ Each call site whose argument is a literal becomes an API call (linked to the ro
 database access (the table read from the SQL, or named), exactly as for a framework a plugin knows. `urlArg` and
 `pathArg` default to the first argument; a `db` entry needs `tableArg` or `sqlArg`. An access the config declares
 counts even when the call resolves into your own code.
+
+`specs` lists API specs outside the tree, relative to the project root, that the code's calls are checked
+against — the same as `--spec`: `{ "specs": ["../backend/openapi.yaml"] }`.
 
 `security` turns a security rule off or changes its severity, by its id — the `ruleId` every finding carries
 (`clarifydoc/sql-injection`; the `clarifydoc/` prefix may be left out):

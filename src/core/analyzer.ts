@@ -1,5 +1,5 @@
 import { readFile } from "fs/promises";
-import { resolve as pathResolve, join, relative, sep, basename } from "path";
+import { resolve as pathResolve, join, relative, sep, basename, extname } from "path";
 import { existsSync, readFileSync } from "fs";
 import { discoverFiles, type DiscoveryOptions, type DiscoveredFile } from "./file-discovery.js";
 import { seedFromMainWorktree } from "./worktree-seed.js";
@@ -53,6 +53,7 @@ import {
   PARTIAL_PREFIX_BY_LANGUAGE,
   importsNameDirectories,
   isApiContractLanguage,
+  EXTENSION_TO_LANGUAGE,
 } from "../extractors/registry.js";
 import { buildSymbolLinks } from "./symbol-linker.js";
 import { enrichGraphFromInheritance } from "./inheritance-edges.js";
@@ -167,6 +168,13 @@ export interface AnalyzeOptions {
   gitHistory?: boolean;
   /** Other tools' SARIF files whose findings join the map (each gets the routes that reach it). */
   importSarif?: string[];
+  /**
+   * API specs outside the analyzed root (an OpenAPI document the backend
+   * publishes) whose operations the code's calls are checked against — a
+   * frontend-only repository joined to the API it calls. Read as files of the
+   * analysis under `@spec/`; `.clarifydoc/config.json` `specs` adds more.
+   */
+  specs?: string[];
   /**
    * Ask OSV (api.osv.dev) about the installed packages' known vulnerabilities
    * (`ExternalPackage.advisories`). The one network call an analysis makes —
@@ -473,6 +481,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   };
   const discovery = await discoverFiles(projectRoot, discoveryOpts);
   const files = discovery.files;
+  // API specs from outside the tree: analyzed beside the code, under a path of their own.
+  const externalSpecs = resolveExternalSpecs(projectRoot, options.specs ?? []);
+  for (const spec of externalSpecs) files.push(spec);
+  if (externalSpecs.length) progress.detail(`  External specs: ${externalSpecs.map((s) => s.absolutePath).join(", ")}`);
   const skippedSensitive = discovery.skippedSensitive;
   const skippedSymlinks = discovery.skippedSymlinks;
 
@@ -623,7 +635,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
           // A file added or removed — even one a plugin skips, which has no manifest entry.
           files: files.map((f) => normalizeManifestKey(f.relativePath)).sort(),
         },
-        extraFiles: [...(options.importSarif ?? []).map((f) => pathResolve(f)), join(projectRoot, ".clarifydoc", "config.json")],
+        extraFiles: [...(options.importSarif ?? []).map((f) => pathResolve(f)), ...externalSpecs.map((s) => s.absolutePath), join(projectRoot, ".clarifydoc", "config.json")],
       }).catch(() => null)
     : null;
   if (fingerprint && prevManifest?.fingerprint === fingerprint && existsSync(join(outputDir, "project-summary.json"))) {
@@ -2801,4 +2813,26 @@ class SourceTexts extends Map<string, string> {
       return undefined;
     }
   }
+}
+
+/**
+ * The API specs to read from outside the tree: the `specs` option's paths and
+ * the project config's (relative to the project root), each existing file once,
+ * with the language its extension's plugin owns. Their analysis path is
+ * `@spec/<name>` — outside every folder of the project, and stable across machines.
+ */
+function resolveExternalSpecs(projectRoot: string, given: readonly string[]): Array<{ absolutePath: string; relativePath: string; language: Language }> {
+  const fromConfig = loadProjectConfig(projectRoot).config.specs ?? [];
+  const seen = new Set<string>();
+  const out: Array<{ absolutePath: string; relativePath: string; language: Language }> = [];
+  for (const p of [...given.map((g) => pathResolve(g)), ...fromConfig.map((c) => pathResolve(projectRoot, c))]) {
+    if (seen.has(p) || !existsSync(p)) continue;
+    seen.add(p);
+    const language = EXTENSION_TO_LANGUAGE[extname(p).toLowerCase()];
+    if (!language) continue;
+    let name = basename(p);
+    for (let n = 2; out.some((o) => o.relativePath === `@spec/${name}`); n++) name = `${n}-${basename(p)}`;
+    out.push({ absolutePath: p, relativePath: `@spec/${name}`, language });
+  }
+  return out;
 }

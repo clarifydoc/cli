@@ -109,10 +109,12 @@ export interface ProjectConfig {
   extract?: ExtractPatterns;
   /** Security rules turned off or re-graded, by rule id (core/security-rules.ts). */
   security?: SecurityConfig;
+  /** API specs outside the tree the code's calls are checked against (paths relative to the project root). */
+  specs?: string[];
 }
 
 const KNOWN_SECTIONS: ReadonlySet<string> = new Set([
-  "$comment", "$schema", "refactorPressure", "layers", "exempt", "generated", "rules", "extract", "security",
+  "$comment", "$schema", "refactorPressure", "layers", "exempt", "generated", "rules", "extract", "security", "specs",
 ]);
 
 const ARCH_LAYERS: ReadonlySet<string> = new Set<ArchLayer>([
@@ -173,6 +175,11 @@ export function loadProjectConfig(projectRoot: string): LoadedProjectConfig {
       });
       config.layers = rules;
     }
+  }
+  if (parsed.specs !== undefined) {
+    const specs = stringList(parsed.specs);
+    if (!Array.isArray(parsed.specs) || specs.length !== parsed.specs.length) warnings.push(`${PROJECT_CONFIG_RELATIVE_PATH}: "specs" must be a list of paths; non-strings ignored`);
+    config.specs = specs;
   }
   if (parsed.security !== undefined) {
     const got = parseSecurityConfig(parsed.security, PROJECT_CONFIG_RELATIVE_PATH);
