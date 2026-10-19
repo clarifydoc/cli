@@ -40,7 +40,7 @@ import { buildReportPayload } from "./report-payload.js";
 import { analyzeFile, type FileTask, type FileResult } from "./file-analyzer.js";
 import { AnalysisWorkerPool } from "./worker-pool.js";
 import { loadTsconfigAliases } from "../extractors/shared/tsconfig-aliases.js";
-import { buildLinkGraph, isExternalPackage } from "../extractors/shared/link-scoring.js";
+import { buildFilePathMap, buildLinkGraph, isExternalPackage, resolveTarget } from "../extractors/shared/link-scoring.js";
 import {
   STRIP_SOURCE_EXTENSION_RE,
   EXTERNAL_NAMESPACE_ROOT_RE,
@@ -2159,18 +2159,27 @@ export function buildComponentGraph(
   // The scans below depend only on the candidate string, and the same
   // candidate recurs across files (e.g. many files import "./types"), so
   // memoize per candidate. `undefined` (no match) is cached too.
-  const importScanCache = new Map<string, string | undefined>();
-  const scanForImport = (candidate: string): string | undefined => {
-    if (importScanCache.has(candidate)) return importScanCache.get(candidate);
-    let match: string | undefined;
-    for (const [stripped, filePath] of strippedPathToFile) {
-      if (stripped.endsWith(candidate) || candidate.endsWith(stripped)) {
-        match = filePath;
-        break;
-      }
+  // A relative import names exactly one place, resolved as the symbol
+  // linker resolves it (`../lib/util` from `apps/a/src/main.ts` is
+  // `apps/a/lib/util.ts` — a path-suffix scan used to take the first file
+  // anywhere ending `lib/util`, often another app's).
+  const filePathMap = buildFilePathMap(analyses);
+  // Where a language searches load paths too (Sass): the one same-family file
+  // whose extension-less path ends with what the import names.
+  const loadPathCache = new Map<string, string | undefined>();
+  const onLoadPath = (source: string, fromFile: string): string | undefined => {
+    if (source.startsWith("../")) return undefined;
+    const suffix = source.replace(/^\.\//, "").replace(STRIP_SOURCE_EXTENSION_RE, "");
+    const family = extensionFamily(fromFile);
+    const key = `${family}\0${suffix}`;
+    if (loadPathCache.has(key)) return loadPathCache.get(key);
+    const hits = new Set<string>();
+    for (const [stripped, file] of strippedPathToFile) {
+      if ((stripped === suffix || stripped.endsWith(`/${suffix}`)) && extensionFamily(file) === family) hits.add(file);
     }
-    importScanCache.set(candidate, match);
-    return match;
+    const hit = hits.size === 1 ? [...hits][0] : undefined;
+    loadPathCache.set(key, hit);
+    return hit;
   };
   const subComponentScanCache = new Map<string, string | undefined>();
   const scanForSubComponent = (candidate: string): string | undefined => {
@@ -2218,10 +2227,7 @@ export function buildComponentGraph(
       // dynamic imports tend to be (`import("./main.vue")`) — match the
       // extension-stripped keys in strippedPathToFile.
       if (imp.source.startsWith(".")) {
-        const candidate = imp.source
-          .replace(/^\.\//, "")
-          .replace(STRIP_SOURCE_EXTENSION_RE, "");
-        const match = scanForImport(candidate);
+        const match = resolveTarget(imp.source, a.filePath, filePathMap) ?? (pluginFor(a.language as Language)?.importLoadPaths ? onLoadPath(imp.source, a.filePath) : undefined);
         // Another family's file only when the import names it, extension and
         // all: a component's `import "./app.scss"` is that stylesheet.
         const named = match !== undefined && imp.source.toLowerCase().endsWith(match.slice(match.lastIndexOf(".")).toLowerCase());

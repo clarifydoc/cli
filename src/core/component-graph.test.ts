@@ -176,3 +176,46 @@ describe("buildComponentGraph — a rewritten project path", () => {
     expect(graph["apps/web/src/main.ts"]).toEqual(["packages/core/src/index.ts"]);
   });
 });
+
+describe("buildComponentGraph — a relative import", () => {
+  it("names exactly one place: beside the importer, never another app's file ending the same way", () => {
+    const ts = (path: string, imports: string[] = []) =>
+      file(path, { language: "typescript", imports: imports.map((source) => ({ source, specifiers: ["x"], isNamespace: false })) });
+    const graph = buildComponentGraph([
+      ts("lib/util.ts"),
+      ts("apps/b/lib/util.ts"),
+      ts("apps/a/lib/util.ts"),
+      ts("apps/a/src/pages/home.ts", ["../../lib/util"]),
+      ts("apps/a/src/main.ts", ["./pages/home", "../lib/util", "../hooks/useDashboard"]),
+      ts("apps/a/src/Dashboard.ts"),
+    ]);
+    expect(graph["apps/a/src/pages/home.ts"]).toEqual(["apps/a/lib/util.ts"]);
+    expect(graph["apps/a/src/main.ts"]).toEqual(["apps/a/src/pages/home.ts", "apps/a/lib/util.ts"]);
+  });
+});
+
+describe("buildComponentGraph — Sass load paths", () => {
+  it("finds an import beside the sheet first, else the one sheet whose path ends that way", () => {
+    const scss = (path: string, imports: string[] = []) =>
+      file(path, { language: "scss" as FileAnalysis["language"], imports: imports.map((source) => ({ source, specifiers: [], isNamespace: false })) });
+    const graph = buildComponentGraph([
+      scss("app/javascript/shared/fonts/_inter.scss"),
+      scss("app/javascript/dashboard/scss/oneui/mixins/_alert.scss"),
+      scss("app/javascript/dashboard/scss/bootstrap/mixins/_alert.scss"),
+      scss("app/javascript/dashboard/scss/bootstrap/mixins/_grid.scss"),
+      scss("app/javascript/dashboard/scss/oneui/_mixins.scss", ["./mixins/alert", "./shared/fonts/inter", "./mixins/grid"]),
+    ]);
+    // Beside the sheet wins; a load-path match must be unique (`mixins/grid` is Bootstrap's only).
+    expect(graph["app/javascript/dashboard/scss/oneui/_mixins.scss"]).toEqual([
+      "app/javascript/dashboard/scss/oneui/mixins/_alert.scss",
+      "app/javascript/shared/fonts/_inter.scss",
+      "app/javascript/dashboard/scss/bootstrap/mixins/_grid.scss",
+    ]);
+    // A TypeScript relative import names one place only.
+    const ts = buildComponentGraph([
+      file("lib/util.ts", { language: "typescript" }),
+      file("apps/a/main.ts", { language: "typescript", imports: [{ source: "./util", specifiers: ["x"], isNamespace: false }] }),
+    ]);
+    expect(ts["apps/a/main.ts"]).toBeUndefined();
+  });
+});

@@ -105,6 +105,10 @@ recorded in the git history only.
   this.repo = new UserRepo() }`, a lazy `this.db ??= new Db()`) is typed by that construction, so calls on
   it resolve. Constructions that disagree, or a constructor that sets the field from an untyped value,
   still state nothing.
+- A relative import in the dependency graph is resolved the way the linker resolves it: `../lib/util` from
+  `apps/a/src/main.ts` is `apps/a/lib/util.ts`. A path-suffix scan used to take the first file anywhere
+  ending the same way — another app's `lib/util.ts`, or `Dashboard.vue` for `../hooks/useDashboard`.
+  Sass, which also searches the build's load paths, falls back to the one sheet whose path ends that way.
 - A workspace-package or tsconfig-alias import (rewritten to `packages/ui/src/index`) is an edge to exactly
   that file. Its last segment, `index`, also matched whichever other `index.ts` sat closest, which added
   a false dependency to nearly every importer in a monorepo.

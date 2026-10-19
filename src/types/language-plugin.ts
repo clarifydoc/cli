@@ -946,6 +946,13 @@ export interface LanguagePluginManifest {
    */
   partialPrefix?: string;
   /**
+   * An import the file writes relative to itself is also searched on load
+   * paths the build configures (Sass `includePaths` / `loadPaths`): when it
+   * names nothing beside the importer, the one file of the family whose path
+   * ends that way is meant. Off, a relative import names exactly one place.
+   */
+  importLoadPaths?: boolean;
+  /**
    * Infixes a bundler picks between per target platform: React Native loads
    * `Button.ios.tsx` or `Button.android.tsx` for `./Button`. A file so named
    * also answers to the plain name when no plain file exists (the first

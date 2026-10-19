@@ -11,6 +11,8 @@ const shared = {
   packageEcosystems: ["npm"],
   // `@import "mixins"` (and `@use … as *`) puts the file's mixins in scope by name.
   importsShareScope: true,
+  // `@import "shared/fonts/inter"` is searched on the build's load paths too.
+  importLoadPaths: true,
 } as const;
 
 export const scssManifest: LanguagePluginManifest = {
