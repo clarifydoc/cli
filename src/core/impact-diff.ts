@@ -1,5 +1,5 @@
 import { ownersOf } from "./code-owners.js";
-import { reverseSymbolReach, type ChangedSymbol, type SymbolCaller } from "./changed-symbols.js";
+import { reverseSymbolReach, type ChangedSymbol, type SignatureChange, type SymbolCaller } from "./changed-symbols.js";
 import type {
   ProjectAnalysis,
   RiskVerdict,
@@ -85,6 +85,8 @@ export interface ImpactDiffResult {
     routes: Array<{ route: string; file: string; line: number; depth: number; confidence: string }>;
     screens: Array<{ name: string; file: string; depth: number }>;
     reviewOnly: string[];
+    /** Functions removed or re-parameterized, and whether the change breaks their callers. */
+    signatureChanges?: SignatureChange[];
   };
   risk: { level: "low" | "moderate" | "high"; reasons: string[] };
 }
@@ -123,7 +125,7 @@ export function computeImpactDiff(
     baseLabel?: string;
     author?: string;
     /** The changed functions (from `symbolsInHunks`), when the diff's lines are known. */
-    symbols?: { changed: ChangedSymbol[]; moduleLevel: string[] };
+    symbols?: { changed: ChangedSymbol[]; moduleLevel: string[]; signatureChanges?: SignatureChange[] };
   },
 ): ImpactDiffResult {
   // Canonical path index — exact first, case-insensitive fallback (Delphi
@@ -297,6 +299,7 @@ export function computeImpactDiff(
       routes: routes.slice(0, 50),
       screens: [...screenSeen.values()].sort((a, b) => a.depth - b.depth || byOrdinal(a.name, b.name)),
       reviewOnly: reviewOnly.slice(0, DEP_LIST_CAP),
+      ...(options.symbols.signatureChanges?.length ? { signatureChanges: options.symbols.signatureChanges } : {}),
     };
   }
 
@@ -336,12 +339,16 @@ export function computeImpactDiff(
   if (tests.length === 0 && dependents.size >= 3) {
     reasons.push(`no test files among ${dependents.size} dependents`);
   }
+  const breaking = symbolImpact?.signatureChanges?.filter((c) => c.breaking) ?? [];
+  if (breaking.length > 0) {
+    reasons.push(`breaks the callers of ${breaking.slice(0, 3).map((c) => `${c.symbol} (${c.kind === "removed" ? "removed" : `${c.before} → ${c.after} required parameters`})`).join(", ")}`);
+  }
   const strongMissing = missingCoChanges.filter((m) => m.score >= 0.6);
   if (strongMissing.length > 0) {
     reasons.push(`leaves out ${strongMissing.length} file(s) usually changed with it (${strongMissing.slice(0, 2).map((m) => m.file).join(", ")})`);
   }
   let level: ImpactDiffResult["risk"]["level"] = "low";
-  if (dangerous || screens.size >= 8 || (screens.size >= 1 && entities.size >= 3)) {
+  if (breaking.length > 0 || dangerous || screens.size >= 8 || (screens.size >= 1 && entities.size >= 3)) {
     level = "high";
   } else if (moderate || screens.size >= 1 || entities.size >= 1 || dependents.size >= 3) {
     level = "moderate";
@@ -428,6 +435,13 @@ export function renderImpactText(r: ImpactDiffResult): string {
     }
     if (si.transitive.length) lines.push(`Callers 2–4 hops away: ${si.transitive.length}`);
     if (si.reviewOnly.length) lines.push(`Import a changed file but call nothing changed: ${si.reviewOnly.join(", ")}`);
+    if (si.signatureChanges?.length) {
+      lines.push("", "Signature changes:");
+      for (const c of si.signatureChanges) {
+        const what = c.kind === "removed" ? "removed" : `${c.before} → ${c.after} required parameters`;
+        lines.push(`  ${c.breaking ? "BREAKING " : ""}${c.symbol}  ${what}; ${c.callers} certain caller(s)  (${c.file}:${c.line})`);
+      }
+    }
   }
   if (r.owners?.length) lines.push("", `Owners (CODEOWNERS): ${r.owners.map((o) => `${o.owner} (${o.files})`).join(", ")}`);
   if (r.reviewers?.length) lines.push(`Suggested reviewers: ${r.reviewers.map((x) => `${x.name} (${x.commits} commits to ${x.files} of these files)`).join(", ")}`);
@@ -474,6 +488,8 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
     row(`Changed functions (${si.changed.length})`, si.changed.map((s) => `\`${s.symbol}\``).join(", ") || "—");
     if (si.routes.length) row(`Routes reached by call (${si.routes.length})`, si.routes.map((rt) => `\`${rt.route}\``).join(", "));
     row(`Callers (${si.direct.length} direct, ${si.transitive.length} further)`, si.direct.slice(0, 10).map((c) => `\`${c.symbol}\``).join(", ") || "—");
+    const sig = si.signatureChanges ?? [];
+    if (sig.length) row("Signature changes", sig.map((c) => `${c.breaking ? "**breaking** " : ""}\`${c.symbol}\` ${c.kind === "removed" ? "removed" : `${c.before}→${c.after} required`} (${c.callers} caller${c.callers === 1 ? "" : "s"})`).join(", "));
   }
   if (r.owners?.length) row("Owners", r.owners.map((o) => `${o.owner} (${o.files})`).join(", "));
   if (r.reviewers?.length) row("Suggested reviewers", r.reviewers.map((x) => `${x.name} (${x.commits} commits)`).join(", "));

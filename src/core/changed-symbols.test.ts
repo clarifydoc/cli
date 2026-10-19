@@ -46,3 +46,21 @@ describe("symbolsInHunks + reverseSymbolReach", () => {
     ]);
   });
 });
+
+describe("signatureChanges", () => {
+  const fn = (name: string, line: number, params: Array<[string, string | null]>) =>
+    ({ name, line, endLine: line + 3, params: params.map(([n, d]) => ({ name: n, type: null, defaultValue: d })) });
+  it("reports removals and required-parameter changes, breaking when a certain caller remains", async () => {
+    const { signatureChanges } = await import("./changed-symbols.js");
+    const before = new Map([["svc.ts", { functions: [fn("place", 1, [["order", null]]), fn("cancel", 10, [["id", null]]), fn("audit", 20, [["msg", null]]), fn("lonely", 30, [])], classes: [] } as never]]);
+    const after = new Map([["svc.ts", { functions: [fn("place", 1, [["order", null], ["user", null]]), fn("cancel", 10, [])], classes: [] } as never]]);
+    const link = (target: string) => ({ sourceFile: "ctl.ts", sourceSymbol: "c", sourceLine: 1, callName: target, targetFile: "svc.ts", targetSymbol: target, targetLine: 1, confidence: "EXTRACTED" }) as never;
+    const out = signatureChanges(before, after, [link("place"), link("cancel"), link("audit")]);
+    expect(out.map((c) => [c.symbol, c.kind, c.before ?? "", c.after ?? "", c.breaking])).toEqual([
+      ["place", "arity", 1, 2, true],
+      ["audit", "removed", "", "", true],
+      ["cancel", "arity", 1, 0, false],
+      ["lonely", "removed", "", "", false],
+    ]);
+  });
+});

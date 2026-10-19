@@ -127,6 +127,7 @@ export function reverseSymbolReach(links: readonly SymbolLink[], changed: readon
 
 /** Read the per-file analyses of some files from an analysis directory (`<dir>/<file>.json`); missing ones are skipped. */
 export async function loadFileAnalyses(analysisDir: string, files: readonly string[]): Promise<Map<string, Pick<FileAnalysis, "functions" | "classes">>> {
+  // (Functions keep their params: signatureChanges compares them.)
   const out = new Map<string, Pick<FileAnalysis, "functions" | "classes">>();
   await Promise.all(files.map(async (f) => {
     try {
@@ -136,5 +137,112 @@ export async function loadFileAnalyses(analysisDir: string, files: readonly stri
       // Not analyzed (new since the analysis, or not a source file).
     }
   }));
+  return out;
+}
+
+/** A function whose callers a change can break: removed, or its required parameters changed. */
+export interface SignatureChange {
+  file: string;
+  symbol: string;
+  line: number;
+  kind: "removed" | "arity";
+  /** Required parameters before and after (`arity`). */
+  before?: number;
+  after?: number;
+  /** Callers the analysis is sure of (EXTRACTED links). */
+  callers: number;
+  /** The change breaks those callers as they are written. */
+  breaking: boolean;
+}
+
+type Spans = Pick<FileAnalysis, "functions" | "classes">;
+
+/** Every function and method of a file by the name call links use, with its parameters. */
+function signatures(a: Spans): Map<string, { line: number; required: number; total: number; variadic: boolean }> {
+  const out = new Map<string, { line: number; required: number; total: number; variadic: boolean }>();
+  const add = (name: string, fn: { line: number; params?: Array<{ name: string; defaultValue: string | null }> }) => {
+    const params = (fn.params ?? []).filter((p) => p.name !== "self" && p.name !== "this" && p.name !== "cls");
+    const variadic = params.some((p) => /^\.\.\.|^\*/.test(p.name));
+    out.set(name, { line: fn.line, required: params.filter((p) => p.defaultValue === null && !/^\.\.\.|^\*|\?$/.test(p.name)).length, total: params.length, variadic });
+  };
+  for (const f of a.functions) if (f.name !== "<setup>") add(f.name, f);
+  for (const c of a.classes) for (const m of c.methods) add(`${c.name}.${m.name}`, m);
+  return out;
+}
+
+/**
+ * What a change does to the signatures callers depend on: the stored
+ * analysis is the "before", a fresh parse of the working tree the "after".
+ * A function that is gone, or whose required parameters changed, is
+ * reported; it is `breaking` when a caller the analysis is sure of still
+ * calls it (a removal) or calls it with a count the new signature no longer
+ * accepts — the arity is judged by parameter count, since a call link does
+ * not carry its arguments, so an added required parameter breaks and a
+ * removed one with a default does not.
+ */
+export function signatureChanges(
+  before: ReadonlyMap<string, Spans>,
+  after: ReadonlyMap<string, Spans>,
+  links: readonly SymbolLink[],
+): SignatureChange[] {
+  const sureCallers = new Map<string, number>();
+  for (const l of links) {
+    if (l.navigational || l.sourceSymbol.startsWith("(") || l.confidence !== "EXTRACTED") continue;
+    const key = `${l.targetFile}::${l.targetSymbol}`;
+    sureCallers.set(key, (sureCallers.get(key) ?? 0) + 1);
+  }
+  const out: SignatureChange[] = [];
+  for (const [file, was] of before) {
+    const now = after.get(file);
+    if (!now) continue;
+    const prev = signatures(was);
+    const next = signatures(now);
+    for (const [symbol, sig] of prev) {
+      const callers = sureCallers.get(`${file}::${symbol}`) ?? 0;
+      const cur = next.get(symbol);
+      if (!cur) {
+        out.push({ file, symbol, line: sig.line, kind: "removed", callers, breaking: callers > 0 });
+      } else if (cur.required !== sig.required && !cur.variadic) {
+        out.push({ file, symbol, line: cur.line, kind: "arity", before: sig.required, after: cur.required, callers, breaking: callers > 0 && cur.required > sig.required });
+      }
+    }
+  }
+  return out.sort((x, y) => Number(y.breaking) - Number(x.breaking) || byOrdinal(x.file, y.file) || x.line - y.line);
+}
+
+/**
+ * Parse the working-tree version of some files, in memory, the way the
+ * analysis did — the "after" side of `signatureChanges`. Files the analysis
+ * cannot read are skipped.
+ */
+export async function analyzeWorkingFiles(projectRoot: string, files: readonly string[]): Promise<Map<string, Spans>> {
+  const [{ analyzeFile }, { getLanguageForFile }, { mkdtemp, rm }, { tmpdir }] = await Promise.all([
+    import("./file-analyzer.js"),
+    import("../parsers/language-map.js"),
+    import("fs/promises"),
+    import("os"),
+  ]);
+  const out = new Map<string, Spans>();
+  const scratch = await mkdtemp(join(tmpdir(), "clarifydoc-after-"));
+  try {
+    for (const f of files) {
+      const language = getLanguageForFile(f);
+      if (!language) continue;
+      const res = await analyzeFile({
+        file: { absolutePath: join(projectRoot, f), relativePath: f, language },
+        frameworkIds: [],
+        projectId: "root",
+        outputOpts: { outputDir: scratch, pretty: false },
+        verbose: false,
+        projectRoot,
+        tsconfigAliases: new Map(),
+      }).catch(() => null);
+      if (res) out.set(f, { functions: res.analysis.functions, classes: res.analysis.classes });
+      // A file the change deleted: every function it had is gone.
+      else if (!(await import("fs")).existsSync(join(projectRoot, f))) out.set(f, { functions: [], classes: [] });
+    }
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
   return out;
 }
