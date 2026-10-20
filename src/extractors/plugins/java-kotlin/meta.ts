@@ -1,3 +1,4 @@
+import { javaTaint } from "./taint.js";
 import { ktorRouteFnResolver } from "./routes/ktor.js";
 import { springSecurityResolver } from "./routes/security-dsl.js";
 import type { Language } from "../../../types/analysis.js";
@@ -105,6 +106,8 @@ function jvmMeta(language: Language, opts: {
       diBindings: (tree, sourceText) => extractJvmDiBindings(tree, sourceText, language === "kotlin" ? "kotlin" : "java"),
       // `RestClient.createClient(X.class, url)` and other proxy factories.
       ...(language === "java" ? { httpClientRegistrations: extractJavaClientProxies } : {}),
+      // Request input followed through a Spring / JAX-RS handler (Java's grammar only).
+      ...(language === "java" ? { taint: javaTaint } : {}),
     },
     calls: opts.calls,
     securityRules: JVM_SECURITY_RULES,

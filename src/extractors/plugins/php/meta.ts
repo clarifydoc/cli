@@ -1,3 +1,4 @@
+import { phpTaint } from "./taint.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { extendControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
@@ -68,6 +69,8 @@ export const phpMeta: LanguagePluginMeta = {
     ["function_static_declaration", "nested-function"],
   ]),
   ast: {
+    // Request input followed to a dangerous call inside each request handler.
+    taint: phpTaint,
     // Blade templates (.blade.php) surface as UI screens; interactive elements
     // are content-gated on Blade directives (the hook receives no file path).
     screens: (_tree, sourceText, filePath) => extractBladeScreens(sourceText, filePath),

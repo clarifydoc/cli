@@ -1,3 +1,4 @@
+import { csharpTaint } from "./taint.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import {
   extendControlFlow,
@@ -67,6 +68,8 @@ export const csharpMeta: LanguagePluginMeta = {
   apiCallRoots: ["HttpClient", "WebClient", "RestClient"],
   dbCallRoots: ["DbContext", "DbSet", "SqlCommand", "SqlConnection"],
   ast: {
+    // Request input followed to a dangerous call inside each request handler.
+    taint: csharpTaint,
     typeReferences: extractCsharpTypeReferences,
     // WinForms wiring (`X.Click += Handler;`) — Designer files AND hand-wired
     // forms; the partial-class handler link is added by CsharpUiBridgeResolver.

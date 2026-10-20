@@ -45,15 +45,24 @@ export interface TaintSpec {
   /** Statement types whose condition can check a value (`if`). */
   ifTypes: ReadonlySet<string>;
   sinks: readonly TaintSink[];
+  /**
+   * The grammar's string literal node types, whose text is data — only their
+   * interpolations (`interpolationTypes`) are code. Added to the defaults
+   * (`string`, `template_string`, `concatenated_string`).
+   */
+  stringTypes?: ReadonlySet<string>;
+  /** Node types inside a string that are code (`{name}` in C#, `$id` in PHP). */
+  interpolationTypes?: ReadonlySet<string>;
 }
 
 /**
  * A condition that checks a value before use: `safe_for_redirect(url)`,
- * `resolved.startsWith(root)`, `is_valid(x)`, `x in ALLOWED`, `commonpath`.
+ * `resolved.startsWith(root)`, `is_valid(x)`, `x in ALLOWED`, `commonpath`,
+ * `IsPathWithinDirectory(root, name)`, `Regex.IsMatch(ext, pattern)`.
  * A tainted name such a condition mentions counts as checked from there on —
  * whether the `if` wraps the sink or exits early when the check fails.
  */
-const GUARD_RE = /\b(?:\w*safe\w*|\w*valid\w*|\w*allowed\w*|\w*whitelist\w*|startswith|startsWith|endswith|endsWith|commonpath|is_relative_to|isAbsolute|realpath)\s*\(|\bin\s+[A-Z_]{3,}\b|\.includes\s*\(/;
+const GUARD_RE = /\b(?:\w*safe\w*|\w*[Vv]alid\w*|\w*[Aa]llowed\w*|\w*whitelist\w*|\w*[Ww]ithin\w*|\w*[Ii]nside\w*|startswith|startsWith|StartsWith|endswith|endsWith|EndsWith|commonpath|is_relative_to|isAbsolute|realpath|IsMatch|matches|preg_match)\s*\(|\bin\s+[A-Z_]{3,}\b|\.includes\s*\(/;
 
 export interface TaintSink {
   callee: RegExp;
@@ -90,6 +99,8 @@ export function handlerTaint(tree: Tree, spec: TaintSpec, filePath: string): Sec
 
 function taintFunction(fn: Node, params: readonly string[], spec: TaintSpec, filePath: string): SecurityIssue[] {
   const body = fn.childForFieldName("body") ?? fn;
+  const stringTypes = spec.stringTypes ? new Set([...STRING_CONTAINERS, ...spec.stringTypes]) : STRING_CONTAINERS;
+  const interpolations = spec.interpolationTypes ? new Set([...INTERPOLATIONS, ...spec.interpolationTypes]) : INTERPOLATIONS;
   const tainted = new Map<string, number>(params.map((p) => [p, fn.startPosition.row + 1]));
   const issues: SecurityIssue[] = [];
   // The line of the statement being read: a request read counts from there.
@@ -97,7 +108,7 @@ function taintFunction(fn: Node, params: readonly string[], spec: TaintSpec, fil
   /** The line the taint in `text` comes from, or null when it carries none. */
   const isTainted = (text: string): number | null => {
     if (spec.source.test(text)) return sourceLine;
-    for (const [name, line] of tainted) if (new RegExp(`(?<![\\w$.])${escape(name)}(?![\\w$])`).test(text)) return line;
+    for (const [name, line] of tainted) if (mentions(text, name)) return line;
     return null;
   };
 
@@ -108,8 +119,8 @@ function taintFunction(fn: Node, params: readonly string[], spec: TaintSpec, fil
    * callee, receiver included, is kept).
    */
   const codeText = (n: Node): string => {
-    if (STRING_CONTAINERS.has(n.type)) {
-      return n.namedChildren.filter((c) => INTERPOLATIONS.has(c.type)).map(codeText).join(" ");
+    if (stringTypes.has(n.type)) {
+      return n.namedChildren.filter((c) => interpolations.has(c.type)).map(codeText).join(" ");
     }
     if (n.childCount === 0) return n.text;
     const call = spec.call(n);
@@ -118,7 +129,8 @@ function taintFunction(fn: Node, params: readonly string[], spec: TaintSpec, fil
     // (`not name`), so `request.args` stays one expression.
     let out = "";
     for (const part of n.children.map(codeText)) {
-      if (out && part && /[\w$]$/.test(out) && /^[\w$]/.test(part)) out += " ";
+      // PHP's `$name` is two tokens, `$` and `name`: no space after a bare sigil.
+      if (out && part && /[\w$]$/.test(out) && !/(?:^|[^\w$])\$$/.test(out) && /^[\w$]/.test(part)) out += " ";
       out += part;
     }
     return out;
@@ -131,7 +143,7 @@ function taintFunction(fn: Node, params: readonly string[], spec: TaintSpec, fil
       const cond = node.childForFieldName("condition")?.text ?? "";
       if (GUARD_RE.test(cond)) {
         for (const name of [...tainted.keys()]) {
-          if (new RegExp(`(?<![\\w$.])${escape(name)}(?![\\w$])`).test(cond)) tainted.delete(name);
+          if (mentions(cond, name)) tainted.delete(name);
         }
       }
     }
@@ -177,6 +189,16 @@ function taintFunction(fn: Node, params: readonly string[], spec: TaintSpec, fil
 /** String containers whose interpolations are code (`f"…{x}…"`, `` `…${x}…` ``). */
 const STRING_CONTAINERS: ReadonlySet<string> = new Set(["string", "template_string", "concatenated_string"]);
 const INTERPOLATIONS: ReadonlySet<string> = new Set(["interpolation", "template_substitution", "string"]);
+
+/**
+ * Whether `text` mentions the variable `name` — not as another name's member
+ * (`obj.name`). A sigil name (PHP's `$id`) is never a member: a `.` before it
+ * is concatenation.
+ */
+function mentions(text: string, name: string): boolean {
+  const before = name.startsWith("$") ? "(?<![\\w$])" : "(?<![\\w$.])";
+  return new RegExp(`${before}${escape(name)}(?![\\w$])`).test(text);
+}
 
 function escape(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
