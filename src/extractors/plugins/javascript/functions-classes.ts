@@ -1,3 +1,4 @@
+import { responsesOf } from "./responses.js";
 import { extractZodSchemas } from "./zod-schemas.js";
 import type { Node, Tree } from "web-tree-sitter";
 import { renderUrlExpr } from "./url-expr.js";
@@ -861,6 +862,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const paramNames = new Set(params.map((p) => p.name));
     const templates = extractUrlTemplates(body, paramNames);
     const requestAccess = requestAccessOf(params, body);
+    const responses = responsesOf(params, body);
     const { calls, localTypes } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx);
     return {
       name,
@@ -875,6 +877,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       ...(localTypes ? { localTypes } : {}),
       ...urlTemplateFields(templates),
       ...(requestAccess ? { requestAccess } : {}),
+      ...(responses ? { responses } : {}),
     };
   }
 
@@ -918,6 +921,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const paramNames = new Set(params.map((p) => p.name));
     const templates = extractUrlTemplates(body, paramNames);
     const requestAccess = requestAccessOf(params, body);
+    const responses = responsesOf(params, body);
     const { calls, localTypes } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx);
     return {
       name,
@@ -932,6 +936,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       ...(localTypes ? { localTypes } : {}),
       ...urlTemplateFields(templates),
       ...(requestAccess ? { requestAccess } : {}),
+      ...(responses ? { responses } : {}),
     };
   }
 
@@ -1218,6 +1223,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           const isAsync = member.text.startsWith("async ");
           const methodBody = member.childForFieldName("body");
           const requestAccess = requestAccessOf(params, methodBody);
+          const responses = responsesOf(params, methodBody);
           const paramNames = new Set(params.map((p) => p.name));
           // A URL-builder helper is as often a service-class method
           // (`configService.APIUrl(sub)`) as a free function.
@@ -1238,6 +1244,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
             ...urlTemplateFields(templates),
             ...(templates.length > 0 && stripped.base ? { urlTemplateBase: stripped.base } : {}),
             ...(requestAccess ? { requestAccess } : {}),
+            ...(responses ? { responses } : {}),
           });
           // `constructor(public readonly id: number)` declares a property.
           if (methodName === "constructor") {

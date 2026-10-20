@@ -29,6 +29,29 @@ export function paramSchema(type: string | null | undefined): Record<string, unk
   return scalar[t] ?? { "x-type": type };
 }
 
+/**
+ * The answers a route's handler states, as OpenAPI `responses`: each status
+ * (the default one as `default` when unwritten), the success body's schema
+ * on the first 2xx/default answer that has one. A route that states nothing
+ * says so.
+ */
+function responsesOf(r: RouteInfo & { responseSchema?: JsonSchemaNode }): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  let bodyPlaced = false;
+  for (const res of r.responses ?? []) {
+    const code = res.status === null ? "default" : String(res.status);
+    if (out[code]) continue;
+    const success = res.status === null || (res.status >= 200 && res.status < 300);
+    const body = success && !bodyPlaced && r.responseSchema && (res.type || res.keys) ? r.responseSchema : null;
+    if (body) bodyPlaced = true;
+    out[code] = {
+      description: res.status === null ? "The framework's default status." : `HTTP ${res.status}.`,
+      ...(body ? { content: { "application/json": { schema: body } } } : {}),
+    };
+  }
+  return Object.keys(out).length > 0 ? out : { default: { description: "The handler states no response here." } };
+}
+
 /** One route as an OpenAPI operation (no `responses`: the caller adds what it knows). */
 export function routeOperation(route: RouteInfo & { requestSchema?: JsonSchemaNode }): Record<string, unknown> {
   const a = route.auth;
@@ -135,7 +158,7 @@ export function buildOpenApi(summary: ProjectAnalysis, opts: { title?: string; v
       ...(tag ? { tags: [tag] } : {}),
       ...(r.prefixUnresolved ? { "x-prefix-unknown": true } : {}),
       "x-source": `${r.filePath}:${r.line}`,
-      responses: { default: { description: "Responses are not read by the analysis." } },
+      responses: responsesOf(r),
     };
   }
   const name = opts.title ?? summary.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? "API";
@@ -144,7 +167,7 @@ export function buildOpenApi(summary: ProjectAnalysis, opts: { title?: string; v
     info: {
       title: name,
       version: opts.version ?? (summary.analyzedAt ? summary.analyzedAt.slice(0, 10) : "unversioned"),
-      description: "Generated from the source by ClarifyDoc: the routes the code declares, with the parameters, request bodies and security its handlers state.",
+      description: "Generated from the source by ClarifyDoc: the routes the code declares, with the parameters, request bodies, responses and security its handlers state.",
     },
     ...(tags.size ? { tags: [...tags].sort().map((t) => ({ name: t })) } : {}),
     paths,

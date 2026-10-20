@@ -11,7 +11,7 @@ import type { ProjectAnalysis } from "../types/analysis.js";
  * labels in its README — written by hand from its source: a NestJS API whose
  * DTOs disagree with what the web client sends.
  */
-describe("request contracts — sample-contract-mismatch", () => {
+describe("request and response contracts — sample-contract-mismatch", () => {
   let out: string;
   let summary: ProjectAnalysis;
   beforeAll(async () => {
@@ -24,9 +24,18 @@ describe("request contracts — sample-contract-mismatch", () => {
   it("finds exactly the labelled disagreements", () => {
     const found = (summary.contractFindings ?? []).map((f) => `${f.method} ${f.url} ${f.kind} ${f.field}${f.expected ? ` ${f.expected}←${f.actual}` : ""}`).sort();
     expect(found).toEqual([
+      "GET /stats unknown-response-field totals",
+      "GET /users/${id} unknown-response-field mail",
       "POST /users missing-field age",
       "POST /users unknown-field nickname",
       "PUT /users/${id} type-mismatch age number←string",
     ]);
+  });
+
+  it("knows what each route answers", () => {
+    const row = (path: string, method: string) => summary.routeMap.find((r) => r.path === path && r.httpMethod === method);
+    expect(row("/users/:id", "GET")?.responseSchema).toMatchObject({ type: "object", properties: { id: { type: "string" }, name: { type: "string" }, email: { type: "string" } } });
+    expect(row("/stats", "GET")?.responseSchema).toEqual({ type: "object", properties: { active: {}, total: {} }, additionalProperties: false });
+    expect(row("/users", "POST")?.responses).toEqual([{ status: 201 }]);
   });
 });

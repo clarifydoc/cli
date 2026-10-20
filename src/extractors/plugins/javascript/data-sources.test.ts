@@ -575,12 +575,18 @@ describe("JS fetch-style calls carry their verb in the options", () => {
       fetch('/api/orders', { method: 'POST', body });
       oazapfts.fetchJson('/activities', oazapfts.json({ ...opts, method: 'DELETE', body }));
       fetch('/api/orders');
-      fetch('/api/x', { method: someVar });`);
+      fetch('/api/x', { method: someVar });
+      fetch('/api/y', { headers });
+      fetch('/api/z', { ...init });`);
+    // No init, or an init literal naming no method: the Fetch standard's GET. A method from a
+    // variable or a spread is unknown.
     expect(calls.map((c) => [c.name, c.target])).toEqual([
       ["post", "/api/orders"],
       ["delete", "/activities"],
-      ["fetch", "/api/orders"],
+      ["get", "/api/orders"],
       ["fetch", "/api/x"],
+      ["get", "/api/y"],
+      ["fetch", "/api/z"],
     ]);
   });
 });

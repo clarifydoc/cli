@@ -1,7 +1,7 @@
 import type { ApiRouteLink, ContractFinding, DataSourceInfo, JsonSchemaNode, RouteInfo } from "../types/analysis.js";
 
 type CallRow = DataSourceInfo & { filePath: string };
-type RouteRow = RouteInfo & { filePath?: string; requestSchema?: JsonSchemaNode };
+type RouteRow = RouteInfo & { filePath?: string; requestSchema?: JsonSchemaNode; responseSchema?: JsonSchemaNode };
 
 /**
  * The request contract of each call the linker joined for certain: the body
@@ -15,7 +15,12 @@ type RouteRow = RouteInfo & { filePath?: string; requestSchema?: JsonSchemaNode 
  *  - `unknown-field`: the call sends a field a CLOSED route schema (a class,
  *    not a list of fields the handler reads) does not have;
  *  - `type-mismatch`: both sides type a field, and the types cannot agree
- *    (an integer is a number; a nullable value is anything).
+ *    (an integer is a number; a nullable value is anything);
+ *  - `unknown-response-field`: the call reads a field off the response
+ *    (`DataSourceInfo.responseReads`) that the route's CLOSED response body
+ *    (`routeMap[].responseSchema`: a declared type, or the keys of the literal
+ *    it sends) does not have — matched case-insensitively, as serializers
+ *    rename `UserName` to `userName`.
  *
  * Path parameters are never body fields. EXTRACTED links only: a guessed
  * link's contract is a guess too. Nested objects are compared one level down.
@@ -26,9 +31,9 @@ export function checkContracts(
   routes: readonly RouteRow[],
 ): ContractFinding[] {
   const callAt = new Map<string, CallRow>();
-  for (const c of calls) if (c.kind === "api-call" && c.requestBody) callAt.set(`${c.filePath}\u0000${c.line}`, c);
+  for (const c of calls) if (c.kind === "api-call" && (c.requestBody || c.responseReads)) callAt.set(`${c.filePath}\u0000${c.line}`, c);
   const routeAt = new Map<string, RouteRow>();
-  for (const r of routes) if (r.filePath && r.requestSchema) routeAt.set(`${r.filePath}\u0000${r.line}\u0000${r.path}`, r);
+  for (const r of routes) if (r.filePath && (r.requestSchema || r.responseSchema)) routeAt.set(`${r.filePath}\u0000${r.line}\u0000${r.path}`, r);
 
   const out: ContractFinding[] = [];
   for (const link of links) {
@@ -36,11 +41,18 @@ export function checkContracts(
     const call = callAt.get(`${link.source}\u0000${link.sourceLine}`);
     const route = routeAt.get(`${link.target}\u0000${link.targetLine}\u0000${link.routePath}`)
       ?? [...routeAt.values()].find((r) => r.filePath === link.target && r.line === link.targetLine);
-    if (!call?.requestBody || !route?.requestSchema) continue;
-    const pathParams = new Set((route.params ?? []).filter((p) => p.binding === "route").map((p) => p.name.toLowerCase()));
+    if (!call || !route) continue;
     const at = { file: link.source, line: link.sourceLine, method: link.method, url: link.url, route: { file: link.target, line: link.targetLine, path: link.routePath } };
-    compare(call.requestBody, route.requestSchema, "", pathParams, (kind, field, expected, actual) =>
-      out.push({ ...at, kind, field, ...(expected ? { expected } : {}), ...(actual ? { actual } : {}) }));
+    if (call.requestBody && route.requestSchema) {
+      const pathParams = new Set((route.params ?? []).filter((p) => p.binding === "route").map((p) => p.name.toLowerCase()));
+      compare(call.requestBody, route.requestSchema, "", pathParams, (kind, field, expected, actual) =>
+        out.push({ ...at, kind, field, ...(expected ? { expected } : {}), ...(actual ? { actual } : {}) }));
+    }
+    const answer = route.responseSchema;
+    if (call.responseReads && answer?.type === "object" && answer.properties && (answer.additionalProperties === undefined || answer.additionalProperties === false)) {
+      const sent = new Set(Object.keys(answer.properties).map((k) => k.toLowerCase()));
+      for (const read of call.responseReads) if (!sent.has(read.toLowerCase())) out.push({ ...at, kind: "unknown-response-field", field: read });
+    }
   }
   return out;
 }

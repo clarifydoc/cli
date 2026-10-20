@@ -749,6 +749,12 @@ export interface FunctionInfo {
    * route gets `params` although its registration line never shows them.
    */
   requestAccess?: RouteParamInfo[];
+  /**
+   * What the function answers when it is a request handler (`res.status(201)
+   * .json({ id })`, a declared return type) — copied onto a route that names
+   * this function as its handler and states no responses of its own.
+   */
+  responses?: RouteResponseInfo[];
 }
 
 export interface PropertyInfo {
@@ -881,6 +887,14 @@ export interface RouteInfo {
    */
   params?: RouteParamInfo[];
   /**
+   * What the handler answers, as far as it states it: each status with the
+   * body's declared type (`Promise<UserDto>`, `ResponseEntity<User>`,
+   * `response_model=User`) or the keys of the object literal it sends
+   * (`res.status(201).json({ id, name })`). `status` is null when the code
+   * is the framework's default and not written. Absent when nothing is visible.
+   */
+  responses?: RouteResponseInfo[];
+  /**
    * A router MOUNT, not an endpoint: `app.use("/api", apiRouter)`,
    * `include_router(x.router, prefix="/users")`. `path` is the prefix and
    * `handler` the router to resolve; the project mount pass prefixes that
@@ -929,6 +943,15 @@ export interface RouteFact {
   line: number;
   owner?: string;
   data: unknown;
+}
+
+/** One answer a route handler gives (`RouteInfo.responses`). */
+export interface RouteResponseInfo {
+  status: number | null;
+  /** The body's declared type, as written. */
+  type?: string;
+  /** The keys of the object literal sent, when the body is one (sorted). */
+  keys?: string[];
 }
 
 /** Where a route handler parameter is read from. */
@@ -1115,7 +1138,11 @@ export interface ContractFinding {
   method: string | null;
   url: string;
   route: { file: string; line: number; path: string };
-  kind: "missing-field" | "unknown-field" | "type-mismatch";
+  /**
+   * `unknown-response-field`: the call reads a field off the response that
+   * the route's closed response body does not send.
+   */
+  kind: "missing-field" | "unknown-field" | "type-mismatch" | "unknown-response-field";
   field: string;
   /** The declared type (`type-mismatch`). */
   expected?: string;
@@ -1258,6 +1285,13 @@ export interface DataSourceInfo {
    * empty schema. `additionalProperties: true` when a spread may add more.
    */
   requestBody?: JsonSchemaNode;
+  /**
+   * For `api-call`: the top-level fields the caller reads off the response
+   * body (`const { items } = await res.json()`, `res.data.total`), sorted.
+   * Absent when the response is not read or flows somewhere the extractor
+   * cannot follow.
+   */
+  responseReads?: string[];
   /**
    * For an api-call: the URL's leading base was a runtime value no pass could
    * resolve (`this.baseUrl`, `environment.apiBaseUrl`, a client's base), so it
@@ -2614,7 +2648,7 @@ export interface ProjectAnalysis {
    * version set). `projectId` names the sub-project the declaring file
    * belongs to — the same endpoint hosted by two services is two rows.
    */
-  routeMap: (RouteInfo & { filePath?: string; projectId?: string; requestSchema?: JsonSchemaNode })[];
+  routeMap: (RouteInfo & { filePath?: string; projectId?: string; requestSchema?: JsonSchemaNode; responseSchema?: JsonSchemaNode })[];
   /**
    * Outbound API calls — HTTP calls made FROM client code to external or internal endpoints.
    * Aggregated from each file's `dataSources` where `kind === "api-call"`.

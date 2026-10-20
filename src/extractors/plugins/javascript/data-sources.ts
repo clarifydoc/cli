@@ -1,3 +1,4 @@
+import { responseReadsOf, type BodyStyle } from "./response-reads.js";
 import { resolveRtkHooks } from "./rtk-query.js";
 import type { Node, Tree } from "web-tree-sitter";
 import type { Confidence, DataSourceInfo, CallInfo, FileAnalysis, JsonSchemaNode, Language } from "../../../types/analysis.js";
@@ -264,6 +265,13 @@ function arrowResult(fn: Node): Node | null {
   if (body.type !== "statement_block") return body;
   const ret = body.namedChildren.filter((c) => c.type === "return_statement");
   return ret.length === 1 ? ret[0]!.namedChild(0) : null;
+}
+
+/** The fields the caller reads off this call's response (response-reads.ts), by how its client hands the body over. */
+function readsFor(node: Node, fnName: string): { responseReads?: string[] } {
+  const style: BodyStyle = /^(?:fetch|ky)$/i.test(fnName) ? "json" : /^(?:\$fetch|ofetch)$/.test(fnName) ? "direct" : "data";
+  const reads = responseReadsOf(node, style);
+  return reads ? { responseReads: reads } : {};
 }
 
 /** A tRPC client call's verb → the HTTP method its link sends (subscriptions go over a socket). */
@@ -789,6 +797,9 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           if (!HTTP_VERBS.has(callName.toLowerCase())) {
             const verb = optionsMethod(positional[1]);
             if (verb) callName = verb;
+            // The Fetch standard's default: `fetch(url)`, or an init literal that names no method
+            // (and spreads nothing that could), is a GET.
+            else if (/^fetch$/i.test(fnName) && fn.type === "identifier" && (positional.length === 1 || statesNoMethod(positional[1]))) callName = "get";
           }
           // openapi-generator's wrappers end `.then((request) => request(this.axios, this.basePath))`:
           // the first argument is the HTTP client itself, not a URL — the request
@@ -833,6 +844,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
                 ? { targetConfidence: resolved.confidence }
                 : {}),
               ...bodyOf(callName, positional, firstArg),
+              ...readsFor(node, fnName),
             }));
             emittedApiCall = true;
           }
@@ -1352,6 +1364,11 @@ function optionsMethod(arg: Node | undefined): string | null {
   if (obj?.type !== "object") return null;
   const verb = literalString(objectPropValue(obj, "method"));
   return verb && HTTP_VERBS.has(verb.toLowerCase()) ? verb.toLowerCase() : null;
+}
+
+/** An init object literal with no `method` and no spread that could bring one. */
+function statesNoMethod(arg: Node | undefined): boolean {
+  return arg?.type === "object" && !hasProp(arg, "method") && !arg.namedChildren.some((c) => c.type === "spread_element");
 }
 
 /** Whether an object literal has this key, as a pair or a shorthand (`{ handler }`). */

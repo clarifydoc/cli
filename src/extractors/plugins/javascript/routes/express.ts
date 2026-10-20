@@ -1,5 +1,6 @@
 import type { Node } from "web-tree-sitter";
-import type { RouteInfo, CallInfo, RouteParamInfo } from "../../../../types/analysis.js";
+import type { RouteInfo, CallInfo, ParamInfo, RouteParamInfo, RouteResponseInfo } from "../../../../types/analysis.js";
+import { responsesOf } from "../responses.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
 import { applyRouteMeta, buildAuth, pathParamNames, type GuardAttr } from "../../../shared/route-metadata.js";
 import { HTTP_METHODS, collectCallNames } from "../../../routes/base.js";
@@ -128,6 +129,17 @@ function requestParamName(fn: Node): string | null {
   if (!first) return null;
   const ident = first.type === "identifier" ? first : first.childForFieldName("pattern");
   return ident?.type === "identifier" ? ident.text : null;
+}
+
+/** An inline handler's parameter names, as the response reader needs them (`(req, res)`, `(c)`). */
+function handlerParamNames(fn: Node): ParamInfo[] {
+  const params = fn.childForFieldName("parameters");
+  const single = fn.childForFieldName("parameter");
+  const nodes = params ? params.namedChildren : single ? [single] : [];
+  return nodes.map((p) => {
+    const ident = p.type === "identifier" ? p : p.childForFieldName("pattern");
+    return { name: ident?.type === "identifier" ? ident.text : "", type: null, defaultValue: null };
+  });
 }
 
 const VALIDATOR_RE = /valid|zod|schema|celebrate/i;
@@ -278,9 +290,11 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
             // that function's `requestAccess`, and only when none are set here.
             let calls: CallInfo[] = [];
             let params: RouteParamInfo[] = [];
+            let responses: RouteResponseInfo[] | undefined;
             if (lastArgIsFn) {
               calls = collectCallNames(last!);
               params = inlineHandlerParams(path, last!, formFields);
+              responses = responsesOf(handlerParamNames(last!), last!.childForFieldName("body"));
             }
             // The schema the body is validated with names its type (a zod schema, a DTO).
             const bodySchema = middlewareNodes.map(validatedBody).find(Boolean) ?? (lastArgIsFn ? parsedBody(last!) : null);
@@ -306,6 +320,7 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
                 calls,
                 middleware,
                 line: node.startPosition.row + 1,
+                ...(responses ? { responses } : {}),
               };
               if (method === "use") route.mount = true;
               routeMeta.set(route, { receiver, guards, params });

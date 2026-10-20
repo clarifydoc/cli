@@ -113,7 +113,7 @@ import { readProjectConfig, readProjectProxies } from "./config-values.js";
 import { buildServiceAddresses } from "./service-addresses.js";
 import { resolveCallOrigins } from "./call-origins.js";
 import { clientProxyCalls } from "./client-proxies.js";
-import { attachHandlerParams, attachRequestSchemas } from "./request-schemas.js";
+import { attachHandlerParams, attachRequestSchemas, attachResponseSchemas } from "./request-schemas.js";
 import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
 import { reconcileProjectRoutes } from "../extractors/route-resolvers/index.js";
 import { resolveProjectApiCalls } from "../extractors/data-sources/index.js";
@@ -1066,6 +1066,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // calls endpoints rather than reads about them needs it next to the route.
   const handlerParamCount = attachHandlerParams(allRoutes, allAnalyses);
   const schemaCount = attachRequestSchemas(allRoutes, allAnalyses);
+  const responseSchemaCount = attachResponseSchemas(allRoutes, allAnalyses);
+  if (responseSchemaCount > 0) progress.detail(`  Response schemas: ${responseSchemaCount} route(s)`);
   if ((handlerParamCount > 0 || schemaCount > 0) && verbose) {
     progress.detail(`  route params from handlers: ${handlerParamCount}, request schemas: ${schemaCount}`);
   }

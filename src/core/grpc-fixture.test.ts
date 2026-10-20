@@ -47,9 +47,8 @@ describe.skipIf(!existsSync(fixture))("sample-grpc", () => {
       "route:POST /v1/orders -> go-orders/server/orders.go OrderServer.CreateOrder",
     ]);
     expect((s.apiRouteLinks ?? []).map((l) => `${l.source} ${l.method} ${l.url}`).sort()).toEqual([
+      "web/src/orders.ts GET /v1/orders/${id}",
       "web/src/orders.ts POST /v1/orders",
-      // A bare fetch(url) states no method; the GET route is the one it reaches.
-      "web/src/orders.ts null /v1/orders/${id}",
     ]);
     const flows = (s.dataFlows ?? []).filter((p) => p.resource === "orders").map((p) => `${p.entryLabel} ${p.effect}`);
     expect(flows).toContain("GET /v1/orders/{id} db-read");

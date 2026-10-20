@@ -39,7 +39,7 @@ function leafName(name: string): string {
   return name.split(/[.\\]|::/).pop() ?? name;
 }
 
-type RouteRow = RouteInfo & { filePath: string; projectId?: string; requestSchema?: JsonSchemaNode };
+type RouteRow = RouteInfo & { filePath: string; projectId?: string; requestSchema?: JsonSchemaNode; responseSchema?: JsonSchemaNode };
 
 interface ClassRef {
   cls: ClassInfo;
@@ -163,6 +163,8 @@ export function attachHandlerParams(routes: RouteRow[], analyses: FileAnalysis[]
     if (route.kind !== "api") continue;
     const ref = resolve(route);
     if (!ref) continue;
+    // What the handler answers is the route's answer, unless the route states its own.
+    if (!route.responses && ref.fn.responses) route.responses = ref.fn.responses;
     const lang = byFile.get(ref.filePath)?.language;
     const hooks = lang ? pluginFor(lang)?.requestSchema : undefined;
     const tokens = pathParamNames(route.path);
@@ -279,6 +281,46 @@ export function attachRequestSchemas(routes: RouteRow[], analyses: FileAnalysis[
       schema = { type: "object", properties, additionalProperties: true };
     }
     route.requestSchema = schema;
+    attached++;
+  }
+  return attached;
+}
+
+/**
+ * Attach a `responseSchema` to every api route whose handler states its
+ * success body: the first default or 2xx response with a declared type
+ * (flattened like a request body) or literal keys (a closed object of those
+ * fields). Returns how many routes got one.
+ */
+export function attachResponseSchemas(routes: RouteRow[], analyses: FileAnalysis[]): number {
+  const languageOf = new Map<string, FileAnalysis["language"]>();
+  const byName = new Map<string, ClassRef[]>();
+  for (const a of analyses) {
+    languageOf.set(a.filePath, a.language);
+    for (const cls of a.classes ?? []) {
+      if (cls.kind === "interface" && !(cls.properties?.length)) continue;
+      const ref = { cls, filePath: a.filePath, projectId: a.projectId ?? "root" };
+      for (const key of new Set([cls.name, leafName(cls.name)])) (byName.get(key) ?? byName.set(key, []).get(key)!).push(ref);
+    }
+  }
+  let attached = 0;
+  for (const route of routes) {
+    if (route.kind !== "api" || !route.responses) continue;
+    const ok = route.responses.find((r) => (r.status === null || (r.status >= 200 && r.status < 300)) && (r.type || r.keys));
+    if (!ok) continue;
+    let schema: JsonSchemaNode | null = null;
+    if (ok.keys) {
+      schema = { type: "object", properties: Object.fromEntries(ok.keys.map((k) => [k, {}])), additionalProperties: false };
+    } else if (ok.type) {
+      const lang = languageOf.get(route.filePath);
+      const hooks = lang ? pluginFor(lang)?.requestSchema : undefined;
+      if (!hooks) continue;
+      const s = new SchemaBuilder(hooks, byName, route.projectId ?? "root").schemaFor(ok.type, 0);
+      if (s.$ref && Object.keys(s).length === 1) continue;
+      schema = s;
+    }
+    if (!schema) continue;
+    route.responseSchema = schema;
     attached++;
   }
   return attached;

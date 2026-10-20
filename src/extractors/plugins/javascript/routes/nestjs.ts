@@ -250,6 +250,12 @@ function paramOf(param: Node, fullPath: string): RouteParamInfo | null {
   return boundParam(firstString(d.call) ?? name, type, binding);
 }
 
+/** The `HttpStatus` members `@HttpCode` is most often given. */
+const HTTP_STATUS: Record<string, number> = {
+  OK: 200, CREATED: 201, ACCEPTED: 202, NO_CONTENT: 204, MOVED_PERMANENTLY: 301, FOUND: 302,
+  BAD_REQUEST: 400, UNAUTHORIZED: 401, FORBIDDEN: 403, NOT_FOUND: 404, CONFLICT: 409,
+};
+
 /** Inspect a single node for a NestJS HTTP-verb decorator. */
 export function visitNestjsRoute(node: Node, routes: RouteInfo[]): void {
   if (node.type !== "decorator") return;
@@ -279,6 +285,18 @@ export function visitNestjsRoute(node: Node, routes: RouteInfo[]): void {
     }
   }
 
+  // `@HttpCode(201)` and the declared return type (`Promise<UserDto>`): what the action answers.
+  let status: number | null = d.name === "Post" ? 201 : null;
+  for (const dec of decorators) {
+    const c = decoratorCall(dec);
+    if (c?.name === "HttpCode") {
+      const arg = c.call.childForFieldName("arguments")?.namedChildren[0];
+      if (arg && /^\d{3}$/.test(arg.text)) status = Number(arg.text);
+      else if (arg && /HttpStatus\.(\w+)/.test(arg.text)) status = HTTP_STATUS[/HttpStatus\.(\w+)/.exec(arg.text)![1]!] ?? status;
+    }
+  }
+  const returnType = method?.childForFieldName("return_type")?.text?.replace(/^:\s*/, "").trim();
+  const bodyType = returnType && !/^(?:Promise<\s*)?(?:void|any|unknown)\s*>?$/.test(returnType) ? returnType : undefined;
   const route: RouteInfo = {
     path: fullPath,
     httpMethod: d.name.toUpperCase(),
@@ -287,6 +305,7 @@ export function visitNestjsRoute(node: Node, routes: RouteInfo[]): void {
     calls: [],
     middleware: [],
     line: node.startPosition.row + 1,
+    ...(bodyType || status !== null ? { responses: [{ status, ...(bodyType ? { type: bodyType } : {}) }] } : {}),
   };
   applyRouteMeta(route, {
     inheritedGuards: scope.guards,
