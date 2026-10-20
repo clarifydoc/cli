@@ -308,6 +308,7 @@ export function computeImpactDiff(
       .filter(([from, deps]) => !symbolFiles.has(from) && !callerFiles.has(from) && deps.some((d) => symbolFiles.has(d)))
       .map(([from]) => from))].sort(byOrdinal);
     const nonRoute = callers.filter((c) => !c.symbol.startsWith("route:"));
+    standCallers(summary, options.symbols.changed, nonRoute.filter((c) => c.depth === 1).slice(0, 50).concat(nonRoute.filter((c) => c.depth > 1).slice(0, 50)));
     symbolImpact = {
       changed: options.symbols.changed,
       moduleLevel: options.symbols.moduleLevel,
@@ -492,10 +493,15 @@ export function renderImpactText(r: ImpactDiffResult): string {
       for (const rt of si.routes) lines.push(`  ${rt.route}  (${rt.file}:${rt.line}, ${rt.depth} hop${rt.depth === 1 ? "" : "s"}, ${rt.confidence.toLowerCase()})`);
     }
     if (si.direct.length) {
-      lines.push("", `Direct callers (${si.direct.length}):`);
-      for (const c of si.direct) lines.push(`  ${c.symbol}  (${c.file}:${c.line}, ${c.confidence.toLowerCase()})`);
+      lines.push("", `Direct callers (${si.direct.length}${si.direct.some((c) => c.standing) ? `: ${standingCounts(si.direct)}` : ""}):`);
+      // Unverified first: those are the ones to read.
+      const order = { unverified: 0, covered: 1, updated: 2, test: 3 } as const;
+      for (const c of [...si.direct].sort((a, b) => (order[a.standing ?? "unverified"] - order[b.standing ?? "unverified"]))) {
+        const note = c.standing ? ` — ${c.standing === "covered" && c.coveredBy ? `covered by ${c.coveredBy.symbol}` : STANDING_NOTE[c.standing]}` : "";
+        lines.push(`  ${c.symbol}  (${c.file}:${c.line}, ${c.confidence.toLowerCase()})${note}`);
+      }
     }
-    if (si.transitive.length) lines.push(`Callers 2–4 hops away: ${si.transitive.length}`);
+    if (si.transitive.length) lines.push(`Callers 2–4 hops away: ${si.transitive.length}${si.transitive.some((c) => c.standing) ? ` (${standingCounts(si.transitive)})` : ""}`);
     if (si.reviewOnly.length) lines.push(`Import a changed file but call nothing changed: ${si.reviewOnly.join(", ")}`);
     if (si.signatureChanges?.length) {
       lines.push("", "Signature changes:");
@@ -552,6 +558,10 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
     row(`Changed functions (${si.changed.length})`, si.changed.map((s) => `\`${s.symbol}\``).join(", ") || "—");
     if (si.routes.length) row(`Routes reached by call (${si.routes.length})`, si.routes.map((rt) => `\`${rt.route}\``).join(", "));
     row(`Callers (${si.direct.length} direct, ${si.transitive.length} further)`, si.direct.slice(0, 10).map((c) => `\`${c.symbol}\``).join(", ") || "—");
+    const unverified = si.direct.filter((c) => c.standing === "unverified");
+    if (si.direct.some((c) => c.standing)) {
+      row("Direct callers stand", `${standingCounts(si.direct)}${unverified.length ? ` — check: ${unverified.slice(0, 10).map((c) => `\`${c.symbol}\``).join(", ")}` : ""}`);
+    }
     const sig = si.signatureChanges ?? [];
     if (sig.length) row("Signature changes", sig.map((c) => `${c.breaking ? "**breaking** " : ""}\`${c.symbol}\` ${c.kind === "removed" ? "removed" : `${c.before}→${c.after} required`} (${c.callers} caller${c.callers === 1 ? "" : "s"})`).join(", "));
   }
@@ -568,6 +578,57 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
   }
   return md.join("\n");
 }
+
+/**
+ * Consumer standing: for each caller of a changed function, whether the
+ * change edits it too (`updated`), a test calls it (nearest test function,
+ * up to six calls back) or a coverage report saw its lines run (`covered`),
+ * it is a test itself (`test`), or nothing vouches for it (`unverified`) —
+ * the callers a reviewer has to check by hand. Sets `standing` in place.
+ */
+function standCallers(summary: ProjectAnalysis, changed: readonly ChangedSymbol[], callers: SymbolCaller[]): void {
+  const edited = new Set(changed.map((c) => `${c.file}::${c.symbol}`));
+  const isTest = (f: string) => summary.fileLayerMap?.[f] === "test" || isTestFile(f);
+  const cov = new Map((summary.testCoverage?.files ?? []).map((f) => [f.file, f]));
+  const ranByCoverage = (c: SymbolCaller): boolean => {
+    const name = c.symbol.split(".").pop()!;
+    const fn = cov.get(c.file)?.functions?.find((f) => c.line >= f.line && c.line <= f.endLine && f.name.endsWith(name));
+    return !!fn && fn.covered > 0;
+  };
+  const links = summary.symbolLinks ?? [];
+  for (const c of callers) {
+    if (isTest(c.file)) {
+      c.standing = "test";
+      continue;
+    }
+    if (edited.has(`${c.file}::${c.symbol}`)) {
+      c.standing = "updated";
+      continue;
+    }
+    const test = reverseSymbolReach(links, [{ file: c.file, symbol: c.symbol, line: c.line, endLine: c.line }], 6)
+      .find((t) => !t.symbol.startsWith("route:") && isTest(t.file));
+    if (test) {
+      c.standing = "covered";
+      c.coveredBy = { file: test.file, symbol: test.symbol };
+    } else {
+      c.standing = ranByCoverage(c) ? "covered" : "unverified";
+    }
+  }
+}
+
+/** "3 updated, 1 covered, 2 unverified" — the callers' standings, worst last. */
+function standingCounts(callers: readonly SymbolCaller[]): string {
+  const n = (s: SymbolCaller["standing"]) => callers.filter((c) => c.standing === s).length;
+  return [["updated", n("updated")], ["covered", n("covered")], ["test", n("test")], ["unverified", n("unverified")]]
+    .filter(([, k]) => (k as number) > 0).map(([label, k]) => `${k} ${label === "test" ? "tests" : label}`).join(", ");
+}
+
+const STANDING_NOTE: Record<NonNullable<SymbolCaller["standing"]>, string> = {
+  updated: "updated in this change",
+  covered: "a test covers it",
+  test: "a test",
+  unverified: "unverified: not updated, no test",
+};
 
 /** Each language's command for these tests, from its plugin (`LanguagePluginManifest.testCommand`). */
 function testCommandsFor(summary: ProjectAnalysis, tests: readonly TestTarget[]): Array<{ language: string; command: string }> {

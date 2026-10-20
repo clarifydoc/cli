@@ -20,6 +20,31 @@ const route = (over: Partial<S["routeMap"][number]> & { path: string }): S["rout
 const kinds = (base: S, head: S) => diffSurface(base, head).changes.map((c) => [c.kind, c.breaking, c.route]);
 
 describe("diffSurface", () => {
+  it("lists the import cycles a change creates or grows, not the ones it only touches", () => {
+    const base: S = {
+      routeMap: [],
+      componentGraph: { "a.ts": ["b.ts"], "b.ts": ["a.ts"], "c.ts": ["d.ts"], "x.ts": ["y.ts"], "y.ts": ["x.ts"] },
+    };
+    const head: S = {
+      routeMap: [],
+      componentGraph: {
+        "a.ts": ["b.ts"], "b.ts": ["a.ts", "e.ts"], "e.ts": ["a.ts"], // grown by e.ts
+        "c.ts": ["d.ts"], "d.ts": ["c.ts"],                             // new
+        "x.ts": ["y.ts"], "y.ts": ["x.ts"],                             // unchanged
+        "t.test.ts": ["u.ts"], "u.ts": ["t.test.ts"],                   // a test: not counted
+        "p.ts": ["q.ts"], "q.ts": ["p.ts"],                             // type-only on one side: no runtime cycle
+      },
+      typeOnlyEdges: { "q.ts": ["p.ts"] },
+    };
+    const d = diffSurface(base, head);
+    expect(d.cycles).toEqual({ introduced: [["c.ts", "d.ts"]], grown: [{ files: ["a.ts", "b.ts", "e.ts"], added: ["e.ts"] }] });
+    expect(d.counts).toMatchObject({ risky: 2, cyclesIntroduced: 2, breaking: 0 });
+    const md = renderSurfaceMarkdown(d);
+    expect(md).toContain("- 🟠 new: `c.ts` ↔ `d.ts`");
+    expect(md).toContain("grown by `e.ts`");
+    expect(md).not.toContain("| Change |");
+  });
+
   it("breaks on a body that requires a new field or changes a field's type, not on an optional one", () => {
     const body = (props: Record<string, unknown>, required: string[]) => ({ type: "object" as const, properties: props as never, required });
     const base: S = { routeMap: [route({ path: "/orders", requestSchema: body({ sku: { type: "string" }, qty: { type: "integer" } }, ["sku"]) })] };

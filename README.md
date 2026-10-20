@@ -145,7 +145,7 @@ clarifydoc analyze ./my-app --include "**/*.ts" "**/*.tsx" --max-files 50 --no-p
 
 ```bash
 clarifydoc impact <path>               # What changed files reach: screens, routes, entities, tests to run
-clarifydoc diff <base> <head>          # What changed in the API surface between two analyses; --fail-on breaking
+clarifydoc diff <base> <head>          # What changed in the API surface (and the import cycles introduced) between two analyses; --fail-on breaking
 clarifydoc lsp-update <analysis-dir>   # Run layer-2 LSP enhancement on an existing analysis
 clarifydoc report <analysis-dir>       # (Re)generate the HTML report from project-summary.json
 clarifydoc cfg <file> -f <function>    # Draw one function's control flow as Mermaid

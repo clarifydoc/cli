@@ -89,6 +89,15 @@ export interface SymbolCaller {
   line: number;
   depth: number;
   confidence: Confidence;
+  /**
+   * Where this caller stands with the change (impact only): `updated` — the
+   * change edits it too; `covered` — a test calls it (`coveredBy`), or a
+   * coverage report says its lines ran; `test` — it is a test itself;
+   * `unverified` — neither, so nothing says it still works.
+   */
+  standing?: "updated" | "covered" | "test" | "unverified";
+  /** The nearest test that calls it, when `standing` is `covered` by call. */
+  coveredBy?: { file: string; symbol: string };
 }
 
 /**

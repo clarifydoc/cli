@@ -721,7 +721,7 @@ program
 
 program
   .command("diff")
-  .description("Diff the API surface of two analyses: routes, parameters, request bodies, guards, versions, cross-tier links, data reached")
+  .description("Diff the API surface of two analyses: routes, parameters, request bodies, guards, versions, cross-tier links, data reached, and the import cycles the head introduced")
   .argument("<base>", "The base analysis: a directory holding project-summary.json, or a project root (its -o analysis is used)")
   .argument("<head>", "The head analysis, the same way")
   .option("-o, --output <dir>", "Analysis output directory for a project-root argument (same value as `analyze -o`)", ".clarifydoc")

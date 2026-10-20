@@ -211,3 +211,48 @@ describe("computeImpactDiff — owners and reviewers", () => {
     expect(r.reviewers).toEqual([{ name: "Bo", files: 2, commits: 3 }, { name: "Ana", files: 1, commits: 3 }]);
   });
 });
+
+describe("consumer standing", () => {
+  const link = (sf: string, ss: string, tf: string, ts: string, line = 1) =>
+    ({ sourceFile: sf, sourceSymbol: ss, sourceLine: line, callName: ts, targetFile: tf, targetSymbol: ts, targetLine: 1, confidence: "EXTRACTED" });
+  const withLinks = {
+    ...summary,
+    files: [...(summary as { files: string[] }).files, "srv/jobs.ts", "srv/report.ts"],
+    symbolLinks: [
+      link("srv/routes.ts", "createOrder", "srv/service.ts", "place", 7),
+      link("srv/jobs.ts", "nightly", "srv/service.ts", "place", 3),
+      link("srv/report.ts", "monthly", "srv/service.ts", "place", 12),
+      link("srv/service.ts", "retry", "srv/service.ts", "place", 40),
+      link("srv/service.test.ts", "test_place", "srv/service.ts", "place", 5),
+      link("srv/service.test.ts", "test_create", "srv/routes.ts", "createOrder", 9),
+    ],
+    testCoverage: {
+      files: [{ file: "srv/report.ts", total: 10, covered: 4, functions: [{ name: "monthly", line: 10, endLine: 20, total: 10, covered: 4 }] }],
+    },
+  } as unknown as ProjectAnalysis;
+
+  it("says, for each caller of a changed function, whether it was updated, is covered, is a test, or is unverified", () => {
+    const r = computeImpactDiff(withLinks, ["srv/service.ts"], {
+      symbols: {
+        changed: [
+          { file: "srv/service.ts", symbol: "place", line: 1, endLine: 30 },
+          { file: "srv/service.ts", symbol: "retry", line: 35, endLine: 50 },
+        ],
+        moduleLevel: [],
+      },
+    });
+    const standing = Object.fromEntries(r.symbolImpact!.direct.map((c) => [c.symbol, [c.standing, c.coveredBy?.symbol]]));
+    expect(standing).toEqual({
+      createOrder: ["covered", "test_create"],
+      nightly: ["unverified", undefined],
+      monthly: ["covered", undefined],
+      retry: ["updated", undefined],
+      test_place: ["test", undefined],
+    });
+    const text = renderImpactText(r);
+    expect(text).toContain("1 updated, 2 covered, 1 tests, 1 unverified");
+    // The ones to read come first.
+    expect(text.indexOf("nightly")).toBeLessThan(text.indexOf("createOrder"));
+    expect(renderImpactMarkdown(r)).toContain("check: `nightly`");
+  });
+});

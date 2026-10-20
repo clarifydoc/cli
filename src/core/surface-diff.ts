@@ -1,4 +1,7 @@
 import type { ApiRouteLink, JsonSchemaNode, ProjectAnalysis, RouteInfo } from "../types/analysis.js";
+import { findCircularDeps } from "./health-scorer.js";
+import { runtimeGraph } from "./import-kinds.js";
+import { isTestFile } from "./test-file-detector.js";
 
 /**
  * What changed in the API surface between two analyses of a project — a base
@@ -48,10 +51,45 @@ export interface SurfaceChange {
 
 export interface SurfaceDiff {
   changes: SurfaceChange[];
-  counts: { total: number; breaking: number; risky: number; routesAdded: number; routesRemoved: number };
+  counts: { total: number; breaking: number; risky: number; routesAdded: number; routesRemoved: number; cyclesIntroduced?: number };
+  /**
+   * Import cycles the head has that the base did not: `introduced` — no base
+   * cycle held these files together; `grown` — a base cycle that now pulls in
+   * more files (`added`). Cycles the change merely touches are not listed.
+   * Over runtime imports (type-only edges dropped), test files left out.
+   */
+  cycles?: { introduced: string[][]; grown: Array<{ files: string[]; added: string[] }> };
 }
 
-type Summary = Pick<ProjectAnalysis, "routeMap"> & Partial<Pick<ProjectAnalysis, "apiRouteLinks" | "apiCalls" | "dataFlows">>;
+type Summary = Pick<ProjectAnalysis, "routeMap"> & Partial<Pick<ProjectAnalysis, "apiRouteLinks" | "apiCalls" | "dataFlows" | "componentGraph" | "typeOnlyEdges" | "fileLayerMap">>;
+
+/** The import cycles of an analysis, each a sorted file list. */
+function cyclesOf(s: Summary): string[][] {
+  if (!s.componentGraph) return [];
+  const isTest = (f: string) => s.fileLayerMap?.[f] === "test" || isTestFile(f);
+  const graph: Record<string, string[]> = {};
+  for (const [from, tos] of Object.entries(s.componentGraph)) if (!isTest(from)) graph[from] = tos.filter((t) => !isTest(t));
+  return findCircularDeps(runtimeGraph(graph, s.typeOnlyEdges)).map((c) => [...c].sort());
+}
+
+/** Cycles the head introduced or grew, judged against the base's. */
+function cycleChanges(base: Summary, head: Summary): NonNullable<SurfaceDiff["cycles"]> {
+  const before = cyclesOf(base).map((c) => new Set(c));
+  const introduced: string[][] = [];
+  const grown: Array<{ files: string[]; added: string[] }> = [];
+  for (const cycle of cyclesOf(head)) {
+    // The base cycles this one overlaps in two or more files: those it continues.
+    const overlaps = before.filter((b) => cycle.filter((f) => b.has(f)).length >= 2);
+    if (overlaps.length === 0) {
+      introduced.push(cycle);
+      continue;
+    }
+    const known = new Set(overlaps.flatMap((b) => [...b]));
+    const added = cycle.filter((f) => !known.has(f));
+    if (added.length > 0 || overlaps.length > 1) grown.push({ files: cycle, added });
+  }
+  return { introduced, grown };
+}
 type Route = Summary["routeMap"][number];
 
 const routeLabel = (r: { httpMethod: string | null; path: string }) => `${(r.httpMethod ?? "*").toUpperCase()} ${r.path}`;
@@ -250,9 +288,20 @@ export function diffSurface(base: Summary, head: Summary): SurfaceDiff {
 
   const rank = (c: SurfaceChange) => (c.breaking ? 0 : c.risky ? 1 : 2);
   changes.sort((x, y) => rank(x) - rank(y) || (x.route < y.route ? -1 : x.route > y.route ? 1 : 0) || (x.kind < y.kind ? -1 : x.kind > y.kind ? 1 : 0));
+  const cycles = base.componentGraph && head.componentGraph ? cycleChanges(base, head) : undefined;
+  const newCycles = cycles ? cycles.introduced.length + cycles.grown.length : 0;
   return {
     changes,
-    counts: { total: changes.length, breaking: changes.filter((c) => c.breaking).length, risky: changes.filter((c) => c.risky).length, routesAdded, routesRemoved },
+    counts: {
+      total: changes.length + newCycles,
+      breaking: changes.filter((c) => c.breaking).length,
+      // A new cycle breaks nothing that runs today; it is what makes the next change hard.
+      risky: changes.filter((c) => c.risky).length + newCycles,
+      routesAdded,
+      routesRemoved,
+      ...(newCycles ? { cyclesIntroduced: newCycles } : {}),
+    },
+    ...(newCycles ? { cycles } : {}),
   };
 }
 
@@ -282,11 +331,16 @@ export function renderSurfaceMarkdown(d: SurfaceDiff, labels: { base?: string; h
   }
   const verdict = d.counts.breaking ? `**${d.counts.breaking} breaking**` : "nothing breaking";
   out.push(`${verdict} · ${d.counts.risky} risky · ${d.counts.routesAdded} route(s) added · ${d.counts.routesRemoved} removed · ${d.counts.total} change(s)`, "");
-  out.push("| | Change | Route | Where | Why |", "|---|---|---|---|---|");
+  if (d.changes.length) out.push("| | Change | Route | Where | Why |", "|---|---|---|---|---|");
   for (const c of d.changes) {
     const mark = c.breaking ? "🔴" : c.risky ? "🟠" : "⚪";
     const where = c.file ? `\`${c.file}${c.line ? `:${c.line}` : ""}\`` : "";
     out.push(`| ${mark} | ${KIND_LABEL[c.kind]} | \`${c.route}\` | ${where} | ${c.reasons.join("; ").replace(/\\/g, "\\\\").replace(/\|/g, "\\|")} |`);
+  }
+  if (d.cycles) {
+    out.push("", "**Import cycles this change creates**", "");
+    for (const c of d.cycles.introduced) out.push(`- 🟠 new: ${c.map((f) => `\`${f}\``).join(" ↔ ")}`);
+    for (const g of d.cycles.grown) out.push(`- 🟠 grown${g.added.length ? ` by ${g.added.map((f) => `\`${f}\``).join(", ")}` : " (two cycles merged)"}: ${g.files.length} files`);
   }
   return out.join("\n") + "\n";
 }
@@ -298,6 +352,10 @@ export function renderSurfaceText(d: SurfaceDiff): string {
     const mark = c.breaking ? "BREAKING" : c.risky ? "RISKY   " : "        ";
     lines.push(`  ${mark} ${KIND_LABEL[c.kind].padEnd(26)} ${c.route}${c.file ? `  (${c.file}${c.line ? `:${c.line}` : ""})` : ""}`);
     for (const r of c.reasons) lines.push(`           ${r}`);
+  }
+  if (d.cycles) {
+    for (const c of d.cycles.introduced) lines.push(`  RISKY    import cycle introduced      ${c.join(" <-> ")}`);
+    for (const g of d.cycles.grown) lines.push(`  RISKY    import cycle grown           ${g.added.length ? `by ${g.added.join(", ")}` : "two cycles merged"} (${g.files.length} files)`);
   }
   return lines.join("\n") + "\n";
 }
