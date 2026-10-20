@@ -38,6 +38,12 @@ EosRestClientFactory.createWithAPIFriendlyProviders(SchoolSelectionApi.class, ge
 EosRestClientFactory.create(Settings.class, defaults);`)).toEqual([{ proxyOf: "com.acme.app.SchoolSelectionApi" }]);
   });
 
+  it("reads a client builder handed an address", async () => {
+    expect(await proxies(`
+Framework.clientFor(PersonApi.class, url).withTimeout(30, SECONDS).build();
+Framework.clientFor(Settings.class, defaults);`)).toEqual([{ proxyOf: "com.acme.api.PersonApi" }]);
+  });
+
   it("reads nothing into factories that are not proxies", async () => {
     expect(await proxies(`
 sessionFactory.getCurrentSession().createCriteria(Application.class);

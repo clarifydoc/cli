@@ -16,7 +16,8 @@ import type { HttpClientRegistration } from "../../../types/analysis.js";
  * Hibernate `session.createCriteria(X.class)` or a domain
  * `ApplicationFactory.create(X.class)` is not a proxy. An in-house wrapper
  * (`EosRestClientFactory.create(X.class, url)`) counts when it is named like a
- * REST client factory AND handed an address. Registered by the type's fully
+ * REST client factory AND handed an address, as does a client builder
+ * (`Framework.clientFor(PersonApi.class, url).build()`) handed one. Registered by the type's fully
  * qualified name, from the file's imports or package.
  */
 const KNOWN_FACTORIES: ReadonlyArray<{ method: RegExp; receiver: RegExp }> = [
@@ -52,8 +53,8 @@ export function extractJavaClientProxies(tree: Tree, sourceText: string): HttpCl
     const literals = args.filter((a) => a.type === "class_literal");
     if (literals.length !== 1) return;
     const known = KNOWN_FACTORIES.some((f) => f.method.test(name) && f.receiver.test(object));
-    const wrapper = /^create\w*$/.test(name) && WRAPPER_RECEIVER.test(object) &&
-      args.some((a) => a.type !== "class_literal" && ADDRESS_ARG.test(a.text));
+    const addressed = args.some((a) => a.type !== "class_literal" && ADDRESS_ARG.test(a.text));
+    const wrapper = addressed && ((/^create\w*$/.test(name) && WRAPPER_RECEIVER.test(object)) || /^clientFor$/.test(name));
     if (!known && !wrapper) return;
     const type = literals[0]!.text.replace(/\.class$/, "").trim();
     const fqn = fqnOf(type);

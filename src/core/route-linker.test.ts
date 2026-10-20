@@ -843,6 +843,15 @@ describe("linkApiCallsToRoutes — a call through a client proxy", () => {
     expect(links).toEqual([]);
     expect(stats.refused.originMismatch).toBe(1);
   });
+
+  it("joins a spec's operation, whose interface the spec names without its package, by simple name", () => {
+    const spec = { ...declared, filePath: "person-api/openapi.yaml", contract: { type: "PersonRepository", method: "getPerson" } };
+    expect(linkApiCallsToRoutes([proxyCall()], [spec])[0]).toMatchObject({ target: "person-api/openapi.yaml", matchedVia: "contract" });
+    // A row naming the qualified type answers first; another package's interface of the same name does not.
+    expect(linkApiCallsToRoutes([proxyCall()], [spec, declared])[0]).toMatchObject({ target: "person-api/PersonRepository.java", confidence: "EXTRACTED" });
+    const other = { ...declared, contract: { type: "com.other.PersonRepository", method: "getPerson" } };
+    expect(linkApiCallsToRoutes([proxyCall()], [other])[0]?.matchedVia).not.toBe("contract");
+  });
 });
 
 describe("linkApiCallsToRoutes — a runtime segment where the route has a version", () => {
