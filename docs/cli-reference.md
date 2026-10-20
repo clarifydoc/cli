@@ -260,6 +260,8 @@ sequence walks (the files are read for this, as `cfg` reads one). Reads a writte
 | `--lanes <level>` | `class` | `class`: a lane per class, else per file. `package`: a lane per directory, so a long flow reads at the level of its modules. |
 | `--expand <dirs...>` | — | With `--lanes package`, directories (and those below them) that keep their class lanes. |
 | `--diff <base-analysis-dir>` | — | Print how the flow changed against another analysis — the base of a change — instead of drawing it: each step added, removed or moved, named by what it is (`OrderService.create()`, `DB orders: write`, `HTTP POST /payments`), so an edit that only moves lines shows no change. |
+| `--lock <file>` | — | Write every API route's flow to `<file>` (JSON) as a baseline to commit. No `--route` needed. |
+| `--check <file>` | — | Compare every API route's flow with the baseline in `<file>`; print each that changed, appeared or went, and exit 1 when any did — a CI step that fails when a change alters what an endpoint does. |
 
 ## `cfg`
 

@@ -46,3 +46,25 @@ describe("sequence diff", () => {
     expect(diffSequences(sequenceTree(one, seed), sequenceTree(reads, seed)).map((c) => `${c.kind} ${c.step}`)).toEqual(["removed DB orders: write", "added DB orders: read"]);
   });
 });
+
+describe("flow locks", () => {
+  it("records every API route's flow and reports the ones that changed, appeared or went", async () => {
+    const { checkFlowLock, flowLock } = await import("./sequence-diff.js");
+    const routes = [
+      { path: "/orders", httpMethod: "POST", kind: "api", filePath: "a.ts", line: 1 },
+      { path: "/health", httpMethod: "GET", kind: "api", filePath: "a.ts", line: 2 },
+      { path: "/", httpMethod: null, kind: "frontend", filePath: "app.tsx", line: 1 },
+    ];
+    const at = (r: { httpMethod: string | null; path: string }) => `route:${r.httpMethod} ${r.path}`;
+    const base = { ...analysis([link("route:POST /orders", "Orders.place", 3), link("route:GET /health", "ping", 1)]), routeMap: routes } as unknown as ProjectAnalysis;
+    const lock = flowLock(base, at);
+    expect(Object.keys(lock.flows)).toEqual(["GET /health", "POST /orders"]);
+    expect(checkFlowLock(lock, flowLock(base, at))).toEqual([]);
+    const head = { ...analysis([link("route:POST /orders", "Orders.place", 3), link("Orders.place", "Mail.send", 9), link("route:GET /ready", "ping", 1)]), routeMap: [routes[0], { ...routes[1]!, path: "/ready" }] } as unknown as ProjectAnalysis;
+    expect(checkFlowLock(lock, flowLock(head, at))).toEqual([
+      "GET /ready: new — not in the lock.\n",
+      "POST /orders: 1 change in the flow\n  + Mail.send() (now called from Orders.place())\n",
+      "GET /health: gone — in the lock, no longer a route with a flow.\n",
+    ]);
+  });
+});

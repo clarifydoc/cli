@@ -131,3 +131,40 @@ export function renderSequenceDiff(title: string, changes: readonly SequenceChan
   }
   return `${lines.join("\n")}\n`;
 }
+
+/**
+ * The flows of every API route, as a committed baseline (`seq --lock`): route
+ * → its step tree. Keys are `METHOD path`; a route reached under two
+ * declarations keeps the first.
+ */
+export interface FlowLock {
+  version: 1;
+  flows: Record<string, SequenceStep>;
+}
+
+export function flowLock(summary: ProjectAnalysis, anchorOf: (r: ProjectAnalysis["routeMap"][number]) => string | null, opts: { depth?: number } = {}): FlowLock {
+  const flows: Record<string, SequenceStep> = {};
+  for (const r of summary.routeMap ?? []) {
+    if (r.kind !== "api" || !r.filePath) continue;
+    const key = `${(r.httpMethod ?? "ANY").toUpperCase()} ${r.path}`;
+    if (key in flows) continue;
+    const anchor = anchorOf(r);
+    if (anchor) flows[key] = sequenceTree(summary, { file: r.filePath, symbol: anchor }, opts);
+  }
+  return { version: 1, flows: Object.fromEntries(Object.entries(flows).sort(([a], [b]) => byOrdinal(a, b))) };
+}
+
+/** Each route whose flow differs from the lock — changed, new or gone — rendered; empty when every flow matches. */
+export function checkFlowLock(lock: FlowLock, current: FlowLock): string[] {
+  const out: string[] = [];
+  for (const [route, tree] of Object.entries(current.flows)) {
+    const before = lock.flows[route];
+    if (!before) out.push(`${route}: new — not in the lock.\n`);
+    else {
+      const changes = diffSequences(before, tree);
+      if (changes.length) out.push(renderSequenceDiff(route, changes));
+    }
+  }
+  for (const route of Object.keys(lock.flows)) if (!(route in current.flows)) out.push(`${route}: gone — in the lock, no longer a route with a flow.\n`);
+  return out;
+}

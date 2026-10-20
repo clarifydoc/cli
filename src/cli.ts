@@ -582,6 +582,8 @@ program
   .option("--lanes <level>", "Lane per class (class, the default) or per directory (package)")
   .option("--expand <dirs...>", "With --lanes package: directories to keep at class level")
   .option("--diff <base-analysis-dir>", "Print how the flow changed against another analysis (the base of a change) instead of drawing it: steps added, removed and moved")
+  .option("--lock <file>", "Write every API route's flow to <file> as a baseline to commit (no --route needed)")
+  .option("--check <file>", "Compare every API route's flow with the baseline in <file>; exit 1 and say what changed when any did")
   .option("-o, --output <dir>", "Analysis output directory (same value as `analyze -o`)", ".clarifydoc")
   .option("--analysis-dir <dir>", "Exact directory containing project-summary.json (overrides --output)")
   .action(async (path: string, options) => {
@@ -609,6 +611,30 @@ program
         const { sequenceFrames } = await import("./core/sequence-frames.js");
         return { ...base, frames: await sequenceFrames(projectRoot, sequenceFiles(summary, seed, base)) };
       };
+      if (options.lock || options.check) {
+        const { checkFlowLock, flowLock } = await import("./core/sequence-diff.js");
+        const { readFile, writeFile } = await import("fs/promises");
+        const current = flowLock(summary, (r) => routeAnchor(r, summary.symbolLinks ?? []), base);
+        if (options.lock) {
+          await writeFile(resolve(options.lock), `${JSON.stringify(current, null, 2)}\n`);
+          console.log(`wrote ${resolve(options.lock)} (${Object.keys(current.flows).length} flows)`);
+          return;
+        }
+        let lock;
+        try {
+          lock = JSON.parse(await readFile(resolve(options.check), "utf8"));
+        } catch {
+          throw new Error(`No flow lock at ${resolve(options.check)} — write one with --lock`);
+        }
+        const changed = checkFlowLock(lock, current);
+        if (!changed.length) {
+          console.log(`Every flow matches ${options.check} (${Object.keys(current.flows).length} routes).`);
+          return;
+        }
+        process.stdout.write(changed.join(""));
+        process.exitCode = 1;
+        return;
+      }
       // The seed in an analysis: the route's call-graph anchor, or the one file declaring the symbol.
       const seedIn = (an: typeof summary, route: string | undefined, file: string | undefined): { file: string; symbol: string; title: string } => {
         if (route) {
