@@ -414,6 +414,8 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     if (storeModules && storeModules.length > 0) analysis.storeModules = storeModules;
     const entryPoints = hooks?.entryPoints?.(tree, sourceText);
     if (entryPoints && entryPoints.length > 0) analysis.entryPoints = entryPoints;
+    const deployed = hooks?.deployedResources?.(tree, sourceText);
+    if (deployed && deployed.length > 0) analysis.deployedResources = deployed;
     const clientRegistrations = hooks?.httpClientRegistrations?.(tree, sourceText);
     if (clientRegistrations && clientRegistrations.length > 0) analysis.httpClientRegistrations = clientRegistrations;
     const proxyRules = hooks?.proxyRules?.(tree, sourceText, file.relativePath);

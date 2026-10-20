@@ -10,6 +10,7 @@ import type {
   DeploymentExternal,
   DeploymentModel,
   SubProject,
+  DeployedResourceFact,
 } from "../types/analysis.js";
 import { collectK8sManifests } from "./deployment-k8s.js";
 import { entryFileOf, readDockerfile, repoFiles, type DockerfileFacts } from "./dockerfiles.js";
@@ -653,6 +654,8 @@ export interface DetectDeploymentOptions {
   fileProjects?: Record<string, string>;
   /** Cap on compose files parsed (defensive; monorepos can vendor examples). */
   maxFiles?: number;
+  /** Infrastructure code declares (`FileAnalysis.deployedResources`, e.g. a CDK stack), one group per file. */
+  resources?: Array<{ file: string; resources: readonly DeployedResourceFact[] }>;
 }
 
 /**
@@ -765,6 +768,16 @@ export async function detectDeployment(
   const terraform = await collectTerraform(absRoot, IGNORE);
   if (terraform) {
     for (let i = 0; i < terraform.groups.length; i++) mergeGroup(terraform.groups[i]!, terraform.files[i]!);
+  }
+
+  // Infrastructure code declares (a CDK stack): one stack scope per file, its wiring as edges.
+  const codeEdges: Array<{ from: string; to: string; kind: "bus" | "db" | "http"; via: string }> = [];
+  for (const { file, resources } of options.resources ?? []) {
+    mergeGroup(resources.map((r) => ({
+      name: r.name, file, env: { ...(r.env ?? {}) }, dependsOn: [], ports: [], kind: r.kind,
+      ...(r.family ? { family: r.family } : {}), ...(r.handler ? { entrypoint: r.handler } : {}),
+    })), file);
+    for (const r of resources) for (const e of r.edges ?? []) codeEdges.push({ from: r.name, to: e.to, kind: e.kind, via: e.via });
   }
 
   // Each built service's Dockerfile: the command when compose states none, its ENV under compose's.
@@ -1045,7 +1058,7 @@ export async function detectDeployment(
   }
 
   // ── k8s Ingress edges: front door → the workload each rule routes to ──
-  for (const e of terraform?.edges ?? []) {
+  for (const e of [...(terraform?.edges ?? []), ...codeEdges]) {
     if (svcByLower.has(e.from.toLowerCase()) && svcByLower.has(e.to.toLowerCase())) addEdge({ from: canon(e.from), to: canon(e.to), kind: e.kind, via: e.via });
   }
   for (const e of k8s?.ingressEdges ?? []) {

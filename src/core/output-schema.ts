@@ -57,6 +57,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   httpClientBases: "optional",
   storeModules: "optional",
   messageHandlers: "optional",
+  deployedResources: "optional",
   entryPoints: "optional",
   httpClientRegistrations: "optional",
   proxyRules: "optional",

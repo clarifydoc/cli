@@ -36,3 +36,45 @@ http.addRoutes({ path: "/ping", integration: new HttpLambdaIntegration("P", fn) 
     expect(await factsOf(`const users = api.root.addResource("users"); users.addMethod("GET", x);`)).toEqual([]);
   });
 });
+
+describe("CDK constructs built in helpers, and the infrastructure a stack declares", () => {
+  it("follows a helper that builds the Lambda, binding its parameters to the call's arguments", async () => {
+    expect(await factsOf(`import * as cdk from "aws-cdk-lib";
+function makeFn(scope: Construct, id: string, handler: string) {
+  return new lambda.Function(scope, id, { handler, runtime: lambda.Runtime.NODEJS_20_X, code: lambda.Code.fromAsset("lambda") });
+}
+const node = (scope: Construct, id: string, file: string) => new NodejsFunction(scope, id, { entry: path.join(__dirname, "../src", file) });
+const list = makeFn(this, "List", "users.list");
+const get = node(this, "Get", "get.ts");
+const api = new apigw.RestApi(this, "Api");
+const users = api.root.addResource("users");
+users.addMethod("GET", new apigw.LambdaIntegration(list));
+users.addResource("{id}").addMethod("GET", new apigw.LambdaIntegration(get));`)).toEqual([
+      "GET /users cwd:lambda|users.list",
+      "GET /users/{id} file:../src|get.handler",
+    ]);
+  });
+
+  it("names the queues, tables and functions a stack creates, and how it wires them", async () => {
+    const { extractCdkResources } = await import("../cdk-resources.js");
+    const src = `import * as cdk from "aws-cdk-lib";
+export class Shop extends cdk.Stack {
+  constructor(scope: Construct, id: string) {
+    super(scope, id);
+    const orders = new sqs.Queue(this, "Orders", { queueName: "orders" });
+    this.table = new dynamodb.Table(this, "OrdersTable", { partitionKey: { name: "id", type: AttributeType.STRING } });
+    const worker = new lambda.Function(this, "Worker", { handler: "worker.handle", environment: { QUEUE_URL: orders.queueUrl, STAGE: "prod" } });
+    orders.grantConsumeMessages(worker);
+    this.table.grantReadWriteData(worker);
+    worker.addEventSource(new SqsEventSource(orders));
+  }
+}`;
+    const got = extractCdkResources(await parseSource(src, "typescript" as never, "lib/shop.ts"), src);
+    expect(got.map((r) => `${r.kind}/${r.family} ${r.name}${r.handler ? ` ${r.handler}` : ""}${r.edges ? ` → ${r.edges.map((e) => `${e.to}(${e.kind}, ${e.via})`).join(", ")}` : ""}`)).toEqual([
+      "queue/sqs orders",
+      "datastore/dynamodb OrdersTable",
+      "app/lambda Worker worker.handle → orders(bus, QUEUE_URL), orders(bus, grantConsumeMessages), OrdersTable(db, grantReadWriteData), orders(bus, event source)",
+    ]);
+    expect(got[2]!.env).toEqual({ QUEUE_URL: "${orders.queueUrl}", STAGE: "prod" });
+  });
+});

@@ -677,15 +677,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Step 2d: Deployment topology from compose manifests — which units actually
   // deploy, their infrastructure, and env-evidenced service→service edges.
   // Feeds the report's Context/Deployment (C1/C2) architecture levels.
-  const deployment = await detectDeployment(projectRoot, { subProjects, fileProjects });
+  // (Read after the files are analyzed: code may declare infrastructure too — an AWS CDK stack.)
   // What the repository's CI pipelines deploy, and when.
   const ciDeploys = await detectCiDeploys(projectRoot, subProjects).catch(() => []);
-  if (deployment) {
-    progress.detail(
-      `Deployment: ${deployment.services.length} compose service${deployment.services.length === 1 ? "" : "s"}, ` +
-        `${deployment.edges.length} edges (${deployment.composeFiles.length} compose file${deployment.composeFiles.length === 1 ? "" : "s"})`,
-    );
-  }
 
   // Step 3: Analyze each file (parallel with concurrency limit).
   // When `incremental` is on, classify each file against the manifest first;
@@ -1028,6 +1022,20 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     ...buildComponentLaunches(symbolLinks),
     ...buildFormLaunches(allAnalyses, symbolLinks),
   ];
+
+  // Step 2d (after the files): deployment topology from compose, Kubernetes, Terraform and Dockerfiles,
+  // plus the infrastructure code declares (FileAnalysis.deployedResources — CDK stacks).
+  const deployment = await detectDeployment(projectRoot, {
+    subProjects,
+    fileProjects,
+    resources: allAnalyses.filter((a) => a.deployedResources?.length).map((a) => ({ file: a.filePath, resources: a.deployedResources! })),
+  });
+  if (deployment) {
+    progress.detail(
+      `Deployment: ${deployment.services.length} service${deployment.services.length === 1 ? "" : "s"}, ` +
+        `${deployment.edges.length} edges (${deployment.composeFiles.length} manifest${deployment.composeFiles.length === 1 ? "" : "s"})`,
+    );
+  }
 
   // Collapse the same endpoint declared twice (Rails: `routes.rb` expansion +
   // controller-action convention) into one richest entry, so the route map and

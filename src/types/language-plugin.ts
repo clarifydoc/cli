@@ -539,6 +539,8 @@ export interface AstExtractorHooks {
   storeModules?(tree: Tree, sourceText: string): Array<{ name: string; ref: string; line: number }>;
   /** HTTP clients configured with a base, host included → `FileAnalysis.httpClientRegistrations`. */
   httpClientRegistrations?(tree: Tree, sourceText: string): HttpClientRegistration[];
+  /** Infrastructure the code declares (AWS CDK constructs) → `FileAnalysis.deployedResources`. */
+  deployedResources?(tree: Tree, sourceText: string): import("./analysis.js").DeployedResourceFact[];
   /** Entry points that are not routes — MCP tools, editor commands, CLI commands → `FileAnalysis.entryPoints`. */
   entryPoints?(tree: Tree, sourceText: string): EntryPointInfo[];
   /** Forwarding rules a code file declares (`vite.config.ts` `server.proxy`) → `FileAnalysis.proxyRules`. */

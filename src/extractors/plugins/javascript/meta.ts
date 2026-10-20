@@ -1,3 +1,4 @@
+import { extractCdkResources } from "./cdk-resources.js";
 import { cdkRouteResolver } from "./routes/cdk.js";
 import { trpcRouterResolver } from "./routes/trpc.js";
 import { extractEntryPoints } from "./entry-points.js";
@@ -212,6 +213,8 @@ function astHooks(language: Language): AstExtractorHooks {
     storeModules: extractStoreModules,
     httpClientRegistrations: extractHttpClientRegistrations,
     entryPoints: extractEntryPoints,
+    // AWS CDK stacks: the queues, tables and functions they create, for the deployment model.
+    deployedResources: (tree, sourceText) => extractCdkResources(tree, sourceText),
     proxyRules: extractDevProxyRules,
     pathArgCalls: extractPathArgCalls,
     moduleValues: extractModuleValues,

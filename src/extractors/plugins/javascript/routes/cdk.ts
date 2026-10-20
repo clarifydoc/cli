@@ -44,13 +44,14 @@ export interface CdkRouteFact {
 const FUNCTION_CTOR = /(?:^|\.)(Function|NodejsFunction|PythonFunction|SingletonFunction)$/;
 const VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 
-const propOf = (obj: Node | null | undefined, key: string): Node | null => {
+const propOfRaw = (obj: Node | null | undefined, key: string): Node | null => {
   for (const p of obj?.namedChildren ?? []) {
     if (p.type === "pair" && p.childForFieldName("key")?.text === key) return p.childForFieldName("value");
     if (p.type === "shorthand_property_identifier" && p.text === key) return p;
   }
   return null;
 };
+const propOf = propOfRaw;
 const args = (call: Node): Node[] => call.childForFieldName("arguments")?.namedChildren ?? [];
 const str = (n: Node | null | undefined): string | null => (n && (n.type === "string" || (n.type === "template_string" && !n.text.includes("${"))) ? stripQuotes(n.text) : null);
 
@@ -66,7 +67,7 @@ function pathOf(n: Node | null): { rel: string; base: "file" | "cwd" } | null {
   if (n.type === "call_expression" && /^(?:path\.)?(?:join|resolve)$/.test(n.childForFieldName("function")?.text ?? "")) {
     const [first, ...rest] = args(n);
     if (first?.text !== "__dirname") return null;
-    const parts = rest.map(str);
+    const parts = rest.map((p) => str(bound(p)));
     return parts.every((p): p is string => p !== null) ? { rel: parts.join("/"), base: "file" } : null;
   }
   return null;
@@ -75,8 +76,24 @@ function pathOf(n: Node | null): { rel: string; base: "file" | "cwd" } | null {
 const dirname = (p: string): string => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 const basename = (p: string): string => p.slice(p.lastIndexOf("/") + 1);
 
+/**
+ * A construct built in a helper (`const list = makeFn(this, "List", "users.list")`
+ * with `function makeFn(scope, id, handler) { return new lambda.Function(scope, id, { handler, … }) }`):
+ * the helper's parameters bound to the call's arguments, so its props read as the call site states them.
+ */
+type Binding = ReadonlyMap<string, Node>;
+let binding: Binding | undefined;
+/** A props value, through the binding of the helper it is written in: a parameter reads as its argument. */
+function bound(n: Node | null): Node | null {
+  if (!n || !binding) return n;
+  if ((n.type === "identifier" || n.type === "shorthand_property_identifier") && binding.has(n.text)) return binding.get(n.text)!;
+  return n;
+}
+
 /** The handler a Lambda construct's props name. */
-function lambdaOf(ctor: string, props: Node | null): LambdaSpec | null {
+function lambdaOf(ctor: string, rawProps: Node | null): LambdaSpec | null {
+  const props = bound(rawProps);
+  const propOf = (obj: Node | null, key: string) => bound(propOfRaw(obj, key));
   if (ctor === "NodejsFunction") {
     const entry = pathOf(propOf(props, "entry"));
     if (!entry) return null;
@@ -91,7 +108,7 @@ function lambdaOf(ctor: string, props: Node | null): LambdaSpec | null {
   }
   const handler = str(propOf(props, "handler"));
   const code = propOf(props, "code");
-  const asset = code?.type === "call_expression" && /(?:^|\.)Code\.fromAsset$/.test(code.childForFieldName("function")?.text ?? "") ? pathOf(args(code)[0] ?? null) : null;
+  const asset = code?.type === "call_expression" && /(?:^|\.)Code\.fromAsset$/.test(code.childForFieldName("function")?.text ?? "") ? pathOf(bound(args(code)[0] ?? null)) : null;
   return handler && asset ? { dir: asset.rel, base: asset.base, spec: handler } : null;
 }
 
@@ -128,10 +145,38 @@ export function collectCdkRoutes(root: Node, sourceText: string, facts: RouteFac
     facts.push({ kind: CDK_ROUTE, line, data: { method, path: path || "/", lambda: fnVar ? lambdas.get(fnVar) ?? null : null } satisfies CdkRouteFact });
   };
 
+  // Helpers that build a Lambda and return it: their parameters and the construct they return.
+  const factories = new Map<string, { params: string[]; made: Node }>();
+  const collectFactory = (name: string | undefined, fn: Node | null) => {
+    if (!name || !fn) return;
+    const body = fn.childForFieldName("body");
+    const made = body?.type === "new_expression" ? body
+      : body?.namedChildren.filter((c) => c.type === "return_statement").map((r) => r.namedChildren[0]).find((x) => x?.type === "new_expression") ?? null;
+    if (!made || !FUNCTION_CTOR.test(made.childForFieldName("constructor")?.text ?? "")) return;
+    const params = (fn.childForFieldName("parameters")?.namedChildren ?? []).map((p) => (p.childForFieldName("pattern") ?? p.childForFieldName("name") ?? p).text.replace(/[?:].*$/s, "").trim());
+    factories.set(name, { params, made });
+  };
+  const findFactories = (n: Node): void => {
+    if (n.type === "function_declaration" || n.type === "method_definition") collectFactory(n.childForFieldName("name")?.text, n);
+    else if (n.type === "variable_declarator" && /arrow_function|function_expression|function$/.test(n.childForFieldName("value")?.type ?? "")) collectFactory(n.childForFieldName("name")?.text, n.childForFieldName("value"));
+    for (const c of n.namedChildren) findFactories(c);
+  };
+  if (/\breturn\s+new\b|=>\s*new\b/.test(sourceText)) findFactories(root);
+
   const visit = (n: Node): void => {
     if (n.type === "variable_declarator") {
       const name = n.childForFieldName("name")?.text;
       const value = n.childForFieldName("value");
+      // `const list = makeFn(this, "List", "users.list")` / `this.makeFn(…)`: the Lambda the helper builds, as called.
+      const callee = value?.type === "call_expression" ? value.childForFieldName("function") : null;
+      const factory = callee ? factories.get(callee.type === "member_expression" ? callee.childForFieldName("property")?.text ?? "" : callee.text) : undefined;
+      if (name && value && factory) {
+        const callArgs = args(value);
+        binding = new Map(factory.params.map((p, i) => [p, callArgs[i]!] as const).filter(([, a]) => !!a));
+        const fnCtor = FUNCTION_CTOR.exec(factory.made.childForFieldName("constructor")?.text ?? "");
+        if (fnCtor) lambdas.set(name, lambdaOf(fnCtor[1]!, args(factory.made)[2] ?? null));
+        binding = undefined;
+      }
       if (name && value?.type === "new_expression") {
         const ctor = value.childForFieldName("constructor")?.text ?? "";
         const props = args(value)[2] ?? null;

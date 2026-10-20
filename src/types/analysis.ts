@@ -477,6 +477,12 @@ export interface FileAnalysis {
    * `axios.create({ baseURL: process.env.X })`.
    */
   /** Entry points that are not routes: MCP tools, editor and CLI commands (`EntryPointInfo`). */
+  /**
+   * Infrastructure the file's code declares (an AWS CDK stack's queues, topics, tables, buckets, databases and
+   * Lambdas, with the grants, event sources and env that join them) — merged into `ProjectAnalysis.deployment`
+   * beside compose, Kubernetes and Terraform.
+   */
+  deployedResources?: DeployedResourceFact[];
   entryPoints?: EntryPointInfo[];
   httpClientRegistrations?: HttpClientRegistration[];
   /** Forwarding rules this file declares (a `vite.config.ts` `server.proxy`, `setupProxy.js`). */
@@ -2941,6 +2947,22 @@ export interface CiDeploy {
 // ─── Deployment topology (compose files) ───────────────────────────────────
 
 /** Broad role of a deployed service, classified from its image/name. */
+/** One deployable resource code declares (`FileAnalysis.deployedResources`). */
+export interface DeployedResourceFact {
+  /** As deployed: the queue/table/function name the code gives it, else its construct id. */
+  name: string;
+  kind: DeployedServiceKind;
+  /** `sqs`, `sns`, `dynamodb`, `s3`, `rds`, `lambda`, … */
+  family?: string;
+  line: number;
+  /** A function's handler as the runtime reads it (`users.list`). */
+  handler?: string;
+  /** Env keys the resource is given (values only when literal). */
+  env?: Record<string, string>;
+  /** What it is wired to: a grant, an event source or an env reference, by the other resource's `name`. */
+  edges?: Array<{ to: string; kind: "bus" | "db" | "http"; via: string }>;
+}
+
 export type DeployedServiceKind =
   | "app"
   | "datastore"
