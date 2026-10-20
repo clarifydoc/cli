@@ -51,6 +51,85 @@ export const postRouter = createTRPCRouter({
   });
 });
 
+const shape = (classes: Awaited<ReturnType<typeof schemasOf>>) =>
+  classes.map((c) => `${c.name}${c.extends ? ` extends ${c.extends}` : ""}: ${c.properties.map((p) => `${p.name}${p.isRequired ? "" : "?"}:${p.type}`).join(", ")}`);
+
+describe("joi schemas", () => {
+  it("reads Joi.object and .keys schemas, optional until .required()", async () => {
+    const classes = await schemasOf(`import Joi from "joi";
+export const createUser = Joi.object({
+  email: Joi.string().email().required(),
+  age: Joi.number().integer().min(0),
+  role: Joi.string().valid("admin", "user").required(),
+  tags: Joi.array().items(Joi.string()),
+  nickname: Joi.string().allow(null, ""),
+  address: Joi.object({ city: Joi.string().required() }),
+});
+export const login = Joi.object().keys({ user: Joi.string().required(), password: Joi.string().required() });
+export const admin = createUser.keys({ level: Joi.number().required() });`);
+    expect(shape(classes)).toEqual([
+      "createUser_address: city:string",
+      "createUser: email:string, age?:number, role:'admin' | 'user', tags?:string[], nickname?:string | null, address?:createUser_address",
+      "login: user:string, password:string",
+      "admin extends createUser: level:number",
+    ]);
+    expect(classes[1]!.decorators).toEqual(["joi-schema"]);
+  });
+
+  it("takes celebrate's re-exported Joi and a require, and nothing without an import", async () => {
+    expect(shape(await schemasOf(`import { celebrate, Joi, Segments } from "celebrate";
+const body = Joi.object({ title: Joi.string().required() });`))).toEqual(["body: title:string"]);
+    expect(shape(await schemasOf(`const Joi = require("joi");
+const body = Joi.object({ n: Joi.number() });`))).toEqual(["body: n?:number"]);
+    expect(await schemasOf(`const Joi = lib; const body = Joi.object({ n: Joi.number() });`)).toEqual([]);
+  });
+});
+
+describe("drizzle-zod schemas", () => {
+  const tables = `import { pgTable, serial, text, varchar, integer, timestamp, boolean, uuid } from "drizzle-orm/pg-core";
+import { createInsertSchema, createSelectSchema, createUpdateSchema } from "drizzle-zod";
+import { z } from "zod";
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  email: varchar("email", { length: 256 }).notNull().unique(),
+  name: text("name"),
+  age: integer("age").notNull().default(0),
+  active: boolean("active").notNull(),
+  createdAt: timestamp("created_at", { mode: "string" }).defaultNow().notNull(),
+});
+export const posts = pgTable("posts", (t) => ({
+  id: t.uuid().primaryKey().defaultRandom(),
+  title: t.text().notNull(),
+}));
+`;
+
+  it("an insert needs not-null columns without a default; a select every column; an update none", async () => {
+    const classes = await schemasOf(`${tables}
+export const insertUser = createInsertSchema(users);
+export const selectUser = createSelectSchema(users);
+export const updateUser = createUpdateSchema(users);
+export const insertPost = createInsertSchema(posts);`);
+    expect(shape(classes)).toEqual([
+      "insertUser: id?:number, email:string, name?:string | null, age?:number, active:boolean, createdAt?:string",
+      "selectUser: id:number, email:string, name:string | null, age:number, active:boolean, createdAt:string",
+      "updateUser: id?:number, email?:string, name?:string | null, age?:number, active?:boolean, createdAt?:string",
+      "insertPost: id?:string, title:string",
+    ]);
+    expect(classes[0]!.decorators).toEqual(["zod-schema", "drizzle-zod:insert"]);
+  });
+
+  it("follows refinements and .omit/.pick/.extend/.partial", async () => {
+    const classes = await schemasOf(`${tables}
+export const newUser = createInsertSchema(users, { email: (s) => s.email(), name: z.string().min(1) }).omit({ id: true, createdAt: true }).extend({ password: z.string() });
+export const patchUser = createInsertSchema(users).pick({ name: true, age: true }).partial();
+export const fromElsewhere = createInsertSchema(accounts);`);
+    expect(shape(classes)).toEqual([
+      "newUser: email:string, name?:string | null, age?:number, active:boolean, password:string",
+      "patchUser: name?:string | null, age?:number",
+    ]);
+  });
+});
+
 describe("Express bodies validated by a schema", () => {
   it("names the schema from validate(…), zValidator('json', …) and schema.parse(req.body)", async () => {
     const src = `
@@ -62,7 +141,13 @@ router.put("/users/:id", requireAuth, async (req, res) => {
 });
 router.get("/users/:id", (req, res) => res.json({ id: req.params.id }));
 router.post("/raw", handlers.create);
-router.post("/checked", validateRequest({ body: createUser }), handlers.create);`;
+router.post("/checked", validateRequest({ body: createUser }), handlers.create);
+router.post("/celebrated", celebrate({ [Segments.BODY]: createPost }), handlers.create);
+router.post("/joi-validated", validator.body(login), handlers.create);
+router.post("/joi-inline", async (req, res) => {
+  const { value } = await signup.validateAsync(req.body);
+  res.json(value);
+});`;
     const tree = await parseSource(src, "typescript" as any, "x.ts");
     const routes: RouteInfo[] = [];
     extractExpressRoutes(tree.rootNode, routes);
@@ -73,6 +158,9 @@ router.post("/checked", validateRequest({ body: createUser }), handlers.create);
       "GET /users/:id -",
       "POST /raw -",
       "POST /checked createUser",
+      "POST /celebrated createPost",
+      "POST /joi-validated login",
+      "POST /joi-inline signup",
     ]);
   });
 });

@@ -148,27 +148,33 @@ const BODY_PARTS = new Set(["json", "form", "body"]);
 /**
  * The schema a validating middleware checks the body against:
  * `validate(createUser)`, `validateBody(schema)`, Hono's
- * `zValidator("json", schema)`, `validateRequest({ body: schema })`.
+ * `zValidator("json", schema)`, `validateRequest({ body: schema })`,
+ * celebrate's `celebrate({ [Segments.BODY]: schema })` and
+ * express-joi-validation's `validator.body(schema)`.
  */
 function validatedBody(m: Node): string | null {
   if (m.type !== "call_expression") return null;
   const callee = m.childForFieldName("function")?.text ?? "";
-  if (!VALIDATOR_RE.test(callee.split(".").pop() ?? "")) return null;
   const args = m.childForFieldName("arguments")?.namedChildren ?? [];
   const [a, b] = args;
+  // express-joi-validation: `validator.body(schema)`.
+  if (/valid/i.test(callee) && callee.endsWith(".body") && a?.type === "identifier" && args.length === 1) return a.text;
+  if (!VALIDATOR_RE.test(callee.split(".").pop() ?? "")) return null;
   if (a?.type === "identifier" && args.length === 1) return a.text;
   if (a?.type === "string" && BODY_PARTS.has(stripQuotes(a.text)) && b?.type === "identifier") return b.text;
   if (a?.type === "object") {
     for (const pair of a.namedChildren) {
-      if (pair.type === "pair" && pair.childForFieldName("key")?.text === "body" && pair.childForFieldName("value")?.type === "identifier") return pair.childForFieldName("value")!.text;
+      const key = pair.type === "pair" ? pair.childForFieldName("key")?.text : undefined;
+      // `body:`, or celebrate's `[Segments.BODY]:`.
+      if ((key === "body" || key === "[Segments.BODY]") && pair.childForFieldName("value")?.type === "identifier") return pair.childForFieldName("value")!.text;
     }
   }
   return null;
 }
 
-/** `schema.parse(req.body)` (or `safeParse`, `parseAsync`, `await c.req.json()`) in the handler: the body's schema. */
+/** `schema.parse(req.body)` (or `safeParse`, `parseAsync`, joi's `validate`/`validateAsync`, `await c.req.json()`) in the handler: the body's schema. */
 function parsedBody(fn: Node): string | null {
-  return /\b([A-Za-z_$][\w$]*)\.(?:parse|safeParse|parseAsync|safeParseAsync)\(\s*(?:await\s+)?(?:req|request|ctx\.request|c\.req)\.(?:body\b|json\(\s*\))/.exec(fn.text)?.[1] ?? null;
+  return /\b([A-Za-z_$][\w$]*)\.(?:parse|safeParse|parseAsync|safeParseAsync|validate|validateAsync)\(\s*(?:await\s+)?(?:req|request|ctx\.request|c\.req)\.(?:body\b|json\(\s*\))/.exec(fn.text)?.[1] ?? null;
 }
 
 /**
