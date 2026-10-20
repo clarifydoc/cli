@@ -992,7 +992,7 @@ export function healthTool(ctx: ToolContext): McpTool {
         }
         case "performance": {
           // Most expensive first: what every request pays, then what a command run pays, then the rest.
-          const weight = (p: PatternInfo) => (p.role === "request" ? 0 : p.role === "command" ? 1 : 2);
+          const weight = (p: PatternInfo) => (p.role === "request" ? 0 : p.role === "background" ? 1 : p.role === "command" ? 2 : 3);
           const rows = (summary.patterns ?? [])
             .filter((p) => isPerformancePattern(p) && inFile(p.filePath))
             .sort((a, b) => weight(a) - weight(b) || (a.entries?.[0]?.distance ?? 99) - (b.entries?.[0]?.distance ?? 99));

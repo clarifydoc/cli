@@ -70,6 +70,14 @@ describe("attachPatternEntries", () => {
     // Only performance patterns are traced.
     expect(patterns[3]!.entries).toBeUndefined();
   });
+
+  it("calls a pattern a consumer or a scheduled job reaches background work", () => {
+    const patterns = [loop("worker.ts", 5, "handle")];
+    attachPatternEntries(patterns, [fns("worker.ts", ["handle", 1, 9])], [],
+      [{ kind: "message-consumer", name: "emails", handler: "handle", line: 1, filePath: "worker.ts" }]);
+    expect(patterns[0]!.role).toBe("background");
+    expect(patterns[0]!.entries).toEqual([{ kind: "message-consumer", entry: "emails", file: "worker.ts", distance: 0, confidence: "EXTRACTED" }]);
+  });
 });
 
 describe("anonymousWriteFindings", () => {

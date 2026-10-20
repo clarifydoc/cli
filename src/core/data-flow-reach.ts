@@ -306,6 +306,8 @@ const ENTRY_LABEL: Record<EntryPointInfo["kind"], string> = {
   "editor-command": "command",
   "lm-tool": "LM tool",
   "cli-command": "CLI",
+  "scheduled-job": "scheduled job",
+  "message-consumer": "consumer of",
 };
 
 export function computeDataFlows(

@@ -1,3 +1,4 @@
+import { extractCsharpScheduledJobs } from "./scheduled-jobs.js";
 import { csharpTaint } from "./taint.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import {
@@ -84,6 +85,8 @@ export const csharpMeta: LanguagePluginMeta = {
     httpClientRegistrations: extractCsharpHttpClientRegistrations,
     // `Program.cs` top-level statements → the `<setup>` pseudo-function's locals.
     topLevelLocalTypes: (tree) => extractCsharpTopLevelLocalTypes(tree.rootNode),
+    // Hangfire recurring jobs and Quartz.NET jobs: entry points a clock runs.
+    entryPoints: (_tree, sourceText) => extractCsharpScheduledJobs(sourceText),
   },
   calls: csharpCallHooks,
 };

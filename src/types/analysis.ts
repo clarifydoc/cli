@@ -565,14 +565,21 @@ export interface ImportInfo {
  * calls, an editor command, a language-model tool, a CLI subcommand.
  */
 export interface EntryPointInfo {
-  kind: "mcp-tool" | "editor-command" | "lm-tool" | "cli-command";
-  /** As it is invoked: the tool name, the command id, the subcommand. */
+  /**
+   * `scheduled-job`: run by a clock (cron, an interval, a recurring job), read by the language's plugin.
+   * `message-consumer`: run when a message arrives — derived in core from the queue-consume data access,
+   * so every language whose plugin reports a consumer has one.
+   */
+  kind: "mcp-tool" | "editor-command" | "lm-tool" | "cli-command" | "scheduled-job" | "message-consumer";
+  /** As it is invoked: the tool name, the command id, the subcommand; a job's id or handler; the queue or topic consumed. */
   name: string;
   /** The function that runs, when the registration names one (an inline handler has none). */
   handler?: string;
   line: number;
-  /** What registers it: `mcp`, `vscode`, `commander`, `yargs`, `click`, `typer`, … */
+  /** What registers it: `mcp`, `vscode`, `commander`, `yargs`, `click`, `typer`, `node-cron`, `spring`, … */
   framework?: string;
+  /** `scheduled-job`: when it runs, as written — a cron expression, `every 5 minutes`, `fixedRate=60000`. */
+  schedule?: string;
 }
 
 export interface ExportInfo {
@@ -2223,8 +2230,11 @@ export interface PatternInfo {
    * (core/finding-entries.ts). What decides whether it costs every request or one command run.
    */
   entries?: PatternEntry[];
-  /** What pays for it: `request` when an API route reaches it, else `command` when a named entry point does. */
-  role?: "request" | "command";
+  /**
+   * What pays for it: `request` when an API route reaches it; else `background` when a message consumer or a
+   * scheduled job does (every message, every run); else `command` when a tool or command does.
+   */
+  role?: "request" | "background" | "command";
 }
 
 /** An entry point whose call chain reaches a pattern's function. */

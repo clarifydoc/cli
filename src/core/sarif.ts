@@ -174,14 +174,14 @@ export function structuralFindings(summary: {
       tags: ["architecture"],
     });
   }
-  // A query per loop pass or a blocking call: a warning where every request pays for it, else a note.
+  // A query per loop pass or a blocking call: a warning where every request or message pays for it, else a note.
   for (const p of summary.patterns ?? []) {
     if (p.kind !== "query-in-loop" && p.kind !== "blocking-in-async") continue;
     const reach = p.entries?.length ? ` Reached from ${p.entries.map((e) => (e.kind === "route" ? e.entry : `${e.kind} ${e.entry}`)).join(", ")}.` : "";
     out.push({
       ruleId: `clarifydoc/${p.kind}`,
       title: p.kind === "query-in-loop" ? "Database query once per loop pass" : "Blocking call inside async code",
-      level: p.role === "request" ? "warning" : "note",
+      level: p.role === "request" || p.role === "background" ? "warning" : "note",
       message: `${p.name}: ${p.detail}.${reach}`,
       file: p.filePath,
       line: p.line,

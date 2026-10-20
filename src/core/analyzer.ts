@@ -75,6 +75,7 @@ import { typeOnlyEdges } from "./import-kinds.js";
 import { checkDocReferences, docReferences, type DocReference } from "./doc-drift.js";
 import { scanHistorySecrets } from "./history-secrets.js";
 import { findBlockingInAsync, findQueriesInLoops } from "./query-in-loop.js";
+import { consumerEntryPoints } from "./consumer-entries.js";
 import { nameCommunities } from "./community-names.js";
 import { buildTestCoverage, COVERAGE_CANDIDATES, parseCoverage } from "./test-coverage.js";
 import { isTestFile } from "./test-file-detector.js";
@@ -1431,6 +1432,12 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const symbolDataAccess = hasDbAccess || hasQueueAccess
     ? attributeDataAccessToSymbols(allAnalyses, entityGraph)
     : [];
+  // A function that takes messages off a queue is run by the broker: an entry point of its own.
+  const consumers = consumerEntryPoints(symbolDataAccess, allAnalyses, allEntryPoints);
+  if (consumers.length > 0) {
+    allEntryPoints.push(...consumers);
+    progress.detail(`  Message consumers: ${consumers.length}`);
+  }
 
   // Broker hop for Call Traces: a publish and a consume naming the same
   // destination become a publisher→consumer edge, so a trace follows the

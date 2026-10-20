@@ -1,3 +1,4 @@
+import { extractJvmScheduledJobs } from "./scheduled-jobs.js";
 import { javaTaint, kotlinTaint } from "./taint.js";
 import { ktorRouteFnResolver } from "./routes/ktor.js";
 import { springSecurityResolver } from "./routes/security-dsl.js";
@@ -110,6 +111,8 @@ function jvmMeta(language: Language, opts: {
       ...(language === "java" ? { httpClientRegistrations: extractJavaClientProxies } : {}),
       // Request input followed through a Spring / JAX-RS handler (Java's grammar only).
       taint: language === "java" ? javaTaint : kotlinTaint,
+      // `@Scheduled` methods and Quartz jobs: entry points a clock runs.
+      entryPoints: (_tree, sourceText) => extractJvmScheduledJobs(sourceText, language === "kotlin" ? "kotlin" : "java"),
     },
     calls: opts.calls,
     securityRules: JVM_SECURITY_RULES,

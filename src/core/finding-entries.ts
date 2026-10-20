@@ -65,7 +65,8 @@ const PERFORMANCE_PATTERNS: ReadonlySet<PatternInfo["kind"]> = new Set(["query-i
  * links only. A query per loop pass behind `GET /orders` costs every request;
  * the same loop in a CLI subcommand costs one run, and in code nothing reaches
  * it may cost nothing. `role` says which: `request` when a route reaches it,
- * else `command`; absent when no entry was found within reach.
+ * else `background` (a message consumer or scheduled job), else `command`;
+ * absent when no entry was found within reach.
  *
  * Sets `PatternInfo.entries` / `role`; returns how many patterns got one.
  */
@@ -102,7 +103,9 @@ export function attachPatternEntries(
     const entries = walk(p.filePath, p.line);
     if (entries.length === 0) continue;
     p.entries = entries;
-    p.role = entries.some((e) => e.kind === "route") ? "request" : "command";
+    p.role = entries.some((e) => e.kind === "route")
+      ? "request"
+      : entries.some((e) => e.kind === "message-consumer" || e.kind === "scheduled-job") ? "background" : "command";
     attached++;
   }
   return attached;
