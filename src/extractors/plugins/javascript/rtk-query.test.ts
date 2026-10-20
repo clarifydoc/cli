@@ -63,4 +63,18 @@ export function Posts() {
     expect(resolveRtkHooks(calls, [slice], ctx)).toBe(1);
     expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual(["POST /api/posts", "useNopeQuery null"]);
   });
+
+  it("drops a use…Mutation the project declares itself — a TanStack composable, no generated hook", () => {
+    const queries: FileAnalysis = {
+      ...createEmptyAnalysis("src/TrainingQueries.ts", "typescript"),
+      functions: [{ name: "useUpdateTrainingMutation", params: [], returnType: null, isAsync: false, isExported: true, decorators: [], calls: [], line: 3, endLine: 8 }],
+    };
+    const calls = [
+      { kind: "api-call" as const, name: "useUpdateTrainingMutation", target: null, line: 9, calls: [], endpoint: "updateTraining", filePath: "src/TrainingInfo.vue" },
+      { kind: "api-call" as const, name: "get", target: "/api/x", line: 12, calls: [], filePath: "src/TrainingInfo.vue" },
+    ];
+    const ctx = { importIndex: { localFor: () => "src/TrainingQueries.ts", sourceFor: () => null, namespacesFor: () => [] } } as unknown as ProjectContext;
+    expect(resolveRtkHooks(calls, [queries], ctx)).toBe(0);
+    expect(calls.map((c) => c.name)).toEqual(["get"]);
+  });
 });

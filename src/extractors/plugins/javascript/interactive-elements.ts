@@ -188,8 +188,9 @@ export function extractVueInteractiveElements(
   const elements: InteractiveElementInfo[] = [];
   const templateStart = fullSource.indexOf(template);
 
-  // Match tags with @event or v-on: bindings
-  const tagRegex = /<([a-zA-Z][a-zA-Z0-9-]*)([^>]*?)\/?\s*>/g;
+  // Match tags with @event or v-on: bindings. A quoted attribute value may
+  // hold a `>` (`v-if="items.length > 0"`), which does not end the tag.
+  const tagRegex = /<([a-zA-Z][a-zA-Z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)\/?\s*>/g;
   let match: RegExpExecArray | null;
 
   while ((match = tagRegex.exec(template)) !== null) {

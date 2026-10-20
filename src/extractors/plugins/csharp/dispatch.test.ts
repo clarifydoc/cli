@@ -20,6 +20,7 @@ const cls = (name: string, opts: Partial<ClassInfo> & { methods: FunctionInfo[] 
     extends: opts.extends ?? null,
     implements: opts.implements ?? [],
     methods: opts.methods,
+    ...(opts.typeParameters ? { typeParameters: opts.typeParameters } : {}),
     properties: [],
     decorators: [],
     line: opts.line ?? 1,
@@ -113,5 +114,52 @@ describe("CSharpMediatrResolver", () => {
       }),
     ]);
     expect(run([ctrl])).toHaveLength(0);
+  });
+
+  it("links a request whose handler fills in a generic base handler's type parameter", () => {
+    const base = file("App/WageCode/GetWageCodesQueryHandler.cs", [
+      cls("GetWageCodesQueryHandler", {
+        extends: "IRequestHandler<T, IEnumerable<WageCode>>",
+        typeParameters: ["T"],
+        methods: [method("Handle", 20, [call("_repo.GetAll")])],
+      }),
+    ]);
+    const concrete = file("App/WageCode/V2/GetWageCodesV2QueryHandler.cs", [
+      cls("GetWageCodesV2QueryHandler", { extends: "GetWageCodesQueryHandler<GetWageCodesV2Query>", methods: [] }),
+    ]);
+    const ctrl = file("Api/WageCodeV2Controller.cs", [
+      cls("WageCodeV2Controller", {
+        methods: [method("Get", 50, [call("new GetWageCodesV2Query", 52), call("_mediator.Send", 58)])],
+      }),
+    ]);
+    const links = run([ctrl, base, concrete]);
+    expect(links.map((l) => `${l.callName} → ${l.targetSymbol}`)).toEqual([
+      "Send(GetWageCodesV2Query) → GetWageCodesQueryHandler.Handle",
+    ]);
+  });
+
+  it("links a request built by a method that states the request type it returns", () => {
+    const ctrl = file("Api/AbsenceService.cs", [
+      cls("AbsenceService", {
+        methods: [method("Create", 210, [call("absenceRequest.ToCreateOwnerCommand", 218), call("_mediator.Send", 218)])],
+      }),
+    ]);
+    const ext = file("App/Extensions.cs", [
+      cls("Extensions", { methods: [{ ...method("ToCreateOwnerCommand", 5), returnType: "CreateOwnerCommand" } as FunctionInfo] }),
+    ]);
+    expect(run([ctrl, ext, cmdHandlerFile]).map((l) => l.targetSymbol)).toEqual(["CreateOwnerCommandHandler.Handle"]);
+  });
+
+  it("indexes no handler for a generic class that passes its own type parameter to a generic base", () => {
+    const base = file("App/BaseHandler.cs", [
+      cls("BaseHandler", { extends: "IRequestHandler<T, Unit>", typeParameters: ["T"], methods: [method("Handle", 5)] }),
+    ]);
+    const generic = file("App/CreateHandler.cs", [
+      cls("CreateHandler", { extends: "BaseHandler<T>", typeParameters: ["T"], methods: [] }),
+    ]);
+    const consumer = file("App/Consumer.cs", [
+      cls("Consumer", { methods: [method("Consume", 10, [call("_mediator.Send", 11)], [param("message", "T")])] }),
+    ]);
+    expect(run([consumer, base, generic])).toHaveLength(0);
   });
 });

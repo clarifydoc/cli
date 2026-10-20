@@ -8,7 +8,10 @@ import type { ProjectApiCall } from "../../data-sources/base.js";
  * hook is imported from defines it (`data-sources.ts` tags each definition
  * with its `endpoint`). The call takes the definition's method and URL — from
  * the imported slice, else from the one definition of that name in the
- * project. Returns how many calls it resolved.
+ * project. A `use…Query` / `use…Mutation` the project itself declares as a
+ * function (a TanStack Query composable, `const useX = () => useQuery(…)`)
+ * is no generated hook: its row is dropped, and the calls inside that
+ * function are what reaches the API. Returns how many calls it resolved.
  */
 export function resolveRtkHooks(calls: ProjectApiCall[], analyses: readonly FileAnalysis[], ctx: ProjectContext): number {
   const pending = calls.filter((c) => c.kind === "api-call" && c.endpoint && c.target === null);
@@ -22,16 +25,27 @@ export function resolveRtkHooks(calls: ProjectApiCall[], analyses: readonly File
       (byName.get(ds.endpoint) ?? byName.set(ds.endpoint, []).get(ds.endpoint)!).push(ds);
     }
   }
+  const declared = new Map(analyses.map((a) => [a.filePath, a]));
+  const ownHooks = new Set<ProjectApiCall>();
   let count = 0;
   for (const c of pending) {
     // The hook (`useGetPostsQuery`) or the api object (`api.endpoints.x.initiate`) is what the file imports.
     const from = ctx.importIndex.localFor(c.filePath, c.name);
+    if (from && c.name.startsWith("use") && declared.get(from)?.functions.some((f) => f.name === c.name)) {
+      ownHooks.add(c);
+      continue;
+    }
     const named = byName.get(c.endpoint!);
     const def = (from ? byFile.get(from)?.get(c.endpoint!) : undefined) ?? (named?.length === 1 ? named[0] : undefined);
     if (!def) continue;
     c.target = def.target;
     c.name = def.name;
     count++;
+  }
+  if (ownHooks.size > 0) {
+    let w = 0;
+    for (const c of calls) if (!ownHooks.has(c)) calls[w++] = c;
+    calls.length = w;
   }
   return count;
 }

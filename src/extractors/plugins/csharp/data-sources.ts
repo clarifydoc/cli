@@ -222,11 +222,42 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
    */
   private pathHelpers = new Map<string, string>();
 
-  override beginFile(_tree: Tree, sourceText: string): void {
+  /**
+   * Names declared as a `DbSet<T>` (field, property, parameter or local) →
+   * the entity `T`, or null when `T` is a type parameter declared in the file
+   * (`protected readonly DbSet<TClass> _dbSet;` in a generic base repository).
+   * A repository habitually keeps its set in a field
+   * (`private readonly DbSet<Note> _repository;`), and the name says nothing
+   * about EF — the declared type does.
+   */
+  private dbSetNames = new Map<string, string | null>();
+
+  override beginFile(tree: Tree, sourceText: string): void {
+    this.dbSetNames = new Map();
+    if (sourceText.includes("DbSet<")) {
+      const typeParams = new Set<string>();
+      for (const tp of tree.rootNode.descendantsOfType("type_parameter")) {
+        const name = tp.childForFieldName("name") ?? tp.namedChildren.find((c) => c.type === "identifier");
+        if (name) typeParams.add(name.text);
+      }
+      for (const m of sourceText.matchAll(/\bI?DbSet<\s*([\w.]+)\s*>\??\s+(\w+)\b/g)) {
+        const type = m[1]!.slice(m[1]!.lastIndexOf(".") + 1);
+        if (!this.dbSetNames.has(m[2]!)) this.dbSetNames.set(m[2]!, typeParams.has(type) ? null : type);
+      }
+    }
     this.constStrings = new Map();
+    // A method's own `const string url = "…";` is a local of that method (read
+    // below as a string local by its line), never a value of the whole file.
+    const localConsts = new Set<number>();
+    if (/\bconst\s+string\b/.test(sourceText)) {
+      for (const d of tree.rootNode.descendantsOfType("local_declaration_statement")) {
+        if (d.text.startsWith("const")) localConsts.add(d.startPosition.row + 1);
+      }
+    }
     // `const string`, and a `readonly`/`static` string field initialized with a
     // literal (`protected readonly string _basePath = "internal/api";`).
     for (const m of sourceText.matchAll(/\b(?:const|readonly|static)\s+string\s+(\w+)\s*=\s*[@$]*"([^"]*)"\s*;/g)) {
+      if (localConsts.size > 0 && localConsts.has(sourceText.slice(0, m.index!).split("\n").length)) continue;
       if (!this.constStrings.has(m[1]!)) this.constStrings.set(m[1]!, m[2]!);
     }
     this.pathHelpers = new Map();
@@ -267,9 +298,9 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     const callLine = node.startPosition.row + 1;
     const first = argumentNodes(node)[0]?.text.trim().replace(NAMED_ARG_RE, "").trim();
     const evaluated = first ? this.evalUri(first, callLine, 0) : null;
-    if (evaluated) return evaluated;
-    const direct = extractFirstStringArg(node);
-    return direct ? this.substituteConsts(direct) : null;
+    const direct = evaluated ? null : extractFirstStringArg(node);
+    const uri = evaluated ?? (direct ? this.substituteConsts(direct) : null);
+    return uri ? memberHoles(uri, node) : null;
   }
 
   /** The nearest string local named `name` assigned at or before `line`. */
@@ -333,6 +364,72 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     });
   }
 
+  /** The EF access an invocation is, when it is one (see `visitNode`). */
+  private efRow(node: Node): DataSourceInfo | null {
+    const fn = node.childForFieldName("function");
+    const fullName = fn ? this.fullCallName(fn) : null;
+    if (!fn || !fullName) return null;
+    const parts = fullName.split(".");
+    const method = parts[parts.length - 1]!.replace(/<.*$/, "");
+    if (!EF_READ_METHODS.has(method) && !EF_WRITE_METHODS.has(method)) return null;
+    const receiver = parts.length > 1 ? parts[parts.length - 2]! : "";
+    const root = parts[0]!;
+    const base = chainBase(fn);
+    if (base !== null && this.dbSetNames.has(base)) {
+      const entity = this.dbSetNames.get(base) ?? undefined;
+      return this.ds({
+        kind: "database",
+        name: `EF: ${method}`,
+        target: entity ?? base,
+        ...(entity ? { entity } : {}),
+        ...access(method, EF_ACCESS),
+        line: node.startPosition.row + 1,
+      });
+    }
+    const contextNamed = (seg: string) =>
+      DBCONTEXT_SUFFIX.test(seg) ||
+      seg === "_context" || seg === "context" || seg === "Context" || seg === "db" ||
+      seg === "_db" || seg === "dbContext" || seg === "_dbContext" || seg === "DbContext";
+    // The context may sit behind a member: `services.Context.CatalogItems…` (eShop's
+    // `[AsParameters] CatalogServices`), `this.uow.Db.Orders…`.
+    const looksLikeEf = contextNamed(root) || parts.slice(1, -2).some((seg) => contextNamed(seg.replace(/\(.*$/, "")));
+    if (looksLikeEf || method === "SaveChanges" || method === "SaveChangesAsync" ||
+        method === "FromSqlRaw" || method === "FromSqlInterpolated" || method === "FromSql" ||
+        method === "ExecuteSqlRaw" || method === "ExecuteSqlInterpolated") {
+      // Walk the receiver chain back to the `<context>.<DbSet>` access so the
+      // entity resolves even when the EF method sits at the END of a fluent
+      // chain — `_db.Owners.Include(..).OrderBy(..).ToListAsync()` would
+      // otherwise take `OrderBy(..)`'s text as the receiver ("Name)") and
+      // never identify the Owners DbSet. The DbSet name is the touched
+      // entity; `attributeDataAccessToSymbols` matches it (case-insensitive,
+      // singular/plural) to the ER node, bridging the trace to the data model.
+      const dbSet = resolveEfDbSet(fn);
+      const entity = dbSet && !NON_ENTITY_EF_METHODS.has(method) ? dbSet : undefined;
+      return this.ds({
+        kind: "database",
+        name: `EF: ${method}`,
+        target: dbSet ?? receiver ?? null,
+        ...(entity ? { entity } : {}),
+        ...access(method, EF_ACCESS),
+        line: node.startPosition.row + 1,
+      });
+    }
+    return null;
+  }
+
+  /** True when this invocation is the receiver of a later EF access in the same chain. */
+  private efCallFollows(node: Node): boolean {
+    let cur: Node = node;
+    for (;;) {
+      const member = cur.parent;
+      if (member?.type !== "member_access_expression" || member.childForFieldName("expression")?.id !== cur.id) return false;
+      const call = member.parent;
+      if (call?.type !== "invocation_expression" || call.childForFieldName("function")?.id !== member.id) return false;
+      if (this.efRow(call)) return true;
+      cur = call;
+    }
+  }
+
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
     if (node.type !== "invocation_expression") return;
 
@@ -350,33 +447,11 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
 
     // EF Core / EF 6 — DbContext.Set<T>(), context.Entities.Where(), SaveChanges()
     if (EF_READ_METHODS.has(method) || EF_WRITE_METHODS.has(method)) {
-      const contextNamed = (seg: string) =>
-        DBCONTEXT_SUFFIX.test(seg) ||
-        seg === "_context" || seg === "context" || seg === "Context" || seg === "db" ||
-        seg === "_db" || seg === "dbContext" || seg === "_dbContext" || seg === "DbContext";
-      // The context may sit behind a member: `services.Context.CatalogItems…` (eShop's
-      // `[AsParameters] CatalogServices`), `this.uow.Db.Orders…`.
-      const looksLikeEf = contextNamed(root) || parts.slice(1, -2).some((seg) => contextNamed(seg.replace(/\(.*$/, "")));
-      if (looksLikeEf || method === "SaveChanges" || method === "SaveChangesAsync" ||
-          method === "FromSqlRaw" || method === "FromSqlInterpolated" || method === "FromSql" ||
-          method === "ExecuteSqlRaw" || method === "ExecuteSqlInterpolated") {
-        // Walk the receiver chain back to the `<context>.<DbSet>` access so the
-        // entity resolves even when the EF method sits at the END of a fluent
-        // chain — `_db.Owners.Include(..).OrderBy(..).ToListAsync()` would
-        // otherwise take `OrderBy(..)`'s text as the receiver ("Name)") and
-        // never identify the Owners DbSet. The DbSet name is the touched
-        // entity; `attributeDataAccessToSymbols` matches it (case-insensitive,
-        // singular/plural) to the ER node, bridging the trace to the data model.
-        const dbSet = resolveEfDbSet(fn);
-        const entity = dbSet && !NON_ENTITY_EF_METHODS.has(method) ? dbSet : undefined;
-        sources.push(this.ds({
-          kind: "database",
-          name: `EF: ${method}`,
-          target: dbSet ?? receiver ?? null,
-          ...(entity ? { entity } : {}),
-          ...access(method, EF_ACCESS),
-          line: node.startPosition.row + 1,
-        }));
+      const row = this.efRow(node);
+      if (row) {
+        // One row per query: `_db.Owners.Where(..).Include(..).ToListAsync()` is
+        // one access, recorded on the outermost EF operator of the chain.
+        if (!this.efCallFollows(node)) sources.push(row);
         return;
       }
     }
@@ -635,6 +710,32 @@ function resolveEfDbSet(fnNode: Node): string | null {
   return null;
 }
 
+/**
+ * The name a member chain starts from: `_set` in `_set.Where(..).ToList`,
+ * `this._set.Add`. Null when the chain starts anywhere else.
+ */
+function chainBase(fnNode: Node): string | null {
+  let node: Node | null = fnNode;
+  let member: string | null = null;
+  while (node) {
+    if (node.type === "invocation_expression") {
+      node = node.childForFieldName("function");
+      member = null;
+      continue;
+    }
+    if (node.type === "member_access_expression") {
+      member = node.childForFieldName("name")?.text ?? null;
+      node = node.childForFieldName("expression") ?? node.firstChild;
+      continue;
+    }
+    if (node.type === "identifier") return node.text;
+    // `this.x` (an anonymous `this` token in current grammars).
+    if (node.type === "this" || node.type === "this_expression") return member;
+    return null;
+  }
+  return null;
+}
+
 /** Unwrap `Set<Order>` → "Order"; strip generics/namespace; drop non-DbSet members. */
 function cleanEntityName(raw: string | null): string | null {
   if (!raw) return null;
@@ -646,6 +747,45 @@ function cleanEntityName(raw: string | null): string | null {
   if (dot >= 0) s = s.slice(dot + 1);
   if (!s || NON_DBSET_MEMBERS.has(s)) return null;
   return s;
+}
+
+/** Members whose bodies declare their own names (parameters, locals). */
+const MEMBER_SCOPES: ReadonlySet<string> = new Set([
+  "method_declaration", "constructor_declaration", "local_function_statement", "accessor_declaration",
+  "property_declaration", "operator_declaration",
+]);
+/** Nodes that declare a name in a member body, and the field holding it. */
+const NAME_DECLARATIONS: ReadonlyMap<string, string> = new Map([
+  ["parameter", "name"], ["variable_declarator", "name"], ["foreach_statement", "left"],
+  ["catch_declaration", "name"], ["declaration_expression", "name"],
+]);
+
+/**
+ * A URI hole the call's own member does not declare (`{BasePath}` read in a
+ * method with no such parameter or local) is a member of the class — written
+ * `${this.BasePath}`, the form the project pass fills from the class chain's
+ * field values (an inherited `const`, a base field set from what a subclass
+ * passes to `base(…)`). Holes naming a parameter or local stay runtime values.
+ */
+function memberHoles(uri: string, call: Node): string {
+  if (!/(?<!\$)\{(?:this\.)?[A-Za-z_]\w*\}/.test(uri)) return uri;
+  let scope: Node | null = call.parent;
+  while (scope && !MEMBER_SCOPES.has(scope.type)) scope = scope.parent;
+  let inClass = scope?.parent ?? null;
+  while (inClass && inClass.type !== "class_declaration" && inClass.type !== "record_declaration") inClass = inClass.parent;
+  if (!scope || !inClass) return uri;
+  const declared = new Set<string>();
+  const stack: Node[] = [scope];
+  while (stack.length > 0) {
+    const n = stack.pop()!;
+    const field = NAME_DECLARATIONS.get(n.type);
+    const named = field ? n.childForFieldName(field) : null;
+    if (named?.type === "identifier") declared.add(named.text);
+    if (n.type === "implicit_parameter" || (n.type === "identifier" && n.parent?.type === "lambda_expression")) declared.add(n.text);
+    for (const c of n.namedChildren) stack.push(c);
+  }
+  return uri.replace(/(?<!\$)\{(?:this\.)?([A-Za-z_]\w*)\}/g, (whole, name: string) =>
+    declared.has(name) ? whole : `\${this.${name}}`);
 }
 
 /** The `argument` children of an invocation's argument_list. */

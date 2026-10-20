@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import "../../registry.js"; // side effect: registers tree-sitter grammars
 import { parseSource } from "../../../parsers/parser-manager.js";
-import { extractInteractiveElements } from "./interactive-elements.js";
+import { extractInteractiveElements, extractVueInteractiveElements } from "./interactive-elements.js";
 
 async function handlersOf(src: string): Promise<Array<string | null>> {
   const tree = await parseSource(src, "typescript" as any, "C.tsx");
@@ -46,6 +46,20 @@ describe("React Native controls", () => {
       "button onPress cancel",
       "button onPress goBack",
       "custom onDone finish",
+    ]);
+  });
+});
+
+describe("Vue template events", () => {
+  it("reads a binding past a `>` inside another attribute's quoted value", () => {
+    const template = `
+  <DropdownMenuItem
+    v-if="getInjuryOnDay.length > 0 || getAKUOnDay.length > 0"
+    @click="editInjuryOrSuspension('Menu')"
+  >Edit injury</DropdownMenuItem>`;
+    const src = `<template>${template}</template>`;
+    expect(extractVueInteractiveElements(template, src).map((e) => `${e.line} ${e.event} ${e.handler}`)).toEqual([
+      "2 @click editInjuryOrSuspension('Menu')",
     ]);
   });
 });

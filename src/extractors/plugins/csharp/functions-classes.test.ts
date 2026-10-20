@@ -277,3 +277,33 @@ public class Orders {
     expect(classes.map((c) => `${c.name}[${c.methods.map((m) => m.name)}]`)).toEqual(["Orders[]", "Command[Command]", "Handler[Handle]"]);
   });
 });
+
+describe("C# functions-classes — declared types", () => {
+  it("records a method's return type and a generic class's type parameters", async () => {
+    const [ext, handler] = await classesOf(`namespace X;
+public static class InjuryExtensions {
+  public static CreatePlayerInjuryCommand ToCreateCommand(this AbsenceRequest r) => new();
+  public async Task<IEnumerable<Note>> List(Guid id) { return null; }
+}
+public abstract class BaseHandler<T, K> : IRequestHandler<T, K> where T : IRequest<K> { }`);
+    expect(ext!.methods.map((m) => `${m.name}: ${m.returnType}`)).toEqual([
+      "ToCreateCommand: CreatePlayerInjuryCommand",
+      "List: Task<IEnumerable<Note>>",
+    ]);
+    expect(handler!.typeParameters).toEqual(["T", "K"]);
+  });
+
+  it("states what a class gives its string fields and passes to its base", async () => {
+    const [base, sub] = await classesOf(`namespace X;
+public abstract class BaseLeagueDataHttpClient {
+  protected const string BasePath = "api";
+  protected readonly string BaseVersion;
+  protected BaseLeagueDataHttpClient(string baseVersion, HttpClient httpClient) { BaseVersion = baseVersion; }
+}
+public class LeagueDataV2HttpClient : BaseLeagueDataHttpClient {
+  public LeagueDataV2HttpClient(HttpClient httpClient) : base("v2", httpClient) { }
+}`);
+    expect(base!.fieldValues).toEqual({ BasePath: "api", BaseVersion: "${baseVersion}" });
+    expect(sub!.superArgs).toEqual(["v2", "${httpClient}"]);
+  });
+});

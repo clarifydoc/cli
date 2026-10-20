@@ -199,14 +199,25 @@ export class CSharpExtractor extends FunctionClassExtractor {
       if (key && !prop.qualifier) prop.qualifier = key;
     }
     if (body && fieldValues.size > 0) refineConstructedFields(this.assignmentsIn(body), fieldValues);
+    const strings = body ? this.stringFieldValues(body) : null;
+    const superArgs = body ? baseInitializerArgs(body) : null;
+
+    const typeParameters = node.children
+      .find((c) => c.type === "type_parameter_list")
+      ?.namedChildren.filter((c) => c.type === "type_parameter")
+      .map((c) => (c.childForFieldName("name") ?? c.namedChildren.find((n) => n.type === "identifier"))?.text ?? "")
+      .filter(Boolean);
 
     return {
       name,
       extends: extendsName,
       implements: implementsList,
+      ...(typeParameters?.length ? { typeParameters } : {}),
       decorators,
       methods,
       properties,
+      ...(strings ? { fieldValues: strings } : {}),
+      ...(superArgs ? { superArgs } : {}),
       isExported: classVis === "public" || classVis === null,
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
@@ -245,7 +256,8 @@ export class CSharpExtractor extends FunctionClassExtractor {
     const paramsNode = node.childForFieldName("parameters");
     const params = paramsNode ? this.parseCsharpParams(paramsNode) : [];
 
-    const returnType = node.childForFieldName("type")?.text ?? null;
+    // `returns` in the current grammar (`type` in older ones); a constructor has neither.
+    const returnType = (node.childForFieldName("returns") ?? node.childForFieldName("type"))?.text ?? null;
     const isAsync = this.hasModifier(node, "async");
     const decorators = extractCsharpAttributes(node);
     const body = node.childForFieldName("body");
@@ -309,6 +321,49 @@ export class CSharpExtractor extends FunctionClassExtractor {
       params.push(param);
     }
     return params;
+  }
+
+  /**
+   * The string a class gives each of its string fields (`ClassInfo.fieldValues`):
+   * a literal initializer (`protected const string BasePath = "api";`) or a
+   * constructor's assignment of a literal or of one of its parameters
+   * (`BaseVersion = baseVersion;` → `${baseVersion}`, which the core fills
+   * with what a subclass passes to `base(…)`). A field given two different
+   * values is left out.
+   */
+  private stringFieldValues(body: Node): Record<string, string> | null {
+    const values = new Map<string, string | null>();
+    const note = (name: string, value: string | null): void => {
+      values.set(name, values.has(name) && values.get(name) !== value ? null : value);
+    };
+    for (const member of body.namedChildren) {
+      if (member.type === "field_declaration") {
+        const decl = this.findChildByType(member, "variable_declaration");
+        if (decl?.childForFieldName("type")?.text !== "string") continue;
+        for (const d of decl.namedChildren) {
+          if (d.type !== "variable_declarator") continue;
+          const name = d.childForFieldName("name")?.text;
+          const init = d.namedChildren.find((c) => c.type === "string_literal" || c.type === "verbatim_string_literal");
+          if (name && init) note(name, plainString(init));
+        }
+      } else if (member.type === "constructor_declaration") {
+        const paramList = member.childForFieldName("parameters");
+        const params = new Set(paramList ? this.parseCsharpParams(paramList).map((p) => p.name) : []);
+        for (const a of this.assignmentsIn(member.childForFieldName("body"))) {
+          const left = a.childForFieldName("left");
+          const right = a.childForFieldName("right");
+          if (!left || !right) continue;
+          const name = left.type === "identifier" ? left.text
+            : left.type === "member_access_expression" && left.firstChild?.type === "this" ? left.childForFieldName("name")?.text : undefined;
+          if (!name) continue;
+          if (right.type === "identifier" && params.has(right.text)) note(name, `\${${right.text}}`);
+          else if (right.type === "string_literal" || right.type === "verbatim_string_literal") note(name, plainString(right));
+        }
+      }
+    }
+    const out: Record<string, string> = {};
+    for (const [name, value] of values) if (value !== null) out[name] = value;
+    return Object.keys(out).length > 0 ? out : null;
   }
 
   private assignmentsIn(scope: Node | null): Node[] {
@@ -389,6 +444,39 @@ function refineConstructedFields(assignments: Node[], fields: Map<string, { prop
     }
     if (built) prop.type = built;
   }
+}
+
+/** A non-interpolated string literal's content, or null. */
+function plainString(node: Node): string | null {
+  const m = /^@?"((?:[^"\\]|\\.)*)"$/.exec(node.text);
+  return m ? m[1]! : null;
+}
+
+/**
+ * What the class's constructor passes to its base (`: base("v2", httpClient)`
+ * → `["v2", "${httpClient}"]`), rendered as `fieldValues` are. Only when
+ * every constructor that calls `base(…)` passes the same.
+ */
+function baseInitializerArgs(body: Node): string[] | null {
+  let found: string[] | null = null;
+  for (const member of body.namedChildren) {
+    if (member.type !== "constructor_declaration") continue;
+    const init = member.namedChildren.find((c) => c.type === "constructor_initializer");
+    if (!init || init.firstChild?.nextSibling?.type !== "base") continue;
+    const list = init.namedChildren.find((c) => c.type === "argument_list");
+    const args = (list?.namedChildren ?? []).filter((c) => c.type === "argument").map((arg) => {
+      const expr = arg.namedChildren[arg.namedChildren.length - 1];
+      if (!expr) return "${}";
+      if (expr.type === "string_literal" || expr.type === "verbatim_string_literal") {
+        const lit = plainString(expr);
+        if (lit !== null) return lit;
+      }
+      return `\${${expr.text}}`;
+    });
+    if (found && found.join("\0") !== args.join("\0")) return null;
+    found = args;
+  }
+  return found;
 }
 
 /** Parameter name → the DI key it is injected by. */

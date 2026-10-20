@@ -560,7 +560,7 @@ export function projectOfContext(context: string, subProjects: readonly SubProje
 
 /** Dockerfiles outside dependency, build and non-runtime (test, example, CI) directories. */
 async function standaloneDockerfiles(absRoot: string): Promise<string[]> {
-  const found = await glob(["**/Dockerfile", "**/Dockerfile.*", "**/*.Dockerfile", "**/*.dockerfile"], {
+  const found = await glob(["**/Dockerfile", "**/Dockerfile.*", "**/Dockerfile-*", "**/*Dockerfile", "**/*.dockerfile"], {
     cwd: absRoot,
     ignore: IGNORE,
     absolute: false,

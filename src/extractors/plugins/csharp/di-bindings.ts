@@ -80,11 +80,24 @@ export function extractCsharpDiBindings(tree: Tree, sourceText: string): DiBindi
 
   for (const inv of tree.rootNode.descendantsOfType("invocation_expression")) {
     const fn = inv.childForFieldName("function");
+    const line = inv.startPosition.row + 1;
+    const before = out.length;
+    if (fn?.type === "generic_name") {
+      // A project's own registration helper named for the API it wraps
+      // (`AddHttpClient<IPlanClient, PlanClient>(services, "Plan", url)`): the
+      // two type arguments are the service and what builds it, as they are
+      // on the method it forwards to.
+      const m = methodNameOf(fn);
+      const lifetime = m ? MS_LIFETIME_RE.exec(m.method) : null;
+      if (m?.typeArgs.length === 2 && (MS_PAIR_METHODS.has(m.method) || (lifetime && lifetime[2] == null))) {
+        push(out, line, m.method, m.typeArgs[0]!.text, m.typeArgs[1]!.text, { ifAbsent: lifetime?.[1] != null || undefined });
+      }
+      dropTypeParameters(out, before, inv);
+      continue;
+    }
     if (fn?.type !== "member_access_expression") continue;
     const m = methodNameOf(fn.childForFieldName("name"));
     if (!m) continue;
-    const line = inv.startPosition.row + 1;
-    const before = out.length;
     const lifetime = MS_LIFETIME_RE.exec(m.method);
     if (lifetime) {
       msRegistration(out, line, m.method, m.typeArgs, argumentsOf(inv), lifetime[1] != null, lifetime[2] != null);
@@ -100,17 +113,21 @@ export function extractCsharpDiBindings(tree: Tree, sourceText: string): DiBindi
     } else if (REGISTER_ROOTS.has(m.method)) {
       registerChain(out, line, inv, m.method, m.typeArgs, declaredTypes);
     }
-    // A generic helper's `AddTransient<BaseConsumer, TConsumer>()` names a type
-    // PARAMETER: what it binds is decided by each caller, not stated here.
-    if (out.length > before) {
-      const params = typeParametersInScope(inv);
-      if (params.size > 0) {
-        const kept = out.splice(before).filter((b) => !params.has(b.service) && !params.has(b.implementation));
-        out.push(...kept);
-      }
-    }
+    dropTypeParameters(out, before, inv);
   }
   return out;
+}
+
+/**
+ * A generic helper's `AddTransient<BaseConsumer, TConsumer>()` names a type
+ * PARAMETER: what it binds is decided by each caller, not stated here.
+ */
+function dropTypeParameters(out: DiBinding[], before: number, inv: Node): void {
+  if (out.length === before) return;
+  const params = typeParametersInScope(inv);
+  if (params.size === 0) return;
+  const kept = out.splice(before).filter((b) => !params.has(b.service) && !params.has(b.implementation));
+  out.push(...kept);
 }
 
 /** Declarations whose `<T, …>` type parameters are in scope inside them. */

@@ -805,6 +805,13 @@ export interface ClassInfo {
   tableName?: string;
   extends: string | null;
   implements: string[];
+  /**
+   * The class's own type parameters in order (`class Handler<TRequest, TKey>` →
+   * `["TRequest", "TKey"]`): what lets a consumer substitute a subclass's
+   * generic arguments (`class X : Handler<GetQuery, Guid>`) into what the base
+   * states with them. Absent on a non-generic class.
+   */
+  typeParameters?: string[];
   decorators: string[];
   methods: FunctionInfo[];
   properties: PropertyInfo[];

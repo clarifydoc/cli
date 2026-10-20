@@ -119,7 +119,7 @@ public class PlanClient {
       "internal/api/v3/institution/{institutionId}/trainings/{trainingId}/updateallowed",
       "internal/api/v3/institution/{institutionId}/trainings",
       "internal/api/v3/institution/{institutionId}/trainings/substitutions",
-      "internal/api/{_apiVersion}/institution/{institutionId}/wagecodes",
+      "internal/api/${this._apiVersion}/institution/{institutionId}/wagecodes",
       null,
     ]);
   });
@@ -229,5 +229,95 @@ public class H {
       ["PatchAsJsonAsync", { type: "object", properties: { title: { type: "string" } } }],
       ["PostAsJsonAsync", null],
     ]);
+  });
+});
+
+describe("EF through a name declared as a DbSet", () => {
+  async function rowsOf(src: string): Promise<DataSourceInfo[]> {
+    const tree = await parseSource(src, "csharp" as any, "R.cs");
+    return new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
+  }
+
+  it("reads a field typed DbSet<T> as that entity's set, one row per chain", async () => {
+    const rows = await rowsOf(`namespace X;
+public class NoteRepository {
+  private readonly DbSet<Note> _repository;
+  public async Task<Note> Insert(Note n, CancellationToken ct) => (await _repository.AddAsync(n, ct)).Entity;
+  public Task<Note[]> List(Guid id, CancellationToken ct) =>
+    _repository.TagWith("x").Where(n => n.Id == id).Include(n => n.Owner).ToArrayAsync(ct);
+  public void Drop(Note n) { this._repository.Remove(n); }
+}`);
+    expect(rows.map((d) => `${d.name} ${d.entity} ${d.access ?? "-"}`)).toEqual([
+      "EF: AddAsync Note write",
+      "EF: ToArrayAsync Note read",
+      "EF: Remove Note write",
+    ]);
+  });
+
+  it("keeps the inner access when the operator after it is no EF access of its own", async () => {
+    const rows = await rowsOf(`namespace X;
+public class LeagueDbContext : DbContext {
+  public async Task<int> Version(CancellationToken ct) {
+    var v = await Set<LeagueDbVersionInfo>().FromSqlRaw(_getVersion).FirstAsync(ct);
+    return v.Version;
+  }
+}`);
+    expect(rows.map((d) => d.name)).toEqual(["EF: FromSqlRaw"]);
+  });
+
+  it("names no entity for a method's own type parameter", async () => {
+    const rows = await rowsOf(`namespace X;
+public class DatabaseFixture {
+  private void CleanDbSet<T>(DbSet<T> dbSet) where T : class { dbSet.RemoveRange(dbSet); }
+}`);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.entity).toBeUndefined();
+  });
+
+  it("records a generic base repository's set without naming its type parameter", async () => {
+    const rows = await rowsOf(`namespace X;
+public abstract class BaseRepository<TContext, TClass> where TClass : class {
+  protected readonly DbSet<TClass> _dbSet;
+  public void Track(TClass dto) { _dbSet.Attach(dto); }
+}`);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ name: "EF: Attach", target: "_dbSet", access: "write" });
+    expect(rows[0]!.entity).toBeUndefined();
+  });
+});
+
+describe("C# HTTP-client URLs — scope of a name", () => {
+  async function targetsOf(src: string): Promise<Array<string | null>> {
+    const tree = await parseSource(src, "csharp" as any, "C.cs");
+    return new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call").map((d) => d.target);
+  }
+
+  it("keeps a method's own const to that method", async () => {
+    expect(await targetsOf(`namespace X;
+public class WageClient {
+  private readonly HttpClient _httpClient;
+  public async Task Create(Guid institutionId) {
+    string url = $"api/v2/{institutionId}/report/";
+    await _httpClient.PostAsync(url, null);
+  }
+  public async Task Failed() {
+    const string url = "api/v2/report/injury/failed";
+    await _httpClient.GetAsync(url);
+  }
+  public async Task Later(Guid institutionId) {
+    string url = $"api/v2/{institutionId}/injury";
+    await _httpClient.PutAsync(url, null);
+  }
+}`)).toEqual(["api/v2/{institutionId}/report/", "api/v2/report/injury/failed", "api/v2/{institutionId}/injury"]);
+  });
+
+  it("writes a hole the method does not declare as a member of the class", async () => {
+    expect(await targetsOf(`namespace X;
+public class LeagueDataV2HttpClient : BaseLeagueDataHttpClient {
+  public async Task Create(Guid institutionId, CancellationToken ct) {
+    var uriBase = $"{BasePath}/{BaseVersion}/institution/{institutionId}/person";
+    await _httpClient.PostAsync(uriBase, null, ct);
+  }
+}`)).toEqual(["${this.BasePath}/${this.BaseVersion}/institution/{institutionId}/person"]);
   });
 });

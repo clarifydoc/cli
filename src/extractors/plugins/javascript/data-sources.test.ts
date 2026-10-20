@@ -827,3 +827,16 @@ async function save(name: string, extra: object) {
     expect(body["put /api/items/1"]).toEqual({ type: "object", properties: { qty: { type: "integer" } } });
   });
 });
+
+describe("JS api-call through a local bound to a URL-builder call", () => {
+  it("reads the builder call the local holds, as it reads one written inline", async () => {
+    const calls = await apiCallsOf(`import axios from 'axios';
+import { requestUri } from '@utils/uriUtils';
+export const createRematch = async (personId: string, request: R) => {
+  const url = requestUri(\`rematches/person/\${personId}\`, 'v3');
+  const response = await axios.post(url, request);
+  return response.data;
+};`);
+    expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual(["post requestUri(`rematches/person/${personId}`, 'v3')"]);
+  });
+});

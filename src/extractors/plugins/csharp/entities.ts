@@ -1,5 +1,6 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import { attributeRepositoryAccesses, splitTypeArgs, type RepositoryAccessKnobs } from "../shared/repository-access.js";
+import { extensionFamily } from "../shared/path-utils.js";
 import type { ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
 
 /**
@@ -171,8 +172,9 @@ export class CSharpEntityExtractor extends EntityExtractor {
     for (const a of analyses) {
       // A class in a clearly non-persistence folder (DTO / view model /
       // API contract) that merely shares an entity's name is NOT the entity —
-      // tagging it would add a phantom ER node and mis-route relations.
-      if (NON_ENTITY_PATH_RE.test(a.filePath)) continue;
+      // tagging it would add a phantom ER node and mis-route relations. Nor is
+      // a frontend's TypeScript type of the same name: EF maps .NET classes.
+      if (NON_ENTITY_PATH_RE.test(a.filePath) || extensionFamily(a.filePath) !== "dotnet") continue;
       for (const cls of a.classes ?? []) {
         const orm = efEntityNames.has(cls.name) ? "ef-core" : marrTables.has(cls.name) ? "marr" : null;
         if (!orm) continue;

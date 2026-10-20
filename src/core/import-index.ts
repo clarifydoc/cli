@@ -429,7 +429,7 @@ export function resolveImportSource(
       if (knownFiles.has(joined + ext)) return joined + ext;
     }
   }
-  const exts = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".d.ts", ".vue",
+  const exts = ["", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".d.ts", ".vue",
                 "/index.ts", "/index.tsx", "/index.js", "/index.jsx", "/index.vue",
                 // Python relative imports: `from .articles import api`.
                 ".py", "/__init__.py"];

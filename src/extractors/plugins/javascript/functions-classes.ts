@@ -54,8 +54,8 @@ function moduleStringConstants(root: Node): Map<string, string> {
 }
 
 /**
- * The body's calls, finished: `calls` with the dynamic-import pseudo-calls
- * appended IN PLACE — the array `extractCalls` returned carries the calls it
+ * The body's calls, finished: `calls` with the dynamic-import and handed-over
+ * function pseudo-calls appended IN PLACE — the array `extractCalls` returned carries the calls it
  * held back as noise (restored later by the per-file pipeline), keyed by its
  * identity — plus the local variables whose type the body states.
  */
@@ -66,7 +66,7 @@ function finishBody(
   ctx: ScanContext,
 ): { calls: CallInfo[]; localTypes?: LocalType[] } {
   const scan = scanBody(body, paramNames, ctx);
-  calls.push(...scan.dynamicImports);
+  calls.push(...scan.extraCalls);
   return scan.localTypes.length > 0 ? { calls, localTypes: scan.localTypes } : { calls };
 }
 
@@ -74,6 +74,12 @@ function finishBody(
 const SEPARATE_SCOPES: ReadonlySet<string> = new Set([
   "function_declaration", "generator_function_declaration", "class_declaration", "class",
 ]);
+
+/**
+ * Option keys whose value is a function the library runs for the caller
+ * (TanStack Query's `queryFn` / `mutationFn`, any `…Fn` option).
+ */
+const FUNCTION_OPTION_KEY = /^["']?\w*Fn["']?$/;
 
 /** Function expressions — anonymous ones run on the enclosing function's behalf. */
 const FUNCTION_EXPRESSIONS: ReadonlySet<string> = new Set(["arrow_function", "function_expression"]);
@@ -122,6 +128,9 @@ function wrappedFunction(value: Node): Node | null {
  *   function expression but stops at nested function DECLARATIONS and classes
  *   (those are linked as their own units). The target resolves to the
  *   imported module's default export — for a `.vue` that's the component.
+ * - A function handed to a library option it runs (`mutationFn:
+ *   service.update`): a call of that function from this body, as the arrow
+ *   form `mutationFn: (x) => service.update(x)` already is.
  * - Locals whose type the body states, so `x.method()` resolves through `x`'s
  *   type: `const x: T = …`, `/** @type {T} *\/ const x = …`, `const x = new
  *   T()`, a container lookup (`inject(T)`, `moduleRef.get(T)`,
@@ -138,9 +147,9 @@ function scanBody(
   body: Node | null,
   paramNames: ReadonlySet<string>,
   ctx: ScanContext,
-): { dynamicImports: CallInfo[]; localTypes: LocalType[] } {
-  const dynamicImports: CallInfo[] = [];
-  if (!body) return { dynamicImports, localTypes: [] };
+): { extraCalls: CallInfo[]; localTypes: LocalType[] } {
+  const extraCalls: CallInfo[] = [];
+  if (!body) return { extraCalls, localTypes: [] };
   const seenImports = new Set<string>();
   // name → every binding seen (null = a binding whose type is not stated).
   const bindings = new Map<string, Array<{ local: LocalType; annotated: boolean } | null>>();
@@ -166,6 +175,15 @@ function scanBody(
     if (!isRoot && SEPARATE_SCOPES.has(type)) return;
     const children = node.children;
 
+    // `useMutation({ mutationFn: service.update })`: the library calls the
+    // function it is handed, on this body's behalf — a call of it here.
+    if (type === "pair" && children[0] && FUNCTION_OPTION_KEY.test(children[0].text)) {
+      const value = children[children.length - 1];
+      if (value && (value.type === "identifier" || value.type === "member_expression") && !value.text.includes("(")) {
+        extraCalls.push({ name: value.text.replace(/\s+/g, ""), kind: "internal", target: null, line: value.startPosition.row + 1 });
+      }
+    }
+
     if (type === "call_expression" && children[0]?.type === "import") {
       const args = children[children.length - 1];
       const arg = args?.type === "arguments" ? args.child(1) : null;
@@ -177,7 +195,7 @@ function scanBody(
         const local = /^[./]/.test(source) || /^[@~]/.test(source);
         if (local && !seenImports.has(source)) {
           seenImports.add(source);
-          dynamicImports.push({
+          extraCalls.push({
             name: "default",
             kind: "cross-file",
             target: source,
@@ -241,7 +259,7 @@ function scanBody(
     if (list.some((b) => b!.local.type !== first.local.type || b!.local.qualifier !== first.local.qualifier)) continue;
     localTypes.push(first.local);
   }
-  return { dynamicImports, localTypes };
+  return { extraCalls, localTypes };
 }
 
 /**

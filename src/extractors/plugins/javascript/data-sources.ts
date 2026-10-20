@@ -552,7 +552,14 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       // A leftover `${…}` means the template couldn't be fully resolved.
       return { url, confidence: url.includes("${") ? "INFERRED" : "EXTRACTED" };
     }
-    if (arg.type === "identifier") return this.bindings()?.lookup(arg.text, arg) ?? null;
+    if (arg.type === "identifier") {
+      const found = this.bindings()?.lookup(arg.text, arg);
+      if (found) return found;
+      // `const url = requestUri('x', 'v3'); axios.get(url)`: the builder call,
+      // as it would be read inline.
+      const value = this.bindings()?.valueOf(arg.text, arg);
+      return value?.type === "call_expression" ? this.resolveUrlArg(value) : null;
+    }
     // `this.baseUrl + 'series/' + seriesId` — Angular's dominant spelling
     // (Kavita: 398 of 417 call sites). Rendered the way a template literal is,
     // `${this.baseUrl}series/${seriesId}`, so one downstream path handles both.
@@ -1574,20 +1581,29 @@ class UrlBindings {
   }
 
   lookup(name: string, at: Node): ResolvedUrl | null {
+    const b = this.binding(name, at);
+    return b ? this.fold(b) : null;
+  }
+
+  /** The initializer of the binding `name` names at `at`. */
+  valueOf(name: string, at: Node): Node | null {
+    return this.binding(name, at)?.value ?? null;
+  }
+
+  private binding(name: string, at: Node): UrlBinding | null {
     const list = this.byName.get(name);
     if (!list) return null;
     for (let p: Node | null = at.parent; p; p = p.parent) {
       if (!FUNCTION_SCOPES.has(p.type)) continue;
       let pick: UrlBinding | null = null;
       for (const b of list) if (b.scope === p.id && b.start < at.startIndex) pick = b;
-      if (pick) return this.fold(pick);
+      if (pick) return pick;
       if (declaresParam(p, name)) return null;
     }
     // Module scope: a function body runs after the module has initialized, so
     // a module binding declared below its use still counts.
     const mod = list.filter((b) => b.scope === this.root.id);
-    const pick = [...mod].reverse().find((b) => b.start < at.startIndex) ?? mod[0];
-    return pick ? this.fold(pick) : null;
+    return [...mod].reverse().find((b) => b.start < at.startIndex) ?? mod[0] ?? null;
   }
 
   private fold(b: UrlBinding): ResolvedUrl | null {

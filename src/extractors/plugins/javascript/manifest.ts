@@ -109,7 +109,7 @@ export const typescriptManifest: LanguagePluginManifest = {
   // `process.env.X` / `import.meta.env.X` bases; `.env` files are never read.
   serviceConfig: jsServiceConfig,
   parsing: "tree-sitter",
-  extensions: [".ts", ".tsx", ".vue", ".svelte"],
+  extensions: [".ts", ".tsx", ".mts", ".cts", ".vue", ".svelte"],
   // A field is only reached through the instance (`this.x`); a bare name never is one.
   explicitSelfMembers: true,
   moduleLocalsInScope: true,

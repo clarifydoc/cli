@@ -323,3 +323,23 @@ export class Top {}`);
     expect(classes.map((c: { name: string; methods: { name: string }[] }) => `${c.name}[${c.methods.map((m) => m.name)}]`).sort()).toEqual(["InNs[run]", "Invoice[total]", "Top[]"]);
   });
 });
+
+describe("a function handed to a library option", () => {
+  it("is a call of that function from the body that hands it over", async () => {
+    const src = `import { useMutation, useQuery } from '@tanstack/vue-query';
+import trainingService from './TrainingService';
+export const useUpdateTrainingMutation = () =>
+  useMutation({
+    mutationFn: trainingService.updateTraining,
+    onSuccess: () => invalidate(),
+  });
+export function useTrainings(id) {
+  return useQuery({ queryKey: ['a', id], queryFn: fetchTrainings });
+}`;
+    const tree = await parseSource(src, "typescript" as any, "TrainingQueries.ts");
+    const fns = new JavaScriptExtractor().extractFunctions(tree, src);
+    const callsOf = (name: string) => fns.find((f) => f.name === name)?.calls.map((c) => c.name) ?? [];
+    expect(callsOf("useUpdateTrainingMutation")).toEqual(expect.arrayContaining(["useMutation", "trainingService.updateTraining"]));
+    expect(callsOf("useTrainings")).toEqual(expect.arrayContaining(["useQuery", "fetchTrainings"]));
+  });
+});

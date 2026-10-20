@@ -123,6 +123,15 @@ describe("collectExternalPackages — manifest parsing", () => {
       '  <ItemGroup>',
       '    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.0" />',
       '    <PackageReference Include="Serilog"><Version>3.1.0</Version></PackageReference>',
+      '    <PackageReference Include="MediatR" />',
+      "  </ItemGroup>",
+      "</Project>",
+    ].join("\n"));
+    // Central Package Management: the version-less reference's version lives here.
+    await writeFile(join(dir, "Directory.Packages.props"), [
+      "<Project>",
+      '  <ItemGroup>',
+      '    <PackageVersion Include="MediatR" Version="12.1.1" />',
       "  </ItemGroup>",
       "</Project>",
     ].join("\n"));
@@ -191,6 +200,8 @@ describe("collectExternalPackages — manifest parsing", () => {
     // nuget via nested csproj: attr + child version
     expect(find("nuget", "Microsoft.EntityFrameworkCore")?.version).toBe("8.0.0");
     expect(find("nuget", "Serilog")?.version).toBe("3.1.0");
+    // nuget central package management
+    expect(find("nuget", "MediatR")?.version).toBe("12.1.1");
   });
 
   it("categorises packages and flags frameworks", async () => {

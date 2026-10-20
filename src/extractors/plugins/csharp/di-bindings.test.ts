@@ -119,6 +119,24 @@ services.Decorate<IOrderRepo, CachedOrderRepo>();`)).toEqual([
     ]);
   });
 
+  it("reads a project helper named for the registration it wraps, not its own generic body", async () => {
+    const src = `class Startup {
+  protected void AddHttpClient<TInterface, TImplementation>(IServiceCollection services, string name, string url)
+      where TImplementation : class, TInterface {
+    services.AddHttpClient<TInterface, TImplementation>(name, c => c.BaseAddress = new Uri(url));
+  }
+  void Configure(IServiceCollection services) {
+    AddHttpClient<IPlanV3HttpClient, PlanV3HttpClient>(services, "PlanHttpClient", PlanUrl());
+    services.AddTransient<IPlanHttpClient>(provider => provider.GetRequiredService<IPlanV3HttpClient>());
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as any, "Startup.cs");
+    expect(extractCsharpDiBindings(tree, src).map(({ line: _l, ...b }) => b)).toEqual([
+      { service: "IPlanV3HttpClient", implementation: "PlanV3HttpClient", via: "AddHttpClient" },
+      { service: "IPlanHttpClient", implementation: "IPlanV3HttpClient", via: "AddTransient" },
+    ]);
+  });
+
   it("reads ServiceDescriptor registrations added to the collection", async () => {
     expect(await factsOf(`services.Add(ServiceDescriptor.Scoped<IFoo, Foo>());
 services.TryAdd(new ServiceDescriptor(typeof(IBar), typeof(Bar), ServiceLifetime.Scoped));
