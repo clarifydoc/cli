@@ -1,6 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { SecurityIssue } from "../../../types/analysis.js";
 import { handlerTaint, type TaintSpec } from "../shared/handler-taint.js";
+import { annotationName, annotationNodes } from "./di-annotations.js";
 
 /**
  * Request input followed through a Spring MVC / JAX-RS handler (see
@@ -89,4 +90,76 @@ const spec: TaintSpec = {
 /** Request input reaching a sink inside a Spring / JAX-RS handler. */
 export function javaTaint(tree: Tree, _sourceText: string, filePath: string): SecurityIssue[] {
   return handlerTaint(tree, spec, filePath);
+}
+
+// ─── Kotlin ─────────────────────────────────────────────────────────────────
+
+const ktAnnotations = (n: Node): string[] => annotationNodes(n).map((a) => annotationName(a) ?? "");
+
+/**
+ * Kotlin: Spring handlers as in Java (the same annotations, sinks and
+ * sanitizers), and Ktor routing — a function that serves routes reads its
+ * request through `call` (`call.parameters["q"]`, `call.receiveText()`).
+ * Strings interpolate: `"… $name"` and `"… ${expr}"` carry what they name.
+ */
+const kotlinSpec: TaintSpec = {
+  ...spec,
+  functionTypes: new Set(["function_declaration"]),
+  handler(fn) {
+    if (ktAnnotations(fn).some((a) => MAPPING.test(a))) {
+      const tainted: string[] = [];
+      const list = fn.namedChildren.find((c) => c.type === "function_value_parameters");
+      for (const p of list?.namedChildren ?? []) {
+        if (p.type !== "parameter") continue;
+        const name = p.namedChildren.find((c) => c.type === "simple_identifier")?.text;
+        const type = (p.namedChildren.find((c) => c.type === "user_type" || c.type === "nullable_type")?.text ?? "").replace(/[<?].*$/, "");
+        if (!name) continue;
+        if (/^(?:Int|Long|Short|Byte|Double|Float|Boolean|BigDecimal|BigInteger|UUID|LocalDate|LocalDateTime|Instant|OffsetDateTime|ZonedDateTime)$/.test(type)) continue;
+        const anns = ktAnnotations(p);
+        if (anns.some((a) => BOUND.test(a)) || (anns.length === 0 && !INJECTED.test(type))) tainted.push(name);
+      }
+      return { taintedParams: tainted };
+    }
+    // Ktor: a routing function reads the request off `call`.
+    const body = fn.namedChildren.find((c) => c.type === "function_body")?.text ?? "";
+    return /\brouting\s*\{|\b(?:get|post|put|patch|delete)\s*\(\s*"/.test(body) && /\bcall\./.test(body) ? { taintedParams: [] } : null;
+  },
+  source: /\b\w*[Rr]equest\.(?:getParameter|getParameterValues|getHeader|getQueryString|getInputStream|getReader|getRequestURI|getPathInfo)\s*\(|\bcall\.(?:parameters|request\.(?:queryParameters|headers|cookies)|receiveText|receiveParameters|receive)\b/,
+  assignment(node) {
+    if (node.type === "property_declaration") {
+      const name = node.namedChildren.find((c) => c.type === "variable_declaration")?.namedChildren.find((c) => c.type === "simple_identifier")?.text;
+      const value = node.namedChildren[node.namedChildren.length - 1];
+      return name && value && value.type !== "variable_declaration" ? { names: [name], value } : null;
+    }
+    if (node.type === "assignment") {
+      const left = node.namedChildren[0];
+      const value = node.namedChildren[node.namedChildren.length - 1];
+      return left && value && /^\w+$/.test(left.text) ? { names: [left.text], value } : null;
+    }
+    return null;
+  },
+  call(node) {
+    if (node.type !== "call_expression") return null;
+    const head = node.child(0);
+    if (!head || head.type === "call_expression") return null;
+    const callee = head.text.replace(/\s+/g, "").replace(/\?\./g, ".");
+    const args = (node.namedChildren.find((c) => c.type === "call_suffix")?.namedChildren.find((c) => c.type === "value_arguments")?.namedChildren ?? [])
+      .map((a) => (a.type === "value_argument" ? a.namedChildren[a.namedChildren.length - 1] ?? a : a));
+    // `ProcessBuilder(cmd)` / `File(path)`: Kotlin constructs without `new`.
+    return { callee: /^(?:File|FileInputStream|FileReader|FileOutputStream|FileWriter|RandomAccessFile|ProcessBuilder|URL)$/.test(callee) ? `new ${callee}` : callee, args };
+  },
+  sanitizer: /^\s*(?:Integer\.(?:parseInt|valueOf)|Long\.(?:parseLong|valueOf)|UUID\.fromString|FilenameUtils\.getName|HtmlUtils\.htmlEscape|URLEncoder\.encode)\s*\(|\.(?:toInt|toLong|toDouble|toBoolean|toIntOrNull|toLongOrNull)\s*\(\s*\)\s*$/,
+  propagator: /^(?:String\.format|Paths\.get|Path\.of|new File|new URL|URI\.create|.+\.(?:plus|replace|trim|lowercase|uppercase|substring|format|resolve|toString|joinToString))$|^(?:buildString|listOf|arrayOf)$/,
+  ifTypes: new Set(["if_expression"]),
+  condition: (n) => n.namedChildren[0] ?? null,
+  stringTypes: new Set(["string_literal", "multiline_string_literal"]),
+  interpolationTypes: new Set(["interpolated_identifier", "interpolated_expression"]),
+  functionName: (fn) => fn.namedChildren.find((c) => c.type === "simple_identifier")?.text ?? null,
+  paramNames: (fn) => (fn.namedChildren.find((c) => c.type === "function_value_parameters")?.namedChildren ?? []).filter((p) => p.type === "parameter").map((p) => p.namedChildren.find((c) => c.type === "simple_identifier")?.text ?? "").filter(Boolean),
+  returnTypes: new Set(["jump_expression"]),
+};
+
+/** Request input reaching a sink inside a Kotlin Spring handler or Ktor routing function. */
+export function kotlinTaint(tree: Tree, _sourceText: string, filePath: string): SecurityIssue[] {
+  return handlerTaint(tree, kotlinSpec, filePath);
 }
