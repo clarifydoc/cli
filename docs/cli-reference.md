@@ -160,12 +160,16 @@ of the JSON form.
 
 ```bash
 clarifydoc diff <base> <head> [options]
+clarifydoc diff --base <ref> [path] [options]
 ```
 
 Compares the API surface of two analyses of one project, the base and the head, and says what breaks a
 caller. Each argument is a directory holding `project-summary.json`, or a project root whose `-o` analysis is
-used. Analyze the base in a git worktree with `--incremental`: it starts from the main checkout's analysis and
-reparses only the files that differ.
+used. With `--base <ref>` (`main`, `HEAD~1`, a commit) the head is the project's current analysis and the base
+is the same project at that ref: checked out in a temporary detached worktree, analyzed starting from the
+head's analysis so only the files that differ reparse, and kept under the head's analysis directory
+(`.base/<commit>/`) for the next diff against it. The working tree, the index and the branches are not
+touched.
 
 | Change | Breaking when |
 |--------|---------------|

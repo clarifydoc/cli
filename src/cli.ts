@@ -819,19 +819,41 @@ program
 program
   .command("diff")
   .description("Diff the API surface of two analyses: routes, parameters, request bodies, guards, versions, cross-tier links, data reached, and the import cycles the head introduced")
-  .argument("<base>", "The base analysis: a directory holding project-summary.json, or a project root (its -o analysis is used)")
-  .argument("<head>", "The head analysis, the same way")
+  .argument("[base]", "The base analysis: a directory holding project-summary.json, or a project root (its -o analysis is used). With --base, the project instead (default: the one around the working directory)")
+  .argument("[head]", "The head analysis, the same way")
+  .option("--base <ref>", "Compare the project with itself at a git ref (main, HEAD~1, a commit): the ref is analyzed in a temporary worktree, kept for the next diff against it")
   .option("-o, --output <dir>", "Analysis output directory for a project-root argument (same value as `analyze -o`)", ".clarifydoc")
   .option("--json", "Print the raw JSON result", false)
   .option("--md", "Print markdown (PR-comment ready)", false)
   .option("--fail-on <level>", "Exit with code 2 when a change at this level exists: breaking | risky")
-  .action(async (base: string, head: string, options) => {
+  .action(async (base: string | undefined, head: string | undefined, options) => {
     try {
       if (options.failOn && options.failOn !== "breaking" && options.failOn !== "risky") throw new Error("--fail-on is breaking or risky");
       const { diffSurface, renderSurfaceMarkdown, renderSurfaceText } = await import("./core/surface-diff.js");
-      const d = diffSurface(await loadAnalysisAt(base, options.output), await loadAnalysisAt(head, options.output));
+      let baseLabel = base;
+      let headLabel = head;
+      let pair: [Awaited<ReturnType<typeof loadAnalysisAt>>, Awaited<ReturnType<typeof loadAnalysisAt>>];
+      if (options.base) {
+        if (head) throw new Error("With --base, pass at most the project: clarifydoc diff --base main [path]");
+        const { locateProjectRoot, defaultAnalysisDir } = await import("./mcp/server.js");
+        const { analysisAtRef } = await import("./core/base-ref.js");
+        const { join } = await import("path");
+        const root = base ? resolve(base) : locateProjectRoot(process.cwd()).root;
+        const headDir = defaultAnalysisDir(root, options.output);
+        const headSummary = await loadAnalysisAt(headDir).catch(() => {
+          throw new Error(`No analysis of ${root} to compare: run clarifydoc analyze ${root} first`);
+        });
+        const at = await analysisAtRef(root, options.base, { headAnalysisDir: headDir, cacheBase: join(headDir, ".base"), log: (l) => console.error(l) });
+        pair = [await loadAnalysisAt(at.dir), headSummary];
+        baseLabel = `${options.base} (${at.commit.slice(0, 12)})`;
+        headLabel = "the working tree's analysis";
+      } else {
+        if (!base || !head) throw new Error("Pass two analyses, or --base <ref>");
+        pair = [await loadAnalysisAt(base, options.output), await loadAnalysisAt(head, options.output)];
+      }
+      const d = diffSurface(...pair);
       if (options.json) console.log(JSON.stringify(d, null, 2));
-      else if (options.md) process.stdout.write(renderSurfaceMarkdown(d, { base, head }));
+      else if (options.md) process.stdout.write(renderSurfaceMarkdown(d, { base: baseLabel, head: headLabel }));
       else process.stdout.write(renderSurfaceText(d));
       if (options.failOn === "breaking" && d.counts.breaking > 0) process.exitCode = 2;
       if (options.failOn === "risky" && d.counts.breaking + d.counts.risky > 0) process.exitCode = 2;
