@@ -852,8 +852,9 @@ program
   .option("--args <json>", "Arguments as one JSON object (merged before the key=value pairs)")
   .option("--analyze", "Allow the call to run an analysis when there is none or it is stale (default: read-only)", false)
   .option("--list", "List the tools and their arguments", false)
+  .option("--from-issue <file>", "With explain: read an issue (a file, or - for stdin), find the routes, files and functions it names, and explain the likeliest")
   .action(async (tool: string | undefined, pairs: string[], options) => {
-    const { askTool, listTools, parseAskArgs } = await import("./mcp/ask.js");
+    const { askFromIssue, askTool, listTools, parseAskArgs } = await import("./mcp/ask.js");
     const { locateProjectRoot } = await import("./mcp/server.js");
     const root = options.project ? resolve(options.project) : locateProjectRoot(process.cwd()).root;
     const config = {
@@ -876,7 +877,11 @@ program
       // stdout carries only the answer; an analysis this call runs logs to stderr.
       const out = process.stdout.write.bind(process.stdout);
       console.log = (...a: unknown[]) => process.stderr.write(a.map(String).join(" ") + "\n");
-      const r = await askTool(config, tool, args);
+      if (options.fromIssue && tool.replace(/^clarifydoc_/, "") !== "explain") throw new Error("--from-issue goes with explain: clarifydoc ask explain --from-issue <file>");
+      const issue = options.fromIssue ? (options.fromIssue === "-" ? await readStdin() : await (await import("fs/promises")).readFile(resolve(options.fromIssue), "utf8")) : null;
+      const r = issue !== null
+        ? await askFromIssue(config, issue, { ...(typeof args.maxTokens === "number" ? { maxTokens: args.maxTokens } : {}), ...(typeof args.explain === "number" ? { explain: args.explain } : {}) })
+        : await askTool(config, tool, args);
       out(r.text.endsWith("\n") ? r.text : r.text + "\n");
       if (r.isError) process.exitCode = 1;
     } catch (err) {

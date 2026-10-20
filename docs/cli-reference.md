@@ -383,7 +383,14 @@ analysis, or a stale one, it answers what the tool would say to an agent that ma
 clarifydoc ask routes path=/api/users method=POST
 clarifydoc ask trace --args '{"symbol":"createOrder","direction":"callees","depth":4}'
 clarifydoc ask impact files='["src/orders.ts"]' > impact.md
+gh issue view 42 --json body -q .body | clarifydoc ask explain --from-issue - maxTokens=8000
 ```
+
+`ask explain --from-issue <file>` (`-` for stdin) reads an issue for what it names that the analysis knows —
+stack frames first, then routes (`POST /api/orders`, or a path such as `/api/users/42` the route map fits),
+file paths, and code spans or identifiers the call graph has; a name the analysis lacks is not a subject. It
+lists every subject found with what named it, then explains the likeliest two (`explain=<n>` for more) within
+`maxTokens`.
 
 | Option | Default | What it does |
 |--------|---------|--------------|
@@ -393,6 +400,7 @@ clarifydoc ask impact files='["src/orders.ts"]' > impact.md
 | `--args <json>` | — | Arguments as one JSON object, merged before the `key=value` pairs. |
 | `--analyze` | off | Let the call run an analysis when there is none or it is stale. Its progress goes to stderr. |
 | `--list` | — | Each tool with its arguments (`?` marks optional ones). |
+| `--from-issue <file>` | — | With `explain`: read an issue (`-` for stdin), find what it names and explain the likeliest. |
 
 Exits `1` when the tool answers with an error (an unknown tool, a bad argument), so a script can test it.
 

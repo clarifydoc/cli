@@ -32,6 +32,34 @@ export async function askTool(config: McpServerConfig, name: string, args: Recor
   return { text, isError: result?.isError === true };
 }
 
+/**
+ * `ask explain --from-issue`: what an issue names that the analysis knows
+ * (`issueSubjects`), and the explain pack of the likeliest — the budget split
+ * among the first `explain` of them — after a list of every subject found and
+ * why, so a reader sees what the issue was read as.
+ */
+export async function askFromIssue(config: McpServerConfig, issue: string, opts: { explain?: number; maxTokens?: number } = {}): Promise<AskResult> {
+  const { issueSubjects } = await import("./issue-subjects.js");
+  const { store } = buildMcpServer(config);
+  const { summary } = await store.load();
+  const subjects = issueSubjects(issue, summary);
+  if (!subjects.length) {
+    return { text: "# Nothing in the issue names a route, file or function the analysis knows\n\nNext: clarifydoc ask search query=<a term from the issue>", isError: false };
+  }
+  const explain = subjects.slice(0, Math.max(1, opts.explain ?? 2));
+  const each = Math.floor((opts.maxTokens ?? 6000) / explain.length);
+  const out = [
+    `# From the issue: ${subjects.length} subject${subjects.length === 1 ? "" : "s"}`,
+    "",
+    ...subjects.map((s, i) => `${i + 1}. ${s.kind} ${s.subject}${s.file ? ` (${s.file})` : ""} — ${s.why}`),
+  ];
+  for (const s of explain) {
+    const r = await askTool(config, "explain", { subject: s.subject, kind: s.kind, ...(s.file ? { file: s.file } : {}), maxTokens: Math.max(500, each) });
+    out.push("", r.text.replace(/^# /, "## ").replace(/\n## /g, "\n### "));
+  }
+  return { text: out.join("\n"), isError: false };
+}
+
 /** Each tool's name, description and arguments, for `ask --list`. */
 export function listTools(config: McpServerConfig): Array<{ name: string; description: string; args: string[] }> {
   return buildMcpServer(config).tools.map((t) => {
