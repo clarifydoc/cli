@@ -284,6 +284,13 @@ export function coverageLine(c: ProjectAnalysis["coverage"]): string | undefined
     parts.push(`${plural(c.parseErrors.files, "file")} parsed with syntax errors (worst ${w.file}, ${Math.round(w.ratio * 100)}% unread)`);
   }
   if (c.imports.local && c.imports.resolved < c.imports.local) parts.push(`${c.imports.resolved}/${c.imports.local} relative imports resolved`);
-  for (const g of c.gaps.slice(0, 3)) parts.push(`${g.dependencies.slice(0, 2).join(", ")} in ${g.project || "the project"} yet no ${g.kind === "routes" ? "API route" : "screen"} found`);
+  for (const g of c.gaps.slice(0, 3)) {
+    const handlers = g.handlers ? ` — ${plural(g.handlers.count, "function")} shaped like a handler, e.g. ${g.handlers.examples[0]}` : "";
+    parts.push(`${g.dependencies.slice(0, 2).join(", ")} in ${g.project || "the project"} yet no ${g.kind === "routes" ? "API route" : "screen"} found${handlers}`);
+  }
+  if (c.approximate) {
+    const langs = c.approximate.languages.slice(0, 3).map((l) => `${l.language} ${l.files}`).join(", ");
+    parts.push(`${plural(c.approximate.files, "file")} read by pattern matching, not a parser (${langs}${c.approximate.languages.length > 3 ? ", …" : ""}): their calls and routes are approximate`);
+  }
   return parts.length ? parts.join(" · ") : `every file parsed cleanly${c.imports.local ? `, ${c.imports.local} relative imports resolved` : ""}`;
 }

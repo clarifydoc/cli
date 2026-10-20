@@ -1,6 +1,8 @@
 import type { Tree } from "web-tree-sitter";
 import type { ExternalPackage, FileAnalysis, ProjectAnalysis, SubProject } from "../types/analysis.js";
 import { getLanguageForFile } from "../parsers/language-map.js";
+import { pluginFor } from "../extractors/registry.js";
+import { isTestFile } from "./test-file-detector.js";
 
 /**
  * How much of the code the map stands on was actually read. A clean answer
@@ -50,8 +52,30 @@ export interface AnalysisCoverage {
   parseErrors: { files: number; worst: Array<{ file: string; ratio: number; nodes: number }> };
   /** Relative imports (`./x`, `../y`, `.models`) of code — not assets no plugin reads — and how many resolved to a project file. */
   imports: { local: number; resolved: number; worst: Array<{ file: string; unresolved: number; total: number }> };
-  /** Where a dependency says there should be routes or screens, and the analysis found none. */
-  gaps: Array<{ project: string; kind: "routes" | "screens"; dependencies: string[] }>;
+  /**
+   * Where a dependency says there should be routes or screens, and the analysis
+   * found none. A routes gap counts the functions there shaped like request
+   * handlers (`handlers`, with up to three examples) — the routes a convention
+   * this tool does not read would have been.
+   */
+  gaps: Array<{ project: string; kind: "routes" | "screens"; dependencies: string[]; handlers?: { count: number; examples: string[] } }>;
+  /**
+   * Code read by pattern matching, not a parser (plugins on the regex path):
+   * its functions, calls and routes are approximate. Absent when every code
+   * file had a parser.
+   */
+  approximate?: { files: number; languages: Array<{ language: string; files: number }> };
+}
+
+/** A parameter typed as a request or a framework context: `*http.Request`, `HttpContext`, `Koa.Context`. */
+const HANDLER_PARAM_TYPE = /(?:^|[.*&\s])(?:\w*Request|\w*Context|Ctx)(?:<.*>)?\??$/;
+const REQUEST_NAME = /^(?:req|request)$/;
+const RESPONSE_NAME = /^(?:res|resp|response|reply|w)$/;
+
+/** Shaped like a request handler by its parameters, whatever the language. */
+function handlerShaped(params: ReadonlyArray<{ name: string; type: string | null }>): boolean {
+  if (params.some((p) => p.type && HANDLER_PARAM_TYPE.test(p.type.trim()))) return true;
+  return params.some((p) => REQUEST_NAME.test(p.name)) && params.some((p) => RESPONSE_NAME.test(p.name));
 }
 
 /** The sub-project a manifest path belongs to: the deepest root that holds it. */
@@ -111,15 +135,35 @@ export function assessCoverage(input: {
     }
   }
   const gaps: AnalysisCoverage["gaps"] = [];
+  const handlersIn = (project: string) => {
+    const found: string[] = [];
+    for (const a of input.analyses) {
+      if ((input.fileProjects[a.filePath] ?? "") !== project || isTestFile(a.filePath, a.language)) continue;
+      for (const fn of a.functions ?? []) if (handlerShaped(fn.params ?? [])) found.push(`${a.filePath}:${fn.line} ${fn.name}`);
+    }
+    return found.length ? { count: found.length, examples: found.slice(0, 3) } : undefined;
+  };
   for (const [project, w] of [...want].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
-    if (w.routes.size && !routesIn.has(project)) gaps.push({ project, kind: "routes", dependencies: [...w.routes].sort() });
+    if (w.routes.size && !routesIn.has(project)) {
+      const handlers = handlersIn(project);
+      gaps.push({ project, kind: "routes", dependencies: [...w.routes].sort(), ...(handlers ? { handlers } : {}) });
+    }
     if (w.screens.size && !screensIn.has(project)) gaps.push({ project, kind: "screens", dependencies: [...w.screens].sort() });
   }
+
+  // A plugin with a family is a programming language; data formats (SQL, specs, descriptors) are not "approximate".
+  const regexFiles = new Map<string, number>();
+  for (const a of input.analyses) {
+    const plugin = pluginFor(a.language);
+    if (plugin?.parsing === "regex" && plugin.family) regexFiles.set(a.language, (regexFiles.get(a.language) ?? 0) + 1);
+  }
+  const languages = [...regexFiles].map(([language, files]) => ({ language, files })).sort((a, b) => b.files - a.files || (a.language < b.language ? -1 : 1));
 
   return {
     files: input.analyses.length,
     parseErrors: { files: withErrors.length, worst: withErrors.slice(0, 20) },
     imports: { local, resolved, worst: perFile.slice(0, 20) },
     gaps,
+    ...(languages.length ? { approximate: { files: languages.reduce((n, l) => n + l.files, 0), languages } } : {}),
   };
 }
