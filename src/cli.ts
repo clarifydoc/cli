@@ -739,6 +739,50 @@ program
   });
 
 program
+  .command("facts")
+  .description("List the analysis's facts with their stable IDs, or check the IDs a document cites ([R-3fa2c1]) against them")
+  .argument("<path>", "Path to project root")
+  .option("-o, --output <dir>", "Analysis output directory (same value as `analyze -o`)", ".clarifydoc")
+  .option("--analysis-dir <dir>", "Exact directory containing project-summary.json (overrides --output)")
+  .option("--check <file>", "A document (- for stdin): resolve every fact ID it cites; exit 1 when one names nothing the analysis holds")
+  .option("--kind <kind>", "List only route | screen | entity | relation | link | access")
+  .action(async (path: string, options) => {
+    const projectRoot = resolve(path);
+    const analysisDir = options.analysisDir ? resolve(options.analysisDir) : resolve(options.output, projectRoot.replace(/\\/g, "/").split("/").pop()!);
+    try {
+      const { loadReportSummary } = await import("./core/report-payload.js");
+      const { checkCitations, factsOf } = await import("./core/fact-ids.js");
+      let summary;
+      try {
+        summary = await loadReportSummary(analysisDir);
+      } catch {
+        throw new Error(`No analysis found at ${analysisDir}.\nRun first: clarifydoc analyze ${path} -o ${options.output}`);
+      }
+      const facts = factsOf(summary);
+      if (options.check) {
+        const text = options.check === "-" ? await readStdin() : await (await import("fs/promises")).readFile(resolve(options.check), "utf8");
+        const cited = checkCitations(text, facts);
+        if (!cited.length) {
+          console.log("The document cites no fact IDs.");
+          return;
+        }
+        const missing = cited.filter((c) => !c.fact);
+        for (const c of cited) console.log(c.fact ? `  ${c.id}  ${c.fact.text}${c.fact.file ? ` (${c.fact.file}${c.fact.line ? `:${c.fact.line}` : ""})` : ""}` : `✗ ${c.id}  (line ${c.line}) — no such fact in this analysis`);
+        console.log(missing.length ? `${missing.length} of ${cited.length} cited facts are not in the analysis.` : `All ${cited.length} cited facts are in the analysis.`);
+        if (missing.length) process.exitCode = 1;
+        return;
+      }
+      for (const f of facts.values()) {
+        if (options.kind && f.kind !== options.kind) continue;
+        console.log(`${f.id}  ${f.text}${f.file ? `  (${f.file}${f.line ? `:${f.line}` : ""})` : ""}`);
+      }
+    } catch (err) {
+      console.error("Error:", (err as Error).message);
+      process.exitCode = 1;
+    }
+  });
+
+program
   .command("hook")
   .description("Agent-host hook (Claude Code protocol): reads the hook payload on stdin, prints context from the analysis. Wired by `clarifydoc install --hooks`")
   .argument("<event>", "pre-search | post-edit | session-start")

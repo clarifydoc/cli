@@ -4,6 +4,7 @@ import { numberArg, requiredStringArg, stringArg } from "../format.js";
 import { requireAnalysis, type ToolContext } from "./context.js";
 import { findRoutes, routeAnchor } from "../../core/sequence.js";
 import { testsReaching } from "../../core/impact-diff.js";
+import { routeFactId } from "../../core/fact-ids.js";
 
 type Row = ProjectAnalysis["routeMap"][number];
 type ToolText = (args: Record<string, unknown>) => Promise<string | null>;
@@ -77,7 +78,7 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
         }
         const r = found[0]!;
         const method = r.httpMethod ?? undefined;
-        heading = `# ${label(r)} — ${r.handler ?? "inline handler"} (${r.filePath}:${r.line})`;
+        heading = `# ${label(r)} — ${r.handler ?? "inline handler"} (${r.filePath}:${r.line}) · [${routeFactId(r)}]`;
         const seed = r.handler ?? `route:${(r.httpMethod ?? "USE").toUpperCase()} ${r.path}`;
         if (r.kind === "api") parts.push({ title: "Contract and callers", get: () => contract({ path: r.path, ...(method ? { method } : {}), file: r.filePath }), follow: `clarifydoc_contract path="${r.path}"` });
         const anchor = routeAnchor(r, summary.symbolLinks ?? []);

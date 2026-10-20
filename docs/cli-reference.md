@@ -14,6 +14,7 @@ clarifydoc seq <path> --route <route> Draw what a route does, in order, as a Mer
 clarifydoc detect <path>              Print detected file types and frameworks; writes nothing
 clarifydoc schema                     Print the top-level fields of a per-file analysis
 clarifydoc export <path>              Render the analysis as ARCHITECTURE.md, DATA-MODEL.md, FLOWS.md, Mermaid, GraphML, Cypher
+clarifydoc facts <path>               List the analysis's facts with stable IDs, or check the IDs a document cites
 clarifydoc mcp [path]                 Serve the analysis to an AI agent over MCP (stdio)
 clarifydoc ask <tool> [key=value…]    Call one MCP tool from a shell or CI and print its answer
 clarifydoc install [path]             Wire ClarifyDoc into agent hosts: MCP entry, hooks, skills, AGENTS.md section
@@ -370,6 +371,26 @@ analysis itself if there is none. Setup and the tool list are in the [README](..
 | `--lsp` | off | Allow the LSP layer in the analyses this server runs. |
 | `--no-git-history`, `--max-files`, `--include`, `--exclude` | as `analyze` | Apply to the analyses this server runs (always incremental). |
 | `--print-config <client>` | — | Print the server's entry for `claude-code`, `cursor`, `vscode`, `windsurf`, `gemini`, `codex`, `claude-desktop` or `all`, with the file it goes in, and exit. Writes nothing; `install --client` merges it for you. |
+
+## `facts`
+
+```bash
+clarifydoc facts <path> [--kind route|screen|entity|relation|link|access]
+clarifydoc facts <path> --check ARCHITECTURE-NOTES.md
+```
+
+Every fact the analysis holds — routes, screens, entities, their relations, cross-tier links, the data each
+function reaches — with a stable ID: `R-3fa2c1`, a hash of the fact's line-free key (a route by method, path
+and declaring file), so an edit elsewhere in a file keeps every ID in it. A document written from the map — a
+design note, an agent's answer, a PR description — cites them (`[R-3fa2c1]`); `--check` resolves each cited ID
+against the current analysis and exits `1` when one names nothing it holds, which is how a narrative is held
+to the code it describes. `clarifydoc_explain` shows a route's ID in its heading.
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `--check <file>` | — | A document (`-` for stdin) whose cited IDs to resolve. |
+| `--kind <kind>` | all | List only one kind of fact. |
+| `-o, --output <dir>` / `--analysis-dir <dir>` | `.clarifydoc` | Where the analysis is, as for `export`. |
 
 ## `ask`
 
