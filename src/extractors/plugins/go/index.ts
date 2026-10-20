@@ -1,3 +1,4 @@
+import { extractGoScheduledJobs } from "./scheduled-jobs.js";
 import type { ParamInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
@@ -87,6 +88,8 @@ export const goSpec: RegexLangSpec = {
 
   // wire / fx / dig interface bindings (see di-bindings.ts).
   extractDiBindings: (lines) => extractGoDiBindings(lines),
+  // Scheduled jobs: entry points a clock runs.
+  extractEntryPoints: (lines) => extractGoScheduledJobs(lines),
 
   importPatterns: [],
   // Its imports, and scripts it starts as processes (`exec.Command("./scripts/run.sh")`): run, not loaded.

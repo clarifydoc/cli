@@ -1,4 +1,4 @@
-import type { FunctionInfo, ClassInfo, CallInfo, RouteFact, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, RouteResponseInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo, DiBinding, HttpClientRegistration } from "../../../types/analysis.js";
+import type { FunctionInfo, ClassInfo, CallInfo, RouteFact, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, RouteResponseInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo, DiBinding, EntryPointInfo, HttpClientRegistration } from "../../../types/analysis.js";
 
 import { holdNoiseCall } from "../../shared/call-graph.js";
 
@@ -208,6 +208,8 @@ export interface RegexLangSpec {
    * `FileAnalysis.diBindings`.
    */
   extractDiBindings?: (lines: string[], filePath: string) => DiBinding[];
+  /** Entry points that are not routes (scheduled jobs, commands) → `FileAnalysis.entryPoints`. */
+  extractEntryPoints?: (lines: string[], filePath: string) => EntryPointInfo[];
   /** HTTP clients and client proxies the file configures → `FileAnalysis.httpClientRegistrations`. */
   extractHttpClientRegistrations?: (lines: string[], filePath: string) => HttpClientRegistration[];
   /** Handlers registered under a message name → `FileAnalysis.messageHandlers`. */

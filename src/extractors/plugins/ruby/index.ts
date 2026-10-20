@@ -1,3 +1,4 @@
+import { extractRubyScheduledJobs } from "./scheduled-jobs.js";
 import type { CallInfo, RouteInfo, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCallsFromBody, extractClassesWithSpec } from "../shared/regex-base.js";
@@ -643,6 +644,8 @@ export const rubySpec: RegexLangSpec = {
 
   // dry-container `register(:user_repo) { SqlUserRepo.new }`.
   extractDiBindings: (lines) => extractRubyDiBindings(lines),
+  // Scheduled jobs: entry points a clock runs.
+  extractEntryPoints: (lines) => extractRubyScheduledJobs(lines),
 
   // Top-level `def`s get the same declared types and call clean-up as methods.
   postProcessFunctions: (lines, fns) => {

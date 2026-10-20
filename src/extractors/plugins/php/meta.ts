@@ -1,3 +1,4 @@
+import { extractPhpScheduledJobs } from "./scheduled-jobs.js";
 import { phpTaint } from "./taint.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { extendControlFlow } from "../../shared/control-flow-defaults.js";
@@ -69,6 +70,8 @@ export const phpMeta: LanguagePluginMeta = {
     ["function_static_declaration", "nested-function"],
   ]),
   ast: {
+    // Laravel and Symfony scheduled jobs: entry points a clock runs.
+    entryPoints: (_tree, sourceText) => extractPhpScheduledJobs(sourceText),
     // Request input followed to a dangerous call inside each request handler.
     taint: phpTaint,
     // Blade templates (.blade.php) surface as UI screens; interactive elements
