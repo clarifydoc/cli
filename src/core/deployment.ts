@@ -13,6 +13,7 @@ import type {
 } from "../types/analysis.js";
 import { collectK8sManifests } from "./deployment-k8s.js";
 import { entryFileOf, readDockerfile, repoFiles, type DockerfileFacts } from "./dockerfiles.js";
+import { collectTerraform } from "./deployment-terraform.js";
 
 /**
  * Deployment-topology extraction from docker-compose / compose manifests.
@@ -237,6 +238,11 @@ export interface RawService {
   build?: { context: string; dockerfile?: string };
   /** What the service's Dockerfile says (read after merging). */
   docker?: DockerfileFacts;
+  /** Kind and family stated by the source itself (a Terraform `aws_sqs_queue`), over the image-based guess. */
+  kind?: DeployedServiceKind;
+  family?: string;
+  /** The entry file the source states (a Lambda's handler module), over the command-based one. */
+  entryFile?: string;
 }
 
 /**
@@ -386,6 +392,7 @@ function imageTail(image: string | undefined): string | undefined {
  * its service name — against `INFRA_FAMILIES`; everything else is an app.
  */
 function classify(svc: RawService): { kind: DeployedServiceKind; family?: string } {
+  if (svc.kind) return { kind: svc.kind, ...(svc.family ? { family: svc.family } : {}) };
   // The image identifies infra; the service name alone is a weaker fallback
   // (an app service named `redis-admin-ui` must not become infra, so name
   // matching only applies when there is no image to judge by).
@@ -708,6 +715,11 @@ export async function detectDeployment(
   if (k8s) {
     for (let i = 0; i < k8s.groups.length; i++) mergeGroup(k8s.groups[i]!, k8s.files[i]!);
   }
+  // Terraform modules too: Lambdas, queues, tables, databases (deployment-terraform.ts).
+  const terraform = await collectTerraform(absRoot, IGNORE);
+  if (terraform) {
+    for (let i = 0; i < terraform.groups.length; i++) mergeGroup(terraform.groups[i]!, terraform.files[i]!);
+  }
 
   // Each built service's Dockerfile: the command when compose states none, its ENV under compose's.
   const repo = repoFiles(absRoot);
@@ -770,7 +782,7 @@ export async function detectDeployment(
     if (kind === "app") {
       // The build context is the strongest evidence of what a service runs.
       s.project = (svc.build ? projectOfContext(svc.build.context, options.subProjects) : undefined) ?? matchProject(svc, projects, byFiles);
-      const entryFile = svc.build ? entryFileOf(svc.entrypoint, svc.build.context, repo) : undefined;
+      const entryFile = svc.entryFile ?? (svc.build ? entryFileOf(svc.entrypoint, svc.build.context, repo) : undefined);
       if (entryFile) s.entryFile = entryFile;
       // Where the service is told other services are — URL-shaped values only.
       const urlEnv: Record<string, string> = {};
@@ -984,6 +996,9 @@ export async function detectDeployment(
   }
 
   // ── k8s Ingress edges: front door → the workload each rule routes to ──
+  for (const e of terraform?.edges ?? []) {
+    if (svcByLower.has(e.from.toLowerCase()) && svcByLower.has(e.to.toLowerCase())) addEdge({ from: canon(e.from), to: canon(e.to), kind: e.kind, via: e.via });
+  }
   for (const e of k8s?.ingressEdges ?? []) {
     const target = k8s?.aliases.get(e.to) ?? e.to;
     if (!svcByLower.has(target.toLowerCase())) continue;

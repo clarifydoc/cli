@@ -64,6 +64,7 @@ import { jspManifest } from "./plugins/jsp/manifest.js";
 import { springxmlManifest } from "./plugins/springxml/manifest.js";
 import { jsightManifest } from "./plugins/jsight/manifest.js";
 import { serverlessManifest } from "./plugins/serverless/manifest.js";
+import { terraformManifest } from "./plugins/terraform/manifest.js";
 import { protobufManifest } from "./plugins/protobuf/manifest.js";
 import { openapiManifest } from "./plugins/openapi/manifest.js";
 import { graphqlManifest } from "./plugins/graphql/manifest.js";
@@ -102,7 +103,7 @@ const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
   goManifest, rustManifest, rubyManifest, swiftManifest, luaManifest, scalaManifest, perlManifest,
   vbManifest, sqlManifest, cManifest, cppManifest, prismaManifest, dartManifest, elixirManifest, erlangManifest, objcManifest,
   haskellManifest, clojureManifest, blazorManifest, htmlManifest, erbManifest, heexManifest, handlebarsManifest, liquidManifest, velocityManifest, razorManifest, qmlManifest, qtuiManifest, xamlManifest,
-  jspManifest, springxmlManifest, jsightManifest, serverlessManifest, protobufManifest,
+  jspManifest, springxmlManifest, jsightManifest, serverlessManifest, terraformManifest, protobufManifest,
   openapiManifest, graphqlManifest, wsdlManifest,
   groovyManifest,
   powershellManifest,
@@ -191,6 +192,7 @@ const LOADERS: readonly PluginLoader[] = [
   { languages: ["springxml"], load: () => import("./plugins/springxml/meta.js").then((m) => [m.springxmlMeta]) },
   { languages: ["jsight"], load: () => import("./plugins/jsight/meta.js").then((m) => [m.jsightMeta]) },
   { languages: ["serverless"], load: () => import("./plugins/serverless/meta.js").then((m) => [m.serverlessMeta]) },
+  { languages: ["terraform"], load: () => import("./plugins/terraform/meta.js").then((m) => [m.terraformMeta]) },
   { languages: ["protobuf"], load: () => import("./plugins/protobuf/meta.js").then((m) => [m.protobufMeta]) },
   { languages: ["openapi"], load: () => import("./plugins/openapi/meta.js").then((m) => [m.openapiMeta]) },
   { languages: ["graphql"], load: () => import("./plugins/graphql/meta.js").then((m) => [m.graphqlMeta]) },

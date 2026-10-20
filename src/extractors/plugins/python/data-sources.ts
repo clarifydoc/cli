@@ -36,6 +36,15 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
+    // `os.environ["DATABASE_URL"]`: an environment read written as a subscript.
+    if (node.type === "subscript" && node.childForFieldName("value")?.text === "os.environ") {
+      const key = node.childForFieldName("subscript");
+      const name = key?.type === "string" ? key.text.replace(/^[rbfu]*['"]{1,3}|['"]{1,3}$/gi, "") : null;
+      if (name && /^[A-Za-z_][\w.-]*$/.test(name)) {
+        sources.push(this.ds({ kind: "env", name: "os.environ", target: name, line: node.startPosition.row + 1 }));
+      }
+      return;
+    }
     // Celery: a `@app.task` / `@shared_task` function consumes the task queue
     // named after it (or the decorator's `name=`); `.delay`/`.apply_async`
     // and `send_task` publish to it.
