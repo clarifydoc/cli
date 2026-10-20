@@ -28,7 +28,11 @@ write. That is what lets an external agent be configured as nothing but a comman
   (imports/exports) comes from the per-file JSON via `AnalysisStore.fileAnalysis`.
 - **Tool output is for a context window.** Cap every list and say how many rows were withheld (`bulletList`). A
   tool's main list also pages: `offset` (`OFFSET_SCHEMA`, `offsetArg`, `page`, `pageFooter`) with a footer naming the
-  next offset — routes, screens, search, data_flows, health and data_model; caps stay as they are. Emit
+  next offset — routes, screens, search, data_flows, health and data_model; caps stay as they are. Tools write
+  the footer as `` `offset=N` ``; the protocol sends it as the cursor `offset="N@rev"` of the analysis revision
+  and, read back in another revision, prefixes a note that rows may have moved ([paging.ts](paging.ts)). It also
+  cuts any answer over `CLARIFYDOC_MCP_MAX_TOKENS` (20000) at a line, saying how to ask for less — below the
+  hosts' own cut, which would take the footer with it; a call's own `maxTokens` is exempt. Emit
   `path:line` for anything worth opening, and never silently return nothing — a miss explains what exists instead
   (`"No routes match … the analysis holds N routes"`), which is what stops an agent from re-guessing.
 - **An empty result names the call that would have data.** Every miss goes through `noResults` ([empty.ts](empty.ts))

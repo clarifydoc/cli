@@ -18,6 +18,7 @@
 import { appendFileSync } from "fs";
 import { validateArguments } from "./validate.js";
 import { sanitizeOutput } from "./format.js";
+import { DEFAULT_ANSWER_TOKENS, bindCursors, fitAnswer, parseCursor, staleCursorNote } from "./paging.js";
 
 /** Protocol revisions we can speak, newest first. */
 export const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
@@ -114,6 +115,10 @@ export interface McpServerOptions {
   log?: (message: string) => void;
   /** A line to end a tool's answer with (a freshness warning), or null for none. */
   annotate?: (tool: string) => Promise<string | null>;
+  /** The revision of the analysis answers are read from, which page cursors are bound to; null when there is none. */
+  revision?: () => Promise<string | null>;
+  /** Cut longer answers at a line (default `CLARIFYDOC_MCP_MAX_TOKENS`, else 20000). A call's own `maxTokens` overrides it. */
+  maxAnswerTokens?: number;
 }
 
 const PARSE_ERROR = -32700;
@@ -259,7 +264,10 @@ export class McpServer {
     if (typeof name !== "string") throw rpcError(INVALID_PARAMS, "tools/call requires a string `name`");
     const tool = this.tools.get(name);
     if (!tool) throw rpcError(INVALID_PARAMS, `Unknown tool: ${name}`);
-    const args = (params.arguments as Record<string, unknown> | undefined) ?? {};
+    let args = (params.arguments as Record<string, unknown> | undefined) ?? {};
+    // A footer's cursor, `offset="50@3fa2c1"`: the handler reads the offset; the revision is checked below.
+    const cursor = parseCursor(args.offset);
+    if (cursor) args = { ...args, offset: cursor.offset };
 
     // Rejected in-band, like a handler error: the model reads the message and
     // retries with the right spelling, instead of getting unfiltered rows for a
@@ -288,9 +296,10 @@ export class McpServer {
       const result = await tool.handler(args, extras);
       this.log(`tools/call ${name} -> ${result.text.length} chars in ${Date.now() - started}ms`);
       logCall(name, args, result, Date.now() - started);
+      const text = await this.shape(result.text, args, cursor);
       const note = this.options.annotate ? await this.options.annotate(name).catch(() => null) : null;
       return {
-        content: [{ type: "text", text: sanitizeOutput(note ? `${result.text}\n\n${note}` : result.text) }],
+        content: [{ type: "text", text: sanitizeOutput(note ? `${text}\n\n${note}` : text) }],
         ...(result.isError ? { isError: true } : {}),
       };
     } catch (e) {
@@ -301,6 +310,24 @@ export class McpServer {
       this.log(`tools/call ${name} failed: ${msg}`);
       return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
     }
+  }
+
+  /**
+   * An answer as it goes out: its page footers bound to the analysis revision
+   * (and a note when the cursor it was asked with is from another one), then
+   * cut to the answer budget unless the call set its own `maxTokens`.
+   */
+  private async shape(text: string, args: Record<string, unknown>, cursor: { offset: number; revision: string } | null): Promise<string> {
+    if (this.options.revision && (cursor || text.includes("`offset="))) {
+      const revision = await this.options.revision().catch(() => null);
+      if (revision) {
+        text = bindCursors(text, revision);
+        if (cursor && cursor.revision !== revision) text = `${staleCursorNote(cursor.offset)}\n\n${text}`;
+      }
+    }
+    if (args.maxTokens !== undefined) return text;
+    const env = Number(process.env.CLARIFYDOC_MCP_MAX_TOKENS);
+    return fitAnswer(text, this.options.maxAnswerTokens ?? (env > 0 ? env : DEFAULT_ANSWER_TOKENS));
   }
 
   private async readResource(params: Record<string, unknown>): Promise<unknown> {

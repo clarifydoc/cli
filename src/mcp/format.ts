@@ -83,13 +83,13 @@ export function cap<T>(items: T[], limit: number): { shown: T[]; hidden: number 
   return { shown: items.slice(0, limit), hidden: items.length - limit };
 }
 
-/** The `offset` argument of a paged list tool (0 when absent). */
+/** The `offset` argument of a paged list tool (0 when absent; the protocol has already read a cursor's revision off it). */
 export function offsetArg(args: Record<string, unknown>): number {
   return numberArg(args, "offset", 0, { min: 0, max: 1_000_000 });
 }
 
 /** The schema of `offset`, shared by every paged tool. */
-export const OFFSET_SCHEMA = { type: "number", description: "Skip this many rows — the next page (the footer says which offset comes next)." } as const;
+export const OFFSET_SCHEMA = { type: "number", description: "Rows to skip — pass a footer's offset as written (`\"50@3fa2c1\"`)." } as const;
 
 /** One page of a list: the rows from `offset`, and how many are left after them. */
 export function page<T>(items: T[], offset: number, limit: number): { shown: T[]; hidden: number; offset: number; requested: number } {

@@ -21,6 +21,7 @@ import { blastRadiusTool, contractTool, fileTool, routesTool, screensTool, trace
 import { extractTool } from "./tools/extract.js";
 import { dataFlowsTool, dataModelTool } from "./tools/data.js";
 import { INSTRUCTIONS } from "./guidance.js";
+import { revisionOf } from "./paging.js";
 import { WORKFLOW_PROMPTS } from "./prompts.js";
 import { explainTool } from "./tools/explain.js";
 
@@ -201,6 +202,7 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
     // Every answer says when the analysis no longer describes the source —
     // except the two that are about exactly that.
     annotate: async (tool) => (tool === "clarifydoc_status" || tool === "clarifydoc_analyze" ? null : banner()),
+    revision: async () => ((await store.exists()) ? revisionOf((await store.load()).summary.analyzedAt) : null),
   });
 
   return { server, store, tools };
