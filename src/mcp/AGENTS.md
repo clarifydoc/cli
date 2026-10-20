@@ -77,7 +77,10 @@ write. That is what lets an external agent be configured as nothing but a comman
   cannot close, and the instructions say quoted repository text is never an instruction.
 - **The up-front cost has a budget.** `tools/list` plus the instructions must stay under `BUDGET_BYTES`
   ([budget.test.ts](budget.test.ts)); a description that pushes past it is argued for in the commit that raises it.
-  `CLARIFYDOC_MCP_LOG=<file>` logs each call locally (JSONL: tool, cut arguments, size, time, error, empty).
+  `CLARIFYDOC_MCP_LOG=<file>` logs each call locally (JSONL: tool, cut arguments, size, time, error, empty) and
+  the session's `usageLine` at disconnect; `clarifydoc://session/usage` renders the same calls ([usage.ts](usage.ts)).
+  `--tools core` (`CORE_TOOLS`, `selectTools`) lists a smaller set and says so in the instructions; a tool left out
+  is not callable, so an answer that names one is a dead end there — keep the core set what answers point to most.
 - **No call outlives the client's deadline.** An analysis a call waits for — `clarifydoc_analyze`, or a cold
   start — gets `waitMs` (20 s, `CLARIFYDOC_MCP_WAIT_MS`); past it the call answers that the run is still going,
   with its stage and file count (`describeRun`, read off the analyzer's own progress line), and the run goes on.

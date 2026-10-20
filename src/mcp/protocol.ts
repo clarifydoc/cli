@@ -18,6 +18,7 @@
 import { appendFileSync } from "fs";
 import { validateArguments } from "./validate.js";
 import { sanitizeOutput } from "./format.js";
+import type { ToolCallRecord } from "./usage.js";
 import { DEFAULT_ANSWER_TOKENS, bindCursors, fitAnswer, parseCursor, staleCursorNote } from "./paging.js";
 
 /** Protocol revisions we can speak, newest first. */
@@ -137,6 +138,8 @@ export class McpServer {
   private negotiatedVersion: string | null = null;
   /** Writes a notification to the client (the transport sets it). */
   private notifier: ((message: Record<string, unknown>) => void) | null = null;
+  /** Every tool call of this session, in order. */
+  private readonly calls: ToolCallRecord[] = [];
 
   constructor(private readonly options: McpServerOptions) {
     for (const tool of options.tools) this.tools.set(tool.name, tool);
@@ -144,6 +147,11 @@ export class McpServer {
     this.templates = options.resourceTemplates ?? [];
     for (const prompt of options.prompts ?? []) this.prompts.set(prompt.name, prompt);
     this.log = options.log ?? (() => {});
+  }
+
+  /** The tool calls of this session so far, in order. */
+  usage(): readonly ToolCallRecord[] {
+    return this.calls;
   }
 
   /** How notifications reach the client; a transport without them leaves it unset. */
@@ -275,6 +283,7 @@ export class McpServer {
     const problems = validateArguments(tool.inputSchema, args);
     if (problems.length) {
       this.log(`tools/call ${name} rejected: ${problems.join(" ")}`);
+      this.calls.push({ tool: name, chars: 0, ms: 0, isError: true, empty: false });
       return { content: [{ type: "text", text: `Invalid arguments for ${name}:\n${problems.map((p) => `- ${p}`).join("\n")}` }], isError: true };
     }
 
@@ -296,6 +305,7 @@ export class McpServer {
       const result = await tool.handler(args, extras);
       this.log(`tools/call ${name} -> ${result.text.length} chars in ${Date.now() - started}ms`);
       logCall(name, args, result, Date.now() - started);
+      this.calls.push({ tool: name, chars: result.text.length, ms: Date.now() - started, isError: result.isError === true, empty: isEmpty(result.text) });
       const text = await this.shape(result.text, args, cursor);
       const note = this.options.annotate ? await this.options.annotate(name).catch(() => null) : null;
       return {
@@ -307,6 +317,7 @@ export class McpServer {
       // sees the message instead of an opaque transport failure.
       const msg = e instanceof Error ? e.message : String(e);
       logCall(name, args, { text: msg, isError: true }, Date.now() - started);
+      this.calls.push({ tool: name, chars: msg.length, ms: Date.now() - started, isError: true, empty: false });
       this.log(`tools/call ${name} failed: ${msg}`);
       return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
     }
@@ -405,6 +416,9 @@ function describeTool(tool: McpTool) {
  * shows which descriptions send an agent the wrong way in a real session,
  * and is sent nowhere. A write that fails is dropped.
  */
+/** A miss: the answer ends in a `Next: …` line. */
+const isEmpty = (text: string) => /(?:^|\n)Next: [^\n]*$/.test(text);
+
 function logCall(tool: string, args: Record<string, unknown>, result: ToolResult, ms: number): void {
   const file = process.env.CLARIFYDOC_MCP_LOG;
   if (!file) return;
@@ -414,7 +428,7 @@ function logCall(tool: string, args: Record<string, unknown>, result: ToolResult
       return [k, text && text.length > 200 ? `${text.slice(0, 200)}… (${text.length} chars)` : v];
     }),
   );
-  const line = { at: new Date().toISOString(), tool, args: short, chars: result.text.length, ms, isError: result.isError === true, empty: /(?:^|\n)Next: [^\n]*$/.test(result.text) };
+  const line = { at: new Date().toISOString(), tool, args: short, chars: result.text.length, ms, isError: result.isError === true, empty: isEmpty(result.text) };
   try {
     appendFileSync(file, JSON.stringify(line) + "\n");
   } catch {

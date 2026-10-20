@@ -346,7 +346,14 @@ instead of interleaving with it.
 
 Flags: `--analysis-dir <dir>` to read an exact analysis directory, `--no-auto-analyze` to forbid re-analysis on
 request (the first analysis still runs), `--no-cold-start` to forbid even that, plus the `analyze` filters
-(`--include`, `--exclude`, `--max-files`, `--lsp`, `--no-git-history`) for the scans it does run.
+(`--include`, `--exclude`, `--max-files`, `--lsp`, `--no-git-history`) for the scans it does run. `--tools core`
+offers only status, search, explain, trace, file, extract, impact and analyze — under half the up-front cost of
+the full set, for a host with many servers — or name the tools, comma-separated.
+
+Long answers are cut at about 20,000 tokens (`CLARIFYDOC_MCP_MAX_TOKENS`) with a note on how to ask for less, and
+a "next page" offset carries the analysis it counts in, so a page asked for after a re-run says the rows may have
+moved. `clarifydoc://session/usage` lists the session's calls in order with their answer sizes and times;
+`CLARIFYDOC_MCP_LOG=<file>` appends each call, and the session's totals at the end, to a local JSONL file.
 
 Inside VS Code the extension publishes this server for you, per workspace folder, and **ClarifyDoc: Set Up MCP for
 an AI Agent…** writes the config for Claude Code, Cursor or Windsurf — pointed at a launcher that survives extension

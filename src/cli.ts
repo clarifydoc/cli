@@ -814,6 +814,7 @@ program
   .option("--include <globs...>", "Additional file patterns to include")
   .option("--exclude <globs...>", "Additional file patterns to exclude")
   .option("--print-config <client>", "Print the MCP entry for a client and exit, without serving: claude-code | cursor | vscode | windsurf | gemini | codex | claude-desktop | all")
+  .option("--tools <profile>", "Tools to offer: all, core (status, search, explain, trace, file, extract, impact, analyze), or names comma-separated", "all")
   .action(async (path: string, options) => {
     if (options.printConfig) {
       const { CLIENTS, mcpSnippet } = await import("./agents/install.js");
@@ -849,6 +850,7 @@ program
         allowAnalyze: options.autoAnalyze !== false,
         allowColdStart: options.coldStart !== false,
         version: program.version() ?? undefined,
+        tools: options.tools,
         analyzeSettings: {
           incremental: true,
           lsp: options.lsp === true,

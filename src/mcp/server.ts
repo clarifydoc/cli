@@ -11,7 +11,7 @@
 import { controlFlowTool } from "./tools/flow.js";
 import { architectureTool } from "./tools/architecture.js";
 import { basename, dirname, join, resolve } from "path";
-import { existsSync } from "fs";
+import { appendFileSync, existsSync } from "fs";
 import { McpServer, serveStdio, type McpResource, type McpResourceTemplate, type McpTool } from "./protocol.js";
 import { TOOL_VERSION } from "../core/version.js";
 import { AnalysisStore, type AnalyzeSettings } from "./store.js";
@@ -22,6 +22,7 @@ import { extractTool } from "./tools/extract.js";
 import { dataFlowsTool, dataModelTool } from "./tools/data.js";
 import { INSTRUCTIONS } from "./guidance.js";
 import { revisionOf } from "./paging.js";
+import { renderUsage, usageLine } from "./usage.js";
 import { WORKFLOW_PROMPTS } from "./prompts.js";
 import { explainTool } from "./tools/explain.js";
 
@@ -52,6 +53,36 @@ export interface McpServerConfig {
   /** Reported in `serverInfo.version`. */
   version?: string;
   log?: (message: string) => void;
+  /**
+   * Which tools `tools/list` offers: `all` (the default), `core` ({@link CORE_TOOLS})
+   * or tool names, comma-separated, with or without the `clarifydoc_` prefix.
+   * Fewer tools cost a session less up front; the rest are not callable.
+   */
+  tools?: string;
+}
+
+/** The `core` profile: orient, find, explain, follow, read, judge an edit, re-run. */
+export const CORE_TOOLS = [
+  "clarifydoc_status",
+  "clarifydoc_search",
+  "clarifydoc_explain",
+  "clarifydoc_trace",
+  "clarifydoc_file",
+  "clarifydoc_extract",
+  "clarifydoc_impact",
+  "clarifydoc_analyze",
+] as const;
+
+/** The tools a profile keeps, in the server's own order; throws on a name no tool has. */
+export function selectTools<T extends { name: string }>(tools: T[], profile: string | undefined): T[] {
+  const spec = (profile ?? "all").trim();
+  if (!spec || spec === "all") return tools;
+  const names = spec === "core" ? [...CORE_TOOLS] : spec.split(",").map((n) => n.trim()).filter(Boolean).map((n) => (n.startsWith("clarifydoc_") ? n : `clarifydoc_${n}`));
+  const unknown = names.filter((n) => !tools.some((t) => t.name === n));
+  if (unknown.length) {
+    throw new Error(`Unknown tool${unknown.length === 1 ? "" : "s"} for --tools: ${unknown.join(", ")}. Known: core, all, or ${tools.map((t) => t.name.replace(/^clarifydoc_/, "")).join(", ")}.`);
+  }
+  return tools.filter((t) => names.includes(t.name));
 }
 
 /**
@@ -151,6 +182,9 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
   ];
   // Composed from the tools above, so it says nothing they would not.
   tools.push(explainTool(ctx, tools));
+  const listed = selectTools(tools, config.tools);
+  // Read when asked, after the server below exists.
+  let server: McpServer | undefined;
 
   const resources: McpResource[] = [
     {
@@ -159,6 +193,13 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
       description: "What ClarifyDoc has mapped for this project (same content as clarifydoc_status).",
       mimeType: "text/markdown",
       read: async () => statusReport(await store.load(), store),
+    },
+    {
+      uri: "clarifydoc://session/usage",
+      name: "ClarifyDoc session usage",
+      description: "The tool calls of this session in order: answer sizes, times, failures and misses.",
+      mimeType: "text/markdown",
+      read: async () => renderUsage([...(server?.usage() ?? [])]),
     },
   ];
 
@@ -190,11 +231,14 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
     },
   ];
 
-  const server = new McpServer({
+  server = new McpServer({
     name: MCP_SERVER_NAME,
     version: config.version ?? TOOL_VERSION,
-    instructions: INSTRUCTIONS,
-    tools,
+    instructions:
+      listed.length < tools.length
+        ? `${INSTRUCTIONS}\n\nThis server was started with a narrower tool set: ${listed.map((t) => t.name).join(", ")}. The other tools named above are not available in this session.`
+        : INSTRUCTIONS,
+    tools: listed,
     resources,
     resourceTemplates,
     prompts: WORKFLOW_PROMPTS,
@@ -205,7 +249,7 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
     revision: async () => ((await store.exists()) ? revisionOf((await store.load()).summary.analyzedAt) : null),
   });
 
-  return { server, store, tools };
+  return { server, store, tools: listed };
 }
 
 /**
@@ -260,7 +304,18 @@ export async function startMcpServer(config: McpServerConfig = {}): Promise<void
 
   await serveStdio(server, {
     writeLine: (line) => void stdoutWrite(line),
-    onClose: () => log("client disconnected"),
+    onClose: () => {
+      const session = usageLine([...server.usage()]);
+      log(`client disconnected — session: ${session}`);
+      const file = process.env.CLARIFYDOC_MCP_LOG;
+      if (file) {
+        try {
+          appendFileSync(file, JSON.stringify({ at: new Date().toISOString(), session }) + "\n");
+        } catch {
+          // Logging must never fail the shutdown.
+        }
+      }
+    },
   });
 }
 
