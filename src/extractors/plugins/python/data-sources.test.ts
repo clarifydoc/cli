@@ -17,13 +17,13 @@ describe("Python outbound HTTP calls", () => {
       ["import requests, httpx", 'requests.get("https://api.example.com/v1/items")', 'httpx.post(f"{BASE}/api/x")'].join("\n"),
     );
     expect(calls).toEqual([
-      { name: "requests.get", target: "https://api.example.com/v1/items", line: 2 },
-      { name: "httpx.post", target: "{BASE}/api/x", line: 3 },
+      { name: "get", target: "https://api.example.com/v1/items", line: 2 },
+      { name: "post", target: "{BASE}/api/x", line: 3 },
     ]);
   });
 
   it("keeps a call whose URL is a variable, without inventing a URL from its name", async () => {
-    expect(await apiCallsOf("requests.get(url)")).toEqual([{ name: "requests.get", target: null, line: 1 }]);
+    expect(await apiCallsOf("requests.get(url)")).toEqual([{ name: "get", target: null, line: 1 }]);
   });
 
   it("reads requests.request(METHOD, url) as that method", async () => {
@@ -51,7 +51,7 @@ describe("Python outbound HTTP calls", () => {
 
   it("does not emit a second call for a chain hanging off the response", async () => {
     const calls = await apiCallsOf('requests.get("/api/x").json().get("page")');
-    expect(calls).toEqual([{ name: "requests.get", target: "/api/x", line: 1 }]);
+    expect(calls).toEqual([{ name: "get", target: "/api/x", line: 1 }]);
   });
 });
 

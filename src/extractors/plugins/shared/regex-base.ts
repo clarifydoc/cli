@@ -1,4 +1,4 @@
-import type { FunctionInfo, ClassInfo, CallInfo, RouteFact, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo, DiBinding, HttpClientRegistration } from "../../../types/analysis.js";
+import type { FunctionInfo, ClassInfo, CallInfo, RouteFact, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, RouteResponseInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo, DiBinding, HttpClientRegistration } from "../../../types/analysis.js";
 
 import { holdNoiseCall } from "../../shared/call-graph.js";
 
@@ -154,6 +154,13 @@ export interface RegexLangSpec {
    * project-level join copies it onto the route naming this handler.
    */
   extractRequestAccess?: (bodyLines: string[], fn: { name: string; params: ParamInfo[] }) => RouteParamInfo[];
+  /**
+   * What a handler body answers (`c.JSON(http.StatusCreated, gin.H{"id": id})`,
+   * `render json: user, status: :created`): status and the body's type or
+   * literal keys. Lands on `FunctionInfo.responses`; the project-level join
+   * copies it onto the route naming this handler, as for request access.
+   */
+  extractResponses?: (bodyLines: string[], fn: { name: string; params: ParamInfo[] }) => RouteResponseInfo[];
   /** Extract routes. `filePath` is the project-relative path (needed by
    *  convention-routed/static formats — e.g. an HTML page's URL is its path).
    *  `fns` are the file's top-level functions, already extracted. `facts`
@@ -453,6 +460,10 @@ function attachLocalTypes(fn: FunctionInfo, lines: string[], declLine: number, i
 }
 
 function attachRequestAccess(fn: FunctionInfo, lines: string[], from: number, to: number, spec: RegexLangSpec): void {
+  if (spec.extractResponses) {
+    const responses = spec.extractResponses(lines.slice(from, Math.min(to, lines.length)), fn);
+    if (responses.length > 0) fn.responses = responses;
+  }
   if (!spec.extractRequestAccess) return;
   const access = spec.extractRequestAccess(lines.slice(from, Math.min(to, lines.length)), fn);
   if (access.length > 0) fn.requestAccess = access;

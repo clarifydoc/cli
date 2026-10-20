@@ -24,6 +24,7 @@ import {
   separateSingletonMethods,
   typeBareConstructions,
 } from "./di.js";
+import { extractRubyResponses } from "./responses.js";
 
 /** Rails RESTful action → HTTP method + URL shape (plural `resources`). */
 const RAILS_ACTION_MAP: Record<string, { method: string; suffix: string }> = {
@@ -631,6 +632,7 @@ export const rubySpec: RegexLangSpec = {
    * convention routes below and the project-level handler join both consume it.
    */
   extractRequestAccess: (bodyLines) => extractRubyRequestAccess(bodyLines),
+  extractResponses: (bodyLines) => extractRubyResponses(bodyLines),
 
   // `def initialize(repo: UserRepo.new)` — a constructing default types the
   // parameter (see di.ts for YARD / Sorbet declarations).

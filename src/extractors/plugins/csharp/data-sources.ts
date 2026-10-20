@@ -3,6 +3,7 @@ import type { DataSourceInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
 import { csharpCallClient } from "./http-clients.js";
+import { csharpResponseReads } from "./response-reads.js";
 
 /**
  * C# data-source extractor — surfaces Entity Framework, Dapper, NHibernate,
@@ -531,12 +532,14 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         // Which registered client the call goes through — its base address
         // says which service the relative URI is relative to.
         const client = csharpCallClient(node, root);
+        const reads = /^(?:Get|Send)/.test(method) ? csharpResponseReads(node) : undefined;
         sources.push(this.ds({
           kind: "api-call",
           name: method,
           target: this.resolveHttpUri(node),
           line: node.startPosition.row + 1,
           ...(client ? { baseRef: client } : {}),
+          ...(reads ? { responseReads: reads } : {}),
         }));
       }
       return;

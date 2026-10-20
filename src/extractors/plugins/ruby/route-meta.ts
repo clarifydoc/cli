@@ -1,6 +1,7 @@
 import type { ClassInfo, FunctionInfo, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../types/analysis.js";
 import type { GuardAttr } from "../../shared/route-metadata.js";
 import { applyRouteMeta, pathParamNames } from "../../shared/route-metadata.js";
+import { extractRubyResponses } from "./responses.js";
 
 /**
  * The attribute layer of Ruby routes — what a Rails/Sinatra handler reads from
@@ -394,6 +395,9 @@ export function extractSinatraRoutes(lines: string[], callsOf?: (start: number, 
       middleware: [],
       line: i + 1,
     };
+    // The block is the handler: what it answers is the route's answer.
+    const responses = extractRubyResponses(body);
+    if (responses.length > 0) route.responses = responses;
     const applicable = inherited.filter((g) => !g.prefix || path.startsWith(g.prefix)).map((g) => g.guard);
     applyRouteMeta(route, {
       inheritedGuards: applicable,

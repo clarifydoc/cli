@@ -9,6 +9,7 @@ import { extractGoClasses } from "./classes.js";
 import { extractGoDiBindings } from "./di-bindings.js";
 import { goResultTextAt, goResultTypes } from "./syntax.js";
 import { extractGoImports } from "./imports.js";
+import { extractGoResponses } from "./responses.js";
 
 /** Bare the Go type identifier — `*[]map[string]User` → `User`. */
 function stripGoTypeModifiers(raw: string): string {
@@ -92,4 +93,5 @@ export const goSpec: RegexLangSpec = {
   extractRoutes: (lines, _classes, _file, _fns, facts) => [...extractGoRoutes(lines, facts), ...extractHumaRoutes(lines, facts)],
   extractDataSources: (lines) => extractGoDataSources(lines),
   extractRequestAccess: extractGoRequestAccess,
+  extractResponses: extractGoResponses,
 };

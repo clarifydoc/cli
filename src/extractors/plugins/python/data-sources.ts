@@ -3,6 +3,7 @@ import { dbAccessFor, dbVerbTable, sqlVerbAccess } from "../shared/db-access.js"
 import type { DataSourceInfo, JsonSchemaNode, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { tableFrom } from "../shared/sql-string-sources.js";
+import { pythonResponseReads } from "./response-reads.js";
 
 export class PythonDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["python"];
@@ -122,12 +123,14 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
         const http = httpCall(fn!, node);
         if (http) {
           const body = jsonBody(node);
+          const reads = pythonResponseReads(node);
           sources.push(this.ds({
             kind: "api-call",
             name: http.name,
             target: http.target,
             line: node.startPosition.row + 1,
             ...(body ? { requestBody: body } : {}),
+            ...(reads ? { responseReads: reads } : {}),
           }));
         }
 
@@ -334,7 +337,8 @@ function httpCall(fn: Node, call: Node): { name: string; target: string | null }
   const recv = obj.type === "identifier" ? obj.text : obj.type === "attribute" ? obj.childForFieldName("attribute")?.text ?? "" : "";
 
   if (obj.type === "identifier" && PY_HTTP_MODULES.has(recv)) {
-    if (PY_HTTP_VERBS.has(leaf)) return { name: `${recv}.${leaf}`, target: args[0] ? pyStringValue(args[0], call) : null };
+    // Named by its verb, as a client receiver's call is: the route linker reads the method off the name.
+    if (PY_HTTP_VERBS.has(leaf)) return { name: leaf, target: args[0] ? pyStringValue(args[0], call) : null };
     if (leaf === "request") {
       const method = pyStringLiteral(args[0]);
       return method && PY_HTTP_VERBS.has(method.toLowerCase())

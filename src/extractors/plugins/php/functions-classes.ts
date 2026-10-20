@@ -5,6 +5,7 @@ import { callChainText, extractCalls } from "../../shared/call-graph.js";
 import { receiverTypeName } from "../../shared/type-parser.js";
 import { arrayLiteralAt, extractPhpRequestAccess, requestReceivers, ruleEntries, ruleType } from "./request-access.js";
 import { docblockAbove, parseDocblock, phpLocatorType, useAliases, type DocTypes } from "./di.js";
+import { extractPhpResponses } from "./responses.js";
 
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
 
@@ -36,11 +37,14 @@ export class PhpExtractor extends FunctionClassExtractor {
   private fileLoadsDeps = false;
   /** Set per file: any `request` token at all? Gates the per-method body scan for `requestAccess`. */
   private fileUsesRequest = false;
+  /** Set per file: any JSON answer or API resource at all? Gates the per-method `responses` scan. */
+  private fileMayRespond = false;
   /** Set per file: `use X as Y` aliases, so `Y::class` in a container lookup names X. */
   private fileAliases: ReadonlyMap<string, string> = new Map();
 
   override extractFunctions(tree: Tree, sourceText: string): FunctionInfo[] {
     this.fileUsesRequest = /request/i.test(sourceText);
+    this.fileMayRespond = /->\s*json\s*\(|JsonResponse|Resource\b|noContent/.test(sourceText);
     this.fileAliases = / as /.test(sourceText) ? useAliases(tree) : new Map();
     return super.extractFunctions(tree, sourceText);
   }
@@ -49,6 +53,7 @@ export class PhpExtractor extends FunctionClassExtractor {
     // `$this->load->model(...)` / `->library(...)` always contains `->load->`.
     this.fileLoadsDeps = /->\s*load\s*->/.test(sourceText);
     this.fileUsesRequest = /request/i.test(sourceText);
+    this.fileMayRespond = /->\s*json\s*\(|JsonResponse|Resource\b|noContent/.test(sourceText);
     this.fileAliases = / as /.test(sourceText) ? useAliases(tree) : new Map();
     return super.extractClasses(tree, sourceText);
   }
@@ -101,6 +106,10 @@ export class PhpExtractor extends FunctionClassExtractor {
       endLine: node.endPosition.row + 1,
     };
     this.attachRequestAccess(fn, body);
+    if (body && this.fileMayRespond) {
+      const responses = extractPhpResponses(body.text);
+      if (responses.length > 0) fn.responses = responses;
+    }
     return fn;
   }
 
@@ -208,6 +217,10 @@ export class PhpExtractor extends FunctionClassExtractor {
       endLine: node.endPosition.row + 1,
     };
     this.attachRequestAccess(fn, body);
+    if (body && this.fileMayRespond) {
+      const responses = extractPhpResponses(body.text);
+      if (responses.length > 0) fn.responses = responses;
+    }
     return fn;
   }
 
