@@ -51,6 +51,22 @@ export const Lazy = useMemo(() => compute(), []);`;
   });
 });
 
+describe("Redux Toolkit thunks", () => {
+  it("names a createAsyncThunk binding after its payload creator, so dispatching it reaches its calls", async () => {
+    const src = `import { createAsyncThunk } from "@reduxjs/toolkit";
+export const fetchPosts = createAsyncThunk("posts/fetch", async () => {
+  const res = await axios.get("/api/posts");
+  return res.data;
+});
+export const addPost = createAsyncThunk("posts/add", async (title, { rejectWithValue }) => save(title), { condition: () => true });`;
+    const tree = await parse(src, "postsSlice.ts");
+    const fns = new JavaScriptExtractor().extractFunctions(tree, src);
+    expect(fns.find((f) => f.name === "fetchPosts")!.calls.map((c) => c.name)).toEqual(["axios.get"]);
+    // The payload creator is the last FUNCTION argument, not the options object after it.
+    expect(fns.find((f) => f.name === "addPost")!.calls.map((c) => c.name)).toEqual(["save"]);
+  });
+});
+
 describe("nested named function extraction (React handler idiom)", () => {
   it("extracts a const-arrow handler defined INSIDE a component", async () => {
     const src = `export function Login() {
