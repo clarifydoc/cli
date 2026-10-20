@@ -98,7 +98,7 @@ import { collectGitHistory, computeHotspots, type GitHistoryResult } from "./git
 import { analyzeUnusedCode, analyzeReachability } from "./dead-code.js";
 import { computeHealthScore } from "./health-scorer.js";
 import { generateSuggestions } from "./suggestions-engine.js";
-import { detectCommunities } from "./community-detector.js";
+import { detectCommunities, groupCommunities } from "./community-detector.js";
 import { findGodNodes, findSurprisingConnections, suggestQuestions } from "./topology-analyzer.js";
 import { dedupSymbolLinks, dropNameCollisionReferences } from "./symbol-dedup.js";
 import { synthesizeApiRouteSymbolLinks, synthesizeQueueSymbolLinks } from "./api-route-symbol-links.js";
@@ -1990,7 +1990,19 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     skippedSensitive: skippedSensitive.length > 0 ? skippedSensitive : undefined,
     skippedSymlinks: skippedSymlinks.length > 0 ? skippedSymlinks : undefined,
     communities: Object.keys(communities).length > 0 ? communities : undefined,
-    ...(Object.keys(communities).length > 0 ? { communityNames: nameCommunities(communities, { fileProjects, projects: subProjects }) } : {}),
+    ...(Object.keys(communities).length > 0
+      ? {
+          communityNames: nameCommunities(communities, {
+            fileProjects,
+            projects: subProjects,
+            routes: allRoutes,
+            access: symbolDataAccess,
+            groups: groupCommunities(linkGraph, communities),
+            links: linkGraph,
+            anchors: new Set([...allRoutes.map((r) => r.filePath ?? ""), ...allScreens.map((x) => x.filePath)].filter(Boolean)),
+          }),
+        }
+      : {}),
     cohesion: Object.keys(cohesion).length > 0 ? cohesion : undefined,
     godNodes: godNodes.length > 0 ? godNodes : undefined,
     surprisingConnections: surprisingConnections.length > 0 ? surprisingConnections : undefined,

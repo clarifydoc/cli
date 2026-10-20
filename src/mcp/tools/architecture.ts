@@ -135,14 +135,19 @@ export function architectureTool(ctx: ToolContext): McpTool {
           const isolates = rows.length - clusters.length;
           const groupOf = (id: string) => {
             const n = named[id];
+            // The cluster of clusters it belongs to, else the folder subsystem when the name does not already say it.
+            if (n?.group) return ` (in ${n.system ? `${n.system} / ` : ""}${n.group})`;
             return n && !n.name.startsWith(n.subsystem) ? ` (in ${n.system ? `${n.system} / ` : ""}${n.subsystem})` : "";
           };
+          const basis = (id: string) => (named[id]?.nameBasis === "routes" ? " · named by its routes" : named[id]?.nameBasis === "entity" ? " · named by its data" : "");
+          const orphans = clusters.filter(([id]) => named[id]?.orphan).length;
           return {
             text: joinLines([
               `# Communities (${rows.length - isolates} of two or more files)`,
-              "Clusters of files more connected to each other than to the rest (Louvain over the import graph), named by the folder most of their files share.",
-              ...bulletList(clusters, limit, ([id, fs]) => `${label(id)}${groupOf(id)}: ${plural(fs.length, "file")}${cohesion[id] !== undefined ? `, cohesion ${cohesion[id]!.toFixed(2)}` : ""} — ${fs.slice(0, 6).join(", ")}${fs.length > 6 ? ` … +${fs.length - 6}` : ""}`),
+              "Clusters of files more connected to each other than to the rest (Louvain over the import graph), named by the folder most of their files share — or, when the folders say little, the routes they serve or the data they reach.",
+              ...bulletList(clusters, limit, ([id, fs]) => `${label(id)}${groupOf(id)}${basis(id)}${named[id]?.orphan ? " · orphan" : ""}: ${plural(fs.length, "file")}${cohesion[id] !== undefined ? `, cohesion ${cohesion[id]!.toFixed(2)}` : ""} — ${fs.slice(0, 6).join(", ")}${fs.length > 6 ? ` … +${fs.length - 6}` : ""}`),
               isolates ? `${plural(isolates, "file")} with no import ties are communities of one, not listed.` : "",
+              orphans ? `${plural(orphans, "community", "communities")} marked orphan: no link to or from another community, and no route or screen — check whether anything still uses them.` : "",
             ]),
           };
         }

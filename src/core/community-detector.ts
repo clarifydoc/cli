@@ -102,6 +102,47 @@ export function detectCommunities(linkGraph: LinkInfo[], files: string[]): Commu
   return { communities, cohesion };
 }
 
+/**
+ * The level above the communities: each community contracted to one node
+ * (the weights between two communities summed over their files' links) and
+ * Louvain run again on that graph — Louvain's own second phase, so a
+ * subsystem is a cluster of clusters rather than a folder. Returns community
+ * id → group id, groups numbered by how many files they hold (0 = largest).
+ * Empty with three or fewer communities, where a level above says nothing.
+ */
+export function groupCommunities(linkGraph: readonly LinkInfo[], communities: Readonly<Record<string, readonly string[]>>): Record<string, string> {
+  const ids = Object.keys(communities);
+  if (ids.length <= 3) return {};
+  const of = new Map<string, string>();
+  for (const id of ids) for (const f of communities[id]!) of.set(f, id);
+  const edges = new Map<string, Map<string, number>>();
+  const degree = new Map<string, number>();
+  for (const id of ids) {
+    edges.set(id, new Map());
+    degree.set(id, 0);
+  }
+  let m2 = 0;
+  for (const link of linkGraph) {
+    const a = of.get(link.source);
+    const b = of.get(link.target);
+    if (!a || !b || a === b) continue;
+    const w = proximityWeight(link.proximity);
+    addUndirectedEdge(edges, a, b, w);
+    degree.set(a, degree.get(a)! + w);
+    degree.set(b, degree.get(b)! + w);
+    m2 += 2 * w;
+  }
+  const connected = ids.filter((id) => degree.get(id)! > 0);
+  const buckets = connected.length ? bucketByCommunity(runLouvain(connected, { edges, degree, m2 })) : [];
+  // A community linked to no other is a group of its own.
+  for (const id of ids) if (degree.get(id) === 0) buckets.push([id]);
+  const size = (g: string[]) => g.reduce((n, id) => n + communities[id]!.length, 0);
+  buckets.sort((a, b) => size(b) - size(a) || (Math.min(...a.map(Number)) - Math.min(...b.map(Number))));
+  const out: Record<string, string> = {};
+  buckets.forEach((g, i) => { for (const id of g) out[id] = String(i); });
+  return out;
+}
+
 /** Symmetric weighted adjacency map. Parallel + reversed edges are summed. */
 function buildUndirectedAdj(linkGraph: LinkInfo[], files: string[]): AdjacencyMap {
   const edges = new Map<string, Map<string, number>>();
