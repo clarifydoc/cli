@@ -673,6 +673,25 @@ const STANDING_NOTE: Record<NonNullable<SymbolCaller["standing"]>, string> = {
 };
 
 /** Each language's command for these tests, from its plugin (`LanguagePluginManifest.testCommand`). */
+/**
+ * The test functions that reach `targets` through the call graph (up to six
+ * calls away), nearest first, and the commands that run just them — what
+ * `clarifydoc_explain` puts in its pack, by the same rules the impact uses.
+ */
+export function testsReaching(
+  summary: ProjectAnalysis,
+  targets: ReadonlyArray<{ file: string; symbol: string }>,
+): { tests: Array<{ file: string; symbol: string; line: number; depth: number }>; commands: Array<{ language: string; command: string }> } {
+  const changed = targets.map((t) => ({ file: t.file, symbol: t.symbol, line: 0, endLine: 0 }));
+  const tests = reverseSymbolReach(summary.symbolLinks ?? [], changed, 6)
+    .filter((c) => !c.symbol.startsWith("route:") && (summary.fileLayerMap?.[c.file] === "test" || isTestFile(c.file)))
+    .map((c) => ({ file: c.file, symbol: c.symbol, line: c.line, depth: c.depth }))
+    .sort((a, b) => a.depth - b.depth || byOrdinal(a.file, b.file) || a.line - b.line);
+  const byFile = new Map<string, Set<string>>();
+  for (const t of tests) (byFile.get(t.file) ?? byFile.set(t.file, new Set()).get(t.file)!).add(t.symbol);
+  return { tests, commands: testCommandsFor(summary, [...byFile].map(([file, names]) => ({ file, names: [...names] }))) };
+}
+
 function testCommandsFor(summary: ProjectAnalysis, tests: readonly TestTarget[]): Array<{ language: string; command: string }> {
   if (!tests.length) return [];
   const ctx = {

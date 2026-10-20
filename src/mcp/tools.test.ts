@@ -651,6 +651,38 @@ describe("clarifydoc_explain — backend fixture", () => {
   });
 });
 
+describe("clarifydoc_explain — the tests in the pack", () => {
+  it("names the tests that reach a function, with the command that runs them, and says when none does", async () => {
+    const { server } = serverFor("sample-powershell-app");
+    const r = await call(server, "clarifydoc_explain", { subject: "Get-AppUser", maxTokens: 8000 });
+    expect(r.text).toMatch(/## Tests\n\n- <setup> \(tests\/Users\.Tests\.ps1:\d+\)/);
+    // A language whose plugin knows its test runner says how to run just those tests.
+    const { server: ts } = serverFor("sample-dead-code");
+    const whisper = await call(ts, "clarifydoc_explain", { subject: "whisper", maxTokens: 8000 });
+    expect(whisper.text).toMatch(/## Tests\n\n- <setup> \(src\/lib\/strings\.test\.ts:\d+\)/);
+    expect(whisper.text).toMatch(/Run: `[^`]*strings\.test\.ts[^`]*`/);
+    const { server: backend } = serverFor("sample-backend");
+    const none = await call(backend, "clarifydoc_explain", { subject: "getUserById", maxTokens: 8000 });
+    expect(none.text).toContain("## Tests\n\nNone of the analysed tests reaches it through the call graph.");
+  });
+});
+
+describe("clarifydoc_explain — a community", () => {
+  it("packs what a community holds, what it depends on and its files, found by its name", async () => {
+    const { server, store } = serverFor("sample-microservices");
+    const { summary } = await store.load();
+    const [id, files] = Object.entries(summary.communities ?? {}).sort((a, b) => b[1].length - a[1].length)[0]!;
+    const name = summary.communityNames![id]!.name;
+    const r = await call(server, "clarifydoc_explain", { subject: name, kind: "community", maxTokens: 8000 });
+    expect(r.text.split("\n")[0]).toBe(`# ${name} — ${files.length} files${summary.communityNames![id]!.subsystem ? ` in ${summary.communityNames![id]!.subsystem}` : ""}`);
+    expect(r.text).toMatch(/## What it holds\n\n/);
+    expect(r.text).toMatch(/## What it depends on\n\n(Imports from|Imports from no other)/);
+    expect(r.text).toContain(`- ${[...files].sort()[0]}`);
+    const missing = await call(server, "clarifydoc_explain", { subject: "No Such Community", kind: "community" });
+    expect(missing.text).toMatch(/^# No community is named "No Such Community"/);
+  });
+});
+
 describe("clarifydoc_explain — a budget it overflows", () => {
   const { server } = serverFor("sample-fullstack-cqrs");
 
