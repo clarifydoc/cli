@@ -26,6 +26,46 @@ describe("parseSimpleYaml", () => {
     expect(api.environment.DQUOTED).toBe("double");
   });
 
+  it("reads block scalars as text: literal lines kept, folded lines joined", () => {
+    const doc = parseSimpleYaml([
+      "jobs:",
+      "  deploy:",
+      "    steps:",
+      "      - name: Build",
+      "        run: |",
+      "          docker build -t api ./api",
+      "          docker push api",
+      "      - run: >-",
+      "          kubectl apply",
+      "          -f k8s/",
+      "    env:",
+      "      STAGE: prod",
+    ].join("\n"));
+    const deploy = (doc.jobs as any).deploy;
+    expect(deploy.steps).toEqual([{ name: "Build", run: "docker build -t api ./api\ndocker push api" }, { run: "kubectl apply -f k8s/" }]);
+    expect(deploy.env).toEqual({ STAGE: "prod" });
+  });
+
+  it("reads a sequence written at its key's own indentation", () => {
+    const doc = parseSimpleYaml([
+      "jobs:",
+      "  test:",
+      "    steps:",
+      "    - uses: actions/checkout@v4",
+      "    - run: npm test",
+      "    env:",
+      "      CI: 'true'",
+      "matrix:",
+      "- name:",
+      "  os: linux",
+      "- os: mac",
+      "  arch:",
+      "  - arm64",
+    ].join("\n"));
+    expect((doc.jobs as any).test).toEqual({ steps: [{ uses: "actions/checkout@v4" }, { run: "npm test" }], env: { CI: "true" } });
+    expect(doc.matrix).toEqual([{ name: "", os: "linux" }, { os: "mac", arch: ["arm64"] }]);
+  });
+
   it("keeps values containing colons intact (URLs, rancher labels)", () => {
     const doc = parseSimpleYaml([
       "services:",

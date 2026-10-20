@@ -2844,6 +2844,28 @@ export interface ProjectAnalysis {
    * set them (`core/env-vars.ts`) — names only, never values.
    */
   envVars?: Array<{ name: string; readBy: Array<{ file: string; line: number; project?: string }>; setBy: Array<{ service: string; file: string }> }>;
+  /** The deploy steps of the repository's CI pipelines (`core/ci-pipelines.ts`): what ships, from where, on what trigger. */
+  ciDeploys?: CiDeploy[];
+}
+
+/** One deploy step of a CI pipeline. */
+export interface CiDeploy {
+  /** The pipeline file (repo-relative). */
+  file: string;
+  provider: "github" | "gitlab" | "azure" | "circleci" | "bitbucket";
+  /** The workflow's `name:`, when it states one. */
+  workflow?: string;
+  job: string;
+  line: number;
+  /** What runs it: `push main`, `tag v*`, `pull_request`, `manual`, `schedule`, a GitLab rule. */
+  triggers: string[];
+  kind: "docker" | "kubernetes" | "helm" | "terraform" | "serverless" | "cdk" | "sam" | "package" | "pages" | "cloud";
+  /** What it ships, as a repo-relative path: build context, manifests, chart, working directory. */
+  path?: string;
+  /** The sub-project that path is in. */
+  project?: string;
+  /** The step as written (the command line, or the action). */
+  via: string;
 }
 
 // ─── Deployment topology (compose files) ───────────────────────────────────

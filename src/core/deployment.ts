@@ -139,6 +139,17 @@ export function parseSimpleYaml(text: string): YamlMap {
 
   let pos = 0;
 
+  /** A block scalar's text (`run: |`, `command: >`): the lines indented deeper than its key. */
+  function blockScalar(style: string, keyIndent: number): string {
+    const parts: string[] = [];
+    while (pos < lines.length && lines[pos].indent > keyIndent) parts.push(lines[pos++].text);
+    return parts.join(style.startsWith(">") ? " " : "\n");
+  }
+  const BLOCK_SCALAR = /^[|>][+-]?\d*$/;
+  /** A sequence may sit at its key's own indentation (`steps:` then `- uses: …` beneath, not indented). */
+  const sameIndentSequence = (keyIndent: number): boolean =>
+    pos < lines.length && lines[pos].indent === keyIndent && (lines[pos].text === "-" || lines[pos].text.startsWith("- "));
+
   function parseBlock(minIndent: number): YamlValue {
     if (pos >= lines.length) return "";
     const first = lines[pos];
@@ -155,17 +166,22 @@ export function parseSimpleYaml(text: string): YamlMap {
           // `- key: value` item — a map whose first entry is inline; deeper
           // lines under the dash extend it.
           const map: YamlMap = {};
-          map[kv.key] = kv.value === "" && pos < lines.length && lines[pos].indent > blockIndent
-            ? parseBlock(lines[pos].indent)
-            : (parseInlineArray(kv.value) ?? unquote(kv.value));
+          map[kv.key] = BLOCK_SCALAR.test(kv.value)
+            ? blockScalar(kv.value, blockIndent)
+            // Nested under the item's first key: deeper than the key's column, or a sequence at it.
+            : kv.value === "" && pos < lines.length && (lines[pos].indent > blockIndent + 2 || sameIndentSequence(blockIndent + 2))
+              ? parseBlock(lines[pos].indent)
+              : (parseInlineArray(kv.value) ?? unquote(kv.value));
           while (pos < lines.length && lines[pos].indent > blockIndent) {
             const sub = splitKeyValue(lines[pos].text);
             if (!sub) { pos++; continue; }
             const subIndent = lines[pos].indent;
             pos++;
-            map[sub.key] = sub.value === "" && pos < lines.length && lines[pos].indent > subIndent
-              ? parseBlock(lines[pos].indent)
-              : (parseInlineArray(sub.value) ?? unquote(sub.value));
+            map[sub.key] = BLOCK_SCALAR.test(sub.value)
+              ? blockScalar(sub.value, subIndent)
+              : sub.value === "" && pos < lines.length && (lines[pos].indent > subIndent || sameIndentSequence(subIndent))
+                ? parseBlock(lines[pos].indent)
+                : (parseInlineArray(sub.value) ?? unquote(sub.value));
           }
           arr.push(map);
         } else {
@@ -180,9 +196,11 @@ export function parseSimpleYaml(text: string): YamlMap {
       const kv = splitKeyValue(lines[pos].text);
       if (!kv) { pos++; continue; }
       pos++;
-      if (kv.value !== "") {
+      if (BLOCK_SCALAR.test(kv.value)) {
+        map[kv.key] = blockScalar(kv.value, blockIndent);
+      } else if (kv.value !== "") {
         map[kv.key] = parseInlineArray(kv.value) ?? unquote(kv.value);
-      } else if (pos < lines.length && lines[pos].indent > blockIndent) {
+      } else if (pos < lines.length && (lines[pos].indent > blockIndent || sameIndentSequence(blockIndent))) {
         map[kv.key] = parseBlock(lines[pos].indent);
       } else {
         map[kv.key] = "";
@@ -502,7 +520,7 @@ export function matchServiceToProject(
  * The sub-project a build context builds: the deepest project whose root
  * holds the context, else the one project inside the context.
  */
-function projectOfContext(context: string, subProjects: readonly SubProject[]): string | undefined {
+export function projectOfContext(context: string, subProjects: readonly SubProject[]): string | undefined {
   const inside = (dir: string, root: string) => root === "" || dir === root || dir.startsWith(root + "/");
   const holding = subProjects.filter((p) => inside(context, p.root)).sort((a, b) => b.root.length - a.root.length);
   if (holding[0] && holding[0].root !== "") return holding[0].id;

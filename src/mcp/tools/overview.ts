@@ -607,9 +607,17 @@ export function servicesTool(ctx: ToolContext): McpTool {
           ? ["", `${plural(envVars.length, "environment variable")} read${unset ? `, ${unset} set by no manifest` : ""} — name a \`project\` to list them.`]
           : [];
 
+      // What the CI pipelines ship, and when.
+      const ci = (summary.ciDeploys ?? []).filter((d) => !projectFilter || (!!d.project && isProject(d.project)));
+      const ciLines = ci.length > 0 && kind !== "bus"
+        ? (!!projectFilter || subProjects.length < 2)
+          ? ["", `## Deployed by CI (${ci.length})`, ...bulletList(ci, limit, (d) => `${d.kind}${d.path ? ` ${d.path}` : ""} — job \`${d.job}\` in ${d.file}:${d.line}${d.triggers.length ? ` on ${d.triggers.join("; ")}` : ""} · ${d.via}`)]
+          : ["", `${plural(ci.length, "CI deploy step")} — name a \`project\` to list what ships it.`]
+        : [];
+
       if (subProjects.length < 2 && all.length === 0) {
-        if (externalLines.length || envLines.length) {
-          return { text: joinLines([`# One project — nothing crosses between projects`, ...externalLines, ...envLines]) };
+        if (externalLines.length || envLines.length || ciLines.length) {
+          return { text: joinLines([`# One project — nothing crosses between projects`, ...externalLines, ...envLines, ...ciLines]) };
         }
         return {
           text: noResults({
@@ -623,8 +631,8 @@ export function servicesTool(ctx: ToolContext): McpTool {
       let deps = all;
       if (kind) deps = deps.filter((d) => d.kind === kind);
       if (projectFilter) deps = deps.filter((d) => isProject(d.from) || isProject(d.to));
-      if (deps.length === 0 && (externalLines.length || envLines.length)) {
-        return { text: joinLines([`# No project dependencies${projectFilter ? ` for "${projectFilter}"` : ""}`, ...externalLines, ...envLines]) };
+      if (deps.length === 0 && (externalLines.length || envLines.length || ciLines.length)) {
+        return { text: joinLines([`# No project dependencies${projectFilter ? ` for "${projectFilter}"` : ""}`, ...externalLines, ...envLines, ...ciLines]) };
       }
       if (deps.length === 0) {
         const drop = filterToDrop(all, [
@@ -675,6 +683,7 @@ export function servicesTool(ctx: ToolContext): McpTool {
           ...bulletList(ordered, limit, render),
           ...externalLines,
           ...envLines,
+          ...ciLines,
         ]),
       };
     },

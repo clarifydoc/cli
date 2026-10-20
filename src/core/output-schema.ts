@@ -134,6 +134,7 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   externalPackages: "optional",
   deployment: "optional",
   envVars: "optional",
+  ciDeploys: "optional",
 };
 
 /**

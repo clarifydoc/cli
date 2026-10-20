@@ -79,6 +79,7 @@ import { buildTestCoverage, COVERAGE_CANDIDATES, parseCoverage } from "./test-co
 import { isTestFile } from "./test-file-detector.js";
 import { checkContracts } from "./contract-check.js";
 import { joinEnvVars } from "./env-vars.js";
+import { detectCiDeploys } from "./ci-pipelines.js";
 import { loadCodeOwners } from "./code-owners.js";
 import { isGeneratedFile } from "./generated-file-detector.js";
 import { TOOL_VERSION } from "./version.js";
@@ -608,6 +609,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // deploy, their infrastructure, and env-evidenced service→service edges.
   // Feeds the report's Context/Deployment (C1/C2) architecture levels.
   const deployment = await detectDeployment(projectRoot, { subProjects, fileProjects });
+  // What the repository's CI pipelines deploy, and when.
+  const ciDeploys = await detectCiDeploys(projectRoot, subProjects).catch(() => []);
   if (deployment) {
     progress.detail(
       `Deployment: ${deployment.services.length} compose service${deployment.services.length === 1 ? "" : "s"}, ` +
@@ -1815,6 +1818,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     ...(historySecrets ? { historySecrets } : {}),
     deployment,
     ...(envVars.length > 0 ? { envVars } : {}),
+    ...(ciDeploys.length > 0 ? { ciDeploys } : {}),
   };
 
   progress.step("Writing project summary...");
