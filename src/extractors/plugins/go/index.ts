@@ -10,6 +10,7 @@ import { extractGoDiBindings } from "./di-bindings.js";
 import { goResultTextAt, goResultTypes } from "./syntax.js";
 import { extractGoImports } from "./imports.js";
 import { extractGoResponses } from "./responses.js";
+import { spawnImports } from "../shared/process-spawns.js";
 
 /** Bare the Go type identifier — `*[]map[string]User` → `User`. */
 function stripGoTypeModifiers(raw: string): string {
@@ -88,7 +89,8 @@ export const goSpec: RegexLangSpec = {
   extractDiBindings: (lines) => extractGoDiBindings(lines),
 
   importPatterns: [],
-  extractImports: extractGoImports,
+  // Its imports, and scripts it starts as processes (`exec.Command("./scripts/run.sh")`): run, not loaded.
+  extractImports: (lines) => [...extractGoImports(lines), ...spawnImports(lines.join("\n"), "go")],
 
   extractRoutes: (lines, _classes, _file, _fns, facts) => [...extractGoRoutes(lines, facts), ...extractHumaRoutes(lines, facts)],
   extractDataSources: (lines) => extractGoDataSources(lines),

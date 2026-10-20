@@ -1,6 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import { ImportExportExtractor } from "../../imports-exports/base.js";
 import type { ImportInfo, ExportInfo, Language } from "../../imports-exports/base.js";
+import { spawnImports } from "../shared/process-spawns.js";
 
 /**
  * Statements that hold other statements. An import is a statement, so it can
@@ -35,6 +36,13 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
    * under a TYPE_CHECKING guard are type-only (`isType`) — they exist for
    * annotations and never bind at runtime.
    */
+  override extractImports(tree: Tree, sourceText: string, opts: { embedded?: boolean } = {}): ImportInfo[] {
+    const imports = super.extractImports(tree, sourceText, opts);
+    // Scripts it starts as processes (`subprocess.run([sys.executable, "tools/gen.py"])`): run, not loaded.
+    imports.push(...spawnImports(sourceText, "python"));
+    return imports;
+  }
+
   protected collectImports(node: Node, imports: ImportInfo[], typeOnly = false): void {
     let typeCheckingBranch: number | undefined;
     if (node.type === "if_statement" && isTypeCheckingGuard(node)) {

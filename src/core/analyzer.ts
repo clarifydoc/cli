@@ -2579,6 +2579,26 @@ export function buildComponentGraph(
         refSet.add(target);
         if (!imp.isType) valueRefs.add(target);
       };
+      // 0. A script it RUNS, named relative to where it runs (`spawn("node", ["tools/import.js"])`,
+      // `subprocess.run(["bash", "tools/x.sh"])`): the path under the nearest directory, from the
+      // importer's own up to the root, that holds it — any language, the path names the file exactly.
+      if (imp.executes && !imp.source.startsWith(".") && !imp.source.startsWith("/")) {
+        let dir = a.filePath.includes("/") ? a.filePath.slice(0, a.filePath.lastIndexOf("/")) : "";
+        let hit: string | undefined;
+        for (;;) {
+          const cand = dir ? `${dir}/${imp.source}` : imp.source;
+          if (byPath.has(cand)) {
+            hit = cand;
+            break;
+          }
+          if (!dir) break;
+          dir = dir.includes("/") ? dir.slice(0, dir.lastIndexOf("/")) : "";
+        }
+        if (hit) {
+          if (hit !== a.filePath) addRef(hit);
+          continue;
+        }
+      }
       // 1. Resolve relative imports (JS/TS/Vue) via pre-built path map.
       // Strip a trailing source extension so extension-bearing specifiers — as
       // dynamic imports tend to be (`import("./main.vue")`) — match the

@@ -2,6 +2,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import { ImportExportExtractor } from "../../imports-exports/base.js";
 import type { ImportInfo, ExportInfo, Language } from "../../imports-exports/base.js";
 import { stripQuotes } from "../../shared/node-helpers.js";
+import { spawnImports } from "../shared/process-spawns.js";
 
 /** Initializer node types that make a `const` export a function. */
 const FUNCTION_VALUE_TYPES: ReadonlySet<string> = new Set([
@@ -132,6 +133,8 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
     this.mayHaveDynamicImport = sourceText.includes("import(");
     this.bindings = [];
     const imports = super.extractImports(tree, sourceText, opts);
+    // Scripts it starts as processes (`fork("./worker.js")`): run, not loaded.
+    imports.push(...spawnImports(sourceText, "js"));
     // A template beside the script (Vue, Svelte) uses imports the script never mentions.
     if (!opts.embedded && this.bindings.length) markUnusedBindings(sourceText, this.bindings);
     this.bindings = [];
