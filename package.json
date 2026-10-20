@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
+    "readme:facts": "README_FACTS_WRITE=1 vitest run src/readme-facts.test.ts",
     "pack:standalone": "node scripts/pack-standalone.mjs",
     "smoke:tarball": "node scripts/smoke-tarball.mjs"
   },

@@ -218,10 +218,12 @@ does the same in any CI with git and Node 24. It exits 2 when a gate tripped.
 
 ClarifyDoc has two extraction paths. **Tree-sitter** languages get full AST extraction; **regex** languages get a lighter convention-driven pass.
 
-| Path | Languages (extensions) |
+<!-- languages:start (generated: npm run readme:facts) -->
+| Path | Languages (extensions and files) |
 |------|------------------------|
-| **tree-sitter** | TypeScript (`.ts`, `.tsx`), Vue (`.vue`) and Svelte (`.svelte`) components, JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`), C# (`.cs`, `.csx`), Python (`.py`, `.pyw`), Java (`.java`), Kotlin (`.kt`, `.kts`), Pascal/Delphi (`.pas`, `.pp`, `.lpr`, `.dpr`, `.dpk`), DFM/LFM/FMX forms (`.dfm`, `.lfm`, `.fmx`), PHP (`.php`), Bash/sh (`.sh`, `.bash`), F# (`.fs`, `.fsi`, `.fsx`), R (`.r`), Julia (`.jl`), Zig (`.zig`), OCaml (`.ml`, `.mli`) |
-| **regex** | Go (`.go`), Rust (`.rs`), Ruby (`.rb`), Swift (`.swift`), Lua (`.lua`), Scala (`.scala`, `.sc`), Perl (`.pl`, `.pm`, `.t`, `.psgi`, `.cgi`), Visual Basic (VB.NET, VB6, VBScript) (`.vb`, `.bas`, `.cls`, `.frm`, `.vbs`), SQL (`.sql`, `.ddl`, `.dml`, `.psql`, `.mysql`, `.tsql`, `.plsql`), C (`.c`), C++ (and CUDA) (`.h`, `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hxx`, `.hh`, `.cu`, `.cuh`), Prisma (`.prisma`), Dart/Flutter (`.dart`), Elixir (`.ex`, `.exs`), Erlang (`.erl`, `.hrl`), Objective-C (`.m`, `.mm`), Haskell (`.hs`, `.lhs`), Clojure (`.clj`, `.cljs`, `.cljc`), Blazor (`.razor`), HTML (`.html`, `.htm`), ERB (`.erb`), HEEx/EEx (`.heex`, `.eex`, `.leex`), Handlebars (`.hbs`, `.handlebars`), Liquid (`.liquid`), Velocity (`.vm`), Razor (`.cshtml`), QML (`.qml`), Qt Designer (`.ui`), XAML (`.xaml`, `.axaml`), JSP (`.jsp`, `.jspx`, `.jspf`, `.tag`), Spring XML / MyBatis mappers / Android navigation graphs (`.xml`), JSight (`.jsight`), OpenAPI (`.yaml`, `.yml`, `.json`), GraphQL (`.graphql`, `.gql`, `.graphqls`), WSDL (`.wsdl`), Protocol Buffers (`.proto`), Serverless / AWS SAM (`serverless.yml`, `template.yaml`), Core Data models (`*.xcdatamodel/contents`), Interface Builder storyboards (`.storyboard`), Terraform (`.tf`), Groovy (`.groovy`, `.gvy`, `.gy`, `.gsh`), PowerShell (`.ps1`, `.psm1`), Windows batch (`.bat`, `.cmd`), CoffeeScript (`.coffee`, `.litcoffee`), Crystal (`.cr`), Raku (`.raku`, `.rakumod`, `.rakutest`, `.p6`, `.pm6`, `.pl6`, `.t6`), Racket (`.rkt`), Scheme (`.scm`, `.ss`, `.sld`, `.sls`), Common Lisp (`.lisp`, `.lsp`, `.asd`), Haxe (`.hx`), Mojo (`.mojo`, `.🔥`), SCSS (`.scss`), Sass (`.sass`), Less (`.less`), AutoHotkey (`.ahk`, `.ah2`), AutoIt (`.au3`), AppleScript (`.applescript`), Nim (`.nim`, `.nims`), D (`.d`, `.di`), V (`.v`, `.vsh`), Fortran (`.f`, `.for`, `.f77`, `.f90`, `.f95`, `.f03`, `.f08`, `.fpp`) |
+| **tree-sitter** | TypeScript, with Vue and Svelte components (`.ts`, `.tsx`, `.vue`, `.svelte`), JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`), C# (`.cs`, `.csx`), Python (`.py`, `.pyw`), Java (`.java`), Kotlin (`.kt`, `.kts`), Pascal/Delphi (`.pas`, `.pp`, `.lpr`, `.dpr`, `.dpk`), DFM/LFM/FMX forms (`.dfm`, `.lfm`, `.fmx`), PHP (`.php`), Bash/sh (`.sh`, `.bash`), F# (`.fs`, `.fsi`, `.fsx`), R (`.r`), Julia (`.jl`), Zig (`.zig`), OCaml (`.ml`, `.mli`) |
+| **regex** | Go (`.go`), Rust (`.rs`), Ruby (`.rb`), Swift (`.swift`), Lua (`.lua`), Scala, with Play routes (`.scala`, `.sc`, `conf/routes`), Perl (`.pl`, `.pm`, `.t`, `.psgi`, `.cgi`), Visual Basic (VB.NET, VB6, VBScript) (`.vb`, `.bas`, `.cls`, `.frm`, `.vbs`), SQL (`.sql`, `.ddl`, `.dml`, `.psql`, `.mysql`, `.tsql`, `.plsql`), C (`.c`), C++ (and CUDA) (`.h`, `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hxx`, `.hh`, `.cu`, `.cuh`), Prisma (`.prisma`), Dart/Flutter (`.dart`), Elixir (`.ex`, `.exs`), Erlang (`.erl`, `.hrl`), Objective-C (`.m`, `.mm`), Haskell (`.hs`, `.lhs`), Clojure (`.clj`, `.cljs`, `.cljc`), Blazor (`.razor`), HTML (`.html`, `.htm`), ERB (`.erb`), HEEx/EEx (`.heex`, `.eex`, `.leex`), Handlebars (`.hbs`, `.handlebars`), Liquid (`.liquid`), Velocity (`.vm`), Razor (`.cshtml`), QML (`.qml`), Qt Designer (`.ui`), XAML (`.xaml`, `.axaml`), JSP (`.jsp`, `.jspx`, `.jspf`, `.tag`), Spring XML / MyBatis mappers / Android navigation graphs (`.xml`), JSight (`.jsight`), Interface Builder storyboards (`.storyboard`), Terraform (`.tf`), Protocol Buffers (`.proto`), OpenAPI (`.yaml`, `.yml`, `.json`), GraphQL (`.graphql`, `.gql`, `.graphqls`), WSDL (`.wsdl`), Groovy, with Jenkinsfiles (`.groovy`, `.gvy`, `.gy`, `.gsh`, `Jenkinsfile`), PowerShell (`.ps1`, `.psm1`), Windows batch (`.bat`, `.cmd`), CoffeeScript (`.coffee`, `.litcoffee`), Crystal (`.cr`), Raku (`.raku`, `.rakumod`, `.rakutest`, `.p6`, `.pm6`, `.pl6`, `.t6`), Racket (`.rkt`), Scheme (`.scm`, `.ss`, `.sld`, `.sls`), Common Lisp (`.lisp`, `.lsp`, `.asd`), Haxe (`.hx`), Mojo (`.mojo`, `.🔥`), SCSS (`.scss`), Sass (`.sass`), Less (`.less`), AutoHotkey (`.ahk`, `.ah2`), AutoIt (`.au3`), AppleScript (`.applescript`), Nim (`.nim`, `.nims`), D (`.d`, `.di`), V (`.v`, `.vsh`), Fortran (`.f`, `.for`, `.f77`, `.f90`, `.f95`, `.f03`, `.f08`, `.fpp`), Serverless / AWS SAM (`serverless.yml`, `serverless.yaml`, `template.yaml`, `template.yml`), Core Data models (`*.xcdatamodel/contents`) |
+<!-- languages:end -->
 
 A `.vue`/`.svelte` SFC is preprocessed to its `<script>` block; Delphi `.dfm` uses a dedicated parser.
 
@@ -533,8 +535,11 @@ Files whose names look like credentials (`.env`, key/secret-like names) are skip
 
 ClarifyDoc is measured on real repositories checked out at pinned commits: it analyzes them, serves the result over
 the MCP server and scores it against labels **written by hand from the source** — never against
-ClarifyDoc's own output. Over seven pinned repositories (Rails + Vue, ASP.NET + Angular, Django + Angular, FastAPI + Nuxt,
-Go + Vue, Express + React, FastAPI), as of extractor 1.117:
+ClarifyDoc's own output. The repositories pair Rails + Vue, ASP.NET + Angular, Django + Angular, FastAPI + Nuxt,
+Go + Vue, Express + React, and FastAPI on its own.
+
+<!-- accuracy:start (generated from the latest measurement) -->
+Over seven pinned repositories, as of extractor 1.174.0:
 
 | | |
 |---|---|
@@ -544,6 +549,7 @@ Go + Vue, Express + React, FastAPI), as of extractor 1.117:
 | Route declaration sites found | F1 **1.000** |
 | Search (Mean Reciprocal Rank) | **1.000** |
 | Answering through the map vs. reading the files | **69%** fewer tokens |
+<!-- accuracy:end -->
 
 Bad numbers get published too: a corpus picked to flatter the tool measures nothing. The first run
 scored route paths at 0.000 on FastAPI and missed every DELETE call in the RealWorld frontend.
