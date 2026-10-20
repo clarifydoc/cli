@@ -1,6 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { SecurityIssue } from "../../../types/analysis.js";
-import { boundIdentifiers, handlerTaint, type TaintSpec } from "../shared/handler-taint.js";
+import { boundIdentifiers, handlerTaint, type TaintFacts, type TaintSpec } from "../shared/handler-taint.js";
 
 /** The first parameter of an Express/Fastify/Koa handler, as it is usually named. */
 const REQUEST_PARAM = /^(?:req|request|ctx)$/;
@@ -49,6 +49,6 @@ const spec: TaintSpec = {
 };
 
 /** Request input reaching a sink inside an Express/Fastify/Koa handler (see `handlerTaint`). */
-export function javascriptTaint(tree: Tree, _sourceText: string, filePath: string): SecurityIssue[] {
-  return handlerTaint(tree, spec, filePath);
+export function javascriptTaint(tree: Tree, _sourceText: string, filePath: string, facts?: TaintFacts): SecurityIssue[] {
+  return handlerTaint(tree, spec, filePath, facts);
 }

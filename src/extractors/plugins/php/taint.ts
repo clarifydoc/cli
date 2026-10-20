@@ -1,6 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { SecurityIssue } from "../../../types/analysis.js";
-import { handlerTaint, type TaintSpec } from "../shared/handler-taint.js";
+import { handlerTaint, type TaintFacts, type TaintSpec } from "../shared/handler-taint.js";
 
 /**
  * Request input followed through PHP request handling (see `handlerTaint`):
@@ -86,6 +86,6 @@ function argsOf(call: Node): Node[] {
 }
 
 /** Request input reaching a sink in a PHP controller action, request-taking function or script. */
-export function phpTaint(tree: Tree, _sourceText: string, filePath: string): SecurityIssue[] {
-  return handlerTaint(tree, spec, filePath);
+export function phpTaint(tree: Tree, _sourceText: string, filePath: string, facts?: TaintFacts): SecurityIssue[] {
+  return handlerTaint(tree, spec, filePath, facts);
 }

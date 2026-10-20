@@ -1,6 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { SecurityIssue } from "../../../types/analysis.js";
-import { handlerTaint, type TaintSpec } from "../shared/handler-taint.js";
+import { handlerTaint, type TaintFacts, type TaintSpec } from "../shared/handler-taint.js";
 
 /**
  * Request input followed through an ASP.NET action (see `handlerTaint`). An
@@ -86,6 +86,6 @@ const spec: TaintSpec = {
 };
 
 /** Request input reaching a sink inside an ASP.NET action. */
-export function csharpTaint(tree: Tree, _sourceText: string, filePath: string): SecurityIssue[] {
-  return handlerTaint(tree, spec, filePath);
+export function csharpTaint(tree: Tree, _sourceText: string, filePath: string, facts?: TaintFacts): SecurityIssue[] {
+  return handlerTaint(tree, spec, filePath, facts);
 }

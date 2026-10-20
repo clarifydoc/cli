@@ -311,6 +311,12 @@ export interface FileAnalysis {
   /** Routing facts for the plugin's project-level route resolver (see `RouteFact`). */
   routeFacts?: RouteFact[];
   /**
+   * What this file's handler taint pass hands the project pass
+   * (`core/cross-file-taint.ts`): which parameters of its functions reach a
+   * sink, and its handlers' calls into other files with request input in them.
+   */
+  taintFacts?: TaintFacts;
+  /**
    * Calls that hand a path literal to a project function (`createFetchHandler(
    * 'system.status', '/system/status')`): a request FACTORY whose own api-call
    * builds its URL from that parameter. The project pass substitutes the
@@ -3132,4 +3138,18 @@ export interface SchemaOp {
   /** The column's type (add-column), as written. */
   type?: string | null;
   line: number;
+}
+
+/** A step of a taint path: the line and what happened there. */
+export interface TaintStep {
+  line: number;
+  note: string;
+}
+
+/** See `FileAnalysis.taintFacts`. */
+export interface TaintFacts {
+  /** Functions that are not handlers, with the parameters (as argument positions) that reach a sink. */
+  summaries: Array<{ name: string; line: number; sinks: Array<{ param: number; line: number; category: SecurityCategory; cwe: string; what: string; callee: string; path: TaintStep[] }> }>;
+  /** Handler calls into functions the file does not declare, with the arguments carrying request input. */
+  calls: Array<{ line: number; callee: string; args: Array<{ index: number; from: number; path: TaintStep[] }> }>;
 }

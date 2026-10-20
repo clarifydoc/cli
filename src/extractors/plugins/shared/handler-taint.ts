@@ -1,5 +1,5 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { SecurityCategory, SecurityIssue } from "../../../types/analysis.js";
+import type { SecurityCategory, SecurityIssue, TaintFacts } from "../../../types/analysis.js";
 
 /**
  * Request input followed through ONE request handler to a dangerous call —
@@ -70,6 +70,8 @@ export interface TaintSpec {
 }
 
 type Step = { line: number; note: string };
+
+export type { TaintFacts } from "../../../types/analysis.js";
 type Taint = { line: number; path: Step[] };
 /** How deep calls into the file's own functions are followed. */
 const MAX_DEPTH = 2;
@@ -94,7 +96,7 @@ export interface TaintSink {
 }
 
 /** Every request handler in `tree`, followed from its request input to the sinks. */
-export function handlerTaint(tree: Tree, spec: TaintSpec, filePath: string): SecurityIssue[] {
+export function handlerTaint(tree: Tree, spec: TaintSpec, filePath: string, facts?: TaintFacts): SecurityIssue[] {
   const out: SecurityIssue[] = [];
   const seen = new Set<string>();
   // The file's functions by name, for following input into a helper.
@@ -107,7 +109,7 @@ export function handlerTaint(tree: Tree, spec: TaintSpec, filePath: string): Sec
     for (const c of node.namedChildren) index(c);
   };
   index(tree.rootNode);
-  const ctx: FileContext = { spec, filePath, byName, summaries: new Map() };
+  const ctx: FileContext = { spec, filePath, byName, summaries: new Map(), ...(facts ? { facts } : {}) };
   const visit = (node: Node): void => {
     if (spec.functionTypes.has(node.type)) {
       const handler = spec.handler(node);
@@ -125,7 +127,39 @@ export function handlerTaint(tree: Tree, spec: TaintSpec, filePath: string): Sec
     for (const c of node.namedChildren) visit(c);
   };
   visit(tree.rootNode);
+  if (facts) summarize(tree.rootNode, ctx, facts);
   return out;
+}
+
+/** Each function that is not a handler: which of its parameters reach a sink, for callers in other files. */
+function summarize(root: Node, ctx: FileContext, facts: TaintFacts): void {
+  const { spec } = ctx;
+  const visit = (node: Node): void => {
+    if (spec.functionTypes.has(node.type) && !spec.handler(node)) {
+      const name = (spec.functionName ?? defaultFunctionName)(node);
+      const params = (spec.paramNames ?? defaultParamNames)(node).filter((p) => !/^(?:self|cls|this)$/.test(p));
+      const all = (spec.paramNames ?? defaultParamNames)(node);
+      if (name && params.length > 0) {
+        const seeds = new Map<string, Taint>(params.map((p) => {
+          const line = node.startPosition.row + 1;
+          return [p, { line, path: [{ line, note: `parameter ${p}` }] }];
+        }));
+        const sinks: TaintFacts["summaries"][number]["sinks"] = [];
+        for (const issue of taintFunction(node, seeds, { ...ctx, facts: undefined }, 1)) {
+          const first = issue.flow?.[0]?.note ?? "";
+          const p = /^parameter (\S+)/.exec(first)?.[1];
+          // As an argument position: a method's `self`/`cls` is its receiver, not an argument.
+          const index = p ? all.indexOf(p) - (/^(?:self|cls)$/.test(all[0] ?? "") ? 1 : 0) : -1;
+          if (index < 0) continue;
+          const sinkNote = issue.flow![issue.flow!.length - 1]!.note;
+          sinks.push({ param: index, line: issue.line, category: issue.category, cwe: issue.cwe ?? "", what: /reaches (.+?) of /.exec(sinkNote)?.[1] ?? "a sink", callee: /of (\S+)\(\)/.exec(sinkNote)?.[1] ?? "", path: issue.flow!.slice(1) });
+        }
+        if (sinks.length) facts.summaries.push({ name, line: node.startPosition.row + 1, sinks });
+      }
+    }
+    for (const c of node.namedChildren) visit(c);
+  };
+  visit(root);
 }
 
 interface FileContext {
@@ -134,6 +168,8 @@ interface FileContext {
   byName: Map<string, Node[]>;
   /** Per function and tainted-parameter set: its findings and whether it returns taint. */
   summaries: Map<string, { issues: SecurityIssue[]; returns: Taint | null }>;
+  /** Where calls into other files are recorded (handlers only). */
+  facts?: TaintFacts;
 }
 
 function defaultFunctionName(fn: Node): string | null {
@@ -330,6 +366,16 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
       if (!spec.sinks.some((s) => s.callee.test(c.callee))) {
         const s = follow(c, node.startPosition.row + 1);
         if (s) issues.push(...s.issues);
+        // A function another file declares: recorded for the project pass (handlers' own calls only).
+        else if (ctx.facts && depth === 0 && !calleeOf(c) && !spec.propagator.test(c.callee) && !spec.sanitizer.test(node.text)) {
+          const line = node.startPosition.row + 1;
+          const args = c.args.flatMap((arg, index) => {
+            if (spec.sanitizer.test(arg.text)) return [];
+            const from = isTainted(codeText(arg));
+            return from ? [{ index, from: from.line, path: from.path }] : [];
+          });
+          if (args.length) ctx.facts.calls.push({ line, callee: c.callee, args });
+        }
       }
     }
     for (const child of node.namedChildren) walk(child);

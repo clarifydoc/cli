@@ -1,6 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { SecurityIssue } from "../../../types/analysis.js";
-import { boundIdentifiers, handlerTaint, type TaintSpec } from "../shared/handler-taint.js";
+import { boundIdentifiers, handlerTaint, type TaintFacts, type TaintSpec } from "../shared/handler-taint.js";
 
 /** `@app.route(…)`, `@router.get(…)`, `@bp.post(…)`, `@api_view(…)`. */
 const ROUTE_DECORATOR = /^@\s*[\w.]*\b(?:route|get|post|put|patch|delete|api_view|websocket)\s*\(/;
@@ -72,6 +72,6 @@ function paramName(p: Node): string | undefined {
 }
 
 /** Request input reaching a sink inside a Python request handler (see `handlerTaint`). */
-export function pythonTaint(tree: Tree, _sourceText: string, filePath: string): SecurityIssue[] {
-  return handlerTaint(tree, spec, filePath);
+export function pythonTaint(tree: Tree, _sourceText: string, filePath: string, facts?: TaintFacts): SecurityIssue[] {
+  return handlerTaint(tree, spec, filePath, facts);
 }

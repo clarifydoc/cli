@@ -1,6 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { SecurityIssue } from "../../../types/analysis.js";
-import { handlerTaint, type TaintSpec } from "../shared/handler-taint.js";
+import { handlerTaint, type TaintFacts, type TaintSpec } from "../shared/handler-taint.js";
 import { annotationName, annotationNodes } from "./di-annotations.js";
 
 /**
@@ -88,8 +88,8 @@ const spec: TaintSpec = {
 };
 
 /** Request input reaching a sink inside a Spring / JAX-RS handler. */
-export function javaTaint(tree: Tree, _sourceText: string, filePath: string): SecurityIssue[] {
-  return handlerTaint(tree, spec, filePath);
+export function javaTaint(tree: Tree, _sourceText: string, filePath: string, facts?: TaintFacts): SecurityIssue[] {
+  return handlerTaint(tree, spec, filePath, facts);
 }
 
 // ─── Kotlin ─────────────────────────────────────────────────────────────────
@@ -160,6 +160,6 @@ const kotlinSpec: TaintSpec = {
 };
 
 /** Request input reaching a sink inside a Kotlin Spring handler or Ktor routing function. */
-export function kotlinTaint(tree: Tree, _sourceText: string, filePath: string): SecurityIssue[] {
-  return handlerTaint(tree, kotlinSpec, filePath);
+export function kotlinTaint(tree: Tree, _sourceText: string, filePath: string, facts?: TaintFacts): SecurityIssue[] {
+  return handlerTaint(tree, kotlinSpec, filePath, facts);
 }

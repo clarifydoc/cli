@@ -79,6 +79,7 @@ import { buildTestCoverage, COVERAGE_CANDIDATES, parseCoverage } from "./test-co
 import { isTestFile } from "./test-file-detector.js";
 import { checkContracts } from "./contract-check.js";
 import { joinEnvVars } from "./env-vars.js";
+import { crossFileTaint } from "./cross-file-taint.js";
 import { detectCiDeploys } from "./ci-pipelines.js";
 import { loadCodeOwners } from "./code-owners.js";
 import { isGeneratedFile } from "./generated-file-detector.js";
@@ -1585,6 +1586,15 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Which API routes reach each input-sink finding: "SQL injection at
   // repo.ts:42" becomes "reachable from POST /search". Before suggestions,
   // which rank by it.
+  // Request input a handler passes into a function another file declares, followed to its sink there.
+  const crossTaint = crossFileTaint(allAnalyses, symbolLinks).filter((i) => !isUnauthored(i.filePath));
+  if (crossTaint.length > 0) {
+    // It says more than the regex finding of the same kind on the same line, which it replaces.
+    const covered = new Set(crossTaint.map((t) => `${t.filePath}\u0000${t.line}\u0000${t.category}`));
+    const kept = allSecurityIssues.filter((i) => !covered.has(`${i.filePath}\u0000${i.line}\u0000${i.category}`));
+    allSecurityIssues.splice(0, allSecurityIssues.length, ...kept, ...crossTaint);
+    progress.detail(`  Request input followed into other files: ${crossTaint.length}`);
+  }
   const findingsWithEntries = attachFindingEntries(allSecurityIssues, allAnalyses, symbolLinks);
   // Routes that waive authentication and write stored data.
   const anonymousWrites = anonymousWriteFindings(allRoutes, dataFlows).filter((i) => !isUnauthored(i.filePath));

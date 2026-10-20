@@ -60,6 +60,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   entryPoints: "optional",
   httpClientRegistrations: "optional",
   proxyRules: "optional",
+  taintFacts: "optional",
 };
 
 export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {

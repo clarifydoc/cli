@@ -40,6 +40,7 @@ import {
   type ComplexityInfo,
   type SecurityIssue,
   type RouteInfo,
+  type TaintFacts,
 } from "../types/analysis.js";
 
 /** Whether a React Router 7 project's `app/routes.ts` delegates to `flatRoutes()`, per sub-project root. */
@@ -466,7 +467,10 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     let fileSecurityIssues = scanSecurity(sourceText, file.relativePath, language);
     // Request input followed to a sink inside each handler; it says more than
     // the regex finding of the same kind on the same line, which it replaces.
-    const rawTainted = isTest || isMinifiedSource(sourceText) ? [] : hooks?.taint?.(tree, sourceText, file.relativePath) ?? [];
+    const taintFacts: TaintFacts = { summaries: [], calls: [] };
+    const rawTainted = isTest || isMinifiedSource(sourceText) ? [] : hooks?.taint?.(tree, sourceText, file.relativePath, taintFacts) ?? [];
+    // What another file's handler may pass request input into, and what this file's handlers pass on.
+    if (taintFacts.summaries.length || taintFacts.calls.length) analysis.taintFacts = taintFacts;
     // A suppression on the sink's line (or the line before) holds for the taint finding too.
     let sourceLines: string[] | null = null;
     const tainted = rawTainted.filter((t) => {
