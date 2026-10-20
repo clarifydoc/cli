@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, InvalidArgumentError } from "commander";
 import { TOOL_VERSION } from "./core/version.js";
 import { resolve, relative } from "path";
 import { analyze } from "./core/analyzer.js";
@@ -23,6 +23,12 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf-8");
 }
 
+/** A whole number ≥ `min` — `parseInt` alone turns "abc" into NaN, which silently disabled the bound it set. */
+const wholeNumber = (min = 0) => (value: string): number => {
+  if (!/^\d+$/.test(value.trim()) || Number(value) < min) throw new InvalidArgumentError(`Expected a whole number${min ? ` ≥ ${min}` : ""}.`);
+  return Number(value);
+};
+
 const program = new Command();
 
 program
@@ -39,13 +45,13 @@ program
   .option("-o, --output <dir>", "Output directory", ".clarifydoc")
   .option("--include <globs...>", "Additional file patterns to include")
   .option("--exclude <globs...>", "Additional file patterns to exclude")
-  .option("--max-files <n>", "Maximum number of files to analyze", parseInt)
+  .option("--max-files <n>", "Maximum number of files to analyze", wholeNumber(1))
   .option("--pretty", "Pretty-print JSON output", true)
   .option("--no-pretty", "Output compact JSON (no formatting)")
   .option("--verbose", "Show progress and debug info", false)
   .option("--dry-run", "List files that would be analyzed without analyzing", false)
   .option("--no-lsp", "Disable LSP-based symbol resolution")
-  .option("--lsp-timeout <ms>", "Timeout for LSP server startup in ms", parseInt)
+  .option("--lsp-timeout <ms>", "Timeout for LSP server startup in ms", wholeNumber())
   .option("--html", "Generate an HTML report after analysis", false)
   .option("--sarif <file>", "Also write the findings as SARIF 2.1.0 (GitHub code scanning): security, calls that reach no route, forbidden imports")
   .option("--fail-on <level>", "Exit with code 2 when a finding at or above this level exists: error | warning | note")
@@ -165,7 +171,7 @@ program
   .option("--pretty", "Pretty-print JSON output", true)
   .option("--no-pretty", "Output compact JSON (no formatting)")
   .option("--verbose", "Show progress and debug info", false)
-  .option("--lsp-timeout <ms>", "Timeout for LSP server startup in ms", parseInt)
+  .option("--lsp-timeout <ms>", "Timeout for LSP server startup in ms", wholeNumber())
   .option("--project-root <path>", "Override projectRoot (otherwise read from summary)")
   .option("--emit-queries <file>", "Write the definition questions to <file> and stop (no server starts) — for an editor to answer")
   .option("--answers <file>", "Take definitions from <file> (answers to --emit-queries) instead of the Docker servers")
@@ -385,9 +391,9 @@ program
   )
   .argument("[file]", "Path to the source file")
   .option("-f, --function <name>", "Function to draw (`Class.method` or the bare method name)")
-  .option("-l, --line <n>", "Draw the function whose body covers this 1-based line", parseInt)
+  .option("-l, --line <n>", "Draw the function whose body covers this 1-based line", wholeNumber(1))
   .option("--format <format>", "mermaid | markdown | json", "mermaid")
-  .option("--slice <line>", "Instead of the graph: the statements that can affect the values used at this line (backward slice)", parseInt)
+  .option("--slice <line>", "Instead of the graph: the statements that can affect the values used at this line (backward slice)", wholeNumber(1))
   .option("--stdin", "Read the file's text from stdin (an editor's unsaved buffer); <file> still names the file and its language")
   .option(
     "--no-styled",
@@ -529,7 +535,7 @@ program
   .option("--route <route>", 'The route, e.g. "POST /api/orders" (a path alone when it is unique)')
   .option("--symbol <symbol>", 'A function or method instead, e.g. "OrderService.create"')
   .option("--file <file>", "The file that declares the route or symbol, when the name is not unique")
-  .option("--depth <n>", "Hops of calls to follow (default 8)", parseInt)
+  .option("--depth <n>", "Hops of calls to follow (default 8)", wholeNumber())
   .option("-o, --output <dir>", "Analysis output directory (same value as `analyze -o`)", ".clarifydoc")
   .option("--analysis-dir <dir>", "Exact directory containing project-summary.json (overrides --output)")
   .action(async (path: string, options) => {
@@ -770,7 +776,7 @@ program
   .option("--no-cold-start", "Never analyze, not even when no analysis exists yet")
   .option("--lsp", "Allow the optional LSP enhancement when this server runs an analysis (needs Docker)", false)
   .option("--no-git-history", "Skip git churn/hotspot collection when this server runs an analysis")
-  .option("--max-files <n>", "Maximum number of files to analyze", parseInt)
+  .option("--max-files <n>", "Maximum number of files to analyze", wholeNumber(1))
   .option("--include <globs...>", "Additional file patterns to include")
   .option("--exclude <globs...>", "Additional file patterns to exclude")
   .option("--print-config <client>", "Print the MCP entry for a client and exit, without serving: claude-code | cursor | vscode | windsurf | gemini | codex | claude-desktop | all")

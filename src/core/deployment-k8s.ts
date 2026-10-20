@@ -4,6 +4,7 @@ import { join, resolve } from "path";
 import {
   IGNORE,
   NON_RUNTIME_RE,
+  isImageRef,
   parseSimpleYaml,
   type RawService,
   type YamlMap,
@@ -74,56 +75,213 @@ export interface ChartContext {
   name: string;
   /** Parsed values.yaml (empty map when absent). */
   values: YamlMap;
+  /** Chart.yaml `appVersion` / `version`, for `.Chart.AppVersion` / `.Chart.Version`. */
+  appVersion?: string;
+  version?: string;
 }
 
-/** `a.b.c` path into the values map; scalars render, structures degrade to "". */
-function valuesLookup(values: YamlMap, path: string): string {
+/** What one expression renders to; `exact: false` when part of it is a stand-in or unknown. */
+interface Rendered {
+  text: string;
+  exact: boolean;
+}
+
+const UNKNOWN: Rendered = { text: "", exact: false };
+
+/** `a.b.c` path into a values map. */
+function valuesAt(values: YamlValue | undefined, path: string): YamlValue | undefined {
   let cur: YamlValue | undefined = values;
-  for (const seg of path.split(".")) {
+  for (const seg of path.split(".").filter(Boolean)) {
     cur = asMap(cur)?.[seg];
-    if (cur === undefined) return "";
+    if (cur === undefined) return undefined;
   }
-  return typeof cur === "string" ? cur : "";
+  return cur;
+}
+
+/** Go-template truth: empty, `false`, `0` and null are false; so are empty maps and lists. */
+function truthy(v: YamlValue | undefined): boolean {
+  if (v === undefined) return false;
+  if (typeof v === "string") return !/^(?:|false|0|null|~)$/i.test(v.trim());
+  return Array.isArray(v) ? v.length > 0 : Object.keys(v).length > 0;
+}
+
+/** Words of a pipeline segment, quoted strings kept whole. */
+function words(segment: string): string[] {
+  return segment.match(/"(?:[^"\\]|\\.)*"|'[^']*'|\S+/g) ?? [];
+}
+
+/** Split on `|` outside quotes. */
+function pipeSegments(expr: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let quote: string | null = null;
+  for (const ch of expr) {
+    if (quote) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === "|") {
+      out.push(cur.trim());
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+/** Scope a template line is rendered in: the chart, and what `.` is inside `with`. */
+interface Scope {
+  chart: ChartContext | undefined;
+  /** Values path `.` stands for inside `{{ with .Values.x }}`; null when unknown (inside `range`). */
+  dot: string | null | undefined;
+}
+
+/** The value one operand names (`.Values.a.b`, `.x` under `with`); undefined when it names nothing known. */
+function operandValue(w: string, scope: Scope): { value: YamlValue | undefined; known: boolean } {
+  const values = scope.chart?.values ?? {};
+  const v = /^\$?\.Values\.([\w.-]+)$/.exec(w);
+  if (v) return { value: scope.chart ? valuesAt(values, v[1]!) : undefined, known: !!scope.chart };
+  if (w === "." || /^\.[\w-]+(?:\.[\w-]+)*$/.test(w)) {
+    if (scope.dot === undefined || scope.dot === null || /^\.(?:Release|Chart|Capabilities|Template|Files)\b/.test(w)) return { value: undefined, known: false };
+    const path = w === "." ? scope.dot : `${scope.dot}.${w.slice(1)}`;
+    return { value: valuesAt(values, path), known: true };
+  }
+  return { value: undefined, known: false };
+}
+
+/** One operand as text: a literal, a values path, a chart field — or a stand-in for what cannot be known. */
+function renderOperand(w: string, scope: Scope): Rendered {
+  if (/^".*"$/.test(w)) return { text: w.slice(1, -1).replace(/\\(.)/g, "$1"), exact: true };
+  if (/^'.*'$/.test(w)) return { text: w.slice(1, -1), exact: true };
+  if (/^-?\d+(?:\.\d+)?$/.test(w) || w === "true" || w === "false") return { text: w, exact: true };
+  const chart = scope.chart;
+  if (/^\$?\.Chart\.Name$/.test(w)) return chart ? { text: chart.name, exact: true } : UNKNOWN;
+  if (/^\$?\.Chart\.AppVersion$/.test(w)) return chart?.appVersion ? { text: chart.appVersion, exact: true } : UNKNOWN;
+  if (/^\$?\.Chart\.Version$/.test(w)) return chart?.version ? { text: chart.version, exact: true } : UNKNOWN;
+  // The release name is chosen at install time: the chart name stands in for it.
+  if (/^\$?\.Release\.Name$/.test(w)) return { text: chart?.name ?? "", exact: false };
+  const { value, known } = operandValue(w, scope);
+  if (!known) return UNKNOWN;
+  if (value === undefined) return { text: "", exact: true };
+  return typeof value === "string" ? { text: value, exact: true } : UNKNOWN;
 }
 
 /**
- * The text one `{{ … }}` expression renders to; see `renderHelmTemplate` for
- * the handled forms. Anything else renders empty.
+ * One pipeline segment: a function applied to its arguments and, after the
+ * first segment, to the piped value (Go templates pass it as the LAST argument).
  */
-function resolveHelmExpr(expr: string, chart: ChartContext | undefined): string {
+function renderSegment(segment: string, piped: Rendered | null, scope: Scope): Rendered {
+  const [fn, ...rest] = words(segment);
+  if (!fn) return piped ?? UNKNOWN;
+  if (/^[($]/.test(fn) && !/^\$\./.test(fn)) return UNKNOWN; // a sub-expression or a variable
+  const args = rest.map((w) => (/^\(/.test(w) ? UNKNOWN : renderOperand(w, scope)));
+  if (piped) args.push(piped);
+  const all = (text: string) => ({ text, exact: args.every((a) => a.exact) });
+  switch (fn) {
+    case "default": {
+      // `default D V`: V unless it is empty.
+      const [d, v] = args;
+      if (!d || !v) return UNKNOWN;
+      return v.text ? v : d;
+    }
+    case "quote":
+      return args.length === 1 ? all(`"${args[0]!.text}"`) : UNKNOWN;
+    case "squote":
+      return args.length === 1 ? all(`'${args[0]!.text}'`) : UNKNOWN;
+    case "toString":
+    case "trim":
+      return args.length === 1 ? all(fn === "trim" ? args[0]!.text.trim() : args[0]!.text) : UNKNOWN;
+    case "lower":
+    case "upper":
+      return args.length === 1 ? all(fn === "lower" ? args[0]!.text.toLowerCase() : args[0]!.text.toUpperCase()) : UNKNOWN;
+    case "trimSuffix":
+    case "trimPrefix": {
+      const [affix, v] = args;
+      if (!affix || !v) return UNKNOWN;
+      const text = fn === "trimSuffix" ? (v.text.endsWith(affix.text) ? v.text.slice(0, v.text.length - affix.text.length) : v.text) : v.text.startsWith(affix.text) ? v.text.slice(affix.text.length) : v.text;
+      return all(text);
+    }
+    case "printf": {
+      const [format, ...vals] = args;
+      if (!format) return UNKNOWN;
+      let i = 0;
+      return all(format.text.replace(/%[svdq]/g, () => vals[i++]?.text ?? ""));
+    }
+    case "include":
+    case "template":
+      // A named template's body is not evaluated: the chart name stands in (it is what `*.fullname` usually renders).
+      return { text: scope.chart?.name ?? (args[0]?.text.split(".")[0] ?? ""), exact: false };
+    default:
+      if (!piped && !rest.length) return renderOperand(fn, scope);
+      return UNKNOWN;
+  }
+}
+
+/** What one `{{ … }}` expression renders to. */
+function renderHelmExpr(expr: string, scope: Scope): Rendered {
   const e = expr.trim();
+  if (e.startsWith("/*") || e === "") return { text: "", exact: true };
+  let piped: Rendered | null = null;
+  for (const seg of pipeSegments(e)) piped = renderSegment(seg, piped, scope);
+  return piped ?? UNKNOWN;
+}
 
-  const vals = e.match(/^\.Values\.([\w.-]+)/);
-  if (vals) {
-    const resolved = chart ? valuesLookup(chart.values, vals[1]!) : "";
-    if (resolved) return resolved;
-    // `.Values.x | default "y"` — fall back to the literal default.
-    const def = e.match(/\bdefault\s+"([^"]*)"/);
-    return def?.[1] ?? "";
+/** A condition's truth: true / false, or null when it cannot be decided from the values. */
+function decide(cond: string, scope: Scope): boolean | null {
+  const w = words(cond.trim());
+  const val = (x: string | undefined): YamlValue | undefined | null => {
+    if (x === undefined) return null;
+    if (/^".*"$|^'.*'$/.test(x)) return x.slice(1, -1);
+    const { value, known } = operandValue(x, scope);
+    return known ? value : null;
+  };
+  if (w.length === 1) {
+    const v = val(w[0]);
+    return v === null ? null : truthy(v);
   }
-
-  // {{ include "myapp.fullname" . }} / {{ template "myapp.name" . }}
-  const inc = e.match(/^(?:include|template)\s+"([^"]+)"/);
-  if (inc) return chart?.name ?? inc[1]!.split(".")[0]!;
-
-  if (/^\.Release\.Name\b/.test(e) || /^\.Chart\.Name\b/.test(e)) {
-    return chart?.name ?? "";
+  if (w.length === 2 && w[0] === "not") {
+    const v = val(w[1]);
+    return v === null ? null : !truthy(v);
   }
-
-  return "";
+  if (w.length === 3 && (w[0] === "eq" || w[0] === "ne")) {
+    const a = val(w[1]);
+    const b = val(w[2]);
+    if (a === null || b === null || (a !== undefined && typeof a !== "string") || (b !== undefined && typeof b !== "string")) return null;
+    return (a ?? "") === (b ?? "") ? w[0] === "eq" : w[0] === "ne";
+  }
+  return null;
 }
 
 /** Lines that are pure template control flow — no YAML content survives them. */
-const HELM_CONTROL_RE = /^\{\{-?\s*(if|else|end|range|with|define)\b[^}]*-?\}\}$/;
+const HELM_CONTROL_RE = /^\{\{-?\s*(if|else if|else|end|range|with|define|block)\b([^}]*?)\s*-?\}\}$/;
+
+/** A key that names a container image. */
+const IMAGE_LINE_RE = /^(\s*(?:-\s+)?image:\s*)/;
+
+interface Frame {
+  kind: "if" | "with" | "range" | "define";
+  /** Whether lines are emitted: true, false, or null when undecidable (emitted, but not exact). */
+  active: boolean | null;
+  /** Whether an earlier branch of this `if` was already taken. */
+  taken: boolean | null;
+  dot?: string | null;
+}
 
 /**
- * Best-effort rendering of a Helm template into plain YAML.
+ * Rendering of a Helm template into plain YAML, against the chart's default
+ * values.
  *
- * Lines that are only control flow (`{{ if }}`, `{{ range }}`, `{{ end }}`, …)
- * are dropped; `{{ .Values.x }}` reads the values file (or the `| default`
- * literal), `{{ include "x.fullname" . }}`/`.Release.Name`/`.Chart.Name` become
- * the chart name, and anything else renders as an empty string. Good enough to
- * recover images, env and ports; never a full Go-template engine.
+ * `if`/`else if`/`else` and `with` are decided against the values file when
+ * they test a value (`if .Values.x`, `not`, `eq`/`ne` with a literal); the
+ * branch not taken is dropped. A condition that cannot be decided keeps its
+ * lines but marks them inexact; inside `range`, `.` is unknown. `define`
+ * bodies are never output. Expressions read values (with `default`, `quote`,
+ * `printf`, `trimSuffix`…), `.Chart.AppVersion`/`.Version`/`.Name`; a named
+ * template (`include`) and `.Release.Name` render as the chart name, a stand-in.
+ *
+ * The rule for images: an `image:` line built from anything not known exactly
+ * renders empty — no image, never a guessed one.
  *
  * @param text - The template source
  * @param chart - The chart context, or undefined when no Chart.yaml was found
@@ -131,10 +289,58 @@ const HELM_CONTROL_RE = /^\{\{-?\s*(if|else|end|range|with|define)\b[^}]*-?\}\}$
  */
 export function renderHelmTemplate(text: string, chart: ChartContext | undefined): string {
   const out: string[] = [];
+  const stack: Frame[] = [];
+  const scope = (): Scope => {
+    let dot: string | null | undefined;
+    for (const f of stack) if (f.kind === "with" || f.kind === "range") dot = f.dot;
+    return { chart, dot };
+  };
   for (const raw of text.split(/\r?\n/)) {
-    const trimmed = raw.trim();
-    if (HELM_CONTROL_RE.test(trimmed)) continue;
-    out.push(raw.replace(/\{\{-?\s*([^{}]*?)\s*-?\}\}/g, (_, expr: string) => resolveHelmExpr(expr, chart)));
+    const control = HELM_CONTROL_RE.exec(raw.trim());
+    if (control) {
+      const kw = control[1]!;
+      const arg = control[2]!.trim();
+      const top = stack[stack.length - 1];
+      if (kw === "end") stack.pop();
+      else if (kw === "else" || kw === "else if") {
+        if (top?.kind === "if" || top?.kind === "with") {
+          const cond = kw === "else if" ? decide(arg, scope()) : true;
+          const before = top.taken;
+          top.active = before === true ? false : before === null || cond === null ? null : cond;
+          top.taken = before === true || top.active === true ? true : before === null || cond === null ? null : false;
+        }
+      } else if (kw === "if") {
+        const d = decide(arg, scope());
+        stack.push({ kind: "if", active: d, taken: d });
+      } else if (kw === "with") {
+        const m = /^\$?\.Values\.([\w.-]+)$/.exec(arg);
+        const d = decide(arg, scope());
+        stack.push({ kind: "with", active: d, taken: d, dot: m ? m[1]! : null });
+      } else if (kw === "range") {
+        // A range body is emitted once; what `.` is inside it is not known.
+        stack.push({ kind: "range", active: true, taken: true, dot: null });
+      } else stack.push({ kind: "define", active: false, taken: false });
+      continue;
+    }
+    if (stack.some((f) => f.active === false)) continue;
+    const inexactBlock = stack.some((f) => f.active === null);
+    const sc = scope();
+    let exact = !inexactBlock;
+    const line = raw.replace(/\{\{-?\s*([^{}]*?)\s*-?\}\}/g, (_, expr: string) => {
+      const r = renderHelmExpr(expr, sc);
+      if (!r.exact) exact = false;
+      return r.text;
+    });
+    const img = IMAGE_LINE_RE.exec(line);
+    if (img && raw.includes("{{") && !exact) {
+      out.push(img[1]!.trimEnd());
+      continue;
+    }
+    if (img && inexactBlock) {
+      out.push(img[1]!.trimEnd());
+      continue;
+    }
+    out.push(line);
   }
   return out.join("\n");
 }
@@ -267,7 +473,14 @@ export async function collectK8sManifests(
           break;
         } catch { /* no values file */ }
       }
-      charts.set(dir, { name: asString(chartDoc.name) ?? dir.split("/").pop() ?? "chart", values });
+      const appVersion = asString(chartDoc.appVersion);
+      const version = asString(chartDoc.version);
+      charts.set(dir, {
+        name: asString(chartDoc.name) ?? dir.split("/").pop() ?? "chart",
+        values,
+        ...(appVersion ? { appVersion } : {}),
+        ...(version ? { version } : {}),
+      });
     } catch { /* unreadable chart */ }
   }
 
@@ -337,7 +550,8 @@ export async function collectK8sManifests(
       let image: string | undefined;
       let entrypoint: string | undefined;
       for (const c of containers) {
-        image ??= asString(c.image);
+        const ref = asString(c.image);
+        if (isImageRef(ref)) image ??= ref;
         entrypoint ??= [...asList(c.command), ...asList(c.args)]
           .filter((x): x is string => typeof x === "string")
           .join(" ") || undefined;

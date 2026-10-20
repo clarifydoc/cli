@@ -14,6 +14,21 @@ const ctx = (over: Partial<DocDriftContext> = {}): DocDriftContext => ({
 const findings = (doc: string, text: string, c = ctx()) => checkDocReferences(docReferences(doc, text), c).map((f) => `${f.kind} ${f.text} — ${f.reason} (${f.confidence})`);
 
 describe("doc drift", () => {
+  it("skips a generated block between markers — ours and BEGIN/END — but nothing after it", () => {
+    expect(findings("AGENTS.md", [
+      "<!-- clarifydoc:start -->",
+      "Hub files: `src/gone.ts`.",
+      "<!-- clarifydoc:end -->",
+      "<!-- BEGIN generated toc -->",
+      "- `src/also-gone.ts`",
+      "<!-- END generated toc -->",
+      "```",
+      "<!-- other:start -->",
+      "```",
+      "Real prose: `src/missing.ts`.",
+    ].join("\n"))).toEqual(["path src/missing.ts — no such path (INFERRED)"]);
+  });
+
   it("reports paths into the tree that are gone, links that break, routes and members that no longer exist", () => {
     expect(findings("docs/guide.md", [
       "Start in `src/app.ts` and `src/routes/legacy.ts`.",

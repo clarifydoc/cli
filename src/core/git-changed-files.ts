@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import { GIT_SAFE_DIFF, gitArgs } from "./git-safe.js";
 
 /**
  * Changed files via git, project-relative (matching the analysis `files[]`).
@@ -16,7 +17,7 @@ export async function gitChangedFiles(
     new Promise((res, rej) => {
       execFile(
         "git",
-        ["-C", root, ...args],
+        gitArgs(root, args),
         { maxBuffer: 16 * 1024 * 1024 },
         (err, stdout, stderr) =>
           err ? rej(new Error((stderr || err.message).trim())) : res(stdout),
@@ -27,12 +28,12 @@ export async function gitChangedFiles(
 
   if (opts.staged) {
     return {
-      files: split(await run(["diff", "--name-only", "--relative", "--cached"])),
+      files: split(await run(["diff", "--name-only", "--relative", ...GIT_SAFE_DIFF, "--cached"])),
       label: "staged",
     };
   }
   const base = opts.base ?? "HEAD";
-  const tracked = await run(["diff", "--name-only", "--relative", base]);
+  const tracked = await run(["diff", "--name-only", "--relative", ...GIT_SAFE_DIFF, base]);
   const untracked = await run(["ls-files", "--others", "--exclude-standard"]);
   return { files: [...split(tracked), ...split(untracked)], label: base };
 }
@@ -40,7 +41,7 @@ export async function gitChangedFiles(
 /** `git config user.name` at a path, or undefined when it is unset or git is missing. */
 export async function gitUserName(cwd: string): Promise<string | undefined> {
   return new Promise((res) => {
-    execFile(process.env.CLARIFYDOC_GIT ?? "git", ["-C", cwd, "config", "user.name"], { timeout: 5000, windowsHide: true }, (err, out) => {
+    execFile(process.env.CLARIFYDOC_GIT ?? "git", gitArgs(cwd, ["config", "user.name"]), { timeout: 5000, windowsHide: true }, (err, out) => {
       const name = (out ?? "").trim();
       res(err || !name ? undefined : name);
     });
@@ -55,7 +56,7 @@ export async function gitUserName(cwd: string): Promise<string | undefined> {
 export async function gitChangedHunks(root: string, opts: { base?: string; staged?: boolean } = {}): Promise<Map<string, Array<[number, number]>>> {
   const { parseUnifiedHunks } = await import("./changed-symbols.js");
   const out = await new Promise<string>((res, rej) => {
-    const args = ["-C", root, "diff", "-U0", "--no-color", "--relative", ...(opts.staged ? ["--cached"] : [opts.base ?? "HEAD"])];
+    const args = gitArgs(root, ["diff", "-U0", "--no-color", ...GIT_SAFE_DIFF, "--relative", ...(opts.staged ? ["--cached"] : [opts.base ?? "HEAD"])]);
     execFile("git", args, { maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => (err ? rej(new Error((stderr || err.message).trim())) : res(stdout)));
   });
   return parseUnifiedHunks(out);

@@ -298,13 +298,13 @@ export class LspManager {
     };
 
     process.on("exit", cleanup);
-    process.on("SIGINT", () => {
-      cleanup();
-      process.exit(1);
-    });
-    process.on("SIGTERM", () => {
-      cleanup();
-      process.exit(1);
-    });
+    // A signal waits (bounded) for the containers to be stopped — exiting at once
+    // left them running — then exits with the shell's code for it (128 + signal).
+    const onSignal = (code: number) => () => {
+      const timer = new Promise((r) => setTimeout(r, 5000).unref());
+      void Promise.race([stopAllContainers().catch(() => {}), timer]).then(() => process.exit(code));
+    };
+    process.once("SIGINT", onSignal(130));
+    process.once("SIGTERM", onSignal(143));
   }
 }

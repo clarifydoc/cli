@@ -2,6 +2,7 @@ import { readFile } from "fs/promises";
 import { dirname, join } from "path";
 import { byOrdinal } from "./ordinal.js";
 import type { Confidence, FileAnalysis, SymbolLink } from "../types/analysis.js";
+import { GIT_SAFE_CONFIG, GIT_SAFE_DIFF } from "./git-safe.js";
 
 /** New-side line ranges a diff changed, per project-relative file (1-based, inclusive). */
 export type ChangedHunks = Map<string, Array<[number, number]>>;
@@ -295,7 +296,7 @@ export async function proposedHunks(projectRoot: string, proposals: ReadonlyMap<
       await write(a, before);
       await write(b, next);
       const diff = await new Promise<string | null>((res) =>
-        execFile("git", ["diff", "--no-index", "-U0", "--no-color", a, b], { maxBuffer: 64 * 1024 * 1024 }, (err, stdout) =>
+        execFile("git", [...GIT_SAFE_CONFIG, "diff", "--no-index", "-U0", "--no-color", ...GIT_SAFE_DIFF, a, b], { maxBuffer: 64 * 1024 * 1024 }, (err, stdout) =>
           // Exit 1 means "they differ" — the answer, not a failure.
           res(err && (err as { code?: number }).code !== 1 ? null : stdout),
         ),

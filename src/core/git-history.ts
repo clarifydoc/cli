@@ -1,6 +1,7 @@
 import { execFile } from "child_process";
 import { byOrdinal } from "./ordinal.js";
 import type { CoChangePair, FileChurnInfo, FileComplexityInfo, HotspotInfo } from "../types/analysis.js";
+import { gitArgs } from "./git-safe.js";
 
 /**
  * Git-history signals: per-file churn (commits, line deltas, recency, authors)
@@ -93,7 +94,7 @@ export async function collectGitHistory(
   const months = options.months ?? 24;
   const maxCommits = options.maxCommits ?? 10_000;
   const timeoutMs = options.timeoutMs ?? 30_000;
-  const g = (args: string[]) => runGit(gitBin, ["-C", projectRoot, ...args], timeoutMs);
+  const g = (args: string[]) => runGit(gitBin, gitArgs(projectRoot, args), timeoutMs);
 
   const inside = await g(["rev-parse", "--is-inside-work-tree"]);
   if (!inside.ok || inside.out.trim() !== "true") return { skipped: "not a git repository" };

@@ -1065,6 +1065,8 @@ export function undrawnStructure(
     }
     for (const child of n.children) walk(child);
   };
+  // A curried `(a) => (b) => { … }`: the body IS the nested function, drawn as one statement.
+  if (roleOf(body.type) === "nested-function") return missing;
   for (const child of body.children) walk(child);
   return missing;
 }

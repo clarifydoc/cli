@@ -48,8 +48,20 @@ const HISTORY_PROSE = /\b(?:removed|deleted|renamed|deprecated|formerly|previous
 export function docReferences(doc: string, text: string): DocReference[] {
   const out: DocReference[] = [];
   let fence: string | null = null;
+  // A block a tool writes between markers (our own `<!-- clarifydoc:start -->`
+  // section, `<!-- BEGIN x -->`) is regenerated output, not prose to hold to the tree.
+  let generated: RegExp | null = null;
   text.split(/\r?\n/).forEach((raw, i) => {
     const line = i + 1;
+    if (generated) {
+      if (generated.test(raw)) generated = null;
+      return;
+    }
+    const g = fence ? null : /^\s*<!--\s*(?:([\w.-]+):start|BEGIN\b[^>]*?)\s*-->/i.exec(raw);
+    if (g) {
+      generated = g[1] ? new RegExp(`<!--\\s*${g[1].replace(/\./g, "\\.")}:end\\s*-->`, "i") : /<!--\s*END\b[^>]*-->/i;
+      return;
+    }
     const f = /^\s*(```+|~~~+)/.exec(raw);
     if (f) {
       if (!fence) fence = f[1]![0]!;

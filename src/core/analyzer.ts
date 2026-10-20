@@ -33,6 +33,7 @@ import { resolveViewBySuffix, pickByPathAffinity, extensionFamily } from "../ext
 import { detectFileBasedRoutes } from "../extractors/plugins/javascript/routes/file-based.js";
 import { resolveAngularExternalTemplates } from "../extractors/plugins/javascript/angular-external-templates.js";
 import { resolveRouterMounts } from "../extractors/shared/router-mounts.js";
+import { gitArgs } from "./git-safe.js";
 import {
   writeProjectSummary,
   writeReportData,
@@ -3137,7 +3138,7 @@ async function computeDocDrift(
  */
 function gitPathHistory(root: string): (path: string) => { deletedIn?: string; renamedTo?: string } | null {
   const run = (args: string[]) =>
-    execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }).trim();
+    execFileSync("git", gitArgs(root, args), { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }).trim();
   return (path) => {
     try {
       const head = run(["log", "-1", "--diff-filter=D", "--format=%h %cs", "--", path]);

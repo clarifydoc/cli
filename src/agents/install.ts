@@ -4,6 +4,7 @@ import { homedir } from "os";
 import { dirname, join, resolve } from "path";
 import { WORKFLOW_PROMPTS } from "../mcp/prompts.js";
 import { AGENT_GUIDANCE } from "../mcp/guidance.js";
+import { GIT_SAFE_CONFIG } from "../core/git-safe.js";
 
 /**
  * Wiring ClarifyDoc into agent hosts from the command line: the MCP server
@@ -30,6 +31,8 @@ interface Planned {
   content: string;
   /** File mode to set after writing (an executable hook). */
   mode?: number;
+  /** Said after the file is written (or printed). */
+  note?: string;
 }
 
 function readJson(path: string): Record<string, unknown> {
@@ -76,6 +79,51 @@ export function mcpSnippet(client: Client, root: string, self = selfCommand()): 
   }
 }
 
+/** The project a user-level entry serves: the last argument after `mcp`. */
+function entryRoot(entry: unknown): string | undefined {
+  const args = (entry as { args?: unknown })?.args;
+  if (!Array.isArray(args)) return undefined;
+  const i = args.lastIndexOf("mcp");
+  return i >= 0 && i < args.length - 1 ? String(args[args.length - 1]) : undefined;
+}
+
+/**
+ * The key a user-level config (one file for every project) gets this
+ * project's entry under. `clarifydoc` unless it already serves another
+ * project — re-pointing it would silently detach that one — in which case the
+ * entry already serving this root, else `clarifydoc-<folder>`.
+ */
+export function userServerKey(servers: Record<string, unknown>, root: string): string {
+  const same = (a: string | undefined) => a !== undefined && resolve(a) === resolve(root);
+  const ours = Object.keys(servers).filter((k) => /^clarifydoc(?:-|$)/.test(k));
+  const serving = ours.find((k) => same(entryRoot(servers[k])));
+  if (serving) return serving;
+  if (!("clarifydoc" in servers) || entryRoot(servers.clarifydoc) === undefined) return "clarifydoc";
+  const base = `clarifydoc-${(root.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "project").toLowerCase().replace(/[^a-z0-9_-]+/g, "-")}`;
+  let key = base;
+  for (let n = 2; key in servers; n++) key = `${base}-${n}`;
+  return key;
+}
+
+/** `[mcp_servers.<name>]` tables of a Codex config.toml, with their args. */
+function codexServers(toml: string): Record<string, { args?: string[] }> {
+  const out: Record<string, { args?: string[] }> = {};
+  for (const m of toml.matchAll(/^\[mcp_servers\.([\w-]+)\]\n((?:(?!\[)[^\n]*\n?)*)/gm)) {
+    const args = /^args\s*=\s*(\[.*\])\s*$/m.exec(m[2]!)?.[1];
+    let parsed: string[] | undefined;
+    try {
+      parsed = args ? (JSON.parse(args) as string[]) : undefined;
+    } catch {
+      parsed = undefined;
+    }
+    out[m[1]!] = { args: parsed };
+  }
+  return out;
+}
+
+const keptNote = (key: string, servers: Record<string, unknown>) =>
+  key === "clarifydoc" ? undefined : `kept the "clarifydoc" entry for ${entryRoot(servers.clarifydoc)}; this project is "${key}"`;
+
 /** The MCP server entry for one client, merged into its config file. */
 export function planMcpConfig(client: Client, root: string, self = selfCommand()): Planned {
   const server = { command: self.command, args: [...self.args, "mcp"] };
@@ -98,22 +146,29 @@ export function planMcpConfig(client: Client, root: string, self = selfCommand()
       const file = join(homedir(), ".codeium", "windsurf", "mcp_config.json");
       const json = readJson(file);
       // A user-level file: the project is passed explicitly.
-      const servers = { ...((json.mcpServers as Record<string, unknown>) ?? {}), clarifydoc: { ...server, args: [...server.args, root] } };
-      return { file, content: pretty({ ...json, mcpServers: servers }) };
+      const existing = (json.mcpServers as Record<string, unknown>) ?? {};
+      const key = userServerKey(existing, root);
+      const servers = { ...existing, [key]: { ...server, args: [...server.args, root] } };
+      return { file, content: pretty({ ...json, mcpServers: servers }), note: keptNote(key, existing) };
     }
     case "claude-desktop": {
       const file = claudeDesktopConfig();
       const json = readJson(file);
       // A user-level file: the project is passed explicitly.
-      const servers = { ...((json.mcpServers as Record<string, unknown>) ?? {}), clarifydoc: { ...server, args: [...server.args, root] } };
-      return { file, content: pretty({ ...json, mcpServers: servers }) };
+      const existing = (json.mcpServers as Record<string, unknown>) ?? {};
+      const key = userServerKey(existing, root);
+      const servers = { ...existing, [key]: { ...server, args: [...server.args, root] } };
+      return { file, content: pretty({ ...json, mcpServers: servers }), note: keptNote(key, existing) };
     }
     case "codex": {
       const file = join(homedir(), ".codex", "config.toml");
       const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
-      const block = `[mcp_servers.clarifydoc]\ncommand = ${JSON.stringify(server.command)}\nargs = ${JSON.stringify([...server.args, root])}\n`;
-      const without = existing.replace(/\n?\[mcp_servers\.clarifydoc\]\n(?:(?!\[)[^\n]*\n?)*/g, "\n").replace(/\n{3,}/g, "\n\n");
-      return { file, content: `${without.trimEnd()}${without.trim() ? "\n\n" : ""}${block}` };
+      const tables = codexServers(existing);
+      const key = userServerKey(tables, root);
+      const block = `[mcp_servers.${key}]\ncommand = ${JSON.stringify(server.command)}\nargs = ${JSON.stringify([...server.args, root])}\n`;
+      const table = new RegExp(`\\n?\\[mcp_servers\\.${key}\\]\\n(?:(?!\\[)[^\\n]*\\n?)*`, "g");
+      const without = existing.replace(table, "\n").replace(/\n{3,}/g, "\n\n");
+      return { file, content: `${without.trimEnd()}${without.trim() ? "\n\n" : ""}${block}`, note: keptNote(key, tables) };
     }
   }
 }
@@ -151,7 +206,7 @@ const GIT_EVENTS: Array<{ name: string; when?: string }> = [
 
 /** Where this repository's hooks live: `core.hooksPath` when set, else `.git/hooks` (worktrees included). */
 export function gitHooksDir(root: string): string {
-  const out = execFileSync("git", ["rev-parse", "--git-path", "hooks"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  const out = execFileSync("git", [...GIT_SAFE_CONFIG, "rev-parse", "--git-path", "hooks"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
   return resolve(root, out);
 }
 
@@ -248,6 +303,7 @@ export function applyPlans(plans: readonly Planned[], print: boolean): string[] 
     writeFileSync(p.file, p.content);
     if (p.mode !== undefined) chmodSync(p.file, p.mode);
     out.push(`wrote ${p.file}`);
+    if (p.note) out.push(`  ${p.note}`);
   }
   return out;
 }

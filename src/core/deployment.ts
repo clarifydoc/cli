@@ -363,7 +363,7 @@ function collectRawServices(doc: YamlMap, file: string): RawService[] {
     out.push({
       name,
       file,
-      image: typeof b.image === "string" && b.image ? b.image : undefined,
+      image: composeImage(b.image),
       entrypoint: entry || undefined,
       env: envMap(b.environment),
       dependsOn: asStringArray(b.depends_on),
@@ -373,6 +373,32 @@ function collectRawServices(doc: YamlMap, file: string): RawService[] {
     });
   }
   return out;
+}
+
+/**
+ * An image reference that names an image: no template or variable left in it,
+ * no empty tag or digest (`nginx:` from an empty `.Values.image.tag`).
+ */
+export function isImageRef(image: string | undefined): image is string {
+  if (!image) return false;
+  const s = image.trim().replace(/^(["'])(.*)\1$/, "$2");
+  return !!s && !/\s|\{\{|\$\{|[:@/]$|^[:@/]/.test(s) && /^[\w.\-/:@]+$/.test(s);
+}
+
+/**
+ * A compose `image:` as it runs: `${X:-d}` / `${X-d}` take their default (the
+ * `.env` that could override it is never read — discovery treats it as a
+ * secret); a bare `${X}` names no image, except as the registry in front or
+ * the tag behind, which are dropped.
+ */
+export function composeImage(image: unknown): string | undefined {
+  if (typeof image !== "string") return undefined;
+  const expanded = image
+    .replace(/\$\{[A-Za-z_][A-Za-z0-9_]*:?-([^}]*)\}/g, "$1")
+    // A registry or a tag left to a variable: the repository between them is still known exactly.
+    .replace(/^\$(?:\{[A-Za-z_]\w*\}|[A-Za-z_]\w*)\//, "")
+    .replace(/[:@]\$(?:\{[A-Za-z_]\w*\}|[A-Za-z_]\w*)$/, "");
+  return isImageRef(expanded) ? expanded : undefined;
 }
 
 // ─── Service classification ─────────────────────────────────────────────────

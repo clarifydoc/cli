@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { renderHelmTemplate, collectK8sManifests } from "./deployment-k8s.js";
-import { detectDeployment } from "./deployment.js";
+import { composeImage, detectDeployment, isImageRef } from "./deployment.js";
 import type { SubProject } from "../types/analysis.js";
 
 // ─── Helm template rendering ────────────────────────────────────────────────
@@ -22,7 +22,7 @@ describe("renderHelmTemplate", () => {
         "metadata:",
         '  name: {{ include "shop.fullname" . }}',
         "spec:",
-        "  {{- if .Values.autoscaling.enabled }}",
+        "  {{- if not .Values.autoscaling.enabled }}",
         "  replicas: {{ .Values.replicaCount }}",
         "  {{- end }}",
         "  template:",
@@ -46,6 +46,61 @@ describe("renderHelmTemplate", () => {
     );
     expect(rendered).toContain("port: 8080");
     expect(rendered).toContain("sa: ");
+  });
+
+  it("decides if/else against the values and drops the branch not taken", () => {
+    const rendered = renderHelmTemplate(
+      [
+        "{{- if .Values.debug.enabled }}",
+        "image: reg.io/shop/api-debug:1.4",
+        "{{- else if eq .Values.flavor \"slim\" }}",
+        "image: reg.io/shop/api-slim:1.4",
+        "{{- else }}",
+        "image: reg.io/shop/api:1.4",
+        "{{- end }}",
+        '{{- define "shop.unused" }}',
+        "kind: NotOutput",
+        "{{- end }}",
+      ].join("\n"),
+      { name: "shop", values: { debug: { enabled: "false" }, flavor: "slim" } as any },
+    );
+    expect(rendered.split("\n")).toEqual(["image: reg.io/shop/api-slim:1.4"]);
+  });
+
+  it("an image built from anything not known exactly is left out, never guessed", () => {
+    const chart = { name: "cx", appVersion: "3.4.5", values: { image: { repository: "nginx", tag: "" }, sidecars: [] } as any };
+    const render = (line: string) => renderHelmTemplate(line, chart).trim();
+    // `| default` with a non-literal operand, and `.Chart.AppVersion`.
+    expect(render('image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"')).toBe('image: "nginx:3.4.5"');
+    expect(render('image: {{ printf "%s:%s" .Values.image.repository .Chart.AppVersion | quote }}')).toBe('image: "nginx:3.4.5"');
+    // A named template is a stand-in (the chart name), so no image — it used to come out as `cx`.
+    expect(render('image: {{ include "cx.image" . }}')).toBe("image:");
+    // Under an undecidable condition, or `.` inside range: no image.
+    expect(renderHelmTemplate("{{- if and .Values.a .Values.b }}\nimage: x/y:1\n{{- end }}", chart).trim()).toBe("image:");
+    expect(renderHelmTemplate("{{- range .Values.sidecars }}\n- image: {{ .image }}\n{{- end }}", chart).trim()).toBe("- image:");
+    // Names still take the stand-in.
+    expect(render('name: {{ include "cx.fullname" . }}')).toBe("name: cx");
+  });
+
+  it("isImageRef refuses empty tags, leftovers and variables", () => {
+    expect(isImageRef("nginx:3.4.5")).toBe(true);
+    expect(isImageRef("ghcr.io/acme/cx@sha256:abc")).toBe(true);
+    expect(isImageRef("nginx:")).toBe(false);
+    expect(isImageRef(":1.0")).toBe(false);
+    expect(isImageRef("${API_IMAGE}")).toBe(false);
+    expect(isImageRef("{{ .Values.image }}")).toBe(false);
+    expect(isImageRef("")).toBe(false);
+  });
+
+  it("a compose image takes its ${X:-default}; a bare ${X} names none", () => {
+    expect(composeImage("${API_IMAGE:-acme/api:1.0}")).toBe("acme/api:1.0");
+    expect(composeImage("acme/api:${TAG-2.1}")).toBe("acme/api:2.1");
+    expect(composeImage("${API_IMAGE}")).toBeUndefined();
+    expect(composeImage("acme/api:${TAG}")).toBe("acme/api");
+    expect(composeImage("$REGISTRY/acme/api:$TAG")).toBe("acme/api");
+    expect(composeImage("acme/${NAME}:1.0")).toBeUndefined();
+    expect(composeImage("postgres:16")).toBe("postgres:16");
+    expect(composeImage("${REGISTRY}/acme/postgres:16")).toBe("acme/postgres:16");
   });
 });
 

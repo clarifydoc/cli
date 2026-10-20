@@ -4,6 +4,7 @@ import { copyFile, mkdir } from "fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "path";
 import { promisify } from "util";
 import { loadManifest, saveManifest } from "./manifest.js";
+import { GIT_SAFE_CONFIG } from "./git-safe.js";
 
 const run = promisify(execFile);
 
@@ -24,7 +25,7 @@ export interface WorktreeSeed {
 
 async function git(cwd: string, args: string[]): Promise<string | null> {
   try {
-    return (await run("git", args, { cwd, encoding: "utf8", timeout: 10_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } })).stdout.trim();
+    return (await run("git", [...GIT_SAFE_CONFIG, ...args], { cwd, encoding: "utf8", timeout: 10_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } })).stdout.trim();
   } catch {
     return null;
   }

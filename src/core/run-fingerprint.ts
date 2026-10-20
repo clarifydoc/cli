@@ -2,6 +2,7 @@ import { execFile } from "child_process";
 import { createHash } from "crypto";
 import { readFile, stat } from "fs/promises";
 import { join } from "path";
+import { GIT_SAFE_DIFF, gitArgs } from "./git-safe.js";
 
 /**
  * What an analysis was made from besides the per-file hashes: the options it
@@ -16,7 +17,7 @@ import { join } from "path";
 
 function git(root: string, args: string[]): Promise<string | null> {
   return new Promise((resolve) =>
-    execFile("git", ["-C", root, ...args], { maxBuffer: 256 * 1024 * 1024, encoding: "utf8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }, (err, stdout) =>
+    execFile("git", gitArgs(root, args), { maxBuffer: 256 * 1024 * 1024, encoding: "utf8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }, (err, stdout) =>
       resolve(err ? null : stdout),
     ),
   );
@@ -26,7 +27,7 @@ export async function runFingerprint(projectRoot: string, inputs: { options: unk
   const head = await git(projectRoot, ["rev-parse", "HEAD"]);
   if (head === null) return null;
   const [diff, untracked] = await Promise.all([
-    git(projectRoot, ["diff", "HEAD", "--no-color", "--no-ext-diff", "--binary", "--relative"]),
+    git(projectRoot, ["diff", "HEAD", "--no-color", ...GIT_SAFE_DIFF, "--binary", "--relative"]),
     git(projectRoot, ["ls-files", "--others", "--exclude-standard", "-z"]),
   ]);
   if (diff === null || untracked === null) return null;

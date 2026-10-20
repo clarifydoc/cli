@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { isPlaceholderSecret, maskSecrets, SECRET_FORMATS } from "./security-scanner.js";
 import { isTestFile } from "./test-file-detector.js";
+import { GIT_SAFE_DIFF, gitArgs } from "./git-safe.js";
 
 /**
  * Credentials in git history: a key committed once is leaked for as long as
@@ -66,7 +67,7 @@ export function secretsInLog(log: string): Array<Omit<HistorySecret, "inTree"> &
 export async function scanHistorySecrets(root: string, opts: { maxCommits?: number; timeoutMs?: number } = {}): Promise<HistorySecretsReport | undefined> {
   const maxCommits = opts.maxCommits ?? 5000;
   const log = await new Promise<string | null>((resolve) => {
-    const child = spawn("git", ["-C", root, "log", "--all", "--no-merges", "--no-color", "--no-ext-diff", "-p", "-U0", `--max-count=${maxCommits}`, "--format=%x00%h %cs"], {
+    const child = spawn("git", gitArgs(root, ["log", "--all", "--no-merges", "--no-color", ...GIT_SAFE_DIFF, "-p", "-U0", `--max-count=${maxCommits}`, "--format=%x00%h %cs"]), {
       stdio: ["ignore", "pipe", "ignore"],
     });
     const chunks: Buffer[] = [];
