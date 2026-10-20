@@ -1,0 +1,56 @@
+# ClarifyDoc for GitLab CI. Include it, then tune the variables:
+#
+#   include:
+#     - remote: https://raw.githubusercontent.com/clarifydoc/cli/main/ci/gitlab-ci.yml
+#   variables:
+#     CLARIFYDOC_FAIL_ON: "security,error"   # a level and/or finding categories; empty = report only
+#
+# In a merge-request pipeline the base commit is analyzed once (cached) and
+# only the findings the change introduces count. Findings appear in the merge
+# request's Code Quality widget and test report; with CLARIFYDOC_GITLAB_TOKEN
+# set, a note on the merge request carries the API surface diff and the new
+# findings, edited in place on every pipeline.
+variables:
+  CLARIFYDOC_REF: main            # the clarifydoc/cli ref to build
+  CLARIFYDOC_PATH: "."            # project to analyze, relative to the repository root
+  CLARIFYDOC_FAIL_ON: ""          # e.g. "contract,route-miss" or "error"
+  CLARIFYDOC_FAIL_ON_API: ""      # breaking | risky
+  CLARIFYDOC_ARGS: ""             # further `clarifydoc analyze` options
+
+clarifydoc:
+  stage: test
+  image: node:24
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  variables:
+    GIT_DEPTH: "0"
+  cache:
+    - key: clarifydoc-cli-$CLARIFYDOC_REF
+      paths: [.clarifydoc-cli/]
+    - key: clarifydoc-base-$CI_MERGE_REQUEST_DIFF_BASE_SHA
+      paths: [.clarifydoc/base/]
+  script:
+    - |
+      if [ ! -f .clarifydoc-cli/dist/cli.js ]; then
+        rm -rf .clarifydoc-cli
+        git clone --depth 1 --branch "$CLARIFYDOC_REF" https://github.com/clarifydoc/cli.git .clarifydoc-cli
+        (cd .clarifydoc-cli && npm ci --no-audit --no-fund && npm run build)
+        # Pascal and Kotlin grammars need Docker to build; without them those files are read by the regex tier.
+      fi
+    - |
+      set +e
+      CD_CLI="$PWD/.clarifydoc-cli/dist/cli.js" CD_OUT="$PWD/.clarifydoc" CD_PATH="$CLARIFYDOC_PATH" \
+        CD_BASE_SHA="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}" CD_FAIL_ON="$CLARIFYDOC_FAIL_ON" \
+        CD_FAIL_ON_API="$CLARIFYDOC_FAIL_ON_API" CD_ARGS="$CLARIFYDOC_ARGS" \
+        bash .clarifydoc-cli/ci/run.sh
+      code=$?
+      set -e
+      [ -f .clarifydoc/comment.md ] && node .clarifydoc-cli/ci/gitlab-note.mjs .clarifydoc/comment.md
+      exit $code
+  artifacts:
+    when: always
+    paths: [.clarifydoc/head.sarif, .clarifydoc/comment.md]
+    reports:
+      codequality: .clarifydoc/codequality.json
+      junit: .clarifydoc/findings.junit.xml

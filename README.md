@@ -166,6 +166,51 @@ without Docker; `--scip index.scip` takes them from a SCIP index — scip-typesc
 rust-analyzer — that CI already builds); `report` reads the summary and emits `report.html`.
 Every command's options are in the [CLI reference](docs/cli-reference.md).
 
+## In CI
+
+Pull requests get the API surface diff and the findings they introduce, and fail only on those.
+
+**GitHub Actions**
+
+```yaml
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write   # the comment
+  security-events: write # code scanning
+jobs:
+  clarifydoc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: clarifydoc/cli@main
+        with:
+          fail-on: security,error     # a level and/or finding categories
+          fail-on-api: breaking       # removed routes, lost guards, new required fields
+```
+
+The base commit is analyzed once and cached by its SHA. The head starts from that analysis, so only the
+changed files reparse. One pull-request comment carries the result and is edited on every push. The SARIF
+goes to code scanning, and the job summary repeats the comment. Inputs: `path`, `fail-on`, `fail-on-api`,
+`base`, `comment`, `sarif`, `args` (further `analyze` options), `token`.
+
+**GitLab CI**
+
+```yaml
+include:
+  - remote: https://raw.githubusercontent.com/clarifydoc/cli/main/ci/gitlab-ci.yml
+variables:
+  CLARIFYDOC_FAIL_ON: "contract,route-miss"
+```
+
+Findings land in the merge request's Code Quality widget and test report. With `CLARIFYDOC_GITLAB_TOKEN`
+set, a note on the merge request carries the same comment.
+
+**Anywhere else**
+
+`ci/run.sh` is what both run. Give it `CD_CLI` (the built `dist/cli.js`), `CD_OUT` and `CD_BASE_SHA`, and it
+does the same in any CI with git and Node 24. It exits 2 when a gate tripped.
+
 ## Supported languages
 
 ClarifyDoc has two extraction paths. **Tree-sitter** languages get full AST extraction; **regex** languages get a lighter convention-driven pass.

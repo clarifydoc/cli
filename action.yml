@@ -1,0 +1,150 @@
+name: ClarifyDoc
+description: Map screen → endpoint → table, and fail a pull request only on the findings and API breaks it introduces.
+author: ClarifyDoc
+branding:
+  icon: map
+  color: blue
+
+inputs:
+  path:
+    description: Project to analyze, relative to the repository root.
+    default: "."
+  fail-on:
+    description: >-
+      Gate on findings: a level (error, warning, note), finding categories (security, contract, route-miss,
+      architecture, performance, dead-code, a rule id), or both, comma-separated. On a pull request only
+      the findings the change introduces count. Empty = report only.
+    default: ""
+  fail-on-api:
+    description: Gate on the API surface diff against the base — breaking or risky. Empty = report only.
+    default: ""
+  base:
+    description: >-
+      The commit to compare with. Defaults to the pull request's base commit; empty on a push, where every
+      finding counts.
+    default: ""
+  comment:
+    description: Post the result as one pull-request comment, edited in place on each push (needs pull-requests write).
+    default: "true"
+  sarif:
+    description: Upload the findings to GitHub code scanning (needs security-events write).
+    default: "true"
+  args:
+    description: Further `clarifydoc analyze` options, such as `--coverage coverage/lcov.info`.
+    default: ""
+  token:
+    description: Token for the pull-request comment.
+    default: ${{ github.token }}
+
+outputs:
+  gate:
+    description: "\"1\" when a gate tripped, else \"0\"."
+    value: ${{ steps.run.outputs.gate }}
+  sarif:
+    description: Path of the SARIF report.
+    value: ${{ steps.run.outputs.sarif }}
+  comment:
+    description: Path of the pull-request comment (markdown).
+    value: ${{ steps.run.outputs.comment }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+
+    # The CLI is built from this action's own checkout (npm is not used yet), cached by its sources.
+    - id: cli
+      shell: bash
+      run: |
+        key="$(cd "$GITHUB_ACTION_PATH" && { cat package.json package-lock.json; find src scripts -type f | LC_ALL=C sort | xargs cat; } | sha256sum | cut -c1-20)"
+        echo "key=clarifydoc-cli-${RUNNER_OS}-${key}" >> "$GITHUB_OUTPUT"
+    - id: cli-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ github.action_path }}/node_modules
+          ${{ github.action_path }}/dist
+        key: ${{ steps.cli.outputs.key }}
+    - if: steps.cli-cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        npm ci --no-audit --no-fund
+        # Pascal and Kotlin grammars are compiled with Docker; without them those files are read by the regex tier.
+        npm run setup || echo "::warning::ClarifyDoc: Pascal/Kotlin grammars not built; those files fall back to regex extraction"
+        npm run build
+
+    - id: base
+      shell: bash
+      env:
+        INPUT_BASE: ${{ inputs.base }}
+        PR_BASE: ${{ github.event.pull_request.base.sha }}
+      run: echo "sha=${INPUT_BASE:-$PR_BASE}" >> "$GITHUB_OUTPUT"
+    # The base is analyzed once per base commit and engine; every push to the pull request reuses it.
+    - if: steps.base.outputs.sha != ''
+      id: base-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ runner.temp }}/clarifydoc/base
+        key: clarifydoc-base-${{ steps.cli.outputs.key }}-${{ inputs.path }}-${{ steps.base.outputs.sha }}
+
+    - id: run
+      shell: bash
+      env:
+        CD_CLI: ${{ github.action_path }}/dist/cli.js
+        CD_OUT: ${{ runner.temp }}/clarifydoc
+        CD_PATH: ${{ inputs.path }}
+        CD_BASE_SHA: ${{ steps.base.outputs.sha }}
+        CD_FAIL_ON: ${{ inputs.fail-on }}
+        CD_FAIL_ON_API: ${{ inputs.fail-on-api }}
+        CD_ARGS: ${{ inputs.args }}
+      run: |
+        set +e
+        bash "$GITHUB_ACTION_PATH/ci/run.sh"
+        code=$?
+        set -e
+        [ "$code" -ne 0 ] && [ "$code" -ne 2 ] && exit "$code"
+        echo "gate=$([ "$code" -eq 2 ] && echo 1 || echo 0)" >> "$GITHUB_OUTPUT"
+        echo "sarif=$CD_OUT/head.sarif" >> "$GITHUB_OUTPUT"
+        echo "comment=$CD_OUT/comment.md" >> "$GITHUB_OUTPUT"
+        cat "$CD_OUT/comment.md" >> "$GITHUB_STEP_SUMMARY"
+
+    - if: steps.base.outputs.sha != '' && steps.base-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      continue-on-error: true
+      with:
+        path: ${{ runner.temp }}/clarifydoc/base
+        key: clarifydoc-base-${{ steps.cli.outputs.key }}-${{ inputs.path }}-${{ steps.base.outputs.sha }}
+
+    - if: inputs.comment == 'true' && github.event.pull_request.number
+      shell: bash
+      continue-on-error: true
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        PR: ${{ github.event.pull_request.number }}
+        BODY: ${{ steps.run.outputs.comment }}
+      run: |
+        id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+          --jq '.[] | select(.body | startswith("<!-- clarifydoc-ci -->")) | .id' | head -n 1)"
+        if [ -n "$id" ]; then
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F "body=@$BODY" > /dev/null
+        else
+          gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F "body=@$BODY" > /dev/null
+        fi
+
+    - if: inputs.sarif == 'true'
+      uses: github/codeql-action/upload-sarif@v3
+      continue-on-error: true
+      with:
+        sarif_file: ${{ steps.run.outputs.sarif }}
+        # Locations are relative to the analyzed project, not the repository root.
+        checkout_path: ${{ github.workspace }}/${{ inputs.path }}
+        category: clarifydoc-${{ inputs.path }}
+
+    - if: steps.run.outputs.gate == '1'
+      shell: bash
+      run: |
+        echo "::error::ClarifyDoc: a gate tripped — see the job summary"
+        exit 2
