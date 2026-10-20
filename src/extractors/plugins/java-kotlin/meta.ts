@@ -1,4 +1,11 @@
 import { extractJvmScheduledJobs } from "./scheduled-jobs.js";
+import { screenClassResolver } from "../shared/screen-classes.js";
+
+/** Android's screen classes: an Activity or a Fragment, by the platform classes a project's own derive from. */
+const androidScreenClasses = screenClassResolver("android-screen-classes", ["java", "kotlin"], new Set([
+  "Activity", "AppCompatActivity", "ComponentActivity", "FragmentActivity", "ListActivity", "PreferenceActivity",
+  "Fragment", "DialogFragment", "AppCompatDialogFragment", "BottomSheetDialogFragment", "ListFragment", "PreferenceFragmentCompat",
+]));
 import { javaTaint, kotlinTaint } from "./taint.js";
 import { ktorRouteFnResolver } from "./routes/ktor.js";
 import { springSecurityResolver } from "./routes/security-dsl.js";
@@ -84,7 +91,7 @@ function jvmMeta(language: Language, opts: {
     ...(opts.preprocess ? { preprocess: opts.preprocess } : {}),
     routes: javaKotlinRouteExtractor,
     // Spring Security's authorizeHttpRequests rules, on the routes they match.
-    routeResolvers: [springSecurityResolver, ktorRouteFnResolver],
+    routeResolvers: [springSecurityResolver, ktorRouteFnResolver, androidScreenClasses],
     functionsClasses: jvmFunctionsClasses,
     requestSchema: jvmRequestSchema,
     grpcStubService: jvmGrpcStub,

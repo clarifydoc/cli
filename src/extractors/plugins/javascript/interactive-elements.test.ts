@@ -24,3 +24,28 @@ describe("interactive elements — the handler an inline function runs", () => {
     expect(await handlersOf(`export const C = () => <div onClick={(e) => e.stopPropagation()} />;`)).toEqual(["stopPropagation"]);
   });
 });
+
+describe("React Native controls", () => {
+  it("reads Pressable and Touchable* as buttons, TextInput as an input", async () => {
+    const { parseSource } = await import("../../../parsers/parser-manager.js");
+    await import("../../registry.js");
+    const { extractInteractiveElements } = await import("./interactive-elements.js");
+    const src = `export function Checkout() {
+  return (<View>
+    <TextInput onChangeText={setEmail} />
+    <Pressable onPress={submit}><Text>Pay</Text></Pressable>
+    <TouchableOpacity onPress={() => cancel()} />
+    <Button title="Back" onPress={goBack} />
+    <PaymentSheet onDone={finish} />
+  </View>);
+}`;
+    const tree = await parseSource(src, "typescript" as never, "Checkout.tsx");
+    expect(extractInteractiveElements(tree, src, "typescript").map((e) => `${e.element} ${e.event} ${e.handler}`)).toEqual([
+      "input onChangeText setEmail",
+      "button onPress submit",
+      "button onPress cancel",
+      "button onPress goBack",
+      "custom onDone finish",
+    ]);
+  });
+});

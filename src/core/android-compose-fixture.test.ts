@@ -23,9 +23,19 @@ describe.skipIf(!existsSync(fixture))("sample-android-compose", () => {
 
   it("makes each NavHost destination a screen on the composable it renders, through the package import", async () => {
     const s = await loadReportSummary(out);
-    expect(s.screens.map((x) => `${x.routePath} ${x.filePath}`).sort()).toEqual([
+    expect(s.screens.filter((x) => !x.filePath.includes("/legacy/")).map((x) => `${x.routePath} ${x.filePath}`).sort()).toEqual([
       "home app/src/main/java/com/acme/app/ui/HomeScreen.kt",
       "profile app/src/main/java/com/acme/app/ui/ProfileScreen.kt",
+    ]);
+  });
+
+  it("makes Activities and Fragments screens by the base-class chain, with the screens they open", async () => {
+    const s = await loadReportSummary(out);
+    const legacy = s.screens.filter((x) => x.filePath.includes("/legacy/")).map((x) => `${x.name} → ${[...x.navigatesTo].sort().join(", ")}`).sort();
+    expect(legacy).toEqual([
+      "CartFragment → ",
+      "OrdersActivity → CartFragment, ReceiptActivity",
+      "ReceiptActivity → ",
     ]);
   });
 });

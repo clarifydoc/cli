@@ -1,3 +1,4 @@
+import { extractAndroidNavigation } from "./android-nav.js";
 import type { Tree } from "web-tree-sitter";
 import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { RouteExtractor } from "../../../routes/base.js";
@@ -53,6 +54,9 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
 
     // GraphQL controllers (Spring for GraphQL, Netflix DGS): the root fields they serve.
     if (GRAPHQL_GATE_RE.test(sourceText)) extractJvmGraphqlRoutes(tree.rootNode, routes);
+
+    // Activities and fragments a file opens by class (the screen-class pass makes the classes screens).
+    routes.push(...extractAndroidNavigation(sourceText));
 
     // Jetpack Compose navigation graphs: their destinations are the app's screens.
     if (sourceText.includes("NavHost") || sourceText.includes("androidx.navigation")) {

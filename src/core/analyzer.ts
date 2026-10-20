@@ -2134,8 +2134,11 @@ function buildScreensFromRoutes(
     const unresolved: RouteInfo[] = [];
     for (const route of frontendRoutes) {
       const targetFile = resolveComponentFile(analysis.filePath, route);
+      // A screen class declared in the route's own file (an Activity, a UIViewController — shared/screen-classes.ts)
+      // is that file's page: the file is the screen, as a navigation row from elsewhere would make it.
+      const own = !targetFile && !route.navigation && !!route.componentPath && analysis.classes.some((c) => c.name === route.componentPath);
       const target =
-        targetFile && targetFile !== analysis.filePath ? byPath.get(targetFile) : null;
+        own ? analysis : targetFile && targetFile !== analysis.filePath ? byPath.get(targetFile) : null;
       if (!target) {
         unresolved.push(route);
         continue;
@@ -2165,7 +2168,19 @@ function buildScreensFromRoutes(
 
   const screens: ScreenInfo[] = [];
 
-  for (const { analysis, routes } of byComponent.values()) {
+  // A file several screen classes live in (three view controllers in one Swift file): one screen per class.
+  const pages: Array<{ analysis: FileAnalysis; routes: RouteInfo[] }> = [];
+  for (const entry of byComponent.values()) {
+    const declared = (n: string | null | undefined): n is string => !!n && entry.analysis.classes.some((c) => c.name === n);
+    const names = [...new Set(entry.routes.map((r) => r.componentPath).filter(declared))];
+    if (names.length < 2) {
+      pages.push(entry);
+      continue;
+    }
+    for (const name of names) pages.push({ analysis: entry.analysis, routes: entry.routes.filter((r) => r.componentPath === name) });
+  }
+
+  for (const { analysis, routes } of pages) {
     // Canonical path = the shortest (least-parameterised) route to the page.
     const primary = routes.slice().sort((a, b) => a.path.length - b.path.length)[0]!;
     // The target's plugin may already have authored the screen (JSP views,
@@ -2188,13 +2203,18 @@ function buildScreensFromRoutes(
     screens.push(buildScreen(analysis, screenNameFromFile(analysis), route.path, rawSources));
   }
 
-  // A view that declares where it navigates (`navigation` routes) opens those screens.
-  const screenOf = new Map(screens.map((sc) => [sc.filePath, sc]));
+  // A view that declares where it navigates (`navigation` routes) opens those screens — in a file of several
+  // screen classes, the screen whose class holds the navigating line.
+  const screensOf = new Map<string, ScreenInfo[]>();
+  for (const sc of screens) (screensOf.get(sc.filePath) ?? screensOf.set(sc.filePath, []).get(sc.filePath)!).push(sc);
   for (const analysis of allAnalyses) {
-    const from = screenOf.get(analysis.filePath);
-    if (!from) continue;
+    const here = screensOf.get(analysis.filePath);
+    if (!here) continue;
     for (const r of analysis.routes) {
-      if (r.kind === "frontend" && r.navigation && r.path !== from.routePath && !from.navigatesTo.includes(r.path)) from.navigatesTo.push(r.path);
+      if (r.kind !== "frontend" || !r.navigation) continue;
+      const holder = here.length > 1 ? analysis.classes.find((c) => r.line >= c.line && r.line <= (c.endLine ?? c.line) && here.some((h) => h.name === c.name)) : undefined;
+      const from = holder ? here.find((h) => h.name === holder.name)! : here[0]!;
+      if (r.path !== from.routePath && !from.navigatesTo.includes(r.path)) from.navigatesTo.push(r.path);
     }
   }
 

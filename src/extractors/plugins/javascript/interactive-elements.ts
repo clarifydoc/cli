@@ -160,9 +160,21 @@ function getCalleeIdentifier(callNode: Node): string | null {
   return null;
 }
 
+/** React Native's own controls: what a press or a text change happens on (`onPress`, `onChangeText`). */
+const NATIVE_TAGS: Record<string, InteractiveElementInfo["element"]> = {
+  Pressable: "button",
+  TouchableOpacity: "button",
+  TouchableHighlight: "button",
+  TouchableWithoutFeedback: "button",
+  TouchableNativeFeedback: "button",
+  TextInput: "input",
+  Switch: "input",
+  Picker: "select",
+};
+
 /** Map a JSX tag name to an interactive element type */
 function resolveElementType(tagName: string): InteractiveElementInfo["element"] {
-  return INTERACTIVE_TAGS[tagName.toLowerCase()] ?? (/^[A-Z]/.test(tagName) ? "custom" : "button");
+  return NATIVE_TAGS[tagName] ?? INTERACTIVE_TAGS[tagName.toLowerCase()] ?? (/^[A-Z]/.test(tagName) ? "custom" : "button");
 }
 
 /**

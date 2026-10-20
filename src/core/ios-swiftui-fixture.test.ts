@@ -24,10 +24,22 @@ describe.skipIf(!existsSync(fixture))("sample-ios-swiftui", () => {
   it("makes every view a navigation opens a screen, with the views it opens", async () => {
     const s = await loadReportSummary(out);
     const screens = new Map(s.screens.map((x) => [x.routePath, x]));
-    expect([...screens.keys()].sort()).toEqual(["AddItemView", "ItemDetailView", "ItemListView", "RootTabs", "SettingsView"]);
+    expect([...screens.keys()].sort()).toEqual([
+      "AddItemView", "ExportDoneViewController", "ExportViewController", "FormatPickerViewController", "ItemDetailView", "ItemListView", "RootTabs", "SettingsView",
+    ]);
     expect(screens.get("RootTabs")?.navigatesTo).toEqual(["ItemListView", "SettingsView"]);
     expect(screens.get("ItemListView")?.navigatesTo).toEqual(["ItemDetailView", "AddItemView"]);
     expect(screens.get("ItemDetailView")?.filePath).toBe("Notes/Views/ItemDetailView.swift");
+  });
+
+  it("makes UIKit view controllers screens by the base-class chain — several in one file — with what each opens", async () => {
+    const s = await loadReportSummary(out);
+    const uikit = s.screens.filter((x) => x.filePath === "Notes/Legacy/ExportViewController.swift").map((x) => `${x.name} → ${x.navigatesTo.join(", ")}`).sort();
+    expect(uikit).toEqual([
+      "ExportDoneViewController → ",
+      "ExportViewController → ExportDoneViewController, FormatPickerViewController",
+      "FormatPickerViewController → ",
+    ]);
   });
 
   it("reads SwiftData models — stored fields only — and where views read and write them", async () => {

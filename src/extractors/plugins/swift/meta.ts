@@ -7,6 +7,13 @@ import { swiftManifest } from "./manifest.js";
 import { swiftRequestSchema } from "./request-schema.js";
 import { swiftReachability } from "./reachability.js";
 import { SwiftEntityExtractor } from "./entities.js";
+import { screenClassResolver } from "../shared/screen-classes.js";
+
+/** UIKit's screen classes: a view controller, by the platform classes a project's own derive from. */
+const uikitScreenClasses = screenClassResolver("uikit-screen-classes", ["swift"], new Set([
+  "UIViewController", "UITableViewController", "UICollectionViewController", "UIPageViewController",
+  "UISplitViewController", "UITabBarController", "UIHostingController",
+]));
 
 const SWIFT_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -36,4 +43,6 @@ export const swiftMeta: LanguagePluginMeta = {
   requestSchema: swiftRequestSchema,
   // SwiftData @Model and Core Data NSManagedObject classes (see entities.ts).
   entities: new SwiftEntityExtractor(),
+  // UIViewController subclasses are screens (shared/screen-classes.ts).
+  routeResolvers: [uikitScreenClasses],
 };
