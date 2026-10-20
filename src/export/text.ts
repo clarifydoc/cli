@@ -53,6 +53,19 @@ export function xml(value: unknown): string {
     .replace(/'/g, "&apos;");
 }
 
+/**
+ * CSV field (RFC 4180): quoted when it holds a comma, quote or line break. A
+ * field a spreadsheet would run as a formula (`=`, `+`, `-`, `@` first — a
+ * route or symbol named by the repository can start that way) gets a leading
+ * `'`, the form spreadsheets show as text; a plain number is left alone.
+ */
+export function csvCell(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  let text = String(value);
+  if (/^[=+\-@\t\r]/.test(text) && !/^[+-]?\d+(\.\d+)?$/.test(text)) text = `'${text}`;
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
 /** Cypher single-quoted string literal. */
 export function cypherStr(value: unknown): string {
   return `'${String(value ?? "").replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\r?\n/g, " ")}'`;

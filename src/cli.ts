@@ -1,6 +1,6 @@
 import { Command, InvalidArgumentError } from "commander";
 import { TOOL_VERSION } from "./core/version.js";
-import { resolve, relative, join, basename } from "path";
+import { resolve, relative, join, basename, dirname } from "path";
 import { existsSync } from "fs";
 import { analyze } from "./core/analyzer.js";
 import {
@@ -609,7 +609,7 @@ program
 
 program
   .command("export")
-  .description("Render an analysis as committed artifacts: ARCHITECTURE.md, DATA-MODEL.md, FLOWS.md, Mermaid diagrams, GraphML, Cypher")
+  .description("Render an analysis as committed artifacts: ARCHITECTURE.md, DATA-MODEL.md, FLOWS.md, Mermaid diagrams, GraphML, Cypher, CSV, an Obsidian vault")
   .argument("<path>", "Path to project root")
   .option("-o, --output <dir>", "Analysis output directory (same value as `analyze -o`)", ".clarifydoc")
   .option("--analysis-dir <dir>", "Exact directory containing project-summary.json (overrides --output)")
@@ -617,9 +617,10 @@ program
   .option("--out-dir <dir>", "Write the files here (default: print one format to stdout, or write several to the current directory)")
   .option("--list", "List the formats", false)
   .action(async (path: string, options) => {
-    const { EXPORT_FORMATS, renderExport } = await import("./export/index.js");
+    const { EXPORT_BUNDLES, EXPORT_FORMATS, findExportBundle, renderExport } = await import("./export/index.js");
     if (options.list) {
       for (const f of EXPORT_FORMATS) console.log(`${f.name.padEnd(22)} ${f.description}`);
+      for (const b of EXPORT_BUNDLES) console.log(`${`${b.name}/`.padEnd(22)} ${b.description}`);
       return;
     }
     const projectRoot = resolve(path);
@@ -634,7 +635,7 @@ program
         throw new Error(`No analysis found at ${analysisDir}.\nRun first: clarifydoc analyze ${path} -o ${options.output}`);
       }
       const names: string[] = options.format ?? ["ARCHITECTURE.md", "DATA-MODEL.md", "FLOWS.md"];
-      if (names.length === 1 && !options.outDir) {
+      if (names.length === 1 && !options.outDir && !findExportBundle(names[0]!)) {
         process.stdout.write(renderExport(names[0]!, summary));
         return;
       }
@@ -642,6 +643,17 @@ program
       const dir = resolve(options.outDir ?? ".");
       await mkdir(dir, { recursive: true });
       for (const name of names) {
+        const bundle = findExportBundle(name);
+        if (bundle) {
+          const root = resolve(dir, bundle.name);
+          const files = bundle.render(summary as never);
+          for (const f of files) {
+            await mkdir(dirname(resolve(root, f.path)), { recursive: true });
+            await writeFile(resolve(root, f.path), f.content);
+          }
+          console.log(`wrote ${root}/ (${files.length} files)`);
+          continue;
+        }
         const file = resolve(dir, name);
         await writeFile(file, renderExport(name, summary));
         console.log(`wrote ${file}`);

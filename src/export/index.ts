@@ -6,6 +6,8 @@ import { architectureDoc, dataModelDoc, flowsDoc, projectName } from "./markdown
 import type { Summary } from "./types.js";
 import { buildOpenApi } from "../core/openapi-export.js";
 import { toCycloneDx } from "./sbom.js";
+import { entitiesCsv, graphEdgesCsv, graphNodesCsv, routesCsv } from "./csv.js";
+import { obsidianVault, type BundleFile } from "./obsidian.js";
 
 /**
  * The export catalogue: every artifact an analysis's graph can leave the tool
@@ -28,6 +30,7 @@ const MARKDOWN = "text/markdown; charset=utf-8";
 const MERMAID = "text/vnd.mermaid; charset=utf-8";
 const GRAPHML = "application/graphml+xml; charset=utf-8";
 const CYPHER = "text/x-cypher; charset=utf-8";
+const CSV = "text/csv; charset=utf-8; header=present";
 
 const DIAGRAM_TITLES: Record<DiagramKind, string> = {
   context: "Sub-project container overview, edges weighted by cross-project link count",
@@ -75,6 +78,18 @@ function catalogue(): ExportFormat[] {
       description: "Every endpoint with a resolved caller or data effect: the cross-tier screen-to-table chain as text.",
       render: flowsDoc,
     },
+    {
+      name: "routes.csv",
+      contentType: CSV,
+      description: "CSV — every route with its handler, file, guards, callers and the data it reaches.",
+      render: routesCsv,
+    },
+    {
+      name: "entities.csv",
+      contentType: CSV,
+      description: "CSV — every entity with its columns, relations, the functions that reach it and the routes that do.",
+      render: entitiesCsv,
+    },
   ];
   for (const kind of DIAGRAM_KINDS) {
     formats.push({
@@ -96,6 +111,18 @@ function catalogue(): ExportFormat[] {
       contentType: CYPHER,
       description: `Neo4j Cypher — ${GRAPH_TITLES[kind]}.`,
       render: (summary) => toCypher(buildGraph(summary, kind), projectName(summary), summary.analyzedAt ?? "unknown"),
+    });
+    formats.push({
+      name: `${kind}.nodes.csv`,
+      contentType: CSV,
+      description: `CSV node table (with ${kind}.edges.csv, for Gephi's spreadsheet import) — ${GRAPH_TITLES[kind]}.`,
+      render: (summary) => graphNodesCsv(buildGraph(summary, kind)),
+    });
+    formats.push({
+      name: `${kind}.edges.csv`,
+      contentType: CSV,
+      description: `CSV edge table — ${GRAPH_TITLES[kind]}.`,
+      render: (summary) => graphEdgesCsv(buildGraph(summary, kind)),
     });
   }
   return formats;
@@ -120,3 +147,28 @@ export function renderExport(name: string, summary: unknown): string {
   if (!format) throw new Error(`Unknown export "${name}". Known: ${EXPORT_FORMATS.map((f) => f.name).join(", ")}`);
   return format.render(summary as Summary);
 }
+
+/**
+ * Exports that are a directory of files rather than one: written by
+ * `clarifydoc export --format <name>` into `<out-dir>/<name>/`.
+ */
+export interface ExportBundle {
+  name: string;
+  description: string;
+  render: (summary: Summary) => BundleFile[];
+}
+
+export const EXPORT_BUNDLES: readonly ExportBundle[] = [
+  {
+    name: "obsidian",
+    description: "Obsidian vault — a note per route, screen, entity and sub-project, wikilinked screen → route → entity.",
+    render: obsidianVault,
+  },
+];
+
+/** Look a bundle up by name, case-insensitively. */
+export function findExportBundle(name: string): ExportBundle | undefined {
+  return EXPORT_BUNDLES.find((b) => b.name.toLowerCase() === name.toLowerCase());
+}
+
+export type { BundleFile } from "./obsidian.js";
