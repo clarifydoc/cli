@@ -1915,6 +1915,10 @@ function extractNavigationTargets(source: string): string[] {
       if (path && path.startsWith("/")) targets.add(path);
     }
   }
+  // A screen named rather than routed (`navigation.navigate("Profile")`,
+  // `navigation.push("Details", …)`): the name, matched only against screens
+  // a navigator declares under it.
+  for (const m of source.matchAll(/\bnavigation\??\.(?:navigate|push|replace|reset)\(\s*['"`]([A-Za-z][\w-]*)['"`]/g)) targets.add(m[1]!);
   // Plain-HTML page navigation: `<a href="other.html">`. Restricted to local
   // `.html`/`.htm` targets (no scheme, anchor, or mailto) so it adds nothing on
   // framework SPAs (which route by path, not by .html files).

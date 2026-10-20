@@ -8,6 +8,7 @@ import { visitVueRouterRoute } from "./vue-router.js";
 import { collectTanstackCodeRoutes, visitTanstackFileRoute } from "./tanstack-router.js";
 import { mayDefineTrpc, visitTrpcRouter } from "./trpc.js";
 import { collectCdkRoutes } from "./cdk.js";
+import { mayDeclareReactNavigation, visitReactNavigationScreen, visitStaticNavigator } from "./react-navigation.js";
 
 /**
  * JS/TS route extraction: one shared tree walk feeding every supported
@@ -26,6 +27,8 @@ export const javascriptRouteExtractor: RouteExtractor = {
     const tanstack: RouteInfo[] = [];
     const trpc: RouteInfo[] = [];
     const maybeTrpc = mayDefineTrpc(sourceText);
+    const navigation: RouteInfo[] = [];
+    const maybeNavigation = mayDeclareReactNavigation(sourceText);
     const maybeTanstack = sourceText.includes("FileRoute(") || sourceText.includes("createRoute(");
 
     const walk = (node: Node): void => {
@@ -35,6 +38,10 @@ export const javascriptRouteExtractor: RouteExtractor = {
       visitVueRouterRoute(node, vueRouter, facts);
       if (maybeTanstack) visitTanstackFileRoute(node, tanstack);
       if (maybeTrpc) visitTrpcRouter(node, trpc, facts);
+      if (maybeNavigation) {
+        visitReactNavigationScreen(node, navigation);
+        visitStaticNavigator(node, navigation);
+      }
       for (const child of node.children) walk(child);
     };
     walk(tree.rootNode);
@@ -49,6 +56,6 @@ export const javascriptRouteExtractor: RouteExtractor = {
     // AWS CDK stacks: API Gateway routes wired to Lambdas, placed on their handlers by cdkRouteResolver.
     collectCdkRoutes(tree.rootNode, sourceText, facts);
 
-    return [...express, ...reactRouter, ...nestjs, ...vueRouter, ...tanstack, ...trpc];
+    return [...express, ...reactRouter, ...nestjs, ...vueRouter, ...tanstack, ...trpc, ...navigation];
   },
 };
