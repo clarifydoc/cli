@@ -1,3 +1,4 @@
+import { pythonProjectCommands } from "./project-commands.js";
 import { pythonTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { pythonFrameworkRules } from "./frameworks.js";
@@ -12,6 +13,7 @@ import { pypiPackageManager } from "./package-manifests.js";
 export const pythonManifest: LanguagePluginManifest = {
   blockingCalls: /^(?:time\.sleep|requests\.(?:get|post|put|patch|delete|head|request)|urllib\.request\.urlopen|urlopen|subprocess\.(?:run|call|check_call|check_output))$/,
   testCommand: pythonTestCommand,
+  projectCommands: pythonProjectCommands,
   language: "python",
   family: "python",
   packageManagers: [pypiPackageManager],

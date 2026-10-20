@@ -274,16 +274,42 @@ export function planGuidance(root: string, file = "AGENTS.md", facts: string[] =
   return { file: path, content };
 }
 
-/** Facts from an analysis worth an agent's first look: hubs, broken calls, contract findings, cycles. */
+/**
+ * Facts from an analysis worth an agent's first look: when they were true,
+ * how the project is built and tested, its hubs, the files fixed again and
+ * again, broken calls, contract findings, cycles. Dated, because this block
+ * is committed and outlives the analysis it came from.
+ */
 export function projectFacts(summary: {
+  analyzedAt?: string;
+  sourceRevision?: { commit: string };
   godNodes?: Array<{ file: string; degree: number }>;
   apiRouteLinkStats?: { unmatched?: number; refused?: { methodMismatch?: number } };
   contractFindings?: unknown[];
   layerViolations?: unknown[];
+  fileChurn?: Array<{ file: string; commits: number; fixes?: number }>;
+  projectCommands?: Array<{ projectId: string; root: string; kind: string; command: string }>;
 }): string[] {
   const out: string[] = [];
+  if (summary.analyzedAt) {
+    const commit = summary.sourceRevision?.commit ? ` at commit ${summary.sourceRevision.commit.slice(0, 12)}` : "";
+    out.push(`As of ${summary.analyzedAt.slice(0, 10)}${commit} — \`clarifydoc_status\` says whether the analysis is still current.`);
+  }
+  // How it is built and tested, per root (the root project first).
+  const commands = (summary.projectCommands ?? []).filter((c) => c.kind === "build" || c.kind === "test");
+  const roots = [...new Set(commands.map((c) => c.root))].sort((a, b) => a.length - b.length || a.localeCompare(b)).slice(0, 4);
+  for (const root of roots) {
+    const here = commands.filter((c) => c.root === root).map((c) => `${c.kind}: \`${c.command}\``);
+    out.push(`${root ? `In \`${root}/\`` : "At the root"} — ${here.join(", ")}.`);
+  }
   const hubs = (summary.godNodes ?? []).slice(0, 5).map((g) => `\`${g.file}\``);
   if (hubs.length) out.push(`Hub files — a change there travels far, check \`clarifydoc_blast_radius\` first: ${hubs.join(", ")}.`);
+  // Fixed again and again (the risk verdict's fix_prone rule): read their history before changing them.
+  const fixProne = (summary.fileChurn ?? [])
+    .filter((f) => (f.fixes ?? 0) >= 3 && (f.fixes ?? 0) / Math.max(1, f.commits) >= 0.3)
+    .sort((a, b) => (b.fixes ?? 0) - (a.fixes ?? 0) || a.file.localeCompare(b.file))
+    .slice(0, 5);
+  if (fixProne.length) out.push(`Fixed again and again — what broke there before may break again: ${fixProne.map((f) => `\`${f.file}\` (${f.fixes} fixes)`).join(", ")}.`);
   const missed = (summary.apiRouteLinkStats?.unmatched ?? 0) + (summary.apiRouteLinkStats?.refused?.methodMismatch ?? 0);
   if (missed) out.push(`${missed} API call(s) reach no route — \`clarifydoc_routes gaps=true\` lists them.`);
   if (summary.contractFindings?.length) out.push(`${summary.contractFindings.length} request body/route disagreement(s) — in \`clarifydoc_routes gaps=true\`.`);

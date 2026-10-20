@@ -1,3 +1,4 @@
+import { phpProjectCommands } from "./project-commands.js";
 import { phpTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { phpFrameworkRules, phpMarkerCandidates } from "./frameworks.js";
@@ -11,6 +12,7 @@ import { composerPackageManager } from "./package-manifests.js";
  */
 export const phpManifest: LanguagePluginManifest = {
   testCommand: phpTestCommand,
+  projectCommands: phpProjectCommands,
   language: "php",
   family: "php",
   packageManagers: [composerPackageManager],

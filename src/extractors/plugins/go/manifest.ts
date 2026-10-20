@@ -1,3 +1,4 @@
+import { goProjectCommands } from "./project-commands.js";
 import { goTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { goFrameworkRules } from "./frameworks.js";
@@ -11,6 +12,7 @@ import { goPackageManager } from "./package-manifests.js";
  */
 export const goManifest: LanguagePluginManifest = {
   testCommand: goTestCommand,
+  projectCommands: goProjectCommands,
   language: "go",
   family: "go",
   // A package is its directory: a bare call reaches the function a sibling file declares.

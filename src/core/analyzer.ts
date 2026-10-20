@@ -76,6 +76,7 @@ import { checkDocReferences, docReferences, type DocReference } from "./doc-drif
 import { scanHistorySecrets } from "./history-secrets.js";
 import { findBlockingInAsync, findQueriesInLoops } from "./query-in-loop.js";
 import { consumerEntryPoints } from "./consumer-entries.js";
+import { collectProjectCommands } from "./project-commands.js";
 import { nameCommunities } from "./community-names.js";
 import { buildTestCoverage, COVERAGE_CANDIDATES, parseCoverage } from "./test-coverage.js";
 import { isTestFile } from "./test-file-detector.js";
@@ -1104,6 +1105,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   if (originCount > 0) progress.detail(`  Call origins resolved: ${originCount}`);
   const thirdParty = externalServices(allApiCalls);
   // MCP tools, editor and CLI commands: entry points that are not routes.
+  // How each sub-project is built, tested and started, as its own files say.
+  const projectCommands = collectProjectCommands(projectRoot, subProjects);
   const allEntryPoints = allAnalyses.flatMap((a) => (a.entryPoints ?? []).map((e) => ({ ...e, filePath: a.filePath, ...(a.projectId ? { projectId: a.projectId } : {}) })));
   if (allEntryPoints.length > 0) progress.detail(`  Entry points: ${allEntryPoints.length} (${[...new Set(allEntryPoints.map((e) => e.kind))].join(", ")})`);
   if (thirdParty.length > 0) progress.detail(`  External services: ${thirdParty.map((s) => `${s.name} (${s.calls})`).join(", ")}`);
@@ -1821,6 +1824,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     apiCalls: allApiCalls,
     ...(thirdParty.length ? { externalServices: thirdParty } : {}),
     ...(allEntryPoints.length ? { entryPoints: allEntryPoints } : {}),
+    ...(projectCommands.length ? { projectCommands } : {}),
     screens: allScreens,
     symbolLinks,
     componentLaunches: componentLaunches.length ? componentLaunches : undefined,

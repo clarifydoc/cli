@@ -663,6 +663,9 @@ export function inferFileFrameworks(
  */
 export const PACKAGE_MANAGERS: readonly PackageManagerSpec[] = ALL_MANIFESTS.flatMap((m) => m.packageManagers ?? []);
 
+/** Every language's build/test/start reader, in manifest order (the first to name a kind for a root wins). */
+export const PROJECT_COMMAND_READERS: ReadonlyArray<NonNullable<LanguagePluginManifest["projectCommands"]>> = ALL_MANIFESTS.flatMap((m) => (m.projectCommands ? [m.projectCommands] : []));
+
 const MATCHING_FIELDS = ["importKey", "packageKey", "prefixMatch", "assertsUnused", "installedOwners"] as const;
 
 /**

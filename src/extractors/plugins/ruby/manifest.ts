@@ -1,3 +1,4 @@
+import { rubyProjectCommands } from "./project-commands.js";
 import { rubyTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { rubyFrameworkRules } from "./frameworks.js";
@@ -11,6 +12,7 @@ import { rubygemsPackageManager } from "./package-manifests.js";
  */
 export const rubyManifest: LanguagePluginManifest = {
   testCommand: rubyTestCommand,
+  projectCommands: rubyProjectCommands,
   language: "ruby",
   family: "ruby",
   // `Foo.new(…)` runs `initialize`.

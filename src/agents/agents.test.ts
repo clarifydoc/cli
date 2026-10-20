@@ -86,6 +86,22 @@ describe("install plans", () => {
       expect(twice.match(/clarifydoc:start/g)).toHaveLength(1);
       expect(twice).toContain("`src/core.ts`");
       expect(twice).toContain("3 API call(s) reach no route");
+      const dated = projectFacts({
+        analyzedAt: "2026-10-20T09:00:00.000Z",
+        sourceRevision: { commit: "0123456789abcdef" },
+        projectCommands: [
+          { projectId: "web", root: "web", kind: "test", command: "npm test" },
+          { projectId: "root", root: "", kind: "build", command: "go build ./..." },
+          { projectId: "root", root: "", kind: "start", command: "go run ." },
+        ],
+        fileChurn: [{ file: "src/pay.ts", commits: 9, fixes: 4 }, { file: "src/ok.ts", commits: 40, fixes: 3 }],
+      });
+      expect(dated).toEqual([
+        "As of 2026-10-20 at commit 0123456789ab — `clarifydoc_status` says whether the analysis is still current.",
+        "At the root — build: `go build ./...`.",
+        "In `web/` — test: `npm test`.",
+        "Fixed again and again — what broke there before may break again: `src/pay.ts` (4 fixes).",
+      ]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

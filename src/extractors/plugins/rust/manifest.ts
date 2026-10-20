@@ -1,3 +1,4 @@
+import { rustProjectCommands } from "./project-commands.js";
 import { rustTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { rustFrameworkRules } from "./frameworks.js";
@@ -11,6 +12,7 @@ import { cargoPackageManager } from "./package-manifests.js";
  */
 export const rustManifest: LanguagePluginManifest = {
   testCommand: rustTestCommand,
+  projectCommands: rustProjectCommands,
   language: "rust",
   family: "rust",
   // Each file in `src/bin/` is a binary crate root; the default `**/bin/**`

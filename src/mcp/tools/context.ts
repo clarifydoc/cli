@@ -192,6 +192,8 @@ export async function statusReport(loaded: LoadedAnalysis, store: AnalysisStore)
     );
   }
 
+  lines.push(...orientation(summary));
+
   lines.push(
     "",
     `map: ${countMap(
@@ -241,6 +243,31 @@ export async function statusReport(loaded: LoadedAnalysis, store: AnalysisStore)
   lines.push("", `analysis dir: ${store.analysisDir}`);
   // A project with no frameworks or sub-projects would otherwise leave a gap.
   return lines.filter((line, i) => line !== "" || lines[i - 1] !== "").join("\n");
+}
+
+/**
+ * Where to start, per sub-project: the files that start it (the entry files
+ * the reachability pass found, with why) and how it is built, tested and
+ * started (`projectCommands`, from its own manifests). What a newcomer — or
+ * an agent's first turn — orients by.
+ */
+export function orientation(summary: Pick<ProjectAnalysis, "subProjects" | "fileProjects" | "deadCode" | "projectCommands">): string[] {
+  const entries = summary.deadCode?.entries ?? [];
+  const commands = summary.projectCommands ?? [];
+  if (!entries.length && !commands.length) return [];
+  const projects = summary.subProjects?.length ? summary.subProjects : [{ id: "root", name: "", root: "", kind: "unknown" as const }];
+  const rows: string[] = [];
+  for (const p of projects.slice(0, 8)) {
+    const starts = entries.filter((e) => (summary.fileProjects?.[e.filePath] ?? "root") === p.id).slice(0, 3);
+    const cmds = commands.filter((c) => c.projectId === p.id);
+    if (!starts.length && !cmds.length) continue;
+    const parts = [
+      starts.length && `starts at ${starts.map((e) => `${e.filePath} (${e.reason})`).join(", ")}`,
+      ...cmds.map((c) => `${c.kind} \`${c.command}\``),
+    ].filter(Boolean);
+    rows.push(`- ${projects.length > 1 ? `${p.name} (${p.root || "."}): ` : ""}${parts.join(" · ")}`);
+  }
+  return rows.length ? ["", "## Where to start", ...rows] : [];
 }
 
 /**

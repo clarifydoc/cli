@@ -953,6 +953,12 @@ export interface LanguagePluginManifest {
    */
   packageManagers?: readonly PackageManagerSpec[];
   /**
+   * How a project of this language is built, tested and started, read off the files at its root
+   * (package.json scripts, go.mod, Cargo.toml, pom.xml, a `.csproj`, …) — what an agent orients by
+   * (`ProjectAnalysis.projectCommands`, `clarifydoc_status`). Static manifest data, like `packageManagers`.
+   */
+  projectCommands?: ProjectCommandSpec["commands"];
+  /**
    * Ecosystems this language's imports are matched against — usually one;
    * Swift/Objective-C import from SwiftPM AND CocoaPods packages.
    */
@@ -1310,3 +1316,27 @@ export interface RequestSchemaHooks {
   /** Whether a request must carry the property. */
   isRequired(prop: import("./analysis.js").PropertyInfo): boolean;
 }
+
+/** What a `projectCommands` reader sees of one project root. */
+export interface ProjectRootView {
+  /** Names directly in the root (files and directories). */
+  entries: readonly string[];
+  /** A file under the root, by relative path; undefined when absent or unreadable. */
+  read(rel: string): string | undefined;
+  /** Whether a path exists under the root. */
+  exists(rel: string): boolean;
+}
+
+export interface ProjectCommandSpec {
+  /** The commands the root's files state or imply; empty when the language's files are not there. */
+  commands(root: ProjectRootView): ProjectCommand[];
+}
+
+export interface ProjectCommand {
+  kind: "build" | "test" | "start" | "dev" | "lint";
+  /** As a person types it at the project root: `npm test`, `go test ./...`, `./gradlew build`. */
+  command: string;
+  /** Where it was read: `package.json scripts.test`, `go.mod`. */
+  source: string;
+}
+

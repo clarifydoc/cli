@@ -1235,7 +1235,8 @@ export function impactTool(ctx: ToolContext): McpTool {
           renderImpactMarkdown(impact),
           "",
           facts([
-            ["analysis age", ago(loaded.summary.analyzedAt)],
+            // Absolute first: an agent compares it with a commit time; "3 h ago" goes stale in its context.
+            ["analyzed", `${loaded.summary.analyzedAt} (${ago(loaded.summary.analyzedAt)})`],
             ["unknown to the analysis", impact.unknownFiles.length],
           ]),
           impact.unknownFiles.length

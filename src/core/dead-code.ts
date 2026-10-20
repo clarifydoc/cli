@@ -1,3 +1,4 @@
+import { DEAD_CODE_ENTRY_LIMIT } from "../types/analysis.js";
 import type {
   DeadCodeReport,
   ExportInfo,
@@ -658,6 +659,13 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
     files,
     exports: exportRows,
   };
+  // What starts each program: where an agent begins reading (clarifydoc_status).
+  const entries = judged
+    .filter((a) => entryReason.has(a.filePath))
+    .map((a) => ({ filePath: a.filePath, reason: entryReason.get(a.filePath)! }))
+    .sort((x, y) => byOrdinal(x.filePath, y.filePath))
+    .slice(0, DEAD_CODE_ENTRY_LIMIT);
+  if (entries.length) report.entries = entries;
   if (skipped.size > 0) {
     report.skippedProjects = [...skipped.values()]
       .map((r) => ({

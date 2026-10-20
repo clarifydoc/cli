@@ -1,3 +1,4 @@
+import { jsProjectCommands } from "./project-commands.js";
 import { jsTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { NOISE_CALLS } from "../../shared/call-graph.js";
@@ -100,6 +101,7 @@ export const JS_PLATFORM_SUFFIXES = [".native", ".ios", ".android", ".web"] as c
 export const typescriptManifest: LanguagePluginManifest = {
   blockingCalls: /^(?:(?:fs|child_process)\.)?(?:readFileSync|writeFileSync|appendFileSync|readdirSync|statSync|existsSync|mkdirSync|copyFileSync|execSync|execFileSync|spawnSync)$/,
   testCommand: jsTestCommand,
+  projectCommands: jsProjectCommands,
   language: "typescript",
   family: "script",
   packageManagers: [npmPackageManager],

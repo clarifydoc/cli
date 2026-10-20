@@ -1,3 +1,4 @@
+import { jvmProjectCommands } from "./project-commands.js";
 import { jvmTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { javaKotlinFrameworkRules } from "./frameworks.js";
@@ -85,6 +86,7 @@ const JVM_BUILTIN_MEMBERS = [
 
 export const javaManifest: LanguagePluginManifest = {
   testCommand: jvmTestCommand,
+  projectCommands: jvmProjectCommands,
   language: "java",
   family: "jvm",
   packageManagers: [mavenPackageManager, gradlePackageManager],

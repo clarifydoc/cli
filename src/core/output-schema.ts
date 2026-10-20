@@ -77,6 +77,7 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   apiCalls: "required",
   externalServices: "optional",
   entryPoints: "optional",
+  projectCommands: "optional",
   testCoverage: "optional",
   docDrift: "optional",
   historySecrets: "optional",

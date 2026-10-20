@@ -2594,6 +2594,8 @@ export interface DeadCodeReport {
   judgedFiles: number;
   /** Judged files that are entry points themselves (toolchain manifest or framework convention). */
   entryFiles: number;
+  /** Those entry files and why each is one (`package.json main`, `manage.py`), at most {@link DEAD_CODE_ENTRY_LIMIT}. */
+  entries?: Array<{ filePath: string; reason: string }>;
   /**
    * Projects (sub-project roots, "" for the analyzed root) holding files of a
    * judged language that were NOT judged, and why — a project with no
@@ -2617,6 +2619,9 @@ export interface DeadCodeReport {
   unusedImports?: Array<{ filePath: string; line: number; source: string; names: string[] }>;
   unusedImportCount?: number;
 }
+
+/** Rows of `DeadCodeReport.entries` kept in the summary. */
+export const DEAD_CODE_ENTRY_LIMIT = 200;
 
 /** Rows of `DeadCodeReport.unusedImports` kept in the summary. */
 export const UNUSED_IMPORTS_LIMIT = 500;
@@ -2719,6 +2724,11 @@ export interface ProjectAnalysis {
   externalServices?: Array<{ name: string; known: boolean; hosts: string[]; calls: number; files: string[] }>;
   /** MCP tools, editor and CLI commands the code registers: entry points that are not routes. */
   entryPoints?: Array<EntryPointInfo & { filePath: string; projectId?: string }>;
+  /**
+   * How each sub-project is built, tested and started, as its own files say (package.json scripts,
+   * go.mod, Cargo.toml, …) — per language plugin, the first plugin to name a kind for a root wins.
+   */
+  projectCommands?: Array<{ projectId: string; root: string; kind: "build" | "test" | "start" | "dev" | "lint"; command: string; source: string }>;
   screens: ScreenInfo[];
   /**
    * Resolved frontend→backend links: each outbound `api-call` matched to the
