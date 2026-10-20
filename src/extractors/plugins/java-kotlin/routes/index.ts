@@ -4,14 +4,15 @@ import type { RouteExtractor } from "../../../routes/base.js";
 import { FUNCTIONAL_ROUTER_GATE_RE, extractSpringRoutes, extractSpringRoutesRegex } from "./spring.js";
 import { extractJaxrsMicronautRoutes } from "./jaxrs.js";
 import { extractKtorRoutes } from "./ktor.js";
+import { extractJavalinSparkRoutes } from "./javalin-spark.js";
 import { extractHaloExtensionRoutes } from "./halo.js";
 import { collectSecurityRules } from "./security-dsl.js";
 import { extractComposeDestinations } from "./compose-nav.js";
 
 /**
  * Java / Kotlin route extraction — Spring (@GetMapping/@RequestMapping),
- * JAX-RS (@Path + @GET markers), Micronaut (@Controller + @Get) and the Ktor
- * routing DSL. Each family is gated on a cheap substring so annotation-free
+ * JAX-RS (@Path + @GET markers), Micronaut (@Controller + @Get), the Ktor
+ * routing DSL and Javalin / Spark route calls. Each family is gated on a cheap substring so annotation-free
  * files skip the full-tree walks entirely.
  */
 export const javaKotlinRouteExtractor: RouteExtractor = {
@@ -42,6 +43,11 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
     // files that actually import io.ktor.
     if (sourceText.includes("io.ktor")) {
       extractKtorRoutes(tree.rootNode, routes, facts);
+    }
+
+    // Javalin and Spark: routes registered by calls (`app.get("/x", ctx -> …)`, ApiBuilder, Spark's static verbs).
+    if (sourceText.includes("io.javalin") || sourceText.includes("spark.")) {
+      extractJavalinSparkRoutes(tree.rootNode, sourceText, routes);
     }
 
     // Jetpack Compose navigation graphs: their destinations are the app's screens.

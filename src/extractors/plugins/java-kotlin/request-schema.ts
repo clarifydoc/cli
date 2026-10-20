@@ -84,7 +84,15 @@ function hasDecorator(decorators: readonly string[] | undefined, names: readonly
   });
 }
 
+/** The request objects Javalin and Spark hand a handler method (`getOne(Context ctx)`, `(Request req, Response res)`). */
+const FRAMEWORK_HANDLER_TYPES = /^(?:io\.javalin\.http\.)?Context$|^(?:spark\.)?(?:Request|Response)$/;
+
 export const jvmRequestSchema: RequestSchemaHooks = {
+  // Spring and JAX-RS bind at the route, by annotation; a Javalin/Spark handler method takes the framework's request object.
+  bindParam(param) {
+    return FRAMEWORK_HANDLER_TYPES.test((param.type ?? "").trim()) ? "services" : null;
+  },
+
   unwrapNullable(type) {
     const t = type.trim().replace(/^@\w+\s+/, "");
     if (t.endsWith("?")) return { type: t.slice(0, -1).trim(), nullable: true };

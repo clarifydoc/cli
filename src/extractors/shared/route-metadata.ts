@@ -48,8 +48,9 @@ export function splitList(s: string | null | undefined): string[] {
 /** Parameter names a path template declares, as written: `/users/{id}/posts/:postId/<int:pk>` → id, postId, pk. */
 export function pathParamTokens(path: string): string[] {
   const names: string[] = [];
-  for (const m of path.matchAll(/\{\*{0,2}([A-Za-z_][\w]*)[^}]*\}/g)) names.push(m[1]!);
-  for (const m of path.matchAll(/:([A-Za-z_][\w]*)/g)) names.push(m[1]!);
+  for (const m of path.matchAll(/\{\*{0,2}([A-Za-z_][\w-]*)[^}]*\}/g)) names.push(m[1]!);
+  // `:id` outside braces and brackets — inside them a colon starts a constraint (`{id:int}`, `<int:pk>`).
+  for (const m of path.replace(/\{[^}]*\}|<[^>]*>/g, "").matchAll(/:([A-Za-z_][\w]*)/g)) names.push(m[1]!);
   for (const m of path.matchAll(/<(?:[\w.]+:)?([A-Za-z_][\w]*)>/g)) names.push(m[1]!);
   return [...new Set(names)];
 }
