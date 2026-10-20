@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import type { ApiRouteLinkStats, ContractFinding, LayerViolation, SecurityCategory, SecurityIssue } from "../types/analysis.js";
+import type { ApiRouteLinkStats, ContractFinding, DeadCodeReport, LayerViolation, PatternInfo, SecurityCategory, SecurityIssue } from "../types/analysis.js";
 import { ruleIdOf as ruleIdFor } from "./security-rules.js";
 
 /**
@@ -116,7 +116,13 @@ export interface StructuralFinding {
  * serve; the rest are warnings) and imports a team rule or the layer order
  * forbids. Calls are listed up to the summary's own cap.
  */
-export function structuralFindings(summary: { apiRouteLinkStats?: ApiRouteLinkStats; layerViolations?: readonly LayerViolation[]; contractFindings?: readonly ContractFinding[] }): StructuralFinding[] {
+export function structuralFindings(summary: {
+  apiRouteLinkStats?: ApiRouteLinkStats;
+  layerViolations?: readonly LayerViolation[];
+  contractFindings?: readonly ContractFinding[];
+  deadCode?: DeadCodeReport;
+  patterns?: readonly PatternInfo[];
+}): StructuralFinding[] {
   const out: StructuralFinding[] = [];
   for (const c of summary.contractFindings ?? []) {
     const call = `${c.method ?? "?"} ${c.url}`;
@@ -168,6 +174,49 @@ export function structuralFindings(summary: { apiRouteLinkStats?: ApiRouteLinkSt
       tags: ["architecture"],
     });
   }
+  // A query per loop pass or a blocking call: a warning where every request pays for it, else a note.
+  for (const p of summary.patterns ?? []) {
+    if (p.kind !== "query-in-loop" && p.kind !== "blocking-in-async") continue;
+    const reach = p.entries?.length ? ` Reached from ${p.entries.map((e) => (e.kind === "route" ? e.entry : `${e.kind} ${e.entry}`)).join(", ")}.` : "";
+    out.push({
+      ruleId: `clarifydoc/${p.kind}`,
+      title: p.kind === "query-in-loop" ? "Database query once per loop pass" : "Blocking call inside async code",
+      level: p.role === "request" ? "warning" : "note",
+      message: `${p.name}: ${p.detail}.${reach}`,
+      file: p.filePath,
+      line: p.line,
+      fingerprint: `${p.name} ${p.detail.replace(/\bline \d+/g, "line")}`,
+      tags: ["performance"],
+    });
+  }
+  // Dead code is advice, never an error: files nothing reaches (only those no reachable file names), exports nothing imports.
+  for (const f of summary.deadCode?.files ?? []) {
+    if (f.confidence !== "INFERRED") continue;
+    out.push({
+      ruleId: "clarifydoc/unreachable-file",
+      title: "File no entry point reaches",
+      level: "note",
+      message: `${f.filePath} is reached by no entry point${f.deadImporters ? ` (imported only by ${f.deadImporters} other unreachable file${f.deadImporters === 1 ? "" : "s"})` : ""}.`,
+      file: f.filePath,
+      line: 1,
+      fingerprint: f.filePath,
+      tags: ["dead-code"],
+    });
+  }
+  for (const e of summary.deadCode?.exports ?? []) {
+    out.push({
+      ruleId: "clarifydoc/unused-export",
+      title: "Export nothing imports",
+      level: "note",
+      message: e.usedInFile
+        ? `${e.name} is exported but imported nowhere; it is used in its own file, so drop the export.`
+        : `${e.name} is exported but used nowhere.`,
+      file: e.filePath,
+      line: e.line,
+      fingerprint: `${e.kind} ${e.name}`,
+      tags: ["dead-code"],
+    });
+  }
   return out;
 }
 
@@ -187,8 +236,165 @@ const ROUTE_MISS_TITLES: Record<NonNullable<ApiRouteLinkStats["misses"]>[number]
 
 /** Results at or above a level: what `--fail-on <level>` counts. */
 export function resultsAtLeast(log: SarifLog, level: SarifLevel): number {
-  return log.runs.reduce((n, run) => n + run.results.filter((r) => rank(r.level) >= rank(level)).length, 0);
+  return failingResults(log, { level }).length;
 }
+
+/**
+ * What `--fail-on` gates on: a level (`error`, `warning`, `note`), finding
+ * categories, or both, comma-separated — `--fail-on contract,route-miss`,
+ * `--fail-on security,error`. A category is a rule tag (`security`,
+ * `api-contract`, `architecture`, `performance`, `dead-code`), a rule id with
+ * or without its `clarifydoc/` prefix (`sql-injection`, `import-rule`), or the
+ * family a rule id starts with (`contract` → `contract-missing-field`, …;
+ * `route-miss` is the `route-*` family). Categories alone gate at any level.
+ */
+export interface FailOn {
+  level?: SarifLevel;
+  categories?: readonly string[];
+}
+
+export function parseFailOn(value: string): FailOn {
+  const tokens = value.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean);
+  if (tokens.length === 0) throw new Error("--fail-on needs a level (error, warning, note) or a finding category");
+  const levels = tokens.filter((t): t is SarifLevel => t === "error" || t === "warning" || t === "note");
+  if (levels.length > 1) throw new Error(`--fail-on takes one level, not ${levels.join(" and ")}`);
+  const categories = tokens.filter((t) => !levels.includes(t as SarifLevel)).map((t) => t.replace(/^clarifydoc\//, ""));
+  return { ...(levels[0] ? { level: levels[0] } : {}), ...(categories.length ? { categories } : {}) };
+}
+
+/** Categories `--fail-on` knows; anything else is refused, so a typo never gates on nothing. */
+export const FAIL_ON_CATEGORIES = [
+  "security", "api-contract", "architecture", "performance", "dead-code",
+  "contract", "route-miss", "import-rule", "layer-order",
+] as const;
+
+/** Every rule id `structuralFindings` can produce, whether or not this run has one. */
+export const STRUCTURAL_RULE_IDS: readonly string[] = [
+  ...Object.keys(CONTRACT_TITLES).map((k) => `clarifydoc/contract-${k}`),
+  ...Object.keys(ROUTE_MISS_TITLES).map((k) => `clarifydoc/route-${k}`),
+  "clarifydoc/import-rule", "clarifydoc/layer-order", "clarifydoc/query-in-loop", "clarifydoc/blocking-in-async",
+  "clarifydoc/unreachable-file", "clarifydoc/unused-export",
+];
+
+/** Is a category one `--fail-on` can match — a known family or tag, or a rule id this log or the security rules hold? */
+export function isKnownCategory(category: string, ruleIds: Iterable<string>): boolean {
+  if ((FAIL_ON_CATEGORIES as readonly string[]).includes(category)) return true;
+  for (const id of ruleIds) if (id.replace(/^clarifydoc\//, "") === category) return true;
+  return false;
+}
+
+/** The results a `--fail-on` gate counts (and, with a baseline, only the new ones). */
+export function failingResults(log: SarifLog, gate: FailOn): SarifResult[] {
+  const out: SarifResult[] = [];
+  for (const run of log.runs) {
+    for (const r of run.results) {
+      if (r.baselineState === "unchanged") continue;
+      if (gate.level && rank(r.level) < rank(gate.level)) continue;
+      if (gate.categories && !gate.categories.some((c) => matchesCategory(r, run.tool.driver.rules[r.ruleIndex], c))) continue;
+      out.push(r);
+    }
+  }
+  return out;
+}
+
+function matchesCategory(r: SarifResult, rule: SarifRule | undefined, category: string): boolean {
+  const id = r.ruleId.replace(/^clarifydoc\//, "");
+  const family = category === "route-miss" ? "route" : category;
+  return id === category || id.startsWith(`${family}-`) || (rule?.properties.tags.includes(category) ?? false);
+}
+
+/**
+ * Marks each result `new` or `unchanged` against a SARIF log from the base
+ * (SARIF's own `baselineState`), by the fingerprint `buildSarif` writes —
+ * which survives a finding's line moving. A gate then counts only what the
+ * change introduced. Returns how many results are new.
+ */
+export function applyBaseline(log: SarifLog, baseline: SarifLog): number {
+  const known = new Set<string>();
+  for (const run of baseline.runs ?? []) {
+    for (const r of run.results ?? []) {
+      const fp = r.partialFingerprints?.[FINGERPRINT_KEY];
+      if (fp) known.add(`${r.ruleId}\u0000${fp}`);
+    }
+  }
+  let fresh = 0;
+  for (const run of log.runs) {
+    for (const r of run.results) {
+      const fp = r.partialFingerprints[FINGERPRINT_KEY];
+      r.baselineState = fp && known.has(`${r.ruleId}\u0000${fp}`) ? "unchanged" : "new";
+      if (r.baselineState === "new") fresh++;
+    }
+  }
+  return fresh;
+}
+
+const FINGERPRINT_KEY = "clarifydocFinding/v1";
+
+/**
+ * The same results as a JUnit XML report — what CI systems without a SARIF
+ * viewer show (GitLab's test report, Jenkins, Azure Pipelines): one test case
+ * per rule, failing with each result the gate counts; the rest pass. With a
+ * baseline, unchanged results do not fail.
+ */
+export function sarifToJunit(log: SarifLog, gate: FailOn = {}): string {
+  const failing = new Set(failingResults(log, gate));
+  const cases: string[] = [];
+  let failures = 0;
+  for (const run of log.runs) {
+    for (const [i, rule] of run.tool.driver.rules.entries()) {
+      const results = run.results.filter((r) => r.ruleIndex === i && failing.has(r));
+      failures += results.length ? 1 : 0;
+      const body = results.map((r) => {
+        const loc = r.locations[0]?.physicalLocation;
+        const where = loc ? `${decodeURI(loc.artifactLocation.uri)}:${loc.region.startLine}` : "";
+        return `${where} ${r.message.text}`;
+      }).join("\n");
+      cases.push(
+        `    <testcase classname="${xml(rule.properties.tags[0] ?? "clarifydoc")}" name="${xml(rule.id)}: ${xml(rule.shortDescription.text)}">` +
+        (results.length ? `\n      <failure message="${xml(`${results.length} finding${results.length === 1 ? "" : "s"}`)}" type="${xml(rule.defaultConfiguration.level)}">${xml(body)}</failure>\n    ` : "") +
+        `</testcase>`,
+      );
+    }
+  }
+  return [
+    `<?xml version="1.0" encoding="UTF-8"?>`,
+    `<testsuites name="ClarifyDoc">`,
+    `  <testsuite name="ClarifyDoc" tests="${cases.length}" failures="${failures}" errors="0">`,
+    ...cases,
+    `  </testsuite>`,
+    `</testsuites>`,
+    "",
+  ].join("\n");
+}
+
+/**
+ * The results as a GitLab Code Quality report (the Code Climate JSON subset
+ * GitLab reads into a merge request's widget). Severity follows the level:
+ * error → major, warning → minor, note → info; the fingerprint is ours, so
+ * GitLab tells new findings from old ones by itself.
+ */
+export function sarifToCodeQuality(log: SarifLog): string {
+  const sev: Record<SarifLevel, string> = { error: "major", warning: "minor", note: "info" };
+  const out: unknown[] = [];
+  for (const run of log.runs) {
+    for (const r of run.results) {
+      const loc = r.locations[0]?.physicalLocation;
+      out.push({
+        type: "issue",
+        check_name: r.ruleId,
+        description: r.message.text,
+        categories: [run.tool.driver.rules[r.ruleIndex]?.properties.tags.includes("security") ? "Security" : "Bug Risk"],
+        fingerprint: createHash("sha256").update(`${r.ruleId}\u0000${r.partialFingerprints[FINGERPRINT_KEY] ?? r.message.text}`).digest("hex").slice(0, 32),
+        severity: sev[r.level],
+        location: { path: loc ? decodeURI(loc.artifactLocation.uri) : "", lines: { begin: loc?.region.startLine ?? 1 } },
+      });
+    }
+  }
+  return JSON.stringify(out, null, 2) + "\n";
+}
+
+const xml = (s: string): string =>
+  s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[c]!).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "");
 
 /** SARIF level: critical/high → error, medium → warning, low → note. */
 function levelOf(issue: SecurityIssue): SarifLevel {
@@ -228,6 +434,8 @@ interface SarifRule {
 }
 interface SarifResult {
   ruleId: string;
+  /** Against a baseline log (`applyBaseline`): whether the base had this finding too. */
+  baselineState?: "new" | "unchanged";
   ruleIndex: number;
   level: SarifLevel;
   message: { text: string };

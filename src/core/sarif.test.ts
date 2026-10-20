@@ -62,3 +62,72 @@ describe("buildSarif — structural findings", () => {
     expect(resultsAtLeast(log, "warning")).toBe(3);
   });
 });
+
+describe("CI gates, baseline and other report formats", () => {
+  const structural = async () => {
+    const { structuralFindings } = await import("./sarif.js");
+    return structuralFindings({
+      patterns: [
+        { kind: "query-in-loop", name: "list", filePath: "src/orders.ts", line: 12, confidence: "high", detail: "queries Order once per pass of the loop at line 10", role: "request",
+          entries: [{ kind: "route", entry: "GET /orders", file: "src/routes.ts", distance: 1, confidence: "EXTRACTED" }] },
+        { kind: "blocking-in-async", name: "rebuild", filePath: "src/cli.ts", line: 4, confidence: "medium", detail: "readFileSync() blocks" },
+        { kind: "singleton", name: "Db", filePath: "src/db.ts", line: 1, confidence: "high", detail: "" },
+      ],
+      deadCode: {
+        languages: ["typescript"], judgedFiles: 3, entryFiles: 1,
+        files: [
+          { filePath: "src/old.ts", confidence: "INFERRED", deadImporters: 0 },
+          { filePath: "src/maybe.ts", confidence: "AMBIGUOUS", deadImporters: 0 },
+        ],
+        exports: [{ filePath: "src/util.ts", name: "pad", kind: "function", line: 8, usedInFile: false }],
+      },
+    });
+  };
+
+  it("reports performance (a warning where a request pays) and dead code (notes, sure files only)", async () => {
+    const found = await structural();
+    expect(found.map((f) => [f.ruleId, f.level, f.file])).toEqual([
+      ["clarifydoc/query-in-loop", "warning", "src/orders.ts"],
+      ["clarifydoc/blocking-in-async", "note", "src/cli.ts"],
+      ["clarifydoc/unreachable-file", "note", "src/old.ts"],
+      ["clarifydoc/unused-export", "note", "src/util.ts"],
+    ]);
+    expect(found[0]!.message).toContain("Reached from GET /orders");
+  });
+
+  it("gates on a level, on categories, or both", async () => {
+    const { parseFailOn, failingResults, isKnownCategory, STRUCTURAL_RULE_IDS } = await import("./sarif.js");
+    const log = buildSarif([issue({})], "0.7.0", await structural());
+    const count = (v: string) => failingResults(log, parseFailOn(v)).map((r) => r.ruleId);
+    expect(count("error")).toEqual(["clarifydoc/sql-injection"]);
+    expect(count("warning")).toEqual(["clarifydoc/sql-injection", "clarifydoc/query-in-loop"]);
+    expect(count("performance")).toEqual(["clarifydoc/query-in-loop", "clarifydoc/blocking-in-async"]);
+    expect(count("performance,warning")).toEqual(["clarifydoc/query-in-loop"]);
+    expect(count("dead-code")).toEqual(["clarifydoc/unreachable-file", "clarifydoc/unused-export"]);
+    expect(count("clarifydoc/sql-injection")).toEqual(["clarifydoc/sql-injection"]);
+    expect(() => parseFailOn("error,warning")).toThrow(/one level/);
+    expect(isKnownCategory("route-miss", STRUCTURAL_RULE_IDS)).toBe(true);
+    expect(isKnownCategory("route-method-mismatch", STRUCTURAL_RULE_IDS)).toBe(true);
+    expect(isKnownCategory("secruity", STRUCTURAL_RULE_IDS)).toBe(false);
+  });
+
+  it("counts only what the base did not have, by fingerprint, even when lines moved", async () => {
+    const { applyBaseline, failingResults } = await import("./sarif.js");
+    const base = buildSarif([issue({})], "0.7.0");
+    const head = buildSarif([issue({ line: 80 }), issue({ category: "xss", cwe: "CWE-79", snippet: "el.innerHTML = q", line: 5 })], "0.7.0");
+    expect(applyBaseline(head, base)).toBe(1);
+    expect(head.runs[0]!.results.map((r) => r.baselineState)).toEqual(["unchanged", "new"]);
+    expect(failingResults(head, { level: "error" }).map((r) => r.ruleId)).toEqual(["clarifydoc/xss"]);
+  });
+
+  it("writes JUnit (a failing case per rule the gate counts) and GitLab Code Quality", async () => {
+    const { sarifToJunit, sarifToCodeQuality } = await import("./sarif.js");
+    const log = buildSarif([issue({ message: "SQL <built> & sent" })], "0.7.0", await structural());
+    const junit = sarifToJunit(log, { level: "warning" });
+    expect(junit).toContain('<testsuite name="ClarifyDoc" tests="5" failures="2" errors="0">');
+    expect(junit).toContain("src/repo.ts:42 SQL &lt;built&gt; &amp; sent (CWE-89)");
+    const cq = JSON.parse(sarifToCodeQuality(log));
+    expect(cq[0]).toMatchObject({ check_name: "clarifydoc/sql-injection", severity: "major", categories: ["Security"], location: { path: "src/repo.ts", lines: { begin: 42 } } });
+    expect(new Set(cq.map((x: { fingerprint: string }) => x.fingerprint)).size).toBe(cq.length);
+  });
+});

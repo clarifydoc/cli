@@ -1,6 +1,7 @@
 import { Command, InvalidArgumentError } from "commander";
 import { TOOL_VERSION } from "./core/version.js";
-import { resolve, relative } from "path";
+import { resolve, relative, join, basename } from "path";
+import { existsSync } from "fs";
 import { analyze } from "./core/analyzer.js";
 import {
   gatherProjectInfo,
@@ -53,8 +54,11 @@ program
   .option("--no-lsp", "Disable LSP-based symbol resolution")
   .option("--lsp-timeout <ms>", "Timeout for LSP server startup in ms", wholeNumber())
   .option("--html", "Generate an HTML report after analysis", false)
-  .option("--sarif <file>", "Also write the findings as SARIF 2.1.0 (GitHub code scanning): security, calls that reach no route, forbidden imports")
-  .option("--fail-on <level>", "Exit with code 2 when a finding at or above this level exists: error | warning | note")
+  .option("--sarif <file>", "Also write the findings as SARIF 2.1.0 (GitHub code scanning): security, request contracts, calls that reach no route, forbidden imports, performance, dead code")
+  .option("--junit <file>", "Also write the findings as a JUnit XML report (one test case per rule)")
+  .option("--codequality <file>", "Also write the findings as a GitLab Code Quality report")
+  .option("--fail-on <gate>", "Exit with code 2 when a finding matches: a level (error | warning | note), finding categories (security, contract, route-miss, performance, dead-code, a rule id…), or both, comma-separated")
+  .option("--baseline <sarif-or-analysis>", "Findings of the base (its SARIF, or its analysis directory): reports mark each finding new or unchanged, and --fail-on counts only new ones")
   .option("--import-sarif <files...>", "Join other tools' SARIF findings (Semgrep, CodeQL, gosec…) to the map: each gets the routes that reach it")
   .option("--spec <files...>", "API specs outside the tree (an OpenAPI document the backend publishes) to check the code's calls against")
   .option("--history-secrets", "Also read every commit's added lines for credentials (cloud keys, tokens, private keys): a key deleted from the tree is still in every clone")
@@ -126,24 +130,50 @@ program
         console.log(`  Output: ${outputDir}`);
 
         let failed = 0;
-        if (options.sarif || options.failOn) {
-          const [{ loadReportSummary }, { buildSarif, structuralFindings, resultsAtLeast }, { TOOL_VERSION }, { writeFile }] = await Promise.all([
+        if (options.sarif || options.failOn || options.junit || options.codequality) {
+          const [{ loadReportSummary }, sarifLib, { TOOL_VERSION }, { writeFile, readFile, stat }] = await Promise.all([
             import("./core/report-payload.js"),
             import("./core/sarif.js"),
             import("./core/version.js"),
             import("fs/promises"),
           ]);
+          const { buildSarif, structuralFindings, parseFailOn, isKnownCategory, failingResults, applyBaseline, sarifToJunit, sarifToCodeQuality } = sarifLib;
+          // Refuse a gate it cannot honour before reporting anything.
+          const gate = options.failOn ? parseFailOn(String(options.failOn)) : undefined;
+          const { SECURITY_CATEGORIES, ruleIdOf } = await import("./core/security-rules.js");
           const summary = await loadReportSummary(outputDir);
           const sarif = buildSarif(summary.securityIssues ?? [], TOOL_VERSION, structuralFindings(summary));
+          const ruleIds = [...SECURITY_CATEGORIES.map(ruleIdOf), ...sarifLib.STRUCTURAL_RULE_IDS];
+          const unknown = (gate?.categories ?? []).filter((c) => !isKnownCategory(c, ruleIds));
+          if (unknown.length) throw new Error(`--fail-on: unknown categor${unknown.length === 1 ? "y" : "ies"} ${unknown.join(", ")}`);
+          if (options.baseline) {
+            let base = resolve(String(options.baseline));
+            // `-o base` writes base/<project>/: accept the directory given to -o as well.
+            if ((await stat(base)).isDirectory() && !existsSync(join(base, "project-summary.json")) && existsSync(join(base, basename(outputDir), "project-summary.json"))) {
+              base = join(base, basename(outputDir));
+            }
+            const baseLog = (await stat(base)).isDirectory()
+              ? (() => loadReportSummary(base).then((b) => buildSarif(b.securityIssues ?? [], TOOL_VERSION, structuralFindings(b))))()
+              : readFile(base, "utf8").then((t) => JSON.parse(t));
+            const fresh = applyBaseline(sarif, await baseLog);
+            console.log(`  Baseline: ${fresh} new finding(s), ${sarif.runs[0]!.results.length - fresh} also in the base`);
+          }
           if (options.sarif) {
             await writeFile(resolve(options.sarif), JSON.stringify(sarif, null, 2));
             console.log(`  SARIF:  ${resolve(options.sarif)} (${sarif.runs[0]!.results.length} result(s))`);
           }
-          if (options.failOn) {
-            const level = String(options.failOn).toLowerCase();
-            if (level !== "error" && level !== "warning" && level !== "note") throw new Error(`--fail-on takes error, warning or note, not "${options.failOn}"`);
-            failed = resultsAtLeast(sarif, level);
-            console.log(`  Fail-on: ${failed} finding(s) at ${level} or above`);
+          if (options.junit) {
+            await writeFile(resolve(options.junit), sarifToJunit(sarif, gate ?? {}));
+            console.log(`  JUnit:  ${resolve(options.junit)}`);
+          }
+          if (options.codequality) {
+            await writeFile(resolve(options.codequality), sarifToCodeQuality(sarif));
+            console.log(`  Code Quality: ${resolve(options.codequality)}`);
+          }
+          if (gate) {
+            failed = failingResults(sarif, gate).length;
+            const what = [gate.categories?.join(", "), gate.level && `${gate.level} or above`].filter(Boolean).join(", at ");
+            console.log(`  Fail-on: ${failed}${options.baseline ? " new" : ""} finding(s) — ${what}`);
           }
         }
 
