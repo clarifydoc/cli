@@ -15,6 +15,9 @@ import type { ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } 
  *                   with builder-chain options (.Optional/.Unique/.Inverse)
  *   - Beego ORM   — `orm.RegisterModel(new(X) | &X{})` / backtick `orm:"..."`
  *                   tags with compound `rel(...)` / `reverse(...)` directives
+ *   - xorm        — `xorm:"..."` tags, on a struct registered like Beego's or
+ *                   declaring the `TableName() string` method xorm/GORM/Beego
+ *                   all read the table from
  *
  * All multiline constructs (struct tags split across physical lines, multiline
  * Ent builder chains) are handled by collapsing physical lines into balanced
@@ -74,6 +77,9 @@ export class GoEntityExtractor extends EntityExtractor {
 
       // Models explicitly registered with Beego's ORM.
       const beegoRegistered = this.findBeegoRegistered(lines);
+      // `func (*X) TableName() string { return "xs" }` — the table each ORM maps X to.
+      const tableNames = this.findTableNames(lines);
+      const inMigrations = /(?:^|\/)migrations?\//.test(ctx.analysis.filePath);
 
       // Ent schema method bodies, keyed by receiver type name.
       const entFields = this.collectEntMethod(lines, "Fields");
@@ -144,9 +150,14 @@ export class GoEntityExtractor extends EntityExtractor {
         // every `v*.go`), and marking those made the real `Repository` one of
         // twelve — the typed-receiver resolution then refused every call on it.
         const hasXormTag = fields.some((f) => f.tags.xorm !== undefined);
+        // A tagged struct naming its table is a model however it is registered
+        // (vikunja lists its models in another file's `GetTables()`) — except
+        // in a migrations package, where each step redeclares the slice of a
+        // table it changes (`tasksReminderDateMigration20190324205606` → "tasks").
+        const namesTable = hasXormTag && tableNames.has(struct.name) && !inMigrations;
 
         // No genuine ORM marker → not an entity (reduces false positives).
-        if (!isGorm && !isBeego) continue;
+        if (!isGorm && !isBeego && !namesTable) continue;
 
         const orm = isGorm ? "gorm" : hasXormTag ? "xorm" : "beego-orm";
         const props: PropertyInfo[] = [];
@@ -178,6 +189,7 @@ export class GoEntityExtractor extends EntityExtractor {
               implementsList: this.uniq(related.map((r) => r.toEntity)),
               line: struct.startLine,
               endLine: struct.endLine,
+              tableName: tableNames.get(struct.name),
             }),
           );
           emitted.add(struct.name);
@@ -759,6 +771,24 @@ export class GoEntityExtractor extends EntityExtractor {
    * multiple comma-separated models in a single call (e.g.
    * `RegisterModel(new(User), &Post{})`).
    */
+  /**
+   * Receiver type → the table its `TableName() string` method returns, when
+   * the body is a single string literal (`return "tasks"`); a computed name
+   * still marks the type, with no table (`null`).
+   */
+  private findTableNames(lines: string[]): Map<string, string | null> {
+    const out = new Map<string, string | null>();
+    for (let i = 0; i < lines.length; i++) {
+      const m = /^func\s*\(\s*(?:\w+\s+)?\*?\s*([A-Za-z_]\w*)\s*\)\s*TableName\s*\(\s*\)\s*string\s*\{(.*)$/.exec(lines[i]!);
+      if (!m) continue;
+      let body = m[2]!;
+      for (let j = i + 1; j < lines.length && j <= i + 3 && !body.includes("}"); j++) body += `\n${lines[j]}`;
+      const literal = /^\s*return\s+"([^"\\]+)"\s*\}/.exec(body.replace(/\/\/.*$/gm, ""));
+      out.set(m[1]!, literal ? literal[1]! : null);
+    }
+    return out;
+  }
+
   private findBeegoRegistered(lines: string[]): Set<string> {
     const names = new Set<string>();
     // Match a whole RegisterModel[...](<args>) call, capturing the arg list.

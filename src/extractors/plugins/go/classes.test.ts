@@ -289,6 +289,45 @@ type User struct {
     expect(user.properties.map((p) => p.name)).toEqual(["Name", "Email"]);
   });
 
+  it("an xorm-tagged struct naming its table is an entity; a tagged struct without one is not", () => {
+    const a = extractWithRegex(`
+package models
+
+type Task struct {
+	ID    int64  \`xorm:"bigint autoincr not null unique pk" json:"id"\`
+	Title string \`xorm:"TEXT not null" json:"title"\`
+}
+
+// TableName returns the table name for tasks
+func (*Task) TableName() string {
+	return "tasks"
+}
+
+type TaskPatch struct {
+	Title string \`xorm:"TEXT" json:"title"\`
+}
+`, "pkg/models/tasks.go", "go");
+    const task = a.classes.find((c) => c.name === "Task")!;
+    expect(task.decorators).toEqual(["entity", "xorm"]);
+    expect(task.tableName).toBe("tasks");
+    expect(a.classes.find((c) => c.name === "TaskPatch")?.decorators ?? []).not.toContain("entity");
+  });
+
+  it("a migration step's copy of a table naming it is not an entity", () => {
+    const a = extractWithRegex(`
+package migration
+
+type tasks20190324205606 struct {
+	ID int64 \`xorm:"bigint autoincr not null unique pk"\`
+}
+
+func (tasks20190324205606) TableName() string {
+	return "tasks"
+}
+`, "pkg/migration/20190324205606.go", "go");
+    expect(a.classes.find((c) => c.name === "tasks20190324205606")?.decorators ?? []).not.toContain("entity");
+  });
+
   it("are left out of a request schema unless a json name makes them a field", async () => {
     const { goRequestSchema } = await import("./request-schema.js");
     const [base] = parseGoFields("Base");

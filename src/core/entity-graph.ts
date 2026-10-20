@@ -491,6 +491,19 @@ export function nodeMatchKeys(node: { name: string; table?: string }): string[] 
   return node.table ? [...new Set([...tableMatchKeys(node.name), ...tableMatchKeys(node.table)])] : tableMatchKeys(node.name);
 }
 
+/**
+ * Match key → the node it names, over every node: names first, then the
+ * tables ORMs map them to, so an entity's own name always beats another
+ * entity's table (a migration's `tasksMigration2019` copy mapped to `tasks`
+ * must not take `Task`'s key). Within each pass the first node wins.
+ */
+export function nodeKeyIndex<T extends { name: string; table?: string }, V>(nodes: readonly T[], value: (n: T) => V): Map<string, V> {
+  const out = new Map<string, V>();
+  for (const n of nodes) for (const k of tableMatchKeys(n.name)) if (!out.has(k)) out.set(k, value(n));
+  for (const n of nodes) if (n.table) for (const k of tableMatchKeys(n.table)) if (!out.has(k)) out.set(k, value(n));
+  return out;
+}
+
 export function tableMatchKeys(name: string): string[] {
   // The last segment of a namespaced name — Ruby `Ns::Model`, an Elixir module
   // `Plausible.Site`, a schema-qualified table `shop.orders` — is how code
@@ -567,10 +580,7 @@ export function synthesizeReferencedTableEntities(
   // a FK joined across many queries yields one relationship. Source/target are
   // sorted by id with cardinalities tracking the orientation, mirroring
   // buildEntityGraph so the diagram renders these identically to declared edges.
-  const idByKey = new Map<string, string>();
-  for (const n of graph.nodes) for (const k of nodeMatchKeys(n)) {
-    if (!idByKey.has(k)) idByKey.set(k, n.id);
-  }
+  const idByKey = nodeKeyIndex(graph.nodes, (n) => n.id);
   const resolveId = (name: string): string | null => {
     for (const k of tableMatchKeys(name)) {
       const id = idByKey.get(k);

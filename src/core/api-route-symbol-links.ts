@@ -135,6 +135,26 @@ export function synthesizeApiRouteSymbolLinks(
     // Target: enclosing span at the route line, else handler-name resolution.
     let targetFile = link.target;
     let tgt = innermostAt(spansFor(link.target), link.targetLine);
+    // The route the link landed on: by line and path, else the one route at
+    // that line serving the call's method (the link's path can be the one the
+    // call reached it by — a version alias, a forwarded prefix).
+    const routeRow = () => {
+      const atLine = (fileOf.get(link.target)?.routes ?? []).filter((r) => r.kind === "api" && r.line === link.targetLine);
+      const byPath = atLine.find((r) => r.path === link.routePath);
+      if (byPath) return byPath;
+      const byMethod = atLine.filter((r) => !link.method || r.httpMethod === link.method);
+      return byMethod.length === 1 ? byMethod[0] : undefined;
+    };
+    // The enclosing span is the handler for an annotated method (`@GetMapping`
+    // on `getUser`); for a route REGISTERED inside a function — Go's
+    // `func RegisterTaskRoutes(api) { Register(api, op, tasksRead) }`, an
+    // Express `setupRoutes(app)` — it is the registrar, which never calls the
+    // handler. The route's own `route:<METHOD> <path>` symbol links to what it
+    // runs, so anchor there.
+    if (tgt && link.handler && tgt.symbol.split(".").pop() !== link.handler.split(".").pop()) {
+      const route = routeRow();
+      if (route) tgt = { symbol: `route:${route.httpMethod ?? "USE"} ${route.path}`, line: route.line, endLine: route.line };
+    }
     if (!tgt && link.handler) {
       const local = byName(spansFor(link.target), link.handler);
       if (local.length >= 1) {
@@ -155,9 +175,7 @@ export function synthesizeApiRouteSymbolLinks(
       // for every route and links it to whatever the route runs — the same
       // anchor `computeDataFlows` uses. Without it the trace, and every
       // screen's reach, stopped at the HTTP boundary of such backends.
-      const route = (fileOf.get(link.target)?.routes ?? []).find(
-        (r) => r.kind === "api" && r.line === link.targetLine && r.path === link.routePath,
-      );
+      const route = routeRow();
       if (route) tgt = { symbol: `route:${route.httpMethod ?? "USE"} ${route.path}`, line: route.line, endLine: route.line };
     }
     if (!tgt) continue;

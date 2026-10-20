@@ -100,6 +100,21 @@ describe("synthesizeApiRouteSymbolLinks", () => {
     expect(out.map((l) => `${l.targetFile}::${l.targetSymbol}`)).toEqual(["server/profile.controller.ts::route:GET /profiles/:username"]);
   });
 
+  it("targets the route's symbol, not the function that registers it", () => {
+    // `func RegisterTaskRoutes(api huma.API) { Register(api, op, tasksRead) }`:
+    // the route line sits inside the registrar, which never calls the handler;
+    // the route's own symbol is what links to `tasksRead`.
+    const backend = fa("pkg/routes/tasks.go", {
+      functions: [fn("RegisterTaskRoutes", 10, 40), fn("tasksRead", 50, 70)],
+      routes: [{ path: "/tasks/{task}", httpMethod: "GET", kind: "api", handler: "tasksRead", calls: [], middleware: [], line: 14 }],
+    } as any);
+    const out = synthesizeApiRouteSymbolLinks(
+      [link({ target: "pkg/routes/tasks.go", targetLine: 14, handler: "tasksRead", routePath: "/tasks/{task}" })],
+      [frontend, backend],
+    );
+    expect(out.map((l) => l.targetSymbol)).toEqual(["route:GET /tasks/{task}"]);
+  });
+
   it("skips AMBIGUOUS links and top-level (unanchored) calls", () => {
     const backend = fa("server/Controllers/OrdersController.cs", {
       classes: [{ name: "OrdersController", methods: [fn("GetAll", 18, 25)] }] as any,
