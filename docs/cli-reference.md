@@ -257,6 +257,8 @@ sequence walks (the files are read for this, as `cfg` reads one). Reads a writte
 | `--file <file>` | — | The declaring file, when the route or name is not unique. |
 | `--depth <n>` | 8 | Hops of calls to follow. |
 | `--no-frames` | — | Draw the calls unframed, reading no source. |
+| `--lanes <level>` | `class` | `class`: a lane per class, else per file. `package`: a lane per directory, so a long flow reads at the level of its modules. |
+| `--expand <dirs...>` | — | With `--lanes package`, directories (and those below them) that keep their class lanes. |
 
 ## `cfg`
 

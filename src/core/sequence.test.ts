@@ -32,6 +32,20 @@ describe("buildSequence", () => {
     expect(text).toMatch(/GetOwnersQueryHandler->>DB_Owner: /);
   });
 
+  it("draws a lane per directory with --lanes package, and keeps an expanded directory's classes", () => {
+    const participants = (text: string) => text.split("\n").filter((l) => l.trim().startsWith("participant")).map((l) => l.replace(/^.* as /, ""));
+    const byClass = participants(buildSequence(cqrs, { file: "web/src/api/owners.ts", symbol: "listOwners", title: "x" }));
+    expect(byClass).toContain("OwnersController");
+    const byPackage = participants(buildSequence(cqrs, { file: "web/src/api/owners.ts", symbol: "listOwners", title: "x" }, { lanes: "package" }));
+    expect(byPackage).toContain("web/src/api/");
+    expect(byPackage.some((p) => p.endsWith("/") && p.toLowerCase().includes("controller"))).toBe(true);
+    expect(byPackage).not.toContain("OwnersController");
+    const dir = byPackage.find((p) => p.endsWith("/") && p.toLowerCase().includes("controller"))!.replace(/\/$/, "");
+    const expanded = participants(buildSequence(cqrs, { file: "web/src/api/owners.ts", symbol: "listOwners", title: "x" }, { lanes: "package", expand: [dir] }));
+    expect(expanded).toContain("OwnersController");
+    expect(expanded).toContain("web/src/api/");
+  });
+
   it("caps depth and marks recursion instead of following it", () => {
     const text = buildSequence(backend, { file: "routes/users.ts", symbol: "route:GET /:id", title: "x" }, { depth: 1 });
     expect(text).toContain("depth 1 reached");

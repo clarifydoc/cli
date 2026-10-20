@@ -579,6 +579,8 @@ program
   .option("--file <file>", "The file that declares the route or symbol, when the name is not unique")
   .option("--depth <n>", "Hops of calls to follow (default 8)", wholeNumber())
   .option("--no-frames", "Draw the calls unframed — without the loop / alt / opt frames read from each function's control flow")
+  .option("--lanes <level>", "Lane per class (class, the default) or per directory (package)")
+  .option("--expand <dirs...>", "With --lanes package: directories to keep at class level")
   .option("-o, --output <dir>", "Analysis output directory (same value as `analyze -o`)", ".clarifydoc")
   .option("--analysis-dir <dir>", "Exact directory containing project-summary.json (overrides --output)")
   .action(async (path: string, options) => {
@@ -594,7 +596,12 @@ program
       } catch {
         throw new Error(`No analysis found at ${analysisDir}.\nRun first: clarifydoc analyze ${path} -o ${options.output}`);
       }
-      const base = options.depth ? { depth: options.depth as number } : {};
+      if (options.lanes && options.lanes !== "class" && options.lanes !== "package") throw new Error(`--lanes is class or package, not ${options.lanes}`);
+      const base = {
+        ...(options.depth ? { depth: options.depth as number } : {}),
+        ...(options.lanes ? { lanes: options.lanes as "class" | "package" } : {}),
+        ...(options.expand ? { expand: options.expand as string[] } : {}),
+      };
       // Loops and branches from each walked file's control flow, unless asked not to.
       const withFrames = async (seed: { file: string; symbol: string }) => {
         if (options.frames === false) return base;

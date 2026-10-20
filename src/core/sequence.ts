@@ -26,6 +26,13 @@ export interface SequenceOptions {
   fanOut?: number;
   /** Loops and branches per file (`sequenceFrames`). */
   frames?: ReadonlyMap<string, readonly SequenceFrame[]>;
+  /**
+   * `class` (the default): a lane per class, else per file. `package`: a lane
+   * per directory, so a long flow reads at the level of its modules; the
+   * directories in `expand` (and below them) keep their class lanes.
+   */
+  lanes?: "class" | "package";
+  expand?: readonly string[];
 }
 
 type Row = ProjectAnalysis["routeMap"][number];
@@ -57,11 +64,22 @@ export function findRoutes(routes: readonly Row[], subject: string, file?: strin
   return same.length ? same : pool.filter((r) => r.path.toLowerCase().includes(path.toLowerCase()));
 }
 
-const laneOf = (file: string, symbol: string): string => {
+const classLane = (file: string, symbol: string): string => {
   if (symbol.startsWith("route:")) return file.split("/").pop()!;
   const dot = symbol.lastIndexOf(".");
   return dot > 0 ? symbol.slice(0, dot) : file.split("/").pop()!;
 };
+
+/** The lane a call lands in, by the options' lane level. */
+function laneRule(opts: SequenceOptions): (file: string, symbol: string) => string {
+  if (opts.lanes !== "package") return classLane;
+  const expand = (opts.expand ?? []).map((d) => d.replace(/^\.\/|\/+$/g, "")).filter(Boolean);
+  return (file, symbol) => {
+    if (expand.some((d) => file === d || file.startsWith(`${d}/`))) return classLane(file, symbol);
+    const dir = file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : ".";
+    return `${dir}/`;
+  };
+}
 
 const short = (symbol: string): string => {
   if (symbol.startsWith("route:")) return symbol.slice("route:".length);
@@ -72,6 +90,7 @@ const short = (symbol: string): string => {
 /** A sequence diagram from a seed symbol (`route:GET /x` in its file, or `Class.method`). */
 export function buildSequence(summary: ProjectAnalysis, seed: { file: string; symbol: string; title: string }, opts: SequenceOptions = {}): string {
   const depth = opts.depth ?? 8;
+  const laneOf = laneRule(opts);
   const fanOut = opts.fanOut ?? 12;
   const calls = new Map<string, SymbolLink[]>();
   for (const l of summary.symbolLinks ?? []) {
