@@ -24,9 +24,15 @@ const SWIFTDATA_QUERY_RE = /@Query\b(?:\([^)]*\))?\s*(?:private\s+|public\s+)?va
 /** `modelContext.insert(x)` / `.delete(x)` / `try context.fetch(FetchDescriptor<Item>(…))`. */
 const SWIFTDATA_CONTEXT_RE = /\b(\w*[Cc]ontext)\.(insert|delete|fetch|fetchCount|save)\s*\(/;
 
+/** Core Data reads: `NSFetchRequest<Item>`, `Item.fetchRequest()`, SwiftUI's `@FetchRequest … FetchedResults<Item>`. */
+const COREDATA_READ_RE = /NSFetchRequest<\s*([A-Z]\w*)\s*>|\b([A-Z]\w*)\.fetchRequest\s*\(|FetchedResults<\s*([A-Z]\w*)\s*>/;
+/** Core Data writes: a managed object made in a context (`Folder(context: ctx)`), or by entity name. */
+const COREDATA_WRITE_RE = /\b([A-Z]\w*)\s*\(\s*context:|insertNewObject\s*\(\s*forEntityName:\s*"(\w+)"/;
+
 export function extractSwiftDataSources(lines: string[]): DataSourceInfo[] {
   const sources: DataSourceInfo[] = extractSqlStringDataSources(lines);
   const swiftData = lines.some((l) => /\bimport\s+SwiftData\b/.test(l));
+  const coreData = lines.some((l) => /\bimport\s+CoreData\b|@FetchRequest\b/.test(l));
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
@@ -45,6 +51,21 @@ export function extractSwiftDataSources(lines: string[]): DataSourceInfo[] {
         const model = /FetchDescriptor<\s*([A-Z]\w*)\s*>/.exec(line)?.[1] ?? /\.(?:insert|delete)\s*\(\s*([A-Z]\w*)\s*\(/.exec(line)?.[1];
         const write = c[2] === "insert" || c[2] === "delete";
         sources.push({ kind: "database", name: `SwiftData: ${c[1]}.${c[2]}`, target: model ?? null, ...(model ? { entity: model } : {}), calls: [], line: lineNo, access: write ? "write" : "read" });
+        continue;
+      }
+    }
+
+    if (coreData) {
+      const read = COREDATA_READ_RE.exec(line);
+      const model = read ? (read[1] ?? read[2] ?? read[3]) : undefined;
+      if (model && model !== "NSManagedObject") {
+        sources.push({ kind: "database", name: "Core Data: fetch", target: model, entity: model, calls: [], line: lineNo, access: "read" });
+        continue;
+      }
+      const write = COREDATA_WRITE_RE.exec(line);
+      const made = write ? (write[1] ?? write[2]) : undefined;
+      if (made) {
+        sources.push({ kind: "database", name: "Core Data: insert", target: made, entity: made, calls: [], line: lineNo, access: "write" });
         continue;
       }
     }

@@ -46,9 +46,25 @@ describe.skipIf(!existsSync(fixture))("sample-ios-swiftui", () => {
     const s = await loadReportSummary(out);
     const fields = (s.entityGraph?.nodes ?? []).find((n) => n.name === "Item")?.columns?.map((f) => f.name);
     expect(fields).toEqual(["name", "createdAt", "notes"]);
-    expect((s.entityGraph?.edges ?? []).length).toBe(1);
+    expect((s.entityGraph?.edges ?? []).filter((e) => e.orm !== "coredata").length).toBe(1);
     const edges = (s.dataAccessGraph?.edges ?? []).map((e) => `${e.source} -> ${e.target}`);
     expect(edges).toContain("file::Notes/Views/ItemListView.swift -> entity::Item::Item");
     expect(edges.some((e) => e.startsWith("file::Notes/Views/AddItemView.swift -> ") && e.includes("Item"))).toBe(true);
+  });
+
+  it("reads a Core Data model — stored attributes, relationships with their inverse — and where code fetches and inserts", async () => {
+    const s = await loadReportSummary(out);
+    const node = (name: string) => (s.entityGraph?.nodes ?? []).find((n) => n.name === name);
+    expect(node("ArchivedNote")).toMatchObject({ orm: "coredata", filePath: "Notes/Legacy/Archive.xcdatamodeld/Archive.xcdatamodel/contents" });
+    expect(node("ArchivedNote")?.columns?.map((c) => `${c.name}:${c.type}`)).toEqual(["archivedAt:Date?", "title:String"]);
+    expect(node("Folder")?.columns?.map((c) => c.name)).toEqual(["name"]);
+    const edges = (s.entityGraph?.edges ?? []).filter((e) => e.orm === "coredata");
+    expect(edges.map((e) => {
+      const [from, to] = [node("Folder")!.id === e.source ? "Folder" : "ArchivedNote", node("Folder")!.id === e.target ? "Folder" : "ArchivedNote"];
+      return `${from} ${e.sourceCardinality} — ${e.targetCardinality} ${to}`;
+    })).toEqual([expect.stringMatching(/^(ArchivedNote many — one Folder|Folder one — many ArchivedNote)$/)]);
+    const access = (s.dataAccessGraph?.edges ?? []).map((e) => `${e.source} -> ${e.target}`).filter((e) => e.includes("ArchiveStore"));
+    expect(access.some((e) => e.includes("ArchivedNote"))).toBe(true);
+    expect(access.some((e) => e.includes("Folder"))).toBe(true);
   });
 });

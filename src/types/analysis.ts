@@ -5,7 +5,7 @@ export type Language =
   | "perl" | "vb" | "sql" | "c" | "cpp" | "prisma" | "dart" | "elixir" | "erlang" | "objc"
   | "haskell" | "clojure" | "blazor" | "html" | "erb" | "heex" | "handlebars" | "liquid" | "velocity" | "razor" | "qml" | "qtui" | "xaml" | "jsp" | "springxml" | "jsight"
   | "openapi" | "graphql" | "wsdl" | "groovy" | "powershell" | "bash" | "batch" | "fsharp" | "coffeescript" | "r" | "julia" | "crystal" | "zig" | "ocaml" | "raku" | "racket" | "scheme" | "commonlisp"
-  | "nim" | "dlang" | "vlang" | "fortran" | "haxe" | "mojo" | "serverless" | "terraform" | "protobuf"
+  | "nim" | "dlang" | "vlang" | "fortran" | "haxe" | "mojo" | "serverless" | "coredata" | "terraform" | "protobuf"
   | "scss" | "sass" | "less" | "autohotkey" | "autoit" | "applescript";
 
 export interface ExtractorWarning {
