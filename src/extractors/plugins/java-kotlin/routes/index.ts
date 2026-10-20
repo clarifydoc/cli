@@ -5,6 +5,7 @@ import { FUNCTIONAL_ROUTER_GATE_RE, extractSpringRoutes, extractSpringRoutesRege
 import { extractJaxrsMicronautRoutes } from "./jaxrs.js";
 import { extractKtorRoutes } from "./ktor.js";
 import { extractJavalinSparkRoutes } from "./javalin-spark.js";
+import { GRAPHQL_GATE_RE, extractJvmGraphqlRoutes } from "./graphql.js";
 import { extractHaloExtensionRoutes } from "./halo.js";
 import { collectSecurityRules } from "./security-dsl.js";
 import { extractComposeDestinations } from "./compose-nav.js";
@@ -49,6 +50,9 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
     if (sourceText.includes("io.javalin") || sourceText.includes("spark.")) {
       extractJavalinSparkRoutes(tree.rootNode, sourceText, routes);
     }
+
+    // GraphQL controllers (Spring for GraphQL, Netflix DGS): the root fields they serve.
+    if (GRAPHQL_GATE_RE.test(sourceText)) extractJvmGraphqlRoutes(tree.rootNode, routes);
 
     // Jetpack Compose navigation graphs: their destinations are the app's screens.
     if (sourceText.includes("NavHost") || sourceText.includes("androidx.navigation")) {

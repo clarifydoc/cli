@@ -8,6 +8,7 @@ import { visitVueRouterRoute } from "./vue-router.js";
 import { collectTanstackCodeRoutes, visitTanstackFileRoute } from "./tanstack-router.js";
 import { mayDefineTrpc, visitTrpcRouter } from "./trpc.js";
 import { collectCdkRoutes } from "./cdk.js";
+import { extractGraphqlCodeFirst, mayDefineGraphqlCode } from "./graphql-code-first.js";
 import { mayDeclareReactNavigation, visitReactNavigationScreen, visitStaticNavigator } from "./react-navigation.js";
 
 /**
@@ -56,6 +57,10 @@ export const javascriptRouteExtractor: RouteExtractor = {
     // AWS CDK stacks: API Gateway routes wired to Lambdas, placed on their handlers by cdkRouteResolver.
     collectCdkRoutes(tree.rootNode, sourceText, facts);
 
-    return [...express, ...reactRouter, ...nestjs, ...vueRouter, ...tanstack, ...trpc, ...navigation];
+    // Code-first GraphQL schemas (NestJS/TypeGraphQL resolvers, Pothos, Nexus, graphql-js): their root fields.
+    const graphql: RouteInfo[] = [];
+    if (mayDefineGraphqlCode(sourceText)) extractGraphqlCodeFirst(tree.rootNode, sourceText, graphql);
+
+    return [...express, ...reactRouter, ...nestjs, ...vueRouter, ...tanstack, ...trpc, ...navigation, ...graphql];
   },
 };
