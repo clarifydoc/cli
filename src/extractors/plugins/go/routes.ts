@@ -88,6 +88,8 @@ const NOT_A_REGISTRAR = /^(?:http|log|fmt|os|signal|context|errors|strings|time|
 const USE_RE = /(\w+)\.\s*Use\s*\(/;
 
 const STRING_RE = /^["'`]([^"'`]*)["'`]$/;
+/** `baseUrl+"/cart"`, `cfg.BasePath + "/x"`: a path under a base the deployment sets — the base is not part of the route. */
+const BASE_PLUS_PATH_RE = /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*\+\s*["'`](\/[^"'`]*)["'`]$/;
 /** Names that read as an authentication/authorization check. */
 const AUTH_NAME_RE = /auth|jwt|token|session|login|guard|protect|permission|role|admin|verify|require/i;
 /** Names that say HOW a request is authenticated. */
@@ -252,7 +254,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
   let currentFn: string | null = null;
 
   const literal = (arg: string | undefined): string | null => {
-    const m = arg?.match(STRING_RE);
+    const m = arg?.match(STRING_RE) ?? arg?.match(BASE_PLUS_PATH_RE);
     return m ? m[1]! : null;
   };
 
@@ -366,7 +368,8 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
           const path = joinPrefix(prefixOf(recv), first);
           const { handler, guards } = splitHandler(args.slice(1));
           const methodsArg = line.match(METHODS_RE)?.[1] ?? "";
-          const verbs = [...methodsArg.matchAll(/["'`](\w+)["'`]/g)].map((m) => m[1]!.toUpperCase());
+          // `"GET"` or net/http's `http.MethodGet`.
+          const verbs = [...methodsArg.matchAll(/["'`](\w+)["'`]|\bhttp\.Method([A-Z][a-z]+)\b/g)].map((m) => (m[1] ?? m[2]!).toUpperCase());
           const own = [...withGuards, ...guards];
           if (verbs.length > 0) for (const v of verbs) push(path, v, handler, lineNo, inheritedOf(recv), own, recv);
           else push(path, null, handler, lineNo, inheritedOf(recv), own, recv);

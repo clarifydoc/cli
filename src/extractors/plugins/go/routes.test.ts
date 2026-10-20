@@ -70,6 +70,22 @@ r.HandleFunc("/legacy", LegacyHandler)
     ]);
     expect(routes[3]!.httpMethod).toBeNull(); // no Methods constraint = all verbs
   });
+
+  it("reads a path under a deployment base (`baseUrl+\"/x\"`) and net/http method constants", () => {
+    const routes = extractGoRoutes(lines(`
+r := mux.NewRouter()
+r.HandleFunc(baseUrl+"/", svc.homeHandler).Methods(http.MethodGet, http.MethodHead)
+r.HandleFunc(baseUrl+"/cart/empty", svc.emptyCartHandler).Methods(http.MethodPost)
+r.HandleFunc(cfg.Base + "/product/{id}", svc.productHandler).Methods("GET")
+r.HandleFunc(prefix(x)+"/no", h)
+`));
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`)).toEqual([
+      "GET / svc.homeHandler",
+      "HEAD / svc.homeHandler",
+      "POST /cart/empty svc.emptyCartHandler",
+      "GET /product/{id} svc.productHandler",
+    ]);
+  });
 });
 
 describe("Go routes: net/http + fiber", () => {

@@ -1,5 +1,6 @@
 import type { RouteInfo, InteractiveElementInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
+import { literalPath, handlerOf } from "../shared/element-requests.js";
 
 /**
  * Plain HTML page extraction (regex path) — for vanilla multi-page static sites
@@ -187,8 +188,10 @@ const ELEMENT_FOR_TAG: Record<string, InteractiveElementInfo["element"]> = {
   textarea: "textarea",
 };
 
-/** A `<tag ...>` opening plus the attribute text on the SAME line (stops at `>`). */
-const TAG_RE = /<([a-zA-Z][\w-]*)\b([^>]*)/g;
+/** A `<tag ...>` opening plus the attribute text on the SAME line (stops at `>`), or a `</tag` closing. */
+const TAG_RE = /<\/?([a-zA-Z][\w-]*)\b([^>]*)/g;
+/** Tags whose attributes are read past a line break: where a request is stated. */
+const READS_WRAPPED = new Set(["form", "button", "input", "a"]);
 /** Inline event handlers: `onclick="foo()"`, `onsubmit='...'`. The `\b` keeps
  *  attributes merely CONTAINING "on" out — without it, `content="notranslate"`
  *  matched as event "ontent" / handler "notranslate". */
@@ -221,36 +224,126 @@ export function attr(attrs: string, name: string): string | null {
   return m ? (m[1] ?? m[2] ?? null) : null;
 }
 
-export function extractHtmlInteractiveElements(lines: string[]): InteractiveElementInfo[] {
+/** `attr` anchored on whitespace, so `data-action` / `data-href` never read as `action` / `href`. */
+function exactAttr(attrs: string, name: string): string | undefined {
+  return new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i").exec(attrs)?.slice(1).find((v) => v !== undefined);
+}
+
+/** A link to a page or an asset is navigation (core reads it), not a request to a route. */
+const STATIC_FILE = /\.(?:html?|css|js|mjs|map|png|jpe?g|gif|svg|webp|ico|pdf|txt|xml|json|woff2?|ttf|zip)$/i;
+
+type ElementRequest = NonNullable<InteractiveElementInfo["request"]>;
+
+/** What a `<form>` submits: its literal app-path `action`, by its `method` (GET when unset, as browsers do). */
+function formRequest(attrs: string, actionAttr = "action", methodAttr = "method", fallbackMethod = "GET"): ElementRequest | undefined {
+  const target = literalPath(exactAttr(attrs, actionAttr));
+  const method = (exactAttr(attrs, methodAttr) ?? fallbackMethod).toUpperCase();
+  return target && method !== "DIALOG" ? { method, target } : undefined;
+}
+
+/**
+ * The text inside the `<tag>` that opens at `markup[line]` column `from`, up to
+ * its `</tag>` (a few lines at most): nested tags and `{{ … }}` dropped,
+ * whitespace collapsed, capped. Undefined when there is none to read, or the
+ * tag does not close nearby (a link wrapping a whole card names nothing).
+ */
+function innerText(markup: string[], line: number, from: number, tag: string): string | undefined {
+  let text = "";
+  for (let j = line, col = from; ; j++, col = 0) {
+    if (j >= Math.min(markup.length, line + 8)) return undefined;
+    const rest = markup[j]!.slice(col);
+    const close = rest.toLowerCase().indexOf(`</${tag}`);
+    text += " " + (close < 0 ? rest : rest.slice(0, close));
+    if (close >= 0) break;
+  }
+  const open = text.indexOf(">");
+  const clean = text.slice(open + 1).replace(/<[^>]*>?|\{\{[\s\S]*?\}\}|&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+  return clean ? (clean.length > 60 ? clean.slice(0, 57) + "…" : clean) : undefined;
+}
+
+/** The form a submit control sits in. */
+interface OpenForm { method: string; request?: ElementRequest }
+
+/**
+ * The page's controls, links and inline handlers. Every `<a href>` is a click
+ * (a pure `#fragment` or `javascript:` link without a handler is no action);
+ * a submit control — `<button>` of type submit (the default inside a form),
+ * `<input type="submit|image">` — sends what its enclosing `<form>` sends,
+ * unless its own `formaction` / `formmethod` say otherwise.
+ *
+ * With `requests`, a form `action`, a submit control and a link to a literal
+ * app path carry that `request` and are named after it (`post_cart_checkout`),
+ * so `materializeElementRequests` can hand them to the route linker; callers
+ * that read requests their own way (template dialects, JSP) leave it off.
+ */
+export function extractHtmlInteractiveElements(lines: string[], opts: { requests?: boolean } = {}): InteractiveElementInfo[] {
   const markup = maskMarkup(lines);
   const out: InteractiveElementInfo[] = [];
+  const forms: OpenForm[] = [];
+  const withRequest = (el: InteractiveElementInfo, request: ElementRequest | undefined): InteractiveElementInfo =>
+    opts.requests && request ? { ...el, handler: handlerOf(request.method, request.target), request } : el;
   for (let i = 0; i < markup.length; i++) {
     const ln = i + 1;
     for (const m of markup[i]!.matchAll(TAG_RE)) {
       const tag = m[1]!.toLowerCase();
-      const attrs = m[2] ?? "";
+      if (m[0][1] === "/") {
+        if (tag === "form") forms.pop();
+        continue;
+      }
+      let attrs = m[2] ?? "";
+      // A tag whose attributes wrap onto the next lines: read them up to its `>`.
+      if (READS_WRAPPED.has(tag) && m.index! + m[0].length >= markup[i]!.length) {
+        for (let j = i + 1; j < Math.min(markup.length, i + 12); j++) {
+          const close = markup[j]!.indexOf(">");
+          attrs += " " + (close < 0 ? markup[j]! : markup[j]!.slice(0, close));
+          if (close >= 0) break;
+        }
+      }
       const handlers = [...attrs.matchAll(HANDLER_RE)];
       const inline = handlers[0]
         ? { event: "on" + (handlers[0][1] ?? handlers[0][3])!.toLowerCase(), handler: cleanHandler((handlers[0][2] ?? handlers[0][4])!) }
         : null;
       const control = FORM_CONTROL[tag];
+      const id = attr(attrs, "id");
+      const type = (attr(attrs, "type") ?? (tag === "button" ? "submit" : "text")).toLowerCase();
+      const text = tag === "a" || tag === "button" ? innerText(markup, i, m.index!, tag)
+        : tag === "input" && (type === "submit" || type === "button" || type === "reset") ? attr(attrs, "value")?.trim() || undefined
+        : undefined;
+      const caption = text ? { caption: text } : {};
+
+      if (tag === "form") {
+        const request = formRequest(attrs);
+        forms.push({ method: (exactAttr(attrs, "method") ?? "GET").toUpperCase(), request });
+        const el: InteractiveElementInfo = { element: "form", event: inline?.event ?? "submit", handler: inline?.handler ?? id, line: ln };
+        out.push(inline ? el : withRequest(el, request));
+        continue;
+      }
+
+      // A submit control sends its form: `formaction` / `formmethod` first, then the enclosing form's.
+      if ((tag === "button" && type === "submit") || (tag === "input" && (type === "submit" || type === "image"))) {
+        const form = forms[forms.length - 1];
+        const request = formRequest(attrs, "formaction", "formmethod", form?.method) ?? form?.request;
+        const el: InteractiveElementInfo = { element: "button", event: inline?.event ?? "click", handler: inline?.handler ?? id, line: ln, ...caption };
+        out.push(inline ? el : withRequest(el, request));
+        continue;
+      }
 
       if (control) {
-        // Skip checkbox/radio/hidden inputs — filter/state noise, not actions.
         if (tag === "input") {
-          const type = (attr(attrs, "type") ?? "text").toLowerCase();
+          // Skip checkbox/radio/hidden inputs — filter/state noise, not actions.
           if (SKIP_INPUT_TYPES.has(type)) continue;
-          // A submit/button/reset input is really a button.
-          if (type === "submit" || type === "button" || type === "reset") {
-            out.push({ element: "button", event: inline?.event ?? "click", handler: inline?.handler ?? attr(attrs, "id"), line: ln });
+          // A button/reset input is really a button.
+          if (type === "button" || type === "reset") {
+            out.push({ element: "button", event: inline?.event ?? "click", handler: inline?.handler ?? id, line: ln, ...caption });
             continue;
           }
         }
         out.push({
           element: control,
           event: inline?.event ?? NATIVE_EVENT[tag] ?? "click",
-          handler: inline?.handler ?? attr(attrs, "id"),
+          handler: inline?.handler ?? id,
           line: ln,
+          ...caption,
         });
       } else if (inline) {
         // A non-control element (a/span/div/li…) carrying an inline handler.
@@ -259,7 +352,15 @@ export function extractHtmlInteractiveElements(lines: string[]): InteractiveElem
           event: inline.event,
           handler: inline.handler,
           line: ln,
+          ...caption,
         });
+      } else if (tag === "a") {
+        // A link is clicked like a button; one to a route of the app is a GET of it.
+        const href = exactAttr(attrs, "href")?.trim();
+        if (!href || href.startsWith("#") || /^javascript:/i.test(href)) continue;
+        const target = literalPath(href);
+        const request = target && !STATIC_FILE.test(target) ? { method: "GET", target } : undefined;
+        out.push(withRequest({ element: "link", event: "click", handler: id, line: ln, ...caption }, request));
       }
     }
   }
@@ -291,5 +392,6 @@ export const htmlSpec: RegexLangSpec = {
   ],
 
   extractRoutes: (lines, _classes, filePath) => extractHtmlRoutes(lines, filePath),
-  extractInteractiveElements: (lines) => extractHtmlInteractiveElements(lines),
+  // A server-rendered page's forms and links request the app's routes (`materializeElementRequests`, in meta.ts).
+  extractInteractiveElements: (lines) => extractHtmlInteractiveElements(lines, { requests: true }),
 };

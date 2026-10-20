@@ -69,8 +69,8 @@ describe("HTML interactive-element extraction", () => {
     expect(out).toEqual([
       { element: "form", event: "submit", handler: "login-form", line: 1 },
       { element: "input", event: "input", handler: "mobile", line: 2 },
-      { element: "button", event: "click", handler: "log", line: 3 }, // submit input → button
-      { element: "button", event: "click", handler: "showbtn", line: 4 },
+      { element: "button", event: "click", handler: "log", line: 3, caption: "LOGIN" }, // submit input → button
+      { element: "button", event: "click", handler: "showbtn", line: 4, caption: "SHOW" },
     ]);
   });
 
@@ -82,13 +82,68 @@ describe("HTML interactive-element extraction", () => {
 
   it("resolves an inline on*= handler to its invoked function", () => {
     const out = els(`<button onclick="addToCart(3)">Add</button>`);
-    expect(out[0]).toEqual({ element: "button", event: "onclick", handler: "addToCart", line: 1 });
+    expect(out[0]).toEqual({ element: "button", event: "onclick", handler: "addToCart", line: 1, caption: "Add" });
   });
 
-  it("emits a non-control tag only when it carries an inline handler (anchors→link)", () => {
-    const out = els(`<a href="x.html">plain</a>\n<a href="#" onclick="logout()">Logout</a>`);
+  it("emits a non-control tag only when it carries an inline handler, and every <a href> as a click", () => {
+    const out = els(`<a href="x.html">plain</a>\n<a href="#" onclick="logout()">Logout</a>\n<a href="#top">up</a>\n<a href="javascript:void(0)">x</a>\n<span>no</span>`);
     expect(out).toEqual([
-      { element: "link", event: "onclick", handler: "logout", line: 2 },
+      { element: "link", event: "click", handler: null, line: 1, caption: "plain" }, // a page: navigation, no request
+      { element: "link", event: "onclick", handler: "logout", line: 2, caption: "Logout" },
+    ]);
+  });
+
+  it("names a link to an app route after its GET, base-path template dropped", () => {
+    const out = els(`<a class="cymbal-button-primary" href="{{ $.baseUrl }}/" role="button">Continue</a>\n<a href="{{ $.baseUrl }}/product/{{.Item.Id}}">\n  <img src="{{.Item.Picture}}">\n</a>\n<a href="/logo.png">x</a>\n<a data-href="/x" href="https://example.com/docs">ext</a>`);
+    expect(out).toEqual([
+      { element: "link", event: "click", handler: "root", line: 1, caption: "Continue", request: { method: "GET", target: "/" } },
+      // an image, no text: no caption
+      { element: "link", event: "click", handler: "product_x", line: 2, request: { method: "GET", target: "/product/:param" } },
+      { element: "link", event: "click", handler: null, line: 5, caption: "x" },
+      { element: "link", event: "click", handler: null, line: 6, caption: "ext" },
+    ]);
+  });
+
+  it("gives a submit button its form's action and method (cart.html)", () => {
+    const out = els(`<form method="POST" action="{{ $.baseUrl }}/cart/empty">
+  <button class="cart-summary-empty-cart-button" type="submit">
+    Empty Cart
+  </button>
+  <a class="cymbal-button-primary" href="{{ $.baseUrl }}/" role="button">Continue</a>
+</form>
+<form class="cart-checkout-form"
+      action="{{ $.baseUrl }}/cart/checkout" method="POST">
+  <input type="email" id="email">
+  <button class="cymbal-button-primary" type="submit">Place Order</button>
+</form>
+<button type="button" id="toggle">x</button>`);
+    expect(out).toEqual([
+      { element: "form", event: "submit", handler: "post_cart_empty", line: 1, request: { method: "POST", target: "/cart/empty" } },
+      { element: "button", event: "click", handler: "post_cart_empty", line: 2, caption: "Empty Cart", request: { method: "POST", target: "/cart/empty" } },
+      { element: "link", event: "click", handler: "root", line: 5, caption: "Continue", request: { method: "GET", target: "/" } },
+      // attributes wrapped onto the next line are still read
+      { element: "form", event: "submit", handler: "post_cart_checkout", line: 7, request: { method: "POST", target: "/cart/checkout" } },
+      { element: "input", event: "input", handler: "email", line: 9 },
+      { element: "button", event: "click", handler: "post_cart_checkout", line: 10, caption: "Place Order", request: { method: "POST", target: "/cart/checkout" } },
+      { element: "button", event: "click", handler: "toggle", line: 12, caption: "x" }, // outside the form, not a submit
+    ]);
+  });
+
+  it("reads a typeless button as submit, formaction over the form's, and GET for a form with no method", () => {
+    const out = els(`<form action="/search">
+  <button>Go</button>
+  <input type="submit" formaction="/orders/delete" formmethod="post" value="Delete">
+  <button type="submit" onclick="check()">Check</button>
+</form>
+<form method="post"><button>Save</button></form>`);
+    expect(out).toEqual([
+      { element: "form", event: "submit", handler: "search", line: 1, request: { method: "GET", target: "/search" } },
+      { element: "button", event: "click", handler: "search", line: 2, caption: "Go", request: { method: "GET", target: "/search" } },
+      { element: "button", event: "click", handler: "post_orders_delete", line: 3, caption: "Delete", request: { method: "POST", target: "/orders/delete" } },
+      { element: "button", event: "onclick", handler: "check", line: 4, caption: "Check" }, // its own handler runs first
+      // no action: the page posts to itself, which names no route
+      { element: "form", event: "submit", handler: null, line: 6 },
+      { element: "button", event: "click", handler: null, line: 6, caption: "Save" },
     ]);
   });
 
@@ -103,7 +158,7 @@ describe("HTML interactive-element extraction", () => {
     const out = els(
       `<!-- <button id="ghost">x</button> -->\n<script>\n  if (a < b) { document.querySelector("input"); }\n</script>\n<button id="real">y</button>`,
     );
-    expect(out).toEqual([{ element: "button", event: "click", handler: "real", line: 5 }]);
+    expect(out).toEqual([{ element: "button", event: "click", handler: "real", line: 5, caption: "y" }]);
   });
 });
 

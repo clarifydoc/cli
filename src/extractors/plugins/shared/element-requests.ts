@@ -9,13 +9,20 @@ import type { FileAnalysis } from "../../../types/analysis.js";
  * joins the call to the route serving it, `synthesizeApiRouteSymbolLinks`
  * turns that into `<file>::<handler> → <route handler>`, and a click on the
  * element traces through the controller to the database — with the same
- * method, version and origin rules as a `fetch`. Targets that are not paths
- * (a route helper, `Ctl#action`) are left to the plugin's resolver.
+ * method, version and origin rules as a `fetch`. Elements sending the same
+ * request under the same name (a form and its submit button, two links to one
+ * page) share one call, inside the pseudo-function at the first of them.
+ * Targets that are not paths (a route helper, `Ctl#action`) are left to the
+ * plugin's resolver.
  */
 export function materializeElementRequests(analysis: FileAnalysis): void {
   const named = new Set(analysis.functions.map((f) => f.name));
+  const sent = new Set<string>();
   for (const el of analysis.interactiveElements) {
     if (!el.request || !el.handler || !el.request.target.startsWith("/")) continue;
+    const key = `${el.handler} ${el.request.method} ${el.request.target}`;
+    if (sent.has(key)) continue;
+    sent.add(key);
     analysis.dataSources.push({
       kind: "api-call",
       name: `${el.request.method} ${el.request.target}`,

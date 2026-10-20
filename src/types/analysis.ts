@@ -1662,6 +1662,8 @@ export interface InteractiveElementInfo {
    * plugin resolver maps to a route. Absent for elements that run client code.
    */
   request?: { method: string; target: string };
+  /** The text a person reads on it: a link's or button's label, a submit input's `value` ("Place Order"). */
+  caption?: string;
 }
 
 export interface EventInfo {

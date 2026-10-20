@@ -2494,13 +2494,14 @@ function buildScreen(
       name,
       componentType: el.element,
       category: WEB_ELEMENT_CATEGORY[el.element] ?? "display",
-      caption: null,
+      caption: el.caption ?? null,
       position: null,
       align: null,
       visible: true,
       children: [],
       events: [el.event + (el.handler ? ` → ${el.handler}` : "")],
-      dataBindings: [],
+      // What a form, submit button or link sends: `POST /cart/checkout`.
+      dataBindings: el.request ? [`${el.request.method} ${el.request.target}`] : [],
       line: el.line,
     });
   });
