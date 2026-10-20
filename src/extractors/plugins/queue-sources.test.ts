@@ -186,9 +186,10 @@ io.on("connection", (socket) => {
     expect(brief(s)).toEqual(["queue-consume Socket.IO: on chat message @4", "queue-publish Socket.IO: emit chat message @4"]);
   });
 
-  it("needs the import: an EventEmitter's emit is not Socket.IO", async () => {
+  it("needs the import: an EventEmitter's emit is not Socket.IO (it is an in-process channel)", async () => {
     const s = await jsSourcesOf(`const socket = new EventEmitter(); socket.emit("chat message", 1);`);
-    expect(brief(s)).toEqual([]);
+    expect(s.filter((d) => d.name.startsWith("Socket.IO"))).toEqual([]);
+    expect(s.filter((d) => d.kind === "queue-publish").map((d) => d.name)).toEqual(["EventEmitter: emit"]);
   });
 });
 

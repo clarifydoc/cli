@@ -14,10 +14,15 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
   private celery = false;
   /** Locals holding a Celery signature: `consume_task = consume_file.s(…)` → consume_task → consume_file. */
   private signatures = new Map<string, string>();
+  /** The file uses boto3 (SQS/SNS clients) or redis-py (pub/sub). */
+  private boto3 = false;
+  private redis = false;
 
   override beginFile(_tree: unknown, sourceText: string): void {
     this.vectorClients = new Set();
     this.celery = /\bcelery\b|\bshared_task\b/i.test(sourceText);
+    this.boto3 = /\b(?:boto3|aioboto3)\b/.test(sourceText);
+    this.redis = /^\s*(?:import\s+(?:redis|aioredis)|from\s+(?:redis|aioredis)(?:\.\w+)*\s+import)\b/m.test(sourceText);
     this.signatures = new Map();
     if (sourceText.includes(".s(") || sourceText.includes(".si(") || sourceText.includes(".signature(")) {
       for (const m of sourceText.matchAll(/^[ \t]*([A-Za-z_]\w*)\s*=\s*(?:[A-Za-z_]\w*\.)*([A-Za-z_]\w*)\.(?:s|si|signature)\(/gm)) {
@@ -97,6 +102,28 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           const task = pyArg(node, "name", 0);
           if (task && /^[\w.]+$/.test(task)) {
             sources.push(this.ds({ kind: "queue-publish", name: "Celery: send_task", target: task.split(".").pop()!, line: node.startPosition.row + 1 }));
+            return;
+          }
+        }
+        // boto3: `sqs.send_message(QueueUrl=…)`, `sqs.receive_message(QueueUrl=…)`, `sns.publish(TopicArn=…)`.
+        if (this.boto3 && (leaf === "send_message" || leaf === "send_message_batch" || leaf === "receive_message" || (leaf === "publish" && /sns/i.test(fnName)))) {
+          const raw = pyArg(node, leaf === "publish" ? "TopicArn" : "QueueUrl", -1);
+          const target = raw ? queueName(raw) : null;
+          if (target) {
+            sources.push(this.ds({
+              kind: leaf === "receive_message" ? "queue-consume" : "queue-publish",
+              name: leaf === "publish" ? "SNS: publish" : leaf === "receive_message" ? "SQS: receive" : "SQS: send",
+              target,
+              line: node.startPosition.row + 1,
+            }));
+            return;
+          }
+        }
+        // redis-py pub/sub: `r.publish("orders", msg)`, `p.subscribe("orders")`.
+        if (this.redis && (leaf === "publish" || leaf === "subscribe" || leaf === "psubscribe") && fnName.includes(".")) {
+          const channel = pyArg(node, "channel", 0);
+          if (channel && /^[\w.:*-]+$/.test(channel)) {
+            sources.push(this.ds({ kind: leaf === "publish" ? "queue-publish" : "queue-consume", name: `Redis: ${leaf}`, target: channel, line: node.startPosition.row + 1 }));
             return;
           }
         }
@@ -318,6 +345,18 @@ function pyArg(call: Node, keyword: string, index: number): string | null {
     ? value.text.replace(/^[rbfu]*['"]{1,3}|['"]{1,3}$/gi, "")
     : value.text.replace(/\s+/g, " ");
   return text && text.length <= 64 ? text : null;
+}
+
+/**
+ * A queue or topic named by its URL, ARN or the variable holding it: the URL's
+ * last segment, the ARN's, an `os.environ[…]` / `os.getenv(…)` name, or the identifier.
+ */
+function queueName(raw: string): string | null {
+  const env = /os\.(?:environ\[\s*['"]([^'"]+)['"]\s*\]|getenv\(\s*['"]([^'"]+)['"]|environ\.get\(\s*['"]([^'"]+)['"])/.exec(raw);
+  if (env) return env[1] ?? env[2] ?? env[3]!;
+  if (/^[A-Za-z_][\w.]*$/.test(raw)) return raw.split(".").pop()!;
+  const last = raw.split(/[/:]/).filter(Boolean).pop();
+  return last && /^[\w.-]+$/.test(last) ? last : null;
 }
 
 /** HTTP client modules whose verb functions are always outbound calls. */

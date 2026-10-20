@@ -285,6 +285,56 @@ interface MqEvidence {
   /** Queue name by the receiver holding it; null when the file does not import Bull/BullMQ. */
   bullQueues: Map<string, string> | null;
   socketIo: boolean;
+  /** The file imports NestJS's event emitter (`@nestjs/event-emitter`). */
+  nestEvents: boolean;
+  /** Receivers the file creates as an in-process emitter (`new EventEmitter()`, `mitt()`), or `this` in a class extending one. */
+  emitters: Set<string>;
+  /** The file imports a Redis client (`redis`, `ioredis`). */
+  redis: boolean;
+}
+
+/**
+ * The emitter receivers a file creates: `const bus = new EventEmitter()`,
+ * `export const events = mitt()`, and `this` in a class that extends
+ * EventEmitter. A name read elsewhere (`import { bus } from "./events"`)
+ * counts when it reads like one (`bus`, `emitter`, `eventBus`, `events`).
+ */
+function emitterReceivers(src: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of src.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:new\s+(?:\w+\.)?EventEmitter\d*\b|mitt\s*\()/g)) out.add(m[1]!);
+  if (/\bclass\s+\w+\s+extends\s+(?:\w+\.)?EventEmitter\b/.test(src)) out.add("this");
+  return out;
+}
+/** A receiver name that reads like an in-process event bus. */
+const EMITTER_NAME_RE = /^(?:bus|emitter|events|eventBus|eventEmitter|eventHub|hub|pubsub)$|EventBus$|Emitter$/;
+/** Receivers whose `on`/`emit` are never a message channel: the process, HTTP objects, streams, the DOM. */
+const NOT_A_CHANNEL_RE = /^(?:process|req|request|res|response|stream|readable|writable|window|document|el|element|\$|server|app|child|proc|ws|wss|db|knex|vm|emit)$/;
+/** AWS SDK v3 commands that put a message on a queue or topic, or take one off. */
+const AWS_SEND_COMMANDS = new Map<string, { kind: "queue-publish" | "queue-consume"; key: string; name: string }>([
+  ["SendMessageCommand", { kind: "queue-publish", key: "QueueUrl", name: "SQS: send" }],
+  ["SendMessageBatchCommand", { kind: "queue-publish", key: "QueueUrl", name: "SQS: send" }],
+  ["ReceiveMessageCommand", { kind: "queue-consume", key: "QueueUrl", name: "SQS: receive" }],
+  ["PublishCommand", { kind: "queue-publish", key: "TopicArn", name: "SNS: publish" }],
+  ["PublishBatchCommand", { kind: "queue-publish", key: "TopicArn", name: "SNS: publish" }],
+]);
+/** SDK v2 methods, the same operations. */
+const AWS_V2_METHODS = new Map<string, { kind: "queue-publish" | "queue-consume"; key: string; name: string }>([
+  ["sendMessage", { kind: "queue-publish", key: "QueueUrl", name: "SQS: send" }],
+  ["sendMessageBatch", { kind: "queue-publish", key: "QueueUrl", name: "SQS: send" }],
+  ["receiveMessage", { kind: "queue-consume", key: "QueueUrl", name: "SQS: receive" }],
+]);
+/**
+ * A queue or topic named by its URL, ARN or the variable holding it: the URL's
+ * last segment (`…/123/orders` → `orders`), the ARN's (`arn:…:orders-topic`),
+ * an env var's name (`process.env.ORDERS_QUEUE_URL`), or an identifier.
+ */
+function queueTarget(node: Node | null): string | null {
+  if (!node) return null;
+  const lit = literalString(node);
+  if (lit) return lit.split(/[/:]/).filter(Boolean).pop() ?? lit;
+  const env = /^process\.env\.([A-Za-z_][\w]*)$|^process\.env\[['"]([^'"]+)['"]\]$/.exec(node.text);
+  if (env) return env[1] ?? env[2]!;
+  return node.type === "identifier" || node.type === "member_expression" ? node.text.split(".").pop()! : null;
 }
 
 function mqEvidence(src: string): MqEvidence {
@@ -298,7 +348,13 @@ function mqEvidence(src: string): MqEvidence {
       bullQueues.set(m[2]!, m[1]!);
     }
   }
-  return { bullQueues, socketIo: SOCKET_IO_IMPORT_RE.test(src) };
+  return {
+    bullQueues,
+    socketIo: SOCKET_IO_IMPORT_RE.test(src),
+    nestEvents: /['"]@nestjs\/event-emitter['"]/.test(src),
+    emitters: emitterReceivers(src),
+    redis: /(?:from\s*|require\(\s*)['"](?:redis|ioredis|@redis\/client)['"]/.test(src),
+  };
 }
 
 /** Method names that are chaining noise, not meaningful calls */
@@ -701,6 +757,27 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       return;
     }
 
+    // NestJS events: `@OnEvent("order.created") handle(…)` consumes the event; the row sits on the method.
+    if (node.type === "call_expression" && node.parent?.type === "decorator" && node.childForFieldName("function")?.text === "OnEvent") {
+      const event = (this.mq ??= mqEvidence(this.sourceText)).nestEvents ? literalString(node.childForFieldName("arguments")?.namedChildren[0] ?? null) : null;
+      if (event) {
+        let method = node.parent.nextNamedSibling;
+        while (method?.type === "decorator") method = method.nextNamedSibling;
+        sources.push(this.ds({ kind: "queue-consume", name: "NestJS: OnEvent", target: event, line: (method ?? node).startPosition.row + 1 }));
+      }
+      return;
+    }
+    // AWS SDK v3: `new SendMessageCommand({ QueueUrl, … })`, `new PublishCommand({ TopicArn })`, `new ReceiveMessageCommand(…)`.
+    if (node.type === "new_expression") {
+      const op = AWS_SEND_COMMANDS.get(node.childForFieldName("constructor")?.text ?? "");
+      const desc = node.childForFieldName("arguments")?.namedChildren[0];
+      if (op && desc?.type === "object") {
+        const target = queueTarget(objectPropValue(desc, op.key));
+        if (target) sources.push(this.ds({ kind: op.kind, name: op.name, target, line: node.startPosition.row + 1 }));
+        return;
+      }
+    }
+
     if (node.type === "call_expression") {
       let fn = node.childForFieldName("function");
       // `await foo<T>(args)` mis-nests as call(function: await_expression(await,
@@ -908,6 +985,51 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
                 target: event,
                 line,
               }));
+              return;
+            }
+          }
+
+          // NestJS events: `this.eventEmitter.emit("order.created", payload)`.
+          const mqev = (this.mq ??= mqEvidence(this.sourceText));
+          if (fnName === "emit" && mqev.nestEvents && /eventEmitter|eventBus/i.test(recv)) {
+            const event = literalString(mqArgs[0] ?? null);
+            if (event) {
+              sources.push(this.ds({ kind: "queue-publish", name: "NestJS: emit", target: event, line }));
+              return;
+            }
+          }
+          // An in-process emitter: `bus.emit("order.created", o)` publishes, `bus.on("order.created", fn)` consumes.
+          if (fnName === "emit" || fnName === "on" || fnName === "once" || fnName === "addListener") {
+            const root = memberRoot(fn) ?? recv;
+            const event = literalString(mqArgs[0] ?? null);
+            const leafRecv = recv.replace(/^this\./, "");
+            const emitterLike = mqev.emitters.has(recv) || mqev.emitters.has(leafRecv) || EMITTER_NAME_RE.test(leafRecv);
+            if (event && emitterLike && !NOT_A_CHANNEL_RE.test(root) && !(fnName !== "emit" && mqArgs.length < 2)) {
+              sources.push(this.ds({ kind: fnName === "emit" ? "queue-publish" : "queue-consume", name: `EventEmitter: ${fnName}`, target: event, line }));
+              return;
+            }
+          }
+          // Redis pub/sub: `pub.publish("orders", msg)` / `sub.subscribe("orders", …)`, in a file that imports a client.
+          if (mqev.redis && (fnName === "publish" || fnName === "subscribe" || fnName === "psubscribe" || fnName === "sSubscribe")) {
+            const channel = literalString(mqArgs[0] ?? null);
+            if (channel) {
+              sources.push(this.ds({ kind: fnName === "publish" ? "queue-publish" : "queue-consume", name: `Redis: ${fnName}`, target: channel, line }));
+              return;
+            }
+          }
+          // AWS SDK v2: `sqs.sendMessage({ QueueUrl })`, `sns.publish({ TopicArn })`; sqs-consumer `Consumer.create({ queueUrl })`.
+          const v2 = AWS_V2_METHODS.get(fnName) ?? (fnName === "publish" && /sns/i.test(recv) ? { kind: "queue-publish" as const, key: "TopicArn", name: "SNS: publish" } : undefined);
+          if (v2 && mqArgs[0]?.type === "object") {
+            const target = queueTarget(objectPropValue(mqArgs[0], v2.key));
+            if (target) {
+              sources.push(this.ds({ kind: v2.kind, name: v2.name, target, line }));
+              return;
+            }
+          }
+          if (fnName === "create" && recv === "Consumer" && mqArgs[0]?.type === "object") {
+            const target = queueTarget(objectPropValue(mqArgs[0], "queueUrl"));
+            if (target) {
+              sources.push(this.ds({ kind: "queue-consume", name: "SQS: consumer", target, line }));
               return;
             }
           }
