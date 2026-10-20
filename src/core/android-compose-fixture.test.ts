@@ -29,13 +29,17 @@ describe.skipIf(!existsSync(fixture))("sample-android-compose", () => {
     ]);
   });
 
-  it("makes Activities and Fragments screens by the base-class chain, with the screens they open", async () => {
+  it("makes Activities and Fragments screens by the base-class chain, with the screens they open — through the navigation graph too", async () => {
     const s = await loadReportSummary(out);
     const legacy = s.screens.filter((x) => x.filePath.includes("/legacy/")).map((x) => `${x.name} → ${[...x.navigatesTo].sort().join(", ")}`).sort();
     expect(legacy).toEqual([
-      "CartFragment → ",
+      "CartFragment → PaymentFragment",
+      "DoneFragment → CartFragment",
       "OrdersActivity → CartFragment, ReceiptActivity",
+      "PaymentFragment → DoneFragment",
       "ReceiptActivity → ",
     ]);
+    // An id no graph declares leaves no row behind.
+    expect(s.routeMap.some((r) => r.path.includes("help_dialog") || r.path.startsWith("@"))).toBe(false);
   });
 });

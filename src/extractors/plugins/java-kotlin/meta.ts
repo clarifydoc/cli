@@ -1,6 +1,7 @@
 import { extractJvmScheduledJobs } from "./scheduled-jobs.js";
 import { extractRetrofitClients } from "./retrofit.js";
 import { screenClassResolver } from "../shared/screen-classes.js";
+import { androidNavGraphResolver } from "./routes/android-nav-graph.js";
 
 /** Android's screen classes: an Activity or a Fragment, by the platform classes a project's own derive from. */
 const androidScreenClasses = screenClassResolver("android-screen-classes", ["java", "kotlin"], new Set([
@@ -92,7 +93,7 @@ function jvmMeta(language: Language, opts: {
     ...(opts.preprocess ? { preprocess: opts.preprocess } : {}),
     routes: javaKotlinRouteExtractor,
     // Spring Security's authorizeHttpRequests rules, on the routes they match.
-    routeResolvers: [springSecurityResolver, ktorRouteFnResolver, androidScreenClasses],
+    routeResolvers: [springSecurityResolver, ktorRouteFnResolver, androidScreenClasses, androidNavGraphResolver],
     functionsClasses: jvmFunctionsClasses,
     requestSchema: jvmRequestSchema,
     grpcStubService: jvmGrpcStub,

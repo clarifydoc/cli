@@ -3,6 +3,7 @@ import { applyRouteMeta, splitList, type GuardAttr } from "../../shared/route-me
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractSpringClientProxies } from "./client-proxies.js";
 import { mapperDataSources, mapperFunctions } from "./mybatis.js";
+import { androidNavGraphFacts } from "../shared/android-nav-graph.js";
 
 /**
  * Spring XML definitions — the declarative wiring tier of classic Java web
@@ -322,7 +323,11 @@ export const springxmlSpec: RegexLangSpec = {
   postProcessFunctions: (lines) => [...extractFlowFunctions(lines), ...mapperFunctions(lines)],
   // MyBatis mapper statements: the table each one reads or writes (mybatis.ts).
   extractDataSources: (lines) => mapperDataSources(lines),
-  extractRoutes: (lines, _classes, filePath) => extractFlowRoutes(lines, filePath),
+  extractRoutes: (lines, _classes, filePath, _functions, facts) => {
+    // An Android navigation graph states its destinations and actions as a fact the Java/Kotlin resolver joins.
+    if (facts) androidNavGraphFacts(lines, facts);
+    return extractFlowRoutes(lines, filePath);
+  },
   extractStringConstants: extractBeanConstants,
   // REST client proxies the beans build (factory beans, `<jaxrs:client>`).
   extractHttpClientRegistrations: (lines) => extractSpringClientProxies(lines),
