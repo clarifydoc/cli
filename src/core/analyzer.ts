@@ -1516,7 +1516,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     // Migrations and seeds run once, by a tool: a query per row there is no N+1.
     const runOnce = /(?:^|\/)(?:migrations?|migrate|alembic|seeds?|seeders|fixtures)\//i;
     const skip = (f: string) => isUnauthored(f) || fileLayerMap[f] === "test" || runOnce.test(f);
-    const loops = await findQueriesInLoops({ projectRoot, dataAccess: symbolDataAccess, symbolLinks, skip }).catch(() => []);
+    const loops = await findQueriesInLoops({ projectRoot, dataAccess: symbolDataAccess, symbolLinks, skip, entityGraph }).catch(() => []);
     const blocking = findBlockingInAsync(allAnalyses, skip);
     patterns.push(...loops, ...blocking);
     if (loops.length || blocking.length) progress.detail(`  Performance patterns: ${loops.length} query-in-loop, ${blocking.length} blocking-in-async`);

@@ -2231,6 +2231,12 @@ export interface PatternInfo {
    */
   entries?: PatternEntry[];
   /**
+   * `query-in-loop` only: what the loop walks, when its header says — the rows of a query (`iterates`, the
+   * entity, and `relation` when the ER model relates it to the one queried inside), or a small fixed number of
+   * passes (`bound`).
+   */
+  loop?: { iterates?: string; bound?: number; relation?: string };
+  /**
    * What pays for it: `request` when an API route reaches it; else `background` when a message consumer or a
    * scheduled job does (every message, every run); else `command` when a tool or command does.
    */

@@ -33,6 +33,11 @@ describe("performance patterns, end to end", () => {
       '  return readFileSync("x", "utf8");',                                     // 18: not async: fine
       "}",                                                                      // 19
     ].join("\n"));
+    await writeFile(join(root, "schema.sql"), [
+      "CREATE TABLE customers (id INT PRIMARY KEY, name TEXT);",
+      "CREATE TABLE orders (id INT PRIMARY KEY, customer_id INT REFERENCES customers(id));",
+      "CREATE TABLE items (id INT PRIMARY KEY, order_id INT);",
+    ].join("\n"));
     await writeFile(join(root, "src", "server.ts"), [
       'import express from "express";',
       'import { report } from "./orders";',
@@ -55,6 +60,16 @@ describe("performance patterns, end to end", () => {
     expect(got).toEqual(["blocking-in-async report:14 medium", "query-in-loop report:12 medium", "query-in-loop report:9 high"].sort());
   });
 
+  it("says what the loop walks, and the relation that would load it in one query", async () => {
+    const s = await loadReportSummary(join(dir, "out"));
+    const direct = (s.patterns ?? []).find((p) => p.kind === "query-in-loop" && p.line === 9)!;
+    expect(direct.loop).toMatchObject({ iterates: "orders" });
+    expect(direct.loop?.relation).toMatch(/^orders→customers/);
+    expect(direct.detail).toContain("once for each orders row the loop at line 8 walks — the orders→customers");
+    // A loop over a parameter says nothing about its size.
+    expect((s.patterns ?? []).find((p) => p.kind === "query-in-loop" && p.line === 12)!.loop).toBeUndefined();
+  });
+
   it("names the route that pays for each, so a request's N+1 ranks above code nothing reaches", async () => {
     const s = await loadReportSummary(join(dir, "out"));
     const perf = (s.patterns ?? []).filter((p) => p.kind === "query-in-loop" || p.kind === "blocking-in-async");
@@ -63,5 +78,27 @@ describe("performance patterns, end to end", () => {
       expect(p.role).toBe("request");
       expect(p.entries?.[0]).toMatchObject({ kind: "route", entry: "GET /report", file: "src/server.ts" });
     }
+  });
+});
+
+describe("how big a loop is", () => {
+  it("reads what a loop walks: a query's rows, or a few fixed passes", async () => {
+    const { loopSize } = await import("./query-in-loop.js");
+    const lines = [
+      "def report(db):",                                  // 1
+      "    orders = db.query(Order).all()",               // 2
+      "    for order in orders:",                         // 3
+      "        pass",                                     // 4
+    ];
+    const queries = new Map([[2, "Order"], [7, "Invoice"]]);
+    expect(loopSize("for order in orders:", 3, 1, queries, lines)).toEqual({ iterates: "Order" });
+    expect(loopSize("for (const inv of await db.invoices.findMany())", 7, 1, queries, lines)).toEqual({ iterates: "Invoice" });
+    expect(loopSize('for (const status of ["open", "closed"])', 3, 1, undefined, lines)).toEqual({ bound: 2 });
+    expect(loopSize("for i in range(3):", 3, 1, undefined, lines)).toEqual({ bound: 3 });
+    expect(loopSize("for (let i = 0; i < 5; i++)", 3, 1, undefined, lines)).toEqual({ bound: 5 });
+    expect(loopSize("for i in 0..3", 3, 1, undefined, lines)).toEqual({ bound: 3 });
+    // Nothing the header says: neither a query's rows nor a small bound.
+    expect(loopSize("for (const id of ids)", 3, 1, queries, lines)).toEqual({});
+    expect(loopSize("for (let i = 0; i < 500; i++)", 3, 1, undefined, lines)).toEqual({});
   });
 });
