@@ -692,7 +692,7 @@ program
   .command("install")
   .description("Wire ClarifyDoc into agent hosts: the MCP server entry, Claude Code hooks, skills, and the AGENTS.md section")
   .argument("[path]", "Project root", ".")
-  .option("--client <names...>", "claude-code | cursor | vscode | windsurf | gemini | codex | claude-desktop (default claude-code)")
+  .option("--client <names...>", "claude-code | cursor | vscode | windsurf | gemini | codex | claude-desktop | zed | opencode | cline (default claude-code)")
   .option("--hooks", "Also add Claude Code hooks (.claude/settings.json): context before searches, after edits, at session start", false)
   .option("--skills", "Also write .claude/skills/clarifydoc-* from the MCP workflow prompts", false)
   .option("--guidance [file]", "Also add or update the ClarifyDoc section of AGENTS.md (or the file named)")
@@ -831,7 +831,7 @@ program
   .option("--max-files <n>", "Maximum number of files to analyze", wholeNumber(1))
   .option("--include <globs...>", "Additional file patterns to include")
   .option("--exclude <globs...>", "Additional file patterns to exclude")
-  .option("--print-config <client>", "Print the MCP entry for a client and exit, without serving: claude-code | cursor | vscode | windsurf | gemini | codex | claude-desktop | all")
+  .option("--print-config <client>", "Print the MCP entry for a client and exit, without serving: claude-code | cursor | vscode | windsurf | gemini | codex | claude-desktop | zed | opencode | cline | all")
   .option("--tools <profile>", "Tools to offer: all, core (status, search, explain, trace, file, extract, impact, analyze), or names comma-separated", "all")
   .action(async (path: string, options) => {
     if (options.printConfig) {

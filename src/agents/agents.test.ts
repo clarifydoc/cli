@@ -155,5 +155,33 @@ describe("mcp --print-config", () => {
     expect(all.codex!.snippet).toBe('[mcp_servers.clarifydoc]\ncommand = "clarifydoc"\nargs = ["mcp","/repo"]\n');
     // The same entry install would merge in.
     expect(JSON.parse(planMcpConfig("cursor", mkdtempSync(join(tmpdir(), "pc-")), self).content).mcpServers.clarifydoc).toEqual(JSON.parse(all.cursor!.snippet).mcpServers.clarifydoc);
+    expect(JSON.parse(all.zed!.snippet)).toEqual({ context_servers: { clarifydoc: { source: "custom", command: "clarifydoc", args: ["mcp"], env: {} } } });
+    expect(all.zed!.file).toBe(join("/repo", ".zed", "settings.json"));
+    expect(JSON.parse(all.opencode!.snippet).mcp.clarifydoc).toEqual({ type: "local", command: ["clarifydoc", "mcp"], enabled: true });
+    expect(all.opencode!.file).toBe(join("/repo", "opencode.json"));
+    expect(JSON.parse(all.cline!.snippet).mcpServers.clarifydoc).toEqual({ command: "clarifydoc", args: ["mcp", "/repo"], disabled: false });
+    expect(all.cline!.file).toMatch(/saoudrizwan\.claude-dev[\\/]settings[\\/]cline_mcp_settings\.json$/);
+  });
+
+  it("merges into Zed's and OpenCode's project settings, and leaves a file with comments alone", () => {
+    const root = mkdtempSync(join(tmpdir(), "pc-"));
+    try {
+      mkdirSync(join(root, ".zed"));
+      writeFileSync(join(root, ".zed", "settings.json"), JSON.stringify({ theme: "One Dark", context_servers: { other: { command: "x" } } }));
+      const zed = JSON.parse(planMcpConfig("zed", root, self).content);
+      expect(zed.theme).toBe("One Dark");
+      expect(Object.keys(zed.context_servers)).toEqual(["other", "clarifydoc"]);
+      writeFileSync(join(root, "opencode.json"), JSON.stringify({ model: "x" }));
+      expect(JSON.parse(planMcpConfig("opencode", root, self).content)).toMatchObject({ model: "x", mcp: { clarifydoc: { type: "local" } } });
+
+      const jsonc = '// my settings\n{ "theme": "One Dark" }\n';
+      writeFileSync(join(root, ".zed", "settings.json"), jsonc);
+      const plan = planMcpConfig("zed", root, self);
+      expect(plan.skip).toMatch(/not plain JSON/);
+      expect(applyPlans([plan], false).join("\n")).toContain("context_servers");
+      expect(readFileSync(join(root, ".zed", "settings.json"), "utf8")).toBe(jsonc);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

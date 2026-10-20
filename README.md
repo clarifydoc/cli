@@ -366,7 +366,9 @@ updates. See [clarifydoc/vscode](https://github.com/clarifydoc/vscode).
 
 `clarifydoc install [path]` writes the MCP server entry for one or more clients — `--client claude-code` (the
 default, `.mcp.json`), `cursor` (`.cursor/mcp.json`), `vscode` (`.vscode/mcp.json`), `gemini`
-(`.gemini/settings.json`), `windsurf` and `codex` (their user-level files) — merged into what is there.
+(`.gemini/settings.json`), `zed` (`.zed/settings.json`), `opencode` (`opencode.json`), and `windsurf`, `codex`,
+`claude-desktop` and `cline` (their user-level files) — merged into what is there. A file that is not plain JSON
+(settings with comments) is left as it is, and the entry to add by hand is printed instead.
 `--hooks` adds Claude Code hooks to `.claude/settings.json`; `--skills` writes `.claude/skills/clarifydoc-*`
 from the MCP workflow prompts; `--guidance` adds or updates a marked ClarifyDoc section of `AGENTS.md` (or the
 file named), with what this project's analysis says an agent should know first. `--print` shows it all instead.

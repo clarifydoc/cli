@@ -13,7 +13,7 @@ import { GIT_SAFE_CONFIG } from "../core/git-safe.js";
  * is there — other servers, hooks and text are kept — and is idempotent;
  * `--print` shows the result instead of writing it.
  */
-export const CLIENTS = ["claude-code", "cursor", "vscode", "windsurf", "gemini", "codex", "claude-desktop"] as const;
+export const CLIENTS = ["claude-code", "cursor", "vscode", "windsurf", "gemini", "codex", "claude-desktop", "zed", "opencode", "cline"] as const;
 export type Client = (typeof CLIENTS)[number];
 
 /** How this CLI is started: the global/npx binary when it runs as one, else node + this script. */
@@ -33,15 +33,37 @@ interface Planned {
   mode?: number;
   /** Said after the file is written (or printed). */
   note?: string;
+  /** Why the file is left as it is: `content` is then the entry to add by hand. */
+  skip?: string;
 }
 
-function readJson(path: string): Record<string, unknown> {
+/** A JSON config's object: `{}` when the file is missing or empty, null when it is there but not plain JSON. */
+function readJson(path: string): Record<string, unknown> | null {
+  let text: string;
   try {
-    const text = readFileSync(path, "utf8");
-    return text.trim() ? (JSON.parse(text) as Record<string, unknown>) : {};
+    text = readFileSync(path, "utf8");
   } catch {
     return {};
   }
+  if (!text.trim()) return {};
+  try {
+    const json = JSON.parse(text) as unknown;
+    return json && typeof json === "object" && !Array.isArray(json) ? (json as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The config with ClarifyDoc's entry merged in — or, for a file there that is
+ * not plain JSON (comments, as Zed's and VS Code's settings often have),
+ * left alone: rewriting it would drop what JSON.parse cannot read.
+ */
+function mergeJson(file: string, merge: (json: Record<string, unknown>) => { content: unknown; note?: string }, snippet: () => string): Planned {
+  const json = readJson(file);
+  if (json === null) return { file, content: snippet(), skip: "it is not plain JSON (comments?), so it was not rewritten — add this entry by hand" };
+  const { content, note } = merge(json);
+  return { file, content: pretty(content), ...(note ? { note } : {}) };
 }
 
 const pretty = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
@@ -52,6 +74,20 @@ function claudeDesktopConfig(): string {
   if (process.platform === "win32") return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "Claude", "claude_desktop_config.json");
   return join(homedir(), ".config", "Claude", "claude_desktop_config.json");
 }
+
+/** Where the Cline extension (in VS Code) reads its MCP servers on this platform. */
+function clineConfig(): string {
+  const user = process.platform === "darwin"
+    ? join(homedir(), "Library", "Application Support", "Code", "User")
+    : process.platform === "win32"
+      ? join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "Code", "User")
+      : join(homedir(), ".config", "Code", "User");
+  return join(user, "globalStorage", "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json");
+}
+
+/** Zed's custom context server, OpenCode's local MCP server: their own shapes for the same command. */
+const zedServer = (server: { command: string; args: string[] }) => ({ source: "custom", ...server, env: {} });
+const opencodeServer = (server: { command: string; args: string[] }) => ({ type: "local", command: [server.command, ...server.args], enabled: true });
 
 /**
  * Just the ClarifyDoc entry for one client, in that client's format, and the
@@ -76,6 +112,12 @@ export function mcpSnippet(client: Client, root: string, self = selfCommand()): 
       return { file: claudeDesktopConfig(), snippet: pretty({ mcpServers: { clarifydoc: withRoot } }) };
     case "codex":
       return { file: join(homedir(), ".codex", "config.toml"), snippet: `[mcp_servers.clarifydoc]\ncommand = ${JSON.stringify(server.command)}\nargs = ${JSON.stringify(withRoot.args)}\n` };
+    case "zed":
+      return { file: join(root, ".zed", "settings.json"), snippet: pretty({ context_servers: { clarifydoc: zedServer(server) } }) };
+    case "opencode":
+      return { file: join(root, "opencode.json"), snippet: pretty({ $schema: "https://opencode.ai/config.json", mcp: { clarifydoc: opencodeServer(server) } }) };
+    case "cline":
+      return { file: clineConfig(), snippet: pretty({ mcpServers: { clarifydoc: { ...withRoot, disabled: false } } }) };
   }
 }
 
@@ -132,33 +174,31 @@ export function planMcpConfig(client: Client, root: string, self = selfCommand()
     case "cursor":
     case "gemini": {
       const file = client === "claude-code" ? join(root, ".mcp.json") : client === "cursor" ? join(root, ".cursor", "mcp.json") : join(root, ".gemini", "settings.json");
-      const json = readJson(file);
-      const servers = { ...((json.mcpServers as Record<string, unknown>) ?? {}), clarifydoc: server };
-      return { file, content: pretty({ ...json, mcpServers: servers }) };
+      return mergeJson(file, (json) => ({ content: { ...json, mcpServers: { ...((json.mcpServers as Record<string, unknown>) ?? {}), clarifydoc: server } } }), () => mcpSnippet(client, root, self).snippet);
     }
     case "vscode": {
       const file = join(root, ".vscode", "mcp.json");
-      const json = readJson(file);
-      const servers = { ...((json.servers as Record<string, unknown>) ?? {}), clarifydoc: { type: "stdio", ...server } };
-      return { file, content: pretty({ ...json, servers }) };
+      return mergeJson(file, (json) => ({ content: { ...json, servers: { ...((json.servers as Record<string, unknown>) ?? {}), clarifydoc: { type: "stdio", ...server } } } }), () => mcpSnippet(client, root, self).snippet);
     }
-    case "windsurf": {
-      const file = join(homedir(), ".codeium", "windsurf", "mcp_config.json");
-      const json = readJson(file);
-      // A user-level file: the project is passed explicitly.
-      const existing = (json.mcpServers as Record<string, unknown>) ?? {};
-      const key = userServerKey(existing, root);
-      const servers = { ...existing, [key]: { ...server, args: [...server.args, root] } };
-      return { file, content: pretty({ ...json, mcpServers: servers }), note: keptNote(key, existing) };
+    case "zed": {
+      const file = join(root, ".zed", "settings.json");
+      return mergeJson(file, (json) => ({ content: { ...json, context_servers: { ...((json.context_servers as Record<string, unknown>) ?? {}), clarifydoc: zedServer(server) } } }), () => mcpSnippet(client, root, self).snippet);
     }
-    case "claude-desktop": {
-      const file = claudeDesktopConfig();
-      const json = readJson(file);
+    case "opencode": {
+      const file = join(root, "opencode.json");
+      return mergeJson(file, (json) => ({ content: { $schema: "https://opencode.ai/config.json", ...json, mcp: { ...((json.mcp as Record<string, unknown>) ?? {}), clarifydoc: opencodeServer(server) } } }), () => mcpSnippet(client, root, self).snippet);
+    }
+    case "windsurf":
+    case "claude-desktop":
+    case "cline": {
+      const file = client === "windsurf" ? join(homedir(), ".codeium", "windsurf", "mcp_config.json") : client === "cline" ? clineConfig() : claudeDesktopConfig();
       // A user-level file: the project is passed explicitly.
-      const existing = (json.mcpServers as Record<string, unknown>) ?? {};
-      const key = userServerKey(existing, root);
-      const servers = { ...existing, [key]: { ...server, args: [...server.args, root] } };
-      return { file, content: pretty({ ...json, mcpServers: servers }), note: keptNote(key, existing) };
+      return mergeJson(file, (json) => {
+        const existing = (json.mcpServers as Record<string, unknown>) ?? {};
+        const key = userServerKey(existing, root);
+        const entry = { ...server, args: [...server.args, root], ...(client === "cline" ? { disabled: false } : {}) };
+        return { content: { ...json, mcpServers: { ...existing, [key]: entry } }, note: keptNote(key, existing) };
+      }, () => mcpSnippet(client, root, self).snippet);
     }
     case "codex": {
       const file = join(homedir(), ".codex", "config.toml");
@@ -176,7 +216,8 @@ export function planMcpConfig(client: Client, root: string, self = selfCommand()
 /** Claude Code hooks in the project's `.claude/settings.json`: before searches, after edits, at session start. */
 export function planClaudeHooks(root: string, self = selfCommand()): Planned {
   const file = join(root, ".claude", "settings.json");
-  const json = readJson(file);
+  const read = readJson(file);
+  const json = read ?? {};
   const cmd = (event: string) => [self.command, ...self.args, "hook", event].map((p) => (/\s/.test(p) ? JSON.stringify(p) : p)).join(" ");
   const hooks = { ...((json.hooks as Record<string, unknown[]>) ?? {}) };
   const add = (hostEvent: string, matcher: string | undefined, event: string) => {
@@ -190,6 +231,7 @@ export function planClaudeHooks(root: string, self = selfCommand()): Planned {
   add("PreToolUse", "Grep|Glob", "pre-search");
   add("PostToolUse", "Edit|Write|MultiEdit", "post-edit");
   add("SessionStart", undefined, "session-start");
+  if (read === null) return { file, content: pretty({ hooks }), skip: "it is not plain JSON (comments?), so it was not rewritten — add these hooks by hand" };
   return { file, content: pretty({ ...json, hooks }) };
 }
 
@@ -321,6 +363,10 @@ export function projectFacts(summary: {
 export function applyPlans(plans: readonly Planned[], print: boolean): string[] {
   const out: string[] = [];
   for (const p of plans) {
+    if (p.skip) {
+      out.push(`left ${p.file} as it is: ${p.skip}\n${p.content}`);
+      continue;
+    }
     if (print) {
       out.push(`── ${p.file}\n${p.content}`);
       continue;
