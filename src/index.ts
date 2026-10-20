@@ -1,4 +1,4 @@
-export { analyze, type AnalyzeOptions, type AnalyzeResult } from "./core/analyzer.js";
+export { analyze, type AnalyzeOptions, type AnalyzeResult, type AnalyzeProgressEvent, type AnalyzeStage } from "./core/analyzer.js";
 // Plugin bodies load lazily; `analyze`/`analyzeFile` self-activate, but API
 // consumers driving extraction paths directly can pre-load here.
 export { ensureLanguagesLoaded, loadAllPlugins } from "./extractors/registry.js";

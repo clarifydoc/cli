@@ -57,6 +57,7 @@ program
   .option("--sarif <file>", "Also write the findings as SARIF 2.1.0 (GitHub code scanning): security, request contracts, calls that reach no route, forbidden imports, performance, dead code")
   .option("--junit <file>", "Also write the findings as a JUnit XML report (one test case per rule)")
   .option("--codequality <file>", "Also write the findings as a GitLab Code Quality report")
+  .option("--progress <format>", "Report progress as `json`: one event per line on stderr (stage, files done, done) instead of the status line")
   .option("--fail-on <gate>", "Exit with code 2 when a finding matches: a level (error | warning | note), finding categories (security, contract, route-miss, performance, dead-code, a rule id…), or both, comma-separated")
   .option("--baseline <sarif-or-analysis>", "Findings of the base (its SARIF, or its analysis directory): reports mark each finding new or unchanged, and --fail-on counts only new ones")
   .option("--import-sarif <files...>", "Join other tools' SARIF findings (Semgrep, CodeQL, gosec…) to the map: each gets the routes that reach it")
@@ -81,6 +82,8 @@ program
     }
 
     try {
+      if (options.progress !== undefined && options.progress !== "json") throw new Error(`--progress takes json, not "${options.progress}"`);
+      const progressJson = options.progress === "json";
       const result = await analyze({
         projectRoot,
         outputDir,
@@ -100,6 +103,7 @@ program
         ...(options.historySecrets ? { historySecrets: true } : {}),
         osv: options.osv,
         stableOutput: options.stableOutput,
+        ...(progressJson ? { onProgress: (e: object) => process.stderr.write(JSON.stringify(e) + "\n") } : {}),
       });
 
       if (options.dryRun) {

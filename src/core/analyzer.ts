@@ -165,6 +165,8 @@ import type { ReachabilityHooks, ReachabilityModel } from "../types/language-plu
 export interface AnalyzeOptions {
   projectRoot: string;
   outputDir: string;
+  /** Machine-readable progress (`analyze --progress json`): stages, file counts, the end. Replaces the status line. */
+  onProgress?: (event: AnalyzeProgressEvent) => void;
   include?: string[];
   exclude?: string[];
   maxFiles?: number;
@@ -376,15 +378,71 @@ async function upToDateResult(outputDir: string, outputOpts: OutputOptions): Pro
  * Reports progress to the CLI. In non-verbose mode, shows a single updating
  * status line. In verbose mode, writes each step on its own line.
  */
+/**
+ * A machine-readable progress event (`analyze --progress json`, one JSON
+ * object per line on stderr): the pipeline stage entered, files analyzed so
+ * far, and the end of the run. Stage ids are stable; `label` is the human
+ * line, free to change.
+ */
+export type AnalyzeProgressEvent =
+  | { event: "stage"; stage: AnalyzeStage; label: string; at: string; filesTotal?: number }
+  | { event: "files"; done: number; total: number }
+  /** A sub-step inside the current stage ("Finding unreachable code"). */
+  | { event: "step"; stage: AnalyzeStage | null; label: string }
+  | { event: "done"; ms: number; files: number; upToDate?: boolean };
+
+/** The stages a run passes through, in order; a run need not visit every one. */
+export type AnalyzeStage = "discover" | "detect" | "analyze" | "link" | "lsp" | "advanced" | "packages" | "write";
+
+const STAGE_OF: Array<[RegExp, AnalyzeStage]> = [
+  [/^Discovering files/, "discover"],
+  [/^Detecting (?:sub-projects|frameworks)/, "detect"],
+  [/^Analyzing \d+ files/, "analyze"],
+  [/^Building dependency graph/, "link"],
+  [/^Running LSP enhancement/, "lsp"],
+  [/^Analyzing complexity and patterns/, "advanced"],
+  [/^Checking packages against OSV/, "packages"],
+  [/^Writing project summary/, "write"],
+];
+
+/** Per-file events at most this often: a large repository would print one line per file otherwise. */
+const FILE_EVENT_MS = 200;
+
 class ProgressReporter {
   private verbose: boolean;
   private active = false;
   private lastLine = "";
   private stage: { name: string; start: number } | null = null;
   private readonly times: Array<{ stage: string; ms: number }> = [];
+  private lastStage: AnalyzeStage | null = null;
+  private lastFileEvent = 0;
 
-  constructor(verbose: boolean) {
+  constructor(verbose: boolean, private readonly onEvent?: (e: AnalyzeProgressEvent) => void) {
     this.verbose = verbose;
+  }
+
+  /** The stage event for a step line, once per stage (detect is announced by two lines). */
+  private emitStage(message: string): void {
+    if (!this.onEvent) return;
+    const stage = STAGE_OF.find(([re]) => re.test(message))?.[1];
+    if (!stage || stage === this.lastStage) return;
+    this.lastStage = stage;
+    const total = /^Analyzing (\d+) files/.exec(message);
+    this.onEvent({ event: "stage", stage, label: message.replace(/\.{3}$/, ""), at: new Date().toISOString(), ...(total ? { filesTotal: Number(total[1]) } : {}) });
+  }
+
+  /** A file finished: an event when the last one is old enough, and always for the final file. */
+  fileDone(done: number, total: number): void {
+    if (!this.onEvent) return;
+    const now = Date.now();
+    if (done < total && now - this.lastFileEvent < FILE_EVENT_MS) return;
+    this.lastFileEvent = now;
+    this.onEvent({ event: "files", done, total });
+  }
+
+  /** Machine progress replaces the human status line. */
+  private get quiet(): boolean {
+    return !!this.onEvent && !this.verbose;
   }
 
   /** A stage boundary: the stage that was running gets its time. Per-file ticks are not stages. */
@@ -409,17 +467,21 @@ class ProgressReporter {
   /** Show a top-level pipeline step (e.g. "Discovering files"). */
   step(message: string): void {
     this.mark(message);
+    this.emitStage(message);
     if (this.verbose) {
       console.log(message);
-    } else {
+    } else if (!this.quiet) {
       this.writeStatus(message);
     }
   }
 
   /** Update the current status line (non-verbose only). */
   status(message: string): void {
-    if (!/^Analyzing \[/.test(message)) this.mark(message);
-    if (!this.verbose) this.writeStatus(message);
+    if (!/^Analyzing \[/.test(message)) {
+      this.mark(message);
+      this.onEvent?.({ event: "step", stage: this.lastStage, label: message.replace(/\.{3}$/, "") });
+    }
+    if (!this.verbose && !this.quiet) this.writeStatus(message);
   }
 
   /** Log a detail line (only shown in verbose mode). */
@@ -474,7 +536,10 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   }
   try {
     await ensureSelfIgnored(options.outputDir, options.projectRoot);
-    return await analyzeProject(options);
+    const started = Date.now();
+    const result = await analyzeProject(options);
+    options.onProgress?.({ event: "done", ms: Date.now() - started, files: result.fileCount, ...(result.upToDate ? { upToDate: true } : {}) });
+    return result;
   } finally {
     await lock.release();
   }
@@ -496,7 +561,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
  */
 async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const { projectRoot, outputDir, verbose, dryRun } = options;
-  const progress = new ProgressReporter(!!verbose);
+  const progress = new ProgressReporter(!!verbose, options.onProgress);
 
   // Step 1: Discover files
   progress.step("Discovering files...");
@@ -761,6 +826,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       },
       () => {
         completedCount++;
+        progress.fileDone(completedCount, files.length);
       },
     );
   } finally {
