@@ -581,6 +581,7 @@ program
   .option("--no-frames", "Draw the calls unframed — without the loop / alt / opt frames read from each function's control flow")
   .option("--lanes <level>", "Lane per class (class, the default) or per directory (package)")
   .option("--expand <dirs...>", "With --lanes package: directories to keep at class level")
+  .option("--diff <base-analysis-dir>", "Print how the flow changed against another analysis (the base of a change) instead of drawing it: steps added, removed and moved")
   .option("-o, --output <dir>", "Analysis output directory (same value as `analyze -o`)", ".clarifydoc")
   .option("--analysis-dir <dir>", "Exact directory containing project-summary.json (overrides --output)")
   .action(async (path: string, options) => {
@@ -608,23 +609,46 @@ program
         const { sequenceFrames } = await import("./core/sequence-frames.js");
         return { ...base, frames: await sequenceFrames(projectRoot, sequenceFiles(summary, seed, base)) };
       };
-      if (options.route) {
-        const found = findRoutes(summary.routeMap ?? [], options.route, options.file);
-        if (found.length !== 1) {
-          throw new Error(found.length === 0 ? `No route matches "${options.route}"` : `"${options.route}" matches ${found.length} routes — pass the method, or --file:\n${found.slice(0, 15).map((r) => `  ${r.httpMethod ?? ""} ${r.path}  (${r.filePath}:${r.line})`).join("\n")}`);
+      // The seed in an analysis: the route's call-graph anchor, or the one file declaring the symbol.
+      const seedIn = (an: typeof summary, route: string | undefined, file: string | undefined): { file: string; symbol: string; title: string } => {
+        if (route) {
+          const found = findRoutes(an.routeMap ?? [], route, file);
+          if (found.length !== 1) {
+            throw new Error(found.length === 0 ? `No route matches "${route}"` : `"${route}" matches ${found.length} routes — pass the method, or --file:\n${found.slice(0, 15).map((r) => `  ${r.httpMethod ?? ""} ${r.path}  (${r.filePath}:${r.line})`).join("\n")}`);
+          }
+          const r = found[0]!;
+          const anchor = routeAnchor(r, an.symbolLinks ?? []);
+          if (!anchor) throw new Error(`${r.httpMethod ?? ""} ${r.path} calls nothing the analysis resolved`);
+          return { file: r.filePath!, symbol: anchor, title: `${r.httpMethod ? `${r.httpMethod.toUpperCase()} ` : ""}${r.path}` };
         }
-        const r = found[0]!;
-        const anchor = routeAnchor(r, summary.symbolLinks ?? []);
-        if (!anchor) throw new Error(`${r.httpMethod ?? ""} ${r.path} calls nothing the analysis resolved`);
-        const seed = { file: r.filePath!, symbol: anchor };
-        process.stdout.write(buildSequence(summary, { ...seed, title: `${r.httpMethod ? `${r.httpMethod.toUpperCase()} ` : ""}${r.path}` }, await withFrames(seed)));
+        if (!options.symbol) throw new Error("Pass --route or --symbol");
+        const defs = [...new Set((an.symbolLinks ?? []).filter((l) => l.sourceSymbol === options.symbol && (!file || l.sourceFile.includes(file))).map((l) => l.sourceFile))];
+        if (defs.length !== 1) throw new Error(defs.length === 0 ? `${options.symbol} calls nothing the analysis resolved` : `${options.symbol} is declared in ${defs.length} files — pass --file:\n${defs.map((f) => `  ${f}`).join("\n")}`);
+        return { file: defs[0]!, symbol: options.symbol as string, title: options.symbol as string };
+      };
+      const seed = seedIn(summary, options.route, options.file);
+      if (options.diff) {
+        const { diffSequences, renderSequenceDiff, sequenceTree } = await import("./core/sequence-diff.js");
+        let baseSummary;
+        try {
+          baseSummary = await loadReportSummary(resolve(options.diff));
+        } catch {
+          throw new Error(`No analysis found at ${resolve(options.diff)} to compare with`);
+        }
+        // The same route (method and path as the head names it) or symbol in the base, declared in the same file.
+        const head = sequenceTree(summary, seed, base);
+        let before;
+        try {
+          const old = seedIn(baseSummary, options.route ? seed.title : undefined, seed.file);
+          before = sequenceTree(baseSummary, old, base);
+        } catch (err) {
+          process.stdout.write(`${seed.title}: not in the base analysis (${(err as Error).message.split("\n")[0]}) — the whole flow is new.\n`);
+          return;
+        }
+        process.stdout.write(renderSequenceDiff(seed.title, diffSequences(before, head)));
         return;
       }
-      if (!options.symbol) throw new Error("Pass --route or --symbol");
-      const defs = [...new Set((summary.symbolLinks ?? []).filter((l) => l.sourceSymbol === options.symbol && (!options.file || l.sourceFile.includes(options.file))).map((l) => l.sourceFile))];
-      if (defs.length !== 1) throw new Error(defs.length === 0 ? `${options.symbol} calls nothing the analysis resolved` : `${options.symbol} is declared in ${defs.length} files — pass --file:\n${defs.map((f) => `  ${f}`).join("\n")}`);
-      const seed = { file: defs[0]!, symbol: options.symbol as string };
-      process.stdout.write(buildSequence(summary, { ...seed, title: options.symbol }, await withFrames(seed)));
+      process.stdout.write(buildSequence(summary, seed, await withFrames(seed)));
     } catch (err) {
       console.error("Error:", (err as Error).message);
       process.exitCode = 1;

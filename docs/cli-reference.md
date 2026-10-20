@@ -259,6 +259,7 @@ sequence walks (the files are read for this, as `cfg` reads one). Reads a writte
 | `--no-frames` | — | Draw the calls unframed, reading no source. |
 | `--lanes <level>` | `class` | `class`: a lane per class, else per file. `package`: a lane per directory, so a long flow reads at the level of its modules. |
 | `--expand <dirs...>` | — | With `--lanes package`, directories (and those below them) that keep their class lanes. |
+| `--diff <base-analysis-dir>` | — | Print how the flow changed against another analysis — the base of a change — instead of drawing it: each step added, removed or moved, named by what it is (`OrderService.create()`, `DB orders: write`, `HTTP POST /payments`), so an edit that only moves lines shows no change. |
 
 ## `cfg`
 
