@@ -8,7 +8,7 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import type { McpTool } from "../protocol.js";
 import type { ImpactDiffResult } from "../../core/impact-diff.js";
-import { describeRun, type LoadedAnalysis } from "../store.js";
+import { AnalysisCancelledError, describeRun, type LoadedAnalysis } from "../store.js";
 import type { PatternInfo, ProjectAnalysis, ProjectDependency } from "../../types/analysis.js";
 import {
   ago,
@@ -68,31 +68,47 @@ export function analyzeTool(ctx: ToolContext): McpTool {
     name: "clarifydoc_analyze",
     title: "Re-analyze the project",
     description:
-      "Re-run the ClarifyDoc static analysis so the other tools see current code. Incremental by default " +
-      "(only changed files are re-parsed), so it is cheap to call after edits. Pass full=true to invalidate " +
-      "the cache and re-parse everything. This is the only clarifydoc tool that writes anything, and only " +
-      "into the analysis directory (.clarifydoc/ by default) — never into your source files.",
+      "Re-run the ClarifyDoc static analysis so the other tools see current code. Incremental (only changed " +
+      "files re-parsed), so cheap after edits. The only clarifydoc tool that writes, and only into the analysis " +
+      "directory (.clarifydoc/ by default) — never your source files.",
     inputSchema: {
       type: "object",
       properties: {
         full: {
           type: "boolean",
-          description: "Force a complete re-scan instead of reusing cached per-file results.",
+          description: "Re-parse everything instead of reusing cached per-file results.",
+        },
+        cancel: {
+          type: "boolean",
+          description: "Stop the run in progress; the previous analysis stays current.",
         },
       },
       additionalProperties: false,
     },
     readOnly: false,
     handler: async (args, extras) => {
+      if (booleanArg(args, "cancel")) {
+        return {
+          text: ctx.store.cancel()
+            ? "Cancelled: the run stops at its next step. The other tools read the previous analysis."
+            : "No analysis is running.",
+        };
+      }
       const full = booleanArg(args, "full");
       const started = Date.now();
-      const outcome = await ctx.store.refreshWithin({ full }, (st) => extras?.progress?.(describeRun(st), st.done, st.total));
+      let outcome: Awaited<ReturnType<typeof ctx.store.refreshWithin>>;
+      try {
+        outcome = await ctx.store.refreshWithin({ full }, (st) => extras?.progress?.(describeRun(st), st.done, st.total));
+      } catch (err) {
+        if (err instanceof AnalysisCancelledError) return { text: err.message };
+        throw err;
+      }
       if ("pending" in outcome) {
         return {
           text:
             `The analysis is still running (${describeRun(outcome.pending)}). It goes on in the background: ` +
             `call clarifydoc_analyze again to wait for this same run (it will not start another), or use the other ` +
-            `tools meanwhile — they read the previous analysis until this one is written.`,
+            `tools meanwhile — they read the previous analysis until this one is written. cancel=true stops it.`,
         };
       }
       const result = outcome.done;

@@ -47,4 +47,24 @@ describe("call deadlines", () => {
     for (let i = 1; i < steps.length; i++) expect(steps[i]!.progress).toBeGreaterThan(steps[i - 1]!.progress);
     expect(steps.every((s) => s.progressToken === "t1")).toBe(true);
   }, 120_000);
+
+  it("cancel stops the running analysis; its waiters hear so and the next call starts afresh", async () => {
+    const logs: string[] = [];
+    const { server } = buildMcpServer({ projectRoot: join(dir, "proj"), analysisDir: join(dir, "out", "cancel"), allowAnalyze: true, analyzeSettings: { gitHistory: false }, log: (m) => logs.push(m) });
+    const call = async (id: number, args: Record<string, unknown> = {}) => {
+      const res = (await server.handleMessage({ jsonrpc: "2.0", id, method: "tools/call", params: { name: "clarifydoc_analyze", arguments: args } })) as { result: { content: Array<{ text: string }> } };
+      return res.result.content[0]!.text;
+    };
+
+    expect(await call(1, { cancel: true })).toBe("No analysis is running.");
+    process.env.CLARIFYDOC_MCP_WAIT_MS = "30";
+    expect(await call(2)).toContain("cancel=true stops it.");
+    expect(await call(3, { cancel: true })).toMatch(/^Cancelled/);
+
+    process.env.CLARIFYDOC_MCP_WAIT_MS = "120000";
+    // The cancelled run is over; this one is new and completes.
+    expect(await call(4)).toMatch(/^Analysis complete in/);
+    expect(logs).toContain("analysis cancelled");
+    expect(logs.filter((l) => l.startsWith("analysis complete")).length).toBe(1);
+  }, 120_000);
 });

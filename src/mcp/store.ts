@@ -172,6 +172,14 @@ export function unsafeColdStartRoot(root: string): string | null {
 
 export class MissingAnalysisError extends Error {}
 
+/** The run was stopped by {@link AnalysisStore.cancel}. */
+export class AnalysisCancelledError extends Error {
+  constructor() {
+    super("The analysis was cancelled; the tools read the previous analysis.");
+    this.name = "AnalysisCancelledError";
+  }
+}
+
 /** How long a cold start waits for an analysis another process is running. */
 const COLD_START_WAIT_MS = 180_000;
 
@@ -180,6 +188,8 @@ export class AnalysisStore {
   private cacheKey = "";
   /** In-flight analysis, so two concurrent tool calls never scan twice. */
   private running: Promise<AnalyzeResult> | null = null;
+  /** Aborts the in-flight analysis (`cancel`). */
+  private runAbort: AbortController | null = null;
   /** Where the in-flight analysis is, read off its own progress line. */
   private runProgress: { startedAt: number; stage: string; done?: number; total?: number } | null = null;
   /** In-flight load, so a burst of tool calls parses the summary once. */
@@ -372,8 +382,22 @@ export class AnalysisStore {
     return this.runAnalysis(opts);
   }
 
+  /**
+   * Stop the analysis this server is running, at its next stage or file
+   * boundary. Every caller waiting on it gets {@link AnalysisCancelledError};
+   * the previous analysis stays what the tools read. False when none is running.
+   */
+  cancel(): boolean {
+    if (!this.runAbort || this.runAbort.signal.aborted) return false;
+    this.log("analysis cancelled");
+    this.runAbort.abort(new AnalysisCancelledError());
+    return true;
+  }
+
   /** The analysis run itself, without the read-only guard. */
   private async runAnalysis(opts: { full?: boolean } = {}): Promise<AnalyzeResult> {
+    // A cancelled run is still on its way to its next step: let it end, then start anew.
+    while (this.running && this.runAbort?.signal.aborted) await this.running.catch(() => {});
     if (this.running) {
       this.log("analysis already running — awaiting it");
       return this.running;
@@ -395,8 +419,11 @@ export class AnalysisStore {
         progress.total = undefined;
       }
     };
+    const abort = new AbortController();
+    this.runAbort = abort;
     const run = withStdoutProtected(this.log, () =>
       analyze({
+        signal: abort.signal,
         projectRoot: this.options.projectRoot,
         outputDir: this.options.analysisDir,
         incremental: opts.full ? false : settings.incremental !== false,
@@ -423,6 +450,7 @@ export class AnalysisStore {
       return result;
     } finally {
       this.running = null;
+      if (this.runAbort === abort) this.runAbort = null;
       if (this.runProgress === progress) this.runProgress = null;
     }
   }

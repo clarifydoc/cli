@@ -168,6 +168,12 @@ export interface AnalyzeOptions {
   outputDir: string;
   /** Machine-readable progress (`analyze --progress json`): stages, file counts, the end. Replaces the status line. */
   onProgress?: (event: AnalyzeProgressEvent) => void;
+  /**
+   * Stops the run at the next stage or file boundary: `analyze` rejects with
+   * the signal's reason. Nothing half-written survives as current — the
+   * manifest is written last, so the next incremental run re-checks.
+   */
+  signal?: AbortSignal;
   include?: string[];
   exclude?: string[];
   maxFiles?: number;
@@ -418,7 +424,11 @@ class ProgressReporter {
   private lastStage: AnalyzeStage | null = null;
   private lastFileEvent = 0;
 
-  constructor(verbose: boolean, private readonly onEvent?: (e: AnalyzeProgressEvent) => void) {
+  constructor(
+    verbose: boolean,
+    private readonly onEvent?: (e: AnalyzeProgressEvent) => void,
+    private readonly signal?: AbortSignal,
+  ) {
     this.verbose = verbose;
   }
 
@@ -434,6 +444,7 @@ class ProgressReporter {
 
   /** A file finished: an event when the last one is old enough, and always for the final file. */
   fileDone(done: number, total: number): void {
+    this.signal?.throwIfAborted();
     if (!this.onEvent) return;
     const now = Date.now();
     if (done < total && now - this.lastFileEvent < FILE_EVENT_MS) return;
@@ -467,6 +478,7 @@ class ProgressReporter {
 
   /** Show a top-level pipeline step (e.g. "Discovering files"). */
   step(message: string): void {
+    this.signal?.throwIfAborted();
     this.mark(message);
     this.emitStage(message);
     if (this.verbose) {
@@ -478,6 +490,7 @@ class ProgressReporter {
 
   /** Update the current status line (non-verbose only). */
   status(message: string): void {
+    this.signal?.throwIfAborted();
     if (!/^Analyzing \[/.test(message)) {
       this.mark(message);
       this.onEvent?.({ event: "step", stage: this.lastStage, label: message.replace(/\.{3}$/, "") });
@@ -562,7 +575,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
  */
 async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const { projectRoot, outputDir, verbose, dryRun } = options;
-  const progress = new ProgressReporter(!!verbose, options.onProgress);
+  const progress = new ProgressReporter(!!verbose, options.onProgress, options.signal);
 
   // Step 1: Discover files
   progress.step("Discovering files...");
