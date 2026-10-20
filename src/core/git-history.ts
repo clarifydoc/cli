@@ -2,6 +2,9 @@ import { execFile } from "child_process";
 import { byOrdinal } from "./ordinal.js";
 import type { CoChangePair, FileChurnInfo, FileComplexityInfo, HotspotInfo } from "../types/analysis.js";
 import { gitArgs } from "./git-safe.js";
+import { getLanguageForFile } from "../parsers/language-map.js";
+import { isTestFile } from "./test-file-detector.js";
+import { isProsePath } from "./run-fingerprint.js";
 
 /**
  * Git-history signals: per-file churn (commits, line deltas, recency, authors)
@@ -130,9 +133,11 @@ export async function collectGitHistory(
     deletions: number;
     lastTouched: string;
     authors: Map<string, number>;
-    /** Commits that fixed something (`isFixCommit`), and the newest one's date. */
+    /** Commits that fixed something (`isFixCommit`) in code, and the newest one's date. */
     fixes: number;
     lastFix?: string;
+    /** The same fixes, each weighed by its age: half every FIX_HALF_LIFE_DAYS. */
+    fixWeight: number;
   }
   const byFile = new Map<string, Acc>();
   /** Identity (email) → the name it is shown by. */
@@ -146,7 +151,24 @@ export async function collectGitHistory(
   };
   const pairs = new Map<string, number>();
   let commitFiles: string[] = [];
+  // A fix counts when the commit changed code: every path it touched (analysed or not), and the analysed files' tallies.
+  let commitPaths: string[] = [];
+  let fixTallies: Array<{ file: string; acc: Acc }> = [];
+  // Ages are measured from the newest commit in the window, so the same history always weighs the same.
+  let newest: number | undefined;
   const flushCommit = () => {
+    if (fix && commitPaths.some(isCodePath)) {
+      const at = Date.parse(date);
+      const weight = Number.isFinite(at) && newest !== undefined ? 0.5 ** ((newest - at) / 86_400_000 / FIX_HALF_LIFE_DAYS) : 1;
+      for (const { file, acc } of fixTallies) {
+        if (!isCodePath(file)) continue;
+        acc.fixes++;
+        acc.fixWeight += weight;
+        acc.lastFix ??= date;
+      }
+    }
+    commitPaths = [];
+    fixTallies = [];
     const unique = [...new Set(commitFiles)].sort(byOrdinal);
     commitFiles = [];
     if (unique.length < 2 || unique.length > MEGA_COMMIT) return;
@@ -174,6 +196,8 @@ export async function collectGitHistory(
       author = name.trim().toLowerCase() || email;
       if (!names.has(author)) names.set(author, name || email);
       date = parts[3]?.trim() ?? "";
+      // git log is newest-first: the first commit read is the one ages count from.
+      if (newest === undefined && Number.isFinite(Date.parse(date))) newest = Date.parse(date);
       fix = isFixCommit(parts[5] ?? "");
       commitCount++;
       continue;
@@ -193,6 +217,7 @@ export async function collectGitHistory(
     } else {
       path = follow(path);
     }
+    commitPaths.push(path);
     if (prefix) {
       if (!path.startsWith(prefix)) continue;
       path = path.slice(prefix.length);
@@ -202,13 +227,10 @@ export async function collectGitHistory(
 
     let acc = byFile.get(file);
     if (!acc) {
-      byFile.set(file, (acc = { commits: 0, additions: 0, deletions: 0, lastTouched: date, authors: new Map(), fixes: 0 }));
+      byFile.set(file, (acc = { commits: 0, additions: 0, deletions: 0, lastTouched: date, authors: new Map(), fixes: 0, fixWeight: 0 }));
     }
     acc.commits++;
-    if (fix) {
-      acc.fixes++;
-      acc.lastFix ??= date;
-    }
+    if (fix) fixTallies.push({ file, acc });
     commitFiles.push(file);
     if (m[1] !== "-") acc.additions += Number(m[1]);
     if (m[2] !== "-") acc.deletions += Number(m[2]);
@@ -239,7 +261,7 @@ export async function collectGitHistory(
         authorCount: acc.authors.size,
         authorShares: ranked.slice(0, 5).map(([name, commits]) => ({ name, commits })),
         busFactor,
-        ...(acc.fixes ? { fixes: acc.fixes, ...(acc.lastFix ? { lastFix: acc.lastFix } : {}) } : {}),
+        ...(acc.fixes ? { fixes: acc.fixes, fixScore: Math.round(acc.fixWeight * 100) / 100, ...(acc.lastFix ? { lastFix: acc.lastFix } : {}) } : {}),
       };
     })
     .sort((a, b) => b.commits - a.commits || byOrdinal(a.file, b.file));
@@ -262,6 +284,14 @@ export async function collectGitHistory(
  * The two paths of a numstat rename entry: `src/{a => b}/x.ts` → `src/a/x.ts`,
  * `src/b/x.ts`; `old.ts => new.ts`; `{ => sub}/x.ts`. Null for a plain path.
  */
+/** A fix older by this many days than the newest commit weighs half as much. */
+const FIX_HALF_LIFE_DAYS = 180;
+
+/** A path a fix in code touched: source a plugin reads, neither a test nor documentation. */
+function isCodePath(path: string): boolean {
+  return !!getLanguageForFile(path) && !isTestFile(path) && !isProsePath(path);
+}
+
 /**
  * A commit that fixed something, by its subject: a conventional `fix:` /
  * `fix(scope):` / `bugfix:` / `hotfix:`, a revert, "fix #12" / "fixes #12" /

@@ -2142,6 +2142,12 @@ export interface FileChurnInfo {
   /** Commits touching it that fixed something (a `fix:` commit, a revert, "fixes #12"), and the newest one's date. */
   fixes?: number;
   lastFix?: string;
+  /**
+   * The same fixes weighed by age — each counts half as much per 180 days
+   * before the newest commit in the window — so a file fixed often long ago
+   * is not flagged like one fixed often lately. Absent with no fixes.
+   */
+  fixScore?: number;
 }
 
 /**

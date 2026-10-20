@@ -145,7 +145,7 @@ export interface FileRiskInput {
   abstractPattern: boolean;
   /** The file's test coverage, when a report covered it: lines counted and lines a test ran. */
   testCoverage?: { total: number; covered: number };
-  /** Its history: commits, and the ones that fixed something. */
+  /** Its history: commits, and the fixes among them weighed by age (`FileChurnInfo.fixScore`). */
   history?: { commits: number; fixes: number };
 }
 
@@ -499,7 +499,7 @@ export const REASON_LABELS: Record<string, string> = {
   no_classifying_evidence: "no classifying evidence",
   fallback_to_import_graph_level: "level taken from the import graph",
   uncovered: "no test runs any of it",
-  fix_prone: "fixed again and again in its history",
+  fix_prone: "fixed again and again lately (inferred from commit subjects)",
 };
 
 /** Short, stable wording per category — the noun the report and MCP both use. */

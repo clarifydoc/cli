@@ -251,4 +251,37 @@ describe("isFixCommit", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("counts a fix only where it changed code, and weighs older fixes less", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rvd-git-fixdecay-"));
+    try {
+      git(dir, ["init", "-q"]);
+      const step = (files: Record<string, string>, msg: string, date: string) => {
+        for (const [file, body] of Object.entries(files)) {
+          mkdirSync(join(dir, file, ".."), { recursive: true });
+          writeFileSync(join(dir, file), body);
+          git(dir, ["add", file]);
+        }
+        git(dir, ["commit", "-q", "-m", msg, "--author", "a <t@t>"], { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date, GIT_COMMITTER_NAME: "a", GIT_AUTHOR_NAME: "a" });
+      };
+      const now = Date.now();
+      const d = (daysAgo: number) => new Date(now - daysAgo * 86_400_000).toISOString();
+      step({ "src/a.ts": "1\n", "src/a.test.ts": "1\n" }, "feat: a", d(400));
+      // A year before the newest commit: weighs about a quarter.
+      step({ "src/a.ts": "2\n" }, "fix: old bug", d(370));
+      // Code and its test together: the code file counts, the test file does not.
+      step({ "src/a.ts": "3\n", "src/a.test.ts": "2\n" }, "fix: recent bug", d(10));
+      // Docs and tests alone: no fix for anyone.
+      step({ "README.md": "x\n", "src/a.test.ts": "3\n" }, "fix: typo in the docs and a flaky test", d(5));
+      step({ "src/a.ts": "4\n" }, "chore: newest", d(0));
+      const res = (await collectGitHistory(dir, ["src/a.ts", "src/a.test.ts"])) as { churn: FileChurnInfo[] };
+      const a = res.churn.find((c) => c.file === "src/a.ts")!;
+      expect(a.fixes).toBe(2);
+      // 0.5^(10/180) + 0.5^(370/180): the recent fix almost whole, the old one about a quarter.
+      expect(a.fixScore).toBeCloseTo(1.2, 1);
+      expect(res.churn.find((c) => c.file === "src/a.test.ts")!.fixes).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
