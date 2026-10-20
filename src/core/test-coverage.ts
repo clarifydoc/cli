@@ -1,4 +1,5 @@
 import type { FileAnalysis } from "../types/analysis.js";
+import { trimTrailingSlashes } from "../extractors/plugins/shared/path-utils.js";
 
 /**
  * Test coverage, read from the report a test run wrote — lcov, Cobertura
@@ -126,7 +127,7 @@ export const COVERAGE_CANDIDATES = [
  */
 export function matchReportPath(reportPath: string, projectRoot: string, byBasename: Map<string, string[]>): string | undefined {
   let p = reportPath.replace(/\\/g, "/").replace(/^file:\/\//, "").replace(/^[A-Za-z]:/, "");
-  const root = projectRoot.replace(/\\/g, "/").replace(/\/+$/, "");
+  const root = trimTrailingSlashes(projectRoot.replace(/\\/g, "/"));
   if (p.startsWith(root + "/")) p = p.slice(root.length + 1);
   p = p.replace(/^(\.\/)+/, "").replace(/^\/+/, "");
   const base = p.slice(p.lastIndexOf("/") + 1);

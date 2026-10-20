@@ -2,6 +2,7 @@ import type { Node } from "web-tree-sitter";
 import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
 import { joinRoutePath } from "../../../shared/route-paths.js";
+import { escapeRegex } from "../../shared/path-utils.js";
 import { literalPath, pathHole } from "./vue-router.js";
 
 /** React Router: <Route path="/dashboard" component={X} /> */
@@ -100,7 +101,7 @@ function mappedComponentProp(openingEl: Node, param: string): string | null {
     const inner = value?.type === "jsx_expression" ? value.namedChildren[0] : value;
     if (!inner) continue;
     const tag = inner.type === "jsx_self_closing_element" ? tagOf(inner) : inner.type === "jsx_element" ? tagOf(inner) : inner.type === "member_expression" ? inner.text : undefined;
-    const m = tag ? new RegExp(`^${param.replace(/\$/g, "\\$")}\\.([\\w$]+)$`).exec(tag) : null;
+    const m = tag ? new RegExp(`^${escapeRegex(param)}\\.([\\w$]+)$`).exec(tag) : null;
     if (m) return m[1]!;
   }
   return null;
@@ -360,7 +361,7 @@ export function collectRouteArrays(root: Node, sourceText: string, facts: RouteF
       if (name?.type !== "identifier" || (value?.type !== "array" && value?.type !== "object")) continue;
       // A route object of its own (`export const ordersRoute = { path, element }`) is an array of one.
       if (value.type === "object" && !/\bpath\s*:/.test(value.text.slice(0, 2000))) continue;
-      if (value.type === "object" ? stmt.type !== "export_statement" && sourceText.split(name.text).length < 3 : stmt.type !== "export_statement" && !(sourceText.includes("<Route") && new RegExp(`\\b${name.text.replace(/\$/g, "\\$")}\\s*\\.\\s*map\\s*\\(`).test(sourceText))) continue;
+      if (value.type === "object" ? stmt.type !== "export_statement" && sourceText.split(name.text).length < 3 : stmt.type !== "export_statement" && !(sourceText.includes("<Route") && new RegExp(`\\b${escapeRegex(name.text)}\\s*\\.\\s*map\\s*\\(`).test(sourceText))) continue;
       const items: RouteArrayFact["items"] = [];
       const spreads: string[] = [];
       for (const el of value.type === "object" ? [value] : value.namedChildren) {

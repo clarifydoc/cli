@@ -3,6 +3,7 @@ import { ImportExportExtractor } from "../../imports-exports/base.js";
 import type { ImportInfo, ExportInfo, Language } from "../../imports-exports/base.js";
 import { stripQuotes } from "../../shared/node-helpers.js";
 import { spawnImports } from "../shared/process-spawns.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /** Initializer node types that make a `const` export a function. */
 const FUNCTION_VALUE_TYPES: ReadonlySet<string> = new Set([
@@ -113,7 +114,7 @@ export function markUnusedBindings(sourceText: string, imports: ImportBindings[]
   for (const b of imports) {
     const unused = b.names.filter((name) => {
       if ((name === "React" && hasJsx) || name === pragma) return false;
-      const escaped = name.replace(/[$]/g, "\\$");
+      const escaped = escapeRegex(name);
       return !new RegExp(`(?<![\\w$])(?<!(?<!\\.)\\.)${escaped}(?![\\w$])`).test(text);
     });
     if (unused.length) b.info.unused = unused;

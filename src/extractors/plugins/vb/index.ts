@@ -163,7 +163,7 @@ const vbBase: RegexLangSpec = {
   ],
 
   /** `<Required>` / `<JsonProperty("x")> _` on the line above a declaration. */
-  attributeLine: { pattern: /^\s*<(.*)>\s*_?\s*$/ },
+  attributeLine: { pattern: /^\s*<(.*)>\s*(?:_\s*)?$/ },
 
   functionPatterns: [
     {

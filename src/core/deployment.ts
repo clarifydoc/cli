@@ -431,11 +431,13 @@ function normName(s: string): string {
 function entryArtifact(entrypoint: string | undefined): string | undefined {
   if (!entrypoint) return undefined;
   for (const tok of entrypoint.split(/\s+/)) {
-    const m = tok.match(/([^/\\]+)\.(dll|jar|war)$/i);
-    if (!m) continue;
+    const seg = tok.slice(Math.max(tok.lastIndexOf("/"), tok.lastIndexOf("\\")) + 1);
+    const dot = seg.lastIndexOf(".");
+    if (dot <= 0 || !/^(?:dll|jar|war)$/i.test(seg.slice(dot + 1))) continue;
+    const base = seg.slice(0, dot);
     // `app-1.2` → `app`: a version suffix is a dash, a digit, then digits and dots to the end.
-    const dash = m[1]!.lastIndexOf("-");
-    return dash >= 0 && /^\d[\d.]*$/.test(m[1]!.slice(dash + 1)) ? m[1]!.slice(0, dash) : m[1]!;
+    const dash = base.lastIndexOf("-");
+    return dash >= 0 && /^\d[\d.]*$/.test(base.slice(dash + 1)) ? base.slice(0, dash) : base;
   }
   return undefined;
 }

@@ -12,7 +12,7 @@
 /** Markdown table cell: pipes and newlines end a row, so neither may survive. */
 export function cell(value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
-  return String(value).replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim() || "—";
+  return String(value).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim() || "—";
 }
 
 /** Markdown inline code cell — the common case for paths and symbols. */
@@ -21,7 +21,9 @@ export function codeCell(value: unknown): string {
   // A backtick inside the value would close the span; widen the fence instead.
   const text = String(value).replace(/\r?\n/g, " ");
   const fence = text.indexOf("`") === -1 ? "`" : "``";
-  return `${fence}${text.replace(/\|/g, "\\|")}${fence}`;
+  // Inside a code span a backslash is literal, so only the pipes get one: the table
+  // parser strips exactly the backslash it finds before a pipe, and nothing else.
+  return `${fence}${text.split("|").join("\\|")}${fence}`;
 }
 
 /** `path:line`, the grep-able reference form used throughout the markdown. */

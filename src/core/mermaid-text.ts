@@ -26,6 +26,15 @@ export function mermaidLabel(value: unknown): string {
     .trim();
 }
 
+/** `s` without leading and trailing underscores; a char scan, so a long run costs nothing. */
+function trimUnderscores(s: string): string {
+  let start = 0;
+  let end = s.length;
+  while (start < end && s.charCodeAt(start) === 95 /* _ */) start++;
+  while (end > start && s.charCodeAt(end - 1) === 95) end--;
+  return s.slice(start, end);
+}
+
 /**
  * A Mermaid-safe node id. Ids are not quotable, so they are derived rather
  * than escaped: sanitize, then append a counter-backed suffix when two
@@ -39,7 +48,7 @@ export function idFactory(prefix = "n"): (key: string, hint?: string) => string 
   return (key: string, hint?: string): string => {
     const existing = assigned.get(key);
     if (existing) return existing;
-    const raw = (hint ?? key).replace(/[^A-Za-z0-9_]/g, "_").replace(/^_+|_+$/g, "");
+    const raw = trimUnderscores((hint ?? key).replace(/[^A-Za-z0-9_]/g, "_"));
     const base = (raw || prefix).slice(0, 40);
     const seed = /^[A-Za-z_]/.test(base) ? base : `${prefix}_${base}`;
     let id = seed;

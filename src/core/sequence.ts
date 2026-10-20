@@ -1,5 +1,6 @@
 import type { ProjectAnalysis, SymbolLink } from "../types/analysis.js";
 import { idFactory, mermaidLabel } from "./mermaid-text.js";
+import { trimTrailingSlashes } from "../extractors/plugins/shared/path-utils.js";
 
 /**
  * What an endpoint does, in order, as a Mermaid `sequenceDiagram`: the
@@ -46,7 +47,7 @@ export function findRoutes(routes: readonly Row[], subject: string, file?: strin
   const pool = routes.filter((r) => (!verb || (r.httpMethod ?? "").toUpperCase() === verb) && (!file || (r.filePath ?? "").includes(file)));
   const exact = pool.filter((r) => r.path === path);
   if (exact.length) return exact;
-  const norm = (p: string) => p.replace(/\{[^}]+\}|:[\w]+/g, "{}").replace(/\/+$/, "").toLowerCase();
+  const norm = (p: string) => trimTrailingSlashes(p.replace(/\{[^{}]+\}|:[\w]+/g, "{}")).toLowerCase();
   const same = pool.filter((r) => norm(r.path) === norm(path));
   return same.length ? same : pool.filter((r) => r.path.toLowerCase().includes(path.toLowerCase()));
 }

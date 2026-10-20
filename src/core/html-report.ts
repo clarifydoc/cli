@@ -54,9 +54,9 @@ export async function generateHtmlReport(options: ReportOptions): Promise<string
 
 /** Open a file with the platform's default handler, without waiting for it. */
 function openInBrowser(filePath: string): void {
-  // Argument vectors, never a shell string: the path is passed as-is.
+  // Argument vectors and no shell (not even `cmd /c start`): the path is passed as-is.
   const [file, args] =
-    process.platform === "win32" ? ["cmd", ["/c", "start", "", filePath]] :
+    process.platform === "win32" ? ["explorer.exe", [filePath]] :
     process.platform === "darwin" ? ["open", [filePath]] :
     ["xdg-open", [filePath]];
   execFile(file, args, { windowsHide: true }, () => {}); // fire and forget

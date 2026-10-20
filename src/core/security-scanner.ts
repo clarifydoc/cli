@@ -42,6 +42,34 @@ export function maskSecrets(text: string): string {
 }
 
 /**
+ * The password of the first `scheme://user:password@` in `value`: the user runs
+ * to the first `:`, the password from there to the `@`, neither crossing
+ * whitespace. Index scans, so a long run of `://` costs nothing.
+ */
+function urlPassword(value: string): string | undefined {
+  for (let s = value.indexOf("://"); s >= 0; ) {
+    let e = s + 3;
+    while (e < value.length && value[e] !== "@" && !/\s/.test(value[e]!)) e++;
+    if (value[e] === "@") {
+      const userinfo = value.slice(s + 3, e);
+      const colon = userinfo.indexOf(":");
+      if (colon > 0 && colon < userinfo.length - 1) return userinfo.slice(colon + 1);
+      s = value.indexOf("://", s + 1);
+    } else {
+      // Every `://` before the stop ends at the same whitespace or end.
+      s = value.indexOf("://", e);
+    }
+  }
+  return undefined;
+}
+
+/** A `<x>` hole: some `<` with a `>` after it. */
+function angleHole(s: string): boolean {
+  const open = s.indexOf("<");
+  return open >= 0 && s.indexOf(">", open + 1) >= 0;
+}
+
+/**
  * A matched secret that is a placeholder, not a credential: documentation
  * values (`AKIAIOSFODNN7EXAMPLE`, `your-api-key-here`), template holes
  * (`${PASSWORD}`, `{{token}}`, `<password>`), masks (`****`, `xxxx`) and the
@@ -52,11 +80,10 @@ export function isPlaceholderSecret(text: string): boolean {
   const quoted = /['"`]([^'"`]*)['"`]\s*$/.exec(text);
   const value = (quoted ? quoted[1]! : text).trim();
   // A connection URL's password is the part between `:` and `@`.
-  const url = /:\/\/[^:@\s]+:([^@\s]+)@/.exec(value);
-  const secret = url ? url[1]! : value;
+  const secret = urlPassword(value) ?? value;
   // Template holes in any dialect: `${x}`, `{{x}}`, Ruby `#{x}`, ERB/JSP `<%= x %>`, `<x>`, `%(x)s`.
   // A shell substitution (`$(gh auth token)`) reads the secret at run time.
-  if (/\$\{|\$\(|\{\{|#\{|<%|<[^>]*>|%\(|%s\b/.test(secret)) return true;
+  if (/\$\{|\$\(|\{\{|#\{|<%|%\(|%s\b/.test(secret) || angleHole(secret)) return true;
   if (/^(?:\*+|x+|\.+|-+|_+|0+|1234\d*)$/i.test(secret)) return true;
   // A counting run no generator produces: a test value typed by hand
   // (`AKIA1234567890…`, `ghp_1234567890abcdefghij…`).

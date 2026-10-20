@@ -1,5 +1,6 @@
 import type { ParamInfo, RouteResponseInfo } from "../../../types/analysis.js";
 import { statusCode } from "../shared/http-status.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * What a Go handler answers, read off its body:
@@ -97,7 +98,7 @@ export function extractGoResponses(bodyLines: string[], fn: { name: string; para
     }
   };
   if (ctx) {
-    const c = ctx.replace(/[$]/g, "\\$");
+    const c = escapeRegex(ctx);
     for (const m of text.matchAll(new RegExp(String.raw`\b${c}\.(?:Status\(\s*([^)]+)\)\.)?(JSON|IndentedJSON|PureJSON|SecureJSON|AsciiJSON|JSONPretty|AbortWithStatusJSON|XML|NoContent|AbortWithStatus|SendStatus|Status|String)\(`, "g"))) {
       const args = splitArgs(argText(text, m.index! + m[0].length - 1));
       const method = m[2]!;
@@ -117,7 +118,7 @@ export function extractGoResponses(bodyLines: string[], fn: { name: string; para
     }
   }
   if (writer) {
-    const w = writer.replace(/[$]/g, "\\$");
+    const w = escapeRegex(writer);
     const header = new RegExp(String.raw`\b${w}\.WriteHeader\(\s*([^)]+)\)`).exec(text);
     const enc = new RegExp(String.raw`json\.NewEncoder\(\s*${w}\s*\)\.Encode\(`).exec(text);
     if (enc) add({ status: header ? statusCode(header[1]) : null, ...shape(argText(text, enc.index + enc[0].length - 1)) });

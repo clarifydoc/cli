@@ -57,7 +57,7 @@ function argText(text: string, open: number): string {
 /** A path joined onto the file's own directory: `path.join(__dirname, "a", "b.js")` → `./a/b.js`. */
 function anchoredJoins(args: string): string[] {
   const out: string[] = [];
-  const re = /(?:path\.)?(?:join|resolve)\(\s*(?:__dirname|import\.meta\.dirname|os\.path\.dirname\(\s*(?:os\.path\.(?:abspath|realpath)\(\s*)?__file__\s*\)?\s*\))\s*,\s*((?:["'][^"']+["']\s*,?\s*)+)\)/g;
+  const re = /(?:path\.)?(?:join|resolve)\(\s*(?:__dirname|import\.meta\.dirname|os\.path\.dirname\(\s*(?:os\.path\.(?:abspath|realpath)\(\s*)?__file__\s*\)?\s*\))\s*,\s*((?:(?:"[^"']+"|'[^"']+')\s*(?:,\s*)?)+)\)/g;
   for (const m of args.matchAll(re)) {
     const parts = [...m[1]!.matchAll(/["']([^"']+)["']/g)].map((p) => p[1]!);
     out.push("./" + parts.join("/").replace(/^\.\//, ""));

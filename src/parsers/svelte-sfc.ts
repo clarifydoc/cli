@@ -80,8 +80,8 @@ const SVELTE_DIALECT: TemplateDialect = {
 function blankNonMarkup(source: string): string {
   const blank = (m: string): string => "\n".repeat((m.match(/\n/g)?.length ?? 0));
   return source
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, blank)
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, blank);
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\b[^>]*>/gi, blank)
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\b[^>]*>/gi, blank);
 }
 
 /** Extract prop/binding names from a Svelte tag's attributes. */

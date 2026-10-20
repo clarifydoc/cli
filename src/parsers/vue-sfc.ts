@@ -43,7 +43,7 @@ export interface VueSfcBlocks {
  */
 export function blankExceptScripts(source: string): string {
   const out = source.replace(/[^\n\r]/g, " ").split("");
-  const regex = /<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi;
+  const regex = /<script\b[^>]*>([\s\S]*?)<\/script\b[^>]*>/gi;
   let m: RegExpExecArray | null;
   while ((m = regex.exec(source)) !== null) {
     const content = m[1] ?? "";

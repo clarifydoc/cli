@@ -286,7 +286,7 @@ export function renderSurfaceMarkdown(d: SurfaceDiff, labels: { base?: string; h
   for (const c of d.changes) {
     const mark = c.breaking ? "🔴" : c.risky ? "🟠" : "⚪";
     const where = c.file ? `\`${c.file}${c.line ? `:${c.line}` : ""}\`` : "";
-    out.push(`| ${mark} | ${KIND_LABEL[c.kind]} | \`${c.route}\` | ${where} | ${c.reasons.join("; ").replace(/\|/g, "\\|")} |`);
+    out.push(`| ${mark} | ${KIND_LABEL[c.kind]} | \`${c.route}\` | ${where} | ${c.reasons.join("; ").replace(/\\/g, "\\\\").replace(/\|/g, "\\|")} |`);
   }
   return out.join("\n") + "\n";
 }

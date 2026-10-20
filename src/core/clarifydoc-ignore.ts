@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "fs";
 import { sep, posix, resolve, dirname } from "path";
+import { trimTrailingSlashes } from "../extractors/plugins/shared/path-utils.js";
 
 /**
  * Full gitignore-semantics ignore-file support for ClarifyDoc.
@@ -134,7 +135,7 @@ export function parseIgnorePattern(cleaned: string, anchor: string): IgnorePatte
   const dirOnly = body.endsWith("/");
   // Trailing slashes go first: `Library/` names a directory at any depth, so
   // its one slash must not be mistaken for the interior slash that anchors.
-  const trimmed = body.replace(/\/+$/, "");
+  const trimmed = trimTrailingSlashes(body);
   const anchored = trimmed.includes("/");
   const glob = trimmed.replace(/^\/+/, "");
   if (!glob) return null;

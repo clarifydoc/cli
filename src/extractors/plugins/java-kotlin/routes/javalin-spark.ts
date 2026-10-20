@@ -2,6 +2,7 @@ import type { Node } from "web-tree-sitter";
 import type { RouteInfo, RouteParamInfo } from "../../../../types/analysis.js";
 import { extractCalls } from "../../../shared/call-graph.js";
 import { applyRouteMeta } from "../../../shared/route-metadata.js";
+import { escapeRegex } from "../../shared/path-utils.js";
 
 /**
  * Javalin and Spark (sparkjava) — the two Java micro-frameworks whose routes
@@ -44,7 +45,7 @@ export function javalinSparkAccess(text: string, name: string, framework: Framew
       out.push(p);
     }
   };
-  const v = name.replace(/[$]/g, "\\$");
+  const v = escapeRegex(name);
   if (framework === "javalin") {
     for (const m of text.matchAll(new RegExp(String.raw`\b${v}\.(pathParam|queryParam|header|formParam|cookie)(?:AsClass)?\s*(?:<[^>]*>)?\(\s*"([^"]+)"`, "g"))) {
       const binding = m[1] === "pathParam" ? "route" : m[1] === "queryParam" ? "query" : m[1] === "formParam" ? "form" : "header";

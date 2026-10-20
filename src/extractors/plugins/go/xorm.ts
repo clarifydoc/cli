@@ -1,4 +1,5 @@
 import type { DataSourceInfo } from "../../../types/analysis.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * xorm — the ORM gitea and many Go services use. Its sessions carry no entity
@@ -160,7 +161,7 @@ const TYPE = String.raw`(?:\[\]|\*|\[\]\*)*(?:[a-z_]\w*\.)?([A-Z]\w*)`;
 
 /** `name`'s element type, when `line` declares it: a short or var declaration, or a parameter. */
 function declaredType(line: string, name: string): string | null {
-  const n = name.replace(/[$]/g, "\\$&");
+  const n = escapeRegex(name);
   const forms = [
     new RegExp(String.raw`\b${n}\s*:=\s*&?(?:[a-z_]\w*\.)?([A-Z]\w*)\s*\{`),
     new RegExp(String.raw`\b${n}\s*:=\s*new\(\s*(?:[a-z_]\w*\.)?([A-Z]\w*)\s*\)`),
