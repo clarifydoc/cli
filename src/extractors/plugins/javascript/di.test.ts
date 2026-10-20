@@ -235,10 +235,13 @@ describe("typed locals (FunctionInfo.localTypes)", () => {
       { name: "local", type: "UserService" },
       { name: "cast", type: "GadgetService" },
     ]);
-    expect(method(cls(r, "S"), "boot").localTypes).toEqual([{ name: "typed", type: "ReportService" }]);
+    expect(method(cls(r, "S"), "boot").localTypes).toEqual([
+      { name: "app", type: "", from: "NestFactory.create()", awaited: true },
+      { name: "typed", type: "ReportService" },
+    ]);
   });
 
-  it("does not type what is not a container lookup or a receiver type", async () => {
+  it("states no type for what is not a container lookup or a receiver type — a call initializer is kept for the linker", async () => {
     const r = await extract(`
       function f(handlers: Map<Function, Handler>) {
         const h = handlers.get(CreateUser);
@@ -249,7 +252,42 @@ describe("typed locals (FunctionInfo.localTypes)", () => {
         const value = compute();
         const res = await this.http.get<User>('/api/user');
       }`);
-    expect(r.functions.find((fn) => fn.name === "f")!.localTypes).toBeUndefined();
+    // The linker types `h`/`value` only through what the called function is declared to return.
+    expect(r.functions.find((fn) => fn.name === "f")!.localTypes).toEqual([
+      { name: "h", type: "", from: "handlers.get()" },
+      { name: "port", type: "", from: "app.get()" },
+      { name: "route", type: "", from: "app.get()" },
+      { name: "value", type: "", from: "compute()" },
+    ]);
+  });
+
+  it("keeps every call a local is initialized from, and none when another binding states a type", async () => {
+    const r = await extract(`
+      function h(flag: boolean) {
+        let api;
+        if (flag) { const client = makeA(); } else { const client = makeB(); }
+        const mixed = makeC();
+        if (flag) { const mixed = new Other(); }
+      }`);
+    expect(r.functions.find((fn) => fn.name === "h")!.localTypes).toEqual([
+      { name: "client", type: "", from: "makeA()" },
+      { name: "client", type: "", from: "makeB()" },
+    ]);
+  });
+
+  it("reads module-scope locals for the file's <setup> (a Vue <script setup>, a module's top level)", async () => {
+    const { topLevelLocalTypes } = await import("./functions-classes.js");
+    const src = `
+      import { useUserApi } from "~/composables/api";
+      const api = useUserApi();
+      const repo = new OrderRepo();
+      async function save() { const local = makeLocal(); await api.mealplans.createOne({}); }
+    `;
+    const tree = await parseSource(src, "typescript" as any, "x.ts");
+    expect(topLevelLocalTypes(tree, src)).toEqual([
+      { name: "api", type: "", from: "useUserApi()" },
+      { name: "repo", type: "OrderRepo" },
+    ]);
   });
 
   it("reports a name only when every binding of it agrees (unique-or-nothing)", async () => {

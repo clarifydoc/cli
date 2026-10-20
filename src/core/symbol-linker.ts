@@ -1899,7 +1899,7 @@ function resolveCallToDefinition(
       const consumer = dot > 0 && !sourceSymbol.startsWith("route:") ? sourceSymbol.slice(0, dot) : "";
       const hit = consumer && ctx.classAt.has(memberKey(sourceFile, consumer)) ? findMethodInClass(ctx, consumer, sourceFile, leafName) : null;
       if (hit && (hit.file !== sourceFile || !hit.symbol.startsWith(`${consumer}.`))) {
-        return mkLink(hit.file, hit.symbol, hit.line, "INFERRED", "inheritance");
+        return Object.assign(mkLink(hit.file, hit.symbol, hit.line, "INFERRED", "inheritance"), { viaType: consumer, viaTypeFile: sourceFile });
       }
       def = hit ? symbolIn(ctx, sourceFile, hit.symbol) : symbolIn(ctx, targetFile, leafName);
     }
@@ -1936,7 +1936,10 @@ function resolveCallToDefinition(
           const parentDef = symbolIn(ctx, parentInfo.parentFile, leafName)
             ?? symbolIn(ctx, parentInfo.parentFile, `${parentInfo.parentClass}.${leafName}`);
           if (parentDef) {
-            return mkLink(parentInfo.parentFile, parentDef.name, parentDef.line, "INFERRED", "inheritance");
+            const link = mkLink(parentInfo.parentFile, parentDef.name, parentDef.line, "INFERRED", "inheritance");
+            // Called on the enclosing class's own instance: say which (see `SymbolLink.viaType`).
+            if (sourceSymbol.startsWith(`${cls.name}.`)) Object.assign(link, { viaType: cls.name, viaTypeFile: sourceFile });
+            return link;
           }
         }
         // Walk further up the chain
@@ -1985,7 +1988,11 @@ function resolveCallToDefinition(
   // the member is the base class's.
   if (!def && call.kind === "cross-file" && isQualified && parts.length === 2 && targetFile && ctx.classAt.has(memberKey(targetFile, parts[0]!))) {
     const inherited = findMethodInClass(ctx, parts[0]!, targetFile, leafName);
-    if (inherited) return mkLink(inherited.file, inherited.symbol, inherited.line, "INFERRED", "inheritance");
+    if (inherited) {
+      const link = mkLink(inherited.file, inherited.symbol, inherited.line, "INFERRED", "inheritance");
+      if (!inherited.symbol.startsWith(`${parts[0]}.`)) Object.assign(link, { viaType: parts[0], viaTypeFile: targetFile });
+      return link;
+    }
   }
 
   // ── Strategy 3b: factory fallback via the binding's provenance ──
@@ -2729,7 +2736,8 @@ function chainPoint(
     // class — the instance its constructor makes (as Strategy 5 reads a bare
     // class call).
     point = ownMethodResult(ctx, sourceFile, consumer, head.name, awaited && receiver.length === 1)
-      ?? instancePoint(ctx, head.name, sourceFile, analysis.projectId, consumer, true);
+      ?? instancePoint(ctx, head.name, sourceFile, analysis.projectId, consumer, true)
+      ?? importedFunctionResult(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, awaited && receiver.length === 1);
     rest = receiver.slice(1);
   } else {
     point = scopedName(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, depth);
@@ -2772,6 +2780,35 @@ function chainPoint(
 
 /** Package-function calls being resolved to type a chain head — re-entry would recurse without end. */
 const resolvingPackageCalls = new Set<string>();
+
+/**
+ * What an imported function returns, as a receiver: `useUserApi()` in `const
+ * api = useUserApi()`, resolved like the call the source writes, then typed by
+ * the definition's declared return type.
+ */
+function importedFunctionResult(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  sourceSymbol: string,
+  consumer: string,
+  name: string,
+  awaited: boolean,
+): InjectionPoint | null {
+  const written = findEnclosingCallable(analysis, sourceSymbol)?.calls.find((c) => c.name === name && c.kind === "cross-file");
+  if (!written) return null;
+  const guard = `${sourceFile}\0${sourceSymbol}\0${name}()`;
+  if (resolvingPackageCalls.has(guard)) return null;
+  resolvingPackageCalls.add(guard);
+  let link: SymbolLink | null;
+  try {
+    link = resolveCallToDefinition(sourceFile, sourceSymbol, written, analysis, ctx);
+  } finally {
+    resolvingPackageCalls.delete(guard);
+  }
+  if (!link || link.relation !== "calls" || link.targetFile === sourceFile) return null;
+  return returnedPoint(ctx, symbolIn(ctx, link.targetFile, link.targetSymbol)?.returnType, link.targetFile, { typeName: "", typeFile: null, consumer }, awaited);
+}
 
 /** Longest run of initializer calls followed to type one local (`a = f(); b = a.g(); b.h()`). */
 const MAX_INITIALIZER_DEPTH = 3;
@@ -2902,8 +2939,8 @@ function returnedPoint(
   }
   const typeName = receiverTypeName(written, (ctx.languageOf.get(declFile) ?? "") as Language);
   if (!typeName) return null;
-  const typeFile = typeFileFor(ctx, typeName, declFile, ctx.projectOf.get(declFile) ?? "root");
-  return typeFile ? { typeName, typeFile, member: "", consumer: receiver.consumer, container: false } : null;
+  const ref = typeRefFor(ctx, typeName, declFile, ctx.projectOf.get(declFile) ?? "root");
+  return ref ? { ...ref, member: "", consumer: receiver.consumer, container: false } : null;
 }
 
 /**
@@ -2953,9 +2990,9 @@ function instancePoint(
 ): InjectionPoint | null {
   const typeName = bareCall ? written : receiverTypeName(written, (ctx.languageOf.get(sourceFile) ?? "") as Language);
   if (!typeName || (bareCall && !/^[A-Z]/.test(typeName))) return null;
-  const typeFile = typeFileFor(ctx, typeName, sourceFile, projectId);
-  if (!typeFile || (bareCall && !ctx.classAt.has(memberKey(typeFile, typeName)))) return null;
-  return { typeName, typeFile, member: "", consumer, container: false };
+  const ref = typeRefFor(ctx, typeName, sourceFile, projectId);
+  if (!ref || (bareCall && !ctx.classAt.has(memberKey(ref.typeFile, ref.typeName)))) return null;
+  return { ...ref, member: "", consumer, container: false };
 }
 
 /** A field of the enclosing class — or, outside any class, of whichever class in the file declares it. */
@@ -3002,9 +3039,10 @@ function scopedName(
   if (declared) {
     const typeName = receiverTypeName(declared.type, analysis.language);
     if (!typeName && !declared.qualifier) return null;
+    const ref = typeName ? typeRefFor(ctx, typeName, sourceFile, analysis.projectId) : null;
     const point: InjectionPoint = {
-      typeName: typeName ?? "",
-      typeFile: typeName ? typeFileFor(ctx, typeName, sourceFile, analysis.projectId) : null,
+      typeName: ref?.typeName ?? typeName ?? "",
+      typeFile: ref?.typeFile ?? null,
       member: name,
       consumer,
     };
@@ -3015,10 +3053,65 @@ function scopedName(
     }
     return point;
   }
+  // A module-scope binding the callable does not shadow with a typed local
+  // or a parameter (`const api = useUserApi()` above `function save() { api.x.y() }`).
+  if (sourceSymbol !== "<setup>" && pluginFor(analysis.language)?.moduleLocalsInScope) {
+    const setup = analysis.functions.find((f) => f.name === "<setup>");
+    if (setup?.localTypes?.some((l) => nameKey(analysis.language, l.name) === key)) {
+      return scopedName(ctx, analysis, sourceFile, "<setup>", consumer, name, depth);
+    }
+  }
   // Where fields need `this.`/`self.`, a bare name is a local or global the
   // body did not type — never the field of the same name.
   if (pluginFor(analysis.language)?.explicitSelfMembers) return null;
   return ownMember(ctx, sourceFile, consumer, name);
+}
+
+/**
+ * Class `typeName` as `sourceFile` names it: the class a barrel the name is
+ * imported from re-exports under it (`export { UserApiClient as UserApi } from
+ * "./client-user"`), under its own name — before `typeFileFor`, whose
+ * project-wide lookup would take an unrelated class that happens to be
+ * called `UserApi` — else the file defining it.
+ */
+function typeRefFor(ctx: LinkContext, typeName: string, sourceFile: string, projectId: string): { typeName: string; typeFile: string } | null {
+  const reexported = reexportedType(ctx, typeName, sourceFile);
+  if (reexported) return reexported;
+  const typeFile = typeFileFor(ctx, typeName, sourceFile, projectId);
+  return typeFile ? { typeName, typeFile } : null;
+}
+
+/** The class an import of `typeName` reaches through a barrel's re-exports; null when the import names a declaration directly, or none. */
+function reexportedType(ctx: LinkContext, typeName: string, sourceFile: string): { typeName: string; typeFile: string } | null {
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  let found: { typeName: string; typeFile: string } | null = null;
+  for (const imp of ctx.analysisByFile.get(sourceFile)?.imports ?? []) {
+    if (!imp.specifiers.includes(typeName)) continue;
+    const barrel = resolveTarget(imp.source, sourceFile, ctx.filePathMap);
+    const hit = barrel ? forwardedClass(ctx, barrel, typeName, 0, new Set()) : null;
+    if (!hit) continue;
+    if (found && (found.typeFile !== hit.typeFile || found.typeName !== hit.typeName)) return null;
+    found = hit;
+  }
+  return found;
+}
+
+/** The class `file` re-exports as `name`, followed through further barrels (`forwardedDefinition`, for types). */
+function forwardedClass(ctx: LinkContext, file: string, name: string, depth: number, seen: Set<string>): { typeName: string; typeFile: string } | null {
+  if (depth > MAX_REEXPORT_DEPTH || seen.has(file)) return null;
+  seen.add(file);
+  let found: { typeName: string; typeFile: string } | null = null;
+  for (const e of ctx.analysisByFile!.get(file)?.exports ?? []) {
+    if (e.kind !== "re-export" || !e.source || (e.name !== name && e.name !== "*")) continue;
+    const inner = e.name === "*" ? name : e.sourceName ?? name;
+    const target = resolveTarget(e.source, file, ctx.filePathMap);
+    if (!target || target === file) continue;
+    const hit = ctx.classAt.has(memberKey(target, inner)) ? { typeName: inner, typeFile: target } : forwardedClass(ctx, target, inner, depth + 1, seen);
+    if (!hit) continue;
+    if (found && (found.typeFile !== hit.typeFile || found.typeName !== hit.typeName)) return null;
+    found = hit;
+  }
+  return found;
 }
 
 /**
@@ -3132,7 +3225,12 @@ function linkThroughPoint(
   }
 
   const target = findMethodInClass(ctx, point.typeName, point.typeFile, method);
-  if (target) return mkLink(target.file, target.symbol, target.line, "INFERRED", "injection");
+  if (target) {
+    const link = mkLink(target.file, target.symbol, target.line, "INFERRED", "injection");
+    // Inherited: say on which class it was called (see `SymbolLink.viaType`).
+    if (!target.symbol.startsWith(`${point.typeName}.`)) Object.assign(link, { viaType: point.typeName, viaTypeFile: point.typeFile });
+    return link;
+  }
   const ext = extensionMethodFor(ctx, analysis, sourceFile, point.typeName, point.typeFile, method);
   if (ext) return mkLink(ext.file, ext.symbol, ext.line, "INFERRED", "injection");
   return null;

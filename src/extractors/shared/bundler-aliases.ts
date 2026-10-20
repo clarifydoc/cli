@@ -20,7 +20,7 @@ import { escapeRegex } from "../plugins/shared/path-utils.js";
  * Output: alias prefix → absolute path, the shape `applyAliases` takes.
  */
 
-const CONFIG_STEMS = ["vite.config", "webpack.config", "vue.config"];
+const CONFIG_STEMS = ["vite.config", "webpack.config", "vue.config", "nuxt.config"];
 const CONFIG_EXTS = [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"];
 const IMPORT_EXTS = ["", ".ts", ".mts", ".js", ".mjs", ".cjs", "/index.ts", "/index.js"];
 
@@ -39,8 +39,38 @@ export function readBundlerAliases(dir: string): Map<string, string> {
   const out = new Map<string, string>();
   for (const config of bundlerConfigsIn(dir)) {
     for (const [k, v] of aliasesOfFile(config)) if (!out.has(k)) out.set(k, v);
+    if (/[\\/]nuxt\.config\.\w+$/.test(config)) addNuxtAliases(config, dir, out);
   }
   return out;
+}
+
+/**
+ * The aliases Nuxt itself defines, which a checkout never holds — they are
+ * written into the generated `.nuxt/tsconfig.json` its tsconfig extends:
+ * `~`/`@` → the source directory, `~~`/`@@` → the project root. The source
+ * directory is the config's literal `srcDir`, else `app/` on Nuxt 4 (or 3 with
+ * `compatibilityVersion: 4`) when it exists, else the root.
+ */
+function addNuxtAliases(config: string, dir: string, out: Map<string, string>): void {
+  const code = readCode(config) ?? "";
+  const declared = /\bsrcDir\s*:\s*(['"`])([^'"`$]+)\1/.exec(code);
+  let srcDir = dir;
+  if (declared) srcDir = resolve(dir, declared[2]!);
+  else if (existsSync(join(dir, "app")) && (/\bcompatibilityVersion\s*:\s*4\b/.test(code) || nuxtMajor(dir) >= 4)) srcDir = join(dir, "app");
+  if (!existsSync(srcDir)) return;
+  for (const [key, target] of [["~", srcDir], ["@", srcDir], ["~~", dir], ["@@", dir]] as const) if (!out.has(key)) out.set(key, target);
+}
+
+/** The major version of `nuxt` the directory's package.json depends on (0 when unknown). */
+function nuxtMajor(dir: string): number {
+  try {
+    const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf-8")) as Record<string, Record<string, string> | undefined>;
+    const range = pkg.dependencies?.nuxt ?? pkg.devDependencies?.nuxt ?? "";
+    const m = /(\d+)/.exec(range);
+    return m ? Number(m[1]) : 0;
+  } catch {
+    return 0;
+  }
 }
 
 function aliasesOfFile(file: string): Map<string, string> {

@@ -125,12 +125,40 @@ export function synthesizeApiRouteSymbolLinks(
     return candidates.length === 1 ? candidates[0]! : null;
   };
 
+  // A base-class method's request resolved for one subclass is that
+  // subclass's inherited member making it: `MealPlanAPI.createOne` in the
+  // subclass's file, not the `BaseCRUDAPI.createOne` every subclass shares —
+  // else a click on any subclass would reach every subclass's route.
+  let classes: Map<string, FileAnalysis[]> | null = null;
+  const subclassMember = (link: ApiRouteLink & { viaSubclass?: string }, baseSymbol: string): { file: string; symbol: string; line: number } | null => {
+    if (!link.viaSubclass) return null;
+    if (!classes) {
+      classes = new Map();
+      for (const a of analyses) for (const c of a.classes ?? []) (classes.get(c.name) ?? classes.set(c.name, []).get(c.name)!).push(a);
+    }
+    const project = fileOf.get(link.source)?.projectId;
+    const files = (classes.get(link.viaSubclass) ?? []).filter((a) => a.projectId === project);
+    if (files.length !== 1) return null;
+    const cls = files[0]!.classes.find((c) => c.name === link.viaSubclass)!;
+    return { file: files[0]!.filePath, symbol: `${link.viaSubclass}.${baseSymbol.split(".").pop()}`, line: cls.line };
+  };
+
   const out: SymbolLink[] = [];
-  for (const link of links) {
+  // One trace edge per subclass a fanned-out base request was resolved for.
+  const hops = links.flatMap((l): Array<ApiRouteLink & { viaSubclass?: string }> => (l.viaSubclasses?.length ? l.viaSubclasses.map((v) => ({ ...l, viaSubclass: v })) : [l]));
+  for (const link of hops) {
     if (link.confidence === "AMBIGUOUS") continue;
 
-    const src = innermostAt(spansFor(link.source), link.sourceLine);
+    let src = innermostAt(spansFor(link.source), link.sourceLine);
     if (!src) continue; // top-level call (module scope) — no trace symbol to anchor
+    let sourceFile = link.source;
+    let sourceLine = link.sourceLine;
+    const member = subclassMember(link, src.symbol);
+    if (member) {
+      sourceFile = member.file;
+      sourceLine = member.line;
+      src = { symbol: member.symbol, line: member.line, endLine: member.line };
+    }
 
     // Target: enclosing span at the route line, else handler-name resolution.
     let targetFile = link.target;
@@ -180,12 +208,12 @@ export function synthesizeApiRouteSymbolLinks(
     }
     if (!tgt) continue;
     // A self-edge (route handler calling its own endpoint) adds no trace value.
-    if (link.source === targetFile && src.symbol === tgt.symbol) continue;
+    if (sourceFile === targetFile && src.symbol === tgt.symbol) continue;
 
     out.push({
-      sourceFile: link.source,
+      sourceFile,
       sourceSymbol: src.symbol,
-      sourceLine: link.sourceLine,
+      sourceLine,
       callName: `${link.method ?? "HTTP"} ${link.routePath}`,
       targetFile,
       targetSymbol: tgt.symbol,
@@ -196,6 +224,83 @@ export function synthesizeApiRouteSymbolLinks(
     });
   }
   return out;
+}
+
+/** Receiver heads naming the instance itself, across languages. */
+const SELF_CALL = /^(?:this|self|super|\$this|Self|base|MyBase|Me)(?:\(\))?(?:\.|->|::)/;
+
+/** Longest run of self-calls followed inside a base class to its per-subclass request. */
+const MAX_INHERITED_DEPTH = 4;
+
+/**
+ * Calls that landed on an inherited method (`SymbolLink.viaType`) move onto
+ * the receiver class's own member when the HTTP pass gave that member an edge
+ * of its own (a base request resolved per subclass, above): the click on a
+ * meal plan reaches the meal-plan route, not every CRUD route. A base method
+ * that reaches such a request only through its own `this.list()` gets a copy
+ * on the subclass (`UsersService.listAll` → `UsersService.list` → route),
+ * made only where it leads to one; a method the subclass overrides is where
+ * its self-call dispatches. Then the in-memory `viaType` fields are dropped
+ * from every link. Mutates `links`; returns the copied edges.
+ */
+export function moveInheritedCallsToSubclasses(
+  links: SymbolLink[],
+  httpLinks: readonly SymbolLink[],
+  analyses: readonly FileAnalysis[] = [],
+): SymbolLink[] {
+  const members = new Map<string, number>();
+  for (const h of httpLinks) members.set(`${h.sourceFile}::${h.sourceSymbol}`, h.sourceLine);
+  const added: SymbolLink[] = [];
+  if (members.size > 0 && links.some((l) => l.viaType)) {
+    const outgoing = new Map<string, SymbolLink[]>();
+    for (const l of links) {
+      if (l.relation === "reference") continue;
+      const k = `${l.sourceFile}::${l.sourceSymbol}`;
+      (outgoing.get(k) ?? outgoing.set(k, []).get(k)!).push(l);
+    }
+    const fileOf = new Map(analyses.map((a) => [a.filePath, a]));
+    const classIn = (file: string, name: string) => fileOf.get(file)?.classes.find((c) => c.name === name);
+    // `reaches`: the member makes the subclass's own request, or a copy leading to one.
+    type Member = { symbol: string; line: number; reaches: boolean };
+    const memo = new Map<string, Member | null>();
+    const onSubclass = (cls: string, clsFile: string, baseFile: string, baseSymbol: string, depth: number): Member | null => {
+      const method = baseSymbol.slice(baseSymbol.lastIndexOf(".") + 1);
+      const symbol = `${cls}.${method}`;
+      const own = members.get(`${clsFile}::${symbol}`);
+      if (own !== undefined) return { symbol, line: own, reaches: true };
+      const decl = classIn(clsFile, cls);
+      const override = decl?.methods.find((m) => m.name === method);
+      if (override) return depth > 0 ? { symbol, line: override.line, reaches: false } : null;
+      const key = `${clsFile}::${symbol}`;
+      if (memo.has(key)) return memo.get(key)!;
+      memo.set(key, null);
+      if (depth >= MAX_INHERITED_DEPTH || !baseSymbol.includes(".")) return null;
+      const outs = outgoing.get(`${baseFile}::${baseSymbol}`) ?? [];
+      const via = outs.map((o) => (SELF_CALL.test(o.callName) && o.targetSymbol.includes(".") ? onSubclass(cls, clsFile, o.targetFile, o.targetSymbol, depth + 1) : null));
+      if (!via.some((v) => v?.reaches)) return null;
+      const line = decl?.line ?? 1;
+      outs.forEach((o, i) => {
+        const v = via[i];
+        added.push({ ...o, sourceFile: clsFile, sourceSymbol: symbol, sourceLine: line, ...(v ? { targetFile: clsFile, targetSymbol: v.symbol, targetLine: v.line } : {}) });
+      });
+      const hit = { symbol, line, reaches: true };
+      memo.set(key, hit);
+      return hit;
+    };
+    for (const l of links) {
+      if (!l.viaType || !l.viaTypeFile) continue;
+      const hit = onSubclass(l.viaType, l.viaTypeFile, l.targetFile, l.targetSymbol, 0);
+      if (!hit?.reaches) continue;
+      l.targetFile = l.viaTypeFile;
+      l.targetSymbol = hit.symbol;
+      l.targetLine = hit.line;
+    }
+  }
+  for (const l of [...links, ...added]) {
+    delete l.viaType;
+    delete l.viaTypeFile;
+  }
+  return added;
 }
 
 /**

@@ -7,7 +7,7 @@ import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from 
 import type { CallInfo, RouteParamInfo } from "../../../types/analysis.js";
 import { getVisibility, extractJsDecorators, stripQuotes } from "../../shared/node-helpers.js";
 import { REQUEST_PARAM_NAMES, scanRequestAccess } from "./request-access.js";
-import { extractCalls } from "../../shared/call-graph.js";
+import { callChainText, extractCalls } from "../../shared/call-graph.js";
 import { foldValue, type ValueExpr } from "../../shared/value-resolver.js";
 import { astToValueExpr } from "./value-capture.js";
 import {
@@ -31,6 +31,26 @@ interface ScanContext {
   tokenTypes: ReadonlyMap<string, string>;
   /** Props `connect(…, mapDispatchToProps)` binds to action creators (see `dispatchPropsOf`). */
   dispatchProps: ReadonlyMap<string, string>;
+  /** Top-level `const x = 'literal'` of the file (see `moduleStringConstants`). */
+  moduleStrings: ReadonlyMap<string, string>;
+}
+
+/**
+ * The file's top-level string constants (`const endpoint = 'users'`), which a
+ * class field set from one (`this.resourceName = endpoint`) holds.
+ */
+function moduleStringConstants(root: Node): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const stmt of root.namedChildren) {
+    const decl = stmt.type === "export_statement" ? stmt.childForFieldName("declaration") : stmt;
+    if (decl?.type !== "lexical_declaration" || !decl.text.startsWith("const")) continue;
+    for (const d of decl.namedChildren) {
+      const name = d.type === "variable_declarator" ? d.childForFieldName("name") : null;
+      const value = d.childForFieldName("value");
+      if (name?.type === "identifier" && value?.type === "string" && value.text.length <= 202) out.set(name.text, stripQuotes(value.text));
+    }
+  }
+  return out;
 }
 
 /**
@@ -208,8 +228,17 @@ function scanBody(
   for (const [name, list] of bindings) {
     if (paramNames.has(name)) continue;
     const first = list[0];
-    if (!first || list.some((b) => !b || b.local.type !== first.local.type || b.local.qualifier !== first.local.qualifier)) continue;
+    if (!first || list.some((b) => !b)) continue;
     if (reassigned.has(name) && !list.every((b) => b!.annotated)) continue;
+    // Initialized by calls that state no type: one entry per distinct call, so
+    // the linker can require them to agree. A stated type alongside decides nothing.
+    if (list.some((b) => b!.local.from)) {
+      if (!list.every((b) => b!.local.from)) continue;
+      const seen = new Set<string>();
+      for (const b of list) if (!seen.has(`${b!.local.from}|${b!.local.awaited}`)) (seen.add(`${b!.local.from}|${b!.local.awaited}`), localTypes.push(b!.local));
+      continue;
+    }
+    if (list.some((b) => b!.local.type !== first.local.type || b!.local.qualifier !== first.local.qualifier)) continue;
     localTypes.push(first.local);
   }
   return { dynamicImports, localTypes };
@@ -245,8 +274,27 @@ function declaredLocal(
   // `const seen = new Set()`, `const out: Order[] = []` say nothing about a
   // receiver's members — not reported (a lookup's token still is).
   if (type && !namesReceiverType(type)) type = "";
-  if (!type && !qualifier) return null;
+  if (!type && !qualifier) {
+    // `const api = useUserApi()`, `const u = await repo.find(id)`: the call is
+    // kept, and the linker types the local by what that call is declared to return.
+    if (annotation || !value) return null;
+    const awaited = value.type === "await_expression";
+    const call = awaited ? value.namedChild(0) : value;
+    const from = call?.type === "call_expression" ? callChainText(call, "typescript") : null;
+    if (!from) return null;
+    return { local: awaited ? { name, type: "", from, awaited } : { name, type: "", from }, annotated: false };
+  }
   return { local: qualifier ? { name, type, qualifier } : { name, type }, annotated: annotation !== null };
+}
+
+/**
+ * Module-scope locals (`const api = useUserApi()` at the top of a module or a
+ * Vue `<script setup>`), for the file's `<setup>` — what every function in the
+ * file sees when its own scope does not bind the name.
+ */
+export function topLevelLocalTypes(tree: Tree, sourceText: string): LocalType[] {
+  const ctx: ScanContext = { jsdoc: JSDOC_TAG_RE.test(sourceText), tokenTypes: collectInjectionTokenTypes(tree.rootNode, sourceText), dispatchProps: new Map(), moduleStrings: new Map() };
+  return scanBody(tree.rootNode, new Set(), ctx).localTypes;
 }
 
 /**
@@ -644,7 +692,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
    * `extractClasses` are each called once per file, synchronously — the one
    * instance is shared by the typescript and javascript metas).
    */
-  private ctx: ScanContext = { jsdoc: false, tokenTypes: new Map(), dispatchProps: new Map() };
+  private ctx: ScanContext = { jsdoc: false, tokenTypes: new Map(), dispatchProps: new Map(), moduleStrings: new Map() };
   private ctxTree: Tree | null = null;
 
   override extractFunctions(tree: Tree, sourceText: string): FunctionInfo[] {
@@ -741,6 +789,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       jsdoc: JSDOC_TAG_RE.test(sourceText),
       tokenTypes: collectInjectionTokenTypes(tree.rootNode, sourceText),
       dispatchProps: sourceText.includes("connect(") ? dispatchPropsOf(tree.rootNode) : new Map(),
+      moduleStrings: sourceText.includes("class ") ? moduleStringConstants(tree.rootNode) : new Map(),
     };
   }
 
@@ -1202,7 +1251,9 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     // String-shaped field values (`baseUrl = environment.apiUrl`, `this.resourceName = 'tags'`);
     // null marks a field given two different values.
     const fieldValues = new Map<string, string | null>();
-    const setValue = (field: string, value: string | null) => {
+    const setValue = (field: string, raw: string | null) => {
+      // A same-file string constant is its value (`this.resourceName = endpoint`).
+      const value = raw === null || this.ctx.moduleStrings.size === 0 ? raw : raw.replace(/\$\{([\w$]+)\}/g, (hole, n: string) => this.ctx.moduleStrings.get(n) ?? hole);
       if (value === null || value.length > 300) return;
       fieldValues.set(field, fieldValues.has(field) && fieldValues.get(field) !== value ? null : value);
     };

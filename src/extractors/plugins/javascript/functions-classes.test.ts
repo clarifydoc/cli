@@ -214,6 +214,15 @@ describe("JS class field values", () => {
     });
   });
 
+  it("reads a same-file string constant a field is set from", async () => {
+    const [cls] = await classesOf(`
+      const endpoint = 'users'
+      export class UserService extends AbstractNameFilterService {
+        constructor() { super(); this.resourceName = endpoint; this.other = elsewhere }
+      }`);
+    expect(cls!.fieldValues).toEqual({ resourceName: "users", other: "${elsewhere}" });
+  });
+
   it("records nothing for a field given two different values", async () => {
     const [cls] = await classesOf(`class A { url = '/a'; constructor() { this.url = '/b'; } }`);
     expect(cls!.fieldValues).toBeUndefined();

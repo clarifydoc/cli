@@ -4,6 +4,7 @@ import type {
 } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCallsFromBody } from "../shared/regex-base.js";
+import { namedQueries } from "./named-queries.js";
 
 /**
  * SQL plugin — covers DDL (CREATE/ALTER/DROP), DML (SELECT/INSERT/UPDATE/DELETE),
@@ -487,7 +488,8 @@ export const sqlSpec: RegexLangSpec = {
 
   // SQL routines (PROCEDURE/FUNCTION/TRIGGER) need BEGIN/END-aware end-line
   // patching so blast-radius and complexity see the right body range.
-  postProcessFunctions: (lines, fns) => fixSqlFunctionEndLines(lines, fns),
+  // Named-query files (aiosql, HugSQL, sqlc …): each `-- name:` block is a function.
+  postProcessFunctions: (lines, fns) => [...fixSqlFunctionEndLines(lines, fns), ...namedQueries(lines)],
 };
 
 /**

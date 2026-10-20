@@ -102,7 +102,7 @@ import { generateSuggestions } from "./suggestions-engine.js";
 import { detectCommunities, groupCommunities } from "./community-detector.js";
 import { findGodNodes, findSurprisingConnections, suggestQuestions } from "./topology-analyzer.js";
 import { dedupSymbolLinks, dropNameCollisionReferences } from "./symbol-dedup.js";
-import { synthesizeApiRouteSymbolLinks, synthesizeQueueSymbolLinks } from "./api-route-symbol-links.js";
+import { moveInheritedCallsToSubclasses, synthesizeApiRouteSymbolLinks, synthesizeQueueSymbolLinks } from "./api-route-symbol-links.js";
 import { aggregateTypeBlast, buildClassGraph } from "./data-model-blast.js";
 import { buildDataAccessGraph, attributeDataAccessToSymbols } from "./data-access-graph.js";
 import {
@@ -1263,8 +1263,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // graph is untouched; blast radius (below) does include them — a handler's
   // blast genuinely covers the screens that call it.
   const apiSymbolLinks = synthesizeApiRouteSymbolLinks(apiRouteLinks, allAnalyses);
+  const inheritedLinks = moveInheritedCallsToSubclasses(symbolLinks, apiSymbolLinks, allAnalyses);
   if (apiSymbolLinks.length > 0) {
-    symbolLinks = dedupSymbolLinks([...symbolLinks, ...apiSymbolLinks]);
+    symbolLinks = dedupSymbolLinks([...symbolLinks, ...inheritedLinks, ...apiSymbolLinks]);
     progress.detail(`  API→handler trace links: ${apiSymbolLinks.length}`);
   }
 

@@ -574,6 +574,8 @@ describe("symbol-linker — an imported instance's inherited member", () => {
     const link = links.find((l) => l.callName === "MonitorsAPI.update");
     expect(link?.targetFile).toBe("api/ApiClient.js");
     expect(link?.strategy).toBe("inheritance");
+    // Called on MonitorsAPI: what the HTTP pass moves onto the subclass's own member.
+    expect([link?.viaType, link?.viaTypeFile]).toEqual(["MonitorsAPI", "api/monitors.js"]);
   });
 });
 

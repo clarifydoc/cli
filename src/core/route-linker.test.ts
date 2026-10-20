@@ -917,6 +917,17 @@ describe("linkApiCallsToRoutesDetailed — rows fanned out per subclass", () => 
     expect(stats.misses).toBeUndefined();
     expect(stats.unmatched + stats.refused.methodMismatch).toBe(0);
   });
+
+  it("joins two subclasses requesting the same URL into one link naming both", () => {
+    const { links } = linkApiCallsToRoutesDetailed(
+      [
+        { ...apiCall("web/base-clients.ts", "patch", "/api/documents/{}", 70), viaSubclass: "DocumentService" },
+        { ...apiCall("web/base-clients.ts", "patch", "/api/documents/{}", 70), viaSubclass: "DocumentNotesService" },
+      ],
+      [route("api/documents.py", "PATCH", "/api/documents/{pk}", "patch_document")],
+    );
+    expect(links.map((l) => l.viaSubclasses)).toEqual([["DocumentService", "DocumentNotesService"]]);
+  });
 });
 
 

@@ -579,7 +579,7 @@ export interface AstExtractorHooks {
    * `var pricing = app.Services.GetRequiredService<IPricing>(); pricing.Quote()`
    * resolves like it would inside a method.
    */
-  topLevelLocalTypes?(tree: Tree): import("./analysis.js").FunctionInfo["localTypes"];
+  topLevelLocalTypes?(tree: Tree, sourceText: string): import("./analysis.js").FunctionInfo["localTypes"];
 }
 
 /** Rich variable-alias value: the module the binding resolves to + the factory that made it. */
@@ -882,6 +882,13 @@ export interface LanguagePluginManifest {
    * leave it unset, so a bare name may still be a field.
    */
   explicitSelfMembers?: boolean;
+  /**
+   * Every function in a file sees its module-scope bindings (`const api =
+   * useUserApi()` at the top of a JS module or a Vue `<script setup>`): a name
+   * a function's own scope does not bind is looked up among the `<setup>`
+   * locals. Unset where a function cannot see them (a Ruby `def`).
+   */
+  moduleLocalsInScope?: boolean;
   /**
    * Language-specific filename/path patterns that mark a file as a test
    * (unit, integration, or e2e) — e.g. Go `_test.go`, JS `*_spec.js`/`*.cy.ts`,

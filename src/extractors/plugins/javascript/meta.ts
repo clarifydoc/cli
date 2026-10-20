@@ -34,7 +34,7 @@ import {
   DEFAULT_CONTROL_FLOW,
   JS_REGEX_CONTROL_FLOW,
 } from "../../shared/control-flow-defaults.js";
-import { JavaScriptExtractor } from "./functions-classes.js";
+import { JavaScriptExtractor, topLevelLocalTypes } from "./functions-classes.js";
 import { JavaScriptImportExportExtractor } from "./imports-exports.js";
 import { JavaScriptDataSourceExtractor } from "./data-sources.js";
 import { JavaScriptMutationExtractor } from "./data-mutations.js";
@@ -221,6 +221,7 @@ function astHooks(language: Language): AstExtractorHooks {
     pathReferences: (sourceText) => extractPathReferences(sourceText),
     variableAliases: extractJsVariableAliases,
     diBindings: extractJsDiBindings,
+    topLevelLocalTypes: (tree, sourceText) => topLevelLocalTypes(tree, sourceText),
   };
 }
 

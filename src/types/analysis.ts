@@ -1088,6 +1088,12 @@ export interface ApiRouteLink {
   /** Matched route's full path (e.g. `/AccessReport/roles/{roleId}/holders`). */
   routePath: string;
   /**
+   * The subclasses a base-class method's request was resolved for
+   * (`ApiCall.viaSubclass`) whose URL this route serves: one link per call
+   * site and route, however many subclasses request it.
+   */
+  viaSubclasses?: string[];
+  /**
    * Sub-project of the calling file and of the route. They differ when one
    * project calls another's API — a frontend its backend, a service another
    * service — which is what a project-level dependency is made of.
@@ -1888,6 +1894,15 @@ export interface SymbolLink {
    * interface. In-memory only (not persisted in the normalized summary).
    */
   navigational?: boolean;
+  /**
+   * The receiver's declared class (and its file) when the method called is
+   * inherited from another class — `api.mealplans.createOne()` on a
+   * `MealPlanAPI` lands on `BaseCRUDAPI.createOne`. The HTTP-edge pass moves
+   * such a link onto the subclass's own member when the base method's request
+   * was resolved per subclass. In-memory only: dropped once that pass ran.
+   */
+  viaType?: string;
+  viaTypeFile?: string;
 }
 
 /**

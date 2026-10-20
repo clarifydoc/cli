@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { synthesizeApiRouteSymbolLinks, synthesizeQueueSymbolLinks } from "./api-route-symbol-links.js";
-import type { ApiRouteLink, FileAnalysis, SymbolDataAccess } from "../types/analysis.js";
+import { moveInheritedCallsToSubclasses, synthesizeApiRouteSymbolLinks, synthesizeQueueSymbolLinks } from "./api-route-symbol-links.js";
+import type { ApiRouteLink, FileAnalysis, SymbolDataAccess, SymbolLink } from "../types/analysis.js";
 
 /**
  * Cross-tier trace edges. Without these, the Call Traces graph stops at the
@@ -113,6 +113,38 @@ describe("synthesizeApiRouteSymbolLinks", () => {
       [frontend, backend],
     );
     expect(out.map((l) => l.targetSymbol)).toEqual(["route:GET /tasks/{task}"]);
+  });
+
+  it("starts a base-class request resolved for a subclass at that subclass's member, and moves inherited calls onto it", () => {
+    // `this.requests.post(this.baseRoute)` in BaseCRUDAPI.createOne, fanned out
+    // per subclass: each URL is its subclass's, so its edge starts there.
+    const base = fa("web/api/base.ts", { classes: [{ name: "BaseCRUDAPI", methods: [fn("createOne", 5, 8)], line: 1 }] } as any);
+    const meals = fa("web/api/mealplans.ts", { classes: [{ name: "MealPlanAPI", methods: [], line: 3 }] } as any);
+    const books = fa("web/api/cookbooks.ts", { classes: [{ name: "CookbookAPI", methods: [], line: 4 }] } as any);
+    const alias = fa("web/api/plan-alias.ts", { classes: [{ name: "PlanAliasAPI", methods: [], line: 2 }] } as any);
+    const backend = fa("srv/meals.py", { classes: [{ name: "Meals", methods: [fn("create", 10, 20)] }] } as any);
+    const backend2 = fa("srv/books.py", { classes: [{ name: "Books", methods: [fn("create", 10, 20)] }] } as any);
+    const http = synthesizeApiRouteSymbolLinks(
+      [
+        link({ source: "web/api/base.ts", sourceLine: 6, method: "POST", target: "srv/meals.py", targetLine: 12, handler: "create", routePath: "/api/mealplans", viaSubclasses: ["MealPlanAPI", "PlanAliasAPI"] }),
+        link({ source: "web/api/base.ts", sourceLine: 6, method: "POST", target: "srv/books.py", targetLine: 12, handler: "create", routePath: "/api/cookbooks", viaSubclasses: ["CookbookAPI"] }),
+      ],
+      [base, meals, books, alias, backend, backend2],
+    );
+    expect(http.map((l) => `${l.sourceFile}::${l.sourceSymbol} → ${l.targetFile}`)).toEqual([
+      "web/api/mealplans.ts::MealPlanAPI.createOne → srv/meals.py",
+      "web/api/plan-alias.ts::PlanAliasAPI.createOne → srv/meals.py",
+      "web/api/cookbooks.ts::CookbookAPI.createOne → srv/books.py",
+    ]);
+    const click: SymbolLink = {
+      sourceFile: "web/AddMeal.vue", sourceSymbol: "add", sourceLine: 9, callName: "api.mealplans.createOne",
+      targetFile: "web/api/base.ts", targetSymbol: "BaseCRUDAPI.createOne", targetLine: 5, viaType: "MealPlanAPI", viaTypeFile: "web/api/mealplans.ts",
+    };
+    const other: SymbolLink = { ...click, sourceSymbol: "other", viaType: "UnlinkedAPI", viaTypeFile: "web/api/unlinked.ts" };
+    moveInheritedCallsToSubclasses([click, other], http);
+    expect(click).toEqual({ ...click, targetFile: "web/api/mealplans.ts", targetSymbol: "MealPlanAPI.createOne", targetLine: 3 });
+    expect("viaType" in click).toBe(false);
+    expect([other.targetSymbol, "viaType" in other]).toEqual(["BaseCRUDAPI.createOne", false]);
   });
 
   it("skips AMBIGUOUS links and top-level (unanchored) calls", () => {

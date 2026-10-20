@@ -112,6 +112,7 @@ export const typescriptManifest: LanguagePluginManifest = {
   extensions: [".ts", ".tsx", ".vue", ".svelte"],
   // A field is only reached through the instance (`this.x`); a bare name never is one.
   explicitSelfMembers: true,
+  moduleLocalsInScope: true,
   platformSuffixes: JS_PLATFORM_SUFFIXES,
   grammar: {
     variants: { typescript: { pkg: "tree-sitter-typescript", wasm: "tree-sitter-typescript.wasm" }, tsx: { pkg: "tree-sitter-typescript", wasm: "tree-sitter-tsx.wasm" } },
@@ -141,6 +142,7 @@ export const javascriptManifest: LanguagePluginManifest = {
   extensions: [".js", ".jsx", ".mjs", ".cjs"],
   // A field is only reached through the instance (`this.x`); a bare name never is one.
   explicitSelfMembers: true,
+  moduleLocalsInScope: true,
   platformSuffixes: JS_PLATFORM_SUFFIXES,
   grammar: { variants: { javascript: { pkg: "tree-sitter-javascript", wasm: "tree-sitter-javascript.wasm" } } },
   testFilePatterns: JS_TEST_PATTERNS,

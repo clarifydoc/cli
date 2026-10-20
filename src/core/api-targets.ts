@@ -418,7 +418,9 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
       if (awaitsSubclass(t, d)) continue;
       const alternatives = call.targetAlternatives?.map((a) => resolveValue(a, call.filePath, d, 0));
       if (t === call.target && !alternatives?.some((a, i) => a !== call.targetAlternatives![i])) continue;
-      if (out.some((o) => o.target === t)) continue;
+      // One row per subclass even when two request the same URL: each is its
+      // own subclass's request (`DocumentService` and `DocumentNotesService`
+      // both under `documents/`), and the trace starts at that subclass.
       out.push({ target: t, ...(alternatives ? { alternatives } : {}), subclass: d.cls.name });
     }
     return out;

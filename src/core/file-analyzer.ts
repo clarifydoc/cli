@@ -347,7 +347,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
         line: 1,
         endLine: 1,
       };
-      const topLocals = hooks?.topLevelLocalTypes?.(tree);
+      const topLocals = hooks?.topLevelLocalTypes?.(tree, sourceText);
       if (topLocals && topLocals.length > 0) setupFn.localTypes = topLocals;
       analysis.functions.unshift(setupFn);
     }

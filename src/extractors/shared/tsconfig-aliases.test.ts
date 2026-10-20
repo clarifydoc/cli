@@ -83,10 +83,27 @@ export default defineConfig({ resolve: { alias: aliases } });`);
     await mkdir(join(root, "both/other"), { recursive: true });
     await writeFile(join(root, "both/tsconfig.json"), JSON.stringify({ compilerOptions: { paths: { "@/*": ["./src/*"] } } }));
     await writeFile(join(root, "both/vite.config.ts"), `export default { resolve: { alias: { '@': '/other', '~': '/other' } } }`);
+    // Nuxt: the tsconfig extends a generated `.nuxt/tsconfig.json` a checkout never has.
+    await mkdir(join(root, "nuxt4/app/composables"), { recursive: true });
+    await writeFile(join(root, "nuxt4/tsconfig.json"), JSON.stringify({ extends: "./.nuxt/tsconfig.json" }));
+    await writeFile(join(root, "nuxt4/nuxt.config.ts"), `export default defineNuxtConfig({ future: { compatibilityVersion: 4 } })`);
+    await mkdir(join(root, "nuxt3/composables"), { recursive: true });
+    await mkdir(join(root, "nuxt3/app"), { recursive: true }); // app/router.options.ts lives here on Nuxt 3
+    await writeFile(join(root, "nuxt3/package.json"), JSON.stringify({ devDependencies: { nuxt: "^3.12.0" } }));
+    await writeFile(join(root, "nuxt3/nuxt.config.ts"), `export default defineNuxtConfig({})`);
     clearTsconfigAliasCache();
   });
   afterAll(async () => {
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("knows Nuxt's own aliases: ~ and @ are the source directory, ~~ the root", () => {
+    const four = loadTsconfigAliasesForDir(join(root, "nuxt4/app/composables"));
+    expect(applyAliases("~/composables/api", four, root)).toBe("nuxt4/app/composables/api");
+    expect(applyAliases("@/composables/api", four, root)).toBe("nuxt4/app/composables/api");
+    expect(applyAliases("~~/server/x", four, root)).toBe("nuxt4/server/x");
+    const three = loadTsconfigAliasesForDir(join(root, "nuxt3/composables"));
+    expect(applyAliases("~/composables/api", three, root)).toBe("nuxt3/composables/api");
   });
 
   it("reads the paths of the configs a solution-style tsconfig references", () => {

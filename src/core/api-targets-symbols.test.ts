@@ -238,6 +238,21 @@ export default new LabelsAPI();`,
     ]);
   });
 
+  it("keeps one row per subclass when two request the same URL (paperless DocumentService, DocumentNotesService)", async () => {
+    const targets = await project({
+      "src/base.ts": `
+export abstract class BaseCRUDAPI {
+  public baseRoute: string;
+  async createOne(payload: unknown) { return await this.requests.post(this.baseRoute, payload); }
+}`,
+      "src/documents.ts": `
+import { BaseCRUDAPI } from "./base";
+export class DocumentService extends BaseCRUDAPI { baseRoute = "/api/documents/"; }
+export class DocumentNotesService extends BaseCRUDAPI { baseRoute = "/api/documents/"; }`,
+    });
+    expect(targets.map((t) => t[0])).toEqual(["/api/documents/", "/api/documents/"]);
+  });
+
   it("fans a generic CRUD client's calls out to each subclass's route fields (mealie)", async () => {
     const targets = await project({
       "src/base/route.ts": `export function route(rest: string, params: Record<string, string> | null = null): string {
