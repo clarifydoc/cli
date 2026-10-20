@@ -18,7 +18,10 @@ import { resolveRouterFunctions } from "../shared/router-functions.js";
  * (`users.Register`) is the function of that name in the package its import
  * names (the directory the import path ends with); a bare one, in the
  * caller's own package; a method on a value (`h.Register(api)`, whose
- * package is not stated) only the one function of that name.
+ * package is not stated) the one function of that name — or, of several,
+ * the one whose package shares the most leading directories with the
+ * caller's, when exactly one shares the most and that is at least one
+ * (`services/billing/main.go` → `services/billing/handlers`).
  */
 
 const dirOf = (p: string): string => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
@@ -31,7 +34,7 @@ function targetOf(callee: string, caller: FileAnalysis, keysNamed: (fn: string) 
   const own = `${dirOf(caller.filePath)}#${fn}`;
   if (parts.length === 0) return keys.includes(own) ? own : null;
   const imp = caller.imports.find((i) => i.specifiers.includes(parts[0]!));
-  if (!imp) return keys.length === 1 ? keys[0]! : keys.includes(own) ? own : null;
+  if (!imp) return keys.length === 1 ? keys[0]! : keys.includes(own) ? own : nearestPackage(keys, dirOf(caller.filePath));
   const matches = keys.filter((k) => {
     const dir = k.slice(0, k.indexOf("#"));
     return dir !== "" && (imp.source === dir || imp.source.endsWith(`/${dir}`) || imp.source.endsWith(`/${dir.split("/").pop()}`));
@@ -39,6 +42,20 @@ function targetOf(callee: string, caller: FileAnalysis, keysNamed: (fn: string) 
   if (matches.length <= 1) return matches[0] ?? null;
   const exact = matches.filter((k) => imp.source.endsWith(`/${k.slice(0, k.indexOf("#"))}`));
   return exact.length === 1 ? exact[0]! : null;
+}
+
+/** Of `${dir}#fn` keys, the one sharing the most leading directories with `from`; null on a tie or when none shares any. */
+function nearestPackage(keys: string[], from: string): string | null {
+  const mine = from.split("/").filter(Boolean);
+  const shared = (k: string) => {
+    const dir = k.slice(0, k.indexOf("#")).split("/").filter(Boolean);
+    let n = 0;
+    while (n < dir.length && n < mine.length && dir[n] === mine[n]) n++;
+    return n;
+  };
+  const depth = keys.map(shared);
+  const best = Math.max(...depth);
+  return best > 0 && depth.filter((d) => d === best).length === 1 ? keys[depth.indexOf(best)]! : null;
 }
 
 export const goRouterFnResolver: RouteResolver = {

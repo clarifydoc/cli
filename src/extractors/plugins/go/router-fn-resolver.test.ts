@@ -87,4 +87,20 @@ func reports(r *gin.RouterGroup) {
     goRouterFnResolver.resolve([main, a, b], {} as ProjectContext);
     expect([a, b].flatMap((f) => f.routes).map((r) => r.path)).toEqual(["/a", "/b"]);
   });
+
+  it("of two packages, takes the one nearest the caller — and only when one is nearest", () => {
+    const main = file("services/billing/main.go", `func main() {\n\tr := gin.Default()\n\th.Register(r.Group("/billing"))\n}`);
+    const billing = file("services/billing/handlers/routes.go", `func Register(r *gin.RouterGroup) {\n\tr.GET("/invoices", A)\n}`);
+    const shipping = file("services/shipping/handlers/routes.go", `func Register(r *gin.RouterGroup) {\n\tr.GET("/parcels", B)\n}`);
+    goRouterFnResolver.resolve([main, billing, shipping], {} as ProjectContext);
+    expect(billing.routes.map((r) => r.path)).toEqual(["/billing/invoices"]);
+    expect(shipping.routes.map((r) => r.path)).toEqual(["/parcels"]);
+
+    // Two packages equally near (both one directory in from services/): neither.
+    const cmd = file("services/cmd/main.go", `func main() {\n\tr := gin.Default()\n\th.Register(r.Group("/x"))\n}`);
+    const a = file("services/a/routes.go", `func Register(r *gin.RouterGroup) {\n\tr.GET("/a", A)\n}`);
+    const b = file("services/b/routes.go", `func Register(r *gin.RouterGroup) {\n\tr.GET("/b", B)\n}`);
+    goRouterFnResolver.resolve([cmd, a, b], {} as ProjectContext);
+    expect([a, b].flatMap((f) => f.routes).map((r) => r.path)).toEqual(["/a", "/b"]);
+  });
 });
