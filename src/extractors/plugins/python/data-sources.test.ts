@@ -85,6 +85,13 @@ describe("Python database calls", () => {
     ]);
   });
 
+  it("names the model of a Django manager or a Flask-SQLAlchemy query, not the manager", async () => {
+    const src = ["Order.objects.filter(paid=True).first()", "User.query.filter_by(name=n)", "orders.objects.all()"].join("\n");
+    const tree = await parseSource(src, "python" as never, "x.py");
+    const rows = new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database").map((d) => `${d.name} → ${d.entity ?? "-"}`);
+    expect(rows).toEqual(["Order.objects.filter(paid=True).first → Order", "Order.objects.filter → Order", "User.query.filter_by → User", "orders.objects.all → -"]);
+  });
+
   it("leaves interpreters, strings, XML trees and arrays alone", async () => {
     // code-scalpel: every one of these was a "database" access.
     expect(await dbCallsOf([

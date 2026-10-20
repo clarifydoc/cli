@@ -444,10 +444,10 @@ describe("clarifydoc MCP tools — data tier", () => {
   });
 
   it("groups route/screen → data-effect flows by entry point", async () => {
-    const { server, store } = serverFor("sample-ruby-web");
+    const { server, store } = serverFor("sample-backend");
     const loaded = await store.load();
     const flows = loaded.summary.dataFlows ?? [];
-    expect(flows.length, "ruby fixture should carry data flows").toBeGreaterThan(0);
+    expect(flows.length, "the backend fixture should carry data flows").toBeGreaterThan(0);
 
     const { text } = await call(server, "clarifydoc_data_flows");
     expect(text).toContain("# Data flows —");

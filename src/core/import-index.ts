@@ -279,6 +279,8 @@ const NON_ENTITY_ROOTS = new Set([
  */
 function entitySegment(callName: string): string | null {
   if (!callName) return null;
+  // A display label (`ADO.NET: ExecuteScalar`, `Settings: GetSetting`) names the API, not a call chain.
+  if (/^[\w.]+:\s/.test(callName)) return null;
   const chain = callName.split(/[([<]/)[0]!; // drop args/generics
   const parts = chain.split(".").map((p) => p.trim()).filter(Boolean);
   if (parts.length >= 3) {

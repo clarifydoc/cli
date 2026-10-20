@@ -185,3 +185,25 @@ describe("EF through a member holding the context", () => {
     expect(rows.map((d) => `${d.name} ${d.entity ?? "-"}`)).toEqual(expect.arrayContaining(["EF: SingleOrDefaultAsync CatalogItems"]));
   });
 });
+
+describe("C# raw SQL — the table a command runs against", () => {
+  it("reads an ADO.NET command's text, set or constructed, and Dapper's SQL argument", async () => {
+    const rows = (await dbSourcesOf(`    using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT body FROM notes WHERE id = $id";
+    var body = cmd.ExecuteScalar();
+    cmd.CommandText = @"UPDATE notes SET body = ""x""";
+    cmd.ExecuteNonQuery();
+    var deleteCommand = new SqlCommand("DELETE FROM audit_log", conn);
+    deleteCommand.ExecuteNonQuery();
+    var builtCommand = new SqlCommand(sql, conn);
+    builtCommand.ExecuteReader();
+    var n = await connection.QueryAsync<Order>("SELECT * FROM orders");`)).map((d) => `${d.name} ${d.entity ?? "-"} ${d.access ?? "-"}`);
+    expect(rows).toEqual([
+      "ADO.NET: ExecuteScalar notes read",
+      "ADO.NET: ExecuteNonQuery notes write",
+      "ADO.NET: ExecuteNonQuery audit_log write",
+      "ADO.NET: ExecuteReader - read",
+      "Dapper: QueryAsync orders read",
+    ]);
+  });
+});

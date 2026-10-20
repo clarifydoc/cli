@@ -2,6 +2,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { DataSourceInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
+import { tableFrom } from "../shared/sql-string-sources.js";
 import { csharpCallClient } from "./http-clients.js";
 import { csharpResponseReads } from "./response-reads.js";
 
@@ -383,10 +384,13 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     if (DAPPER_METHODS.has(method) &&
         (root === "connection" || root === "_connection" || root === "conn" ||
          /Connection$/.test(root))) {
+      const sql = extractFirstStringArg(node);
+      const hit = sql ? tableFrom(sql) : null;
       sources.push(this.ds({
         kind: "database",
         name: `Dapper: ${method}`,
-        target: extractFirstStringArg(node),
+        target: sql,
+        ...(hit ? { entity: hit.table } : {}),
         ...access(method, DAPPER_ACCESS),
         line: node.startPosition.row + 1,
       }));
@@ -398,10 +402,12 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         (root === "cmd" || root === "command" || /Command$/.test(root) ||
          root === "connection" || /Connection$/.test(root) ||
          root === "adapter" || /Adapter$/.test(root))) {
+      const hit = adoCommandTable(node, receiver);
       sources.push(this.ds({
         kind: "database",
         name: `ADO.NET: ${method}`,
-        target: null,
+        target: hit?.table ?? null,
+        ...(hit ? { entity: hit.table } : {}),
         ...access(method, ADO_ACCESS),
         line: node.startPosition.row + 1,
       }));
@@ -726,6 +732,24 @@ function splitConcat(expr: string): string[] | null {
 }
 
 /** Pull the first string-literal argument from an invocation_expression's arg list. */
+/**
+ * The table an ADO.NET command runs against, from the SQL the method gave it
+ * before this call: the last `cmd.CommandText = "…"`, or the `new SqlCommand("…", conn)`
+ * it was made with. Null when the text is built at runtime or names no table.
+ */
+function adoCommandTable(call: Node, command: string): { verb: string; table: string } | null {
+  if (!/^\w+$/.test(command)) return null;
+  let body: Node | null = call.parent;
+  while (body && !/^(?:method|constructor|local_function|accessor)_declaration$|^lambda_expression$/.test(body.type)) body = body.parent;
+  if (!body) return null;
+  const before = body.text.slice(0, call.startIndex - body.startIndex);
+  const literal = String.raw`(@?"(?:[^"\\]|\\.|"")*")`;
+  const set = [...before.matchAll(new RegExp(String.raw`\b${command}\.CommandText\s*=\s*${literal}`, "g"))].pop()
+    ?? [...before.matchAll(new RegExp(String.raw`\b${command}\s*=\s*new\s+\w*Command\s*\(\s*${literal}`, "g"))].pop();
+  if (!set) return null;
+  return tableFrom(set[1]!.replace(/^@?"|"$/g, "").replace(/""/g, '"'));
+}
+
 function extractFirstStringArg(node: Node): string | null {
   const args = node.childForFieldName("arguments");
   if (!args) return null;

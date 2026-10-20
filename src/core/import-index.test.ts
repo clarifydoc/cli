@@ -158,3 +158,14 @@ describe("resolveImportSource — TypeScript ESM specifiers", () => {
     expect(resolveImportSource("src/index.ts", "./plain.js", known)).toBe("src/plain.js");
   });
 });
+
+describe("an API label is not a call chain", () => {
+  it("reads no entity from `ADO.NET: ExecuteScalar` or `Settings: GetSetting`, and still reads `User.findOne`", () => {
+    const a: FileAnalysis = {
+      ...createEmptyAnalysis("app.cs", "csharp"),
+      dataSources: ["ADO.NET: ExecuteScalar", "Cache: GetValue", "User.findOne"].map((name, i) => ({ kind: "database" as const, name, target: null, calls: [], line: i + 1 })),
+    };
+    enrichFileDataSources(a);
+    expect(a.dataSources.map((d) => d.entity)).toEqual([undefined, undefined, "User"]);
+  });
+});

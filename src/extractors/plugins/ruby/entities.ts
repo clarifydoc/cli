@@ -131,6 +131,7 @@ export class RubyEntityExtractor extends EntityExtractor {
   override reconcileProject(analyses: FileAnalysis[]): void {
     joinSchemaColumns(analyses);
     resolveChainAccesses(analyses);
+    dropServiceObjectQueries(analyses);
   }
 
   /**
@@ -764,5 +765,30 @@ function resolveChainAccesses(analyses: FileAnalysis[]): void {
       progress = true;
     }
     if (!progress) break;
+  }
+}
+
+/**
+ * `UserService.create` reads like `User.create` — a constant and an
+ * ActiveRecord verb — but a class the project declares that is not a model is
+ * a service object, and its own body holds the queries. The per-file pass
+ * cannot tell; the project can, so those rows go. A constant declared nowhere
+ * here (a model from a gem or an engine) is kept.
+ */
+function dropServiceObjectQueries(analyses: FileAnalysis[]): void {
+  const ruby = analyses.filter((a) => a.language === "ruby");
+  const models = new Set<string>();
+  const declared = new Set<string>();
+  for (const a of ruby) {
+    for (const cls of a.classes) (cls.decorators.includes("entity") ? models : declared).add(cls.name.split("::").pop()!);
+  }
+  const service = (name: string) => declared.has(name) && !models.has(name);
+  for (const a of ruby) {
+    if (!a.dataSources.some((d) => d.kind === "database" && d.entity && service(d.entity))) continue;
+    a.dataSources = a.dataSources.filter((d) => {
+      if (d.kind !== "database" || !d.entity || !service(d.entity)) return true;
+      // Only the `Constant.verb` rows, whose receiver is the class itself.
+      return d.name.slice(0, d.name.lastIndexOf(".")).split("::").pop() !== d.entity;
+    });
   }
 }

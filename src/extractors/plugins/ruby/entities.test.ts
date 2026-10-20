@@ -38,3 +38,26 @@ end`, "app/controllers/api/agents_controller.rb", "ruby");
     ]);
   });
 });
+
+describe("Ruby service objects are not models", () => {
+  it("drops `UserService.create` when the project declares UserService and it is not a model, and keeps real and undeclared models", () => {
+    const user = extractWithRegex(`class User < ApplicationRecord
+end`, "app/models/user.rb", "ruby");
+    const service = extractWithRegex(`class UserService
+  def self.create(attrs)
+    User.create(attrs)
+  end
+end`, "app/services/user_service.rb", "ruby");
+    const ctl = extractWithRegex(`class UsersController < ApplicationController
+  def create
+    UserService.create(params)
+    User.find(params[:id])
+    Billing::Invoice.where(paid: true)
+  end
+end`, "app/controllers/users_controller.rb", "ruby");
+    new RubyEntityExtractor().reconcileProject([user, service, ctl]);
+    const rows = (a: typeof ctl) => a.dataSources.filter((d) => d.kind === "database").map((d) => `${d.name} ${d.entity ?? "-"}`);
+    expect(rows(ctl)).toEqual(["User.find User", "Billing::Invoice.where Invoice"]);
+    expect(rows(service)).toEqual(["User.create User"]);
+  });
+});

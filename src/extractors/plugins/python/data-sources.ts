@@ -217,6 +217,9 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
               access ??= sqlVerbAccess(hit.verb);
             }
           }
+          // A model's manager or query attribute (`Order.objects.filter`, `User.query.filter_by`)
+          // names the model before it, not after: the segment ahead of the leaf is the manager.
+          table ??= managerModel(fnName);
           sources.push(this.ds({
             kind: "database",
             name: fnName,
@@ -258,6 +261,12 @@ const PY_DATASTORE_SEGMENT_RE = /(^|_)(session|db|conn|connection|cursor|cur|eng
 function relatedManager(fnName: string, leaf: string): boolean {
   return (leaf === "all" || leaf === "first" || leaf === "filter") &&
     /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*){2,}$/.test(fnName);
+}
+
+/** `Order.objects.filter(…).first` / `User.query.filter_by` → the capitalised model before the manager. */
+function managerModel(fnName: string): string | null {
+  const m = /(?:^|\.)([A-Z]\w*)\.(?:objects|query)\./.exec(fnName.replace(/\([^()]*\)/g, "()"));
+  return m ? m[1]! : null;
 }
 
 /**
