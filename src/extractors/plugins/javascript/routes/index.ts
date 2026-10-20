@@ -7,6 +7,7 @@ import { visitNestjsRoute } from "./nestjs.js";
 import { visitVueRouterRoute } from "./vue-router.js";
 import { collectTanstackCodeRoutes, visitTanstackFileRoute } from "./tanstack-router.js";
 import { mayDefineTrpc, visitTrpcRouter } from "./trpc.js";
+import { collectCdkRoutes } from "./cdk.js";
 
 /**
  * JS/TS route extraction: one shared tree walk feeding every supported
@@ -45,6 +46,8 @@ export const javascriptRouteExtractor: RouteExtractor = {
     if (facts && /\bpath\s*:/.test(sourceText)) collectRouteArrays(tree.rootNode, sourceText, facts);
 
     if (maybeTanstack) collectTanstackCodeRoutes(tree.rootNode, sourceText, tanstack);
+    // AWS CDK stacks: API Gateway routes wired to Lambdas, placed on their handlers by cdkRouteResolver.
+    collectCdkRoutes(tree.rootNode, sourceText, facts);
 
     return [...express, ...reactRouter, ...nestjs, ...vueRouter, ...tanstack, ...trpc];
   },

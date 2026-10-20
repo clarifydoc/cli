@@ -26,6 +26,10 @@ describe.skipIf(!existsSync(fixture))("sample-serverless", () => {
     const routes = s.routeMap.map((r) => `${r.httpMethod ?? "ANY"} ${r.path} ${r.filePath} ${r.handler}`);
     expect(routes.sort()).toEqual([
       "ANY /legacy/{proxy+} users-service/serverless.yml bin/legacy",
+      "GET /orders cdk-app/lambda/orders.ts list",
+      "GET /orders/{id} cdk-app/src/handlers/get-order.ts handler",
+      "GET /reports cdk-app/py/report.py main",
+      "POST /reports cdk-app/py/report.py main",
       "GET /greet/{name} sam-java/HelloWorldFunction/src/main/java/helloworld/App.java App.handleRequest",
       "GET /hello sam-app/hello_world/app.py lambda_handler",
       "GET /users users-service/src/handlers/users.ts list",

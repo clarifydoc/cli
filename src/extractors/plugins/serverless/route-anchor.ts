@@ -1,11 +1,8 @@
-import type { FileAnalysis, FunctionInfo, RouteInfo } from "../../../types/analysis.js";
+import type { FileAnalysis, RouteInfo } from "../../../types/analysis.js";
 import type { ProjectContext } from "../../../types/project.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
+import { lambdaClassHandler, lambdaModuleHandler } from "../shared/lambda-handlers.js";
 
-/** The extensions a Lambda runtime loads a handler module from, in the order tried. */
-const MODULE_EXTENSIONS = [".ts", ".js", ".mjs", ".cjs", ".tsx", ".jsx", ".py", ".rb"];
-/** A bundler's output directory names the compiled copy of `src/`. */
-const BUILD_DIR_RE = /^(?:dist|build|\.build|lib|out)\//;
 
 /**
  * Serverless routes, anchored on the function that serves them.
@@ -32,7 +29,7 @@ export const serverlessHandlerAnchor: RouteResolver = {
       const dir = a.filePath.includes("/") ? a.filePath.slice(0, a.filePath.lastIndexOf("/")) : "";
       const kept: RouteInfo[] = [];
       for (const r of a.routes) {
-        const hit = r.handler ? (r.handler.includes("::") ? classHandler(r.handler, dir, code) : moduleHandler(r.handler, dir, ctx)) : null;
+        const hit = r.handler ? (r.handler.includes("::") ? lambdaClassHandler(r.handler, dir, code) : lambdaModuleHandler(r.handler, dir, ctx)) : null;
         if (!hit) {
           kept.push(r);
           continue;
@@ -46,73 +43,3 @@ export const serverlessHandlerAnchor: RouteResolver = {
     for (const [a, rows] of moved) a.routes = [...a.routes, ...rows];
   },
 };
-
-/** The function a handler names, its file, and the handler as the row now spells it. */
-interface Hit {
-  file: FileAnalysis;
-  fn: FunctionInfo;
-  handler: string;
-}
-
-const joinPath = (dir: string, rel: string): string => {
-  const parts = (dir ? `${dir}/${rel}` : rel).split("/");
-  const out: string[] = [];
-  for (const p of parts) {
-    if (p === "" || p === ".") continue;
-    if (p === "..") out.pop();
-    else out.push(p);
-  }
-  return out.join("/");
-};
-
-/** `src/handlers/users.list` → the export `list` of the module file. */
-function moduleHandler(handler: string, dir: string, ctx: ProjectContext): Hit | null {
-  const dot = handler.lastIndexOf(".");
-  if (dot <= 0) return null;
-  const module = handler.slice(0, dot);
-  const name = handler.slice(dot + 1);
-  const modules = [module];
-  if (BUILD_DIR_RE.test(module)) modules.push(module.replace(BUILD_DIR_RE, "src/"));
-  // Python names a package module with dots (`src.api.app`).
-  if (!module.includes("/") && module.includes(".")) modules.push(module.replace(/\./g, "/"));
-  for (const m of modules) {
-    const base = joinPath(dir, m);
-    for (const path of [...MODULE_EXTENSIONS.map((e) => base + e), ...MODULE_EXTENSIONS.map((e) => `${base}/index${e}`)]) {
-      const file = ctx.fileOf(path);
-      if (!file) continue;
-      // `export const list = …`, `def list`, and the `exports.list = …` / `module.exports.list = …` spellings.
-      // A renamed local export (`export { del as delete }`) stands for its local binding.
-      const local = file.exports.find((e) => e.name === name && !e.source && e.sourceName)?.sourceName;
-      const fn =
-        file.functions.find((f) => f.name === name) ??
-        file.functions.find((f) => f.name.endsWith(`exports.${name}`)) ??
-        (local ? file.functions.find((f) => f.name === local) : undefined);
-      return fn ? { file, fn, handler: fn.name } : null;
-    }
-  }
-  return null;
-}
-
-/**
- * `helloworld.App::handleRequest` (Java), `Asm::Ns.Fn::Handler` (.NET): the
- * method of the one class of that name declaring it — the ones under the
- * descriptor's directory first.
- */
-function classHandler(handler: string, dir: string, code: readonly FileAnalysis[]): Hit | null {
-  const parts = handler.split("::");
-  const method = parts.length >= 2 ? parts[parts.length - 1]! : null;
-  const written = parts[parts.length - 2]!;
-  const simple = written.slice(written.lastIndexOf(".") + 1);
-  if (!method || !simple) return null;
-  const hits: Hit[] = [];
-  for (const a of code) {
-    for (const c of a.classes) {
-      if (c.name !== simple && c.name !== written && !c.name.endsWith(`.${simple}`)) continue;
-      const fn = c.methods.find((m) => m.name === method || m.name === `${c.name}.${method}`);
-      if (fn) hits.push({ file: a, fn, handler: `${c.name}.${method}` });
-    }
-  }
-  const near = dir ? hits.filter((h) => h.file.filePath.startsWith(`${dir}/`)) : hits;
-  const pool = near.length > 0 ? near : hits;
-  return pool.length === 1 ? pool[0]! : null;
-}
