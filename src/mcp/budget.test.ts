@@ -7,10 +7,11 @@ import { buildMcpServer } from "./server.js";
 /**
  * What every session pays before its first question: the tool list and the
  * server instructions. 17,645 + 2,768 bytes when this budget was set out,
- * 22,341 + 3,328 with eighteen tools. A description that grows the total
+ * 22,341 + 3,328 with eighteen tools, 22,477 + 2,498 once the instructions
+ * stopped repeating the tool descriptions. A description that grows the total
  * past the budget has to be argued for in the commit that raises it.
  */
-const BUDGET_BYTES = 26_000;
+const BUDGET_BYTES = 25_500;
 
 afterEach(() => {
   delete process.env.CLARIFYDOC_MCP_LOG;
