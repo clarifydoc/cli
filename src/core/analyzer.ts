@@ -1597,6 +1597,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     progress.detail(`  Request input followed into other files: ${crossTaint.length}`);
   }
   const findingsWithEntries = attachFindingEntries(allSecurityIssues, allAnalyses, symbolLinks);
+  // Who pays for each performance pattern: the routes and commands that reach it.
+  const perfWithEntries = attachPatternEntries(patterns, allAnalyses, symbolLinks, allEntryPoints);
+  if (perfWithEntries > 0) progress.detail(`  Performance patterns reached from an entry point: ${perfWithEntries}`);
   // Routes that waive authentication and write stored data.
   const anonymousWrites = anonymousWriteFindings(allRoutes, dataFlows).filter((i) => !isUnauthored(i.filePath));
   if (anonymousWrites.length > 0) {
@@ -2842,7 +2845,7 @@ export function enrichLinkGraphFromComponentGraph(
 }
 
 import type { ImportInfo, RouteInfo } from "../types/analysis.js";
-import { anonymousWriteFindings, attachFindingEntries, safeMethodWriteFindings } from "./finding-entries.js";
+import { anonymousWriteFindings, attachFindingEntries, attachPatternEntries, safeMethodWriteFindings } from "./finding-entries.js";
 import { attachOsvAdvisories } from "./osv.js";
 import { readSourceRevision } from "./source-revision.js";
 import { importSarif } from "./sarif-import.js";

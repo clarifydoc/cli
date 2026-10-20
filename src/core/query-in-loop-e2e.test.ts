@@ -11,7 +11,7 @@ describe("performance patterns, end to end", () => {
     dir = await mkdtemp(join(tmpdir(), "clarifydoc-perf-"));
     const root = join(dir, "app");
     await mkdir(join(root, "src"), { recursive: true });
-    await writeFile(join(root, "package.json"), JSON.stringify({ name: "app", dependencies: { pg: "8.11.0" } }));
+    await writeFile(join(root, "package.json"), JSON.stringify({ name: "app", dependencies: { pg: "8.11.0", express: "4.19.2" } }));
     await writeFile(join(root, "src", "orders.ts"), [
       'import { Pool } from "pg";',                                            // 1
       'import { readFileSync } from "fs";',                                     // 2
@@ -33,6 +33,16 @@ describe("performance patterns, end to end", () => {
       '  return readFileSync("x", "utf8");',                                     // 18: not async: fine
       "}",                                                                      // 19
     ].join("\n"));
+    await writeFile(join(root, "src", "server.ts"), [
+      'import express from "express";',
+      'import { report } from "./orders";',
+      "const app = express();",
+      "export async function handleReport(req: any, res: any) {",
+      "  res.send(await report(req.query.ids));",
+      "}",
+      'app.get("/report", handleReport);',
+      "app.listen(3000);",
+    ].join("\n"));
     await analyze({ projectRoot: root, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
   });
   afterAll(async () => {
@@ -43,5 +53,15 @@ describe("performance patterns, end to end", () => {
     const s = await loadReportSummary(join(dir, "out"));
     const got = (s.patterns ?? []).filter((p) => p.kind === "query-in-loop" || p.kind === "blocking-in-async").map((p) => `${p.kind} ${p.name}:${p.line} ${p.confidence}`).sort();
     expect(got).toEqual(["blocking-in-async report:14 medium", "query-in-loop report:12 medium", "query-in-loop report:9 high"].sort());
+  });
+
+  it("names the route that pays for each, so a request's N+1 ranks above code nothing reaches", async () => {
+    const s = await loadReportSummary(join(dir, "out"));
+    const perf = (s.patterns ?? []).filter((p) => p.kind === "query-in-loop" || p.kind === "blocking-in-async");
+    expect(perf.length).toBe(3);
+    for (const p of perf) {
+      expect(p.role).toBe("request");
+      expect(p.entries?.[0]).toMatchObject({ kind: "route", entry: "GET /report", file: "src/server.ts" });
+    }
   });
 });

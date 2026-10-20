@@ -2217,6 +2217,26 @@ export interface PatternInfo {
   line: number;
   confidence: "high" | "medium" | "low";
   detail: string;
+  /**
+   * Performance patterns only: the API routes and named entry points (MCP tools, editor and CLI commands)
+   * whose call chain reaches the function holding it, nearest first, over resolved links
+   * (core/finding-entries.ts). What decides whether it costs every request or one command run.
+   */
+  entries?: PatternEntry[];
+  /** What pays for it: `request` when an API route reaches it, else `command` when a named entry point does. */
+  role?: "request" | "command";
+}
+
+/** An entry point whose call chain reaches a pattern's function. */
+export interface PatternEntry {
+  kind: "route" | EntryPointInfo["kind"];
+  /** `GET /orders` for a route; the tool, command id or subcommand otherwise. */
+  entry: string;
+  /** The file that declares the route or registers the entry point. */
+  file: string;
+  /** Calls from the entry to the pattern's function. */
+  distance: number;
+  confidence: Confidence;
 }
 
 export type SecuritySeverity = "critical" | "high" | "medium" | "low";

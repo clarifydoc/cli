@@ -8,7 +8,7 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import type { McpTool } from "../protocol.js";
 import { describeRun, type LoadedAnalysis } from "../store.js";
-import type { ProjectAnalysis, ProjectDependency } from "../../types/analysis.js";
+import type { PatternInfo, ProjectAnalysis, ProjectDependency } from "../../types/analysis.js";
 import {
   ago,
   bulletList,
@@ -475,6 +475,7 @@ type HealthCategory =
   | "hotspots"
   | "suggestions"
   | "patterns"
+  | "performance"
   | "unused"
   | "dead-code"
   | "concerns"
@@ -489,6 +490,7 @@ const HEALTH_CATEGORIES: readonly HealthCategory[] = [
   "hotspots",
   "suggestions",
   "patterns",
+  "performance",
   "unused",
   "dead-code",
   "concerns",
@@ -496,6 +498,11 @@ const HEALTH_CATEGORIES: readonly HealthCategory[] = [
   "dependencies",
   "docs",
 ];
+
+/** Patterns that cost time on the path that runs them. */
+function isPerformancePattern(p: PatternInfo): boolean {
+  return p.kind === "query-in-loop" || p.kind === "blocking-in-async";
+}
 
 /**
  * How many findings each health category holds, unfiltered.
@@ -513,6 +520,7 @@ function categoryCounts(summary: ProjectAnalysis): Array<[HealthCategory, number
     ["hotspots", (summary.hotspots ?? []).length],
     ["suggestions", (summary.suggestions ?? []).length],
     ["patterns", (summary.patterns ?? []).length],
+    ["performance", (summary.patterns ?? []).filter(isPerformancePattern).length],
     ["unused", (summary.unusedFiles ?? []).length],
     ["dead-code", (summary.deadCode?.files.length ?? 0) + (summary.deadCode?.exports.length ?? 0) + (summary.deadCode?.unusedImportCount ?? 0)],
     ["concerns", (summary.responsibilityProfiles ?? []).filter((r) => r.concernCount >= 2).length],
@@ -696,11 +704,11 @@ export function healthTool(ctx: ToolContext): McpTool {
     title: "Code health findings",
     description:
       "The project's health score and the findings behind it: security issues, architecture layer violations, " +
-      "high-complexity functions, duplicate code, churn×complexity hotspots, dead code (files no entry point reaches, " +
-      "exports nothing imports, unused generated output), detected " +
-      "patterns, files that mix the most concerns (database + http + queue + auth …), the composite refactor " +
-      "pressure ranking (where to refactor first, with drivers and confidence) and actionable suggestions. " +
-      "Call with no category for the summary, then drill into one.",
+      "high-complexity functions, duplicate code, churn×complexity hotspots, dead code (unreached files, unimported " +
+      "exports, unused generated output), patterns, performance (ranked by who pays), " +
+      "files that mix the most concerns (database, http, queue, auth), the refactor pressure ranking (where " +
+      "to refactor first, with drivers and confidence) and actionable suggestions. " +
+      "Call with no category for the summary, then drill in.",
     inputSchema: {
       type: "object",
       properties: {
@@ -977,6 +985,32 @@ export function healthTool(ctx: ToolContext): McpTool {
                 rows,
                 limit,
                 (p) => `${p.kind}: ${p.name} (${loc(p.filePath, p.line)}) [${p.confidence}] ${p.detail}`,
+                { offset },
+              ),
+            ]),
+          };
+        }
+        case "performance": {
+          // Most expensive first: what every request pays, then what a command run pays, then the rest.
+          const weight = (p: PatternInfo) => (p.role === "request" ? 0 : p.role === "command" ? 1 : 2);
+          const rows = (summary.patterns ?? [])
+            .filter((p) => isPerformancePattern(p) && inFile(p.filePath))
+            .sort((a, b) => weight(a) - weight(b) || (a.entries?.[0]?.distance ?? 99) - (b.entries?.[0]?.distance ?? 99));
+          if (rows.length === 0) return { text: noFindings(summary, category, filters) };
+          const byRole = tally(rows, (p) => p.role ?? "no entry found");
+          return {
+            text: joinLines([
+              `# Performance findings (${rows.length})`,
+              `by who pays: ${countMap(byRole)}`,
+              ...bulletList(
+                rows,
+                limit,
+                (p) => {
+                  const reach = p.entries?.length
+                    ? `\n    reached from ${p.entries.map((e) => `${e.kind === "route" ? "" : `${e.kind} `}${e.entry} (${plural(e.distance, "call")})`).join(", ")}`
+                    : "";
+                  return `${p.kind}: ${p.name} (${loc(p.filePath, p.line)}) [${p.confidence}] ${p.detail}${reach}`;
+                },
                 { offset },
               ),
             ]),

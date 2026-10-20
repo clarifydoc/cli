@@ -1,4 +1,4 @@
-import type { Confidence, DataFlowPath, FileAnalysis, RouteInfo, SecurityIssue, SymbolLink } from "../types/analysis.js";
+import type { Confidence, DataFlowPath, EntryPointInfo, FileAnalysis, PatternEntry, PatternInfo, RouteInfo, SecurityIssue, SymbolLink } from "../types/analysis.js";
 import { buildSymbolAdjacency, edgeKey, fileOf, keyOf } from "./symbol-graph.js";
 import { innermostAt, spansOf } from "./api-route-symbol-links.js";
 
@@ -41,51 +41,118 @@ export function attachFindingEntries(
     }
   }
   if (apiRoutes.size === 0) return 0;
-  const byFile = new Map(analyses.map((a) => [a.filePath, a]));
-  const spanCache = new Map<string, ReturnType<typeof spansOf>>();
-  const entriesFrom = new Map<string, NonNullable<SecurityIssue["entries"]>>();
+  const entryOf = (key: string): Omit<PatternEntry, "distance" | "confidence"> | undefined =>
+    apiRoutes.has(key) ? { kind: "route", entry: key.slice(key.indexOf("::") + 2 + "route:".length), file: fileOf(key) } : undefined;
+  const walk = entryWalker(analyses, reverse, confidence, entryOf);
   let attached = 0;
   for (const issue of sinks) {
-    const a = byFile.get(issue.filePath);
-    if (!a) continue;
-    let spans = spanCache.get(a.filePath);
-    if (!spans) spanCache.set(a.filePath, (spans = spansOf(a)));
-    const at = innermostAt(spans, issue.line);
-    if (!at) continue;
-    const start = keyOf(issue.filePath, at.symbol);
-    let entries = entriesFrom.get(start);
-    if (!entries) {
-      entries = [];
-      const dist = new Map([[start, 0]]);
-      const queue = [start];
-      for (let qi = 0; qi < queue.length && entries.length < MAX_ENTRIES; qi++) {
-        const cur = queue[qi]!;
-        const d = dist.get(cur)!;
-        const symbol = cur.slice(cur.indexOf("::") + 2);
-        if (apiRoutes.has(cur)) {
-          entries.push({
-            route: symbol.slice("route:".length),
-            file: fileOf(cur),
-            distance: d,
-            confidence: (d <= 1 ? "EXTRACTED" : "INFERRED") as Confidence,
-          });
-          continue;
-        }
-        if (d >= MAX_HOPS) continue;
-        for (const caller of reverse.get(cur) ?? []) {
-          if (dist.has(caller) || confidence.get(edgeKey(caller, cur)) === "AMBIGUOUS") continue;
-          dist.set(caller, d + 1);
-          queue.push(caller);
-        }
-      }
-      entriesFrom.set(start, entries);
-    }
+    const entries = walk(issue.filePath, issue.line);
     if (entries.length > 0) {
-      issue.entries = entries;
+      issue.entries = entries.map((e) => ({ route: e.entry, file: e.file, distance: e.distance, confidence: e.confidence }));
       attached++;
     }
   }
   return attached;
+}
+
+/** Patterns that cost time on the path that runs them. */
+const PERFORMANCE_PATTERNS: ReadonlySet<PatternInfo["kind"]> = new Set(["query-in-loop", "blocking-in-async"]);
+
+/**
+ * Who pays for each performance pattern: the API routes and named entry
+ * points (MCP tools, editor and CLI commands that name their handler) whose
+ * call chain reaches the function holding it, nearest first, over resolved
+ * links only. A query per loop pass behind `GET /orders` costs every request;
+ * the same loop in a CLI subcommand costs one run, and in code nothing reaches
+ * it may cost nothing. `role` says which: `request` when a route reaches it,
+ * else `command`; absent when no entry was found within reach.
+ *
+ * Sets `PatternInfo.entries` / `role`; returns how many patterns got one.
+ */
+export function attachPatternEntries(
+  patterns: PatternInfo[],
+  analyses: readonly FileAnalysis[],
+  symbolLinks: readonly SymbolLink[],
+  entryPoints: ReadonlyArray<EntryPointInfo & { filePath: string }> = [],
+): number {
+  const perf = patterns.filter((p) => PERFORMANCE_PATTERNS.has(p.kind));
+  if (perf.length === 0) return 0;
+  const { reverse, confidence } = buildSymbolAdjacency(symbolLinks);
+  const entryAt = new Map<string, Omit<PatternEntry, "distance" | "confidence">>();
+  for (const a of analyses) {
+    for (const r of a.routes ?? []) {
+      if (r.kind !== "api") continue;
+      const label = `${r.httpMethod ?? "USE"} ${r.path}`;
+      entryAt.set(keyOf(a.filePath, `route:${label}`), { kind: "route", entry: label, file: a.filePath });
+    }
+  }
+  // A registration that names its handler, found among the registering file's own functions.
+  const spansByFile = new Map(analyses.map((a) => [a.filePath, spansOf(a)]));
+  for (const ep of entryPoints) {
+    if (!ep.handler) continue;
+    const span = (spansByFile.get(ep.filePath) ?? []).find((s) => s.symbol === ep.handler || s.symbol.endsWith(`.${ep.handler}`));
+    if (!span) continue;
+    const key = keyOf(ep.filePath, span.symbol);
+    if (!entryAt.has(key)) entryAt.set(key, { kind: ep.kind, entry: ep.name, file: ep.filePath });
+  }
+  if (entryAt.size === 0) return 0;
+  const walk = entryWalker(analyses, reverse, confidence, (key) => entryAt.get(key));
+  let attached = 0;
+  for (const p of perf) {
+    const entries = walk(p.filePath, p.line);
+    if (entries.length === 0) continue;
+    p.entries = entries;
+    p.role = entries.some((e) => e.kind === "route") ? "request" : "command";
+    attached++;
+  }
+  return attached;
+}
+
+/**
+ * Breadth-first back from the function holding a line, along callers, to the
+ * entries `entryOf` recognises — never past one, never over an AMBIGUOUS
+ * edge, at most MAX_HOPS calls and MAX_ENTRIES entries. Memoized per function.
+ */
+function entryWalker(
+  analyses: readonly FileAnalysis[],
+  reverse: ReturnType<typeof buildSymbolAdjacency>["reverse"],
+  confidence: ReturnType<typeof buildSymbolAdjacency>["confidence"],
+  entryOf: (key: string) => Omit<PatternEntry, "distance" | "confidence"> | undefined,
+): (filePath: string, line: number) => PatternEntry[] {
+  const byFile = new Map(analyses.map((a) => [a.filePath, a]));
+  const spanCache = new Map<string, ReturnType<typeof spansOf>>();
+  const entriesFrom = new Map<string, PatternEntry[]>();
+  return (filePath, line) => {
+    const a = byFile.get(filePath);
+    if (!a) return [];
+    let spans = spanCache.get(a.filePath);
+    if (!spans) spanCache.set(a.filePath, (spans = spansOf(a)));
+    const at = innermostAt(spans, line);
+    if (!at) return [];
+    const start = keyOf(filePath, at.symbol);
+    const known = entriesFrom.get(start);
+    if (known) return known;
+    const entries: PatternEntry[] = [];
+    const dist = new Map([[start, 0]]);
+    const queue = [start];
+    for (let qi = 0; qi < queue.length && entries.length < MAX_ENTRIES; qi++) {
+      const cur = queue[qi]!;
+      const d = dist.get(cur)!;
+      const entry = entryOf(cur);
+      if (entry) {
+        entries.push({ ...entry, distance: d, confidence: (d <= 1 ? "EXTRACTED" : "INFERRED") as Confidence });
+        continue;
+      }
+      if (d >= MAX_HOPS) continue;
+      for (const caller of reverse.get(cur) ?? []) {
+        if (dist.has(caller) || confidence.get(edgeKey(caller, cur)) === "AMBIGUOUS") continue;
+        dist.set(caller, d + 1);
+        queue.push(caller);
+      }
+    }
+    entriesFrom.set(start, entries);
+    return entries;
+  };
 }
 
 /** Methods that change state. */

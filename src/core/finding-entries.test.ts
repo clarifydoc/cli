@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { attachFindingEntries } from "./finding-entries.js";
-import type { FileAnalysis, SecurityIssue, SymbolLink } from "../types/analysis.js";
+import { attachFindingEntries, attachPatternEntries } from "./finding-entries.js";
+import type { FileAnalysis, PatternInfo, SecurityIssue, SymbolLink } from "../types/analysis.js";
 
 const fns = (filePath: string, ...defs: Array<[string, number, number]>): FileAnalysis =>
   ({ filePath, functions: defs.map(([name, line, endLine]) => ({ name, line, endLine })), classes: [] }) as unknown as FileAnalysis;
@@ -30,6 +30,45 @@ describe("attachFindingEntries", () => {
     expect(issues[0]!.entries).toEqual([{ route: "POST /search", file: "routes.ts", distance: 2, confidence: "INFERRED" }]);
     // Only input sinks are traced.
     expect(issues[1]!.entries).toBeUndefined();
+  });
+});
+
+describe("attachPatternEntries", () => {
+  const loop = (filePath: string, line: number, name: string): PatternInfo => ({
+    kind: "query-in-loop", name, filePath, line, confidence: "high", detail: "queries Order once per pass",
+  });
+
+  it("says which routes and commands pay for a performance pattern, and ranks a request first", () => {
+    const routes = {
+      ...fns("routes.ts", ["list", 3, 9]),
+      routes: [{ path: "/orders", httpMethod: "GET", kind: "api", handler: "list", line: 3, calls: [], middleware: [] }],
+    } as unknown as FileAnalysis;
+    const patterns = [
+      loop("repo.ts", 12, "loadAll"),
+      loop("repo.ts", 32, "rebuild"),
+      loop("repo.ts", 52, "orphan"),
+      { kind: "god-object", name: "Repo", filePath: "repo.ts", line: 12, confidence: "low", detail: "" } as PatternInfo,
+    ];
+    const n = attachPatternEntries(
+      patterns,
+      [fns("repo.ts", ["loadAll", 10, 20], ["rebuild", 30, 40], ["orphan", 50, 60]), routes, fns("cli.ts", ["reindex", 1, 9])],
+      [
+        link("routes.ts", "route:GET /orders", "routes.ts", "list"),
+        link("routes.ts", "list", "repo.ts", "loadAll"),
+        link("cli.ts", "reindex", "repo.ts", "rebuild"),
+      ],
+      [{ kind: "cli-command", name: "reindex", handler: "reindex", line: 2, filePath: "cli.ts" }],
+    );
+    expect(n).toBe(2);
+    expect(patterns[0]!.role).toBe("request");
+    expect(patterns[0]!.entries).toEqual([{ kind: "route", entry: "GET /orders", file: "routes.ts", distance: 2, confidence: "INFERRED" }]);
+    expect(patterns[1]!.role).toBe("command");
+    expect(patterns[1]!.entries).toEqual([{ kind: "cli-command", entry: "reindex", file: "cli.ts", distance: 1, confidence: "EXTRACTED" }]);
+    // Nothing reaches it: no entry, no role — not "unreached", which a missed link would also look like.
+    expect(patterns[2]!.entries).toBeUndefined();
+    expect(patterns[2]!.role).toBeUndefined();
+    // Only performance patterns are traced.
+    expect(patterns[3]!.entries).toBeUndefined();
   });
 });
 
