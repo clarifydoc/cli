@@ -1,3 +1,4 @@
+import { goRouterFnResolver } from "./router-fn-resolver.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
@@ -23,7 +24,7 @@ const GO_BUILTINS: ReadonlySet<string> = new Set<string>([
 export const goMeta: LanguagePluginMeta = {
   securityRules: GO_SECURITY_RULES,
   // Huma operations get the base their API is served under (huma-resolver.ts).
-  routeResolvers: [humaBaseResolver],
+  routeResolvers: [humaBaseResolver, goRouterFnResolver],
   // Dead-code reachability (see reachability.ts).
   reachability: goReachability,
   // Go has no grammar here, so its control flow is read off the source. The

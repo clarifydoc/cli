@@ -81,7 +81,7 @@ export const goSpec: RegexLangSpec = {
   importPatterns: [],
   extractImports: extractGoImports,
 
-  extractRoutes: (lines, _classes, _file, _fns, facts) => [...extractGoRoutes(lines), ...extractHumaRoutes(lines, facts)],
+  extractRoutes: (lines, _classes, _file, _fns, facts) => [...extractGoRoutes(lines, facts), ...extractHumaRoutes(lines, facts)],
   extractDataSources: (lines) => extractGoDataSources(lines),
   extractRequestAccess: extractGoRequestAccess,
 };

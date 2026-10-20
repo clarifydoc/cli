@@ -1,4 +1,4 @@
-import type { RouteInfo } from "../../../types/analysis.js";
+import type { RouteFact, RouteInfo } from "../../../types/analysis.js";
 import { buildAuth, type GuardAttr } from "../../shared/route-metadata.js";
 
 /**
@@ -34,6 +34,14 @@ import { buildAuth, type GuardAttr } from "../../shared/route-metadata.js";
  * when a role middleware lists literals, a policy otherwise. Plain
  * middleware (`gin.Logger()`, `cors.New()`) stays in `middleware` only.
  *
+ * A router can be handed to a function that registers on it
+ * (`users.Register(v1.Group("/users"))` → `func Register(r *gin.RouterGroup)`).
+ * Routes registered on such a parameter (or a group derived from it) are
+ * owned by their function (`owner: "fn:Register"`) and keep only the path the
+ * function knows; each call passing a router is a `go:router-call` fact with
+ * the prefix and guards the router carries there. `goRouterFnResolver` joins
+ * the two across files and packages.
+ *
  * The handler is kept as the expression text (`handler.ListProducts`,
  * `h.GetUser`); the project-level join resolves it and reads the handler's
  * body for what it binds (`FunctionInfo.requestAccess`), so no params are
@@ -64,6 +72,28 @@ const GROUP_RE = /(\w+)\s*:?=\s*(\w+)\.\s*Group\s*\(/;
 const SUBROUTER_RE = /(\w+)\s*:?=\s*(\w+)\.\s*PathPrefix\s*\(\s*["'`]([^"'`]*)["'`]\s*\)\s*\.\s*Subrouter\s*\(/;
 /** `r.Route("/api", func(r chi.Router) {` / `r.Group(func(r chi.Router) {` — chi nested blocks. */
 const CHI_BLOCK_RE = /(\w+)\.\s*(Route|Group)\s*\(/;
+/** A parameter typed as a router: `router *gin.RouterGroup`, `e *echo.Echo`, `r chi.Router`, `app *fiber.App`. */
+const ROUTER_PARAM_RE = /(\w+)\s+\*?(?:gin\.(?:RouterGroup|Engine|IRoutes|IRouter)|echo\.(?:Echo|Group)|chi\.(?:Router|Mux)|mux\.Router|fiber\.(?:App|Router)|http\.ServeMux)\b/g;
+/** A router built here: `r := gin.Default()`, `e := echo.New()`, `r := chi.NewRouter()`. */
+const ENGINE_RE = /(\w+)\s*:?=\s*(?:gin\.(?:Default|New)|echo\.New|chi\.NewRouter|mux\.NewRouter|fiber\.New|http\.NewServeMux)\s*\(/;
+/** Router methods that are registrations, not calls handing a router on. */
+const ROUTER_METHODS = new Set(["Group", "Use", "Route", "Mount", "With", "Handle", "HandleFunc", "Method", "PathPrefix", "Subrouter", "Methods", "Static", "StaticFS", "NoRoute", "Any", "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "Get", "Post", "Put", "Patch", "Delete", "Options", "Head"]);
+
+/** Handing a router to the standard library or a server start is serving it, not registering on it. */
+const NOT_A_REGISTRAR = /^(?:http|log|fmt|os|signal|context|errors|strings|time|slog|httptest)\.|(?:^|\.)(?:ListenAndServe(?:TLS)?|Serve(?:TLS)?|Run(?:TLS)?|Start(?:TLS)?|Listen|Handler|ServeHTTP|Shutdown)$/;
+
+export const GO_ROUTER_CALL = "go:router-call";
+
+/** A call handing a router on: who calls, whom, and what the router carries there. */
+export interface GoRouterCall {
+  callee: string;
+  /** The router's prefix at the call (`v1.Group("/users")` under `/api` → `/api/users`). */
+  prefix: string;
+  /** The router derives from the caller's own router parameter: the prefix is relative to the caller's. */
+  relative: boolean;
+  guards: GuardAttr[];
+}
+
 /** `r.Use(a, b)` — router-level middleware. */
 const USE_RE = /(\w+)\.\s*Use\s*\(/;
 
@@ -169,8 +199,10 @@ function unwrapHandler(arg: string): { handler: string | null; guards: GuardAttr
   return { handler: null, guards };
 }
 
-export function extractGoRoutes(lines: string[]): RouteInfo[] {
+export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo[] {
   const routes: RouteInfo[] = [];
+  /** Router variables in scope; those rooted at the function's router parameter map to true. */
+  const routerVars = new Map<string, boolean>();
   /** Router variable → composed path prefix (Group / PathPrefix chains). */
   const varPrefix = new Map<string, string>();
   /** Router variable → middleware chain accumulated so far (Use + Group args). */
@@ -193,6 +225,7 @@ export function extractGoRoutes(lines: string[]): RouteInfo[] {
     line: number,
     inherited: GuardAttr[],
     own: GuardAttr[],
+    recv?: string,
   ): void => {
     const route: RouteInfo = {
       path,
@@ -202,6 +235,8 @@ export function extractGoRoutes(lines: string[]): RouteInfo[] {
       calls: [],
       middleware: [...inherited, ...own].map((g) => g.text),
       line,
+      // Registered on the function's router parameter: the path is relative to wherever it is passed.
+      ...(recv && routerVars.get(recv) && currentFn ? { owner: `fn:${currentFn}` } : {}),
     };
     const auth = buildAuth(inherited.filter(isAuthGuard), own.filter(isAuthGuard));
     if (auth) route.auth = auth;
@@ -236,9 +271,21 @@ export function extractGoRoutes(lines: string[]): RouteInfo[] {
     const lineNo = i + 1;
 
     const fnDecl = line.match(/^func\s+(?:\([^)]*\)\s*)?(\w+)\s*[[(]/); // `[` — a generic func's type parameters
-    if (fnDecl) currentFn = fnDecl[1]!;
+    if (fnDecl) {
+      currentFn = fnDecl[1]!;
+      routerVars.clear();
+      const params = line.slice(fnDecl.index! + fnDecl[0].length - 1);
+      for (const m of params.slice(0, params.indexOf(")") + 1 || undefined).matchAll(ROUTER_PARAM_RE)) {
+        routerVars.set(m[1]!, true);
+        varPrefix.delete(m[1]!);
+        varGuards.delete(m[1]!);
+      }
+    }
+    const engine = line.match(ENGINE_RE);
+    if (engine) routerVars.set(engine[1]!, false);
 
     const sub = line.match(SUBROUTER_RE);
+    if (sub && routerVars.has(sub[2]!)) routerVars.set(sub[1]!, routerVars.get(sub[2]!)!);
     if (sub) {
       varPrefix.set(sub[1]!, (varPrefix.get(sub[2]!) ?? "") + sub[3]!);
       varGuards.set(sub[1]!, [...(varGuards.get(sub[2]!) ?? [])]);
@@ -248,6 +295,7 @@ export function extractGoRoutes(lines: string[]): RouteInfo[] {
       const { args } = parseArgs(line, group.index! + group[0].length - 1);
       const prefix = literal(args[0]);
       if (prefix !== null) {
+        if (routerVars.has(group[2]!)) routerVars.set(group[1]!, routerVars.get(group[2]!)!);
         varPrefix.set(group[1]!, (varPrefix.get(group[2]!) ?? "") + prefix);
         varGuards.set(group[1]!, [...(varGuards.get(group[2]!) ?? []), ...args.slice(1).map(classifyGuard)]);
       }
@@ -299,7 +347,7 @@ export function extractGoRoutes(lines: string[]): RouteInfo[] {
       // Title-case verbs must carry an absolute path — `s.Get("key")` is not a route.
       if (args.length >= 2 && path !== null && (caps || path.startsWith("/"))) {
         const { handler, guards } = splitHandler(args.slice(1));
-        push(joinPrefix(prefixOf(recv), path), method, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards]);
+        push(joinPrefix(prefixOf(recv), path), method, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
       }
     } else {
       const chiMethod = line.match(CHI_METHOD_RE);
@@ -311,7 +359,7 @@ export function extractGoRoutes(lines: string[]): RouteInfo[] {
         const path = literal(args[1]);
         if (args.length >= 3 && method && VERBS.has(method) && path !== null && path.startsWith("/")) {
           const { handler, guards } = splitHandler(args.slice(2));
-          push(joinPrefix(prefixOf(recv), path), method, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards]);
+          push(joinPrefix(prefixOf(recv), path), method, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
         }
       } else if (handle) {
         const recv = receiver(handle[1]!);
@@ -321,7 +369,7 @@ export function extractGoRoutes(lines: string[]): RouteInfo[] {
         if (go122 && VERBS.has(go122[1]!)) {
           // Go 1.22 "VERB /path" pattern strings (absolute — no group composition).
           const { handler, guards } = splitHandler(args.slice(1));
-          push(go122[2]!, go122[1]!, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards]);
+          push(go122[2]!, go122[1]!, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
         } else if (first !== null && first.startsWith("/")) {
           // gorilla / legacy net/http: path-first, verbs (if any) constrained
           // by a same-line `.Methods(...)`.
@@ -330,8 +378,31 @@ export function extractGoRoutes(lines: string[]): RouteInfo[] {
           const methodsArg = line.match(METHODS_RE)?.[1] ?? "";
           const verbs = [...methodsArg.matchAll(/["'`](\w+)["'`]/g)].map((m) => m[1]!.toUpperCase());
           const own = [...withGuards, ...guards];
-          if (verbs.length > 0) for (const v of verbs) push(path, v, handler, lineNo, inheritedOf(recv), own);
-          else push(path, null, handler, lineNo, inheritedOf(recv), own);
+          if (verbs.length > 0) for (const v of verbs) push(path, v, handler, lineNo, inheritedOf(recv), own, recv);
+          else push(path, null, handler, lineNo, inheritedOf(recv), own, recv);
+        }
+      }
+      // A call handing a router on: `users.Register(v1.Group("/users"))`, `routes.Setup(r)`.
+      if (facts && routerVars.size > 0 && !chiMethod && !handle) {
+        for (const m of line.matchAll(/(?<![\w.])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)\s*\(/g)) {
+          const callee = m[1]!;
+          if (ROUTER_METHODS.has(callee.split(".").pop()!) || callee === "func" || NOT_A_REGISTRAR.test(callee)) continue;
+          const { args } = parseArgs(line, m.index! + m[0].length - 1);
+          for (const arg of args) {
+            const bare = /^&?(\w+)$/.exec(arg)?.[1];
+            const grouped = /^(\w+)\.\s*Group\s*\(\s*["'`]([^"'`]*)["'`]\s*(?:,([\s\S]*))?\)$/.exec(arg);
+            const v = bare ?? grouped?.[1];
+            if (!v || !routerVars.has(v)) continue;
+            const extra = grouped ? parseArgs(`(${grouped[3] ?? ""})`, 0).args.map(classifyGuard) : [];
+            const call: GoRouterCall = {
+              callee,
+              prefix: joinPrefix(prefixOf(v), grouped?.[2] ?? ""),
+              relative: routerVars.get(v)!,
+              guards: [...inheritedOf(v), ...extra],
+            };
+            facts.push({ kind: GO_ROUTER_CALL, line: lineNo, ...(currentFn ? { owner: currentFn } : {}), data: call });
+            break;
+          }
         }
       }
     }
