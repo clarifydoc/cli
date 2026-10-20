@@ -49,6 +49,17 @@ export const config = { all: 1, nested: { x: 2 } };`);
     ]);
   });
 
+  it("an inline object input is the procedure's body, named after it; a scalar input is none", async () => {
+    const a = await fileOf("src/post.ts", `export const postRouter = createTRPCRouter({
+  byId: publicProcedure.input(z.object({ id: z.string() })).query(() => 1),
+  remove: publicProcedure.input(z.string()).mutation(() => 1),
+});`);
+    expect(a.routes.map((r) => `${r.path} ${(r.params ?? []).map((p) => p.type).join(",") || "-"}`)).toEqual([
+      "/trpc/byId postRouter.byId.input",
+      "/trpc/remove -",
+    ]);
+  });
+
   it("leaves an Express router and a file that builds no procedure alone", async () => {
     const a = await fileOf("src/x.ts", `const router = express.Router(); const r = router({ strict: true }); const cfg = createRouter({ routes });`);
     expect(a.routes).toEqual([]);

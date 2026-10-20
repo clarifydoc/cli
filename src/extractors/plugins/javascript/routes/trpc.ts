@@ -43,7 +43,7 @@ const keyOf = (pair: Node): string | null => {
 };
 
 /** `x.input(…).use(…).query(fn)` → the verb, the handler, the builder the chain starts on, and a named `.input(schema)`. */
-function procedureOf(value: Node): { verb: string; handler: Node | null; builder: string; input: string | null } | null {
+function procedureOf(value: Node): { verb: string; handler: Node | null; builder: string; input: string | null; inlineInput: boolean } | null {
   if (value.type !== "call_expression") return null;
   const fn = value.childForFieldName("function");
   if (fn?.type !== "member_expression") return null;
@@ -51,17 +51,22 @@ function procedureOf(value: Node): { verb: string; handler: Node | null; builder
   if (!(verb in PROCEDURE_VERBS)) return null;
   let root: Node | null = fn.childForFieldName("object");
   let input: string | null = null;
+  let inlineInput = false;
   while (root && (root.type === "call_expression" || root.type === "member_expression")) {
     if (root.type === "call_expression") {
       const f = root.childForFieldName("function");
       const arg = root.childForFieldName("arguments")?.namedChildren[0];
-      if (f?.type === "member_expression" && f.childForFieldName("property")?.text === "input" && arg?.type === "identifier") input = arg.text;
+      if (f?.type === "member_expression" && f.childForFieldName("property")?.text === "input") {
+        if (arg?.type === "identifier") input = arg.text;
+        // Only an object schema is a class (zod-schemas.ts); `z.string()` has no fields to flatten.
+        else if (arg?.type === "call_expression" && /^\w+\s*\.\s*object\s*\(/.test(arg.text)) inlineInput = true;
+      }
     }
     root = root.type === "call_expression" ? root.childForFieldName("function") : root.childForFieldName("object");
   }
   const builder = root?.type === "identifier" ? root.text : "";
   const handler = value.childForFieldName("arguments")?.namedChildren[0] ?? null;
-  return { verb, handler: handler && /function|arrow_function/.test(handler.type) ? handler : null, builder, input };
+  return { verb, handler: handler && /function|arrow_function/.test(handler.type) ? handler : null, builder, input, inlineInput };
 }
 
 /** Collect the procedures and mounts of one router object, recursing into nested routers. */
@@ -73,6 +78,8 @@ function collectRouter(obj: Node, owner: string, prefix: string, routes: RouteIn
     if (!key || !value) continue;
     const proc = procedureOf(value);
     if (proc) {
+      // An inline `.input(z.object(…))` is the class zod-schemas.ts names after the procedure.
+      const input = proc.input ?? (proc.inlineInput ? `${owner}.${prefix}${key}.input` : null);
       routes.push({
         path: `${TRPC_PREFIX}${prefix}${key}`,
         httpMethod: PROCEDURE_VERBS[proc.verb]!,
@@ -83,7 +90,7 @@ function collectRouter(obj: Node, owner: string, prefix: string, routes: RouteIn
         line: pair.startPosition.row + 1,
         owner,
         // `.input(createPost)`: the request is the schema's type (a zod schema is a class, zod-schemas.ts).
-        ...(proc.input ? { params: [{ name: "input", type: proc.input, binding: "body" as const, inferred: true }] } : {}),
+        ...(input ? { params: [{ name: "input", type: input, binding: "body" as const, inferred: true }] } : {}),
       });
       continue;
     }

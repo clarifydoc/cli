@@ -33,6 +33,19 @@ const notASchema = makeThing({ a: 1 });`);
     ]);
   });
 
+  it("names a tRPC procedure's inline input after the procedure", async () => {
+    const classes = await schemasOf(`import { z } from "zod";
+export const postRouter = createTRPCRouter({
+  byId: publicProcedure.input(z.object({ id: z.string() })).query(({ input }) => get(input.id)),
+  admin: { purge: protectedProcedure.input(z.object({ before: z.date() })).mutation(() => purge()) },
+  count: publicProcedure.input(z.string()).query(() => 1),
+});`);
+    expect(classes.map((c) => `${c.name}: ${c.properties.map((p) => `${p.name}:${p.type}`).join(", ")}`)).toEqual([
+      "postRouter.byId.input: id:string",
+      "postRouter.admin.purge.input: before:Date",
+    ]);
+  });
+
   it("reads nothing in a file that does not import zod", async () => {
     expect(await schemasOf(`const z = lib; export const s = z.object({ a: z.string() });`)).toEqual([]);
   });

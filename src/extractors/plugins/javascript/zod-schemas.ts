@@ -18,7 +18,10 @@ import { stripQuotes } from "../../shared/node-helpers.js";
  * `'admin' | 'user'`, `addressSchema`, `string[]` — and `isRequired` unless
  * the field is `.optional()`/`.nullish()`/has a `.default()`. A nested
  * `z.object` field is a class of its own, `createUser_address`, and
- * `base.extend({ … })` a class that extends `base`. The
+ * `base.extend({ … })` a class that extends `base`. An inline schema a tRPC
+ * procedure takes (`byId: publicProcedure.input(z.object({ id: z.string() }))`
+ * in `postRouter`) is named after the procedure, `postRouter.byId.input`, the
+ * name `routes/trpc.ts` gives the procedure's body parameter. The
  * request-schema pass then flattens a body typed by the schema's name with
  * the TypeScript hooks, as it does any class. Only a schema bound to a name
  * (`const x = z.object(…)`, possibly `.strict()`ed, or `y.extend(…)`) is read;
@@ -158,6 +161,28 @@ function objectLiteralOf(value: Node, ns: ReadonlySet<string>): Node | null {
   return obj?.type === "object" ? obj : null;
 }
 
+/**
+ * `postRouter.admin.purge.input`: the procedure an inline `.input(z.object(…))`
+ * belongs to, read up through the router object's keys to the binding.
+ */
+function procedureInputName(inputCall: Node): string | null {
+  const keys: string[] = [];
+  let n: Node | null = inputCall.parent;
+  for (let i = 0; n && i < 40; i++, n = n.parent) {
+    if (n.type === "pair") {
+      const k = n.childForFieldName("key");
+      if (!k) return null;
+      keys.unshift(k.type === "string" ? stripQuotes(k.text) : k.text);
+    } else if (n.type === "variable_declarator") {
+      const owner = n.childForFieldName("name");
+      return owner?.type === "identifier" && keys.length > 0 ? `${owner.text}.${keys.join(".")}.input` : null;
+    } else if (n.type === "statement_block" || n.type === "program") {
+      return null;
+    }
+  }
+  return null;
+}
+
 /** Every `const x = z.object({ … })` in the file, as classes. */
 export function extractZodSchemas(root: Node, sourceText: string): ClassInfo[] {
   if (!sourceText.includes("zod")) return [];
@@ -165,6 +190,14 @@ export function extractZodSchemas(root: Node, sourceText: string): ClassInfo[] {
   if (ns.size === 0) return [];
   const reader = new ZodReader(ns);
   const visit = (n: Node): void => {
+    // A tRPC procedure's inline input: `.input(z.object({ … }))`.
+    if (n.type === "call_expression") {
+      const fn = n.childForFieldName("function");
+      const arg = n.childForFieldName("arguments")?.namedChildren[0];
+      const obj = fn?.type === "member_expression" && fn.childForFieldName("property")?.text === "input" && arg ? objectLiteralOf(arg, ns) : null;
+      const name = obj ? procedureInputName(n) : null;
+      if (obj && name) reader.objectClass(name, obj, n.startPosition.row + 1);
+    }
     if (n.type === "variable_declarator") {
       const name = n.childForFieldName("name");
       const value = n.childForFieldName("value");
