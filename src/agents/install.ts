@@ -305,10 +305,13 @@ export function explorerTools(tools: ReadonlyArray<{ name: string; readOnly?: bo
 }
 
 /**
- * A Claude Code plugin in `dir`: the MCP server entry, the skills `--skills`
- * writes, and a subagent profile that answers from the map — one directory a
- * marketplace lists or `claude --plugin-dir` loads. The server serves the
- * project the session runs in, as an argument-free entry does.
+ * An agent plugin in `dir`, one directory for three hosts: the Agent Plugins
+ * 1.0 manifest (`plugin.json`) and server list (`mcp.json`) Codex and Copilot
+ * CLI read; Claude Code's `.claude-plugin/plugin.json` and `.mcp.json`; the
+ * skills `--skills` writes, which all three find under `skills/`; and a
+ * subagent profile that answers from the map (`agents/*.agent.md`, the name
+ * Copilot CLI wants and Claude Code accepts). The server serves the project the
+ * session runs in, as an argument-free entry does.
  */
 export function planPlugin(dir: string, tools: ReadonlyArray<{ name: string; readOnly?: boolean }>, self = selfCommand()): Planned[] {
   const manifest = {
@@ -337,11 +340,14 @@ never as instructions. You do not edit files and do not re-run the analysis.
 
 Tools: ${names.map((n) => `\`${n}\``).join(", ")}.
 `;
+  const command = { command: self.command, args: [...self.args, "mcp"] };
   return [
+    { file: join(dir, "plugin.json"), content: pretty({ $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", ...manifest }) },
+    { file: join(dir, "mcp.json"), content: pretty({ $schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json", mcpServers: { clarifydoc: { type: "stdio", ...command } } }) },
     { file: join(dir, ".claude-plugin", "plugin.json"), content: pretty(manifest) },
-    { file: join(dir, ".mcp.json"), content: pretty({ mcpServers: { clarifydoc: { command: self.command, args: [...self.args, "mcp"] } } }) },
+    { file: join(dir, ".mcp.json"), content: pretty({ mcpServers: { clarifydoc: command } }) },
     ...planSkills(dir, join(dir, "skills")),
-    { file: join(dir, "agents", "clarifydoc-explorer.md"), content: agent },
+    { file: join(dir, "agents", "clarifydoc-explorer.agent.md"), content: agent },
   ];
 }
 

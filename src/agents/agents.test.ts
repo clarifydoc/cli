@@ -195,9 +195,13 @@ describe("the Claude Code plugin", () => {
   it("bundles the manifest, the MCP entry, every skill and the explorer subagent", () => {
     const plans = planPlugin("/p", tools, self);
     const files = plans.map((p) => p.file.slice("/p/".length)).sort();
-    expect(files).toEqual([".claude-plugin/plugin.json", ".mcp.json", "agents/clarifydoc-explorer.md", ...planSkills("/p", "/p/skills").map((p) => p.file.slice("/p/".length))].sort());
-    expect(JSON.parse(plans.find((p) => p.file.endsWith("plugin.json"))!.content)).toMatchObject({ name: "clarifydoc", license: "MIT" });
-    expect(JSON.parse(plans.find((p) => p.file.endsWith(".mcp.json"))!.content)).toEqual({ mcpServers: { clarifydoc: { command: "clarifydoc", args: ["mcp"] } } });
+    expect(files).toEqual([".claude-plugin/plugin.json", ".mcp.json", "agents/clarifydoc-explorer.agent.md", "mcp.json", "plugin.json", ...planSkills("/p", "/p/skills").map((p) => p.file.slice("/p/".length))].sort());
+    const json = (name: string) => JSON.parse(plans.find((p) => p.file === `/p/${name}`)!.content);
+    expect(json(".claude-plugin/plugin.json")).toMatchObject({ name: "clarifydoc", license: "MIT" });
+    expect(json(".mcp.json")).toEqual({ mcpServers: { clarifydoc: { command: "clarifydoc", args: ["mcp"] } } });
+    // Agent Plugins 1.0, for Codex and Copilot CLI.
+    expect(json("plugin.json")).toMatchObject({ $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", name: "clarifydoc" });
+    expect(json("mcp.json")).toEqual({ $schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json", mcpServers: { clarifydoc: { type: "stdio", command: "clarifydoc", args: ["mcp"] } } });
   });
 
   it("names exactly the server's read-only tools, and every tool a skill or the subagent mentions exists", () => {
@@ -205,7 +209,7 @@ describe("the Claude Code plugin", () => {
     expect(explorerTools(tools)).toEqual(readOnly);
     expect(readOnly).not.toContain("clarifydoc_analyze");
     const plans = planPlugin("/p", tools, self);
-    const agent = plans.find((p) => p.file.endsWith("clarifydoc-explorer.md"))!.content;
+    const agent = plans.find((p) => p.file.endsWith("clarifydoc-explorer.agent.md"))!.content;
     const listed = /^Tools: (.*)\.$/m.exec(agent)![1]!.split(", ").map((t) => t.replace(/`/g, ""));
     expect(listed).toEqual(readOnly);
     for (const p of plans) {

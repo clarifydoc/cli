@@ -813,7 +813,7 @@ program
   .option("--print", "Print what would be written instead of writing it", false)
   .option("--command <launcher>", "Start ClarifyDoc with this command in the entries and hooks written (default: the way this CLI was started)")
   .option("--no-mcp", "Write no MCP server entry — only the hooks, skills, guidance or git hooks asked for")
-  .option("--plugin <dir>", "Write a Claude Code plugin into <dir> instead: the MCP server entry, the skills and an explorer subagent")
+  .option("--plugin <dir>", "Write an agent plugin into <dir> instead (Claude Code, Codex, Copilot CLI): the MCP server entry, the skills and an explorer subagent")
   .action(async (path: string, options) => {
     const root = resolve(path);
     const { CLIENTS, applyPlans, planClaudeHooks, planGitHooks, planGuidance, planMcpConfig, planPlugin, planSkills, projectFacts, selfCommand } = await import("./agents/install.js");
