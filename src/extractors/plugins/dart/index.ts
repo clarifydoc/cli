@@ -21,6 +21,7 @@ import {
 } from "./di.js";
 import { addBodyLevelMembers, isDartInterface } from "./members.js";
 import { singularize } from "../shared/inflection.js";
+import { dartRequestBody } from "./request-body.js";
 
 /**
  * Dart (and therefore Flutter) regex extraction.
@@ -209,12 +210,14 @@ function extractDartDataSources(lines: string[]): DataSourceInfo[] {
       const receiver = m[1]!;
       const verb = m[2]!;
       if (!HTTP_RECEIVER_RE.test(receiver)) continue;
+      const body = /^(?:post|put|patch)$/i.test(verb) ? dartRequestBody(lines, i, m.index! + m[0]!.length) : null;
       push({
         kind: "api-call",
         name: `${receiver}.${verb}`,
         target: firstUrlArg(line, m.index! + m[0]!.length),
         calls: [],
         line: ln,
+        ...(body ? { requestBody: body } : {}),
       });
     }
 

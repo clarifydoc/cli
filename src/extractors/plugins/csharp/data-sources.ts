@@ -5,6 +5,7 @@ import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
 import { tableFrom } from "../shared/sql-string-sources.js";
 import { csharpCallClient } from "./http-clients.js";
 import { csharpResponseReads } from "./response-reads.js";
+import { csharpJsonBody } from "./request-body.js";
 
 /**
  * C# data-source extractor — surfaces Entity Framework, Dapper, NHibernate,
@@ -117,7 +118,7 @@ const ADO_METHODS = new Set([
 const HTTP_CLIENT_METHODS = new Set([
   "GetAsync", "PostAsync", "PutAsync", "PatchAsync", "DeleteAsync",
   "SendAsync", "GetStringAsync", "GetByteArrayAsync", "GetStreamAsync",
-  "GetFromJsonAsync", "PostAsJsonAsync", "PutAsJsonAsync",
+  "GetFromJsonAsync", "PostAsJsonAsync", "PutAsJsonAsync", "PatchAsJsonAsync", "DeleteFromJsonAsync",
 ]);
 
 // ─── Message queues (RabbitMQ.Client + publisher-wrapper heuristic) ─────────
@@ -539,6 +540,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         // says which service the relative URI is relative to.
         const client = csharpCallClient(node, root);
         const reads = /^(?:Get|Send)/.test(method) ? csharpResponseReads(node) : undefined;
+        const body = /^(?:Post|Put|Patch)AsJsonAsync$/.test(method) ? csharpJsonBody(node) : null;
         sources.push(this.ds({
           kind: "api-call",
           name: method,
@@ -546,6 +548,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
           line: node.startPosition.row + 1,
           ...(client ? { baseRef: client } : {}),
           ...(reads ? { responseReads: reads } : {}),
+          ...(body ? { requestBody: body } : {}),
         }));
       }
       return;

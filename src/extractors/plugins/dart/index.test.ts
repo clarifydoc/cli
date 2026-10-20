@@ -238,3 +238,31 @@ describe("Flutter closure handlers", () => {
     expect(fn("<onTap@10>")?.calls.map((c) => c.name)).toContain("context.pushRoute");
   });
 });
+
+describe("dartSpec — request bodies", () => {
+  it("states the map package:http's jsonEncode and Dio's data send, across lines and through a local", () => {
+    const rows = dataSources(`
+      Future<void> save(String name) async {
+        await http.post(
+          Uri.parse('https://api.example.com/users'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'name': name, 'age': 3, 'tags': ['a'], 'address': {'city': 'x'}}),
+        );
+        final payload = {
+          'title': 'hello',
+          'done': false,
+          ...extra,
+        };
+        await dio.put('/api/todos/1', data: payload);
+        await dio.post('/api/ping');
+        await dio.get('/api/todos', queryParameters: {'page': 1});
+      }
+    `).filter((d) => d.kind === "api-call").map((d) => [d.name, d.requestBody ?? null]);
+    expect(rows).toEqual([
+      ["http.post", { type: "object", properties: { name: {}, age: { type: "integer" }, tags: { type: "array", items: { type: "string" } }, address: { type: "object", properties: { city: { type: "string" } } } } }],
+      ["dio.put", { type: "object", properties: { title: { type: "string" }, done: { type: "boolean" } }, additionalProperties: true }],
+      ["dio.post", null],
+      ["dio.get", null],
+    ]);
+  });
+});

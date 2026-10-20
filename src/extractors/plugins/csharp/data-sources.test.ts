@@ -207,3 +207,27 @@ describe("C# raw SQL — the table a command runs against", () => {
     ]);
   });
 });
+
+describe("C# HttpClient JSON bodies", () => {
+  it("states the body an anonymous object, an object initializer or a local sends, in the camelCase the JSON helpers write", async () => {
+    const src = `namespace X;
+public class H {
+  private readonly HttpClient _http;
+  public async Task M(string name, string email) {
+    await _http.PostAsJsonAsync("/api/users", new { Name = name, Age = 3, Tags = new[] { "a" }, Address = new { City = "x" }, email });
+    await _http.PutAsJsonAsync("/api/users/1", new UpdateUser { Name = "n", Active = true, Score = 1.5 });
+    var dto = new { Title = $"t{name}" };
+    await _http.PatchAsJsonAsync("/api/x", dto);
+    await _http.PostAsJsonAsync("/api/y", someDto);
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as any, "H.cs");
+    const calls = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call").map((d) => [d.name, d.requestBody ?? null]);
+    expect(calls).toEqual([
+      ["PostAsJsonAsync", { type: "object", properties: { name: {}, age: { type: "integer" }, tags: { type: "array", items: { type: "string" } }, address: { type: "object", properties: { city: { type: "string" } } }, email: {} } }],
+      ["PutAsJsonAsync", { type: "object", properties: { name: { type: "string" }, active: { type: "boolean" }, score: { type: "number" } } }],
+      ["PatchAsJsonAsync", { type: "object", properties: { title: { type: "string" } } }],
+      ["PostAsJsonAsync", null],
+    ]);
+  });
+});
