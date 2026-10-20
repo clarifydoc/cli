@@ -99,16 +99,35 @@ export function handlerTaint(tree: Tree, spec: TaintSpec, filePath: string): Sec
 
 function taintFunction(fn: Node, params: readonly string[], spec: TaintSpec, filePath: string): SecurityIssue[] {
   const body = fn.childForFieldName("body") ?? fn;
+  type Step = { line: number; note: string };
   const stringTypes = spec.stringTypes ? new Set([...STRING_CONTAINERS, ...spec.stringTypes]) : STRING_CONTAINERS;
   const interpolations = spec.interpolationTypes ? new Set([...INTERPOLATIONS, ...spec.interpolationTypes]) : INTERPOLATIONS;
-  const tainted = new Map<string, number>(params.map((p) => [p, fn.startPosition.row + 1]));
+  const fnLine = fn.startPosition.row + 1;
+  /** The line a parameter is declared on: its name in the signature, not the function's first line (an annotation). */
+  const paramLine = (name: string): number => {
+    const find = (n: Node): Node | null => {
+      if (n.id === body.id) return null;
+      if (n.childCount === 0 ? n.text === name : (n.type === "variable_name" && n.text === name)) return n;
+      for (const c of n.children) {
+        const hit = find(c);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    return (find(fn)?.startPosition.row ?? fn.startPosition.row) + 1;
+  };
+  /** Each tainted name: where its taint comes from, and the steps that carried it there. */
+  const tainted = new Map<string, { line: number; path: Step[] }>(params.map((p) => {
+    const line = paramLine(p);
+    return [p, { line, path: [{ line, note: `request parameter ${p}` }] }];
+  }));
   const issues: SecurityIssue[] = [];
   // The line of the statement being read: a request read counts from there.
   let sourceLine = 0;
-  /** The line the taint in `text` comes from, or null when it carries none. */
-  const isTainted = (text: string): number | null => {
-    if (spec.source.test(text)) return sourceLine;
-    for (const [name, line] of tainted) if (mentions(text, name)) return line;
+  /** Where the taint in `text` comes from and how it got here, or null when it carries none. */
+  const isTainted = (text: string): { line: number; path: Step[] } | null => {
+    if (spec.source.test(text)) return { line: sourceLine, path: [{ line: sourceLine, note: "request input read here" }] };
+    for (const [name, t] of tainted) if (mentions(text, name)) return t;
     return null;
   };
 
@@ -154,8 +173,13 @@ function taintFunction(fn: Node, params: readonly string[], spec: TaintSpec, fil
       sourceLine = node.startPosition.row + 1;
       const from = spec.sanitizer.test(a.value.text) ? null : isTainted(codeText(a.value));
       for (const n of a.names) {
-        if (from !== null) tainted.set(n, from);
-        else tainted.delete(n);
+        if (from === null) {
+          tainted.delete(n);
+          continue;
+        }
+        const last = from.path[from.path.length - 1];
+        const step = { line: sourceLine, note: `${n} carries it` };
+        tainted.set(n, { line: from.line, path: last?.line === sourceLine ? [...from.path.slice(0, -1), { line: sourceLine, note: `${last.note}; ${n} carries it` }] : [...from.path, step] });
       }
       return;
     }
@@ -168,14 +192,20 @@ function taintFunction(fn: Node, params: readonly string[], spec: TaintSpec, fil
         if (!arg || spec.sanitizer.test(arg.text)) continue;
         const from = isTainted(codeText(arg));
         if (from === null) continue;
+        const line = node.startPosition.row + 1;
+        const sinkNote = `reaches ${sink.what} of ${c.callee}()`;
+        const flow = from.path[from.path.length - 1]?.line === line
+          ? [...from.path.slice(0, -1), { line, note: `${from.path[from.path.length - 1]!.note}; ${sinkNote}` }]
+          : [...from.path, { line, note: sinkNote }];
         issues.push({
           category: sink.category,
           severity: "high",
-          message: `Request input${from !== node.startPosition.row + 1 ? ` (from line ${from})` : ""} reaches ${sink.what} of ${c.callee}() unsanitized.`,
+          message: `Request input${from.line !== line ? ` (from line ${from.line})` : ""} reaches ${sink.what} of ${c.callee}() unsanitized.`,
           filePath,
-          line: node.startPosition.row + 1,
+          line,
           snippet: node.text.split("\n")[0]!.trim().slice(0, 100),
           cwe: sink.cwe,
+          ...(flow.length > 1 ? { flow } : {}),
         });
         break;
       }

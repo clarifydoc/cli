@@ -98,3 +98,23 @@ system('ls ' . $_POST['dir']);
 `, phpTaint)).toEqual(["3 sql-injection", "6 command-injection"]);
   });
 });
+
+describe("handler taint — the steps a finding carries", () => {
+  it("names the parameter or read, each assignment, and the sink", async () => {
+    const tree = await parseSource(`class C {
+  @GetMapping("/a")
+  List<User> a(@RequestParam String name) {
+    String trimmed = name.trim();
+    String sql = "SELECT * FROM users WHERE name = '" + trimmed + "'";
+    return jdbcTemplate.query(sql, mapper);
+  }
+}`, "java" as any, "C.java");
+    const [issue] = javaTaint(tree, "", "C.java");
+    expect(issue!.flow).toEqual([
+      { line: 3, note: "request parameter name" },
+      { line: 4, note: "trimmed carries it" },
+      { line: 5, note: "sql carries it" },
+      { line: 6, note: "reaches the SQL text of jdbcTemplate.query()" },
+    ]);
+  });
+});

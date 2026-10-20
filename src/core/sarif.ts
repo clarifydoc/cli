@@ -41,19 +41,19 @@ export function buildSarif(issues: readonly SecurityIssue[], toolVersion: string
     // Two identical lines in one file are two findings.
     const n = (occurrence.get(base) ?? 0) + 1;
     occurrence.set(base, n);
+    const uri = encodeURI(issue.filePath.replace(/\\/g, "/"));
+    const at = (line: number, file?: string): SarifLocation => ({ physicalLocation: { artifactLocation: { uri: file ? encodeURI(file.replace(/\\/g, "/")) : uri, uriBaseId: "%SRCROOT%" }, region: { startLine: Math.max(1, line) } } });
     return {
       ruleId: ruleIdOf(issue),
       ruleIndex: index.get(ruleIdOf(issue))!,
       level: levelOf(issue),
       message: { text: issue.cwe ? `${issue.message} (${issue.cwe})` : issue.message },
-      locations: [{
-        physicalLocation: {
-          artifactLocation: { uri: encodeURI(issue.filePath.replace(/\\/g, "/")), uriBaseId: "%SRCROOT%" },
-          region: { startLine: Math.max(1, issue.line) },
-        },
-      }],
+      locations: [at(issue.line)],
       partialFingerprints: { "clarifydocFinding/v1": `${base}:${n}` },
       properties: { severity: issue.severity },
+      ...(issue.flow && issue.flow.length > 1
+        ? { codeFlows: [{ threadFlows: [{ locations: issue.flow.map((step) => ({ location: { ...at(step.line, step.file), message: { text: step.note } } })) }] }] }
+        : {}),
     };
   });
   // Structural findings: their own rules, after the security ones.
@@ -233,7 +233,10 @@ interface SarifResult {
   locations: Array<{ physicalLocation: { artifactLocation: { uri: string; uriBaseId: string }; region: { startLine: number } } }>;
   partialFingerprints: Record<string, string>;
   properties: { severity: string };
+  /** A taint finding's path from request input to the sink, one thread in its file. */
+  codeFlows?: Array<{ threadFlows: Array<{ locations: Array<{ location: SarifLocation & { message: { text: string } } }> }> }>;
 }
+type SarifLocation = { physicalLocation: { artifactLocation: { uri: string; uriBaseId: string }; region: { startLine: number } } };
 /** The SARIF 2.1.0 log `buildSarif` writes (the subset it fills). */
 export interface SarifLog {
   $schema: string;

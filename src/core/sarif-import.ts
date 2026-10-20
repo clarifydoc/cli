@@ -45,9 +45,11 @@ interface SarifResult {
   rule?: { id?: string };
   level?: string;
   message?: { text?: string; markdown?: string };
-  locations?: Array<{ physicalLocation?: { artifactLocation?: { uri?: string; uriBaseId?: string }; region?: { startLine?: number; snippet?: { text?: string } } } }>;
+  locations?: Array<{ physicalLocation?: SarifPhysical }>;
+  codeFlows?: Array<{ threadFlows?: Array<{ locations?: Array<{ location?: { physicalLocation?: SarifPhysical; message?: { text?: string } } }> }> }>;
   properties?: Record<string, unknown>;
 }
+type SarifPhysical = { artifactLocation?: { uri?: string; uriBaseId?: string }; region?: { startLine?: number; snippet?: { text?: string } } };
 
 interface SarifRule {
   id?: string;
@@ -81,6 +83,24 @@ function relPath(uri: string, base: string | undefined, projectRoot: string): st
   const rel = isAbsolute(p) ? relative(projectRoot, p) : p.replace(/^\.\//, "");
   const posix = rel.split("\\").join("/");
   return posix.startsWith("../") || posix === ".." ? null : posix;
+}
+
+/** The first thread flow of a result, as the steps a finding carries (in-project steps only). */
+function flowOf(
+  r: SarifResult,
+  file: string,
+  rel: (uri: string, base: string | undefined) => string | null,
+  knownFiles: ReadonlySet<string>,
+): { flow?: NonNullable<SecurityIssue["flow"]> } {
+  const steps: NonNullable<SecurityIssue["flow"]> = [];
+  for (const l of r.codeFlows?.[0]?.threadFlows?.[0]?.locations ?? []) {
+    const p = l.location?.physicalLocation;
+    const uri = p?.artifactLocation?.uri;
+    const at = uri ? rel(uri, p?.artifactLocation?.uriBaseId) : null;
+    if (!at || !knownFiles.has(at)) continue;
+    steps.push({ line: Math.max(1, p?.region?.startLine ?? 1), note: (l.location?.message?.text ?? "").replace(/\s+/g, " ").slice(0, 200), ...(at !== file ? { file: at } : {}) });
+  }
+  return steps.length > 1 ? { flow: steps } : {};
 }
 
 export function importSarif(text: string, projectRoot: string, knownFiles: ReadonlySet<string>): SarifImport {
@@ -117,6 +137,7 @@ export function importSarif(text: string, projectRoot: string, knownFiles: Reado
         line: Math.max(1, loc?.region?.startLine ?? 1),
         snippet: (loc?.region?.snippet?.text ?? "").trim().slice(0, 200),
         ...(cwe ? { cwe } : {}),
+        ...flowOf(r, file, (u, b) => relPath(u, b ? bases[b] : undefined, projectRoot), knownFiles),
         tool,
         ruleId,
       });

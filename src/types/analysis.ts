@@ -2224,6 +2224,13 @@ export interface SecurityIssue {
    * Reachability, not taint. Absent when no route reaches it.
    */
   entries?: Array<{ route: string; file: string; distance: number; confidence: Confidence }>;
+  /**
+   * A taint finding's steps, source first, sink last: the request parameter
+   * or read, each assignment that carried the value, the call it reaches.
+   * `file` is set on a step in another file than the finding's (an imported
+   * tool's flow). Absent for findings that are not followed from input.
+   */
+  flow?: Array<{ line: number; note: string; file?: string }>;
   /** The tool that reported it, for a finding imported from another tool's SARIF (`semgrep`, `CodeQL`). */
   tool?: string;
   /** That tool's rule id. */
