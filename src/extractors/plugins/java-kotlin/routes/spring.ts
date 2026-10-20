@@ -1,5 +1,5 @@
 import type { Node } from "web-tree-sitter";
-import type { RouteInfo, CallInfo } from "../../../../types/analysis.js";
+import type { RouteResponseInfo, RouteInfo, CallInfo } from "../../../../types/analysis.js";
 import { stripQuotes, findChildByType, getNameFromNode } from "../../../shared/node-helpers.js";
 import { extractCalls } from "../../../shared/call-graph.js";
 import { applyRouteMeta, type GuardAttr } from "../../../shared/route-metadata.js";
@@ -246,6 +246,41 @@ export function declarationHasAnnotation(declNode: Node, name: string): boolean 
   return false;
 }
 
+// ─── Responses ────────────────────────────────────────────────────────────
+
+/** The `HttpStatus` names `@ResponseStatus` is most often given. */
+const HTTP_STATUS: Record<string, number> = {
+  OK: 200, CREATED: 201, ACCEPTED: 202, NO_CONTENT: 204, MOVED_PERMANENTLY: 301, FOUND: 302,
+  BAD_REQUEST: 400, UNAUTHORIZED: 401, FORBIDDEN: 403, NOT_FOUND: 404, CONFLICT: 409,
+};
+/** Wrappers whose type argument is the body: `ResponseEntity<User>`, `Mono<User>`, `CompletableFuture<User>`. */
+const BODY_WRAPPERS = /^(?:ResponseEntity|Mono|CompletableFuture|CompletionStage|Optional|Callable|DeferredResult|HttpEntity|Single|Maybe|Deferred)<([\s\S]+)>$/;
+
+/** A Java / Kotlin handler's declared answer: its return type (unwrapped) and `@ResponseStatus`. */
+function springResponses(method: Node): RouteResponseInfo[] | undefined {
+  let typeText = method.childForFieldName("type")?.text ?? null;
+  if (!typeText && method.type === "function_declaration") {
+    const params = method.children.findIndex((c) => c.type === "function_value_parameters");
+    typeText = method.children.slice(params + 1).find((c) => c.type === "user_type" || c.type === "nullable_type")?.text ?? null;
+  }
+  let type = typeText?.replace(/\s+/g, "") ?? null;
+  for (let i = 0; type && i < 3; i++) {
+    const m = BODY_WRAPPERS.exec(type);
+    if (!m) break;
+    type = m[1]!;
+  }
+  if (type && /^Flux<(.+)>$/.test(type)) type = `List<${/^Flux<(.+)>$/.exec(type)![1]}>`;
+  if (type && /^(?:void|Void|Unit|\?|\*|Object|Any|ResponseEntity|Mono)$/.test(type)) type = null;
+  let status: number | null = null;
+  const annotations = [...method.children, ...(method.children.find((c) => c.type === "modifiers")?.children ?? [])];
+  for (const ann of annotations) {
+    if (!isAnnotationNode(ann) || annotationSimpleName(ann) !== "ResponseStatus") continue;
+    const name = /HttpStatus\.(\w+)/.exec(ann.text)?.[1];
+    status = name ? HTTP_STATUS[name] ?? null : null;
+  }
+  return type || status !== null ? [{ status, ...(type ? { type } : {}) }] : undefined;
+}
+
 // ─── Walk ─────────────────────────────────────────────────────────────────
 
 /** Java / Kotlin: Spring Boot @GetMapping, @PostMapping, @RequestMapping */
@@ -287,8 +322,10 @@ function walkForJavaKotlinRoutes(
     const bodyCalls = body ? extractCalls(body, lang) : [];
     const methodGuards = guardsOn(node);
 
+    const responses = springResponses(node);
     const emit = (ann: Node): void => {
       for (const route of parseSpringAnnotation(ann, methodName, bodyCalls, classPrefix)) {
+        if (responses) route.responses = responses;
         applyRouteMeta(route, {
           inheritedGuards: classGuards,
           guards: methodGuards,

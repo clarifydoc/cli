@@ -1,5 +1,5 @@
 import type { Node } from "web-tree-sitter";
-import type { RouteFact, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../../types/analysis.js";
+import type { RouteFact, RouteInfo, RouteParamBinding, RouteParamInfo, RouteResponseInfo } from "../../../../types/analysis.js";
 import { findChildByType } from "../../../shared/node-helpers.js";
 import { buildAuth, splitList, type GuardAttr } from "../../../shared/route-metadata.js";
 import type { RouteExtractor } from "../../../routes/base.js";
@@ -375,8 +375,54 @@ function parseMethodRoutes(
       if (versions.deprecated.length > 0) route.deprecatedVersions = versions.deprecated;
     }
     if (params.length > 0) route.params = params;
+    const responses = actionResponses(methodNode, attrs);
+    if (responses) route.responses = responses;
     routes.push(route);
   }
+}
+
+/** `StatusCodes.Status201Created` / `201` / `HttpStatusCode.Created`. */
+const NAMED_STATUS: Record<string, number> = { OK: 200, Created: 201, Accepted: 202, NoContent: 204, BadRequest: 400, Unauthorized: 401, Forbidden: 403, NotFound: 404, Conflict: 409 };
+function statusText(text: string): number | null {
+  const m = /Status(\d{3})\w*|\b(\d{3})\b|HttpStatusCode\.(\w+)/.exec(text);
+  if (!m) return null;
+  return m[1] ? Number(m[1]) : m[2] ? Number(m[2]) : NAMED_STATUS[m[3]!] ?? null;
+}
+/** The result helpers a controller returns, by the status they send. */
+const RESULT_HELPERS: Record<string, number> = {
+  Ok: 200, Created: 201, CreatedAtAction: 201, CreatedAtRoute: 201, Accepted: 202, AcceptedAtAction: 202, NoContent: 204,
+  BadRequest: 400, Unauthorized: 401, Forbid: 403, NotFound: 404, Conflict: 409, UnprocessableEntity: 422,
+};
+const RESULT_WRAPPERS = /^(?:Task|ValueTask|ActionResult|Results)<([\s\S]+)>$/;
+
+/**
+ * What an action answers: `[ProducesResponseType(typeof(T), 201)]`, the
+ * declared return type (`Task<ActionResult<UserDto>>` → `UserDto`; an
+ * `IActionResult` says nothing), and the result helpers the body returns
+ * (`return NotFound();`, `return CreatedAtAction(…, dto);`).
+ */
+function actionResponses(method: Node, attrs: readonly Node[]): RouteResponseInfo[] | undefined {
+  const out: RouteResponseInfo[] = [];
+  for (const attr of attrs) {
+    if (attributeName(attr) !== "ProducesResponseType") continue;
+    const type = /typeof\(\s*([\w.<>,\[\]\s]+?)\s*\)/.exec(attr.text)?.[1]?.replace(/\s+/g, "");
+    const status = statusText(attr.text.replace(/typeof\([^)]*\)/, ""));
+    out.push({ status, ...(type ? { type } : {}) });
+  }
+  let type = method.childForFieldName("returns")?.text?.replace(/\s+/g, "") ?? method.childForFieldName("type")?.text?.replace(/\s+/g, "") ?? null;
+  for (let i = 0; type && i < 3; i++) {
+    const m = RESULT_WRAPPERS.exec(type);
+    if (!m) break;
+    type = m[1]!;
+  }
+  if (type && /^(?:void|Task|ValueTask|I?ActionResult|IResult|object|dynamic)$/.test(type)) type = null;
+  if (type && !out.some((r) => r.type)) out.push({ status: null, type });
+  const body = method.childForFieldName("body");
+  for (const m of (body?.text ?? "").matchAll(/\breturn\s+(?:this\.)?([A-Z]\w*)\s*\(/g)) {
+    const status = RESULT_HELPERS[m[1]!];
+    if (status !== undefined && !out.some((r) => r.status === status)) out.push({ status });
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 /** The controller base classes' own virtual hooks — overriding one makes no action. */

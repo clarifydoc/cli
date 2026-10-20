@@ -280,6 +280,9 @@ interface RouteDecorator {
   path: string;
   /** `dependencies=[…]` on the decorator. */
   guards: GuardAttr[];
+  /** `response_model=User`, `status_code=201` / `status.HTTP_201_CREATED`. */
+  responseModel: string | null;
+  statusCode: number | null;
 }
 
 /**
@@ -313,7 +316,17 @@ function routeDecorator(dec: Node): RouteDecorator | null {
     if (named !== null) path = named;
   }
   const deps = args ? keywordArg(args, "dependencies") : null;
-  return { receiver, methods, path, guards: deps ? guardsFromDependencies(deps) : [] };
+  const model = args ? keywordArg(args, "response_model") : null;
+  const code = args ? keywordArg(args, "status_code") : null;
+  const statusCode = code ? (/^\d{3}$/.test(code.text) ? Number(code.text) : Number(/HTTP_(\d{3})_/.exec(code.text)?.[1] ?? NaN)) : NaN;
+  return {
+    receiver,
+    methods,
+    path,
+    guards: deps ? guardsFromDependencies(deps) : [],
+    responseModel: model && model.text !== "None" ? model.text : null,
+    statusCode: Number.isFinite(statusCode) ? statusCode : null,
+  };
 }
 
 function joinPrefix(prefix: string, path: string): string {
@@ -346,6 +359,10 @@ function walkForPythonRoutes(node: Node, routes: RouteInfo[], routers: Map<strin
         const path = joinPrefix(router?.prefix ?? "", rd.path);
         const signature = fnDef ? signatureParams(fnDef, path) : { params: [], guards: [] };
         const params = [...signature.params, ...bodyAccessParams(fnDef, path, signature.params)];
+        // FastAPI's response: `response_model=`, else the return annotation (not a Response object), and `status_code=`.
+        const annotated = fnDef?.childForFieldName("return_type")?.text;
+        const bodyType = rd.responseModel ?? (annotated && !/^(?:None|Any|\w*Response)$/.test(annotated) ? annotated : null);
+        const responses = bodyType || rd.statusCode !== null ? [{ status: rd.statusCode, ...(bodyType ? { type: bodyType } : {}) }] : undefined;
         for (const method of rd.methods) {
           const route: RouteInfo = {
             path,
@@ -355,6 +372,7 @@ function walkForPythonRoutes(node: Node, routes: RouteInfo[], routers: Map<strin
             calls: [],
             middleware: [],
             line: node.startPosition.row + 1,
+            ...(responses ? { responses } : {}),
           };
           applyRouteMeta(route, {
             inheritedGuards: router?.guards,
