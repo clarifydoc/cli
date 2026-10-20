@@ -26,6 +26,7 @@ import { extractCsharpTopLevelLocalTypes } from "./local-types.js";
 import { preprocessCsharpScript } from "./script.js";
 import { CSHARP_SECURITY_RULES, csharpSecurityPostScan } from "./security-rules.js";
 import { csharpGrpcStub } from "../shared/grpc-stubs.js";
+import { hotChocolateResolver } from "./graphql.js";
 
 export const csharpMeta: LanguagePluginMeta = {
   securityRules: CSHARP_SECURITY_RULES,
@@ -41,7 +42,7 @@ export const csharpMeta: LanguagePluginMeta = {
   dataSources: new CSharpDataSourceExtractor(),
   entities: new CSharpEntityExtractor(),
   dispatchResolvers: [new CSharpMediatrResolver(), new CsharpUiBridgeResolver()],
-  routeResolvers: [aspnetControllerInheritance],
+  routeResolvers: [aspnetControllerInheritance, hotChocolateResolver],
   requestSchema: csharpRequestSchema,
   grpcStubService: csharpGrpcStub,
   builtinTypes: CSHARP_BUILTINS,

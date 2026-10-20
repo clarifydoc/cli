@@ -6,6 +6,7 @@ import type { RouteExtractor } from "../../../routes/base.js";
 import { extractMinimalApiRoutes, MINIMAL_API_GATE } from "./minimal-api.js";
 import { attributeDefFact, attributeUse, type CsAttrUse } from "./aspnet-attributes.js";
 import { CONVENTIONAL_ROUTE_GATE, extractConventionalPatterns, webApiVerb } from "./aspnet-conventional.js";
+import { collectHotChocolateFacts } from "../graphql.js";
 
 /**
  * ASP.NET attribute routing.
@@ -747,6 +748,8 @@ const ATTRIBUTE_CLASS_GATE = /\bclass\s+\w+Attribute\s*:/;
 export const csharpRouteExtractor: RouteExtractor = {
   languages: ["csharp"],
   extractRoutes(tree, sourceText, _filePath, facts) {
+    // HotChocolate root-type registrations (`AddQueryType<Query>()`), for hotChocolateResolver.
+    collectHotChocolateFacts(sourceText, facts);
     // Cheap gate: skip the full-tree walk for files with no route attributes.
     const minimal = MINIMAL_API_GATE.test(sourceText);
     if (
