@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtemp, mkdir, writeFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { renderHelmTemplate, collectK8sManifests } from "./deployment-k8s.js";
+import { chartDefines, renderHelmTemplate, collectK8sManifests } from "./deployment-k8s.js";
 import { composeImage, detectDeployment, isImageRef } from "./deployment.js";
 import type { SubProject } from "../types/analysis.js";
 
@@ -108,6 +108,86 @@ describe("renderHelmTemplate", () => {
 
 const sub = (id: string, name: string, root: string): SubProject =>
   ({ id, name, root, kind: "dotnet", markers: [] } as SubProject);
+
+describe("renderHelmTemplate — named templates", () => {
+  // What `helm create` writes, as written.
+  const HELPERS = `{{/*
+Expand the name of the chart.
+*/}}
+{{- define "shop.name" -}}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "shop.fullname" -}}
+{{- if .Values.fullnameOverride }}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- $name := default .Chart.Name .Values.nameOverride }}
+{{- if contains $name .Release.Name }}
+{{- .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- define "shop.chart" -}}
+{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "shop.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "shop.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{- define "shop.labels" -}}
+helm.sh/chart: {{ include "shop.chart" . }}
+{{ include "shop.selectorLabels" . }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+`;
+
+  it("reads the defines of _helpers.tpl and renders includes through them, nindent and all", () => {
+    const defines = chartDefines([HELPERS]);
+    expect([...defines.keys()]).toEqual(["shop.name", "shop.fullname", "shop.chart", "shop.selectorLabels", "shop.labels"]);
+    const chart = { name: "shop", version: "0.1.0", values: { nameOverride: "orders", fullnameOverride: "" } as any, defines };
+    const out = renderHelmTemplate([
+      "metadata:",
+      '  name: {{ include "shop.fullname" . }}',
+      "  labels:",
+      '    {{- include "shop.labels" . | nindent 4 }}',
+      "spec:",
+      "  selector:",
+      "    matchLabels:",
+      '      {{- include "shop.selectorLabels" . | nindent 6 }}',
+    ].join("\n"), chart);
+    expect(out.split("\n").filter((l) => l.trim())).toEqual([
+      "metadata:",
+      // nameOverride set, the release name a stand-in for the chart's: printf "%s-%s" of the two.
+      "  name: shop-orders",
+      "  labels:",
+      "    helm.sh/chart: shop-0.1.0",
+      "    app.kubernetes.io/name: orders",
+      "    app.kubernetes.io/instance: shop",
+      "    app.kubernetes.io/managed-by: Helm",
+      "spec:",
+      "  selector:",
+      "    matchLabels:",
+      "      app.kubernetes.io/name: orders",
+      "      app.kubernetes.io/instance: shop",
+    ]);
+    // An override is taken as written.
+    const override = renderHelmTemplate('  name: {{ include "shop.fullname" . }}', { ...chart, values: { fullnameOverride: "orders-api" } as any });
+    expect(override).toBe("  name: orders-api");
+  });
+
+  it("keeps an image built from a named template's inexact output empty", () => {
+    const defines = chartDefines(['{{- define "shop.image" -}}{{ .Release.Name }}:1{{- end }}']);
+    expect(renderHelmTemplate('image: {{ include "shop.image" . }}', { name: "shop", values: {} as any, defines })).toBe("image:");
+    const exact = chartDefines(['{{- define "shop.image" -}}reg.io/shop:{{ .Chart.Version }}{{- end }}']);
+    expect(renderHelmTemplate('image: {{ include "shop.image" . }}', { name: "shop", version: "2.0", values: {} as any, defines: exact })).toBe("image: reg.io/shop:2.0");
+  });
+});
 
 describe("k8s deployment topology", () => {
   let root: string;

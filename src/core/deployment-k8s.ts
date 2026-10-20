@@ -78,6 +78,8 @@ export interface ChartContext {
   /** Chart.yaml `appVersion` / `version`, for `.Chart.AppVersion` / `.Chart.Version`. */
   appVersion?: string;
   version?: string;
+  /** The chart's named templates (`{{ define "x.fullname" }}…{{ end }}`, mostly in `_helpers.tpl`): name → body. */
+  defines?: ReadonlyMap<string, string>;
 }
 
 /** What one expression renders to; `exact: false` when part of it is a stand-in or unknown. */
@@ -135,6 +137,10 @@ interface Scope {
   chart: ChartContext | undefined;
   /** Values path `.` stands for inside `{{ with .Values.x }}`; null when unknown (inside `range`). */
   dot: string | null | undefined;
+  /** Template variables (`$name := …`) inside a named template's body. */
+  vars?: Map<string, Rendered>;
+  /** How deep in `include`s this is: bounded, a template may include itself. */
+  depth?: number;
 }
 
 /** The value one operand names (`.Values.a.b`, `.x` under `with`); undefined when it names nothing known. */
@@ -152,6 +158,8 @@ function operandValue(w: string, scope: Scope): { value: YamlValue | undefined; 
 
 /** One operand as text: a literal, a values path, a chart field — or a stand-in for what cannot be known. */
 function renderOperand(w: string, scope: Scope): Rendered {
+  const variable = /^\$(\w+)$/.exec(w);
+  if (variable) return scope.vars?.get(variable[1]!) ?? UNKNOWN;
   if (/^".*"$/.test(w)) return { text: w.slice(1, -1).replace(/\\(.)/g, "$1"), exact: true };
   if (/^'.*'$/.test(w)) return { text: w.slice(1, -1), exact: true };
   if (/^-?\d+(?:\.\d+)?$/.test(w) || w === "true" || w === "false") return { text: w, exact: true };
@@ -161,6 +169,7 @@ function renderOperand(w: string, scope: Scope): Rendered {
   if (/^\$?\.Chart\.Version$/.test(w)) return chart?.version ? { text: chart.version, exact: true } : UNKNOWN;
   // The release name is chosen at install time: the chart name stands in for it.
   if (/^\$?\.Release\.Name$/.test(w)) return { text: chart?.name ?? "", exact: false };
+  if (/^\$?\.Release\.Service$/.test(w)) return { text: "Helm", exact: true };
   const { value, known } = operandValue(w, scope);
   if (!known) return UNKNOWN;
   if (value === undefined) return { text: "", exact: true };
@@ -208,10 +217,43 @@ function renderSegment(segment: string, piped: Rendered | null, scope: Scope): R
       let i = 0;
       return all(format.text.replace(/%[svdq]/g, () => vals[i++]?.text ?? ""));
     }
+    case "trunc": {
+      const [n, v] = args;
+      const k = Number(n?.text);
+      if (!n || !v || !Number.isFinite(k)) return UNKNOWN;
+      return all(k >= 0 ? v.text.slice(0, k) : v.text.slice(k));
+    }
+    case "nindent":
+    case "indent": {
+      const [n, v] = args;
+      const k = Number(n?.text);
+      if (!n || !v || !Number.isFinite(k)) return UNKNOWN;
+      const pad = " ".repeat(Math.max(0, k));
+      const text = v.text.split("\n").map((l) => (l ? pad + l : l)).join("\n");
+      return all(fn === "nindent" ? `\n${text}` : text);
+    }
+    case "replace": {
+      const [from, to, v] = args;
+      if (!from || !to || !v) return UNKNOWN;
+      return all(v.text.split(from.text).join(to.text));
+    }
+    case "required":
+      // `required "msg" .Values.x`: the value, when it is there.
+      return args.length === 2 && args[1]!.text ? args[1]! : UNKNOWN;
     case "include":
-    case "template":
-      // A named template's body is not evaluated: the chart name stands in (it is what `*.fullname` usually renders).
-      return { text: scope.chart?.name ?? (args[0]?.text.split(".")[0] ?? ""), exact: false };
+    case "template": {
+      // A named template the chart defines is rendered in its own scope: `.` is what the call passes.
+      const name = args[0];
+      const body = name?.exact ? scope.chart?.defines?.get(name.text) : undefined;
+      const depth = (scope.depth ?? 0) + 1;
+      if (body !== undefined && depth <= 6) {
+        const passed = rest[1];
+        const dot = passed === "." || passed === "$" ? scope.dot : passed && /^\$?\.Values\.([\w.-]+)$/.test(passed) ? passed.replace(/^\$?\.Values\./, "") : null;
+        return renderNamedTemplate(body, { chart: scope.chart, dot: passed === undefined ? undefined : dot, depth });
+      }
+      // Not defined here: the chart name stands in (it is what `*.fullname` usually renders).
+      return { text: scope.chart?.name ?? (name?.text.split(".")[0] ?? ""), exact: false };
+    }
     default:
       if (!piped && !rest.length) return renderOperand(fn, scope);
       return UNKNOWN;
@@ -230,6 +272,16 @@ function renderHelmExpr(expr: string, scope: Scope): Rendered {
 /** A condition's truth: true / false, or null when it cannot be decided from the values. */
 function decide(cond: string, scope: Scope): boolean | null {
   const w = words(cond.trim());
+  // `contains SUB S`, and a variable alone: decided on what they render to.
+  if (w.length === 3 && w[0] === "contains") {
+    const sub = renderOperand(w[1]!, scope);
+    const str = renderOperand(w[2]!, scope);
+    return sub.exact && str.exact ? str.text.includes(sub.text) : null;
+  }
+  if (w.length === 1 && /^\$\w+$/.test(w[0]!)) {
+    const v = renderOperand(w[0]!, scope);
+    return v.exact ? truthy(v.text) : null;
+  }
   const val = (x: string | undefined): YamlValue | undefined | null => {
     if (x === undefined) return null;
     if (/^".*"$|^'.*'$/.test(x)) return x.slice(1, -1);
@@ -251,6 +303,120 @@ function decide(cond: string, scope: Scope): boolean | null {
     return (a ?? "") === (b ?? "") ? w[0] === "eq" : w[0] === "ne";
   }
   return null;
+}
+
+/** A template's text split into literal text and `{{ actions }}`, with the trim markers applied. */
+function templateTokens(body: string): Array<{ text?: string; action?: string }> {
+  const out: Array<{ text?: string; action?: string }> = [];
+  const re = /\{\{(-?)\s*([\s\S]*?)\s*(-?)\}\}/g;
+  let last = 0;
+  let trimNext = false;
+  for (const m of body.matchAll(re)) {
+    let text = body.slice(last, m.index);
+    if (trimNext) text = text.replace(/^\s+/, "");
+    if (m[1]) text = text.replace(/\s+$/, "");
+    if (text) out.push({ text });
+    out.push({ action: m[2]! });
+    trimNext = !!m[3];
+    last = m.index! + m[0].length;
+  }
+  let tail = body.slice(last);
+  if (trimNext) tail = tail.replace(/^\s+/, "");
+  if (tail) out.push({ text: tail });
+  return out;
+}
+
+/**
+ * A named template's body, rendered: its text and actions in order, `if` /
+ * `else if` / `else` / `with` decided as the line renderer decides them,
+ * `range` bodies unknown, `$variables` assigned and read. Exact only when
+ * everything it printed was, and every branch on the way was decided.
+ */
+function renderNamedTemplate(body: string, scope: Scope): Rendered {
+  const vars = new Map<string, Rendered>();
+  const inner: Scope = { ...scope, vars };
+  const frames: Array<{ kind: string; active: boolean | null; taken: boolean | null }> = [];
+  let text = "";
+  let exact = true;
+  const live = () => !frames.some((f) => f.active === false);
+  for (const t of templateTokens(body)) {
+    if (t.text !== undefined) {
+      if (live()) {
+        text += t.text;
+        if (frames.some((f) => f.active === null)) exact = false;
+      }
+      continue;
+    }
+    const a = t.action!;
+    const kw = /^(if|else if|else|end|with|range|define|block)\b\s*([\s\S]*)$/.exec(a);
+    if (kw) {
+      const [, k, arg] = kw;
+      const top = frames[frames.length - 1];
+      if (k === "end") frames.pop();
+      else if (k === "else" || k === "else if") {
+        if (top) {
+          const cond = k === "else if" ? decide(arg!, inner) : true;
+          const before = top.taken;
+          top.active = before === true ? false : before === null || cond === null ? null : cond;
+          top.taken = before === true || top.active === true ? true : before === null || cond === null ? null : false;
+        }
+      } else if (k === "if" || k === "with") {
+        let d = live() ? decide(arg!, inner) : false;
+        // `contains $name .Release.Name`: decided on the stand-in's text, so one branch prints — inexactly.
+        const c = d === null ? /^contains\s+(\S+)\s+(\S+)$/.exec(arg!.trim()) : null;
+        if (c) {
+          d = renderOperand(c[2]!, inner).text.includes(renderOperand(c[1]!, inner).text);
+          exact = false;
+        }
+        frames.push({ kind: k, active: d, taken: d });
+      } else frames.push({ kind: k!, active: k === "range" ? null : false, taken: null });
+      continue;
+    }
+    if (!live()) continue;
+    const assign = /^\$(\w+)\s*:?=\s*([\s\S]+)$/.exec(a);
+    if (assign) {
+      vars.set(assign[1]!, renderHelmExpr(assign[2]!, inner));
+      continue;
+    }
+    const r = renderHelmExpr(a, inner);
+    text += r.text;
+    if (!r.exact || frames.some((f) => f.active === null)) exact = false;
+  }
+  return { text, exact };
+}
+
+/**
+ * The named templates in a chart's template files: `{{ define "name" }}`
+ * to the `{{ end }}` that closes it, counting the blocks opened inside.
+ */
+export function chartDefines(texts: readonly string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const action = /\{\{-?\s*(define|if|with|range|block|end)\b\s*("[^"]*")?[^}]*?-?\}\}/g;
+  for (const text of texts) {
+    let open: { name: string; from: number } | null = null;
+    let depth = 0;
+    for (const m of text.matchAll(action)) {
+      const kw = m[1]!;
+      if (!open) {
+        if (kw === "define" && m[2]) {
+          open = { name: m[2].slice(1, -1), from: m.index! + m[0].length };
+          depth = 0;
+        }
+        continue;
+      }
+      if (kw === "end") {
+        if (depth === 0) {
+          // The body, with the define's own trim markers: `-}}` after the name, `{{-` before its end.
+          let body = text.slice(open.from, m.index);
+          if (/-\}\}$/.test(text.slice(0, open.from))) body = body.replace(/^\s+/, "");
+          if (m[0].startsWith("{{-")) body = body.replace(/\s+$/, "");
+          if (!out.has(open.name)) out.set(open.name, body);
+          open = null;
+        } else depth--;
+      } else depth++;
+    }
+  }
+  return out;
 }
 
 /** Lines that are pure template control flow — no YAML content survives them. */
@@ -475,11 +641,22 @@ export async function collectK8sManifests(
       }
       const appVersion = asString(chartDoc.appVersion);
       const version = asString(chartDoc.version);
+      // Named templates: `_helpers.tpl` and any template file that defines one.
+      const templateFiles = await glob(["templates/**/*.{tpl,yaml,yml}"], { cwd: join(absRoot, dir), absolute: false, deep: 4 }).catch(() => [] as string[]);
+      const texts: string[] = [];
+      for (const f of templateFiles.slice(0, 200)) {
+        try {
+          const t = await readFile(join(absRoot, dir, f), "utf-8");
+          if (t.includes("define")) texts.push(t);
+        } catch { /* unreadable template */ }
+      }
+      const defines = chartDefines(texts);
       charts.set(dir, {
         name: asString(chartDoc.name) ?? dir.split("/").pop() ?? "chart",
         values,
         ...(appVersion ? { appVersion } : {}),
         ...(version ? { version } : {}),
+        ...(defines.size ? { defines } : {}),
       });
     } catch { /* unreadable chart */ }
   }
