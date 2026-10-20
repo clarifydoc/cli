@@ -9,6 +9,7 @@ import { collectTanstackCodeRoutes, visitTanstackFileRoute } from "./tanstack-ro
 import { mayDefineTrpc, visitTrpcRouter } from "./trpc.js";
 import { collectCdkRoutes } from "./cdk.js";
 import { extractGraphqlCodeFirst, mayDefineGraphqlCode } from "./graphql-code-first.js";
+import { extractInlineSdlRoutes } from "./graphql-sdl-inline.js";
 import { mayDeclareReactNavigation, visitReactNavigationScreen, visitStaticNavigator } from "./react-navigation.js";
 
 /**
@@ -60,6 +61,8 @@ export const javascriptRouteExtractor: RouteExtractor = {
     // Code-first GraphQL schemas (NestJS/TypeGraphQL resolvers, Pothos, Nexus, graphql-js): their root fields.
     const graphql: RouteInfo[] = [];
     if (mayDefineGraphqlCode(sourceText)) extractGraphqlCodeFirst(tree.rootNode, sourceText, graphql);
+    // A schema written inline (Apollo `typeDefs = gql\`type Query …\``): the same routes a `.graphql` file gives.
+    graphql.push(...extractInlineSdlRoutes(sourceText));
 
     return [...express, ...reactRouter, ...nestjs, ...vueRouter, ...tanstack, ...trpc, ...navigation, ...graphql];
   },

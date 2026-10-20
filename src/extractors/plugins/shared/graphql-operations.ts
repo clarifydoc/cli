@@ -83,6 +83,8 @@ export function extractGqlOperationCalls(sourceText: string): DataSourceInfo[] {
   GQL_TEMPLATE_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = GQL_TEMPLATE_RE.exec(sourceText)) !== null) {
+    // A schema template (Apollo `typeDefs`) declares the fields; it calls none.
+    if (/\b(?:extend\s+)?type\s+(?:Query|Mutation|Subscription)\b|\bschema\s*\{/.test(m[1]!)) continue;
     const fields = parseGqlOperationRootFields(m[1]!);
     if (fields.length === 0) continue;
     let line = 1;
@@ -101,3 +103,38 @@ export function extractGqlOperationCalls(sourceText: string): DataSourceInfo[] {
   }
   return out;
 }
+
+/**
+ * A GraphQL document file's operations (`.graphql` beside the client code,
+ * read by codegen): one api-call per root field of each `query`, `mutation`
+ * or `subscription`, at the operation's line. A schema file has none.
+ */
+export function extractGqlDocumentCalls(text: string): DataSourceInfo[] {
+  const clean = stripGqlComments(text);
+  const out: DataSourceInfo[] = [];
+  // Each top-level operation starts at depth 0 with its keyword.
+  let depth = 0;
+  for (let i = 0; i < clean.length; i++) {
+    const ch = clean[i]!;
+    if (ch === "{") depth++;
+    else if (ch === "}") depth = Math.max(0, depth - 1);
+    else if (depth === 0 && /[qms]/.test(ch) && (i === 0 || /[\s}]/.test(clean[i - 1]!))) {
+      const head = /^(query|mutation|subscription)\b[^{]*\{/.exec(clean.slice(i, i + 400));
+      if (!head) continue;
+      // The operation's text: from its keyword to the brace that closes its selection set.
+      let d = 0;
+      let end = i + head[0].length - 1;
+      for (; end < clean.length; end++) {
+        if (clean[end] === "{") d++;
+        else if (clean[end] === "}" && --d === 0) break;
+      }
+      const line = clean.slice(0, i).split("\n").length;
+      for (const field of parseGqlOperationRootFields(clean.slice(i, end + 1))) {
+        out.push({ kind: "api-call", name: "post", target: `/graphql/${field}`, calls: [], line });
+      }
+      i = end;
+    }
+  }
+  return out;
+}
+
