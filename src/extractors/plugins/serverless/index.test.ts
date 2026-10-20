@@ -37,6 +37,62 @@ functions:
   });
 });
 
+describe("path variables", () => {
+  it("reads ${self:} from the same file and keeps deploy-time values as {segments}", () => {
+    expect(rows(`service: s
+custom:
+  base: api/v1
+  prefix: \${self:custom.base}/admin
+  stages:
+    dev:
+      root: internal
+functions:
+  list:
+    handler: src/users.list
+    events:
+      - http:
+          path: \${self:custom.base}/users
+          method: get
+      - http:
+          path: \${self:custom.prefix}/users/{id}
+          method: delete
+      - http:
+          path: \${opt:stage, 'dev'}/health
+          method: get
+      - httpApi: 'GET /\${env:API_ROOT}/ping'
+      - http:
+          path: \${self:custom.stages.\${opt:stage}.root}/x
+          method: get
+      - http:
+          path: \${self:custom.missing}/y
+          method: get
+`)).toEqual([
+      "GET /api/v1/users src/users.list list",
+      "DELETE /api/v1/admin/users/{id} src/users.list list",
+      "GET /{stage}/health src/users.list list",
+      "GET /{API_ROOT}/ping src/users.list list",
+      "GET /{root}/x src/users.list list",
+      "GET /{missing}/y src/users.list list",
+    ]);
+  });
+
+  it("SAM: a !Sub path keeps its parameters as {segments}", () => {
+    expect(rows(`Transform: AWS::Serverless-2016-10-31
+Resources:
+  Fn:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.handler
+      Events:
+        Get:
+          Type: Api
+          Properties:
+            Path: !Sub '/\${Stage}/orders/{id}'
+            Method: get
+`)).toEqual(["GET /{Stage}/orders/{id} app.handler Fn"]);
+  });
+});
+
 describe("SAM template", () => {
   it("joins CodeUri to the handler, keeps a class handler as written, and reads event auth", () => {
     expect(rows(`Transform: AWS::Serverless-2016-10-31

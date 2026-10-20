@@ -37,8 +37,53 @@ const childOf = (n: SpecNode | undefined, key: string): SpecNode | undefined => 
 const valueOf = (n: SpecNode | undefined, key: string): string | null => childOf(n, key)?.value ?? null;
 
 function normalizePath(path: string): string {
-  const p = path.trim().replace(/^["']|["']$/g, "");
+  const p = path.trim().replace(/^["']|["']$/g, "").replace(/\/{2,}/g, "/");
   return p.startsWith("/") ? p : `/${p}`;
+}
+
+/**
+ * A path with the descriptor's variables read: `${self:custom.base}` is the
+ * value the same file states (`custom: { base: api/v1 }`); what is set at
+ * deploy time — `${opt:stage}`, `${env:PREFIX}`, `${ssm:…}`, a SAM `!Sub`
+ * parameter — becomes a `{stage}` segment, which a client URL matches like a
+ * path parameter. A default (`${opt:stage, 'dev'}`) is a deploy-time fallback,
+ * not the path, so it is not taken.
+ */
+function readPathVariables(path: string, root: SpecNode, depth = 0): string {
+  let text = path.trim().replace(/^["']|["']$/g, "");
+  const sub = /^!Sub\s+(.+)$/.exec(text);
+  if (sub) text = sub[1]!.trim().replace(/^["']|["']$/g, "");
+  if (!text.includes("${")) return text;
+  const read = (expr: string): string => {
+    // Innermost first: `${self:custom.${opt:stage}.base}` reads `${opt:stage}` before its outer reference.
+    const ref = readPathVariables(expr, root, depth + 1).split(",")[0]!.trim();
+    const self = /^self:([\w.-]+)$/.exec(ref);
+    if (self && depth < 3) {
+      let node: SpecNode | undefined = root;
+      for (const key of self[1]!.split(".")) node = childOf(node, key);
+      if (node?.value) return readPathVariables(node.value, root, depth + 1).replace(/^\/+|\/+$/g, "");
+    }
+    const name = ref.replace(/^[\w-]+:/, "").split(/[.:/{}]/).filter(Boolean).pop();
+    return `{${name && /^[\w-]+$/.test(name) ? name : "var"}}`;
+  };
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== "$" || text[i + 1] !== "{") {
+      out += text[i];
+      continue;
+    }
+    // The reference's own closing brace, past any nested `${…}` or `{param}`.
+    let level = 0;
+    let j = i + 1;
+    for (; j < text.length; j++) {
+      if (text[j] === "{") level++;
+      else if (text[j] === "}" && --level === 0) break;
+    }
+    if (j >= text.length) return out + "{var}";
+    out += read(text.slice(i + 2, j));
+    i = j;
+  }
+  return out;
 }
 
 function methodOf(raw: string | null): string | null {
@@ -87,12 +132,12 @@ function serverlessRoutes(root: SpecNode): RouteInfo[] {
         if (ev.value) {
           // Short forms: `http: GET users/{id}`, `httpApi: 'POST /users'`, `httpApi: '*'`.
           const m = /^\s*([A-Za-z*]+)\s+(\S+)\s*$/.exec(ev.value.replace(/^["']|["']$/g, ""));
-          if (m) out.push(route(m[2]!, methodOf(m[1]!), handler, name, ev.line));
+          if (m) out.push(route(readPathVariables(m[2]!, root), methodOf(m[1]!), handler, name, ev.line));
           continue;
         }
         const path = valueOf(ev, "path");
         if (!path) continue;
-        out.push(route(path, methodOf(valueOf(ev, "method")), handler, name, ev.line, slsAuthorizer(ev)));
+        out.push(route(readPathVariables(path, root), methodOf(valueOf(ev, "method")), handler, name, ev.line, slsAuthorizer(ev)));
       }
     }
   }
@@ -122,7 +167,7 @@ function samRoutes(root: SpecNode): RouteInfo[] {
       const path = valueOf(p, "Path");
       if (!path) continue;
       const auth = valueOf(childOf(p, "Auth"), "Authorizer") ?? defaultAuth;
-      out.push(route(path, methodOf(valueOf(p, "Method")), written, name, ev.line, auth && auth !== "NONE" ? auth : undefined));
+      out.push(route(readPathVariables(path, root), methodOf(valueOf(p, "Method")), written, name, ev.line, auth && auth !== "NONE" ? auth : undefined));
     }
   }
   return out;
