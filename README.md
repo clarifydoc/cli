@@ -541,7 +541,7 @@ ClarifyDoc's own output. The repositories pair Rails + Vue, ASP.NET + Angular, D
 Go + Vue, Express + React, and FastAPI on its own.
 
 <!-- accuracy:start (generated from the latest measurement) -->
-Over seven pinned repositories, as of extractor 1.174.0:
+Over seven pinned repositories, as of extractor 1.220.0:
 
 | | |
 |---|---|
