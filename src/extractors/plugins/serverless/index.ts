@@ -1,4 +1,4 @@
-import type { RouteAuthInfo, RouteInfo } from "../../../types/analysis.js";
+import type { EntryPointInfo, RouteAuthInfo, RouteInfo } from "../../../types/analysis.js";
 import { parseOpenApiDocument, type SpecNode } from "../openapi/index.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 
@@ -26,8 +26,9 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
  * them, relative to the descriptor's directory (a SAM `CodeUri` joined in
  * front; a JVM / .NET `Class::method` kept as written), and `owner` is the
  * function's name in the descriptor. The project pass (`route-anchor.ts`)
- * moves each row onto the function it names. Non-HTTP events (queues,
- * schedules) are not routes.
+ * moves each row onto the function it names. Non-HTTP events are not routes:
+ * a schedule makes the function a scheduled job, a queue, topic or stream a
+ * message consumer (`extractServerlessEntryPoints`), moved onto it the same way.
  */
 
 const ANY = new Set(["any", "*"]);
@@ -127,6 +128,84 @@ function samRoutes(root: SpecNode): RouteInfo[] {
   return out;
 }
 
+/**
+ * The resource an event names, readably: `arn:aws:sqs:eu-west-1:123:orders` → `orders`,
+ * `!GetAtt OrdersQueue.Arn` / `{ Fn::GetAtt: [OrdersQueue, Arn] }` → `OrdersQueue`, `${self:custom.queue}` kept.
+ */
+function resourceName(n: SpecNode | undefined): string | null {
+  if (!n) return null;
+  // `Fn::GetAtt: [OrdersQueue, Arn]`, as a block list or a flow one, under the event or its `arn:`.
+  const getAtt = childOf(n, "Fn::GetAtt") ?? childOf(childOf(n, "arn"), "Fn::GetAtt");
+  const attTarget = getAtt?.items?.[0]?.value ?? /^\[\s*([\w-]+)/.exec(getAtt?.value ?? "")?.[1] ?? (getAtt?.value ? getAtt.value.split(".")[0] : undefined);
+  if (attTarget) return attTarget;
+  const raw = n.value ?? valueOf(n, "arn") ?? valueOf(n, "Arn") ?? valueOf(n, "topicName") ?? valueOf(n, "queueName") ?? valueOf(n, "Ref");
+  if (!raw) return null;
+  const text = raw.replace(/^["']|["']$/g, "").trim();
+  const tagged = /^!GetAtt\s+([\w-]+)(?:\.\w+)?$/.exec(text) ?? /^!Ref\s+([\w-]+)$/.exec(text);
+  if (tagged) return tagged[1]!;
+  if (text.startsWith("arn:")) return text.split(":").pop() || text;
+  return text;
+}
+
+/** One SLS/SAM event as an entry point: `schedule` a scheduled job, a queue/topic/stream a consumer; anything else nothing. */
+function eventEntry(type: string, ev: SpecNode | undefined, name: string, handler: string | null, framework: string): EntryPointInfo | null {
+  const line = ev?.line ?? 1;
+  const at = (e: Omit<EntryPointInfo, "line" | "framework">): EntryPointInfo => ({ ...e, line, framework, ...(handler ? { handler } : {}) });
+  switch (type) {
+    case "schedule": case "Schedule": case "ScheduleV2": {
+      const props = framework === "sam" ? childOf(ev, "Properties") : ev;
+      const expr = props?.value ?? valueOf(props, "rate") ?? valueOf(props, "Schedule") ?? valueOf(props, "ScheduleExpression")
+        ?? childOf(props, "rate")?.items?.[0]?.value ?? null;
+      return at({ kind: "scheduled-job", name, ...(expr ? { schedule: expr.replace(/^["']|["']$/g, "") } : {}) });
+    }
+    case "sqs": case "SQS": case "sns": case "SNS": case "stream": case "DynamoDB": case "Kinesis": case "eventBridge": case "EventBridgeRule": {
+      const props = framework === "sam" ? childOf(ev, "Properties") : ev;
+      const src = type === "sqs" || type === "SQS" ? (framework === "sam" ? childOf(props, "Queue") : props)
+        : type === "sns" || type === "SNS" ? (framework === "sam" ? childOf(props, "Topic") : props)
+        : type === "eventBridge" || type === "EventBridgeRule" ? undefined
+        : framework === "sam" ? childOf(props, "Stream") : props;
+      // An EventBridge rule with a schedule is a clock, not a message.
+      const rate = type === "eventBridge" ? valueOf(props, "schedule") : type === "EventBridgeRule" ? valueOf(props, "ScheduleExpression") : null;
+      if (rate) return at({ kind: "scheduled-job", name, schedule: rate });
+      const queue = resourceName(src) ?? (type === "eventBridge" || type === "EventBridgeRule" ? valueOf(props, "eventBus") ?? "eventbridge" : null);
+      return queue ? at({ kind: "message-consumer", name: queue }) : null;
+    }
+    default:
+      return null;
+  }
+}
+
+/** Functions a clock or a queue runs, as the descriptor states it (see `eventEntry`). */
+export function extractServerlessEntryPoints(lines: string[]): EntryPointInfo[] {
+  const root = parseOpenApiDocument(lines);
+  const out: EntryPointInfo[] = [];
+  if (root.children.has("Resources")) {
+    const globals = childOf(childOf(root, "Globals"), "Function");
+    for (const [name, res] of childOf(root, "Resources")?.children ?? []) {
+      if (valueOf(res, "Type") !== "AWS::Serverless::Function") continue;
+      const props = childOf(res, "Properties");
+      const handler = valueOf(props, "Handler") ?? valueOf(globals, "Handler");
+      const codeUri = valueOf(props, "CodeUri") ?? valueOf(globals, "CodeUri");
+      const written = handler ? (handler.includes("::") ? handler : join(codeUri, handler)) : null;
+      for (const [, ev] of childOf(props, "Events")?.children ?? []) {
+        const e = eventEntry(valueOf(ev, "Type") ?? "", ev, name, written, "sam");
+        if (e) out.push(e);
+      }
+    }
+    return out;
+  }
+  for (const [name, fn] of childOf(root, "functions")?.children ?? []) {
+    const handler = valueOf(fn, "handler");
+    for (const item of childOf(fn, "events")?.items ?? []) {
+      for (const [type, ev] of item.children) {
+        const e = eventEntry(type, ev, name, handler, "serverless");
+        if (e) out.push(e);
+      }
+    }
+  }
+  return out;
+}
+
 export function extractServerlessRoutes(lines: string[]): RouteInfo[] {
   const root = parseOpenApiDocument(lines);
   return root.children.has("Resources") ? samRoutes(root) : serverlessRoutes(root);
@@ -140,4 +219,5 @@ export const serverlessSpec: RegexLangSpec = {
   importPatterns: [],
   lineCommentPrefixes: ["#"],
   extractRoutes: (lines) => extractServerlessRoutes(lines),
+  extractEntryPoints: (lines) => extractServerlessEntryPoints(lines),
 };

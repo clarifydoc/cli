@@ -89,3 +89,64 @@ Resources:
     expect(serverlessMeta.preprocess!("service: x\nprovider:\n  name: aws\n", "serverless.yml")).toMatchObject({ skip: expect.any(String) });
   });
 });
+
+describe("non-HTTP events as entry points", () => {
+  it("serverless.yml: schedules are scheduled jobs; SQS, SNS and streams are consumers", async () => {
+    const { extractServerlessEntryPoints } = await import("./index.js");
+    const got = extractServerlessEntryPoints(`service: s
+functions:
+  nightly:
+    handler: src/jobs.nightly
+    events:
+      - schedule: rate(1 day)
+      - eventBridge:
+          schedule: cron(0 3 * * ? *)
+  worker:
+    handler: src/worker.handle
+    events:
+      - sqs: arn:aws:sqs:eu-west-1:1:orders
+      - sns: order-events
+      - sqs:
+          arn:
+            Fn::GetAtt: [PaymentsQueue, Arn]
+      - http: GET /x
+`.split("\n")).map((e) => `${e.kind} ${e.name} → ${e.handler} [${e.schedule ?? ""}]`);
+    expect(got).toEqual([
+      "scheduled-job nightly → src/jobs.nightly [rate(1 day)]",
+      "scheduled-job nightly → src/jobs.nightly [cron(0 3 * * ? *)]",
+      "message-consumer orders → src/worker.handle []",
+      "message-consumer order-events → src/worker.handle []",
+      "message-consumer PaymentsQueue → src/worker.handle []",
+    ]);
+  });
+
+  it("SAM: Schedule, SQS and SNS events on a function, with CodeUri joined to the handler", async () => {
+    const { extractServerlessEntryPoints } = await import("./index.js");
+    const got = extractServerlessEntryPoints(`Transform: AWS::Serverless-2016-10-31
+Resources:
+  ProcessFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: process/
+      Handler: app.handler
+      Events:
+        Nightly:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 day)
+        FromQueue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt OrdersQueue.Arn
+        FromTopic:
+          Type: SNS
+          Properties:
+            Topic: !Ref OrderTopic
+`.split("\n")).map((e) => `${e.kind} ${e.name} → ${e.handler} [${e.schedule ?? ""}]`);
+    expect(got).toEqual([
+      "scheduled-job ProcessFunction → process/app.handler [rate(1 day)]",
+      "message-consumer OrdersQueue → process/app.handler []",
+      "message-consumer OrderTopic → process/app.handler []",
+    ]);
+  });
+});

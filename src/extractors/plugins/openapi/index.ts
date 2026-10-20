@@ -148,7 +148,8 @@ function setFlowValue(node: SpecNode, raw: string): void {
 function parseYaml(lines: string[]): SpecNode {
   const root = newNode(1);
   const stack: Array<{ indent: number; node: SpecNode; isItem?: boolean }> = [{ indent: -1, node: root }];
-  const keyRe = /^(\s*)("(?:[^"\\]|\\.)*"|'[^']*'|[^\s:][^:]*?)\s*:\s*(.*)$/;
+  // A key may hold a colon not followed by a space (`Fn::GetAtt`, `x:y`), as YAML allows.
+  const keyRe = /^(\s*)("(?:[^"\\]|\\.)*"|'[^']*'|[^\s:](?:[^:]|:(?!\s|$))*?)\s*:(?:\s+|$)(.*)$/;
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i]!;

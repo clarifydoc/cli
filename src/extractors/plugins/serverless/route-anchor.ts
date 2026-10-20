@@ -1,4 +1,4 @@
-import type { FileAnalysis, RouteInfo } from "../../../types/analysis.js";
+import type { EntryPointInfo, FileAnalysis, RouteInfo } from "../../../types/analysis.js";
 import type { ProjectContext } from "../../../types/project.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
 import { lambdaClassHandler, lambdaModuleHandler } from "../shared/lambda-handlers.js";
@@ -41,5 +41,24 @@ export const serverlessHandlerAnchor: RouteResolver = {
       if (kept.length !== a.routes.length) a.routes = kept;
     }
     for (const [a, rows] of moved) a.routes = [...a.routes, ...rows];
+    // The functions a schedule or a queue runs: entry points on the code, like the routes.
+    const movedEntries = new Map<FileAnalysis, EntryPointInfo[]>();
+    for (const a of analyses) {
+      if (a.language !== "serverless" || !a.entryPoints?.length) continue;
+      const dir = a.filePath.includes("/") ? a.filePath.slice(0, a.filePath.lastIndexOf("/")) : "";
+      const kept: EntryPointInfo[] = [];
+      for (const e of a.entryPoints) {
+        const hit = e.handler ? (e.handler.includes("::") ? lambdaClassHandler(e.handler, dir, code) : lambdaModuleHandler(e.handler, dir, ctx)) : null;
+        if (!hit) {
+          kept.push(e);
+          continue;
+        }
+        const list = movedEntries.get(hit.file) ?? [];
+        list.push({ ...e, handler: hit.handler, line: hit.fn.line });
+        movedEntries.set(hit.file, list);
+      }
+      a.entryPoints = kept.length ? kept : undefined;
+    }
+    for (const [a, rows] of movedEntries) a.entryPoints = [...(a.entryPoints ?? []), ...rows];
   },
 };
