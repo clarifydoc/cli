@@ -45,6 +45,7 @@ import { javascriptReachability } from "./reachability.js";
 import { CREDENTIAL_CONTEXT } from "../shared/security-context.js";
 import { javascriptTaint } from "./taint.js";
 import { reactRouterResolver } from "./routes/react-router-resolver.js";
+import { jsGrpcStub } from "../shared/grpc-stubs.js";
 
 const TS_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -255,6 +256,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   ast: astHooks("typescript"),
   calls: javascriptCallHooks,
   requestSchema: javascriptRequestSchema,
+  grpcStubService: jsGrpcStub,
   reachability: javascriptReachability,
 };
 
@@ -280,5 +282,6 @@ export const javascriptMeta: LanguagePluginMeta = {
   ast: astHooks("javascript"),
   calls: javascriptCallHooks,
   requestSchema: javascriptRequestSchema,
+  grpcStubService: jsGrpcStub,
   reachability: javascriptReachability,
 };

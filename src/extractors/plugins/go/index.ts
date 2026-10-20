@@ -61,6 +61,14 @@ export const goSpec: RegexLangSpec = {
   ],
 
   parseParam: parseGoParam,
+  // A method called straight on a constructed client, `pb.NewOrderServiceClient(conn).GetOrder(ctx, req)`:
+  // the baseline reads only the constructor, so the call on it is named after it (`pb.NewOrderServiceClient().GetOrder`).
+  callPatterns: [
+    {
+      pattern: /\b((?:\w+\.)?New\w+Client)\((?:[^()]|\([^()]*\))*\)\.([A-Z]\w*)\s*\(/,
+      buildName: (m) => ({ name: `${m[1]}().${m[2]}`, leafName: m[2]! }),
+    },
+  ],
   parseReturnType: parseGoReturnType,
 
   /**

@@ -25,6 +25,7 @@ import { extractCsharpHttpClientRegistrations } from "./http-clients.js";
 import { extractCsharpTopLevelLocalTypes } from "./local-types.js";
 import { preprocessCsharpScript } from "./script.js";
 import { CSHARP_SECURITY_RULES, csharpSecurityPostScan } from "./security-rules.js";
+import { csharpGrpcStub } from "../shared/grpc-stubs.js";
 
 export const csharpMeta: LanguagePluginMeta = {
   securityRules: CSHARP_SECURITY_RULES,
@@ -42,6 +43,7 @@ export const csharpMeta: LanguagePluginMeta = {
   dispatchResolvers: [new CSharpMediatrResolver(), new CsharpUiBridgeResolver()],
   routeResolvers: [aspnetControllerInheritance],
   requestSchema: csharpRequestSchema,
+  grpcStubService: csharpGrpcStub,
   builtinTypes: CSHARP_BUILTINS,
   knownPackages: nugetPackages,
   complexity: {

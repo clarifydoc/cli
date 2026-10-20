@@ -113,6 +113,7 @@ import { readProjectConfig, readProjectProxies } from "./config-values.js";
 import { buildServiceAddresses } from "./service-addresses.js";
 import { resolveCallOrigins } from "./call-origins.js";
 import { clientProxyCalls } from "./client-proxies.js";
+import { grpcClientCalls } from "./grpc-clients.js";
 import { attachHandlerParams, attachRequestSchemas, attachResponseSchemas } from "./request-schemas.js";
 import { attachWebhookRoutes } from "./webhook-routes.js";
 import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
@@ -983,6 +984,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const proxyCalls = clientProxyCalls(allAnalyses);
   allApiCalls.push(...proxyCalls);
   if (proxyCalls.length > 0) progress.detail(`  Calls through client proxies: ${proxyCalls.length}`);
+  // Calls through gRPC stubs (`client.GetOrder(ctx, req)` on a `pb.NewOrderServiceClient(conn)`): the rpc they invoke.
+  const grpcCalls = grpcClientCalls(allAnalyses, allRoutes);
+  allApiCalls.push(...grpcCalls);
+  if (grpcCalls.length > 0) progress.detail(`  Calls through gRPC stubs: ${grpcCalls.length}`);
   // Plugin project passes over the api-call targets — URL-builder helper calls
   // (`axios.get(requestUri('teamtalk','v4'))` → `/api/v4/institution/{}/teamtalk`)
   // so frontend calls funneled through a project URL helper carry a concrete

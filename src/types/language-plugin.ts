@@ -1152,6 +1152,18 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    */
   requestSchema?: RequestSchemaHooks;
   /**
+   * The gRPC service a stub type or stub-building call names, by protoc's
+   * naming for this language (`pb.OrderServiceClient` /
+   * `pb.NewOrderServiceClient()` → `OrderService`, `GreeterStub`,
+   * `OrderServiceGrpc.newBlockingStub()`, `Greeter.GreeterClient`). `spelling`
+   * is a declared type or a local's initializer as `callChainText` writes it.
+   * `certain` when the spelling is protoc's own; an uncertain one (a
+   * dynamically loaded client class) counts only when a `.proto` in the
+   * project declares the service. Core's gRPC client pass
+   * (`core/grpc-clients.ts`) reads only this.
+   */
+  grpcStubService?: (spelling: string, file: FileAnalysis) => { service: string; certain: boolean } | null;
+  /**
    * How this language's toolchain finds files — what dead-code analysis
    * (`core/dead-code.ts`) needs to tell a file nothing loads from one that is
    * loaded by convention. Declaring it opts the language's files into being

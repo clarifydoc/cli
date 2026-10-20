@@ -47,8 +47,20 @@ describe.skipIf(!existsSync(fixture))("sample-grpc", () => {
       "route:POST /v1/orders -> go-orders/server/orders.go OrderServer.CreateOrder",
     ]);
     expect((s.apiRouteLinks ?? []).map((l) => `${l.source} ${l.method} ${l.url}`).sort()).toEqual([
+      "checkout/main.go POST /acme.orders.v1.OrderService/CreateOrder",
+      "checkout/main.go POST /acme.orders.v1.OrderService/GetOrder",
+      "dotnet-caller/GreeterCaller.cs POST /helloworld.Greeter/SayHello",
+      "py-greeter/greeter_client.py POST /helloworld.Greeter/SayHello",
       "web/src/orders.ts GET /v1/orders/${id}",
       "web/src/orders.ts POST /v1/orders",
+    ]);
+    // A stub call traces on to the server method implementing the rpc, across languages.
+    const traces = s.symbolLinks.filter((l) => l.callName.startsWith("POST /") && !l.sourceFile.startsWith("web/")).map((l) => `${l.sourceSymbol} -> ${l.targetSymbol}`);
+    expect(traces.sort()).toEqual([
+      "Checkout.Place -> OrderServer.CreateOrder",
+      "GreeterCaller.Greet -> Greeter.SayHello",
+      "main -> OrderServer.GetOrder",
+      "run -> Greeter.SayHello",
     ]);
     const flows = (s.dataFlows ?? []).filter((p) => p.resource === "orders").map((p) => `${p.entryLabel} ${p.effect}`);
     expect(flows).toContain("GET /v1/orders/{id} db-read");

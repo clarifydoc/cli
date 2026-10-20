@@ -24,6 +24,7 @@ import { extractJvmDiBindings } from "./di-bindings.js";
 import { extractJavaClientProxies } from "./client-proxies.js";
 import { terminateAnnotatedDeclarations } from "./kotlin-preprocess.js";
 import { JVM_SECURITY_RULES, jvmSecurityPostScan } from "./security-rules.js";
+import { jvmGrpcStub } from "../shared/grpc-stubs.js";
 
 const JAVA_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -85,6 +86,7 @@ function jvmMeta(language: Language, opts: {
     routeResolvers: [springSecurityResolver, ktorRouteFnResolver],
     functionsClasses: jvmFunctionsClasses,
     requestSchema: jvmRequestSchema,
+    grpcStubService: jvmGrpcStub,
     importsExports: jvmImportsExports,
     dataSources: jvmDataSources,
     dataMutations: jvmDataMutations,
