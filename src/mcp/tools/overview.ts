@@ -7,6 +7,7 @@ import { BodyIndex, thrownTypes, type BodyHit } from "../body-search.js";
 import { readFile } from "fs/promises";
 import { join } from "path";
 import type { McpTool } from "../protocol.js";
+import type { ImpactDiffResult } from "../../core/impact-diff.js";
 import { describeRun, type LoadedAnalysis } from "../store.js";
 import type { PatternInfo, ProjectAnalysis, ProjectDependency } from "../../types/analysis.js";
 import {
@@ -101,6 +102,7 @@ export function analyzeTool(ctx: ToolContext): McpTool {
           result.upToDate
             ? `Already up to date (checked in ${((Date.now() - started) / 1000).toFixed(1)}s): no file, option or git state changed since the last analysis of ${result.fileCount} files.`
             : `Analysis complete in ${((Date.now() - started) / 1000).toFixed(1)}s (${full ? "full re-scan" : "incremental"}): ${result.fileCount} files.`,
+          result.upToDate ? "" : await whatChanged(ctx.store.analysisDir, started),
           "",
           await statusReport(loaded, ctx.store),
         ]),
@@ -696,6 +698,33 @@ export function servicesTool(ctx: ToolContext): McpTool {
       };
     },
   };
+}
+
+/**
+ * What the run that just finished changed, from the impact it wrote
+ * (`impact-latest.json`, against the run before): the files, and the routes,
+ * screens and data they reach. Empty when this run wrote none (a full
+ * re-scan, or the first run) — an older file is an earlier run's.
+ */
+async function whatChanged(analysisDir: string, since: number): Promise<string> {
+  let impact: Partial<ImpactDiffResult>;
+  try {
+    impact = JSON.parse(await readFile(join(analysisDir, "impact-latest.json"), "utf8"));
+  } catch {
+    return "";
+  }
+  if (!impact.generatedAt || Date.parse(impact.generatedAt) < since) return "";
+  const changed = impact.changedFiles ?? [];
+  const removed = impact.removedFiles ?? [];
+  if (!changed.length && !removed.length) return "";
+  const parts = [
+    `This run: ${plural(changed.length, "file")} changed${changed.length ? ` (${cap(changed, 5).shown.join(", ")}${changed.length > 5 ? ", …" : ""})` : ""}${removed.length ? `, ${removed.length} removed` : ""}`,
+    impact.routeCount ? `reaching ${plural(impact.routeCount, "route")} (${(impact.routes ?? []).slice(0, 3).map((r) => `${r.method ?? ""} ${r.path}`.trim()).join(", ")}${impact.routeCount > 3 ? ", …" : ""})` : "",
+    impact.screenCount ? `${plural(impact.screenCount, "screen")}` : "",
+    impact.entities?.length ? `data ${impact.entities.slice(0, 3).join(", ")}${impact.entities.length > 3 ? ", …" : ""}` : "",
+    impact.risk ? `risk ${impact.risk.level}` : "",
+  ].filter(Boolean);
+  return `${parts.join("; ")}. clarifydoc_impact gives the detail.`;
 }
 
 export function healthTool(ctx: ToolContext): McpTool {
