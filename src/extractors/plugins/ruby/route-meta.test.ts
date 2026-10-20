@@ -261,6 +261,15 @@ end
     expect(routes[3]!.auth).toMatchObject({ policies: ["protected!"], inherited: false });
   });
 
+  it("reads a header through Rack's env", () => {
+    expect(extractRubyRequestAccess(["halt 401 unless request.env['HTTP_X_GITLAB_TOKEN'] == ENV['TOKEN']"])).toEqual([{ name: "x-gitlab-token", type: null, binding: "header" }]);
+  });
+
+  it("carries the block's calls as the route's own", () => {
+    expect(routes[0]!.calls.map((c) => c.name)).toContain("User.find");
+    expect(routes[2]!.calls.map((c) => c.name)).toContain("stats");
+  });
+
   it("does not read the DSL from a non-Sinatra file", () => {
     const spec = `
       describe "users" do

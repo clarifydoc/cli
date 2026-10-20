@@ -114,6 +114,7 @@ import { buildServiceAddresses } from "./service-addresses.js";
 import { resolveCallOrigins } from "./call-origins.js";
 import { clientProxyCalls } from "./client-proxies.js";
 import { attachHandlerParams, attachRequestSchemas, attachResponseSchemas } from "./request-schemas.js";
+import { attachWebhookRoutes } from "./webhook-routes.js";
 import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
 import { reconcileProjectRoutes } from "../extractors/route-resolvers/index.js";
 import { resolveProjectApiCalls } from "../extractors/data-sources/index.js";
@@ -1067,6 +1068,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const handlerParamCount = attachHandlerParams(allRoutes, allAnalyses);
   const schemaCount = attachRequestSchemas(allRoutes, allAnalyses);
   const responseSchemaCount = attachResponseSchemas(allRoutes, allAnalyses);
+  // Routes that receive a third-party webhook, and whether they check its signature.
+  const webhookRoutes = attachWebhookRoutes(allRoutes, allAnalyses);
+  if (webhookRoutes.webhooks > 0) progress.detail(`  Webhook routes: ${webhookRoutes.webhooks}`);
   if (responseSchemaCount > 0) progress.detail(`  Response schemas: ${responseSchemaCount} route(s)`);
   if ((handlerParamCount > 0 || schemaCount > 0) && verbose) {
     progress.detail(`  route params from handlers: ${handlerParamCount}, request schemas: ${schemaCount}`);
@@ -1283,7 +1287,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     }
     const uncalled = allRoutes.filter((r) =>
       r.kind === "api" && isJoinableRoutePath(r.path) && !isContractRoute(r) && !isUnauthored(r.filePath) &&
-      calledProjects.has(r.projectId ?? "") && !reached.has(`${r.filePath}\u0000${r.line}`));
+      // A webhook receiver is called by its sender, never by the repository.
+      !r.webhook && calledProjects.has(r.projectId ?? "") && !reached.has(`${r.filePath}\u0000${r.line}`));
     if (uncalled.length > 0) {
       apiRouteLinkStats.uncalledCount = uncalled.length;
       apiRouteLinkStats.uncalled = uncalled.slice(0, 200).map((r) => ({ file: r.filePath, line: r.line, method: r.httpMethod ?? null, path: r.path }));
@@ -1574,6 +1579,12 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   if (anonymousWrites.length > 0) {
     allSecurityIssues.push(...anonymousWrites);
     progress.detail(`  Anonymous routes that write data: ${anonymousWrites.length}`);
+  }
+  // Webhook receivers that never check the sender's signature.
+  const unverifiedWebhooks = webhookRoutes.findings.filter((i) => !isUnauthored(i.filePath));
+  if (unverifiedWebhooks.length > 0) {
+    allSecurityIssues.push(...unverifiedWebhooks);
+    progress.detail(`  Webhook routes that never verify: ${unverifiedWebhooks.length}`);
   }
   // Safe methods that change state.
   const safeWrites = safeMethodWriteFindings(allRoutes, dataFlows).filter((i) => !isUnauthored(i.filePath));

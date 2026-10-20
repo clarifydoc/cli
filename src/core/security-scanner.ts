@@ -243,6 +243,7 @@ export const CATEGORY_CWE: Partial<Record<SecurityIssue["category"], string>> = 
   ssrf: "CWE-918",
   "open-redirect": "CWE-601",
   "safe-method-write": "CWE-650",
+  "webhook-unverified": "CWE-345",
 };
 
 /** A TODO/FIXME/HACK/XXX marker after a comment opener on its line, or on a block-comment continuation line. */

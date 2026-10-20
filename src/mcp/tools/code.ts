@@ -234,6 +234,10 @@ export function routesTool(ctx: ToolContext): McpTool {
           extra.push(`    versions: ${route.versions.map((v) =>
             route.deprecatedVersions?.includes(v) ? `${v} (deprecated)` : v).join(", ")}`);
         }
+        if (route.webhook) {
+          const w = route.webhook;
+          extra.push(`    webhook: from ${w.provider ?? "a third party"}; ${w.verified === true ? `signature checked by ${w.via}` : w.verified === false ? "NOTHING it reaches checks the signature" : "signature check unknown"}`);
+        }
         if (route.auth) {
           const a = route.auth;
           const parts = [

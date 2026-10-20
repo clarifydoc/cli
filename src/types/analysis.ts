@@ -860,6 +860,14 @@ export interface RouteInfo {
    * declaring file's screen opens this one.
    */
   navigation?: true;
+  /**
+   * API routes only: the route receives a third-party webhook
+   * (`core/webhook-routes.ts`) — `provider` from the header it reads, the
+   * verification it calls or its path; `verified` true when something it
+   * reaches checks the signature (`via` says what), false when everything it
+   * reaches is known and nothing does, absent when that cannot be told.
+   */
+  webhook?: { provider?: string; verified?: boolean; via?: string };
   calls: CallInfo[];
   /**
    * Guards and filters applied to the route, as readable strings: Express
@@ -2211,7 +2219,7 @@ export type SecurityCategory =
   | "command-injection" | "debug-statement" | "todo-fixme"
   | "pickle" | "subprocess-shell" | "bare-except"
   | "deserialization" | "xxe" | "weak-crypto" | "insecure-config" | "missing-auth"
-  | "path-traversal" | "ssrf" | "open-redirect" | "safe-method-write"
+  | "path-traversal" | "ssrf" | "open-redirect" | "safe-method-write" | "webhook-unverified"
   /** A finding another tool reported (`analyze --import-sarif`) whose weakness has no category here. */
   | "external";
 

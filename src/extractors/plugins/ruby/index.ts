@@ -1,6 +1,6 @@
 import type { CallInfo, RouteInfo, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
-import { extractClassesWithSpec } from "../shared/regex-base.js";
+import { extractCallsFromBody, extractClassesWithSpec } from "../shared/regex-base.js";
 import type { GuardAttr } from "../../shared/route-metadata.js";
 import { applyRouteMeta } from "../../shared/route-metadata.js";
 import {
@@ -685,7 +685,7 @@ export const rubySpec: RegexLangSpec = {
 
     // Sinatra's block DSL — gated on the gem being required / subclassed so a
     // `get '/x' do` in a request spec or a Rails router never counts.
-    if (isSinatraFile(lines)) routes.push(...extractSinatraRoutes(lines));
+    if (isSinatraFile(lines)) routes.push(...extractSinatraRoutes(lines, (start, end) => extractCallsFromBody(lines, start, end, ["#"], rubySpec.callPatterns)));
 
     // ActiveAdmin DSL. `ActiveAdmin.register Model do … end` mounts the standard
     // admin CRUD routes under `/admin/<pluralized_resource>`; the generated

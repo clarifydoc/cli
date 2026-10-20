@@ -364,6 +364,7 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
       if (r.deprecatedVersions) row.deprecatedVersions = r.deprecatedVersions;
       if (r.params) row.params = r.params;
       if (r.requestSchema) row.requestSchema = r.requestSchema;
+      if (r.webhook) row.webhook = r.webhook;
       return row;
     }),
     /** Outbound HTTP calls — surfaced alongside routes in the Routes tab, each with the route it reaches. */

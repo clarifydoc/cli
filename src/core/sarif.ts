@@ -215,6 +215,7 @@ const TITLES: Partial<Record<SecurityIssue["category"], string>> = {
   ssrf: "Server-side request forgery",
   "open-redirect": "Open redirect",
   "safe-method-write": "GET that writes",
+  "webhook-unverified": "Unverified webhook",
 };
 
 export type SarifLevel = "error" | "warning" | "note";

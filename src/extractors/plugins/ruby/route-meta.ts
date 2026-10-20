@@ -69,6 +69,10 @@ export function extractRubyRequestAccess(bodyLines: string[]): RouteParamInfo[] 
   for (const m of text.matchAll(/\brequest\s*\.\s*headers\s*(?:\[\s*['"]([^'"]+)['"]\s*\]|\.\s*(?:fetch|\[)\s*\(?\s*['"]([^'"]+)['"])/g)) {
     add((m[1] ?? m[2])!, "header");
   }
+  // Rack's env: `request.env['HTTP_X_GITLAB_TOKEN']` is the `X-Gitlab-Token` header.
+  for (const m of text.matchAll(/\b(?:request\s*\.\s*)?env\s*\[\s*['"]HTTP_([A-Z0-9_]+)['"]\s*\]/g)) {
+    add(m[1]!.toLowerCase().replace(/_/g, "-"), "header");
+  }
   if (/\brequest\s*\.\s*(?:body\s*\.\s*read|raw_post)\b/.test(text)) add("body", "body");
   return out;
 }
@@ -352,9 +356,10 @@ function blockEnd(lines: string[], start: number, indent: string): number {
  * same reader the Rails actions use, re-bound by the path's `:id` tokens.
  * `before do … end` blocks (optionally path-filtered) that check a session,
  * halt 401, or call `protected!` are inherited guards; `use Rack::Auth::Basic`
- * is a basic scheme.
+ * is a basic scheme. `callsOf` reads the block's calls (0-based line range,
+ * end exclusive), which the route carries as its own.
  */
-export function extractSinatraRoutes(lines: string[]): RouteInfo[] {
+export function extractSinatraRoutes(lines: string[], callsOf?: (start: number, end: number) => RouteInfo["calls"]): RouteInfo[] {
   const routes: RouteInfo[] = [];
   const inherited: Array<{ prefix: string; guard: GuardAttr }> = [];
 
@@ -385,7 +390,7 @@ export function extractSinatraRoutes(lines: string[]): RouteInfo[] {
       httpMethod: m[2]!.toUpperCase(),
       kind: "api",
       handler: null,
-      calls: [],
+      calls: callsOf?.(i + 1, end) ?? [],
       middleware: [],
       line: i + 1,
     };

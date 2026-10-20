@@ -63,6 +63,10 @@ interface HandlerRef {
  * for typed signatures, plus whatever the body reads (`fn.requestAccess`).
  * Everything here is `inferred`. Returns how many routes were filled.
  */
+/** The function each route's handler resolved to in the last `attachHandlerParams` (webhook-routes.ts reads it). */
+const resolvedHandlers = new WeakMap<object, HandlerRef>();
+export const handlerOf = (route: object): { fn: FunctionInfo; filePath: string } | undefined => resolvedHandlers.get(route);
+
 export function attachHandlerParams(routes: RouteRow[], analyses: FileAnalysis[]): number {
   const byFile = new Map<string, FileAnalysis>();
   const byName = new Map<string, HandlerRef[]>(); // leaf name → every function/method
@@ -163,6 +167,7 @@ export function attachHandlerParams(routes: RouteRow[], analyses: FileAnalysis[]
     if (route.kind !== "api") continue;
     const ref = resolve(route);
     if (!ref) continue;
+    resolvedHandlers.set(route, ref);
     // What the handler answers is the route's answer, unless the route states its own.
     if (!route.responses && ref.fn.responses) route.responses = ref.fn.responses;
     const lang = byFile.get(ref.filePath)?.language;

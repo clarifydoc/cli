@@ -27,8 +27,8 @@ import type { FunctionInfo, RouteFact } from "../types/analysis.js";
 import { isTestFile } from "./test-file-detector.js";
 import {
   inferExpoRouterRoutes,
-  inferFileBasedRoute,
   inferFlatRoutes,
+  inferNextRoutes,
   inferReactRouterConfig,
   inferSvelteKitRoutes,
 } from "../extractors/plugins/javascript/routes/file-routes.js";
@@ -447,9 +447,8 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // AST-extracted routes. API endpoints read the file's exported handlers.
     if (!isTest) {
       const { relativePath: routePath, frameworkIds: routeFrameworks } = routeScope;
-      const fileRoute = inferFileBasedRoute(routePath, routeFrameworks);
-      if (fileRoute) analysis.routes.push(fileRoute);
       analysis.routes.push(
+        ...inferNextRoutes(routePath, analysis, routeFrameworks),
         ...inferSvelteKitRoutes(routePath, analysis, routeFrameworks),
         ...inferExpoRouterRoutes(routePath, analysis, routeFrameworks),
         ...inferReactRouterConfig(routePath, sourceText, routeFrameworks).routes,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { inferExpoRouterRoutes, inferFileBasedRoute } from "../extractors/plugins/javascript/routes/file-routes.js";
+import { inferExpoRouterRoutes, inferFileBasedRoute, inferNextRoutes } from "../extractors/plugins/javascript/routes/file-routes.js";
 import type { FileAnalysis } from "../types/analysis.js";
 
 const path = (rel: string, frameworks: string[]) => inferFileBasedRoute(rel, frameworks)?.path ?? null;
@@ -46,6 +46,17 @@ describe("Next.js App Router paths", () => {
     expect(path("pages/_document.tsx", ["nextjs"])).toBeNull();
     expect(path("pages/_error.tsx", ["nextjs"])).toBeNull();
     expect(inferFileBasedRoute("pages/api/users.ts", ["nextjs"])).toMatchObject({ path: "/api/users", kind: "api" });
+  });
+});
+
+describe("Next.js App Router route handlers", () => {
+  const file = (names: string[]) => ({ functions: names.map((name, i) => ({ name, line: i + 3 })), exports: [] }) as unknown as FileAnalysis;
+
+  it("serves one api route per exported method handler, and one method-less row for a file exporting none", () => {
+    expect(inferNextRoutes("app/api/webhooks/route.ts", file(["POST", "helper"]), ["nextjs"])).toMatchObject([{ path: "/api/webhooks", kind: "api", httpMethod: "POST", handler: "POST", line: 3 }]);
+    expect(inferNextRoutes("src/app/api/users/[id]/route.ts", file(["GET", "DELETE"]), ["nextjs"]).map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /api/users/:id", "DELETE /api/users/:id"]);
+    expect(inferNextRoutes("app/api/legacy/route.ts", file([]), ["nextjs"])).toMatchObject([{ path: "/api/legacy", httpMethod: null }]);
+    expect(inferNextRoutes("app/users/page.tsx", file(["GET"]), ["nextjs"])).toMatchObject([{ path: "/users", kind: "frontend", httpMethod: null }]);
   });
 });
 

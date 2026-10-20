@@ -77,13 +77,15 @@ export function scanRequestAccess(text: string, reqName: string): RouteParamInfo
     const source = m[2]!;
     if (isKoa && source === "body" && !m[1]) continue;
     const name = m[3] ?? m[5] ?? null;
+    // `request.headers.get("x")` (the Fetch `Headers` API) names its header below, not `get`.
+    if (source === "headers" && (name === "get" || name === "has") && text[m.index! + m[0].length] === "(") continue;
     const binding = source === "params" ? "route" : source === "headers" ? "header" : (source as "query" | "body");
     if (name) hits.push({ index: m.index!, apply: () => add(name, binding) });
     else if (source === "body") hits.push({ index: m.index!, apply: () => add("body", "body") });
   }
 
-  // `req.get('x-token')` / `req.header('x-token')`.
-  const headerCall = new RegExp(String.raw`${base}\.(?:get|header)\(\s*(['"\`])([^'"\`]+)\2\s*\)`, "g");
+  // `req.get('x-token')` / `req.header('x-token')` / `request.headers.get('x-token')`.
+  const headerCall = new RegExp(String.raw`${base}\.(?:get|header|headers\.get)\(\s*(['"\`])([^'"\`]+)\2\s*\)`, "g");
   for (const m of text.matchAll(headerCall)) {
     hits.push({ index: m.index!, apply: () => add(m[3]!, "header") });
   }

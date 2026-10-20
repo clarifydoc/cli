@@ -94,6 +94,22 @@ export function inferFileBasedRoute(relativePath: string, frameworkIds: string[]
 }
 
 /**
+ * Next.js routes with the file's handlers read: an App Router `route.ts`
+ * serves one `api` route per exported HTTP-method handler (`export async
+ * function POST`), as SvelteKit's `+server.ts` does; one exporting none keeps
+ * the single method-less row.
+ */
+export function inferNextRoutes(relativePath: string, analysis: FileAnalysis, frameworkIds: string[]): RouteInfo[] {
+  const r = inferFileBasedRoute(relativePath, frameworkIds);
+  if (!r) return [];
+  if (r.kind === "api" && /(?:^|\/)route\.(?:tsx?|jsx?)$/.test(relativePath.replace(/\\/g, "/"))) {
+    const handlers = methodRoutes(r.path, analysis);
+    if (handlers.length > 0) return handlers;
+  }
+  return [r];
+}
+
+/**
  * SvelteKit under `src/routes/`: `+page.svelte` is a page; `+server.ts` is an
  * endpoint with one `api` route per exported HTTP-method handler.
  */
