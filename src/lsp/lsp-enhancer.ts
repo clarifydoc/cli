@@ -7,6 +7,7 @@ import type {
   Language,
   LspStats,
   LspDefinitionRecord,
+  LspImplementationRecord,
   LspReferenceRecord,
 } from "../types/analysis.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
@@ -35,6 +36,9 @@ export interface DefinitionClient {
   getDefinition(filePath: string, line: number, character: number): Promise<DefinitionResult[]>;
   getReferences(filePath: string, line: number, character: number): Promise<ReferenceResult[]>;
   readonly supportsReferences: boolean;
+  /** Where an interface member is implemented; absent when the source cannot say. */
+  getImplementation?(filePath: string, line: number, character: number): Promise<DefinitionResult[]>;
+  readonly supportsImplementation?: boolean;
   /** False when the source never put this question (a budget ran out): no record, not a miss. Absent = always asked. */
   asked?(filePath: string, line: number, character: number): boolean;
 }
@@ -77,6 +81,8 @@ export interface LspEnhancementResult {
   definitionRecords: LspDefinitionRecord[];
   /** Every reference query made and the non-self references found. */
   referenceRecords: LspReferenceRecord[];
+  /** Implementations asked for at the calls DI left on an interface — ground truth, not links. */
+  implementationRecords?: LspImplementationRecord[];
 }
 
 /**
@@ -304,6 +310,9 @@ export async function enhanceWithLsp(options: LspEnhancerOptions): Promise<LspEn
       return redirected;
     });
 
+    // Phase C: where the calls DI refused to choose for are implemented — recorded as ground truth.
+    const implementationRecords = await recordImplementations(analyses, existingLinks, source, sourceLines);
+
     // Merge all links
     const allLinks = [...existingLinks, ...redirectedDefinitions, ...referenceLinks];
     const deduped = deduplicateLinks(allLinks);
@@ -322,10 +331,54 @@ export async function enhanceWithLsp(options: LspEnhancerOptions): Promise<LspEn
       timeMs: Date.now() - startTime,
       definitionRecords,
       referenceRecords,
+      ...(implementationRecords.length ? { implementationRecords } : {}),
     };
   } finally {
     await source.shutdown();
   }
+}
+
+// ─── Phase C: Implementations at the calls DI left on an interface ──────
+
+/**
+ * The calls the injection resolver kept on an interface member (it found
+ * several implementations and nothing that binds one), each asked where it is
+ * implemented. Recorded only: whether one of the answers is right is for the
+ * resolver's own rules to decide, and these records are what those rules can
+ * be measured against.
+ */
+async function recordImplementations(
+  analyses: readonly FileAnalysis[],
+  links: readonly SymbolLink[],
+  source: DefinitionSource,
+  sourceLines: SourceLineCache,
+): Promise<LspImplementationRecord[]> {
+  const interfaces = new Set<string>();
+  for (const a of analyses) for (const c of a.classes) if (c.kind === "interface") interfaces.add(`${a.filePath}::${c.name}`);
+  const byFile = new Map(analyses.map((a) => [a.filePath, a]));
+  const out: LspImplementationRecord[] = [];
+  for (const l of links) {
+    if (l.strategy !== "injection" || l.relation === "reference") continue;
+    const owner = l.targetSymbol.slice(0, l.targetSymbol.lastIndexOf("."));
+    if (!owner || !interfaces.has(`${l.targetFile}::${owner}`)) continue;
+    const a = byFile.get(l.sourceFile);
+    const client = a ? source.clientFor(a.language) : null;
+    if (!a || !client?.getImplementation || client.supportsImplementation === false) continue;
+    const fn = a.functions.find((f) => f.name === l.sourceSymbol) ?? a.classes.flatMap((c) => c.methods).find((m) => m.name === l.sourceSymbol.split(".").pop());
+    const call = fn?.calls.find((c) => c.line === l.sourceLine && c.name === l.callName) ?? { name: l.callName, line: l.sourceLine } as CallInfo;
+    const pos = await findQueryPosition(sourceLines, l.sourceFile, call);
+    try {
+      const found = await client.getImplementation(l.sourceFile, pos.line - 1, pos.column);
+      out.push({
+        sourceFile: l.sourceFile, sourceSymbol: l.sourceSymbol, line: l.sourceLine, column: pos.column, callName: l.callName,
+        language: a.language, interfaceSymbol: l.targetSymbol,
+        implementations: found.map((d) => ({ file: d.uri, line: d.line + 1 })),
+      });
+    } catch {
+      // A failed request is no answer: nothing recorded.
+    }
+  }
+  return out;
 }
 
 // ─── Phase A: Resolve unresolved calls ──────────────────────────────────

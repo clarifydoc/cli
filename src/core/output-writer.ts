@@ -9,6 +9,7 @@ import type {
   LinkInfo,
   LspDefinitionRecord,
   LspReferenceRecord,
+  LspImplementationRecord,
 } from "../types/analysis.js";
 import { validateFileAnalysis } from "./fileanalysis-validator.js";
 import { normalizeProject } from "./element-registry.js";
@@ -62,6 +63,8 @@ export interface LspGroundTruth {
   };
   definitions: LspDefinitionRecord[];
   references: LspReferenceRecord[];
+  /** Implementations at the calls dependency injection left on an interface (ground truth for its refusals). */
+  implementations?: LspImplementationRecord[];
   generatedAt: string;
 }
 
@@ -194,6 +197,7 @@ export interface LspGroundTruthInput {
   timeMs: number;
   definitionRecords: LspDefinitionRecord[];
   referenceRecords: LspReferenceRecord[];
+  implementationRecords?: LspImplementationRecord[];
 }
 
 /**
@@ -220,6 +224,7 @@ export async function writeLspGroundTruth(
     },
     definitions: result.definitionRecords,
     references: result.referenceRecords,
+    ...(result.implementationRecords?.length ? { implementations: result.implementationRecords } : {}),
     generatedAt: new Date().toISOString(),
   };
   return writeJson("lsp-ground-truth.json", groundTruth, options);

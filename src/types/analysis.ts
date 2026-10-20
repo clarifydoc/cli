@@ -2068,6 +2068,24 @@ export interface LspDefinitionRecord {
   redirectedTarget?: { file: string; symbol: string; line: number };
 }
 
+/**
+ * One textDocument/implementation query, at a call the dependency-injection
+ * resolver left on an interface because it would not choose among its
+ * implementations: what the language server says implements it. Ground truth
+ * for the resolver, recorded, never applied.
+ */
+export interface LspImplementationRecord {
+  sourceFile: string;
+  sourceSymbol: string;
+  line: number;
+  column: number;
+  callName: string;
+  language: Language;
+  /** The interface member the call stayed on (`INotifier.Send`). */
+  interfaceSymbol: string;
+  implementations: { file: string; line: number }[];
+}
+
 /** One textDocument/references query: the exported symbol and every non-self reference LSP found. */
 export interface LspReferenceRecord {
   symbolFile: string;

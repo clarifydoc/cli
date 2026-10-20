@@ -43,6 +43,7 @@ interface InitializeParams {
 interface ServerCapabilities {
   definitionProvider?: boolean | object;
   referencesProvider?: boolean | object;
+  implementationProvider?: boolean | object;
 }
 
 interface InitializeResult {
@@ -115,6 +116,7 @@ export class LspClient {
 
   private hasDefinition = false;
   private hasReferences = false;
+  private hasImplementation = false;
   private closed = false;
 
   constructor(options: LspClientOptions) {
@@ -143,6 +145,7 @@ export class LspClient {
         textDocument: {
           definition: { dynamicRegistration: false },
           references: { dynamicRegistration: false },
+          implementation: { dynamicRegistration: false },
           synchronization: {
             didOpen: true,
             didClose: true,
@@ -159,6 +162,7 @@ export class LspClient {
 
     this.hasDefinition = !!result.capabilities.definitionProvider;
     this.hasReferences = !!result.capabilities.referencesProvider;
+    this.hasImplementation = !!result.capabilities.implementationProvider;
 
     // Send initialized notification
     this.sendNotification("initialized", {});
@@ -250,6 +254,18 @@ export class LspClient {
    */
   get supportsReferences(): boolean {
     return this.hasReferences;
+  }
+
+  get supportsImplementation(): boolean {
+    return this.hasImplementation;
+  }
+
+  /** Where the member at the position is implemented: an interface method's implementations. */
+  async getImplementation(filePath: string, line: number, character: number): Promise<DefinitionResult[]> {
+    if (!this.hasImplementation) return [];
+    const uri = this.toContainerUri(filePath);
+    const result = await this.sendRequest("textDocument/implementation", { textDocument: { uri }, position: { line, character } }, 5000);
+    return this.parseLocations(result);
   }
 
   /**
