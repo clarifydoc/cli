@@ -17,7 +17,7 @@ import type { SecurityCategory, SecurityIssue, SecuritySeverity } from "../types
 export const SECURITY_CATEGORIES: readonly SecurityCategory[] = [
   "hardcoded-secret", "sql-injection", "xss", "eval-exec", "command-injection", "debug-statement", "todo-fixme",
   "pickle", "subprocess-shell", "bare-except", "deserialization", "xxe", "weak-crypto", "insecure-config",
-  "missing-auth", "path-traversal", "ssrf", "open-redirect", "safe-method-write", "webhook-unverified",
+  "missing-auth", "path-traversal", "ssrf", "open-redirect", "safe-method-write", "webhook-unverified", "missing-rate-limit", "missing-csrf",
 ];
 const KNOWN = new Set<string>(SECURITY_CATEGORIES);
 const SEVERITIES = new Set<string>(["critical", "high", "medium", "low"]);

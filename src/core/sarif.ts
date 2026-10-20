@@ -421,6 +421,8 @@ const TITLES: Partial<Record<SecurityIssue["category"], string>> = {
   ssrf: "Server-side request forgery",
   "open-redirect": "Open redirect",
   "safe-method-write": "GET that writes",
+  "missing-rate-limit": "Write route without the rate limit its siblings have",
+  "missing-csrf": "Write route without the CSRF check its siblings have",
   "webhook-unverified": "Unverified webhook",
 };
 

@@ -20,6 +20,14 @@ const route = (over: Partial<S["routeMap"][number]> & { path: string }): S["rout
 const kinds = (base: S, head: S) => diffSurface(base, head).changes.map((c) => [c.kind, c.breaking, c.route]);
 
 describe("diffSurface", () => {
+  it("calls a route that lost its rate limit or CSRF check risky", () => {
+    const base: S = { routeMap: [route({ path: "/orders", filters: [{ text: 'EnableRateLimiting("fixed")', kind: "rate-limit" }, { text: "ValidateAntiForgeryToken", kind: "csrf" }] })] };
+    const head: S = { routeMap: [route({ path: "/orders", filters: [{ text: "ValidateAntiForgeryToken", kind: "csrf" }] })] };
+    expect(diffSurface(base, head).changes.map((c) => [c.kind, c.risky, c.reasons])).toEqual([
+      ["filter-lost", true, ['no longer rate-limited (was EnableRateLimiting("fixed"))']],
+    ]);
+  });
+
   it("lists the import cycles a change creates or grows, not the ones it only touches", () => {
     const base: S = {
       routeMap: [],

@@ -1,4 +1,4 @@
-import type { RouteAuthInfo, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../types/analysis.js";
+import type { RouteAuthInfo, RouteFilter, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../types/analysis.js";
 
 /**
  * The attribute layer of a route, framework-agnostic. Every route extractor
@@ -60,11 +60,54 @@ export function pathParamNames(path: string): Set<string> {
   return new Set(pathParamTokens(path).map((n) => n.toLowerCase()));
 }
 
+/**
+ * What kind of filter a name or attribute is, by the words it is spelled
+ * with — across frameworks: `EnableRateLimiting`, `throttle:60,1`,
+ * `rateLimit()`, `@Throttle` → rate-limit; `EnableCors`, `cors()` → cors;
+ * `ValidateAntiForgeryToken`, `csrf`, `VerifyCsrfToken` → csrf; `UsePipes(ValidationPipe)`,
+ * `validate(schema)`, `celebrate` → validation; `ResponseCache`, `OutputCache`,
+ * `CacheInterceptor` → cache; `Transactional`, `UnitOfWork` → transaction;
+ * `LoggingInterceptor`, `morgan` → logging; `UseFilters(HttpExceptionFilter)` → error.
+ * Null for a name that says nothing (the plugin knows auth separately).
+ */
+export function filterKind(text: string): RouteFilter["kind"] | null {
+  const t = text.replace(/[\s_-]+/g, "").toLowerCase();
+  if (/ratelimit|throttl|slowdown|bucket4j|resilience4j\.ratelimiter/.test(t)) return "rate-limit";
+  if (/cors/.test(t)) return "cors";
+  if (/antiforgery|csrf|xsrf|csurf|lusca/.test(t)) return "csrf";
+  if (/valid|celebrate|zvalidator|pipe\(|usepipes/.test(t)) return "validation";
+  if (/cache|etag/.test(t)) return "cache";
+  if (/transaction|unitofwork|atomic/.test(t)) return "transaction";
+  if (/morgan|logging|logger|audit|requestlog|tracing/.test(t)) return "logging";
+  if (/exceptionfilter|errorhandler|usefilters|catch\(/.test(t)) return "error";
+  return null;
+}
+
+/** A filter attribute that switches its protection off: `DisableRateLimiting`, `IgnoreAntiforgeryToken`, `SkipThrottle`, `DisableCors`. */
+export function disablesFilter(text: string): boolean {
+  return /^\s*(?:Disable|Ignore|Skip|Without)/i.test(text);
+}
+
+/** Filters as written → `RouteFilter`s; names that classify as nothing are dropped. */
+export function routeFilters(texts: readonly string[], inherited: boolean): RouteFilter[] {
+  const out: RouteFilter[] = [];
+  for (const text of texts) {
+    const kind = filterKind(text);
+    if (!kind) continue;
+    out.push({ text, kind, ...(inherited ? { inherited: true } : {}), ...(disablesFilter(text) ? { enabled: false as const } : {}) });
+  }
+  return out;
+}
+
 export interface RouteMeta {
   /** Guards from the enclosing class / router / group, applied to every action. */
   inheritedGuards?: readonly GuardAttr[];
   /** Guards on the action itself. */
   guards?: readonly GuardAttr[];
+  /** Non-auth filters as written (`EnableRateLimiting("fixed")`, `UsePipes(ValidationPipe)`), from the class / router. */
+  inheritedFilters?: readonly string[];
+  /** …and on the action itself. */
+  filters?: readonly string[];
   versions?: readonly string[];
   deprecatedVersions?: readonly string[];
   params?: readonly RouteParamInfo[];
@@ -86,6 +129,12 @@ export function applyRouteMeta(route: RouteInfo, meta: RouteMeta): RouteInfo {
     }
   }
   if (meta.params && meta.params.length > 0) route.params = [...meta.params];
+  // A framework that lists every middleware as a guard (Laravel `throttle:60,1`) has its filters among them.
+  const filters = [
+    ...routeFilters([...(meta.inheritedFilters ?? []), ...inherited.map((g) => g.text)], true),
+    ...routeFilters([...(meta.filters ?? []), ...own.map((g) => g.text)], false),
+  ];
+  if (filters.length > 0) route.filters = [...(route.filters ?? []), ...filters];
   return route;
 }
 

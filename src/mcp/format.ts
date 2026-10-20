@@ -231,6 +231,7 @@ export function routeGuardNote(route: {
   auth?: { policies: string[]; roles: string[]; schemes: string[]; anonymous: boolean } | undefined;
   versions?: string[];
   deprecatedVersions?: string[];
+  filters?: Array<{ kind: string; enabled?: false }>;
 }): string {
   const parts: string[] = [];
   const a = route.auth;
@@ -245,6 +246,9 @@ export function routeGuardNote(route: {
       if (bits.length) parts.push(`auth: ${bits.join("; ")}`);
     }
   }
+  // Filters by kind (`rate-limit, csrf`), a switched-off one marked: what else runs around the handler.
+  const kinds = [...new Set((route.filters ?? []).map((f) => (f.enabled === false ? `no ${f.kind}` : f.kind)))];
+  if (kinds.length) parts.push(kinds.join(", "));
   if (route.versions?.length) {
     parts.push(
       route.versions.map((v) => (route.deprecatedVersions?.includes(v) ? `v${v} (deprecated)` : `v${v}`)).join(", "),

@@ -1694,6 +1694,12 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     allSecurityIssues.push(...safeWrites);
     progress.detail(`  GET/HEAD routes that write data: ${safeWrites.length}`);
   }
+  // A write route without the rate limit or CSRF check its siblings carry.
+  const filterGaps = filterGapFindings(allRoutes).filter((i) => !isUnauthored(i.filePath));
+  if (filterGaps.length > 0) {
+    allSecurityIssues.push(...filterGaps);
+    progress.detail(`  Write routes missing their siblings' rate limit or CSRF check: ${filterGaps.length}`);
+  }
   if (findingsWithEntries > 0) progress.detail(`  Security findings reachable from a route: ${findingsWithEntries}`);
   // The route-level findings above are ours too: the same rule ids and settings (idempotent over the rest).
   allSecurityIssues.splice(0, allSecurityIssues.length, ...applySecurityRules(allSecurityIssues, projectConfig.config.security).issues);
@@ -2922,7 +2928,7 @@ export function enrichLinkGraphFromComponentGraph(
 }
 
 import type { ImportInfo, RouteInfo } from "../types/analysis.js";
-import { anonymousWriteFindings, attachFindingEntries, attachPatternEntries, safeMethodWriteFindings } from "./finding-entries.js";
+import { anonymousWriteFindings, attachFindingEntries, attachPatternEntries, filterGapFindings, safeMethodWriteFindings } from "./finding-entries.js";
 import { attachOsvAdvisories } from "./osv.js";
 import { readSourceRevision } from "./source-revision.js";
 import { importSarif } from "./sarif-import.js";

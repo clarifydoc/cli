@@ -2,7 +2,7 @@ import type { Node } from "web-tree-sitter";
 import type { RouteInfo, CallInfo, ParamInfo, RouteParamInfo, RouteResponseInfo } from "../../../../types/analysis.js";
 import { responsesOf } from "../responses.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
-import { applyRouteMeta, buildAuth, pathParamNames, type GuardAttr } from "../../../shared/route-metadata.js";
+import { applyRouteMeta, buildAuth, filterKind, pathParamNames, type GuardAttr } from "../../../shared/route-metadata.js";
 import { HTTP_METHODS, collectCallNames } from "../../../routes/base.js";
 import { scanRequestAccess } from "../request-access.js";
 
@@ -344,12 +344,14 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
  * path guards every route registered on that receiver LATER in the file —
  * Express runs middleware in registration order. Collected from the file's
  * top-level statements, then written onto each route together with its own
- * guards and params. Non-auth `use` middleware (`express.json()`, `cors()`)
- * is deliberately not inherited: it says nothing about access.
+ * guards and params. Non-auth `use` middleware says nothing about access, so
+ * it is not a guard; the kinds that protect or shape a request (`rateLimit()`,
+ * `cors()`, `csurf()`, a validator) are inherited as `filters` instead.
  */
 export function applyRouterLevelGuards(root: Node, routes: RouteInfo[]): void {
   composeLocalMounts(routes);
   const routerGuards: Array<{ receiver: string; line: number; guard: GuardAttr }> = [];
+  const routerFilters: Array<{ receiver: string; line: number; text: string }> = [];
   for (const stmt of root.namedChildren) {
     const call = stmt.type === "expression_statement" ? stmt.namedChildren[0] : null;
     if (!call || call.type !== "call_expression") continue;
@@ -362,6 +364,7 @@ export function applyRouterLevelGuards(root: Node, routes: RouteInfo[]): void {
     for (const arg of args) {
       const guard = guardFromMiddleware(arg);
       if (guard) routerGuards.push({ receiver, line: call.startPosition.row + 1, guard });
+      else if (filterKind(collapse(arg.text))) routerFilters.push({ receiver, line: call.startPosition.row + 1, text: collapse(arg.text) });
     }
   }
 
@@ -375,10 +378,14 @@ export function applyRouterLevelGuards(root: Node, routes: RouteInfo[]): void {
     // Middleware keeps source order (router-level first, then the route's own
     // arguments as written), so `applyRouteMeta` is used only for params; the
     // auth merge is the same `buildAuth` it would call.
+    // The route's own middleware that is not a guard: a rate limiter, a validator…
+    const guardTexts = new Set(meta.guards.map((g) => g.text));
+    const ownFilters = route.middleware.filter((m) => !guardTexts.has(m));
     if (inherited.length > 0) route.middleware = [...inherited.map((g) => g.text), ...route.middleware];
     const auth = buildAuth([...(meta.mountGuards ?? []), ...inherited], meta.guards);
     if (auth) route.auth = auth;
-    applyRouteMeta(route, { params: meta.params });
+    const inheritedFilters = routerFilters.filter((f) => f.receiver === meta.receiver && f.line < route.line).map((f) => f.text);
+    applyRouteMeta(route, { params: meta.params, inheritedFilters, filters: ownFilters });
   }
 }
 

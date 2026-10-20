@@ -164,6 +164,15 @@ interface ControllerScope {
   prefix: string;
   guards: GuardAttr[];
   versions: string[];
+  /** `@UseInterceptors`, `@UsePipes`, `@UseFilters`, `@Throttle` on the controller, as written. */
+  filters: string[];
+}
+
+/** Decorators that filter a request besides guards, as written: `UsePipes(ValidationPipe)`, `Throttle({ default: … })`. */
+const FILTER_DECORATORS = new Set(["UseInterceptors", "UsePipes", "UseFilters", "Throttle", "SkipThrottle", "CacheTTL", "CacheKey"]);
+function filterOf(dec: Node): string | undefined {
+  const d = decoratorCall(dec);
+  return d && FILTER_DECORATORS.has(d.name) ? dec.text.replace(/^@/, "").replace(/\s+/g, " ") : undefined;
 }
 
 /**
@@ -181,7 +190,7 @@ function classDecorators(classBody: Node): Node[] {
 }
 
 function controllerScope(classBody: Node): ControllerScope {
-  const scope: ControllerScope = { prefix: "", guards: [], versions: [] };
+  const scope: ControllerScope = { prefix: "", guards: [], versions: [], filters: [] };
   for (const dec of classDecorators(classBody)) {
     const d = decoratorCall(dec);
     if (!d) continue;
@@ -198,6 +207,8 @@ function controllerScope(classBody: Node): ControllerScope {
     }
     const guard = guardOf(dec);
     if (guard) scope.guards.push(guard);
+    const filter = filterOf(dec);
+    if (filter) scope.filters.push(filter);
     scope.versions.push(...versionsOf(dec));
   }
   return scope;
@@ -270,9 +281,12 @@ export function visitNestjsRoute(node: Node, routes: RouteInfo[]): void {
 
   const guards: GuardAttr[] = [];
   const methodVersions: string[] = [];
+  const filters: string[] = [];
   for (const dec of decorators) {
     const guard = guardOf(dec);
     if (guard) guards.push(guard);
+    const filter = filterOf(dec);
+    if (filter) filters.push(filter);
     methodVersions.push(...versionsOf(dec));
   }
 
@@ -313,6 +327,8 @@ export function visitNestjsRoute(node: Node, routes: RouteInfo[]): void {
     // A method-level @Version overrides the controller's.
     versions: methodVersions.length > 0 ? methodVersions : scope.versions,
     params,
+    inheritedFilters: scope.filters,
+    filters,
   });
   routes.push(route);
 }

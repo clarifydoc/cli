@@ -1,7 +1,7 @@
 import type { Node } from "web-tree-sitter";
 import type { RouteFact, RouteInfo, RouteParamBinding, RouteParamInfo, RouteResponseInfo } from "../../../../types/analysis.js";
 import { findChildByType } from "../../../shared/node-helpers.js";
-import { buildAuth, splitList, type GuardAttr } from "../../../shared/route-metadata.js";
+import { buildAuth, filterKind, routeFilters, splitList, type GuardAttr } from "../../../shared/route-metadata.js";
 import type { RouteExtractor } from "../../../routes/base.js";
 import { extractMinimalApiRoutes, MINIMAL_API_GATE } from "./minimal-api.js";
 import { attributeDefFact, attributeUse, type CsAttrUse } from "./aspnet-attributes.js";
@@ -51,6 +51,8 @@ interface ControllerScope {
   apiController: boolean;
   /** Class-level `[Authorize]`/`[AllowAnonymous]`, applied to every action. */
   guards: GuardAttr[];
+  /** Class-level filter attributes (`[EnableRateLimiting("fixed")]`, `[ValidateAntiForgeryToken]`), as written. */
+  filters?: string[];
   /** Class-level `[ApiVersion]` set (version → deprecated). */
   versions: Map<string, boolean>;
   versionNeutral: boolean;
@@ -165,6 +167,7 @@ function walkForCsharpRoutes(
       className: name ?? scope.className,
       apiController: scope.apiController || ownApiController,
       guards: [...scope.guards, ...ownGuards],
+      filters: [...(scope.filters ?? []), ...filterAttributes(attrs)],
       versions: apiVersionsOf(attrs, scope.versions),
       versionNeutral: scope.versionNeutral || attrs.some((a) => attributeName(a) === "ApiVersionNeutral"),
       webApi: scope.webApi,
@@ -376,6 +379,8 @@ function parseMethodRoutes(
       if (versions.deprecated.length > 0) route.deprecatedVersions = versions.deprecated;
     }
     if (params.length > 0) route.params = params;
+    const filters = [...routeFilters(scope.filters ?? [], true), ...routeFilters(filterAttributes(attrs), false)];
+    if (filters.length > 0) route.filters = filters;
     const responses = actionResponses(methodNode, attrs);
     if (responses) route.responses = responses;
     routes.push(route);
@@ -441,6 +446,20 @@ function isPlainAction(methodNode: Node, attrs: Node[]): boolean {
   if (attrs.some((a) => attributeName(a) === "NonAction")) return false;
   const name = methodNode.childForFieldName("name")?.text ?? "";
   return !(CONTROLLER_HOOKS.test(name) && (mods.includes("override") || name === "Dispose"));
+}
+
+// ─── Filters: rate limits, CORS, antiforgery, caching, service filters ──────
+
+/** The attributes that filter a request besides auth, as written: `EnableRateLimiting("fixed")`, `ServiceFilter(typeof(AuditFilter))`. */
+function filterAttributes(attrs: Node[]): string[] {
+  const out: string[] = [];
+  for (const attr of attrs) {
+    const name = attributeName(attr);
+    if (!name || name === "Authorize" || name === "AllowAnonymous") continue;
+    const text = attr.text.replace(/\s+/g, " ");
+    if (filterKind(text)) out.push(text);
+  }
+  return out;
 }
 
 // ─── Auth: [Authorize] / [AllowAnonymous] ──────────────────────────────────

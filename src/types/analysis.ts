@@ -840,6 +840,17 @@ export interface ClassInfo {
   structural?: boolean;
 }
 
+/** A non-auth filter on a route (`RouteInfo.filters`). */
+export interface RouteFilter {
+  /** As written: `EnableRateLimiting("fixed")`, `throttle:60,1`, `UsePipes(ValidationPipe)`. */
+  text: string;
+  kind: "rate-limit" | "cors" | "csrf" | "validation" | "cache" | "transaction" | "logging" | "error" | "other";
+  /** Declared on the class, router or group rather than the action. */
+  inherited?: boolean;
+  /** `false` when the filter switches the protection off (`DisableRateLimiting`, `IgnoreAntiforgeryToken`, `SkipThrottle`). */
+  enabled?: false;
+}
+
 export interface RouteInfo {
   path: string;
   httpMethod: string | null;
@@ -889,6 +900,13 @@ export interface RouteInfo {
    * form of the auth subset is `auth`.
    */
   middleware: string[];
+  /**
+   * What else runs around the handler besides auth, by kind: rate limits, CORS, CSRF checks, validation,
+   * caching, transactions, logging, error handling — ASP.NET `[EnableRateLimiting]` / `[ValidateAntiForgeryToken]`,
+   * NestJS `@UseInterceptors` / `@UsePipes`, Laravel `throttle:60,1`, an Express `rateLimit()` (`inherited`:
+   * from the class, router or group). Read off the attributes and middleware names the plugin sees.
+   */
+  filters?: RouteFilter[];
   line: number;
   /**
    * Who may call the route, when the framework states it declaratively
@@ -2261,7 +2279,7 @@ export type SecurityCategory =
   | "command-injection" | "debug-statement" | "todo-fixme"
   | "pickle" | "subprocess-shell" | "bare-except"
   | "deserialization" | "xxe" | "weak-crypto" | "insecure-config" | "missing-auth"
-  | "path-traversal" | "ssrf" | "open-redirect" | "safe-method-write" | "webhook-unverified"
+  | "path-traversal" | "ssrf" | "open-redirect" | "safe-method-write" | "webhook-unverified" | "missing-rate-limit" | "missing-csrf"
   /** A finding another tool reported (`analyze --import-sarif`) whose weakness has no category here. */
   | "external";
 

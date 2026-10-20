@@ -158,6 +158,53 @@ function entryWalker(
   };
 }
 
+/**
+ * A write route missing a protection its siblings have: in one controller,
+ * router or file, at least two other POST/PUT/PATCH/DELETE routes carry a
+ * rate limit (or a CSRF check) and this one does not — and nothing on it
+ * switches the protection off on purpose (`DisableRateLimiting`,
+ * `IgnoreAntiforgeryToken`). The inconsistency is the evidence: a project
+ * that rate-limits none of its routes, or protects them globally, is not
+ * flagged. The message names the siblings' filter, so the fix is a copy.
+ */
+export function filterGapFindings(routes: ReadonlyArray<RouteInfo & { filePath: string }>): SecurityIssue[] {
+  const groups = new Map<string, Array<RouteInfo & { filePath: string }>>();
+  for (const r of routes) {
+    if (r.kind !== "api" || !MUTATING.has((r.httpMethod ?? "").toUpperCase())) continue;
+    const key = `${r.filePath}\u0000${r.owner ?? ""}`;
+    (groups.get(key) ?? groups.set(key, []).get(key)!).push(r);
+  }
+  const out: SecurityIssue[] = [];
+  const rules: Array<{ kind: "rate-limit" | "csrf"; category: SecurityIssue["category"]; cwe: string; what: string; why: string }> = [
+    { kind: "rate-limit", category: "missing-rate-limit", cwe: "CWE-770", what: "rate limit", why: "a client can call it as often as it likes" },
+    { kind: "csrf", category: "missing-csrf", cwe: "CWE-352", what: "CSRF check", why: "a page on another site can submit it with the user's cookies" },
+  ];
+  for (const group of groups.values()) {
+    if (group.length < 3) continue;
+    for (const rule of rules) {
+      const has = (r: RouteInfo) => (r.filters ?? []).some((f) => f.kind === rule.kind && f.enabled !== false);
+      const waived = (r: RouteInfo) => (r.filters ?? []).some((f) => f.kind === rule.kind && f.enabled === false);
+      const protectedOnes = group.filter(has);
+      if (protectedOnes.length < 2) continue;
+      const example = protectedOnes[0]!.filters!.find((f) => f.kind === rule.kind && f.enabled !== false)!.text;
+      for (const r of group) {
+        if (has(r) || waived(r)) continue;
+        const label = `${(r.httpMethod ?? "").toUpperCase()} ${r.path}`;
+        out.push({
+          category: rule.category,
+          severity: "medium",
+          message: `${label} has no ${rule.what}, while ${protectedOnes.length} other write route(s) beside it have \`${example}\`: ${rule.why}. Add the same, or mark it as deliberately without.`,
+          filePath: r.filePath,
+          line: r.line,
+          snippet: `${label}${r.handler ? ` → ${r.handler}` : ""}`,
+          cwe: rule.cwe,
+        });
+      }
+    }
+  }
+  return out;
+}
+
 /** Methods that change state. */
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 

@@ -29,6 +29,7 @@ export type SurfaceChangeKind =
   | "body-changed"
   | "guard-lost"
   | "guard-added"
+  | "filter-lost"
   | "version-removed"
   | "version-deprecated"
   | "link-lost"
@@ -155,6 +156,15 @@ function compareRoutes(a: Route, b: Route, push: (c: Omit<SurfaceChange, "route"
   const nowAnonymous = gb.has("anonymous") && !ga.has("anonymous");
   if (lost.length || nowAnonymous) {
     push({ kind: "guard-lost", breaking: false, risky: true, reasons: [...lost.map((g) => `no longer guarded by ${g}`), ...(nowAnonymous ? ["now allows anonymous callers"] : [])] });
+  }
+  // Protections that are filters, not guards (an ASP.NET [EnableRateLimiting], a NestJS @Throttle): one lost is
+  // as risky as a guard lost. A filter that is also a middleware string was reported just above.
+  const protective = (r: Route) => new Map((r.filters ?? []).filter((f) => f.enabled !== false && (f.kind === "rate-limit" || f.kind === "csrf")).map((f) => [f.kind, f.text]));
+  const protA = protective(a);
+  const protB = protective(b);
+  const filtersLost = [...protA].filter(([kind, text]) => !protB.has(kind) && !lost.includes(text));
+  if (filtersLost.length) {
+    push({ kind: "filter-lost", breaking: false, risky: true, reasons: filtersLost.map(([kind, text]) => `no longer ${kind === "csrf" ? "CSRF-checked" : "rate-limited"} (was ${text})`) });
   }
   const added = minus(gb, ga).filter((g) => g !== "anonymous");
   const noLongerAnonymous = ga.has("anonymous") && !gb.has("anonymous");
@@ -313,6 +323,7 @@ const KIND_LABEL: Record<SurfaceChangeKind, string> = {
   "body-changed": "request body",
   "guard-lost": "guard lost",
   "guard-added": "guard added",
+  "filter-lost": "protection lost",
   "version-removed": "version removed",
   "version-deprecated": "version deprecated",
   "link-lost": "call no longer linked",

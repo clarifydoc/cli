@@ -116,3 +116,27 @@ describe("safeMethodWriteFindings", () => {
     expect(found[0]!.message).toContain("writes AuditLog, Orders");
   });
 });
+
+describe("filterGapFindings", () => {
+  const route = (method: string, path: string, filters: Array<{ text: string; kind: "rate-limit" | "csrf"; enabled?: false }> = []) =>
+    ({ path, httpMethod: method, kind: "api", handler: "h", line: 5, calls: [], middleware: [], filePath: "Ctl.cs", owner: "OrdersController", filters }) as never;
+  const limited = [{ text: 'EnableRateLimiting("fixed")', kind: "rate-limit" as const }];
+
+  it("flags a write route without the rate limit its siblings have, not one that waives it on purpose", async () => {
+    const { filterGapFindings } = await import("./finding-entries.js");
+    const found = filterGapFindings([
+      route("POST", "/orders", limited),
+      route("PUT", "/orders/{id}", limited),
+      route("DELETE", "/orders/{id}"),
+      route("PATCH", "/orders/{id}/note", [{ text: "DisableRateLimiting", kind: "rate-limit", enabled: false }]),
+      route("GET", "/orders"),
+    ]);
+    expect(found.map((f) => [f.category, f.snippet, f.cwe])).toEqual([["missing-rate-limit", "DELETE /orders/{id} → h", "CWE-770"]]);
+    expect(found[0]!.message).toContain('`EnableRateLimiting("fixed")`');
+  });
+
+  it("says nothing when the siblings are not protected either", async () => {
+    const { filterGapFindings } = await import("./finding-entries.js");
+    expect(filterGapFindings([route("POST", "/a", limited), route("PUT", "/b"), route("DELETE", "/c")])).toEqual([]);
+  });
+});
