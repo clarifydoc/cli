@@ -8,6 +8,10 @@
  * (separators and camelCase, lowercased), common keywords dropped, and ranked
  * with BM25 (k1 = 1.2, b = 0.75). Deterministic: same source, same order.
  *
+ * The project's Markdown is indexed the same way, a section (a heading and
+ * the text under it) per document (`kind: "doc"`), so a conceptual question
+ * can land on the page that explains it as well as on the code that does it.
+ *
  * Built lazily on the first body query, once per analysis, in memory; files
  * over 1 MB and text past a total budget are left out (said in the result).
  */
@@ -16,7 +20,10 @@ import { splitTokens } from "./search-rank.js";
 
 export interface BodyDoc {
   file: string;
+  /** A function's name, or a doc section's heading. */
   name: string;
+  /** A function body (the default), or a section of a Markdown document. */
+  kind?: "doc";
   line: number;
   endLine: number;
   /** Term → count in this document. */
@@ -57,9 +64,46 @@ export class BodyIndex {
   static async build(
     spans: ReadonlyArray<{ file: string; functions: ReadonlyArray<{ name: string; line: number; endLine: number }> }>,
     readText: (file: string) => Promise<string | null>,
+    docs: readonly string[] = [],
   ): Promise<BodyIndex> {
     const index = new BodyIndex();
     let total = 0;
+    const add = (doc: Omit<BodyDoc, "terms" | "length">, extra: string) => {
+      const terms = new Map<string, number>();
+      for (const l of doc.lines) for (const t of termsOf(l.text)) terms.set(t, (terms.get(t) ?? 0) + 1);
+      for (const t of termsOf(extra)) terms.set(t, (terms.get(t) ?? 0) + 1);
+      const length = [...terms.values()].reduce((a, b) => a + b, 0);
+      if (!length) return;
+      index.docs.push({ ...doc, terms, length });
+      for (const t of terms.keys()) index.df.set(t, (index.df.get(t) ?? 0) + 1);
+    };
+    for (const file of docs) {
+      if (total > MAX_TOTAL_CHARS) {
+        index.skipped++;
+        continue;
+      }
+      const text = await readText(file);
+      if (text === null || text.length > MAX_FILE_BYTES) {
+        index.skipped++;
+        continue;
+      }
+      total += text.length;
+      const all = text.split(/\r?\n/);
+      // Sections: from each heading to the next one; the text above the first, under the file's name. Fences are not headings.
+      let fence = false;
+      const heads: Array<{ line: number; title: string }> = [];
+      all.forEach((l, i) => {
+        if (/^\s*(```|~~~)/.test(l)) fence = !fence;
+        const h = !fence && /^#{1,6}\s+(.+?)\s*#*\s*$/.exec(l);
+        if (h) heads.push({ line: i + 1, title: h[1]! });
+      });
+      const starts = heads[0]?.line === 1 ? heads : [{ line: 1, title: file.split("/").pop()! }, ...heads];
+      starts.forEach((h, i) => {
+        const end = (starts[i + 1]?.line ?? all.length + 1) - 1;
+        const lines = all.slice(h.line - 1, end).map((t, k) => ({ n: h.line + k, text: t }));
+        add({ file, name: h.title, kind: "doc", line: h.line, endLine: end, lines }, h.title);
+      });
+    }
     for (const { file, functions } of spans) {
       if (functions.length === 0) continue;
       if (total > MAX_TOTAL_CHARS) {
@@ -83,13 +127,8 @@ export class BodyIndex {
           else break;
         }
         const lines = all.slice(start, fn.endLine).map((t, i) => ({ n: start + i + 1, text: t }));
-        const terms = new Map<string, number>();
-        for (const l of lines) for (const t of termsOf(l.text)) terms.set(t, (terms.get(t) ?? 0) + 1);
         // The function's own name counts as its words too.
-        for (const t of termsOf(fn.name)) terms.set(t, (terms.get(t) ?? 0) + 1);
-        const length = [...terms.values()].reduce((a, b) => a + b, 0);
-        index.docs.push({ file, name: fn.name, line: fn.line, endLine: fn.endLine, terms, length, lines });
-        for (const t of terms.keys()) index.df.set(t, (index.df.get(t) ?? 0) + 1);
+        add({ file, name: fn.name, line: fn.line, endLine: fn.endLine, lines }, fn.name);
       }
     }
     index.avgLength = index.docs.length ? index.docs.reduce((a, d) => a + d.length, 0) / index.docs.length : 0;

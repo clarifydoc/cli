@@ -4,6 +4,8 @@ import { describeDrivers, describeGates } from "../../core/refactor-pressure.js"
 import { byOrdinal } from "../../core/ordinal.js";
 import { normalize, rankCandidates, type Candidate, type SearchKind } from "../search-rank.js";
 import { BodyIndex, thrownTypes, type BodyHit } from "../body-search.js";
+import { glob } from "../../core/glob.js";
+import { DEFAULT_IGNORE } from "../../core/file-discovery.js";
 import { readFile } from "fs/promises";
 import { join } from "path";
 import type { McpTool } from "../protocol.js";
@@ -303,7 +305,7 @@ export function searchTool(ctx: ToolContext): McpTool {
         },
         limit: { type: "number", description: "Max results, best first (default 12)." },
         offset: OFFSET_SCHEMA,
-        body: { type: "boolean", description: "Also match function bodies and comments (BM25)." },
+        body: { type: "boolean", description: "Also match function bodies, comments and docs (BM25)." },
         throws: { type: "string", description: "Only bodies throwing this type." },
         signature: { type: "string", description: "Only signatures containing this." },
       },
@@ -358,7 +360,8 @@ export function searchTool(ctx: ToolContext): McpTool {
         }
         // A thrown-type filter is about bodies: name matches say nothing about what a function throws.
         if (throwsFilter) ranked = [];
-        bodyNote = `${index.docs.length} function bodies indexed${index.skipped ? `, ${plural(index.skipped, "file")} left out (too large or unreadable)` : ""}.`;
+        const sections = index.docs.filter((d) => d.kind === "doc").length;
+        bodyNote = `${index.docs.length - sections} function bodies${sections ? ` and ${plural(sections, "doc section")}` : ""} indexed${index.skipped ? `, ${plural(index.skipped, "file")} left out (too large or unreadable)` : ""}.`;
       }
 
       if (ranked.length === 0 && bodyHits.length > 0) {
@@ -366,7 +369,7 @@ export function searchTool(ctx: ToolContext): McpTool {
           text: joinLines([
             `# Search: "${query}"`,
             "",
-            `No name matches · ${plural(bodyHits.length, "function")} whose body matches`,
+            `No name matches · ${plural(bodyHits.length, "body or doc section", "bodies or doc sections")} that match`,
             "",
             ...bodyLines(bodyHits),
             "",
@@ -416,7 +419,7 @@ export function searchTool(ctx: ToolContext): McpTool {
           ...note,
           bulletList(ranked, limit, (hit) => `${kindTag(hit.kind)} ${hit.text}`, { offset }),
           ...(wantBody
-            ? ["", `## In function bodies`, "", ...(bodyHits.length ? bodyLines(bodyHits) : ["(no further function body matches)"]), "", bodyNote ?? ""]
+            ? ["", `## In function bodies and docs`, "", ...(bodyHits.length ? bodyLines(bodyHits) : ["(no further body or doc matches)"]), "", bodyNote ?? ""]
             : []),
         ]),
       };
@@ -424,9 +427,11 @@ export function searchTool(ctx: ToolContext): McpTool {
   };
 }
 
-/** Body hits as result lines: the function, where it is, and the line that matched. */
+/** Body hits as result lines: the function or doc section, where it is, and the line that matched. */
 function bodyLines(hits: readonly BodyHit[]): string[] {
-  return hits.map((h) => `- [fn] ${h.doc.name}() (${h.doc.file}:${h.doc.line}) · L${h.best.n}: ${h.best.text}`);
+  return hits.map((h) => h.doc.kind === "doc"
+    ? `- [doc] ${h.doc.name} (${h.doc.file}:${h.doc.line}) · L${h.best.n}: ${h.best.text}`
+    : `- [fn] ${h.doc.name}() (${h.doc.file}:${h.doc.line}) · L${h.best.n}: ${h.best.text}`);
 }
 
 /** One body index per loaded analysis (a reload is a new summary object, so a new index). */
@@ -439,13 +444,20 @@ function bodyIndexFor(loaded: LoadedAnalysis, projectRoot: string): Promise<Body
       file: f.filePath,
       functions: f.functions.map((fn) => ({ name: fn.functionName, line: fn.line, endLine: fn.endLine })),
     }));
-    index = BodyIndex.build(spans, async (file) => {
-      try {
-        return await readFile(join(projectRoot, file), "utf-8");
-      } catch {
-        return null;
-      }
-    });
+    index = (async () => {
+      // The project's own Markdown, as doc drift reads it: no dependencies' docs, no changelogs.
+      const docs = (await glob("**/*.{md,markdown}", { cwd: projectRoot, ignore: DEFAULT_IGNORE, caseSensitiveMatch: false }).catch(() => [] as string[]))
+        .filter((d) => !/(?:^|\/)(?:CHANGELOG|CHANGES|HISTORY|RELEASES?|NEWS)[^/]*$/i.test(d))
+        .sort()
+        .slice(0, 400);
+      return BodyIndex.build(spans, async (file) => {
+        try {
+          return await readFile(join(projectRoot, file), "utf-8");
+        } catch {
+          return null;
+        }
+      }, docs);
+    })();
     BODY_INDEXES.set(loaded.summary, index);
   }
   return index;

@@ -38,6 +38,35 @@ describe("BodyIndex", () => {
   });
 });
 
+describe("BodyIndex — Markdown", () => {
+  const DOC = `Intro line about the service.
+
+# Payments
+
+Refunds go back to the original card within five days.
+
+## Retries
+
+\`\`\`
+# not a heading inside a fence
+\`\`\`
+A failed capture is retried with backoff before the order is cancelled.
+`;
+  it("indexes a document by its sections, a fenced # is not a heading, and ranks a section beside the code", async () => {
+    const index = await BodyIndex.build(
+      [{ file: "a.ts", functions: [{ name: "retryWithBackoff", line: 8, endLine: 14 }] }],
+      async (file) => (file === "docs/payments.md" ? DOC : SRC),
+      ["docs/payments.md"],
+    );
+    const sections = index.docs.filter((d) => d.kind === "doc").map((d) => `${d.name}@${d.line}-${d.endLine}`);
+    expect(sections).toEqual(["payments.md@1-2", "Payments@3-6", "Retries@7-13"]);
+    const hits = index.search("refunds card", 3);
+    expect(hits[0]).toMatchObject({ doc: { kind: "doc", name: "Payments", file: "docs/payments.md" }, best: { n: 5 } });
+    const both = index.search("retried backoff", 3).map((h) => `${h.doc.kind ?? "fn"} ${h.doc.name}`);
+    expect(both).toEqual(expect.arrayContaining(["doc Retries", "fn retryWithBackoff"]));
+  });
+});
+
 describe("clarifydoc_search — bodies and signatures (sample-backend)", () => {
   const { server } = buildMcpServer({ projectRoot: join("test-fixtures", "sample-backend"), analysisDir: join("test-output", "sample-backend"), allowAnalyze: false, allowColdStart: false });
   const search = async (args: Record<string, unknown>) => {
