@@ -33,6 +33,7 @@ Layer 1 always runs and is fully self-contained. Layers 2 and 3 only *augment* t
 Every analyzed file is tracked in `manifest.json` by **SHA-256 of its contents** plus an `EXTRACTOR_VERSION` stamp. This makes change-tracking explicit:
 
 - `--incremental` reuses cached per-file JSON for files whose hash is unchanged (mtime fast-path, hash slow-path — survives branch switches and sync tools that bump mtime).
+- A re-run with no file, option or git state changed rebuilds nothing; one in which only documentation (`.md`, `.rst`, `.adoc`) changed re-checks doc drift on the last analysis and keeps the rest.
 - Bumping `EXTRACTOR_VERSION` invalidates the whole cache, so a fixed extractor never leaves stale JSON behind.
 - Per-file output carries `analyzedAt`; the project summary records framework/LSP provenance and per-link `confidence` (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`).
 

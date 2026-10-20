@@ -117,7 +117,7 @@ export function analyzeTool(ctx: ToolContext): McpTool {
         text: joinLines([
           result.upToDate
             ? `Already up to date (checked in ${((Date.now() - started) / 1000).toFixed(1)}s): no file, option or git state changed since the last analysis of ${result.fileCount} files.`
-            : `Analysis complete in ${((Date.now() - started) / 1000).toFixed(1)}s (${full ? "full re-scan" : "incremental"}): ${result.fileCount} files.`,
+            : `Analysis complete in ${((Date.now() - started) / 1000).toFixed(1)}s (${full ? "full re-scan" : result.docsOnly ? "only documentation changed: doc drift re-checked, the rest kept" : "incremental"}): ${result.fileCount} files.`,
           result.upToDate ? "" : await whatChanged(ctx.store.analysisDir, started),
           "",
           await statusReport(loaded, ctx.store),

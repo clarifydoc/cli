@@ -24,27 +24,60 @@ function git(root: string, args: string[]): Promise<string | null> {
 }
 
 export async function runFingerprint(projectRoot: string, inputs: { options: unknown; extraFiles?: readonly string[] }): Promise<string | null> {
+  return (await runFingerprints(projectRoot, inputs))?.full ?? null;
+}
+
+/** Prose a reader edits without touching what the analysis is made from. */
+const PROSE = ["md", "markdown", "rst", "adoc", "asciidoc"];
+const PROSE_RE = new RegExp(`\\.(?:${PROSE.join("|")})$`, "i");
+
+/** True for a documentation file: only doc drift reads it. */
+export function isProsePath(path: string): boolean {
+  return PROSE_RE.test(path);
+}
+
+/**
+ * `full` is {@link runFingerprint}; `code` is the same with every prose file
+ * left out — the commit by its non-prose blobs rather than its id, the diff
+ * and the untracked files without `.md` & co. A run whose `code` matches the
+ * last one's while `full` does not changed only documentation.
+ */
+export async function runFingerprints(projectRoot: string, inputs: { options: unknown; extraFiles?: readonly string[] }): Promise<{ full: string; code: string } | null> {
   const head = await git(projectRoot, ["rev-parse", "HEAD"]);
   if (head === null) return null;
-  const [diff, untracked] = await Promise.all([
+  const notProse = PROSE.map((ext) => `:(exclude,glob,icase)**/*.${ext}`);
+  const [diff, codeDiff, tree, untracked] = await Promise.all([
     git(projectRoot, ["diff", "HEAD", "--no-color", ...GIT_SAFE_DIFF, "--binary", "--relative"]),
+    git(projectRoot, ["diff", "HEAD", "--no-color", ...GIT_SAFE_DIFF, "--binary", "--relative", "--", ".", ...notProse]),
+    git(projectRoot, ["ls-tree", "-r", "-z", "HEAD"]),
     git(projectRoot, ["ls-files", "--others", "--exclude-standard", "-z"]),
   ]);
-  if (diff === null || untracked === null) return null;
-  const h = createHash("sha256");
-  h.update(JSON.stringify(inputs.options ?? null));
-  h.update("\0head\0").update(head.trim());
-  h.update("\0diff\0").update(diff);
+  if (diff === null || codeDiff === null || tree === null || untracked === null) return null;
+  const full = createHash("sha256");
+  const code = createHash("sha256");
+  const both = (text: string | Buffer) => {
+    full.update(text);
+    code.update(text);
+  };
+  both(JSON.stringify(inputs.options ?? null));
+  full.update("\0head\0").update(head.trim());
+  // `<mode> <type> <blob>\t<path>` per entry: the commit's content, prose aside.
+  code.update("\0tree\0");
+  for (const entry of tree.split("\0")) if (entry && !isProsePath(entry.slice(entry.indexOf("\t") + 1))) code.update(`${entry}\0`);
+  full.update("\0diff\0").update(diff);
+  code.update("\0diff\0").update(codeDiff);
   // An untracked file is new or edited content git's diff does not show.
   const others = untracked.split("\0").filter(Boolean).sort();
   for (const f of others) {
     const s = await stat(join(projectRoot, f)).catch(() => null);
-    h.update(`\0u\0${f}\0${s ? `${s.size}:${s.mtimeMs}` : "gone"}`);
+    const line = `\0u\0${f}\0${s ? `${s.size}:${s.mtimeMs}` : "gone"}`;
+    full.update(line);
+    if (!isProsePath(f)) code.update(line);
   }
   // Inputs read from outside the tree (imported SARIF) or not tracked by git (the project config).
   for (const f of inputs.extraFiles ?? []) {
-    h.update(`\0x\0${f}\0`);
-    h.update(await readFile(f).catch(() => Buffer.from("missing")));
+    both(`\0x\0${f}\0`);
+    both(await readFile(f).catch(() => Buffer.from("missing")));
   }
-  return h.digest("hex");
+  return { full: full.digest("hex"), code: code.digest("hex") };
 }

@@ -7,7 +7,7 @@ import { DEFAULT_IGNORE } from "./file-discovery.js";
 import { normalizeRoutePath } from "./route-linker.js";
 import { discoverFiles, type DiscoveryOptions, type DiscoveredFile } from "./file-discovery.js";
 import { seedFromMainWorktree } from "./worktree-seed.js";
-import { runFingerprint } from "./run-fingerprint.js";
+import { runFingerprints } from "./run-fingerprint.js";
 import {
   EXTRACTOR_VERSION,
   loadManifest,
@@ -131,7 +131,7 @@ import type { ProjectContext } from "../types/project.js";
 import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from "./component-launches.js";
 import { buildImportIndex, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
 import { demoteProjectCallDataSources } from "./project-call-data-sources.js";
-import { denormalizeFileAnalysis } from "./element-registry.js";
+import { denormalizeFileAnalysis, denormalizeProject } from "./element-registry.js";
 import {
   UNUSED_IMPORTS_LIMIT,
   type ArchLayer,
@@ -263,6 +263,8 @@ export interface AnalyzeResult {
    * or git state — so the previous artifacts stand and nothing was rebuilt.
    */
   upToDate?: boolean;
+  /** Only documentation changed: doc drift was redone on the previous analysis, nothing else. */
+  docsOnly?: boolean;
 }
 
 /** Project root as a posix path relative to the working directory, for stable fixtures. */
@@ -360,6 +362,60 @@ async function loadCachedFileResult(
 async function upToDateResult(outputDir: string, outputOpts: OutputOptions): Promise<AnalyzeResult> {
   const summary = await loadReportSummary(outputDir);
   await writeImpactDiff(computeImpactDiff(summary, [], { removedFiles: [], baseLabel: "previous analysis run" }), outputOpts);
+  return { ...resultOf(summary, outputDir), upToDate: true };
+}
+
+/**
+ * A run in which only documentation changed — the code fingerprint equals the
+ * last run's, the full one does not, no analyzed file changed. Every fact
+ * stands but doc drift, the one pass that reads Markdown, so that is redone on
+ * the previous analysis, and the summary, payload, impact and manifest are
+ * rewritten at the new revision. Git-history facts (churn, co-change) carry
+ * over from the last full run.
+ */
+async function docsOnlyResult(args: {
+  projectRoot: string;
+  outputDir: string;
+  outputOpts: OutputOptions;
+  files: readonly DiscoveredFile[];
+  manifest: Manifest;
+  fingerprints: { full: string; code: string };
+  sourceRevision: Promise<ProjectAnalysis["sourceRevision"] | null> | null;
+  gitHistory: boolean;
+  stableOutput: boolean;
+}): Promise<AnalyzeResult> {
+  const prev = denormalizeProject(JSON.parse(await readFile(join(args.outputDir, "project-summary.json"), "utf-8")));
+  // Doc drift checks class members by name; the cached per-file JSON has them.
+  const analyses = (await Promise.all(args.files.map(async (f) => {
+    try {
+      return denormalizeFileAnalysis(JSON.parse(await readFile(pathResolve(args.outputDir, `${f.relativePath}.json`), "utf-8")));
+    } catch {
+      return null;
+    }
+  }))).filter((a): a is FileAnalysis => !!a?.classes);
+  const docDrift = await computeDocDrift(args.projectRoot, analyses, prev.routeMap ?? [], args.gitHistory).catch(() => undefined);
+  const sourceRevision = args.sourceRevision ? await args.sourceRevision : null;
+  const summary: ProjectAnalysis = {
+    ...prev,
+    analyzedAt: args.stableOutput ? STABLE_TIMESTAMP : new Date().toISOString(),
+    ...(sourceRevision ? { sourceRevision } : {}),
+  };
+  if (docDrift) summary.docDrift = docDrift;
+  else delete summary.docDrift;
+  await writeProjectSummary(summary, args.outputOpts);
+  await writeReportData(buildReportPayload(summary), args.outputOpts);
+  await writeImpactDiff(computeImpactDiff(summary, [], { removedFiles: [], baseLabel: "previous analysis run" }), args.outputOpts);
+  await saveManifest(args.outputDir, {
+    ...args.manifest,
+    ...(sourceRevision ? { revision: { commit: sourceRevision.commit, branch: sourceRevision.branch } } : {}),
+    fingerprint: args.fingerprints.full,
+    codeFingerprint: args.fingerprints.code,
+  });
+  return { ...resultOf(summary, args.outputDir), docsOnly: true };
+}
+
+/** The result counts of a summary already on disk. */
+function resultOf(summary: ProjectAnalysis, outputDir: string): AnalyzeResult {
   return {
     fileCount: summary.files.length,
     files: [...summary.files],
@@ -375,7 +431,6 @@ async function upToDateResult(outputDir: string, outputOpts: OutputOptions): Pro
     suggestionCount: summary.suggestions?.length ?? 0,
     changedFiles: [],
     removedFiles: [],
-    upToDate: true,
   };
 }
 
@@ -724,8 +779,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   }
   const prevManifest = options.incremental ? await loadManifest(outputDir) : null;
   // What the run is made from besides the files; OSV answers change on their own, so never "up to date" with it.
-  const fingerprint = options.incremental && !dryRun && !options.osv
-    ? await runFingerprint(projectRoot, {
+  const fingerprints = options.incremental && !dryRun && !options.osv
+    ? await runFingerprints(projectRoot, {
         options: {
           extractor: EXTRACTOR_VERSION,
           include: options.include ?? [],
@@ -742,13 +797,30 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
         extraFiles: [...(options.importSarif ?? []).map((f) => pathResolve(f)), ...externalSpecs.map((s) => s.absolutePath), ...coverageFiles, join(projectRoot, ".clarifydoc", "config.json")],
       }).catch(() => null)
     : null;
-  if (fingerprint && prevManifest?.fingerprint === fingerprint && existsSync(join(outputDir, "project-summary.json"))) {
+  const fingerprint = fingerprints?.full ?? null;
+  const sameRun = !!fingerprints && prevManifest?.fingerprint === fingerprints.full;
+  const sameCode = !!fingerprints && prevManifest?.codeFingerprint === fingerprints.code;
+  if (prevManifest && (sameRun || sameCode) && existsSync(join(outputDir, "project-summary.json"))) {
     // Every file the last run kept is unchanged (the fingerprint covers the file list and git's view of the rest).
     const kept = files.filter((f) => normalizeManifestKey(f.relativePath) in prevManifest.entries);
     const states = await Promise.all(kept.map((f) => classifyFileForCache(f.absolutePath, prevManifest.entries[normalizeManifestKey(f.relativePath)]).then((c) => c.state).catch(() => "changed")));
     if (kept.length === Object.keys(prevManifest.entries).length && states.every((st) => st === "unchanged")) {
-      progress.detail("  Up to date: no file, option, config or git state changed since the last run");
-      return upToDateResult(outputDir, outputOpts);
+      if (sameRun) {
+        progress.detail("  Up to date: no file, option, config or git state changed since the last run");
+        return upToDateResult(outputDir, outputOpts);
+      }
+      progress.detail("  Only documentation changed: re-checking doc drift on the last analysis");
+      return docsOnlyResult({
+        projectRoot,
+        outputDir,
+        outputOpts,
+        files: kept,
+        manifest: prevManifest,
+        fingerprints: fingerprints!,
+        sourceRevision: revisionPromise,
+        gitHistory: options.gitHistory !== false,
+        stableOutput: options.stableOutput === true,
+      });
     }
   }
   const newManifestEntries: Record<string, { mtime: number; sha256: string }> = {};
@@ -1985,6 +2057,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       entries: newManifestEntries,
       ...(sourceRevision ? { revision: { commit: sourceRevision.commit, branch: sourceRevision.branch } } : {}),
       ...(fingerprint ? { fingerprint } : {}),
+      ...(fingerprints ? { codeFingerprint: fingerprints.code } : {}),
     };
     await saveManifest(outputDir, manifest);
     // Remove per-file JSON for sources that disappeared since the last run so

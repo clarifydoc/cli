@@ -38,6 +38,8 @@ export interface Manifest {
   revision?: { commit: string; branch: string | null };
   /** What the run was made from besides the files (`runFingerprint`): equal next time, with no file changed, means up to date. */
   fingerprint?: string;
+  /** The same with documentation left out (`runFingerprints().code`): equal while `fingerprint` is not means only prose changed. */
+  codeFingerprint?: string;
 }
 
 const MANIFEST_NAME = "manifest.json";
