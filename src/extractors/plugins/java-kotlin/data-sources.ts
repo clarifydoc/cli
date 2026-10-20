@@ -376,11 +376,16 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       // it to the serving backend route.
       const retrofit = text.match(RETROFIT_ANN_RE);
       if (retrofit) {
+        // The interface declaring it is the client: its base is the one the Retrofit builder creating it names.
+        let holder: typeof node | null = node.parent;
+        while (holder && holder.type !== "interface_declaration" && holder.type !== "class_declaration") holder = holder.parent;
+        const iface = holder ? (holder.childForFieldName("name") ?? holder.namedChildren.find((c) => c.type === "type_identifier" || c.type === "identifier"))?.text : undefined;
         sources.push(this.ds({
           kind: "api-call",
           name: retrofit[1]!,
           target: joinUrl(null, retrofit[2]!),
           line: node.startPosition.row + 1,
+          ...(iface ? { baseRef: { kind: "client" as const, key: iface } } : {}),
         }));
       }
 

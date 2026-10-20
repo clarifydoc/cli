@@ -75,7 +75,9 @@ export function extractSwiftDataSources(lines: string[]): DataSourceInfo[] {
 
     const http = line.match(HTTP_CLIENT_RE);
     if (http) {
-      const verb = http[1] === "request" ? "GET" : http[1]!.toUpperCase();
+      // `AF.request(url, method: .post)` names its method; without one Alamofire sends GET.
+      const stated = http[1] === "request" ? /\bmethod:\s*(?:HTTPMethod)?\.(\w+)|\bmethod:\s*HTTPMethod\(\s*rawValue:\s*"(\w+)"/.exec(line.slice(http.index! + http[0].length)) : null;
+      const verb = http[1] === "request" ? (stated?.[1] ?? stated?.[2] ?? "get").toUpperCase() : http[1]!.toUpperCase();
       sources.push({ kind: "api-call", name: verb, target: http[2]!, calls: [], line: lineNo });
       continue;
     }

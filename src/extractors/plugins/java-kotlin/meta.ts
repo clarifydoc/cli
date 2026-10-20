@@ -1,4 +1,5 @@
 import { extractJvmScheduledJobs } from "./scheduled-jobs.js";
+import { extractRetrofitClients } from "./retrofit.js";
 import { screenClassResolver } from "../shared/screen-classes.js";
 
 /** Android's screen classes: an Activity or a Fragment, by the platform classes a project's own derive from. */
@@ -115,7 +116,8 @@ function jvmMeta(language: Language, opts: {
       // Spring / Guice / Dagger-Hilt / CDI / Koin registrations (see di-bindings.ts).
       diBindings: (tree, sourceText) => extractJvmDiBindings(tree, sourceText, language === "kotlin" ? "kotlin" : "java"),
       // `RestClient.createClient(X.class, url)` and other proxy factories.
-      ...(language === "java" ? { httpClientRegistrations: extractJavaClientProxies } : {}),
+      // Proxy factories (Java) and Retrofit's builders (both): the base each client is made with.
+      httpClientRegistrations: (tree, sourceText) => [...(language === "java" ? extractJavaClientProxies(tree, sourceText) : []), ...extractRetrofitClients(sourceText)],
       // Request input followed through a Spring / JAX-RS handler (Java's grammar only).
       taint: language === "java" ? javaTaint : kotlinTaint,
       // `@Scheduled` methods and Quartz jobs: entry points a clock runs.

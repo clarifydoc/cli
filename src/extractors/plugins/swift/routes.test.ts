@@ -120,3 +120,15 @@ app.get("users", ":id", "posts") { req in
     ]);
   });
 });
+
+describe("Alamofire's method", () => {
+  it("reads the method AF.request states, GET when it states none", async () => {
+    const { extractSwiftDataSources } = await import("./data-sources.js");
+    const rows = extractSwiftDataSources([
+      'AF.request("https://api.shop.test/orders", method: .post, parameters: order)',
+      'AF.request("https://api.shop.test/orders/1", method: HTTPMethod.delete)',
+      'AF.request("https://api.shop.test/orders")',
+    ]).filter((d) => d.kind === "api-call").map((d) => `${d.name} ${d.target}`);
+    expect(rows).toEqual(["POST https://api.shop.test/orders", "DELETE https://api.shop.test/orders/1", "GET https://api.shop.test/orders"]);
+  });
+});
