@@ -46,6 +46,11 @@ write. That is what lets an external agent be configured as nothing but a comman
   written after its manifest), and HEAD against the commit it was made at (`sourceRevision`, also in the
   manifest). One stat pass per ten seconds, however many calls; `clarifydoc_status` and `clarifydoc_analyze` are
   left alone, since they are about exactly that.
+- **Body search is opt-in.** `clarifydoc_search body=true` (or `throws=`) builds a BM25 index over function
+  bodies and the doc comments above them — spans from the summary's complexity rows, text from the
+  source — once per loaded analysis, in memory (`body-search.ts`). `signature=` reads parameters and
+  return types from the per-file JSON of the candidates only. The tools/list byte budget is tight:
+  new schema text has to pay for itself.
 - **Search ranks across kinds, not within them.** `clarifydoc_search` flattens every source into one
   `Candidate` list ([search-rank.ts](search-rank.ts)) and prints one ranked list, because whatever prints first
   IS the rank — for a model reading top-down and for a search benchmark alike. A new searchable kind

@@ -3,6 +3,9 @@
 import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
 import { byOrdinal } from "../../core/ordinal.js";
 import { normalize, rankCandidates, type Candidate, type SearchKind } from "../search-rank.js";
+import { BodyIndex, thrownTypes, type BodyHit } from "../body-search.js";
+import { readFile } from "fs/promises";
+import { join } from "path";
 import type { McpTool } from "../protocol.js";
 import { describeRun, type LoadedAnalysis } from "../store.js";
 import type { ProjectAnalysis, ProjectDependency } from "../../types/analysis.js";
@@ -264,32 +267,36 @@ export function searchTool(ctx: ToolContext): McpTool {
     name: "clarifydoc_search",
     title: "Search the code map",
     description:
-      "Find things by name across the analysis: API/frontend routes, screens, files, symbols (functions and " +
-      "classes), ORM entities/tables, and outbound API calls. Returns path:line references you can open or " +
-      "feed to the other clarifydoc tools. Use this when you know a name but not where it lives.",
+      "Find routes, screens, files, symbols, entities and API calls by name, or with `body` by what a function's " +
+      "code says. Returns path:line references for the other clarifydoc tools.",
     inputSchema: {
       type: "object",
       properties: {
         query: {
           type: "string",
           description:
-            "What to look for, case-insensitive (route path, screen title, symbol, table, file). Terms are " +
-            "matched independently and camelCase splits, so `user login` and `user id` both work — the latter " +
-            "finds `getUserById`.",
+            "What to look for, case-insensitive (route path, screen, symbol, table, file). Terms match " +
+            "independently and camelCase splits: `user id` finds `getUserById`.",
         },
         kinds: {
           type: "array",
           items: { type: "string", enum: [...SEARCH_KINDS] },
-          description: "Restrict the search to these kinds. Default: all.",
+          description: "Only these kinds (default: all).",
         },
-        limit: { type: "number", description: "Max results in total, best first (default 12)." },
+        limit: { type: "number", description: "Max results, best first (default 12)." },
         offset: OFFSET_SCHEMA,
+        body: { type: "boolean", description: "Also match function bodies and comments (BM25)." },
+        throws: { type: "string", description: "Only bodies throwing this type." },
+        signature: { type: "string", description: "Only signatures containing this." },
       },
       required: ["query"],
       additionalProperties: false,
     },
     handler: async (args) => {
       const query = requiredStringArg(args, "query");
+      const throwsFilter = typeof args.throws === "string" && args.throws.trim() ? args.throws.trim() : null;
+      const signatureText = typeof args.signature === "string" && args.signature.trim() ? args.signature.trim().toLowerCase() : null;
+      const wantBody = args.body === true || throwsFilter !== null;
       const limit = numberArg(args, "limit", 12, { max: 100 });
       const offset = offsetArg(args);
       const requested = stringArrayArg(args, "kinds")
@@ -298,7 +305,9 @@ export function searchTool(ctx: ToolContext): McpTool {
       const kinds = new Set<SearchKind>(requested.length ? requested : SEARCH_KINDS);
       const loaded = await requireAnalysis(ctx);
       const { summary } = loaded;
-      const candidates = searchCandidates(loaded, kinds, query);
+      const signatureFilter = signatureText !== null;
+      // A signature filter is about functions: only symbols can pass it.
+      const candidates = searchCandidates(loaded, signatureFilter ? new Set<SearchKind>(["symbol"]) : kinds, query);
 
       // Strict first: every term must be present. Only when that finds nothing at
       // all does a looser any-term pass run, so a multi-word query degrades to
@@ -306,6 +315,47 @@ export function searchTool(ctx: ToolContext): McpTool {
       let ranked = rankCandidates(candidates, query);
       const loose = ranked.length === 0;
       if (loose) ranked = rankCandidates(candidates, query, { loose: true });
+
+      // Signature filters read each candidate function's declared parameters and return type.
+      const signatureOf = signatureLookup(ctx);
+      if (signatureFilter) {
+        const kept: typeof ranked = [];
+        for (const hit of ranked) {
+          if (hit.path && (await signatureOf(hit.path, hit.name, hit.line)).some((sig) => passes(sig, signatureText!))) kept.push(hit);
+        }
+        ranked = kept;
+      }
+
+      let bodyHits: BodyHit[] = [];
+      let bodyNote: string | null = null;
+      if (wantBody) {
+        const index = await bodyIndexFor(loaded, ctx.store.projectRoot);
+        const raw = index.search(query === "*" ? throwsFilter ?? query : query, 200, (doc) => !throwsFilter || thrownTypes(doc).some((t) => t.toLowerCase().includes(throwsFilter.toLowerCase())));
+        for (const hit of raw) {
+          if (signatureFilter && !(await signatureOf(hit.doc.file, hit.doc.name, hit.doc.line)).some((sig) => passes(sig, signatureText!))) continue;
+          // A function the name search already listed is not listed twice.
+          if (ranked.some((r) => r.kind === "symbol" && r.path === hit.doc.file && r.line === hit.doc.line)) continue;
+          bodyHits.push(hit);
+          if (bodyHits.length >= limit) break;
+        }
+        // A thrown-type filter is about bodies: name matches say nothing about what a function throws.
+        if (throwsFilter) ranked = [];
+        bodyNote = `${index.docs.length} function bodies indexed${index.skipped ? `, ${plural(index.skipped, "file")} left out (too large or unreadable)` : ""}.`;
+      }
+
+      if (ranked.length === 0 && bodyHits.length > 0) {
+        return {
+          text: joinLines([
+            `# Search: "${query}"`,
+            "",
+            `No name matches · ${plural(bodyHits.length, "function")} whose body matches`,
+            "",
+            ...bodyLines(bodyHits),
+            "",
+            bodyNote ?? "",
+          ]),
+        };
+      }
 
       if (ranked.length === 0) {
         // Two things can make a search miss: the query, or the filter. Both are
@@ -347,10 +397,74 @@ export function searchTool(ctx: ToolContext): McpTool {
           "",
           ...note,
           bulletList(ranked, limit, (hit) => `${kindTag(hit.kind)} ${hit.text}`, { offset }),
+          ...(wantBody
+            ? ["", `## In function bodies`, "", ...(bodyHits.length ? bodyLines(bodyHits) : ["(no further function body matches)"]), "", bodyNote ?? ""]
+            : []),
         ]),
       };
     },
   };
+}
+
+/** Body hits as result lines: the function, where it is, and the line that matched. */
+function bodyLines(hits: readonly BodyHit[]): string[] {
+  return hits.map((h) => `- [fn] ${h.doc.name}() (${h.doc.file}:${h.doc.line}) · L${h.best.n}: ${h.best.text}`);
+}
+
+/** One body index per loaded analysis (a reload is a new summary object, so a new index). */
+const BODY_INDEXES = new WeakMap<object, Promise<BodyIndex>>();
+
+function bodyIndexFor(loaded: LoadedAnalysis, projectRoot: string): Promise<BodyIndex> {
+  let index = BODY_INDEXES.get(loaded.summary);
+  if (!index) {
+    const spans = (loaded.summary.complexity ?? []).map((f) => ({
+      file: f.filePath,
+      functions: f.functions.map((fn) => ({ name: fn.functionName, line: fn.line, endLine: fn.endLine })),
+    }));
+    index = BodyIndex.build(spans, async (file) => {
+      try {
+        return await readFile(join(projectRoot, file), "utf-8");
+      } catch {
+        return null;
+      }
+    });
+    BODY_INDEXES.set(loaded.summary, index);
+  }
+  return index;
+}
+
+interface Signature {
+  params: Array<{ name: string; type: string | null }>;
+  returnType: string | null;
+}
+
+/** The declared signatures of the functions named `name` in a file (at `line` when known), from its per-file JSON. */
+function signatureLookup(ctx: ToolContext): (file: string, name: string, line: number | null) => Promise<Signature[]> {
+  type Fn = { name: string; short: string; line: number } & Signature;
+  const cache = new Map<string, Promise<Fn[]>>();
+  return async (file, name, line) => {
+    let all = cache.get(file);
+    if (!all) {
+      all = ctx.store.fileAnalysis(file).then((a): Fn[] =>
+        a
+          ? [
+              ...a.functions.map((f) => ({ name: f.name, short: f.name, line: f.line, params: f.params ?? [], returnType: f.returnType ?? null })),
+              ...a.classes.flatMap((c) => c.methods.map((m) => ({ name: `${c.name}.${m.name}`, short: m.name, line: m.line, params: m.params ?? [], returnType: m.returnType ?? null }))),
+            ]
+          : [],
+      );
+      cache.set(file, all);
+    }
+    const leaf = name.split(".").pop()!;
+    return (await all)
+      .filter((f) => (f.name === name || f.short === leaf) && (line === null || Math.abs(f.line - line) <= 2))
+      .map((f) => ({ params: f.params, returnType: f.returnType }));
+  };
+}
+
+/** The signature mentions `text`: in the return type, or a parameter's name or type. */
+function passes(sig: Signature, text: string): boolean {
+  return (sig.returnType ?? "").toLowerCase().includes(text) || sig.params.some((p) => p.name.toLowerCase().includes(text) || (p.type ?? "").toLowerCase().includes(text));
 }
 
 type HealthCategory =
