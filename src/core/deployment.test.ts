@@ -322,3 +322,19 @@ describe("detectDeployment — vector stores", () => {
     }
   });
 });
+
+describe("detectDeployment — a compose-only repository", () => {
+  it("leaves a service built from a folder this repository does not have to be matched by name", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clarifydoc-infra-"));
+    try {
+      await writeFile(join(root, "docker-compose.yml"), ["services:", "  worker:", "    build: ./worker", "    environment:", "      ORDERS_URL: http://orders:8080", ""].join("\n"));
+      const dep = await detectDeployment(root, { subProjects: [{ id: "root", name: "infra", root: "", type: "unknown" } as unknown as SubProject] });
+      const worker = dep!.services.find((s) => s.name === "worker")!;
+      // Not the infra repo's own root project: the system linker joins it to the repo that holds ./worker.
+      expect(worker.project).toBeUndefined();
+      expect(worker.urlEnv).toEqual({ ORDERS_URL: "http://orders:8080" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

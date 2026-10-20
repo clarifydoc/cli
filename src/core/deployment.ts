@@ -827,7 +827,10 @@ export async function detectDeployment(
     if (svc.env && Object.keys(svc.env).length) s.envKeys = Object.keys(svc.env).sort(byOrdinal);
     if (kind === "app") {
       // The build context is the strongest evidence of what a service runs.
-      s.project = (svc.build ? projectOfContext(svc.build.context, options.subProjects) : undefined) ?? matchProject(svc, projects, byFiles);
+      // A context that is not in this repository (a compose-only repo building ./worker from another) names
+      // nothing here: the service is matched by name, as before, so a system can join it to the repo that has it.
+      const context = svc.build && (svc.build.context === "" || repo.exists(svc.build.context)) ? svc.build.context : undefined;
+      s.project = (context !== undefined ? projectOfContext(context, options.subProjects) : undefined) ?? matchProject(svc, projects, byFiles);
       const entryFile = svc.entryFile ?? (svc.build ? entryFileOf(svc.entrypoint, svc.build.context, repo) : undefined);
       if (entryFile) s.entryFile = entryFile;
       // Where the service is told other services are — URL-shaped values only.
