@@ -240,3 +240,73 @@ export function buildTestCoverage(
   }
   return { sources, total, covered, files, unmatched };
 }
+
+/**
+ * How much of what a route runs the tests ran: the handler and the project
+ * functions it calls, up to `depth` calls away over resolved links, summed
+ * over the functions a coverage report counts. A route whose reach has counted
+ * lines and none run is untested — whatever breaks there, no test says so.
+ * Keyed `<file>\u0000<METHOD> <path>` (the route's file and label).
+ */
+export function routeTestCoverage(
+  routes: ReadonlyArray<{ filePath: string; kind: string; httpMethod: string | null; path: string }>,
+  symbolLinks: ReadonlyArray<{ sourceFile: string; sourceSymbol: string; targetFile: string; targetSymbol: string; confidence?: string; navigational?: boolean }>,
+  coverage: TestCoverageReport,
+  depth = 3,
+): Map<string, { covered: number; total: number; functions: number }> {
+  const byFile = new Map(coverage.files.map((f) => [f.file, f]));
+  const forward = new Map<string, Array<{ file: string; symbol: string }>>();
+  for (const l of symbolLinks) {
+    if (l.navigational || l.confidence === "AMBIGUOUS") continue;
+    const k = `${l.sourceFile}\u0000${l.sourceSymbol}`;
+    (forward.get(k) ?? forward.set(k, []).get(k)!).push({ file: l.targetFile, symbol: l.targetSymbol });
+  }
+  const counted = (file: string, symbol: string) => {
+    const leaf = symbol.split(".").pop()!;
+    return byFile.get(file)?.functions?.find((f) => f.name === symbol || f.name.endsWith(`.${leaf}`) || f.name === leaf);
+  };
+  const out = new Map<string, { covered: number; total: number; functions: number }>();
+  for (const r of routes) {
+    if (r.kind !== "api") continue;
+    const label = `${(r.httpMethod ?? "USE").toUpperCase()} ${r.path}`;
+    const start = `${r.filePath}\u0000route:${r.httpMethod ?? "USE"} ${r.path}`;
+    const seen = new Set([start]);
+    let frontier = [start];
+    let covered = 0;
+    let total = 0;
+    let functions = 0;
+    for (let d = 0; d < depth + 1 && frontier.length; d++) {
+      const next: string[] = [];
+      for (const key of frontier) {
+        for (const t of forward.get(key) ?? []) {
+          const tk = `${t.file}\u0000${t.symbol}`;
+          if (seen.has(tk)) continue;
+          seen.add(tk);
+          next.push(tk);
+          const fn = counted(t.file, t.symbol);
+          if (fn && fn.total > 0) {
+            covered += fn.covered;
+            total += fn.total;
+            functions++;
+          }
+        }
+      }
+      frontier = next;
+    }
+    if (functions > 0) out.set(`${r.filePath}\u0000${label}`, { covered, total, functions });
+  }
+  return out;
+}
+
+/** "3-5,9" → [3,4,5,9]: the lines a range list names. */
+export function rangeLines(ranges: string): number[] {
+  const out: number[] = [];
+  for (const part of ranges.split(",")) {
+    const m = /^\s*(\d+)(?:-(\d+))?\s*$/.exec(part);
+    if (!m) continue;
+    const a = Number(m[1]);
+    const b = m[2] ? Number(m[2]) : a;
+    for (let n = a; n <= b && n - a < 100_000; n++) out.push(n);
+  }
+  return out;
+}

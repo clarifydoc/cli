@@ -907,6 +907,11 @@ export interface RouteInfo {
    */
   middleware: string[];
   /**
+   * API routes, with a coverage report: the lines the tests ran in the handler and the functions it calls
+   * (three calls deep), over the functions the report counts. `covered: 0` is a route no test runs.
+   */
+  testCoverage?: { covered: number; total: number; functions: number };
+  /**
    * What else runs around the handler besides auth, by kind: rate limits, CORS, CSRF checks, validation,
    * caching, transactions, logging, error handling — ASP.NET `[EnableRateLimiting]` / `[ValidateAntiForgeryToken]`,
    * NestJS `@UseInterceptors` / `@UsePipes`, Laravel `throttle:60,1`, an Express `rateLimit()` (`inherited`:

@@ -312,7 +312,7 @@ program
       );
       const author = options.author ?? (options.files?.length ? undefined : await gitUserName(projectRoot));
       // The diff's lines, so the change is also judged function by function.
-      let symbols: { changed: import("./core/changed-symbols.js").ChangedSymbol[]; moduleLevel: string[]; signatureChanges?: import("./core/changed-symbols.js").SignatureChange[] } | undefined;
+      let symbols: { changed: import("./core/changed-symbols.js").ChangedSymbol[]; moduleLevel: string[]; signatureChanges?: import("./core/changed-symbols.js").SignatureChange[]; hunks?: import("./core/changed-symbols.js").ChangedHunks } | undefined;
       if (!options.files?.length) {
         try {
           const { symbolsInHunks, loadFileAnalyses, analyzeWorkingFiles, signatureChanges } = await import("./core/changed-symbols.js");
@@ -321,7 +321,7 @@ program
           const before = await loadFileAnalyses(analysisDir, touched);
           const found = symbolsInHunks(before, hunks);
           const after = await analyzeWorkingFiles(projectRoot, [...before.keys()]);
-          symbols = { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: signatureChanges(before, after, summary.symbolLinks ?? []) };
+          symbols = { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: signatureChanges(before, after, summary.symbolLinks ?? []), hunks };
         } catch (e) {
           // No line ranges: the file-level impact stands alone.
           if (process.env.CLARIFYDOC_DEBUG) console.error(e);

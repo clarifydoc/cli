@@ -232,6 +232,7 @@ export function routeGuardNote(route: {
   versions?: string[];
   deprecatedVersions?: string[];
   filters?: Array<{ kind: string; enabled?: false }>;
+  testCoverage?: { covered: number; total: number };
 }): string {
   const parts: string[] = [];
   const a = route.auth;
@@ -246,6 +247,8 @@ export function routeGuardNote(route: {
       if (bits.length) parts.push(`auth: ${bits.join("; ")}`);
     }
   }
+  // With a coverage report: how much of what the route runs the tests ran.
+  if (route.testCoverage) parts.push(route.testCoverage.covered === 0 ? "untested" : `tests run ${Math.round((route.testCoverage.covered / route.testCoverage.total) * 100)}%`);
   // Filters by kind (`rate-limit, csrf`), a switched-off one marked: what else runs around the handler.
   const kinds = [...new Set((route.filters ?? []).map((f) => (f.enabled === false ? `no ${f.kind}` : f.kind)))];
   if (kinds.length) parts.push(kinds.join(", "));

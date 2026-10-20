@@ -256,3 +256,19 @@ describe("consumer standing", () => {
     expect(renderImpactMarkdown(r)).toContain("check: `nightly`");
   });
 });
+
+describe("patch coverage", () => {
+  it("lists the changed lines the coverage report says no test ran", () => {
+    const withCoverage = {
+      ...summary,
+      testCoverage: { sources: [], total: 20, covered: 12, unmatched: [], files: [{ file: "srv/service.ts", total: 20, covered: 12, uncovered: "4-6,15-18" }] },
+    } as unknown as ProjectAnalysis;
+    const r = computeImpactDiff(withCoverage, ["srv/service.ts"], {
+      symbols: { changed: [], moduleLevel: ["srv/service.ts"], hunks: new Map([["srv/service.ts", [[3, 5], [16, 16], [30, 31]] as const]]) },
+    });
+    expect(r.patchCoverage).toEqual({ uncoveredLines: 3, files: [{ file: "srv/service.ts", changedLines: 6, uncovered: "4-5,16" }] });
+    expect(renderImpactText(r)).toContain("Changed lines no test runs: 3");
+    expect(renderImpactMarkdown(r)).toContain("`srv/service.ts:4-5,16`");
+  });
+});
+

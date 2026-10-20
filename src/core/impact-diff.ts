@@ -10,6 +10,20 @@ import type {
   TraceImpactScreen,
 } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
+import { rangeLines } from "./test-coverage.js";
+
+/** [3,4,5,9] → "3-5,9". */
+function toRanges(lines: readonly number[]): string {
+  const sorted = [...new Set(lines)].sort((a, b) => a - b);
+  const out: string[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    let j = i;
+    while (j + 1 < sorted.length && sorted[j + 1] === sorted[j]! + 1) j++;
+    out.push(j > i ? `${sorted[i]}-${sorted[j]}` : `${sorted[i]}`);
+    i = j;
+  }
+  return out.join(",");
+}
 import { isTestFile } from "./test-file-detector.js";
 
 /**
@@ -78,6 +92,12 @@ export interface ImpactDiffResult {
    * files) with counted lines and none run. Absent without a coverage report.
    */
   untested?: Array<{ file: string; symbol?: string; line?: number; lines: number }>;
+  /**
+   * The changed lines (the diff's new side) that the coverage report says no
+   * test ran, per file — patch coverage, as the lines to look at. Absent
+   * without a coverage report or the diff's lines.
+   */
+  patchCoverage?: { uncoveredLines: number; files: Array<{ file: string; changedLines: number; uncovered: string }> };
   /** CODEOWNERS owners of the changed files, with how many changed files each owns. */
   owners?: Array<{ owner: string; files: number }>;
   /**
@@ -142,7 +162,7 @@ export function computeImpactDiff(
     baseLabel?: string;
     author?: string;
     /** The changed functions (from `symbolsInHunks`), when the diff's lines are known. */
-    symbols?: { changed: ChangedSymbol[]; moduleLevel: string[]; signatureChanges?: SignatureChange[] };
+    symbols?: { changed: ChangedSymbol[]; moduleLevel: string[]; signatureChanges?: SignatureChange[]; hunks?: ReadonlyMap<string, ReadonlyArray<readonly [number, number]>> };
   },
 ): ImpactDiffResult {
   // Canonical path index — exact first, case-insensitive fallback (Delphi
@@ -353,6 +373,22 @@ export function computeImpactDiff(
     }
   }
 
+  // ── The changed lines no test ran ──
+  let patchCoverage: ImpactDiffResult["patchCoverage"];
+  if (summary.testCoverage && options?.symbols?.hunks?.size) {
+    const cov = new Map(summary.testCoverage.files.map((f) => [f.file, f]));
+    const files: NonNullable<ImpactDiffResult["patchCoverage"]>["files"] = [];
+    for (const [file, ranges] of options.symbols.hunks) {
+      const c = cov.get(file);
+      if (!c) continue;
+      const missed = new Set(rangeLines(c.uncovered));
+      const changed = ranges.flatMap(([a, b]) => Array.from({ length: Math.max(0, b - a + 1) }, (_, i) => a + i));
+      const hit = changed.filter((l) => missed.has(l));
+      if (hit.length) files.push({ file, changedLines: changed.length, uncovered: toRanges(hit) });
+    }
+    if (files.length) patchCoverage = { uncoveredLines: files.reduce((n, f) => n + rangeLines(f.uncovered).length, 0), files: files.sort((a, b) => byOrdinal(a.file, b.file)) };
+  }
+
   // ── Owners and reviewers ──
   const ownerFiles = new Map<string, number>();
   for (const f of changedFiles) {
@@ -431,6 +467,7 @@ export function computeImpactDiff(
     ...(symbolImpact ? { symbolImpact } : {}),
     ...(reviewers.length > 0 ? { reviewers } : {}),
     ...(untested?.length ? { untested } : {}),
+    ...(patchCoverage ? { patchCoverage } : {}),
     ...(testCallers.length ? { testCallers: testCallers.slice(0, 50) } : {}),
     ...(testCommands.length ? { testCommands } : {}),
     risk: { level, reasons },
@@ -474,6 +511,10 @@ export function renderImpactText(r: ImpactDiffResult): string {
       for (const t of r.testCallers.slice(0, 20)) lines.push(`  ${t.symbol} (${t.file}:${t.line})${t.depth > 1 ? ` — ${t.depth} calls away` : ""}`);
     }
     for (const c of r.testCommands ?? []) lines.push(`  run: ${c.command}`);
+    if (r.patchCoverage) {
+      lines.push("", `Changed lines no test runs: ${r.patchCoverage.uncoveredLines}`);
+      for (const f of r.patchCoverage.files) lines.push(`  ${f.file}: ${f.uncovered}`);
+    }
     if (r.untested?.length) {
       lines.push("", `Untested — no test runs these (${r.untested.length}):`);
       for (const u of r.untested) lines.push(`  ${u.symbol ? `${u.symbol} (${u.file}:${u.line})` : u.file}`);
@@ -550,6 +591,7 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
   row(`Tests to run (${r.testCount})`, r.tests.map((t) => `\`${t}\``).join(", ") || "—");
   if (r.testCommands?.length) row("Run", r.testCommands.map((c) => `\`${c.command}\``).join("<br>"));
   if (r.untested?.length) row(`Untested (${r.untested.length})`, r.untested.map((u) => `\`${u.symbol ?? u.file}\``).join(", "));
+  if (r.patchCoverage) row(`Changed lines no test runs (${r.patchCoverage.uncoveredLines})`, r.patchCoverage.files.map((f) => `\`${f.file}:${f.uncovered}\``).join(", "));
   if (r.missingCoChanges?.length) {
     row("Usually changed with", r.missingCoChanges.map((m) => `\`${m.file}\` (${Math.round(m.score * 100)}% with \`${m.with}\`)`).join(", "));
   }

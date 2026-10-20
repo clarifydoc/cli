@@ -1213,7 +1213,7 @@ export function impactTool(ctx: ToolContext): McpTool {
       }
       const { computeImpactDiff, renderImpactMarkdown } = await import("../../core/impact-diff.js");
       // From git, the diff's lines too: the change judged function by function.
-      let symbols: { changed: import("../../core/changed-symbols.js").ChangedSymbol[]; moduleLevel: string[]; signatureChanges?: import("../../core/changed-symbols.js").SignatureChange[] } | undefined;
+      let symbols: { changed: import("../../core/changed-symbols.js").ChangedSymbol[]; moduleLevel: string[]; signatureChanges?: import("../../core/changed-symbols.js").SignatureChange[]; hunks?: import("../../core/changed-symbols.js").ChangedHunks } | undefined;
       if (!explicit.length) {
         try {
           const [{ gitChangedHunks }, { symbolsInHunks, loadFileAnalyses, analyzeWorkingFiles, signatureChanges }] = await Promise.all([
@@ -1224,7 +1224,7 @@ export function impactTool(ctx: ToolContext): McpTool {
           const before = await loadFileAnalyses(ctx.store.analysisDir, [...new Set([...hunks.keys(), ...changed])]);
           const found = symbolsInHunks(before, hunks);
           const after = await analyzeWorkingFiles(ctx.store.projectRoot, [...before.keys()]);
-          symbols = { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: signatureChanges(before, after, loaded.summary.symbolLinks ?? []) };
+          symbols = { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: signatureChanges(before, after, loaded.summary.symbolLinks ?? []), hunks };
         } catch {
           // Without line ranges the file-level projection stands alone.
         }

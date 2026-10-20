@@ -93,3 +93,35 @@ describe("buildTestCoverage", () => {
     expect(lineRanges([9, 3, 4, 5, 12, 13, 14, 4])).toBe("3-5,9,12-14");
   });
 });
+
+describe("routeTestCoverage", () => {
+  it("sums what the tests ran in a route's handler and the functions it calls; a route with none run is untested", async () => {
+    const { routeTestCoverage, rangeLines } = await import("./test-coverage.js");
+    const link = (sf: string, ss: string, tf: string, ts: string) => ({ sourceFile: sf, sourceSymbol: ss, targetFile: tf, targetSymbol: ts, confidence: "EXTRACTED" });
+    const coverage = {
+      sources: [], total: 30, covered: 12, unmatched: [],
+      files: [
+        { file: "routes.ts", total: 10, covered: 6, uncovered: "5-8", functions: [{ name: "list", line: 1, endLine: 9, total: 10, covered: 6 }] },
+        { file: "repo.ts", total: 20, covered: 6, uncovered: "", functions: [{ name: "findAll", line: 1, endLine: 9, total: 10, covered: 6 }, { name: "purge", line: 10, endLine: 19, total: 10, covered: 0 }] },
+      ],
+    };
+    const got = routeTestCoverage(
+      [
+        { filePath: "routes.ts", kind: "api", httpMethod: "GET", path: "/orders" },
+        { filePath: "routes.ts", kind: "api", httpMethod: "DELETE", path: "/orders" },
+        { filePath: "routes.ts", kind: "frontend", httpMethod: null, path: "/" },
+      ],
+      [
+        link("routes.ts", "route:GET /orders", "routes.ts", "list"),
+        link("routes.ts", "list", "repo.ts", "findAll"),
+        link("routes.ts", "route:DELETE /orders", "repo.ts", "purge"),
+      ],
+      coverage as never,
+    );
+    expect(Object.fromEntries(got)).toEqual({
+      "routes.ts\u0000GET /orders": { covered: 12, total: 20, functions: 2 },
+      "routes.ts\u0000DELETE /orders": { covered: 0, total: 10, functions: 1 },
+    });
+    expect(rangeLines("3-5,9")).toEqual([3, 4, 5, 9]);
+  });
+});

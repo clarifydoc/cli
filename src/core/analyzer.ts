@@ -78,7 +78,7 @@ import { findBlockingInAsync, findQueriesInLoops } from "./query-in-loop.js";
 import { consumerEntryPoints } from "./consumer-entries.js";
 import { collectProjectCommands } from "./project-commands.js";
 import { nameCommunities } from "./community-names.js";
-import { buildTestCoverage, COVERAGE_CANDIDATES, parseCoverage } from "./test-coverage.js";
+import { buildTestCoverage, COVERAGE_CANDIDATES, parseCoverage, routeTestCoverage } from "./test-coverage.js";
 import { isTestFile } from "./test-file-detector.js";
 import { checkContracts } from "./contract-check.js";
 import { joinEnvVars } from "./env-vars.js";
@@ -1569,6 +1569,14 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Test coverage, from the reports a test run wrote.
   const testCoverage = await readTestCoverage(coverageFiles, allAnalyses, projectRoot);
   if (testCoverage) {
+    // How much of what each route runs the tests ran (its handler and three calls deep).
+    const perRoute = routeTestCoverage(allRoutes, symbolLinks, testCoverage);
+    for (const r of allRoutes) {
+      const c = perRoute.get(`${r.filePath}\u0000${(r.httpMethod ?? "USE").toUpperCase()} ${r.path}`);
+      if (c) r.testCoverage = c;
+    }
+    const untestedRoutes = [...perRoute.values()].filter((c) => c.covered === 0).length;
+    if (untestedRoutes) progress.detail(`  Routes no test runs: ${untestedRoutes}`);
     const pct = testCoverage.total ? Math.round((testCoverage.covered / testCoverage.total) * 100) : 0;
     progress.detail(`  Test coverage: ${pct}% of ${testCoverage.total} lines in ${testCoverage.files.length} file(s) from ${testCoverage.sources.map((s) => `${s.file} (${s.format}${s.stale ? ", older than the sources" : ""})`).join(", ")}`);
   }
