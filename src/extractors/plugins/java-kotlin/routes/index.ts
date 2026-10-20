@@ -40,7 +40,7 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
     // Ktor verbs are maximally generic (`get`), so the DSL walk only runs in
     // files that actually import io.ktor.
     if (sourceText.includes("io.ktor")) {
-      extractKtorRoutes(tree.rootNode, routes);
+      extractKtorRoutes(tree.rootNode, routes, facts);
     }
 
     // Spring Security's URL rules, applied to every route by springSecurityResolver.

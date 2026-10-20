@@ -3,7 +3,9 @@ import "../../../registry.js"; // side effect: registers tree-sitter grammars
 import { parseSource } from "../../../../parsers/parser-manager.js";
 import { extractKtorRoutes } from "./ktor.js";
 import { javaKotlinRouteExtractor } from "./index.js";
-import type { RouteInfo } from "../../../../types/analysis.js";
+import { createEmptyAnalysis, type FileAnalysis, type RouteFact, type RouteInfo } from "../../../../types/analysis.js";
+import type { ProjectContext } from "../../../../types/project.js";
+import { ktorRouteFnResolver } from "./ktor.js";
 
 /** Ktor's routing DSL produced zero routes before this extractor. */
 async function routesOf(source: string): Promise<RouteInfo[]> {
@@ -116,5 +118,58 @@ fun Application.module() {
     const health = routes.find((r) => r.path === "/health")!;
     expect(health.auth).toBeUndefined();
     expect(health.params).toBeUndefined();
+  });
+});
+
+describe("Ktor route functions installed by name", () => {
+  const fileOf = async (filePath: string, src: string): Promise<FileAnalysis> => {
+    const tree = await parseSource(src, "kotlin" as any, filePath);
+    const facts: RouteFact[] = [];
+    const routes = javaKotlinRouteExtractor.extractRoutes(tree, src, filePath, facts);
+    return { ...createEmptyAnalysis(filePath, "kotlin"), routes, routeFacts: facts };
+  };
+
+  it("serves a Route extension's routes under the block that installs it, through relaying extensions", async () => {
+    const app = await fileOf("src/Application.kt", `package app
+import io.ktor.server.routing.*
+fun Application.module() {
+    routing {
+        get("/health") { call.respondText("OK") }
+        route("/api") {
+            authenticate("jwt") {
+                userRoutes()
+            }
+            adminRoutes()
+        }
+    }
+}`);
+    const users = await fileOf("src/routes/UserRoutes.kt", `package app.routes
+import io.ktor.server.routing.*
+fun Route.userRoutes() {
+    route("/users") {
+        get { call.respond(repo.all()) }
+        post("/{id}/lock") { helper() }
+    }
+}
+fun Route.adminRoutes() {
+    route("/admin") {
+        reportRoutes()
+    }
+}
+fun Route.reportRoutes() {
+    get("/reports") { call.respond(1) }
+}`);
+    expect(users.routes.map((r) => `${r.httpMethod} ${r.path} ${r.owner}`)).toEqual([
+      "GET /users fn:userRoutes",
+      "POST /users/{id}/lock fn:userRoutes",
+      "GET /reports fn:reportRoutes",
+    ]);
+    ktorRouteFnResolver.resolve([app, users], {} as ProjectContext);
+    expect([app, users].flatMap((a) => a.routes).map((r) => `${r.httpMethod} ${r.path}${r.auth ? ` auth=${r.auth.schemes.join(",")}` : ""}`)).toEqual([
+      "GET /health",
+      "GET /api/users auth=jwt",
+      "POST /api/users/{id}/lock auth=jwt",
+      "GET /api/admin/reports",
+    ]);
   });
 });

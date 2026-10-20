@@ -1,3 +1,4 @@
+import { ktorRouteFnResolver } from "./routes/ktor.js";
 import { springSecurityResolver } from "./routes/security-dsl.js";
 import type { Language } from "../../../types/analysis.js";
 import { jvmRequestSchema } from "./request-schema.js";
@@ -80,7 +81,7 @@ function jvmMeta(language: Language, opts: {
     ...(opts.preprocess ? { preprocess: opts.preprocess } : {}),
     routes: javaKotlinRouteExtractor,
     // Spring Security's authorizeHttpRequests rules, on the routes they match.
-    routeResolvers: [springSecurityResolver],
+    routeResolvers: [springSecurityResolver, ktorRouteFnResolver],
     functionsClasses: jvmFunctionsClasses,
     requestSchema: jvmRequestSchema,
     importsExports: jvmImportsExports,

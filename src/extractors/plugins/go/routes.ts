@@ -1,5 +1,6 @@
 import type { RouteFact, RouteInfo } from "../../../types/analysis.js";
 import { buildAuth, type GuardAttr } from "../../shared/route-metadata.js";
+import { ROUTER_CALL, type RouterCall } from "../shared/router-functions.js";
 
 /**
  * Go server routes across the ecosystem's router families:
@@ -38,7 +39,7 @@ import { buildAuth, type GuardAttr } from "../../shared/route-metadata.js";
  * (`users.Register(v1.Group("/users"))` → `func Register(r *gin.RouterGroup)`).
  * Routes registered on such a parameter (or a group derived from it) are
  * owned by their function (`owner: "fn:Register"`) and keep only the path the
- * function knows; each call passing a router is a `go:router-call` fact with
+ * function knows; each call passing a router is a `router-call` fact with
  * the prefix and guards the router carries there. `goRouterFnResolver` joins
  * the two across files and packages.
  *
@@ -82,17 +83,6 @@ const ROUTER_METHODS = new Set(["Group", "Use", "Route", "Mount", "With", "Handl
 /** Handing a router to the standard library or a server start is serving it, not registering on it. */
 const NOT_A_REGISTRAR = /^(?:http|log|fmt|os|signal|context|errors|strings|time|slog|httptest)\.|(?:^|\.)(?:ListenAndServe(?:TLS)?|Serve(?:TLS)?|Run(?:TLS)?|Start(?:TLS)?|Listen|Handler|ServeHTTP|Shutdown)$/;
 
-export const GO_ROUTER_CALL = "go:router-call";
-
-/** A call handing a router on: who calls, whom, and what the router carries there. */
-export interface GoRouterCall {
-  callee: string;
-  /** The router's prefix at the call (`v1.Group("/users")` under `/api` → `/api/users`). */
-  prefix: string;
-  /** The router derives from the caller's own router parameter: the prefix is relative to the caller's. */
-  relative: boolean;
-  guards: GuardAttr[];
-}
 
 /** `r.Use(a, b)` — router-level middleware. */
 const USE_RE = /(\w+)\.\s*Use\s*\(/;
@@ -394,13 +384,13 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
             const v = bare ?? grouped?.[1];
             if (!v || !routerVars.has(v)) continue;
             const extra = grouped ? parseArgs(`(${grouped[3] ?? ""})`, 0).args.map(classifyGuard) : [];
-            const call: GoRouterCall = {
+            const call: RouterCall = {
               callee,
               prefix: joinPrefix(prefixOf(v), grouped?.[2] ?? ""),
               relative: routerVars.get(v)!,
               guards: [...inheritedOf(v), ...extra],
             };
-            facts.push({ kind: GO_ROUTER_CALL, line: lineNo, ...(currentFn ? { owner: currentFn } : {}), data: call });
+            facts.push({ kind: ROUTER_CALL, line: lineNo, ...(currentFn ? { owner: currentFn } : {}), data: call });
             break;
           }
         }

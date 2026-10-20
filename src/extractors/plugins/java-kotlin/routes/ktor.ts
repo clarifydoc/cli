@@ -1,5 +1,7 @@
 import type { Node } from "web-tree-sitter";
-import type { RouteInfo } from "../../../../types/analysis.js";
+import type { FileAnalysis, RouteFact, RouteInfo } from "../../../../types/analysis.js";
+import type { RouteResolver } from "../../../route-resolvers/base.js";
+import { ROUTER_CALL, resolveRouterFunctions, type RouterCall } from "../../shared/router-functions.js";
 import { findChildByType } from "../../../shared/node-helpers.js";
 import { extractCalls } from "../../../shared/call-graph.js";
 import { applyRouteMeta, type GuardAttr } from "../../../shared/route-metadata.js";
@@ -21,8 +23,19 @@ import type { RouteParamInfo } from "../../../../types/analysis.js";
  * by an outer call_expression that carries the trailing lambda. The inner
  * node is the match anchor; the outer one supplies the handler body's calls.
  *
+ * Routes are often split into extension functions installed by name:
+ *
+ *   fun Route.userRoutes() { route("/users") { get { … } } }
+ *   routing { route("/api") { userRoutes() } }                → GET /api/users
+ *
+ * A route inside `fun Route.x()` is owned by `x` (`owner: "fn:x"`) with the
+ * path the function knows; a call `x()` in a routing block is a
+ * `router-call` fact with the block's prefix and guards, and
+ * `ktorRouteFnResolver` (the shared router-functions kit) composes them.
+ *
  * The verb names are maximally generic (`get`), so a route is only emitted
- * when the call sits under a `routing { }` / `route("…") { }` ancestor —
+ * when the call sits under a `routing { }` / `route("…") { }` ancestor (or in a
+ * `Route` extension function) —
  * a stray `get("key")` helper elsewhere in a Ktor file never qualifies. The
  * extractor itself is additionally gated on the file importing io.ktor.
  */
@@ -55,14 +68,45 @@ function calleeName(call: Node): string | null {
  * Climb enclosing DSL blocks: collect `route("prefix")` segments (outermost
  * first) and report whether a routing/route anchor exists at all.
  */
-function dslContext(node: Node): { prefixes: string[]; anchored: boolean; guards: GuardAttr[] } {
+/** `fun Route.userRoutes() { … }` → `userRoutes`: a function that registers on the route it extends. */
+function routeExtensionName(fn: Node): string | null {
+  const recv = fn.namedChildren.find((c) => c.type === "user_type");
+  if (!recv || !/^(?:Route|Routing)$/.test(recv.text)) return null;
+  return fn.namedChildren.find((c) => c.type === "simple_identifier")?.text ?? null;
+}
+
+interface DslContext {
+  prefixes: string[];
+  anchored: boolean;
+  guards: GuardAttr[];
+  /** The `Route` extension function the node is in, when no `routing { }` is nearer. */
+  ownerFn: string | null;
+  /** The node sits in a verb's handler lambda. */
+  inVerb: boolean;
+}
+
+function dslContext(node: Node): DslContext {
   const prefixes: string[] = [];
   const guards: GuardAttr[] = [];
   let anchored = false;
+  let ownerFn: string | null = null;
+  let inVerb = false;
+  // Only `routing { }` makes the path absolute; `route("/x") { }` inside an extension stays relative to its caller.
+  let sawRouting = false;
   let cur: Node | null = node.parent;
   while (cur) {
+    if (cur.type === "function_declaration") {
+      // Lexical scope ends at the function: what is outside is wherever it is called.
+      const ext = routeExtensionName(cur);
+      if (ext && !sawRouting) {
+        anchored = true;
+        ownerFn = ext;
+      }
+      break;
+    }
     if (cur.type === "call_expression") {
       const inner = cur.child(0);
+      if ((inner?.type === "call_expression" && KTOR_VERBS.has(calleeName(inner) ?? "")) || KTOR_VERBS.has(calleeName(cur) ?? "")) inVerb = true;
       if (inner?.type === "call_expression" && calleeName(inner) === "route") {
         const p = firstStringArg(inner);
         if (p) prefixes.unshift(p);
@@ -74,14 +118,18 @@ function dslContext(node: Node): { prefixes: string[]; anchored: boolean; guards
         guards.unshift({ text: scheme ? `authenticate("${scheme}")` : "authenticate", schemes: scheme ? [scheme] : [] });
       } else if (calleeName(cur) === "routing" || calleeName(cur) === "route") {
         anchored = true;
+        if (calleeName(cur) === "routing") sawRouting = true;
       } else if (calleeName(cur) === "authenticate") {
         guards.unshift({ text: "authenticate", schemes: [] });
       }
     }
     cur = cur.parent;
   }
-  return { prefixes, anchored, guards };
+  return { prefixes, anchored, guards, ownerFn, inVerb };
 }
+
+/** DSL calls that are not installing a route function. */
+const DSL_CALLS = new Set([...KTOR_VERBS, "route", "routing", "authenticate", "install", "static", "staticResources", "staticFiles", "intercept", "handle", "method", "accept", "contentType", "header", "param", "optionalParam", "host", "port", "webSocket", "sse", "rateLimit", "println"]);
 
 /**
  * What the handler lambda reads from the request — Ktor has no parameter
@@ -123,16 +171,24 @@ function joinPath(prefixes: string[], path: string | null): string {
   return "/" + parts.join("/");
 }
 
-export function extractKtorRoutes(root: Node, routes: RouteInfo[]): void {
+export function extractKtorRoutes(root: Node, routes: RouteInfo[], facts?: RouteFact[]): void {
   const visit = (node: Node): void => {
     if (node.type === "call_expression") {
       const verb = calleeName(node);
+      // `userRoutes()` in a routing block: a Route extension installed here.
+      if (facts && verb && !DSL_CALLS.has(verb) && node.child(1)?.type === "call_suffix") {
+        const ctx = dslContext(node);
+        if (ctx.anchored && !ctx.inVerb) {
+          const call: RouterCall = { callee: verb, prefix: joinPath(ctx.prefixes, null), relative: ctx.ownerFn !== null, guards: ctx.guards };
+          facts.push({ kind: ROUTER_CALL, line: node.startPosition.row + 1, ...(ctx.ownerFn ? { owner: ctx.ownerFn } : {}), data: call });
+        }
+      }
       if (verb && KTOR_VERBS.has(verb)) {
         // Path-arg form: this is the inner call; the outer wrapper (if any)
         // carries the trailing lambda. Path-less form (`get { }`) has the
         // lambda directly on this node and inherits the enclosing prefix.
         const path = firstStringArg(node);
-        const { prefixes, anchored, guards } = dslContext(node);
+        const { prefixes, anchored, guards, ownerFn } = dslContext(node);
         if (anchored) {
           // NOTE: compare node identity via .id — web-tree-sitter mints a new
           // wrapper object on every child() access, so === is always false.
@@ -152,6 +208,7 @@ export function extractKtorRoutes(root: Node, routes: RouteInfo[]): void {
             calls: lambda ? extractCalls(lambda, "kotlin") : [],
             middleware: [],
             line: node.startPosition.row + 1,
+            ...(ownerFn ? { owner: `fn:${ownerFn}` } : {}),
           };
           applyRouteMeta(route, { inheritedGuards: guards, params: lambdaParams(lambda, fullPath) });
           routes.push(route);
@@ -162,3 +219,23 @@ export function extractKtorRoutes(root: Node, routes: RouteInfo[]): void {
   };
   visit(root);
 }
+
+/**
+ * Ktor route functions, installed by name: the one function of that name
+ * among the project's `Route` extensions, the caller's own file first.
+ */
+export const ktorRouteFnResolver: RouteResolver = {
+  id: "ktor-route-functions",
+  languages: ["kotlin"],
+  priority: 45,
+  resolve(analyses: FileAnalysis[]): void {
+    resolveRouterFunctions(analyses, {
+      unitOf: (f) => f,
+      target(callee, caller, keysNamed) {
+        const keys = keysNamed(callee);
+        const own = `${caller.filePath}#${callee}`;
+        return keys.includes(own) ? own : keys.length === 1 ? keys[0]! : null;
+      },
+    });
+  },
+};

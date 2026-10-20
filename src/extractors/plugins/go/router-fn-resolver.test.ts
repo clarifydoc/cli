@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { extractGoRoutes, GO_ROUTER_CALL } from "./routes.js";
+import { extractGoRoutes } from "./routes.js";
+import { ROUTER_CALL } from "../shared/router-functions.js";
 import { goRouterFnResolver } from "./router-fn-resolver.js";
 import { createEmptyAnalysis, type FileAnalysis, type RouteFact } from "../../../types/analysis.js";
 import type { ProjectContext } from "../../../types/project.js";
@@ -37,7 +38,7 @@ func Register(router *gin.RouterGroup) {
 }`);
     expect(users.routes.map((r) => `${r.httpMethod} ${r.path} ${r.owner}`)).toEqual(["POST / fn:Register", "POST /login fn:Register"]);
     const main = file("main.go", MAIN);
-    expect(main.routeFacts!.filter((f) => f.kind === GO_ROUTER_CALL).map((f) => {
+    expect(main.routeFacts!.filter((f) => f.kind === ROUTER_CALL).map((f) => {
       const d = f.data as { callee: string; prefix: string; relative: boolean; guards: Array<{ text: string }> };
       return `${d.callee} ${d.prefix} ${d.relative} [${d.guards.map((g) => g.text).join(",")}]`;
     })).toEqual([
