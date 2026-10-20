@@ -8,12 +8,12 @@ describe("process spawns", () => {
     expect(paths(`import { fork, spawn, execSync } from "node:child_process";
 import { Worker } from "node:worker_threads";
 fork("./worker.js");
-spawn("node", ["scripts/seed.js", "--fresh"]);
+spawn("node", ["tools/load.js", "--fresh"]);
 execSync("python tools/gen.py --out x");
 const w = new Worker(new URL("./resize.js", import.meta.url));
 spawn(process.execPath, [path.join(__dirname, "jobs", "nightly.js")]);
 spawn("git", ["status"]);
-const m = /x/.exec("a.js");`, "js")).toEqual(["3:./worker.js", "4:scripts/seed.js", "5:tools/gen.py", "6:./resize.js", "7:./jobs/nightly.js"]);
+const m = /x/.exec("a.js");`, "js")).toEqual(["3:./worker.js", "4:tools/load.js", "5:tools/gen.py", "6:./resize.js", "7:./jobs/nightly.js"]);
     expect(paths(`fork("./worker.js")`, "js")).toEqual([]);
   });
 
