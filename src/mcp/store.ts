@@ -43,6 +43,7 @@ import type {
   JsonSchemaNode,
 } from "../types/analysis.js";
 import { analyze, type AnalyzeResult } from "../core/analyzer.js";
+import { discoverFiles } from "../core/file-discovery.js";
 import { loadReportSummary } from "../core/report-payload.js";
 
 /** Routes/api-calls carry the owning file once aggregated project-wide. */
@@ -168,6 +169,53 @@ export function unsafeColdStartRoot(root: string): string | null {
   if (abs === resolve(homedir())) return `${abs} is your home directory, not a project`;
   if (dirname(abs) === abs) return `${abs} is a filesystem root, not a project`;
   return null;
+}
+
+/** The most files a first analysis runs on unasked (`CLARIFYDOC_MCP_COLD_START_MAX_FILES`). */
+const COLD_START_MAX_FILES = 25_000;
+/** A file walk still going after this long is a tree too big to map unasked. */
+const COLD_START_COUNT_MS = 10_000;
+
+/**
+ * Why the first analysis should not run unasked over what is at `root`: no
+ * file in a language ClarifyDoc reads, or more than the cap (a walk that does
+ * not finish in time counts as more). The refusal names the scoping to ask the
+ * user for — the folders holding the most files, a `.clarifydocignore` line, a
+ * deliberate `clarifydoc analyze` — rather than only "pass a path". Null when
+ * the run may go ahead; a `maxFiles` the user set is their scoping already.
+ */
+export async function coldStartScopeRefusal(
+  root: string,
+  settings: Pick<AnalyzeSettings, "include" | "exclude" | "maxFiles"> = {},
+): Promise<string | null> {
+  const env = Number(process.env.CLARIFYDOC_MCP_COLD_START_MAX_FILES);
+  const max = env > 0 ? env : COLD_START_MAX_FILES;
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<"late">((res) => (timer = setTimeout(() => res("late"), COLD_START_COUNT_MS)));
+  const found = await Promise.race([discoverFiles(root, { include: settings.include, exclude: settings.exclude }).catch(() => null), late]);
+  clearTimeout(timer);
+  if (found === null) return null;
+  const hint = (tops: string) =>
+    `Ask the user which part to map${tops}: serve that folder (\`clarifydoc mcp <path>\`), leave generated or vendored ` +
+    "folders out with lines in `.clarifydocignore`, or have them run `clarifydoc analyze` on it once, which takes any size.";
+  if (found === "late") {
+    return `listing the files under ${root} took longer than ${COLD_START_COUNT_MS / 1000}s, more than a first analysis should take on unasked. ${hint("")}`;
+  }
+  const files = found.files;
+  if (files.length === 0) {
+    return `${root} holds no file in a language ClarifyDoc reads. Ask the user where the project's source is, and serve that folder (\`clarifydoc mcp <path>\`)`;
+  }
+  if (settings.maxFiles || files.length <= max) return null;
+  const byTop = new Map<string, number>();
+  for (const f of files) {
+    const top = f.relativePath.includes("/") ? `${f.relativePath.slice(0, f.relativePath.indexOf("/"))}/` : "(top level)";
+    byTop.set(top, (byTop.get(top) ?? 0) + 1);
+  }
+  const tops = [...byTop].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([d, n]) => `${d} ${n.toLocaleString("en-US")}`);
+  return (
+    `${root} holds ${files.length.toLocaleString("en-US")} source files, more than the ${max.toLocaleString("en-US")} a first analysis takes on unasked ` +
+    `(\`CLARIFYDOC_MCP_COLD_START_MAX_FILES\` raises it). ${hint(` — the most files are in ${tops.join(", ")}`)}`
+  );
 }
 
 export class MissingAnalysisError extends Error {}
@@ -335,6 +383,10 @@ export class AnalysisStore {
         `Not analyzing automatically: ${refusal}. Start the server with the project's path ` +
           `(\`clarifydoc mcp <path>\`), or analyze it first (\`clarifydoc analyze <path>\`).`,
       );
+    }
+    if (!this.running) {
+      const scope = await coldStartScopeRefusal(this.options.projectRoot, this.options.analyzeSettings);
+      if (scope) throw new MissingAnalysisError(`Not analyzing automatically: ${scope}`);
     }
 
     if (!this.running) this.log("no analysis on disk — running one now");

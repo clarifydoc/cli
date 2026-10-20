@@ -320,7 +320,9 @@ With no path, the server serves the project containing the client's working dire
 `<root>/.clarifydoc/<name>`, where `clarifydoc analyze` and the VS Code extension both write. That is why the config
 needs no paths and never goes stale.
 
-If the project has never been analyzed, the server runs one analysis itself so the agent is useful immediately. An
+If the project has never been analyzed, the server runs one analysis itself so the agent is useful immediately —
+unless the folder holds no source it reads, or more than 25,000 files (`CLARIFYDOC_MCP_COLD_START_MAX_FILES`), when
+it refuses with the folders that hold the most so the agent can ask which part to map. An
 advisory lock in the analysis directory means only one process ever writes it: a second run waits for the first
 instead of interleaving with it.
 
