@@ -541,7 +541,7 @@ ClarifyDoc's own output. The repositories pair Rails + Vue, ASP.NET + Angular, D
 Go + Vue, Express + React, and FastAPI on its own.
 
 <!-- accuracy:start (generated from the latest measurement) -->
-Over seven pinned repositories, as of extractor 1.220.0:
+Over seven pinned repositories, as of extractor 1.222.0:
 
 | | |
 |---|---|
@@ -550,7 +550,7 @@ Over seven pinned repositories, as of extractor 1.220.0:
 | Route paths, as a caller would request them | F1 **1.000** |
 | Route declaration sites found | F1 **1.000** |
 | Search (Mean Reciprocal Rank) | **1.000** |
-| Answering through the map vs. reading the files | **69%** fewer tokens |
+| Answering through the map vs. reading the files | **68%** fewer tokens |
 <!-- accuracy:end -->
 
 Bad numbers get published too: a corpus picked to flatter the tool measures nothing. The first run
