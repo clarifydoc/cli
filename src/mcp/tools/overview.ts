@@ -1126,11 +1126,15 @@ async function proposedImpact(ctx: ToolContext, summary: Parameters<typeof impor
   const after = await cs.analyzeWorkingFiles(ctx.store.projectRoot, files, contents);
   const impact = computeImpactDiff(summary, files, {
     baseLabel: "proposed edit",
-    symbols: { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: cs.signatureChanges(before, after, summary.symbolLinks ?? []) },
+    symbols: { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: cs.signatureChanges(before, after, summary.symbolLinks ?? []), hunks },
   });
+  // What the edit itself gets wrong: syntax it introduces, calls with an argument count nothing accepts.
+  const { checkPatch, renderPatchCheck } = await import("../../core/patch-check.js");
+  const check = renderPatchCheck(await checkPatch(ctx.store.projectRoot, ctx.store.analysisDir, summary.symbolLinks ?? [], contents));
   return {
     text: joinLines([
       renderImpactMarkdown(impact),
+      check ? `\n${check}` : "",
       "",
       "Nothing was written: this is the analysis's answer for the content you proposed.",
       impact.unknownFiles.length ? `New to the analysis: ${cap(impact.unknownFiles, 10).shown.join(", ")}` : "",
@@ -1146,8 +1150,8 @@ export function impactTool(ctx: ToolContext): McpTool {
       "Project a set of changed files onto the analysis: which screens and API routes are affected, which ORM " +
       "entities and queues are touched, which files transitively import the changes, which tests to run, and a " +
       "risk level. Defaults to the working tree vs HEAD (git); pass `files` to skip git entirely. Before an edit, " +
-      "pass `proposed` — each file's full new content — to see what it would break: the functions it changes, " +
-      "their callers, the routes above them, and signatures that would no longer fit their callers.",
+      "pass `proposed` — each file's full new content — to see what it would break: changed functions, " +
+      "their callers and routes, signatures callers no longer fit, syntax errors, wrong argument counts.",
     inputSchema: {
       type: "object",
       properties: {
