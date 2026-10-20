@@ -44,8 +44,12 @@ const LINE_TOKEN_RE = /"((?:[^"\\]|\\.)*)"|\b([A-Z][A-Z0-9_]{2,})\b/g;
 const SQL_START_RE =
   /\b(SELECT|INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM|REPLACE\s+INTO|MERGE\s+INTO|TRUNCATE\s+TABLE|CREATE\s+TABLE|DROP\s+TABLE|ALTER\s+TABLE)\b/i;
 
-/** A table token: bracketed/quoted/backticked or a bare (possibly dotted) name. */
-const TABLE = String.raw`(?:\[([^\]]+)\]|"([^"]+)"|\x60([^\x60]+)\x60|([\w.]+))`;
+/**
+ * A table token: bracketed/quoted/backticked or a bare (possibly dotted) name.
+ * A schema written before a quoted name (`"public"."Orders"`, `[dbo].[Users]`,
+ * `public."Orders"`) is skipped, so the name is the table, not the schema.
+ */
+const TABLE = String.raw`(?:(?:\[[^\]]+\]|"[^"]+"|\x60[^\x60]+\x60|\w+)\.(?=[\["\x60]))?(?:\[([^\]]+)\]|"([^"]+)"|\x60([^\x60]+)\x60|([\w.]+))`;
 
 /**
  * `FROM`/`JOIN` source. The trailing `(` capture distinguishes a TABLE from a

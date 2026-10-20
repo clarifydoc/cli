@@ -13,7 +13,7 @@ import { csharpManifest } from "./manifest.js";
 import { extractWinFormsInteractiveElements, extractWinFormsScreens } from "./winforms-ui.js";
 import { CSharpExtractor } from "./functions-classes.js";
 import { CSharpImportExportExtractor } from "./imports-exports.js";
-import { CSharpDataSourceExtractor } from "./data-sources.js";
+import { CSharpDataSourceExtractor, extractCsharpPathArgCalls } from "./data-sources.js";
 import { CSharpEntityExtractor } from "./entities.js";
 import { csharpRouteExtractor } from "./routes/aspnet.js";
 import { aspnetControllerInheritance } from "./routes/aspnet-resolver.js";
@@ -85,6 +85,9 @@ export const csharpMeta: LanguagePluginMeta = {
     httpClientRegistrations: extractCsharpHttpClientRegistrations,
     // `Program.cs` top-level statements → the `<setup>` pseudo-function's locals.
     topLevelLocalTypes: (tree) => extractCsharpTopLevelLocalTypes(tree.rootNode),
+    // `await Get<T>(uri)` on a helper that requests its `uri` parameter: the path each call hands over.
+    // Gated on a string holding a `/` — a file without one names no path.
+    pathArgCalls: (tree, sourceText) => (/"[^"\n]*\/[^"\n]*"/.test(sourceText) ? extractCsharpPathArgCalls(tree, sourceText) : []),
     // Hangfire recurring jobs and Quartz.NET jobs: entry points a clock runs.
     entryPoints: (_tree, sourceText) => extractCsharpScheduledJobs(sourceText),
   },

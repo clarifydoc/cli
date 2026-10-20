@@ -391,4 +391,28 @@ describe("generic repository access + Marr table mapping (project-level)", () =>
     ]);
     expect(movie.classes[0]!.decorators).toEqual(["entity", "marr", "table:Movies"]);
   });
+
+  it("follows a local the method initializes from a call, typed by what the callee declares it returns", () => {
+    const repo = analysis("Repositories/ContractRepository.cs", [
+      cls("IContractRepository", { extends: "IIntegerDatabaseRepository<TCONTRACT, ITCONTRACT>" }),
+    ]);
+    const table = analysis("Tables/TCONTRACT.cs", [cls("TCONTRACT", { extends: "ITCONTRACT" })]);
+    const context = analysis("ILeagueDbContext.cs", [
+      cls("ILeagueDbContext", { properties: [{ name: "ContractRepository", type: "IContractRepository" }] }),
+    ]);
+    const service = analysis("FlexibleFixtureService.cs", [{
+      ...cls("FlexibleFixtureService"),
+      methods: [
+        { name: "GetLeagueDbContext", returnType: "Task<ILeagueDbContext>", line: 5, endLine: 8, params: [], calls: [] } as any,
+        { name: "MakeBadges", line: 10, endLine: 20, params: [],
+          localTypes: [{ name: "leagueDbContext", type: "", from: "GetLeagueDbContext()", awaited: true }],
+          calls: [{ name: "leagueDbContext.ContractRepository.GetAllIndexedAsync", kind: "internal", target: null, line: 12 }] } as any,
+      ],
+    }]);
+    for (const a of [repo, table, context, service]) { (a as any).language = "csharp"; (a as any).functions = []; (a as any).dataSources = []; }
+    new CSharpEntityExtractor().reconcileProject([repo, table, context, service]);
+    expect(service.dataSources.map((d) => [d.name, d.entity, d.access])).toEqual([
+      ["leagueDbContext.ContractRepository.GetAllIndexedAsync", "TCONTRACT", "read"],
+    ]);
+  });
 });

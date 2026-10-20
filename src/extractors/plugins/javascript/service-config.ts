@@ -1,7 +1,7 @@
 import type { CallBaseRef, ProxyRule } from "../../../types/analysis.js";
 import type { ProxySourceSpec, ServiceConfigSpec } from "../../../types/language-plugin.js";
 import { lineOfPair, parseJsoncObject } from "../shared/jsonc.js";
-import { isHttpTarget, prefixOfPattern, rewritePrefix } from "../shared/proxy-kit.js";
+import { isHttpTarget, nginxProxy, prefixOfPattern, rewritePrefix } from "../shared/proxy-kit.js";
 
 /**
  * How a JS/TS program is told where other services are: environment
@@ -90,5 +90,6 @@ const craProxy: ProxySourceSpec = {
 
 export const jsServiceConfig: ServiceConfigSpec = {
   baseRefOf: jsBaseRefOf,
-  proxySources: [angularProxy, craProxy],
+  // nginx: the server an SPA's container runs, forwarding its API paths.
+  proxySources: [angularProxy, craProxy, nginxProxy],
 };

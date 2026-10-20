@@ -4,6 +4,7 @@ import { glob } from "./glob.js";
 import { isSensitive } from "./file-discovery.js";
 import { urlValue } from "./url-values.js";
 import { byOrdinal } from "./ordinal.js";
+import { readDockerfile } from "./dockerfiles.js";
 import { CONFIG_SOURCES, PROXY_SOURCES } from "../extractors/registry.js";
 import type { ProxyRule, SubProject } from "../types/analysis.js";
 import type { ConfigEntry, ConfigSourceSpec, ProxySourceSpec } from "../types/language-plugin.js";
@@ -104,8 +105,25 @@ export function readProjectProxies(
 ): Promise<Map<string, ProxyRule[]>> {
   return readAtRoots(projectRoot, subProjects, sources, (spec, text, path, file) =>
     spec.parse(text, path).flatMap((rule) => {
-      const target = urlValue(rule.target);
+      const target = urlValue(withImageEnv(rule.target, projectRoot, file));
       return target ? [{ ...rule, target, file }] : [];
     }),
   );
+}
+
+/**
+ * A target written as a template the container fills at start
+ * (`http://${API_SERVICE_NAME}` in an nginx `templates/*.template`), with
+ * each `${VAR}` the image's Dockerfile beside the file — or in a directory
+ * above it — sets with `ENV`. Left as written when one is not set there.
+ */
+function withImageEnv(target: string, projectRoot: string, file: string): string {
+  if (!target.includes("${")) return target;
+  const parts = file.split("/").slice(0, -1);
+  for (let n = parts.length; n >= 0; n--) {
+    const env = readDockerfile(resolve(projectRoot), [...parts.slice(0, n), "Dockerfile"].join("/"))?.env;
+    if (!env) continue;
+    return target.replace(/\$\{([A-Za-z_]\w*)\}/g, (hole, name: string) => env[name] ?? hole);
+  }
+  return target;
 }

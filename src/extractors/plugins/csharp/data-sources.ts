@@ -1,5 +1,5 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { DataSourceInfo, Language } from "../../../types/analysis.js";
+import type { DataSourceInfo, Language, PathArgCall } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
 import { tableFrom } from "../shared/sql-string-sources.js";
@@ -141,6 +141,8 @@ const MQ_WRAPPER_PUBLISH_RE = /^(?:Publish|Produce)(?:Event|Message)?(?:Async)?$
 
 /** Receiver that reads like a broker publisher (`_eventPublisher`, `producer`, `_bus`). */
 const MQ_PUBLISHER_RECEIVER_RE = /publisher|producer|(?:^|_)bus$|broker/i;
+/** A variable or message property that holds an AMQP routing key. */
+const ROUTING_KEY_RE = /^_?routing_?key$/i;
 /** In-process dispatchers that must never count as broker publishes. */
 const MQ_RECEIVER_DENY_RE = /mediator|dispatcher/i;
 
@@ -300,7 +302,40 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     const evaluated = first ? this.evalUri(first, callLine, 0) : null;
     const direct = evaluated ? null : extractFirstStringArg(node);
     const uri = evaluated ?? (direct ? this.substituteConsts(direct) : null);
-    return uri ? memberHoles(uri, node) : null;
+    if (uri) return memberHoles(uri, node);
+    // A helper handed its URL (`Task<T> Get<T>(string uri) => _httpClient.GetAsync(uri)`):
+    // the parameter, as a hole each call site of the helper fills (`pathArgCalls`).
+    if (first && /^[A-Za-z_]\w*$/.test(first) && this.nearestLocal(first, callLine) === null && enclosingParams(node).has(first)) {
+      return `\${${first}}`;
+    }
+    return null;
+  }
+
+  /**
+   * Calls handing a path to a method (`await Get<PersonViewModel>(uri, ct)`
+   * with `var uri = $"{BasePath}/person/{id}"`): each argument as the URL it
+   * evaluates to, null for one that states none. The core fills a helper's
+   * `${uri}` with it (`expandRequestFactories`). Only calls with a path argument.
+   */
+  pathArgCallsOf(root: Node): PathArgCall[] {
+    const out: PathArgCall[] = [];
+    for (const inv of root.descendantsOfType("invocation_expression")) {
+      const fn = inv.childForFieldName("function");
+      const name = fn?.type === "identifier" || fn?.type === "generic_name" ? fn
+        : fn?.type === "member_access_expression" && /^(?:this|base)$/.test(fn.firstChild?.type ?? "") ? fn.childForFieldName("name")
+        : null;
+      const callee = name?.text.replace(/<[\s\S]*$/, "");
+      if (!callee) continue;
+      const line = inv.startPosition.row + 1;
+      const args = argumentNodes(inv).map((arg) => {
+        const text = arg.text.trim().replace(NAMED_ARG_RE, "").trim();
+        if (!/^[@$]*"|^[A-Za-z_]\w*$/.test(text)) return null;
+        const v = this.evalUri(text, line, 0);
+        return v && v.includes("/") ? memberHoles(v, inv) : null;
+      });
+      if (args.some((a) => a !== null)) out.push({ callee, args, line });
+    }
+    return out;
   }
 
   /** The nearest string local named `name` assigned at or before `line`. */
@@ -362,6 +397,74 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       }
       return whole;
     });
+  }
+
+  /**
+   * A consumer dispatching on the routing key of a delivered message
+   * (`switch (message.RoutingKey) { case PlanRouting.TrainingCreated: … }`):
+   * each constant case is a destination it consumes, named as the publisher
+   * names it (`routingKeyAssignment`), so the two meet at one queue node.
+   */
+  private routingKeyCases(node: Node, sources: DataSourceInfo[]): void {
+    const value = node.childForFieldName("value") ?? node.namedChildren[0];
+    const subject = value?.type === "member_access_expression" ? value.childForFieldName("name")?.text : value?.text;
+    if (!subject || !ROUTING_KEY_RE.test(subject)) return;
+    const body = node.type === "switch_statement" ? node.childForFieldName("body") : node;
+    for (const branch of body?.namedChildren ?? []) {
+      if (branch.type !== "switch_section" && branch.type !== "switch_expression_arm") continue;
+      for (const pattern of branch.namedChildren) {
+        if (pattern.type !== "constant_pattern") continue;
+        const label = this.routingKeyLabel(pattern.namedChildren[0] ?? null);
+        if (!label) continue;
+        sources.push(this.ds({
+          kind: "queue-consume",
+          name: "MQ: case RoutingKey",
+          target: label,
+          entity: label,
+          line: pattern.startPosition.row + 1,
+        }));
+      }
+    }
+  }
+
+  /**
+   * A routing key the code decides on (`routingKey = PlanRouting.TrainingCreated;`):
+   * what it publishes, however it hands the message on — straight to the
+   * channel or through an outbox table a relay drains.
+   */
+  private routingKeyAssignment(node: Node, sources: DataSourceInfo[]): void {
+    const left = node.childForFieldName(node.type === "assignment_expression" ? "left" : "name");
+    if (left?.type !== "identifier" || !ROUTING_KEY_RE.test(left.text)) return;
+    const right = node.type === "assignment_expression"
+      ? node.childForFieldName("right")
+      : node.namedChildren.find((c) => c.id !== left.id) ?? null;
+    const label = this.routingKeyLabel(right);
+    if (!label) return;
+    sources.push(this.ds({
+      kind: "queue-publish",
+      name: "MQ: routing key",
+      target: label,
+      entity: label,
+      line: node.startPosition.row + 1,
+    }));
+  }
+
+  /**
+   * A routing key as a destination label: a string literal, a file const's
+   * value, or a constant member written `Class.Member` (its value is usually
+   * composed in another file, and both sides spell it the same way).
+   */
+  private routingKeyLabel(node: Node | null): string | null {
+    if (!node) return null;
+    if (node.type === "string_literal" || node.type === "verbatim_string_literal") {
+      const m = /^@?"([^"{}]+)"$/.exec(node.text);
+      return m ? m[1]! : null;
+    }
+    if (node.type === "identifier") return this.constStrings.get(node.text) ?? null;
+    if (node.type === "member_access_expression" && /^(?:[\w.]+\.)?[A-Z]\w*\.[A-Z]\w*$/.test(node.text.replace(/^global::/, ""))) {
+      return node.text.split(".").slice(-2).join(".");
+    }
+    return null;
   }
 
   /** The EF access an invocation is, when it is one (see `visitNode`). */
@@ -431,6 +534,14 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
+    if (node.type === "switch_statement" || node.type === "switch_expression") {
+      this.routingKeyCases(node, sources);
+      return;
+    }
+    if (node.type === "assignment_expression" || node.type === "variable_declarator") {
+      this.routingKeyAssignment(node, sources);
+      return;
+    }
     if (node.type !== "invocation_expression") return;
 
     const fn = node.childForFieldName("function");
@@ -454,6 +565,28 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         if (!this.efCallFollows(node)) sources.push(row);
         return;
       }
+    }
+
+    // EF Core migration data fixes — `migrationBuilder.Sql(@"INSERT INTO ""Roles"" …")`:
+    // one row per DML statement whose table resolves (DDL is the schema, not data).
+    if (method === "Sql" && /^_?migrationBuilder$/i.test(root) && parts.length === 2) {
+      const raw = argumentNodes(node)[0]?.namedChildren[0];
+      const sql = raw?.type === "verbatim_string_literal" ? raw.text.slice(2, -1).replace(/""/g, '"')
+        : raw?.type === "string_literal" ? raw.text.slice(1, -1).replace(/\\(.)/g, "$1")
+        : null;
+      for (const stmt of sql?.split(";") ?? []) {
+        const hit = tableFrom(stmt);
+        if (!hit || !/^(?:SELECT|INSERT|UPDATE|DELETE|MERGE)/.test(hit.verb)) continue;
+        sources.push(this.ds({
+          kind: "database",
+          name: `EF migration: ${hit.verb.split(" ")[0]}`,
+          target: hit.table,
+          entity: hit.table,
+          access: hit.verb === "SELECT" ? "read" : "write",
+          line: node.startPosition.row + 1,
+        }));
+      }
+      return;
     }
 
     // Dapper — IDbConnection.Query / Execute
@@ -786,6 +919,28 @@ function memberHoles(uri: string, call: Node): string {
   }
   return uri.replace(/(?<!\$)\{(?:this\.)?([A-Za-z_]\w*)\}/g, (whole, name: string) =>
     declared.has(name) ? whole : `\${this.${name}}`);
+}
+
+/** The parameter names of the method (or local function, lambda) a node sits in. */
+function enclosingParams(node: Node): Set<string> {
+  const out = new Set<string>();
+  for (let p: Node | null = node.parent; p; p = p.parent) {
+    if (!MEMBER_SCOPES.has(p.type) && p.type !== "lambda_expression") continue;
+    const list = p.childForFieldName("parameters") ?? p.namedChildren.find((c) => c.type === "parameter_list");
+    for (const param of list?.namedChildren ?? []) {
+      const n = param.childForFieldName("name");
+      if (n) out.add(n.text);
+    }
+    if (MEMBER_SCOPES.has(p.type)) break;
+  }
+  return out;
+}
+
+/** Every call handing a path to a method (`FileAnalysis.pathArgCalls`, the plugin's `pathArgCalls` hook). */
+export function extractCsharpPathArgCalls(tree: Tree, sourceText: string): PathArgCall[] {
+  const x = new CSharpDataSourceExtractor();
+  x.beginFile(tree, sourceText);
+  return x.pathArgCallsOf(tree.rootNode);
 }
 
 /** The `argument` children of an invocation's argument_list. */

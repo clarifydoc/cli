@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import "../../registry.js"; // side effect: registers tree-sitter grammars
 import { parseSource } from "../../../parsers/parser-manager.js";
-import { CSharpDataSourceExtractor } from "./data-sources.js";
+import { CSharpDataSourceExtractor, extractCsharpPathArgCalls } from "./data-sources.js";
 import type { DataSourceInfo } from "../../../types/analysis.js";
 
 async function dbSourcesOf(body: string): Promise<DataSourceInfo[]> {
@@ -319,5 +319,103 @@ public class LeagueDataV2HttpClient : BaseLeagueDataHttpClient {
     await _httpClient.PostAsync(uriBase, null, ct);
   }
 }`)).toEqual(["${this.BasePath}/${this.BaseVersion}/institution/{institutionId}/person"]);
+  });
+});
+
+describe("C# message routing keys", () => {
+  async function queueRowsOf(src: string): Promise<string[]> {
+    const tree = await parseSource(src, "csharp" as any, "Q.cs");
+    return new CSharpDataSourceExtractor().extract(tree, src)
+      .filter((d) => d.kind === "queue-publish" || d.kind === "queue-consume")
+      .map((d) => `${d.kind} ${d.target} ${d.line}`);
+  }
+
+  it("reads the routing key an outbox writer decides on as what it publishes", async () => {
+    expect(await queueRowsOf(`namespace X;
+public class PlanContext : DbContext {
+  public override async Task<int> SaveChangesAsync(CancellationToken ct) {
+    string routingKey = null;
+    switch (entry.State) {
+      case EntityState.Added: routingKey = PlanRouting.TrainingCreated; break;
+      case EntityState.Deleted: routingKey = Core.Routing.PlanRouting.TrainingDeleted; break;
+    }
+    var key = message.RoutingKey;
+    events.Add(new EventLogEntry(eventObject, routingKey, correlationId));
+    return 0;
+  }
+}`)).toEqual(["queue-publish PlanRouting.TrainingCreated 6", "queue-publish PlanRouting.TrainingDeleted 7"]);
+  });
+
+  it("reads each constant case of a switch on a delivered message's routing key as what it consumes", async () => {
+    expect(await queueRowsOf(`namespace X;
+public class DefaultConsumer {
+  public async Task<bool> ConsumeMessageAsync(EventMessage message) {
+    switch (message.RoutingKey) {
+      case PlanRouting.TrainingCreated:
+        await Handle(message); break;
+      case "Substitute.Injury.Created":
+      case SubstituteRouting.InjuryDeleted:
+        break;
+    }
+    switch (entry.State) { case EntityState.Added: break; }
+    return true;
+  }
+}`)).toEqual([
+      "queue-consume PlanRouting.TrainingCreated 5",
+      "queue-consume Substitute.Injury.Created 7",
+      "queue-consume SubstituteRouting.InjuryDeleted 8",
+    ]);
+  });
+});
+
+describe("C# EF migration SQL", () => {
+  it("reads each data statement of migrationBuilder.Sql as a database access on its table", async () => {
+    const src = `namespace X;
+public partial class Add_Roller : Migration {
+  protected override void Up(MigrationBuilder migrationBuilder) {
+    migrationBuilder.Sql(@"INSERT INTO ""Roles"" (""Name"") VALUES ('FixtureManager');
+      UPDATE ""Contracts"" SET ""Role"" = 1;");
+    migrationBuilder.Sql("UPDATE \\"ContractWageMetadata\\" SET \\"Wagesystem\\" = 3");
+    migrationBuilder.Sql("CREATE INDEX ix ON \\"Roles\\" (\\"Name\\")");
+    migrationBuilder.Sql(@"DELETE FROM ""public"".""Coaching"" u WHERE u.""TacticId"" IS NULL");
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as any, "Migrations/20260618_Add_Roller.cs");
+    const rows = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
+    expect(rows.map((d) => `${d.name} ${d.entity} ${d.access} ${d.line}`)).toEqual([
+      "EF migration: INSERT Roles write 4",
+      "EF migration: UPDATE Contracts write 4",
+      "EF migration: UPDATE ContractWageMetadata write 6",
+      "EF migration: DELETE Coaching write 8",
+    ]);
+  });
+});
+
+describe("C# HTTP helpers handed their URL", () => {
+  const src = `namespace X;
+public abstract class BaseHttpClient {
+  protected async Task<T> Get<T>(string uri, CancellationToken ct) {
+    using (var response = await _httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct)) { return default; }
+  }
+}
+public class LeagueDataV2HttpClient : BaseHttpClient {
+  public Task<PersonViewModel> GetPerson(Guid institutionId, Guid id, CancellationToken ct) {
+    var uri = $"{BasePath}/{BaseVersion}/institution/{institutionId}/person/{id}";
+    return Get<PersonViewModel>(uri, ct);
+  }
+  public void Log(string message) { Write(message); }
+}`;
+
+  it("states the helper's URL as its parameter, a hole each call site fills", async () => {
+    const tree = await parseSource(src, "csharp" as any, "C.cs");
+    const calls = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call");
+    expect(calls.map((c) => c.target)).toEqual(["${uri}"]);
+  });
+
+  it("reports each call that hands a method a path, evaluated as the URL it is", async () => {
+    const tree = await parseSource(src, "csharp" as any, "C.cs");
+    expect(extractCsharpPathArgCalls(tree, src)).toEqual([
+      { callee: "Get", args: ["${this.BasePath}/${this.BaseVersion}/institution/{institutionId}/person/{id}", null], line: 10 },
+    ]);
   });
 });

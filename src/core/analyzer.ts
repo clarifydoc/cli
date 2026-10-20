@@ -1168,7 +1168,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const resolvedUrlCount = resolveProjectApiCalls(allApiCalls, allAnalyses, projectContext);
   // A request factory's URL is named at each call site
   // (`createFetchHandler('system.status', '/system/status')`).
-  const factoryCalls = expandRequestFactories(allApiCalls, allAnalyses, importIndex);
+  const factoryCalls = expandRequestFactories(allApiCalls, allAnalyses, importIndex, projectContext.classes);
   if (factoryCalls > 0 && verbose) progress.detail(`  request-factory calls: ${factoryCalls}`);
   // `${this.baseUrl}` / `${environment.apiUrl}`: values a class or a module states.
   resolveSymbolicTargets(allApiCalls, allAnalyses, projectContext);

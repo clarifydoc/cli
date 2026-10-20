@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { expandRequestFactories, finalizeApiTargets, splitUnknownBase } from "./api-targets.js";
 import type { DataSourceInfo, FileAnalysis, FunctionInfo, PathArgCall } from "../types/analysis.js";
-import type { ImportIndex } from "../types/project.js";
+import type { ClassIndex, ImportIndex } from "../types/project.js";
 
 describe("splitUnknownBase", () => {
   it("splits a leading hole off, at the segment boundary it implies", () => {
@@ -81,6 +81,24 @@ describe("expandRequestFactories", () => {
     localFor: (_f, n) => imports[n] ?? null,
     sourceFor: () => null,
     namespacesFor: () => [],
+  });
+
+  it("finds a helper the caller's class inherits, and only up that chain", () => {
+    const base = { ...analysis("Clients/BaseHttpClient.cs", []), classes: [{ name: "BaseHttpClient", line: 1, endLine: 60, methods: [fn("Get", 40, 45, ["uri", "ct"])] }] } as unknown as FileAnalysis;
+    const client = { ...analysis("Clients/LeagueDataV2HttpClient.cs", [], [{ callee: "Get", args: ["${this.BasePath}/v2/person/{id}", null], line: 30 }]),
+      classes: [{ name: "LeagueDataV2HttpClient", line: 5, endLine: 80, methods: [] }] } as unknown as FileAnalysis;
+    const other = { ...analysis("Other/ReportService.cs", [], [{ callee: "Get", args: ["reports/x", null], line: 12 }]),
+      classes: [{ name: "ReportService", line: 3, endLine: 50, methods: [] }] } as unknown as FileAnalysis;
+    const ref = (a: FileAnalysis) => ({ filePath: a.filePath, projectId: "p", language: "csharp", cls: a.classes[0]! });
+    const classes = {
+      classesIn: (f: string) => [base, client, other].filter((a) => a.filePath === f).map(ref),
+      ancestors: (r: { cls: { name: string } }) => (r.cls.name === "LeagueDataV2HttpClient" ? [{ written: "BaseHttpClient", ref: ref(base) }] : []),
+    } as unknown as ClassIndex;
+    const calls: Array<DataSourceInfo & { filePath: string }> = [
+      { kind: "api-call", name: "GetAsync", target: "${uri}", line: 42, calls: [], filePath: base.filePath },
+    ];
+    expect(expandRequestFactories(calls, [base, client, other], index({}), classes)).toBe(1);
+    expect(calls[1]).toMatchObject({ filePath: client.filePath, line: 30, target: "${this.BasePath}/v2/person/{id}", via: "Get" });
   });
 
   it("fills the factory's URL parameter from each call site's literal (Radarr)", () => {

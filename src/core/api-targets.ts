@@ -1,5 +1,5 @@
 import type { DataSourceInfo, FileAnalysis, FunctionInfo } from "../types/analysis.js";
-import type { ClassRef, ImportIndex, ProjectContext } from "../types/project.js";
+import type { ClassIndex, ClassRef, ImportIndex, ProjectContext } from "../types/project.js";
 
 type ApiCall = DataSourceInfo & { filePath: string };
 
@@ -148,8 +148,10 @@ const HOLE = /\$\{([A-Za-z_$][\w$]*)\}/g;
  * does not resolve (a bundler source-root path) falls back to the one factory
  * of that name in the project. A hole whose argument
  * is not a literal leaves that row out; a callee resolving to anything but
- * one function adds nothing. One level deep: a factory calling a factory is
- * not followed.
+ * one function adds nothing. A bare call inside a class that no import names
+ * (`await Get<T>(uri)` in a client deriving from a base client) resolves up
+ * that class's chain, and only there. One level deep: a factory calling a
+ * factory is not followed.
  *
  * Returns the number of rows added (appended to `calls`).
  */
@@ -157,6 +159,7 @@ export function expandRequestFactories(
   calls: ApiCall[],
   analyses: readonly FileAnalysis[],
   importIndex: ImportIndex,
+  classes?: ClassIndex,
 ): number {
   const byFile = new Map<string, FileAnalysis>(analyses.map((a) => [a.filePath, a]));
   if (!analyses.some((a) => a.pathArgCalls?.length)) return 0;
@@ -197,13 +200,39 @@ export function expandRequestFactories(
   }
   if (factories.size === 0) return 0;
 
+  /**
+   * A method the caller inherits (`Get<T>(uri)` in a client deriving from a
+   * base client): the factory in the nearest class up the chain that has
+   * one. `inClass` says whether the call sits in a class at all.
+   */
+  const inherited = (file: string, line: number): { inClass: boolean; find(callee: string): FactoryRow[] | undefined } => {
+    const own = classes?.classesIn(file).filter((r) => r.cls.line <= line && line <= r.cls.endLine).sort((x, y) => y.cls.line - x.cls.line)[0];
+    return {
+      inClass: own !== undefined,
+      find: (callee) => {
+        if (!own || !classes) return undefined;
+        for (const s of classes.ancestors(own)) {
+          const rows = s.ref ? factories.get(`${s.ref.filePath}::${callee}`) : undefined;
+          if (rows) return rows;
+        }
+        return undefined;
+      },
+    };
+  };
+
   let added = 0;
   for (const a of analyses) {
     for (const site of a.pathArgCalls ?? []) {
       const ownKey = `${a.filePath}::${site.callee}`;
       const source = importIndex.localFor(a.filePath, site.callee);
       let rows = factories.get(ownKey) ?? (source ? factories.get(`${source}::${site.callee}`) : undefined);
-      if (!rows && !source) {
+      // A bare call from inside a class, of a name no import brings in, is a
+      // method of that class's own chain — never another class's helper.
+      const imported = (a.imports ?? []).some((i) => i.specifiers.includes(site.callee));
+      const chain = rows || source || imported ? null : inherited(a.filePath, site.line);
+      if (chain?.inClass) {
+        rows = chain.find(site.callee);
+      } else if (!rows && !source) {
         // An import the index cannot resolve — a bundler's source-root path
         // (`'Store/Actions/Creators/createFetchHandler'`): the ONE factory in
         // the project with that name, or nothing.

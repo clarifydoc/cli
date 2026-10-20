@@ -16,9 +16,10 @@ RUN npm ci && \\
 FROM build AS runtime
 ENV PORT=8080 ORDERS_URL="http://orders:8080"
 ENV LEGACY_MODE on
+ENV API_SERVICE_NAME "orders-api"
 EXPOSE 8080/tcp 9090
 CMD ["node", "dist/server.js"]
-`)).toEqual({ command: "node dist/server.js", env: { NODE_ENV: "production", PORT: "8080", ORDERS_URL: "http://orders:8080", LEGACY_MODE: "on" }, expose: [8080, 9090], workdir: "/app" });
+`)).toEqual({ command: "node dist/server.js", env: { NODE_ENV: "production", PORT: "8080", ORDERS_URL: "http://orders:8080", LEGACY_MODE: "on", API_SERVICE_NAME: "orders-api" }, expose: [8080, 9090], workdir: "/app" });
     expect(parseDockerfile(`FROM python:3.12\nENTRYPOINT ["gunicorn"]\nCMD ["shop.wsgi:application", "-b", "0.0.0.0:8000"]`).command).toBe("gunicorn shop.wsgi:application -b 0.0.0.0:8000");
     expect(parseDockerfile(`FROM mcr.microsoft.com/dotnet/aspnet:8.0\nENTRYPOINT dotnet Orders.Api.dll`).command).toBe("dotnet Orders.Api.dll");
   });

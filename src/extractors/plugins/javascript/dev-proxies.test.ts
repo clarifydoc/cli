@@ -49,3 +49,29 @@ describe("JS proxy files", () => {
     expect(cra!.parse(`{ "name": "web" }`, "package.json")).toEqual([]);
   });
 });
+
+describe("nginx forwarding rules", () => {
+  const nginx = jsServiceConfig.proxySources!.find((s) => s.files.includes("**/nginx.conf"))!;
+
+  it("reads prefix locations, upstreams, URI rewrites and envsubst templates; skips regex and $variable targets", () => {
+    const conf = `upstream backend { server orders-api:8080 max_fails=3; }
+server {
+  listen 80;
+  location / { try_files $uri $uri/ /index.html; }
+  location /api/hub {
+    proxy_pass http://\${API_SERVICE_NAME};   # websockets
+    proxy_http_version 1.1;
+  }
+  location /api/ { proxy_pass http://\${API_SERVICE_NAME}; }
+  location ^~ /orders/ { proxy_pass http://backend/api/v1/; }
+  location ~ \\.php$ { proxy_pass http://php; }
+  location /dyn/ { proxy_pass http://$host_from_map; }
+}`;
+    expect(nginx.parse(conf, "default.conf.template").map(({ line: _l, ...r }) => r)).toEqual([
+      { pathPrefix: "/api/hub", target: "http://${API_SERVICE_NAME}", via: "nginx" },
+      { pathPrefix: "/api", target: "http://${API_SERVICE_NAME}", via: "nginx" },
+      { pathPrefix: "/orders", target: "http://orders-api:8080", rewriteTo: "/api/v1", via: "nginx" },
+    ]);
+    expect(nginx.parse(conf, "default.conf.template")[1]!.line).toBe(9);
+  });
+});

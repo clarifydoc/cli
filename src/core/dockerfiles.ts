@@ -62,7 +62,7 @@ function envPairs(arg: string): Record<string, string> {
   const t = arg.trim();
   if (!/^[A-Za-z_][\w.-]*=/.test(t)) {
     const m = /^([A-Za-z_][\w.-]*)\s+([\s\S]*)$/.exec(t);
-    if (m) out[m[1]!] = m[2]!.trim();
+    if (m) out[m[1]!] = m[2]!.trim().replace(/^(["'])([\s\S]*)\1$/, "$2");
     return out;
   }
   for (const m of t.matchAll(/([A-Za-z_][\w.-]*)=("(?:[^"\\]|\\.)*"|'[^']*'|\S*)/g)) out[m[1]!] = m[2]!.replace(/^["']|["']$/g, "");

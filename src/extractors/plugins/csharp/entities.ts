@@ -1239,6 +1239,7 @@ const CSHARP_REPOSITORY_KNOBS: RepositoryAccessKnobs = {
     return m ? splitTypeArgs(m[1]!) : null;
   },
   selfHeads: new Set(["this"]),
+  asyncResultTypes: ["Task", "ValueTask"],
   memberKey: (name) => name.replace(/^_/, "").toLowerCase(),
   isConstructor: (m, cls) => m.name === cls.name || m.name === "constructor",
   verbs: /^(Get|Find|All|Single|First|Query|Where|Count|Exists|Paged|Insert|Add|Update|Set|Upsert|Save|Delete|Remove|Purge|Clear)\w*$/,

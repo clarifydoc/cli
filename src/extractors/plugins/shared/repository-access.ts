@@ -14,7 +14,8 @@ import { receiverTypeName } from "../../shared/type-parser.js";
  * there, so a call through the repository reached no entity. This walks the
  * typed member chain across files — property annotations, constructor
  * parameters, method return types, a memoizing property's `_name` backing
- * field, bases — to the repository type, takes the entity-typed argument of
+ * field, bases, a local initialized by a call (typed by what the callee
+ * declares it returns) — to the repository type, takes the entity-typed argument of
  * its generic base (else the first argument that is a project class), and
  * puts it on every CRUD-shaped call through the chain. A row the per-file pass
  * already emitted at that call is upgraded in place. The knobs are what differs
@@ -30,6 +31,8 @@ export interface RepositoryAccessKnobs {
   /** How a member is named at the call versus its declaration (`_movieRepository` ↔ `movieRepository`). */
   memberKey(name: string): string;
   isConstructor(method: FunctionInfo, cls: ClassInfo): boolean;
+  /** Generic types an awaited call's result is wrapped in (`Task`, `ValueTask`). */
+  asyncResultTypes?: readonly string[];
   /** CRUD-shaped leaf verbs, and the subset that writes. */
   verbs: RegExp;
   writeVerbs: RegExp;
@@ -122,6 +125,49 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
     return type;
   };
 
+  const awaitedType = (type: string | null): string | null => {
+    const m = type ? /^([\w.]+)\s*<(.+)>$/.exec(type.trim()) : null;
+    return m && knobs.asyncResultTypes?.includes(m[1]!.slice(m[1]!.lastIndexOf(".") + 1)) ? m[2]!.trim() : type;
+  };
+  /** The type a receiver head names in `fn`: a typed parameter or local, a member of the enclosing class. */
+  const headType = (head: string, fn: FunctionInfo, owner: ClassInfo | null, depth = 0): string | null => {
+    if (knobs.selfHeads.has(head)) return owner?.name ?? null;
+    const param = written(fn.params.find((p) => p.name === head)?.type);
+    if (param) return param;
+    const locals = (fn.localTypes ?? []).filter((l) => l.name === head);
+    const typed = written(locals.find((l) => l.type)?.type);
+    if (typed) return typed;
+    // `var ctx = await GetContext(id)`: what the called member declares it
+    // returns — every initializer must agree.
+    if (locals.length > 0 && depth < 3 && locals.every((l) => l.from)) {
+      const types = new Set(locals.map((l) => fromType(l.from!, l.awaited === true, fn, owner, depth + 1)));
+      if (types.size === 1) return [...types][0]!;
+      return null;
+    }
+    return owner ? typeOfMember(owner.name, head) : null;
+  };
+  /** What method `name` of `className` declares it returns, as written, through bases. */
+  const returnTypeOf = (className: string | null, name: string, depth = 0): string | null => {
+    if (!className || depth > 6) return null;
+    for (const cls of classes.get(className) ?? []) {
+      const declared = cls.methods.find((m) => m.name === name)?.returnType?.trim();
+      if (declared) return declared;
+    }
+    for (const base of basesOf(className)) {
+      const found = returnTypeOf(bare(base), name, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  };
+  /** The declared result of a call chain as `localTypes[].from` spells it (`a.b.Get()`). */
+  const fromType = (from: string, awaited: boolean, fn: FunctionInfo, owner: ClassInfo | null, depth: number): string | null => {
+    const parts = from.replace(/\(\)/g, "").split(".");
+    if (parts.some((p) => !/^[\w$]+$/.test(p))) return null;
+    const receiver = parts.length === 1 ? owner?.name ?? null : bare(resolveChain(parts.slice(1, -1), headType(parts[0]!, fn, owner, depth)));
+    const declared = returnTypeOf(receiver, parts[parts.length - 1]!);
+    return written(awaited ? awaitedType(declared) : declared);
+  };
+
   for (const a of own) {
     let changed = false;
     const rows = [...(a.dataSources ?? [])];
@@ -133,16 +179,9 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
         if (parts.some((p) => /[^\w$]/.test(p))) continue;
         const leaf = parts[parts.length - 1]!;
         if (!knobs.verbs.test(leaf)) continue;
-        const head = parts[0]!;
-        let type: string | null;
-        if (knobs.selfHeads.has(head)) {
-          type = owner ? resolveChain(parts.slice(1, -1), owner.name) : null;
-        } else {
-          // A typed parameter or local, else a member of the enclosing class named without `this`.
-          const start = written(fn.params.find((p) => p.name === head)?.type ?? fn.localTypes?.find((l) => l.name === head)?.type)
-            ?? (owner ? typeOfMember(owner.name, head) : null);
-          type = start ? resolveChain(parts.slice(1, -1), start) : null;
-        }
+        // A typed parameter or local, else a member of the enclosing class named without `this`.
+        const start = headType(parts[0]!, fn, owner);
+        const type = start ? resolveChain(parts.slice(1, -1), start) : null;
         const entity = repoEntity(type);
         if (!entity) continue;
         const key = `${call.line}\0${call.name}`;
