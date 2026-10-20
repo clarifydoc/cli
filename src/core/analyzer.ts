@@ -1916,9 +1916,9 @@ function extractNavigationTargets(source: string): string[] {
     }
   }
   // A screen named rather than routed (`navigation.navigate("Profile")`,
-  // `navigation.push("Details", …)`): the name, matched only against screens
-  // a navigator declares under it.
-  for (const m of source.matchAll(/\bnavigation\??\.(?:navigate|push|replace|reset)\(\s*['"`]([A-Za-z][\w-]*)['"`]/g)) targets.add(m[1]!);
+  // `navigation.push("Details", …)`, Compose's `navController.navigate("home")`):
+  // the name, matched only against screens a navigator declares under it.
+  for (const m of source.matchAll(/\bnav(?:igation|Controller)\??\.(?:navigate|push|replace|reset)\(\s*['"`]([A-Za-z][\w-]*)['"`]/g)) targets.add(m[1]!);
   // Plain-HTML page navigation: `<a href="other.html">`. Restricted to local
   // `.html`/`.htm` targets (no scheme, anchor, or mailto) so it adds nothing on
   // framework SPAs (which route by path, not by .html files).
@@ -1960,7 +1960,26 @@ function buildScreensFromRoutes(
       if (spec.startsWith("/")) return resolveViewBySuffix(spec, knownFiles, configFile);
       return null;
     }
-    return importIndex.localFor(configFile, spec);
+    const viaImport = importIndex.localFor(configFile, spec);
+    if (viaImport) return viaImport;
+    if (!/^[A-Za-z_$][\w$]*$/.test(spec)) return null;
+    const dirOf = (f: string) => (f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "");
+    const declares = (a: FileAnalysis) => a.functions.some((f) => f.name === spec) || a.classes.some((c) => c.name === spec);
+    // A package-path import (`com.acme.ui.HomeScreen`, JVM style): the file at that path,
+    // else the one file of that package declaring the name.
+    const imp = byPath.get(configFile)?.imports.find((i) => i.specifiers.includes(spec));
+    if (imp && /^[\w.]+\.[\w]+$/.test(imp.source)) {
+      const tail = "/" + imp.source.replace(/\./g, "/");
+      const atPath = [...knownFiles].filter((f) => ("/" + f.slice(0, f.lastIndexOf("."))).endsWith(tail));
+      if (atPath.length === 1) return atPath[0]!;
+      const pkg = tail.slice(0, tail.lastIndexOf("/"));
+      const inPkg = allAnalyses.filter((a) => ("/" + dirOf(a.filePath)).endsWith(pkg) && declares(a));
+      if (inPkg.length === 1) return inPkg[0]!.filePath;
+      return null;
+    }
+    // Unimported: the same package or directory — one other file there declaring the name.
+    const sameDir = allAnalyses.filter((a) => a.filePath !== configFile && dirOf(a.filePath) === dirOf(configFile) && declares(a));
+    return sameDir.length === 1 ? sameDir[0]!.filePath : null;
   };
 
   // A page component reached by several routes (e.g. "/pak" and

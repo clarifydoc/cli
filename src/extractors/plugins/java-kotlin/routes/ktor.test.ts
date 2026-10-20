@@ -173,3 +173,34 @@ fun Route.reportRoutes() {
     ]);
   });
 });
+
+describe("Jetpack Compose navigation", () => {
+  it("reads composable / dialog destinations, string and type-safe, and the page each renders", async () => {
+    const routes = await routesOf(`package app
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+
+@Composable
+fun AppNav(navController: NavHostController) {
+    NavHost(navController, startDestination = "home") {
+        composable("home") { HomeScreen(onOpen = { id -> navController.navigate("profile/$id") }) }
+        composable(route = "profile/{userId}") { entry ->
+            val id = entry.arguments?.getString("userId")
+            ProfileScreen(userId = id)
+        }
+        composable<Settings> { SettingsScreen() }
+        dialog("confirm") { ConfirmDialog() }
+        navigation(startDestination = "a", route = "wizard") {
+            composable("a") { StepA() }
+        }
+    }
+}`);
+    expect(routes.map((r) => `${r.kind} ${r.path} ${r.componentPath}`)).toEqual([
+      "frontend home HomeScreen",
+      "frontend profile/{userId} ProfileScreen",
+      "frontend Settings SettingsScreen",
+      "frontend confirm ConfirmDialog",
+      "frontend a StepA",
+    ]);
+  });
+});

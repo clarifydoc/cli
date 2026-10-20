@@ -6,6 +6,7 @@ import { extractJaxrsMicronautRoutes } from "./jaxrs.js";
 import { extractKtorRoutes } from "./ktor.js";
 import { extractHaloExtensionRoutes } from "./halo.js";
 import { collectSecurityRules } from "./security-dsl.js";
+import { extractComposeDestinations } from "./compose-nav.js";
 
 /**
  * Java / Kotlin route extraction — Spring (@GetMapping/@RequestMapping),
@@ -41,6 +42,11 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
     // files that actually import io.ktor.
     if (sourceText.includes("io.ktor")) {
       extractKtorRoutes(tree.rootNode, routes, facts);
+    }
+
+    // Jetpack Compose navigation graphs: their destinations are the app's screens.
+    if (sourceText.includes("NavHost") || sourceText.includes("androidx.navigation")) {
+      extractComposeDestinations(tree.rootNode, routes);
     }
 
     // Spring Security's URL rules, applied to every route by springSecurityResolver.
