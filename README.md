@@ -372,6 +372,8 @@ default, `.mcp.json`), `cursor` (`.cursor/mcp.json`), `vscode` (`.vscode/mcp.jso
 `--hooks` adds Claude Code hooks to `.claude/settings.json`; `--skills` writes `.claude/skills/clarifydoc-*`
 from the MCP workflow prompts; `--guidance` adds or updates a marked ClarifyDoc section of `AGENTS.md` (or the
 file named), with what this project's analysis says an agent should know first. `--print` shows it all instead.
+`--plugin <dir>` writes a Claude Code plugin there instead — the MCP entry, the same skills, and a read-only
+`clarifydoc-explorer` subagent that answers from the map — for a marketplace or `claude --plugin-dir`.
 
 The hooks run `clarifydoc hook <event>`, which reads the host's JSON payload on stdin and answers with
 `additionalContext` from the last analysis, or with nothing:

@@ -701,11 +701,18 @@ program
   .option("--print", "Print what would be written instead of writing it", false)
   .option("--command <launcher>", "Start ClarifyDoc with this command in the entries and hooks written (default: the way this CLI was started)")
   .option("--no-mcp", "Write no MCP server entry — only the hooks, skills, guidance or git hooks asked for")
+  .option("--plugin <dir>", "Write a Claude Code plugin into <dir> instead: the MCP server entry, the skills and an explorer subagent")
   .action(async (path: string, options) => {
     const root = resolve(path);
-    const { CLIENTS, applyPlans, planClaudeHooks, planGitHooks, planGuidance, planMcpConfig, planSkills, projectFacts, selfCommand } = await import("./agents/install.js");
+    const { CLIENTS, applyPlans, planClaudeHooks, planGitHooks, planGuidance, planMcpConfig, planPlugin, planSkills, projectFacts, selfCommand } = await import("./agents/install.js");
     // A launcher that outlives this install (an editor's stable shim) instead of this process's own path.
     const self = options.command ? { command: options.command as string, args: [] } : selfCommand();
+    if (options.plugin) {
+      const { buildMcpServer } = await import("./mcp/server.js");
+      const { tools } = buildMcpServer({ projectRoot: root, allowAnalyze: false, allowColdStart: false });
+      for (const line of applyPlans(planPlugin(resolve(options.plugin), tools, self), options.print)) console.log(line);
+      return;
+    }
     const clients = (options.client as string[] | undefined) ?? ["claude-code"];
     const unknown = clients.filter((c) => !(CLIENTS as readonly string[]).includes(c));
     if (unknown.length) {
