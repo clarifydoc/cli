@@ -159,10 +159,15 @@ export interface SignatureChange {
   file: string;
   symbol: string;
   line: number;
-  kind: "removed" | "arity";
-  /** Required parameters before and after (`arity`). */
-  before?: number;
-  after?: number;
+  kind: "removed" | "arity" | "return-type";
+  /** Required parameters before and after (`arity`); the declared return types (`return-type`). */
+  before?: number | string;
+  after?: number | string;
+  /**
+   * `removed`: a function the change added to the same file with the same parameters — possibly
+   * the same function renamed. Callers still break; the fix is the new name.
+   */
+  renamedTo?: string;
   /** Callers the analysis is sure of (EXTRACTED links). */
   callers: number;
   /** The change breaks those callers as they are written. */
@@ -171,13 +176,31 @@ export interface SignatureChange {
 
 type Spans = Pick<FileAnalysis, "functions" | "classes">;
 
+/** "removed (possibly renamed to placeOrder)", "1 → 2 required parameters", "returns Order, was Order | null". */
+export function describeSignatureChange(c: Pick<SignatureChange, "kind" | "before" | "after" | "renamedTo">): string {
+  if (c.kind === "removed") return c.renamedTo ? `removed (possibly renamed to ${c.renamedTo})` : "removed";
+  if (c.kind === "return-type") return `returns ${c.after}, was ${c.before}`;
+  return `${c.before} → ${c.after} required parameters`;
+}
+
 /** Every function and method of a file by the name call links use, with its parameters. */
-function signatures(a: Spans): Map<string, { line: number; required: number; total: number; variadic: boolean }> {
-  const out = new Map<string, { line: number; required: number; total: number; variadic: boolean }>();
-  const add = (name: string, fn: { line: number; params?: Array<{ name: string; defaultValue: string | null }> }) => {
+interface Signature { line: number; required: number; total: number; variadic: boolean; params: string; returnType: string | null; returnKey: string | null }
+
+function signatures(a: Spans): Map<string, Signature> {
+  const out = new Map<string, Signature>();
+  const add = (name: string, fn: { line: number; params?: Array<{ name: string; type?: string | null; defaultValue: string | null }>; returnType?: string | null }) => {
     const params = (fn.params ?? []).filter((p) => p.name !== "self" && p.name !== "this" && p.name !== "cls");
     const variadic = params.some((p) => /^\.\.\.|^\*/.test(p.name));
-    out.set(name, { line: fn.line, required: params.filter((p) => p.defaultValue === null && !/^\.\.\.|^\*|\?$/.test(p.name)).length, total: params.length, variadic });
+    out.set(name, {
+      line: fn.line,
+      required: params.filter((p) => p.defaultValue === null && !/^\.\.\.|^\*|\?$/.test(p.name)).length,
+      total: params.length,
+      variadic,
+      // What a rename keeps: the parameters' names and types, in order.
+      params: params.map((p) => `${p.name}:${p.type ?? ""}`).join(","),
+      returnType: fn.returnType?.trim().replace(/^:\s*/, "") || null,
+      returnKey: normType(fn.returnType),
+    });
   };
   for (const f of a.functions) if (f.name !== "<setup>") add(f.name, f);
   for (const c of a.classes) for (const m of c.methods) add(`${c.name}.${m.name}`, m);
@@ -211,17 +234,31 @@ export function signatureChanges(
     if (!now) continue;
     const prev = signatures(was);
     const next = signatures(now);
+    // Functions the change added to this file: a removed one with the same parameters may be it, renamed.
+    const added = [...next].filter(([name]) => !prev.has(name));
+    const sameClass = (a: string, b: string) => a.slice(0, a.lastIndexOf(".") + 1) === b.slice(0, b.lastIndexOf(".") + 1);
     for (const [symbol, sig] of prev) {
       const callers = sureCallers.get(`${file}::${symbol}`) ?? 0;
       const cur = next.get(symbol);
       if (!cur) {
-        out.push({ file, symbol, line: sig.line, kind: "removed", callers, breaking: callers > 0 });
+        // Only an unambiguous match: one added function, same class, same parameters (and some to compare).
+        const twins = added.filter(([name, s2]) => sameClass(name, symbol) && s2.params === sig.params && (sig.total > 0 || s2.returnKey === sig.returnKey));
+        out.push({ file, symbol, line: sig.line, kind: "removed", callers, breaking: callers > 0, ...(twins.length === 1 ? { renamedTo: twins[0]![0] } : {}) });
       } else if (cur.required !== sig.required && !cur.variadic) {
         out.push({ file, symbol, line: cur.line, kind: "arity", before: sig.required, after: cur.required, callers, breaking: callers > 0 && cur.required > sig.required });
+      } else if (sig.returnKey && cur.returnKey && sig.returnKey !== cur.returnKey) {
+        // A caller that uses the result was written against the old type.
+        out.push({ file, symbol, line: cur.line, kind: "return-type", before: sig.returnType ?? sig.returnKey, after: cur.returnType ?? cur.returnKey, callers, breaking: callers > 0 });
       }
     }
   }
   return out.sort((x, y) => Number(y.breaking) - Number(x.breaking) || byOrdinal(x.file, y.file) || x.line - y.line);
+}
+
+/** A declared return type compared as written, whitespace aside. */
+function normType(t: string | null | undefined): string | null {
+  const s = (t ?? "").replace(/\s+/g, "").replace(/^:/, "");
+  return s ? s : null;
 }
 
 /**

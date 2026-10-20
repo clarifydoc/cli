@@ -45,7 +45,7 @@ describe.skipIf(!existsSync(join(analysisDir, "project-summary.json")))("askTool
     const r = await askTool(config, "impact", { proposed: [{ file: "services/userService.ts", content }] });
     expect(r.isError).toBe(false);
     expect(r.text).toMatch(/base: proposed edit/);
-    expect(r.text).toMatch(/\*\*breaking\*\* `getUserById` 1→2 required/);
+    expect(r.text).toMatch(/\*\*breaking\*\* `getUserById` 1 → 2 required parameters/);
     expect(await readFile(file, "utf8")).toBe(now);
     const bad = await askTool(config, "impact", { proposed: [{ file: "../etc/passwd", content: "" }] });
     expect(bad.isError).toBe(true);

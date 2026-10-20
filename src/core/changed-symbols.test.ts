@@ -63,6 +63,30 @@ describe("signatureChanges", () => {
       ["lonely", "removed", "", "", false],
     ]);
   });
+
+  it("says a removed function was possibly renamed, and breaks on a changed return type", async () => {
+    const { signatureChanges, describeSignatureChange } = await import("./changed-symbols.js");
+    const typed = (name: string, line: number, params: Array<[string, string]>, returnType: string | null) =>
+      ({ name, line, endLine: line + 3, returnType, params: params.map(([n, t]) => ({ name: n, type: t, defaultValue: null })) });
+    const before = new Map([["svc.ts", { functions: [
+      typed("place", 1, [["order", "Order"]], "Receipt"),
+      typed("find", 10, [["id", "string"]], "Order | null"),
+      typed("drop", 20, [["id", "string"]], null),
+    ], classes: [] } as never]]);
+    const after = new Map([["svc.ts", { functions: [
+      typed("placeOrder", 1, [["order", "Order"]], "Receipt"),
+      typed("find", 10, [["id", "string"]], "Order"),
+      typed("dropAll", 20, [["ids", "string[]"]], null),
+    ], classes: [] } as never]]);
+    const link = (target: string) => ({ sourceFile: "ctl.ts", sourceSymbol: "c", sourceLine: 1, callName: target, targetFile: "svc.ts", targetSymbol: target, targetLine: 1, confidence: "EXTRACTED" }) as never;
+    const out = signatureChanges(before, after, [link("place"), link("find")]);
+    expect(out.map((c) => [c.symbol, describeSignatureChange(c), c.breaking])).toEqual([
+      ["place", "removed (possibly renamed to placeOrder)", true],
+      ["find", "returns Order, was Order | null", true],
+      // Different parameters: not the same function.
+      ["drop", "removed", false],
+    ]);
+  });
 });
 
 describe("an edit not made yet", () => {
