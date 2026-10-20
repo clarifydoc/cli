@@ -1,3 +1,4 @@
+import { extractSwiftUINavigation } from "./swiftui-navigation.js";
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractClassesWithSpec } from "../shared/regex-base.js";
@@ -243,7 +244,7 @@ export const swiftSpec: RegexLangSpec = {
   extractLocalTypes: extractSwiftLocalTypes,
   extractDiBindings: (lines) => extractSwiftDiBindings(lines),
 
-  extractRoutes: (lines) => extractVaporRoutes(lines),
+  extractRoutes: (lines) => [...extractVaporRoutes(lines), ...extractSwiftUINavigation(lines)],
   extractDataSources: (lines) => extractSwiftDataSources(lines),
   extractRequestAccess: extractSwiftRequestAccess,
 };

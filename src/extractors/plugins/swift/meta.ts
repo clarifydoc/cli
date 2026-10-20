@@ -6,6 +6,7 @@ import { swiftPackages } from "./packages.js";
 import { swiftManifest } from "./manifest.js";
 import { swiftRequestSchema } from "./request-schema.js";
 import { swiftReachability } from "./reachability.js";
+import { SwiftEntityExtractor } from "./entities.js";
 
 const SWIFT_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -33,4 +34,6 @@ export const swiftMeta: LanguagePluginMeta = {
   knownPackages: swiftPackages,
   builtinTypes: SWIFT_BUILTINS,
   requestSchema: swiftRequestSchema,
+  // SwiftData @Model and Core Data NSManagedObject classes (see entities.ts).
+  entities: new SwiftEntityExtractor(),
 };

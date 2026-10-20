@@ -33,6 +33,7 @@ const LANGUAGE_MARKERS: Partial<Record<Language, RegExp>> = {
   php:
     /\bextends\s+(?:Model|Authenticatable|Pivot)\b|@ORM\\|#\[\s*ORM\\|->\s*(?:hasMany|belongsTo|hasOne|belongsToMany|morph\w*|hasManyThrough|hasOneThrough)\s*\(|\b(?:hasMany|belongsTo|hasOne|belongsToMany)\s*\(|->\s*join\s*\(\s*['"]/,
   sql: /\b(?:CREATE|ALTER|DROP|RENAME)\s+(?:(?:GLOBAL\s+)?(?:TEMPORARY|TEMP|UNLOGGED)\s+)?TABLE\b/i,
+  swift: /@Model\b|\bNSManagedObject\b/,
   ruby:
     /<\s*(?:ApplicationRecord|ActiveRecord::Base)\b|\bhas_many\b|\bbelongs_to\b|\bhas_one\b|\bhas_and_belongs_to_many\b|self\.table_name|ActiveRecord::Schema\b/,
 };
@@ -97,7 +98,9 @@ export function mergeEntities(analysis: FileAnalysis, result: EntityExtractResul
       // extractor's noise (`serialVersionUID`, the static table constant). For
       // other ORMs the extractor can under-capture (e.g. unannotated fields), so
       // UNION to stay safe.
-      if (e.decorators.includes("jooq") && e.properties.length > 0) {
+      // SwiftData / Core Data models say which properties are stored (computed and
+      // @Transient ones are not) — authoritative too.
+      if ((e.decorators.includes("jooq") || e.decorators.includes("swiftdata") || e.decorators.includes("coredata")) && e.properties.length > 0) {
         existing.properties = e.properties;
       } else {
         const haveProps = new Set(existing.properties.map((p) => p.name));

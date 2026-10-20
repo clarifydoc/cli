@@ -19,13 +19,35 @@ const URLSESSION_RE = /URLSession(?:\.shared)?\.(dataTask|data|download|upload)\
 const URL_LITERAL_RE = /URL\s*\(\s*string:\s*"([^"]+)"/;
 const ENV_RE = /Environment\.get\s*\(\s*"([^"]+)"/;
 
+/** SwiftData: `@Query(sort: …) private var items: [Item]` reads the model it lists. */
+const SWIFTDATA_QUERY_RE = /@Query\b(?:\([^)]*\))?\s*(?:private\s+|public\s+)?var\s+\w+\s*:\s*\[\s*([A-Z]\w*)\s*\]/;
+/** `modelContext.insert(x)` / `.delete(x)` / `try context.fetch(FetchDescriptor<Item>(…))`. */
+const SWIFTDATA_CONTEXT_RE = /\b(\w*[Cc]ontext)\.(insert|delete|fetch|fetchCount|save)\s*\(/;
+
 export function extractSwiftDataSources(lines: string[]): DataSourceInfo[] {
   const sources: DataSourceInfo[] = extractSqlStringDataSources(lines);
+  const swiftData = lines.some((l) => /\bimport\s+SwiftData\b/.test(l));
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     if (/^\s*\/\//.test(line)) continue;
     const lineNo = i + 1;
+
+    if (swiftData) {
+      const q = SWIFTDATA_QUERY_RE.exec(line);
+      if (q) {
+        sources.push({ kind: "database", name: "SwiftData: @Query", target: q[1]!, entity: q[1]!, calls: [], line: lineNo, access: "read" });
+        continue;
+      }
+      const c = SWIFTDATA_CONTEXT_RE.exec(line);
+      if (c && c[2] !== "save") {
+        // `FetchDescriptor<Item>(…)`, or a model built in place: `insert(Item(name: n))`.
+        const model = /FetchDescriptor<\s*([A-Z]\w*)\s*>/.exec(line)?.[1] ?? /\.(?:insert|delete)\s*\(\s*([A-Z]\w*)\s*\(/.exec(line)?.[1];
+        const write = c[2] === "insert" || c[2] === "delete";
+        sources.push({ kind: "database", name: `SwiftData: ${c[1]}.${c[2]}`, target: model ?? null, ...(model ? { entity: model } : {}), calls: [], line: lineNo, access: write ? "write" : "read" });
+        continue;
+      }
+    }
 
     const fluent = line.match(FLUENT_STATIC_RE);
     if (fluent) {

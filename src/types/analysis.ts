@@ -854,6 +854,12 @@ export interface RouteInfo {
    * route is wiring, never a screen.
    */
   redirectTo?: string;
+  /**
+   * Frontend routes only: declared where the reader navigates FROM (a SwiftUI
+   * `NavigationLink`, a `.sheet`) rather than in a route table — the
+   * declaring file's screen opens this one.
+   */
+  navigation?: true;
   calls: CallInfo[];
   /**
    * Guards and filters applied to the route, as readable strings: Express

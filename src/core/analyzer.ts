@@ -1979,7 +1979,13 @@ function buildScreensFromRoutes(
     }
     // Unimported: the same package or directory — one other file there declaring the name.
     const sameDir = allAnalyses.filter((a) => a.filePath !== configFile && dirOf(a.filePath) === dirOf(configFile) && declares(a));
-    return sameDir.length === 1 ? sameDir[0]!.filePath : null;
+    if (sameDir.length === 1) return sameDir[0]!.filePath;
+    if (sameDir.length > 1) return null;
+    // A language whose files share their module's types (Swift): the one type of
+    // that name in the config file's sub-project.
+    const project = byPath.get(configFile)?.projectId;
+    const typed = allAnalyses.filter((a) => a.filePath !== configFile && a.projectId === project && a.classes.some((c) => c.name === spec));
+    return typed.length === 1 ? typed[0]!.filePath : null;
   };
 
   // A page component reached by several routes (e.g. "/pak" and
@@ -2014,7 +2020,8 @@ function buildScreensFromRoutes(
     // resolved, an inline screen of the config file itself is an empty shell,
     // not a page. Inline screens remain for route-in-page files (React) and
     // pages that route themselves (HTML, Blazor `@page`).
-    const wiringOnly = frontendRoutes.every((r) => r.componentPath?.startsWith("/"));
+    // Navigation a view declares (a SwiftUI link) makes no page of the declaring file.
+    const wiringOnly = frontendRoutes.every((r) => r.componentPath?.startsWith("/") || r.navigation);
     if (!resolvedAny && !wiringOnly) {
       inline.push({ analysis, route: frontendRoutes[0] });
     } else if (unresolved.length > 0 && !wiringOnly && (analysis.templateTree?.length ?? 0) > 0) {
@@ -2049,6 +2056,16 @@ function buildScreensFromRoutes(
     // Routes declared inline in the page file: name the screen after the file
     // (unchanged from the original behaviour for React-style/single-file pages).
     screens.push(buildScreen(analysis, screenNameFromFile(analysis), route.path, rawSources));
+  }
+
+  // A view that declares where it navigates (`navigation` routes) opens those screens.
+  const screenOf = new Map(screens.map((sc) => [sc.filePath, sc]));
+  for (const analysis of allAnalyses) {
+    const from = screenOf.get(analysis.filePath);
+    if (!from) continue;
+    for (const r of analysis.routes) {
+      if (r.kind === "frontend" && r.navigation && r.path !== from.routePath && !from.navigatesTo.includes(r.path)) from.navigatesTo.push(r.path);
+    }
   }
 
   return screens;
