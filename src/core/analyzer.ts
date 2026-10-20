@@ -29,6 +29,7 @@ import {
 } from "./dependency-inventory.js";
 import { detectSubProjects, assignProjectId } from "./project-detector.js";
 import { detectDeployment } from "./deployment.js";
+import { detectGitopsReleases } from "./gitops-releases.js";
 import { resolveViewBySuffix, pickByPathAffinity, extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { detectFileBasedRoutes } from "../extractors/plugins/javascript/routes/file-based.js";
 import { resolveAngularExternalTemplates } from "../extractors/plugins/javascript/angular-external-templates.js";
@@ -747,7 +748,11 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Feeds the report's Context/Deployment (C1/C2) architecture levels.
   // (Read after the files are analyzed: code may declare infrastructure too — an AWS CDK stack.)
   // What the repository's CI pipelines deploy, and when.
-  const ciDeploys = await detectCiDeploys(projectRoot, subProjects).catch(() => []);
+  // CI pipelines' deploy steps, and the releases a GitOps controller syncs from the repository.
+  const ciDeploys = [
+    ...(await detectCiDeploys(projectRoot, subProjects).catch(() => [])),
+    ...(await detectGitopsReleases(projectRoot, subProjects).catch(() => [])),
+  ];
 
   // Step 3: Analyze each file (parallel with concurrency limit).
   // When `incremental` is on, classify each file against the manifest first;

@@ -2933,7 +2933,8 @@ export interface ProjectAnalysis {
 export interface CiDeploy {
   /** The pipeline file (repo-relative). */
   file: string;
-  provider: "github" | "gitlab" | "azure" | "circleci" | "bitbucket";
+  /** The CI system, or the GitOps tool that deploys it (`flux`, `argo`, `kustomize`, `terraform` — `core/gitops-releases.ts`). */
+  provider: "github" | "gitlab" | "azure" | "circleci" | "bitbucket" | "flux" | "argo" | "kustomize" | "terraform";
   /** The workflow's `name:`, when it states one. */
   workflow?: string;
   job: string;
