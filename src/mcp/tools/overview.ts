@@ -593,9 +593,23 @@ export function servicesTool(ctx: ToolContext): McpTool {
           ]
         : [];
 
+      // The environment variables the code reads, and the deployed services that set them.
+      const envVars = (summary.envVars ?? []).filter((v) => !projectFilter || v.readBy.some((r) => !!r.project && isProject(r.project)));
+      const listEnv = envVars.length > 0 && kind !== "bus" && (!!projectFilter || subProjects.length < 2);
+      const unset = envVars.filter((v) => v.setBy.length === 0).length;
+      const envLines = listEnv
+        ? [
+            "",
+            `## Environment variables (${envVars.length}${unset ? `; ${unset} set by no manifest` : ""})`,
+            ...bulletList(envVars, limit, (v) => `${v.name} — read in ${v.readBy.slice(0, 2).map((r) => `${r.file}:${r.line}`).join(", ")}${v.readBy.length > 2 ? ` +${v.readBy.length - 2}` : ""} · ${v.setBy.length ? `set by ${v.setBy.map((x) => `${x.service} (${x.file})`).join(", ")}` : "set by no compose/k8s/Dockerfile"}`),
+          ]
+        : envVars.length > 0 && kind !== "bus"
+          ? ["", `${plural(envVars.length, "environment variable")} read${unset ? `, ${unset} set by no manifest` : ""} — name a \`project\` to list them.`]
+          : [];
+
       if (subProjects.length < 2 && all.length === 0) {
-        if (externalLines.length) {
-          return { text: joinLines([`# One project — nothing crosses between projects`, ...externalLines]) };
+        if (externalLines.length || envLines.length) {
+          return { text: joinLines([`# One project — nothing crosses between projects`, ...externalLines, ...envLines]) };
         }
         return {
           text: noResults({
@@ -609,6 +623,9 @@ export function servicesTool(ctx: ToolContext): McpTool {
       let deps = all;
       if (kind) deps = deps.filter((d) => d.kind === kind);
       if (projectFilter) deps = deps.filter((d) => isProject(d.from) || isProject(d.to));
+      if (deps.length === 0 && (externalLines.length || envLines.length)) {
+        return { text: joinLines([`# No project dependencies${projectFilter ? ` for "${projectFilter}"` : ""}`, ...externalLines, ...envLines]) };
+      }
       if (deps.length === 0) {
         const drop = filterToDrop(all, [
           projectFilter ? { label: "project", keep: (d: ProjectDependency) => isProject(d.from) || isProject(d.to) } : undefined,
@@ -657,6 +674,7 @@ export function servicesTool(ctx: ToolContext): McpTool {
           "",
           ...bulletList(ordered, limit, render),
           ...externalLines,
+          ...envLines,
         ]),
       };
     },

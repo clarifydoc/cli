@@ -572,7 +572,9 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
 
     // 7) Environment / config reads.
     if (method === "getProperty" || method === "getenv") {
-      sources.push(this.ds({ kind: "env", name: method, target: null, line }));
+      // The variable (or system property) named: `System.getenv("DATABASE_URL")`.
+      const key = /\b(?:getenv|getProperty)\s*\(\s*"([A-Za-z_][\w.-]*)"/.exec(node.text)?.[1] ?? null;
+      sources.push(this.ds({ kind: "env", name: method, target: key, line }));
     }
   }
 

@@ -2,7 +2,7 @@ import { glob } from "./glob.js";
 import { urlValue } from "./url-values.js";
 import { byOrdinal } from "./ordinal.js";
 import { readFile } from "fs/promises";
-import { join, resolve } from "path";
+import { join, posix, resolve } from "path";
 import type {
   DeployedService,
   DeployedServiceKind,
@@ -12,6 +12,7 @@ import type {
   SubProject,
 } from "../types/analysis.js";
 import { collectK8sManifests } from "./deployment-k8s.js";
+import { entryFileOf, readDockerfile, repoFiles, type DockerfileFacts } from "./dockerfiles.js";
 
 /**
  * Deployment-topology extraction from docker-compose / compose manifests.
@@ -232,6 +233,10 @@ export interface RawService {
   ports?: number[];
   /** Other names the service answers to: `hostname`, `container_name`, network aliases. */
   aliases?: string[];
+  /** Compose `build:` — the context directory and Dockerfile, repo-relative. */
+  build?: { context: string; dockerfile?: string };
+  /** What the service's Dockerfile says (read after merging). */
+  docker?: DockerfileFacts;
 }
 
 /**
@@ -301,6 +306,23 @@ function envMap(v: YamlValue | undefined): Record<string, string> {
   return out;
 }
 
+/** Compose `build: ./orders` or `build: { context: ., dockerfile: orders/Dockerfile }`, relative to the compose file. */
+function buildOf(v: YamlValue | undefined, composeFile: string): RawService["build"] {
+  const dir = posix.dirname(composeFile);
+  const rel = (p: string) => {
+    const n = posix.normalize(posix.join(dir === "." ? "" : dir, unquote(p)));
+    return n === "." ? "" : n.replace(/\/$/, "");
+  };
+  if (typeof v === "string" && v && !v.includes("${") && !/^[a-z]+:\/\//.test(v)) return { context: rel(v) };
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    const ctx = typeof v.context === "string" && !v.context.includes("${") ? v.context : ".";
+    if (/^[a-z]+:\/\//.test(ctx)) return undefined;
+    const df = typeof v.dockerfile === "string" && !v.dockerfile.includes("${") ? unquote(v.dockerfile) : undefined;
+    return { context: rel(ctx), ...(df ? { dockerfile: df } : {}) };
+  }
+  return undefined;
+}
+
 /**
  * Every entry under `services:` of one compose document as a `RawService`
  * (image, joined entrypoint + command, env, depends_on, ports, aliases).
@@ -313,6 +335,7 @@ function collectRawServices(doc: YamlMap, file: string): RawService[] {
     if (!body || typeof body !== "object" || Array.isArray(body)) continue;
     const b = body as YamlMap;
     const entry = [...asStringArray(b.entrypoint), ...asStringArray(b.command)].join(" ").trim();
+    const build = buildOf(b.build, file);
     out.push({
       name,
       file,
@@ -322,6 +345,7 @@ function collectRawServices(doc: YamlMap, file: string): RawService[] {
       dependsOn: asStringArray(b.depends_on),
       ports: hostPorts(b.ports),
       aliases: serviceAliases(b),
+      ...(build ? { build } : {}),
     });
   }
   return out;
@@ -465,6 +489,35 @@ export function matchServiceToProject(
     const ids = [...new Set((cands ?? []).map((c) => c.id))];
     return ids.length === 1 ? ids[0] : undefined;
   });
+}
+
+/**
+ * The sub-project a build context builds: the deepest project whose root
+ * holds the context, else the one project inside the context.
+ */
+function projectOfContext(context: string, subProjects: readonly SubProject[]): string | undefined {
+  const inside = (dir: string, root: string) => root === "" || dir === root || dir.startsWith(root + "/");
+  const holding = subProjects.filter((p) => inside(context, p.root)).sort((a, b) => b.root.length - a.root.length);
+  if (holding[0] && holding[0].root !== "") return holding[0].id;
+  const within = subProjects.filter((p) => p.root !== "" && inside(p.root, context));
+  if (within.length === 1) return within[0]!.id;
+  return holding[0]?.id;
+}
+
+/** Dockerfiles outside dependency, build and non-runtime (test, example, CI) directories. */
+async function standaloneDockerfiles(absRoot: string): Promise<string[]> {
+  const found = await glob(["**/Dockerfile", "**/Dockerfile.*", "**/*.Dockerfile", "**/*.dockerfile"], {
+    cwd: absRoot,
+    ignore: IGNORE,
+    absolute: false,
+    caseSensitiveMatch: false,
+    deep: 5,
+  });
+  return found
+    .map((f) => f.split("\\").join("/"))
+    .filter((f) => f.split("/").every((seg) => !NON_RUNTIME_RE.test(seg)) && !/(?:^|[.-])(?:dev|debug|local|test|ci)(?:[.-]|$)/i.test(f.split("/").pop()!))
+    .sort(byOrdinal)
+    .slice(0, 20);
 }
 
 // ─── Env-derived edges ──────────────────────────────────────────────────────
@@ -656,6 +709,31 @@ export async function detectDeployment(
     for (let i = 0; i < k8s.groups.length; i++) mergeGroup(k8s.groups[i]!, k8s.files[i]!);
   }
 
+  // Each built service's Dockerfile: the command when compose states none, its ENV under compose's.
+  const repo = repoFiles(absRoot);
+  const referenced = new Set<string>();
+  for (const svc of merged.values()) {
+    if (!svc.build) continue;
+    const df = posix.normalize(posix.join(svc.build.context, svc.build.dockerfile ?? "Dockerfile"));
+    referenced.add(df);
+    const facts = readDockerfile(absRoot, df);
+    if (!facts) continue;
+    svc.docker = facts;
+    if (!svc.entrypoint && facts.command) svc.entrypoint = facts.command;
+    for (const [k, v] of Object.entries(facts.env)) if (!(k in svc.env)) svc.env[k] = v;
+  }
+  // A Dockerfile no compose file builds is a deployable unit of its own, named after its directory.
+  for (const df of await standaloneDockerfiles(absRoot)) {
+    if (referenced.has(df)) continue;
+    const facts = readDockerfile(absRoot, df);
+    if (!facts?.command) continue;
+    const context = posix.dirname(df) === "." ? "" : posix.dirname(df);
+    const name = (context ? context.split("/").pop()! : posix.basename(absRoot)).toLowerCase().replace(/[^a-z0-9_.-]+/g, "-");
+    if (merged.has(name)) continue;
+    merged.set(name, { name, file: df, entrypoint: facts.command, env: { ...facts.env }, dependsOn: [], ports: [], build: { context }, docker: facts });
+    declaredIn.set(name, new Set([df]));
+  }
+
   const rawMerged = [...merged.values()];
   if (rawMerged.length === 0) return undefined;
 
@@ -687,8 +765,13 @@ export async function detectDeployment(
       family,
       tech: artifact ?? imageTail(svc.image),
     };
+    if (svc.docker) s.dockerfile = svc.docker.dockerfile;
+    if (svc.env && Object.keys(svc.env).length) s.envKeys = Object.keys(svc.env).sort(byOrdinal);
     if (kind === "app") {
-      s.project = matchProject(svc, projects, byFiles);
+      // The build context is the strongest evidence of what a service runs.
+      s.project = (svc.build ? projectOfContext(svc.build.context, options.subProjects) : undefined) ?? matchProject(svc, projects, byFiles);
+      const entryFile = svc.build ? entryFileOf(svc.entrypoint, svc.build.context, repo) : undefined;
+      if (entryFile) s.entryFile = entryFile;
       // Where the service is told other services are — URL-shaped values only.
       const urlEnv: Record<string, string> = {};
       for (const k of Object.keys(svc.env).sort(byOrdinal)) {

@@ -2839,6 +2839,11 @@ export interface ProjectAnalysis {
    * Context (C1) and Deployment (C2) levels. Omitted when no compose files.
    */
   deployment?: DeploymentModel;
+  /**
+   * Environment variables the code reads, where, and which deployed services
+   * set them (`core/env-vars.ts`) — names only, never values.
+   */
+  envVars?: Array<{ name: string; readBy: Array<{ file: string; line: number; project?: string }>; setBy: Array<{ service: string; file: string }> }>;
 }
 
 // ─── Deployment topology (compose files) ───────────────────────────────────
@@ -2892,6 +2897,12 @@ export interface DeployedService {
   databases?: Array<{ name: string; primary: boolean }>;
   /** Databases hosted BY this service (datastore kind), e.g. POSTGRES_MULTIPLE_DATABASES. */
   hostedDatabases?: string[];
+  /** The Dockerfile that builds it (repo-relative): a compose `build:`, or a Dockerfile no compose file uses. */
+  dockerfile?: string;
+  /** The repository file its command starts (`CMD ["python", "app/main.py"]` → `app/main.py`). */
+  entryFile?: string;
+  /** Names of the environment variables it is given (compose, Kubernetes, Dockerfile `ENV`) — never their values. */
+  envKeys?: string[];
 }
 
 export interface DeploymentEdge {

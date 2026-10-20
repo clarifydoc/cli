@@ -78,6 +78,7 @@ import { nameCommunities } from "./community-names.js";
 import { buildTestCoverage, COVERAGE_CANDIDATES, parseCoverage } from "./test-coverage.js";
 import { isTestFile } from "./test-file-detector.js";
 import { checkContracts } from "./contract-check.js";
+import { joinEnvVars } from "./env-vars.js";
 import { loadCodeOwners } from "./code-owners.js";
 import { isGeneratedFile } from "./generated-file-detector.js";
 import { TOOL_VERSION } from "./version.js";
@@ -1186,6 +1187,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     const p = f.replace(/\\/g, "/");
     return generatedRoots.some((r) => p === r || p.startsWith(r + "/"));
   };
+  // Environment variables: where the code reads each one, and which deployed services set it.
+  const envVars = joinEnvVars(allAnalyses, deployment, (f) => !isUnauthored(f) && !isTestFile(f));
+
   // The per-file scanner already skips minified sources; this catches issues
   // cached by older extractor versions and everything under generatedRoots.
   const keptSecurityIssues = allSecurityIssues.filter((i) => !isUnauthored(i.filePath));
@@ -1810,6 +1814,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     ...(docDrift ? { docDrift } : {}),
     ...(historySecrets ? { historySecrets } : {}),
     deployment,
+    ...(envVars.length > 0 ? { envVars } : {}),
   };
 
   progress.step("Writing project summary...");

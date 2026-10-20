@@ -136,10 +136,12 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
 
         // os.environ, os.getenv
         if (fnName.includes("os.getenv") || fnName.includes("os.environ")) {
+          // The variable read: `os.getenv("DATABASE_URL")`, `os.environ.get("X", default)`.
+          const key = pyArg(node, "key", 0);
           sources.push(this.ds({
             kind: "env",
             name: fnName,
-            target: null,
+            target: key && /^[A-Za-z_][\w.-]*$/.test(key) ? key : null,
             line: node.startPosition.row + 1,
           }));
         }
