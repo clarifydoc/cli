@@ -165,7 +165,8 @@ clarifydoc install --git-hooks         # Refresh the analysis in the background 
 `lsp-update` writes `lsp-enhancement.json` alongside `project-summary.json` (`--emit-queries <file>` writes the
 definition questions instead, for an editor's language servers to answer; `--answers <file>` merges those answers
 without Docker; `--scip index.scip` takes them from a SCIP index — scip-typescript, scip-java, scip-python,
-rust-analyzer — that CI already builds); `report` reads the summary and emits `report.html`.
+rust-analyzer — that CI already builds, and `--lsif dump.lsif` from an older pipeline's LSIF dump); `report` reads
+the summary and emits `report.html`.
 Every command's options are in the [CLI reference](docs/cli-reference.md).
 
 ## In CI

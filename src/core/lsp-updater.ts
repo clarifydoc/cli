@@ -41,6 +41,8 @@ export interface UpdateLspOptions {
   answers?: string;
   /** Take definitions from a SCIP index (`index.scip`) instead of the Docker servers. */
   scip?: string;
+  /** Take definitions from an LSIF dump (`dump.lsif`) instead of the Docker servers. */
+  lsif?: string;
 }
 
 /**
@@ -116,7 +118,7 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
     return { outputPath, source: "queries", serversUsed: [], lspResolvedCount: 0, referenceLinksCount: 0, elapsedMs: Date.now() - startTime, queryCount: queries.length };
   }
   let answers: (import("../lsp/lsp-enhancer.js").DefinitionSource & { abstained(): number }) | undefined;
-  if (options.answers || options.scip) {
+  if (options.answers || options.scip || options.lsif) {
     const { answersDefinitionSource, readDefinitionAnswers } = await import("../lsp/answers-source.js");
     // The lines where the analysis declares something: what a disagreeing answer is narrowed to.
     const declared = new Set<string>();
@@ -134,6 +136,12 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
       const queries = await planDefinitionQueries(projectRoot, perFileAnalyses, existingLinks);
       file = scipAnswers(index, queries, scipPathMapper(index.documents, new Set(perFileAnalyses.map((a) => a.filePath))));
       if (verbose) console.log(`  SCIP: ${index.documents.length} documents, ${file.answers.length}/${queries.length} questions answered`);
+    } else if (options.lsif) {
+      const { decodeLsif, lsifAnswers } = await import("../lsp/lsif.js");
+      const dump = decodeLsif(await readFile(resolve(options.lsif), "utf8"));
+      const queries = await planDefinitionQueries(projectRoot, perFileAnalyses, existingLinks);
+      file = lsifAnswers(dump, queries, new Set(perFileAnalyses.map((a) => a.filePath)));
+      if (verbose) console.log(`  LSIF: ${dump.documents.size} documents, ${file.answers.length}/${queries.length} questions answered`);
     } else file = await readDefinitionAnswers(resolve(options.answers!));
     answers = answersDefinitionSource(file, (f, line) => declared.has(`${f}:${line}`));
   }

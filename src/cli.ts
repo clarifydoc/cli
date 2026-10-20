@@ -216,6 +216,7 @@ program
   .option("--emit-queries <file>", "Write the definition questions to <file> and stop (no server starts) — for an editor to answer")
   .option("--answers <file>", "Take definitions from <file> (answers to --emit-queries) instead of the Docker servers")
   .option("--scip <file>", "Take definitions from a SCIP index (index.scip from scip-typescript, scip-java, …) instead of the Docker servers")
+  .option("--lsif <file>", "Take definitions from an LSIF dump (dump.lsif) instead of the Docker servers")
   .action(async (analysisDir: string, options) => {
     try {
       const { updateLsp } = await import("./core/lsp-updater.js");
@@ -230,6 +231,7 @@ program
         ...(options.emitQueries ? { emitQueries: options.emitQueries } : {}),
         ...(options.answers ? { answers: options.answers } : {}),
         ...(options.scip ? { scip: options.scip } : {}),
+        ...(options.lsif ? { lsif: options.lsif } : {}),
       });
       if (result.source === "queries") {
         console.log(`Done. ${result.queryCount} definition queries written to ${result.outputPath}`);
