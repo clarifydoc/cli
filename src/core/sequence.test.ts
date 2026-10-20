@@ -37,3 +37,43 @@ describe("buildSequence", () => {
     expect(text).toContain("depth 1 reached");
   });
 });
+
+describe("sequence frames", () => {
+  it("wraps calls in the loops, branches and catches around them, from each function's control flow", async () => {
+    const { sequenceFrames } = await import("./sequence-frames.js");
+    const { sequenceFiles } = await import("./sequence.js");
+    const pressure = await loadReportSummary(join("test-output", "sample-pressure"));
+    const [r] = findRoutes(pressure.routeMap, "POST /orders/reconcile");
+    const seed = { file: r!.filePath!, symbol: routeAnchor(r!, pressure.symbolLinks)! };
+    const frames = await sequenceFrames(join("test-fixtures", "sample-pressure"), sequenceFiles(pressure, seed));
+    const text = buildSequence(pressure, { ...seed, title: "POST /orders/reconcile" }, { frames });
+    const lines = text.split("\n").map((l) => l.trim());
+    const at = (needle: string) => lines.findIndex((l) => l.includes(needle));
+    // rowToOrder() runs for each stuck row; authorizePayment() only for a positive total, inside the loop.
+    expect(at("loop for (const row of stuck.rows)")).toBeGreaterThan(at("assertScope()"));
+    expect(at("rowToOrder()")).toBeGreaterThan(at("loop for (const row of stuck.rows)"));
+    expect(at("opt (order.total #gt; 0)")).toBeGreaterThan(at("rowToOrder()"));
+    expect(at("authorizePayment()")).toBeGreaterThan(at("opt (order.total #gt; 0)"));
+    // Every frame opened is closed.
+    const opened = lines.filter((l) => /^(loop|alt|opt|break) /.test(l)).length;
+    expect(lines.filter((l) => l === "end").length).toBe(opened);
+    expect(opened).toBeGreaterThan(1);
+
+    const unframed = buildSequence(pressure, { ...seed, title: "x" });
+    expect(unframed).not.toMatch(/^\s*(loop|opt|alt|break) /m);
+  });
+
+  it("opens an else arm where the false branch begins, and closes frames as calls leave them", async () => {
+    const summary = {
+      symbolLinks: [
+        { sourceFile: "a.ts", sourceSymbol: "run", sourceLine: 3, targetFile: "a.ts", targetSymbol: "one", targetLine: 20, callName: "one", relation: "call", confidence: "EXTRACTED" },
+        { sourceFile: "a.ts", sourceSymbol: "run", sourceLine: 6, targetFile: "a.ts", targetSymbol: "two", targetLine: 21, callName: "two", relation: "call", confidence: "EXTRACTED" },
+        { sourceFile: "a.ts", sourceSymbol: "run", sourceLine: 9, targetFile: "a.ts", targetSymbol: "three", targetLine: 22, callName: "three", relation: "call", confidence: "EXTRACTED" },
+      ],
+      symbolDataAccess: [],
+    } as unknown as ProjectAnalysis;
+    const frames = new Map([["a.ts", [{ kind: "alt" as const, label: "if (ok)", line: 2, endLine: 7, elseLine: 5 }]]]);
+    const body = buildSequence(summary, { file: "a.ts", symbol: "run", title: "run" }, { frames }).split("\n").map((l) => l.trim()).filter((l) => !l.startsWith("participant"));
+    expect(body.slice(3, 9)).toEqual(["alt if (ok)", "a_ts->>a_ts: one()", "else", "a_ts->>a_ts: two()", "end", "a_ts->>a_ts: three()"]);
+  });
+});

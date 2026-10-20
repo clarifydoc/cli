@@ -245,8 +245,10 @@ What an endpoint (or a function) does, in order, as a Mermaid `sequenceDiagram`:
 call it makes depth-first in source order, each followed by its return; the tables it reads and writes and
 the queues it publishes to; and the HTTP calls it makes to another tier, into the handler that serves them.
 Lanes are classes, else files. A call the linker only guessed is drawn with an open arrow and a `?`; a
-recursion is marked, not followed. Reads a written analysis (`-o` / `--analysis-dir`, as `export`), writes
-nothing, prints to stdout.
+recursion is marked, not followed. A call made inside a loop, a branch or a `catch` is drawn inside a `loop`,
+`alt` (with its `else`), `opt` or `break` frame, read from the control-flow graph of each function the
+sequence walks (the files are read for this, as `cfg` reads one). Reads a written analysis (`-o` /
+`--analysis-dir`, as `export`), writes nothing, prints to stdout.
 
 | Option | Default | What it does |
 |--------|---------|--------------|
@@ -254,6 +256,7 @@ nothing, prints to stdout.
 | `--symbol <symbol>` | — | A function or method instead of a route. |
 | `--file <file>` | — | The declaring file, when the route or name is not unique. |
 | `--depth <n>` | 8 | Hops of calls to follow. |
+| `--no-frames` | — | Draw the calls unframed, reading no source. |
 
 ## `cfg`
 

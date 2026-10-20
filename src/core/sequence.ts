@@ -1,6 +1,7 @@
 import type { ProjectAnalysis, SymbolLink } from "../types/analysis.js";
 import { idFactory, mermaidLabel } from "./mermaid-text.js";
 import { trimTrailingSlashes } from "../extractors/plugins/shared/path-utils.js";
+import type { SequenceFrame } from "./sequence-frames.js";
 
 /**
  * What an endpoint does, in order, as a Mermaid `sequenceDiagram`: the
@@ -15,12 +16,16 @@ import { trimTrailingSlashes } from "../extractors/plugins/shared/path-utils.js"
  * Bounds: a visited set per path (a recursion is marked, not followed),
  * `depth` hops (default 8), and `fanOut` calls per caller (default 12) with
  * "+N more". A call the linker only guessed (AMBIGUOUS) is drawn as an
- * open-headed arrow, so it reads as uncertain.
+ * open-headed arrow, so it reads as uncertain. With `frames` (each walked
+ * function's loops and branches, `sequence-frames.ts`), a call made inside a
+ * loop or a branch is drawn inside a `loop` / `alt` / `opt` frame.
  */
 
 export interface SequenceOptions {
   depth?: number;
   fanOut?: number;
+  /** Loops and branches per file (`sequenceFrames`). */
+  frames?: ReadonlyMap<string, readonly SequenceFrame[]>;
 }
 
 type Row = ProjectAnalysis["routeMap"][number];
@@ -103,7 +108,30 @@ export function buildSequence(summary: ProjectAnalysis, seed: { file: string; sy
     }
     const out = calls.get(key) ?? [];
     const shown = out.slice(0, fanOut);
+    // The frames open around the calls drawn so far, outermost first.
+    const frames = opts.frames?.get(file) ?? [];
+    const open: Array<{ frame: SequenceFrame; inElse: boolean }> = [];
+    const enter = (line: number) => {
+      while (open.length && (line < open[open.length - 1]!.frame.line || line > open[open.length - 1]!.frame.endLine)) {
+        open.pop();
+        body.push("  end");
+      }
+      for (const f of frames) {
+        if (line < f.line || line > f.endLine || open.some((o) => o.frame === f)) continue;
+        const enclosing = open[open.length - 1]?.frame;
+        if (enclosing && (f.line < enclosing.line || f.endLine > enclosing.endLine)) continue;
+        open.push({ frame: f, inElse: false });
+        body.push(`  ${f.kind} ${mermaidLabel(f.label)}`);
+      }
+      for (const o of open) {
+        if (o.frame.kind === "alt" && !o.inElse && o.frame.elseLine && line >= o.frame.elseLine) {
+          o.inElse = true;
+          body.push("  else");
+        }
+      }
+    };
     for (const l of shown) {
+      enter(l.sourceLine);
       const callee = `${l.targetFile}::${l.targetSymbol}`;
       const to = lane(laneOf(l.targetFile, l.targetSymbol));
       const arrow = l.confidence === "AMBIGUOUS" ? "-)" : "->>";
@@ -120,6 +148,7 @@ export function buildSequence(summary: ProjectAnalysis, seed: { file: string; sy
       // A call within the lane that led nowhere needs no return arrow to read.
       if (to !== here || body.length > before) say(to, here, "return", "-->>");
     }
+    for (let i = open.length; i > 0; i--) body.push("  end");
     if (out.length > shown.length) body.push(`  Note over ${here}: +${out.length - shown.length} more calls`);
   };
   walk(seed.file, seed.symbol, 1, new Set([`${seed.file}::${seed.symbol}`]));
@@ -128,4 +157,31 @@ export function buildSequence(summary: ProjectAnalysis, seed: { file: string; sy
   const header = ["sequenceDiagram", `  title ${mermaidLabel(seed.title)}`];
   const participants = [...lanes].map(([name, pid]) => `  participant ${pid} as ${mermaidLabel(name)}`);
   return [...header, ...participants, ...body].join("\n") + "\n";
+}
+
+/** The files a sequence from `seed` walks into — what `sequenceFrames` needs to read. */
+export function sequenceFiles(summary: ProjectAnalysis, seed: { file: string; symbol: string }, opts: SequenceOptions = {}): string[] {
+  const depth = opts.depth ?? 8;
+  const calls = new Map<string, SymbolLink[]>();
+  for (const l of summary.symbolLinks ?? []) {
+    if (l.relation === "reference" || l.sourceSymbol === "(reference)" || l.navigational) continue;
+    const k = `${l.sourceFile}::${l.sourceSymbol}`;
+    (calls.get(k) ?? calls.set(k, []).get(k)!).push(l);
+  }
+  const files = new Set([seed.file]);
+  const seen = new Set<string>();
+  let frontier = [`${seed.file}::${seed.symbol}`];
+  for (let level = 0; level < depth && frontier.length; level++) {
+    const next: string[] = [];
+    for (const k of frontier) {
+      if (seen.has(k)) continue;
+      seen.add(k);
+      for (const l of calls.get(k) ?? []) {
+        files.add(l.targetFile);
+        next.push(`${l.targetFile}::${l.targetSymbol}`);
+      }
+    }
+    frontier = next;
+  }
+  return [...files];
 }

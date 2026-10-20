@@ -578,6 +578,7 @@ program
   .option("--symbol <symbol>", 'A function or method instead, e.g. "OrderService.create"')
   .option("--file <file>", "The file that declares the route or symbol, when the name is not unique")
   .option("--depth <n>", "Hops of calls to follow (default 8)", wholeNumber())
+  .option("--no-frames", "Draw the calls unframed — without the loop / alt / opt frames read from each function's control flow")
   .option("-o, --output <dir>", "Analysis output directory (same value as `analyze -o`)", ".clarifydoc")
   .option("--analysis-dir <dir>", "Exact directory containing project-summary.json (overrides --output)")
   .action(async (path: string, options) => {
@@ -586,14 +587,20 @@ program
     const analysisDir = options.analysisDir ? resolve(options.analysisDir) : resolve(options.output, projectName);
     try {
       const { loadReportSummary } = await import("./core/report-payload.js");
-      const { buildSequence, findRoutes, routeAnchor } = await import("./core/sequence.js");
+      const { buildSequence, findRoutes, routeAnchor, sequenceFiles } = await import("./core/sequence.js");
       let summary;
       try {
         summary = await loadReportSummary(analysisDir);
       } catch {
         throw new Error(`No analysis found at ${analysisDir}.\nRun first: clarifydoc analyze ${path} -o ${options.output}`);
       }
-      const depth = options.depth ? { depth: options.depth as number } : {};
+      const base = options.depth ? { depth: options.depth as number } : {};
+      // Loops and branches from each walked file's control flow, unless asked not to.
+      const withFrames = async (seed: { file: string; symbol: string }) => {
+        if (options.frames === false) return base;
+        const { sequenceFrames } = await import("./core/sequence-frames.js");
+        return { ...base, frames: await sequenceFrames(projectRoot, sequenceFiles(summary, seed, base)) };
+      };
       if (options.route) {
         const found = findRoutes(summary.routeMap ?? [], options.route, options.file);
         if (found.length !== 1) {
@@ -602,13 +609,15 @@ program
         const r = found[0]!;
         const anchor = routeAnchor(r, summary.symbolLinks ?? []);
         if (!anchor) throw new Error(`${r.httpMethod ?? ""} ${r.path} calls nothing the analysis resolved`);
-        process.stdout.write(buildSequence(summary, { file: r.filePath!, symbol: anchor, title: `${r.httpMethod ? `${r.httpMethod.toUpperCase()} ` : ""}${r.path}` }, depth));
+        const seed = { file: r.filePath!, symbol: anchor };
+        process.stdout.write(buildSequence(summary, { ...seed, title: `${r.httpMethod ? `${r.httpMethod.toUpperCase()} ` : ""}${r.path}` }, await withFrames(seed)));
         return;
       }
       if (!options.symbol) throw new Error("Pass --route or --symbol");
       const defs = [...new Set((summary.symbolLinks ?? []).filter((l) => l.sourceSymbol === options.symbol && (!options.file || l.sourceFile.includes(options.file))).map((l) => l.sourceFile))];
       if (defs.length !== 1) throw new Error(defs.length === 0 ? `${options.symbol} calls nothing the analysis resolved` : `${options.symbol} is declared in ${defs.length} files — pass --file:\n${defs.map((f) => `  ${f}`).join("\n")}`);
-      process.stdout.write(buildSequence(summary, { file: defs[0]!, symbol: options.symbol, title: options.symbol }, depth));
+      const seed = { file: defs[0]!, symbol: options.symbol as string };
+      process.stdout.write(buildSequence(summary, { ...seed, title: options.symbol }, await withFrames(seed)));
     } catch (err) {
       console.error("Error:", (err as Error).message);
       process.exitCode = 1;
