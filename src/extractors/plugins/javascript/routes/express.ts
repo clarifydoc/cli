@@ -153,6 +153,18 @@ const BODY_PARTS = new Set(["json", "form", "body"]);
  * express-joi-validation's `validator.body(schema)`.
  */
 function validatedBody(m: Node): string | null {
+  // Fastify: the route options `{ schema: { body: CreateUser } }`.
+  if (m.type === "object") {
+    for (const pair of m.namedChildren) {
+      if (pair.type !== "pair" || pair.childForFieldName("key")?.text !== "schema") continue;
+      const schema = pair.childForFieldName("value");
+      for (const inner of schema?.type === "object" ? schema.namedChildren : []) {
+        const v = inner.type === "pair" && inner.childForFieldName("key")?.text === "body" ? inner.childForFieldName("value") : null;
+        if (v?.type === "identifier") return v.text;
+      }
+    }
+    return null;
+  }
   if (m.type !== "call_expression") return null;
   const callee = m.childForFieldName("function")?.text ?? "";
   const args = m.childForFieldName("arguments")?.namedChildren ?? [];

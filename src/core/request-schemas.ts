@@ -231,7 +231,9 @@ export function attachRequestSchemas(routes: RouteRow[], analyses: FileAnalysis[
   for (const a of analyses) {
     languageOf.set(a.filePath, a.language);
     for (const cls of a.classes ?? []) {
-      if (cls.kind === "interface") continue;
+      // An interface states a body's shape as well as a class does (`@Body() dto: CreateDto` with
+      // `interface CreateDto { … }`); one with no properties says nothing.
+      if (cls.kind === "interface" && !(cls.properties?.length)) continue;
       const ref = { cls, filePath: a.filePath, projectId: a.projectId ?? "root" };
       // Indexed under the full name and its leaf (`MyApp.Accounts.Address` /
       // `Address`): type texts name either.

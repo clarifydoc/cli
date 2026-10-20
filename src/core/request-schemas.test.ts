@@ -57,6 +57,19 @@ const bodyRoute = (
 });
 
 describe("attachRequestSchemas", () => {
+  it("reads a body typed by an interface that states its fields, never one with none", () => {
+    const iface = (name: string, properties: PropertyInfo[]): ClassInfo => ({ ...cls(name, properties), kind: "interface" });
+    const analyses = [
+      file("Controllers/UsersController.cs", []),
+      file("Models/Dto.cs", [iface("CreateTeam", [prop("Name", "string", { isRequired: true }), prop("Size", "int")]), iface("Marker", [])]),
+    ];
+    const typed = bodyRoute("CreateTeam");
+    const empty = bodyRoute("Marker");
+    expect(attachRequestSchemas([typed, empty], analyses)).toBe(1);
+    expect(Object.keys(typed.requestSchema?.properties ?? {})).toEqual(["name", "size"]);
+    expect(empty.requestSchema).toBeUndefined();
+  });
+
   it("flattens inheritance, camel-cases, honours [JsonPropertyName]/[Required]/required and maps C# types", () => {
     const analyses = [
       file("Controllers/UsersController.cs", []),

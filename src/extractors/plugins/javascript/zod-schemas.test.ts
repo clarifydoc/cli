@@ -164,3 +164,24 @@ router.post("/joi-inline", async (req, res) => {
     ]);
   });
 });
+
+describe("yup and TypeBox schemas", () => {
+  it("reads yup (optional until required) and TypeBox (required unless Optional) as request types", async () => {
+    const { parseSource } = await import("../../../parsers/parser-manager.js");
+    const { extractZodSchemas } = await import("./zod-schemas.js");
+    const src = `import * as yup from "yup";
+import { Type } from "@sinclair/typebox";
+export const team = yup.object({ name: yup.string().required(), size: yup.number(), kind: yup.string().oneOf(["a", "b"]).nullable() });
+export const member = yup.object().shape({ email: yup.string().email().defined(), roles: yup.array().of(yup.string()) });
+export const Tag = Type.Object({ label: Type.String(), color: Type.Optional(Type.String()), kinds: Type.Array(Type.Union([Type.Literal("x"), Type.Literal(2)])) });`;
+    const tree = await parseSource(src, "typescript" as never, "s.ts");
+    const show = (c: { name: string; properties: Array<{ name: string; type: string | null; isRequired?: boolean }> }) =>
+      `${c.name}: ${c.properties.map((p) => `${p.name}${p.isRequired ? "" : "?"}:${p.type}`).join(", ")}`;
+    expect(extractZodSchemas(tree.rootNode, src).map(show)).toEqual([
+      "team: name:string, size?:number, kind?:'a' | 'b' | null",
+      "member: email:string, roles?:string[]",
+      "Tag: label:string, color?:string, kinds:'x' | 2[]",
+    ]);
+  });
+});
+

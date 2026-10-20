@@ -56,6 +56,28 @@ export function zodNamespaces(sourceText: string): Set<string> {
   return out;
 }
 
+const YUP_IMPORT_RE = /import\s+(?:\*\s+as\s+(\w+)|(\w+))\s+from\s+['"]yup['"]|\b(?:const|let|var)\s+(\w+)\s*=\s*require\(\s*['"]yup['"]\s*\)/g;
+const TYPEBOX_IMPORT_RE = /import\s+\{\s*([^}]*)\}\s+from\s+['"](?:@sinclair\/typebox|typebox)['"]/g;
+
+/** The names the file binds yup's namespace to (`yup`, `Yup`). */
+export function yupNamespaces(sourceText: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of sourceText.matchAll(YUP_IMPORT_RE)) out.add((m[1] ?? m[2] ?? m[3])!);
+  return out;
+}
+
+/** The names the file binds TypeBox's `Type` builder to (`Type`, `T`). */
+export function typeboxNamespaces(sourceText: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of sourceText.matchAll(TYPEBOX_IMPORT_RE)) {
+    for (const part of m[1]!.split(",")) {
+      const [name, alias] = part.trim().split(/\s+as\s+/);
+      if (name === "Type") out.add(alias ?? "Type");
+    }
+  }
+  return out;
+}
+
 const JOI_IMPORT_RE = /import\s+(?:\{\s*([^}]*)\}|\*\s+as\s+(\w+)|(\w+))\s+from\s+['"](?:joi|@hapi\/joi|celebrate)['"]|\b(?:const|let|var)\s+(\w+)\s*=\s*require\(\s*['"](?:joi|@hapi\/joi)['"]\s*\)/g;
 
 /** The names the file binds joi to (`Joi`, celebrate's re-exported `Joi`). */
@@ -111,7 +133,7 @@ function chainOf(node: Node, ns: ReadonlySet<string>): Array<{ name: string; arg
   return null;
 }
 
-type Dialect = "zod" | "joi";
+type Dialect = "zod" | "joi" | "yup" | "typebox";
 
 const literalOf = (v: Node): string | null => (v.type === "string" ? `'${stripQuotes(v.text)}'` : v.type === "number" || v.type === "true" || v.type === "false" ? v.text : null);
 
@@ -135,7 +157,8 @@ class ZodReader {
       return { type: "unknown", optional: false };
     }
     const [head, ...mods] = chain;
-    if (this.dialect === "joi") return this.joiField(head!, mods, owner);
+    if (this.dialect === "joi" || this.dialect === "yup") return this.joiField(head!, mods, owner);
+    if (this.dialect === "typebox") return this.typeboxField(head!, owner);
     const optional = mods.some((m) => m.name === "optional" || m.name === "nullish" || m.name === "default");
     const nullable = mods.some((m) => m.name === "nullable" || m.name === "nullish");
     let type = this.headType(head!, owner);
@@ -143,23 +166,60 @@ class ZodReader {
     return { type: nullable ? `${type} | null` : type, optional };
   }
 
-  /** joi: optional until `.required()`; `.valid(…)` narrows to its values, `.allow(null)` admits null. */
+  /**
+   * TypeBox: `Type.String()` and the like are required; `Type.Optional(x)` is not; `Type.Union`
+   * of literals, `Type.Array(x)`, `Type.Object({ … })` nest as zod's do.
+   */
+  private typeboxField(head: { name: string; args: Node[] }, owner: string): Field {
+    const inner = (n: Node | undefined) => (n ? this.field(n, owner) : { type: "unknown", optional: false });
+    switch (head.name) {
+      case "Optional": return { type: inner(head.args[0]).type, optional: true };
+      case "String": return { type: "string", optional: false };
+      case "Number": case "Integer": case "BigInt": return { type: "number", optional: false };
+      case "Boolean": return { type: "boolean", optional: false };
+      case "Date": return { type: "Date", optional: false };
+      case "Null": return { type: "null", optional: false };
+      case "Literal": return { type: head.args[0] ? literalOf(head.args[0]) ?? "unknown" : "unknown", optional: false };
+      case "Array": return { type: `${inner(head.args[0]).type}[]`, optional: false };
+      case "Union": {
+        const list = head.args[0];
+        const parts = list?.type === "array" ? list.namedChildren.map((c) => this.field(c, owner).type) : [];
+        return { type: parts.length ? parts.join(" | ") : "unknown", optional: false };
+      }
+      case "Record": return { type: `Record<string, ${inner(head.args[head.args.length - 1]).type}>`, optional: false };
+      case "Object": {
+        const obj = head.args[0];
+        if (obj?.type !== "object") return { type: "unknown", optional: false };
+        this.objectClass(owner, obj, -1);
+        return { type: owner, optional: false };
+      }
+      default: return { type: "unknown", optional: false };
+    }
+  }
+
+  /**
+   * joi: optional until `.required()`; `.valid(…)` narrows to its values, `.allow(null)` admits null.
+   * yup reads the same way: optional until `.required()` (`.defined()` too), `.oneOf([…])` narrows,
+   * `.nullable()` admits null, `array().of(x)`, `object().shape({ … })`.
+   */
   private joiField(head: { name: string; args: Node[] }, mods: Array<{ name: string; args: Node[] }>, owner: string): Field {
-    const optional = !mods.some((m) => m.name === "required" || m.name === "exist");
-    const valid = [head, ...mods].filter((m) => m.name === "valid" || m.name === "only" || m.name === "equal").flatMap((m) => m.args.map(literalOf)).filter((v): v is string => v !== null);
-    const nullable = mods.some((m) => m.name === "allow" && m.args.some((a) => a.type === "null"));
+    const optional = !mods.some((m) => m.name === "required" || m.name === "exist" || m.name === "defined");
+    const valid = [head, ...mods].filter((m) => m.name === "valid" || m.name === "only" || m.name === "equal").flatMap((m) => m.args.map(literalOf))
+      .concat(mods.filter((m) => m.name === "oneOf").flatMap((m) => (m.args[0]?.type === "array" ? m.args[0].namedChildren.map(literalOf) : [])))
+      .filter((v): v is string => v !== null);
+    const nullable = mods.some((m) => (m.name === "allow" && m.args.some((a) => a.type === "null")) || m.name === "nullable");
     let type: string;
     if (valid.length) type = valid.join(" | ");
     else if (head.name === "array") {
-      const items = mods.find((m) => m.name === "items")?.args[0];
+      const items = (mods.find((m) => m.name === "items") ?? mods.find((m) => m.name === "of"))?.args[0] ?? head.args[0];
       type = `${items ? this.field(items, owner).type : "unknown"}[]`;
     } else if (head.name === "object") {
-      const obj = head.args[0]?.type === "object" ? head.args[0] : mods.find((m) => m.name === "keys")?.args[0];
+      const obj = head.args[0]?.type === "object" ? head.args[0] : mods.find((m) => m.name === "keys" || m.name === "shape")?.args[0];
       if (obj?.type === "object") {
         this.objectClass(owner, obj, -1);
         type = owner;
       } else type = "Record<string, unknown>";
-    } else type = { string: "string", number: "number", boolean: "boolean", bool: "boolean", date: "Date", binary: "string", any: "unknown" }[head.name] ?? "unknown";
+    } else type = { string: "string", number: "number", boolean: "boolean", bool: "boolean", date: "Date", binary: "string", any: "unknown", mixed: "unknown" }[head.name] ?? "unknown";
     return { type: nullable ? `${type} | null` : type, optional };
   }
 
@@ -211,7 +271,7 @@ class ZodReader {
       name,
       extends: base,
       implements: [],
-      decorators: [this.dialect === "joi" ? "joi-schema" : "zod-schema"],
+      decorators: [`${this.dialect}-schema`],
       methods: [],
       properties,
       isExported: false,
@@ -224,8 +284,8 @@ class ZodReader {
 /** The object literal a named schema is built from: `z.object({…})`, possibly `.strict()`/`.passthrough()`d. */
 function objectLiteralOf(value: Node, ns: ReadonlySet<string>, dialect: Dialect = "zod"): Node | null {
   const chain = chainOf(value, ns);
-  if (!chain || chain[0]!.name !== "object") return null;
-  const obj = chain[0]!.args[0] ?? (dialect === "joi" ? chain.find((c) => c.name === "keys")?.args[0] : undefined);
+  if (!chain || chain[0]!.name !== (dialect === "typebox" ? "Object" : "object")) return null;
+  const obj = chain[0]!.args[0] ?? (dialect === "joi" ? chain.find((c) => c.name === "keys")?.args[0] : dialect === "yup" ? chain.find((c) => c.name === "shape")?.args[0] : undefined);
   return obj?.type === "object" ? obj : null;
 }
 
@@ -258,18 +318,26 @@ export function extractZodSchemas(root: Node, sourceText: string): ClassInfo[] {
     const ns = zodNamespaces(sourceText);
     if (ns.size > 0) out.push(...readSchemas(root, new ZodReader(ns, "zod"), ns, "zod"));
     const factories = drizzleFactories(sourceText);
-    if (factories.size > 0) out.push(...drizzleSchemas(root, factories, ns));
+    if (factories.size > 0) out.push(...drizzleSchemas(root, factories, ns, sourceText));
   }
   if (/\bjoi\b|celebrate/.test(sourceText)) {
     const ns = joiNamespaces(sourceText);
     if (ns.size > 0) out.push(...readSchemas(root, new ZodReader(ns, "joi"), ns, "joi"));
+  }
+  if (sourceText.includes("yup")) {
+    const ns = yupNamespaces(sourceText);
+    if (ns.size > 0) out.push(...readSchemas(root, new ZodReader(ns, "yup"), ns, "yup"));
+  }
+  if (sourceText.includes("typebox")) {
+    const ns = typeboxNamespaces(sourceText);
+    if (ns.size > 0) out.push(...readSchemas(root, new ZodReader(ns, "typebox"), ns, "typebox"));
   }
   return out;
 }
 
 function readSchemas(root: Node, reader: ZodReader, ns: ReadonlySet<string>, dialect: Dialect): ClassInfo[] {
   // How a named schema is extended: zod `base.extend({…})`, joi `base.keys({…})`/`base.append({…})`.
-  const EXTEND = dialect === "zod" ? new Set(["extend"]) : new Set(["keys", "append"]);
+  const EXTEND = dialect === "zod" ? new Set(["extend"]) : dialect === "yup" ? new Set(["shape", "concat"]) : dialect === "typebox" ? new Set<string>() : new Set(["keys", "append"]);
   const visit = (n: Node): void => {
     // A tRPC procedure's inline input: `.input(z.object({ … }))`.
     if (dialect === "zod" && n.type === "call_expression") {
@@ -390,9 +458,17 @@ function drizzleTables(root: Node): Map<string, DrizzleColumn[]> {
 /** `true`-valued keys of an object literal: `.omit({ id: true, createdAt: true })`. */
 const maskKeys = (obj: Node | undefined): Set<string> => new Set((obj?.type === "object" ? obj.namedChildren : []).filter((p) => p.type === "pair").map((p) => p.childForFieldName("key")!).map((k) => (k.type === "string" ? stripQuotes(k.text) : k.text)));
 
-function drizzleSchemas(root: Node, factories: ReadonlyMap<string, DrizzleMode>, zodNs: ReadonlySet<string>): ClassInfo[] {
+function drizzleSchemas(root: Node, factories: ReadonlyMap<string, DrizzleMode>, zodNs: ReadonlySet<string>, sourceText = ""): ClassInfo[] {
   const tables = drizzleTables(root);
-  if (tables.size === 0) return [];
+  // A table imported from the schema file: its columns are there, so the schema extends that table's entity.
+  const imported = new Set<string>();
+  for (const m of sourceText.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+['"][^'"]+['"]/g)) {
+    for (const part of m[1]!.split(",")) {
+      const local = part.trim().split(/\s+as\s+/).pop()?.trim();
+      if (local && /^[A-Za-z_$][\w$]*$/.test(local)) imported.add(local);
+    }
+  }
+  if (tables.size === 0 && imported.size === 0) return [];
   const reader = new ZodReader(zodNs, "zod");
   const out: ClassInfo[] = [];
   const visit = (n: Node): void => {
@@ -409,6 +485,13 @@ function drizzleSchemas(root: Node, factories: ReadonlyMap<string, DrizzleMode>,
           const mode = factories.get(fn.text);
           const table = args[0]?.type === "identifier" ? tables.get(args[0].text) : undefined;
           if (name?.type === "identifier" && mode && table) out.push(drizzleClass(name.text, n, mode, table, args[1], tail, reader));
+          else if (name?.type === "identifier" && mode && args[0]?.type === "identifier" && imported.has(args[0].text)) {
+            // The columns, by extending the table's entity; which are required the other file knows, not this one.
+            out.push({
+              name: name.text, extends: args[0].text, implements: [], decorators: ["zod-schema", `drizzle-zod:${mode}`], methods: [], properties: [],
+              isExported: false, line: n.startPosition.row + 1, endLine: n.endPosition.row + 1,
+            });
+          }
           return;
         }
         if (fn?.type !== "member_expression") break;
