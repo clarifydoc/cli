@@ -25,7 +25,8 @@ describe.skipIf(!existsSync(fixture))("sample-ios-swiftui", () => {
     const s = await loadReportSummary(out);
     const screens = new Map(s.screens.map((x) => [x.routePath, x]));
     expect([...screens.keys()].sort()).toEqual([
-      "AddItemView", "ExportDoneViewController", "ExportViewController", "FormatPickerViewController", "ItemDetailView", "ItemListView", "RootTabs", "SettingsView",
+      "AddItemView", "ArchiveDetailViewController", "ArchiveFilterViewController", "ArchiveInfoViewController", "ArchiveListViewController",
+      "ExportDoneViewController", "ExportViewController", "FormatPickerViewController", "ItemDetailView", "ItemListView", "RootTabs", "SettingsView",
     ]);
     expect(screens.get("RootTabs")?.navigatesTo).toEqual(["ItemListView", "SettingsView"]);
     expect(screens.get("ItemListView")?.navigatesTo).toEqual(["ItemDetailView", "AddItemView"]);
@@ -66,5 +67,17 @@ describe.skipIf(!existsSync(fixture))("sample-ios-swiftui", () => {
     const access = (s.dataAccessGraph?.edges ?? []).map((e) => `${e.source} -> ${e.target}`).filter((e) => e.includes("ArchiveStore"));
     expect(access.some((e) => e.includes("ArchivedNote"))).toBe(true);
     expect(access.some((e) => e.includes("Folder"))).toBe(true);
+  });
+
+  it("follows storyboard segues — through a navigation controller — and segues and storyboard ids named in code", async () => {
+    const s = await loadReportSummary(out);
+    const archive = s.screens.filter((x) => x.filePath === "Notes/Legacy/ArchiveViewControllers.swift").map((x) => `${x.name} → ${[...x.navigatesTo].sort().join(", ")}`).sort();
+    expect(archive).toEqual([
+      "ArchiveDetailViewController → ",
+      "ArchiveFilterViewController → ",
+      "ArchiveInfoViewController → ",
+      "ArchiveListViewController → ArchiveDetailViewController, ArchiveFilterViewController, ArchiveInfoViewController",
+    ]);
+    expect(s.routeMap.some((r) => r.path.startsWith("@") || r.path.includes("showExport"))).toBe(false);
   });
 });

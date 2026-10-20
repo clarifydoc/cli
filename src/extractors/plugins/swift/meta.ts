@@ -8,6 +8,7 @@ import { swiftRequestSchema } from "./request-schema.js";
 import { swiftReachability } from "./reachability.js";
 import { SwiftEntityExtractor } from "./entities.js";
 import { screenClassResolver } from "../shared/screen-classes.js";
+import { storyboardNavigationResolver } from "./storyboard-navigation.js";
 
 /** UIKit's screen classes: a view controller, by the platform classes a project's own derive from. */
 const uikitScreenClasses = screenClassResolver("uikit-screen-classes", ["swift"], new Set([
@@ -44,5 +45,5 @@ export const swiftMeta: LanguagePluginMeta = {
   // SwiftData @Model and Core Data NSManagedObject classes (see entities.ts).
   entities: new SwiftEntityExtractor(),
   // UIViewController subclasses are screens (shared/screen-classes.ts).
-  routeResolvers: [uikitScreenClasses],
+  routeResolvers: [uikitScreenClasses, storyboardNavigationResolver],
 };
