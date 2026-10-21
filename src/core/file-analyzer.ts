@@ -455,7 +455,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     if (!isTest) {
       const { relativePath: routePath, frameworkIds: routeFrameworks } = routeScope;
       analysis.routes.push(
-        ...inferNextRoutes(routePath, analysis, routeFrameworks),
+        ...inferNextRoutes(routePath, analysis, routeFrameworks, sourceText),
         ...inferSvelteKitRoutes(routePath, analysis, routeFrameworks),
         ...inferExpoRouterRoutes(routePath, analysis, routeFrameworks),
         ...inferReactRouterConfig(routePath, sourceText, routeFrameworks).routes,

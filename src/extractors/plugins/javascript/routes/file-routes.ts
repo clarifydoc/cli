@@ -99,14 +99,34 @@ export function inferFileBasedRoute(relativePath: string, frameworkIds: string[]
  * function POST`), as SvelteKit's `+server.ts` does; one exporting none keeps
  * the single method-less row.
  */
-export function inferNextRoutes(relativePath: string, analysis: FileAnalysis, frameworkIds: string[]): RouteInfo[] {
+export function inferNextRoutes(relativePath: string, analysis: FileAnalysis, frameworkIds: string[], sourceText = ""): RouteInfo[] {
   const r = inferFileBasedRoute(relativePath, frameworkIds);
   if (!r) return [];
   if (r.kind === "api" && /(?:^|\/)route\.(?:tsx?|jsx?)$/.test(relativePath.replace(/\\/g, "/"))) {
     const handlers = methodRoutes(r.path, analysis);
     if (handlers.length > 0) return handlers;
   }
+  if (r.kind === "api" && sourceText) return pagesApiRoutes(r, analysis, sourceText);
   return [r];
+}
+
+/**
+ * A `pages/api` route's handler is the default export — through a wrapping
+ * middleware call (`export default withAuth(handler)`) — and the methods it
+ * serves are the ones its body branches on (`switch (method) { case 'GET': …`,
+ * `req.method === 'POST'`): one row per method, else the method-less row.
+ */
+function pagesApiRoutes(r: RouteInfo, analysis: FileAnalysis, sourceText: string): RouteInfo[] {
+  const exported = /\bexport\s+default\s+(?:async\s+)?(?:function\s+(\w+)|(?:[\w.]+\s*\(\s*)*(\w+)\s*\)*\s*;?\s*$)/m.exec(sourceText);
+  const name = exported?.[1] ?? exported?.[2];
+  const fn = name ? analysis.functions.find((f) => f.name === name) : undefined;
+  if (!fn) return [r];
+  const body = sourceText.split("\n").slice(fn.line - 1, fn.endLine).join("\n");
+  const methods = new Set<string>();
+  for (const m of body.matchAll(/\bcase\s+['"`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)['"`]\s*:/g)) methods.add(m[1]!);
+  for (const m of body.matchAll(/\bmethod\s*[!=]==?\s*['"`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)['"`]/g)) methods.add(m[1]!);
+  if (methods.size === 0) return [{ ...r, handler: fn.name, line: fn.line }];
+  return [...methods].map((method) => ({ ...r, httpMethod: method, handler: fn.name, line: fn.line }));
 }
 
 /**

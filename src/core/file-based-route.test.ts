@@ -135,3 +135,26 @@ describe("Remix / React Router flat routes", () => {
     expect(inferReactRouterConfig("app/routes.ts", "export default flatRoutes() satisfies RouteConfig;", ["react-router-framework"]).flatRoutes).toBe(true);
   });
 });
+
+describe("Next.js pages/api handlers", () => {
+  it("take the default export through its middleware, one row per method its body branches on", () => {
+    const src = [
+      "import type { NextApiHandler } from 'next';",
+      "const handler: NextApiHandler = async ({ method, query }, res) => {",
+      "  switch (method) {",
+      "    case 'GET': return res.json(await getSquad(query.club));",
+      "    case 'POST': return res.json(await addPlayer(query.club));",
+      "  }",
+      "};",
+      "export default withLogging(handler);",
+    ].join("\n");
+    const file = { functions: [{ name: "handler", line: 2, endLine: 7 }], exports: [] } as unknown as FileAnalysis;
+    expect(inferNextRoutes("pages/api/squad.ts", file, ["nextjs"], src).map((r) => `${r.httpMethod} ${r.path} ${r.handler} ${r.line}`)).toEqual([
+      "GET /api/squad handler 2",
+      "POST /api/squad handler 2",
+    ]);
+    const plain = "export default async function standings(req, res) {\n  res.json([]);\n}";
+    const one = { functions: [{ name: "standings", line: 1, endLine: 3 }], exports: [] } as unknown as FileAnalysis;
+    expect(inferNextRoutes("pages/api/standings.ts", one, ["nextjs"], plain)).toMatchObject([{ path: "/api/standings", httpMethod: null, handler: "standings" }]);
+  });
+});
