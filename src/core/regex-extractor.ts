@@ -105,7 +105,8 @@ export function extractWithRegex(
  * A script's top-level statements as the `<setup>` pseudo-function (the
  * tree-sitter path builds the same one from module-level calls): the calls
  * on every line no function or class covers. Null when the spec does not
- * run top-level code for this file, or those lines call nothing.
+ * run top-level code for this file, or those lines neither call anything nor
+ * touch data.
  */
 function topLevelSetup(lines: string[], analysis: FileAnalysis, spec: RegexLangSpec, filePath: string): FunctionInfo | null {
   const on = spec.topLevelCalls;
@@ -124,7 +125,9 @@ function topLevelSetup(lines: string[], analysis: FileAnalysis, spec: RegexLangS
   const attribute = spec.attributeLine?.pattern;
   if (attribute) for (let i = 0; i < outside.length; i++) if (attribute.test(outside[i]!)) outside[i] = "";
   const calls = extractCallsFromBody(outside, 0, outside.length, spec.lineCommentPrefixes, spec.callPatterns);
-  if (calls.length === 0) return null;
+  // Top-level statements that call nothing still run when they read or write
+  // data (a view's `json.goals player.goals.count`): that access is `<setup>`'s.
+  if (calls.length === 0 && !analysis.dataSources.some((d) => (outside[d.line - 1] ?? "").trim())) return null;
   const setup: FunctionInfo = { name: "<setup>", params: [], returnType: null, isAsync: false, isExported: false, decorators: [], calls, line: 1, endLine: 1 };
   // `let repo = UserRepo()` at the top of a script types `repo.save()` below it.
   const locals = spec.extractLocalTypes?.(outside, setup) ?? [];

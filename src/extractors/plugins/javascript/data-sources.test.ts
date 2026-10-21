@@ -888,3 +888,51 @@ describe("JS api-call through a local holding a template on the class's base", (
     expect(ds.map((d) => d.target)).toEqual(["${this.url}?${buildParams(params)}", "${this.url}/search?${buildParams({ q: query })}"]);
   });
 });
+
+describe("Vue Options-API components", () => {
+  const rowsOf = async (src: string) => {
+    const tree = await parseSource(src, "javascript" as any, "x.js");
+    return new JavaScriptDataSourceExtractor()
+      .extract(tree, src)
+      .filter((d) => d.kind === "prop" || d.kind === "store" || (d.kind === "state" && d.name === "data"))
+      .map((d) => `${d.kind} ${d.name}${d.target ? ` ${d.target}` : ""}`);
+  };
+
+  it("reads props, data keys and Vuex map helpers off `export default {…}`", async () => {
+    expect(await rowsOf(`
+import { mapGetters, mapState } from 'vuex';
+export default {
+  props: { club: { type: Object, required: true }, 'kick-off': String },
+  data() {
+    return { showLineup: false, selectedPlayer: null };
+  },
+  computed: {
+    ...mapGetters({ standings: 'league/getStandings', currentClub: 'getClub' }),
+    ...mapGetters('fixtures', ['upcoming']),
+    ...mapState('league', { season: (state) => state.season }),
+  },
+};`)).toEqual([
+      "prop club",
+      "prop kick-off",
+      "state data showLineup",
+      "state data selectedPlayer",
+      "store mapGetters league/getStandings",
+      "store mapGetters getClub",
+      "store mapGetters fixtures/upcoming",
+      "store mapState league/season",
+    ]);
+  });
+
+  it("reads `defineComponent({…})` with an array of props and an arrow `data`", async () => {
+    expect(await rowsOf(`
+export const GarageCard = defineComponent({
+  props: ['car', 'garage'],
+  data: () => ({ open: false }),
+});`)).toEqual(["prop car", "prop garage", "state data open"]);
+  });
+
+  it("leaves an exported object that declares no props or data alone", async () => {
+    expect(await rowsOf(`export default { name: 'league', routes: [], data: undefined.x };`)).toEqual([]);
+    expect(await rowsOf(`export default { columns: { props: 1 } };`)).toEqual([]);
+  });
+});

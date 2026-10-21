@@ -50,11 +50,12 @@ export interface CallPattern {
    * Build the qualified call name (e.g. `this.service.method`) from the regex
    * match. `receiverType`/`receiverQualifier` say what a service-locator
    * receiver chained into the call evaluates to (`getIt<Repo>().find()`) —
-   * see `CallInfo.receiverType`. The pattern runs on the line with string
+   * see `CallInfo.receiverType`; `key` is the name the call dispatches by
+   * (`CallInfo.key`: a template `render :edit` selects). The pattern runs on the line with string
    * contents blanked; `rawLine` is the original (same columns), for a key
    * written as a string (`resolve(Repo.self, name: "mem")`).
    */
-  buildName: (m: RegExpExecArray, rawLine?: string) => { name: string; leafName: string; receiverType?: string; receiverQualifier?: string };
+  buildName: (m: RegExpExecArray, rawLine?: string) => { name: string; leafName: string; receiverType?: string; receiverQualifier?: string; key?: string };
   /**
    * Skip a line that continues the statement above it: the previous line
    * (strings blanked, comment dropped) matches this. For a pattern anchored
@@ -854,11 +855,17 @@ export function extractCallsFromBody(
   const seen = new Set<string>();
   const noBaseline = extraCallPatterns.some((cp) => cp.replacesBaseline);
 
-  function add(name: string, shortName: string, line: number, column: number, receiver?: { receiverType?: string; receiverQualifier?: string }) {
+  function add(name: string, shortName: string, line: number, column: number, receiver?: { receiverType?: string; receiverQualifier?: string; key?: string }) {
     // A pattern returns no name for a match that calls nothing (a CSS built-in).
     if (!name || isControlFlowKeyword(shortName)) return;
-    if (seen.has(name)) return;
-    seen.add(name);
+    // Calls of one name with different keys stay separate (two templates rendered).
+    const seenKey = receiver?.key ? `${name}\0${receiver.key}` : name;
+    if (seen.has(seenKey)) return;
+    seen.add(seenKey);
+    if (receiver?.key) {
+      calls.push({ name, kind: "internal", target: null, line, column, key: receiver.key });
+      return;
+    }
     if (receiver?.receiverType || receiver?.receiverQualifier) {
       const call: CallInfo = { name, kind: "internal", target: null, line, column };
       if (receiver.receiverType) call.receiverType = receiver.receiverType;

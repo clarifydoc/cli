@@ -26,3 +26,33 @@ end`, "app/views/api/v1/clubs/index.json.jbuilder", "ruby");
     expect(index.dataSources.filter((d) => d.kind === "database").map((d) => d.name)).toEqual(["club.players.where"]);
   });
 });
+
+describe("Rails explicit renders and Jbuilder partials", () => {
+  it("links `render :x` / `render 'dir/x'` to that template and a view to the partials it renders", () => {
+    const ctl = extractWithRegex(`class Api::V1::ClubsController < Api::BaseController
+  def update
+    @club.update!(club_params)
+    render :show
+  end
+
+  def transfer
+    render 'api/v1/players/index'
+  end
+
+  def table
+    render json: { ok: true }
+  end
+end`, "app/controllers/api/v1/clubs_controller.rb", "ruby");
+    const show = extractWithRegex(`json.partial! 'api/v1/models/club', formats: [:json], club: @club`, "app/views/api/v1/clubs/show.json.jbuilder", "ruby");
+    const players = extractWithRegex(`json.array! @players, partial: 'player', as: :player`, "app/views/api/v1/players/index.json.jbuilder", "ruby");
+    const club = extractWithRegex(`json.id club.id\njson.sponsors club.sponsors.where(active: true)`, "app/views/api/v1/models/_club.json.jbuilder", "ruby");
+    const player = extractWithRegex(`json.id player.id\njson.goals player.goals.count`, "app/views/api/v1/players/_player.json.jbuilder", "ruby");
+    const links = new RailsViewResolver().resolve([ctl, show, players, club, player]);
+    expect(links.map((l) => `${l.sourceSymbol} -> ${l.targetFile}`).sort()).toEqual([
+      "<setup> -> app/views/api/v1/models/_club.json.jbuilder",
+      "<setup> -> app/views/api/v1/players/_player.json.jbuilder",
+      "Api::V1::ClubsController.transfer -> app/views/api/v1/players/index.json.jbuilder",
+      "Api::V1::ClubsController.update -> app/views/api/v1/clubs/show.json.jbuilder",
+    ]);
+  });
+});

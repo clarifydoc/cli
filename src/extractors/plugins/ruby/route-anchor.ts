@@ -2,6 +2,7 @@ import type { CallInfo, FileAnalysis, FunctionInfo, RouteInfo } from "../../../t
 import type { ClassRef, ProjectContext } from "../../../types/project.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
 import { enclosingModules } from "./index.js";
+import { railsUnderscore } from "./schema.js";
 
 const HANDLER_RE = /^((?:[A-Z]\w*::)*[A-Z]\w*Controller)#(\w+)$/;
 
@@ -21,7 +22,8 @@ const HANDLER_RE = /^((?:[A-Z]\w*::)*[A-Z]\w*Controller)#(\w+)$/;
  */
 export const railsRouteAnchor: RouteResolver = {
   id: "rails-route-anchor",
-  languages: ["ruby"],
+  // ERB files only as the templates an action without a method renders.
+  languages: ["ruby", "erb"],
   priority: 50,
   resolve(analyses: FileAnalysis[], ctx: ProjectContext): void {
     const byName = new Map<string, ClassRef | null>();
@@ -65,6 +67,24 @@ export const railsRouteAnchor: RouteResolver = {
     const guessOf = new Map<string, RouteInfo>();
     for (const a of analyses) for (const r of a.routes) if (isGuess(a, r) && declared.has(r.handler!)) guessOf.set(r.handler!, r);
 
+    // Templates an action without a method still renders (`app/views/clubs/new.html.erb`),
+    // and the view directories that have any.
+    const views = new Set<string>();
+    for (const a of analyses) {
+      const v = /(?:^|\/)app\/views\/(.+?)\/([^/.]+)\.[^/]*$/.exec(a.filePath);
+      if (v) views.add(`${v[1]}/${v[2]}`).add(`${v[1]}/`);
+    }
+    // Every class or module by its last segment: an extension module named for
+    // the controller under a namespace (`Premium::Api::ClubsController`, prepended
+    // at boot) may define its actions.
+    const byLeaf = new Map<string, ClassRef[]>();
+    for (const a of analyses) {
+      for (const ref of ctx.classes.classesIn(a.filePath)) {
+        const leaf = ref.cls.name.split("::").pop()!;
+        byLeaf.set(leaf, [...(byLeaf.get(leaf) ?? []), ref]);
+      }
+    }
+
     const moved = new Map<FileAnalysis, RouteInfo[]>();
     for (const a of analyses) {
       if (a.routes.length === 0) continue;
@@ -77,6 +97,9 @@ export const railsRouteAnchor: RouteResolver = {
         const m = r.handler ? HANDLER_RE.exec(r.handler) : null;
         const ref = m ? byName.get(m[1]!) : null;
         const action = ref ? definerOf(ref, m![2]!, byName, qualified, modules) : null;
+        // `resources :clubs` declares `new`/`edit`/… for every action; one the
+        // controller never defines, inherits nowhere and has no view for is a 404.
+        if (ref && !action && servesNothing(ref, m![2]!, byName, qualified, views, byLeaf)) continue;
         const target = action ? byPath.get(action.file) : undefined;
         if (!action || !target || action.file === a.filePath) {
           kept.push(r);
@@ -153,6 +176,38 @@ function definerOf(
     }
   }
   return null;
+}
+
+/**
+ * Whether `ref#action` cannot be served: the class chain is the project's own
+ * up to Rails' `ActionController::Base`/`API` (a gem base such as an admin
+ * framework's supplies actions the project never writes), none of it handles a
+ * missing action, no module named like the controller defines it, and no
+ * template renders it implicitly. A `Base` controller renders HTML through
+ * templates the analysis may not read (Haml, Slim): it is judged only when its
+ * view directory holds templates the analysis does read.
+ */
+function servesNothing(
+  ref: ClassRef,
+  action: string,
+  byName: Map<string, ClassRef | null>,
+  qualified: Map<ClassRef, string>,
+  views: ReadonlySet<string>,
+  byLeaf: ReadonlyMap<string, ClassRef[]>,
+): boolean {
+  const name = qualified.get(ref) ?? ref.cls.name;
+  const dir = name.split("::").map(railsUnderscore).join("/").replace(/_controller$/, "");
+  if (views.has(`${dir}/${action}`)) return false;
+  if ((byLeaf.get(name.split("::").pop()!) ?? []).some((c) => c !== ref && c.cls.name.endsWith(`::${name}`) && c.cls.methods.some((f) => f.name === action))) return false;
+  let last = ref;
+  const seen = new Set<ClassRef>();
+  for (let c: ClassRef | null | undefined = ref; c && !seen.has(c); c = superOf(c, byName, qualified)) {
+    seen.add(c);
+    if (c.cls.methods.some((f) => f.name === "action_missing" || f.name === "method_missing")) return false;
+    last = c;
+  }
+  const base = /^(?:::)?ActionController::(API|Base)$/.exec(last.cls.extends ?? "")?.[1];
+  return base === "API" || (base === "Base" && views.has(`${dir}/`));
 }
 
 /** A constant as Ruby finds it from inside `scope`: innermost namespace first. */

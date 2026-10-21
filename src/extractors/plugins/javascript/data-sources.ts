@@ -478,7 +478,11 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.collectionReceivers = null;
     this.routerReceivers = null;
     this.clientKinds = null;
+    this.optionsApi = /\b(?:props|data)\s*[:(]/.test(sourceText);
   }
+
+  /** The file may declare an Options-API component (`props:` / `data()`): gates the object check in `visitNode`. */
+  private optionsApi = false;
 
   /**
    * A generic verb (`create`, `update`, `remove`, `findAll`) is a database
@@ -753,6 +757,31 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
     // One-time gql-operation scan (no whole-file hook exists in the fused walk).
     if (!this.gqlScanned) this.scanGql(sources);
+
+    // Vue Options API: `export default { props: {…}, data() { return {…} } }` /
+    // `defineComponent({…})` declares what `<script setup>` declares with
+    // `defineProps` and `ref`: one prop row per prop, one state row per data key.
+    if (node.type === "object" && this.optionsApi && isOptionsComponent(node)) {
+      for (const pair of node.namedChildren) {
+        const key = optionKey(pair);
+        if (key === "props") {
+          const value = pair.type === "pair" ? pair.childForFieldName("value") : null;
+          for (const name of propNamesOf(value)) sources.push(this.ds({ kind: "prop", name, target: null, line: pair.startPosition.row + 1 }));
+        } else if (key === "data") {
+          for (const name of dataKeysOf(pair)) sources.push(this.ds({ kind: "state", name: "data", target: name, line: pair.startPosition.row + 1 }));
+        }
+      }
+    }
+
+    // Vuex `...mapGetters('league', ['standings'])` / `...mapState({ club: 'club' })`:
+    // the store reads a component binds, one row per key it names.
+    if (node.type === "call_expression") {
+      const helper = node.childForFieldName("function")?.text;
+      if (helper === "mapGetters" || helper === "mapState") {
+        for (const target of mappedStoreKeys(node)) sources.push(this.ds({ kind: "store", name: helper, target, line: node.startPosition.row + 1 }));
+        return;
+      }
+    }
 
     // BullMQ: `new Worker("emails", processor)` consumes the queue it names.
     if (node.type === "new_expression" && node.childForFieldName("constructor")?.text === "Worker") {
@@ -2025,6 +2054,95 @@ function getCallbackCalls(callNode: Node): CallInfo[] {
   return [];
 }
 
+/** The keys of a props object (`{ title: String }`) or the strings of a props array (`['title']`). */
+function propNamesOf(value: Node | null | undefined): string[] {
+  const names: string[] = [];
+  if (value?.type === "object") {
+    for (const p of value.namedChildren) {
+      const key = optionKey(p);
+      if (key) names.push(key);
+    }
+  } else if (value?.type === "array") {
+    for (const s of value.namedChildren) if (s.type === "string") names.push(s.text.slice(1, -1));
+  }
+  return names.filter((n) => /^[\w$-]+$/.test(n));
+}
+
+/** The key of an object member: `key: v`, `'key': v`, shorthand `key`, or a method `key() {}`. */
+function optionKey(member: Node): string | null {
+  const key =
+    member.type === "pair" || member.type === "method_definition"
+      ? member.childForFieldName(member.type === "pair" ? "key" : "name")
+      : member.type === "shorthand_property_identifier"
+        ? member
+        : null;
+  if (!key || !(key.type === "property_identifier" || key.type === "string" || key.type === "shorthand_property_identifier")) return null;
+  return key.text.replace(/^['"]|['"]$/g, "");
+}
+
+/**
+ * The component options object: `export default {…}`, the argument of
+ * `defineComponent(…)` / `Vue.extend(…)`, or the second of `Vue.component('x', …)` —
+ * and only one that declares `props` or `data`, so a plain exported config is no component.
+ */
+function isOptionsComponent(obj: Node): boolean {
+  const parent = obj.parent;
+  let host = false;
+  if (parent?.type === "export_statement") host = true;
+  else if (parent?.type === "arguments") {
+    const fn = parent.parent?.childForFieldName("function")?.text;
+    host = fn === "defineComponent" || fn === "Vue.extend" || (fn === "Vue.component" && parent.namedChildren[1] === obj);
+  }
+  if (!host) return false;
+  return obj.namedChildren.some((m) => {
+    const k = optionKey(m);
+    return k === "props" || k === "data";
+  });
+}
+
+/** The keys `data` returns: `data() { return {…} }`, `data: () => ({…})`, `data: function () { return {…} }`. */
+function dataKeysOf(member: Node): string[] {
+  const fn: Node | null = member.type === "method_definition" ? member : member.type === "pair" ? member.childForFieldName("value") : null;
+  if (!fn) return [];
+  let body = fn.childForFieldName("body");
+  if (body?.type === "parenthesized_expression") body = body.namedChildren[0] ?? null;
+  let returned: Node | null = body?.type === "object" ? body : null;
+  if (!returned && body?.type === "statement_block") {
+    const ret = body.namedChildren.filter((c) => c.type === "return_statement").pop();
+    const value = ret?.namedChildren[0] ?? null;
+    returned = value?.type === "object" ? value : value?.type === "parenthesized_expression" && value.namedChildren[0]?.type === "object" ? value.namedChildren[0]! : null;
+  }
+  return returned ? returned.namedChildren.map(optionKey).filter((k): k is string => !!k && /^[\w$]+$/.test(k)) : [];
+}
+
+/**
+ * The store keys a Vuex map helper names: `mapGetters('league', ['standings'])` →
+ * `league/standings`, `mapGetters({ table: 'league/standings' })` → that string,
+ * `mapState('league', { clubs: (s) => s.clubs })` → `league/clubs`, `mapGetters(['x'])` → `x`.
+ */
+function mappedStoreKeys(call: Node): string[] {
+  const args = (call.childForFieldName("arguments")?.namedChildren ?? []).filter((a) => a.type !== "comment");
+  const ns = args.length > 1 ? literalString(args[0]!) : null;
+  if (args.length > 1 && ns === null) return [];
+  const map = args[args.length - 1];
+  const keyed = (k: string) => (ns ? `${ns}/${k}` : k);
+  const out: string[] = [];
+  if (map?.type === "array") {
+    for (const el of map.namedChildren) {
+      const k = literalString(el);
+      if (k) out.push(keyed(k));
+    }
+  } else if (map?.type === "object") {
+    for (const m of map.namedChildren) {
+      const local = optionKey(m);
+      if (!local) continue;
+      const value = m.type === "pair" ? literalString(m.childForFieldName("value")) : null;
+      out.push(keyed(value ?? local));
+    }
+  }
+  return out;
+}
+
 /**
  * The prop names `defineProps` declares: the keys of its object argument
  * (`defineProps({ title: String })`), the strings of an array (`defineProps(['title'])`)
@@ -2033,13 +2151,8 @@ function getCallbackCalls(callNode: Node): CallInfo[] {
 function declaredProps(call: Node): string[] {
   const arg = call.childForFieldName("arguments")?.namedChildren.find((a) => a.type !== "comment");
   const names: string[] = [];
-  if (arg?.type === "object") {
-    for (const p of arg.namedChildren) {
-      const key = p.type === "pair" ? p.childForFieldName("key") : p.type === "shorthand_property_identifier" ? p : null;
-      if (key && (key.type === "property_identifier" || key.type === "string" || key.type === "shorthand_property_identifier")) names.push(key.text.replace(/^['"]|['"]$/g, ""));
-    }
-  } else if (arg?.type === "array") {
-    for (const s of arg.namedChildren) if (s.type === "string") names.push(s.text.slice(1, -1));
+  if (arg?.type === "object" || arg?.type === "array") {
+    names.push(...propNamesOf(arg));
   } else if (!arg) {
     const typeArgs = call.childForFieldName("type_arguments") ?? call.namedChildren.find((c) => c.type === "type_arguments");
     const literal = typeArgs?.namedChildren.find((c) => c.type === "object_type");

@@ -284,3 +284,12 @@ describe("routes.rb: controller modules a scope or a resources option names", ()
     ]);
   });
 });
+
+describe("routes.rb: redirects and symbol controllers", () => {
+  it("leaves a redirect without a controller and reads `controller: :name`", () => {
+    const out = routes(
+      draw(`  get '/garage/install', to: redirect(status: 302) { |_p, req| "/app/garage" }\n  resources :clubs, only: [] do\n    resource :stats, only: [:show], controller: :club_stats\n  end`),
+    ).map(sig);
+    expect(out).toEqual(["GET /garage/install -> null", "GET /clubs/:club_id/stats -> ClubStatsController#show"]);
+  });
+});

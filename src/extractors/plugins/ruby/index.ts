@@ -1,6 +1,7 @@
 import { extractRubyScheduledJobs } from "./scheduled-jobs.js";
 import { addJobDispatchCalls, extractJobQueueSources } from "./active-job.js";
 import { addScopeMethods, extractModelSelfQueries } from "./model-scopes.js";
+import { RAILS_RENDER_CALL_PATTERNS } from "./render-patterns.js";
 import type { CallInfo, RouteInfo, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCallsFromBody, extractClassesWithSpec } from "../shared/regex-base.js";
@@ -634,6 +635,7 @@ export const rubySpec: RegexLangSpec = {
   // the paren-less shapes that carry their own evidence of being calls.
   callPatterns: [
     ...RUBY_DI_CALL_PATTERNS,
+    ...RAILS_RENDER_CALL_PATTERNS,
     {
       pattern: /\b([A-Z]\w+)\.(\w+)\s*\(/,
       buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2] }),
@@ -1066,7 +1068,7 @@ export const rubySpec: RegexLangSpec = {
         // `resources :inboxes, module: :assignment_policies` puts its controller in that module.
         const optionModule = stmt.match(/\bmodule:\s*:?['"]?([\w/]+)/)?.[1];
         // `resources :children, controller: 'children'` names the class explicitly.
-        const explicitController = stmt.match(/\bcontroller:\s*['"]([\w/]+)['"]/)?.[1] ?? null;
+        const explicitController = stmt.match(/\bcontroller:\s*(?:['"]([\w/]+)['"]|:(\w+))/)?.slice(1).find(Boolean) ?? null;
         let frame: ResourceFrame | null = null;
         let nestedPrefix = "";
         for (const m of beforeOpts.matchAll(/:(\w+)/g)) {
@@ -1139,7 +1141,9 @@ export const rubySpec: RegexLangSpec = {
         let controller: string | null = null;
         let action: string | null = null;
         let handler: string | null = null;
-        if (target) {
+        if (/(?:=>|\bto:)\s*redirect\b/.test(line)) {
+          // `get '/old', to: redirect('/new')`: Rails answers it, no controller does.
+        } else if (target) {
           controller = target[1];
           action = target[2];
         } else if (explicitAction && resource) {
