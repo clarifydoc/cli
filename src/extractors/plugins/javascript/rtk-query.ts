@@ -39,6 +39,7 @@ export function resolveRtkHooks(calls: ProjectApiCall[], analyses: readonly File
     const def = (from ? byFile.get(from)?.get(c.endpoint!) : undefined) ?? (named?.length === 1 ? named[0] : undefined);
     if (!def) continue;
     c.target = def.target;
+    if (def.targetAlternatives) c.targetAlternatives = def.targetAlternatives;
     c.name = def.name;
     count++;
   }

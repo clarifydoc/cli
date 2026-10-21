@@ -6,6 +6,7 @@ import { resolveUrlBuilders } from "../extractors/plugins/javascript/url-builder
 import { extractImports } from "../extractors/imports-exports/index.js";
 import { extractDataSources } from "../extractors/data-sources/index.js";
 import { extractModuleValues } from "../extractors/plugins/javascript/module-values.js";
+import { extractInstantiations } from "../extractors/plugins/javascript/instantiations.js";
 import { buildImportIndex } from "./import-index.js";
 import { buildClassIndex } from "./class-index.js";
 import { finalizeApiTargets, resolveSymbolicTargets } from "./api-targets.js";
@@ -27,6 +28,7 @@ async function project(files: Record<string, string>) {
       functions: extractFunctions(tree, src, "typescript" as never),
       dataSources: extractDataSources(tree, src, "typescript" as never),
       moduleValues: extractModuleValues(tree, src),
+      instantiations: extractInstantiations(tree, src),
     } as unknown as FileAnalysis);
   }
   const importIndex = buildImportIndex(analyses);
@@ -333,3 +335,23 @@ export class AdminGroupsApi extends BaseCRUDAPI {
   });
 });
 
+
+describe("resolveSymbolicTargets — a generic client configured per instance", () => {
+  it("reads the class's requests once per `new X(\"…\")` that names its resource, as a subclass's super() would", async () => {
+    const targets = await project({
+      "src/services/removal.ts": `
+export class RemovalService {
+  private resource: string;
+  constructor(resource: string) { this.resource = resource; }
+  check(id: string) { return axios.get(\`/api/\${this.resource}/\${id}/dependencies\`); }
+}
+export const clubRemoval = new RemovalService("clubs");
+export const garageRemoval = new RemovalService("garages");
+export const counter = new Map();`,
+    });
+    expect(targets).toEqual([
+      ["/api/clubs/${id}/dependencies", null],
+      ["/api/garages/${id}/dependencies", null],
+    ]);
+  });
+});

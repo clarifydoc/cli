@@ -2,11 +2,13 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { PathArgCall } from "../../../types/analysis.js";
 import { stripQuotes } from "../../shared/node-helpers.js";
 
-/** Cheap gate: some call takes a string/template starting with `/` (or `./`, `api/`…) as an argument. */
-const PATH_ARGUMENT = /[(,]\s*['"`](?:\/[\w-]|[.]?[\w-]+\/)/;
+/** Cheap gate: some call takes a string/template starting with `/` (or `./`, `api/`, `${BASE}/`…) as an argument. */
+const PATH_ARGUMENT = /[(,]\s*(?:['"`](?:\/[\w-]|[.]?[\w-]+\/)|`\$\{[\w$.]+\}\/[\w-])/;
 
-/** `/tag`, `/system/status`, `api/v1/x`, `./x/y` — a path, not a word. */
-const PATH_SHAPED = /^(?:\/[\w-]|[.]?[\w-]+\/)/;
+/** `/tag`, `/system/status`, `api/v1/x`, `./x/y`, `${API_BASE}/x` — a path, not a word. */
+const PATH_SHAPED = /^(?:\/[\w-]|[.]?[\w-]+\/|\$\{[\w$.]+\}\/[\w-])/;
+
+const VERB = /^(?:get|post|put|patch|delete|head|options)$/i;
 
 /** Clients and verbs are api-calls themselves, not factories handed a URL. */
 const NOT_A_FACTORY = new Set(["fetch", "axios", "get", "post", "put", "patch", "delete", "del", "request", "ajax", "require", "import"]);
@@ -34,16 +36,27 @@ export function extractPathArgCalls(tree: Tree, sourceText: string): PathArgCall
     const argNodes = call.childForFieldName("arguments")?.namedChildren.filter((a) => a.type !== "comment") ?? [];
     const args = argNodes.map(literalArg);
     if (!args.some((a) => a !== null && PATH_SHAPED.test(a))) continue;
-    out.push({ callee, args, line: call.startPosition.row + 1 });
+    // `send(url, { method: "POST", … })`: the verb the site's options state.
+    const options = argNodes.find((a) => a.type === "object");
+    const method = options ? methodOf(options) : null;
+    out.push({ callee, args, line: call.startPosition.row + 1, ...(method ? { method } : {}) });
   }
   return out;
 }
 
-/** A string, or a template with no substitutions, as its content; anything else null. */
+/** A string, or a template as written (its substitutions kept as `${…}` holes); anything else null. */
 function literalArg(node: Node): string | null {
-  if (node.type === "string") return stripQuotes(node.text);
-  if (node.type === "template_string" && !node.namedChildren.some((c) => c.type === "template_substitution")) {
-    return stripQuotes(node.text);
+  if (node.type === "string" || node.type === "template_string") return stripQuotes(node.text);
+  return null;
+}
+
+/** The literal `method` an options object states, upper-cased. */
+function methodOf(obj: Node): string | null {
+  for (const pair of obj.namedChildren) {
+    if (pair.type !== "pair" || stripQuotes(pair.childForFieldName("key")?.text ?? "") !== "method") continue;
+    const v = pair.childForFieldName("value");
+    const verb = v?.type === "string" ? stripQuotes(v.text) : null;
+    return verb && VERB.test(verb) ? verb.toUpperCase() : null;
   }
   return null;
 }

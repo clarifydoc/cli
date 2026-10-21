@@ -57,16 +57,19 @@ class Outer {
     class Inner : Api
 }`, "kotlin")).toEqual([
       { service: "Storage", implementation: "S3Storage", via: "@Component", qualifier: "s3", matchesMemberName: true },
+      { service: "", implementation: "S3Storage", via: "@Component", qualifier: "s3", matchesMemberName: true, allInterfaces: true },
       { service: "Api", implementation: "Inner", via: "@Service", qualifier: "inner", matchesMemberName: true },
     ]);
   });
 
-  it("reports nothing for interfaces, abstract classes, concrete-only beans and the superclass", async () => {
+  it("reports nothing for interfaces, abstract classes and concrete-only beans; a subclass answers what its base implements", async () => {
     expect(await factsOf(`@Repository interface PlayerRepo extends JpaRepository<Player, Long> {}
 @Component abstract class Base implements Api {}
 @Component class Clock {}
 @Service class Sub extends Base {}
-class Plain implements Api {}`, "java")).toEqual([]);
+class Plain implements Api {}`, "java")).toEqual([
+      { service: "", implementation: "Sub", via: "@Service", qualifier: "sub", matchesMemberName: true, allInterfaces: true },
+    ]);
   });
 });
 

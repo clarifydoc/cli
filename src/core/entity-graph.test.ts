@@ -64,6 +64,15 @@ describe("synthesizeReferencedTableEntities", () => {
     expect(g.nodes.filter((n) => n.orm === "inferred").map((n) => n.name)).toEqual(["audit_log"]);
   });
 
+  it("adds no node for a name only a test queries", () => {
+    const g = graph([]);
+    synthesizeReferencedTableEntities(
+      [{ ...analysis("src/test/java/com/example/league/MatchServiceTest.java", ["MatchRowSetter"]), language: "java" } as FileAnalysis, analysis("m.php", ["fixtures"])],
+      g,
+    );
+    expect(g.nodes.map((n) => n.name)).toEqual(["fixtures"]);
+  });
+
   it("rejects non-table noise (template/var names) and empty entities", async () => {
     const g = graph([]);
     synthesizeReferencedTableEntities(

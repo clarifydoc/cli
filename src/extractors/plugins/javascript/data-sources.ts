@@ -20,6 +20,8 @@ import { sqlVerbAccess } from "../shared/db-access.js";
 /** A resolved api-call URL: the app-relative path plus recovered provenance. */
 interface ResolvedUrl {
   url: string;
+  /** The other values the URL can take (a local set by a ternary or in each branch of an `if`). */
+  alternatives?: string[];
   baseEnv?: string;
   confidence: Confidence;
 }
@@ -258,14 +260,25 @@ function rtkEvidence(src: string): { slice: boolean; base: string } {
   return { slice, base };
 }
 
-/** What an arrow function returns: its expression body, or a block's single `return`. */
-function arrowResult(fn: Node): Node | null {
+/** What a function returns: its expression body, or the value of every `return` in its block (nested functions left out). */
+function returnedValues(fn: Node): Node[] {
   const body = fn.childForFieldName("body");
-  if (!body) return null;
-  if (body.type === "parenthesized_expression") return body.namedChild(0);
-  if (body.type !== "statement_block") return body;
-  const ret = body.namedChildren.filter((c) => c.type === "return_statement");
-  return ret.length === 1 ? ret[0]!.namedChild(0) : null;
+  if (!body) return [];
+  if (body.type !== "statement_block") {
+    const value = body.type === "parenthesized_expression" ? body.namedChild(0) : body;
+    return value ? [value] : [];
+  }
+  const out: Node[] = [];
+  const walk = (n: Node): void => {
+    for (const c of n.namedChildren) {
+      if (c.type === "return_statement") {
+        const v = c.namedChild(0);
+        if (v) out.push(v.type === "parenthesized_expression" ? v.namedChild(0) ?? v : v);
+      } else if (!FUNCTION_SCOPES.has(c.type)) walk(c);
+    }
+  };
+  walk(body);
+  return out;
 }
 
 /** The fields the caller reads off this call's response (response-reads.ts), by how its client hands the body over. */
@@ -409,6 +422,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   private trpcClient: boolean | null = null;
   /** RTK Query: whether the file defines an API slice, and the slice's `fetchBaseQuery` base. */
   private rtk: { slice: boolean; base: string } | null = null;
+  /** RTK Query triggers a generated hook hands back (`const [remove] = useDeleteGameMutation()`), with the scope that declares them. */
+  private rtkTriggers: Map<string, { hook: string; endpoint: string; start: number; end: number }> | null = null;
 
   /**
    * RTK Query. In an API slice (`createApi` / `injectEndpoints`), each
@@ -442,20 +457,48 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       const query = def?.type === "object"
         ? objectPropValue(def, "query") ?? def.namedChildren.find((m) => m.type === "method_definition" && m.childForFieldName("name")?.text === "query") ?? null
         : null;
-      const returned = query && /arrow_function|function|method_definition/.test(query.type) ? arrowResult(query) : null;
-      const spec = returned?.type === "object" ? returned : null;
-      const path = spec ? literalString(objectPropValue(spec, "url")) : returned ? literalString(returned) : null;
-      if (path === null) return false;
-      const method = (spec ? literalString(objectPropValue(spec, "method")) : null)?.toUpperCase() ?? (fnName === "mutation" ? "POST" : "GET");
-      const target = rtk.base ? `${rtk.base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}` : path.startsWith("/") ? path : `/${path}`;
-      sources.push(this.ds({ kind: "api-call", name: method, target, line, endpoint: stripQuotes(endpoint) }));
+      // What `query` returns — each `return` of a block body — as a path or a
+      // `{ url, method }`; a URL held in a local (`let url = …; return url`,
+      // `return { url, params }`) or a ternary gives every value it can take.
+      const returned = query && /arrow_function|function|method_definition/.test(query.type) ? returnedValues(query) : [];
+      const paths: string[] = [];
+      let stated: string | null = null;
+      for (const r of returned) {
+        const spec = r.type === "object" ? r : null;
+        const lit = literalString(spec ? objectPropValue(spec, "url") : r);
+        const urls = lit !== null ? [lit] : spec ? this.descriptorUrls(spec, "url") : this.urlsOf(r);
+        paths.push(...urls.filter((u) => !/^\$\{[^}]*\}$/.test(u)));
+        stated ??= spec ? literalString(objectPropValue(spec, "method")) : null;
+      }
+      if (paths.length === 0) return false;
+      const method = stated?.toUpperCase() ?? (fnName === "mutation" ? "POST" : "GET");
+      const targets = [...new Set(paths.map((path) => rtk.base ? `${rtk.base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}` : path.startsWith("/") ? path : `/${path}`))];
+      sources.push(this.ds({
+        kind: "api-call", name: method, target: targets[0]!, line, endpoint: stripQuotes(endpoint),
+        ...(targets.length > 1 ? { targetAlternatives: targets.slice(1) } : {}),
+      }));
       return true;
     }
     // `useGetPostsQuery(…)` imported from a slice; `api.endpoints.getPosts.initiate(…)`.
     const hook = fn?.type === "identifier" ? /^use(?:Lazy)?([A-Z][\w$]*?)(?:Query|Mutation|InfiniteQuery|QueryState)$/.exec(fnName) : null;
     const initiate = fn?.type === "member_expression" && fnName === "initiate" ? /\.endpoints\.([\w$]+)\.initiate$/.exec(fn.text.replace(/\s+/g, "")) : null;
     if (hook && (this.imports ??= importEvidence(this.sourceText)).names.has(fnName)) {
-      sources.push(this.ds({ kind: "api-call", name: fnName, target: null, line, endpoint: hook[1]![0]!.toLowerCase() + hook[1]!.slice(1) }));
+      const endpoint = hook[1]![0]!.toLowerCase() + hook[1]!.slice(1);
+      sources.push(this.ds({ kind: "api-call", name: fnName, target: null, line, endpoint }));
+      // `const [remove] = useDeleteGameMutation()`: the mutation (or lazy query)
+      // is sent where the trigger is called — in a click handler, not at render.
+      const decl = node.parent?.type === "variable_declarator" ? node.parent : null;
+      const trigger = decl?.childForFieldName("name")?.type === "array_pattern" ? decl.childForFieldName("name")!.namedChildren[0] : null;
+      if (trigger?.type === "identifier" && /Mutation$|^useLazy/.test(fnName)) {
+        let scope: Node | null = decl!.parent;
+        while (scope && !FUNCTION_SCOPES.has(scope.type)) scope = scope.parent;
+        (this.rtkTriggers ??= new Map()).set(trigger.text, { hook: fnName, endpoint, start: scope?.startIndex ?? 0, end: scope?.endIndex ?? Infinity });
+      }
+      return true;
+    }
+    const trigger = fn?.type === "identifier" ? this.rtkTriggers?.get(fnName) : undefined;
+    if (trigger && node.startIndex > trigger.start && node.startIndex < trigger.end) {
+      sources.push(this.ds({ kind: "api-call", name: trigger.hook, target: null, line, endpoint: trigger.endpoint }));
       return true;
     }
     if (initiate) {
@@ -475,6 +518,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.mq = null;
     this.trpcClient = null;
     this.rtk = null;
+    this.rtkTriggers = null;
     this.collectionReceivers = null;
     this.routerReceivers = null;
     this.clientKinds = null;
@@ -554,25 +598,34 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       return this.resolveUrlArg(built);
     }
     if (arg.type === "template_string") {
-      const url = resolveTemplateUrl(arg, (name) => this.bindings()?.lookup(name, arg) ?? null);
+      // `` `${API}${endpoint}` `` with `endpoint` one of several paths: one URL per value.
+      const multi = arg.namedChildren
+        .map((p) => (p.type === "template_substitution" && p.namedChild(0)?.type === "identifier" ? p.namedChild(0)!.text : null))
+        .filter((n): n is string => n !== null)
+        .map((n) => ({ n, values: this.localUrls(n, arg) }))
+        .filter((m) => m.values !== null);
+      if (multi.length === 1) {
+        const { n, values } = multi[0]!;
+        const urls = [...new Set(values!.map((v) => resolveTemplateUrl(arg, (name) => (name === n ? { url: v, confidence: "INFERRED" } : this.lookupUrl(name, arg)))))];
+        return { url: urls[0]!, ...(urls.length > 1 ? { alternatives: urls.slice(1) } : {}), confidence: "INFERRED" };
+      }
+      const url = resolveTemplateUrl(arg, (name) => this.lookupUrl(name, arg));
       // A leftover `${…}` means the template couldn't be fully resolved.
       return { url, confidence: url.includes("${") ? "INFERRED" : "EXTRACTED" };
     }
     if (arg.type === "identifier") {
-      // `const requestURL = `${this.url}/search?${…}``: read as the template
-      // itself, so the class's base stays a hole the project pass fills (the
-      // fold below has no `this` and would drop it).
-      const init = this.bindings()?.valueOf(arg.text, arg);
-      if ((init?.type === "template_string" || init?.type === "binary_expression") && init.text.includes("this.")) {
-        const inline = this.resolveUrlArg(init);
-        if (inline) return inline;
-      }
-      const found = this.bindings()?.lookup(arg.text, arg);
+      const values = this.localUrls(arg.text, arg);
+      if (values) return { url: values[0]!, alternatives: values.slice(1), confidence: "INFERRED" };
+      const found = this.lookupUrl(arg.text, arg);
       if (found) return found;
       // `const url = requestUri('x', 'v3'); axios.get(url)`: the builder call,
       // as it would be read inline.
       const value = this.bindings()?.valueOf(arg.text, arg);
-      return value?.type === "call_expression" ? this.resolveUrlArg(value) : null;
+      if (value?.type === "call_expression") return this.resolveUrlArg(value);
+      // `const send = (url, options) => fetch(url, options)`: a request wrapper's
+      // parameter stays a `${url}` hole, which the request-factory pass fills
+      // from each call site (`send(`${API}/clubs`, …)`).
+      return value == null && declaredParamInScope(arg.text, arg) ? { url: `\${${arg.text}}`, confidence: "INFERRED" } : null;
     }
     // `this.baseUrl + 'series/' + seriesId` — Angular's dominant spelling
     // (Kavita: 398 of 417 call sites). Rendered the way a template literal is,
@@ -593,6 +646,83 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       return { url: arg.text.replace(/\s+/g, " ").trim(), confidence: "INFERRED" };
     }
     return null;
+  }
+
+  /**
+   * The URL a local holds, as the URL bindings fold it — except one built on a
+   * field (`const url = `${this.url}/search?${…}``), read as the template
+   * itself, so the class's base stays a hole the project pass fills (the fold
+   * has no `this` and would drop it), also where the local is interpolated
+   * into another URL (`` fetch(`${url}?${params}`) ``).
+   */
+  private lookupUrl(name: string, at: Node): ResolvedUrl | null {
+    const init = this.bindings()?.valueOf(name, at);
+    if ((init?.type === "template_string" || init?.type === "binary_expression") && init.text.includes("this.") && this.inlineDepth < 4) {
+      this.inlineDepth++;
+      try {
+        const inline = this.resolveUrlArg(init);
+        if (inline) return inline;
+      } finally {
+        this.inlineDepth--;
+      }
+    }
+    return this.bindings()?.lookup(name, at) ?? null;
+  }
+
+  /** How many locals {@link lookupUrl} is reading through (a local built on itself stops). */
+  private inlineDepth = 0;
+
+  /**
+   * The values a local URL takes when it can take several: both arms of a
+   * ternary initializer (`const url = all ? `${API}/teams/all` : `${API}/teams``),
+   * or its initializer and each plain assignment the enclosing function makes
+   * before `at` (`let url; if (id) url = A; else url = B;`). Null for one value,
+   * or when the local is also built up (`url += …`), which the fold reads.
+   */
+  private localUrls(name: string, at: Node): string[] | null {
+    let fn: Node | null = at.parent;
+    while (fn && !FUNCTION_SCOPES.has(fn.type)) fn = fn.parent;
+    if (!fn) return null;
+    // `action: "preview" | "apply"`: a parameter typed as the strings it can be.
+    const typedParam = (from: Node): string[] | null => {
+      for (let p: Node | null = from; p; p = p.parent) {
+        if (!FUNCTION_SCOPES.has(p.type) || !declaresParam(p, name)) continue;
+        const values = literalUnionParam(p, name);
+        return values && values.length > 1 ? values : null;
+      }
+      return null;
+    };
+    if (declaresParam(fn, name)) return typedParam(fn);
+    // Set inside the walk, which the compiler's narrowing does not see.
+    let init = null as Node | null;
+    let declared = false as boolean;
+    const assigned: Node[] = [];
+    let augmented = false as boolean;
+    const walk = (n: Node): void => {
+      for (const c of n.namedChildren) {
+        if (c.startIndex >= at.startIndex) return;
+        if (FUNCTION_SCOPES.has(c.type)) continue;
+        if (c.type === "variable_declarator" && c.childForFieldName("name")?.text === name) {
+          declared = true;
+          init = c.childForFieldName("value");
+        } else if (c.type === "assignment_expression" && c.childForFieldName("left")?.text === name) {
+          const right = c.childForFieldName("right");
+          if (right) assigned.push(right);
+        } else if (c.type === "augmented_assignment_expression" && c.childForFieldName("left")?.text === name) {
+          augmented = true;
+        }
+        walk(c);
+      }
+    };
+    walk(fn);
+    if (!declared) return fn.parent ? typedParam(fn.parent) : null;
+    if (augmented) return null;
+    let value: Node | null = init;
+    while (value && (value.type === "parenthesized_expression" || value.type === "as_expression")) value = value.namedChild(0);
+    const sources = assigned.length > 0 ? [...(value ? [value] : []), ...assigned] : value?.type === "ternary_expression" ? [value] : [];
+    // A placeholder initializer (`let url = ""`) is no request.
+    const urls = [...new Set(sources.flatMap((v) => this.urlsOf(v)))].filter((u) => u.trim() !== "" && !/^\$\{[^}]*\}$/.test(u));
+    return urls.length > 1 ? urls : null;
   }
 
   /**
@@ -617,8 +747,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     let out = "";
     for (const p of pieces) {
       if (p.type === "string") out += stripQuotes(p.text);
-      else if (p.type === "template_string") out += resolveTemplateUrl(p, (name) => this.bindings()?.lookup(name, p) ?? null);
-      else if (p.type === "identifier") out += this.bindings()?.lookup(p.text, p)?.url ?? `\${${p.text}}`;
+      else if (p.type === "template_string") out += resolveTemplateUrl(p, (name) => this.lookupUrl(name, p));
+      else if (p.type === "identifier") out += this.lookupUrl(p.text, p)?.url ?? `\${${p.text}}`;
       else out += `\${${p.text.replace(/\s+/g, " ")}}`;
     }
     return out;
@@ -636,7 +766,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     if (value) return [...new Set(this.urlsOf(value))];
     const shorthand = obj.namedChildren.find((c) => c.type === "shorthand_property_identifier" && c.text === key);
     if (!shorthand) return [];
-    return [this.bindings()?.lookup(key, shorthand)?.url ?? "${" + key + "}"];
+    return [this.lookupUrl(key, shorthand)?.url ?? "${" + key + "}"];
   }
 
   private urlsOf(v: Node): string[] {
@@ -648,8 +778,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     if (n.type === "ternary_expression") {
       return [...this.urlsOf(n.childForFieldName("consequence")!), ...this.urlsOf(n.childForFieldName("alternative")!)];
     }
-    if (n.type === "template_string") return [resolveTemplateUrl(n, (name) => this.bindings()?.lookup(name, n!) ?? null)];
-    if (n.type === "identifier") return [this.bindings()?.lookup(n.text, n)?.url ?? `\${${n.text}}`];
+    if (n.type === "template_string") return [resolveTemplateUrl(n, (name) => this.lookupUrl(name, n!))];
+    if (n.type === "identifier") return [this.lookupUrl(n.text, n)?.url ?? `\${${n.text}}`];
     if (n.type === "binary_expression") {
       const url = this.concatUrl(n);
       return url ? [url] : [];
@@ -960,6 +1090,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
               kind: "api-call",
               name: callName,
               target: resolved.url,
+              ...(resolved.alternatives?.length ? { targetAlternatives: resolved.alternatives } : {}),
               line: node.startPosition.row + 1,
               // Recovered env base (display only; `target` stays app-relative).
               ...(resolved.baseEnv ? { baseEnv: resolved.baseEnv } : {}),
@@ -1731,6 +1862,26 @@ function isParamHole(url: string, at: Node): boolean {
 }
 
 /** Whether a function node declares a parameter of this name. */
+/** The strings parameter `name` of `fnNode` is typed as (`kind: "club" | "league"`), else null. */
+function literalUnionParam(fnNode: Node, name: string): string[] | null {
+  const params = fnNode.childForFieldName("parameters");
+  for (const p of params?.namedChildren ?? []) {
+    if ((p.type !== "required_parameter" && p.type !== "optional_parameter") || p.childForFieldName("pattern")?.text !== name) continue;
+    const type = p.childForFieldName("type")?.namedChild(0);
+    if (type?.type !== "union_type") return null;
+    const out: string[] = [];
+    const walk = (t: Node): boolean => {
+      if (t.type === "union_type") return t.namedChildren.every(walk);
+      const lit = t.type === "literal_type" ? t.namedChild(0) : null;
+      if (lit?.type !== "string") return false;
+      out.push(stripQuotes(lit.text));
+      return true;
+    };
+    return walk(type) ? out : null;
+  }
+  return null;
+}
+
 function declaresParam(fnNode: Node, name: string): boolean {
   const params = fnNode.childForFieldName("parameters") ?? fnNode.childForFieldName("parameter");
   if (!params) return false;

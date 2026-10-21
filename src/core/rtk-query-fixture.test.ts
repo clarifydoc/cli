@@ -21,15 +21,18 @@ describe.skipIf(!existsSync(fixture))("sample-rtk-query", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it("links every hook through its endpoint to the Express route serving it", async () => {
+  it("links every hook, and every trigger a mutation or lazy hook hands back, through its endpoint to the Express route serving it", async () => {
     const s = await loadReportSummary(out);
     const links = (s.apiRouteLinks ?? []).filter((l) => l.source.startsWith("web/src/features/")).map((l) => `${l.source} ${l.method} ${l.url} -> ${l.routePath}`);
     expect(links.sort()).toEqual([
+      "web/src/features/GameDetail.tsx DELETE /api/games/${id} -> /api/games/:id",
       "web/src/features/GameDetail.tsx DELETE /api/games/${id} -> /api/games/:id",
       "web/src/features/GameDetail.tsx GET /games/${gameId}/comments -> /api/games/:id/comments",
       "web/src/features/Games.tsx GET /api/games -> /api/games",
       "web/src/features/Games.tsx GET /api/games -> /api/games",
       "web/src/features/Games.tsx GET /api/games/${id} -> /api/games/:id",
+      "web/src/features/Games.tsx GET /api/games/${id} -> /api/games/:id",
+      "web/src/features/Games.tsx POST /api/games -> /api/games",
       "web/src/features/Games.tsx POST /api/games -> /api/games",
     ]);
   });

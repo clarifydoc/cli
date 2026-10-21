@@ -931,3 +931,36 @@ describe("two same-named classes, told apart by the consumer's import", () => {
     expect(links.map((l) => `${l.targetFile}::${l.targetSymbol}`)).toEqual(["app/Services/Auth/AuthenticationService.php::AuthenticationService.authenticate"]);
   });
 });
+
+describe("symbol-linker — implementations below an abstract base", () => {
+  const chain = (): FileAnalysis[] => [
+    file("league/FixtureService.java", [cls("FixtureService", { kind: "interface", methods: [method("reschedule", [], [], 3)] })], { language: "java" }),
+    file("league/impl/AbstractFixtureSupport.java", [cls("AbstractFixtureSupport", { implements: ["FixtureService"], methods: [method("audit", [], [], 4)] })], { language: "java" }),
+    file("league/impl/AbstractFixtureQuery.java", [cls("AbstractFixtureQuery", { extends: "AbstractFixtureSupport" })], { language: "java" }),
+  ];
+  const controller = (member: string) =>
+    file("league/web/FixtureController.java", [cls("FixtureController", { properties: [prop(member, "FixtureService")], methods: [method("move", [call(`${member}.reschedule`)])] })], { language: "java" });
+
+  it("a lone implementation that declares no such member dispatches to the one subclass that does", () => {
+    const links = buildSymbolLinks([
+      ...chain(),
+      file("league/impl/FixtureServiceImpl.java", [cls("FixtureServiceImpl", { extends: "AbstractFixtureQuery", methods: [method("reschedule", [], [], 9)] })], { language: "java" }),
+      controller("fixtureService"),
+    ]);
+    expect(callsFrom(links, "league/web/FixtureController.java").map((l) => [l.targetSymbol, l.strategy])).toEqual([["FixtureServiceImpl.reschedule", "interface-redirect"]]);
+  });
+
+  it("two beans below the base: the one registered under the member's name, its interfaces read through the base", () => {
+    const bean = (name: string, beanName: string): FileAnalysis =>
+      file(`league/impl/${name}.java`, [cls(name, { extends: "AbstractFixtureQuery", methods: [method("reschedule", [], [], 9)] })], {
+        language: "java",
+        diBindings: [bind("", name, { qualifier: beanName, matchesMemberName: true, allInterfaces: true })],
+      });
+    const beans = [bean("FixtureServiceImpl", "fixtureService"), bean("ManualFixtureMove", "manualFixtureMove")];
+    let links = buildSymbolLinks([...chain(), ...beans, controller("fixtureService")]);
+    expect(callsFrom(links, "league/web/FixtureController.java").map((l) => [l.targetSymbol, l.strategy])).toEqual([["FixtureServiceImpl.reschedule", "di-binding"]]);
+    // A member named for neither stays on the interface.
+    links = buildSymbolLinks([...chain(), ...beans, controller("service")]);
+    expect(callsFrom(links, "league/web/FixtureController.java").map((l) => l.targetSymbol)).toEqual(["FixtureService.reschedule"]);
+  });
+});

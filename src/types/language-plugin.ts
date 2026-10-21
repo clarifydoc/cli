@@ -16,6 +16,7 @@ import type {
   ExternalPackage,
   PackageEcosystem,
   PathArgCall,
+  Instantiation,
   CallBaseRef,
   HttpClientRegistration,
   ProxyRule,
@@ -550,6 +551,8 @@ export interface AstExtractorHooks {
   generatedClients?(tree: Tree, sourceText: string, filePath: string): GeneratedClientConfig[];
   /** Calls handing a path literal to a project function → `FileAnalysis.pathArgCalls`. */
   pathArgCalls?(tree: Tree, sourceText: string): PathArgCall[];
+  /** Project classes constructed with a string argument → `FileAnalysis.instantiations`. */
+  instantiations?(tree: Tree, sourceText: string): Instantiation[];
   /** URL-shaped module-level values by name (`environment.apiUrl`) → `FileAnalysis.moduleValues`. */
   moduleValues?(tree: Tree, sourceText: string): Record<string, string>;
   /**

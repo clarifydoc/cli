@@ -25,6 +25,7 @@ import { extractStoreModules, VuexDispatchResolver } from "./vuex.js";
 import { extractDevProxyRules } from "./dev-proxies.js";
 import { extractKubbConfigs } from "./kubb.js";
 import { extractPathArgCalls } from "./path-arg-calls.js";
+import { extractInstantiations } from "./instantiations.js";
 import { extractModuleValues } from "./module-values.js";
 import { vuePreprocess } from "./vue-hooks.js";
 import { sveltePreprocess } from "./svelte-hooks.js";
@@ -220,6 +221,7 @@ function astHooks(language: Language): AstExtractorHooks {
     proxyRules: extractDevProxyRules,
     generatedClients: extractKubbConfigs,
     pathArgCalls: extractPathArgCalls,
+    instantiations: extractInstantiations,
     moduleValues: extractModuleValues,
     pathReferences: (sourceText) => extractPathReferences(sourceText),
     variableAliases: extractJsVariableAliases,

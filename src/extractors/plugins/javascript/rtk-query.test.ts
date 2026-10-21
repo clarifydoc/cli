@@ -77,4 +77,40 @@ export function Games() {
     expect(resolveRtkHooks(calls, [queries], ctx)).toBe(0);
     expect(calls.map((c) => c.name)).toEqual(["get"]);
   });
+  it("a query that keeps its URL in a local or a ternary gives every value it can take", async () => {
+    const calls = await callsOf(`import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
+export const api = createApi({
+  baseQuery: fetchBaseQuery({ baseUrl: "/api" }),
+  endpoints: (build) => ({
+    getGarages: build.query({ query: ({ page }) => { let url = \`/garages?page=\${page}\`; if (page > 1) url += "&more=1"; return url; } }),
+    getCarPreferences: build.query({ query: ({ carId, isFleet }) => (isFleet ? \`fleets/\${carId}/preferences\` : \`cars/\${carId}/preferences\`) }),
+    addMechanic: build.mutation({ query: (body) => { const url = "/mechanics"; return { url, method: "POST", body }; } }),
+    getParts: build.query({ query: (suffix) => { if (suffix) return \`parts?\${suffix}\`; return "parts"; } }),
+  }),
+});`);
+    expect(calls.map((d) => `${d.endpoint} ${d.name} ${d.target} ${(d.targetAlternatives ?? []).join(",")}`)).toEqual([
+      "getGarages GET /api/garages?page={} ",
+      "getCarPreferences GET /api/fleets/${carId}/preferences /api/cars/${carId}/preferences",
+      "addMechanic POST /api/mechanics ",
+      "getParts GET /api/parts?${suffix} /api/parts",
+    ]);
+  });
+
+  it("a mutation is sent where the trigger its hook hands back is called", async () => {
+    const calls = await callsOf(`import { useDeleteGameMutation, useLazyGetGameQuery } from "./api";
+export function GameList() {
+  const [deleteGame, { isLoading }] = useDeleteGameMutation();
+  const [loadGame] = useLazyGetGameQuery();
+  const handleDelete = async (id) => { await deleteGame({ id }).unwrap(); };
+  const handleOpen = (id) => loadGame(id);
+  return null;
+}
+function Elsewhere() { deleteGame(); }`);
+    expect(calls.map((d) => `${d.line} ${d.name} ${d.endpoint}`)).toEqual([
+      "3 useDeleteGameMutation deleteGame",
+      "4 useLazyGetGameQuery getGame",
+      "5 useDeleteGameMutation deleteGame",
+      "6 useLazyGetGameQuery getGame",
+    ]);
+  });
 });

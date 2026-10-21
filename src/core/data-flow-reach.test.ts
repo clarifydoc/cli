@@ -3,6 +3,7 @@ import {
   attributeApiCallsToSymbols,
   computeDataFlows,
   computeSymbolReach,
+  fairCap,
   type SymbolReachInput,
 } from "./data-flow-reach.js";
 import type {
@@ -405,5 +406,21 @@ describe("computeDataFlows — witness paths", () => {
       { file: "svc.ts", symbol: "CarService.place", line: 40 },
       { file: "repo.ts", symbol: "CarRepo.save" },
     ]);
+  });
+});
+
+describe("fairCap", () => {
+  const flow = (entryLabel: string, resource: string, distance: number) =>
+    ({ entryKind: "route" as const, entryLabel, entryFile: "garage.ts", effect: "db-read" as const, resource, distance, confidence: "INFERRED" as const });
+
+  it("past the cap every entry keeps its closest effects, never the first entries' rows alone", () => {
+    const flows = [
+      ...["Car", "Engine", "Wheel", "Door"].map((r, i) => flow("GET /cars", r, 4 - i)),
+      ...["Garage", "Mechanic", "Invoice"].map((r, i) => flow("GET /garages", r, i + 1)),
+      flow("GET /parts", "Part", 2),
+    ];
+    const kept = fairCap(flows, 6).map((f) => `${f.entryLabel} ${f.resource}`);
+    expect(kept).toEqual(["GET /cars Door", "GET /cars Wheel", "GET /garages Garage", "GET /garages Mechanic", "GET /parts Part"]);
+    expect(fairCap(flows, 100)).toBe(flows);
   });
 });

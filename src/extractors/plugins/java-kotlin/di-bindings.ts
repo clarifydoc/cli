@@ -182,12 +182,16 @@ function classBindings(node: Node, ctx: Ctx): void {
   }
   if (node.type === "enum_declaration" || node.type === "object_declaration" || isAbstract(node)) return;
 
-  const { implementsList } = jvmSupertypes(node);
+  const { implementsList, extendsName } = jvmSupertypes(node);
   const services = [...new Set(implementsList.map((s) => simpleName(s)).filter((s): s is string => !!s && s !== className))];
 
   const stereotype = [...byName.keys()].find((n) => SPRING_STEREOTYPES.has(n));
   if (stereotype) {
-    if (services.length === 0) return;
+    // A bean is registered under every interface it has, inherited ones too:
+    // `class Impl extends AbstractBase` answers what the base implements —
+    // which only the core sees (`allInterfaces`).
+    const inherits = !!extendsName && simpleName(extendsName) !== className;
+    if (services.length === 0 && !inherits) return;
     // Bean name: `@Service("x")` / `@Component(value = "x")` / a JSR-330 `@Named("x")`, else the decapitalized class name.
     const explicit =
       annotationValues(byName.get(stereotype)!, ["value"])?.[0] ??
@@ -196,12 +200,14 @@ function classBindings(node: Node, ctx: Ctx): void {
     const primary = byName.has("Primary");
     const qualifierAnn = byName.get("Qualifier");
     const extra = qualifierAnn ? annotationValues(qualifierAnn, ["value"])?.[0] : undefined;
-    for (const service of services) {
+    for (const service of inherits ? [...services, ""] : services) {
       const b: DiBinding = { service, implementation: className, line, via: `@${stereotype}`, qualifier: beanName, matchesMemberName: true };
+      if (!service) b.allInterfaces = true;
       if (primary) b.primary = true;
       ctx.out.push(b);
       if (extra && extra !== beanName) {
         const q: DiBinding = { service, implementation: className, line, via: "@Qualifier", qualifier: extra };
+        if (!service) q.allInterfaces = true;
         if (primary) q.primary = true;
         ctx.out.push(q);
       }

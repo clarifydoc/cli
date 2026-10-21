@@ -424,6 +424,8 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     if (generatedClients && generatedClients.length > 0) analysis.generatedClients = generatedClients;
     const pathArgCalls = hooks?.pathArgCalls?.(tree, sourceText);
     if (pathArgCalls && pathArgCalls.length > 0) analysis.pathArgCalls = pathArgCalls;
+    const instantiations = hooks?.instantiations?.(tree, sourceText);
+    if (instantiations && instantiations.length > 0) analysis.instantiations = instantiations;
     const moduleValues = hooks?.moduleValues?.(tree, sourceText);
     if (moduleValues && Object.keys(moduleValues).length > 0) analysis.moduleValues = moduleValues;
 

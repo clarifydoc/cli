@@ -83,6 +83,24 @@ public class Player {
     expect(tables(a)).toEqual({ Player: "app_players" });
   });
 
+  it("Java: @Table(name = X.TABLE), the constant declared in the class", async () => {
+    const a = await analyze(
+      `package com.acme;
+import jakarta.persistence.*;
+
+@Table(name = EntityClub.TABLE)
+@Entity
+public class EntityClub {
+  public static final String TABLE = "clubs";
+  @Id private Long id;
+}
+`,
+      "src/main/java/com/acme/EntityClub.java",
+      "java",
+    );
+    expect(tables(a)).toEqual({ EntityClub: "clubs" });
+  });
+
   it("TypeScript: TypeORM @Entity(\"…\") and @Entity({ name }), Sequelize tableName", async () => {
     const a = await analyze(
       `import { Entity, PrimaryGeneratedColumn, Column } from "typeorm";

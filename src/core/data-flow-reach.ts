@@ -303,8 +303,12 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
   return { reach: out, witness };
 }
 
-/** Total emitted source→sink rows cap (a convenience view; symbolReach holds the full data). */
-const FLOWS_CAP = 2000;
+/**
+ * Total emitted source→sink rows cap (a convenience view; symbolReach holds
+ * the full data). Past it every entry keeps its closest effects, the same
+ * number each — never the first entries' rows and nothing for the rest.
+ */
+const FLOWS_CAP = 20_000;
 
 /**
  * Derive source→sink rows: each API route's handler symbol, resolved to a
@@ -427,7 +431,6 @@ export function computeDataFlows(
         confidence: e.confidence,
         ...viaOf(key, e),
       });
-      if (out.length >= FLOWS_CAP) return sortFlows(out);
     }
   }
 
@@ -468,7 +471,6 @@ export function computeDataFlows(
         confidence: e.confidence,
         ...viaOf(key, e),
       });
-      if (out.length >= FLOWS_CAP) return sortFlows(out);
     }
   }
   // Commands and tools: what an agent's tool call or a CLI subcommand ends up writing. Only a
@@ -485,10 +487,30 @@ export function computeDataFlows(
       if (seen.has(dk)) continue;
       seen.add(dk);
       out.push({ entryKind: "command", entryLabel, entryFile: ep.filePath, effect: e.kind, resource: e.resource, distance: e.distance, confidence: e.confidence, ...viaOf(key, e) });
-      if (out.length >= FLOWS_CAP) return sortFlows(out);
     }
   }
-  return sortFlows(out);
+  return sortFlows(fairCap(out, FLOWS_CAP));
+}
+
+/** At most `cap` rows: each entry's closest effects, as many per entry as fit for all. */
+export function fairCap(flows: DataFlowPath[], cap: number): DataFlowPath[] {
+  if (flows.length <= cap) return flows;
+  const byEntry = new Map<string, DataFlowPath[]>();
+  for (const f of flows) {
+    const k = `${f.entryKind} ${f.entryFile} ${f.entryLabel}`;
+    (byEntry.get(k) ?? byEntry.set(k, []).get(k)!).push(f);
+  }
+  const groups = [...byEntry.values()];
+  for (const g of groups) g.sort((a, b) => a.distance - b.distance);
+  // The largest per-entry quota whose total fits.
+  let lo = 0;
+  let hi = Math.max(...groups.map((g) => g.length));
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (groups.reduce((n, g) => n + Math.min(g.length, mid), 0) <= cap) lo = mid;
+    else hi = mid - 1;
+  }
+  return groups.flatMap((g) => g.slice(0, lo));
 }
 
 /** Sort flows in place by entry label, effect and resource, for stable output. */

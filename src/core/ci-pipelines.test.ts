@@ -57,6 +57,13 @@ jobs:
       - uses: peaceiris/actions-gh-pages@v4
         with:
           publish_dir: ./web/dist
+  api-image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build and push the api image
+        run: |
+          docker build -t ghcr.io/example/league-api:\${{ github.ref_name }} -f api/Dockerfile .
+          docker push ghcr.io/example/league-api:\${{ github.ref_name }}
 `);
     await writeFile(join(dir, ".github/workflows/ci.yml"), `on: pull_request
 jobs:
@@ -81,7 +88,7 @@ publish:
   });
   afterAll(() => rm(dir, { recursive: true, force: true }));
 
-  it("finds each deploy step with its trigger, path and project; a docker build without a push is no deploy", async () => {
+  it("finds each deploy step with its trigger, path and project — a script naming `${{ … }}` too; a docker build without a push is no deploy", async () => {
     const rows = await detectCiDeploys(dir, projects);
     expect(rows.map((r) => `${r.provider} ${r.file}:${r.line} ${r.job} [${r.triggers.join("; ")}] ${r.kind} ${r.path ?? "-"} ${r.project ?? "-"} · ${r.via}`)).toEqual([
       "github .github/workflows/release.yml:13 images [push main; tag v*; manual] docker cars cars · docker/build-push-action",
@@ -89,6 +96,7 @@ publish:
       "github .github/workflows/release.yml:23 images [push main; tag v*; manual] kubernetes k8s/cars root · kubectl apply -f k8s/cars",
       "github .github/workflows/release.yml:32 infra [push main; tag v*; manual] terraform infra root · terraform apply -auto-approve",
       "github .github/workflows/release.yml:38 site [push main; tag v*; manual] pages web/dist web · peaceiris/actions-gh-pages",
+      "github .github/workflows/release.yml:46 api-image [push main; tag v*; manual] docker . root · docker build -t ghcr.io/example/league-api:${{ github.ref_name }} -f api/Dockerfile .",
       "gitlab .gitlab-ci.yml:7 deploy_api [push main] serverless api api · npx serverless deploy --stage prod",
       "gitlab .gitlab-ci.yml:11 publish [manual] package - - · npm publish",
     ]);

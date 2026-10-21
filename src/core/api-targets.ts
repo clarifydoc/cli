@@ -246,6 +246,7 @@ export function expandRequestFactories(
     return hits.length === 1 ? hits[0]! : null;
   };
 
+  const known = new Set(calls.filter((c) => c.kind === "api-call" && c.target).map((c) => `${c.filePath}:${c.line}:${c.target}`));
   let added = 0;
   for (const a of analyses) {
     for (const site of a.pathArgCalls ?? []) {
@@ -259,7 +260,7 @@ export function expandRequestFactories(
           const chain = [receiver, ...classes.ancestors(receiver).flatMap((s) => (s.ref ? [s.ref] : []))];
           const owner = chain.find((c) => c.cls.methods.some((m) => m.name === site.callee));
           const rows = owner ? factories.get(`${owner.filePath}::${site.callee}`) : undefined;
-          if (rows) added += expandSite(calls, a.filePath, site, rows);
+          if (rows) added += expandSite(calls, a.filePath, site, rows, known);
         }
         continue;
       }
@@ -286,14 +287,14 @@ export function expandRequestFactories(
         const fnName = def ? functionsIn(source).find((f) => f.line === def.line)?.name : undefined;
         if (fnName) rows = factories.get(`${source}::${fnName}`);
       }
-      if (rows) added += expandSite(calls, a.filePath, site, rows);
+      if (rows) added += expandSite(calls, a.filePath, site, rows, known);
     }
   }
   return added;
 }
 
 /** The rows one call site of a factory adds: each factory row with the site's literals in its holes. */
-function expandSite(calls: ApiCall[], filePath: string, site: PathArgCall, rows: FactoryRow[]): number {
+function expandSite(calls: ApiCall[], filePath: string, site: PathArgCall, rows: FactoryRow[], known: ReadonlySet<string>): number {
   let chosen = rows;
   let method: string | null = null;
   if (site.method && VERBS.has(site.method)) {
@@ -327,6 +328,8 @@ function expandSite(calls: ApiCall[], filePath: string, site: PathArgCall, rows:
     // Two branches of one verb (`post(url, data: d)` / `post(url)`) are one request.
     if (method && seen.has(target)) continue;
     seen.add(target);
+    // A site already read as that request (a configured client pattern) is not a second one.
+    if (known.has(`${filePath}:${site.line}:${target}`)) continue;
     const alternatives = (f.row.targetAlternatives ?? []).map(fill).filter((u): u is string => u !== null);
     calls.push({
       ...f.row,
@@ -517,16 +520,45 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
   };
 
   /**
+   * `new CascadeService("rooms")`: each construction with a string argument,
+   * as a class of its own that extends the constructed one and passes those
+   * arguments to `super(…)` — which is what the constructor receives.
+   */
+  let instances: Map<ClassRef, ClassRef[]> | null = null;
+  const instancesOf = (cls: ClassRef): ClassRef[] => {
+    if (!instances) {
+      instances = new Map();
+      for (const a of analyses) {
+        for (const inst of a.instantiations ?? []) {
+          const of = ctx.classes.resolve(a.filePath, inst.className);
+          if (!of) continue;
+          const label = inst.name ?? `${inst.className}(${inst.args.map((x) => JSON.stringify(x)).join(", ")})`;
+          const pseudo: ClassRef = {
+            filePath: a.filePath,
+            projectId: a.projectId,
+            language: a.language,
+            cls: { name: label, extends: inst.className, implements: [], decorators: [], methods: [], properties: [], superArgs: inst.args, isExported: false, line: inst.line, endLine: inst.line },
+          };
+          (instances.get(of) ?? instances.set(of, []).get(of)!).push(pseudo);
+        }
+      }
+    }
+    return instances.get(cls) ?? [];
+  };
+
+  /**
    * A call in a base class whose URL reads `this` (`axios.get(this.url)` in
    * `ApiClient.get`) requests a different URL for every subclass that inherits
    * the method: one row per concrete subclass that does not override it, each
-   * resolved as seen from that subclass.
+   * resolved as seen from that subclass — and per instance a string argument
+   * configures (`instancesOf`).
    */
   const perSubclass = (call: ApiCall, cls: ClassRef): Array<{ target: string; alternatives?: string[]; subclass: string }> => {
     const method = cls.cls.methods.find((m) => m.line <= call.line && call.line <= m.endLine);
     if (!method || ![call.target!, ...(call.targetAlternatives ?? [])].some((t) => /\$\{this\.|\bthis\.[\w$]+\s*\(/.test(t))) return [];
     const out: Array<{ target: string; alternatives?: string[]; subclass: string }> = [];
-    for (const d of ctx.classes.descendants(cls)) {
+    const below = ctx.classes.descendants(cls);
+    for (const d of [...below, ...[cls, ...below].flatMap(instancesOf)]) {
       // The method `this.m()` dispatches to from `d`: the first definition up its chain.
       const definer = chainOf(d).find(({ c }) => c.cls.methods.some((m) => m.name === method.name))?.c;
       if (definer !== cls) continue;

@@ -381,12 +381,12 @@ describe("JS api-call bindings are resolved in the scope of the call", () => {
     ]);
   });
 
-  it("lets a parameter shadow a module const of the same name", async () => {
+  it("lets a parameter shadow a module const of the same name — it stays a hole a call site fills", async () => {
     const calls = await apiCallsOf(`
       const url = '/api/default';
       export function load(url) { return fetch(url); }
       export function def() { return fetch(url); }`);
-    expect(calls.map((c) => c.target)).toEqual(["/api/default"]);
+    expect(calls.map((c) => c.target)).toEqual(["${url}", "/api/default"]);
   });
 
   it("still finds a module const declared below the function using it", async () => {
@@ -944,6 +944,17 @@ describe("JS api-call through a local holding a template on the class's base", (
       }`);
     expect(ds.map((d) => d.target)).toEqual(["${this.url}?${buildParams(params)}", "${this.url}/search?${buildParams({ q: query })}"]);
   });
+
+  it("keeps it when that local is interpolated into the request's own template", async () => {
+    const ds = await apiCallsOf(`
+      class SquadPreferences {
+        async clear(params) {
+          const url = \`\${this.baseUrl}/preferences/bulk/clear\`;
+          return fetch(\`\${url}?\${params}\`, { method: "DELETE" });
+        }
+      }`);
+    expect(ds.map((d) => d.target)).toEqual(["${this.baseUrl}/preferences/bulk/clear?${params}"]);
+  });
 });
 
 describe("Vue Options-API components", () => {
@@ -991,5 +1002,51 @@ export const GarageCard = defineComponent({
   it("leaves an exported object that declares no props or data alone", async () => {
     expect(await rowsOf(`export default { name: 'league', routes: [], data: undefined.x };`)).toEqual([]);
     expect(await rowsOf(`export default { columns: { props: 1 } };`)).toEqual([]);
+  });
+});
+
+describe("JS api-call through a local that holds one of several URLs", () => {
+  it("gives a ternary local, a local assigned in each branch and a ternary interpolated into a template every value", async () => {
+    const ds = await apiCallsOf(`
+      export async function loadFixtures(leagueId) {
+        const url = leagueId ? \`\${API_BASE_URL}/fixtures/league/\${leagueId}\` : \`\${API_BASE_URL}/fixtures/all\`;
+        return fetch(url, { headers });
+      }
+      export async function loadClub(id, byCode) {
+        let url = "";
+        if (byCode) url = \`/clubs/code/\${id}\`;
+        else url = \`/clubs/\${id}\`;
+        return axios.get(url);
+      }
+      export async function lookupPlayer(id, toUuid) {
+        const endpoint = toUuid ? \`/players/\${id}\` : \`/players/uuid/\${id}\`;
+        return fetch(\`\${API_BASE_URL}\${endpoint}\`);
+      }`);
+    expect(ds.map((d) => [d.target, ...(d.targetAlternatives ?? [])].join(" | "))).toEqual([
+      "${API_BASE_URL}/fixtures/league/${leagueId} | ${API_BASE_URL}/fixtures/all",
+      "/clubs/code/${id} | /clubs/${id}",
+      "${API_BASE_URL}/players/${id} | ${API_BASE_URL}/players/uuid/${id}",
+    ]);
+  });
+
+  it("gives a parameter typed as a union of strings each of them", async () => {
+    const ds = await apiCallsOf(`
+      const transfer = async (clubId: string, step: "preview" | "apply") =>
+        fetch(\`\${API_BASE_URL}/clubs/\${clubId}/transfers/\${step}\`, { method: "POST" });
+      const rename = async (clubId: string, step: string) => fetch(\`/clubs/\${clubId}/\${step}\`);`);
+    expect(ds.map((d) => [d.target, ...(d.targetAlternatives ?? [])].join(" | "))).toEqual([
+      "${API_BASE_URL}/clubs/${clubId}/transfers/preview | ${API_BASE_URL}/clubs/${clubId}/transfers/apply",
+      "/clubs/${clubId}/${step}",
+    ]);
+  });
+
+  it("leaves a local that is also built up to the fold", async () => {
+    const ds = await apiCallsOf(`
+      export async function search(q) {
+        let url = "/players?";
+        if (q) url += \`q=\${q}\`;
+        return axios.get(url);
+      }`);
+    expect(ds.map((d) => d.targetAlternatives)).toEqual([undefined]);
   });
 });

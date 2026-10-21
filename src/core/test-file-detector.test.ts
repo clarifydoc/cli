@@ -80,6 +80,9 @@ describe("isTestFile — per-language filename conventions", () => {
     ["main.go", "go"],
     ["src/views.py", "python"], // "test_" only matches as a filename prefix
     ["src/PlayerService.java", "java"],
+    // Maven/Gradle production sources: a controller named `…Test` there is served.
+    ["backend/src/main/java/com/example/league/ControllerHealthTest.java", "java"],
+    ["src/main/kotlin/com/example/league/ControllerHealthTest.kt", "kotlin"],
     ["Controllers/PlayersController.cs", "csharp"],
     ["app/models/player.rb", "ruby"],
     ["src/PlayerController.php", "php"],

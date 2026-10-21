@@ -12,6 +12,7 @@ import type {
   Confidence,
 } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
+import { isTestFile } from "./test-file-detector.js";
 import { isApiContractLanguage } from "../extractors/registry.js";
 
 /**
@@ -557,6 +558,8 @@ export function synthesizeReferencedTableEntities(
   for (const n of graph.nodes) for (const k of nodeMatchKeys(n)) covered.add(k);
 
   for (const a of analyses) {
+    // A name only a test queries (a mocked `jdbcTemplate`'s argument type) is no table of the schema.
+    if (isTestFile(a.filePath, a.language)) continue;
     for (const ds of a.dataSources ?? []) {
       if (ds.kind !== "database") continue;
       const table = ds.entity?.trim();

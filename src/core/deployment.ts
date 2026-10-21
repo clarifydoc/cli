@@ -226,6 +226,21 @@ export const IGNORE = [
 ];
 
 /**
+ * Compose files and Dockerfiles are also searched in dot-directories — a repo
+ * may keep its stack in `.docker/` or `.script/docker/` — except tool state
+ * and editor, dev-container and cache trees, which never describe the deployment.
+ */
+const DOT_SEARCH = {
+  dot: true,
+  ignore: [
+    ...IGNORE,
+    "**/.devcontainer/**", "**/.vscode/**", "**/.idea/**", "**/.cache/**", "**/.venv/**", "**/.tox/**",
+    "**/.next/**", "**/.nuxt/**", "**/.svelte-kit/**", "**/.angular/**", "**/.turbo/**", "**/.yarn/**",
+    "**/.pnpm-store/**", "**/.gradle/**", "**/.m2/**", "**/.terraform/**", "**/.clarifydoc/**",
+  ],
+};
+
+/**
  * Path tokens that mark a compose file as non-runtime (build/test/CI stacks,
  * vendored examples). Tested against every path segment, token-delimited, so
  * `deployment/PR/docker-compose.yml` and `league-tests-compose.yml` are both
@@ -562,7 +577,7 @@ export function projectOfContext(context: string, subProjects: readonly SubProje
 async function standaloneDockerfiles(absRoot: string): Promise<string[]> {
   const found = await glob(["**/Dockerfile", "**/Dockerfile.*", "**/Dockerfile-*", "**/*Dockerfile", "**/*.dockerfile"], {
     cwd: absRoot,
-    ignore: IGNORE,
+    ...DOT_SEARCH,
     absolute: false,
     caseSensitiveMatch: false,
     deep: 5,
@@ -680,7 +695,7 @@ export async function detectDeployment(
   const absRoot = resolve(projectRoot);
   const found = await glob(["**/*compose*.{yml,yaml}"], {
     cwd: absRoot,
-    ignore: IGNORE,
+    ...DOT_SEARCH,
     absolute: false,
     caseSensitiveMatch: false,
     deep: 5,

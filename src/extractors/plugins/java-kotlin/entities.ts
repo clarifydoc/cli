@@ -134,7 +134,7 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
               line: cls.line,
               endLine: cls.endLine,
               extraDecorators,
-              tableName: jpaTableName(cls.decorators),
+              tableName: jpaTableName(cls.decorators, ctx.sourceText ?? "", cls.name),
             }),
           );
         } catch {
@@ -838,12 +838,19 @@ function toSnake(name: string): string {
 }
 
 /** `@Table(name = "app_users")`, `@Table("app_users")` (Spring Data JDBC), `@Table(schema = "s", name = "t")`. */
-function jpaTableName(decorators: readonly string[]): string | null {
+function jpaTableName(decorators: readonly string[], sourceText: string, className: string): string | null {
   for (const d of decorators) {
     const m = /^@?(?:[\w.]+\.)?Table\s*\(([\s\S]*)\)\s*$/.exec(d.trim());
     if (!m) continue;
     const named = /\b(?:name|value)\s*=\s*"([^"]+)"/.exec(m[1]!) ?? /^\s*"([^"]+)"/.exec(m[1]!);
     if (named) return named[1]!;
+    // `@Table(name = EntityClub.TABLE)` with `public static final String TABLE = "clubs";`
+    // (Kotlin `const val TABLE = "clubs"`) in this file.
+    const ref = /\b(?:name|value)\s*=\s*(?:([A-Za-z_$][\w$]*)\.)?([A-Za-z_$][\w$]*)\s*(?:,|$)/.exec(m[1]!) ?? /^\s*(?:([A-Za-z_$][\w$]*)\.)?([A-Za-z_$][\w$]*)\s*$/.exec(m[1]!);
+    if (ref && (!ref[1] || ref[1] === className || new RegExp(`\\b(?:class|interface|object)\\s+${ref[1]}\\b`).test(sourceText))) {
+      const constant = new RegExp(`\\b(?:static\\s+final\\s+String|final\\s+static\\s+String|const\\s+val)\\s+${ref[2]}\\s*(?::\\s*String\\s*)?=\\s*"([^"]+)"`).exec(sourceText);
+      if (constant) return constant[1]!;
+    }
   }
   return null;
 }

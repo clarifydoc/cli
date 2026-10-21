@@ -1025,6 +1025,8 @@ interface LinkContext {
   bindings: Map<string, IndexedBinding[]>;
   /** `${file}\0${class}` → its ClassInfo (kind, base class). */
   classAt: Map<string, ClassInfo>;
+  /** Base class → the classes extending it, built on first use (`overrideBelow`). */
+  subclasses?: Map<string, Array<{ name: string; file: string }>>;
   /** Class name → every file declaring it (capped), for type-space lookups. */
   classFiles: Map<string, string[]>;
   /** `${file}\0${symbol}` of extension methods (a parameter `isReceiver`). */
@@ -1554,27 +1556,33 @@ function indexClassDecls(analyses: FileAnalysis[]): Map<string, Array<{ a: FileA
 }
 
 /**
- * The project interfaces class `name` declares, as the registering file `reg`
- * sees it: its definition in the same type space (the registering sub-project
- * first), every part of it when it is split across one directory. A name
- * defined in several places, or a supertype that is not a project interface
- * (a base class, an external `IDisposable`), contributes nothing.
+ * The project interfaces class `name` implements, as the registering file
+ * `reg` sees it: its definition in the same type space (the registering
+ * sub-project first), every part of it when it is split across one directory
+ * — and, as a container registers a class under every interface it has, the
+ * ones its project base classes and base interfaces declare. A name defined in
+ * several places, or a supertype outside the project (an external
+ * `IDisposable`), contributes nothing.
  */
 function declaredInterfaces(
   name: string,
   reg: FileAnalysis,
   decls: Map<string, Array<{ a: FileAnalysis; cls: ClassInfo }>>,
+  seen = new Set<string>(),
 ): string[] {
   const inSpace = (d: { a: FileAnalysis }) => sameTypeSpace(reg.filePath, reg.language, d.a.filePath, d.a.language);
+  const out = new Set<string>();
+  seen.add(name);
   const cands = (decls.get(name) ?? []).filter(inSpace);
   const own = cands.filter((d) => d.a.projectId === reg.projectId);
   const pool = own.length > 0 ? own : cands;
   if (pool.length === 0 || new Set(pool.map((d) => d.a.filePath.slice(0, d.a.filePath.lastIndexOf("/") + 1))).size !== 1) return [];
-  const out = new Set<string>();
   for (const d of pool) {
     for (const sup of declaredSupertypes(d.cls, d.a)) {
-      const iface = bareSupertypeName(sup);
-      if ((decls.get(iface) ?? []).some((x) => x.cls.kind === "interface" && inSpace(x))) out.add(iface);
+      const base = bareSupertypeName(sup);
+      if (seen.has(base)) continue;
+      if ((decls.get(base) ?? []).some((x) => x.cls.kind === "interface" && inSpace(x))) out.add(base);
+      if (seen.size < MAX_BASE_DEPTH * 4) for (const inherited of declaredInterfaces(base, reg, decls, seen)) out.add(inherited);
     }
   }
   return [...out];
@@ -3228,7 +3236,11 @@ function linkThroughPoint(
   // decorator holding another instance of its own interface).
   if (impls.length === 1 && impls[0]!.className !== point.consumer) {
     const impl = impls[0]!;
-    const target = findMethodInClass(ctx, impl.className, impl.classFile, method);
+    // An implementation that does not declare the member is an abstract base:
+    // the call runs in the one class below it that does (`ServiceImpl extends
+    // AbstractQuery extends … AbstractSupport implements Service`).
+    const target = findMethodInClass(ctx, impl.className, impl.classFile, method)
+      ?? overrideBelow(ctx, impl.className, impl.classFile, method, sourceIsTest);
     if (target) return throughDeclared(mkLink(target.file, target.symbol, target.line, "INFERRED", "interface-redirect"));
   }
 
@@ -3325,6 +3337,56 @@ function buildExtensionIndex(analyses: FileAnalysis[]): Map<string, ExtensionDef
 const MAX_BASE_DEPTH = 8;
 
 /** `method` as defined by class `className` in `classFile`, or inherited from its base classes. */
+/**
+ * The one class below `className` — its subclasses, theirs, … — that declares
+ * `method`, test classes left out of production calls. Null when none or
+ * several do.
+ */
+function overrideBelow(
+  ctx: LinkContext,
+  className: string,
+  classFile: string,
+  method: string,
+  sourceIsTest: boolean,
+): { file: string; symbol: string; line: number } | null {
+  const below = (ctx.subclasses ??= buildSubclassIndex(ctx));
+  const found: Array<{ file: string; symbol: string; line: number }> = [];
+  const seen = new Set([memberKey(classFile, className)]);
+  let frontier = [memberKey(classFile, className)];
+  for (let depth = 0; depth < MAX_BASE_DEPTH && frontier.length > 0 && found.length < 2; depth++) {
+    const next: string[] = [];
+    for (const k of frontier) {
+      for (const sub of below.get(k) ?? []) {
+        const key = memberKey(sub.file, sub.name);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (!sourceIsTest && (TEST_DOUBLE_PATH_RE.test(sub.file) || isTestFile(sub.file, (ctx.languageOf.get(sub.file) ?? "") as Language))) continue;
+        const def = symbolIn(ctx, sub.file, `${sub.name}.${method}`);
+        if (def) found.push({ file: sub.file, symbol: def.name, line: def.line });
+        else next.push(key);
+      }
+    }
+    frontier = next;
+  }
+  return found.length === 1 ? found[0]! : null;
+}
+
+/** `${file}\0${class}` → the classes that extend it, each base located as `findMethodInClass` locates it. */
+function buildSubclassIndex(ctx: LinkContext): Map<string, Array<{ name: string; file: string }>> {
+  const out = new Map<string, Array<{ name: string; file: string }>>();
+  for (const [key, cls] of ctx.classAt) {
+    if (cls.kind === "interface" || !cls.extends) continue;
+    const base = bareClassName(cls.extends);
+    if (!base) continue;
+    const file = key.slice(0, key.indexOf("\0"));
+    const baseFile = locateClass(ctx, base, file, ctx.projectOf.get(file) ?? "root");
+    if (!baseFile) continue;
+    const baseKey = memberKey(baseFile, base);
+    (out.get(baseKey) ?? out.set(baseKey, []).get(baseKey)!).push({ name: cls.name, file });
+  }
+  return out;
+}
+
 function findMethodInClass(
   ctx: LinkContext,
   className: string,

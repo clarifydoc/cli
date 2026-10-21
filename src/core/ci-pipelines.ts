@@ -57,6 +57,8 @@ const COMMANDS: Array<{ re: RegExp; kind: Kind; path?: (m: RegExpExecArray, line
 ];
 
 const str = (v: YamlValue | undefined): string | undefined => (typeof v === "string" && v && !v.includes("${{") ? v : undefined);
+/** A script as written: unlike a path, its `${{ github.ref_name }}` expressions do not void it. */
+const scriptText = (v: YamlValue | undefined): string | undefined => (typeof v === "string" && v ? v : undefined);
 const map = (v: YamlValue | undefined): YamlMap => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
 const list = (v: YamlValue | undefined): YamlValue[] => (Array.isArray(v) ? v : v === undefined || v === "" ? [] : [v]);
 
@@ -185,7 +187,8 @@ export async function detectCiDeploys(projectRoot: string, subProjects: readonly
           const step = map(s);
           const workdir = str(step["working-directory"]) ?? jobDir;
           if (str(step.uses)) steps.push({ uses: str(step.uses), with: map(step.with), workdir, line: locate(str(step.uses)) });
-          if (str(step.run)) for (const sub of withCd(str(step.run)!, workdir)) steps.push({ ...sub, line: locate(sub.text) });
+          const run = scriptText(step.run);
+          if (run) for (const sub of withCd(run, workdir)) steps.push({ ...sub, line: locate(sub.text) });
         }
         jobs.push({ name, triggers, steps });
       }

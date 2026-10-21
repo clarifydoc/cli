@@ -324,6 +324,13 @@ export interface FileAnalysis {
    */
   pathArgCalls?: PathArgCall[];
   /**
+   * `new X("rooms")`: project classes constructed with a string argument — a
+   * generic client configured per instance, as a subclass configures it
+   * through `super("rooms")`. The project pass reads the class's requests
+   * once per instance, with these arguments.
+   */
+  instantiations?: Instantiation[];
+  /**
    * URL-shaped values this module defines at its top level, by name — an
    * object's members as `name.member` (`environment.apiUrl` →
    * `http://localhost:5000/api/`). A project pass follows an import here to
@@ -557,10 +564,11 @@ export interface DiBinding {
    */
   ifAbsent?: boolean;
   /**
-   * Exposed under EVERY interface `implementation` declares (Autofac
-   * `AsImplementedInterfaces()` on a class declared in another file):
-   * `service` is ignored and the linker expands the registration from the
-   * class's own declaration — project-defined interfaces only.
+   * Exposed under EVERY interface `implementation` has (Autofac
+   * `AsImplementedInterfaces()` on a class declared in another file, a Spring
+   * bean whose interfaces come from its base class): `service` is ignored and
+   * the linker expands the registration from the class's declaration and its
+   * project base types — project-defined interfaces only.
    */
   allInterfaces?: boolean;
   /** How the registration was written — `AddScoped`, `bind`, `@Bean`, `@Service` — for display. */
@@ -1012,6 +1020,17 @@ export interface RouteInfo {
    * table maps onto it (`/clubs` → `club/list`). One endpoint, one row.
    */
   aliases?: string[];
+}
+
+/** A construction with a string argument (see `FileAnalysis.instantiations`). */
+export interface Instantiation {
+  /** The class as written. */
+  className: string;
+  /** Each argument as `ClassInfo.superArgs` renders it: a string's content, else a `${…}` hole. */
+  args: string[];
+  line: number;
+  /** The variable it is assigned to (`const roomService = new …`). */
+  name?: string;
 }
 
 /** A call passing at least one path literal to a function (see `FileAnalysis.pathArgCalls`). */
