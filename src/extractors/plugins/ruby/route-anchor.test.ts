@@ -34,7 +34,8 @@ end`;
     const out = [
       file("config/routes.rb", [], rubySpec.extractRoutes!(router.split("\n"), [], "config/routes.rb")),
       file("app/controllers/api/labels_controller.rb", [cls("Api::LabelsController", "Api::BaseController", [["index", 5], ["show", 9], ["export", 12]])], [
-        // The plugin's guesses from action names: `show` is declared by the router, `export` is not.
+        // The plugin's guesses from action names: `show` is declared by the router, `export` is not
+        // (kept: the chain ends at a base outside the project, which may route it).
         { path: "/api/labels/:id", httpMethod: "GET", kind: "api", handler: "Api::LabelsController#show", calls: [], middleware: ["before_action :authenticate_user!"], line: 9 },
         { path: "/api/labels/export", httpMethod: "GET", kind: "api", handler: "Api::LabelsController#export", calls: [], middleware: [], line: 12 },
       ]),
@@ -125,5 +126,32 @@ end`;
     reconcileProjectRoutes(out, ctx, [railsRouteAnchor]);
     const paths = out.flatMap((a) => a.routes.map((r) => `${r.httpMethod} ${r.path}`));
     expect(paths.sort()).toEqual(["GET /admin/players", "GET /api/clubs", "GET /api/clubs/:id/edit", "GET /garages/new", "GET /stadiums/new"]);
+  });
+});
+
+describe("rails-route-anchor — guesses for actions the router never names", () => {
+  it("drops a routed controller's undeclared public helper, but keeps guesses on a gem-based controller", () => {
+    const router = `Rails.application.routes.draw do
+  resources :clubs, only: [:index]
+  get 'staff/logout', to: 'staff/sessions#destroy'
+end`;
+    const guess = (handler: string, path: string, line: number) => ({ path, httpMethod: "GET", kind: "api", handler, calls: [], middleware: [], line });
+    const out = [
+      file("config/routes.rb", [], rubySpec.extractRoutes!(router.split("\n"), [], "config/routes.rb")),
+      file("app/controllers/application_controller.rb", [cls("ApplicationController", "ActionController::Base", [])]),
+      file("app/controllers/clubs_controller.rb", [cls("ClubsController", "ApplicationController", [["index", 2], ["club_params", 6]])], [
+        guess("ClubsController#index", "/clubs", 2),
+        guess("ClubsController#club_params", "/clubs/club_params", 6),
+      ] as FileAnalysis["routes"]),
+      // `devise_for` routes this controller's `new`/`create`: the gem's DSL, not read here.
+      file("app/controllers/staff/sessions_controller.rb", [cls("Staff::SessionsController", "Devise::SessionsController", [["new", 2], ["destroy", 5]])], [
+        guess("Staff::SessionsController#new", "/staff/sessions/new", 2),
+      ] as FileAnalysis["routes"]),
+    ];
+    const importIndex = buildImportIndex(out);
+    const ctx = { importIndex, classes: buildClassIndex(out, importIndex), resolveModule: () => null, fileOf: (p: string) => out.find((a) => a.filePath === p) } as ProjectContext;
+    reconcileProjectRoutes(out, ctx, [railsRouteAnchor]);
+    const handlers = out.flatMap((a) => a.routes.map((r) => r.handler)).sort();
+    expect(handlers).toEqual(["ClubsController#index", "Staff::SessionsController#destroy", "Staff::SessionsController#new"]);
   });
 });

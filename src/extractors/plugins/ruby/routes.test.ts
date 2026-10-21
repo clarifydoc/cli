@@ -293,3 +293,40 @@ describe("routes.rb: redirects and symbol controllers", () => {
     expect(out).toEqual(["GET /garage/install -> null", "GET /clubs/:club_id/stats -> ClubStatsController#show"]);
   });
 });
+
+describe("controller convention: only public methods are actions", () => {
+  it("leaves out `protected` helpers, `private def` and `private :name`, and keeps what follows `public`", () => {
+    const lines = `class Api::TransfersController < ApplicationController
+  def index
+  end
+
+  def window
+  end
+  private :window
+
+  private def fee_params
+  end
+
+  def approve
+  end
+
+  protected
+
+  def scope
+  end
+
+  public
+
+  def history
+  end
+
+  private
+
+  def club
+  end
+end`.split("\n");
+    const classes = rubySpec.extractClasses!(lines, []);
+    const handlers = (rubySpec.extractRoutes?.(lines, classes) ?? []).map((r) => r.handler).sort();
+    expect(handlers).toEqual(["Api::TransfersController#approve", "Api::TransfersController#history", "Api::TransfersController#index"]);
+  });
+});

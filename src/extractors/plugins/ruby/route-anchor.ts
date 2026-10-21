@@ -61,6 +61,18 @@ export const railsRouteAnchor: RouteResolver = {
     // row for an action the router declares is a second, often wrong, path.
     const declared = new Set<string>();
     for (const a of analyses) for (const r of a.routes) if (r.handler && HANDLER_RE.test(r.handler) && !isGuess(a, r)) declared.add(r.handler);
+    // A controller the router routes is served only where it says: a guess for
+    // an action it never names (a public helper) is no endpoint — unless a
+    // legacy `/:controller(/:action)` route serves any action, or the controller
+    // is built on a gem's (Devise's), whose own routing DSL (`devise_for`) serves it.
+    const routedControllers = new Set([...declared].map((h) => h.split("#")[0]!));
+    const catchAll = analyses.some((a) => a.routes.some((r) => !isGuess(a, r) && /:action\b/.test(r.path)));
+    const guessDropped = (handler: string): boolean => {
+      const controller = handler.split("#")[0]!;
+      if (catchAll || !routedControllers.has(controller)) return false;
+      const ref = byName.get(controller);
+      return !!ref && /^(?:::)?ActionController::(?:Base|API)$/.test(chainEnd(ref, byName, qualified).cls.extends ?? "");
+    };
 
     // What a guess knew that the router row does not: the controller's filters
     // (auth, middleware) and the parameters its body reads.
@@ -91,7 +103,7 @@ export const railsRouteAnchor: RouteResolver = {
       const kept: RouteInfo[] = [];
       for (const r of a.routes) {
         if (isGuess(a, r)) {
-          if (!declared.has(r.handler!)) kept.push(r);
+          if (!declared.has(r.handler!) && !guessDropped(r.handler!)) kept.push(r);
           continue;
         }
         const m = r.handler ? HANDLER_RE.exec(r.handler) : null;
@@ -199,15 +211,24 @@ function servesNothing(
   const dir = name.split("::").map(railsUnderscore).join("/").replace(/_controller$/, "");
   if (views.has(`${dir}/${action}`)) return false;
   if ((byLeaf.get(name.split("::").pop()!) ?? []).some((c) => c !== ref && c.cls.name.endsWith(`::${name}`) && c.cls.methods.some((f) => f.name === action))) return false;
-  let last = ref;
   const seen = new Set<ClassRef>();
   for (let c: ClassRef | null | undefined = ref; c && !seen.has(c); c = superOf(c, byName, qualified)) {
     seen.add(c);
     if (c.cls.methods.some((f) => f.name === "action_missing" || f.name === "method_missing")) return false;
+  }
+  const base = /^(?:::)?ActionController::(API|Base)$/.exec(chainEnd(ref, byName, qualified).cls.extends ?? "")?.[1];
+  return base === "API" || (base === "Base" && views.has(`${dir}/`));
+}
+
+/** The last class of `ref`'s chain the project declares: its `extends` names the framework or gem base. */
+function chainEnd(ref: ClassRef, byName: Map<string, ClassRef | null>, qualified: Map<ClassRef, string>): ClassRef {
+  let last = ref;
+  const seen = new Set<ClassRef>();
+  for (let c: ClassRef | null | undefined = ref; c && !seen.has(c); c = superOf(c, byName, qualified)) {
+    seen.add(c);
     last = c;
   }
-  const base = /^(?:::)?ActionController::(API|Base)$/.exec(last.cls.extends ?? "")?.[1];
-  return base === "API" || (base === "Base" && views.has(`${dir}/`));
+  return last;
 }
 
 /** A constant as Ruby finds it from inside `scope`: innermost namespace first. */

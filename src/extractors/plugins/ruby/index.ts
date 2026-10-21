@@ -864,20 +864,32 @@ export const rubySpec: RegexLangSpec = {
       }
     }
 
-    // Scan for `private` keyword to mark lines below it as private
+    // Rails routes only public methods: a bare `private`/`protected` hides every
+    // method below it (until `public` or the class ends), `private def x` and
+    // `private :x, :y` only the ones they name.
     const privateMethodLines = new Set<number>();
+    const privateNames = new Set<string>();
     let inPrivateBlock = false;
     let privateBlockIndent = -1;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      const trimmed = line.trimStart();
-      const indent = line.length - trimmed.length;
-      if (/^private\s*$/.test(trimmed) || /^private\s+/.test(trimmed)) {
+      const trimmed = line.trimStart().replace(/\s+#.*$/, "");
+      const indent = line.length - line.trimStart().length;
+      if (/^(?:private|protected)$/.test(trimmed)) {
         inPrivateBlock = true;
         privateBlockIndent = indent;
         continue;
       }
-      if (/^(public|protected)\b/.test(trimmed)) {
+      if (/^(?:private|protected)\s+def\b/.test(trimmed)) {
+        privateMethodLines.add(i + 1);
+        continue;
+      }
+      const named = /^(?:private|protected)\s+(:[\w?!]+(?:\s*,\s*:[\w?!]+)*)$/.exec(trimmed);
+      if (named) {
+        for (const n of named[1]!.matchAll(/:([\w?!]+)/g)) privateNames.add(n[1]!);
+        continue;
+      }
+      if (/^public\b/.test(trimmed)) {
         inPrivateBlock = false;
         continue;
       }
@@ -900,7 +912,7 @@ export const rubySpec: RegexLangSpec = {
       const basePath = modules.map((m) => "/" + railsUnderscore(m)).join("") + "/" + resource;
 
       for (const method of cls.methods) {
-        if (privateMethodLines.has(method.line)) continue;
+        if (privateMethodLines.has(method.line) || privateNames.has(method.name)) continue;
         // A singleton method (`self.x`, see di.ts) is no action.
         if (method.name.startsWith("self.")) continue;
         if (method.name.endsWith("?") || method.name.endsWith("!")) continue;
