@@ -7,8 +7,8 @@ import { byOrdinal } from "./ordinal.js";
  * don't benefit from AST parsing. Each file is classified into at most one
  * ecosystem; the more specific patterns are tried first.
  *
- * Only files already discovered by the analyzer are considered, so XML/YAML
- * changelogs (Liquibase) only surface when they carry an analyzed extension.
+ * Only files already discovered by the analyzer are considered, so a Liquibase
+ * changelog surfaces when its plugin reads it (XML today).
  */
 export function detectMigrations(filePaths: string[]): MigrationInfo[] {
   const out: MigrationInfo[] = [];
@@ -88,6 +88,12 @@ function classify(p: string): MigrationInfo | null {
   // Diesel: migrations/<timestamp>_<name>/up.sql (down.sql ignored to dedup)
   m = p.match(/(?:^|\/)migrations\/([^/]+)\/up\.sql$/i);
   if (m) return mk(p, "diesel", m[1]!);
+
+  // Liquibase: changelogs under a liquibase/changelog directory, or named for one
+  // (`db.changelog-master.xml`, `changelog-1.2.yaml`).
+  if (/\.(?:xml|ya?ml|json)$/i.test(p) && (/(?:^|\/)(?:liquibase|changelogs?)\//i.test(p) || /changelog/i.test(baseName(p)))) {
+    return mk(p, "liquibase", stripExt(baseName(p)));
+  }
 
   // Flyway: V<version>__<name>.sql (also repeatable R__name.sql)
   m = baseName(p).match(/^(V[\d._]+__.+|R__.+)\.sql$/);

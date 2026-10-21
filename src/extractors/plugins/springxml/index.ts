@@ -4,6 +4,7 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractSpringClientProxies } from "./client-proxies.js";
 import { mapperDataSources, mapperFunctions } from "./mybatis.js";
 import { ormMappingFunctions } from "./orm-mappings.js";
+import { liquibaseClasses, liquibaseImports } from "./liquibase.js";
 import { androidNavGraphFacts } from "../shared/android-nav-graph.js";
 import { CXF_SERVICE_BEANS_FACT } from "../shared/cxf-service-beans.js";
 
@@ -378,6 +379,9 @@ export const springxmlSpec: RegexLangSpec = {
     return extractFlowRoutes(lines, filePath);
   },
   extractStringConstants: extractBeanConstants,
+  // Liquibase changelogs: the tables they create, and the changelogs they include.
+  extractClasses: (lines) => liquibaseClasses(lines),
+  extractImports: (lines) => liquibaseImports(lines),
   // REST client proxies the beans build (factory beans, `<jaxrs:client>`).
   extractHttpClientRegistrations: (lines) => extractSpringClientProxies(lines),
 };

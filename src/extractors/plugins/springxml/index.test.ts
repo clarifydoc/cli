@@ -56,13 +56,14 @@ const BEANS = `<?xml version="1.0" encoding="UTF-8"?>
 const FLOW_PATH = "admin/src/main/webapp/WEB-INF/flows/club/league.wf.clubapplication.details.xml";
 
 describe("springxml preprocess sniff", () => {
-  it("keeps flows and bean definitions, skips other XML", () => {
+  it("keeps flows, bean definitions and changelogs, skips other XML", () => {
     expect(springxmlMeta.preprocess!(FLOW, FLOW_PATH)).toBeNull();
     expect(springxmlMeta.preprocess!(BEANS, "ctx.xml")).toBeNull();
     const pom = `<project xmlns="http://maven.apache.org/POM/4.0.0"><artifactId>x</artifactId></project>`;
     expect(springxmlMeta.preprocess!(pom, "pom.xml")).toEqual({ skip: expect.any(String) });
     const liquibase = `<databaseChangeLog><changeSet id="1"><createTable tableName="t"/></changeSet></databaseChangeLog>`;
-    expect(springxmlMeta.preprocess!(liquibase, "changelog-1.xml")).toEqual({ skip: expect.any(String) });
+    // A Liquibase changelog is the schema: read (liquibase.ts).
+    expect(springxmlMeta.preprocess!(liquibase, "changelog-1.xml")).toBeNull();
   });
 });
 

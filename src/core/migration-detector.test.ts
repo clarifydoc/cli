@@ -33,3 +33,15 @@ describe("detectMigrations — version order", () => {
     expect(detectMigrations(files).map((m) => m.name)).toEqual(["V1__init", "V1_2__a", "V1_10__b", "V2__players", "V10__add_index"]);
   });
 });
+
+describe("detectMigrations — Liquibase", () => {
+  it("recognises changelogs by their directory or name", () => {
+    const found = detectMigrations([
+      "league-service/src/main/resources/META-INF/liquibase/changelog/db.changelog-1.0.xml",
+      "db/changelog/fixtures.yaml",
+      "src/main/resources/changelog-cup-master.xml",
+      "src/main/resources/applicationContext.xml",
+    ]).map((m) => `${m.ecosystem} ${m.name}`);
+    expect(found).toEqual(["liquibase changelog-cup-master", "liquibase db.changelog-1.0", "liquibase fixtures"]);
+  });
+});
