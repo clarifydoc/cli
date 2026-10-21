@@ -32,6 +32,19 @@ describe("C# EF data-source — fluent chain entity resolution", () => {
     expect(sources.some((s) => s.name === "EF: ToListAsync")).toBe(true);
   });
 
+  it("follows a local holding a query on a set, and reads each set of a LINQ query expression (real-repo FP)", async () => {
+    const rows = await dbSourcesOf(`    var q = _db.Set<Entities.Fixture>().AsQueryable();
+    var rows = await q.OrderByDescending(e => e.KickOff).ToListAsync(ct);
+    var squads = from p in _db.Set<Entities.Player>()
+                 join c in _db.Clubs on p.ClubId equals c.Id
+                 select p;`);
+    expect(rows.map((r) => `${r.name} ${r.entity} ${r.access}`)).toEqual([
+      "EF: ToListAsync Fixture read",
+      "EF: from Player read",
+      "EF: join Clubs read",
+    ]);
+  });
+
   it("resolves a simple `_db.Owners.Where(..)` access", async () => {
     const [s] = await dbSourcesOf(`    var q = _db.Owners.Where(o => o.Name == "a").FirstOrDefault();`);
     expect(s?.entity).toBe("Owners");

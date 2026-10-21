@@ -233,9 +233,16 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
    * about EF — the declared type does.
    */
   private dbSetNames = new Map<string, string | null>();
+  /**
+   * Locals holding a query on a set, by `<member node id>:<name>`
+   * (`var q = _context.Set<Club>().AsQueryable();` → Club): a later
+   * `q.Where(..).ToListAsync()` reads that set.
+   */
+  private efLocals = new Map<string, string>();
 
   override beginFile(tree: Tree, sourceText: string): void {
     this.dbSetNames = new Map();
+    this.efLocals = new Map();
     if (sourceText.includes("DbSet<")) {
       const typeParams = new Set<string>();
       for (const tp of tree.rootNode.descendantsOfType("type_parameter")) {
@@ -478,8 +485,9 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     const receiver = parts.length > 1 ? parts[parts.length - 2]! : "";
     const root = parts[0]!;
     const base = chainBase(fn);
-    if (base !== null && this.dbSetNames.has(base)) {
-      const entity = this.dbSetNames.get(base) ?? undefined;
+    const local = base !== null ? this.efLocals.get(`${enclosingMember(node)?.id}:${base}`) : undefined;
+    if (base !== null && (this.dbSetNames.has(base) || local)) {
+      const entity = local ?? this.dbSetNames.get(base) ?? undefined;
       return this.ds({
         kind: "database",
         name: `EF: ${method}`,
@@ -520,6 +528,36 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     return null;
   }
 
+  /** `var q = <a query on a set>;`: remember which set the local holds. */
+  private recordEfLocal(declarator: Node): void {
+    const name = declarator.childForFieldName("name")?.text ?? declarator.namedChildren.find((c) => c.type === "identifier")?.text;
+    const value = declarator.namedChildren[declarator.namedChildren.length - 1];
+    if (!name || !value || value.type === "identifier") return;
+    const entity = this.efSetOf(value, declarator);
+    if (entity) this.efLocals.set(`${enclosingMember(declarator)?.id}:${name}`, entity);
+  }
+
+  /**
+   * The set an expression queries: `_context.Clubs`, `_context.Set<Club>()`,
+   * either followed by query operators, a DbSet field, or a local holding one.
+   * Null for anything else.
+   */
+  private efSetOf(expr: Node, at: Node): string | null {
+    const fn = expr.type === "invocation_expression" ? expr.childForFieldName("function") : expr;
+    if (!fn) return null;
+    const base = chainBase(fn);
+    if (base !== null && this.dbSetNames.has(base)) return this.dbSetNames.get(base) ?? null;
+    const local = base !== null ? this.efLocals.get(`${enclosingMember(at)?.id}:${base}`) : undefined;
+    if (local) return local;
+    const root = (this.fullCallName(fn) ?? "").split(".")[0]!;
+    if (!/^(?:_?(?:db)?[Cc]ontext|\w+Context|_?db|_?dbContext)$/.test(root)) return null;
+    // `_context.Set<Club>()` itself names its set; a query operator on one walks back to it.
+    const own = fn.childForFieldName("name");
+    if (expr.type === "invocation_expression" && own?.type === "generic_name" && /^Set</.test(own.text)) return cleanEntityName(own.text);
+    if (expr.type === "invocation_expression") return resolveEfDbSet(fn);
+    return cleanEntityName(fn.childForFieldName("name")?.text ?? null);
+  }
+
   /** True when this invocation is the receiver of a later EF access in the same chain. */
   private efCallFollows(node: Node): boolean {
     let cur: Node = node;
@@ -540,6 +578,15 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     }
     if (node.type === "assignment_expression" || node.type === "variable_declarator") {
       this.routingKeyAssignment(node, sources);
+      if (node.type === "variable_declarator") this.recordEfLocal(node);
+      return;
+    }
+    // LINQ query syntax: each `from x in <set>` / `join y in <set>` reads that set.
+    if (node.type === "from_clause" || node.type === "join_clause") {
+      const inAt = node.children.findIndex((c) => c.type === "in");
+      const source = inAt >= 0 ? node.children.slice(inAt + 1).find((c) => c.isNamed) : undefined;
+      const entity = source ? this.efSetOf(source, node) : null;
+      if (entity) sources.push(this.ds({ kind: "database", name: `EF: ${node.type === "join_clause" ? "join" : "from"}`, target: entity, entity, access: "read", line: node.startPosition.row + 1 }));
       return;
     }
     if (node.type !== "invocation_expression") return;
@@ -867,6 +914,13 @@ function chainBase(fnNode: Node): string | null {
     return null;
   }
   return null;
+}
+
+/** The method, constructor or accessor a node sits in. */
+function enclosingMember(node: Node): Node | null {
+  let cur: Node | null = node.parent;
+  while (cur && !MEMBER_SCOPES.has(cur.type)) cur = cur.parent;
+  return cur;
 }
 
 /** Unwrap `Set<Order>` → "Order"; strip generics/namespace; drop non-DbSet members. */
