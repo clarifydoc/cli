@@ -74,6 +74,14 @@ public class MatchService {
         return em.createNamedQuery("player.retired").getResultList();
     }
 
+    public Object viaHelper(Object club) {
+        return list("match.count.by.club", club);
+    }
+
+    private Object list(String queryName, Object... values) {
+        return em.createNamedQuery(queryName).getResultList();
+    }
+
     public Object unknown() {
         return em.createNamedQuery("season.all").getResultList();
     }
@@ -99,7 +107,7 @@ describe("JPA named queries", () => {
 
   it("reads each declaration's name and the entity its query reads", () => {
     expect(namedQueryDeclarations('NamedQueries({ @NamedQuery(name = "a", query = "select m from Match m"), @NamedQuery(name = "b", query = "select 1") })', "Match"))
-      .toEqual([{ name: "a", entity: "Match" }, { name: "b", entity: "Match" }]);
+      .toEqual([{ name: "a", entity: "Match", access: "read" }, { name: "b", entity: "Match", access: "read" }]);
   });
 
   it("gives the call running a named query the entity it reads", () => {
@@ -113,6 +121,7 @@ describe("JPA named queries", () => {
       "MatchService.raw Player",
       "MatchService.clubMatches Match",
       "MatchService.retired Player",
+      "MatchService.viaHelper Match",
     ]));
     expect(rows.some((r) => r.startsWith("MatchService.unknown") && !r.endsWith(" -"))).toBe(false);
   });

@@ -105,6 +105,7 @@ export const javaCallHooks: CallExtractionHooks = {
   qualifiedRootCandidates: capitalizedRoot,
   receiverTypeOf: javaReceiverType,
   argCountOf: javaArgCount,
+  argsOf: javaQueryNameArgs,
   collectExtraCalls: javaMethodReference,
 };
 
@@ -148,6 +149,21 @@ export const kotlinCallHooks: CallExtractionHooks = {
   receiverTypeOf: kotlinReceiverType,
   argCountOf: kotlinArgCount,
 };
+
+/** A string literal shaped like a query name (`"match.by.club"`, `"Club.findAll"`): dotted, no spaces. */
+const QUERY_NAME_LITERAL = /^"[A-Za-z][\w-]*(?:\.[\w-]+)+"$/;
+
+/**
+ * The arguments of a call handing over a named query's name — a DAO helper
+ * (`list("match.by.club", club)`) that runs `createNamedQuery(name)` for it —
+ * so the JVM entity pass can tell which query runs there. Other calls keep none.
+ */
+function javaQueryNameArgs(node: Node): string[] | null {
+  if (node.type !== "method_invocation") return null;
+  const args = node.childForFieldName("arguments")?.namedChildren.filter((c): c is Node => !!c && !/comment$/.test(c.type)) ?? [];
+  if (!args.some((a) => a.type === "string_literal" && QUERY_NAME_LITERAL.test(a.text))) return null;
+  return args.map((a) => a.text.replace(/\s+/g, " "));
+}
 
 /** A Java call's argument count: the `argument_list`'s expressions. */
 function javaArgCount(node: Node): number | null {

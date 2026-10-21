@@ -34,14 +34,17 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
    */
   override reconcileProject(analyses: FileAnalysis[]): void {
     const jvm = analyses.filter((a) => a.language === "java" || a.language === "kotlin");
-    const calls = jvm.flatMap((a) => (a.dataSources ?? []).filter((d) => d.namedQuery && !d.entity));
-    if (calls.length === 0) return;
     const byName = namedQueryEntities(analyses);
-    for (const ds of calls) {
-      const entity = byName.get(ds.namedQuery!);
-      if (!entity) continue;
-      ds.entity = entity;
-      ds.target ??= entity;
+    if (byName.size === 0) return;
+    for (const a of jvm) {
+      for (const ds of a.dataSources ?? []) {
+        const query = ds.namedQuery && !ds.entity ? byName.get(ds.namedQuery) : null;
+        if (!query) continue;
+        ds.entity = query.entity;
+        ds.target ??= query.entity;
+        ds.access ??= query.access;
+      }
+      addHelperQueryRuns(a, byName);
     }
   }
 
@@ -874,8 +877,32 @@ function jpaTableName(decorators: readonly string[], sourceText: string, classNa
   return null;
 }
 
-/** Every declared named query's entity by name; null for a name two declarations disagree on. */
-function namedQueryEntities(analyses: FileAnalysis[]): Map<string, string | null> {
+/**
+ * A call handing a declared query's name to a project helper (`list("match.by.club")`,
+ * which runs `createNamedQuery(name)` a frame or two down) runs that query
+ * there: a read of its entity at the call, unless a row there already names it.
+ */
+function addHelperQueryRuns(a: FileAnalysis, byName: ReadonlyMap<string, NamedQueryRun | null>): void {
+  const calls = [...a.functions, ...a.classes.flatMap((c) => c.methods)].flatMap((fn) => fn.calls.filter((c) => c.args));
+  for (const call of calls) {
+    if (/^(?:createNamedQuery|getNamedQuery)$/.test(call.name.replace(/^.*\./, ""))) continue;
+    const name = call.args!.map((x) => /^"([^"]+)"$/.exec(x)?.[1]).find((n) => n !== undefined && byName.get(n));
+    const query = name ? byName.get(name) : null;
+    if (!query) continue;
+    a.dataSources ??= [];
+    if (a.dataSources.some((d) => d.line === call.line && d.entity === query.entity)) continue;
+    a.dataSources.push({ kind: "database", name: call.name, target: query.entity, entity: query.entity, namedQuery: name, access: query.access, calls: [], line: call.line });
+  }
+}
+
+/** What running a named query does: the entity it reads or writes. */
+interface NamedQueryRun {
+  entity: string;
+  access: "read" | "write";
+}
+
+/** Every declared named query by name; null for a name two declarations disagree on. */
+function namedQueryEntities(analyses: FileAnalysis[]): Map<string, NamedQueryRun | null> {
   const onClasses = analyses.flatMap((a) => a.classes.flatMap((cls) => cls.decorators.flatMap((d) => namedQueryDeclarations(d, cls.name))));
   // A mapping file's queries are functions decorated alike, their declaring entity `@entity("X")`.
   const inMappings = analyses.filter((a) => a.language === "springxml").flatMap((a) => a.functions.flatMap((fn) => {
@@ -883,10 +910,11 @@ function namedQueryEntities(analyses: FileAnalysis[]): Map<string, string | null
     return fn.decorators.flatMap((d) => namedQueryDeclarations(d, owner));
   }));
   const declared = [...onClasses, ...inMappings];
-  const byName = new Map<string, string | null>();
+  const byName = new Map<string, NamedQueryRun | null>();
   for (const q of declared) {
     const prev = byName.get(q.name);
-    byName.set(q.name, prev === undefined || prev === q.entity ? q.entity : null);
+    const same = prev === undefined || (prev !== null && prev.entity === q.entity && prev.access === q.access);
+    byName.set(q.name, same ? { entity: q.entity, access: q.access } : null);
   }
   return byName;
 }
@@ -896,12 +924,14 @@ function namedQueryEntities(analyses: FileAnalysis[]): Map<string, string | null
  * decorator declares: each name with the entity it reads — the JPQL's `from`
  * entity, a native query's `resultClass`, else the declaring class.
  */
-export function namedQueryDeclarations(decorator: string, declaringClass: string): Array<{ name: string; entity: string }> {
-  const out: Array<{ name: string; entity: string }> = [];
+export function namedQueryDeclarations(decorator: string, declaringClass: string): Array<{ name: string; entity: string } & NamedQueryRun> {
+  const out: Array<{ name: string } & NamedQueryRun> = [];
   const parts = decorator.split(/@?(?=\bNamed(?:Native)?Query\s*\()/).filter((p) => /^Named(?:Native)?Query\s*\(/.test(p));
   for (const part of parts) {
     const name = /\bname\s*=\s*"([^"]+)"/.exec(part)?.[1];
-    if (name) out.push({ name, entity: namedQueryEntity(part) ?? declaringClass });
+    // An update or delete query writes; anything else reads.
+    const access = /\bquery\s*=\s*"\s*(?:update|delete|insert)\b/i.test(part) ? "write" : "read";
+    if (name) out.push({ name, entity: namedQueryEntity(part) ?? declaringClass, access });
   }
   return out;
 }
