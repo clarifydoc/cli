@@ -1474,16 +1474,35 @@ function buildMemberTypes(analyses: FileAnalysis[]): Map<string, Map<string, Inj
 
       const seen = new Set<string>([cls.name]);
       let base = bareClassName(cls.extends);
+      let child: FileAnalysis["classes"][number] | null = cls;
       while (base && classByName.has(base) && !seen.has(base)) {
         seen.add(base);
         const baseCls = classByName.get(base)!;
-        for (const prop of baseCls.properties) add(prop.name, prop.type, prop.qualifier, false);
+        for (const prop of baseCls.properties) add(prop.name, (child && handedType(child, baseCls, prop.name)) ?? prop.type, prop.qualifier, false);
         base = bareClassName(baseCls.extends);
+        child = null;
       }
       if (members.size > 0) out.set(memberKey(a.filePath, cls.name), members);
     }
   }
   return out;
+}
+
+/**
+ * The type a subclass hands its base for a field the base sets from its
+ * constructor: `BaseHandler(IRepository<T> repository) { _repository = repository; }`
+ * and `MatchHandler(IMatchRepository matches) : base(matches)` make the
+ * subclass's `_repository` an `IMatchRepository`. Null when any step is unstated.
+ */
+function handedType(child: ClassInfo, base: ClassInfo, field: string): string | null {
+  const hole = (v: string | undefined): string | null => (v ? /^\$\{(\w+)\}$/.exec(v)?.[1] ?? null : null);
+  const param = hole(base.fieldValues?.[field]);
+  if (!param || !child.superArgs) return null;
+  const index = base.methods.find((m) => isConstructor(m, base) && m.params.some((p) => p.name === param))?.params.findIndex((p) => p.name === param) ?? -1;
+  const passed = index >= 0 ? hole(child.superArgs[index]) : null;
+  if (!passed) return null;
+  const ctor = child.methods.find((m) => isConstructor(m, child) && m.params.some((p) => p.name === passed));
+  return ctor?.params.find((p) => p.name === passed)?.type ?? null;
 }
 
 /** Key of a class within a file: `file\0className`. */
@@ -3416,8 +3435,17 @@ function ownerOverrideLinks(
   const action = host.methods.find((m) => m.name === handlerName && route.line >= m.line && route.line <= m.endLine)
     ?? host.methods.find((m) => m.name === handlerName)!;
   const own = new Set(host.methods.map((m) => m.name));
+  const ownerClass = ctx.classAt.get(memberKey(owner.file, route.owner!));
   const out: SymbolLink[] = [];
   for (const call of action.calls) {
+    // `_providerFactory.All()` on a field the owner handed the base: on the owner's type.
+    const onField = /^(?:this\.)?(\w+)\.(\w+)$/.exec(call.name);
+    const handed = onField && ownerClass && bareClassName(ownerClass.extends) === host.name ? handedType(ownerClass, host, onField[1]!) : null;
+    if (handed) {
+      const link = resolveCallToDefinition(sourceFile, sourceSymbol, { ...call, receiverType: handed }, analysis, ctx);
+      if (link) out.push({ ...link, strategy: "route-override" });
+      continue;
+    }
     const name = /^(?:this\.|self\.|base\.)?(\w+)$/.exec(call.name)?.[1];
     if (!name || name === handlerName || !own.has(name)) continue;
     const override = findMethodInClass(ctx, route.owner!, owner.file, name);
