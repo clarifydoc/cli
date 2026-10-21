@@ -4,6 +4,7 @@ import { springxmlManifest } from "./manifest.js";
 import { WebflowUiBridgeResolver } from "./dispatch.js";
 import { MyBatisMapperResolver } from "./mybatis-dispatch.js";
 import { isMapperXml } from "./mybatis.js";
+import { isOrmMappingXml } from "./orm-mappings.js";
 import { isAndroidNavGraph } from "../shared/android-nav-graph.js";
 
 /**
@@ -22,7 +23,9 @@ export const springxmlMeta: LanguagePluginMeta = {
   preprocess(rawSource) {
     const isFlow = rawSource.includes("springframework.org/schema/webflow") && /<flow[\s>]/.test(rawSource);
     const isBeans = /<beans[\s>]/.test(rawSource) && (/<bean\b[^>]*\bclass\s*=/.test(rawSource) || /<jaxrs:client\b/.test(rawSource));
-    if (!isFlow && !isBeans && !isMapperXml(rawSource) && !isAndroidNavGraph(rawSource)) return { skip: "not a Spring flow/bean definition, MyBatis mapper or Android navigation graph" };
+    if (!isFlow && !isBeans && !isMapperXml(rawSource) && !isAndroidNavGraph(rawSource) && !isOrmMappingXml(rawSource)) {
+      return { skip: "not a Spring flow/bean definition, MyBatis mapper, JPA mapping file or Android navigation graph" };
+    }
     return null;
   },
 };

@@ -35,6 +35,18 @@ public class Player {
     @Id private Long id;
 }
 `,
+  "src/main/resources/META-INF/orm.xml": `<?xml version="1.0" encoding="UTF-8"?>
+<entity-mappings xmlns="http://xmlns.jcp.org/xml/ns/persistence/orm" version="2.1">
+    <named-query name="club.matches">
+        <query><![CDATA[
+            select m from Match m where m.club = :club
+        ]]></query>
+    </named-query>
+    <entity class="com.example.league.Player">
+        <named-native-query name="player.retired"><query>SELECT * FROM players WHERE retired</query></named-native-query>
+    </entity>
+</entity-mappings>
+`,
   "src/main/java/com/example/league/MatchService.java": `package com.example.league;
 
 import javax.persistence.EntityManager;
@@ -52,6 +64,14 @@ public class MatchService {
 
     public Object raw() {
         return em.createNamedQuery("player.raw").getResultList();
+    }
+
+    public Object clubMatches(Object club) {
+        return em.createNamedQuery("club.matches").setParameter("club", club).getResultList();
+    }
+
+    public Object retired() {
+        return em.createNamedQuery("player.retired").getResultList();
     }
 
     public Object unknown() {
@@ -91,6 +111,8 @@ describe("JPA named queries", () => {
       "MatchService.countMatches Match",
       "MatchService.players Player",
       "MatchService.raw Player",
+      "MatchService.clubMatches Match",
+      "MatchService.retired Player",
     ]));
     expect(rows.some((r) => r.startsWith("MatchService.unknown") && !r.endsWith(" -"))).toBe(false);
   });

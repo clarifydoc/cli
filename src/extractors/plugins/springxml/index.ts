@@ -3,6 +3,7 @@ import { applyRouteMeta, splitList, type GuardAttr } from "../../shared/route-me
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractSpringClientProxies } from "./client-proxies.js";
 import { mapperDataSources, mapperFunctions } from "./mybatis.js";
+import { ormMappingFunctions } from "./orm-mappings.js";
 import { androidNavGraphFacts } from "../shared/android-nav-graph.js";
 import { CXF_SERVICE_BEANS_FACT } from "../shared/cxf-service-beans.js";
 
@@ -366,7 +367,7 @@ export const springxmlSpec: RegexLangSpec = {
   classPatterns: [],
   importPatterns: [],
 
-  postProcessFunctions: (lines) => [...extractFlowFunctions(lines), ...mapperFunctions(lines)],
+  postProcessFunctions: (lines) => [...extractFlowFunctions(lines), ...mapperFunctions(lines), ...ormMappingFunctions(lines)],
   // MyBatis mapper statements: the table each one reads or writes (mybatis.ts).
   extractDataSources: (lines) => mapperDataSources(lines),
   extractRoutes: (lines, _classes, filePath, _functions, facts) => {

@@ -36,7 +36,7 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
     const jvm = analyses.filter((a) => a.language === "java" || a.language === "kotlin");
     const calls = jvm.flatMap((a) => (a.dataSources ?? []).filter((d) => d.namedQuery && !d.entity));
     if (calls.length === 0) return;
-    const byName = namedQueryEntities(jvm);
+    const byName = namedQueryEntities(analyses);
     for (const ds of calls) {
       const entity = byName.get(ds.namedQuery!);
       if (!entity) continue;
@@ -876,7 +876,13 @@ function jpaTableName(decorators: readonly string[], sourceText: string, classNa
 
 /** Every declared named query's entity by name; null for a name two declarations disagree on. */
 function namedQueryEntities(analyses: FileAnalysis[]): Map<string, string | null> {
-  const declared = analyses.flatMap((a) => a.classes.flatMap((cls) => cls.decorators.flatMap((d) => namedQueryDeclarations(d, cls.name))));
+  const onClasses = analyses.flatMap((a) => a.classes.flatMap((cls) => cls.decorators.flatMap((d) => namedQueryDeclarations(d, cls.name))));
+  // A mapping file's queries are functions decorated alike, their declaring entity `@entity("X")`.
+  const inMappings = analyses.filter((a) => a.language === "springxml").flatMap((a) => a.functions.flatMap((fn) => {
+    const owner = fn.decorators.map((d) => /^@entity\("(\w+)"\)$/.exec(d)?.[1]).find(Boolean) ?? fn.name;
+    return fn.decorators.flatMap((d) => namedQueryDeclarations(d, owner));
+  }));
+  const declared = [...onClasses, ...inMappings];
   const byName = new Map<string, string | null>();
   for (const q of declared) {
     const prev = byName.get(q.name);
