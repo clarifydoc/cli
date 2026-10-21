@@ -119,13 +119,13 @@ const MEASURED: Measured[] = [
     globs: ["src/**/*.ts"],
     minFunctions: 1200,
     minExact: 0.9,
-    // TypeScript's ternaries (and the `?` of its types) are invisible to a line
-    // scanner; it never takes this path in production, having a parser.
-    minNesting: 0.8,
-    minCognitive: 0.55,
+    // A ternary split over lines, or nested in another, still reads apart from
+    // the parser's; TypeScript never takes this path in production, having one.
+    minNesting: 0.9,
+    minCognitive: 0.75,
   },
-  { language: "csharp", globs: ["test-fixtures/**/*.cs"], minFunctions: 20, minExact: 0.85, minNesting: 0.93, minCognitive: 0.93 },
-  { language: "java", globs: ["test-fixtures/**/*.java"], minFunctions: 40, minExact: 0.9, minNesting: 0.95, minCognitive: 0.95 },
+  { language: "csharp", globs: ["test-fixtures/**/*.cs"], minFunctions: 20, minExact: 0.85, minNesting: 0.95, minCognitive: 0.95 },
+  { language: "java", globs: ["test-fixtures/**/*.java"], minFunctions: 40, minExact: 0.9, minNesting: 0.98, minCognitive: 0.98 },
 ];
 
 /**
@@ -423,5 +423,21 @@ describe("regex tier — the languages that have only it", () => {
         }
       }
     }
+  });
+});
+
+describe("regex tier — conditional expressions", () => {
+  it("counts a spaced ternary as a branch at its statement's nesting, and never Rust's `?` or an optional member", () => {
+    const lines = [
+      "function grade(car, garage) {",
+      "  const label = car.fast ? 'fast' : 'slow';",
+      "  if (garage) {",
+      "    return garage.open ? label : garage?.name;",
+      "  }",
+      "  const spare = car.parts?.spare;",
+      "  return spare;",
+      "}",
+    ];
+    expect(regexStructureMetrics(lines, "typescript" as Language, { name: "grade", line: 1, endLine: 8 })).toEqual({ cognitive: 4, nestingDepth: 2 });
   });
 });

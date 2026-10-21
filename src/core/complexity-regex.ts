@@ -2,11 +2,11 @@ import type { ComplexityInfo, FileAnalysis, FunctionInfo } from "../types/analys
 import type { RegexLangSpec } from "../extractors/plugins/shared/regex-base.js";
 import { blankStringLiterals } from "../extractors/plugins/shared/regex-base.js";
 import { REGEX_COMPLEXITY_DEFAULT } from "../extractors/shared/complexity-defaults.js";
-import { regexStructureMetrics } from "./control-flow-regex.js";
+import { regexStructureMetrics, ternaryCount } from "./control-flow-regex.js";
 
 /**
  * Cyclomatic complexity for the regex path, where there is no tree to walk:
- * 1 + the branch keywords and logical operators in a function's body lines,
+ * 1 + the branch keywords, logical operators and `a ? b : c` conditionals in a function's body lines,
  * strings and comments blanked first (the plugins' shared line blanker, plus
  * backtick strings). The vocabulary is `REGEX_COMPLEXITY_DEFAULT` unless the
  * spec overrides it. A `match`/`case`/`select` counts once — its arms are not
@@ -32,7 +32,7 @@ export function computeRegexComplexity(lines: string[], analysis: FileAnalysis, 
     while (branches.exec(code)) n++;
     logical.lastIndex = 0;
     while (logical.exec(code)) n++;
-    return n;
+    return n + ternaryCount(code, analysis.language);
   };
   const measure = (fn: FunctionInfo, name: string): void => {
     if (!fn.endLine || fn.endLine < fn.line || fn.name === "<setup>") return;

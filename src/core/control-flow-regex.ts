@@ -100,6 +100,8 @@ class SynthNode implements FlowNode {
   readonly isNamed = true;
   readonly startIndex: number;
   readonly children: SynthNode[] = [];
+  /** The first line's comment- and string-blanked text, for counting operators. */
+  code = "";
   private readonly fields = new Map<string, SynthNode>();
 
   constructor(
@@ -550,12 +552,14 @@ function blockEnd(lines: readonly ScanLine[], i: number, to: number): number {
  * first line's raw text unless `text` is given.
  */
 function node(type: string, start: ScanLine, end: ScanLine, text?: string): SynthNode {
-  return new SynthNode(
+  const n = new SynthNode(
     type,
     text ?? start.raw.trim(),
     { row: start.row, column: 0 },
     { row: end.row, column: (end.raw || "").length },
   );
+  n.code = start.code;
+  return n;
 }
 
 /** Emit one construct and return the line index to continue from. */
@@ -813,6 +817,19 @@ function logicalOpsOf(language: Language): RegExp | null {
   return re;
 }
 
+const TERNARY = /(?<=\s)\?(?=\s)/g;
+const TERNARY_NODES = /^(?:ternary_expression|conditional_expression)$/;
+
+/** Spaced `a ? b : c` operators in blanked code, for a language whose complexity table counts them (else 0). */
+export function ternaryCount(code: string, language: Language): number {
+  return countsTernaries(language) ? (code.match(TERNARY) ?? []).length : 0;
+}
+
+/** Whether the language's complexity table counts a conditional expression as a branch. */
+function countsTernaries(language: Language): boolean {
+  return [...(complexityFor(language) ?? DEFAULT_COMPLEXITY).branchNodes].some((t) => TERNARY_NODES.test(t));
+}
+
 /**
  * Cognitive complexity and nesting depth read off the same synthesized structure
  * the graph is drawn from — what a regex-path language had no way to report.
@@ -833,8 +850,17 @@ export function regexStructureMetrics(
   if (!body) return null;
   let cognitive = 0;
   let deepest = 0;
+  const ternary = countsTernaries(language);
   const count = (n: SynthNode | null): void => {
     if (n && logical) cognitive += (n.text.match(globalOf(logical)) ?? []).length;
+  };
+  /** `a ? b : c`, spaced as written in code (not Rust's `x?`, TS's `x?:` or `?.`): a branch at the statement's nesting. */
+  const ternaries = (n: SynthNode, nesting: number): void => {
+    if (!ternary) return;
+    const k = (n.code.match(TERNARY) ?? []).length;
+    if (k === 0) return;
+    cognitive += k * (1 + nesting);
+    deepest = Math.max(deepest, nesting + 1);
   };
   /** A construct that adds 1 plus its nesting and deepens what it holds. */
   const enter = (nesting: number): void => {
@@ -851,6 +877,7 @@ export function regexStructureMetrics(
       case "return_statement":
       case "throw_statement":
         count(n);
+        ternaries(n, nesting);
         return;
       case "if_statement":
         enter(nesting);
