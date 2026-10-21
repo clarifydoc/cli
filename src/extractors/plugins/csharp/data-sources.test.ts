@@ -472,3 +472,41 @@ public class RecordMatch {
     expect(rows.map((r) => `${r.target} ${r.entity}`)).toEqual(["MatchPlayedMessage.RoutingKey MatchPlayedMessage"]);
   });
 });
+
+describe("C# Redis through StackExchange.Redis", () => {
+  it("reads and writes the store by the command's verb", async () => {
+    const src = `using StackExchange.Redis;
+namespace League;
+public class SquadStore {
+  private readonly IConnectionMultiplexer _redis;
+  public async Task<string> Load(string club) {
+    var db = _redis.GetDatabase();
+    var value = await db.HashGetAsync(club, "squad");
+    await db.HashSetAsync(club, new[] { new HashEntry("squad", value) });
+    await db.KeyDeleteAsync(club + ":old");
+    return value;
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as any, "S.cs");
+    const rows = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
+    expect(rows.map((r) => `${r.name} ${r.target} ${r.access}`)).toEqual([
+      "Redis: HashGetAsync redis read",
+      "Redis: HashSetAsync redis write",
+      "Redis: KeyDeleteAsync redis write",
+    ]);
+  });
+
+  it("reads an IDistributedCache as a key-value store", async () => {
+    const src = `namespace League;
+public class SquadCache {
+  private readonly IDistributedCache _cache;
+  public async Task Save(string club, byte[] squad) {
+    var old = await _cache.GetAsync(club);
+    await _cache.SetAsync(club, squad);
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as any, "C.cs");
+    const rows = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
+    expect(rows.map((r) => `${r.name} ${r.target} ${r.access}`)).toEqual(["Cache: GetAsync distributed-cache read", "Cache: SetAsync distributed-cache write"]);
+  });
+});

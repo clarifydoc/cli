@@ -233,6 +233,10 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
    * about EF — the declared type does.
    */
   private dbSetNames = new Map<string, string | null>();
+  /** The file talks to Redis through StackExchange.Redis (`IDatabase`). */
+  private usesRedis = false;
+  /** Fields and parameters declared `IDistributedCache` (`_cache`, `cache`). */
+  private cacheNames = new Set<string>();
   /**
    * Locals holding a query on a set, by `<member node id>:<name>`
    * (`var q = _context.Set<Club>().AsQueryable();` → Club): a later
@@ -254,6 +258,8 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         if (!this.dbSetNames.has(m[2]!)) this.dbSetNames.set(m[2]!, typeParams.has(type) ? null : type);
       }
     }
+    this.usesRedis = /\bStackExchange\.Redis\b|\bIDatabase\b/.test(sourceText);
+    this.cacheNames = new Set([...sourceText.matchAll(/\bIDistributedCache\s+(\w+)/g)].map((m) => m[1]!));
     this.constStrings = new Map();
     // A method's own `const string url = "…";` is a local of that method (read
     // below as a string local by its line), never a value of the whole file.
@@ -782,6 +788,32 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       return;
     }
 
+    // StackExchange.Redis: `db.HashGetAsync(key, field)`, `db.StringSetAsync(key, value)` on an
+    // `IDatabase` — a read or a write of the Redis store, by the command's verb.
+    if (this.usesRedis && REDIS_COMMAND_RE.test(method) && (/^_?(?:db|redis|database|cache|store)$/i.test(receiver) ||
+      /\bIDatabase(?:Async)?$/.test(parameterType(node, receiver) ?? ""))) {
+      sources.push(this.ds({
+        kind: "database",
+        name: `Redis: ${method}`,
+        target: "redis",
+        line: node.startPosition.row + 1,
+        access: REDIS_READ_RE.test(method) ? "read" : "write",
+      }));
+      return;
+    }
+
+    // ASP.NET's `IDistributedCache` (Redis, SQL Server or memory behind it): a key-value store.
+    if (this.cacheNames.has(receiver) && /^(?:Get|Set|Remove|Refresh)(?:String)?(?:Async)?$/.test(method)) {
+      sources.push(this.ds({
+        kind: "database",
+        name: `Cache: ${method}`,
+        target: "distributed-cache",
+        line: node.startPosition.row + 1,
+        access: /^Get/.test(method) ? "read" : "write",
+      }));
+      return;
+    }
+
     // Settings store — ISettingsProvider.GetSetting / SetSetting. Distinctive
     // names; treated as I/O on the synthetic "Settings" resource.
     if (SETTINGS_METHODS.has(method)) {
@@ -958,6 +990,10 @@ function chainBase(fnNode: Node): string | null {
   }
   return null;
 }
+
+/** StackExchange.Redis `IDatabase` commands: the data-type prefix, then the operation. */
+const REDIS_COMMAND_RE = /^(?:String|Hash|List|Set|SortedSet|Key|Stream|Geo|HyperLogLog)[A-Z]\w*?(?:Async)?$/;
+const REDIS_READ_RE = /^(?:String|Hash|List|Set|SortedSet|Key|Stream|Geo|HyperLogLog)(?:Get\w*|Exists|Length|Range\w*|Scan|Members|Contains|Keys|Values|Score|Rank|Read\w*|Ttl|TimeToLive|Type|Position|Distance|Search\w*|RandomMember\w*|Index)(?:Async)?$/;
 
 /** Contexts ASP.NET and friends hand to a callback: never a `DbContext`. */
 const FRAMEWORK_CONTEXT_TYPE = /(?:Http|Action|Filter|Factory|Binding|Executing|Executed|Exception|Result|View|Page|Controller|Validated|Validation|Token\w*|Message|Endpoint|Authorization|Hub|Execution|Logging|Rewrite|Redirect)Context$/;
