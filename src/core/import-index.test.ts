@@ -44,13 +44,13 @@ describe("resolveDataSourceStringConstants", () => {
     const pasB = file("proj-b/fMain.pas", { sources: [{ name: "FDTable1.Open", target: "FDTable1" }] });
     resolveDataSourceStringConstants([
       file("proj-a/fMain.fmx", { constants: { FDTable1: "squad" } }),
-      file("proj-b/fMain.fmx", { constants: { FDTable1: "employee" } }),
+      file("proj-b/fMain.fmx", { constants: { FDTable1: "referee" } }),
       pasA,
       pasB,
     ]);
     // Each companion unit resolves to ITS form's table despite the global conflict.
     expect(pasA.dataSources[0]).toMatchObject({ target: "squad", entity: "squad" });
-    expect(pasB.dataSources[0]).toMatchObject({ target: "employee", entity: "employee" });
+    expect(pasB.dataSources[0]).toMatchObject({ target: "referee", entity: "referee" });
   });
 
   it("backfills a missing entity when the target names a resolvable constant", () => {
@@ -72,12 +72,12 @@ describe("resolveDataSourceStringConstants", () => {
   });
 
   it("never rewrites an entity that resolved to a real table already", () => {
-    const pas = file("app/U.pas", { sources: [{ name: "SELECT", target: "orders", entity: "orders" }] });
+    const pas = file("app/U.pas", { sources: [{ name: "SELECT", target: "cars", entity: "cars" }] });
     resolveDataSourceStringConstants([
-      file("app/U.dfm", { constants: { qryX: "invoices" } }),
+      file("app/U.dfm", { constants: { qryX: "bills" } }),
       pas,
     ]);
-    expect(pas.dataSources[0]).toMatchObject({ target: "orders", entity: "orders" });
+    expect(pas.dataSources[0]).toMatchObject({ target: "cars", entity: "cars" });
   });
 
   it("ignores non-database sources", () => {
@@ -118,18 +118,18 @@ describe("Delphi dataset calls are not entities", () => {
   });
 
   it("still reads a real entity from a non-dataset call chain", () => {
-    const a = pascal(["prisma.user.findMany"]);
+    const a = pascal(["prisma.player.findMany"]);
     enrichFileDataSources(a);
-    expect(a.dataSources[0]!.entity).toBe("user");
+    expect(a.dataSources[0]!.entity).toBe("player");
   });
 
   it("does not change other languages", () => {
     const a: FileAnalysis = {
       ...createEmptyAnalysis("app.ts", "typescript"),
-      dataSources: [{ kind: "database", name: "User.findOne", target: "User", calls: [], line: 1 }],
+      dataSources: [{ kind: "database", name: "Player.findOne", target: "Player", calls: [], line: 1 }],
     };
     enrichFileDataSources(a);
-    expect(a.dataSources[0]!.entity).toBe("User");
+    expect(a.dataSources[0]!.entity).toBe("Player");
   });
 });
 
@@ -160,12 +160,12 @@ describe("resolveImportSource — TypeScript ESM specifiers", () => {
 });
 
 describe("an API label is not a call chain", () => {
-  it("reads no entity from `ADO.NET: ExecuteScalar` or `Settings: GetSetting`, and still reads `User.findOne`", () => {
+  it("reads no entity from `ADO.NET: ExecuteScalar` or `Settings: GetSetting`, and still reads `Player.findOne`", () => {
     const a: FileAnalysis = {
       ...createEmptyAnalysis("app.cs", "csharp"),
-      dataSources: ["ADO.NET: ExecuteScalar", "Cache: GetValue", "User.findOne"].map((name, i) => ({ kind: "database" as const, name, target: null, calls: [], line: i + 1 })),
+      dataSources: ["ADO.NET: ExecuteScalar", "Cache: GetValue", "Player.findOne"].map((name, i) => ({ kind: "database" as const, name, target: null, calls: [], line: i + 1 })),
     };
     enrichFileDataSources(a);
-    expect(a.dataSources.map((d) => d.entity)).toEqual([undefined, undefined, "User"]);
+    expect(a.dataSources.map((d) => d.entity)).toEqual([undefined, undefined, "Player"]);
   });
 });

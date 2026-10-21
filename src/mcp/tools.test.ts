@@ -477,8 +477,8 @@ describe("clarifydoc MCP tools — missing analysis", () => {
 
 describe("path resolution", () => {
   it("normalizes separators, ./ prefixes and the project root away", () => {
-    expect(normalizePath("src\\api\\Users.ts")).toBe("src/api/users.ts");
-    expect(normalizePath("./src/api/users.ts")).toBe("src/api/users.ts");
+    expect(normalizePath("src\\api\\Players.ts")).toBe("src/api/players.ts");
+    expect(normalizePath("./src/api/players.ts")).toBe("src/api/players.ts");
     expect(normalizePath("C:/proj/src/a.ts", "C:\\proj")).toBe("src/a.ts");
   });
 
@@ -514,17 +514,17 @@ describe("clarifydoc MCP tools — csharp fixture (route attribute layer)", () =
   const { server } = serverFor("sample-csharp-api");
 
   it("routes print versions, auth and parameter bindings, and the body schema on request", async () => {
-    const { text } = await call(server, "clarifydoc_routes", { path: "/Users", method: "POST", schema: true });
+    const { text } = await call(server, "clarifydoc_routes", { path: "/Players", method: "POST", schema: true });
     expect(text).toContain("versions: 2");
-    expect(text).toContain("auth: policy Policies.UsersRead; roles Admin, UserManager; scheme Bearer");
-    expect(text).toContain("params: dto: CreateUserDto ← body");
+    expect(text).toContain("auth: policy Policies.PlayersRead; roles Admin, PlayerManager; scheme Bearer");
+    expect(text).toContain("params: dto: CreatePlayerDto ← body");
     expect(text).toContain('body: {"type":"object","properties":{"requestedBy"');
     expect(text).toContain('"email_address":{"type":"string"}');
     expect(text).toContain('"required":["name"]');
   });
 
   it("a deprecated version and an anonymous override are called out", async () => {
-    const { text } = await call(server, "clarifydoc_routes", { path: "/Users/{id}", method: "DELETE" });
+    const { text } = await call(server, "clarifydoc_routes", { path: "/Players/{id}", method: "DELETE" });
     expect(text).toContain("versions: 1 (deprecated), 2");
     expect(text).toContain("auth: anonymous (AllowAnonymous)");
   });
@@ -542,14 +542,14 @@ describe("clarifydoc MCP tools — attribute-layer queries (csharp fixture)", ()
   const { server } = serverFor("sample-csharp-api");
 
   it("routes filter by policy, role, scheme, anonymous, version, deprecated and body type", async () => {
-    const policy = await call(server, "clarifydoc_routes", { policy: "UsersRead", limit: 100 });
+    const policy = await call(server, "clarifydoc_routes", { policy: "PlayersRead", limit: 100 });
     expect(policy.text).toMatch(/# Routes \(4 matches\)/);
-    const role = await call(server, "clarifydoc_routes", { role: "UserManager" });
+    const role = await call(server, "clarifydoc_routes", { role: "PlayerManager" });
     expect(role.text).toContain("# Routes (1 match)");
-    expect(role.text).toContain("POST /api/v{version}/Users");
+    expect(role.text).toContain("POST /api/v{version}/Players");
     const anonymous = await call(server, "clarifydoc_routes", { anonymous: true });
     expect(anonymous.text).toContain("# Routes (2 matches)");
-    expect(anonymous.text).toContain("DELETE /api/v{version}/Users/{id}");
+    expect(anonymous.text).toContain("DELETE /api/v{version}/Players/{id}");
     // Its own [AllowAnonymous] waives the [Authorize] it inherits from BaseApiController.
     expect(anonymous.text).toContain("POST /api/Reports/run");
     const guarded = await call(server, "clarifydoc_routes", { anonymous: false, limit: 100 });
@@ -561,34 +561,34 @@ describe("clarifydoc MCP tools — attribute-layer queries (csharp fixture)", ()
     expect(v1.text).toMatch(/# Routes \(3 matches\)/); // POST is v2 only
     const deprecated = await call(server, "clarifydoc_routes", { deprecated: true, limit: 100 });
     expect(deprecated.text).toMatch(/# Routes \(3 matches\)/);
-    const body = await call(server, "clarifydoc_routes", { bodyType: "CreateUserDto", limit: 100 });
+    const body = await call(server, "clarifydoc_routes", { bodyType: "CreatePlayerDto", limit: 100 });
     expect(body.text).toMatch(/# Routes \(2 matches\)/);
     const miss = await call(server, "clarifydoc_routes", { scheme: "no-such-scheme", method: "GET" });
     expect(miss.text).toContain("clarifydoc_routes without `scheme`");
   });
 
   it("search finds a route by its policy and shows the guard on the row", async () => {
-    const { text } = await call(server, "clarifydoc_search", { query: "UsersRead", kinds: ["route"] });
+    const { text } = await call(server, "clarifydoc_search", { query: "PlayersRead", kinds: ["route"] });
     expect(text).toContain("[route]");
-    expect(text).toContain("auth: policy Policies.UsersRead");
+    expect(text).toContain("auth: policy Policies.PlayersRead");
   });
 
   it("contract renders one endpoint as an OpenAPI-shaped operation with security, parameters and body schema", async () => {
-    const { text, isError } = await call(server, "clarifydoc_contract", { path: "/api/v{version}/Users", method: "POST" });
+    const { text, isError } = await call(server, "clarifydoc_contract", { path: "/api/v{version}/Players", method: "POST" });
     expect(isError).toBe(false);
-    expect(text).toContain("# POST /api/v{version}/Users → Create");
+    expect(text).toContain("# POST /api/v{version}/Players → Create");
     expect(text).toContain("guards: Authorize(");
     const json = JSON.parse(text.split("```json")[1]!.split("```")[0]!);
     expect(json).toMatchObject({
       operationId: "Create",
-      security: [{ Bearer: ["Admin", "UserManager"] }],
-      "x-policies": ["Policies.UsersRead"],
+      security: [{ Bearer: ["Admin", "PlayerManager"] }],
+      "x-policies": ["Policies.PlayersRead"],
       "x-api-versions": ["2"],
     });
     expect(json.requestBody.content["application/json"].schema).toMatchObject({ type: "object", required: ["name"] });
     expect(json.requestBody.content["application/json"].schema.properties.email_address).toEqual({ type: "string" });
     // Path parameters come from the route's params, typed and required.
-    const byId = await call(server, "clarifydoc_contract", { path: "/api/v{version}/Users/{id}", method: "GET" });
+    const byId = await call(server, "clarifydoc_contract", { path: "/api/v{version}/Players/{id}", method: "GET" });
     const op = JSON.parse(byId.text.split("```json")[1]!.split("```")[0]!);
     expect(op.parameters).toEqual([
       { name: "id", in: "path", required: true, schema: { type: "integer" }, "x-inferred": true },
@@ -598,8 +598,8 @@ describe("clarifydoc MCP tools — attribute-layer queries (csharp fixture)", ()
   });
 
   it("contract lists the candidates when the path is ambiguous, and misses point elsewhere", async () => {
-    const many = await call(server, "clarifydoc_contract", { path: "/Users" });
-    expect(many.text).toMatch(/# \d+ endpoints match "\/Users"/);
+    const many = await call(server, "clarifydoc_contract", { path: "/Players" });
+    expect(many.text).toMatch(/# \d+ endpoints match "\/Players"/);
     expect(many.text).toContain("narrow with method, project, file or version");
   });
 });
@@ -627,9 +627,9 @@ describe("clarifydoc_explain — backend fixture", () => {
   const { server } = serverFor("sample-backend");
 
   it("packs a route's contract, what it reaches and its risk, in that order", async () => {
-    const r = await call(server, "clarifydoc_explain", { subject: "GET /api/users/:id" });
+    const r = await call(server, "clarifydoc_explain", { subject: "GET /api/players/:id" });
     expect(r.isError).toBe(false);
-    expect(r.text).toMatch(/^# GET \/api\/users\/:id — /);
+    expect(r.text).toMatch(/^# GET \/api\/players\/:id — /);
     const order = ["## Contract and callers", "## What it reaches", "## Risk"].map((h) => r.text.indexOf(h));
     expect(order.every((i) => i > 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
@@ -637,15 +637,15 @@ describe("clarifydoc_explain — backend fixture", () => {
   });
 
   it("asks which route when a path names several, and names what did not fit", async () => {
-    const many = await call(server, "clarifydoc_explain", { subject: "/api/users" });
+    const many = await call(server, "clarifydoc_explain", { subject: "/api/players" });
     expect(many.text).toMatch(/matches \d+ routes — pick one/);
-    expect(many.text).toContain('clarifydoc_explain subject="GET /api/users"');
-    const reaches = await call(server, "clarifydoc_explain", { subject: "GET /api/users/:id" });
+    expect(many.text).toContain('clarifydoc_explain subject="GET /api/players"');
+    const reaches = await call(server, "clarifydoc_explain", { subject: "GET /api/players/:id" });
     expect(reaches.text).toMatch(/## What it reaches\n\n(?!No call-graph)/);
   });
 
   it("explains a function by its source and callers", async () => {
-    const r = await call(server, "clarifydoc_explain", { subject: "getUserById" });
+    const r = await call(server, "clarifydoc_explain", { subject: "getPlayerById" });
     expect(r.text).toMatch(/## Source/);
     expect(r.text).toMatch(/## Callers/);
   });
@@ -654,15 +654,15 @@ describe("clarifydoc_explain — backend fixture", () => {
 describe("clarifydoc_explain — the tests in the pack", () => {
   it("names the tests that reach a function, with the command that runs them, and says when none does", async () => {
     const { server } = serverFor("sample-powershell-app");
-    const r = await call(server, "clarifydoc_explain", { subject: "Get-AppUser", maxTokens: 8000 });
-    expect(r.text).toMatch(/## Tests\n\n- <setup> \(tests\/Users\.Tests\.ps1:\d+\)/);
+    const r = await call(server, "clarifydoc_explain", { subject: "Get-AppPlayer", maxTokens: 8000 });
+    expect(r.text).toMatch(/## Tests\n\n- <setup> \(tests\/Players\.Tests\.ps1:\d+\)/);
     // A language whose plugin knows its test runner says how to run just those tests.
     const { server: ts } = serverFor("sample-dead-code");
     const whisper = await call(ts, "clarifydoc_explain", { subject: "whisper", maxTokens: 8000 });
     expect(whisper.text).toMatch(/## Tests\n\n- <setup> \(src\/lib\/strings\.test\.ts:\d+\)/);
     expect(whisper.text).toMatch(/Run: `[^`]*strings\.test\.ts[^`]*`/);
     const { server: backend } = serverFor("sample-backend");
-    const none = await call(backend, "clarifydoc_explain", { subject: "getUserById", maxTokens: 8000 });
+    const none = await call(backend, "clarifydoc_explain", { subject: "getPlayerById", maxTokens: 8000 });
     expect(none.text).toContain("## Tests\n\nNone of the analysed tests reaches it through the call graph.");
   });
 });

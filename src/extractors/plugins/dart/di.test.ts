@@ -16,9 +16,9 @@ describe("dart class members", () => {
   it("reads abstract signatures and makes a pure abstract class an interface", () => {
     const [repo] = classes(
       [
-        "abstract class UserRepo {",
-        "  Future<User?> load(int id);",
-        "  Future<User?> find(",
+        "abstract class PlayerRepo {",
+        "  Future<Player?> load(int id);",
+        "  Future<Player?> find(",
         "    int id,",
         "  );",
         "  String? get(String k);",
@@ -65,17 +65,17 @@ describe("dart class members", () => {
   it("reads constructors with their parameters, typing `this.x` from the field", () => {
     const found = classes(
       [
-        "class UserService {",
-        "  final UserRepo _repo;",
+        "class PlayerService {",
+        "  final PlayerRepo _repo;",
         "  final Cache cache;",
-        "  UserService(this._repo, {required this.cache});",
+        "  PlayerService(this._repo, {required this.cache});",
         "}",
         "class Worker {",
-        "  final UserRepo _repo;",
-        "  Worker(@Named('mem') UserRepo repo) : _repo = repo;",
+        "  final PlayerRepo _repo;",
+        "  Worker(@Named('mem') PlayerRepo repo) : _repo = repo;",
         "}",
         "class Other {",
-        "  final UserRepo _repo;",
+        "  final PlayerRepo _repo;",
         "  const Other(@Named('pg') this._repo) {",
         "    init();",
         "  }",
@@ -85,10 +85,10 @@ describe("dart class members", () => {
     );
     const ctor = (c: (typeof found)[number]) => c.methods.find((m) => m.name === c.name)!;
     expect(ctor(found[0]!).params).toEqual([
-      { name: "_repo", type: "UserRepo", defaultValue: null },
+      { name: "_repo", type: "PlayerRepo", defaultValue: null },
       { name: "cache", type: "Cache", defaultValue: null },
     ]);
-    expect(ctor(found[1]!).params).toEqual([{ name: "repo", type: "UserRepo", defaultValue: null, qualifier: "mem" }]);
+    expect(ctor(found[1]!).params).toEqual([{ name: "repo", type: "PlayerRepo", defaultValue: null, qualifier: "mem" }]);
     // The key reaches the field the parameter initialises.
     expect(found[1]!.properties[0]).toMatchObject({ name: "_repo", qualifier: "mem" });
     expect(ctor(found[2]!)).toMatchObject({ line: 12, endLine: 14 });
@@ -106,18 +106,18 @@ describe("dart class members", () => {
     const [screen] = classes(
       [
         "class Screen {",
-        "  final _repo2 = getIt.get<UserRepo>();",
+        "  final _repo2 = getIt.get<PlayerRepo>();",
         "  late final local = PgRepo();",
-        "  final UserRepo named = getIt<UserRepo>(instanceName: 'pg');",
+        "  final PlayerRepo named = getIt<PlayerRepo>(instanceName: 'pg');",
         "  final createdAt = DateTime.now();",
         "  var count = 0;",
         "}",
       ].join("\n"),
     );
     expect(screen!.properties.map((p) => [p.name, p.type, p.qualifier])).toEqual([
-      ["_repo2", "UserRepo", undefined],
+      ["_repo2", "PlayerRepo", undefined],
       ["local", "PgRepo", undefined],
-      ["named", "UserRepo", "pg"],
+      ["named", "PlayerRepo", "pg"],
     ]);
   });
 });
@@ -127,16 +127,16 @@ describe("dart locals", () => {
     expect(
       locals(
         "final a = ConcRepo();",
-        "UserRepo b = PgRepo();",
+        "PlayerRepo b = PgRepo();",
         "final ConcRepo c = ConcRepo();",
         "var d = PgRepo();",
-        "final r = getIt<UserRepo>();",
-        "final r2 = GetIt.I.get<UserRepo>(instanceName: 'mem');",
-        "final UserRepo r3 = GetIt.instance<UserRepo>();",
+        "final r = getIt<PlayerRepo>();",
+        "final r2 = GetIt.I.get<PlayerRepo>(instanceName: 'mem');",
+        "final PlayerRepo r3 = GetIt.instance<PlayerRepo>();",
         "final c1 = context.read<Cache>();",
         "final c2 = Provider.of<Cache>(context, listen: false);",
         "final g = Get.find<Clock>(tag: 'fake');",
-        "final k = KiwiContainer().resolve<UserRepo>('mem');",
+        "final k = KiwiContainer().resolve<PlayerRepo>('mem');",
         "final p = ref.read(repoProvider);",
         "final x = await getIt.getAsync<Db>();",
         "final y = compute(1);",
@@ -145,16 +145,16 @@ describe("dart locals", () => {
       ),
     ).toEqual([
       { name: "a", type: "ConcRepo" },
-      { name: "b", type: "UserRepo" },
+      { name: "b", type: "PlayerRepo" },
       { name: "c", type: "ConcRepo" },
       { name: "d", type: "PgRepo" },
-      { name: "r", type: "UserRepo" },
-      { name: "r2", type: "UserRepo", qualifier: "mem" },
-      { name: "r3", type: "UserRepo" },
+      { name: "r", type: "PlayerRepo" },
+      { name: "r2", type: "PlayerRepo", qualifier: "mem" },
+      { name: "r3", type: "PlayerRepo" },
       { name: "c1", type: "Cache" },
       { name: "c2", type: "Cache" },
       { name: "g", type: "Clock", qualifier: "fake" },
-      { name: "k", type: "UserRepo", qualifier: "mem" },
+      { name: "k", type: "PlayerRepo", qualifier: "mem" },
       { name: "p", type: "", qualifier: "repoProvider" },
       { name: "x", type: "Db" },
     ]);
@@ -169,15 +169,15 @@ describe("dart locals", () => {
   });
 
   it("reads each statement of a line, past a trailing comment", () => {
-    expect(locals("final a = PgRepo(); final UserRepo b = getIt<UserRepo>(); // two", "for (var i = 0; i < n; i++) {")).toEqual([
+    expect(locals("final a = PgRepo(); final PlayerRepo b = getIt<PlayerRepo>(); // two", "for (var i = 0; i < n; i++) {")).toEqual([
       { name: "a", type: "PgRepo" },
-      { name: "b", type: "UserRepo" },
+      { name: "b", type: "PlayerRepo" },
     ]);
   });
 
   it("types a Riverpod read with the provider's declared type when the provider is in the file", () => {
     const src = [
-      "final repoProvider = Provider<UserRepo>((ref) => PgRepo());",
+      "final repoProvider = Provider<PlayerRepo>((ref) => PgRepo());",
       "class C {",
       "  final Ref ref;",
       "  C(this.ref);",
@@ -189,27 +189,27 @@ describe("dart locals", () => {
     ].join("\n");
     const [c] = classes(src);
     const run = c!.methods.find((m) => m.name === "run")!;
-    expect(run.localTypes).toEqual([{ name: "repo", type: "UserRepo", qualifier: "repoProvider" }]);
-    expect(run.calls.find((x) => x.receiverQualifier)).toMatchObject({ receiverType: "UserRepo", receiverQualifier: "repoProvider" });
+    expect(run.localTypes).toEqual([{ name: "repo", type: "PlayerRepo", qualifier: "repoProvider" }]);
+    expect(run.calls.find((x) => x.receiverQualifier)).toMatchObject({ receiverType: "PlayerRepo", receiverQualifier: "repoProvider" });
   });
 });
 
 describe("dart lookups chained into a call", () => {
   it("types the receiver of a locator lookup", () => {
-    expect(calls("await getIt<UserRepo>().find(id);").find((c) => c.receiverType)).toMatchObject({
-      name: "getIt<UserRepo>().find",
-      receiverType: "UserRepo",
+    expect(calls("await getIt<PlayerRepo>().find(id);").find((c) => c.receiverType)).toMatchObject({
+      name: "getIt<PlayerRepo>().find",
+      receiverType: "PlayerRepo",
     });
-    expect(calls("await sl.get<UserRepo>(instanceName: 'mem').load(id);").find((c) => c.receiverType)).toMatchObject({
-      receiverType: "UserRepo",
+    expect(calls("await sl.get<PlayerRepo>(instanceName: 'mem').load(id);").find((c) => c.receiverType)).toMatchObject({
+      receiverType: "PlayerRepo",
       receiverQualifier: "mem",
     });
-    expect(calls("context.watch<UserRepo>().save(u);").find((c) => c.receiverType)).toMatchObject({ receiverType: "UserRepo" });
+    expect(calls("context.watch<PlayerRepo>().save(u);").find((c) => c.receiverType)).toMatchObject({ receiverType: "PlayerRepo" });
     expect(calls("ref.read(repoProvider).save(u);").find((c) => c.receiverQualifier)).toMatchObject({ receiverQualifier: "repoProvider" });
   });
 
   it("records a plain generic call by its type argument, and never a comparison", () => {
-    expect(calls("final r = context.read<UserRepo>();").map((c) => c.name)).toContain("context.read<UserRepo>");
+    expect(calls("final r = context.read<PlayerRepo>();").map((c) => c.name)).toContain("context.read<PlayerRepo>");
     expect(calls("if (i<n && x>(y)) {}").some((c) => c.name.includes("<"))).toBe(false);
   });
 
@@ -223,9 +223,9 @@ describe("dart container registrations", () => {
     expect(
       bindings(
         [
-          "getIt.registerSingleton<UserRepo>(PgRepo());",
-          "getIt.registerLazySingleton<UserRepo>(() => PgRepo(), instanceName: 'pg');",
-          "sl.registerFactory<UserRepo>(() => MemRepo(), instanceName: 'mem');",
+          "getIt.registerSingleton<PlayerRepo>(PgRepo());",
+          "getIt.registerLazySingleton<PlayerRepo>(() => PgRepo(), instanceName: 'pg');",
+          "sl.registerFactory<PlayerRepo>(() => MemRepo(), instanceName: 'mem');",
           "locator",
           "  ..registerFactory<Cache>(MemCache.new)",
           "  ..registerSingletonAsync<Db>(() async {",
@@ -237,9 +237,9 @@ describe("dart container registrations", () => {
         ].join("\n"),
       ),
     ).toEqual([
-      { service: "UserRepo", implementation: "PgRepo", via: "registerSingleton" },
-      { service: "UserRepo", implementation: "PgRepo", via: "registerLazySingleton", qualifier: "pg", keyedOnly: true },
-      { service: "UserRepo", implementation: "MemRepo", via: "registerFactory", qualifier: "mem", keyedOnly: true },
+      { service: "PlayerRepo", implementation: "PgRepo", via: "registerSingleton" },
+      { service: "PlayerRepo", implementation: "PgRepo", via: "registerLazySingleton", qualifier: "pg", keyedOnly: true },
+      { service: "PlayerRepo", implementation: "MemRepo", via: "registerFactory", qualifier: "mem", keyedOnly: true },
       { service: "Cache", implementation: "MemCache", via: "registerFactory" },
       { service: "Db", implementation: "SqlDb", via: "registerSingletonAsync" },
       { service: "Clock", implementation: "FakeClock", via: "registerFactory", qualifier: "fake", keyedOnly: true },
@@ -252,10 +252,10 @@ describe("dart container registrations", () => {
     expect(
       bindings(
         [
-          "getIt.registerLazySingleton<UserService>(() => UserService(getIt<UserRepo>()));",
+          "getIt.registerLazySingleton<PlayerService>(() => PlayerService(getIt<PlayerRepo>()));",
           "getIt.registerSingleton(PgRepo());",
           "getIt.registerSingletonAsync<Prefs>(() => SharedPreferences.getInstance());",
-          "getIt.registerLazySingleton<UserRepo>(() {",
+          "getIt.registerLazySingleton<PlayerRepo>(() {",
           "  final r = PgRepo();",
           "  return r;",
           "});",
@@ -265,7 +265,7 @@ describe("dart container registrations", () => {
   });
 
   it("emits both of two unconditional registrations", () => {
-    expect(bindings(["getIt.registerSingleton<UserRepo>(PgRepo());", "getIt.registerSingleton<UserRepo>(MemRepo());"].join("\n")).map((b) => b.implementation)).toEqual([
+    expect(bindings(["getIt.registerSingleton<PlayerRepo>(PgRepo());", "getIt.registerSingleton<PlayerRepo>(MemRepo());"].join("\n")).map((b) => b.implementation)).toEqual([
       "PgRepo",
       "MemRepo",
     ]);
@@ -275,27 +275,27 @@ describe("dart container registrations", () => {
     expect(
       bindings(
         [
-          "@LazySingleton(as: UserRepo)",
-          "class PgRepo implements UserRepo {}",
+          "@LazySingleton(as: PlayerRepo)",
+          "class PgRepo implements PlayerRepo {}",
           "",
           "/// In tests.",
           "@Injectable(",
-          "  as: UserRepo,",
+          "  as: PlayerRepo,",
           "  env: [Environment.test],",
           ")",
-          "class MemRepo implements UserRepo {}",
+          "class MemRepo implements PlayerRepo {}",
           "",
           "@Named('redis')",
           "@Singleton(as: Cache)",
           "class RedisCache implements Cache {}",
           "",
           "@injectable",
-          "class UserService {}",
+          "class PlayerService {}",
         ].join("\n"),
       ),
     ).toEqual([
-      { service: "UserRepo", implementation: "PgRepo", via: "@LazySingleton" },
-      { service: "UserRepo", implementation: "MemRepo", via: "@Injectable" },
+      { service: "PlayerRepo", implementation: "PgRepo", via: "@LazySingleton" },
+      { service: "PlayerRepo", implementation: "MemRepo", via: "@Injectable" },
       { service: "Cache", implementation: "RedisCache", via: "@Singleton", qualifier: "redis", keyedOnly: true },
     ]);
   });
@@ -304,7 +304,7 @@ describe("dart container registrations", () => {
     expect(
       bindings(
         [
-          "gh.lazySingleton<UserRepo>(() => PgRepo(gh<Db>()));",
+          "gh.lazySingleton<PlayerRepo>(() => PgRepo(gh<Db>()));",
           "gh.factory<Cache>(() => MemCache(), instanceName: 'mem');",
           "@module",
           "abstract class RegisterModule {",
@@ -316,7 +316,7 @@ describe("dart container registrations", () => {
         ].join("\n"),
       ),
     ).toEqual([
-      { service: "UserRepo", implementation: "PgRepo", via: "gh.lazySingleton" },
+      { service: "PlayerRepo", implementation: "PgRepo", via: "gh.lazySingleton" },
       { service: "Cache", implementation: "MemCache", via: "gh.factory", qualifier: "mem", keyedOnly: true },
       { service: "Mailer", implementation: "SmtpMailer", via: "@module" },
       { service: "Clock", implementation: "FakeClock", via: "@module" },
@@ -327,13 +327,13 @@ describe("dart container registrations", () => {
     expect(
       bindings(
         [
-          "Provider<UserRepo>(create: (_) => PgRepo()),",
+          "Provider<PlayerRepo>(create: (_) => PgRepo()),",
           "Provider<Cache>.value(value: MemCache()),",
           "RepositoryProvider<Auth>(",
           "  create: (context) => FirebaseAuthImpl(),",
           "),",
-          "BlocProvider<UserBloc>(create: (_) => UserBloc()),",
-          "final repoProvider = Provider<UserRepo>((ref) => PgRepo());",
+          "BlocProvider<PlayerBloc>(create: (_) => PlayerBloc()),",
+          "final repoProvider = Provider<PlayerRepo>((ref) => PgRepo());",
           "final cacheProvider = Provider.autoDispose.family<Cache, int>((ref, id) {",
           "  return MemCache();",
           "});",
@@ -343,7 +343,7 @@ describe("dart container registrations", () => {
         ].join("\n"),
       ),
     ).toEqual([
-      { service: "UserRepo", implementation: "PgRepo", via: "Provider" },
+      { service: "PlayerRepo", implementation: "PgRepo", via: "Provider" },
       { service: "Cache", implementation: "MemCache", via: "Provider" },
       { service: "Auth", implementation: "FirebaseAuthImpl", via: "RepositoryProvider" },
       { service: "repoProvider", implementation: "PgRepo", via: "Provider", keyedOnly: true },

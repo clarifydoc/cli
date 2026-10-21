@@ -7,7 +7,7 @@ import type { RouteInfo } from "../../../../types/analysis.js";
 /**
  * CodeIgniter is convention-routed: a URL maps onto controllers/<dir>/<file>.php
  * + a public method, with no route table. The engine had no PHP route extractor
- * at all, so every Vue `fetch('/site/cui_cart_json')` had no backend route to
+ * at all, so every Vue `fetch('/site/cui_garage_json')` had no backend route to
  * join to (photo-booth: routeMap was 21 frontend-only routes for 75 controllers).
  */
 async function routesOf(source: string, filePath: string): Promise<RouteInfo[]> {
@@ -21,7 +21,7 @@ describe("CodeIgniter convention routing", () => {
 class Photos extends JAR_Controller {
   function Photos() { parent::__construct(); }   // PHP4 constructor — not a route
   function index() { show_error(""); }
-  function archive() { return $this->customers_model->get_customer(1); }
+  function archive() { return $this->drivers_model->get_driver(1); }
   private function _validate() { return true; }   // private — not a route
 }`;
     const routes = await routesOf(SRC, "application/controllers/api/photos.php");
@@ -52,19 +52,19 @@ class Checkout extends JAR_Controller {
   it("captures the handler method's calls so they reach the call graph", async () => {
     const SRC = `<?php
 class Site extends JAR_Controller {
-  function cui_cart_json() { return $this->cart_model->get_cart(5); }
+  function cui_garage_json() { return $this->garage_model->get_garage(5); }
 }`;
     const [route] = await routesOf(SRC, "application/controllers/site.php");
-    expect(route!.handler).toBe("cui_cart_json");
-    expect(route!.calls.some((c) => /get_cart/.test(c.name ?? ""))).toBe(true);
+    expect(route!.handler).toBe("cui_garage_json");
+    expect(route!.calls.some((c) => /get_garage/.test(c.name ?? ""))).toBe(true);
   });
 
   it("ignores PHP files that are not under a controllers/ directory", async () => {
     const SRC = `<?php
-class Orders_model extends CI_Model {
-  function get_orders() { return $this->db->get('orders'); }
+class Cars_model extends CI_Model {
+  function get_cars() { return $this->db->get('cars'); }
 }`;
-    expect(await routesOf(SRC, "application/models/orders_model.php")).toEqual([]);
+    expect(await routesOf(SRC, "application/models/cars_model.php")).toEqual([]);
   });
 });
 

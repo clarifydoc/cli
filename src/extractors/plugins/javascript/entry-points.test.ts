@@ -16,7 +16,7 @@ scheduler = BackgroundScheduler()
 scheduler.add_job(purge_sessions, "cron", hour=3, id="purge")
 
 @scheduler.scheduled_job("interval", minutes=5)
-def sync_inventory():
+def sync_fleet():
     pass
 
 schedule.every(10).minutes.do(send_digest)
@@ -32,7 +32,7 @@ def refresh_rates():
     const got = extractPythonScheduledJobs(await parseSource(src, "python" as never, "jobs.py"), src).map((e) => `${e.kind} ${e.name} → ${e.handler} [${e.schedule}] (${e.framework})`);
     expect(got).toEqual([
       "scheduled-job purge → purge_sessions [cron hour=3] (apscheduler)",
-      "scheduled-job sync_inventory → sync_inventory [interval minutes=5] (apscheduler)",
+      "scheduled-job sync_fleet → sync_fleet [interval minutes=5] (apscheduler)",
       "scheduled-job send_digest → send_digest [every(10).minutes] (schedule)",
       "scheduled-job nightly-report → build_report [crontab(hour=1, minute=0)] (celery-beat)",
       "scheduled-job refresh_rates → refresh_rates [timedelta(hours=1)] (celery)",
@@ -41,7 +41,7 @@ def refresh_rates():
 
   it("JS/TS: scheduled jobs — node-cron, node-schedule, cron, NestJS, agenda — and not a queue's schedule()", async () => {
     const src = `
-cron.schedule("*/5 * * * *", syncInventory);
+cron.schedule("*/5 * * * *", syncFleet);
 schedule.scheduleJob("nightly", "0 3 * * *", rebuildIndex);
 const job = new CronJob("0 * * * *", purgeSessions);
 CronJob.from({ cronTime: "@daily", onTick: sendDigest, start: true });
@@ -56,7 +56,7 @@ export class Reports {
 }`;
     const got = extractEntryPoints(await parseSource(src, "typescript" as never, "src/jobs.ts"), src).map((e) => `${e.kind} ${e.name} → ${e.handler} [${e.schedule}] (${e.framework})`);
     expect(got).toEqual([
-      "scheduled-job syncInventory → syncInventory [*/5 * * * *] (node-cron)",
+      "scheduled-job syncFleet → syncFleet [*/5 * * * *] (node-cron)",
       "scheduled-job nightly → rebuildIndex [0 3 * * *] (node-schedule)",
       "scheduled-job purgeSessions → purgeSessions [0 * * * *] (cron)",
       "scheduled-job sendDigest → sendDigest [@daily] (cron)",
@@ -68,8 +68,8 @@ export class Reports {
 
   it("JS/TS: MCP tools, VS Code commands and LM tools, commander and yargs commands", async () => {
     expect(await js(`
-server.tool("search_orders", { q: z.string() }, searchOrders);
-server.registerTool("close_order", { description: "x" }, async (args) => close(args));
+server.tool("search_cars", { q: z.string() }, searchCars);
+server.registerTool("close_car", { description: "x" }, async (args) => close(args));
 vscode.commands.registerCommand("shop.refresh", () => refresh());
 context.subscriptions.push(commands.registerTextEditorCommand("shop.format", this.format));
 vscode.lm.registerTool("shop_lookup", new LookupTool());
@@ -78,8 +78,8 @@ yargs.command("serve [port]", "start", (y) => y, serve);
 router.command; // not a call
 emitter.tool(name, fn); // not a literal name
 `)).toEqual([
-      "mcp-tool search_orders → searchOrders (mcp)",
-      "mcp-tool close_order (mcp)",
+      "mcp-tool search_cars → searchCars (mcp)",
+      "mcp-tool close_car (mcp)",
       "editor-command shop.refresh (vscode)",
       "editor-command shop.format → format (vscode)",
       "lm-tool shop_lookup (vscode)",
@@ -91,10 +91,10 @@ emitter.tool(name, fn); // not a literal name
   it("Python: FastMCP tools and click / typer commands from their decorators", async () => {
     expect(await py(`
 @mcp.tool()
-def search_orders(q: str) -> list: ...
+def search_cars(q: str) -> list: ...
 
 @server.tool(name="close")
-async def close_order(id: int): ...
+async def close_car(id: int): ...
 
 @cli.command()
 def import_data(): ...
@@ -102,8 +102,8 @@ def import_data(): ...
 @app.command("seed-db")
 def seed(): ...
 `)).toEqual([
-      "mcp-tool search_orders → search_orders (mcp)",
-      "mcp-tool close → close_order (mcp)",
+      "mcp-tool search_cars → search_cars (mcp)",
+      "mcp-tool close → close_car (mcp)",
       "cli-command import-data → import_data (click)",
       "cli-command seed-db → seed (typer)",
     ]);

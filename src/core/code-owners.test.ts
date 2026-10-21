@@ -20,7 +20,7 @@ describe("CODEOWNERS", () => {
       ].join("\n"));
       const co = loadCodeOwners(root)!;
       expect(co.file).toBe(".github/CODEOWNERS");
-      expect(ownersOf(co.rules, "api/users.ts")).toEqual(["@org/backend"]);
+      expect(ownersOf(co.rules, "api/players.ts")).toEqual(["@org/backend"]);
       expect(ownersOf(co.rules, "web/src/App.vue")).toEqual(["@org/frontend"]);
       expect(ownersOf(co.rules, "api/vendor/lib.js")).toEqual([]);
       expect(ownersOf(co.rules, "docs/a/b.md")).toEqual(["jane@example.com"]);

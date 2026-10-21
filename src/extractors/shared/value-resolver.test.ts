@@ -17,20 +17,20 @@ const opaque = (text: string): ValueExpr => ({ kind: "opaque", text });
 
 describe("foldValue", () => {
   it("folds an all-literal concatenation to EXTRACTED with no hole", () => {
-    const r = foldValue(concat(lit("/api/"), lit("users")), new Map());
-    expect(r.text).toBe("/api/users");
+    const r = foldValue(concat(lit("/api/"), lit("players")), new Map());
+    expect(r.text).toBe("/api/players");
     expect(r.confidence).toBe("EXTRACTED");
     expect(r.hadHole).toBe(false);
   });
 
   it("chases ref bindings multi-hop across a scope", () => {
-    // const a = base; const base = "/api/v2"; url = a + "/users"
+    // const a = base; const base = "/api/v2"; url = a + "/players"
     const scope: Scope = new Map([
       ["a", ref("base")],
       ["base", lit("/api/v2")],
     ]);
-    const r = foldValue(concat(ref("a"), lit("/users")), scope);
-    expect(r.text).toBe("/api/v2/users");
+    const r = foldValue(concat(ref("a"), lit("/players")), scope);
+    expect(r.text).toBe("/api/v2/players");
     expect(r.confidence).toBe("EXTRACTED");
   });
 
@@ -136,8 +136,8 @@ describe("toAppRelativeUrl", () => {
   });
 
   it("leaves a literal absolute URL untouched (downstream treats it as external)", () => {
-    expect(toAppRelativeUrl("https://api.example.com/v1/users")).toEqual({
-      url: "https://api.example.com/v1/users",
+    expect(toAppRelativeUrl("https://api.example.com/v1/players")).toEqual({
+      url: "https://api.example.com/v1/players",
     });
   });
 

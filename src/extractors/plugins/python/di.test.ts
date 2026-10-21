@@ -25,21 +25,21 @@ describe("Python instance attributes", () => {
   it("types self attributes from the parameter, a construction, an annotation or a type comment", async () => {
     const { classes } = await extract(`
 class Svc:
-    def __init__(self, store: AccountStore, repo: Optional[UserRepo] = None, other=Provide[Container.repo], legacy=None):
-        self._accounts = store
+    def __init__(self, store: ClubStore, repo: Optional[PlayerRepo] = None, other=Provide[Container.repo], legacy=None):
+        self._clubs = store
         self.repo = repo
-        self.made = SqlUserRepo(db)
-        self.typed: AccountStore = make()
+        self.made = SqlPlayerRepo(db)
+        self.typed: ClubStore = make()
         self.legacy = legacy  # type: LegacyStore
         self.injected = other
         self.none = None
         self.count = 0
 `);
     expect(props(classes[0]!)).toEqual([
-      { name: "_accounts", type: "AccountStore" },
-      { name: "repo", type: "Optional[UserRepo]" },
-      { name: "made", type: "SqlUserRepo" },
-      { name: "typed", type: "AccountStore" },
+      { name: "_clubs", type: "ClubStore" },
+      { name: "repo", type: "Optional[PlayerRepo]" },
+      { name: "made", type: "SqlPlayerRepo" },
+      { name: "typed", type: "ClubStore" },
       { name: "legacy", type: "LegacyStore" },
       { name: "injected", type: null, qualifier: "Container.repo" },
     ]);
@@ -50,35 +50,35 @@ class Svc:
     const { classes } = await extract(`
 class Svc:
     def __init__(self, fast):
-        self.repo = SqlUserRepo()
+        self.repo = SqlPlayerRepo()
         if fast:
-            self.same = SqlUserRepo()
+            self.same = SqlPlayerRepo()
         else:
-            self.same = SqlUserRepo(1)
+            self.same = SqlPlayerRepo(1)
         if fast:
-            self.differ = SqlUserRepo()
+            self.differ = SqlPlayerRepo()
         else:
             self.differ = TwinRepo()
 
     def reset(self, other):
         self.repo = other
 `);
-    expect(props(classes[0]!)).toEqual([{ name: "same", type: "SqlUserRepo" }]);
+    expect(props(classes[0]!)).toEqual([{ name: "same", type: "SqlPlayerRepo" }]);
   });
 
   it("keeps a class-level annotation over what __init__ assigns, and ignores static/class methods", async () => {
     const { classes } = await extract(`
 class Svc:
-    repo: UserRepo
+    repo: PlayerRepo
 
-    def __init__(self, repo: SqlUserRepo):
+    def __init__(self, repo: SqlPlayerRepo):
         self.repo = repo
 
     @classmethod
     def build(cls):
         cls.cache = Cache()
 `);
-    expect(props(classes[0]!)).toEqual([{ name: "repo", type: "UserRepo" }]);
+    expect(props(classes[0]!)).toEqual([{ name: "repo", type: "PlayerRepo" }]);
   });
 });
 
@@ -86,29 +86,29 @@ describe("Python locals", () => {
   it("types constructed, annotated, commented, cast and container-fetched locals", async () => {
     const { functions } = await extract(`
 def run(container: Container, x):
-    a = SqlUserRepo()
-    b: UserRepo = make()
+    a = SqlPlayerRepo()
+    b: PlayerRepo = make()
     c = x  # type: Store
-    d = cast(UserRepo, x)
-    e = injector.get(UserRepo)
-    f = ServiceLocator.resolve(UserRepo)
+    d = cast(PlayerRepo, x)
+    e = injector.get(PlayerRepo)
+    f = ServiceLocator.resolve(PlayerRepo)
     g = container.repo()
     h = Container.repo()
-    i = lagom_container[UserRepo]
-    j = models.Account(1)
+    i = lagom_container[PlayerRepo]
+    j = models.Club(1)
     k = make()
 `);
     expect(functions[0]!.localTypes).toEqual([
-      { name: "a", type: "SqlUserRepo" },
-      { name: "b", type: "UserRepo" },
+      { name: "a", type: "SqlPlayerRepo" },
+      { name: "b", type: "PlayerRepo" },
       { name: "c", type: "Store" },
-      { name: "d", type: "UserRepo" },
-      { name: "e", type: "UserRepo" },
-      { name: "f", type: "UserRepo" },
+      { name: "d", type: "PlayerRepo" },
+      { name: "e", type: "PlayerRepo" },
+      { name: "f", type: "PlayerRepo" },
       { name: "g", type: "", qualifier: "Container.repo" },
       { name: "h", type: "", qualifier: "Container.repo" },
-      { name: "i", type: "UserRepo" },
-      { name: "j", type: "models.Account" },
+      { name: "i", type: "PlayerRepo" },
+      { name: "j", type: "models.Club" },
       // Typed later through `make`'s declared return type.
       { name: "k", type: "", from: "make()" },
     ]);
@@ -126,7 +126,7 @@ async def run(path, items):
     s = items[0]
     t = len(items)
     u = build_a()
-    u = SqlUserRepo()
+    u = SqlPlayerRepo()
 `);
     expect(functions[0]!.localTypes).toEqual([
       { name: "p", type: "", from: "Patcher.from_file()" },
@@ -140,33 +140,33 @@ async def run(path, items):
 
   it("drops a local reassigned untyped, rebound by a loop or `with … as`, and never re-types a parameter", async () => {
     const { functions } = await extract(`
-def run(other, repos, cm, param: UserRepo):
-    a = SqlUserRepo()
+def run(other, repos, cm, param: PlayerRepo):
+    a = SqlPlayerRepo()
     a = other
-    b = SqlUserRepo()
+    b = SqlPlayerRepo()
     for b in repos:
         pass
-    c = SqlUserRepo()
+    c = SqlPlayerRepo()
     with cm() as c:
         pass
-    param = SqlUserRepo()
-    d = foo.get(UserRepo)
-    e = SqlUserRepo()
+    param = SqlPlayerRepo()
+    d = foo.get(PlayerRepo)
+    e = SqlPlayerRepo()
 `);
     expect(functions[0]!.localTypes).toEqual([
       // A container lookup the plugin does not recognise is an untyped call.
       { name: "d", type: "", from: "foo.get()" },
-      { name: "e", type: "SqlUserRepo" },
+      { name: "e", type: "SqlPlayerRepo" },
     ]);
   });
 
   it("an annotation declares the type whatever is assigned later", async () => {
     const { functions } = await extract(`
 def run(x):
-    repo: Optional[UserRepo] = None
+    repo: Optional[PlayerRepo] = None
     repo = x
 `);
-    expect(functions[0]!.localTypes).toEqual([{ name: "repo", type: "Optional[UserRepo]" }]);
+    expect(functions[0]!.localTypes).toEqual([{ name: "repo", type: "Optional[PlayerRepo]" }]);
   });
 });
 
@@ -174,10 +174,10 @@ describe("Python parameter types from comments and docstrings", () => {
   it("reads a PEP 484 function type comment", async () => {
     const { functions } = await extract(`
 def run(store, n, *args):
-    # type: (AccountStore, int, *str) -> None
+    # type: (ClubStore, int, *str) -> None
     store.go()
 `);
-    expect(functions[0]!.params.map((p) => p.type)).toEqual(["AccountStore", "int"]);
+    expect(functions[0]!.params.map((p) => p.type)).toEqual(["ClubStore", "int"]);
   });
 
   it("reads Sphinx, Google and NumPy docstrings, and never overrides an annotation", async () => {
@@ -186,8 +186,8 @@ def sphinx(a, b, c: Real):
     """Doc.
 
     :param a: first
-    :type a: AccountStore
-    :param UserRepo b: second
+    :type a: ClubStore
+    :param PlayerRepo b: second
     :type c: Ignored
     """
 
@@ -195,7 +195,7 @@ def google(repo, n):
     """Doc.
 
     Args:
-        repo (app.repos.UserRepo): the repo
+        repo (app.repos.PlayerRepo): the repo
         n (int, optional): count
     """
 
@@ -204,7 +204,7 @@ def numpy(repo, a, b):
 
     Parameters
     ----------
-    repo : :class:\`~app.repos.UserRepo\`
+    repo : :class:\`~app.repos.PlayerRepo\`
         The repo.
     a, b : Store or None
 
@@ -214,15 +214,15 @@ def numpy(repo, a, b):
     """
 `);
     expect(functions.map((f) => f.params.map((p) => p.type))).toEqual([
-      ["AccountStore", "UserRepo", "Real"],
-      ["app.repos.UserRepo", "int"],
-      ["app.repos.UserRepo", "Store | None", "Store | None"],
+      ["ClubStore", "PlayerRepo", "Real"],
+      ["app.repos.PlayerRepo", "int"],
+      ["app.repos.PlayerRepo", "Store | None", "Store | None"],
     ]);
   });
 
   it("parses the docstring forms on their own", () => {
-    expect([...docstringParamTypes(":type repo: UserRepo\n:param Store s: x").entries()]).toEqual([
-      ["repo", "UserRepo"],
+    expect([...docstringParamTypes(":type repo: PlayerRepo\n:param Store s: x").entries()]).toEqual([
+      ["repo", "PlayerRepo"],
       ["s", "Store"],
     ]);
   });
@@ -239,22 +239,22 @@ describe("Python injection tokens", () => {
     expect(injectionToken("Closing[Provide[Container.db]]")).toBe("Container.db");
     // The annotation's class is the dependency; a class is no provider token.
     expect(injectionToken("Depends()")).toBeNull();
-    expect(injectionToken("Depends(SqlUserRepo)")).toBeNull();
+    expect(injectionToken("Depends(SqlPlayerRepo)")).toBeNull();
     expect(injectionToken("Provider[Container.repo]")).toBeNull();
   });
 
   it("sets qualifiers from defaults, Annotated metadata and module aliases", async () => {
     const { functions } = await extract(`
-RepoDep = Annotated[UserRepo, Depends(get_repo)]
+RepoDep = Annotated[PlayerRepo, Depends(get_repo)]
 
-def handler(a: UserRepo = Depends(get_repo), b: Annotated[UserRepo, Depends(get_other)] = None, c: RepoDep = None, d: SqlUserRepo = Depends(), e=Provide["repo"]):
+def handler(a: PlayerRepo = Depends(get_repo), b: Annotated[PlayerRepo, Depends(get_other)] = None, c: RepoDep = None, d: SqlPlayerRepo = Depends(), e=Provide["repo"]):
     pass
 `);
     expect(functions[0]!.params.map((p) => [p.name, p.type, p.qualifier])).toEqual([
-      ["a", "UserRepo", "get_repo"],
-      ["b", "Annotated[UserRepo, Depends(get_other)]", "get_other"],
-      ["c", "Annotated[UserRepo, Depends(get_repo)]", "get_repo"],
-      ["d", "SqlUserRepo", undefined],
+      ["a", "PlayerRepo", "get_repo"],
+      ["b", "Annotated[PlayerRepo, Depends(get_other)]", "get_other"],
+      ["c", "Annotated[PlayerRepo, Depends(get_repo)]", "get_repo"],
+      ["d", "SqlPlayerRepo", undefined],
       ["e", null, "repo"],
     ]);
   });
@@ -324,18 +324,18 @@ describe("Python chained container lookups", () => {
   it("types the receiver of a call made on a lookup, and only on a lookup", async () => {
     const { functions } = await extract(`
 def run(container: Container, foo):
-    injector.get(UserRepo).find_user(1)
-    ServiceLocator.resolve(UserRepo).find(2)
+    injector.get(PlayerRepo).find_player(1)
+    ServiceLocator.resolve(PlayerRepo).find(2)
     container.repo().save(3)
-    foo.get(UserRepo).other(4)
+    foo.get(PlayerRepo).other(4)
 `);
     const typed = functions[0]!.calls
       .filter((c) => c.receiverType !== undefined || c.receiverQualifier !== undefined)
       .map((c) => [c.name, c.receiverType, c.receiverQualifier]);
     expect(typed).toEqual([
-      ["injector.get(UserRepo).find_user", "UserRepo", undefined],
+      ["injector.get(PlayerRepo).find_player", "PlayerRepo", undefined],
       // A noise-named leaf on a typed lookup is a project call, never held back.
-      ["ServiceLocator.resolve(UserRepo).find", "UserRepo", undefined],
+      ["ServiceLocator.resolve(PlayerRepo).find", "PlayerRepo", undefined],
       // A provider call names its key alone.
       ["container.repo().save", undefined, "Container.repo"],
     ]);
@@ -345,8 +345,8 @@ def run(container: Container, foo):
 describe("Python container registrations", () => {
   it("binds a FastAPI dependency function to the one class it returns or yields", async () => {
     expect(await bindings(`
-def get_repo() -> UserRepo:
-    return SqlUserRepo()
+def get_repo() -> PlayerRepo:
+    return SqlPlayerRepo()
 
 async def get_db():
     db = SessionLocal()
@@ -357,22 +357,22 @@ async def get_db():
 
 def get_either(flag):
     if flag:
-        return SqlUserRepo()
+        return SqlPlayerRepo()
     return TwinRepo()
 
 def get_maybe(flag):
     if flag:
         return None
-    return SqlUserRepo()
+    return SqlPlayerRepo()
 
 def get_built():
     return build_repo()
 
 class Holder:
     def method(self):
-        return SqlUserRepo()
+        return SqlPlayerRepo()
 `)).toEqual([
-      { service: "get_repo", implementation: "SqlUserRepo", via: "provider", keyedOnly: true },
+      { service: "get_repo", implementation: "SqlPlayerRepo", via: "provider", keyedOnly: true },
       { service: "get_db", implementation: "SessionLocal", via: "provider", keyedOnly: true },
     ]);
   });
@@ -394,14 +394,14 @@ app.dependency_overrides[get_x] = lambda: make()
     expect(await bindings(`
 class Container(containers.DeclarativeContainer):
     config = providers.Configuration()
-    repo = providers.Factory(SqlUserRepo, session=db.provided.session)
+    repo = providers.Factory(SqlPlayerRepo, session=db.provided.session)
     cache = providers.Singleton("app.cache.RedisCache")
     fn = providers.Callable(make_repo)
-    dep = providers.Dependency(instance_of=UserRepo)
+    dep = providers.Dependency(instance_of=PlayerRepo)
     lazy = providers.Factory(make_repo)
 `)).toEqual([
-      { service: "Container.repo", implementation: "SqlUserRepo", via: "providers.Factory", keyedOnly: true },
-      { service: "repo", implementation: "SqlUserRepo", via: "providers.Factory", keyedOnly: true },
+      { service: "Container.repo", implementation: "SqlPlayerRepo", via: "providers.Factory", keyedOnly: true },
+      { service: "repo", implementation: "SqlPlayerRepo", via: "providers.Factory", keyedOnly: true },
       { service: "Container.cache", implementation: "RedisCache", via: "providers.Singleton", keyedOnly: true },
       { service: "cache", implementation: "RedisCache", via: "providers.Singleton", keyedOnly: true },
     ]);

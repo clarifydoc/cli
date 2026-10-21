@@ -201,18 +201,18 @@ describe("buildReportPayload — the route each api-call reaches", () => {
   const call = (filePath: string, line: number, target: string, extra: Record<string, unknown> = {}) =>
     ({ kind: "api-call", name: "get", target, filePath, line, calls: [], ...extra });
   const link = (source: string, sourceLine: number, url: string, routePath: string, extra: Record<string, unknown> = {}) => ({
-    source, sourceLine, method: "GET", url, target: "api/Orders.cs", targetLine: 12, handler: "List",
-    routePath, sourceProject: "web", targetProject: "orders", confidence: "EXTRACTED", matchedVia: "exact", ...extra,
+    source, sourceLine, method: "GET", url, target: "api/Cars.cs", targetLine: 12, handler: "List",
+    routePath, sourceProject: "web", targetProject: "cars", confidence: "EXTRACTED", matchedVia: "exact", ...extra,
   });
   const withLinks = (apiCalls: unknown[], apiRouteLinks: unknown[]) =>
     buildReportPayload({ ...summary, apiCalls, apiRouteLinks } as unknown as ProjectAnalysis);
 
   it("attaches the linked route, with its project and how it matched", () => {
-    const payload = withLinks([call("web/a.ts", 3, "/api/orders"), call("web/a.ts", 9, "/nowhere")], [link("web/a.ts", 3, "/api/orders", "/api/orders")]);
+    const payload = withLinks([call("web/a.ts", 3, "/api/cars"), call("web/a.ts", 9, "/nowhere")], [link("web/a.ts", 3, "/api/cars", "/api/cars")]);
     expect(payload.apiCallsLinked).toBe(true);
     expect(payload.apiCalls[0].route).toEqual({
-      method: "GET", path: "/api/orders", file: "api/Orders.cs", line: 12, handler: "List",
-      confidence: "EXTRACTED", project: "orders", via: "exact",
+      method: "GET", path: "/api/cars", file: "api/Cars.cs", line: 12, handler: "List",
+      confidence: "EXTRACTED", project: "cars", via: "exact",
     });
     expect(payload.apiCalls[1]).not.toHaveProperty("route");
   });

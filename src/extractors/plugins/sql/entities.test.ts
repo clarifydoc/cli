@@ -4,32 +4,32 @@ import { migrationVersion, schemaOpsOf } from "./entities.js";
 describe("SQL schema operations", () => {
   it("reads ALTER actions, inline and table-level foreign keys, renames and drops", () => {
     const ops = schemaOpsOf(`
-CREATE TABLE IF NOT EXISTS "orders" (
+CREATE TABLE IF NOT EXISTS "cars" (
   id bigint PRIMARY KEY,
-  customer_id bigint REFERENCES customers(id),
+  driver_id bigint REFERENCES drivers(id),
   CONSTRAINT fk_shop FOREIGN KEY (shop_id) REFERENCES shops (id)
 );
-ALTER TABLE ONLY orders
+ALTER TABLE ONLY cars
   ADD COLUMN IF NOT EXISTS note text,
   ADD CONSTRAINT pk_x PRIMARY KEY (id),
   DROP CONSTRAINT old_fk,
   DROP COLUMN legacy,
   RENAME COLUMN note TO remark;
-ALTER TABLE orders CHANGE COLUMN remark remarks TEXT; -- MySQL
-ALTER TABLE orders RENAME TO purchase_orders;
+ALTER TABLE cars CHANGE COLUMN remark remarks TEXT; -- MySQL
+ALTER TABLE cars RENAME TO used_cars;
 RENAME TABLE a TO b;
 DROP TABLE IF EXISTS x, y CASCADE;
 /* ALTER TABLE ghosts ADD COLUMN boo int; */
 `.split("\n")).map((o) => [o.op, o.table, o.column ?? "", o.to ?? ""].join(" ").trim());
     expect(ops).toEqual([
-      "create-table orders",
-      "add-foreign-key orders customer_id customers",
-      "add-foreign-key orders shop_id shops",
-      "add-column orders note",
-      "drop-column orders legacy",
-      "rename-column orders note remark",
-      "rename-column orders remark remarks",
-      "rename-table orders  purchase_orders",
+      "create-table cars",
+      "add-foreign-key cars driver_id drivers",
+      "add-foreign-key cars shop_id shops",
+      "add-column cars note",
+      "drop-column cars legacy",
+      "rename-column cars note remark",
+      "rename-column cars remark remarks",
+      "rename-table cars  used_cars",
       "rename-table a  b",
       "drop-table x",
       "drop-table y",

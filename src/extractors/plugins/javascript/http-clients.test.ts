@@ -40,15 +40,15 @@ describe("extractHttpClientRegistrations", () => {
   it("keeps the host of a literal base and the variable an env base reads", async () => {
     await ensureLanguagesLoaded(["typescript"]);
     const src = `
-const inventory = axios.create({ baseURL: process.env.INVENTORY_URL });
-const orders = axios.create({ baseURL: process.env.ORDERS_URL ?? "http://localhost:5101" });
+const fleet = axios.create({ baseURL: process.env.FLEET_URL });
+const cars = axios.create({ baseURL: process.env.CARS_URL ?? "http://localhost:5101" });
 const partner = ky.create({ prefixUrl: "https://api.partner.com/v1" });
 const local = axios.create({ baseURL: "/api" });
 `;
     const regs = extractHttpClientRegistrations(await parseSource(src, "typescript", "c.ts"), src);
     expect(regs.map(({ line: _l, ...r }) => r)).toEqual([
-      { client: "inventory", scope: "file", base: { kind: "env", key: "INVENTORY_URL" } },
-      { client: "orders", scope: "file", base: { kind: "env", key: "ORDERS_URL", fallback: "http://localhost:5101" } },
+      { client: "fleet", scope: "file", base: { kind: "env", key: "FLEET_URL" } },
+      { client: "cars", scope: "file", base: { kind: "env", key: "CARS_URL", fallback: "http://localhost:5101" } },
       { client: "partner", scope: "file", base: { kind: "literal", key: "https://api.partner.com/v1" } },
     ]);
   });
@@ -56,8 +56,8 @@ const local = axios.create({ baseURL: "/api" });
 
 describe("jsBaseRefOf", () => {
   it("reads environment variables however the runtime exposes them", () => {
-    for (const expr of ["process.env.ORDERS_URL", "process.env['ORDERS_URL']", "import.meta.env.ORDERS_URL", "Bun.env.ORDERS_URL", 'Deno.env.get("ORDERS_URL")']) {
-      expect(jsBaseRefOf(expr), expr).toEqual({ kind: "env", key: "ORDERS_URL" });
+    for (const expr of ["process.env.CARS_URL", "process.env['CARS_URL']", "import.meta.env.CARS_URL", "Bun.env.CARS_URL", 'Deno.env.get("CARS_URL")']) {
+      expect(jsBaseRefOf(expr), expr).toEqual({ kind: "env", key: "CARS_URL" });
     }
     expect(jsBaseRefOf("process.env.API || 'http://localhost:3000'")).toEqual({ kind: "env", key: "API", fallback: "http://localhost:3000" });
   });

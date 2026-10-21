@@ -34,11 +34,11 @@ function build(): McpServer {
     tools: [echoTool, boomTool],
     resources: [
       {
-        uri: "test://thing",
-        name: "thing",
-        description: "a thing",
+        uri: "test://ball",
+        name: "ball",
+        description: "a ball",
         mimeType: "text/plain",
-        read: () => "thing body",
+        read: () => "ball body",
       },
     ],
   });
@@ -110,10 +110,10 @@ describe("McpServer — tools", () => {
 describe("McpServer — resources and dispatch", () => {
   it("lists and reads a resource", async () => {
     const list = await request(build(), "resources/list");
-    expect((list?.result as { resources: Array<{ uri: string }> }).resources[0].uri).toBe("test://thing");
-    const read = await request(build(), "resources/read", { uri: "test://thing" });
+    expect((list?.result as { resources: Array<{ uri: string }> }).resources[0].uri).toBe("test://ball");
+    const read = await request(build(), "resources/read", { uri: "test://ball" });
     expect(read?.result).toEqual({
-      contents: [{ uri: "test://thing", mimeType: "text/plain", text: "thing body" }],
+      contents: [{ uri: "test://ball", mimeType: "text/plain", text: "ball body" }],
     });
   });
 

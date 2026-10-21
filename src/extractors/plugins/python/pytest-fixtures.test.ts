@@ -13,24 +13,24 @@ const cls = (name: string, methods: string[], ext: string | null = null) =>
 
 describe("pytest fixtures", () => {
   it("types a test's parameter by the fixture of that name — its module first, then the nearest conftest.py", () => {
-    const models = file("app/models.py", [], [cls("Base", ["ping"]), cls("User", ["save"], "Base"), cls("Admin", ["grant"])]);
+    const models = file("app/models.py", [], [cls("Base", ["ping"]), cls("Player", ["save"], "Base"), cls("Admin", ["grant"])]);
     const rootConftest = file("tests/conftest.py", [
-      fn("user", { decorators: ["pytest.fixture"], returnType: "User" }),
+      fn("player", { decorators: ["pytest.fixture"], returnType: "Player" }),
       fn("admin_gen", { decorators: ['pytest.fixture(name="admin")'], returnType: "Iterator[Admin]" }),
     ]);
-    const deeper = file("tests/api/conftest.py", [fn("user", { decorators: ["fixture"], returnType: "Admin" })]);
-    const test = file("tests/test_users.py", [
-      fn("test_save", { params: [param("user"), param("typed", "Other")], calls: [call("user.save"), call("user.ping"), call("user.missing"), call("typed.save")] }),
+    const deeper = file("tests/api/conftest.py", [fn("player", { decorators: ["fixture"], returnType: "Admin" })]);
+    const test = file("tests/test_players.py", [
+      fn("test_save", { params: [param("player"), param("typed", "Other")], calls: [call("player.save"), call("player.ping"), call("player.missing"), call("typed.save")] }),
       fn("test_admin", { params: [param("admin")], calls: [call("admin.grant")] }),
-      fn("helper", { params: [param("user")], calls: [call("user.save")] }),
+      fn("helper", { params: [param("player")], calls: [call("player.save")] }),
     ]);
-    const apiTest = file("tests/api/test_api.py", [fn("test_it", { params: [param("user")], calls: [call("user.grant")] })]);
+    const apiTest = file("tests/api/test_api.py", [fn("test_it", { params: [param("player")], calls: [call("player.grant")] })]);
     const links = new PytestFixtureResolver().resolve([models, rootConftest, deeper, test, apiTest]);
     expect(links.map((l) => [l.sourceFile, l.sourceSymbol, l.callName, l.targetSymbol])).toEqual([
-      ["tests/test_users.py", "test_save", "user.save", "User.save"],
-      ["tests/test_users.py", "test_save", "user.ping", "Base.ping"],
-      ["tests/test_users.py", "test_admin", "admin.grant", "Admin.grant"],
-      ["tests/api/test_api.py", "test_it", "user.grant", "Admin.grant"],
+      ["tests/test_players.py", "test_save", "player.save", "Player.save"],
+      ["tests/test_players.py", "test_save", "player.ping", "Base.ping"],
+      ["tests/test_players.py", "test_admin", "admin.grant", "Admin.grant"],
+      ["tests/api/test_api.py", "test_it", "player.grant", "Admin.grant"],
     ]);
   });
 });

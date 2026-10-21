@@ -18,26 +18,26 @@ function ciRelationsOf(src: string): EntityRelation[] {
 
 describe("CodeIgniter query-builder join relations", () => {
   it("orients many→one from the FK column, not the joined table", () => {
-    // orders owns customer_id (FK) → many; customers is the referenced one side.
+    // cars owns driver_id (FK) → many; drivers is the referenced one side.
     const rels = ciRelationsOf(
-      `<?php class Orders_model extends CI_Model {
-        function g(){ $this->db->from('orders')->join('customers','orders.customer_id = customers.customer_id'); }
+      `<?php class Cars_model extends CI_Model {
+        function g(){ $this->db->from('cars')->join('drivers','cars.driver_id = drivers.driver_id'); }
       }`,
     );
     expect(rels).toHaveLength(1);
-    expect(rels[0]!.fromEntity).toBe("orders");
-    expect(rels[0]!.toEntity).toBe("customers");
+    expect(rels[0]!.fromEntity).toBe("cars");
+    expect(rels[0]!.toEntity).toBe("drivers");
     expect(rels[0]!.cardinality).toBe("many-to-one");
-    expect(rels[0]!.foreignKey).toBe("customer_id");
+    expect(rels[0]!.foreignKey).toBe("driver_id");
   });
 
   it("gets the same direction whichever table is the join() argument", () => {
     const rels = ciRelationsOf(
-      `<?php class M { function f(){ $this->db->join('order_rows','order_rows.order_id = orders.order_id'); } }`,
+      `<?php class M { function f(){ $this->db->join('car_rows','car_rows.car_id = cars.car_id'); } }`,
     );
     expect(rels).toHaveLength(1);
-    expect(rels[0]!.fromEntity).toBe("order_rows"); // owns order_id (not its own PK)
-    expect(rels[0]!.toEntity).toBe("orders");
+    expect(rels[0]!.fromEntity).toBe("car_rows"); // owns car_id (not its own PK)
+    expect(rels[0]!.toEntity).toBe("cars");
   });
 
   it("ignores conditions that aren't table.column = table.column", () => {
@@ -47,8 +47,8 @@ describe("CodeIgniter query-builder join relations", () => {
   it("dedupes a relationship joined across many queries", () => {
     const rels = ciRelationsOf(
       `<?php class M {
-        function a(){ $this->db->join('customers','orders.customer_id = customers.customer_id'); }
-        function b(){ $this->db->join('customers','orders.customer_id = customers.customer_id'); }
+        function a(){ $this->db->join('drivers','cars.driver_id = drivers.driver_id'); }
+        function b(){ $this->db->join('drivers','cars.driver_id = drivers.driver_id'); }
       }`,
     );
     expect(rels).toHaveLength(1);
@@ -67,35 +67,35 @@ describe("Eloquent access resolution across files", () => {
   });
 
   it("sets the entity from the static root, a relation call, a typed receiver or the enclosing model, and drops the rest", () => {
-    const user = { filePath: "app/Models/User.php", language: "php", classes: [model("User")], functions: [], dataSources: [],
-      entityRelations: [{ fromEntity: "User", fromField: "accounts", toEntity: "Account", cardinality: "one-to-many", orm: "eloquent", confidence: "EXTRACTED" }] } as unknown as FileAnalysis;
-    const account = { filePath: "app/Models/Account.php", language: "php", classes: [{ ...model("Account"), methods: [
+    const player = { filePath: "app/Models/Player.php", language: "php", classes: [model("Player")], functions: [], dataSources: [],
+      entityRelations: [{ fromEntity: "Player", fromField: "clubs", toEntity: "Club", cardinality: "one-to-many", orm: "eloquent", confidence: "EXTRACTED" }] } as unknown as FileAnalysis;
+    const club = { filePath: "app/Models/Club.php", language: "php", classes: [{ ...model("Club"), methods: [
       { name: "scopeActive", params: [{ name: "query", type: "Builder" }], returnType: null, isAsync: false, isExported: true, decorators: [], calls: [], line: 5, endLine: 8 },
     ] }], functions: [], dataSources: [db("$query->where('active', 1)->get", 6), db("static::where('x', 1)->first", 7)] } as unknown as FileAnalysis;
-    const repo = { filePath: "app/Repositories/AccountRepository.php", language: "php", classes: [{
-      name: "AccountRepository", extends: null, implements: [], decorators: [], properties: [{ name: "user", type: "User", visibility: "private", isStatic: false, isReadonly: false }],
-      methods: [{ name: "find", params: [{ name: "account", type: "Account" }], returnType: null, isAsync: false, isExported: true, decorators: [], calls: [], line: 10, endLine: 30 }],
+    const repo = { filePath: "app/Repositories/ClubRepository.php", language: "php", classes: [{
+      name: "ClubRepository", extends: null, implements: [], decorators: [], properties: [{ name: "player", type: "Player", visibility: "private", isStatic: false, isReadonly: false }],
+      methods: [{ name: "find", params: [{ name: "club", type: "Club" }], returnType: null, isAsync: false, isExported: true, decorators: [], calls: [], line: 10, endLine: 30 }],
       isExported: true, line: 3, endLine: 40,
     }], functions: [], dataSources: [
-      db("Account::where('active', 1)->get", 11),
-      db("$this->user->accounts()->where('name', $n)->first", 12),
-      db("$account->save", 13),
+      db("Club::where('active', 1)->get", 11),
+      db("$this->player->clubs()->where('name', $n)->first", 12),
+      db("$club->save", 13),
       db("Carbon::create", 14),
       db("$query->first", 15),
       db("$pdo->query('SELECT 1')->fetchAll", 16),
-      { kind: "database", name: "$this->db->get", target: "orders", entity: "orders", line: 17, calls: [] },
+      { kind: "database", name: "$this->db->get", target: "cars", entity: "cars", line: 17, calls: [] },
     ] } as unknown as FileAnalysis;
 
-    new PhpEntityExtractor().reconcileProject([user, account, repo]);
+    new PhpEntityExtractor().reconcileProject([player, club, repo]);
 
     expect(repo.dataSources.map((d) => [d.name, d.entity ?? null])).toEqual([
-      ["Account::where('active', 1)->get", "Account"],
-      ["$this->user->accounts()->where('name', $n)->first", "Account"],
-      ["$account->save", "Account"],
+      ["Club::where('active', 1)->get", "Club"],
+      ["$this->player->clubs()->where('name', $n)->first", "Club"],
+      ["$club->save", "Club"],
       ["$pdo->query('SELECT 1')->fetchAll", null],
-      ["$this->db->get", "orders"],
+      ["$this->db->get", "cars"],
     ]);
-    expect(account.dataSources.map((d) => d.entity)).toEqual(["Account", "Account"]);
+    expect(club.dataSources.map((d) => d.entity)).toEqual(["Club", "Club"]);
   });
 
   it("leaves a project with no Eloquent models untouched", () => {

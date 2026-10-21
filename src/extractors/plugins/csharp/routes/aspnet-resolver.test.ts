@@ -126,9 +126,9 @@ public abstract class RestController<T> : Controller
 
   it("marks rows whose base nobody can resolve, instead of guessing a prefix", async () => {
     const [ctl] = await analyze({
-      "Api/ThingController.cs": `public class ThingController : VendorApiControllerBase { [HttpGet("things")] public IActionResult List() => Ok(); }`,
+      "Api/BallController.cs": `public class BallController : VendorApiControllerBase { [HttpGet("balls")] public IActionResult List() => Ok(); }`,
     });
-    expect(ctl!.routes[0]).toMatchObject({ path: "/things", prefixUnresolved: "base:VendorApiControllerBase" });
+    expect(ctl!.routes[0]).toMatchObject({ path: "/balls", prefixUnresolved: "base:VendorApiControllerBase" });
   });
 
   it("leaves a controller on a framework base exactly as extracted", async () => {
@@ -270,9 +270,9 @@ public class DynamicRouteAttribute : Attribute, IRouteTemplateProvider
     public DynamicRouteAttribute(int version) { Template = Routes.Build(version); }
     public string Template { get; }
 }`,
-      "Api/ThingController.cs": `[DynamicRoute(2)] public class ThingController : ControllerBase { [HttpGet("things")] public IActionResult List() => Ok(); }`,
+      "Api/BallController.cs": `[DynamicRoute(2)] public class BallController : ControllerBase { [HttpGet("balls")] public IActionResult List() => Ok(); }`,
     });
-    expect(ctl!.routes[0]).toMatchObject({ path: "/things", prefixUnresolved: "attribute:DynamicRoute" });
+    expect(ctl!.routes[0]).toMatchObject({ path: "/balls", prefixUnresolved: "attribute:DynamicRoute" });
   });
 
   it("refuses a verb attribute whose template cannot be evaluated, and ignores attributes that do not route", async () => {
@@ -285,9 +285,9 @@ public class OddPutAttribute : HttpPutAttribute
 public class SkipValidationAttribute : ActionFilterAttribute
 {
 }`,
-      "Api/ThingController.cs": `
-[Route("api/things")]
-public class ThingController : ControllerBase
+      "Api/BallController.cs": `
+[Route("api/balls")]
+public class BallController : ControllerBase
 {
     [OddPut]
     public IActionResult Put(int id) => Ok();
@@ -299,7 +299,7 @@ public class ThingController : ControllerBase
     public IActionResult List() => Ok();
 }`,
     });
-    expect(rows(ctl)).toEqual(["GET /api/things ThingController"]);
+    expect(rows(ctl)).toEqual(["GET /api/balls BallController"]);
   });
 });
 
@@ -325,18 +325,18 @@ public class HomeController : Controller {
   public static void Util() {}
   protected override void Dispose(bool disposing) {}
 }`,
-      "Web/Areas/Admin/Controllers/UsersController.cs": `
+      "Web/Areas/Admin/Controllers/PlayersController.cs": `
 [Area("Admin")]
-public class UsersController : Controller { public IActionResult List() => View(); }`,
-      "Web/Controllers/ApiThingController.cs": `
-[ApiController] [Route("api/things")]
-public class ApiThingController : ControllerBase { [HttpGet] public int Get() => 1; public int NotRouted() => 2; }`,
+public class PlayersController : Controller { public IActionResult List() => View(); }`,
+      "Web/Controllers/ApiBallController.cs": `
+[ApiController] [Route("api/balls")]
+public class ApiBallController : ControllerBase { [HttpGet] public int Get() => 1; public int NotRouted() => 2; }`,
     });
     expect(rows(out)).toEqual([
-      "ANY /Admin/Users/List UsersController.List",
+      "ANY /Admin/Players/List PlayersController.List",
       "ANY /Home/Edit/{id} HomeController.Edit",
       "ANY /Home/Index HomeController.Index",
-      "GET /api/things ApiThingController.Get",
+      "GET /api/balls ApiBallController.Get",
       "POST /Home/Edit/{id} HomeController.Edit",
       "POST /Home/Remove/{id} HomeController.Delete",
     ]);
@@ -356,24 +356,24 @@ public static class WebApiConfig { public static void Register(HttpConfiguration
 public class ShopAreaRegistration : AreaRegistration { public override void RegisterArea(AreaRegistrationContext context) {
   context.MapRoute("Shop_default", "Shop/{controller}/{action}/{id}", new { action = "Index", id = UrlParameter.Optional });
 } }`,
-      "Site/Areas/Shop/Controllers/CartController.cs": `public class CartController : Controller { public ActionResult Add(int id) { return View(); } }`,
-      "Site/Controllers/OrdersController.cs": `public class OrdersController : Controller { public ActionResult Index() { return View(); } }`,
-      "Site/Controllers/ProductsController.cs": `
+      "Site/Areas/Shop/Controllers/GarageController.cs": `public class GarageController : Controller { public ActionResult Add(int id) { return View(); } }`,
+      "Site/Controllers/CarsController.cs": `public class CarsController : Controller { public ActionResult Index() { return View(); } }`,
+      "Site/Controllers/PartsController.cs": `
 using System.Web.Http;
-public class ProductsController : ApiController {
-  public string GetProduct(int id) { return null; }
-  public void PostProduct(string p) { }
+public class PartsController : ApiController {
+  public string GetPart(int id) { return null; }
+  public void PostPart(string p) { }
   [HttpDelete] public void Remove(int id) { }
-  [Route("api/products/{id}/stock")] public int Stock(int id) { return 0; }
+  [Route("api/parts/{id}/stock")] public int Stock(int id) { return 0; }
 }`,
     });
     expect(rows(out)).toEqual([
-      "ANY /Orders/Index OrdersController.Index",
-      "ANY /Shop/Cart/Add/{id} CartController.Add",
-      "DELETE /api/Products/{id} ProductsController.Remove",
-      "GET /api/Products/{id} ProductsController.GetProduct",
-      "POST /api/Products ProductsController.PostProduct",
-      "POST /api/products/{id}/stock ProductsController.Stock",
+      "ANY /Cars/Index CarsController.Index",
+      "ANY /Shop/Garage/Add/{id} GarageController.Add",
+      "DELETE /api/Parts/{id} PartsController.Remove",
+      "GET /api/Parts/{id} PartsController.GetPart",
+      "POST /api/Parts PartsController.PostPart",
+      "POST /api/parts/{id}/stock PartsController.Stock",
     ]);
   });
 
@@ -387,38 +387,38 @@ public abstract class CrudController : Controller {
   [HttpPost] public IActionResult Delete(int id) => Ok();
   public override void OnActionExecuting(ActionExecutingContext c) { }
 }
-public class ProductsController : CrudController {
-  public override IActionResult Details(int id) => View("Product");
+public class PartsController : CrudController {
+  public override IActionResult Details(int id) => View("Part");
   public IActionResult Export() => File(new byte[0], "text/csv");
 }
-public class OrdersController : CrudController { }`,
+public class CarsController : CrudController { }`,
     });
     expect(rows(out)).toEqual([
-      "ANY /Orders/Details/{id} OrdersController.Details",
-      "ANY /Orders/List OrdersController.List",
-      "ANY /Products/Details/{id} ProductsController.Details",
-      "ANY /Products/Export ProductsController.Export",
-      "ANY /Products/List ProductsController.List",
-      "POST /Orders/Delete/{id} OrdersController.Delete",
-      "POST /Products/Delete/{id} ProductsController.Delete",
+      "ANY /Cars/Details/{id} CarsController.Details",
+      "ANY /Cars/List CarsController.List",
+      "ANY /Parts/Details/{id} PartsController.Details",
+      "ANY /Parts/Export PartsController.Export",
+      "ANY /Parts/List PartsController.List",
+      "POST /Cars/Delete/{id} CarsController.Delete",
+      "POST /Parts/Delete/{id} PartsController.Delete",
     ]);
   });
 
   it("reads Web API 2 [RoutePrefix] as the class template", async () => {
     const out = await analyze({
-      "Site/Controllers/OrdersController.cs": `
+      "Site/Controllers/CarsController.cs": `
 using System.Web.Http;
-[RoutePrefix("api/orders")]
-public class OrdersController : ApiController {
+[RoutePrefix("api/cars")]
+public class CarsController : ApiController {
   [Route("")] public IHttpActionResult GetAll() { return Ok(); }
   [Route("{id:int}")] [HttpGet] public IHttpActionResult Get(int id) { return Ok(); }
-  [Route("~/api/legacy/orders")] public IHttpActionResult PostLegacy() { return Ok(); }
+  [Route("~/api/legacy/cars")] public IHttpActionResult PostLegacy() { return Ok(); }
 }`,
     });
     expect(rows(out)).toEqual([
-      "GET /api/orders OrdersController.GetAll",
-      "GET /api/orders/{id} OrdersController.Get",
-      "POST /api/legacy/orders OrdersController.PostLegacy",
+      "GET /api/cars CarsController.GetAll",
+      "GET /api/cars/{id} CarsController.Get",
+      "POST /api/legacy/cars CarsController.PostLegacy",
     ]);
   });
 

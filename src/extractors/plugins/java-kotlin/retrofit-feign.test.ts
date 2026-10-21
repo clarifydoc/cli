@@ -23,17 +23,17 @@ describe("Retrofit client interfaces", () => {
     const SRC = `package x;
 import retrofit2.http.*;
 
-public interface UserApi {
-  @GET("users/{id}")
-  Call<User> getUser(@Path("id") String id);
+public interface PlayerApi {
+  @GET("players/{id}")
+  Call<Player> getPlayer(@Path("id") String id);
 
-  @POST("users/new")
-  Call<User> createUser(@Body User user);
+  @POST("players/new")
+  Call<Player> createPlayer(@Body Player player);
 }`;
-    const calls = apiCalls(await sourcesOf(SRC, "java", "UserApi.java"));
+    const calls = apiCalls(await sourcesOf(SRC, "java", "PlayerApi.java"));
     expect(calls.map((c) => `${c.name} ${c.target}`).sort()).toEqual([
-      "GET /users/{id}",
-      "POST /users/new",
+      "GET /players/{id}",
+      "POST /players/new",
     ]);
   });
 
@@ -43,26 +43,26 @@ public interface UserApi {
 import retrofit2.http.GET
 import retrofit2.http.Path
 
-interface OrderApi {
-  @GET("api/orders/{id}")
-  suspend fun order(@Path("id") id: Long): Order
+interface CarApi {
+  @GET("api/cars/{id}")
+  suspend fun car(@Path("id") id: Long): Car
 }`;
-    const calls = apiCalls(await sourcesOf(SRC, "kotlin", "OrderApi.kt"));
+    const calls = apiCalls(await sourcesOf(SRC, "kotlin", "CarApi.kt"));
     expect(calls).toHaveLength(1);
     expect(calls[0]!.name).toBe("GET");
-    expect(calls[0]!.target).toBe("/api/orders/{id}");
+    expect(calls[0]!.target).toBe("/api/cars/{id}");
   });
 
   it("does NOT emit api-calls for JAX-RS marker verbs (no argument)", async () => {
     const SRC = `package x;
 import javax.ws.rs.*;
 
-@Path("/users")
-public class UserResource {
+@Path("/players")
+public class PlayerResource {
   @GET
-  public List<User> list() { return repo.loadAll(); }
+  public List<Player> list() { return repo.loadAll(); }
 }`;
-    expect(apiCalls(await sourcesOf(SRC, "java", "UserResource.java"))).toEqual([]);
+    expect(apiCalls(await sourcesOf(SRC, "java", "PlayerResource.java"))).toEqual([]);
   });
 });
 
@@ -72,18 +72,18 @@ describe("Feign client interfaces", () => {
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.*;
 
-@FeignClient(name = "inventory", path = "/api/inventory")
-public interface InventoryClient {
+@FeignClient(name = "fleet", path = "/api/fleet")
+public interface FleetClient {
   @GetMapping("/items/{id}")
   Item item(@PathVariable("id") long id);
 
   @PostMapping(value = "/items")
   Item create(@RequestBody Item item);
 }`;
-    const calls = apiCalls(await sourcesOf(SRC, "java", "InventoryClient.java"));
+    const calls = apiCalls(await sourcesOf(SRC, "java", "FleetClient.java"));
     expect(calls.map((c) => `${c.name} ${c.target}`).sort()).toEqual([
-      "GET /api/inventory/items/{id}",
-      "POST /api/inventory/items",
+      "GET /api/fleet/items/{id}",
+      "POST /api/fleet/items",
     ]);
   });
 

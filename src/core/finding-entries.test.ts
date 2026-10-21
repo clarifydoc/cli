@@ -35,13 +35,13 @@ describe("attachFindingEntries", () => {
 
 describe("attachPatternEntries", () => {
   const loop = (filePath: string, line: number, name: string): PatternInfo => ({
-    kind: "query-in-loop", name, filePath, line, confidence: "high", detail: "queries Order once per pass",
+    kind: "query-in-loop", name, filePath, line, confidence: "high", detail: "queries Car once per pass",
   });
 
   it("says which routes and commands pay for a performance pattern, and ranks a request first", () => {
     const routes = {
       ...fns("routes.ts", ["list", 3, 9]),
-      routes: [{ path: "/orders", httpMethod: "GET", kind: "api", handler: "list", line: 3, calls: [], middleware: [] }],
+      routes: [{ path: "/cars", httpMethod: "GET", kind: "api", handler: "list", line: 3, calls: [], middleware: [] }],
     } as unknown as FileAnalysis;
     const patterns = [
       loop("repo.ts", 12, "loadAll"),
@@ -53,7 +53,7 @@ describe("attachPatternEntries", () => {
       patterns,
       [fns("repo.ts", ["loadAll", 10, 20], ["rebuild", 30, 40], ["orphan", 50, 60]), routes, fns("cli.ts", ["reindex", 1, 9])],
       [
-        link("routes.ts", "route:GET /orders", "routes.ts", "list"),
+        link("routes.ts", "route:GET /cars", "routes.ts", "list"),
         link("routes.ts", "list", "repo.ts", "loadAll"),
         link("cli.ts", "reindex", "repo.ts", "rebuild"),
       ],
@@ -61,7 +61,7 @@ describe("attachPatternEntries", () => {
     );
     expect(n).toBe(2);
     expect(patterns[0]!.role).toBe("request");
-    expect(patterns[0]!.entries).toEqual([{ kind: "route", entry: "GET /orders", file: "routes.ts", distance: 2, confidence: "INFERRED" }]);
+    expect(patterns[0]!.entries).toEqual([{ kind: "route", entry: "GET /cars", file: "routes.ts", distance: 2, confidence: "INFERRED" }]);
     expect(patterns[1]!.role).toBe("command");
     expect(patterns[1]!.entries).toEqual([{ kind: "cli-command", entry: "reindex", file: "cli.ts", distance: 1, confidence: "EXTRACTED" }]);
     // Nothing reaches it: no entry, no role — not "unreached", which a missed link would also look like.
@@ -85,53 +85,53 @@ describe("anonymousWriteFindings", () => {
     ({ path, httpMethod: method, kind: "api", handler: "h", line: 5, calls: [], middleware: [], filePath: "Ctl.cs",
        ...(anonymous === undefined ? {} : { auth: { policies: [], roles: [], schemes: [], anonymous } }) }) as never;
   const flow = (label: string, effect: string) =>
-    ({ entryKind: "route", entryLabel: label, entryFile: "Ctl.cs", effect, resource: "Orders", distance: 2, confidence: "INFERRED" }) as never;
+    ({ entryKind: "route", entryLabel: label, entryFile: "Ctl.cs", effect, resource: "Cars", distance: 2, confidence: "INFERRED" }) as never;
 
   it("flags an anonymous mutating route that writes, and nothing else", async () => {
     const { anonymousWriteFindings } = await import("./finding-entries.js");
     const found = anonymousWriteFindings(
-      [route("POST", "/orders", true), route("GET", "/orders", true), route("DELETE", "/orders/{id}", false), route("PUT", "/orders/{id}", undefined)],
-      [flow("POST /orders", "db-write"), flow("GET /orders", "db-read"), flow("DELETE /orders/{id}", "db-write"), flow("PUT /orders/{id}", "db-write")],
+      [route("POST", "/cars", true), route("GET", "/cars", true), route("DELETE", "/cars/{id}", false), route("PUT", "/cars/{id}", undefined)],
+      [flow("POST /cars", "db-write"), flow("GET /cars", "db-read"), flow("DELETE /cars/{id}", "db-write"), flow("PUT /cars/{id}", "db-write")],
     );
-    expect(found.map((f) => [f.category, f.snippet, f.cwe])).toEqual([["missing-auth", "POST /orders → h", "CWE-306"]]);
+    expect(found.map((f) => [f.category, f.snippet, f.cwe])).toEqual([["missing-auth", "POST /cars → h", "CWE-306"]]);
   });
 });
 
 describe("safeMethodWriteFindings", () => {
   const route = (method: string, path: string) =>
     ({ path, httpMethod: method, kind: "api", handler: "h", line: 5, calls: [], middleware: [], filePath: "Ctl.cs" }) as never;
-  const flow = (label: string, effect: string, resource = "Orders") =>
+  const flow = (label: string, effect: string, resource = "Cars") =>
     ({ entryKind: "route", entryLabel: label, entryFile: "Ctl.cs", effect, resource, distance: 2, confidence: "INFERRED" }) as never;
 
   it("flags a GET or HEAD that writes, naming the tables, and no other method", async () => {
     const { safeMethodWriteFindings } = await import("./finding-entries.js");
     const found = safeMethodWriteFindings(
-      [route("GET", "/orders/{id}/confirm"), route("GET", "/orders"), route("POST", "/orders"), route("HEAD", "/ping")],
-      [flow("GET /orders/{id}/confirm", "db-write"), flow("GET /orders/{id}/confirm", "db-write", "AuditLog"), flow("GET /orders", "db-read"), flow("POST /orders", "db-write"), flow("HEAD /ping", "db-write", "Visits")],
+      [route("GET", "/cars/{id}/confirm"), route("GET", "/cars"), route("POST", "/cars"), route("HEAD", "/ping")],
+      [flow("GET /cars/{id}/confirm", "db-write"), flow("GET /cars/{id}/confirm", "db-write", "AuditLog"), flow("GET /cars", "db-read"), flow("POST /cars", "db-write"), flow("HEAD /ping", "db-write", "Repairs")],
     );
     expect(found.map((f) => [f.category, f.snippet, f.cwe])).toEqual([
-      ["safe-method-write", "GET /orders/{id}/confirm → h", "CWE-650"],
+      ["safe-method-write", "GET /cars/{id}/confirm → h", "CWE-650"],
       ["safe-method-write", "HEAD /ping → h", "CWE-650"],
     ]);
-    expect(found[0]!.message).toContain("writes AuditLog, Orders");
+    expect(found[0]!.message).toContain("writes AuditLog, Cars");
   });
 });
 
 describe("filterGapFindings", () => {
   const route = (method: string, path: string, filters: Array<{ text: string; kind: "rate-limit" | "csrf"; enabled?: false }> = []) =>
-    ({ path, httpMethod: method, kind: "api", handler: "h", line: 5, calls: [], middleware: [], filePath: "Ctl.cs", owner: "OrdersController", filters }) as never;
+    ({ path, httpMethod: method, kind: "api", handler: "h", line: 5, calls: [], middleware: [], filePath: "Ctl.cs", owner: "CarsController", filters }) as never;
   const limited = [{ text: 'EnableRateLimiting("fixed")', kind: "rate-limit" as const }];
 
   it("flags a write route without the rate limit its siblings have, not one that waives it on purpose", async () => {
     const { filterGapFindings } = await import("./finding-entries.js");
     const found = filterGapFindings([
-      route("POST", "/orders", limited),
-      route("PUT", "/orders/{id}", limited),
-      route("DELETE", "/orders/{id}"),
-      route("PATCH", "/orders/{id}/note", [{ text: "DisableRateLimiting", kind: "rate-limit", enabled: false }]),
-      route("GET", "/orders"),
+      route("POST", "/cars", limited),
+      route("PUT", "/cars/{id}", limited),
+      route("DELETE", "/cars/{id}"),
+      route("PATCH", "/cars/{id}/note", [{ text: "DisableRateLimiting", kind: "rate-limit", enabled: false }]),
+      route("GET", "/cars"),
     ]);
-    expect(found.map((f) => [f.category, f.snippet, f.cwe])).toEqual([["missing-rate-limit", "DELETE /orders/{id} → h", "CWE-770"]]);
+    expect(found.map((f) => [f.category, f.snippet, f.cwe])).toEqual([["missing-rate-limit", "DELETE /cars/{id} → h", "CWE-770"]]);
     expect(found[0]!.message).toContain('`EnableRateLimiting("fixed")`');
   });
 

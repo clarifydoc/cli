@@ -60,28 +60,28 @@ describe("resolveRouterMounts", () => {
 
   it("composes transitively through a nested router mount", () => {
     const server = file("server.js", [use("/api", "apiRouter")]);
-    const api = file("routes/api.js", [use("/users", "usersRouter")]);
-    const users = file("routes/users.js", [route("GET", "/:id", "getUser")]);
-    resolveRouterMounts([server, api, users], importIndex({
+    const api = file("routes/api.js", [use("/players", "playersRouter")]);
+    const players = file("routes/players.js", [route("GET", "/:id", "getPlayer")]);
+    resolveRouterMounts([server, api, players], importIndex({
       "server.js": { apiRouter: "routes/api.js" },
-      "routes/api.js": { usersRouter: "routes/users.js" },
+      "routes/api.js": { playersRouter: "routes/players.js" },
     }));
 
-    expect(users.routes[0]!.path).toBe("/api/users/:id");
+    expect(players.routes[0]!.path).toBe("/api/players/:id");
     expect(api.routes).toHaveLength(0); // intermediate mount dropped
   });
 
   it("duplicates routes when a router is mounted at several prefixes", () => {
     const server = file("server.js", [
-      use("/api/v1/users", "usersRouter"),
-      use("/api/v2/users", "usersRouter"),
+      use("/api/v1/players", "playersRouter"),
+      use("/api/v2/players", "playersRouter"),
     ]);
-    const users = file("routes/users.js", [route("GET", "/", "list")]);
-    resolveRouterMounts([server, users], importIndex({
-      "server.js": { usersRouter: "routes/users.js" },
+    const players = file("routes/players.js", [route("GET", "/", "list")]);
+    resolveRouterMounts([server, players], importIndex({
+      "server.js": { playersRouter: "routes/players.js" },
     }));
 
-    expect(apiPaths(users)).toEqual(["/api/v1/users", "/api/v2/users"]);
+    expect(apiPaths(players)).toEqual(["/api/v1/players", "/api/v2/players"]);
   });
 
   it("leaves an unmounted (orphan) router and non-router middleware untouched", () => {
@@ -129,14 +129,14 @@ describe("resolveRouterMounts — mount-level guards", () => {
     };
     const server = file("server.js", [mount]);
     const admin = file("routes/admin.js", [
-      route("GET", "/users", "list"),
-      { ...route("DELETE", "/users/:id", "remove"), middleware: ["requireAdmin"], auth: { policies: ["requireAdmin"], roles: [], schemes: [], anonymous: false, inherited: false } },
+      route("GET", "/players", "list"),
+      { ...route("DELETE", "/players/:id", "remove"), middleware: ["requireAdmin"], auth: { policies: ["requireAdmin"], roles: [], schemes: [], anonymous: false, inherited: false } },
     ]);
     resolveRouterMounts([server, admin], importIndex({ "server.js": { adminRoutes: "routes/admin.js" } }));
     const [list, remove] = admin.routes;
-    expect(list).toMatchObject({ path: "/admin/users", middleware: ["requireAuth"], auth: { policies: ["requireAuth"], inherited: true } });
+    expect(list).toMatchObject({ path: "/admin/players", middleware: ["requireAuth"], auth: { policies: ["requireAuth"], inherited: true } });
     expect(remove).toMatchObject({
-      path: "/admin/users/{id}".replace("{id}", ":id"),
+      path: "/admin/players/{id}".replace("{id}", ":id"),
       middleware: ["requireAuth", "requireAdmin"],
       auth: { policies: ["requireAuth", "requireAdmin"], inherited: false },
     });

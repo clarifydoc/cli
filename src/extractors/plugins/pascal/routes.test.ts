@@ -14,21 +14,21 @@ const UNIT = `unit ApiController;
 interface
 uses EMS.Services, EMS.ResourceAPI, EMS.ResourceTypes;
 type
-  [ResourceName('users')]
-  TUserController = class(TDataModule)
+  [ResourceName('players')]
+  TPlayerController = class(TDataModule)
   public
     function acceptGetLegacy: TJSONArray;
 
     [ResourceSuffix('/')]
-    procedure GetUsers(const AContext: TEndpointContext;
+    procedure GetPlayers(const AContext: TEndpointContext;
       const ARequest: TEndpointRequest; const AResponse: TEndpointResponse);
 
     [ResourceSuffix('/{id}')]
-    procedure GetUserByID(const AContext: TEndpointContext;
+    procedure GetPlayerByID(const AContext: TEndpointContext;
       const ARequest: TEndpointRequest; const AResponse: TEndpointResponse);
 
     [ResourceSuffix('/')]
-    procedure PostUser(const AContext: TEndpointContext;
+    procedure PostPlayer(const AContext: TEndpointContext;
       const ARequest: TEndpointRequest; const AResponse: TEndpointResponse);
 
     [ResourceSuffix('/{id}/avatar')]
@@ -40,12 +40,12 @@ type
   end;
 implementation
 
-function TUserController.acceptGetLegacy: TJSONArray;
+function TPlayerController.acceptGetLegacy: TJSONArray;
 begin
   Result := nil;
 end;
 
-procedure TUserController.GetUsers(const AContext: TEndpointContext;
+procedure TPlayerController.GetPlayers(const AContext: TEndpointContext;
   const ARequest: TEndpointRequest; const AResponse: TEndpointResponse);
 var
   Filter: string;
@@ -54,7 +54,7 @@ begin
   AResponse.Body.SetValue(TJSONArray.Create, True);
 end;
 
-procedure TUserController.GetUserByID(const AContext: TEndpointContext;
+procedure TPlayerController.GetPlayerByID(const AContext: TEndpointContext;
   const ARequest: TEndpointRequest; const AResponse: TEndpointResponse);
 var
   ID: Integer;
@@ -62,7 +62,7 @@ begin
   ID := ARequest.Params.Values['id'].ToInteger;
 end;
 
-procedure TUserController.PostUser(const AContext: TEndpointContext;
+procedure TPlayerController.PostPlayer(const AContext: TEndpointContext;
   const ARequest: TEndpointRequest; const AResponse: TEndpointResponse);
 var
   Data: TJSONObject;
@@ -70,13 +70,13 @@ begin
   Data := ARequest.Body.GetObject;
 end;
 
-procedure TUserController.UploadAvatar(const AContext: TEndpointContext;
+procedure TPlayerController.UploadAvatar(const AContext: TEndpointContext;
   const ARequest: TEndpointRequest; const AResponse: TEndpointResponse);
 begin
   FService.SaveAvatar(ARequest.Params.Values['id'], ARequest.Body.GetStream);
 end;
 
-procedure TUserController.Helper;
+procedure TPlayerController.Helper;
 begin
 end;
 end.`;
@@ -92,11 +92,11 @@ describe("pascal routes — RAD Server attributes", () => {
   it("builds the path from [ResourceName] + [ResourceSuffix] and the verb from the name prefix or [EndpointMethod]", async () => {
     const routes = await routesOf(UNIT);
     expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
-      "GET /GetLegacy -> TUserController.acceptGetLegacy",
-      "GET /users -> TUserController.GetUsers",
-      "GET /users/{id} -> TUserController.GetUserByID",
-      "POST /users -> TUserController.PostUser",
-      "PUT /users/{id}/avatar -> TUserController.UploadAvatar",
+      "GET /GetLegacy -> TPlayerController.acceptGetLegacy",
+      "GET /players -> TPlayerController.GetPlayers",
+      "GET /players/{id} -> TPlayerController.GetPlayerByID",
+      "POST /players -> TPlayerController.PostPlayer",
+      "PUT /players/{id}/avatar -> TPlayerController.UploadAvatar",
     ]);
     // `Helper` carries no attribute and no verb prefix: not an endpoint.
     expect(routes.some((r) => r.handler?.endsWith("Helper"))).toBe(false);
@@ -104,17 +104,17 @@ describe("pascal routes — RAD Server attributes", () => {
 
   it("marks the injected context/request/response as services and reads the body's request access", async () => {
     const routes = await routesOf(UNIT);
-    const byName = (n: string) => routes.find((r) => r.handler === `TUserController.${n}`)!;
-    expect(byName("GetUsers").params).toEqual([
+    const byName = (n: string) => routes.find((r) => r.handler === `TPlayerController.${n}`)!;
+    expect(byName("GetPlayers").params).toEqual([
       { name: "AContext", type: "TEndpointContext", binding: "services", inferred: true },
       { name: "ARequest", type: "TEndpointRequest", binding: "services", inferred: true },
       { name: "AResponse", type: "TEndpointResponse", binding: "services", inferred: true },
       { name: "q", type: null, binding: "query", inferred: true },
     ]);
-    expect(byName("GetUserByID").params!.slice(3)).toEqual([
+    expect(byName("GetPlayerByID").params!.slice(3)).toEqual([
       { name: "id", type: null, binding: "route", inferred: true },
     ]);
-    expect(byName("PostUser").params!.slice(3)).toEqual([
+    expect(byName("PostPlayer").params!.slice(3)).toEqual([
       { name: "body", type: "TJSONObject", binding: "body", inferred: true },
     ]);
     expect(byName("UploadAvatar").params!.slice(3)).toEqual([

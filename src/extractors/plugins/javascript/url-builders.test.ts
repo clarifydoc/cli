@@ -67,9 +67,9 @@ describe("resolveUrlBuilders", () => {
   });
 
   it("applies a parameter default when the arg is omitted", () => {
-    const calls = [apiCall("adminUri(`license/product`)")];
+    const calls = [apiCall("adminUri(`license/part`)")];
     resolveUrlBuilders(calls, [analysis([adminUri])]);
-    expect(calls[0]!.target).toBe("/api/v1/license/product"); // version defaults to v1
+    expect(calls[0]!.target).toBe("/api/v1/license/part"); // version defaults to v1
   });
 
   it("reduces a concatenation arg to literals + {} wildcards", () => {
@@ -104,9 +104,9 @@ describe("resolveUrlBuilders", () => {
   });
 
   it("leaves an unknown helper and a non-helper target untouched", () => {
-    const calls = [apiCall("buildSomething('x')"), apiCall("/api/v1/literal")];
+    const calls = [apiCall("buildBall('x')"), apiCall("/api/v1/literal")];
     expect(resolveUrlBuilders(calls, [analysis([requestUri])])).toBe(0);
-    expect(calls[0]!.target).toBe("buildSomething('x')");
+    expect(calls[0]!.target).toBe("buildBall('x')");
     expect(calls[1]!.target).toBe("/api/v1/literal");
   });
 
@@ -137,20 +137,20 @@ describe("resolveUrlBuilders", () => {
         methods: [fn("APIUrl", "/api/{aSubPath}", [{ name: "aSubPath", type: "string", defaultValue: null }])],
       },
     ];
-    const calls = [apiCall('configService.APIUrl("logout.json")', "post"), apiCall("this.config.APIUrl(`users/${id}.json`)")];
+    const calls = [apiCall('configService.APIUrl("logout.json")', "post"), apiCall("this.config.APIUrl(`players/${id}.json`)")];
     expect(resolveUrlBuilders(calls, [configService])).toBe(2);
     expect(calls[0]!.target).toBe("/api/logout.json");
-    expect(calls[1]!.target).toBe("/api/users/${id}.json");
+    expect(calls[1]!.target).toBe("/api/players/${id}.json");
     expect(calls[0]!.targetAlternatives).toBeUndefined();
   });
 
   it("fans a branching helper out into target + targetAlternatives, primary first", () => {
     const roleUri = fn("roleUri", "/api/staff/{sub}", [{ name: "sub", type: "string", defaultValue: null }]);
     roleUri.urlTemplateAlternatives = ["/api/{sub}"];
-    const calls = [apiCall('configService.roleUri("employees.json")')];
+    const calls = [apiCall('configService.roleUri("referees.json")')];
     expect(resolveUrlBuilders(calls, [analysis([roleUri])])).toBe(1);
-    expect(calls[0]!.target).toBe("/api/staff/employees.json");
-    expect(calls[0]!.targetAlternatives).toEqual(["/api/employees.json"]);
+    expect(calls[0]!.target).toBe("/api/staff/referees.json");
+    expect(calls[0]!.targetAlternatives).toEqual(["/api/referees.json"]);
   });
 
   it("leaves a call whose path argument is a bare variable unresolved", () => {

@@ -5,7 +5,7 @@ import { extractNestjsRoutes } from "./nestjs.js";
 import type { RouteInfo } from "../../../../types/analysis.js";
 
 async function routesOf(src: string): Promise<RouteInfo[]> {
-  const tree = await parseSource(src, "typescript" as any, "users.controller.ts");
+  const tree = await parseSource(src, "typescript" as any, "players.controller.ts");
   const routes: RouteInfo[] = [];
   extractNestjsRoutes(tree.rootNode, routes);
   return routes;
@@ -13,27 +13,27 @@ async function routesOf(src: string): Promise<RouteInfo[]> {
 
 const CONTROLLER = `import { Controller, Get, Post, Body, Param, Query, Headers, Req, UseGuards, Version } from '@nestjs/common';
 
-@Controller('users')
+@Controller('players')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
-export class UsersController {
-  constructor(private readonly users: UsersService) {}
+export class PlayersController {
+  constructor(private readonly players: PlayersService) {}
 
   @Get(':id')
   @Roles('admin', 'editor')
   findOne(@Param('id') id: string, @Query('q') q?: string, @Headers('x-tenant') tenant: string, @Req() req: Request) {
-    return this.users.find(id);
+    return this.players.find(id);
   }
 
   @Post()
   @Version('2')
-  create(@Body() dto: CreateUserDto, plain: number) {
-    return this.users.create(dto);
+  create(@Body() dto: CreatePlayerDto, plain: number) {
+    return this.players.create(dto);
   }
 
   @Public()
   @Get()
-  list(@Query() filter: ListUsersQuery) {
-    return this.users.list(filter);
+  list(@Query() filter: ListPlayersQuery) {
+    return this.players.list(filter);
   }
 
   @Post(':id/avatar')
@@ -45,10 +45,10 @@ describe("NestJS routes — handler and prefix", () => {
   it("names the decorated method as handler, not the first method in the class", async () => {
     const routes = await routesOf(CONTROLLER);
     expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
-      "GET /users/:id -> findOne",
-      "POST /users -> create",
-      "GET /users -> list",
-      "POST /users/:id/avatar -> upload",
+      "GET /players/:id -> findOne",
+      "POST /players -> create",
+      "GET /players -> list",
+      "POST /players/:id/avatar -> upload",
     ]);
   });
 
@@ -117,11 +117,11 @@ describe("NestJS routes — params", () => {
       { name: "req", type: "Request", binding: "services", inferred: true },
     ]);
     expect(routes.find((r) => r.handler === "create")!.params).toEqual([
-      { name: "dto", type: "CreateUserDto", binding: "body" },
+      { name: "dto", type: "CreatePlayerDto", binding: "body" },
       { name: "plain", type: "number", binding: null },
     ]);
     expect(routes.find((r) => r.handler === "list")!.params).toEqual([
-      { name: "filter", type: "ListUsersQuery", binding: "query" },
+      { name: "filter", type: "ListPlayersQuery", binding: "query" },
     ]);
     expect(routes.find((r) => r.handler === "upload")!.params).toEqual([
       { name: "id", type: "string", binding: "route" },

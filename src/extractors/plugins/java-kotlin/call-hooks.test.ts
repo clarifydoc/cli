@@ -25,7 +25,7 @@ describe("JVM receiverTypeOf — container lookups chained into a call", () => {
   void m() {
     ctx.getBean(ReportBuilder.class).build();
     injector.getInstance(Key.get(Sorter.class, Names.named("fast"))).sortAll(null);
-    ((Notifier) ctx.getBean("mailNotifier")).notifyUser("u");
+    ((Notifier) ctx.getBean("mailNotifier")).notifyPlayer("u");
     new Foo().bar();
     repo.find(1).getId();
   }
@@ -36,7 +36,7 @@ describe("JVM receiverTypeOf — container lookups chained into a call", () => {
     });
     const sort = m.calls.find((c) => c.name.endsWith(".sortAll"));
     expect([sort?.receiverType, sort?.receiverQualifier]).toEqual(["Sorter", "fast"]);
-    const notify = m.calls.find((c) => c.name.endsWith(".notifyUser"));
+    const notify = m.calls.find((c) => c.name.endsWith(".notifyPlayer"));
     expect([notify?.receiverType, notify?.receiverQualifier]).toEqual(["Notifier", "mailNotifier"]);
     expect(m.calls.find((c) => c.name.endsWith(".getId"))?.receiverType).toBeUndefined();
   });
@@ -45,17 +45,17 @@ describe("JVM receiverTypeOf — container lookups chained into a call", () => {
     const m = await methodOf(`package x
 class C {
   fun m() {
-    ctx.getBean(OrderRepo::class.java).loadAll()
+    ctx.getBean(CarRepo::class.java).loadAll()
     get<KRepo>(named("main")).find(1)
     getBean<Exporter>().export("d")
-    OrderRepo().loadAll()
+    CarRepo().loadAll()
   }
 }`, "kotlin", "m");
     const by = (leaf: string) => m.calls.find((c) => c.name.endsWith(`.${leaf}`) && c.name.includes("("));
-    expect([by("loadAll")?.receiverType]).toEqual(["OrderRepo"]);
+    expect([by("loadAll")?.receiverType]).toEqual(["CarRepo"]);
     expect([by("find")?.receiverType, by("find")?.receiverQualifier]).toEqual(["KRepo", "main"]);
     expect(by("export")?.receiverType).toBe("Exporter");
-    expect(m.calls.find((c) => c.name === "OrderRepo().loadAll")?.receiverType).toBeUndefined();
+    expect(m.calls.find((c) => c.name === "CarRepo().loadAll")?.receiverType).toBeUndefined();
   });
 });
 
@@ -63,7 +63,7 @@ describe("JVM call attribution through lambdas", () => {
   it("attributes a Java lambda argument's calls to the enclosing method", async () => {
     const m = await methodOf(`class C {
   void m() {
-    orders.forEach(o -> repo.save(o));
+    cars.forEach(o -> repo.save(o));
     list.stream().map(x -> mapper.toDto(x)).count();
   }
 }`, "java", "m");
@@ -101,23 +101,23 @@ fun plain(r: Row) {}`, "kotlin", "plain");
 });
 
 describe("Java method references", () => {
-  it("records `postService::updatePost`, `PostVo::from` and `Snapshot::new` as calls", async () => {
+  it("records `gameService::updateGame`, `GameVo::from` and `Snapshot::new` as calls", async () => {
     const { parseSource } = await import("../../../parsers/parser-manager.js");
     const { extractFunctions } = await import("../../functions-classes/index.js");
     const { extractClasses } = await import("../../functions-classes/index.js");
-    const src = `class PostEndpoint {
-  Mono<ServerResponse> updatePost(ServerRequest request) {
-    return request.bodyToMono(PostRequest.class)
-      .flatMap(postService::updatePost)
-      .map(PostVo::from)
+    const src = `class GameEndpoint {
+  Mono<ServerResponse> updateGame(ServerRequest request) {
+    return request.bodyToMono(GameRequest.class)
+      .flatMap(gameService::updateGame)
+      .map(GameVo::from)
       .map(Snapshot::new)
       .flatMap(this::toResponse);
   }
 }`;
-    const tree = await parseSource(src, "java" as never, "PostEndpoint.java");
+    const tree = await parseSource(src, "java" as never, "GameEndpoint.java");
     void extractFunctions;
     const [cls] = extractClasses(tree, src, "java" as never);
     const calls = cls!.methods[0]!.calls.map((c) => c.name);
-    expect(calls).toEqual(expect.arrayContaining(["postService.updatePost", "PostVo.from", "Snapshot", "this.toResponse"]));
+    expect(calls).toEqual(expect.arrayContaining(["gameService.updateGame", "GameVo.from", "Snapshot", "this.toResponse"]));
   });
 });

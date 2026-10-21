@@ -43,7 +43,7 @@ describe("classifyFileLayers", () => {
 
   it("recognizes .NET test-scaffolding segments (CommonTest, Foo.Tests, TestXxx)", () => {
     expect(classify("src/Core/CommonTest/TestDataAccessHelper.cs")).toBe("test");
-    expect(classify("src/Api/Api.IntegrationTests/UsersTests.cs")).toBe("test");
+    expect(classify("src/Api/Api.IntegrationTests/PlayersTests.cs")).toBe("test");
     // …but not words that merely contain "test"
     expect(classify("src/Contest/ContestEntry.cs")).toBe("unknown");
     expect(classify("src/pages/TestimonialSection.vue")).toBe("ui");
@@ -54,12 +54,12 @@ describe("classifyFileLayers", () => {
   });
 
   it("lets the basename suffix beat generic directory tokens", () => {
-    // `App/` is a generic container — TodoController is services, not ui
-    expect(classify("Sources/App/TodoController.swift")).toBe("services");
-    expect(classify("src/app/user.service.ts")).toBe("services");
+    // `App/` is a generic container — DrillController is services, not ui
+    expect(classify("Sources/App/DrillController.swift")).toBe("services");
+    expect(classify("src/app/player.service.ts")).toBe("services");
     expect(classify("src/app/app.component.ts")).toBe("components");
     expect(classify("WinApp/MainWindow.xaml")).toBe("ui");
-    expect(classify("src/OrderRepository.cs")).toBe("data");
+    expect(classify("src/CarRepository.cs")).toBe("data");
   });
 
   it("does not read CamelCase suffixes out of unrelated words", () => {
@@ -78,16 +78,16 @@ describe("classifyFileLayers", () => {
   });
 
   it("prefers semantic tokens over the generic app container (Rails layout)", () => {
-    expect(classify("app/models/user.rb")).toBe("data");
-    expect(classify("app/controllers/users_controller.rb")).toBe("services");
-    expect(classify("app/views/users/index.html.erb")).toBe("ui");
+    expect(classify("app/models/player.rb")).toBe("data");
+    expect(classify("app/controllers/players_controller.rb")).toBe("services");
+    expect(classify("app/views/players/index.html.erb")).toBe("ui");
   });
 
   it("does not read the app/ container dir as ui (pit-stop FP: Laravel Enums, Kotlin dto)", () => {
     // 92 phantom services→ui violations: controllers importing an enum that
     // only lived under Laravel's app/ container.
     expect(classify("dsps-web/LEGACY/app/Enums/API_REQUEST_TYPE.php")).toBe("utils");
-    expect(classify("dsps-web/LEGACY/app/Providers/ApiUserProvider.php")).toBe("unknown");
+    expect(classify("dsps-web/LEGACY/app/Providers/ApiPlayerProvider.php")).toBe("unknown");
   });
 
   it("classifies dto dirs and ALL-CAPS acronym suffixes as data (pit-stop FP)", () => {
@@ -125,8 +125,8 @@ describe("detectLayerViolations", () => {
   });
 
   it("flags a genuine 2+ level upward import (data -> ui)", () => {
-    const graph = { "src/models/user.ts": ["src/pages/Profile.vue"] };
-    const layers = classifyFileLayers(["src/models/user.ts", "src/pages/Profile.vue"]);
+    const graph = { "src/models/player.ts": ["src/pages/Profile.vue"] };
+    const layers = classifyFileLayers(["src/models/player.ts", "src/pages/Profile.vue"]);
     const v = detectLayerViolations(analyses, graph, layers);
     expect(v).toHaveLength(1);
     expect(v[0].sourceLayer).toBe("data");
@@ -177,7 +177,7 @@ describe("Struts/WebFlow Action + JVM form-bean classification (real-repo FPs)",
   });
 
   it("keeps JVM *View/*Page/*Window basenames as ui", () => {
-    const layers = classifyFileLayers(["src/main/java/com/x/wicket/AccountPage.java"]);
+    const layers = classifyFileLayers(["src/main/java/com/x/wicket/ClubPage.java"]);
     expect(Object.values(layers)[0]).toBe("ui");
   });
 });
@@ -223,13 +223,13 @@ describe("classifyFileLayers — repository overrides", () => {
 
   it("lets a layer rule beat the path heuristics", () => {
     // Heuristics would say services (Application) / unknown (adapters).
-    expect(c("src/Persistence/Application/OrderStore.cs")).toBe("data");
+    expect(c("src/Persistence/Application/CarStore.cs")).toBe("data");
     expect(c("src/adapters/Toolbar.vue")).toBe("ui");
   });
 
   it("matches a slash-less pattern against the bare file name anywhere", () => {
-    expect(c("deep/in/the/tree/OrderRepository.cs")).toBe("data");
-    expect(c("deep/in/the/tree/OrderRepositoryTests.cs")).toBe("test"); // tests still win
+    expect(c("deep/in/the/tree/CarRepository.cs")).toBe("data");
+    expect(c("deep/in/the/tree/CarRepositoryTests.cs")).toBe("test"); // tests still win
   });
 
   it("applies rules in order — first match wins", () => {
@@ -245,7 +245,7 @@ describe("classifyFileLayers — repository overrides", () => {
   });
 
   it("keeps tests exempt regardless of rules", () => {
-    expect(c("src/Persistence/OrderStore.spec.ts")).toBe("test");
+    expect(c("src/Persistence/CarStore.spec.ts")).toBe("test");
   });
 
   it("changes nothing when no overrides are given", () => {
@@ -261,7 +261,7 @@ describe("classifyFileLayers — language-aware test detection", () => {
     ["pkg/handlers/server_test.go", "go"],
     ["api/test_views.py", "python"],
     ["lib/foo_spec.rb", "ruby"],
-    ["app/models/user_spec.rb", "ruby"],
+    ["app/models/player_spec.rb", "ruby"],
   ];
   for (const [path, language] of cases) {
     it(`${path} is a test when the language is known`, () => {
@@ -271,7 +271,7 @@ describe("classifyFileLayers — language-aware test detection", () => {
 
   it("still accepts bare paths, and still finds the conventions that need no language", () => {
     expect(classifyFileLayers(["src/services/api.test.ts"])["src/services/api.test.ts"]).toBe("test");
-    expect(classifyFileLayers(["src/Api/Api.IntegrationTests/UsersTests.cs"])["src/Api/Api.IntegrationTests/UsersTests.cs"]).toBe("test");
+    expect(classifyFileLayers(["src/Api/Api.IntegrationTests/PlayersTests.cs"])["src/Api/Api.IntegrationTests/PlayersTests.cs"]).toBe("test");
   });
 
   it("does not turn a production file into a test just because a language is supplied", () => {
@@ -283,13 +283,13 @@ describe("detectRuleViolations — the team's own import rules", () => {
   it("reports an import a rule forbids, with the rule's name, and honours except", async () => {
     const { detectRuleViolations } = await import("./layer-analyzer.js");
     const graph = {
-      "features/billing/invoice.ts": ["features/payroll/salary.ts", "features/payroll/shared/money.ts", "lib/date.ts"],
-      "features/payroll/salary.ts": ["features/billing/invoice.ts"],
+      "features/billing/bill.ts": ["features/payroll/salary.ts", "features/payroll/shared/money.ts", "lib/date.ts"],
+      "features/payroll/salary.ts": ["features/billing/bill.ts"],
     };
     const rules = [{ name: "billing ↛ payroll", from: ["features/billing/**"], to: ["features/payroll/**"], except: ["**/shared/**"], severity: "error" as const }];
     const v = detectRuleViolations([], graph, {}, rules);
     expect(v.map((x) => [x.sourceFile, x.targetFile, x.rule, x.severity])).toEqual([
-      ["features/billing/invoice.ts", "features/payroll/salary.ts", "billing ↛ payroll", "error"],
+      ["features/billing/bill.ts", "features/payroll/salary.ts", "billing ↛ payroll", "error"],
     ]);
   });
 });

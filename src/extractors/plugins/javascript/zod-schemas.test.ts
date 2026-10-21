@@ -13,36 +13,36 @@ async function schemasOf(src: string) {
 describe("zod schemas", () => {
   it("a named z.object is a class whose fields carry TypeScript type spellings", async () => {
     const classes = await schemasOf(`import { z } from "zod";
-export const createUser = z.object({
+export const createPlayer = z.object({
   email: z.string().email(),
   age: z.number().int().optional(),
   role: z.enum(["admin", "user"]),
   kind: z.literal("person"),
   address: z.object({ city: z.string(), zip: z.string().nullable() }),
-  manager: userRef,
+  manager: playerRef,
   tags: z.array(z.string()).default([]),
   meta: z.record(z.string(), z.number()),
   scores: z.number().array(),
 }).strict();
-export const admin = createUser.extend({ level: z.number() });
-const notASchema = makeThing({ a: 1 });`);
+export const admin = createPlayer.extend({ level: z.number() });
+const notASchema = makeBall({ a: 1 });`);
     expect(classes.map((c) => `${c.name}${c.extends ? ` extends ${c.extends}` : ""}: ${c.properties.map((p) => `${p.name}${p.isRequired ? "" : "?"}:${p.type}`).join(", ")}`)).toEqual([
-      "createUser_address: city:string, zip:string | null",
-      "createUser: email:string, age?:number, role:'admin' | 'user', kind:'person', address:createUser_address, manager:userRef, tags?:string[], meta:Record<string, number>, scores:number[]",
-      "admin extends createUser: level:number",
+      "createPlayer_address: city:string, zip:string | null",
+      "createPlayer: email:string, age?:number, role:'admin' | 'user', kind:'person', address:createPlayer_address, manager:playerRef, tags?:string[], meta:Record<string, number>, scores:number[]",
+      "admin extends createPlayer: level:number",
     ]);
   });
 
   it("names a tRPC procedure's inline input after the procedure", async () => {
     const classes = await schemasOf(`import { z } from "zod";
-export const postRouter = createTRPCRouter({
+export const gameRouter = createTRPCRouter({
   byId: publicProcedure.input(z.object({ id: z.string() })).query(({ input }) => get(input.id)),
   admin: { purge: protectedProcedure.input(z.object({ before: z.date() })).mutation(() => purge()) },
   count: publicProcedure.input(z.string()).query(() => 1),
 });`);
     expect(classes.map((c) => `${c.name}: ${c.properties.map((p) => `${p.name}:${p.type}`).join(", ")}`)).toEqual([
-      "postRouter.byId.input: id:string",
-      "postRouter.admin.purge.input: before:Date",
+      "gameRouter.byId.input: id:string",
+      "gameRouter.admin.purge.input: before:Date",
     ]);
   });
 
@@ -57,7 +57,7 @@ const shape = (classes: Awaited<ReturnType<typeof schemasOf>>) =>
 describe("joi schemas", () => {
   it("reads Joi.object and .keys schemas, optional until .required()", async () => {
     const classes = await schemasOf(`import Joi from "joi";
-export const createUser = Joi.object({
+export const createPlayer = Joi.object({
   email: Joi.string().email().required(),
   age: Joi.number().integer().min(0),
   role: Joi.string().valid("admin", "user").required(),
@@ -66,12 +66,12 @@ export const createUser = Joi.object({
   address: Joi.object({ city: Joi.string().required() }),
 });
 export const login = Joi.object().keys({ user: Joi.string().required(), password: Joi.string().required() });
-export const admin = createUser.keys({ level: Joi.number().required() });`);
+export const admin = createPlayer.keys({ level: Joi.number().required() });`);
     expect(shape(classes)).toEqual([
-      "createUser_address: city:string",
-      "createUser: email:string, age?:number, role:'admin' | 'user', tags?:string[], nickname?:string | null, address?:createUser_address",
+      "createPlayer_address: city:string",
+      "createPlayer: email:string, age?:number, role:'admin' | 'user', tags?:string[], nickname?:string | null, address?:createPlayer_address",
       "login: user:string, password:string",
-      "admin extends createUser: level:number",
+      "admin extends createPlayer: level:number",
     ]);
     expect(classes[1]!.decorators).toEqual(["joi-schema"]);
   });
@@ -89,7 +89,7 @@ describe("drizzle-zod schemas", () => {
   const tables = `import { pgTable, serial, text, varchar, integer, timestamp, boolean, uuid } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema, createUpdateSchema } from "drizzle-zod";
 import { z } from "zod";
-export const users = pgTable("users", {
+export const players = pgTable("players", {
   id: serial("id").primaryKey(),
   email: varchar("email", { length: 256 }).notNull().unique(),
   name: text("name"),
@@ -97,7 +97,7 @@ export const users = pgTable("users", {
   active: boolean("active").notNull(),
   createdAt: timestamp("created_at", { mode: "string" }).defaultNow().notNull(),
 });
-export const posts = pgTable("posts", (t) => ({
+export const games = pgTable("games", (t) => ({
   id: t.uuid().primaryKey().defaultRandom(),
   title: t.text().notNull(),
 }));
@@ -105,27 +105,27 @@ export const posts = pgTable("posts", (t) => ({
 
   it("an insert needs not-null columns without a default; a select every column; an update none", async () => {
     const classes = await schemasOf(`${tables}
-export const insertUser = createInsertSchema(users);
-export const selectUser = createSelectSchema(users);
-export const updateUser = createUpdateSchema(users);
-export const insertPost = createInsertSchema(posts);`);
+export const insertPlayer = createInsertSchema(players);
+export const selectPlayer = createSelectSchema(players);
+export const updatePlayer = createUpdateSchema(players);
+export const insertGame = createInsertSchema(games);`);
     expect(shape(classes)).toEqual([
-      "insertUser: id?:number, email:string, name?:string | null, age?:number, active:boolean, createdAt?:string",
-      "selectUser: id:number, email:string, name:string | null, age:number, active:boolean, createdAt:string",
-      "updateUser: id?:number, email?:string, name?:string | null, age?:number, active?:boolean, createdAt?:string",
-      "insertPost: id?:string, title:string",
+      "insertPlayer: id?:number, email:string, name?:string | null, age?:number, active:boolean, createdAt?:string",
+      "selectPlayer: id:number, email:string, name:string | null, age:number, active:boolean, createdAt:string",
+      "updatePlayer: id?:number, email?:string, name?:string | null, age?:number, active?:boolean, createdAt?:string",
+      "insertGame: id?:string, title:string",
     ]);
     expect(classes[0]!.decorators).toEqual(["zod-schema", "drizzle-zod:insert"]);
   });
 
   it("follows refinements and .omit/.pick/.extend/.partial", async () => {
     const classes = await schemasOf(`${tables}
-export const newUser = createInsertSchema(users, { email: (s) => s.email(), name: z.string().min(1) }).omit({ id: true, createdAt: true }).extend({ password: z.string() });
-export const patchUser = createInsertSchema(users).pick({ name: true, age: true }).partial();
-export const fromElsewhere = createInsertSchema(accounts);`);
+export const newPlayer = createInsertSchema(players, { email: (s) => s.email(), name: z.string().min(1) }).omit({ id: true, createdAt: true }).extend({ password: z.string() });
+export const patchPlayer = createInsertSchema(players).pick({ name: true, age: true }).partial();
+export const fromElsewhere = createInsertSchema(clubs);`);
     expect(shape(classes)).toEqual([
-      "newUser: email:string, name?:string | null, age?:number, active:boolean, password:string",
-      "patchUser: name?:string | null, age?:number",
+      "newPlayer: email:string, name?:string | null, age?:number, active:boolean, password:string",
+      "patchPlayer: name?:string | null, age?:number",
     ]);
   });
 });
@@ -133,16 +133,16 @@ export const fromElsewhere = createInsertSchema(accounts);`);
 describe("Express bodies validated by a schema", () => {
   it("names the schema from validate(…), zValidator('json', …) and schema.parse(req.body)", async () => {
     const src = `
-router.post("/users", validate(createUser), (req, res) => res.json(req.body));
-app.post("/hono", zValidator("json", createPost), (c) => c.json({}));
-router.put("/users/:id", requireAuth, async (req, res) => {
-  const body = updateUser.parse(req.body);
+router.post("/players", validate(createPlayer), (req, res) => res.json(req.body));
+app.post("/hono", zValidator("json", createGame), (c) => c.json({}));
+router.put("/players/:id", requireAuth, async (req, res) => {
+  const body = updatePlayer.parse(req.body);
   res.json(body);
 });
-router.get("/users/:id", (req, res) => res.json({ id: req.params.id }));
+router.get("/players/:id", (req, res) => res.json({ id: req.params.id }));
 router.post("/raw", handlers.create);
-router.post("/checked", validateRequest({ body: createUser }), handlers.create);
-router.post("/celebrated", celebrate({ [Segments.BODY]: createPost }), handlers.create);
+router.post("/checked", validateRequest({ body: createPlayer }), handlers.create);
+router.post("/celebrated", celebrate({ [Segments.BODY]: createGame }), handlers.create);
 router.post("/joi-validated", validator.body(login), handlers.create);
 router.post("/joi-inline", async (req, res) => {
   const { value } = await signup.validateAsync(req.body);
@@ -152,13 +152,13 @@ router.post("/joi-inline", async (req, res) => {
     const routes: RouteInfo[] = [];
     extractExpressRoutes(tree.rootNode, routes);
     expect(routes.map((r) => `${r.httpMethod} ${r.path} ${(r.params ?? []).filter((p) => p.binding === "body" && p.type).map((p) => p.type).join(",") || "-"}`)).toEqual([
-      "POST /users createUser",
-      "POST /hono createPost",
-      "PUT /users/:id updateUser",
-      "GET /users/:id -",
+      "POST /players createPlayer",
+      "POST /hono createGame",
+      "PUT /players/:id updatePlayer",
+      "GET /players/:id -",
       "POST /raw -",
-      "POST /checked createUser",
-      "POST /celebrated createPost",
+      "POST /checked createPlayer",
+      "POST /celebrated createGame",
       "POST /joi-validated login",
       "POST /joi-inline signup",
     ]);

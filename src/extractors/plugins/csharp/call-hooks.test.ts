@@ -31,16 +31,16 @@ describe("C# call hooks", () => {
   it("types the receiver of a container lookup chained into the call", async () => {
     const calls = await callsOf(`sp.GetRequiredService<IPricing>().Quote(o);
 sp.GetRequiredKeyedService<IStorage>("blob").Store(b);
-c.Resolve<IUserStore>().find(1);
-c.ResolveNamed<IUserStore>("mongo").Find(2);
+c.Resolve<IPlayerStore>().find(1);
+c.ResolveNamed<IPlayerStore>("mongo").Find(2);
 sp.GetService<IAudit>()?.Record("x");
 sp.GetRequiredService<Shop.Domain.IClock>()!.Now();`);
     expect(receivers(calls)).toEqual([
       ["sp.GetRequiredService<IPricing>().Quote", "IPricing", undefined],
       ["sp.GetRequiredKeyedService<IStorage>(\"blob\").Store", "IStorage", "blob"],
       // `find` is noise by its leaf name — but not on a typed receiver.
-      ["c.Resolve<IUserStore>().find", "IUserStore", undefined],
-      ["c.ResolveNamed<IUserStore>(\"mongo\").Find", "IUserStore", "mongo"],
+      ["c.Resolve<IPlayerStore>().find", "IPlayerStore", undefined],
+      ["c.ResolveNamed<IPlayerStore>(\"mongo\").Find", "IPlayerStore", "mongo"],
       ["sp.GetService<IAudit>()?.Record", "IAudit", undefined],
       ["sp.GetRequiredService<Shop.Domain.IClock>()!.Now", "Shop.Domain.IClock", undefined],
     ]);

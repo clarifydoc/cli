@@ -5,12 +5,12 @@ import { RubyEntityExtractor } from "./entities.js";
 
 describe("Ruby chain rows through memoizers and instance variables", () => {
   it("types `@agent.update!` by what the filter assigned, through the memoizer it called", () => {
-    const user = extractWithRegex(`class User < ApplicationRecord
-  has_many :account_users
-end`, "app/models/user.rb", "ruby");
-    const account = extractWithRegex(`class Account < ApplicationRecord
-  has_many :users
-end`, "app/models/account.rb", "ruby");
+    const player = extractWithRegex(`class Player < ApplicationRecord
+  has_many :club_players
+end`, "app/models/player.rb", "ruby");
+    const club = extractWithRegex(`class Club < ApplicationRecord
+  has_many :players
+end`, "app/models/club.rb", "ruby");
     const ctl = extractWithRegex(`class Api::AgentsController < Api::BaseController
   before_action :fetch_agent, except: [:index]
 
@@ -25,39 +25,39 @@ end`, "app/models/account.rb", "ruby");
   end
 
   def agents
-    @agents ||= Current.account.users.order_by_full_name.includes(:avatar)
+    @agents ||= Current.club.players.order_by_full_name.includes(:avatar)
   end
 end`, "app/controllers/api/agents_controller.rb", "ruby");
-    const analyses = [user, account, ctl];
+    const analyses = [player, club, ctl];
     new RubyEntityExtractor().reconcileProject(analyses);
     const rows = ctl.dataSources.filter((d) => d.kind === "database").map((d) => `${d.line} ${d.name} ${d.entity ?? "-"}`).sort();
     // `agents.find` is a read on a bare variable — no row per file (an Array reads the same).
     expect(rows).toEqual([
-      "15 Current.account.users.order_by_full_name.includes User",
-      "5 @agent.update! User",
+      "15 Current.club.players.order_by_full_name.includes Player",
+      "5 @agent.update! Player",
     ]);
   });
 });
 
 describe("Ruby service objects are not models", () => {
-  it("drops `UserService.create` when the project declares UserService and it is not a model, and keeps real and undeclared models", () => {
-    const user = extractWithRegex(`class User < ApplicationRecord
-end`, "app/models/user.rb", "ruby");
-    const service = extractWithRegex(`class UserService
+  it("drops `PlayerService.create` when the project declares PlayerService and it is not a model, and keeps real and undeclared models", () => {
+    const player = extractWithRegex(`class Player < ApplicationRecord
+end`, "app/models/player.rb", "ruby");
+    const service = extractWithRegex(`class PlayerService
   def self.create(attrs)
-    User.create(attrs)
+    Player.create(attrs)
   end
-end`, "app/services/user_service.rb", "ruby");
-    const ctl = extractWithRegex(`class UsersController < ApplicationController
+end`, "app/services/player_service.rb", "ruby");
+    const ctl = extractWithRegex(`class PlayersController < ApplicationController
   def create
-    UserService.create(params)
-    User.find(params[:id])
-    Billing::Invoice.where(paid: true)
+    PlayerService.create(params)
+    Player.find(params[:id])
+    Billing::Bill.where(paid: true)
   end
-end`, "app/controllers/users_controller.rb", "ruby");
-    new RubyEntityExtractor().reconcileProject([user, service, ctl]);
+end`, "app/controllers/players_controller.rb", "ruby");
+    new RubyEntityExtractor().reconcileProject([player, service, ctl]);
     const rows = (a: typeof ctl) => a.dataSources.filter((d) => d.kind === "database").map((d) => `${d.name} ${d.entity ?? "-"}`);
-    expect(rows(ctl)).toEqual(["User.find User", "Billing::Invoice.where Invoice"]);
-    expect(rows(service)).toEqual(["User.create User"]);
+    expect(rows(ctl)).toEqual(["Player.find Player", "Billing::Bill.where Bill"]);
+    expect(rows(service)).toEqual(["Player.create Player"]);
   });
 });

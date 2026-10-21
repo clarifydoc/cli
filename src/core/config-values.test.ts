@@ -16,7 +16,7 @@ describe("readProjectProxies", () => {
   location /files/ { proxy_pass http://\${FILES_HOST}; }
 }`);
     await writeFile(join(dir, "web", "Dockerfile"), `FROM nginx:1.27
-ENV API_SERVICE_NAME "orders-api"
+ENV API_SERVICE_NAME "cars-api"
 COPY default.conf.template /etc/nginx/templates/`);
   });
   afterAll(async () => {
@@ -27,7 +27,7 @@ COPY default.conf.template /etc/nginx/templates/`);
     const web = { id: "web", root: "web" } as unknown as SubProject;
     const rules = (await readProjectProxies(dir, [web])).get("web") ?? [];
     expect(rules.map(({ line: _l, ...r }) => r)).toEqual([
-      { pathPrefix: "/api", target: "http://orders-api", via: "nginx", file: "web/default.conf.template" },
+      { pathPrefix: "/api", target: "http://cars-api", via: "nginx", file: "web/default.conf.template" },
     ]);
   });
 });

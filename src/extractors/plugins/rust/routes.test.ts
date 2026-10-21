@@ -8,20 +8,20 @@ const lines = (src: string) => src.split("\n");
 describe("Rust routes: actix-web / Rocket attribute macros", () => {
   it("extracts verb attributes with the fn below (skipping stacked attrs)", () => {
     const routes = extractRustRoutes(lines(`
-#[get("/users/{id}")]
-async fn get_user(path: web::Path<u32>) -> impl Responder {
+#[get("/players/{id}")]
+async fn get_player(path: web::Path<u32>) -> impl Responder {
     HttpResponse::Ok()
 }
 
-#[post("/users")]
+#[post("/players")]
 #[tracing::instrument]
-async fn create_user(body: web::Json<User>) -> impl Responder {
+async fn create_player(body: web::Json<Player>) -> impl Responder {
     HttpResponse::Created()
 }
 `));
     expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
-      "GET /users/{id} -> get_user",
-      "POST /users -> create_user",
+      "GET /players/{id} -> get_player",
+      "POST /players -> create_player",
     ]);
   });
 
@@ -44,14 +44,14 @@ describe("Rust routes: axum method routers", () => {
   it("emits one route per verb in the chain, resolving handler names", () => {
     const routes = extractRustRoutes(lines(`
 let app = Router::new()
-    .route("/users", get(list_users).post(create_user))
-    .route("/users/:id", get(handlers::get_user).delete(delete_user));
+    .route("/players", get(list_players).post(create_player))
+    .route("/players/:id", get(handlers::get_player).delete(delete_player));
 `));
     expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
-      "GET /users -> list_users",
-      "POST /users -> create_user",
-      "GET /users/:id -> get_user",
-      "DELETE /users/:id -> delete_user",
+      "GET /players -> list_players",
+      "POST /players -> create_player",
+      "GET /players/:id -> get_player",
+      "DELETE /players/:id -> delete_player",
     ]);
   });
 });
@@ -59,28 +59,28 @@ let app = Router::new()
 describe("Rust routes: axum .nest() prefix resolution", () => {
   it("applies same-file nest prefixes to routes declared in the nested fn, transitively", () => {
     const routes = extractRustRoutes(lines(`
-fn item_routes() -> Router {
+fn ball_routes() -> Router {
     Router::new()
-        .route("/", get(list_items))
-        .route("/:id", get(get_item))
+        .route("/", get(list_balls))
+        .route("/:id", get(get_ball))
 }
 
-fn user_routes() -> Router {
+fn player_routes() -> Router {
     Router::new()
-        .route("/", get(list_users))
-        .nest("/items", item_routes())
+        .route("/", get(list_players))
+        .nest("/balls", ball_routes())
 }
 
 pub fn app() -> Router {
     Router::new()
         .route("/health", get(health))
-        .nest("/api/users", user_routes())
+        .nest("/api/players", player_routes())
 }
 `));
     expect(routes.map((r) => `${r.httpMethod} ${r.path}`).sort()).toEqual([
-      "GET /api/users",
-      "GET /api/users/items",
-      "GET /api/users/items/:id",
+      "GET /api/players",
+      "GET /api/players/balls",
+      "GET /api/players/balls/:id",
       "GET /health",
     ].sort());
   });
@@ -89,10 +89,10 @@ pub fn app() -> Router {
 describe("Rust routes: attribute-macro handler params", () => {
   it("binds actix extractors explicitly, with the payload type inside the wrapper", () => {
     const routes = extractRustRoutes(lines(`
-#[post("/users/{id}")]
-async fn update_user(
+#[post("/players/{id}")]
+async fn update_player(
     path: web::Path<u32>,
-    body: web::Json<UpdateUser>,
+    body: web::Json<UpdatePlayer>,
     query: web::Query<ListParams>,
     form: web::Form<Login>,
     req: HttpRequest,
@@ -103,7 +103,7 @@ async fn update_user(
 `));
     expect(routes[0]!.params).toEqual([
       { name: "path", type: "u32", binding: "route" },
-      { name: "body", type: "UpdateUser", binding: "body" },
+      { name: "body", type: "UpdatePlayer", binding: "body" },
       { name: "query", type: "ListParams", binding: "query" },
       { name: "form", type: "Login", binding: "form" },
       { name: "req", type: "HttpRequest", binding: "services", inferred: true },
@@ -114,16 +114,16 @@ async fn update_user(
 
   it("reads Rocket path, query and data names and turns a guard-typed param into auth", () => {
     const routes = extractRustRoutes(lines(`
-#[get("/items/<id>?<page>&<limit>")]
-fn list(id: u64, page: Option<u32>, limit: Option<u32>, user: AuthUser, cookies: &CookieJar<'_>) -> Json<Vec<Item>> { todo!() }
+#[get("/balls/<id>?<page>&<limit>")]
+fn list(id: u64, page: Option<u32>, limit: Option<u32>, user: AuthUser, cookies: &CookieJar<'_>) -> Json<Vec<Ball>> { todo!() }
 
-#[post("/users", data = "<user>")]
-fn create(user: Json<NewUser>, admin: AdminUser) -> Status { todo!() }
+#[post("/players", data = "<player>")]
+fn create(player: Json<NewPlayer>, admin: AdminUser) -> Status { todo!() }
 
-#[put("/orders/<id>", data = "<order>")]
-fn replace(id: u64, order: Order) -> Status { todo!() }
+#[put("/cars/<id>", data = "<car>")]
+fn replace(id: u64, car: Car) -> Status { todo!() }
 `));
-    expect(routes[0]!.path).toBe("/items/{id}");
+    expect(routes[0]!.path).toBe("/balls/{id}");
     expect(routes[0]!.params).toEqual([
       { name: "id", type: "u64", binding: "route", inferred: true },
       { name: "page", type: "Option<u32>", binding: "query" },
@@ -134,25 +134,25 @@ fn replace(id: u64, order: Order) -> Status { todo!() }
     expect(routes[0]!.middleware).toEqual(["AuthUser"]);
     expect(routes[0]!.auth).toEqual({ policies: ["AuthUser"], roles: [], schemes: [], anonymous: false, inherited: false });
     expect(routes[1]!.params).toEqual([
-      { name: "user", type: "NewUser", binding: "body" },
+      { name: "player", type: "NewPlayer", binding: "body" },
       { name: "admin", type: "AdminUser", binding: "services", inferred: true },
     ]);
     expect(routes[1]!.auth!.policies).toEqual(["AdminUser"]);
-    // `data = "<order>"` names the body even though `Order` carries no wrapper.
+    // `data = "<car>"` names the body even though `Car` carries no wrapper.
     expect(routes[2]!.params).toEqual([
       { name: "id", type: "u64", binding: "route", inferred: true },
-      { name: "order", type: "Order", binding: "body" },
+      { name: "car", type: "Car", binding: "body" },
     ]);
   });
 
   it("names a destructured axum-style param after its binding", () => {
     const routes = extractRustRoutes(lines(`
-#[get("/users/{id}")]
-async fn get_user(Path(id): Path<u64>, Json(payload): Json<CreateUser>) -> String { todo!() }
+#[get("/players/{id}")]
+async fn get_player(Path(id): Path<u64>, Json(payload): Json<CreatePlayer>) -> String { todo!() }
 `));
     expect(routes[0]!.params).toEqual([
       { name: "id", type: "u64", binding: "route" },
-      { name: "payload", type: "CreateUser", binding: "body" },
+      { name: "payload", type: "CreatePlayer", binding: "body" },
     ]);
   });
 });
@@ -162,7 +162,7 @@ describe("Rust routes: axum layers", () => {
     const routes = extractRustRoutes(lines(`
 let app = Router::new()
     .route("/health", get(health))
-    .route("/api/orders", get(list_orders).post(create_order))
+    .route("/api/cars", get(list_cars).post(create_car))
     .route_layer(middleware::from_fn(auth))
     .route("/public", get(public_page))
     .layer(TraceLayer::new_for_http());
@@ -170,19 +170,19 @@ let app = Router::new()
     const byPath = Object.fromEntries(routes.map((r) => [`${r.httpMethod} ${r.path}`, r]));
     expect(byPath["GET /health"]!.middleware).toEqual(["middleware::from_fn(auth)", "TraceLayer::new_for_http()"]);
     expect(byPath["GET /health"]!.auth).toEqual({ policies: ["auth"], roles: [], schemes: [], anonymous: false, inherited: true });
-    expect(byPath["POST /api/orders"]!.auth!.policies).toEqual(["auth"]);
+    expect(byPath["POST /api/cars"]!.auth!.policies).toEqual(["auth"]);
     expect(byPath["GET /public"]!.middleware).toEqual(["TraceLayer::new_for_http()"]);
     expect(byPath["GET /public"]!.auth).toBeUndefined();
     // Handler names stay bare — the project-level join resolves them.
-    expect(byPath["POST /api/orders"]!.handler).toBe("create_order");
-    expect(byPath["POST /api/orders"]!.params).toBeUndefined();
+    expect(byPath["POST /api/cars"]!.handler).toBe("create_car");
+    expect(byPath["POST /api/cars"]!.params).toBeUndefined();
   });
 
   it("carries a layer on the outer router down into a same-file nested router", () => {
     const routes = extractRustRoutes(lines(`
 fn admin_routes() -> Router {
     Router::new()
-        .route("/users", get(list_users))
+        .route("/players", get(list_players))
         .route_layer(from_fn_with_state(state, require_admin))
 }
 
@@ -195,10 +195,10 @@ pub fn app() -> Router {
 }
 `));
     const byPath = Object.fromEntries(routes.map((r) => [`${r.httpMethod} ${r.path}`, r]));
-    expect(byPath["GET /admin/users"]!.middleware).toEqual([
+    expect(byPath["GET /admin/players"]!.middleware).toEqual([
       'RequireAuthorizationLayer::bearer("secret")', "CorsLayer::permissive()", "from_fn_with_state(state, require_admin)",
     ]);
-    expect(byPath["GET /admin/users"]!.auth).toEqual({
+    expect(byPath["GET /admin/players"]!.auth).toEqual({
       policies: ["require_admin"], roles: [], schemes: ["bearer"], anonymous: false, inherited: true,
     });
     expect(byPath["POST /login"]!.auth!.schemes).toEqual(["bearer"]);
@@ -209,8 +209,8 @@ pub fn app() -> Router {
 describe("Rust routes: actix App wiring", () => {
   it("gives .service()d attribute routes the scope prefix and the wrap() guards above them", () => {
     const routes = extractRustRoutes(lines(`
-#[get("/users/{id}")]
-async fn get_user(path: web::Path<u32>) -> impl Responder { HttpResponse::Ok() }
+#[get("/players/{id}")]
+async fn get_player(path: web::Path<u32>) -> impl Responder { HttpResponse::Ok() }
 
 #[get("/health")]
 async fn health() -> impl Responder { HttpResponse::Ok() }
@@ -224,7 +224,7 @@ async fn main() -> std::io::Result<()> {
             .service(
                 web::scope("/api")
                     .wrap(HttpAuthentication::bearer(validator))
-                    .service(get_user)
+                    .service(get_player)
                     .route("/ping", web::get().to(ping)),
             )
     })
@@ -234,14 +234,14 @@ async fn main() -> std::io::Result<()> {
 }
 `));
     const byPath = Object.fromEntries(routes.map((r) => [`${r.httpMethod} ${r.path}`, r]));
-    expect(Object.keys(byPath).sort()).toEqual(["GET /api/ping", "GET /api/users/{id}", "GET /health"]);
+    expect(Object.keys(byPath).sort()).toEqual(["GET /api/ping", "GET /api/players/{id}", "GET /health"]);
     expect(byPath["GET /health"]!.middleware).toEqual(["Logger::default()"]);
     expect(byPath["GET /health"]!.auth).toBeUndefined();
-    expect(byPath["GET /api/users/{id}"]!.middleware).toEqual(["Logger::default()", "HttpAuthentication::bearer(validator)"]);
-    expect(byPath["GET /api/users/{id}"]!.auth).toEqual({
+    expect(byPath["GET /api/players/{id}"]!.middleware).toEqual(["Logger::default()", "HttpAuthentication::bearer(validator)"]);
+    expect(byPath["GET /api/players/{id}"]!.auth).toEqual({
       policies: ["validator"], roles: [], schemes: ["bearer"], anonymous: false, inherited: true,
     });
-    expect(byPath["GET /api/users/{id}"]!.params).toEqual([{ name: "path", type: "u32", binding: "route" }]);
+    expect(byPath["GET /api/players/{id}"]!.params).toEqual([{ name: "path", type: "u32", binding: "route" }]);
     expect(byPath["GET /api/ping"]!.handler).toBe("ping");
     expect(byPath["GET /api/ping"]!.auth!.schemes).toEqual(["bearer"]);
   });
@@ -271,33 +271,33 @@ pub fn config(cfg: &mut ServiceConfig) {
 
 describe("Rust data sources", () => {
   it("normalizes r#\"...\"# raw strings into per-line quoted fragments", () => {
-    const norm = normalizeRawStrings('sqlx::query(r#"SELECT id\nFROM orders"#)');
-    expect(norm.split("\n")).toEqual(['sqlx::query("SELECT id"', '"FROM orders")']);
+    const norm = normalizeRawStrings('sqlx::query(r#"SELECT id\nFROM cars"#)');
+    expect(norm.split("\n")).toEqual(['sqlx::query("SELECT id"', '"FROM cars")']);
   });
 
   it("extracts tables from sqlx raw SQL and diesel ::table refs", () => {
     const s = extractRustDataSources(lines(`
-let rows = sqlx::query_as::<_, Order>(r#"
+let rows = sqlx::query_as::<_, Car>(r#"
     SELECT id, total
-    FROM orders
+    FROM cars
     WHERE status = $1"#)
     .fetch_all(&pool).await?;
-let results = users::table.filter(dsl::active.eq(true)).load::<User>(conn)?;
+let results = players::table.filter(dsl::active.eq(true)).load::<Player>(conn)?;
 `));
-    expect(s.some((d) => d.kind === "database" && d.entity === "orders")).toBe(true);
-    expect(s.some((d) => d.kind === "database" && d.entity === "users" && d.name === "diesel")).toBe(true);
+    expect(s.some((d) => d.kind === "database" && d.entity === "cars")).toBe(true);
+    expect(s.some((d) => d.kind === "database" && d.entity === "players" && d.name === "diesel")).toBe(true);
   });
 
   it("captures reqwest calls, env reads and lapin AMQP", () => {
     const s = extractRustDataSources(lines(`
-let resp = client.get("https://api.example.com/items").send().await?;
+let resp = client.get("https://api.example.com/balls").send().await?;
 let key = env::var("API_KEY")?;
-channel.basic_publish("orders", "order.created", opts, payload, props).await?;
-let consumer = channel.basic_consume("orders-queue", "tag", opts, table).await?;
+channel.basic_publish("cars", "car.created", opts, payload, props).await?;
+let consumer = channel.basic_consume("cars-queue", "tag", opts, table).await?;
 `));
-    expect(s.some((d) => d.kind === "api-call" && d.name === "GET" && d.target === "https://api.example.com/items")).toBe(true);
+    expect(s.some((d) => d.kind === "api-call" && d.name === "GET" && d.target === "https://api.example.com/balls")).toBe(true);
     expect(s.some((d) => d.kind === "env" && d.target === "API_KEY")).toBe(true);
-    expect(s.some((d) => d.kind === "queue-publish" && d.target === "orders")).toBe(true);
-    expect(s.some((d) => d.kind === "queue-consume" && d.target === "orders-queue")).toBe(true);
+    expect(s.some((d) => d.kind === "queue-publish" && d.target === "cars")).toBe(true);
+    expect(s.some((d) => d.kind === "queue-consume" && d.target === "cars-queue")).toBe(true);
   });
 });

@@ -9,14 +9,14 @@ async function mutationsOf(body: string, lang: Language): Promise<DataMutationIn
   const src =
     lang === "kotlin"
       ? `package x
-class Repo(val repo: UserRepository) {
-  fun m(user: User) {
+class Repo(val repo: PlayerRepository) {
+  fun m(player: Player) {
 ${body}
   }
 }`
       : `package x;
 class Repo {
-  void m(User user) {
+  void m(Player player) {
 ${body}
   }
 }`;
@@ -26,19 +26,19 @@ ${body}
 
 describe("Kotlin data mutations (call_expression has no name field — was 0 mutations)", () => {
   it("captures repository writes in Kotlin", async () => {
-    const m = await mutationsOf(`    repo.save(user)\n    repo.deleteById(user.id)`, "kotlin");
+    const m = await mutationsOf(`    repo.save(player)\n    repo.deleteById(player.id)`, "kotlin");
     const writes = m.filter((x) => x.kind === "db-write");
     expect(writes).toHaveLength(2);
     expect(writes[0]!.target).toContain("save");
   });
 
   it("captures Kotlin setter calls", async () => {
-    const m = await mutationsOf(`    user.setName("x")`, "kotlin");
+    const m = await mutationsOf(`    player.setName("x")`, "kotlin");
     expect(m.some((x) => x.kind === "assignment" && x.target === "setName")).toBe(true);
   });
 
   it("still captures Java repository writes (field-based path)", async () => {
-    const m = await mutationsOf(`    repo.save(user);`, "java");
+    const m = await mutationsOf(`    repo.save(player);`, "java");
     expect(m.some((x) => x.kind === "db-write")).toBe(true);
   });
 });

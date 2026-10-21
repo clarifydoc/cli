@@ -17,22 +17,22 @@ describe("Racket", () => {
   const a = analyze([
     "#lang racket/base",
     '(require web-server/servlet web-server/dispatch db "db.rkt" (only-in "crm.rkt" notify-closed))',
-    "(provide start (struct-out order))",
+    "(provide start (struct-out car))",
     "#| block comment (not-a-call) |#",
-    "(struct order (id total) #:transparent)",
-    "(define order-repo%",
+    "(struct car (id total) #:transparent)",
+    "(define car-repo%",
     "  (class object%",
     "    (init-field conn)",
-    "    (define/public (find id) (query-row conn \"SELECT id, total FROM orders WHERE id = $1\" id))",
+    "    (define/public (find id) (query-row conn \"SELECT id, total FROM cars WHERE id = $1\" id))",
     "    (super-new)))",
-    "(define (close-order req id #:force [force #f])",
+    "(define (close-car req id #:force [force #f])",
     "  (when (and id (not force)) (mark-closed! id))",
     "  (send repo save id)",
     "  (notify-closed id))",
     "(define-values (app-dispatch app-url)",
     "  (dispatch-rules",
-    '   [("orders" (integer-arg)) show-order]',
-    '   [("orders" (integer-arg) "close") #:method "post" close-order]))',
+    '   [("cars" (integer-arg)) show-car]',
+    '   [("cars" (integer-arg) "close") #:method "post" close-car]))',
     "(define (start req) (app-dispatch req))",
     "(module+ test (check-equal? (start #f) 1))",
     "(module+ main (serve/servlet start))",
@@ -41,12 +41,12 @@ describe("Racket", () => {
   it("reads functions, structs and classes", () => {
     expect(fns(a)).toEqual([
       ["<setup>", [], ["serve/servlet"]],
-      ["close-order", ["req", "id", "force=#f"], ["mark-closed!", "repo.save", "notify-closed"]],
+      ["close-car", ["req", "id", "force=#f"], ["mark-closed!", "repo.save", "notify-closed"]],
       ["start", ["req"], ["app-dispatch"]],
     ]);
     expect(a.classes.map((c) => [c.name, c.extends, c.properties.map((p) => p.name), c.methods.map((m) => m.name)])).toEqual([
-      ["order", null, ["id", "total"], []],
-      ["order-repo%", "object%", ["conn"], ["find"]],
+      ["car", null, ["id", "total"], []],
+      ["car-repo%", "object%", ["conn"], ["find"]],
     ]);
   });
 
@@ -54,15 +54,15 @@ describe("Racket", () => {
     expect(a.imports.map((i) => [i.source, i.specifiers])).toEqual([
       ["web-server/servlet", []], ["web-server/dispatch", []], ["db", []], ["./db.rkt", []], ["./crm.rkt", ["notify-closed"]],
     ]);
-    expect(a.exports.map((e) => e.name)).toEqual(["start", "order"]);
+    expect(a.exports.map((e) => e.name)).toEqual(["start", "car"]);
   });
 
   it("reads dispatch-rules routes and SQL", () => {
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
-      "GET /orders/{integer} -> show-order",
-      "POST /orders/{integer}/close -> close-order",
+      "GET /cars/{integer} -> show-car",
+      "POST /cars/{integer}/close -> close-car",
     ]);
-    expect(a.dataSources.map((d) => `${d.kind} ${d.name} ${d.entity}`)).toEqual(["database SELECT orders"]);
+    expect(a.dataSources.map((d) => `${d.kind} ${d.name} ${d.entity}`)).toEqual(["database SELECT cars"]);
   });
 });
 
@@ -70,60 +70,60 @@ describe("Common Lisp", () => {
   const a = analyze([
     "(defpackage :shop.web",
     "  (:use :cl :caveman2)",
-    "  (:import-from :shop.db #:find-order #:close-order)",
+    "  (:import-from :shop.db #:find-car #:close-car)",
     "  (:export #:start))",
     "(in-package :shop.web)",
-    "(defclass order (base-model) ((id :initarg :id :type integer) total))",
-    "(defstruct (line-item (:include base)) sku (qty 1 :type integer))",
+    "(defclass car (base-model) ((id :initarg :id :type integer) total))",
+    "(defstruct (car-part (:include base)) sku (qty 1 :type integer))",
     "(defun start (&key (port 5000))",
     "  (clack:clackup *app* :port port))",
-    "(defmethod total-of ((o order) &optional tax)",
-    "  (+ (order-total o) (or tax 0)))",
-    '(defroute "/orders/:id" (&key id) (render-json (find-order id)))',
-    '(defroute ("/orders/:id/close" :method :POST) (&key id) (close-order id))',
+    "(defmethod total-of ((o car) &optional tax)",
+    "  (+ (car-total o) (or tax 0)))",
+    '(defroute "/cars/:id" (&key id) (render-json (find-car id)))',
+    '(defroute ("/cars/:id/close" :method :POST) (&key id) (close-car id))',
     '(hunchentoot:define-easy-handler (health :uri "/health") () "ok")',
-    '(defun crm (id) (dex:post "https://crm.example.com/v2/orders/closed" :content id))',
+    '(defun crm (id) (dex:post "https://crm.example.com/v2/cars/closed" :content id))',
   ].join("\n"), "src/web.lisp", "commonlisp");
 
   it("reads defuns, generic methods and their specializers, classes and structs", () => {
     expect(fns(a)).toEqual([
       ["start", ["port=5000"], ["clack:clackup"]],
-      ["total-of", ["o:order", "tax"], ["order-total"]],
+      ["total-of", ["o:car", "tax"], ["car-total"]],
       ["crm", ["id"], ["dex:post"]],
     ]);
     expect(a.classes.map((c) => [c.name, c.extends, c.properties.map((p) => `${p.name}:${p.type}`)])).toEqual([
-      ["order", "base-model", ["id:integer", "total:null"]],
-      ["line-item", "base", ["sku:null", "qty:integer"]],
+      ["car", "base-model", ["id:integer", "total:null"]],
+      ["car-part", "base", ["sku:null", "qty:integer"]],
     ]);
   });
 
   it("reads defpackage imports and exports, routes and HTTP calls", () => {
-    expect(a.imports.map((i) => [i.source, i.specifiers])).toEqual([["caveman2", []], ["shop.db", ["find-order", "close-order"]]]);
+    expect(a.imports.map((i) => [i.source, i.specifiers])).toEqual([["caveman2", []], ["shop.db", ["find-car", "close-car"]]]);
     expect(a.exports.map((e) => e.name)).toEqual(["start"]);
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} [${r.calls.map((c) => c.name)}]`)).toEqual([
-      "GET /orders/{id} [render-json,find-order]",
-      "POST /orders/{id}/close [close-order]",
+      "GET /cars/{id} [render-json,find-car]",
+      "POST /cars/{id}/close [close-car]",
       "null /health []",
     ]);
-    expect(a.dataSources.map((d) => d.name)).toEqual(["POST https://crm.example.com/v2/orders/closed"]);
+    expect(a.dataSources.map((d) => d.name)).toEqual(["POST https://crm.example.com/v2/cars/closed"]);
   });
 });
 
 describe("Scheme", () => {
   it("reads R7RS libraries, record types and Artanis routes", () => {
     const a = analyze([
-      "(define-library (shop orders)",
-      "  (export find-order make-order)",
+      "(define-library (shop cars)",
+      "  (export find-car make-car)",
       "  (import (scheme base) (shop db))",
       "  (begin",
-      "    (define-record-type <order> (make-order id total) order? (id order-id) (total order-total))",
-      "    (define (find-order id) (db-query \"SELECT id FROM orders WHERE id = ?\" id))))",
-      '(get "/orders/:id" (lambda (rc) (find-order (params rc "id"))))',
-    ].join("\n"), "shop/orders.sld", "scheme");
-    expect(fns(a)).toEqual([["<setup>", [], ["get"]], ["find-order", ["id"], ["db-query"]]]);
-    expect(a.classes.map((c) => [c.name, c.properties.map((p) => p.name)])).toEqual([["order", ["id", "total"]]]);
+      "    (define-record-type <car> (make-car id total) car? (id car-id) (total car-total))",
+      "    (define (find-car id) (db-query \"SELECT id FROM cars WHERE id = ?\" id))))",
+      '(get "/cars/:id" (lambda (rc) (find-car (params rc "id"))))',
+    ].join("\n"), "shop/cars.sld", "scheme");
+    expect(fns(a)).toEqual([["<setup>", [], ["get"]], ["find-car", ["id"], ["db-query"]]]);
+    expect(a.classes.map((c) => [c.name, c.properties.map((p) => p.name)])).toEqual([["car", ["id", "total"]]]);
     expect(a.imports.map((i) => i.source)).toEqual(["shop/db"]);
-    expect(a.routes.map((r) => `${r.httpMethod} ${r.path} [${r.calls.map((c) => c.name)}]`)).toEqual(["GET /orders/{id} [find-order,params]"]);
+    expect(a.routes.map((r) => `${r.httpMethod} ${r.path} [${r.calls.map((c) => c.name)}]`)).toEqual(["GET /cars/{id} [find-car,params]"]);
   });
 });
 

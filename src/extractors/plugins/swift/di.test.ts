@@ -16,10 +16,10 @@ describe("swift protocols", () => {
   it("marks a protocol as an interface whose requirements end on their own line", () => {
     const [proto] = classes(
       [
-        "protocol UserRepo: AnyObject {",
-        "    func load(id: Int) -> User?",
-        "    func find(id: Int) throws -> User?",
-        "    func save(_ user: User) async throws",
+        "protocol PlayerRepo: AnyObject {",
+        "    func load(id: Int) -> Player?",
+        "    func find(id: Int) throws -> Player?",
+        "    func save(_ player: Player) async throws",
         "    var count: Int { get }",
         "}",
       ].join("\n"),
@@ -33,10 +33,10 @@ describe("swift protocols", () => {
   });
 
   it("records a conformance declared by an extension", () => {
-    const found = classes(["final class PgRepo: NSObject {", "}", "extension PgRepo: UserRepo, Cache {", "    func load(id: Int) -> User? { nil }", "}"].join("\n"));
+    const found = classes(["final class PgRepo: NSObject {", "}", "extension PgRepo: PlayerRepo, Cache {", "    func load(id: Int) -> Player? { nil }", "}"].join("\n"));
     expect(found.map((c) => [c.name, c.extends, c.implements, c.kind])).toEqual([
       ["PgRepo", "NSObject", [], undefined],
-      ["PgRepo", null, ["UserRepo", "Cache"], undefined],
+      ["PgRepo", null, ["PlayerRepo", "Cache"], undefined],
     ]);
   });
 });
@@ -47,20 +47,20 @@ describe("swift injected members", () => {
   it("reads the key an injecting wrapper names", () => {
     expect(
       props(
-        "    @Injected(\\.userRepo) private var repo: UserRepo",
-        "    @Injected(Container.legacyRepo) var legacy: UserRepo",
-        "    @Injected(name: \"mem\") var mem: UserRepo",
-        "    @Injected(name: .fast) var fast: UserRepo",
-        "    @Injected var plain: UserRepo",
+        "    @Injected(\\.playerRepo) private var repo: PlayerRepo",
+        "    @Injected(Container.legacyRepo) var legacy: PlayerRepo",
+        "    @Injected(name: \"mem\") var mem: PlayerRepo",
+        "    @Injected(name: .fast) var fast: PlayerRepo",
+        "    @Injected var plain: PlayerRepo",
         "    @LazyInjected(\\Container.cache)",
         "    var cache: Cache",
       ).map((p) => [p.name, p.type, p.qualifier]),
     ).toEqual([
-      ["repo", "UserRepo", "userRepo"],
-      ["legacy", "UserRepo", "legacyRepo"],
-      ["mem", "UserRepo", "mem"],
-      ["fast", "UserRepo", "fast"],
-      ["plain", "UserRepo", undefined],
+      ["repo", "PlayerRepo", "playerRepo"],
+      ["legacy", "PlayerRepo", "legacyRepo"],
+      ["mem", "PlayerRepo", "mem"],
+      ["fast", "PlayerRepo", "fast"],
+      ["plain", "PlayerRepo", undefined],
       ["cache", "Cache", "cache"],
     ]);
   });
@@ -76,7 +76,7 @@ describe("swift injected members", () => {
       props(
         "    private let repo = PgRepo()",
         "    private lazy var audit = container.resolve(Auditing.self)!",
-        "    let named: UserRepo = container.resolve(UserRepo.self, name: \"mem\")!",
+        "    let named: PlayerRepo = container.resolve(PlayerRepo.self, name: \"mem\")!",
         "    weak var delegate: Delegate?",
         "    let id = UUID()",
         "    let client = HTTPClient()",
@@ -89,7 +89,7 @@ describe("swift injected members", () => {
     ).toEqual([
       ["repo", "PgRepo", undefined],
       ["audit", "Auditing", undefined],
-      ["named", "UserRepo", "mem"],
+      ["named", "PlayerRepo", "mem"],
       ["delegate", "Delegate?", undefined],
     ]);
   });
@@ -100,30 +100,30 @@ describe("swift locals", () => {
     expect(
       locals(
         "let a = ConcRepo()",
-        "let b: UserRepo = PgRepo()",
-        "var d = Repo<User>(db: db)",
-        "let r = container.resolve(UserRepo.self)!",
-        "let m = container.resolve(UserRepo.self, name: \"mem\")",
-        "let r2: UserRepo = Resolver.resolve()",
+        "let b: PlayerRepo = PgRepo()",
+        "var d = Repo<Player>(db: db)",
+        "let r = container.resolve(PlayerRepo.self)!",
+        "let m = container.resolve(PlayerRepo.self, name: \"mem\")",
+        "let r2: PlayerRepo = Resolver.resolve()",
         "let r3 = Resolver.resolve(Cache.self, name: .fast)",
         "if let r4 = container.resolve(Auditing.self) {",
         "guard let r5 = container.resolve(Mailer.self) else { return }",
-        "let f = Container.shared.userRepo()",
-        "let c = thing as! Cache",
+        "let f = Container.shared.playerRepo()",
+        "let c = ball as! Cache",
         "let x = makeRepo()",
         "let y = PgRepo().configured()",
       ),
     ).toEqual([
       { name: "a", type: "ConcRepo" },
-      { name: "b", type: "UserRepo" },
-      { name: "d", type: "Repo<User>" },
-      { name: "r", type: "UserRepo" },
-      { name: "m", type: "UserRepo", qualifier: "mem" },
-      { name: "r2", type: "UserRepo" },
+      { name: "b", type: "PlayerRepo" },
+      { name: "d", type: "Repo<Player>" },
+      { name: "r", type: "PlayerRepo" },
+      { name: "m", type: "PlayerRepo", qualifier: "mem" },
+      { name: "r2", type: "PlayerRepo" },
       { name: "r3", type: "Cache", qualifier: "fast" },
       { name: "r4", type: "Auditing" },
       { name: "r5", type: "Mailer" },
-      { name: "f", type: "", qualifier: "userRepo" },
+      { name: "f", type: "", qualifier: "playerRepo" },
       { name: "c", type: "Cache" },
     ]);
   });
@@ -135,7 +135,7 @@ describe("swift locals", () => {
   });
 
   it("keeps a name expression it cannot read as the key, so the unnamed registration never answers", () => {
-    expect(locals("let k = container.resolve(UserRepo.self, name: key)!")).toEqual([{ name: "k", type: "UserRepo", qualifier: "key" }]);
+    expect(locals("let k = container.resolve(PlayerRepo.self, name: key)!")).toEqual([{ name: "k", type: "PlayerRepo", qualifier: "key" }]);
   });
 
   it("does not type a local whose initializer wraps onto a chain below", () => {
@@ -151,26 +151,26 @@ describe("swift locals", () => {
   });
 
   it("attaches locals to an extracted method", () => {
-    const [fn] = extractFunctionsWithSpec(["func go() {", "    let r = container.resolve(UserRepo.self)!", "    r.load(id: 1)", "}"], swiftSpec);
-    expect(fn!.localTypes).toEqual([{ name: "r", type: "UserRepo" }]);
+    const [fn] = extractFunctionsWithSpec(["func go() {", "    let r = container.resolve(PlayerRepo.self)!", "    r.load(id: 1)", "}"], swiftSpec);
+    expect(fn!.localTypes).toEqual([{ name: "r", type: "PlayerRepo" }]);
   });
 });
 
 describe("swift lookups chained into a call", () => {
   it("types the receiver of an inline container lookup", () => {
-    expect(calls("_ = container.resolve(UserRepo.self)!.load(id: 1)")[0]).toMatchObject({
-      name: "container.resolve(UserRepo.self).load",
-      receiverType: "UserRepo",
+    expect(calls("_ = container.resolve(PlayerRepo.self)!.load(id: 1)")[0]).toMatchObject({
+      name: "container.resolve(PlayerRepo.self).load",
+      receiverType: "PlayerRepo",
     });
-    expect(calls("_ = try Resolver.resolve(UserRepo.self, name: \"mem\")?.find(id: 1)")[0]).toMatchObject({
-      receiverType: "UserRepo",
+    expect(calls("_ = try Resolver.resolve(PlayerRepo.self, name: \"mem\")?.find(id: 1)")[0]).toMatchObject({
+      receiverType: "PlayerRepo",
       receiverQualifier: "mem",
     });
   });
 
   it("keys a Factory lookup by its key path", () => {
-    const [call] = calls("_ = Container.shared.userRepo().find(id: 1)");
-    expect(call).toMatchObject({ name: "Container.userRepo().find", receiverQualifier: "userRepo" });
+    const [call] = calls("_ = Container.shared.playerRepo().find(id: 1)");
+    expect(call).toMatchObject({ name: "Container.playerRepo().find", receiverQualifier: "playerRepo" });
     expect(call!.receiverType).toBeUndefined();
   });
 
@@ -184,17 +184,17 @@ describe("swift container registrations", () => {
     expect(
       bindings(
         [
-          "container.register(UserRepo.self) { _ in",
+          "container.register(PlayerRepo.self) { _ in",
           "    PgRepo()",
           "}.inObjectScope(.container)",
-          "container.register(UserRepo.self, name: \"mem\", factory: { _ in MemRepo() })",
-          "container.register(Mailer.self) { r in SmtpMailer(repo: r.resolve(UserRepo.self)!) }",
+          "container.register(PlayerRepo.self, name: \"mem\", factory: { _ in MemRepo() })",
+          "container.register(Mailer.self) { r in SmtpMailer(repo: r.resolve(PlayerRepo.self)!) }",
           "c.autoregister(Auditing.self, initializer: SqlAudit.init)",
         ].join("\n"),
       ),
     ).toEqual([
-      { service: "UserRepo", implementation: "PgRepo", via: "register" },
-      { service: "UserRepo", implementation: "MemRepo", via: "register", qualifier: "mem", keyedOnly: true },
+      { service: "PlayerRepo", implementation: "PgRepo", via: "register" },
+      { service: "PlayerRepo", implementation: "MemRepo", via: "register", qualifier: "mem", keyedOnly: true },
       { service: "Mailer", implementation: "SmtpMailer", via: "register" },
       { service: "Auditing", implementation: "SqlAudit", via: "autoregister" },
     ]);
@@ -204,13 +204,13 @@ describe("swift container registrations", () => {
     expect(
       bindings(
         [
-          "container.register(UserService.self) { r in UserService(repo: r.resolve(UserRepo.self)!) }",
+          "container.register(PlayerService.self) { r in PlayerService(repo: r.resolve(PlayerRepo.self)!) }",
           "container.register(Reporter.self) { r in",
           "    let x = Reporter()",
           "    return x",
           "}",
-          "container.register(UserRepo.self) { _ in PgRepo.shared }",
-          "tableView.register(UserCell.self, forCellReuseIdentifier: \"cell\")",
+          "container.register(PlayerRepo.self) { _ in PgRepo.shared }",
+          "tableView.register(PlayerCell.self, forCellReuseIdentifier: \"cell\")",
           "func register(_ type: Any.Type) {",
           "}",
         ].join("\n"),
@@ -220,7 +220,7 @@ describe("swift container registrations", () => {
 
   it("emits both of two unconditional registrations", () => {
     expect(
-      bindings(["container.register(UserRepo.self) { _ in PgRepo() }", "container.register(UserRepo.self) { _ in MemRepo() }"].join("\n")).map(
+      bindings(["container.register(PlayerRepo.self) { _ in PgRepo() }", "container.register(PlayerRepo.self) { _ in MemRepo() }"].join("\n")).map(
         (b) => b.implementation,
       ),
     ).toEqual(["PgRepo", "MemRepo"]);
@@ -230,21 +230,21 @@ describe("swift container registrations", () => {
     expect(
       bindings(
         [
-          "register { PgRepo() as UserRepo }",
+          "register { PgRepo() as PlayerRepo }",
           "register(Cache.self) { MemCache() }",
           "register { SqlAudit() }",
           "    .implements(Auditing.self)",
           "    .implements(Logging.self, name: \"audit\")",
-          "register(name: .mem) { MemRepo() as UserRepo }",
+          "register(name: .mem) { MemRepo() as PlayerRepo }",
           "register { Plain() }",
         ].join("\n"),
       ),
     ).toEqual([
-      { service: "UserRepo", implementation: "PgRepo", via: "register" },
+      { service: "PlayerRepo", implementation: "PgRepo", via: "register" },
       { service: "Cache", implementation: "MemCache", via: "register" },
       { service: "Auditing", implementation: "SqlAudit", via: "implements" },
       { service: "Logging", implementation: "SqlAudit", via: "implements", qualifier: "audit", keyedOnly: true },
-      { service: "UserRepo", implementation: "MemRepo", via: "register", qualifier: "mem", keyedOnly: true },
+      { service: "PlayerRepo", implementation: "MemRepo", via: "register", qualifier: "mem", keyedOnly: true },
     ]);
   });
 
@@ -253,25 +253,25 @@ describe("swift container registrations", () => {
       bindings(
         [
           "extension Container {",
-          "    var userRepo: Factory<UserRepo> {",
+          "    var playerRepo: Factory<PlayerRepo> {",
           "        self { PgRepo() }",
           "            .onTest { MockRepo() }",
           "            .singleton",
           "    }",
-          "    var memRepo: Factory<UserRepo> { Factory(self) { MemRepo() } }",
-          "    var byId: ParameterFactory<Int, UserRepo> { self { id in PgRepo(id: id) } }",
-          "    static let legacy = Factory<UserRepo>(scope: .singleton) { PgRepo() }",
+          "    var memRepo: Factory<PlayerRepo> { Factory(self) { MemRepo() } }",
+          "    var byId: ParameterFactory<Int, PlayerRepo> { self { id in PgRepo(id: id) } }",
+          "    static let legacy = Factory<PlayerRepo>(scope: .singleton) { PgRepo() }",
           "}",
-          "let _ = Container.shared.userRepo.register { PreviewRepo() }",
+          "let _ = Container.shared.playerRepo.register { PreviewRepo() }",
         ].join("\n"),
       ),
     ).toEqual([
-      { service: "userRepo", implementation: "PgRepo", via: "Factory", keyedOnly: true },
-      { service: "userRepo", implementation: "MockRepo", via: "Factory", keyedOnly: true },
+      { service: "playerRepo", implementation: "PgRepo", via: "Factory", keyedOnly: true },
+      { service: "playerRepo", implementation: "MockRepo", via: "Factory", keyedOnly: true },
       { service: "memRepo", implementation: "MemRepo", via: "Factory", keyedOnly: true },
       { service: "byId", implementation: "PgRepo", via: "Factory", keyedOnly: true },
       { service: "legacy", implementation: "PgRepo", via: "Factory", keyedOnly: true },
-      { service: "userRepo", implementation: "PreviewRepo", via: "Factory", keyedOnly: true },
+      { service: "playerRepo", implementation: "PreviewRepo", via: "Factory", keyedOnly: true },
     ]);
   });
 });

@@ -17,26 +17,26 @@ import strawberry
 from .permissions import IsAuthenticated
 
 @strawberry.type
-class Book:
+class Stadium:
     title: str
     @strawberry.field
-    def author(self) -> str: return "x"
+    def scout(self) -> str: return "x"
 
 @strawberry.type
 class Query:
-    books: list[Book] = strawberry.field(resolver=get_books)
-    @strawberry.field(name="topBook", permission_classes=[IsAuthenticated])
-    def top_book(self, info: strawberry.Info, min_rating: int = 0) -> Book:
+    stadiums: list[Stadium] = strawberry.field(resolver=get_stadiums)
+    @strawberry.field(name="topStadium", permission_classes=[IsAuthenticated])
+    def top_stadium(self, info: strawberry.Info, min_rating: int = 0) -> Stadium:
         return repo.top(min_rating)
 
 @strawberry.type
 class RootMutation:
     @strawberry.mutation
-    def add_book(self, title: str) -> Book:
+    def add_stadium(self, title: str) -> Stadium:
         return repo.add(title)
 
 schema = strawberry.Schema(query=Query, mutation=RootMutation)`);
-    expect(rows(routes)).toEqual(["/graphql/books → get_books", "/graphql/topBook → Query.top_book (minRating: int)", "/graphql/addBook → RootMutation.add_book (title: str)"]);
+    expect(rows(routes)).toEqual(["/graphql/stadiums → get_stadiums", "/graphql/topStadium → Query.top_stadium (minRating: int)", "/graphql/addStadium → RootMutation.add_stadium (title: str)"]);
     expect(routes[1]!.middleware).toEqual(["IsAuthenticated"]);
     expect(routes[1]!.calls.map((c) => c.name)).toContain("repo.top");
   });
@@ -46,16 +46,16 @@ schema = strawberry.Schema(query=Query, mutation=RootMutation)`);
 import graphene
 
 class Query(graphene.ObjectType):
-    all_users = graphene.List(UserType, first=graphene.Int())
+    all_players = graphene.List(PlayerType, first=graphene.Int())
     hello = graphene.String(name="greeting")
-    def resolve_all_users(root, info, first=None):
-        return User.objects.all()
+    def resolve_all_players(root, info, first=None):
+        return Player.objects.all()
 
 class Mutation(graphene.ObjectType):
-    create_user = CreateUser.Field()
+    create_player = CreatePlayer.Field()
 
-class UserType(graphene.ObjectType):
+class PlayerType(graphene.ObjectType):
     full_name = graphene.String()`);
-    expect(rows(routes)).toEqual(["/graphql/allUsers → Query.resolve_all_users (first: Int)", "/graphql/greeting", "/graphql/createUser → CreateUser.mutate"]);
+    expect(rows(routes)).toEqual(["/graphql/allPlayers → Query.resolve_all_players (first: Int)", "/graphql/greeting", "/graphql/createPlayer → CreatePlayer.mutate"]);
   });
 });

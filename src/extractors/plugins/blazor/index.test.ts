@@ -93,12 +93,12 @@ describe("Blazor imports (@using)", () => {
 });
 
 describe("Blazor page attribute layer (auth + params)", () => {
-  const PAGE = `@page "/orders/{id:int}"
-@page "/orders/{id:int}/{slug?}"
+  const PAGE = `@page "/cars/{id:int}"
+@page "/cars/{id:int}/{slug?}"
 @attribute [Authorize(Roles = "Admin, Editor", Policy = "CanView")]
 @using SampleBlazor.Components
 
-<Card Title="Order">@Id</Card>
+<Card Title="Car">@Id</Card>
 
 @code {
     [Parameter] public int Id { get; set; }
@@ -166,7 +166,7 @@ describe("Blazor @code methods", () => {
 @inject BasketState Basket
 @inject NavigationManager Nav
 
-<form method="post" @onsubmit="AddToCartAsync">
+<form method="post" @onsubmit="AddToGarageAsync">
   <button type="submit">Add</button>
 </form>
 
@@ -179,11 +179,11 @@ describe("Blazor @code methods", () => {
         item = await CatalogService.GetCatalogItem(ItemId);
     }
 
-    private async Task AddToCartAsync()
+    private async Task AddToGarageAsync()
     {
         if (item is null) return;
         await Basket.AddAsync(item);
-        Nav.NavigateTo("cart");
+        Nav.NavigateTo("garage");
     }
 
     private string Label(int n) => $"{n} items";
@@ -191,12 +191,12 @@ describe("Blazor @code methods", () => {
     const a = extractWithRegex(src, "src/WebApp/Components/Pages/Item/ItemPage.razor", "blazor");
     expect(a.functions.map((f) => `${f.name}@${f.line}-${f.endLine}`)).toEqual([
       "OnInitializedAsync@13-16",
-      "AddToCartAsync@18-23",
+      "AddToGarageAsync@18-23",
       "Label@25-25",
     ]);
-    const add = a.functions.find((f) => f.name === "AddToCartAsync")!;
+    const add = a.functions.find((f) => f.name === "AddToGarageAsync")!;
     expect(add.calls.map((c) => c.name)).toEqual(expect.arrayContaining(["Basket.AddAsync", "Nav.NavigateTo"]));
     expect(add.localTypes).toEqual([{ name: "Basket", type: "BasketState" }, { name: "Nav", type: "NavigationManager" }]);
-    expect(a.interactiveElements.find((e) => e.event === "onsubmit")?.handler).toBe("AddToCartAsync");
+    expect(a.interactiveElements.find((e) => e.event === "onsubmit")?.handler).toBe("AddToGarageAsync");
   });
 });

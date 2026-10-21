@@ -11,7 +11,7 @@ describe("VBScript top-level statements", () => {
     "Option Explicit",
     "Dim conn, n",
     "Set conn = OpenConnection()",
-    "n = CountOrders(conn)",
+    "n = CountCars(conn)",
     "Report n",
     "Call Cleanup",
     "conn.Close",
@@ -21,12 +21,12 @@ describe("VBScript top-level statements", () => {
     "End Function",
     "",
     "Sub Report(total)",
-    '    WScript.Echo "orders: " & total',
+    '    WScript.Echo "cars: " & total',
     "End Sub",
   ].join("\n");
 
   it("become the <setup> pseudo-function, with calls written without parentheses", () => {
-    expect(callNames(SCRIPT, "<setup>")).toEqual(["OpenConnection", "CountOrders", "Report", "Cleanup", "conn.Close"]);
+    expect(callNames(SCRIPT, "<setup>")).toEqual(["OpenConnection", "CountCars", "Report", "Cleanup", "conn.Close"]);
   });
 
   it("leave the functions' own calls in the functions", () => {
@@ -80,14 +80,14 @@ describe("VB statement calls", () => {
 describe("VB data sources", () => {
   const SRC = [
     "Sub Close(c, id)",
-    '    Set rs = c.Execute("SELECT Id FROM Orders WHERE Status = \'shipped\'")',
-    "    c.Execute \"UPDATE Orders SET Status = 'closed' \" & _",
+    '    Set rs = c.Execute("SELECT Id FROM Cars WHERE Status = \'shipped\'")',
+    "    c.Execute \"UPDATE Cars SET Status = 'closed' \" & _",
     '              "WHERE Id = " & id',
     '    c.Execute "INSERT INTO AuditLog (Message) VALUES (""closed"")" \' log it',
     '    x = ""',
-    "    ' c.Execute \"DELETE FROM Orders\"",
+    "    ' c.Execute \"DELETE FROM Cars\"",
     '    http.Open "POST", "https://reports.example.com/api/closed", False',
-    '    req.Open "GET", "/api/customers/" & id, False',
+    '    req.Open "GET", "/api/drivers/" & id, False',
     '    conn.Open "Provider=SQLOLEDB;Data Source=db01"',
     "End Sub",
   ].join("\n");
@@ -95,8 +95,8 @@ describe("VB data sources", () => {
 
   it("read SQL across `_` continuations and `\"\"` escapes, never from comments", () => {
     expect(sources.filter((s) => s[0] === "database")).toEqual([
-      ["database", "SELECT", "Orders", 2],
-      ["database", "UPDATE", "Orders", 3],
+      ["database", "SELECT", "Cars", 2],
+      ["database", "UPDATE", "Cars", 3],
       ["database", "INSERT INTO", "AuditLog", 5],
     ]);
   });
@@ -104,7 +104,7 @@ describe("VB data sources", () => {
   it("read COM HTTP requests by their verb, and nothing else that opens", () => {
     expect(sources.filter((s) => s[0] === "api-call")).toEqual([
       ["api-call", "POST https://reports.example.com/api/closed", "https://reports.example.com/api/closed", 8],
-      ["api-call", "GET /api/customers/{id}", "/api/customers/{id}", 9],
+      ["api-call", "GET /api/drivers/{id}", "/api/drivers/{id}", 9],
     ]);
   });
 });

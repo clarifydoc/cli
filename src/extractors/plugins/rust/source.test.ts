@@ -29,7 +29,7 @@ describe("Rust analysis — code inside strings is not code", () => {
       "pub fn phantom_two(x: i32) -> i32 { x }",
       '"#;',
       '    sqlx::query(r#"',
-      "        SELECT id FROM accounts WHERE id = $1",
+      "        SELECT id FROM clubs WHERE id = $1",
       '    "#);',
       "    1",
       "}",
@@ -46,7 +46,7 @@ describe("Rust analysis — code inside strings is not code", () => {
     } as never);
     const a = result!.analysis;
     expect(a.functions.map((f: { name: string }) => f.name)).toEqual(["real"]);
-    expect(a.dataSources.some((d: { target?: string | null; entity?: string }) => (d.entity ?? d.target) === "accounts")).toBe(true);
+    expect(a.dataSources.some((d: { target?: string | null; entity?: string }) => (d.entity ?? d.target) === "clubs")).toBe(true);
   });
 });
 
@@ -60,7 +60,7 @@ describe("rustPathHeads", () => {
       "struct S;",
       "fn f() {",
       "    let v = serde_json::to_string(&S).unwrap();",
-      "    let m = models::User::new();",
+      "    let m = models::Player::new();",
       "    std::fs::read(\"x\");",
       "    tokio::spawn(async {});",
       "    // anyhow::bail!",

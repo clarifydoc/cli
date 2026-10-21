@@ -7,38 +7,38 @@ const analyze = (src: string, path = "src/shop/Api.hx"): FileAnalysis => extract
 describe("Haxe classes, functions and imports", () => {
   const a = analyze([
     "package shop;",
-    "import shop.db.Orders;",
+    "import shop.db.Cars;",
     "import tink.web.routing.*;",
     "using StringTools;",
     "",
-    "typedef OrderDto = { id:Int, ?note:String }",
+    "typedef CarDto = { id:Int, ?note:String }",
     "",
-    "interface Repo { function find(id:Int):Null<Order>; }",
+    "interface Repo { function find(id:Int):Null<Car>; }",
     "",
     "@:keep",
-    "class OrderService extends BaseService implements Repo {",
+    "class CarService extends BaseService implements Repo {",
     "  public var name(default, null):String;",
-    "  @:inject var repo:Orders;",
+    "  @:inject var repo:Cars;",
     "  static final LIMIT = 10;",
     "",
-    "  public function new(repo:Orders) { this.repo = repo; }",
+    "  public function new(repo:Cars) { this.repo = repo; }",
     "",
     "  public function close(id:Int, ?force:Bool = false):Bool {",
-    "    var order = repo.find(id);",
-    "    if (order != null && !force) audit(order);",
-    "    return Mailer.send(order.email);",
+    "    var car = repo.find(id);",
+    "    if (car != null && !force) audit(car);",
+    "    return Mailer.send(car.email);",
     "  }",
     "",
-    "  private function audit(o:Order):Void {}",
+    "  private function audit(o:Car):Void {}",
     "}",
     "enum abstract Status(String) { var Open = 'open'; }",
   ].join("\n"));
 
   it("reads classes, interfaces, typedefs and fields", () => {
     expect(a.classes.map((c) => [c.name, c.kind ?? "class", c.extends, c.implements, c.properties.map((p) => `${p.name}:${p.type}`)])).toEqual([
-      ["OrderDto", "class", null, [], ["id:Int", "note:String"]],
+      ["CarDto", "class", null, [], ["id:Int", "note:String"]],
       ["Repo", "interface", null, [], []],
-      ["OrderService", "class", "BaseService", ["Repo"], ["name:String", "repo:Orders", "LIMIT:null"]],
+      ["CarService", "class", "BaseService", ["Repo"], ["name:String", "repo:Cars", "LIMIT:null"]],
       ["Status", "enum", null, [], []],
     ]);
     expect(a.classes[2]!.properties[1]!.decorators).toEqual([":inject"]);
@@ -56,7 +56,7 @@ describe("Haxe classes, functions and imports", () => {
   });
 
   it("reads imports and using", () => {
-    expect(a.imports.map((i) => [i.source, i.specifiers])).toEqual([["shop.db.Orders", ["Orders"]], ["tink.web.routing", []], ["StringTools", ["StringTools"]]]);
+    expect(a.imports.map((i) => [i.source, i.specifiers])).toEqual([["shop.db.Cars", ["Cars"]], ["tink.web.routing", []], ["StringTools", ["StringTools"]]]);
   });
 });
 
@@ -65,10 +65,10 @@ describe("Haxe routes and data access", () => {
     const a = analyze([
       "class Api {",
       "  public function new() {}",
-      "  @:get('/orders/$id')",
-      "  public function show(id:Int):Order return Orders.find(id);",
-      "  @:post public function close(body:{id:Int}):Noise return Orders.close(body.id);",
-      "  @:get public function list() return Orders.all().map(function(o) return o.id);",
+      "  @:get('/cars/$id')",
+      "  public function show(id:Int):Car return Cars.find(id);",
+      "  @:post public function close(body:{id:Int}):Noise return Cars.close(body.id);",
+      "  @:get public function list() return Cars.all().map(function(o) return o.id);",
       "}",
       "class Server {",
       "  static function main() {",
@@ -76,9 +76,9 @@ describe("Haxe routes and data access", () => {
       "  }",
       "}",
     ].join("\n"));
-    expect(a.classes[0]!.methods.find((m) => m.name === "list")!.calls.map((c) => c.name)).toEqual(["Orders.all"]);
+    expect(a.classes[0]!.methods.find((m) => m.name === "list")!.calls.map((c) => c.name)).toEqual(["Cars.all"]);
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
-      "GET /orders/{id} -> Api.show",
+      "GET /cars/{id} -> Api.show",
       "POST /close -> Api.close",
       "GET /list -> Api.list",
       "GET /health -> health",
@@ -89,32 +89,32 @@ describe("Haxe routes and data access", () => {
     const a = analyze([
       "class Db {",
       "  public static function load(cnx:sys.db.Connection, id:Int) {",
-      '    cnx.request("SELECT id, total FROM orders WHERE status = \'open\'");',
+      '    cnx.request("SELECT id, total FROM cars WHERE status = \'open\'");',
       "    cnx.request('DELETE FROM sessions WHERE id = $id');",
-      '    var h = new haxe.Http("https://crm.example.com/v2/orders");',
+      '    var h = new haxe.Http("https://crm.example.com/v2/cars");',
       "    h.request(true);",
       "  }",
       "}",
     ].join("\n"));
     expect(a.dataSources.map((d) => `${d.kind} ${d.name}${d.entity ? ` ${d.entity}` : ""}@${d.line}`)).toEqual([
-      "database SELECT orders@3",
+      "database SELECT cars@3",
       "database DELETE FROM sessions@4",
-      "api-call POST https://crm.example.com/v2/orders@5",
+      "api-call POST https://crm.example.com/v2/cars@5",
     ]);
   });
 
   it("reads record-macros models", () => {
     const a = analyze([
       "import sys.db.Types;",
-      '@:table("orders")',
-      "class Order extends sys.db.Object {",
+      '@:table("cars")',
+      "class Car extends sys.db.Object {",
       "  public var id:SId;",
       "  public var total:SFloat;",
-      "  @:relation(cid) public var customer:Customer;",
+      "  @:relation(cid) public var driver:Driver;",
       "}",
-    ].join("\n"), "src/shop/Order.hx");
+    ].join("\n"), "src/shop/Car.hx");
     const entity = a.classes.find((c) => c.decorators.includes("entity"))!;
-    expect([entity.name, entity.decorators.find((d) => d.startsWith("table:")), entity.properties.map((p) => p.name)]).toEqual(["Order", "table:orders", ["id", "total"]]);
-    expect(a.entityRelations?.map((r) => `${r.fromEntity}.${r.fromField} ${r.cardinality} ${r.toEntity}`)).toEqual(["Order.customer many-to-one Customer"]);
+    expect([entity.name, entity.decorators.find((d) => d.startsWith("table:")), entity.properties.map((p) => p.name)]).toEqual(["Car", "table:cars", ["id", "total"]]);
+    expect(a.entityRelations?.map((r) => `${r.fromEntity}.${r.fromField} ${r.cardinality} ${r.toEntity}`)).toEqual(["Car.driver many-to-one Driver"]);
   });
 });

@@ -27,10 +27,10 @@ describe.skipIf(!existsSync(fixture))("sample-express-validation", () => {
       s.routeMap.filter((r) => r.requestSchema).map((r) => [`${r.httpMethod} ${r.path}`, (r.requestSchema!.required ?? []).slice().sort().join(",") || "—"]),
     );
     expect(schemas).toEqual({
-      "POST /api/users": "active,email,password",
+      "POST /api/players": "active,email,password",
       "POST /api/signup": "email,password",
-      "POST /api/posts": "authorId,title",
-      "PATCH /api/posts/:id": "—",
+      "POST /api/games": "scoutId,title",
+      "PATCH /api/games/:id": "—",
       "POST /api/teams": "name,visibility",
       "PATCH /api/profile": "—",
       "POST /api/tags": "kind,label",

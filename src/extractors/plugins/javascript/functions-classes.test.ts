@@ -65,10 +65,10 @@ async function classesOf(src: string) {
  */
 describe("class properties — decorators, optional marker, parameter properties", () => {
   it("keeps class-validator/transformer decorators with arguments and marks required fields", async () => {
-    const [dto] = await classesOf(`export class CreateUserDto extends BaseDto {
+    const [dto] = await classesOf(`export class CreatePlayerDto extends BaseDto {
       @IsString()
-      @Expose({ name: 'user_name' })
-      userName: string;
+      @Expose({ name: 'player_name' })
+      playerName: string;
 
       @IsOptional() @IsInt()
       age?: number;
@@ -80,7 +80,7 @@ describe("class properties — decorators, optional marker, parameter properties
     }`);
     expect(dto!.extends).toBe("BaseDto");
     expect(dto!.properties).toEqual([
-      { name: "userName", type: "string", visibility: null, isStatic: false, isReadonly: false, decorators: ["IsString()", "Expose({ name: 'user_name' })"], isRequired: true },
+      { name: "playerName", type: "string", visibility: null, isStatic: false, isReadonly: false, decorators: ["IsString()", "Expose({ name: 'player_name' })"], isRequired: true },
       { name: "age", type: "number", visibility: null, isStatic: false, isReadonly: false, decorators: ["IsOptional()", "IsInt()"], isRequired: false },
       { name: "tags", type: "string[]", visibility: null, isStatic: false, isReadonly: false, decorators: [], isRequired: false },
       { name: "secret", type: "string", visibility: "private", isStatic: false, isReadonly: false, decorators: [], isRequired: true },
@@ -106,15 +106,15 @@ describe("class properties — decorators, optional marker, parameter properties
 });
 
 /**
- * A handler declared away from its route (`router.get('/', getUsers)`) has
+ * A handler declared away from its route (`router.get('/', getPlayers)`) has
  * no bindings in its signature; what its body reads off `req` is recorded so
  * the project-level join can hand it to the route.
  */
 describe("requestAccess on handler-shaped functions", () => {
   it("records request reads for functions and methods whose first param is req/request/ctx", async () => {
-    const src = `export async function getUser(req: Request, res: Response) {
-      const user = await find(req.params.id, req.query.expand);
-      res.json(user);
+    const src = `export async function getPlayer(req: Request, res: Response) {
+      const player = await find(req.params.id, req.query.expand);
+      res.json(player);
     }
     export const login = (request, reply) => { const { email, password } = request.body; };
     export class Ctl { async remove(req, res) { await del(req.params['id']); } }
@@ -124,7 +124,7 @@ describe("requestAccess on handler-shaped functions", () => {
     const ex = new JavaScriptExtractor();
     const fns = ex.extractFunctions(tree, src);
     const by = (n: string) => fns.find((f) => f.name === n)!;
-    expect(by("getUser").requestAccess).toEqual([
+    expect(by("getPlayer").requestAccess).toEqual([
       { name: "id", type: null, binding: "route" },
       { name: "expand", type: null, binding: "query" },
     ]);
@@ -216,11 +216,11 @@ describe("JS class field values", () => {
 
   it("reads a same-file string constant a field is set from", async () => {
     const [cls] = await classesOf(`
-      const endpoint = 'users'
-      export class UserService extends AbstractNameFilterService {
+      const endpoint = 'players'
+      export class PlayerService extends AbstractNameFilterService {
         constructor() { super(); this.resourceName = endpoint; this.other = elsewhere }
       }`);
-    expect(cls!.fieldValues).toEqual({ resourceName: "users", other: "${elsewhere}" });
+    expect(cls!.fieldValues).toEqual({ resourceName: "players", other: "${elsewhere}" });
   });
 
   it("records nothing for a field given two different values", async () => {
@@ -318,9 +318,9 @@ describe("TypeScript namespaces", () => {
   it("extracts the classes a namespace block holds, nested or exported", async () => {
     const classes = await classesOf(`
 export namespace NS { export class InNs { run() { return 1; } } }
-namespace Billing.Core { export class Invoice { total() { return 2; } } }
+namespace Billing.Core { export class Bill { total() { return 2; } } }
 export class Top {}`);
-    expect(classes.map((c: { name: string; methods: { name: string }[] }) => `${c.name}[${c.methods.map((m) => m.name)}]`).sort()).toEqual(["InNs[run]", "Invoice[total]", "Top[]"]);
+    expect(classes.map((c: { name: string; methods: { name: string }[] }) => `${c.name}[${c.methods.map((m) => m.name)}]`).sort()).toEqual(["Bill[total]", "InNs[run]", "Top[]"]);
   });
 });
 

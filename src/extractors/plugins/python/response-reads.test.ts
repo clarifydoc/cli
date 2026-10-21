@@ -16,13 +16,13 @@ import requests, httpx
 def totals():
     return requests.get("/api/totals").json()["sum"]
 
-def orders():
-    resp = requests.get("/api/orders")
+def cars():
+    resp = requests.get("/api/cars")
     items = resp.json()["items"]
     data = resp.json()
     return data["total"], data.get("next")
 
-async def user(client: httpx.AsyncClient):
+async def player(client: httpx.AsyncClient):
     r = await client.get("/api/me")
     body = r.json()
     return body["name"]
@@ -35,7 +35,7 @@ def passed_on():
     return requests.get("/api/x")
 `)).toEqual([
       ["/api/totals", ["sum"]],
-      ["/api/orders", ["items", "next", "total"]],
+      ["/api/cars", ["items", "next", "total"]],
       ["/api/me", ["name"]],
       ["/api/raw", ["count"]],
       ["/api/x", undefined],

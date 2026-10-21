@@ -77,20 +77,20 @@ describe("filterToDrop", () => {
 
 describe("termDiagnosis", () => {
   const candidates = [
-    candidate("UserProfile"),
-    candidate("UserSettings"),
-    candidate("UserList"),
+    candidate("PlayerProfile"),
+    candidate("PlayerSettings"),
+    candidate("PlayerList"),
     candidate("ProfileCard"),
   ];
 
   it("names the term worth keeping and the terms that match nothing", () => {
-    const d = termDiagnosis(candidates, "user profile widget");
-    expect(d?.best).toBe("user");
-    expect(d?.text).toBe("`user` alone has 3 hits, `profile` 2; `widget` matches nothing.");
+    const d = termDiagnosis(candidates, "player profile ball");
+    expect(d?.best).toBe("player");
+    expect(d?.text).toBe("`player` alone has 3 hits, `profile` 2; `ball` matches nothing.");
   });
 
   it("is silent for a single term — there is nothing to drop", () => {
-    expect(termDiagnosis(candidates, "widget")).toBeUndefined();
+    expect(termDiagnosis(candidates, "ball")).toBeUndefined();
   });
 
   it("is silent when no term matches anything, so status is the only honest hint", () => {
@@ -98,7 +98,7 @@ describe("termDiagnosis", () => {
   });
 
   it("scores at most four terms, however long the query", () => {
-    const d = termDiagnosis(candidates, "user aaa bbb ccc ddd profile");
+    const d = termDiagnosis(candidates, "player aaa bbb ccc ddd profile");
     expect(d?.text).not.toContain("profile");
   });
 });

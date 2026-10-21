@@ -17,24 +17,24 @@ const calls = (a: FileAnalysis, name: string) =>
 describe("CoffeeScript functions and calls", () => {
   const a = analyze([
     "{ save } = require './store'",
-    "process = (order, opts) ->",
+    "process = (car, opts) ->",
     "  ### block comment: notCalled() ###",
-    "  if order.total is 0 and not opts.force then return",
-    "  save order, force: true",
-    "  @audit(order) for order in [order] when order?",
+    "  if car.total is 0 and not opts.force then return",
+    "  save car, force: true",
+    "  @audit(car) for car in [car] when car?",
     "  fmt = (x) -> x.toFixed 2",
-    "  log fmt order.total",
-    "class OrderView extends Backbone.View",
+    "  log fmt car.total",
+    "class CarView extends Backbone.View",
     "  render: ->",
     "    $.ajax",
-    "      url: \"/api/orders/#{@model.id}\"",
+    "      url: \"/api/cars/#{@model.id}\"",
     "      type: 'DELETE'",
     "      success: => @remove()",
   ].join("\n"));
 
   it("reads functions and class members, never nested callbacks or locals", () => {
     expect(a.functions.map((f) => f.name)).toEqual(["process"]);
-    expect(a.classes.map((c) => [c.name, c.extends, c.methods.map((m) => m.name)])).toEqual([["OrderView", "View", ["render"]]]);
+    expect(a.classes.map((c) => [c.name, c.extends, c.methods.map((m) => m.name)])).toEqual([["CarView", "View", ["render"]]]);
   });
 
   it("reads implicit and parenthesized calls — never keywords or comments", () => {
@@ -43,7 +43,7 @@ describe("CoffeeScript functions and calls", () => {
   });
 
   it("reads a multi-line $.ajax call", () => {
-    expect(a.dataSources.map((d) => `${d.name}@${d.line}`)).toEqual(["DELETE /api/orders/{id}@11"]);
+    expect(a.dataSources.map((d) => `${d.name}@${d.line}`)).toEqual(["DELETE /api/cars/{id}@11"]);
   });
 
   it("reads require bindings as imports", () => {
@@ -54,30 +54,30 @@ describe("CoffeeScript functions and calls", () => {
 describe("CoffeeScript routes and data access", () => {
   it("reads Express routes, guards, handlers and mounts", () => {
     const a = analyze([
-      "router.get '/', listOrders",
+      "router.get '/', listCars",
       "router.post '/:id/close', requireLogin, (req, res) ->",
       "  res.sendStatus 204",
-      "app.use '/api/orders', orders",
+      "app.use '/api/cars', cars",
       "robot.router.get '/hubot/status', (req, res) -> res.send 'up'",
     ].join("\n"));
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler} [${r.middleware}]`)).toEqual([
-      "GET / -> listOrders []",
+      "GET / -> listCars []",
       "POST /:id/close -> null [requireLogin]",
-      "null /api/orders -> orders []",
+      "null /api/cars -> cars []",
       "GET /hubot/status -> null []",
     ]);
   });
 
   it("reads Backbone urls, HTTP clients and SQL in strings", () => {
     const a = analyze([
-      "class Orders extends Backbone.Collection",
-      "  url: '/api/orders'",
-      "fetchOne = (id) -> axios.get \"/api/orders/#{id}\"",
-      "closeAll = -> db.query \"UPDATE orders SET status = 'closed'\"",
+      "class Cars extends Backbone.Collection",
+      "  url: '/api/cars'",
+      "fetchOne = (id) -> axios.get \"/api/cars/#{id}\"",
+      "closeAll = -> db.query \"UPDATE cars SET status = 'closed'\"",
       "label = 'Select a file from the list'",
     ].join("\n"));
     expect(a.dataSources.map((d) => `${d.kind} ${d.name}${d.entity ? ` ${d.entity}` : ""}`)).toEqual([
-      "api-call GET /api/orders", "api-call GET /api/orders/{id}", "database UPDATE orders",
+      "api-call GET /api/cars", "api-call GET /api/cars/{id}", "database UPDATE cars",
     ]);
   });
 
@@ -91,11 +91,11 @@ describe("CoffeeScript routes and data access", () => {
       "    match this text  # a heregex comment",
       "  ///",
       "  q = \"\"\"",
-      "    SELECT id FROM orders",
+      "    SELECT id FROM cars",
       "  \"\"\"",
     ].join("\n"));
     expect(calls(a, "fail")).toEqual(["Error"]);
-    expect(a.dataSources.map((d) => `${d.name} ${d.entity}@${d.line}`)).toEqual(["SELECT orders@9"]);
+    expect(a.dataSources.map((d) => `${d.name} ${d.entity}@${d.line}`)).toEqual(["SELECT cars@9"]);
   });
 
   it("reads only the code of a literate file", () => {

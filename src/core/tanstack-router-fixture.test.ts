@@ -29,19 +29,19 @@ describe.skipIf(!existsSync(fixture))("sample-tanstack-router", () => {
       "/about src/code-router.tsx",
       "/dashboard src/routes/_auth.dashboard.tsx",
       "/files/* src/routes/files.$.tsx",
-      "/posts/:postId src/routes/posts.$postId.tsx",
+      "/games/:gameId src/routes/games.$gameId.tsx",
       "/settings src/routes/settings/index.tsx",
-      "/users/:userId src/code-router.tsx",
+      "/players/:playerId src/code-router.tsx",
     ].sort());
   });
 
   it("makes each route's page the screen: the route file, or the component it names", async () => {
     const s = await loadReportSummary(out);
     const screens = new Map(s.screens.map((x) => [x.filePath, x.routePath]));
-    expect(screens.get("src/routes/posts.$postId.tsx")).toBe("/posts/:postId");
+    expect(screens.get("src/routes/games.$gameId.tsx")).toBe("/games/:gameId");
     expect(screens.get("src/pages/Settings.tsx")).toBe("/settings");
     expect(screens.get("src/pages/About.tsx")).toBe("/about");
-    expect(screens.get("src/pages/User.tsx")).toBe("/users/:userId");
+    expect(screens.get("src/pages/Player.tsx")).toBe("/players/:playerId");
   });
 
   it("detects the router and keeps its route files alive without the generated tree", async () => {

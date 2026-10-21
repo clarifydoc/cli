@@ -28,51 +28,51 @@ const link = (over: Partial<ApiRouteLink> = {}): ApiRouteLink => ({
   source: "web/src/api.ts",
   sourceLine: 12,
   method: "GET",
-  url: "/api/orders",
-  target: "server/Controllers/OrdersController.cs",
+  url: "/api/cars",
+  target: "server/Controllers/CarsController.cs",
   targetLine: 20,
   handler: "GetAll",
-  routePath: "/api/orders",
+  routePath: "/api/cars",
   confidence: "EXTRACTED",
   ...over,
 });
 
 describe("synthesizeApiRouteSymbolLinks", () => {
-  const frontend = fa("web/src/api.ts", { functions: [fn("loadOrders", 10, 15)] });
+  const frontend = fa("web/src/api.ts", { functions: [fn("loadCars", 10, 15)] });
 
   it("links the enclosing frontend function to the enclosing route method (annotation-routed)", () => {
-    const backend = fa("server/Controllers/OrdersController.cs", {
-      classes: [{ name: "OrdersController", methods: [fn("GetAll", 18, 25)] }] as any,
+    const backend = fa("server/Controllers/CarsController.cs", {
+      classes: [{ name: "CarsController", methods: [fn("GetAll", 18, 25)] }] as any,
     });
     const [l] = synthesizeApiRouteSymbolLinks([link()], [frontend, backend]);
     expect(l).toMatchObject({
       sourceFile: "web/src/api.ts",
-      sourceSymbol: "loadOrders",
-      targetFile: "server/Controllers/OrdersController.cs",
-      targetSymbol: "OrdersController.GetAll",
-      callName: "GET /api/orders",
+      sourceSymbol: "loadCars",
+      targetFile: "server/Controllers/CarsController.cs",
+      targetSymbol: "CarsController.GetAll",
+      callName: "GET /api/cars",
       confidence: "EXTRACTED",
     });
   });
 
   it("falls back to the handler NAME in the route file when the route line is top-level (Express)", () => {
-    const routes = fa("server/routes/orders.js", { functions: [fn("listOrders", 30, 40)] });
+    const routes = fa("server/routes/cars.js", { functions: [fn("listCars", 30, 40)] });
     const [l] = synthesizeApiRouteSymbolLinks(
-      [link({ target: "server/routes/orders.js", targetLine: 5, handler: "listOrders" })],
+      [link({ target: "server/routes/cars.js", targetLine: 5, handler: "listCars" })],
       [frontend, routes],
     );
-    expect(l?.targetSymbol).toBe("listOrders");
+    expect(l?.targetSymbol).toBe("listCars");
   });
 
   it("resolves a handler defined in ANOTHER file when the name is globally unique", () => {
-    const routes = fa("server/routes/orders.js"); // route def file, no functions
-    const controller = fa("server/controllers/orderController.js", { functions: [fn("listOrders", 8, 20)] });
+    const routes = fa("server/routes/cars.js"); // route def file, no functions
+    const controller = fa("server/controllers/carController.js", { functions: [fn("listCars", 8, 20)] });
     const [l] = synthesizeApiRouteSymbolLinks(
-      [link({ target: "server/routes/orders.js", targetLine: 5, handler: "listOrders" })],
+      [link({ target: "server/routes/cars.js", targetLine: 5, handler: "listCars" })],
       [frontend, routes, controller],
     );
-    expect(l?.targetFile).toBe("server/controllers/orderController.js");
-    expect(l?.targetSymbol).toBe("listOrders");
+    expect(l?.targetFile).toBe("server/controllers/carController.js");
+    expect(l?.targetSymbol).toBe("listCars");
   });
 
   it("does NOT guess when the handler name exists in several files", () => {
@@ -148,8 +148,8 @@ describe("synthesizeApiRouteSymbolLinks", () => {
   });
 
   it("skips AMBIGUOUS links and top-level (unanchored) calls", () => {
-    const backend = fa("server/Controllers/OrdersController.cs", {
-      classes: [{ name: "OrdersController", methods: [fn("GetAll", 18, 25)] }] as any,
+    const backend = fa("server/Controllers/CarsController.cs", {
+      classes: [{ name: "CarsController", methods: [fn("GetAll", 18, 25)] }] as any,
     });
     expect(synthesizeApiRouteSymbolLinks([link({ confidence: "AMBIGUOUS" })], [frontend, backend])).toHaveLength(0);
     expect(synthesizeApiRouteSymbolLinks([link({ sourceLine: 500 })], [frontend, backend])).toHaveLength(0);
@@ -161,7 +161,7 @@ describe("synthesizeQueueSymbolLinks", () => {
     file: "f.cs",
     symbol: "S.m",
     symbolLine: 1,
-    entity: "order.placed",
+    entity: "car.sold",
     entityMatched: false,
     datastore: "shop-events",
     sites: [{ name: "x", line: 3 }],
@@ -170,12 +170,12 @@ describe("synthesizeQueueSymbolLinks", () => {
 
   it("links a publish to every consume naming the same destination", () => {
     const out = synthesizeQueueSymbolLinks([
-      row({ file: "Pub.cs", symbol: "Pub.Send", access: "queue-publish", datastore: "order-placed" }),
-      row({ file: "Con.cs", symbol: "Con.Start", access: "queue-consume", datastore: "order-placed" }),
-      row({ file: "worker.js", symbol: "main", access: "queue-consume", datastore: "order-placed" }),
+      row({ file: "Pub.cs", symbol: "Pub.Send", access: "queue-publish", datastore: "car-sold" }),
+      row({ file: "Con.cs", symbol: "Con.Start", access: "queue-consume", datastore: "car-sold" }),
+      row({ file: "worker.js", symbol: "main", access: "queue-consume", datastore: "car-sold" }),
     ]);
     expect(out.map((l) => `${l.sourceSymbol}->${l.targetSymbol}`)).toEqual(["Pub.Send->Con.Start", "Pub.Send->main"]);
-    expect(out[0]!.callName).toBe("MQ order-placed");
+    expect(out[0]!.callName).toBe("MQ car-sold");
   });
 
   it("creates no edge across DIFFERENT destinations or for plain DB rows", () => {

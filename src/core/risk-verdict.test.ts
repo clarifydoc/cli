@@ -92,7 +92,7 @@ describe("classifyRiskVerdict — the cascade", () => {
   });
 
   it("does not call a mixed-concern module a foundation just because it exports a type", () => {
-    // sample-pressure's orders.ts: declares `Order` at the top, then does
+    // sample-pressure's cars.ts: declares `Car` at the top, then does
     // persistence, transport, messaging and auth. The interface is incidental.
     const v = classifyRiskVerdict(
       input({
@@ -282,17 +282,17 @@ describe("classifyRiskVerdict — behaviour at risk and confidence", () => {
       input({
         blast: blast({
           traceImpact: reach({
-            screens: [{ name: "Orders", file: "src/pages/Orders.tsx", route: "/orders" }],
+            screens: [{ name: "Cars", file: "src/pages/Cars.tsx", route: "/cars" }],
             screenCount: 1,
-            routes: [{ method: "GET", path: "/api/orders", file: "src/api/orders.ts", line: 3 }],
+            routes: [{ method: "GET", path: "/api/cars", file: "src/api/cars.ts", line: 3 }],
             routeCount: 1,
-            entities: ["Order", "OrderLine"],
+            entities: ["Car", "CarPart"],
             entityCount: 2,
           }),
         }),
       }),
     );
-    expect(v.behaviourAtRisk).toEqual(["Orders screen (/orders)", "GET /api/orders", "data: Order, OrderLine"]);
+    expect(v.behaviourAtRisk).toEqual(["Cars screen (/cars)", "GET /api/cars", "data: Car, CarPart"]);
     // Free text cannot be page-encoded, so it must never carry a path.
     for (const b of v.behaviourAtRisk) expect(b).not.toContain("src/");
   });
@@ -336,7 +336,7 @@ describe("attachRiskVerdicts", () => {
       analyses: [],
       entityGraph: {
         nodes: [
-          { id: "src/entity.ts::Order", name: "Order", orm: "prisma", kind: "entity", filePath: "src/entity.ts", columns: [], line: 1 },
+          { id: "src/entity.ts::Car", name: "Car", orm: "prisma", kind: "entity", filePath: "src/entity.ts", columns: [], line: 1 },
         ],
         edges: [],
       },
@@ -350,7 +350,7 @@ describe("attachRiskVerdicts", () => {
     attachRiskVerdicts(rows, {
       analyses: [],
       patterns: [
-        { kind: "dataclass", name: "Order", filePath: "src/dto.py", line: 2, confidence: "high", detail: "" },
+        { kind: "dataclass", name: "Car", filePath: "src/dto.py", line: 2, confidence: "high", detail: "" },
       ],
     });
     expect(rows[0]!.verdict!.category).toBe("foundation");

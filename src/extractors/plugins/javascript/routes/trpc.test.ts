@@ -17,45 +17,45 @@ const rows = (a: FileAnalysis) => a.routes.map((r) => `${r.httpMethod} ${r.path}
 
 describe("tRPC routers", () => {
   it("reads queries, mutations, nested routers and plain objects, with the builder as middleware", async () => {
-    const a = await fileOf("src/server/post.ts", `import { createTRPCRouter, publicProcedure, protectedProcedure } from "./trpc";
-export const postRouter = createTRPCRouter({
-  latest: publicProcedure.query(() => db.post.findFirst()),
-  create: protectedProcedure.input(schema).mutation(async ({ input }) => db.post.create({ data: input })),
-  admin: { purge: protectedProcedure.mutation(() => db.post.deleteMany()) },
+    const a = await fileOf("src/server/game.ts", `import { createTRPCRouter, publicProcedure, protectedProcedure } from "./trpc";
+export const gameRouter = createTRPCRouter({
+  latest: publicProcedure.query(() => db.game.findFirst()),
+  create: protectedProcedure.input(schema).mutation(async ({ input }) => db.game.create({ data: input })),
+  admin: { purge: protectedProcedure.mutation(() => db.game.deleteMany()) },
   tags: t.router({ list: publicProcedure.query(() => listTags()) }),
   comments: commentRouter,
   "with-dash": publicProcedure.query(() => 1),
 });`);
     expect(rows(a)).toEqual([
-      "GET /trpc/latest postRouter calls=db.post.findFirst",
-      "POST /trpc/create postRouter [protectedProcedure] calls=db.post.create",
-      "POST /trpc/admin.purge postRouter [protectedProcedure] calls=db.post.deleteMany",
-      "GET /trpc/tags.list postRouter calls=listTags",
-      "GET /trpc/with-dash postRouter calls=",
+      "GET /trpc/latest gameRouter calls=db.game.findFirst",
+      "POST /trpc/create gameRouter [protectedProcedure] calls=db.game.create",
+      "POST /trpc/admin.purge gameRouter [protectedProcedure] calls=db.game.deleteMany",
+      "GET /trpc/tags.list gameRouter calls=listTags",
+      "GET /trpc/with-dash gameRouter calls=",
     ]);
     expect(a.routeFacts!.filter((f) => f.kind === "trpc-mount").map((f) => f.data)).toEqual([{ key: "comments", router: "commentRouter" }]);
   });
 
   it("reads a tRPC 11 router record, and no object without a procedure", async () => {
-    const a = await fileOf("src/post.ts", `import type { TRPCRouterRecord } from "@trpc/server";
-export const postRouter = {
-  all: publicProcedure.query(({ ctx }) => ctx.db.query.Post.findMany()),
-  delete: protectedProcedure.input(z.string()).mutation(({ ctx, input }) => ctx.db.delete(Post)),
+    const a = await fileOf("src/game.ts", `import type { TRPCRouterRecord } from "@trpc/server";
+export const gameRouter = {
+  all: publicProcedure.query(({ ctx }) => ctx.db.query.Game.findMany()),
+  delete: protectedProcedure.input(z.string()).mutation(({ ctx, input }) => ctx.db.delete(Game)),
 } satisfies TRPCRouterRecord;
 export const config = { all: 1, nested: { x: 2 } };`);
     expect(rows(a)).toEqual([
-      "GET /trpc/all postRouter calls=ctx.db.query.Post.findMany",
-      "POST /trpc/delete postRouter [protectedProcedure] calls=ctx.db.delete,Post",
+      "GET /trpc/all gameRouter calls=ctx.db.query.Game.findMany",
+      "POST /trpc/delete gameRouter [protectedProcedure] calls=ctx.db.delete,Game",
     ]);
   });
 
   it("an inline object input is the procedure's body, named after it; a scalar input is none", async () => {
-    const a = await fileOf("src/post.ts", `export const postRouter = createTRPCRouter({
+    const a = await fileOf("src/game.ts", `export const gameRouter = createTRPCRouter({
   byId: publicProcedure.input(z.object({ id: z.string() })).query(() => 1),
   remove: publicProcedure.input(z.string()).mutation(() => 1),
 });`);
     expect(a.routes.map((r) => `${r.path} ${(r.params ?? []).map((p) => p.type).join(",") || "-"}`)).toEqual([
-      "/trpc/byId postRouter.byId.input",
+      "/trpc/byId gameRouter.byId.input",
       "/trpc/remove -",
     ]);
   });
@@ -66,14 +66,14 @@ export const config = { all: 1, nested: { x: 2 } };`);
   });
 
   it("serves a mounted router under every key path a root reaches it by", async () => {
-    const root = await fileOf("src/root.ts", `import { postRouter } from "./post";
-export const appRouter = createTRPCRouter({ health: publicProcedure.query(() => "ok"), post: postRouter, blog: { posts: postRouter } });`);
-    const post = await fileOf("src/post.ts", `export const postRouter = createTRPCRouter({ byId: publicProcedure.query(() => 1) });`);
+    const root = await fileOf("src/root.ts", `import { gameRouter } from "./game";
+export const appRouter = createTRPCRouter({ health: publicProcedure.query(() => "ok"), game: gameRouter, league: { games: gameRouter } });`);
+    const game = await fileOf("src/game.ts", `export const gameRouter = createTRPCRouter({ byId: publicProcedure.query(() => 1) });`);
     const ctx = {
-      importIndex: { localFor: (f: string, n: string) => (f === "src/root.ts" && n === "postRouter" ? "src/post.ts" : null), sourceFor: () => null, namespacesFor: () => [] },
+      importIndex: { localFor: (f: string, n: string) => (f === "src/root.ts" && n === "gameRouter" ? "src/game.ts" : null), sourceFor: () => null, namespacesFor: () => [] },
     } as unknown as ProjectContext;
-    trpcRouterResolver.resolve([root, post], ctx);
+    trpcRouterResolver.resolve([root, game], ctx);
     expect(root.routes.map((r) => r.path)).toEqual(["/trpc/health"]);
-    expect(post.routes.map((r) => r.path)).toEqual(["/trpc/post.byId", "/trpc/blog.posts.byId"]);
+    expect(game.routes.map((r) => r.path)).toEqual(["/trpc/game.byId", "/trpc/league.games.byId"]);
   });
 });

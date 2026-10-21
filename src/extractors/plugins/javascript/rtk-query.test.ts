@@ -15,53 +15,53 @@ const SLICE = `import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query
 export const api = createApi({
   baseQuery: fetchBaseQuery({ baseUrl: "/api/" }),
   endpoints: (build) => ({
-    getPosts: build.query({ query: () => "posts" }),
-    getPost: build.query({ query: (id) => \`/posts/\${id}\` }),
-    addPost: build.mutation({ query: (body) => ({ url: "posts", method: "POST", body }) }),
-    deletePost: build.mutation({ query(id) { return { url: \`posts/\${id}\`, method: "delete" }; } }),
+    getGames: build.query({ query: () => "games" }),
+    getGame: build.query({ query: (id) => \`/games/\${id}\` }),
+    addGame: build.mutation({ query: (body) => ({ url: "games", method: "POST", body }) }),
+    deleteGame: build.mutation({ query(id) { return { url: \`games/\${id}\`, method: "delete" }; } }),
     custom: build.query({ queryFn: () => ({ data: 1 }) }),
   }),
 });
-export const { useGetPostsQuery, useAddPostMutation } = api;`;
+export const { useGetGamesQuery, useAddGameMutation } = api;`;
 
 describe("RTK Query", () => {
   it("each endpoint is one api-call at the slice's base, tagged with its name", async () => {
     expect((await callsOf(SLICE)).map((d) => `${d.name} ${d.target} ${d.endpoint}`)).toEqual([
-      "GET /api/posts getPosts",
-      "GET /api/posts/${id} getPost",
-      "POST /api/posts addPost",
-      "DELETE /api/posts/${id} deletePost",
+      "GET /api/games getGames",
+      "GET /api/games/${id} getGame",
+      "POST /api/games addGame",
+      "DELETE /api/games/${id} deleteGame",
     ]);
   });
 
   it("a component's generated hooks and initiate() name the endpoint they call", async () => {
-    const calls = await callsOf(`import { useGetPostsQuery, useLazyGetPostQuery, useAddPostMutation, api } from "./api";
+    const calls = await callsOf(`import { useGetGamesQuery, useLazyGetGameQuery, useAddGameMutation, api } from "./api";
 import { useAppDispatch } from "./hooks";
-export function Posts() {
-  useGetPostsQuery();
-  useLazyGetPostQuery();
-  useAddPostMutation();
+export function Games() {
+  useGetGamesQuery();
+  useLazyGetGameQuery();
+  useAddGameMutation();
   useAppDispatch();
   useCustomQuery();
-  dispatch(api.endpoints.getPosts.initiate());
+  dispatch(api.endpoints.getGames.initiate());
 }`);
     expect(calls.map((d) => `${d.name} ${d.target} ${d.endpoint}`)).toEqual([
-      "useGetPostsQuery null getPosts",
-      "useLazyGetPostQuery null getPost",
-      "useAddPostMutation null addPost",
-      "api null getPosts",
+      "useGetGamesQuery null getGames",
+      "useLazyGetGameQuery null getGame",
+      "useAddGameMutation null addGame",
+      "api null getGames",
     ]);
   });
 
   it("the project pass gives a hook call its endpoint's method and URL, from the slice it imports", async () => {
     const slice: FileAnalysis = { ...createEmptyAnalysis("src/api.ts", "typescript"), dataSources: await callsOf(SLICE) };
     const calls = [
-      { kind: "api-call" as const, name: "useAddPostMutation", target: null, line: 3, calls: [], endpoint: "addPost", filePath: "src/Posts.tsx" },
-      { kind: "api-call" as const, name: "useNopeQuery", target: null, line: 4, calls: [], endpoint: "nope", filePath: "src/Posts.tsx" },
+      { kind: "api-call" as const, name: "useAddGameMutation", target: null, line: 3, calls: [], endpoint: "addGame", filePath: "src/Games.tsx" },
+      { kind: "api-call" as const, name: "useNopeQuery", target: null, line: 4, calls: [], endpoint: "nope", filePath: "src/Games.tsx" },
     ];
     const ctx = { importIndex: { localFor: (_f: string, n: string) => (n.startsWith("use") ? "src/api.ts" : null), sourceFor: () => null, namespacesFor: () => [] } } as unknown as ProjectContext;
     expect(resolveRtkHooks(calls, [slice], ctx)).toBe(1);
-    expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual(["POST /api/posts", "useNopeQuery null"]);
+    expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual(["POST /api/games", "useNopeQuery null"]);
   });
 
   it("drops a use…Mutation the project declares itself — a TanStack composable, no generated hook", () => {

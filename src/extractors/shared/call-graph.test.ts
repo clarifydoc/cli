@@ -22,18 +22,18 @@ async function callsIn(src: string, language: TreeSitterLanguage, type: string, 
 }
 
 // An identifier passed as an argument is recorded as a call so that
-// `items.map(formatUser)` links to formatUser. A name the function binds
+// `items.map(formatPlayer)` links to formatPlayer. A name the function binds
 // itself is a value, not a reference to a definition — recorded, the linker
 // resolved it by name or through a factory alias to an unrelated function.
 describe("extractCalls — callback-argument references", () => {
   it("TypeScript: keeps function references, drops parameters, locals, loop and arrow variables", async () => {
     expect(await callsIn(`
-function setup(items, { user }, [first], ...rest) {
-  const onClick = () => doThing();
+function setup(items, { player }, [first], ...rest) {
+  const onClick = () => kickBall();
   const client = new ApiClient();
   let count; count = 1;
   button.on("click", onClick);
-  save(items, user, first, rest, client, count);
+  save(items, player, first, rest, client, count);
   items.forEach(renderItem);
   register(helper);
   items.map(item => show(item));
@@ -55,8 +55,8 @@ class Svc {
 
   it("Python: drops parameters, assignment and loop targets, with/except aliases", async () => {
     expect(await callsIn(`
-def handler(self, request, user_id: int, *args, page=1, **kw):
-    data = load(user_id)
+def handler(self, request, player_id: int, *args, page=1, **kw):
+    data = load(player_id)
     a, (b, c) = partition(data)
     for row in rows:
         emit(row)
@@ -87,13 +87,13 @@ def wire(app):
   it("Java: drops parameters, locals, enhanced-for and catch variables", async () => {
     expect(await callsIn(`
 class A {
-  void m(Order order, String... tags) {
-    Customer customer = repo.load(order);
-    for (Line line : order.lines()) audit(line);
-    try { deliver(order, customer, tags); } catch (IOException e) { alert(e, fallback); }
+  void m(Car car, String... tags) {
+    Driver driver = repo.load(car);
+    for (Part part : car.parts()) audit(part);
+    try { deliver(car, driver, tags); } catch (IOException e) { alert(e, fallback); }
   }
 }`, "java", "method_declaration")).toEqual([
-      "repo.load", "order.lines", "audit", "deliver", "alert", "fallback",
+      "repo.load", "car.parts", "audit", "deliver", "alert", "fallback",
     ]);
   });
 });

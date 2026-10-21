@@ -11,10 +11,10 @@ const show = (routes: RouteInfo[]) => routes.map((r) => `${r.httpMethod} ${r.pat
 describe("filters each framework states", () => {
   it("ASP.NET: rate limits, CORS, antiforgery and caching on the controller and the action", async () => {
     const src = `[ApiController]
-[Route("orders")]
+[Route("cars")]
 [EnableRateLimiting("fixed")]
 [EnableCors("spa")]
-public class OrdersController : ControllerBase {
+public class CarsController : ControllerBase {
   [HttpPost]
   [ValidateAntiForgeryToken]
   public IActionResult Create() => Ok();
@@ -25,13 +25,13 @@ public class OrdersController : ControllerBase {
 }`;
     const routes: RouteInfo[] = [];
     extractAspnetRoutes((await parseSource(src, "csharp" as never, "C.cs")).rootNode, routes);
-    expect(show(routes)).toEqual(["POST /orders: rate-limit^,cors^,csrf", "GET /orders: rate-limit^,cors^,cache,rate-limit(off)"]);
+    expect(show(routes)).toEqual(["POST /cars: rate-limit^,cors^,csrf", "GET /cars: rate-limit^,cors^,cache,rate-limit(off)"]);
   });
 
   it("NestJS: interceptors, pipes and throttling", async () => {
-    const src = `@Controller('orders')
+    const src = `@Controller('cars')
 @UseInterceptors(LoggingInterceptor)
-export class OrdersController {
+export class CarsController {
   @Post()
   @UsePipes(new ValidationPipe())
   @Throttle({ default: { limit: 3, ttl: 60000 } })
@@ -42,18 +42,18 @@ export class OrdersController {
 }`;
     const routes: RouteInfo[] = [];
     extractNestjsRoutes((await parseSource(src, "typescript" as never, "o.controller.ts")).rootNode, routes);
-    expect(show(routes)).toEqual(["POST /orders: logging^,validation,rate-limit", "GET /orders: logging^,rate-limit(off)"]);
+    expect(show(routes)).toEqual(["POST /cars: logging^,validation,rate-limit", "GET /cars: logging^,rate-limit(off)"]);
   });
 
   it("Express: a router's rate limiter is inherited by the routes after it; a route's own validator is its own", async () => {
     const src = `const router = express.Router();
 router.get("/health", health);
 router.use(rateLimit({ windowMs: 60000, max: 10 }));
-router.post("/orders", celebrate({ body: schema }), createOrder);`;
+router.post("/cars", celebrate({ body: schema }), createCar);`;
     const tree = await parseSource(src, "typescript" as never, "routes.ts");
     const routes: RouteInfo[] = [];
     extractExpressRoutes(tree.rootNode, routes);
     applyRouterLevelGuards(tree.rootNode, routes);
-    expect(show(routes)).toEqual(["GET /health: ", "POST /orders: rate-limit^,validation"]);
+    expect(show(routes)).toEqual(["GET /health: ", "POST /cars: rate-limit^,validation"]);
   });
 });

@@ -114,15 +114,15 @@ describe.skipIf(!existsSync(join(analysis, "project-summary.json")))("lsp-update
     const at = (x: DefinitionQuery) => [x.line - 1, x.column, x.column + 1];
     // Built one directory above the analysis root: the paths carry a prefix.
     const occs: Record<string, Occ[]> = {};
-    (occs[one!.file] ??= []).push({ range: at(one!), symbol: sym("users") });
+    (occs[one!.file] ??= []).push({ range: at(one!), symbol: sym("players") });
     (occs[two!.file] ??= []).push({ range: at(two!), symbol: sym("dependency") });
-    (occs["routes/users.ts"] ??= []).push({ range: [13, 9, 13], symbol: sym("users"), def: true });
+    (occs["routes/players.ts"] ??= []).push({ range: [13, 9, 13], symbol: sym("players"), def: true });
     await writeFile(join(dir, "index.scip"), index(Object.entries(occs).map(([f, o]) => [`sample-backend/${f}`, o])));
     const r = await updateLsp({ analysisDir: join(dir, "an"), projectRoot: fixture, scip: join(dir, "index.scip") });
     expect(r).toMatchObject({ source: "scip", serversUsed: ["scip-typescript"], lspResolvedCount: 1, referenceLinksCount: 0 });
     const enh = JSON.parse(await readFile(join(dir, "an", "lsp-enhancement.json"), "utf-8"));
     const added = enh.symbolLinks.filter((l: { resolvedBy?: string }) => l.resolvedBy === "lsp");
-    expect(added).toEqual([expect.objectContaining({ sourceFile: one!.file, sourceLine: one!.line, targetFile: "routes/users.ts", targetLine: 14 })]);
+    expect(added).toEqual([expect.objectContaining({ sourceFile: one!.file, sourceLine: one!.line, targetFile: "routes/players.ts", targetLine: 14 })]);
     expect(existsSync(join(dir, "an", "lsp-ground-truth.json"))).toBe(false);
   });
 });

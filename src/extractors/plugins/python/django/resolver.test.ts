@@ -166,13 +166,13 @@ describe("django-urlconf: Django's own guards", () => {
     "config/urls.py": `
 from django.urls import path
 from accounts import views
-from accounts.views import public_page, OrdersView, ReportView, OpenView
+from accounts.views import public_page, CarsView, ReportView, OpenView
 
 urlpatterns = [
     path("profile/", views.profile),
     path("staff/", views.staff_only),
     path("public/", public_page),
-    path("orders/", OrdersView.as_view()),
+    path("cars/", CarsView.as_view()),
     path("reports/", ReportView.as_view()),
     path("open/", OpenView.as_view()),
     path("api/stats/", views.stats),
@@ -197,7 +197,7 @@ def staff_only(request):
 def public_page(request):
     return None
 
-class OrdersView(LoginRequiredMixin, View):
+class CarsView(LoginRequiredMixin, View):
     def get(self, request):
         return None
 
@@ -235,7 +235,7 @@ def stats(request):
 
   it("reads an auth mixin or a method_decorator on a class-based view", async () => {
     const g = await guards();
-    expect(g["/orders/"]).toBe("LoginRequiredMixin");
+    expect(g["/cars/"]).toBe("LoginRequiredMixin");
     expect(g["/reports/"]).toBe("login_required");
     expect(g["/open/"]).toBe("-");
   });
@@ -249,7 +249,7 @@ from django.urls import path
 from api.views import ListView, OpenView, PlainView, stats, health
 
 urlpatterns = [
-    path("items/", ListView.as_view()),
+    path("balls/", ListView.as_view()),
     path("open/", OpenView.as_view()),
     path("plain/", PlainView.as_view()),
     path("stats/", stats),
@@ -294,12 +294,12 @@ REST_FRAMEWORK = {
 
   it("applies to DRF views and @api_view functions that state none, never to plain Django views", async () => {
     const g = await guards({ "config/settings.py": SETTINGS, "config/test_settings.py": `REST_FRAMEWORK = {"DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"]}\n` });
-    expect(g).toEqual({ "/items/": "IsAuthenticated", "/open/": "anonymous", "/plain/": "-", "/stats/": "IsAuthenticated", "/health/": "-" });
+    expect(g).toEqual({ "/balls/": "IsAuthenticated", "/open/": "anonymous", "/plain/": "-", "/stats/": "IsAuthenticated", "/health/": "-" });
   });
 
   it("is no default when two settings files disagree", async () => {
     const g = await guards({ "config/settings.py": SETTINGS, "config/prod.py": `REST_FRAMEWORK = {"DEFAULT_PERMISSION_CLASSES": ["x.IsStaff"]}\n` });
-    expect(g["/items/"]).toBe("-");
+    expect(g["/balls/"]).toBe("-");
   });
 });
 

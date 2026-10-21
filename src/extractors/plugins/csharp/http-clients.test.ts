@@ -13,43 +13,43 @@ async function registrationsOf(src: string) {
 describe("csharpBaseRefOf", () => {
   it("reads configuration keys however they are spelled", () => {
     for (const expr of [
-      `new Uri(builder.Configuration["Services:Orders"]!)`,
-      `_config["Services:Orders"]`,
-      `configuration.GetValue<string>("Services:Orders")`,
-      `_configuration.GetSection("Services")["Orders"]`,
-      `cfg.GetSection("Services").GetValue<string>("Orders")`,
-      `sp.GetRequiredService<IConfiguration>()["Services:Orders"]`,
+      `new Uri(builder.Configuration["Services:Cars"]!)`,
+      `_config["Services:Cars"]`,
+      `configuration.GetValue<string>("Services:Cars")`,
+      `_configuration.GetSection("Services")["Cars"]`,
+      `cfg.GetSection("Services").GetValue<string>("Cars")`,
+      `sp.GetRequiredService<IConfiguration>()["Services:Cars"]`,
     ]) {
-      expect(csharpBaseRefOf(expr), expr).toEqual({ kind: "config", key: "Services:Orders" });
+      expect(csharpBaseRefOf(expr), expr).toEqual({ kind: "config", key: "Services:Cars" });
     }
-    expect(csharpBaseRefOf(`config.GetConnectionString("Orders")`)).toEqual({ kind: "config", key: "ConnectionStrings:Orders" });
+    expect(csharpBaseRefOf(`config.GetConnectionString("Cars")`)).toEqual({ kind: "config", key: "ConnectionStrings:Cars" });
   });
 
   it("reads environment variables, literals and fallbacks", () => {
-    expect(csharpBaseRefOf(`Environment.GetEnvironmentVariable("ORDERS_URL")`)).toEqual({ kind: "env", key: "ORDERS_URL" });
-    expect(csharpBaseRefOf(`new Uri("http://orders:8080")`)).toEqual({ kind: "literal", key: "http://orders:8080" });
-    expect(csharpBaseRefOf(`new Uri(_config["Services:Orders"] ?? "http://localhost:5101")`)).toEqual({
-      kind: "config", key: "Services:Orders", fallback: "http://localhost:5101",
+    expect(csharpBaseRefOf(`Environment.GetEnvironmentVariable("CARS_URL")`)).toEqual({ kind: "env", key: "CARS_URL" });
+    expect(csharpBaseRefOf(`new Uri("http://cars:8080")`)).toEqual({ kind: "literal", key: "http://cars:8080" });
+    expect(csharpBaseRefOf(`new Uri(_config["Services:Cars"] ?? "http://localhost:5101")`)).toEqual({
+      kind: "config", key: "Services:Cars", fallback: "http://localhost:5101",
     });
   });
 
   it("reads nothing into what is not configuration", () => {
     expect(csharpBaseRefOf(`_options.Value.BaseUrl`)).toBeNull();
-    expect(csharpBaseRefOf(`_cache["Services:Orders"]`)).toBeNull();
-    expect(csharpBaseRefOf(`"api/orders"`)).toBeNull();
+    expect(csharpBaseRefOf(`_cache["Services:Cars"]`)).toBeNull();
+    expect(csharpBaseRefOf(`"api/cars"`)).toBeNull();
   });
 });
 
 describe("C# HTTP client registrations", () => {
   it("keys a typed client by its implementation, a named one by its name", async () => {
     expect(await registrationsOf(`
-builder.Services.AddHttpClient<InventoryClient>(c => c.BaseAddress = new Uri(builder.Configuration["Services:Inventory"]!));
-builder.Services.AddHttpClient<IOrders, Shop.Clients.OrdersClient>(c => { c.Timeout = TimeSpan.FromSeconds(5); c.BaseAddress = new Uri("http://orders:8080"); });
+builder.Services.AddHttpClient<FleetClient>(c => c.BaseAddress = new Uri(builder.Configuration["Services:Fleet"]!));
+builder.Services.AddHttpClient<ICars, Shop.Clients.CarsClient>(c => { c.Timeout = TimeSpan.FromSeconds(5); c.BaseAddress = new Uri("http://cars:8080"); });
 builder.Services.AddHttpClient("legacy", c => c.BaseAddress = new Uri("http://legacy:8080"));
 builder.Services.AddHttpClient<BillingClient>().ConfigureHttpClient(c => c.BaseAddress = new Uri(Environment.GetEnvironmentVariable("BILLING_URL")!));
 `)).toEqual([
-      { client: "InventoryClient", scope: "project", base: { kind: "config", key: "Services:Inventory" } },
-      { client: "OrdersClient", scope: "project", base: { kind: "literal", key: "http://orders:8080" } },
+      { client: "FleetClient", scope: "project", base: { kind: "config", key: "Services:Fleet" } },
+      { client: "CarsClient", scope: "project", base: { kind: "literal", key: "http://cars:8080" } },
       { client: "name:legacy", scope: "project", base: { kind: "literal", key: "http://legacy:8080" } },
       { client: "BillingClient", scope: "project", base: { kind: "env", key: "BILLING_URL" } },
     ]);
@@ -85,10 +85,10 @@ describe("csharpCallClient", () => {
   it("names the client a CreateClient local or field came from, else the enclosing class", async () => {
     expect(await clientOfCall(`class A { async Task M() { var client = _factory.CreateClient("legacy"); await client.GetAsync("api/items"); } }`, "GetAsync"))
       .toEqual({ kind: "client", key: "name:legacy" });
-    expect(await clientOfCall(`class A { HttpClient _http; A(IHttpClientFactory f) { _http = f.CreateClient("orders"); } Task M() => _http.GetFromJsonAsync<X>("api/x"); }`, "GetFromJsonAsync")).toEqual({ kind: "client", key: "name:orders" });
+    expect(await clientOfCall(`class A { HttpClient _http; A(IHttpClientFactory f) { _http = f.CreateClient("cars"); } Task M() => _http.GetFromJsonAsync<X>("api/x"); }`, "GetFromJsonAsync")).toEqual({ kind: "client", key: "name:cars" });
     expect(await clientOfCall(`class A { Task M() => _factory.CreateClient("billing").GetAsync("api/x"); }`, "GetAsync")).toEqual({ kind: "client", key: "name:billing" });
-    expect(await clientOfCall(`class InventoryClient { HttpClient _http; Task M() => _http.GetFromJsonAsync<X>("api/items"); }`, "GetFromJsonAsync"))
-      .toEqual({ kind: "client", key: "InventoryClient" });
+    expect(await clientOfCall(`class FleetClient { HttpClient _http; Task M() => _http.GetFromJsonAsync<X>("api/items"); }`, "GetFromJsonAsync"))
+      .toEqual({ kind: "client", key: "FleetClient" });
   });
 });
 
@@ -98,30 +98,30 @@ describe("C# configuration files", () => {
   it("flattens appsettings to `:` keys, with the profile from the file name", () => {
     const text = `{
   // comments are allowed
-  "Services": { "Orders": "http://localhost:5101" },
+  "Services": { "Cars": "http://localhost:5101" },
   "Urls": "http://localhost:5000;https://localhost:5001",
 }`;
     expect(appsettings!.parse(text, "appsettings.Development.json")).toEqual([
-      { key: "Services:Orders", value: "http://localhost:5101", line: 3, profile: "Development" },
+      { key: "Services:Cars", value: "http://localhost:5101", line: 3, profile: "Development" },
       { key: "Urls", value: "http://localhost:5000", line: 4, profile: "Development", listen: true },
       { key: "Urls", value: "https://localhost:5001", line: 4, profile: "Development", listen: true },
     ]);
-    expect(appsettings!.parse(`{"Services":{"Orders":"http://legacy"}}`, "appsettings.Test.json")[0]).toMatchObject({ test: true });
+    expect(appsettings!.parse(`{"Services":{"Cars":"http://legacy"}}`, "appsettings.Test.json")[0]).toMatchObject({ test: true });
   });
 
   it("reads launchSettings listen URLs and profile environment", () => {
     const text = JSON.stringify({
-      profiles: { Api: { applicationUrl: "https://localhost:7101;http://localhost:5101", environmentVariables: { Services__Inventory: "http://localhost:5102" } } },
+      profiles: { Api: { applicationUrl: "https://localhost:7101;http://localhost:5101", environmentVariables: { Services__Fleet: "http://localhost:5102" } } },
     });
     expect(launchSettings!.parse(text, "Properties/launchSettings.json").map(({ line: _l, ...e }) => e)).toEqual([
       { key: "applicationUrl", value: "https://localhost:7101", profile: "Api", listen: true },
       { key: "applicationUrl", value: "http://localhost:5101", profile: "Api", listen: true },
-      { key: "Services__Inventory", value: "http://localhost:5102", profile: "Api", env: true },
+      { key: "Services__Fleet", value: "http://localhost:5102", profile: "Api", env: true },
     ]);
   });
 
   it("maps a configuration key to the environment variable that overrides it", () => {
-    expect(csharpServiceConfig.envNamesFor!("Services:Orders")).toEqual(["Services__Orders"]);
+    expect(csharpServiceConfig.envNamesFor!("Services:Cars")).toEqual(["Services__Cars"]);
   });
 });
 
@@ -133,32 +133,32 @@ describe("C# gateway routes", () => {
     const text = JSON.stringify({
       ReverseProxy: {
         Routes: {
-          orders: { ClusterId: "orders", Match: { Path: "/api/orders/{**catch-all}" } },
-          legacy: { ClusterId: "orders", Match: { Path: "/legacy/{**rest}" }, Transforms: [{ PathRemovePrefix: "/legacy" }] },
+          cars: { ClusterId: "cars", Match: { Path: "/api/cars/{**catch-all}" } },
+          legacy: { ClusterId: "cars", Match: { Path: "/legacy/{**rest}" }, Transforms: [{ PathRemovePrefix: "/legacy" }] },
           stock: { ClusterId: "inv", Match: { Path: "/stock/{**rest}" }, Transforms: [{ PathPattern: "/api/items/{**rest}" }] },
         },
         Clusters: {
-          orders: { Destinations: { a: { Address: "http://orders:8080/" } } },
-          inv: { Destinations: { a: { Address: "http://inventory:8080" }, b: { Address: "http://inventory-2:8080" } } },
+          cars: { Destinations: { a: { Address: "http://cars:8080/" } } },
+          inv: { Destinations: { a: { Address: "http://fleet:8080" }, b: { Address: "http://fleet-2:8080" } } },
         },
       },
     });
     expect(strip(yarp!.parse(text, "appsettings.json"))).toEqual([
-      { pathPrefix: "/api/orders", target: "http://orders:8080/", via: "yarp" },
-      { pathPrefix: "/legacy", target: "http://orders:8080/", rewriteTo: "", via: "yarp" },
-      { pathPrefix: "/stock", target: "http://inventory:8080", rewriteTo: "/api/items", via: "yarp" },
-      { pathPrefix: "/stock", target: "http://inventory-2:8080", rewriteTo: "/api/items", via: "yarp" },
+      { pathPrefix: "/api/cars", target: "http://cars:8080/", via: "yarp" },
+      { pathPrefix: "/legacy", target: "http://cars:8080/", rewriteTo: "", via: "yarp" },
+      { pathPrefix: "/stock", target: "http://fleet:8080", rewriteTo: "/api/items", via: "yarp" },
+      { pathPrefix: "/stock", target: "http://fleet-2:8080", rewriteTo: "/api/items", via: "yarp" },
     ]);
     expect(yarp!.parse(text, "appsettings.Test.json")).toEqual([]);
   });
 
   it("reads Ocelot routes, upstream template to downstream host and template", () => {
     const text = JSON.stringify({ Routes: [{
-      UpstreamPathTemplate: "/orders/{everything}", DownstreamPathTemplate: "/api/orders/{everything}",
-      DownstreamScheme: "http", DownstreamHostAndPorts: [{ Host: "orders", Port: 8080 }],
+      UpstreamPathTemplate: "/cars/{everything}", DownstreamPathTemplate: "/api/cars/{everything}",
+      DownstreamScheme: "http", DownstreamHostAndPorts: [{ Host: "cars", Port: 8080 }],
     }] });
     expect(strip(ocelot!.parse(text, "ocelot.json"))).toEqual([
-      { pathPrefix: "/orders", target: "http://orders:8080", rewriteTo: "/api/orders", via: "ocelot" },
+      { pathPrefix: "/cars", target: "http://cars:8080", rewriteTo: "/api/cars", via: "ocelot" },
     ]);
   });
 });

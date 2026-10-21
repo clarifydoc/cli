@@ -23,11 +23,11 @@ const row = (suffix: string): RefactorPressureInfo =>
 
 describe("sample-pressure — refactor pressure reaches the artifact", () => {
   it("scores the mixed-concern module and nothing else", () => {
-    expect(rows.map((r) => r.filePath)).toEqual(["src/orders.ts"]);
+    expect(rows.map((r) => r.filePath)).toEqual(["src/cars.ts"]);
   });
 
   it("ranks it strong on evidence, not on one axis", () => {
-    const r = row("orders.ts");
+    const r = row("cars.ts");
     expect(r.band).toBe("strong");
     expect(r.drivers).toEqual(
       expect.arrayContaining(["high_cognitive_complexity", "deep_nesting", "large_file", "mixed_concerns"]),
@@ -36,13 +36,13 @@ describe("sample-pressure — refactor pressure reaches the artifact", () => {
   });
 
   it("reports the confidence honestly — fixtures carry no git history", () => {
-    const r = row("orders.ts");
+    const r = row("cars.ts");
     expect(r.components.churn).toBeNull();
     expect(r.confidence).toBe(0.75);
   });
 
   it("carries the evidence a reader needs to check the score", () => {
-    const e = row("orders.ts").evidence;
+    const e = row("cars.ts").evidence;
     expect(e.concernCount).toBe(4);
     expect(e.roles).toEqual(expect.arrayContaining(["persistence", "transport", "messaging", "security"]));
     expect(e.maxCognitive).toBeGreaterThan(20);
@@ -57,18 +57,18 @@ describe("sample-pressure — refactor pressure reaches the artifact", () => {
   it("turns the strong row into a suggestion with a concrete action", () => {
     const s = (summary.suggestions ?? []).filter((x) => x.category === "Refactor pressure");
     expect(s).toHaveLength(1);
-    expect(s[0]!.filePath).toBe("src/orders.ts");
+    expect(s[0]!.filePath).toBe("src/cars.ts");
     expect(s[0]!.actionable).toMatch(/Split by responsibility/);
     expect(s[0]!.evidence).toContain("mixed_concerns");
     expect(s[0]!.confidence).toBe(0.75);
   });
 
   it("classifies the database writes the module performs", () => {
-    const orders = (summary.responsibilityProfiles ?? []).find((p) => p.filePath.endsWith("orders.ts"))!;
-    expect(orders.roles).toEqual(expect.arrayContaining(["persistence", "transport", "messaging", "security"]));
-    expect(orders.emitsEvents).toBe(true);
-    expect(orders.consumesEvents).toBe(true);
-    expect(orders.callsExternal).toBe(true);
+    const cars = (summary.responsibilityProfiles ?? []).find((p) => p.filePath.endsWith("cars.ts"))!;
+    expect(cars.roles).toEqual(expect.arrayContaining(["persistence", "transport", "messaging", "security"]));
+    expect(cars.emitsEvents).toBe(true);
+    expect(cars.consumesEvents).toBe(true);
+    expect(cars.callsExternal).toBe(true);
   });
 });
 

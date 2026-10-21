@@ -15,8 +15,8 @@ const viaOf = (c: Candidate, query: string) => scoreCandidate(c, parseQuery(quer
 
 describe("splitTokens", () => {
   it("splits camelCase and PascalCase", () => {
-    expect(splitTokens("getUserById")).toEqual(["get", "user", "by", "id"]);
-    expect(splitTokens("ArticlesRepository")).toEqual(["articles", "repository"]);
+    expect(splitTokens("getPlayerById")).toEqual(["get", "player", "by", "id"]);
+    expect(splitTokens("ReportsRepository")).toEqual(["reports", "repository"]);
   });
 
   it("splits runs of capitals at the last one", () => {
@@ -24,9 +24,9 @@ describe("splitTokens", () => {
   });
 
   it("splits every separator a path or a route uses", () => {
-    expect(splitTokens("article.service.ts")).toEqual(["article", "service", "ts"]);
-    expect(splitTokens("/profiles/:username")).toEqual(["profiles", "username"]);
-    expect(splitTokens("user_id")).toEqual(["user", "id"]);
+    expect(splitTokens("report.service.ts")).toEqual(["report", "service", "ts"]);
+    expect(splitTokens("/profiles/:playername")).toEqual(["profiles", "playername"]);
+    expect(splitTokens("player_id")).toEqual(["player", "id"]);
     expect(splitTokens("prisma-client")).toEqual(["prisma", "client"]);
   });
 
@@ -37,25 +37,25 @@ describe("splitTokens", () => {
   });
 
   it("normalizes two spellings of one name to the same string", () => {
-    expect(normalize("getUserById")).toBe(normalize("get_user_by_id"));
+    expect(normalize("getPlayerById")).toBe(normalize("get_player_by_id"));
     expect(normalize("/tags")).toBe(normalize("tags"));
   });
 });
 
 describe("scoreCandidate tiers", () => {
   it("100 — the name is the query, however either is spelled", () => {
-    expect(scoreOf(candidate({ name: "getUserById" }), "get user by id")).toBe(100);
+    expect(scoreOf(candidate({ name: "getPlayerById" }), "get player by id")).toBe(100);
     expect(scoreOf(candidate({ name: "/tags" }), "tags")).toBe(100);
   });
 
   it("100 via aka — a route handler, or a column, counts as a name", () => {
-    const route = candidate({ kind: "route", name: "/users/login", nameIsPath: true, aka: ["login"] });
+    const route = candidate({ kind: "route", name: "/players/login", nameIsPath: true, aka: ["login"] });
     expect(scoreOf(route, "login")).toBe(100);
     expect(viaOf(route, "login")).toBe("aka");
   });
 
   it("100 via aka — a multi-segment endpoint is named by its last segment", () => {
-    const route = candidate({ kind: "route", name: "/articles/:slug/favorite", nameIsPath: true });
+    const route = candidate({ kind: "route", name: "/reports/:slug/favorite", nameIsPath: true });
     expect(scoreCandidate(route, parseQuery("favorite"))).toEqual({ score: 100, via: "aka" });
     // A single-segment path is its own name, and stays a name match — otherwise
     // the router line for `/settings` would outrank the screen called Settings.
@@ -66,25 +66,25 @@ describe("scoreCandidate tiers", () => {
   it("90 — the query names the file, only the last extension dropped", () => {
     const file = (path: string) => candidate({ name: path.slice(path.lastIndexOf("/") + 1), path });
     expect(scoreOf(file("backend/src/prisma/prisma-client.ts"), "prisma client")).toBe(90);
-    expect(scoreOf(file("backend/routes/article/article.service.ts"), "article.service")).toBe(90);
+    expect(scoreOf(file("backend/routes/report/report.service.ts"), "report.service")).toBe(90);
   });
 
   it("40 — naming a DIRECTORY is much weaker than naming the file", () => {
     const client = candidate({ name: "prisma-client.ts", path: "backend/src/prisma/prisma-client.ts" });
-    const entity = candidate({ kind: "entity", name: "Article", path: "backend/src/prisma/schema.prisma" });
+    const entity = candidate({ kind: "entity", name: "Report", path: "backend/src/prisma/schema.prisma" });
     // Both sit under `prisma/`; only one is called prisma-something.
     expect(scoreOf(client, "prisma")).toBe(70);
     expect(scoreOf(entity, "prisma")).toBe(40);
   });
 
   it("70 vs 50 — every term is in the name, from the start or not", () => {
-    expect(scoreOf(candidate({ name: "getUserById" }), "get user")).toBe(70);
-    expect(scoreOf(candidate({ name: "getUserById" }), "user id")).toBe(50);
+    expect(scoreOf(candidate({ name: "getPlayerById" }), "get player")).toBe(70);
+    expect(scoreOf(candidate({ name: "getPlayerById" }), "player id")).toBe(50);
   });
 
   it("30 — every term is in the name plus the path", () => {
-    const c = candidate({ name: "create", path: "backend/src/app/routes/article/article.service.ts" });
-    expect(scoreOf(c, "article create")).toBe(30);
+    const c = candidate({ name: "create", path: "backend/src/app/routes/report/report.service.ts" });
+    expect(scoreOf(c, "report create")).toBe(30);
   });
 
   it("10 — a partial word the tokenizer cannot see", () => {
@@ -96,7 +96,7 @@ describe("scoreCandidate tiers", () => {
   });
 
   it("0 — a term that is nowhere", () => {
-    expect(scoreOf(candidate({ name: "getUserById" }), "user password")).toBe(0);
+    expect(scoreOf(candidate({ name: "getPlayerById" }), "player password")).toBe(0);
   });
 });
 
@@ -149,7 +149,7 @@ describe("rankCandidates", () => {
         candidate({ kind: "screen", name: "login", path: "frontend/Login.js", line: 4, text: "screen row" }),
         candidate({
           kind: "route",
-          name: "/users/login",
+          name: "/players/login",
           nameIsPath: true,
           isEndpoint: true,
           aka: ["login"],
@@ -202,11 +202,11 @@ describe("rankCandidates", () => {
   it("breaks a remaining tie on the usefulness prior, then ordinally", () => {
     const rows = rankCandidates(
       [
-        candidate({ name: "Article", path: "a.ts", weight: 1, text: "zzz low impact" }),
-        candidate({ name: "Article", path: "b.ts", weight: 9, text: "aaa high impact" }),
-        candidate({ name: "Article", path: "c.ts", weight: 1, text: "aab low impact" }),
+        candidate({ name: "Report", path: "a.ts", weight: 1, text: "zzz low impact" }),
+        candidate({ name: "Report", path: "b.ts", weight: 9, text: "aaa high impact" }),
+        candidate({ name: "Report", path: "c.ts", weight: 1, text: "aab low impact" }),
       ],
-      "Article",
+      "Report",
     );
     expect(rows.map((r) => r.text)).toEqual(["aaa high impact", "aab low impact", "zzz low impact"]);
   });

@@ -12,24 +12,24 @@ const file = (filePath: string, classes: ClassInfo[], extra: Partial<FileAnalysi
 describe("HotChocolate root types", () => {
   it("reads registered, attributed and conventional root classes as fields named HotChocolate's way", () => {
     const facts: RouteFact[] = [];
-    collectHotChocolateFacts(`builder.Services.AddSingleton<BookStore>();
-builder.Services.AddGraphQLServer().AddQueryType<RootQuery>().AddTypeExtension<BookQueries>().AddMutationType<Mutation>();`, facts);
-    expect(facts.map((f) => f.data)).toEqual([{ types: ["BookStore"] }, { root: "Query", cls: "RootQuery" }, { root: null, cls: "BookQueries" }, { root: "Mutation", cls: "Mutation" }]);
+    collectHotChocolateFacts(`builder.Services.AddSingleton<StadiumStore>();
+builder.Services.AddGraphQLServer().AddQueryType<RootQuery>().AddTypeExtension<StadiumQueries>().AddMutationType<Mutation>();`, facts);
+    expect(facts.map((f) => f.data)).toEqual([{ types: ["StadiumStore"] }, { root: "Query", cls: "RootQuery" }, { root: null, cls: "StadiumQueries" }, { root: "Mutation", cls: "Mutation" }]);
     const program = file("Program.cs", [], { routeFacts: facts });
     const root = file("RootQuery.cs", [cls("RootQuery", [method("GetVersion", [])])]);
-    const books = file("BookQueries.cs", [cls("BookQueries", [
-      method("GetBookByIdAsync", [["id", "int"], ["db", "AppDbContext"], ["ct", "CancellationToken"]], { decorators: ["Authorize(Policy = \"Admin\")"] }),
+    const stadiums = file("StadiumQueries.cs", [cls("StadiumQueries", [
+      method("GetStadiumByIdAsync", [["id", "int"], ["db", "AppDbContext"], ["ct", "CancellationToken"]], { decorators: ["Authorize(Policy = \"Admin\")"] }),
       method("Helper", [], { isExported: false }),
     ], { decorators: ["ExtendObjectType(OperationTypeNames.Query)"], properties: [{ name: "Greeting", type: "string", visibility: "public", isStatic: false, isReadonly: true, decorators: ["GraphQLName(\"hello\")"] }] })], { imports: [{ source: "HotChocolate.Types" } as never] });
-    const mutation = file("Mutation.cs", [cls("Mutation", [method("AddBook", [["input", "BookInput"], ["repo", "BookRepository"], ["store", "BookStore"]])])]);
+    const mutation = file("Mutation.cs", [cls("Mutation", [method("AddStadium", [["input", "StadiumInput"], ["repo", "StadiumRepository"], ["store", "StadiumStore"]])])]);
     const plain = file("Query.cs", [cls("Query", [method("Ignored", [])])]);
-    hotChocolateResolver.resolve([program, root, books, mutation, plain], {} as never);
-    const rows = [root, books, mutation, plain].flatMap((a) => a.routes.map((r) => `${r.path} → ${r.handler}${r.params?.length ? ` (${r.params.map((p) => p.name).join(", ")})` : ""}${r.middleware.length ? ` [${r.middleware.join("; ")}]` : ""}`));
+    hotChocolateResolver.resolve([program, root, stadiums, mutation, plain], {} as never);
+    const rows = [root, stadiums, mutation, plain].flatMap((a) => a.routes.map((r) => `${r.path} → ${r.handler}${r.params?.length ? ` (${r.params.map((p) => p.name).join(", ")})` : ""}${r.middleware.length ? ` [${r.middleware.join("; ")}]` : ""}`));
     expect(rows).toEqual([
       "/graphql/version → RootQuery.GetVersion",
-      "/graphql/bookById → BookQueries.GetBookByIdAsync (id) [Authorize(Policy = \"Admin\")]",
-      "/graphql/hello → BookQueries.Greeting",
-      "/graphql/addBook → Mutation.AddBook (input)",
+      "/graphql/stadiumById → StadiumQueries.GetStadiumByIdAsync (id) [Authorize(Policy = \"Admin\")]",
+      "/graphql/hello → StadiumQueries.Greeting",
+      "/graphql/addStadium → Mutation.AddStadium (input)",
     ]);
   });
 });

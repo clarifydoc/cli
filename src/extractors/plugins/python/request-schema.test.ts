@@ -16,7 +16,7 @@ describe("Python request-schema hooks", () => {
     expect(h.unwrapNullable("Union[Address, None]")).toEqual({ type: "Address", nullable: true });
     expect(h.unwrapNullable("Annotated[str | None, Query()]")).toEqual({ type: "str", nullable: true });
     expect(h.unwrapNullable("int | str")).toEqual({ type: "int | str", nullable: false });
-    expect(h.unwrapNullable("UserCreate")).toEqual({ type: "UserCreate", nullable: false });
+    expect(h.unwrapNullable("PlayerCreate")).toEqual({ type: "PlayerCreate", nullable: false });
   });
 
   it("classifies scalars, collections, maps, literals and class names", () => {
@@ -40,13 +40,13 @@ describe("Python request-schema hooks", () => {
     expect(h.describeType("dict[str, Address]")).toEqual({ kind: "map", value: "Address" });
     expect(h.describeType("Mapping[str, list[int]]")).toEqual({ kind: "map", value: "list[int]" });
     expect(h.describeType("Literal['a', 'b']")).toEqual({ kind: "scalar", schema: { type: "string", enum: ["a", "b"] } });
-    expect(h.describeType("UserCreate")).toEqual({ kind: "object", name: "UserCreate" });
+    expect(h.describeType("PlayerCreate")).toEqual({ kind: "object", name: "PlayerCreate" });
     expect(h.describeType("models.Address")).toEqual({ kind: "object", name: "models.Address" });
   });
 
   it("reads the wire name from Field(alias=…) and required/serialized from the property", () => {
-    expect(h.serializedName(prop({ decorators: ['Field(..., alias="user_name")'] }))).toBe("user_name");
-    expect(h.serializedName(prop({ decorators: ['Field(alias="userName", description="x")'] }))).toBe("userName");
+    expect(h.serializedName(prop({ decorators: ['Field(..., alias="player_name")'] }))).toBe("player_name");
+    expect(h.serializedName(prop({ decorators: ['Field(alias="playerName", description="x")'] }))).toBe("playerName");
     expect(h.serializedName(prop({ decorators: ['Field(None, description="no alias")'] }))).toBe("display_name");
     expect(h.serializedName(prop({}))).toBe("display_name");
     expect(h.isRequired(prop({ isRequired: true }))).toBe(true);
@@ -64,7 +64,7 @@ describe("Python request-schema hooks", () => {
     expect(bindParam({ name: "req", type: "HttpRequest", defaultValue: null }, route)).toBe("services");
     expect(bindParam({ name: "r", type: "Request", defaultValue: null }, route)).toBe("services");
     expect(bindParam({ name: "db", type: "Session", defaultValue: "Depends(get_db)" }, route)).toBe("services");
-    expect(bindParam({ name: "user_id", type: "int", defaultValue: null }, route)).toBeNull();
-    expect(bindParam({ name: "data", type: "UserCreate", defaultValue: null }, route)).toBeNull();
+    expect(bindParam({ name: "player_id", type: "int", defaultValue: null }, route)).toBeNull();
+    expect(bindParam({ name: "data", type: "PlayerCreate", defaultValue: null }, route)).toBeNull();
   });
 });

@@ -22,22 +22,22 @@ public class App {
   public static void main(String[] args) {
     Javalin app = Javalin.create(config -> {
       config.router.apiBuilder(() -> {
-        path("api/users", () -> {
-          get(UserController::getAll);
-          post(UserController::create);
+        path("api/players", () -> {
+          get(PlayerController::getAll);
+          post(PlayerController::create);
           path("<id>", () -> {
-            get(UserController::getOne);
+            get(PlayerController::getOne);
             delete(ctx -> repo.remove(ctx.pathParam("id")));
           });
         });
-        crud("orders/{order-id}", new OrderController());
+        crud("cars/{car-id}", new CarController());
       });
     }).start(7070);
     app.get("/health", ctx -> ctx.result("ok"));
-    app.post("/items", ctx -> {
-      Item item = ctx.bodyAsClass(Item.class);
+    app.post("/balls", ctx -> {
+      Ball ball = ctx.bodyAsClass(Ball.class);
       String token = ctx.header("X-Token");
-      service.save(item, ctx.queryParam("dry"));
+      service.save(ball, ctx.queryParam("dry"));
     });
     Javalin.create().get("/a", ctx -> a()).post("/b", ctx -> b());
     cache.put("/not-a-route", value);
@@ -45,23 +45,23 @@ public class App {
   }
 }`);
     expect(rows(routes)).toEqual([
-      "GET /api/users → UserController.getAll",
-      "POST /api/users → UserController.create",
-      "GET /api/users/{id} → UserController.getOne",
-      "DELETE /api/users/{id}",
-      "GET /orders → OrderController.getAll",
-      "POST /orders → OrderController.create",
-      "GET /orders/{order-id} → OrderController.getOne",
-      "PATCH /orders/{order-id} → OrderController.update",
-      "DELETE /orders/{order-id} → OrderController.delete",
+      "GET /api/players → PlayerController.getAll",
+      "POST /api/players → PlayerController.create",
+      "GET /api/players/{id} → PlayerController.getOne",
+      "DELETE /api/players/{id}",
+      "GET /cars → CarController.getAll",
+      "POST /cars → CarController.create",
+      "GET /cars/{car-id} → CarController.getOne",
+      "PATCH /cars/{car-id} → CarController.update",
+      "DELETE /cars/{car-id} → CarController.delete",
       "GET /health",
-      "POST /items",
+      "POST /balls",
       "GET /a",
       "POST /b",
     ]);
-    expect(params(routes.find((r) => r.path === "/items"))).toEqual(["header:X-Token", "query:dry", "body:body:Item"]);
+    expect(params(routes.find((r) => r.path === "/balls"))).toEqual(["header:X-Token", "query:dry", "body:body:Ball"]);
     expect(params(routes[3])).toEqual(["route:id"]);
-    expect(routes.find((r) => r.path === "/items")!.calls.map((c) => c.name)).toContain("service.save");
+    expect(routes.find((r) => r.path === "/balls")!.calls.map((c) => c.name)).toContain("service.save");
   });
 
   it("reads Kotlin trailing lambdas and callable references", async () => {
@@ -71,15 +71,15 @@ import io.javalin.apibuilder.ApiBuilder.*
 
 fun main() {
     val app = Javalin.create().start(7070)
-    app.get("/users/{id}") { ctx -> ctx.json(repo.find(ctx.pathParam("id"))) }
-    app.post("/users", UserController::create)
+    app.get("/players/{id}") { ctx -> ctx.json(repo.find(ctx.pathParam("id"))) }
+    app.post("/players", PlayerController::create)
     app.routes {
         path("admin") {
             get(AdminController::stats)
         }
     }
 }`, "kotlin");
-    expect(rows(routes)).toEqual(["GET /users/{id}", "POST /users → UserController.create", "GET /admin → AdminController.stats"]);
+    expect(rows(routes)).toEqual(["GET /players/{id}", "POST /players → PlayerController.create", "GET /admin → AdminController.stats"]);
     expect(params(routes[0])).toEqual(["route:id"]);
   });
 });
@@ -93,20 +93,20 @@ public class Main {
   public static void main(String[] args) {
     port(4567);
     get("/hello", (req, res) -> "Hello");
-    post("/users/:id", (req, res) -> {
+    post("/players/:id", (req, res) -> {
       String id = req.params(":id");
       String q = req.queryParams("q");
-      return users.update(id, req.body());
+      return players.update(id, req.body());
     });
     path("/api", () -> {
       before("/*", (q, a) -> log());
-      get("/items", ItemRoutes::list);
-      path("/v2", () -> put("/items/:id", ItemRoutes::update));
+      get("/balls", BallRoutes::list);
+      path("/v2", () -> put("/balls/:id", BallRoutes::update));
     });
     staticFiles.location("/public");
   }
 }`);
-    expect(rows(routes)).toEqual(["GET /hello", "POST /users/:id", "GET /api/items → ItemRoutes.list", "PUT /api/v2/items/:id → ItemRoutes.update"]);
+    expect(rows(routes)).toEqual(["GET /hello", "POST /players/:id", "GET /api/balls → BallRoutes.list", "PUT /api/v2/balls/:id → BallRoutes.update"]);
     expect(params(routes[1])).toEqual(["route:id", "query:q", "body:body"]);
   });
 

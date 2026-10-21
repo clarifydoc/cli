@@ -8,15 +8,15 @@ describe("what a handler answers", () => {
   it("reads Express, Fastify and Hono responses with their status and literal keys", async () => {
     const src = `
 export async function show(req, res) {
-  const user = await repo.find(req.params.id);
-  if (!user) return res.status(404).json({ error: "not found" });
-  res.json({ id: user.id, name: user.name });
+  const player = await repo.find(req.params.id);
+  if (!player) return res.status(404).json({ error: "not found" });
+  res.json({ id: player.id, name: player.name });
 }
 export async function create(req, reply) { return reply.code(201).send({ ok: true }); }
 export const remove = async (req, res) => { await repo.del(req.params.id); res.sendStatus(204); };
 export const list = (c) => c.json({ items: [], ...meta }, 200);
 export function helper(a, b) { return b.json({ x: 1 }); }`;
-    const tree = await parseSource(src, "typescript" as any, "users.ts");
+    const tree = await parseSource(src, "typescript" as any, "players.ts");
     const fns = new JavaScriptExtractor().extractFunctions(tree, src);
     const of = (n: string) => fns.find((f) => f.name === n)?.responses;
     expect(of("show")).toEqual([{ status: 404, keys: ["error"] }, { status: null, keys: ["id", "name"] }]);
@@ -36,15 +36,15 @@ describe("what a caller reads off a response", () => {
 
   it("follows fetch's json(), axios's data and destructuring; arrays' members are not fields", async () => {
     expect(await readsOf(`
-export async function a(id) { const res = await fetch(\`/users/\${id}\`); const user = await res.json(); return user.name + user?.email; }
+export async function a(id) { const res = await fetch(\`/players/\${id}\`); const player = await res.json(); return player.name + player?.email; }
 export async function b() { const res = await fetch("/stats"); const { total, active: on } = await res.json(); return total + on; }
 export async function c() { const { data } = await axios.get("/items"); return data.items.map((i) => i.id).concat(data.length); }
-export async function d() { const res = await api.get("/orders"); return res.data.count; }
+export async function d() { const res = await api.get("/cars"); return res.data.count; }
 export async function e() { return fetch("/raw").then((r) => r.json()); }`)).toEqual([
-      "/users/${id} email,name",
+      "/players/${id} email,name",
       "/stats active,total",
       "/items items",
-      "/orders count",
+      "/cars count",
       "/raw -",
     ]);
   });

@@ -26,15 +26,15 @@ fun Application.configureRouting() {
             call.respondText("OK")
         }
         route("/api") {
-            get("/users") {
-                call.respond(userService.listUsers())
+            get("/players") {
+                call.respond(playerService.listPlayers())
             }
-            post("/users") {
-                userService.createUser(call.receive())
+            post("/players") {
+                playerService.createPlayer(call.receive())
             }
             route("/admin") {
-                delete("/users/{id}") {
-                    userService.removeUser(call.parameters["id"])
+                delete("/players/{id}") {
+                    playerService.removePlayer(call.parameters["id"])
                 }
             }
         }
@@ -43,12 +43,12 @@ fun Application.configureRouting() {
     const routes = await routesOf(SRC);
     expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual([
       "GET /health",
-      "GET /api/users",
-      "POST /api/users",
-      "DELETE /api/admin/users/{id}",
+      "GET /api/players",
+      "POST /api/players",
+      "DELETE /api/admin/players/{id}",
     ]);
-    const users = routes.find((r) => r.path === "/api/users" && r.httpMethod === "GET")!;
-    expect(users.calls.some((c) => /listUsers/.test(c.name ?? ""))).toBe(true);
+    const players = routes.find((r) => r.path === "/api/players" && r.httpMethod === "GET")!;
+    expect(players.calls.some((c) => /listPlayers/.test(c.name ?? ""))).toBe(true);
   });
 
   it("handles path-less verbs inside a route block", async () => {
@@ -93,10 +93,10 @@ fun Application.module() {
   routing {
     authenticate("auth-jwt") {
       route("/api") {
-        post("/users/{id}") {
+        post("/players/{id}") {
           val id = call.parameters["id"]
           val q = call.request.queryParameters["q"]
-          val body = call.receive<CreateUserDto>()
+          val body = call.receive<CreatePlayerDto>()
           call.respond(body)
         }
       }
@@ -113,7 +113,7 @@ fun Application.module() {
     expect(post.params).toEqual([
       { name: "id", type: null, binding: "route" },
       { name: "q", type: null, binding: "query" },
-      { name: "body", type: "CreateUserDto", binding: "body" },
+      { name: "body", type: "CreatePlayerDto", binding: "body" },
     ]);
     const health = routes.find((r) => r.path === "/health")!;
     expect(health.auth).toBeUndefined();
@@ -137,16 +137,16 @@ fun Application.module() {
         get("/health") { call.respondText("OK") }
         route("/api") {
             authenticate("jwt") {
-                userRoutes()
+                playerRoutes()
             }
             adminRoutes()
         }
     }
 }`);
-    const users = await fileOf("src/routes/UserRoutes.kt", `package app.routes
+    const players = await fileOf("src/routes/PlayerRoutes.kt", `package app.routes
 import io.ktor.server.routing.*
-fun Route.userRoutes() {
-    route("/users") {
+fun Route.playerRoutes() {
+    route("/players") {
         get { call.respond(repo.all()) }
         post("/{id}/lock") { helper() }
     }
@@ -159,16 +159,16 @@ fun Route.adminRoutes() {
 fun Route.reportRoutes() {
     get("/reports") { call.respond(1) }
 }`);
-    expect(users.routes.map((r) => `${r.httpMethod} ${r.path} ${r.owner}`)).toEqual([
-      "GET /users fn:userRoutes",
-      "POST /users/{id}/lock fn:userRoutes",
+    expect(players.routes.map((r) => `${r.httpMethod} ${r.path} ${r.owner}`)).toEqual([
+      "GET /players fn:playerRoutes",
+      "POST /players/{id}/lock fn:playerRoutes",
       "GET /reports fn:reportRoutes",
     ]);
-    ktorRouteFnResolver.resolve([app, users], {} as ProjectContext);
-    expect([app, users].flatMap((a) => a.routes).map((r) => `${r.httpMethod} ${r.path}${r.auth ? ` auth=${r.auth.schemes.join(",")}` : ""}`)).toEqual([
+    ktorRouteFnResolver.resolve([app, players], {} as ProjectContext);
+    expect([app, players].flatMap((a) => a.routes).map((r) => `${r.httpMethod} ${r.path}${r.auth ? ` auth=${r.auth.schemes.join(",")}` : ""}`)).toEqual([
       "GET /health",
-      "GET /api/users auth=jwt",
-      "POST /api/users/{id}/lock auth=jwt",
+      "GET /api/players auth=jwt",
+      "POST /api/players/{id}/lock auth=jwt",
       "GET /api/admin/reports",
     ]);
   });
@@ -184,9 +184,9 @@ import androidx.navigation.compose.composable
 fun AppNav(navController: NavHostController) {
     NavHost(navController, startDestination = "home") {
         composable("home") { HomeScreen(onOpen = { id -> navController.navigate("profile/$id") }) }
-        composable(route = "profile/{userId}") { entry ->
-            val id = entry.arguments?.getString("userId")
-            ProfileScreen(userId = id)
+        composable(route = "profile/{playerId}") { entry ->
+            val id = entry.arguments?.getString("playerId")
+            ProfileScreen(playerId = id)
         }
         composable<Settings> { SettingsScreen() }
         dialog("confirm") { ConfirmDialog() }
@@ -197,7 +197,7 @@ fun AppNav(navController: NavHostController) {
 }`);
     expect(routes.map((r) => `${r.kind} ${r.path} ${r.componentPath}`)).toEqual([
       "frontend home HomeScreen",
-      "frontend profile/{userId} ProfileScreen",
+      "frontend profile/{playerId} ProfileScreen",
       "frontend Settings SettingsScreen",
       "frontend confirm ConfirmDialog",
       "frontend a StepA",

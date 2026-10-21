@@ -25,12 +25,12 @@ describe.skipIf(!existsSync(fixture))("sample-rtk-query", () => {
     const s = await loadReportSummary(out);
     const links = (s.apiRouteLinks ?? []).filter((l) => l.source.startsWith("web/src/features/")).map((l) => `${l.source} ${l.method} ${l.url} -> ${l.routePath}`);
     expect(links.sort()).toEqual([
-      "web/src/features/PostDetail.tsx DELETE /api/posts/${id} -> /api/posts/:id",
-      "web/src/features/PostDetail.tsx GET /posts/${postId}/comments -> /api/posts/:id/comments",
-      "web/src/features/Posts.tsx GET /api/posts -> /api/posts",
-      "web/src/features/Posts.tsx GET /api/posts -> /api/posts",
-      "web/src/features/Posts.tsx GET /api/posts/${id} -> /api/posts/:id",
-      "web/src/features/Posts.tsx POST /api/posts -> /api/posts",
+      "web/src/features/GameDetail.tsx DELETE /api/games/${id} -> /api/games/:id",
+      "web/src/features/GameDetail.tsx GET /games/${gameId}/comments -> /api/games/:id/comments",
+      "web/src/features/Games.tsx GET /api/games -> /api/games",
+      "web/src/features/Games.tsx GET /api/games -> /api/games",
+      "web/src/features/Games.tsx GET /api/games/${id} -> /api/games/:id",
+      "web/src/features/Games.tsx POST /api/games -> /api/games",
     ]);
   });
 });

@@ -40,14 +40,14 @@ describe("demoteProjectCallDataSources", () => {
   });
 
   it("keeps a call into an ORM entity's method or an interface method — that is where the query is", () => {
-    const svc = file("svc.rb", { dataSources: [ds("User.active", 3), ds("users.findByEmail", 9)] });
-    const model = file("user.rb", { classes: [{ name: "User", decorators: ["ApplicationRecord", "entity", "activerecord"], methods: [] }] as any });
-    const repo = file("UserRepository.java", { classes: [{ name: "UserRepository", kind: "interface", decorators: [], methods: [] }] as any });
+    const svc = file("svc.rb", { dataSources: [ds("Player.active", 3), ds("players.findByEmail", 9)] });
+    const model = file("player.rb", { classes: [{ name: "Player", decorators: ["ApplicationRecord", "entity", "activerecord"], methods: [] }] as any });
+    const repo = file("PlayerRepository.java", { classes: [{ name: "PlayerRepository", kind: "interface", decorators: [], methods: [] }] as any });
     const n = demoteProjectCallDataSources([svc, model, repo], [
-      link("svc.rb", 3, "User.active", "user.rb", "User.active", { strategy: "class-name" }),
-      link("svc.rb", 9, "users.findByEmail", "UserRepository.java", "UserRepository.findByEmail", { strategy: "injection" }),
+      link("svc.rb", 3, "Player.active", "player.rb", "Player.active", { strategy: "class-name" }),
+      link("svc.rb", 9, "players.findByEmail", "PlayerRepository.java", "PlayerRepository.findByEmail", { strategy: "injection" }),
     ]);
     expect(n).toBe(0);
-    expect(names(svc)).toEqual(["User.active", "users.findByEmail"]);
+    expect(names(svc)).toEqual(["Player.active", "players.findByEmail"]);
   });
 });

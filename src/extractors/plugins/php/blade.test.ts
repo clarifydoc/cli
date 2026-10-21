@@ -7,14 +7,14 @@ import { extractBladeScreens, extractBladeInteractiveElements } from "./blade.js
  */
 const TEMPLATE = `@extends('layouts.app')
 
-@section('title', 'Product Catalog')
+@section('title', 'Part Catalog')
 
 @section('content')
-    <form action="/api/products" method="post">
+    <form action="/api/parts" method="post">
         @csrf
         <button type="submit" onclick="submitSearch()">Search</button>
     </form>
-    <button onclick="addToCart({{ $product->id }})">Add</button>
+    <button onclick="addToGarage({{ $part->id }})">Add</button>
     <!-- <button onclick="commentedOut()">nope</button> -->
 @endsection
 `;
@@ -25,7 +25,7 @@ describe("Blade screens", () => {
     expect(screens).toHaveLength(1);
     expect(screens[0]!.name).toBe("catalog");
     expect(screens[0]!.formType).toBe("blade-view");
-    expect(screens[0]!.caption).toBe("Product Catalog");
+    expect(screens[0]!.caption).toBe("Part Catalog");
   });
 
   it("emits nothing for non-blade PHP files", () => {
@@ -38,15 +38,15 @@ describe("Blade interactive elements", () => {
     const els = extractBladeInteractiveElements(TEMPLATE);
     expect(els.some((e) => e.element === "form")).toBe(true);
     expect(els.some((e) => e.handler === "submitSearch")).toBe(true);
-    expect(els.some((e) => e.handler === "addToCart")).toBe(true);
+    expect(els.some((e) => e.handler === "addToGarage")).toBe(true);
     expect(els.some((e) => e.handler === "commentedOut")).toBe(false);
   });
 
   it("stays silent on plain PHP class files (no Blade markers)", () => {
     const SRC = `<?php
-class ProductController {
+class PartController {
   // has the word onclick="x()" only inside a comment-free class? no markers.
-  public function index() { return Product::all(); }
+  public function index() { return Part::all(); }
 }`;
     expect(extractBladeInteractiveElements(SRC)).toEqual([]);
   });

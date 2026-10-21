@@ -22,20 +22,20 @@ describe("config extract patterns — sample-config-patterns", () => {
 
   it("turns the wrappers' call sites into routes, links and data access", () => {
     expect(summary.routeMap.map((r) => `${r.httpMethod} ${r.path} ${r.filePath}:${r.line}`).sort()).toEqual([
-      "GET /api/orders server/orders.ts:14",
-      "POST /api/orders server/orders.ts:15",
+      "GET /api/cars server/cars.ts:14",
+      "POST /api/cars server/cars.ts:15",
     ]);
     expect((summary.apiRouteLinks ?? []).map((l) => `${l.method} ${l.source}:${l.sourceLine} -> ${l.target}:${l.targetLine}`).sort()).toEqual([
-      "GET web/orders-page.ts:4 -> server/orders.ts:14",
-      "POST web/orders-page.ts:8 -> server/orders.ts:15",
+      "GET web/cars-page.ts:4 -> server/cars.ts:14",
+      "POST web/cars-page.ts:8 -> server/cars.ts:15",
     ]);
   });
 
   it("records the database access only the config names", () => {
     const tables = (summary.entityGraph?.nodes ?? []).map((n) => n.name).sort();
     expect(tables).toContain("payments");
-    expect(tables).toContain("orders");
-    expect(tables.filter((t) => t === "orders")).toHaveLength(1);
+    expect(tables).toContain("cars");
+    expect(tables.filter((t) => t === "cars")).toHaveLength(1);
   });
 
   it("reads the config strictly enough to say what it dropped", () => {

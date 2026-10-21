@@ -23,12 +23,12 @@ describe("symbolsInHunks + reverseSymbolReach", () => {
   const analyses = new Map([
     ["svc.ts", {
       functions: [{ name: "helper", line: 1, endLine: 4 }, { name: "<setup>", line: 1, endLine: 40 }],
-      classes: [{ name: "OrderService", methods: [{ name: "place", line: 10, endLine: 20 }, { name: "cancel", line: 22, endLine: 30 }] }],
+      classes: [{ name: "CarService", methods: [{ name: "place", line: 10, endLine: 20 }, { name: "cancel", line: 22, endLine: 30 }] }],
     } as never],
   ]);
   it("maps hunks to the innermost function, and lines outside any to the file", () => {
     const { symbols, moduleLevel } = symbolsInHunks(analyses, new Map([["svc.ts", [[12, 13], [35, 36]]], ["new.ts", [[1, 9]]]]));
-    expect(symbols.map((s) => s.symbol)).toEqual(["OrderService.place"]);
+    expect(symbols.map((s) => s.symbol)).toEqual(["CarService.place"]);
     expect(moduleLevel).toEqual(["new.ts", "svc.ts"]);
   });
 
@@ -36,13 +36,13 @@ describe("symbolsInHunks + reverseSymbolReach", () => {
     const link = (sf: string, ss: string, tf: string, ts: string, confidence: string): SymbolLink =>
       ({ sourceFile: sf, sourceSymbol: ss, sourceLine: 1, callName: ts, targetFile: tf, targetSymbol: ts, targetLine: 1, confidence } as SymbolLink);
     const callers = reverseSymbolReach([
-      link("ctl.ts", "OrderController.create", "svc.ts", "OrderService.place", "EXTRACTED"),
-      link("ctl.ts", "route:POST /orders", "ctl.ts", "OrderController.create", "INFERRED"),
-      link("other.ts", "unrelated", "svc.ts", "OrderService.cancel", "EXTRACTED"),
-    ], [{ file: "svc.ts", symbol: "OrderService.place", line: 10, endLine: 20 }]);
+      link("ctl.ts", "CarController.create", "svc.ts", "CarService.place", "EXTRACTED"),
+      link("ctl.ts", "route:POST /cars", "ctl.ts", "CarController.create", "INFERRED"),
+      link("other.ts", "unrelated", "svc.ts", "CarService.cancel", "EXTRACTED"),
+    ], [{ file: "svc.ts", symbol: "CarService.place", line: 10, endLine: 20 }]);
     expect(callers.map((c) => [c.symbol, c.depth, c.confidence])).toEqual([
-      ["OrderController.create", 1, "EXTRACTED"],
-      ["route:POST /orders", 2, "INFERRED"],
+      ["CarController.create", 1, "EXTRACTED"],
+      ["route:POST /cars", 2, "INFERRED"],
     ]);
   });
 });
@@ -52,8 +52,8 @@ describe("signatureChanges", () => {
     ({ name, line, endLine: line + 3, params: params.map(([n, d]) => ({ name: n, type: null, defaultValue: d })) });
   it("reports removals and required-parameter changes, breaking when a certain caller remains", async () => {
     const { signatureChanges } = await import("./changed-symbols.js");
-    const before = new Map([["svc.ts", { functions: [fn("place", 1, [["order", null]]), fn("cancel", 10, [["id", null]]), fn("audit", 20, [["msg", null]]), fn("lonely", 30, [])], classes: [] } as never]]);
-    const after = new Map([["svc.ts", { functions: [fn("place", 1, [["order", null], ["user", null]]), fn("cancel", 10, [])], classes: [] } as never]]);
+    const before = new Map([["svc.ts", { functions: [fn("place", 1, [["car", null]]), fn("cancel", 10, [["id", null]]), fn("audit", 20, [["msg", null]]), fn("lonely", 30, [])], classes: [] } as never]]);
+    const after = new Map([["svc.ts", { functions: [fn("place", 1, [["car", null], ["player", null]]), fn("cancel", 10, [])], classes: [] } as never]]);
     const link = (target: string) => ({ sourceFile: "ctl.ts", sourceSymbol: "c", sourceLine: 1, callName: target, targetFile: "svc.ts", targetSymbol: target, targetLine: 1, confidence: "EXTRACTED" }) as never;
     const out = signatureChanges(before, after, [link("place"), link("cancel"), link("audit")]);
     expect(out.map((c) => [c.symbol, c.kind, c.before ?? "", c.after ?? "", c.breaking])).toEqual([
@@ -69,20 +69,20 @@ describe("signatureChanges", () => {
     const typed = (name: string, line: number, params: Array<[string, string]>, returnType: string | null) =>
       ({ name, line, endLine: line + 3, returnType, params: params.map(([n, t]) => ({ name: n, type: t, defaultValue: null })) });
     const before = new Map([["svc.ts", { functions: [
-      typed("place", 1, [["order", "Order"]], "Receipt"),
-      typed("find", 10, [["id", "string"]], "Order | null"),
+      typed("place", 1, [["car", "Car"]], "Receipt"),
+      typed("find", 10, [["id", "string"]], "Car | null"),
       typed("drop", 20, [["id", "string"]], null),
     ], classes: [] } as never]]);
     const after = new Map([["svc.ts", { functions: [
-      typed("placeOrder", 1, [["order", "Order"]], "Receipt"),
-      typed("find", 10, [["id", "string"]], "Order"),
+      typed("placeCar", 1, [["car", "Car"]], "Receipt"),
+      typed("find", 10, [["id", "string"]], "Car"),
       typed("dropAll", 20, [["ids", "string[]"]], null),
     ], classes: [] } as never]]);
     const link = (target: string) => ({ sourceFile: "ctl.ts", sourceSymbol: "c", sourceLine: 1, callName: target, targetFile: "svc.ts", targetSymbol: target, targetLine: 1, confidence: "EXTRACTED" }) as never;
     const out = signatureChanges(before, after, [link("place"), link("find")]);
     expect(out.map((c) => [c.symbol, describeSignatureChange(c), c.breaking])).toEqual([
-      ["place", "removed (possibly renamed to placeOrder)", true],
-      ["find", "returns Order, was Order | null", true],
+      ["place", "removed (possibly renamed to placeCar)", true],
+      ["find", "returns Car, was Car | null", true],
       // Different parameters: not the same function.
       ["drop", "removed", false],
     ]);

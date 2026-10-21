@@ -15,15 +15,15 @@ describe("doc drift with git history", () => {
     dir = await mkdtemp(join(tmpdir(), "clarifydoc-drift-"));
     await mkdir(join(root(), "src"), { recursive: true });
     await writeFile(join(root(), "package.json"), JSON.stringify({ name: "app" }));
-    await writeFile(join(root(), "src", "orders.ts"), "export function placeOrder() {\n  return 1;\n}\n// a body long enough for rename detection to see the same file\n");
+    await writeFile(join(root(), "src", "cars.ts"), "export function buyCar() {\n  return 1;\n}\n// a body long enough for rename detection to see the same file\n");
     await writeFile(join(root(), "src", "legacy.ts"), "export const legacy = 1;\n");
     git("init", "-q");
     git("add", ".");
     git("commit", "-qm", "first");
-    git("mv", "src/orders.ts", "src/order-service.ts");
+    git("mv", "src/cars.ts", "src/car-service.ts");
     git("rm", "-q", "src/legacy.ts");
     git("commit", "-qm", "rename and delete");
-    await writeFile(join(root(), "README.md"), "Orders live in `src/orders.ts`; `src/legacy.ts` holds the old code; `src/order-service.ts` is new.\n");
+    await writeFile(join(root(), "README.md"), "Cars live in `src/cars.ts`; `src/legacy.ts` holds the old code; `src/car-service.ts` is new.\n");
     await analyze({ projectRoot: root(), outputDir: join(dir, "out"), lsp: false, stableOutput: true });
   });
   afterAll(async () => {
@@ -33,6 +33,6 @@ describe("doc drift with git history", () => {
   it("names the new file for a rename and the commit for a deletion", async () => {
     const s = await loadReportSummary(join(dir, "out"));
     const f = s.docDrift!.findings.map((x) => `${x.text}: ${x.reason.replace(/[0-9a-f]{7,} \(\d{4}-\d\d-\d\d\)/, "<commit>")} (${x.confidence})`);
-    expect(f).toEqual(["src/orders.ts: renamed to src/order-service.ts (EXTRACTED)", "src/legacy.ts: deleted in <commit> (EXTRACTED)"]);
+    expect(f).toEqual(["src/cars.ts: renamed to src/car-service.ts (EXTRACTED)", "src/legacy.ts: deleted in <commit> (EXTRACTED)"]);
   });
 });

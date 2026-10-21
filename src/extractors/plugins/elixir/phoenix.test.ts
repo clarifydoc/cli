@@ -45,8 +45,8 @@ defmodule AppWeb.Router do
   scope "/api", AppWeb do
     pipe_through [:api, :auth]
 
-    resources "/users", UserController, only: [:index, :show, :create]
-    resources "/posts", PostController, except: [:new, :edit] do
+    resources "/players", PlayerController, only: [:index, :show, :create]
+    resources "/games", GameController, except: [:new, :edit] do
       resources "/comments", CommentController, only: [:index]
     end
     live "/dashboard", DashboardLive, :index
@@ -69,15 +69,15 @@ describe("Phoenix router — pipelines and pipe_through", () => {
   });
 
   it("inherits the auth pipeline's guard plugs on every route of the scope", () => {
-    const users = out.find((r) => r.handler === "UserController.index")!;
-    expect(users.auth).toEqual({
+    const players = out.find((r) => r.handler === "PlayerController.index")!;
+    expect(players.auth).toEqual({
       policies: ["AppWeb.Auth.Pipeline", "require_authenticated_user"],
       roles: [],
       schemes: [],
       anonymous: false,
       inherited: true,
     });
-    expect(users.middleware).toEqual([':accepts, ["json"]', ":fetch_session", "AppWeb.Auth.Pipeline", ":require_authenticated_user"]);
+    expect(players.middleware).toEqual([':accepts, ["json"]', ":fetch_session", "AppWeb.Auth.Pipeline", ":require_authenticated_user"]);
   });
 
   it("treats Guardian plugs as schemes", () => {
@@ -96,16 +96,16 @@ describe("Phoenix router — resources expansion", () => {
   const out = routes(ROUTER);
 
   it("expands `resources` with only:/except: and nests a do-block under /:parent_id", () => {
-    expect(out.filter((r) => r.handler?.startsWith("UserController")).map(sig)).toEqual([
-      "GET /api/users -> UserController.index",
-      "POST /api/users -> UserController.create",
-      "GET /api/users/:id -> UserController.show",
+    expect(out.filter((r) => r.handler?.startsWith("PlayerController")).map(sig)).toEqual([
+      "GET /api/players -> PlayerController.index",
+      "POST /api/players -> PlayerController.create",
+      "GET /api/players/:id -> PlayerController.show",
     ]);
-    expect(out.filter((r) => r.handler?.startsWith("PostController")).map((r) => `${r.httpMethod} ${r.path}`)).toEqual([
-      "GET /api/posts", "POST /api/posts", "GET /api/posts/:id", "PUT /api/posts/:id", "DELETE /api/posts/:id",
+    expect(out.filter((r) => r.handler?.startsWith("GameController")).map((r) => `${r.httpMethod} ${r.path}`)).toEqual([
+      "GET /api/games", "POST /api/games", "GET /api/games/:id", "PUT /api/games/:id", "DELETE /api/games/:id",
     ]);
     expect(out.filter((r) => r.handler?.startsWith("CommentController")).map(sig)).toEqual([
-      "GET /api/posts/:post_id/comments -> CommentController.index",
+      "GET /api/games/:game_id/comments -> CommentController.index",
     ]);
   });
 
@@ -122,7 +122,7 @@ describe("Phoenix router — resources expansion", () => {
 
 describe("Phoenix controller — pattern-matched params", () => {
   const CTL = `
-defmodule AppWeb.UserController do
+defmodule AppWeb.PlayerController do
   use Phoenix.Controller
 
   def index(conn, params) do
@@ -134,12 +134,12 @@ defmodule AppWeb.UserController do
     json(conn, %{id: id})
   end
 
-  def create(conn, %{"user" => user_params, "notify" => notify}) do
+  def create(conn, %{"player" => player_params, "notify" => notify}) do
     [client] = get_req_header(conn, "x-client-id")
     json(conn, %{})
   end
 
-  def update(conn, %{"id" => id, "user" => attrs} = params) do
+  def update(conn, %{"id" => id, "player" => attrs} = params) do
     json(conn, %{})
   end
 end
@@ -156,13 +156,13 @@ end
   it("binds `id` to the route, create keys to the body, and read keys to the query", () => {
     expect(method("show").requestAccess).toEqual([{ name: "id", type: null, binding: "route" }]);
     expect(method("create").requestAccess).toEqual([
-      { name: "user", type: null, binding: "body" },
+      { name: "player", type: null, binding: "body" },
       { name: "notify", type: null, binding: "body" },
       { name: "x-client-id", type: null, binding: "header" },
     ]);
     expect(method("update").requestAccess).toEqual([
       { name: "id", type: null, binding: "route" },
-      { name: "user", type: null, binding: "body" },
+      { name: "player", type: null, binding: "body" },
     ]);
     expect(method("index").requestAccess).toEqual([{ name: "page", type: null, binding: "query" }]);
   });
@@ -175,22 +175,22 @@ end
 
 describe("Ecto schema → properties + hooks", () => {
   const SCHEMA = `
-defmodule App.Accounts.User do
+defmodule App.Clubs.Player do
   use Ecto.Schema
   import Ecto.Changeset
 
-  schema "users" do
+  schema "players" do
     field :name, :string
     field :age, :integer
     field :tags, {:array, :string}, default: []
-    field :role, Ecto.Enum, values: [:user, :admin]
-    belongs_to :organization, App.Accounts.Organization
-    embeds_one :address, App.Accounts.Address
+    field :role, Ecto.Enum, values: [:player, :admin]
+    belongs_to :organization, App.Clubs.Organization
+    embeds_one :address, App.Clubs.Address
     timestamps()
   end
 
-  def changeset(user, attrs) do
-    user
+  def changeset(player, attrs) do
+    player
     |> cast(attrs, [:name, :age, :tags])
     |> validate_required([:name])
   end
@@ -205,7 +205,7 @@ end
       ["tags", "{:array, :string}", false],
       ["role", "Ecto.Enum", false],
       ["organization_id", ":id", false],
-      ["address", "App.Accounts.Address", false],
+      ["address", "App.Clubs.Address", false],
       ["inserted_at", ":naive_datetime", false],
       ["updated_at", ":naive_datetime", false],
     ]);
@@ -224,11 +224,11 @@ end
     expect(elixirRequestSchema.describeType(":utc_datetime")).toEqual({ kind: "scalar", schema: { type: "string", format: "date-time" } });
     expect(elixirRequestSchema.describeType("{:array, :string}")).toEqual({ kind: "array", element: ":string" });
     expect(elixirRequestSchema.describeType(":map")).toEqual({ kind: "any" });
-    expect(elixirRequestSchema.describeType("App.Accounts.Address")).toEqual({ kind: "object", name: "Address" });
+    expect(elixirRequestSchema.describeType("App.Clubs.Address")).toEqual({ kind: "object", name: "Address" });
   });
 
   it("leaves a module without a schema block property-less", () => {
-    expect(classesOf(`defmodule App.Accounts do\n  def list_users, do: []\nend`)[0]!.properties).toEqual([]);
+    expect(classesOf(`defmodule App.Clubs do\n  def list_players, do: []\nend`)[0]!.properties).toEqual([]);
   });
 });
 

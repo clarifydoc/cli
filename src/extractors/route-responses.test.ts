@@ -19,15 +19,15 @@ describe("route responses", () => {
     expect(await answers(pythonRouteExtractor, "python", "app/main.py", `from fastapi import FastAPI, status
 app = FastAPI()
 
-@app.post("/users", response_model=UserOut, status_code=status.HTTP_201_CREATED)
-def create(user: UserIn):
-    return user
+@app.post("/players", response_model=PlayerOut, status_code=status.HTTP_201_CREATED)
+def create(player: PlayerIn):
+    return player
 
-@app.get("/users/{id}")
-def show(id: int) -> UserOut:
+@app.get("/players/{id}")
+def show(id: int) -> PlayerOut:
     return find(id)
 
-@app.delete("/users/{id}", status_code=204)
+@app.delete("/players/{id}", status_code=204)
 def remove(id: int) -> None:
     pass
 
@@ -35,53 +35,53 @@ def remove(id: int) -> None:
 def raw() -> JSONResponse:
     return JSONResponse({})
 `)).toEqual([
-      'POST /users [{"status":201,"type":"UserOut"}]',
-      'GET /users/{id} [{"status":null,"type":"UserOut"}]',
-      'DELETE /users/{id} [{"status":204}]',
+      'POST /players [{"status":201,"type":"PlayerOut"}]',
+      'GET /players/{id} [{"status":null,"type":"PlayerOut"}]',
+      'DELETE /players/{id} [{"status":204}]',
       "GET /raw null",
     ]);
   });
 
   it("Spring: the return type unwrapped and @ResponseStatus", async () => {
-    expect(await answers(javaKotlinRouteExtractor, "java", "UserController.java", `@RestController
-@RequestMapping("/users")
-public class UserController {
+    expect(await answers(javaKotlinRouteExtractor, "java", "PlayerController.java", `@RestController
+@RequestMapping("/players")
+public class PlayerController {
   @GetMapping("/{id}")
-  public ResponseEntity<UserDto> show(@PathVariable Long id) { return ResponseEntity.ok(find(id)); }
+  public ResponseEntity<PlayerDto> show(@PathVariable Long id) { return ResponseEntity.ok(find(id)); }
   @PostMapping
   @ResponseStatus(HttpStatus.CREATED)
-  public Mono<UserDto> create(@RequestBody UserIn in) { return save(in); }
+  public Mono<PlayerDto> create(@RequestBody PlayerIn in) { return save(in); }
   @GetMapping
-  public Flux<UserDto> list() { return all(); }
+  public Flux<PlayerDto> list() { return all(); }
   @DeleteMapping("/{id}")
   public ResponseEntity<Void> remove(@PathVariable Long id) { return ResponseEntity.noContent().build(); }
 }`)).toEqual([
-      'GET /users/{id} [{"status":null,"type":"UserDto"}]',
-      'POST /users [{"status":201,"type":"UserDto"}]',
-      'GET /users [{"status":null,"type":"List<UserDto>"}]',
-      "DELETE /users/{id} null",
+      'GET /players/{id} [{"status":null,"type":"PlayerDto"}]',
+      'POST /players [{"status":201,"type":"PlayerDto"}]',
+      'GET /players [{"status":null,"type":"List<PlayerDto>"}]',
+      "DELETE /players/{id} null",
     ]);
   });
 
   it("ASP.NET: ProducesResponseType, ActionResult<T> and the result helpers returned", async () => {
-    expect(await answers(csharpRouteExtractor, "csharp", "UsersController.cs", `[ApiController]
-[Route("api/users")]
-public class UsersController : ControllerBase {
+    expect(await answers(csharpRouteExtractor, "csharp", "PlayersController.cs", `[ApiController]
+[Route("api/players")]
+public class PlayersController : ControllerBase {
   [HttpGet("{id}")]
-  public async Task<ActionResult<UserDto>> Get(int id) {
+  public async Task<ActionResult<PlayerDto>> Get(int id) {
     var u = await _repo.Find(id);
     if (u == null) return NotFound();
     return Ok(u);
   }
   [HttpPost]
-  [ProducesResponseType(typeof(UserDto), StatusCodes.Status201Created)]
-  public IActionResult Create(UserIn dto) { return CreatedAtAction(nameof(Get), new { id = 1 }, dto); }
+  [ProducesResponseType(typeof(PlayerDto), StatusCodes.Status201Created)]
+  public IActionResult Create(PlayerIn dto) { return CreatedAtAction(nameof(Get), new { id = 1 }, dto); }
   [HttpDelete("{id}")]
   public IActionResult Delete(int id) { return NoContent(); }
 }`)).toEqual([
-      'GET /api/users/{id} [{"status":null,"type":"UserDto"},{"status":404},{"status":200}]',
-      'POST /api/users [{"status":201,"type":"UserDto"}]',
-      'DELETE /api/users/{id} [{"status":204}]',
+      'GET /api/players/{id} [{"status":null,"type":"PlayerDto"},{"status":404},{"status":200}]',
+      'POST /api/players [{"status":201,"type":"PlayerDto"}]',
+      'DELETE /api/players/{id} [{"status":204}]',
     ]);
   });
 });

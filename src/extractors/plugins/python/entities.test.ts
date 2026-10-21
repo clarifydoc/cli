@@ -32,29 +32,29 @@ describe("Python entities — SQLAlchemy bases and Flask-SQLAlchemy", () => {
 class Base(DeclarativeBase):
     pass
 
-class User(Base):
-    __tablename__ = "users"
+class Player(Base):
+    __tablename__ = "players"
     id: Mapped[int] = mapped_column(primary_key=True)
 `);
-    expect(entities(a)).toEqual(["User"]);
+    expect(entities(a)).toEqual(["Player"]);
   });
 
   it("reads db.Model classes, their db.Column fields and db.relationship / db.ForeignKey", async () => {
     const a = await analyze(`from flask_sqlalchemy import SQLAlchemy
 db = SQLAlchemy()
 
-class Author(db.Model):
+class Scout(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(80))
-    posts = db.relationship("Post", back_populates="author")
+    games = db.relationship("Game", back_populates="scout")
 
-class Post(db.Model):
+class Game(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    author_id = db.Column(db.Integer, db.ForeignKey("author.id"))
+    scout_id = db.Column(db.Integer, db.ForeignKey("scout.id"))
 `);
-    expect(entities(a).sort()).toEqual(["Author", "Post"]);
-    const author = a.classes.find((c) => c.name === "Author")!;
-    expect(author.properties.map((p) => `${p.name}:${p.type}`)).toEqual(expect.arrayContaining(["id:Integer", "name:String"]));
-    expect((a.entityRelations ?? []).map((r) => `${r.fromEntity} -> ${r.toEntity}`)).toEqual(expect.arrayContaining(["Author -> Post"]));
+    expect(entities(a).sort()).toEqual(["Game", "Scout"]);
+    const scout = a.classes.find((c) => c.name === "Scout")!;
+    expect(scout.properties.map((p) => `${p.name}:${p.type}`)).toEqual(expect.arrayContaining(["id:Integer", "name:String"]));
+    expect((a.entityRelations ?? []).map((r) => `${r.fromEntity} -> ${r.toEntity}`)).toEqual(expect.arrayContaining(["Scout -> Game"]));
   });
 });

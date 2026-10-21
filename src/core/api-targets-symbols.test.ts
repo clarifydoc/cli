@@ -79,14 +79,14 @@ export class TagsService extends BaseService {
 
   it("falls back to the default of `a || b` when the project states only the default (chatwoot)", async () => {
     const targets = await project({
-      "src/account.js": `
+      "src/club.js": `
 const DEFAULT_API_VERSION = 'v1';
-class AccountAPI {
-  constructor(options = {}) { this.url = \`/api/\${options.apiVersion || DEFAULT_API_VERSION}/accounts\`; }
+class ClubAPI {
+  constructor(options = {}) { this.url = \`/api/\${options.apiVersion || DEFAULT_API_VERSION}/clubs\`; }
   get(id) { return axios.get(\`\${this.url}/\${id}\`); }
 }`,
     });
-    expect(targets).toEqual([["/api/v1/accounts/${id}", null]]);
+    expect(targets).toEqual([["/api/v1/clubs/${id}", null]]);
   });
 
   it("leaves a hole nothing explains to the base split", async () => {
@@ -162,7 +162,7 @@ export class DocumentService extends AbstractPaperlessService<Document> {
     expect(
       await linked({
         "lib/api/config.ts": `const PREFIX = "/api";\nexport const config = { PREFIX };`,
-        "lib/api/user/organizer-tags.ts": `
+        "lib/api/player/organizer-tags.ts": `
 import { config } from '../config';
 const prefix = config.PREFIX + "/organizers";
 const routes = {
@@ -202,7 +202,7 @@ describe("resolveSymbolicTargets — a base client whose URL each subclass names
   baseUrl() {
     let url = this.apiVersion;
     if (this.options.enterprise) url = \`/enterprise\${url}\`;
-    if (this.options.accountScoped && this.accountIdFromRoute) url = \`\${url}/accounts/\${this.accountIdFromRoute}\`;
+    if (this.options.clubScoped && this.clubIdFromRoute) url = \`\${url}/clubs/\${this.clubIdFromRoute}\`;
     return url;
   }
   get() { return axios.get(this.url); }
@@ -211,7 +211,7 @@ describe("resolveSymbolicTargets — a base client whose URL each subclass names
 export default ApiClient;`,
       "api/contacts.js": `import ApiClient from './ApiClient';
 class ContactAPI extends ApiClient {
-  constructor() { super('contacts', { accountScoped: true }); }
+  constructor() { super('contacts', { clubScoped: true }); }
   get(page) { return axios.get(this.url, { params: { page } }); }
 }
 export default new ContactAPI();`,
@@ -222,7 +222,7 @@ class CacheEnabledApiClient extends ApiClient {
 export default CacheEnabledApiClient;`,
       "api/labels.js": `import CacheEnabledApiClient from './CacheEnabledApiClient';
 class LabelsAPI extends CacheEnabledApiClient {
-  constructor() { super('labels', { accountScoped: true }); }
+  constructor() { super('labels', { clubScoped: true }); }
 }
 export default new LabelsAPI();`,
     });
@@ -233,8 +233,8 @@ export default new LabelsAPI();`,
     const contacts = rows.find((r) => r[0] === "/api/v1/contacts")!;
     expect(contacts[2]).toEqual([
       "/enterprise/api/v1/contacts",
-      "/api/v1/accounts/${this.accountIdFromRoute}/contacts",
-      "/enterprise/api/v1/accounts/${this.accountIdFromRoute}/contacts",
+      "/api/v1/clubs/${this.clubIdFromRoute}/contacts",
+      "/enterprise/api/v1/clubs/${this.clubIdFromRoute}/contacts",
     ]);
   });
 

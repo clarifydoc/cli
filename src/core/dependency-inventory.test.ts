@@ -454,7 +454,7 @@ describe("attachPackageUsage", () => {
     ]);
     attachPackageUsage(
       pkgs,
-      [fileWith("php", ["GuzzleHttp\\Client", "App\\Domain\\Order"])],
+      [fileWith("php", ["GuzzleHttp\\Client", "App\\Domain\\Car"])],
       { installedOwners: new Map([["composer", composerAutoload]]) },
     );
     expect(pkgs[0].used).toBe(true); // GuzzleHttp\Client → guzzlehttp/guzzle

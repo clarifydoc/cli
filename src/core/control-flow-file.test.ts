@@ -14,7 +14,7 @@ beforeAll(async () => {
 describe("controlFlowForFile", () => {
   it("lists every function of a file when nothing is selected", async () => {
     const result = await controlFlowForFile({
-      filePath: resolve(FIXTURES, "sample-backend/services/userService.ts"),
+      filePath: resolve(FIXTURES, "sample-backend/services/playerService.ts"),
     });
     expect(result.available.length).toBeGreaterThan(0);
     for (const fn of result.available) {
@@ -24,7 +24,7 @@ describe("controlFlowForFile", () => {
   });
 
   it("selects by the bare method name as well as Class.method", async () => {
-    const filePath = resolve(FIXTURES, "sample-backend/services/userService.ts");
+    const filePath = resolve(FIXTURES, "sample-backend/services/playerService.ts");
     const all = await controlFlowForFile({ filePath });
     const qualified = all.available.find((fn) => fn.functionName.includes("."));
     if (!qualified) return; // the fixture has no methods; nothing to assert
@@ -38,7 +38,7 @@ describe("controlFlowForFile", () => {
     // A CodeLens carries the name and the line from the same stored analysis.
     // Edit above the function and the line moves while the name stays right,
     // so a name that matches must win over a line that no longer does.
-    const filePath = resolve(FIXTURES, "sample-backend/services/userService.ts");
+    const filePath = resolve(FIXTURES, "sample-backend/services/playerService.ts");
     const all = await controlFlowForFile({ filePath });
     const target = all.available[0]!;
 
@@ -80,8 +80,8 @@ describe("controlFlowForFile", () => {
 
 describe("controlFlowForFile with the text given", () => {
   it("draws the text it is given, not the file on disk", async () => {
-    // An unsaved edit: one more branch than the saved userService.ts has.
-    const filePath = resolve(FIXTURES, "sample-backend/services/userService.ts");
+    // An unsaved edit: one more branch than the saved playerService.ts has.
+    const filePath = resolve(FIXTURES, "sample-backend/services/playerService.ts");
     const source = [
       "export function pick(a: number, b: number): number {",
       "  if (a > b) return a;",

@@ -21,27 +21,27 @@ describe("Crystal functions and types", () => {
     "  record Money, cents : Int64, currency : String = \"EUR\"",
     "",
     "  abstract class Repo",
-    "    abstract def find(id : Int64) : Order?",
+    "    abstract def find(id : Int64) : Car?",
     "  end",
     "",
-    "  class OrderService < BaseService",
-    "    include Comparable(OrderService)",
-    "    property name : String = \"orders\"",
+    "  class CarService < BaseService",
+    "    include Comparable(CarService)",
+    "    property name : String = \"cars\"",
     "    getter? enabled : Bool = true",
-    "    @cache : Hash(Int64, Order)",
+    "    @cache : Hash(Int64, Car)",
     "",
     "    def initialize(@repo : Repo, mailer : Mailer)",
-    "      @cache = {} of Int64 => Order",
+    "      @cache = {} of Int64 => Car",
     "    end",
     "",
-    "    def close(id : Int64, *, force = false) : Order",
-    "      order = @repo.find(id)",
-    "      order.close!",
-    "      notify order",
-    "      Audit.log(order)",
+    "    def close(id : Int64, *, force = false) : Car",
+    "      car = @repo.find(id)",
+    "      car.close!",
+    "      notify car",
+    "      Audit.log(car)",
     "    end",
     "",
-    "    private def notify(order : Order)",
+    "    private def notify(car : Car)",
     "    end",
     "  end",
     "end",
@@ -51,7 +51,7 @@ describe("Crystal functions and types", () => {
     expect(a.classes.map((c) => [c.name, c.extends, c.implements, c.properties.map((p) => `${p.name}:${p.type}`)])).toEqual([
       ["Shop", null, [], []],
       ["Repo", null, [], []],
-      ["OrderService", "BaseService", ["Comparable"], ["name:String", "enabled:Bool", "cache:Hash(Int64, Order)", "repo:Repo"]],
+      ["CarService", "BaseService", ["Comparable"], ["name:String", "enabled:Bool", "cache:Hash(Int64, Car)", "repo:Repo"]],
       ["Money", null, [], ["cents:Int64", "currency:String"]],
     ]);
     expect(a.classes.find((c) => c.name === "Shop")!.methods).toEqual([]);
@@ -63,9 +63,9 @@ describe("Crystal functions and types", () => {
       { name: "id", type: "Int64", defaultValue: null },
       { name: "force", type: null, defaultValue: "false" },
     ]);
-    expect(close.returnType).toBe("Order");
-    expect(close.calls.map((c) => c.name)).toEqual(["repo.find", "order.close!", "Audit.log"]);
-    expect(fn(a, "find")!.returnType).toBe("Order?");
+    expect(close.returnType).toBe("Car");
+    expect(close.calls.map((c) => c.name)).toEqual(["repo.find", "car.close!", "Audit.log"]);
+    expect(fn(a, "find")!.returnType).toBe("Car?");
     expect(fn(a, "notify")!.isExported).toBe(false);
   });
 
@@ -78,11 +78,11 @@ describe("Crystal routes", () => {
   it("reads Kemal routes, and keeps their blocks out of the script's own calls", () => {
     const a = analyze([
       'require "kemal"',
-      'get "/orders/:id" do |env|',
-      '  Order.find!(env.params.url["id"]).to_json',
+      'get "/cars/:id" do |env|',
+      '  Car.find!(env.params.url["id"]).to_json',
       "end",
-      'post "/orders" do |env|',
-      "  create_order(env)",
+      'post "/cars" do |env|',
+      "  create_car(env)",
       "end",
       "before_all do |env|",
       "  authenticate(env)",
@@ -90,8 +90,8 @@ describe("Crystal routes", () => {
       "Kemal.run",
     ].join("\n"));
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} [${r.calls.map((c) => c.name)}]`)).toEqual([
-      "GET /orders/{id} [Order.find!]",
-      "POST /orders [create_order]",
+      "GET /cars/{id} [Car.find!]",
+      "POST /cars [create_car]",
     ]);
     expect(fn(a, "<setup>")!.calls.map((c) => c.name)).toEqual(["Kemal.run"]);
   });
@@ -103,22 +103,22 @@ describe("Crystal routes", () => {
       '    get "/", HomeController, :index',
       "  end",
       '  routes :api, "/api" do',
-      '    resources "/posts", PostController, only: [:index, :show]',
+      '    resources "/games", GameController, only: [:index, :show]',
       "  end",
       "end",
     ].join("\n"), "config/routes.cr");
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
       "GET / -> HomeController.index",
-      "GET /api/posts -> PostController.index",
-      "GET /api/posts/{id} -> PostController.show",
+      "GET /api/games -> GameController.index",
+      "GET /api/games/{id} -> GameController.show",
     ]);
   });
 
   it("reads Lucky actions, explicit and inferred", () => {
     const a = analyze([
-      "class Api::Orders::Show < ApiAction",
-      '  get "/api/orders/:order_id" do',
-      "    json OrderSerializer.new(OrderQuery.find(order_id))",
+      "class Api::Cars::Show < ApiAction",
+      '  get "/api/cars/:car_id" do',
+      "    json CarSerializer.new(CarQuery.find(car_id))",
       "  end",
       "end",
       "class Projects::Tasks::Index < BrowserAction",
@@ -126,42 +126,42 @@ describe("Crystal routes", () => {
       "    html IndexPage, tasks: TaskQuery.new",
       "  end",
       "end",
-      "class Users::Update < BrowserAction",
+      "class Players::Update < BrowserAction",
       "  route do",
-      "    redirect Users::Show",
+      "    redirect Players::Show",
       "  end",
       "end",
-    ].join("\n"), "src/actions/orders.cr");
+    ].join("\n"), "src/actions/cars.cr");
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual([
-      "GET /api/orders/{order_id}",
+      "GET /api/cars/{car_id}",
       "GET /projects/{project_id}/tasks",
-      "PUT /users/{user_id}",
+      "PUT /players/{player_id}",
     ]);
   });
 
   it("reads Athena and Spider-Gazelle annotations and Marten paths", () => {
     const a = analyze([
       '@[ARTA::Route("/api")]',
-      "class UserController < ATH::Controller",
-      '  @[ARTA::Get("/users/{id}")]',
-      "  def user(id : Int64) : User",
+      "class PlayerController < ATH::Controller",
+      '  @[ARTA::Get("/players/{id}")]',
+      "  def player(id : Int64) : Player",
       "  end",
       "end",
-      "class Orders < Application",
-      '  base "/orders"',
+      "class Cars < Application",
+      '  base "/cars"',
       '  @[AC::Route::POST("/:id/close")]',
       "  def close(id : Int64)",
       "  end",
       "end",
       "Marten.routes.draw do",
-      '  path "/articles/<pk:int>", ArticleDetailHandler, name: "article_detail"',
+      '  path "/reports/<pk:int>", ReportDetailHandler, name: "report_detail"',
       '  path "/blog", Blog::ROUTES, name: "blog"',
       "end",
     ].join("\n"));
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
-      "GET /api/users/{id} -> UserController.user",
-      "POST /orders/{id}/close -> Orders.close",
-      "null /articles/{pk} -> ArticleDetailHandler",
+      "GET /api/players/{id} -> PlayerController.player",
+      "POST /cars/{id}/close -> Cars.close",
+      "null /reports/{pk} -> ReportDetailHandler",
     ]);
   });
 });
@@ -170,63 +170,63 @@ describe("Crystal data access", () => {
   it("reads Avram queries, HTTP calls and SQL in heredocs — never a plain class's methods", () => {
     const a = analyze([
       "def load(id)",
-      "  order = Order.find!(id)",
-      "  order.save",
-      "  UserQuery.new.email(\"x\").first",
-      "  SaveUser.create(params)",
+      "  car = Car.find!(id)",
+      "  car.save",
+      "  PlayerQuery.new.email(\"x\").first",
+      "  SavePlayer.create(params)",
       "  Address.create(\"a@b.c\")",
-      "  HTTP::Client.get(\"https://crm.example.com/customers/#{id}\")",
+      "  HTTP::Client.get(\"https://crm.example.com/drivers/#{id}\")",
       "  db.exec <<-SQL",
-      "    UPDATE orders SET closed = true",
+      "    UPDATE cars SET closed = true",
       "    WHERE id = #{id}",
       "  SQL",
-      "  db.query(\"SELECT id FROM customers\")",
+      "  db.query(\"SELECT id FROM drivers\")",
       "end",
     ].join("\n"));
     expect(a.dataSources.map((d) => `${d.kind} ${d.name}${d.entity ? ` ${d.entity}` : ""}${d.access ? ` ${d.access}` : ""}`)).toEqual([
-      "database UserQuery.new User read",
-      "database SaveUser.create User write",
-      "api-call GET https://crm.example.com/customers/{id}",
-      "database UPDATE orders write",
-      "database SELECT customers read",
+      "database PlayerQuery.new Player read",
+      "database SavePlayer.create Player write",
+      "api-call GET https://crm.example.com/drivers/{id}",
+      "database UPDATE cars write",
+      "database SELECT drivers read",
     ]);
     // The heredoc's SQL is no code.
     expect(fn(a, "load")!.calls.map((c) => c.name)).not.toContain("SET");
   });
 
   it("joins model queries project-wide, against the models the project declares", () => {
-    const models = analyze("class Order < Granite::Base\n  column total : Float64\nend\n", "src/models/order.cr");
+    const models = analyze("class Car < Granite::Base\n  column total : Float64\nend\n", "src/models/car.cr");
     const app = analyze([
-      'post "/orders/:id/close" do |env|',
-      '  order = Order.find!(env.params.url["id"])',
-      "  order.save",
+      'post "/cars/:id/close" do |env|',
+      '  car = Car.find!(env.params.url["id"])',
+      "  car.save",
       "end",
       "def close(id)",
-      "  order = Order.find!(id)",
-      "  order.save",
+      "  car = Car.find!(id)",
+      "  car.save",
       "  Address.create(\"a@b.c\")",
       "end",
     ].join("\n"));
     pluginFor("crystal")!.entities!.reconcileProject([models, app]);
     expect(app.dataSources.map((d) => `${d.name} ${d.access}@${d.line}`)).toEqual([
-      "Order.find! read@2", "Order.save write@3", "Order.find! read@6", "Order.save write@7",
+      "Car.find! read@2", "Car.save write@3", "Car.find! read@6", "Car.save write@7",
     ]);
   });
 
   it("reads Granite, Avram and Jennifer models", () => {
     const a = analyze([
-      "class Order < Granite::Base",
+      "class Car < Granite::Base",
       "  connection pg",
-      "  table orders",
+      "  table cars",
       "  column id : Int64, primary: true",
       "  column total : Float64",
-      "  belongs_to customer : Customer",
-      "  has_many :line_items",
+      "  belongs_to driver : Driver",
+      "  has_many :car_parts",
       "end",
-      "class User < BaseModel",
+      "class Player < BaseModel",
       "  table do",
       "    column email : String",
-      "    has_many posts : Post",
+      "    has_many games : Game",
       "  end",
       "end",
       "class Tag < Jennifer::Model::Base",
@@ -234,20 +234,20 @@ describe("Crystal data access", () => {
       "    id: Primary32,",
       "    name: String?",
       "  )",
-      "  has_and_belongs_to_many :posts, Post",
+      "  has_and_belongs_to_many :games, Game",
       "end",
     ].join("\n"), "src/models.cr");
     const entities = a.classes.filter((c) => c.decorators.includes("entity"));
     expect(entities.map((c) => [c.name, c.decorators.find((d) => d.startsWith("table:")), c.properties.map((p) => p.name)])).toEqual([
-      ["Order", "table:orders", ["id", "total"]],
-      ["User", "table:users", ["email"]],
+      ["Car", "table:cars", ["id", "total"]],
+      ["Player", "table:players", ["email"]],
       ["Tag", undefined, ["id", "name"]],
     ]);
     expect(a.entityRelations?.map((r) => `${r.fromEntity}.${r.fromField} ${r.cardinality} ${r.toEntity} ${r.confidence}`)).toEqual([
-      "Order.customer many-to-one Customer EXTRACTED",
-      "Order.line_items one-to-many LineItem INFERRED",
-      "User.posts one-to-many Post EXTRACTED",
-      "Tag.posts many-to-many Post EXTRACTED",
+      "Car.driver many-to-one Driver EXTRACTED",
+      "Car.car_parts one-to-many CarPart INFERRED",
+      "Player.games one-to-many Game EXTRACTED",
+      "Tag.games many-to-many Game EXTRACTED",
     ]);
   });
 });

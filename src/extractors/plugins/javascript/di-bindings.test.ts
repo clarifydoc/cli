@@ -35,7 +35,7 @@ describe("NestJS / Angular provider objects", () => {
       const shared = [{ provide: 'SHARED', useClass: SharedImpl }];
       @Module({
         providers: [
-          OrdersService,
+          CarsService,
           { provide: AUDIT_LOG, useClass: DbAuditLog },
           notifierProvider,
           ...shared,
@@ -116,24 +116,24 @@ describe("InversifyJS", () => {
   it("reads bind chains: to, scopes, names, tags, contextual, aliases, values, factories", async () => {
     const bs = await bindings(`
       const container = new Container();
-      container.bind<IUserRepo>(TYPES.UserRepo).to(SqlUserRepo);
+      container.bind<IPlayerRepo>(TYPES.PlayerRepo).to(SqlPlayerRepo);
       container.bind<IMailer>(TYPES.Mailer).to(SmtpMailer).inSingletonScope();
       container.bind<ILogger>(TYPES.Logger).to(FileLogger).whenTargetNamed('file');
       container.bind<ILogger>(TYPES.Logger).to(ConsoleLogger).whenTargetNamed('console');
       container.bind(TYPES.Weapon).to(Shuriken).whenTargetTagged('canThrow', true);
-      container.bind<IAudit>(TYPES.Audit).to(SpecialAudit).whenInjectedInto(OrderService);
+      container.bind<IAudit>(TYPES.Audit).to(SpecialAudit).whenInjectedInto(CarService);
       container.bind<IParser>(TYPES.Parser).toDynamicValue(() => new JsonParser());
       container.bind<IParser>(TYPES.Parser2).toDynamicValue((ctx) => ctx.container.get(TYPES.Parser));
       container.bind(TYPES.Cfg).toConstantValue(new Config());
       container.bind(TYPES.Raw).toConstantValue(rawValue);
-      container.bind(TYPES.Old).toService(TYPES.UserRepo);
+      container.bind(TYPES.Old).toService(TYPES.PlayerRepo);
       container.bind(Clock).toSelf().inSingletonScope();
       container.bind(Clock).toSelf().whenTargetNamed('wall');
       container.rebind<IMailer>(TYPES.Mailer).to(OtherMailer);
       export const mod = new ContainerModule((bind) => { bind<INotifier>(TYPES.Notifier).to(PushNotifier); });
       handler.bind(this);`);
     expect(brief(bs)).toEqual([
-      "TYPES.UserRepo -> SqlUserRepo",
+      "TYPES.PlayerRepo -> SqlPlayerRepo",
       "TYPES.Mailer -> SmtpMailer",
       "TYPES.Logger -> FileLogger [q=file,keyed]",
       // A named registration is also recorded under its type argument, keyed
@@ -143,10 +143,10 @@ describe("InversifyJS", () => {
       "TYPES.Logger -> ConsoleLogger [q=console,keyed]",
       "ILogger -> ConsoleLogger [q=console,keyed]",
       "TYPES.Weapon -> Shuriken [q=canThrow=true,keyed]",
-      "TYPES.Audit -> SpecialAudit [for=OrderService]",
+      "TYPES.Audit -> SpecialAudit [for=CarService]",
       "TYPES.Parser -> JsonParser",
       "TYPES.Cfg -> Config",
-      "TYPES.Old -> TYPES.UserRepo",
+      "TYPES.Old -> TYPES.PlayerRepo",
       "Clock -> Clock [q=wall,keyed]",
       "TYPES.Mailer -> OtherMailer",
       "TYPES.Notifier -> PushNotifier",
@@ -167,15 +167,15 @@ describe("InversifyJS", () => {
 describe("tsyringe", () => {
   it("reads register-family calls and registration decorators", async () => {
     const bs = await bindings(`
-      container.register<IAccountRepo>('IAccountRepo', { useClass: PgAccountRepo });
+      container.register<IClubRepo>('IClubRepo', { useClass: PgClubRepo });
       container.registerSingleton<IEmailer>('IEmailer', SesEmailer);
       container.register('ChatNotifier', { useClass: SlackNotifier }, { lifecycle: Lifecycle.Singleton });
       container.register(AuditTrail, { useClass: DbAuditTrail });
       container.register(SystemClock, { useClass: SystemClock });
       container.register('Config', { useValue: { region: 'eu' } });
       container.register('Emailer2', { useToken: 'IEmailer' });
-      container.register('Repo2', { useFactory: (c) => c.resolve<IAccountRepo>('IAccountRepo') });
-      container.register('Repo3', { useFactory: instanceCachingFactory((c) => new MongoAccountRepo()) });
+      container.register('Repo2', { useFactory: (c) => c.resolve<IClubRepo>('IClubRepo') });
+      container.register('Repo3', { useFactory: instanceCachingFactory((c) => new MongoClubRepo()) });
       container.registerType('IFoo', FooImpl);
       container.registerInstance('Now', Date.now());
       container.registerInstance('Clock', new FixedClock());
@@ -187,12 +187,12 @@ describe("tsyringe", () => {
       @injectable({ token: 'IQux' })
       export class QuxImpl {}`);
     expect(brief(bs)).toEqual([
-      "IAccountRepo -> PgAccountRepo",
+      "IClubRepo -> PgClubRepo",
       "IEmailer -> SesEmailer",
       "ChatNotifier -> SlackNotifier",
       "AuditTrail -> DbAuditTrail",
       "Emailer2 -> IEmailer",
-      "Repo3 -> MongoAccountRepo",
+      "Repo3 -> MongoClubRepo",
       "IFoo -> FooImpl",
       "Clock -> FixedClock",
       "IBar -> BarImpl",

@@ -17,11 +17,11 @@ describe("FastAPI include_router mounts", () => {
   it("emits a mount carrying the prefix and the module identifier", async () => {
     const routes = await routesOf(`
 router = APIRouter()
-router.include_router(authentication.router, tags=["auth"], prefix="/users")
+router.include_router(authentication.router, tags=["auth"], prefix="/players")
 router.include_router(tags.router, prefix="/tags")
 `);
     expect(routes).toEqual([
-      expect.objectContaining({ path: "/users", httpMethod: null, kind: "api", handler: "authentication", mount: true }),
+      expect.objectContaining({ path: "/players", httpMethod: null, kind: "api", handler: "authentication", mount: true }),
       expect.objectContaining({ path: "/tags", httpMethod: null, kind: "api", handler: "tags", mount: true }),
     ]);
   });
@@ -30,17 +30,17 @@ router.include_router(tags.router, prefix="/tags")
     const routes = await routesOf(`
 router = APIRouter(prefix="/api")
 router.include_router(app.router)
-router.include_router(users.router, prefix="/users")
+router.include_router(players.router, prefix="/players")
 `);
     expect(routes.map((r) => [r.path, r.handler, r.mount])).toEqual([
       ["/api", "app", true],
-      ["/api/users", "users", true],
+      ["/api/players", "players", true],
     ]);
   });
 
   it("still emits a prefix-less mount on a prefix-less router, so mounts compose", async () => {
-    const routes = await routesOf(`router.include_router(articles.router, tags=["articles"])`);
-    expect(routes).toEqual([expect.objectContaining({ path: "", handler: "articles", mount: true })]);
+    const routes = await routesOf(`router.include_router(reports.router, tags=["reports"])`);
+    expect(routes).toEqual([expect.objectContaining({ path: "", handler: "reports", mount: true })]);
   });
 
   it("resolves a module constant prefix, and marks one it cannot know", async () => {
@@ -56,7 +56,7 @@ app.include_router(api_router, prefix=settings.api_prefix)
 
   it("reads a project router class's prefix and puts the receiver's guards on the mount", async () => {
     const routes = await routesOf(`
-router = UserAPIRouter(prefix="/recipes", route_class=MealieCrudRoute)
+router = PlayerAPIRouter(prefix="/recipes", route_class=MealieCrudRoute)
 
 @router.get("/{slug}")
 def get_one(slug: str): ...
@@ -76,12 +76,12 @@ admin.include_router(about.router)
 
   it("keeps the decorator path as written — composition is a project-level pass", async () => {
     const routes = await routesOf(`
-@router.get("", response_model=ListOfArticles)
-async def list_articles():
+@router.get("", response_model=ListOfReports)
+async def list_reports():
     ...
 `);
     expect(routes).toEqual([
-      expect.objectContaining({ path: "", httpMethod: "GET", handler: "list_articles" }),
+      expect.objectContaining({ path: "", httpMethod: "GET", handler: "list_reports" }),
     ]);
   });
 });
@@ -104,7 +104,7 @@ describe("FastAPI mounts resolved across files", () => {
     // files in one statement — the import index has to resolve per specifier.
     const api = file(
       "app/api/routes/api.py",
-      [mount("/users", "authentication"), mount("/tags", "tags")],
+      [mount("/players", "authentication"), mount("/tags", "tags")],
       [{ source: "app.api.routes", specifiers: ["authentication", "tags"], isDefault: false, isNamespace: false, isType: false, line: 1 }],
     );
     const auth = file("app/api/routes/authentication.py", [get("/login")]);
@@ -114,25 +114,25 @@ describe("FastAPI mounts resolved across files", () => {
     const prefixed = resolveRouterMounts(analyses, buildImportIndex(analyses));
 
     expect(prefixed).toBe(2);
-    expect(auth.routes.map((r) => r.path)).toEqual(["/users/login"]);
+    expect(auth.routes.map((r) => r.path)).toEqual(["/players/login"]);
     expect(tags.routes.map((r) => r.path)).toEqual(["/tags"]);
     expect(api.routes).toEqual([]); // wiring, not endpoints
   });
 
   it("composes transitively through a nested router package", () => {
-    // app/api/routes/articles/api.py mounts its siblings at /articles, and is
+    // app/api/routes/reports/api.py mounts its siblings at /reports, and is
     // itself included from api.py — the FastAPI RealWorld layout.
     const inner = file(
-      "app/api/routes/articles/api.py",
-      [mount("/articles", "articles_resource")],
-      [{ source: "app.api.routes.articles", specifiers: ["articles_resource"], isDefault: false, isNamespace: false, isType: false, line: 1 }],
+      "app/api/routes/reports/api.py",
+      [mount("/reports", "reports_resource")],
+      [{ source: "app.api.routes.reports", specifiers: ["reports_resource"], isDefault: false, isNamespace: false, isType: false, line: 1 }],
     );
-    const resource = file("app/api/routes/articles/articles_resource.py", [get(""), get("/{slug}")]);
+    const resource = file("app/api/routes/reports/reports_resource.py", [get(""), get("/{slug}")]);
 
     const analyses = [inner, resource];
     resolveRouterMounts(analyses, buildImportIndex(analyses));
 
-    expect(resource.routes.map((r) => r.path)).toEqual(["/articles", "/articles/{slug}"]);
+    expect(resource.routes.map((r) => r.path)).toEqual(["/reports", "/reports/{slug}"]);
   });
 
   it("composes the receiving router's prefix through prefix-less includes (mealie's /api/app/about)", async () => {
@@ -163,33 +163,33 @@ describe("FastAPI mounts resolved across files", () => {
     // literally `GET ""`, and dedupeRoutes — which keys on method+path —
     // collapses five endpoints into one. This is why route-path F1 measured
     // 0.000 while declaration-site F1 was 0.848.
-    const users = file("app/api/routes/users.py", [get("")]);
+    const players = file("app/api/routes/players.py", [get("")]);
     const tags = file("app/api/routes/tags.py", [get("")]);
     const api = file(
       "app/api/routes/api.py",
-      [mount("/user", "users"), mount("/tags", "tags")],
-      [{ source: "app.api.routes", specifiers: ["users", "tags"], isDefault: false, isNamespace: false, isType: false, line: 1 }],
+      [mount("/player", "players"), mount("/tags", "tags")],
+      [{ source: "app.api.routes", specifiers: ["players", "tags"], isDefault: false, isNamespace: false, isType: false, line: 1 }],
     );
 
-    const analyses = [api, users, tags];
+    const analyses = [api, players, tags];
     resolveRouterMounts(analyses, buildImportIndex(analyses));
 
     const { dedupeRoutes } = await import("../../../core/route-linker.js");
     const all = analyses.flatMap((a) => a.routes.map((r) => ({ ...r, filePath: a.filePath })));
-    expect(dedupeRoutes(all).map((r) => r.path).sort()).toEqual(["/tags", "/user"]);
+    expect(dedupeRoutes(all).map((r) => r.path).sort()).toEqual(["/player", "/tags"]);
   });
 });
 
 describe("FastAPI route attributes", () => {
   it("binds the handler signature: explicit markers, path tokens, scalar → query, model → body", async () => {
     const [route] = await routesOf(`
-@router.post("/{user_id}")
-async def create(user_id: int, body: UserCreate, q: str | None = Query(None), token: str = Header(...), current=Depends(get_current_user), page=1):
+@router.post("/{player_id}")
+async def create(player_id: int, body: PlayerCreate, q: str | None = Query(None), token: str = Header(...), current=Depends(get_current_user), page=1):
     ...
 `);
     expect(route!.params).toEqual([
-      { name: "user_id", type: "int", binding: "route", inferred: true },
-      { name: "body", type: "UserCreate", binding: "body", inferred: true },
+      { name: "player_id", type: "int", binding: "route", inferred: true },
+      { name: "body", type: "PlayerCreate", binding: "body", inferred: true },
       { name: "q", type: "str | None", binding: "query" },
       { name: "token", type: "str", binding: "header" },
       { name: "current", type: null, binding: "services" },
@@ -202,12 +202,12 @@ async def create(user_id: int, body: UserCreate, q: str | None = Query(None), to
 
   it("reads Annotated[...] markers, injected types, UploadFile and Security scopes", async () => {
     const [route] = await routesOf(`
-@app.put("/items/{item_id}")
-async def put_item(item_id: int, q: Annotated[str | None, Query(max_length=50)] = None, request: Request, file: UploadFile, tasks: BackgroundTasks, db: Session = Depends(get_db), user: User = Security(get_user, scopes=["items:write"]), ids: list[int] = Query([]), payload: dict = Body(...)):
+@app.put("/balls/{ball_id}")
+async def put_ball(ball_id: int, q: Annotated[str | None, Query(max_length=50)] = None, request: Request, file: UploadFile, tasks: BackgroundTasks, db: Session = Depends(get_db), user: User = Security(get_user, scopes=["balls:write"]), ids: list[int] = Query([]), payload: dict = Body(...)):
     ...
 `);
     expect(route!.params).toEqual([
-      { name: "item_id", type: "int", binding: "route", inferred: true },
+      { name: "ball_id", type: "int", binding: "route", inferred: true },
       { name: "q", type: "str | None", binding: "query" },
       { name: "request", type: "Request", binding: "services", inferred: true },
       { name: "file", type: "UploadFile", binding: "form" },
@@ -218,7 +218,7 @@ async def put_item(item_id: int, q: Annotated[str | None, Query(max_length=50)] 
       { name: "payload", type: "dict", binding: "body" },
     ]);
     // `get_db` is not an auth check; `Security(...)` always is.
-    expect(route!.auth).toEqual({ policies: ["get_user"], roles: ["items:write"], schemes: [], anonymous: false, inherited: false });
+    expect(route!.auth).toEqual({ policies: ["get_user"], roles: ["balls:write"], schemes: [], anonymous: false, inherited: false });
   });
 
   it("inherits router-level dependencies and prefix, adds route-level dependencies", async () => {
@@ -226,8 +226,8 @@ async def put_item(item_id: int, q: Annotated[str | None, Query(max_length=50)] 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(verify_token)])
 public = APIRouter()
 
-@router.get("/users", dependencies=[Depends(require_admin)])
-async def list_users():
+@router.get("/players", dependencies=[Depends(require_admin)])
+async def list_players():
     ...
 
 @router.get("/stats")
@@ -238,7 +238,7 @@ async def stats():
 async def ping():
     ...
 `);
-    expect(routes.map((r) => r.path)).toEqual(["/admin/users", "/admin/stats", "/ping"]);
+    expect(routes.map((r) => r.path)).toEqual(["/admin/players", "/admin/stats", "/ping"]);
     expect(routes[0]!.middleware).toEqual(["Depends(verify_token)", "Depends(require_admin)"]);
     expect(routes[0]!.auth).toEqual({ policies: ["verify_token", "require_admin"], roles: [], schemes: [], anonymous: false, inherited: false });
     expect(routes[1]!.auth).toEqual({ policies: ["verify_token"], roles: [], schemes: [], anonymous: false, inherited: true });

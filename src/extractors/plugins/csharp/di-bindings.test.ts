@@ -69,16 +69,16 @@ services.AddKeyedScoped(typeof(IAudit), "file", typeof(FileAudit));`)).toEqual([
 
   it("takes a factory's implementation from what it constructs or forwards to", async () => {
     expect(await factsOf(`services.AddScoped<IMailer>(sp => new SmtpMailer(sp.GetRequiredService<IConfig>()));
-services.AddScoped<IOrderRepo>(sp => sp.GetRequiredService<SqlOrderRepo>());
+services.AddScoped<ICarRepo>(sp => sp.GetRequiredService<SqlCarRepo>());
 services.AddSingleton<IClock>(_ => { var c = 1; return new SystemClock(); });
 services.AddScoped(typeof(IAudit), sp => (IAudit)new DbAudit());
-services.AddScoped<IThing>(sp => ActivatorUtilities.CreateInstance<Thing>(sp));
+services.AddScoped<IBall>(sp => ActivatorUtilities.CreateInstance<Ball>(sp));
 services.AddSingleton<ICache>(sp => flag ? new RedisCache() : new RedisCache());`)).toEqual([
       { service: "IMailer", implementation: "SmtpMailer", via: "AddScoped" },
-      { service: "IOrderRepo", implementation: "SqlOrderRepo", via: "AddScoped" },
+      { service: "ICarRepo", implementation: "SqlCarRepo", via: "AddScoped" },
       { service: "IClock", implementation: "SystemClock", via: "AddSingleton" },
       { service: "IAudit", implementation: "DbAudit", via: "AddScoped" },
-      { service: "IThing", implementation: "Thing", via: "AddScoped" },
+      { service: "IBall", implementation: "Ball", via: "AddScoped" },
       { service: "ICache", implementation: "RedisCache", via: "AddSingleton" },
     ]);
   });
@@ -101,10 +101,10 @@ services.AddSingleton(typeof(IClock), new SystemClock());`)).toEqual([
   });
 
   it("skips self registrations", async () => {
-    expect(await factsOf(`services.AddTransient<OrderService>();
-services.AddScoped<OrderService, OrderService>();
-services.AddScoped(typeof(OrderService));
-services.AddSingleton(new OrderService());
+    expect(await factsOf(`services.AddTransient<CarService>();
+services.AddScoped<CarService, CarService>();
+services.AddScoped(typeof(CarService));
+services.AddSingleton(new CarService());
 services.AddHttpClient<WeatherClient>();
 services.AddDbContext<AppDb>(o => o.UseSqlServer(cs));`)).toEqual([]);
   });
@@ -112,10 +112,10 @@ services.AddDbContext<AppDb>(o => o.UseSqlServer(cs));`)).toEqual([]);
   it("reads AddHttpClient<I, T>, AddDbContext<I, T> and Scrutor Decorate<I, D>", async () => {
     expect(await factsOf(`services.AddHttpClient<IWeatherClient, WeatherClient>(c => c.BaseAddress = uri);
 services.AddDbContext<IAppDb, AppDb>(o => o.UseNpgsql(cs));
-services.Decorate<IOrderRepo, CachedOrderRepo>();`)).toEqual([
+services.Decorate<ICarRepo, CachedCarRepo>();`)).toEqual([
       { service: "IWeatherClient", implementation: "WeatherClient", via: "AddHttpClient" },
       { service: "IAppDb", implementation: "AppDb", via: "AddDbContext" },
-      { service: "IOrderRepo", implementation: "CachedOrderRepo", via: "Decorate" },
+      { service: "ICarRepo", implementation: "CachedCarRepo", via: "Decorate" },
     ]);
   });
 
@@ -159,15 +159,15 @@ list.Add(item);`)).toEqual([
   it("reads registrations inside an extension-method module", async () => {
     const src = `public static class Billing {
   public static IServiceCollection AddBilling(this IServiceCollection s) {
-    s.AddScoped<IInvoiceSender, PdfInvoiceSender>().AddSingleton<IClock, SystemClock>();
+    s.AddScoped<IBillSender, PdfBillSender>().AddSingleton<IClock, SystemClock>();
     return s;
   }
 }`;
     const tree = await parseSource(src, "csharp" as any, "Billing.cs");
     // A chained `s.AddScoped<…>().AddSingleton<…>()` is two registrations.
     expect(extractCsharpDiBindings(tree, src).map((b) => `${b.service}->${b.implementation}`).sort()).toEqual([
+      "IBillSender->PdfBillSender",
       "IClock->SystemClock",
-      "IInvoiceSender->PdfInvoiceSender",
     ]);
   });
 
@@ -191,10 +191,10 @@ list.Add(item);`)).toEqual([
 
 describe("C# DI bindings — Autofac", () => {
   it("reads RegisterType<T>().As<I>() chains, any modifiers in between", async () => {
-    expect(await factsOf(`builder.RegisterType<SqlUserStore>().As<IUserStore>().InstancePerLifetimeScope();
+    expect(await factsOf(`builder.RegisterType<SqlPlayerStore>().As<IPlayerStore>().InstancePerLifetimeScope();
 builder.RegisterType<Multi>().InstancePerDependency().As<IA, IB>();
 builder.RegisterType(typeof(Clock)).As(typeof(IClock));`)).toEqual([
-      { service: "IUserStore", implementation: "SqlUserStore", via: "RegisterType.As" },
+      { service: "IPlayerStore", implementation: "SqlPlayerStore", via: "RegisterType.As" },
       { service: "IA", implementation: "Multi", via: "RegisterType.As" },
       { service: "IB", implementation: "Multi", via: "RegisterType.As" },
       { service: "IClock", implementation: "Clock", via: "RegisterType.As" },
@@ -203,11 +203,11 @@ builder.RegisterType(typeof(Clock)).As(typeof(IClock));`)).toEqual([
 
   it("reads Keyed/Named as key-only unless As<I>() also exposes the type", async () => {
     expect(await factsOf(`builder.RegisterType<CsvExporter>().Keyed<IExporter>("csv");
-builder.Register(c => new MongoUserStore()).Named<IUserStore>("mongo");
+builder.Register(c => new MongoPlayerStore()).Named<IPlayerStore>("mongo");
 builder.RegisterType<JsonExporter>().As<IExporter>().Keyed<IExporter>("json");
 builder.RegisterType<XmlExporter>().Keyed("xml", typeof(IExporter));`)).toEqual([
       { service: "IExporter", implementation: "CsvExporter", via: "RegisterType.Keyed", qualifier: "csv", keyedOnly: true },
-      { service: "IUserStore", implementation: "MongoUserStore", via: "Register.Named", qualifier: "mongo", keyedOnly: true },
+      { service: "IPlayerStore", implementation: "MongoPlayerStore", via: "Register.Named", qualifier: "mongo", keyedOnly: true },
       { service: "IExporter", implementation: "JsonExporter", via: "RegisterType.As" },
       { service: "IExporter", implementation: "JsonExporter", via: "RegisterType.Keyed", qualifier: "json" },
       { service: "IExporter", implementation: "XmlExporter", via: "RegisterType.Keyed", qualifier: "xml", keyedOnly: true },
@@ -270,10 +270,10 @@ public class Cash : Comparable { }`;
   });
 
   it("does not report what the source cannot state: self registrations, assembly scanning", async () => {
-    expect(await factsOf(`builder.RegisterType<UserService>().AsSelf().WithAttributeFiltering();
-builder.RegisterType<UserService>();
+    expect(await factsOf(`builder.RegisterType<PlayerService>().AsSelf().WithAttributeFiltering();
+builder.RegisterType<PlayerService>();
 builder.RegisterAssemblyTypes(typeof(A).Assembly).Where(t => t.Name.EndsWith("Repo")).AsImplementedInterfaces();
-builder.Register(c => Build(c)).As<IThing>();`)).toEqual([]);
+builder.Register(c => Build(c)).As<IBall>();`)).toEqual([]);
   });
 });
 

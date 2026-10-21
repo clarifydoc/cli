@@ -39,8 +39,8 @@ describe("webhook routes", () => {
   });
 
   it("finds a named sender's webhook that nothing it reaches verifies, through followed calls", () => {
-    const routes = [route("POST", "/webhooks/shopify", { params: [header("x-shopify-topic")], calls: [call("saveOrder"), call("JSON.parse")] })];
-    const result = judge(routes, [file([fn("saveOrder", ["db.insert"])])]);
+    const routes = [route("POST", "/webhooks/shopify", { params: [header("x-shopify-topic")], calls: [call("saveCar"), call("JSON.parse")] })];
+    const result = judge(routes, [file([fn("saveCar", ["db.insert"])])]);
     expect(routes[0]!.webhook).toEqual({ provider: "Shopify", verified: false });
     expect(result.findings).toMatchObject([{ category: "webhook-unverified", severity: "high", cwe: "CWE-345", line: 1 }]);
     expect(result.findings[0]!.message).toMatch(/^POST \/webhooks\/shopify receives Shopify webhooks but nothing it reaches checks the signature:/);
@@ -66,8 +66,8 @@ describe("webhook routes", () => {
     const routes = [
       route("POST", "/api/webhook", { calls: [call("log")] }),
       route("GET", "/webhooks/stripe"),
-      route("POST", "/api/users", { calls: [call("save")] }),
-      route("POST", "/accounts/:id/webhooks", { auth: signedIn }),
+      route("POST", "/api/players", { calls: [call("save")] }),
+      route("POST", "/clubs/:id/webhooks", { auth: signedIn }),
       route("POST", "/integrations/slack"),
       route("POST", "/resend_confirmation"),
       route("POST", "/twilio/callback", { calls: [call("Inbound.perform_later")] }),

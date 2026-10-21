@@ -28,29 +28,29 @@ describe("Zig functions, types and imports", () => {
       'const std = @import("std");',
       'const db = @import("db.zig");',
       'const Router = @import("router.zig").Router;',
-      "pub const Order = struct {",
+      "pub const Car = struct {",
       "    id: u64,",
       "    total: f64 = 0,",
-      "    pub fn close(self: *Order, repo: *db.Repo) !void {",
+      "    pub fn close(self: *Car, repo: *db.Repo) !void {",
       "        if (self.total > 0 and repo.ok) try repo.save(self);",
       "    }",
       "    const Line = struct { sku: []const u8 };",
       "};",
       "const Status = enum { open, closed };",
       "pub fn main() !void {",
-      "    var order = Order{ .id = 1 };",
-      "    try order.close(db.connect());",
+      "    var car = Car{ .id = 1 };",
+      "    try car.close(db.connect());",
       '    std.debug.print("done", .{});',
       "}",
       "fn helper() void {}",
       'test "closes" { try std.testing.expect(true); }',
     ].join("\n"));
     expect(a.functions.map((f) => [f.name, f.isExported, f.returnType, f.calls.map((c) => c.name)])).toEqual([
-      ["main", true, "!void", ["order.close", "db.connect", "std.debug.print"]],
+      ["main", true, "!void", ["car.close", "db.connect", "std.debug.print"]],
       ["helper", false, "void", []],
     ]);
     expect(a.classes.map((c) => [c.name, c.kind ?? "class", c.properties.map((p) => `${p.name}:${p.type}`), c.methods.map((m) => m.name)])).toEqual([
-      ["Order", "class", ["id:u64", "total:f64"], ["close"]],
+      ["Car", "class", ["id:u64", "total:f64"], ["close"]],
       ["Line", "class", ["sku:[]const u8"], []],
       ["Status", "enum", ["open:null", "closed:null"], []],
     ]);
@@ -59,13 +59,13 @@ describe("Zig functions, types and imports", () => {
     expect(close.calls.map((c) => c.name)).toEqual(["repo.save"]);
     expect(a.complexities?.find((c) => c.functionName.endsWith("close"))?.complexity).toBe(3);
     expect(a.imports.map((i) => [i.source, i.specifiers])).toEqual([["std", ["std"]], ["./db.zig", ["db"]], ["./router.zig", ["Router"]]]);
-    expect(a.exports.map((e) => `${e.kind} ${e.name}`)).toEqual(["class Order", "function main"]);
+    expect(a.exports.map((e) => `${e.kind} ${e.name}`)).toEqual(["class Car", "function main"]);
   });
 
   it("reads a file that declares fields as a struct named after the file", async () => {
-    const a = await analyze(["id: u64,", "name: []const u8,", "pub fn init(id: u64) @This() {", "    return .{ .id = id, .name = \"\" };", "}"].join("\n"), "src/Customer.zig");
+    const a = await analyze(["id: u64,", "name: []const u8,", "pub fn init(id: u64) @This() {", "    return .{ .id = id, .name = \"\" };", "}"].join("\n"), "src/Driver.zig");
     expect(a.functions).toEqual([]);
-    expect(a.classes.map((c) => [c.name, c.properties.map((p) => p.name), c.methods.map((m) => m.name)])).toEqual([["Customer", ["id", "name"], ["init"]]]);
+    expect(a.classes.map((c) => [c.name, c.properties.map((p) => p.name), c.methods.map((m) => m.name)])).toEqual([["Driver", ["id", "name"], ["init"]]]);
   });
 });
 
@@ -74,24 +74,24 @@ describe("Zig routes and data access", () => {
     const a = await analyze([
       "pub fn main() !void {",
       "    var router = try server.router(.{});",
-      '    router.get("/api/orders/:id", getOrder, .{});',
+      '    router.get("/api/cars/:id", getCar, .{});',
       '    var admin = router.group("/admin", .{});',
-      '    admin.post("/orders/:id/close", closeOrder, .{});',
+      '    admin.post("/cars/:id/close", closeCar, .{});',
       '    try zrouter.handle_func_unbound("/health", health);',
       "}",
-      'const routes = &.{ .get("/", index), .group("/api", &.{ .get("/users", listUsers) }) };',
-      "const UserEndpoint = struct {",
-      '    path: []const u8 = "/users",',
-      "    pub fn get(self: *UserEndpoint, r: zap.Request) !void { _ = self; _ = r; }",
+      'const routes = &.{ .get("/", index), .group("/api", &.{ .get("/players", listPlayers) }) };',
+      "const PlayerEndpoint = struct {",
+      '    path: []const u8 = "/players",',
+      "    pub fn get(self: *PlayerEndpoint, r: zap.Request) !void { _ = self; _ = r; }",
       "};",
     ].join("\n"));
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
-      "GET /api/orders/{id} -> getOrder",
-      "POST /admin/orders/{id}/close -> closeOrder",
+      "GET /api/cars/{id} -> getCar",
+      "POST /admin/cars/{id}/close -> closeCar",
       "null /health -> health",
       "GET / -> index",
-      "GET /api/users -> listUsers",
-      "GET /users -> UserEndpoint.get",
+      "GET /api/players -> listPlayers",
+      "GET /players -> PlayerEndpoint.get",
     ]);
   });
 
@@ -100,9 +100,9 @@ describe("Zig routes and data access", () => {
       "pub fn index(request: *jetzig.Request) !jetzig.View { return request.render(.ok); }",
       "pub fn get(id: []const u8, request: *jetzig.Request) !jetzig.View { _ = id; return request.render(.ok); }",
       "pub fn post(request: *jetzig.Request) !jetzig.View { return request.render(.created); }",
-    ].join("\n"), "src/app/views/orders.zig");
+    ].join("\n"), "src/app/views/cars.zig");
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
-      "GET /orders -> index", "GET /orders/{id} -> get", "POST /orders -> post",
+      "GET /cars -> index", "GET /cars/{id} -> get", "POST /cars -> post",
     ]);
   });
 
@@ -111,20 +111,20 @@ describe("Zig routes and data access", () => {
       "fn load(conn: *pg.Conn, client: *std.http.Client) !void {",
       "    _ = try conn.query(",
       "        \\\\SELECT id, total",
-      "        \\\\FROM orders WHERE id = $1",
+      "        \\\\FROM cars WHERE id = $1",
       "    , .{1});",
       '    _ = try conn.exec("DELETE FROM sessions WHERE id = $1", .{2});',
-      '    _ = try client.fetch(.{ .location = .{ .url = "https://crm.example.com/v2/customers" }, .method = .POST });',
-      '    const uri = try std.Uri.parse("https://crm.example.com/v2/orders");',
+      '    _ = try client.fetch(.{ .location = .{ .url = "https://crm.example.com/v2/drivers" }, .method = .POST });',
+      '    const uri = try std.Uri.parse("https://crm.example.com/v2/cars");',
       "    var req = try client.open(.GET, uri, .{});",
       '    const msg = "Select a file from the list";',
       "}",
     ].join("\n"));
     expect(a.dataSources.map((d) => `${d.kind} ${d.name}${d.entity ? ` ${d.entity}` : ""}@${d.line}`)).toEqual([
-      "database SELECT orders@3",
+      "database SELECT cars@3",
       "database DELETE FROM sessions@6",
-      "api-call POST https://crm.example.com/v2/customers@7",
-      "api-call GET https://crm.example.com/v2/orders@9",
+      "api-call POST https://crm.example.com/v2/drivers@7",
+      "api-call GET https://crm.example.com/v2/cars@9",
     ]);
   });
 });

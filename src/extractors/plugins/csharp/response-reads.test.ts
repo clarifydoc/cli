@@ -11,19 +11,19 @@ async function readsOf(src: string): Promise<Array<[string | null, string[] | un
 describe("C# response reads", () => {
   it("reads the typed body's properties as the wire names them", async () => {
     expect(await readsOf(`
-public class OrdersClient {
+public class CarsClient {
   private readonly HttpClient _http;
   public async Task<decimal> Total(int id) {
-    var order = await _http.GetFromJsonAsync<OrderDto>($"/api/orders/{id}");
-    Log(order.ToString());
-    return order!.Total + (order?.Items.Count ?? 0);
+    var car = await _http.GetFromJsonAsync<CarDto>($"/api/cars/{id}");
+    Log(car.ToString());
+    return car!.Total + (car?.Items.Count ?? 0);
   }
   public async Task<string> Name() {
     var resp = await _http.GetAsync("/api/me");
     var me = await resp.Content.ReadFromJsonAsync<MeDto>();
     return me.DisplayName;
   }
-  public Task<OrderDto?> Passed() => _http.GetFromJsonAsync<OrderDto>("/api/x");
-}`)).toEqual([["/api/orders/{id}", ["items", "total"]], ["/api/me", ["displayName"]], ["/api/x", undefined]]);
+  public Task<CarDto?> Passed() => _http.GetFromJsonAsync<CarDto>("/api/x");
+}`)).toEqual([["/api/cars/{id}", ["items", "total"]], ["/api/me", ["displayName"]], ["/api/x", undefined]]);
   });
 });

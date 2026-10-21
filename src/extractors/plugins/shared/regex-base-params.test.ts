@@ -4,7 +4,7 @@ import type { RegexLangSpec } from "./regex-base.js";
 
 describe("regex-path parameter lists", () => {
   it("takes the parens after the function NAME, so a Go receiver is not a parameter", () => {
-    const params = extractParamsFromDeclaration(["func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {"], 0, "GetUser");
+    const params = extractParamsFromDeclaration(["func (h *PlayerHandler) GetPlayer(w http.ResponseWriter, r *http.Request) {"], 0, "GetPlayer");
     expect(params.map((p) => p.name)).toEqual(["w", "r"]);
   });
 
@@ -12,12 +12,12 @@ describe("regex-path parameter lists", () => {
     const lines = [
       "async fn create(",
       "    State(repo): State<AppState>,",
-      "    Json(payload): Json<CreateUser>,",
+      "    Json(payload): Json<CreatePlayer>,",
       "    q: HashMap<String, String>,",
       ") -> impl IntoResponse {",
     ];
     const params = extractParamsFromDeclaration(lines, 0, "create", (t) => ({ name: t.trim(), type: null, defaultValue: null }));
-    expect(params.map((p) => p.name)).toEqual(["State(repo): State<AppState>", "Json(payload): Json<CreateUser>", "q: HashMap<String, String>"]);
+    expect(params.map((p) => p.name)).toEqual(["State(repo): State<AppState>", "Json(payload): Json<CreatePlayer>", "q: HashMap<String, String>"]);
   });
 
   it("splitTopLevel ignores commas inside brackets and quotes", () => {
@@ -41,26 +41,26 @@ describe("regex-path attribute lines", () => {
     const lines = [
       "#[derive(Deserialize)]",
       "#[serde(rename_all = \"camelCase\")]",
-      "pub struct CreateUser {",
-      "    #[serde(rename = \"user_name\")]",
+      "pub struct CreatePlayer {",
+      "    #[serde(rename = \"player_name\")]",
       "    pub name: String,",
       "",
       "    pub email: Option<String>,",
       "}",
       "",
-      "#[post(\"/users\")]",
-      "async fn create(body: Json<CreateUser>) {",
+      "#[post(\"/players\")]",
+      "async fn create(body: Json<CreatePlayer>) {",
       "}",
     ];
     expect(attributeLinesAbove(lines, 2, spec)).toEqual(["derive(Deserialize)", 'serde(rename_all = "camelCase")']);
     const [cls] = extractClassesWithSpec(lines, spec);
     expect(cls!.decorators).toEqual(["derive(Deserialize)", 'serde(rename_all = "camelCase")']);
     expect(cls!.properties.map((p) => [p.name, p.decorators])).toEqual([
-      ["name", ['serde(rename = "user_name")']],
+      ["name", ['serde(rename = "player_name")']],
       ["email", undefined],
     ]);
     const [fn] = extractFunctionsWithSpec(lines, spec);
-    expect(fn!.decorators).toEqual(['post("/users")']);
+    expect(fn!.decorators).toEqual(['post("/players")']);
   });
 
   it("extractRequestAccess output lands on the function", () => {

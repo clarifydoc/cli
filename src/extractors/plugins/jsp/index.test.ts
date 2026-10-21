@@ -6,25 +6,25 @@ import { jspSpec } from "./index.js";
 const SAMPLE = `<%@ include file="../fragments/header.jsp" %>
 
 <head>
-    <title>Account applications</title>
+    <title>Club applications</title>
 </head>
 
-<club:page labelKey="league.jsp.accountapplication_list.header">
+<club:page labelKey="league.jsp.clubapplication_list.header">
     <grid_extjs:controller id="applications" entityListDescriptor="\${applications}">
         <grid:column name="action.details" labelKey="league.misc.action.details">
             <grid:actionLink cssClass="actionLink details" event="details" title="Details">
                 <grid:actionParam name="applicationId" value="\${ref.id}"/>
             </grid:actionLink>
         </grid:column>
-        <grid:column name="civicNo" labelKey="league.jsp.accountapplication_list.applicant"/>
+        <grid:column name="civicNo" labelKey="league.jsp.clubapplication_list.applicant"/>
     </grid_extjs:controller>
     <!-- <club:button event="ghost" labelKey="commented.out"/> -->
     <club:form>
-        <club:textBox bindPath="model.notes" cols="50" labelKey="league.dmo.accountapplication.notes"/>
+        <club:textBox bindPath="model.notes" cols="50" labelKey="league.dmo.clubapplication.notes"/>
         <club:buttonGroup>
             <club:button cssClass="approveButton" event="approveAll"
-                        labelKey="league.jsp.accountapplication_list.approveselected"/>
-            <club:button cssClass="rejectButton" event="rejectAll" labelKey="league.jsp.accountapplication_list.rejectselected"/>
+                        labelKey="league.jsp.clubapplication_list.approveselected"/>
+            <club:button cssClass="rejectButton" event="rejectAll" labelKey="league.jsp.clubapplication_list.rejectselected"/>
         </club:buttonGroup>
     </club:form>
     <a href="other.jsp" onclick="openHelp()">Help</a>
@@ -65,12 +65,12 @@ describe("jspSpec interactive elements", () => {
 });
 
 describe("jspSpec screens", () => {
-  const screens = jspSpec.extractScreens!(lines, "admin/src/main/webapp/WEB-INF/views/account/accountapplication_list.jsp", []);
+  const screens = jspSpec.extractScreens!(lines, "admin/src/main/webapp/WEB-INF/views/club/clubapplication_list.jsp", []);
 
   it("builds one screen per page with the taglib caption", () => {
     expect(screens).toHaveLength(1);
-    expect(screens[0]!.name).toBe("accountapplication_list");
-    expect(screens[0]!.caption).toBe("league.jsp.accountapplication_list.header");
+    expect(screens[0]!.name).toBe("clubapplication_list");
+    expect(screens[0]!.caption).toBe("league.jsp.clubapplication_list.header");
     expect(screens[0]!.formType).toBe("jsp-view");
   });
 
@@ -103,21 +103,21 @@ describe("JSP form and link requests", () => {
   it("hands form actions and action links to the route linker as calls in named pseudo-functions", async () => {
     const { extractWithRegex } = await import("../../../core/regex-extractor.js");
     const src = `<%@ taglib prefix="html" uri="http://struts.apache.org/tags-html" %>
-<form action="\${pageContext.request.contextPath}/account/save.do" method="post">
+<form action="\${pageContext.request.contextPath}/club/save.do" method="post">
   <input type="submit" value="Save"/>
 </form>
-<html:form action="/account/delete">
+<html:form action="/club/delete">
 </html:form>
-<a href="<c:url value='/account/list.do'/>">List</a>
+<a href="<c:url value='/club/list.do'/>">List</a>
 <a href="/static/help.html">Help</a>`;
-    const a = extractWithRegex(src, "web/account/edit.jsp", "jsp");
+    const a = extractWithRegex(src, "web/club/edit.jsp", "jsp");
     const reqs = a.interactiveElements.filter((e) => e.request).map((e) => `${e.element}@${e.line} ${e.handler} ${e.request!.method} ${e.request!.target}`);
     expect(reqs).toEqual([
-      "form@2 post_account_save_do POST /account/save.do",
-      "form@5 post_account_delete_do POST /account/delete.do",
-      "link@7 account_list_do GET /account/list.do",
+      "form@2 post_club_save_do POST /club/save.do",
+      "form@5 post_club_delete_do POST /club/delete.do",
+      "link@7 club_list_do GET /club/list.do",
     ]);
-    expect(a.dataSources.map((d) => `${d.name}@${d.line}`)).toEqual(["POST /account/save.do@2", "POST /account/delete.do@5", "GET /account/list.do@7"]);
-    expect(a.functions.map((f) => f.name)).toEqual(expect.arrayContaining(["post_account_save_do", "account_list_do"]));
+    expect(a.dataSources.map((d) => `${d.name}@${d.line}`)).toEqual(["POST /club/save.do@2", "POST /club/delete.do@5", "GET /club/list.do@7"]);
+    expect(a.functions.map((f) => f.name)).toEqual(expect.arrayContaining(["post_club_save_do", "club_list_do"]));
   });
 });

@@ -19,16 +19,16 @@ describe("scanSecurity — sql-injection template rule", () => {
   });
 
   it("flags interpolation inside a real SQL statement, in either order", () => {
-    expect(cats("db.query(`SELECT * FROM users WHERE id = ${id}`);")).toContain("sql-injection");
-    expect(cats("db.query(`UPDATE users SET name = ${name}`);")).toContain("sql-injection");
+    expect(cats("db.query(`SELECT * FROM players WHERE id = ${id}`);")).toContain("sql-injection");
+    expect(cats("db.query(`UPDATE players SET name = ${name}`);")).toContain("sql-injection");
     expect(cats("db.query(`DELETE FROM t WHERE id = ${id}`);")).toContain("sql-injection");
     expect(cats("db.query(`INSERT INTO t (a) VALUES (${v})`);")).toContain("sql-injection");
     // interpolation before the statement
-    expect(cats("const q = `${prefix} SELECT id FROM accounts`;")).toContain("sql-injection");
+    expect(cats("const q = `${prefix} SELECT id FROM clubs`;")).toContain("sql-injection");
   });
 
   it("skips test files", () => {
-    expect(cats("db.query(`SELECT * FROM users WHERE id = ${id}`);", "src/app.spec.ts"))
+    expect(cats("db.query(`SELECT * FROM players WHERE id = ${id}`);", "src/app.spec.ts"))
       .not.toContain("sql-injection");
   });
 });
@@ -135,7 +135,7 @@ describe("scanSecurity — what a line says about itself", () => {
     scanSecurity(src, file, lang).filter((i) => i.category !== "todo-fixme" && i.category !== "debug-statement").map((i) => [i.category, i.line]);
 
   it("matches a SQL statement formatted across lines, at the line it starts", () => {
-    expect(found(["const r = await db.query(", '  "SELECT * FROM users WHERE id = " +', "  id,", ");"].join("\n"))).toEqual([["sql-injection", 1]]);
+    expect(found(["const r = await db.query(", '  "SELECT * FROM players WHERE id = " +', "  id,", ");"].join("\n"))).toEqual([["sql-injection", 1]]);
     expect(found(["cursor.execute(", '    "SELECT * FROM t WHERE id = %s"', "    % uid", ")"].join("\n"), "app/db.py", "python")).toEqual([["sql-injection", 1]]);
   });
 

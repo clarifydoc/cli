@@ -39,9 +39,9 @@ describe("assessCoverage", () => {
   it("counts the handler-shaped functions where routes are missing, and names the code read by pattern matching", () => {
     const fn = (name: string, line: number, params: Array<[string, string | null]>) =>
       ({ name, line, params: params.map(([n, type]) => ({ name: n, type, defaultValue: null })) }) as unknown as FunctionInfo;
-    const go = { ...createEmptyAnalysis("api/orders.go", "go"), functions: [fn("ListOrders", 12, [["w", "http.ResponseWriter"], ["r", "*http.Request"]]), fn("total", 30, [["xs", "[]int"]])] };
+    const go = { ...createEmptyAnalysis("api/cars.go", "go"), functions: [fn("ListCars", 12, [["w", "http.ResponseWriter"], ["r", "*http.Request"]]), fn("total", 30, [["xs", "[]int"]])] };
     const js = { ...createEmptyAnalysis("api/legacy.js", "javascript"), functions: [fn("handle", 3, [["req", null], ["res", null]])] };
-    const test = { ...createEmptyAnalysis("api/orders_test.go", "go"), functions: [fn("TestList", 5, [["t", "*testing.T"], ["r", "*http.Request"]])] };
+    const test = { ...createEmptyAnalysis("api/cars_test.go", "go"), functions: [fn("TestList", 5, [["t", "*testing.T"], ["r", "*http.Request"]])] };
     const c = assessCoverage({
       analyses: [go, js, test],
       resolveModule: () => "x",
@@ -49,9 +49,9 @@ describe("assessCoverage", () => {
       subProjects: [{ id: "api", root: "api" }] as any,
       routeMap: [],
       screens: [],
-      fileProjects: { "api/orders.go": "api", "api/legacy.js": "api", "api/orders_test.go": "api" },
+      fileProjects: { "api/cars.go": "api", "api/legacy.js": "api", "api/cars_test.go": "api" },
     });
-    expect(c.gaps).toEqual([{ project: "api", kind: "routes", dependencies: ["github.com/go-chi/chi"], handlers: { count: 2, examples: ["api/orders.go:12 ListOrders", "api/legacy.js:3 handle"] } }]);
+    expect(c.gaps).toEqual([{ project: "api", kind: "routes", dependencies: ["github.com/go-chi/chi"], handlers: { count: 2, examples: ["api/cars.go:12 ListCars", "api/legacy.js:3 handle"] } }]);
     expect(c.approximate).toEqual({ files: 2, languages: [{ language: "go", files: 2 }] });
   });
 });

@@ -21,25 +21,25 @@ const byName = (cs: ClassInfo[], n: string) => cs.find((c) => c.name === n)!;
 describe("TypeScript class heritage", () => {
   it("records extends and implements", async () => {
     const cs = await classesOf(`
-      export class UserService extends BaseService implements IUserService, Disposable {
+      export class PlayerService extends BaseService implements IPlayerService, Disposable {
         load(id: string) { return id; }
       }
     `);
-    const c = byName(cs, "UserService");
+    const c = byName(cs, "PlayerService");
     expect(c.extends).toBe("BaseService");
-    expect(c.implements).toEqual(["IUserService", "Disposable"]);
+    expect(c.implements).toEqual(["IPlayerService", "Disposable"]);
     expect(c.isExported).toBe(true);
   });
 
   it("strips type arguments so the base matches its declaration", async () => {
-    const cs = await classesOf(`class Repo extends BaseRepo<User> implements Findable<User> {}`);
+    const cs = await classesOf(`class Repo extends BaseRepo<Player> implements Findable<Player> {}`);
     expect(byName(cs, "Repo").extends).toBe("BaseRepo");
     expect(byName(cs, "Repo").implements).toEqual(["Findable"]);
   });
 
   it("keeps a dotted base as written", async () => {
-    const cs = await classesOf(`class Widget extends React.Component {}`, "w.tsx");
-    expect(byName(cs, "Widget").extends).toBe("React.Component");
+    const cs = await classesOf(`class Ball extends React.Component {}`, "w.tsx");
+    expect(byName(cs, "Ball").extends).toBe("React.Component");
   });
 
   it("collects abstract classes with their heritage", async () => {
@@ -66,13 +66,13 @@ describe("plain JavaScript class heritage", () => {
 describe("TypeScript interfaces", () => {
   it("become ClassInfo with kind interface, methods and properties", async () => {
     const cs = await classesOf(`
-      export interface IUserService {
+      export interface IPlayerService {
         readonly name: string;
-        load(id: string): Promise<User>;
-        save(u: User): void;
+        load(id: string): Promise<Player>;
+        save(u: Player): void;
       }
     `);
-    const i = byName(cs, "IUserService");
+    const i = byName(cs, "IPlayerService");
     expect(i.kind).toBe("interface");
     expect(i.isExported).toBe(true);
     expect(i.methods.map((m) => m.name).sort()).toEqual(["load", "save"]);

@@ -27,13 +27,13 @@ describe("form reader", () => {
 describe("Compojure bindings → params", () => {
   const out = extractClojureRoutes(lines(`
 (defroutes app-routes
-  (GET "/users/:id" [id] (get-user id))
+  (GET "/players/:id" [id] (get-player id))
   (GET "/search" [q page :as req] (search q page))
-  (POST "/users" {body :body} (create-user body))
-  (PUT "/users/:id" {{:keys [id]} :params {:keys [name email]} :body} (update-user id name email))
+  (POST "/players" {body :body} (create-player body))
+  (PUT "/players/:id" {{:keys [id]} :params {:keys [name email]} :body} (update-player id name email))
   (GET "/me" {{:strs [authorization]} :headers} (whoami authorization))
-  (POST "/orders" req (create-order (:body req) (get-in req [:params :dry-run])))
-  (GET "/items" {{:keys [q]} :params :as req} (list-items q (-> req :headers :x-tenant))))
+  (POST "/cars" req (create-car (:body req) (get-in req [:params :dry-run])))
+  (GET "/balls" {{:keys [q]} :params :as req} (list-balls q (-> req :headers :x-tenant))))
 `));
 
   it("binds vector names by the path (route) or params (query), `:as` to the request", () => {
@@ -59,7 +59,7 @@ describe("Compojure guards (buddy)", () => {
 (def backend (backends/jws {:secret "s"}))
 (defroutes app-routes
   (GET "/" [] (home))
-  (GET "/users" [] (list-users)))
+  (GET "/players" [] (list-players)))
 (def app
   (-> app-routes
       (wrap-authentication backend)
@@ -100,20 +100,20 @@ describe("reitit routes", () => {
     [["/ping" {:get ping-handler}]
      ["/api" {:middleware [wrap-auth [wrap-limit 10]]
               :swagger {:security [{:bearer []}]}}
-      ["/users" {:get {:handler list-users :parameters {:query {:q string? :page int?}}}
-                 :post {:handler create-user :parameters {:body NewUser}}}]
-      ["/users/:id" {:get fetch-user
-                     :delete {:handler remove-user :middleware [wrap-admin]}}]]
+      ["/players" {:get {:handler list-players :parameters {:query {:q string? :page int?}}}
+                 :post {:handler create-player :parameters {:body NewPlayer}}}]
+      ["/players/:id" {:get fetch-player
+                     :delete {:handler remove-player :middleware [wrap-admin]}}]]
      ["/health" health-handler]]))
 `));
 
   it("nests child vectors under the parent path and reads verb maps", () => {
     expect(out.map(sig)).toEqual([
       "GET /ping -> ping-handler",
-      "GET /api/users -> list-users",
-      "POST /api/users -> create-user",
-      "GET /api/users/:id -> fetch-user",
-      "DELETE /api/users/:id -> remove-user",
+      "GET /api/players -> list-players",
+      "POST /api/players -> create-player",
+      "GET /api/players/:id -> fetch-player",
+      "DELETE /api/players/:id -> remove-player",
       "null /health -> health-handler",
     ]);
   });
@@ -127,7 +127,7 @@ describe("reitit routes", () => {
 
   it("turns :parameters into typed bindings and path tokens into route params", () => {
     expect(bind(out[1]!)).toEqual(["query:q<string?>", "query:page<int?>"]);
-    expect(bind(out[2]!)).toEqual(["body:body<NewUser>"]);
+    expect(bind(out[2]!)).toEqual(["body:body<NewPlayer>"]);
     expect(bind(out[3]!)).toEqual(["route:id?"]);
   });
 });
@@ -135,16 +135,16 @@ describe("reitit routes", () => {
 describe("defn params and request access", () => {
   it("reads the arg vector, destructuring names, and body reads", () => {
     const ls = lines(`
-(defn create-user [req]
+(defn create-player [req]
   (let [body (:body req)
         tenant (get-in req [:headers "x-tenant"])]
     (db/insert! body)))
 
-(defn find-user [{:keys [id]} & opts]
+(defn find-player [{:keys [id]} & opts]
   (db/find id))
 `);
     const fns = clojureSpec.postProcessFunctions!(ls, extractFunctionsWithSpec(ls, clojureSpec));
-    expect(fns.map((f) => [f.name, f.params.map((p) => p.name)])).toEqual([["create-user", ["req"]], ["find-user", ["id"]]]);
+    expect(fns.map((f) => [f.name, f.params.map((p) => p.name)])).toEqual([["create-player", ["req"]], ["find-player", ["id"]]]);
     expect(fns[0]!.requestAccess).toEqual([
       { name: "body", type: null, binding: "body" },
       { name: "x-tenant", type: null, binding: "header" },
@@ -155,13 +155,13 @@ describe("defn params and request access", () => {
 
 describe("records, Malli and Schema → properties + hooks", () => {
   it("defrecord fields are untyped properties", () => {
-    const cls = classesOf(`(defrecord User [id name email])`)[0]!;
+    const cls = classesOf(`(defrecord Player [id name email])`)[0]!;
     expect(cls.properties.map((p) => [p.name, p.type])).toEqual([["id", null], ["name", null], ["email", null]]);
   });
 
   it("a Malli map schema is a typed class with :optional → not required", () => {
     const cls = classesOf(`
-(def NewUser
+(def NewPlayer
   [:map
    [:name string?]
    [:email {:optional true} string?]
@@ -169,7 +169,7 @@ describe("records, Malli and Schema → properties + hooks", () => {
    [:tags [:vector string?]]
    [:address Address]])
 `)[0]!;
-    expect(cls.name).toBe("NewUser");
+    expect(cls.name).toBe("NewPlayer");
     expect(cls.properties.map((p) => [p.name, p.type, p.isRequired ?? false])).toEqual([
       ["name", "string?", true],
       ["email", "string?", false],
@@ -191,7 +191,7 @@ describe("records, Malli and Schema → properties + hooks", () => {
   });
 
   it("a Plumatic defschema map is a typed class with optional-key → not required", () => {
-    const cls = classesOf(`(s/defschema Order {:id s/Int (s/optional-key :note) s/Str :lines [Line]})`)[0]!;
+    const cls = classesOf(`(s/defschema Car {:id s/Int (s/optional-key :note) s/Str :lines [Line]})`)[0]!;
     expect(cls.properties.map((p) => [p.name, p.type, p.isRequired ?? false])).toEqual([
       ["id", "s/Int", true],
       ["note", "s/Str", false],

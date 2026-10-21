@@ -13,7 +13,7 @@ describe("GitOps releases", () => {
       await mkdir(join(dir, path, ".."), { recursive: true });
       await writeFile(join(dir, path), text);
     };
-    await put("deploy/flux/orders.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+    await put("deploy/flux/cars.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
   name: shop
@@ -21,13 +21,13 @@ metadata:
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
-  name: orders
+  name: cars
   namespace: shop
 spec:
-  releaseName: orders-api
+  releaseName: cars-api
   chart:
     spec:
-      chart: ./charts/orders
+      chart: ./charts/cars
       sourceRef:
         kind: GitRepository
         name: shop
@@ -95,12 +95,12 @@ spec:
   });
 
   it("reads Flux, Argo CD, kustomize and Terraform Helm releases as deploy rows, local charts with their sub-project", async () => {
-    const projects = [{ id: "orders", root: "charts/orders" }, { id: "web", root: "web" }] as unknown as SubProject[];
+    const projects = [{ id: "cars", root: "charts/cars" }, { id: "web", root: "web" }] as unknown as SubProject[];
     const rows = (await detectGitopsReleases(dir, projects)).map((r) => `${r.provider} ${r.kind} ${r.job} ${r.path ?? "-"} ${r.project ?? "-"} | ${r.via}`);
     expect(rows).toEqual([
       "argo kubernetes web web/k8s web | Application web: web/k8s at https://github.com/acme/shop main into web",
       "argo helm ingress - - | Application ingress: chart ingress-nginx 4.10.0 from https://kubernetes.github.io/ingress-nginx into ingress",
-      "flux helm orders-api charts/orders orders | HelmRelease orders: chart ./charts/orders from GitRepository shop into shop",
+      "flux helm cars-api charts/cars cars | HelmRelease cars: chart ./charts/cars from GitRepository shop into shop",
       "flux helm redis - - | HelmRelease redis: chart redis 18.1.0 from HelmRepository bitnami into data",
       "kustomize helm certs - - | helmCharts cert-manager v1.14.0 from https://charts.jetstack.io",
       "terraform helm metrics-server - - | helm_release metrics: chart metrics-server 3.12.0 from https://kubernetes-sigs.github.io/metrics-server/ into kube-system",

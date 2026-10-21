@@ -7,10 +7,10 @@ const setupOf = (src: string, path: string) =>
 
 describe("swift main.swift", () => {
   it("runs main.swift's top-level statements, with their typed locals, and no other file's", () => {
-    const src = "let repo = UserRepo()\n_ = repo.save()\n";
+    const src = "let repo = PlayerRepo()\n_ = repo.save()\n";
     const setup = setupOf(src, "Sources/App/main.swift");
-    expect(setup?.calls.map((c) => c.name)).toEqual(["UserRepo", "repo.save"]);
-    expect(setup?.localTypes).toEqual([{ name: "repo", type: "UserRepo" }]);
+    expect(setup?.calls.map((c) => c.name)).toEqual(["PlayerRepo", "repo.save"]);
+    expect(setup?.localTypes).toEqual([{ name: "repo", type: "PlayerRepo" }]);
     expect(setupOf(src, "Sources/App/Repo.swift")).toBeUndefined();
   });
 });

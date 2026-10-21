@@ -7,45 +7,45 @@ describe("GraphQL schemas and operations outside a .graphql schema file", () => 
   it("reads an Apollo schema written inline as routes at their lines, and calls none of them", () => {
     const src = `import { gql } from "graphql-tag";
 export const typeDefs = gql\`
-  type User { id: ID! }
+  type Player { id: ID! }
   type Query {
-    users: [User!]!
-    user(id: ID!): User
+    players: [Player!]!
+    player(id: ID!): Player
   }
   type Mutation {
-    createUser(name: String!): User
+    createPlayer(name: String!): Player
   }
   schema { query: Query mutation: Mutation }
 \`;`;
     expect(extractInlineSdlRoutes(src).map((r) => `${r.httpMethod} ${r.path} @${r.line}`)).toEqual([
-      "POST /graphql/users @5",
-      "POST /graphql/user @6",
-      "POST /graphql/createUser @9",
+      "POST /graphql/players @5",
+      "POST /graphql/player @6",
+      "POST /graphql/createPlayer @9",
     ]);
     expect(extractGqlOperationCalls(src)).toEqual([]);
     // An operation template is no schema.
-    expect(extractInlineSdlRoutes("const Q = gql`query GetUsers { users { id } }`;")).toEqual([]);
+    expect(extractInlineSdlRoutes("const Q = gql`query GetPlayers { players { id } }`;")).toEqual([]);
   });
 
   it("reads each operation of a .graphql document as calls of its root fields", () => {
     const doc = `# client operations
-fragment UserBits on User { id name }
+fragment PlayerBits on Player { id name }
 
-query GetUser($id: ID!) {
-  user(id: $id) { ...UserBits }
+query GetPlayer($id: ID!) {
+  player(id: $id) { ...PlayerBits }
 }
 
 mutation Rename($id: ID!, $name: String!) {
-  renameUser(id: $id, name: $name) { id }
+  renamePlayer(id: $id, name: $name) { id }
   audit: logEvent(kind: "rename") { ok }
 }`;
     expect(extractGqlDocumentCalls(doc).map((c) => `${c.target} @${c.line}`)).toEqual([
-      "/graphql/user @4",
-      "/graphql/renameUser @8",
+      "/graphql/player @4",
+      "/graphql/renamePlayer @8",
       "/graphql/logEvent @8",
     ]);
     // A schema file has no operations.
-    expect(extractGqlDocumentCalls("type Query { users: [User] }\nschema { query: Query }")).toEqual([]);
+    expect(extractGqlDocumentCalls("type Query { players: [Player] }\nschema { query: Query }")).toEqual([]);
   });
 
   it("claims Spring's .graphqls schema files", () => {

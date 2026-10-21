@@ -247,8 +247,8 @@ describe("analyzeReachability", () => {
       configMentions: new Set(["AuditPlugin"]),
     };
     const sources: Record<string, string> = {
-      "Program.cs": "builder.Services.AddScoped<OrderService>();",
-      "OrderService.cs": "class OrderService { }",
+      "Program.cs": "builder.Services.AddScoped<CarService>();",
+      "CarService.cs": "class CarService { }",
       "LegacyPricing.cs": "class LegacyPricing { PricingRules r; }",
       "PricingRules.cs": "class PricingRules { }",
       "AuditPlugin.cs": "class AuditPlugin { }",
@@ -256,7 +256,7 @@ describe("analyzeReachability", () => {
     const cs = (filePath: string, name?: string) =>
       file({ filePath, language: "csharp" as never, classes: name ? ([{ name, methods: [] }] as never) : [] });
     const r = run(
-      [cs("Program.cs"), cs("OrderService.cs", "OrderService"), cs("LegacyPricing.cs", "LegacyPricing"), cs("PricingRules.cs", "PricingRules"), cs("AuditPlugin.cs", "AuditPlugin")],
+      [cs("Program.cs"), cs("CarService.cs", "CarService"), cs("LegacyPricing.cs", "LegacyPricing"), cs("PricingRules.cs", "PricingRules"), cs("AuditPlugin.cs", "AuditPlugin")],
       named,
       { models: new Map([["csharp", named]]) as never, readSource: (f) => sources[f] },
     );

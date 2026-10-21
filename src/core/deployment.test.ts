@@ -128,12 +128,12 @@ describe("detectDeployment", () => {
     await writeFile(join(root, "compose", "app-services-compose.yml"), [
       "version: '2'",
       "services:",
-      "  orders-api:",
-      '    entrypoint: ["dotnet", "Orders.API.dll"]',
+      "  cars-api:",
+      '    entrypoint: ["dotnet", "Cars.API.dll"]',
       "    image: reg.io/org/suite:${TAG}",
       "    environment:",
-      "      ApiKeyAuthenticator__ApiKey: ${ORDERS_API_KEY}",
-      "      ConnectionString: User ID=${DB_User};Server=db;Database=orders;Password=${DB_Password}",
+      "      ApiKeyAuthenticator__ApiKey: ${CARS_API_KEY}",
+      "      ConnectionString: User ID=${DB_User};Server=db;Database=cars;Password=${DB_Password}",
       "      EventBusConnection: ${EVENTBUS_CONNECTION}",
       "      RedisConnectionString: redis:6379,password=${RedisPassword}",
       "      GraylogUrl: ${GRAYLOG_URL}",
@@ -141,9 +141,9 @@ describe("detectDeployment", () => {
       '    entrypoint: ["dotnet", "Billing.API.dll"]',
       "    image: reg.io/org/suite:${TAG}",
       "    environment:",
-      "      orders-api-key: ${ORDERS_API_KEY}",
+      "      cars-api-key: ${CARS_API_KEY}",
       "      ConnectionString: ${BILLING_DB_CONNECTIONSTRING}",
-      "      OrdersConnectionString: User ID=${DB_User};Server=db;Database=orders;Password=${DB_Password}",
+      "      CarsConnectionString: User ID=${DB_User};Server=db;Database=cars;Password=${DB_Password}",
       "      PayPro__BaseUrl: https://api.paypro.example.com/v2",
       "      TokenIssuer: ${IDP_ISSUER}",
       "  shop-spa:",
@@ -158,7 +158,7 @@ describe("detectDeployment", () => {
       "  pgdb:",
       "    image: reg.io/hub/postgres:16",
       "    environment:",
-      "      POSTGRES_MULTIPLE_DATABASES: orders,billing",
+      "      POSTGRES_MULTIPLE_DATABASES: cars,billing",
       "  rabbitmq:",
       "    image: reg.io/hub/rabbitmq:3.8-management",
       "  redis:",
@@ -169,7 +169,7 @@ describe("detectDeployment", () => {
     // Metadata-only manifest (rancher style): must not hollow out services.
     await writeFile(join(root, "compose", "rancher-compose.yml"), [
       "services:",
-      "  orders-api:",
+      "  cars-api:",
       "    scale: 2",
       "",
     ].join("\n"));
@@ -189,7 +189,7 @@ describe("detectDeployment", () => {
   });
 
   const subProjects = [
-    sub("p-orders", "Orders.API", "src/Orders/Orders.API"),
+    sub("p-cars", "Cars.API", "src/Cars/Cars.API"),
     sub("p-billing", "Billing.API", "src/Billing/Billing.API"),
     sub("p-spa", "ShopSPA", "Frontend/ShopSPA"),
   ];
@@ -198,11 +198,11 @@ describe("detectDeployment", () => {
     const dep = await detectDeployment(root, { subProjects });
     expect(dep).toBeDefined();
     const names = dep!.services.map((s) => s.name).sort();
-    expect(names).toEqual(["billing-api", "orders-api", "pgdb", "rabbitmq", "redis", "shop-spa"]);
+    expect(names).toEqual(["billing-api", "cars-api", "pgdb", "rabbitmq", "redis", "shop-spa"]);
     const byName = new Map(dep!.services.map((s) => [s.name, s]));
     expect(byName.get("pgdb")!.kind).toBe("datastore");
     expect(byName.get("pgdb")!.family).toBe("postgres");
-    expect(byName.get("pgdb")!.hostedDatabases).toEqual(["orders", "billing"]);
+    expect(byName.get("pgdb")!.hostedDatabases).toEqual(["cars", "billing"]);
     expect(byName.get("rabbitmq")!.kind).toBe("queue");
     expect(byName.get("redis")!.kind).toBe("cache");
   });
@@ -210,22 +210,22 @@ describe("detectDeployment", () => {
   it("matches services to sub-projects via entrypoint dll and image tail", async () => {
     const dep = await detectDeployment(root, { subProjects });
     const byName = new Map(dep!.services.map((s) => [s.name, s]));
-    expect(byName.get("orders-api")!.project).toBe("p-orders");
+    expect(byName.get("cars-api")!.project).toBe("p-cars");
     expect(byName.get("billing-api")!.project).toBe("p-billing");
     expect(byName.get("shop-spa")!.project).toBe("p-spa"); // shop-spa ≈ ShopSPA
   });
 
   it("keeps image/entrypoint when a metadata-only manifest declares the service first", async () => {
     const dep = await detectDeployment(root, { subProjects });
-    const orders = dep!.services.find((s) => s.name === "orders-api")!;
-    expect(orders.entrypoint).toContain("Orders.API.dll");
-    expect(orders.tech).toBe("Orders.API");
+    const cars = dep!.services.find((s) => s.name === "cars-api")!;
+    expect(cars.entrypoint).toContain("Cars.API.dll");
+    expect(cars.tech).toBe("Cars.API");
   });
 
   it("records every compose file that declares a service (stack membership)", async () => {
     const dep = await detectDeployment(root, { subProjects });
-    const orders = dep!.services.find((s) => s.name === "orders-api")!;
-    expect(orders.composeFiles).toEqual([
+    const cars = dep!.services.find((s) => s.name === "cars-api")!;
+    expect(cars.composeFiles).toEqual([
       "compose/app-services-compose.yml",
       "compose/rancher-compose.yml",
     ]);
@@ -244,36 +244,36 @@ describe("detectDeployment", () => {
   it("derives the api-key handshake edge (consumer → provider)", async () => {
     const dep = await detectDeployment(root, { subProjects });
     expect(dep!.edges).toContainEqual(
-      expect.objectContaining({ from: "billing-api", to: "orders-api", kind: "http", via: "ORDERS_API_KEY" }),
+      expect.objectContaining({ from: "billing-api", to: "cars-api", kind: "http", via: "CARS_API_KEY" }),
     );
   });
 
   it("derives db edges literal-first, marks cross-database access, skips cache/bus conn strings", async () => {
     const dep = await detectDeployment(root, { subProjects });
-    const orders = dep!.services.find((s) => s.name === "orders-api")!;
-    // Literal Database=orders wins over the ${DB_User} credential placeholder.
-    expect(orders.databases).toEqual([{ name: "orders", primary: true }]);
+    const cars = dep!.services.find((s) => s.name === "cars-api")!;
+    // Literal Database=cars wins over the ${DB_User} credential placeholder.
+    expect(cars.databases).toEqual([{ name: "cars", primary: true }]);
     const billing = dep!.services.find((s) => s.name === "billing-api")!;
-    // Own db from the var name, foreign db (orders) from the decorated key.
+    // Own db from the var name, foreign db (cars) from the decorated key.
     expect(billing.databases).toContainEqual({ name: "billing", primary: true });
-    expect(billing.databases).toContainEqual({ name: "orders", primary: false });
+    expect(billing.databases).toContainEqual({ name: "cars", primary: false });
     // RedisConnectionString must NOT become a database.
-    expect(orders.databases!.some((d) => d.name.includes("redis"))).toBe(false);
+    expect(cars.databases!.some((d) => d.name.includes("redis"))).toBe(false);
     expect(dep!.edges).toContainEqual(
-      expect.objectContaining({ from: "billing-api", to: "pgdb", kind: "db", label: "orders" }),
+      expect.objectContaining({ from: "billing-api", to: "pgdb", kind: "db", label: "cars" }),
     );
     expect(dep!.edges).toContainEqual(
-      expect.objectContaining({ from: "orders-api", to: "pgdb", kind: "db", label: "orders" }),
+      expect.objectContaining({ from: "cars-api", to: "pgdb", kind: "db", label: "cars" }),
     );
   });
 
   it("attaches bus services to the queue and flags cache users", async () => {
     const dep = await detectDeployment(root, { subProjects });
-    const orders = dep!.services.find((s) => s.name === "orders-api")!;
-    expect(orders.bus).toBe(true);
-    expect(orders.cache).toBe(true);
+    const cars = dep!.services.find((s) => s.name === "cars-api")!;
+    expect(cars.bus).toBe(true);
+    expect(cars.cache).toBe(true);
     expect(dep!.edges).toContainEqual(
-      expect.objectContaining({ from: "orders-api", to: "rabbitmq", kind: "bus" }),
+      expect.objectContaining({ from: "cars-api", to: "rabbitmq", kind: "bus" }),
     );
   });
 
@@ -327,12 +327,12 @@ describe("detectDeployment — a compose-only repository", () => {
   it("leaves a service built from a folder this repository does not have to be matched by name", async () => {
     const root = await mkdtemp(join(tmpdir(), "clarifydoc-infra-"));
     try {
-      await writeFile(join(root, "docker-compose.yml"), ["services:", "  worker:", "    build: ./worker", "    environment:", "      ORDERS_URL: http://orders:8080", ""].join("\n"));
+      await writeFile(join(root, "docker-compose.yml"), ["services:", "  worker:", "    build: ./worker", "    environment:", "      CARS_URL: http://cars:8080", ""].join("\n"));
       const dep = await detectDeployment(root, { subProjects: [{ id: "root", name: "infra", root: "", type: "unknown" } as unknown as SubProject] });
       const worker = dep!.services.find((s) => s.name === "worker")!;
       // Not the infra repo's own root project: the system linker joins it to the repo that holds ./worker.
       expect(worker.project).toBeUndefined();
-      expect(worker.urlEnv).toEqual({ ORDERS_URL: "http://orders:8080" });
+      expect(worker.urlEnv).toEqual({ CARS_URL: "http://cars:8080" });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

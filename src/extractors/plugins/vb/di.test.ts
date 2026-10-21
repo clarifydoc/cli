@@ -62,7 +62,7 @@ End Class
 Partial Public Class Wrapped
 #Region "Contracts"
     Inherits BaseThing
-    Implements IRepo(Of User), _
+    Implements IRepo(Of Player), _
                IAudit
 #End Region
     Private _x As Integer
@@ -77,7 +77,7 @@ End Class`;
     expect(byName.get("FormalGreeter")!.implements).toEqual(["IGreeter"]);
     expect(byName.get("SystemClock")!.implements).toEqual(["IClock"]);
     expect(byName.get("Multi")).toMatchObject({ extends: "BaseThing", implements: ["IA", "Global.App.IB"] });
-    expect(byName.get("Wrapped")).toMatchObject({ extends: "BaseThing", implements: ["IRepo(Of User)", "IAudit"] });
+    expect(byName.get("Wrapped")).toMatchObject({ extends: "BaseThing", implements: ["IRepo(Of Player)", "IAudit"] });
     // The header scan stops at the class's first member — a later class's
     // `Implements` never leaks into an earlier one.
     expect(byName.get("Next1")!.implements).toEqual([]);
@@ -140,7 +140,7 @@ describe("VB typed locals", () => {
     expect(locals(`
         Dim calc As New DiscountCalc()
         Dim calc2 = New DiscountCalc(1)
-        Dim box As New Box(Of User)()
+        Dim box As New Box(Of Player)()
         Dim g As IGreeter = sp.GetRequiredService(Of IGreeter)()
         Dim k = sp.GetRequiredService(Of IClock)()
         Dim n = sp.GetRequiredKeyedService(Of INotifier)("sms")
@@ -150,11 +150,11 @@ describe("VB typed locals", () => {
         Dim r As IRepo
         Using scope As New UnitOfWork()
         End Using
-        For Each item As OrderLine In order.Lines
+        For Each item As CarPart In car.Lines
         Next`)).toEqual([
       { name: "calc", type: "DiscountCalc" },
       { name: "calc2", type: "DiscountCalc" },
-      { name: "box", type: "Box(Of User)" },
+      { name: "box", type: "Box(Of Player)" },
       { name: "g", type: "IGreeter" },
       { name: "k", type: "IClock" },
       { name: "n", type: "INotifier", qualifier: "sms" },
@@ -163,7 +163,7 @@ describe("VB typed locals", () => {
       { name: "d", type: "IRepo" },
       { name: "r", type: "IRepo" },
       { name: "scope", type: "UnitOfWork" },
-      { name: "item", type: "OrderLine" },
+      { name: "item", type: "CarPart" },
     ]);
   });
 
@@ -241,7 +241,7 @@ Public Module Registration
     Public Sub Register(services As IServiceCollection)
         services.AddScoped(Of IGreeter, FormalGreeter)()
         services.AddSingleton(Of IClock, SystemClock)()
-        services.AddTransient(Of OrderService)()
+        services.AddTransient(Of CarService)()
         services.AddScoped(GetType(IGreeter), GetType(CasualGreeter))
         services.AddScoped(GetType(IRepo(Of )), GetType(SqlRepo(Of )))
         services.TryAddScoped(Of IPricer, DefaultPricer)()
@@ -291,12 +291,12 @@ End Module`)).toEqual([
 
   it("skips what the source does not decide: self registrations, computed factories, comments, strings", () => {
     expect(bindings(`
-        services.AddScoped(Of OrderService)()
+        services.AddScoped(Of CarService)()
         services.AddScoped(Of IRepo)(Function(sp) MakeRepo(sp))
         services.AddScoped(Of IRepo)(Function(sp) New SqlRepo().WithCache())
         ' services.AddScoped(Of IRepo, CommentedRepo)()
         Log("services.AddScoped(Of IRepo, StringRepo)()")
-        services.AddScoped(GetType(OrderService))`)).toEqual([]);
+        services.AddScoped(GetType(CarService))`)).toEqual([]);
   });
 
   it("keeps conflicting registrations — the linker refuses to choose between them", () => {
@@ -359,7 +359,7 @@ describe("VB DI helpers", () => {
   it("reads the class a factory produces only when it is one plain construction", () => {
     expect(producedClass("Function(sp) New Repo(sp.GetRequiredService(Of IDb)())")).toBe("Repo");
     expect(producedClass("New Ns.Repo With {.Cache = True}")).toBe("Repo");
-    expect(producedClass("New Box(Of User)(1)")).toBe("Box");
+    expect(producedClass("New Box(Of Player)(1)")).toBe("Box");
     expect(producedClass("Function(sp) \n    New Repo()")).toBe("Repo");
     expect(producedClass("Function(sp)\n    Return New Repo()\nEnd Function")).toBe("Repo");
     expect(producedClass("Function(sp)\n    Log(sp)\n    Return New Repo()\nEnd Function")).toBeNull();

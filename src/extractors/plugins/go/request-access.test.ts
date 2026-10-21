@@ -14,17 +14,17 @@ const access = (body: string) => extractGoRequestAccess(lines(body), { name: "h"
 describe("Go request access", () => {
   it("types a bound body from the local declaration that precedes the bind", () => {
     expect(access(`
-	var input store.Product
+	var input store.Part
 	if err := c.ShouldBindJSON(&input); err != nil {
 		return
 	}
-`)).toEqual([{ name: "input", type: "store.Product", binding: "body" }]);
+`)).toEqual([{ name: "input", type: "store.Part", binding: "body" }]);
     expect(access(`
-	req := &model.CreateUserRequest{}
+	req := &model.CreatePlayerRequest{}
 	if err := json.NewDecoder(r.Body).Decode(req); err != nil {
 		return
 	}
-`)).toEqual([{ name: "req", type: "model.CreateUserRequest", binding: "body" }]);
+`)).toEqual([{ name: "req", type: "model.CreatePlayerRequest", binding: "body" }]);
     expect(access(`
 	f := new(listFilter)
 	c.ShouldBindQuery(f)
@@ -80,8 +80,8 @@ describe("Go request access", () => {
     expect(access(`
 	id := c.Param("id")
 	again := c.Param("id")
-	rows, _ := db.Query("SELECT id FROM users WHERE id = $1", id)
-	v, _ := cache.Get("users:all")
+	rows, _ := db.Query("SELECT id FROM players WHERE id = $1", id)
+	v, _ := cache.Get("players:all")
 `)).toEqual([{ name: "id", type: null, binding: "route" }]);
   });
 
@@ -89,8 +89,8 @@ describe("Go request access", () => {
     const fns = extractFunctionsWithSpec(lines(`
 package handler
 
-func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
-	var req model.CreateUserRequest
+func (h *PlayerHandler) CreatePlayer(w http.ResponseWriter, r *http.Request) {
+	var req model.CreatePlayerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return
 	}
@@ -101,7 +101,7 @@ func helper(x int) int { return x }
 `), goSpec);
     expect(fns[0]!.params.map((p) => p.name)).toEqual(["w", "r"]);
     expect(fns[0]!.requestAccess).toEqual([
-      { name: "req", type: "model.CreateUserRequest", binding: "body" },
+      { name: "req", type: "model.CreatePlayerRequest", binding: "body" },
       { name: "role", type: null, binding: "query" },
     ]);
     expect(fns[1]!.requestAccess).toBeUndefined();
@@ -113,7 +113,7 @@ describe("Go struct fields for the schema pass", () => {
     const src = lines(`
 package store
 
-type Product struct {
+type Part struct {
 	ID          int          \`json:"id"\`
 	Name        string       \`json:"name" validate:"required"\`
 	Description *string      \`json:"description,omitempty"\`
@@ -121,7 +121,7 @@ type Product struct {
 	Attrs       map[string]any
 	Raw         interface{}
 	secret      string
-	OnChange    func(Product)
+	OnChange    func(Part)
 }
 
 type createInput struct {
@@ -129,7 +129,7 @@ type createInput struct {
 }
 `);
     const classes = goSpec.extractClasses!(src, extractFunctionsWithSpec(src, goSpec));
-    expect(classes.map((c) => c.name)).toEqual(["Product", "createInput"]);
+    expect(classes.map((c) => c.name)).toEqual(["Part", "createInput"]);
     const props = Object.fromEntries(classes[0]!.properties.map((p) => [p.name, p]));
     expect(props["Name"]!.decorators).toEqual(['json:"name"', 'validate:"required"']);
     expect(props["Description"]!.type).toBe("*string");

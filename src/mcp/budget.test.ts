@@ -32,7 +32,7 @@ describe("what a session pays up front", () => {
       process.env.CLARIFYDOC_MCP_LOG = join(dir, "calls.jsonl");
       const { server } = buildMcpServer({ projectRoot: resolve("test-fixtures/sample-backend"), analysisDir: resolve("test-output/sample-backend"), allowAnalyze: false, allowColdStart: false });
       const call = (args: Record<string, unknown>) => server.handleMessage({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "clarifydoc_routes", arguments: args } });
-      await call({ path: "/api/users" });
+      await call({ path: "/api/players" });
       await call({ path: "x".repeat(300) });
       const lines = readFileSync(join(dir, "calls.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
       expect(lines.map((l) => [l.tool, l.isError, l.empty])).toEqual([["clarifydoc_routes", false, false], ["clarifydoc_routes", false, true]]);

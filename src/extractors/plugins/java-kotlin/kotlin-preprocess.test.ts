@@ -55,24 +55,24 @@ describe("Kotlin preprocess — annotated top-level declarations", () => {
 
   it("keeps a controller's annotations when the declaration before it would detach them", async () => {
     const src = `package a
-data class UserRequest(val name: String, val manager: String?)
+data class PlayerRequest(val name: String, val manager: String?)
 
 // Spring-style controller
 @RestController
-@RequestMapping("/users")
+@RequestMapping("/players")
 @PreAuthorize("hasRole('USER')")
-class UserRoutesController {
+class PlayerRoutesController {
     @GetMapping("/")
-    fun listUsers(): List<String> = listOf()
+    fun listPlayers(): List<String> = listOf()
 }
 
 fun Application.configureRouting() {}
 `;
     const classes = await classesOf(terminateAnnotatedDeclarations(src)!);
     expect(classes[1]).toEqual([
-      "UserRoutesController", 8, 11,
-      ["RestController", "RequestMapping(\"/users\")", "PreAuthorize(\"hasRole('USER')\")"],
-      ["listUsers"],
+      "PlayerRoutesController", 8, 11,
+      ["RestController", "RequestMapping(\"/players\")", "PreAuthorize(\"hasRole('USER')\")"],
+      ["listPlayers"],
     ]);
   });
 

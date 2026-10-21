@@ -20,8 +20,8 @@ describe("coverage parsers", () => {
   });
 
   it("JaCoCo: package path + source file, covered instructions decide", () => {
-    const h = parseJacoco(`<report name="x"><package name="com/acme"><sourcefile name="Orders.java"><line nr="10" mi="0" ci="3"/><line nr="11" mi="2" ci="0"/></sourcefile></package></report>`);
-    expect(lines(h, "com/acme/Orders.java")).toEqual({ 10: 3, 11: 0 });
+    const h = parseJacoco(`<report name="x"><package name="com/acme"><sourcefile name="Cars.java"><line nr="10" mi="0" ci="3"/><line nr="11" mi="2" ci="0"/></sourcefile></package></report>`);
+    expect(lines(h, "com/acme/Cars.java")).toEqual({ 10: 3, 11: 0 });
   });
 
   it("Clover: statements, not the method declaration line", () => {
@@ -107,20 +107,20 @@ describe("routeTestCoverage", () => {
     };
     const got = routeTestCoverage(
       [
-        { filePath: "routes.ts", kind: "api", httpMethod: "GET", path: "/orders" },
-        { filePath: "routes.ts", kind: "api", httpMethod: "DELETE", path: "/orders" },
+        { filePath: "routes.ts", kind: "api", httpMethod: "GET", path: "/cars" },
+        { filePath: "routes.ts", kind: "api", httpMethod: "DELETE", path: "/cars" },
         { filePath: "routes.ts", kind: "frontend", httpMethod: null, path: "/" },
       ],
       [
-        link("routes.ts", "route:GET /orders", "routes.ts", "list"),
+        link("routes.ts", "route:GET /cars", "routes.ts", "list"),
         link("routes.ts", "list", "repo.ts", "findAll"),
-        link("routes.ts", "route:DELETE /orders", "repo.ts", "purge"),
+        link("routes.ts", "route:DELETE /cars", "repo.ts", "purge"),
       ],
       coverage as never,
     );
     expect(Object.fromEntries(got)).toEqual({
-      "routes.ts\u0000GET /orders": { covered: 12, total: 20, functions: 2 },
-      "routes.ts\u0000DELETE /orders": { covered: 0, total: 10, functions: 1 },
+      "routes.ts\u0000GET /cars": { covered: 12, total: 20, functions: 2 },
+      "routes.ts\u0000DELETE /cars": { covered: 0, total: 10, functions: 1 },
     });
     expect(rangeLines("3-5,9")).toEqual([3, 4, 5, 9]);
   });

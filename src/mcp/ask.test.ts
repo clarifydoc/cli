@@ -8,9 +8,9 @@ const config = { projectRoot: resolve("test-fixtures/sample-backend"), analysisD
 
 describe("parseAskArgs", () => {
   it("merges a JSON object with key=value pairs, reading JSON-shaped values as JSON", () => {
-    expect(parseAskArgs('{"limit":5,"path":"/x"}', ["path=/api/users", "detail=true", "kinds=[\"route\"]", "q=GET /a"])).toEqual({
+    expect(parseAskArgs('{"limit":5,"path":"/x"}', ["path=/api/players", "detail=true", "kinds=[\"route\"]", "q=GET /a"])).toEqual({
       limit: 5,
-      path: "/api/users",
+      path: "/api/players",
       detail: true,
       kinds: ["route"],
       q: "GET /a",
@@ -26,9 +26,9 @@ describe("parseAskArgs", () => {
 
 describe.skipIf(!existsSync(join(analysisDir, "project-summary.json")))("askTool", () => {
   it("answers through the server's own tools/call, read-only", async () => {
-    const r = await askTool(config, "routes", { path: "/api/users", method: "POST" });
+    const r = await askTool(config, "routes", { path: "/api/players", method: "POST" });
     expect(r.isError).toBe(false);
-    expect(r.text).toMatch(/POST \/api\/users \(routes\/users\.ts:20\)/);
+    expect(r.text).toMatch(/POST \/api\/players \(routes\/players\.ts:20\)/);
   });
   it("refuses an unknown tool and bad arguments as errors", async () => {
     const unknown = await askTool(config, "nope", {});
@@ -39,13 +39,13 @@ describe.skipIf(!existsSync(join(analysisDir, "project-summary.json")))("askTool
   });
   it("projects an edit not made yet: proposed content, nothing written", async () => {
     const { readFile } = await import("fs/promises");
-    const file = join(config.projectRoot, "services", "userService.ts");
+    const file = join(config.projectRoot, "services", "playerService.ts");
     const now = await readFile(file, "utf8");
-    const content = now.replace("export async function getUserById(id: number) {", "export async function getUserById(id: number, withPosts: boolean) {");
-    const r = await askTool(config, "impact", { proposed: [{ file: "services/userService.ts", content }] });
+    const content = now.replace("export async function getPlayerById(id: number) {", "export async function getPlayerById(id: number, withGames: boolean) {");
+    const r = await askTool(config, "impact", { proposed: [{ file: "services/playerService.ts", content }] });
     expect(r.isError).toBe(false);
     expect(r.text).toMatch(/base: proposed edit/);
-    expect(r.text).toMatch(/\*\*breaking\*\* `getUserById` 1 → 2 required parameters/);
+    expect(r.text).toMatch(/\*\*breaking\*\* `getPlayerById` 1 → 2 required parameters/);
     expect(await readFile(file, "utf8")).toBe(now);
     const bad = await askTool(config, "impact", { proposed: [{ file: "../etc/passwd", content: "" }] });
     expect(bad.isError).toBe(true);

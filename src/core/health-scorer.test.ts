@@ -23,18 +23,18 @@ describe("computeHealthScore — generated-code exclusion", () => {
       ...base,
       componentGraph: {
         // 12 app files import the generated barrel → would be "highly coupled".
-        ...Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`app/c${i}.ts`, ["web/src/gen/account/index.ts"]])),
-        "web/src/gen/account/index.ts": ["web/src/gen/account/a.ts", "web/src/gen/account/b.ts"],
+        ...Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`app/c${i}.ts`, ["web/src/gen/club/index.ts"]])),
+        "web/src/gen/club/index.ts": ["web/src/gen/club/a.ts", "web/src/gen/club/b.ts"],
       },
       patterns: [
-        pattern("god-object", "web/src/gen/account/client.ts"),
-        pattern("long-file", "web/src/gen/account/schemas.ts"),
+        pattern("god-object", "web/src/gen/club/client.ts"),
+        pattern("long-file", "web/src/gen/club/schemas.ts"),
       ],
-      duplicates: [dupe("web/src/gen/account/a.ts")],
-      complexity: [cmplx("web/src/gen/account/a.ts", 50)],
+      duplicates: [dupe("web/src/gen/club/a.ts")],
+      complexity: [cmplx("web/src/gen/club/a.ts", 50)],
     };
 
-    const withGen = computeHealthScore({ ...input, generatedRoots: ["web/src/gen/account"] });
+    const withGen = computeHealthScore({ ...input, generatedRoots: ["web/src/gen/club"] });
     const withoutGen = computeHealthScore({ ...input, generatedRoots: [] });
 
     expect(withGen.score).toBe(100); // all problems were in generated code

@@ -9,32 +9,32 @@ import { createEmptyAnalysis } from "../../../types/analysis.js";
 vi.mock("../../registry.js", () => ({ pluginFor: () => wsdlMeta }));
 
 const WSDL = `<?xml version="1.0"?>
-<definitions xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:tns="urn:users">
+<definitions xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:tns="urn:players">
   <types>
     <xsd:schema>
-      <xsd:complexType name="User">
+      <xsd:complexType name="Player">
         <xsd:sequence>
           <xsd:element name="id" type="xsd:int"/>
           <xsd:element name="name" type="xsd:string"/>
-          <xsd:element name="orders" type="tns:Order" maxOccurs="unbounded"/>
+          <xsd:element name="cars" type="tns:Car" maxOccurs="unbounded"/>
         </xsd:sequence>
       </xsd:complexType>
-      <xsd:complexType name="Order">
+      <xsd:complexType name="Car">
         <xsd:sequence>
           <xsd:element name="id" type="xsd:int"/>
         </xsd:sequence>
       </xsd:complexType>
     </xsd:schema>
   </types>
-  <portType name="UserService">
-    <operation name="GetUser">
-      <input message="tns:GetUserRequest"/>
-      <output message="tns:GetUserResponse"/>
+  <portType name="PlayerService">
+    <operation name="GetPlayer">
+      <input message="tns:GetPlayerRequest"/>
+      <output message="tns:GetPlayerResponse"/>
     </operation>
-    <operation name="ListUsers"/>
+    <operation name="ListPlayers"/>
   </portType>
-  <binding name="UserServiceSoap" type="tns:UserService">
-    <operation name="GetUser"/>
+  <binding name="PlayerServiceSoap" type="tns:PlayerService">
+    <operation name="GetPlayer"/>
   </binding>
 </definitions>
 `;
@@ -43,8 +43,8 @@ describe("WSDL route extraction", () => {
   it("extracts one api route per portType operation (not binding duplicates)", () => {
     const routes = extractWsdlRoutes(WSDL.split("\n"));
     expect(routes.map((r) => `${r.path} -> ${r.handler}`)).toEqual([
-      "/GetUser -> GetUser",
-      "/ListUsers -> ListUsers",
+      "/GetPlayer -> GetPlayer",
+      "/ListPlayers -> ListPlayers",
     ]);
     expect(routes.every((r) => r.kind === "api")).toBe(true);
   });
@@ -57,17 +57,17 @@ describe("WSDL route extraction", () => {
 describe("WSDL / XSD entities", () => {
   it("turns complexTypes into entities with element properties", () => {
     const entities = extractWsdlEntities(WSDL.split("\n"));
-    expect(entities.map((e) => e.name).sort()).toEqual(["Order", "User"]);
-    const user = entities.find((e) => e.name === "User")!;
-    expect(user.decorators).toEqual(["entity", "wsdl"]);
-    expect(user.properties.map((p) => p.name)).toEqual(["id", "name", "orders"]);
+    expect(entities.map((e) => e.name).sort()).toEqual(["Car", "Player"]);
+    const player = entities.find((e) => e.name === "Player")!;
+    expect(player.decorators).toEqual(["entity", "wsdl"]);
+    expect(player.properties.map((p) => p.name)).toEqual(["id", "name", "cars"]);
   });
 
   it("derives relations from tns: element types (maxOccurs unbounded => one-to-many)", () => {
     const lines = WSDL.split("\n");
     const rels = extractWsdlRelations(lines, extractWsdlEntities(lines));
     expect(rels).toEqual([
-      expect.objectContaining({ fromEntity: "User", fromField: "orders", toEntity: "Order", cardinality: "one-to-many" }),
+      expect.objectContaining({ fromEntity: "Player", fromField: "cars", toEntity: "Car", cardinality: "one-to-many" }),
     ]);
   });
 });
@@ -75,7 +75,7 @@ describe("WSDL / XSD entities", () => {
 // ─── Route attribute layer (params / auth) + request schema ───────────────────
 
 const META_WSDL = `<?xml version="1.0"?>
-<definitions xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:tns="urn:users"
+<definitions xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:tns="urn:players"
              xmlns:wsp="http://www.w3.org/ns/ws-policy" xmlns:sp="http://docs.oasis-open.org/ws-sx/ws-securitypolicy/200702">
   <wsp:Policy wsu:Id="UT"><sp:SupportingTokens><wsp:Policy><sp:UsernameToken/></wsp:Policy></sp:SupportingTokens></wsp:Policy>
   <types>
@@ -86,7 +86,7 @@ const META_WSDL = `<?xml version="1.0"?>
           <xsd:element name="city" type="xsd:string" minOccurs="0"/>
         </xsd:sequence>
       </xsd:complexType>
-      <xsd:element name="CreateUserRequest">
+      <xsd:element name="CreatePlayerRequest">
         <xsd:complexType>
           <xsd:sequence>
             <xsd:element name="name" type="xsd:string"/>
@@ -103,19 +103,19 @@ const META_WSDL = `<?xml version="1.0"?>
       </xsd:element>
     </xsd:schema>
   </types>
-  <message name="GetUserRequest">
+  <message name="GetPlayerRequest">
     <part name="id" type="xsd:int"/>
     <part name="verbose" type="xsd:boolean"/>
   </message>
-  <message name="CreateUserRequest">
-    <part name="parameters" element="tns:CreateUserRequest"/>
+  <message name="CreatePlayerRequest">
+    <part name="parameters" element="tns:CreatePlayerRequest"/>
   </message>
-  <portType name="UserService">
-    <operation name="GetUser">
-      <input message="tns:GetUserRequest"/>
+  <portType name="PlayerService">
+    <operation name="GetPlayer">
+      <input message="tns:GetPlayerRequest"/>
     </operation>
-    <operation name="CreateUser">
-      <input message="tns:CreateUserRequest"/>
+    <operation name="CreatePlayer">
+      <input message="tns:CreatePlayerRequest"/>
     </operation>
     <operation name="Ping"/>
   </portType>
@@ -127,11 +127,11 @@ describe("WSDL route attribute layer", () => {
   const byName = (n: string) => routes.find((r) => r.handler === n)!;
 
   it("turns the input message's parts into body-bound params (rpc and document style)", () => {
-    expect(byName("GetUser").params).toEqual([
+    expect(byName("GetPlayer").params).toEqual([
       { name: "id", type: "int", binding: "body" },
       { name: "verbose", type: "boolean", binding: "body" },
     ]);
-    expect(byName("CreateUser").params).toEqual([{ name: "parameters", type: "CreateUserRequest", binding: "body" }]);
+    expect(byName("CreatePlayer").params).toEqual([{ name: "parameters", type: "CreatePlayerRequest", binding: "body" }]);
     expect(byName("Ping").params).toBeUndefined();
   });
 
@@ -149,11 +149,11 @@ describe("WSDL route attribute layer", () => {
 
 describe("WSDL / XSD properties for the request-schema pass", () => {
   const entities = extractWsdlEntities(META_WSDL.split("\n"));
-  const req = entities.find((e) => e.name === "CreateUserRequest")!;
+  const req = entities.find((e) => e.name === "CreatePlayerRequest")!;
   const prop = (n: string) => req.properties.find((p) => p.name === n)!;
 
   it("emits a document-style wrapper element as an entity and skips nested anonymous types", () => {
-    expect(entities.map((e) => e.name)).toEqual(["Address", "CreateUserRequest"]);
+    expect(entities.map((e) => e.name)).toEqual(["Address", "CreatePlayerRequest"]);
     expect(req.properties.map((p) => p.name)).toEqual(["name", "email", "birthDate", "address", "tags", "extra", "after"]);
   });
 
@@ -175,22 +175,22 @@ describe("WSDL / XSD properties for the request-schema pass", () => {
     expect(h.describeType("boolean")).toEqual({ kind: "scalar", schema: { type: "boolean" } });
     expect(h.describeType("dateTime")).toEqual({ kind: "scalar", schema: { type: "string", format: "date-time" } });
     expect(h.describeType("base64Binary")).toEqual({ kind: "scalar", schema: { type: "string", format: "byte" } });
-    expect(h.describeType("Order[]")).toEqual({ kind: "array", element: "Order" });
+    expect(h.describeType("Car[]")).toEqual({ kind: "array", element: "Car" });
     expect(h.describeType("anyType")).toEqual({ kind: "any" });
-    expect(h.describeType("Order")).toEqual({ kind: "object", name: "Order" });
+    expect(h.describeType("Car")).toEqual({ kind: "object", name: "Car" });
     expect(h.unwrapNullable("date?")).toEqual({ type: "date", nullable: true });
   });
 
   it("flattens a document-style body through the core pass", () => {
     const lines = META_WSDL.split("\n");
-    const analysis = createEmptyAnalysis("users.wsdl", "wsdl");
+    const analysis = createEmptyAnalysis("players.wsdl", "wsdl");
     analysis.projectId = "root";
     analysis.classes = extractWsdlEntities(lines);
-    const routes = extractWsdlRoutes(lines).map((r) => ({ ...r, filePath: "users.wsdl", projectId: "root" }));
-    // GetUser's rpc-style `id: int` part gets a scalar schema too — the core
+    const routes = extractWsdlRoutes(lines).map((r) => ({ ...r, filePath: "players.wsdl", projectId: "root" }));
+    // GetPlayer's rpc-style `id: int` part gets a scalar schema too — the core
     // pass skips only a bare unresolved `$ref`.
     expect(attachRequestSchemas(routes, [analysis])).toBe(2);
-    const create = routes.find((r) => r.handler === "CreateUser") as typeof routes[number] & { requestSchema?: unknown };
+    const create = routes.find((r) => r.handler === "CreatePlayer") as typeof routes[number] & { requestSchema?: unknown };
     expect(create.requestSchema).toEqual({
       type: "object",
       properties: {

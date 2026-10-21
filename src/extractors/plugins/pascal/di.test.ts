@@ -28,57 +28,57 @@ const SERVICE = `unit Shop.Service;
 interface
 uses Spring.Container, Shop.Intf;
 type
-  IOrderRepo = interface
+  ICarRepo = interface
     ['{11111111-1111-1111-1111-111111111111}']
     function Find(Id: Integer): string;
     procedure Save(const S: string);
   end;
 
-  IAudited = interface(IOrderRepo)
+  IAudited = interface(ICarRepo)
     procedure Audit;
   end;
 
-  TSqlOrderRepo = class(TInterfacedObject, IOrderRepo, IAudited)
+  TSqlCarRepo = class(TInterfacedObject, ICarRepo, IAudited)
   public
     function Find(Id: Integer): string;
     procedure Save(const S: string);
     procedure Audit;
   end;
 
-  TBareRepo = class(IOrderRepo)
+  TBareRepo = class(ICarRepo)
     function Find(Id: Integer): string;
     procedure Save(const S: string);
   end;
 
-  TOrderService = class(TBaseService)
+  TCarService = class(TBaseService)
   private
     [Inject]
-    FRepo: IOrderRepo;
+    FRepo: ICarRepo;
     [Inject('email'), Weak]
     FNotifier: INotifier;
     FA, FB: IClock;
   public
-    constructor Create(const ARepo: IOrderRepo);
+    constructor Create(const ARepo: ICarRepo);
     procedure Run;
     procedure LocalProc;
   end;
 
 implementation
 
-function TSqlOrderRepo.Find(Id: Integer): string; begin Result := ''; end;
-procedure TSqlOrderRepo.Save(const S: string); begin end;
-procedure TSqlOrderRepo.Audit; begin end;
+function TSqlCarRepo.Find(Id: Integer): string; begin Result := ''; end;
+procedure TSqlCarRepo.Save(const S: string); begin end;
+procedure TSqlCarRepo.Audit; begin end;
 function TBareRepo.Find(Id: Integer): string; begin Result := ''; end;
 procedure TBareRepo.Save(const S: string); begin end;
 
-constructor TOrderService.Create(const ARepo: IOrderRepo);
+constructor TCarService.Create(const ARepo: ICarRepo);
 begin
   inherited Create;
   FRepo := ARepo;
   FRepo.Find(0);
 end;
 
-procedure TOrderService.Run;
+procedure TCarService.Run;
 var
   Calc: TDiscountCalc;
   I: Integer;
@@ -90,7 +90,7 @@ begin
   FRepo.find(1);
 end;
 
-procedure TOrderService.LocalProc;
+procedure TCarService.LocalProc;
   procedure Inner;
   begin
     FNotifier.Send('x');
@@ -106,34 +106,34 @@ end.`;
 describe("pascal classes and interfaces", () => {
   it("marks interfaces, with their method signatures and parent interface", async () => {
     const { classes } = await analyze(SERVICE);
-    const repo = cls(classes, "IOrderRepo");
+    const repo = cls(classes, "ICarRepo");
     expect(repo.kind).toBe("interface");
     expect(repo.methods.map((m) => m.name)).toEqual(["Find", "Save"]);
     expect(repo.methods.every((m) => m.calls.length === 0)).toBe(true);
-    expect(cls(classes, "IAudited")).toMatchObject({ kind: "interface", extends: "IOrderRepo" });
+    expect(cls(classes, "IAudited")).toMatchObject({ kind: "interface", extends: "ICarRepo" });
   });
 
   it("splits class parents: base class first, then every implemented interface", async () => {
     const { classes } = await analyze(SERVICE);
-    expect(cls(classes, "TSqlOrderRepo")).toMatchObject({ extends: "TInterfacedObject", implements: ["IOrderRepo", "IAudited"] });
-    // `class(IOrderRepo)`: an interface this unit declares is never the base class.
-    expect(cls(classes, "TBareRepo")).toMatchObject({ extends: null, implements: ["IOrderRepo"] });
-    expect(cls(classes, "TOrderService")).toMatchObject({ extends: "TBaseService", implements: [] });
+    expect(cls(classes, "TSqlCarRepo")).toMatchObject({ extends: "TInterfacedObject", implements: ["ICarRepo", "IAudited"] });
+    // `class(ICarRepo)`: an interface this unit declares is never the base class.
+    expect(cls(classes, "TBareRepo")).toMatchObject({ extends: null, implements: ["ICarRepo"] });
+    expect(cls(classes, "TCarService")).toMatchObject({ extends: "TBaseService", implements: [] });
   });
 
   it("attributes a constructor's body to it", async () => {
     const { classes } = await analyze(SERVICE);
-    const ctor = method(cls(classes, "TOrderService"), "constructor");
-    expect(ctor.params).toEqual([{ name: "ARepo", type: "IOrderRepo", defaultValue: null }]);
+    const ctor = method(cls(classes, "TCarService"), "constructor");
+    expect(ctor.params).toEqual([{ name: "ARepo", type: "ICarRepo", defaultValue: null }]);
     expect(ctor.calls.map((c) => c.name)).toContain("FRepo.Find");
     // The span is the implementation's, not the one-line declaration's.
-    expect(ctor.line).toBe(SERVICE.split("\n").indexOf("constructor TOrderService.Create(const ARepo: IOrderRepo);") + 1);
+    expect(ctor.line).toBe(SERVICE.split("\n").indexOf("constructor TCarService.Create(const ARepo: ICarRepo);") + 1);
   });
 
   it("reads one property per field name, with RTTI attributes and Spring4D's [Inject('name')]", async () => {
     const { classes } = await analyze(SERVICE);
-    expect(cls(classes, "TOrderService").properties).toEqual([
-      { name: "FRepo", type: "IOrderRepo", visibility: "private", isStatic: false, isReadonly: false, decorators: ["Inject"] },
+    expect(cls(classes, "TCarService").properties).toEqual([
+      { name: "FRepo", type: "ICarRepo", visibility: "private", isStatic: false, isReadonly: false, decorators: ["Inject"] },
       {
         name: "FNotifier", type: "INotifier", visibility: "private", isStatic: false, isReadonly: false,
         decorators: ["Inject('email')", "Weak"], qualifier: "email",
@@ -145,21 +145,21 @@ describe("pascal classes and interfaces", () => {
 
   it("reads declared locals, skipping builtin and structured types", async () => {
     const { classes } = await analyze(SERVICE);
-    expect(method(cls(classes, "TOrderService"), "Run").localTypes).toEqual([{ name: "Calc", type: "TDiscountCalc" }]);
+    expect(method(cls(classes, "TCarService"), "Run").localTypes).toEqual([{ name: "Calc", type: "TDiscountCalc" }]);
   });
 
   it("holds a noise-named call on a typed field until the receiver is known", async () => {
     const { classes } = await analyze(SERVICE);
     const a = createEmptyAnalysis("Unit1.pas", "pascal");
     a.classes = classes;
-    expect(callNames(cls(classes, "TOrderService"), "Run")).not.toContain("FRepo.find");
+    expect(callNames(cls(classes, "TCarService"), "Run")).not.toContain("FRepo.find");
     restoreTypedReceiverCalls(a);
-    expect(callNames(cls(classes, "TOrderService"), "Run")).toContain("FRepo.find");
+    expect(callNames(cls(classes, "TCarService"), "Run")).toContain("FRepo.find");
   });
 
   it("gives a local procedure's calls to the routine that owns it", async () => {
     const { classes } = await analyze(SERVICE);
-    expect(callNames(cls(classes, "TOrderService"), "LocalProc")).toEqual(["Inner", "FNotifier.Send"]);
+    expect(callNames(cls(classes, "TCarService"), "LocalProc")).toEqual(["Inner", "FNotifier.Send"]);
   });
 
   it("keeps routine calls out of the unit-level <setup>, and attributes out of every call list", async () => {
@@ -213,10 +213,10 @@ interface
 implementation
 procedure TSvc.ResolveCase;
 var
-  R: IOrderRepo;
+  R: ICarRepo;
   N: INotifier;
 begin
-  R := GlobalContainer.Resolve<IOrderRepo>;
+  R := GlobalContainer.Resolve<ICarRepo>;
   N := GlobalContainer.Resolve<INotifier>('sms');
   GlobalContainer.Resolve<INotifier>('email').Send('x');
   ServiceLocator.GetService<IClock>.NowUtc;
@@ -225,7 +225,7 @@ begin
   Other.Make<IRepo>.Find(1);
   var C := TDiscountCalc.Create;
   var Q := GlobalContainer.Resolve<IQueue>('jobs');
-  var X := MakeThing;
+  var X := MakeBall;
 end;
 end.`;
 
@@ -233,7 +233,7 @@ end.`;
     const { functions } = await analyze(UNIT);
     const fn = functions.find((f) => f.name === "TSvc.ResolveCase")!;
     expect(fn.localTypes).toEqual([
-      { name: "R", type: "IOrderRepo" },
+      { name: "R", type: "ICarRepo" },
       { name: "N", type: "INotifier", qualifier: "sms" },
       { name: "C", type: "TDiscountCalc" },
       { name: "Q", type: "IQueue", qualifier: "jobs" },
@@ -272,7 +272,7 @@ interface
 implementation
 procedure RegisterServices;
 begin
-  GlobalContainer.RegisterType<TSqlOrderRepo>.Implements<IOrderRepo>;
+  GlobalContainer.RegisterType<TSqlCarRepo>.Implements<ICarRepo>;
   GlobalContainer.RegisterType<IClock, TSystemClock>;
   GlobalContainer.RegisterType<TEmailNotifier>.Implements<INotifier>('email');
   GlobalContainer.RegisterType<TSmsNotifier>.Implements<INotifier>('sms').AsDefault;
@@ -289,7 +289,7 @@ begin
     RegisterType<TMemCache>.Implements<ICache>;
 end;
 end.`)).toEqual([
-      { service: "IOrderRepo", implementation: "TSqlOrderRepo", via: "RegisterType" },
+      { service: "ICarRepo", implementation: "TSqlCarRepo", via: "RegisterType" },
       { service: "IClock", implementation: "TSystemClock", via: "RegisterType" },
       { service: "INotifier", implementation: "TEmailNotifier", via: "RegisterType", qualifier: "email", keyedOnly: true },
       { service: "INotifier", implementation: "TSmsNotifier", via: "RegisterType", qualifier: "sms", primary: true },
@@ -309,7 +309,7 @@ interface
 implementation
 procedure RegisterServices;
 begin
-  GlobalContainer.RegisterType<TOrderService>.AsSingleton;
+  GlobalContainer.RegisterType<TCarService>.AsSingleton;
   GlobalContainer.RegisterType<TPricing>;
   GlobalContainer.RegisterType<TPricing>.DelegateTo(function: TPricing begin Result := TPricing.Create; end);
   GlobalContainer.RegisterType<INotifier>.DelegateTo(

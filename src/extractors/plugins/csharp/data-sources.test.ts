@@ -197,13 +197,13 @@ describe("C# raw SQL — the table a command runs against", () => {
     deleteCommand.ExecuteNonQuery();
     var builtCommand = new SqlCommand(sql, conn);
     builtCommand.ExecuteReader();
-    var n = await connection.QueryAsync<Order>("SELECT * FROM orders");`)).map((d) => `${d.name} ${d.entity ?? "-"} ${d.access ?? "-"}`);
+    var n = await connection.QueryAsync<Car>("SELECT * FROM cars");`)).map((d) => `${d.name} ${d.entity ?? "-"} ${d.access ?? "-"}`);
     expect(rows).toEqual([
       "ADO.NET: ExecuteScalar notes read",
       "ADO.NET: ExecuteNonQuery notes write",
       "ADO.NET: ExecuteNonQuery audit_log write",
       "ADO.NET: ExecuteReader - read",
-      "Dapper: QueryAsync orders read",
+      "Dapper: QueryAsync cars read",
     ]);
   });
 });
@@ -214,8 +214,8 @@ describe("C# HttpClient JSON bodies", () => {
 public class H {
   private readonly HttpClient _http;
   public async Task M(string name, string email) {
-    await _http.PostAsJsonAsync("/api/users", new { Name = name, Age = 3, Tags = new[] { "a" }, Address = new { City = "x" }, email });
-    await _http.PutAsJsonAsync("/api/users/1", new UpdateUser { Name = "n", Active = true, Score = 1.5 });
+    await _http.PostAsJsonAsync("/api/players", new { Name = name, Age = 3, Tags = new[] { "a" }, Address = new { City = "x" }, email });
+    await _http.PutAsJsonAsync("/api/players/1", new UpdatePlayer { Name = "n", Active = true, Score = 1.5 });
     var dto = new { Title = $"t{name}" };
     await _http.PatchAsJsonAsync("/api/x", dto);
     await _http.PostAsJsonAsync("/api/y", someDto);

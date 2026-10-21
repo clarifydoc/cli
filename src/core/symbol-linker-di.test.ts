@@ -78,15 +78,15 @@ const consumer = (
   calls: CallInfo[],
   props: PropertyInfo[] = [prop("_notifier", "INotifier")],
   extra: Parameters<typeof file>[2] = {},
-) => file(path, [cls("OrderService", { properties: props, methods: [method("Place", calls)] })], extra);
+) => file(path, [cls("CarService", { properties: props, methods: [method("Place", calls)] })], extra);
 
 const callsFrom = (links: ReturnType<typeof buildSymbolLinks>, sourceFile: string) =>
   links.filter((l) => l.sourceFile === sourceFile && l.relation !== "reference");
 
 describe("symbol-linker — dependency injection", () => {
   it("stays on the interface when two implementations exist and nothing binds one", () => {
-    const links = buildSymbolLinks([...notifiers(), consumer("Infra/Mail/OrderService.cs", [call("_notifier.Send")])]);
-    const out = callsFrom(links, "Infra/Mail/OrderService.cs");
+    const links = buildSymbolLinks([...notifiers(), consumer("Infra/Mail/CarService.cs", [call("_notifier.Send")])]);
+    const out = callsFrom(links, "Infra/Mail/CarService.cs");
     // No guessing by directory proximity: MailNotifier shares the caller's dir.
     expect(out.map((l) => l.targetSymbol)).toEqual(["INotifier.Send"]);
     expect(out[0]!.strategy).toBe("injection");
@@ -94,26 +94,26 @@ describe("symbol-linker — dependency injection", () => {
 
   it("follows a container registration to the bound implementation", () => {
     const program = file("Api/Program.cs", [], { diBindings: [bind("INotifier", "SmsNotifier")] });
-    const links = buildSymbolLinks([...notifiers(), program, consumer("Infra/Mail/OrderService.cs", [call("_notifier.Send")])]);
-    const out = callsFrom(links, "Infra/Mail/OrderService.cs");
+    const links = buildSymbolLinks([...notifiers(), program, consumer("Infra/Mail/CarService.cs", [call("_notifier.Send")])]);
+    const out = callsFrom(links, "Infra/Mail/CarService.cs");
     expect(out.map((l) => [l.targetSymbol, l.strategy])).toEqual([["SmsNotifier.Send", "di-binding"]]);
     // …and records that the caller depends on the interface's signature.
-    const ref = links.find((l) => l.sourceFile === "Infra/Mail/OrderService.cs" && l.relation === "reference");
+    const ref = links.find((l) => l.sourceFile === "Infra/Mail/CarService.cs" && l.relation === "reference");
     expect(ref?.targetSymbol).toBe("INotifier.Send");
   });
 
   it("does not choose when two unconditional registrations disagree", () => {
     const program = file("Api/Program.cs", [], { diBindings: [bind("INotifier", "SmsNotifier"), bind("INotifier", "MailNotifier")] });
-    const links = buildSymbolLinks([...notifiers(), program, consumer("App/OrderService.cs", [call("_notifier.Send")])]);
-    expect(callsFrom(links, "App/OrderService.cs").map((l) => l.targetSymbol)).toEqual(["INotifier.Send"]);
+    const links = buildSymbolLinks([...notifiers(), program, consumer("App/CarService.cs", [call("_notifier.Send")])]);
+    expect(callsFrom(links, "App/CarService.cs").map((l) => l.targetSymbol)).toEqual(["INotifier.Send"]);
   });
 
   it("prefers a primary registration, then one named like the injected member", () => {
     const primary = file("Api/Config.cs", [], {
       diBindings: [bind("INotifier", "SmsNotifier", { primary: true }), bind("INotifier", "MailNotifier")],
     });
-    let links = buildSymbolLinks([...notifiers(), primary, consumer("App/OrderService.cs", [call("_notifier.Send")])]);
-    expect(callsFrom(links, "App/OrderService.cs")[0]!.targetSymbol).toBe("SmsNotifier.Send");
+    let links = buildSymbolLinks([...notifiers(), primary, consumer("App/CarService.cs", [call("_notifier.Send")])]);
+    expect(callsFrom(links, "App/CarService.cs")[0]!.targetSymbol).toBe("SmsNotifier.Send");
 
     const byName = file("Api/Config.cs", [], {
       diBindings: [
@@ -124,9 +124,9 @@ describe("symbol-linker — dependency injection", () => {
     links = buildSymbolLinks([
       ...notifiers(),
       byName,
-      consumer("App/OrderService.cs", [call("mailNotifier.Send")], [prop("mailNotifier", "INotifier")]),
+      consumer("App/CarService.cs", [call("mailNotifier.Send")], [prop("mailNotifier", "INotifier")]),
     ]);
-    expect(callsFrom(links, "App/OrderService.cs")[0]!.targetSymbol).toBe("MailNotifier.Send");
+    expect(callsFrom(links, "App/CarService.cs")[0]!.targetSymbol).toBe("MailNotifier.Send");
   });
 
   it("selects by qualifier, and keeps keyed-only registrations away from unqualified injection", () => {
@@ -136,43 +136,43 @@ describe("symbol-linker — dependency injection", () => {
     let links = buildSymbolLinks([
       ...notifiers(),
       keyed,
-      consumer("App/OrderService.cs", [call("_notifier.Send")], [prop("_notifier", "INotifier", { qualifier: "sms" })]),
+      consumer("App/CarService.cs", [call("_notifier.Send")], [prop("_notifier", "INotifier", { qualifier: "sms" })]),
     ]);
-    expect(callsFrom(links, "App/OrderService.cs")[0]!.targetSymbol).toBe("SmsNotifier.Send");
+    expect(callsFrom(links, "App/CarService.cs")[0]!.targetSymbol).toBe("SmsNotifier.Send");
 
-    links = buildSymbolLinks([...notifiers(), keyed, consumer("App/OrderService.cs", [call("_notifier.Send")])]);
-    expect(callsFrom(links, "App/OrderService.cs")[0]!.targetSymbol).toBe("INotifier.Send");
+    links = buildSymbolLinks([...notifiers(), keyed, consumer("App/CarService.cs", [call("_notifier.Send")])]);
+    expect(callsFrom(links, "App/CarService.cs")[0]!.targetSymbol).toBe("INotifier.Send");
   });
 
   it("resolves a token injection point through the token's registration", () => {
     const module = file("src/app.module.ts", [], { language: "typescript", diBindings: [bind("NOTIFIER", "SmsNotifier")] });
     const ts = notifiers().map((a) => ({ ...a, filePath: a.filePath.replace(/\.cs$/, ".ts"), language: "typescript" }) as FileAnalysis);
-    const svc = consumer("src/order.service.ts", [call("this._notifier.Send")], [prop("_notifier", "INotifier", { qualifier: "NOTIFIER" })], { language: "typescript" });
+    const svc = consumer("src/car.service.ts", [call("this._notifier.Send")], [prop("_notifier", "INotifier", { qualifier: "NOTIFIER" })], { language: "typescript" });
     const links = buildSymbolLinks([...ts, module, svc]);
-    expect(callsFrom(links, "src/order.service.ts")[0]!.targetSymbol).toBe("SmsNotifier.Send");
+    expect(callsFrom(links, "src/car.service.ts")[0]!.targetSymbol).toBe("SmsNotifier.Send");
   });
 
   it("resolves a member injected by key alone (no declared type) through its registration", () => {
-    const container = file("config/container.rb", [], { language: "ruby", diBindings: [bind("repos.user", "SqlNotifier", { keyedOnly: true })] });
+    const container = file("config/container.rb", [], { language: "ruby", diBindings: [bind("repos.player", "SqlNotifier", { keyedOnly: true })] });
     const impl = file("app/sql_notifier.rb", [cls("SqlNotifier", { methods: [method("Send", [], [], 3)] })], { language: "ruby" });
-    const svc = file("app/order_service.rb", [cls("OrderService", {
-      properties: [{ name: "user", type: null, visibility: "private", isStatic: false, isReadonly: true, qualifier: "repos.user" }],
-      methods: [method("place", [call("user.Send")])],
+    const svc = file("app/car_service.rb", [cls("CarService", {
+      properties: [{ name: "player", type: null, visibility: "private", isStatic: false, isReadonly: true, qualifier: "repos.player" }],
+      methods: [method("place", [call("player.Send")])],
     })], { language: "ruby" });
     const links = buildSymbolLinks([container, impl, svc]);
-    expect(callsFrom(links, "app/order_service.rb")[0]).toMatchObject({ targetSymbol: "SqlNotifier.Send", strategy: "di-binding" });
+    expect(callsFrom(links, "app/car_service.rb")[0]).toMatchObject({ targetSymbol: "SqlNotifier.Send", strategy: "di-binding" });
   });
 
   it("applies a contextual registration only to its consumer", () => {
     const provider = file("app/Providers/AppServiceProvider.php", [], {
       language: "php",
-      diBindings: [bind("INotifier", "MailNotifier"), bind("INotifier", "SmsNotifier", { consumer: "OrderService" })],
+      diBindings: [bind("INotifier", "MailNotifier"), bind("INotifier", "SmsNotifier", { consumer: "CarService" })],
     });
     const php = notifiers().map((a) => ({ ...a, filePath: a.filePath.replace(/\.cs$/, ".php"), language: "php" }) as FileAnalysis);
-    const order = consumer("app/OrderService.php", [call("this._notifier.Send")], undefined, { language: "php" });
+    const car = consumer("app/CarService.php", [call("this._notifier.Send")], undefined, { language: "php" });
     const other = file("app/Billing.php", [cls("Billing", { properties: [prop("_notifier", "INotifier")], methods: [method("Bill", [call("this._notifier.Send")])] })], { language: "php" });
-    const links = buildSymbolLinks([...php, provider, order, other]);
-    expect(callsFrom(links, "app/OrderService.php")[0]!.targetSymbol).toBe("SmsNotifier.Send");
+    const links = buildSymbolLinks([...php, provider, car, other]);
+    expect(callsFrom(links, "app/CarService.php")[0]!.targetSymbol).toBe("SmsNotifier.Send");
     expect(callsFrom(links, "app/Billing.php")[0]!.targetSymbol).toBe("MailNotifier.Send");
   });
 
@@ -217,7 +217,7 @@ describe("symbol-linker — dependency injection", () => {
     const iface = file("Domain/INotifier.cs", [cls("INotifier", { kind: "interface", methods: [method("Send")] })]);
     const regA = file("a/Program.cs", [], { diBindings: [bind("INotifier", "SmsNotifier")] });
     const regB = file("b/Program.cs", [], { diBindings: [bind("INotifier", "SmsNotifier")] });
-    const out = callsFrom(buildSymbolLinks([iface, a, b, regA, regB, consumer("App/OrderService.cs", [call("_notifier.Send")])]), "App/OrderService.cs");
+    const out = callsFrom(buildSymbolLinks([iface, a, b, regA, regB, consumer("App/CarService.cs", [call("_notifier.Send")])]), "App/CarService.cs");
     expect(out.map((l) => l.targetSymbol)).toEqual(["INotifier.Send"]);
   });
 
@@ -238,18 +238,18 @@ describe("symbol-linker — dependency injection", () => {
 
   it("ignores a test container's registrations for production code", () => {
     const testSetup = file("tests/TestStartup.cs", [], { diBindings: [bind("INotifier", "SmsNotifier")] });
-    const links = buildSymbolLinks([...notifiers(), testSetup, consumer("App/OrderService.cs", [call("_notifier.Send")])]);
-    expect(callsFrom(links, "App/OrderService.cs")[0]!.targetSymbol).toBe("INotifier.Send");
+    const links = buildSymbolLinks([...notifiers(), testSetup, consumer("App/CarService.cs", [call("_notifier.Send")])]);
+    expect(callsFrom(links, "App/CarService.cs")[0]!.targetSymbol).toBe("INotifier.Send");
   });
 
   it("prefers the consumer's own sub-project container, and needs agreement across others", () => {
     const apiA = file("A/Program.cs", [], { projectId: "A", diBindings: [bind("INotifier", "SmsNotifier")] });
     const apiB = file("B/Program.cs", [], { projectId: "B", diBindings: [bind("INotifier", "MailNotifier")] });
-    const inA = consumer("A/OrderService.cs", [call("_notifier.Send")], undefined, { projectId: "A" });
-    const inC = consumer("C/OrderService.cs", [call("_notifier.Send")], undefined, { projectId: "C" });
+    const inA = consumer("A/CarService.cs", [call("_notifier.Send")], undefined, { projectId: "A" });
+    const inC = consumer("C/CarService.cs", [call("_notifier.Send")], undefined, { projectId: "C" });
     const links = buildSymbolLinks([...notifiers(), apiA, apiB, inA, inC]);
-    expect(callsFrom(links, "A/OrderService.cs")[0]!.targetSymbol).toBe("SmsNotifier.Send");
-    expect(callsFrom(links, "C/OrderService.cs")[0]!.targetSymbol).toBe("INotifier.Send");
+    expect(callsFrom(links, "A/CarService.cs")[0]!.targetSymbol).toBe("SmsNotifier.Send");
+    expect(callsFrom(links, "C/CarService.cs")[0]!.targetSymbol).toBe("INotifier.Send");
   });
 
   it("follows an alias registration to the class it ends at", () => {
@@ -261,9 +261,9 @@ describe("symbol-linker — dependency injection", () => {
       ...notifiers(),
       legacy,
       program,
-      consumer("App/OrderService.cs", [call("_old.Send")], [prop("_old", "ILegacyNotifier")]),
+      consumer("App/CarService.cs", [call("_old.Send")], [prop("_old", "ILegacyNotifier")]),
     ]);
-    expect(callsFrom(links, "App/OrderService.cs")[0]!.targetSymbol).toBe("SmsNotifier.Send");
+    expect(callsFrom(links, "App/CarService.cs")[0]!.targetSymbol).toBe("SmsNotifier.Send");
   });
 
   it("lets a real registration override a default (TryAdd / @ImplementedBy) in any order", () => {
@@ -271,8 +271,8 @@ describe("symbol-linker — dependency injection", () => {
       const bindings = order.map((k) =>
         k === "try" ? bind("INotifier", "MailNotifier", { ifAbsent: true }) : bind("INotifier", "SmsNotifier"));
       const program = file("Api/Program.cs", [], { diBindings: bindings });
-      const links = buildSymbolLinks([...notifiers(), program, consumer("App/OrderService.cs", [call("_notifier.Send")])]);
-      expect(callsFrom(links, "App/OrderService.cs")[0]!.targetSymbol, order.join(",")).toBe("SmsNotifier.Send");
+      const links = buildSymbolLinks([...notifiers(), program, consumer("App/CarService.cs", [call("_notifier.Send")])]);
+      expect(callsFrom(links, "App/CarService.cs")[0]!.targetSymbol, order.join(",")).toBe("SmsNotifier.Send");
     }
   });
 
@@ -280,22 +280,22 @@ describe("symbol-linker — dependency injection", () => {
     const go = (path: string, classes: ReturnType<typeof cls>[], functions: unknown[] = [], diBindings?: DiBinding[]) =>
       file(path, classes, { language: "go", functions, ...(diBindings ? { diBindings } : {}) });
     const ctor = (name: string, returnType: string) => ({ ...method(name), returnType });
-    const iface = go("repo/repo.go", [{ ...cls("UserRepo", { kind: "interface", methods: [method("Find")] }), structural: true }]);
-    const pg = go("repo/pg.go", [cls("PgRepo", { methods: [method("Find", [], [], 9)] })], [ctor("NewPgRepo", "*PgRepo"), ctor("NewAny", "UserRepo")]);
+    const iface = go("repo/repo.go", [{ ...cls("PlayerRepo", { kind: "interface", methods: [method("Find")] }), structural: true }]);
+    const pg = go("repo/pg.go", [cls("PgRepo", { methods: [method("Find", [], [], 9)] })], [ctor("NewPgRepo", "*PgRepo"), ctor("NewAny", "PlayerRepo")]);
     const mem = go("repo/mem.go", [cls("MemRepo", { methods: [method("Find", [], [], 4)] })]);
-    const svc = go("svc/svc.go", [cls("Svc", { properties: [prop("repo", "UserRepo")], methods: [method("Get", [call("repo.Find")])] })]);
-    const app = (impl: string) => go("repo/module.go", [], [], [bind("UserRepo", impl)]);
+    const svc = go("svc/svc.go", [cls("Svc", { properties: [prop("repo", "PlayerRepo")], methods: [method("Get", [call("repo.Find")])] })]);
+    const app = (impl: string) => go("repo/module.go", [], [], [bind("PlayerRepo", impl)]);
     expect(callsFrom(buildSymbolLinks([iface, pg, mem, svc, app("NewPgRepo")]), "svc/svc.go")[0]!.targetSymbol).toBe("PgRepo.Find");
     // A provider declared to return the interface decides nothing.
-    expect(callsFrom(buildSymbolLinks([iface, pg, mem, svc, app("NewAny")]), "svc/svc.go")[0]!.targetSymbol).toBe("UserRepo.Find");
+    expect(callsFrom(buildSymbolLinks([iface, pg, mem, svc, app("NewAny")]), "svc/svc.go")[0]!.targetSymbol).toBe("PlayerRepo.Find");
   });
 
   it("expands an all-interfaces registration from the class's own declaration", () => {
     const sink = file("Infra/SlackSink.cs", [cls("SlackSink", { extends: "BaseSink", implements: ["INotifier", "IDisposable"], methods: [method("Send", [], [], 5)] })]);
     const base = file("Infra/BaseSink.cs", [cls("BaseSink")]);
     const module = file("Api/Module.cs", [], { diBindings: [{ service: "", implementation: "SlackSink", allInterfaces: true, line: 2, via: "test" }] });
-    const links = buildSymbolLinks([...notifiers(), sink, base, module, consumer("App/OrderService.cs", [call("_notifier.Send")])]);
-    expect(callsFrom(links, "App/OrderService.cs")[0]).toMatchObject({ targetSymbol: "SlackSink.Send", strategy: "di-binding" });
+    const links = buildSymbolLinks([...notifiers(), sink, base, module, consumer("App/CarService.cs", [call("_notifier.Send")])]);
+    expect(callsFrom(links, "App/CarService.cs")[0]).toMatchObject({ targetSymbol: "SlackSink.Send", strategy: "di-binding" });
   });
 
   it("resolves an extension method on a typed receiver — same file or not", () => {
@@ -314,45 +314,45 @@ describe("symbol-linker — dependency injection", () => {
     const base = file("Infra/BaseNotifier.cs", [cls("BaseNotifier", { methods: [method("Send", [], [], 4)] })]);
     const impl = file("Infra/QueueNotifier.cs", [cls("QueueNotifier", { extends: "BaseNotifier", implements: ["INotifier"] })]);
     const iface = file("Domain/INotifier.cs", [cls("INotifier", { kind: "interface", methods: [method("Send")] })]);
-    const links = buildSymbolLinks([base, impl, iface, consumer("App/OrderService.cs", [call("_notifier.Send")])]);
-    expect(callsFrom(links, "App/OrderService.cs")[0]!.targetSymbol).toBe("BaseNotifier.Send");
+    const links = buildSymbolLinks([base, impl, iface, consumer("App/CarService.cs", [call("_notifier.Send")])]);
+    expect(callsFrom(links, "App/CarService.cs")[0]!.targetSymbol).toBe("BaseNotifier.Send");
   });
 });
 
 describe("symbol-linker — typed receivers", () => {
   const repo = () =>
-    file("Data/UserRepository.php", [cls("UserRepository", { methods: [method("find", [], [], 6), method("save", [], [], 9)] })], { language: "php" });
+    file("Data/PlayerRepository.php", [cls("PlayerRepository", { methods: [method("find", [], [], 6), method("save", [], [], 9)] })], { language: "php" });
 
   it("links a name-classified database call when its receiver is an injected project class", () => {
-    const svc = file("Service/UserService.php", [cls("UserService", {
-      methods: [method("create", [call("repo.save", { kind: "database" })], [param("repo", "UserRepository")])],
+    const svc = file("Service/PlayerService.php", [cls("PlayerService", {
+      methods: [method("create", [call("repo.save", { kind: "database" })], [param("repo", "PlayerRepository")])],
     })], { language: "php" });
     const links = buildSymbolLinks([repo(), svc]);
-    expect(callsFrom(links, "Service/UserService.php").map((l) => l.targetSymbol)).toEqual(["UserRepository.save"]);
+    expect(callsFrom(links, "Service/PlayerService.php").map((l) => l.targetSymbol)).toEqual(["PlayerRepository.save"]);
   });
 
   it("leaves a database call alone when the declared type does not define the method", () => {
-    const svc = file("Service/UserService.php", [cls("UserService", {
-      methods: [method("create", [call("repo.persist", { kind: "database" })], [param("repo", "UserRepository")])],
+    const svc = file("Service/PlayerService.php", [cls("PlayerService", {
+      methods: [method("create", [call("repo.persist", { kind: "database" })], [param("repo", "PlayerRepository")])],
     })], { language: "php" });
-    expect(callsFrom(buildSymbolLinks([repo(), svc]), "Service/UserService.php")).toEqual([]);
+    expect(callsFrom(buildSymbolLinks([repo(), svc]), "Service/PlayerService.php")).toEqual([]);
   });
 
   it("scopes a bare receiver as local, then parameter, then field", () => {
     const other = file("Data/AuditLog.php", [cls("AuditLog", { methods: [method("find", [], [], 3)] })], { language: "php" });
-    const svc = file("Service/UserService.php", [cls("UserService", {
+    const svc = file("Service/PlayerService.php", [cls("PlayerService", {
       properties: [prop("repo", "AuditLog")],
-      methods: [method("load", [call("repo.find")], [param("repo", "UserRepository")])],
+      methods: [method("load", [call("repo.find")], [param("repo", "PlayerRepository")])],
     })], { language: "php" });
-    expect(callsFrom(buildSymbolLinks([repo(), other, svc]), "Service/UserService.php")[0]!.targetSymbol).toBe("UserRepository.find");
+    expect(callsFrom(buildSymbolLinks([repo(), other, svc]), "Service/PlayerService.php")[0]!.targetSymbol).toBe("PlayerRepository.find");
   });
 
   it("never reads a bare receiver as a field where fields need `this.`", () => {
-    const repoTs = file("src/repo.ts", [cls("UserRepo", { methods: [method("load", [], [], 3)] })], { language: "typescript" });
+    const repoTs = file("src/repo.ts", [cls("PlayerRepo", { methods: [method("load", [], [], 3)] })], { language: "typescript" });
     // A second `load`, so the unique-name heuristic cannot link the bare call.
     const decoy = file("src/other.ts", [cls("Other", { methods: [method("load", [], [], 2)] })], { language: "typescript" });
     const svc = file("src/svc.ts", [cls("Svc", {
-      properties: [prop("repo", "UserRepo")],
+      properties: [prop("repo", "PlayerRepo")],
       methods: [method("run", [call("repo.load"), call("this.repo.load")])],
     })], { language: "typescript" });
     const out = callsFrom(buildSymbolLinks([repoTs, decoy, svc]), "src/svc.ts");
@@ -361,37 +361,37 @@ describe("symbol-linker — typed receivers", () => {
 
   it("does not let a sibling class's field type a receiver", () => {
     const svc = file("Service/Both.php", [
-      cls("A", { properties: [prop("repo", "UserRepository")] }),
+      cls("A", { properties: [prop("repo", "PlayerRepository")] }),
       cls("B", { methods: [method("run", [call("this.repo.find")])] }),
     ], { language: "php" });
     expect(callsFrom(buildSymbolLinks([repo(), svc]), "Service/Both.php")).toEqual([]);
   });
 
   it("follows `self.x` and member chains through declared field types", () => {
-    const holder = file("Service/Holder.py", [cls("Holder", { properties: [prop("repo", "Optional[UserRepository]")] })], { language: "python" });
-    const repoPy = file("Data/repo.py", [cls("UserRepository", { methods: [method("find", [], [], 6)] })], { language: "python" });
+    const holder = file("Service/Holder.py", [cls("Holder", { properties: [prop("repo", "Optional[PlayerRepository]")] })], { language: "python" });
+    const repoPy = file("Data/repo.py", [cls("PlayerRepository", { methods: [method("find", [], [], 6)] })], { language: "python" });
     const svc = file("Service/svc.py", [cls("Svc", {
       properties: [prop("holder", "Holder")],
       methods: [method("run", [call("self.holder.repo.find")])],
     })], { language: "python" });
     const links = buildSymbolLinks([repoPy, holder, svc]);
-    expect(callsFrom(links, "Service/svc.py")[0]!.targetSymbol).toBe("UserRepository.find");
+    expect(callsFrom(links, "Service/svc.py")[0]!.targetSymbol).toBe("PlayerRepository.find");
   });
 
   it("normalizes optional chaining and non-null assertions on the receiver", () => {
-    const svc = file("Service/UserService.php", [cls("UserService", {
-      properties: [prop("repo", "?UserRepository")],
+    const svc = file("Service/PlayerService.php", [cls("PlayerService", {
+      properties: [prop("repo", "?PlayerRepository")],
       methods: [method("a", [call("this.repo?.find"), call("this.repo!!.save")])],
     })], { language: "php" });
-    const targets = callsFrom(buildSymbolLinks([repo(), svc]), "Service/UserService.php").map((l) => l.targetSymbol).sort();
-    expect(targets).toEqual(["UserRepository.find", "UserRepository.save"]);
+    const targets = callsFrom(buildSymbolLinks([repo(), svc]), "Service/PlayerService.php").map((l) => l.targetSymbol).sort();
+    expect(targets).toEqual(["PlayerRepository.find", "PlayerRepository.save"]);
   });
 
   it("resolves an inline service-locator receiver from CallInfo.receiverType", () => {
-    const svc = file("Service/UserService.php", [cls("UserService", {
-      methods: [method("a", [call("app(UserRepository::class).find", { receiverType: "UserRepository" })])],
+    const svc = file("Service/PlayerService.php", [cls("PlayerService", {
+      methods: [method("a", [call("app(PlayerRepository::class).find", { receiverType: "PlayerRepository" })])],
     })], { language: "php" });
-    expect(callsFrom(buildSymbolLinks([repo(), svc]), "Service/UserService.php")[0]!.targetSymbol).toBe("UserRepository.find");
+    expect(callsFrom(buildSymbolLinks([repo(), svc]), "Service/PlayerService.php")[0]!.targetSymbol).toBe("PlayerRepository.find");
   });
 
   describe("call chains through declared return types", () => {
@@ -479,8 +479,8 @@ describe("symbol-linker — typed receivers", () => {
     });
 
     it("unwraps the language's task type when the initializer is awaited", () => {
-      const repo = file("Data/Repo.cs", [cls("Repo", { methods: [returning("FindAsync", "Task<User>", 3), returning("Find", "User", 6)] })]);
-      const user = file("Domain/User.cs", [cls("User", { methods: [returning("Rename", null, 4)] })]);
+      const repo = file("Data/Repo.cs", [cls("Repo", { methods: [returning("FindAsync", "Task<Player>", 3), returning("Find", "Player", 6)] })]);
+      const player = file("Domain/Player.cs", [cls("Player", { methods: [returning("Rename", null, 4)] })]);
       const svc = file("App/Svc.cs", [cls("Svc", {
         properties: [prop("_repo", "Repo")],
         methods: [{ ...method("Run", [call("a.Rename"), call("b.Rename"), call("c.Rename")]), localTypes: [
@@ -491,8 +491,8 @@ describe("symbol-linker — typed receivers", () => {
         ] } as ReturnType<typeof method>],
       })]);
       const decoy = file("Domain/Group.cs", [cls("Group", { methods: [returning("Rename", null, 4)] })]);
-      const out = callsFrom(buildSymbolLinks([repo, user, decoy, svc]), "App/Svc.cs");
-      expect(out.map((l) => [l.callName, l.targetSymbol])).toEqual([["a.Rename", "User.Rename"], ["b.Rename", "User.Rename"]]);
+      const out = callsFrom(buildSymbolLinks([repo, player, decoy, svc]), "App/Svc.cs");
+      expect(out.map((l) => [l.callName, l.targetSymbol])).toEqual([["a.Rename", "Player.Rename"], ["b.Rename", "Player.Rename"]]);
     });
 
     it("keeps a reassigned parameter's declared type when the reassigning call states none", () => {
@@ -541,8 +541,8 @@ describe("symbol-linker — typed receivers", () => {
     expect(callsFrom(buildSymbolLinks([helper, other, ctl(["StdHelper", "OtherHelper"])]), "app/controllers/x.rb")).toEqual([]);
     const trait = file("app/HasRoles.php", [cls("HasRoles", { methods: [method("roles", [], [], 3)] })], { language: "php" });
     const decoy = file("app/Team.php", [cls("Team", { methods: [method("roles", [], [], 3)] })], { language: "php" });
-    const user = file("app/User.php", [cls("User", { implements: ["HasRoles"], methods: [method("can", [call("this.roles"), call("roles")], [], 5)] })], { language: "php" });
-    expect(callsFrom(buildSymbolLinks([trait, decoy, user]), "app/User.php").map((l) => [l.callName, l.targetSymbol])).toEqual([["this.roles", "HasRoles.roles"]]);
+    const player = file("app/Player.php", [cls("Player", { implements: ["HasRoles"], methods: [method("can", [call("this.roles"), call("roles")], [], 5)] })], { language: "php" });
+    expect(callsFrom(buildSymbolLinks([trait, decoy, player]), "app/Player.php").map((l) => [l.callName, l.targetSymbol])).toEqual([["this.roles", "HasRoles.roles"]]);
   });
 
   it("finds `Outer::Inner.m` where Inner is declared nested inside Outer under its simple name", () => {
@@ -631,12 +631,12 @@ describe("symbol-linker — typed receivers", () => {
   it("follows a NAMED re-export past the barrel, keeping the barrel only when it leads outside the project", () => {
     const withIo = (a: FileAnalysis, extra: Record<string, unknown>) => ({ ...a, ...extra }) as unknown as FileAnalysis;
     const impl = file("app/pkg/impl.py", [cls("Service", { methods: [method("__init__", [], [], 4)] })], { language: "python" });
-    const helpers = file("app/pkg/helpers.py", [], { language: "python", functions: [method("make_thing", [], [], 1)] });
-    // `from .impl import Service` / `from app.pkg.helpers import make_thing as make` /
+    const helpers = file("app/pkg/helpers.py", [], { language: "python", functions: [method("make_ball", [], [], 1)] });
+    // `from .impl import Service` / `from app.pkg.helpers import make_ball as make` /
     // `from vendored_lib import connect` — the last names no project file.
     const init = withIo(file("app/pkg/__init__.py", [], { language: "python" }), { exports: [
       { name: "Service", kind: "re-export", line: 1, source: ".impl" },
-      { name: "make", kind: "re-export", line: 2, source: "app.pkg.helpers", sourceName: "make_thing" },
+      { name: "make", kind: "re-export", line: 2, source: "app.pkg.helpers", sourceName: "make_ball" },
       { name: "connect", kind: "re-export", line: 3, source: "vendored_lib" },
     ] });
     const main = file("app/main.py", [], { language: "python", functions: [method("main", [
@@ -647,7 +647,7 @@ describe("symbol-linker — typed receivers", () => {
     const out = callsFrom(buildSymbolLinks([impl, helpers, init, main]), "app/main.py");
     expect(out.map((l) => [l.callName, l.targetFile, l.targetSymbol])).toEqual([
       ["Service", "app/pkg/impl.py", "Service.__init__"],
-      ["make", "app/pkg/helpers.py", "make_thing"],
+      ["make", "app/pkg/helpers.py", "make_ball"],
       ["connect", "app/pkg/__init__.py", "connect"],
     ]);
   });
@@ -669,14 +669,14 @@ describe("symbol-linker — typed receivers", () => {
     const withIo = (a: FileAnalysis, extra: Record<string, unknown>) => ({ ...a, ...extra }) as unknown as FileAnalysis;
     const helpers = withIo(file("src/helpers.php", [], { language: "php", functions: [method("money", [], [], 3)] }), { declaredNamespace: "App" });
     const legacy = withIo(file("src/legacy.php", [], { language: "php", functions: [method("money", [], [], 9)] }), { declaredNamespace: "Legacy" });
-    const invoice = withIo(file("src/Invoice.php", [cls("Invoice", { methods: [method("total", [call("money"), call("\\App\\money"), call("new \\Legacy\\Thing")])] })], { language: "php" }), { declaredNamespace: "App" });
-    const thing = withIo(file("src/Thing.php", [cls("Thing")], { language: "php" }), { declaredNamespace: "Legacy" });
+    const bill = withIo(file("src/Bill.php", [cls("Bill", { methods: [method("total", [call("money"), call("\\App\\money"), call("new \\Legacy\\Ball")])] })], { language: "php" }), { declaredNamespace: "App" });
+    const ball = withIo(file("src/Ball.php", [cls("Ball")], { language: "php" }), { declaredNamespace: "Legacy" });
     const page = withIo(file("page.php", [], { language: "php", functions: [method("<setup>", [call("money", { kind: "cross-file", target: "Legacy\\money" })])] }), {});
-    const out = buildSymbolLinks([helpers, legacy, invoice, thing, page]);
-    expect(callsFrom(out, "src/Invoice.php").map((l) => [l.callName, l.targetFile])).toEqual([
+    const out = buildSymbolLinks([helpers, legacy, bill, ball, page]);
+    expect(callsFrom(out, "src/Bill.php").map((l) => [l.callName, l.targetFile])).toEqual([
       ["money", "src/helpers.php"],
       ["\\App\\money", "src/helpers.php"],
-      ["new \\Legacy\\Thing", "src/Thing.php"],
+      ["new \\Legacy\\Ball", "src/Ball.php"],
     ]);
     expect(callsFrom(out, "page.php").map((l) => [l.callName, l.targetFile])).toEqual([["money", "src/legacy.php"]]);
   });
@@ -706,9 +706,9 @@ describe("symbol-linker — typed receivers", () => {
   it("types a local by what a function of an imported package returns (`repo := store.NewRepo()`)", () => {
     const withIo = (a: FileAnalysis, extra: Record<string, unknown>) => ({ ...a, ...extra }) as unknown as FileAnalysis;
     const store = file("store/store.go", [
-      cls("Repo", { methods: [{ ...method("Find", [], [], 11), returnType: "User" }] }),
-      cls("User", { methods: [method("Save", [], [], 5)] }),
-      cls("Other", { methods: [{ ...method("Find", [], [], 20), returnType: "User" }, method("Save", [], [], 21)] }),
+      cls("Repo", { methods: [{ ...method("Find", [], [], 11), returnType: "Player" }] }),
+      cls("Player", { methods: [method("Save", [], [], 5)] }),
+      cls("Other", { methods: [{ ...method("Find", [], [], 20), returnType: "Player" }, method("Save", [], [], 21)] }),
     ], { language: "go", functions: [{ ...method("NewRepo", [], [], 9), returnType: "Repo" }] });
     const svc = withIo(file("svc/svc.go", [], { language: "go", functions: [{
       ...method("Run", [call("store.NewRepo"), call("repo.Find"), call("u.Save")]),
@@ -717,7 +717,7 @@ describe("symbol-linker — typed receivers", () => {
     const out = callsFrom(buildSymbolLinks([store, svc]), "svc/svc.go");
     expect(out.filter((l) => l.callName !== "store.NewRepo").map((l) => [l.callName, l.targetSymbol, l.strategy])).toEqual([
       ["repo.Find", "Repo.Find", "injection"],
-      ["u.Save", "User.Save", "injection"],
+      ["u.Save", "Player.Save", "injection"],
     ]);
   });
 
@@ -726,27 +726,27 @@ describe("symbol-linker — typed receivers", () => {
     const dbPkg = file("models/db/engine.go", [cls("Engine", { methods: [method("Where", [], [], 8)] })], {
       language: "go", functions: [{ ...method("GetEngine", [], [], 3), returnType: "Engine" }],
     });
-    const user = withIo(file("models/user.go", [], { language: "go", functions: [{
+    const player = withIo(file("models/player.go", [], { language: "go", functions: [{
       ...method("Find", [call("db.GetEngine"), call("db.Where")]),
       localTypes: [{ name: "db", type: "", from: "db.GetEngine()" }],
     }] }), { imports: [{ source: "example.com/app/models/db", specifiers: ["db"], isDefault: false, isNamespace: false, isType: false, line: 3 }] });
-    const out = callsFrom(buildSymbolLinks([dbPkg, user]), "models/user.go");
+    const out = callsFrom(buildSymbolLinks([dbPkg, player]), "models/player.go");
     expect(out.some((l) => l.callName === "db.Where" && l.targetSymbol === "Engine.Where")).toBe(true);
   });
 
   it("resolves a bare PHP call to the one included file that defines it", () => {
     const withIo = (a: FileAnalysis, extra: Record<string, unknown>) => ({ ...a, ...extra }) as unknown as FileAnalysis;
-    const db = file("site/inc/db.php", [], { language: "php", functions: [method("find_user", [], [], 2)] });
+    const db = file("site/inc/db.php", [], { language: "php", functions: [method("find_player", [], [], 2)] });
     const header = file("site/inc/header.php", [], { language: "php", functions: [method("render_header", [], [], 3)] });
     const inc = (source: string, line: number) => ({ source, specifiers: [], isDefault: false, isNamespace: false, isType: false, line });
     // `require_once __DIR__ . '/inc/db.php'` and `include 'inc/header.php'`
     // (from the site's root, a folder below the repository's).
-    const index = withIo(file("site/index.php", [], { language: "php", functions: [method("<setup>", [call("find_user"), call("render_header"), call("mysqli_query")])] }), {
+    const index = withIo(file("site/index.php", [], { language: "php", functions: [method("<setup>", [call("find_player"), call("render_header"), call("mysqli_query")])] }), {
       imports: [inc("./inc/db.php", 2), inc("inc/header.php", 3)],
     });
     const out = callsFrom(buildSymbolLinks([db, header, index]), "site/index.php");
     expect(out.map((l) => [l.callName, l.targetFile, l.strategy])).toEqual([
-      ["find_user", "site/inc/db.php", "import-file"],
+      ["find_player", "site/inc/db.php", "import-file"],
       ["render_header", "site/inc/header.php", "import-file"],
     ]);
   });
@@ -793,12 +793,12 @@ describe("symbol-linker — typed receivers", () => {
 
   it("only binds the leaf on the receiver's own type, never an intermediate one", () => {
     // `this.repo.inner.find` — `inner` is untyped, so nothing may bind `find`
-    // on UserRepository (the old leaf fallback did).
-    const svc = file("Service/UserService.php", [cls("UserService", {
-      properties: [prop("repo", "UserRepository")],
+    // on PlayerRepository (the old leaf fallback did).
+    const svc = file("Service/PlayerService.php", [cls("PlayerService", {
+      properties: [prop("repo", "PlayerRepository")],
       methods: [method("a", [call("this.repo.inner.find")])],
     })], { language: "php" });
-    expect(callsFrom(buildSymbolLinks([repo(), svc]), "Service/UserService.php")).toEqual([]);
+    expect(callsFrom(buildSymbolLinks([repo(), svc]), "Service/PlayerService.php")).toEqual([]);
   });
 
   it("still resolves `super().m()` / `super(Cls, self).m()` through the base class", () => {
@@ -810,12 +810,12 @@ describe("symbol-linker — typed receivers", () => {
 
   it("does not resolve `this.repo.find` to a base class's own `find`", () => {
     const base = file("Service/BaseService.php", [cls("BaseService", { methods: [method("find", [], [], 2)] })], { language: "php" });
-    const svc = file("Service/UserService.php", [cls("UserService", {
+    const svc = file("Service/PlayerService.php", [cls("PlayerService", {
       extends: "BaseService",
-      properties: [prop("repo", "UserRepository")],
+      properties: [prop("repo", "PlayerRepository")],
       methods: [method("a", [call("this.repo.find")])],
     })], { language: "php" });
-    expect(callsFrom(buildSymbolLinks([repo(), base, svc]), "Service/UserService.php")[0]!.targetSymbol).toBe("UserRepository.find");
+    expect(callsFrom(buildSymbolLinks([repo(), base, svc]), "Service/PlayerService.php")[0]!.targetSymbol).toBe("PlayerRepository.find");
   });
 });
 
@@ -832,23 +832,23 @@ describe("symbol-linker — interfaces keyed by definition", () => {
 
   it("resolves a type split across files of one directory (class + extension)", () => {
     const decl = file("App/PgRepo.swift", [cls("PgRepo", { extends: "NSObject" })], { language: "swift" });
-    const ext = file("App/PgRepo+UserRepo.swift", [cls("PgRepo", { implements: ["UserRepo"], methods: [method("load", [], [], 4)] })], { language: "swift" });
-    const proto = file("App/UserRepo.swift", [cls("UserRepo", { kind: "interface", methods: [method("load")] })], { language: "swift" });
-    const reg = file("App/DI.swift", [], { language: "swift", diBindings: [bind("UserRepo", "PgRepo")] });
+    const ext = file("App/PgRepo+PlayerRepo.swift", [cls("PgRepo", { implements: ["PlayerRepo"], methods: [method("load", [], [], 4)] })], { language: "swift" });
+    const proto = file("App/PlayerRepo.swift", [cls("PlayerRepo", { kind: "interface", methods: [method("load")] })], { language: "swift" });
+    const reg = file("App/DI.swift", [], { language: "swift", diBindings: [bind("PlayerRepo", "PgRepo")] });
     const svc = file("Feature/Reporter.swift", [cls("Reporter", {
-      properties: [prop("repo", "UserRepo"), prop("pg", "PgRepo")],
+      properties: [prop("repo", "PlayerRepo"), prop("pg", "PgRepo")],
       methods: [method("report", [call("repo.load"), call("pg.load")])],
     })], { language: "swift" });
     const out = callsFrom(buildSymbolLinks([decl, ext, proto, reg, svc]), "Feature/Reporter.swift");
     expect(out.map((l) => [l.callName, l.targetFile, l.targetSymbol])).toEqual([
-      ["repo.load", "App/PgRepo+UserRepo.swift", "PgRepo.load"],
-      ["pg.load", "App/PgRepo+UserRepo.swift", "PgRepo.load"],
+      ["repo.load", "App/PgRepo+PlayerRepo.swift", "PgRepo.load"],
+      ["pg.load", "App/PgRepo+PlayerRepo.swift", "PgRepo.load"],
     ]);
   });
 
   it("keeps same-named classes of one directory apart where types do not span files", () => {
-    const repo = file("app/repo.py", [cls("SqlUserRepo", { methods: [method("load", [], [], 2)] })], { language: "python" });
-    const a = file("app/cases/a.py", [cls("Svc", { properties: [prop("repo", "SqlUserRepo")] })], { language: "python" });
+    const repo = file("app/repo.py", [cls("SqlPlayerRepo", { methods: [method("load", [], [], 2)] })], { language: "python" });
+    const a = file("app/cases/a.py", [cls("Svc", { properties: [prop("repo", "SqlPlayerRepo")] })], { language: "python" });
     const b = file("app/cases/b.py", [cls("Svc", { methods: [method("run", [call("self.repo.load")])] })], { language: "python" });
     expect(callsFrom(buildSymbolLinks([repo, a, b]), "app/cases/b.py")).toEqual([]);
   });
@@ -866,12 +866,12 @@ describe("symbol-linker — interfaces keyed by definition", () => {
 
 describe("symbol-linker — structural interfaces", () => {
   it("counts a type whose methods (across its package's files) cover a structural interface", () => {
-    const iface = file("repo/repo.go", [{ ...cls("UserRepo", { kind: "interface", methods: [method("Find"), method("Save")] }), structural: true }], { language: "go" });
+    const iface = file("repo/repo.go", [{ ...cls("PlayerRepo", { kind: "interface", methods: [method("Find"), method("Save")] }), structural: true }], { language: "go" });
     // PgRepo's struct and its methods live in different files of the package.
     const struct = file("repo/pg.go", [cls("PgRepo", { properties: [prop("db", "DB")] })], { language: "go" });
     const methods = file("repo/pg_methods.go", [cls("PgRepo", { methods: [method("Find", [], [], 4), method("Save", [], [], 8)] })], { language: "go" });
     const partial = file("repo/mem.go", [cls("MemRepo", { methods: [method("Find", [], [], 3)] })], { language: "go" });
-    const svc = file("svc/svc.go", [cls("Service", { properties: [prop("repo", "UserRepo")], methods: [method("Get", [call("repo.Find")])] })], { language: "go" });
+    const svc = file("svc/svc.go", [cls("Service", { properties: [prop("repo", "PlayerRepo")], methods: [method("Get", [call("repo.Find")])] })], { language: "go" });
     const links = buildSymbolLinks([iface, struct, methods, partial, svc]);
     // MemRepo lacks Save: not an implementation, so PgRepo is the only one.
     expect(callsFrom(links, "svc/svc.go")[0]).toMatchObject({ targetFile: "repo/pg_methods.go", targetSymbol: "PgRepo.Find", strategy: "interface-redirect" });

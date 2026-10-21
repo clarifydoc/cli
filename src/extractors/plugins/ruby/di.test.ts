@@ -19,8 +19,8 @@ const bindings = (src: string) => extractRubyDiBindings(src.replace(/^\n/, "").s
 
 describe("Ruby parameters", () => {
   it("types a parameter by its constructing default and keeps the old names", () => {
-    expect(parseRubyParam("repo: UserRepo.new")).toEqual({ name: "repo", type: "UserRepo", defaultValue: "UserRepo.new" });
-    expect(parseRubyParam("repo = ::Repos::SqlUserRepo.new(db)")).toEqual({ name: "repo", type: "Repos::SqlUserRepo", defaultValue: "::Repos::SqlUserRepo.new(db)" });
+    expect(parseRubyParam("repo: PlayerRepo.new")).toEqual({ name: "repo", type: "PlayerRepo", defaultValue: "PlayerRepo.new" });
+    expect(parseRubyParam("repo = ::Repos::SqlPlayerRepo.new(db)")).toEqual({ name: "repo", type: "Repos::SqlPlayerRepo", defaultValue: "::Repos::SqlPlayerRepo.new(db)" });
     expect(parseRubyParam("repo:")).toEqual({ name: "repo", type: null, defaultValue: null });
     expect(parseRubyParam("repo = build_repo")).toEqual({ name: "repo", type: null, defaultValue: "build_repo" });
     expect(parseRubyParam("opts = {}")).toEqual({ name: "opts", type: null, defaultValue: "{}" });
@@ -32,12 +32,12 @@ describe("Ruby parameters", () => {
   it("reads YARD tags and Sorbet sigs above a def (Sorbet wins)", () => {
     const lines = `
 # Builds it.
-# @param repo [UserRepo, nil] the repository
+# @param repo [PlayerRepo, nil] the repository
 # @param [Integer] id
 # @param cb [#call] a duck type
 sig do
   params(
-    repo: T.nilable(SqlUserRepo),
+    repo: T.nilable(SqlPlayerRepo),
     logger: T.any(Logger, NullLogger)
   ).void
 end
@@ -45,7 +45,7 @@ def initialize(repo, id, logger, cb)
 `.split("\n");
     const types = declaredParamTypes(lines, lines.length - 2);
     expect([...types.entries()]).toEqual([
-      ["repo", "SqlUserRepo | nil"],
+      ["repo", "SqlPlayerRepo | nil"],
       ["logger", "Logger | NullLogger"],
       ["id", "Integer"],
     ]);
@@ -53,7 +53,7 @@ def initialize(repo, id, logger, cb)
 
   it("does not read the tags of an earlier method", () => {
     const lines = `
-# @param repo [UserRepo]
+# @param repo [PlayerRepo]
 def prev(repo)
 end
 def call(repo)
@@ -62,9 +62,9 @@ def call(repo)
   });
 
   it("normalizes YARD and Sorbet type spellings", () => {
-    expect(rubyTypeText("T.nilable(UserRepo)")).toBe("UserRepo | nil");
-    expect(rubyTypeText("UserRepo, nil")).toBe("UserRepo | nil");
-    expect(rubyTypeText("T::Array[User]")).toBe("T::Array[User]");
+    expect(rubyTypeText("T.nilable(PlayerRepo)")).toBe("PlayerRepo | nil");
+    expect(rubyTypeText("PlayerRepo, nil")).toBe("PlayerRepo | nil");
+    expect(rubyTypeText("T::Array[Player]")).toBe("T::Array[Player]");
     expect(rubyTypeText("#find")).toBeNull();
   });
 });
@@ -72,36 +72,36 @@ def call(repo)
 describe("Ruby locals", () => {
   it("types constructed, container-fetched and T.let locals", () => {
     const body = [
-      "  a = UserRepo.new",
-      "  b = Repos::SqlUserRepo.new(db) # comment",
-      '  c = AppContainer["repos.user"]',
-      "  d = AppContainer.resolve(:user_repo)",
-      "  e = T.let(x, UserRepo)",
-      "  f = UserRepo.new.tap { |r| r.warm }",
+      "  a = PlayerRepo.new",
+      "  b = Repos::SqlPlayerRepo.new(db) # comment",
+      '  c = AppContainer["repos.player"]',
+      "  d = AppContainer.resolve(:player_repo)",
+      "  e = T.let(x, PlayerRepo)",
+      "  f = PlayerRepo.new.tap { |r| r.warm }",
       "  g = CONFIG[:repo]",
       "  h = build",
     ];
     expect(extractRubyLocalTypes(body, { params: [] })).toEqual([
-      { name: "a", type: "UserRepo" },
-      { name: "b", type: "Repos::SqlUserRepo" },
-      { name: "c", type: "", qualifier: "repos.user" },
-      { name: "d", type: "", qualifier: "user_repo" },
-      { name: "e", type: "UserRepo" },
+      { name: "a", type: "PlayerRepo" },
+      { name: "b", type: "Repos::SqlPlayerRepo" },
+      { name: "c", type: "", qualifier: "repos.player" },
+      { name: "d", type: "", qualifier: "player_repo" },
+      { name: "e", type: "PlayerRepo" },
     ]);
   });
 
   it("drops a local reassigned untyped or rebound as a block parameter, and never re-types a parameter", () => {
     const body = [
-      "  a = UserRepo.new",
+      "  a = PlayerRepo.new",
       "  a = other",
-      "  b = UserRepo.new",
+      "  b = PlayerRepo.new",
       "  items.each { |b| b.go }",
-      "  repo = UserRepo.new",
-      "  c = UserRepo.new",
-      "  c ||= UserRepo.new",
+      "  repo = PlayerRepo.new",
+      "  c = PlayerRepo.new",
+      "  c ||= PlayerRepo.new",
     ];
     expect(extractRubyLocalTypes(body, { params: [{ name: "repo", type: null, defaultValue: null }] })).toEqual([
-      { name: "c", type: "UserRepo" },
+      { name: "c", type: "PlayerRepo" },
     ]);
   });
 });
@@ -113,7 +113,7 @@ class Svc
   attr_reader :repo
 
   # @param mailer [Mailer]
-  def initialize(repo: SqlUserRepo.new, mailer, log: nil, raw)
+  def initialize(repo: SqlPlayerRepo.new, mailer, log: nil, raw)
     @repo = repo
     @mailer, @log = mailer, log
     @clock = Clock.new
@@ -127,7 +127,7 @@ class Svc
 end
 `);
     expect(props(c)).toEqual([
-      { name: "repo", type: "SqlUserRepo" },
+      { name: "repo", type: "SqlPlayerRepo" },
       { name: "mailer", type: "Mailer" },
       { name: "clock", type: "Clock" },
       { name: "typed", type: "Store" },
@@ -139,8 +139,8 @@ end
     const c = cls(`
 class Svc
   def initialize
-    @repo = SqlUserRepo.new
-    @other = SqlUserRepo.new
+    @repo = SqlPlayerRepo.new
+    @other = SqlPlayerRepo.new
   end
 
   def swap(x)
@@ -152,15 +152,15 @@ class Svc
   end
 end
 `);
-    expect(props(c)).toEqual([{ name: "other", type: "SqlUserRepo" }]);
+    expect(props(c)).toEqual([{ name: "other", type: "SqlPlayerRepo" }]);
   });
 
   it("turns dry-auto_inject imports into keyed readers, not implemented modules", () => {
     const c = cls(`
 class Svc
   include Comparable
-  include Import["user_repo", "repos.account_repo"]
-  include Deps[repo: "repos.user", :mailer => "mail.smtp"]
+  include Import["player_repo", "repos.club_repo"]
+  include Deps[repo: "repos.player", :mailer => "mail.smtp"]
   include MyApp::Import.kwargs[
     "logger",
   ]
@@ -170,9 +170,9 @@ end
 `);
     expect(c.implements).toEqual(["Comparable"]);
     expect(props(c)).toEqual([
-      { name: "user_repo", type: null, qualifier: "user_repo" },
-      { name: "account_repo", type: null, qualifier: "repos.account_repo" },
-      { name: "repo", type: null, qualifier: "repos.user" },
+      { name: "player_repo", type: null, qualifier: "player_repo" },
+      { name: "club_repo", type: null, qualifier: "repos.club_repo" },
+      { name: "repo", type: null, qualifier: "repos.player" },
       { name: "mailer", type: null, qualifier: "mail.smtp" },
       { name: "logger", type: null, qualifier: "logger" },
     ]);
@@ -196,7 +196,7 @@ end
 describe("Ruby singleton methods", () => {
   it("names a singleton method that collides with an instance method `self.x`, and types `new(...).x`", () => {
     const c = cls(`
-class CreateUser
+class CreatePlayer
   def self.call(...)
     new(...).call
   end
@@ -223,8 +223,8 @@ end
     expect(c.methods.map((m) => m.name)).toEqual(["self.call", "build", "self.run", "call", "run"]);
     const typed = c.methods.flatMap((m) => m.calls.filter((k) => k.receiverType).map((k) => [m.name, k.name, k.receiverType]));
     expect(typed).toEqual([
-      ["self.call", "new.call", "CreateUser"],
-      ["self.run", "new.run", "CreateUser"],
+      ["self.call", "new.call", "CreatePlayer"],
+      ["self.run", "new.run", "CreatePlayer"],
     ]);
   });
 });
@@ -232,48 +232,48 @@ end
 describe("Ruby calls", () => {
   it("types a call on a fresh construction or a container lookup", () => {
     const view = (src: string) => callsOf(src).map((c) => [c.name, c.receiverType, c.receiverQualifier]);
-    expect(view("    UserRepo.new.find(id)")).toContainEqual(["new.find", "UserRepo", undefined]);
-    expect(view("    Repos::UserRepo.new(db).save")).toContainEqual(["new.save", "Repos::UserRepo", undefined]);
-    expect(view("    AppContainer[:user_repo].find(id)")).toContainEqual(["AppContainer[:user_repo].find", undefined, "user_repo"]);
+    expect(view("    PlayerRepo.new.find(id)")).toContainEqual(["new.find", "PlayerRepo", undefined]);
+    expect(view("    Repos::PlayerRepo.new(db).save")).toContainEqual(["new.save", "Repos::PlayerRepo", undefined]);
+    expect(view("    AppContainer[:player_repo].find(id)")).toContainEqual(["AppContainer[:player_repo].find", undefined, "player_repo"]);
     expect(view("    MyApp::Container.resolve(:repo).find(id)")).toContainEqual(["MyApp::Container.resolve(:repo).find", undefined, "repo"]);
     // A Hash constant is no container.
     expect(view("    CONFIG[:repo].fetch(id)").filter((c) => c[1] !== undefined)).toEqual([]);
   });
 
   it("records `self.repo.m(` and `repo&.m(` once, as a call on the reader `repo`", () => {
-    expect(callsOf("    self.repo.find_user(id)").map((c) => c.name)).toEqual(["repo.find_user"]);
+    expect(callsOf("    self.repo.find_player(id)").map((c) => c.name)).toEqual(["repo.find_player"]);
     const c = cls(`
 class Svc
   def call(id)
-    @repo&.find_user(id)
+    @repo&.find_player(id)
   end
 end
 `);
-    expect(c.methods[0]!.calls.map((k) => k.name)).toEqual(["repo.find_user"]);
+    expect(c.methods[0]!.calls.map((k) => k.name)).toEqual(["repo.find_player"]);
   });
 
   it("drops the bare reading of a member call on an unnamed receiver", () => {
     const c = cls(`
 class Svc
   def call(id)
-    AppContainer["repos.user"].find_user(id)
-    params[:user].permit(:name)
-    find_user(id)
+    AppContainer["repos.player"].find_player(id)
+    params[:player].permit(:name)
+    find_player(id)
   end
 
-  def find_user(id); end
+  def find_player(id); end
 end
 `);
-    // The member calls' bare readings are gone; the real `find_user(id)` on
+    // The member calls' bare readings are gone; the real `find_player(id)` on
     // line 5 stays (moved off the first, detached occurrence it was deduped into).
-    expect(c.methods[0]!.calls.map((k) => [k.name, k.line])).toEqual([["find_user", 5]]);
+    expect(c.methods[0]!.calls.map((k) => [k.name, k.line])).toEqual([["find_player", 5]]);
     expect(cls(`
 class Svc
   def call(id)
-    AppContainer["repos.user"].find_user(id)
+    AppContainer["repos.player"].find_player(id)
   end
 
-  def find_user(id); end
+  def find_player(id); end
 end
 `).methods[0]!.calls).toEqual([]);
   });
@@ -285,17 +285,17 @@ describe("Ruby dry-container registrations", () => {
 class AppContainer
   extend Dry::Container::Mixin
 
-  register(:user_repo) { SqlUserRepo.new }
-  register("repos.user", memoize: true) { |c| Repos::SqlUserRepo.new(c[:db]) }
+  register(:player_repo) { SqlPlayerRepo.new }
+  register("repos.player", memoize: true) { |c| Repos::SqlPlayerRepo.new(c[:db]) }
   register :mailer, SmtpMailer.new
   register(:clock, -> { SystemClock.new })
-  register(:klass, SqlUserRepo)
-  register(:proc, call: false) { SqlUserRepo.new }
+  register(:klass, SqlPlayerRepo)
+  register(:proc, call: false) { SqlPlayerRepo.new }
   register(:built) { build_repo }
 
   namespace(:repos) do
-    register(:account) do |c|
-      AccountRepo.new(
+    register(:club) do |c|
+      ClubRepo.new(
         c[:db]
       )
     end
@@ -308,11 +308,11 @@ class AppContainer
   register(:after) { AfterRepo.new }
 end
 `)).toEqual([
-      { service: "user_repo", implementation: "SqlUserRepo", via: "register", keyedOnly: true },
-      { service: "repos.user", implementation: "SqlUserRepo", via: "register", keyedOnly: true },
+      { service: "player_repo", implementation: "SqlPlayerRepo", via: "register", keyedOnly: true },
+      { service: "repos.player", implementation: "SqlPlayerRepo", via: "register", keyedOnly: true },
       { service: "mailer", implementation: "SmtpMailer", via: "register", keyedOnly: true },
       { service: "clock", implementation: "SystemClock", via: "register", keyedOnly: true },
-      { service: "repos.account", implementation: "AccountRepo", via: "register", keyedOnly: true },
+      { service: "repos.club", implementation: "ClubRepo", via: "register", keyedOnly: true },
       { service: "after", implementation: "AfterRepo", via: "register", keyedOnly: true },
     ]);
   });
@@ -320,14 +320,14 @@ end
   it("binds registrations on container receivers, conditional ones included, and nothing else", () => {
     expect(bindings(`
 Container = Dry::Container.new
-Container.register(:repo) { SqlUserRepo.new }
+Container.register(:repo) { SqlPlayerRepo.new }
 AppContainer.register(:mailer) { SesMailer.new } if ENV["SES"]
 Mime::Type.register "text/csv", :csv
-ActiveAdmin.register User do
+ActiveAdmin.register Player do
 end
 register(:loose) { LooseRepo.new }
 `)).toEqual([
-      { service: "repo", implementation: "SqlUserRepo", via: "register", keyedOnly: true },
+      { service: "repo", implementation: "SqlPlayerRepo", via: "register", keyedOnly: true },
       { service: "mailer", implementation: "SesMailer", via: "register", keyedOnly: true },
     ]);
   });
@@ -336,9 +336,9 @@ register(:loose) { LooseRepo.new }
     const a = analyze(`
 class AppContainer
   extend Dry::Container::Mixin
-  register(:user_repo) { SqlUserRepo.new }
+  register(:player_repo) { SqlPlayerRepo.new }
 end
 `, "config/initializers/container.rb");
-    expect(a.diBindings).toEqual([{ service: "user_repo", implementation: "SqlUserRepo", line: 3, via: "register", keyedOnly: true }]);
+    expect(a.diBindings).toEqual([{ service: "player_repo", implementation: "SqlPlayerRepo", line: 3, via: "register", keyedOnly: true }]);
   });
 });

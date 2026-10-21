@@ -22,7 +22,7 @@ describe("LSP implementations at DI refusals", () => {
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "clarifydoc-impl-"));
     await mkdir(join(dir, "App"), { recursive: true });
-    await writeFile(join(dir, "App", "OrderService.cs"), `${"\n".repeat(9)}        _notifier.Send(order);\n`);
+    await writeFile(join(dir, "App", "CarService.cs"), `${"\n".repeat(9)}        _notifier.Send(car);\n`);
   });
   afterAll(async () => {
     await rm(dir, { recursive: true, force: true });
@@ -33,12 +33,12 @@ describe("LSP implementations at DI refusals", () => {
       file("Domain/INotifier.cs", [cls("INotifier", "interface", [method("Send", 3)])]),
       file("Infra/MailNotifier.cs", [cls("MailNotifier", "class", [method("Send", 7)], { implements: ["INotifier"] })]),
       file("Infra/SmsNotifier.cs", [cls("SmsNotifier", "class", [method("Send", 9)], { implements: ["INotifier"] })]),
-      file("App/OrderService.cs", [cls("OrderService", "class", [method("Place", 5, [{ name: "_notifier.Send", kind: "internal", target: null, line: 10 }])], {
+      file("App/CarService.cs", [cls("CarService", "class", [method("Place", 5, [{ name: "_notifier.Send", kind: "internal", target: null, line: 10 }])], {
         properties: [{ name: "_notifier", type: "INotifier", visibility: "private", isStatic: false, isReadonly: true }],
       })]),
     ];
     const links = buildSymbolLinks(analyses);
-    expect(links.find((l) => l.sourceFile === "App/OrderService.cs" && l.relation !== "reference")).toMatchObject({ targetSymbol: "INotifier.Send", strategy: "injection" });
+    expect(links.find((l) => l.sourceFile === "App/CarService.cs" && l.relation !== "reference")).toMatchObject({ targetSymbol: "INotifier.Send", strategy: "injection" });
 
     const asked: Array<[string, number, number]> = [];
     const client: DefinitionClient = {
@@ -54,13 +54,13 @@ describe("LSP implementations at DI refusals", () => {
     const source: DefinitionSource = { kind: "fake", initialize: async () => ["fake-csharp"], clientFor: () => client, shutdown: async () => {} };
     const r = await enhanceWithLsp({ projectRoot: dir, analyses, existingLinks: links, files: [], verbose: false, source });
     // At the method's own token, 0-based line.
-    expect(asked).toEqual([["App/OrderService.cs", 9, 18]]);
+    expect(asked).toEqual([["App/CarService.cs", 9, 18]]);
     expect(r.implementationRecords).toEqual([{
-      sourceFile: "App/OrderService.cs", sourceSymbol: "OrderService.Place", line: 10, column: 18, callName: "_notifier.Send",
+      sourceFile: "App/CarService.cs", sourceSymbol: "CarService.Place", line: 10, column: 18, callName: "_notifier.Send",
       language: "csharp", interfaceSymbol: "INotifier.Send",
       implementations: [{ file: "Infra/MailNotifier.cs", line: 7 }, { file: "Infra/SmsNotifier.cs", line: 9 }],
     }]);
     // Recorded, not applied: the call still stays on the interface.
-    expect(r.enhancedLinks.filter((l) => l.sourceFile === "App/OrderService.cs" && l.relation !== "reference").map((l) => l.targetSymbol)).toEqual(["INotifier.Send"]);
+    expect(r.enhancedLinks.filter((l) => l.sourceFile === "App/CarService.cs" && l.relation !== "reference").map((l) => l.targetSymbol)).toEqual(["INotifier.Send"]);
   });
 });

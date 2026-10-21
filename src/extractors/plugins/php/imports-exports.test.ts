@@ -41,9 +41,9 @@ require __DIR__;
   it("keeps namespace imports beside the includes", async () => {
     expect(await imports(`<?php
 namespace App;
-use App\\Models\\User;
+use App\\Models\\Player;
 require_once __DIR__ . '/helpers.php';
-`)).toEqual([["App\\Models\\User", 3], ["./helpers.php", 4]]);
+`)).toEqual([["App\\Models\\Player", 3], ["./helpers.php", 4]]);
   });
 });
 
@@ -52,15 +52,15 @@ describe("PHP use declarations", () => {
     const tree = await parseSource(`<?php
 use function App\\money;
 use const App\\RATE;
-use App\\Models\\User;
-use App\\{Models\\Post, function helpers\\fmt};
+use App\\Models\\Player;
+use App\\{Models\\Game, function helpers\\fmt};
 `, "php" as never, "a.php");
     const out = new PhpImportExportExtractor().extractImports(tree, "").map((i) => [i.source, i.specifiers[0], i.isType]);
     expect(out).toEqual([
       ["App\\money", "money", false],
       ["App\\RATE", "RATE", false],
-      ["App\\Models\\User", "User", true],
-      ["App\\Models\\Post", "Post", true],
+      ["App\\Models\\Player", "Player", true],
+      ["App\\Models\\Game", "Game", true],
       ["App\\helpers\\fmt", "fmt", false],
     ]);
   });
@@ -68,8 +68,8 @@ use App\\{Models\\Post, function helpers\\fmt};
 
 describe("PHP calls", () => {
   it("records an unqualified function call and a construction", async () => {
-    const tree = await parseSource(`<?php function f() { $u = find_user(1); $r = new Report(); return \\App\\fmt($u); }`, "php" as never, "a.php");
+    const tree = await parseSource(`<?php function f() { $u = find_player(1); $r = new Report(); return \\App\\fmt($u); }`, "php" as never, "a.php");
     const body = tree.rootNode.descendantsOfType("compound_statement")[0]!;
-    expect(extractCalls(body, "php").map((c) => c.name)).toEqual(["find_user", "new Report", "\\App\\fmt"]);
+    expect(extractCalls(body, "php").map((c) => c.name)).toEqual(["find_player", "new Report", "\\App\\fmt"]);
   });
 });

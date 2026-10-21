@@ -22,7 +22,7 @@ describe("rubySpec.extractRoutes — router gating", () => {
     // Regression guard: these `get`/`delete` calls are HTTP requests, not routes.
     const cucumber = `
       When(/^I fetch duties$/) do
-        get "/duties.xml?employee_id=#{employee_id}&start_date=#{start_date}"
+        get "/duties.xml?referee_id=#{referee_id}&start_date=#{start_date}"
       end
       When(/^I delete a duty$/) do
         delete "/duties/#{duty_id}.xml"
@@ -78,9 +78,9 @@ describe("rubySpec.extractRoutes — resources expansion", () => {
     ]);
   });
 
-  it("maps a directory in the controller token to a module (`admin/users#index`)", () => {
-    const out = routes(draw(`  get 'dashboard' => 'admin/users#index'`)).map(sig);
-    expect(out).toEqual(["GET /dashboard -> Admin::UsersController#index"]);
+  it("maps a directory in the controller token to a module (`admin/players#index`)", () => {
+    const out = routes(draw(`  get 'dashboard' => 'admin/players#index'`)).map(sig);
+    expect(out).toEqual(["GET /dashboard -> Admin::PlayersController#index"]);
   });
 
   it("hangs `on: :collection` / `on: :member` routes off the enclosing resource", () => {
@@ -101,12 +101,12 @@ describe("rubySpec.extractRoutes — resources expansion", () => {
 
   it("nests a resources block's children under one member of the parent", () => {
     const out = routes(
-      draw(`  resources :employees, only: [:index] do\n    resources :contact_informations, only: [:index, :create]\n  end`),
+      draw(`  resources :referees, only: [:index] do\n    resources :contact_informations, only: [:index, :create]\n  end`),
     ).map(sig);
     expect(out).toEqual([
-      "GET /employees -> EmployeesController#index",
-      "GET /employees/:employee_id/contact_informations -> ContactInformationsController#index",
-      "POST /employees/:employee_id/contact_informations -> ContactInformationsController#create",
+      "GET /referees -> RefereesController#index",
+      "GET /referees/:referee_id/contact_informations -> ContactInformationsController#index",
+      "POST /referees/:referee_id/contact_informations -> ContactInformationsController#create",
     ]);
   });
 
@@ -114,9 +114,9 @@ describe("rubySpec.extractRoutes — resources expansion", () => {
     const only = routes(draw(`  resources :photos, only: [:index, :show]`)).map((r) => r.httpMethod + " " + r.path);
     expect(only.sort()).toEqual(["GET /photos", "GET /photos/:id"]);
 
-    const except = routes(draw(`  resources :widgets, except: [:destroy]`)).map(sig);
+    const except = routes(draw(`  resources :balls, except: [:destroy]`)).map(sig);
     expect(except.some((s) => s.startsWith("DELETE "))).toBe(false);
-    expect(except).toEqual(expect.arrayContaining(["GET /widgets/:id -> WidgetsController#show"]));
+    expect(except).toEqual(expect.arrayContaining(["GET /balls/:id -> BallsController#show"]));
   });
 
   it("handles multiple resources on one line", () => {
@@ -174,16 +174,16 @@ describe("rubySpec.extractRoutes — controller convention", () => {
     ]);
   });
 
-  it("reads the namespace off a `class Admin::UsersController` name", () => {
-    const src = `class Admin::UsersController < ApplicationController\n  def index\n  end\nend`;
-    const out = (rubySpec.extractRoutes?.(src.split("\n"), [cls("Admin::UsersController", 1, 4, ["index"])]) ?? []).map(sig);
-    expect(out).toEqual(["GET /admin/users -> Admin::UsersController#index"]);
+  it("reads the namespace off a `class Admin::PlayersController` name", () => {
+    const src = `class Admin::PlayersController < ApplicationController\n  def index\n  end\nend`;
+    const out = (rubySpec.extractRoutes?.(src.split("\n"), [cls("Admin::PlayersController", 1, 4, ["index"])]) ?? []).map(sig);
+    expect(out).toEqual(["GET /admin/players -> Admin::PlayersController#index"]);
   });
 
   it("leaves a top-level controller unprefixed", () => {
-    const src = `class UsersController < ApplicationController\n  def index\n  end\nend`;
-    const out = (rubySpec.extractRoutes?.(src.split("\n"), [cls("UsersController", 1, 4, ["index"])]) ?? []).map(sig);
-    expect(out).toEqual(["GET /users -> UsersController#index"]);
+    const src = `class PlayersController < ApplicationController\n  def index\n  end\nend`;
+    const out = (rubySpec.extractRoutes?.(src.split("\n"), [cls("PlayersController", 1, 4, ["index"])]) ?? []).map(sig);
+    expect(out).toEqual(["GET /players -> PlayersController#index"]);
   });
 });
 
@@ -193,8 +193,8 @@ describe("routes.rb: root, symbol member routes, singular plural resources", () 
     const lines = `Rails.application.routes.draw do
   namespace :super_admin do
     root to: 'dashboard#index'
-    resource :user_diagnostics, only: [:show]
-    resources :users, only: [:show] do
+    resource :player_diagnostics, only: [:show]
+    resources :players, only: [:show] do
       post :seed, on: :member
       delete :avatar, on: :member, action: :destroy_avatar
       get 'presence', :on => :collection
@@ -204,11 +204,11 @@ end`.split("\n");
     const routes = rubySpec.extractRoutes!(lines, [], "config/routes.rb");
     expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`)).toEqual([
       "GET /super_admin SuperAdmin::DashboardController#index",
-      "GET /super_admin/user_diagnostics SuperAdmin::UserDiagnosticsController#show",
-      "GET /super_admin/users/:id SuperAdmin::UsersController#show",
-      "POST /super_admin/users/:id/seed SuperAdmin::UsersController#seed",
-      "DELETE /super_admin/users/:id/avatar SuperAdmin::UsersController#destroy_avatar",
-      "GET /super_admin/users/presence SuperAdmin::UsersController#presence",
+      "GET /super_admin/player_diagnostics SuperAdmin::PlayerDiagnosticsController#show",
+      "GET /super_admin/players/:id SuperAdmin::PlayersController#show",
+      "POST /super_admin/players/:id/seed SuperAdmin::PlayersController#seed",
+      "DELETE /super_admin/players/:id/avatar SuperAdmin::PlayersController#destroy_avatar",
+      "GET /super_admin/players/presence SuperAdmin::PlayersController#presence",
     ]);
   });
 });
@@ -217,8 +217,8 @@ describe("routes.rb: controller modules a scope or a resources option names", ()
   it("puts controllers under `scope module:` and `resources …, module:` without changing the path", () => {
     const out = routes(
       draw(`  namespace :api do
-    resources :accounts, only: [:show] do
-      scope module: :accounts do
+    resources :clubs, only: [:show] do
+      scope module: :clubs do
         resources :labels, only: [:index]
         resources :inboxes, only: [:index], module: :assignment_policies
       end
@@ -229,9 +229,9 @@ describe("routes.rb: controller modules a scope or a resources option names", ()
   end`),
     ).map(sig);
     expect(out).toEqual([
-      "GET /api/accounts/:id -> Api::AccountsController#show",
-      "GET /api/accounts/:account_id/labels -> Api::Accounts::LabelsController#index",
-      "GET /api/accounts/:account_id/inboxes -> Api::Accounts::AssignmentPolicies::InboxesController#index",
+      "GET /api/clubs/:id -> Api::ClubsController#show",
+      "GET /api/clubs/:club_id/labels -> Api::Clubs::LabelsController#index",
+      "GET /api/clubs/:club_id/inboxes -> Api::Clubs::AssignmentPolicies::InboxesController#index",
       "GET /api/profile -> Api::Profile::ProfilesController#show",
     ]);
   });

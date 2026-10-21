@@ -17,28 +17,28 @@ async function routesOf(source: string, filePath = "routes/web.php"): Promise<Ro
 describe("Laravel Route:: facade routing", () => {
   it("extracts verb routes with tuple, string, and closure handlers", async () => {
     const SRC = `<?php
-use App\\Http\\Controllers\\UserController;
+use App\\Http\\Controllers\\PlayerController;
 
-Route::get('/users/{id}', [UserController::class, 'show']);
-Route::post('/users', 'UserController@store');
-Route::delete('/users/{id}', [App\\Http\\Controllers\\UserController::class, 'destroy']);
-Route::put('/users/{id}', function ($id) {
-    return $this->userService->update($id);
+Route::get('/players/{id}', [PlayerController::class, 'show']);
+Route::post('/players', 'PlayerController@store');
+Route::delete('/players/{id}', [App\\Http\\Controllers\\PlayerController::class, 'destroy']);
+Route::put('/players/{id}', function ($id) {
+    return $this->playerService->update($id);
 });
 `;
     const routes = await routesOf(SRC);
     expect(routes).toHaveLength(4);
 
     const get = routes.find((r) => r.httpMethod === "GET")!;
-    expect(get.path).toBe("/users/{id}");
-    expect(get.handler).toBe("UserController#show");
+    expect(get.path).toBe("/players/{id}");
+    expect(get.handler).toBe("PlayerController#show");
 
     const post = routes.find((r) => r.httpMethod === "POST")!;
-    expect(post.handler).toBe("UserController#store");
+    expect(post.handler).toBe("PlayerController#store");
 
     // Namespaced ::class constant reduces to the bare class name.
     const del = routes.find((r) => r.httpMethod === "DELETE")!;
-    expect(del.handler).toBe("UserController#destroy");
+    expect(del.handler).toBe("PlayerController#destroy");
 
     // Closure handler: no name, but the body's calls survive for the trace.
     const put = routes.find((r) => r.httpMethod === "PUT")!;
@@ -78,7 +78,7 @@ Route::group(['prefix' => 'admin'], function () {
 Route::prefix('api')->group(function () {
     Route::middleware('auth')->get('/me', [MeController::class, 'show']);
     Route::prefix('v1')->group(function () {
-        Route::get('/orders', [OrderController::class, 'index']);
+        Route::get('/cars', [CarController::class, 'index']);
     });
 });
 `;
@@ -86,7 +86,7 @@ Route::prefix('api')->group(function () {
     const paths = routes.map((r) => r.path);
     expect(paths).toContain("/admin/dashboard");
     expect(paths).toContain("/api/me"); // fluent verb behind a fluent group
-    expect(paths).toContain("/api/v1/orders"); // nested groups compose
+    expect(paths).toContain("/api/v1/cars"); // nested groups compose
   });
 
   it("handles Route::match (per-verb), Route::any (wildcard), Route::view (GET)", async () => {
@@ -108,27 +108,27 @@ Route::view('/welcome', 'welcome');
 
   it("mounts routes/api.php under /api (RouteServiceProvider convention)", async () => {
     const SRC = `<?php
-Route::get('/products', [ProductController::class, 'index']);
-Route::apiResource('orders', OrderController::class);
+Route::get('/parts', [PartController::class, 'index']);
+Route::apiResource('cars', CarController::class);
 `;
     const api = await routesOf(SRC, "routes/api.php");
-    expect(api.map((r) => r.path)).toContain("/api/products");
-    expect(api.map((r) => r.path)).toContain("/api/orders/{id}");
+    expect(api.map((r) => r.path)).toContain("/api/parts");
+    expect(api.map((r) => r.path)).toContain("/api/cars/{id}");
 
     // web.php keeps its paths bare.
     const web = await routesOf(SRC, "routes/web.php");
-    expect(web.map((r) => r.path)).toContain("/products");
+    expect(web.map((r) => r.path)).toContain("/parts");
   });
 
   it("does NOT let CodeIgniter convention routing claim Laravel controllers", async () => {
     const SRC = `<?php
 namespace App\\Http\\Controllers;
 
-class ProductController extends Controller {
-  public function index() { return Product::all(); }
+class PartController extends Controller {
+  public function index() { return Part::all(); }
 }`;
-    const routes = await routesOf(SRC, "app/Http/Controllers/ProductController.php");
-    expect(routes).toEqual([]); // no phantom /productcontroller/... routes
+    const routes = await routesOf(SRC, "app/Http/Controllers/PartController.php");
+    expect(routes).toEqual([]); // no phantom /partcontroller/... routes
   });
 
   it("ignores non-route facade calls and non-Route static calls", async () => {
@@ -154,30 +154,30 @@ describe("Laravel middleware → auth", () => {
   it("reads the chain below and above the verb, and inherits from every enclosing group", async () => {
     const SRC = `<?php
 Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
-    Route::get('/orders/{order}', [OrderController::class, 'show'])->name('orders.show')->middleware('can:view,order');
+    Route::get('/cars/{car}', [CarController::class, 'show'])->name('cars.show')->middleware('can:view,car');
     Route::prefix('reports')->middleware('throttle:60,1')->group(function () {
         Route::get('/daily', [ReportController::class, 'daily']);
     });
 });
 Route::group(['prefix' => 'v1', 'middleware' => ['auth']], function () {
-    Route::post('/orders', [OrderController::class, 'store']);
+    Route::post('/cars', [CarController::class, 'store']);
 });
 Route::group(['middleware' => 'auth.basic'], function () {
     Route::apiResource('tags', TagController::class);
 });
 Route::middleware('guest')->get('/login', [AuthController::class, 'form']);
 Route::get('/health', fn () => 'ok');
-Route::middleware('permission:orders.export')->get('/export', [OrderController::class, 'export']);
+Route::middleware('permission:cars.export')->get('/export', [CarController::class, 'export']);
 Route::get('/verified', [ProfileController::class, 'show'])->middleware(['auth', 'verified']);
 `;
     const routes = await routesOf(SRC, "routes/api.php");
     const byPath = (p: string) => routes.find((r) => r.path === p)!;
 
     // Group middleware is inherited; the trailing `->middleware('can:…')` is the route's own.
-    const show = byPath("/api/orders/{order}");
-    expect(show.middleware).toEqual(["auth:sanctum", "role:admin", "can:view,order"]);
+    const show = byPath("/api/cars/{car}");
+    expect(show.middleware).toEqual(["auth:sanctum", "role:admin", "can:view,car"]);
     expect(show.auth).toEqual({
-      schemes: ["sanctum"], roles: ["admin"], policies: ["can:view,order"], anonymous: false, inherited: false,
+      schemes: ["sanctum"], roles: ["admin"], policies: ["can:view,car"], anonymous: false, inherited: false,
     });
 
     // A nested group adds its middleware; `throttle` is middleware but not auth.
@@ -186,7 +186,7 @@ Route::get('/verified', [ProfileController::class, 'show'])->middleware(['auth',
     expect(daily.auth).toEqual({ schemes: ["sanctum"], roles: ["admin"], policies: [], anonymous: false, inherited: true });
 
     // Options-array group: `'middleware' => ['auth']` + `'prefix' => 'v1'`.
-    const store = byPath("/api/v1/orders");
+    const store = byPath("/api/v1/cars");
     expect(store.middleware).toEqual(["auth"]);
     expect(store.auth).toMatchObject({ schemes: ["auth"], inherited: true });
 
@@ -201,18 +201,18 @@ Route::get('/verified', [ProfileController::class, 'show'])->middleware(['auth',
     expect(byPath("/api/health").middleware).toEqual([]);
 
     // `permission:` is a policy; `->middleware([...])` above the verb with several entries.
-    expect(byPath("/api/export").auth).toMatchObject({ policies: ["permission:orders.export"], inherited: false });
+    expect(byPath("/api/export").auth).toMatchObject({ policies: ["permission:cars.export"], inherited: false });
     expect(byPath("/api/verified").middleware).toEqual(["auth", "verified"]);
     expect(byPath("/api/verified").auth).toMatchObject({ schemes: ["auth"], policies: ["verified"], inherited: false });
   });
 
   it("leaves params to the join for controller handlers, but fills them for closures", async () => {
     const SRC = `<?php
-Route::get('/users/{id}', [UserController::class, 'show']);
-Route::put('/users/{id}', function (Request $request, $id) {
+Route::get('/players/{id}', [PlayerController::class, 'show']);
+Route::put('/players/{id}', function (Request $request, $id) {
     $name = $request->input('name');
     $page = $request->query('page');
-    return $this->userService->update($id, $name);
+    return $this->playerService->update($id, $name);
 });
 `;
     const routes = await routesOf(SRC);
@@ -233,10 +233,10 @@ describe("Laravel handler forms beyond the tuple", () => {
 use App\\Http\\Controllers\\LoginController;
 Route::post('me', LoginController::class);
 Route::group(['namespace' => 'App\\Api', 'prefix' => 'v1'], static function (): void {
-    Route::get('accounts', ['uses' => 'AccountController@accounts', 'as' => 'accounts']);
+    Route::get('clubs', ['uses' => 'ClubController@clubs', 'as' => 'clubs']);
 });`;
     const routes = await routesOf(src);
     expect(routes.find((r) => r.path === "/me")!.handler).toBe("LoginController#__invoke");
-    expect(routes.find((r) => r.path === "/v1/accounts")!.handler).toBe("AccountController#accounts");
+    expect(routes.find((r) => r.path === "/v1/clubs")!.handler).toBe("ClubController#clubs");
   });
 });

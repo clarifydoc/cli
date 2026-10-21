@@ -80,11 +80,11 @@ describe.skipIf(!existsSync(join(analysis, "project-summary.json")))("lsp-update
 
   it("turns the dump's definitions into layer-2 links, built one directory above the analysis root", async () => {
     const one = queries[0]!;
-    await writeFile(join(dir, "dump.lsif"), dump("file:///work", [{ file: `sample-backend/${one.file}`, line0: one.line - 1, col: one.column, defFile: "sample-backend/routes/users.ts", defLine0: 13 }]));
+    await writeFile(join(dir, "dump.lsif"), dump("file:///work", [{ file: `sample-backend/${one.file}`, line0: one.line - 1, col: one.column, defFile: "sample-backend/routes/players.ts", defLine0: 13 }]));
     const r = await updateLsp({ analysisDir: join(dir, "an"), projectRoot: fixture, lsif: join(dir, "dump.lsif") });
     expect(r).toMatchObject({ source: "lsif", serversUsed: ["lsif-tsc"], lspResolvedCount: 1 });
     const enh = JSON.parse(await readFile(join(dir, "an", "lsp-enhancement.json"), "utf-8"));
     const added = enh.symbolLinks.filter((l: { resolvedBy?: string }) => l.resolvedBy === "lsp");
-    expect(added).toEqual([expect.objectContaining({ sourceFile: one.file, sourceLine: one.line, targetFile: "routes/users.ts", targetLine: 14 })]);
+    expect(added).toEqual([expect.objectContaining({ sourceFile: one.file, sourceLine: one.line, targetFile: "routes/players.ts", targetLine: 14 })]);
   });
 });

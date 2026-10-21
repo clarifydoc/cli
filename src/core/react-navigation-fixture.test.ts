@@ -34,8 +34,8 @@ describe.skipIf(!existsSync(fixture))("sample-react-navigation", () => {
   it("links the screens' calls to the API", async () => {
     const s = await loadReportSummary(out);
     expect((s.apiRouteLinks ?? []).map((l) => `${l.source} ${l.method} -> ${l.routePath}`).sort()).toEqual([
-      "app/src/screens/DetailsScreen.tsx GET -> /api/items/:id",
-      "app/src/screens/HomeScreen.tsx GET -> /api/items",
+      "app/src/screens/DetailsScreen.tsx GET -> /api/balls/:id",
+      "app/src/screens/HomeScreen.tsx GET -> /api/balls",
     ]);
   });
 });

@@ -9,8 +9,8 @@ const src = (body: string) => extractPascalDataSources(body.split("\n"));
 
 describe("pascal data sources — SQL in strings", () => {
   it("extracts a single-line query", () => {
-    const out = src(`Query1.SQL.Text := 'SELECT id, name FROM customers WHERE active = 1';`);
-    const sql = out.find((d) => d.entity === "customers");
+    const out = src(`Query1.SQL.Text := 'SELECT id, name FROM drivers WHERE active = 1';`);
+    const sql = out.find((d) => d.entity === "drivers");
     expect(sql).toBeDefined();
     expect(sql!.kind).toBe("database");
   });
@@ -21,12 +21,12 @@ describe("pascal data sources — SQL in strings", () => {
       `begin`,
       `  Query1.SQL.Clear;`,
       `  Query1.SQL.Add('SELECT o.id, o.total');`,
-      `  Query1.SQL.Add('FROM orders o');`,
+      `  Query1.SQL.Add('FROM cars o');`,
       `  Query1.SQL.Add('WHERE o.status = 1');`,
       `  Query1.Open;`,
       `end;`,
     ].join("\n"));
-    const sql = out.find((d) => d.entity === "orders");
+    const sql = out.find((d) => d.entity === "cars");
     expect(sql).toBeDefined();
   });
 
@@ -43,7 +43,7 @@ describe("pascal data sources — SQL in strings", () => {
   it("ignores SQL keywords inside comments", () => {
     const out = src([
       `{ SELECT the best item FROM the list below }`,
-      `// DELETE FROM users -- disabled`,
+      `// DELETE FROM players -- disabled`,
       `(* INSERT INTO backlog when ready *)`,
       `X := 1;`,
     ].join("\n"));
@@ -55,14 +55,14 @@ describe("pascal data sources — dataset & connection verbs", () => {
   it("captures receiver-gated dataset verbs", () => {
     const out = src([
       `Query1.Open;`,
-      `tblOrders.Append;`,
-      `cdsUsers.Post;`,
+      `tblCars.Append;`,
+      `cdsPlayers.Post;`,
       `dm.qryStats.ExecSQL;`,
     ].join("\n"));
     const names = out.map((d) => d.name);
     expect(names).toContain("Query1.Open");
-    expect(names).toContain("tblOrders.Append");
-    expect(names).toContain("cdsUsers.Post");
+    expect(names).toContain("tblCars.Append");
+    expect(names).toContain("cdsPlayers.Post");
     expect(names).toContain("dm.qryStats.ExecSQL");
     expect(out.every((d) => d.kind === "database")).toBe(true);
   });
@@ -80,9 +80,9 @@ describe("pascal data sources — dataset & connection verbs", () => {
 
 describe("pascal data sources — HTTP and config", () => {
   it("captures Indy / REST client verbs with URL targets", () => {
-    const out = src(`Response := IdHTTP1.Get('http://api.example.com/users');`);
+    const out = src(`Response := IdHTTP1.Get('http://api.example.com/players');`);
     expect(out).toHaveLength(1);
-    expect(out[0]).toMatchObject({ kind: "api-call", name: "GET", target: "http://api.example.com/users" });
+    expect(out[0]).toMatchObject({ kind: "api-call", name: "GET", target: "http://api.example.com/players" });
   });
 
   it("captures WinINet calls (server literal for Connect, url for OpenUrl)", () => {
@@ -182,14 +182,14 @@ interface
 implementation
 procedure Load;
 begin
-  Query1.SQL.Add('SELECT * FROM products');
+  Query1.SQL.Add('SELECT * FROM parts');
   Query1.Open;
 end;
 end.`;
     const tree = await parseSource(code, "pascal" as any, "U.pas");
     const ext = new PascalDataSourceExtractor();
     const out = ext.extract(tree, code);
-    expect(out.find((d) => d.entity === "products")).toBeDefined();
+    expect(out.find((d) => d.entity === "parts")).toBeDefined();
     expect(out.find((d) => d.name === "Query1.Open")).toBeDefined();
     // A second file must not inherit the first file's sources.
     const tree2 = await parseSource("unit V;\ninterface\nimplementation\nend.", "pascal" as any, "V.pas");

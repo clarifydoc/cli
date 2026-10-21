@@ -89,8 +89,8 @@ describe("resolveArchitectureOverrides / matchesAnyGlob", () => {
   });
 
   it("matches a slash-less pattern against the bare name only", () => {
-    expect(matchesAnyGlob("gen/api/User.generated.ts", ["*.generated.ts"])).toBe(true);
-    expect(matchesAnyGlob("gen/api/User.ts", ["*.generated.ts"])).toBe(false);
+    expect(matchesAnyGlob("gen/api/Player.generated.ts", ["*.generated.ts"])).toBe(true);
+    expect(matchesAnyGlob("gen/api/Player.ts", ["*.generated.ts"])).toBe(false);
   });
 
   it("denies the bare-name fallback to an anchored pattern", () => {

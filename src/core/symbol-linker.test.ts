@@ -33,13 +33,13 @@ describe("symbol-linker — C# cross-project + generic type-arg resolution", () 
     expect(links.some((l) => l.targetFile === "Application/CreateOwnerCommand.cs")).toBe(true);
   });
 
-  it("resolves a generic type argument (`_db.Set<Account>()`) to the unique type's file", () => {
-    const repo = file("Infra/AccountRepository.cs", "Infra", {
-      classes: [{ ...cls("AccountRepository"), methods: [fn("GetAll", [call("_db.Set<Account>")])] }],
+  it("resolves a generic type argument (`_db.Set<Club>()`) to the unique type's file", () => {
+    const repo = file("Infra/ClubRepository.cs", "Infra", {
+      classes: [{ ...cls("ClubRepository"), methods: [fn("GetAll", [call("_db.Set<Club>")])] }],
     });
-    const domain = file("Domain/Account.cs", "Domain", { classes: [cls("Account")] });
+    const domain = file("Domain/Club.cs", "Domain", { classes: [cls("Club")] });
     const links = buildSymbolLinks([repo, domain]);
-    expect(links.some((l) => l.targetFile === "Domain/Account.cs")).toBe(true);
+    expect(links.some((l) => l.targetFile === "Domain/Club.cs")).toBe(true);
   });
 
   it("resolves a call on a dependency INHERITED from a base handler (`_repository.AddAsync`)", () => {
@@ -50,25 +50,25 @@ describe("symbol-linker — C# cross-project + generic type-arg resolution", () 
     const base = file("Shared/BaseCommandHandler.cs", "Shared", {
       classes: [{ ...cls("BaseCommandHandler"), properties: [{ name: "_repository", type: "IRepository<TResult>" }] }],
     });
-    const handler = file("App/CreateAccountCommandHandler.cs", "App", {
+    const handler = file("App/CreateClubCommandHandler.cs", "App", {
       classes: [{
-        ...cls("CreateAccountCommandHandler"),
-        extends: "BaseCommandHandler<CreateAccountCommand, Account>",
+        ...cls("CreateClubCommandHandler"),
+        extends: "BaseCommandHandler<CreateClubCommand, Club>",
         methods: [fn("Handle", [call("_repository.AddAsync")])],
       }],
     });
     const links = buildSymbolLinks([iface, base, handler]);
-    expect(links.some((l) => l.sourceFile === "App/CreateAccountCommandHandler.cs" && l.targetFile === "Shared/IRepository.cs")).toBe(true);
+    expect(links.some((l) => l.sourceFile === "App/CreateClubCommandHandler.cs" && l.targetFile === "Shared/IRepository.cs")).toBe(true);
   });
 
   it("does NOT resolve a generic arg when the type name is not globally unique (avoids false edges)", () => {
-    const repo = file("Infra/AccountRepository.cs", "Infra", {
-      classes: [{ ...cls("AccountRepository"), methods: [fn("GetAll", [call("_db.Set<Account>")])] }],
+    const repo = file("Infra/ClubRepository.cs", "Infra", {
+      classes: [{ ...cls("ClubRepository"), methods: [fn("GetAll", [call("_db.Set<Club>")])] }],
     });
-    const d1 = file("Domain/Account.cs", "Domain", { classes: [cls("Account")] });
-    const d2 = file("Scaffold/Account.cs", "Infra", { classes: [cls("Account")] });
+    const d1 = file("Domain/Club.cs", "Domain", { classes: [cls("Club")] });
+    const d2 = file("Scaffold/Club.cs", "Infra", { classes: [cls("Club")] });
     const links = buildSymbolLinks([repo, d1, d2]);
-    expect(links.some((l) => /Account\.cs$/.test(l.targetFile) && l.sourceFile === "Infra/AccountRepository.cs")).toBe(false);
+    expect(links.some((l) => /Club\.cs$/.test(l.targetFile) && l.sourceFile === "Infra/ClubRepository.cs")).toBe(false);
   });
 });
 
@@ -90,13 +90,13 @@ describe("symbol-linker — factory fallback via binding provenance (Strategy 3b
   });
 
   it("prefers a REAL member over the factory when the leaf exists in the module", () => {
-    const component = file("spa/Cart.vue", "spa", {
+    const component = file("spa/Garage.vue", "spa", {
       functions: [fn("onClick", [
-        { name: "cart.updateQuantity", kind: "cross-file", target: "./useShopCart", via: "useShopCart", line: 3 },
+        { name: "garage.updateQuantity", kind: "cross-file", target: "./useGarage", via: "useGarage", line: 3 },
       ])],
     });
-    const composable = file("spa/useShopCart.ts", "spa", {
-      functions: [fn("useShopCart", []), fn("updateQuantity", [])],
+    const composable = file("spa/useGarage.ts", "spa", {
+      functions: [fn("useGarage", []), fn("updateQuantity", [])],
     });
     const links = buildSymbolLinks([component, composable]);
     expect(links.find((l) => l.sourceSymbol === "onClick")?.targetSymbol).toBe("updateQuantity");
@@ -158,29 +158,29 @@ describe("symbol-linker — route-handler fallback guards (pit-stop FPs)", () =>
     const spec = {
       ...file("api/openapi.yaml", "api", {}),
       language: "openapi",
-      routes: [{ path: "/users", httpMethod: "GET", handler: "listUsers", kind: "api", line: 7, calls: [] }],
+      routes: [{ path: "/players", httpMethod: "GET", handler: "listPlayers", kind: "api", line: 7, calls: [] }],
     } as unknown as FileAnalysis;
-    const controller = file("src/users.controller.ts", "api", {
-      functions: [fn("listUsers", [])],
+    const controller = file("src/players.controller.ts", "api", {
+      functions: [fn("listPlayers", [])],
     });
     (controller as any).language = "typescript";
     const links = buildSymbolLinks([spec, controller]);
-    const specLink = links.find((l) => l.sourceFile === "api/openapi.yaml" && l.callName === "listUsers");
-    expect(specLink?.targetFile).toBe("src/users.controller.ts");
+    const specLink = links.find((l) => l.sourceFile === "api/openapi.yaml" && l.callName === "listPlayers");
+    expect(specLink?.targetFile).toBe("src/players.controller.ts");
   });
 
-  it("joins a WSDL PascalCase operation to a camelCase Java handler (GetUser → getUser)", () => {
+  it("joins a WSDL PascalCase operation to a camelCase Java handler (GetPlayer → getPlayer)", () => {
     const wsdl = {
-      ...file("api/users.wsdl", "api", {}),
+      ...file("api/players.wsdl", "api", {}),
       language: "wsdl",
-      routes: [{ path: "/GetUser", httpMethod: null, handler: "GetUser", kind: "api", line: 5, calls: [] }],
+      routes: [{ path: "/GetPlayer", httpMethod: null, handler: "GetPlayer", kind: "api", line: 5, calls: [] }],
     } as unknown as FileAnalysis;
-    const impl = file("src/UserServiceImpl.java", "api", {
-      classes: [{ ...cls("UserServiceImpl"), methods: [fn("getUser", [])] }],
+    const impl = file("src/PlayerServiceImpl.java", "api", {
+      classes: [{ ...cls("PlayerServiceImpl"), methods: [fn("getPlayer", [])] }],
     });
     (impl as any).language = "java";
     const links = buildSymbolLinks([wsdl, impl]);
-    expect(links.some((l) => l.sourceFile === "api/users.wsdl" && l.targetFile === "src/UserServiceImpl.java")).toBe(true);
+    expect(links.some((l) => l.sourceFile === "api/players.wsdl" && l.targetFile === "src/PlayerServiceImpl.java")).toBe(true);
   });
 
   it("requires the qualified handler's class to be evidenced in the target file", () => {
@@ -190,8 +190,8 @@ describe("symbol-linker — route-handler fallback guards (pit-stop FPs)", () =>
       routes: [route("/dashboard", "DashboardController#create")],
     } as unknown as FileAnalysis;
     const wrong = {
-      ...file("web/LEGACY/app/Models/Order.php", "web", {
-        classes: [{ ...cls("Order"), methods: [fn("create", [])] }],
+      ...file("web/LEGACY/app/Models/Car.php", "web", {
+        classes: [{ ...cls("Car"), methods: [fn("create", [])] }],
       }),
       language: "php",
     } as unknown as FileAnalysis;
@@ -203,24 +203,24 @@ describe("symbol-linker — route-handler fallback guards (pit-stop FPs)", () =>
     } as unknown as FileAnalysis;
     const links = buildSymbolLinks([webPhp, wrong, right]);
     const handlerLinks = links.filter((l) => l.sourceSymbol.startsWith("route:") && l.callName === "DashboardController#create");
-    expect(handlerLinks.some((l) => l.targetFile === "web/LEGACY/app/Models/Order.php")).toBe(false);
+    expect(handlerLinks.some((l) => l.targetFile === "web/LEGACY/app/Models/Car.php")).toBe(false);
     expect(handlerLinks.some((l) => l.targetFile === "web/LEGACY/app/Http/Controllers/DashboardController.php")).toBe(true);
   });
 
   it("never binds a `Class.method` handler to another class's method by name alone", () => {
     const groovy = (path: string, opts: Parameters<typeof file>[2]) =>
       ({ ...file(path, "app", opts), language: "groovy" }) as unknown as FileAnalysis;
-    // Grails `resources: "book"` routes every REST action, `create` included,
+    // Grails `resources: "stadium"` routes every REST action, `create` included,
     // and `/api/reviews` names a controller the project does not have.
     const mappings = {
       ...groovy("grails-app/controllers/UrlMappings.groovy", {}),
-      routes: [route("/api/books/create", "BookController.create"), route("/api/reviews", "ReviewController.save")],
+      routes: [route("/api/stadiums/create", "StadiumController.create"), route("/api/reviews", "ReviewController.save")],
     } as unknown as FileAnalysis;
-    const controller = groovy("grails-app/controllers/BookController.groovy", {
-      classes: [{ ...cls("BookController"), methods: [fn("save", [])] }],
+    const controller = groovy("grails-app/controllers/StadiumController.groovy", {
+      classes: [{ ...cls("StadiumController"), methods: [fn("save", [])] }],
     });
-    const service = groovy("grails-app/services/BookService.groovy", {
-      classes: [{ ...cls("BookService"), methods: [fn("create", [])] }],
+    const service = groovy("grails-app/services/StadiumService.groovy", {
+      classes: [{ ...cls("StadiumService"), methods: [fn("create", [])] }],
     });
     const links = buildSymbolLinks([mappings, controller, service]).filter((l) => l.sourceSymbol.startsWith("route:"));
     expect(links).toEqual([]);
@@ -231,41 +231,41 @@ describe("symbol-linker — route-handler fallback guards (pit-stop FPs)", () =>
       ({ ...file(path, "web", opts), language: "php" }) as unknown as FileAnalysis;
     const routes = {
       ...php("routes/api.php", {}),
-      routes: [route("/api/user", "UserController#index"), route("/api/health", "ping")],
+      routes: [route("/api/player", "PlayerController#index"), route("/api/health", "ping")],
     } as unknown as FileAnalysis;
-    const controller = php("app/Http/Controllers/UserController.php", {
-      classes: [{ ...cls("UserController"), methods: [fn("index", [])] }],
+    const controller = php("app/Http/Controllers/PlayerController.php", {
+      classes: [{ ...cls("PlayerController"), methods: [fn("index", [])] }],
     });
     const helpers = php("app/helpers.php", { functions: [fn("ping", [])] });
     const graded = (files: FileAnalysis[]) =>
       buildSymbolLinks(files).filter((l) => l.sourceSymbol.startsWith("route:")).map((l) => [l.callName, l.confidence]);
-    // The one `UserController.index`: named by the route, only the import is missing.
+    // The one `PlayerController.index`: named by the route, only the import is missing.
     // A bare handler name found by search stays a guess.
     expect(graded([routes, controller, helpers])).toEqual([
-      ["UserController#index", "INFERRED"],
+      ["PlayerController#index", "INFERRED"],
       ["ping", "AMBIGUOUS"],
     ]);
     // Two controllers of that name: whichever is linked is a guess.
-    const other = php("legacy/UserController.php", {
-      classes: [{ ...cls("UserController"), methods: [fn("index", [])] }],
+    const other = php("legacy/PlayerController.php", {
+      classes: [{ ...cls("PlayerController"), methods: [fn("index", [])] }],
     });
-    expect(graded([routes, controller, other])[0]).toEqual(["UserController#index", "AMBIGUOUS"]);
+    expect(graded([routes, controller, other])[0]).toEqual(["PlayerController#index", "AMBIGUOUS"]);
   });
 
   it("keeps a `Class.method` handler whose class is namespaced on the target side (Phoenix)", () => {
     const router = {
       ...file("lib/app_web/router.ex", "app", {}),
       language: "elixir",
-      routes: [route("/api/users/:id", "UserController.show")],
+      routes: [route("/api/players/:id", "PlayerController.show")],
     } as unknown as FileAnalysis;
     const controller = {
-      ...file("lib/app_web/user_controller.ex", "app", {
-        classes: [{ ...cls("AppWeb.UserController"), methods: [fn("show", [])] }],
+      ...file("lib/app_web/player_controller.ex", "app", {
+        classes: [{ ...cls("AppWeb.PlayerController"), methods: [fn("show", [])] }],
       }),
       language: "elixir",
     } as unknown as FileAnalysis;
     const links = buildSymbolLinks([router, controller]).filter((l) => l.sourceSymbol.startsWith("route:"));
-    expect(links.map((l) => l.targetSymbol)).toEqual(["AppWeb.UserController.show"]);
+    expect(links.map((l) => l.targetSymbol)).toEqual(["AppWeb.PlayerController.show"]);
   });
 });
 
@@ -281,30 +281,30 @@ describe("symbol-linker — Strategy 7 evidence gate (stdlib-name magnets)", () 
       }),
       imports: imports.map((i) => ({ ...i, isDefault: false, isNamespace: false, isType: false, line: 1 })),
     } as unknown as FileAnalysis);
-  const target = file("a/api/CustomerApiImpl.cs", "app", {
-    classes: [{ ...cls("CustomerApiImpl"), methods: [fn("computeOverview", [])] }],
+  const target = file("a/api/DriverApiImpl.cs", "app", {
+    classes: [{ ...cls("DriverApiImpl"), methods: [fn("computeOverview", [])] }],
   });
 
   it("does NOT link a unique leaf across directories without import evidence", () => {
     const links = buildSymbolLinks([caller([{ source: "./Helper", specifiers: ["Helper"] }]), helper, target]);
-    expect(links.some((l) => l.targetFile === "a/api/CustomerApiImpl.cs")).toBe(false);
+    expect(links.some((l) => l.targetFile === "a/api/DriverApiImpl.cs")).toBe(false);
   });
 
   it("links when the source file imports the target", () => {
     const links = buildSymbolLinks([
-      caller([{ source: "../../a/api/CustomerApiImpl", specifiers: ["CustomerApiImpl"] }]),
+      caller([{ source: "../../a/api/DriverApiImpl", specifiers: ["DriverApiImpl"] }]),
       helper,
       target,
     ]);
-    expect(links.some((l) => l.targetFile === "a/api/CustomerApiImpl.cs")).toBe(true);
+    expect(links.some((l) => l.targetFile === "a/api/DriverApiImpl.cs")).toBe(true);
   });
 
   it("links a same-directory target (same package needs no import)", () => {
-    const sameDir = file("b/svc/CustomerApiImpl.cs", "app", {
-      classes: [{ ...cls("CustomerApiImpl"), methods: [fn("computeOverview", [])] }],
+    const sameDir = file("b/svc/DriverApiImpl.cs", "app", {
+      classes: [{ ...cls("DriverApiImpl"), methods: [fn("computeOverview", [])] }],
     });
     const links = buildSymbolLinks([caller([{ source: "./Helper", specifiers: ["Helper"] }]), helper, sameDir]);
-    const link = links.find((l) => l.targetFile === "b/svc/CustomerApiImpl.cs");
+    const link = links.find((l) => l.targetFile === "b/svc/DriverApiImpl.cs");
     expect(link).toBeDefined();
     // Same directory IS evidence — the stronger of the two sub-tiers.
     expect(link!.strategy).toBe("unique-global");
@@ -312,7 +312,7 @@ describe("symbol-linker — Strategy 7 evidence gate (stdlib-name magnets)", () 
 
   it("keeps the old behavior for import-blind source files", () => {
     const links = buildSymbolLinks([caller([]), helper, target]);
-    const link = links.find((l) => l.targetFile === "a/api/CustomerApiImpl.cs");
+    const link = links.find((l) => l.targetFile === "a/api/DriverApiImpl.cs");
     expect(link).toBeDefined();
     // Same edge, same AMBIGUOUS confidence, but reached with no evidence at all
     // — only the strategy tag separates it from the case above, which is the
@@ -337,18 +337,18 @@ describe("symbol-linker — Strategy 7 evidence gate (stdlib-name magnets)", () 
 });
 
 describe("symbol-linker — Strategy 7 receiver-type contradiction veto", () => {
-  // `existing.setStartDate()` where `existing` is declared `Account` must not
-  // bind CustomerEntity.setStartDate — even when CustomerEntity is imported
+  // `existing.setStartDate()` where `existing` is declared `Club` must not
+  // bind DriverEntity.setStartDate — even when DriverEntity is imported
   // (evidence gate passes) and the setter name is repo-unique.
-  const customerEntity = file("jpa/CustomerEntity.cs", "app", {
-    classes: [{ ...cls("CustomerEntity"), methods: [fn("setStartDate", [])] }],
+  const driverEntity = file("jpa/DriverEntity.cs", "app", {
+    classes: [{ ...cls("DriverEntity"), methods: [fn("setStartDate", [])] }],
   });
-  const accountEntity = file("jpa/Account.cs", "app", { classes: [cls("Account")] });
+  const clubEntity = file("jpa/Club.cs", "app", { classes: [cls("Club")] });
   const callerWith = (localType: string) =>
     ({
-      ...file("api/AccountApiImpl.cs", "app", {
+      ...file("api/ClubApiImpl.cs", "app", {
         classes: [{
-          ...cls("AccountApiImpl"),
+          ...cls("ClubApiImpl"),
           methods: [{
             ...fn("update", [call("existing.setStartDate")]),
             localTypes: [{ name: "existing", type: localType }],
@@ -356,19 +356,19 @@ describe("symbol-linker — Strategy 7 receiver-type contradiction veto", () => 
         }],
       }),
       imports: [
-        { source: "../jpa/CustomerEntity", specifiers: ["CustomerEntity"], isDefault: false, isNamespace: false, isType: false, line: 1 },
-        { source: "../jpa/Account", specifiers: ["Account"], isDefault: false, isNamespace: false, isType: false, line: 2 },
+        { source: "../jpa/DriverEntity", specifiers: ["DriverEntity"], isDefault: false, isNamespace: false, isType: false, line: 1 },
+        { source: "../jpa/Club", specifiers: ["Club"], isDefault: false, isNamespace: false, isType: false, line: 2 },
       ],
     } as unknown as FileAnalysis);
 
   it("vetoes the unique-name match when the declared receiver type contradicts it", () => {
-    const links = buildSymbolLinks([callerWith("Account"), customerEntity, accountEntity]);
-    expect(links.some((l) => l.targetSymbol === "CustomerEntity.setStartDate")).toBe(false);
+    const links = buildSymbolLinks([callerWith("Club"), driverEntity, clubEntity]);
+    expect(links.some((l) => l.targetSymbol === "DriverEntity.setStartDate")).toBe(false);
   });
 
   it("keeps the match when the declared type IS the target's class", () => {
-    const links = buildSymbolLinks([callerWith("CustomerEntity"), customerEntity, accountEntity]);
-    expect(links.some((l) => l.targetSymbol === "CustomerEntity.setStartDate")).toBe(true);
+    const links = buildSymbolLinks([callerWith("DriverEntity"), driverEntity, clubEntity]);
+    expect(links.some((l) => l.targetSymbol === "DriverEntity.setStartDate")).toBe(true);
   });
 
   it("keeps the match when no declared type is known (dynamic receiver)", () => {
@@ -376,35 +376,35 @@ describe("symbol-linker — Strategy 7 receiver-type contradiction veto", () => 
       ...callerWith("ignored"),
     } as any;
     noLocal.classes[0].methods[0].localTypes = [];
-    const links = buildSymbolLinks([noLocal, customerEntity, accountEntity]);
-    expect(links.some((l) => l.targetSymbol === "CustomerEntity.setStartDate")).toBe(true);
+    const links = buildSymbolLinks([noLocal, driverEntity, clubEntity]);
+    expect(links.some((l) => l.targetSymbol === "DriverEntity.setStartDate")).toBe(true);
   });
 });
 
 describe("symbol-linker — spec-route → impl-method name join", () => {
   const specFile = (path: string, httpMethod: string) =>
     ({
-      ...file("src/main/jsight/account-ui-api.jsight", "app", {}),
+      ...file("src/main/jsight/club-ui-api.jsight", "app", {}),
       language: "jsight",
       routes: [{ path, httpMethod, kind: "api", handler: null, calls: [], middleware: [], line: 3 }],
     } as unknown as FileAnalysis);
 
   it("joins GET /grantable-club-entity-types to the verb-prefixed method", () => {
-    const impl = file("api/AccountUiApiImpl.cs", "app", {
-      classes: [{ ...cls("AccountUiApiImpl"), methods: [fn("getGrantableClubEntityTypes", [])] }],
+    const impl = file("api/ClubUiApiImpl.cs", "app", {
+      classes: [{ ...cls("ClubUiApiImpl"), methods: [fn("getGrantableClubEntityTypes", [])] }],
     });
     const links = buildSymbolLinks([specFile("/grantable-club-entity-types", "GET"), impl]);
     const l = links.find((x) => x.sourceSymbol === "route:GET /grantable-club-entity-types");
-    expect(l?.targetSymbol).toBe("AccountUiApiImpl.getGrantableClubEntityTypes");
+    expect(l?.targetSymbol).toBe("ClubUiApiImpl.getGrantableClubEntityTypes");
     expect(l?.confidence).toBe("INFERRED");
   });
 
   it("joins the bare camel form when no verb-prefixed method exists", () => {
-    const impl = file("api/AccountUiApiImpl.cs", "app", {
-      classes: [{ ...cls("AccountUiApiImpl"), methods: [fn("findPersons", [])] }],
+    const impl = file("api/ClubUiApiImpl.cs", "app", {
+      classes: [{ ...cls("ClubUiApiImpl"), methods: [fn("findPersons", [])] }],
     });
     const links = buildSymbolLinks([specFile("/find-persons", "GET"), impl]);
-    expect(links.some((l) => l.targetSymbol === "AccountUiApiImpl.findPersons")).toBe(true);
+    expect(links.some((l) => l.targetSymbol === "ClubUiApiImpl.findPersons")).toBe(true);
   });
 
   it("never binds a test file, and stays silent on ambiguity", () => {
@@ -584,9 +584,9 @@ describe("symbol-linker — overloads picked by argument count", () => {
     ({ name, line, endLine: line + 2, params: params.map((p) => ({ type: null, defaultValue: null, ...p })), calls } as any);
 
   it("links each call to the overload whose arity accepts it, and leaves an undecided one alone", () => {
-    const svc = file("src/OrderService.java", "app", {
+    const svc = file("src/CarService.java", "app", {
       classes: [{
-        ...cls("OrderService"),
+        ...cls("CarService"),
         methods: [
           method("save", 4, [{ name: "o" }]),
           method("save", 8, [{ name: "o" }, { name: "flush" }, { name: "tag", defaultValue: "\"x\"" }]),
@@ -603,16 +603,16 @@ describe("symbol-linker — overloads picked by argument count", () => {
     });
     const at = (from: string, name: string) =>
       buildSymbolLinks([svc]).find((l) => l.sourceSymbol === from && l.callName === name)?.targetLine;
-    expect(at("OrderService.run", "save")).toBe(4);
-    expect(at("OrderService.again", "save")).toBe(8); // the third parameter has a default
-    expect(at("OrderService.run", "log")).toBe(14); // only the variadic one takes five
+    expect(at("CarService.run", "save")).toBe(4);
+    expect(at("CarService.again", "save")).toBe(8); // the third parameter has a default
+    expect(at("CarService.run", "log")).toBe(14); // only the variadic one takes five
     // One argument fits both `log`s (the variadic may get none): undecided, so
     // the link keeps what the index gave it.
     const { argCount: _, ...bare } = { ...call("log", 41), argCount: 1 };
-    const unpicked = file("src/OrderService.java", "app", {
-      classes: [{ ...cls("OrderService"), methods: [method("log", 12, [{ name: "level" }]), method("log", 14, [{ name: "level" }, { name: "parts", variadic: true }]), method("unknown", 40, [], [bare])] }],
+    const unpicked = file("src/CarService.java", "app", {
+      classes: [{ ...cls("CarService"), methods: [method("log", 12, [{ name: "level" }]), method("log", 14, [{ name: "level" }, { name: "parts", variadic: true }]), method("unknown", 40, [], [bare])] }],
     });
-    const indexed = buildSymbolLinks([unpicked]).find((l) => l.sourceSymbol === "OrderService.unknown")?.targetLine;
-    expect(at("OrderService.unknown", "log")).toBe(indexed);
+    const indexed = buildSymbolLinks([unpicked]).find((l) => l.sourceSymbol === "CarService.unknown")?.targetLine;
+    expect(at("CarService.unknown", "log")).toBe(indexed);
   });
 });

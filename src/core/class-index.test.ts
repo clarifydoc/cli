@@ -70,15 +70,15 @@ describe("buildClassIndex", () => {
 
     const a = file("A/Base.cs", [cls("Base")], [], "a");
     const b = file("B/Base.cs", [cls("Base")], [], "b");
-    const user = file("C/User.cs", [cls("User", "Base")], [], "c");
-    expect(index([a, b, user]).resolve(user.filePath, "Base")).toBeNull();
+    const player = file("C/Player.cs", [cls("Player", "Base")], [], "c");
+    expect(index([a, b, player]).resolve(player.filePath, "Base")).toBeNull();
   });
 
   it("walks ancestors depth-first, each once, and survives a cycle", () => {
-    const f = file("m.ts", [cls("A", "B", ["IThing"]), cls("B", "C"), cls("C", "A")]);
+    const f = file("m.ts", [cls("A", "B", ["IBall"]), cls("B", "C"), cls("C", "A")]);
     const idx = index([f]);
     const a = idx.classesIn("m.ts")[0]!;
-    expect(idx.ancestors(a).map((s) => s.name)).toEqual(["B", "C", "IThing"]);
+    expect(idx.ancestors(a).map((s) => s.name)).toEqual(["B", "C", "IBall"]);
   });
 
   it("finds transitive descendants", () => {

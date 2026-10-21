@@ -14,10 +14,10 @@ async function apiCallsOf(src: string) {
 describe("Python outbound HTTP calls", () => {
   it("reads a module verb call and its literal URL", async () => {
     const calls = await apiCallsOf(
-      ["import requests, httpx", 'requests.get("https://api.example.com/v1/items")', 'httpx.post(f"{BASE}/api/x")'].join("\n"),
+      ["import requests, httpx", 'requests.get("https://api.example.com/v1/balls")', 'httpx.post(f"{BASE}/api/x")'].join("\n"),
     );
     expect(calls).toEqual([
-      { name: "get", target: "https://api.example.com/v1/items", line: 2 },
+      { name: "get", target: "https://api.example.com/v1/balls", line: 2 },
       { name: "post", target: "{BASE}/api/x", line: 3 },
     ]);
   });
@@ -27,14 +27,14 @@ describe("Python outbound HTTP calls", () => {
   });
 
   it("reads requests.request(METHOD, url) as that method", async () => {
-    expect(await apiCallsOf('requests.request("DELETE", "/api/items/1")')).toEqual([
-      { name: "delete", target: "/api/items/1", line: 1 },
+    expect(await apiCallsOf('requests.request("DELETE", "/api/balls/1")')).toEqual([
+      { name: "delete", target: "/api/balls/1", line: 1 },
     ]);
   });
 
   it("accepts a session or client receiver only with a URL-shaped argument", async () => {
-    const calls = await apiCallsOf(['self.session.get("/api/users")', 'cache_client.get("users")'].join("\n"));
-    expect(calls).toEqual([{ name: "get", target: "/api/users", line: 1 }]);
+    const calls = await apiCallsOf(['self.session.get("/api/players")', 'cache_client.get("players")'].join("\n"));
+    expect(calls).toEqual([{ name: "get", target: "/api/players", line: 1 }]);
   });
 
   it("is not fooled by text that merely contains a client module's name", async () => {
@@ -65,31 +65,31 @@ describe("Python database calls", () => {
     expect(await dbCallsOf([
       'cursor.execute("SELECT 1")',
       'self.conn.execute("DELETE FROM t")',
-      "Order.objects.filter(paid=True)",
-      "session.query(User).filter(User.id == 1).first()",
-      "User.query.filter_by(name=n)",
-      "db.users.find({})",
-      "user.orders.all()",
-      "order.save()",
+      "Car.objects.filter(paid=True)",
+      "session.query(Player).filter(Player.id == 1).first()",
+      "Player.query.filter_by(name=n)",
+      "db.players.find({})",
+      "player.cars.all()",
+      "car.save()",
     ].join("\n"))).toEqual([
       "cursor.execute",
       "self.conn.execute",
-      "Order.objects.filter",
-      "session.query(User).filter(User.id == 1).first",
-      "session.query(User).filter",
+      "Car.objects.filter",
+      "session.query(Player).filter(Player.id == 1).first",
+      "session.query(Player).filter",
       "session.query",
-      "User.query.filter_by",
-      "db.users.find",
-      "user.orders.all",
-      "order.save",
+      "Player.query.filter_by",
+      "db.players.find",
+      "player.cars.all",
+      "car.save",
     ]);
   });
 
   it("names the model of a Django manager or a Flask-SQLAlchemy query, not the manager", async () => {
-    const src = ["Order.objects.filter(paid=True).first()", "User.query.filter_by(name=n)", "orders.objects.all()"].join("\n");
+    const src = ["Car.objects.filter(paid=True).first()", "Player.query.filter_by(name=n)", "cars.objects.all()"].join("\n");
     const tree = await parseSource(src, "python" as never, "x.py");
     const rows = new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database").map((d) => `${d.name} → ${d.entity ?? "-"}`);
-    expect(rows).toEqual(["Order.objects.filter(paid=True).first → Order", "Order.objects.filter → Order", "User.query.filter_by → User", "orders.objects.all → -"]);
+    expect(rows).toEqual(["Car.objects.filter(paid=True).first → Car", "Car.objects.filter → Car", "Player.query.filter_by → Player", "cars.objects.all → -"]);
   });
 
   it("leaves interpreters, strings, XML trees and arrays alone", async () => {
@@ -113,23 +113,23 @@ describe("Python URLs and SQL held in locals", () => {
 
   it("reads an HTTP call's URL from a local assigned once", async () => {
     expect(await rows([
-      "def sync(user_id):",
-      '    url = f"{BASE}/users/{user_id}"',
+      "def sync(player_id):",
+      '    url = f"{BASE}/players/{player_id}"',
       "    requests.get(url)",
-      "    requests.post(BASE_URL + \"/users\")",
-    ].join("\n"))).toEqual([["api-call", "{BASE}/users/{user_id}", null, null], ["api-call", "{}/users", null, null]]);
+      "    requests.post(BASE_URL + \"/players\")",
+    ].join("\n"))).toEqual([["api-call", "{BASE}/players/{player_id}", null, null], ["api-call", "{}/players", null, null]]);
   });
 
   it("reads the table and the verb from raw SQL, literal or local", async () => {
     expect(await rows([
       "def report(cursor, n):",
-      '    cursor.execute("SELECT id FROM orders WHERE total > %s", (n,))',
-      '    sql = "UPDATE customers SET flagged = 1 WHERE id = %s"',
+      '    cursor.execute("SELECT id FROM cars WHERE total > %s", (n,))',
+      '    sql = "UPDATE drivers SET flagged = 1 WHERE id = %s"',
       "    cursor.execute(sql, (n,))",
       '    session.execute(text("DELETE FROM sessions WHERE expired"))',
     ].join("\n"))).toEqual([
-      ["database", "orders", "orders", "read"],
-      ["database", "customers", "customers", "write"],
+      ["database", "cars", "cars", "read"],
+      ["database", "drivers", "drivers", "write"],
       ["database", "sessions", "sessions", "write"],
     ]);
   });
@@ -173,8 +173,8 @@ describe("Python api-call — the json body", () => {
 
 def create(name):
     payload = {"title": "t", "count": 2, **extra}
-    requests.post("/api/items", json={"name": name, "price": 9.5, "tags": ["a"], "active": True})
-    requests.put("/api/items/1", json=payload)
+    requests.post("/api/balls", json={"name": name, "price": 9.5, "tags": ["a"], "active": True})
+    requests.put("/api/balls/1", json=payload)
 `;
     const tree = await parseSource(src, "python" as never, "x.py");
     const calls = new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call");

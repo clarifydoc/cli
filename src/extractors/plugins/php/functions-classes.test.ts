@@ -21,15 +21,15 @@ describe("CodeIgniter load->model synthetic injection properties", () => {
     const SRC = `<?php
 class Site extends JAR_Controller {
   function show() {
-    $this->load->model('customers_model');
-    $this->load->model('products_model');
-    return $this->customers_model->get_customer(1);
+    $this->load->model('drivers_model');
+    $this->load->model('parts_model');
+    return $this->drivers_model->get_driver(1);
   }
 }`;
     const [cls] = await classesOf(SRC);
     const byName = Object.fromEntries(cls!.properties.map((p) => [p.name, p.type]));
-    expect(byName["customers_model"]).toBe("Customers_model");
-    expect(byName["products_model"]).toBe("Products_model");
+    expect(byName["drivers_model"]).toBe("Drivers_model");
+    expect(byName["parts_model"]).toBe("Parts_model");
   });
 
   it("honors the alias arg and strips a subdirectory path", async () => {
@@ -70,9 +70,9 @@ namespace App\\Dto;
 use Symfony\\Component\\Serializer\\Annotation\\SerializedName;
 use Symfony\\Component\\Validator\\Constraints as Assert;
 
-#[Route('/api/users')]
+#[Route('/api/players')]
 #[IsGranted('ROLE_ADMIN')]
-class CreateUserDto extends BaseDto
+class CreatePlayerDto extends BaseDto
 {
     #[SerializedName('full_name')]
     #[Assert\\NotBlank]
@@ -96,7 +96,7 @@ class CreateUserDto extends BaseDto
     public function create(int $id): void {}
 }`;
     const [cls] = await classesOf(SRC);
-    expect(cls!.decorators).toEqual(["Route('/api/users')", "IsGranted('ROLE_ADMIN')"]);
+    expect(cls!.decorators).toEqual(["Route('/api/players')", "IsGranted('ROLE_ADMIN')"]);
     expect(cls!.methods.find((m) => m.name === "create")!.decorators).toEqual(["Route('/{id}', methods: ['POST'])"]);
 
     const byName = Object.fromEntries(cls!.properties.map((p) => [p.name, p]));
@@ -144,11 +144,11 @@ namespace {
 describe("requestAccess — what a controller method reads from $request", () => {
   it("records body, query, header, route and form reads, and validation rule keys", async () => {
     const SRC = `<?php
-class OrderController extends Controller {
+class CarController extends Controller {
   public function store(Request $request, int $id)
   {
       $data = $request->validate([
-          'customer_id' => 'required|integer',
+          'driver_id' => 'required|integer',
           'items' => 'required|array',
           'items.*.sku' => 'string',
           'note' => ['nullable', 'string'],
@@ -156,7 +156,7 @@ class OrderController extends Controller {
       $currency = $request->input('currency');
       $page = $request->query('page');
       $trace = $request->header('X-Trace');
-      $orderId = $request->route('order');
+      $carId = $request->route('car');
       $receipt = $request->file('receipt');
       $qty = $request->integer('qty');
       $token = $request->bearerToken();
@@ -164,18 +164,18 @@ class OrderController extends Controller {
       $all = $request->all();
       return $request->user();
   }
-  public function index() { return Order::all(); }
+  public function index() { return Car::all(); }
 }`;
     const [cls] = await classesOf(SRC);
     const store = cls!.methods.find((m) => m.name === "store")!;
     const access = store.requestAccess!;
     const key = (p: { binding: string | null; name: string }) => `${p.binding}:${p.name}`;
     expect(access.map(key)).toEqual(expect.arrayContaining([
-      "body:customer_id", "body:items", "body:items.*.sku", "body:note",
+      "body:driver_id", "body:items", "body:items.*.sku", "body:note",
       "body:currency", "body:qty", "body:status", "body:body",
-      "query:page", "header:X-Trace", "header:Authorization", "route:order", "form:receipt",
+      "query:page", "header:X-Trace", "header:Authorization", "route:car", "form:receipt",
     ]));
-    expect(access.find((p) => p.name === "customer_id")!.type).toBe("int");
+    expect(access.find((p) => p.name === "driver_id")!.type).toBe("int");
     expect(access.find((p) => p.name === "items")!.type).toBe("array");
     expect(access.find((p) => p.name === "qty")!.type).toBe("int");
     expect(access.find((p) => p.name === "receipt")!.type).toBe("UploadedFile");
@@ -226,14 +226,14 @@ namespace App\\Http\\Requests;
 
 use Illuminate\\Foundation\\Http\\FormRequest;
 
-class StoreOrderRequest extends FormRequest
+class StoreCarRequest extends FormRequest
 {
     public function authorize(): bool { return true; }
 
     public function rules(): array
     {
         return [
-            'customer_id' => 'required|integer|exists:customers,id',
+            'driver_id' => 'required|integer|exists:drivers,id',
             'items' => 'required|array|min:1',
             'items.*.sku' => 'required|string',
             'note' => ['nullable', 'string', 'max:500'],
@@ -243,8 +243,8 @@ class StoreOrderRequest extends FormRequest
 }`;
     const [cls] = await classesOf(SRC);
     const byName = Object.fromEntries(cls!.properties.map((p) => [p.name, p]));
-    expect(Object.keys(byName)).toEqual(["customer_id", "items", "note", "ship_on"]);
-    expect(byName["customer_id"]).toMatchObject({ type: "int", visibility: "public", isRequired: true, decorators: ['Rule("required|integer|exists:customers,id")'] });
+    expect(Object.keys(byName)).toEqual(["driver_id", "items", "note", "ship_on"]);
+    expect(byName["driver_id"]).toMatchObject({ type: "int", visibility: "public", isRequired: true, decorators: ['Rule("required|integer|exists:drivers,id")'] });
     expect(byName["items"]).toMatchObject({ type: "array", isRequired: true });
     expect(byName["note"]).toMatchObject({ type: "string" });
     expect(byName["note"]!.isRequired).toBeUndefined();

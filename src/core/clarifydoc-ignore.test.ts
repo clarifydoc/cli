@@ -201,7 +201,7 @@ describe("fnmatch — `**` respects path separators", () => {
     ["src/db/x/y.ts", "src/db/**", true],
     ["src/a/foo.ts", "src/**/foo.ts", true],
     ["src/xfoo.ts", "src/**/foo.ts", false],
-    ["User.generated.ts", "*.generated.ts", true],
+    ["Player.generated.ts", "*.generated.ts", true],
     ["a/b.ts", "*.ts", false],
     ["b.ts", "*.ts", true],
   ];

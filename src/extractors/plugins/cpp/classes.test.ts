@@ -12,20 +12,20 @@ const classesOf = (src: string) => {
 const methodNames = (cls: { methods: { name: string }[] } | undefined) => cls?.methods.map((m) => m.name);
 
 describe("C++ out-of-line method definitions", () => {
-  const userCpp = `
-#include "User.h"
+  const playerCpp = `
+#include "Player.h"
 
 namespace app {
 
-User::User(int id, std::string name)
+Player::Player(int id, std::string name)
     : id_(id), name_(std::move(name)) {}
 
-std::string User::displayName() const {
+std::string Player::displayName() const {
     return name_.empty() ? std::string{"(unknown)"} : name_;
 }
 
-std::string AdminUser::displayName() const {
-    return "[" + role_ + "] " + User::displayName();
+std::string AdminPlayer::displayName() const {
+    return "[" + role_ + "] " + Player::displayName();
 }
 
 static int helper(int x) {
@@ -36,18 +36,18 @@ static int helper(int x) {
 `;
 
   it("attaches each definition to a stub of its class, so same-named bodies stay apart", () => {
-    const classes = classesOf(userCpp);
-    expect(classes.map((c) => c.name)).toEqual(["User", "AdminUser"]);
-    expect(methodNames(classes[0])).toEqual(["User", "displayName"]);
+    const classes = classesOf(playerCpp);
+    expect(classes.map((c) => c.name)).toEqual(["Player", "AdminPlayer"]);
+    expect(methodNames(classes[0])).toEqual(["Player", "displayName"]);
     expect(methodNames(classes[1])).toEqual(["displayName"]);
     expect(classes[1]!.methods[0]!.calls.map((c) => c.name)).toContain("displayName");
   });
 
   it("removes the attached definitions from the top-level functions (no double count)", () => {
-    const a = extractWithRegex(userCpp, "User.cpp", "cpp");
+    const a = extractWithRegex(playerCpp, "Player.cpp", "cpp");
     expect(a.functions.map((f) => f.name)).toEqual(["helper"]);
     expect(a.classes.flatMap((c) => c.methods.map((m) => `${c.name}.${m.name}`))).toEqual([
-      "User.User", "User.displayName", "AdminUser.displayName",
+      "Player.Player", "Player.displayName", "AdminPlayer.displayName",
     ]);
   });
 
@@ -87,7 +87,7 @@ int Local::value() const {
   it("reads the owner off nested and templated qualifiers", () => {
     expect(outOfLineOwner("void Outer::Inner::run() {", "run")).toBe("Inner");
     expect(outOfLineOwner("void Stack<T>::push(const T& v) {", "push")).toBe("Stack");
-    expect(outOfLineOwner("User::~User() {", "~User")).toBe("User");
+    expect(outOfLineOwner("Player::~Player() {", "~Player")).toBe("Player");
     expect(outOfLineOwner("std::string helper() {", "helper")).toBeNull();
     expect(outOfLineOwner("static int helper(int x) {", "helper")).toBeNull();
   });
@@ -96,11 +96,11 @@ int Local::value() const {
 describe("C++ class-body declarations", () => {
   it("keeps pure virtual declarations as the abstract class's methods", () => {
     const classes = classesOf(`
-class IUserRepo {
+class IPlayerRepo {
 public:
-    virtual ~IUserRepo() = default;
-    virtual User* find(int id) const = 0;
-    virtual void save(const User& u,
+    virtual ~IPlayerRepo() = default;
+    virtual Player* find(int id) const = 0;
+    virtual void save(const Player& u,
                       bool flush) = 0;
     virtual int count() const;
     int size() const { return 0; }

@@ -93,8 +93,8 @@ describe("detectDuplicates — structural", () => {
   it("still finds cross-file structural clones under different names", () => {
     const calls = ["fetchRows", "mapRow", "sortBy", "renderTable"];
     const groups = detectDuplicates([
-      file("a/x.ts", [fn("buildUserTable", calls, { span: 12, params: 2 })]),
-      file("b/y.ts", [fn("buildOrderTable", calls, { span: 13, params: 2 })]),
+      file("a/x.ts", [fn("buildPlayerTable", calls, { span: 12, params: 2 })]),
+      file("b/y.ts", [fn("buildCarTable", calls, { span: 13, params: 2 })]),
     ]);
     expect(groups.some((g) => g.kind === "structural")).toBe(true);
   });

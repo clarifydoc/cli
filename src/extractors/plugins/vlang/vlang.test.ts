@@ -55,8 +55,8 @@ describe("V declarations", () => {
     "import db.sqlite as sqlite",
     "import net.http { get, post }",
     "",
-    "@[table: 'users']",
-    "pub struct User {",
+    "@[table: 'players']",
+    "pub struct Player {",
     "pub mut:",
     "  id   int    @[primary; sql: serial]",
     "  name string",
@@ -68,9 +68,9 @@ describe("V declarations", () => {
     "  notify(msg string) !",
     "}",
     "",
-    "pub fn (mut app App) find_user(id int) ?User {",
+    "pub fn (mut app App) find_player(id int) ?Player {",
     "  if id <= 0 { return none }",
-    "  rows := sql app.db { select from User where id == id }",
+    "  rows := sql app.db { select from Player where id == id }",
     "  app.log(int(id).str())",
     "  return rows[0] or { none }",
     "}",
@@ -85,20 +85,20 @@ describe("V declarations", () => {
     expect(a.functions.map((f) => [f.name, f.isExported, f.returnType])).toEqual([["helper", false, "string"]]);
     expect(a.functions[0]!.params.map((p) => `${p.name}:${p.type}`)).toEqual(["a:int", "b:int", "out:[]string"]);
     const app = a.classes.find((c) => c.name === "App")!;
-    expect(app.methods.map((m) => [m.name, m.isExported, m.returnType])).toEqual([["find_user", true, "?User"]]);
+    expect(app.methods.map((m) => [m.name, m.isExported, m.returnType])).toEqual([["find_player", true, "?Player"]]);
     // The receiver is the method's typed local.
     expect(app.methods[0]!.localTypes).toEqual([{ name: "app", type: "App" }]);
   });
 
   it("reads calls — never keywords, casts or compile-time calls", () => {
-    expect(calls(a, "find_user")).toEqual(["app.log"]);
+    expect(calls(a, "find_player")).toEqual(["app.log"]);
     expect(calls(a, "helper")).toEqual(["fmt"]);
   });
 
   it("reads structs with fields per access section, attributes and interfaces", () => {
-    const user = a.classes.find((c) => c.name === "User")!;
-    expect(user.decorators).toEqual(["table: 'users'"]);
-    expect(user.properties.map((p) => `${p.name}:${p.type}:${p.visibility}:${p.decorators?.join("|") ?? ""}`)).toEqual([
+    const player = a.classes.find((c) => c.name === "Player")!;
+    expect(player.decorators).toEqual(["table: 'players'"]);
+    expect(player.properties.map((p) => `${p.name}:${p.type}:${p.visibility}:${p.decorators?.join("|") ?? ""}`)).toEqual([
       "id:int:public:primary|sql: serial", "name:string:public:", "hits:int:private:",
     ]);
     const notifier = a.classes.find((c) => c.name === "Notifier")!;
@@ -118,9 +118,9 @@ describe("veb routes", () => {
       "pub fn (mut ctx Context) not_found() veb.Result {",
       "  return ctx.text('404')",
       "}",
-      "@['/users/:id'; get; post]",
-      "pub fn (app &App) user(mut ctx Context, id string) veb.Result {",
-      "  return ctx.json(app.find_user(id.int()))",
+      "@['/players/:id'; get; post]",
+      "pub fn (app &App) player(mut ctx Context, id string) veb.Result {",
+      "  return ctx.json(app.find_player(id.int()))",
       "}",
       "['/legacy']",
       "pub fn (mut app App) legacy() vweb.Result {",
@@ -136,12 +136,12 @@ describe("veb routes", () => {
       "pub fn (app &App) about(mut ctx Context) veb.Result {",
       "  return ctx.text('about')",
       "}",
-      "fn (app &App) find_user(id int) User {",
-      "  return User{}",
+      "fn (app &App) find_player(id int) Player {",
+      "  return Player{}",
       "}",
     ].join("\n"));
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
-      "GET /users/:id -> App.user", "POST /users/:id -> App.user", "GET /legacy -> App.legacy",
+      "GET /players/:id -> App.player", "POST /players/:id -> App.player", "GET /legacy -> App.legacy",
       "POST /logout -> App.logout", "GET / -> App.index", "GET /about -> App.about",
     ]);
   });
@@ -152,28 +152,28 @@ describe("V data access", () => {
     const a = analyze([
       "fn (mut app App) sync() ! {",
       "  sql app.db {",
-      "    create table Order",
-      "    insert order into entity.Order",
+      "    create table Car",
+      "    insert car into entity.Car",
       "  }!",
-      "  done := sql app.db { select count from Order where paid == true }!",
+      "  done := sql app.db { select count from Car where paid == true }!",
       "  sql app.db {",
-      "    update Order set paid = true where id == 1",
-      "    delete from Order where id == 2",
+      "    update Car set paid = true where id == 1",
+      "    delete from Car where id == 2",
       "  }!",
-      "  app.db.exec('SELECT id FROM invoices WHERE total > 0')!",
+      "  app.db.exec('SELECT id FROM bills WHERE total > 0')!",
       "  app.db.exec('DELETE FROM ${sql_table(t)} WHERE id = 1')!",
-      "  resp := http.post_json('https://api.example.com/orders', body)!",
+      "  resp := http.post_json('https://api.example.com/cars', body)!",
       "  http.fetch(url: 'https://api.example.com/ping', method: .head)!",
       "}",
     ].join("\n"));
     expect(a.dataSources.map((d) => `${d.kind} ${d.name} ${d.entity ?? "-"} ${d.access ?? "-"}@${d.line}`)).toEqual([
-      "database create table Order Order -@3",
-      "database insert Order Order write@4",
-      "database select Order Order read@6",
-      "database update Order Order write@8",
-      "database delete Order Order write@9",
-      "database SELECT invoices read@11",
-      "api-call POST https://api.example.com/orders - -@13",
+      "database create table Car Car -@3",
+      "database insert Car Car write@4",
+      "database select Car Car read@6",
+      "database update Car Car write@8",
+      "database delete Car Car write@9",
+      "database SELECT bills read@11",
+      "api-call POST https://api.example.com/cars - -@13",
       "api-call HEAD https://api.example.com/ping - -@14",
     ]);
   });

@@ -114,12 +114,12 @@ describe("element-registry codec — synthetic edge cases", () => {
       nodes: [
         { id: "file::src/db.rb", name: "db.rb", kind: "file", filePath: "src/db.rb", inboundCount: 0, outboundCount: 2 },
         { id: "db::DBIx::Class", name: "DBIx::Class", kind: "datastore", filePath: "", inboundCount: 2, outboundCount: 0 },
-        { id: "entity::DBIx::Class::users", name: "users", kind: "entity", filePath: "", inboundCount: 1, outboundCount: 0 },
-        { id: "entity::Microsoft::EntityFrameworkCore::User", name: "User", kind: "entity", filePath: "", inboundCount: 1, outboundCount: 0 },
+        { id: "entity::DBIx::Class::players", name: "players", kind: "entity", filePath: "", inboundCount: 1, outboundCount: 0 },
+        { id: "entity::Microsoft::EntityFrameworkCore::Player", name: "Player", kind: "entity", filePath: "", inboundCount: 1, outboundCount: 0 },
       ],
       edges: [
         { source: "file::src/db.rb", target: "db::DBIx::Class", calls: [{ name: "find", line: 3 }], total: 1 },
-        { source: "file::src/db.rb", target: "entity::DBIx::Class::users", calls: [], total: 4 },
+        { source: "file::src/db.rb", target: "entity::DBIx::Class::players", calls: [], total: 4 },
       ],
     };
     roundTrips(p);
@@ -131,11 +131,11 @@ describe("element-registry codec — synthetic edge cases", () => {
     p.symbolReach = [
       {
         file: "srv/routes.ts",
-        symbol: "createOrder",
+        symbol: "createCar",
         effects: [
           {
             kind: "db",
-            resource: "orders",
+            resource: "cars",
             originFile: "srv/service.ts",
             originSymbol: "save",
             distance: 1,
@@ -149,10 +149,10 @@ describe("element-registry codec — synthetic edge cases", () => {
     p.dataFlows = [
       {
         entryKind: "route",
-        entryLabel: "POST /api/orders",
+        entryLabel: "POST /api/cars",
         entryFile: "srv/routes.ts",
         effect: "db",
-        resource: "orders",
+        resource: "cars",
         distance: 1,
         confidence: "INFERRED",
       },
@@ -167,9 +167,9 @@ describe("element-registry codec — synthetic edge cases", () => {
         sourceFile: "lib/App/Ctrl.pm",
         sourceSymbol: "App::Controller::Ctrl.login",
         sourceLine: 12,
-        callName: "App::Model::User->find",
-        targetFile: "lib/App/Model/User.pm",
-        targetSymbol: "App::Model::User.find",
+        callName: "App::Model::Player->find",
+        targetFile: "lib/App/Model/Player.pm",
+        targetSymbol: "App::Model::Player.find",
         targetLine: 7,
         confidence: "INFERRED",
       },
@@ -248,7 +248,7 @@ describe("element-registry codec — synthetic edge cases", () => {
           category: "foundation",
           level: "high",
           summary: "Defines contracts other code is written against.",
-          behaviourAtRisk: ["Orders screen (/orders)", "data: Order"],
+          behaviourAtRisk: ["Cars screen (/cars)", "data: Car"],
           reasons: ["declares_data_entity", "many_dependents"],
           confidence: 0.75,
         },
@@ -262,8 +262,8 @@ describe("element-registry codec — synthetic edge cases", () => {
     p.entityGraph = {
       nodes: [
         {
-          id: "src/e.ts::User",
-          name: "User",
+          id: "src/e.ts::Player",
+          name: "Player",
           orm: "prisma",
           kind: "entity",
           filePath: "src/e.ts",
@@ -273,13 +273,13 @@ describe("element-registry codec — synthetic edge cases", () => {
             { name: "orgId", type: "Int", isPrimaryKey: false, isForeignKey: true },
           ],
           line: 1,
-          referencingModels: [{ id: "src/dto.ts::UserDto", name: "UserDto", filePath: "src/dto.ts", isInterface: true, kinds: ["field"], count: 2 }],
+          referencingModels: [{ id: "src/dto.ts::PlayerDto", name: "PlayerDto", filePath: "src/dto.ts", isInterface: true, kinds: ["field"], count: 2 }],
         },
         { id: "src/e.ts::Status", name: "Status", orm: null, kind: "enum", filePath: "src/e.ts", columns: [], line: 9 }, // no referencingModels key
       ],
       edges: [
-        { source: "src/e.ts::User", target: "src/e.ts::User", sourceCardinality: "one", targetCardinality: "many", fields: ["self"], foreignKey: null, joinTable: null, selfRef: true },
-        { source: "src/e.ts::User", target: "src/e.ts::Status", sourceCardinality: "many", targetCardinality: "one", fields: ["status"], foreignKey: "statusId" }, // joinTable/orm/confidence/selfRef absent
+        { source: "src/e.ts::Player", target: "src/e.ts::Player", sourceCardinality: "one", targetCardinality: "many", fields: ["self"], foreignKey: null, joinTable: null, selfRef: true },
+        { source: "src/e.ts::Player", target: "src/e.ts::Status", sourceCardinality: "many", targetCardinality: "one", fields: ["status"], foreignKey: "statusId" }, // joinTable/orm/confidence/selfRef absent
       ],
     };
     roundTrips(p);
@@ -294,8 +294,8 @@ describe("element-registry codec — synthetic edge cases", () => {
         maxComplexity: 2,
         averageComplexity: 1.5,
         functions: [
-          { functionName: "TUser.Create", complexity: 1, line: 21, endLine: 21 },
-          { functionName: "TUser.Create", complexity: 2, line: 22, endLine: 22 },
+          { functionName: "TPlayer.Create", complexity: 1, line: 21, endLine: 21 },
+          { functionName: "TPlayer.Create", complexity: 2, line: 22, endLine: 22 },
         ],
       },
     ];

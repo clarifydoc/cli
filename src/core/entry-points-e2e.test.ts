@@ -13,18 +13,18 @@ describe("entry points, end to end", () => {
     const root = join(dir, "srv");
     await mkdir(join(root, "src"), { recursive: true });
     await writeFile(join(root, "package.json"), JSON.stringify({ name: "srv", dependencies: { "@modelcontextprotocol/sdk": "1.0.0", pg: "8.11.0" } }));
-    await writeFile(join(root, "src", "orders.ts"), [
+    await writeFile(join(root, "src", "cars.ts"), [
       'import { Pool } from "pg";',
       "const pool = new Pool();",
-      "export async function saveOrder(args: { id: string }) {",
-      '  await pool.query("INSERT INTO orders (id) VALUES ($1)", [args.id]);',
+      "export async function saveCar(args: { id: string }) {",
+      '  await pool.query("INSERT INTO cars (id) VALUES ($1)", [args.id]);',
       "}",
     ].join("\n"));
     await writeFile(join(root, "src", "server.ts"), [
       'import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";',
-      'import { saveOrder } from "./orders";',
+      'import { saveCar } from "./cars";',
       'const server = new McpServer({ name: "shop", version: "1" });',
-      'server.tool("save_order", { id: "string" }, saveOrder);',
+      'server.tool("save_car", { id: "string" }, saveCar);',
     ].join("\n"));
     await analyze({ projectRoot: root, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
   });
@@ -34,8 +34,8 @@ describe("entry points, end to end", () => {
 
   it("lists the tool and follows its handler to the table it writes", async () => {
     const s = await loadReportSummary(join(dir, "out"));
-    expect(s.entryPoints?.map((e) => `${e.kind} ${e.name} → ${e.handler} @ ${e.filePath}:${e.line}`)).toEqual(["mcp-tool save_order → saveOrder @ src/server.ts:4"]);
+    expect(s.entryPoints?.map((e) => `${e.kind} ${e.name} → ${e.handler} @ ${e.filePath}:${e.line}`)).toEqual(["mcp-tool save_car → saveCar @ src/server.ts:4"]);
     const flows = (s.dataFlows ?? []).filter((f) => f.entryKind === "command");
-    expect(flows.map((f) => `${f.entryLabel} → ${f.effect} ${f.resource}`)).toContain("MCP tool save_order → db-write orders");
+    expect(flows.map((f) => `${f.entryLabel} → ${f.effect} ${f.resource}`)).toContain("MCP tool save_car → db-write cars");
   });
 });

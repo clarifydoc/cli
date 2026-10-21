@@ -41,15 +41,15 @@ import peewee
 class Base(DeclarativeBase):
     pass
 
-class User(Base):
-    __tablename__ = "app_users"
+class Player(Base):
+    __tablename__ = "app_players"
     id: Mapped[int] = mapped_column(primary_key=True)
 
-class Order(models.Model):
+class Car(models.Model):
     total = models.IntegerField()
 
     class Meta:
-        db_table = "shop_orders"
+        db_table = "shop_cars"
 
 class Tag(peewee.Model):
     name = peewee.CharField()
@@ -63,7 +63,7 @@ class Note(models.Model):
       "app/models.py",
       "python",
     );
-    expect(tables(a)).toEqual({ User: "app_users", Order: "shop_orders", Tag: "tags_v2", Note: null });
+    expect(tables(a)).toEqual({ Player: "app_players", Car: "shop_cars", Tag: "tags_v2", Note: null });
   });
 
   it("Java: @Table(name = …), with a schema, and Spring Data JDBC's @Table(\"…\")", async () => {
@@ -72,15 +72,15 @@ class Note(models.Model):
 import jakarta.persistence.*;
 
 @Entity
-@Table(schema = "core", name = "app_users")
-public class User {
+@Table(schema = "core", name = "app_players")
+public class Player {
   @Id private Long id;
 }
 `,
-      "src/main/java/com/acme/User.java",
+      "src/main/java/com/acme/Player.java",
       "java",
     );
-    expect(tables(a)).toEqual({ User: "app_users" });
+    expect(tables(a)).toEqual({ Player: "app_players" });
   });
 
   it("TypeScript: TypeORM @Entity(\"…\") and @Entity({ name }), Sequelize tableName", async () => {
@@ -88,13 +88,13 @@ public class User {
       `import { Entity, PrimaryGeneratedColumn, Column } from "typeorm";
 import { DataTypes } from "sequelize";
 
-@Entity("app_users")
-export class User {
+@Entity("app_players")
+export class Player {
   @PrimaryGeneratedColumn() id: number;
 }
 
-@Entity({ name: "shop_orders" })
-export class Order {
+@Entity({ name: "shop_cars" })
+export class Car {
   @Column() total: number;
 }
 
@@ -103,6 +103,6 @@ export const Tag = sequelize.define("Tag", { name: DataTypes.STRING }, { tableNa
       "src/entities.ts",
       "typescript",
     );
-    expect(tables(a)).toEqual({ User: "app_users", Order: "shop_orders", Tag: "tags_v2" });
+    expect(tables(a)).toEqual({ Player: "app_players", Car: "shop_cars", Tag: "tags_v2" });
   });
 });

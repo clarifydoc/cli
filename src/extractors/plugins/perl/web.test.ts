@@ -10,7 +10,7 @@ const routes = (src: string): RouteInfo[] => perlSpec.extractRoutes!(lines(src),
 const sig = (r: RouteInfo) => `${r.httpMethod} ${r.path} -> ${r.handler}`;
 
 const CONTROLLER = `
-package MyApp::Controller::Admin::Users;
+package MyApp::Controller::Admin::Players;
 use Moose;
 BEGIN { extends 'Catalyst::Controller'; }
 
@@ -25,9 +25,9 @@ sub index :Path :Args(0) {
     my $page = $c->req->param('page');
 }
 
-sub show :Path('/api/users') :Args(1) :Method('GET') {
+sub show :Path('/api/players') :Args(1) :Method('GET') {
     my ($self, $c, $id) = @_;
-    my $u = $c->model('DB::User')->find($id);
+    my $u = $c->model('DB::Player')->find($id);
 }
 
 sub create :Local :Args(0) :Method('POST') {
@@ -37,7 +37,7 @@ sub create :Local :Args(0) :Method('POST') {
     my $token = $c->req->header('X-Token');
 }
 
-sub destroy :Path('/api/users') :Args(1) :Method('DELETE') {
+sub destroy :Path('/api/players') :Args(1) :Method('DELETE') {
     my ($self, $c, $id) = @_;
     unless ($c->check_user_roles('admin')) { return; }
 }
@@ -58,10 +58,10 @@ describe("Catalyst routes — paths, :Args and params", () => {
 
   it("resolves :Path / :Local / :Global against the controller namespace", () => {
     expect(out.map(sig)).toEqual([
-      "null /admin/users -> index",
-      "GET /api/users/{id} -> show",
-      "POST /admin/users/create -> create",
-      "DELETE /api/users/{id} -> destroy",
+      "null /admin/players -> index",
+      "GET /api/players/{id} -> show",
+      "POST /admin/players/create -> create",
+      "DELETE /api/players/{id} -> destroy",
       "null /search -> search",
     ]);
   });
@@ -122,9 +122,9 @@ sub login :Path('/login') :Args(0) :Method('POST') {
 describe("Catalyst chained actions", () => {
   it("resolves a same-file chain with its captures", () => {
     const out = routes(`
-package MyApp::Controller::Orders;
-sub base :Chained('/') :PathPart('orders') :CaptureArgs(1) {
-    my ($self, $c, $order_id) = @_;
+package MyApp::Controller::Cars;
+sub base :Chained('/') :PathPart('cars') :CaptureArgs(1) {
+    my ($self, $c, $car_id) = @_;
 }
 sub view :Chained('base') :PathPart('') :Args(0) :Method('GET') {
     my ($self, $c) = @_;
@@ -133,9 +133,9 @@ sub lines :Chained('base') :PathPart('lines') :Args(1) {
     my ($self, $c, $line_no) = @_;
 }
 `);
-    expect(out.map(sig)).toEqual(["GET /orders/{order_id} -> view", "null /orders/{order_id}/lines/{line_no} -> lines"]);
+    expect(out.map(sig)).toEqual(["GET /cars/{car_id} -> view", "null /cars/{car_id}/lines/{line_no} -> lines"]);
     expect(out[1]!.params).toEqual([
-      { name: "order_id", type: null, binding: "route" },
+      { name: "car_id", type: null, binding: "route" },
       { name: "line_no", type: null, binding: "route" },
     ]);
   });
@@ -159,8 +159,8 @@ describe("extractCatalystRequestAccess", () => {
   it("types the body by the Moose class it is constructed into", () => {
     expect(extractCatalystRequestAccess(lines(`
       my $params = decode_json($c->req->body_data);
-      my $input = My::Form::UserInput->new(%$params);
-    `))).toEqual([{ name: "body", type: "My::Form::UserInput", binding: "body" }]);
+      my $input = My::Form::PlayerInput->new(%$params);
+    `))).toEqual([{ name: "body", type: "My::Form::PlayerInput", binding: "body" }]);
   });
 
   it("reports the body itself when no key is named", () => {
@@ -170,7 +170,7 @@ describe("extractCatalystRequestAccess", () => {
 
 describe("perl parseParam", () => {
   it("drops the attribute paren of a Catalyst sub and keeps real signatures", () => {
-    const fns = extractFunctionsWithSpec(lines(`sub index :Path('/users') :Args(0) {\n}\nsub add ($x, $y = 2) {\n}`), perlSpec);
+    const fns = extractFunctionsWithSpec(lines(`sub index :Path('/players') :Args(0) {\n}\nsub add ($x, $y = 2) {\n}`), perlSpec);
     expect(fns.map((f) => [f.name, f.params.map((p) => p.name)])).toEqual([["index", []], ["add", ["x", "y"]]]);
   });
 });
@@ -185,15 +185,15 @@ under sub {
     return 1 if $c->session('user');
     $c->redirect_to('/login'); return 0;
 };
-get '/users/:id' => sub {
+get '/players/:id' => sub {
     my $c = shift;
     my $id = $c->stash('id');
     my $fmt = $c->param('format');
     $c->render(json => { id => $id });
 };
-post '/users' => sub { my $c = shift; my $data = $c->req->json; };
+post '/players' => sub { my $c = shift; my $data = $c->req->json; };
 `);
-    expect(out.map(sig)).toEqual(["GET /ping -> null", "GET /users/:id -> null", "POST /users -> null"]);
+    expect(out.map(sig)).toEqual(["GET /ping -> null", "GET /players/:id -> null", "POST /players -> null"]);
     expect(out[0]!.auth).toBeUndefined();
     expect(out[1]!.auth).toMatchObject({ inherited: true });
     expect(out[1]!.params).toEqual([
@@ -212,10 +212,10 @@ sub startup {
     my $r = $self->routes;
     $r->get('/')->to('pages#home');
     my $auth = $r->under('/admin')->to('auth#check');
-    $auth->get('/users/:id')->to(controller => 'users', action => 'show');
+    $auth->get('/players/:id')->to(controller => 'players', action => 'show');
 }
 `);
-    expect(out.map(sig)).toEqual(["GET / -> Pages#home", "GET /users/:id -> Users#show"]);
+    expect(out.map(sig)).toEqual(["GET / -> Pages#home", "GET /players/:id -> Players#show"]);
     expect(out[1]!.auth).toEqual({ policies: ["Auth#check"], roles: [], schemes: [], anonymous: false, inherited: true });
     expect(out[0]!.auth).toBeUndefined();
   });
@@ -224,11 +224,11 @@ sub startup {
     const out = routes(`
 use Dancer2;
 use Dancer2::Plugin::Auth::Extensible;
-get '/items' => sub { my $q = query_parameters->get('q'); };
-del '/items/:id' => require_role admin => sub { my $id = route_parameters->get('id'); };
-post '/items' => require_login sub { my $name = body_parameters->get('name'); };
+get '/balls' => sub { my $q = query_parameters->get('q'); };
+del '/balls/:id' => require_role admin => sub { my $id = route_parameters->get('id'); };
+post '/balls' => require_login sub { my $name = body_parameters->get('name'); };
 `);
-    expect(out.map(sig)).toEqual(["GET /items -> null", "DELETE /items/:id -> null", "POST /items -> null"]);
+    expect(out.map(sig)).toEqual(["GET /balls -> null", "DELETE /balls/:id -> null", "POST /balls -> null"]);
     expect(out[1]!.auth).toMatchObject({ roles: ["admin"], inherited: false });
     expect(out[1]!.params).toEqual([{ name: "id", type: null, binding: "route", inferred: true }]);
     expect(out[2]!.auth).toMatchObject({ policies: ["require_login"] });
@@ -269,7 +269,7 @@ has _secret => (is => 'rw', isa => 'Bool');
     expect(perlRequestSchema.unwrapNullable("Maybe[Int]")).toEqual({ type: "Int", nullable: true });
     expect(perlRequestSchema.describeType("Int")).toEqual({ kind: "scalar", schema: { type: "integer" } });
     expect(perlRequestSchema.describeType("ArrayRef[Str]")).toEqual({ kind: "array", element: "Str" });
-    expect(perlRequestSchema.describeType("HashRef[Item]")).toEqual({ kind: "map", value: "Item" });
+    expect(perlRequestSchema.describeType("HashRef[Ball]")).toEqual({ kind: "map", value: "Ball" });
     expect(perlRequestSchema.describeType("My::App::Address")).toEqual({ kind: "object", name: "My::App::Address" });
     expect(perlRequestSchema.describeType("Any")).toEqual({ kind: "any" });
     expect(perlRequestSchema.bindParam!({ name: "c", type: null, defaultValue: null }, {} as RouteInfo)).toBe("services");

@@ -156,9 +156,9 @@ describe("JS reachability — entry points", () => {
   });
 
   it("matches template tags to component files by normalized name", async () => {
-    const m = await model(["src/components/UserCard.vue", "src/widgets/date-picker/index.vue", "src/util.ts"]);
-    expect(m.resolveTag?.("src/App.vue", "UserCard")).toEqual(["src/components/UserCard.vue"]);
-    expect(m.resolveTag?.("src/App.vue", "user-card")).toEqual(["src/components/UserCard.vue"]);
+    const m = await model(["src/components/PlayerCard.vue", "src/widgets/date-picker/index.vue", "src/util.ts"]);
+    expect(m.resolveTag?.("src/App.vue", "PlayerCard")).toEqual(["src/components/PlayerCard.vue"]);
+    expect(m.resolveTag?.("src/App.vue", "player-card")).toEqual(["src/components/PlayerCard.vue"]);
     expect(m.resolveTag?.("src/App.vue", "DatePicker")).toEqual(["src/widgets/date-picker/index.vue"]);
     expect(m.resolveTag?.("src/App.vue", "Util")).toEqual([]);
   });

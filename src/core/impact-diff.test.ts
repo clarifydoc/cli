@@ -32,22 +32,22 @@ const blast = (filePath: string, over: Partial<BlastRadiusInfo> = {}): BlastRadi
   ...over,
 });
 
-const ordersScreen = { name: "Orders", file: "web/Orders.vue", route: "/orders" };
-const ordersRoute = { method: "POST", path: "/api/orders", file: "srv/routes.ts", line: 6 };
+const carsScreen = { name: "Cars", file: "web/Cars.vue", route: "/cars" };
+const carsRoute = { method: "POST", path: "/api/cars", file: "srv/routes.ts", line: 6 };
 
-/** Two import islands, joined only by HTTP: Orders.vue imports the frontend
+/** Two import islands, joined only by HTTP: Cars.vue imports the frontend
  *  api client; routes.ts imports service.ts imports util.ts. */
 const summary = {
-  files: ["web/Orders.vue", "web/api.ts", "srv/routes.ts", "srv/service.ts", "srv/service.test.ts", "srv/util.ts"],
+  files: ["web/Cars.vue", "web/api.ts", "srv/routes.ts", "srv/service.ts", "srv/service.test.ts", "srv/util.ts"],
   componentGraph: {
-    "web/Orders.vue": ["web/api.ts"],
+    "web/Cars.vue": ["web/api.ts"],
     "srv/routes.ts": ["srv/service.ts"],
     "srv/service.test.ts": ["srv/service.ts"],
     "srv/service.ts": ["srv/util.ts"],
   },
-  screens: [{ name: "Orders", filePath: "web/Orders.vue", routePath: "/orders" }],
+  screens: [{ name: "Cars", filePath: "web/Cars.vue", routePath: "/cars" }],
   routeMap: [
-    { path: "/api/orders", httpMethod: "POST", kind: "api", handler: "createOrder", line: 6, filePath: "srv/routes.ts" },
+    { path: "/api/cars", httpMethod: "POST", kind: "api", handler: "createCar", line: 6, filePath: "srv/routes.ts" },
   ],
   blastRadius: [
     blast("srv/service.ts", {
@@ -55,20 +55,20 @@ const summary = {
       affectedFiles: ["srv/routes.ts", "srv/service.test.ts"],
       transitiveFiles: [],
       traceImpact: impact({
-        screens: [ordersScreen],
+        screens: [carsScreen],
         screenCount: 1,
-        routes: [ordersRoute],
+        routes: [carsRoute],
         routeCount: 1,
-        entities: ["orders"],
+        entities: ["cars"],
         entityCount: 1,
       }),
     }),
     blast("srv/util.ts", {
       affectedFiles: ["srv/service.ts"],
       traceImpact: impact({
-        screens: [ordersScreen],
+        screens: [carsScreen],
         screenCount: 1,
-        entities: ["orders"],
+        entities: ["cars"],
         entityCount: 1,
       }),
     }),
@@ -81,10 +81,10 @@ describe("computeImpactDiff", () => {
   it("unions cross-tier reach over the changed set and dedupes", () => {
     const r = computeImpactDiff(summary, ["srv/service.ts", "srv/util.ts"]);
     expect(r.changedFiles).toEqual(["srv/service.ts", "srv/util.ts"]);
-    expect(r.screens).toEqual([ordersScreen]); // same screen from both files → one entry
+    expect(r.screens).toEqual([carsScreen]); // same screen from both files → one entry
     expect(r.screenCount).toBe(1);
-    expect(r.routes).toEqual([ordersRoute]);
-    expect(r.entities).toEqual(["orders"]);
+    expect(r.routes).toEqual([carsRoute]);
+    expect(r.entities).toEqual(["cars"]);
     expect(r.truncated).toBe(false);
   });
 
@@ -107,7 +107,7 @@ describe("computeImpactDiff", () => {
 
   it("chains end at a screen file on the frontend island", () => {
     const r = computeImpactDiff(summary, ["web/api.ts"]);
-    expect(r.chains).toEqual([{ path: ["web/api.ts", "web/Orders.vue"], endsAt: "screen" }]);
+    expect(r.chains).toEqual([{ path: ["web/api.ts", "web/Cars.vue"], endsAt: "screen" }]);
   });
 
   it("rolls risk up from blast changeRisk and cross-tier reach", () => {
@@ -136,7 +136,7 @@ describe("computeImpactDiff", () => {
       ...(summary as object),
       blastRadius: [
         blast("srv/service.ts", {
-          traceImpact: impact({ screens: [ordersScreen], screenCount: 20 }), // capped upstream
+          traceImpact: impact({ screens: [carsScreen], screenCount: 20 }), // capped upstream
         }),
       ],
     } as unknown as ProjectAnalysis;
@@ -160,8 +160,8 @@ describe("impact renderers", () => {
     const text = renderImpactText(r);
     expect(text).toContain("Risk: MODERATE");
     expect(text).toContain("Screens reached (1):");
-    expect(text).toContain("Orders  /orders  (web/Orders.vue)");
-    expect(text).toContain("POST /api/orders  (srv/routes.ts:6)");
+    expect(text).toContain("Cars  /cars  (web/Cars.vue)");
+    expect(text).toContain("POST /api/cars  (srv/routes.ts:6)");
     expect(text).toContain("Tests to run (1):");
     expect(text).toContain("srv/routes.ts → srv/service.ts  [route]");
   });
@@ -171,7 +171,7 @@ describe("impact renderers", () => {
     expect(md).toContain("### ClarifyDoc impact — **MODERATE** risk");
     expect(md).toContain("|---|---|");
     expect(md).toContain("`srv/service.ts`");
-    expect(md).toContain("`POST /api/orders`");
+    expect(md).toContain("`POST /api/cars`");
   });
 });
 
@@ -182,7 +182,7 @@ describe("computeImpactDiff — usually changed with", () => {
       coChange: [
         { a: "srv/service.ts", b: "web/api.ts", count: 6, score: 0.8, hidden: true },
         { a: "srv/routes.ts", b: "srv/service.ts", count: 3, score: 0.4 },
-        { a: "srv/util.ts", b: "web/Orders.vue", count: 3, score: 0.5 },
+        { a: "srv/util.ts", b: "web/Cars.vue", count: 3, score: 0.5 },
       ],
     } as unknown as ProjectAnalysis;
     const r = computeImpactDiff(withHistory, ["srv/service.ts"]);
@@ -219,12 +219,12 @@ describe("consumer standing", () => {
     ...summary,
     files: [...(summary as { files: string[] }).files, "srv/jobs.ts", "srv/report.ts"],
     symbolLinks: [
-      link("srv/routes.ts", "createOrder", "srv/service.ts", "place", 7),
+      link("srv/routes.ts", "createCar", "srv/service.ts", "place", 7),
       link("srv/jobs.ts", "nightly", "srv/service.ts", "place", 3),
       link("srv/report.ts", "monthly", "srv/service.ts", "place", 12),
       link("srv/service.ts", "retry", "srv/service.ts", "place", 40),
       link("srv/service.test.ts", "test_place", "srv/service.ts", "place", 5),
-      link("srv/service.test.ts", "test_create", "srv/routes.ts", "createOrder", 9),
+      link("srv/service.test.ts", "test_create", "srv/routes.ts", "createCar", 9),
     ],
     testCoverage: {
       files: [{ file: "srv/report.ts", total: 10, covered: 4, functions: [{ name: "monthly", line: 10, endLine: 20, total: 10, covered: 4 }] }],
@@ -243,7 +243,7 @@ describe("consumer standing", () => {
     });
     const standing = Object.fromEntries(r.symbolImpact!.direct.map((c) => [c.symbol, [c.standing, c.coveredBy?.symbol]]));
     expect(standing).toEqual({
-      createOrder: ["covered", "test_create"],
+      createCar: ["covered", "test_create"],
       nightly: ["unverified", undefined],
       monthly: ["covered", undefined],
       retry: ["updated", undefined],
@@ -252,7 +252,7 @@ describe("consumer standing", () => {
     const text = renderImpactText(r);
     expect(text).toContain("1 updated, 2 covered, 1 tests, 1 unverified");
     // The ones to read come first.
-    expect(text.indexOf("nightly")).toBeLessThan(text.indexOf("createOrder"));
+    expect(text.indexOf("nightly")).toBeLessThan(text.indexOf("createCar"));
     expect(renderImpactMarkdown(r)).toContain("check: `nightly`");
   });
 });

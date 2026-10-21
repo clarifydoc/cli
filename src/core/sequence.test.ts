@@ -13,15 +13,15 @@ describe("buildSequence", () => {
   });
 
   it("draws a route's calls in order, its data access, and returns", () => {
-    const [r] = findRoutes(backend.routeMap, "GET /api/users/:id");
+    const [r] = findRoutes(backend.routeMap, "GET /api/players/:id");
     const anchor = routeAnchor(r!, backend.symbolLinks)!;
     expect(anchor).toBe("route:GET /:id");
-    const text = buildSequence(backend, { file: r!.filePath!, symbol: anchor, title: "GET /api/users/:id" });
+    const text = buildSequence(backend, { file: r!.filePath!, symbol: anchor, title: "GET /api/players/:id" });
     const lines = text.split("\n");
     expect(lines[0]).toBe("sequenceDiagram");
     const at = (needle: string) => lines.findIndex((l) => l.includes(needle));
-    expect(at("getUserById()")).toBeGreaterThan(at("requireAuth()"));
-    expect(at("prisma.user.findUnique")).toBeGreaterThan(at("getUserById()"));
+    expect(at("getPlayerById()")).toBeGreaterThan(at("requireAuth()"));
+    expect(at("prisma.player.findUnique")).toBeGreaterThan(at("getPlayerById()"));
     expect(text).toMatch(/-\)auth_ts: requireAuth\(\) \?/);
     expect(lines.at(-2)).toMatch(/-->>Client: response$/);
   });
@@ -47,7 +47,7 @@ describe("buildSequence", () => {
   });
 
   it("caps depth and marks recursion instead of following it", () => {
-    const text = buildSequence(backend, { file: "routes/users.ts", symbol: "route:GET /:id", title: "x" }, { depth: 1 });
+    const text = buildSequence(backend, { file: "routes/players.ts", symbol: "route:GET /:id", title: "x" }, { depth: 1 });
     expect(text).toContain("depth 1 reached");
   });
 });
@@ -57,17 +57,17 @@ describe("sequence frames", () => {
     const { sequenceFrames } = await import("./sequence-frames.js");
     const { sequenceFiles } = await import("./sequence.js");
     const pressure = await loadReportSummary(join("test-output", "sample-pressure"));
-    const [r] = findRoutes(pressure.routeMap, "POST /orders/reconcile");
+    const [r] = findRoutes(pressure.routeMap, "POST /cars/reconcile");
     const seed = { file: r!.filePath!, symbol: routeAnchor(r!, pressure.symbolLinks)! };
     const frames = await sequenceFrames(join("test-fixtures", "sample-pressure"), sequenceFiles(pressure, seed));
-    const text = buildSequence(pressure, { ...seed, title: "POST /orders/reconcile" }, { frames });
+    const text = buildSequence(pressure, { ...seed, title: "POST /cars/reconcile" }, { frames });
     const lines = text.split("\n").map((l) => l.trim());
     const at = (needle: string) => lines.findIndex((l) => l.includes(needle));
-    // rowToOrder() runs for each stuck row; authorizePayment() only for a positive total, inside the loop.
+    // rowToCar() runs for each stuck row; authorizePayment() only for a positive total, inside the loop.
     expect(at("loop for (const row of stuck.rows)")).toBeGreaterThan(at("assertScope()"));
-    expect(at("rowToOrder()")).toBeGreaterThan(at("loop for (const row of stuck.rows)"));
-    expect(at("opt (order.total #gt; 0)")).toBeGreaterThan(at("rowToOrder()"));
-    expect(at("authorizePayment()")).toBeGreaterThan(at("opt (order.total #gt; 0)"));
+    expect(at("rowToCar()")).toBeGreaterThan(at("loop for (const row of stuck.rows)"));
+    expect(at("opt (car.total #gt; 0)")).toBeGreaterThan(at("rowToCar()"));
+    expect(at("authorizePayment()")).toBeGreaterThan(at("opt (car.total #gt; 0)"));
     // Every frame opened is closed.
     const opened = lines.filter((l) => /^(loop|alt|opt|break) /.test(l)).length;
     expect(lines.filter((l) => l === "end").length).toBe(opened);

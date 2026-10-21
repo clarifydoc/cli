@@ -20,9 +20,9 @@ describe("PowerShell functions", () => {
   const SRC = [
     "<#",
     ".EXAMPLE",
-    "    Get-AppUser -Id 5",
+    "    Get-AppPlayer -Id 5",
     "#>",
-    "function Get-AppUser {",
+    "function Get-AppPlayer {",
     "    [CmdletBinding()]",
     "    param(",
     "        [Parameter(Mandatory = $false)]",
@@ -31,18 +31,18 @@ describe("PowerShell functions", () => {
     "    )",
     "    $rows = Invoke-Sqlcmd -Query 'SELECT 1' | Where-Object { $_.Id -eq $Id }",
     "    Write-Output (Get-Date)",
-    "    if ($Id -and ($Tags)) { return Format-User $rows }",
+    "    if ($Id -and ($Tags)) { return Format-Player $rows }",
     "    $repo.Save($rows)",
-    "    [UserRepository]::new('db').Find($Id)",
-    "    $result = @{ Name = 'x'; Count = Measure-Thing }",
+    "    [PlayerRepository]::new('db').Find($Id)",
+    "    $result = @{ Name = 'x'; Count = Measure-Ball }",
     "}",
     "function script:Helper($a, [int]$b = 2) { Write-Host $a }",
   ].join("\n");
   const a = analyze(SRC);
 
   it("reads functions and their param() block, attributes and all", () => {
-    expect(a.functions.map((f) => f.name)).toEqual(["Get-AppUser", "Helper"]);
-    expect(fn(a, "Get-AppUser")!.params).toEqual([
+    expect(a.functions.map((f) => f.name)).toEqual(["Get-AppPlayer", "Helper"]);
+    expect(fn(a, "Get-AppPlayer")!.params).toEqual([
       { name: "Id", type: "int", defaultValue: null },
       { name: "Tags", type: "string[]", defaultValue: "@('a')" },
     ]);
@@ -50,8 +50,8 @@ describe("PowerShell functions", () => {
   });
 
   it("reads commands, methods and static calls — never parameters, attributes or keywords", () => {
-    expect(calls(a, "Get-AppUser")).toEqual([
-      "Invoke-Sqlcmd", "Where-Object", "Write-Output", "Get-Date", "Format-User", "repo.Save", "new UserRepository", "Measure-Thing",
+    expect(calls(a, "Get-AppPlayer")).toEqual([
+      "Invoke-Sqlcmd", "Where-Object", "Write-Output", "Get-Date", "Format-Player", "repo.Save", "new PlayerRepository", "Measure-Ball",
     ]);
   });
 
@@ -65,7 +65,7 @@ describe("PowerShell imports", () => {
     const a = analyze([
       "#Requires -Modules Pester, @{ ModuleName = 'Az.Accounts'; ModuleVersion = '2.0' }",
       "Import-Module Pode",
-      'Import-Module "$PSScriptRoot\\modules\\Users.psm1"',
+      'Import-Module "$PSScriptRoot\\modules\\Players.psm1"',
       "using module ./Shared.psm1",
       "using namespace System.Collections.Generic",
       ". $PSScriptRoot\\..\\lib\\Common.ps1",
@@ -74,7 +74,7 @@ describe("PowerShell imports", () => {
       ". $PSScriptRoot\\Private\\*.ps1",
     ].join("\n"));
     expect(a.imports.map((i) => i.source)).toEqual([
-      "Pester", "Az.Accounts", "Pode", "./modules/Users.psm1", "./Shared.psm1", "System.Collections.Generic",
+      "Pester", "Az.Accounts", "Pode", "./modules/Players.psm1", "./Shared.psm1", "System.Collections.Generic",
       "../lib/Common.ps1", "./helpers.ps1", "./build.ps1",
     ]);
   });
@@ -83,21 +83,21 @@ describe("PowerShell imports", () => {
 describe("PowerShell classes", () => {
   it("reads classes, base types, properties and methods", () => {
     const a = analyze([
-      "class UserRepository : BaseRepository, IDisposable {",
-      "    hidden [string] $Table = 'Users'",
+      "class PlayerRepository : BaseRepository, IDisposable {",
+      "    hidden [string] $Table = 'Players'",
       "    static [int] $Count",
-      "    UserRepository([string]$server) { $this.Server = $server }",
+      "    PlayerRepository([string]$server) { $this.Server = $server }",
       "    [object[]] FindAll() {",
-      "        return Invoke-Sqlcmd -Query \"SELECT * FROM Users\"",
+      "        return Invoke-Sqlcmd -Query \"SELECT * FROM Players\"",
       "    }",
       "}",
     ].join("\n"));
     const cls = a.classes[0]!;
-    expect([cls.name, cls.extends, cls.implements]).toEqual(["UserRepository", "BaseRepository", ["IDisposable"]]);
+    expect([cls.name, cls.extends, cls.implements]).toEqual(["PlayerRepository", "BaseRepository", ["IDisposable"]]);
     expect(cls.properties.map((p) => [p.name, p.type, p.visibility, p.isStatic])).toEqual([
       ["Table", "string", "private", false], ["Count", "int", "public", true],
     ]);
-    expect(cls.methods.map((m) => m.name)).toEqual(["UserRepository", "FindAll"]);
+    expect(cls.methods.map((m) => m.name)).toEqual(["PlayerRepository", "FindAll"]);
     expect(calls(a, "FindAll")).toEqual(["Invoke-Sqlcmd"]);
   });
 });
@@ -106,22 +106,22 @@ describe("Pode routes", () => {
   it("reads routes, groups, methods, guards and the script block's calls", () => {
     const a = analyze([
       "Start-PodeServer {",
-      "    Add-PodeRoute -Method Get -Path '/api/users' -ScriptBlock {",
-      "        Write-PodeJsonResponse -Value (Get-AppUser)",
+      "    Add-PodeRoute -Method Get -Path '/api/players' -ScriptBlock {",
+      "        Write-PodeJsonResponse -Value (Get-AppPlayer)",
       "    }",
-      "    Add-PodeRoute -Path '/api/users/:id' -Method Delete `",
-      "        -ScriptBlock { Remove-AppUser -Id $WebEvent.Parameters['id'] }",
+      "    Add-PodeRoute -Path '/api/players/:id' -Method Delete `",
+      "        -ScriptBlock { Remove-AppPlayer -Id $WebEvent.Parameters['id'] }",
       "    Add-PodeRouteGroup -Path '/api/admin' -Routes {",
-      "        Add-PodeRoute -Method Post, Put -Path '/sync' -Authentication 'Login' -ScriptBlock { Sync-AppUsers }",
+      "        Add-PodeRoute -Method Post, Put -Path '/sync' -Authentication 'Login' -ScriptBlock { Sync-AppPlayers }",
       "    }",
       "    Add-PodeRoute -Method Get -Path '/after' -ScriptBlock { Get-After }",
       "}",
     ].join("\n"), "server.ps1");
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} [${r.middleware}] ${r.calls.map((c) => c.name)}`)).toEqual([
-      "GET /api/users [] Write-PodeJsonResponse,Get-AppUser",
-      "DELETE /api/users/:id [] Remove-AppUser",
-      "POST /api/admin/sync [Authentication(Login)] Sync-AppUsers",
-      "PUT /api/admin/sync [Authentication(Login)] Sync-AppUsers",
+      "GET /api/players [] Write-PodeJsonResponse,Get-AppPlayer",
+      "DELETE /api/players/:id [] Remove-AppPlayer",
+      "POST /api/admin/sync [Authentication(Login)] Sync-AppPlayers",
+      "PUT /api/admin/sync [Authentication(Login)] Sync-AppPlayers",
       "GET /after [] Get-After",
     ]);
   });
@@ -130,21 +130,21 @@ describe("Pode routes", () => {
 describe("PowerShell data access", () => {
   const a = analyze([
     "function Sync {",
-    '    $c = Invoke-RestMethod -Uri "$env:CRM_URL/api/customers/$($user.Id)" -Method Get',
+    '    $c = Invoke-RestMethod -Uri "$env:CRM_URL/api/drivers/$($player.Id)" -Method Get',
     "    irm 'https://audit.example.com/api/events' -Method Post",
     "    $sql = @\"",
-    "MERGE INTO Users AS t",
+    "MERGE INTO Players AS t",
     "USING (SELECT 1 AS Id) AS s ON t.Id = s.Id;",
     "\"@",
     "    Invoke-Sqlcmd -Query \"DELETE FROM Sessions WHERE Expired = 1\"",
-    "    Invoke-Sqlcmd -Query 'SELECT Name FROM Users WHERE Name = ''it''''s'''",
+    "    Invoke-Sqlcmd -Query 'SELECT Name FROM Players WHERE Name = ''it''''s'''",
     "}",
   ].join("\n"));
   const sources = a.dataSources.map((d) => `${d.kind} ${d.name}${d.baseEnv ? ` (${d.baseEnv})` : ""}@${d.line}`);
 
   it("reads REST calls, a base URL from the environment kept apart", () => {
     expect(sources.filter((s) => s.startsWith("api-call"))).toEqual([
-      "api-call GET /api/customers/{id} (CRM_URL)@2",
+      "api-call GET /api/drivers/{id} (CRM_URL)@2",
       "api-call POST https://audit.example.com/api/events@3",
     ]);
   });

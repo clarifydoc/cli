@@ -36,18 +36,18 @@ describe("type-only import edges", () => {
 describe("layers from what a file does", () => {
   it("places a file no path rule places by its routes, entities, screens or database access, and says why", () => {
     const facts: Record<string, Partial<FileAnalysis>> = {
-      "src/x/orders.ts": { routes: [{ kind: "api" }, { kind: "api" }] as never },
-      "src/x/order.ts": { classes: [{ name: "Order", decorators: ["entity"] }] as never },
+      "src/x/cars.ts": { routes: [{ kind: "api" }, { kind: "api" }] as never },
+      "src/x/car.ts": { classes: [{ name: "Car", decorators: ["entity"] }] as never },
     };
     const reasons: Record<string, string> = {};
-    const layers = classifyFileLayers(["src/x/orders.ts", "src/x/order.ts", "src/services/billing.ts", "src/x/misc.ts"], undefined, (f) => {
+    const layers = classifyFileLayers(["src/x/cars.ts", "src/x/car.ts", "src/services/billing.ts", "src/x/misc.ts"], undefined, (f) => {
       const a = facts[f];
       if (a?.routes?.length) return { layer: "ui", reason: `it declares ${a.routes.length} API routes` };
-      if (a?.classes?.length) return { layer: "data", reason: "it defines the entity Order" };
+      if (a?.classes?.length) return { layer: "data", reason: "it defines the entity Car" };
       return null;
     }, reasons);
-    expect(layers).toEqual({ "src/x/orders.ts": "ui", "src/x/order.ts": "data", "src/services/billing.ts": "services", "src/x/misc.ts": "unknown" });
-    expect(reasons["src/x/orders.ts"]).toBe("it declares 2 API routes");
+    expect(layers).toEqual({ "src/x/cars.ts": "ui", "src/x/car.ts": "data", "src/services/billing.ts": "services", "src/x/misc.ts": "unknown" });
+    expect(reasons["src/x/cars.ts"]).toBe("it declares 2 API routes");
     expect(reasons["src/services/billing.ts"]).toBe("its folder (services)");
     expect(reasons["src/x/misc.ts"]).toMatch(/no path rule/);
   });

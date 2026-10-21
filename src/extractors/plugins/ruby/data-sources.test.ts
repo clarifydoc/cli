@@ -19,7 +19,7 @@ describe("rubySpec.extractDataSources — ActiveRecord", () => {
       class AbsencesController < ApplicationController
         def show
           @absence = Absence.find_authorized params[:id], current_institution_id
-          @others  = Absence.where(employee_id: @absence.employee_id).order(:date)
+          @others  = Absence.where(referee_id: @absence.referee_id).order(:date)
           inst     = Institution.find(current_institution_id)
         end
       end
@@ -37,10 +37,10 @@ describe("rubySpec.extractDataSources — ActiveRecord", () => {
     const ds = dbSources(`
       Absence.create!(create_params)
       Duty.update_all(active: false)
-      DepartmentEmployee.destroy_all
+      DepartmentReferee.destroy_all
     `).map((d) => d.name);
     expect(ds).toEqual(
-      expect.arrayContaining(["Absence.create!", "Duty.update_all", "DepartmentEmployee.destroy_all"]),
+      expect.arrayContaining(["Absence.create!", "Duty.update_all", "DepartmentReferee.destroy_all"]),
     );
   });
 
@@ -96,12 +96,12 @@ describe("rubySpec.extractDataSources — ActiveRecord", () => {
       @absence.update(params)
       absences.each { |a| a.save }
       self.scope.where(x: 1)
-      Current.account.conversations.find_by!(display_id: 3)
+      Current.club.conversations.find_by!(display_id: 3)
     `);
     expect(ds.map((d) => [d.name, d.entity ?? null, d.access])).toEqual([
       ["@absence.update", null, "write"],
       ["self.scope.where", null, "read"],
-      ["Current.account.conversations.find_by!", null, "read"],
+      ["Current.club.conversations.find_by!", null, "read"],
     ]);
   });
 
@@ -150,7 +150,7 @@ describe("rubySpec.extractDataSources — outbound HTTP (api-call)", () => {
 
   it("captures other client gems (HTTParty / Faraday / Typhoeus / Excon)", () => {
     const ds = apiCalls(`
-      HTTParty.get("https://api.example.com/v1/things")
+      HTTParty.get("https://api.example.com/v1/balls")
       Faraday.delete(endpoint)
       Typhoeus.post(url, body: payload)
       Excon.head(host)
@@ -189,7 +189,7 @@ describe("rubySpec.extractDataSources — outbound HTTP (api-call)", () => {
   });
 
   it("does not emit api-calls for ActiveRecord model access", () => {
-    expect(apiCalls(`users = User.where(active: true).order(:name)`)).toHaveLength(0);
+    expect(apiCalls(`players = Player.where(active: true).order(:name)`)).toHaveLength(0);
   });
 });
 
@@ -197,7 +197,7 @@ describe("rubySpec.extractDataSources — a local holding a relation", () => {
   it("names the chain the local was assigned, for the association join", () => {
     const ds = dbSources(`
   def fetch_contact
-    contact_scope = Current.account.contacts
+    contact_scope = Current.club.contacts
     contact_scope = contact_scope.includes(contact_inboxes: [:inbox]) if @include_contact_inboxes
     @contact = contact_scope.find(params[:id])
   end
@@ -208,8 +208,8 @@ describe("rubySpec.extractDataSources — a local holding a relation", () => {
     `);
     // `items.first` stays out: `items` holds what a method returned, no relation the file can see.
     expect(ds.map((d) => [d.name, d.access])).toEqual([
-      ["Current.account.contacts.includes", "read"],
-      ["Current.account.contacts.includes.find", "read"],
+      ["Current.club.contacts.includes", "read"],
+      ["Current.club.contacts.includes.find", "read"],
     ]);
   });
 });

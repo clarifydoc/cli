@@ -10,14 +10,14 @@ describe("serverless.yml", () => {
     expect(rows(`service: s
 functions:
   list:
-    handler: src/users.list
+    handler: src/players.list
     events:
       - http:
-          path: users
+          path: players
           method: get
-      - http: POST users
-      - httpApi: 'DELETE /users/{id}'
-      - http: { path: users/{id}, method: any, authorizer: { name: auth } }
+      - http: POST players
+      - httpApi: 'DELETE /players/{id}'
+      - http: { path: players/{id}, method: any, authorizer: { name: auth } }
       - schedule: rate(1 day)
       - sqs: arn:aws:sqs:eu-west-1:1:q
   ping:
@@ -28,10 +28,10 @@ functions:
           method: GET
           private: true
 `)).toEqual([
-      "GET /users src/users.list list",
-      "POST /users src/users.list list",
-      "DELETE /users/{id} src/users.list list",
-      "ANY /users/{id} src/users.list list auth=auth",
+      "GET /players src/players.list list",
+      "POST /players src/players.list list",
+      "DELETE /players/{id} src/players.list list",
+      "ANY /players/{id} src/players.list list auth=auth",
       "GET /ping ping.handler ping auth=api-key",
     ]);
   });
@@ -48,13 +48,13 @@ custom:
       root: internal
 functions:
   list:
-    handler: src/users.list
+    handler: src/players.list
     events:
       - http:
-          path: \${self:custom.base}/users
+          path: \${self:custom.base}/players
           method: get
       - http:
-          path: \${self:custom.prefix}/users/{id}
+          path: \${self:custom.prefix}/players/{id}
           method: delete
       - http:
           path: \${opt:stage, 'dev'}/health
@@ -67,12 +67,12 @@ functions:
           path: \${self:custom.missing}/y
           method: get
 `)).toEqual([
-      "GET /api/v1/users src/users.list list",
-      "DELETE /api/v1/admin/users/{id} src/users.list list",
-      "GET /{stage}/health src/users.list list",
-      "GET /{API_ROOT}/ping src/users.list list",
-      "GET /{root}/x src/users.list list",
-      "GET /{missing}/y src/users.list list",
+      "GET /api/v1/players src/players.list list",
+      "DELETE /api/v1/admin/players/{id} src/players.list list",
+      "GET /{stage}/health src/players.list list",
+      "GET /{API_ROOT}/ping src/players.list list",
+      "GET /{root}/x src/players.list list",
+      "GET /{missing}/y src/players.list list",
     ]);
   });
 
@@ -87,9 +87,9 @@ Resources:
         Get:
           Type: Api
           Properties:
-            Path: !Sub '/\${Stage}/orders/{id}'
+            Path: !Sub '/\${Stage}/cars/{id}'
             Method: get
-`)).toEqual(["GET /{Stage}/orders/{id} app.handler Fn"]);
+`)).toEqual(["GET /{Stage}/cars/{id} app.handler Fn"]);
   });
 });
 
@@ -108,12 +108,12 @@ Resources:
         Get:
           Type: Api
           Properties:
-            Path: /items
+            Path: /balls
             Method: get
         Post:
           Type: HttpApi
           Properties:
-            Path: /items
+            Path: /balls
             Method: post
             Auth:
               Authorizer: Cognito
@@ -133,8 +133,8 @@ Resources:
   Bucket:
     Type: AWS::S3::Bucket
 `)).toEqual([
-      "GET /items src/app.handler Py",
-      "POST /items src/app.handler Py auth=Cognito",
+      "GET /balls src/app.handler Py",
+      "POST /balls src/app.handler Py auth=Cognito",
       "GET /greet helloworld.App::handleRequest Jvm",
     ]);
   });
@@ -160,8 +160,8 @@ functions:
   worker:
     handler: src/worker.handle
     events:
-      - sqs: arn:aws:sqs:eu-west-1:1:orders
-      - sns: order-events
+      - sqs: arn:aws:sqs:eu-west-1:1:cars
+      - sns: car-events
       - sqs:
           arn:
             Fn::GetAtt: [PaymentsQueue, Arn]
@@ -170,8 +170,8 @@ functions:
     expect(got).toEqual([
       "scheduled-job nightly → src/jobs.nightly [rate(1 day)]",
       "scheduled-job nightly → src/jobs.nightly [cron(0 3 * * ? *)]",
-      "message-consumer orders → src/worker.handle []",
-      "message-consumer order-events → src/worker.handle []",
+      "message-consumer cars → src/worker.handle []",
+      "message-consumer car-events → src/worker.handle []",
       "message-consumer PaymentsQueue → src/worker.handle []",
     ]);
   });
@@ -193,16 +193,16 @@ Resources:
         FromQueue:
           Type: SQS
           Properties:
-            Queue: !GetAtt OrdersQueue.Arn
+            Queue: !GetAtt CarsQueue.Arn
         FromTopic:
           Type: SNS
           Properties:
-            Topic: !Ref OrderTopic
+            Topic: !Ref CarTopic
 `.split("\n")).map((e) => `${e.kind} ${e.name} → ${e.handler} [${e.schedule ?? ""}]`);
     expect(got).toEqual([
       "scheduled-job ProcessFunction → process/app.handler [rate(1 day)]",
-      "message-consumer OrdersQueue → process/app.handler []",
-      "message-consumer OrderTopic → process/app.handler []",
+      "message-consumer CarsQueue → process/app.handler []",
+      "message-consumer CarTopic → process/app.handler []",
     ]);
   });
 });

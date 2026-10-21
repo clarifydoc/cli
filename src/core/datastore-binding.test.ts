@@ -32,13 +32,13 @@ describe("datastore binding through a constructed receiver", () => {
     const a = await analyze(`
       import { PrismaClient } from "@prisma/client";
       const prisma = new PrismaClient();
-      export const list = () => prisma.order.findMany();
-      export const add = (d: unknown) => prisma.order.create({ data: d });
+      export const list = () => prisma.car.findMany();
+      export const add = (d: unknown) => prisma.car.create({ data: d });
     `);
     expect(dbTargets(a)).toEqual(
       expect.arrayContaining([
-        ["prisma.order.findMany", "@prisma/client", "read", "INFERRED"],
-        ["prisma.order.create", "@prisma/client", "write", "INFERRED"],
+        ["prisma.car.findMany", "@prisma/client", "read", "INFERRED"],
+        ["prisma.car.create", "@prisma/client", "write", "INFERRED"],
       ]),
     );
   });
@@ -57,7 +57,7 @@ describe("datastore binding through a constructed receiver", () => {
     const a = await analyze(`
       import { drizzle } from "drizzle-orm/node-postgres";
       const db = drizzle(process.env.DB!);
-      export const all = () => db.select().from("orders");
+      export const all = () => db.select().from("cars");
     `);
     expect(dbTargets(a).every(([, target]) => target === "drizzle-orm/node-postgres")).toBe(true);
   });
@@ -76,7 +76,7 @@ describe("datastore binding through a constructed receiver", () => {
   });
 
   it("leaves an unbound receiver alone", async () => {
-    const a = await analyze(`export const go = (prisma: any) => prisma.order.findMany();`);
+    const a = await analyze(`export const go = (prisma: any) => prisma.car.findMany();`);
     expect(dbTargets(a).every(([, target]) => target === null)).toBe(true);
   });
 });

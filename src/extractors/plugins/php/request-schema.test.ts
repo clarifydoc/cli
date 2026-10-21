@@ -63,15 +63,15 @@ describe("phpRequestSchema hooks", () => {
   });
 
   it("binds a handler parameter: path token → route, injected types → services, FormRequest → body, else null", () => {
-    const route: RouteInfo = { path: "/orders/{order}", httpMethod: "PUT", kind: "api", handler: "OrderController#update", calls: [], middleware: [], line: 1 };
+    const route: RouteInfo = { path: "/cars/{car}", httpMethod: "PUT", kind: "api", handler: "CarController#update", calls: [], middleware: [], line: 1 };
     const bind = (name: string, type: string | null) => phpRequestSchema.bindParam!({ name, type, defaultValue: null }, route);
-    expect(bind("order", "Order")).toBe("route"); // implicit route-model binding
+    expect(bind("car", "Car")).toBe("route"); // implicit route-model binding
     expect(bind("request", "Request")).toBe("services");
     expect(bind("response", "ResponseInterface")).toBe("services");
-    expect(bind("request", "UpdateOrderRequest")).toBe("body");
-    expect(bind("service", "OrderService")).toBe("services");
+    expect(bind("request", "UpdateCarRequest")).toBe("body");
+    expect(bind("service", "CarService")).toBe("services");
     expect(bind("id", "int")).toBeNull();
-    expect(bind("user", "User")).toBeNull();
+    expect(bind("player", "Player")).toBeNull();
   });
 });
 
@@ -91,7 +91,7 @@ class Address
     public ?string $zip = null;
 }
 
-class CreateUserDto extends BaseDto
+class CreatePlayerDto extends BaseDto
 {
     public function __construct(
         #[Assert\\NotBlank] public readonly string $email,
@@ -104,13 +104,13 @@ class CreateUserDto extends BaseDto
         private string $internal = '',
     ) {}
 }`;
-    const tree = await parseSource(SRC, "php" as any, "src/Dto/CreateUserDto.php");
+    const tree = await parseSource(SRC, "php" as any, "src/Dto/CreatePlayerDto.php");
     const classes = new PhpExtractor().extractClasses(tree, SRC);
-    const analysis = { filePath: "src/Dto/CreateUserDto.php", language: "php", classes, functions: [], projectId: "root" } as unknown as FileAnalysis;
+    const analysis = { filePath: "src/Dto/CreatePlayerDto.php", language: "php", classes, functions: [], projectId: "root" } as unknown as FileAnalysis;
     const route = {
-      path: "/api/users", httpMethod: "POST", kind: "api", handler: "create", calls: [], middleware: [], line: 1,
-      filePath: "src/Controller/UserController.php", projectId: "root",
-      params: [{ name: "dto", type: "CreateUserDto", binding: "body" }],
+      path: "/api/players", httpMethod: "POST", kind: "api", handler: "create", calls: [], middleware: [], line: 1,
+      filePath: "src/Controller/PlayerController.php", projectId: "root",
+      params: [{ name: "dto", type: "CreatePlayerDto", binding: "body" }],
     } as RouteInfo & { filePath: string; projectId: string; requestSchema?: JsonSchemaNode };
     const controller = { filePath: route.filePath, language: "php", classes: [], functions: [], projectId: "root" } as unknown as FileAnalysis;
 

@@ -27,7 +27,7 @@ describe("isExternalPackage", () => {
     // A project unit that merely STARTS with a root name is not external.
     expect(isExternalPackage("SystemHelpers")).toBe(false);
     expect(isExternalPackage("FormsBuilder")).toBe(false);
-    expect(isExternalPackage("UserService")).toBe(false);
+    expect(isExternalPackage("PlayerService")).toBe(false);
     expect(isExternalPackage("UMainForm")).toBe(false);
   });
 });
@@ -84,11 +84,11 @@ describe("resolveTarget — language-family fence", () => {
 
   it("still resolves within the family across extensions (js importer → ts file)", () => {
     const analyses = [
-      { filePath: "web/src/services/userService.ts", projectId: "web" },
+      { filePath: "web/src/services/playerService.ts", projectId: "web" },
       { filePath: "web/src/page.js", projectId: "web" },
     ] as any[];
     const map = buildFilePathMap(analyses);
-    expect(resolveTarget("userService", "web/src/page.js", map)).toBe("web/src/services/userService.ts");
+    expect(resolveTarget("playerService", "web/src/page.js", map)).toBe("web/src/services/playerService.ts");
   });
 });
 

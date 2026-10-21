@@ -37,7 +37,7 @@ describe("splitUnknownBase", () => {
 
   it("reads a bare relative path as relative to an unknown base", () => {
     expect(splitUnknownBase("me")).toEqual({ target: "/me", baseExpr: "" });
-    expect(splitUnknownBase("api/v1/accounts.json")).toEqual({ target: "/api/v1/accounts.json", baseExpr: "" });
+    expect(splitUnknownBase("api/v1/clubs.json")).toEqual({ target: "/api/v1/clubs.json", baseExpr: "" });
   });
 
   it("leaves an app path, a lone hole and a query-only URL as written", () => {

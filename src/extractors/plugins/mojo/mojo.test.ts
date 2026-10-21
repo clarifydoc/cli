@@ -7,14 +7,14 @@ const analyze = (src: string, path = "shop/service.mojo"): FileAnalysis => extra
 describe("Mojo functions, structs and imports", () => {
   const a = analyze([
     "from collections import List, Dict",
-    "from .db import find_order, close_order",
+    "from .db import find_car, close_car",
     "import math",
     "",
     "trait Repo:",
-    "    fn find(self, id: Int) raises -> Order: ...",
+    "    fn find(self, id: Int) raises -> Car: ...",
     "",
     "@value",
-    "struct OrderService(Repo, Copyable):",
+    "struct CarService(Repo, Copyable):",
     "    var name: String",
     "    var count: Int = 0",
     "",
@@ -22,23 +22,23 @@ describe("Mojo functions, structs and imports", () => {
     "        self.name = name^",
     "",
     "    fn close(mut self, id: Int, force: Bool = False) raises -> Bool:",
-    "        var order = find_order(id)",
-    "        if order.total > 0 and not force:",
-    "            close_order(id)",
-    "        return self.audit(order)",
+    "        var car = find_car(id)",
+    "        if car.total > 0 and not force:",
+    "            close_car(id)",
+    "        return self.audit(car)",
     "",
-    "    fn audit(self, order: Order) -> Bool:",
+    "    fn audit(self, car: Car) -> Bool:",
     "        return True",
     "",
     "def main():",
-    "    var svc = OrderService(\"orders\")",
+    "    var svc = CarService(\"cars\")",
     "    print(svc.audit(1))",
   ].join("\n"));
 
   it("reads structs with their traits and fields, and traits", () => {
     expect(a.classes.map((c) => [c.name, c.kind ?? "class", c.implements, c.properties.map((p) => `${p.name}:${p.type}`), c.methods.map((m) => m.name)])).toEqual([
       ["Repo", "interface", [], [], ["find"]],
-      ["OrderService", "class", ["Repo", "Copyable"], ["name:String", "count:Int"], ["__init__", "close", "audit"]],
+      ["CarService", "class", ["Repo", "Copyable"], ["name:String", "count:Int"], ["__init__", "close", "audit"]],
     ]);
     expect(a.classes[1]!.decorators).toEqual(["value"]);
   });
@@ -50,15 +50,15 @@ describe("Mojo functions, structs and imports", () => {
       { name: "force", type: "Bool", defaultValue: "False" },
     ]);
     expect(close.returnType).toBe("Bool");
-    expect(close.calls.map((c) => c.name)).toEqual(["find_order", "close_order", "self.audit"]);
+    expect(close.calls.map((c) => c.name)).toEqual(["find_car", "close_car", "self.audit"]);
     expect(a.classes[1]!.methods[0]!.params).toEqual([{ name: "name", type: "String", defaultValue: null }]);
-    expect(a.functions.map((f) => [f.name, f.calls.map((c) => c.name)])).toEqual([["main", ["OrderService", "svc.audit"]]]);
-    expect(a.functions[0]!.localTypes).toEqual([{ name: "svc", type: "OrderService" }]);
+    expect(a.functions.map((f) => [f.name, f.calls.map((c) => c.name)])).toEqual([["main", ["CarService", "svc.audit"]]]);
+    expect(a.functions[0]!.localTypes).toEqual([{ name: "svc", type: "CarService" }]);
   });
 
   it("reads imports, relative ones as paths", () => {
     expect(a.imports.map((i) => [i.source, i.specifiers])).toEqual([
-      ["collections", ["List", "Dict"]], ["./db", ["find_order", "close_order"]], ["math", ["math"]],
+      ["collections", ["List", "Dict"]], ["./db", ["find_car", "close_car"]], ["math", ["math"]],
     ]);
   });
 });
@@ -73,24 +73,24 @@ describe("Mojo routes and data access", () => {
       "struct Shop(HTTPService):",
       "    fn func(mut self, req: HTTPRequest) raises -> HTTPResponse:",
       "        var p = req.uri.path",
-      "        if p == \"/api/orders\":",
-      "            return OK(list_orders())",
-      "        elif p == \"/api/orders/close\" and req.method == \"POST\":",
+      "        if p == \"/api/cars\":",
+      "            return OK(list_cars())",
+      "        elif p == \"/api/cars/close\" and req.method == \"POST\":",
       "            return OK(close_all())",
       "        return NotFound(p)",
       "",
       "fn close_all() raises -> String:",
       "    var requests = Python.import_module(\"requests\")",
-      "    _ = requests.post(\"https://crm.example.com/v2/orders/closed\")",
-      "    return db_exec(\"UPDATE orders SET status = 'closed'\")",
+      "    _ = requests.post(\"https://crm.example.com/v2/cars/closed\")",
+      "    return db_exec(\"UPDATE cars SET status = 'closed'\")",
     ].join("\n"), "shop/main.mojo");
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
-      "null /api/orders -> Shop.func",
-      "POST /api/orders/close -> Shop.func",
+      "null /api/cars -> Shop.func",
+      "POST /api/cars/close -> Shop.func",
     ]);
     expect(a.dataSources.map((d) => `${d.kind} ${d.name}${d.entity ? ` ${d.entity}` : ""}`)).toEqual([
-      "api-call POST https://crm.example.com/v2/orders/closed",
-      "database UPDATE orders",
+      "api-call POST https://crm.example.com/v2/cars/closed",
+      "database UPDATE cars",
     ]);
   });
 

@@ -35,8 +35,8 @@ class AppController {
     @DeleteMapping("items/{id}")
     fun del(@PathVariable id: Int): ResponseEntity<Boolean> { return service.del(id) }
 
-    @RequestMapping(value = ["/things"], method = [RequestMethod.PUT])
-    fun things(): String { return "x" }
+    @RequestMapping(value = ["/balls"], method = [RequestMethod.PUT])
+    fun balls(): String { return "x" }
 }
 `;
 
@@ -45,7 +45,7 @@ class AppController {
     expect(routes).toContain("GET app/globalVariables");
     expect(routes).toContain("POST app/items");
     expect(routes).toContain("DELETE app/items/{id}");
-    expect(routes).toContain("PUT app/things"); // method= attribute on @RequestMapping
+    expect(routes).toContain("PUT app/balls"); // method= attribute on @RequestMapping
     expect(routes).toHaveLength(4);
   });
 });
@@ -56,12 +56,12 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api")
-public class UserController {
-    @GetMapping("/users")
-    public List<User> list() { return service.list(); }
+public class PlayerController {
+    @GetMapping("/players")
+    public List<Player> list() { return service.list(); }
 
     @PostMapping
-    public User create(@RequestBody User u) { return service.save(u); }
+    public Player create(@RequestBody Player u) { return service.save(u); }
 
     @RequestMapping(value = "/legacy", method = RequestMethod.DELETE)
     public void legacy() {}
@@ -70,7 +70,7 @@ public class UserController {
 
   it("still extracts Java Spring routes", async () => {
     const routes = await routesOf(JAVA, "java");
-    expect(routes).toContain("GET /api/users");
+    expect(routes).toContain("GET /api/players");
     expect(routes).toContain("POST /api"); // no path -> class prefix only
     expect(routes).toContain("DELETE /api/legacy");
     expect(routes).toHaveLength(3);
@@ -230,12 +230,12 @@ describe("Spring routes — guards and parameter bindings", () => {
   it("merges class-level @PreAuthorize with action-level @Secured/@RolesAllowed and reads every binding annotation", async () => {
     const SRC = `package x;
 @RestController
-@RequestMapping("/api/users")
+@RequestMapping("/api/players")
 @PreAuthorize("hasRole('ADMIN')")
-public class UserController {
+public class PlayerController {
   @PostMapping("/{id}")
   @Secured({"ROLE_A", "ROLE_B"})
-  public ResponseEntity<User> save(@PathVariable Long id, @RequestBody CreateUserDto dto,
+  public ResponseEntity<Player> save(@PathVariable Long id, @RequestBody CreatePlayerDto dto,
       @RequestParam(name = "q", required = false) String q, @RequestHeader("X-T") String t,
       @Valid @ModelAttribute Form f, Principal p, HttpServletRequest r, Filter filter, int page) { return null; }
 }`;
@@ -250,7 +250,7 @@ public class UserController {
     });
     expect(r!.params).toEqual([
       { name: "id", type: "Long", binding: "route" },
-      { name: "dto", type: "CreateUserDto", binding: "body" },
+      { name: "dto", type: "CreatePlayerDto", binding: "body" },
       { name: "q", type: "String", binding: "query" },
       { name: "t", type: "String", binding: "header" },
       { name: "f", type: "Form", binding: "form" },
@@ -277,16 +277,16 @@ public class C {
 
   it("reads Kotlin parameter annotations from the preceding parameter_modifiers sibling", async () => {
     const SRC = `package x
-class UserController {
+class PlayerController {
   @PostMapping("/{id}")
   @PreAuthorize("hasRole('ADMIN')")
-  fun save(@PathVariable id: Long, @RequestBody dto: CreateUserDto, @RequestParam(name = "q") q: String?): User = TODO()
+  fun save(@PathVariable id: Long, @RequestBody dto: CreatePlayerDto, @RequestParam(name = "q") q: String?): Player = TODO()
 }`;
     const [r] = await fullRoutesOf(SRC, "kotlin");
     expect(r!.auth?.policies).toEqual(["hasRole('ADMIN')"]);
     expect(r!.params).toEqual([
       { name: "id", type: "Long", binding: "route" },
-      { name: "dto", type: "CreateUserDto", binding: "body" },
+      { name: "dto", type: "CreatePlayerDto", binding: "body" },
       { name: "q", type: "String?", binding: "query" },
     ]);
   });
@@ -334,9 +334,9 @@ class PolicyEndpoint {
 describe("Halo runtime routes", () => {
   it("prefixes a CustomEndpoint's functional routes with its group/version, Halo's default when not overridden", async () => {
     const src = `package x;
-class PostEndpoint implements CustomEndpoint {
+class GameEndpoint implements CustomEndpoint {
   public RouterFunction<ServerResponse> endpoint() {
-    return SpringdocRouteBuilder.route().GET("/posts/{name}/content", this::fetchContent, b -> b.tag("t")).build();
+    return SpringdocRouteBuilder.route().GET("/games/{name}/content", this::fetchContent, b -> b.tag("t")).build();
   }
 }
 class ThemeEndpoint implements CustomEndpoint {
@@ -350,7 +350,7 @@ class ThemeEndpoint implements CustomEndpoint {
     const routes: RouteInfo[] = [];
     extractSpringRoutes(tree.rootNode, routes);
     expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual([
-      "GET /apis/api.console.halo.run/v1alpha1/posts/{name}/content",
+      "GET /apis/api.console.halo.run/v1alpha1/games/{name}/content",
       "GET /apis/api.halo.run/v1alpha1/themes",
     ]);
   });
@@ -377,12 +377,12 @@ class Menu {}`, routes);
 
 describe("Spring routes — several paths on one mapping", () => {
   it("emits one route per path, in Java and Kotlin", async () => {
-    const java = await routesOf(`@RestController @RequestMapping("/posts")
+    const java = await routesOf(`@RestController @RequestMapping("/games")
 class C {
-  @GetMapping({"/featured", "/pinned"}) List<Post> top() { return s.top(); }
+  @GetMapping({"/featured", "/pinned"}) List<Game> top() { return s.top(); }
   @RequestMapping(value = {"/a", "/b"}, method = {RequestMethod.GET, RequestMethod.POST}) void ab() {}
 }`, "java");
-    expect(java.sort()).toEqual(["GET /posts/a", "GET /posts/b", "GET /posts/featured", "GET /posts/pinned", "POST /posts/a", "POST /posts/b"]);
+    expect(java.sort()).toEqual(["GET /games/a", "GET /games/b", "GET /games/featured", "GET /games/pinned", "POST /games/a", "POST /games/b"]);
     const kotlin = await routesOf(`@RestController
 class K {
   @GetMapping(value = ["/x", "/y"])

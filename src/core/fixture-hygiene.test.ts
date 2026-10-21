@@ -46,8 +46,8 @@ describe("committed fixtures are machine-independent", () => {
   });
 
   it("leaks no absolute path from the machine that generated it", () => {
-    // Deliberately NOT a bare "/Users/" search: `sample-csharp-api` legitimately
-    // declares the ASP.NET route `/Users/{id}`, which is part of the analyzed
+    // Deliberately NOT a bare "/Users/" search: a fixture may legitimately
+    // declare an ASP.NET route such as `/Users/{id}`, which is part of the analyzed
     // application, not a developer's home directory. The leaks that matter are
     // this checkout's own root and a Windows drive root.
     const offenders: string[] = [];

@@ -44,7 +44,7 @@ public class AccessReportController : ApiController {
     const SRC = `namespace X;
 [ApiController]
 [Route("api/[controller]")]
-public class UsersController : ControllerBase {
+public class PlayersController : ControllerBase {
     [HttpGet]
     public Task<int> GetAll() => Task.FromResult(1);
 
@@ -55,21 +55,21 @@ public class UsersController : ControllerBase {
     public Task<int> Delete(int id) => Task.FromResult(1);
 }`;
     const routes = await routesOf(SRC);
-    expect(routes).toContain("GET /api/Users");
-    expect(routes).toContain("GET /api/Users/{id}");
-    expect(routes).toContain("DELETE /api/Users/{id}");
+    expect(routes).toContain("GET /api/Players");
+    expect(routes).toContain("GET /api/Players/{id}");
+    expect(routes).toContain("DELETE /api/Players/{id}");
     expect(routes).toHaveLength(3);
   });
 
   it("ignores a named Name= argument and uses the positional template", async () => {
     const SRC = `namespace X;
 [Route("api/[controller]")]
-public class OrdersController {
-    [HttpGet("{id}", Name = "GetOrder", Order = 2)]
+public class CarsController {
+    [HttpGet("{id}", Name = "GetCar", Order = 2)]
     public int Get(int id) => 1;
 }`;
     const routes = await routesOf(SRC);
-    expect(routes).toEqual(["GET /api/Orders/{id}"]);
+    expect(routes).toEqual(["GET /api/Cars/{id}"]);
   });
 
   it("resolves the [action] token", async () => {

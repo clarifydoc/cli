@@ -47,16 +47,16 @@ describe.skipIf(!existsSync(join(analysis, "project-summary.json")))("lsp-update
 
   it("links an unambiguous answer, abstains on a disagreement, drops paths outside the project", async () => {
     const [one, two, three, four] = queries;
-    const summary = JSON.parse(await readFile(join(analysis, "services", "userService.ts.json"), "utf-8"));
+    const summary = JSON.parse(await readFile(join(analysis, "services", "playerService.ts.json"), "utf-8"));
     const FN_LINE: number = summary.functions[0].line;
     const answers: DefinitionAnswerFile = {
       source: "editor",
       servers: ["typescript"],
       answers: [
-        { ...one!, targets: [{ file: "routes/users.ts", line: 14 }, { file: "routes/users.ts", line: 14 }] },
-        { ...two!, targets: [{ file: "routes/users.ts", line: 14 }, { file: "routes/auth.ts", line: 9 }] },
+        { ...one!, targets: [{ file: "routes/players.ts", line: 14 }, { file: "routes/players.ts", line: 14 }] },
+        { ...two!, targets: [{ file: "routes/players.ts", line: 14 }, { file: "routes/auth.ts", line: 9 }] },
         // An alias: the property and the function it names — only the function is a declaration.
-        { ...four!, targets: [{ file: "middleware/auth.ts", line: 3 }, { file: "services/userService.ts", line: FN_LINE }] },
+        { ...four!, targets: [{ file: "middleware/auth.ts", line: 3 }, { file: "services/playerService.ts", line: FN_LINE }] },
         { ...three!, targets: [{ file: "../outside.ts", line: 1 }] },
       ],
     };
@@ -67,8 +67,8 @@ describe.skipIf(!existsSync(join(analysis, "project-summary.json")))("lsp-update
     expect(enh.lspStats.source).toBe("editor");
     const added = enh.symbolLinks.filter((l: { resolvedBy?: string }) => l.resolvedBy === "lsp");
     expect(added).toEqual(expect.arrayContaining([
-      expect.objectContaining({ sourceFile: one!.file, sourceLine: one!.line, targetFile: "routes/users.ts", targetLine: 14, strategy: "lsp-definition" }),
-      expect.objectContaining({ sourceFile: four!.file, sourceLine: four!.line, targetFile: "services/userService.ts", targetLine: FN_LINE }),
+      expect.objectContaining({ sourceFile: one!.file, sourceLine: one!.line, targetFile: "routes/players.ts", targetLine: 14, strategy: "lsp-definition" }),
+      expect.objectContaining({ sourceFile: four!.file, sourceLine: four!.line, targetFile: "services/playerService.ts", targetLine: FN_LINE }),
     ]));
     expect(added).toHaveLength(2);
     // A budgeted editor run never overwrites a full Docker capture.
@@ -97,12 +97,12 @@ describe.skipIf(!existsSync(fixture))("layer 2 across an incremental re-analysis
     await updateLsp({ analysisDir: out, emitQueries: join(dir, "q.json") });
     const queries: DefinitionQuery[] = JSON.parse(await readFile(join(dir, "q.json"), "utf-8")).queries;
     const inAuth = queries.find((q) => q.file === "middleware/auth.ts")!;
-    const inOther = queries.find((q) => q.file !== "middleware/auth.ts" && q.file !== "routes/users.ts")!;
+    const inOther = queries.find((q) => q.file !== "middleware/auth.ts" && q.file !== "routes/players.ts")!;
     const answers: DefinitionAnswerFile = {
       source: "editor",
       answers: [
-        { ...inAuth, targets: [{ file: "routes/users.ts", line: 14 }] },
-        { ...inOther, targets: [{ file: "routes/users.ts", line: 14 }] },
+        { ...inAuth, targets: [{ file: "routes/players.ts", line: 14 }] },
+        { ...inOther, targets: [{ file: "routes/players.ts", line: 14 }] },
       ],
     };
     await writeFile(join(dir, "a.json"), JSON.stringify(answers));

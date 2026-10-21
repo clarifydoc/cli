@@ -15,8 +15,8 @@ const call = (filePath: string, target: string, extra: Partial<DataSourceInfo> =
 const deployment: DeploymentModel = {
   composeFiles: ["docker-compose.yml"],
   services: [
-    { name: "orders", composeFile: "docker-compose.yml", kind: "app", project: "orders", urlEnv: { Services__Inventory: "http://inventory:8080" }, hostPorts: [5101] },
-    { name: "inventory", composeFile: "docker-compose.yml", kind: "app", project: "inventory", hostPorts: [5102] },
+    { name: "cars", composeFile: "docker-compose.yml", kind: "app", project: "cars", urlEnv: { Services__Fleet: "http://fleet:8080" }, hostPorts: [5101] },
+    { name: "fleet", composeFile: "docker-compose.yml", kind: "app", project: "fleet", hostPorts: [5102] },
     { name: "legacy", composeFile: "docker-compose.yml", kind: "app", project: "legacy" },
   ],
   externals: [],
@@ -36,14 +36,14 @@ function run(calls: Array<DataSourceInfo & { filePath: string }>, analyses: File
   return calls;
 }
 
-const typedClient = (base: HttpClientRegistration["base"]): HttpClientRegistration => ({ client: "InventoryClient", scope: "project", base, line: 3 });
+const typedClient = (base: HttpClientRegistration["base"]): HttpClientRegistration => ({ client: "FleetClient", scope: "project", base, line: 3 });
 
 describe("resolveCallOrigins", () => {
   it("names nothing when the stated values name two services, and leaves the call as it was", () => {
     const [c] = run(
-      [call("orders/InventoryClient.cs", "/api/items", { baseExpr: "", baseRef: { kind: "client", key: "InventoryClient" } })],
-      [analysis("orders/Program.cs", "orders", "csharp", [typedClient({ kind: "config", key: "Services:Inventory" })]), analysis("orders/InventoryClient.cs", "orders", "csharp")],
-      { orders: [{ key: "Services:Inventory", value: "http://legacy:8080", file: "orders/appsettings.json" }] },
+      [call("cars/FleetClient.cs", "/api/items", { baseExpr: "", baseRef: { kind: "client", key: "FleetClient" } })],
+      [analysis("cars/Program.cs", "cars", "csharp", [typedClient({ kind: "config", key: "Services:Fleet" })]), analysis("cars/FleetClient.cs", "cars", "csharp")],
+      { cars: [{ key: "Services:Fleet", value: "http://legacy:8080", file: "cars/appsettings.json" }] },
     );
     expect(c!.origin).toMatchObject({ confidence: "AMBIGUOUS" });
     expect(c!.origin).not.toHaveProperty("project");
@@ -53,20 +53,20 @@ describe("resolveCallOrigins", () => {
   it("never reads a test profile, and takes the code's fallback only when nothing else is stated", () => {
     const noEnv: DeploymentModel = { ...deployment, services: deployment.services.map(({ urlEnv: _u, ...s }) => s) };
     const [c] = run(
-      [call("orders/InventoryClient.cs", "/api/items", { baseExpr: "", baseRef: { kind: "client", key: "InventoryClient" } })],
-      [analysis("orders/Program.cs", "orders", "csharp", [typedClient({ kind: "config", key: "Services:Inventory", fallback: "http://localhost:5102" })]), analysis("orders/InventoryClient.cs", "orders", "csharp")],
-      { orders: [{ key: "Services:Inventory", value: "http://legacy:8080", test: true, file: "orders/appsettings.Test.json" }] },
+      [call("cars/FleetClient.cs", "/api/items", { baseExpr: "", baseRef: { kind: "client", key: "FleetClient" } })],
+      [analysis("cars/Program.cs", "cars", "csharp", [typedClient({ kind: "config", key: "Services:Fleet", fallback: "http://localhost:5102" })]), analysis("cars/FleetClient.cs", "cars", "csharp")],
+      { cars: [{ key: "Services:Fleet", value: "http://legacy:8080", test: true, file: "cars/appsettings.Test.json" }] },
       noEnv,
     );
-    expect(c!.origin).toMatchObject({ project: "inventory", host: "localhost:5102", confidence: "INFERRED" });
+    expect(c!.origin).toMatchObject({ project: "fleet", host: "localhost:5102", confidence: "INFERRED" });
     expect(c!.origin!.evidence.map((e) => e.step)).toEqual(["client", "fallback", "address"]);
     expect(c).not.toHaveProperty("baseExpr");
   });
 
   it("makes a relative call through an outside base absolute, so it never joins a route here", () => {
     const [c] = run(
-      [call("orders/Payments.cs", "/v1/charges", { baseExpr: "", baseRef: { kind: "client", key: "Payments" } })],
-      [analysis("orders/Payments.cs", "orders", "csharp", [{ client: "Payments", scope: "project", base: { kind: "literal", key: "https://api.stripe.com" }, line: 2 }])],
+      [call("cars/Payments.cs", "/v1/charges", { baseExpr: "", baseRef: { kind: "client", key: "Payments" } })],
+      [analysis("cars/Payments.cs", "cars", "csharp", [{ client: "Payments", scope: "project", base: { kind: "literal", key: "https://api.stripe.com" }, line: 2 }])],
     );
     expect(c!.origin).toMatchObject({ host: "api.stripe.com", external: true, confidence: "EXTRACTED" });
     expect(c!.target).toBe("https://api.stripe.com/v1/charges");
@@ -76,21 +76,21 @@ describe("resolveCallOrigins", () => {
   it("puts the base's path in front of the call's, once", () => {
     const [a, b] = run(
       [
-        call("worker/index.ts", "/items", { baseExpr: "process.env.INVENTORY_URL" }),
-        call("worker/index.ts", "/inv/items", { baseExpr: "process.env.INVENTORY_URL" }),
+        call("worker/index.ts", "/items", { baseExpr: "process.env.FLEET_URL" }),
+        call("worker/index.ts", "/fleet/items", { baseExpr: "process.env.FLEET_URL" }),
       ],
       [analysis("worker/index.ts", "worker", "typescript")],
       {},
-      { ...deployment, services: [...deployment.services, { name: "worker", composeFile: "docker-compose.yml", kind: "app", project: "worker", urlEnv: { INVENTORY_URL: "http://inventory:8080/inv/" } }] },
+      { ...deployment, services: [...deployment.services, { name: "worker", composeFile: "docker-compose.yml", kind: "app", project: "worker", urlEnv: { FLEET_URL: "http://fleet:8080/fleet/" } }] },
     );
-    expect([a!.target, b!.target]).toEqual(["/inv/items", "/inv/items"]);
-    expect(a!.origin).toMatchObject({ project: "inventory", host: "inventory", confidence: "EXTRACTED" });
+    expect([a!.target, b!.target]).toEqual(["/fleet/items", "/fleet/items"]);
+    expect(a!.origin).toMatchObject({ project: "fleet", host: "fleet", confidence: "EXTRACTED" });
   });
 
   it("leaves a local port no service publishes unresolved — the machine is not a service", () => {
     const [c] = run(
-      [call("orders/A.cs", "/api/x", { baseExpr: "", baseRef: { kind: "client", key: "A" } })],
-      [analysis("orders/A.cs", "orders", "csharp", [{ client: "A", scope: "project", base: { kind: "literal", key: "http://localhost:5999" }, line: 1 }])],
+      [call("cars/A.cs", "/api/x", { baseExpr: "", baseRef: { kind: "client", key: "A" } })],
+      [analysis("cars/A.cs", "cars", "csharp", [{ client: "A", scope: "project", base: { kind: "literal", key: "http://localhost:5999" }, line: 1 }])],
     );
     expect(c!.origin).toMatchObject({ host: "localhost:5999", confidence: "INFERRED" });
     expect(c!.origin).not.toHaveProperty("project");
@@ -102,7 +102,7 @@ describe("resolveCallOrigins", () => {
       [call("web/api.ts", "/api/items", { baseRef: { kind: "literal", key: "http://localhost:5102" } })],
       [analysis("web/api.ts", "web", "typescript")],
     );
-    expect(c!.origin).toMatchObject({ project: "inventory", host: "localhost:5102", confidence: "EXTRACTED" });
+    expect(c!.origin).toMatchObject({ project: "fleet", host: "localhost:5102", confidence: "EXTRACTED" });
   });
 
   it("reads a host left as a hole only by its port, and never surer than INFERRED", () => {
@@ -113,7 +113,7 @@ describe("resolveCallOrigins", () => {
       ],
       [analysis("web/api.ts", "web", "typescript")],
     );
-    expect(c!.origin).toMatchObject({ project: "inventory", confidence: "INFERRED" });
+    expect(c!.origin).toMatchObject({ project: "fleet", confidence: "INFERRED" });
     expect(c).not.toHaveProperty("baseExpr");
     expect(d!.origin).not.toHaveProperty("project");
     expect(d!.baseExpr).toBe("http://${IP}:5999");
@@ -134,7 +134,7 @@ describe("resolveCallOrigins", () => {
       addresses: buildServiceAddresses(deployment, new Map()),
       proxyRules: rules,
     });
-    expect(calls[0]).toMatchObject({ target: "/items", origin: { project: "inventory", confidence: "EXTRACTED" } });
+    expect(calls[0]).toMatchObject({ target: "/items", origin: { project: "fleet", confidence: "EXTRACTED" } });
     // A staging host is not one of this analysis's services: nothing changes.
     expect(calls[1]).toMatchObject({ target: "/ext/items" });
     expect(calls[1]).not.toHaveProperty("origin");

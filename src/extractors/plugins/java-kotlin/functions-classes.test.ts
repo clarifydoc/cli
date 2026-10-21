@@ -24,9 +24,9 @@ function method(cls: ClassInfo | undefined, name: string): FunctionInfo {
 describe("Java/Kotlin localTypes extraction", () => {
   it("captures Java typed locals and enhanced-for variables, skipping String; an untyped var keeps its initializer call", async () => {
     const src = `package x;
-class AccountApiImpl {
+class ClubApiImpl {
   void update(String id) {
-    Account existing = repo.find(id);
+    Club existing = repo.find(id);
     var inferred = other();
     String name = existing.getName();
     List<Grant> grants = existing.getGrants();
@@ -36,7 +36,7 @@ class AccountApiImpl {
     const classes = await classesOf(src, "java");
     const locals = classes[0]!.methods[0]!.localTypes ?? [];
     const byName = Object.fromEntries(locals.map((l) => [l.name, l.type]));
-    expect(byName["existing"]).toBe("Account");
+    expect(byName["existing"]).toBe("Club");
     expect(byName["grants"]).toBe("List");
     expect(byName["g"]).toBe("Grant");
     // No stated type: the linker types it by what `other()` is declared to return.
@@ -90,10 +90,10 @@ class Service {
 fun Text(s: String) {}
 class C {
   fun m() {
-    val made = OrderRepo()
-    val qualified = com.acme.OrderRepo(1)
-    val applied = OrderRepo().apply { init() }
-    val bean = ctx.getBean(OrderRepo::class.java)
+    val made = CarRepo()
+    val qualified = com.acme.CarRepo(1)
+    val applied = CarRepo().apply { init() }
+    val bean = ctx.getBean(CarRepo::class.java)
     val named = ctx.getBean("s3", Storage::class.java)
     val koin = get<KRepo>()
     val koinNamed = get<Mailer>(named("noop"))
@@ -108,10 +108,10 @@ class C {
 }`;
     const locals = (await classesOf(src, "kotlin"))[0]!.methods.find((m) => m.name === "m")!.localTypes;
     expect(locals).toEqual([
-      { name: "made", type: "OrderRepo" },
-      { name: "qualified", type: "OrderRepo" },
-      { name: "applied", type: "OrderRepo" },
-      { name: "bean", type: "OrderRepo" },
+      { name: "made", type: "CarRepo" },
+      { name: "qualified", type: "CarRepo" },
+      { name: "applied", type: "CarRepo" },
+      { name: "bean", type: "CarRepo" },
       { name: "named", type: "Storage", qualifier: "s3" },
       { name: "koin", type: "KRepo" },
       { name: "koinNamed", type: "Mailer", qualifier: "noop" },
@@ -196,14 +196,14 @@ describe("Java/Kotlin injection points", () => {
   it("reads Kotlin parameter annotations (sibling parameter_modifiers), use-site targets and nullable types", async () => {
     const [cls] = await classesOf(`package x
 class C {
-  fun f(@Named("p") r: OrderRepo?, s: Repo, @get:Named("g") t: Repo): Foo? = null
+  fun f(@Named("p") r: CarRepo?, s: Repo, @get:Named("g") t: Repo): Foo? = null
   fun g(): List<Foo> { return emptyList() }
   fun Foo.ext(): Bar = Bar()
   fun unit() {}
 }`, "kotlin");
     const f = method(cls, "f");
     expect(f.params).toEqual([
-      { name: "r", type: "OrderRepo?", defaultValue: null, qualifier: "p" },
+      { name: "r", type: "CarRepo?", defaultValue: null, qualifier: "p" },
       { name: "s", type: "Repo", defaultValue: null },
       { name: "t", type: "Repo", defaultValue: null },
     ]);
@@ -216,10 +216,10 @@ class C {
   it("emits the Kotlin primary constructor with ALL its parameters, and types properties from them", async () => {
     const [cls] = await classesOf(`package x
 @Service
-class OrderSvc(
+class CarSvc(
     @Qualifier("s3") private val storage: Storage,
     @field:Named("a") val a: A,
-    plainRepo: OrderRepo,
+    plainRepo: CarRepo,
     @Named("p") qualifiedPlain: Repo?,
     count: Int = 3,
 ) {
@@ -228,7 +228,7 @@ class OrderSvc(
     private val made = Cache()
     private val untypedRepo by inject<KRepo>()
     private val namedRepo: KRepo by inject(named("k"))
-    private val lazyRepo by lazy { OrderRepo() }
+    private val lazyRepo by lazy { CarRepo() }
     @Inject @Named("q") lateinit var b: B
     private val unknown = compute()
 }`, "kotlin");
@@ -236,18 +236,18 @@ class OrderSvc(
     expect(ctor.params).toEqual([
       { name: "storage", type: "Storage", defaultValue: null, qualifier: "s3" },
       { name: "a", type: "A", defaultValue: null, qualifier: "a" },
-      { name: "plainRepo", type: "OrderRepo", defaultValue: null },
+      { name: "plainRepo", type: "CarRepo", defaultValue: null },
       { name: "qualifiedPlain", type: "Repo?", defaultValue: null, qualifier: "p" },
       { name: "count", type: "Int", defaultValue: "3" },
     ]);
     const props = Object.fromEntries(cls!.properties.map((p) => [p.name, [p.type, p.qualifier]]));
     expect(props).toEqual({
-      keptRepo: ["OrderRepo", undefined],
+      keptRepo: ["CarRepo", undefined],
       keptQualified: ["Repo?", "p"],
       made: ["Cache", undefined],
       untypedRepo: ["KRepo", undefined],
       namedRepo: ["KRepo", "k"],
-      lazyRepo: ["OrderRepo", undefined],
+      lazyRepo: ["CarRepo", undefined],
       b: ["B", "q"],
       unknown: [null, undefined],
       storage: ["Storage", "s3"],
@@ -276,12 +276,12 @@ describe("nested types and aliases", () => {
   it("extracts Java nested classes with their own methods", async () => {
     const classes = await classesOf(`
 package a;
-public class Order {
-  public static class Builder { public Order build() { return new Order(); } }
+public class Car {
+  public static class Builder { public Car build() { return new Car(); } }
   @Nested class WhenEmpty { void rejects() {} }
   enum Status { OPEN, CLOSED }
 }`, "java");
-    expect(classes.map((c) => `${c.name}[${c.methods.map((m) => m.name)}]`)).toEqual(["Order[]", "Builder[build]", "WhenEmpty[rejects]", "Status[]"]);
+    expect(classes.map((c) => `${c.name}[${c.methods.map((m) => m.name)}]`)).toEqual(["Car[]", "Builder[build]", "WhenEmpty[rejects]", "Status[]"]);
   });
 
   it("extracts Kotlin nested classes, keeps objects folded into their class, and reads a typealias as the class it names", async () => {
@@ -291,11 +291,11 @@ class Outer {
   class Inner { fun go() = 1 }
   companion object { fun make() = Outer() }
 }
-typealias Users = UserRepository
+typealias Players = PlayerRepository
 private typealias Handler<T> = (T) -> Unit
 `, "kotlin");
-    expect(classes.map((c) => `${c.name}[${c.methods.map((m) => m.name)}]`)).toEqual(["Outer[make]", "Inner[go]", "Users[]"]);
-    const alias = classes.find((c) => c.name === "Users")!;
-    expect([alias.extends, alias.decorators]).toEqual(["UserRepository", ["typealias"]]);
+    expect(classes.map((c) => `${c.name}[${c.methods.map((m) => m.name)}]`)).toEqual(["Outer[make]", "Inner[go]", "Players[]"]);
+    const alias = classes.find((c) => c.name === "Players")!;
+    expect([alias.extends, alias.decorators]).toEqual(["PlayerRepository", ["typealias"]]);
   });
 });

@@ -4,14 +4,14 @@ import { parseRustParam } from "./params.js";
 import { extractFunctionsWithSpec, extractClassesWithSpec } from "../shared/regex-base.js";
 import { rustSpec } from "./index.js";
 
-const route = { path: "/users/:id", httpMethod: "POST", kind: "api" as const, handler: null, calls: [], middleware: [], line: 1 };
+const route = { path: "/players/:id", httpMethod: "POST", kind: "api" as const, handler: null, calls: [], middleware: [], line: 1 };
 const lines = (src: string) => src.split("\n");
 
 describe("Rust request-schema hooks", () => {
   it("unwraps Option, transparent pointers and extractor wrappers", () => {
     expect(h.unwrapNullable("Option<String>")).toEqual({ type: "String", nullable: true });
-    expect(h.unwrapNullable("Json<CreateUser>")).toEqual({ type: "CreateUser", nullable: false });
-    expect(h.unwrapNullable("web::Json<CreateUser>")).toEqual({ type: "CreateUser", nullable: false });
+    expect(h.unwrapNullable("Json<CreatePlayer>")).toEqual({ type: "CreatePlayer", nullable: false });
+    expect(h.unwrapNullable("web::Json<CreatePlayer>")).toEqual({ type: "CreatePlayer", nullable: false });
     expect(h.unwrapNullable("Option<Box<Address>>")).toEqual({ type: "Address", nullable: true });
     expect(h.unwrapNullable("Vec<String>")).toEqual({ type: "Vec<String>", nullable: false });
     expect(h.unwrapNullable("&'static str")).toEqual({ type: "str", nullable: false });
@@ -38,16 +38,16 @@ describe("Rust request-schema hooks", () => {
     expect(h.describeType("Box<Address>")).toEqual({ kind: "object", name: "Address" });
     expect(h.describeType("serde_json::Value")).toEqual({ kind: "any" });
     expect(h.describeType("Value")).toEqual({ kind: "any" });
-    expect(h.describeType("models::CreateUser")).toEqual({ kind: "object", name: "models::CreateUser" });
+    expect(h.describeType("models::CreatePlayer")).toEqual({ kind: "object", name: "models::CreatePlayer" });
   });
 
   it("reads serde attributes off a field's decorators and Option off its type", () => {
     const p = (type: string, decorators?: string[]) => ({
-      name: "user_name", type, visibility: "public" as const, isStatic: false, isReadonly: false, decorators,
+      name: "player_name", type, visibility: "public" as const, isStatic: false, isReadonly: false, decorators,
     });
-    expect(h.serializedName(p("String", ['serde(rename = "userName")']))).toBe("userName");
-    expect(h.serializedName(p("String", ['serde(default, rename = "userName", skip_serializing_if = "x")']))).toBe("userName");
-    expect(h.serializedName(p("String"))).toBe("user_name"); // struct-level rename_all is not visible here
+    expect(h.serializedName(p("String", ['serde(rename = "playerName")']))).toBe("playerName");
+    expect(h.serializedName(p("String", ['serde(default, rename = "playerName", skip_serializing_if = "x")']))).toBe("playerName");
+    expect(h.serializedName(p("String"))).toBe("player_name"); // struct-level rename_all is not visible here
     expect(h.isSerialized(p("String"))).toBe(true);
     expect(h.isSerialized(p("String", ["serde(skip)"]))).toBe(false);
     expect(h.isSerialized(p("String", ["serde(skip_deserializing)"]))).toBe(false);
@@ -60,9 +60,9 @@ describe("Rust request-schema hooks", () => {
 
   it("binds handler params by extractor type for the project-level join", () => {
     const bind = (name: string, type: string) => h.bindParam!({ name, type, defaultValue: null }, route);
-    expect(bind("payload", "Json<CreateUser>")).toBe("body");
-    expect(bind("body", "axum::Json<CreateUser>")).toBe("body");
-    expect(bind("body", "web::Json<CreateUser>")).toBe("body");
+    expect(bind("payload", "Json<CreatePlayer>")).toBe("body");
+    expect(bind("body", "axum::Json<CreatePlayer>")).toBe("body");
+    expect(bind("body", "web::Json<CreatePlayer>")).toBe("body");
     expect(bind("form", "Form<Login>")).toBe("form");
     expect(bind("params", "Query<ListParams>")).toBe("query");
     expect(bind("params", "Option<Query<ListParams>>")).toBe("query");
@@ -80,30 +80,30 @@ describe("Rust request-schema hooks", () => {
     expect(bind("addr", "ConnectInfo<SocketAddr>")).toBe("services");
     expect(bind("user", "AuthUser")).toBe("services");
     expect(bind("n", "u64")).toBeNull();
-    expect(classifyRustParamType("Result<Json<CreateUser>, JsonRejection>")).toEqual({ binding: "body", inner: "CreateUser", guard: null });
+    expect(classifyRustParamType("Result<Json<CreatePlayer>, JsonRejection>")).toEqual({ binding: "body", inner: "CreatePlayer", guard: null });
     expect(classifyRustParamType("Claims").guard).toBe("Claims");
   });
 });
 
 describe("Rust params and attributes through the spec", () => {
   it("parses destructured extractor params and keeps the wrapper type", () => {
-    expect(parseRustParam("Json(payload): Json<CreateUser>")).toEqual({ name: "payload", type: "Json<CreateUser>", defaultValue: null });
+    expect(parseRustParam("Json(payload): Json<CreatePlayer>")).toEqual({ name: "payload", type: "Json<CreatePlayer>", defaultValue: null });
     expect(parseRustParam("Path((id, sub)): Path<(u64, u64)>")).toEqual({ name: "id", type: "Path<(u64, u64)>", defaultValue: null });
     expect(parseRustParam("Query(ListParams { page, .. }): Query<ListParams>")).toEqual({ name: "page", type: "Query<ListParams>", defaultValue: null });
-    expect(parseRustParam("mut body: web::Json<User>")).toEqual({ name: "body", type: "web::Json<User>", defaultValue: null });
+    expect(parseRustParam("mut body: web::Json<Player>")).toEqual({ name: "body", type: "web::Json<Player>", defaultValue: null });
     expect(parseRustParam("&self")).toBeNull();
     expect(parseRustParam("self: Pin<&mut Self>")).toBeNull();
     const fns = extractFunctionsWithSpec(lines(`
-async fn create_user(
+async fn create_player(
     State(repo): State<AppState>,
-    Json(payload): Json<CreateUser>,
-) -> Json<User> {
+    Json(payload): Json<CreatePlayer>,
+) -> Json<Player> {
     todo!()
 }
 `), rustSpec);
     expect(fns[0]!.params).toEqual([
       { name: "repo", type: "State<AppState>", defaultValue: null },
-      { name: "payload", type: "Json<CreateUser>", defaultValue: null },
+      { name: "payload", type: "Json<CreatePlayer>", defaultValue: null },
     ]);
   });
 
@@ -111,8 +111,8 @@ async fn create_user(
     const src = lines(`
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CreateUser {
-    #[serde(rename = "user_name")]
+pub struct CreatePlayer {
+    #[serde(rename = "player_name")]
     pub name: String,
     pub email: Option<String>,
     #[serde(default)]
@@ -122,20 +122,20 @@ pub struct CreateUser {
     pub internal: bool,
 }
 
-#[get("/users")]
+#[get("/players")]
 #[tracing::instrument]
-async fn list_users() -> String { todo!() }
+async fn list_players() -> String { todo!() }
 `);
     const cls = extractClassesWithSpec(src, rustSpec)[0]!;
     expect(cls.decorators).toEqual(["derive(Debug, Deserialize)", 'serde(rename_all = "camelCase")']);
     const props = Object.fromEntries(cls.properties.map((p) => [p.name, p]));
-    expect(props["name"]!.decorators).toEqual(['serde(rename = "user_name")']);
+    expect(props["name"]!.decorators).toEqual(['serde(rename = "player_name")']);
     expect(props["email"]!.decorators).toBeUndefined();
     expect(props["email"]!.type).toBe("Option<String>");
     expect(props["roles"]!.decorators).toEqual(["serde(default)"]);
     expect(props["attrs"]!.type).toBe("HashMap<String, String>");
     expect(props["internal"]!.decorators).toEqual(["serde(skip)"]);
     const fn = extractFunctionsWithSpec(src, rustSpec)[0]!;
-    expect(fn.decorators).toEqual(['get("/users")', "tracing::instrument"]);
+    expect(fn.decorators).toEqual(['get("/players")', "tracing::instrument"]);
   });
 });

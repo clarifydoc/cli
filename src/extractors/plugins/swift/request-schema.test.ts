@@ -30,7 +30,7 @@ describe("Swift request-schema hooks", () => {
     expect(h.serializedName(p(['Field(key: "created_at")']))).toBe("created_at");
     expect(h.serializedName(p(["ID(key: .id)"]))).toBe("createdAt");
     expect(h.serializedName(p([]))).toBe("createdAt");
-    expect(h.isSerialized(p(['Children(for: \\.$todo)']))).toBe(false);
+    expect(h.isSerialized(p(['Children(for: \\.$drill)']))).toBe(false);
     expect(h.isSerialized(p(['Parent(key: "owner_id")']))).toBe(true);
     expect(h.isSerialized(p([], { isStatic: true }))).toBe(false);
     expect(h.isRequired(p([], { isRequired: true }))).toBe(true);
@@ -38,7 +38,7 @@ describe("Swift request-schema hooks", () => {
   });
 
   it("binds a Request parameter to services and says nothing about the rest", () => {
-    const route = { path: "/todos", httpMethod: "POST", kind: "api" as const, handler: "create", calls: [], middleware: [], line: 1 };
+    const route = { path: "/drills", httpMethod: "POST", kind: "api" as const, handler: "create", calls: [], middleware: [], line: 1 };
     expect(h.bindParam!({ name: "req", type: "Request", defaultValue: null }, route)).toBe("services");
     expect(h.bindParam!({ name: "id", type: "UUID", defaultValue: null }, route)).toBeNull();
   });
@@ -48,12 +48,12 @@ describe("Swift properties with attributes", () => {
   it("takes inline and own-line property wrappers as decorators and marks required fields", () => {
     const [cls] = classes(
       [
-        "struct CreateTodo: Content {",
+        "struct CreateDrill: Content {",
         "    @Field(key: \"title\")",
         "    var title: String",
         "    @OptionalField(key: \"due_at\") var due: Date?",
         "    var tags: [String] = []",
-        "    static let schema = \"todos\"",
+        "    static let schema = \"drills\"",
         "    let owner: Owner",
         "}",
       ].join("\n"),
@@ -75,8 +75,8 @@ describe("Swift properties with attributes", () => {
 describe("Swift request access", () => {
   it("reads body, query, route, header and auth access off the request", () => {
     const body = [
-      "let input = try req.content.decode(CreateTodo.self)",
-      "let filter = try req.query.decode(TodoFilter.self)",
+      "let input = try req.content.decode(CreateDrill.self)",
+      "let filter = try req.query.decode(DrillFilter.self)",
       'let q = req.query["q"]',
       'let page = req.query[Int.self, at: "page"]',
       'let size = req.query.get(Int.self, at: "size")',
@@ -85,11 +85,11 @@ describe("Swift request access", () => {
       'let tenant = req.headers["X-Tenant"]',
       'let lang = req.headers.first(name: "Accept-Language")',
       "let token = req.headers.bearerAuthorization",
-      "let user = try req.auth.require(User.self)",
+      "let player = try req.auth.require(Player.self)",
     ];
     expect(extractSwiftRequestAccess(body, { name: "create", params: [{ name: "req", type: "Request", defaultValue: null }] })).toEqual([
-      { name: "input", type: "CreateTodo", binding: "body" },
-      { name: "filter", type: "TodoFilter", binding: "query" },
+      { name: "input", type: "CreateDrill", binding: "body" },
+      { name: "filter", type: "DrillFilter", binding: "query" },
       { name: "q", type: null, binding: "query" },
       { name: "page", type: "Int", binding: "query" },
       { name: "size", type: "Int", binding: "query" },
@@ -98,20 +98,20 @@ describe("Swift request access", () => {
       { name: "X-Tenant", type: null, binding: "header" },
       { name: "Accept-Language", type: null, binding: "header" },
       { name: "Authorization", type: null, binding: "header" },
-      { name: "auth", type: "User", binding: "services" },
+      { name: "auth", type: "Player", binding: "services" },
     ]);
   });
 
   it("lands on FunctionInfo.requestAccess for a handler, under the request's declared name", () => {
     const [fn] = functions(
       [
-        "func create(request: Request) async throws -> Todo {",
-        "    let todo = try request.content.decode(Todo.self)",
-        "    return todo",
+        "func create(request: Request) async throws -> Drill {",
+        "    let drill = try request.content.decode(Drill.self)",
+        "    return drill",
         "}",
       ].join("\n"),
     );
-    expect(fn.requestAccess).toEqual([{ name: "todo", type: "Todo", binding: "body" }]);
+    expect(fn.requestAccess).toEqual([{ name: "drill", type: "Drill", binding: "body" }]);
     expect(fn.params).toEqual([{ name: "request", type: "Request", defaultValue: null }]);
   });
 

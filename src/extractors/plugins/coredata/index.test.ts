@@ -11,7 +11,7 @@ const MODEL = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <relationship name="clubs" toMany="YES" destinationEntity="Club" inverseName="members" inverseEntity="Club"/>
         <relationship name="notes" toMany="YES" destinationEntity="Note"/>
     </entity>
-    <entity name="Employee" representedClassName="Employee" parentEntity="Person" syncable="YES">
+    <entity name="Referee" representedClassName="Referee" parentEntity="Person" syncable="YES">
         <attribute name="salary" optional="YES" attributeType="Decimal"/>
     </entity>
     <entity name="Passport" representedClassName="Passport" syncable="YES">
@@ -28,7 +28,7 @@ describe("Core Data models", () => {
     const lines = MODEL.split("\n");
     expect(extractCoreDataEntities(lines).map((c) => `${c.name}${c.tableName ? `(${c.tableName})` : ""} < ${c.extends ?? "-"} [${c.properties.map((p) => `${p.name}:${p.type}`).join(", ")}]`)).toEqual([
       "PersonMO(Person) < - [name:String]",
-      "Employee < PersonMO [salary:Decimal?]",
+      "Referee < PersonMO [salary:Decimal?]",
       "Passport < - []",
       "Club < - []",
       "Note < - []",

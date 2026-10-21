@@ -24,15 +24,15 @@ describe.skipIf(!existsSync(fixture))("sample-terraform", () => {
   it("puts each API Gateway route on the Lambda handler it invokes, and the browser's calls on them", async () => {
     const s = await loadReportSummary(out);
     expect(s.routeMap.map((r) => `${r.httpMethod} ${r.path} → ${r.filePath} ${r.handler}`).sort()).toEqual([
-      "GET /orders/{id} → src/orders/handler.ts getOrder",
+      "GET /cars/{id} → src/cars/handler.ts getCar",
       "GET /reports/daily → src/reports/main.py daily",
-      "POST /orders → src/orders/handler.ts createOrder",
+      "POST /cars → src/cars/handler.ts createCar",
     ]);
     expect(s.routeMap.find((r) => r.httpMethod === "POST")?.auth?.schemes).toEqual(["JWT"]);
     expect((s.apiRouteLinks ?? []).map((l) => `${l.method} ${l.url} → ${l.target} ${l.confidence}`).sort()).toEqual([
-      "GET /orders/${id} → src/orders/handler.ts EXTRACTED",
+      "GET /cars/${id} → src/cars/handler.ts EXTRACTED",
       "GET /reports/daily → src/reports/main.py EXTRACTED",
-      "POST /orders → src/orders/handler.ts EXTRACTED",
+      "POST /cars → src/cars/handler.ts EXTRACTED",
     ]);
   });
 
@@ -40,19 +40,19 @@ describe.skipIf(!existsSync(fixture))("sample-terraform", () => {
     const s = await loadReportSummary(out);
     const d = s.deployment!;
     expect(d.services.map((v) => `${v.name} ${v.kind}${v.family ? `/${v.family}` : ""}${v.entryFile ? ` ${v.entryFile}` : ""}`).sort()).toEqual([
-      "create-order app src/orders/handler.ts",
+      "cars app src/cars/handler.ts",
+      "cars-dynamodb datastore/dynamodb",
+      "create-car app src/cars/handler.ts",
       "jobs queue/sqs",
-      "orders app src/orders/handler.ts",
-      "orders-dynamodb datastore/dynamodb",
       "reporting datastore/postgres",
       "reports app src/reports/main.py",
     ]);
     expect(d.edges.map((e) => `${e.from} → ${e.to} [${e.kind}] ${e.via}`).sort()).toEqual([
-      "orders → jobs [bus] QUEUE_URL",
-      "orders → orders-dynamodb [db] TABLE_NAME",
+      "cars → cars-dynamodb [db] TABLE_NAME",
+      "cars → jobs [bus] QUEUE_URL",
       "reports → jobs [bus] event source",
       "reports → reporting [db] DATABASE_URL",
     ]);
-    expect((s.envVars ?? []).map((v) => `${v.name} ← ${v.setBy.map((x) => x.service).join(",")}`)).toEqual(["DATABASE_URL ← reports", "TABLE_NAME ← orders"]);
+    expect((s.envVars ?? []).map((v) => `${v.name} ← ${v.setBy.map((x) => x.service).join(",")}`)).toEqual(["DATABASE_URL ← reports", "TABLE_NAME ← cars"]);
   });
 });

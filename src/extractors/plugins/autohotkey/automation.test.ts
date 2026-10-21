@@ -17,7 +17,7 @@ describe("AutoHotkey", () => {
   it("reads functions, classes, hotkeys and labels — never a call as a definition", () => {
     const a = analyze([
       "#Requires AutoHotkey v2.0",
-      "#Include lib\\Orders.ahk",
+      "#Include lib\\Cars.ahk",
       "#Include <Json>",
       "/* SaveAll() in a comment */",
       "Init()",
@@ -29,16 +29,16 @@ describe("AutoHotkey", () => {
       "        Log(\"debug\")",
       "}",
       "",
-      "Poll() => Orders.Sync(cfg.url)",
+      "Poll() => Cars.Sync(cfg.url)",
       "",
-      "class OrderWindow extends Gui {",
-      "    title := \"Orders\"",
+      "class CarWindow extends Gui {",
+      "    title := \"Cars\"",
       "    Show(id, opts := \"\") {",
       "        this.Load(id)",
       "    }",
       "}",
       "",
-      "^j::SendOrder(42)",
+      "^j::SendCar(42)",
       "#n:: {",
       "    Run(\"notepad\")",
       "    SaveAll()",
@@ -47,14 +47,14 @@ describe("AutoHotkey", () => {
     expect(fns(a)).toEqual([
       ["<setup>", [], ["Init", "Poll"]],
       ["Init", [], ["LoadConfig", "Log"]],
-      ["Poll", [], ["Orders.Sync"]],
-      ["^j::", [], ["SendOrder"]],
+      ["Poll", [], ["Cars.Sync"]],
+      ["^j::", [], ["SendCar"]],
       ["#n::", [], ["Run", "SaveAll"]],
     ]);
     expect(a.classes.map((c) => [c.name, c.extends, c.properties.map((p) => p.name), c.methods.map((m) => [m.name, m.params.map((p) => p.name)])])).toEqual([
-      ["OrderWindow", "Gui", ["title"], [["Show", ["id", "opts"]]]],
+      ["CarWindow", "Gui", ["title"], [["Show", ["id", "opts"]]]],
     ]);
-    expect(a.imports.map((i) => i.source)).toEqual(["./lib/Orders.ahk", "Json"]);
+    expect(a.imports.map((i) => i.source)).toEqual(["./lib/Cars.ahk", "Json"]);
   });
 
   it("reads v1 labels and hotkeys that run to a return, and WinHttp calls", () => {
@@ -81,28 +81,28 @@ describe("AutoIt", () => {
       "#include <Array.au3>",
       "#include \"lib\\db.au3\"",
       "#cs",
-      "  SaveOrder() in a comment block",
+      "  SaveCar() in a comment block",
       "#ce",
       "Main()",
       "",
       "Func Main()",
-      "    Local $aOrders = LoadOrders(10)",
-      "    If UBound($aOrders) > 0 Then _ArrayDisplay($aOrders)",
+      "    Local $aCars = LoadCars(10)",
+      "    If UBound($aCars) > 0 Then _ArrayDisplay($aCars)",
       "EndFunc",
       "",
-      "Func LoadOrders($iLimit, ByRef $aOut = 0)",
-      "    _SQLite_Query(-1, 'SELECT id, total FROM orders LIMIT ' & $iLimit, $hQuery)",
-      "    Local $sJson = InetRead(\"https://crm.example.com/v2/orders\")",
-      "    Return _ParseOrders($sJson)",
+      "Func LoadCars($iLimit, ByRef $aOut = 0)",
+      "    _SQLite_Query(-1, 'SELECT id, total FROM cars LIMIT ' & $iLimit, $hQuery)",
+      "    Local $sJson = InetRead(\"https://crm.example.com/v2/cars\")",
+      "    Return _ParseCars($sJson)",
       "EndFunc",
     ].join("\n"), "app.au3", "autoit");
     expect(fns(a)).toEqual([
       ["<setup>", [], ["Main"]],
-      ["Main", [], ["LoadOrders", "UBound", "_ArrayDisplay"]],
-      ["LoadOrders", ["iLimit", "aOut"], ["_SQLite_Query", "InetRead", "_ParseOrders"]],
+      ["Main", [], ["LoadCars", "UBound", "_ArrayDisplay"]],
+      ["LoadCars", ["iLimit", "aOut"], ["_SQLite_Query", "InetRead", "_ParseCars"]],
     ]);
     expect(a.imports.map((i) => i.source)).toEqual(["Array", "./lib/db.au3"]);
-    expect(a.dataSources.map((d) => `${d.kind} ${d.name}${d.entity ? ` ${d.entity}` : ""}`)).toEqual(["database SELECT orders", "api-call GET https://crm.example.com/v2/orders"]);
+    expect(a.dataSources.map((d) => `${d.kind} ${d.name}${d.entity ? ` ${d.entity}` : ""}`)).toEqual(["database SELECT cars", "api-call GET https://crm.example.com/v2/cars"]);
   });
 });
 
@@ -110,42 +110,42 @@ describe("AppleScript", () => {
   it("reads handlers, script objects, libraries and curl in shell scripts", () => {
     const a = analyze([
       "use AppleScript version \"2.4\"",
-      "use script \"OrderLib\"",
+      "use script \"CarLib\"",
       "(* saveAll() in a comment *)",
-      "set orders to fetchOrders()",
-      "repeat with o in orders",
-      "    my closeOrder(o)",
+      "set cars to fetchCars()",
+      "repeat with o in cars",
+      "    my closeCar(o)",
       "end repeat",
       "",
-      "on fetchOrders()",
-      "    set json to do shell script \"curl -s https://crm.example.com/v2/orders\"",
-      "    return parseOrders(json)",
-      "end fetchOrders",
+      "on fetchCars()",
+      "    set json to do shell script \"curl -s https://crm.example.com/v2/cars\"",
+      "    return parseCars(json)",
+      "end fetchCars",
       "",
-      "to closeOrder(anOrder)",
+      "to closeCar(aCar)",
       "    try",
-      "        do shell script \"curl -X POST https://crm.example.com/v2/orders/\" & anOrder & \"/close\"",
+      "        do shell script \"curl -X POST https://crm.example.com/v2/cars/\" & aCar & \"/close\"",
       "    on error errMsg",
       "        logError(errMsg)",
       "    end try",
-      "end closeOrder",
+      "end closeCar",
       "",
-      "script OrderCache",
+      "script CarCache",
       "    property items : {}",
-      "    on add(anOrder)",
-      "        set end of items to anOrder",
+      "    on add(aCar)",
+      "        set end of items to aCar",
       "    end add",
       "end script",
-    ].join("\n"), "orders.applescript", "applescript");
+    ].join("\n"), "cars.applescript", "applescript");
     expect(fns(a)).toEqual([
-      ["<setup>", [], ["fetchOrders", "closeOrder"]],
-      ["fetchOrders", [], ["parseOrders"]],
-      ["closeOrder", ["anOrder"], ["logError"]],
+      ["<setup>", [], ["fetchCars", "closeCar"]],
+      ["fetchCars", [], ["parseCars"]],
+      ["closeCar", ["aCar"], ["logError"]],
     ]);
     expect(a.classes.map((c) => [c.name, c.properties.map((p) => p.name), c.methods.map((m) => [m.name, m.params.map((p) => p.name)])])).toEqual([
-      ["OrderCache", ["items"], [["add", ["anOrder"]]]],
+      ["CarCache", ["items"], [["add", ["aCar"]]]],
     ]);
-    expect(a.imports.map((i) => i.source)).toEqual(["OrderLib"]);
-    expect(a.dataSources.map((d) => d.name)).toEqual(["GET https://crm.example.com/v2/orders", "POST https://crm.example.com/v2/orders/{anOrder}/close"]);
+    expect(a.imports.map((i) => i.source)).toEqual(["CarLib"]);
+    expect(a.dataSources.map((d) => d.name)).toEqual(["GET https://crm.example.com/v2/cars", "POST https://crm.example.com/v2/cars/{aCar}/close"]);
   });
 });

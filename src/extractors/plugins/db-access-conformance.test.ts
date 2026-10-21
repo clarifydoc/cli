@@ -41,25 +41,25 @@ describe("C# — EF / Dapper / ADO.NET / NHibernate", () => {
     );
 
   it("classifies EF writes", async () => {
-    const s = await cs(`    _context.Orders.Add(o);\n    await _context.SaveChangesAsync();\n    await _context.Orders.ExecuteDeleteAsync();`);
+    const s = await cs(`    _context.Cars.Add(o);\n    await _context.SaveChangesAsync();\n    await _context.Cars.ExecuteDeleteAsync();`);
     expect(accessOf(s, "Add")).toBe("write");
     expect(accessOf(s, "SaveChangesAsync")).toBe("write");
     expect(accessOf(s, "ExecuteDeleteAsync")).toBe("write");
   });
 
   it("classifies EF terminal reads", async () => {
-    const s = await cs(`    var a = await _context.Orders.ToListAsync();\n    var b = await _context.Orders.FindAsync(1);`);
+    const s = await cs(`    var a = await _context.Cars.ToListAsync();\n    var b = await _context.Cars.FindAsync(1);`);
     expect(accessOf(s, "ToListAsync")).toBe("read");
     expect(accessOf(s, "FindAsync")).toBe("read");
   });
 
   it("leaves fluent composition unclassified — it neither reads nor writes", async () => {
-    const s = await cs(`    var q = _context.Orders.Where(o => o.Id > 1);`);
+    const s = await cs(`    var q = _context.Cars.Where(o => o.Id > 1);`);
     expect(accessOf(s, "Where")).toBeUndefined();
   });
 
   it("classifies Dapper and ADO.NET", async () => {
-    const s = await cs(`    connection.Execute("INSERT INTO t VALUES (1)");\n    var r = connection.Query<Order>("SELECT 1");`);
+    const s = await cs(`    connection.Execute("INSERT INTO t VALUES (1)");\n    var r = connection.Query<Car>("SELECT 1");`);
     expect(accessOf(s, "Dapper: Execute")).toBe("write");
     expect(accessOf(s, "Dapper: Query")).toBe("read");
   });
@@ -69,7 +69,7 @@ describe("Python — SQLAlchemy / Django / pymongo", () => {
   const py = (body: string) => sourcesOf(body, "python", "r.py", () => new PythonDataSourceExtractor());
 
   it("detects session writes that produced no data source at all before", async () => {
-    const s = await py(`def save(session, order):\n    session.add(order)\n    session.commit()\n`);
+    const s = await py(`def save(session, car):\n    session.add(car)\n    session.commit()\n`);
     expect(db(s).length).toBeGreaterThanOrEqual(2);
     expect(db(s).every((d) => d.access === "write")).toBe(true);
   });
@@ -80,7 +80,7 @@ describe("Python — SQLAlchemy / Django / pymongo", () => {
   });
 
   it("classifies ORM reads and writes", async () => {
-    const s = await py(`def go(db):\n    db.query(User).all()\n    coll.insert_one({})\n    coll.delete_many({})\n`);
+    const s = await py(`def go(db):\n    db.query(Player).all()\n    coll.insert_one({})\n    coll.delete_many({})\n`);
     expect(accessOf(s, "query")).toBe("read");
     expect(accessOf(s, "insert_one")).toBe("write");
     expect(accessOf(s, "delete_many")).toBe("write");
@@ -95,7 +95,7 @@ describe("Python — SQLAlchemy / Django / pymongo", () => {
 describe("JVM — Spring Data / JDBC", () => {
   const java = (body: string) =>
     sourcesOf(
-      `import org.springframework.stereotype.Service;\npublic class S {\n  private OrderRepository repo;\n  private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;\n  public void m() {\n${body}\n  }\n}`,
+      `import org.springframework.stereotype.Service;\npublic class S {\n  private CarRepository repo;\n  private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;\n  public void m() {\n${body}\n  }\n}`,
       "java",
       "S.java",
       () => new JavaKotlinDataSourceExtractor(),
@@ -120,7 +120,7 @@ describe("PHP — PDO / Eloquent", () => {
   const php = (body: string) => sourcesOf(`<?php\nclass C {\n  public function m() {\n${body}\n  }\n}`, "php", "C.php", () => new PhpDataSourceExtractor());
 
   it("classifies instance and static model calls", async () => {
-    const s = await php(`    $pdo->fetchAll();\n    $model->save();\n    User::create([]);\n    User::find(1);`);
+    const s = await php(`    $pdo->fetchAll();\n    $model->save();\n    Player::create([]);\n    Player::find(1);`);
     expect(accessOf(s, "fetchAll")).toBe("read");
     expect(accessOf(s, "save")).toBe("write");
     expect(accessOf(s, "create")).toBe("write");
@@ -135,7 +135,7 @@ describe("SQL verbs", () => {
     expect(sqlVerbAccess("UPDATE")).toBe("write");
     expect(sqlVerbAccess("DELETE")).toBe("write");
     expect(sqlVerbAccess("TRUNCATE")).toBe("write");
-    // A startup `CREATE TABLE IF NOT EXISTS` is not an answer to "who modifies Orders".
+    // A startup `CREATE TABLE IF NOT EXISTS` is not an answer to "who modifies Cars".
     expect(sqlVerbAccess("CREATE")).toBeUndefined();
     expect(sqlVerbAccess("ALTER")).toBeUndefined();
     expect(sqlVerbAccess("DROP")).toBeUndefined();

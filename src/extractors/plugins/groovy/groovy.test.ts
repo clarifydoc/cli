@@ -15,7 +15,7 @@ const method = (a: ReturnType<typeof analyze>, name: string) => a.classes.flatMa
 
 describe("Groovy declarations", () => {
   const SRC = [
-    "class OrderService implements Serializable, Comparable<OrderService> {",
+    "class CarService implements Serializable, Comparable<CarService> {",
     "    def repository",
     "    private final Clock clock",
     "    static int MAX = 5",
@@ -25,13 +25,13 @@ describe("Groovy declarations", () => {
     "        repository.save params",
     "    }",
     "",
-    "    List<Order> recent(int limit = 10, @Named('x') String... tags) {",
+    "    List<Car> recent(int limit = 10, @Named('x') String... tags) {",
     "        transaction(true) {",
     "            println foo(limit)",
     "        }",
     "    }",
     "",
-    "    def \"places an order\"() {",
+    "    def \"places a car\"() {",
     "        expect: true",
     "    }",
     "",
@@ -42,7 +42,7 @@ describe("Groovy declarations", () => {
   const cls = a.classes[0]!;
 
   it("reads def / typed / Spock / closure members, never a call with a trailing closure", () => {
-    expect(cls.methods.map((m) => m.name)).toEqual(["place", "recent", "places an order", "list"]);
+    expect(cls.methods.map((m) => m.name)).toEqual(["place", "recent", "places a car", "list"]);
     expect(cls.implements).toEqual(["Serializable", "Comparable"]);
   });
 
@@ -52,7 +52,7 @@ describe("Groovy declarations", () => {
   });
 
   it("reads parameters, return types and fields", () => {
-    expect(method(a, "recent")!.returnType).toBe("List<Order>");
+    expect(method(a, "recent")!.returnType).toBe("List<Car>");
     expect(method(a, "recent")!.params).toEqual([
       { name: "limit", type: "int", defaultValue: "10" },
       { name: "tags", type: "String[]", defaultValue: null },
@@ -77,12 +77,12 @@ describe("Groovy scripts", () => {
       "import groovy.json.JsonSlurper",
       "def data = load 'x.json'",
       "data.each { b ->",
-      "    importBook b",
+      "    importStadium b",
       "}",
       "def load(String p) { new JsonSlurper().parse(new File(p)) }",
     ].join("\n"), "scripts/run.groovy");
     expect(a.functions.map((f) => f.name)).toEqual(["<setup>", "load"]);
-    expect(a.functions[0]!.calls.map((c) => c.name)).toEqual(["load", "importBook"]);
+    expect(a.functions[0]!.calls.map((c) => c.name)).toEqual(["load", "importStadium"]);
     expect(a.imports.map((i) => [i.source, i.specifiers])).toEqual([["groovy.json.JsonSlurper", ["JsonSlurper"]]]);
   });
 });
@@ -94,11 +94,11 @@ describe("Groovy routes", () => {
       "  static mappings = {",
       '    "/$controller/$action?/$id?(.$format)?" { constraints { } }',
       '    "/"(view: "/index")',
-      '    "/api/books"(resources: "book")',
+      '    "/api/stadiums"(resources: "stadium")',
       '    "/api/tags"(controller: "tag") {',
       '      action = [GET: "list", POST: "save"]',
       "    }",
-      '    put "/api/authors/$id"(controller: "author", action: "update")',
+      '    put "/api/scouts/$id"(controller: "scout", action: "update")',
       '    group "/admin", {',
       '      "/stats"(controller: "report")',
       "    }",
@@ -109,17 +109,17 @@ describe("Groovy routes", () => {
     ].join("\n");
     const routes = analyze(src, "grails-app/controllers/app/UrlMappings.groovy").routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`);
     expect(routes).toEqual([
-      "GET /api/books BookController.index",
-      "GET /api/books/create BookController.create",
-      "POST /api/books BookController.save",
-      "GET /api/books/{id} BookController.show",
-      "GET /api/books/{id}/edit BookController.edit",
-      "PUT /api/books/{id} BookController.update",
-      "PATCH /api/books/{id} BookController.patch",
-      "DELETE /api/books/{id} BookController.delete",
+      "GET /api/stadiums StadiumController.index",
+      "GET /api/stadiums/create StadiumController.create",
+      "POST /api/stadiums StadiumController.save",
+      "GET /api/stadiums/{id} StadiumController.show",
+      "GET /api/stadiums/{id}/edit StadiumController.edit",
+      "PUT /api/stadiums/{id} StadiumController.update",
+      "PATCH /api/stadiums/{id} StadiumController.patch",
+      "DELETE /api/stadiums/{id} StadiumController.delete",
       "GET /api/tags TagController.list",
       "POST /api/tags TagController.save",
-      "PUT /api/authors/{id} AuthorController.update",
+      "PUT /api/scouts/{id} ScoutController.update",
       "null /admin/stats ReportController.index",
       "null /after PageController.after",
     ]);
@@ -127,7 +127,7 @@ describe("Groovy routes", () => {
 
   it("routes Grails controller actions by convention, narrowed by allowedMethods", () => {
     const src = [
-      "class MyBookController {",
+      "class MyStadiumController {",
       '  static allowedMethods = [save: "POST"]',
       "  def index() { }",
       "  def save() { }",
@@ -135,8 +135,8 @@ describe("Groovy routes", () => {
       "  static def util() { }",
       "}",
     ].join("\n");
-    const routes = analyze(src, "grails-app/controllers/app/MyBookController.groovy").routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`);
-    expect(routes).toEqual(["null /myBook/index MyBookController.index", "POST /myBook/save MyBookController.save"]);
+    const routes = analyze(src, "grails-app/controllers/app/MyStadiumController.groovy").routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`);
+    expect(routes).toEqual(["null /myStadium/index MyStadiumController.index", "POST /myStadium/save MyStadiumController.save"]);
   });
 
   it("reads Spring and Micronaut annotations", () => {
@@ -157,27 +157,27 @@ describe("Groovy routes", () => {
 
 describe("Groovy data access", () => {
   const SRC = [
-    "class BookService {",
+    "class StadiumService {",
     "  def find(String t) {",
-    "    def book = Book.findByTitle(t)",
-    "    book.delete()",
+    "    def stadium = Stadium.findByTitle(t)",
+    "    stadium.delete()",
     "    Paths.get('/tmp')",
-    "    new Author(name: t).save()",
+    "    new Scout(name: t).save()",
     "    sql.rows('''",
-    "      SELECT id FROM book_sales",
+    "      SELECT id FROM stadium_sales",
     "      WHERE count(id) > 0",
     "    ''')",
-    "    sql.execute(\"UPDATE books SET x = 1\")",
-    '    restTemplate.getForObject("https://api.example.com/books", Map)',
+    "    sql.execute(\"UPDATE stadiums SET x = 1\")",
+    '    restTemplate.getForObject("https://api.example.com/stadiums", Map)',
     "  }",
     "}",
   ].join("\n");
-  const a = analyze(SRC, "grails-app/services/BookService.groovy");
+  const a = analyze(SRC, "grails-app/services/StadiumService.groovy");
 
   it("reads GORM queries and writes with their entity, not library calls", () => {
     expect(a.dataSources.filter((d) => d.kind === "database").map((d) => `${d.name}:${d.access}@${d.line}`)).toEqual([
       // An SQL statement is reported on the line its SQL starts.
-      "Book.findByTitle:read@3", "Book.delete:write@4", "Author.save:write@6", "SELECT:read@8", "UPDATE:write@11",
+      "Stadium.findByTitle:read@3", "Stadium.delete:write@4", "Scout.save:write@6", "SELECT:read@8", "UPDATE:write@11",
     ]);
   });
 
@@ -186,37 +186,37 @@ describe("Groovy data access", () => {
   });
 
   it("reads HTTP clients", () => {
-    expect(a.dataSources.filter((d) => d.kind === "api-call").map((d) => d.name)).toEqual(["GET https://api.example.com/books"]);
+    expect(a.dataSources.filter((d) => d.kind === "api-call").map((d) => d.name)).toEqual(["GET https://api.example.com/stadiums"]);
   });
 
   it("types locals so the linker can resolve GORM instance calls", () => {
-    expect(method(a, "find")!.localTypes).toEqual([{ name: "book", type: "Book" }]);
+    expect(method(a, "find")!.localTypes).toEqual([{ name: "stadium", type: "Stadium" }]);
   });
 });
 
 describe("GORM entities", () => {
   it("reads a domain class, its table and relations", () => {
     const src = [
-      "class Book {",
+      "class Stadium {",
       "  String title",
-      "  Author author",
+      "  Scout scout",
       "  Publisher publisher",
-      "  static belongsTo = [author: Author]",
+      "  static belongsTo = [scout: Scout]",
       "  static hasMany = [reviews: Review]",
       "  static transients = ['displayName']",
       "  String displayName",
-      "  static mapping = { table 'books' }",
+      "  static mapping = { table 'stadiums' }",
       "}",
     ].join("\n");
     // Through the pipeline: entities merge into the class, and the columns a
-    // relation holds (author, publisher) are pruned from it.
-    const analysis = analyze(src, "grails-app/domain/app/Book.groovy");
-    const book = analysis.classes.find((c) => c.name === "Book")!;
-    expect(book.decorators).toEqual(["entity", "gorm", "table:books"]);
-    expect(book.properties.filter((p) => !p.isStatic).map((p) => p.name)).toEqual(["title", "displayName"]);
+    // relation holds (scout, publisher) are pruned from it.
+    const analysis = analyze(src, "grails-app/domain/app/Stadium.groovy");
+    const stadium = analysis.classes.find((c) => c.name === "Stadium")!;
+    expect(stadium.decorators).toEqual(["entity", "gorm", "table:stadiums"]);
+    expect(stadium.properties.filter((p) => !p.isStatic).map((p) => p.name)).toEqual(["title", "displayName"]);
     expect((analysis.entityRelations ?? []).map((r) => `${r.fromField} ${r.cardinality} ${r.toEntity} ${r.confidence}`)).toEqual([
       "reviews one-to-many Review EXTRACTED",
-      "author many-to-one Author EXTRACTED",
+      "scout many-to-one Scout EXTRACTED",
       "publisher many-to-one Publisher INFERRED",
     ]);
   });

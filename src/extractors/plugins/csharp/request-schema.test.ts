@@ -19,7 +19,7 @@ describe("C# request-schema hooks", () => {
     expect(h.describeType("Address[]")).toEqual({ kind: "array", element: "Address" });
     expect(h.describeType("Dictionary<string, List<int>>")).toEqual({ kind: "map", value: "List<int>" });
     expect(h.describeType("object")).toEqual({ kind: "any" });
-    expect(h.describeType("Models.CreateUserDto")).toEqual({ kind: "object", name: "Models.CreateUserDto" });
+    expect(h.describeType("Models.CreatePlayerDto")).toEqual({ kind: "object", name: "Models.CreatePlayerDto" });
   });
 
   it("reads wire names and required/ignored markers from property attributes", () => {

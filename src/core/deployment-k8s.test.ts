@@ -150,7 +150,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
   it("reads the defines of _helpers.tpl and renders includes through them, nindent and all", () => {
     const defines = chartDefines([HELPERS]);
     expect([...defines.keys()]).toEqual(["shop.name", "shop.fullname", "shop.chart", "shop.selectorLabels", "shop.labels"]);
-    const chart = { name: "shop", version: "0.1.0", values: { nameOverride: "orders", fullnameOverride: "" } as any, defines };
+    const chart = { name: "shop", version: "0.1.0", values: { nameOverride: "cars", fullnameOverride: "" } as any, defines };
     const out = renderHelmTemplate([
       "metadata:",
       '  name: {{ include "shop.fullname" . }}',
@@ -164,21 +164,21 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
     expect(out.split("\n").filter((l) => l.trim())).toEqual([
       "metadata:",
       // nameOverride set, the release name a stand-in for the chart's: printf "%s-%s" of the two.
-      "  name: shop-orders",
+      "  name: shop-cars",
       "  labels:",
       "    helm.sh/chart: shop-0.1.0",
-      "    app.kubernetes.io/name: orders",
+      "    app.kubernetes.io/name: cars",
       "    app.kubernetes.io/instance: shop",
       "    app.kubernetes.io/managed-by: Helm",
       "spec:",
       "  selector:",
       "    matchLabels:",
-      "      app.kubernetes.io/name: orders",
+      "      app.kubernetes.io/name: cars",
       "      app.kubernetes.io/instance: shop",
     ]);
     // An override is taken as written.
-    const override = renderHelmTemplate('  name: {{ include "shop.fullname" . }}', { ...chart, values: { fullnameOverride: "orders-api" } as any });
-    expect(override).toBe("  name: orders-api");
+    const override = renderHelmTemplate('  name: {{ include "shop.fullname" . }}', { ...chart, values: { fullnameOverride: "cars-api" } as any });
+    expect(override).toBe("  name: cars-api");
   });
 
   it("keeps an image built from a named template's inexact output empty", () => {
@@ -199,40 +199,40 @@ describe("k8s deployment topology", () => {
     // Deployment + Service (different names — the Service is the DNS identity)
     // + ConfigMap env, all in one multi-doc manifest.
     await writeFile(
-      join(root, "deploy", "user-api.yaml"),
+      join(root, "deploy", "player-api.yaml"),
       [
         "apiVersion: apps/v1",
         "kind: Deployment",
         "metadata:",
-        "  name: user-api-deployment",
+        "  name: player-api-deployment",
         "spec:",
         "  template:",
         "    metadata:",
         "      labels:",
-        "        app: user-api",
+        "        app: player-api",
         "    spec:",
         "      containers:",
         "        - name: api",
-        "          image: reg.io/acme/user-api:2.0",
+        "          image: reg.io/acme/player-api:2.0",
         "          envFrom:",
         "            - configMapRef:",
-        "                name: user-api-config",
+        "                name: player-api-config",
         "          env:",
         "            - name: ConnectionString",
-        "              value: Host=pg;Database=users",
+        "              value: Host=pg;Database=players",
         "---",
         "apiVersion: v1",
         "kind: Service",
         "metadata:",
-        "  name: user-svc",
+        "  name: player-svc",
         "spec:",
         "  selector:",
-        "    app: user-api",
+        "    app: player-api",
         "---",
         "apiVersion: v1",
         "kind: ConfigMap",
         "metadata:",
-        "  name: user-api-config",
+        "  name: player-api-config",
         "data:",
         "  LOG_LEVEL: debug",
       ].join("\n"),
@@ -240,21 +240,21 @@ describe("k8s deployment topology", () => {
 
     // A second workload whose env URL points at the FIRST one's Service name.
     await writeFile(
-      join(root, "deploy", "order-api.yaml"),
+      join(root, "deploy", "car-api.yaml"),
       [
         "apiVersion: apps/v1",
         "kind: Deployment",
         "metadata:",
-        "  name: order-api",
+        "  name: car-api",
         "spec:",
         "  template:",
         "    spec:",
         "      containers:",
         "        - name: api",
-        "          image: reg.io/acme/order-api:1.1",
+        "          image: reg.io/acme/car-api:1.1",
         "          env:",
-        "            - name: USERS_API_URL",
-        "              value: http://user-svc:8080",
+        "            - name: PLAYERS_API_URL",
+        "              value: http://player-svc:8080",
         "---",
         "apiVersion: apps/v1",
         "kind: StatefulSet",
@@ -268,7 +268,7 @@ describe("k8s deployment topology", () => {
         "          image: postgres:16",
         "          env:",
         "            - name: POSTGRES_DB",
-        "              value: users",
+        "              value: players",
       ].join("\n"),
     );
 
@@ -288,7 +288,7 @@ describe("k8s deployment topology", () => {
         "          - path: /",
         "            backend:",
         "              service:",
-        "                name: user-svc",
+        "                name: player-svc",
         "                port:",
         "                  number: 80",
         "---",
@@ -325,12 +325,12 @@ describe("k8s deployment topology", () => {
     expect(k8s.files).toHaveLength(3);
 
     const all = k8s.groups.flat();
-    const user = all.find((s) => s.name === "user-api-deployment")!;
-    expect(user.image).toBe("reg.io/acme/user-api:2.0");
-    expect(user.env.LOG_LEVEL).toBe("debug"); // envFrom configMapRef merged
-    expect(user.env.ConnectionString).toBe("Host=pg;Database=users");
+    const player = all.find((s) => s.name === "player-api-deployment")!;
+    expect(player.image).toBe("reg.io/acme/player-api:2.0");
+    expect(player.env.LOG_LEVEL).toBe("debug"); // envFrom configMapRef merged
+    expect(player.env.ConnectionString).toBe("Host=pg;Database=players");
 
-    expect(k8s.aliases.get("user-svc")).toBe("user-api-deployment");
+    expect(k8s.aliases.get("player-svc")).toBe("player-api-deployment");
   });
 
   it("synthesizes ${secret.key} placeholders for secretKeyRef env values", async () => {
@@ -341,12 +341,12 @@ describe("k8s deployment topology", () => {
 
   it("feeds detectDeployment: app/datastore classification, URL edge via Service alias, db edge", async () => {
     const model = (await detectDeployment(root, {
-      subProjects: [sub("p1", "UserApi", "user-api"), sub("p2", "OrderApi", "order-api")],
+      subProjects: [sub("p1", "PlayerApi", "player-api"), sub("p2", "CarApi", "car-api")],
     }))!;
     expect(model).toBeDefined();
 
     const names = model.services.map((s) => s.name).sort();
-    expect(names).toEqual(["billing-api", "main-ingress", "order-api", "pg", "user-api-deployment"]);
+    expect(names).toEqual(["billing-api", "car-api", "main-ingress", "pg", "player-api-deployment"]);
 
     // The ingress classifies as proxy and routes to the workload the Service
     // alias selects, labelled with the rule host.
@@ -354,7 +354,7 @@ describe("k8s deployment topology", () => {
     expect(model.edges).toContainEqual(
       expect.objectContaining({
         from: "main-ingress",
-        to: "user-api-deployment",
+        to: "player-api-deployment",
         kind: "http",
         label: "shop.example.com",
         via: "ingress",
@@ -366,15 +366,15 @@ describe("k8s deployment topology", () => {
     const billing = model.services.find((s) => s.name === "billing-api")!;
     expect(billing.databases?.map((d) => d.name)).toContain("billing");
     expect(model.services.find((s) => s.name === "pg")!.kind).toBe("datastore");
-    expect(model.services.find((s) => s.name === "pg")!.hostedDatabases).toContain("users");
+    expect(model.services.find((s) => s.name === "pg")!.hostedDatabases).toContain("players");
 
-    // order-api → user-api via http://user-svc (Service alias resolution).
+    // car-api → player-api via http://player-svc (Service alias resolution).
     expect(model.edges).toContainEqual(
-      expect.objectContaining({ from: "order-api", to: "user-api-deployment", kind: "http" }),
+      expect.objectContaining({ from: "car-api", to: "player-api-deployment", kind: "http" }),
     );
-    // user-api → pg via its literal connection string naming Database=users.
+    // player-api → pg via its literal connection string naming Database=players.
     expect(model.edges).toContainEqual(
-      expect.objectContaining({ from: "user-api-deployment", to: "pg", kind: "db", label: "users" }),
+      expect.objectContaining({ from: "player-api-deployment", to: "pg", kind: "db", label: "players" }),
     );
   });
 });

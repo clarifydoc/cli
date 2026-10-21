@@ -54,16 +54,16 @@ export const Lazy = useMemo(() => compute(), []);`;
 describe("Redux Toolkit thunks", () => {
   it("names a createAsyncThunk binding after its payload creator, so dispatching it reaches its calls", async () => {
     const src = `import { createAsyncThunk } from "@reduxjs/toolkit";
-export const fetchPosts = createAsyncThunk("posts/fetch", async () => {
-  const res = await axios.get("/api/posts");
+export const fetchGames = createAsyncThunk("games/fetch", async () => {
+  const res = await axios.get("/api/games");
   return res.data;
 });
-export const addPost = createAsyncThunk("posts/add", async (title, { rejectWithValue }) => save(title), { condition: () => true });`;
-    const tree = await parse(src, "postsSlice.ts");
+export const addGame = createAsyncThunk("games/add", async (title, { rejectWithValue }) => save(title), { condition: () => true });`;
+    const tree = await parse(src, "gamesSlice.ts");
     const fns = new JavaScriptExtractor().extractFunctions(tree, src);
-    expect(fns.find((f) => f.name === "fetchPosts")!.calls.map((c) => c.name)).toEqual(["axios.get"]);
+    expect(fns.find((f) => f.name === "fetchGames")!.calls.map((c) => c.name)).toEqual(["axios.get"]);
     // The payload creator is the last FUNCTION argument, not the options object after it.
-    expect(fns.find((f) => f.name === "addPost")!.calls.map((c) => c.name)).toEqual(["save"]);
+    expect(fns.find((f) => f.name === "addGame")!.calls.map((c) => c.name)).toEqual(["save"]);
   });
 });
 
@@ -111,14 +111,14 @@ describe("nested named function extraction (React handler idiom)", () => {
 
 describe("anonymous-arrow call attribution", () => {
   it("attributes a call inside an inline JSX handler to the component", async () => {
-    const src = `export function ProductCard({ product }) {
-  const { addToCart } = useAppContext();
-  return <button onClick={() => addToCart(product._id)}>Add</button>;
+    const src = `export function PartCard({ part }) {
+  const { addToGarage } = useAppContext();
+  return <button onClick={() => addToGarage(part._id)}>Add</button>;
 }`;
     const tree = await parse(src);
     const fns = new JavaScriptExtractor().extractFunctions(tree, src);
-    const card = fns.find((f) => f.name === "ProductCard")!;
-    expect(card.calls.some((c) => c.name === "addToCart")).toBe(true);
+    const card = fns.find((f) => f.name === "PartCard")!;
+    expect(card.calls.some((c) => c.name === "addToGarage")).toBe(true);
   });
 
   it("does NOT pull a NAMED nested arrow's calls into the parent", async () => {
@@ -136,13 +136,13 @@ describe("anonymous-arrow call attribution", () => {
 describe("destructured factory-member aliases", () => {
   it("maps destructured members to the factory's module (any scope)", async () => {
     const src = `import { useAppContext } from "../context/AppContext";
-export function Cart() {
-  const { addToCart, removeFromCart: drop } = useAppContext();
+export function Garage() {
+  const { addToGarage, removeFromGarage: drop } = useAppContext();
   return null;
 }`;
     const tree = await parse(src);
     const aliases = extractJsVariableAliases(tree, IMPORTS);
-    expect(aliases.get("addToCart")).toEqual({ source: "../context/AppContext", factory: "useAppContext" });
+    expect(aliases.get("addToGarage")).toEqual({ source: "../context/AppContext", factory: "useAppContext" });
     expect(aliases.get("drop")).toEqual({ source: "../context/AppContext", factory: "useAppContext" }); // renamed binding
   });
 
@@ -161,8 +161,8 @@ function two() { const { save } = useB(); }`;
   });
 
   it("classifies a BARE destructured-member call as cross-file into the factory module", () => {
-    const aliases = new Map([["addToCart", "../context/AppContext"]]);
-    const calls = [{ name: "addToCart", kind: "internal" as const, target: null, line: 5 }];
+    const aliases = new Map([["addToGarage", "../context/AppContext"]]);
+    const calls = [{ name: "addToGarage", kind: "internal" as const, target: null, line: 5 }];
     classifyCalls(calls, [], "typescript", aliases);
     expect(calls[0]).toMatchObject({ kind: "cross-file", target: "../context/AppContext", confidence: "INFERRED" });
   });

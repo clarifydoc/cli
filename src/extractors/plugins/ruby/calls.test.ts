@@ -10,29 +10,29 @@ const calls = (src: string) => {
 
 describe("ruby paren-less calls", () => {
   it("captures a constant receiver with no parentheses", () => {
-    expect(calls("    User.all.map(&:to_h)")).toContain("User.all");
+    expect(calls("    Player.all.map(&:to_h)")).toContain("Player.all");
   });
 
   it("captures predicate and bang methods", () => {
-    expect(calls("    raise 'nope' unless user.valid?")).toContain("user.valid?");
-    expect(calls("    order.save!")).toContain("order.save!");
+    expect(calls("    raise 'nope' unless player.valid?")).toContain("player.valid?");
+    expect(calls("    car.save!")).toContain("car.save!");
   });
 
   it("keeps a predicate or bang method's suffix on a constant receiver — no truncated twin", () => {
     expect(calls("      HolidaysHelper.is_holiday?(date)")).toEqual(["HolidaysHelper.is_holiday?"]);
     expect(calls("      Pools.validate!(params[:id])")).toEqual(["Pools.validate!"]);
-    expect(calls("      return if Order.count!= 0")).toEqual(["Order.count"]);
+    expect(calls("      return if Car.count!= 0")).toEqual(["Car.count"]);
   });
 
   it("captures a bare `receiver.method` statement", () => {
-    expect(calls("    user.destroy")).toContain("user.destroy");
+    expect(calls("    player.destroy")).toContain("player.destroy");
   });
 
   it("leaves an attribute read inside an expression alone", () => {
-    // `order.total` in expression position is indistinguishable from a
+    // `car.total` in expression position is indistinguishable from a
     // zero-arity call; taking it would link to every project method named
     // `total`.
-    expect(calls("    total = order.total + shipping.amount")).toEqual([]);
+    expect(calls("    total = car.total + shipping.amount")).toEqual([]);
   });
 
   it("does not take stdlib or framework constants as project calls", () => {

@@ -21,23 +21,23 @@ describe("Nim routines and types", () => {
   const a = analyze([
     "#[ a block comment: proc ghost() = discard ]#",
     "type",
-    "  Rank* = enum guest, user, admin",
+    "  Rank* = enum guest, player, admin",
     "  Base = object of RootObj",
     "    id*: int",
-    "  User* = ref object of Base",
+    "  Player* = ref object of Base",
     "    name*, email: string",
     "    rank: Rank",
     "",
-    "proc loadUser*(id: int; cache = true): User {.async.} =",
-    "  ## Loads one user.",
-    "  let row = db.getRow(sql\"SELECT * FROM users WHERE id = ?\", id)",
+    "proc loadPlayer*(id: int; cache = true): Player {.async.} =",
+    "  ## Loads one player.",
+    "  let row = db.getRow(sql\"SELECT * FROM players WHERE id = ?\", id)",
     "  if row.len == 0 and cache: return nil",
-    "  result = toUser row",
+    "  result = toPlayer row",
     "  echo \"loaded\"",
     "  proc local(x: int): int = x * 2",
     "  discard local(3)",
     "",
-    "func display(u: User, a, b: int): string = u.name & $a",
+    "func display(u: Player, a, b: int): string = u.name & $a",
     "",
     "proc sendMail(",
     "  to: string,",
@@ -50,14 +50,14 @@ describe("Nim routines and types", () => {
 
   it("reads routines with their export marker, parameters and result type — never nested ones", () => {
     expect(a.functions.map((f) => [f.name, f.isExported, f.returnType])).toEqual([
-      ["loadUser", true, "User"], ["display", false, "string"], ["sendMail", false, null],
+      ["loadPlayer", true, "Player"], ["display", false, "string"], ["sendMail", false, null],
     ]);
-    expect(fn(a, "loadUser")!.isAsync).toBe(true);
-    expect(fn(a, "loadUser")!.params).toEqual([
+    expect(fn(a, "loadPlayer")!.isAsync).toBe(true);
+    expect(fn(a, "loadPlayer")!.params).toEqual([
       { name: "id", type: "int", defaultValue: null }, { name: "cache", type: null, defaultValue: "true" },
     ]);
     // `a, b: int` share their type.
-    expect(fn(a, "display")!.params.map((p) => `${p.name}:${p.type}`)).toEqual(["u:User", "a:int", "b:int"]);
+    expect(fn(a, "display")!.params.map((p) => `${p.name}:${p.type}`)).toEqual(["u:Player", "a:int", "b:int"]);
   });
 
   it("reads a signature wrapped down to column 0 and a routine that runs to the end of the file", () => {
@@ -68,12 +68,12 @@ describe("Nim routines and types", () => {
 
   it("reads parenthesized, method and command calls — never keywords", () => {
     // `echo` is stdlib noise; a nested proc's calls belong to its enclosing routine.
-    expect(calls(a, "loadUser")).toEqual(["db.getRow", "toUser", "local"]);
+    expect(calls(a, "loadPlayer")).toEqual(["db.getRow", "toPlayer", "local"]);
   });
 
   it("reads object, ref object and enum types with their base and fields", () => {
     expect(a.classes.map((c) => [c.name, c.kind ?? "class", c.extends, c.isExported])).toEqual([
-      ["Rank", "enum", null, true], ["Base", "class", "RootObj", false], ["User", "class", "Base", true],
+      ["Rank", "enum", null, true], ["Base", "class", "RootObj", false], ["Player", "class", "Base", true],
     ]);
     expect(a.classes[2]!.properties.map((p) => `${p.name}:${p.type}:${p.visibility}`)).toEqual([
       "name:string:public", "email:string:private", "rank:Rank:private",
@@ -108,17 +108,17 @@ describe("Nim routes", () => {
       "  get \"/stats\":",
       "    resp renderStats()",
       "routes:",
-      "  get \"/users/@id\":",
-      "    let user = findUser(@\"id\")",
-      "    resp %user",
-      "  post \"/users\": createUser(request.body)",
+      "  get \"/players/@id\":",
+      "    let player = findPlayer(@\"id\")",
+      "    resp %player",
+      "  post \"/players\": createPlayer(request.body)",
       "  get re\"/files/(.*)\":",
       "    sendFile(\"x\")",
       "  extend admin, \"/admin\"",
     ].join("\n"));
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} [${r.calls.map((c) => c.name)}]`)).toEqual([
       // A router extended under a prefix keeps its own declaration line.
-      "GET /admin/stats [resp,renderStats]", "GET /users/{id} [findUser,resp]", "POST /users [createUser]", "GET /files/(.*) [sendFile]",
+      "GET /admin/stats [resp,renderStats]", "GET /players/{id} [findPlayer,resp]", "POST /players [createPlayer]", "GET /files/(.*) [sendFile]",
     ]);
     // The route DSL is no call of the setup code.
     expect(calls(a, "<setup>")).not.toContain("get");
@@ -129,8 +129,8 @@ describe("Nim routes", () => {
       "import prologue",
       "import ./views",
       "let apiPatterns = @[",
-      "  pattern(\"/users\", views.listUsers, @[HttpGet, HttpPost]),",
-      "  pattern(\"/users/{id}\", showUser),",
+      "  pattern(\"/players\", views.listPlayers, @[HttpGet, HttpPost]),",
+      "  pattern(\"/players/{id}\", showPlayer),",
       "]",
       "var app = newApp()",
       "app.addRoute(apiPatterns, \"/api\")",
@@ -139,7 +139,7 @@ describe("Nim routes", () => {
       "app.run()",
     ].join("\n"));
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler} [${r.middleware}]`)).toEqual([
-      "GET /api/users -> listUsers []", "POST /api/users -> listUsers []", "GET /api/users/{id} -> showUser []",
+      "GET /api/players -> listPlayers []", "POST /api/players -> listPlayers []", "GET /api/players/{id} -> showPlayer []",
       "POST /login -> login [csrfMiddleware]", "GET / -> home []",
     ]);
   });
@@ -155,15 +155,15 @@ describe("Nim data access", () => {
       "proc report(db: DbConn) =",
       "  let rows = db.getAllRows(sql\"\"\"",
       "select name, count(*)",
-      "from orders",
+      "from cars",
       "group by name",
       "\"\"\", 10)",
-      "  db.exec(sql\"UPDATE orders SET seen = 1\")",
+      "  db.exec(sql\"UPDATE cars SET seen = 1\")",
       "  publish rows",
     ].join("\n"));
     expect(a.dataSources.map((d) => `${d.name} ${d.entity} ${d.access ?? "-"}@${d.line}`)).toEqual([
       // A statement is located where its text starts.
-      "SELECT orders read@3", "UPDATE orders write@7",
+      "SELECT cars read@3", "UPDATE cars write@7",
     ]);
     expect(calls(a, "report")).toEqual(["db.getAllRows", "db.exec", "publish"]);
     expect(fn(a, "report")!.endLine).toBe(8);
@@ -176,12 +176,12 @@ describe("Nim data access", () => {
       "  discard client.getContent(\"https://api.example.com/v1/items\")",
       "  discard client.request(\"https://api.example.com/v1/items\", httpMethod = HttpPost)",
       "proc onSave(id: int) =",
-      "  let uri = makeUri(\"/users/\" & $id & \"/save\")",
+      "  let uri = makeUri(\"/players/\" & $id & \"/save\")",
       "  ajaxPost(uri, @[], form)",
       "  ajaxGet(makeUri(\"threads.json?start=\" & $start), @[], cb)",
     ].join("\n"));
     expect(a.dataSources.map((d) => d.name)).toEqual([
-      "GET https://api.example.com/v1/items", "POST https://api.example.com/v1/items", "POST /users/{id}/save", "GET /threads.json",
+      "GET https://api.example.com/v1/items", "POST https://api.example.com/v1/items", "POST /players/{id}/save", "GET /threads.json",
     ]);
   });
 });

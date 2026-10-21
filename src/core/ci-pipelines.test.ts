@@ -7,7 +7,7 @@ import type { SubProject } from "../types/analysis.js";
 
 const projects = [
   { id: "root", name: "(root)", root: "", kind: "root", markers: [] },
-  { id: "orders", name: "orders", root: "orders", kind: "node", markers: [] },
+  { id: "cars", name: "cars", root: "cars", kind: "node", markers: [] },
   { id: "api", name: "api", root: "api", kind: "node", markers: [] },
   { id: "web", name: "web", root: "web", kind: "node", markers: [] },
 ] as unknown as SubProject[];
@@ -28,10 +28,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Orders image
+      - name: Cars image
         uses: docker/build-push-action@v6
         with:
-          context: ./orders
+          context: ./cars
           push: true
       - uses: docker/build-push-action@v6
         with:
@@ -39,7 +39,7 @@ jobs:
           push: \${{ github.event_name == 'push' }}
       - name: Manifests
         run: |
-          kubectl apply -f k8s/orders
+          kubectl apply -f k8s/cars
           echo done
   infra:
     runs-on: ubuntu-latest
@@ -84,14 +84,14 @@ publish:
   it("finds each deploy step with its trigger, path and project; a docker build without a push is no deploy", async () => {
     const rows = await detectCiDeploys(dir, projects);
     expect(rows.map((r) => `${r.provider} ${r.file}:${r.line} ${r.job} [${r.triggers.join("; ")}] ${r.kind} ${r.path ?? "-"} ${r.project ?? "-"} · ${r.via}`)).toEqual([
-      "github .github/workflows/release.yml:13 images [push main; tag v*; manual] docker orders orders · docker/build-push-action",
+      "github .github/workflows/release.yml:13 images [push main; tag v*; manual] docker cars cars · docker/build-push-action",
       "github .github/workflows/release.yml:17 images [push main; tag v*; manual] docker web web · docker/build-push-action",
-      "github .github/workflows/release.yml:23 images [push main; tag v*; manual] kubernetes k8s/orders root · kubectl apply -f k8s/orders",
+      "github .github/workflows/release.yml:23 images [push main; tag v*; manual] kubernetes k8s/cars root · kubectl apply -f k8s/cars",
       "github .github/workflows/release.yml:32 infra [push main; tag v*; manual] terraform infra root · terraform apply -auto-approve",
       "github .github/workflows/release.yml:38 site [push main; tag v*; manual] pages web/dist web · peaceiris/actions-gh-pages",
       "gitlab .gitlab-ci.yml:7 deploy_api [push main] serverless api api · npx serverless deploy --stage prod",
       "gitlab .gitlab-ci.yml:11 publish [manual] package - - · npm publish",
     ]);
-    expect(rows.find((r) => r.kind === "docker" && r.path === "orders")?.workflow).toBe("Release");
+    expect(rows.find((r) => r.kind === "docker" && r.path === "cars")?.workflow).toBe("Release");
   });
 });

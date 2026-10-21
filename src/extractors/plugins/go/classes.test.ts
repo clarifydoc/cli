@@ -20,7 +20,7 @@ type PgRepo struct {
 	db *sql.DB
 }
 
-func (r *PgRepo) Load(id int) (*User, error) { return nil, nil }
+func (r *PgRepo) Load(id int) (*Player, error) { return nil, nil }
 func (r PgRepo) Name() string { return "pg" }
 
 func (c *Cache) Load(id int) error { return nil }
@@ -93,24 +93,24 @@ func Map[T, U any](xs []T, f func(T) U) []U {
 describe("Go interfaces", () => {
   it("are structural interfaces with their method specs as methods", () => {
     const classes = byName(classesOf(`
-type UserRepo interface {
-	// Load one user.
-	Load(id int) (*User, error)
+type PlayerRepo interface {
+	// Load one player.
+	Load(id int) (*Player, error)
 	Save(
 		ctx context.Context,
-		u *User,
+		u *Player,
 	) error
 }
 
 type Closer interface{ Close() error }
 `));
-    const repo = classes["UserRepo"]!;
+    const repo = classes["PlayerRepo"]!;
     expect(repo).toMatchObject({ kind: "interface", structural: true });
     expect(repo.methods.map((m) => [m.name, m.line, m.endLine, m.returnType])).toEqual([
-      ["Load", 4, 4, "User"],
+      ["Load", 4, 4, "Player"],
       ["Save", 5, 8, "error"],
     ]);
-    expect(repo.methods[1]!.params.map((p) => `${p.name}:${p.type}`)).toEqual(["ctx:context.Context", "u:User"]);
+    expect(repo.methods[1]!.params.map((p) => `${p.name}:${p.type}`)).toEqual(["ctx:context.Context", "u:Player"]);
     expect(repo.methods.every((m) => m.calls.length === 0)).toBe(true);
     expect(classes["Closer"]).toMatchObject({ kind: "interface", structural: true });
     expect(classes["Closer"]!.methods.map((m) => m.name)).toEqual(["Close"]);
@@ -120,7 +120,7 @@ type Closer interface{ Close() error }
     const classes = byName(classesOf(`
 type ReadSaver interface {
 	io.Reader
-	Save(u *User) error
+	Save(u *Player) error
 }
 
 type Number interface {
@@ -153,11 +153,11 @@ type (
 describe("Go struct fields", () => {
   it("covers embedded fields, grouped names, trailing comments and one-line bodies", () => {
     const classes = byName(classesOf(`
-type UserService struct {
-	UserRepo
+type PlayerService struct {
+	PlayerRepo
 	*Base
 	log.Logger
-	repo  UserRepo // injected
+	repo  PlayerRepo // injected
 	conc  *PgRepo \`inject:""\`
 	a, b  *PgRepo
 	url   string \`doc:"http://x"\` // the // in the tag stays
@@ -165,10 +165,10 @@ type UserService struct {
 
 type Pair struct{ a int; b *PgRepo }
 `));
-    const props = classes["UserService"]!.properties;
+    const props = classes["PlayerService"]!.properties;
     expect(props.map((p) => `${p.name}:${p.type}`)).toEqual([
-      "UserRepo:UserRepo", "Base:*Base", "Logger:log.Logger",
-      "repo:UserRepo", "conc:*PgRepo", "a:*PgRepo", "b:*PgRepo", "url:string",
+      "PlayerRepo:PlayerRepo", "Base:*Base", "Logger:log.Logger",
+      "repo:PlayerRepo", "conc:*PgRepo", "a:*PgRepo", "b:*PgRepo", "url:string",
     ]);
     expect(props[0]!.decorators).toEqual(["embedded"]);
     expect(props[3]!.decorators).toBeUndefined();
@@ -178,7 +178,7 @@ type Pair struct{ a int; b *PgRepo }
   });
 
   it("skips func-typed and inline-struct fields and blank names", () => {
-    expect(parseGoFields("OnChange func(Product)")).toEqual([]);
+    expect(parseGoFields("OnChange func(Part)")).toEqual([]);
     expect(parseGoFields("Inner struct { X int }")).toEqual([]);
     expect(parseGoFields("_ struct{}")).toEqual([]);
     expect(parseGoFields("Raw interface{}")[0]!.type).toBe("interface{}");
@@ -208,14 +208,14 @@ describe("Go typed locals", () => {
 	a := &PgRepo{dsn: d}
 	b := PgRepo{}
 	c := new(MemRepo)
-	var d UserRepo = &PgRepo{}
+	var d PlayerRepo = &PgRepo{}
 	var e *PgRepo
 	var f = repo.Store{}
 `)).toEqual([
       { name: "a", type: "*PgRepo" },
       { name: "b", type: "PgRepo" },
       { name: "c", type: "*MemRepo" },
-      { name: "d", type: "UserRepo" },
+      { name: "d", type: "PlayerRepo" },
       { name: "e", type: "*PgRepo" },
       { name: "f", type: "repo.Store" },
     ]);
@@ -259,7 +259,7 @@ describe("Go typed locals", () => {
   });
 
   it("does not let a local of another type override a parameter of the same name", () => {
-    expect(extractGoLocalTypes(lines(`	repo := &MemRepo{}`), [{ name: "repo", type: "UserRepo", defaultValue: null }])).toEqual([]);
+    expect(extractGoLocalTypes(lines(`	repo := &MemRepo{}`), [{ name: "repo", type: "PlayerRepo", defaultValue: null }])).toEqual([]);
     expect(extractGoLocalTypes(lines(`	repo := &MemRepo{}`), [{ name: "repo", type: "MemRepo", defaultValue: null }]))
       .toEqual([{ name: "repo", type: "*MemRepo" }]);
   });
@@ -278,15 +278,15 @@ describe("Go embedded fields downstream", () => {
     const a = extractWithRegex(`
 package models
 
-type User struct {
+type Player struct {
 	gorm.Model
 	Name  string \`gorm:"size:255"\`
 	Email string
 }
-`, "models/user.go", "go");
-    const user = a.classes.find((c) => c.name === "User")!;
-    expect(user.decorators).toContain("entity");
-    expect(user.properties.map((p) => p.name)).toEqual(["Name", "Email"]);
+`, "models/player.go", "go");
+    const player = a.classes.find((c) => c.name === "Player")!;
+    expect(player.decorators).toContain("entity");
+    expect(player.properties.map((p) => p.name)).toEqual(["Name", "Email"]);
   });
 
   it("an xorm-tagged struct naming its table is an entity; a tagged struct without one is not", () => {

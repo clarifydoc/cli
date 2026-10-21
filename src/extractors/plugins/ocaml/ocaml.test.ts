@@ -26,20 +26,20 @@ describe("OCaml modules, functions and imports", () => {
   it("reads the file as a module, nested modules, types and functions", async () => {
     const a = await analyze([
       "open Lwt.Syntax",
-      "type order = { id : int; total : float }",
+      "type car = { id : int; total : float }",
       "type status = Open | Closed",
-      "module type REPO = sig val find : int -> order Lwt.t end",
+      "module type REPO = sig val find : int -> car Lwt.t end",
       "module Cache = struct let get key = Hashtbl.find_opt table key end",
-      "let find_order ~id = Db.find id |> Lwt.map Option.get",
-      "let close_order (repo : Repo.t) ?(force = false) id =",
+      "let find_car ~id = Db.find id |> Lwt.map Option.get",
+      "let close_car (repo : Repo.t) ?(force = false) id =",
       "  if id > 0 && not force then Repo.save repo id else Lwt.return_unit",
       "let handler = fun req -> Db.load req",
       "let port = 8080",
-      "let () = Dream.run (fun _ -> find_order ~id:1)",
-    ].join("\n"), "lib/order_repo.ml");
+      "let () = Dream.run (fun _ -> find_car ~id:1)",
+    ].join("\n"), "lib/car_repo.ml");
     expect(a.classes.map((c) => [c.name, c.kind ?? "class", c.methods.map((m) => m.name), c.properties.map((p) => p.name)])).toEqual([
-      ["Order_repo", "class", ["find_order", "close_order", "handler"], []],
-      ["order", "class", [], ["id", "total"]],
+      ["Car_repo", "class", ["find_car", "close_car", "handler"], []],
+      ["car", "class", [], ["id", "total"]],
       ["status", "enum", [], []],
       ["REPO", "interface", ["find"], []],
       ["Cache", "class", ["get"], []],
@@ -63,29 +63,29 @@ describe("OCaml routes and data access", () => {
     const a = await analyze([
       "let () =",
       "  Dream.run @@ Dream.router [",
-      '    Dream.get "/api/orders/:id" (fun req -> Orders.find (Dream.param req "id"));',
-      '    Dream.scope "/admin" [ Auth.require ] [ Dream.post "/orders/:id/close" Orders.close ];',
+      '    Dream.get "/api/cars/:id" (fun req -> Cars.find (Dream.param req "id"));',
+      '    Dream.scope "/admin" [ Auth.require ] [ Dream.post "/cars/:id/close" Cars.close ];',
       "  ]",
       'let app = App.empty |> App.get "/health" health |> App.run_command',
     ].join("\n"));
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler} [${r.calls.map((c) => c.name)}]`)).toEqual([
-      "GET /api/orders/{id} -> null [Orders.find,Dream.param]",
-      "POST /admin/orders/{id}/close -> Orders.close []",
+      "GET /api/cars/{id} -> null [Cars.find,Dream.param]",
+      "POST /admin/cars/{id}/close -> Cars.close []",
       "GET /health -> health []",
     ]);
   });
 
   it("reads SQL in strings and ppx_rapper blocks, and HTTP client calls", async () => {
     const a = await analyze([
-      'let all = Caqti_request.Infix.(T.unit ->* T.string) "SELECT name FROM customers"',
-      "let one = [%rapper get_one {sql| SELECT @int{id}, @string{status} FROM orders WHERE id = %int{id} |sql}]",
-      'let crm id = Cohttp_lwt_unix.Client.get (Uri.of_string "https://crm.example.com/v2/customers")',
+      'let all = Caqti_request.Infix.(T.unit ->* T.string) "SELECT name FROM drivers"',
+      "let one = [%rapper get_one {sql| SELECT @int{id}, @string{status} FROM cars WHERE id = %int{id} |sql}]",
+      'let crm id = Cohttp_lwt_unix.Client.get (Uri.of_string "https://crm.example.com/v2/drivers")',
       'let msg = "Select a file from the list"',
     ].join("\n"));
     expect(a.dataSources.map((d) => `${d.kind} ${d.name}${d.entity ? ` ${d.entity}` : ""}@${d.line}`)).toEqual([
-      "database SELECT customers@1",
-      "database SELECT orders@2",
-      "api-call GET https://crm.example.com/v2/customers@3",
+      "database SELECT drivers@1",
+      "database SELECT cars@2",
+      "api-call GET https://crm.example.com/v2/drivers@3",
     ]);
   });
 });
@@ -93,12 +93,12 @@ describe("OCaml routes and data access", () => {
 describe("OCaml packages", () => {
   it("a [%rapper …] binding is a function, applied to () or not", async () => {
     const a = await analyze([
-      "let open_orders =",
-      "  [%rapper get_many {sql| SELECT @int{id} FROM orders |sql} record_out] ()",
-      "let one = [%rapper get_one {sql| SELECT @int{id} FROM orders WHERE id = %int{id} |sql}]",
+      "let open_cars =",
+      "  [%rapper get_many {sql| SELECT @int{id} FROM cars |sql} record_out] ()",
+      "let one = [%rapper get_one {sql| SELECT @int{id} FROM cars WHERE id = %int{id} |sql}]",
       "let limit = 10",
     ].join("\n"), "lib/db.ml");
-    expect(a.classes[0]!.methods.map((m) => m.name)).toEqual(["open_orders", "one"]);
+    expect(a.classes[0]!.methods.map((m) => m.name)).toEqual(["open_cars", "one"]);
   });
 
   it("reads opam and dune-project dependencies", async () => {

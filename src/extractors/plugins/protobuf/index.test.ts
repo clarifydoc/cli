@@ -29,7 +29,7 @@ message Item {
   oneof price { int64 cents = 5; string free_text = 6; }
   repeated Tag tags = 7;
   message Tag { string label = 1; }
-  enum Kind { KIND_UNSPECIFIED = 0; BOOK = 1; }
+  enum Kind { KIND_UNSPECIFIED = 0; STADIUM = 1; }
   Kind kind = 8;
 }
 `.split("\n");

@@ -49,17 +49,17 @@ function sampleBinary(): string {
     0x00,
     0x00,
     // child 3: a query carrying its SQL in the form
-    s("TQuery"), s("qryUsers"),
+    s("TQuery"), s("qryPlayers"),
     s("SQL.Strings"), vaList,
       vaString, s("SELECT id, name"),
-      vaString, s("FROM users"),
+      vaString, s("FROM players"),
       vaString, s("WHERE active = 1"),
     0x00,
     0x00,
     0x00,
     // child 4: a BDE table naming its table file
-    s("TTable"), s("tblOrders"),
-    s("TableName"), vaString, s("ORDERS.DB"),
+    s("TTable"), s("tblCars"),
+    s("TableName"), vaString, s("CARS.DB"),
     0x00,
     0x00,
     0x00, // end of root's children
@@ -96,8 +96,8 @@ describe("binaryDfmToText", () => {
     // Collection consumed without derailing the following property
     expect(text).toContain("Columns = <>");
     expect(text).toContain("Visible = False");
-    expect(text).toContain("SQL.Strings = ('SELECT id, name' 'FROM users' 'WHERE active = 1')");
-    expect(text).toContain("TableName = 'ORDERS.DB'");
+    expect(text).toContain("SQL.Strings = ('SELECT id, name' 'FROM players' 'WHERE active = 1')");
+    expect(text).toContain("TableName = 'CARS.DB'");
     // Balanced object/end
     const objects = text.match(/^\s*object /gm)!.length;
     const ends = text.match(/^\s*end$/gm)!.length;
@@ -144,14 +144,14 @@ describe("parseDfm on binary input", () => {
 
   it("extracts database sources from SQL.Strings and TableName", () => {
     const db = analysis.dataSources.filter((d) => d.kind === "database");
-    const sql = db.find((d) => d.name.startsWith("qryUsers"));
+    const sql = db.find((d) => d.name.startsWith("qryPlayers"));
     expect(sql).toBeDefined();
-    expect(sql!.target).toBe("users");
-    expect(sql!.entity).toBe("users");
-    const table = db.find((d) => d.name === "tblOrders.TableName");
+    expect(sql!.target).toBe("players");
+    expect(sql!.entity).toBe("players");
+    const table = db.find((d) => d.name === "tblCars.TableName");
     expect(table).toBeDefined();
-    expect(table!.target).toBe("ORDERS");
-    expect(table!.entity).toBe("ORDERS");
+    expect(table!.target).toBe("CARS");
+    expect(table!.entity).toBe("CARS");
   });
 });
 
@@ -159,11 +159,11 @@ describe("parseDfm text DFM with multi-line SQL", () => {
   const text = [
     "object frmData: TfrmData",
     "  Caption = 'Data'",
-    "  object qryOrders: TQuery",
+    "  object qryCars: TQuery",
     "    SQL.Strings = (",
     "      'SELECT o.id, o.total'",
-    "      'FROM orders o'",
-    "      'JOIN customers c ON c.id = o.customer_id')",
+    "      'FROM cars o'",
+    "      'JOIN drivers c ON c.id = o.driver_id')",
     "    Left = 40",
     "  end",
     "  object tblItems: TTable",
@@ -174,9 +174,9 @@ describe("parseDfm text DFM with multi-line SQL", () => {
   const analysis = parseDfm(text, "src/frmData.dfm");
 
   it("joins the SQL list and resolves the table", () => {
-    const sql = analysis.dataSources.find((d) => d.name.startsWith("qryOrders"));
+    const sql = analysis.dataSources.find((d) => d.name.startsWith("qryCars"));
     expect(sql).toBeDefined();
-    expect(sql!.target).toBe("orders");
+    expect(sql!.target).toBe("cars");
   });
 
   it("keeps parsing properties after the list closes", () => {
@@ -187,9 +187,9 @@ describe("parseDfm text DFM with multi-line SQL", () => {
 
   it("publishes component→table constants for the cross-file datastore join", () => {
     // resolveDataSourceStringConstants rewrites the companion unit's
-    // `qryOrders.Open` (entity/target = component name) to the real table.
+    // `qryCars.Open` (entity/target = component name) to the real table.
     expect(analysis.stringConstants).toEqual({
-      qryOrders: "orders",
+      qryCars: "cars",
       tblItems: "items",
     });
   });

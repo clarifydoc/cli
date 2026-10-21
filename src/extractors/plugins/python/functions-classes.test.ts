@@ -12,12 +12,12 @@ async function extract(src: string) {
 describe("Python functions", () => {
   it("keeps every parameter shape with its name, type and default", async () => {
     const { functions } = await extract(`
-async def create(user_id: int, body: UserCreate, q: str | None = Query(None), current=Depends(get_current_user), plain, *args: int, **kwargs):
+async def create(player_id: int, body: PlayerCreate, q: str | None = Query(None), current=Depends(get_current_user), plain, *args: int, **kwargs):
     pass
 `);
     expect(functions[0]!.params).toEqual([
-      { name: "user_id", type: "int", defaultValue: null },
-      { name: "body", type: "UserCreate", defaultValue: null },
+      { name: "player_id", type: "int", defaultValue: null },
+      { name: "body", type: "PlayerCreate", defaultValue: null },
       { name: "q", type: "str | None", defaultValue: "Query(None)" },
       { name: "current", type: null, defaultValue: "Depends(get_current_user)", qualifier: "get_current_user" },
       { name: "plain", type: null, defaultValue: null },
@@ -53,13 +53,13 @@ def helper(x):
 describe("Python classes", () => {
   it("emits annotated attributes as properties with Field(...) kept as a decorator", async () => {
     const { classes } = await extract(`
-class AdminUserCreate(UserCreate, metaclass=Meta):
-    display_name: str = Field(..., alias="user_name")
+class AdminPlayerCreate(PlayerCreate, metaclass=Meta):
+    display_name: str = Field(..., alias="player_name")
     nick: Optional[str] = None
     age: int | None
     tags: list[str] = []
     address: Address
-    role: UserRole = UserRole.USER
+    role: PlayerRole = PlayerRole.PLAYER
     code: str = Field(alias="c")
     note: str = Field(None, max_length=10)
     _hidden: int = 0
@@ -71,14 +71,14 @@ class AdminUserCreate(UserCreate, metaclass=Meta):
         from_attributes = True
 `);
     const cls = classes[0]!;
-    expect(cls.extends).toBe("UserCreate");
+    expect(cls.extends).toBe("PlayerCreate");
     expect(cls.properties).toEqual([
-      { name: "display_name", type: "str", visibility: "public", isStatic: false, isReadonly: false, decorators: ['Field(..., alias="user_name")'], isRequired: true },
+      { name: "display_name", type: "str", visibility: "public", isStatic: false, isReadonly: false, decorators: ['Field(..., alias="player_name")'], isRequired: true },
       { name: "nick", type: "Optional[str]", visibility: "public", isStatic: false, isReadonly: false, isRequired: false },
       { name: "age", type: "int | None", visibility: "public", isStatic: false, isReadonly: false, isRequired: false },
       { name: "tags", type: "list[str]", visibility: "public", isStatic: false, isReadonly: false, isRequired: false },
       { name: "address", type: "Address", visibility: "public", isStatic: false, isReadonly: false, isRequired: true },
-      { name: "role", type: "UserRole", visibility: "public", isStatic: false, isReadonly: false, isRequired: false },
+      { name: "role", type: "PlayerRole", visibility: "public", isStatic: false, isReadonly: false, isRequired: false },
       { name: "code", type: "str", visibility: "public", isStatic: false, isReadonly: false, decorators: ['Field(alias="c")'], isRequired: true },
       { name: "note", type: "str", visibility: "public", isStatic: false, isReadonly: false, decorators: ['Field(None, max_length=10)'], isRequired: false },
       { name: "_hidden", type: "int", visibility: "private", isStatic: false, isReadonly: false, isRequired: false },
@@ -88,11 +88,11 @@ class AdminUserCreate(UserCreate, metaclass=Meta):
 
   it("leaves ORM column and relationship attributes to the entity extractor", async () => {
     const { classes } = await extract(`
-class User(Base):
-    __tablename__ = "users"
+class Player(Base):
+    __tablename__ = "players"
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(120))
-    posts: Mapped[list["Post"]] = relationship(back_populates="author")
+    games: Mapped[list["Game"]] = relationship(back_populates="scout")
     nickname: str = "anon"
 `);
     expect(classes[0]!.properties.map((p) => p.name)).toEqual(["nickname"]);
@@ -119,8 +119,8 @@ class Outer:
 import pytest
 
 @pytest.fixture
-def user():
-    return User(name="a")
+def player():
+    return Player(name="a")
 
 @pytest.fixture(scope="module")
 def db():
@@ -130,17 +130,17 @@ def db():
 @pytest.fixture
 def mixed(flag):
     if flag:
-        return User()
+        return Player()
     return Admin()
 
 @pytest.fixture
-def typed() -> Account:
+def typed() -> Club:
     return make()
 
 def not_a_fixture():
-    return User()
+    return Player()
 `);
     const rt = Object.fromEntries(functions.map((f) => [f.name, f.returnType]));
-    expect(rt).toEqual({ user: "User", db: "models.Database", mixed: null, typed: "Account", not_a_fixture: null });
+    expect(rt).toEqual({ player: "Player", db: "models.Database", mixed: null, typed: "Club", not_a_fixture: null });
   });
 });

@@ -11,7 +11,7 @@ import type { BlastRadiusInfo, ProjectAnalysis } from "../types/analysis.js";
  * the classification itself — against a committed artifact.
  *
  * `sample-pressure` is the right corpus for it: one module that mixes
- * persistence, transport, messaging and security (`orders.ts`), one that only
+ * persistence, transport, messaging and security (`cars.ts`), one that only
  * serves routes (`routes.ts`), and one leaf (`worker.ts`) — three different
  * categories from four files.
  */
@@ -34,10 +34,10 @@ describe("sample-pressure — risk verdicts reach the artifact", () => {
   });
 
   it("calls the mixed-concern module a boundary, not a foundation", () => {
-    // It exports `Order`, `OrderLine` and `Actor`, but it is a module that
+    // It exports `Car`, `CarPart` and `Actor`, but it is a module that
     // talks to the DB, an HTTP payment API and a broker. The interface
     // declarations are incidental — see maxConcernsForInterfaceRule.
-    const v = row("orders.ts").verdict!;
+    const v = row("cars.ts").verdict!;
     expect(v.category).toBe("boundary");
     expect(v.reasons).toEqual(
       expect.arrayContaining(["calls_external_service", "broker_boundary", "datastore_boundary"]),

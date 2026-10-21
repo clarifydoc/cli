@@ -23,7 +23,7 @@ describe("ASP.NET Minimal APIs", () => {
             .WithName("ListItems");
         api.MapGet("/items/{id:int}", GetItemById);
         admin.MapDelete("/items/{id:int}", DeleteItemById);
-        app.MapPost("/orders", async (CreateOrder cmd, IMediator mediator) => await mediator.Send(cmd))
+        app.MapPost("/cars", async (CreateCar cmd, IMediator mediator) => await mediator.Send(cmd))
             .RequireAuthorization();
         return app;
     }
@@ -34,7 +34,7 @@ describe("ASP.NET Minimal APIs", () => {
       "GET /api/catalog/items GetAllItemsV1 v=1.0 ",
       "GET /api/catalog/items/{id} GetItemById v=1.0|2.0 ",
       "DELETE /api/catalog/admin/items/{id} DeleteItemById v=1.0|2.0 RequireAuthorization(\"Admin\")",
-      "POST /orders - v= RequireAuthorization",
+      "POST /cars - v= RequireAuthorization",
     ]);
     expect(out[3]!.calls.map((c) => c.name)).toContain("mediator.Send");
     expect(out[2]!.auth?.policies).toEqual(["Admin"]);

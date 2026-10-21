@@ -40,20 +40,20 @@ describe("C# functions-classes — dependency-injection facts", () => {
 
   it("reports constructors as methods named after the class, with their params and calls", async () => {
     const classes = await classesOf(`class CheckoutService {
-  private readonly IOrderRepo _repo;
-  public CheckoutService(IOrderRepo repo, IPricing pricing) { _repo = repo; _repo.Get(0); }
+  private readonly ICarRepo _repo;
+  public CheckoutService(ICarRepo repo, IPricing pricing) { _repo = repo; _repo.Get(0); }
   static CheckoutService() { }
-  public CheckoutService(IOrderRepo repo) : this(repo, null) => Init(repo);
+  public CheckoutService(ICarRepo repo) : this(repo, null) => Init(repo);
 }`);
     const ctors = byName(classes, "CheckoutService").methods.filter((m) => m.name === "CheckoutService");
     expect(ctors).toHaveLength(3);
-    expect(ctors[0]!.params.map((p) => [p.name, p.type])).toEqual([["repo", "IOrderRepo"], ["pricing", "IPricing"]]);
+    expect(ctors[0]!.params.map((p) => [p.name, p.type])).toEqual([["repo", "ICarRepo"], ["pricing", "IPricing"]]);
     expect(ctors[0]!.calls.map((c) => c.name)).toEqual(["_repo.Get"]);
     expect(ctors[2]!.calls.map((c) => c.name)).toEqual(["Init"]);
   });
 
   it("reports a primary constructor (class, struct, record) as a constructor with its params", async () => {
-    const classes = await classesOf(`public class ReportService(IReportStore store, [FromKeyedServices("x")] OrderService orders) {
+    const classes = await classesOf(`public class ReportService(IReportStore store, [FromKeyedServices("x")] CarService cars) {
   public string Run() => store.Load();
 }
 public struct Point(int x, int y) : IShape { }
@@ -63,7 +63,7 @@ public class Plain { }`);
     expect(report.methods[0]).toMatchObject({ name: "ReportService", line: 1, calls: [] });
     expect(report.methods[0]!.params).toEqual([
       { name: "store", type: "IReportStore", defaultValue: null },
-      { name: "orders", type: "OrderService", defaultValue: null, qualifier: "x" },
+      { name: "cars", type: "CarService", defaultValue: null, qualifier: "x" },
     ]);
     expect(byName(classes, "Point").methods.map((m) => m.name)).toEqual(["Point"]);
     expect(byName(classes, "Dto").methods[0]!.params.map((p) => p.name)).toEqual(["Id", "Name"]);
@@ -183,7 +183,7 @@ DiscountCalc calc2 = new();
 IPricing p = new Pricing();
 IPricing q = Create();
 Shop.Domain.IAudit? a = null;
-List<Order> orders = new List<Order>();
+List<Car> cars = new List<Car>();
 using var u = new UnitOfWork();
 int n = 0;`)).toEqual([
       { name: "calc", type: "DiscountCalc" },
@@ -193,7 +193,7 @@ int n = 0;`)).toEqual([
       { name: "u", type: "UnitOfWork" },
       // `T x = new U()`: the constructed class once the body never reassigns `x`.
       { name: "p", type: "Pricing" },
-      { name: "orders", type: "List<Order>" },
+      { name: "cars", type: "List<Car>" },
     ]);
   });
 
@@ -209,8 +209,8 @@ var t = (IClock)sp.GetService(typeof(IClock))!;
 var s = sp.GetService(typeof(IMailer)) as IMailer;
 var k = sp.GetRequiredKeyedService<IStorage>("blob");
 IStorage k2 = sp.GetKeyedService<IStorage>(StorageKeys.Disk);
-var r = c.Resolve<IUserStore>();
-var n = c.ResolveNamed<IUserStore>("mongo");
+var r = c.Resolve<IPlayerStore>();
+var n = c.ResolveNamed<IPlayerStore>("mongo");
 var x = Build();
 var y = sp.GetServices<IPlugin>();`)).toEqual([
       { name: "a", type: "IPricing" },
@@ -219,8 +219,8 @@ var y = sp.GetServices<IPlugin>();`)).toEqual([
       { name: "s", type: "IMailer" },
       { name: "k", type: "IStorage", qualifier: "blob" },
       { name: "k2", type: "IStorage", qualifier: "StorageKeys.Disk" },
-      { name: "r", type: "IUserStore" },
-      { name: "n", type: "IUserStore", qualifier: "mongo" },
+      { name: "r", type: "IPlayerStore" },
+      { name: "n", type: "IPlayerStore", qualifier: "mongo" },
       // No stated type: typed later by what each call is declared to return.
       { name: "x", type: "", from: "Build()" },
       { name: "y", type: "", from: "sp.GetServices<IPlugin>()" },
@@ -239,14 +239,14 @@ var n = 5 + Count();`)).toEqual([
   });
 
   it("types foreach / pattern / out variables and an argument lambda's typed parameters", async () => {
-    expect(await localsOf(`foreach (Order item in items) item.Ship();
+    expect(await localsOf(`foreach (Car item in items) item.Ship();
 foreach (var any in items) any.Ship();
-if (o is Invoice inv) inv.Send();
+if (o is Bill bill) bill.Send();
 TryGet(out Receipt rcp);
 list.ForEach((IRepo repo) => repo.Save());
 Func<IRepo, int> named = (IRepo hidden) => hidden.Count();`)).toEqual([
-      { name: "item", type: "Order" },
-      { name: "inv", type: "Invoice" },
+      { name: "item", type: "Car" },
+      { name: "bill", type: "Bill" },
       { name: "rcp", type: "Receipt" },
       { name: "repo", type: "IRepo" },
       // The delegate itself is a typed local; its lambda is a scope of its own.
@@ -270,11 +270,11 @@ describe("nested types", () => {
   it("extracts nested classes and records with their own members", async () => {
     const classes = await classesOf(`
 namespace App;
-public class Orders {
+public class Cars {
   public record Command(int Id);
   public class Handler { public int Handle(Command c) => c.Id; }
 }`);
-    expect(classes.map((c) => `${c.name}[${c.methods.map((m) => m.name)}]`)).toEqual(["Orders[]", "Command[Command]", "Handler[Handle]"]);
+    expect(classes.map((c) => `${c.name}[${c.methods.map((m) => m.name)}]`)).toEqual(["Cars[]", "Command[Command]", "Handler[Handle]"]);
   });
 });
 

@@ -9,13 +9,13 @@ describe("scheduled jobs in Go, Ruby and PHP", () => {
   it("Go: robfig/cron and gocron v1/v2", () => {
     const src = [
       `c := cron.New()`,
-      `c.AddFunc("0 30 * * * *", syncInventory)`,
+      `c.AddFunc("0 30 * * * *", syncFleet)`,
       `c.AddFunc("@hourly", func() { log.Println("tick") })`,
       `s.Every(1).Day().At("10:30").Do(sendDigest)`,
       `s.NewJob(gocron.DurationJob(10*time.Second), gocron.NewTask(jobs.Purge, ctx))`,
     ];
     expect(extractGoScheduledJobs(src).map(show)).toEqual([
-      "syncInventory → syncInventory [0 30 * * * *] (robfig/cron) @2",
+      "syncFleet → syncFleet [0 30 * * * *] (robfig/cron) @2",
       "@hourly → - [@hourly] (robfig/cron) @3",
       "sendDigest → sendDigest [every 1 day at 10:30] (gocron) @4",
       "Purge → Purge [duration 10*time.Second] (gocron) @5",

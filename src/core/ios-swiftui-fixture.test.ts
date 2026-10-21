@@ -25,12 +25,12 @@ describe.skipIf(!existsSync(fixture))("sample-ios-swiftui", () => {
     const s = await loadReportSummary(out);
     const screens = new Map(s.screens.map((x) => [x.routePath, x]));
     expect([...screens.keys()].sort()).toEqual([
-      "AddItemView", "ArchiveDetailViewController", "ArchiveFilterViewController", "ArchiveInfoViewController", "ArchiveListViewController",
-      "ExportDoneViewController", "ExportViewController", "FormatPickerViewController", "ItemDetailView", "ItemListView", "RootTabs", "SettingsView",
+      "AddBallView", "ArchiveDetailViewController", "ArchiveFilterViewController", "ArchiveInfoViewController", "ArchiveListViewController",
+      "BallDetailView", "BallListView", "ExportDoneViewController", "ExportViewController", "FormatPickerViewController", "RootTabs", "SettingsView",
     ]);
-    expect(screens.get("RootTabs")?.navigatesTo).toEqual(["ItemListView", "SettingsView"]);
-    expect(screens.get("ItemListView")?.navigatesTo).toEqual(["ItemDetailView", "AddItemView"]);
-    expect(screens.get("ItemDetailView")?.filePath).toBe("Notes/Views/ItemDetailView.swift");
+    expect(screens.get("RootTabs")?.navigatesTo).toEqual(["BallListView", "SettingsView"]);
+    expect(screens.get("BallListView")?.navigatesTo).toEqual(["BallDetailView", "AddBallView"]);
+    expect(screens.get("BallDetailView")?.filePath).toBe("Notes/Views/BallDetailView.swift");
   });
 
   it("makes UIKit view controllers screens by the base-class chain — several in one file — with what each opens", async () => {
@@ -45,12 +45,12 @@ describe.skipIf(!existsSync(fixture))("sample-ios-swiftui", () => {
 
   it("reads SwiftData models — stored fields only — and where views read and write them", async () => {
     const s = await loadReportSummary(out);
-    const fields = (s.entityGraph?.nodes ?? []).find((n) => n.name === "Item")?.columns?.map((f) => f.name);
+    const fields = (s.entityGraph?.nodes ?? []).find((n) => n.name === "Ball")?.columns?.map((f) => f.name);
     expect(fields).toEqual(["name", "createdAt", "notes"]);
     expect((s.entityGraph?.edges ?? []).filter((e) => e.orm !== "coredata").length).toBe(1);
     const edges = (s.dataAccessGraph?.edges ?? []).map((e) => `${e.source} -> ${e.target}`);
-    expect(edges).toContain("file::Notes/Views/ItemListView.swift -> entity::Item::Item");
-    expect(edges.some((e) => e.startsWith("file::Notes/Views/AddItemView.swift -> ") && e.includes("Item"))).toBe(true);
+    expect(edges).toContain("file::Notes/Views/BallListView.swift -> entity::Ball::Ball");
+    expect(edges.some((e) => e.startsWith("file::Notes/Views/AddBallView.swift -> ") && e.includes("Ball"))).toBe(true);
   });
 
   it("reads a Core Data model — stored attributes, relationships with their inverse — and where code fetches and inserts", async () => {

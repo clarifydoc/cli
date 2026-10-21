@@ -36,11 +36,11 @@ describe("buildProjectDependencies", () => {
   it("folds cross-project call→route links into one edge per pair, endpoints most-linked first", () => {
     const deps = buildProjectDependencies({
       apiRouteLinks: [
-        link("web", "orders", "/api/orders"),
-        link("web", "orders", "/api/orders/{id}", { confidence: "INFERRED" }),
-        link("web", "orders", "/api/orders/{id}"),
+        link("web", "cars", "/api/cars"),
+        link("web", "cars", "/api/cars/{id}", { confidence: "INFERRED" }),
+        link("web", "cars", "/api/cars/{id}"),
         link("web", "web", "/api/session"),
-        link("web", "orders", "/api/legacy", { method: null }),
+        link("web", "cars", "/api/legacy", { method: null }),
       ],
       symbolLinks: [],
       projectOf,
@@ -48,14 +48,14 @@ describe("buildProjectDependencies", () => {
     expect(deps).toEqual([
       {
         from: "web",
-        to: "orders",
+        to: "cars",
         kind: "http",
         links: 4,
         confidence: { EXTRACTED: 3, INFERRED: 1 },
         endpoints: [
-          { name: "GET /api/orders/{id}", links: 2 },
+          { name: "GET /api/cars/{id}", links: 2 },
           { name: "/api/legacy", links: 1 },
-          { name: "GET /api/orders", links: 1 },
+          { name: "GET /api/cars", links: 1 },
         ],
         endpointCount: 3,
       },
@@ -65,28 +65,28 @@ describe("buildProjectDependencies", () => {
   it("leaves out test callers and guesses, keeps generated callers, and skips ends it cannot place", () => {
     const deps = buildProjectDependencies({
       apiRouteLinks: [
-        link("e2e", "orders", "/api/orders", { sourceRole: "test" }),
-        link("web", "billing", "/api/invoices", { confidence: "AMBIGUOUS" }),
-        link("sdk", "orders", "/api/orders", { sourceRole: "generated" }),
-        { ...link("web", "orders", "/api/orders"), sourceProject: undefined },
+        link("e2e", "cars", "/api/cars", { sourceRole: "test" }),
+        link("web", "billing", "/api/bills", { confidence: "AMBIGUOUS" }),
+        link("sdk", "cars", "/api/cars", { sourceRole: "generated" }),
+        { ...link("web", "cars", "/api/cars"), sourceProject: undefined },
       ],
       symbolLinks: [],
       projectOf,
     });
-    expect(deps.map((d) => [d.from, d.to, d.links])).toEqual([["sdk", "orders", 1]]);
+    expect(deps.map((d) => [d.from, d.to, d.links])).toEqual([["sdk", "cars", 1]]);
   });
 
   it("makes a broker edge from a publish matched to a consumer in another project", () => {
     const deps = buildProjectDependencies({
       apiRouteLinks: [],
       symbolLinks: [
-        mq("orders/OrderService.cs", "billing/OrderPlacedConsumer.cs", "order-placed"),
-        mq("orders/OrderService.cs", "orders/Audit.cs", "order-placed"),
+        mq("cars/CarService.cs", "billing/CarSoldConsumer.cs", "car-sold"),
+        mq("cars/CarService.cs", "cars/Audit.cs", "car-sold"),
       ],
       projectOf,
     });
     expect(deps).toEqual([
-      expect.objectContaining({ from: "orders", to: "billing", kind: "bus", links: 1, endpoints: [{ name: "order-placed", links: 1 }] }),
+      expect.objectContaining({ from: "cars", to: "billing", kind: "bus", links: 1, endpoints: [{ name: "car-sold", links: 1 }] }),
     ]);
   });
 
@@ -95,31 +95,31 @@ describe("buildProjectDependencies", () => {
       composeFiles: ["docker-compose.yml"],
       services: [
         { name: "web", composeFile: "docker-compose.yml", kind: "app", project: "web" },
-        { name: "orders", composeFile: "docker-compose.yml", kind: "app", project: "orders" },
+        { name: "cars", composeFile: "docker-compose.yml", kind: "app", project: "cars" },
         { name: "billing", composeFile: "docker-compose.yml", kind: "app", project: "billing" },
         { name: "pgdb", composeFile: "docker-compose.yml", kind: "datastore" },
       ],
       externals: [],
       edges: [
-        { from: "web", to: "orders", kind: "http", via: "ORDERS_URL" },
-        { from: "orders", to: "billing", kind: "http", via: "BILLING_URL" },
-        { from: "orders", to: "pgdb", kind: "db" },
+        { from: "web", to: "cars", kind: "http", via: "CARS_URL" },
+        { from: "cars", to: "billing", kind: "http", via: "BILLING_URL" },
+        { from: "cars", to: "pgdb", kind: "db" },
       ],
     };
     const deps = buildProjectDependencies({
-      apiRouteLinks: [link("web", "orders", "/api/orders")],
+      apiRouteLinks: [link("web", "cars", "/api/cars")],
       symbolLinks: [],
       projectOf,
       deployment,
     });
     expect(deps.map((d) => [d.from, d.to, d.links, d.deployment])).toEqual([
-      ["orders", "billing", 0, { via: "BILLING_URL", file: "docker-compose.yml" }],
-      ["web", "orders", 1, { via: "ORDERS_URL", file: "docker-compose.yml" }],
+      ["cars", "billing", 0, { via: "BILLING_URL", file: "docker-compose.yml" }],
+      ["web", "cars", 1, { via: "CARS_URL", file: "docker-compose.yml" }],
     ]);
   });
 
   it("caps the endpoint list and keeps the total", () => {
-    const many = Array.from({ length: PROJECT_DEPENDENCY_ENDPOINT_CAP + 5 }, (_, i) => link("web", "orders", `/api/r${i}`));
+    const many = Array.from({ length: PROJECT_DEPENDENCY_ENDPOINT_CAP + 5 }, (_, i) => link("web", "cars", `/api/r${i}`));
     const [dep] = buildProjectDependencies({ apiRouteLinks: many, symbolLinks: [], projectOf });
     expect(dep!.endpoints).toHaveLength(PROJECT_DEPENDENCY_ENDPOINT_CAP);
     expect(dep!.endpointCount).toBe(PROJECT_DEPENDENCY_ENDPOINT_CAP + 5);

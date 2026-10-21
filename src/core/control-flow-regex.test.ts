@@ -365,9 +365,9 @@ describe.each(MEASURED)("regex structure metrics agree with the parser — $lang
 describe("regex tier — the languages that have only it", () => {
   const cases: { file: string; language: string; expect: Partial<ReturnType<typeof shape>> }[] = [
     {
-      file: `${FIXTURES}/sample-go-api/handler/user_handler.go`,
+      file: `${FIXTURES}/sample-go-api/handler/player_handler.go`,
       language: "go",
-      // `GetUser` guards two calls with `if err != nil { … return }`.
+      // `GetPlayer` guards two calls with `if err != nil { … return }`.
       expect: { decisions: 2, returns: 2 },
     },
   ];
@@ -376,7 +376,7 @@ describe("regex tier — the languages that have only it", () => {
     it(`draws ${probe.language} from its source`, async () => {
       const result = await controlFlowForFile({
         filePath: probe.file,
-        functionName: "GetUser",
+        functionName: "GetPlayer",
       });
       const cfg = result.cfgs[0];
       expect(cfg).toBeDefined();
@@ -388,13 +388,13 @@ describe("regex tier — the languages that have only it", () => {
 
   it("marks every graph it produces as approximate, and the parsed ones not at all", async () => {
     const scanned = await controlFlowForFile({
-      filePath: `${FIXTURES}/sample-go-api/handler/user_handler.go`,
+      filePath: `${FIXTURES}/sample-go-api/handler/player_handler.go`,
     });
     expect(scanned.cfgs.length).toBeGreaterThan(0);
     for (const cfg of scanned.cfgs) expect(cfg.approximate).toBe(true);
 
     const parsed = await controlFlowForFile({
-      filePath: `${FIXTURES}/sample-backend/services/userService.ts`,
+      filePath: `${FIXTURES}/sample-backend/services/playerService.ts`,
     });
     expect(parsed.cfgs.length).toBeGreaterThan(0);
     for (const cfg of parsed.cfgs) expect(cfg.approximate).toBeUndefined();

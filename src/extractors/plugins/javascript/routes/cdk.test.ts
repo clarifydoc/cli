@@ -33,7 +33,7 @@ http.addRoutes({ path: "/ping", integration: new HttpLambdaIntegration("P", fn) 
   });
 
   it("reads nothing in a file that is not a CDK stack", async () => {
-    expect(await factsOf(`const users = api.root.addResource("users"); users.addMethod("GET", x);`)).toEqual([]);
+    expect(await factsOf(`const players = api.root.addResource("players"); players.addMethod("GET", x);`)).toEqual([]);
   });
 });
 
@@ -44,14 +44,14 @@ function makeFn(scope: Construct, id: string, handler: string) {
   return new lambda.Function(scope, id, { handler, runtime: lambda.Runtime.NODEJS_20_X, code: lambda.Code.fromAsset("lambda") });
 }
 const node = (scope: Construct, id: string, file: string) => new NodejsFunction(scope, id, { entry: path.join(__dirname, "../src", file) });
-const list = makeFn(this, "List", "users.list");
+const list = makeFn(this, "List", "players.list");
 const get = node(this, "Get", "get.ts");
 const api = new apigw.RestApi(this, "Api");
-const users = api.root.addResource("users");
-users.addMethod("GET", new apigw.LambdaIntegration(list));
-users.addResource("{id}").addMethod("GET", new apigw.LambdaIntegration(get));`)).toEqual([
-      "GET /users cwd:lambda|users.list",
-      "GET /users/{id} file:../src|get.handler",
+const players = api.root.addResource("players");
+players.addMethod("GET", new apigw.LambdaIntegration(list));
+players.addResource("{id}").addMethod("GET", new apigw.LambdaIntegration(get));`)).toEqual([
+      "GET /players cwd:lambda|players.list",
+      "GET /players/{id} file:../src|get.handler",
     ]);
   });
 
@@ -61,20 +61,20 @@ users.addResource("{id}").addMethod("GET", new apigw.LambdaIntegration(get));`))
 export class Shop extends cdk.Stack {
   constructor(scope: Construct, id: string) {
     super(scope, id);
-    const orders = new sqs.Queue(this, "Orders", { queueName: "orders" });
-    this.table = new dynamodb.Table(this, "OrdersTable", { partitionKey: { name: "id", type: AttributeType.STRING } });
-    const worker = new lambda.Function(this, "Worker", { handler: "worker.handle", environment: { QUEUE_URL: orders.queueUrl, STAGE: "prod" } });
-    orders.grantConsumeMessages(worker);
+    const cars = new sqs.Queue(this, "Cars", { queueName: "cars" });
+    this.table = new dynamodb.Table(this, "CarsTable", { partitionKey: { name: "id", type: AttributeType.STRING } });
+    const worker = new lambda.Function(this, "Worker", { handler: "worker.handle", environment: { QUEUE_URL: cars.queueUrl, STAGE: "prod" } });
+    cars.grantConsumeMessages(worker);
     this.table.grantReadWriteData(worker);
-    worker.addEventSource(new SqsEventSource(orders));
+    worker.addEventSource(new SqsEventSource(cars));
   }
 }`;
     const got = extractCdkResources(await parseSource(src, "typescript" as never, "lib/shop.ts"), src);
     expect(got.map((r) => `${r.kind}/${r.family} ${r.name}${r.handler ? ` ${r.handler}` : ""}${r.edges ? ` → ${r.edges.map((e) => `${e.to}(${e.kind}, ${e.via})`).join(", ")}` : ""}`)).toEqual([
-      "queue/sqs orders",
-      "datastore/dynamodb OrdersTable",
-      "app/lambda Worker worker.handle → orders(bus, QUEUE_URL), orders(bus, grantConsumeMessages), OrdersTable(db, grantReadWriteData), orders(bus, event source)",
+      "queue/sqs cars",
+      "datastore/dynamodb CarsTable",
+      "app/lambda Worker worker.handle → cars(bus, QUEUE_URL), cars(bus, grantConsumeMessages), CarsTable(db, grantReadWriteData), cars(bus, event source)",
     ]);
-    expect(got[2]!.env).toEqual({ QUEUE_URL: "${orders.queueUrl}", STAGE: "prod" });
+    expect(got[2]!.env).toEqual({ QUEUE_URL: "${cars.queueUrl}", STAGE: "prod" });
   });
 });

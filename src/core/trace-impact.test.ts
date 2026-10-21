@@ -70,20 +70,20 @@ const blastEntry = (filePath: string, over: Partial<BlastRadiusInfo> = {}): Blas
 });
 
 // The miniature cross-tier chain used by most tests:
-//   Orders.vue (screen "/orders") ── onSave → api.ts::postOrder
-//   postOrder ──"POST /api/orders"→ routes.ts::createOrder   (synthetic HTTP edge)
-//   createOrder → service.ts::save                            (regular call)
-//   service.ts::save touches entity "orders"
+//   Cars.vue (screen "/cars") ── onSave → api.ts::postCar
+//   postCar ──"POST /api/cars"→ routes.ts::createCar         (synthetic HTTP edge)
+//   createCar → service.ts::save                              (regular call)
+//   service.ts::save touches entity "cars"
 const chain = {
   symbolLinks: [
-    link("web/Orders.vue", "onSave", "web/api.ts", "postOrder"),
-    link("web/api.ts", "postOrder", "srv/routes.ts", "createOrder", "POST /api/orders"),
-    link("srv/routes.ts", "createOrder", "srv/service.ts", "save"),
+    link("web/Cars.vue", "onSave", "web/api.ts", "postCar"),
+    link("web/api.ts", "postCar", "srv/routes.ts", "createCar", "POST /api/cars"),
+    link("srv/routes.ts", "createCar", "srv/service.ts", "save"),
   ],
-  screens: [screen("web/Orders.vue", "Orders", "/orders")],
-  routes: [route("srv/routes.ts", "/api/orders", "POST", "createOrder", 6)],
-  symbolDataAccess: [dbRow("srv/service.ts", "save", "orders")],
-  analyses: [fns("srv/routes.ts", ["createOrder", 5, 15])],
+  screens: [screen("web/Cars.vue", "Cars", "/cars")],
+  routes: [route("srv/routes.ts", "/api/cars", "POST", "createCar", 6)],
+  symbolDataAccess: [dbRow("srv/service.ts", "save", "cars")],
+  analyses: [fns("srv/routes.ts", ["createCar", 5, 15])],
 };
 
 // ─── computeTraceImpact ─────────────────────────────────────────────────────
@@ -94,47 +94,47 @@ describe("computeTraceImpact — cross-tier chain", () => {
   it("labels the deepest file with the screen and route that reach it", () => {
     const svc = impacts.get("srv/service.ts")!;
     expect(svc).toBeDefined();
-    expect(svc.screens.map((s) => s.name)).toEqual(["Orders"]);
-    expect(svc.screens[0]).toEqual({ name: "Orders", file: "web/Orders.vue", route: "/orders" });
-    expect(svc.routes).toEqual([{ method: "POST", path: "/api/orders", file: "srv/routes.ts", line: 6 }]);
-    expect(svc.entities).toEqual(["orders"]);
+    expect(svc.screens.map((s) => s.name)).toEqual(["Cars"]);
+    expect(svc.screens[0]).toEqual({ name: "Cars", file: "web/Cars.vue", route: "/cars" });
+    expect(svc.routes).toEqual([{ method: "POST", path: "/api/cars", file: "srv/routes.ts", line: 6 }]);
+    expect(svc.entities).toEqual(["cars"]);
   });
 
   it("propagates entities upstream to the screen through the HTTP edge", () => {
-    const vue = impacts.get("web/Orders.vue")!;
-    expect(vue.entities).toEqual(["orders"]);
+    const vue = impacts.get("web/Cars.vue")!;
+    expect(vue.entities).toEqual(["cars"]);
     // A screen trivially reaches its own file.
-    expect(vue.screens.map((s) => s.name)).toEqual(["Orders"]);
+    expect(vue.screens.map((s) => s.name)).toEqual(["Cars"]);
   });
 
   it("gives the route file both directions", () => {
     const rt = impacts.get("srv/routes.ts")!;
-    expect(rt.screens.map((s) => s.name)).toEqual(["Orders"]);
-    expect(rt.entities).toEqual(["orders"]);
+    expect(rt.screens.map((s) => s.name)).toEqual(["Cars"]);
+    expect(rt.entities).toEqual(["cars"]);
     expect(rt.routeCount).toBe(1); // its own route
   });
 
   it("does not mark the frontend service as impacting the backend route", () => {
-    // Changing web/api.ts cannot change what POST /api/orders does — the route
+    // Changing web/api.ts cannot change what POST /api/cars does — the route
     // BFS runs forward from the handler, never sideways to callers.
     const api = impacts.get("web/api.ts")!;
     expect(api.routeCount).toBe(0);
-    expect(api.screens.map((s) => s.name)).toEqual(["Orders"]);
-    expect(api.entities).toEqual(["orders"]);
+    expect(api.screens.map((s) => s.name)).toEqual(["Cars"]);
+    expect(api.entities).toEqual(["cars"]);
   });
 });
 
 describe("computeTraceImpact — routes", () => {
   it("resolves a handler defined in another file via the unique-name lookup", () => {
     const impacts = computeTraceImpact({
-      symbolLinks: [link("srv/controllers.ts", "saveUser", "srv/repo.ts", "insert")],
+      symbolLinks: [link("srv/controllers.ts", "savePlayer", "srv/repo.ts", "insert")],
       screens: [],
-      routes: [route("srv/routes.ts", "/users", "POST", "saveUser", 3)],
+      routes: [route("srv/routes.ts", "/players", "POST", "savePlayer", 3)],
       symbolDataAccess: [],
-      analyses: [fns("srv/routes.ts"), fns("srv/controllers.ts", ["saveUser", 10, 20])],
+      analyses: [fns("srv/routes.ts"), fns("srv/controllers.ts", ["savePlayer", 10, 20])],
     });
-    expect(impacts.get("srv/controllers.ts")!.routes.map((r) => r.path)).toEqual(["/users"]);
-    expect(impacts.get("srv/repo.ts")!.routes.map((r) => r.path)).toEqual(["/users"]);
+    expect(impacts.get("srv/controllers.ts")!.routes.map((r) => r.path)).toEqual(["/players"]);
+    expect(impacts.get("srv/repo.ts")!.routes.map((r) => r.path)).toEqual(["/players"]);
   });
 
   it("never guesses: an unresolvable handler only labels the declaring file", () => {
@@ -153,7 +153,7 @@ describe("computeTraceImpact — routes", () => {
     const impacts = computeTraceImpact({
       symbolLinks: [],
       screens: [],
-      routes: [route("web/router.ts", "/orders", null, "Orders", 1, "frontend")],
+      routes: [route("web/router.ts", "/cars", null, "Cars", 1, "frontend")],
       symbolDataAccess: [],
       analyses: [],
     });
@@ -165,24 +165,24 @@ describe("computeTraceImpact — queues", () => {
   it("follows the MQ edge so a publisher inherits the consumer's entities", () => {
     const impacts = computeTraceImpact({
       symbolLinks: [
-        link("pub.ts", "send", "con.ts", "handle", "MQ orders-x"), // synthetic MQ edge
+        link("pub.ts", "send", "con.ts", "handle", "MQ cars-x"), // synthetic MQ edge
         link("con.ts", "handle", "db.ts", "persist"),
       ],
       screens: [],
       routes: [],
       symbolDataAccess: [
-        queueRow("pub.ts", "send", "orders-x", "queue-publish"),
-        queueRow("con.ts", "handle", "orders-x", "queue-consume"),
-        dbRow("db.ts", "persist", "orders"),
+        queueRow("pub.ts", "send", "cars-x", "queue-publish"),
+        queueRow("con.ts", "handle", "cars-x", "queue-consume"),
+        dbRow("db.ts", "persist", "cars"),
       ],
       analyses: [],
     });
     const pub = impacts.get("pub.ts")!;
-    expect(pub.queues).toEqual(["orders-x"]);
-    expect(pub.entities).toEqual(["orders"]);
+    expect(pub.queues).toEqual(["cars-x"]);
+    expect(pub.entities).toEqual(["cars"]);
     const con = impacts.get("con.ts")!;
-    expect(con.queues).toEqual(["orders-x"]);
-    expect(con.entities).toEqual(["orders"]);
+    expect(con.queues).toEqual(["cars-x"]);
+    expect(con.entities).toEqual(["cars"]);
   });
 });
 
@@ -303,13 +303,13 @@ describe("attachTraceImpact", () => {
 
     expect(count).toBeGreaterThan(0);
     const svc = blast.find((b) => b.filePath === "srv/service.ts")!;
-    expect(svc.traceImpact!.screens.map((s) => s.name)).toEqual(["Orders"]);
+    expect(svc.traceImpact!.screens.map((s) => s.name)).toEqual(["Cars"]);
     expect(svc.changeRisk).toBe("moderate"); // escalated: screen + entity reach
 
-    // Orders.vue had no import-graph entry → synthetic zero-scored entry appended.
-    const vue = blast.find((b) => b.filePath === "web/Orders.vue")!;
+    // Cars.vue had no import-graph entry → synthetic zero-scored entry appended.
+    const vue = blast.find((b) => b.filePath === "web/Cars.vue")!;
     expect(vue).toBeDefined();
     expect(vue.impactScore).toBe(0);
-    expect(vue.traceImpact!.entities).toEqual(["orders"]);
+    expect(vue.traceImpact!.entities).toEqual(["cars"]);
   });
 });

@@ -59,38 +59,38 @@ describe("EF Core IEntityTypeConfiguration<T> relations", () => {
          public void Configure(EntityTypeBuilder<License> builder)
          {
            builder
-             .HasOne(d => d.Product)
+             .HasOne(d => d.Part)
              .WithMany(p => p.Licenses)
-             .HasForeignKey(d => d.ProductId);
+             .HasForeignKey(d => d.PartId);
          }
        }`,
     );
     expect(rels).toHaveLength(1);
     expect(rels[0]).toMatchObject({
       fromEntity: "License",
-      toEntity: "Product",
+      toEntity: "Part",
       cardinality: "many-to-one",
-      foreignKey: "ProductId",
+      foreignKey: "PartId",
       inverseField: "Licenses",
     });
   });
 
   it("derives one-to-many from HasMany(...).WithOne()", () => {
     const rels = relationsOf(
-      `public class ProductConfig : IEntityTypeConfiguration<Product>
+      `public class PartConfig : IEntityTypeConfiguration<Part>
        {
-         public void Configure(EntityTypeBuilder<Product> builder)
+         public void Configure(EntityTypeBuilder<Part> builder)
          {
-           builder.HasMany(p => p.Licenses).WithOne(l => l.Product).HasForeignKey(l => l.ProductId);
+           builder.HasMany(p => p.Licenses).WithOne(l => l.Part).HasForeignKey(l => l.PartId);
          }
        }`,
     );
     expect(rels).toHaveLength(1);
     expect(rels[0]).toMatchObject({
-      fromEntity: "Product",
+      fromEntity: "Part",
       toEntity: "License", // "Licenses" → "License"
       cardinality: "one-to-many",
-      foreignKey: "ProductId",
+      foreignKey: "PartId",
     });
   });
 
@@ -113,16 +113,16 @@ describe("EF Core IEntityTypeConfiguration<T> relations", () => {
     // Some codebases extend a base configuration without re-declaring the
     // interface; the EntityTypeBuilder<T> parameter still names the entity.
     const rels = relationsOf(
-      `public static class OrderMapping
+      `public static class CarMapping
        {
-         public static void Configure(EntityTypeBuilder<Order> builder)
+         public static void Configure(EntityTypeBuilder<Car> builder)
          {
-           builder.HasOne(o => o.Customer).WithMany(c => c.Orders);
+           builder.HasOne(o => o.Driver).WithMany(c => c.Cars);
          }
        }`,
     );
     expect(rels).toHaveLength(1);
-    expect(rels[0]).toMatchObject({ fromEntity: "Order", toEntity: "Customer", cardinality: "many-to-one" });
+    expect(rels[0]).toMatchObject({ fromEntity: "Car", toEntity: "Driver", cardinality: "many-to-one" });
   });
 
   it("still parses the modelBuilder.Entity<T>() fluent path (regression)", () => {
@@ -131,13 +131,13 @@ describe("EF Core IEntityTypeConfiguration<T> relations", () => {
        {
          protected override void OnModelCreating(ModelBuilder modelBuilder)
          {
-           modelBuilder.Entity<Blog>().HasMany(b => b.Posts).WithOne(p => p.Blog).HasForeignKey(p => p.BlogId);
+           modelBuilder.Entity<League>().HasMany(b => b.Games).WithOne(p => p.League).HasForeignKey(p => p.LeagueId);
          }
        }`,
       [{ name: "AppDbContext", line: 1, endLine: 999, extends: "DbContext" }],
     );
-    const blogPost = rels.find((r) => r.fromEntity === "Blog");
-    expect(blogPost).toMatchObject({ toEntity: "Post", cardinality: "one-to-many", foreignKey: "BlogId" });
+    const leagueGame = rels.find((r) => r.fromEntity === "League");
+    expect(leagueGame).toMatchObject({ toEntity: "Game", cardinality: "one-to-many", foreignKey: "LeagueId" });
   });
 });
 
@@ -179,11 +179,11 @@ describe("EF Core ModelSnapshot relations", () => {
     const rels = snapshotRelationsOf(
       `modelBuilder.Entity("N.Profile", b =>
          {
-             b.HasOne("N.User", "User").WithOne().HasForeignKey("N.Profile", "UserId");
+             b.HasOne("N.Player", "Player").WithOne().HasForeignKey("N.Profile", "PlayerId");
          });`,
       "Migrations/AppDbContextModelSnapshot.cs",
     );
-    expect(rels[0]).toMatchObject({ fromEntity: "Profile", toEntity: "User", cardinality: "one-to-one" });
+    expect(rels[0]).toMatchObject({ fromEntity: "Profile", toEntity: "Player", cardinality: "one-to-one" });
   });
 });
 

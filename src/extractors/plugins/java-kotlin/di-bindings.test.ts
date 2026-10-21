@@ -62,7 +62,7 @@ class Outer {
   });
 
   it("reports nothing for interfaces, abstract classes, concrete-only beans and the superclass", async () => {
-    expect(await factsOf(`@Repository interface UserRepo extends JpaRepository<User, Long> {}
+    expect(await factsOf(`@Repository interface PlayerRepo extends JpaRepository<Player, Long> {}
 @Component abstract class Base implements Api {}
 @Component class Clock {}
 @Service class Sub extends Base {}
@@ -107,11 +107,11 @@ public class AppConfig {
 class Cfg {
     @Bean fun tok(): Tokenizer = RegexTokenizer()
     @Bean fun mail(): Mailer { return SmtpMailer().apply { host = "x" } }
-    @Bean fun repo() = OrderRepo()
+    @Bean fun repo() = CarRepo()
 }`, "kotlin")).toEqual([
       { service: "Tokenizer", implementation: "RegexTokenizer", via: "@Bean", qualifier: "tok", matchesMemberName: true },
       { service: "Mailer", implementation: "SmtpMailer", via: "@Bean", qualifier: "mail", matchesMemberName: true },
-      { service: "OrderRepo", implementation: "OrderRepo", via: "@Bean", qualifier: "repo", matchesMemberName: true },
+      { service: "CarRepo", implementation: "CarRepo", via: "@Bean", qualifier: "repo", matchesMemberName: true },
     ]);
   });
 });
@@ -226,18 +226,18 @@ class CardBilling implements Billing {}
 @RequestScoped @Named
 class InvoiceBilling implements Billing {}
 @ApplicationScoped @Alternative @Priority(1)
-class MockShipping implements Shipping {}
+class MockDelivery implements Delivery {}
 @ApplicationScoped @Alternative
-class StubShipping implements Shipping {}
+class StubDelivery implements Delivery {}
 @Dependent
-class RealShipping implements Shipping {}
+class RealDelivery implements Delivery {}
 @Singleton
-class DaggerOnly implements Shipping {}`, "java")).toEqual([
+class DaggerOnly implements Delivery {}`, "java")).toEqual([
       { service: "Billing", implementation: "CardBilling", via: "@ApplicationScoped", qualifier: "primaryBilling" },
       { service: "Billing", implementation: "InvoiceBilling", via: "@RequestScoped", qualifier: "invoiceBilling" },
-      { service: "Shipping", implementation: "MockShipping", via: "@ApplicationScoped", primary: true },
-      { service: "Shipping", implementation: "StubShipping", via: "@ApplicationScoped" },
-      { service: "Shipping", implementation: "RealShipping", via: "@Dependent" },
+      { service: "Delivery", implementation: "MockDelivery", via: "@ApplicationScoped", primary: true },
+      { service: "Delivery", implementation: "StubDelivery", via: "@ApplicationScoped" },
+      { service: "Delivery", implementation: "RealDelivery", via: "@Dependent" },
     ]);
   });
 

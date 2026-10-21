@@ -14,7 +14,7 @@ describe("overload arity facts", () => {
   it("Java: argument counts, and a variadic parameter by its own name", async () => {
     const [emit, run] = await methodsOf(`class S {
   void emit(String level, String... parts) {}
-  void run(Order o) { save(o); save(o, true); emit("a", "b", "c"); }
+  void run(Car o) { save(o); save(o, true); emit("a", "b", "c"); }
 }`, "java", "S.java");
     expect(emit!.params.map((p) => [p.name, p.variadic ?? false])).toEqual([["level", false], ["parts", true]]);
     // Two `save` calls of different arity both stay: they may be two overloads.
@@ -23,7 +23,7 @@ describe("overload arity facts", () => {
 
   it("C#: argument counts, defaults and `params`", async () => {
     const [add, run] = await methodsOf(`class R {
-  void Add(Order o, bool flush, string tag = "x", params string[] rest) { }
+  void Add(Car o, bool flush, string tag = "x", params string[] rest) { }
   void Run() { Add(null, flush: true); }
 }`, "csharp", "R.cs");
     expect(add!.params.map((p) => [p.name, p.defaultValue, p.variadic ?? false])).toEqual([

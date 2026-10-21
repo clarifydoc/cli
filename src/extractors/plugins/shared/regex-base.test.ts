@@ -145,7 +145,7 @@ describe("one-line bodies and string literals in regex call extraction", () => {
     expect(at("func (s *Svc) One(id int) { s.repo.Find(id) }", "One")).toBe("s.repo.Find(id) }");
     expect(at("  def f(r: Repo): Unit = r.loadAll()", "f")).toBe("r.loadAll()");
     expect(at("  void save() => _repo.save();", "save")).toBe("_repo.save();");
-    expect(at("func load(id: Int = 3) -> User? {", "load")).toBe("");
+    expect(at("func load(id: Int = 3) -> Player? {", "load")).toBe("");
     expect(at("  Future<void> f({required this.x}) async {", "f")).toBe("");
     expect(at("int f(int a);", "f")).toBeNull();
     expect(at("local f = function(x)", "f")).toBeNull();
@@ -154,7 +154,7 @@ describe("one-line bodies and string literals in regex call extraction", () => {
 
   it("blanks string contents but keeps interpolated code", async () => {
     const { blankStringLiterals } = await import("./regex-base.js");
-    expect(blankStringLiterals("String d() => 'UserService($baseUrl)';")).not.toMatch(/UserService\(/);
+    expect(blankStringLiterals("String d() => 'PlayerService($baseUrl)';")).not.toMatch(/PlayerService\(/);
     expect(blankStringLiterals('puts "a #{repo.find(1)} b"')).toContain("#{repo.find(1)}");
     expect(blankStringLiterals('let s = "\\(repo.load())"')).toContain("\\(repo.load())");
     expect(blankStringLiterals("fn f<'a>(x: &'a Foo) { x.bar() }")).toBe("fn f<'a>(x: &'a Foo) { x.bar() }");

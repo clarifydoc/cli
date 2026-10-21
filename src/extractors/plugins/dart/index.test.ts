@@ -19,8 +19,8 @@ describe("dartSpec — functions", () => {
         runApp(MyApp());
       }
 
-      Future<User> fetchUser(int id) async {
-        return User.fromJson({});
+      Future<Player> fetchPlayer(int id) async {
+        return Player.fromJson({});
       }
 
       int add(int a, int b) => a + b;
@@ -30,8 +30,8 @@ describe("dartSpec — functions", () => {
       }
     `);
     const byName = Object.fromEntries(f.map((x) => [x.name, x]));
-    expect(Object.keys(byName).sort()).toEqual(["add", "build", "fetchUser", "main"]);
-    expect(byName["fetchUser"]).toMatchObject({ isAsync: true, returnType: "Future<User>" });
+    expect(Object.keys(byName).sort()).toEqual(["add", "build", "fetchPlayer", "main"]);
+    expect(byName["fetchPlayer"]).toMatchObject({ isAsync: true, returnType: "Future<Player>" });
     expect(byName["add"]).toMatchObject({ returnType: "int" });
     expect(byName["main"]!.returnType).toBeNull(); // void → null
   });
@@ -123,13 +123,13 @@ describe("dartSpec — imports", () => {
       import 'package:flutter/material.dart';
       import 'package:http/http.dart' as http;
       import 'dart:convert';
-      import '../models/user.dart' show User, Post;
+      import '../models/player.dart' show Player, Game;
       export 'src/widget.dart';
     `);
     const bySource = Object.fromEntries(imp.map((x) => [x.source, x]));
     expect(bySource["package:flutter/material.dart"]).toBeDefined();
     expect(bySource["package:http/http.dart"]!.specifiers).toEqual(["http"]);
-    expect(bySource["../models/user.dart"]!.specifiers).toEqual(["User", "Post"]);
+    expect(bySource["../models/player.dart"]!.specifiers).toEqual(["Player", "Game"]);
     expect(bySource["dart:convert"]).toBeDefined();
   });
 });
@@ -137,14 +137,14 @@ describe("dartSpec — imports", () => {
 describe("dartSpec — data sources", () => {
   it("surfaces http/dio client calls as api-call with the URL target", () => {
     const ds = dataSources(`
-      final res = await http.get(Uri.parse('https://api.example.com/users'));
-      final r2 = await _dio.post('/orders', data: body);
-      final r3 = await apiClient.delete('/items/42');
+      final res = await http.get(Uri.parse('https://api.example.com/players'));
+      final r2 = await _dio.post('/cars', data: body);
+      final r3 = await apiClient.delete('/balls/42');
     `).filter((d) => d.kind === "api-call");
     const byName = Object.fromEntries(ds.map((d) => [d.name, d]));
-    expect(byName["http.get"]).toMatchObject({ target: "https://api.example.com/users" });
-    expect(byName["_dio.post"]).toMatchObject({ target: "/orders" });
-    expect(byName["apiClient.delete"]).toMatchObject({ target: "/items/42" });
+    expect(byName["http.get"]).toMatchObject({ target: "https://api.example.com/players" });
+    expect(byName["_dio.post"]).toMatchObject({ target: "/cars" });
+    expect(byName["apiClient.delete"]).toMatchObject({ target: "/balls/42" });
   });
 
   it("does NOT treat non-client receivers as HTTP calls", () => {
@@ -157,12 +157,12 @@ describe("dartSpec — data sources", () => {
 
   it("surfaces Firestore collections and sqflite tables as database with entity", () => {
     const ds = dataSources(`
-      final snap = await FirebaseFirestore.instance.collection('users').get();
-      await db.insert('orders', row);
-      final rows = await db.query('products', where: 'id = ?');
+      final snap = await FirebaseFirestore.instance.collection('players').get();
+      await db.insert('cars', row);
+      final rows = await db.query('parts', where: 'id = ?');
     `).filter((d) => d.kind === "database");
     const entities = ds.map((d) => d.entity).sort();
-    expect(entities).toEqual(["orders", "products", "users"]);
+    expect(entities).toEqual(["cars", "parts", "players"]);
   });
 });
 
@@ -170,15 +170,15 @@ describe("dartSpec — routes", () => {
   it("captures shelf_router API routes", () => {
     const r = routes(`
       final router = Router();
-      router.get('/users', listUsers);
-      router.post('/users', createUser);
-      app.delete('/users/<id>', deleteUser);
+      router.get('/players', listPlayers);
+      router.post('/players', createPlayer);
+      app.delete('/players/<id>', deletePlayer);
     `);
     expect(r).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ path: "/users", httpMethod: "GET", handler: "listUsers", kind: "api" }),
-        expect.objectContaining({ path: "/users", httpMethod: "POST", handler: "createUser" }),
-        expect.objectContaining({ path: "/users/<id>", httpMethod: "DELETE", handler: "deleteUser" }),
+        expect.objectContaining({ path: "/players", httpMethod: "GET", handler: "listPlayers", kind: "api" }),
+        expect.objectContaining({ path: "/players", httpMethod: "POST", handler: "createPlayer" }),
+        expect.objectContaining({ path: "/players/<id>", httpMethod: "DELETE", handler: "deletePlayer" }),
       ]),
     );
   });
@@ -197,7 +197,7 @@ describe("dartSpec — routes", () => {
   });
 
   it("does not treat dio client calls (relative path) as server routes", () => {
-    const r = routes(`final r = await dio.get('/users');`);
+    const r = routes(`final r = await dio.get('/players');`);
     expect(r).toHaveLength(0);
   });
 });
@@ -244,7 +244,7 @@ describe("dartSpec — request bodies", () => {
     const rows = dataSources(`
       Future<void> save(String name) async {
         await http.post(
-          Uri.parse('https://api.example.com/users'),
+          Uri.parse('https://api.example.com/players'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({'name': name, 'age': 3, 'tags': ['a'], 'address': {'city': 'x'}}),
         );
@@ -253,9 +253,9 @@ describe("dartSpec — request bodies", () => {
           'done': false,
           ...extra,
         };
-        await dio.put('/api/todos/1', data: payload);
+        await dio.put('/api/drills/1', data: payload);
         await dio.post('/api/ping');
-        await dio.get('/api/todos', queryParameters: {'page': 1});
+        await dio.get('/api/drills', queryParameters: {'page': 1});
       }
     `).filter((d) => d.kind === "api-call").map((d) => [d.name, d.requestBody ?? null]);
     expect(rows).toEqual([

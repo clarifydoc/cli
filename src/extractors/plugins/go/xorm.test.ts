@@ -41,7 +41,7 @@ func Fetch(c *http.Client) { c.Get("https://example.com") }
   });
 
   it("reads nothing in a file that never states xorm", () => {
-    expect(rows(`package web\nfunc h(e echo.Context) error { return e.Get("user") }`)).toEqual([]);
+    expect(rows(`package web\nfunc h(e echo.Context) error { return e.Get("player") }`)).toEqual([]);
   });
 });
 

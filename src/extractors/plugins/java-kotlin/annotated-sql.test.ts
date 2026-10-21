@@ -22,28 +22,28 @@ describe("SQL in repository annotations", () => {
 import androidx.room.*
 
 @Dao
-interface TodoDao {
-    @Query("SELECT * FROM todos ORDER BY id")
-    fun all(): List<Todo>
+interface DrillDao {
+    @Query("SELECT * FROM drills ORDER BY id")
+    fun all(): List<Drill>
 
     @Query("""
-        UPDATE todos
+        UPDATE drills
         SET done = 1
         WHERE id = :id
     """)
     fun complete(id: Long)
 
     @Insert
-    fun insertAll(todos: List<Todo>)
+    fun insertAll(drills: List<Drill>)
 
     @Delete
-    fun remove(todo: Todo)
+    fun remove(drill: Drill)
 }`;
-    expect(await dbRows(SRC, "kotlin", "TodoDao.kt")).toEqual([
-      "@Query read todos@7",
-      "@Query write todos@14",
-      "@Insert write Todo@17",
-      "@Delete write Todo@20",
+    expect(await dbRows(SRC, "kotlin", "DrillDao.kt")).toEqual([
+      "@Query read drills@7",
+      "@Query write drills@14",
+      "@Insert write Drill@17",
+      "@Delete write Drill@20",
     ]);
   });
 
@@ -51,17 +51,17 @@ interface TodoDao {
     const SRC = `package x;
 import org.springframework.data.jpa.repository.*;
 
-public interface OrderRepository extends JpaRepository<Order, Long> {
-  @Query("SELECT o FROM Order o WHERE o.customer.id = :id")
-  List<Order> forCustomer(Long id);
+public interface CarRepository extends JpaRepository<Car, Long> {
+  @Query("SELECT o FROM Car o WHERE o.driver.id = :id")
+  List<Car> forDriver(Long id);
 
   @Modifying
-  @Query(value = "DELETE FROM order_lines " + "WHERE order_id = ?1", nativeQuery = true)
-  void dropLines(Long id);
+  @Query(value = "DELETE FROM car_parts " + "WHERE car_id = ?1", nativeQuery = true)
+  void dropParts(Long id);
 }`;
-    expect(await dbRows(SRC, "java", "OrderRepository.java")).toEqual([
-      "@Query read Order@6",
-      "@Query write order_lines@10",
+    expect(await dbRows(SRC, "java", "CarRepository.java")).toEqual([
+      "@Query read Car@6",
+      "@Query write car_parts@10",
     ]);
   });
 
@@ -74,7 +74,7 @@ public interface Api {
   String find(String q);
 
   @Delete
-  void remove(Item item);
+  void remove(Ball ball);
 }`;
     expect(await dbRows(SRC, "java", "Api.java")).toEqual([]);
   });

@@ -98,11 +98,11 @@ describe("Bash data access", () => {
       "DELETE FROM sessions WHERE expired = 1;",
       "UPDATE stats SET n = 0;",
       "SQL",
-      'docker exec db mysql -e "SELECT id FROM orders"',
+      'docker exec db mysql -e "SELECT id FROM cars"',
       'echo "Select a file from disk"',
     ].join("\n"));
     expect(a.dataSources.map((d) => `${d.name} ${d.entity}@${d.line}`)).toEqual([
-      "INSERT INTO deploys@1", "DELETE FROM sessions@3", "UPDATE stats@4", "SELECT orders@6",
+      "INSERT INTO deploys@1", "DELETE FROM sessions@3", "UPDATE stats@4", "SELECT cars@6",
     ]);
   });
 });

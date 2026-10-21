@@ -25,7 +25,7 @@ describe("restoreTypedReceiverCalls — noise-named methods on declared receiver
   it("PHP: keeps `find`/`send` on typed fields and params, drops them on untyped receivers", async () => {
     const a = await analyze(`<?php
 class Svc {
-  private UserRepository $repo;
+  private PlayerRepository $repo;
   private $items;
   public function __construct(private Notifier $notifier) {}
   public function run(Parser $parser) {
@@ -43,7 +43,7 @@ class Svc {
     const a = await analyze(`
 class Svc {
   private items: Item[] = [];
-  constructor(private readonly repo: UserRepository) {}
+  constructor(private readonly repo: PlayerRepository) {}
   run() {
     this.items.find((i) => i.ok);
     return this.repo.find(1);
@@ -55,7 +55,7 @@ class Svc {
   it("restores at the position the walk found the call", async () => {
     const a = await analyze(`<?php
 class Svc {
-  private UserRepository $repo;
+  private PlayerRepository $repo;
   public function run() { $this->a(); $this->repo->find(1); $this->b(); }
 }`, "php", "Svc.php");
     expect(callsOf(a, "Svc", "run")).toEqual(["this.a", "this.repo.find", "this.b"]);

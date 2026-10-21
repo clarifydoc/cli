@@ -10,7 +10,7 @@ describe("receiverTypeName — the class a declared type dispatches member calls
   });
 
   it("keeps a generic type itself, and unwraps only registered transparent wrappers", () => {
-    expect(receiverTypeName("IRepository<User>", "csharp")).toBe("IRepository");
+    expect(receiverTypeName("IRepository<Player>", "csharp")).toBe("IRepository");
     // Java's Optional is a real container (calls go through `.get()`): never unwrapped.
     expect(receiverTypeName("Optional<Repo>", "java")).not.toBe("Repo");
     registerTransparentTypeWrappers("rust", ["Arc", "Box", "Rc"]);

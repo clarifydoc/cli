@@ -6,9 +6,9 @@ import { loadReportSummary } from "./report-payload.js";
 
 describe("openApiPath", () => {
   it("writes each framework's parameter syntax as an OpenAPI template", () => {
-    expect(openApiPath("/orders/:id")).toEqual({ path: "/orders/{id}", params: ["id"] });
+    expect(openApiPath("/cars/:id")).toEqual({ path: "/cars/{id}", params: ["id"] });
     expect(openApiPath("/api/items/{id:int}")).toEqual({ path: "/api/items/{id}", params: ["id"] });
-    expect(openApiPath("/users/<int:pk>/")).toEqual({ path: "/users/{pk}", params: ["pk"] });
+    expect(openApiPath("/players/<int:pk>/")).toEqual({ path: "/players/{pk}", params: ["pk"] });
     expect(openApiPath("/blog/[slug]")).toEqual({ path: "/blog/{slug}", params: ["slug"] });
     expect(openApiPath("/files/*")).toEqual({ path: "/files/{wildcard}", params: ["wildcard"] });
     expect(openApiPath("^/legacy/(\\d+)$")).toBeNull();

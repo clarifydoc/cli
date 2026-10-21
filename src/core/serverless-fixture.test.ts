@@ -25,30 +25,30 @@ describe.skipIf(!existsSync(fixture))("sample-serverless", () => {
     const s = await loadReportSummary(out);
     const routes = s.routeMap.map((r) => `${r.httpMethod ?? "ANY"} ${r.path} ${r.filePath} ${r.handler}`);
     expect(routes.sort()).toEqual([
-      "ANY /legacy/{proxy+} users-service/serverless.yml bin/legacy",
-      "GET /orders cdk-app/lambda/orders.ts list",
-      "GET /orders/{id} cdk-app/src/handlers/get-order.ts handler",
+      "ANY /legacy/{proxy+} players-service/serverless.yml bin/legacy",
+      "GET /cars cdk-app/lambda/cars.ts list",
+      "GET /cars/{id} cdk-app/src/handlers/get-car.ts handler",
       "GET /reports cdk-app/py/report.py main",
       "POST /reports cdk-app/py/report.py main",
       "GET /greet/{name} sam-java/HelloWorldFunction/src/main/java/helloworld/App.java App.handleRequest",
       "GET /hello sam-app/hello_world/app.py lambda_handler",
-      "GET /users users-service/src/handlers/users.ts list",
-      "GET /users/{id} users-service/src/handlers/users.ts get",
+      "GET /players players-service/src/handlers/players.ts list",
+      "GET /players/{id} players-service/src/handlers/players.ts get",
       "POST /hello sam-app/hello_world/app.py lambda_handler",
-      "POST /users users-service/src/handlers/users.ts create",
+      "POST /players players-service/src/handlers/players.ts create",
     ].sort());
-    expect(s.routeMap.find((r) => r.path === "/users/{id}")?.auth?.schemes).toEqual(["authorize"]);
+    expect(s.routeMap.find((r) => r.path === "/players/{id}")?.auth?.schemes).toEqual(["authorize"]);
   });
 
   it("links the web client's calls to those handlers, and the handlers to the table", async () => {
     const s = await loadReportSummary(out);
     const links = (s.apiRouteLinks ?? []).map((l) => `${l.source} -> ${l.target}`);
     expect(new Set(links)).toEqual(new Set([
-      "web/src/api.ts -> users-service/src/handlers/users.ts",
+      "web/src/api.ts -> players-service/src/handlers/players.ts",
       "web/src/api.ts -> sam-app/hello_world/app.py",
     ]));
     expect(links.length).toBe(4);
-    const flows = (s.dataFlows ?? []).filter((p) => p.resource === "users").map((p) => `${p.entryLabel} ${p.effect}`);
-    expect(flows.sort()).toEqual(["GET /users db-read", "GET /users/{id} db-read", "POST /users db-write"]);
+    const flows = (s.dataFlows ?? []).filter((p) => p.resource === "players").map((p) => `${p.entryLabel} ${p.effect}`);
+    expect(flows.sort()).toEqual(["GET /players db-read", "GET /players/{id} db-read", "POST /players db-write"]);
   });
 });

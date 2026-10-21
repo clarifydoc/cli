@@ -30,20 +30,20 @@ describe("JS entities — Drizzle tables", () => {
   it("reads pgTable/sqliteTable definitions, their columns and references", async () => {
     const a = await analyze(`import { pgTable, serial, text, integer } from "drizzle-orm/pg-core";
 
-export const users = pgTable("users", {
+export const players = pgTable("players", {
   id: serial("id").primaryKey(),
   email: text("email").notNull().unique(),
 });
 
-export const posts = pgTable("posts", {
+export const games = pgTable("games", {
   id: serial("id").primaryKey(),
   title: text("title"),
-  authorId: integer("author_id").references(() => users.id, { onDelete: "cascade" }),
+  scoutId: integer("scout_id").references(() => players.id, { onDelete: "cascade" }),
 });
 `);
-    expect(entities(a).sort()).toEqual(["posts", "users"]);
-    const posts = a.classes.find((c) => c.name === "posts")!;
-    expect(posts.properties.map((p) => `${p.name}:${p.type}`)).toEqual(["id:serial", "title:text", "authorId:integer"]);
-    expect((a.entityRelations ?? []).map((r) => `${r.fromEntity}.${r.fromField} -> ${r.toEntity} (${r.foreignKey})`)).toEqual(["posts.authorId -> users (authorId)"]);
+    expect(entities(a).sort()).toEqual(["games", "players"]);
+    const games = a.classes.find((c) => c.name === "games")!;
+    expect(games.properties.map((p) => `${p.name}:${p.type}`)).toEqual(["id:serial", "title:text", "scoutId:integer"]);
+    expect((a.entityRelations ?? []).map((r) => `${r.fromEntity}.${r.fromField} -> ${r.toEntity} (${r.foreignKey})`)).toEqual(["games.scoutId -> players (scoutId)"]);
   });
 });

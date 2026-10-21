@@ -38,7 +38,7 @@ export const Profile = {
   });
 
   it("nests prefixes, and names default-export and module.exports members by key", async () => {
-    expect(await names(`const api = { users: { get: (id) => http.get(id) } };`)).toEqual(["api.users.get"]);
+    expect(await names(`const api = { players: { get: (id) => http.get(id) } };`)).toEqual(["api.players.get"]);
     expect(await names(`export default { Articles, Profile, setToken: _token => { token = _token; } };`)).toEqual(["setToken"]);
     expect(await names(`module.exports = { hash: (s) => crypto(s), check(a, b) { return a === b; } };`)).toEqual(["hash", "check"]);
   });

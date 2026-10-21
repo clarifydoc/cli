@@ -14,15 +14,15 @@ const route = (over: Partial<S["routeMap"][number]> & { path: string }): S["rout
   calls: [],
   middleware: [],
   line: 10,
-  filePath: "api/orders.ts",
+  filePath: "api/cars.ts",
   ...over,
 });
 const kinds = (base: S, head: S) => diffSurface(base, head).changes.map((c) => [c.kind, c.breaking, c.route]);
 
 describe("diffSurface", () => {
   it("calls a route that lost its rate limit or CSRF check risky", () => {
-    const base: S = { routeMap: [route({ path: "/orders", filters: [{ text: 'EnableRateLimiting("fixed")', kind: "rate-limit" }, { text: "ValidateAntiForgeryToken", kind: "csrf" }] })] };
-    const head: S = { routeMap: [route({ path: "/orders", filters: [{ text: "ValidateAntiForgeryToken", kind: "csrf" }] })] };
+    const base: S = { routeMap: [route({ path: "/cars", filters: [{ text: 'EnableRateLimiting("fixed")', kind: "rate-limit" }, { text: "ValidateAntiForgeryToken", kind: "csrf" }] })] };
+    const head: S = { routeMap: [route({ path: "/cars", filters: [{ text: "ValidateAntiForgeryToken", kind: "csrf" }] })] };
     expect(diffSurface(base, head).changes.map((c) => [c.kind, c.risky, c.reasons])).toEqual([
       ["filter-lost", true, ['no longer rate-limited (was EnableRateLimiting("fixed"))']],
     ]);
@@ -55,22 +55,22 @@ describe("diffSurface", () => {
 
   it("breaks on a body that requires a new field or changes a field's type, not on an optional one", () => {
     const body = (props: Record<string, unknown>, required: string[]) => ({ type: "object" as const, properties: props as never, required });
-    const base: S = { routeMap: [route({ path: "/orders", requestSchema: body({ sku: { type: "string" }, qty: { type: "integer" } }, ["sku"]) })] };
-    const head: S = { routeMap: [route({ path: "/orders", requestSchema: body({ sku: { type: "string" }, qty: { type: "string" }, note: { type: "string" }, coupon: { type: "string" } }, ["sku", "coupon"]) })] };
+    const base: S = { routeMap: [route({ path: "/cars", requestSchema: body({ sku: { type: "string" }, qty: { type: "integer" } }, ["sku"]) })] };
+    const head: S = { routeMap: [route({ path: "/cars", requestSchema: body({ sku: { type: "string" }, qty: { type: "string" }, note: { type: "string" }, coupon: { type: "string" } }, ["sku", "coupon"]) })] };
     const [c] = diffSurface(base, head).changes;
     expect(c).toMatchObject({ kind: "body-changed", breaking: true });
     // What breaks first, then what only changed.
     expect(c!.reasons).toEqual(["body field qty is string, was integer", "body requires a new field coupon", "body accepts a new field note"]);
-    const optionalOnly: S = { routeMap: [route({ path: "/orders", requestSchema: body({ sku: { type: "string" }, qty: { type: "integer" }, note: { type: "string" } }, ["sku"]) })] };
-    expect(kinds(base, optionalOnly)).toEqual([["body-changed", false, "POST /orders"]]);
+    const optionalOnly: S = { routeMap: [route({ path: "/cars", requestSchema: body({ sku: { type: "string" }, qty: { type: "integer" }, note: { type: "string" } }, ["sku"]) })] };
+    expect(kinds(base, optionalOnly)).toEqual([["body-changed", false, "POST /cars"]]);
   });
 
   it("moves a route whose method or path changed under the same handler, and breaks on a parameter binding elsewhere", () => {
-    const base: S = { routeMap: [route({ path: "/orders/:id", httpMethod: "PUT", handler: "update", params: [{ name: "id", type: null, binding: "route" }, { name: "dto", type: "Dto", binding: "body" }] })] };
-    const head: S = { routeMap: [route({ path: "/orders/:id", httpMethod: "PATCH", handler: "update", params: [{ name: "id", type: null, binding: "route" }, { name: "dto", type: "Dto", binding: "query" }] })] };
+    const base: S = { routeMap: [route({ path: "/cars/:id", httpMethod: "PUT", handler: "update", params: [{ name: "id", type: null, binding: "route" }, { name: "dto", type: "Dto", binding: "body" }] })] };
+    const head: S = { routeMap: [route({ path: "/cars/:id", httpMethod: "PATCH", handler: "update", params: [{ name: "id", type: null, binding: "route" }, { name: "dto", type: "Dto", binding: "query" }] })] };
     const d = diffSurface(base, head);
     expect(d.changes.map((c) => [c.kind, c.breaking])).toEqual([["param-changed", true], ["route-moved", true]]);
-    expect(d.changes.find((c) => c.kind === "route-moved")!.reasons).toEqual(["was PUT /orders/:id"]);
+    expect(d.changes.find((c) => c.kind === "route-moved")!.reasons).toEqual(["was PUT /cars/:id"]);
     expect(d.counts).toMatchObject({ routesAdded: 0, routesRemoved: 0 });
   });
 
@@ -85,13 +85,13 @@ describe("diffSurface", () => {
   });
 
   it("follows calls across tiers: a call reaching another route, a new link, and what a route reaches in data", () => {
-    const link = (routePath: string, target = "api/orders.ts") => ({ source: "web/a.ts", sourceLine: 3, method: "GET", url: "/api/orders", target, targetLine: 10, handler: null, routePath, confidence: "EXTRACTED" as const });
-    const flow = (resource: string) => ({ entryKind: "route" as const, entryLabel: "POST /orders", entryFile: "api/orders.ts", effect: "db-write" as const, resource, distance: 1, confidence: "INFERRED" as const, path: [] });
-    const base: S = { routeMap: [route({ path: "/orders" })], apiRouteLinks: [link("/api/orders")] as never, dataFlows: [flow("order")] as never };
+    const link = (routePath: string, target = "api/cars.ts") => ({ source: "web/a.ts", sourceLine: 3, method: "GET", url: "/api/cars", target, targetLine: 10, handler: null, routePath, confidence: "EXTRACTED" as const });
+    const flow = (resource: string) => ({ entryKind: "route" as const, entryLabel: "POST /cars", entryFile: "api/cars.ts", effect: "db-write" as const, resource, distance: 1, confidence: "INFERRED" as const, path: [] });
+    const base: S = { routeMap: [route({ path: "/cars" })], apiRouteLinks: [link("/api/cars")] as never, dataFlows: [flow("car")] as never };
     const head: S = {
-      routeMap: [route({ path: "/orders" })],
-      apiRouteLinks: [link("/api/v2/orders", "api/v2.ts"), { ...link("/api/orders"), source: "web/b.ts" }] as never,
-      dataFlows: [flow("order"), flow("audit_log")] as never,
+      routeMap: [route({ path: "/cars" })],
+      apiRouteLinks: [link("/api/v2/cars", "api/v2.ts"), { ...link("/api/cars"), source: "web/b.ts" }] as never,
+      dataFlows: [flow("car"), flow("audit_log")] as never,
     };
     const d = diffSurface(base, head);
     expect(d.changes.map((c) => c.kind)).toEqual(expect.arrayContaining(["link-moved", "link-gained", "data-effect-changed"]));
@@ -109,15 +109,15 @@ describe("diffSurface on two analyses", () => {
     for (const side of ["base", "head"]) {
       await cp(fixture, join(dir, side), { recursive: true });
       await mkdir(join(dir, side, "web"), { recursive: true });
-      await writeFile(join(dir, side, "web", "client.ts"), "import axios from 'axios';\nexport const loadUser = (id: number) => axios.get(`/api/users/${id}`);\n");
+      await writeFile(join(dir, side, "web", "client.ts"), "import axios from 'axios';\nexport const loadPlayer = (id: number) => axios.get(`/api/players/${id}`);\n");
     }
     // The head drops a guard, adds one, and moves GET /:id.
-    const users = join(dir, "head", "routes", "users.ts");
-    const src = (await readFile(users, "utf8"))
+    const players = join(dir, "head", "routes", "players.ts");
+    const src = (await readFile(players, "utf8"))
       .replace("router.delete('/:id', requireAuth, requireAdmin,", "router.delete('/:id', requireAuth,")
       .replace("router.get('/:id', requireAuth,", "router.get('/by-id/:id', requireAuth,")
       .replace("router.put('/:id', requireAuth, async", "router.put('/:id', requireAuth, requireAdmin, async");
-    await writeFile(users, src);
+    await writeFile(players, src);
     for (const side of ["base", "head"]) {
       await analyze({ projectRoot: join(dir, side), outputDir: join(dir, "out", side), lsp: false, gitHistory: false });
     }
@@ -129,10 +129,10 @@ describe("diffSurface on two analyses", () => {
   it("names each change, with what breaks first", async () => {
     const d = diffSurface(await loadReportSummary(join(dir, "out", "base")), await loadReportSummary(join(dir, "out", "head")));
     expect(d.changes.map((c) => [c.kind, c.route, c.breaking])).toEqual([
-      ["link-lost", "GET /api/users/:id", true],
-      ["route-moved", "GET /api/users/by-id/:id", true],
-      ["guard-added", "PUT /api/users/:id", true],
-      ["guard-lost", "DELETE /api/users/:id", false],
+      ["link-lost", "GET /api/players/:id", true],
+      ["route-moved", "GET /api/players/by-id/:id", true],
+      ["guard-added", "PUT /api/players/:id", true],
+      ["guard-lost", "DELETE /api/players/:id", false],
     ]);
     expect(renderSurfaceMarkdown(d)).toMatch(/\*\*3 breaking\*\* · 1 risky/);
     const same = await loadReportSummary(join(dir, "out", "base"));

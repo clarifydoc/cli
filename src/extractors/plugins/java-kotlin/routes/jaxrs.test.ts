@@ -10,7 +10,7 @@ import type { RouteInfo } from "../../../../types/analysis.js";
  * verb marker (@GET — argument-less), and an optional method @Path. Micronaut
  * uses @Controller("/x") + @Get("/y"). Neither produced any routes before.
  * The argument-less requirement on JAX-RS verbs keeps Retrofit client
- * interfaces (`@GET("users")` — outbound) from minting phantom inbound routes.
+ * interfaces (`@GET("players")` — outbound) from minting phantom inbound routes.
  */
 async function routesOf(source: string, file: string): Promise<RouteInfo[]> {
   const lang = file.endsWith(".kt") ? "kotlin" : "java";
@@ -23,32 +23,32 @@ describe("JAX-RS resource routes", () => {
     const SRC = `package x;
 import javax.ws.rs.*;
 
-@Path("/users")
-public class UserResource {
+@Path("/players")
+public class PlayerResource {
   @GET
-  public List<User> list() { return userService.findAll(); }
+  public List<Player> list() { return playerService.findAll(); }
 
   @GET
   @Path("{id}")
-  public User get(@PathParam("id") long id) { return userService.fetchUser(id); }
+  public Player get(@PathParam("id") long id) { return playerService.fetchPlayer(id); }
 
   @POST
-  public Response create(User u) { return userService.save(u); }
+  public Response create(Player u) { return playerService.save(u); }
 
   @DELETE
   @Path("{id}")
-  public void remove(@PathParam("id") long id) { userService.delete(id); }
+  public void remove(@PathParam("id") long id) { playerService.delete(id); }
 }`;
-    const routes = await routesOf(SRC, "UserResource.java");
+    const routes = await routesOf(SRC, "PlayerResource.java");
     expect(routes.map((r) => `${r.httpMethod} ${r.path}`).sort()).toEqual([
-      "DELETE /users/{id}",
-      "GET /users",
-      "GET /users/{id}",
-      "POST /users",
+      "DELETE /players/{id}",
+      "GET /players",
+      "GET /players/{id}",
+      "POST /players",
     ]);
-    const get = routes.find((r) => r.httpMethod === "GET" && r.path === "/users/{id}")!;
+    const get = routes.find((r) => r.httpMethod === "GET" && r.path === "/players/{id}")!;
     expect(get.handler).toBe("get");
-    expect(get.calls.some((c) => /fetchUser/.test(c.name ?? ""))).toBe(true);
+    expect(get.calls.some((c) => /fetchPlayer/.test(c.name ?? ""))).toBe(true);
   });
 
   it("extracts Kotlin JAX-RS resources (Quarkus style)", async () => {
@@ -73,12 +73,12 @@ class FruitResource {
 
   it("does NOT emit routes for Retrofit-style verb annotations with arguments", async () => {
     const SRC = `package x;
-public interface UserApi {
-  @GET("users/{id}")
-  Call<User> getUser(@retrofit2.http.Path("id") String id);
+public interface PlayerApi {
+  @GET("players/{id}")
+  Call<Player> getPlayer(@retrofit2.http.Path("id") String id);
 }`;
     // No class @Path, and the verb carries an argument → outbound, not a route.
-    const routes = await routesOf(SRC, "UserApi.java");
+    const routes = await routesOf(SRC, "PlayerApi.java");
     expect(routes).toEqual([]);
   });
 
@@ -101,33 +101,33 @@ describe("Micronaut controller routes", () => {
 
 import io.micronaut.http.annotation.*
 
-@Controller("/orders")
-class OrderController(private val service: OrderService) {
+@Controller("/cars")
+class CarController(private val service: CarService) {
   @Get
-  fun all(): List<Order> = service.findAll()
+  fun all(): List<Car> = service.findAll()
 
   @Get("/{id}")
-  fun byId(id: Long): Order = service.find(id)
+  fun byId(id: Long): Car = service.find(id)
 
   @Post("/")
-  fun create(order: Order): Order = service.save(order)
+  fun create(car: Car): Car = service.save(car)
 }`;
-    const routes = await routesOf(SRC, "OrderController.kt");
+    const routes = await routesOf(SRC, "CarController.kt");
     expect(routes.map((r) => `${r.httpMethod} ${r.path}`).sort()).toEqual([
-      "GET /orders",
-      "GET /orders/{id}",
-      "POST /orders",
+      "GET /cars",
+      "GET /cars/{id}",
+      "POST /cars",
     ]);
   });
 
   it("skips Micronaut @Client declarative HTTP clients (outbound)", async () => {
     const SRC = `package x;
-@Client("/pets")
-public interface PetClient {
+@Client("/vehicles")
+public interface VehicleClient {
   @Get("/{id}")
-  Pet find(String id);
+  Vehicle find(String id);
 }`;
-    expect(await routesOf(SRC, "PetClient.java")).toEqual([]);
+    expect(await routesOf(SRC, "VehicleClient.java")).toEqual([]);
   });
 });
 
@@ -177,11 +177,11 @@ public class Res {
 
   it("Micronaut: @Secured rule expressions become policies, @Body/@QueryValue bindings, complex default → body", async () => {
     const SRC = `package x
-@Controller("/users")
+@Controller("/players")
 @Secured("isAuthenticated()")
-class UserController {
+class PlayerController {
   @Post("/{id}")
-  fun save(@PathVariable id: Long, @Body dto: CreateUserDto, @QueryValue q: String, extra: Extra): User = TODO()
+  fun save(@PathVariable id: Long, @Body dto: CreatePlayerDto, @QueryValue q: String, extra: Extra): Player = TODO()
 }`;
     const tree = await parseSource(SRC, "kotlin" as any, "A.kt");
     const routes: RouteInfo[] = [];
@@ -190,7 +190,7 @@ class UserController {
     expect(r!.auth).toMatchObject({ policies: ["isAuthenticated()"], roles: [], inherited: true });
     expect(r!.params).toEqual([
       { name: "id", type: "Long", binding: "route" },
-      { name: "dto", type: "CreateUserDto", binding: "body" },
+      { name: "dto", type: "CreatePlayerDto", binding: "body" },
       { name: "q", type: "String", binding: "query" },
       { name: "extra", type: "Extra", binding: "body", inferred: true },
     ]);

@@ -12,19 +12,19 @@ describe("performance patterns, end to end", () => {
     const root = join(dir, "app");
     await mkdir(join(root, "src"), { recursive: true });
     await writeFile(join(root, "package.json"), JSON.stringify({ name: "app", dependencies: { pg: "8.11.0", express: "4.19.2" } }));
-    await writeFile(join(root, "src", "orders.ts"), [
+    await writeFile(join(root, "src", "cars.ts"), [
       'import { Pool } from "pg";',                                            // 1
       'import { readFileSync } from "fs";',                                     // 2
       "const pool = new Pool();",                                               // 3
-      "export async function loadItems(id: string) {",                          // 4
-      '  return pool.query("SELECT * FROM items WHERE order_id = $1", [id]);',  // 5
+      "export async function loadParts(id: string) {",                          // 4
+      '  return pool.query("SELECT * FROM car_parts WHERE car_id = $1", [id]);', // 5
       "}",                                                                      // 6
       "export async function report(ids: string[]) {",                          // 7
-      '  for (const row of await pool.query("SELECT id FROM orders")) {',       // 8: the header runs once
-      '    await pool.query("SELECT * FROM customers WHERE id = $1", [row.id]);', // 9: N+1, direct
+      '  for (const row of await pool.query("SELECT id FROM cars")) {',         // 8: the header runs once
+      '    await pool.query("SELECT * FROM drivers WHERE id = $1", [row.id]);',   // 9: N+1, direct
       "  }",                                                                    // 10
       "  for (const id of ids) {",                                              // 11
-      "    await loadItems(id);",                                               // 12: N+1, through a helper
+      "    await loadParts(id);",                                               // 12: N+1, through a helper
       "  }",                                                                    // 13
       '  const tpl = readFileSync("tpl.html", "utf8");',                         // 14: blocks the loop
       "  return tpl;",                                                          // 15
@@ -34,13 +34,13 @@ describe("performance patterns, end to end", () => {
       "}",                                                                      // 19
     ].join("\n"));
     await writeFile(join(root, "schema.sql"), [
-      "CREATE TABLE customers (id INT PRIMARY KEY, name TEXT);",
-      "CREATE TABLE orders (id INT PRIMARY KEY, customer_id INT REFERENCES customers(id));",
-      "CREATE TABLE items (id INT PRIMARY KEY, order_id INT);",
+      "CREATE TABLE drivers (id INT PRIMARY KEY, name TEXT);",
+      "CREATE TABLE cars (id INT PRIMARY KEY, driver_id INT REFERENCES drivers(id));",
+      "CREATE TABLE car_parts (id INT PRIMARY KEY, car_id INT);",
     ].join("\n"));
     await writeFile(join(root, "src", "server.ts"), [
       'import express from "express";',
-      'import { report } from "./orders";',
+      'import { report } from "./cars";',
       "const app = express();",
       "export async function handleReport(req: any, res: any) {",
       "  res.send(await report(req.query.ids));",
@@ -63,9 +63,9 @@ describe("performance patterns, end to end", () => {
   it("says what the loop walks, and the relation that would load it in one query", async () => {
     const s = await loadReportSummary(join(dir, "out"));
     const direct = (s.patterns ?? []).find((p) => p.kind === "query-in-loop" && p.line === 9)!;
-    expect(direct.loop).toMatchObject({ iterates: "orders" });
-    expect(direct.loop?.relation).toMatch(/^orders→customers/);
-    expect(direct.detail).toContain("once for each orders row the loop at line 8 walks — the orders→customers");
+    expect(direct.loop).toMatchObject({ iterates: "cars" });
+    expect(direct.loop?.relation).toMatch(/^cars→drivers/);
+    expect(direct.detail).toContain("once for each cars row the loop at line 8 walks — the cars→drivers");
     // A loop over a parameter says nothing about its size.
     expect((s.patterns ?? []).find((p) => p.kind === "query-in-loop" && p.line === 12)!.loop).toBeUndefined();
   });
@@ -86,13 +86,13 @@ describe("how big a loop is", () => {
     const { loopSize } = await import("./query-in-loop.js");
     const lines = [
       "def report(db):",                                  // 1
-      "    orders = db.query(Order).all()",               // 2
-      "    for order in orders:",                         // 3
+      "    cars = db.query(Car).all()",                   // 2
+      "    for car in cars:",                             // 3
       "        pass",                                     // 4
     ];
-    const queries = new Map([[2, "Order"], [7, "Invoice"]]);
-    expect(loopSize("for order in orders:", 3, 1, queries, lines)).toEqual({ iterates: "Order" });
-    expect(loopSize("for (const inv of await db.invoices.findMany())", 7, 1, queries, lines)).toEqual({ iterates: "Invoice" });
+    const queries = new Map([[2, "Car"], [7, "Bill"]]);
+    expect(loopSize("for car in cars:", 3, 1, queries, lines)).toEqual({ iterates: "Car" });
+    expect(loopSize("for (const bill of await db.bills.findMany())", 7, 1, queries, lines)).toEqual({ iterates: "Bill" });
     expect(loopSize('for (const status of ["open", "closed"])', 3, 1, undefined, lines)).toEqual({ bound: 2 });
     expect(loopSize("for i in range(3):", 3, 1, undefined, lines)).toEqual({ bound: 3 });
     expect(loopSize("for (let i = 0; i < 5; i++)", 3, 1, undefined, lines)).toEqual({ bound: 5 });

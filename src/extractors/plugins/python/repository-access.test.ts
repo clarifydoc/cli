@@ -19,13 +19,13 @@ describe("Python generic repository access", () => {
     const generic = file("repos/repository_generic.py", [cls("RepositoryGeneric"), cls("HouseholdRepositoryGeneric", { extends: "RepositoryGeneric[Schema, Model]" })]);
     const recipes = file("repos/repository_recipes.py", [cls("RepositoryRecipes", { extends: "RecipeSuggestionMixin", implements: ["HouseholdRepositoryGeneric[Recipe, RecipeModel]"] })]);
     const factory = file("repos/repository_factory.py", [cls("AllRepositories", { props: [["session", "Session"]], methods: [method("recipes", [], "RepositoryRecipes")] })]);
-    const base = file("routes/_base.py", [cls("_BaseController", { props: [["_repos", "AllRepositories | None"]], methods: [method("repos", ["self._repos"])] }), cls("BaseUserController", { extends: "_BaseController" })]);
+    const base = file("routes/_base.py", [cls("_BaseController", { props: [["_repos", "AllRepositories | None"]], methods: [method("repos", ["self._repos"])] }), cls("BasePlayerController", { extends: "_BaseController" })]);
     const service = file("services/recipe_service.py", [
       cls("RecipeServiceBase", { props: [["repos", "AllRepositories"]] }),
       cls("RecipeService", { extends: "RecipeServiceBase", methods: [method("create_one", ["self._factory", "self.repos.recipes.create", "self.repos.recipes.get_one"])] }),
     ]);
     const controller = file("routes/recipes.py", [
-      cls("RecipeController", { extends: "BaseUserController", methods: [method("delete_one", ["self.repos.recipes.delete", "self.service.update_one"])] }),
+      cls("RecipeController", { extends: "BasePlayerController", methods: [method("delete_one", ["self.repos.recipes.delete", "self.service.update_one"])] }),
     ]);
     const fn = file("routes/public.py", [], [method("list_recipes", ["repos.recipes.get_all"], null, [{ name: "repos", type: "AllRepositories", defaultValue: null }])]);
     (controller as any).dataSources = [{ kind: "database", name: "self.service.update_one", target: null, entity: "service", line: 11, calls: [] }];

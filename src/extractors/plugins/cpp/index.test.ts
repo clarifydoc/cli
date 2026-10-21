@@ -66,7 +66,7 @@ class QmlBatteryProxy : public QObject {
     QML_NAMED_ELEMENT(Battery)
     QML_SINGLETON
   public:
-    void doThing();
+    void doBall();
 };
 class QmlControlProxy : public QObject {
     QML_ELEMENT

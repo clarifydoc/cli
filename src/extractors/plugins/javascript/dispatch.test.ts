@@ -31,7 +31,7 @@ function fa(filePath: string, over: Partial<FileAnalysis> = {}): FileAnalysis {
 const fn = (name: string, line: number, endLine: number) =>
   ({ name, params: [], returnType: null, isAsync: false, isExported: false, decorators: [], calls: [], line, endLine });
 
-const parent = fa("src/pages/Orders.vue", {
+const parent = fa("src/pages/Cars.vue", {
   functions: [fn("onSave", 20, 30)],
   interactiveElements: [
     { element: "custom", event: "@save", handler: "onSave", line: 4, component: "SaveDialog" },
@@ -51,14 +51,14 @@ describe("JsComponentEmitResolver", () => {
       sourceFile: "src/components/SaveDialog.vue",
       sourceSymbol: "confirm",
       callName: "emit:save",
-      targetFile: "src/pages/Orders.vue",
+      targetFile: "src/pages/Cars.vue",
       targetSymbol: "onSave",
       confidence: "INFERRED",
     });
   });
 
   it("matches kebab-case tags and event names to their camel forms", () => {
-    const kebabParent = fa("src/pages/Orders.vue", {
+    const kebabParent = fa("src/pages/Cars.vue", {
       functions: [fn("onItemClick", 20, 30)],
       interactiveElements: [
         { element: "custom", event: "@item-click", handler: "onItemClick", line: 4, component: "save-dialog" },
@@ -74,7 +74,7 @@ describe("JsComponentEmitResolver", () => {
   });
 
   it("creates nothing for events the child never declares (native fallthrough)", () => {
-    const clickParent = fa("src/pages/Orders.vue", {
+    const clickParent = fa("src/pages/Cars.vue", {
       functions: [fn("submit", 20, 30)],
       interactiveElements: [
         { element: "custom", event: "@click", handler: "submit", line: 4, component: "SaveDialog" },
@@ -85,7 +85,7 @@ describe("JsComponentEmitResolver", () => {
   });
 
   it("creates nothing for external/library components", () => {
-    const extParent = fa("src/pages/Orders.vue", {
+    const extParent = fa("src/pages/Cars.vue", {
       functions: [fn("submit", 20, 30)],
       interactiveElements: [
         { element: "custom", event: "@click", handler: "submit", line: 4, component: "MyButton" },

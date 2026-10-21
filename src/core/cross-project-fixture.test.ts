@@ -12,31 +12,31 @@ import type { ProjectAnalysis } from "../types/analysis.js";
  * tool's own output.
  *
  * Three .NET APIs and a Node worker. `legacy` serves the same paths as
- * `inventory` (GET /api/items) and `orders` (GET+POST /api/orders), so a call
+ * `fleet` (GET /api/parts) and `cars` (GET+POST /api/cars), so a call
  * matched on its path alone cannot tell them apart: every label below is only
  * reachable by following the call to the service it names.
  *
- *   orders  InventoryClient   typed HttpClient (AddHttpClient<InventoryClient>),
- *                             BaseAddress = Configuration["Services:Inventory"]
- *                             → compose `Services__Inventory: http://inventory:8080`
+ *   cars    FleetClient       typed HttpClient (AddHttpClient<FleetClient>),
+ *                             BaseAddress = Configuration["Services:Fleet"]
+ *                             → compose `Services__Fleet: http://fleet:8080`
  *                             → appsettings.json `http://localhost:5102`, which is
- *                               inventory's launchSettings URL and compose port.
+ *                               fleet's launchSettings URL and compose port.
  *                             appsettings.Test.json points at legacy: a test
  *                             profile never decides where production calls go.
- *   orders  OrdersController  _factory.CreateClient("legacy") → named client
+ *   cars    CarsController    _factory.CreateClient("legacy") → named client
  *                             `http://legacy:8080` → legacy.
- *   orders  PaymentsClient    https://api.stripe.com — a third party.
- *   worker  placeOrder        fetch(`${process.env.ORDERS_URL}/api/orders`, POST)
- *                             → compose worker `ORDERS_URL: http://orders:8080`.
- *   worker  stockOf           axios.create({ baseURL: process.env.INVENTORY_URL })
- *                             → compose worker `INVENTORY_URL: http://inventory:8080`.
+ *   cars    PaymentsClient    https://api.stripe.com — a third party.
+ *   worker  buyCar            fetch(`${process.env.CARS_URL}/api/cars`, POST)
+ *                             → compose worker `CARS_URL: http://cars:8080`.
+ *   worker  stockOf           axios.create({ baseURL: process.env.FLEET_URL })
+ *                             → compose worker `FLEET_URL: http://fleet:8080`.
  *   web     api.ts            same-origin fetch("/api/…") → vite.config.ts proxy
  *                             `/api` → http://localhost:5100, the gateway's
  *                             launchSettings URL and compose port → the gateway's
- *                             YARP routes → orders / inventory; `/api/stock/{**rest}`
- *                             is rewritten to `/api/items/{**rest}`. The gateway
+ *                             YARP routes → cars / fleet; `/api/stock/{**rest}`
+ *                             is rewritten to `/api/parts/{**rest}`. The gateway
  *                             serves no route itself.
- *   billing CustomerLookup    a JAX-RS proxy of person's published API, built
+ *   billing DriverLookup      a JAX-RS proxy of person's published API, built
  *                             by a Spring XML factory bean (clients.xml) —
  *                             no URL on the calling side at all. Each call
  *                             invokes an operation of `com.shop.person.api.
@@ -46,16 +46,16 @@ import type { ProjectAnalysis } from "../types/analysis.js";
 const FIXTURE = resolve(__dirname, "..", "..", "test-fixtures", "sample-microservices");
 
 const EXPECTED = [
-  { call: "orders/Clients/InventoryClient.cs:12", route: "GET /api/items", at: "inventory/Controllers/ItemsController.cs:9" },
-  { call: "orders/Clients/InventoryClient.cs:14", route: "GET /api/items/{id}", at: "inventory/Controllers/ItemsController.cs:12" },
-  { call: "orders/Controllers/OrdersController.cs:37", route: "GET /api/items", at: "legacy/Controllers/ItemsController.cs:11" },
-  { call: "worker/src/index.ts:6", route: "POST /api/orders", at: "orders/Controllers/OrdersController.cs:26" },
-  { call: "worker/src/index.ts:15", route: "GET /api/items/{id}", at: "inventory/Controllers/ItemsController.cs:12" },
-  { call: "web/src/api.ts:2", route: "POST /api/orders", at: "orders/Controllers/OrdersController.cs:26" },
-  { call: "web/src/api.ts:7", route: "GET /api/items", at: "inventory/Controllers/ItemsController.cs:9" },
-  { call: "web/src/api.ts:12", route: "GET /api/items/{id}", at: "inventory/Controllers/ItemsController.cs:12" },
-  { call: "billing/src/main/java/com/shop/billing/CustomerLookup.java:11", route: "GET /v1/persons/{personId}", at: "person/person-api/src/main/java/com/shop/person/api/PersonRepository.java:15" },
-  { call: "billing/src/main/java/com/shop/billing/CustomerLookup.java:16", route: "POST /v1/persons", at: "person/person-api/src/main/java/com/shop/person/api/PersonRepository.java:19" },
+  { call: "cars/Clients/FleetClient.cs:12", route: "GET /api/parts", at: "fleet/Controllers/PartsController.cs:9" },
+  { call: "cars/Clients/FleetClient.cs:14", route: "GET /api/parts/{id}", at: "fleet/Controllers/PartsController.cs:12" },
+  { call: "cars/Controllers/CarsController.cs:37", route: "GET /api/parts", at: "legacy/Controllers/PartsController.cs:11" },
+  { call: "worker/src/index.ts:6", route: "POST /api/cars", at: "cars/Controllers/CarsController.cs:26" },
+  { call: "worker/src/index.ts:15", route: "GET /api/parts/{id}", at: "fleet/Controllers/PartsController.cs:12" },
+  { call: "web/src/api.ts:2", route: "POST /api/cars", at: "cars/Controllers/CarsController.cs:26" },
+  { call: "web/src/api.ts:7", route: "GET /api/parts", at: "fleet/Controllers/PartsController.cs:9" },
+  { call: "web/src/api.ts:12", route: "GET /api/parts/{id}", at: "fleet/Controllers/PartsController.cs:12" },
+  { call: "billing/src/main/java/com/shop/billing/DriverLookup.java:11", route: "GET /v1/persons/{personId}", at: "person/person-api/src/main/java/com/shop/person/api/PersonRepository.java:15" },
+  { call: "billing/src/main/java/com/shop/billing/DriverLookup.java:16", route: "POST /v1/persons", at: "person/person-api/src/main/java/com/shop/person/api/PersonRepository.java:19" },
 ];
 
 let out: string | undefined;
@@ -86,14 +86,14 @@ describe("service-to-service links — hand-labelled fixture", () => {
   it("says which service each call reaches, and that the third party is outside", () => {
     const origin = (file: string, line: number) =>
       summary.apiCalls.find((c) => c.filePath === file && c.line === line)?.origin;
-    expect(origin("orders/Clients/InventoryClient.cs", 12)).toMatchObject({ project: "inventory", confidence: "EXTRACTED" });
-    expect(origin("orders/Controllers/OrdersController.cs", 37)).toMatchObject({ project: "legacy", host: "legacy" });
-    expect(origin("worker/src/index.ts", 6)).toMatchObject({ project: "orders", host: "orders" });
-    expect(origin("worker/src/index.ts", 15)).toMatchObject({ project: "inventory", host: "inventory" });
-    expect(origin("orders/Clients/PaymentsClient.cs", 9)).toMatchObject({ host: "api.stripe.com", external: true });
-    expect(origin("orders/Clients/PaymentsClient.cs", 9)).not.toHaveProperty("project");
+    expect(origin("cars/Clients/FleetClient.cs", 12)).toMatchObject({ project: "fleet", confidence: "EXTRACTED" });
+    expect(origin("cars/Controllers/CarsController.cs", 37)).toMatchObject({ project: "legacy", host: "legacy" });
+    expect(origin("worker/src/index.ts", 6)).toMatchObject({ project: "cars", host: "cars" });
+    expect(origin("worker/src/index.ts", 15)).toMatchObject({ project: "fleet", host: "fleet" });
+    expect(origin("cars/Clients/PaymentsClient.cs", 9)).toMatchObject({ host: "api.stripe.com", external: true });
+    expect(origin("cars/Clients/PaymentsClient.cs", 9)).not.toHaveProperty("project");
     // Two hops: the dev proxy to the gateway, the gateway's route to the service.
-    expect(origin("web/src/api.ts", 12)).toMatchObject({ project: "inventory", host: "inventory", confidence: "EXTRACTED" });
+    expect(origin("web/src/api.ts", 12)).toMatchObject({ project: "fleet", host: "fleet", confidence: "EXTRACTED" });
     expect(origin("web/src/api.ts", 12)!.evidence.filter((e) => e.step === "proxy").map((e) => e.file)).toEqual([
       "web/vite.config.ts",
       "gateway/appsettings.json",
@@ -104,13 +104,13 @@ describe("service-to-service links — hand-labelled fixture", () => {
     const deps = (summary.projectDependencies ?? []).map((d) => [d.from, d.to, d.kind, d.links, d.deployment?.via ?? null]);
     expect(deps).toEqual([
       ["billing", "person-person-api", "http", 2, null],
-      // docker-compose.yml: orders `Services__Inventory: http://inventory:8080`.
-      ["orders", "inventory", "http", 2, "Services__Inventory"],
-      ["orders", "legacy", "http", 1, null],
-      ["web", "inventory", "http", 2, null],
-      ["web", "orders", "http", 1, null],
-      ["worker", "inventory", "http", 1, "INVENTORY_URL"],
-      ["worker", "orders", "http", 1, "ORDERS_URL"],
+      // docker-compose.yml: cars `Services__Fleet: http://fleet:8080`.
+      ["cars", "fleet", "http", 2, "Services__Fleet"],
+      ["cars", "legacy", "http", 1, null],
+      ["web", "cars", "http", 1, null],
+      ["web", "fleet", "http", 2, null],
+      ["worker", "cars", "http", 1, "CARS_URL"],
+      ["worker", "fleet", "http", 1, "FLEET_URL"],
     ]);
   });
 });

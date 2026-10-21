@@ -3,14 +3,14 @@ import { checkContracts } from "./contract-check.js";
 import type { ApiRouteLink, DataSourceInfo, JsonSchemaNode, RouteInfo } from "../types/analysis.js";
 
 const link = (over: Partial<ApiRouteLink> = {}): ApiRouteLink => ({
-  source: "web/api.ts", sourceLine: 5, method: "POST", url: "/api/users/${id}", target: "api/users.ts", targetLine: 12,
-  handler: "create", routePath: "/api/users/:id", confidence: "EXTRACTED", ...over,
+  source: "web/api.ts", sourceLine: 5, method: "POST", url: "/api/players/${id}", target: "api/players.ts", targetLine: 12,
+  handler: "create", routePath: "/api/players/:id", confidence: "EXTRACTED", ...over,
 } as ApiRouteLink);
 const call = (body: JsonSchemaNode): DataSourceInfo & { filePath: string } =>
-  ({ kind: "api-call", name: "post", target: "/api/users/${id}", calls: [], line: 5, filePath: "web/api.ts", requestBody: body });
+  ({ kind: "api-call", name: "post", target: "/api/players/${id}", calls: [], line: 5, filePath: "web/api.ts", requestBody: body });
 const route = (schema: JsonSchemaNode): RouteInfo & { filePath: string; requestSchema: JsonSchemaNode } => ({
-  path: "/api/users/:id", httpMethod: "POST", kind: "api", handler: "create", calls: [], middleware: [], line: 12, filePath: "api/users.ts",
-  params: [{ name: "id", type: "string", binding: "route" }, { name: "dto", type: "CreateUser", binding: "body" }], requestSchema: schema,
+  path: "/api/players/:id", httpMethod: "POST", kind: "api", handler: "create", calls: [], middleware: [], line: 12, filePath: "api/players.ts",
+  params: [{ name: "id", type: "string", binding: "route" }, { name: "dto", type: "CreatePlayer", binding: "body" }], requestSchema: schema,
 } as never);
 
 const declared: JsonSchemaNode = {
@@ -31,7 +31,7 @@ describe("checkContracts", () => {
       ["type-mismatch", "address.city", "string", "integer"],
       ["missing-field", "age", "", ""],
     ]);
-    expect(found[0]!.route).toEqual({ file: "api/users.ts", line: 12, path: "/api/users/:id" });
+    expect(found[0]!.route).toEqual({ file: "api/players.ts", line: 12, path: "/api/players/:id" });
   });
 
   it("judges nothing it cannot know: an open body, an open schema, an untyped value, a guessed link", () => {

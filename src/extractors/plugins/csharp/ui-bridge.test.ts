@@ -121,8 +121,8 @@ describe("CsharpUiBridgeResolver — XAML code-behind", () => {
 
 describe("CsharpUiBridgeResolver — MAUI command bindings", () => {
   it("joins `{Binding CheckoutCommand}` to the view model's [RelayCommand] method (x:DataType)", () => {
-    const view = analysis("src/ClientApp/Views/BasketView.xaml", "xaml", {
-      screens: [{ name: "BasketView", viewModel: "BasketViewModel" } as ScreenInfo],
+    const view = analysis("src/ClientApp/Views/GarageView.xaml", "xaml", {
+      screens: [{ name: "GarageView", viewModel: "GarageViewModel" } as ScreenInfo],
       interactiveElements: [
         { element: "button", event: "command", handler: "CheckoutCommand", line: 88 },
         { element: "button", event: "command", handler: "Source", line: 90 },
@@ -130,10 +130,10 @@ describe("CsharpUiBridgeResolver — MAUI command bindings", () => {
       ],
     });
     const relay = (name: string, line: number) => ({ ...fn(name, line), decorators: ["RelayCommand"] });
-    const vm = analysis("src/ClientApp/ViewModels/BasketViewModel.cs", "csharp", {
-      classes: [cls("BasketViewModel", [relay("AddAsync", 53), relay("CheckoutAsync", 104), fn("Missing", 120)])],
+    const vm = analysis("src/ClientApp/ViewModels/GarageViewModel.cs", "csharp", {
+      classes: [cls("GarageViewModel", [relay("AddAsync", 53), relay("CheckoutAsync", 104), fn("Missing", 120)])],
     });
     const links = resolver.resolve([view, vm]);
-    expect(links.map((l) => `${l.callName}@${l.sourceLine} -> ${l.targetSymbol}`)).toEqual(["CheckoutCommand@88 -> BasketViewModel.CheckoutAsync"]);
+    expect(links.map((l) => `${l.callName}@${l.sourceLine} -> ${l.targetSymbol}`)).toEqual(["CheckoutCommand@88 -> GarageViewModel.CheckoutAsync"]);
   });
 });

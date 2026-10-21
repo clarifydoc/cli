@@ -13,16 +13,16 @@ describe("swift conformance", () => {
   });
 
   it("treats every conformance of a struct as a protocol", () => {
-    const [cls] = classes("struct Todo: Content, Codable {\n}");
+    const [cls] = classes("struct Drill: Content, Codable {\n}");
     expect(cls.extends).toBeNull();
     expect(cls.implements).toEqual(["Content", "Codable"]);
   });
 
   it("covers actors and extensions", () => {
-    const found = classes(["actor Counter {", "}", "extension Todo: Content {", "}"].join("\n"));
+    const found = classes(["actor Counter {", "}", "extension Drill: Content {", "}"].join("\n"));
     expect(found.map((c) => [c.name, c.implements])).toEqual([
       ["Counter", []],
-      ["Todo", ["Content"]],
+      ["Drill", ["Content"]],
     ]);
   });
 
@@ -43,7 +43,7 @@ describe("swift members", () => {
       [
         "final class Store: BaseStore {",
         "    static let shared: Store = Store()",
-        "    private var cache: [UUID: Todo] = [:]",
+        "    private var cache: [UUID: Drill] = [:]",
         "    let capacity: Int",
         "    func load() {",
         "        let local: Int = 1",
@@ -53,7 +53,7 @@ describe("swift members", () => {
     );
     expect(cls.properties.map((p) => [p.name, p.type, p.isStatic, p.isReadonly])).toEqual([
       ["shared", "Store", true, true],
-      ["cache", "[UUID: Todo]", false, false],
+      ["cache", "[UUID: Drill]", false, false],
       ["capacity", "Int", false, true],
     ]);
   });
@@ -66,8 +66,8 @@ describe("swift members", () => {
 
 describe("swift one-line types and main.swift", () => {
   it("reads the methods of a type written on one line", () => {
-    const [repo, order] = classes("class UserRepo { func save() -> Int { return helper() } }\nstruct OrderRepo { func save() -> Int { 2 }; func load() -> Int { 3 } }");
+    const [repo, car] = classes("class PlayerRepo { func save() -> Int { return helper() } }\nstruct CarRepo { func save() -> Int { 2 }; func load() -> Int { 3 } }");
     expect(repo!.methods.map((m) => [m.name, m.calls.map((c) => c.name)])).toEqual([["save", ["helper"]]]);
-    expect(order!.methods.map((m) => m.name)).toEqual(["save", "load"]);
+    expect(car!.methods.map((m) => m.name)).toEqual(["save", "load"]);
   });
 });

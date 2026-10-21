@@ -8,8 +8,8 @@ import type { FileAnalysis } from "../../../../types/analysis.js";
 /**
  * SPA-router extraction fixes from the greencart and real-repo corpus:
  *  - nested <Route> children must inherit the parent prefix, or the composed
- *    path never joins a screen (`product-list` vs `/seller/product-list`);
- *  - an arbitrary object with a `path:` key is NOT a route — category/sidebar
+ *    path never joins a screen (`part-list` vs `/seller/part-list`);
+ *  - an arbitrary object with a `path:` key is NOT a route — brand/sidebar
  *    data arrays produced phantom frontend routes;
  *  - ESM-TS `.js` specifiers must resolve to the `.ts` file on disk.
  */
@@ -25,31 +25,31 @@ describe("react-router nested <Route> prefix composition", () => {
   return (
     <Routes>
       <Route path="/seller" element={isSeller ? <SellerLayout/> : <SellerLogin/>}>
-        <Route index element={<AddProduct/>} />
-        <Route path="product-list" element={<ProductList/>} />
-        <Route path="orders" element={<Orders/>} />
+        <Route index element={<AddPart/>} />
+        <Route path="part-list" element={<PartList/>} />
+        <Route path="cars" element={<Cars/>} />
       </Route>
     </Routes>
   );
 }`;
     const paths = (await routesOf(src)).map((r) => r.path);
     expect(paths).toContain("/seller");
-    expect(paths).toContain("/seller/product-list");
-    expect(paths).toContain("/seller/orders");
-    expect(paths).not.toContain("product-list");
+    expect(paths).toContain("/seller/part-list");
+    expect(paths).toContain("/seller/cars");
+    expect(paths).not.toContain("part-list");
   });
 
   it("leaves an ABSOLUTE child path untouched and composes multi-level nesting", async () => {
     const src = `const r = (
   <Route path="/admin">
-    <Route path="users">
-      <Route path=":id" element={<UserDetail/>} />
+    <Route path="players">
+      <Route path=":id" element={<PlayerDetail/>} />
     </Route>
     <Route path="/absolute" element={<Abs/>} />
   </Route>
 );`;
     const paths = (await routesOf(src)).map((r) => r.path);
-    expect(paths).toContain("/admin/users/:id");
+    expect(paths).toContain("/admin/players/:id");
     expect(paths).toContain("/absolute");
     expect(paths).not.toContain("/admin//absolute");
   });
@@ -67,10 +67,10 @@ describe("react-router: the component a <Route> renders", () => {
   it("reads component / Component / element / render", async () => {
     expect(await rendered(`<Route path="/@:username" component={Profile} />`))
       .toEqual({ handler: "Profile", componentPath: "Profile" });
-    expect(await rendered(`<Route path="/a" Component={Account} />`))
-      .toEqual({ handler: "Account", componentPath: "Account" });
-    expect(await rendered(`<Route path="/users/:id" element={<UserCard />} />`))
-      .toEqual({ handler: "UserCard", componentPath: "UserCard" });
+    expect(await rendered(`<Route path="/a" Component={Club} />`))
+      .toEqual({ handler: "Club", componentPath: "Club" });
+    expect(await rendered(`<Route path="/players/:id" element={<PlayerCard />} />`))
+      .toEqual({ handler: "PlayerCard", componentPath: "PlayerCard" });
     expect(await rendered(`<Route path="/d" element={<Dashboard></Dashboard>} />`))
       .toEqual({ handler: "Dashboard", componentPath: "Dashboard" });
     expect(await rendered(`<Route path="/r" render={(props) => <Report {...props} />} />`))
@@ -84,8 +84,8 @@ describe("react-router: the component a <Route> renders", () => {
       .toEqual({ handler: "Settings", componentPath: "Settings" });
     expect(await rendered(`<Route path="/p" component={withRouter(Profile)} />`))
       .toEqual({ handler: "Profile", componentPath: "Profile" });
-    expect(await rendered(`<Route path="/c" component={connect(mapState)(Cart)} />`))
-      .toEqual({ handler: "Cart", componentPath: "Cart" });
+    expect(await rendered(`<Route path="/c" component={connect(mapState)(Garage)} />`))
+      .toEqual({ handler: "Garage", componentPath: "Garage" });
     expect(await rendered(`<Route path="/l" component={lazy(() => import("./pages/Login"))} />`))
       .toEqual({ handler: "Login", componentPath: "./pages/Login" });
   });
@@ -93,9 +93,9 @@ describe("react-router: the component a <Route> renders", () => {
   it("reads the v5 children form, but not a nested <Route> as the page", async () => {
     expect(await rendered(`<Route path="/x"><Editor /></Route>`))
       .toEqual({ handler: "Editor", componentPath: "Editor" });
-    const nested = await routesOf(`const r = (<Route path="/admin"><Route path="users" element={<Users />} /></Route>);`);
+    const nested = await routesOf(`const r = (<Route path="/admin"><Route path="players" element={<Players />} /></Route>);`);
     expect(nested.find((r) => r.path === "/admin")?.componentPath).toBeNull();
-    expect(nested.find((r) => r.path === "/admin/users")?.componentPath).toBe("Users");
+    expect(nested.find((r) => r.path === "/admin/players")?.componentPath).toBe("Players");
   });
 
   it("names nothing when the route renders no single component", async () => {
@@ -109,12 +109,12 @@ describe("react-router: the component a <Route> renders", () => {
 
 describe("vue-router path-object guard", () => {
   it("ignores data objects that merely carry a path key", async () => {
-    const src = `export const categories = [
+    const src = `export const brands = [
   { text: "Vegetables", path: "Vegetables", image: veg },
   { text: "Fruits", path: "Fruits", image: fruit },
 ];
 export const sidebarLinks = [
-  { name: "Product List", path: "/seller/product-list", icon: listIcon },
+  { name: "Part List", path: "/seller/part-list", icon: listIcon },
 ];`;
     const routes = await routesOf(src, "assets.ts");
     expect(routes).toHaveLength(0);
@@ -124,10 +124,10 @@ export const sidebarLinks = [
     const src = `export const routes = [
   { path: "/", component: Home },
   { path: "/old", redirect: "/" },
-  { path: "/shop", children: [{ path: "cart", component: Cart }] },
+  { path: "/shop", children: [{ path: "garage", component: Garage }] },
 ];`;
     const paths = (await routesOf(src, "router.ts")).map((r) => r.path);
-    expect(paths).toEqual(expect.arrayContaining(["/", "/old", "/shop", "/shop/cart"]));
+    expect(paths).toEqual(expect.arrayContaining(["/", "/old", "/shop", "/shop/garage"]));
   });
 
   it("ignores trees, docs entries and computed paths that only look like routes", async () => {
@@ -139,7 +139,7 @@ const items = list.map((r) => ({ path: '/' + r.path, component: Page }));`;
 
   it("composes nested children under their parent's path", async () => {
     const src = `export const routes = [
-  { path: "/user/:id", component: User, children: [
+  { path: "/player/:id", component: Player, children: [
     { path: "profile", component: Profile },
     { path: "/absolute", component: Abs },
     { path: "settings", children: [{ path: "email", component: Email }] },
@@ -147,7 +147,7 @@ const items = list.map((r) => ({ path: '/' + r.path, component: Page }));`;
   { path: "", component: Layout, children: [{ path: "dashboard", component: Dash }] },
 ];`;
     const paths = (await routesOf(src, "router.ts")).map((r) => r.path);
-    expect(paths).toEqual(expect.arrayContaining(["/user/:id/profile", "/absolute", "/user/:id/settings/email", "dashboard"]));
+    expect(paths).toEqual(expect.arrayContaining(["/player/:id/profile", "/absolute", "/player/:id/settings/email", "dashboard"]));
   });
 });
 
@@ -160,11 +160,11 @@ const router = createBrowserRouter([
     element: <AppLayout />,
     children: [
       { index: true, element: <Home /> },
-      { path: "/orders", Component: Orders, loader: ordersLoader },
-      { path: "/orders/:id", lazy: () => import("./pages/OrderDetail") },
+      { path: "/cars", Component: Cars, loader: carsLoader },
+      { path: "/cars/:id", lazy: () => import("./pages/CarDetail") },
       { path: "/admin", element: <RequireAdmin><AdminLayout /></RequireAdmin>, children: [
         { index: true, element: <AdminHome /> },
-        { path: "users", element: <Users /> },
+        { path: "players", element: <Players /> },
       ] },
     ],
   },
@@ -172,41 +172,41 @@ const router = createBrowserRouter([
     const rows = (await routesOf(src, "router.tsx")).map((r) => [r.path, r.handler, r.componentPath]);
     expect(rows).toEqual(expect.arrayContaining([
       ["/", "Home", "Home"],
-      ["/orders", "Orders", "Orders"],
-      ["/orders/:id", "OrderDetail", "./pages/OrderDetail"],
+      ["/cars", "Cars", "Cars"],
+      ["/cars/:id", "CarDetail", "./pages/CarDetail"],
       ["/admin", "AdminLayout", "AdminLayout"],
       ["/admin", "AdminHome", "AdminHome"],
-      ["/admin/users", "Users", "Users"],
+      ["/admin/players", "Players", "Players"],
     ]));
-    expect(rows.map((r) => r[0])).not.toContain("users");
+    expect(rows.map((r) => r[0])).not.toContain("players");
   });
 
   it("resolves path constants the file declares, and ignores look-alikes", async () => {
-    const src = `export const ROUTES = { home: "/", orders: { list: "/orders" } } as const;
+    const src = `export const ROUTES = { home: "/", cars: { list: "/cars" } } as const;
 const BASE = "/shop";
 export const routes = [
-  { path: ROUTES.orders.list, element: <Orders /> },
-  { path: \`\${BASE}/cart\`, element: <Cart /> },
+  { path: ROUTES.cars.list, element: <Cars /> },
+  { path: \`\${BASE}/garage\`, element: <Garage /> },
   { path: ROUTES.missing, element: <Lost /> },
 ];
 const menu = [{ path: "/docs", element: someNode }, { path: "/x", Component: "Button" }];`;
     const paths = (await routesOf(src, "routes.tsx")).map((r) => r.path);
     // A name this file does not declare stays a hole for the project pass
     // (react-router-resolver.ts), which fills it from an import or drops it.
-    expect(paths).toEqual(["/orders", "/shop/cart", "${ROUTES.missing}"]);
+    expect(paths).toEqual(["/cars", "/shop/garage", "${ROUTES.missing}"]);
   });
 });
 
 describe("Angular Router route configs", () => {
   it("extracts { path, component } eager routes", async () => {
     const src = `export const routes = [
-  { path: 'users', component: UserListComponent },
-  { path: 'users/:id', component: UserDetailComponent },
+  { path: 'players', component: PlayerListComponent },
+  { path: 'players/:id', component: PlayerDetailComponent },
 ];`;
     const routes = await routesOf(src, "app.routes.ts");
     const byPath = new Map(routes.map((r) => [r.path, r]));
-    expect(byPath.get("users")?.handler).toBe("UserListComponent");
-    expect(byPath.get("users/:id")?.handler).toBe("UserDetailComponent");
+    expect(byPath.get("players")?.handler).toBe("PlayerListComponent");
+    expect(byPath.get("players/:id")?.handler).toBe("PlayerDetailComponent");
   });
 
   it("extracts lazy loadComponent routes, taking the class from the .then()", async () => {

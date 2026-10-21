@@ -11,11 +11,11 @@ const CONTROLLER = `
 Imports System.Web.Http
 
 Namespace SampleApi.Controllers
-    <Route("api/users")>
+    <Route("api/players")>
     <ApiVersion("2")>
     <ApiVersion("1", Deprecated:=True)>
     <Authorize>
-    Public Class UsersController
+    Public Class PlayersController
         Inherits ApiController
 
         <HttpGet("")>
@@ -36,13 +36,13 @@ Namespace SampleApi.Controllers
 
         <HttpPost("")>
         <MapToApiVersion("2")>
-        Public Function Post(<FromBody> request As CreateUserRequest) As IHttpActionResult
+        Public Function Post(<FromBody> request As CreatePlayerRequest) As IHttpActionResult
             Return Ok()
         End Function
 
         <HttpPut("{id}")>
         <Authorize(Roles:="Admin, Editor", Policy:="CanEdit")>
-        Public Function Put(id As Integer, request As CreateUserRequest, <FromHeader> tenant As String) As IHttpActionResult
+        Public Function Put(id As Integer, request As CreatePlayerRequest, <FromHeader> tenant As String) As IHttpActionResult
             Return Ok()
         End Function
 
@@ -57,12 +57,12 @@ End Namespace
 describe("VB ASP.NET routes", () => {
   it("captures every attribute-routed action, including an escaped [Get] name", () => {
     expect(routes(CONTROLLER).map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
-      "GET /api/users -> Index",
-      "GET /api/users/{id} -> Get",
-      "GET /api/users/search -> Search",
-      "POST /api/users -> Post",
-      "PUT /api/users/{id} -> Put",
-      "DELETE /api/users/{id} -> Delete",
+      "GET /api/players -> Index",
+      "GET /api/players/{id} -> Get",
+      "GET /api/players/search -> Search",
+      "POST /api/players -> Post",
+      "PUT /api/players/{id} -> Put",
+      "DELETE /api/players/{id} -> Delete",
     ]);
   });
 
@@ -94,10 +94,10 @@ describe("VB ASP.NET routes", () => {
       { name: "q", type: "String", binding: "query" },
       { name: "page", type: "Integer", binding: "query" },
     ]);
-    expect(byName["Post"]!.params).toEqual([{ name: "request", type: "CreateUserRequest", binding: "body" }]);
+    expect(byName["Post"]!.params).toEqual([{ name: "request", type: "CreatePlayerRequest", binding: "body" }]);
     expect(byName["Put"]!.params).toEqual([
       { name: "id", type: "Integer", binding: "route", inferred: true },
-      { name: "request", type: "CreateUserRequest", binding: "body", inferred: true },
+      { name: "request", type: "CreatePlayerRequest", binding: "body", inferred: true },
       { name: "tenant", type: "String", binding: "header" },
     ]);
     expect(byName["Delete"]!.params).toEqual([
@@ -109,19 +109,19 @@ describe("VB ASP.NET routes", () => {
   it("keeps the convention fallback for an un-attributed controller, with class guards", () => {
     const r = routes(`
 <Authorize>
-Public Class OrdersController
+Public Class CarsController
     Inherits ApiController
     Public Function [Get](id As Integer) As IHttpActionResult
         Return Ok()
     End Function
-    Public Function Post(order As CreateOrder) As IHttpActionResult
+    Public Function Post(car As CreateCar) As IHttpActionResult
         Return Ok()
     End Function
 End Class
 `);
-    expect(r.map((x) => `${x.httpMethod} ${x.path}`)).toEqual(["GET /orders/{id}", "POST /orders"]);
+    expect(r.map((x) => `${x.httpMethod} ${x.path}`)).toEqual(["GET /cars/{id}", "POST /cars"]);
     expect(r[0]!.auth).toEqual({ policies: [], roles: [], schemes: [], anonymous: false, inherited: true });
-    expect(r[1]!.params).toEqual([{ name: "order", type: "CreateOrder", binding: "body", inferred: true }]);
+    expect(r[1]!.params).toEqual([{ name: "car", type: "CreateCar", binding: "body", inferred: true }]);
   });
 });
 

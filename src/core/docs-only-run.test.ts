@@ -29,7 +29,7 @@ describe("a docs-only re-run", () => {
     dir = await mkdtemp(join(tmpdir(), "clarifydoc-docs-only-"));
     await mkdir(join(root(), "src"), { recursive: true });
     await writeFile(join(root(), "package.json"), JSON.stringify({ name: "app", dependencies: { express: "4.0.0" } }));
-    await writeFile(join(root(), "src", "server.ts"), 'import express from "express";\nconst app = express();\napp.get("/api/orders", (req, res) => res.json([]));\n');
+    await writeFile(join(root(), "src", "server.ts"), 'import express from "express";\nconst app = express();\napp.get("/api/cars", (req, res) => res.json([]));\n');
     await writeFile(join(root(), "README.md"), "The server is `src/server.ts`.\n");
     git("init", "-q");
     git("add", ".");
@@ -48,11 +48,11 @@ describe("a docs-only re-run", () => {
     expect(firstManifest.codeFingerprint).toMatch(/^[0-9a-f]{64}$/);
 
     // An uncommitted edit to the README that names a file the tree lacks.
-    await writeFile(join(root(), "README.md"), "The server is `src/server.ts`; orders are in `src/orders.ts`.\n");
+    await writeFile(join(root(), "README.md"), "The server is `src/server.ts`; cars are in `src/cars.ts`.\n");
     const edited = await run();
     expect(edited).toMatchObject({ docsOnly: true, fileCount: first.fileCount, routeCount: first.routeCount });
     const afterEdit = await summary();
-    expect(afterEdit.docDrift!.findings.map((f) => f.text)).toEqual(["src/orders.ts"]);
+    expect(afterEdit.docDrift!.findings.map((f) => f.text)).toEqual(["src/cars.ts"]);
     expect(facts(afterEdit)).toEqual(facts(before));
     expect(afterEdit.analyzedAt > before.analyzedAt).toBe(true);
     const editedManifest = (await loadManifest(out()))!;
@@ -68,7 +68,7 @@ describe("a docs-only re-run", () => {
 
     expect((await run()).upToDate).toBe(true);
 
-    await writeFile(join(root(), "src", "server.ts"), 'import express from "express";\nconst app = express();\napp.get("/api/orders", (req, res) => res.json([]));\napp.post("/api/orders", (req, res) => res.json({}));\n');
+    await writeFile(join(root(), "src", "server.ts"), 'import express from "express";\nconst app = express();\napp.get("/api/cars", (req, res) => res.json([]));\napp.post("/api/cars", (req, res) => res.json({}));\n');
     const code = await run();
     expect(code.docsOnly).toBeUndefined();
     expect(code.upToDate).toBeUndefined();

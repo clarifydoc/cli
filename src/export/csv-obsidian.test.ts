@@ -44,15 +44,15 @@ describe("CSV exports", () => {
     const routes = parseCsv(renderExport("routes.csv", summary));
     expect(routes[0]).toEqual(["kind", "method", "path", "handler", "file", "line", "project", "guards", "callers", "caller_files", "reaches"]);
     expect(routes.length - 1).toBe(summary.routeMap!.length);
-    const del = routes.find((r) => r[1] === "DELETE" && r[2] === "/api/products/:id")!;
-    expect(del.slice(4, 7)).toEqual(["backend/src/routes/products.ts", "31", "backend"]);
+    const del = routes.find((r) => r[1] === "DELETE" && r[2] === "/api/parts/:id")!;
+    expect(del.slice(4, 7)).toEqual(["backend/src/routes/parts.ts", "31", "backend"]);
     expect(Number(del[8])).toBeGreaterThan(0);
-    expect(del[10]).toContain("db-write products");
+    expect(del[10]).toContain("db-write parts");
 
     const entities = parseCsv(renderExport("entities.csv", summary));
-    const products = entities.find((r) => r[0] === "products")!;
-    expect(products[8]).toContain("backend/src/db/products.ts:36 removeProduct");
-    expect(Number(products[9])).toBe(4);
+    const parts = entities.find((r) => r[0] === "parts")!;
+    expect(parts[8]).toContain("backend/src/db/parts.ts:36 removePart");
+    expect(Number(parts[9])).toBe(4);
   });
 
   it("writes each graph as a node table and an edge table that agree", async () => {
@@ -81,13 +81,13 @@ describe("Obsidian vault", () => {
     expect(new Set(files.map((f) => f.path)).size).toBe(files.length);
     for (const f of files) expect(f.path, f.path).not.toMatch(/[\\:*?"<>|]/);
 
-    const route = byPath.get("Routes/DELETE ∕api∕products∕꞉id.md")!;
-    expect(route).toMatch(/^---\ntype: "route"\nkind: "api"\nmethod: "DELETE"\npath: "\/api\/products\/:id"\n/);
-    expect(route).toContain("Declared at `backend/src/routes/products.ts:31` in [[Sub-projects/backend|backend]].");
-    expect(route).toContain("- db-write [[Entities/products|products]]");
+    const route = byPath.get("Routes/DELETE ∕api∕parts∕꞉id.md")!;
+    expect(route).toMatch(/^---\ntype: "route"\nkind: "api"\nmethod: "DELETE"\npath: "\/api\/parts\/:id"\n/);
+    expect(route).toContain("Declared at `backend/src/routes/parts.ts:31` in [[Sub-projects/backend|backend]].");
+    expect(route).toContain("- db-write [[Entities/parts|parts]]");
 
-    const entity = byPath.get("Entities/products.md")!;
-    expect(entity).toContain("## Reached by routes\n\n- [[Routes/DELETE ∕api∕products∕꞉id|DELETE /api/products/:id]]");
+    const entity = byPath.get("Entities/parts.md")!;
+    expect(entity).toContain("## Reached by routes\n\n- [[Routes/DELETE ∕api∕parts∕꞉id|DELETE /api/parts/:id]]");
 
     // Every wikilink lands on a note the vault has.
     const notes = new Set(files.map((f) => f.path.replace(/\.md$/, "")));

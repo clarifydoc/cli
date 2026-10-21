@@ -14,12 +14,12 @@ describe("isTestFile — generic (language-agnostic) conventions", () => {
     "src/__mocks__/foo.ts",
     "test/helpers.js",
     "tests/helpers.js",
-    "spec/models/user.rb",
-    "specs/user.rb",
+    "spec/models/player.rb",
+    "specs/player.rb",
     "frontend/cypress/integration/login.js",
     "e2e/checkout.ts",
-    "src/users.test.ts",
-    "src/users.spec.js",
+    "src/players.test.ts",
+    "src/players.spec.js",
   ])("flags %s", (p) => {
     expect(isTestFile(p)).toBe(true);
   });
@@ -29,12 +29,12 @@ describe("isTestFile — generic (language-agnostic) conventions", () => {
   });
 
   it.each([
-    "src/routes/users.ts",
+    "src/routes/players.ts",
     "src/latest/index.ts", // "latest" must not look like "test"
     "src/contest/page.ts", // "contest" must not look like "test"
     "src/test-utils/render.ts", // helper dir, not a `test/` segment
     "src/integration/payment-gateway.ts", // real code, not under cypress/e2e
-    "app/controllers/users_controller.rb",
+    "app/controllers/players_controller.rb",
   ])("does not flag %s", (p) => {
     expect(isTestFile(p)).toBe(false);
   });
@@ -64,13 +64,13 @@ describe("isTestFile — per-language filename conventions", () => {
     ["api/test_views.py", "python"],
     ["api/views_test.py", "python"],
     ["api/conftest.py", "python"],
-    ["src/main/UserServiceTest.java", "java"],
-    ["src/main/UserServiceIT.java", "java"],
-    ["src/main/UserServiceTest.kt", "kotlin"],
-    ["Controllers/UsersControllerTests.cs", "csharp"],
-    ["app/models/user_spec.rb", "ruby"],
-    ["app/models/user_test.rb", "ruby"],
-    ["src/UserControllerTest.php", "php"],
+    ["src/main/PlayerServiceTest.java", "java"],
+    ["src/main/PlayerServiceIT.java", "java"],
+    ["src/main/PlayerServiceTest.kt", "kotlin"],
+    ["Controllers/PlayersControllerTests.cs", "csharp"],
+    ["app/models/player_spec.rb", "ruby"],
+    ["app/models/player_test.rb", "ruby"],
+    ["src/PlayerControllerTest.php", "php"],
     ["t/basic.t", "perl"],
   ] as const)("flags %s for %s", (p, lang) => {
     expect(isTestFile(p, lang)).toBe(true);
@@ -79,10 +79,10 @@ describe("isTestFile — per-language filename conventions", () => {
   it.each([
     ["main.go", "go"],
     ["src/views.py", "python"], // "test_" only matches as a filename prefix
-    ["src/UserService.java", "java"],
-    ["Controllers/UsersController.cs", "csharp"],
-    ["app/models/user.rb", "ruby"],
-    ["src/UserController.php", "php"],
+    ["src/PlayerService.java", "java"],
+    ["Controllers/PlayersController.cs", "csharp"],
+    ["app/models/player.rb", "ruby"],
+    ["src/PlayerController.php", "php"],
   ] as const)("does not flag %s for %s", (p, lang) => {
     expect(isTestFile(p, lang)).toBe(false);
   });

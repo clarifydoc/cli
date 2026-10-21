@@ -69,14 +69,14 @@ describe("Kotlin jOOQ data-source extraction (was completely blind before)", () 
     const src = `package x
 import org.jooq.impl.DSL
 class Dao {
-  private val TABLE = DSL.table("CaseExternalSupportUser")
+  private val TABLE = DSL.table("CaseExternalSupportPlayer")
   fun load(id: Int) {
     val r = dsl.select(field("id")).from(TABLE).fetch()
   }
 }`;
     const tree = await parseSource(src, "kotlin" as any, "Dao.kt");
     const s = db(new JavaKotlinDataSourceExtractor().extract(tree, src));
-    expect(s.some((d) => d.entity === "CaseExternalSupportUser")).toBe(true);
+    expect(s.some((d) => d.entity === "CaseExternalSupportPlayer")).toBe(true);
     expect(s.some((d) => d.entity === "TABLE")).toBe(false);
   });
 
@@ -97,9 +97,9 @@ describe("DAO / Repository receiver → entity (the dominant data path here)", (
     expect(s.some((d) => d.entity === "case")).toBe(true);
   });
 
-  it("handles a `this.userRepository.save()` receiver", async () => {
-    const s = db(await sourcesOf(`    this.userRepository.save(u)`, "kotlin"));
-    expect(s.some((d) => d.entity === "user")).toBe(true);
+  it("handles a `this.playerRepository.save()` receiver", async () => {
+    const s = db(await sourcesOf(`    this.playerRepository.save(u)`, "kotlin"));
+    expect(s.some((d) => d.entity === "player")).toBe(true);
   });
 
   it("does NOT treat a non-CRUD method on a DAO, or a DAO factory, as access", async () => {
@@ -120,7 +120,7 @@ describe("Java jOOQ + Spring Data", () => {
   });
 
   it("does NOT flag `file.delete()` or a plain getter as DB access", async () => {
-    const s = db(await sourcesOf(`    file.delete(); var n = user.getName();`, "java"));
+    const s = db(await sourcesOf(`    file.delete(); var n = player.getName();`, "java"));
     expect(s.length).toBe(0);
   });
 });
@@ -150,8 +150,8 @@ describe("Repository receiver → entity via declared field type", () => {
     const src = `package x;
 class RoleOverviewApiService {
   private final FederatedIdentityJpaRepository externalIdJpaRepository;
-  void m(String customerId) {
-    externalIdJpaRepository.findIdsByCustomerId(customerId);
+  void m(String driverId) {
+    externalIdJpaRepository.findIdsByDriverId(driverId);
   }
 }`;
     const tree = await parseSource(src, "java" as any, "RoleOverviewApiService.java");
@@ -160,8 +160,8 @@ class RoleOverviewApiService {
   });
 
   it("strips a residual Jpa/Db tech suffix from the receiver name", async () => {
-    const s = db(await sourcesOf(`    accountJpaRepository.findById(id);`, "java"));
-    expect(s.some((d) => d.entity === "account")).toBe(true);
+    const s = db(await sourcesOf(`    clubJpaRepository.findById(id);`, "java"));
+    expect(s.some((d) => d.entity === "club")).toBe(true);
   });
 
   it("strips the interface-convention I prefix from a DAO type", async () => {
@@ -194,8 +194,8 @@ class ServiceTeacherImpl {
   });
 
   it("derives the entity from a prefix-named field with no declared type", async () => {
-    const s = db(await sourcesOf(`    daoInvoice.findById(id);`, "java"));
-    expect(s.some((d) => d.entity === "Invoice")).toBe(true);
+    const s = db(await sourcesOf(`    daoBill.findById(id);`, "java"));
+    expect(s.some((d) => d.entity === "Bill")).toBe(true);
   });
 
   it("vetoes a prefix base naming a collaborator role, and bare `repo…`", async () => {
@@ -208,21 +208,21 @@ describe("Spring Data call on a non-DAO-shaped receiver", () => {
   it("targets the receiver's declared type rather than leaving it unresolved", async () => {
     const src = `package x;
 class S {
-  private final UserStore store;
+  private final PlayerStore store;
   void m(String e) { store.findByEmail(e); }
 }`;
     const tree = await parseSource(src, "java" as any, "S.java");
     const s = db(new JavaKotlinDataSourceExtractor().extract(tree, src));
-    expect(s.map((d) => d.target)).toEqual(["UserStore"]);
+    expect(s.map((d) => d.target)).toEqual(["PlayerStore"]);
   });
 
   it("does not make a service-layer receiver type a datastore", async () => {
     const src = `package x;
-class UserController {
-  private final UserService userService;
-  void m() { userService.findAll(); }
+class PlayerController {
+  private final PlayerService playerService;
+  void m() { playerService.findAll(); }
 }`;
-    const tree = await parseSource(src, "java" as any, "UserController.java");
+    const tree = await parseSource(src, "java" as any, "PlayerController.java");
     const s = db(new JavaKotlinDataSourceExtractor().extract(tree, src));
     // A call into the service layer is no access of its own — the service's
     // method shows the access where it happens.
@@ -265,18 +265,18 @@ public class Refresher {
 
   it("publisher.send(audit, meta, message) → queue-publish on the local's declared type", async () => {
     const src = `package x;
-public class AccountEventServiceImpl {
+public class ClubEventServiceImpl {
   private final EventPublisher eventPublisher;
   void notifyUpdate(String id) {
     AuditInformation auditInformation = createAuditInformation();
     Metadata metaData = createMetadata(id);
-    AccountUpdateMessage message = AccountUpdateMessage.newBuilder().setId(id).build();
+    ClubUpdateMessage message = ClubUpdateMessage.newBuilder().setId(id).build();
     eventPublisher.send(auditInformation, metaData, message);
   }
 }`;
-    const tree = await parseSource(src, "java" as any, "AccountEventServiceImpl.java");
+    const tree = await parseSource(src, "java" as any, "ClubEventServiceImpl.java");
     const s = q(new JavaKotlinDataSourceExtractor().extract(tree, src));
-    expect(s.some((d) => d.kind === "queue-publish" && d.target === "AccountUpdateMessage")).toBe(true);
+    expect(s.some((d) => d.kind === "queue-publish" && d.target === "ClubUpdateMessage")).toBe(true);
   });
 
   it("publishEvent(new X(...)) → queue-publish even without an Event suffix requirement", async () => {
@@ -302,32 +302,32 @@ public class LoginEventHandler {
 
   it("strips an upper-case DB tech suffix from a repository type", async () => {
     const src = `package x;
-class CustomerService {
-  private final CustomerDBRepository customerDb;
-  void m(String id) { customerDb.findById(id); }
+class DriverService {
+  private final DriverDBRepository driverDb;
+  void m(String id) { driverDb.findById(id); }
 }`;
-    const tree = await parseSource(src, "java" as any, "CustomerService.java");
+    const tree = await parseSource(src, "java" as any, "DriverService.java");
     const s = new JavaKotlinDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
-    expect(s.some((d) => d.entity === "Customer")).toBe(true);
+    expect(s.some((d) => d.entity === "Driver")).toBe(true);
   });
 });
 
 describe("extension clients keyed by the entity class (Halo)", () => {
   it("reads the class literal, else the declared type of the object handed over", async () => {
     const java = `import run.halo.app.extension.ReactiveExtensionClient;
-class PostServiceImpl {
+class GameServiceImpl {
   private final ReactiveExtensionClient client;
-  Mono<Post> getPost(String name) { return client.fetch(Post.class, name); }
-  Flux<Post> list() { return client.listAll(Post.class, options, sort); }
-  Mono<Post> save(Post post) { return client.update(post); }
+  Mono<Game> getGame(String name) { return client.fetch(Game.class, name); }
+  Flux<Game> list() { return client.listAll(Game.class, options, sort); }
+  Mono<Game> save(Game game) { return client.update(game); }
   Mono<Void> remove(String name, ExtensionClient other) { return client.delete(something); }
 }`;
-    const tree = await parseSource(java, "java", "PostServiceImpl.java");
+    const tree = await parseSource(java, "java", "GameServiceImpl.java");
     const rows = new JavaKotlinDataSourceExtractor().extract(tree, java).filter((d) => d.kind === "database");
     expect(rows.map((d) => `${d.name} ${d.entity ?? "-"} ${d.access}`)).toEqual([
-      "client.fetch Post read",
-      "client.listAll Post read",
-      "client.update Post write",
+      "client.fetch Game read",
+      "client.listAll Game read",
+      "client.update Game write",
       "client.delete - write",
     ]);
   });
@@ -343,14 +343,14 @@ describe("Java JPA / Hibernate rows name their entity", () => {
     em.persist(address);
     em.merge(person.get());
     session.saveOrUpdate(address);
-    session.get(Order.class, id);
-    for (Category c : categories) { em.remove(c); }`, "java");
+    session.get(Car.class, id);
+    for (Brand c : brands) { em.remove(c); }`, "java");
     expect(db(rows)).toEqual([
       ["persist", "PersonAddress"],
       ["merge", "Person"],
       ["saveOrUpdate", "PersonAddress"],
-      ["get", "Order"],
-      ["remove", "Category"],
+      ["get", "Car"],
+      ["remove", "Brand"],
     ]);
   });
 
@@ -378,15 +378,15 @@ describe("JVM HTTP — requests are read where they are built", () => {
   it("reads an OkHttp request URL and verb, and no call from client configuration", async () => {
     const ds = await sourcesOf(`
     val client = OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).readTimeout(5, TimeUnit.SECONDS).build()
-    val req = Request.Builder().url("https://api.example.com/v1/orders").post(body).build()
+    val req = Request.Builder().url("https://api.example.com/v1/cars").post(body).build()
     val get = Request.Builder().url("/api/health").build()`, "kotlin");
-    expect(api(ds)).toEqual(["POST https://api.example.com/v1/orders", "GET /api/health"]);
+    expect(api(ds)).toEqual(["POST https://api.example.com/v1/cars", "GET /api/health"]);
   });
 
   it("reads java.net.http requests", async () => {
     const ds = await sourcesOf(`
     HttpRequest r = HttpRequest.newBuilder(URI.create("https://svc/api/items")).PUT(body).build();
-    HttpRequest q = HttpRequest.newBuilder().uri(URI.create("/api/users")).GET().build();`, "java");
-    expect(api(ds)).toEqual(["PUT https://svc/api/items", "GET /api/users"]);
+    HttpRequest q = HttpRequest.newBuilder().uri(URI.create("/api/players")).GET().build();`, "java");
+    expect(api(ds)).toEqual(["PUT https://svc/api/items", "GET /api/players"]);
   });
 });

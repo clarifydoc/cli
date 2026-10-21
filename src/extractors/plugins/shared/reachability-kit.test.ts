@@ -46,8 +46,8 @@ describe("reachability kit — imports", () => {
   it("probes extensions and index files, case-insensitively when asked", async () => {
     const lua = await load({ extensions: [".lua"], importPath: (s) => s.replace(/\./g, "/"), indexFiles: ["init.lua"] }, ["lua/app/util/init.lua"]);
     expect(lua.resolve("main.lua", "app.util")).toEqual(["lua/app/util/init.lua"]);
-    const php = await load({ extensions: [".php"], caseInsensitive: true, importPath: (s) => s.replace(/\\/g, "/") }, ["app/Services/Invoice.php"]);
-    expect(php.resolve("routes/web.php", "App\\Services\\Invoice")).toEqual(["app/Services/Invoice.php"]);
+    const php = await load({ extensions: [".php"], caseInsensitive: true, importPath: (s) => s.replace(/\\/g, "/") }, ["app/Services/Bill.php"]);
+    expect(php.resolve("routes/web.php", "App\\Services\\Bill")).toEqual(["app/Services/Bill.php"]);
   });
 });
 
@@ -85,9 +85,9 @@ describe("reachability kit — names", () => {
 
   it("strips namespaces and generics from type names", () => {
     expect(typeLeaf("Microsoft.AspNetCore.Mvc.ControllerBase")).toBe("ControllerBase");
-    expect(typeLeaf("IRequestHandler<GetUser, User>")).toBe("IRequestHandler");
+    expect(typeLeaf("IRequestHandler<GetPlayer, Player>")).toBe("IRequestHandler");
     expect(typeLeaf("App\\Http\\Kernel")).toBe("Kernel");
-    expect(typeLeaf("MyApp.Accounts.User")).toBe("User");
+    expect(typeLeaf("MyApp.Clubs.Player")).toBe("Player");
   });
 });
 

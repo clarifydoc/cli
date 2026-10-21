@@ -13,7 +13,7 @@ import type { ProjectAnalysis } from "../types/analysis.js";
 describe("MyBatis mapper XML — sample-mybatis", () => {
   let out: string;
   let summary: ProjectAnalysis;
-  const xml = "src/main/resources/mapper/UserMapper.xml";
+  const xml = "src/main/resources/mapper/PlayerMapper.xml";
   beforeAll(async () => {
     out = mkdtempSync(join(tmpdir(), "clarifydoc-mybatis-"));
     await analyze({ projectRoot: resolve(__dirname, "../../test-fixtures/sample-mybatis"), outputDir: out, lsp: false, gitHistory: false });
@@ -25,12 +25,12 @@ describe("MyBatis mapper XML — sample-mybatis", () => {
     const { readFile } = await import("fs/promises");
     const file = JSON.parse(await readFile(join(out, `${xml}.json`), "utf-8"));
     expect(file.dataSources.map((d: { target: string; access?: string; line: number }) => `${d.line} ${d.target} ${d.access}`)).toEqual([
-      "13 app_users read",
+      "13 app_players read",
       "13 departments read",
-      "20 app_users read",
-      "27 app_users write",
-      "31 app_users write",
-      "40 app_users read",
+      "20 app_players read",
+      "27 app_players write",
+      "31 app_players write",
+      "40 app_players read",
     ]);
   });
 
@@ -40,10 +40,10 @@ describe("MyBatis mapper XML — sample-mybatis", () => {
       .map((l) => `${l.sourceSymbol}:${l.sourceLine} -> ${l.targetSymbol}:${l.targetLine} ${l.confidence}`)
       .sort();
     expect(links).toEqual([
-      "UserMapper.deactivate:15 -> deactivate:31 EXTRACTED",
-      "UserMapper.findById:9 -> findById:13 EXTRACTED",
-      "UserMapper.insert:13 -> insert:27 EXTRACTED",
-      "UserMapper.search:11 -> search:20 EXTRACTED",
+      "PlayerMapper.deactivate:15 -> deactivate:31 EXTRACTED",
+      "PlayerMapper.findById:9 -> findById:13 EXTRACTED",
+      "PlayerMapper.insert:13 -> insert:27 EXTRACTED",
+      "PlayerMapper.search:11 -> search:20 EXTRACTED",
     ]);
   });
 });

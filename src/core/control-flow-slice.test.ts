@@ -21,14 +21,14 @@ describe("backwardSlice", () => {
   it("keeps both arms that assign the value and the if that picks one, nothing unrelated", async () => {
     const src = [
       "export function search(req: any, db: any, admin: boolean) {",
-      '  let sql = "SELECT * FROM orders";',
+      '  let sql = "SELECT * FROM cars";',
       "  const limit = 10;",
       "  if (admin) {",
-      '    sql = "SELECT * FROM all_orders";',
+      '    sql = "SELECT * FROM all_cars";',
       "  } else {",
-      '    sql += " WHERE owner = " + req.query.user;',
+      '    sql += " WHERE owner = " + req.query.player;',
       "  }",
-      '  const label = "orders";',
+      '  const label = "cars";',
       "  console.log(label);",
       '  return db.query(sql + " LIMIT " + limit);',
       "}",
@@ -40,15 +40,15 @@ describe("backwardSlice", () => {
 
   it("follows a loop variable to what it iterates, in Python", async () => {
     const src = [
-      "def total(orders, rate):",
+      "def total(cars, rate):",
       "    acc = 0",
       "    unused = 1",
-      "    for o in orders:",
-      "        acc += o.price * rate",
+      "    for c in cars:",
+      "        acc += c.price * rate",
       "    return acc",
     ].join("\n");
     const { lines, outside } = await sliceOf("t.py", src, 6);
     expect(lines).toEqual([[2, "data"], [4, "data"], [5, "data"], [6, "criterion"]]);
-    expect(outside).toEqual(["orders", "rate"]);
+    expect(outside).toEqual(["cars", "rate"]);
   });
 });

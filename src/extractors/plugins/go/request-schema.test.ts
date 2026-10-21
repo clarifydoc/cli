@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { goRequestSchema as h } from "./request-schema.js";
 
-const route = { path: "/users/{id}", httpMethod: "GET", kind: "api" as const, handler: null, calls: [], middleware: [], line: 1 };
+const route = { path: "/players/{id}", httpMethod: "GET", kind: "api" as const, handler: null, calls: [], middleware: [], line: 1 };
 
 describe("Go request-schema hooks", () => {
   it("classifies scalars, slices, arrays, maps, pointers and unknown structs", () => {
@@ -16,7 +16,7 @@ describe("Go request-schema hooks", () => {
     expect(h.describeType("time.Time")).toEqual({ kind: "scalar", schema: { type: "string", format: "date-time" } });
     expect(h.describeType("time.Duration")).toEqual({ kind: "scalar", schema: { type: "string", format: "duration" } });
     expect(h.describeType("uuid.UUID")).toEqual({ kind: "scalar", schema: { type: "string", format: "uuid" } });
-    expect(h.describeType("[]store.Product")).toEqual({ kind: "array", element: "store.Product" });
+    expect(h.describeType("[]store.Part")).toEqual({ kind: "array", element: "store.Part" });
     expect(h.describeType("[3]int")).toEqual({ kind: "array", element: "int" });
     expect(h.describeType("map[string]Address")).toEqual({ kind: "map", value: "Address" });
     expect(h.describeType("map[string][]int")).toEqual({ kind: "map", value: "[]int" });
@@ -24,17 +24,17 @@ describe("Go request-schema hooks", () => {
     expect(h.describeType("interface{}")).toEqual({ kind: "any" });
     expect(h.describeType("any")).toEqual({ kind: "any" });
     expect(h.describeType("json.RawMessage")).toEqual({ kind: "any" });
-    expect(h.describeType("store.Product")).toEqual({ kind: "object", name: "store.Product" });
+    expect(h.describeType("store.Part")).toEqual({ kind: "object", name: "store.Part" });
   });
 
   it("reads wire names, required and skipped fields from struct tags", () => {
     const p = (name: string, decorators?: string[]) => ({
       name, type: "string", visibility: "public" as const, isStatic: false, isReadonly: false, decorators,
     });
-    expect(h.serializedName(p("UserName", ['json:"user_name,omitempty"']))).toBe("user_name");
-    expect(h.serializedName(p("UserName", ['json:",omitempty"']))).toBe("UserName");
-    expect(h.serializedName(p("UserName"))).toBe("UserName");
-    expect(h.isSerialized(p("UserName"))).toBe(true);
+    expect(h.serializedName(p("PlayerName", ['json:"player_name,omitempty"']))).toBe("player_name");
+    expect(h.serializedName(p("PlayerName", ['json:",omitempty"']))).toBe("PlayerName");
+    expect(h.serializedName(p("PlayerName"))).toBe("PlayerName");
+    expect(h.isSerialized(p("PlayerName"))).toBe(true);
     expect(h.isSerialized(p("Secret", ['json:"-"']))).toBe(false);
     expect(h.isSerialized(p("internal"))).toBe(false);
     expect(h.isRequired(p("Name", ['json:"name"', 'validate:"required,min=2"']))).toBe(true);
@@ -53,6 +53,6 @@ describe("Go request-schema hooks", () => {
     expect(bind("c", "echo.Context")).toBe("services");
     expect(bind("c", "fiber.Ctx")).toBe("services");
     expect(bind("id", "int")).toBeNull();
-    expect(bind("input", "store.Product")).toBeNull();
+    expect(bind("input", "store.Part")).toBeNull();
   });
 });

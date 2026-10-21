@@ -3,21 +3,21 @@ import { extractCustomElements } from "./web-components.js";
 
 describe("web component (custom element) detection", () => {
   it("detects customElements.define('tag', Class)", () => {
-    const src = `class UserCard extends HTMLElement {}
-customElements.define('user-card', UserCard);`;
+    const src = `class PlayerCard extends HTMLElement {}
+customElements.define('player-card', PlayerCard);`;
     expect(extractCustomElements(src)).toEqual([
-      { tag: "user-card", className: "UserCard", line: 2 },
+      { tag: "player-card", className: "PlayerCard", line: 2 },
     ]);
   });
 
   it("detects window.customElements.define and Lit @customElement", () => {
     const src = `@customElement('my-badge')
 export class MyBadge extends LitElement {}
-window.customElements.define('user-avatar', UserAvatar);`;
+window.customElements.define('player-avatar', PlayerAvatar);`;
     const defs = extractCustomElements(src);
     expect(defs.map((d) => `${d.tag}=${d.className}`).sort()).toEqual([
       "my-badge=MyBadge",
-      "user-avatar=UserAvatar",
+      "player-avatar=PlayerAvatar",
     ]);
   });
 

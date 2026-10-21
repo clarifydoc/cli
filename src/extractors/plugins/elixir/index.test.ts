@@ -20,8 +20,8 @@ describe("Ecto writes and query reads", () => {
 
   def bulk(rows), do: Repo.insert_all(Event, rows)
 
-  def list(user) do
-    query = from(s in Site, where: s.user_id == ^user.id)
+  def list(player) do
+    query = from(s in Site, where: s.player_id == ^player.id)
     Repo.all(query)
   end
 

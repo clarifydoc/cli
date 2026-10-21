@@ -15,13 +15,13 @@ describe("handler taint — Java (Spring / JAX-RS)", () => {
     expect(await found("java", "C.java", `@RestController
 class C {
   @GetMapping("/a")
-  List<User> a(@RequestParam String name, @RequestParam int limit) {
-    String sql = "SELECT * FROM users WHERE name = '" + name + "'";
+  List<Player> a(@RequestParam String name, @RequestParam int limit) {
+    String sql = "SELECT * FROM players WHERE name = '" + name + "'";
     return jdbcTemplate.query(sql, mapper);
   }
   @GetMapping("/b")
-  User b(@PathVariable String id) {
-    return jdbcTemplate.queryForObject("SELECT * FROM users WHERE id = ?", mapper, id);
+  Player b(@PathVariable String id) {
+    return jdbcTemplate.queryForObject("SELECT * FROM players WHERE id = ?", mapper, id);
   }
   @PostMapping("/c")
   void c(@RequestBody Job job, HttpServletResponse response) throws Exception {
@@ -46,12 +46,12 @@ class C {
 
 describe("handler taint — C# (ASP.NET)", () => {
   it("follows bound parameters and Request reads; FromServices, parameterized and parsed values are clean", async () => {
-    expect(await found("csharp", "C.cs", `public class UsersController : ControllerBase {
+    expect(await found("csharp", "C.cs", `public class PlayersController : ControllerBase {
   [HttpGet("a")]
   public IActionResult A([FromQuery] string name, [FromServices] AppDbContext db) {
-    var q = $"SELECT * FROM Users WHERE Name = '{name}'";
+    var q = $"SELECT * FROM Players WHERE Name = '{name}'";
     using var cmd = new SqlCommand(q, conn);
-    return Ok(db.Users.FromSqlRaw("SELECT * FROM Users WHERE Name = {0}", name));
+    return Ok(db.Players.FromSqlRaw("SELECT * FROM Players WHERE Name = {0}", name));
   }
   [HttpGet("b")]
   public IActionResult B(string file) {
@@ -66,7 +66,7 @@ describe("handler taint — C# (ASP.NET)", () => {
   [HttpGet("d")]
   public IActionResult D(string id) {
     var n = int.Parse(id);
-    return Ok(_db.Users.FromSqlInterpolated($"SELECT * FROM Users WHERE Id = {n}"));
+    return Ok(_db.Players.FromSqlInterpolated($"SELECT * FROM Players WHERE Id = {n}"));
   }
 }`, csharpTaint)).toEqual(["5 sql-injection", "10 path-traversal", "15 ssrf", "16 open-redirect"]);
   });
@@ -75,11 +75,11 @@ describe("handler taint — C# (ASP.NET)", () => {
 describe("handler taint — PHP (Laravel, plain scripts)", () => {
   it("follows request input and route parameters; quoted and escaped values are clean", async () => {
     expect(await found("php", "C.php", `<?php
-class UserController extends Controller {
+class PlayerController extends Controller {
   public function show(Request $request, $id) {
     $name = $request->input('name');
-    $rows = DB::select("SELECT * FROM users WHERE name = '$name'");
-    $safe = DB::select('SELECT * FROM users WHERE id = ?', [$id]);
+    $rows = DB::select("SELECT * FROM players WHERE name = '$name'");
+    $safe = DB::select('SELECT * FROM players WHERE id = ?', [$id]);
     $cached = $this->cache->get($id);
     return redirect($request->input('next'));
   }
@@ -103,9 +103,9 @@ describe("handler taint — the steps a finding carries", () => {
   it("names the parameter or read, each assignment, and the sink", async () => {
     const tree = await parseSource(`class C {
   @GetMapping("/a")
-  List<User> a(@RequestParam String name) {
+  List<Player> a(@RequestParam String name) {
     String trimmed = name.trim();
-    String sql = "SELECT * FROM users WHERE name = '" + trimmed + "'";
+    String sql = "SELECT * FROM players WHERE name = '" + trimmed + "'";
     return jdbcTemplate.query(sql, mapper);
   }
 }`, "java" as any, "C.java");

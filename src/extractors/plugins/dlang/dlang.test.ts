@@ -46,14 +46,14 @@ describe("D declarations", () => {
   const a = analyze([
     "module app.service;",
     "",
-    "/// Loads users.",
-    "@safe User[] loadUsers(string role = \"admin\", int limit = 10) {",
+    "/// Loads players.",
+    "@safe Player[] loadPlayers(string role = \"admin\", int limit = 10) {",
     "  if (!isValid(role)) return [];",
     "  auto ids = fetchIds(role);",
     "  auto names = ids.project!(x => x.name)(limit);",
     "  int helper(int x) { return compute(x); }",
     "  assert(helper(1) > 0);",
-    "  return to!(User[])(cast(int) limit);",
+    "  return to!(Player[])(cast(int) limit);",
     "}",
     "",
     "auto pick(alias pred, R)(R range, size_t n)",
@@ -63,35 +63,35 @@ describe("D declarations", () => {
     "",
     "private void secret() {}",
     "",
-    "class UserService : BaseService, IUserService {",
+    "class PlayerService : BaseService, IPlayerService {",
     "  private {",
-    "    UserRepo m_repo;",
+    "    PlayerRepo m_repo;",
     "    int m_hits, m_misses;",
     "  }",
     "  static struct Cache {",
     "    string key;",
     "    void clear() { reset(); }",
     "  }",
-    "  this(UserRepo repo) { m_repo = repo; }",
+    "  this(PlayerRepo repo) { m_repo = repo; }",
     "  @property int hits() const { return m_hits; }",
     "  override string describe() nothrow {",
     "    return m_repo.describe();",
     "  }",
     "}",
     "",
-    "interface IUserService {",
-    "  User find(int id);",
+    "interface IPlayerService {",
+    "  Player find(int id);",
     "}",
     "",
     "enum Role : ubyte {",
     "  admin,",
-    "  user",
+    "  player",
     "}",
   ].join("\n"));
 
   it("reads functions with return types, parameters (runtime ones of a template) and protection", () => {
     expect(a.functions.map((f) => [f.name, f.returnType, f.isExported])).toEqual([
-      ["loadUsers", "User[]", true], ["pick", null, true], ["secret", "void", false],
+      ["loadPlayers", "Player[]", true], ["pick", null, true], ["secret", "void", false],
     ]);
     expect(a.functions[0]!.params).toEqual([
       { name: "role", type: "string", defaultValue: "\"admin\"" }, { name: "limit", type: "int", defaultValue: "10" },
@@ -101,20 +101,20 @@ describe("D declarations", () => {
   });
 
   it("reads calls — template instances by their name, a nested function's as the enclosing one's, never keywords", () => {
-    expect(calls(a, "loadUsers")).toEqual(["isValid", "fetchIds", "ids.project", "helper", "compute", "to"]);
+    expect(calls(a, "loadPlayers")).toEqual(["isValid", "fetchIds", "ids.project", "helper", "compute", "to"]);
   });
 
   it("reads classes, interfaces, structs and enums with their bases, fields and members", () => {
     expect(a.classes.map((c) => [c.name, c.kind ?? "class", c.extends, c.implements.join(",")])).toEqual([
-      ["UserService", "class", "BaseService", "IUserService"], ["Cache", "class", null, ""],
-      ["IUserService", "interface", null, ""], ["Role", "enum", null, ""],
+      ["PlayerService", "class", "BaseService", "IPlayerService"], ["Cache", "class", null, ""],
+      ["IPlayerService", "interface", null, ""], ["Role", "enum", null, ""],
     ]);
     const svc = a.classes[0]!;
     expect(svc.properties.map((p) => `${p.name}:${p.type}:${p.visibility}`)).toEqual([
-      "m_repo:UserRepo:private", "m_hits:int:private", "m_misses:int:private",
+      "m_repo:PlayerRepo:private", "m_hits:int:private", "m_misses:int:private",
     ]);
     // The nested struct's method is its own; the constructor takes the class's name.
-    expect(svc.methods.map((m) => [m.name, m.decorators.join(",")])).toEqual([["UserService", ""], ["hits", "property"], ["describe", ""]]);
+    expect(svc.methods.map((m) => [m.name, m.decorators.join(",")])).toEqual([["PlayerService", ""], ["hits", "property"], ["describe", ""]]);
     expect(a.classes[1]!.methods.map((m) => m.name)).toEqual(["clear"]);
     expect(calls(a, "describe")).toEqual(["m_repo.describe"]);
   });
@@ -128,11 +128,11 @@ describe("D imports", () => {
       "  registerRestInterface;",
       "static import std.file;",
       "import io = std.stdio;",
-      "void f() { import app.models : User; }",
+      "void f() { import app.models : Player; }",
     ].join("\n"));
     expect(a.imports.map((i) => `${i.source}[${i.specifiers}]@${i.line}`)).toEqual([
       "std.stdio[stdio]@1", "std.string[string]@1", "vibe.web.rest[RestInterfaceClient,registerRestInterface]@2",
-      "std.file[file]@4", "std.stdio[io]@5", "app.models[User]@6",
+      "std.file[file]@4", "std.stdio[io]@5", "app.models[Player]@6",
     ]);
   });
 });
@@ -143,7 +143,7 @@ describe("vibe.d routes", () => {
       "import vibe.vibe;",
       "void setup(URLRouter r) {",
       "  r.get(\"/\", &index);",
-      "  r.post(\"/users/:id\", &updateUser).delete_(\"/users/:id\", &removeUser);",
+      "  r.post(\"/players/:id\", &updatePlayer).delete_(\"/players/:id\", &removePlayer);",
       "  r",
       "    .put(\"/items/:id\", toDelegate(&putItem));",
       "  r.match(HTTPMethod.PATCH, \"/items/:id\", &patchItem);",
@@ -153,7 +153,7 @@ describe("vibe.d routes", () => {
       "}",
     ].join("\n"));
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler} [${r.calls.map((c) => c.name)}]`)).toEqual([
-      "GET / -> index []", "POST /users/:id -> updateUser []", "DELETE /users/:id -> removeUser []",
+      "GET / -> index []", "POST /players/:id -> updatePlayer []", "DELETE /players/:id -> removePlayer []",
       "PUT /items/:id -> putItem []", "PATCH /items/:id -> patchItem []", "GET /dump -> null [dumpAll]",
     ]);
   });
@@ -196,12 +196,12 @@ describe("vibe.d routes", () => {
     const a = analyze([
       "import vibe.d;",
       "interface IShop {",
-    "  Product[] getProducts();",
-    "  void addOrder(Order o);",
+    "  Part[] getParts();",
+    "  void addCar(Car c);",
     "}",
       "class Shop : IShop {",
-      "  Product[] getProducts() { return m_repo.all(); }",
-      "  void addOrder(Order o) { m_repo.save(o); }",
+      "  Part[] getParts() { return m_repo.all(); }",
+      "  void addCar(Car c) { m_repo.save(c); }",
       "}",
       "class BasePages {",
     "  void index() {}",
@@ -209,8 +209,8 @@ describe("vibe.d routes", () => {
     "}",
       "@path(\"/admin\")",
       "class AdminPages : BasePages {",
-      "  @auth void getUsers() {}",
-      "  @path(\"/users/:id\") void postUser(string _id) {}",
+      "  @auth void getPlayers() {}",
+      "  @path(\"/players/:id\") void postPlayer(string _id) {}",
       "  void search(string q) {}",
       "  private void helper() {}",
       "  static void util() {}",
@@ -223,9 +223,9 @@ describe("vibe.d routes", () => {
       "}",
     ].join("\n"));
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler} [${r.middleware}]`)).toEqual([
-      "GET /api/products -> Shop.getProducts []", "POST /api/order -> Shop.addOrder []",
+      "GET /api/parts -> Shop.getParts []", "POST /api/car -> Shop.addCar []",
       "GET /admin -> BasePages.index []", "GET /admin/about -> BasePages.getAbout []",
-      "GET /admin/users -> AdminPages.getUsers [auth]", "POST /admin/users/:id -> AdminPages.postUser []",
+      "GET /admin/players -> AdminPages.getPlayers [auth]", "POST /admin/players/:id -> AdminPages.postPlayer []",
       "POST /admin/search -> AdminPages.search []",
     ]);
   });
@@ -240,14 +240,14 @@ describe("D data access", () => {
     const a = analyze([
       "import vibe.db.mongo.mongo;",
       "class Store {",
-      "  MongoCollection m_orders;",
-      "  this(MongoDatabase db) { m_orders = db[\"orders\"]; }",
+      "  MongoCollection m_cars;",
+      "  this(MongoDatabase db) { m_cars = db[\"cars\"]; }",
       "  void archive(Database sql) {",
-      "    sql.execute(`DELETE FROM archived_orders",
+      "    sql.execute(`DELETE FROM archived_cars",
       "      WHERE created < ?`);",
-      "    auto rows = sql.execute(\"SELECT id FROM orders WHERE paid = 1\");",
-      "    m_orders.insertOne(doc);",
-      "    auto o = m_orders.findOne([\"_id\": id]);",
+      "    auto rows = sql.execute(\"SELECT id FROM cars WHERE paid = 1\");",
+      "    m_cars.insertOne(doc);",
+      "    auto o = m_cars.findOne([\"_id\": id]);",
       "    requestHTTP(\"https://hooks.example.com/archive\", (scope req) {",
       "      req.method = HTTPMethod.POST;",
       "    }, (scope res) {});",
@@ -255,10 +255,10 @@ describe("D data access", () => {
       "}",
     ].join("\n"));
     expect(a.dataSources.map((d) => `${d.kind} ${d.name} ${d.entity ?? "-"} ${d.access ?? "-"}@${d.line}`)).toEqual([
-      "database DELETE FROM archived_orders write@6",
-      "database SELECT orders read@8",
-      "database orders.insertOne orders write@9",
-      "database orders.findOne orders read@10",
+      "database DELETE FROM archived_cars write@6",
+      "database SELECT cars read@8",
+      "database cars.insertOne cars write@9",
+      "database cars.findOne cars read@10",
       "api-call POST https://hooks.example.com/archive - -@11",
     ]);
   });

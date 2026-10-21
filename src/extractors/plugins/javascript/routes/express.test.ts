@@ -11,7 +11,7 @@ import type { RouteInfo } from "../../../../types/analysis.js";
  * reported as `GET <string>` endpoints.
  */
 describe("isRoutePath", () => {
-  it.each(["/", "/users", "/users/:id", "/api/v1/orders", "*", "/*", "/users/${id}"])(
+  it.each(["/", "/players", "/players/:id", "/api/v1/cars", "*", "/*", "/players/${id}"])(
     "accepts route-shaped path %j",
     (p) => expect(isRoutePath(p)).toBe(true),
   );
@@ -20,7 +20,7 @@ describe("isRoutePath", () => {
     "minSpotColor", // jquery.sparkline options.get(...)
     "numberFormatter",
     "button", // Cypress cy.get(...)
-    "input[name=user]",
+    "input[name=player]",
     ".multiselect__tags",
     "etag", // res.get('etag')
     "content-type",
@@ -29,9 +29,9 @@ describe("isRoutePath", () => {
 });
 
 /**
- * Regression: a hand-written API client (`accountApiClient.get('/x', { params })`)
+ * Regression: a hand-written API client (`clubApiClient.get('/x', { params })`)
  * was extracted as an inbound API route — the receiver denylist can't enumerate
- * every client name (`accountApiClient`, `licenseApiClient`, …). Real routes
+ * every client name (`clubApiClient`, `licenseApiClient`, …). Real routes
  * carry a handler; outbound client calls carry only a URL + optional config.
  */
 async function routesOf(src: string): Promise<string[]> {
@@ -44,8 +44,8 @@ async function routesOf(src: string): Promise<string[]> {
 describe("Express routes — handler gating", () => {
   it("does NOT treat an HTTP-client call as a route (no handler)", async () => {
     const routes = await routesOf(
-      `const res = await accountApiClient.get('/access-report/roles/' + roleId + '/holders', { params: { page } });
-       await accountApiClient.post('/access-report/permission-set/holders', body);
+      `const res = await clubApiClient.get('/access-report/roles/' + roleId + '/holders', { params: { page } });
+       await clubApiClient.post('/access-report/permission-set/holders', body);
        await apiClient.delete(\`/owners/\${id}\`);`,
     );
     expect(routes).toEqual([]);
@@ -53,13 +53,13 @@ describe("Express routes — handler gating", () => {
 
   it("still extracts real Express routes (function and identifier handlers)", async () => {
     const routes = await routesOf(
-      `app.get('/users', (req, res) => res.json([]));
-       router.post('/users', createUser);
-       app.get('/users/:id', auth, getUser);`,
+      `app.get('/players', (req, res) => res.json([]));
+       router.post('/players', createPlayer);
+       app.get('/players/:id', auth, getPlayer);`,
     );
-    expect(routes).toContain("GET /users");
-    expect(routes).toContain("POST /users");
-    expect(routes).toContain("GET /users/:id");
+    expect(routes).toContain("GET /players");
+    expect(routes).toContain("POST /players");
+    expect(routes).toContain("GET /players/:id");
     expect(routes).toHaveLength(3);
   });
 });
@@ -98,8 +98,8 @@ describe("Express routes — middleware, handler and auth", () => {
   });
 
   it("takes an identifier last argument as the handler with the rest as middleware", async () => {
-    const [r] = await fullRoutesOf(`router.post('/users', auth.required, upload.single('avatar'), createUser);`);
-    expect(r!.handler).toBe("createUser");
+    const [r] = await fullRoutesOf(`router.post('/players', auth.required, upload.single('avatar'), createPlayer);`);
+    expect(r!.handler).toBe("createPlayer");
     expect(r!.middleware).toEqual(["auth.required", "upload.single('avatar')"]);
     expect(r!.auth?.policies).toEqual(["auth.required"]);
     // Declared elsewhere: params come from the project-level join, not here.
@@ -138,7 +138,7 @@ describe("Express routes — middleware, handler and auth", () => {
 describe("Express routes — inline handler params", () => {
   it("reads path tokens and request accesses from the handler body", async () => {
     const [r] = await fullRoutesOf(
-      `router.put('/users/:id/posts/:postId', upload.single('cover'), async (req: AuthRequest, res: Response) => {
+      `router.put('/players/:id/games/:gameId', upload.single('cover'), async (req: AuthRequest, res: Response) => {
          const { title, tags = [] } = req.body;
          const page = req.query.page;
          const token = req.headers.authorization;
@@ -149,7 +149,7 @@ describe("Express routes — inline handler params", () => {
     );
     expect(r!.params).toEqual([
       { name: "id", type: null, binding: "route", inferred: true },
-      { name: "postid", type: null, binding: "route", inferred: true },
+      { name: "gameid", type: null, binding: "route", inferred: true },
       { name: "title", type: null, binding: "body", inferred: true },
       { name: "tags", type: null, binding: "body", inferred: true },
       { name: "page", type: null, binding: "query", inferred: true },
@@ -182,12 +182,12 @@ describe("Express routes — wrapped handlers", () => {
   it("reads the function an async/error adapter wraps", async () => {
     const routes = await fullRoutesOf(`
       app.get('/a', asyncHandler(async (req, res) => { res.json(await svc.list()); }));
-      app.post('/b', requireAuth, catchAsync(createThing));
+      app.post('/b', requireAuth, catchAsync(createBall));
       app.get('/c', wrap(ctrl.show));
       app.get('/d', passport.authenticate('jwt'));`);
     expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler ?? "<inline>"}`)).toEqual([
       "GET /a <inline>",
-      "POST /b createThing",
+      "POST /b createBall",
       "GET /c ctrl.show",
     ]);
     expect(routes[0]!.calls.map((c) => c.name)).toContain("svc.list");
@@ -201,17 +201,17 @@ describe("Express routes — routers mounted in their own file", () => {
       const app = express();
       const api = express.Router();
       const admin = express.Router();
-      api.get('/users', listUsers);
-      api.post('/users', createUser);
-      admin.delete('/users/:id', removeUser);
+      api.get('/players', listPlayers);
+      api.post('/players', createPlayer);
+      admin.delete('/players/:id', removePlayer);
       api.use('/admin', requireAdmin, admin);
       app.use('/api', api);
       app.get('/health', (req, res) => res.send('ok'));`);
     expect(routes.map((r) => `${r.httpMethod} ${r.path}`).sort()).toEqual([
-      "DELETE /api/admin/users/:id",
-      "GET /api/users",
+      "DELETE /api/admin/players/:id",
+      "GET /api/players",
       "GET /health",
-      "POST /api/users",
+      "POST /api/players",
     ]);
     const del = routes.find((r) => r.httpMethod === "DELETE")!;
     expect(del.middleware).toEqual(["requireAdmin"]);
@@ -219,18 +219,18 @@ describe("Express routes — routers mounted in their own file", () => {
   });
 
   it("leaves a mount of an imported router for the project pass", async () => {
-    const routes = await fullRoutesOf(`import users from './users'; app.use('/users', users); app.get('/x', h);`);
-    expect(routes.filter((r) => r.mount).map((r) => r.path)).toEqual(["/users"]);
+    const routes = await fullRoutesOf(`import players from './players'; app.use('/players', players); app.get('/x', h);`);
+    expect(routes.filter((r) => r.mount).map((r) => r.path)).toEqual(["/players"]);
   });
 });
 
 describe("Express routes — a router that only mounts routers", () => {
   it("composes the whole chain", async () => {
     const routes = await fullRoutesOf(`
-      const app = express(); const apiRouter = express.Router(); const usersRouter = express.Router();
-      usersRouter.get('/:id', (req, res) => res.json({}));
-      apiRouter.use('/users', usersRouter);
+      const app = express(); const apiRouter = express.Router(); const playersRouter = express.Router();
+      playersRouter.get('/:id', (req, res) => res.json({}));
+      apiRouter.use('/players', playersRouter);
       app.use('/api/v1', apiRouter);`);
-    expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /api/v1/users/:id"]);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /api/v1/players/:id"]);
   });
 });

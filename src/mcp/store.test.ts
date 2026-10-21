@@ -92,7 +92,7 @@ describe("buildIndex", () => {
     fileLayerMap: { "src/a.ts": "services" },
     entityGraph: {
       nodes: [
-        { id: "src/b.ts::User", name: "User", orm: "prisma", kind: "entity", filePath: "src/b.ts", columns: [], line: 1 },
+        { id: "src/b.ts::Player", name: "Player", orm: "prisma", kind: "entity", filePath: "src/b.ts", columns: [], line: 1 },
       ],
       edges: [],
     },
@@ -107,7 +107,7 @@ describe("buildIndex", () => {
     expect(index.byFile.get("src/b.ts")?.inbound).toHaveLength(1);
     expect(index.byFile.get("src/a.ts")?.routes[0].path).toBe("/x");
     expect(index.byFile.get("src/a.ts")?.layer).toBe("services");
-    expect(index.entitiesByName.get("user")?.[0].id).toBe("src/b.ts::User");
+    expect(index.entitiesByName.get("player")?.[0].id).toBe("src/b.ts::Player");
     expect(index.reachBySymbol.get("src/a.ts::callerfn")?.effectCounts.db).toBe(2);
   });
 

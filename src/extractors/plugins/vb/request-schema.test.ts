@@ -39,13 +39,13 @@ describe("VB request-schema hooks", () => {
 
   it("reads wire names and required/ignored markers from attributes, split from one <…> list", () => {
     const p = (decorators: string[], extra: Record<string, unknown> = {}) => ({
-      name: "UserName", type: "String", visibility: "public" as const, isStatic: false, isReadonly: false, decorators, ...extra,
+      name: "PlayerName", type: "String", visibility: "public" as const, isStatic: false, isReadonly: false, decorators, ...extra,
     });
-    expect(h.serializedName(p(['JsonProperty("user_name")']))).toBe("user_name");
-    expect(h.serializedName(p(['JsonPropertyName("user_name")']))).toBe("user_name");
-    expect(h.serializedName(p(['DataMember(Name:="user_name")']))).toBe("user_name");
-    expect(h.serializedName(p(['Required, JsonProperty("user_name")']))).toBe("user_name");
-    expect(h.serializedName(p([]))).toBe("userName");
+    expect(h.serializedName(p(['JsonProperty("player_name")']))).toBe("player_name");
+    expect(h.serializedName(p(['JsonPropertyName("player_name")']))).toBe("player_name");
+    expect(h.serializedName(p(['DataMember(Name:="player_name")']))).toBe("player_name");
+    expect(h.serializedName(p(['Required, JsonProperty("player_name")']))).toBe("player_name");
+    expect(h.serializedName(p([]))).toBe("playerName");
     expect(h.isRequired(p(["Required"]))).toBe(true);
     expect(h.isRequired(p(['Required(ErrorMessage:="x"), StringLength(50)']))).toBe(true);
     expect(h.isRequired(p(["RequiredIf"]))).toBe(false);
@@ -63,10 +63,10 @@ describe("VB request-schema hooks", () => {
 
 describe("VB handler parameter binding (project-level join)", () => {
   it("binds simple types from the query, complex ones from the body, and injected tokens as services", () => {
-    const route = { path: "/api/users/{id}", httpMethod: "PUT", kind: "api" as const, handler: "Put", calls: [], middleware: [], line: 1 };
+    const route = { path: "/api/players/{id}", httpMethod: "PUT", kind: "api" as const, handler: "Put", calls: [], middleware: [], line: 1 };
     expect(h.bindParam!({ name: "page", type: "Integer", defaultValue: null }, route)).toBe("query");
     expect(h.bindParam!({ name: "ids", type: "List(Of Integer)", defaultValue: null }, route)).toBe("query");
-    expect(h.bindParam!({ name: "request", type: "CreateUserRequest", defaultValue: null }, route)).toBe("body");
+    expect(h.bindParam!({ name: "request", type: "CreatePlayerRequest", defaultValue: null }, route)).toBe("body");
     expect(h.bindParam!({ name: "token", type: "CancellationToken", defaultValue: null }, route)).toBe("services");
   });
 });
@@ -75,16 +75,16 @@ describe("VB properties", () => {
   it("takes auto-properties with own-line and inline attributes, generics, nullables and inheritance", () => {
     const found = classes(
       [
-        "Public Class UserRequestBase",
+        "Public Class PlayerRequestBase",
         "    <Required>",
         "    Public Property Email As String",
         "End Class",
         "",
-        "Public Class CreateUserRequest",
-        "    Inherits UserRequestBase",
+        "Public Class CreatePlayerRequest",
+        "    Inherits PlayerRequestBase",
         "",
         "    <Required> _",
-        '    <JsonProperty("user_name")>',
+        '    <JsonProperty("player_name")>',
         "    Public Property Name As String",
         "    <StringLength(20)> Public Property Role As String = \"user\"",
         "    Public Property Tags As List(Of String)",
@@ -99,12 +99,12 @@ describe("VB properties", () => {
         "End Class",
       ].join("\n"),
     );
-    const base = found.find((c) => c.name === "UserRequestBase")!;
+    const base = found.find((c) => c.name === "PlayerRequestBase")!;
     expect(base.properties.map((p) => [p.name, p.type, p.decorators])).toEqual([["Email", "String", ["Required"]]]);
-    const req = found.find((c) => c.name === "CreateUserRequest")!;
-    expect(req.extends).toBe("UserRequestBase");
+    const req = found.find((c) => c.name === "CreatePlayerRequest")!;
+    expect(req.extends).toBe("PlayerRequestBase");
     expect(req.properties.map((p) => [p.name, p.type, p.visibility, p.isStatic, p.decorators ?? []])).toEqual([
-      ["Name", "String", "public", false, ["Required", 'JsonProperty("user_name")']],
+      ["Name", "String", "public", false, ["Required", 'JsonProperty("player_name")']],
       ["Role", "String", "public", false, ["StringLength(20)"]],
       ["Tags", "List(Of String)", "public", false, []],
       ["Age", "Integer?", "public", false, []],
@@ -115,9 +115,9 @@ describe("VB properties", () => {
   });
 
   it("still takes fields, now with their generic arguments", () => {
-    const [cls] = classes(["Public Class UserService", "    Private ReadOnly _users As New List(Of User)", "    Private _nextId As Integer = 1", "End Class"].join("\n"));
+    const [cls] = classes(["Public Class PlayerService", "    Private ReadOnly _players As New List(Of Player)", "    Private _nextId As Integer = 1", "End Class"].join("\n"));
     expect(cls.properties.map((p) => [p.name, p.type, p.isReadonly])).toEqual([
-      ["_users", "List(Of User)", true],
+      ["_players", "List(Of Player)", true],
       ["_nextId", "Integer", false],
     ]);
   });

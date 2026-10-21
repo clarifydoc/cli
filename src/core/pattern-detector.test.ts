@@ -20,11 +20,11 @@ const method = (name: string, line: number, endLine: number, params = 1) => ({
 
 const fileWith = (methods: ReturnType<typeof method>[]): FileAnalysis =>
   ({
-    filePath: "src/CustomerEntity.java",
+    filePath: "src/DriverEntity.java",
     language: "java",
     functions: [],
     classes: [{
-      name: "CustomerEntity", kind: "class", extends: null, implements: [],
+      name: "DriverEntity", kind: "class", extends: null, implements: [],
       decorators: [], methods, properties: [], line: 1, endLine: 200,
     }],
     imports: [], exports: [], routes: [], dataSources: [], events: [],

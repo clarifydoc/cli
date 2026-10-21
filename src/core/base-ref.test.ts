@@ -18,12 +18,12 @@ describe("analysisAtRef", () => {
     dir = await mkdtemp(join(tmpdir(), "clarifydoc-baseref-"));
     await mkdir(join(root(), "src"), { recursive: true });
     await writeFile(join(root(), "package.json"), JSON.stringify({ name: "api", dependencies: { express: "4.0.0" } }));
-    await writeFile(join(root(), "src", "server.ts"), 'import express from "express";\nconst app = express();\napp.get("/api/orders", (req, res) => res.json([]));\napp.delete("/api/orders/:id", (req, res) => res.json({}));\n');
+    await writeFile(join(root(), "src", "server.ts"), 'import express from "express";\nconst app = express();\napp.get("/api/cars", (req, res) => res.json([]));\napp.delete("/api/cars/:id", (req, res) => res.json({}));\n');
     git("init", "-q");
     git("add", ".");
     git("commit", "-qm", "base");
     // The head drops a route and adds one, uncommitted.
-    await writeFile(join(root(), "src", "server.ts"), 'import express from "express";\nconst app = express();\napp.get("/api/orders", (req, res) => res.json([]));\napp.post("/api/orders", (req, res) => res.json({}));\n');
+    await writeFile(join(root(), "src", "server.ts"), 'import express from "express";\nconst app = express();\napp.get("/api/cars", (req, res) => res.json([]));\napp.post("/api/cars", (req, res) => res.json({}));\n');
     await analyze({ projectRoot: root(), outputDir: join(root(), ".clarifydoc", "api"), incremental: true, lsp: false, gitHistory: false });
   });
   afterAll(async () => {
@@ -37,8 +37,8 @@ describe("analysisAtRef", () => {
     expect(first.dir).toBe(join(head, ".base", first.commit, "api"));
     const d = diffSurface(await loadReportSummary(first.dir), await loadReportSummary(head));
     const kinds = d.changes.map((c) => `${c.kind} ${c.route}`);
-    expect(kinds.some((k) => k.includes("DELETE /api/orders/:id"))).toBe(true);
-    expect(kinds.some((k) => k.includes("POST /api/orders"))).toBe(true);
+    expect(kinds.some((k) => k.includes("DELETE /api/cars/:id"))).toBe(true);
+    expect(kinds.some((k) => k.includes("POST /api/cars"))).toBe(true);
     // Nothing left behind: no worktree, the working tree's edit intact.
     expect(git("worktree", "list").trim().split("\n")).toHaveLength(1);
     expect(await readFile(join(root(), "src", "server.ts"), "utf8")).toContain("app.post");

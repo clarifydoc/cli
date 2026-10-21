@@ -66,7 +66,7 @@ from typing import TYPE_CHECKING
 import typing
 
 if TYPE_CHECKING:
-    from app.models import User
+    from app.models import Player
 elif FEATURE:
     from app.feature import flag
 else:
@@ -77,7 +77,7 @@ if typing.TYPE_CHECKING:
 `)).toEqual([
       { source: "typing", specifiers: ["TYPE_CHECKING"], isType: false, line: 2 },
       { source: "typing", specifiers: ["typing"], isType: false, line: 3 },
-      { source: "app.models", specifiers: ["User"], isType: true, line: 6 },
+      { source: "app.models", specifiers: ["Player"], isType: true, line: 6 },
       { source: "app.feature", specifiers: ["flag"], isType: false, line: 8 },
       { source: "app.runtime", specifiers: ["Runtime"], isType: false, line: 10 },
       { source: "app.db", specifiers: ["Session"], isType: true, line: 13 },
@@ -98,7 +98,7 @@ describe("python package re-exports", () => {
     const { parseSource } = await import("../../../parsers/parser-manager.js");
     const { PythonImportExportExtractor } = await import("./imports-exports.js");
     const src = `from .dependencies import *
-from .user import User as Account, Group
+from .player import Player as Club, Group
 from mealie.schema import *
 from typing import Any
 def helper():
@@ -108,8 +108,8 @@ def helper():
     const exports = new PythonImportExportExtractor().extractExports(tree, src).filter((e) => e.kind === "re-export");
     expect(exports.map((e) => [e.name, e.source, e.sourceName])).toEqual([
       ["*", ".dependencies", undefined],
-      ["Account", ".user", "User"],
-      ["Group", ".user", undefined],
+      ["Club", ".player", "Player"],
+      ["Group", ".player", undefined],
       ["*", "mealie.schema", undefined],
     ]);
   });
@@ -117,8 +117,8 @@ def helper():
   it("forwards a package __init__'s absolute imports of its own tree", async () => {
     const { parseSource } = await import("../../../parsers/parser-manager.js");
     const { PythonImportExportExtractor } = await import("./imports-exports.js");
-    const src = `from app.services.user import UserService
-from app.services.order import OrderService as Orders
+    const src = `from app.services.player import PlayerService
+from app.services.car import CarService as Cars
 from typing import Any
 `;
     const reExports = async (path: string) => {
@@ -127,8 +127,8 @@ from typing import Any
         .filter((e) => e.kind === "re-export").map((e) => [e.name, e.source, e.sourceName]);
     };
     expect(await reExports("src/app/services/__init__.py")).toEqual([
-      ["UserService", "app.services.user", undefined],
-      ["Orders", "app.services.order", "OrderService"],
+      ["PlayerService", "app.services.player", undefined],
+      ["Cars", "app.services.car", "CarService"],
     ]);
     // Any other module's absolute imports are its dependencies.
     expect(await reExports("src/app/services/api.py")).toEqual([]);

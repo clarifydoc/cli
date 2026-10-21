@@ -58,17 +58,17 @@ TYPE @Person
 
 const SPEC = `JSIGHT 0.3
 
-GET /orders
+GET /cars
   Query "status=open&limit=20"
   200
-    [@Order]
+    [@Car]
 
-POST /orders
-  Request @CreateOrderRequest
+POST /cars
+  Request @CreateCarRequest
   201
-    @Order
+    @Car
 
-GET /orders/{id}
+GET /cars/{id}
   Path
     {
       "id": 42 // {type: "integer"}
@@ -78,10 +78,10 @@ GET /orders/{id}
       "X-Tenant": "acme"
     }
   200
-    @Order
+    @Car
 
-PUT /orders/{id}/lines/{lineId}
-  Query @LineFilter
+PUT /cars/{id}/parts/{partId}
+  Query @PartFilter
   Request
     Headers
       {
@@ -96,9 +96,9 @@ PUT /orders/{id}/lines/{lineId}
       {
         "X-Not-A-Request-Header": "x"
       }
-    @Order
+    @Car
 
-URL /orders/{id}/notes
+URL /cars/{id}/notes
   GET
     Query { "page": 1 }
     200 [@Note]
@@ -106,13 +106,13 @@ URL /orders/{id}/notes
     Request [@Note]
     201 @Note
 
-TYPE @Order
+TYPE @Car
   {
     "id": 42,
     "status": "open", // {type: "enum"}
     "total": 99.5,
     "createdAt": "2024-01-01T00:00:00Z", // {type: "datetime"}
-    "lines": [@OrderLine],
+    "parts": [@CarPart],
     "meta": {
       "nested": "skipped"
     },
@@ -121,17 +121,17 @@ TYPE @Order
     ]
   }
 
-TYPE @OrderLine
+TYPE @CarPart
   {
     "sku": "A-1",
     "quantity": 2,
     "note": "gift" // {optional: true}
   }
 
-TYPE @CreateOrderRequest
+TYPE @CreateCarRequest
   {
-    "customerId": "3b241101-e2bb-4255-8caf-4136c566a962", // {type: "uuid"}
-    "lines": [@OrderLine],
+    "driverId": "3b241101-e2bb-4255-8caf-4136c566a962", // {type: "uuid"}
+    "parts": [@CarPart],
     "coupon": "SPRING", // {optional: true}
     "shipTo": @Address // {optional: true}
   }
@@ -141,7 +141,7 @@ TYPE @Address
     "street": "Main 1"
   }
 
-TYPE @Note @OrderLine
+TYPE @Note @CarPart
 `;
 
 describe("JSight endpoint blocks as route params", () => {
@@ -149,36 +149,36 @@ describe("JSight endpoint blocks as route params", () => {
   const byPath = (m: string, p: string) => routes.find((r) => r.httpMethod === m && r.path === p)!;
 
   it("reads Query strings, Path objects and Headers", () => {
-    expect(byPath("GET", "/orders").params).toEqual([
+    expect(byPath("GET", "/cars").params).toEqual([
       { name: "status", type: null, binding: "query" },
       { name: "limit", type: null, binding: "query" },
     ]);
-    expect(byPath("GET", "/orders/{id}").params).toEqual([
+    expect(byPath("GET", "/cars/{id}").params).toEqual([
       { name: "id", type: "integer", binding: "route" },
       { name: "X-Tenant", type: "string", binding: "header" },
     ]);
   });
 
   it("types the body from `Request @Type`", () => {
-    expect(byPath("POST", "/orders").params).toEqual([{ name: "body", type: "CreateOrderRequest", binding: "body" }]);
+    expect(byPath("POST", "/cars").params).toEqual([{ name: "body", type: "CreateCarRequest", binding: "body" }]);
   });
 
   it("reads nested Request Headers/Body, a typed Query, and skips response blocks", () => {
-    expect(byPath("PUT", "/orders/{id}/lines/{lineId}").params).toEqual([
+    expect(byPath("PUT", "/cars/{id}/parts/{partId}").params).toEqual([
       { name: "id", type: null, binding: "route" },
-      { name: "lineId", type: null, binding: "route" },
-      { name: "query", type: "LineFilter", binding: "query" },
+      { name: "partId", type: null, binding: "route" },
+      { name: "query", type: "PartFilter", binding: "query" },
       { name: "If-Match", type: "string", binding: "header" },
       { name: "body", type: "object", binding: "body" },
     ]);
   });
 
   it("expands a URL block into one route per nested verb", () => {
-    expect(byPath("GET", "/orders/{id}/notes").params).toEqual([
+    expect(byPath("GET", "/cars/{id}/notes").params).toEqual([
       { name: "id", type: null, binding: "route" },
       { name: "page", type: "integer", binding: "query" },
     ]);
-    expect(byPath("POST", "/orders/{id}/notes").params).toEqual([
+    expect(byPath("POST", "/cars/{id}/notes").params).toEqual([
       { name: "id", type: null, binding: "route" },
       { name: "body", type: "Note[]", binding: "body" },
     ]);
@@ -195,27 +195,27 @@ describe("JSight TYPE blocks as classes", () => {
   const prop = (c: string, n: string) => cls(c).properties.find((p) => p.name === n)!;
 
   it("emits one class per TYPE with typed, required-by-default properties", () => {
-    expect(types.map((t) => t.name)).toEqual(["Order", "OrderLine", "CreateOrderRequest", "Address", "Note"]);
-    expect(cls("Order").decorators).toEqual(["jsight"]);
-    expect(prop("Order", "id")).toMatchObject({ type: "integer", isRequired: true });
-    expect(prop("Order", "total").type).toBe("number");
-    expect(prop("Order", "status").type).toBe("string");
-    expect(prop("Order", "createdAt").type).toBe("string(date-time)");
-    expect(prop("Order", "lines").type).toBe("OrderLine[]");
-    expect(prop("Order", "meta").type).toBe("object");
-    expect(prop("Order", "tags").type).toBe("string[]");
-    expect(cls("Order").properties.map((p) => p.name)).not.toContain("nested");
+    expect(types.map((t) => t.name)).toEqual(["Car", "CarPart", "CreateCarRequest", "Address", "Note"]);
+    expect(cls("Car").decorators).toEqual(["jsight"]);
+    expect(prop("Car", "id")).toMatchObject({ type: "integer", isRequired: true });
+    expect(prop("Car", "total").type).toBe("number");
+    expect(prop("Car", "status").type).toBe("string");
+    expect(prop("Car", "createdAt").type).toBe("string(date-time)");
+    expect(prop("Car", "parts").type).toBe("CarPart[]");
+    expect(prop("Car", "meta").type).toBe("object");
+    expect(prop("Car", "tags").type).toBe("string[]");
+    expect(cls("Car").properties.map((p) => p.name)).not.toContain("nested");
   });
 
   it("clears isRequired on `{optional: true}` and reads `@Ref` values", () => {
-    expect(prop("CreateOrderRequest", "customerId").type).toBe("string(uuid)");
-    expect(prop("CreateOrderRequest", "coupon").isRequired).toBeUndefined();
-    expect(prop("CreateOrderRequest", "shipTo")).toMatchObject({ type: "Address" });
-    expect(prop("CreateOrderRequest", "shipTo").isRequired).toBeUndefined();
+    expect(prop("CreateCarRequest", "driverId").type).toBe("string(uuid)");
+    expect(prop("CreateCarRequest", "coupon").isRequired).toBeUndefined();
+    expect(prop("CreateCarRequest", "shipTo")).toMatchObject({ type: "Address" });
+    expect(prop("CreateCarRequest", "shipTo").isRequired).toBeUndefined();
   });
 
   it("reads an alias TYPE as inheritance", () => {
-    expect(cls("Note").extends).toBe("OrderLine");
+    expect(cls("Note").extends).toBe("CarPart");
     expect(cls("Note").properties).toEqual([]);
   });
 
@@ -236,12 +236,12 @@ describe("JSight request schema through the core pass", () => {
     analysis.classes = extractJsightTypes(lines);
     const routes = extractJsightRoutes(lines).map((r) => ({ ...r, filePath: "api.jsight", projectId: "root" }));
     attachRequestSchemas(routes, [analysis]);
-    const create = routes.find((r) => r.httpMethod === "POST" && r.path === "/orders") as typeof routes[number] & { requestSchema?: unknown };
+    const create = routes.find((r) => r.httpMethod === "POST" && r.path === "/cars") as typeof routes[number] & { requestSchema?: unknown };
     expect(create.requestSchema).toEqual({
       type: "object",
       properties: {
-        customerId: { type: "string", format: "uuid" },
-        lines: {
+        driverId: { type: "string", format: "uuid" },
+        parts: {
           type: "array",
           items: {
             type: "object",
@@ -252,9 +252,9 @@ describe("JSight request schema through the core pass", () => {
         coupon: { type: "string" },
         shipTo: { type: "object", properties: { street: { type: "string" } }, required: ["street"] },
       },
-      required: ["customerId", "lines"],
+      required: ["driverId", "parts"],
     });
-    const notes = routes.find((r) => r.httpMethod === "POST" && r.path === "/orders/{id}/notes") as typeof routes[number] & { requestSchema?: { type?: string } };
+    const notes = routes.find((r) => r.httpMethod === "POST" && r.path === "/cars/{id}/notes") as typeof routes[number] & { requestSchema?: { type?: string } };
     expect(notes.requestSchema?.type).toBe("array");
   });
 
@@ -262,8 +262,8 @@ describe("JSight request schema through the core pass", () => {
     const { jsightRequestSchema: h } = await import("./request-schema.js");
     expect(h.describeType("string(email)")).toEqual({ kind: "scalar", schema: { type: "string", format: "email" } });
     expect(h.describeType("boolean")).toEqual({ kind: "scalar", schema: { type: "boolean" } });
-    expect(h.describeType("Order[]")).toEqual({ kind: "array", element: "Order" });
+    expect(h.describeType("Car[]")).toEqual({ kind: "array", element: "Car" });
     expect(h.describeType("any")).toEqual({ kind: "any" });
-    expect(h.describeType("Order")).toEqual({ kind: "object", name: "Order" });
+    expect(h.describeType("Car")).toEqual({ kind: "object", name: "Car" });
   });
 });

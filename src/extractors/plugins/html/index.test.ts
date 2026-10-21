@@ -31,7 +31,7 @@ describe("HTML page-route extraction (the page IS the screen)", () => {
   it("maps index.html to its directory and the top-level index to '/'", () => {
     expect(pageRoutePath("index.html")).toBe("/");
     expect(pageRoutePath("shop/index.html")).toBe("/shop/");
-    expect(pageRoutePath("cartpage/cart.html")).toBe("/cartpage/cart.html");
+    expect(pageRoutePath("garagepage/garage.html")).toBe("/garagepage/garage.html");
     expect(pageRoutePath("a\\b\\page.htm")).toBe("/a/b/page.htm"); // backslashes normalised
   });
 
@@ -81,8 +81,8 @@ describe("HTML interactive-element extraction", () => {
   });
 
   it("resolves an inline on*= handler to its invoked function", () => {
-    const out = els(`<button onclick="addToCart(3)">Add</button>`);
-    expect(out[0]).toEqual({ element: "button", event: "onclick", handler: "addToCart", line: 1, caption: "Add" });
+    const out = els(`<button onclick="addToGarage(3)">Add</button>`);
+    expect(out[0]).toEqual({ element: "button", event: "onclick", handler: "addToGarage", line: 1, caption: "Add" });
   });
 
   it("emits a non-control tag only when it carries an inline handler, and every <a href> as a click", () => {
@@ -94,37 +94,37 @@ describe("HTML interactive-element extraction", () => {
   });
 
   it("names a link to an app route after its GET, base-path template dropped", () => {
-    const out = els(`<a class="cymbal-button-primary" href="{{ $.baseUrl }}/" role="button">Continue</a>\n<a href="{{ $.baseUrl }}/product/{{.Item.Id}}">\n  <img src="{{.Item.Picture}}">\n</a>\n<a href="/logo.png">x</a>\n<a data-href="/x" href="https://example.com/docs">ext</a>`);
+    const out = els(`<a class="cymbal-button-primary" href="{{ $.baseUrl }}/" role="button">Continue</a>\n<a href="{{ $.baseUrl }}/part/{{.Item.Id}}">\n  <img src="{{.Item.Picture}}">\n</a>\n<a href="/logo.png">x</a>\n<a data-href="/x" href="https://example.com/docs">ext</a>`);
     expect(out).toEqual([
       { element: "link", event: "click", handler: "root", line: 1, caption: "Continue", request: { method: "GET", target: "/" } },
       // an image, no text: no caption
-      { element: "link", event: "click", handler: "product_x", line: 2, request: { method: "GET", target: "/product/:param" } },
+      { element: "link", event: "click", handler: "part_x", line: 2, request: { method: "GET", target: "/part/:param" } },
       { element: "link", event: "click", handler: null, line: 5, caption: "x" },
       { element: "link", event: "click", handler: null, line: 6, caption: "ext" },
     ]);
   });
 
-  it("gives a submit button its form's action and method (cart.html)", () => {
-    const out = els(`<form method="POST" action="{{ $.baseUrl }}/cart/empty">
-  <button class="cart-summary-empty-cart-button" type="submit">
-    Empty Cart
+  it("gives a submit button its form's action and method (garage.html)", () => {
+    const out = els(`<form method="POST" action="{{ $.baseUrl }}/garage/empty">
+  <button class="garage-summary-empty-garage-button" type="submit">
+    Empty Garage
   </button>
   <a class="cymbal-button-primary" href="{{ $.baseUrl }}/" role="button">Continue</a>
 </form>
-<form class="cart-checkout-form"
-      action="{{ $.baseUrl }}/cart/checkout" method="POST">
+<form class="garage-checkout-form"
+      action="{{ $.baseUrl }}/garage/checkout" method="POST">
   <input type="email" id="email">
-  <button class="cymbal-button-primary" type="submit">Place Order</button>
+  <button class="cymbal-button-primary" type="submit">Buy Car</button>
 </form>
 <button type="button" id="toggle">x</button>`);
     expect(out).toEqual([
-      { element: "form", event: "submit", handler: "post_cart_empty", line: 1, request: { method: "POST", target: "/cart/empty" } },
-      { element: "button", event: "click", handler: "post_cart_empty", line: 2, caption: "Empty Cart", request: { method: "POST", target: "/cart/empty" } },
+      { element: "form", event: "submit", handler: "post_garage_empty", line: 1, request: { method: "POST", target: "/garage/empty" } },
+      { element: "button", event: "click", handler: "post_garage_empty", line: 2, caption: "Empty Garage", request: { method: "POST", target: "/garage/empty" } },
       { element: "link", event: "click", handler: "root", line: 5, caption: "Continue", request: { method: "GET", target: "/" } },
       // attributes wrapped onto the next line are still read
-      { element: "form", event: "submit", handler: "post_cart_checkout", line: 7, request: { method: "POST", target: "/cart/checkout" } },
+      { element: "form", event: "submit", handler: "post_garage_checkout", line: 7, request: { method: "POST", target: "/garage/checkout" } },
       { element: "input", event: "input", handler: "email", line: 9 },
-      { element: "button", event: "click", handler: "post_cart_checkout", line: 10, caption: "Place Order", request: { method: "POST", target: "/cart/checkout" } },
+      { element: "button", event: "click", handler: "post_garage_checkout", line: 10, caption: "Buy Car", request: { method: "POST", target: "/garage/checkout" } },
       { element: "button", event: "click", handler: "toggle", line: 12, caption: "x" }, // outside the form, not a submit
     ]);
   });
@@ -132,14 +132,14 @@ describe("HTML interactive-element extraction", () => {
   it("reads a typeless button as submit, formaction over the form's, and GET for a form with no method", () => {
     const out = els(`<form action="/search">
   <button>Go</button>
-  <input type="submit" formaction="/orders/delete" formmethod="post" value="Delete">
+  <input type="submit" formaction="/cars/delete" formmethod="post" value="Delete">
   <button type="submit" onclick="check()">Check</button>
 </form>
 <form method="post"><button>Save</button></form>`);
     expect(out).toEqual([
       { element: "form", event: "submit", handler: "search", line: 1, request: { method: "GET", target: "/search" } },
       { element: "button", event: "click", handler: "search", line: 2, caption: "Go", request: { method: "GET", target: "/search" } },
-      { element: "button", event: "click", handler: "post_orders_delete", line: 3, caption: "Delete", request: { method: "POST", target: "/orders/delete" } },
+      { element: "button", event: "click", handler: "post_cars_delete", line: 3, caption: "Delete", request: { method: "POST", target: "/cars/delete" } },
       { element: "button", event: "onclick", handler: "check", line: 4, caption: "Check" }, // its own handler runs first
       // no action: the page posts to itself, which names no route
       { element: "form", event: "submit", handler: null, line: 6 },
@@ -179,7 +179,7 @@ describe("apiDocGeneratorOf / htmlPreprocess", () => {
   });
 
   it("keeps hand-written pages and SITE-generator output (Hugo)", () => {
-    expect(htmlPreprocess(`<html><head><title>Shop</title></head><body><a href="cart.html">Cart</a></body></html>`)).toBeNull();
+    expect(htmlPreprocess(`<html><head><title>Shop</title></head><body><a href="garage.html">Garage</a></body></html>`)).toBeNull();
     expect(htmlPreprocess(`<html><head><meta name="generator" content="Hugo 0.118.2"></head><body></body></html>`)).toBeNull();
   });
 

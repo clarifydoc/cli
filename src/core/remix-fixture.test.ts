@@ -34,9 +34,9 @@ describe.skipIf(!existsSync(fixture))("sample-remix-app", () => {
       "/concerts/mine concerts_.mine.tsx",
       "/files/* files.$.tsx",
       "/login _auth.login.tsx",
-      "GET /api/orders api.orders.ts",
+      "GET /api/cars api.cars.ts",
       "GET /sitemap.xml sitemap[.]xml.tsx",
-      "POST /api/orders api.orders.ts",
+      "POST /api/cars api.cars.ts",
     ].sort());
     const layout = JSON.parse(await readFile(join(out, "remix/app/routes/concerts.tsx.json"), "utf8"));
     expect(layout.routes.map((r: { path: string }) => r.path)).toEqual(["/concerts"]);

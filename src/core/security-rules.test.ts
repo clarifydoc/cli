@@ -26,7 +26,7 @@ const CASES: Array<[Language, string, string, string | null]> = [
   ["csharp", "src/A.cs", "var des = DES.Create();", "weak-crypto"],
   ["csharp", "src/A.cs", "new XmlReaderSettings { DtdProcessing = DtdProcessing.Parse, XmlResolver = null }", null],
   ["csharp", "src/A.cs", "handler.ServerCertificateCustomValidationCallback = (m, c, ch, e) => true;", "insecure-config"],
-  ["php", "src/a.php", "$data = unserialize($_COOKIE['cart']);", "deserialization"],
+  ["php", "src/a.php", "$data = unserialize($_COOKIE['garage']);", "deserialization"],
   ["php", "src/a.php", "$data = unserialize($raw, ['allowed_classes' => false]);", null],
   ["php", "src/a.php", "$out = shell_exec('convert ' . $file);", "command-injection"],
   ["php", "src/a.php", "$pdo->exec($sql);", null],

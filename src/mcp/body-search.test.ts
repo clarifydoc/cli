@@ -3,11 +3,11 @@ import { join } from "path";
 import { BodyIndex, thrownTypes } from "./body-search.js";
 import { buildMcpServer } from "./server.js";
 
-const SRC = `// Stores the user's password
+const SRC = `// Stores the player's password
 // as a salted bcrypt hash.
-export async function storePassword(user, plain) {
+export async function storePassword(player, plain) {
   const digest = await bcrypt.hash(plain, 12);
-  await db.users.update(user.id, { digest });
+  await db.players.update(player.id, { digest });
 }
 
 export function retryWithBackoff(fn) {
@@ -50,7 +50,7 @@ Refunds go back to the original card within five days.
 \`\`\`
 # not a heading inside a fence
 \`\`\`
-A failed capture is retried with backoff before the order is cancelled.
+A failed capture is retried with backoff before the car sale is cancelled.
 `;
   it("indexes a document by its sections, a fenced # is not a heading, and ranks a section beside the code", async () => {
     const index = await BodyIndex.build(

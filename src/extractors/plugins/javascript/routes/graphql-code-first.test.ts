@@ -15,19 +15,19 @@ describe("code-first GraphQL", () => {
     const routes = await routesOf(`
 import { Resolver, Query, Mutation, Args } from "@nestjs/graphql";
 import { UseGuards } from "@nestjs/common";
-@Resolver(() => User)
-export class UserResolver {
-  constructor(private readonly users: UsersService) {}
-  @Query(() => [User], { name: "users" })
-  all(@Args("first") first: number) { return this.users.list(first); }
-  @Mutation(() => User)
+@Resolver(() => Player)
+export class PlayerResolver {
+  constructor(private readonly players: PlayersService) {}
+  @Query(() => [Player], { name: "players" })
+  all(@Args("first") first: number) { return this.players.list(first); }
+  @Mutation(() => Player)
   @UseGuards(GqlAuthGuard)
-  createUser(@Args("input") input: NewUserInput) { return this.users.create(input); }
+  createPlayer(@Args("input") input: NewPlayerInput) { return this.players.create(input); }
   @ResolveField()
-  posts(@Parent() user: User) { return []; }
+  games(@Parent() player: Player) { return []; }
   helper() {}
 }`);
-    expect(rows(routes)).toEqual(["/graphql/users → UserResolver.all (first: number)", "/graphql/createUser → UserResolver.createUser (input: NewUserInput)"]);
+    expect(rows(routes)).toEqual(["/graphql/players → PlayerResolver.all (first: number)", "/graphql/createPlayer → PlayerResolver.createPlayer (input: NewPlayerInput)"]);
     expect(routes[1]!.middleware).toEqual(["UseGuards(GqlAuthGuard)"]);
   });
 
@@ -36,33 +36,33 @@ export class UserResolver {
 import SchemaBuilder from "@pothos/core";
 const builder = new SchemaBuilder({});
 builder.queryType({ fields: (t) => ({ hello: t.string({ resolve: () => greet() }) }) });
-builder.queryField("me", (t) => t.field({ type: User, resolve: (_, __, ctx) => users.load(ctx.id) }));
-builder.mutationFields((t) => ({ signUp: t.field({ type: User, resolve: () => auth.signUp() }) }));
-builder.objectType(User, { fields: (t) => ({ name: t.exposeString("name") }) });`);
+builder.queryField("me", (t) => t.field({ type: Player, resolve: (_, __, ctx) => players.load(ctx.id) }));
+builder.mutationFields((t) => ({ signUp: t.field({ type: Player, resolve: () => auth.signUp() }) }));
+builder.objectType(Player, { fields: (t) => ({ name: t.exposeString("name") }) });`);
     expect(rows(routes)).toEqual(["/graphql/hello", "/graphql/me", "/graphql/signUp"]);
-    expect(routes[1]!.calls.map((c) => c.name)).toContain("users.load");
+    expect(routes[1]!.calls.map((c) => c.name)).toContain("players.load");
   });
 
   it("reads Nexus root types, extensions and fields, and graphql-js root object types", async () => {
     const nexus = await routesOf(`
 import { queryType, extendType, mutationField, objectType } from "nexus";
-export const Query = queryType({ definition(t) { t.list.field("posts", { type: "Post", resolve: () => db.post.findMany() }); t.string("ping"); } });
-export const More = extendType({ type: "Query", definition(t) { t.nonNull.field("me", { type: "User" }); } });
-export const Ignored = extendType({ type: "User", definition(t) { t.field("friends", { type: "User" }); } });
-export const Publish = mutationField("publish", { type: "Post", resolve: () => db.post.update() });
-export const User = objectType({ name: "User", definition(t) { t.string("name"); } });`);
-    expect(rows(nexus)).toEqual(["/graphql/posts", "/graphql/ping", "/graphql/me", "/graphql/publish"]);
+export const Query = queryType({ definition(t) { t.list.field("games", { type: "Game", resolve: () => db.game.findMany() }); t.string("ping"); } });
+export const More = extendType({ type: "Query", definition(t) { t.nonNull.field("me", { type: "Player" }); } });
+export const Ignored = extendType({ type: "Player", definition(t) { t.field("friends", { type: "Player" }); } });
+export const Publish = mutationField("publish", { type: "Game", resolve: () => db.game.update() });
+export const Player = objectType({ name: "Player", definition(t) { t.string("name"); } });`);
+    expect(rows(nexus)).toEqual(["/graphql/games", "/graphql/ping", "/graphql/me", "/graphql/publish"]);
     const js = await routesOf(`
 import { GraphQLObjectType, GraphQLString } from "graphql";
-const Query = new GraphQLObjectType({ name: "Query", fields: () => ({ book: { type: Book, resolve: (_, a) => books.get(a.id) } }) });
-const Book = new GraphQLObjectType({ name: "Book", fields: { title: { type: GraphQLString } } });`);
-    expect(rows(js)).toEqual(["/graphql/book"]);
+const Query = new GraphQLObjectType({ name: "Query", fields: () => ({ stadium: { type: Stadium, resolve: (_, a) => stadiums.get(a.id) } }) });
+const Stadium = new GraphQLObjectType({ name: "Stadium", fields: { title: { type: GraphQLString } } });`);
+    expect(rows(js)).toEqual(["/graphql/stadium"]);
   });
 
   it("leaves an HTTP controller's @Query() parameter and a file importing none of these alone", async () => {
     expect(await routesOf(`
 import { Controller, Get, Query } from "@nestjs/common";
-@Controller("users") export class C { @Get() list(@Query("q") q: string) { return q; } }`)).toEqual([]);
+@Controller("players") export class C { @Get() list(@Query("q") q: string) { return q; } }`)).toEqual([]);
     expect(await routesOf(`builder.queryField("x", (t) => t.field({})); queryType({ definition(t) { t.field("y", {}); } });`)).toEqual([]);
   });
 });

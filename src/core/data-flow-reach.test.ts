@@ -65,15 +65,15 @@ const reachOf = (
   symbol: string,
 ): SymbolReachSummary | undefined => summaries.find((s) => s.file === file && s.symbol === symbol);
 
-// Orders.vue::onSave → api.ts::postOrder → routes.ts::createOrder → service.ts::save,
-// where save touches entity "orders".
+// Cars.vue::onSave → api.ts::postCar → routes.ts::createCar → service.ts::save,
+// where save touches entity "cars".
 const chain: SymbolReachInput = {
   symbolLinks: [
-    link("web/Orders.vue", "onSave", "web/api.ts", "postOrder"),
-    link("web/api.ts", "postOrder", "srv/routes.ts", "createOrder", "POST /api/orders"),
-    link("srv/routes.ts", "createOrder", "srv/service.ts", "save"),
+    link("web/Cars.vue", "onSave", "web/api.ts", "postCar"),
+    link("web/api.ts", "postCar", "srv/routes.ts", "createCar", "POST /api/cars"),
+    link("srv/routes.ts", "createCar", "srv/service.ts", "save"),
   ],
-  symbolDataAccess: [dbRow("srv/service.ts", "save", "orders")],
+  symbolDataAccess: [dbRow("srv/service.ts", "save", "cars")],
 };
 
 describe("computeSymbolReach", () => {
@@ -83,7 +83,7 @@ describe("computeSymbolReach", () => {
     expect(save?.effects).toEqual([
       {
         kind: "db",
-        resource: "orders",
+        resource: "cars",
         originFile: "srv/service.ts",
         originSymbol: "save",
         distance: 0,
@@ -98,11 +98,11 @@ describe("computeSymbolReach", () => {
     const reach = computeSymbolReach(chain);
     const dist = (file: string, symbol: string): number | undefined =>
       reachOf(reach, file, symbol)?.effects[0]?.distance;
-    expect(dist("srv/routes.ts", "createOrder")).toBe(1);
-    expect(dist("web/api.ts", "postOrder")).toBe(2);
-    expect(dist("web/Orders.vue", "onSave")).toBe(3);
+    expect(dist("srv/routes.ts", "createCar")).toBe(1);
+    expect(dist("web/api.ts", "postCar")).toBe(2);
+    expect(dist("web/Cars.vue", "onSave")).toBe(3);
 
-    const caller = reachOf(reach, "srv/routes.ts", "createOrder");
+    const caller = reachOf(reach, "srv/routes.ts", "createCar");
     expect(caller?.effects[0]?.confidence).toBe("INFERRED");
     expect(caller?.effects[0]?.originSymbol).toBe("save"); // attributed to the origin
     expect(caller?.hasTransitive).toBe(true);
@@ -114,7 +114,7 @@ describe("computeSymbolReach", () => {
         link("f.ts", "a", "f.ts", "b"),
         link("f.ts", "b", "f.ts", "a"), // a↔b cycle
       ],
-      symbolDataAccess: [dbRow("f.ts", "b", "widgets")],
+      symbolDataAccess: [dbRow("f.ts", "b", "balls")],
     });
     // Both members reach the effect; the BFS just terminates (no hang).
     expect(reachOf(reach, "f.ts", "b")?.effects[0]?.distance).toBe(0);
@@ -130,12 +130,12 @@ describe("computeSymbolReach", () => {
           file: "svc.ts",
           symbol: "save",
           symbolLine: 1,
-          entity: "orders",
+          entity: "cars",
           entityMatched: true,
           datastore: "db",
           sites: [
-            { name: "Order.create", line: 10 },
-            { name: "Order.find", line: 12 },
+            { name: "Car.create", line: 10 },
+            { name: "Car.find", line: 12 },
           ],
         },
       ],
@@ -170,9 +170,9 @@ describe("computeSymbolReach", () => {
           file: "p.ts",
           symbol: "publish",
           symbolLine: 1,
-          entity: "OrderCreated",
+          entity: "CarCreated",
           entityMatched: false,
-          datastore: "orders.exchange",
+          datastore: "cars.exchange",
           access: "queue-publish",
           sites: [],
         },
@@ -192,16 +192,16 @@ describe("computeDataFlows", () => {
     const reach = computeSymbolReach(chain);
     const flows = computeDataFlows(
       reach,
-      [route("srv/routes.ts", "/api/orders", "POST", "createOrder", 6)],
-      [fns("srv/routes.ts", ["createOrder", 5, 15])],
+      [route("srv/routes.ts", "/api/cars", "POST", "createCar", 6)],
+      [fns("srv/routes.ts", ["createCar", 5, 15])],
     );
     expect(flows).toEqual([
       {
         entryKind: "route",
-        entryLabel: "POST /api/orders",
+        entryLabel: "POST /api/cars",
         entryFile: "srv/routes.ts",
         effect: "db",
-        resource: "orders",
+        resource: "cars",
         distance: 1,
         confidence: "INFERRED",
       },
@@ -210,26 +210,26 @@ describe("computeDataFlows", () => {
 
   it("emits a screen row for whatever any function of the screen's file reaches, at the shortest distance", () => {
     // The mission question as a row: which screen ends up touching which table.
-    // `web/Orders.vue` reaches `orders` only through postOrder → POST
-    // /api/orders → createOrder → save (3 hops); a second symbol of the same
+    // `web/Cars.vue` reaches `cars` only through postCar → POST
+    // /api/cars → createCar → save (3 hops); a second symbol of the same
     // file reaching it in more hops must not lengthen the distance.
     const reach = computeSymbolReach({
       ...chain,
-      symbolLinks: [...chain.symbolLinks, link("web/Orders.vue", "render", "web/Orders.vue", "onSave")],
+      symbolLinks: [...chain.symbolLinks, link("web/Cars.vue", "render", "web/Cars.vue", "onSave")],
     });
     const flows = computeDataFlows(
       reach,
       [],
-      [fns("web/Orders.vue", ["render", 1, 4], ["onSave", 5, 9])],
-      [{ name: "Orders", filePath: "web/Orders.vue", routePath: "/orders" }],
+      [fns("web/Cars.vue", ["render", 1, 4], ["onSave", 5, 9])],
+      [{ name: "Cars", filePath: "web/Cars.vue", routePath: "/cars" }],
     );
     expect(flows).toEqual([
       {
         entryKind: "screen",
-        entryLabel: "Orders /orders",
-        entryFile: "web/Orders.vue",
+        entryLabel: "Cars /cars",
+        entryFile: "web/Cars.vue",
         effect: "db",
-        resource: "orders",
+        resource: "cars",
         distance: 3,
         confidence: "INFERRED",
       },
@@ -238,11 +238,11 @@ describe("computeDataFlows", () => {
 
   it("names a routeless screen by name alone, and skips a screen that reaches nothing", () => {
     const reach = computeSymbolReach(chain);
-    const flows = computeDataFlows(reach, [], [fns("web/Orders.vue", ["onSave", 5, 9]), fns("web/Empty.vue", ["x", 1, 2])], [
-      { name: "OrderForm", filePath: "web/Orders.vue", routePath: null },
+    const flows = computeDataFlows(reach, [], [fns("web/Cars.vue", ["onSave", 5, 9]), fns("web/Empty.vue", ["x", 1, 2])], [
+      { name: "CarForm", filePath: "web/Cars.vue", routePath: null },
       { name: "Empty", filePath: "web/Empty.vue", routePath: "/empty" },
     ]);
-    expect(flows.map((f) => `${f.entryKind} ${f.entryLabel}`)).toEqual(["screen OrderForm"]);
+    expect(flows.map((f) => `${f.entryKind} ${f.entryLabel}`)).toEqual(["screen CarForm"]);
   });
 
   it("is empty when no route handler resolves to a reaching symbol", () => {
@@ -252,35 +252,35 @@ describe("computeDataFlows", () => {
   });
 
   it("resolves a route with an inline handler through its synthetic route symbol", () => {
-    // `router.get("/orders", auth, async (req, res) => …)` — plain Express, and
+    // `router.get("/cars", auth, async (req, res) => …)` — plain Express, and
     // the shape every RealWorld controller uses. There is no function span at
     // the route's line and `handler` holds the MIDDLEWARE's name, so both of
     // the name-based fallbacks miss and the route used to resolve to nothing.
-    // `symbol-linker` already mints `route:GET /orders` and links it onward, so
+    // `symbol-linker` already mints `route:GET /cars` and links it onward, so
     // the effects were sitting in the reach summary one lookup away — which is
     // how `clarifydoc_data_flows` came to report "no data
     // flows" on a repo with 19 cross-tier links and 5 file→table edges.
     const reach = computeSymbolReach({
       symbolLinks: [
-        link("srv/ctrl.ts", "route:GET /orders", "srv/repo.ts", "listOrders", "listOrders"),
+        link("srv/ctrl.ts", "route:GET /cars", "srv/repo.ts", "listCars", "listCars"),
       ],
-      symbolDataAccess: [dbRow("srv/repo.ts", "listOrders", "orders")],
+      symbolDataAccess: [dbRow("srv/repo.ts", "listCars", "cars")],
       apiCallAccess: [],
       dbAccessByLine: new Map(),
     });
 
     const flows = computeDataFlows(
       reach,
-      [route("srv/ctrl.ts", "/orders", "GET", "auth.optional", 12)],
+      [route("srv/ctrl.ts", "/cars", "GET", "auth.optional", 12)],
       [fns("srv/ctrl.ts")], // no named function anywhere near line 12
     );
 
     expect(flows).toEqual([
       expect.objectContaining({
         entryKind: "route",
-        entryLabel: "GET /orders",
+        entryLabel: "GET /cars",
         entryFile: "srv/ctrl.ts",
-        resource: "orders",
+        resource: "cars",
         distance: 1,
       }),
     ]);
@@ -291,20 +291,20 @@ describe("computeDataFlows", () => {
     // not to the registrar — otherwise every route in the file collapses onto
     // one entry carrying the union of their effects.
     const reach = computeSymbolReach({
-      symbolLinks: [link("srv/ctrl.ts", "route:GET /orders", "srv/repo.ts", "listOrders", "listOrders")],
-      symbolDataAccess: [dbRow("srv/repo.ts", "listOrders", "orders")],
+      symbolLinks: [link("srv/ctrl.ts", "route:GET /cars", "srv/repo.ts", "listCars", "listCars")],
+      symbolDataAccess: [dbRow("srv/repo.ts", "listCars", "cars")],
       apiCallAccess: [],
       dbAccessByLine: new Map(),
     });
 
     const flows = computeDataFlows(
       reach,
-      [route("srv/ctrl.ts", "/orders", "GET", null, 12)],
+      [route("srv/ctrl.ts", "/cars", "GET", null, 12)],
       [fns("srv/ctrl.ts", ["registerRoutes", 1, 40])],
     );
 
     expect(flows).toHaveLength(1);
-    expect(flows[0]).toMatchObject({ entryLabel: "GET /orders", resource: "orders" });
+    expect(flows[0]).toMatchObject({ entryLabel: "GET /cars", resource: "cars" });
   });
 });
 
@@ -312,12 +312,12 @@ describe("attributeApiCallsToSymbols", () => {
   it("attributes an outbound api-call to its enclosing function", () => {
     const analysis = {
       filePath: "svc.ts",
-      functions: [{ name: "loadUser", line: 3, endLine: 8 }],
+      functions: [{ name: "loadPlayer", line: 3, endLine: 8 }],
       classes: [],
-      dataSources: [{ kind: "api-call", name: "get", target: "/api/users/{}", line: 5, calls: [] }],
+      dataSources: [{ kind: "api-call", name: "get", target: "/api/players/{}", line: 5, calls: [] }],
     } as unknown as FileAnalysis;
     expect(attributeApiCallsToSymbols([analysis])).toEqual([
-      { file: "svc.ts", symbol: "loadUser", resource: "/api/users/{}" },
+      { file: "svc.ts", symbol: "loadPlayer", resource: "/api/players/{}" },
     ]);
   });
 
@@ -346,7 +346,7 @@ describe("computeSymbolReach — a path is as sure as its weakest link", () => {
         link("b.ts", "handler", "a.ts", "report"),
         link("c.ts", "checkout", "repo.ts", "Repo.save"),
       ],
-      symbolDataAccess: [dbRow("repo.ts", "Repo.save", "orders")],
+      symbolDataAccess: [dbRow("repo.ts", "Repo.save", "cars")],
     });
     expect(effectOf(reach, "c.ts", "checkout")).toMatchObject({ distance: 1, confidence: "INFERRED" });
     expect(effectOf(reach, "a.ts", "report")).toMatchObject({ distance: 1, confidence: "AMBIGUOUS" });
@@ -361,7 +361,7 @@ describe("computeSymbolReach — a path is as sure as its weakest link", () => {
         link("h.ts", "handler", "s.ts", "Service.run"),
         link("s.ts", "Service.run", "repo.ts", "Repo.save"),
       ],
-      symbolDataAccess: [dbRow("repo.ts", "Repo.save", "orders")],
+      symbolDataAccess: [dbRow("repo.ts", "Repo.save", "cars")],
     });
     expect(effectOf(reach, "h.ts", "handler")).toMatchObject({ distance: 2, confidence: "INFERRED" });
   });
@@ -373,20 +373,20 @@ describe("computeDataFlows — witness paths", () => {
     const at = (l: SymbolLink, line: number): SymbolLink => ({ ...l, sourceLine: line });
     const { reach, witness } = computeSymbolReachWithWitness({
       symbolLinks: [
-        at(link("routes.ts", "route:POST /orders", "ctl.ts", "OrderController.create"), 3),
-        at(link("ctl.ts", "OrderController.create", "svc.ts", "OrderService.place"), 12),
-        at(link("svc.ts", "OrderService.place", "repo.ts", "OrderRepo.save"), 40),
+        at(link("routes.ts", "route:POST /cars", "ctl.ts", "CarController.create"), 3),
+        at(link("ctl.ts", "CarController.create", "svc.ts", "CarService.place"), 12),
+        at(link("svc.ts", "CarService.place", "repo.ts", "CarRepo.save"), 40),
       ],
-      symbolDataAccess: [dbRow("repo.ts", "OrderRepo.save", "orders")],
+      symbolDataAccess: [dbRow("repo.ts", "CarRepo.save", "cars")],
     });
-    const flows = computeDataFlows(reach, [route("routes.ts", "/orders", "POST", null, 3)], [], [], witness);
+    const flows = computeDataFlows(reach, [route("routes.ts", "/cars", "POST", null, 3)], [], [], witness);
     expect(flows).toHaveLength(1);
     expect(flows[0]).toMatchObject({ distance: 3 });
     expect(flows[0]!.via).toEqual([
-      { file: "routes.ts", symbol: "route:POST /orders", line: 3 },
-      { file: "ctl.ts", symbol: "OrderController.create", line: 12 },
-      { file: "svc.ts", symbol: "OrderService.place", line: 40 },
-      { file: "repo.ts", symbol: "OrderRepo.save" },
+      { file: "routes.ts", symbol: "route:POST /cars", line: 3 },
+      { file: "ctl.ts", symbol: "CarController.create", line: 12 },
+      { file: "svc.ts", symbol: "CarService.place", line: 40 },
+      { file: "repo.ts", symbol: "CarRepo.save" },
     ]);
   });
 });

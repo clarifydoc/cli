@@ -11,11 +11,11 @@ describe("enrichGraphFromInheritance", () => {
   it("adds implementation → interface edges no import states (same namespace)", () => {
     const graph: Record<string, string[]> = {};
     enrichGraphFromInheritance(graph, [
-      file("Repo/IUserRepo.cs", [cls("IUserRepo")]),
-      file("Repo/SqlUserRepo.cs", [cls("SqlUserRepo", "BaseRepo<User>", ["Repo.IUserRepo"])]),
+      file("Repo/IPlayerRepo.cs", [cls("IPlayerRepo")]),
+      file("Repo/SqlPlayerRepo.cs", [cls("SqlPlayerRepo", "BaseRepo<Player>", ["Repo.IPlayerRepo"])]),
       file("Repo/BaseRepo.cs", [cls("BaseRepo")]),
     ]);
-    expect(graph["Repo/SqlUserRepo.cs"]!.sort()).toEqual(["Repo/BaseRepo.cs", "Repo/IUserRepo.cs"]);
+    expect(graph["Repo/SqlPlayerRepo.cs"]!.sort()).toEqual(["Repo/BaseRepo.cs", "Repo/IPlayerRepo.cs"]);
   });
 
   it("leaves imported bases, ORM relation targets and other type spaces alone", () => {
@@ -27,7 +27,7 @@ describe("enrichGraphFromInheritance", () => {
       } as Partial<FileAnalysis>),
       file("src/a.ts", [cls("A", "Base")], { language: "typescript", imports: [{ source: "lib", specifiers: ["Base"], isDefault: false, isNamespace: false, isType: false, line: 1 }] } as Partial<FileAnalysis>),
       file("src/base.ts", [cls("Base")], { language: "typescript" } as Partial<FileAnalysis>),
-      file("app/models/tag.rb", [cls("Article", "ApplicationRecord", ["Tag"])], { language: "ruby" } as Partial<FileAnalysis>),
+      file("app/models/tag.rb", [cls("Report", "ApplicationRecord", ["Tag"])], { language: "ruby" } as Partial<FileAnalysis>),
       file("prisma/schema.prisma", [cls("Tag")], { language: "prisma" } as Partial<FileAnalysis>),
     ]);
     expect(graph).toEqual({});

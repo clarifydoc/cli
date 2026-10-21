@@ -25,14 +25,14 @@ describe("JS ORM read/write classification (access)", () => {
   it("tags write verbs as write and finders as read", async () => {
     const ds = await dbOf(`
       async function f() {
-        await prisma.user.findMany();
-        await prisma.user.create({ data });
-        await userRepo.save(user);
+        await prisma.player.findMany();
+        await prisma.player.create({ data });
+        await playerRepo.save(player);
       }`);
     const byName = Object.fromEntries(ds.map((d) => [d.name, d.access]));
-    expect(byName["prisma.user.findMany"]).toBe("read");
-    expect(byName["prisma.user.create"]).toBe("write");
-    expect(byName["userRepo.save"]).toBe("write");
+    expect(byName["prisma.player.findMany"]).toBe("read");
+    expect(byName["prisma.player.create"]).toBe("write");
+    expect(byName["playerRepo.save"]).toBe("write");
   });
 });
 
@@ -54,51 +54,51 @@ async function go(ownerId: number) { await fetch(\`\${galleryUrl}?ownerCustomerI
   });
 
   it("resolves a concatenation-built const URL (the old literal-only gap)", async () => {
-    // `base + '/api/users/' + id` — the previous folder mishandled `+` and
+    // `base + '/api/players/' + id` — the previous folder mishandled `+` and
     // produced a mangled partial; the symbolic resolver reduces each runtime
     // part to `{}` and strips the leading unknown base → an app-relative path
-    // that joins `/api/users/:id`.
+    // that joins `/api/players/:id`.
     const SRC = `function go(base, id) {
-  const url = base + '/api/users/' + id;
+  const url = base + '/api/players/' + id;
   return fetch(url);
 }`;
     const calls = await apiCallsOf(SRC);
-    expect(calls[0]!.target).toBe("/api/users/{}");
+    expect(calls[0]!.target).toBe("/api/players/{}");
   });
 
   it("resolves an env-base concat const and records the env var in baseEnv", async () => {
-    const SRC = `const url = import.meta.env.VITE_API + '/orders';
+    const SRC = `const url = import.meta.env.VITE_API + '/cars';
 async function go() { await fetch(url); }`;
     const calls = await apiCallsOf(SRC);
-    expect(calls[0]!.target).toBe("/orders");
+    expect(calls[0]!.target).toBe("/cars");
     expect(calls[0]!.baseEnv).toBe("VITE_API");
   });
 
   it("chases a const-to-const base multi-hop", async () => {
     const SRC = `const base = '/api/v2';
-const url = base + '/users';
+const url = base + '/players';
 async function go() { await fetch(url); }`;
     const calls = await apiCallsOf(SRC);
-    expect(calls[0]!.target).toBe("/api/v2/users");
+    expect(calls[0]!.target).toBe("/api/v2/players");
   });
 
   it("still captures a literal URL and leaves an unresolved template unchanged", async () => {
-    const lit = await apiCallsOf(`fetch('/api/users');`);
-    expect(lit[0]!.target).toBe("/api/users");
+    const lit = await apiCallsOf(`fetch('/api/players');`);
+    expect(lit[0]!.target).toBe("/api/players");
     // No URL const in scope → template reproduced verbatim (no fixture churn).
-    const tpl = await apiCallsOf("function f(base){ return fetch(`${base}/users`); }");
-    expect(tpl[0]!.target).toBe("${base}/users");
+    const tpl = await apiCallsOf("function f(base){ return fetch(`${base}/players`); }");
+    expect(tpl[0]!.target).toBe("${base}/players");
   });
 
   it("does not treat `<name>Router.post('/x', handler)` route defs as outbound calls", async () => {
-    // Express route files name the router `productRouter`/`userRouter` and pass an
+    // Express route files name the router `partRouter`/`playerRouter` and pass an
     // imported handler identifier, so neither the literal-`router` name nor the
     // inline-function heuristic caught them → the whole route file was mis-read as
     // outbound api-calls (greencart: 17 phantom calls). The `*Router`/`*Route`
     // receiver convention fixes it.
-    const SRC = `productRouter.post("/add", authSeller, addProduct);
-productRouter.get("/list", productList);
-userRoute.delete("/:id", removeUser);`;
+    const SRC = `partRouter.post("/add", authSeller, addPart);
+partRouter.get("/list", partList);
+playerRoute.delete("/:id", removePlayer);`;
     expect(await apiCallsOf(SRC)).toHaveLength(0);
   });
 
@@ -111,8 +111,8 @@ reports.get('/summary', asyncHandler(async (req, res) => res.json({})));
 app.get('/health', (c) => c.text('ok'));
 items.get('/list', catchAsync(function (req, res) { res.end(); }));
 const api = axios.create({ baseURL: '/api' });
-api.get('/orders');`;
-    expect((await apiCallsOf(SRC)).map((c) => c.target)).toEqual(["/orders"]);
+api.get('/cars');`;
+    expect((await apiCallsOf(SRC)).map((c) => c.target)).toEqual(["/cars"]);
   });
 
   it("names the default instance of a generated SDK call on `(options?.client ?? client)`", async () => {
@@ -121,8 +121,8 @@ api.get('/orders');`;
   });
 
   it("still captures a genuine client call whose receiver isn't router-shaped", async () => {
-    const calls = await apiCallsOf(`apiClient.get("/api/products");`);
-    expect(calls.map((c) => c.target)).toContain("/api/products");
+    const calls = await apiCallsOf(`apiClient.get("/api/parts");`);
+    expect(calls.map((c) => c.target)).toContain("/api/parts");
   });
 
   it("does not map non-URL string consts (keeps the map an endpoint table)", async () => {
@@ -196,22 +196,22 @@ describe("JS ORM detection rejects DOM/builtin noise", () => {
 
   it("still treats .delete with ORM evidence in the chain as a DB op", async () => {
     const names = (await dbSourcesOf(
-      `async function go() { await prisma.user.delete({ where: { id } }); await this.userRepository.delete(id); await ctx.db.delete(users); await User.delete(id); }`,
+      `async function go() { await prisma.player.delete({ where: { id } }); await this.playerRepository.delete(id); await ctx.db.delete(players); await Player.delete(id); }`,
     )).map((d) => d.name);
-    expect(names).toEqual(["prisma.user.delete", "this.userRepository.delete", "ctx.db.delete", "User.delete"]);
+    expect(names).toEqual(["prisma.player.delete", "this.playerRepository.delete", "ctx.db.delete", "Player.delete"]);
   });
 
   it("still recognises a genuine ORM call", async () => {
-    const db = await dbSourcesOf(`async function go() { return prisma.user.findMany(); }`);
-    expect(db.map((d) => d.name)).toContain("prisma.user.findMany");
+    const db = await dbSourcesOf(`async function go() { return prisma.player.findMany(); }`);
+    expect(db.map((d) => d.name)).toContain("prisma.player.findMany");
   });
 });
 
 /**
  * Mongoose (and Sequelize/TypeORM) statics are the data layer of the typical
  * MERN backend, but the core finder/mutator verbs were absent from ORM_METHODS:
- * `Product.find({})`, `Product.findById(id)`, `Product.findByIdAndUpdate(...)`,
- * `Address.find({userId})` produced NO data source — controllers only resolved
+ * `Part.find({})`, `Part.findById(id)`, `Part.findByIdAndUpdate(...)`,
+ * `Address.find({playerId})` produced NO data source — controllers only resolved
  * for `User.*`/`Order.*` because those names happened to be hardcoded ORM roots.
  * The fix adds the finder/mutator family + a model-like-receiver gate for the
  * Array-colliding bare `find` (greencart: symbolDataAccess 9 → all controller
@@ -219,62 +219,62 @@ describe("JS ORM detection rejects DOM/builtin noise", () => {
  */
 describe("JS ORM detection recognises Mongoose model statics", () => {
   it("treats Model.find on a PascalCase model receiver as a DB op", async () => {
-    const db = await dbSourcesOf(`async function go() { return Product.find({}); }`);
-    expect(db.map((d) => d.name)).toContain("Product.find");
+    const db = await dbSourcesOf(`async function go() { return Part.find({}); }`);
+    expect(db.map((d) => d.name)).toContain("Part.find");
   });
 
   it("recognises the findById / findByIdAndUpdate family on any model", async () => {
     const names = (await dbSourcesOf(
       `async function go(id) {
-         await Product.findById(id);
-         await Product.findByIdAndUpdate(id, { inStock: true });
-         await Address.find({ userId: 1 });
-         await User.findOneAndDelete({ id });
+         await Part.findById(id);
+         await Part.findByIdAndUpdate(id, { inStock: true });
+         await Address.find({ playerId: 1 });
+         await Player.findOneAndDelete({ id });
        }`,
     )).map((d) => d.name);
-    expect(names).toContain("Product.findById");
-    expect(names).toContain("Product.findByIdAndUpdate");
+    expect(names).toContain("Part.findById");
+    expect(names).toContain("Part.findByIdAndUpdate");
     expect(names).toContain("Address.find");
-    expect(names).toContain("User.findOneAndDelete");
+    expect(names).toContain("Player.findOneAndDelete");
   });
 
   it("recognises countDocuments / deleteOne / insertMany / updateOne", async () => {
     const names = (await dbSourcesOf(
       `async function go() {
-         await Order.countDocuments();
-         await Order.deleteOne({ _id });
-         await Order.insertMany(rows);
-         await Order.updateOne({ _id }, patch);
+         await Car.countDocuments();
+         await Car.deleteOne({ _id });
+         await Car.insertMany(rows);
+         await Car.updateOne({ _id }, patch);
        }`,
     )).map((d) => d.name);
     expect(names).toEqual(
       expect.arrayContaining([
-        "Order.countDocuments", "Order.deleteOne", "Order.insertMany", "Order.updateOne",
+        "Car.countDocuments", "Car.deleteOne", "Car.insertMany", "Car.updateOne",
       ]),
     );
   });
 
   it("catches the model find inside a fluent populate/sort chain", async () => {
-    // The inner `Order.find(...)` is the DB op; the outer .populate/.sort are
+    // The inner `Car.find(...)` is the DB op; the outer .populate/.sort are
     // chain noise. The model entity still attributes via the inner call.
     const db = await dbSourcesOf(
-      `async function go() { return Order.find({ userId }).populate("items").sort({ createdAt: -1 }); }`,
+      `async function go() { return Car.find({ playerId }).populate("parts").sort({ createdAt: -1 }); }`,
     );
-    expect(db.map((d) => d.name)).toContain("Order.find");
+    expect(db.map((d) => d.name)).toContain("Car.find");
   });
 
   it("does NOT treat Array.prototype.find on a plain collection as a DB op", async () => {
-    expect(await dbSourcesOf(`const u = users.find(u => u.id === id);`)).toHaveLength(0);
-    expect(await dbSourcesOf(`const u = state.users.find(u => u.id === id);`)).toHaveLength(0);
+    expect(await dbSourcesOf(`const p = players.find(p => p.id === id);`)).toHaveLength(0);
+    expect(await dbSourcesOf(`const p = state.players.find(p => p.id === id);`)).toHaveLength(0);
   });
 
   it("does NOT treat .find(predicate) on a PascalCase-named array as a DB op", async () => {
-    // A React state array can be PascalCase (`const Product = useContext(...)`), so
-    // `Product.find(p => p._id === id)` is Array.find, not a query — the function
+    // A React state array can be PascalCase (`const Part = useContext(...)`), so
+    // `Part.find(p => p._id === id)` is Array.find, not a query — the function
     // first-arg vetoes it (greencart: AppContext/Cart/ProductDetail were false hits).
-    expect(await dbSourcesOf(`const p = Product.find((item) => item._id === id);`)).toHaveLength(0);
+    expect(await dbSourcesOf(`const p = Part.find((item) => item._id === id);`)).toHaveLength(0);
     // ...but a real query filter (object / id / none) is still a DB op.
-    expect((await dbSourcesOf(`Product.find({ inStock: true });`)).map((d) => d.name)).toContain("Product.find");
+    expect((await dbSourcesOf(`Part.find({ inStock: true });`)).map((d) => d.name)).toContain("Part.find");
   });
 
   it("does NOT treat find/all on a PascalCase JS builtin as a DB op", async () => {
@@ -428,8 +428,8 @@ describe("JS api-call trust: only a real client is believed without a URL", () =
     const calls = await apiCallsOf(`
       fastify.route({ method: 'GET', url: '/api/items', handler: listItems });
       fastify.route({ method: 'POST', url: '/api/items', handler });
-      axios({ method: 'get', url: '/api/users' });`);
-    expect(calls.map((c) => c.target)).toEqual(["/api/users"]);
+      axios({ method: 'get', url: '/api/players' });`);
+    expect(calls.map((c) => c.target)).toEqual(["/api/players"]);
   });
 });
 
@@ -439,7 +439,7 @@ describe("JS request descriptors and positional request()", () => {
       $.ajax({ type: 'POST', url: '/api/a' });
       http.request({ method: 'GET', path: '/api/b' });
       notify({ type: 'success', url: '/docs' });
-      this.$router.push({ path: '/users', params: { id } });`);
+      this.$router.push({ path: '/players', params: { id } });`);
     expect(calls.map((c) => [c.name, c.target])).toEqual([
       ["post", "/api/a"],
       ["get", "/api/b"],
@@ -481,8 +481,8 @@ describe("JS request descriptors and positional request()", () => {
   });
 
   it("unwraps a .replace() on a literal path, keeping its parameter", async () => {
-    const calls = await apiCallsOf(`axios({ method: 'GET', url: '/users/{id}'.replace('{id}', String(id)) });`);
-    expect(calls.map((c) => c.target)).toEqual(["/users/{id}"]);
+    const calls = await apiCallsOf(`axios({ method: 'GET', url: '/players/{id}'.replace('{id}', String(id)) });`);
+    expect(calls.map((c) => c.target)).toEqual(["/players/{id}"]);
   });
 });
 
@@ -531,8 +531,8 @@ describe("JS generated OpenAPI clients (openapi-generator typescript-axios)", ()
 describe("JS route decorators are not outbound calls", () => {
   it("skips NestJS @Get / @Post decorators", async () => {
     const calls = await apiCallsOf(`
-      @Controller('users')
-      export class UsersController {
+      @Controller('players')
+      export class PlayersController {
         @Get('public/:id')
         publicProfile(@Param('id') id: string) { return id; }
         @Post('sync/all')
@@ -572,18 +572,18 @@ describe("JS request factories: a descriptor URL built from a parameter", () => 
 describe("JS fetch-style calls carry their verb in the options", () => {
   it("reads method from fetch's options and from a wrapped options object", async () => {
     const calls = await apiCallsOf(`
-      fetch('/api/orders', { method: 'POST', body });
+      fetch('/api/cars', { method: 'POST', body });
       oazapfts.fetchJson('/activities', oazapfts.json({ ...opts, method: 'DELETE', body }));
-      fetch('/api/orders');
+      fetch('/api/cars');
       fetch('/api/x', { method: someVar });
       fetch('/api/y', { headers });
       fetch('/api/z', { ...init });`);
     // No init, or an init literal naming no method: the Fetch standard's GET. A method from a
     // variable or a spread is unknown.
     expect(calls.map((c) => [c.name, c.target])).toEqual([
-      ["post", "/api/orders"],
+      ["post", "/api/cars"],
       ["delete", "/activities"],
-      ["get", "/api/orders"],
+      ["get", "/api/cars"],
       ["fetch", "/api/x"],
       ["get", "/api/y"],
       ["fetch", "/api/z"],
@@ -617,8 +617,8 @@ describe("JS ORM rows need ORM evidence", () => {
   it("keeps them when the file imports an ORM or a model", async () => {
     expect((await dbSourcesOf(`import { Sequelize } from 'sequelize';
       async function go() { await item.update({ a: 1 }); }`)).map((d) => d.name)).toContain("item.update");
-    expect((await dbSourcesOf(`import Article from '../models/article';
-      async function go() { await Article.findAll(); }`)).map((d) => d.name)).toContain("Article.findAll");
+    expect((await dbSourcesOf(`import Report from '../models/report';
+      async function go() { await Report.findAll(); }`)).map((d) => d.name)).toContain("Report.findAll");
   });
 });
 
@@ -627,23 +627,23 @@ describe("SWR keys are the request", () => {
     const calls = await apiCallsOf(`
       const fetcher = (url: string) => fetch(url).then((r) => r.json());
       export function Profile({ id, token }) {
-        const { data } = useSWR("/api/user", fetcher);
-        const { data: orders } = useSWR(\`/api/users/\${id}/orders\`, fetcher);
+        const { data } = useSWR("/api/player", fetcher);
+        const { data: cars } = useSWR(\`/api/players/\${id}/cars\`, fetcher);
         const { data: me } = useSWRImmutable(["/api/me", token], fetcher);
         return null;
       }
     `);
     expect(calls.filter((c) => c.name === "GET").map((c) => c.target)).toEqual([
-      "/api/user",
-      "/api/users/${id}/orders",
+      "/api/player",
+      "/api/players/${id}/cars",
       "/api/me",
     ]);
   });
 
   it("leaves a react-query cache key alone — it labels the cache, it is not a URL", async () => {
     const calls = await apiCallsOf(`
-      export function Todos() {
-        const q = useQuery({ queryKey: ["todos"], queryFn: () => listTodos() });
+      export function Drills() {
+        const q = useQuery({ queryKey: ["drills"], queryFn: () => listDrills() });
         const s = useSWR(shouldFetch ? null : undefined, fetcher);
         return null;
       }
@@ -656,15 +656,15 @@ describe("raw SQL handed to a driver", () => {
   it("records the table any receiver's query names, read or write", async () => {
     const ds = await dbOf(`
       export async function f(id: number) {
-        await pool.query("SELECT id FROM todos WHERE id = $1", [id]);
-        await client.query(\`UPDATE todos SET done = true WHERE id = \${id}\`);
+        await pool.query("SELECT id FROM drills WHERE id = $1", [id]);
+        await client.query(\`UPDATE drills SET done = true WHERE id = \${id}\`);
         db.prepare("INSERT INTO audit_log (msg) VALUES (?)").run("x");
         await sql.unsafe("DELETE FROM sessions");
       }
     `);
     expect(ds.filter((d) => d.target).map((d) => `${d.access} ${d.target}`)).toEqual([
-      "read todos",
-      "write todos",
+      "read drills",
+      "write drills",
       "write audit_log",
       "write sessions",
     ]);
@@ -675,7 +675,7 @@ describe("raw SQL handed to a driver", () => {
       export function g(map: Map<string, string>) {
         map.get("Select a file from the list");
         router.all("/select from here", h);
-        cache.query({ where: "users" });
+        cache.query({ where: "players" });
       }
     `);
     expect(ds.filter((d) => d.target)).toEqual([]);
@@ -688,7 +688,7 @@ describe("JS api-call — a verb on an untrusted receiver needs a request path",
       const cache = new Map<string, number>();
       class Store { private seen: Set<string> = new Set(); has(k: string) { return this.seen.delete(\`a/\${k}\`); } }
       function f(id: string) {
-        cache.get("user/1");
+        cache.get("player/1");
         cy.get("[data-test=a/b]");
         searchParams.get("next/page");
       }`);
@@ -703,7 +703,7 @@ describe("JS api-call — a verb on an untrusted receiver needs a request path",
   it("keeps rooted, absolute and base-prefixed paths on an unknown receiver", async () => {
     const calls = await apiCallsOf(`
       function f(svc: any, base: string) {
-        svc.get("/api/users");
+        svc.get("/api/players");
         svc.post("https://example.com/hook");
         svc.delete(\`\${base}/items/1\`);
       }`);
@@ -711,15 +711,15 @@ describe("JS api-call — a verb on an untrusted receiver needs a request path",
   });
 
   it("keeps a relative path on a trusted client receiver", async () => {
-    const calls = await apiCallsOf(`function f() { return apiClient.get("users/1"); }`);
-    expect(calls.map((c) => c.target)).toEqual(["users/1"]);
+    const calls = await apiCallsOf(`function f() { return apiClient.get("players/1"); }`);
+    expect(calls.map((c) => c.target)).toEqual(["players/1"]);
   });
 });
 
 describe("JS api-call — path descriptors count only when handed to a client", () => {
   it("does not read route tables and mocks as requests", async () => {
     const calls = await apiCallsOf(`
-      export const routes = [{ method: "GET", path: "/users" }, { path: "/items/:id", type: "delete" }];
+      export const routes = [{ method: "GET", path: "/players" }, { path: "/items/:id", type: "delete" }];
       register({ method: "POST", path: "/hooks" });`);
     expect(calls).toEqual([]);
   });
@@ -740,10 +740,10 @@ describe("JS api-call — an aliased Node request takes a path descriptor", () =
 describe("JS database — Supabase tables", () => {
   it("reads the table and the access of supabase.from(…)", async () => {
     const ds = await dbOf(`
-      const { data } = await supabase.from("posts").select("*").eq("id", id);
+      const { data } = await supabase.from("games").select("*").eq("id", id);
       await supabase.from('comments').insert({ body });
       const rows = list.from("x");`);
-    expect(ds.map((d) => [d.entity, d.access])).toEqual([["posts", "read"], ["comments", "write"]]);
+    expect(ds.map((d) => [d.entity, d.access])).toEqual([["games", "read"], ["comments", "write"]]);
   });
 });
 
@@ -758,9 +758,9 @@ const prisma = new PrismaClient();
 async function f() {
   await client.embeddings.create({ model: "m", input: "x" });
   await mcp.callTool({ name: "t" });
-  await prisma.user.create({ data: {} });
+  await prisma.player.create({ data: {} });
 }`);
-    expect(ds.map((d) => d.name)).toEqual(["prisma.user.create"]);
+    expect(ds.map((d) => d.name)).toEqual(["prisma.player.create"]);
   });
 
   it("reads a Qdrant client's collection operations", async () => {
@@ -808,22 +808,22 @@ describe("JS api-call — the body a call sends", () => {
   it("types an object literal body from its values, through JSON.stringify and a local const", async () => {
     const calls = await apiCallsOf(`
 async function save(name: string, extra: object) {
-  await axios.post("/api/users", { name, age: 3, score: 1.5, admin: false, tags: ["a"], address: { city: "x" } });
+  await axios.post("/api/players", { name, age: 3, score: 1.5, admin: false, tags: ["a"], address: { city: "x" } });
   const dto = { title: "t", ...extra };
-  await fetch("/api/posts", { method: "POST", body: JSON.stringify(dto) });
-  await axios.get("/api/users", { params: { q: 1 } });
+  await fetch("/api/games", { method: "POST", body: JSON.stringify(dto) });
+  await axios.get("/api/players", { params: { q: 1 } });
   await http.request({ method: "PUT", url: "/api/items/1", data: { qty: 2 } });
 }`);
     const body = Object.fromEntries(calls.map((c) => [`${c.name} ${c.target}`, c.requestBody]));
-    expect(body["post /api/users"]).toEqual({
+    expect(body["post /api/players"]).toEqual({
       type: "object",
       properties: {
         name: {}, age: { type: "integer" }, score: { type: "number" }, admin: { type: "boolean" },
         tags: { type: "array", items: { type: "string" } }, address: { type: "object", properties: { city: { type: "string" } } },
       },
     });
-    expect(body["post /api/posts"]).toEqual({ type: "object", properties: { title: { type: "string" } }, additionalProperties: true });
-    expect(body["get /api/users"]).toBeUndefined();
+    expect(body["post /api/games"]).toEqual({ type: "object", properties: { title: { type: "string" } }, additionalProperties: true });
+    expect(body["get /api/players"]).toBeUndefined();
     expect(body["put /api/items/1"]).toEqual({ type: "object", properties: { qty: { type: "integer" } } });
   });
 });

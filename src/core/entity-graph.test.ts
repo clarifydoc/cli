@@ -39,28 +39,28 @@ describe("synthesizeReferencedTableEntities", () => {
   it("adds an 'inferred' node per referenced table with no entity, deduped", async () => {
     const g = graph([]);
     synthesizeReferencedTableEntities(
-      [analysis("m.php", ["orders", "customers", "orders", "order_rows"])],
+      [analysis("m.php", ["cars", "drivers", "cars", "car_parts"])],
       g,
     );
-    expect(g.nodes.map((n) => n.name).sort()).toEqual(["customers", "order_rows", "orders"]);
+    expect(g.nodes.map((n) => n.name).sort()).toEqual(["car_parts", "cars", "drivers"]);
     expect(g.nodes.every((n) => n.orm === "inferred")).toBe(true);
   });
 
   it("does NOT duplicate a table that already has an ORM entity (singular/plural)", async () => {
-    const g = graph(["Order", "User"]); // real Prisma entities
+    const g = graph(["Car", "Player"]); // real Prisma entities
     synthesizeReferencedTableEntities(
-      [analysis("m.php", ["orders", "users", "photos"])],
+      [analysis("m.php", ["cars", "players", "photos"])],
       g,
     );
-    // orders→Order and users→User are covered; only photos is new.
+    // cars→Car and players→Player are covered; only photos is new.
     const added = g.nodes.filter((n) => n.orm === "inferred").map((n) => n.name);
     expect(added).toEqual(["photos"]);
   });
 
   it("matches a query on the physical table an entity maps to, not only its class name", () => {
-    const g = graph(["User"]);
-    g.nodes[0]!.table = "app_users"; // `@Table(name = "app_users") class User`
-    synthesizeReferencedTableEntities([analysis("UserMapper.xml", ["app_users", "audit_log"])], g);
+    const g = graph(["Player"]);
+    g.nodes[0]!.table = "app_players"; // `@Table(name = "app_players") class Player`
+    synthesizeReferencedTableEntities([analysis("PlayerMapper.xml", ["app_players", "audit_log"])], g);
     expect(g.nodes.filter((n) => n.orm === "inferred").map((n) => n.name)).toEqual(["audit_log"]);
   });
 
@@ -78,16 +78,16 @@ describe("synthesizeReferencedTableEntities", () => {
     const a = {
       filePath: "m.php",
       dataSources: [
-        { kind: "database", name: "q", target: "orders", entity: "orders", line: 1, calls: [] },
-        { kind: "database", name: "q", target: "customers", entity: "customers", line: 2, calls: [] },
+        { kind: "database", name: "q", target: "cars", entity: "cars", line: 1, calls: [] },
+        { kind: "database", name: "q", target: "drivers", entity: "drivers", line: 2, calls: [] },
       ],
       entityRelations: [
         {
-          fromEntity: "orders",
-          fromField: "customer_id",
-          toEntity: "customers",
+          fromEntity: "cars",
+          fromField: "driver_id",
+          toEntity: "drivers",
           cardinality: "many-to-one",
-          foreignKey: "customer_id",
+          foreignKey: "driver_id",
           orm: "ci-query",
           confidence: "INFERRED",
         },
@@ -95,22 +95,22 @@ describe("synthesizeReferencedTableEntities", () => {
     } as unknown as FileAnalysis;
 
     synthesizeReferencedTableEntities([a], g);
-    expect(g.nodes.map((n) => n.name).sort()).toEqual(["customers", "orders"]);
+    expect(g.nodes.map((n) => n.name).sort()).toEqual(["cars", "drivers"]);
     expect(g.edges).toHaveLength(1);
     const e = g.edges[0]!;
-    expect(e.foreignKey).toBe("customer_id");
-    // customers must render as the "one" side, orders as "many".
+    expect(e.foreignKey).toBe("driver_id");
+    // drivers must render as the "one" side, cars as "many".
     const oneSide = e.sourceCardinality === "one" ? e.source : e.target;
-    expect(g.nodes.find((n) => n.id === oneSide)!.name).toBe("customers");
+    expect(g.nodes.find((n) => n.id === oneSide)!.name).toBe("drivers");
   });
 
   it("does not emit edges for ORM relations (only ci-query)", async () => {
-    const g = graph(["Order", "Customer"]);
+    const g = graph(["Car", "Driver"]);
     const a = {
       filePath: "m.php",
       dataSources: [],
       entityRelations: [
-        { fromEntity: "Order", fromField: "customer", toEntity: "Customer", cardinality: "many-to-one", orm: "eloquent" },
+        { fromEntity: "Car", fromField: "driver", toEntity: "Driver", cardinality: "many-to-one", orm: "eloquent" },
       ],
     } as unknown as FileAnalysis;
     synthesizeReferencedTableEntities([a], g);
@@ -120,17 +120,17 @@ describe("synthesizeReferencedTableEntities", () => {
 
 describe("ORM-suffix dedupe (JPA `XEntity` classes vs repository-derived names)", () => {
   it("does NOT synthesize a node when a real `<name>Entity` class covers the table", () => {
-    const g = graph(["CustomerEntity", "CachedItemEntity"]);
+    const g = graph(["DriverEntity", "CachedItemEntity"]);
     synthesizeReferencedTableEntities(
-      [analysis("a.java", ["customer", "cachedItem"])],
+      [analysis("a.java", ["driver", "cachedItem"])],
       g,
     );
     expect(g.nodes.filter((n) => n.orm === "inferred")).toEqual([]);
   });
 
   it("still synthesizes genuinely unmodeled tables next to Entity-suffixed ones", () => {
-    const g = graph(["CustomerEntity"]);
-    synthesizeReferencedTableEntities([analysis("a.java", ["customer", "auditlog"])], g);
+    const g = graph(["DriverEntity"]);
+    synthesizeReferencedTableEntities([analysis("a.java", ["driver", "auditlog"])], g);
     expect(g.nodes.filter((n) => n.orm === "inferred").map((n) => n.name)).toEqual(["auditlog"]);
   });
 });
@@ -165,7 +165,7 @@ describe("propagateStiRelations — STI subclasses inherit their base's relation
   it("re-homes a base's relations onto a cross-file STI subclass chain", () => {
     const analyses = [
       file("change_request.rb", [entityClass("ChangeRequest", "IdaModel")], [
-        rel("ChangeRequest", "employee", "Employee"),
+        rel("ChangeRequest", "referee", "Referee"),
         rel("ChangeRequest", "department", "Department"),
       ]),
       file("duty_change_request.rb", [entityClass("DutyChangeRequest", "ChangeRequest")], [
@@ -173,7 +173,7 @@ describe("propagateStiRelations — STI subclasses inherit their base's relation
       ]),
       // Grandchild in a separate file, declaring NO relations of its own.
       file("time_duty_change_request.rb", [entityClass("TimeDutyChangeRequest", "DutyChangeRequest")]),
-      file("employee.rb", [entityClass("Employee", "IdaModel")]),
+      file("referee.rb", [entityClass("Referee", "IdaModel")]),
       file("department.rb", [entityClass("Department", "IdaModel")]),
       file("duty.rb", [entityClass("Duty", "IdaModel")]),
     ];
@@ -183,17 +183,17 @@ describe("propagateStiRelations — STI subclasses inherit their base's relation
     const relsOf = (fp: string) =>
       (analyses.find((a) => a.filePath === fp)!.entityRelations ?? []).map((r) => `${r.fromEntity}.${r.fromField}->${r.toEntity}`);
 
-    // DutyChangeRequest keeps its own `duty` and inherits employee+department.
+    // DutyChangeRequest keeps its own `duty` and inherits referee+department.
     expect(relsOf("duty_change_request.rb").sort()).toEqual([
       "DutyChangeRequest.department->Department",
       "DutyChangeRequest.duty->Duty",
-      "DutyChangeRequest.employee->Employee",
+      "DutyChangeRequest.referee->Referee",
     ]);
     // The grandchild inherits all three, transitively.
     expect(relsOf("time_duty_change_request.rb").sort()).toEqual([
       "TimeDutyChangeRequest.department->Department",
       "TimeDutyChangeRequest.duty->Duty",
-      "TimeDutyChangeRequest.employee->Employee",
+      "TimeDutyChangeRequest.referee->Referee",
     ]);
     // Inherited copies are marked INFERRED (only declared ones stay EXTRACTED).
     const inherited = analyses
@@ -210,24 +210,24 @@ describe("propagateStiRelations — STI subclasses inherit their base's relation
           (e.source === nid(aName) && e.target === nid(bName)) ||
           (e.source === nid(bName) && e.target === nid(aName)),
       );
-    for (const target of ["Employee", "Department", "Duty"]) {
+    for (const target of ["Referee", "Department", "Duty"]) {
       expect(touches("TimeDutyChangeRequest", target)).toBe(true);
     }
   });
 
   it("does not duplicate a relation the subclass overrides, and is a no-op without STI", () => {
     const analyses = [
-      file("base.rb", [entityClass("Base", "ApplicationRecord")], [rel("Base", "owner", "User")]),
-      // Child overrides `owner` to point at Admin instead of User.
+      file("base.rb", [entityClass("Base", "ApplicationRecord")], [rel("Base", "owner", "Player")]),
+      // Child overrides `owner` to point at Admin instead of Player.
       file("child.rb", [entityClass("Child", "Base")], [
         { ...rel("Child", "owner", "Admin") },
       ]),
-      file("user.rb", [entityClass("User", "ApplicationRecord")]),
+      file("player.rb", [entityClass("Player", "ApplicationRecord")]),
       file("admin.rb", [entityClass("Admin", "ApplicationRecord")]),
     ];
     propagateStiRelations(analyses);
     const childRels = analyses.find((a) => a.filePath === "child.rb")!.entityRelations!;
-    // Only the child's own `owner->Admin`; the base's `owner->User` is NOT added
+    // Only the child's own `owner->Admin`; the base's `owner->Player` is NOT added
     // (same field = an override).
     expect(childRels.map((r) => `${r.fromField}->${r.toEntity}`)).toEqual(["owner->Admin"]);
 

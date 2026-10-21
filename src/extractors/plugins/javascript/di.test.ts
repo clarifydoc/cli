@@ -28,26 +28,26 @@ const param = (fn: FunctionInfo, name: string) => fn.params.find((p) => p.name =
 describe("injection points — constructor parameters and parameter properties", () => {
   it("reads the token of @Inject/@inject onto the parameter AND the property it declares", async () => {
     const r = await extract(`
-      export class OrdersService {
+      export class CarsService {
         constructor(
-          @Inject(USER_REPO) private readonly users: IUserRepository,
+          @Inject(PLAYER_REPO) private readonly players: IPlayerRepository,
           @Inject('PAYMENT') private readonly payments: IPaymentGateway,
           @Inject(forwardRef(() => LateService)) private late: ILate,
-          @inject(TYPES.UserRepo) private readonly repo: IUserRepo,
+          @inject(TYPES.PlayerRepo) private readonly repo: IPlayerRepo,
           @Inject(AUDIT_LOG) auditParam: IAuditLog,
           private readonly mailer: MailerService,
         ) {}
       }`);
-    const c = cls(r, "OrdersService");
+    const c = cls(r, "CarsService");
     const ctor = method(c, "constructor");
-    expect(param(ctor, "users")).toMatchObject({ type: "IUserRepository", qualifier: "USER_REPO" });
+    expect(param(ctor, "players")).toMatchObject({ type: "IPlayerRepository", qualifier: "PLAYER_REPO" });
     expect(param(ctor, "payments").qualifier).toBe("PAYMENT");
     expect(param(ctor, "late").qualifier).toBe("LateService");
-    expect(param(ctor, "repo").qualifier).toBe("TYPES.UserRepo");
+    expect(param(ctor, "repo").qualifier).toBe("TYPES.PlayerRepo");
     expect(param(ctor, "auditParam")).toMatchObject({ type: "IAuditLog", qualifier: "AUDIT_LOG" });
     expect(param(ctor, "mailer").qualifier).toBeUndefined();
-    expect(prop(c, "users")).toMatchObject({ type: "IUserRepository", qualifier: "USER_REPO" });
-    expect(prop(c, "repo")?.qualifier).toBe("TYPES.UserRepo");
+    expect(prop(c, "players")).toMatchObject({ type: "IPlayerRepository", qualifier: "PLAYER_REPO" });
+    expect(prop(c, "repo")?.qualifier).toBe("TYPES.PlayerRepo");
     expect(prop(c, "mailer")?.qualifier).toBeUndefined();
     // A plain parameter (no modifier) declares no property.
     expect(prop(c, "auditParam")).toBeUndefined();
@@ -58,7 +58,7 @@ describe("injection points — constructor parameters and parameter properties",
       class A {
         constructor(
           @Inject(ClockService) private readonly clock: ClockService,
-          @inject('IAccountRepo') private repo: IAccountRepo,
+          @inject('IClubRepo') private repo: IClubRepo,
           @Inject(ClockService) private untyped,
         ) {}
       }`);
@@ -101,25 +101,25 @@ describe("injection points — fields", () => {
     const r = await extract(`
       export const ANALYTICS = new InjectionToken<IAnalytics>('analytics');
       export class C {
-        private svc = inject(UserService);
+        private svc = inject(PlayerService);
         private notifier = inject<Notifier>(NOTIFIER);
         private analytics = inject(ANALYTICS);
         private formatter = inject(FORMATTER);
-        private typed: UserService = inject(UserService);
+        private typed: PlayerService = inject(PlayerService);
         private gadget = new GadgetService();
-        private wrapped = new ns.Repo<User>();
-        @Output() select = new EventEmitter<User>();
+        private wrapped = new ns.Repo<Player>();
+        @Output() select = new EventEmitter<Player>();
         private plain = makeThing();
         count = 0;
       }`);
     const c = cls(r, "C");
-    expect(prop(c, "svc")).toMatchObject({ type: "UserService" });
+    expect(prop(c, "svc")).toMatchObject({ type: "PlayerService" });
     expect(prop(c, "svc")?.qualifier).toBeUndefined();
     expect(prop(c, "notifier")).toMatchObject({ type: "Notifier", qualifier: "NOTIFIER" });
     expect(prop(c, "analytics")).toMatchObject({ type: "IAnalytics", qualifier: "ANALYTICS" });
     // Token declared elsewhere: the qualifier alone (the registration decides).
     expect(prop(c, "formatter")).toMatchObject({ type: null, qualifier: "FORMATTER" });
-    expect(prop(c, "typed")?.type).toBe("UserService");
+    expect(prop(c, "typed")?.type).toBe("PlayerService");
     expect(prop(c, "gadget")?.type).toBe("GadgetService");
     expect(prop(c, "wrapped")?.type).toBe("Repo");
     expect(prop(c, "select")?.type).toBe("EventEmitter");
@@ -154,7 +154,7 @@ describe("injection points — fields", () => {
         static shared;
         constructor(dep) { this.injected = dep; this.cache = null; }
         init() {
-          this.repo = new UserRepo();
+          this.repo = new PlayerRepo();
           if (!this.cache) this.cache = new Cache();
           this.mixed = new A();
           this.injected = new Replacement();
@@ -164,7 +164,7 @@ describe("injection points — fields", () => {
         static boot() { this.shared = new Shared(); }
       }`);
     const c = cls(r, "Svc");
-    expect(prop(c, "repo")?.type).toBe("UserRepo");
+    expect(prop(c, "repo")?.type).toBe("PlayerRepo");
     expect(prop(c, "cache")?.type).toBe("Cache");
     // Its own declaration wins.
     expect(prop(c, "audit")?.type).toBe("AuditRepo | undefined");
@@ -207,14 +207,14 @@ describe("typed locals (FunctionInfo.localTypes)", () => {
           const typedLocal: ReportService = this.moduleRef.get(ReportService);
           const newed = new ReportService();
           const notif = this.moduleRef.get<INotifier>(NOTIFIER);
-          const repo = container.get<IUserRepo>(TYPES.UserRepo);
+          const repo = container.get<IPlayerRepo>(TYPES.PlayerRepo);
           const mailer: IMailer = container.get(TYPES.Mailer);
           const bare = container.get(TYPES.Bare);
-          const resolved = container.resolve<IAccountRepo>('IAccountRepo');
+          const resolved = container.resolve<IClubRepo>('IClubRepo');
           const named = container.getNamed<ILogger>(TYPES.Logger, 'file');
-          const located = this.injector.get(UserService);
-          const tb = TestBed.inject(UserService);
-          const local = inject(UserService);
+          const located = this.injector.get(PlayerService);
+          const tb = TestBed.inject(PlayerService);
+          const local = inject(PlayerService);
           const cast = something() as GadgetService;
         }
         async boot() { const app = await NestFactory.create(AppModule); const typed = await app.resolve(ReportService); }
@@ -225,14 +225,14 @@ describe("typed locals (FunctionInfo.localTypes)", () => {
       { name: "typedLocal", type: "ReportService" },
       { name: "newed", type: "ReportService" },
       { name: "notif", type: "INotifier", qualifier: "NOTIFIER" },
-      { name: "repo", type: "IUserRepo", qualifier: "TYPES.UserRepo" },
+      { name: "repo", type: "IPlayerRepo", qualifier: "TYPES.PlayerRepo" },
       { name: "mailer", type: "IMailer", qualifier: "TYPES.Mailer" },
       { name: "bare", type: "", qualifier: "TYPES.Bare" },
-      { name: "resolved", type: "IAccountRepo" },
+      { name: "resolved", type: "IClubRepo" },
       { name: "named", type: "ILogger", qualifier: "file" },
-      { name: "located", type: "UserService" },
-      { name: "tb", type: "UserService" },
-      { name: "local", type: "UserService" },
+      { name: "located", type: "PlayerService" },
+      { name: "tb", type: "PlayerService" },
+      { name: "local", type: "PlayerService" },
       { name: "cast", type: "GadgetService" },
     ]);
     expect(method(cls(r, "S"), "boot").localTypes).toEqual([
@@ -244,13 +244,13 @@ describe("typed locals (FunctionInfo.localTypes)", () => {
   it("states no type for what is not a container lookup or a receiver type — a call initializer is kept for the linker", async () => {
     const r = await extract(`
       function f(handlers: Map<Function, Handler>) {
-        const h = handlers.get(CreateUser);
+        const h = handlers.get(CreatePlayer);
         const port = app.get('port');
         const route = app.get('/x', handler);
         const seen = new Set<string>();
-        const out: Order[] = [];
+        const out: Car[] = [];
         const value = compute();
-        const res = await this.http.get<User>('/api/user');
+        const res = await this.http.get<Player>('/api/player');
       }`);
     // The linker types `h`/`value` only through what the called function is declared to return.
     expect(r.functions.find((fn) => fn.name === "f")!.localTypes).toEqual([
@@ -278,15 +278,15 @@ describe("typed locals (FunctionInfo.localTypes)", () => {
   it("reads module-scope locals for the file's <setup> (a Vue <script setup>, a module's top level)", async () => {
     const { topLevelLocalTypes } = await import("./functions-classes.js");
     const src = `
-      import { useUserApi } from "~/composables/api";
-      const api = useUserApi();
-      const repo = new OrderRepo();
+      import { usePlayerApi } from "~/composables/api";
+      const api = usePlayerApi();
+      const repo = new CarRepo();
       async function save() { const local = makeLocal(); await api.mealplans.createOne({}); }
     `;
     const tree = await parseSource(src, "typescript" as any, "x.ts");
     expect(topLevelLocalTypes(tree, src)).toEqual([
-      { name: "api", type: "", from: "useUserApi()" },
-      { name: "repo", type: "OrderRepo" },
+      { name: "api", type: "", from: "usePlayerApi()" },
+      { name: "repo", type: "CarRepo" },
     ]);
   });
 
@@ -320,22 +320,22 @@ describe("receiver types of a lookup or cast chained into a call (CallInfo.recei
   it("types the receiver and keeps noise-named leaves on a typed receiver", async () => {
     const r = await extract(`
       function main(map: Map<string, X>) {
-        this.injector.get(UserService).countUsers();
-        container.get<IUserRepo>(TYPES.UserRepo).fetchUserById(9);
+        this.injector.get(PlayerService).countPlayers();
+        container.get<IPlayerRepo>(TYPES.PlayerRepo).fetchPlayerById(9);
         container.get(TYPES.Repo).find(1);
         (await app.resolve(ReportService)).buildReport();
         (this.gadget as GadgetService).buffGadget();
         (<GadgetService>other).waxGadget();
         (x as any).map(f);
-        cache.get(UserService).thing();
+        cache.get(PlayerService).thing();
         this.service.doWork();
       }`);
     const calls = r.functions.find((fn) => fn.name === "main")!.calls;
     const byName = (n: string) => calls.find((c) => c.name.replace(/\s+/g, "") === n);
-    expect(byName("this.injector.get(UserService).countUsers")).toMatchObject({ receiverType: "UserService" });
-    expect(byName("container.get<IUserRepo>(TYPES.UserRepo).fetchUserById")).toMatchObject({
-      receiverType: "IUserRepo",
-      receiverQualifier: "TYPES.UserRepo",
+    expect(byName("this.injector.get(PlayerService).countPlayers")).toMatchObject({ receiverType: "PlayerService" });
+    expect(byName("container.get<IPlayerRepo>(TYPES.PlayerRepo).fetchPlayerById")).toMatchObject({
+      receiverType: "IPlayerRepo",
+      receiverQualifier: "TYPES.PlayerRepo",
     });
     // A lookup by token alone carries the token and no type.
     expect(byName("container.get(TYPES.Repo).find")).toMatchObject({ receiverQualifier: "TYPES.Repo" });
@@ -345,7 +345,7 @@ describe("receiver types of a lookup or cast chained into a call (CallInfo.recei
     expect(byName("(<GadgetService>other).waxGadget")).toMatchObject({ receiverType: "GadgetService" });
     // `as any` names no receiver type: `.map` stays noise.
     expect(byName("(xasany).map")).toBeUndefined();
-    expect(byName("cache.get(UserService).thing")?.receiverType).toBeUndefined();
+    expect(byName("cache.get(PlayerService).thing")?.receiverType).toBeUndefined();
     expect(byName("this.service.doWork")?.receiverType).toBeUndefined();
   });
 });
@@ -369,14 +369,14 @@ import { Mailer } from '../mail/mailer.js';
 
 /** @implements {IAudit} */
 export class SignupService {
-  /** @type {import('../repos/user-repo.js').UserRepo} */
+  /** @type {import('../repos/player-repo.js').PlayerRepo} */
   repoField;
   other = new Mailer();
   #secret = 1;
   static shared;
 
   /**
-   * @param {UserRepo} repo
+   * @param {PlayerRepo} repo
    * @param {?Mailer} mailer
    * @param {AuditLog=} [audit]
    */
@@ -389,9 +389,9 @@ export class SignupService {
     this.untyped = compute();
   }
 
-  /** @param {UserRepo} extraRepo */
+  /** @param {PlayerRepo} extraRepo */
   run(extraRepo) {
-    /** @type {UserRepo} */
+    /** @type {PlayerRepo} */
     const r = locate('repo');
     const m = new Mailer();
   }
@@ -403,10 +403,10 @@ export class AuditLog {
   writeAudit(e) { throw new Error('abstract'); }
 }
 
-/** @param {UserRepo} repo */
+/** @param {PlayerRepo} repo */
 export function standalone(repo) {}
 
-/** @param {UserRepo} repo */
+/** @param {PlayerRepo} repo */
 export const arrow = (repo) => repo;
 `;
 
@@ -416,29 +416,29 @@ export const arrow = (repo) => repo;
     expect(c.implements).toEqual(["IAudit"]);
     const ctor = method(c, "constructor");
     expect(ctor.params.map((p) => [p.name, p.type, p.defaultValue])).toEqual([
-      ["repo", "UserRepo", null],
+      ["repo", "PlayerRepo", null],
       ["mailer", "Mailer", null],
       ["audit", "AuditLog", "defaultAudit"],
     ]);
-    expect(prop(c, "repoField")?.type).toBe("UserRepo");
+    expect(prop(c, "repoField")?.type).toBe("PlayerRepo");
     expect(prop(c, "other")?.type).toBe("Mailer");
     expect(prop(c, "#secret")).toMatchObject({ visibility: "private", type: null });
     expect(prop(c, "shared")).toMatchObject({ isStatic: true });
-    expect(prop(c, "repo")?.type).toBe("UserRepo");
+    expect(prop(c, "repo")?.type).toBe("PlayerRepo");
     expect(prop(c, "mailer")?.type).toBe("Mailer");
     expect(prop(c, "audit")?.type).toBe("AuditLog");
     expect(prop(c, "clock")?.type).toBe("Clock");
     // Nothing states the type: not invented.
     expect(prop(c, "untyped")).toBeUndefined();
     const run = method(c, "run");
-    expect(param(run, "extraRepo").type).toBe("UserRepo");
+    expect(param(run, "extraRepo").type).toBe("PlayerRepo");
     expect(run.localTypes).toEqual([
-      { name: "r", type: "UserRepo" },
+      { name: "r", type: "PlayerRepo" },
       { name: "m", type: "Mailer" },
     ]);
     expect(cls(r, "AuditLog").kind).toBe("interface");
-    expect(param(r.functions.find((f) => f.name === "standalone")!, "repo").type).toBe("UserRepo");
-    expect(param(r.functions.find((f) => f.name === "arrow")!, "repo").type).toBe("UserRepo");
+    expect(param(r.functions.find((f) => f.name === "standalone")!, "repo").type).toBe("PlayerRepo");
+    expect(param(r.functions.find((f) => f.name === "arrow")!, "repo").type).toBe("PlayerRepo");
   });
 
   it("a TypeScript annotation wins over JSDoc", async () => {
@@ -450,21 +450,21 @@ export const arrow = (repo) => repo;
 });
 
 describe("variable aliases skip container lookups", () => {
-  it("does not bind `const x = inject(UserService)` to @angular/core", async () => {
+  it("does not bind `const x = inject(PlayerService)` to @angular/core", async () => {
     const src = `
       import { inject } from '@angular/core';
-      import { useUserStore } from './stores/users';
+      import { usePlayerStore } from './stores/players';
       function f() {
-        const local = inject(UserService);
-        const store = useUserStore();
+        const local = inject(PlayerService);
+        const store = usePlayerStore();
       }`;
     const tree = await parseSource(src, "typescript" as any, "x.ts");
     const imports: ImportInfo[] = [
       { source: "@angular/core", specifiers: ["inject"], isDefault: false, isNamespace: false, isType: false, line: 2 },
-      { source: "./stores/users", specifiers: ["useUserStore"], isDefault: false, isNamespace: false, isType: false, line: 3 },
+      { source: "./stores/players", specifiers: ["usePlayerStore"], isDefault: false, isNamespace: false, isType: false, line: 3 },
     ];
     const aliases = extractJsVariableAliases(tree, imports);
     expect(aliases.has("local")).toBe(false);
-    expect(aliases.get("store")).toMatchObject({ source: "./stores/users", factory: "useUserStore" });
+    expect(aliases.get("store")).toMatchObject({ source: "./stores/players", factory: "usePlayerStore" });
   });
 });

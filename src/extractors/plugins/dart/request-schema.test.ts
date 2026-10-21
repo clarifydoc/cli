@@ -40,7 +40,7 @@ describe("Dart request-schema hooks", () => {
   });
 
   it("binds a shelf Request to services and says nothing about the rest", () => {
-    const route = { path: "/users/<id>", httpMethod: "GET", kind: "api" as const, handler: "_getUser", calls: [], middleware: [], line: 1 };
+    const route = { path: "/players/<id>", httpMethod: "GET", kind: "api" as const, handler: "_getPlayer", calls: [], middleware: [], line: 1 };
     expect(h.bindParam!({ name: "request", type: "Request", defaultValue: null }, route)).toBe("services");
     expect(h.bindParam!({ name: "id", type: "String", defaultValue: null }, route)).toBeNull();
   });
@@ -50,14 +50,14 @@ describe("Dart class fields", () => {
   it("takes typed fields with annotations, nullability and initializers; skips method locals", () => {
     const [cls] = classes(
       [
-        "class User {",
+        "class Player {",
         "  final int id;",
         "  @JsonKey(name: 'created_at')",
         "  final DateTime? createdAt;",
         "  @JsonKey(name: 'tag_list') final List<String> tags;",
         "  String? nickname;",
         "  int loginCount = 0;",
-        "  static const String table = 'users';",
+        "  static const String table = 'players';",
         "  final Map<String, int> _scores = {",
         "    'a': 1,",
         "  };",
@@ -101,21 +101,21 @@ describe("Dart request access", () => {
       { name: "x-tenant", type: null, binding: "header" },
       { name: "id", type: null, binding: "route" },
     ]);
-    expect(extractDartRequestAccess(["final user = User.fromJson(jsonDecode(await req.readAsString()) as Map<String, dynamic>);"], { name: "h", params: [] })).toEqual([
-      { name: "user", type: "User", binding: "body" },
+    expect(extractDartRequestAccess(["final player = Player.fromJson(jsonDecode(await req.readAsString()) as Map<String, dynamic>);"], { name: "h", params: [] })).toEqual([
+      { name: "player", type: "Player", binding: "body" },
     ]);
   });
 
   it("lands on FunctionInfo.requestAccess for a handler method", () => {
     const [fn] = functions(
       [
-        "Future<Response> _createUser(Request request) async {",
-        "  final user = User.fromJson(jsonDecode(await request.readAsString()) as Map<String, dynamic>);",
+        "Future<Response> _createPlayer(Request request) async {",
+        "  final player = Player.fromJson(jsonDecode(await request.readAsString()) as Map<String, dynamic>);",
         "  return Response(201);",
         "}",
       ].join("\n"),
     );
-    expect(fn.requestAccess).toEqual([{ name: "user", type: "User", binding: "body" }]);
+    expect(fn.requestAccess).toEqual([{ name: "player", type: "Player", binding: "body" }]);
   });
 });
 
@@ -123,8 +123,8 @@ describe("shelf Pipeline middleware", () => {
   it("inherits auth middleware from a wrapped Pipeline onto the router's routes", () => {
     const r = routes(`
       final router = Router();
-      router.get('/users', _listUsers);
-      router.post('/users', _createUser);
+      router.get('/players', _listPlayers);
+      router.post('/players', _createPlayer);
       final handler = const Pipeline()
           .addMiddleware(logRequests())
           .addMiddleware(authMiddleware(secret: 'x'))

@@ -22,44 +22,44 @@ describe("Raku routines, classes and imports", () => {
     "",
     "role Repo { method find(Int $id) { ... } }",
     "",
-    "class OrderService is BaseService does Repo {",
-    "    has Str $.name is rw = 'orders';",
+    "class CarService is BaseService does Repo {",
+    "    has Str $.name is rw = 'cars';",
     "    has Repo $!repo is required;",
     "    has @.items;",
     "",
-    "    method close-order(Int $id, Bool :$force = False --> Order) {",
+    "    method close-car(Int $id, Bool :$force = False --> Car) {",
     "        if ($force) { self.audit($id) }",
-    "        my $order = $!repo.find($id);",
-    "        $order.mark-closed;",
-    "        notify-customer($order);",
+    "        my $car = $!repo.find($id);",
+    "        $car.mark-closed;",
+    "        notify-driver($car);",
     "    }",
     "    method !audit($id) { }",
     "}",
     "",
-    "sub notify-customer(Order $order) is export { say \"closed\"; }",
+    "sub notify-driver(Car $car) is export { say \"closed\"; }",
     "multi greet(Str $who) { greet-all([$who]) }",
     "",
     "=begin pod",
-    "Call close-order() when done.",
+    "Call close-car() when done.",
     "=end pod",
   ].join("\n"));
 
   it("reads classes, roles and attributes", () => {
     expect(a.classes.map((c) => [c.name, c.kind ?? "class", c.extends, c.implements, c.properties.map((p) => `${p.name}:${p.type}:${p.visibility}`)])).toEqual([
       ["Repo", "interface", null, [], []],
-      ["OrderService", "class", "BaseService", ["Repo"], ["name:Str:public", "repo:Repo:private", "items:Array:public"]],
+      ["CarService", "class", "BaseService", ["Repo"], ["name:Str:public", "repo:Repo:private", "items:Array:public"]],
     ]);
   });
 
   it("reads hyphenated routines, typed params and return types", () => {
-    const close = fn(a, "close-order")!;
+    const close = fn(a, "close-car")!;
     expect(close.params).toEqual([
       { name: "id", type: "Int", defaultValue: null },
       { name: "force", type: "Bool", defaultValue: "False" },
     ]);
-    expect(close.returnType).toBe("Order");
-    expect(close.calls.map((c) => c.name)).toEqual(["self.audit", "repo.find", "order.mark-closed", "notify-customer"]);
-    expect(a.functions.map((f) => f.name)).toEqual(["notify-customer", "greet"]);
+    expect(close.returnType).toBe("Car");
+    expect(close.calls.map((c) => c.name)).toEqual(["self.audit", "repo.find", "car.mark-closed", "notify-driver"]);
+    expect(a.functions.map((f) => f.name)).toEqual(["notify-driver", "greet"]);
     expect(fn(a, "greet")!.calls.map((c) => c.name)).toEqual(["greet-all"]);
   });
 
@@ -69,8 +69,8 @@ describe("Raku routines, classes and imports", () => {
   });
 
   it("reads a unit class as the whole file", () => {
-    const u = analyze(["unit class Shop::Customer;", "has Str $.email;", "method greet() { say-hi(self.email) }"].join("\n"));
-    expect(u.classes.map((c) => [c.name, c.methods.map((m) => m.name), c.properties.map((p) => p.name)])).toEqual([["Shop::Customer", ["greet"], ["email"]]]);
+    const u = analyze(["unit class Shop::Driver;", "has Str $.email;", "method greet() { say-hi(self.email) }"].join("\n"));
+    expect(u.classes.map((c) => [c.name, c.methods.map((m) => m.name), c.properties.map((p) => p.name)])).toEqual([["Shop::Driver", ["greet"], ["email"]]]);
   });
 });
 
@@ -80,8 +80,8 @@ describe("Raku routes and data access", () => {
       "sub routes() is export {",
       "    route {",
       "        get -> { content 'text/plain', 'ok' }",
-      "        get -> 'orders', Int $id { content 'application/json', find-order($id) }",
-      "        post -> 'orders', Int $id, 'close', Str :$reason { close-order($id) }",
+      "        get -> 'cars', Int $id { content 'application/json', find-car($id) }",
+      "        post -> 'cars', Int $id, 'close', Str :$reason { close-car($id) }",
       "        include 'api' => api-routes();",
       "    }",
       "}",
@@ -94,8 +94,8 @@ describe("Raku routes and data access", () => {
     ].join("\n"), "lib/Routes.rakumod");
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} [${r.calls.map((c) => c.name)}]`)).toEqual([
       "GET / [content]",
-      "GET /orders/{id} [find-order,content]",
-      "POST /orders/{id}/close [close-order]",
+      "GET /cars/{id} [find-car,content]",
+      "POST /cars/{id}/close [close-car]",
       "GET /api/files/* [static]",
       "GET /health/{check} [render-health,response.html]",
     ]);
@@ -106,20 +106,20 @@ describe("Raku routes and data access", () => {
       "sub load($dbh, $id) {",
       "    my $sth = $dbh.prepare(q:to/SQL/);",
       "        SELECT id, total",
-      "        FROM orders WHERE id = ?",
+      "        FROM cars WHERE id = ?",
       "        SQL",
       "    $dbh.execute('DELETE FROM sessions WHERE id = ?', $id);",
       "    my $crm = Cro::HTTP::Client.new(base-uri => 'https://crm.example.com/v2');",
-      "    await $crm.post('/orders/closed', body => { :$id });",
-      "    await Cro::HTTP::Client.get(\"https://crm.example.com/v2/customers/$id\");",
+      "    await $crm.post('/cars/closed', body => { :$id });",
+      "    await Cro::HTTP::Client.get(\"https://crm.example.com/v2/drivers/$id\");",
       "    my $msg = 'Select a file from the list';",
       "}",
     ].join("\n"));
     expect(a.dataSources.map((d) => `${d.kind} ${d.name}${d.entity ? ` ${d.entity}` : ""}@${d.line}`)).toEqual([
-      "database SELECT orders@2",
+      "database SELECT cars@2",
       "database DELETE FROM sessions@6",
-      "api-call POST https://crm.example.com/v2/orders/closed@8",
-      "api-call GET https://crm.example.com/v2/customers/{id}@9",
+      "api-call POST https://crm.example.com/v2/cars/closed@8",
+      "api-call GET https://crm.example.com/v2/drivers/{id}@9",
     ]);
     expect(fn(a, "load")!.calls.map((c) => c.name)).not.toContain("FROM");
   });

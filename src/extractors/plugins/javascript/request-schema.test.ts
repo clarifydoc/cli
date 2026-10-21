@@ -3,7 +3,7 @@ import { javascriptRequestSchema as h } from "./request-schema.js";
 import type { PropertyInfo } from "../../../types/analysis.js";
 
 const prop = (decorators: string[], extra: Partial<PropertyInfo> = {}): PropertyInfo => ({
-  name: "userName", type: "string", visibility: null, isStatic: false, isReadonly: false, decorators, ...extra,
+  name: "playerName", type: "string", visibility: null, isStatic: false, isReadonly: false, decorators, ...extra,
 });
 
 describe("TypeScript request-schema hooks", () => {
@@ -32,20 +32,20 @@ describe("TypeScript request-schema hooks", () => {
     expect(h.describeType("Set<number>")).toEqual({ kind: "array", element: "number" });
     expect(h.describeType("Record<string, Item>")).toEqual({ kind: "map", value: "Item" });
     expect(h.describeType("Map<string, Array<Item>>")).toEqual({ kind: "map", value: "Array<Item>" });
-    expect(h.describeType("Promise<CreateUserDto>")).toEqual({ kind: "object", name: "CreateUserDto" });
+    expect(h.describeType("Promise<CreatePlayerDto>")).toEqual({ kind: "object", name: "CreatePlayerDto" });
     expect(h.describeType("Partial<Address>")).toEqual({ kind: "object", name: "Address" });
     expect(h.describeType("'a' | 'b'")).toEqual({ kind: "scalar", schema: { type: "string", enum: ["a", "b"] } });
     expect(h.describeType("A | B")).toEqual({ kind: "any" });
-    expect(h.describeType("CreateUserDto")).toEqual({ kind: "object", name: "CreateUserDto" });
-    expect(h.describeType("models.User")).toEqual({ kind: "object", name: "models.User" });
+    expect(h.describeType("CreatePlayerDto")).toEqual({ kind: "object", name: "CreatePlayerDto" });
+    expect(h.describeType("models.Player")).toEqual({ kind: "object", name: "models.Player" });
   });
 
   it("reads wire names from Expose / JsonProperty / ApiProperty, else the declared name", () => {
-    expect(h.serializedName(prop(["Expose({ name: 'user_name' })"]))).toBe("user_name");
-    expect(h.serializedName(prop(['JsonProperty("user_name")']))).toBe("user_name");
-    expect(h.serializedName(prop(["ApiProperty({ name: 'user_name', required: true })"]))).toBe("user_name");
-    expect(h.serializedName(prop(["Expose()"]))).toBe("userName");
-    expect(h.serializedName(prop([]))).toBe("userName");
+    expect(h.serializedName(prop(["Expose({ name: 'player_name' })"]))).toBe("player_name");
+    expect(h.serializedName(prop(['JsonProperty("player_name")']))).toBe("player_name");
+    expect(h.serializedName(prop(["ApiProperty({ name: 'player_name', required: true })"]))).toBe("player_name");
+    expect(h.serializedName(prop(["Expose()"]))).toBe("playerName");
+    expect(h.serializedName(prop([]))).toBe("playerName");
   });
 
   it("serializes public instance fields that are not excluded", () => {
@@ -67,7 +67,7 @@ describe("TypeScript request-schema hooks", () => {
   });
 
   it("binds framework objects of an Express handler to services and says nothing about the rest", () => {
-    const route = { path: "/users/:id", httpMethod: "GET", kind: "api" as const, handler: "getUser", calls: [], middleware: [], line: 1 };
+    const route = { path: "/players/:id", httpMethod: "GET", kind: "api" as const, handler: "getPlayer", calls: [], middleware: [], line: 1 };
     const p = (name: string, type: string | null = null) => ({ name, type, defaultValue: null });
     expect(h.bindParam!(p("req"), route)).toBe("services");
     expect(h.bindParam!(p("res", "Response"), route)).toBe("services");

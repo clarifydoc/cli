@@ -5,7 +5,7 @@ import { javaKotlinRouteExtractor } from "./index.js";
 import type { RouteInfo } from "../../../../types/analysis.js";
 
 async function routesOf(source: string, lang: "java" | "kotlin" = "java"): Promise<RouteInfo[]> {
-  const file = lang === "java" ? "Books.java" : "Shows.kt";
+  const file = lang === "java" ? "Stadiums.java" : "Shows.kt";
   const tree = await parseSource(source, lang as any, file);
   return javaKotlinRouteExtractor.extractRoutes(tree, source, file);
 }
@@ -16,23 +16,23 @@ describe("JVM GraphQL controllers", () => {
     const routes = await routesOf(`
 import org.springframework.graphql.data.method.annotation.*;
 @Controller
-public class BookController {
+public class StadiumController {
   @QueryMapping
-  public Book bookById(@Argument String id) { return repo.load(id); }
-  @MutationMapping(name = "addBook")
+  public Stadium stadiumById(@Argument String id) { return repo.load(id); }
+  @MutationMapping(name = "addStadium")
   @PreAuthorize("hasRole('ADMIN')")
-  public Book add(@Argument("input") BookInput input) { return repo.save(input); }
-  @SchemaMapping(typeName = "Query", field = "authors")
-  public List<Author> authors() { return List.of(); }
-  @SchemaMapping(typeName = "Book", field = "author")
-  public Author author(Book book) { return null; }
+  public Stadium add(@Argument("input") StadiumInput input) { return repo.save(input); }
+  @SchemaMapping(typeName = "Query", field = "scouts")
+  public List<Scout> scouts() { return List.of(); }
+  @SchemaMapping(typeName = "Stadium", field = "scout")
+  public Scout scout(Stadium stadium) { return null; }
   @GetMapping("/health") public String health() { return "ok"; }
 }`);
     expect(rows(routes)).toEqual([
       "GET /health → health",
-      "POST /graphql/bookById → BookController.bookById (id: String)",
-      "POST /graphql/addBook → BookController.add (input: BookInput)",
-      "POST /graphql/authors → BookController.authors",
+      "POST /graphql/stadiumById → StadiumController.stadiumById (id: String)",
+      "POST /graphql/addStadium → StadiumController.add (input: StadiumInput)",
+      "POST /graphql/scouts → StadiumController.scouts",
     ]);
     expect(routes[2]!.middleware).toEqual([`PreAuthorize("hasRole('ADMIN')")`]);
     expect(routes[1]!.calls.map((c) => c.name)).toContain("repo.load");

@@ -33,7 +33,7 @@ describe("Julia functions, types and imports", () => {
       "    conn",
       "    table::String",
       "end",
-      "function find(repo::PgRepo, id::Int=1; strict=false)::Order",
+      "function find(repo::PgRepo, id::Int=1; strict=false)::Car",
       "    if id > 0 && strict",
       "        load(repo, id)",
       "    end",
@@ -41,7 +41,7 @@ describe("Julia functions, types and imports", () => {
       "        parse_row(f)",
       "    end",
       "end",
-      "total(o::Order) = o.total * rate()",
+      "total(o::Car) = o.total * rate()",
       "macro trace(ex)",
       "    esc(ex)",
       "end",
@@ -56,7 +56,7 @@ describe("Julia functions, types and imports", () => {
       { name: "id", type: "Int", defaultValue: "1" },
       { name: "strict", type: null, defaultValue: "false" },
     ]);
-    expect(fns.find!.returnType).toBe("Order");
+    expect(fns.find!.returnType).toBe("Car");
     expect(fns.find!.calls.map((c) => c.name)).toEqual(["load", "open", "parse_row"]);
     expect(fns.total!.calls.map((c) => c.name)).toEqual(["rate"]);
     expect(a.complexities?.find((c) => c.functionName === "find")?.complexity).toBe(3);
@@ -70,27 +70,27 @@ describe("Julia functions, types and imports", () => {
 describe("Julia routes and data access", () => {
   it("reads Genie, Oxygen and HTTP.jl routes", async () => {
     const a = await analyze([
-      'route("/api/orders") do',
-      "    json(open_orders())",
+      'route("/api/cars") do',
+      "    json(open_cars())",
       "end",
-      'route("/api/orders/:id::Int", method = POST) do',
-      "    close_order(payload(:id))",
+      'route("/api/cars/:id::Int", method = POST) do',
+      "    close_car(payload(:id))",
       "end",
-      'route("/api/customers/:id", customer_handler)',
+      'route("/api/drivers/:id", driver_handler)',
       '@get "/health" function(req)',
       '    "ok"',
       "end",
       '@route ["GET", "POST"] "/echo" echo',
-      'HTTP.register!(router, "DELETE", "/api/orders/{id}", delete_order)',
+      'HTTP.register!(router, "DELETE", "/api/cars/{id}", delete_car)',
     ].join("\n"));
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler} [${r.calls.map((c) => c.name)}]`)).toEqual([
-      "GET /api/orders -> null [open_orders]",
-      "POST /api/orders/{id} -> null [close_order,payload]",
-      "GET /api/customers/{id} -> customer_handler []",
+      "GET /api/cars -> null [open_cars]",
+      "POST /api/cars/{id} -> null [close_car,payload]",
+      "GET /api/drivers/{id} -> driver_handler []",
       "GET /health -> null []",
       "GET /echo -> echo []",
       "POST /echo -> echo []",
-      "DELETE /api/orders/{id} -> delete_order []",
+      "DELETE /api/cars/{id} -> delete_car []",
     ]);
     // Registering a route runs at load; its do-block runs per request.
     expect(a.functions.find((f) => f.name === "<setup>")?.calls.map((c) => c.name)).toEqual(["route", "HTTP.register!"]);
@@ -99,13 +99,13 @@ describe("Julia routes and data access", () => {
   it("reads SQL in strings and HTTP calls, interpolations as holes", async () => {
     const a = await analyze([
       "f(conn, id) = LibPQ.execute(conn, \"DELETE FROM sessions WHERE id = $id\")",
-      "g(id) = HTTP.get(\"https://crm.example.com/v2/customers/$(id)\")",
+      "g(id) = HTTP.get(\"https://crm.example.com/v2/drivers/$(id)\")",
       "h() = HTTP.request(\"POST\", \"/api/events\")",
       "msg = \"Select a file from the list\"",
     ].join("\n"));
     expect(a.dataSources.map((d) => `${d.kind} ${d.name}${d.entity ? ` ${d.entity}` : ""}`)).toEqual([
       "database DELETE FROM sessions",
-      "api-call GET https://crm.example.com/v2/customers/{id}",
+      "api-call GET https://crm.example.com/v2/drivers/{id}",
       "api-call POST /api/events",
     ]);
   });

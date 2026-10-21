@@ -28,11 +28,11 @@ describe("mermaidLabel", () => {
 describe("idFactory", () => {
   it("never merges two different keys that sanitize alike", () => {
     const id = idFactory("n");
-    const a = id("app/user.ts");
-    const b = id("app-user.ts");
+    const a = id("app/player.ts");
+    const b = id("app-player.ts");
     expect(a).not.toBe(b);
     // …and the same key always comes back to the same id.
-    expect(id("app/user.ts")).toBe(a);
+    expect(id("app/player.ts")).toBe(a);
   });
 
   it("produces ids Mermaid can parse", () => {

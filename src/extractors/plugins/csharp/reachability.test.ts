@@ -13,6 +13,6 @@ describe("C# reachability — what PowerShell and the compiler load", () => {
     expect(passive(analysis("GetFoo.cs", { name: "GetFooCommand", extends: "PSCmdlet", decorators: ['Cmdlet(VerbsCommon.Get, "Foo")'] }))).not.toBeNull();
     expect(passive(analysis("MyGen.cs", { name: "MyGen", extends: "IIncrementalGenerator", decorators: ["Generator"] }))).not.toBeNull();
     expect(passive(analysis("Fix.cs", { name: "Fix", extends: "CodeFixProvider" }))).not.toBeNull();
-    expect(passive(analysis("Orphan.cs", { name: "OrphanThing" }))).toBeNull();
+    expect(passive(analysis("Orphan.cs", { name: "OrphanBall" }))).toBeNull();
   });
 });

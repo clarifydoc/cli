@@ -8,7 +8,7 @@ import type { RouteInfo } from "../../../../types/analysis.js";
  * Symfony's #[Route] attributes were only understood by the dormant PHP regex
  * spec — PHP parses via tree-sitter, so Symfony apps produced zero routes.
  */
-async function routesOf(source: string, filePath = "src/Controller/UserController.php"): Promise<RouteInfo[]> {
+async function routesOf(source: string, filePath = "src/Controller/PlayerController.php"): Promise<RouteInfo[]> {
   const tree = await parseSource(source, "php" as any, filePath);
   return phpRouteExtractor.extractRoutes(tree, source, filePath);
 }
@@ -21,8 +21,8 @@ namespace App\\Controller;
 
 use Symfony\\Component\\Routing\\Attribute\\Route;
 
-#[Route('/api/users', name: 'users_')]
-class UserController extends AbstractController
+#[Route('/api/players', name: 'players_')]
+class PlayerController extends AbstractController
 {
     #[Route('', name: 'list', methods: ['GET'])]
     public function list(): JsonResponse
@@ -33,25 +33,25 @@ class UserController extends AbstractController
     #[Route('/{id}', name: 'show', methods: ['GET', 'HEAD'])]
     public function show(int $id): JsonResponse
     {
-        return $this->json($this->repo->loadUser($id));
+        return $this->json($this->repo->loadPlayer($id));
     }
 
     #[Route('/{id}', methods: ['DELETE'])]
     public function remove(int $id): Response
     {
-        $this->repo->removeUser($id);
+        $this->repo->removePlayer($id);
         return new Response(null, 204);
     }
 }`;
     const routes = await routesOf(SRC);
     expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`).sort()).toEqual([
-      "DELETE /api/users/{id} -> remove",
-      "GET /api/users -> list",
-      "GET /api/users/{id} -> show",
-      "HEAD /api/users/{id} -> show",
+      "DELETE /api/players/{id} -> remove",
+      "GET /api/players -> list",
+      "GET /api/players/{id} -> show",
+      "HEAD /api/players/{id} -> show",
     ]);
     const show = routes.find((r) => r.handler === "show")!;
-    expect(show.calls.some((c) => /loadUser/.test(c.name ?? ""))).toBe(true);
+    expect(show.calls.some((c) => /loadPlayer/.test(c.name ?? ""))).toBe(true);
   });
 
   it("treats a methods:-less #[Route] as a verb wildcard and honors verb attributes", async () => {
@@ -90,28 +90,28 @@ describe("Symfony guards and parameter bindings", () => {
     const SRC = `<?php
 namespace App\\Controller;
 
-#[Route('/api/users')]
+#[Route('/api/players')]
 #[IsGranted('ROLE_ADMIN')]
-class UserController extends AbstractController
+class PlayerController extends AbstractController
 {
     #[Route('/{id}', methods: ['POST'])]
     #[IsGranted('ROLE_EDITOR')]
     public function update(
         int $id,
-        #[MapRequestPayload] CreateUserDto $dto,
+        #[MapRequestPayload] CreatePlayerDto $dto,
         #[MapQueryParameter] ?string $q,
         #[MapQueryParameter(name: 'page_size')] int $pageSize = 20,
         Request $request,
-        #[CurrentUser] ?User $me = null,
-        UserRepository $repo,
+        #[CurrentUser] ?Player $me = null,
+        PlayerRepository $repo,
     ): JsonResponse {
         $trace = $request->headers->get('X-Trace');
         return $this->json([]);
     }
 
     #[Route('/{id}', methods: ['GET'])]
-    #[IsGranted('view', 'user')]
-    public function show(User $user, LoggerInterface $logger): JsonResponse { return $this->json($user); }
+    #[IsGranted('view', 'player')]
+    public function show(Player $player, LoggerInterface $logger): JsonResponse { return $this->json($player); }
 
     #[Route('', methods: ['GET'])]
     #[Security("is_granted('ROLE_ADMIN') or is_granted('ROLE_AUDITOR')")]
@@ -129,21 +129,21 @@ class UserController extends AbstractController
     expect(update.auth).toEqual({ roles: ["ROLE_ADMIN", "ROLE_EDITOR"], policies: [], schemes: [], anonymous: false, inherited: false });
     expect(update.params).toEqual([
       { name: "id", type: "int", binding: "route", inferred: true },
-      { name: "dto", type: "CreateUserDto", binding: "body" },
+      { name: "dto", type: "CreatePlayerDto", binding: "body" },
       { name: "q", type: "string", binding: "query" },
       { name: "page_size", type: "int", binding: "query" },
       { name: "request", type: "Request", binding: "services", inferred: true },
-      { name: "me", type: "User", binding: "services" },
-      { name: "repo", type: "UserRepository", binding: "services", inferred: true },
+      { name: "me", type: "Player", binding: "services" },
+      { name: "repo", type: "PlayerRepository", binding: "services", inferred: true },
       { name: "X-Trace", type: null, binding: "header", inferred: true },
     ]);
 
     // A voter attribute with a subject is a policy; an entity on a route with a
     // path parameter is loaded by the entity value resolver (route, inferred).
     const show = byHandler("show");
-    expect(show.auth).toMatchObject({ roles: ["ROLE_ADMIN"], policies: ["view,user"], inherited: false });
+    expect(show.auth).toMatchObject({ roles: ["ROLE_ADMIN"], policies: ["view,player"], inherited: false });
     expect(show.params).toEqual([
-      { name: "user", type: "User", binding: "route", inferred: true },
+      { name: "player", type: "Player", binding: "route", inferred: true },
       { name: "logger", type: "LoggerInterface", binding: "services", inferred: true },
     ]);
 

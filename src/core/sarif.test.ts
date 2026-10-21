@@ -43,7 +43,7 @@ describe("buildSarif — structural findings", () => {
     const extra = structuralFindings({
       apiRouteLinkStats: {
         misses: [
-          { file: "web/a.ts", line: 3, method: "DELETE", url: "/api/orders", reason: "method-mismatch", existing: [{ method: "GET", path: "/api/orders", file: "api/o.py", line: 9 }] },
+          { file: "web/a.ts", line: 3, method: "DELETE", url: "/api/cars", reason: "method-mismatch", existing: [{ method: "GET", path: "/api/cars", file: "api/o.py", line: 9 }] },
           { file: "web/b.ts", line: 5, method: "GET", url: "/api/nope", reason: "unmatched" },
         ],
       } as never,
@@ -57,7 +57,7 @@ describe("buildSarif — structural findings", () => {
       ["clarifydoc/route-unmatched", "warning"],
       ["clarifydoc/import-rule", "error"],
     ]);
-    expect(run.results[0]!.message.text).toContain("served as GET /api/orders (api/o.py:9)");
+    expect(run.results[0]!.message.text).toContain("served as GET /api/cars (api/o.py:9)");
     expect(resultsAtLeast(log, "error")).toBe(2);
     expect(resultsAtLeast(log, "warning")).toBe(3);
   });
@@ -68,8 +68,8 @@ describe("CI gates, baseline and other report formats", () => {
     const { structuralFindings } = await import("./sarif.js");
     return structuralFindings({
       patterns: [
-        { kind: "query-in-loop", name: "list", filePath: "src/orders.ts", line: 12, confidence: "high", detail: "queries Order once per pass of the loop at line 10", role: "request",
-          entries: [{ kind: "route", entry: "GET /orders", file: "src/routes.ts", distance: 1, confidence: "EXTRACTED" }] },
+        { kind: "query-in-loop", name: "list", filePath: "src/cars.ts", line: 12, confidence: "high", detail: "queries Car once per pass of the loop at line 10", role: "request",
+          entries: [{ kind: "route", entry: "GET /cars", file: "src/routes.ts", distance: 1, confidence: "EXTRACTED" }] },
         { kind: "blocking-in-async", name: "rebuild", filePath: "src/cli.ts", line: 4, confidence: "medium", detail: "readFileSync() blocks" },
         { kind: "singleton", name: "Db", filePath: "src/db.ts", line: 1, confidence: "high", detail: "" },
       ],
@@ -87,12 +87,12 @@ describe("CI gates, baseline and other report formats", () => {
   it("reports performance (a warning where a request pays) and dead code (notes, sure files only)", async () => {
     const found = await structural();
     expect(found.map((f) => [f.ruleId, f.level, f.file])).toEqual([
-      ["clarifydoc/query-in-loop", "warning", "src/orders.ts"],
+      ["clarifydoc/query-in-loop", "warning", "src/cars.ts"],
       ["clarifydoc/blocking-in-async", "note", "src/cli.ts"],
       ["clarifydoc/unreachable-file", "note", "src/old.ts"],
       ["clarifydoc/unused-export", "note", "src/util.ts"],
     ]);
-    expect(found[0]!.message).toContain("Reached from GET /orders");
+    expect(found[0]!.message).toContain("Reached from GET /cars");
   });
 
   it("gates on a level, on categories, or both", async () => {

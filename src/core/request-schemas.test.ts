@@ -44,14 +44,14 @@ const bodyRoute = (
   type: string,
   projectId = "api",
 ): RouteInfo & { filePath: string; projectId: string; requestSchema?: JsonSchemaNode } => ({
-  path: "/api/users",
+  path: "/api/players",
   httpMethod: "POST",
   kind: "api",
   handler: "Create",
   calls: [],
   middleware: [],
   line: 12,
-  filePath: "Controllers/UsersController.cs",
+  filePath: "Controllers/PlayersController.cs",
   projectId,
   params: [{ name: "dto", type, binding: "body" }],
 });
@@ -60,7 +60,7 @@ describe("attachRequestSchemas", () => {
   it("reads a body typed by an interface that states its fields, never one with none", () => {
     const iface = (name: string, properties: PropertyInfo[]): ClassInfo => ({ ...cls(name, properties), kind: "interface" });
     const analyses = [
-      file("Controllers/UsersController.cs", []),
+      file("Controllers/PlayersController.cs", []),
       file("Models/Dto.cs", [iface("CreateTeam", [prop("Name", "string", { isRequired: true }), prop("Size", "int")]), iface("Marker", [])]),
     ];
     const typed = bodyRoute("CreateTeam");
@@ -72,10 +72,10 @@ describe("attachRequestSchemas", () => {
 
   it("flattens inheritance, camel-cases, honours [JsonPropertyName]/[Required]/required and maps C# types", () => {
     const analyses = [
-      file("Controllers/UsersController.cs", []),
-      file("Models/User.cs", [
+      file("Controllers/PlayersController.cs", []),
+      file("Models/Player.cs", [
         cls("AuditedRequest", [prop("RequestedBy", "Guid?"), prop("RequestedAt", "DateTime")]),
-        cls("CreateUserDto", [
+        cls("CreatePlayerDto", [
           prop("Name", "string", { decorators: ["Required"], isRequired: true }),
           prop("Email", "string", { decorators: ['JsonPropertyName("email_address")'] }),
           prop("Roles", "List<string>"),
@@ -84,12 +84,12 @@ describe("attachRequestSchemas", () => {
           prop("Secret", "string", { decorators: ["JsonIgnore"] }),
           prop("Counter", "int", { isStatic: true }),
           prop("_cache", "string", { visibility: "private" }),
-          prop("PrimaryRole", "UserRole"),
+          prop("PrimaryRole", "PlayerRole"),
         ], "AuditedRequest"),
         cls("Address", [prop("Street", "string"), prop("PostalCode", "int?")]),
       ]),
     ];
-    const route = bodyRoute("CreateUserDto");
+    const route = bodyRoute("CreatePlayerDto");
     expect(attachRequestSchemas([route], analyses)).toBe(1);
     expect(route.requestSchema).toEqual({
       type: "object",
@@ -105,7 +105,7 @@ describe("attachRequestSchemas", () => {
           nullable: true,
         },
         attributes: { type: "object", additionalProperties: { type: "integer", format: "int32" } },
-        primaryRole: { $ref: "UserRole" }, // enum: not a class the extractor knows → by name
+        primaryRole: { $ref: "PlayerRole" }, // enum: not a class the extractor knows → by name
       },
       required: ["name"],
     });
@@ -113,7 +113,7 @@ describe("attachRequestSchemas", () => {
 
   it("prefers the class in the route's own sub-project and leaves a cross-project ambiguity as a $ref", () => {
     const analyses = [
-      file("Controllers/UsersController.cs", [], "api"),
+      file("Controllers/PlayersController.cs", [], "api"),
       file("api/Dto.cs", [cls("Dto", [prop("A", "int")])], "api"),
       file("other/Dto.cs", [cls("Dto", [prop("B", "int")])], "other"),
       file("x/Shared.cs", [cls("Shared", [prop("S", "int")])], "x"),
@@ -128,7 +128,7 @@ describe("attachRequestSchemas", () => {
 
   it("cuts cycles and depth with a $ref instead of recursing forever", () => {
     const analyses = [
-      file("Controllers/UsersController.cs", []),
+      file("Controllers/PlayersController.cs", []),
       file("Node.cs", [cls("Node", [prop("Value", "int"), prop("Children", "List<Node>")])]),
     ];
     const route = bodyRoute("Node");
@@ -140,7 +140,7 @@ describe("attachRequestSchemas", () => {
   });
 
   it("builds an object from field-level body params when no whole-body type is known", () => {
-    const analyses = [file("Controllers/UsersController.cs", [])];
+    const analyses = [file("Controllers/PlayersController.cs", [])];
     const route = { ...bodyRoute("x"), params: [
       { name: "name", type: "string", binding: "body" as const, inferred: true },
       { name: "age", type: "int?", binding: "body" as const, inferred: true },
@@ -164,16 +164,16 @@ describe("attachRequestSchemas", () => {
   });
 
   it("renders an enum class as a string enum of its members", () => {
-    const role = cls("UserRole", [prop("Guest", "UserRole"), prop("Admin", "UserRole")]);
+    const role = cls("PlayerRole", [prop("Guest", "PlayerRole"), prop("Admin", "PlayerRole")]);
     role.kind = "enum";
-    const analyses = [file("Controllers/UsersController.cs", []), file("Dto.cs", [cls("Dto", [prop("Role", "UserRole")]), role])];
+    const analyses = [file("Controllers/PlayersController.cs", []), file("Dto.cs", [cls("Dto", [prop("Role", "PlayerRole")]), role])];
     const route = bodyRoute("Dto");
     attachRequestSchemas([route], analyses);
     expect(route.requestSchema).toEqual({ type: "object", properties: { role: { type: "string", enum: ["Guest", "Admin"] } } });
   });
 
   it("skips routes without a body parameter, non-api routes, and languages without hooks", () => {
-    const analyses = [file("Controllers/UsersController.cs", []), file("Dto.cs", [cls("Dto", [prop("A", "int")])])];
+    const analyses = [file("Controllers/PlayersController.cs", []), file("Dto.cs", [cls("Dto", [prop("A", "int")])])];
     const noBody = { ...bodyRoute("Dto"), params: [{ name: "id", type: "int", binding: "route" as const }] };
     const frontend = { ...bodyRoute("Dto"), kind: "frontend" as const };
     const ruby = { ...bodyRoute("Dto"), filePath: "app/c.rb" };
@@ -213,10 +213,10 @@ describe("attachHandlerParams — routes whose handler is declared elsewhere", (
     ({ ...file(filePath, classes, projectId), functions }) as FileAnalysis;
 
   it("bare handler in the same file: path tokens → route, body reads from requestAccess", () => {
-    const handler = fn("getUser", [["req", null], ["res", null]], {
+    const handler = fn("getPlayer", [["req", null], ["res", null]], {
       requestAccess: [{ name: "body", type: null, binding: "body" }, { name: "q", type: null, binding: "query" }],
     });
-    const route = apiRoute("getUser", "/users/:id");
+    const route = apiRoute("getPlayer", "/players/:id");
     const filled = attachHandlerParams([route], [analysisWith("routes.ts", [handler])]);
     expect(filled).toBe(1);
     expect(route).toMatchObject({
@@ -231,27 +231,27 @@ describe("attachHandlerParams — routes whose handler is declared elsewhere", (
   });
 
   it("`Class#method` resolves to the class method in another file of the same sub-project", () => {
-    const ctl = cls("OrderController", []);
-    ctl.methods = [fn("store", [["request", "StoreOrderRequest"], ["id", "int"]], {
+    const ctl = cls("CarController", []);
+    ctl.methods = [fn("store", [["request", "StoreCarRequest"], ["id", "int"]], {
       requestAccess: [{ name: "note", type: null, binding: "body" }],
     })];
-    const route = apiRoute("OrderController#store", "/orders/{id}", "routes/api.php");
-    attachHandlerParams([route], [analysisWith("routes/api.php", []), analysisWith("app/OrderController.php", [], [ctl])]);
+    const route = apiRoute("CarController#store", "/cars/{id}", "routes/api.php");
+    attachHandlerParams([route], [analysisWith("routes/api.php", []), analysisWith("app/CarController.php", [], [ctl])]);
     expect((route as { params?: unknown }).params).toEqual([
-      { name: "request", type: "StoreOrderRequest", binding: null },
+      { name: "request", type: "StoreCarRequest", binding: null },
       { name: "id", type: "int", binding: "route", inferred: true },
       { name: "note", type: null, binding: "body", inferred: true },
     ]);
   });
 
   it("`pkg.Func` resolves to the unique leaf name in the sub-project; an ambiguous name is left alone", () => {
-    const route = apiRoute("handler.ListProducts", "/products", "main.go");
+    const route = apiRoute("handler.ListParts", "/parts", "main.go");
     const dup = apiRoute("svc.Dup", "/dup", "main.go");
     attachHandlerParams(
       [route, dup],
       [
         analysisWith("main.go", []),
-        analysisWith("handler/products.go", [fn("ListProducts", [["c", "*gin.Context"]], { requestAccess: [{ name: "page", type: null, binding: "query" }] }), fn("Dup", [["db", "*sql.DB"]])]),
+        analysisWith("handler/parts.go", [fn("ListParts", [["c", "*gin.Context"]], { requestAccess: [{ name: "page", type: null, binding: "query" }] }), fn("Dup", [["db", "*sql.DB"]])]),
         analysisWith("other/dup.go", [fn("Dup", [["x", "int"]])]),
       ],
     );
@@ -260,17 +260,17 @@ describe("attachHandlerParams — routes whose handler is declared elsewhere", (
   });
 
   it("breaks a shared leaf name by the qualifier's directory, then by handler shape", () => {
-    const byDir = apiRoute("handler.ListProducts", "/products", "main.go");
-    const byShape = apiRoute("h.ListUsers", "/users", "main.go");
+    const byDir = apiRoute("handler.ListParts", "/parts", "main.go");
+    const byShape = apiRoute("h.ListPlayers", "/players", "main.go");
     attachHandlerParams(
       [byDir, byShape],
       [
         analysisWith("main.go", []),
-        analysisWith("handler/product_handler.go", [
-          fn("ListProducts", [["c", "*gin.Context"]], { requestAccess: [{ name: "q", type: null, binding: "query" }] }),
-          fn("ListUsers", [["c", "*gin.Context"]], { requestAccess: [{ name: "page", type: null, binding: "query" }] }),
+        analysisWith("handler/part_handler.go", [
+          fn("ListParts", [["c", "*gin.Context"]], { requestAccess: [{ name: "q", type: null, binding: "query" }] }),
+          fn("ListPlayers", [["c", "*gin.Context"]], { requestAccess: [{ name: "page", type: null, binding: "query" }] }),
         ]),
-        analysisWith("store/product_store.go", [fn("ListProducts", [["db", "*sql.DB"]]), fn("ListUsers", [["limit", "int"]])]),
+        analysisWith("store/part_store.go", [fn("ListParts", [["db", "*sql.DB"]]), fn("ListPlayers", [["limit", "int"]])]),
       ],
     );
     expect((byDir as { params?: Array<{ name: string }> }).params?.map((p) => p.name)).toEqual(["c", "q"]);

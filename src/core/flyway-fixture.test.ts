@@ -24,14 +24,14 @@ describe("migration replay — sample-flyway", () => {
     const rows = summary.entityGraph!.nodes.map((n) => `${n.name} ${n.filePath.split("/").pop()}:${n.line} ${n.columns.map((c) => c.name).join(",")}`).sort();
     expect(rows).toEqual([
       "audit V5__audit_v2.sql:3 id,actor_id,action",
-      "orders V1__init.sql:6 id,user_id,placed_at",
-      "users V1__init.sql:1 id,display_name,email",
+      "cars V1__init.sql:6 id,player_id,placed_at",
+      "players V1__init.sql:1 id,display_name,email",
     ]);
   });
 
   it("keeps the foreign keys the final schema holds", () => {
     const name = new Map(summary.entityGraph!.nodes.map((n) => [n.id, n.name]));
     const edges = summary.entityGraph!.edges.map((e) => [name.get(e.source), name.get(e.target)].sort().join("–") + ` ${e.foreignKey}`).sort();
-    expect(edges).toEqual(["audit–users actor_id", "orders–users user_id"]);
+    expect(edges).toEqual(["audit–players actor_id", "cars–players player_id"]);
   });
 });

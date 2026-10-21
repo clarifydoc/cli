@@ -50,8 +50,8 @@ describe("normalizeRoutePath", () => {
   });
 
   it("normalizes express :params and strips host/query", () => {
-    expect(normalizeRoutePath("https://api.x.com/users/:id?q=1")).toBe("/users/{}");
-    expect(normalizeRoutePath("/api/Users/{id}")).toBe("/api/users/{}");
+    expect(normalizeRoutePath("https://api.x.com/players/:id?q=1")).toBe("/players/{}");
+    expect(normalizeRoutePath("/api/Players/{id}")).toBe("/api/players/{}");
   });
 
   it("strips a trailing response-format extension (Rails .json/.xml)", () => {
@@ -68,7 +68,7 @@ describe("normalizeRoutePath", () => {
     expect(normalizeRoutePath("/api/v4/institution/{id}/teamtalk")).toBe(
       normalizeRoutePath("/api/v{apiVersion}/institution/{institutionId}/teamtalk"),
     );
-    expect(normalizeRoutePath("/api/v1/license/product")).toBe("/api/v{}/license/product");
+    expect(normalizeRoutePath("/api/v1/license/part")).toBe("/api/v{}/license/part");
     // A non-version segment that merely starts with `v` is untouched.
     expect(normalizeRoutePath("/api/vendors/list")).toBe("/api/vendors/list");
   });
@@ -78,8 +78,8 @@ describe("linkApiCallsToRoutes", () => {
   const routes = [
     route("Api/AccessReportController.cs", "GET", "/AccessReport/roles/{roleId}/holders", "GetRoleHolders", 29),
     route("Api/AccessReportController.cs", "POST", "/AccessReport/permission-set/holders", "GetPermissionSetHolders", 62),
-    route("Api/UsersController.cs", "GET", "/api/Users/{id}", "GetById", 27),
-    route("Api/UsersController.cs", "DELETE", "/api/Users/{id}", "Delete", 44),
+    route("Api/PlayersController.cs", "GET", "/api/Players/{id}", "GetById", 27),
+    route("Api/PlayersController.cs", "DELETE", "/api/Players/{id}", "Delete", 44),
   ];
 
   it("matches method + normalized path with EXTRACTED confidence", () => {
@@ -99,7 +99,7 @@ describe("linkApiCallsToRoutes", () => {
 
   it("disambiguates two same-path routes by HTTP method", () => {
     const links = linkApiCallsToRoutes(
-      [apiCall("web/api/users.ts", "delete", "/api/users/${id}")],
+      [apiCall("web/api/players.ts", "delete", "/api/players/${id}")],
       routes,
     );
     expect(links).toHaveLength(1);
@@ -108,7 +108,7 @@ describe("linkApiCallsToRoutes", () => {
 
   it("marks AMBIGUOUS when the method can't disambiguate colliding routes", () => {
     const links = linkApiCallsToRoutes(
-      [apiCall("web/api/users.ts", "fetch", "/api/users/${id}")], // 'fetch' is not an HTTP verb
+      [apiCall("web/api/players.ts", "fetch", "/api/players/${id}")], // 'fetch' is not an HTTP verb
       routes,
     );
     expect(links).toHaveLength(1);
@@ -120,7 +120,7 @@ describe("linkApiCallsToRoutes", () => {
     // `del`. Without the alias this matched on path alone and landed on
     // whichever route came first — here the GET — as INFERRED.
     const links = linkApiCallsToRoutes(
-      [apiCall("web/api/users.ts", "del", "/api/users/${id}")],
+      [apiCall("web/api/players.ts", "del", "/api/players/${id}")],
       routes,
     );
     expect(links).toHaveLength(1);
@@ -186,46 +186,46 @@ describe("linkApiCallsToRoutes — Rails behind an /api proxy", () => {
 
   it("prefers a literal match over prefix-stripping (no downgrade)", () => {
     // A backend that genuinely mounts under /api must still match at EXTRACTED.
-    const literal = [route("api/UsersController.cs", "GET", "/api/users/{id}", "GetById", 27)];
+    const literal = [route("api/PlayersController.cs", "GET", "/api/players/{id}", "GetById", 27)];
     const links = linkApiCallsToRoutes(
-      [apiCall("web/users.ts", "get", "/api/users/${id}")],
+      [apiCall("web/players.ts", "get", "/api/players/${id}")],
       literal,
     );
     expect(links[0]).toMatchObject({ confidence: "EXTRACTED", handler: "GetById" });
   });
 
   it("honors a caller-supplied base path (e.g. discovered from proxy config)", () => {
-    const backend = [route("ctrl.rb", "GET", "/widgets/:id", "WidgetsController#show", 3)];
+    const backend = [route("ctrl.rb", "GET", "/balls/:id", "BallsController#show", 3)];
     // Default prefixes wouldn't strip `/internal`; an explicit basePath does.
-    expect(linkApiCallsToRoutes([apiCall("c.ts", "get", "/internal/widgets/${id}.json")], backend)).toHaveLength(0);
+    expect(linkApiCallsToRoutes([apiCall("c.ts", "get", "/internal/balls/${id}.json")], backend)).toHaveLength(0);
     const links = linkApiCallsToRoutes(
-      [apiCall("c.ts", "get", "/internal/widgets/${id}.json")],
+      [apiCall("c.ts", "get", "/internal/balls/${id}.json")],
       backend,
       { basePaths: ["/internal"] },
     );
     expect(links).toHaveLength(1);
-    expect(links[0]).toMatchObject({ handler: "WidgetsController#show" });
+    expect(links[0]).toMatchObject({ handler: "BallsController#show" });
   });
 });
 
 describe("linkApiCallsToRoutes — frontend client omits the base the route carries", () => {
-  // `axios.create({ baseURL: "/api" })` then `client.get("/products")`: the
-  // captured call URL is the base-less `/products`, but the backend route is
-  // `/api/products`. The mirror of proxy-stripping — prepend a conventional base
+  // `axios.create({ baseURL: "/api" })` then `client.get("/parts")`: the
+  // captured call URL is the base-less `/parts`, but the backend route is
+  // `/api/parts`. The mirror of proxy-stripping — prepend a conventional base
   // to the call and retry.
   it("links a base-less call to the `/api`-prefixed route (downgraded confidence)", () => {
-    const backend = [route("server/products.ts", "GET", "/api/products", "list", 5)];
-    const links = linkApiCallsToRoutes([apiCall("web/api.ts", "get", "/products")], backend);
+    const backend = [route("server/parts.ts", "GET", "/api/parts", "list", 5)];
+    const links = linkApiCallsToRoutes([apiCall("web/api.ts", "get", "/parts")], backend);
     expect(links).toHaveLength(1);
-    expect(links[0]).toMatchObject({ routePath: "/api/products", handler: "list", confidence: "INFERRED" });
+    expect(links[0]).toMatchObject({ routePath: "/api/parts", handler: "list", confidence: "INFERRED" });
   });
 
   it("still prefers a literal match (no base prepended when the call already matches)", () => {
     const backend = [
-      route("server/products.ts", "GET", "/products", "bare", 1),
-      route("server/products.ts", "GET", "/api/products", "prefixed", 2),
+      route("server/parts.ts", "GET", "/parts", "bare", 1),
+      route("server/parts.ts", "GET", "/api/parts", "prefixed", 2),
     ];
-    const links = linkApiCallsToRoutes([apiCall("web/api.ts", "get", "/products")], backend);
+    const links = linkApiCallsToRoutes([apiCall("web/api.ts", "get", "/parts")], backend);
     expect(links[0]).toMatchObject({ handler: "bare", confidence: "EXTRACTED" });
   });
 });
@@ -426,7 +426,7 @@ describe("linkApiCallsToRoutes — wildcard-only URLs", () => {
     // a `/:id` route by accident.
     const links = linkApiCallsToRoutes(
       [apiCall("svc.ts", "get", "/api/{}"), apiCall("svc.ts", "get", "/${id}"), apiCall("svc.ts", "get", "/{}/{}")],
-      [route("routes.rb", "GET", "/:id", "ThingsController#show"), route("routes.rb", "GET", "/:a/:b", "PairsController#show")],
+      [route("routes.rb", "GET", "/:id", "BallsController#show"), route("routes.rb", "GET", "/:a/:b", "PairsController#show")],
     );
     expect(links).toHaveLength(0);
   });
@@ -451,11 +451,11 @@ describe("normalizeRoutePath — holes before separators", () => {
 
   it("reads Flask/Django converters as parameters", () => {
     expect(normalizeRoutePath("/items/<int:id>/")).toBe("/items/{}");
-    expect(normalizeRoutePath("users/<pk>/notes")).toBe("/users/{}/notes");
+    expect(normalizeRoutePath("players/<pk>/notes")).toBe("/players/{}/notes");
   });
 
   it("reduces a Django re_path regex to the path it matches", () => {
-    expect(normalizeRoutePath("^users/(?P<pk>[^/.]+)/$")).toBe("/users/{}");
+    expect(normalizeRoutePath("^players/(?P<pk>[^/.]+)/$")).toBe("/players/{}");
     expect(normalizeRoutePath("^documents/(?P<pk>\\d+)/versions/(?P<version_id>\\d+)/?$")).toBe(
       "/documents/{}/versions/{}",
     );
@@ -464,8 +464,8 @@ describe("normalizeRoutePath — holes before separators", () => {
   });
 
   it("drops a format-suffix group like a response extension", () => {
-    expect(normalizeRoutePath("^users\\.(?P<format>[a-z0-9]+)/?$")).toBe("/users");
-    expect(normalizeRoutePath("/users.{format}")).toBe("/users");
+    expect(normalizeRoutePath("^players\\.(?P<format>[a-z0-9]+)/?$")).toBe("/players");
+    expect(normalizeRoutePath("/players.{format}")).toBe("/players");
   });
 
   it("keeps ASP.NET constraints and catch-alls as one parameter", () => {
@@ -673,26 +673,26 @@ describe("linkApiCallsToRoutesDetailed — stats", () => {
 
 describe("linkApiCallsToRoutes — the sub-projects of both ends", () => {
   const projectOf = (f: string) => f.split("/")[0];
-  const orders = { ...route("orders/OrdersController.cs", "GET", "/api/orders", "List"), projectId: "orders" };
+  const cars = { ...route("cars/CarsController.cs", "GET", "/api/cars", "List"), projectId: "cars" };
   const web = { ...route("web/routes.ts", "GET", "/api/session", "session"), projectId: "web" };
 
   it("names the calling and the serving project, and counts a link between two", () => {
     const { links, stats } = linkApiCallsToRoutesDetailed(
-      [apiCall("web/orders.ts", "get", "/api/orders"), apiCall("web/session.ts", "get", "/api/session")],
-      [orders, web],
+      [apiCall("web/cars.ts", "get", "/api/cars"), apiCall("web/session.ts", "get", "/api/session")],
+      [cars, web],
       { projectOf },
     );
     expect(links.map((l) => [l.sourceProject, l.targetProject])).toEqual([
-      ["web", "orders"],
+      ["web", "cars"],
       ["web", "web"],
     ]);
     expect(stats.crossProject).toBe(1);
   });
 
   it("leaves an end it cannot place unnamed, and never counts unknown as a difference", () => {
-    const { links, stats } = linkApiCallsToRoutesDetailed([apiCall("web/orders.ts", "get", "/api/orders")], [orders]);
+    const { links, stats } = linkApiCallsToRoutesDetailed([apiCall("web/cars.ts", "get", "/api/cars")], [cars]);
     expect(links[0]).not.toHaveProperty("sourceProject");
-    expect(links[0]).toMatchObject({ targetProject: "orders" });
+    expect(links[0]).toMatchObject({ targetProject: "cars" });
     expect(stats.crossProject).toBe(0);
   });
 });
@@ -782,27 +782,27 @@ describe("linkApiCallsToRoutes — a route whose prefix is unknown", () => {
 });
 
 describe("linkApiCallsToRoutes — the service a call names", () => {
-  const inventory = { ...route("inventory/ItemsController.cs", "GET", "/api/items", "List"), projectId: "inventory" };
+  const fleet = { ...route("fleet/ItemsController.cs", "GET", "/api/items", "List"), projectId: "fleet" };
   const legacy = { ...route("legacy/ItemsController.cs", "GET", "/api/items", "Items"), projectId: "legacy" };
   const toward = (project: string, confidence: "EXTRACTED" | "INFERRED" | "AMBIGUOUS") => ({
-    ...apiCall("orders/InventoryClient.cs", "GetFromJsonAsync", "/api/items"),
+    ...apiCall("cars/FleetClient.cs", "GetFromJsonAsync", "/api/items"),
     origin: { project, host: project, confidence, evidence: [] },
   });
 
   it("joins only the named service's routes, and says so", () => {
-    const links = linkApiCallsToRoutes([toward("legacy", "EXTRACTED")], [inventory, legacy]);
+    const links = linkApiCallsToRoutes([toward("legacy", "EXTRACTED")], [fleet, legacy]);
     expect(links[0]).toMatchObject({ target: "legacy/ItemsController.cs", confidence: "EXTRACTED", matchedVia: "service:legacy" });
   });
 
   it("refuses rather than fall back to another service's route", () => {
-    const { links, stats } = linkApiCallsToRoutesDetailed([toward("billing", "EXTRACTED")], [inventory, legacy]);
+    const { links, stats } = linkApiCallsToRoutesDetailed([toward("billing", "EXTRACTED")], [fleet, legacy]);
     expect(links).toEqual([]);
     expect(stats.refused.originMismatch).toBe(1);
   });
 
   it("ranks an inferred service first without excluding the others", () => {
-    expect(linkApiCallsToRoutes([toward("legacy", "INFERRED")], [inventory, legacy])[0]).toMatchObject({ target: "legacy/ItemsController.cs" });
-    expect(linkApiCallsToRoutes([toward("billing", "INFERRED")], [inventory, legacy])[0]!.confidence).toBe("AMBIGUOUS");
+    expect(linkApiCallsToRoutes([toward("legacy", "INFERRED")], [fleet, legacy])[0]).toMatchObject({ target: "legacy/ItemsController.cs" });
+    expect(linkApiCallsToRoutes([toward("billing", "INFERRED")], [fleet, legacy])[0]!.confidence).toBe("AMBIGUOUS");
   });
 
   it("reaches a route in a library the named service imports", () => {
@@ -813,8 +813,8 @@ describe("linkApiCallsToRoutes — the service a call names", () => {
   });
 
   it("ignores an origin that could not choose between services", () => {
-    const call = { ...apiCall("orders/InventoryClient.cs", "GetFromJsonAsync", "/api/items"), origin: { confidence: "AMBIGUOUS" as const, evidence: [] } };
-    expect(linkApiCallsToRoutes([call], [inventory, legacy])[0]!.confidence).toBe("AMBIGUOUS");
+    const call = { ...apiCall("cars/FleetClient.cs", "GetFromJsonAsync", "/api/items"), origin: { confidence: "AMBIGUOUS" as const, evidence: [] } };
+    expect(linkApiCallsToRoutes([call], [fleet, legacy])[0]!.confidence).toBe("AMBIGUOUS");
   });
 });
 
@@ -865,8 +865,8 @@ describe("linkApiCallsToRoutes — a runtime segment where the route has a versi
 
   it("prefers a route that takes a runtime segment there as written", () => {
     const links = linkApiCallsToRoutes(
-      [apiCall("web/client.ts", "get", "/api/${tenant}/orders")],
-      [route("api/Orders.cs", "GET", "/api/v{apiVersion}/orders", "Versioned"), route("api/Tenant.cs", "GET", "/api/{tenant}/orders", "PerTenant")],
+      [apiCall("web/client.ts", "get", "/api/${tenant}/cars")],
+      [route("api/Cars.cs", "GET", "/api/v{apiVersion}/cars", "Versioned"), route("api/Tenant.cs", "GET", "/api/{tenant}/cars", "PerTenant")],
     );
     expect(links.map((l) => [l.handler, l.matchedVia])).toEqual([["PerTenant", "exact"]]);
   });
@@ -877,7 +877,7 @@ describe("normalizeRoutePath — a hole glued to the last segment", () => {
     const { normalizeRoutePath } = await import("./route-linker.js");
     expect(normalizeRoutePath("/albums${QS.query(QS.explode({ assetId, id }))}")).toBe(normalizeRoutePath("/albums"));
     expect(normalizeRoutePath("/albums/${encodeURIComponent(id)}${QS.query({ key })}")).toBe(normalizeRoutePath("/albums/{id}"));
-    expect(normalizeRoutePath("/users/${id}")).toBe(normalizeRoutePath("/users/:id"));
+    expect(normalizeRoutePath("/players/${id}")).toBe(normalizeRoutePath("/players/:id"));
   });
 });
 
@@ -885,20 +885,20 @@ describe("linkApiCallsToRoutesDetailed — misses are listed, not only counted",
   it("names each call that reached no route, with why", () => {
     const { stats } = linkApiCallsToRoutesDetailed(
       [
-        apiCall("web/orders.ts", "get", "/api/orders", 3),
+        apiCall("web/cars.ts", "get", "/api/cars", 3),
         apiCall("web/backups.ts", "get", "/api/backups/available", 7),
-        apiCall("web/orders.ts", "delete", "/api/orders", 9),
+        apiCall("web/cars.ts", "delete", "/api/cars", 9),
         apiCall("web/x.ts", "get", "route(`${base}/x`)", 11),
       ],
-      [route("api/orders.py", "GET", "/api/orders", "list_orders")],
+      [route("api/cars.py", "GET", "/api/cars", "list_cars")],
     );
     expect(stats.linked).toBe(1);
     expect(stats.misses).toEqual([
       { file: "web/backups.ts", line: 7, method: "GET", url: "/api/backups/available", reason: "unmatched" },
       {
-        file: "web/orders.ts", line: 9, method: "DELETE", url: "/api/orders", reason: "method-mismatch",
+        file: "web/cars.ts", line: 9, method: "DELETE", url: "/api/cars", reason: "method-mismatch",
         // The route that does serve the path, so the miss says "the backend accepts GET".
-        existing: [{ method: "GET", path: "/api/orders", file: "api/orders.py", line: 1 }],
+        existing: [{ method: "GET", path: "/api/cars", file: "api/cars.py", line: 1 }],
       },
     ]);
   });

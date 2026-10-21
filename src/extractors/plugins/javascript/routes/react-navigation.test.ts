@@ -29,6 +29,6 @@ export const Tabs = createBottomTabNavigator({ screens: { Feed: FeedScreen, Inbo
   });
 
   it("reads nothing in a file that names no navigator", async () => {
-    expect(await routesOf(`const Stack = makeThing(); export const X = () => <Stack.Screen name="A" component={B} />;`)).toEqual([]);
+    expect(await routesOf(`const Stack = makeBall(); export const X = () => <Stack.Screen name="A" component={B} />;`)).toEqual([]);
   });
 });

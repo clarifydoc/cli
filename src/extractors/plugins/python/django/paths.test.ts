@@ -4,7 +4,7 @@ import { djangoRoute, joinDjango } from "./paths.js";
 describe("djangoRoute", () => {
   it("turns path() converters into parameters", () => {
     expect(djangoRoute("documents/<int:pk>/notes/", false)).toBe("documents/{pk}/notes/");
-    expect(djangoRoute("users/<slug>/", false)).toBe("users/{slug}/");
+    expect(djangoRoute("players/<slug>/", false)).toBe("players/{slug}/");
   });
 
   it("reduces a re_path regex to the path it matches", () => {

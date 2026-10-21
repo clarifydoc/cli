@@ -12,13 +12,13 @@ import type { ProjectAnalysis } from "../types/analysis.js";
  *
  *   mobile/   Expo Router app in a sub-folder (its own package.json names
  *             expo-router). Files under app/ are screens at their path:
- *             (tabs)/index → /, (tabs)/settings → /settings, todo/[id] →
- *             /todo/:id. _layout files and +not-found are not routes;
+ *             (tabs)/index → /, (tabs)/settings → /settings, drill/[id] →
+ *             /drill/:id. _layout files and +not-found are not routes;
  *             health+api.ts serves GET /health.
  *             lib/api.ts calls the server with `${BASE}/api/…` (BASE from
  *             EXPO_PUBLIC_API_URL, falling back to http://localhost:4000).
  *   server/   Express with inline handlers; each runs raw SQL through a pg
- *             Pool imported from ./db — two reads and one write of `todos`.
+ *             Pool imported from ./db — two reads and one write of `drills`.
  *
  * The chain closes only if the screens are routed from a sub-folder, the
  * driver call's SQL names its table, and an inline handler's query belongs to
@@ -29,25 +29,25 @@ const FIXTURE = resolve(__dirname, "..", "..", "test-fixtures", "sample-expo-app
 const SCREEN_ROUTES = [
   "frontend / mobile/app/(tabs)/index.tsx",
   "frontend /settings mobile/app/(tabs)/settings.tsx",
-  "frontend /todo/:id mobile/app/todo/[id].tsx",
+  "frontend /drill/:id mobile/app/drill/[id].tsx",
 ];
 
 const LINKS = [
-  { call: "mobile/lib/api.ts:10", route: "GET /api/todos" },
-  { call: "mobile/lib/api.ts:15", route: "GET /api/todos/:id" },
-  { call: "mobile/lib/api.ts:20", route: "PATCH /api/todos/:id/complete" },
+  { call: "mobile/lib/api.ts:10", route: "GET /api/drills" },
+  { call: "mobile/lib/api.ts:15", route: "GET /api/drills/:id" },
+  { call: "mobile/lib/api.ts:20", route: "PATCH /api/drills/:id/complete" },
 ];
 
 const SCREEN_EFFECTS = [
-  "TodoListScreen db-read todos",
-  "TodoScreen db-read todos",
-  "TodoScreen db-write todos",
+  "DrillListScreen db-read drills",
+  "DrillScreen db-read drills",
+  "DrillScreen db-write drills",
 ];
 
 const ROUTE_EFFECTS = [
-  "GET /api/todos db-read todos",
-  "GET /api/todos/:id db-read todos",
-  "PATCH /api/todos/:id/complete db-write todos",
+  "GET /api/drills db-read drills",
+  "GET /api/drills/:id db-read drills",
+  "PATCH /api/drills/:id/complete db-write drills",
 ];
 
 describe("sample-expo-app: an Expo screen to the table its endpoint writes", () => {

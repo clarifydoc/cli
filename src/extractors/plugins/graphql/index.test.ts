@@ -9,28 +9,28 @@ import { createEmptyAnalysis } from "../../../types/analysis.js";
 vi.mock("../../registry.js", () => ({ pluginFor: () => graphqlMeta }));
 
 const SCHEMA = `# The data model
-type User {
+type Player {
   id: ID!
   name: String!
-  orders: [Order!]!
+  cars: [Car!]!
 }
 
-type Order {
+type Car {
   id: ID!
   total: Float!
-  buyer: User!
+  buyer: Player!
 }
 
 type Query {
-  users: [User!]!
-  user(id: ID!): User
+  players: [Player!]!
+  player(id: ID!): Player
 }
 
 type Mutation {
-  createUser(input: CreateUserInput!): User
+  createPlayer(input: CreatePlayerInput!): Player
 }
 
-input CreateUserInput {
+input CreatePlayerInput {
   name: String!
 }
 `;
@@ -39,9 +39,9 @@ describe("GraphQL schema route extraction", () => {
   it("turns each Query/Mutation field into a synthetic /graphql/<field> POST route", () => {
     const routes = extractGraphqlRoutes(SCHEMA.split("\n"));
     expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
-      "POST /graphql/users -> users",
-      "POST /graphql/user -> user",
-      "POST /graphql/createUser -> createUser",
+      "POST /graphql/players -> players",
+      "POST /graphql/player -> player",
+      "POST /graphql/createPlayer -> createPlayer",
     ]);
     expect(routes.every((r) => r.kind === "api")).toBe(true);
   });
@@ -50,18 +50,18 @@ describe("GraphQL schema route extraction", () => {
 describe("GraphQL schema entities", () => {
   it("turns object/input types (not root types) into entities", () => {
     const entities = extractGraphqlEntities(SCHEMA.split("\n"));
-    expect(entities.map((e) => e.name).sort()).toEqual(["CreateUserInput", "Order", "User"]);
-    expect(entities.find((e) => e.name === "User")!.decorators).toEqual(["entity", "graphql"]);
+    expect(entities.map((e) => e.name).sort()).toEqual(["Car", "CreatePlayerInput", "Player"]);
+    expect(entities.find((e) => e.name === "Player")!.decorators).toEqual(["entity", "graphql"]);
   });
 
   it("derives relations from object-typed fields (list => one-to-many)", () => {
     const lines = SCHEMA.split("\n");
     const rels = extractGraphqlRelations(lines, extractGraphqlEntities(lines));
     expect(rels).toContainEqual(
-      expect.objectContaining({ fromEntity: "User", fromField: "orders", toEntity: "Order", cardinality: "one-to-many" }),
+      expect.objectContaining({ fromEntity: "Player", fromField: "cars", toEntity: "Car", cardinality: "one-to-many" }),
     );
     expect(rels).toContainEqual(
-      expect.objectContaining({ fromEntity: "Order", fromField: "buyer", toEntity: "User", cardinality: "many-to-one" }),
+      expect.objectContaining({ fromEntity: "Car", fromField: "buyer", toEntity: "Player", cardinality: "many-to-one" }),
     );
   });
 
@@ -77,21 +77,21 @@ describe("GraphQL schema entities", () => {
 const META_SCHEMA = `scalar DateTime
 
 type Query {
-  users(limit: Int = 20, search: String): [User!]!
-  user(
+  players(limit: Int = 20, search: String): [Player!]!
+  player(
     id: ID!
-  ): User
-  legacyUsers: [User!]! @deprecated(reason: "Use users")
+  ): Player
+  legacyPlayers: [Player!]! @deprecated(reason: "Use players")
 }
 
 type Mutation @isAuthenticated {
-  createUser(input: CreateUserInput!): User
-  deleteUser(id: ID!): Boolean! @auth(requires: ADMIN)
-  importUsers(rows: [CreateUserInput!]!): Int @hasRole(role: "importer") @hasScope(scope: "users:write")
+  createPlayer(input: CreatePlayerInput!): Player
+  deletePlayer(id: ID!): Boolean! @auth(requires: ADMIN)
+  importPlayers(rows: [CreatePlayerInput!]!): Int @hasRole(role: "importer") @hasScope(scope: "players:write")
   ping: String @public
 }
 
-type User {
+type Player {
   id: ID!
   name: String!
   createdAt: DateTime
@@ -102,7 +102,7 @@ input AddressInput {
   zip: String
 }
 
-input CreateUserInput {
+input CreatePlayerInput {
   name: String!
   email: String
   address: AddressInput
@@ -116,36 +116,36 @@ describe("GraphQL route attribute layer", () => {
   const byName = (n: string) => routes.find((r) => r.handler === n)!;
 
   it("keeps field arguments as body-bound params with the type text as written", () => {
-    expect(byName("users").params).toEqual([
+    expect(byName("players").params).toEqual([
       { name: "limit", type: "Int", binding: "body" },
       { name: "search", type: "String", binding: "body" },
     ]);
-    expect(byName("createUser").params).toEqual([{ name: "input", type: "CreateUserInput!", binding: "body" }]);
+    expect(byName("createPlayer").params).toEqual([{ name: "input", type: "CreatePlayerInput!", binding: "body" }]);
   });
 
   it("joins a wrapped argument list onto its field and never reads the inner lines as fields", () => {
-    expect(byName("user").params).toEqual([{ name: "id", type: "ID!", binding: "body" }]);
+    expect(byName("player").params).toEqual([{ name: "id", type: "ID!", binding: "body" }]);
     expect(routes.map((r) => r.handler)).not.toContain("id");
-    expect(byName("user").line).toBe(5);
+    expect(byName("player").line).toBe(5);
   });
 
   it("inherits a root-type directive and adds field directives as own guards", () => {
-    expect(byName("createUser").auth).toEqual({
+    expect(byName("createPlayer").auth).toEqual({
       policies: ["isAuthenticated"], roles: [], schemes: [], anonymous: false, inherited: true,
     });
-    expect(byName("deleteUser").auth).toEqual({
+    expect(byName("deletePlayer").auth).toEqual({
       policies: ["isAuthenticated"], roles: ["ADMIN"], schemes: [], anonymous: false, inherited: false,
     });
-    expect(byName("deleteUser").middleware).toEqual(["@isAuthenticated", "@auth(requires: ADMIN)"]);
-    expect(byName("importUsers").auth).toMatchObject({ roles: ["importer"], policies: ["isAuthenticated", "scope:users:write"] });
+    expect(byName("deletePlayer").middleware).toEqual(["@isAuthenticated", "@auth(requires: ADMIN)"]);
+    expect(byName("importPlayers").auth).toMatchObject({ roles: ["importer"], policies: ["isAuthenticated", "scope:players:write"] });
     expect(byName("ping").auth).toMatchObject({ anonymous: true });
-    expect(byName("users").auth).toBeUndefined();
+    expect(byName("players").auth).toBeUndefined();
   });
 
   it("records @deprecated as a middleware entry, never as a version", () => {
-    expect(byName("legacyUsers").middleware).toEqual(['@deprecated(reason: "Use users")']);
-    expect(byName("legacyUsers").deprecatedVersions).toBeUndefined();
-    expect(byName("legacyUsers").versions).toBeUndefined();
+    expect(byName("legacyPlayers").middleware).toEqual(['@deprecated(reason: "Use players")']);
+    expect(byName("legacyPlayers").deprecatedVersions).toBeUndefined();
+    expect(byName("legacyPlayers").versions).toBeUndefined();
   });
 
   it("never marks a schema-declared binding as inferred", () => {
@@ -155,7 +155,7 @@ describe("GraphQL route attribute layer", () => {
 
 describe("GraphQL type properties for the request-schema pass", () => {
   const entities = extractGraphqlEntities(META_SCHEMA.split("\n"));
-  const input = entities.find((e) => e.name === "CreateUserInput")!;
+  const input = entities.find((e) => e.name === "CreatePlayerInput")!;
   const prop = (n: string) => input.properties.find((p) => p.name === n)!;
 
   it("keeps the raw type text and marks `!` fields required", () => {
@@ -170,7 +170,7 @@ describe("GraphQL type properties for the request-schema pass", () => {
     const lines = SCHEMA.split("\n");
     const rels = extractGraphqlRelations(lines, extractGraphqlEntities(lines));
     expect(rels.map((r) => `${r.fromEntity}.${r.fromField}->${r.toEntity}`)).toEqual([
-      "User.orders->Order", "Order.buyer->User",
+      "Player.cars->Car", "Car.buyer->Player",
     ]);
   });
 });
@@ -197,7 +197,7 @@ describe("GraphQL request-schema hooks", () => {
     analysis.classes = extractGraphqlEntities(lines);
     const routes = extractGraphqlRoutes(lines).map((r) => ({ ...r, filePath: "schema.graphql", projectId: "root" }));
     attachRequestSchemas(routes, [analysis]);
-    const create = routes.find((r) => r.handler === "createUser") as typeof routes[number] & { requestSchema?: unknown };
+    const create = routes.find((r) => r.handler === "createPlayer") as typeof routes[number] & { requestSchema?: unknown };
     expect(create.requestSchema).toEqual({
       type: "object",
       properties: {

@@ -24,10 +24,10 @@ async function classes(src: string): Promise<ClassInfo[]> {
 describe("PHP container registrations", () => {
   it("reads Laravel bind/singleton/instance, closures, and the *If defaults", async () => {
     expect(await bindings(`<?php
-use App\\Repo\\SqlUserRepository as SqlRepo;
+use App\\Repo\\SqlPlayerRepository as SqlRepo;
 class AppServiceProvider extends ServiceProvider {
   public function register(): void {
-    $this->app->bind(UserRepositoryInterface::class, SqlRepo::class);
+    $this->app->bind(PlayerRepositoryInterface::class, SqlRepo::class);
     $this->app->singleton(\\App\\Contracts\\Mailer::class, fn ($app) => new SmtpMailer($app['config']));
     $this->app->scoped(Clock::class, function ($app) { return new SystemClock(); });
     $this->app->instance(Cache::class, new RedisCache());
@@ -36,7 +36,7 @@ class AppServiceProvider extends ServiceProvider {
     app()->singleton(Queue::class, SqsQueue::class);
   }
 }`)).toEqual([
-      { service: "UserRepositoryInterface", implementation: "SqlUserRepository" },
+      { service: "PlayerRepositoryInterface", implementation: "SqlPlayerRepository" },
       { service: "Mailer", implementation: "SmtpMailer" },
       { service: "Clock", implementation: "SystemClock" },
       { service: "Cache", implementation: "RedisCache" },
@@ -52,14 +52,14 @@ class P extends ServiceProvider {
   public $bindings = [Reporter::class => PdfReporter::class];
   public $singletons = ['geo' => GeoIp::class];
   public function register() {
-    $this->app->when([OrderController::class, Billing::class])->needs(Notifier::class)->give(SmsNotifier::class);
+    $this->app->when([CarController::class, Billing::class])->needs(Notifier::class)->give(SmsNotifier::class);
     $this->app->when(Audit::class)->needs(Logger::class)->give(fn () => new FileLogger('/tmp/x'));
     $this->app->alias(Mailer::class, 'mailer');
   }
 }`)).toEqual([
       { service: "Reporter", implementation: "PdfReporter" },
       { service: "geo", implementation: "GeoIp" },
-      { service: "Notifier", implementation: "SmsNotifier", consumer: "OrderController" },
+      { service: "Notifier", implementation: "SmsNotifier", consumer: "CarController" },
       { service: "Notifier", implementation: "SmsNotifier", consumer: "Billing" },
       { service: "Logger", implementation: "FileLogger", consumer: "Audit" },
       { service: "mailer", implementation: "Mailer" },
@@ -70,7 +70,7 @@ class P extends ServiceProvider {
     expect(await bindings(`<?php
 return function (ContainerConfigurator $c) {
   $services = $c->services();
-  $services->set(UserRepositoryInterface::class, DoctrineUserRepository::class);
+  $services->set(PlayerRepositoryInterface::class, DoctrinePlayerRepository::class);
   $services->alias(Clock::class, SystemClock::class);
   $container->setAlias(Mailer::class, SmtpMailer::class);
 };
@@ -80,7 +80,7 @@ class MailNotifier implements Notifier {}
 class SqlCache implements CacheInterface {}
 #[Bind(StripeGateway::class)]
 interface PaymentGateway {}`)).toEqual([
-      { service: "UserRepositoryInterface", implementation: "DoctrineUserRepository" },
+      { service: "PlayerRepositoryInterface", implementation: "DoctrinePlayerRepository" },
       { service: "Clock", implementation: "SystemClock" },
       { service: "Mailer", implementation: "SmtpMailer" },
       { service: "Notifier", implementation: "MailNotifier" },
@@ -93,12 +93,12 @@ interface PaymentGateway {}`)).toEqual([
     expect(await bindings(`<?php
 use function DI\\autowire;
 return [
-  UserRepository::class => autowire(SqlUserRepository::class),
+  PlayerRepository::class => autowire(SqlPlayerRepository::class),
   Mailer::class => \\DI\\create(SmtpMailer::class),
   Clock::class => DI\\factory(fn () => new SystemClock()),
   Cache::class => autowire(),
 ];`)).toEqual([
-      { service: "UserRepository", implementation: "SqlUserRepository" },
+      { service: "PlayerRepository", implementation: "SqlPlayerRepository" },
       { service: "Mailer", implementation: "SmtpMailer" },
       { service: "Clock", implementation: "SystemClock" },
     ]);
@@ -120,7 +120,7 @@ describe("PHP injection facts", () => {
   it("types untyped params, properties and locals from docblocks", async () => {
     const [cls] = await classes(`<?php
 class Svc {
-  /** @var \\App\\Repo\\UserRepository|null */
+  /** @var \\App\\Repo\\PlayerRepository|null */
   private $repo;
   /**
    * @param Mailer $mailer the mailer
@@ -134,7 +134,7 @@ class Svc {
     $e = $this->exporter();
   }
 }`);
-    expect(cls!.properties.find((p) => p.name === "repo")!.type).toBe("UserRepository|null");
+    expect(cls!.properties.find((p) => p.name === "repo")!.type).toBe("PlayerRepository|null");
     const ctor = cls!.methods.find((m) => m.name === "__construct")!;
     expect(ctor.params.map((p) => [p.name, p.type])).toEqual([["mailer", "Mailer"], ["retries", "int"], ["native", "Typed"]]);
     expect(cls!.methods.find((m) => m.name === "run")!.localTypes).toEqual([
@@ -164,7 +164,7 @@ class Svc {
 
   it("records a class's trait uses beside the interfaces it implements", async () => {
     const [cls] = await classes(`<?php
-class User extends Model implements Auth {
+class Player extends Model implements Auth {
   use \\App\\Concerns\\HasRoles, Notifiable;
   use Sorts { sort as order; }
 }`);
@@ -196,12 +196,12 @@ class Sheet {
   it("types properties the constructor fills, and object-typed class @property tags", async () => {
     const [cls] = await classes(`<?php
 /**
- * @property Users_model $users_model
+ * @property Players_model $players_model
  * @property int $id
  */
 class Svc {
   private $repo;
-  public function __construct(UserRepository $repository, $untyped) {
+  public function __construct(PlayerRepository $repository, $untyped) {
     $this->repo = $repository;
     $this->clock = new SystemClock();
     $this->mailer = app(Mailer::class);
@@ -211,11 +211,11 @@ class Svc {
 }`);
     const byName = Object.fromEntries(cls!.properties.map((p) => [p.name, [p.type, p.qualifier]]));
     expect(byName).toEqual({
-      repo: ["UserRepository", undefined],
+      repo: ["PlayerRepository", undefined],
       clock: ["SystemClock", undefined],
       mailer: ["Mailer", undefined],
       geo: [null, "geo"],
-      users_model: ["Users_model", undefined],
+      players_model: ["Players_model", undefined],
     });
   });
 
@@ -270,8 +270,8 @@ describe("PHP closures", () => {
   it("attributes the calls of closures passed along to the enclosing method", async () => {
     const [cls] = await classes(`<?php
 class Svc {
-  public function run($users) {
-    return $users->map(fn ($u) => $this->repo->load($u))
+  public function run($players) {
+    return $players->map(fn ($u) => $this->repo->load($u))
       ->each(function ($u) { $this->notifier->notify($u); });
   }
 }`);
@@ -284,18 +284,18 @@ class Svc {
 describe("PHP method injection", () => {
   it("marks controller actions' and handle()/__invoke() parameters as container-injected", async () => {
     const all = await classes(`<?php
-class UserController extends Controller {
+class PlayerController extends Controller {
   public function __construct(Mailer $m) {}
-  public function show(UserService $svc, int $id) {}
-  private function helper(UserService $svc) {}
+  public function show(PlayerService $svc, int $id) {}
+  private function helper(PlayerService $svc) {}
 }
 class SendReport { public function handle(Reporter $r) {} }
 class Plain { public function run(Reporter $r) {} }`);
     const injected = (cls: string, m: string) =>
       all.find((c) => c.name === cls)!.methods.find((x) => x.name === m)!.params.map((p) => [p.name, !!p.injected]);
-    expect(injected("UserController", "__construct")).toEqual([["m", false]]);
-    expect(injected("UserController", "show")).toEqual([["svc", true], ["id", true]]);
-    expect(injected("UserController", "helper")).toEqual([["svc", false]]);
+    expect(injected("PlayerController", "__construct")).toEqual([["m", false]]);
+    expect(injected("PlayerController", "show")).toEqual([["svc", true], ["id", true]]);
+    expect(injected("PlayerController", "helper")).toEqual([["svc", false]]);
     expect(injected("SendReport", "handle")).toEqual([["r", true]]);
     expect(injected("Plain", "run")).toEqual([["r", false]]);
   });

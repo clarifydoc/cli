@@ -10,18 +10,18 @@ struct A: View {
   var body: some View {
     NavigationStack {
       List {
-        NavigationLink("Edit", destination: EditView(item: item))
-        NavigationLink { DetailView(item: item) } label: { Text("Open") }
-        NavigationLink(value: item) { ItemRow(item: item) }
+        NavigationLink("Edit", destination: EditView(ball: ball))
+        NavigationLink { DetailView(ball: ball) } label: { Text("Open") }
+        NavigationLink(value: ball) { BallRow(ball: ball) }
       }
-      .navigationDestination(for: Item.self) { item in ItemView(item: item) }
+      .navigationDestination(for: Ball.self) { ball in BallView(ball: ball) }
       .sheet(isPresented: $adding) { AddView() }
       .fullScreenCover(item: $selected) { selected in PlayerView(track: selected) }
     }
   }
 }`.split("\n"));
     expect(routes.map((r) => `${r.path}${r.navigation ? " (navigation)" : ""}`)).toEqual([
-      "EditView (navigation)", "DetailView (navigation)", "ItemView (navigation)", "AddView (navigation)", "PlayerView (navigation)",
+      "EditView (navigation)", "DetailView (navigation)", "BallView (navigation)", "AddView (navigation)", "PlayerView (navigation)",
     ]);
   });
 
@@ -35,19 +35,19 @@ describe("SwiftData and Core Data models", () => {
 
   it("keeps stored properties only and relates model-typed ones", () => {
     const src = `@Model
-final class Item {
+final class Ball {
   var name: String
   @Attribute(.unique) var code: String
-  var owner: User?
+  var owner: Athlete?
   @Relationship(deleteRule: .cascade) var tags: [Tag] = []
   @Transient var draft = false
   var title: String {
     name.uppercased()
   }
 }`;
-    const r = new SwiftEntityExtractor().extract({ analysis: { classes: [cls("Item", 2, 11)] } as never, lines: src.split("\n"), sourceText: src } as never);
-    expect(r.entities[0]!.properties.map((p) => `${p.name}:${p.type}${p.isRequired ? "" : "?"}`)).toEqual(["name:String", "code:String", "owner:User??", "tags:[Tag]"]);
-    expect(r.relations.map((x) => `${x.fromField} ${x.cardinality} ${x.toEntity} ${x.confidence}`)).toEqual(["owner many-to-one User INFERRED", "tags one-to-many Tag EXTRACTED"]);
+    const r = new SwiftEntityExtractor().extract({ analysis: { classes: [cls("Ball", 2, 11)] } as never, lines: src.split("\n"), sourceText: src } as never);
+    expect(r.entities[0]!.properties.map((p) => `${p.name}:${p.type}${p.isRequired ? "" : "?"}`)).toEqual(["name:String", "code:String", "owner:Athlete??", "tags:[Tag]"]);
+    expect(r.relations.map((x) => `${x.fromField} ${x.cardinality} ${x.toEntity} ${x.confidence}`)).toEqual(["owner many-to-one Athlete INFERRED", "tags one-to-many Tag EXTRACTED"]);
   });
 
   it("reads Core Data's @NSManaged properties", () => {

@@ -36,18 +36,18 @@ describe("buildComponentGraph — same-name disambiguation", () => {
 
   it("resolves exported names to the closest declaring file (when the symbol is used)", () => {
     const consumer = file("app-two/Consumer.pas", {
-      imports: [{ source: "Whatever", specifiers: ["TUserService"] }],
+      imports: [{ source: "Whatever", specifiers: ["TPlayerService"] }],
     });
     // Namespace imports resolve by export name only when the file USES the
     // symbol — otherwise a TLB unit exporting thousands of names collects
     // an edge from every unit in the repo.
-    consumer.typeReferences = [{ typeName: "TUserService", line: 5, context: "type" } as never];
+    consumer.typeReferences = [{ typeName: "TPlayerService", line: 5, context: "type" } as never];
     const graph = buildComponentGraph([
-      file("app-one/UserService.pas", { exports: ["TUserService"] }),
-      file("app-two/UserService.pas", { exports: ["TUserService"] }),
+      file("app-one/PlayerService.pas", { exports: ["TPlayerService"] }),
+      file("app-two/PlayerService.pas", { exports: ["TPlayerService"] }),
       consumer,
     ]);
-    expect(graph["app-two/Consumer.pas"]).toEqual(["app-two/UserService.pas"]);
+    expect(graph["app-two/Consumer.pas"]).toEqual(["app-two/PlayerService.pas"]);
   });
 
   it("gates namespace-import symbol matches on actual use", () => {
@@ -68,14 +68,14 @@ describe("buildComponentGraph — same-name disambiguation", () => {
 
   it("never resolves an import to the importing file itself, even when self is closest", () => {
     const graph = buildComponentGraph([
-      file("pkg-a/UserService.java", {
+      file("pkg-a/PlayerService.java", {
         language: "java",
-        exports: ["UserService"],
-        imports: [{ source: "otherpkg.UserService", specifiers: ["UserService"] }],
+        exports: ["PlayerService"],
+        imports: [{ source: "otherpkg.PlayerService", specifiers: ["PlayerService"] }],
       }),
-      file("pkg-b/UserService.java", { language: "java", exports: ["UserService"] }),
+      file("pkg-b/PlayerService.java", { language: "java", exports: ["PlayerService"] }),
     ]);
-    expect(graph["pkg-a/UserService.java"]).toEqual(["pkg-b/UserService.java"]);
+    expect(graph["pkg-a/PlayerService.java"]).toEqual(["pkg-b/PlayerService.java"]);
   });
 });
 
@@ -145,19 +145,19 @@ describe("buildComponentGraph — package-directory imports (Go)", () => {
 
   it("keeps every file of the package when the importer uses no name it declares, but never its tests", () => {
     const graph = buildComponentGraph([
-      goFile("handler/user.go", ["NewUser"]),
-      goFile("handler/order.go", ["NewOrder"]),
-      goFile("handler/user_test.go", ["TestNewUser"]),
+      goFile("handler/player.go", ["NewPlayer"]),
+      goFile("handler/car.go", ["NewCar"]),
+      goFile("handler/player_test.go", ["TestNewPlayer"]),
       goFile("main.go", [], ["sample-go-api/handler"]),
     ]);
-    expect(graph["main.go"]?.sort()).toEqual(["handler/order.go", "handler/user.go"]);
+    expect(graph["main.go"]?.sort()).toEqual(["handler/car.go", "handler/player.go"]);
   });
 
   it("refuses an import two directories match equally well", () => {
     const graph = buildComponentGraph([
-      goFile("svc-a/internal/models/user.go", ["User"]),
-      goFile("svc-b/internal/models/user.go", ["User"]),
-      goFile("tools/gen.go", [], ["example.com/internal/models"], ["models.User"]),
+      goFile("svc-a/internal/models/player.go", ["Player"]),
+      goFile("svc-b/internal/models/player.go", ["Player"]),
+      goFile("tools/gen.go", [], ["example.com/internal/models"], ["models.Player"]),
     ]);
     expect(graph["tools/gen.go"]).toBeUndefined();
   });

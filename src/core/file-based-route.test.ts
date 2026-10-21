@@ -6,16 +6,16 @@ const path = (rel: string, frameworks: string[]) => inferFileBasedRoute(rel, fra
 
 describe("inferFileBasedRoute — each convention under its own framework only", () => {
   it("routes Next.js pages/ and app/ files only when the project is Next.js", () => {
-    expect(path("pages/users/[id].tsx", ["nextjs", "react"])).toBe("/users/:id");
+    expect(path("pages/players/[id].tsx", ["nextjs", "react"])).toBe("/players/:id");
     expect(path("src/app/settings/page.tsx", ["nextjs"])).toBe("/settings");
     // A React Router app (or a Vue one) keeps page components in `pages/` too;
     // that is a folder name, not a router.
-    expect(path("pages/UserEditPage.tsx", ["react", "react-router"])).toBeNull();
-    expect(path("pages/UserEditPage.tsx", ["vue", "vue-router"])).toBeNull();
+    expect(path("pages/PlayerEditPage.tsx", ["react", "react-router"])).toBeNull();
+    expect(path("pages/PlayerEditPage.tsx", ["vue", "vue-router"])).toBeNull();
   });
 
   it("routes Nuxt pages/*.vue only when the project is Nuxt — Vue alone is not Nuxt", () => {
-    expect(path("pages/users/[id].vue", ["nuxt", "vue"])).toBe("/users/:id");
+    expect(path("pages/players/[id].vue", ["nuxt", "vue"])).toBe("/players/:id");
     expect(path("pages/LoginPage.vue", ["vue", "vue-router"])).toBeNull();
     // ...and a Nuxt project does not get Next.js routes for its .ts files.
     expect(path("pages/helpers.ts", ["nuxt", "vue"])).toBeNull();
@@ -30,7 +30,7 @@ describe("Next.js App Router paths", () => {
   });
 
   it("leaves route groups and parallel-route slots out of the URL", () => {
-    expect(path("app/(shop)/cart/page.tsx", ["nextjs"])).toBe("/cart");
+    expect(path("app/(shop)/garage/page.tsx", ["nextjs"])).toBe("/garage");
     expect(path("app/(marketing)/page.tsx", ["nextjs"])).toBe("/");
     expect(path("app/dashboard/@stats/page.tsx", ["nextjs"])).toBe("/dashboard");
   });
@@ -45,7 +45,7 @@ describe("Next.js App Router paths", () => {
     expect(path("pages/_app.tsx", ["nextjs"])).toBeNull();
     expect(path("pages/_document.tsx", ["nextjs"])).toBeNull();
     expect(path("pages/_error.tsx", ["nextjs"])).toBeNull();
-    expect(inferFileBasedRoute("pages/api/users.ts", ["nextjs"])).toMatchObject({ path: "/api/users", kind: "api" });
+    expect(inferFileBasedRoute("pages/api/players.ts", ["nextjs"])).toMatchObject({ path: "/api/players", kind: "api" });
   });
 });
 
@@ -54,9 +54,9 @@ describe("Next.js App Router route handlers", () => {
 
   it("serves one api route per exported method handler, and one method-less row for a file exporting none", () => {
     expect(inferNextRoutes("app/api/webhooks/route.ts", file(["POST", "helper"]), ["nextjs"])).toMatchObject([{ path: "/api/webhooks", kind: "api", httpMethod: "POST", handler: "POST", line: 3 }]);
-    expect(inferNextRoutes("src/app/api/users/[id]/route.ts", file(["GET", "DELETE"]), ["nextjs"]).map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /api/users/:id", "DELETE /api/users/:id"]);
+    expect(inferNextRoutes("src/app/api/players/[id]/route.ts", file(["GET", "DELETE"]), ["nextjs"]).map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /api/players/:id", "DELETE /api/players/:id"]);
     expect(inferNextRoutes("app/api/legacy/route.ts", file([]), ["nextjs"])).toMatchObject([{ path: "/api/legacy", httpMethod: null }]);
-    expect(inferNextRoutes("app/users/page.tsx", file(["GET"]), ["nextjs"])).toMatchObject([{ path: "/users", kind: "frontend", httpMethod: null }]);
+    expect(inferNextRoutes("app/players/page.tsx", file(["GET"]), ["nextjs"])).toMatchObject([{ path: "/players", kind: "frontend", httpMethod: null }]);
   });
 });
 
@@ -69,7 +69,7 @@ describe("Expo Router", () => {
   it("makes every app/ component a screen at its path", () => {
     expect(expo("app/index.tsx")).toMatchObject([{ path: "/", kind: "frontend" }]);
     expect(expo("app/(tabs)/settings.tsx")).toMatchObject([{ path: "/settings", kind: "frontend" }]);
-    expect(expo("app/user/[id].tsx")).toMatchObject([{ path: "/user/:id" }]);
+    expect(expo("app/player/[id].tsx")).toMatchObject([{ path: "/player/:id" }]);
     expect(expo("src/app/(auth)/login/index.tsx")).toMatchObject([{ path: "/login" }]);
   });
 
@@ -81,8 +81,8 @@ describe("Expo Router", () => {
   });
 
   it("serves a +api file once per exported HTTP method", () => {
-    const routes = expo("app/users/[id]+api.ts", undefined, ["GET", "DELETE", "helper"]);
-    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.kind}`)).toEqual(["GET /users/:id api", "DELETE /users/:id api"]);
+    const routes = expo("app/players/[id]+api.ts", undefined, ["GET", "DELETE", "helper"]);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.kind}`)).toEqual(["GET /players/:id api", "DELETE /players/:id api"]);
   });
 
   it("only in an Expo Router project, and never over Next.js's app/", () => {

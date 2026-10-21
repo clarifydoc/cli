@@ -41,11 +41,11 @@ describe("buildResponsibilityProfiles", () => {
   });
 
   it("derives boundaries, roles and effect flags from imports and data sources", () => {
-    const a = file("src/orders/service.ts", "typescript", (f) => {
+    const a = file("src/cars/service.ts", "typescript", (f) => {
       f.imports.push(imp("@prisma/client", 1), imp("axios", 2), imp("amqplib", 3), imp("jsonwebtoken", 4), imp("pino", 5));
       f.dataSources.push(
-        ds("database", "prisma.order.findMany", 20, { access: "read" }),
-        ds("database", "prisma.order.update", 31, { access: "write" }),
+        ds("database", "prisma.car.findMany", 20, { access: "read" }),
+        ds("database", "prisma.car.update", 31, { access: "write" }),
         ds("api-call", "axios.post", 40),
         ds("queue-publish", "channel.publish", 52),
         ds("env", "process.env.DB_URL", 7),
@@ -67,8 +67,8 @@ describe("buildResponsibilityProfiles", () => {
   });
 
   it("marks declared API routes as serving and frontend routes/screens as presentation", () => {
-    const api = file("src/routes/users.ts", "typescript", (f) => {
-      f.routes.push({ path: "/users", httpMethod: "GET", kind: "api", handler: "list", line: 3 } as any);
+    const api = file("src/routes/players.ts", "typescript", (f) => {
+      f.routes.push({ path: "/players", httpMethod: "GET", kind: "api", handler: "list", line: 3 } as any);
     });
     const ui = file("src/pages/Home.vue", "typescript", (f) => {
       f.routes.push({ path: "/home", httpMethod: null, kind: "frontend", handler: null, line: 1 } as any);
@@ -78,7 +78,7 @@ describe("buildResponsibilityProfiles", () => {
     expect(u.roles).toEqual(["presentation"]);
     expect(a.roles).toEqual(["transport"]);
     expect(a.servesRequests).toBe(true);
-    expect(a.evidence[0]).toMatchObject({ kind: "http", source: "route", operation: "serve", name: "GET /users" });
+    expect(a.evidence[0]).toMatchObject({ kind: "http", source: "route", operation: "serve", name: "GET /players" });
   });
 
   it("collapses several submodule imports of one package into one evidence row", () => {

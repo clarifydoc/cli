@@ -9,19 +9,19 @@ const goFile = file("go", { imports: [{ source: "google.golang.org/grpc", specif
 
 describe("protoc stub naming", () => {
   it("reads each language's stub types and the calls that build them", () => {
-    expect(goGrpcStub("pb.NewOrderServiceClient()", goFile)).toEqual({ service: "OrderService", certain: true });
-    expect(goGrpcStub("pb.OrderServiceClient", file("go"))).toEqual({ service: "OrderService", certain: false });
+    expect(goGrpcStub("pb.NewCarServiceClient()", goFile)).toEqual({ service: "CarService", certain: true });
+    expect(goGrpcStub("pb.CarServiceClient", file("go"))).toEqual({ service: "CarService", certain: false });
     expect(goGrpcStub("http.Client", goFile)).toBeNull();
     expect(goGrpcStub("redis.NewClient()", goFile)).toBeNull();
     expect(pythonGrpcStub("helloworld_pb2_grpc.GreeterStub")).toEqual({ service: "Greeter", certain: true });
     expect(pythonGrpcStub("GreeterStub")).toEqual({ service: "Greeter", certain: false });
-    expect(jvmGrpcStub("OrderServiceGrpc.OrderServiceBlockingStub")).toEqual({ service: "OrderService", certain: true });
-    expect(jvmGrpcStub("OrderServiceGrpc.newFutureStub()")).toEqual({ service: "OrderService", certain: true });
-    expect(jvmGrpcStub("OrderServiceGrpcKt.OrderServiceCoroutineStub")).toEqual({ service: "OrderService", certain: true });
+    expect(jvmGrpcStub("CarServiceGrpc.CarServiceBlockingStub")).toEqual({ service: "CarService", certain: true });
+    expect(jvmGrpcStub("CarServiceGrpc.newFutureStub()")).toEqual({ service: "CarService", certain: true });
+    expect(jvmGrpcStub("CarServiceGrpcKt.CarServiceCoroutineStub")).toEqual({ service: "CarService", certain: true });
     expect(csharpGrpcStub("Greeter.GreeterClient")).toEqual({ service: "Greeter", certain: true });
     expect(csharpGrpcStub("Api.HttpClient")).toBeNull();
-    expect(jsGrpcStub("OrderService", file("typescript"))).toBeNull();
-    expect(jsGrpcStub("OrderService", file("typescript", { imports: [{ source: "@grpc/grpc-js" } as never] }))).toEqual({ service: "OrderService", certain: false });
+    expect(jsGrpcStub("CarService", file("typescript"))).toBeNull();
+    expect(jsGrpcStub("CarService", file("typescript", { imports: [{ source: "@grpc/grpc-js" } as never] }))).toEqual({ service: "CarService", certain: false });
   });
 });
 
@@ -32,13 +32,13 @@ describe("gRPC client calls", () => {
   const rpc = (type: string, method: string) => ({ path: `/${type}/${method}`, httpMethod: "POST", kind: "api", handler: method, contract: { type, method }, calls: [], middleware: [], line: 1 }) as RouteInfo;
 
   it("calls a declared service at its rpc's path, the method as declared, plumbing left out", () => {
-    const go = { ...goFile, functions: [fn("main", ["pb.NewOrderServiceClient", "client.GetOrder", "client.Close"], [{ name: "client", type: "", from: "pb.NewOrderServiceClient()" }])] } as FileAnalysis;
-    const java = file("java", { classes: [{ name: "C", properties: [{ name: "stub", type: "OrderServiceGrpc.OrderServiceBlockingStub" }], methods: [fn("get", ["stub.withDeadlineAfter", "stub.getOrder"])] } as never] });
+    const go = { ...goFile, functions: [fn("main", ["pb.NewCarServiceClient", "client.GetCar", "client.Close"], [{ name: "client", type: "", from: "pb.NewCarServiceClient()" }])] } as FileAnalysis;
+    const java = file("java", { classes: [{ name: "C", properties: [{ name: "stub", type: "CarServiceGrpc.CarServiceBlockingStub" }], methods: [fn("get", ["stub.withDeadlineAfter", "stub.getCar"])] } as never] });
     const cs = file("csharp", { functions: [fn("Greet", ["client.SayHelloAsync"], [{ name: "client", type: "Greeter.GreeterClient" }])] });
-    const calls = grpcClientCalls([go, java, cs], [rpc("acme.orders.v1.OrderService", "GetOrder"), rpc("helloworld.Greeter", "SayHello")]);
+    const calls = grpcClientCalls([go, java, cs], [rpc("acme.cars.v1.CarService", "GetCar"), rpc("helloworld.Greeter", "SayHello")]);
     expect(calls.map((c) => [c.filePath, c.name, c.target, c.contract])).toEqual([
-      ["x.go", "POST /acme.orders.v1.OrderService/GetOrder", "/acme.orders.v1.OrderService/GetOrder", undefined],
-      ["x.java", "POST /acme.orders.v1.OrderService/GetOrder", "/acme.orders.v1.OrderService/GetOrder", undefined],
+      ["x.go", "POST /acme.cars.v1.CarService/GetCar", "/acme.cars.v1.CarService/GetCar", undefined],
+      ["x.java", "POST /acme.cars.v1.CarService/GetCar", "/acme.cars.v1.CarService/GetCar", undefined],
       ["x.csharp", "POST /helloworld.Greeter/SayHello", "/helloworld.Greeter/SayHello", undefined],
     ]);
   });
@@ -64,7 +64,7 @@ describe("gRPC client calls", () => {
 
   it("names a service no .proto here declares by its contract, and an uncertain spelling only when declared", () => {
     const py = file("python", { functions: [fn("run", ["stub.SayHello"], [{ name: "stub", type: "helloworld_pb2_grpc.GreeterStub" }])] });
-    const js = file("typescript", { imports: [{ source: "@grpc/grpc-js" } as never], functions: [fn("go", ["client.getOrder", "cache.get"], [{ name: "client", type: "OrderService" }, { name: "cache", type: "Cache" }])] });
+    const js = file("typescript", { imports: [{ source: "@grpc/grpc-js" } as never], functions: [fn("go", ["client.getCar", "cache.get"], [{ name: "client", type: "CarService" }, { name: "cache", type: "Cache" }])] });
     const calls = grpcClientCalls([py, js], []);
     expect(calls.map((c) => [c.name, c.target, c.contract])).toEqual([["Greeter.SayHello", null, { type: "Greeter", method: "SayHello" }]]);
   });

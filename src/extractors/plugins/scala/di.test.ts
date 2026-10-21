@@ -32,9 +32,9 @@ describe("scala constructor members", () => {
   const params = (src: string) => ctor(src)?.params.map((p) => [p.name, p.type, p.qualifier]);
 
   it("reads every parameter of an `@Inject()` constructor, keyed by `@Named`, without the implicit list", () => {
-    const src = "class OrderSvc @Inject()(repo: OrderRepo, @Named(\"stripe\") gw: PayGw)(implicit ec: ExecutionContext) {\n}";
+    const src = "class CarSvc @Inject()(repo: CarRepo, @Named(\"stripe\") gw: PayGw)(implicit ec: ExecutionContext) {\n}";
     expect(params(src)).toEqual([
-      ["repo", "OrderRepo", undefined],
+      ["repo", "CarRepo", undefined],
       ["gw", "PayGw", "stripe"],
     ]);
     expect(ctor(src)).toMatchObject({ line: 1, endLine: 1, calls: [] });
@@ -43,26 +43,26 @@ describe("scala constructor members", () => {
   });
 
   it("reads a spaced `@Inject() (val …)` list, an access-modified one and a wrapped one", () => {
-    expect(props("class ValSvc @Inject() (val repo: OrderRepo, private val audit: Auditable) {\n}")).toEqual([
-      ["repo", "OrderRepo", "public", undefined],
+    expect(props("class ValSvc @Inject() (val repo: CarRepo, private val audit: Auditable) {\n}")).toEqual([
+      ["repo", "CarRepo", "public", undefined],
       ["audit", "Auditable", "private", undefined],
     ]);
-    expect(ctor("class ValSvc @Inject() (val repo: OrderRepo) {\n}")).toBeUndefined();
+    expect(ctor("class ValSvc @Inject() (val repo: CarRepo) {\n}")).toBeUndefined();
     expect(params("class Quiet private[app] (ec: ExecutionContext) {\n}")).toEqual([["ec", "ExecutionContext", undefined]]);
     expect(
-      params(["class Ctrl @Inject()(", "    cc: ControllerComponents,", "    service: OrderService", ")(implicit ec: ExecutionContext)", "    extends AbstractController(cc) {", "}"].join("\n")),
+      params(["class Ctrl @Inject()(", "    cc: ControllerComponents,", "    service: CarService", ")(implicit ec: ExecutionContext)", "    extends AbstractController(cc) {", "}"].join("\n")),
     ).toEqual([
       ["cc", "ControllerComponents", undefined],
-      ["service", "OrderService", undefined],
+      ["service", "CarService", undefined],
     ]);
   });
 
   it("keeps a case class's fields public and adds no constructor", () => {
-    expect(props("case class Order(id: Long, note: Option[String] = None)")).toEqual([
+    expect(props("case class Car(id: Long, note: Option[String] = None)")).toEqual([
       ["id", "Long", "public", undefined],
       ["note", "Option[String]", "public", undefined],
     ]);
-    expect(ctor("case class Order(id: Long)")).toBeUndefined();
+    expect(ctor("case class Car(id: Long)")).toBeUndefined();
   });
 });
 
@@ -72,7 +72,7 @@ describe("scala fields", () => {
       props(
         [
           "class FieldSvc {",
-          "  @Inject var fieldRepo: OrderRepo = _",
+          "  @Inject var fieldRepo: CarRepo = _",
           "  @Inject @Named(\"mem\") var mem: Repo = _",
           "  @Named(\"pg\")",
           "  @Inject var pg: Repo = _",
@@ -81,7 +81,7 @@ describe("scala fields", () => {
         ].join("\n"),
       ),
     ).toEqual([
-      ["fieldRepo", "OrderRepo", "public", undefined],
+      ["fieldRepo", "CarRepo", "public", undefined],
       ["mem", "Repo", "public", "mem"],
       ["pg", "Repo", "public", "pg"],
       ["cache", "Cache", "private", undefined],
@@ -122,7 +122,7 @@ describe("scala locals", () => {
   it("types locals from annotations, constructions and injector lookups", () => {
     expect(
       locals(
-        "val local: OrderRepo = injector.instanceOf[OrderRepo]",
+        "val local: CarRepo = injector.instanceOf[CarRepo]",
         "val r = injector.instanceOf[Repo]",
         "val c = injector.instanceOf(classOf[Cache])",
         "val g = injector.getInstance(classOf[Clock])",
@@ -134,7 +134,7 @@ describe("scala locals", () => {
         "val y = Repo(1)",
       ),
     ).toEqual([
-      { name: "local", type: "OrderRepo" },
+      { name: "local", type: "CarRepo" },
       { name: "r", type: "Repo" },
       { name: "c", type: "Cache" },
       { name: "g", type: "Clock" },
@@ -161,8 +161,8 @@ describe("scala locals", () => {
 
 describe("scala lookups chained into a call", () => {
   it("types the receiver of an injector lookup", () => {
-    expect(calls("injector.instanceOf[OrderRepo].loadAll()")[0]).toMatchObject({ name: "injector.instanceOf[OrderRepo].loadAll", receiverType: "OrderRepo" });
-    expect(calls("injector.instanceOf(classOf[OrderRepo]).loadAll()")[0]).toMatchObject({ receiverType: "OrderRepo" });
+    expect(calls("injector.instanceOf[CarRepo].loadAll()")[0]).toMatchObject({ name: "injector.instanceOf[CarRepo].loadAll", receiverType: "CarRepo" });
+    expect(calls("injector.instanceOf(classOf[CarRepo]).loadAll()")[0]).toMatchObject({ receiverType: "CarRepo" });
     expect(calls("injector.getInstance(classOf[Repo]).find(1)")[0]).toMatchObject({ receiverType: "Repo" });
   });
 
