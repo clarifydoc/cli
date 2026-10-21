@@ -76,7 +76,7 @@ const JDBC_WRITES = ["update", "batchUpdate", "persist", "merge", "remove", "sav
 const JDBC_METHODS = new Set([
   ...JDBC_READS, ...JDBC_WRITES,
   // Neither a read nor a write by name: the statement or the entity's state decides.
-  "execute", "createQuery", "createNativeQuery", "createNamedQuery", "refresh", "detach",
+  "execute", "createQuery", "createNativeQuery", "createSQLQuery", "createNamedQuery", "getNamedQuery", "refresh", "detach",
 ]);
 /**
  * A JDBC / JPA / Hibernate handle, read on the receiver's LAST segment:
@@ -409,6 +409,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
    * completion before the next file, so a per-instance field is safe).
    */
   private tableAliases = new Map<string, string>();
+  /** The file's string constants by name (`EXISTS = "select … from …"`): a query handed over by name. */
+  private stringConsts = new Map<string, string>();
 
   /** File declares a Feign client — its mapping annotations are outbound calls. */
   private isFeignFile = false;
@@ -432,6 +434,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   override beginFile(tree: Tree): void {
     const prepass = buildFilePrepass(tree.rootNode);
     this.tableAliases = prepass.tableAliases;
+    this.stringConsts = prepass.stringConsts;
     this.fieldTypes = prepass.fieldTypes;
     const text = tree.rootNode.text;
     this.isFeignFile = text.includes("@FeignClient");
@@ -446,6 +449,17 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     if (node.type === "method_invocation" || node.type === "call_expression") {
       const call = resolveCall(node);
       if (call) this.classifyCall(node, call, sources);
+    }
+
+    // A JPQL query handed to a constructor — a framework's list or grid
+    // descriptor (`new EntityListDescriptor<>(Match.class, "select m from Match m")`)
+    // runs it later; the query names the entity it reads.
+    if (node.type === "object_creation_expression") {
+      const entity = constructorJpqlEntity(node);
+      if (entity) {
+        const type = simpleTypeName(node.childForFieldName("type")?.text) ?? "query";
+        sources.push(this.ds({ kind: "database", name: `new ${type}`, target: entity, entity, line: node.startPosition.row + 1, ...withAccess("read") }));
+      }
     }
 
     // @Autowired / @Inject / @Value annotations indicate dependency injection.
@@ -579,13 +593,19 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // Account), else from the receiver name (`caseDAO.get` → Case). Dominant
     // data path here: the DAO wraps jOOQ behind a factory, so this is where a
     // service method's DB access is visible.
-    const daoEntity = daoReceiverEntity(receiver, this.fieldTypes);
-    if (daoEntity && DAO_CRUD_RE.test(method)) {
+    const named = daoReceiverEntity(receiver, this.fieldTypes);
+    // A class literal names the entity outright (`commonDAO.find(Player.class, id)`);
+    // a DAO named for no entity (`CommonDAO`, `GenericDao`) handles whatever it is
+    // handed, so the instance's declared type is the entity, or none.
+    const generic = named !== null && GENERIC_DAO_NAME.test(named);
+    const daoEntity = named === null ? null
+      : (jpaEntityArg(node) ?? (generic ? this.instanceArgType(node, call.firstArg) : named));
+    if (named && DAO_CRUD_RE.test(method)) {
       sources.push(this.ds({
         kind: "database",
         name: `DAO: ${method}`,
         target: daoEntity,
-        entity: daoEntity,
+        ...(daoEntity ? { entity: daoEntity } : {}),
         line,
         ...withAccess(jvmVerbAccess(method)),
       }));
@@ -651,17 +671,26 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       // `em.createNamedQuery("q", X.class).setParameter(…).getResultList()` is ONE access: the
       // `createNamedQuery` row inside the chain carries it, with its entity.
       if (/^(?:getResultList|getSingleResult|list|uniqueResult)$/.test(method) &&
-        /\.create(?:Named|Native)?Query\s*\(|\.createCriteria\s*\(/.test(receiver)) return;
+        /\.create(?:Named|Native|SQL)?Query\s*\(|\.getNamedQuery\s*\(|\.createCriteria\s*\(/.test(receiver)) return;
+      // A query held in a constant of the file (`session.createSQLQuery(EXISTS)`).
+      const constant = call.firstArg && /^(?:this\.)?\w+$/.test(call.firstArg.text)
+        ? this.stringConsts.get(call.firstArg.text.replace(/^this\./, "")) ?? null : null;
+      const fromConstant = constant ? constantQueryTarget(constant) : null;
       const entity = jpaEntityArg(node)
+        ?? fromConstant?.entity
         // `em.merge(person)`, `session.saveOrUpdate(order)`: the instance's declared type.
         ?? (JPA_INSTANCE_METHODS.has(method) ? this.instanceArgType(node, call.firstArg) : null);
+      // `createNamedQuery("match.byClub", Long.class)`: the query is declared on an entity elsewhere.
+      const named = /^(?:createNamedQuery|getNamedQuery)$/.test(method) && call.firstArg?.type === "string_literal"
+        ? call.firstArg.text.replace(/^"|"$/g, "") : null;
       sources.push(this.ds({
         kind: "database",
         name: method,
         target: entity,
         ...(entity ? { entity } : {}),
+        ...(named && !entity ? { namedQuery: named } : {}),
         line,
-        ...withAccess(dbAccessFor(method, JDBC_ACCESS)),
+        ...withAccess(dbAccessFor(method, JDBC_ACCESS) ?? fromConstant?.access),
       }));
       return;
     }
@@ -728,12 +757,14 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   /** A JDBC/JPA handle by its last segment, unless it is named or declared as a service-layer object. */
   private isJdbcReceiver(node: Node, receiver: string): boolean {
     const leaf = receiverLeaf(receiver);
+    const declared = /^\w+$/.test(leaf) ? (localDeclaredType(node, leaf) ?? this.fieldTypes.get(leaf) ?? null) : null;
+    // A handle declared as one (`private JdbcTemplate template`) is one whatever it is called.
+    if (declared && JDBC_RECEIVER_RE.test(declared) && !NON_DB_SESSION_RE.test(declared)) return true;
     // A query chain on a handle (`em.createQuery(…).getResultList()`) is still that handle's.
     if (!JDBC_RECEIVER_RE.test(leaf) && !/^(?:this\.)?(?:em|entityManager|session)\s*\./i.test(receiver)) return false;
     if (SERVICE_LAYER_NAME_RE.test(leaf) || NON_DB_SESSION_RE.test(leaf)) return false;
     // `request.getSession()` is the servlet's; Hibernate's `getSession()` has no request in front of it.
     if (/\b\w*(?:request|req)\s*\.\s*getSession\s*\(/i.test(receiver)) return false;
-    const declared = /^\w+$/.test(leaf) ? (localDeclaredType(node, leaf) ?? this.fieldTypes.get(leaf) ?? null) : null;
     // `EntityManager` ends like a service-layer `…Manager` but is the handle itself.
     return !(declared && SERVICE_LAYER_TYPE_RE.test(declared) && !JDBC_RECEIVER_RE.test(declared));
   }
@@ -931,6 +962,46 @@ function resolveTableExpr(arg: Node | null, aliases: Map<string, string>): strin
  * (`ICaseDAO` → `Case`). The prefix convention works the same way
  * (`RepositoryClass` → `Class`). Null when the receiver isn't a DAO.
  */
+/** `select … from Match m` (JPQL names an entity, Capitalized) among a constructor's string arguments. */
+function constructorJpqlEntity(node: Node): string | null {
+  const args = node.childForFieldName("arguments");
+  if (!args || !/select/i.test(args.text)) return null;
+  for (const arg of args.namedChildren) {
+    if (!arg) continue;
+    const text = stringArgText(arg);
+    const m = text ? /^\s*(?:select|SELECT|Select)\b[\s\S]*?\b(?:from|FROM|From)\s+([A-Z]\w*)\b/.exec(text) : null;
+    if (m && !NOT_AN_ENTITY_LITERAL.has(m[1]!)) return m[1]!;
+  }
+  return null;
+}
+
+/** The literal text of a string argument, a concatenation of literals included. */
+function stringArgText(arg: Node): string | null {
+  if (arg.type === "string_literal" || arg.type === "text_block") return arg.text.replace(/^"(?:"")?|(?:"")?"$/g, "");
+  if (arg.type === "parenthesized_expression") return concatText(arg.namedChildren);
+  if (arg.type === "binary_expression") return concatText(arg.namedChildren);
+  return null;
+}
+
+/** The parts' literal text joined, a non-literal part as a space; null when none is literal. */
+function concatText(parts: ReadonlyArray<Node | null>): string | null {
+  const texts = parts.map((part) => (part ? stringArgText(part) : null));
+  if (texts.every((t) => t === null)) return null;
+  return texts.map((t) => t ?? " ").join("");
+}
+
+/** The entity (JPQL) or table (SQL) a query constant reads or writes. */
+function constantQueryTarget(text: string): { entity: string; access?: "read" | "write" } | null {
+  const sql = tableFrom(text);
+  const entity = jpaEntityText(`"${text}"`) ?? sql?.table.split(".").pop();
+  if (!entity) return null;
+  if (!sql) return { entity };
+  return { entity, ...withAccess(sqlVerbAccess(sql.verb)) };
+}
+
+/** What a DAO's name says when it is no entity's: it serves every entity. */
+const GENERIC_DAO_NAME = /^(?:common|generic|base|abstract|default|crud|shared|core|main|global|entity|data|persistence|hibernate|jpa|db|database|app|simple)$/i;
+
 function daoReceiverEntity(receiver: string, fieldTypes?: Map<string, string>): string | null {
   const seg = receiver.split(".").pop()?.trim() ?? "";
   const declared = fieldTypes?.get(seg);
@@ -1106,9 +1177,11 @@ function receiverNode(call: Node): Node | null {
 function buildFilePrepass(root: Node): {
   tableAliases: Map<string, string>;
   fieldTypes: Map<string, string>;
+  stringConsts: Map<string, string>;
 } {
   const tableAliases = new Map<string, string>();
   const fieldTypes = new Map<string, string>();
+  const stringConsts = new Map<string, string>();
   const putType = (name: string | null | undefined, rawType: string | null | undefined): void => {
     const type = simpleTypeName(rawType);
     if (name && type && !fieldTypes.has(name)) fieldTypes.set(name, type);
@@ -1130,7 +1203,12 @@ function buildFilePrepass(root: Node): {
         // Java: one type, possibly several declarators.
         const rawType = n.childForFieldName("type")?.text;
         for (const c of n.children) {
-          if (c.type === "variable_declarator") putType(c.childForFieldName("name")?.text, rawType);
+          if (c.type !== "variable_declarator") continue;
+          putType(c.childForFieldName("name")?.text, rawType);
+          const value = c.childForFieldName("value");
+          const text = value ? stringArgText(value) : null;
+          const name = c.childForFieldName("name")?.text;
+          if (text && name && rawType === "String") stringConsts.set(name, text);
         }
       }
     } else if (n.type === "class_parameter") {
@@ -1145,7 +1223,7 @@ function buildFilePrepass(root: Node): {
     for (const c of n.children) visit(c);
   };
   visit(root);
-  return { tableAliases, fieldTypes };
+  return { tableAliases, fieldTypes, stringConsts };
 }
 
 /** The expression node following the `=` of a Kotlin `property_declaration`. */

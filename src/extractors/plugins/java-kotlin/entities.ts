@@ -1,5 +1,5 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
-import type { ClassInfo, EntityRelation, Language, PropertyInfo } from "../../../types/analysis.js";
+import type { ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
 
 /**
  * Extracts JPA entities + their relations from Java and Kotlin source.
@@ -25,6 +25,25 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
 
   /** Java/Kotlin both use C-style `//` line comments. */
   private static readonly COMMENT = ["//"] as const;
+
+  /**
+   * A named query runs where its name is used (`em.createNamedQuery("match.byClub")`)
+   * and is declared on an entity (`@NamedQuery(name = "match.byClub", query = "select
+   * m from Match m …")`): the call reads what the query's `from` names, else the
+   * declaring entity. A name two declarations disagree on names nothing.
+   */
+  override reconcileProject(analyses: FileAnalysis[]): void {
+    const jvm = analyses.filter((a) => a.language === "java" || a.language === "kotlin");
+    const calls = jvm.flatMap((a) => (a.dataSources ?? []).filter((d) => d.namedQuery && !d.entity));
+    if (calls.length === 0) return;
+    const byName = namedQueryEntities(jvm);
+    for (const ds of calls) {
+      const entity = byName.get(ds.namedQuery!);
+      if (!entity) continue;
+      ds.entity = entity;
+      ds.target ??= entity;
+    }
+  }
 
   extract(ctx: EntityExtractContext): EntityExtractResult {
     const entities: ClassInfo[] = [];
@@ -853,4 +872,38 @@ function jpaTableName(decorators: readonly string[], sourceText: string, classNa
     }
   }
   return null;
+}
+
+/** Every declared named query's entity by name; null for a name two declarations disagree on. */
+function namedQueryEntities(analyses: FileAnalysis[]): Map<string, string | null> {
+  const declared = analyses.flatMap((a) => a.classes.flatMap((cls) => cls.decorators.flatMap((d) => namedQueryDeclarations(d, cls.name))));
+  const byName = new Map<string, string | null>();
+  for (const q of declared) {
+    const prev = byName.get(q.name);
+    byName.set(q.name, prev === undefined || prev === q.entity ? q.entity : null);
+  }
+  return byName;
+}
+
+/**
+ * The queries a `@NamedQuery` / `@NamedQueries({…})` / `@NamedNativeQuery`
+ * decorator declares: each name with the entity it reads — the JPQL's `from`
+ * entity, a native query's `resultClass`, else the declaring class.
+ */
+export function namedQueryDeclarations(decorator: string, declaringClass: string): Array<{ name: string; entity: string }> {
+  const out: Array<{ name: string; entity: string }> = [];
+  const parts = decorator.split(/@?(?=\bNamed(?:Native)?Query\s*\()/).filter((p) => /^Named(?:Native)?Query\s*\(/.test(p));
+  for (const part of parts) {
+    const name = /\bname\s*=\s*"([^"]+)"/.exec(part)?.[1];
+    if (name) out.push({ name, entity: namedQueryEntity(part) ?? declaringClass });
+  }
+  return out;
+}
+
+/** What one declaration reads: a JPQL query's `from` entity, else a native query's `resultClass`. */
+function namedQueryEntity(declaration: string): string | undefined {
+  const resultClass = /\bresultClass\s*=\s*([A-Z]\w*)\.class/.exec(declaration)?.[1];
+  if (declaration.startsWith("NamedNativeQuery")) return resultClass;
+  const query = /\bquery\s*=\s*((?:"(?:[^"\\]|\\.)*"\s*\+?\s*)+)/.exec(declaration)?.[1] ?? "";
+  return /\b(?:from|FROM|From)\s+([A-Z]\w*)\b/.exec(query.replace(/"\s*\+\s*"/g, ""))?.[1] ?? resultClass;
 }

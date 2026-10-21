@@ -97,6 +97,39 @@ describe("DAO / Repository receiver → entity (the dominant data path here)", (
     expect(s.some((d) => d.entity === "case")).toBe(true);
   });
 
+  it("takes a generic DAO's entity from the class literal or the instance it is handed, never from its name (real-repo FP)", async () => {
+    const s = db(await sourcesOf(
+      `    Player p = new Player(); commonDAO.save(p); commonDAO.find(Club.class, id); commonDAO.flush(); matchDAO.find(Season.class, id);`,
+      "java",
+    ));
+    expect(s.map((d) => `${d.name} ${d.entity ?? "-"}`)).toEqual(["DAO: save Player", "DAO: find Club", "DAO: find Season"]);
+  });
+
+  it("reads the entity of a JPQL query handed to a constructor", async () => {
+    const s = db(await sourcesOf(
+      `    var d = new EntityListDescriptor<>(Match.class, "select m from Match m " + "where m.season = :s");
+    var n = new Notice("select a seat from the list");`,
+      "java",
+    ));
+    expect(s.map((d) => `${d.name} ${d.entity} ${d.access}`)).toEqual(["new EntityListDescriptor Match read"]);
+  });
+
+  it("reads a query held in a constant, on a handle declared as one whatever its name", async () => {
+    const s = db(await sourcesOf(
+      `    session.createSQLQuery(EXISTS).uniqueResult();
+    template.execute(INSERT_SEASON);`,
+      "java",
+      `class Holder {
+  private static final String EXISTS = "SELECT 1 FROM league.fixtures " + "WHERE id = ?";
+  private static final String INSERT_SEASON = """
+      INSERT INTO seasons (id) VALUES (?)
+      """;
+  private JdbcTemplate template;
+}`,
+    ));
+    expect(s.map((d) => `${d.name} ${d.entity ?? "-"} ${d.access ?? "-"}`)).toEqual(["createSQLQuery fixtures read", "execute seasons write"]);
+  });
+
   it("handles a `this.playerRepository.save()` receiver", async () => {
     const s = db(await sourcesOf(`    this.playerRepository.save(u)`, "kotlin"));
     expect(s.some((d) => d.entity === "player")).toBe(true);

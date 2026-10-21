@@ -1366,6 +1366,11 @@ export interface DataSourceInfo {
    */
   entity?: string;
   /**
+   * For `database`: the named query the call runs (`em.createNamedQuery("match.byClub")`),
+   * declared elsewhere — a project pass fills `entity` from the query's declaration.
+   */
+  namedQuery?: string;
+  /**
    * For `database`: `target` is a stored procedure or table-valued function the
    * statement calls (`EXECUTE PROCEDURE X`, `SELECT … FROM SP_X(:a)`), not a
    * table. It names no ER entity; the trace shows the routine by name.
