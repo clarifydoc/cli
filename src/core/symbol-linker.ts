@@ -620,6 +620,32 @@ function specRouteHandlerLink(
     strategy: "spec-join",
     relation: "calls",
   });
+  // A class method implements it: the JAX-WS / JAX-RS class implementing the
+  // interface generated from the spec at build time (`IntegrationPropertyServiceImpl
+  // implements IntegrationPropertyServicePort`, the WSDL portType; `PetApiImpl
+  // implements PetApi`). The interface is not in the source, so the join is by
+  // the operation's name, among implementors of the route's contract type —
+  // unique-or-nothing.
+  // Only an implementor: a class of the same name is the generated CLIENT
+  // (`UsersApi.listUsers` in a TypeScript SDK), the caller, not the code.
+  // Tried first: a class stating the contract outranks a function that merely
+  // shares the operation's name (a client wrapper `getCart` beside the stubs).
+  const contractType = route.contract?.type.split(".").pop();
+  for (const cand of contractType && opId ? candidates.slice(0, 2) : []) {
+    const methods = methodLeafIndex(ctx).get(cand)?.filter((m) => !isExcluded(m.file) && !isApiContractLanguage(ctx.languageOf.get(m.file) as Language)) ?? [];
+    // The class states the contract — implementing the interface by name, or
+    // extending the base protoc generated for the service (`GreeterBase`, …).
+    const states = (file: string, cls: ClassInfo | undefined): boolean =>
+      !!cls && (cls.implements.some((t) => t.replace(/<.*$/, "").split(".").pop() === contractType) ||
+        pluginFor(ctx.languageOf.get(file) as Language)?.grpcServiceOf?.(cls) === contractType);
+    const pick = methods.filter((m) => statesThrough(m.file, m.className, states, ctx));
+    // Several classes serving the operation: the source does not say which, and
+    // a function that only shares its name is no better answer.
+    if (pick.length > 1) return null;
+    if (pick.length !== 1) continue;
+    const def = ctx.symbolIndex.get(pick[0]!.file)?.get(pick[0]!.symbol);
+    if (def) return link(cand, pick[0]!.file, def);
+  }
   for (const cand of candidates) {
     // classNameIndex maps every dot-free symbol name to its defining files in
     // symbolIndex order — same uniqueness semantics as a full scan, O(hits).
@@ -629,29 +655,23 @@ function specRouteHandlerLink(
     if (!def) continue;
     return link(cand, files[0]!, def);
   }
-  // A class method implements it: the JAX-WS / JAX-RS class implementing the
-  // interface generated from the spec at build time (`IntegrationPropertyServiceImpl
-  // implements IntegrationPropertyServicePort`, the WSDL portType; `PetApiImpl
-  // implements PetApi`). The interface is not in the source, so the join is by
-  // the operation's name, among implementors of the route's contract type —
-  // unique-or-nothing.
-  // Only an implementor: a class of the same name is the generated CLIENT
-  // (`UsersApi.listUsers` in a TypeScript SDK), the caller, not the code.
-  const contractType = route.contract?.type.split(".").pop();
-  if (!contractType || !opId) return null;
-  for (const cand of candidates.slice(0, 2)) {
-    const methods = methodLeafIndex(ctx).get(cand)?.filter((m) => !isExcluded(m.file) && !isApiContractLanguage(ctx.languageOf.get(m.file) as Language)) ?? [];
-    // The class states the contract — implementing the interface by name, or
-    // extending the base protoc generated for the service (`GreeterBase`, …).
-    const states = (file: string, cls: ClassInfo | undefined): boolean =>
-      !!cls && (cls.implements.some((t) => t.replace(/<.*$/, "").split(".").pop() === contractType) ||
-        pluginFor(ctx.languageOf.get(file) as Language)?.grpcServiceOf?.(cls) === contractType);
-    const pick = methods.filter((m) => states(m.file, ctx.classAt.get(memberKey(m.file, m.className))));
-    if (pick.length !== 1) continue;
-    const def = ctx.symbolIndex.get(pick[0]!.file)?.get(pick[0]!.symbol);
-    if (def) return link(cand, pick[0]!.file, def);
-  }
   return null;
+}
+
+/** Whether a class, or a project base class of it, states the contract (`EmailService(BaseEmailService)`, the base the Servicer). */
+function statesThrough(file: string, className: string, states: (file: string, cls: ClassInfo | undefined) => boolean, ctx: LinkContext): boolean {
+  let f = file;
+  let name = className;
+  for (let depth = 0; depth < MAX_BASE_DEPTH; depth++) {
+    const cls = ctx.classAt.get(memberKey(f, name));
+    if (states(f, cls)) return true;
+    const base = bareClassName(cls?.extends);
+    const entry = base ? classEntryFor(ctx.classCatalog.get(base), f) : undefined;
+    if (!entry || entry.count !== 1) return false;
+    f = entry.file;
+    name = base;
+  }
+  return false;
 }
 
 const methodLeafCache = new WeakMap<object, Map<string, Array<{ file: string; symbol: string; className: string }>>>();

@@ -27,6 +27,13 @@ message Table { repeated string rows = 1; }
 message AssignRequest { string match = 1; }
 message Assignment { string referee = 1; }
 `,
+  "web/proto/league.proto": `syntax = "proto3";
+package league;
+
+service FixtureService { rpc GetFixture (FixtureRequest) returns (Fixture); }
+message FixtureRequest { string id = 1; }
+message Fixture { string id = 1; }
+`,
   "fixtures/Fixtures.csproj": `<Project Sdk="Microsoft.NET.Sdk.Web"></Project>`,
   "fixtures/FixtureService.cs": `namespace Fixtures;
 
@@ -59,9 +66,20 @@ func (t *tableServer) GetTable(ctx context.Context, req *pb.TableRequest) (*pb.T
   "referees/referee_server.py": `import league_pb2_grpc
 
 
-class Referees(league_pb2_grpc.RefereeServiceServicer):
+class BaseReferees(league_pb2_grpc.RefereeServiceServicer):
+    pass
+
+
+class Referees(BaseReferees):
     def Assign(self, request, context):
         return None
+
+
+class TrainingReferees(BaseReferees):
+    def Assign(self, request, context):
+        return None
+`,
+  "web/gateways/referees.ts": `export async function assign(match: string) { return match; }
 `,
   "web/package.json": `{"name":"web","dependencies":{"@grpc/grpc-js":"^1.10.0"}}`,
   "web/gateways/fixtures.ts": `import { ChannelCredentials } from "@grpc/grpc-js";
@@ -90,17 +108,23 @@ describe("gRPC services through protoc's generated bases", () => {
   });
 
   it("anchor each rpc on its implementing method", () => {
-    const joins = summary.symbolLinks.filter((l) => l.strategy === "spec-join").map((l) => `${l.sourceSymbol} -> ${l.targetSymbol}`).sort();
+    // Each copy of the proto joins the same implementation.
+    const joins = [...new Set(summary.symbolLinks.filter((l) => l.strategy === "spec-join").map((l) => `${l.sourceSymbol} -> ${l.targetSymbol}`))].sort();
     expect(joins).toEqual([
       "route:POST /league.FixtureService/GetFixture -> FixtureService.GetFixture",
-      "route:POST /league.RefereeService/Assign -> Referees.Assign",
       "route:POST /league.SquadService/ListPlayers -> SquadServer.listPlayers",
       "route:POST /league.TableService/GetTable -> tableServer.GetTable",
     ]);
   });
 
+  it("refuse an rpc two subclasses of the servicer implement, never a function of the same name", () => {
+    expect(summary.symbolLinks.filter((l) => l.sourceSymbol.endsWith("RefereeService/Assign"))).toEqual([]);
+  });
+
   it("read a ts-proto client's call as the rpc, and the edge goes to the implementing service", () => {
     expect((summary.apiCalls ?? []).filter((c) => c.filePath === "web/gateways/fixtures.ts").map((c) => c.target)).toEqual(["/league.FixtureService/GetFixture"]);
+    // The web's own copy of the proto is the same operation, not a second service to choose from.
+    expect((summary.apiRouteLinks ?? []).filter((l) => l.source === "web/gateways/fixtures.ts").map((l) => l.confidence)).toEqual(["EXTRACTED"]);
     expect((summary.projectDependencies ?? []).map((d) => `${d.from} -> ${d.to}`)).toContain("web -> fixtures");
   });
 });
