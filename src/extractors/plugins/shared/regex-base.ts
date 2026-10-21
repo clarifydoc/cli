@@ -11,6 +11,12 @@ export interface FnPattern {
   pattern: RegExp;
   isExported?: (line: string, name: string) => boolean;
   isAsync?: (line: string) => boolean;
+  /**
+   * A check on the surrounding lines a one-line pattern cannot make — a
+   * signature wrapped over several lines is a definition only when a body,
+   * not a `;`, follows it. Absent: the line match decides.
+   */
+  accept?: (lines: readonly string[], i: number) => boolean;
 }
 
 export interface ClsPattern {
@@ -382,9 +388,9 @@ export function extractFunctionsWithSpec(lines: string[], spec: RegexLangSpec): 
     const line = lines[i];
     if (isCommentLine(line, spec.lineCommentPrefixes)) continue;
 
-    for (const { pattern, isExported, isAsync: asyncCheck } of spec.functionPatterns) {
+    for (const { pattern, isExported, isAsync: asyncCheck, accept } of spec.functionPatterns) {
       const m = line.match(pattern);
-      if (m && m[1] && !isControlFlowKeyword(m[1])) {
+      if (m && m[1] && !isControlFlowKeyword(m[1]) && (!accept || accept(lines, i))) {
         const endLine = findEndLine(lines, i, resolveBlockStyle(spec), spec.keywordEnd);
         const inline = inlineBodyColumn(line, line.indexOf(m[1], m.index ?? 0) + m[1].length);
         const calls = extractCallsFromBody(lines, i + 1, endLine, spec.lineCommentPrefixes, spec.callPatterns, inline >= 0 ? { line: i, column: inline } : undefined);
@@ -495,8 +501,9 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
           const bodyLine = bodyLines[j];
           if (isCommentLine(bodyLine, spec.lineCommentPrefixes)) continue;
 
-          for (const { pattern: fnPat, isExported, isAsync: asyncCheck } of spec.functionPatterns) {
+          for (const { pattern: fnPat, isExported, isAsync: asyncCheck, accept } of spec.functionPatterns) {
             const fm = bodyLine.match(fnPat);
+            if (fm && accept && !accept(lines, i + 1 + j)) continue;
             if (fm && fm[1] && !isControlFlowKeyword(fm[1])) {
               const methodStart = i + 1 + j;
               const methodEnd = findEndLine(lines, methodStart, resolveBlockStyle(spec), spec.keywordEnd);

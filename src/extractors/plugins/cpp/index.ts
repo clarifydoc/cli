@@ -102,6 +102,15 @@ export const cppSpec: RegexLangSpec = {
       isAsync: () => false,
     },
     {
+      // A signature whose parameter list wraps onto later lines
+      // (`Status Convert(ServerContext* context,` …), taken when a body
+      // follows the closing `)` — a prototype ends with `;` instead.
+      pattern: /^\s*(?!if\b|while\b|for\b|switch\b|do\b|else\b|return\b|case\b|sizeof\b|catch\b|delete\b|new\b|throw\b)(?:static\s+|inline\s+|virtual\s+|constexpr\s+|explicit\s+|friend\s+|const\s+)*[\w:<>,]+[\s*&]+[*&]?(?:[A-Za-z_]\w*::)?(~?[A-Za-z_]\w*)\s*\([^)]*$/,
+      isExported: (line) => !/^\s*static\b/.test(line),
+      isAsync: () => false,
+      accept: (lines, i) => bodyFollowsSignature(lines, i),
+    },
+    {
       // Out-of-line constructor / destructor where the `:` member-init list
       // or the `{` is on the following line — `User::User(...)` ending with `)`.
       pattern: /^\s*([A-Za-z_]\w*)::~?\1\s*\([^)]*\)\s*$/,
@@ -183,3 +192,20 @@ export const cppSpec: RegexLangSpec = {
   extractInteractiveElements: extractCppConnectElements,
 
 };
+
+/** Whether the parameter list opened on line `i` closes, within a few lines, into a body (`{`, a `:` init list) rather than `;`. */
+function bodyFollowsSignature(lines: readonly string[], i: number): boolean {
+  const text = lines.slice(i, i + 12).join("\n");
+  const open = text.indexOf("(");
+  if (open < 0) return false;
+  let depth = 0;
+  for (let k = open; k < text.length; k++) {
+    if (text[k] === "(") depth++;
+    else if (text[k] === ")" && --depth === 0) {
+      const rest = text.slice(k + 1).replace(/^(?:\s|const\b|noexcept\b|override\b|final\b|->\s*[\w:<>*&]+)*/, "");
+      return rest.startsWith("{") || (rest.startsWith(":") && !rest.startsWith("::"));
+    }
+  }
+  return false;
+}
+

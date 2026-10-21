@@ -129,3 +129,22 @@ int parse_all(parser_t* p) {
     expect(a.functions.map((f) => f.name)).toEqual(["parse_all"]);
   });
 });
+
+describe("C++ signatures wrapped over several lines", () => {
+  it("are methods when a body follows, never when a prototype ends with ;", () => {
+    const cls = classesOf(`class FixtureService final : public league::FixtureService::Service
+{
+  Status GetFixture(ServerContext* context,
+      const FixtureRequest* request,
+      Fixture* reply) override
+  {
+    return Status::OK;
+  }
+
+  void Reschedule(int fixtureId,
+      int days);
+};`).find((c) => c.name === "FixtureService");
+    expect(methodNames(cls)).toEqual(["GetFixture"]);
+    expect(cls?.implements).toEqual(["league::FixtureService::Service"]);
+  });
+});
