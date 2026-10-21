@@ -258,3 +258,30 @@ describe("WebflowUiBridgeResolver", () => {
     expect(l.targetSymbol).toBe("<flow>");
   });
 });
+
+describe("CXF servers declared in Spring XML", () => {
+  it("records the classes a jaxrs:server serves, through refs, inline beans and factory beans", () => {
+    const xml = `<beans xmlns:jaxrs="http://cxf.apache.org/jaxrs">
+  <bean id="matchRestApi" class="com.example.league.ws.MatchRestApiImpl"/>
+  <bean id="clubRestApi" class="com.example.league.util.RestServiceFactory" factory-method="create">
+    <constructor-arg>
+      <bean class="com.example.league.ws.ClubRestApiImpl" autowire="byName"/>
+    </constructor-arg>
+  </bean>
+  <bean id="unused" class="com.example.league.ws.RefereeRestApiImpl"/>
+  <jaxrs:server id="league" address="/league">
+    <jaxrs:providers><bean class="com.fasterxml.jackson.jaxrs.json.JacksonJsonProvider"/></jaxrs:providers>
+    <jaxrs:serviceBeans>
+      <ref bean="matchRestApi"/>
+      <ref bean="clubRestApi"/>
+      <bean class="com.example.league.ws.SeasonRestApiImpl"/>
+    </jaxrs:serviceBeans>
+  </jaxrs:server>
+</beans>`;
+    const facts: import("../../../types/analysis.js").RouteFact[] = [];
+    springxmlSpec.extractRoutes!(xml.split("\n"), [], "src/main/resources/context.xml", [], facts);
+    expect(facts.map((f) => f.data)).toEqual([
+      { types: ["com.example.league.ws.ClubRestApiImpl", "com.example.league.ws.MatchRestApiImpl", "com.example.league.ws.SeasonRestApiImpl"] },
+    ]);
+  });
+});

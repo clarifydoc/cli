@@ -1,8 +1,10 @@
 import type { ClassInfo, FileAnalysis, FunctionInfo, RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
+import { CXF_SERVICE_BEANS_FACT, type ServiceBeanFact } from "../../shared/cxf-service-beans.js";
 
 /**
- * Apache CXF service beans: the classes a `JAXRSServerFactoryBean` serves.
+ * Apache CXF service beans: the classes a `JAXRSServerFactoryBean` (or a Spring
+ * XML `<jaxrs:server>`) serves.
  *
  *   @Bean Server rsServer(MatchApi matchApi, ClubApi clubApi) {
  *     JAXRSServerFactoryBean endpoint = new JAXRSServerFactoryBean();
@@ -20,14 +22,8 @@ import type { RouteResolver } from "../../../route-resolvers/base.js";
  * tiers of the route linker never match it.
  */
 
-export const CXF_SERVICE_BEANS_FACT = "cxf:service-beans";
 
-interface ServiceBeanFact {
-  /** Declared types of the registered beans, fully qualified where the file says so. */
-  types: string[];
-}
-
-const GATE = /\.setServiceBean(?:s|Objects)?\s*\(/;
+const GATE = /\.setServiceBean(?:s|Objects)?\s*\(|RealmResourceProvider\b/;
 const REGISTER_RE = /\.setServiceBean(?:s|Objects)?\s*\(/g;
 /** Collection wrappers whose arguments are the beans themselves. */
 const WRAPPERS = /^(?:(?:java\.util\.)?(?:Arrays\.asList|List\.of|Set\.of|Collections\.singletonList)|asList|listOf|setOf|mutableListOf|arrayListOf)$/;
@@ -142,7 +138,7 @@ function typesOf(text: string, arg: string, seen: Set<string>, out: Set<string>)
   }
 }
 
-/** Per-file: the types this file registers as CXF service beans, as a route fact. */
+/** Per-file: the types this file registers as CXF service beans (or a Keycloak realm resource), as a route fact. */
 export function collectServiceBeans(sourceText: string, facts: RouteFact[] | undefined): void {
   if (!facts || !GATE.test(sourceText)) return;
   const text = blank(sourceText);
@@ -151,6 +147,15 @@ export function collectServiceBeans(sourceText: string, facts: RouteFact[] | und
   for (const m of text.matchAll(REGISTER_RE)) {
     line ||= text.slice(0, m.index).split("\n").length;
     for (const a of argsAt(text, m.index + m[0].length - 1) ?? []) typesOf(text, a, new Set(), types);
+  }
+  // Keycloak: a realm resource provider hands out the JAX-RS resource it serves.
+  if (/\bimplements\s+[\w.,\s]*RealmResourceProvider\b/.test(text)) {
+    const get = /\bgetResource\s*\(/.exec(text);
+    const created = get ? /\breturn\s+new\s+([A-Z]\w*(?:\.\w+)*)/.exec(text.slice(get.index)) : null;
+    if (created) {
+      types.add(created[1]!);
+      line ||= text.slice(0, get!.index).split("\n").length;
+    }
   }
   if (types.size === 0) return;
   // Qualify each type the way the file names it: an import, else the file's own package.
@@ -282,7 +287,7 @@ function contractRows(cls: ClassInfo, file: FileAnalysis, idx: BeanIndex): Route
 export const cxfServiceBeanResolver: RouteResolver = {
   id: "cxf-service-beans",
   // The spec formats too: an API one of them already describes has its rows.
-  languages: ["java", "kotlin", "openapi", "jsight", "wsdl", "protobuf"],
+  languages: ["java", "kotlin", "springxml", "openapi", "jsight", "wsdl", "protobuf"],
   priority: 41,
   resolve(analyses: FileAnalysis[]): void {
     const idx = indexBeans(analyses);

@@ -143,6 +143,20 @@ describe("CXF service beans implementing a jar's API interfaces", () => {
     expect(facts.map((f) => f.data)).toEqual([{ types: ["com.example.league.api.ClubApi", "com.example.league.api.MatchApi"] }]);
   });
 
+  it("reads the resource a Keycloak realm resource provider hands out", () => {
+    const facts: RouteFact[] = [];
+    collectServiceBeans(`package com.example.league.admin;
+
+public class LeagueAdminResourceProvider implements AdminRealmResourceProvider {
+    @Override
+    public Object getResource(KeycloakSession session, RealmModel realm) {
+        return new LeagueAdminResource(session, realm) {
+        };
+    }
+}`, facts);
+    expect(facts.map((f) => f.data)).toEqual([{ types: ["com.example.league.admin.LeagueAdminResource"] }]);
+  });
+
   it("serves each overridden operation of a registered interface as a contract row", () => {
     const rows = summary.routeMap
       .filter((r) => r.prefixUnresolved?.startsWith("contract:"))

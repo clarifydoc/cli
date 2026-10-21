@@ -1,9 +1,10 @@
-import type { CallInfo, FunctionInfo, RouteInfo, RouteParamInfo } from "../../../types/analysis.js";
+import type { CallInfo, FunctionInfo, RouteFact, RouteInfo, RouteParamInfo } from "../../../types/analysis.js";
 import { applyRouteMeta, splitList, type GuardAttr } from "../../shared/route-metadata.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractSpringClientProxies } from "./client-proxies.js";
 import { mapperDataSources, mapperFunctions } from "./mybatis.js";
 import { androidNavGraphFacts } from "../shared/android-nav-graph.js";
+import { CXF_SERVICE_BEANS_FACT } from "../shared/cxf-service-beans.js";
 
 /**
  * Spring XML definitions — the declarative wiring tier of classic Java web
@@ -310,6 +311,51 @@ function extractBeanConstants(lines: string[]): Record<string, string> {
   return out;
 }
 
+/**
+ * The beans a `<jaxrs:server>` serves — `<ref bean="x"/>` or an inline `<bean
+ * class>` under `<jaxrs:serviceBeans>` — as their classes. A bean made by a
+ * `factory-method` wraps the class its own nested `<bean class>` names.
+ */
+function cxfServerBeans(lines: string[], facts: RouteFact[]): void {
+  const tags = parsedOf(lines).tags;
+  // The tag scanner stops a name at `:` — `jaxrs:serviceBeans` reads as `jaxrs` with attrs `:serviceBeans …`.
+  const local = (t: XmlTag): string => (t.attrs.startsWith(":") ? /^:([\w.-]+)/.exec(t.attrs)?.[1] ?? t.name : t.name);
+  const classOfBean = new Map<string, string>();
+  const refs: string[] = [];
+  const inline: string[] = [];
+  // Open beans, innermost last: a factory bean takes the class of the first bean nested in it.
+  const beans: Array<{ id: string | null; cls: string | null; factory: boolean }> = [];
+  let serving = 0;
+  let line = 0;
+  for (const t of tags) {
+    const name = local(t);
+    if (name === "serviceBeans" && !t.selfClose) serving += t.close ? -1 : 1;
+    if (t.close) {
+      if (name === "bean") beans.pop();
+      continue;
+    }
+    if (name === "ref" && serving > 0) {
+      const ref = attrOf(t.attrs, "bean");
+      if (ref) refs.push(ref);
+      line ||= t.line;
+    }
+    if (name !== "bean") continue;
+    const cls = attrOf(t.attrs, "class");
+    if (serving > 0 && cls) {
+      inline.push(cls);
+      line ||= t.line;
+    }
+    const outer = beans[beans.length - 1];
+    if (outer?.factory && outer.id && cls && !classOfBean.has(outer.id)) classOfBean.set(outer.id, cls);
+    const id = attrOf(t.attrs, "id") ?? attrOf(t.attrs, "name");
+    const factory = attrOf(t.attrs, "factory-method") !== null;
+    if (id && cls && !factory) classOfBean.set(id, cls);
+    if (!t.selfClose) beans.push({ id, cls, factory });
+  }
+  const types = [...inline, ...refs.flatMap((r) => classOfBean.get(r) ?? [])].filter((c) => /^[\w$.]+$/.test(c));
+  if (types.length > 0) facts.push({ kind: CXF_SERVICE_BEANS_FACT, line, data: { types: [...new Set(types)].sort() } });
+}
+
 export const springxmlSpec: RegexLangSpec = {
   language: "springxml",
   extensions: [".xml"],
@@ -326,6 +372,8 @@ export const springxmlSpec: RegexLangSpec = {
   extractRoutes: (lines, _classes, filePath, _functions, facts) => {
     // An Android navigation graph states its destinations and actions as a fact the Java/Kotlin resolver joins.
     if (facts) androidNavGraphFacts(lines, facts);
+    // CXF servers: the classes they serve become contract rows in the Java/Kotlin resolver.
+    if (facts) cxfServerBeans(lines, facts);
     return extractFlowRoutes(lines, filePath);
   },
   extractStringConstants: extractBeanConstants,
