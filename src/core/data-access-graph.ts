@@ -266,7 +266,9 @@ export function attributeDataAccessToSymbols(
       // an exchange name still reaches the trace.
       const entity = matchedName ?? raw ?? "";
       const datastore = ds.target && ds.target.trim() !== "" ? ds.target.trim() : null;
-      const traceEntity = entity || (isQueue ? (datastore ?? "") : "");
+      // A stored-procedure call names no entity; the routine is what the trace
+      // reaches (unmatched, like any table the ER model does not know).
+      const traceEntity = entity || (isQueue || ds.routine ? (datastore ?? "") : "");
       if (!traceEntity) continue; // no resolvable target — nothing to link.
 
       const key = `${a.filePath}::${best.symbol}::${ds.kind}::${traceEntity}`;

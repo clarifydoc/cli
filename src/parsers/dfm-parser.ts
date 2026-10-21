@@ -148,7 +148,7 @@ function componentTableConstants(
   const map: Record<string, string> = {};
   for (const obj of objects) {
     if (obj.dbProps.length === 0 || !/^[A-Za-z_]\w*$/.test(obj.name)) continue;
-    const table = dbSourcesFromObject(obj).find((s) => s.entity)?.entity;
+    const table = dbSourcesFromObject(obj).find((s) => s.entity && !s.joined)?.entity;
     if (table && table !== obj.name) map[obj.name] = table;
   }
   return map;
@@ -324,8 +324,9 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
         current.dbProps.push({ prop: propName, value: stripQuotes(propValue), line: lineNum });
       }
 
-      // Event handlers: OnClick = btnAddClick
-      if (propName.startsWith("On")) {
+      // Event handlers: OnClick = btnAddClick. The handler is a method name —
+      // `OneOnRow = True` or `OnlyNumbers = False` are properties, not events.
+      if (/^On[A-Z_]/.test(propName) && /^[A-Za-z_][\w.]*$/.test(propValue.trim()) && !/^(?:True|False|nil)$/i.test(propValue.trim())) {
         current.events.push({
           event: propName,
           handler: propValue,

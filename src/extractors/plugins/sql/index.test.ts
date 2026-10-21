@@ -41,3 +41,31 @@ SELECT count(*) FROM
     expect(out.filter((r) => r.entity).map((r) => r.entity)).toEqual([]);
   });
 });
+
+describe("SQL routines and grants", () => {
+  it("reads Firebird and SQL Server CREATE OR ALTER / RECREATE PROCEDURE as routines", () => {
+    const fns = (sql: string) =>
+      sqlSpec.functionPatterns!.flatMap((p) => sql.split("\n").map((l) => l.match(p.pattern)?.[1]).filter(Boolean));
+    expect(fns("CREATE OR ALTER PROCEDURE TEAM_STANDINGS (\nRECREATE PROCEDURE LAP_TIMES\nCREATE OR REPLACE FUNCTION f()")).toEqual([
+      "TEAM_STANDINGS",
+      "LAP_TIMES",
+      "f",
+    ]);
+  });
+
+  it("targets the object a GRANT names, never the privilege", () => {
+    const out = rows(`GRANT SELECT ON players TO read_only_role;
+GRANT EXECUTE ON PROCEDURE TEAM_STANDINGS TO USER COACH;
+GRANT coach TO alice;`);
+    expect(out.map((r) => [r.name, r.target])).toEqual([
+      ["GRANT", "players"],
+      ["GRANT", "TEAM_STANDINGS"],
+    ]);
+  });
+
+  it("marks an EXEC as a routine call and skips dynamic SQL", () => {
+    const out = rows(`EXECUTE PROCEDURE TEAM_STANDINGS(:SEASON);
+EXECUTE STATEMENT :sql;`);
+    expect(out.map((r) => [r.name, r.target, r.routine])).toEqual([["EXEC", "TEAM_STANDINGS", true]]);
+  });
+});

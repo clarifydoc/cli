@@ -11,10 +11,10 @@ import { companionStem } from "./companion.js";
  * uses:
  *
  *     object dsPlayerInfo: TpFIBDataSet
- *       UpdateSQL.Strings = ('UPDATE COACH SET INITIALS = :INITIALS, …')
- *       InsertSQL.Strings = ('INSERT INTO COACH (ID, INITIALS, …) VALUES …')
- *       object dsPlayerInfoINITIALS: TStringField
- *         FieldName = 'INITIALS'
+ *       UpdateSQL.Strings = ('UPDATE PLAYER SET SHIRT_NAME = :SHIRT_NAME, …')
+ *       InsertSQL.Strings = ('INSERT INTO PLAYER (ID, SHIRT_NAME, …) VALUES …')
+ *       object dsPlayerInfoSHIRT_NAME: TStringField
+ *         FieldName = 'SHIRT_NAME'
  *         Size = 10
  *       end
  *     end
@@ -27,8 +27,8 @@ import { companionStem } from "./companion.js";
  * ## Why columns come from the DML, not from the field list
  *
  * A dataset's `SelectSQL` is usually a join, so its persistent fields are a
- * RESULT-SET shape, not a table shape — `dsPlayerInfo` carries `FIRSTNAME` from
- * the joined `TPERSON`, which is not a `COACH` column. Attributing every field
+ * RESULT-SET shape, not a table shape — `dsPlayerInfo` carries `CLUB_NAME` from
+ * the joined `TCLUB`, which is not a `PLAYER` column. Attributing every field
  * to the owning table would invent columns. So the authoritative column set is
  * whatever single-table DML the dataset declares (INSERT column list, UPDATE
  * SET list, single-table SELECT), and the field list only supplies TYPES for
@@ -37,7 +37,7 @@ import { companionStem } from "./companion.js";
  *
  * ## Relations
  *
- * Firebird FK metadata isn't in the repo either, and team-desk uses no
+ * Firebird FK metadata isn't in the repo either, and these apps use no
  * `MasterFields`/`MasterSource` wiring — so join predicates are the only
  * relationship signal: `INNER JOIN TEAM T ON T.ID = TL.TEAM_ID` is a
  * `TEAM_PLAYER → TEAM` many-to-one. Emitted with orm `"ci-query"` so they are
@@ -151,7 +151,7 @@ function bareTable(raw: string): string | null {
   return name;
 }
 
-/** A plain column reference (`FIRSTNAME` or `L.FIRSTNAME`) — not an expression. */
+/** A plain column reference (`CLUB_NAME` or `C.CLUB_NAME`) — not an expression. */
 function bareColumn(raw: string): string | null {
   const t = raw.trim().replace(/["`[\]]/g, "");
   const m = /^(?:[A-Za-z_]\w*\.)?([A-Za-z_]\w*)$/.exec(t);
@@ -221,7 +221,7 @@ function parseDelete(sql: string): { table: string; columns: string[] } | null {
  * declared.
  *
  * Firebird's SELECTABLE STORED PROCEDURES are invoked in exactly the table
- * position — `FROM SP_WAITLIST(:CLUB_ID, :MATCH_DATE)` — and team-desk leans on them
+ * position — `FROM SP_FIXTURES(:CLUB_ID, :MATCH_DATE)` — and Firebird apps lean on them
  * heavily. They are not tables and must not become ER nodes, so a name followed
  * by an argument list is skipped.
  */
@@ -290,8 +290,8 @@ function joinRelations(sql: string, seen: Set<string>): EntityRelation[] {
   const byAlias = new Map<string, string>();
   // Position in the FROM/JOIN sequence — the tiebreak when neither side of the
   // predicate is a bare `ID`: the table introduced LATER is the one being joined
-  // TO (the lookup/parent), e.g. `FROM TPERSON FAR JOIN TPOSTTOWN FARBY ON
-  // FARBY.POSTCODE = FAR.POSTCODE` is TPERSON.POSTCODE → TPOSTTOWN, not the reverse.
+  // TO (the lookup/parent), e.g. `FROM PLAYER P JOIN TSTADIUM ST ON
+  // ST.STADIUM_CODE = P.STADIUM_CODE` is PLAYER.STADIUM_CODE → TSTADIUM, not the reverse.
   const position = new Map<string, number>();
   queryTables(sql).forEach(({ table, alias }, i) => {
     const key = (alias ?? table).toLowerCase();
@@ -320,7 +320,7 @@ function joinRelations(sql: string, seen: Set<string>): EntityRelation[] {
     } else if (rightCol.toUpperCase() === "ID" && leftCol.toUpperCase() !== "ID") {
       fromTable = leftTable; toTable = rightTable; fk = leftCol;
     } else {
-      // No PK side to go on (`POSTCODE = POSTCODE`, or `ID = ID`) — the table
+      // No PK side to go on (`STADIUM_CODE = STADIUM_CODE`, or `ID = ID`) — the table
       // introduced later in the query is the one being looked up.
       const leftPos = position.get(m[1]!.toLowerCase()) ?? 0;
       const rightPos = position.get(m[3]!.toLowerCase()) ?? 0;
@@ -494,9 +494,9 @@ export function extractDfmEntities(
  * Project-level merge for DFM tables.
  *
  * The same physical table is modelled by a dataset on every form that touches
- * it — `COACH` appears in a dozen `.dfm`s, each with the column subset that
+ * it — `PLAYER` appears in a dozen `.dfm`s, each with the column subset that
  * form writes. Left alone, `buildEntityGraph` (which keys nodes by
- * `file::name`) would render a dozen partial `COACH` nodes. This collapses them
+ * `file::name`) would render a dozen partial `PLAYER` nodes. This collapses them
  * into ONE entity carrying the union of the columns, in the file that knows the
  * most about it.
  *
@@ -571,43 +571,64 @@ export class DfmEntityExtractor extends EntityExtractor {
 export const dfmEntityExtractor = new DfmEntityExtractor();
 
 /**
- * A unit's dataset access names the COMPONENT (`qryDrill.Open`,
- * `dsDrill.FieldByName(…)` → target `qryDrill`); the table is in the
+ * A unit's dataset access names the COMPONENT (`qryFixtures.Open`,
+ * `dsFixtures.FieldByName(…)` → target `qryFixtures`); the table is in the
  * companion `.dfm`, whose rows are named `<component>: <VERB>` with the table
  * as entity. Join the two: the `.pas` row gets the table its component reads,
- * and the form's handler then reaches the table in Call Traces (team-desk: 3,400 of
- * 4,200 Pascal accesses carried no entity). Only the companion form (same
+ * and the form's handler then reaches the table in Call Traces (on one real
+ * codebase, 3,400 of 4,200 Pascal accesses carried no entity). Only the companion form (same
  * path, `.dfm`) is consulted — a component name is local to its form.
  */
 function joinUnitAccessesToFormTables(analyses: FileAnalysis[]): Map<string, Map<string, string>> {
   const tablesByForm = new Map<string, Map<string, string>>();
+  // A component whose query's own source is a stored procedure
+  // (`SelectSQL = 'SELECT … FROM SP_SQUAD(:A)'`): the unit's `dsSquad.Open`
+  // calls that procedure.
+  const routinesByForm = new Map<string, Map<string, string>>();
   for (const a of analyses) {
     if (a.language !== "dfm") continue;
     const byComponent = new Map<string, string>();
+    const routines = new Map<string, string>();
     for (const ds of a.dataSources) {
-      if (ds.kind !== "database" || !ds.entity) continue;
+      // A joined table is beside the statement's own; it does not say which
+      // table the component is.
+      if (ds.kind !== "database" || ds.joined) continue;
       const component = /^(\w+):\s/.exec(ds.name)?.[1];
       if (!component) continue;
       const key = component.toLowerCase();
+      if (ds.routine && ds.target) {
+        const known = routines.get(key);
+        if (known && known !== ds.target) routines.set(key, "");
+        else if (!known) routines.set(key, ds.target);
+        continue;
+      }
+      if (!ds.entity) continue;
       const known = byComponent.get(key);
       if (known && known !== ds.entity) byComponent.set(key, ""); // several tables: no single answer
       else if (!known) byComponent.set(key, ds.entity);
     }
     tablesByForm.set(companionStem(a.filePath), byComponent);
+    routinesByForm.set(companionStem(a.filePath), routines);
   }
   if (tablesByForm.size === 0) return tablesByForm;
   for (const a of analyses) {
     if (a.language !== "pascal") continue;
     const form = tablesByForm.get(companionStem(a.filePath));
-    if (!form || form.size === 0) continue;
+    const routines = routinesByForm.get(companionStem(a.filePath));
+    if (!form || (form.size === 0 && !routines?.size)) continue;
     let changed = false;
     const next: DataSourceInfo[] = a.dataSources.map((ds) => {
-      if (ds.kind !== "database" || ds.entity || !ds.target) return ds;
+      if (ds.kind !== "database" || ds.entity || ds.routine || !ds.target) return ds;
       const component = ds.target.split(".").pop()!.toLowerCase();
       const table = form.get(component);
-      if (!table) return ds;
+      if (table) {
+        changed = true;
+        return { ...ds, entity: table };
+      }
+      const routine = routines?.get(component);
+      if (!routine || table === "") return ds;
       changed = true;
-      return { ...ds, entity: table };
+      return { ...ds, target: routine, routine: true };
     });
     if (changed) a.dataSources = next;
   }
@@ -617,7 +638,7 @@ function joinUnitAccessesToFormTables(analyses: FileAnalysis[]): Map<string, Map
 /**
  * A routine that takes a dataset (`procedure FillGrid(DataSet: TDataSet)`) reads
  * `DataSet.FieldByName(…)` on whatever its callers pass — so those rows name no
- * table of their own (team-desk: 1,400 rows on one `Report_DefineVars`). Follow the
+ * table of their own (1,400 rows on one shared report routine, in one real codebase). Follow the
  * argument back: a call that passes a component (`FillGrid(qryPupils)`,
  * `srcPupils.DataSet`) reads the table that component reads in its own form, and
  * a local whose SQL the calling routine sets reads that SQL's table. Only when
@@ -667,7 +688,7 @@ function followDatasetParameters(analyses: FileAnalysis[], tablesByForm: Map<str
       // dataset (`qry.Open`, `qry.SQL.Add(…)`) and selects from exactly one table.
       const inRoutine = dbRows.get(caller)!.filter((ds) => ds.line >= routine.line && ds.line <= routine.endLine);
       const own = new Set(inRoutine.filter((ds) => ds.entity && (ds.target ?? "").split(".").pop()!.toLowerCase() === name).map((ds) => ds.entity!));
-      const selected = new Set(inRoutine.filter((ds) => ds.entity && /^SELECT\b/i.test(ds.name)).map((ds) => ds.entity!));
+      const selected = new Set(inRoutine.filter((ds) => ds.entity && !ds.joined && /^SELECT\b/i.test(ds.name)).map((ds) => ds.entity!));
       const usesArg = inRoutine.some((ds) => ds.name.toLowerCase().startsWith(`${name}.`));
       table = own.size === 1 ? [...own][0]! : usesArg && selected.size === 1 ? [...selected][0]! : null;
     }

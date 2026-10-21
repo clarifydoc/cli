@@ -230,6 +230,8 @@ const DATASET_API_METHODS = new Set([
   "findfield", "parambyname", "applyupdates", "cancelupdates", "commitupdates",
   "starttransaction", "commit", "rollback", "commitretaining", "rollbackretaining",
   "disablecontrols", "enablecontrols", "fullrefresh", "checkbrowsemode", "prepare",
+  // FIBPlus / IBX `TpFIBQuery.ExecQuery`, `TpFIBDataSet.CloseOpen`.
+  "execquery", "closeopen",
 ]);
 
 /** `Receiver.Method` where Method is a TDataSet/connection API call. */

@@ -51,6 +51,112 @@ describe("pascal data sources — SQL in strings", () => {
   });
 });
 
+describe("pascal data sources — FIBPlus and declared datasets", () => {
+  it("reads a dataset the unit declares, whatever its name, and FIBPlus verbs", () => {
+    const out = src([
+      `type`,
+      `  TTeamFrame = class(TFrame)`,
+      `    dsPlayers: TpFIBDataSet;`,
+      `    qStats, qLaps: TpFIBQuery;`,
+      `    mdCache: TdxMemData;`,
+      `    memCopy: TFDMemTable;`,
+      `  end;`,
+      `implementation`,
+      `procedure TTeamFrame.btnRemoveClick(Sender: TObject);`,
+      `begin`,
+      `  dsPlayers.Delete;`,
+      `  qStats.ExecQuery;`,
+      `  Self.qLaps.CloseOpen(False);`,
+      `  mdCache.Delete;`,
+      `  memCopy.Post;`,
+      `  DM.dsLookup.Open;`,
+      `end;`,
+    ].join("\n"));
+    expect(out.map((d) => d.name)).toEqual(["dsPlayers.Delete", "qStats.ExecQuery", "Self.qLaps.CloseOpen"]);
+  });
+
+  it("reads a local created as a dataset", () => {
+    const out = src(`  q := TpFIBQuery.Create(nil);\n  q.ExecQuery;`);
+    expect(out.map((d) => d.target)).toEqual(["q"]);
+  });
+
+  it("keeps one FieldByName row per dataset per routine", () => {
+    const out = src([
+      `procedure TF.Load(DataSet: TDataSet);`,
+      `begin`,
+      `  A := DataSet.FieldByName('GOALS').AsInteger;`,
+      `  B := DataSet.FieldByName('ASSISTS').AsInteger;`,
+      `end;`,
+      `procedure TF.Save(DataSet: TDataSet);`,
+      `begin`,
+      `  C := DataSet.FieldByName('GOALS').AsInteger;`,
+      `end;`,
+    ].join("\n"));
+    expect(out.map((d) => d.line)).toEqual([3, 8]);
+  });
+
+  it("never reads a routine header as a call", () => {
+    const out = src(`procedure THTTPLapLogThread.Execute;\nbegin\n  Log;\nend;`);
+    expect(out).toEqual([]);
+  });
+
+  it("carries a builder statement across if-lines and a call whose literal is on the next line", () => {
+    const out = src([
+      `  ds.SelectSQL.Add('SELECT P.ID');`,
+      `  ds.SelectSQL.Add('FROM SP_SEARCH_DRIVERS(:IDS) P');`,
+      `  if FTeamID <> 0 then`,
+      `    ds.SelectSQL.Add(`,
+      `    'INNER JOIN TEAM_DRIVER TD ON TD.DRIVER_ID = P.ID');`,
+      `  ds.Open;`,
+    ].join("\n"));
+    expect(out.filter((d) => !d.name.includes(".")).map((d) => [d.name, d.target, d.line])).toEqual([
+      ["EXEC", "SP_SEARCH_DRIVERS", 1],
+      ["SELECT", "TEAM_DRIVER", 1],
+    ]);
+  });
+});
+
+describe("pascal data sources — HTTP URLs built before the call", () => {
+  const urls = (body: string) => src(body).filter((d) => d.kind === "api-call").map((d) => [d.name, d.target]);
+
+  it("follows a local assigned through a URL helper with concatenation", () => {
+    expect(urls([
+      `procedure TPhotoService.DeletePhoto(hash: string);`,
+      `var URL: String;`,
+      `begin`,
+      `  URL := ApiUrl('/REST/DriverPhoto/' + hash + '?' + Query);`,
+      `  HTTPS.Delete(URL);`,
+      `end;`,
+    ].join("\n"))).toEqual([["DELETE", "/REST/DriverPhoto/{hash}"]]);
+  });
+
+  it("follows Format over a routine constant, and a unit constant", () => {
+    expect(urls([
+      `const LOG_URI = '/api/Log/Lap';`,
+      `procedure TArchive.Store(AId: string);`,
+      `const`,
+      `  PATH = '/api/Matches/%s/archive';`,
+      `begin`,
+      `  URL := ApiUrl(Format(PATH, [AId]));`,
+      `  HTTPS.Post(URL);`,
+      `end;`,
+      `procedure TLogger.Log;`,
+      `begin`,
+      `  FHTTPS.Post(ApiUrl(LOG_URI), Body);`,
+      `  HTTPS.GetURL(ApiUrl(Format('/REST/%d/Teams', [Id])));`,
+      `end;`,
+    ].join("\n"))).toEqual([
+      ["POST", "/api/Matches/{}/archive"],
+      ["POST", "/api/Log/Lap"],
+      ["GET", "/REST/{}/Teams"],
+    ]);
+  });
+
+  it("leaves a URL that comes from a parameter unresolved", () => {
+    expect(urls(`procedure TX.Send(Url: string);\nbegin\n  HTTPS.Post(Url);\nend;`)).toEqual([["POST", null]]);
+  });
+});
+
 describe("pascal data sources — dataset & connection verbs", () => {
   it("captures receiver-gated dataset verbs", () => {
     const out = src([

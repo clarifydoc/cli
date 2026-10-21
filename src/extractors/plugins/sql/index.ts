@@ -406,21 +406,42 @@ function extractDmlStatements(lines: string[]): DataSourceInfo[] {
     // EXEC / CALL stored_procedure(args).
     // Skip the leading `FUNCTION`/`PROCEDURE` keyword (used by `CREATE TRIGGER ... EXECUTE FUNCTION foo()`)
     // so the actual routine name lands in the target.
-    const execMatch = line.match(/^\s*(?:EXEC(?:UTE)?|CALL|PERFORM)\s+(?:FUNCTION\s+|PROCEDURE\s+)?([\w.]+)/i);
-    if (execMatch) {
+    // Dynamic SQL (`EXECUTE STATEMENT`, `EXECUTE IMMEDIATE`, `EXECUTE BLOCK`) names no routine.
+    const execMatch = line.match(/^\s*(?:EXEC(?:UTE)?|CALL|PERFORM)\s+(?:FUNCTION\s+|PROCEDURE\s+)?([\w.$]+)/i);
+    if (execMatch && !/^(?:STATEMENT|IMMEDIATE|BLOCK|AS|sp_executesql)$/i.test(execMatch[1]!)) {
       sources.push({
         kind: "database",
         name: "EXEC",
         target: execMatch[1],
+        routine: true,
         calls: [],
         line: i + 1,
       });
       continue;
     }
 
+    // GRANT / REVOKE privileges ON an object: the object is the target, never
+    // the privilege (`GRANT SELECT ON players` named a table `SELECT`). A role
+    // grant (`GRANT admin TO alice`) names no object and is no access.
+    const grantMatch = line.match(
+      /^\s*(GRANT|REVOKE)\b.*?\bON\s+(?:TABLE\s+|PROCEDURE\s+|FUNCTION\s+|SEQUENCE\s+|VIEW\s+)?(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.$]+))/i,
+    );
+    if (/^\s*(?:GRANT|REVOKE)\b/i.test(line)) {
+      if (grantMatch) {
+        sources.push({
+          kind: "database",
+          name: grantMatch[1]!.toUpperCase(),
+          target: grantMatch[2] ?? grantMatch[3] ?? grantMatch[4] ?? grantMatch[5]!,
+          calls: [],
+          line: i + 1,
+        });
+      }
+      continue;
+    }
+
     // ALTER TABLE / DROP TABLE — DDL commands
     const ddlMatch = line.match(
-      /^\s*(ALTER\s+TABLE|DROP\s+TABLE|DROP\s+VIEW|DROP\s+INDEX|RENAME\s+TABLE|GRANT|REVOKE)\s+(?:IF\s+EXISTS\s+)?(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))/i,
+      /^\s*(ALTER\s+TABLE|DROP\s+TABLE|DROP\s+VIEW|DROP\s+INDEX|RENAME\s+TABLE)\s+(?:IF\s+EXISTS\s+)?(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))/i,
     );
     if (ddlMatch) {
       const verb = ddlMatch[1]!.toUpperCase().replace(/\s+/g, " ");
@@ -445,11 +466,13 @@ export const sqlSpec: RegexLangSpec = {
   lineCommentPrefixes: ["--", "#"],
 
   functionPatterns: [
-    // CREATE [OR REPLACE] PROCEDURE / FUNCTION / TRIGGER name — name is group 1.
+    // CREATE [OR REPLACE | OR ALTER] / RECREATE PROCEDURE / FUNCTION / TRIGGER
+    // name — name is group 1. `OR ALTER` is Firebird's and SQL Server's spelling,
+    // `RECREATE` Firebird's drop-and-create.
     // Optional surrounding quotes/brackets are stripped non-capturingly so the
     // generic extractor (which reads m[1] for the name) gets a clean identifier.
     {
-      pattern: /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:PROCEDURE|FUNCTION|TRIGGER)\s+(?:IF\s+NOT\s+EXISTS\s+)?["`[]?([\w.]+)/i,
+      pattern: /^\s*(?:CREATE\s+(?:OR\s+(?:REPLACE|ALTER)\s+)?|RECREATE\s+)(?:PROCEDURE|FUNCTION|TRIGGER)\s+(?:IF\s+NOT\s+EXISTS\s+)?["`[]?([\w.]+)/i,
       isExported: () => true,
     },
   ],

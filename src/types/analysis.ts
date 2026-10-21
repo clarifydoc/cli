@@ -1297,6 +1297,19 @@ export interface DataSourceInfo {
    */
   entity?: string;
   /**
+   * For `database`: `target` is a stored procedure or table-valued function the
+   * statement calls (`EXECUTE PROCEDURE X`, `SELECT … FROM SP_X(:a)`), not a
+   * table. It names no ER entity; the trace shows the routine by name.
+   */
+  routine?: true;
+  /**
+   * For `database`: a further source the same statement reads beside its own
+   * (a JOINed table, a subquery's table) — the row before it on the same line
+   * is the statement's own target. Consumers asking which table a query is
+   * ABOUT skip these.
+   */
+  joined?: true;
+  /**
    * For `api-call`: the named environment variable of a leading base that was
    * stripped to keep `target` app-relative (e.g. `VITE_API` from
    * `import.meta.env.VITE_API + "/api/x"`). Display/deployment-facing; `target`
