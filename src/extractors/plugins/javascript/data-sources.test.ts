@@ -531,6 +531,15 @@ describe("JS request descriptors and positional request()", () => {
     expect(calls.map((c) => [c.name, c.target])).toEqual([["request", "/calendar"]]);
   });
 
+  it("reads a { url } descriptor handed to a function named for a request as a request (real-repo FP)", async () => {
+    const calls = await apiCallsOf(`
+      const basePath = '/api';
+      export const getStandings = () => request<string[]>({ url: \`\${basePath}/standings\` });
+      export const getFixtures = (season) => request({ url: '/api/fixtures', queryParams: { season } });
+      useThing({ url: '/not/a/request' });`);
+    expect(calls.map((c) => [c.name, c.target])).toEqual([["request", "/api/standings"], ["request", "/api/fixtures"]]);
+  });
+
   it("reads the verb first and the URL second in request(VERB, url)", async () => {
     const calls = await apiCallsOf(`
       class A { save() { return this.http.request('POST', '/api/upload', { body }); } }

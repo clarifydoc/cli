@@ -1520,7 +1520,9 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           !method &&
           node.parent?.type === "arguments" &&
           (looksLikeUrl(url) || isParamHole(url, node)) &&
-          (REQUEST_KEYS.some((k) => hasProp(node, k)) || isJQueryAjax(node.parent.parent?.childForFieldName("function") ?? null));
+          (REQUEST_KEYS.some((k) => hasProp(node, k)) || isJQueryAjax(node.parent.parent?.childForFieldName("function") ?? null) ||
+            // Handed to a function named for a request (`request<T>({ url })`, `apiRequest({ url })`).
+            REQUEST_CALLEE_RE.test(callee ?? ""));
         if (method || requestShaped) {
           // The instance the descriptor is handed to (`apiClient.get({ url })`,
           // hey-api's `(options?.client ?? client).get(…)`): its base is prepended later.
@@ -1975,7 +1977,9 @@ function directReceiver(fn: Node): string | null {
 }
 
 /** Keys only a request descriptor carries beside its `url`. */
-const REQUEST_KEYS = ["data", "body", "params", "headers", "dataType", "contentType", "traditional", "timeout"];
+const REQUEST_KEYS = ["data", "body", "params", "queryParams", "headers", "dataType", "contentType", "traditional", "timeout"];
+/** A project function named for sending a request, handed a `{ url }` descriptor. */
+const REQUEST_CALLEE_RE = /^(?:request|\w+Request|sendRequest|httpRequest)$/;
 
 /** Globals an HTTP root may hang off: jQuery's `$.ajax`, `window.fetch`. */
 const GLOBAL_RECEIVERS = new Set(["$", "jQuery", "window", "globalThis", "self"]);
