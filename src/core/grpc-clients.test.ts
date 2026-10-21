@@ -17,6 +17,10 @@ describe("protoc stub naming", () => {
     expect(pythonGrpcStub("GreeterStub")).toEqual({ service: "Greeter", certain: false });
     expect(jvmGrpcStub("CarServiceGrpc.CarServiceBlockingStub")).toEqual({ service: "CarService", certain: true });
     expect(jvmGrpcStub("CarServiceGrpc.newFutureStub()")).toEqual({ service: "CarService", certain: true });
+    // The bare nested class, as the file imports it.
+    const imports = { imports: [{ source: "demo.CarServiceGrpc.CarServiceBlockingStub", specifiers: [], isDefault: false, isNamespace: false, isType: false, line: 1 }] } as unknown as FileAnalysis;
+    expect(jvmGrpcStub("CarServiceBlockingStub", imports)).toEqual({ service: "CarService", certain: true });
+    expect(jvmGrpcStub("GarageBlockingStub", imports)).toBeNull();
     expect(jvmGrpcStub("CarServiceGrpcKt.CarServiceCoroutineStub")).toEqual({ service: "CarService", certain: true });
     expect(csharpGrpcStub("Greeter.GreeterClient")).toEqual({ service: "Greeter", certain: true });
     expect(csharpGrpcStub("Api.HttpClient")).toBeNull();

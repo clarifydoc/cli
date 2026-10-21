@@ -96,6 +96,27 @@ server.addService(leaguePackage.league.TicketService.service, {
 }
 module.exports = { buyTicketHandler };
 `,
+  "checkout/go.mod": `module example.com/checkout\n\ngo 1.22\n`,
+  "checkout/main.go": `package main
+
+import (
+	"context"
+
+	pb "example.com/checkout/pb"
+	"google.golang.org/grpc"
+)
+
+type checkout struct {
+	ticketClient pb.TicketServiceClient
+	conn         *grpc.ClientConn
+}
+
+func (cs *checkout) Order(ctx context.Context) error {
+	tickets := cs.ticketClient
+	_, err := tickets.BuyTicket(ctx, &pb.TicketRequest{})
+	return err
+}
+`,
   "web/gateways/referees.ts": `export async function assign(match: string) { return match; }
 `,
   "web/package.json": `{"name":"web","dependencies":{"@grpc/grpc-js":"^1.10.0"}}`,
@@ -146,5 +167,7 @@ describe("gRPC services through protoc's generated bases", () => {
     // The web's own copy of the proto is the same operation, not a second service to choose from.
     expect((summary.apiRouteLinks ?? []).filter((l) => l.source === "web/gateways/fixtures.ts").map((l) => l.confidence)).toEqual(["EXTRACTED"]);
     expect((summary.projectDependencies ?? []).map((d) => `${d.from} -> ${d.to}`)).toContain("web -> fixtures");
+    // A Go local standing for the stub field is the stub.
+    expect((summary.apiCalls ?? []).filter((c) => c.filePath === "checkout/main.go").map((c) => c.target)).toEqual(["/league.TicketService/BuyTicket"]);
   });
 });

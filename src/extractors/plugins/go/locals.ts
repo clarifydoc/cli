@@ -29,6 +29,7 @@ const ANY_SHORT_DECL_RE = /([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*:=/g;
  *   r := NewPgRepo()  r, err := NewRepo(cfg)              → the same-file constructor's result
  *   u, err := repo.Find(id)   r := store.NewRepo()        → `from` that call: core types it by
  *                                                          the callee's declared (first) result
+ *   c := s.ordersClient                                   → `from` that field
  *
  * Types are kept as written (`*PgRepo`, `repo.UserRepo`); the linker bares
  * them. A name declared more than once with different or unknown types
@@ -57,7 +58,7 @@ export function extractGoLocalTypes(
   /** A stated type, else — for the first variable — the one call it is initialised from. */
   const recordInit = (name: string, rhs: string, index: number, count: number): void => {
     const type = initializerType(rhs, index, count, constructors);
-    const call = type === null && index === 0 ? singleCall(rhs) : null;
+    const call = type === null && index === 0 ? singleCall(rhs) ?? fieldAlias(rhs) : null;
     if (call === null || name === "_") { record(name, type); return; }
     declared?.add(name);
     let set = fromCalls.get(name);
@@ -112,6 +113,12 @@ export function extractGoLocalTypes(
     for (const from of calls) out.push({ name, type: "", from });
   }
   return out;
+}
+
+/** `s.ordersClient` — a local standing for a field of a value, which a pass may type through the field. */
+function fieldAlias(rhs: string): string | null {
+  const m = /^\s*([a-z_]\w*\.[A-Za-z_]\w*)\s*;?\s*$/.exec(rhs);
+  return m ? m[1]! : null;
 }
 
 /** `repo.Find(id)` / `store.NewRepo()` — the whole expression is ONE call: its chain as a call names it, `repo.Find()`. */

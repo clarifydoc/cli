@@ -23,10 +23,17 @@ export function pythonGrpcStub(spelling: string): Stub {
   return { service: m[2]!, certain: /_pb2_grpc$/.test(m[1] ?? "") };
 }
 
-/** Java/Kotlin: `OrderServiceGrpc.OrderServiceBlockingStub`, `OrderServiceGrpc.newStub()`, `…GrpcKt.…CoroutineStub`. */
-export function jvmGrpcStub(spelling: string): Stub {
+/**
+ * Java/Kotlin: `OrderServiceGrpc.OrderServiceBlockingStub`, `OrderServiceGrpc.newStub()`,
+ * `…GrpcKt.…CoroutineStub` — or the bare nested class a file imports
+ * (`import demo.OrderServiceGrpc.OrderServiceBlockingStub;`).
+ */
+export function jvmGrpcStub(spelling: string, file?: FileAnalysis): Stub {
   const m = /^(?:[\w.]+\.)?(\w+)Grpc(?:Kt)?\.(?:new(?:Blocking(?:V2)?|Future)?Stub\(\)|\w+?(?:Blocking(?:V2)?|Future|Coroutine)?Stub)$/.exec(spelling);
-  return m ? { service: m[1]!, certain: true } : null;
+  if (m) return { service: m[1]!, certain: true };
+  if (!file || !/^\w+Stub$/.test(spelling)) return null;
+  const nested = file.imports.map((i) => new RegExp(`(?:^|\\.)(\\w+)Grpc(?:Kt)?\\.${spelling}$`).exec(i.source)).find(Boolean);
+  return nested ? { service: nested[1]!, certain: true } : null;
 }
 
 /** C#: the nested `Greeter.GreeterClient` protoc generates (or `new Greeter.GreeterClient(…)`). */

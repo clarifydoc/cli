@@ -44,7 +44,8 @@ export function grpcClientCalls(analyses: readonly FileAnalysis[], routes: reado
   // The services the analysis declares, by simple name → qualified names and their rpcs.
   const declared = new Map<string, Map<string, Set<string>>>();
   for (const r of routes) {
-    if (!r.contract) continue;
+    // A code row serving an operation by its contract (a grpc-js handler) declares no service.
+    if (!r.contract || r.prefixUnresolved?.startsWith("contract:")) continue;
     const leaf = r.contract.type.slice(r.contract.type.lastIndexOf(".") + 1);
     const byType = declared.get(leaf) ?? declared.set(leaf, new Map()).get(leaf)!;
     (byType.get(r.contract.type) ?? byType.set(r.contract.type, new Set()).get(r.contract.type)!).add(r.contract.method);
@@ -128,14 +129,18 @@ export function grpcClientCalls(analyses: readonly FileAnalysis[], routes: reado
         });
       }
     };
-    const scopeOf = (fn: FunctionInfo, members: ReadonlyMap<string, string>) => {
+    const scopeOf = (fn: FunctionInfo, members: ReadonlyMap<string, string>, owner?: string) => {
       const scope = new Map(members);
       for (const p of fn.params) {
         const s = serviceOf(p.type);
         if (s) scope.set(p.name, s);
       }
+      // A receiver's own name (Go's `cs` in `func (cs *checkout) …`, a local typed as the class) heads a member like `this`.
+      const selfNames = new Set([...SELF_HEADS, ...fn.params.filter((p) => p.isReceiver).map((p) => p.name), ...(fn.localTypes ?? []).filter((l) => l.type && owner && l.type.replace(/^\*/, "") === owner).map((l) => l.name)]);
       for (const l of fn.localTypes ?? []) {
-        const s = serviceOf(l.type) ?? serviceOf(l.from);
+        // `paymentService := cs.paymentSvcClient`: the member's stub.
+        const alias = l.from ? /^(\w+)\.(\w+)$/.exec(l.from) : null;
+        const s = serviceOf(l.type) ?? serviceOf(l.from) ?? (alias && selfNames.has(alias[1]!) ? members.get(alias[2]!) : undefined);
         if (s) scope.set(l.name, s);
       }
       return scope;
@@ -160,7 +165,7 @@ export function grpcClientCalls(analyses: readonly FileAnalysis[], routes: reado
     for (const fn of a.functions) emit(fn, scopeOf(fn, none));
     for (const cls of a.classes) {
       const members = membersOf(cls);
-      for (const m of cls.methods) emit(m, scopeOf(m, members));
+      for (const m of cls.methods) emit(m, scopeOf(m, members, cls.name));
     }
   }
   return out;
