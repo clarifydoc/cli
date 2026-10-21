@@ -412,7 +412,8 @@ function httpCall(fn: Node, call: Node): { name: string; target: string | null }
     return null;
   }
   if (PY_HTTP_VERBS.has(leaf) && PY_HTTP_RECEIVER_RE.test(recv)) {
-    const target = pyStringLiteral(args[0]);
+    // A literal, or a local the function builds it in (`url = f"http://{BASE}/api/x"`).
+    const target = pyStringLiteral(args[0]) ?? (args[0] ? pyStringValue(args[0], call) : null);
     if (target && (target.includes("/") || /^https?:/i.test(target))) return { name: leaf, target };
   }
   return null;

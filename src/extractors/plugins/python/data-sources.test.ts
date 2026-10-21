@@ -22,6 +22,18 @@ describe("Python outbound HTTP calls", () => {
     ]);
   });
 
+  it("reads a client's call whose URL the function builds in a local (real-repo FP)", async () => {
+    const calls = await apiCallsOf([
+      "import httpx",
+      "async def standings(season):",
+      "    async with httpx.AsyncClient() as client:",
+      '        url = f"http://{BASE_URL}/api/standings"',
+      "        res = await client.get(url, params={'season': season})",
+      "        return res.json()",
+    ].join("\n"));
+    expect(calls).toEqual([{ name: "get", target: "http://{BASE_URL}/api/standings", line: 5 }]);
+  });
+
   it("keeps a call whose URL is a variable, without inventing a URL from its name", async () => {
     expect(await apiCallsOf("requests.get(url)")).toEqual([{ name: "get", target: null, line: 1 }]);
   });
