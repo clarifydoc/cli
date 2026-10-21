@@ -184,3 +184,84 @@ def create(name):
     ]);
   });
 });
+
+describe("Python api-call — a base the file states", () => {
+  const rows = async (src: string) => {
+    const tree = await parseSource(src, "python" as never, "x.py");
+    return new PythonDataSourceExtractor()
+      .extract(tree, src)
+      .filter((d) => d.kind === "api-call")
+      .map((d) => `${d.name} ${d.target}${d.baseRef ? ` @ ${d.baseRef.key}` : ""}`);
+  };
+
+  it("keeps the host of a base the class assigns self once", async () => {
+    expect(await rows([
+      "import requests",
+      "class LeagueClient:",
+      '    season_url = "https://stats.example.com/seasons/"',
+      "    def __init__(self, domain):",
+      '        self.base_url = f"https://{domain}/rest/api/2"',
+      "    def fixtures(self, club_id):",
+      '        url = f"{self.base_url}/clubs/{club_id}/fixtures"',
+      "        return requests.get(url)",
+      "    def season(self):",
+      '        return requests.get(f"{self.season_url}?year=2024")',
+      "    def standings(self):",
+      '        return requests.get(f"{self.other_url}/standings")',
+    ].join("\n"))).toEqual([
+      "get /rest/api/2/clubs/{club_id}/fixtures @ https://{domain}",
+      "get /seasons?year=2024 @ https://stats.example.com",
+      "get {self.other_url}/standings",
+    ]);
+  });
+
+  it("keeps the host of a module constant, unless it is assigned twice or rebound locally", async () => {
+    expect(await rows([
+      "import requests",
+      'GARAGE_URL = "https://garage.example.com/api"',
+      'PITS_URL = "https://pits.example.com"',
+      'PITS_URL = "https://pits.example.org"',
+      'requests.get(f"{GARAGE_URL}/cars")',
+      'requests.get(f"{PITS_URL}/stops")',
+      "def tyres(GARAGE_URL):",
+      '    requests.get(f"{GARAGE_URL}/tyres")',
+    ].join("\n"))).toEqual([
+      "get /api/cars @ https://garage.example.com",
+      "get {PITS_URL}/stops",
+      "get {GARAGE_URL}/tyres",
+    ]);
+  });
+});
+
+describe("Python api-call — urllib", () => {
+  const rows = async (src: string) => {
+    const tree = await parseSource(src, "python" as never, "x.py");
+    return new PythonDataSourceExtractor()
+      .extract(tree, src)
+      .filter((d) => d.kind === "api-call")
+      .map((d) => `${d.name} ${d.target}@${d.line}`);
+  };
+
+  it("reads urlopen of a URL or of a Request, with the Request's method or body", async () => {
+    expect(await rows([
+      "import urllib.request",
+      "from urllib.request import Request, urlopen",
+      "def upload(api_url, body):",
+      "    req = Request(f'{api_url}/files/kits', data=body, method='PUT')",
+      "    return urlopen(req, timeout=30)",
+      "def scores():",
+      '    urllib.request.urlopen(urllib.request.Request("https://scores.example.com/live", headers={"A": "b"}))',
+      '    urlopen("https://scores.example.com/table", b"x=1")',
+      "    urlopen(url)",
+    ].join("\n"))).toEqual([
+      "put {api_url}/files/kits@5",
+      "get https://scores.example.com/live@7",
+      "post https://scores.example.com/table@8",
+      "get null@9",
+    ]);
+  });
+
+  it("leaves a urlopen that is not urllib's alone", async () => {
+    expect(await rows('class Pitch:\n    def urlopen(self, x): pass\nPitch().urlopen("/x")')).toEqual([]);
+  });
+});

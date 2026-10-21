@@ -1,4 +1,4 @@
-import type { DataSourceInfo, FileAnalysis, FunctionInfo } from "../types/analysis.js";
+import type { DataSourceInfo, FileAnalysis, FunctionInfo, PathArgCall } from "../types/analysis.js";
 import type { ClassIndex, ClassRef, ImportIndex, ProjectContext } from "../types/project.js";
 
 type ApiCall = DataSourceInfo & { filePath: string };
@@ -127,7 +127,14 @@ interface FactoryRow {
   params: Map<string, number>;
 }
 
-const HOLE = /\$\{([A-Za-z_$][\w$]*)\}/g;
+// `${url}`, or PHP's `{$url}`.
+const HOLE = /\$\{([A-Za-z_$][\w$]*)\}|\{\$([A-Za-z_]\w*)\}/g;
+const VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+/** The verb a row's name states (`dio.get`, `$client->post`, `GET`), or null. */
+const rowVerb = (row: ApiCall): string | null => {
+  const leaf = (row.name ?? "").split(/\.|->/).pop()!.replace(/\(.*$/, "").toUpperCase();
+  return VERBS.has(leaf) ? leaf : null;
+};
 
 /**
  * A request FACTORY builds its request from its parameters, and every call
@@ -150,7 +157,11 @@ const HOLE = /\$\{([A-Za-z_$][\w$]*)\}/g;
  * is not a literal leaves that row out; a callee resolving to anything but
  * one function adds nothing. A bare call inside a class that no import names
  * (`await Get<T>(uri)` in a client deriving from a base client) resolves up
- * that class's chain, and only there. One level deep: a factory calling a
+ * that class's chain, and only there. A call on a receiver whose class the
+ * site states (`receiverType`) resolves on that class's chain instead. A site
+ * naming a verb (`method`: `request(RequestType.POST, '/x')`) keeps the rows
+ * of the wrapper's branch for that verb, or applies it to a row that names
+ * none (`$client->request($verb, $url)`). One level deep: a factory calling a
  * factory is not followed.
  *
  * Returns the number of rows added (appended to `calls`).
@@ -179,7 +190,7 @@ export function expandRequestFactories(
   for (const row of calls) {
     if (row.kind !== "api-call" || !row.target) continue;
     const holes = new Set<string>();
-    for (const url of [row.target, ...(row.targetAlternatives ?? [])]) for (const m of url.matchAll(HOLE)) holes.add(m[1]!);
+    for (const url of [row.target, ...(row.targetAlternatives ?? [])]) for (const m of url.matchAll(HOLE)) holes.add((m[1] ?? m[2])!);
     if (holes.size === 0) continue;
     for (const name of holes) {
       // The innermost function enclosing the row that declares this name.
@@ -220,10 +231,38 @@ export function expandRequestFactories(
     };
   };
 
+  /**
+   * `use App\Http\Model\ApiConnection;` names the class of that name a file
+   * declaring namespace `App\Http\Model` holds — an import the module index
+   * does not resolve to a file.
+   */
+  const importedClass = (file: string, name: string): ClassRef | null => {
+    const src = importIndex.sourceFor(file, name);
+    if (!src || !classes) return null;
+    const norm = (s: string) => s.replace(/^\\/, "").replace(/\\|::/g, ".");
+    const hits = analyses
+      .filter((x) => x.declaredNamespace && norm(`${x.declaredNamespace}.${name}`) === norm(src))
+      .flatMap((x) => classes.classesIn(x.filePath).filter((r) => r.cls.name === name));
+    return hits.length === 1 ? hits[0]! : null;
+  };
+
   let added = 0;
   for (const a of analyses) {
     for (const site of a.pathArgCalls ?? []) {
       const ownKey = `${a.filePath}::${site.callee}`;
+      // `ApiConnection().request(…)`: that class's method (or an inherited one),
+      // and only that — a receiver of no project class (`Uri.parse`,
+      // `Route::get`) calls no project factory.
+      if (site.receiverType) {
+        const receiver = classes?.resolve(a.filePath, site.receiverType) ?? importedClass(a.filePath, site.receiverType);
+        if (receiver && classes) {
+          const chain = [receiver, ...classes.ancestors(receiver).flatMap((s) => (s.ref ? [s.ref] : []))];
+          const owner = chain.find((c) => c.cls.methods.some((m) => m.name === site.callee));
+          const rows = owner ? factories.get(`${owner.filePath}::${site.callee}`) : undefined;
+          if (rows) added += expandSite(calls, a.filePath, site, rows);
+        }
+        continue;
+      }
       const source = importIndex.localFor(a.filePath, site.callee);
       let rows = factories.get(ownKey) ?? (source ? factories.get(`${source}::${site.callee}`) : undefined);
       // A bare call from inside a class, of a name no import brings in, is a
@@ -247,35 +286,59 @@ export function expandRequestFactories(
         const fnName = def ? functionsIn(source).find((f) => f.line === def.line)?.name : undefined;
         if (fnName) rows = factories.get(`${source}::${fnName}`);
       }
-      for (const f of rows ?? []) {
-        const fill = (url: string): string | null => {
-          let ok = true;
-          const out = url.replace(HOLE, (whole, name: string) => {
-            const i = f.params.get(name);
-            if (i === undefined) return whole;
-            const arg = site.args[i];
-            if (arg === null || arg === undefined) {
-              ok = false;
-              return whole;
-            }
-            return arg;
-          });
-          return ok ? out : null;
-        };
-        const target = fill(f.row.target!);
-        if (target === null) continue;
-        const alternatives = (f.row.targetAlternatives ?? []).map(fill).filter((u): u is string => u !== null);
-        calls.push({
-          ...f.row,
-          filePath: a.filePath,
-          line: site.line,
-          target,
-          ...(alternatives.length ? { targetAlternatives: alternatives } : {}),
-          via: site.callee,
-        });
-        added++;
-      }
+      if (rows) added += expandSite(calls, a.filePath, site, rows);
     }
+  }
+  return added;
+}
+
+/** The rows one call site of a factory adds: each factory row with the site's literals in its holes. */
+function expandSite(calls: ApiCall[], filePath: string, site: PathArgCall, rows: FactoryRow[]): number {
+  let chosen = rows;
+  let method: string | null = null;
+  if (site.method && VERBS.has(site.method)) {
+    // The wrapper's branch for that verb; else the rows whose verb is a parameter.
+    const branch = rows.filter((f) => rowVerb(f.row) === site.method);
+    const open = rows.filter((f) => rowVerb(f.row) === null);
+    if (branch.length > 0 || open.length > 0) {
+      chosen = branch.length > 0 ? branch : open;
+      method = site.method;
+    }
+  }
+  const seen = new Set<string>();
+  let added = 0;
+  for (const f of chosen) {
+    const fill = (url: string): string | null => {
+      let ok = true;
+      const out = url.replace(HOLE, (whole, js: string | undefined, php: string | undefined) => {
+        const i = f.params.get((js ?? php)!);
+        if (i === undefined) return whole;
+        const arg = site.args[i];
+        if (arg === null || arg === undefined) {
+          ok = false;
+          return whole;
+        }
+        return arg;
+      });
+      return ok ? out : null;
+    };
+    const target = fill(f.row.target!);
+    if (target === null) continue;
+    // Two branches of one verb (`post(url, data: d)` / `post(url)`) are one request.
+    if (method && seen.has(target)) continue;
+    seen.add(target);
+    const alternatives = (f.row.targetAlternatives ?? []).map(fill).filter((u): u is string => u !== null);
+    calls.push({
+      ...f.row,
+      // A row named by its verb is what the route linker reads the method from.
+      ...(method ? { name: method } : {}),
+      filePath,
+      line: site.line,
+      target,
+      ...(alternatives.length ? { targetAlternatives: alternatives } : {}),
+      via: site.callee,
+    });
+    added++;
   }
   return added;
 }
@@ -379,7 +442,12 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     if (!name) return null;
     const source = ctx.importIndex.localFor(file, name[1]!) ?? file;
     const v = byFile.get(source)?.moduleValues?.[expr];
-    return v === undefined ? null : resolveValue(v, source, null, depth + 1);
+    if (v !== undefined) return resolveValue(v, source, null, depth + 1);
+    // `Settings.apiBasePath`: a field value of the project class the name resolves to.
+    const member = /^[A-Za-z_$][\w$]*\.([\w$]+)$/.exec(expr)?.[1];
+    const owner = member ? ctx.classes.resolve(file, name[1]!) : null;
+    const fv = owner?.cls.fieldValues?.[member!];
+    return fv === undefined ? null : resolveValue(fv, owner!.filePath, owner, depth + 1);
   };
 
   /**

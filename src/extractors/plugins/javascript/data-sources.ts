@@ -1,5 +1,6 @@
 import { responseReadsOf, type BodyStyle } from "./response-reads.js";
 import { resolveRtkHooks } from "./rtk-query.js";
+import { resolveKubbClientCalls } from "./kubb.js";
 import type { Node, Tree } from "web-tree-sitter";
 import type { Confidence, DataSourceInfo, CallInfo, FileAnalysis, JsonSchemaNode, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor, type ProjectApiCall } from "../../data-sources/base.js";
@@ -375,7 +376,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
    * cross-tier linker can join.
    */
   override resolveProject(calls: ProjectApiCall[], analyses: FileAnalysis[], ctx: ProjectContext): number {
-    return resolveRtkHooks(calls, analyses, ctx) + resolveUrlBuilders(calls, analyses, ctx);
+    // Calls of Kubb-generated clients (kubb.ts) are added first: the module they name is not on disk.
+    return resolveKubbClientCalls(calls, analyses, ctx) + resolveRtkHooks(calls, analyses, ctx) + resolveUrlBuilders(calls, analyses, ctx);
   }
 
   /**

@@ -6,13 +6,17 @@ import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
  *
  *  - HTTP: `Invoke-RestMethod` / `Invoke-WebRequest` (and `irm` / `iwr`) with
  *    `-Uri` (or the first positional string) and `-Method`; a URL built on a
- *    variable keeps its literal tail (`"$base/users/$id"` → `/users/{id}`).
+ *    variable keeps its literal tail (`"$base/users/$id"` → `/users/{id}`),
+ *    and when the file assigns that variable one absolute URL
+ *    (`$base = "https://league.example.com"`) the call carries it as its
+ *    literal base, so it reaches that host rather than an unknown one.
  *  - SQL: any SQL statement in a string — `Invoke-Sqlcmd -Query "…"`,
  *    `$cmd.CommandText = "…"`, a here-string — read from the RAW source by
  *    `extractPowerShellSqlSources`, since the spec sees here-strings blanked.
  */
 export function extractPowerShellDataSources(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
+  let bases: Map<string, string | null> | undefined;
   for (let i = 0; i < lines.length; i++) {
     let text = lines[i]!;
     if (!/\b(?:Invoke-RestMethod|Invoke-WebRequest|irm|iwr)\b/i.test(text)) continue;
@@ -26,7 +30,32 @@ export function extractPowerShellDataSources(lines: string[]): DataSourceInfo[] 
     const source: DataSourceInfo = { kind: "api-call", name: `${method} ${target}`, target, calls: [], line: i + 1 };
     const env = /^\$env:(\w+)\//i.exec(uri)?.[1];
     if (env) source.baseEnv = env;
+    const variable = /^\$(?:\{(?:script:|global:)?(\w+)\}|(?:script:|global:)?(\w+))(?=\/)/i.exec(uri);
+    if (variable && !env) {
+      bases ??= literalUrlVariables(lines);
+      const base = bases.get((variable[1] ?? variable[2]!).toLowerCase());
+      if (base) source.baseRef = { kind: "literal", key: base };
+    }
     out.push(source);
+  }
+  return out;
+}
+
+/**
+ * Variables the file assigns an absolute URL written out in full
+ * (`$base = "https://league.example.com/api"`), by lower-cased name — PowerShell
+ * names are case-insensitive. A variable assigned anything else anywhere in the
+ * file (another URL, a parameter, a command's output) maps to null: its value
+ * at the call is not the one stated.
+ */
+function literalUrlVariables(lines: string[]): Map<string, string | null> {
+  const out = new Map<string, string | null>();
+  for (const line of lines) {
+    const m = /^\s*\$(?:script:|global:)?(\w+)\s*=(?!=)\s*(.*)$/i.exec(line);
+    if (!m) continue;
+    const name = m[1]!.toLowerCase();
+    const url = /^(["'])(https?:\/\/[^"'$`\s]+?)\/?\1\s*(?:#.*)?$/i.exec(m[2]!)?.[2] ?? null;
+    out.set(name, out.has(name) && out.get(name) !== url ? null : url);
   }
   return out;
 }

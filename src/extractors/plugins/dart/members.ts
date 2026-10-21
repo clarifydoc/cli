@@ -105,10 +105,13 @@ function memberAt(
   if (close < 0) return null;
   const after = text.slice(close).trimStart();
   const hasBody = /^(?:async\*?|sync\*?)?\s*(?:\{|=>)/.test(after);
+  // A parameter list that wraps onto later lines (`Future<Response> request(Verb verb,`
+  // / `String url, {Body? body}) async {`): the function pattern reads one line.
+  const wraps = hasBody && text.slice(open, close).includes("\n");
   if (sig) {
-    // Only a bodiless signature: a method with a body is the function
-    // pattern's, and anything else (`foo(…),`) is no declaration.
-    if (!after.startsWith(";")) return null;
+    // Only a bodiless signature or a wrapped one: a method with a body is the
+    // function pattern's, and anything else (`foo(…),`) is no declaration.
+    if (!after.startsWith(";") && !wraps) return null;
   } else if (!hasBody && !after.startsWith(";") && !after.startsWith(":")) return null;
 
   const endLine = findEndLine(lines, j, "brace");
@@ -126,7 +129,7 @@ function memberAt(
     decorators: attributeLinesAbove(lines, j, spec),
     calls,
     line: j + 1,
-    endLine: sig ? j + 1 + (text.slice(0, close).match(/\n/g)?.length ?? 0) : endLine,
+    endLine: sig && !wraps ? j + 1 + (text.slice(0, close).match(/\n/g)?.length ?? 0) : endLine,
   };
   if (hasBody && spec.extractLocalTypes) {
     const body = lines.slice(j + 1, Math.min(endLine, lines.length));

@@ -96,7 +96,7 @@ import { attachTraceImpact } from "./trace-impact.js";
 import { attachRiskVerdicts } from "./risk-verdict.js";
 import { computeImpactDiff } from "./impact-diff.js";
 import { collectGitHistory, computeHotspots, type GitHistoryResult } from "./git-history.js";
-import { analyzeUnusedCode, analyzeReachability } from "./dead-code.js";
+import { analyzeUnusedCode, analyzeReachability, dropVendoredFacts } from "./dead-code.js";
 import { computeHealthScore } from "./health-scorer.js";
 import { generateSuggestions } from "./suggestions-engine.js";
 import { detectCommunities, groupCommunities } from "./community-detector.js";
@@ -997,6 +997,13 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     progress.detail(`  Config patterns: ${got.httpCalls} HTTP call(s), ${got.routes} route(s), ${got.db} database access(es)`);
   }
 
+  // Vendored libraries copied into the tree (`public/js/plugins/ckeditor`,
+  // `third_party/`) are not this project's screens, endpoints or tables: their
+  // sample pages, requests and queries leave the chain before anything joins
+  // them. Project-level + in-memory; the per-file JSON keeps what the file says.
+  const vendoredPaths = dropVendoredFacts(allAnalyses);
+  if (vendoredPaths.size > 0 && verbose) progress.detail(`  vendored files (no screens, calls or data): ${vendoredPaths.size}`);
+
   // Step 4: Post-analysis
 
   // One project-wide import index, shared across the router mount resolver and
@@ -1217,7 +1224,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const webScreens = buildScreensFromRoutes(allAnalyses, rawSources, importIndex);
   const screenedFiles = new Set(webScreens.map((s) => s.filePath));
   const componentScreens = buildScreensFromComponents(allAnalyses, rawSources, screenedFiles);
-  const allScreens = [...dfmScreens, ...webScreens, ...componentScreens];
+  const allScreens = [...dfmScreens, ...webScreens, ...componentScreens].filter((sc) => !vendoredPaths.has(sc.filePath));
   // The Delphi project file names the main form outright — mark it, and the
   // other forms the app creates at startup, so the screen graph has a root.
   markStartupScreens(allAnalyses, allScreens, rawSources);
@@ -1711,7 +1718,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     const reached = computeSymbolReachWithWitness({
       symbolLinks,
       symbolDataAccess,
-      apiCallAccess: attributeApiCallsToSymbols(allAnalyses),
+      apiCallAccess: attributeApiCallsToSymbols(allAnalyses, allApiCalls),
       dbAccessByLine,
     });
     symbolReach = reached.reach;

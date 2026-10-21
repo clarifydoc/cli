@@ -149,6 +149,29 @@ describe("PowerShell data access", () => {
     ]);
   });
 
+  it("keeps the host of a base URL the script assigns once", () => {
+    const b = analyze([
+      '$leagueBase = "https://league.example.com"',
+      '$garage = "https://garage.example.com/v1"',
+      '$garage = "https://garage.example.com/v2"',
+      "$clubs = Read-Host 'Clubs URL'",
+      "function Sync {",
+      '    Invoke-RestMethod `',
+      '        -Uri "$leagueBase/api/fixtures" `',
+      "        -Method POST",
+      '    irm "${LeagueBase}/api/clubs/$($club.Id)"',
+      '    irm "$garage/cars"',
+      '    irm "$clubs/players"',
+      "}",
+    ].join("\n"));
+    expect(b.dataSources.map((d) => `${d.name} ${d.baseRef ? d.baseRef.key : "-"}`)).toEqual([
+      "POST /api/fixtures https://league.example.com",
+      "GET /api/clubs/{id} https://league.example.com",
+      "GET /cars -",
+      "GET /players -",
+    ]);
+  });
+
   it("reads SQL in strings and here-strings", () => {
     expect(sources.filter((s) => s.startsWith("database"))).toEqual([
       "database MERGE INTO@5", "database DELETE FROM@8", "database SELECT@9",

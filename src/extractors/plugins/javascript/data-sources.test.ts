@@ -44,6 +44,20 @@ async function go() { await fetch(checkoutUrl, { method: 'POST' }); }`;
     expect(calls.map((c) => c.target)).toContain("/site/cui_checkout_json");
   });
 
+  it("reads an optional query string written as a ternary as a query, never part of the last segment", async () => {
+    const SRC = `async function fixtures(seasonId?: number) {
+  const params = [\`active=true\`]
+  if (seasonId) params.push(\`seasonId=\${seasonId}\`)
+  const url = \`/api/league/matches/fixtures\${params.length ? (\`?\${params.join("&")}\`) : ""}\`
+  return axios.get(url)
+}
+async function standings(byPoints: boolean) {
+  const url = \`/api/league/standings\${byPoints ? '/points' : '/goals'}\`
+  return axios.get(url)
+}`;
+    expect((await apiCallsOf(SRC)).map((c) => c.target)).toEqual(["/api/league/matches/fixtures?{}", "/api/league/standings{}"]);
+  });
+
   it("substitutes a ${const} interpolation in a template URL", async () => {
     const SRC = `const galleryUrl = '/site/cui_gallery_detail_json';
 async function go(ownerId: number) { await fetch(\`\${galleryUrl}?ownerCustomerId=\${ownerId}\`); }`;

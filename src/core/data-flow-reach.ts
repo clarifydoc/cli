@@ -59,25 +59,43 @@ export interface SymbolApiCallAccess {
  * `attributeDataAccessToSymbols` (`Class.method` | `fn`). Top-level calls with
  * no enclosing symbol are dropped (no trace symbol to attach to); duplicate
  * (file, symbol, resource) rows are collapsed. No new parsing — the api-call
- * data sources are already extracted per file.
+ * data sources are already extracted per file. `projectCalls` are the calls a
+ * project pass added with no per-file row (client proxies, gRPC stubs,
+ * generated clients); a row at a line that already has a per-file api-call is
+ * skipped, so those keep the target they were extracted with.
  */
-export function attributeApiCallsToSymbols(analyses: FileAnalysis[]): SymbolApiCallAccess[] {
+export function attributeApiCallsToSymbols(
+  analyses: FileAnalysis[],
+  projectCalls: ReadonlyArray<{ filePath?: string; line: number; target?: string | null }> = [],
+): SymbolApiCallAccess[] {
   const out: SymbolApiCallAccess[] = [];
   const seen = new Set<string>();
+  const perFileLines = new Set<string>();
+  const spansByFile = new Map<string, ReturnType<typeof spansOf>>();
+  const attribute = (file: string, spans: ReturnType<typeof spansOf>, line: number, target: string | null | undefined) => {
+    const resource = (target ?? "").trim();
+    if (!resource) return;
+    const at = innermostAt(spans, line);
+    if (!at) return; // module-level call — no trace symbol to attach to
+    const key = `${file} ${at.symbol} ${resource}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ file, symbol: at.symbol, resource });
+  };
   for (const a of analyses) {
     const spans = spansOf(a);
     if (spans.length === 0) continue;
+    spansByFile.set(a.filePath, spans);
     for (const ds of a.dataSources ?? []) {
       if (ds.kind !== "api-call") continue;
-      const resource = (ds.target ?? "").trim();
-      if (!resource) continue;
-      const at = innermostAt(spans, ds.line);
-      if (!at) continue; // module-level call — no trace symbol to attach to
-      const key = `${a.filePath} ${at.symbol} ${resource}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({ file: a.filePath, symbol: at.symbol, resource });
+      perFileLines.add(`${a.filePath}:${ds.line}`);
+      attribute(a.filePath, spans, ds.line, ds.target);
     }
+  }
+  for (const c of projectCalls) {
+    if (!c.filePath || perFileLines.has(`${c.filePath}:${c.line}`)) continue;
+    const spans = spansByFile.get(c.filePath);
+    if (spans) attribute(c.filePath, spans, c.line, c.target);
   }
   return out;
 }

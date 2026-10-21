@@ -61,6 +61,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   entryPoints: "optional",
   httpClientRegistrations: "optional",
   proxyRules: "optional",
+  generatedClients: "optional",
   taintFacts: "optional",
 };
 

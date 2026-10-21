@@ -19,6 +19,7 @@ import type {
   CallBaseRef,
   HttpClientRegistration,
   ProxyRule,
+  GeneratedClientConfig,
 } from "./analysis.js";
 import type { ProjectInfo } from "./plugin.js";
 import type { RouteExtractor } from "../extractors/routes/base.js";
@@ -545,6 +546,8 @@ export interface AstExtractorHooks {
   entryPoints?(tree: Tree, sourceText: string): EntryPointInfo[];
   /** Forwarding rules a code file declares (`vite.config.ts` `server.proxy`) → `FileAnalysis.proxyRules`. */
   proxyRules?(tree: Tree, sourceText: string, filePath: string): ProxyRule[];
+  /** API-client generators a config file sets up (`kubb.config.ts`) → `FileAnalysis.generatedClients`. */
+  generatedClients?(tree: Tree, sourceText: string, filePath: string): GeneratedClientConfig[];
   /** Calls handing a path literal to a project function → `FileAnalysis.pathArgCalls`. */
   pathArgCalls?(tree: Tree, sourceText: string): PathArgCall[];
   /** URL-shaped module-level values by name (`environment.apiUrl`) → `FileAnalysis.moduleValues`. */

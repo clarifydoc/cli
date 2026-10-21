@@ -52,6 +52,10 @@ const AUTHORED_MIN_OUTSIDE_DEPS = 3;
  */
 const CONVENTION_SEGMENT_RE =
   /^(?:generated|__generated__|codegen|node_modules|bower_components|jspm_packages|vendors?|third[-_]?party|thirdparty)$/i;
+/** The vendoring half of the conventions: someone else's code, copied in.
+ *  Not `vendors` — an app's own domain folder as often as a library's (a
+ *  marketplace's `vendors/` module), and discovery already skips `vendor/`. */
+const VENDORED_SEGMENT_RE = /^(?:node_modules|bower_components|jspm_packages|third[-_]?party|thirdparty)$/i;
 
 /** Static-asset containers; a `plugins`/`lib(s)` dir below one holds vendored
  *  browser libraries (`public/js/plugins/ckeditor`), not authored code. */
@@ -60,14 +64,14 @@ const ASSET_LIB_SEGMENT_RE = /^(?:plugins|libs?)$/i;
 
 /** Root dirs (posix, no trailing slash) marked generated/vendored by path
  *  convention. Shallowest-wins pruning happens in the caller's merge. */
-export function conventionRoots(filePaths: string[]): string[] {
+export function conventionRoots(filePaths: string[], segmentRe: RegExp = CONVENTION_SEGMENT_RE): string[] {
   const roots = new Set<string>();
   for (const f of filePaths) {
     const segs = f.replace(/\\/g, "/").split("/");
     let underAssets = false;
     for (let i = 0; i < segs.length - 1; i++) {
       const seg = segs[i]!;
-      if (CONVENTION_SEGMENT_RE.test(seg) || (underAssets && ASSET_LIB_SEGMENT_RE.test(seg))) {
+      if (segmentRe.test(seg) || (underAssets && ASSET_LIB_SEGMENT_RE.test(seg))) {
         roots.add(segs.slice(0, i + 1).join("/"));
         break;
       }
@@ -75,6 +79,45 @@ export function conventionRoots(filePaths: string[]): string[] {
     }
   }
   return [...roots];
+}
+
+/**
+ * The vendored subset of the convention roots: third-party libraries copied
+ * into the tree (`public/js/plugins/ckeditor`, `third_party/`). Unlike
+ * codegen output — a jOOQ table class, a generated API client, which state
+ * the project's own schema and endpoints — nothing in them is a fact about
+ * this project: their sample pages are not its screens, and their requests
+ * and queries are not its calls.
+ */
+export function vendoredRoots(filePaths: string[]): string[] {
+  const roots = conventionRoots(filePaths, VENDORED_SEGMENT_RE);
+  return roots.filter((r) => !roots.some((o) => o !== r && r.startsWith(o + "/"))).sort();
+}
+
+/**
+ * Clear what files under a vendored root would contribute to the screen →
+ * route → table chain: their routes, screens, outbound requests, queries,
+ * writes and entity relations. In memory, on the analyses the pipeline
+ * aggregates; the files stay analyzed (functions, imports, size), and stay
+ * excluded from the quality signals as before. Returns the files under a
+ * vendored root, cleared or not, for builders that derive more from them
+ * (component screens from a page's template).
+ */
+export function dropVendoredFacts(analyses: FileAnalysis[]): Set<string> {
+  const roots = vendoredRoots(analyses.map((a) => a.filePath));
+  const vendored = new Set<string>();
+  if (roots.length === 0) return vendored;
+  for (const a of analyses) {
+    const p = a.filePath.replace(/\\/g, "/");
+    if (!roots.some((r) => p.startsWith(r + "/"))) continue;
+    vendored.add(a.filePath);
+    a.routes = [];
+    a.screens = [];
+    a.dataSources = [];
+    a.dataMutations = [];
+    if (a.entityRelations) a.entityRelations = [];
+  }
+  return vendored;
 }
 
 /**

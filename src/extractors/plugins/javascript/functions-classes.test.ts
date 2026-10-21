@@ -343,3 +343,97 @@ export function useTrainings(id) {
     expect(callsOf("useTrainings")).toEqual(expect.arrayContaining(["useQuery", "fetchTrainings"]));
   });
 });
+
+describe("URL-builder template extraction — a local given a value per branch", () => {
+  it("makes one template per value a declared-empty local is assigned, ternary arms included", async () => {
+    const SRC = `export function kitEndpoint(params: { clubId?: number; kind?: string; isAway?: boolean }): string {
+      const { clubId, kind, isAway = false } = params
+      if (clubId) {
+        let endpoint: string
+        if (kind === 'shirt') {
+          endpoint = \`/api/league/clubs/\${clubId}/shirt\`
+        } else if (kind === 'badge') {
+          endpoint = isAway ? '/api/league/badges/away' : '/api/league/badges/home'
+        } else {
+          throw new Error('unknown kit')
+        }
+        return \`\${endpoint}?away=\${isAway}\`
+      }
+      return '/api/league/kits'
+    }`;
+    expect(await templatesOf(SRC, "kitEndpoint")).toEqual([
+      "/api/league/clubs/${clubId}/shirt?away=${isAway}",
+      "/api/league/badges/away?away=${isAway}",
+      "/api/league/badges/home?away=${isAway}",
+      "/api/league/kits",
+    ]);
+  });
+});
+
+describe("Pinia stores", () => {
+  async function extract(src: string) {
+    const tree = await parseSource(src, "typescript" as any, "club-store.ts");
+    const x = new JavaScriptExtractor();
+    return { functions: x.extractFunctions(tree, src), classes: x.extractClasses(tree, src) };
+  }
+
+  it("reads an option store as a class of its actions and getters, returned by the store's binding", async () => {
+    const { functions, classes } = await extract(`import { defineStore } from 'pinia'
+export const useClubStore = defineStore('club', {
+  state: () => ({ clubs: [], url: "/api/league/clubs", season: \`/api/league/seasons/\${SEASON}\`, loading: false }),
+  getters: {
+    count: (state) => state.clubs.length,
+    byId(state) { return (id) => state.clubs.find((c) => c.id === id) },
+  },
+  actions: {
+    async load() { this.clubs = (await axios.get(this.url)).data },
+    async delete(id: number) { await axios.delete(\`\${this.url}/\${id}\`); this.drop(id) },
+    drop: function (id: number) { this.clubs.splice(id, 1) },
+  },
+})`);
+    const store = functions.find((f) => f.name === "useClubStore")!;
+    expect([store.returnType, store.isExported]).toEqual(["ClubStore", true]);
+    const cls = classes.find((c) => c.name === "ClubStore")!;
+    expect(cls.methods.map((m) => m.name)).toEqual(["count", "byId", "load", "delete", "drop"]);
+    expect(cls.methods.find((m) => m.name === "delete")!.calls.map((c) => c.name)).toEqual(["axios.delete", "this.drop"]);
+    expect(cls.fieldValues).toEqual({ url: "/api/league/clubs", season: "/api/league/seasons/${SEASON}" });
+    // The actions are the class's, not free functions named by their key.
+    expect(functions.map((f) => f.name)).not.toContain("delete");
+  });
+
+  it("reads `defineStore({ id, … })` and `state() { return { … } }` the same way", async () => {
+    const { classes } = await extract(`export const usePlayerStore = defineStore({
+  id: 'players',
+  state() { return { endpoint: '/api/league/players' } },
+  actions: { fetch() { return axios.get(this.endpoint) } },
+})`);
+    expect(classes.map((c) => [c.name, c.methods.map((m) => m.name), c.fieldValues])).toEqual([
+      ["PlayerStore", ["fetch"], { endpoint: "/api/league/players" }],
+    ]);
+  });
+
+  it("reads a setup store's returned functions as members calling the function they name", async () => {
+    const { functions, classes } = await extract(`export const useSquadStore = defineStore('squad', () => {
+  const players = ref([])
+  const captain = computed(() => players.value[0])
+  async function load(id: number) { players.value = (await axios.get(\`/api/league/squads/\${id}\`)).data }
+  const transfer = async (id: number) => axios.post(\`/api/league/players/\${id}/transfer\`)
+  return { players, captain, load, sell: transfer }
+})`);
+    const store = functions.find((f) => f.name === "useSquadStore")!;
+    expect(store.returnType).toBe("SquadStore");
+    expect(functions.map((f) => f.name)).toEqual(expect.arrayContaining(["load", "transfer"]));
+    // Refs and computeds are state, not members to call.
+    expect(classes.find((c) => c.name === "SquadStore")!.methods.map((m) => `${m.name} -> ${m.calls.map((c) => c.name).join(",")}`)).toEqual([
+      "load -> load",
+      "sell -> transfer",
+    ]);
+  });
+
+  it("leaves a store defined inside a function, and a defineStore that is not Pinia's shape, alone", async () => {
+    const { functions, classes } = await extract(`function make() { const useGarageStore = defineStore('garage', { actions: { park() {} } }); return useGarageStore }
+export const useCarStore = defineStore('car')`);
+    expect(classes).toEqual([]);
+    expect(functions.map((f) => f.name)).toEqual(["make"]);
+  });
+});

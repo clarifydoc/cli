@@ -274,6 +274,8 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
       // which classes are models and which relation names reach which.
       if (PHP_INSTANCE_VERBS.has(method)) {
         if (continuesEloquentChain(node)) return;
+        // `$request->all()`, `$request->query('page')`: the HTTP request's input, not a model.
+        if (REQUEST_INPUT_VERBS.has(method) && objNode && isHttpRequest(objNode, node)) return;
         sources.push(this.ds({
           kind: "database",
           name: callText,
@@ -359,9 +361,11 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
    */
   private httpRequest(node: Node, method: string, callText: string): { name: string; target: string | null } {
     if (/^(request|send)$/i.test(method)) {
-      const verb = this.stringArgAt(node, 0)?.toUpperCase();
+      const verb = (this.stringArgAt(node, 0) ?? this.argText(node, 0)?.replace(/^[\w\\]+::/, ""))?.toUpperCase();
       if (verb && /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/.test(verb)) return { name: verb, target: this.urlArgAt(node, 1) };
-      return { name: callText, target: null };
+      // `request($requestType, $endpoint)`: the verb is a variable — a
+      // wrapper's parameter, which each call site of the wrapper names.
+      return { name: callText, target: this.urlArgAt(node, 1) };
     }
     return { name: callText, target: this.urlArgAt(node, 0) };
   }
@@ -447,6 +451,30 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
     t = t.replace(/`/g, ""); // strip backtick identifier quoting
     return /^[A-Za-z_]\w*$/.test(t) ? t : null;
   }
+}
+
+/** Methods the HTTP request shares with Eloquent/PDO verbs: reads of its input. */
+const REQUEST_INPUT_VERBS: ReadonlySet<string> = new Set(["all", "get", "query", "exists"]);
+
+/**
+ * Is `obj` the HTTP request — `$this->request`, `request()`, or a parameter of
+ * the enclosing function typed as one (`Request $request`, a FormRequest
+ * `StoreClubRequest $request`, PSR-7 `ServerRequestInterface $req`) or left
+ * untyped under the name `$request`/`$req`? A local assigned anything else
+ * (`$request = TransferRequest::find($id)`) is not.
+ */
+function isHttpRequest(obj: Node, call: Node): boolean {
+  if (obj.text === "$this->request" || /^\\?request\(\s*\)$/.test(obj.text)) return true;
+  if (obj.type !== "variable_name") return false;
+  let fn: Node | null = call.parent;
+  while (fn && !/^(?:method_declaration|function_definition|anonymous_function|arrow_function)$/.test(fn.type)) fn = fn.parent;
+  for (const p of fn?.childForFieldName("parameters")?.namedChildren ?? []) {
+    if (p?.childForFieldName("name")?.text !== obj.text) continue;
+    const type = p.childForFieldName("type")?.text.replace(/^\?/, "");
+    if (!type) return /^\$(?:request|req)$/.test(obj.text);
+    return /(?:^|\\)\w*Request(?:Interface)?$/.test(type);
+  }
+  return false;
 }
 
 /**

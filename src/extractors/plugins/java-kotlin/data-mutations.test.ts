@@ -42,3 +42,20 @@ describe("Kotlin data mutations (call_expression has no name field — was 0 mut
     expect(m.some((x) => x.kind === "db-write")).toBe(true);
   });
 });
+
+describe("setter-shaped calls that assign no property", () => {
+  it("skips JDBC parameter binding, two-argument drawing calls and Kotlin's setOf", async () => {
+    const m = await mutationsOf(`    stmt?.setInt(1, player.id)
+    page.setFont(Fonts.COURIER, 12f)
+    val positions = setOf(Position.KEEPER, Position.STRIKER)
+    player.setClub(club)
+    button.setOnClickListener { println("kick-off") }`, "kotlin");
+    expect(m.filter((x) => x.kind === "assignment").map((x) => x.target)).toEqual(["setClub", "setOnClickListener"]);
+  });
+
+  it("keeps a one-argument Java setter and skips a PreparedStatement binding", async () => {
+    const m = await mutationsOf(`    player.setNumber(9);
+    ps.setString(2, player.getName());`, "java");
+    expect(m.filter((x) => x.kind === "assignment").map((x) => x.target)).toEqual(["setNumber"]);
+  });
+});

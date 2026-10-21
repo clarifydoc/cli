@@ -90,6 +90,16 @@ export function astToValueExpr(node: Node | null, opts: CaptureOptions = {}): Va
     case "as_expression":
     case "satisfies_expression":
       return astToValueExpr(node.namedChild(0), opts);
+    case "ternary_expression": {
+      // `${params.length ? `?${params.join("&")}` : ""}` — an optional query
+      // string: the request goes to the same path either way, so the arm that
+      // writes it out stands for both. Any other choice stays one hole.
+      const arms = [node.childForFieldName("consequence"), node.childForFieldName("alternative")].map(unparenthesized);
+      const empty = arms.findIndex((a) => a !== null && isEmptyString(a));
+      const other = empty === -1 ? null : arms[1 - empty];
+      if (other && (other.type === "string" || other.type === "template_string") && /^.[?&#]/.test(other.text)) return astToValueExpr(other, opts);
+      return { kind: "opaque", text: node.text };
+    }
     case "identifier":
       return { kind: "ref", name: node.text };
     case "member_expression":
@@ -100,6 +110,17 @@ export function astToValueExpr(node: Node | null, opts: CaptureOptions = {}): Va
     default:
       return { kind: "opaque", text: node.text };
   }
+}
+
+function unparenthesized(node: Node | null): Node | null {
+  let n = node;
+  while (n?.type === "parenthesized_expression") n = n.namedChild(0);
+  return n;
+}
+
+/** `""`, `''` or an empty template literal. */
+function isEmptyString(node: Node): boolean {
+  return (node.type === "string" || node.type === "template_string") && node.text.length === 2;
 }
 
 /**

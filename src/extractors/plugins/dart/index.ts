@@ -22,6 +22,7 @@ import {
 import { addBodyLevelMembers, isDartInterface } from "./members.js";
 import { singularize } from "../shared/inflection.js";
 import { dartRequestBody } from "./request-body.js";
+import { dartFieldValues, dartUrlArg, dartVerbArg, extractDartPathArgCalls, isDartHttpReceiver } from "./request-wrappers.js";
 
 /**
  * Dart (and therefore Flutter) regex extraction.
@@ -145,12 +146,12 @@ function importSpecifiers(tail: string): string[] {
 const HTTP_VERBS =
   "get|post|put|patch|delete|head|read|request|getUri|postUri|putUri|patchUri|deleteUri|download|send";
 
-/** A receiver name that looks like an HTTP client (`http`, `dio`, `_client`, `apiClient`, `Dio()`). */
-const HTTP_RECEIVER_RE = /(?:^|_)(?:http|dio|client|api)/i;
-
-/** `<recv>.<verb>(` — global so a line can hold several. */
+/**
+ * `<recv>.<verb>(` — global so a line can hold several. The receiver is a
+ * client variable, `Dio()`, or a getter call returning one (`this.getDio()`).
+ */
 const HTTP_CALL_RE = new RegExp(
-  String.raw`(?<![\w.])((?:[A-Za-z_$]\w*)|Dio\(\))\.(${HTTP_VERBS})\s*\(`,
+  String.raw`(?<![\w.])(?:this\.)?((?:[A-Za-z_$]\w*)|Dio\(\)|_?get[A-Z]\w*\(\))\.(${HTTP_VERBS})\s*\(`,
   "g",
 );
 
@@ -180,15 +181,6 @@ const DRIFT_WRITE = /^(delete|deleteWhere|deleteAll|insert\w*|into|update|replac
 
 const pascal = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
-/** Pull a URL-ish first argument out of an HTTP call (`'…'`, `"…"`, or `Uri.parse('…')`). */
-function firstUrlArg(line: string, fromIndex: number): string | null {
-  const slice = line.slice(fromIndex);
-  const uri = slice.match(/^\s*Uri\.(?:parse|https?)\(\s*['"]([^'"]+)['"]/);
-  if (uri) return uri[1]!;
-  const str = slice.match(/^\s*['"]([^'"]+)['"]/);
-  return str ? str[1]! : null;
-}
-
 function extractDartDataSources(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
   const seen = new Set<string>();
@@ -209,12 +201,17 @@ function extractDartDataSources(lines: string[]): DataSourceInfo[] {
     for (const m of line.matchAll(HTTP_CALL_RE)) {
       const receiver = m[1]!;
       const verb = m[2]!;
-      if (!HTTP_RECEIVER_RE.test(receiver)) continue;
+      if (!isDartHttpReceiver(receiver)) continue;
+      // `apiConnection.request(RequestType.GET, '/x')` is the project's own
+      // wrapper, not a client: its call site is a `pathArgCalls` entry.
+      const after = line.slice(m.index! + m[0]!.length);
+      const firstArg = (after.trim() ? after : lines[i + 1] ?? "").split(",")[0] ?? "";
+      if (dartVerbArg(firstArg.replace(/\).*$/, ""))) continue;
       const body = /^(?:post|put|patch)$/i.test(verb) ? dartRequestBody(lines, i, m.index! + m[0]!.length) : null;
       push({
         kind: "api-call",
         name: `${receiver}.${verb}`,
-        target: firstUrlArg(line, m.index! + m[0]!.length),
+        target: dartUrlArg(lines, i, m.index! + m[0]!.length),
         calls: [],
         line: ln,
         ...(body ? { requestBody: body } : {}),
@@ -452,6 +449,8 @@ function extractDartClasses(lines: string[], fns: FunctionInfo[]): ClassInfo[] {
     // An enum's value list (`venus(4.8e24);`) is shaped like a signature.
     if (/^\s*enum\b/.test(lines[cls.line - 1] ?? "")) continue;
     addBodyLevelMembers(lines, cls, dartSpec, parseDartParam);
+    const values = dartFieldValues(lines, cls);
+    if (values) cls.fieldValues = values;
     if (/\bclass\b/.test(decl) && isDartInterface(decl, cls, lines)) cls.kind = "interface";
   }
   // A Riverpod read keyed by a provider declared in this file has that
@@ -792,6 +791,8 @@ export const dartSpec: RegexLangSpec = {
   ],
 
   extractDataSources: (lines) => extractDartDataSources(lines),
+  // Call sites of a project request wrapper (`ApiConnection().request(RequestType.GET, '/x')`).
+  extractPathArgCalls: extractDartPathArgCalls,
   extractRoutes: (lines) => extractDartRoutes(lines),
   extractInteractiveElements: (lines) => extractFlutterInteractiveElements(lines),
   // Inline closure handlers as functions of their own (see `flutterClosureFunctions`).

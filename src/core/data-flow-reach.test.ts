@@ -330,6 +330,23 @@ describe("attributeApiCallsToSymbols", () => {
     } as unknown as FileAnalysis;
     expect(attributeApiCallsToSymbols([analysis])).toEqual([]);
   });
+
+  it("attributes a call a project pass added, unless the line already has its own row", () => {
+    const analysis = {
+      filePath: "store.ts",
+      functions: [{ name: "sellPlayer", line: 3, endLine: 8 }],
+      classes: [],
+      dataSources: [{ kind: "api-call", name: "get", target: "${base}/players", line: 4, calls: [] }],
+    } as unknown as FileAnalysis;
+    const projectCalls = [
+      { filePath: "store.ts", line: 4, target: "/players" },
+      { filePath: "store.ts", line: 6, target: "/league/transfers/{id}" },
+    ];
+    expect(attributeApiCallsToSymbols([analysis], projectCalls)).toEqual([
+      { file: "store.ts", symbol: "sellPlayer", resource: "${base}/players" },
+      { file: "store.ts", symbol: "sellPlayer", resource: "/league/transfers/{id}" },
+    ]);
+  });
 });
 
 describe("computeSymbolReach — a path is as sure as its weakest link", () => {

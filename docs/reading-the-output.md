@@ -195,6 +195,7 @@ cross-file facts — which function a call reaches, which route serves a URL —
 | `screens`, `subComponents`, `templateTree`, `interactiveElements`, `events` | The UI: screens and their component tree, child components, buttons/inputs/forms with their handlers, emitted events. |
 | `typeReferences` | Every place a type is used (extends, parameter, field, `new`, cast), for per-class blast radius. |
 | `diBindings`, `httpClientRegistrations`, `proxyRules` | Container registrations, HTTP clients with a base URL, dev-server and gateway proxy rules — facts the cross-file pass resolves. |
+| `generatedClients` | API-client generators a config file sets up (`kubb.config.ts`): the `spec` read and the `outputs` written one module per operation. A call of an import from those outputs becomes an api-call at the spec operation's method and path, even when the generated modules are not on disk. |
 | `complexities` | Per function: cyclomatic and cognitive complexity, nesting depth, parameter count. |
 | `securityIssues` | Findings in this file, with the line and snippet. |
 | `extraction` | Present only when the parser failed and the file was read with the regex fallback — expect less detail. |

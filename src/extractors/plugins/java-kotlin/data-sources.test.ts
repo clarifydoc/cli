@@ -125,6 +125,31 @@ describe("Java jOOQ + Spring Data", () => {
   });
 });
 
+describe("jOOQ `delete(TABLE)` — the older spelling of deleteFrom", () => {
+  it("names the table of a delete chained on a DSL context (Kotlin)", async () => {
+    const s = db(await jooqSourcesOf(`    JooqFactory.getDSL().delete(MATCHREPORT).where(MATCHREPORT.ID.eq(id)).execute()
+    dsl
+      .delete(Tables.FIXTURE)
+      .execute()`, "kotlin"));
+    expect(s.map((d) => [d.name, d.entity, d.access])).toEqual([
+      ["jOOQ: delete", "MATCHREPORT", "write"],
+      ["jOOQ: delete", "FIXTURE", "write"],
+    ]);
+  });
+
+  it("names the table in Java, through a file-local table alias", async () => {
+    const s = db(await sourcesOf(`    ctx.delete(TABLE).where(CLUB.ID.eq(id)).execute();`, "java",
+      "import org.jooq.impl.DSL;\nclass T { static final Table<?> TABLE = DSL.table(\"league.Club\"); }"));
+    expect(s.some((d) => d.name === "jOOQ: delete" && d.entity === "Club")).toBe(true);
+  });
+
+  it("leaves a cache or DAO delete alone, even in a jOOQ file", async () => {
+    const s = db(await jooqSourcesOf(`    cache.delete(SQUAD_KEY)
+    playerCache.delete(PLAYER)`, "kotlin"));
+    expect(s.some((d) => d.name === "jOOQ: delete")).toBe(false);
+  });
+});
+
 describe("jOOQ false-table fences", () => {
   it("String.join(ALL_CAPS_CONST, …) in a non-jOOQ file emits nothing (file gate)", async () => {
     const s = db(await sourcesOf(
@@ -388,5 +413,48 @@ describe("JVM HTTP — requests are read where they are built", () => {
     HttpRequest r = HttpRequest.newBuilder(URI.create("https://svc/api/items")).PUT(body).build();
     HttpRequest q = HttpRequest.newBuilder().uri(URI.create("/api/players")).GET().build();`, "java");
     expect(api(ds)).toEqual(["PUT https://svc/api/items", "GET /api/players"]);
+  });
+
+  it("keeps Kotlin template holes in the target, an absolute host as written", async () => {
+    const ds = await sourcesOf(`
+    val a = Request.Builder().url("$baseUrl/api/cars").build()
+    val b = Request.Builder().url("https://api.example.com/v0/\${GarageConf.appId}/Cars").get().build()
+    val c = Request.Builder().header("X-Key", key).url("\${this.baseUrl}/api/garages/$id").delete().build()
+    val url = "https://api.example.com/v0/$garage/Cars?limit=$limit"
+    val d = Request.Builder().url(url).build()
+    val e = HttpRequest.newBuilder().uri(URI(endpoint + "/api/drivers")).POST(body).build()
+    val f = Request.Builder().url("$other").build()
+    val g = Request.Builder().url(other).build()
+    val endpoint = "drivers/v1/active"
+    val query = "?season=$season"
+    val h = Request.Builder().method("POST", body).url("$baseUrl/$endpoint$query").build()`, "kotlin");
+    expect(api(ds)).toEqual([
+      "GET ${baseUrl}/api/cars",
+      "GET https://api.example.com/v0/${GarageConf.appId}/Cars",
+      "DELETE ${this.baseUrl}/api/garages/${id}",
+      "GET https://api.example.com/v0/${garage}/Cars?limit=${limit}",
+      "POST ${endpoint}/api/drivers",
+      "POST ${baseUrl}/drivers/v1/active?season=${season}",
+    ]);
+  });
+
+  it("reads Java concatenation inside new URI(…) and keeps a `$` in a Java literal as text", async () => {
+    const ds = await sourcesOf(`
+    HttpRequest r = HttpRequest.newBuilder(new URI(base + "/api/clubs/" + id)).build();
+    HttpRequest q = HttpRequest.newBuilder(URI.create("/api/price$list")).build();`, "java");
+    expect(api(ds)).toEqual(["GET ${base}/api/clubs/${id}", "GET /api/price$list"]);
+  });
+});
+
+describe("dependency-injection annotations are read by name", () => {
+  it("records @Autowired / @Value, not a parameter annotation whose argument says Value", async () => {
+    const src = `package x
+class ClubController(@Autowired val clubs: ClubService) {
+  @field:Value("\${league.size}") lateinit var size: String
+  fun list(@RequestParam(required = false, defaultValue = "true") active: Boolean, @JsonValue x: Int) {}
+}`;
+    const tree = await parseSource(src, "kotlin" as any, "ClubController.kt");
+    const imports = new JavaKotlinDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "import").map((d) => d.name);
+    expect(imports).toEqual(["Autowired", 'field:Value("\${league.size}")']);
   });
 });

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { extractOpenApiRoutes, extractOpenApiEntities, extractOpenApiRelations } from "./index.js";
-import { openapiMeta } from "./meta.js";
+import { isOpenApiDocument, openapiMeta } from "./meta.js";
 import { attachRequestSchemas } from "../../../core/request-schemas.js";
 import { createEmptyAnalysis } from "../../../types/analysis.js";
 
@@ -353,5 +353,24 @@ describe("OpenAPI request schema through the core pass", () => {
     });
     const bulk = routes.find((r) => r.handler === "shared") as typeof routes[number] & { requestSchema?: { type?: string } };
     expect(bulk.requestSchema?.type).toBe("array");
+  });
+});
+
+describe("OpenAPI document sniff", () => {
+  const filler = Array.from({ length: 300 }, (_, i) => `"Club${i}": { "type": "object", "properties": { "name": { "type": "string" } } }`).join(",\n");
+  it("finds the version key of a sorted-key JSON document past the head", () => {
+    const doc = `{\n"components": { "schemas": {\n${filler}\n} },\n"info": { "title": "League" },\n"openapi": "3.1.0",\n"paths": {}\n}`;
+    expect(doc.indexOf('"openapi"')).toBeGreaterThan(8192);
+    expect(isOpenApiDocument(doc)).toBe(true);
+  });
+  it("finds a YAML document's top-level version key past the head, never an indented one", () => {
+    const yamlFiller = Array.from({ length: 400 }, (_, i) => `    Club${i}:\n      type: object`).join("\n");
+    expect(isOpenApiDocument(`components:\n  schemas:\n${yamlFiller}\nopenapi: 3.0.3\npaths: {}\n`)).toBe(true);
+    expect(isOpenApiDocument(`components:\n  schemas:\n${yamlFiller}\n  openapi: 3.0.3\n`)).toBe(false);
+  });
+  it("rejects a JSON document that names the key only below the top level", () => {
+    const doc = `{\n"clubs": [\n${filler}\n],\n"meta": { "openapi": "3.0.0" }\n}`;
+    expect(isOpenApiDocument(doc)).toBe(false);
+    expect(isOpenApiDocument(`{\n"clubs": [\n${filler}\n],\n"note": "openapi"\n}`)).toBe(false);
   });
 });

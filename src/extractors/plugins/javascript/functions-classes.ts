@@ -346,7 +346,7 @@ export function extractUrlTemplates(
 ): string[] {
   if (!body) return [];
 
-  const locals: Locals = { values: new Map(), appends: new Map(), reassigns: new Map() };
+  const locals: Locals = { values: new Map(), appends: new Map(), reassigns: new Map(), unset: new Set(), assigned: new Map() };
   const returns: Node[] = [];
   if (body.type === "statement_block") {
     collectReturns(body.namedChildren, locals, returns, 0, null, paramNames);
@@ -363,8 +363,8 @@ export function extractUrlTemplates(
   // project pass resolves them where the helper is CALLED — `this` is the
   // caller's instance, so an inherited `getResourceUrl()` builds each
   // subclass's own URL.
-  const fold = (expr: ValueExpr) =>
-    foldValue(expr, scope, {
+  const fold = (expr: ValueExpr, within: ReadonlyMap<string, ValueExpr> = scope) =>
+    foldValue(expr, within, {
       params: paramNames,
       envMode: "collapse",
       opaqueCall: "template",
@@ -410,8 +410,19 @@ export function extractUrlTemplates(
       }
       continue;
     }
+    // `let endpoint; if (home) endpoint = `/badges/${id}/home`; else endpoint = …; return `${endpoint}?kit=1``
+    // — one template per value the local is given (each arm of a ternary one).
+    const branchLocal = locals.assigned.size > 0 ? [...locals.assigned.keys()].find((n) => new RegExp(`(?<![\\w$.])${n.replace(/\$/g, "\\$")}(?![\\w$])`).test(ret.text)) : undefined;
     for (const branch of ternaryArms(ret, 0)) {
-      if (push(fold(astToValueExpr(branch)))) return templates;
+      if (!branchLocal) {
+        if (push(fold(astToValueExpr(branch)))) return templates;
+        continue;
+      }
+      for (const value of locals.assigned.get(branchLocal)!.flatMap((v) => ternaryArms(v, 0))) {
+        const within = new Map(scope);
+        within.set(branchLocal, astToValueExpr(value));
+        if (push(fold(astToValueExpr(branch), within))) return templates;
+      }
     }
   }
   return templates;
@@ -465,6 +476,10 @@ interface Locals {
   appends: Map<string, Array<{ guard: string | null; expr: Node }>>;
   /** `url = `/enterprise${url}`` — reassignments that read the local's previous value, in order, each with its guard. */
   reassigns: Map<string, Array<{ guard: string | null; expr: Node }>>;
+  /** Locals declared with no value (`let endpoint: string`). */
+  unset: Set<string>;
+  /** The values such a local is given (`endpoint = `/x/${id}``), one per assignment, whatever guards it. */
+  assigned: Map<string, Node[]>;
 }
 
 /** The appended expressions of every combination of guards, unconditional appends always in, fewest guards first. */
@@ -521,6 +536,7 @@ function collectReturns(
         const nm = decl.childForFieldName("name");
         const val = decl.childForFieldName("value");
         if (nm?.type === "identifier" && val && !locals.values.has(nm.text)) locals.values.set(nm.text, val);
+        else if (nm?.type === "identifier" && !val) locals.unset.add(nm.text);
       }
     } else if (stmt.type === "expression_statement") {
       // `url += `${id}/`` — appended under whatever guards this statement.
@@ -533,6 +549,10 @@ function collectReturns(
           const list = locals.reassigns.get(left.text) ?? [];
           list.push({ guard, expr: right });
           locals.reassigns.set(left.text, list);
+        } else if (left?.type === "identifier" && right && locals.unset.has(left.text)) {
+          const list = locals.assigned.get(left.text) ?? [];
+          if (list.length < MAX_URL_TEMPLATES) list.push(right);
+          locals.assigned.set(left.text, list);
         }
       }
       if (e?.type === "augmented_assignment_expression" && e.childForFieldName("operator")?.text === "+=") {
@@ -699,6 +719,67 @@ function objectKeyName(key: Node | null): string | null {
   return null;
 }
 
+/**
+ * A Pinia store definition bound at module level:
+ *
+ *   export const useClubStore = defineStore('club', { state, getters, actions })   // option store
+ *   export const useClubStore = defineStore({ id: 'club', state, actions })        // the same, id inside
+ *   export const useClubStore = defineStore('club', () => { …; return { load } })  // setup store
+ *
+ * Calling the binding returns the store instance, whose members the caller
+ * reaches as `store.load()`. The instance is reported as a class of its own
+ * (`ClubStore`, see `storeClassName`) and the binding as a function declared
+ * to return it, so the linker types `const store = useClubStore()` like any
+ * factory's product and resolves `store.load()` on that class.
+ */
+interface PiniaStore {
+  binding: string;
+  className: string;
+  /** The option store's options object. */
+  options: Node | null;
+  /** The setup store's setup function. */
+  setup: Node | null;
+}
+
+function piniaStoreOf(decl: Node): PiniaStore | null {
+  const name = decl.childForFieldName("name");
+  const value = decl.childForFieldName("value");
+  if (name?.type !== "identifier" || value?.type !== "call_expression") return null;
+  if (value.childForFieldName("function")?.text !== "defineStore") return null;
+  const args = value.childForFieldName("arguments")?.namedChildren ?? [];
+  const options = args.find((a) => a.type === "object") ?? null;
+  const setup = args.find((a) => FUNCTION_EXPRESSIONS.has(a.type)) ?? null;
+  if (!options && !setup) return null;
+  return { binding: name.text, className: storeClassName(name.text), options, setup };
+}
+
+/** `useClubStore` → `ClubStore`; a binding not named `use…` is capitalized, kept apart from the binding itself. */
+function storeClassName(binding: string): string {
+  const m = /^use([A-Z][\w$]*)$/.exec(binding);
+  if (m) return m[1]!;
+  const cap = binding[0]!.toUpperCase() + binding.slice(1);
+  return cap === binding ? `${binding}Instance` : cap;
+}
+
+/** The object a Pinia `state` option returns: `state: () => ({ … })`, `state() { return { … } }`, `state: { … }`. */
+function piniaStateObject(member: Node): Node | null {
+  let fn: Node | null = member;
+  if (member.type === "pair") fn = member.childForFieldName("value");
+  if (!fn) return null;
+  if (fn.type === "object") return fn;
+  let body = fn.childForFieldName("body");
+  while (body?.type === "parenthesized_expression") body = body.namedChild(0);
+  if (body?.type === "object") return body;
+  if (body?.type !== "statement_block") return null;
+  for (const stmt of body.namedChildren) {
+    if (stmt.type !== "return_statement") continue;
+    let ret = stmt.namedChild(0);
+    while (ret?.type === "parenthesized_expression") ret = ret.namedChild(0);
+    return ret?.type === "object" ? ret : null;
+  }
+  return null;
+}
+
 /** Any JSDoc tag this extractor reads — the per-file gate before looking at comments at all. */
 const JSDOC_TAG_RE = /@(?:param|arg|argument|type|implements|interface)\b/;
 
@@ -712,6 +793,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
    */
   private ctx: ScanContext = { jsdoc: false, tokenTypes: new Map(), dispatchProps: new Map(), moduleStrings: new Map() };
   private ctxTree: Tree | null = null;
+  /** Whether the file defines a Pinia store (a substring gate, see `piniaStoreOf`). */
+  private pinia = false;
 
   override extractFunctions(tree: Tree, sourceText: string): FunctionInfo[] {
     this.beginFile(tree, sourceText);
@@ -803,6 +886,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     // Both entry points run for the same file in turn — compute once.
     if (this.ctxTree === tree) return;
     this.ctxTree = tree;
+    this.pinia = sourceText.includes("defineStore");
     this.ctx = {
       jsdoc: JSDOC_TAG_RE.test(sourceText),
       tokenTypes: collectInjectionTokenTypes(tree.rootNode, sourceText),
@@ -879,7 +963,10 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
             const name = decl.childForFieldName("name")?.text;
             const value = decl.childForFieldName("value");
             const wrapped = value ? wrappedFunction(value) : null;
-            if (
+            const store = moduleLevel && this.pinia && name ? piniaStoreOf(decl) : null;
+            if (store) {
+              functions.push(this.piniaStoreFunction(store, decl, isExported));
+            } else if (
               name &&
               value &&
               (value.type === "arrow_function" ||
@@ -1051,6 +1138,108 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     }
   }
 
+  /**
+   * The binding of a Pinia store (`useClubStore`), declared to return the
+   * store's class. A setup store's binding runs its setup function — its body
+   * is this function's; an option store's runs nothing of the caller's.
+   */
+  private piniaStoreFunction(store: PiniaStore, decl: Node, isExported: boolean): FunctionInfo {
+    if (store.setup) {
+      const fn = this.parseJsArrowOrExpr(store.binding, store.setup, isExported);
+      fn.returnType = store.className;
+      return fn;
+    }
+    return {
+      name: store.binding,
+      params: [],
+      returnType: store.className,
+      isAsync: false,
+      isExported,
+      decorators: [],
+      calls: [],
+      line: decl.startPosition.row + 1,
+      endLine: decl.endPosition.row + 1,
+    };
+  }
+
+  /**
+   * The instance a Pinia store binding returns, as a class: an option store's
+   * `actions` and `getters` are its methods (called as `store.load()`,
+   * `this._drop(id)` inside), and the string-shaped values its `state` starts
+   * with are its `fieldValues` — what fills `${this.url}` in an action's
+   * request. A setup store's members are the functions its setup returns
+   * (`return { load }`): each a method that calls the inner function it names.
+   * Never exported: no module exports the instance's type by that name.
+   */
+  private piniaStoreClass(store: PiniaStore, decl: Node): ClassInfo {
+    const methods: FunctionInfo[] = [];
+    const fieldValues = new Map<string, string | null>();
+    if (store.options) {
+      for (const member of store.options.namedChildren) {
+        const key = objectKeyName(member.type === "pair" ? member.childForFieldName("key") : member.type === "method_definition" ? member.childForFieldName("name") : null);
+        if (key === "actions" || key === "getters") {
+          const value = member.childForFieldName("value");
+          if (value?.type === "object") this.extractObjectMembers(null, value, methods, false, MAX_NAMESPACE_DEPTH);
+        } else if (key === "state") {
+          for (const entry of piniaStateObject(member)?.namedChildren ?? []) {
+            const field = entry.type === "pair" ? objectKeyName(entry.childForFieldName("key")) : null;
+            const value = field ? renderUrlExpr(entry.childForFieldName("value")) : null;
+            if (field && value !== null && value.length <= 300) fieldValues.set(field, value);
+          }
+        }
+      }
+    } else if (store.setup) {
+      const body = store.setup.childForFieldName("body");
+      const declared = new Set<string>();
+      let returned: Node | null = null;
+      for (const stmt of body?.type === "statement_block" ? body.namedChildren : []) {
+        if (stmt.type === "function_declaration") {
+          const n = stmt.childForFieldName("name")?.text;
+          if (n) declared.add(n);
+        } else if (stmt.type === "lexical_declaration" || stmt.type === "variable_declaration") {
+          for (const d of stmt.namedChildren) {
+            const v = d.type === "variable_declarator" ? d.childForFieldName("value") : null;
+            const n = d.childForFieldName("name");
+            if (n?.type === "identifier" && v && (FUNCTION_EXPRESSIONS.has(v.type) || wrappedFunction(v))) declared.add(n.text);
+          }
+        } else if (stmt.type === "return_statement") {
+          returned = stmt.namedChild(0);
+          while (returned?.type === "parenthesized_expression") returned = returned.namedChild(0);
+        }
+      }
+      for (const entry of returned?.type === "object" ? returned.namedChildren : []) {
+        // `return { load }` / `return { fetchAll: load }`
+        const key = entry.type === "shorthand_property_identifier" ? entry.text : entry.type === "pair" ? objectKeyName(entry.childForFieldName("key")) : null;
+        const ref = entry.type === "pair" ? entry.childForFieldName("value") : entry;
+        if (!key || !ref || (ref.type !== "identifier" && ref.type !== "shorthand_property_identifier") || !declared.has(ref.text)) continue;
+        const line = entry.startPosition.row + 1;
+        methods.push({
+          name: key,
+          params: [],
+          returnType: null,
+          isAsync: false,
+          isExported: false,
+          decorators: [],
+          calls: [{ name: ref.text, kind: "internal", target: null, line, column: ref.startPosition.column }],
+          line,
+          endLine: line,
+        });
+      }
+    }
+    return {
+      name: store.className,
+      extends: null,
+      implements: [],
+      decorators: [],
+      methods,
+      properties: [],
+      isExported: false,
+      line: decl.startPosition.row + 1,
+      endLine: decl.endPosition.row + 1,
+      ...knownFieldValues(fieldValues),
+    };
+  }
+
   private extractObjectMembers(
     prefix: string | null,
     obj: Node,
@@ -1161,6 +1350,11 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       classes.push(this.parseJsClass(node, isExported));
     } else if (node.type === "interface_declaration") {
       classes.push(this.parseTsInterface(node, isExported));
+    } else if (this.pinia && (node.type === "lexical_declaration" || node.type === "variable_declaration")) {
+      for (const decl of node.namedChildren) {
+        const store = decl.type === "variable_declarator" ? piniaStoreOf(decl) : null;
+        if (store) classes.push(this.piniaStoreClass(store, decl));
+      }
     }
   }
 

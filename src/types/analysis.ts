@@ -487,6 +487,28 @@ export interface FileAnalysis {
   httpClientRegistrations?: HttpClientRegistration[];
   /** Forwarding rules this file declares (a `vite.config.ts` `server.proxy`, `setupProxy.js`). */
   proxyRules?: ProxyRule[];
+  /** API-client generators this file configures (`kubb.config.ts`): the spec each reads and where it writes. */
+  generatedClients?: GeneratedClientConfig[];
+}
+
+/**
+ * An API-client generator's configuration: the spec it reads and the
+ * directories it writes one module per operation into. Those modules are
+ * build output and usually gitignored, so this is the only in-repo statement
+ * of what an import from them calls; the plugin's project pass turns a call
+ * of such an import into the spec operation it requests. Paths are
+ * project-relative and posix, without a trailing slash.
+ */
+export interface GeneratedClientConfig {
+  /** The generator, as the plugin names it (`kubb`). */
+  generator: string;
+  /** The spec the operations come from (`web/api.json`). */
+  spec: string;
+  /** The output root every directory below sits in — also the barrel that re-exports them all. */
+  root: string;
+  /** What each output directory holds: request functions, or hooks wrapping them. */
+  outputs: Array<{ dir: string; kind: "client" | "hook" }>;
+  line: number;
 }
 
 /**
@@ -992,6 +1014,17 @@ export interface PathArgCall {
   /** Each positional argument: a string literal's content, else null. */
   args: Array<string | null>;
   line: number;
+  /**
+   * The project class the call is made on, as written (`ApiConnection` in
+   * `ApiConnection().request(…)`, `$c = new ApiConnection(); $c->request(…)`):
+   * the callee is that class's method, wherever the call sits.
+   */
+  receiverType?: string;
+  /**
+   * The HTTP verb an argument names (`RequestType.POST`, `Verb::DELETE`,
+   * `'GET'`): a wrapper that dispatches on it requests with that method.
+   */
+  method?: string;
 }
 
 /**

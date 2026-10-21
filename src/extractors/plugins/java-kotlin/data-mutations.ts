@@ -1,7 +1,18 @@
 import type { Node } from "web-tree-sitter";
 import type { DataMutationInfo, Language } from "../../../types/analysis.js";
 import { DataMutationExtractor } from "../../data-mutations/base.js";
-import { resolveCall } from "./data-sources.js";
+import { callArguments, resolveCall } from "./data-sources.js";
+
+/**
+ * Kotlin's collection builders, spelled like a setter (`setOf(a, b)`).
+ */
+const NOT_A_SETTER = new Set(["setOf", "setOfNotNull"]);
+
+/** Arguments a call passes, a Kotlin trailing lambda included (`setOnClickListener { … }`). */
+function valueCount(node: Node): number {
+  const lambda = node.children.find((c) => c.type === "call_suffix")?.children.some((c) => c.type === "annotated_lambda") ? 1 : 0;
+  return callArguments(node).length + lambda;
+}
 
 export class JavaKotlinMutationExtractor extends DataMutationExtractor {
   readonly languages: Language[] = ["java", "kotlin"];
@@ -35,8 +46,10 @@ export class JavaKotlinMutationExtractor extends DataMutationExtractor {
           });
         }
 
-        // Setter methods (setXxx pattern)
-        if (/^set[A-Z]/.test(fnName)) {
+        // Setter methods (setXxx pattern): a property setter takes ONE value.
+        // `stmt.setInt(1, id)` binds a JDBC parameter and `page.setFont(font, 12f)`
+        // configures a drawing call — neither assigns a property.
+        if (/^set[A-Z]/.test(fnName) && !NOT_A_SETTER.has(fnName) && valueCount(node) === 1) {
           mutations.push({
             kind: "assignment",
             target: fnName,

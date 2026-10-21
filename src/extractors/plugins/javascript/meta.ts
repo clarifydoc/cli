@@ -23,10 +23,12 @@ import { extractJsDiBindings } from "./di-bindings.js";
 import { extractHttpClientBases, extractHttpClientRegistrations } from "./http-clients.js";
 import { extractStoreModules, VuexDispatchResolver } from "./vuex.js";
 import { extractDevProxyRules } from "./dev-proxies.js";
+import { extractKubbConfigs } from "./kubb.js";
 import { extractPathArgCalls } from "./path-arg-calls.js";
 import { extractModuleValues } from "./module-values.js";
 import { vuePreprocess } from "./vue-hooks.js";
 import { sveltePreprocess } from "./svelte-hooks.js";
+import { bundlePreprocess } from "./bundles.js";
 import { npmPackages } from "./packages.js";
 import { typescriptManifest, javascriptManifest } from "./manifest.js";
 import { DEFAULT_COMPLEXITY } from "../../shared/complexity-defaults.js";
@@ -216,6 +218,7 @@ function astHooks(language: Language): AstExtractorHooks {
     // AWS CDK stacks: the queues, tables and functions they create, for the deployment model.
     deployedResources: (tree, sourceText) => extractCdkResources(tree, sourceText),
     proxyRules: extractDevProxyRules,
+    generatedClients: extractKubbConfigs,
     pathArgCalls: extractPathArgCalls,
     moduleValues: extractModuleValues,
     pathReferences: (sourceText) => extractPathReferences(sourceText),
@@ -274,6 +277,9 @@ export const javascriptMeta: LanguagePluginMeta = {
   entities,
   dispatchResolvers,
   routeResolvers,
+  // A committed build (`public/js/app.js` from webpack) is skipped: its
+  // modules are the project's own, bundled, and their facts come from the source.
+  preprocess: (raw) => bundlePreprocess(raw),
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
   controlFlow: CONTROL_FLOW,

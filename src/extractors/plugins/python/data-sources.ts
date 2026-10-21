@@ -17,12 +17,15 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
   /** The file uses boto3 (SQS/SNS clients) or redis-py (pub/sub). */
   private boto3 = false;
   private redis = false;
+  /** The file names urllib: a bare `urlopen(…)` is `urllib.request.urlopen`. */
+  private urllib = false;
 
   override beginFile(_tree: unknown, sourceText: string): void {
     this.vectorClients = new Set();
     this.celery = /\bcelery\b|\bshared_task\b/i.test(sourceText);
     this.boto3 = /\b(?:boto3|aioboto3)\b/.test(sourceText);
     this.redis = /^\s*(?:import\s+(?:redis|aioredis)|from\s+(?:redis|aioredis)(?:\.\w+)*\s+import)\b/m.test(sourceText);
+    this.urllib = /\burllib2?\b/.test(sourceText);
     this.signatures = new Map();
     if (sourceText.includes(".s(") || sourceText.includes(".si(") || sourceText.includes(".signature(")) {
       for (const m of sourceText.matchAll(/^[ \t]*([A-Za-z_]\w*)\s*=\s*(?:[A-Za-z_]\w*\.)*([A-Za-z_]\w*)\.(?:s|si|signature)\(/gm)) {
@@ -155,15 +158,17 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           return;
         }
 
-        // requests.get(url), httpx.post(url), session.get("/api/x")
-        const http = httpCall(fn!, node);
+        // requests.get(url), httpx.post(url), session.get("/api/x"), urlopen(Request(url))
+        const http = httpCall(fn!, node) ?? (this.urllib ? urlopenCall(fn!, node) : null);
         if (http) {
           const body = jsonBody(node);
           const reads = pythonResponseReads(node);
+          const based = http.target ? statedBase(http.target, node) : null;
           sources.push(this.ds({
             kind: "api-call",
             name: http.name,
-            target: http.target,
+            target: based ? based.target : http.target,
+            ...(based ? { baseRef: { kind: "literal" as const, key: based.origin } } : {}),
             line: node.startPosition.row + 1,
             ...(body ? { requestBody: body } : {}),
             ...(reads ? { responseReads: reads } : {}),
@@ -411,6 +416,127 @@ function httpCall(fn: Node, call: Node): { name: string; target: string | null }
     if (target && (target.includes("/") || /^https?:/i.test(target))) return { name: leaf, target };
   }
   return null;
+}
+
+/** `urlopen` as urllib spells it: bare (imported), or through `urllib.request` / `request` / Python 2's `urllib2`. */
+const URLOPEN_RE = /^(?:(?:urllib\.)?request\.|urllib2\.)?urlopen$/;
+/** `Request` as urllib spells it. */
+const URLLIB_REQUEST_RE = /^(?:(?:urllib\.)?request\.|urllib2\.)?Request$/;
+
+/**
+ * `urlopen(url)` / `urlopen(Request(url, data=…, method="POST"))`, the
+ * Request built inline or held in a local assigned once. The method is the
+ * Request's `method=`, else POST when a body is passed (`data=`, or the second
+ * positional argument) — urllib's own rule — else GET.
+ */
+function urlopenCall(fn: Node, call: Node): { name: string; target: string | null } | null {
+  if (!URLOPEN_RE.test(fn.text)) return null;
+  let arg: Node | undefined = positional(call)[0] ?? keywordArg(call, "url") ?? undefined;
+  if (!arg) return null;
+  if (arg.type === "identifier") {
+    const held = singleAssignment(arg.text, call);
+    if (held?.type === "call") arg = held;
+  }
+  let request = call;
+  if (arg.type === "call" && URLLIB_REQUEST_RE.test(arg.childForFieldName("function")?.text ?? "")) {
+    request = arg;
+    arg = positional(arg)[0] ?? keywordArg(arg, "url") ?? undefined;
+    if (!arg) return null;
+  }
+  const method = request !== call ? pyStringLiteral(keywordArg(request, "method") ?? undefined) : null;
+  const hasBody = !!keywordArg(request, "data") || positional(request).length > 1;
+  const name = (method && PY_HTTP_VERBS.has(method.toLowerCase()) ? method : hasBody ? "post" : "get").toLowerCase();
+  return { name, target: pyStringValue(arg, call) };
+}
+
+/** A call's keyword argument value, by keyword. */
+function keywordArg(call: Node, keyword: string): Node | null {
+  for (const a of call.childForFieldName("arguments")?.namedChildren ?? []) {
+    if (a.type === "keyword_argument" && a.childForFieldName("name")?.text === keyword) return a.childForFieldName("value");
+  }
+  return null;
+}
+
+/**
+ * A URL that starts with a base the file states once, written out as an
+ * absolute URL: `{self.base_url}` where the class assigns `self.base_url =
+ * f"https://{domain}/rest/api/2"` (or a class attribute `base_url = …`), or
+ * `{BASE_URL}` where the module assigns `BASE_URL = "https://…"`. The base's
+ * origin is the call's literal base and its path leads the target, so the
+ * call reaches that host — never an unknown base the route linker guesses
+ * at. Null when the base is assigned more than once, from anything but a
+ * string, or to a relative path.
+ */
+function statedBase(target: string, at: Node): { origin: string; target: string } | null {
+  const m = /^\{(self\.)?([A-Za-z_]\w*)\}/.exec(target);
+  if (!m) return null;
+  const rest = target.slice(m[0].length);
+  if (rest && !/^[/?#]/.test(rest)) return null;
+  const value = m[1] ? selfAttributeValue(m[2]!, at) : moduleConstantValue(m[2]!, at);
+  const url = value ? /^(https?:\/\/[^/?#\s]+)([^?#\s]*)$/i.exec(value) : null;
+  if (!url) return null;
+  const path = url[2]!.replace(/\/+$/, "") + rest;
+  return { origin: url[1]!, target: path.startsWith("/") ? path : `/${path}` };
+}
+
+/** The one string the class enclosing `at` gives `self.<name>` (in any method) or its class attribute `<name>`. */
+function selfAttributeValue(name: string, at: Node): string | null {
+  let cls: Node | null = at.parent;
+  while (cls && cls.type !== "class_definition") cls = cls.parent;
+  const body = cls?.childForFieldName("body");
+  if (!body) return null;
+  const values = new Set<string | null>();
+  const visit = (n: Node, inMethod: boolean): void => {
+    if (n.type === "class_definition") return;
+    if (n.type === "assignment" || n.type === "augmented_assignment") {
+      const left = n.childForFieldName("left")?.text;
+      if (left === `self.${name}` || (!inMethod && left === name)) {
+        const right = n.childForFieldName("right");
+        values.add(n.type === "assignment" && right ? pyStringValue(right, right) : null);
+      }
+    }
+    for (const c of n.namedChildren) visit(c, inMethod || n.type === "function_definition");
+  };
+  for (const c of body.namedChildren) visit(c, false);
+  return values.size === 1 ? [...values][0]! : null;
+}
+
+/** The one string the module assigns `<name>` at top level, when no function enclosing `at` binds the name itself. */
+function moduleConstantValue(name: string, at: Node): string | null {
+  const binds = new RegExp(`\\b${name}\\b`);
+  let scope: Node | null = at.parent;
+  let module: Node | null = null;
+  for (; scope; scope = scope.parent) {
+    if (scope.type === "function_definition" && binds.test(scope.childForFieldName("parameters")?.text ?? "")) return null;
+    if (scope.type === "module") module = scope;
+  }
+  if (!module) return null;
+  const values = new Set<string | null>();
+  const visit = (n: Node, nested: boolean): void => {
+    if (n.type === "assignment" || n.type === "augmented_assignment" || n.type === "global_statement") {
+      const left = n.type === "global_statement" ? null : n.childForFieldName("left")?.text;
+      if (n.type === "global_statement" ? binds.test(n.text) : left === name) {
+        const right = n.childForFieldName("right");
+        // Assigned inside a function: a local of that function, unless it is the one enclosing the call.
+        if (!nested) values.add(n.type === "assignment" && right ? pyStringValue(right, right) : null);
+        else if (n.type === "global_statement" || isAncestor(enclosingFunction(n), at)) values.add(null);
+      }
+    }
+    for (const c of n.namedChildren) visit(c, nested || n.type === "function_definition" || n.type === "class_definition");
+  };
+  for (const c of module.namedChildren) visit(c, false);
+  return values.size === 1 ? [...values][0]! : null;
+}
+
+function enclosingFunction(n: Node): Node | null {
+  let p: Node | null = n.parent;
+  while (p && p.type !== "function_definition") p = p.parent;
+  return p;
+}
+
+function isAncestor(a: Node | null, n: Node): boolean {
+  for (let p: Node | null = n; a && p; p = p.parent) if (p.id === a.id) return true;
+  return false;
 }
 
 /**

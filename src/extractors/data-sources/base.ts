@@ -54,7 +54,9 @@ export abstract class DataSourceExtractor {
    * Optional project-level pass over EVERY api-call row in the project — from
    * any language, since a helper defined in TypeScript is called from Vue and
    * Svelte files too. Rewrites targets in place (a URL-builder call → the URL
-   * it builds) and returns how many it rewrote. Runs on the aggregated copies
+   * it builds), or appends the calls a project fact implies (a call of a
+   * generated client whose module is not on disk), and returns how many it
+   * rewrote or added. Runs on the aggregated copies
    * only, before the cross-tier linker; per-file JSON is untouched.
    */
   resolveProject?(calls: ProjectApiCall[], analyses: FileAnalysis[], ctx: ProjectContext): number;

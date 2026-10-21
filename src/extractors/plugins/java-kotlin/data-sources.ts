@@ -32,7 +32,7 @@ import { kotlinNameAndType } from "./functions-classes.js";
  * so `LocalDate.from(instant)` / `service.update(dto)` never produce a source.
  */
 const JOOQ_TABLE_VERBS = new Set([
-  "selectFrom", "insertInto", "update", "deleteFrom", "mergeInto",
+  "selectFrom", "insertInto", "update", "deleteFrom", "delete", "mergeInto",
   "from", "join", "leftJoin", "rightJoin", "innerJoin", "fullJoin",
   "crossJoin", "leftOuterJoin", "rightOuterJoin", "fullOuterJoin",
   "naturalJoin", "naturalLeftOuterJoin", "naturalRightOuterJoin", "straightJoin",
@@ -142,8 +142,25 @@ function jvmVerbAccess(method: string): "read" | "write" | undefined {
 /** jOOQ query builders: `selectFrom`/`from`/`join` read, the DML entry points write. */
 const JOOQ_ACCESS = dbVerbTable(
   ["select", "selectFrom", "selectDistinct", "selectCount", "from", "join", "leftJoin", "rightJoin", "innerJoin", "fetch"],
-  ["insertInto", "update", "deleteFrom", "mergeInto", "truncate"],
+  ["insertInto", "update", "deleteFrom", "delete", "mergeInto", "truncate"],
 );
+
+/**
+ * jOOQ's `delete(TABLE)` (the older spelling of `deleteFrom`) shares its name
+ * with every cache, file and DAO `delete`, so beyond the table-shaped argument
+ * it must sit in a query chain: on a DSL context (`dsl`, `ctx`,
+ * `JooqFactory.getDSL()`, `DSL.using(cfg)`) or followed by the statement's own
+ * steps (`.where(…)`, `.execute()`).
+ */
+const JOOQ_DSL_RECEIVER_RE = /(?:dsl|ctx|context|jooq|create|using)$/i;
+const JOOQ_DELETE_STEP_RE = /^\s*\.\s*(?:where|execute|executeAsync|returning|returningResult|using|limit|orderBy)\s*\(/;
+
+function isJooqDeleteChain(node: Node, receiver: string): boolean {
+  if (JOOQ_DSL_RECEIVER_RE.test(receiverLeaf(receiver))) return true;
+  let top = node;
+  while (top.parent && /^(?:method_invocation|navigation_expression|navigation_suffix|call_expression|call_suffix)$/.test(top.parent.type)) top = top.parent;
+  return JOOQ_DELETE_STEP_RE.test(top.text.slice(node.endIndex - top.startIndex));
+}
 
 /** HTTP-client hints anywhere in the call text, plus Spring REST method names. */
 const HTTP_HINT_RE = /RestTemplate|WebClient|HttpClient|OkHttpClient|Retrofit/;
@@ -156,25 +173,144 @@ const HTTP_METHODS = new Set([
 /** The calls that send a request on an HTTP client object. */
 const HTTP_SEND_METHODS = new Set(["execute", "enqueue", "send", "sendAsync", "get", "post", "put", "delete", "patch", "head"]);
 
-/** The URL literal a request builder is given, when this call is that step. */
+/**
+ * The URL a request builder is given, when this call is that step. A Kotlin
+ * template keeps its holes in the `${…}` notation every URL fold renders
+ * (`"$baseUrl/api/cars"` → `${baseUrl}/api/cars`), so core splits an unknown
+ * leading base off and an absolute host survives as another service.
+ */
 function builtRequestUrl(node: Node, call: CallParts): string | null {
   const { method, receiver } = call;
-  let arg: Node | null = null;
-  if (method === "url" && /\bRequest\s*\.\s*Builder\s*\(/.test(receiver)) arg = call.firstArg;
-  else if ((method === "newBuilder" && /\bHttpRequest\b/.test(receiver)) || (method === "uri" && /\bHttpRequest\b/.test(receiver))) {
-    arg = call.firstArg;
-    const create = arg?.text.match(/^URI\s*\.\s*create\s*\(\s*("(?:[^"\\]|\\.)*")\s*\)$/);
-    if (create) return JSON.parse(create[1]!) as string;
-  }
-  const url = stringLiteralValue(arg);
-  return url && /^(?:https?:\/\/|\/)/.test(url) ? url : null;
+  const builds =
+    (method === "url" && /\bRequest\s*\.\s*Builder\s*\(/.test(receiver)) ||
+    ((method === "newBuilder" || method === "uri") && /\bHttpRequest\b/.test(receiver));
+  const url = builds && call.firstArg ? urlExpression(call.firstArg, node, 0) : null;
+  // An absolute URL, an app path, or a path behind an unknown base — never a bare hole.
+  return url && /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/.test(url) ? url : null;
 }
 
-/** The verb of the request chain a builder step belongs to: `.post(body)`, `.method("PUT", …)`, else GET. */
-function requestChainVerb(node: Node): string {
+/**
+ * The text of a URL expression: a string literal (Kotlin templates rendered),
+ * `URI.create(x)` / `URI(x)` / `new URI(x)`, a `+` concatenation with at least
+ * one literal part (other parts become holes), or a local `val url = …`
+ * declared before the call in the enclosing function. Null when nothing in it
+ * is written out.
+ */
+function urlExpression(expr: Node, at: Node, depth: number): string | null {
+  if (depth > 3) return null;
+  switch (expr.type) {
+    case "string_literal":
+    case "line_string_literal":
+    case "multi_line_string_literal":
+      // A `$name` hole naming a local string (`val endpoint = "cars/v1"`) is filled in.
+      return renderStringLiteral(expr, (name) => {
+        const init = localInitializer(at, name);
+        return init ? urlExpression(init, at, depth + 1) : null;
+      });
+    case "parenthesized_expression": {
+      const inner = expr.namedChildren.find((c) => c.type !== "comment");
+      return inner ? urlExpression(inner, at, depth) : null;
+    }
+    case "object_creation_expression": {
+      // Java `new URI(x)`.
+      if (simpleTypeName(expr.childForFieldName("type")?.text) !== "URI") return null;
+      const arg = firstJavaArg(expr.childForFieldName("arguments"));
+      return arg ? urlExpression(arg, at, depth + 1) : null;
+    }
+    case "method_invocation":
+    case "call_expression": {
+      // `URI.create(x)`, Kotlin `URI(x)`.
+      const inner = resolveCall(expr);
+      const isUri = inner && ((inner.method === "create" && /(?:^|\.)URI$/.test(inner.receiver.trim())) || (inner.method === "URI" && !inner.receiver));
+      return isUri && inner.firstArg ? urlExpression(inner.firstArg, at, depth + 1) : null;
+    }
+    case "additive_expression":
+    case "binary_expression": {
+      const parts = concatParts(expr);
+      if (!parts) return null;
+      let literal = false;
+      let out = "";
+      for (const part of parts) {
+        const text = urlExpression(part, at, depth + 1);
+        if (text !== null) { literal = true; out += text; }
+        else out += "${" + part.text.replace(/\s+/g, " ") + "}";
+      }
+      return literal ? out : null;
+    }
+    case "identifier":
+    case "simple_identifier": {
+      const init = localInitializer(at, expr.text);
+      return init ? urlExpression(init, at, depth + 1) : null;
+    }
+    default:
+      return null;
+  }
+}
+
+/** The operands of a `+` chain, left to right; null when another operator is involved. */
+function concatParts(expr: Node): Node[] | null {
+  if (expr.type !== "additive_expression" && expr.type !== "binary_expression") return [expr];
+  const op = expr.children.find((c) => !c.isNamed)?.text;
+  if (op !== "+") return null;
+  const [left, right] = expr.namedChildren.filter((c) => c.type !== "comment");
+  if (!left || !right) return null;
+  const l = concatParts(left);
+  const r = concatParts(right);
+  return l && r ? [...l, ...r] : null;
+}
+
+/**
+ * The initializer of the last `val`/local named `name` declared before `at`
+ * in the enclosing function (lambdas included: a request built inside
+ * `client.newCall(…).use { }` reads a URL declared outside it).
+ */
+function localInitializer(at: Node, name: string): Node | null {
+  let fn: Node | null = at.parent;
+  while (fn && !/^(?:method_declaration|constructor_declaration|function_declaration|anonymous_initializer|secondary_constructor)$/.test(fn.type)) fn = fn.parent;
+  if (!fn) return null;
+  let found: Node | null = null;
+  const scan = (n: Node): void => {
+    if (n.startIndex >= at.startIndex) return;
+    if (n.type === "property_declaration" && kotlinNameAndType(n).name === name) found = initializerAfterEquals(n) ?? found;
+    else if (n.type === "variable_declarator" && n.childForFieldName("name")?.text === name) found = n.childForFieldName("value") ?? found;
+    for (const c of n.children) scan(c);
+  };
+  scan(fn);
+  return found;
+}
+
+/**
+ * A Java/Kotlin string literal's text with Kotlin template entries as `${…}`
+ * holes (`$id` → `${id}`), unless `fill` knows the identifier's value; Java
+ * has no templates, so its `$` is literal.
+ */
+function renderStringLiteral(node: Node, fill: (name: string) => string | null = () => null): string {
+  if (!node.namedChildren.some((c) => c.type === "interpolated_identifier" || c.type === "interpolated_expression")) {
+    return node.text.replace(/^(?:"""|")|(?:"""|")$/g, "");
+  }
+  let out = "";
+  for (const c of node.namedChildren) {
+    if (c.type === "interpolated_identifier") {
+      const name = c.text.replace(/^\$/, "");
+      out += fill(name) ?? "${" + name + "}";
+    } else if (c.type === "interpolated_expression" && c.namedChildren.length === 1 && c.namedChildren[0]!.type === "simple_identifier") {
+      const name = c.namedChildren[0]!.text;
+      out += fill(name) ?? "${" + name + "}";
+    } else if (c.type === "interpolated_expression") out += "${" + c.text.replace(/^\$\{|\}$/g, "").trim() + "}";
+    else if (c.type === "escape_sequence" || c.type === "character_escape") out += c.text.slice(1);
+    else out += c.text;
+  }
+  return out;
+}
+
+/**
+ * The verb of the request chain a builder step belongs to: `.post(body)`,
+ * `.method("PUT", …)`, else GET — set before the URL step or after it.
+ */
+function requestChainVerb(node: Node, receiver: string): string {
   let top = node;
   while (top.parent && /^(?:method_invocation|navigation_expression|navigation_suffix|call_expression|call_suffix)$/.test(top.parent.type)) top = top.parent;
-  const after = top.text.slice(node.endIndex - top.startIndex);
+  const after = receiver + "\n" + top.text.slice(node.endIndex - top.startIndex);
   const verb = /\.\s*(post|put|delete|patch|head)\s*\(/i.exec(after)?.[1] ?? /\.\s*method\s*\(\s*"(\w+)"/.exec(after)?.[1];
   const builtVerb = /\.\s*(POST|PUT|DELETE|GET)\s*\(/.exec(after)?.[1];
   return (verb ?? builtVerb ?? "GET").toUpperCase();
@@ -260,6 +396,9 @@ function joinUrl(base: string | null, path: string): string {
   return "/" + parts.join("/");
 }
 
+/** Dependency-injection annotations: `@Autowired`, `@Inject`, `@Value("${x}")`, qualified or with a Kotlin use-site target. */
+const DI_ANNOTATION_RE = /^@(?:\w+:)?(?:[\w.]+\.)?(?:Autowired|Inject|Value)(?![\w.])/;
+
 export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["java", "kotlin"];
 
@@ -312,7 +451,9 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // @Autowired / @Inject / @Value annotations indicate dependency injection.
     if (node.type === "annotation" || node.type === "marker_annotation") {
       const text = node.text;
-      if (text.includes("Autowired") || text.includes("Inject") || text.includes("Value")) {
+      // By the annotation's NAME (`@field:Value`, `@javax.inject.Inject`): a substring
+      // test read `@RequestParam(defaultValue = "x")` and `@JsonValue` as injections.
+      if (DI_ANNOTATION_RE.test(text)) {
         sources.push(this.ds({
           kind: "import",
           name: text.replace(/^@/, ""),
@@ -417,7 +558,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // a phantom table. The receiver veto covers the same shape inside genuine
     // jOOQ files: a Capitalized bare-identifier receiver is a class (`String`,
     // `LocalDate`), never a query chain (`dsl…`, `DSL`, `STUDENT` stay eligible).
-    if (this.isJooqFile && JOOQ_TABLE_VERBS.has(method) && !/^[A-Z][a-z]\w*$/.test(receiver.trim())) {
+    if (this.isJooqFile && JOOQ_TABLE_VERBS.has(method) && !/^[A-Z][a-z]\w*$/.test(receiver.trim()) &&
+      (method !== "delete" || isJooqDeleteChain(node, receiver))) {
       const table = resolveTableExpr(call.firstArg, this.tableAliases);
       if (table) {
         sources.push(this.ds({
@@ -565,7 +707,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // / `.uri(URI.create("…"))` — and its verb from the rest of the chain.
     const built = builtRequestUrl(node, call);
     if (built) {
-      sources.push(this.ds({ kind: "api-call", name: requestChainVerb(node), target: built, line }));
+      sources.push(this.ds({ kind: "api-call", name: requestChainVerb(node, call.receiver), target: built, line }));
       return;
     }
     // Otherwise only a call that SENDS on a client named as one: a builder's
@@ -809,7 +951,7 @@ function daoBase(name: string): string | undefined {
 }
 
 /** Argument expression nodes of a Java/Kotlin call, in order. */
-function callArguments(call: Node): Node[] {
+export function callArguments(call: Node): Node[] {
   if (call.type === "method_invocation") {
     const argList = call.childForFieldName("arguments");
     return argList ? argList.children.filter((c) => c.isNamed && c.type !== "comment") : [];

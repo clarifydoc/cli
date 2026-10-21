@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { conventionRoots, analyzeUnusedCode, analyzeReachability, type ReachabilityInput } from "./dead-code.js";
-import type { ExportInfo, FileAnalysis } from "../types/analysis.js";
+import { conventionRoots, analyzeUnusedCode, analyzeReachability, vendoredRoots, dropVendoredFacts, type ReachabilityInput } from "./dead-code.js";
+import { createEmptyAnalysis, type ExportInfo, type FileAnalysis } from "../types/analysis.js";
 import type { ReachabilityModel } from "../types/language-plugin.js";
 
 describe("conventionRoots", () => {
@@ -33,6 +33,32 @@ describe("conventionRoots", () => {
 
   it("never marks a root from the file segment itself", () => {
     expect(conventionRoots(["src/vendor.ts", "src/generated.py"])).toHaveLength(0);
+  });
+});
+
+describe("vendored roots", () => {
+  it("are the copied-in libraries, not codegen output", () => {
+    expect(vendoredRoots([
+      "league/src/main/java/com/example/league/jooq/generated/tables/Club.java",
+      "league-web/public/js/plugins/editor/editor.js",
+      "league-web/public/js/plugins/editor/samples/index.html",
+      "garage/third_party/tyres/client.py",
+      "garage/src/api/__generated__/cars.ts",
+      "league-web/resources/js/pages/Fixtures.vue",
+    ])).toEqual(["garage/third_party", "league-web/public/js/plugins"]);
+  });
+
+  it("contribute no screens, routes, calls or data, and keep their structure", () => {
+    const sample = createEmptyAnalysis("web/public/js/plugins/editor/samples/index.html", "html");
+    sample.routes = [{ path: "/samples/index.html", kind: "frontend", calls: [], line: 1 } as never];
+    sample.dataSources = [{ kind: "database", name: "find", target: "CLUB", calls: [], line: 3 }];
+    sample.functions = [{ name: "boot" } as never];
+    const page = createEmptyAnalysis("web/src/pages/Fixtures.js", "javascript");
+    page.dataSources = [{ kind: "api-call", name: "get", target: "/api/fixtures", calls: [], line: 2 }];
+    const vendored = dropVendoredFacts([sample, page]);
+    expect([...vendored]).toEqual(["web/public/js/plugins/editor/samples/index.html"]);
+    expect([sample.routes, sample.dataSources, sample.functions.length]).toEqual([[], [], 1]);
+    expect(page.dataSources).toHaveLength(1);
   });
 });
 

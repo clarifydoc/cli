@@ -17,6 +17,7 @@ import { phpRequestSchema } from "./request-schema.js";
 import { phpReachability } from "./reachability.js";
 import { phpDiBindings } from "./di.js";
 import { PHP_SECURITY_RULES } from "./security-rules.js";
+import { extractPhpPathArgCalls } from "./path-arg-calls.js";
 
 const PHP_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -78,6 +79,8 @@ export const phpMeta: LanguagePluginMeta = {
     // are content-gated on Blade directives (the hook receives no file path).
     screens: (_tree, sourceText, filePath) => extractBladeScreens(sourceText, filePath),
     interactiveElements: (_tree, sourceText) => extractBladeInteractiveElements(sourceText),
+    // Call sites of a project request wrapper (`$connection->request(Verb::GET, "/x")`).
+    pathArgCalls: extractPhpPathArgCalls,
     // Laravel / Symfony / PHP-DI container registrations (see di.ts).
     diBindings: (tree, sourceText) => phpDiBindings(tree, sourceText),
     // `namespace App\Support;` — where `money()` and `use function …\money` look.
