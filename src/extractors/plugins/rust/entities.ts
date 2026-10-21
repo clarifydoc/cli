@@ -1,5 +1,5 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
-import type { ClassInfo, EntityRelation, Language, PropertyInfo } from "../../../types/analysis.js";
+import type { FileAnalysis, ClassInfo, EntityRelation, Language, PropertyInfo } from "../../../types/analysis.js";
 
 /**
  * Rust ORM entity extractor for Diesel and SeaORM.
@@ -47,7 +47,43 @@ interface SeaOrmRelation {
   optional: boolean;
 }
 
+/** Marks the class a `table!` block made, with the table it declares (`diesel-table:folders`). */
+const DIESEL_TABLE_DECORATOR = "diesel-table:";
+
 export class RustEntityExtractor extends EntityExtractor {
+  /**
+   * A `table!` block's entity and the model struct that maps it
+   * (`#[diesel(table_name = folders)] pub struct Folder`) are one entity: the
+   * struct becomes it (its fields, the table's name and columns' relations
+   * kept), and the class the macro made — named like the struct, so receivers
+   * typed `Folder` met two classes — is dropped.
+   */
+  override reconcileProject(analyses: FileAnalysis[]): void {
+    const rust = analyses.filter((a) => a.language === "rust");
+    const mapped = new Map<string, ClassInfo[]>();
+    for (const a of rust) {
+      for (const c of a.classes) {
+        if (c.decorators.some((d) => d.startsWith(DIESEL_TABLE_DECORATOR))) continue;
+        const table = c.decorators.map((d) => /^diesel\(\s*table_name\s*=\s*"?(\w+)"?\s*\)$|^table_name\s*=\s*"(\w+)"$/.exec(d)).find(Boolean);
+        const name = table?.[1] ?? table?.[2];
+        if (name) (mapped.get(name) ?? mapped.set(name, []).get(name)!).push(c);
+      }
+    }
+    if (mapped.size === 0) return;
+    for (const a of rust) {
+      a.classes = a.classes.filter((c) => {
+        const table = c.decorators.find((d) => d.startsWith(DIESEL_TABLE_DECORATOR))?.slice(DIESEL_TABLE_DECORATOR.length);
+        const models = table ? mapped.get(table) : undefined;
+        if (!table || !models) return true;
+        for (const model of models) {
+          if (!model.decorators.includes("entity")) model.decorators.push("entity", "diesel");
+          if (table.toLowerCase() !== model.name.toLowerCase()) model.tableName = table;
+        }
+        return false;
+      });
+    }
+  }
+
   readonly languages: Language[] = ["rust"];
 
   /** Rust uses C-style `//` (and `///` doc) line comments. */
@@ -131,6 +167,7 @@ export class RustEntityExtractor extends EntityExtractor {
           properties: columns,
           line: i + 1,
           endLine: block.closeLine + 1,
+          extraDecorators: [`${DIESEL_TABLE_DECORATOR}${tableName}`],
         }),
       );
       i = block.closeLine; // don't re-enter this block
