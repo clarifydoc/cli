@@ -75,10 +75,20 @@ export function buildProjectDependencies(input: {
     acc.byEndpoint.set(endpoint, (acc.byEndpoint.get(endpoint) ?? 0) + 1);
   };
 
+  // A contract row (a `.proto` rpc, a spec operation) is served where the spec
+  // join found its implementation: that sub-project is the one called.
+  const implementedIn = new Map<string, string | null>();
+  for (const l of input.symbolLinks) {
+    if (l.strategy !== "spec-join" || !l.sourceSymbol.startsWith("route:")) continue;
+    const key = `${l.sourceFile}\0${l.sourceSymbol}`;
+    const project = input.projectOf(l.targetFile) ?? null;
+    implementedIn.set(key, implementedIn.has(key) && implementedIn.get(key) !== project ? null : project);
+  }
+
   for (const l of input.apiRouteLinks) {
     if (l.sourceRole === "test" || l.confidence === "AMBIGUOUS") continue;
     const from = l.sourceProject;
-    const to = l.targetProject;
+    const to = (l.target && l.method ? implementedIn.get(`${l.target}\0route:${l.method} ${l.routePath}`) : null) ?? l.targetProject;
     if (from === undefined || to === undefined || from === to) continue;
     count(edge(from, to, "http"), l.method ? `${l.method} ${l.routePath}` : l.routePath, l.confidence);
   }

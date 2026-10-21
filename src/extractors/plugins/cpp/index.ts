@@ -140,6 +140,8 @@ export const cppSpec: RegexLangSpec = {
         if (!m) return null;
         return m[1].replace(/.*::/, "");
       },
+      // protoc's server base `demo::CurrencyService::Service` keeps its qualifier: it names the service.
+      getImplements: (line) => [...line.matchAll(/(?:public|private|protected)?\s*((?:\w+::)*\w+::Service)\b/g)].map((m) => m[1]!).filter((b) => b.includes("::")),
     },
     { pattern: /^\s*(?:typedef\s+)?enum(?:\s+class)?\s+([A-Za-z_]\w*)\s*[:{]?/, getExtends: () => null },
     { pattern: /^\s*typedef\s+struct\s+([A-Za-z_]\w*)\s*\{?/, getExtends: () => null },

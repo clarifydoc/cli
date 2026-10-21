@@ -5,6 +5,7 @@ import { nativePackages } from "./packages.js";
 import { C_BUILTINS } from "../c/meta.js";
 import { cppManifest } from "./manifest.js";
 import { cFamilyReachability } from "../shared/c-family-reachability.js";
+import { cppGrpcService } from "../shared/grpc-stubs.js";
 
 const CPP_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...C_BUILTINS,
@@ -27,4 +28,5 @@ export const cppMeta: LanguagePluginMeta = {
   regexSpec: cppSpec,
   knownPackages: nativePackages,
   builtinTypes: CPP_BUILTINS,
+  grpcServiceOf: cppGrpcService,
 };

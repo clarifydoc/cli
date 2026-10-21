@@ -1,5 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type {
+  ClassInfo,
   EntryPointInfo,
   Language,
   SecurityCategory,
@@ -1184,6 +1185,13 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * (`core/grpc-clients.ts`) reads only this.
    */
   grpcStubService?: (spelling: string, file: FileAnalysis) => { service: string; certain: boolean } | null;
+  /**
+   * The gRPC service a class implements, read off protoc's generated base for
+   * it (`CartService.CartServiceBase`, `…Grpc.…ImplBase`, `…Servicer`, an
+   * embedded `Unimplemented…Server`, `…::Service`), or null: the class whose
+   * methods serve that `.proto` service's rpcs.
+   */
+  grpcServiceOf?: (cls: ClassInfo) => string | null;
   /**
    * How this language's toolchain finds files — what dead-code analysis
    * (`core/dead-code.ts`) needs to tell a file nothing loads from one that is

@@ -26,7 +26,7 @@ import { extractCsharpHttpClientRegistrations } from "./http-clients.js";
 import { extractCsharpTopLevelLocalTypes } from "./local-types.js";
 import { preprocessCsharpScript } from "./script.js";
 import { CSHARP_SECURITY_RULES, csharpSecurityPostScan } from "./security-rules.js";
-import { csharpGrpcStub } from "../shared/grpc-stubs.js";
+import { csharpGrpcStub, csharpGrpcService } from "../shared/grpc-stubs.js";
 import { hotChocolateResolver } from "./graphql.js";
 
 export const csharpMeta: LanguagePluginMeta = {
@@ -46,6 +46,7 @@ export const csharpMeta: LanguagePluginMeta = {
   routeResolvers: [aspnetControllerInheritance, hotChocolateResolver],
   requestSchema: csharpRequestSchema,
   grpcStubService: csharpGrpcStub,
+  grpcServiceOf: csharpGrpcService,
   builtinTypes: CSHARP_BUILTINS,
   knownPackages: nugetPackages,
   complexity: {

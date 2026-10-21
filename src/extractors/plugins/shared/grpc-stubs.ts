@@ -1,4 +1,4 @@
-import type { FileAnalysis } from "../../../types/analysis.js";
+import type { ClassInfo, FileAnalysis } from "../../../types/analysis.js";
 
 /**
  * protoc's names for a gRPC client stub, per language — what each plugin's
@@ -38,6 +38,58 @@ export function csharpGrpcStub(spelling: string): Stub {
 /** JS/TS: a client class `@grpc/grpc-js` loads from a proto at run time — only a declared service counts. */
 export function jsGrpcStub(spelling: string, file: FileAnalysis): Stub {
   if (!imports(file, /^(?:@grpc\/grpc-js|grpc)$/)) return null;
-  const m = /^(?:new\s+)?(?:[\w$.]+\.)?([A-Z]\w*)(?:\(\))?$/.exec(spelling);
+  // ts-proto / grpc-js clients are named `<Service>Client`.
+  const m = /^(?:new\s+)?(?:[\w$.]+\.)?([A-Z]\w*?)(?:Client)?(?:\(\))?$/.exec(spelling);
   return m ? { service: m[1]!, certain: false } : null;
 }
+
+// ─── Servers: the class protoc's generated base says implements a service ─────
+
+const basesOf = (cls: ClassInfo): string[] => [cls.extends ?? "", ...cls.implements].filter(Boolean);
+
+/** Java/Kotlin: `extends OrderServiceGrpc.OrderServiceImplBase` (also `…CoroutineImplBase`). */
+export function jvmGrpcService(cls: ClassInfo): string | null {
+  for (const b of basesOf(cls)) {
+    const m = /(?:^|\.)(\w+)Grpc(?:Kt)?\.(\w+?)(?:Coroutine)?ImplBase$/.exec(b.replace(/<.*$/, ""));
+    if (m && m[1] === m[2]) return m[1]!;
+  }
+  return null;
+}
+
+/** C#: `: Greeter.GreeterBase`. */
+export function csharpGrpcService(cls: ClassInfo): string | null {
+  for (const b of basesOf(cls)) {
+    const m = /(?:^|\.)(\w+)\.(\w+)Base$/.exec(b);
+    if (m && m[1] === m[2]) return m[1]!;
+  }
+  return null;
+}
+
+/** Python: `class Greeter(helloworld_pb2_grpc.GreeterServicer)`. */
+export function pythonGrpcService(cls: ClassInfo): string | null {
+  for (const b of basesOf(cls)) {
+    const m = /^(?:\w+_pb2_grpc\.)?([A-Z]\w*)Servicer$/.exec(b);
+    if (m) return m[1]!;
+  }
+  return null;
+}
+
+/** Go: a struct embedding `pb.UnimplementedOrderServiceServer`. */
+export function goGrpcService(cls: ClassInfo): string | null {
+  for (const p of cls.properties) {
+    if (!p.decorators?.includes("embedded")) continue;
+    const m = /(?:^|\.)Unimplemented(\w+)Server$/.exec((p.type ?? p.name).replace(/^\*/, ""));
+    if (m) return m[1]!;
+  }
+  return null;
+}
+
+/** C++: `: public demo::CurrencyService::Service` (kept in `implements` by the plugin). */
+export function cppGrpcService(cls: ClassInfo): string | null {
+  for (const b of basesOf(cls)) {
+    const m = /(?:^|::)(\w+)::Service$/.exec(b);
+    if (m) return m[1]!;
+  }
+  return null;
+}
+

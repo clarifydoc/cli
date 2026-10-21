@@ -21,7 +21,7 @@ import { pythonReachability, extractPythonPathReferences } from "./reachability.
 import { extractPythonDiBindings } from "./di.js";
 import { CREDENTIAL_CONTEXT } from "../shared/security-context.js";
 import { pythonTaint } from "./taint.js";
-import { pythonGrpcStub } from "../shared/grpc-stubs.js";
+import { pythonGrpcStub, pythonGrpcService } from "../shared/grpc-stubs.js";
 
 const PYTHON_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -205,5 +205,6 @@ export const pythonMeta: LanguagePluginMeta = {
   calls: pythonCallHooks,
   requestSchema: pythonRequestSchema,
   grpcStubService: pythonGrpcStub,
+  grpcServiceOf: pythonGrpcService,
   reachability: pythonReachability,
 };

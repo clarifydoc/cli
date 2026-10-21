@@ -641,7 +641,12 @@ function specRouteHandlerLink(
   if (!contractType || !opId) return null;
   for (const cand of candidates.slice(0, 2)) {
     const methods = methodLeafIndex(ctx).get(cand)?.filter((m) => !isExcluded(m.file) && !isApiContractLanguage(ctx.languageOf.get(m.file) as Language)) ?? [];
-    const pick = methods.filter((m) => (ctx.classAt.get(memberKey(m.file, m.className))?.implements ?? []).some((t) => t.replace(/<.*$/, "").split(".").pop() === contractType));
+    // The class states the contract — implementing the interface by name, or
+    // extending the base protoc generated for the service (`GreeterBase`, …).
+    const states = (file: string, cls: ClassInfo | undefined): boolean =>
+      !!cls && (cls.implements.some((t) => t.replace(/<.*$/, "").split(".").pop() === contractType) ||
+        pluginFor(ctx.languageOf.get(file) as Language)?.grpcServiceOf?.(cls) === contractType);
+    const pick = methods.filter((m) => states(m.file, ctx.classAt.get(memberKey(m.file, m.className))));
     if (pick.length !== 1) continue;
     const def = ctx.symbolIndex.get(pick[0]!.file)?.get(pick[0]!.symbol);
     if (def) return link(cand, pick[0]!.file, def);
