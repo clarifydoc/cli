@@ -439,13 +439,23 @@ export function computeDataFlows(
   // functions reach (its JSX children are calls, and the cross-tier HTTP links
   // carry the reach on into the backend), at the shortest distance. A
   // file's `(reference)` pseudo-symbol is left out: importing a module runs
-  // none of its effects.
+  // none of its effects. A page with no functions (a JSP, a template) reaches
+  // through its `<component>` pseudo-symbol, which its tags' events anchor on;
+  // the frontend route the screen is (a Web Flow flow, whose actions run on its
+  // own synthetic symbol) reaches what the page does.
+  const frontendKeys = new Map<string, string[]>();
+  for (const r of routes) {
+    if (r.kind !== "frontend") continue;
+    const k = keyOf(r.filePath, `route:${r.httpMethod ?? "USE"} ${r.path}`);
+    if (reachByKey.has(k)) (frontendKeys.get(r.path) ?? frontendKeys.set(r.path, []).get(r.path)!).push(k);
+  }
   for (const screen of screens) {
-    const spans = spansFor(screen.filePath);
-    if (spans.length === 0) continue;
+    const keys = [
+      ...[...spansFor(screen.filePath).map((s) => s.symbol), "<component>"].map((symbol) => keyOf(screen.filePath, symbol)),
+      ...(screen.routePath ? (frontendKeys.get(screen.routePath) ?? []) : []),
+    ];
     const best = new Map<string, { e: ReachedEffect; key: string }>();
-    for (const span of spans) {
-      const spanKey = keyOf(screen.filePath, span.symbol);
+    for (const spanKey of keys) {
       const r = reachByKey.get(spanKey);
       for (const e of r?.effects ?? []) {
         const ek = `${e.kind} ${e.resource}`;

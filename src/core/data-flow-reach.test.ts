@@ -385,6 +385,27 @@ describe("computeSymbolReach — a path is as sure as its weakest link", () => {
   });
 });
 
+describe("computeDataFlows — pages and flows without functions", () => {
+  it("reads a JSP screen's reach off its <component> pseudo-symbol", () => {
+    const reach = computeSymbolReach({
+      symbolLinks: [link("web/garage_list.jsp", "<component>", "svc.ts", "GarageService.approve")],
+      symbolDataAccess: [dbRow("svc.ts", "GarageService.approve", "garages")],
+    });
+    const flows = computeDataFlows(reach, [], [], [{ name: "garage_list", filePath: "web/garage_list.jsp", routePath: "garage.flow" }]);
+    expect(flows.map((f) => `${f.entryKind} ${f.entryLabel} ${f.resource}`)).toEqual(["screen garage_list garage.flow garages"]);
+  });
+
+  it("adds the reach of the frontend route a screen is, never a route row of its own", () => {
+    const reach = computeSymbolReach({
+      symbolLinks: [link("flows/garage.xml", "route:USE garage.flow", "svc.ts", "GarageService.load")],
+      symbolDataAccess: [dbRow("svc.ts", "GarageService.load", "garages")],
+    });
+    const flow = { ...route("flows/garage.xml", "garage.flow", null, "garage_list", 3), kind: "frontend" as const };
+    const flows = computeDataFlows(reach, [flow], [], [{ name: "garage_list", filePath: "web/garage_list.jsp", routePath: "garage.flow" }]);
+    expect(flows.map((f) => `${f.entryKind} ${f.entryLabel} ${f.resource}`)).toEqual(["screen garage_list garage.flow garages"]);
+  });
+});
+
 describe("computeDataFlows — witness paths", () => {
   it("names every function between the route and the effect, with the call lines", async () => {
     const { computeSymbolReachWithWitness } = await import("./data-flow-reach.js");
