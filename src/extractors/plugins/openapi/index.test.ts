@@ -74,6 +74,145 @@ describe("OpenAPI route extraction", () => {
   });
 });
 
+describe("OpenAPI 3 servers base path", () => {
+  const pathsOf = (spec: string) => extractOpenApiRoutes(spec.split("\n")).map((r) => `${r.httpMethod} ${r.path}`);
+
+  it("serves every operation under the path of the servers url", () => {
+    expect(pathsOf(`openapi: 3.0.3
+servers:
+  - url: https://api.example.com/league-api
+    description: production
+paths:
+  /clubs/{club}/players:
+    get:
+      operationId: listPlayers
+`)).toEqual(["GET /league-api/clubs/{club}/players"]);
+  });
+
+  it("reads a relative server url, fills variables from their defaults, and ignores a host-only one", () => {
+    expect(pathsOf(`openapi: 3.0.3
+servers: [{ url: /api/v3 }]
+paths:
+  /cars:
+    get: { operationId: listCars }
+`)).toEqual(["GET /api/v3/cars"]);
+    expect(pathsOf(`openapi: 3.0.3
+servers:
+  - url: '{scheme}://garage.example.com/{base}/'
+    variables:
+      scheme: { default: https }
+      base:
+        default: garage/v2
+paths:
+  /cars:
+    get: { operationId: listCars }
+`)).toEqual(["GET /garage/v2/cars"]);
+    expect(pathsOf(`openapi: 3.0.3
+servers:
+  - url: http://localhost:8080
+paths:
+  /cars:
+    get: { operationId: listCars }
+`)).toEqual(["GET /cars"]);
+  });
+
+  it("applies no prefix when the servers disagree or a path variable has no default", () => {
+    expect(pathsOf(`openapi: 3.0.3
+servers:
+  - url: https://gateway.example.com/garage-service
+  - url: http://localhost:8080
+paths:
+  /cars:
+    get: { operationId: listCars }
+`)).toEqual(["GET /cars"]);
+    expect(pathsOf(`openapi: 3.0.3
+servers:
+  - url: https://garage.example.com/{tenant}
+paths:
+  /cars:
+    get: { operationId: listCars }
+`)).toEqual(["GET /cars"]);
+  });
+
+  it("lets path-item and operation servers override the root's", () => {
+    expect(pathsOf(`openapi: 3.0.3
+servers:
+  - url: https://api.example.com/league
+paths:
+  /clubs:
+    servers:
+      - url: https://api.example.com/clubs-api
+    get:
+      operationId: listClubs
+    post:
+      operationId: createClub
+      servers:
+        - url: https://admin.example.com/
+  /matches:
+    get:
+      operationId: listMatches
+`)).toEqual(["GET /clubs-api/clubs", "POST /clubs", "GET /league/matches"]);
+  });
+
+  it("keeps a JSON document's servers path too", () => {
+    const spec = JSON.stringify({
+      openapi: "3.0.0",
+      servers: [{ url: "https://api.example.com/league-api" }],
+      paths: { "/matches": { get: { operationId: "listMatches" } } },
+    }, null, 2);
+    expect(pathsOf(spec)).toEqual(["GET /league-api/matches"]);
+  });
+});
+
+describe("OpenAPI parameters defined in another file", () => {
+  // (real-repo FP) the shared header definitions are unpacked into the build
+  // output at build time, so the ref target is not in the repository.
+  const routes = extractOpenApiRoutes(`openapi: 3.0.3
+paths:
+  /clubs/{club}/players:
+    get:
+      operationId: listPlayers
+      parameters:
+        - $ref: '#/components/parameters/clubIdRequired'
+        - $ref: '../../../target/generated-sources/common/headers.yaml#/sessionIdRequired'
+        - $ref: './common/limit.yaml'
+        - name: club
+          in: path
+          schema: { type: string }
+components:
+  parameters:
+    clubIdRequired:
+      $ref: '../../../target/generated-sources/common/headers.yaml#/clubIdRequired'
+`.split("\n"));
+
+  it("keeps each one under the ref's name with its binding unknown", () => {
+    expect(routes[0]!.params).toEqual([
+      { name: "clubIdRequired", type: null, binding: null, ref: "../../../target/generated-sources/common/headers.yaml#/clubIdRequired" },
+      { name: "sessionIdRequired", type: null, binding: null, ref: "../../../target/generated-sources/common/headers.yaml#/sessionIdRequired" },
+      { name: "limit", type: null, binding: null, ref: "./common/limit.yaml" },
+      { name: "club", type: "string", binding: "route" },
+    ]);
+  });
+
+  it("never answers an external ref with a same-named local parameter", () => {
+    const [route] = extractOpenApiRoutes(`openapi: 3.0.3
+paths:
+  /cars:
+    get:
+      operationId: listCars
+      parameters:
+        - $ref: 'shared.yaml#/parameters/page'
+components:
+  parameters:
+    page:
+      name: pageNumber
+      in: query
+      schema: { type: integer }
+`.split("\n"));
+    expect(route!.params).toEqual([{ name: "page", type: null, binding: null, ref: "shared.yaml#/parameters/page" }]);
+  });
+});
+
 describe("OpenAPI schema entities", () => {
   it("turns components.schemas into entity classes with properties", () => {
     const entities = extractOpenApiEntities(YAML_SPEC.split("\n"));

@@ -317,19 +317,43 @@ const IN_BINDINGS: Record<string, RouteParamBinding> = {
   formData: "form", // Swagger 2
 };
 
-/** Resolve a `$ref` into `components.<section>` / Swagger 2 `<section>`. */
+/**
+ * Resolve a local `$ref` into `components.<section>` / Swagger 2 `<section>`,
+ * following a chain of them. A ref into another file stops the chain: that
+ * node (still carrying the `$ref`) is returned, never a same-named local one.
+ */
 function resolveRef(root: SpecNode, node: SpecNode, section: string): SpecNode {
-  const ref = node.children.get("$ref")?.value;
-  if (!ref) return node;
-  const name = ref.split("/").pop() ?? "";
-  return get(root, "components", section, name) ?? get(root, section, name) ?? node;
+  let cur = node;
+  for (let hop = 0; hop < 4; hop++) {
+    const ref = cur.children.get("$ref")?.value;
+    if (!ref?.startsWith("#")) return cur;
+    const name = ref.split("/").pop() ?? "";
+    const next = get(root, "components", section, name) ?? get(root, section, name);
+    if (!next || next === cur) return cur;
+    cur = next;
+  }
+  return cur;
+}
+
+/** `headers.yaml#/customerId` → `customerId`; `common/limit.yaml` → `limit`. */
+function externalRefName(ref: string): string | null {
+  const [file = "", fragment = ""] = ref.split("#");
+  const seg = fragment.split("/").filter(Boolean).pop()
+    ?? file.split("/").pop()?.replace(/\.(ya?ml|json)$/i, "");
+  return seg || null;
 }
 
 function paramOf(root: SpecNode, raw: SpecNode): RouteParamInfo | null {
   const p = resolveRef(root, raw, "parameters");
   const name = p.children.get("name")?.value;
   const where = p.children.get("in")?.value;
-  if (!name || !where) return null;
+  if (!name || !where) {
+    // Defined in a file the analysis does not have (often unpacked into the
+    // build output): keep that the operation takes it, under the ref's name.
+    const ref = p.children.get("$ref")?.value;
+    const refName = ref && !ref.startsWith("#") ? externalRefName(ref) : null;
+    return ref && refName ? { name: refName, type: null, binding: null, ref } : null;
+  }
   const binding = IN_BINDINGS[where] ?? null;
   // OpenAPI 3 nests the type under `schema`; Swagger 2 puts it on the parameter.
   const type = schemaTypeText(p.children.get("schema")) ?? schemaTypeText(p);
@@ -375,20 +399,51 @@ function guardsOf(security: SpecNode | undefined): GuardAttr[] {
   return out;
 }
 
+/**
+ * The path OpenAPI 3 `servers` serve every operation under:
+ * `https://api.example.com/league-api` → `/league-api`, `/api/v3` as written,
+ * `{variables}` filled from their defaults. `undefined` when no server is
+ * listed (the enclosing level's applies), `""` when the servers do not agree:
+ * a gateway URL beside a bare `localhost` one says the prefix is the
+ * gateway's, not the service's.
+ */
+function serversBasePath(servers: SpecNode | undefined): string | undefined {
+  const items = itemsOf(servers);
+  if (items.length === 0) return undefined;
+  const paths = new Set<string | null>();
+  for (const server of items) {
+    const vars = server.children.get("variables");
+    const url = (server.children.get("url")?.value ?? "")
+      .replace(/\{([^}]+)\}/g, (m, name: string) => get(vars, name, "default")?.value ?? m)
+      .replace(/^([a-z][a-z0-9+.-]*:)?\/\/[^/]*/i, "")
+      .replace(/[?#].*$/, "")
+      .replace(/\/+$/, "");
+    paths.add(url === "" || (url.startsWith("/") && !url.includes("{")) ? url : null);
+  }
+  const [only] = paths;
+  return paths.size === 1 && only != null ? only : "";
+}
+
 export function extractOpenApiRoutes(lines: string[]): RouteInfo[] {
   const root = parsedOf(lines);
   const paths = root.children.get("paths");
   if (!paths) return [];
   const routes: RouteInfo[] = [];
-  // A shared basePath (Swagger 2 `basePath: /v1`) prefixes every route path.
+  // A shared basePath (Swagger 2 `basePath: /v1`) prefixes every route path;
+  // OpenAPI 3 states it as the path of `servers[].url`, at the root, a path
+  // item or an operation (the innermost listing wins).
   const basePath = (root.children.get("basePath")?.value ?? "").replace(/\/$/, "");
+  const rootServers = basePath ? undefined : serversBasePath(root.children.get("servers"));
   const version = get(root, "info", "version")?.value ?? null;
   const rootGuards = guardsOf(root.children.get("security"));
   for (const [rawPath, pathNode] of paths.children) {
     if (!rawPath.startsWith("/")) continue;
-    const fullPath = basePath ? `${basePath}${rawPath}` : rawPath;
+    const pathServers = basePath ? undefined : serversBasePath(pathNode.children.get("servers"));
     for (const [method, opNode] of pathNode.children) {
       if (!HTTP_METHODS.has(method)) continue;
+      const prefix = basePath
+        || (serversBasePath(opNode.children.get("servers")) ?? pathServers ?? rootServers ?? "");
+      const fullPath = prefix ? `${prefix}${rawPath}` : rawPath;
       const operationId = opNode.children.get("operationId")?.value ?? null;
       // openapi-generator names the server interface after the operation's first
       // tag (`users` → `UsersApi`): what an implementing class `implements`.

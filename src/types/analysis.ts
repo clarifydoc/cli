@@ -1070,6 +1070,13 @@ export interface RouteParamInfo {
    * binds from the body) rather than an explicit `[FromX]` attribute.
    */
   inferred?: boolean;
+  /**
+   * The `$ref` the parameter is defined by when that definition lives in a file
+   * outside the analysis (an API spec's shared `headers.yaml#/customerId`): the
+   * parameter is known to exist, `name` is the ref's last segment, and its real
+   * name, binding and type are unknown.
+   */
+  ref?: string;
 }
 
 /**
