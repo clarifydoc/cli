@@ -18,6 +18,9 @@ service FixtureService { rpc GetFixture (FixtureRequest) returns (Fixture); }
 service SquadService { rpc ListPlayers (SquadRequest) returns (Squad); }
 service TableService { rpc GetTable (TableRequest) returns (Table); }
 service RefereeService { rpc Assign (AssignRequest) returns (Assignment); }
+service TicketService { rpc BuyTicket (TicketRequest) returns (Ticket); }
+message TicketRequest { string match = 1; }
+message Ticket { string seat = 1; }
 message FixtureRequest { string id = 1; }
 message Fixture { string id = 1; }
 message SquadRequest { string club = 1; }
@@ -79,6 +82,20 @@ class TrainingReferees(BaseReferees):
     def Assign(self, request, context):
         return None
 `,
+  "tickets/package.json": `{"name":"tickets","dependencies":{"@grpc/grpc-js":"^1.10.0"}}`,
+  "tickets/server.js": `const grpc = require("@grpc/grpc-js");
+const { buyTicketHandler } = require("./buy");
+
+const server = new grpc.Server();
+server.addService(leaguePackage.league.TicketService.service, {
+  buyTicket: Tickets.buyTicketHandler.bind(this)
+});
+`,
+  "tickets/buy.js": `function buyTicketHandler(call, callback) {
+  callback(null, { seat: "A1" });
+}
+module.exports = { buyTicketHandler };
+`,
   "web/gateways/referees.ts": `export async function assign(match: string) { return match; }
 `,
   "web/package.json": `{"name":"web","dependencies":{"@grpc/grpc-js":"^1.10.0"}}`,
@@ -114,7 +131,10 @@ describe("gRPC services through protoc's generated bases", () => {
       "route:POST /league.FixtureService/GetFixture -> FixtureService.GetFixture",
       "route:POST /league.SquadService/ListPlayers -> SquadServer.listPlayers",
       "route:POST /league.TableService/GetTable -> tableServer.GetTable",
+      "route:POST /league.TicketService/BuyTicket -> route:USE TicketService#BuyTicket",
     ]);
+    // The grpc-js row runs its handler.
+    expect(summary.symbolLinks.filter((l) => l.sourceSymbol === "route:USE TicketService#BuyTicket").map((l) => l.targetSymbol)).toContain("buyTicketHandler");
   });
 
   it("refuse an rpc two subclasses of the servicer implement, never a function of the same name", () => {

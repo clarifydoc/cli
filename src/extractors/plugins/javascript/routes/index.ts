@@ -11,6 +11,7 @@ import { collectCdkRoutes } from "./cdk.js";
 import { extractGraphqlCodeFirst, mayDefineGraphqlCode } from "./graphql-code-first.js";
 import { extractInlineSdlRoutes } from "./graphql-sdl-inline.js";
 import { mayDeclareReactNavigation, visitReactNavigationScreen, visitStaticNavigator } from "./react-navigation.js";
+import { extractGrpcJsServices } from "./grpc-server.js";
 
 /**
  * JS/TS route extraction: one shared tree walk feeding every supported
@@ -64,6 +65,9 @@ export const javascriptRouteExtractor: RouteExtractor = {
     // A schema written inline (Apollo `typeDefs = gql\`type Query …\``): the same routes a `.graphql` file gives.
     graphql.push(...extractInlineSdlRoutes(sourceText));
 
-    return [...express, ...reactRouter, ...nestjs, ...vueRouter, ...tanstack, ...trpc, ...navigation, ...graphql];
+    // grpc-js servers: the handlers `addService` registers per rpc.
+    const grpc = extractGrpcJsServices(sourceText);
+
+    return [...express, ...reactRouter, ...nestjs, ...vueRouter, ...tanstack, ...trpc, ...navigation, ...graphql, ...grpc];
   },
 };

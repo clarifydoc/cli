@@ -631,6 +631,13 @@ function specRouteHandlerLink(
   // Tried first: a class stating the contract outranks a function that merely
   // shares the operation's name (a client wrapper `getCart` beside the stubs).
   const contractType = route.contract?.type.split(".").pop();
+  // A code row declaring the same operation (a grpc-js `addService` handler,
+  // a resource implementing a jar's interface) is where it is served.
+  if (contractType && route.contract) {
+    const served = codeContractRoutes(ctx).get(`${contractType}#${route.contract.method.toLowerCase()}`)?.filter((r) => !isExcluded(r.file)) ?? [];
+    if (served.length > 1) return null;
+    if (served.length === 1) return link(served[0]!.symbol, served[0]!.file, { name: served[0]!.symbol, line: served[0]!.line, endLine: served[0]!.line });
+  }
   for (const cand of contractType && opId ? candidates.slice(0, 2) : []) {
     const methods = methodLeafIndex(ctx).get(cand)?.filter((m) => !isExcluded(m.file) && !isApiContractLanguage(ctx.languageOf.get(m.file) as Language)) ?? [];
     // The class states the contract — implementing the interface by name, or
@@ -656,6 +663,25 @@ function specRouteHandlerLink(
     return link(cand, files[0]!, def);
   }
   return null;
+}
+
+const codeContractCache = new WeakMap<object, Map<string, Array<{ file: string; symbol: string; line: number }>>>();
+
+/** Routes of code (not of a spec) declaring a contract, by `<Type>#<method lower-cased>`. */
+function codeContractRoutes(ctx: LinkContext): Map<string, Array<{ file: string; symbol: string; line: number }>> {
+  let idx = codeContractCache.get(ctx.analyses);
+  if (idx) return idx;
+  idx = new Map();
+  for (const a of ctx.analyses) {
+    if (isApiContractLanguage(a.language)) continue;
+    for (const r of a.routes) {
+      if (!r.contract || r.kind !== "api") continue;
+      const key = `${r.contract.type.split(".").pop()}#${r.contract.method.toLowerCase()}`;
+      (idx.get(key) ?? idx.set(key, []).get(key)!).push({ file: a.filePath, symbol: `route:${r.httpMethod ?? "USE"} ${r.path}`, line: r.line });
+    }
+  }
+  codeContractCache.set(ctx.analyses, idx);
+  return idx;
 }
 
 /** Whether a class, or a project base class of it, states the contract (`EmailService(BaseEmailService)`, the base the Servicer). */
