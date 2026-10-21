@@ -267,3 +267,23 @@ describe("JSight request schema through the core pass", () => {
     expect(h.describeType("Car")).toEqual({ kind: "object", name: "Car" });
   });
 });
+
+describe("JSight operations as the generated interface's methods", () => {
+  it("names the interface after the file and each operation by verb, last literal segment and trailing parameters", () => {
+    const spec = [
+      "PUT /garage-close/{garageId}",
+      "GET /garages/{garageId}/cars",
+      "DELETE /garages/{garageId}/cars/{carId}",
+      "POST /cars-search",
+      "GET /garages/{garageId}/{carId}",
+    ].join("\n");
+    const routes = extractJsightRoutes(spec.split("\n"), "src/main/jsight/garage_ui-api.jsight");
+    expect(routes.map((r) => `${r.contract?.type}#${r.contract?.method}`)).toEqual([
+      "GarageUiApi#putGarageCloseByGarageid",
+      "GarageUiApi#getCars",
+      "GarageUiApi#deleteCarsByCarid",
+      "GarageUiApi#postCarsSearch",
+      "GarageUiApi#getGaragesByGarageidAndCarid",
+    ]);
+  });
+});

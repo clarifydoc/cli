@@ -297,14 +297,46 @@ function paramsOf(path: string, block: string[]): RouteParamInfo[] {
 
 // ─── Routes ────────────────────────────────────────────────────────────────────
 
-export function extractJsightRoutes(lines: string[]): RouteInfo[] {
+/** `match-reports` → `MatchReports`: each `-`-separated word capitalized, the rest lower-cased. */
+const pascalWords = (s: string): string =>
+  s.toLowerCase().split("-").filter(Boolean).map((w) => w[0]!.toUpperCase() + w.slice(1)).join("");
+
+/**
+ * The operation a generated interface declares for an endpoint: the verb, the
+ * last literal segment, and the parameters after it (`PUT /matches/{matchId}`
+ * → `putMatchesByMatchid`, several joined by `And`).
+ */
+export function jsightOperationName(verb: string, path: string): string | null {
+  const segs = path.split("/").filter(Boolean);
+  const params: string[] = [];
+  for (let i = segs.length - 1; i >= 0; i--) {
+    if (!segs[i]!.includes("{")) {
+      params.sort().reverse();
+      const by = params.length > 0 ? "By" + params.map(pascalWords).join("And") : "";
+      return verb.toLowerCase() + pascalWords(segs[i]!) + by;
+    }
+    params.push(segs[i]!.replace(/[{}]/g, ""));
+  }
+  return null;
+}
+
+/**
+ * Routes of one spec. The interface generated from it is named after the file
+ * (`match-reports.jsight` → `MatchReports`), each endpoint its operation (see
+ * `jsightOperationName`): the `contract` a class implementing it serves.
+ */
+export function extractJsightRoutes(lines: string[], filePath?: string): RouteInfo[] {
   const routes: RouteInfo[] = [];
+  const base = filePath?.replace(/^.*\//, "").replace(/\.jsight$/i, "").replace(/_/g, "-");
+  const apiInterface = base ? pascalWords(base) : null;
   const push = (method: string, path: string, line: number, block: string[]) => {
+    const operation = apiInterface ? jsightOperationName(method, path) : null;
     const route: RouteInfo = {
       path,
       httpMethod: method,
       kind: "api",
       handler: null,
+      ...(apiInterface && operation ? { contract: { type: apiInterface, method: operation } } : {}),
       calls: [],
       middleware: [],
       line,
@@ -380,6 +412,6 @@ export const jsightSpec: RegexLangSpec = {
   classPatterns: [],
   importPatterns: [],
   lineCommentPrefixes: ["//"],
-  extractRoutes: (lines) => extractJsightRoutes(lines),
+  extractRoutes: (lines, _classes, filePath) => extractJsightRoutes(lines, filePath),
   extractClasses: (lines) => extractJsightTypes(lines),
 };

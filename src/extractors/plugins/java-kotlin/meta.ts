@@ -11,6 +11,7 @@ const androidScreenClasses = screenClassResolver("android-screen-classes", ["jav
 import { javaTaint, kotlinTaint } from "./taint.js";
 import { ktorRouteFnResolver } from "./routes/ktor.js";
 import { springSecurityResolver } from "./routes/security-dsl.js";
+import { cxfServiceBeanResolver } from "./routes/service-beans.js";
 import type { Language } from "../../../types/analysis.js";
 import { jvmRequestSchema } from "./request-schema.js";
 import {
@@ -93,7 +94,7 @@ function jvmMeta(language: Language, opts: {
     ...(opts.preprocess ? { preprocess: opts.preprocess } : {}),
     routes: javaKotlinRouteExtractor,
     // Spring Security's authorizeHttpRequests rules, on the routes they match.
-    routeResolvers: [springSecurityResolver, ktorRouteFnResolver, androidScreenClasses, androidNavGraphResolver],
+    routeResolvers: [springSecurityResolver, cxfServiceBeanResolver, ktorRouteFnResolver, androidScreenClasses, androidNavGraphResolver],
     functionsClasses: jvmFunctionsClasses,
     requestSchema: jvmRequestSchema,
     grpcStubService: jvmGrpcStub,

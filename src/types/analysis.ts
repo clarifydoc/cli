@@ -1007,8 +1007,11 @@ export interface RouteInfo {
    * known tail of what a caller requests. The value names why: `base:X` (an
    * unresolved base controller), `attribute:X` (a routing attribute whose
    * template could not be evaluated), `mount:<expr>` (mounted under a runtime
-   * value), `urlconf:not-included`. The cross-tier linker matches such a row
-   * only as a suffix, and never above a row whose path is complete.
+   * value), `urlconf:not-included`, `contract:<Type>` (the whole path is
+   * declared on an API interface outside the analysis — `path` then names the
+   * operation, `MatchApi#getMatch`, and only its `contract` joins). The
+   * cross-tier linker matches such a row only as a suffix, and never above a
+   * row whose path is complete.
    */
   prefixUnresolved?: string;
   /** Id of the project-level resolver that created or rewrote this row. */

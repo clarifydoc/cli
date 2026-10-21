@@ -584,10 +584,11 @@ function specRouteHandlerLink(
   const verb = (route.httpMethod ?? "").toLowerCase();
   // The spec operationId (`listUsers`, `UserService.getUser` → leaf `getUser`)
   // is the most precise join key; try it before path-derived candidates. WSDL
-  // and OpenAPI carry it verbatim; JSight has none and falls to the path.
+  // and OpenAPI carry it verbatim; JSight names it only as its contract's
+  // operation, and falls to the path without one.
   const opId = route.handler
     ? route.handler.includes(".") ? route.handler.split(".").pop()! : route.handler
-    : null;
+    : route.contract?.method ?? null;
   // A WSDL/SOAP operation is PascalCase (`GetUser`); its C# impl matches
   // verbatim, but the Java (JAX-WS) impl de-capitalizes the first letter
   // (`getUser`) — try both forms of the operationId.

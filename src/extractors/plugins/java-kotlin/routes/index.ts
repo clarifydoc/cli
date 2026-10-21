@@ -9,6 +9,7 @@ import { extractJavalinSparkRoutes } from "./javalin-spark.js";
 import { GRAPHQL_GATE_RE, extractJvmGraphqlRoutes } from "./graphql.js";
 import { extractHaloExtensionRoutes } from "./halo.js";
 import { collectSecurityRules } from "./security-dsl.js";
+import { collectServiceBeans } from "./service-beans.js";
 import { extractComposeDestinations } from "./compose-nav.js";
 
 /**
@@ -65,6 +66,9 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
 
     // Spring Security's URL rules, applied to every route by springSecurityResolver.
     collectSecurityRules(sourceText, facts);
+
+    // CXF service beans, whose jar interfaces become contract rows in cxfServiceBeanResolver.
+    collectServiceBeans(sourceText, facts);
 
     return routes;
   },
