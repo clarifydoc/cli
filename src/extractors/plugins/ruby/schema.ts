@@ -103,7 +103,7 @@ export function isRailsSchemaFile(source: string): boolean {
  * live in the schema dump — so without this join every Rails entity renders
  * field-less in the Data Model view.
  *
- * Join is by table-name convention (`Absence` → `absences`), trying several
+ * Join is by table-name convention (`Match` → `matches`), trying several
  * candidate spellings so namespaced models resolve too:
  *   - an explicit `self.table_name` override (carried as a `table:<name>`
  *     decorator by the entity extractor) — authoritative;

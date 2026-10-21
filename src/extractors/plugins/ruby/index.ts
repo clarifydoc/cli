@@ -410,8 +410,8 @@ function extractRubyHttpCalls(lines: string[]): DataSourceInfo[] {
 }
 
 /**
- * Surface ActiveRecord access (`Absence.find_authorized(..)`, `Department.where(..)`,
- * `Employee.create!`, namespaced `League::MatchReport.all`) as `database`
+ * Surface ActiveRecord access (`Match.find_authorized(..)`, `Club.where(..)`,
+ * `Car.create!`, namespaced `League::MatchReport.all`) as `database`
  * data sources, so a controller/service method links to the entity it touches —
  * the backend half of the screen→API→DB chain. Per-file extraction can't see
  * cross-file types, so `entity` is set to the receiver's bare model name (matching
@@ -554,7 +554,7 @@ export const rubySpec: RegexLangSpec = {
   classPatterns: [
     {
       // Capture the FULL (possibly namespaced) class name — `League::MatchReport`,
-      // not just the first segment `League` (which collided with the League concern).
+      // not just the first segment `League` (which collided with a `League` concern).
       pattern: /^\s*class\s+([A-Z]\w*(?:::[A-Z]\w*)*)/,
       getExtends: (line) => {
         // Superclass may be namespaced too (`< ActiveRecord::Base`, `< League::Base`).

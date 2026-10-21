@@ -371,7 +371,7 @@ public class DefaultConsumer {
 describe("C# EF migration SQL", () => {
   it("reads each data statement of migrationBuilder.Sql as a database access on its table", async () => {
     const src = `namespace X;
-public partial class Add_Roller : Migration {
+public partial class Add_Roles : Migration {
   protected override void Up(MigrationBuilder migrationBuilder) {
     migrationBuilder.Sql(@"INSERT INTO ""Roles"" (""Name"") VALUES ('FixtureManager');
       UPDATE ""Contracts"" SET ""Role"" = 1;");
@@ -380,7 +380,7 @@ public partial class Add_Roller : Migration {
     migrationBuilder.Sql(@"DELETE FROM ""public"".""Coaching"" u WHERE u.""TacticId"" IS NULL");
   }
 }`;
-    const tree = await parseSource(src, "csharp" as any, "Migrations/20260618_Add_Roller.cs");
+    const tree = await parseSource(src, "csharp" as any, "Migrations/20260618_Add_Roles.cs");
     const rows = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
     expect(rows.map((d) => `${d.name} ${d.entity} ${d.access} ${d.line}`)).toEqual([
       "EF migration: INSERT Roles write 4",

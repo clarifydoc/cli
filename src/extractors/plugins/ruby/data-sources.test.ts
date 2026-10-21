@@ -16,18 +16,18 @@ function apiCalls(src: string) {
 describe("rubySpec.extractDataSources — ActiveRecord", () => {
   it("captures finders/queries and resolves the entity from the model receiver", () => {
     const ds = dbSources(`
-      class AbsencesController < ApplicationController
+      class MatchesController < ApplicationController
         def show
-          @absence = Absence.find_authorized params[:id], current_institution_id
-          @others  = Absence.where(referee_id: @absence.referee_id).order(:date)
-          inst     = Institution.find(current_institution_id)
+          @match  = Match.find_authorized params[:id], current_club_id
+          @others = Match.where(referee_id: @match.referee_id).order(:date)
+          club    = Club.find(current_club_id)
         end
       end
     `);
     const byName = Object.fromEntries(ds.map((d) => [d.name, d]));
-    expect(byName["Absence.find_authorized"]).toMatchObject({ kind: "database", entity: "Absence" });
-    expect(byName["Absence.where"]).toMatchObject({ entity: "Absence" });
-    expect(byName["Institution.find"]).toMatchObject({ entity: "Institution" });
+    expect(byName["Match.find_authorized"]).toMatchObject({ kind: "database", entity: "Match" });
+    expect(byName["Match.where"]).toMatchObject({ entity: "Match" });
+    expect(byName["Club.find"]).toMatchObject({ entity: "Club" });
     // The chained `.order(:date)` shares the line but has a lowercase relation
     // receiver — it must NOT produce a second source.
     expect(ds.filter((d) => d.name.endsWith(".order"))).toHaveLength(0);
@@ -35,28 +35,28 @@ describe("rubySpec.extractDataSources — ActiveRecord", () => {
 
   it("captures writes (create!/update/destroy) the same way", () => {
     const ds = dbSources(`
-      Absence.create!(create_params)
-      Duty.update_all(active: false)
-      DepartmentReferee.destroy_all
+      Match.create!(create_params)
+      Car.update_all(active: false)
+      GarageCar.destroy_all
     `).map((d) => d.name);
     expect(ds).toEqual(
-      expect.arrayContaining(["Absence.create!", "Duty.update_all", "DepartmentReferee.destroy_all"]),
+      expect.arrayContaining(["Match.create!", "Car.update_all", "GarageCar.destroy_all"]),
     );
   });
 
   it("captures raw-SQL finders on a model receiver (find_by_sql / count_by_sql)", () => {
     const ds = dbSources(`
-      rows  = Duty.find_by_sql([sql, bindings])
-      total = Event.count_by_sql([sql, bindings])
+      rows  = Car.find_by_sql([sql, bindings])
+      total = Goal.count_by_sql([sql, bindings])
     `);
     const byName = Object.fromEntries(ds.map((d) => [d.name, d]));
     // find_by_sql matches the generic `find_` finder; count_by_sql is explicit.
-    expect(byName["Duty.find_by_sql"]).toMatchObject({ entity: "Duty" });
-    expect(byName["Event.count_by_sql"]).toMatchObject({ entity: "Event" });
+    expect(byName["Car.find_by_sql"]).toMatchObject({ entity: "Car" });
+    expect(byName["Goal.count_by_sql"]).toMatchObject({ entity: "Goal" });
   });
 
   it("resolves namespaced models to their bare entity name", () => {
-    const ds = dbSources(`x = League::MatchReport.where(year: 2026).first`);
+    const ds = dbSources(`x = League::MatchReport.where(season: 2026).first`);
     expect(ds.find((d) => d.name === "League::MatchReport.where")).toMatchObject({
       entity: "MatchReport",
     });
@@ -75,54 +75,54 @@ describe("rubySpec.extractDataSources — ActiveRecord", () => {
 
   it("classifies AR reads vs writes via the access field", () => {
     const ds = dbSources(`
-      rows = Absence.where(active: true)
-      Absence.create!(create_params)
-      Duty.update_all(active: false)
-      one = Institution.find(id)
+      rows = Match.where(active: true)
+      Match.create!(create_params)
+      Car.update_all(active: false)
+      one = Club.find(id)
     `);
     const byName = Object.fromEntries(ds.map((d) => [d.name, d.access]));
-    expect(byName["Absence.where"]).toBe("read");
-    expect(byName["Institution.find"]).toBe("read");
-    expect(byName["Absence.create!"]).toBe("write");
-    expect(byName["Duty.update_all"]).toBe("write");
+    expect(byName["Match.where"]).toBe("read");
+    expect(byName["Club.find"]).toBe("read");
+    expect(byName["Match.create!"]).toBe("write");
+    expect(byName["Car.update_all"]).toBe("write");
   });
 
   it("emits an instance/relation chain as an entity-less candidate for the project join", () => {
     // Lowercase / @ivar receivers carry no model name per file: the row goes
     // out without an entity and `RubyEntityExtractor.reconcileProject` joins it
     // to the association's target or the model the variable is named after —
-    // or drops it. A read on a bare variable (`absences.each`) is no access.
+    // or drops it. A read on a bare variable (`matches.each`) is no access.
     const ds = dbSources(`
-      @absence.update(params)
-      absences.each { |a| a.save }
+      @match.update(params)
+      matches.each { |a| a.save }
       self.scope.where(x: 1)
       Current.club.conversations.find_by!(display_id: 3)
     `);
     expect(ds.map((d) => [d.name, d.entity ?? null, d.access])).toEqual([
-      ["@absence.update", null, "write"],
+      ["@match.update", null, "write"],
       ["self.scope.where", null, "read"],
       ["Current.club.conversations.find_by!", null, "read"],
     ]);
   });
 
   it("does not match inside comments", () => {
-    expect(dbSources(`# Absence.where(foo) is just documentation`)).toHaveLength(0);
+    expect(dbSources(`# Match.where(foo) is just documentation`)).toHaveLength(0);
   });
 });
 
 describe("rubySpec.extractDataSources — outbound HTTP (api-call)", () => {
   it("captures RestClient verbs in both the paren-less and parenthesised forms", () => {
     const ds = apiCalls(`
-      response = RestClient.get url, get_headers(institution_external_id)
-      response = RestClient.post(url, JSON(new_leaguedata_institution), get_headers(external_id))
-      RestClient.delete "http://leaguedata-api/api/v2/institution/#{id}"
+      response = RestClient.get url, get_headers(club_external_id)
+      response = RestClient.post(url, JSON(new_club), get_headers(external_id))
+      RestClient.delete "http://league-api/api/v2/clubs/#{id}"
     `);
     // `name` is the bare verb (the route-linker reads it as the HTTP method);
     // `target` is the URL argument — a literal, or a variable as a runtime hole.
     expect(ds.map((d) => `${d.name} ${d.target}`)).toEqual([
       "get #{url}",
       "post #{url}",
-      "delete http://leaguedata-api/api/v2/institution/#{id}",
+      "delete http://league-api/api/v2/clubs/#{id}",
     ]);
     expect(ds.every((d) => d.kind === "api-call")).toBe(true);
   });
@@ -170,13 +170,13 @@ describe("rubySpec.extractDataSources — outbound HTTP (api-call)", () => {
 
   it("resolves a bare URL variable to its file-local string-literal, keeping #{} verbatim", () => {
     const ds = apiCalls(`
-      def self.get_institutions(id)
-        url = "#{LEAGUEDATA_API_URL}/institution"
+      def self.get_clubs(id)
+        url = "#{LEAGUE_API_URL}/clubs"
         response = RestClient.get url, get_headers(id)
       end
     `);
     expect(ds).toEqual([
-      expect.objectContaining({ name: "get", target: "#{LEAGUEDATA_API_URL}/institution" }),
+      expect.objectContaining({ name: "get", target: "#{LEAGUE_API_URL}/clubs" }),
     ]);
   });
 

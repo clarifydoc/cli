@@ -111,7 +111,7 @@ public class LegacyController {
  * The attribute layer: who may call a route, in which API versions, with what
  * parameters. Previously discarded — every route came out with an empty
  * `middleware`, no versions and no bindings, although the arguments were in
- * the parse (League-planner's Substitutions.API: 154 of 316 routes carry a policy,
+ * the parse (one real API: 154 of 316 routes carry a policy,
  * none surfaced).
  */
 async function fullRoutesOf(source: string): Promise<RouteInfo[]> {

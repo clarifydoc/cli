@@ -150,7 +150,7 @@ describe("Struts/WebFlow Action + JVM form-bean classification (real-repo FPs)",
     expect(Object.values(layers)[0]).toBe("services");
   });
 
-  it("does NOT read a frontend *Actions component as services (Vue toolbar, league-planner FP)", () => {
+  it("does NOT read a frontend *Actions component as services (Vue toolbar FP)", () => {
     const layers = classifyFileLayers([
       "frontend/src/components/MatchSheet/live/MatchSheetLiveHeaderActions.vue",
     ]);

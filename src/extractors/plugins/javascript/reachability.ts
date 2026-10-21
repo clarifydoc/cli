@@ -400,7 +400,7 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
     // unplugin-vue-components / unplugin-auto-import write a registry
     // (`components.d.ts`: `Agenda: typeof import('./src/components/Agenda.vue')['default']`)
     // for what templates use by TAG, with no import anywhere — so no import
-    // graph reaches those components (league-planner: 308 of a Vue app's files reported
+    // graph reaches those components (one real repo: 308 of a Vue app's files reported
     // dead). Every module the registry names is registered by the tool and
     // used as a default export.
     for (const name of ["components.d.ts", "auto-imports.d.ts", "src/components.d.ts", "src/auto-imports.d.ts"]) {

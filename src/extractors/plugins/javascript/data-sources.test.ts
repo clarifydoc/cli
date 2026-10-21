@@ -286,7 +286,7 @@ describe("JS ORM detection recognises Mongoose model statics", () => {
  * URL-builder helper calls: real Vue/React data layers funnel every request
  * through a helper (`axios.get(requestUri('teamtalk','v4'))`). The verb's
  * URL argument is a call expression, not a literal — captured verbatim so a
- * project-level pass can substitute the helper's template (league-planner: 187 of 190
+ * project-level pass can substitute the helper's template (one real repo: 187 of 190
  * axios calls were dropped before this).
  */
 describe("JS api-call call-expression URL arg", () => {

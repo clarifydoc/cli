@@ -211,7 +211,7 @@ export function buildFormLaunches(
  *
  * A Delphi project file says this explicitly, and in order:
  *
- *     program teamdesk;
+ *     program League;
  *     begin
  *       Application.Initialize;
  *       Application.CreateForm(TMainForm, MainForm);   // ← the main form

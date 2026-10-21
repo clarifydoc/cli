@@ -41,19 +41,19 @@ describe("buildClassGraph", () => {
   it("keeps synthesized tables out of the graph, one node per real declaration", () => {
     // A Delphi table reconstructed from dataset DML lands in `classes` on every
     // .dfm that queries it (dfm-entities.ts). Those are tables, not declared
-    // types — only the real `TPerson` class belongs in the class graph.
+    // types — only the real `TPlayer` class belongs in the class graph.
     const synthetic = ["entity", "dfm", SYNTHETIC_ENTITY];
     const graph = buildClassGraph([
-      file("PictureFrame.dfm", "dfm", [cls("TPERSON", synthetic, "varchar")]),
-      file("T2UFPupils.dfm", "dfm", [cls("TPERSON", synthetic, "varchar")]),
-      file("t2ufWaitList.dfm", "dfm", [cls("TPERSON", synthetic, "varchar")]),
-      file("model/Person.pas", "pascal", [cls("TPerson")]),
+      file("SquadFrame.dfm", "dfm", [cls("TPLAYER", synthetic, "varchar")]),
+      file("Transfers.dfm", "dfm", [cls("TPLAYER", synthetic, "varchar")]),
+      file("Fixtures.dfm", "dfm", [cls("TPLAYER", synthetic, "varchar")]),
+      file("model/Player.pas", "pascal", [cls("TPlayer")]),
     ]);
 
     // Only the declared class survives; the external SQL-type nodes the real
     // class's own columns reference are expected and not what this guards.
     expect(graph.nodes.filter((n) => !n.isExternal).map((n) => n.id)).toEqual([
-      "model/Person.pas::TPerson",
+      "model/Player.pas::TPlayer",
     ]);
     // The dropped references take their type nodes with them: `varchar` came
     // only from the synthesized tables, `integer` also from the real class.
@@ -62,10 +62,10 @@ describe("buildClassGraph", () => {
 
   it("keeps ORM entity classes, which ARE declared types", () => {
     const graph = buildClassGraph([
-      file("model/Person.pas", "pascal", [cls("TPerson", ["entity", "ef-core"])]),
+      file("model/Player.pas", "pascal", [cls("TPlayer", ["entity", "ef-core"])]),
     ]);
 
-    const node = graph.nodes.find((n) => n.name === "TPerson");
+    const node = graph.nodes.find((n) => n.name === "TPlayer");
     expect(node).toMatchObject({ isEntity: true, orm: "ef-core" });
   });
 });

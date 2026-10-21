@@ -32,20 +32,20 @@ function unit(path: string, cls: string, methods: FunctionInfo[]): FileAnalysis 
 }
 
 describe("Delphi form launches", () => {
-  const dialog = form("t2UFRelationsAttributer.dfm", "TfrmRelationer", "frmRelationer");
+  const dialog = form("TransferDialog.dfm", "TfrmTransfer", "frmTransfer");
   const waitForm = form("WaitForm.dfm", "TWaitForm", "frmWait");
 
   it("links a form to the form it constructs", () => {
-    const caller = unit("FamilyFrame.pas", "TfrFamilie", [
-      routine("btnRedigerClick", [{ name: "TfrmRelationer.Create", line: 187 }]),
+    const caller = unit("SquadFrame.pas", "TfrSquad", [
+      routine("btnEditClick", [{ name: "TfrmTransfer.Create", line: 187 }]),
     ]);
-    const out = buildFormLaunches([dialog, waitForm, form("FamilyFrame.dfm", "TfrFamilie", "frFamilie"), caller]);
+    const out = buildFormLaunches([dialog, waitForm, form("SquadFrame.dfm", "TfrSquad", "frSquad"), caller]);
     expect(out).toEqual([{
       // reported .dfm → .dfm so it lands on both screens
-      sourceFile: "FamilyFrame.dfm",
-      sourceSymbol: "btnRedigerClick",
-      targetFile: "t2UFRelationsAttributer.dfm",
-      launcher: "btnRedigerClick",
+      sourceFile: "SquadFrame.dfm",
+      sourceSymbol: "btnEditClick",
+      targetFile: "TransferDialog.dfm",
+      launcher: "btnEditClick",
       line: 187,
     }]);
   });
@@ -70,18 +70,18 @@ describe("Delphi form launches", () => {
 
   it("reports a launcher in a unit with no form of its own against that unit", () => {
     const a = createEmptyAnalysis("DialogHelpers.pas", "pascal");
-    a.functions = [routine("ShowRelationer", [{ name: "TfrmRelationer.Create", line: 46 }])];
+    a.functions = [routine("ShowTransfer", [{ name: "TfrmTransfer.Create", line: 46 }])];
     const out = buildFormLaunches([dialog, a]);
-    expect(out[0]).toMatchObject({ sourceFile: "DialogHelpers.pas", targetFile: "t2UFRelationsAttributer.dfm" });
+    expect(out[0]).toMatchObject({ sourceFile: "DialogHelpers.pas", targetFile: "TransferDialog.dfm" });
   });
 
   it("skips the synthetic unit-level symbol, which duplicates the real routine", () => {
     const a = createEmptyAnalysis("u.pas", "pascal");
     a.functions = [
-      routine("<setup>", [{ name: "TfrmRelationer.Create", line: 46 }]),
-      routine("ShowRelationer", [{ name: "TfrmRelationer.Create", line: 46 }]),
+      routine("<setup>", [{ name: "TfrmTransfer.Create", line: 46 }]),
+      routine("ShowTransfer", [{ name: "TfrmTransfer.Create", line: 46 }]),
     ];
-    expect(buildFormLaunches([dialog, a]).map((l) => l.launcher)).toEqual(["ShowRelationer"]);
+    expect(buildFormLaunches([dialog, a]).map((l) => l.launcher)).toEqual(["ShowTransfer"]);
   });
 
   it("drops a class name declared by two different forms rather than guessing", () => {
@@ -97,50 +97,50 @@ describe("Delphi form launches", () => {
   });
 
   it("credits the CALLERS of a dialog-opener that builds its own form", () => {
-    // `ShowPupilsWindow` lives in the unit whose form it opens, so the edge on
+    // `ShowPlayersWindow` lives in the unit whose form it opens, so the edge on
     // its own unit is a self-link; the screens that navigate are its callers.
-    const opener = createEmptyAnalysis("T2UFPupils.pas", "pascal");
-    opener.functions = [routine("ShowPupilsWindow", [{ name: "TfrmPupils.Create", line: 90 }])];
-    const pupils = form("T2UFPupils.dfm", "TfrmPupils", "frmPupils");
+    const opener = createEmptyAnalysis("Players.pas", "pascal");
+    opener.functions = [routine("ShowPlayersWindow", [{ name: "TfrmPlayers.Create", line: 90 }])];
+    const players = form("Players.dfm", "TfrmPlayers", "frmPlayers");
     const links = [{
-      sourceFile: "Main.pas", sourceSymbol: "TfrmMain.mnuPupilsClick", sourceLine: 412,
-      callName: "ShowPupilsWindow", targetFile: "T2UFPupils.pas", targetSymbol: "ShowPupilsWindow",
+      sourceFile: "Main.pas", sourceSymbol: "TfrmMain.mnuPlayersClick", sourceLine: 412,
+      callName: "ShowPlayersWindow", targetFile: "Players.pas", targetSymbol: "ShowPlayersWindow",
       targetLine: 90, confidence: "EXTRACTED" as const,
     }];
-    const out = buildFormLaunches([pupils, form("Main.dfm", "TfrmMain", "frmMain"), opener], links);
+    const out = buildFormLaunches([players, form("Main.dfm", "TfrmMain", "frmMain"), opener], links);
     expect(out).toEqual([{
       sourceFile: "Main.dfm",
-      sourceSymbol: "TfrmMain.mnuPupilsClick",
-      targetFile: "T2UFPupils.dfm",
-      launcher: "ShowPupilsWindow",
+      sourceSymbol: "TfrmMain.mnuPlayersClick",
+      targetFile: "Players.dfm",
+      launcher: "ShowPlayersWindow",
       line: 412,
     }]);
   });
 
   it("reports the launcher when the caller resolved to the unit-level bucket", () => {
-    const opener = createEmptyAnalysis("t2ufGL_DriverRatings.pas", "pascal");
-    opener.functions = [routine("ShowDriverRatings", [{ name: "TfrmKar.Create", line: 20 }])];
-    const kar = form("t2ufGL_DriverRatings.dfm", "TfrmKar", "frmKar");
+    const opener = createEmptyAnalysis("PlayerRatings.pas", "pascal");
+    opener.functions = [routine("ShowPlayerRatings", [{ name: "TfrmRatings.Create", line: 20 }])];
+    const ratings = form("PlayerRatings.dfm", "TfrmRatings", "frmRatings");
     const links = [{
-      sourceFile: "t2ufHold.pas", sourceSymbol: "<setup>", sourceLine: 88,
-      callName: "ShowDriverRatings", targetFile: "t2ufGL_DriverRatings.pas",
-      targetSymbol: "ShowDriverRatings", targetLine: 20, confidence: "EXTRACTED" as const,
+      sourceFile: "Teams.pas", sourceSymbol: "<setup>", sourceLine: 88,
+      callName: "ShowPlayerRatings", targetFile: "PlayerRatings.pas",
+      targetSymbol: "ShowPlayerRatings", targetLine: 20, confidence: "EXTRACTED" as const,
     }];
-    const out = buildFormLaunches([kar, form("t2ufHold.dfm", "TfrmHold", "frmHold"), opener], links);
+    const out = buildFormLaunches([ratings, form("Teams.dfm", "TfrmTeams", "frmTeams"), opener], links);
     // The edge survives (it is the only evidence of this navigation) …
     expect(out).toHaveLength(1);
     // … but never surfaces the placeholder symbol.
-    expect(out[0]!.sourceSymbol).toBe("ShowDriverRatings");
+    expect(out[0]!.sourceSymbol).toBe("ShowPlayerRatings");
   });
 
   it("attributes a generically-named opener only to callers the linker resolved", () => {
     // Many classes have an `Execute`; name matching alone would over-connect.
-    const opener = createEmptyAnalysis("t2ufVaelgPlanTypes.pas", "pascal");
-    opener.functions = [routine("Execute", [{ name: "TfrmAbon.Create", line: 30 }])];
-    const abon = form("t2ufVaelgPlanTypes.dfm", "TfrmAbon", "frmAbon");
+    const opener = createEmptyAnalysis("SelectTicketTypes.pas", "pascal");
+    opener.functions = [routine("Execute", [{ name: "TfrmTickets.Create", line: 30 }])];
+    const tickets = form("SelectTicketTypes.dfm", "TfrmTickets", "frmTickets");
     const links = [{
       sourceFile: "Real.pas", sourceSymbol: "TfrmReal.Go", sourceLine: 7,
-      callName: "Execute", targetFile: "t2ufVaelgPlanTypes.pas", targetSymbol: "Execute",
+      callName: "Execute", targetFile: "SelectTicketTypes.pas", targetSymbol: "Execute",
       targetLine: 30, confidence: "EXTRACTED" as const,
     }, {
       // An unrelated Execute in another unit — must not produce an edge.
@@ -148,7 +148,7 @@ describe("Delphi form launches", () => {
       callName: "Execute", targetFile: "SomeThread.pas", targetSymbol: "TWorker.Execute",
       targetLine: 12, confidence: "EXTRACTED" as const,
     }];
-    const out = buildFormLaunches([abon, form("Real.dfm", "TfrmReal", "f1"), form("Other.dfm", "TfrmOther", "f2"), opener], links);
+    const out = buildFormLaunches([tickets, form("Real.dfm", "TfrmReal", "f1"), form("Other.dfm", "TfrmOther", "f2"), opener], links);
     expect(out.map((l) => l.sourceFile)).toEqual(["Real.dfm"]);
   });
 
@@ -165,8 +165,8 @@ describe("Delphi startup screens", () => {
 
   /** A .dpr whose source is supplied through the raw-source map. */
   function project(body: string): [FileAnalysis, Map<string, string>] {
-    const a = createEmptyAnalysis("teamdesk.dpr", "pascal");
-    return [a, new Map([["teamdesk.dpr", body]])];
+    const a = createEmptyAnalysis("League.dpr", "pascal");
+    return [a, new Map([["League.dpr", body]])];
   }
 
   it("marks the first Application.CreateForm as the main form", () => {
