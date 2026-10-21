@@ -1040,6 +1040,21 @@ describe("JS api-call through a local that holds one of several URLs", () => {
     ]);
   });
 
+  it("gives a loop variable every URL of the array it walks", async () => {
+    const ds = await apiCallsOf(`
+      export async function loadSeasons(leagueId) {
+        const urls = leagueId ? [\`/seasons/league/\${leagueId}\`, "/seasons/current"] : ["/seasons/current"];
+        for (const url of urls) { const res = await fetch(url); if (res.ok) return res.json(); }
+      }
+      export async function warm() {
+        for (const url of ["/clubs"]) await fetch(url);
+      }`);
+    expect(ds.map((d) => [d.target, ...(d.targetAlternatives ?? [])].join(" | "))).toEqual([
+      "/seasons/league/${leagueId} | /seasons/current",
+      "/clubs",
+    ]);
+  });
+
   it("leaves a local that is also built up to the fold", async () => {
     const ds = await apiCallsOf(`
       export async function search(q) {

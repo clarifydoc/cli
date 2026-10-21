@@ -1,3 +1,4 @@
+import { existsSync } from "fs";
 import { readFile } from "fs/promises";
 import { join, posix, resolve } from "path";
 import { glob } from "./glob.js";
@@ -106,8 +107,39 @@ interface Step {
 }
 
 
+/** Actions that run a script on a remote host (`with.script`): what it starts there is deployed. */
+const REMOTE_SCRIPT_ACTIONS = /^(?:appleboy\/ssh-action|garygrossgarten\/github-action-ssh|D3rHase\/ssh-command-action)(?:@|: )/;
+
+/** A remote script line that (re)starts the stack: `docker compose … up`, `docker stack deploy`. */
+const REMOTE_START = /\bdocker(?:-compose|\s+compose)\b(?:.*?(?:-f|--file)\s+(\S+))?.*\bup\b|\bdocker\s+stack\s+deploy\b/;
+
+/**
+ * `appleboy/ssh-action` with `script: cd app/deploy && docker compose up -d`:
+ * a deploy to that host, at the directory the script moved into (a path in the
+ * repository's own checkout). Only the starting line is kept as `via` — the
+ * rest of a remote script often carries credentials.
+ */
+function remoteDeploys(step: Step): Array<{ kind: Kind; path?: string; via: string }> {
+  const script = scriptText(step.with?.script);
+  if (!script || !step.uses || !REMOTE_SCRIPT_ACTIONS.test(step.uses)) return [];
+  let dir: string | undefined;
+  for (const part of script.split(/\n|&&|;/)) {
+    const cd = /^\s*cd\s+(\S+)\s*$/.exec(part);
+    if (cd) {
+      dir = /^[\w.-]+(?:\/[\w.-]+)*$/.test(cd[1]!) ? (dir ? posix.join(dir, cd[1]!) : cd[1]!) : undefined;
+      continue;
+    }
+    const m = REMOTE_START.exec(part.trim());
+    if (!m) continue;
+    const file = m[1] && !m[1].includes("$") ? m[1] : undefined;
+    const via = `${step.uses.replace(/@.*$/, "")}: ${part.trim()}`;
+    return [{ kind: "docker", ...(file ? { path: dir ? posix.join(dir, posix.dirname(file)) : posix.dirname(file) } : dir ? { path: dir } : {}), via: via.length > 100 ? `${via.slice(0, 97)}…` : via }];
+  }
+  return [];
+}
+
 function deploysOf(step: Step): Array<{ kind: Kind; path?: string; via: string }> {
-  const out: Array<{ kind: Kind; path?: string; via: string }> = [];
+  const out: Array<{ kind: Kind; path?: string; via: string }> = remoteDeploys(step);
   if (step.uses) {
     for (const a of ACTIONS) {
       if (!a.re.test(step.uses)) continue;
@@ -250,6 +282,17 @@ export async function detectCiDeploys(projectRoot: string, subProjects: readonly
   for (const d of out) {
     if (!d.path) continue;
     d.path = posix.normalize(d.path).replace(/\/$/, "") || ".";
+    // A remote script `cd`s into its own clone first (`cd league-app && cd deploy`):
+    // the path is the part the repository holds.
+    if (REMOTE_SCRIPT_ACTIONS.test(d.via)) {
+      const parts = d.path.split("/");
+      while (parts.length > 0 && !existsSync(join(absRoot, ...parts))) parts.shift();
+      if (parts.length === 0) {
+        delete d.path;
+        continue;
+      }
+      d.path = parts.join("/");
+    }
     const project = projectOfContext(d.path === "." ? "" : d.path, subProjects);
     if (project) d.project = project;
   }

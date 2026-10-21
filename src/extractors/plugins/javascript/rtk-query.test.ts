@@ -96,13 +96,15 @@ export const api = createApi({
     ]);
   });
 
-  it("a mutation is sent where the trigger its hook hands back is called", async () => {
-    const calls = await callsOf(`import { useDeleteGameMutation, useLazyGetGameQuery } from "./api";
+  it("a mutation is sent where the trigger its hook hands back is called, a query again where its refetch is", async () => {
+    const calls = await callsOf(`import { useDeleteGameMutation, useLazyGetGameQuery, useGetGamesQuery } from "./api";
 export function GameList() {
   const [deleteGame, { isLoading }] = useDeleteGameMutation();
   const [loadGame] = useLazyGetGameQuery();
   const handleDelete = async (id) => { await deleteGame({ id }).unwrap(); };
   const handleOpen = (id) => loadGame(id);
+  const { data, refetch: reloadGames } = useGetGamesQuery();
+  const handleReload = () => reloadGames();
   return null;
 }
 function Elsewhere() { deleteGame(); }`);
@@ -111,6 +113,8 @@ function Elsewhere() { deleteGame(); }`);
       "4 useLazyGetGameQuery getGame",
       "5 useDeleteGameMutation deleteGame",
       "6 useLazyGetGameQuery getGame",
+      "7 useGetGamesQuery getGames",
+      "8 useGetGamesQuery getGames",
     ]);
   });
 });

@@ -42,8 +42,13 @@ const SENSITIVE_NAMES: ReadonlyArray<RegExp> = [
 export function isSensitive(relativePath: string, language?: Language): boolean {
   if (SENSITIVE_FILES.some((p) => p.test(relativePath))) return true;
   if (language && CODE_LANGUAGES.has(language)) return false;
-  return SENSITIVE_NAMES.some((p) => p.test(relativePath));
+  // `password-reset.html`, `forgot_password.json`: a flow about a password, not one stored.
+  const name = relativePath.replace(PASSWORD_FLOW, "");
+  return SENSITIVE_NAMES.some((p) => p.test(name));
 }
+
+/** A password named with what is done to it — a page, a template, its strings. */
+const PASSWORD_FLOW = /\b(?:reset|forgot|forgotten|change|update|recover|recovery|confirm|new|set)[-_ ]?passwords?\b|\bpasswords?[-_ ]?(?:reset|forgot|change|changed|update|recovery|policy|strength|expired)\b/gi;
 
 
 export const DEFAULT_IGNORE = [

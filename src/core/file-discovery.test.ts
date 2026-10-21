@@ -88,6 +88,15 @@ describe("discoverFiles — secret-looking names and skipped source directories"
     expect(r.skippedSensitive).toContain("config/secrets.yaml");
   });
 
+  it("reads a page about a password, and still skips a page of passwords", async () => {
+    write("templates/email/password-reset.html", "<p>Reset</p>\n");
+    write("templates/forgot-password.html", "<p>Forgot</p>\n");
+    write("export/passwords.html", "<p>x</p>\n");
+    const r = await discoverFiles(root);
+    expect(r.files.map((f) => f.relativePath)).toEqual(["templates/email/password-reset.html", "templates/forgot-password.html"]);
+    expect(r.skippedSensitive).toEqual(["export/passwords.html"]);
+  });
+
   it("reads a Rust crate's src/bin and a package's declared bin/, not other bin/ folders", async () => {
     write("server/Cargo.toml", "[package]\nname = \"s\"\n");
     write("server/src/main.rs", "fn main() {}\n");

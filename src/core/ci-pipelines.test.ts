@@ -64,7 +64,21 @@ jobs:
         run: |
           docker build -t ghcr.io/example/league-api:\${{ github.ref_name }} -f api/Dockerfile .
           docker push ghcr.io/example/league-api:\${{ github.ref_name }}
+  host:
+    runs-on: ubuntu-latest
+    needs: api-image
+    steps:
+      - uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: \${{ secrets.HOST }}
+          script: |
+            git clone https://example.invalid/league.git || true
+            cd league
+            git pull
+            cd deploy/stack
+            docker compose -f docker-compose.prod.yml up -d
 `);
+    await mkdir(join(dir, "deploy/stack"), { recursive: true });
     await writeFile(join(dir, ".github/workflows/ci.yml"), `on: pull_request
 jobs:
   test:
@@ -97,6 +111,7 @@ publish:
       "github .github/workflows/release.yml:32 infra [push main; tag v*; manual] terraform infra root · terraform apply -auto-approve",
       "github .github/workflows/release.yml:38 site [push main; tag v*; manual] pages web/dist web · peaceiris/actions-gh-pages",
       "github .github/workflows/release.yml:46 api-image [push main; tag v*; manual] docker . root · docker build -t ghcr.io/example/league-api:${{ github.ref_name }} -f api/Dockerfile .",
+      "github .github/workflows/release.yml:52 host [push main; tag v*; manual] docker deploy/stack root · appleboy/ssh-action: docker compose -f docker-compose.prod.yml up -d",
       "gitlab .gitlab-ci.yml:7 deploy_api [push main] serverless api api · npx serverless deploy --stage prod",
       "gitlab .gitlab-ci.yml:11 publish [manual] package - - · npm publish",
     ]);

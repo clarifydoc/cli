@@ -260,6 +260,18 @@ function rtkEvidence(src: string): { slice: boolean; base: string } {
   return { slice, base };
 }
 
+/** The name `{ refetch }` / `{ refetch: reload }` binds in a destructured query result. */
+function refetchBinding(pattern: Node): Node | null {
+  for (const p of pattern.namedChildren) {
+    if (p.type === "shorthand_property_identifier_pattern" && p.text === "refetch") return p;
+    if (p.type === "pair_pattern" && p.childForFieldName("key")?.text === "refetch") {
+      const v = p.childForFieldName("value");
+      return v?.type === "identifier" ? v : null;
+    }
+  }
+  return null;
+}
+
 /** What a function returns: its expression body, or the value of every `return` in its block (nested functions left out). */
 function returnedValues(fn: Node): Node[] {
   const body = fn.childForFieldName("body");
@@ -486,10 +498,14 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       const endpoint = hook[1]![0]!.toLowerCase() + hook[1]!.slice(1);
       sources.push(this.ds({ kind: "api-call", name: fnName, target: null, line, endpoint }));
       // `const [remove] = useDeleteGameMutation()`: the mutation (or lazy query)
-      // is sent where the trigger is called — in a click handler, not at render.
+      // is sent where the trigger is called — in a click handler, not at render;
+      // a query's `const { refetch: reload } = useGetGamesQuery()` sends it again.
       const decl = node.parent?.type === "variable_declarator" ? node.parent : null;
-      const trigger = decl?.childForFieldName("name")?.type === "array_pattern" ? decl.childForFieldName("name")!.namedChildren[0] : null;
-      if (trigger?.type === "identifier" && /Mutation$|^useLazy/.test(fnName)) {
+      const pattern = decl?.childForFieldName("name");
+      const trigger = pattern?.type === "array_pattern"
+        ? (/Mutation$|^useLazy/.test(fnName) ? pattern.namedChildren[0] : null)
+        : pattern?.type === "object_pattern" ? refetchBinding(pattern) : null;
+      if (trigger?.type === "identifier" || trigger?.type === "shorthand_property_identifier_pattern") {
         let scope: Node | null = decl!.parent;
         while (scope && !FUNCTION_SCOPES.has(scope.type)) scope = scope.parent;
         (this.rtkTriggers ??= new Map()).set(trigger.text, { hook: fnName, endpoint, start: scope?.startIndex ?? 0, end: scope?.endIndex ?? Infinity });
@@ -675,9 +691,11 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   /**
    * The values a local URL takes when it can take several: both arms of a
    * ternary initializer (`const url = all ? `${API}/teams/all` : `${API}/teams``),
-   * or its initializer and each plain assignment the enclosing function makes
-   * before `at` (`let url; if (id) url = A; else url = B;`). Null for one value,
-   * or when the local is also built up (`url += …`), which the fold reads.
+   * its initializer and each plain assignment the enclosing function makes
+   * before `at` (`let url; if (id) url = A; else url = B;`), or each element of
+   * the array a loop walks (`for (const url of [A, B])`). Null for one value
+   * (unless a loop states it), or when the local is also built up (`url += …`),
+   * which the fold reads.
    */
   private localUrls(name: string, at: Node): string[] | null {
     let fn: Node | null = at.parent;
@@ -698,6 +716,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     let declared = false as boolean;
     const assigned: Node[] = [];
     let augmented = false as boolean;
+    let looped = false as boolean;
     const walk = (n: Node): void => {
       for (const c of n.namedChildren) {
         if (c.startIndex >= at.startIndex) return;
@@ -705,6 +724,19 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         if (c.type === "variable_declarator" && c.childForFieldName("name")?.text === name) {
           declared = true;
           init = c.childForFieldName("value");
+        } else if (c.type === "for_in_statement" && c.childForFieldName("left")?.text === name && c.endIndex > at.startIndex) {
+          // `for (const url of [a, b])`, or of a local array of URLs (either arm of a ternary): each element.
+          let list: Node | null = c.childForFieldName("right");
+          if (list?.type === "identifier") list = this.bindings()?.valueOf(list.text, list) ?? null;
+          const arrays = list?.type === "ternary_expression"
+            ? [list.childForFieldName("consequence"), list.childForFieldName("alternative")]
+            : [list];
+          if (arrays.every((x) => x?.type === "array")) {
+            declared = true;
+            looped = true;
+            init = null;
+            for (const x of arrays) assigned.push(...x!.namedChildren);
+          }
         } else if (c.type === "assignment_expression" && c.childForFieldName("left")?.text === name) {
           const right = c.childForFieldName("right");
           if (right) assigned.push(right);
@@ -722,7 +754,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     const sources = assigned.length > 0 ? [...(value ? [value] : []), ...assigned] : value?.type === "ternary_expression" ? [value] : [];
     // A placeholder initializer (`let url = ""`) is no request.
     const urls = [...new Set(sources.flatMap((v) => this.urlsOf(v)))].filter((u) => u.trim() !== "" && !/^\$\{[^}]*\}$/.test(u));
-    return urls.length > 1 ? urls : null;
+    return urls.length > 1 || (looped && urls.length === 1) ? urls : null;
   }
 
   /**
