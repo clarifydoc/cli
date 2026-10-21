@@ -444,3 +444,31 @@ public class LeagueDataV2HttpClient : BaseHttpClient {
     ]);
   });
 });
+
+describe("C# consumers that filter on the routing key", () => {
+  it("consume the key they compare against (real-repo FP)", async () => {
+    const src = `namespace League;
+public class MatchPlayedConsumer : BaseConsumer {
+  protected override async Task Consume(string routingKey, byte[] body) {
+    if (routingKey != MatchPlayedMessage.RoutingKey) return;
+    if (routingKey == otherKey) return;
+    await _handler.Handle(body);
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as any, "C.cs");
+    const rows = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "queue-consume");
+    expect(rows.map((r) => `${r.name} ${r.target}`)).toEqual(["MQ: routing key filter MatchPlayedMessage.RoutingKey"]);
+  });
+
+  it("and the publish handing over that key names it as its destination", async () => {
+    const src = `namespace League;
+public class RecordMatch {
+  public async Task Handle(Match m, CancellationToken ct) {
+    await _producer.ProduceAsync(new MatchPlayedMessage(m.Id), MatchPlayedMessage.RoutingKey, ct);
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as any, "P.cs");
+    const rows = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "queue-publish");
+    expect(rows.map((r) => `${r.target} ${r.entity}`)).toEqual(["MatchPlayedMessage.RoutingKey MatchPlayedMessage"]);
+  });
+});

@@ -435,6 +435,36 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   }
 
   /**
+   * A consumer that filters on the routing key (`if (routingKey != MatchPlayedMessage.RoutingKey) return;`,
+   * `ea.RoutingKey == "league.match.played"`): it consumes that key.
+   */
+  private routingKeyComparison(node: Node, sources: DataSourceInfo[]): void {
+    const op = node.childForFieldName("operator")?.text ?? node.children.find((c) => !c.isNamed)?.text;
+    if (op !== "==" && op !== "!=") return;
+    const left = node.childForFieldName("left");
+    const right = node.childForFieldName("right");
+    // The subject is a variable (`routingKey`, `ea.RoutingKey`); `MatchPlayedMessage.RoutingKey` is a class's constant.
+    const subjectOf = (n: Node | null): string | undefined => {
+      if (n?.type === "identifier") return n.text;
+      if (n?.type !== "member_access_expression" || /^[A-Z]/.test(n.childForFieldName("expression")?.text ?? "")) return undefined;
+      return n.childForFieldName("name")?.text;
+    };
+    const keyed = (n: Node | null): boolean => ROUTING_KEY_RE.test(subjectOf(n) ?? "");
+    const other = keyed(left) ? right : keyed(right) ? left : null;
+    // `routingKey == otherKey` names no key; neither does a comparison of two subjects.
+    if (!other || keyed(other)) return;
+    const label = this.routingKeyLabel(other);
+    if (!label) return;
+    sources.push(this.ds({
+      kind: "queue-consume",
+      name: "MQ: routing key filter",
+      target: label,
+      entity: label,
+      line: node.startPosition.row + 1,
+    }));
+  }
+
+  /**
    * A routing key the code decides on (`routingKey = PlanRouting.TrainingCreated;`):
    * what it publishes, however it hands the message on — straight to the
    * channel or through an outbox table a relay drains.
@@ -577,6 +607,10 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
     if (node.type === "switch_statement" || node.type === "switch_expression") {
       this.routingKeyCases(node, sources);
+      return;
+    }
+    if (node.type === "binary_expression") {
+      this.routingKeyComparison(node, sources);
       return;
     }
     if (node.type === "assignment_expression" || node.type === "variable_declarator") {
@@ -731,11 +765,17 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       (MQ_PUBLISHER_RECEIVER_RE.test(root) || MQ_PUBLISHER_RECEIVER_RE.test(receiver)) &&
       !MQ_RECEIVER_DENY_RE.test(root) && !MQ_RECEIVER_DENY_RE.test(receiver)
     ) {
-      const entity = mqMessageEntity(argumentNodes(node));
+      const args = argumentNodes(node);
+      const entity = mqMessageEntity(args);
+      // The routing key handed over (`MatchPlayedMessage.RoutingKey`) is the destination a
+      // consumer filtering on the same key names; the exchange is bound inside the wrapper.
+      const keyArg = args.map((a) => a.namedChildren[a.namedChildren.length - 1] ?? null)
+        .find((e) => e?.type === "member_access_expression" && /^[A-Z]/.test(e.childForFieldName("expression")?.text ?? "") && ROUTING_KEY_RE.test(e.childForFieldName("name")?.text ?? ""));
+      const key = keyArg ? this.routingKeyLabel(keyArg) : null;
       sources.push(this.ds({
         kind: "queue-publish",
         name: `MQ: ${method}`,
-        target: null, // exchange is bound inside the wrapper, not at this call site
+        target: key,
         ...(entity ? { entity } : {}),
         line: node.startPosition.row + 1,
       }));
