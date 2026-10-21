@@ -10,6 +10,24 @@ function under(prefix: string, rel: string): string {
 import type { RouteArrayFact, RouteMapFact } from "./react-router.js";
 
 /**
+ * A URL helper's template (`/app/{path}?{}`) with the literal arguments a route
+ * passed it (`'accounts/:id'`, quoted as the hole spells them), its query part
+ * dropped — a route path has none. Null when a used parameter is not passed or
+ * a runtime part stays in the path.
+ */
+function helperPath(template: string, params: string[], argText: string): string | null {
+  const args = [...argText.matchAll(/'([^']*)'/g)].map((m) => m[1]!);
+  let out = template.replace(/\?.*$/, "");
+  for (const [i, name] of params.entries()) {
+    const token = `{${name}}`;
+    if (!out.includes(token)) continue;
+    if (args[i] === undefined) return null;
+    out = out.split(token).join(args[i]);
+  }
+  return /[{}]/.test(out) || !out.startsWith("/") ? null : out.replace(/\/{2,}/g, "/");
+}
+
+/**
  * What a frontend router declares across files, which one file cannot see:
  *
  *  - a path named by an imported constant (`path={paths.orders}`, written as
@@ -39,6 +57,15 @@ export const reactRouterResolver: RouteResolver = {
     const fill = (path: string, file: string): string | null => {
       if (!path.includes("${")) return path;
       let ok = true;
+      // `${frontendURL('accounts/:id')}`: the helper's template with the literal arguments.
+      path = path.replace(/\$\{([A-Za-z_$][\w$]*)\(([^(){}]*)\)\}/g, (hole, name: string, argText: string) => {
+        const source = sourceOf(file, name);
+        const helper = byFile.get(source)?.functions.find((f) => f.name === name && f.urlTemplate);
+        const built = helper ? helperPath(helper.urlTemplate!, helper.params.map((p) => p.name), argText) : null;
+        if (built === null) ok = false;
+        return built ?? hole;
+      });
+      if (!ok) return null;
       const out = path.replace(/\$\{([A-Za-z_$][\w$]*)((?:\.[\w$]+)*)\}/g, (hole, head: string, rest: string) => {
         const source = sourceOf(file, head);
         const values = byFile.get(source)?.moduleValues ?? {};
@@ -74,11 +101,14 @@ export const reactRouterResolver: RouteResolver = {
         if (f.kind !== "react-router-map") continue;
         const m = f.data as RouteMapFact;
         if (m.pathProp !== "path") continue;
+        // A parent path a helper or an imported constant builds is filled like any other.
+        const prefix = m.prefix ? fill(m.prefix, a.filePath) : null;
+        if (m.prefix && prefix === null) continue;
         for (const { target, item } of arrayItems(a.filePath, m.array)) {
           const own = fill(item.path, target.filePath);
           if (own === null) continue;
           const headed = m.head + own;
-          const path = m.prefix && !headed.startsWith("/") ? under(m.prefix, headed) : headed;
+          const path = prefix && !headed.startsWith("/") ? under(prefix, headed) : headed;
           const page = m.componentProp ? item.props[m.componentProp] : undefined;
           // The element may be a route already (`{ path, component }`): re-place it.
           const at = target.routes.findIndex((r) => r.kind === "frontend" && r.line === item.line);

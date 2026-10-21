@@ -61,3 +61,46 @@ end`;
     ]);
   });
 });
+
+describe("ruby calls on a constructed local", () => {
+  it("records a paren-less member call on a local the method built", () => {
+    const lines = [
+      "class PlayersController",
+      "  def create",
+      "    builder = PlayerBuilder.new(",
+      "      name: params[:name]",
+      "    )",
+      "    @player = builder.perform",
+      "    label = builder.name_label",
+      "  end",
+      "end",
+    ];
+    const cls = rubySpec.extractClasses!(lines, [])[0]!;
+    const names = cls.methods[0]!.calls.map((c) => c.name);
+    expect(names).toEqual(expect.arrayContaining(["builder.perform", "builder.name_label"]));
+  });
+});
+
+describe("ruby bare calls of the class's own methods", () => {
+  it("records a bare own-method name as a call, not a local, symbol, key or member", () => {
+    const lines = [
+      "class SquadBuilder",
+      "  def perform",
+      "    raise Full unless room?",
+      "    @player = find_or_sign_player",
+      "    create_contract",
+      "    contract = 1",
+      "    log(contract, kind: :create_contract, note: 'room?')",
+      "    other.create_contract",
+      "  end",
+      "  def room?; true; end",
+      "  def find_or_sign_player; end",
+      "  def create_contract; end",
+      "end",
+    ];
+    const cls = rubySpec.extractClasses!(lines, [])[0]!;
+    const perform = cls.methods.find((m) => m.name === "perform")!;
+    const own = perform.calls.filter((c) => !c.name.includes(".") && !["log", "other"].includes(c.name)).map((c) => `${c.name}@${c.line}`);
+    expect(own.sort()).toEqual(["create_contract@5", "find_or_sign_player@4", "room?@3"]);
+  });
+});

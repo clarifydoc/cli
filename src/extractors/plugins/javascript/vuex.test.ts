@@ -58,4 +58,24 @@ describe("vuex-action dispatch", () => {
       "onSave -dispatch:articles/index-> store/modules/helpCenterArticles.js#actions.index",
     ]);
   });
+
+  it("joins a method mapActions binds, called as this.x(), like the dispatch it stands for", async () => {
+    const files = {
+      ...FILES,
+      "components/MatchFooter.vue.ts": `import { mapActions } from 'vuex';
+export default {
+  methods: {
+    ...mapActions('contacts', ['get', 'missing']),
+    ...mapActions('articles', { listArticles: 'index' }),
+    ...mapActions(['contacts/update']),
+    async save() { await this.get(); this.listArticles(); this.missing(); this.other(); },
+  },
+};`,
+    };
+    const links = new VuexDispatchResolver().resolve(await project(files));
+    expect(links.filter((l) => l.sourceFile.startsWith("components/")).map((l) => `${l.sourceSymbol} -${l.callName}-> ${l.targetSymbol}`)).toEqual([
+      "save -dispatch:contacts/get-> actions.get",
+      "save -dispatch:articles/index-> actions.index",
+    ]);
+  });
 });

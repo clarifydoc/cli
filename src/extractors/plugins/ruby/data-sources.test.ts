@@ -100,6 +100,7 @@ describe("rubySpec.extractDataSources — ActiveRecord", () => {
     `);
     expect(ds.map((d) => [d.name, d.entity ?? null, d.access])).toEqual([
       ["@match.update", null, "write"],
+      ["a.save", null, "write"],
       ["self.scope.where", null, "read"],
       ["Current.club.conversations.find_by!", null, "read"],
     ]);
@@ -107,6 +108,32 @@ describe("rubySpec.extractDataSources — ActiveRecord", () => {
 
   it("does not match inside comments", () => {
     expect(dbSources(`# Match.where(foo) is just documentation`)).toHaveLength(0);
+  });
+
+  it("records an instance save as a write — `save!` is how a built record is persisted", () => {
+    const ds = dbSources(`
+      @match.save!
+      player.save
+      @car.update_column(:mileage, 10)
+      garage.toggle!(:open)
+    `);
+    expect(ds.map((d) => [d.name, d.access])).toEqual([
+      ["@match.save!", "write"],
+      ["player.save", "write"],
+      ["@car.update_column", "write"],
+      ["garage.toggle!", "write"],
+    ]);
+  });
+
+  it("reads a chain whose model constant stands on its own line", () => {
+    const ds = dbSources(`
+      def goals
+        Goal
+          .joins(match: { fixtures: :club })
+          .where(season: 2026)
+      end
+    `);
+    expect(ds.map((d) => [d.name, d.entity, d.line])).toEqual([["Goal.joins", "Goal", 3]]);
   });
 });
 
@@ -168,6 +195,43 @@ describe("rubySpec.extractDataSources — outbound HTTP (api-call)", () => {
     expect(ds).toHaveLength(0);
   });
 
+  it("follows requests through a connection object Faraday.new built", () => {
+    const ds = apiCalls(`
+      class ScoreClient
+        def push(body)
+          connection.post(endpoint, body)
+          uploads.put("https://cdn.example.com/badges")
+        end
+
+        def connection
+          Faraday.new do |f|
+            f.options.timeout = 3
+          end
+        end
+
+        def uploads
+          @uploads ||= Faraday.new do |f|
+            f.request :multipart
+          end
+        end
+      end
+    `);
+    expect(ds.map((d) => `${d.name} ${d.target}`)).toEqual(["post #{endpoint}", "put https://cdn.example.com/badges"]);
+  });
+
+  it("leaves a same-named object the file never binds to Faraday alone", () => {
+    const ds = apiCalls(`
+      def check
+        connection.get(key)
+      end
+      def validate
+        conn = Faraday.new(url)
+        conn.get("/models")
+      end
+    `);
+    expect(ds.map((d) => `${d.name} ${d.target}`)).toEqual(["get /models"]);
+  });
+
   it("resolves a bare URL variable to its file-local string-literal, keeping #{} verbatim", () => {
     const ds = apiCalls(`
       def self.get_clubs(id)
@@ -211,5 +275,26 @@ describe("rubySpec.extractDataSources — a local holding a relation", () => {
       ["Current.club.contacts.includes", "read"],
       ["Current.club.contacts.includes.find", "read"],
     ]);
+  });
+});
+
+describe("rubySpec.extractDataSources — a relation an action hands its view", () => {
+  it("reads `@x = Current.club.players` in a controller as that association", () => {
+    const lines = `
+class Api::PlayersController < ApplicationController
+  def index
+    @players = Current.club.players
+    @name = Current.club.name
+    @filters = params.filters
+  end
+end
+class PlayerPresenter
+  def rows
+    @players = Current.club.players
+  end
+end`.split("\n");
+    const classes = rubySpec.extractClasses!(lines, []);
+    const ds = (rubySpec.extractDataSources?.(lines, classes) ?? []).filter((d) => d.kind === "database");
+    expect(ds.map((d) => [d.name, d.access, d.line])).toEqual([["Current.club.players.all", "read", 4]]);
   });
 });

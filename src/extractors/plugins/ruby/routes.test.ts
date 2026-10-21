@@ -99,6 +99,54 @@ describe("rubySpec.extractRoutes — resources expansion", () => {
     ]);
   });
 
+  it("serves `collection do` / `member do` blocks off the resource, not off its nested `/:x_id` prefix", () => {
+    const out = routes(
+      draw(
+        `  resources :players, only: [:index] do\n` +
+          `    collection do\n      get :search\n      post :filter\n    end\n` +
+          `    member do\n      post :transfer\n    end\n` +
+          `    resources :injuries, only: [:index]\n` +
+          `  end`,
+      ),
+    ).map(sig);
+    expect(out).toEqual([
+      "GET /players -> PlayersController#index",
+      "GET /players/search -> PlayersController#search",
+      "POST /players/filter -> PlayersController#filter",
+      "POST /players/:id/transfer -> PlayersController#transfer",
+      "GET /players/:player_id/injuries -> InjuriesController#index",
+    ]);
+  });
+
+  it("maps a canonical action in a collection scope onto the collection path itself", () => {
+    const out = routes(
+      draw(`  resources :squad_members, only: [:create], param: :club_id do\n    collection do\n      delete :destroy\n      patch :update\n    end\n  end`),
+    ).map(sig);
+    expect(out).toEqual([
+      "POST /squad_members -> SquadMembersController#create",
+      "DELETE /squad_members -> SquadMembersController#destroy",
+      "PATCH /squad_members -> SquadMembersController#update",
+    ]);
+  });
+
+  it("reads `%i[…]` filters, a singular resource's member and an explicit `action:` on a path", () => {
+    const out = routes(
+      draw(
+        `  resources :garages, only: [:show] do\n` +
+          `    resource :inspection, only: %i[create destroy], controller: 'inspection' do\n      get :token, on: :member\n    end\n` +
+          `    get 'preview/:token', action: :preview_status\n` +
+          `  end`,
+      ),
+    ).map(sig);
+    expect(out).toEqual([
+      "GET /garages/:id -> GaragesController#show",
+      "POST /garages/:garage_id/inspection -> InspectionController#create",
+      "DELETE /garages/:garage_id/inspection -> InspectionController#destroy",
+      "GET /garages/:garage_id/inspection/token -> InspectionController#token",
+      "GET /garages/:garage_id/preview/:token -> GaragesController#preview_status",
+    ]);
+  });
+
   it("nests a resources block's children under one member of the parent", () => {
     const out = routes(
       draw(`  resources :referees, only: [:index] do\n    resources :contact_informations, only: [:index, :create]\n  end`),

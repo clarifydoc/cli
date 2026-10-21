@@ -81,6 +81,11 @@ export const javascriptCallHooks: CallExtractionHooks = {
 function dispatchKeyOf(node: Node): string | null {
   if (node.type !== "call_expression") return null;
   const fn = node.childForFieldName("function");
+  // `this.sendMessage(…)` where the component spread `...mapActions('chat', ['sendMessage'])`.
+  if (fn?.type === "member_expression" && fn.childForFieldName("object")?.type === "this") {
+    const prop = fn.childForFieldName("property")?.text;
+    return prop ? (mappedActions(node).get(prop) ?? null) : null;
+  }
   const leaf = fn?.type === "member_expression" ? fn.childForFieldName("property")?.text : fn?.type === "identifier" ? fn.text : null;
   if (leaf !== "dispatch") return null;
   const first = node.childForFieldName("arguments")?.namedChildren[0];
@@ -88,4 +93,44 @@ function dispatchKeyOf(node: Node): string | null {
   if (first.type === "string") return first.text.slice(1, -1) || null;
   if (first.type === "template_string" && !first.namedChildren.some((c) => c.type === "template_substitution")) return first.text.slice(1, -1) || null;
   return null;
+}
+
+/**
+ * The component methods `mapActions` binds in this file, by local name → the
+ * action key a `dispatch` would name: `mapActions('chat', ['send'])` →
+ * `send → chat/send`, `mapActions('chat', { post: 'send' })` → `post → chat/send`,
+ * `mapActions(['chat/send'])` → `chat/send`. Literal arguments only.
+ */
+let actionsTree: Node["tree"] | null = null;
+let actions = new Map<string, string>();
+
+function mappedActions(node: Node): Map<string, string> {
+  if (node.tree === actionsTree) return actions;
+  actionsTree = node.tree;
+  actions = new Map();
+  if (!node.tree.rootNode.text.includes("mapActions")) return actions;
+  const literal = (n: Node | undefined): string | null =>
+    n?.type === "string" ? n.text.slice(1, -1) : n?.type === "template_string" && n.namedChildren.length === 0 ? n.text.slice(1, -1) : null;
+  for (const call of node.tree.rootNode.descendantsOfType("call_expression")) {
+    if (call.childForFieldName("function")?.text !== "mapActions") continue;
+    const args = (call.childForFieldName("arguments")?.namedChildren ?? []).filter((a) => a.type !== "comment");
+    const ns = args.length > 1 ? literal(args[0]) : null;
+    if (args.length > 1 && ns === null) continue;
+    const map = args[args.length - 1];
+    const keyed = (act: string) => (ns ? `${ns}/${act}` : act);
+    if (map?.type === "array") {
+      for (const el of map.namedChildren) {
+        const act = literal(el);
+        if (act) actions.set(act, keyed(act));
+      }
+    } else if (map?.type === "object") {
+      for (const pair of map.namedChildren) {
+        if (pair.type !== "pair") continue;
+        const local = pair.childForFieldName("key")?.text.replace(/^['"]|['"]$/g, "");
+        const act = literal(pair.childForFieldName("value") ?? undefined);
+        if (local && act) actions.set(local, keyed(act));
+      }
+    }
+  }
+  return actions;
 }

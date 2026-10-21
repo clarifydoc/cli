@@ -126,7 +126,8 @@ export class VuexDispatchResolver implements DispatchResolver {
       const fns = [...a.functions, ...a.classes.flatMap((c) => c.methods.map((m) => ({ ...m, name: `${c.name}.${m.name}` })))];
       for (const fn of fns) {
         for (const call of fn.calls) {
-          if (!call.key || !/(?:^|\.)dispatch$/.test(call.name)) continue;
+          // `this.send()` carries a key when `mapActions` bound it (call-hooks.ts).
+          if (!call.key || !/(?:^|\.)dispatch$|^this\.[\w$]+$/.test(call.name)) continue;
           if (!memo.has(call.key)) memo.set(call.key, resolveKey(call.key));
           const hit = memo.get(call.key);
           if (!hit) continue;

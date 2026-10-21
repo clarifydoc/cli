@@ -526,6 +526,15 @@ describe("symbol-linker — typed receivers", () => {
     expect(out.map((l) => [l.sourceSymbol, l.targetSymbol])).toEqual([["Calc.initialize", "BaseCalc.initialize"], ["Calc.run", "BaseCalc.run"]]);
   });
 
+  it("finds a class declared under its qualified name (`Transfers::FeeService`) from a typed receiver", () => {
+    const svc = file("app/services/transfers/fee_service.rb", [cls("Transfers::FeeService", { methods: [method("perform", [], [], 4)] })], { language: "ruby" });
+    const ctl = file("app/controllers/transfers_controller.rb", [cls("TransfersController", {
+      methods: [method("create", [call("new.perform", { receiverType: "Transfers::FeeService" })], [], 3)],
+    })], { language: "ruby" });
+    const out = callsFrom(buildSymbolLinks([svc, ctl]), "app/controllers/transfers_controller.rb");
+    expect(out.map((l) => [l.sourceSymbol, l.targetSymbol])).toEqual([["TransfersController.create", "Transfers::FeeService.perform"]]);
+  });
+
   it("leaves a `super()` that only receives a member call (Python) to that call", () => {
     const base = file("svc/base.py", [cls("Base", { methods: [method("save", [], [], 2), method("validate", [], [], 5)] })], { language: "python" });
     const child = file("svc/child.py", [cls("Child", { extends: "Base", methods: [method("save", [call("super", { line: 4 }), call("super().validate", { line: 4 })])] })], { language: "python" });

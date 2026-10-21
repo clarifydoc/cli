@@ -2681,11 +2681,19 @@ function resolveThroughDeclaredType(
   leafName = receiverSegment(leafName);
 
   if (call.receiverType || call.receiverQualifier) {
-    const typeName = receiverTypeName(call.receiverType, analysis.language);
+    let typeName = receiverTypeName(call.receiverType, analysis.language);
     if (!typeName && !call.receiverQualifier) return null;
+    let typeFile = typeName ? typeFileFor(ctx, typeName, sourceFile, analysis.projectId) : null;
+    // A language that names a class by its qualified path (`Billing::InvoiceService`)
+    // declares it under that name, which the bare name does not find.
+    const written = call.receiverType?.trim().replace(/^::/, "");
+    if (typeName && !typeFile && written && written !== typeName && /^[A-Za-z_]\w*(?:::[A-Za-z_]\w*)+$/.test(written)) {
+      const qualified = typeFileFor(ctx, written, sourceFile, analysis.projectId);
+      if (qualified) { typeName = written; typeFile = qualified; }
+    }
     const point: InjectionPoint = {
       typeName: typeName ?? "",
-      typeFile: typeName ? typeFileFor(ctx, typeName, sourceFile, analysis.projectId) : null,
+      typeFile,
       member: "",
       consumer,
     };

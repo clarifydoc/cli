@@ -21,7 +21,7 @@ export const rubyManifest: LanguagePluginManifest = {
   packageManagers: [rubygemsPackageManager],
   packageEcosystems: ["rubygems"],
   parsing: "regex",
-  extensions: [".rb"],
+  extensions: [".rb", ".rake"],
   // One type spans files here: a class can be reopened in another file of its namespace.
   typesSpanFiles: true,
   testFilePatterns: [/_(spec|test)\.rb$/],

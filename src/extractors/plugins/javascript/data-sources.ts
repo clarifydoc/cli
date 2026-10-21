@@ -1168,12 +1168,16 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
 
         // Vue <script setup> compiler macros
         if (VUE_MACROS.has(fnName)) {
-          sources.push(this.ds({
-            kind: "prop",
-            name: fnName,
-            target: null,
-            line: node.startPosition.row + 1,
-          }));
+          // `defineProps({ title, … })` declares the component's props: one row each, by name.
+          const props = fnName === "defineProps" ? declaredProps(node) : [];
+          for (const name of props.length > 0 ? props : [fnName]) {
+            sources.push(this.ds({
+              kind: "prop",
+              name,
+              target: null,
+              line: node.startPosition.row + 1,
+            }));
+          }
         }
 
         // ORM calls — prisma.user.findMany(), userRepo.save(user), Model.findOne()
@@ -2011,4 +2015,30 @@ function getCallbackCalls(callNode: Node): CallInfo[] {
     }
   }
   return [];
+}
+
+/**
+ * The prop names `defineProps` declares: the keys of its object argument
+ * (`defineProps({ title: String })`), the strings of an array (`defineProps(['title'])`)
+ * or the members of its type argument (`defineProps<{ title: string }>()`).
+ */
+function declaredProps(call: Node): string[] {
+  const arg = call.childForFieldName("arguments")?.namedChildren.find((a) => a.type !== "comment");
+  const names: string[] = [];
+  if (arg?.type === "object") {
+    for (const p of arg.namedChildren) {
+      const key = p.type === "pair" ? p.childForFieldName("key") : p.type === "shorthand_property_identifier" ? p : null;
+      if (key && (key.type === "property_identifier" || key.type === "string" || key.type === "shorthand_property_identifier")) names.push(key.text.replace(/^['"]|['"]$/g, ""));
+    }
+  } else if (arg?.type === "array") {
+    for (const s of arg.namedChildren) if (s.type === "string") names.push(s.text.slice(1, -1));
+  } else if (!arg) {
+    const typeArgs = call.childForFieldName("type_arguments") ?? call.namedChildren.find((c) => c.type === "type_arguments");
+    const literal = typeArgs?.namedChildren.find((c) => c.type === "object_type");
+    for (const m of literal?.namedChildren ?? []) {
+      const key = m.type === "property_signature" ? m.childForFieldName("name") : null;
+      if (key) names.push(key.text.replace(/^['"]|['"]$/g, ""));
+    }
+  }
+  return names.filter((n) => /^[\w$-]+$/.test(n));
 }

@@ -90,6 +90,11 @@ describe("Ruby locals", () => {
     ]);
   });
 
+  it("types a local whose construction spans several lines", () => {
+    const body = ["  builder = PlayerBuilder.new(", "    name: params[:name],", "    club: Current.club", "  )", "  @player = builder.perform"];
+    expect(extractRubyLocalTypes(body, { params: [] })).toEqual([{ name: "builder", type: "PlayerBuilder" }]);
+  });
+
   it("drops a local reassigned untyped or rebound as a block parameter, and never re-types a parameter", () => {
     const body = [
       "  a = PlayerRepo.new",

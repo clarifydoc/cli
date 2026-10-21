@@ -3,7 +3,7 @@ import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
 import { joinRoutePath } from "../../../shared/route-paths.js";
 import { escapeRegex } from "../../shared/path-utils.js";
-import { literalPath, pathHole } from "./vue-router.js";
+import { helperHole, literalPath, pathHole } from "./vue-router.js";
 
 /** React Router: <Route path="/dashboard" component={X} /> */
 export function extractReactRouterRoutes(root: Node, routes: RouteInfo[]): void {
@@ -349,6 +349,12 @@ function ancestorRoutePrefix(openingEl: Node): string | null {
  * is the page, only the `.map` site says. Only arrays another file can reach
  * (exported) or this file maps into a `<Route>` are kept.
  */
+/** Whether this file puts the array under a route: `children: name`, or spread into a list (`[...name]`). */
+function childrenOf(name: string, sourceText: string): boolean {
+  const n = escapeRegex(name);
+  return new RegExp(`\\bchildren\\s*:\\s*${n}\\b|\\.\\.\\.\\s*${n}\\b`).test(sourceText);
+}
+
 export function collectRouteArrays(root: Node, sourceText: string, facts: RouteFact[]): void {
   for (const stmt of root.namedChildren) {
     const decl = stmt.type === "export_statement" ? stmt.namedChildren.find((c) => c.type === "lexical_declaration") : stmt;
@@ -361,7 +367,7 @@ export function collectRouteArrays(root: Node, sourceText: string, facts: RouteF
       if (name?.type !== "identifier" || (value?.type !== "array" && value?.type !== "object")) continue;
       // A route object of its own (`export const ordersRoute = { path, element }`) is an array of one.
       if (value.type === "object" && !/\bpath\s*:/.test(value.text.slice(0, 2000))) continue;
-      if (value.type === "object" ? stmt.type !== "export_statement" && sourceText.split(name.text).length < 3 : stmt.type !== "export_statement" && !(sourceText.includes("<Route") && new RegExp(`\\b${escapeRegex(name.text)}\\s*\\.\\s*map\\s*\\(`).test(sourceText))) continue;
+      if (value.type === "object" ? stmt.type !== "export_statement" && sourceText.split(name.text).length < 3 : stmt.type !== "export_statement" && !(sourceText.includes("<Route") && new RegExp(`\\b${escapeRegex(name.text)}\\s*\\.\\s*map\\s*\\(`).test(sourceText)) && !childrenOf(name.text, sourceText)) continue;
       const items: RouteArrayFact["items"] = [];
       const spreads: string[] = [];
       for (const el of value.type === "object" ? [value] : value.namedChildren) {
@@ -374,7 +380,7 @@ export function collectRouteArrays(root: Node, sourceText: string, facts: RouteF
           const key = pair.childForFieldName("key")?.text;
           const v = pair.childForFieldName("value");
           if (!key || !v) continue;
-          if (key === "path") path = literalPath(v) ?? pathHole(v);
+          if (key === "path") path = literalPath(v) ?? helperHole(v) ?? pathHole(v);
           else if (v.type === "identifier" && /^[A-Z]/.test(v.text)) props[key] = { name: v.text, specifier: v.text };
           else {
             const c = v.type === "jsx_element" || v.type === "jsx_self_closing_element" || v.type === "arrow_function" || v.type === "call_expression" ? componentOf(v) : null;

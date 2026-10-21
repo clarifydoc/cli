@@ -114,6 +114,32 @@ export function pathHole(value: Node): string | null {
   return /^[A-Za-z_$][\w$]*(?:\.[\w$]+)*$/.test(name) ? `\${${name}}` : null;
 }
 
+/**
+ * A path a project helper builds from literal arguments
+ * (`frontendURL('accounts/:accountId/inbox')`), written as a `${helper('…')}`
+ * hole that the project pass (react-router-resolver.ts) fills from the
+ * helper's `urlTemplate`, or drops when it cannot.
+ */
+export function helperHole(value: Node): string | null {
+  if (value.type !== "call_expression") return null;
+  const fn = value.childForFieldName("function");
+  if (fn?.type !== "identifier") return null;
+  const args: string[] = [];
+  for (const a of value.childForFieldName("arguments")?.namedChildren ?? []) {
+    if (a.type === "comment") continue;
+    if (a.type !== "string" && !(a.type === "template_string" && a.namedChildren.length === 0)) return null;
+    const text = stripQuotes(a.text);
+    if (/['"`(){}\\]/.test(text)) return null;
+    args.push(`'${text}'`);
+  }
+  return args.length > 0 ? `\${${fn.text}(${args.join(", ")})}` : null;
+}
+
+/** A helper hole stands alone like an absolute path: the helper returns the whole path. */
+function isHelperHole(path: string): boolean {
+  return /^\$\{[A-Za-z_$][\w$]*\(/.test(path);
+}
+
 /** `const HOME = "/"`, `export const ROUTES = { admin: { users: "/admin/users" } } as const` — by dotted name. */
 let constsTree: Tree | null = null;
 let consts = new Map<string, string>();
@@ -167,9 +193,9 @@ function parentPath(obj: Node): string | null {
   // A pathless layout route (`{ element: <Layout />, children: [...] }`) adds
   // no segment; one at the top level is the root ("").
   if (!value) return parentPath(parent) ?? (isNested(parent) ? null : "");
-  const own = literalPath(value);
+  const own = literalPath(value) ?? helperHole(value);
   if (own === null) return null;
-  if (own.startsWith("/")) return own;
+  if (own.startsWith("/") || isHelperHole(own)) return own;
   const above = parentPath(parent);
   return above === null ? own : joinChild(above, own);
 }
@@ -193,7 +219,7 @@ function isNested(obj: Node): boolean {
 }
 
 function joinChild(parent: string, child: string): string {
-  if (child.startsWith("/")) return child;
+  if (child.startsWith("/") || isHelperHole(child)) return child;
   const head = parent.replace(/\/+$/, "");
   if (child === "") return parent;
   // Under a component-less root (`path: ""`) a child keeps its own spelling,
@@ -221,7 +247,7 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[], facts?: Rou
         const keyText = key?.text;
 
         if (keyText === "path" && value) {
-          path = literalPath(value) ?? pathHole(value);
+          path = literalPath(value) ?? helperHole(value) ?? pathHole(value);
         } else if ((keyText === "component" || keyText === "loadComponent" || keyText === "loadChildren") && value) {
           // Angular lazy routes carry the target in a `loadComponent`/
           // `loadChildren` thunk (`() => import('./x').then(m => m.XComponent)`)

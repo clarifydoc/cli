@@ -438,6 +438,27 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     if (literal) return literal[2]!;
     const field = /^this\.([\w$]+)$/.exec(expr);
     if (field) return cls ? resolveMember(field[1]!, cls, depth) : null;
+    // `options.apiVersion`: a member of a constructor parameter, stated by the
+    // object literal the subclass below passed to `super(…)` (walked down like `resolveMember`).
+    const paramMember = /^([A-Za-z_$][\w$]*)\.([\w$]+)$/.exec(expr);
+    if (paramMember && cls) {
+      const chain = chainOf(cls);
+      for (let k = 0; k < chain.length; k++) {
+        let index = ctorParamIndex(chain[k]!.c, `\${${paramMember[1]}}`);
+        if (index < 0) continue;
+        for (let j = k - 1; j >= 0; j--) {
+          const below = chain[j]!.c;
+          const passed = below.cls.superArgs?.[index];
+          if (passed === undefined) break;
+          const next = ctorParamIndex(below, passed);
+          if (next >= 0) { index = next; continue; }
+          const v = new RegExp(`[{,]\\s*${paramMember[2]}\\s*:\\s*(['"\`])([\\w.\\-/]*)\\1`).exec(passed)?.[2];
+          if (v !== undefined) return v;
+          break;
+        }
+        break;
+      }
+    }
     const name = /^([A-Za-z_$][\w$]*)((?:\.[\w$]+)*)$/.exec(expr);
     if (!name) return null;
     const source = ctx.importIndex.localFor(file, name[1]!) ?? file;

@@ -49,6 +49,11 @@ describe("normalizeRoutePath", () => {
     );
   });
 
+  it("reads a Ruby `#{…}` interpolation as a hole, not as the start of a fragment", () => {
+    expect(normalizeRoutePath("#{league_api_url}/getFixtures")).toBe("/{}/getfixtures");
+    expect(normalizeRoutePath("/api/v2/clubs/#{id}#squad")).toBe(normalizeRoutePath("/api/v2/clubs/${id}"));
+  });
+
   it("normalizes express :params and strips host/query", () => {
     expect(normalizeRoutePath("https://api.x.com/players/:id?q=1")).toBe("/players/{}");
     expect(normalizeRoutePath("/api/Players/{id}")).toBe("/api/players/{}");

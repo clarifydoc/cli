@@ -1,4 +1,5 @@
 import { extractRubyScheduledJobs } from "./scheduled-jobs.js";
+import { addJobDispatchCalls, extractJobQueueSources } from "./active-job.js";
 import type { CallInfo, RouteInfo, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCallsFromBody, extractClassesWithSpec } from "../shared/regex-base.js";
@@ -56,12 +57,21 @@ const SINGULAR_ACTION_MAP: Record<string, { method: string; suffix: string }> = 
 function parseActionFilter(stmt: string): { only: Set<string> | null; except: Set<string> } {
   let only: Set<string> | null = null;
   const except = new Set<string>();
-  const onlyM = stmt.match(/(?:\bonly\s*:|:only\s*=>)\s*(\[[^\]]*\]|:\w+)/);
-  if (onlyM) only = new Set([...onlyM[1]!.matchAll(/:(\w+)/g)].map((m) => m[1]!));
-  const exceptM = stmt.match(/(?:\bexcept\s*:|:except\s*=>)\s*(\[[^\]]*\]|:\w+)/);
-  if (exceptM) for (const m of exceptM[1]!.matchAll(/:(\w+)/g)) except.add(m[1]!);
+  const onlyM = stmt.match(/(?:\bonly\s*:|:only\s*=>)\s*(\[[^\]]*\]|%[iI][\[(][^\])]*[\])]|:\w+)/);
+  if (onlyM) only = new Set(actionSymbols(onlyM[1]!));
+  const exceptM = stmt.match(/(?:\bexcept\s*:|:except\s*=>)\s*(\[[^\]]*\]|%[iI][\[(][^\])]*[\])]|:\w+)/);
+  if (exceptM) for (const a of actionSymbols(exceptM[1]!)) except.add(a);
   return { only, except };
 }
+
+/** `[:a, :b]` / `:a` → its symbols; `%i[a b]` → its words. */
+function actionSymbols(list: string): string[] {
+  if (/^%[iI]/.test(list)) return list.slice(3, -1).split(/\s+/).filter(Boolean);
+  return [...list.matchAll(/:(\w+)/g)].map((m) => m[1]!);
+}
+
+/** Actions Rails maps onto the scope's own path inside `collection`/`member` (`delete :destroy` → `DELETE /players`). */
+const CANONICAL_ACTIONS = new Set(["index", "create", "new", "show", "update", "destroy"]);
 
 /**
  * Controllers provided by Rails / its engines, not the application. Routes that
@@ -121,6 +131,58 @@ function addImplicitReceiverCalls(lines: string[], fn: FunctionInfo): void {
     extra.push({ name: root, kind: "internal", target: null, line: c.line });
   }
   fn.calls.push(...extra);
+}
+
+/**
+ * A bare name that is one of the class's own methods is a call of it:
+ * `@players = players`, `create_contract` on its own line,
+ * `raise Full unless squad_has_room?`. Ruby needs no parens or `self.`, so the
+ * call patterns, which need evidence, miss these; the class's own method list
+ * is that evidence. A name the method binds as a local or parameter is the
+ * local, and a `:name` symbol, `name:` key or `.name` member is no own call.
+ */
+function addOwnMethodCalls(lines: string[], cls: ClassInfo, fn: FunctionInfo): void {
+  const own = new Set(cls.methods.map((m) => m.name).filter((n) => !/^self\./.test(n) && n !== "initialize"));
+  if (own.size === 0) return;
+  const bound = new Set(fn.params.map((p) => p.name));
+  for (let i = fn.line; i < Math.min(fn.endLine, lines.length); i++) {
+    const code = (lines[i] ?? "").replace(/#.*$/, "");
+    for (const m of code.matchAll(/(?:^|[^\w.@:])([a-z_]\w*)\s*(?:\|\|)?=(?![=~>])/g)) bound.add(m[1]!);
+    for (const m of code.matchAll(/\|([^|]*)\|/g)) for (const n of m[1]!.split(",")) bound.add(n.trim().replace(/^[*&]/, ""));
+  }
+  const have = new Set(fn.calls.map((c) => `${c.name}@${c.line}`));
+  for (let i = fn.line; i < Math.min(fn.endLine, lines.length); i++) {
+    // Strings and comments are no code.
+    const code = (lines[i] ?? "").replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""').replace(/#.*$/, "");
+    for (const m of code.matchAll(/(?<![\w.@$:])([a-z_]\w*[?!]?)(?![\w(:]|\s*(?:\|\|)?=[^=~>])/g)) {
+      const name = m[1]!;
+      if (!own.has(name) || bound.has(name) || /\bdef\s+$/.test(code.slice(0, m.index))) continue;
+      if (have.has(`${name}@${i + 1}`)) continue;
+      have.add(`${name}@${i + 1}`);
+      fn.calls.push({ name, kind: "internal", target: null, line: i + 1 });
+    }
+  }
+}
+
+/**
+ * `builder.perform` on a local the method constructed (`builder = PlayerBuilder.new(…)`):
+ * a paren-less call the call patterns cannot tell from an attribute read, but
+ * the local's stated type makes it a member of that class.
+ */
+function addTypedLocalCalls(lines: string[], fn: FunctionInfo): void {
+  const typed = (fn.localTypes ?? []).filter((l) => l.type);
+  if (typed.length === 0) return;
+  const have = new Set(fn.calls.map((c) => `${c.name}@${c.line}`));
+  const re = new RegExp(`(?<![\\w.@$:])(${typed.map((l) => l.name).join("|")})\\.([a-z_]\\w*[?!]?)(?![\\w(]|\\s*=[^=~>])`, "g");
+  for (let i = fn.line; i < Math.min(fn.endLine, lines.length); i++) {
+    const code = (lines[i] ?? "").replace(/\s#.*$/, "");
+    for (const m of code.matchAll(re)) {
+      const name = `${m[1]}.${m[2]}`;
+      if (have.has(`${name}@${i + 1}`)) continue;
+      have.add(`${name}@${i + 1}`);
+      fn.calls.push({ name, kind: "internal", target: null, line: i + 1 });
+    }
+  }
 }
 
 /** `@x = a.b(…)` / `@x ||= A.b.c(…)` inside a class's methods → `{ x: "a.b(…)" }`, several chains one per line. */
@@ -261,6 +323,7 @@ const AR_WRITE_METHODS = new Set([
   "destroy", "destroy!", "destroy_all", "delete", "delete_all", "delete_by",
   "destroy_by", "first_or_create", "first_or_create!", "touch_all",
   "increment_counter", "decrement_counter", "update_counters", "save", "save!",
+  "update_attribute", "update_column", "toggle!", "increment!", "decrement!",
 ]);
 
 /** Read/write nature of an AR method (a `find…`/query is a read). */
@@ -376,8 +439,34 @@ const BARE_VAR_RE = /^[a-z_]\w*$/;
  * interpolations verbatim (as the JS/PHP URL resolvers do) so a concrete
  * endpoint path surfaces instead of the opaque variable name.
  */
+/**
+ * The names a file binds to a Faraday connection: a local or ivar assigned
+ * `Faraday.new` (`conn = Faraday.new(url)`, `@connection ||= Faraday.new do`)
+ * and a method whose body opens with one (`def connection` / `Faraday.new do`).
+ * A request goes through that object, so `connection.post(url)` is the call;
+ * a same-named object the file never binds to Faraday (a Redis `connection`) is not.
+ */
+function faradayConnectionNames(lines: string[]): RegExp | null {
+  const names = new Set<string>();
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (!/\bFaraday(?:::Connection)?\s*\.\s*new\b/.test(line)) continue;
+    const assigned = line.match(/^\s*(@?[a-z_]\w*)\s*(\|\|)?=\s*Faraday\b/);
+    if (assigned) names.add(assigned[1]!);
+    // A plain local (`conn = Faraday.new`) is not what the enclosing method returns.
+    if (assigned && !assigned[2] && !assigned[1]!.startsWith("@")) continue;
+    for (let j = i - 1; j >= 0 && i - j <= 2; j--) {
+      const def = (lines[j] ?? "").match(/^\s*def\s+([a-z_]\w*)\s*$/)?.[1];
+      if (def) { names.add(def); break; }
+    }
+  }
+  if (names.size === 0) return null;
+  return new RegExp(`(?<![\\w.@:])(${[...names].join("|")})\\s*\\.\\s*(get|post|put|patch|delete|head)\\b`, "g");
+}
+
 function extractRubyHttpCalls(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
+  const connectionCall = faradayConnectionNames(lines);
   const seen = new Set<string>();
   const varLiterals = new Map<string, string>();
   const push = (verb: string, rawArg: string | null, line: number, col: number): void => {
@@ -404,6 +493,11 @@ function extractRubyHttpCalls(lines: string[]): DataSourceInfo[] {
     }
     for (const m of line.matchAll(NET_HTTP_METHOD_RE)) {
       push(NET_HTTP_METHOD_MAP[m[1]!]!, firstArgUrl(line, m.index! + m[0]!.length), i + 1, m.index!);
+    }
+    if (connectionCall) {
+      for (const m of line.matchAll(connectionCall)) {
+        push(m[2]!, firstArgUrl(line, m.index! + m[0]!.length), i + 1, m.index!);
+      }
     }
   }
   return out;
@@ -438,13 +532,26 @@ function localChainBefore(lines: string[], i: number, local: string): string | n
   return null;
 }
 
-function extractRubyDataSources(lines: string[]): DataSourceInfo[] {
+/**
+ * `@clubs = Current.league.clubs` in a controller: the relation an action hands
+ * its view, which runs the query when it renders. Read as `….clubs.all` so the
+ * association join names the model; a chain no association settles is dropped there.
+ */
+const RELATION_ASSIGN_RE = /^\s*@[a-z_]\w*\s*(?:\|\|)?=\s*((?:Current|@?[a-z_]\w*|[A-Z]\w*(?:::[A-Z]\w*)*)(?:\.[a-z_]\w*)*\.[a-z_]\w*s)\s*$/;
+
+function extractRubyDataSources(lines: string[], classes: readonly ClassInfo[] = []): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
   const seen = new Set<string>();
+  const controllers = classes.filter((c) => /Controller$/.test(c.name));
+  const inController = (line: number): boolean => controllers.some((c) => line >= c.line && line <= c.endLine);
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
+    let line = lines[i] ?? "";
     const trimmed = line.trimStart();
     if (!trimmed || trimmed.startsWith("#")) continue;
+    // A chain whose receiver stands on its own line (`Match` / `  .where(…)`):
+    // read the first continued call as part of this line.
+    const next = (lines[i + 1] ?? "").trimStart();
+    if (next.startsWith(".") && /[\w)]\s*$/.test(line.replace(/\s+#.*$/, ""))) line = line.trimEnd() + next;
     for (const m of line.matchAll(AR_CALL_RE)) {
       const receiver = m[1]!;
       const method = m[2]!;
@@ -464,11 +571,17 @@ function extractRubyDataSources(lines: string[]): DataSourceInfo[] {
     // `RubyEntityExtractor.reconcileProject` joins or drops it. A bare
     // lowercase receiver counts only with a WRITE verb — `items.first` is an
     // Array; `contact.save!` is persistence.
+    const relation = RELATION_ASSIGN_RE.exec(line.replace(/\s+#.*$/, ""));
+    if (relation && !/^(?:params|request|session)\b/.test(relation[1]!) && inController(i + 1)) {
+      out.push({ kind: "database", name: `${relation[1]}.all`, target: null, calls: [], line: i + 1, access: "read" });
+      continue;
+    }
     if (!AR_VERB_GATE.test(line)) continue; // the chain regex is costly; most lines call no AR verb
     for (const m of line.matchAll(AR_CHAIN_RE)) {
       const receiver = m[1]!;
       const method = m[2]!;
-      if (!isArQueryMethod(method)) continue;
+      // `@message.save!` — an instance write is no query method, but persists.
+      if (!isArQueryMethod(method) && !AR_WRITE_METHODS.has(method)) continue;
       const chained = receiver.includes(".");
       // A local holding a relation (`scope = Current.account.contacts` … `scope.find(id)`):
       // the row names the chain it was assigned, which the association join resolves.
@@ -495,8 +608,10 @@ function extractRubyDataSources(lines: string[]): DataSourceInfo[] {
 
 export const rubySpec: RegexLangSpec = {
   language: "ruby",
-  extensions: [".rb"],
+  extensions: [".rb", ".rake"],
   indentBased: true,
+  // A Rake file's tasks are its own statements: their calls are the file's `<setup>`.
+  topLevelCalls: /\.rake$/,
   lineCommentPrefixes: ["#"],
 
   functionPatterns: [
@@ -589,7 +704,12 @@ export const rubySpec: RegexLangSpec = {
       for (const p of collectIvarProperties(lines, cls, classes)) if (!injected.has(p.name)) properties.push(p);
       cls.properties.push(...properties);
       // `agents.find(id)` with no local `agents` calls the method `agents` first.
-      for (const m of cls.methods) addImplicitReceiverCalls(lines, m);
+      for (const m of cls.methods) {
+        addImplicitReceiverCalls(lines, m);
+        addTypedLocalCalls(lines, m);
+        addJobDispatchCalls(lines, m);
+        addOwnMethodCalls(lines, cls, m);
+      }
       // A controller's filters, for the project pass that runs them before each action.
       if (/Controller$/.test(cls.name)) cls.decorators.push(...filterDecorators(lines, cls));
       // What each instance variable is assigned from a call chain (`@agent = agents.find(id)`,
@@ -656,7 +776,7 @@ export const rubySpec: RegexLangSpec = {
     return fns;
   },
 
-  extractDataSources: (lines) => [...extractRubyDataSources(lines), ...extractRubyHttpCalls(lines)],
+  extractDataSources: (lines, classes) => [...extractRubyDataSources(lines, classes), ...extractRubyHttpCalls(lines), ...extractJobQueueSources(lines, classes)],
 
   importPatterns: [
     {
@@ -815,8 +935,14 @@ export const rubySpec: RegexLangSpec = {
     // `blockStack` carries one entry per `end`-terminated block (namespace/scope
     // contribute a path prefix; every other block — `if`, `do`, nested
     // `resources do` — contributes ""), so `end` always pops exactly one frame.
-    const blockStack: string[] = [];
-    const currentPrefix = () => blockStack.join("");
+    // An entry is absolute when the block resets the path rather than extending
+    // it: `collection do` serves the resource's own path, `member do` one member's.
+    const blockStack: { prefix: string; absolute?: boolean }[] = [];
+    const currentPrefix = (): string => {
+      let out = "";
+      for (const b of blockStack) out = b.absolute ? b.prefix : out + b.prefix;
+      return out;
+    };
     // Parallel to `blockStack`: the Devise `authenticate :user do … end` guard a
     // block contributes (null for every other block), inherited by the routes
     // declared inside it.
@@ -830,25 +956,31 @@ export const rubySpec: RegexLangSpec = {
     // Parallel to `blockStack`: the `resources :x do … end` block a route is
     // declared in, for `on: :collection` / `on: :member` and the implicit
     // controller of a bare `get 'presence'` inside it.
-    interface ResourceFrame { base: string; controllerClass: string }
+    interface ResourceFrame { base: string; controllerClass: string; memberPath: string }
     const resourceStack: (ResourceFrame | null)[] = [];
     const innermostResource = (): ResourceFrame | null => {
       for (let k = resourceStack.length - 1; k >= 0; k--) if (resourceStack[k]) return resourceStack[k];
       return null;
     };
+    // Parallel to `blockStack`: true for a `collection do` / `member do` block,
+    // where a canonical action (`delete :destroy`) is the scope's path itself.
+    const scopeStack: boolean[] = [];
     const pushBlock = (
       prefix: string,
       guard: GuardAttr | null = null,
       module: string | null = null,
       resource: ResourceFrame | null = null,
+      absolute = false,
     ): void => {
-      blockStack.push(prefix);
+      blockStack.push(absolute ? { prefix, absolute } : { prefix });
+      scopeStack.push(absolute);
       guardStack.push(guard);
       moduleStack.push(module);
       resourceStack.push(resource);
     };
     const popBlock = (): void => {
       blockStack.pop();
+      scopeStack.pop();
       guardStack.pop();
       moduleStack.pop();
       resourceStack.pop();
@@ -898,6 +1030,18 @@ export const rubySpec: RegexLangSpec = {
         continue;
       }
 
+      // `collection do … end` / `member do … end` inside `resources :x do`:
+      // routes hang off the collection (`/x/search`) or one member (`/x/:id/snooze`),
+      // not off the nested `/x/:x_id` prefix the resources block opened.
+      const scopeMatch = line.match(/^(collection|member)\s+do\b/);
+      if (scopeMatch) {
+        const resource = innermostResource();
+        if (resource) {
+          pushBlock(scopeMatch[1] === "member" ? resource.base + resource.memberPath : resource.base, null, null, null, true);
+        } else pushBlock("");
+        continue;
+      }
+
       // resources :a, :b, :only => [...] — may span multiple lines (trailing comma).
       // Expand each resource into its full RESTful route set so member paths
       // (`/duties/:id`) exist for cross-tier matching — not just the collection
@@ -913,7 +1057,9 @@ export const rubySpec: RegexLangSpec = {
         const actionMap = singular ? SINGULAR_ACTION_MAP : RAILS_ACTION_MAP;
         const { only, except } = parseActionFilter(stmt);
         // Take the leading :symbol list, before any option (only:/except:/=>).
-        const beforeOpts = stmt.slice(resourcesMatch[1].length).split(/\b(?:only|except|controller|module|path|as)\b|=>/)[0];
+        const beforeOpts = stmt.slice(resourcesMatch[1].length).split(/\b(?:only|except|controller|module|path|as|param)\b|=>/)[0];
+        // `param: :inbox_id` renames the member's `:id`.
+        const memberParam = stmt.match(/\bparam:\s*:(\w+)/)?.[1] ?? "id";
         // `resources :inboxes, module: :assignment_policies` puts its controller in that module.
         const optionModule = stmt.match(/\bmodule:\s*:?['"]?([\w/]+)/)?.[1];
         // `resources :children, controller: 'children'` names the class explicitly.
@@ -928,7 +1074,8 @@ export const rubySpec: RegexLangSpec = {
             optionModule ? [...currentModules(), railsModule(optionModule)] : currentModules(),
           );
           const base = currentPrefix() + "/" + name;
-          frame = { base, controllerClass };
+          const memberPath = singular ? "" : "/:" + memberParam;
+          frame = { base, controllerClass, memberPath };
           // Routes nested in the block hang off one member: `resources
           // :employees do resources :contact_informations end` serves
           // `/employees/:employee_id/contact_informations`.
@@ -939,7 +1086,7 @@ export const rubySpec: RegexLangSpec = {
             // Rails routes `update` on PATCH and on PUT alike.
             for (const method of action === "update" ? ["PATCH", info.method] : [info.method]) {
               routes.push(withGuards({
-                path: base + info.suffix,
+                path: base + info.suffix.replace("/:id", memberPath),
                 httpMethod: method,
                 kind: "api",
                 handler: `${controllerClass}#${action}`,
@@ -977,7 +1124,7 @@ export const rubySpec: RegexLangSpec = {
       const verbMatch = line.match(/^(get|post|put|patch|delete)\s+(?:['"]([^'"]+)['"]|:(\w+))/);
       if (verbMatch) {
         const rawPath = verbMatch[2] ?? verbMatch[3]!;
-        const explicitAction = verbMatch[3] ? line.match(/(?:\baction:|:action\s*=>)\s*:?['"]?(\w+)/)?.[1] : undefined;
+        const explicitAction = line.match(/(?:\baction:|:action\s*=>)\s*:?['"]?(\w+)/)?.[1];
         const target = line.match(/(?:=>|to:)\s*['"]([^'"#]+)#(\w+)['"]/);
         // Inside `resources :children do … end`: `on: :collection` hangs off
         // the collection (`/children/presence`), `on: :member` off one member
@@ -992,6 +1139,9 @@ export const rubySpec: RegexLangSpec = {
         if (target) {
           controller = target[1];
           action = target[2];
+        } else if (explicitAction && resource) {
+          // `get 'preview/:token', action: :preview_status` inside a resources block.
+          handler = `${resource.controllerClass}#${explicitAction}`;
         } else if (rawPath.includes("/")) {
           // Implicit `controller/action` convention (e.g. `get 'absences/vacation_days'`).
           const segs = rawPath.split("/").filter((s) => s && !s.startsWith(":") && !s.startsWith("*"));
@@ -1007,10 +1157,14 @@ export const rubySpec: RegexLangSpec = {
         if (controller && FRAMEWORK_CONTROLLER_RE.test(controller)) continue;
         if (controller && action) handler = `${railsControllerClass(controller, currentModules())}#${action}`;
 
-        const relPath = rawPath.startsWith("/") ? rawPath : "/" + rawPath;
+        // In a collection or member scope a canonical action is the scope's own
+        // path: `delete :destroy` → `DELETE /inbox_members`, `get :show, on: :member` → `/x/:id`.
+        const inScope = (on !== null && resource !== null) || scopeStack[scopeStack.length - 1] === true;
+        const relPath =
+          inScope && verbMatch[3] && CANONICAL_ACTIONS.has(verbMatch[3]) ? "" : rawPath.startsWith("/") ? rawPath : "/" + rawPath;
         const path =
           on && resource
-            ? resource.base + (on === "member" ? "/:id" : "") + relPath
+            ? resource.base + (on === "member" ? resource.memberPath : "") + relPath
             : currentPrefix() + relPath;
 
         routes.push(withGuards({

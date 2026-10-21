@@ -238,6 +238,32 @@ export default new LabelsAPI();`,
     ]);
   });
 
+  it("reads an option the subclass passes to super() over the base's default (`apiVersion: 'v2'`)", async () => {
+    const rows = await project({
+      "api/ApiClient.js": `class ApiClient {
+  constructor(resource, options = {}) {
+    this.apiVersion = \`/api/\${options.apiVersion || 'v1'}\`;
+    this.resource = resource;
+  }
+  get url() { return \`\${this.apiVersion}/\${this.resource}\`; }
+}
+export default ApiClient;`,
+      "api/fixtures.js": `import ApiClient from './ApiClient';
+class FixturesAPI extends ApiClient {
+  constructor() { super('fixtures', { clubScoped: true, apiVersion: 'v2' }); }
+  live() { return axios.get(\`\${this.url}/live\`); }
+}
+export default new FixturesAPI();`,
+      "api/clubs.js": `import ApiClient from './ApiClient';
+class ClubsAPI extends ApiClient {
+  constructor() { super('clubs', { clubScoped: true }); }
+  search() { return axios.get(\`\${this.url}/search\`); }
+}
+export default new ClubsAPI();`,
+    });
+    expect(rows.map((r) => r[0]).sort()).toEqual(["/api/v1/clubs/search", "/api/v2/fixtures/live"]);
+  });
+
   it("keeps one row per subclass when two request the same URL (paperless DocumentService, DocumentNotesService)", async () => {
     const targets = await project({
       "src/base.ts": `

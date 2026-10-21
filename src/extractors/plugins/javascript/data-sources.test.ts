@@ -854,3 +854,20 @@ export const createRematch = async (personId: string, request: R) => {
     expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual(["post requestUri(`rematches/person/${personId}`, 'v3')"]);
   });
 });
+
+describe("Vue defineProps rows", () => {
+  const propsOf = async (src: string) => {
+    const tree = await parseSource(src, "typescript" as any, "x.ts");
+    return new JavaScriptDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "prop").map((d) => d.name);
+  };
+
+  it("names each declared prop, from an object, an array or a type argument", async () => {
+    expect(await propsOf(`defineProps({ club: { type: String, required: true }, 'kick-off': Date, season });`)).toEqual(["club", "kick-off", "season"]);
+    expect(await propsOf(`defineProps(['club', 'league']);`)).toEqual(["club", "league"]);
+    expect(await propsOf(`const props = defineProps<{ club: string; league?: number }>();`)).toEqual(["club", "league"]);
+  });
+
+  it("keeps the macro's own row when nothing names a prop", async () => {
+    expect(await propsOf(`defineProps(Fixture.props);`)).toEqual(["defineProps"]);
+  });
+});

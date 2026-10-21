@@ -274,9 +274,20 @@ export function extractRubyLocalTypes(bodyLines: readonly string[], fn: { params
     if (paramNames.has(name)) return paramFact(fn.params.find((p) => p.name === name));
     return table.get(name) ?? UNKNOWN;
   };
-  for (const raw of bodyLines) {
+  for (let i = 0; i < bodyLines.length; i++) {
+    let raw = bodyLines[i]!;
     if (raw.trimStart().startsWith("#")) continue;
-    const code = codeOf(raw);
+    let code = codeOf(raw);
+    // `builder = PlayerBuilder.new(` with its arguments on the lines below: read the whole call.
+    if (/=\s*[A-Z][\w:]*\.new\s*\($/.test(code.trimEnd())) {
+      let depth = 0;
+      for (let j = i; j < bodyLines.length && j - i <= 20; j++) {
+        const part = j === i ? code : codeOf(bodyLines[j]!);
+        for (const ch of part) depth += ch === "(" ? 1 : ch === ")" ? -1 : 0;
+        if (j > i) { raw += " " + bodyLines[j]!.trim(); code += " " + part.trim(); }
+        if (depth <= 0) { i = j; break; }
+      }
+    }
     for (const m of code.matchAll(BLOCK_PARAMS_RE)) {
       for (const n of m[1]!.split(",")) {
         const name = n.trim().replace(/^[*&]+/, "");
