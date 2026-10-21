@@ -560,10 +560,15 @@ export function synthesizeReferencedTableEntities(
   for (const a of analyses) {
     // A name only a test queries (a mocked `jdbcTemplate`'s argument type) is no table of the schema.
     if (isTestFile(a.filePath, a.language)) continue;
+    // A table the file's own schema changes create, rename or drop (a migration copying
+    // `cars` into `cars_new`, then renaming it) is the schema's to show, as it ends.
+    const ownSchema = new Set(
+      (a.schemaOps ?? []).filter((o) => /table$/.test(o.op)).flatMap((o) => [o.table, ...(o.op === "rename-table" && o.to ? [o.to] : [])]).map((n) => n.split(".").pop()!.toLowerCase()),
+    );
     for (const ds of a.dataSources ?? []) {
       if (ds.kind !== "database") continue;
       const table = ds.entity?.trim();
-      if (!table) continue;
+      if (!table || ownSchema.has(table.toLowerCase())) continue;
       // A real table is a bare SQL identifier. This rejects framework/template
       // noise that leaks into `entity` from dynamic-language data sources
       // (`$el`, `$backdrop` from Vue refs), keeping the Data Model to real tables.

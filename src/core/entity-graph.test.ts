@@ -64,6 +64,22 @@ describe("synthesizeReferencedTableEntities", () => {
     expect(g.nodes.filter((n) => n.orm === "inferred").map((n) => n.name)).toEqual(["audit_log"]);
   });
 
+  it("adds no node for a table the querying migration itself creates, renames or drops", () => {
+    // Real-repo FP: a table rebuild (`CREATE garages_new`, copy, `DROP garages`, `RENAME garages_new TO garages`).
+    const g = graph([]);
+    const rebuild = {
+      ...analysis("migrations/2022-03-02-210038_rebuild_garages/up.sql", ["garages_new", "old_cars", "drivers"]),
+      schemaOps: [
+        { op: "create-table", table: "garages_new", line: 1 },
+        { op: "drop-table", table: "garages", line: 9 },
+        { op: "rename-table", table: "garages_new", to: "garages", line: 10 },
+        { op: "rename-table", table: "cars", to: "old_cars", line: 11 },
+      ],
+    } as FileAnalysis;
+    synthesizeReferencedTableEntities([rebuild], g);
+    expect(g.nodes.map((n) => n.name)).toEqual(["drivers"]);
+  });
+
   it("adds no node for a name only a test queries", () => {
     const g = graph([]);
     synthesizeReferencedTableEntities(

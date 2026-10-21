@@ -42,6 +42,9 @@ DROP TABLE IF EXISTS x, y CASCADE;
     expect(v("db/migration/V1_2__x.sql")).toBe("1.2");
     expect(v("migrations/000002_add.up.sql")).toBe("2");
     expect(v("migrations/20240101120000_init.sql")).toBe("20240101120000");
+    // Diesel: one directory per migration.
+    expect(v("migrations/sqlite/2022-03-02-210038_rebuild_garages/up.sql")).toBe("20220302210038");
+    expect(v("migrations/sqlite/2022-03-02-210038_rebuild_garages/down.sql")).toBeNull();
     expect([v("db/U10__x.sql"), v("db/R__views.sql"), v("migrations/000002_add.down.sql"), v("db/schema.sql")]).toEqual([null, null, null, null]);
   });
 });

@@ -12,7 +12,7 @@ import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } 
  *
  * Project-wide, a directory of versioned migrations — Flyway `V2__x.sql`,
  * `0002_x.sql`, golang-migrate `000002_x.up.sql`, timestamped
- * `20240101120000_x.sql` — is replayed in version order (`V10` after `V2`;
+ * `20240101120000_x.sql`, Prisma and Diesel directories — is replayed in version order (`V10` after `V2`;
  * down / undo scripts and Flyway repeatables never) into the schema it ends
  * with: an ALTER-added column joins its table, a FK added later is an edge,
  * a dropped table is gone, a table dropped and created again is one node —
@@ -191,14 +191,16 @@ export function migrationVersion(filePath: string): bigint[] | null {
 /**
  * Where a migration sits in its chain: the chain (the directory holding the
  * versioned scripts) and its version. Prisma keeps one script per directory,
- * versioned by the directory (`migrations/20230101000000_init/migration.sql`).
+ * versioned by the directory (`migrations/20230101000000_init/migration.sql`),
+ * and so does Diesel (`migrations/2023-01-01-000000_init/up.sql`).
  */
 function migrationSlot(filePath: string): { chain: string; version: bigint[] } | null {
   const parts = filePath.split("/");
   const base = parts[parts.length - 1]!;
-  if (base === "migration.sql" && parts.length >= 3) {
-    const dir = /^(\d+)_/.exec(parts[parts.length - 2]!);
-    return dir ? { chain: parts.slice(0, -2).join("/") + "/", version: [BigInt(dir[1]!)] } : null;
+  // Diesel: `migrations/2022-03-02-210038_update_cars/up.sql`, its `down.sql` beside it never.
+  if ((base === "migration.sql" || base === "up.sql") && parts.length >= 3) {
+    const dir = /^(\d[\d-]*)_/.exec(parts[parts.length - 2]!);
+    return dir ? { chain: parts.slice(0, -2).join("/") + "/", version: [BigInt(dir[1]!.replace(/-/g, ""))] } : null;
   }
   const version = fileVersion(base);
   return version ? { chain: parts.slice(0, -1).join("/") + "/", version } : null;
