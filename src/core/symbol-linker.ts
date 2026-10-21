@@ -1448,7 +1448,7 @@ function buildMemberTypes(analyses: FileAnalysis[]): Map<string, Map<string, Inj
       const add = (rawName: string, type: string | null, qualifier: string | undefined, overwrite: boolean): void => {
         const name = nameKey(a.language, rawName);
         if (!overwrite && members.has(name)) return;
-        const typeName = receiverTypeName(type, a.language);
+        const typeName = aliasedType(a, receiverTypeName(type, a.language));
         // A member injected by key alone (dry-auto_inject `Import["repo"]`,
         // Swift `@Injected(\.repo) var repo`) has no declared type — its
         // registration decides everything.
@@ -1503,6 +1503,17 @@ function handedType(child: ClassInfo, base: ClassInfo, field: string): string | 
   if (!passed) return null;
   const ctor = child.methods.find((m) => isConstructor(m, child) && m.params.some((p) => p.name === passed));
   return ctor?.params.find((p) => p.name === passed)?.type ?? null;
+}
+
+/**
+ * The type an alias import names (`using LocalClubs = League.Interfaces.IClubRepository;`,
+ * Kotlin `import league.ClubRepository as Clubs`): the qualified source's last
+ * segment, when the file imports the name as an alias of a type.
+ */
+function aliasedType(a: FileAnalysis, typeName: string | null): string | null {
+  if (!typeName) return typeName;
+  const imp = a.imports.find((i) => !i.isNamespace && i.specifiers.length === 1 && i.specifiers[0] === typeName && /^[\w.]+\.[A-Z]\w*$/.test(i.source));
+  return imp ? imp.source.slice(imp.source.lastIndexOf(".") + 1) : typeName;
 }
 
 /** Key of a class within a file: `file\0className`. */
@@ -3200,7 +3211,19 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
   if (files.length > 1 && new Set(files.map((f) => f.slice(0, f.lastIndexOf("/") + 1))).size === 1) {
     return pickDefinition(typeName, files, sourceFile, declOf, languageOf);
   }
-  return null;
+  // A namespace import (`using League.Clubs.Interfaces;`) names the directory a
+  // definition sits in where folders mirror namespaces: the one it names.
+  const named = files.length > 1 && source ? files.filter((f) => importsDirectoryOf(source, f)) : [];
+  return named.length === 1 ? named[0]! : null;
+}
+
+/** Whether a namespace the source imports is the file's directory, read with dots (`League.Clubs/Interfaces/X.cs`). */
+function importsDirectoryOf(source: FileAnalysis, file: string): boolean {
+  const dir = file.slice(0, file.lastIndexOf("/")).replace(/\//g, ".");
+  return source.imports.some((i) => {
+    const ns = i.source.replace(/[\\/:]+/g, ".").replace(/^\.+|\.+$/g, "");
+    return ns.includes(".") && (dir === ns || dir.endsWith(`.${ns}`));
+  });
 }
 
 /**

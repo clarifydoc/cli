@@ -19,8 +19,17 @@ export class CSharpImportExportExtractor extends ImportExportExtractor {
     let source = "";
     let alias: string | null = null;
 
+    // `using Alias = Namespace.Type;` — the grammar spells the alias as an
+    // identifier before `=` (no `name_equals` node in every version).
+    const eq = node.children.findIndex((c) => c.type === "=");
+    if (eq > 0) {
+      const name = node.children.slice(0, eq).reverse().find((c) => c.type === "identifier");
+      if (name) alias = name.text;
+    }
+
     // Walk children to extract the namespace via AST rather than text regex
-    for (const child of node.children) {
+    for (const [i, child] of node.children.entries()) {
+      if (eq > 0 && i < eq) continue;
 
       // "static" keyword
       if (child.text === "static") {
