@@ -33,6 +33,9 @@ export const phpReachability = conventionReachability({
     [/^(?:resources\/views|templates?|views?)\//, "view template"],
     [/^app\/(?:Console\/Commands|Policies|Listeners|Observers|View\/Components|Livewire|Providers)\//, "discovered by the framework"],
     [/^application\/(?:controllers|config|hooks|views|language)\//, "routed / loaded by CodeIgniter"],
+    // `subclass_prefix` (`MY_` by default): `MY_Form_validation` replaces the
+    // framework's class wherever `form_validation` is loaded — no file names it.
+    [/^application\/(?:core|libraries)\/[A-Z][A-Z0-9]*_[A-Z]\w*\.php$/, "CodeIgniter subclass-prefix extension"],
   ],
   entryDecorators:
     /^(?:Route|AsCommand|AsController|AsEventListener|AsMessageHandler|AsTwigComponent|AsLiveComponent|AsCronTask|AsPeriodicTask|ApiResource|Autoconfigure|AsDecorator|AsTaggedItem)\b/,

@@ -202,11 +202,12 @@ export function extractVueInteractiveElements(
     const line = (beforeMatch.match(/\n/g)?.length ?? 0) + 1;
 
     // Find @event bindings
-    const eventRegex = /@([a-zA-Z][a-zA-Z0-9.-]*)(?:="([^"]*)")?/g;
+    // A handler may be single-quoted when it holds a double quote: `@click='pick("striker")'`.
+    const eventRegex = /@([a-zA-Z][a-zA-Z0-9.-]*)(?:="([^"]*)"|='([^']*)')?/g;
     let eventMatch: RegExpExecArray | null;
     while ((eventMatch = eventRegex.exec(attrs)) !== null) {
       const event = `@${eventMatch[1]}`;
-      const handler = eventMatch[2] || null;
+      const handler = eventMatch[2] || eventMatch[3] || null;
       const element = resolveVueElementType(tagName);
       elements.push({
         element,
@@ -218,14 +219,14 @@ export function extractVueInteractiveElements(
     }
 
     // Find v-on: bindings
-    const vonRegex = /v-on:([a-zA-Z]+)(?:="([^"]*)")?/g;
+    const vonRegex = /v-on:([a-zA-Z]+)(?:="([^"]*)"|='([^']*)')?/g;
     let vonMatch: RegExpExecArray | null;
     while ((vonMatch = vonRegex.exec(attrs)) !== null) {
       const vonElement = resolveVueElementType(tagName);
       elements.push({
         element: vonElement,
         event: `@${vonMatch[1]}`,
-        handler: vonMatch[2] || null,
+        handler: vonMatch[2] || vonMatch[3] || null,
         line,
         ...(vonElement === "custom" ? { component: tagName } : {}),
       });

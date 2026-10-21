@@ -943,3 +943,35 @@ describe("linkApiCallsToRoutes — an unresolved mount is not an endpoint", () =
     expect(links).toEqual([]);
   });
 });
+
+describe("route aliases", () => {
+  const ci = (path: string, aliases: string[]): RouteInfo & { filePath: string } => ({
+    ...route("application/controllers/ajax/garage.php", null as unknown as string, path, "car", 1),
+    httpMethod: null,
+    aliases,
+  });
+
+  it("joins a call that carries the segments a method binds, onto the one route", () => {
+    const r = ci("/ajax/garage/car", ["/ajax/garage/car/{car_id}"]);
+    const { links } = linkApiCallsToRoutesDetailed([apiCall("public/js/garage.js", "GET", "/ajax/garage/car/${id}")], [r]);
+    expect(links).toHaveLength(1);
+    expect(links[0]!.routePath).toBe("/ajax/garage/car");
+  });
+
+  it("lets a literal segment fill an alias argument only when nothing matched as written", () => {
+    const download = ci("/admin/garage/download", ["/admin/garage/download/{kind}"]);
+    const manual = { ...ci("/admin/garage/download/manual", []), handler: "manual" };
+    const calls = [apiCall("views/garage.php", "GET", "/admin/garage/download/brochure", 1), apiCall("views/garage.php", "GET", "/admin/garage/download/manual", 2)];
+    const { links } = linkApiCallsToRoutesDetailed(calls, [download, manual]);
+    expect(links.map((l) => [l.sourceLine, l.routePath, l.confidence])).toEqual([
+      [1, "/admin/garage/download", "INFERRED"],
+      [2, "/admin/garage/download/manual", "INFERRED"],
+    ]);
+  });
+
+  it("matches a route-table alias as the route's own path", () => {
+    const r = ci("/showroom/index", ["/autos"]);
+    const { links } = linkApiCallsToRoutesDetailed([apiCall("views/home.php", "GET", "/autos")], [r]);
+    expect(links[0]?.routePath).toBe("/showroom/index");
+  });
+});

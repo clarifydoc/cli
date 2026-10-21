@@ -117,7 +117,7 @@ describe("JVM — Spring Data / JDBC", () => {
 });
 
 describe("PHP — PDO / Eloquent", () => {
-  const php = (body: string) => sourcesOf(`<?php\nclass C {\n  public function m() {\n${body}\n  }\n}`, "php", "C.php", () => new PhpDataSourceExtractor());
+  const php = (body: string) => sourcesOf(`<?php\nnamespace App\\Models;\nclass C {\n  public function m() {\n${body}\n  }\n}`, "php", "C.php", () => new PhpDataSourceExtractor());
 
   it("classifies instance and static model calls", async () => {
     const s = await php(`    $pdo->fetchAll();\n    $model->save();\n    Player::create([]);\n    Player::find(1);`);

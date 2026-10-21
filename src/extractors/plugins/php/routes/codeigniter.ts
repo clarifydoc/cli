@@ -1,10 +1,10 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { RouteInfo, Language, RouteParamBinding, RouteParamInfo } from "../../../../types/analysis.js";
+import type { RouteInfo, Language, RouteParamBinding, RouteParamInfo, RouteFact } from "../../../../types/analysis.js";
 import type { RouteExtractor } from "../../../routes/base.js";
 import { route } from "../../../routes/base.js";
 import { findChildByType } from "../../../shared/node-helpers.js";
 import { extractCalls } from "../../../shared/call-graph.js";
-import { applyRouteMeta } from "../../../shared/route-metadata.js";
+import { applyRouteMeta, type GuardAttr } from "../../../shared/route-metadata.js";
 
 /**
  * CodeIgniter convention-based routing.
@@ -31,13 +31,83 @@ import { applyRouteMeta } from "../../../shared/route-metadata.js";
  *
  * Parameters: CI passes the URI segments after the method name as the
  * method's arguments (`/photos/archive/5` → `archive($id)`), so every
- * signature parameter binds from the route (inferred — the path template
- * never spells them). What the body reads through the input class is
- * appended: `$this->input->post('x')` → form, `->get('x')` → query,
- * CI4 `$this->request->getJSON()` / `getVar('x')` → body,
- * `getHeaderLine('X')` → header. CI has no auth layer of its own, so `auth`
- * stays absent.
+ * signature parameter binds from the route (inferred). The path stays the
+ * method's own; each run of segments the signature binds is an alias
+ * (`/api/photos/archive/{id}`), so a call that carries an id joins the one
+ * route. What the body reads through the input class is appended:
+ * `$this->input->post('x')` → form, `->get('x')` → query, CI4
+ * `$this->request->getJSON()` / `getVar('x')` → body, `getHeaderLine('X')`
+ * → header.
+ *
+ * Auth: CI has no auth layer of its own, but an app guards a whole
+ * controller from its constructor — `$this->is_logged_in()` there runs
+ * before every method — so a login/permission check the constructor calls
+ * is each route's guard.
+ *
+ * `config/routes.php` remaps URIs onto controllers
+ * (`$route['clubs'] = 'club/list'`): each entry is a `ci:route` fact, which
+ * `codeigniterRoutesResolver` turns into an alias of the route it names.
  */
+
+export const CI_ROUTE_FACT = "ci:route";
+
+/** One `$route['from'] = 'to'` entry: both as written, `(:any)` / `(:num)` / `$1` kept. */
+export interface CiRouteAlias {
+  from: string;
+  to: string;
+}
+
+/** `$route['clubs/(:num)'] = "club/view/$1";` — the reserved keys configure, they do not alias. */
+const ROUTES_ENTRY_RE = /^[ \t]*\$route\[\s*(['"])([^'"]+)\1\s*\]\s*=\s*(['"])([^'"]+)\3\s*;/gm;
+const RESERVED_ROUTE_KEYS = new Set(["default_controller", "404_override", "translate_uri_dashes"]);
+
+function extractRouteTable(sourceText: string, facts: RouteFact[]): void {
+  for (const m of sourceText.matchAll(ROUTES_ENTRY_RE)) {
+    if (RESERVED_ROUTE_KEYS.has(m[2]!)) continue;
+    const line = sourceText.slice(0, m.index).split("\n").length;
+    facts.push({ kind: CI_ROUTE_FACT, line, data: { from: m[2]!, to: m[4]! } satisfies CiRouteAlias });
+  }
+}
+
+/** A method name that checks the caller in: `is_logged_in`, `require_login`, `check_permission`, `authenticate`. */
+const GUARD_NAME_RE = /logged_?in|login|auth|permission|access|admin_only|restrict/i;
+
+/** The guards a controller's constructor (`__construct` or the PHP4 class-named one) calls on itself. */
+function constructorGuards(cls: Node, className: string): GuardAttr[] {
+  const body = cls.childForFieldName("body") ?? findChildByType(cls, "declaration_list");
+  const ctor = body?.children.find((m) => m.type === "method_declaration" && /^(?:__construct)$/i.test(m.childForFieldName("name")?.text ?? "")
+    || (m.type === "method_declaration" && (m.childForFieldName("name")?.text ?? "").toLowerCase() === className));
+  const ctorBody = ctor?.childForFieldName("body");
+  if (!ctorBody) return [];
+  const out: GuardAttr[] = [];
+  const walk = (n: Node): void => {
+    let name: string | undefined;
+    if (n.type === "member_call_expression" && n.childForFieldName("object")?.text === "$this") name = n.childForFieldName("name")?.text;
+    else if (n.type === "function_call_expression" && n.childForFieldName("function")?.type === "name") name = n.childForFieldName("function")?.text;
+    if (name && GUARD_NAME_RE.test(name) && !out.some((g) => g.text === name)) out.push({ text: name });
+    for (const c of n.namedChildren) walk(c);
+  };
+  walk(ctorBody);
+  return out;
+}
+
+/**
+ * Each run of leading signature parameters as further URI segments:
+ * `/a/b/{id}`, `/a/b/{id}/{page}`. `index` takes them only after its own
+ * name (`/a/index/{page}` — `/a/5` asks for a method `5`), and answers at
+ * `/a/index` too.
+ */
+function segmentAliases(path: string, params: RouteParamInfo[], isIndex: boolean): string[] {
+  const base = isIndex ? `${path}/index` : path;
+  const out = isIndex ? [base] : [];
+  let tail = "";
+  for (const p of params) {
+    if (p.binding !== "route") continue;
+    tail += `/{${p.name}}`;
+    out.push(base + tail);
+  }
+  return out;
+}
 
 /** CI3 `$this->input->…` and CI4 `$this->request->…` accessors, with the binding each reads. */
 const INPUT_ACCESSORS: ReadonlyArray<[RegExp, RouteParamBinding, string | null]> = [
@@ -94,7 +164,7 @@ const NON_ROUTE_METHODS: ReadonlySet<string> = new Set<string>([
 ]);
 
 /** `application/controllers/api/photos.php` → `api/photos`; null if not a controller. */
-function controllerBase(filePath: string): string | null {
+export function controllerBase(filePath: string): string | null {
   const posix = filePath.replace(/\\/g, "/");
   // Laravel controllers live under `app/Http/Controllers/` — routed by the
   // `Route::` facade, not by CI's URL-from-path convention. Without this veto
@@ -128,8 +198,9 @@ function collectClassDeclarations(node: Node, out: Node[]): void {
 export const codeigniterRouteExtractor: RouteExtractor = {
   languages: ["php"] as Language[],
 
-  extractRoutes(tree: Tree, _sourceText: string, filePath?: string): RouteInfo[] {
+  extractRoutes(tree: Tree, sourceText: string, filePath?: string, facts?: RouteFact[]): RouteInfo[] {
     if (!filePath) return [];
+    if (facts && /(?:^|\/)config\/routes\.php$/i.test(filePath) && sourceText.includes("$route[")) extractRouteTable(sourceText, facts);
     const base = controllerBase(filePath);
     if (!base) return [];
 
@@ -142,6 +213,7 @@ export const codeigniterRouteExtractor: RouteExtractor = {
       const body =
         cls.childForFieldName("body") ?? findChildByType(cls, "declaration_list");
       if (!body) continue;
+      const guards = constructorGuards(cls, className);
 
       for (const member of body.children) {
         if (member.type !== "method_declaration") continue;
@@ -156,19 +228,21 @@ export const codeigniterRouteExtractor: RouteExtractor = {
 
         const path = lower === "index" ? `/${base}` : `/${base}/${name}`;
         const mbody = member.childForFieldName("body");
-        routes.push(
-          applyRouteMeta(
-            route({
-              path,
-              httpMethod: null, // CI dispatches all HTTP verbs to one URI
-              kind: "api",
-              handler: name,
-              line: member.startPosition.row + 1,
-              calls: mbody ? extractCalls(mbody, "php") : [],
-            }),
-            { params: ciParams(member, mbody) },
-          ),
+        const params = ciParams(member, mbody);
+        const r = applyRouteMeta(
+          route({
+            path,
+            httpMethod: null, // CI dispatches all HTTP verbs to one URI
+            kind: "api",
+            handler: name,
+            line: member.startPosition.row + 1,
+            calls: mbody ? extractCalls(mbody, "php") : [],
+          }),
+          { params, inheritedGuards: guards },
         );
+        const aliases = segmentAliases(path, params, lower === "index");
+        if (aliases.length > 0) r.aliases = aliases;
+        routes.push(r);
       }
     }
 

@@ -188,3 +188,11 @@ describe("apiDocGeneratorOf / htmlPreprocess", () => {
     expect(htmlPreprocess(page)).toBeNull();
   });
 });
+
+describe("directory guard pages", () => {
+  it("skips the 403 stub a framework drops into each folder, never a real page", () => {
+    const guard = "<html>\n<head>\n\t<title>403 Forbidden</title>\n</head>\n<body>\n<p>Directory access is forbidden.</p>\n</body>\n</html>";
+    expect(htmlPreprocess(guard)).toEqual({ skip: "directory guard page (403 Forbidden)" });
+    expect(htmlPreprocess('<title>403 Forbidden</title><p>No entry to the pit lane.</p><a href="/garage">Back</a>')).toBeNull();
+  });
+});

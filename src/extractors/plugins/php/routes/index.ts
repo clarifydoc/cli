@@ -1,5 +1,5 @@
 import type { Tree } from "web-tree-sitter";
-import type { RouteInfo } from "../../../../types/analysis.js";
+import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { RouteExtractor } from "../../../routes/base.js";
 import { codeigniterRouteExtractor } from "./codeigniter.js";
 import { extractLaravelRoutes } from "./laravel.js";
@@ -16,7 +16,7 @@ import { extractSymfonyAttributeRoutes } from "./symfony.js";
 export const phpRouteExtractor: RouteExtractor = {
   languages: ["php"],
 
-  extractRoutes(tree: Tree, sourceText: string, filePath?: string): RouteInfo[] {
+  extractRoutes(tree: Tree, sourceText: string, filePath?: string, facts?: RouteFact[]): RouteInfo[] {
     const routes: RouteInfo[] = [];
     if (sourceText.includes("Route::")) {
       // Laravel mounts routes/api.php under /api by convention — the prefix
@@ -27,7 +27,7 @@ export const phpRouteExtractor: RouteExtractor = {
     if (/#\[\s*(?:[\w\\]+\\)?(Route|Get|Post|Put|Patch|Delete)\b/.test(sourceText)) {
       extractSymfonyAttributeRoutes(tree.rootNode, routes);
     }
-    routes.push(...codeigniterRouteExtractor.extractRoutes(tree, sourceText, filePath));
+    routes.push(...codeigniterRouteExtractor.extractRoutes(tree, sourceText, filePath, facts));
     return routes;
   },
 };

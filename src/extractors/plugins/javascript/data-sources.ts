@@ -863,7 +863,12 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         // Object-config calls (axios({url}), Kubb request({url})) are captured by
         // the request-descriptor `object` branch below.
         const isRoot = isHttpRoot(fnName);
-        const isVerb = HTTP_VERBS.has(fnName.toLowerCase());
+        // jQuery's Ajax shorthands on the global itself — `$.get(url, data, cb)`,
+        // `$.post(…)`, `jQuery.getJSON(…)` — are requests whatever follows the
+        // URL; the trailing callback is the success handler, not a route handler.
+        // `$('#x').get(0)` is a selection's DOM getter: its receiver is a call.
+        const jqueryVerb = jqueryShorthandVerb(fn, fnName);
+        const isVerb = HTTP_VERBS.has(fnName.toLowerCase()) || !!jqueryVerb;
         // A verb call on a known HTTP-client receiver (`axios.get`,
         // `apiClient.post`, `this.http.delete`) is itself a strong HTTP signal —
         // trust it like a named root so the URL-shape check is relaxed and a
@@ -873,11 +878,11 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         // `request.params.get('page')` in a test predicate as a GET to "page".
         const recvRoot = fn && fn.type === "member_expression" ? memberRoot(fn) : null;
         const recv = fn && fn.type === "member_expression" ? directReceiver(fn) : null;
-        const trustedReceiver = !!recv && (HTTP_RECEIVER_RE.test(recv) || /client$/i.test(recv));
+        const trustedReceiver = !!jqueryVerb || (!!recv && (HTTP_RECEIVER_RE.test(recv) || /client$/i.test(recv)));
         // `app.get("/x", handler)` / `router.post(...)` are inbound route
         // definitions (already captured as routes), not outbound calls — exclude.
         // So is a route decorator: NestJS `@Get('public/:id')` is a call too.
-        if ((isRoot || isVerb) && fn && !isServerRouteDef(fn, node, this.serverRouterReceivers()) && node.parent?.type !== "decorator") {
+        if ((isRoot || isVerb) && fn && (!!jqueryVerb || !isServerRouteDef(fn, node, this.serverRouterReceivers())) && node.parent?.type !== "decorator") {
           const args = node.childForFieldName("arguments");
           let firstArg = args && args.childCount > 1 ? args.child(1) : null;
           // Bare HTTP verbs (`get`/`post`/...) collide with `Map.get`,
@@ -906,7 +911,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           const trusted = exactRoot || trustedReceiver;
           // `http.request('POST', url)` / `this.http.request('GET', url)`:
           // the verb comes first and the URL second.
-          let callName = fnName;
+          let callName = jqueryVerb ?? fnName;
           const positional = args?.namedChildren.filter((a) => a.type !== "comment") ?? [];
           if (trusted && fnName.toLowerCase() === "request" && positional.length > 1) {
             const verb = literalString(positional[0]!);
@@ -943,8 +948,12 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           const urlEvidence = trusted
             ? !!resolved && looksLikeUrl(resolved.url)
             : !!resolved && urlShaped(resolved.url) && !(recv && this.isCollectionReceiver(recv));
+          // A jQuery shorthand is trusted for a URL held in a variable or built
+          // by a helper, but a literal must still read as one: `$.get('x')` is not.
+          const literalNonUrl = !!jqueryVerb && firstArg?.type === "string" && !urlEvidence;
           if (
             resolved != null &&
+            !literalNonUrl &&
             (urlEvidence || (trusted && (!argIsCall || strictHttp)))
           ) {
             sources.push(this.ds({
@@ -957,7 +966,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
               // The client instance (`apiClient.get(...)`): its base URL is
               // prepended by a project pass. Library roots (`axios`, `fetch`)
               // are not instances.
-              ...(recvRoot && /^[A-Za-z_$][\w$]*$/.test(recvRoot) && !HTTP_ROOTS.has(recvRoot.toLowerCase())
+              ...(recvRoot && /^[A-Za-z_$][\w$]*$/.test(recvRoot) && !HTTP_ROOTS.has(recvRoot.toLowerCase()) && !GLOBAL_RECEIVERS.has(recvRoot)
                 ? { client: recvRoot }
                 : {}),
               // Flag only AMBIGUOUS provenance — a conflicting binding — so a
@@ -1348,7 +1357,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           !method &&
           node.parent?.type === "arguments" &&
           (looksLikeUrl(url) || isParamHole(url, node)) &&
-          REQUEST_KEYS.some((k) => hasProp(node, k));
+          (REQUEST_KEYS.some((k) => hasProp(node, k)) || isJQueryAjax(node.parent.parent?.childForFieldName("function") ?? null));
         if (method || requestShaped) {
           // The instance the descriptor is handed to (`apiClient.get({ url })`,
           // hey-api's `(options?.client ?? client).get(…)`): its base is prepended later.
@@ -1787,6 +1796,24 @@ const REQUEST_KEYS = ["data", "body", "params", "headers", "dataType", "contentT
 
 /** Globals an HTTP root may hang off: jQuery's `$.ajax`, `window.fetch`. */
 const GLOBAL_RECEIVERS = new Set(["$", "jQuery", "window", "globalThis", "self"]);
+
+/** jQuery's Ajax shorthands → the HTTP method each sends (`getScript` loads code, `load` fills a selection). */
+const JQUERY_SHORTHANDS = new Map([["get", "get"], ["post", "post"], ["getJSON", "get"]]);
+
+/** The method of a jQuery Ajax shorthand called on the global itself (`$.post`, `jQuery.getJSON`), else null. */
+function jqueryShorthandVerb(fn: Node | null, leaf: string): string | null {
+  if (fn?.type !== "member_expression") return null;
+  const obj = fn.childForFieldName("object");
+  if (obj?.type !== "identifier" || (obj.text !== "$" && obj.text !== "jQuery")) return null;
+  return JQUERY_SHORTHANDS.get(leaf) ?? null;
+}
+
+/** `$.ajax` / `jQuery.ajax`: whatever descriptor it is handed is a request (a GET when it names no `type`). */
+function isJQueryAjax(fn: Node | null): boolean {
+  if (fn?.type !== "member_expression" || fn.childForFieldName("property")?.text !== "ajax") return false;
+  const obj = fn.childForFieldName("object");
+  return obj?.type === "identifier" && (obj.text === "$" || obj.text === "jQuery");
+}
 
 /** A receiver named like an HTTP client: `http`, `$http`, `httpClient`, `axios`, `$axios`, `api`, `apiService`, `requests`. */
 const HTTP_RECEIVER_RE = /^\$?(http|axios|ky|got|api|request|requests)(client|service)?$/i;

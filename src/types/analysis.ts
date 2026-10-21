@@ -1005,6 +1005,13 @@ export interface RouteInfo {
   prefixUnresolved?: string;
   /** Id of the project-level resolver that created or rewrote this row. */
   resolvedBy?: string;
+  /**
+   * API routes only: further paths the same endpoint answers at, which the
+   * cross-tier linker matches like `path` — the URI segments a CodeIgniter
+   * method binds as arguments (`/sync/photo/{sync_id}`), an alias a route
+   * table maps onto it (`/clubs` → `club/list`). One endpoint, one row.
+   */
+  aliases?: string[];
 }
 
 /** A call passing at least one path literal to a function (see `FileAnalysis.pathArgCalls`). */

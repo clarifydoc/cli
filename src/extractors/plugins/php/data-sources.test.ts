@@ -96,6 +96,7 @@ ${body}
  */
 async function eloquentRowsOf(body: string): Promise<DataSourceInfo[]> {
   const src = `<?php
+namespace App\\Http\\Controllers;
 class R {
   function q(Player $player) {
 ${body}
@@ -124,9 +125,88 @@ describe("Eloquent chain rows", () => {
     expect(rows[1]!.target).toBe("Club");
   });
 
-  it("keeps the SQL text as a PDO target", async () => {
+  it("reads a PDO query's table from its SQL, once per chain", async () => {
     const rows = await eloquentRowsOf(`    $rows = $pdo->query('SELECT * FROM cars')->fetchAll();`);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.name).toBe("$pdo->query('SELECT * FROM cars')->fetchAll");
+    expect(rows.map((r) => [r.name, r.target, r.entity, r.access])).toEqual([["$pdo->query", "cars", "cars", "read"]]);
+  });
+});
+
+describe("CodeIgniter raw SQL, library handles and verb-sharing calls", () => {
+  it("names every table a `$this->db->query(…)` statement touches, literals concatenated", async () => {
+    const rows = await dbSourcesOf(`    $this->db->query(" UPDATE laps l INNER JOIN driver_laps dl ON dl.lap_id = l.id SET l.valid = 0");
+    $this->db->query("SELECT * FROM garages WHERE owner_id ='".$owner_id."' AND open = 1");
+    $sql = "x"; $this->db->query($sql);
+    $this->db->query(<<<SQL
+DELETE FROM pit_stops WHERE race_id = {$race}
+SQL);`);
+    expect(rows.map((r) => [r.name, r.target, r.access, r.joined ?? false])).toEqual([
+      ["$this->db->query", "laps", "write", false],
+      ["$this->db->query", "driver_laps", "read", true],
+      ["$this->db->query", "garages", "read", false],
+      ["$this->db->query", "pit_stops", "write", false],
+    ]);
+  });
+
+  it("reads a library's `get_instance()` handle as the query builder", async () => {
+    const rows = await dbSourcesOf(`    $this->CI->db->delete('cart_rows');
+    $query = $this->CI->db->where('active', 1)->get('mechanics');
+    $CI =& get_instance(); $CI->db->insert('invoices', $row);
+    get_instance()->db->truncate('sessions');`);
+    expect(rows.map((r) => [r.target, r.access])).toEqual([
+      ["cart_rows", "write"],
+      ["mechanics", "read"],
+      ["invoices", "write"],
+      ["sessions", "write"],
+    ]);
+  });
+
+  it("drops no-SQL text and verb-sharing calls in a file no model can be imported into", async () => {
+    const rows = await dbSourcesOf(`    $page = $this->input->get('page');
+    $writer->save($path);
+    $this->price_model->get($id);
+    $nodes = $xpath->query("//table/tr");
+    $rows = $stmt->fetchAll();`);
+    expect(rows.map((r) => r.name)).toEqual(["$stmt->fetchAll"]);
+  });
+});
+
+describe("curl URLs from the file's constants", () => {
+  it("reads a define()d or class constant base concatenated with a runtime path", async () => {
+    const src = `<?php
+define('FLEET_API_URL', "https://api.fleet.example");
+// define('FLEET_API_URL', "https://staging.fleet.example");
+class Fleet_api {
+  const TOKEN_URL = 'https://auth.fleet.example/token';
+  function call($endpoint, $query) {
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, FLEET_API_URL.$endpoint.'?'.http_build_query($query));
+    curl_exec($ch);
+    $t = curl_init(self::TOKEN_URL);
+    curl_exec($t);
+    $u = curl_init();
+    curl_setopt($u, CURLOPT_URL, $endpoint);
+    curl_exec($u);
+  }
+}`;
+    const tree = await parseSource(src, "php" as any, "application/libraries/fleet_api.php");
+    const calls = new PhpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call").map((d) => d.target);
+    expect(calls).toEqual(["https://api.fleet.example{$endpoint}?{…}", "https://auth.fleet.example/token", null]);
+  });
+});
+
+describe("CodeIgniter writes name their table", () => {
+  it("records the table a query-builder write targets", async () => {
+    const { PhpMutationExtractor } = await import("./data-mutations.js");
+    const src = `<?php
+class Cars_model extends CI_Model {
+  function save($row) {
+    $this->db->insert('cars', $row);
+    $this->db->where('id', 1)->delete('pit_stops p');
+    $this->CI->db->update($table, $row);
+  }
+}`;
+    const tree = await parseSource(src, "php" as any, "application/models/cars_model.php");
+    const targets = new PhpMutationExtractor().extract(tree, src).filter((m) => m.kind === "db-write").map((m) => m.target);
+    expect(targets).toEqual(["cars", "pit_stops", "$this->CI->db->update"]);
   });
 });

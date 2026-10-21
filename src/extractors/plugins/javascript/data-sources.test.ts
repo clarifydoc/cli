@@ -447,6 +447,63 @@ describe("JS api-call trust: only a real client is believed without a URL", () =
   });
 });
 
+describe("jQuery Ajax shorthands", () => {
+  it("reads `$.get` / `$.post` / `jQuery.getJSON` with a success callback as requests (real-repo FP)", async () => {
+    const calls = await apiCallsOf(`
+      $(document).ready(function () {
+        $('.btn-club-remove').click(function () {
+          var rowId = $(this).attr('data-row');
+          $.get('/ajax/club/remove', { row_id: rowId }, function (data) {
+            $('.row-' + rowId).remove();
+          });
+        });
+        function sendTransfer() {
+          $.post('/ajax/transfer/send', { player_id: $('#player').val() }, function (data) {});
+        }
+        jQuery.getJSON('/ajax/league/table', function (table) {});
+        $.post(\`/ajax/club/\${clubId}/crest\`, form);
+      });`);
+    expect(calls.map((c) => [c.name, c.target, c.line])).toEqual([
+      ["get", "/ajax/club/remove", 5],
+      ["post", "/ajax/transfer/send", 10],
+      ["get", "/ajax/league/table", 12],
+      ["post", "/ajax/club/${clubId}/crest", 13],
+    ]);
+    // The global is not a client instance whose base URL a project pass prepends.
+    expect(calls.every((c) => !("client" in c) || c.client === undefined)).toBe(true);
+    // A POST's data argument is its body.
+    expect(calls[1]!.requestBody).toBeDefined();
+  });
+
+  it("follows a URL held in a variable", async () => {
+    const calls = await apiCallsOf(`
+      var url = '/ajax/garage/cars';
+      $.get(url, {}, function (data) {});`);
+    expect(calls.map((c) => [c.name, c.target])).toEqual([["get", "/ajax/garage/cars"]]);
+  });
+
+  it("leaves a selection's DOM getter, a non-URL literal and getScript alone", async () => {
+    const calls = await apiCallsOf(`
+      var first = $('.player').get(0);
+      $('#squad').find('li').get(2);
+      $.get('standings', function () {});
+      $.getScript('/js/league-widget.js');
+      $.get(0);`);
+    expect(calls).toEqual([]);
+  });
+
+  it("reads a bare \`$.ajax({ url })\` as a request (jQuery's default GET)", async () => {
+    const calls = await apiCallsOf(`
+      $.ajax({ url: '/ajax/match/live' });
+      jQuery.ajax({ url: '/ajax/match/report', type: 'POST' });
+      notify({ url: '/docs' });`);
+    expect(calls.map((c) => [c.name, c.target])).toEqual([
+      ["request", "/ajax/match/live"],
+      ["post", "/ajax/match/report"],
+    ]);
+  });
+});
+
 describe("JS request descriptors and positional request()", () => {
   it("reads jQuery's `type` and Node's `path`, but only beside a real verb", async () => {
     const calls = await apiCallsOf(`

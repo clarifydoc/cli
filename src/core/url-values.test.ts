@@ -23,6 +23,12 @@ describe("parseAddress", () => {
     expect(parseAddress("fleet:5102")).toEqual({ host: "fleet", port: 5102, path: "" });
   });
 
+  it("ends the host where a runtime part starts, and names none for a runtime host", () => {
+    expect(parseAddress("https://api.garage.example{$endpoint}")?.host).toBe("api.garage.example");
+    expect(parseAddress("https://api.garage.example${path}")?.host).toBe("api.garage.example");
+    expect(parseAddress("https://${host}/cars")).toBeNull();
+  });
+
   it("knows the machine itself", () => {
     for (const h of ["localhost", "127.0.0.1", "0.0.0.0", "[::1]", "+", "*"]) expect(isLoopbackHost(h), h).toBe(true);
     expect(isLoopbackHost("cars")).toBe(false);

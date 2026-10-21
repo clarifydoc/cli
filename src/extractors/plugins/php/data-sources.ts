@@ -1,10 +1,15 @@
 import type { Node } from "web-tree-sitter";
-import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
+import { dbAccessFor, dbVerbTable, sqlVerbAccess } from "../shared/db-access.js";
+import { statementAccesses } from "../shared/sql-string-sources.js";
 import type { DataSourceInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 
-/** A CodeIgniter Query Builder receiver — `$this->db`, including fluent chains. */
-const CI_DB_RECEIVER = /\$this\s*->\s*db\b/;
+/**
+ * A CodeIgniter Query Builder receiver, including fluent chains: `$this->db`
+ * in a controller or model, and the `get_instance()` handle a library keeps —
+ * `$this->CI->db`, `$CI->db`, `get_instance()->db`.
+ */
+export const CI_DB_RECEIVER = /^(?:\$this\s*->\s*(?:_?ci\s*->\s*)?|\$_?ci\s*->\s*|get_instance\(\s*\)\s*->\s*)db\b/i;
 
 /**
  * Laravel facades that are NOT Eloquent models but share its verb names
@@ -132,9 +137,102 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
    * calls in noise (photo-booth: 398 of 431 "api calls" were curl/file plumbing).
    */
   private curlUrls = new Map<string, string>();
+  /** String constants the file defines: `define('API_URL', "https://…")`, `const API_URL = '…'`. */
+  private constants = new Map<string, string>();
+  /**
+   * The file declares a namespace or imports one. An Eloquent model is only
+   * reachable that way, so a verb-sharing call in a file that does neither
+   * (`$this->input->get('page')`, `$writer->save($path)` in CodeIgniter or
+   * plain PHP) is no model access — unless its receiver is a PDO handle.
+   */
+  private namespaced = false;
 
-  override beginFile(): void {
+  override beginFile(_tree: unknown, sourceText: string): void {
     this.curlUrls = new Map();
+    this.constants = new Map();
+    this.namespaced = /^\s*(?:namespace\s+[\w\\]+|use\s+\\?[A-Z][\w\\]*)/m.test(sourceText);
+    if (!sourceText.includes("define") && !sourceText.includes("const")) return;
+    for (const m of sourceText.matchAll(/^[ \t]*(?:define\(\s*(['"])(\w+)\1\s*,|(?:(?:public|protected|private)\s+)?const\s+(\w+)\s*=)\s*(['"])([^'"\n]*)\4/gm)) {
+      const name = (m[2] ?? m[3])!;
+      // The first definition wins, as PHP's does (a later `define` of one name is a warning).
+      if (!this.constants.has(name)) this.constants.set(name, m[5]!);
+    }
+  }
+
+  /**
+   * A URL argument as an expression: literals and the file's constants as
+   * written, variables as `{$name}` runtime parts, any other operand a `{…}`
+   * hole — `AFTERPAY_URL.$endpoint` → `https://api.example.com{$endpoint}`.
+   * Null unless it starts with a literal or a known constant.
+   */
+  private urlExprAt(node: Node, index: number): string | null {
+    const arg = node.childForFieldName("arguments")?.children.filter((c) => c.type === "argument")[index];
+    const expr = arg?.namedChildren[arg.namedChildren.length - 1];
+    if (!expr) return null;
+    const parts: Array<{ text: string; known: boolean }> = [];
+    const visit = (n: Node): void => {
+      if (n.type === "binary_expression" && n.childForFieldName("operator")?.text === ".") {
+        visit(n.childForFieldName("left")!);
+        visit(n.childForFieldName("right")!);
+      } else if (n.type === "parenthesized_expression" && n.namedChildren[0]) {
+        visit(n.namedChildren[0]);
+      } else if (n.type === "string" || n.type === "encapsed_string") {
+        parts.push({ text: n.text.replace(/^['"]|['"]$/g, ""), known: true });
+      } else if (n.type === "name" && this.constants.has(n.text)) {
+        parts.push({ text: this.constants.get(n.text)!, known: true });
+      } else if (n.type === "class_constant_access_expression" && /^(?:self|static)::/.test(n.text) && this.constants.has(n.text.replace(/^\w+::/, ""))) {
+        parts.push({ text: this.constants.get(n.text.replace(/^\w+::/, ""))!, known: true });
+      } else {
+        parts.push({ text: n.type === "variable_name" ? `{${n.text}}` : "{…}", known: false });
+      }
+    };
+    visit(expr);
+    if (!parts[0]?.known || !parts[0].text) return null;
+    return parts.map((p) => p.text).join("");
+  }
+
+  /**
+   * The SQL text of a call's first argument: its literals concatenated, every
+   * other operand a `?` placeholder (`"… WHERE id ='".$id."'"`). Null when
+   * it names no table.
+   */
+  private sqlText(node: Node): string | null {
+    const arg = node.childForFieldName("arguments")?.children.find((c) => c.type === "argument");
+    const expr = arg?.namedChildren[arg.namedChildren.length - 1];
+    if (!expr) return null;
+    let text = "";
+    const visit = (n: Node): void => {
+      if (n.type === "binary_expression" && n.childForFieldName("operator")?.text === ".") {
+        visit(n.childForFieldName("left")!);
+        visit(n.childForFieldName("right")!);
+      } else if (n.type === "string" || n.type === "encapsed_string" || n.type === "heredoc" || n.type === "nowdoc") {
+        text += n.type === "heredoc" || n.type === "nowdoc"
+          ? n.namedChildren.filter((c) => /body|string_content|string_value/.test(c.type)).map((c) => c.text).join(" ")
+          : n.text.replace(/^['"]|['"]$/g, "");
+      } else {
+        text += "?";
+      }
+    };
+    visit(expr);
+    return statementAccesses(text).length > 0 ? text : null;
+  }
+
+  /** One `database` row per table (or routine) the call's SQL text names. */
+  private pushSqlRows(node: Node, callText: string, line: number, sources: DataSourceInfo[]): void {
+    const sql = this.sqlText(node);
+    if (!sql) return;
+    for (const hit of statementAccesses(sql)) {
+      const access = hit.routine ? undefined : sqlVerbAccess(hit.verb);
+      sources.push(this.ds({
+        kind: "database",
+        name: callText,
+        target: hit.table,
+        ...(hit.routine ? { routine: true as const } : { entity: hit.table }),
+        ...(access ? { access } : {}),
+        ...(hit.joined ? { joined: true as const } : {}),
+        line,
+      }));
+    }
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
@@ -159,7 +257,7 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
       // curl: the session's URL is recorded where it's configured; the ONE
       // api-call is emitted at curl_exec — the actual request.
       if (fnName === "curl_init") {
-        const url = this.firstStringArg(node);
+        const url = this.urlExprAt(node, 0);
         const handle = curlInitHandle(node);
         if (url && handle) this.curlUrls.set(handle, url);
         return;
@@ -167,7 +265,7 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
       if (fnName === "curl_setopt" || fnName === "curl_setopt_array") {
         const handle = this.argText(node, 0);
         const url = fnName === "curl_setopt"
-          ? (this.argText(node, 1) === "CURLOPT_URL" ? this.stringArgAt(node, 2) : null)
+          ? (this.argText(node, 1) === "CURLOPT_URL" ? this.urlExprAt(node, 2) : null)
           : (node.text.match(/CURLOPT_URL\s*=>\s*['"]([^'"]+)['"]/)?.[1] ?? null);
         if (handle && url) this.curlUrls.set(handle, url);
         return;
@@ -240,6 +338,11 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
       // (an entity-less `database` source is dropped), so the model method that
       // runs the query reaches the table in the Call Traces view.
       if (CI_DB_RECEIVER.test(recvText)) {
+        // `$this->db->query("UPDATE tickets t INNER JOIN …")`: raw SQL, every table it names.
+        if (method === "query") {
+          this.pushSqlRows(node, callText, line, sources);
+          return;
+        }
         if (CI_TABLE_VERBS.has(method)) {
           const table = this.cleanTable(this.firstStringArg(node));
           if (table) {
@@ -273,13 +376,25 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
       // project-wide in `PhpEntityExtractor.reconcileProject`, which knows
       // which classes are models and which relation names reach which.
       if (PHP_INSTANCE_VERBS.has(method)) {
+        // PDO `query`/`exec`/`prepare` with SQL text: a row per table it names,
+        // even inside a chain (`$pdo->query('SELECT …')->fetchAll()`, whose
+        // outer verb then adds nothing). Text that is no SQL
+        // (`$xpath->query("//table/tr")`) is no data access.
+        if (PDO_SQL_VERBS.has(method) && this.sqlText(node) !== null) {
+          this.pushSqlRows(node, callText, line, sources);
+          return;
+        }
+        // A literal that is no SQL (`$xpath->query("//table/tr")`) names no table.
+        if (PDO_SQL_VERBS.has(method) && this.firstStringArg(node) !== null) return;
+        if (/->\s*(?:query|exec|prepare)\(\s*['"]/.test(recvText) && /^fetch/.test(method)) return;
         if (continuesEloquentChain(node)) return;
         // `$request->all()`, `$request->query('page')`: the HTTP request's input, not a model.
         if (REQUEST_INPUT_VERBS.has(method) && objNode && isHttpRequest(objNode, node)) return;
+        if (!this.namespaced && !PDO_HANDLE_RE.test(callText)) return;
         sources.push(this.ds({
           kind: "database",
           name: callText,
-          target: PDO_SQL_VERBS.has(method) ? (this.firstStringArg(node) ?? null) : null,
+          target: null,
           line,
           ...phpAccess(method),
         }));
@@ -452,6 +567,9 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
     return /^[A-Za-z_]\w*$/.test(t) ? t : null;
   }
 }
+
+/** A PDO / mysqli handle or statement by its conventional name: `$pdo->query`, `$stmt->fetchAll()`. */
+const PDO_HANDLE_RE = /^\$(?:pdo|db|dbh|conn|connection|stmt|statement|sth|mysqli|link)\b|->(?:query|exec|prepare|fetchAll|fetch)$/i;
 
 /** Methods the HTTP request shares with Eloquent/PDO verbs: reads of its input. */
 const REQUEST_INPUT_VERBS: ReadonlySet<string> = new Set(["all", "get", "query", "exists"]);

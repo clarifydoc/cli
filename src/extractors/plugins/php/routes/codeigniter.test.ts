@@ -110,3 +110,76 @@ class Photos extends CI_Controller {
     for (const r of routes) expect(r.auth).toBeUndefined();
   });
 });
+
+describe("CodeIgniter URI segments, constructor guards and routes.php", () => {
+  it("aliases the segments a method binds, so a call carrying an id joins the one route", async () => {
+    const routes = await routesOf(`<?php
+class Garage extends CI_Controller {
+  function index($page = 1) {}
+  function car($car_id) {}
+  function service($car_id, $visit = null) {}
+  function list_all() {}
+}`, "application/controllers/ajax/garage.php");
+    const by = Object.fromEntries(routes.map((r) => [r.path, r.aliases ?? []]));
+    expect(by["/ajax/garage"]).toEqual(["/ajax/garage/index", "/ajax/garage/index/{page}"]);
+    expect(by["/ajax/garage/car"]).toEqual(["/ajax/garage/car/{car_id}"]);
+    expect(by["/ajax/garage/service"]).toEqual(["/ajax/garage/service/{car_id}", "/ajax/garage/service/{car_id}/{visit}"]);
+    expect(by["/ajax/garage/list_all"]).toEqual([]);
+  });
+
+  it("guards every method with the login check the constructor calls", async () => {
+    const routes = await routesOf(`<?php
+class Fleet extends Base_Controller {
+  function Fleet() {
+    parent::__construct();
+    $this->is_manager_logged_in();
+    $this->load->model('cars_model');
+  }
+  function index() {}
+  function view($id) {}
+}`, "application/controllers/admin/fleet.php");
+    expect(routes.map((r) => r.middleware)).toEqual([["is_manager_logged_in"], ["is_manager_logged_in"]]);
+    expect(routes[0]!.auth).toMatchObject({ inherited: true, anonymous: false });
+    const open = await routesOf(`<?php
+class Showroom extends CI_Controller {
+  function __construct() { parent::__construct(); $this->load->helper('url'); }
+  function index() {}
+}`, "application/controllers/showroom.php");
+    expect(open[0]!.middleware).toEqual([]);
+    expect(open[0]!.auth).toBeUndefined();
+  });
+
+  it("reads config/routes.php entries as facts and aliases the routes they name", async () => {
+    const { codeigniterRoutesResolver } = await import("./codeigniter-resolver.js");
+    const table = `<?php
+$route['default_controller'] = "showroom";
+$route['autos'] = "showroom/index";
+$route['werkstatt'] = 'garage/service';
+$route['cars/(:num)'] = "garage/car/$1";
+$route['nowhere'] = "missing/thing";
+`;
+    const facts: import("../../../../types/analysis.js").RouteFact[] = [];
+    const tree = await parseSource(table, "php" as any, "application/config/routes.php");
+    phpRouteExtractor.extractRoutes(tree, table, "application/config/routes.php", facts);
+    expect(facts.map((f) => f.data)).toEqual([
+      { from: "autos", to: "showroom/index" },
+      { from: "werkstatt", to: "garage/service" },
+      { from: "cars/(:num)", to: "garage/car/$1" },
+      { from: "nowhere", to: "missing/thing" },
+    ]);
+    const showroom = await routesOf(`<?php class Showroom extends CI_Controller { function index() {} }`, "application/controllers/showroom.php");
+    const garage = await routesOf(`<?php class Garage extends CI_Controller { function car($id) {} function service() {} }`, "application/controllers/garage.php");
+    const analyses = [
+      { filePath: "application/config/routes.php", routes: [], routeFacts: facts },
+      { filePath: "application/controllers/showroom.php", routes: showroom },
+      { filePath: "application/controllers/garage.php", routes: garage },
+    ] as unknown as import("../../../../types/analysis.js").FileAnalysis[];
+    codeigniterRoutesResolver.resolve(analyses, {} as never);
+    const aliases = analyses.flatMap((a) => a.routes).map((r) => [r.path, r.aliases ?? []]);
+    expect(aliases).toEqual([
+      ["/showroom", ["/showroom/index", "/autos"]],
+      ["/garage/car", ["/garage/car/{id}", "/cars/{p1}"]],
+      ["/garage/service", ["/werkstatt"]],
+    ]);
+  });
+});

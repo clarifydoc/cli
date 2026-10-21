@@ -260,3 +260,23 @@ class LoginRequest extends FormRequest {
     expect(cls!.properties).toEqual([]);
   });
 });
+
+describe("conditional declarations", () => {
+  it("reads the helper idiom: functions and classes inside a top-level `if (!…_exists())`", async () => {
+    const src = `<?php
+if (!function_exists('lap_time')) {
+  function lap_time($ms) { return format_ms($ms); }
+}
+if (!function_exists('pit_stop')):
+  function pit_stop() {}
+endif;
+if (PHP_VERSION_ID > 80000) { function grid_a() {} } elseif (true) { function grid_b() {} } else { function grid_c() {} }
+if (!class_exists('Gearbox')) { class Gearbox { function shift() {} } }
+function warm_up() { if (true) { function never_top_level() {} } }
+`;
+    const tree = await parseSource(src, "php" as any, "application/helpers/race_helper.php");
+    const ex = new PhpExtractor();
+    expect(ex.extractFunctions(tree, src).map((f) => f.name)).toEqual(["lap_time", "pit_stop", "grid_a", "grid_b", "grid_c", "warm_up"]);
+    expect(ex.extractClasses(tree, src).map((c) => c.name)).toEqual(["Gearbox"]);
+  });
+});

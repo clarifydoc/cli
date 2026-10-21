@@ -58,6 +58,26 @@ export const phpCallHooks: CallExtractionHooks = {
     },
   }),
 
+  // `$this->load->view('clubs/edit', $data)` (CodeIgniter 3, also through a
+  // library's `$this->CI->load`) and CI4's `view('clubs/edit')` render a view
+  // by name: `CodeIgniterViewResolver` joins the key to that template.
+  keyOf(node) {
+    let name: string | undefined;
+    if (node.type === "member_call_expression") {
+      if (node.childForFieldName("name")?.text !== "view" || !/->\s*load$/.test(node.childForFieldName("object")?.text ?? "")) return null;
+      name = "view";
+    } else if (node.type === "function_call_expression") {
+      if (node.childForFieldName("function")?.text !== "view") return null;
+      name = "view";
+    }
+    if (!name) return null;
+    const arg = node.childForFieldName("arguments")?.namedChildren.find((c) => c.type === "argument")?.namedChildren[0];
+    if (!arg || (arg.type !== "string" && arg.type !== "encapsed_string")) return null;
+    const view = arg.text.replace(/^['"]|['"]$/g, "").replace(/\.php$/, "");
+    // Laravel's `view('shop.catalog')` names a Blade template in dot notation: not this.
+    return /^[\w/-]+$/.test(view) ? `ci-view:${view}` : null;
+  },
+
   // `app(Mailer::class)->send()`, `$container->get(Mailer::class)->send()`,
   // `(new Mailer)->send()`: the receiver expression names its own type.
   receiverTypeOf(node) {

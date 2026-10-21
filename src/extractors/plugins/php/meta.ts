@@ -13,6 +13,9 @@ import { PhpDataSourceExtractor } from "./data-sources.js";
 import { PhpMutationExtractor } from "./data-mutations.js";
 import { PhpEntityExtractor } from "./entities.js";
 import { phpRouteExtractor } from "./routes/index.js";
+import { codeigniterRoutesResolver } from "./routes/codeigniter-resolver.js";
+import { phpViewKey, readPhpView } from "./views.js";
+import { CodeIgniterViewResolver } from "./view-resolver.js";
 import { phpRequestSchema } from "./request-schema.js";
 import { phpReachability } from "./reachability.js";
 import { phpDiBindings } from "./di.js";
@@ -35,6 +38,14 @@ export const phpMeta: LanguagePluginMeta = {
   reachability: phpReachability,
   ...phpManifest,
   routes: phpRouteExtractor,
+  // `config/routes.php` aliases onto the CodeIgniter convention routes they name.
+  routeResolvers: [codeigniterRoutesResolver],
+  // A controller's `$this->load->view('x')` reaches that template.
+  dispatchResolvers: [new CodeIgniterViewResolver()],
+  // A plain-PHP view template (`views/**.php`, not Blade) is read for the page
+  // around its code: forms, links, inline AJAX and the screen (views.ts).
+  preprocess: (rawSource, relativePath) =>
+    phpViewKey(relativePath) === null ? null : { sourceText: rawSource, language: "php", postExtract: (analysis, raw) => readPhpView(analysis, raw) },
   functionsClasses: new PhpExtractor(),
   importsExports: new PhpImportExportExtractor(),
   dataSources: new PhpDataSourceExtractor(),

@@ -1,6 +1,6 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import { receiverTypeName } from "../../shared/type-parser.js";
-import { RELATIVE_SCOPE_RE } from "./data-sources.js";
+import { CI_DB_RECEIVER, RELATIVE_SCOPE_RE } from "./data-sources.js";
 import type {
   ClassInfo,
   DataSourceInfo,
@@ -1012,10 +1012,10 @@ export class PhpEntityExtractor extends EntityExtractor {
 
 /** CodeIgniter, PDO and Laravel's non-model facades keep their rows as emitted. */
 const NON_ELOQUENT_ROW_RE =
-  /^\$this\s*->\s*db\b|^(?:DB|Schema|Cache|Redis)::|^\$(?:pdo|db|dbh|conn|connection|stmt|statement|sth|mysqli|link)\b|->(?:query|exec|prepare|fetchAll|fetch)$/i;
+  /^(?:DB|Schema|Cache|Redis)::|^\$(?:pdo|db|dbh|conn|connection|stmt|statement|sth|mysqli|link)\b|->(?:query|exec|prepare|fetchAll|fetch)$/i;
 
 function isEloquentCandidate(name: string): boolean {
-  return !NON_ELOQUENT_ROW_RE.test(name);
+  return !NON_ELOQUENT_ROW_RE.test(name) && !CI_DB_RECEIVER.test(name);
 }
 
 /** Innermost class whose line range holds `line`, and the method inside it. */

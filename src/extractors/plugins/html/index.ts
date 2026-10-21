@@ -57,10 +57,20 @@ export function apiDocGeneratorOf(source: string): string | null {
   return null;
 }
 
-/** Content-sniffing preprocess: skip pages that are generated API reference. */
+/**
+ * A directory guard: the stub `index.html` a framework drops into every
+ * folder so a misconfigured server lists nothing (CodeIgniter's "403
+ * Forbidden — Directory access is forbidden."). It is no page of the app.
+ */
+function isDirectoryGuard(source: string): boolean {
+  return source.length < 1024 && /<title>\s*403 Forbidden\s*<\/title>/i.test(source) && !/<(?:a|form|script|button|input)\b/i.test(source);
+}
+
+/** Content-sniffing preprocess: skip pages that are generated API reference, and directory guards. */
 export function htmlPreprocess(rawSource: string): { skip: string } | null {
   const generator = apiDocGeneratorOf(rawSource);
-  return generator ? { skip: `generated API documentation (${generator})` } : null;
+  if (generator) return { skip: `generated API documentation (${generator})` };
+  return isDirectoryGuard(rawSource) ? { skip: "directory guard page (403 Forbidden)" } : null;
 }
 
 // ─── Route (the page itself) ────────────────────────────────────────────────

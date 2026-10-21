@@ -73,3 +73,18 @@ describe("PHP calls", () => {
     expect(extractCalls(body, "php").map((c) => c.name)).toEqual(["find_player", "new Report", "\\App\\fmt"]);
   });
 });
+
+describe("PHP includes under an application root constant", () => {
+  it("reads APPPATH / BASEPATH / ABSPATH paths as tails the resolver matches by suffix", async () => {
+    expect(await imports(`<?php
+require_once APPPATH.'/libraries/gearbox/Gearbox.php';
+include BASEPATH . 'helpers/race_helper.php';
+require_once(ABSPATH . 'wp-admin/includes/pit.php');
+require APPPATH . $dir . '/x.php';
+`)).toEqual([
+      ["libraries/gearbox/Gearbox.php", 2],
+      ["helpers/race_helper.php", 3],
+      ["wp-admin/includes/pit.php", 4],
+    ]);
+  });
+});

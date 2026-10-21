@@ -171,6 +171,15 @@ const INCLUDE_TYPES = new Set(["require_expression", "require_once_expression", 
 const SELF_DIR = "\0";
 
 /**
+ * A directory the application defines at bootstrap — CodeIgniter's
+ * `APPPATH` / `BASEPATH` / `FCPATH`, WordPress's `ABSPATH`. Where it points
+ * is set at runtime, so a path under it is known only as a tail: resolved by
+ * the one file whose path ends with it.
+ */
+const APP_ROOT = "\u0001";
+const APP_ROOT_CONSTANTS = new Set(["APPPATH", "BASEPATH", "FCPATH", "ROOTPATH", "SYSTEMPATH", "WRITEPATH", "ABSPATH", "BASE_PATH", "APP_PATH", "ROOT_PATH"]);
+
+/**
  * The path an include operand spells: `./x.php` / `../x.php` when anchored on
  * the file's own directory, the literal path otherwise (PHP looks it up on the
  * include_path, then beside the including script). Null for an absolute path
@@ -188,7 +197,12 @@ function includePath(operand: Node): string | null {
     const prefix = up === 0 ? "." : Array(up).fill("..").join("/");
     return prefix + rest;
   }
-  if (raw.includes(SELF_DIR) || raw.startsWith("/") || /^[A-Za-z]:[\\/]/.test(raw) || !/\.[A-Za-z0-9]+$/.test(raw)) return null;
+  if (raw.startsWith(APP_ROOT)) {
+    // `APPPATH.'/libraries/x.php'` → `libraries/x.php`, matched by path suffix.
+    const rest = raw.slice(APP_ROOT.length).replace(/^\/+/, "");
+    return !rest.includes(APP_ROOT) && !rest.includes(SELF_DIR) && /\.[A-Za-z0-9]+$/.test(rest) ? rest : null;
+  }
+  if (raw.includes(SELF_DIR) || raw.includes(APP_ROOT) || raw.startsWith("/") || /^[A-Za-z]:[\\/]/.test(raw) || !/\.[A-Za-z0-9]+$/.test(raw)) return null;
   return raw.replace(/^\.\//, "");
 }
 
@@ -219,7 +233,7 @@ function staticPath(n: Node): string | null {
       return a === null || b === null ? null : a + b;
     }
     case "name":
-      return n.text === "__DIR__" ? SELF_DIR : null;
+      return n.text === "__DIR__" ? SELF_DIR : APP_ROOT_CONSTANTS.has(n.text) ? APP_ROOT : null;
     case "function_call_expression": {
       // dirname(__FILE__) is the file's directory; dirname(__DIR__, n) climbs n.
       if (n.childForFieldName("function")?.text.toLowerCase() !== "dirname") return null;

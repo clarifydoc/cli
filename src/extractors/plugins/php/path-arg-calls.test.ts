@@ -146,6 +146,7 @@ class TransferController {
 
   it("does not read the HTTP request's input as a database access", async () => {
     const rows = await sourcesOf(`<?php
+namespace App\\Http\\Controllers;
 class PlayerController {
     public function store(Request $request, StorePlayerRequest $form, $req) {
         $a = $request->all();

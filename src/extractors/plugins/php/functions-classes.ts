@@ -66,6 +66,8 @@ export class PhpExtractor extends FunctionClassExtractor {
         // `namespace X { … }` — the braced form nests declarations one level down.
         const block = child.childForFieldName("body") ?? this.findChildByType(child, "compound_statement");
         if (block) this.collectFunctions(block, functions);
+      } else if (child.type === "if_statement") {
+        for (const block of conditionalBlocks(child)) this.collectFunctions(block, functions);
       }
     }
   }
@@ -82,6 +84,8 @@ export class PhpExtractor extends FunctionClassExtractor {
       } else if (child.type === "namespace_definition") {
         const block = child.childForFieldName("body") ?? this.findChildByType(child, "compound_statement");
         if (block) this.collectClasses(block, classes);
+      } else if (child.type === "if_statement") {
+        for (const block of conditionalBlocks(child)) this.collectClasses(block, classes);
       }
     }
   }
@@ -717,5 +721,21 @@ function extractLocalTypes(
   };
   walk(body);
   for (const [name, froms] of fromCalls) if (!seen.has(name)) for (const from of froms) out.push({ name, type: "", from });
+  return out;
+}
+
+/**
+ * The blocks of a top-level `if` that declares conditionally — the helper
+ * idiom `if (!function_exists('money')) { function money() { … } }` and
+ * `if (!class_exists('Club')) { class Club { … } }`: the then-block, each
+ * `elseif`/`else` block, braced or `if (): … endif;`. What they declare is
+ * declared at file scope once the branch runs.
+ */
+function conditionalBlocks(node: Node): Node[] {
+  const out: Node[] = [];
+  for (const c of node.children) {
+    if (c.type === "compound_statement" || c.type === "colon_block") out.push(c);
+    else if (c.type === "else_clause" || c.type === "else_if_clause") out.push(...conditionalBlocks(c));
+  }
   return out;
 }

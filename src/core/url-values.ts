@@ -29,7 +29,9 @@ export interface ParsedAddress {
 
 /** Host, port and path of an address `urlValue` kept. */
 export function parseAddress(url: string): ParsedAddress | null {
-  const m = /^(?:([a-z][a-z0-9+.-]*):\/\/)?(\[[^\]]+\]|[^/:?#]+)(?::(\d{1,5}))?([^?#]*)/i.exec(url.trim());
+  // A host that is itself a runtime value (`https://${host}/x`) names none.
+  if (/^[a-z][a-z0-9+.-]*:\/\/[{$]/i.test(url.trim())) return null;
+  const m = /^(?:([a-z][a-z0-9+.-]*):\/\/)?(\[[^\]]+\]|[^/:?#{$]+)(?::(\d{1,5}))?([^?#]*)/i.exec(url.trim());
   if (!m || !m[2]) return null;
   const scheme = m[1]?.toLowerCase();
   const port = m[3] ? Number(m[3]) : scheme === "http" ? 80 : scheme === "https" ? 443 : undefined;

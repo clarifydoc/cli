@@ -62,4 +62,52 @@ describe("Vue template events", () => {
       "2 @click editInjuryOrSuspension('Menu')",
     ]);
   });
+
+  it("reads a binding past an arrow function in a `:ref` (real-repo FP)", () => {
+    const template = `
+  <button
+    :ref="(el) => registerShirt(player.index, el)"
+    type="button"
+    :class="{ 'squad__shirt--active': player.index === activeIndex }"
+    :aria-current="player.index === activeIndex ? 'true' : undefined"
+    @click="selectPlayer(player.index)"
+  >
+    <img :src="player.photoUrl" alt="" />
+  </button>`;
+    const src = `<template>${template}</template>`;
+    expect(extractVueInteractiveElements(template, src).map((e) => `${e.line} ${e.element} ${e.event} ${e.handler}`)).toEqual([
+      "2 button @click selectPlayer(player.index)",
+    ]);
+  });
+
+  it("keeps both arrows of a pager whose `v-if` compares with `>` (real-repo FP)", () => {
+    const template = `
+  <div class="lineup">
+    <button
+      v-if="substitutes.length > 1"
+      type="button"
+      @click="step(-1)"
+    >prev</button>
+    <PlayerCard :player="current" />
+    <button
+      v-if="substitutes.length > 1"
+      type="button"
+      @click="step(1)"
+    >next</button>
+  </div>`;
+    const src = `<template>${template}</template>`;
+    expect(extractVueInteractiveElements(template, src).map((e) => `${e.line} ${e.element} ${e.event} ${e.handler}`)).toEqual([
+      "3 button @click step(-1)",
+      "9 button @click step(1)",
+    ]);
+  });
+
+  it("reads a single-quoted handler that holds double quotes", () => {
+    const template = `<button @click='pick("striker")'>Pick</button><a v-on:click='open("league")'>League</a>`;
+    const src = `<template>${template}</template>`;
+    expect(extractVueInteractiveElements(template, src).map((e) => `${e.event} ${e.handler}`)).toEqual([
+      `@click pick("striker")`,
+      `@click open("league")`,
+    ]);
+  });
 });
