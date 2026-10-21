@@ -12,6 +12,7 @@ import type {
   Confidence,
 } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
+import { isApiContractLanguage } from "../extractors/registry.js";
 
 /**
  * Build the project-wide entity-relationship graph rendered in the report's
@@ -199,13 +200,23 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
   const nameToIds = new Map<string, string[]>();
   const projectOf = new Map<string, string>();
 
+  // An API contract split into several documents (one spec, then one per tag
+  // group) repeats each schema in each: one node per name and shape in a sub-project.
+  const contractSchemas = new Set<string>();
+
   // ── Pass 1: nodes (entities / tables / enums) ──
   for (const a of analyses) {
+    const contract = isApiContractLanguage(a.language);
     for (const cls of a.classes ?? []) {
       const decs = cls.decorators ?? [];
       const isEntity = decs.includes("entity") || decs.includes("table");
       const isEnum = decs.includes("enum");
       if (!isEntity && !isEnum) continue;
+      if (contract) {
+        const shape = `${a.projectId ?? "root"}\0${cls.name}\0${(cls.properties ?? []).map((p) => `${p.name}:${p.type ?? ""}`).join(",")}`;
+        if (contractSchemas.has(shape)) continue;
+        contractSchemas.add(shape);
+      }
 
       const id = `${a.filePath}::${cls.name}`;
       if (nodes.has(id)) continue;

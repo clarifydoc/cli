@@ -1,5 +1,6 @@
 import { extractRubyScheduledJobs } from "./scheduled-jobs.js";
 import { addJobDispatchCalls, extractJobQueueSources } from "./active-job.js";
+import { addScopeMethods, extractModelSelfQueries } from "./model-scopes.js";
 import type { CallInfo, RouteInfo, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCallsFromBody, extractClassesWithSpec } from "../shared/regex-base.js";
@@ -608,10 +609,11 @@ function extractRubyDataSources(lines: string[], classes: readonly ClassInfo[] =
 
 export const rubySpec: RegexLangSpec = {
   language: "ruby",
-  extensions: [".rb", ".rake"],
+  extensions: [".rb", ".rake", ".jbuilder"],
   indentBased: true,
-  // A Rake file's tasks are its own statements: their calls are the file's `<setup>`.
-  topLevelCalls: /\.rake$/,
+  // A Rake file's tasks and a Jbuilder view's statements are the file's own:
+  // their calls are its `<setup>`.
+  topLevelCalls: /\.(?:rake|jbuilder)$/,
   lineCommentPrefixes: ["#"],
 
   functionPatterns: [
@@ -691,6 +693,7 @@ export const rubySpec: RegexLangSpec = {
     if (classes.length === 0) return classes;
 
     for (const cls of classes) {
+      addScopeMethods(lines, cls);
       separateSingletonMethods(lines, cls);
       typeBareConstructions(lines, cls);
       for (const m of cls.methods) {
@@ -776,7 +779,7 @@ export const rubySpec: RegexLangSpec = {
     return fns;
   },
 
-  extractDataSources: (lines, classes) => [...extractRubyDataSources(lines, classes), ...extractRubyHttpCalls(lines), ...extractJobQueueSources(lines, classes)],
+  extractDataSources: (lines, classes) => [...extractRubyDataSources(lines, classes), ...extractRubyHttpCalls(lines), ...extractJobQueueSources(lines, classes), ...extractModelSelfQueries(lines, classes)],
 
   importPatterns: [
     {

@@ -59,6 +59,13 @@ const adminUri = fn("adminUri", "/api/{version}/{aSubPath}", [
 ]);
 
 describe("resolveUrlBuilders", () => {
+  it("fills a destructured-object helper from the keys the call states", () => {
+    const fixtureSearch = fn("fixtureSearchURL", "${host}/${leagueSlug}/fixtures?{}", []);
+    const calls = [apiCall("fixtureSearchURL({ leagueSlug, page, host: '/api/v1/clubs' })"), apiCall("fixtureSearchURL({ leagueSlug, host: base.url })")];
+    resolveUrlBuilders(calls, [analysis([fixtureSearch])]);
+    expect(calls.map((c) => c.target)).toEqual(["/api/v1/clubs/${leagueSlug}/fixtures?{}", "${base.url}/${leagueSlug}/fixtures?{}"]);
+  });
+
   it("substitutes literal args, dropping the env base and runtime refs to {}", () => {
     const calls = [apiCall("requestUri('teamtalk', 'v4')")];
     const n = resolveUrlBuilders(calls, [analysis([requestUri])]);

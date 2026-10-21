@@ -6,6 +6,7 @@ import { rubyManifest } from "./manifest.js";
 import { RubyEntityExtractor } from "./entities.js";
 import { rubyReachability } from "./reachability.js";
 import { railsRouteAnchor } from "./route-anchor.js";
+import { RailsViewResolver } from "./rails-views.js";
 import { RUBY_REGEX_CONTROL_FLOW } from "./control-flow.js";
 import { RUBY_SECURITY_RULES } from "./security-rules.js";
 
@@ -19,6 +20,8 @@ export const rubyMeta: LanguagePluginMeta = {
   entities: new RubyEntityExtractor(),
   // Rails routes move from config/routes.rb onto the action that serves them.
   routeResolvers: [railsRouteAnchor],
+  // An action renders its Jbuilder view by convention (see rails-views.ts).
+  dispatchResolvers: [new RailsViewResolver()],
   builtinTypes: new Set(COMMON_PRIMITIVES),
   complexity: {
     branchNodes: new Set([

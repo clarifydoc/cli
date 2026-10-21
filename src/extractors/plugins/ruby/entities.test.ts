@@ -61,3 +61,54 @@ end`, "app/controllers/players_controller.rb", "ruby");
     expect(rows(service)).toEqual(["Player.create Player"]);
   });
 });
+
+describe("Ruby concerns and abstract bases are not tables", () => {
+  it("hands a concern's associations to the models that include it", () => {
+    const concern = extractWithRegex(`module Scoreable
+  extend ActiveSupport::Concern
+
+  included do
+    has_many :goals, dependent: :destroy
+  end
+end`, "app/models/concerns/scoreable.rb", "ruby");
+    const base = extractWithRegex(`class ApplicationRecord < ActiveRecord::Base
+  self.abstract_class = true
+end`, "app/models/application_record.rb", "ruby");
+    const match = extractWithRegex(`class Match < ApplicationRecord
+  include Scoreable
+  belongs_to :league
+end`, "app/models/match.rb", "ruby");
+    const goal = extractWithRegex(`class Goal < ApplicationRecord
+  belongs_to :match
+end`, "app/models/goal.rb", "ruby");
+    const entityNames = (a: typeof match) => a.classes.filter((c) => c.decorators.includes("entity")).map((c) => c.name);
+    expect([...entityNames(concern), ...entityNames(base)]).toEqual([]);
+    new RubyEntityExtractor().reconcileProject([concern, base, match, goal]);
+    expect(concern.entityRelations ?? []).toEqual([]);
+    expect((match.entityRelations ?? []).map((r) => `${r.fromEntity}.${r.fromField} -> ${r.toEntity}`).sort()).toEqual([
+      "Match.goals -> Goal",
+      "Match.league -> League",
+    ]);
+  });
+});
+
+describe("Ruby concerns named like a model", () => {
+  it("gives a namespaced concern's associations to no model that only belongs to the same-named model", () => {
+    const concern = extractWithRegex(`module Premium::Concerns::Club
+  extend ActiveSupport::Concern
+
+  included do
+    has_many :sponsors
+  end
+end`, "premium/app/models/premium/concerns/club.rb", "ruby");
+    const club = extractWithRegex(`class Club < ApplicationRecord
+  has_many :players
+end`, "app/models/club.rb", "ruby");
+    const player = extractWithRegex(`class Player < ApplicationRecord
+  belongs_to :club
+end`, "app/models/player.rb", "ruby");
+    new RubyEntityExtractor().reconcileProject([concern, club, player]);
+    const rels = [concern, club, player].flatMap((a) => a.entityRelations ?? []).map((r) => `${r.fromEntity}.${r.fromField} -> ${r.toEntity}`);
+    expect(rels.sort()).toEqual(["Club.players -> Player", "Player.club -> Club"]);
+  });
+});

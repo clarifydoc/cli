@@ -530,11 +530,11 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
       // The method `this.m()` dispatches to from `d`: the first definition up its chain.
       const definer = chainOf(d).find(({ c }) => c.cls.methods.some((m) => m.name === method.name))?.c;
       if (definer !== cls) continue;
-      const t = resolveValue(call.target!, call.filePath, d, 0);
+      const t = collapseEmptySegments(resolveValue(call.target!, call.filePath, d, 0));
       // An abstract middle class (`CacheEnabledApiClient`) leaves a field its own
       // subclasses state through `super(…)`: it requests nothing itself.
       if (awaitsSubclass(t, d)) continue;
-      const alternatives = call.targetAlternatives?.map((a) => resolveValue(a, call.filePath, d, 0));
+      const alternatives = call.targetAlternatives?.map((a) => collapseEmptySegments(resolveValue(a, call.filePath, d, 0)));
       if (t === call.target && !alternatives?.some((a, i) => a !== call.targetAlternatives![i])) continue;
       // One row per subclass even when two request the same URL: each is its
       // own subclass's request (`DocumentService` and `DocumentNotesService`
@@ -588,6 +588,11 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     }
   }
   return changed;
+}
+
+/** A field a subclass states as `''` leaves an empty segment (`/api/v1//${id}`): the request goes to `/api/v1/${id}`. */
+function collapseEmptySegments(url: string): string {
+  return url.replace(/([^:/])\/{2,}/g, "$1/");
 }
 
 /** `this.m(args)` in a URL, bare or as a whole `${…}` hole (args without nested parentheses). */

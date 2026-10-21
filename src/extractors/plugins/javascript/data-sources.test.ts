@@ -871,3 +871,20 @@ describe("Vue defineProps rows", () => {
     expect(await propsOf(`defineProps(Fixture.props);`)).toEqual(["defineProps"]);
   });
 });
+
+describe("JS api-call through a local holding a template on the class's base", () => {
+  it("keeps `${this.url}` when the URL is built in a local first", async () => {
+    const ds = await apiCallsOf(`
+      class ClubsAPI extends ApiClient {
+        all(params = {}) {
+          const requestURL = \`\${this.url}?\${buildParams(params)}\`;
+          return axios.get(requestURL);
+        }
+        search(query = '') {
+          const requestURL = \`\${this.url}/search?\${buildParams({ q: query })}\`;
+          return axios.get(requestURL);
+        }
+      }`);
+    expect(ds.map((d) => d.target)).toEqual(["${this.url}?${buildParams(params)}", "${this.url}/search?${buildParams({ q: query })}"]);
+  });
+});

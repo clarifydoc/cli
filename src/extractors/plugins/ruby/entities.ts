@@ -66,6 +66,11 @@ export class RubyEntityExtractor extends EntityExtractor {
     for (const cls of ctx.analysis.classes) {
       const orm = ormByName.get(cls.name);
       if (!orm) continue;
+      const declaration = ctx.lines[cls.line - 1] ?? "";
+      // A concern (`module Reportable` with `has_many :events` in `included do`)
+      // is no table: its associations belong to each model that includes it,
+      // which `reconcileProject` hands them to. An abstract base is no table either.
+      const concern = /^\s*module\s/.test(declaration);
 
       const targets = new Set<string>();
       let body: string[];
@@ -100,6 +105,8 @@ export class RubyEntityExtractor extends EntityExtractor {
         }
       }
 
+      if (concern || body.some((l) => /^\s*self\.abstract_class\s*=\s*true\b/.test(l))) continue;
+
       // An explicit `self.table_name = "x"` overrides the pluralization
       // convention; carry it as a `table:<name>` decorator so the project-level
       // schema join keys on the real table instead of guessing.
@@ -129,6 +136,7 @@ export class RubyEntityExtractor extends EntityExtractor {
    * schema lives in a different file from the models.
    */
   override reconcileProject(analyses: FileAnalysis[]): void {
+    moveConcernRelations(analyses);
     joinSchemaColumns(analyses);
     resolveChainAccesses(analyses);
     dropServiceObjectQueries(analyses);
@@ -765,6 +773,47 @@ function resolveChainAccesses(analyses: FileAnalysis[]): void {
       progress = true;
     }
     if (!progress) break;
+  }
+}
+
+/**
+ * A concern's associations (`has_many :events` in `module Reportable`) are the
+ * including models' own: each model whose class includes the module gets a copy
+ * from itself. A concern no model includes contributes none.
+ */
+function moveConcernRelations(analyses: FileAnalysis[]): void {
+  const ruby = analyses.filter((a) => a.language === "ruby");
+  const entities = new Set<string>();
+  const includers = new Map<string, Array<{ a: FileAnalysis; model: string }>>();
+  for (const a of ruby) {
+    for (const cls of a.classes) {
+      if (!cls.decorators.includes("entity")) continue;
+      entities.add(cls.name);
+      // An entity's `implements` also lists its relations' targets: only the
+      // rest are the modules it mixes in.
+      const targets = new Set((a.entityRelations ?? []).filter((r) => r.fromEntity === cls.name).map((r) => r.toEntity));
+      for (const mixin of cls.implements) {
+        if (targets.has(mixin)) continue;
+        const name = mixin.replace(/^::/, "");
+        includers.set(name, [...(includers.get(name) ?? []), { a, model: cls.name }]);
+      }
+    }
+  }
+  // `include Scoreable` names the concern as declared; a namespaced one is written in full.
+  const includersOf = (concern: string) => includers.get(concern) ?? [];
+  const moved: Array<{ a: FileAnalysis; rel: EntityRelation }> = [];
+  for (const a of ruby) {
+    const rels = a.entityRelations;
+    if (!rels?.some((r) => !entities.has(r.fromEntity))) continue;
+    a.entityRelations = rels.filter((r) => {
+      if (entities.has(r.fromEntity)) return true;
+      for (const inc of includersOf(r.fromEntity)) moved.push({ a: inc.a, rel: { ...r, fromEntity: inc.model } });
+      return false;
+    });
+  }
+  for (const { a, rel } of moved) {
+    const list = (a.entityRelations ??= []);
+    if (!list.some((r) => r.fromEntity === rel.fromEntity && r.fromField === rel.fromField)) list.push(rel);
   }
 }
 

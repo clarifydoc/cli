@@ -264,6 +264,23 @@ export default new ClubsAPI();`,
     expect(rows.map((r) => r[0]).sort()).toEqual(["/api/v1/clubs/search", "/api/v2/fixtures/live"]);
   });
 
+  it("leaves no empty segment when a subclass passes an empty resource", async () => {
+    const rows = await project({
+      "api/ApiClient.js": `class ApiClient {
+  constructor(resource) { this.resource = resource; }
+  get url() { return \`/api/v1/\${this.resource}\`; }
+  show(id) { return axios.get(\`\${this.url}/\${id}\`); }
+}
+export default ApiClient;`,
+      "api/league.js": `import ApiClient from './ApiClient';
+class LeagueAPI extends ApiClient {
+  constructor() { super(''); }
+}
+export default new LeagueAPI();`,
+    });
+    expect(rows.map((r) => r[0])).toEqual(["/api/v1/${id}"]);
+  });
+
   it("keeps one row per subclass when two request the same URL (paperless DocumentService, DocumentNotesService)", async () => {
     const targets = await project({
       "src/base.ts": `

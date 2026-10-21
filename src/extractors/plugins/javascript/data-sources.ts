@@ -555,6 +555,14 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       return { url, confidence: url.includes("${") ? "INFERRED" : "EXTRACTED" };
     }
     if (arg.type === "identifier") {
+      // `const requestURL = `${this.url}/search?${…}``: read as the template
+      // itself, so the class's base stays a hole the project pass fills (the
+      // fold below has no `this` and would drop it).
+      const init = this.bindings()?.valueOf(arg.text, arg);
+      if ((init?.type === "template_string" || init?.type === "binary_expression") && init.text.includes("this.")) {
+        const inline = this.resolveUrlArg(init);
+        if (inline) return inline;
+      }
       const found = this.bindings()?.lookup(arg.text, arg);
       if (found) return found;
       // `const url = requestUri('x', 'v3'); axios.get(url)`: the builder call,

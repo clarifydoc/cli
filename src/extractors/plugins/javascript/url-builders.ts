@@ -91,6 +91,31 @@ function substitute(template: string, params: ParamInfo[], args: string[]): stri
 
 const NULLISH = /^(?:null|undefined|''|""|``)$/;
 
+/** `{ slug, host: this.url, kind: 'live' }` → its `key: value` pairs (shorthands name a runtime value: left out). */
+function objectArgument(arg: string): Map<string, string> | null {
+  if (!arg.startsWith("{") || !arg.endsWith("}")) return null;
+  const out = new Map<string, string>();
+  for (const part of splitTopLevel(arg.slice(1, -1), ",")) {
+    const m = /^\s*['"]?([A-Za-z_$][\w$]*)['"]?\s*:\s*([\s\S]+?)\s*$/.exec(part);
+    if (m) out.set(m[1]!, m[2]!);
+  }
+  return out;
+}
+
+/**
+ * A helper taking one destructured object (`({ host, slug }) => `${host}/${slug}/fixtures``):
+ * each `${key}` the call states becomes its value — a literal's text, else the
+ * expression as a hole the next pass resolves (`${this.url}`).
+ */
+function substituteNamed(template: string, values: ReadonlyMap<string, string>): string {
+  return template.replace(/\$\{\s*([A-Za-z_$][\w$]*)\s*\}/g, (hole, key: string) => {
+    const v = values.get(key);
+    if (v === undefined) return hole;
+    const lit = argLiteral(v);
+    return lit ?? `\${${v}}`;
+  });
+}
+
 function specificWithout(template: string, token: string): boolean {
   if (template.includes("${")) return true;
   const after = template.slice(template.indexOf(token) + token.length).replace(/\{[^}]*\}/g, "");
@@ -225,7 +250,10 @@ function firstResolvable(text: string, lookup: HelperLookup, site: CallSite): He
     const builder = lookupHelper(lookup, site, receiver, name);
     if (!builder) continue; // unknown or ambiguous — leave verbatim
     const args = splitTopLevel(argsText, ",").map((a) => a.trim()).filter((a) => a.length > 0);
-    const rewrites = chooseTemplates(builder, args).map((tpl) => substitute(tpl, builder.params, args));
+    const named = builder.params.length === 0 && args.length === 1 ? objectArgument(args[0]!) : null;
+    const rewrites = named
+      ? builder.templates.map((tpl) => substituteNamed(tpl, named))
+      : chooseTemplates(builder, args).map((tpl) => substitute(tpl, builder.params, args));
     if (rewrites.some((r) => r === null)) continue; // a bare-variable arg — leave verbatim
     return { start: m.index!, end: m.index! + m[0].length, rewrites: rewrites as string[] };
   }

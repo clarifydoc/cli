@@ -248,3 +248,27 @@ describe("tableMatchKeys", () => {
     expect(tableMatchKeys("Entity")).toEqual(["entity"]);
   });
 });
+
+describe("buildEntityGraph — an API contract split into several documents", () => {
+  const spec = (filePath: string, props: string[]): FileAnalysis =>
+    ({
+      filePath,
+      language: "openapi",
+      projectId: "root",
+      classes: [
+        { name: "Club", decorators: ["entity", "openapi"], properties: props.map((p) => ({ name: p, type: "string" })), line: 3 },
+        { name: "Player", decorators: ["entity", "openapi"], properties: [{ name: "id", type: "integer" }], line: 9 },
+      ],
+      entityRelations: [{ fromEntity: "Club", fromField: "captain", toEntity: "Player", cardinality: "many-to-one", orm: "openapi" }],
+    }) as unknown as FileAnalysis;
+
+  it("keeps one node per schema name and shape, and one edge between them", () => {
+    const g = buildEntityGraph([spec("swagger/swagger.json", ["id", "name"]), spec("swagger/tag_groups/league.json", ["id", "name"]), spec("swagger/v2.json", ["id", "name", "city"])]);
+    expect(g.nodes.map((n) => `${n.filePath}::${n.name}`)).toEqual([
+      "swagger/swagger.json::Club",
+      "swagger/swagger.json::Player",
+      "swagger/v2.json::Club",
+    ]);
+    expect(g.edges).toHaveLength(2);
+  });
+});
