@@ -74,7 +74,8 @@ const STRUCT_ENTITY_RE = /&([A-Z]\w*)\s*\{/;
 /** `http.Get("url")` / `http.PostForm(...)` — stdlib client helpers. */
 const HTTP_HELPER_RE = /\bhttp\.(Get|Post|PostForm|Head)\s*\(\s*(?:["'`]([^"'`]+)["'`])?/;
 /** `http.NewRequest("GET", url, ...)` / `http.NewRequestWithContext(ctx, http.MethodGet, url, ...)`. */
-const NEW_REQUEST_RE = /http\.NewRequest(?:WithContext)?\s*\([^,)]*?(?:["'`](GET|POST|PUT|PATCH|DELETE|HEAD)["'`]|http\.Method(Get|Post|Put|Patch|Delete|Head))\s*,\s*(?:["'`]([^"'`]+)["'`])?/;
+// `NewRequestWithContext(ctx, …)` / `(r.Context(), …)`: the context comes first.
+const NEW_REQUEST_RE = /http\.NewRequest(?:WithContext\s*\(\s*[\w.]+(?:\(\s*\))?\s*,|\s*\()\s*(?:["'`](GET|POST|PUT|PATCH|DELETE|HEAD)["'`]|http\.Method(Get|Post|Put|Patch|Delete|Head))\s*,\s*(?:["'`]([^"'`]+)["'`])?/;
 /** `client.Get("url")` — any *client-named receiver with an HTTP verb. */
 const CLIENT_VERB_RE = /\b(\w*[Cc]lient)\.\s*(Get|Post|Put|Patch|Delete|Head)\s*\(\s*(?:["'`]([^"'`]+)["'`])?/;
 

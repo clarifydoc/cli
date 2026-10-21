@@ -213,6 +213,17 @@ msgs, _ := ch.Consume("cars-queue", "", true, false, false, false, nil)
     expect(s.some((d) => d.kind === "queue-consume" && d.target === "cars-queue")).toBe(true);
   });
 
+  it("reads a request made with its context first (real-repo FP)", () => {
+    const s = extractGoDataSources(lines(`
+req, _ := http.NewRequestWithContext(ctx, http.MethodPut, "https://garage.example.com/cars", body)
+req2, _ := http.NewRequestWithContext(r.Context(), "DELETE", "/internal/cars", nil)
+`));
+    expect(s.filter((d) => d.kind === "api-call").map((d) => `${d.name} ${d.target}`)).toEqual([
+      "PUT https://garage.example.com/cars",
+      "DELETE /internal/cars",
+    ]);
+  });
+
   it("does not misread prose or non-DB receivers", () => {
     const s = extractGoDataSources(lines(`
 log.Println("Select a file from the list")
