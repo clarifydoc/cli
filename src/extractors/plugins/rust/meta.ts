@@ -1,6 +1,7 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
+import { rocketMountResolver } from "./rocket-mounts.js";
 import { rustSpec } from "./index.js";
 import { cargoPackages } from "./packages.js";
 import { rustManifest } from "./manifest.js";
@@ -31,6 +32,7 @@ export const rustMeta: LanguagePluginMeta = {
   regexControlFlow: extendRegexControlFlow([], { quotes: ['"'] }),
   ...rustManifest,
   regexSpec: rustSpec,
+  routeResolvers: [rocketMountResolver],
   // Multi-line strings are blanked so their code-shaped text is not read as
   // functions; the data sources (SQL in `r#"…"#`, URLs) come from the raw source.
   preprocess(rawSource) {

@@ -1,6 +1,7 @@
 import type { PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { parseRustParam, stripRustTypeModifiers } from "./params.js";
+import { collectRocketFacts } from "./rocket-mounts.js";
 import { extractRustRoutes } from "./routes.js";
 import { extractRustDataSources } from "./data-sources.js";
 import { extractRustModuleRefs } from "./reachability.js";
@@ -106,7 +107,11 @@ export const rustSpec: RegexLangSpec = {
   importPatterns: [],
   extractImports: (lines) => extractRustImports(lines),
 
-  extractRoutes: (lines) => extractRustRoutes(lines),
+  extractRoutes: (lines, _classes, _filePath, _fns, facts) => {
+    // Rocket mounts, route functions and renames, joined across files by rocketMountResolver.
+    collectRocketFacts(lines, facts);
+    return extractRustRoutes(lines);
+  },
   extractMessageHandlers: (lines) => extractEventRegistrations(lines),
   extractDataSources: (lines) => extractRustDataSources(lines),
 };
