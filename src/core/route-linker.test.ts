@@ -640,6 +640,16 @@ describe("linkApiCallsToRoutes — same sub-project breaks a tie", () => {
   });
 });
 
+describe("linkApiCallsToRoutes — the call's own spelling breaks a tie first (real-repo FP)", () => {
+  it("takes /getquote over the caller's own /get-quote", () => {
+    const own = { ...route("shipping/server.rs", "POST", "/get-quote", "get_quote"), projectId: "shipping" };
+    const quote = { ...route("quote/routes.php", "POST", "/getquote", null as never), projectId: "quote" };
+    const projectOf = (f: string) => f.split("/")[0];
+    const links = linkApiCallsToRoutes([apiCall("shipping/quote.rs", "post", "/getquote")], [own, quote], { projectOf });
+    expect(links[0]).toMatchObject({ target: "quote/routes.php" });
+  });
+});
+
 describe("linkApiCallsToRoutesDetailed — stats", () => {
   it("accounts for every call", () => {
     const { stats } = linkApiCallsToRoutesDetailed(
