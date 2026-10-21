@@ -31,6 +31,7 @@ import { detectSubProjects, assignProjectId } from "./project-detector.js";
 import { detectDeployment } from "./deployment.js";
 import { detectGitopsReleases } from "./gitops-releases.js";
 import { resolveViewBySuffix, pickByPathAffinity, extensionFamily } from "../extractors/plugins/shared/path-utils.js";
+import { linkRenderedViews } from "./rendered-views.js";
 import { detectFileBasedRoutes } from "../extractors/plugins/javascript/routes/file-based.js";
 import { resolveAngularExternalTemplates } from "../extractors/plugins/javascript/angular-external-templates.js";
 import { resolveRouterMounts } from "../extractors/shared/router-mounts.js";
@@ -1234,6 +1235,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // The Delphi project file names the main form outright — mark it, and the
   // other forms the app creates at startup, so the screen graph has a root.
   markStartupScreens(allAnalyses, allScreens, rawSources);
+  // Server-rendered pages: the template a route's handler renders by name is the page it serves.
+  const renderedViews = linkRenderedViews(allRoutes, allAnalyses, allScreens, symbolLinks, (f) => rawSources.get(f));
+  if (renderedViews > 0) progress.detail(`  Routes rendering a template: ${renderedViews}`);
 
   // Cross-tier join: match each outbound api-call to the inbound route serving
   // it (by HTTP method + normalized path). Connects the two halves of the

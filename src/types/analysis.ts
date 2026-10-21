@@ -1819,6 +1819,13 @@ export interface ScreenInfo {
    * `{Binding CheckoutCommand}` and the other bindings of the view resolve.
    */
   viewModel?: string;
+  /**
+   * The server routes whose handlers render this template by name
+   * (`render_template("league/table.html")`, `return "garage/list"`): the page
+   * each of them serves, and the data it shows is what they load. Set by core's
+   * rendered-view pass (`core/rendered-views.ts`).
+   */
+  renderedBy?: Array<{ filePath: string; method: string | null; path: string; line: number }>;
 }
 
 /**
