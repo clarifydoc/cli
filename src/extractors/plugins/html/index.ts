@@ -320,12 +320,17 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
         : tag === "input" && (type === "submit" || type === "button" || type === "reset") ? attr(attrs, "value")?.trim() || undefined
         : undefined;
       const caption = text ? { caption: text } : {};
+      // What a page script can find a handler-less element by.
+      const selector = inline ? undefined : selectorOf(tag, attrs);
+      const add = (el: InteractiveElementInfo): void => {
+        out.push(selector && !el.request && (el.handler === null || el.handler === id) ? { ...el, selector } : el);
+      };
 
       if (tag === "form") {
         const request = formRequest(attrs);
         forms.push({ method: (exactAttr(attrs, "method") ?? "GET").toUpperCase(), request });
         const el: InteractiveElementInfo = { element: "form", event: inline?.event ?? "submit", handler: inline?.handler ?? id, line: ln };
-        out.push(inline ? el : withRequest(el, request));
+        add(inline ? el : withRequest(el, request));
         continue;
       }
 
@@ -334,7 +339,7 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
         const form = forms[forms.length - 1];
         const request = formRequest(attrs, "formaction", "formmethod", form?.method) ?? form?.request;
         const el: InteractiveElementInfo = { element: "button", event: inline?.event ?? "click", handler: inline?.handler ?? id, line: ln, ...caption };
-        out.push(inline ? el : withRequest(el, request));
+        add(inline ? el : withRequest(el, request));
         continue;
       }
 
@@ -344,11 +349,11 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
           if (SKIP_INPUT_TYPES.has(type)) continue;
           // A button/reset input is really a button.
           if (type === "button" || type === "reset") {
-            out.push({ element: "button", event: inline?.event ?? "click", handler: inline?.handler ?? id, line: ln, ...caption });
+            add({ element: "button", event: inline?.event ?? "click", handler: inline?.handler ?? id, line: ln, ...caption });
             continue;
           }
         }
-        out.push({
+        add({
           element: control,
           event: inline?.event ?? NATIVE_EVENT[tag] ?? "click",
           handler: inline?.handler ?? id,
@@ -357,7 +362,7 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
         });
       } else if (inline) {
         // A non-control element (a/span/div/li…) carrying an inline handler.
-        out.push({
+        add({
           element: ELEMENT_FOR_TAG[tag] ?? "custom",
           event: inline.event,
           handler: inline.handler,
@@ -370,11 +375,30 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
         if (!href || href.startsWith("#") || /^javascript:/i.test(href)) continue;
         const target = literalPath(href);
         const request = target && !STATIC_FILE.test(target) ? { method: "GET", target } : undefined;
-        out.push(withRequest({ element: "link", event: "click", handler: id, line: ln, ...caption }, request));
+        add(withRequest({ element: "link", event: "click", handler: id, line: ln, ...caption }, request));
       }
     }
   }
   return out;
+}
+
+/** Attribute names a selector can use: not the id/class (spelled `#`/`.`), styling, events or accessibility text. */
+const SELECTOR_SKIP = /^(?:id|class|style|type|href|src|alt|title|value|placeholder|tabindex|role|for|disabled|checked|selected|on\w+|aria-.*|data-bs-.*)$/i;
+
+/** `button#save.btn[data-delete][name=club]` — tag, id, classes and the other attributes (a plain value kept); null when only the tag is known. */
+export function selectorOf(tag: string, attrs: string): string | null {
+  let id = "";
+  const classes: string[] = [];
+  const names: string[] = [];
+  for (const m of attrs.matchAll(/([^\s=/>"']+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g)) {
+    const name = m[1]!.toLowerCase();
+    const value = (m[2] ?? m[3] ?? m[4] ?? "").trim();
+    if (name === "id") id = /^[\w-]+$/.test(value) ? value : "";
+    else if (name === "class") classes.push(...value.split(/\s+/).filter((c) => /^[\w-]+$/.test(c)));
+    else if (!SELECTOR_SKIP.test(name) && /^[a-z][\w:-]*$/.test(name)) names.push(/^[\w-]{1,40}$/.test(value) ? `${name}=${value}` : name);
+  }
+  if (!id && classes.length === 0 && names.length === 0) return null;
+  return `${tag}${id ? `#${id}` : ""}${classes.map((c) => `.${c}`).join("")}${names.map((n) => `[${n}]`).join("")}`;
 }
 
 // ─── Spec ───────────────────────────────────────────────────────────────────

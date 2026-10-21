@@ -25,6 +25,8 @@ import { extractStoreModules, VuexDispatchResolver } from "./vuex.js";
 import { extractDevProxyRules } from "./dev-proxies.js";
 import { extractKubbConfigs } from "./kubb.js";
 import { extractPathArgCalls } from "./path-arg-calls.js";
+import { extractDomBindings } from "./dom-bindings.js";
+import { DomBindingResolver } from "./dom-binding-resolver.js";
 import { extractInstantiations } from "./instantiations.js";
 import { extractModuleValues } from "./module-values.js";
 import { vuePreprocess } from "./vue-hooks.js";
@@ -221,6 +223,7 @@ function astHooks(language: Language): AstExtractorHooks {
     proxyRules: extractDevProxyRules,
     generatedClients: extractKubbConfigs,
     pathArgCalls: extractPathArgCalls,
+    domBindings: extractDomBindings,
     instantiations: extractInstantiations,
     moduleValues: extractModuleValues,
     pathReferences: (sourceText) => extractPathReferences(sourceText),
@@ -237,7 +240,7 @@ const importsExports = new JavaScriptImportExportExtractor();
 const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
-const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver()];
+const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new DomBindingResolver()];
 const routeResolvers = [reactRouterResolver, trpcRouterResolver, cdkRouteResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {

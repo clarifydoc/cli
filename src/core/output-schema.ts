@@ -30,6 +30,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   routes: "required",
   routeFacts: "optional",
   pathArgCalls: "optional",
+  domBindings: "optional",
   instantiations: "optional",
   moduleValues: "optional",
   dataSources: "required",

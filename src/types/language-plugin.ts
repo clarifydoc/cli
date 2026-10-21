@@ -552,6 +552,8 @@ export interface AstExtractorHooks {
   generatedClients?(tree: Tree, sourceText: string, filePath: string): GeneratedClientConfig[];
   /** Calls handing a path literal to a project function → `FileAnalysis.pathArgCalls`. */
   pathArgCalls?(tree: Tree, sourceText: string): PathArgCall[];
+  /** Listeners bound to page elements by selector → `FileAnalysis.domBindings`. */
+  domBindings?(tree: Tree, sourceText: string): import("./analysis.js").DomBinding[];
   /** Project classes constructed with a string argument → `FileAnalysis.instantiations`. */
   instantiations?(tree: Tree, sourceText: string): Instantiation[];
   /** URL-shaped module-level values by name (`environment.apiUrl`) → `FileAnalysis.moduleValues`. */

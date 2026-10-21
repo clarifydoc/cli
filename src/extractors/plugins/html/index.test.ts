@@ -60,7 +60,16 @@ describe("HTML local <script src> imports (page → JS call graph)", () => {
 });
 
 describe("HTML interactive-element extraction", () => {
-  const els = (s: string) => htmlSpec.extractInteractiveElements!(lines(s));
+  // Selectors have their own test below.
+  const els = (s: string) => htmlSpec.extractInteractiveElements!(lines(s)).map(({ selector: _, ...e }) => e);
+
+  it("gives a handler-less element the selector a page script finds it by", () => {
+    const all = htmlSpec.extractInteractiveElements!(lines(`<button type="button" class="btn btn-sm" vw-delete-club aria-label="x">Delete</button>
+<input id="club-name" name="club" type="text">
+<button onclick="save()">Save</button>
+<a href="/clubs">Clubs</a>`));
+    expect(all.map((e) => e.selector)).toEqual(["button.btn.btn-sm[vw-delete-club]", "input#club-name[name=club]", undefined, undefined]);
+  });
 
   it("captures forms, buttons and submit-inputs, naming by id when there's no inline handler", () => {
     const out = els(

@@ -130,5 +130,13 @@ export const templateSpec = (dialect: TemplateDialect, extensions: string[]): Re
   lineCommentPrefixes: [],
   functionPatterns: [],
   classPatterns: [],
-  importPatterns: [],
+  importPatterns: [
+    {
+      // The page's own scripts, which bind its elements (`<script src="{{urlpath}}/static/clubs.js">`):
+      // the served prefix a template expression supplies is dropped — the file is found by what follows.
+      pattern: /<script\b[^>]*\bsrc\s*=\s*["'](?!https?:|\/\/)([^"']+\.[cm]?js)(?:\?[^"']*)?["']/i,
+      getSource: (m) => m[1]!.replace(/^.*(?:\}\}|%>|\})/, ""),
+      getSpecifiers: () => [],
+    },
+  ],
 });

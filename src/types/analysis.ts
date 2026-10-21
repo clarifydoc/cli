@@ -324,6 +324,13 @@ export interface FileAnalysis {
    */
   pathArgCalls?: PathArgCall[];
   /**
+   * Listeners a page script binds to elements by selector
+   * (`document.querySelectorAll("button[data-delete]").forEach(b => b.addEventListener("click", deleteClub))`).
+   * Joined to the elements of the pages that load the script, whose
+   * `InteractiveElementInfo.selector` they match.
+   */
+  domBindings?: DomBinding[];
+  /**
    * `new X("rooms")`: project classes constructed with a string argument — a
    * generic client configured per instance, as a subclass configures it
    * through `super("rooms")`. The project pass reads the class's requests
@@ -1758,6 +1765,20 @@ export interface InteractiveElementInfo {
   request?: { method: string; target: string };
   /** The text a person reads on it: a link's or button's label, a submit input's `value` ("Place Order"). */
   caption?: string;
+  /**
+   * A markup element with no handler of its own, as a compound selector of what
+   * a script can find it by — `button#save.btn[data-delete]`: tag, id, classes
+   * and attribute names. A page script's `domBindings` join on it.
+   */
+  selector?: string;
+}
+
+/** One listener a script binds by selector. `handler` is null for an inline function (its calls are the enclosing function's). */
+export interface DomBinding {
+  selector: string;
+  event: string;
+  handler: string | null;
+  line: number;
 }
 
 export interface EventInfo {
