@@ -217,10 +217,12 @@ msgs, _ := ch.Consume("cars-queue", "", true, false, false, false, nil)
     const s = extractGoDataSources(lines(`
 req, _ := http.NewRequestWithContext(ctx, http.MethodPut, "https://garage.example.com/cars", body)
 req2, _ := http.NewRequestWithContext(r.Context(), "DELETE", "/internal/cars", nil)
+req3, _ := http.NewRequestWithContext(ctx, "POST", cs.garageAddr+"/get-quote", bytes.NewBuffer(body))
 `));
     expect(s.filter((d) => d.kind === "api-call").map((d) => `${d.name} ${d.target}`)).toEqual([
       "PUT https://garage.example.com/cars",
       "DELETE /internal/cars",
+      "POST ${cs.garageAddr}/get-quote",
     ]);
   });
 

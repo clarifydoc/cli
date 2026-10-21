@@ -87,6 +87,25 @@ const MQ_PUBLISH_RE = /\b(\w+)\.\s*(Publish|PublishWithContext|PublishMsg|WriteM
 const MQ_CONSUME_RE = /\b(\w+)\.\s*(Consume|Subscribe|QueueSubscribe|ChanSubscribe|ReadMessage|FetchMessage|ReceiveMessage)\s*\(/;
 const FIRST_STRING_RE = /["'`]([^"'`]+)["'`]/;
 
+/**
+ * A URL argument built by concatenation (`cs.shippingAddr+"/get-quote"`), read
+ * up to the argument's end: literals as written, anything else as a `${…}`
+ * hole. Null when no part is a literal.
+ */
+function concatUrl(rest: string): string | null {
+  let depth = 0;
+  let end = rest.length;
+  for (let i = 0; i < rest.length; i++) {
+    const c = rest[i]!;
+    if (c === "(") depth++;
+    else if (c === ")" && depth-- === 0) { end = i; break; }
+    else if (c === "," && depth === 0) { end = i; break; }
+  }
+  const parts = rest.slice(0, end).split("+").map((p) => p.trim()).filter(Boolean);
+  if (!parts.some((p) => /^["`]/.test(p))) return null;
+  return parts.map((p) => (/^["`]/.test(p) ? p.slice(1, -1) : `\${${p}}`)).join("");
+}
+
 export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
   // Raw SQL first (multi-line aware), then per-line pattern scans.
   const normLines = normalizeRawStrings(lines.join("\n")).split("\n");
@@ -123,7 +142,8 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
       continue;
     }
     if (newReq) {
-      sources.push({ kind: "api-call", name: (newReq[1] ?? newReq[2]!).toUpperCase(), target: newReq[3] ?? null, calls: [], line: lineNo });
+      const target = newReq[3] ?? concatUrl(line.slice(newReq.index! + newReq[0].length));
+      sources.push({ kind: "api-call", name: (newReq[1] ?? newReq[2]!).toUpperCase(), target, calls: [], line: lineNo });
       continue;
     }
     if (clientVerb) {
