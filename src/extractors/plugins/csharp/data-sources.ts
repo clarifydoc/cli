@@ -503,6 +503,9 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       seg === "_db" || seg === "dbContext" || seg === "_dbContext" || seg === "DbContext";
     // The context may sit behind a member: `services.Context.CatalogItems…` (eShop's
     // `[AsParameters] CatalogServices`), `this.uow.Db.Orders…`.
+    // A `context` declared as one of the framework's own contexts (an MVC
+    // `ValueProviderFactoryContext`, an `HttpContext`) holds no entity sets.
+    if (FRAMEWORK_CONTEXT_TYPE.test(parameterType(node, root) ?? "")) return null;
     const looksLikeEf = contextNamed(root) || parts.slice(1, -2).some((seg) => contextNamed(seg.replace(/\(.*$/, "")));
     if (looksLikeEf || method === "SaveChanges" || method === "SaveChangesAsync" ||
         method === "FromSqlRaw" || method === "FromSqlInterpolated" || method === "FromSql" ||
@@ -912,6 +915,23 @@ function chainBase(fnNode: Node): string | null {
     // `this.x` (an anonymous `this` token in current grammars).
     if (node.type === "this" || node.type === "this_expression") return member;
     return null;
+  }
+  return null;
+}
+
+/** Contexts ASP.NET and friends hand to a callback: never a `DbContext`. */
+const FRAMEWORK_CONTEXT_TYPE = /(?:Http|Action|Filter|Factory|Binding|Executing|Executed|Exception|Result|View|Page|Controller|Validated|Validation|Token\w*|Message|Endpoint|Authorization|Hub|Execution|Logging|Rewrite|Redirect)Context$/;
+
+/** The declared type of a parameter or local named `name` in the member around `node`, as written. */
+function parameterType(node: Node, name: string): string | null {
+  const member = enclosingMember(node);
+  if (!member) return null;
+  for (const p of member.descendantsOfType(["parameter", "variable_declaration"])) {
+    if (!p) continue;
+    if (p.type === "parameter" && p.childForFieldName("name")?.text === name) return p.childForFieldName("type")?.text ?? null;
+    if (p.type === "variable_declaration" && p.namedChildren.some((d) => d?.type === "variable_declarator" && (d.childForFieldName("name") ?? d.namedChildren[0])?.text === name)) {
+      return p.childForFieldName("type")?.text ?? null;
+    }
   }
   return null;
 }

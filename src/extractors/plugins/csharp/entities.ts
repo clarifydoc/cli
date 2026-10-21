@@ -131,13 +131,18 @@ export class CSharpEntityExtractor extends EntityExtractor {
   override reconcileProject(analyses: FileAnalysis[]): void {
     // (1) Names declared as EF entities by `DbSet<T>` or `IEntityTypeConfiguration<T>`.
     const efEntityNames = new Set<string>();
+    // The sub-projects whose DbContexts declare each set: of several classes of
+    // one name (a domain DTO beside the infrastructure entity), those are the ones meant.
+    const declaredIn = new Map<string, Set<string>>();
     for (const a of analyses) {
       for (const cls of a.classes ?? []) {
         // `DbSet<T>` / `IDbSet<T>` properties — the authoritative entity set.
         for (const p of cls.properties ?? []) {
           for (const m of (p.type ?? "").matchAll(DBSET_RE)) {
             const t = bareType(m[1]);
-            if (t) efEntityNames.add(t);
+            if (!t) continue;
+            efEntityNames.add(t);
+            (declaredIn.get(t) ?? declaredIn.set(t, new Set()).get(t)!).add(a.projectId ?? "");
           }
         }
         // `IEntityTypeConfiguration<T>` — lands in extends or implements
@@ -169,6 +174,17 @@ export class CSharpEntityExtractor extends EntityExtractor {
     if (efEntityNames.size === 0 && marrTables.size === 0) return;
 
     // (2) Tag the matching domain POCO classes so they become ER nodes.
+    const sameNamed = new Map<string, FileAnalysis[]>();
+    for (const a of analyses) {
+      if (a.language !== "csharp") continue;
+      for (const cls of a.classes ?? []) (sameNamed.get(cls.name) ?? sameNamed.set(cls.name, []).get(cls.name)!).push(a);
+    }
+    /** A class of a set's name outside the declaring DbContexts' sub-projects, while one inside exists, is another type. */
+    const elsewhere = (name: string, a: FileAnalysis): boolean => {
+      const projects = declaredIn.get(name);
+      if (!projects || projects.has(a.projectId ?? "")) return false;
+      return (sameNamed.get(name) ?? []).some((b) => projects.has(b.projectId ?? ""));
+    };
     for (const a of analyses) {
       // A class in a clearly non-persistence folder (DTO / view model /
       // API contract) that merely shares an entity's name is NOT the entity —
@@ -177,7 +193,7 @@ export class CSharpEntityExtractor extends EntityExtractor {
       if (NON_ENTITY_PATH_RE.test(a.filePath) || extensionFamily(a.filePath) !== "dotnet") continue;
       for (const cls of a.classes ?? []) {
         const orm = efEntityNames.has(cls.name) ? "ef-core" : marrTables.has(cls.name) ? "marr" : null;
-        if (!orm) continue;
+        if (!orm || (orm === "ef-core" && elsewhere(cls.name, a))) continue;
         const decs = cls.decorators ?? (cls.decorators = []);
         if (decs.includes("entity")) continue;
         decs.push("entity", orm);

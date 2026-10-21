@@ -48,4 +48,16 @@ public class NightlyJob : IJob { public Task Execute(IJobExecutionContext ctx) =
       "NightlyJob → NightlyJob.Execute [] (quartz) @3",
     ]);
   });
+
+  it("C#: a hosted worker deriving BackgroundService, with the interval its loop waits", () => {
+    const src = `public class FixtureReminderWorker : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(15));
+        while (await timer.WaitForNextTickAsync(stoppingToken)) await _reminders.SendDue();
+    }
+}`;
+    expect(extractCsharpScheduledJobs(src).map(show)).toEqual(["FixtureReminderWorker → FixtureReminderWorker.ExecuteAsync [TimeSpan.FromMinutes(15)] (hosted-service) @1"]);
+  });
 });

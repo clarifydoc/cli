@@ -5,10 +5,12 @@ import type { EntryPointInfo } from "../../../types/analysis.js";
  *  - Hangfire `RecurringJob.AddOrUpdate("id", () => svc.Run(), Cron.Daily)` and the generic
  *    `AddOrUpdate<IReport>("id", x => x.Build(), "0 3 * * *")` (also on an `IRecurringJobManager`)
  *  - Quartz.NET: a class implementing `IJob` (`Execute`)
+ *  - a hosted worker deriving `BackgroundService` (`ExecuteAsync`), with the interval its loop
+ *    waits when it states one (`new PeriodicTimer(TimeSpan.FromMinutes(5))`, `Task.Delay(TimeSpan.FromHours(1))`)
  * Read off the source text; the handler is `Type.Method` when the type is stated, else the method.
  */
 export function extractCsharpScheduledJobs(sourceText: string): EntryPointInfo[] {
-  if (!/\bAddOrUpdate\b|\bIJob\b/.test(sourceText)) return [];
+  if (!/\bAddOrUpdate\b|\bIJob\b|\bBackgroundService\b/.test(sourceText)) return [];
   const out: EntryPointInfo[] = [];
   const lineAt = (i: number) => sourceText.slice(0, i).split("\n").length;
   const recurring = /\.AddOrUpdate\s*(?:<\s*([\w.]+)\s*>)?\s*\(\s*(?:"([^"]+)"|nameof\(([\w.]+)\))\s*,\s*(?:\(\s*\)|\w+|\(\s*\w+\s*\))\s*=>\s*(?:[\w.]+\.)?(\w+)\s*\(/g;
@@ -30,6 +32,18 @@ export function extractCsharpScheduledJobs(sourceText: string): EntryPointInfo[]
   }
   for (const m of sourceText.matchAll(/\bclass\s+(\w+)\s*:[^{]*\bIJob\b/g)) {
     out.push({ kind: "scheduled-job", name: m[1]!, handler: `${m[1]}.Execute`, line: lineAt(m.index!), framework: "quartz" });
+  }
+  for (const m of sourceText.matchAll(/\bclass\s+(\w+)\s*(?:\([^)]*\))?\s*:\s*(?:Microsoft\.Extensions\.Hosting\.)?BackgroundService\b/g)) {
+    if (!/\boverride\s+(?:async\s+)?Task\s+ExecuteAsync\s*\(/.test(sourceText)) continue;
+    const interval = /\b(?:new\s+PeriodicTimer|Task\.Delay)\s*\(\s*(TimeSpan\.From\w+\s*\([^()]*\))/.exec(sourceText)?.[1];
+    out.push({
+      kind: "scheduled-job",
+      name: m[1]!,
+      handler: `${m[1]}.ExecuteAsync`,
+      line: lineAt(m.index!),
+      framework: "hosted-service",
+      ...(interval ? { schedule: interval.replace(/\s+/g, "") } : {}),
+    });
   }
   return out;
 }

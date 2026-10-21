@@ -45,6 +45,18 @@ describe("C# EF data-source — fluent chain entity resolution", () => {
     ]);
   });
 
+  it("never reads a framework context's collections as entity sets (real-repo FP)", async () => {
+    const src = `namespace X;
+public class LeagueValueProviderFactory : IValueProviderFactory {
+  public Task CreateValueProviderAsync(ValueProviderFactoryContext context) {
+    context.ValueProviders.Add(new LeagueValueProvider());
+    return Task.CompletedTask;
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as any, "F.cs");
+    expect(new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database")).toEqual([]);
+  });
+
   it("resolves a simple `_db.Owners.Where(..)` access", async () => {
     const [s] = await dbSourcesOf(`    var q = _db.Owners.Where(o => o.Name == "a").FirstOrDefault();`);
     expect(s?.entity).toBe("Owners");
