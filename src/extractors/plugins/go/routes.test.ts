@@ -226,6 +226,17 @@ req3, _ := http.NewRequestWithContext(ctx, "POST", cs.garageAddr+"/get-quote", b
     ]);
   });
 
+  it("reads a sarama producer message as a publish to its topic", () => {
+    const s = extractGoDataSources(lines(`
+msg := sarama.ProducerMessage{
+	Topic: "fixtures",
+	Value: sarama.ByteEncoder(body),
+}
+producer.Input() <- &msg
+`));
+    expect(s.filter((d) => d.kind === "queue-publish").map((d) => `${d.target} @${d.line}`)).toEqual(["fixtures @2"]);
+  });
+
   it("does not misread prose or non-DB receivers", () => {
     const s = extractGoDataSources(lines(`
 log.Println("Select a file from the list")

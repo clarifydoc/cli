@@ -510,3 +510,21 @@ public class SquadCache {
     expect(rows.map((r) => `${r.name} ${r.target} ${r.access}`)).toEqual(["Cache: GetAsync distributed-cache read", "Cache: SetAsync distributed-cache write"]);
   });
 });
+
+describe("C# Kafka consumers", () => {
+  it("consume the topic they subscribe to, an environment topic by its default", async () => {
+    const src = `using Confluent.Kafka;
+namespace League;
+public class FixtureConsumer {
+  private static readonly string TopicName = Environment.GetEnvironmentVariable("KAFKA_TOPIC") ?? "fixtures";
+  private readonly IConsumer<string, byte[]> _consumer;
+  public void Run() {
+    _consumer.Subscribe(TopicName);
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as any, "K.cs");
+    const rows = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "queue-consume");
+    expect(rows.map((r) => `${r.name} ${r.target}`)).toEqual(["MQ: Kafka Subscribe fixtures"]);
+  });
+});
+

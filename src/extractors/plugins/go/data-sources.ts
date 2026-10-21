@@ -151,6 +151,18 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
       continue;
     }
 
+    // sarama: a `ProducerMessage{ Topic: … }` is what the producer sends — the publish names its topic.
+    if (/\bsarama\.ProducerMessage\s*\{/.test(line)) {
+      let topic: string | null = null;
+      for (let k = i; k < Math.min(lines.length, i + 12) && topic === null; k++) {
+        const t = /\bTopic\s*:\s*(?:"([^"]+)"|([\w.]+))/.exec(lines[k]!);
+        if (t) topic = t[1] ?? t[2]!;
+        if (k > i && /^\s*\}/.test(lines[k]!)) break;
+      }
+      sources.push({ kind: "queue-publish", name: "MQ: sarama ProducerMessage", target: topic, calls: [], line: lineNo });
+      continue;
+    }
+
     const env = line.match(ENV_RE);
     if (env) {
       sources.push({ kind: "env", name: `os.${env[1]}`, target: env[2]!, calls: [], line: lineNo });

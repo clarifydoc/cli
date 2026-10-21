@@ -430,6 +430,9 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
    * field name: `externalIdJpaRepository` is a FederatedIdentityJpaRepository.
    */
   private fieldTypes = new Map<string, string>();
+  /** The file uses the plain Kafka client (`KafkaConsumer`, `KafkaProducer`). */
+  private isKafkaClientFile = false;
+  private topicDefaults = new Map<string, string>();
 
   override beginFile(tree: Tree): void {
     const prepass = buildFilePrepass(tree.rootNode);
@@ -443,6 +446,10 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       : null;
     this.isJooqFile = /jooq/i.test(text);
     this.isRoomFile = /\bandroidx\.room\b/.test(text);
+    this.isKafkaClientFile = /\borg\.apache\.kafka\.clients\b/.test(text);
+    // Topics a file names by a variable read from the environment with a default
+    // (`val topic = System.getenv("TOPIC") ?: "orders"`): the default.
+    this.topicDefaults = new Map([...text.matchAll(/\b(?:val|var|String)\s+(\w+)\s*(?::\s*String\??\s*)?=\s*[^\n;]*?(?:\?:|\?\s*\S+\s*:)\s*"([^"]+)"/g)].map((m) => [m[1]!, m[2]!]));
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
@@ -692,6 +699,17 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
         line,
         ...withAccess(dbAccessFor(method, JDBC_ACCESS) ?? fromConstant?.access),
       }));
+      return;
+    }
+
+    // 4b) The plain Kafka client: `consumer.subscribe(listOf(topic))` (in a
+    // `KafkaConsumer(props).apply { … }` the receiver is implicit) consumes the topic.
+    if (this.isKafkaClientFile && method === "subscribe" && (!receiver || /consumer/i.test(receiver))) {
+      const args = node.childForFieldName("arguments")?.text ?? node.children.find((c) => c.type === "call_suffix")?.text ?? "";
+      const lit = /"([^"]+)"/.exec(args)?.[1];
+      const name = /\(\s*(?:listOf|setOf|List\.of|Set\.of|Arrays\.asList|Collections\.singletonList)?\s*\(?\s*([a-z_]\w*)\s*\)/i.exec(args)?.[1];
+      const topic = lit ?? (name ? this.topicDefaults.get(name) ?? this.stringConsts.get(name) ?? name : null);
+      sources.push(this.ds({ kind: "queue-consume", name: "MQ: Kafka subscribe", target: topic ?? null, line }));
       return;
     }
 

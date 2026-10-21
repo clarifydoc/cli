@@ -491,3 +491,16 @@ class ClubController(@Autowired val clubs: ClubService) {
     expect(imports).toEqual(["Autowired", 'field:Value("\${league.size}")']);
   });
 });
+
+describe("the plain Kafka client", () => {
+  it("consumes the topic a consumer subscribes to, an environment topic by its default", async () => {
+    const s = (await sourcesOf(
+      `    KafkaConsumer<String, ByteArray>(props).apply { subscribe(listOf(topic)) }`,
+      "kotlin",
+      `import org.apache.kafka.clients.consumer.KafkaConsumer
+val topic: String = System.getenv("KAFKA_TOPIC") ?: "fixtures"`,
+    )).filter((d) => d.kind === "queue-consume");
+    expect(s.map((d) => `${d.name} ${d.target}`)).toEqual(["MQ: Kafka subscribe fixtures"]);
+  });
+});
+

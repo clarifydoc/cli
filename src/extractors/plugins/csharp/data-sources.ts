@@ -235,6 +235,8 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   private dbSetNames = new Map<string, string | null>();
   /** The file talks to Redis through StackExchange.Redis (`IDatabase`). */
   private usesRedis = false;
+  /** The file uses Confluent.Kafka. */
+  private usesKafka = false;
   /** Fields and parameters declared `IDistributedCache` (`_cache`, `cache`). */
   private cacheNames = new Set<string>();
   /**
@@ -259,6 +261,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       }
     }
     this.usesRedis = /\bStackExchange\.Redis\b|\bIDatabase\b/.test(sourceText);
+    this.usesKafka = /\bConfluent\.Kafka\b|\bIConsumer\s*</.test(sourceText);
     this.cacheNames = new Set([...sourceText.matchAll(/\bIDistributedCache\s+(\w+)/g)].map((m) => m[1]!));
     this.constStrings = new Map();
     // A method's own `const string url = "…";` is a local of that method (read
@@ -273,6 +276,10 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     // literal (`protected readonly string _basePath = "internal/api";`).
     for (const m of sourceText.matchAll(/\b(?:const|readonly|static)\s+string\s+(\w+)\s*=\s*[@$]*"([^"]*)"\s*;/g)) {
       if (localConsts.size > 0 && localConsts.has(sourceText.slice(0, m.index!).split("\n").length)) continue;
+      if (!this.constStrings.has(m[1]!)) this.constStrings.set(m[1]!, m[2]!);
+    }
+    // A field read from the environment with a default (`= Environment.GetEnvironmentVariable("TOPIC") ?? "orders"`) is its default.
+    for (const m of sourceText.matchAll(/\b(?:readonly|static)\s+string\s+(\w+)\s*=\s*[^;]*?\?\?\s*"([^"]+)"\s*;/g)) {
       if (!this.constStrings.has(m[1]!)) this.constStrings.set(m[1]!, m[2]!);
     }
     this.pathHelpers = new Map();
@@ -799,6 +806,14 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         line: node.startPosition.row + 1,
         access: REDIS_READ_RE.test(method) ? "read" : "write",
       }));
+      return;
+    }
+
+    // Confluent.Kafka: `_consumer.Subscribe(topic)` on an `IConsumer<,>` consumes that topic.
+    if (method === "Subscribe" && this.usesKafka && /consumer/i.test(receiver)) {
+      const arg = argumentNodes(node)[0]?.namedChildren.at(-1) ?? null;
+      const label = arg?.type === "identifier" || arg?.type === "string_literal" || arg?.type === "member_access_expression" ? this.routingKeyLabel(arg) : null;
+      sources.push(this.ds({ kind: "queue-consume", name: "MQ: Kafka Subscribe", target: label ?? arg?.text ?? null, line: node.startPosition.row + 1 }));
       return;
     }
 
