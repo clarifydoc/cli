@@ -184,6 +184,7 @@ export const SYMBOL_LINK_STRATEGIES: readonly string[] = [
   // out pins it at 24, so codes appended after it never move it.
   "dispatch",
   "di-binding",
+  "route-override",
 ];
 
 /** Wire alphabet for `SymbolLink.relation`, 1-based like the strategies. Append only. */

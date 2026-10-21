@@ -1922,6 +1922,11 @@ export type SymbolLinkStrategy =
   | "route-scan"
   /** Spec route (OpenAPI/WSDL/GraphQL) joined to an implementation by name. */
   | "spec-join"
+  /**
+   * A route its `owner` class serves through an inherited action: linked to the
+   * owner's override of a method that action calls on itself.
+   */
+  | "route-override"
   /** Interface → each implementation, for navigation only. */
   | "interface-fanout"
   /** Reverse edge from an import specifier back to the symbol it names. */

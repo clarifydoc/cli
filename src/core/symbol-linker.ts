@@ -11,6 +11,7 @@ import {
   type Confidence,
   type ParamInfo,
   type PackageEcosystem,
+  type RouteInfo,
   type SubProject,
 } from "../types/analysis.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
@@ -297,6 +298,11 @@ export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly
           }
         }
       }
+
+      // A route a subclass serves through a base-class action
+      // (`RestController<T>.GetResourceByIdWithErrorHandler` for
+      // `MatchController`): what the action calls on itself is the subclass's.
+      if (route.owner && route.handler && !isSpecFile) links.push(...ownerOverrideLinks(route, sourceFile, sourceSymbol, analysis, ctx));
 
       // Spec-file routes (JSight/OpenAPI/WSDL/GraphQL): the file declares the
       // API surface but contains no code, so there is no same-repo handler
@@ -3386,6 +3392,48 @@ function buildSubclassIndex(ctx: LinkContext): Map<string, Array<{ name: string;
     if (!baseFile) continue;
     const baseKey = memberKey(baseFile, base);
     (out.get(baseKey) ?? out.set(baseKey, []).get(baseKey)!).push({ name: cls.name, file });
+  }
+  return out;
+}
+
+/**
+ * The overrides a route's own class supplies for the methods its base-class
+ * handler calls on itself: a route served by `MatchController` through the
+ * inherited `RestController.GetById`, which calls the abstract `GetResourceById`,
+ * reaches `MatchController.GetResourceById` — never another subclass's.
+ */
+function ownerOverrideLinks(
+  route: RouteInfo,
+  sourceFile: string,
+  sourceSymbol: string,
+  analysis: FileAnalysis,
+  ctx: LinkContext,
+): SymbolLink[] {
+  const handlerName = route.handler!.split(/[#.]/).pop()!;
+  const host = analysis.classes.find((c) => c.name !== route.owner && route.line >= c.line && route.line <= c.endLine && c.methods.some((m) => m.name === handlerName));
+  const owner = host ? classEntryFor(ctx.classCatalog.get(route.owner!), sourceFile) : undefined;
+  if (!host || !owner || owner.count !== 1) return [];
+  const action = host.methods.find((m) => m.name === handlerName && route.line >= m.line && route.line <= m.endLine)
+    ?? host.methods.find((m) => m.name === handlerName)!;
+  const own = new Set(host.methods.map((m) => m.name));
+  const out: SymbolLink[] = [];
+  for (const call of action.calls) {
+    const name = /^(?:this\.|self\.|base\.)?(\w+)$/.exec(call.name)?.[1];
+    if (!name || name === handlerName || !own.has(name)) continue;
+    const override = findMethodInClass(ctx, route.owner!, owner.file, name);
+    if (!override || override.symbol === `${host.name}.${name}`) continue;
+    out.push({
+      sourceFile,
+      sourceSymbol,
+      sourceLine: call.line,
+      callName: call.name,
+      targetFile: override.file,
+      targetSymbol: override.symbol,
+      targetLine: override.line,
+      confidence: "INFERRED",
+      strategy: "route-override",
+      relation: "calls",
+    });
   }
   return out;
 }
