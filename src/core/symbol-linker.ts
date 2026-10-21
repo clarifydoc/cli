@@ -329,12 +329,14 @@ export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly
 
   links.push(...ctx.extraLinks);
 
-  // Fan-out: for interfaces with >1 implementations, emit a link from each
-  // interface method to every implementation's matching method so the trace
-  // tab can navigate from interface → all impls. (Single-impl interfaces are
-  // already redirected directly at the call site in resolveCallToDefinition.)
+  // Fan-out: emit a link from each interface method to every implementation's
+  // matching method so the trace tab can navigate from interface → impls. A
+  // call is redirected to a single implementation at the call site already
+  // (resolveCallToDefinition), but a route declared on the interface (JAX-RS
+  // `@Path` on the API, the class in another module) anchors on the interface
+  // method itself, and reaches what it does only through this link.
   for (const [, info] of interfaceImplMap) {
-    if (info.impls.length < 2) continue;
+    if (info.impls.length < 1) continue;
     for (const ifaceMethod of info.methods) {
       const ifaceSymbol = `${info.interfaceName}.${ifaceMethod.name}`;
       for (const impl of info.impls) {

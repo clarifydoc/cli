@@ -885,7 +885,6 @@ function jpaTableName(decorators: readonly string[], sourceText: string, classNa
 function addHelperQueryRuns(a: FileAnalysis, byName: ReadonlyMap<string, NamedQueryRun | null>): void {
   const calls = [...a.functions, ...a.classes.flatMap((c) => c.methods)].flatMap((fn) => fn.calls.filter((c) => c.args));
   for (const call of calls) {
-    if (/^(?:createNamedQuery|getNamedQuery)$/.test(call.name.replace(/^.*\./, ""))) continue;
     const name = call.args!.map((x) => /^"([^"]+)"$/.exec(x)?.[1]).find((n) => n !== undefined && byName.get(n));
     const query = name ? byName.get(name) : null;
     if (!query) continue;

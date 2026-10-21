@@ -82,6 +82,18 @@ public class MatchService {
         return em.createNamedQuery(queryName).getResultList();
     }
 
+    public Object ownHelper() {
+        return single(createNamedQuery("match.players"));
+    }
+
+    private Object createNamedQuery(String name) {
+        return em.createNamedQuery(name);
+    }
+
+    private Object single(Object q) {
+        return q;
+    }
+
     public Object unknown() {
         return em.createNamedQuery("season.all").getResultList();
     }
@@ -122,7 +134,10 @@ describe("JPA named queries", () => {
       "MatchService.clubMatches Match",
       "MatchService.retired Player",
       "MatchService.viaHelper Match",
+      "MatchService.ownHelper Player",
     ]));
+    // The direct call resolves once, not again as a helper run.
+    expect(rows.filter((r) => r === "MatchService.players Player")).toHaveLength(1);
     expect(rows.some((r) => r.startsWith("MatchService.unknown") && !r.endsWith(" -"))).toBe(false);
   });
 });

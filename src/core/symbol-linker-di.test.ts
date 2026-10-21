@@ -709,7 +709,7 @@ describe("symbol-linker — typed receivers", () => {
       cls("C", { kind: "interface", methods: [method("hello", [], [], 7)] }),
       cls("D", { extends: "B", implements: ["C"], methods: [method("run", [call("this.hello")], [], 10)] }),
     ], { language: "java" });
-    expect(callsFrom(buildSymbolLinks([java]), "D.java").map((l) => l.targetSymbol)).toEqual(["A.hello"]);
+    expect(callsFrom(buildSymbolLinks([java]), "D.java").filter((l) => l.relation !== "implements").map((l) => l.targetSymbol)).toEqual(["A.hello"]);
   });
 
   it("types a local by what a function of an imported package returns (`repo := store.NewRepo()`)", () => {
