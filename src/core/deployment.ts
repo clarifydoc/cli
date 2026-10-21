@@ -242,11 +242,11 @@ const DOT_SEARCH = {
 
 /**
  * Path tokens that mark a compose file as non-runtime (build/test/CI stacks,
- * vendored examples). Tested against every path segment, token-delimited, so
+ * end-to-end harnesses, vendored examples). Tested against every path segment, token-delimited, so
  * `deployment/PR/docker-compose.yml` and `league-tests-compose.yml` are both
  * excluded while `production/` or `services/` pass.
  */
-export const NON_RUNTIME_RE = /(^|[^a-z0-9])(build|test|tests|ci|pr|example|examples|sample|samples|demo)([^a-z0-9]|$)/i;
+export const NON_RUNTIME_RE = /(^|[^a-z0-9])(build|test|tests|e2e|playwright|cypress|ci|pr|example|examples|sample|samples|demo)([^a-z0-9]|$)/i;
 /** Tokens that mark an environment variant — parsed, but after the base files. */
 const VARIANT_RE = /(^|[^a-z0-9])(local|macos|osx|windows|ports|override|dev)([^a-z0-9]|$)/i;
 

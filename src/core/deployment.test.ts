@@ -182,6 +182,9 @@ describe("detectDeployment", () => {
       "    image: reg.io/org/suite:${TAG}",
       "",
     ].join("\n"));
+    // An end-to-end harness's stack (real-repo FP: a `playwright/docker-compose.yml` of browsers and databases).
+    await mkdir(join(root, "playwright"), { recursive: true });
+    await writeFile(join(root, "playwright", "docker-compose.yml"), ["services:", "  browser:", "    image: mcr.example.com/playwright:v1", "  mariadb:", "    image: mariadb:11", ""].join("\n"));
   });
 
   afterAll(async () => {
