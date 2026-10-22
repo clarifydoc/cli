@@ -217,7 +217,7 @@ function sourceScopes(sql: string): { inScope: (i: number) => boolean; depthAt: 
 function cteNames(stmt: string): Set<string> {
   const out = new Set<string>();
   if (!/\bWITH\b/i.test(stmt)) return out;
-  for (const m of stmt.matchAll(/(?:\bWITH(?:\s+RECURSIVE)?|,)\s*(\w+)\s*(?:\([^)]*\))?\s+AS\s*\(/gi)) out.add(m[1]!.toUpperCase());
+  for (const m of stmt.matchAll(/(?:\bWITH(?:\s+RECURSIVE)?|,)\s*["`[]?(\w+)["`\]]?\s*(?:\([^)]*\))?\s+AS\s*(?:NOT\s+)?(?:MATERIALIZED\s+)?\(/gi)) out.add(m[1]!.toUpperCase());
   return out;
 }
 

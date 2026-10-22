@@ -183,6 +183,14 @@ describe("every table a statement reads", () => {
     expect(q("SELECT column_name FROM information_schema.columns WHERE table_name = 'clubs'")).toEqual([]);
   });
 
+  it("skips a quoted CTE's name, as a query builder dumps it", () => {
+    // Escaped as it sits in a double-quoted code string.
+    expect(q('with \\"today\\" as (SELECT * FROM fixtures) SELECT * FROM \\"today\\" JOIN clubs ON 1 = 1')).toEqual([
+      ["SELECT", "fixtures", false],
+      ["SELECT", "clubs", true],
+    ]);
+  });
+
   it("skips a CTE's own name", () => {
     expect(q("WITH top_scorers AS (SELECT * FROM goals) SELECT * FROM top_scorers JOIN players ON 1 = 1")).toEqual([
       ["SELECT", "goals", false],

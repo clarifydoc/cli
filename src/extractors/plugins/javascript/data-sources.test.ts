@@ -1077,3 +1077,15 @@ describe("JS api-call through a local that holds one of several URLs", () => {
     expect(ds.map((d) => d.targetAlternatives)).toEqual([undefined]);
   });
 });
+
+describe("Kysely", () => {
+  it("reads each clause's table and never a common table expression's name (real-repo FP: today, res, agg, cte tables)", async () => {
+    const ds = await dbOf(`
+      this.db.with('recent', (qb) => qb.selectFrom('fixture').selectAll().limit(5))
+        .selectFrom('recent')
+        .innerJoin('club', 'club.id', 'recent.clubId')
+        .execute();
+      this.db.insertInto('match_report').values(row).execute();`);
+    expect(ds.filter((d) => d.kind === "database").map((d) => d.entity).sort()).toEqual(["fixture", "match_report"]);
+  });
+});

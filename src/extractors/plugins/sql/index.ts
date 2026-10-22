@@ -341,7 +341,8 @@ function tableEntity(target: string, rest: string, local: ReadonlySet<string>): 
  */
 function localRelations(text: string): Set<string> {
   const out = new Set<string>();
-  for (const m of text.matchAll(/(?:\bWITH(?:\s+RECURSIVE)?|,)\s*(\w+)\s*(?:\([^)]*\))?\s+AS\s*(?:NOT\s+)?(?:MATERIALIZED\s+)?\(/gi)) out.add(m[1]!.toLowerCase());
+  // `with "today" as (` — a query builder's dump quotes the names.
+  for (const m of text.matchAll(/(?:\bWITH(?:\s+RECURSIVE)?|,)\s*["`[]?(\w+)["`\]]?\s*(?:\([^)]*\))?\s+AS\s*(?:NOT\s+)?(?:MATERIALIZED\s+)?\(/gi)) out.add(m[1]!.toLowerCase());
   for (const m of text.matchAll(/\b(?:OLD|NEW)\s+TABLE\s+AS\s+(\w+)/gi)) out.add(m[1]!.toLowerCase());
   // A view the file creates is its query, not a table of the data model.
   for (const m of text.matchAll(/\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:MATERIALIZED\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?"?(\w+)/gi)) out.add(m[1]!.toLowerCase());

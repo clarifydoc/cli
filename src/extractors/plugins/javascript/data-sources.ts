@@ -432,6 +432,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   private mq: MqEvidence | null = null;
   /** The file names tRPC (its client import), so `x.y.useQuery()` chains are procedure calls. */
   private trpcClient: boolean | null = null;
+  /** Names the file's Kysely queries give their common table expressions. */
+  private kyselyCtes: Set<string> | null = null;
   /** RTK Query: whether the file defines an API slice, and the slice's `fetchBaseQuery` base. */
   private rtk: { slice: boolean; base: string } | null = null;
   /** RTK Query triggers a generated hook hands back (`const [remove] = useDeleteGameMutation()`), with the scope that declares them. */
@@ -533,6 +535,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.imports = null;
     this.mq = null;
     this.trpcClient = null;
+    this.kyselyCtes = null;
     this.rtk = null;
     this.rtkTriggers = null;
     this.collectionReceivers = null;
@@ -1406,7 +1409,9 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         // no root-name rule trusts, and the verbs are Kysely's alone — so the
         // table literal is the evidence.
         const kyselyArg = fnName && KYSELY_TABLE_VERBS.has(fnName) ? literalString(node.childForFieldName("arguments")?.namedChildren[0] ?? null) : null;
-        const kysely = kyselyArg ? /^([A-Za-z_]\w*(?:\.\w+)*)(?:\s+as\s+\w+)?$/.exec(kyselyArg) : null;
+        const kyselyMatch = kyselyArg ? /^([A-Za-z_]\w*(?:\.\w+)*)(?:\s+as\s+\w+)?$/.exec(kyselyArg) : null;
+        // A common table expression the query defines (`.with('today', (qb) => …).selectFrom('today')`) is no table.
+        const kysely = kyselyMatch && !(this.kyselyCtes ??= new Set([...this.sourceText.matchAll(/\.with(?:Recursive)?\s*\(\s*['"`](\w+)/g)].map((m) => m[1]!))).has(kyselyMatch[1]!) ? kyselyMatch : null;
         // Raw SQL to a driver: `pool.query("SELECT … FROM todos")`. The
         // statement names the table, whatever the receiver is called.
         const rawSql = !emittedApiCall && fnName && RAW_SQL_VERBS.has(fnName)
