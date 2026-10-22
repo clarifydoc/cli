@@ -762,7 +762,10 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     }
     // Otherwise only a call that SENDS on a client named as one: a builder's
     // configuration (`OkHttpClient.Builder().connectTimeout(…)`) sends nothing.
-    if (HTTP_METHODS.has(method) || (HTTP_SEND_METHODS.has(method) && HTTP_HINT_RE.test(receiver))) {
+    // `request.exchange()` on a ServerRequest is an accessor: a bare exchange/retrieve
+    // sends only at the end of a request chain (`webClient.get().uri(…).exchange()`).
+    const accessor = (method === "exchange" || method === "retrieve") && callArguments(node).length === 0 && !/\.uri\s*\(|\.(?:get|post|put|patch|delete|method)\s*\(/.test(receiver) && !HTTP_HINT_RE.test(receiver);
+    if ((HTTP_METHODS.has(method) && !accessor) || (HTTP_SEND_METHODS.has(method) && HTTP_HINT_RE.test(receiver))) {
       sources.push(this.ds({ kind: "api-call", name: method, target: null, line }));
       return;
     }

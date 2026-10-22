@@ -510,3 +510,14 @@ val topic: String = System.getenv("KAFKA_TOPIC") ?: "fixtures"`,
   });
 });
 
+
+describe("exchange() as an accessor", () => {
+  it("does not take a ServerRequest's exchange() for a request (real-repo FP: 528 rows)", async () => {
+    const ds = await sourcesOf(`
+    super(request.exchange());
+    ResponseEntity<Club> r = restTemplate.exchange("/clubs/" + id, HttpMethod.GET, null, Club.class);
+    Mono<Club> m = webClient.get().uri("/clubs/{id}", id).retrieve().bodyToMono(Club.class);`, "java");
+    // The RestTemplate and WebClient requests only.
+    expect(ds.filter((d) => d.kind === "api-call").map((d) => d.name)).toEqual(["exchange", "retrieve"]);
+  });
+});
