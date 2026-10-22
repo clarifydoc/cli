@@ -37,6 +37,12 @@ const DATASET_RECEIVER = new RegExp(
   "i",
 );
 
+/**
+ * The `tab` prefix of a table component (`tabOrders`, `dmdb.tabLoans` on a data module):
+ * lower-case, so a `TabControl1` is none.
+ */
+const TAB_DATASET_RECEIVER = new RegExp(String.raw`\b((?:\w+\.)?tab[A-Z]\w*)\s*\.\s*(${DATASET_VERBS})\b`);
+
 /** Any receiver with a dataset verb — accepted when the unit DECLARES it a dataset. */
 const ANY_DATASET_CALL = new RegExp(String.raw`\b((?:\w+\.)?(\w+))\s*\.\s*(${DATASET_VERBS})\b`, "gi");
 
@@ -86,7 +92,7 @@ export function declaredDatasets(lines: string[]): Set<string> {
 
 /** The dataset call on a line: by naming convention, or on a receiver the unit declares a dataset. */
 function datasetCall(line: string, declared: Set<string>): { receiver: string; verb: string } | null {
-  const named = line.match(DATASET_RECEIVER);
+  const named = line.match(DATASET_RECEIVER) ?? line.match(TAB_DATASET_RECEIVER);
   if (named) return { receiver: named[1]!, verb: named[2]! };
   if (declared.size === 0) return null;
   for (const m of line.matchAll(ANY_DATASET_CALL)) {

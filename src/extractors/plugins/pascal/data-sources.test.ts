@@ -180,8 +180,17 @@ describe("pascal data sources — dataset & connection verbs", () => {
       `OpenDialog1.Execute;`,
       `MyFile.Open;`,
       `RestoreForm.Delete;`,
+      `TabControl1.Insert;`,
     ].join("\n"));
     expect(out).toHaveLength(0);
+  });
+
+  it("reads a tab-prefixed table component, on a data module of another unit too", () => {
+    const out = src([
+      `dmLeague.tabTransfers.Insert;`,
+      `tabSquads.Open;`,
+    ].join("\n"));
+    expect(out.map((d) => `${d.name} -> ${d.target}`)).toEqual(["dmLeague.tabTransfers.Insert -> tabTransfers", "tabSquads.Open -> tabSquads"]);
   });
 });
 
