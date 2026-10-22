@@ -36,6 +36,37 @@ describe("JS ORM read/write classification (access)", () => {
   });
 });
 
+describe("JS request wrappers whose fetch takes a ternary", () => {
+  it("reads both arms, and one path when they differ only by a query string", async () => {
+    const SRC = `import * as url from './util/url'
+export async function standings(club: Club, query: StandingsQuery) {
+  const qs = shareToken ? new URLSearchParams({ token: shareToken }).toString() : ''
+  const path = url.leaguePath(club, '/standings')
+  const response = await fetch(qs ? \`\${path}?\${qs}\` : path, { method: 'POST', body: JSON.stringify(query) })
+  return response.json()
+}
+export const mutation = async (url: string, options: { method: 'POST' | 'PUT' }) => {
+  const qs = serializeParams(shareParams())
+  const response = await fetch(qs ? \`\${url}?\${qs}\` : url, { method: options.method })
+  return response.json()
+}
+export async function kit(home: boolean) {
+  return fetch(home ? '/api/kits/home' : '/api/kits/away')
+}
+const SQUAD_ENDPOINT = '/squad'
+export async function squad(club: Club) {
+  return fetch(url.leaguePath(club, SQUAD_ENDPOINT))
+}`;
+    const calls = await apiCallsOf(SRC);
+    expect(calls.map((c) => [c.target, ...(c.targetAlternatives ?? [])].join(" | "))).toEqual([
+      "url.leaguePath(club, '/standings')",
+      "${url}",
+      "/api/kits/home | /api/kits/away",
+      "url.leaguePath(club, '/squad')",
+    ]);
+  });
+});
+
 describe("JS api-call URL const resolution", () => {
   it("resolves a bare identifier fetch arg via an env-default const", async () => {
     const SRC = `const checkoutUrl = import.meta.env.VITE_CHECKOUT_URL ?? '/site/cui_checkout_json';

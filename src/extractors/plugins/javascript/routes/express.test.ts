@@ -234,3 +234,12 @@ describe("Express routes — a router that only mounts routers", () => {
     expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /api/v1/players/:id"]);
   });
 });
+
+describe("Express routes — a client building a URL is no route", () => {
+  it("refuses a path whose holes compute a value, keeps one mounted under a base constant", async () => {
+    const out = await routesOf(`import * as api from '../../api'
+const kit = () => api.get(\`/api/clubs/\${encodeURIComponent(club.slug)}/kits/\${kitMeta.id}\`, queryKey[1].state)
+router.get(\`/\${SEASON}/clubs\`, listClubs)`);
+    expect(out).toEqual(["GET /${SEASON}/clubs"]);
+  });
+});

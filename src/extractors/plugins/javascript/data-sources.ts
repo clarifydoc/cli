@@ -644,6 +644,23 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
    */
   private resolveUrlArg(arg: Node): ResolvedUrl | null {
     if (arg.type === "string") return { url: stripQuotes(arg.text), confidence: "EXTRACTED" };
+    if (arg.type === "parenthesized_expression" && arg.namedChild(0)) return this.resolveUrlArg(arg.namedChild(0)!);
+    // `fetch(qs ? `${path}?${qs}` : path)`: each arm; arms that differ only by a query string are one path.
+    if (arg.type === "ternary_expression") {
+      const both = [arg.childForFieldName("consequence"), arg.childForFieldName("alternative")];
+      // `` `${path}?${qs}` `` beside `path` itself: the path, its query optional.
+      const bare = both.find((a) => a?.type === "identifier");
+      const queried = both.find((a) => a?.type === "template_string" && bare && a.text.startsWith(`\`\${${bare.text}}?`));
+      if (bare && queried) return this.resolveUrlArg(bare);
+      const arms = both
+        .map((a) => (a ? this.resolveUrlArg(a) : null))
+        .filter((r): r is ResolvedUrl => r !== null);
+      if (arms.length === 0) return null;
+      const urls = [...new Set(arms.flatMap((r) => [r.url, ...(r.alternatives ?? [])]))];
+      const paths = [...new Set(urls.map((u) => u.split("?")[0]!))];
+      if (paths.length === 1) return { ...(arms.find((r) => !r.url.includes("?")) ?? arms[0]!), confidence: "INFERRED" };
+      return { url: urls[0]!, alternatives: urls.slice(1), confidence: "INFERRED" };
+    }
     // `fetch(url.toString())`, `fetch(url.href)`, `fetch(url)` with `const url = new URL(path, origin)`:
     // the request is the URL's path argument — a parameter of a request factory
     // stays a `${path}` hole for the factory expansion to fill per call site.
@@ -698,7 +715,18 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     // only on a trusted HTTP receiver (see visitNode) so a non-client verb call
     // isn't mistaken for one.
     if (arg.type === "call_expression") {
-      return { url: arg.text.replace(/\s+/g, " ").trim(), confidence: "INFERRED" };
+      // A bare-identifier argument bound to a literal path in scope (`apiPath(club,
+      // SQUAD_ENDPOINT)`) is spelled as that literal, which the helper pass substitutes.
+      let text = arg.text;
+      const args = arg.childForFieldName("arguments")?.namedChildren ?? [];
+      for (const a of [...args].reverse()) {
+        if (a.type !== "identifier") continue;
+        const bound = this.bindings()?.lookup(a.text, a);
+        if (!bound || bound.confidence !== "EXTRACTED" || bound.url.includes("${") || /['"`\\]/.test(bound.url)) continue;
+        const at = a.startIndex - arg.startIndex;
+        text = `${text.slice(0, at)}'${bound.url}'${text.slice(at + a.text.length)}`;
+      }
+      return { url: text.replace(/\s+/g, " ").trim(), confidence: "INFERRED" };
     }
     return null;
   }

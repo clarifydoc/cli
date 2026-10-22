@@ -261,7 +261,11 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
           if (
             firstArg &&
             (firstArg.type === "string" || firstArg.type === "template_string") &&
-            isRoutePath(stripQuotes(firstArg.text))
+            isRoutePath(stripQuotes(firstArg.text)) &&
+            // A router mounts under a base constant (`${API_BASE}/clubs`); a hole that
+            // computes a value (`${encodeURIComponent(club.slug)}`, `${ids[0]}`) is a
+            // client building a request URL.
+            !/\$\{[^}]*[(\[]/.test(firstArg.text)
           ) {
             const path = stripQuotes(firstArg.text);
             // Everything after the path, with `[a, b]` middleware arrays flattened.
