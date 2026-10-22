@@ -1014,7 +1014,7 @@ const CONFIG_MARKER_RE = /IEntityTypeConfiguration\s*<|EntityTypeBuilder\s*</;
 // persisted entity — so a same-named class there must NOT be tagged an entity
 // by the cross-file reconcile. Matches path separators in either slash style.
 const NON_ENTITY_PATH_RE =
-  /[\/\\](?:ViewModels?|Dtos?|Contracts|Requests?|Responses?)[\/\\]/i;
+  /[\/\\](?:ViewModels?|Dtos?|Contracts|Requests?|Responses?|Migrations)[\/\\]/i;
 
 // ── type classification ──────────────────────────────────────────────────
 

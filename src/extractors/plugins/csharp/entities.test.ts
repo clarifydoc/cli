@@ -277,6 +277,16 @@ describe("EF Core cross-file entity reconciliation", () => {
     expect(vmInst.decorators).not.toContain("entity");
   });
 
+  it("does NOT tag a migration class named after an entity (real-repo FP: 14 phantom nodes)", () => {
+    const ctx = analysis("Persistence/AppDbContext.cs", [
+      cls("Ctx", { extends: "DbContext", properties: [{ name: "Fixtures", type: "DbSet<FixtureTag>" }] }),
+    ]);
+    const migration = cls("FixtureTag", { extends: "Migration" });
+    const migrationFile = analysis("League.Database/Migrations/20210519215934_FixtureTag.cs", [migration]);
+    new CSharpEntityExtractor().reconcileProject([ctx, migrationFile]);
+    expect(migration.decorators).not.toContain("entity");
+  });
+
   it("establishes entity-ness from IEntityTypeConfiguration<T> alone (no DbSet)", () => {
     const cfg = analysis("Config/FooConfiguration.cs", [
       cls("FooConfiguration", { implements: ["IEntityTypeConfiguration<Foo>"] }),
