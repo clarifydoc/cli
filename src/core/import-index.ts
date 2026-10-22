@@ -435,6 +435,8 @@ export function resolveImportSource(
     // project-relative path before this runs; it names a project file only if
     // one is there — a package import (`lodash/fp`) never matches.
     if (!src.includes("/")) return null;
+    // Written with its extension: `page/albums.vue` → `frontend/src/page/albums.vue`.
+    if (knownFiles.has(src)) return src;
     for (const ext of PROJECT_PATH_EXTENSIONS) {
       if (knownFiles.has(src + ext)) return src + ext;
     }

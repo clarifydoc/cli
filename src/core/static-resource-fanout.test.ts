@@ -69,6 +69,17 @@ export class Player extends Rest {
   }
 }
 `,
+  "src/page/clubs.vue": `<template><div>Clubs</div></template>
+<script>
+export default { name: "PageClubs" };
+</script>
+`,
+  "src/app/routes.js": `import Clubs from "page/clubs.vue";
+
+export default [
+  { name: "clubs", path: "/clubs", component: Clubs },
+];
+`,
   "server/routes.go": `package server
 
 func Register(router *gin.RouterGroup) {
@@ -118,5 +129,9 @@ describe("a base class's calls through a static resource each subclass overrides
       "5 GET /players/:uid",
       "8 POST /clubs",
     ]);
+  });
+
+  it("give a page imported by its source-root path, with its extension, the route that renders it", () => {
+    expect(summary.screens.find((s) => s.filePath === "src/page/clubs.vue")?.routePath).toBe("/clubs");
   });
 });
