@@ -687,9 +687,11 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       }
     }
 
-    // EF Core migration data fixes — `migrationBuilder.Sql(@"INSERT INTO ""Roles"" …")`:
-    // one row per DML statement whose table resolves (DDL is the schema, not data).
-    if (method === "Sql" && /^_?migrationBuilder$/i.test(root) && parts.length === 2) {
+    // EF Core migration data fixes — `migrationBuilder.Sql(@"INSERT INTO ""Roles"" …")`, and
+    // FluentMigrator's `Execute.Sql("DELETE FROM \"Config\" …")`: one row per DML statement whose
+    // table resolves (DDL is the schema, not data).
+    const fluent = root === "Execute";
+    if (method === "Sql" && (/^_?migrationBuilder$/i.test(root) || fluent) && parts.length === 2) {
       const raw = argumentNodes(node)[0]?.namedChildren[0];
       const sql = raw?.type === "verbatim_string_literal" ? raw.text.slice(2, -1).replace(/""/g, '"')
         : raw?.type === "string_literal" ? raw.text.slice(1, -1).replace(/\\(.)/g, "$1")
@@ -699,7 +701,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         if (!hit || !/^(?:SELECT|INSERT|UPDATE|DELETE|MERGE)/.test(hit.verb)) continue;
         sources.push(this.ds({
           kind: "database",
-          name: `EF migration: ${hit.verb.split(" ")[0]}`,
+          name: `${fluent ? "Migration" : "EF migration"}: ${hit.verb.split(" ")[0]}`,
           target: hit.table,
           entity: hit.table,
           access: hit.verb === "SELECT" ? "read" : "write",
@@ -709,11 +711,13 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       return;
     }
 
-    // Dapper — IDbConnection.Query / Execute
+    // Dapper — IDbConnection.Query / Execute, on a connection-named receiver, or any receiver
+    // handed a statement (`using var mapper = _database.OpenConnection(); mapper.Execute("DELETE FROM …")`).
+    const dapperSql = DAPPER_METHODS.has(method) ? extractFirstStringArg(node) : null;
     if (DAPPER_METHODS.has(method) &&
         (root === "connection" || root === "_connection" || root === "conn" ||
-         /Connection$/.test(root))) {
-      const sql = extractFirstStringArg(node);
+         /Connection$/.test(root) || (dapperSql !== null && tableFrom(dapperSql) !== null))) {
+      const sql = dapperSql;
       const hit = sql ? tableFrom(sql) : null;
       sources.push(this.ds({
         kind: "database",
@@ -1280,7 +1284,9 @@ function extractFirstStringArg(node: Node): string | null {
     const target = inner ?? arg;
     if (target.type === "string_literal" || target.type === "interpolated_string_expression" ||
         target.type === "verbatim_string_literal") {
-      return target.text.replace(/^[@$]*["']|["']$/g, "");
+      const body = target.text.replace(/^[@$]*["']|["']$/g, "");
+      // A verbatim string doubles its quotes: `@"DELETE FROM ""Fixtures"" …"` names `"Fixtures"`.
+      return /^\$?@|^@\$?/.test(target.text) ? body.replace(/""/g, '"') : body;
     }
   }
   return null;

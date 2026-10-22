@@ -231,6 +231,18 @@ describe("C# raw SQL — the table a command runs against", () => {
       "Dapper: QueryAsync cars read",
     ]);
   });
+
+  it("reads a Dapper call on any receiver that is handed a statement (real-repo FP)", async () => {
+    const rows = (await dbSourcesOf(`    using var mapper = _database.OpenConnection();
+    mapper.Execute(@"DELETE FROM ""Fixtures"" WHERE ""Id"" IN (SELECT ""FixtureId"" FROM ""Postponed"")");
+    var cache = _cache.Execute(key);`)).map((d) => `${d.name} ${d.entity ?? "-"} ${d.access ?? "-"}`);
+    expect(rows).toEqual(["Dapper: Execute Fixtures write"]);
+  });
+
+  it("reads a FluentMigrator migration's raw statement", async () => {
+    const rows = (await dbSourcesOf(`    Execute.Sql("DELETE FROM \\"Config\\" WHERE \\"Key\\" = 'autoscout'");`)).map((d) => `${d.name} ${d.entity ?? "-"} ${d.access ?? "-"}`);
+    expect(rows).toEqual(["Migration: DELETE Config write"]);
+  });
 });
 
 describe("C# HttpClient JSON bodies", () => {
