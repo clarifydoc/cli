@@ -42,10 +42,13 @@ function callText(lines: string[], i: number, open: number): string {
   return out;
 }
 
-/** The widget a route builds: the page's `child:`, else what its builder returns. */
+/**
+ * The widget a route builds: the page's `child:`, else what its builder returns.
+ * A child held in a variable names no widget — the page wrapper around it is not the screen.
+ */
 function widgetOf(text: string): string | null {
-  const child = /\bchild\s*:\s*(?:const\s+)?([A-Z]\w*)\s*\(/.exec(text);
-  if (child) return child[1]!;
+  const child = /\bchild\s*:\s*(?:const\s+)?([A-Za-z_]\w*)\s*[(,)\n]/.exec(text);
+  if (child) return /^[A-Z]/.test(child[1]!) ? child[1]! : null;
   return /(?:=>|\breturn)\s*(?:const\s+)?([A-Z]\w*)\s*\(/.exec(text)?.[1] ?? null;
 }
 

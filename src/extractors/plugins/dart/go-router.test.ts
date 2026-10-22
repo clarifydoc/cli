@@ -60,6 +60,8 @@ describe("GoRouter routes", () => {
   ],
 )`.split("\n"), []);
     expect(routes.map((r) => `${r.path} ${r.handler} @${r.line}`)).toEqual(["/league LeaguePage @1", "table TablePage @5"]);
+    const shell = goRoutes(["GoRoute(path: '/', pageBuilder: (c, s) => FadePage(child: child))"], []);
+    expect(shell.map((r) => `${r.path} ${r.handler}`)).toEqual(["/ null"]);
   });
 });
 
