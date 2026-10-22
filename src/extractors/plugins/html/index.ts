@@ -239,6 +239,13 @@ function exactAttr(attrs: string, name: string): string | undefined {
   return new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i").exec(attrs)?.slice(1).find((v) => v !== undefined);
 }
 
+/** A Thymeleaf link expression's path: `@{/signup}`, `@{/fixtures/{id}(id=${f.id})}` → `/fixtures/{id}`. */
+function thymeleafUrl(value: string | undefined): string | undefined {
+  const inner = value ? /^\s*@\{([\s\S]*)\}\s*$/.exec(value)?.[1] : undefined;
+  const path = inner?.split("(")[0]!.trim();
+  return path?.startsWith("/") && !/\s/.test(path) ? path : undefined;
+}
+
 /** A link to a page or an asset is navigation (core reads it), not a request to a route. */
 const STATIC_FILE = /\.(?:html?|css|js|mjs|map|png|jpe?g|gif|svg|webp|ico|pdf|txt|xml|json|woff2?|ttf|zip)$/i;
 
@@ -246,7 +253,7 @@ type ElementRequest = NonNullable<InteractiveElementInfo["request"]>;
 
 /** What a `<form>` submits: its literal app-path `action`, by its `method` (GET when unset, as browsers do). */
 function formRequest(attrs: string, actionAttr = "action", methodAttr = "method", fallbackMethod = "GET"): ElementRequest | undefined {
-  const target = literalPath(exactAttr(attrs, actionAttr));
+  const target = literalPath(exactAttr(attrs, actionAttr) ?? thymeleafUrl(exactAttr(attrs, `th:${actionAttr}`)));
   const method = (exactAttr(attrs, methodAttr) ?? fallbackMethod).toUpperCase();
   return target && method !== "DIALOG" ? { method, target } : undefined;
 }

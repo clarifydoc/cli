@@ -138,6 +138,18 @@ describe("HTML interactive-element extraction", () => {
     ]);
   });
 
+  it("reads a Thymeleaf form's th:action link expression (real-repo FP)", () => {
+    const out = els(`<form th:action="@{/transfers/confirm(club=\${club.id})}" method="post" id="transfer-form">
+  <button type="submit">Confirm</button>
+</form>
+<form th:action="@{/contracts/{token}(token=\${token})}" method="post" id="contract-form"></form>`);
+    expect(out.map((e) => [e.element, e.request?.method, e.request?.target])).toEqual([
+      ["form", "POST", "/transfers/confirm"],
+      ["button", "POST", "/transfers/confirm"],
+      ["form", "POST", "/contracts/{token}"],
+    ]);
+  });
+
   it("reads a typeless button as submit, formaction over the form's, and GET for a form with no method", () => {
     const out = els(`<form action="/search">
   <button>Go</button>
