@@ -1,5 +1,6 @@
 import type { Node } from "web-tree-sitter";
-import type { RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../../types/analysis.js";
+import type { FileAnalysis, RouteFact, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../../types/analysis.js";
+import type { RouteResolver } from "../../../route-resolvers/base.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
 import { applyRouteMeta, boundParam, inferredParam, type GuardAttr } from "../../../shared/route-metadata.js";
 
@@ -162,6 +163,8 @@ function versionsOf(dec: Node): string[] {
 /** What the enclosing controller contributes to every route in it. */
 interface ControllerScope {
   prefix: string;
+  /** `@Controller(RouteKey.Asset)`: the prefix is another file's enum member, resolved project-wide. */
+  prefixRef?: string;
   guards: GuardAttr[];
   versions: string[];
   /** `@UseInterceptors`, `@UsePipes`, `@UseFilters`, `@Throttle` on the controller, as written. */
@@ -200,6 +203,8 @@ function controllerScope(classBody: Node): ControllerScope {
         scope.prefix = objectStringField(first, "path") ?? "";
         const v = objectStringField(first, "version");
         if (v) scope.versions.push(v);
+      } else if (first?.type === "member_expression" && /^[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*$/.test(first.text)) {
+        scope.prefixRef = first.text;
       } else {
         scope.prefix = firstString(d.call) ?? "";
       }
@@ -268,7 +273,10 @@ const HTTP_STATUS: Record<string, number> = {
 };
 
 /** Inspect a single node for a NestJS HTTP-verb decorator. */
-export function visitNestjsRoute(node: Node, routes: RouteInfo[]): void {
+/** A route whose controller prefix is an enum member (`@Controller(RouteKey.Asset)`), for `nestPrefixResolver`. */
+export const NEST_PREFIX_FACT = "nest-prefix-ref";
+
+export function visitNestjsRoute(node: Node, routes: RouteInfo[], facts?: RouteFact[]): void {
   if (node.type !== "decorator") return;
   const d = decoratorCall(node);
   if (!d || !HTTP_DECORATORS.has(d.name)) return;
@@ -311,6 +319,7 @@ export function visitNestjsRoute(node: Node, routes: RouteInfo[]): void {
   }
   const returnType = method?.childForFieldName("return_type")?.text?.replace(/^:\s*/, "").trim();
   const bodyType = returnType && !/^(?:Promise<\s*)?(?:void|any|unknown)\s*>?$/.test(returnType) ? returnType : undefined;
+  if (scope.prefixRef) facts?.push({ kind: NEST_PREFIX_FACT, line: node.startPosition.row + 1, data: { ref: scope.prefixRef, path: fullPath } });
   const route: RouteInfo = {
     path: fullPath,
     httpMethod: d.name.toUpperCase(),
@@ -332,3 +341,40 @@ export function visitNestjsRoute(node: Node, routes: RouteInfo[]): void {
   });
   routes.push(route);
 }
+
+/**
+ * `@Controller(RouteKey.Asset)` where `enum RouteKey { Asset = 'assets' }` sits
+ * in another file: every route of that controller is served under the member's
+ * value. The enum is the one of that name in the controller's sub-project, else
+ * in the project; a name two enums share there is left alone.
+ */
+export const nestPrefixResolver: RouteResolver = {
+  id: "nest-enum-prefix",
+  languages: ["typescript", "javascript"],
+  priority: 40,
+  resolve(analyses: FileAnalysis[]): void {
+    const pending = analyses.filter((a) => a.routeFacts?.some((f) => f.kind === NEST_PREFIX_FACT));
+    if (pending.length === 0) return;
+    const enums = new Map<string, Array<{ project: string | undefined; values: Record<string, string> }>>();
+    for (const a of analyses) {
+      for (const c of a.classes) {
+        if (c.kind !== "enum" || !c.fieldValues) continue;
+        (enums.get(c.name) ?? enums.set(c.name, []).get(c.name)!).push({ project: a.projectId, values: c.fieldValues });
+      }
+    }
+    for (const a of pending) {
+      for (const f of a.routeFacts!) {
+        if (f.kind !== NEST_PREFIX_FACT) continue;
+        const { ref, path } = f.data as { ref: string; path: string };
+        const [enumName, member] = ref.split(".") as [string, string];
+        const all = enums.get(enumName) ?? [];
+        const local = all.filter((e) => e.project === a.projectId);
+        const pick = local.length > 0 ? local : all;
+        if (pick.length !== 1) continue;
+        const prefix = pick[0]!.values[member];
+        if (prefix === undefined) continue;
+        for (const r of a.routes) if (r.line === f.line && r.path === path) r.path = joinPath(prefix, path);
+      }
+    }
+  },
+};

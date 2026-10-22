@@ -37,7 +37,7 @@ export const javascriptRouteExtractor: RouteExtractor = {
     const walk = (node: Node): void => {
       visitExpressRoute(node, express);
       visitReactRouterRoute(node, reactRouter, facts);
-      visitNestjsRoute(node, nestjs);
+      visitNestjsRoute(node, nestjs, facts);
       visitVueRouterRoute(node, vueRouter, facts);
       if (maybeTanstack) visitTanstackFileRoute(node, tanstack);
       if (maybeTrpc) visitTrpcRouter(node, trpc, facts);

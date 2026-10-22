@@ -1,5 +1,6 @@
 import { extractCdkResources } from "./cdk-resources.js";
 import { cdkRouteResolver } from "./routes/cdk.js";
+import { nestPrefixResolver } from "./routes/nestjs.js";
 import { trpcRouterResolver } from "./routes/trpc.js";
 import { extractEntryPoints } from "./entry-points.js";
 import type { Language, SecurityIssue } from "../../../types/analysis.js";
@@ -241,7 +242,7 @@ const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
 const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new DomBindingResolver()];
-const routeResolvers = [reactRouterResolver, trpcRouterResolver, cdkRouteResolver];
+const routeResolvers = [reactRouterResolver, trpcRouterResolver, cdkRouteResolver, nestPrefixResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {
   ...typescriptManifest,
