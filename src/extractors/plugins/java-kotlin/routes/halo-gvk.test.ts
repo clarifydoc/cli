@@ -44,7 +44,7 @@ describe("@GVK CRUD routes whose group is another class's constant", () => {
   });
 
   it("are served at the constants' values", () => {
-    const routes = summary.routeMap.filter((r) => r.filePath.endsWith("Club.java")).map((r) => `${r.httpMethod} ${r.path}`);
+    const routes = summary.routeMap.filter((r) => r.filePath?.endsWith("Club.java")).map((r) => `${r.httpMethod} ${r.path}`);
     expect(routes).toEqual([
       "GET /apis/content.league.example.com/v1alpha1/clubs",
       "POST /apis/content.league.example.com/v1alpha1/clubs",
