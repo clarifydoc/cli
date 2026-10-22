@@ -44,3 +44,19 @@ export const environment = {
     });
   });
 });
+
+describe("extractModuleValues — route paths in a report table", () => {
+  it("names a computed key by its string enum member and keeps a path member's slug", async () => {
+    expect(
+      await valuesOf(`
+export enum ReportKey { 'squad' = 'squad', fixtures = 'fixtures' }
+export const REPORTS: Record<ReportKey, ReportConfig> = {
+  [ReportKey.squad]: { dimensions: ['event:player'], detailsPath: 'squad' },
+  [ReportKey.fixtures]: { title: 'Fixtures', detailsPath: 'fixtures/upcoming' },
+};`),
+    ).toEqual({
+      "REPORTS.squad.detailsPath": "squad",
+      "REPORTS.fixtures.detailsPath": "fixtures/upcoming",
+    });
+  });
+});
