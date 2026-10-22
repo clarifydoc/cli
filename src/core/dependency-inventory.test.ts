@@ -53,10 +53,16 @@ describe("collectExternalPackages — manifest parsing", () => {
       "require-dev": { "phpunit/phpunit": "^10.0" },
     }));
     await writeFile(join(dir, "pom.xml"), [
-      "<project><dependencies>",
+      "<project><properties><league.annotations.version>1.6.8</league.annotations.version></properties>",
+      "<!-- pin each API: <dependency><groupId>com.example.league</groupId><artifactId>{club}-api</artifactId></dependency> -->",
+      "<dependencyManagement><dependencies><dependency><groupId>com.example.league</groupId><artifactId>league-bom</artifactId><version>2</version></dependency></dependencies></dependencyManagement>",
+      "<dependencies>",
       "<dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId><version>3.1.0</version></dependency>",
       "<dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>5.10.0</version><scope>test</scope></dependency>",
-      "</dependencies></project>",
+      "<dependency><groupId>com.example.league</groupId><artifactId>league-annotations</artifactId><version>${league.annotations.version}</version></dependency>",
+      "</dependencies>",
+      "<build><plugins><plugin><artifactId>dockerfile-maven-plugin</artifactId><dependencies><dependency><groupId>com.example.garage</groupId><artifactId>garage-socket</artifactId><version>0.38</version></dependency></dependencies></plugin></plugins></build>",
+      "</project>",
     ].join("\n"));
     await writeFile(join(dir, "pubspec.yaml"), [
       "name: app",
@@ -172,6 +178,13 @@ describe("collectExternalPackages — manifest parsing", () => {
     // maven: group:artifact name, test scope → dev
     expect(find("maven", "org.springframework.boot:spring-boot-starter-web")?.version).toBe("3.1.0");
     expect(find("maven", "org.junit.jupiter:junit-jupiter")?.scope).toBe("dev");
+    // The POM's own properties fill a version; comments, managed versions and plugin dependencies are no dependency.
+    expect(find("maven", "com.example.league:league-annotations")?.version).toBe("1.6.8");
+    expect(pkgs.filter((p) => p.ecosystem === "maven").map((p) => p.name).sort()).toEqual([
+      "com.example.league:league-annotations",
+      "org.junit.jupiter:junit-jupiter",
+      "org.springframework.boot:spring-boot-starter-web",
+    ]);
 
     // pub: sdk pseudo-version → null, dev_dependencies
     expect(find("pub", "flutter")).toMatchObject({ version: null, scope: "prod" });

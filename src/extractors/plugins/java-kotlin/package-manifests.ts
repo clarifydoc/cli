@@ -3,15 +3,28 @@ import type { DeclaredPackage, PackageManagerSpec } from "../../../types/languag
 import { declared } from "../shared/declared-package.js";
 
 /** Maven: `pom.xml` `<dependency>` blocks as `group:artifact`. */
-function parsePom(text: string, declaredIn: string): DeclaredPackage[] {
+function parsePom(raw: string, declaredIn: string): DeclaredPackage[] {
   const out: DeclaredPackage[] = [];
+  // What the project depends on: not what a comment shows, a `<dependencyManagement>`
+  // pins for its children, or a build plugin needs to run.
+  const text = raw
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<dependencyManagement>[\s\S]*?<\/dependencyManagement>/gi, "")
+    .replace(/<plugin>[\s\S]*?<\/plugin>/gi, "");
+  // `${jackson.version}` from the POM's own `<properties>`.
+  const props = new Map<string, string>();
+  for (const block of text.matchAll(/<properties>([\s\S]*?)<\/properties>/gi)) {
+    for (const p of block[1]!.matchAll(/<([\w.-]+)>\s*([^<]*?)\s*<\/\1>/g)) props.set(p[1]!, p[2]!);
+  }
+  const resolve = (v: string): string => v.replace(/\$\{([\w.-]+)\}/g, (all, k: string) => props.get(k) ?? all);
   const re = /<dependency>([\s\S]*?)<\/dependency>/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const body = m[1]!;
     const group = body.match(/<groupId>\s*([^<]+?)\s*<\/groupId>/i)?.[1];
     const artifact = body.match(/<artifactId>\s*([^<]+?)\s*<\/artifactId>/i)?.[1];
-    const version = body.match(/<version>\s*([^<]+?)\s*<\/version>/i)?.[1] ?? null;
+    const written = body.match(/<version>\s*([^<]+?)\s*<\/version>/i)?.[1];
+    const version = written ? resolve(written) : null;
     const scope = /test/i.test(body.match(/<scope>\s*([^<]+?)\s*<\/scope>/i)?.[1] ?? "") ? "dev" : "prod";
     if (!artifact) continue;
     const name = group ? `${group}:${artifact}` : artifact;

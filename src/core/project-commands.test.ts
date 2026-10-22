@@ -20,6 +20,8 @@ describe("how each sub-project is built, tested and started", () => {
       put("py/manage.py");
       put("jvm/pom.xml", "<project><build><plugins><plugin><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build></project>");
       put("jvm/mvnw");
+      // A parent POM manages the plugin for its children and runs nothing itself.
+      put("parent/pom.xml", "<project><packaging>pom</packaging><build><pluginManagement><plugins><plugin><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></pluginManagement></build></project>");
       put("net/Shop.Api.csproj", "<Project/>");
       put("rs/Cargo.toml", "[package]\nname = \"x\"\n");
       put("rs/src/main.rs");
@@ -29,13 +31,14 @@ describe("how each sub-project is built, tested and started", () => {
       put("php/composer.json", JSON.stringify({ scripts: { test: "phpunit" } }));
       put("php/artisan");
       put("old/package.json", JSON.stringify({ scripts: { test: "echo \"Error: no test specified\" && exit 1" } }));
-      const ids = ["web", "api", "py", "jvm", "net", "rs", "rb", "php", "old"];
+      const ids = ["web", "api", "py", "jvm", "parent", "net", "rs", "rb", "php", "old"];
       const got = collectProjectCommands(root, ids.map((id) => ({ id, root: id })));
       const by = (id: string) => got.filter((c) => c.projectId === id).map((c) => `${c.kind}: ${c.command}`);
       expect(by("web")).toEqual(["build: pnpm build", "test: pnpm test", "dev: pnpm dev", "lint: pnpm lint"]);
       expect(by("api")).toEqual(["build: go build ./...", "test: go test ./..."]);
       expect(by("py")).toEqual(["build: python -m build", "test: pytest", "start: python manage.py runserver"]);
       expect(by("jvm")).toEqual(["build: ./mvnw package", "test: ./mvnw test", "start: ./mvnw spring-boot:run"]);
+      expect(by("parent")).toEqual(["build: mvn package", "test: mvn test"]);
       expect(by("net")).toEqual(["build: dotnet build", "test: dotnet test", "start: dotnet run"]);
       expect(by("rs")).toEqual(["build: cargo build", "test: cargo test", "start: cargo run"]);
       expect(by("rb")).toEqual(["test: bundle exec rspec", "start: bin/rails server"]);

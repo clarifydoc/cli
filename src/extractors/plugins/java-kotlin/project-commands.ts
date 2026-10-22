@@ -5,11 +5,13 @@ export function jvmProjectCommands(root: ProjectRootView): ProjectCommand[] {
   const has = (f: string) => root.entries.includes(f);
   if (has("pom.xml")) {
     const mvn = has("mvnw") ? "./mvnw" : "mvn";
-    const pom = root.read("pom.xml") ?? "";
+    const pom = (root.read("pom.xml") ?? "").replace(/<!--[\s\S]*?-->/g, "");
+    // A parent or aggregator POM runs nothing itself, and a plugin it only manages is its children's.
+    const runs = !/<packaging>\s*pom\s*<\/packaging>/.test(pom) && /spring-boot-maven-plugin/.test(pom.replace(/<pluginManagement>[\s\S]*?<\/pluginManagement>/g, ""));
     return [
       { kind: "build", command: `${mvn} package`, source: "pom.xml" },
       { kind: "test", command: `${mvn} test`, source: "pom.xml" },
-      ...(/spring-boot-maven-plugin/.test(pom) ? [{ kind: "start" as const, command: `${mvn} spring-boot:run`, source: "pom.xml spring-boot-maven-plugin" }] : []),
+      ...(runs ? [{ kind: "start" as const, command: `${mvn} spring-boot:run`, source: "pom.xml spring-boot-maven-plugin" }] : []),
     ];
   }
   const gradleFile = ["build.gradle.kts", "build.gradle"].find(has);
