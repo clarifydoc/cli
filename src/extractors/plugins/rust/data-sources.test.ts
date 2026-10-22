@@ -67,4 +67,25 @@ impl Crud for Club {
       "diesel: delete player write @26",
     ]);
   });
+
+  it("read a table named through its dsl module, qualified or imported", () => {
+    const src = `use garage_db::schema::car_table;
+use garage_db::schema::car_table::dsl;
+
+pub fn update_car(conn: &mut Conn, changeset: CarChangeset) -> Result<()> {
+  diesel::update(dsl::car_table)
+    .filter(car_table::id.eq(changeset.id))
+    .execute(conn)?;
+}
+pub fn select_car(conn: &mut Conn, id: &str) -> Result<Car> {
+  let car = dsl::car_table.filter(dsl::id.eq(id)).first::<Car>(conn)?;
+  diesel::delete(engine_table::dsl::engine_table.filter(engine_table::car_id.eq(id))).execute(conn)?;
+}`;
+    const rows = extractRustDataSources(src.split("\n")).filter((d) => d.kind === "database");
+    expect(rows.map((r) => `${r.name} ${r.target} ${r.access} @${r.line}`)).toEqual([
+      "diesel: update car_table write @5",
+      "diesel car_table read @10",
+      "diesel: delete engine_table write @11",
+    ]);
+  });
 });

@@ -32,10 +32,12 @@ const DIESEL_WRITE_RE = /\b(insert_into|replace_into|update|delete)\s*\(\s*$/;
  * module: `use schema::match_report::dsl::{id, match_report}` binds
  * `match_report`; `dsl::*` binds the table's own name. Columns are not tables.
  */
-function dieselDslTables(lines: string[]): Map<string, string> {
+function dieselDslTables(lines: string[]): { tables: Map<string, string>; modules: Set<string> } {
   const out = new Map<string, string>();
+  const modules = new Set<string>();
   const text = lines.join("\n");
   for (const use of text.matchAll(/^\s*(?:pub(?:\([^)]*\))?\s+)?use\b[^;]*;/gm)) {
+    for (const m of use[0].matchAll(/\b([a-z][a-z0-9_]*)::dsl\s*(?=[;,}])/g)) modules.add(m[1]!);
     for (const m of use[0].matchAll(DIESEL_DSL_RE)) {
       const table = m[1]!;
       const items = m[2] === "*" ? [table] : m[2]!.replace(/[{}]/g, "").split(",");
@@ -45,7 +47,25 @@ function dieselDslTables(lines: string[]): Map<string, string> {
       }
     }
   }
-  return out;
+  return { tables: out, modules };
+}
+
+/** `dsl::match_report` under `use schema::match_report::dsl`, or `match_report::dsl::match_report` written out. */
+const DIESEL_QUALIFIED_DSL_RE = /\b(?:([a-z][a-z0-9_]*)::)?dsl::([a-z][a-z0-9_]*)\b(?!\s*::)/g;
+
+/** The first Diesel table a line names, and where. */
+function dieselTableOn(line: string, dsl: { tables: Map<string, string>; modules: Set<string> }, dslRe: RegExp | null, declaration: boolean): { table: string; at: number } | null {
+  const hits: { table: string; at: number }[] = [];
+  const own = DIESEL_TABLE_RE.exec(line);
+  if (own) hits.push({ table: own[1]!, at: own.index });
+  if (!declaration) {
+    const local = dslRe?.exec(line);
+    if (local) hits.push({ table: dsl.tables.get(local[1]!)!, at: local.index });
+    for (const m of line.matchAll(DIESEL_QUALIFIED_DSL_RE)) {
+      if (m[1] ? m[1] === m[2] : dsl.modules.has(m[2]!)) { hits.push({ table: m[2]!, at: m.index }); break; }
+    }
+  }
+  return hits.sort((a, b) => a.at - b.at)[0] ?? null;
 }
 
 /** Whether the table named at `at` on line `i` is what an `insert_into(`/`update(`/`delete(` writes. */
@@ -127,9 +147,9 @@ function splitTopLevel(text: string): string[] {
 export function extractRustDataSources(lines: string[]): DataSourceInfo[] {
   const normLines = normalizeRawStrings(lines.join("\n")).split("\n");
   const sources: DataSourceInfo[] = extractSqlStringDataSources(normLines);
-  const dslTables = dieselDslTables(lines);
-  const dslRe = dslTables.size
-    ? new RegExp(`(?<![\\w:.])(${[...dslTables.keys()].join("|")})\\b(?!\\s*(?:::|:[^:]|=[^=>]|!))`)
+  const dsl = dieselDslTables(lines);
+  const dslRe = dsl.tables.size
+    ? new RegExp(`(?<![\\w:.])(${[...dsl.tables.keys()].join("|")})\\b(?!\\s*(?:::|:[^:]|=[^=>]|!))`)
     : null;
 
   let inUse = false;
@@ -141,10 +161,10 @@ export function extractRustDataSources(lines: string[]): DataSourceInfo[] {
     if (/^\s*(?:pub(?:\([^)]*\))?\s+)?use\b/.test(line)) inUse = true;
     if (inUse && line.includes(";")) inUse = false;
 
-    const diesel = line.match(DIESEL_TABLE_RE) ?? (declaration ? null : line.match(dslRe ?? /$^/));
+    const diesel = dieselTableOn(line, dsl, dslRe, declaration);
     if (diesel) {
-      const table = dslTables.get(diesel[1]!) ?? diesel[1]!;
-      const write = dieselWrite(lines, i, diesel.index ?? 0);
+      const { table } = diesel;
+      const write = dieselWrite(lines, i, diesel.at);
       sources.push({
         kind: "database",
         name: write ? `diesel: ${write}` : "diesel",
