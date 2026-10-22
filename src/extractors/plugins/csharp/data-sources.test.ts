@@ -651,3 +651,30 @@ class LeagueStats {
     expect(rows.some((r) => /Response|Headers|Mapper/.test(r))).toBe(false);
   });
 });
+
+describe("C# typed repository query helpers", () => {
+  it("reads the tables a typed query names and the model a repository subclass is closed over", async () => {
+    const src = `namespace League.Squads {
+  public class BasicRepository<TModel> where TModel : ModelBase {
+    protected readonly IDatabase _database;
+    protected virtual List<TModel> Query(SqlBuilder builder) => _database.Query<TModel>(builder).ToList();
+  }
+  public class PlayerRepository : BasicRepository<Player>, IPlayerRepository {
+    public List<Player> ByClub(int clubId) => Query(x => x.ClubId == clubId);
+    public IEnumerable<Player> WithKits(SqlBuilder builder) =>
+      _database.QueryJoined<Player, Kit, Club>(builder, (p, k, c) => p);
+    public List<Player> Raw(IDbConnection db) => db.Query<PlayerRow>("SELECT * FROM players").ToList();
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as never, "PlayerRepository.cs");
+    const rows = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
+    expect(rows.map((d) => `${d.name} ${d.entity}${d.joined ? " joined" : ""} @${d.line}`)).toEqual([
+      "Query Player @7",
+      "_database.QueryJoined Player @9",
+      "_database.QueryJoined Kit joined @9",
+      "_database.QueryJoined Club joined @9",
+      // Dapper over SQL: the statement's table, not the row type.
+      "Dapper: Query players @10",
+    ]);
+  });
+});

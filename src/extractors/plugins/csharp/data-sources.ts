@@ -602,6 +602,8 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     const fn = node.childForFieldName("function");
     const fullName = fn ? this.fullCallName(fn) : null;
     if (!fn || !fullName) return null;
+    // `db.Query<PlayerRow>("SELECT …").ToList()` is Dapper over SQL, not an EF set.
+    if (/\bQuery(?:First|Single)?(?:OrDefault)?\s*<[^>]*>\s*\(\s*[@$]*"/.test(node.text)) return null;
     const parts = fullName.split(".");
     const method = parts[parts.length - 1]!.replace(/<.*$/, "");
     if (!EF_READ_METHODS.has(method) && !EF_WRITE_METHODS.has(method)) return null;
@@ -934,6 +936,30 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         sources.push(this.ds({ kind: "queue-publish", name: `MQ: ${method}`, target: type, entity: type, line: node.startPosition.row + 1 }));
       }
       if (types.length > 0) return;
+    }
+
+    // A project's typed query helpers: `_database.Query<Movie>(builder)`, `_database.QueryJoined<Movie, MovieFile>(…)`
+    // (the type arguments are the tables read), and a repository subclass's inherited
+    // `Query(x => x.MovieId == id)`, which reads the model its base is closed over (`: BasicRepository<Movie>`).
+    if (REPOSITORY_QUERY_RE.test(method)) {
+      const own = enclosingTypeDecl(node);
+      const typeParams = new Set((own?.namedChildren.find((c) => c.type === "type_parameter_list")?.namedChildren ?? []).map((t) => t.text));
+      const generic = fn.type === "member_access_expression" ? fn.childForFieldName("name") : fn.type === "generic_name" ? fn : null;
+      const typeArgs = generic?.type === "generic_name"
+        ? (generic.namedChildren.find((c) => c.type === "type_argument_list")?.namedChildren ?? []).map((t) => t.text.replace(/<.*$/, "").split(".").pop()!)
+        : [];
+      // `db.Query<Movie>("SELECT … FROM \"Movies\"")` is Dapper: the SQL names the table, the type is the row's shape.
+      const sqlFirst = /^\s*[@$]*"/.test(argumentNodes(node)[0]?.text ?? "");
+      const onDatabase = !sqlFirst && (/^_?(?:database|db|dataContext)$/i.test(receiver) || /\bIDatabase$/.test(parameterType(node, receiver) ?? ""));
+      const models = typeArgs.length > 0 && onDatabase
+        ? typeArgs
+        : (!receiver || receiver === "this" || receiver === "base") && own ? [repositoryModel(own)].filter((m): m is string => !!m) : [];
+      const concrete = models.filter((m) => /^[A-Z]\w*$/.test(m) && !typeParams.has(m));
+      concrete.forEach((entity, i) => sources.push(this.ds({
+        kind: "database", name: `${receiver ? `${receiver}.` : ""}${method}`, target: entity, entity, access: "read",
+        ...(i > 0 ? { joined: true } : {}), line: node.startPosition.row + 1,
+      })));
+      if (concrete.length > 0) return;
     }
 
     // StackExchange.Redis: `db.HashGetAsync(key, field)`, `db.StringSetAsync(key, value)` on an
@@ -1333,6 +1359,27 @@ function mqArgLabel(args: Node[], name: string, index: number, literalOnly = fal
   if (literalOnly && !isLiteral) return null;
   const cleaned = (isLiteral ? text.replace(/^[@$]*"|"$/g, "") : text).replace(/\s+/g, " ");
   return cleaned && cleaned.length <= 64 ? cleaned : null;
+}
+
+/** A repository's read helpers, by the names data-access layers give them. */
+const REPOSITORY_QUERY_RE = /^(?:Query|QueryDistinct|QueryJoined|PagedQuery|QueryFirst|QuerySingle)$/;
+
+/** The class, struct or record a node sits in. */
+function enclosingTypeDecl(node: Node): Node | null {
+  for (let p: Node | null = node.parent; p; p = p.parent) {
+    if (p.type === "class_declaration" || p.type === "record_declaration" || p.type === "struct_declaration") return p;
+  }
+  return null;
+}
+
+/** The model a repository class is closed over: `class MovieRepository : BasicRepository<Movie>` → Movie. */
+function repositoryModel(cls: Node): string | null {
+  const bases = cls.namedChildren.find((c) => c.type === "base_list");
+  for (const b of bases?.namedChildren ?? []) {
+    const m = /^(?:[\w.]+\.)?\w*Repository\s*<\s*([\w.]+)\s*>$/.exec(b.text);
+    if (m) return m[1]!.split(".").pop()!;
+  }
+  return null;
 }
 
 /**
