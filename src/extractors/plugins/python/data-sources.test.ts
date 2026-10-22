@@ -106,6 +106,20 @@ describe("Python database calls", () => {
     expect(rows).toEqual(["Car.objects.filter(paid=True).first → Car", "Car.objects.filter → Car", "Player.query.filter_by → Player", "cars.objects.all → -"]);
   });
 
+  it("reads every verb on a model's manager, its writes as writes (real-repo FP)", async () => {
+    const src = [
+      "club = Club.objects.get(pk=pk)",
+      "kinds = ContentType.objects.get_for_model(Club)",
+      "rows = Club.objects.annotate(players=Count('player'))",
+      "Fixture.objects.bulk_update(fixtures, ['kickoff'])",
+      "Player.objects.using(alias).filter(club=club).update(active=False)",
+      "Referee.objects.create(name=n)",
+    ].join("\n");
+    const tree = await parseSource(src, "python" as never, "x.py");
+    const rows = new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database" && /^[A-Z]\w*\.objects\.\w+$|objects\.using.*update$/.test(d.name)).map((d) => `${d.entity} ${d.access}`);
+    expect(rows).toEqual(["Club read", "ContentType read", "Club read", "Fixture write", "Player write", "Player read", "Referee write"]);
+  });
+
   it("leaves interpreters, strings, XML trees and arrays alone", async () => {
     // code-scalpel: every one of these was a "database" access.
     expect(await dbCallsOf([

@@ -203,11 +203,14 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
         // interpreter's, string's and ElementTree's: they need the chain to
         // show a datastore — a session/cursor/collection receiver, a Django
         // manager (`.objects`), a SQLAlchemy query (`.query(...)`).
+        // A model's Django manager queried, whatever the verb or custom manager method
+        // (`Site.objects.annotate(…)`, `ContentType.objects.get_for_model(…)`, `.bulk_update(…)`).
+        const djangoManager = /\.objects\./.test(fnName) && managerModel(fnName) !== null;
         const isQuery =
-          PY_DB_LEAVES.has(leaf) ||
+          PY_DB_LEAVES.has(leaf) || djangoManager ||
           (PY_GENERIC_DB_LEAVES.has(leaf) && (datastoreChain(fnName) || relatedManager(fnName, leaf)));
         if (fnName.includes(".") && (isQuery || isSessionWrite)) {
-          let access = isSessionWrite ? "write" : dbAccessFor(leaf, PY_DB_ACCESS);
+          let access = isSessionWrite ? "write" : dbAccessFor(leaf, PY_DB_ACCESS) ?? (djangoManager ? (DJANGO_WRITE_LEAVES.has(leaf) ? "write" : "read") : undefined);
           // Raw SQL (`cursor.execute(sql)`, `session.execute(text(q))`): the
           // statement names the table and says whether it reads or writes —
           // read from a literal or a local assigned one.
@@ -249,6 +252,11 @@ const PY_DB_LEAVES = new Set([
   "executemany", "find_one", "find_many", "filter_by", "get_or_create", "save",
   "insert_one", "insert_many", "update_one", "update_many",
   "delete_one", "delete_many", "count_documents",
+]);
+
+/** A Django manager's writing verbs; every other manager call reads. */
+const DJANGO_WRITE_LEAVES = new Set([
+  "create", "bulk_create", "bulk_update", "update", "update_or_create", "get_or_create", "delete", "save",
 ]);
 
 /** DB verbs that are also ordinary method names — trusted only on a datastore-shaped chain. */
