@@ -2,7 +2,7 @@ import type { FileAnalysis, RouteInfo } from "../../../../types/analysis.js";
 import type { ClassRef, ProjectContext } from "../../../../types/project.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
 import { buildAuth, type GuardAttr } from "../../../shared/route-metadata.js";
-import { buildPath, rebindParams, CS_CONTROLLER_FACT, type CsControllerFact, type CsActionFact } from "./aspnet.js";
+import { buildPath, optionalTailPath, rebindParams, CS_CONTROLLER_FACT, type CsControllerFact, type CsActionFact } from "./aspnet.js";
 import { CustomAttributes } from "./aspnet-attributes.js";
 import { areaOfPath, conventionalPath, webApiVerb, CS_CONVENTIONAL_ROUTE_FACT, type CsConventionalPattern } from "./aspnet-conventional.js";
 
@@ -155,12 +155,14 @@ export const aspnetControllerInheritance: RouteResolver = {
       const controllerToken = at.ref.cls.name.replace(/Controller$/, "");
       const path = buildPath(scope.template, action.template, controllerToken, action.handler);
       const classGuards = [...scope.guards, ...at.fact.guards];
+      const shorter = optionalTailPath(scope.template, action.template, controllerToken, action.handler);
       const row: RouteInfo = {
         ...source,
         path,
         owner: at.ref.cls.name,
         middleware: [...classGuards, ...action.guards].map((g) => g.text),
       };
+      if (shorter && shorter !== path) row.aliases = [shorter];
       const auth = buildAuth(classGuards, action.guards);
       if (auth) row.auth = auth;
       else delete row.auth;

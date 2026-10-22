@@ -363,6 +363,7 @@ function parseMethodRoutes(
     actions?.push({ line, verb, handler: methodName, template: own ?? routeAttrTemplate, guards: methodGuards, ...(actionName ? { action: actionName } : {}) });
     const path = buildPath(scope.prefix, own ?? routeAttrTemplate, scope.controllerName, actionName ?? methodName);
     const params = parameterBindings(methodNode, path, scope.apiController);
+    const shorter = optionalTailPath(scope.prefix, own ?? routeAttrTemplate, scope.controllerName, actionName ?? methodName);
     const route: RouteInfo = {
       path,
       httpMethod: verb,
@@ -371,6 +372,7 @@ function parseMethodRoutes(
       calls: [],
       middleware: guards.map((g) => g.text),
       line,
+      ...(shorter && shorter !== path ? { aliases: [shorter] } : {}),
     };
     if (scope.className) route.owner = scope.className;
     if (auth) route.auth = auth;
@@ -752,6 +754,23 @@ export function buildPath(
   path = path.replace(/\/{2,}/g, "/");
   if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
   return path || "/";
+}
+
+/**
+ * The path the route also answers when its template ends in an optional parameter —
+ * `[HttpPut("{id:int?}")]` serves `PUT /api/clubs` as well as `PUT /api/clubs/5` — or null.
+ */
+export function optionalTailPath(
+  classPrefix: string | null,
+  template: string | null,
+  controllerName: string | null,
+  methodName: string | null,
+): string | null {
+  const tail = /(?:^|\/)\{[^}]*\?\}\/?$/.exec(template ?? "");
+  if (!tail) return null;
+  const shorter = (template ?? "").slice(0, tail.index);
+  // Nothing left of an absolute template is the site root, not the prefix.
+  return buildPath(classPrefix, shorter === "" && template!.startsWith("/") ? "/" : shorter, controllerName, methodName);
 }
 
 /** Route-registry adapter for this plugin (see routes/base.ts). */

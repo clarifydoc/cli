@@ -259,6 +259,8 @@ public class MovieLookupController : RestController<MovieResource>
     // `IApiBehaviorMetadata` is [ApiController] behaviour: the complex parameter binds from the body.
     const put = byPath("Radarr.Api.V3/Tags/TagController.cs")!.routes.find((r) => r.httpMethod === "PUT")!;
     expect(put.params).toEqual([{ name: "resource", type: "TagResource", binding: "body", inferred: true }]);
+    // `{id:int?}` is optional: the update also answers the collection path a settings page saves to.
+    expect(put.aliases).toEqual(["/api/v3/Tag"]);
     expect(put.resolvedBy).toBe("aspnet-controller-inheritance");
   });
 
