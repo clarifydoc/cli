@@ -47,6 +47,7 @@ export class PythonEntityExtractor extends EntityExtractor {
    */
   override reconcileProject(analyses: FileAnalysis[]): void {
     attributeRepositoryAccesses(analyses, PY_REPOSITORY_KNOBS);
+    inheritDjangoModels(analyses);
   }
 
   extract(ctx: EntityExtractContext): EntityExtractResult {
@@ -178,6 +179,12 @@ export class PythonEntityExtractor extends EntityExtractor {
     // `models.Model` is shared by Django and Tortoise — disambiguate via imports.
     if (/\bmodels\.Model\b/.test(base) || /\bmodels\.Model\b/.test(declLine)) {
       return flags.hasTortoise ? { id: "tortoise-orm" } : { id: "django" };
+    }
+
+    // A Django model with a project base (`class Fixture(ScheduledModel, OwnedModel)`): its body
+    // declares Django fields, and the file is Django's.
+    if (flags.hasDjango && !flags.hasTortoise && /\bmodels\.(?:\w*Field|ForeignKey|OneToOneField|ManyToManyField)\s*\(/.test(bodyText)) {
+      return { id: "django" };
     }
 
     // SQLAlchemy declarative: a `Base`/`DeclarativeBase` base, OR a body marker
@@ -816,4 +823,53 @@ function pythonTableName(body: string): string | null {
   const meta = /^([ \t]*)class[ \t]+Meta\b[^\n]*:[ \t]*\n((?:\1[ \t]+[^\n]*(?:\n|$))*)/m.exec(body);
   const inMeta = meta ? /^\s*(?:db_table|table_name|table)\s*=\s*["']([^"']+)["']/m.exec(meta[2]!) : null;
   return inMeta?.[1] ?? null;
+}
+
+/**
+ * A Django model whose fields come from its bases (`class Club(MatchingModel)`,
+ * `MatchingModel(OwnedModel)`, `OwnedModel(models.Model)`): an entity too, with
+ * the columns it inherits. Bases are found by name among the Python classes —
+ * a name two classes share decides nothing.
+ */
+function inheritDjangoModels(analyses: FileAnalysis[]): void {
+  const python = analyses.filter((a) => a.language === "python");
+  const byName = new Map<string, ClassInfo[]>();
+  for (const a of python) for (const c of a.classes) (byName.get(c.name) ?? byName.set(c.name, []).get(c.name)!).push(c);
+  const isDjango = (c: ClassInfo) => c.decorators.includes("entity") && c.decorators.includes("django");
+  // `implements` also carries the models a class relates to (`ForeignKey(Club)`): those are no bases.
+  const relatedTo = new Map<ClassInfo, Set<string>>();
+  for (const a of python) {
+    for (const c of a.classes) relatedTo.set(c, new Set((a.entityRelations ?? []).filter((r) => r.fromEntity === c.name).map((r) => r.toEntity.split(".").pop()!)));
+  }
+  const basesOf = (c: ClassInfo) => [c.extends, ...c.implements]
+    .filter((b): b is string => !!b)
+    .map((b) => b.split(".").pop()!.trim())
+    .filter((b) => b === c.extends?.split(".").pop()?.trim() || !relatedTo.get(c)?.has(b));
+  const one = (name: string) => {
+    const cs = byName.get(name);
+    return cs?.length === 1 ? cs[0]! : null;
+  };
+  for (let round = 0; round < 4; round++) {
+    let changed = false;
+    for (const a of python) {
+      for (const c of a.classes) {
+        const bases = basesOf(c).map(one).filter((b): b is ClassInfo => b !== null && b !== c && isDjango(b));
+        if (bases.length === 0) continue;
+        if (!isDjango(c)) {
+          c.decorators.push("entity", "django");
+          changed = true;
+        }
+        const own = new Set(c.properties.map((p) => p.name));
+        for (const b of bases) {
+          for (const p of b.properties) {
+            if (own.has(p.name)) continue;
+            own.add(p.name);
+            c.properties.push({ ...p });
+            changed = true;
+          }
+        }
+      }
+    }
+    if (!changed) break;
+  }
 }
