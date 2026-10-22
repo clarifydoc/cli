@@ -110,8 +110,6 @@ function extractSvelteProps(attrs: string): string[] {
  * Extract interactive elements (event/`bind:` bindings) from Svelte markup, so
  * the screen builder can attach event pills to the matching tree nodes by line.
  */
-const SVELTE_TAG_RE = /<([a-zA-Z][a-zA-Z0-9-]*)((?:"[^"]*"|'[^']*'|\{[^{}]*\}|[^>'"{])*?)\/?>/g;
-const SVELTE_EVENT_RE = /\bon:([a-zA-Z][a-zA-Z0-9]*)(?:=(?:"([^"]*)"|\{([^}]*)\}))?/g;
 /**
  * Svelte 5 event attributes: `onclick={save}` / `onsubmit={(e) => …}` — plain
  * DOM event properties, no colon. Only known DOM events qualify, so a prop
@@ -123,56 +121,132 @@ const SVELTE5_EVENTS: ReadonlySet<string> = new Set([
   "contextmenu", "touchstart", "touchend", "touchmove", "pointerdown", "pointerup", "pointermove", "drop",
   "dragstart", "dragend", "dragover", "scroll", "wheel", "load", "error", "toggle", "select", "paste", "copy", "cut",
 ]);
-const SVELTE5_EVENT_RE = new RegExp(`\\bon(${[...SVELTE5_EVENTS].join("|")})=(?:"([^"]*)"|\\{([^}]*)\\})`, "g");
-const SVELTE_BIND_RE = /\bbind:([a-zA-Z][a-zA-Z0-9]*)/g;
+
+interface SvelteAttr {
+  name: string;
+  /** The `{…}` or quoted value as written, without its delimiters; null for a bare attribute. */
+  value: string | null;
+  /** `{onclick}` — the attribute named by its value. */
+  shorthand?: boolean;
+}
+
+/**
+ * Every tag of the markup with its attributes, read with braces balanced and
+ * strings skipped — an attribute value may hold `{ … }` of its own
+ * (`onclick={() => { save({ id }); }}`, `class={styles({ disabled })}`).
+ */
+function scanSvelteTags(markup: string): Array<{ tag: string; index: number; attrs: SvelteAttr[] }> {
+  const out: Array<{ tag: string; index: number; attrs: SvelteAttr[] }> = [];
+  const n = markup.length;
+  /** The end (exclusive) of a `{…}` starting at `i`, strings and nested braces skipped. */
+  const braceEnd = (i: number): number => {
+    let depth = 0;
+    for (let j = i; j < n; j++) {
+      const c = markup[j]!;
+      if (c === "'" || c === '"' || c === "`") {
+        const q = c;
+        for (j++; j < n && markup[j] !== q; j++) if (markup[j] === "\\") j++;
+      } else if (c === "{") depth++;
+      else if (c === "}" && --depth === 0) return j + 1;
+    }
+    return n;
+  };
+  for (let i = 0; i < n; i++) {
+    if (markup[i] === "{") {
+      // A block or expression in text (`{#if …}`, `{value}`): never a tag.
+      i = braceEnd(i) - 1;
+      continue;
+    }
+    if (markup[i] !== "<" || !/[a-zA-Z]/.test(markup[i + 1] ?? "")) continue;
+    const name = /^[a-zA-Z][\w.:-]*/.exec(markup.slice(i + 1, i + 200))![0];
+    const attrs: SvelteAttr[] = [];
+    let j = i + 1 + name.length;
+    while (j < n && markup[j] !== ">") {
+      const c = markup[j]!;
+      if (/\s|\//.test(c)) { j++; continue; }
+      if (c === "{") {
+        const end = braceEnd(j);
+        const inner = markup.slice(j + 1, end - 1).trim();
+        if (/^[a-zA-Z_$][\w$]*$/.test(inner)) attrs.push({ name: inner, value: inner, shorthand: true });
+        j = end;
+        continue;
+      }
+      const key = /^[^\s=>/{]+/.exec(markup.slice(j, j + 200))?.[0];
+      if (!key) { j++; continue; }
+      j += key.length;
+      let k = j;
+      while (k < n && /\s/.test(markup[k]!)) k++;
+      if (markup[k] !== "=") { attrs.push({ name: key, value: null }); continue; }
+      k++;
+      while (k < n && /\s/.test(markup[k]!)) k++;
+      const v = markup[k];
+      if (v === "{") {
+        const end = braceEnd(k);
+        attrs.push({ name: key, value: markup.slice(k + 1, end - 1) });
+        j = end;
+      } else if (v === '"' || v === "'") {
+        let e = k + 1;
+        while (e < n && markup[e] !== v) e = markup[e] === "{" ? braceEnd(e) : e + 1;
+        const raw = markup.slice(k + 1, e);
+        attrs.push({ name: key, value: /^\{[\s\S]*\}$/.test(raw.trim()) ? raw.trim().slice(1, -1) : raw });
+        j = e + 1;
+      } else {
+        const bare = /^[^\s>]+/.exec(markup.slice(k))?.[0] ?? "";
+        attrs.push({ name: key, value: bare });
+        j = k + bare.length;
+      }
+    }
+    out.push({ tag: name, index: i, attrs });
+    i = j;
+  }
+  return out;
+}
 
 export function extractSvelteInteractiveElements(
   markup: string,
 ): InteractiveElementInfo[] {
   const elements: InteractiveElementInfo[] = [];
-  SVELTE_TAG_RE.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = SVELTE_TAG_RE.exec(markup)) !== null) {
-    const tag = match[1]!;
-    const attrs = match[2] ?? "";
-    const line = (markup.slice(0, match.index).match(/\n/g)?.length ?? 0) + 1;
+  const lineStarts: number[] = [0];
+  for (let i = 0; i < markup.length; i++) if (markup[i] === "\n") lineStarts.push(i + 1);
+  const lineOf = (index: number): number => {
+    let lo = 0, hi = lineStarts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (lineStarts[mid]! <= index) lo = mid; else hi = mid - 1;
+    }
+    return lo + 1;
+  };
+  for (const { tag, index, attrs } of scanSvelteTags(markup)) {
+    const line = lineOf(index);
     const element = resolveInteractiveElementKind(tag);
-
-    SVELTE_EVENT_RE.lastIndex = 0;
-    let e: RegExpExecArray | null;
-    while ((e = SVELTE_EVENT_RE.exec(attrs)) !== null) {
-      elements.push({
-        element,
-        event: `on:${e[1]}`,
-        handler: cleanHandler(e[2] ?? e[3] ?? null),
-        line,
-      });
-    }
-    SVELTE5_EVENT_RE.lastIndex = 0;
-    while ((e = SVELTE5_EVENT_RE.exec(attrs)) !== null) {
-      elements.push({
-        element,
-        event: `on${e[1]}`,
-        handler: cleanHandler(e[2] ?? e[3] ?? null),
-        line,
-      });
-    }
-    // bind:value etc. — a two-way binding worth surfacing on inputs/components.
-    SVELTE_BIND_RE.lastIndex = 0;
-    let b: RegExpExecArray | null;
-    while ((b = SVELTE_BIND_RE.exec(attrs)) !== null) {
-      elements.push({ element, event: `bind:${b[1]}`, handler: null, line });
+    // A component (`<ArchiveAction>`, `<Modal.Root>`) takes callbacks as camelCase props (`onClick`, `onCheckedChange`).
+    const component = /^[A-Z]/.test(tag) || tag.includes(".");
+    for (const a of attrs) {
+      let event: string | null = null;
+      if (a.name.startsWith("on:")) event = a.name;
+      else if (/^on[a-z]+$/.test(a.name) && SVELTE5_EVENTS.has(a.name.slice(2))) event = a.name;
+      else if (component && /^on[A-Z]\w*$/.test(a.name)) event = a.name;
+      if (event) {
+        elements.push({ element, event, handler: cleanHandler(a.value), line, ...(component && element === "custom" ? { component: tag } : {}) });
+      } else if (a.name.startsWith("bind:")) {
+        // bind:value etc. — a two-way binding worth surfacing on inputs/components.
+        elements.push({ element, event: a.name, handler: null, line });
+      }
     }
   }
   return elements;
 }
 
-/** Normalize a handler expression to a short name (`() => save()` → `save`). */
+/** Normalize a handler expression to a short name (`() => save()` → `save`, `() => { void run({ id }); }` → `run`). */
 function cleanHandler(raw: string | null): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
   const arrow = trimmed.match(/=>\s*([a-zA-Z_$][\w$]*)/);
   if (arrow) return arrow[1]!;
+  // A block body: the first function it calls.
+  const block = /=>\s*\{([\s\S]*)\}\s*$/.exec(trimmed)?.[1];
+  const called = block ? /(?:^|[^\w$.])(?!(?:if|for|while|switch|return|await|void|new|typeof|catch)\b)([a-zA-Z_$][\w$]*)\s*\(/.exec(block)?.[1] : undefined;
+  if (called) return called;
   const call = trimmed.match(/^([a-zA-Z_$][\w$]*)/);
   return call ? call[1]! : trimmed;
 }
