@@ -243,6 +243,21 @@ describe("EF through a member holding the context", () => {
     const rows = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
     expect(rows.map((d) => `${d.name} ${d.entity ?? "-"}`)).toEqual(expect.arrayContaining(["EF: SingleOrDefaultAsync CatalogItems"]));
   });
+
+  it("follows the set cast into a local IQueryable", async () => {
+    const src = `public static class ClubApi {
+  public static async Task<List<Club>> GetClubs([AsParameters] LeagueServices services, string name)
+  {
+    var root = (IQueryable<Club>)services.Context.Clubs;
+    if (name is not null) root = root.Where(c => c.Name.StartsWith(name));
+    var scope = root;
+    return await scope.OrderBy(c => c.Name).ToListAsync();
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as never, "ClubApi.cs");
+    const rows = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
+    expect(rows.map((d) => `${d.name} ${d.entity ?? "-"} @${d.line}`)).toEqual(["EF: Where Clubs @5", "EF: ToListAsync Clubs @7"]);
+  });
 });
 
 describe("C# raw SQL — the table a command runs against", () => {

@@ -657,10 +657,16 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   /** `var q = <a query on a set>;`: remember which set the local holds. */
   private recordEfLocal(declarator: Node): void {
     const name = declarator.childForFieldName("name")?.text ?? declarator.namedChildren.find((c) => c.type === "identifier")?.text;
-    const value = declarator.namedChildren[declarator.namedChildren.length - 1];
-    if (!name || !value || value.type === "identifier") return;
-    const entity = this.efSetOf(value, declarator);
-    if (entity) this.efLocals.set(`${enclosingMember(declarator)?.id}:${name}`, entity);
+    let value: Node | undefined = declarator.namedChildren[declarator.namedChildren.length - 1];
+    // `(IQueryable<Club>)services.Context.Clubs`: the cast names the interface, the value is the set.
+    while (value?.type === "cast_expression" || value?.type === "parenthesized_expression") {
+      value = value.type === "cast_expression" ? value.childForFieldName("value") ?? undefined : value.namedChildren[0];
+    }
+    if (!name || !value) return;
+    const scope = enclosingMember(declarator)?.id;
+    // `var brandScope = items;`: another name for a set local.
+    const entity = value.type === "identifier" ? this.efLocals.get(`${scope}:${value.text}`) ?? null : this.efSetOf(value, declarator);
+    if (entity) this.efLocals.set(`${scope}:${name}`, entity);
   }
 
   /**
@@ -675,7 +681,12 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     if (base !== null && this.dbSetNames.has(base)) return this.dbSetNames.get(base) ?? null;
     const local = base !== null ? this.efLocals.get(`${enclosingMember(at)?.id}:${base}`) : undefined;
     if (local) return local;
-    const root = (this.fullCallName(fn) ?? "").split(".")[0]!;
+    const segments = (this.fullCallName(fn) ?? "").split(".");
+    const root = segments[0]!;
+    // `services.Context.Clubs`: a set read off a context a holder carries.
+    if (expr.type === "member_access_expression" && segments.length > 2 && /^(?:[Cc]ontext|\w+Context|Db)$/.test(segments[segments.length - 2]!)) {
+      return cleanEntityName(segments[segments.length - 1]!);
+    }
     if (!/^(?:_?(?:db)?[Cc]ontext|\w+Context|_?db|_?dbContext)$/.test(root)) return null;
     // `_context.Set<Club>()` itself names its set; a query operator on one walks back to it.
     const own = fn.childForFieldName("name");
