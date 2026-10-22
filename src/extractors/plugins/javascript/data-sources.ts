@@ -368,7 +368,7 @@ function emitterReceivers(src: string): Set<string> {
   return out;
 }
 /** A receiver name that reads like an in-process event bus. */
-const EMITTER_NAME_RE = /^(?:bus|emitter|events|eventBus|eventEmitter|eventHub|hub|pubsub)$|EventBus$|Emitter$/;
+const EMITTER_NAME_RE = /^(?:bus|emitter|events|eventBus|eventEmitter|eventHub|eventManager|hub|pubsub)$|EventBus$|Emitter$|EventManager$/;
 /** Receivers whose `on`/`emit` are never a message channel: the process, HTTP objects, streams, the DOM. */
 const NOT_A_CHANNEL_RE = /^(?:process|req|request|res|response|stream|readable|writable|window|document|el|element|\$|server|app|child|proc|ws|wss|db|knex|vm|emit)$/;
 /** AWS SDK v3 commands that put a message on a queue or topic, or take one off. */
@@ -1304,6 +1304,15 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
             if (event && emitterLike && !NOT_A_CHANNEL_RE.test(root) && !(fnName !== "emit" && mqArgs.length < 2)) {
               sources.push(this.ds({ kind: fnName === "emit" ? "queue-publish" : "queue-consume", name: `EventEmitter: ${fnName}`, target: event, line }));
               return;
+            }
+            // A typed manager subscribing to several events at once: `events.on({ ClubUpdate: refresh, AuthLogout: () => … })`.
+            if (fnName !== "emit" && emitterLike && !NOT_A_CHANNEL_RE.test(root) && mqArgs.length === 1 && mqArgs[0]!.type === "object") {
+              const keyed = mqArgs[0]!.namedChildren.filter((p) => p.type === "pair" || p.type === "shorthand_property_identifier" || p.type === "method_definition");
+              for (const p of keyed) {
+                const key = p.type === "shorthand_property_identifier" ? p.text : (p.childForFieldName("key") ?? p.childForFieldName("name"))?.text.replace(/^['"]|['"]$/g, "");
+                if (key && /^[\w:.-]+$/.test(key)) sources.push(this.ds({ kind: "queue-consume", name: `EventEmitter: ${fnName}`, target: key, line: p.startPosition.row + 1 }));
+              }
+              if (keyed.length > 0) return;
             }
           }
           // Redis pub/sub: `pub.publish("orders", msg)` / `sub.subscribe("orders", …)`, in a file that imports a client.

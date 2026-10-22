@@ -11,6 +11,19 @@ const channels = async (src: string, language: "typescript" | "python" = "typesc
 };
 
 describe("in-process events and cloud queues as channels", () => {
+  it("a typed event manager: emit publishes, on({ … }) subscribes to each key", async () => {
+    expect(await channels(`import { eventManager } from "./event-manager";
+export const signPlayer = async () => { eventManager.emit("PlayerUpdate", player); };
+class SquadManager {
+  constructor() {
+    eventManager.on({
+      PlayerUpdate: (p) => this.refresh(p),
+      AuthLogout: () => this.clear(),
+    });
+  }
+}`)).toEqual(["pub PlayerUpdate (EventEmitter: emit) @2", "sub PlayerUpdate (EventEmitter: on) @6", "sub AuthLogout (EventEmitter: on) @7"]);
+  });
+
   it("NestJS events: emit publishes, @OnEvent consumes on its method", async () => {
     expect(await channels(`import { EventEmitter2, OnEvent } from "@nestjs/event-emitter";
 export class Cars {
