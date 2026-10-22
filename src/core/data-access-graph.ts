@@ -232,7 +232,7 @@ export function attributeDataAccessToSymbols(
         }
       }
     }
-    if (fns.length === 0 && inlineRouteAt.size === 0) continue;
+    if (fns.length === 0 && inlineRouteAt.size === 0 && (a.classes ?? []).length === 0) continue;
     const setupFn = (a.functions ?? []).find((f) => f.name === "<setup>");
     const setup = setupFn ? { symbol: "<setup>", line: setupFn.line } : null;
 
@@ -251,8 +251,13 @@ export function attributeDataAccessToSymbols(
           }
         }
       }
-      // Only the file's top-level `<setup>` contains it (or nothing does): an
-      // inline route handler's call on that line is the better owner.
+      // Only the file's top-level `<setup>` contains it (or nothing does): a class body stating it
+      // (`queryset = Club.objects.all()` on a viewset) is the class's own; an inline route
+      // handler's call on that line is the better owner too.
+      if (!best || best.symbol === "<setup>") {
+        const cls = (a.classes ?? []).filter((c) => c.endLine !== undefined && ds.line >= c.line && ds.line <= c.endLine).sort((x, y) => (x.endLine! - x.line) - (y.endLine! - y.line))[0];
+        if (cls) best = { symbol: cls.name, line: cls.line };
+      }
       if (!best || best.symbol === "<setup>") best = inlineRouteAt.get(ds.line) ?? best;
       // Module-level code (a `new Worker("q", async (job) => …)` at the top of
       // the file) is the file's `<setup>`, the symbol the call graph gives it.

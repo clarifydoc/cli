@@ -3560,13 +3560,37 @@ function ownerOverrideLinks(
 ): SymbolLink[] {
   const handlerName = route.handler!.split(/[#.]/).pop()!;
   const host = analysis.classes.find((c) => c.name !== route.owner && route.line >= c.line && route.line <= c.endLine && c.methods.some((m) => m.name === handlerName));
-  const owner = host ? classEntryFor(ctx.classCatalog.get(route.owner!), sourceFile) : undefined;
-  if (!host || !owner || owner.count !== 1) return [];
+  const owner = classEntryFor(ctx.classCatalog.get(route.owner!), sourceFile);
+  if (!owner || owner.count !== 1) return [];
+  if (!host) {
+    // A handler the framework supplies (DRF's `create` on a `ModelViewSet`): no project method serves
+    // the route, so the owner's own body (its `queryset`) is all it states.
+    const ownerClass = ctx.classAt.get(memberKey(owner.file, route.owner!));
+    const declared = ownerClass?.methods.some((m) => m.name === handlerName) || findMethodInClass(ctx, route.owner!, owner.file, handlerName);
+    if (!ownerClass || declared) return [];
+    return [{ sourceFile, sourceSymbol, sourceLine: route.line, callName: route.owner!, targetFile: owner.file, targetSymbol: route.owner!, targetLine: ownerClass.line, confidence: "INFERRED", strategy: "route-override", relation: "calls" }];
+  }
   const action = host.methods.find((m) => m.name === handlerName && route.line >= m.line && route.line <= m.endLine)
     ?? host.methods.find((m) => m.name === handlerName)!;
   const own = new Set(host.methods.map((m) => m.name));
   const ownerClass = ctx.classAt.get(memberKey(owner.file, route.owner!));
   const out: SymbolLink[] = [];
+  // What the owner states in its own body (`queryset = Club.objects.all()` on a viewset whose
+  // handlers it inherits) is what those handlers serve.
+  if (ownerClass) {
+    out.push({
+      sourceFile,
+      sourceSymbol,
+      sourceLine: route.line,
+      callName: route.owner!,
+      targetFile: owner.file,
+      targetSymbol: route.owner!,
+      targetLine: ownerClass.line,
+      confidence: "INFERRED",
+      strategy: "route-override",
+      relation: "calls",
+    });
+  }
   for (const call of action.calls) {
     // `_providerFactory.All()` on a field the owner handed the base: on the owner's type.
     const onField = /^(?:this\.)?(\w+)\.(\w+)$/.exec(call.name);
