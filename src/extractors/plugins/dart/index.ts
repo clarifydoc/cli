@@ -7,6 +7,7 @@ import type {
 } from "../../../types/analysis.js";
 import type { HttpClientRegistration, InteractiveElementInfo, PropertyInfo, RouteFact, ScreenInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
+import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractCallsFromBody, extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
 import { applyRouteMeta, type GuardAttr } from "../../shared/route-metadata.js";
 import { extractDartRequestAccess, middlewareGuard } from "./request-schema.js";
@@ -249,6 +250,16 @@ const DRIFT_WRITE = /^(delete|deleteWhere|deleteAll|insert\w*|into|update|replac
 
 const pascal = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
+/** The string literal a call's first argument is, read from column `col` of line `i` on: single, double or triple quoted, over lines. */
+function dartStringArg(lines: string[], i: number, col: number): string | null {
+  const text = [lines[i]!.slice(col), ...lines.slice(i + 1, i + 40)].join("\n").trimStart();
+  const quote = /^r?('''|"""|'|")/.exec(text);
+  if (!quote) return null;
+  const body = text.slice(quote[0].length);
+  const end = body.indexOf(quote[1]!);
+  return end < 0 ? null : body.slice(0, end);
+}
+
 function extractDartDataSources(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
   const seen = new Set<string>();
@@ -317,9 +328,18 @@ function extractDartDataSources(lines: string[]): DataSourceInfo[] {
       push({ kind: "database", name: `isar.${m[1]}.${m[2]}`, target: entity, calls: [], line: ln, entity, access: /^(put|delete|clear)/.test(m[2]!) ? "write" : "read" });
     }
 
+    // Raw SQL: Drift's `customSelect('SELECT … FROM logs')` and `customStatement` (often triple-quoted), sqflite's `rawQuery(…)`.
+    for (const m of line.matchAll(/\.(customSelect|customStatement|customUpdate|customInsert|rawQuery|rawInsert|rawUpdate|rawDelete)\s*\(/g)) {
+      const sql = dartStringArg(lines, i, m.index! + m[0].length);
+      const literal = sql ? `"${sql.replace(/\$\{[^}]*\}|\$\w+/g, "{}").replace(/\s+/g, " ").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}";` : null;
+      for (const h of literal ? extractSqlStringDataSources([literal]) : []) push({ ...h, name: `db.${m[1]}`, line: ln });
+    }
+
     // sqflite — `db.query('users', …)`.
     for (const m of line.matchAll(SQFLITE_RE)) {
       const method = m[1]!;
+      // A raw statement named its table above.
+      if (/^raw/.test(method) && out.some((d) => d.line === ln && d.name === `db.${method}`)) continue;
       const table = SQFLITE_TABLE_METHODS.has(method) ? m[2] ?? null : null;
       push({
         kind: "database",

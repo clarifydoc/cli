@@ -331,3 +331,27 @@ class SquadPage extends HookConsumerWidget {
     expect(a.screens.find((sc) => sc.name === "SquadPage")?.navigatesTo.sort()).toEqual(["FixturesPage", "LoginPage", "PlayerDetailPage"]);
   });
 });
+
+describe("Dart raw SQL", () => {
+  it("reads the tables Drift custom statements and sqflite raw queries name", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const src = "class LogRepository {\n" +
+      "  Future<int> count() async {\n" +
+      "    final rows = await logDb.customSelect('SELECT COUNT(*) FROM logger_messages').get();\n" +
+      "    return rows.length;\n" +
+      "  }\n" +
+      "  Future<void> migrate() async {\n" +
+      "    await _db.customStatement('''\n" +
+      "      UPDATE remote_fixture_entity SET kickoff = NULL WHERE id = $id\n" +
+      "    ''');\n" +
+      "  }\n" +
+      "  Future<List<Map>> squad(Database db) => db.rawQuery('SELECT * FROM players WHERE club_id = ?', [1]);\n" +
+      "}\n";
+    const a = extractWithRegex(src, "mobile/lib/repositories/log.repository.dart", "dart");
+    expect(a.dataSources.filter((d) => d.kind === "database" && d.entity).map((d) => `${d.name} ${d.entity} ${d.access} @${d.line}`)).toEqual([
+      "db.customSelect logger_messages read @3",
+      "db.customStatement remote_fixture_entity write @7",
+      "db.rawQuery players read @11",
+    ]);
+  });
+});
