@@ -77,6 +77,19 @@ export function Games() {
     expect(resolveRtkHooks(calls, [queries], ctx)).toBe(0);
     expect(calls.map((c) => c.name)).toEqual(["get"]);
   });
+  it("drops a use…Query a package exports — a router or media composable (real-repo FP: 69 rows)", async () => {
+    const slice: FileAnalysis = { ...createEmptyAnalysis("src/api.ts", "typescript"), dataSources: await callsOf(SLICE) };
+    const calls = [
+      { kind: "api-call" as const, name: "useRouteQuery", target: null, line: 3, calls: [], endpoint: "route", filePath: "src/Fixtures.vue" },
+      { kind: "api-call" as const, name: "useMediaQuery", target: null, line: 4, calls: [], endpoint: "media", filePath: "src/Fixtures.vue" },
+      { kind: "api-call" as const, name: "useAddGameMutation", target: null, line: 5, calls: [], endpoint: "addGame", filePath: "src/Fixtures.vue" },
+    ];
+    const sources: Record<string, string> = { useRouteQuery: "@vueuse/router", useMediaQuery: "@vueuse/core", useAddGameMutation: "@/store/api" };
+    const ctx = { importIndex: { localFor: () => null, sourceFor: (_f: string, n: string) => sources[n] ?? null, namespacesFor: () => [] } } as unknown as ProjectContext;
+    expect(resolveRtkHooks(calls, [slice], ctx)).toBe(1);
+    expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual(["POST /api/games"]);
+  });
+
   it("a query that keeps its URL in a local or a ternary gives every value it can take", async () => {
     const calls = await callsOf(`import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 export const api = createApi({

@@ -11,7 +11,9 @@ import type { ProjectApiCall } from "../../data-sources/base.js";
  * project. A `use…Query` / `use…Mutation` the project itself declares as a
  * function (a TanStack Query composable, `const useX = () => useQuery(…)`)
  * is no generated hook: its row is dropped, and the calls inside that
- * function are what reaches the API. Returns how many calls it resolved.
+ * function are what reaches the API — as is one a package exports
+ * (`useRouteQuery`, `useMediaQuery`) or any in a project with no API slice.
+ * Returns how many calls it resolved.
  */
 export function resolveRtkHooks(calls: ProjectApiCall[], analyses: readonly FileAnalysis[], ctx: ProjectContext): number {
   const pending = calls.filter((c) => c.kind === "api-call" && c.endpoint && c.target === null);
@@ -37,7 +39,14 @@ export function resolveRtkHooks(calls: ProjectApiCall[], analyses: readonly File
     }
     const named = byName.get(c.endpoint!);
     const def = (from ? byFile.get(from)?.get(c.endpoint!) : undefined) ?? (named?.length === 1 ? named[0] : undefined);
-    if (!def) continue;
+    if (!def) {
+      // A `use…Query` from a package (`useRouteQuery`, `useMediaQuery`), or in a project
+      // that defines no API slice at all, is no generated hook.
+      const source = from ? null : ctx.importIndex.sourceFor(c.filePath, c.name);
+      const fromPackage = !!source && !/^[.~#/]|^@\//.test(source);
+      if (c.name.startsWith("use") && (fromPackage || byName.size === 0)) ownHooks.add(c);
+      continue;
+    }
     c.target = def.target;
     if (def.targetAlternatives) c.targetAlternatives = def.targetAlternatives;
     c.name = def.name;
