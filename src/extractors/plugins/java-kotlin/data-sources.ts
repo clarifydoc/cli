@@ -333,13 +333,14 @@ const DAO_RECEIVER_RE = /^(.+?)(DAO|Dao|Repository|Repo)$/;
  * `RepositoryClass` / fields `repositoryClass` instead of `ClassRepository`.
  * Whole words only (no bare `repo…`: `repoPath`, `repoUrl` are VCS vocabulary),
  * and a base naming a collaborator role rather than a record is vetoed —
- * `daoFactory` / `repositoryService` are not data access on "Factory"/"Service".
+ * `daoFactory` / `repositoryService` are not data access on "Factory"/"Service",
+ * nor is a Maven resolver's `RepositorySystem` on "System".
  */
 const DAO_PREFIX_RE = /^(?:Repository|repository|DAO|Dao|dao)([A-Z]\w*)$/;
 /** Declared receiver type that is a service-layer collaborator, not a data store. */
 const SERVICE_LAYER_TYPE_RE = /(Service|ServiceImpl|Controller|Facade|Handler|Resource|Client|Api|Gateway|Manager|Helper|Component)$/;
 const DAO_PREFIX_ROLE_VETO =
-  /(Factory|Service|Manager|Provider|Helper|Registry|Impl|Client|Utils?|Url|Uri|Path|Name|Dir|Root)$/;
+  /(Factory|Service|Manager|Provider|Helper|Registry|Impl|Client|Utils?|Url|Uri|Path|Name|Dir|Root|System|Session|Connection|Layout|Context|Config|Configuration|Builder|Listener|Exception)$/;
 
 /** Verb that begins a DAO/Repository data operation (`get`, `findBy…`, `save`, `deleteAll`, …). */
 const DAO_CRUD_RE =
@@ -475,10 +476,12 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       // By the annotation's NAME (`@field:Value`, `@javax.inject.Inject`): a substring
       // test read `@RequestParam(defaultValue = "x")` and `@JsonValue` as injections.
       if (DI_ANNOTATION_RE.test(text)) {
+        // `@Value("${league.season:2024}")` reads configuration — the key, its default dropped.
+        const configKey = /Value\s*\(\s*(?:value\s*=\s*)?"\$\{([^}:]+)/.exec(text)?.[1]?.trim();
         sources.push(this.ds({
-          kind: "import",
+          kind: /(?:^@|[.:])Value\b/.test(text) ? "env" : "import",
           name: text.replace(/^@/, ""),
-          target: null,
+          target: configKey ?? null,
           line: node.startPosition.row + 1,
         }));
       }

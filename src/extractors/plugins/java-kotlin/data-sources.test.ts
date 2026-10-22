@@ -260,6 +260,11 @@ class ServiceTeacherImpl {
     const s = db(await sourcesOf(`    daoFactory.create(x); repoPath.getParent();`, "java"));
     expect(s).toHaveLength(0);
   });
+
+  it("does not take a Maven resolver's RepositorySystem for a repository (real-repo FP)", async () => {
+    const s = db(await sourcesOf(`    repositorySystem.readArtifactDescriptor(session, request);`, "java"));
+    expect(s).toHaveLength(0);
+  });
 });
 
 describe("Spring Data call on a non-DAO-shaped receiver", () => {
@@ -480,15 +485,16 @@ describe("JVM HTTP — requests are read where they are built", () => {
 });
 
 describe("dependency-injection annotations are read by name", () => {
-  it("records @Autowired / @Value, not a parameter annotation whose argument says Value", async () => {
+  it("records @Autowired as injection and @Value as the configuration key it reads, not a parameter annotation whose argument says Value", async () => {
     const src = `package x
 class ClubController(@Autowired val clubs: ClubService) {
   @field:Value("\${league.size}") lateinit var size: String
   fun list(@RequestParam(required = false, defaultValue = "true") active: Boolean, @JsonValue x: Int) {}
 }`;
     const tree = await parseSource(src, "kotlin" as any, "ClubController.kt");
-    const imports = new JavaKotlinDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "import").map((d) => d.name);
-    expect(imports).toEqual(["Autowired", 'field:Value("\${league.size}")']);
+    const ds = new JavaKotlinDataSourceExtractor().extract(tree, src);
+    expect(ds.filter((d) => d.kind === "import").map((d) => d.name)).toEqual(["Autowired"]);
+    expect(ds.filter((d) => d.kind === "env").map((d) => d.target)).toEqual(["league.size"]);
   });
 });
 
