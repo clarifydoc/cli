@@ -540,6 +540,8 @@ public class SquadStore {
       "Redis: HashSetAsync redis write",
       "Redis: KeyDeleteAsync redis write",
     ]);
+    // A store with no tables: the trace reaches it by name.
+    expect(rows.every((r) => r.store)).toBe(true);
   });
 
   it("reads an IDistributedCache as a key-value store", async () => {

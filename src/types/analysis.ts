@@ -1390,6 +1390,12 @@ export interface DataSourceInfo {
    */
   routine?: true;
   /**
+   * For `database`: `target` is a store with no tables — a key-value store or
+   * cache (`Redis: StringSetAsync`). It names no ER entity; the trace reaches
+   * the store by name.
+   */
+  store?: true;
+  /**
    * For `database`: a further source the same statement reads beside its own
    * (a JOINed table, a subquery's table) — the row before it on the same line
    * is the statement's own target. Consumers asking which table a query is

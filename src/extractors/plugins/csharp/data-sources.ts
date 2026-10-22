@@ -931,6 +931,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         kind: "database",
         name: `Redis: ${method}`,
         target: "redis",
+        store: true,
         line: node.startPosition.row + 1,
         access: REDIS_READ_RE.test(method) ? "read" : "write",
       }));
@@ -951,6 +952,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         kind: "database",
         name: `Cache: ${method}`,
         target: "distributed-cache",
+        store: true,
         line: node.startPosition.row + 1,
         access: /^Get/.test(method) ? "read" : "write",
       }));
