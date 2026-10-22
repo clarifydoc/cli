@@ -92,9 +92,33 @@ describe("discoverFiles — secret-looking names and skipped source directories"
     write("templates/email/password-reset.html", "<p>Reset</p>\n");
     write("templates/forgot-password.html", "<p>Forgot</p>\n");
     write("export/passwords.html", "<p>x</p>\n");
+    // A component's template and a migration directory named for what they handle (real-repo FP).
+    write("src/app/admin/manage-club-tokens/manage-club-tokens.component.html", "<button>Revoke</button>\n");
+    write("migrations/2020-01-01-000000_password-reset-token/up.sql", "CREATE TABLE password_reset (id INT);\n");
+    write("deploy/secrets/league.json", "{}\n");
     const r = await discoverFiles(root);
-    expect(r.files.map((f) => f.relativePath)).toEqual(["templates/email/password-reset.html", "templates/forgot-password.html"]);
-    expect(r.skippedSensitive).toEqual(["export/passwords.html"]);
+    expect(r.files.map((f) => f.relativePath)).toEqual([
+      "migrations/2020-01-01-000000_password-reset-token/up.sql",
+      "src/app/admin/manage-club-tokens/manage-club-tokens.component.html",
+      "templates/email/password-reset.html",
+      "templates/forgot-password.html",
+    ]);
+    expect(r.skippedSensitive.sort()).toEqual(["deploy/secrets/league.json", "export/passwords.html"]);
+  });
+
+  it("skips a build tool's build/ output, not a package or a build project named build (real-repo FP)", async () => {
+    write("league-api/pom.xml", "<project/>\n");
+    write("league-api/src/main/java/com/example/league/build/ApiResolver.java", "package com.example.league.build;\nclass ApiResolver {}\n");
+    write("league-api/build/generated/Stub.java", "class Stub {}\n");
+    write("garage-ui/package.json", "{}\n");
+    write("garage-ui/build/static/main.js", "console.log(1);\n");
+    write("tools/build/_build.csproj", "<Project/>\n");
+    write("tools/build/Build.cs", "class Build {}\n");
+    write("build/output.js", "x();\n");
+    const r = await discoverFiles(root);
+    const files = r.files.map((f) => f.relativePath);
+    expect(files).toEqual(expect.arrayContaining(["league-api/src/main/java/com/example/league/build/ApiResolver.java", "tools/build/Build.cs"]));
+    expect(files.filter((f) => /(?:^|\/)build\/(?:generated|static|output)/.test(f))).toEqual([]);
   });
 
   it("reads a Rust crate's src/bin and a package's declared bin/, not other bin/ folders", async () => {

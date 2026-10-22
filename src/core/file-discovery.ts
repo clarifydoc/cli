@@ -1,6 +1,6 @@
-import { readFileSync, realpathSync, statSync } from "fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "fs";
 import { byOrdinal } from "./ordinal.js";
-import { resolve, sep } from "path";
+import { basename, dirname, resolve, sep } from "path";
 import { glob, LinkedFiles } from "./glob.js";
 import type { Language } from "../types/analysis.js";
 import { EXTENSION_TO_LANGUAGE, getLanguageForFile } from "../parsers/language-map.js";
@@ -27,8 +27,14 @@ const SENSITIVE_FILES: ReadonlyArray<RegExp> = [
  */
 const SENSITIVE_NAMES: ReadonlyArray<RegExp> = [
   /\b(credential|secret|passwd|password|token|private_key)s?\b/i,
-  /(aws_credentials|gcloud_credentials|service.account)/i,
+  /(aws_credentials|gcloud_credentials|service[._-]account)/i,
 ];
+
+/** A directory that holds credentials by its name alone: `secrets/`, `credentials/`, `private_keys/`. */
+const SENSITIVE_DIR = /^\.?(?:credential|secret|private_key)s?$/i;
+
+/** A component's template (`manage-user-tokens.component.html`): the screen of a flow, not a store of what it handles. */
+const PAGE_TEMPLATE = /\.(?:component|page|view|modal|dialog|partial)\.(?:html?|hbs|handlebars|erb|cshtml|razor|jspx?|liquid|twig|mustache|njk|ejs|pug)$/i;
 
 /**
  * Whether a path looks like it holds a credential. A `.env`, a key or a
@@ -42,14 +48,48 @@ const SENSITIVE_NAMES: ReadonlyArray<RegExp> = [
 export function isSensitive(relativePath: string, language?: Language): boolean {
   if (SENSITIVE_FILES.some((p) => p.test(relativePath))) return true;
   if (language && CODE_LANGUAGES.has(language)) return false;
-  // `password-reset.html`, `forgot_password.json`: a flow about a password, not one stored.
-  const name = relativePath.replace(PASSWORD_FLOW, "");
+  const segments = relativePath.split(/[\\/]/);
+  if (segments.slice(0, -1).some((d) => SENSITIVE_DIR.test(d))) return true;
+  const base = segments[segments.length - 1]!;
+  if (PAGE_TEMPLATE.test(base)) return false;
+  // `password-reset.html`, `forgot_password.json`: a flow about a password, not one stored. The file's
+  // own name decides — a migration directory named `…_password-reset-token/` holds a schema change.
+  const name = base.replace(PASSWORD_FLOW, "");
   return SENSITIVE_NAMES.some((p) => p.test(name));
 }
 
 /** A password named with what is done to it — a page, a template, its strings. */
 const PASSWORD_FLOW = /\b(?:reset|forgot|forgotten|change|update|recover|recovery|confirm|new|set)[-_ ]?passwords?\b|\bpasswords?[-_ ]?(?:reset|forgot|change|changed|update|recovery|policy|strength|expired)\b/gi;
 
+
+/** Files that make a directory a project its build tool builds. */
+const PROJECT_MANIFEST = /^(?:package\.json|pom\.xml|build\.gradle(?:\.kts)?|settings\.gradle(?:\.kts)?|build\.sbt|CMakeLists\.txt|Makefile|Cargo\.toml|go\.mod|composer\.json|Gemfile|mix\.exs|pyproject\.toml|setup\.py|pubspec\.yaml|[^/]+\.(?:csproj|fsproj|vbproj|sln))$/i;
+
+const manifestCache = new Map<string, boolean>();
+function holdsManifest(dir: string): boolean {
+  let hit = manifestCache.get(dir);
+  if (hit === undefined) {
+    try {
+      hit = readdirSync(dir).some((name) => PROJECT_MANIFEST.test(name));
+    } catch {
+      hit = false;
+    }
+    manifestCache.set(dir, hit);
+  }
+  return hit;
+}
+
+/**
+ * A `build/` directory a build tool writes: at the root, or beside the project's
+ * manifest — unless it is a project itself (a NUKE / Cake build project with
+ * its own `.csproj`). A `build` package deep in a source tree is source.
+ */
+function buildOutput(root: string, dir: string): boolean {
+  if (basename(dir).toLowerCase() !== "build") return false;
+  if (holdsManifest(dir)) return false;
+  const parent = dirname(dir);
+  return parent === root || holdsManifest(parent);
+}
 
 export const DEFAULT_IGNORE = [
   "**/node_modules/**",
@@ -132,9 +172,12 @@ export async function discoverFiles(
     ...[...NAMED_FILE_LANGUAGE.keys()].map((name) => `**/${name}`),
   ];
   const patterns = options.include?.length ? options.include : sourcePatterns;
-  const ignore = [...DEFAULT_IGNORE, ...(options.exclude ?? [])];
+  // `build/` is decided per directory (`buildOutput`), not by name: a Java package or a
+  // build project of its own may be called that.
+  const ignore = [...DEFAULT_IGNORE.filter((p) => p !== "**/build/**"), ...(options.exclude ?? [])];
   const ignorePatterns = loadIgnorePatterns(root);
-  const prune = ignoredDirectories(root, ignorePatterns);
+  const pruneIgnored = ignoredDirectories(root, ignorePatterns);
+  const prune = (dir: string): boolean => (pruneIgnored?.(dir) ?? false) || buildOutput(root, dir);
 
   // Not following links, the walk would drop every linked file; list them
   // and decide per link below.
