@@ -435,6 +435,27 @@ describe("linkApiCallsToRoutes — target alternatives", () => {
   });
 });
 
+describe("linkApiCallsToRoutes — an id written into the path", () => {
+  const routes = [
+    route("Api/ClubsApi.cs", "GET", "/api/clubs/{id}", "GetClub"),
+    route("Api/ClubsApi.cs", "GET", "/api/clubs/type/all/kit/{kitId}", "GetAllKits"),
+    route("Api/ClubsApi.cs", "GET", "/api/clubs/type/{typeId}/kit/{kitId}", "GetKits"),
+    route("Api/ClubsApi.cs", "GET", "/api/clubs/by/{name}", "GetByName"),
+  ];
+  const linked = (url: string) => linkApiCallsToRoutes([apiCall("tests/ClubsTests.cs", "get", url)], routes).map((l) => l.handler);
+
+  it("fills a route parameter with a number or a GUID, the most literal route first", () => {
+    expect(linked("/api/clubs/7")).toEqual(["GetClub"]);
+    expect(linked("/api/clubs/3f2504e0-4f89-11d3-9a0c-0305e82c3301")).toEqual(["GetClub"]);
+    expect(linked("/api/clubs/type/all/kit/3?pageSize=5")).toEqual(["GetAllKits"]);
+    expect(linked("/api/clubs/type/3/kit/3")).toEqual(["GetKits"]);
+  });
+
+  it("never fills one with a name", () => {
+    expect(linked("/api/clubs/by/Rovers")).toEqual([]);
+  });
+});
+
 describe("linkApiCallsToRoutes — wildcard-only URLs", () => {
   it("never joins a URL whose path is nothing but wildcards", () => {
     // `configService.APIUrl(url)` with a bare variable resolves to `/api/{}`;
