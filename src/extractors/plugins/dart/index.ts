@@ -5,7 +5,7 @@ import type {
   DataSourceInfo,
   ParamInfo,
 } from "../../../types/analysis.js";
-import type { InteractiveElementInfo, PropertyInfo, ScreenInfo } from "../../../types/analysis.js";
+import type { InteractiveElementInfo, PropertyInfo, RouteFact, ScreenInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCallsFromBody, extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
 import { applyRouteMeta, type GuardAttr } from "../../shared/route-metadata.js";
@@ -22,6 +22,7 @@ import {
 import { addBodyLevelMembers, isDartInterface } from "./members.js";
 import { singularize } from "../shared/inflection.js";
 import { dartRequestBody } from "./request-body.js";
+import { goRoutes } from "./go-router.js";
 import { dartFieldValues, dartUrlArg, dartVerbArg, extractDartPathArgCalls, isDartHttpReceiver } from "./request-wrappers.js";
 
 /**
@@ -334,8 +335,6 @@ const ROUTER_RECEIVER_RE = /^(?:_?router|_?app|server|_?mux|r)$/;
 const SHELF_ROUTE_RE =
   /\b([A-Za-z_$]\w*)\s*(?:\.\.|\.)\s*(get|post|put|patch|delete|head|options|all|mount)\s*\(\s*['"](\/[^'"]*)['"]\s*(?:,\s*([A-Za-z_$][\w$.]*))?/g;
 
-/** GoRouter `GoRoute(path: '/users/:id', builder: (c, s) => UsersPage())`. */
-const GOROUTE_RE = /GoRoute\(\s*path:\s*['"]([^'"]+)['"]/;
 
 /**
  * A shelf `Pipeline` — where the middleware every route behind it inherits is
@@ -408,7 +407,7 @@ function extractPipelines(lines: string[]): Pipeline[] {
   return out;
 }
 
-function extractDartRoutes(lines: string[]): RouteInfo[] {
+function extractDartRoutes(lines: string[], facts?: RouteFact[]): RouteInfo[] {
   const routes: RouteInfo[] = [];
   /** Route → the router variable it was registered on. */
   const receiverOf = new Map<RouteInfo, string>();
@@ -437,21 +436,9 @@ function extractDartRoutes(lines: string[]): RouteInfo[] {
       routes.push(route);
     }
 
-    // GoRouter declarative routes → frontend screens.
-    const go = line.match(GOROUTE_RE);
-    if (go) {
-      const widget = line.match(/=>\s*(?:const\s+)?([A-Z]\w*)\s*\(/);
-      routes.push({
-        path: go[1]!,
-        httpMethod: null,
-        kind: "frontend",
-        handler: widget ? widget[1]! : null,
-        calls: [],
-        middleware: [],
-        line: ln,
-      });
-    }
   }
+  // GoRouter declarative routes → frontend screens.
+  routes.push(...goRoutes(lines, facts));
 
   // Pipeline middleware is inherited by the routes it wraps. `params` stay
   // absent on purpose: the handler is named, and the project-level join reads
@@ -869,7 +856,7 @@ export const dartSpec: RegexLangSpec = {
   extractDataSources: (lines) => extractDartDataSources(lines),
   // Call sites of a project request wrapper (`ApiConnection().request(RequestType.GET, '/x')`).
   extractPathArgCalls: extractDartPathArgCalls,
-  extractRoutes: (lines) => extractDartRoutes(lines),
+  extractRoutes: (lines, _classes, _file, _functions, facts) => extractDartRoutes(lines, facts),
   extractInteractiveElements: (lines) => extractFlutterInteractiveElements(lines),
   // Inline closure handlers as functions of their own (see `flutterClosureFunctions`).
   postProcessFunctions: (lines, fns) => {

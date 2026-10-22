@@ -7,6 +7,7 @@ import { dartManifest } from "./manifest.js";
 import { dartRequestSchema } from "./request-schema.js";
 import { dartReachability } from "./reachability.js";
 import { DartEntityExtractor } from "./entities.js";
+import { goRouterResolver } from "./go-router.js";
 
 const DART_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -33,4 +34,5 @@ export const dartMeta: LanguagePluginMeta = {
   apiCallRoots: ["http", "dio", "Dio", "Client", "client"],
   dbCallRoots: ["FirebaseFirestore", "Firestore", "Database", "db", "supabase"],
   requestSchema: dartRequestSchema,
+  routeResolvers: [goRouterResolver],
 };
