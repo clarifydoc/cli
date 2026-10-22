@@ -70,6 +70,15 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
     // CXF service beans, whose jar interfaces become contract rows in cxfServiceBeanResolver.
     collectServiceBeans(sourceText, facts);
 
+    // `@GetMapping("${service.prefix}public/user-types")`: the property's value is a prefix
+    // the code does not state — the rest is the known tail a caller's URL ends with.
+    for (const r of routes) {
+      const m = /^\/?(\$\{[^}]+\})\/?/.exec(r.path);
+      if (!m || r.prefixUnresolved) continue;
+      r.path = `/${r.path.slice(m[0].length)}`.replace(/\/+$/, "") || "/";
+      r.prefixUnresolved = `property:${m[1]}`;
+    }
+
     return routes;
   },
 };

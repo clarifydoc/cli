@@ -391,3 +391,24 @@ class K {
     expect(kotlin.sort()).toEqual(["GET /x", "GET /y"]);
   });
 });
+
+describe("a mapping that starts with a configuration placeholder", () => {
+  it("keeps the known tail and says the prefix is unresolved (real-repo FP: the caller's URL never matched)", async () => {
+    const { parseSource } = await import("../../../../parsers/parser-manager.js");
+    const { javaKotlinRouteExtractor } = await import("./index.js");
+    const src = `package x;
+@RestController
+public class ClubTypesController {
+  @GetMapping(value = "\${service.prefix}public/club-types", produces = "application/json")
+  public List<String> clubTypes() { return List.of(); }
+  @GetMapping("\${service.prefix}")
+  public String root() { return ""; }
+}`;
+    const tree = await parseSource(src, "java" as never, "ClubTypesController.java");
+    const routes = javaKotlinRouteExtractor.extractRoutes(tree, src, "ClubTypesController.java");
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.prefixUnresolved}`)).toEqual([
+      "GET /public/club-types property:\${service.prefix}",
+      "GET / property:\${service.prefix}",
+    ]);
+  });
+});

@@ -1014,7 +1014,8 @@ export interface RouteInfo {
    * known tail of what a caller requests. The value names why: `base:X` (an
    * unresolved base controller), `attribute:X` (a routing attribute whose
    * template could not be evaluated), `mount:<expr>` (mounted under a runtime
-   * value), `urlconf:not-included`, `contract:<Type>` (the whole path is
+   * value), `urlconf:not-included`, `property:${x}` (a configuration
+   * placeholder the path starts with), `contract:<Type>` (the whole path is
    * declared on an API interface outside the analysis — `path` then names the
    * operation, `MatchApi#getMatch`, and only its `contract` joins). The
    * cross-tier linker matches such a row only as a suffix, and never above a
