@@ -88,6 +88,12 @@ const NOT_A_REGISTRAR = /^(?:http|log|fmt|os|signal|context|errors|strings|time|
 const USE_RE = /(\w+)\.\s*Use\s*\(/;
 
 const STRING_RE = /^["'`]([^"'`]*)["'`]$/;
+/** `conf.BaseUri("/livez")`, `cfg.BasePath("/s")`: the app's configured base in front of a literal path. */
+const BASE_WRAPPED_RE = /^[A-Za-z_][\w.]*\.(?:Base\w*|\w*Prefix\w*)\s*\(\s*["'`](\/[^"'`]*)["'`]\s*\)$/;
+/** `"/folders/" + root` — a literal path ending in `/`, then a variable. */
+const PATH_PLUS_VAR_RE = /^["'`](\/[^"'`]*\/)["'`]\s*\+\s*([A-Za-z_]\w*)$/;
+/** gin `r.Match(methods, "/p", h)` / `r.Any("/p", h)`. */
+const MATCH_RE = /(\w+|\))\.\s*(Match|Any)\s*\(/;
 /** `baseUrl+"/cart"`, `cfg.BasePath + "/x"`: a path under a base the deployment sets — the base is not part of the route. */
 const BASE_PLUS_PATH_RE = /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*\+\s*["'`](\/[^"'`]*)["'`]$/;
 /** Names that read as an authentication/authorization check. */
@@ -269,8 +275,11 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
   let returnsRouter = false;
 
   const literal = (arg: string | undefined): string | null => {
-    const m = arg?.match(STRING_RE) ?? arg?.match(BASE_PLUS_PATH_RE);
-    return m ? m[1]! : null;
+    const m = arg?.match(STRING_RE) ?? arg?.match(BASE_PLUS_PATH_RE) ?? arg?.match(BASE_WRAPPED_RE);
+    if (m) return m[1]!;
+    // `"/folders/" + root`: the variable is a segment the caller fills.
+    const tail = arg?.match(PATH_PLUS_VAR_RE);
+    return tail ? `${tail[1]}{${tail[2]}}` : null;
   };
 
   for (let i = 0; i < lines.length; i++) {
@@ -396,7 +405,20 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
     const caps = line.match(CAPS_VERB_RE);
     const title = caps ? null : line.match(TITLE_VERB_RE);
     const verb = caps ?? title;
-    if (verb) {
+    const match = verb ? null : line.match(MATCH_RE);
+    if (match) {
+      // gin `Match(methods, path, h…)` and `Any(path, h…)`: verbs as a literal list, else every one.
+      const recv = receiver(match[1]!);
+      const { args } = parseArgs(line, match.index! + match[0].length - 1);
+      const any = match[2] === "Any";
+      const path = literal(args[any ? 0 : 1]);
+      if (path !== null && path.startsWith("/") && args.length >= (any ? 2 : 3)) {
+        const { handler, guards } = splitHandler(args.slice(any ? 1 : 2));
+        const verbs = any ? [] : [...(args[0] ?? "").matchAll(/["'`](\w+)["'`]|\bhttp\.Method([A-Z][a-z]+)\b/g)].map((m) => (m[1] ?? m[2]!).toUpperCase()).filter((v) => VERBS.has(v));
+        if (verbs.length > 0) for (const v of verbs) push(joinPrefix(prefixOf(recv), path), v, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
+        else push(joinPrefix(prefixOf(recv), path), null, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
+      }
+    } else if (verb) {
       const recv = receiver(verb[1]!);
       const method = caps ? caps[2]! : HTTP_VERBS_TITLE[title![2]!]!;
       const { args } = parseArgs(line, verb.index! + verb[0].length - 1);
@@ -425,7 +447,13 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
         const { args } = parseArgs(line, handle.index! + handle[0].length - 1);
         const first = args.length >= 2 ? literal(args[0]) : null;
         const go122 = first?.match(/^([A-Z]+)\s+(\S+)$/);
-        if (go122 && VERBS.has(go122[1]!)) {
+        // gin `Handle(method, path, h…)`: `"GET"`, `http.MethodGet`, `header.MethodPost`.
+        const ginVerb = args.length >= 3 ? (/^["'`]([A-Z]+)["'`]$/.exec(args[0]!)?.[1] ?? /^\w+\.Method([A-Z][a-z]+)$/.exec(args[0]!)?.[1]?.toUpperCase()) : undefined;
+        const ginPath = ginVerb && VERBS.has(ginVerb) ? literal(args[1]) : null;
+        if (ginPath !== null && ginPath.startsWith("/")) {
+          const { handler, guards } = splitHandler(args.slice(2));
+          push(joinPrefix(prefixOf(recv), ginPath), ginVerb!, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
+        } else if (go122 && VERBS.has(go122[1]!)) {
           // Go 1.22 "VERB /path" pattern strings (absolute — no group composition).
           const { handler, guards } = splitHandler(args.slice(1));
           push(go122[2]!, go122[1]!, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);

@@ -10,6 +10,34 @@ import { extractGoDataSources, normalizeRawStrings } from "./data-sources.js";
  */
 const lines = (src: string) => src.split("\n");
 
+describe("Go routes: gin's other registrations (real-repo FP)", () => {
+  it("reads Match, Any and Handle, paths behind a base helper or ending in a variable", () => {
+    const routes = extractGoRoutes(lines(`
+func registerRoutes(router *gin.Engine, conf *config.Config) {
+	router.GET(conf.BaseUri("/livez"), Livez)
+	share := router.Group(conf.BaseUri("/s"))
+	share.GET("/:token", ShareToken)
+}
+
+func BatchFixturesEdit(router *gin.RouterGroup) {
+	router.Match([]string{http.MethodPut, http.MethodPost}, "/batch/fixtures/edit", EditFixtures)
+	router.Any("/echo", Echo)
+	router.Handle(http.MethodGet, "/standings", Standings)
+	router.GET("/folders/"+root, SearchFolders)
+}
+`));
+    expect(routes.map((r) => `${r.httpMethod ?? "*"} ${r.path} ${r.handler}`)).toEqual([
+      "GET /livez Livez",
+      "GET /s/:token ShareToken",
+      "PUT /batch/fixtures/edit EditFixtures",
+      "POST /batch/fixtures/edit EditFixtures",
+      "* /echo Echo",
+      "GET /standings Standings",
+      "GET /folders/{root} SearchFolders",
+    ]);
+  });
+});
+
 describe("Go routes: gin/echo groups", () => {
   it("composes chained Group prefixes onto ALL-CAPS verbs", () => {
     const routes = extractGoRoutes(lines(`
