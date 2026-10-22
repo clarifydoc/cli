@@ -25,6 +25,14 @@ export const velocityManifest: LanguagePluginManifest = {
   importTarget: false,
 };
 
+/** Go `html/template` pages (`.tmpl`, `.gohtml`): `{{template "base/head" .}}`, `{{AppSubUrl}}/x` links. */
+export const gotemplateManifest: LanguagePluginManifest = {
+  language: "gotemplate",
+  parsing: "regex",
+  extensions: [".tmpl", ".gohtml"],
+  importTarget: false,
+};
+
 /** Razor views and pages (`.cshtml`); Blazor components (`.razor`) are the blazor plugin's. */
 export const razorManifest: LanguagePluginManifest = {
   language: "razor",

@@ -22,6 +22,26 @@ describe("server templates", () => {
     expect(a.screens[0]).toMatchObject({ formType: "HandlebarsTemplate", caption: "Vaultwarden Admin" });
   });
 
+  it("reads a Go html/template page: {{template}} partials, a form and links under {{AppSubUrl}}", () => {
+    const a = analysis("templates/club/settings/profile.tmpl", "gotemplate");
+    readTemplate(a, `{{template "base/head" .}}
+<div class="club settings">
+	{{template "club/settings/navbar" .}}
+	<form class="ui form" action="{{AppSubUrl}}/club/settings" method="post">
+		{{.CsrfTokenHtml}}
+		<input name="name" value="{{.Club.Name}}">
+		<button class="ui primary button">{{ctx.Locale.Tr "save"}}</button>
+	</form>
+	<a href="{{AppSubUrl}}/club/settings/players">Players</a>
+	<a href="{{.Club.HomeLink}}/edit">Edit</a>
+</div>
+{{template "base/footer" .}}`, "gotemplate");
+    expect(a.subComponents.map((s) => s.name)).toEqual(["head", "navbar", "footer"]);
+    // A link relative to another page's own URL (`{{.Club.HomeLink}}/edit`) is no app path.
+    expect(a.dataSources.map((d) => d.name).sort()).toEqual(["GET /club/settings/players", "POST /club/settings"]);
+    expect(a.screens[0]).toMatchObject({ formType: "GoTemplate" });
+  });
+
   it("keeps mail templates and partials off the screen list", () => {
     const mail = analysis("src/static/templates/email/welcome.html.hbs", "handlebars");
     readTemplate(mail, `<a href="{{url}}/#/login">Log in</a> <a href="{{url}}/identity/accounts/verify?t={{token}}">Verify</a>`, "handlebars");

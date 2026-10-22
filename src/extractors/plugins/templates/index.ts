@@ -23,13 +23,14 @@ import { literalPath, handlerOf, materializeElementRequests } from "../shared/el
  * have none.
  */
 
-export type TemplateDialect = "handlebars" | "liquid" | "velocity" | "razor";
+export type TemplateDialect = "handlebars" | "liquid" | "velocity" | "razor" | "gotemplate";
 
 const TAGS: Record<TemplateDialect, RegExp> = {
   handlebars: /\{\{\{?[\s\S]*?\}?\}\}/g,
   liquid: /\{%[\s\S]*?%\}|\{\{[\s\S]*?\}\}/g,
   velocity: /#\*[\s\S]*?\*#|##[^\n]*|#\{?(?:if|else|elseif|end|foreach|set|parse|include|macro|define|break|stop)\}?(?:\([^)\n]*\))?|\$!?\{?[\w.]+(?:\([^)\n]*\))?\}?/g,
   razor: /@\*[\s\S]*?\*@|@\{[\s\S]*?\n\}|@\([^)\n]*\)|@[A-Za-z_][\w.]*(?:\([^)\n]*\))?/g,
+  gotemplate: /\{\{[\s\S]*?\}\}/g,
 };
 
 const PARTIALS: Record<TemplateDialect, RegExp> = {
@@ -37,6 +38,7 @@ const PARTIALS: Record<TemplateDialect, RegExp> = {
   liquid: /\{%-?\s*(?:include|render|section)\s+["']([\w/.-]+)["']/g,
   velocity: /#(?:parse|include)\s*\(\s*["']([\w/.-]+)["']/g,
   razor: /<partial\s+name\s*=\s*["']([\w/.~-]+)["']|Html\.Partial(?:Async)?\(\s*"([\w/.~-]+)"|Html\.RenderPartial(?:Async)?\(\s*"([\w/.~-]+)"|Component\.InvokeAsync\(\s*"(\w+)"/g,
+  gotemplate: /\{\{-?\s*template\s+"([\w/.-]+)"/g,
 };
 
 const lineAt = (text: string, index: number): number => {
@@ -112,7 +114,7 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
   const caption = /<title>([^<]+)<\/title>|<h1\b[^>]*>([^<]+)<\/h1>/i.exec(markup);
   const screen: ScreenInfo = {
     name,
-    formType: { handlebars: "HandlebarsTemplate", liquid: "LiquidTemplate", velocity: "VelocityTemplate", razor: /(?:^|\/)Pages\//.test(filePath) ? "RazorPage" : "RazorView" }[dialect],
+    formType: { handlebars: "HandlebarsTemplate", liquid: "LiquidTemplate", velocity: "VelocityTemplate", gotemplate: "GoTemplate", razor: /(?:^|\/)Pages\//.test(filePath) ? "RazorPage" : "RazorView" }[dialect],
     caption: (caption?.[1] ?? caption?.[2])?.trim() || null,
     dimensions: null,
     components: components.sort((a, b) => a.line - b.line),
