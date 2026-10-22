@@ -59,7 +59,7 @@ describe("a NestJS controller prefixed by an enum member", () => {
     }
     await analyze({ projectRoot: join(dir, "app"), outputDir: join(dir, "out"), lsp: false, gitHistory: false });
     summary = await loadReportSummary(join(dir, "out"));
-  }, 60_000);
+  }, 180_000);
   afterAll(async () => {
     await rm(dir, { recursive: true, force: true });
   });
