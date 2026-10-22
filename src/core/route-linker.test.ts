@@ -451,8 +451,14 @@ describe("linkApiCallsToRoutes — an id written into the path", () => {
     expect(linked("/api/clubs/type/3/kit/3")).toEqual(["GetKits"]);
   });
 
-  it("never fills one with a name", () => {
-    expect(linked("/api/clubs/by/Rovers")).toEqual([]);
+  it("fills one with a name only for the one route agreeing on two literal segments, inferred", () => {
+    const links = linkApiCallsToRoutes([apiCall("tests/ClubsTests.cs", "get", "/api/clubs/by/Rovers")], routes);
+    expect(links.map((l) => `${l.handler} ${l.confidence}`)).toEqual(["GetByName INFERRED"]);
+    // `/kits/{}` and `/badges/{}` both take `/{x}/home`: no one route is meant.
+    const twoRoutes = [route("Api/KitsApi.cs", "GET", "/kits/{kit}/home", "KitHome"), route("Api/KitsApi.cs", "GET", "/kits/home/{colour}", "HomeKit")];
+    expect(linkApiCallsToRoutes([apiCall("web/kits.ts", "get", "/kits/home/home")], twoRoutes)).toEqual([]);
+    // One literal segment anchors nothing.
+    expect(linkApiCallsToRoutes([apiCall("web/kits.ts", "get", "/kits/away")], [route("Api/KitsApi.cs", "GET", "/kits/{kit}", "Kit")])).toEqual([]);
   });
 });
 

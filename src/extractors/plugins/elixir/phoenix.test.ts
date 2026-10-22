@@ -120,6 +120,47 @@ describe("Phoenix router — resources expansion", () => {
   });
 });
 
+describe("Phoenix router — call form and wrapped statements", () => {
+  const WRAPPED = `
+defmodule LeagueWeb.Router do
+  use LeagueWeb, :router
+
+  pipeline :club_api do
+    plug(:accepts, ["json"])
+    plug(LeagueWeb.Plugs.AuthorizeClubAPI)
+  end
+
+  scope "/api/clubs" do
+    scope "/v1", LeagueWeb.Clubs.Controllers, assigns: %{clubs_api: true} do
+      pipe_through([:club_api])
+      get("/kits", Kits, :index)
+      put("/kits/:id", Kits, :update)
+      get("/openapi", OpenApiSpex.Plug.RenderSpec, [])
+    end
+
+    scope "/:club/fixtures", LeagueWeb.Api.Internal,
+      private: %{allow_shared: true} do
+      get "/:fixture_id/tickets", FixturesController, :tickets
+    end
+
+    post "/:club/scouting/next-with-agent",
+         ScoutingController,
+         :next_with_agent
+  end
+end`;
+  it("reads parenthesized macros, joins a wrapped scope's options and a wrapped route onto their first line", () => {
+    const out = routes(WRAPPED);
+    expect(out.map((r) => `${sig(r)} @${r.line}`)).toEqual([
+      "GET /api/clubs/v1/kits -> Kits.index @13",
+      "PUT /api/clubs/v1/kits/:id -> Kits.update @14",
+      "GET /api/clubs/v1/openapi -> OpenApiSpex.Plug.RenderSpec @15",
+      "GET /api/clubs/:club/fixtures/:fixture_id/tickets -> FixturesController.tickets @20",
+      "POST /api/clubs/:club/scouting/next-with-agent -> ScoutingController.next_with_agent @23",
+    ]);
+    expect(out[0]!.middleware.join(" ")).toContain("accepts");
+  });
+});
+
 describe("Phoenix controller — pattern-matched params", () => {
   const CTL = `
 defmodule AppWeb.PlayerController do

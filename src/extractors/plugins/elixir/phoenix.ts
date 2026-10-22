@@ -12,13 +12,40 @@ import { applyRouteMeta } from "../../shared/route-metadata.js";
 
 // ─── Router ──────────────────────────────────────────────────────────────────
 
-const PHX_SCOPE_RE = /^\s*scope\s+(?:"([^"]+)"|path:\s*"([^"]+)")/;
-const PHX_PIPELINE_RE = /^\s*pipeline\s+:(\w+)\s+do\b/;
-const PHX_PLUG_RE = /^\s*plug\s+(.+?)\s*$/;
-const PHX_PIPE_THROUGH_RE = /^\s*pipe_through\s+(.+?)\s*$/;
-const PHX_ROUTE_RE = /^\s*(get|post|put|patch|delete|head|options)\s+"([^"]+)"\s*,\s*([A-Za-z_][\w.]*)\s*,\s*:([a-z_]\w*)/;
-const PHX_RESOURCES_RE = /^\s*resources\s+"([^"]+)"\s*,\s*([A-Za-z_][\w.]*)(.*)$/;
-const PHX_LIVE_RE = /^\s*live\s+"([^"]+)"\s*,\s*([A-Za-z_][\w.]*)(?:\s*,\s*:(\w+))?/;
+// Each macro also in its call form, `get("/x", Controller, :action)` — the spelling `mix format` keeps for a `locals_without_parens`-less project.
+const PHX_SCOPE_RE = /^\s*scope\s*\(?\s*(?:"([^"]+)"|path:\s*"([^"]+)")/;
+const PHX_PIPELINE_RE = /^\s*pipeline\s*\(?\s*:(\w+)\s*\)?\s+do\b/;
+const PHX_PLUG_RE = /^\s*plug\s*(?:\((.+)\)|\s(.+?))\s*$/;
+const PHX_PIPE_THROUGH_RE = /^\s*pipe_through\s*(?:\((.+)\)|\s(.+?))\s*$/;
+// A plug as the endpoint (`get("/openapi", OpenApiSpex.Plug.RenderSpec, [])`) has options where an action would be.
+const PHX_ROUTE_RE = /^\s*(get|post|put|patch|delete|head|options)\s*\(?\s*"([^"]+)"\s*,\s*([A-Za-z_][\w.]*)\s*(?:,\s*:([a-z_]\w*))?/;
+const PHX_RESOURCES_RE = /^\s*resources\s*\(?\s*"([^"]+)"\s*,\s*([A-Za-z_][\w.]*)(.*)$/;
+const PHX_LIVE_RE = /^\s*live\s*\(?\s*"([^"]+)"\s*,\s*([A-Za-z_][\w.]*)(?:\s*,\s*:(\w+))?/;
+
+/**
+ * A router's statements one per entry, a call `mix format` wrapped over lines
+ * (`post "/x",\n Controller,\n :action`, `scope "/x", Mod,\n private: … do`)
+ * joined onto its first line, which keeps the line number.
+ */
+function routerStatements(lines: string[]): Array<{ text: string; line: number }> {
+  const out: Array<{ text: string; line: number }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    let text = lines[i] ?? "";
+    const first = i;
+    // An open bracket, or a trailing comma, continues the statement on the next line.
+    const open = (t: string): boolean => {
+      let depth = 0;
+      for (const ch of t.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/#.*$/, "")) {
+        if (ch === "(" || ch === "[" || ch === "{") depth++;
+        else if (ch === ")" || ch === "]" || ch === "}") depth--;
+      }
+      return depth > 0 || /,\s*(?:#.*)?$/.test(t);
+    };
+    while (open(text) && i + 1 < lines.length && i - first < 12) text += " " + lines[++i]!.trim();
+    out.push({ text, line: first + 1 });
+  }
+  return out;
+}
 
 /** A plug whose name reads as an access check rather than content negotiation or layout. */
 const AUTH_PLUG_RE = /auth|guardian|pow\b|session_?(?:auth|check)|token|login|verify|require|ensure|permission|role|admin|protect_(?!from_forgery)|authorize/i;
@@ -95,7 +122,9 @@ function memberParam(path: string): string {
  * approximate — Elixir's shared `end` means a non-scope block can mis-pop —
  * but routers are overwhelmingly nested scopes, so it holds.
  */
-export function extractPhoenixRoutes(lines: string[]): RouteInfo[] {
+export function extractPhoenixRoutes(source: string[]): RouteInfo[] {
+  const statements = routerStatements(source);
+  const lines = statements.map((st) => st.text);
   const pipelines = new Map<string, Pipeline>();
   // Pass 1: pipelines (they may be declared after the scope that uses them).
   for (let i = 0; i < lines.length; i++) {
@@ -105,7 +134,7 @@ export function extractPhoenixRoutes(lines: string[]): RouteInfo[] {
     for (let j = i + 1; j < lines.length && !/^\s*end\b/.test(lines[j]!); j++) {
       const plug = lines[j]!.match(PHX_PLUG_RE);
       if (!plug) continue;
-      const { guard, text } = classifyPlug(plug[1]!);
+      const { guard, text } = classifyPlug(plug[1] ?? plug[2]!);
       if (guard) pipe.guards.push(guard);
       else pipe.middleware.push(text);
     }
@@ -130,7 +159,7 @@ export function extractPhoenixRoutes(lines: string[]): RouteInfo[] {
     const line = lines[i] ?? "";
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
-    const ln = i + 1;
+    const ln = statements[i]!.line;
 
     if (PHX_PIPELINE_RE.test(line)) { inPipeline = true; continue; }
     if (/^end\b/.test(trimmed)) {
@@ -152,7 +181,7 @@ export function extractPhoenixRoutes(lines: string[]): RouteInfo[] {
     const pipe = line.match(PHX_PIPE_THROUGH_RE);
     if (pipe) {
       const frame = top() ?? (stack.push({ prefix: "", guards: [], middleware: [], kind: "other" }), top()!);
-      for (const name of pipelineNames(pipe[1]!)) {
+      for (const name of pipelineNames(pipe[1] ?? pipe[2]!)) {
         const p = pipelines.get(name);
         if (!p) { frame.middleware.push(`pipe_through :${name}`); continue; }
         frame.guards.push(...p.guards);
@@ -163,7 +192,7 @@ export function extractPhoenixRoutes(lines: string[]): RouteInfo[] {
 
     const r = line.match(PHX_ROUTE_RE);
     if (r) {
-      emit({ path: join(r[2]!), httpMethod: r[1]!.toUpperCase(), kind: "api", handler: `${r[3]}.${r[4]}`, calls: [], middleware: [], line: ln });
+      emit({ path: join(r[2]!), httpMethod: r[1]!.toUpperCase(), kind: "api", handler: r[4] ? `${r[3]}.${r[4]}` : r[3]!, calls: [], middleware: [], line: ln });
       continue;
     }
     const res = line.match(PHX_RESOURCES_RE);
