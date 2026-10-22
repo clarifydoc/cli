@@ -18,7 +18,8 @@ import { resolveRouterFunctions } from "../shared/router-functions.js";
  * (`users.Register`) is the function of that name in the package its import
  * names (the directory the import path ends with); a bare one, in the
  * caller's own package; a method on a value (`h.Register(api)`, whose
- * package is not stated) the one function of that name — or, of several,
+ * package is not stated) the one method of that name (`Handler.Register`),
+ * else the one function of that name outside the caller's package — or, of several,
  * the one whose package shares the most leading directories with the
  * caller's, when exactly one shares the most and that is at least one
  * (`services/billing/main.go` → `services/billing/handlers`).
@@ -26,15 +27,24 @@ import { resolveRouterFunctions } from "../shared/router-functions.js";
 
 const dirOf = (p: string): string => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 
+const isMethod = (key: string): boolean => key.slice(key.indexOf("#") + 1).includes(".");
+
 function targetOf(callee: string, caller: FileAnalysis, keysNamed: (fn: string) => string[]): string | null {
   const parts = callee.split(".");
   const fn = parts.pop()!;
-  const keys = keysNamed(fn);
-  if (keys.length === 0) return null;
+  const all = keysNamed(fn);
+  if (all.length === 0) return null;
   const own = `${dirOf(caller.filePath)}#${fn}`;
-  if (parts.length === 0) return keys.includes(own) ? own : null;
+  if (parts.length === 0) return all.includes(own) ? own : null;
   const imp = caller.imports.find((i) => i.specifiers.includes(parts[0]!));
-  if (!imp) return keys.length === 1 ? keys[0]! : keys.includes(own) ? own : nearestPackage(keys, dirOf(caller.filePath));
+  // A method on a value (`h.RegisterRoutes(api)`): some type's method of that name when one is declared — never
+  // the caller's own package's free function, which the value cannot be.
+  if (!imp) {
+    const methods = all.filter(isMethod);
+    const pool = methods.length > 0 ? methods : all.filter((k) => k !== own);
+    return pool.length === 1 ? pool[0]! : nearestPackage(pool, dirOf(caller.filePath));
+  }
+  const keys = all.filter((k) => !isMethod(k));
   const matches = keys.filter((k) => {
     const dir = k.slice(0, k.indexOf("#"));
     return dir !== "" && (imp.source === dir || imp.source.endsWith(`/${dir}`) || imp.source.endsWith(`/${dir.split("/").pop()}`));

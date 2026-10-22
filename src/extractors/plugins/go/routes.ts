@@ -277,9 +277,10 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
     const line = lines[i]!;
     const lineNo = i + 1;
 
-    const fnDecl = line.match(/^func\s+(?:\([^)]*\)\s*)?(\w+)\s*[[(]/); // `[` — a generic func's type parameters
+    const fnDecl = line.match(/^func\s+(?:\((?:\w+\s+)?\*?(\w+)(?:\[[^\]]*\])?\)\s*)?(\w+)\s*[[(]/); // `[` — a generic func's type parameters
     if (fnDecl) {
-      currentFn = fnDecl[1]!;
+      // A method is its receiver type's: `func (h *FileMigratorWeb) RegisterRoutes(g *echo.Group)` → FileMigratorWeb.RegisterRoutes.
+      currentFn = fnDecl[1] ? `${fnDecl[1]}.${fnDecl[2]!}` : fnDecl[2]!;
       routerVars.clear();
       // `func Routes() *web.Router {`: the router it builds is mounted wherever a caller mounts the result.
       returnsRouter = /\)\s*\*?(?:\w+\.)?(?:Router|Mux|ServeMux|Engine|Echo|App|Handler)\s*\{\s*$/.test(line);

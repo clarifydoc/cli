@@ -130,3 +130,27 @@ func NormalRoutes() *web.Router {
     expect(init.routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["POST /-/fetch-redirect"]);
   });
 });
+
+describe("a method call on a value that hands its router on", () => {
+  it("reaches the type's method, not the caller's own free function of that name (real-repo FP: the whole API under /migration)", () => {
+    const routes = file("pkg/routes/routes.go", `package routes
+
+func RegisterRoutes(e *echo.Echo) {
+\tapi := e.Group("/api/v1")
+\tapi.GET("/clubs", clubs)
+\tregisterMigrations(api)
+}
+
+func registerMigrations(m *echo.Group) {
+\tfileMigrator.RegisterRoutes(m.Group("/migration"))
+}`);
+    const handler = file("pkg/modules/migration/handler/handler_file.go", `package handler
+
+func (h *FileMigratorWeb) RegisterRoutes(g *echo.Group) {
+\tg.PUT("/club-import", h.Migrate)
+}`);
+    goRouterFnResolver.resolve([routes, handler], {} as ProjectContext);
+    expect(routes.routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /api/v1/clubs"]);
+    expect(handler.routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["PUT /api/v1/migration/club-import"]);
+  });
+});

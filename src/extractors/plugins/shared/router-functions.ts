@@ -43,7 +43,10 @@ interface Mount {
 export function resolveRouterFunctions(analyses: FileAnalysis[], rules: RouterFunctionRules): void {
   const owners = new Map<string, FileAnalysis[]>();
   const byName = new Map<string, Set<string>>();
-  const add = (fn: string, key: string) => (byName.get(fn) ?? byName.set(fn, new Set()).get(fn)!).add(key);
+  // A method (`Handler.Register`) answers to its own name too: a call on a value names only that.
+  const add = (fn: string, key: string) => {
+    for (const name of new Set([fn, fn.slice(fn.lastIndexOf(".") + 1)])) (byName.get(name) ?? byName.set(name, new Set()).get(name)!).add(key);
+  };
   for (const a of analyses) {
     for (const r of a.routes) {
       if (!r.owner?.startsWith("fn:")) continue;
