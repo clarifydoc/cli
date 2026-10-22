@@ -96,7 +96,10 @@ export function constructedClass(node: Node | null): string | null {
   return null;
 }
 
-/** Parentheses, `await`, `x!` (and with `throughCasts`, `x as T`) peeled off an expression. */
+/** Calls that return their argument, typed as it was: Vue's reactivity wrappers. */
+const SAME_TYPE_WRAPPERS: ReadonlySet<string> = new Set(["reactive", "shallowReactive", "readonly", "shallowReadonly", "markRaw", "Object.freeze"]);
+
+/** Parentheses, `await`, `x!` (and with `throughCasts`, `x as T` and a same-type wrapper) peeled off an expression. */
 function unwrapExpression(node: Node | null, throughCasts: boolean): Node | null {
   let cur = node;
   for (let guard = 0; cur && guard < 6; guard++) {
@@ -105,6 +108,9 @@ function unwrapExpression(node: Node | null, throughCasts: boolean): Node | null
       cur = cur.namedChild(t === "await_expression" ? cur.namedChildCount - 1 : 0);
     } else if (throughCasts && (t === "as_expression" || t === "satisfies_expression")) {
       cur = cur.namedChild(0);
+    } else if (throughCasts && t === "call_expression" && SAME_TYPE_WRAPPERS.has(cur.childForFieldName("function")?.text ?? "")) {
+      // `reactive(new Session(…))`: Vue hands back the object it was given, made reactive.
+      cur = cur.childForFieldName("arguments")?.namedChild(0) ?? null;
     } else {
       break;
     }

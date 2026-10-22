@@ -437,6 +437,8 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     // so the component graph can join `<kebab-tag>` markup usages to this file.
     const customEls = hooks?.customElements?.(sourceText);
     if (customEls && customEls.length > 0) analysis.customElements = customEls;
+    const globalMembers = hooks?.globalMembers?.(sourceText);
+    if (globalMembers && globalMembers.length > 0) analysis.globalMembers = globalMembers;
 
     // HTTP client instances with a base URL (`axios.create({ baseURL })`) —
     // the project pass prepends the base to calls made through them.

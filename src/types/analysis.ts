@@ -379,6 +379,11 @@ export interface FileAnalysis {
    */
   customElements?: CustomElementDef[];
   /**
+   * Members this file gives every component instance (`app.config.globalProperties.$session = $session`,
+   * `Vue.prototype.$api = api`): `this.$session` in any component is this file's binding of that name.
+   */
+  globalMembers?: GlobalMemberDef[];
+  /**
    * Project paths this file names as string DATA rather than importing —
    * `import.meta.glob("./pages/*.vue")`, `new URL("./worker.ts",
    * import.meta.url)`, a jest config's `"<rootDir>/setup.ts"`. The toolchain
@@ -1709,6 +1714,15 @@ export interface SubComponentInfo {
    * import source's component, wherever it is used.
    */
   global?: true;
+}
+
+/** One app-wide instance member a file installs (`FileAnalysis.globalMembers`). */
+export interface GlobalMemberDef {
+  /** The member as components read it: `$session`. */
+  name: string;
+  /** The identifier the file assigns to it — an import or a module-level binding of the file. */
+  binding: string;
+  line: number;
 }
 
 /**

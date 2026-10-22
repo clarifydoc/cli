@@ -13,6 +13,7 @@ import {
   type PackageEcosystem,
   type RouteInfo,
   type SubProject,
+  type GlobalMemberDef,
 } from "../types/analysis.js";
 import type { ImportResolveContext } from "../types/language-plugin.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
@@ -2845,7 +2846,7 @@ function chainPoint(
     rest = receiver.slice(1);
   } else if (receiver.length >= 2 && !head.call && SELF_HEADS.has(head.name)) {
     const own = receiver[1]!;
-    point = own.call ? ownMethodResult(ctx, sourceFile, consumer, own.name) : ownMember(ctx, sourceFile, consumer, own.name);
+    point = own.call ? ownMethodResult(ctx, sourceFile, consumer, own.name) : ownMember(ctx, sourceFile, consumer, own.name) ?? globalMember(ctx, sourceFile, own.name);
     rest = receiver.slice(2);
   } else if (head.call) {
     // `root().getPriority()` — what the enclosing class's own method returns;
@@ -3135,6 +3136,34 @@ function ownMember(ctx: LinkContext, sourceFile: string, consumer: string, name:
   if (consumer && ctx.classAt.has(key)) return ctx.memberTypes.get(key)?.get(member) ?? null;
   return ctx.injectionMap.get(`${sourceFile}::${member}`) ?? null;
 }
+
+/**
+ * A member the app installs on every component instance (`FileAnalysis.globalMembers`:
+ * `app.config.globalProperties.$session = $session`), as `this.$session` reads it in any file of
+ * that language family: the installing module's binding, typed where it is declared — the module
+ * it is imported from, or the installing file itself. Two installations of one name decide nothing.
+ */
+function globalMember(ctx: LinkContext, sourceFile: string, name: string): InjectionPoint | null {
+  let index = globalMemberIndex.get(ctx);
+  if (!index) {
+    index = new Map();
+    for (const a of ctx.analyses) for (const g of a.globalMembers ?? []) (index.get(g.name) ?? index.set(g.name, []).get(g.name)!).push({ a, g });
+    globalMemberIndex.set(ctx, index);
+  }
+  const installs = index.get(name) ?? [];
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  if (installs.length !== 1 || extensionFamily(installs[0]!.a.filePath) !== extensionFamily(sourceFile)) return null;
+  const { a, g } = installs[0]!;
+  const imp = a.imports.find((i) => i.specifiers.includes(g.binding));
+  const file = imp ? resolveTarget(imp.source, a.filePath, ctx.filePathMap) : a.filePath;
+  const holder = file ? ctx.analysisByFile.get(file) : undefined;
+  if (!holder) return null;
+  const local = imp?.isDefault ? holder.exports.find((e) => e.kind === "default")?.sourceName ?? g.binding : g.binding;
+  return scopedName(ctx, holder, holder.filePath, "<setup>", "", local);
+}
+
+/** Installed members by name, per link run. */
+const globalMemberIndex = new WeakMap<LinkContext, Map<string, Array<{ a: FileAnalysis; g: GlobalMemberDef }>>>();
 
 /** A bare name as the enclosing callable sees it: local, then parameter, then field. */
 function scopedName(

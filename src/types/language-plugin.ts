@@ -10,6 +10,7 @@ import type {
   InteractiveElementInfo,
   SubComponentInfo,
   CustomElementDef,
+  GlobalMemberDef,
   EventInfo,
   ImportInfo,
   FileAnalysis,
@@ -536,6 +537,8 @@ export interface AstExtractorHooks {
    * component graph can join `<x-y>` markup usages to the defining file.
    */
   customElements?(sourceText: string): CustomElementDef[];
+  /** Members installed on every component instance → `FileAnalysis.globalMembers`. */
+  globalMembers?(sourceText: string): GlobalMemberDef[];
   /** HTTP client instances created with a base URL → `FileAnalysis.httpClientBases`. */
   httpClientBases?(tree: Tree, sourceText: string): Record<string, string>;
   /** State-store module registrations → `FileAnalysis.storeModules`. */

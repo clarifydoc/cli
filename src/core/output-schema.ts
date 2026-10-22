@@ -41,6 +41,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   templateTree: "optional",
   angularTemplateUrl: "optional",
   customElements: "optional",
+  globalMembers: "optional",
   pathReferences: "optional",
   events: "required",
   screens: "required",

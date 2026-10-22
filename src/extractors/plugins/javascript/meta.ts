@@ -42,6 +42,7 @@ import {
   JS_REGEX_CONTROL_FLOW,
 } from "../../shared/control-flow-defaults.js";
 import { JavaScriptExtractor, topLevelLocalTypes } from "./functions-classes.js";
+import { extractGlobalMembers } from "./global-members.js";
 import { JavaScriptImportExportExtractor } from "./imports-exports.js";
 import { JavaScriptDataSourceExtractor } from "./data-sources.js";
 import { JavaScriptMutationExtractor } from "./data-mutations.js";
@@ -216,6 +217,7 @@ function astHooks(language: Language): AstExtractorHooks {
     events: (sourceText) => extractEvents(sourceText, language),
     externalTemplate: (sourceText) => extractAngularTemplateUrl(sourceText),
     customElements: (sourceText) => extractCustomElements(sourceText),
+    globalMembers: (sourceText) => extractGlobalMembers(sourceText),
     httpClientBases: extractHttpClientBases,
     storeModules: extractStoreModules,
     httpClientRegistrations: extractHttpClientRegistrations,
