@@ -255,7 +255,7 @@ const PY_DB_LEAVES = new Set([
 const PY_GENERIC_DB_LEAVES = new Set(["query", "execute", "find", "filter", "all", "first", "aggregate"]);
 
 /** A receiver segment that names a datastore handle or an ORM query. */
-const PY_DATASTORE_SEGMENT_RE = /(^|_)(session|db|conn|connection|cursor|cur|engine|collection|coll|database|queryset|qs)$/i;
+const PY_DATASTORE_SEGMENT_RE = /(^|_)(session|db|con|conn|connection|cursor|cur|engine|collection|coll|database|queryset|qs)$/i;
 
 /**
  * A Django related manager queried — `user.orders.all()`,
@@ -308,7 +308,7 @@ const PY_SESSION_WRITE_LEAVES = new Set([
 ]);
 
 /** Receiver names that read as a SQLAlchemy session / DB-API connection. */
-const PY_DB_RECEIVER_RE = /(^|_)(session|db|conn|connection|cursor|engine)$/i;
+const PY_DB_RECEIVER_RE = /(^|_)(session|db|con|conn|connection|cursor|engine)$/i;
 
 /**
  * Read/write classification for the leaves above. `execute`/`executemany` stay

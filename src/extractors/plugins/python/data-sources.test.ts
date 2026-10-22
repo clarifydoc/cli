@@ -77,6 +77,7 @@ describe("Python database calls", () => {
     expect(await dbCallsOf([
       'cursor.execute("SELECT 1")',
       'self.conn.execute("DELETE FROM t")',
+      "con.execute(\"SELECT Value FROM league_setting WHERE Key = ?\", (k,))",
       "Car.objects.filter(paid=True)",
       "session.query(Player).filter(Player.id == 1).first()",
       "Player.query.filter_by(name=n)",
@@ -86,6 +87,7 @@ describe("Python database calls", () => {
     ].join("\n"))).toEqual([
       "cursor.execute",
       "self.conn.execute",
+      "con.execute",
       "Car.objects.filter",
       "session.query(Player).filter(Player.id == 1).first",
       "session.query(Player).filter",
