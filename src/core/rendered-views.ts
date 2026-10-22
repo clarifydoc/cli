@@ -64,8 +64,9 @@ export function linkRenderedViews(
     const key = `${file}\0${span.line}`;
     const hit = viewsCache.get(key);
     if (hit) return hit;
-    const text = sourceOf(file)?.split("\n").slice(span.line - 1, span.endLine).join("\n") ?? "";
-    const out = text ? viewLiterals(text) : [];
+    const whole = sourceOf(file) ?? "";
+    const text = whole.split("\n").slice(span.line - 1, span.endLine).join("\n");
+    const out = text ? [...viewLiterals(text), ...viewConstants(text, whole)] : [];
     viewsCache.set(key, out);
     return out;
   };
@@ -148,6 +149,25 @@ const RENDER_CALL = new RegExp(String.raw`[\w.:$]*(?:render|template|view|html|p
 const VIEW_FIELD = new RegExp(String.raw`["']?\w*(?:template|view|page)\w*["']?\s*(?::|=>?|=)\s*${NAME}`, "gi");
 /** A handler returning the view's name (Spring MVC, Struts, Grails). */
 const RETURN_NAME = new RegExp(String.raw`\breturn\s+${NAME}`, "g");
+
+/** A render call handed a name (`ctx.HTML(http.StatusOK, tplClubSettings)`), not a literal. */
+const RENDER_CALL_NAME = /[\w.:$]*(?:render|template|view|html|page)[\w$]*\s*!?\s*\(\s*(?:[^()"'\x60;,]{0,80},\s*)?([A-Za-z_][\w$]*)\s*[,)]/gi;
+
+/**
+ * The template names a function body hands a render call through a constant
+ * of its file: `tplClubSettings templates.TplName = "club/settings"` (Go),
+ * `const VIEW = 'club/settings'`.
+ */
+export function viewConstants(body: string, file: string): string[] {
+  const out = new Set<string>();
+  RENDER_CALL_NAME.lastIndex = 0;
+  for (const m of body.matchAll(RENDER_CALL_NAME)) {
+    const name = m[1]!;
+    const decl = new RegExp(String.raw`(?:^|[\s(,])${name}\b[^=\n;(]*=\s*["'\x60]([^"'\x60\s{}$<>]+)["'\x60]`, "m").exec(file);
+    if (decl) out.add(decl[1]!);
+  }
+  return [...out];
+}
 
 /** The template names a function body states, by the three shapes above. */
 export function viewLiterals(text: string): string[] {

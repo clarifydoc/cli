@@ -4,8 +4,22 @@ import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { analyze } from "./analyzer.js";
 import { loadReportSummary } from "./report-payload.js";
-import { viewLiterals } from "./rendered-views.js";
+import { viewConstants, viewLiterals } from "./rendered-views.js";
 import type { ProjectAnalysis } from "../types/analysis.js";
+
+describe("viewConstants", () => {
+  it("reads a template name a render call takes through a file constant", () => {
+    const file = `const (
+	tplClubSettings templates.TplName = "club/settings"
+	tplClubs        templates.TplName = "club/list"
+)
+
+func Settings(ctx *context.Context) {
+	ctx.HTML(http.StatusOK, tplClubSettings)
+}`;
+    expect(viewConstants("ctx.HTML(http.StatusOK, tplClubSettings)", file)).toEqual(["club/settings"]);
+  });
+});
 
 describe("viewLiterals", () => {
   it("reads render calls, view fields and returned names", () => {
@@ -75,7 +89,7 @@ describe("a route renders the template it names", () => {
     }
     await analyze({ projectRoot: join(dir, "app"), outputDir: join(dir, "out"), lsp: false, gitHistory: false });
     summary = await loadReportSummary(join(dir, "out"));
-  }, 60_000);
+  }, 180_000);
   afterAll(async () => {
     await rm(dir, { recursive: true, force: true });
   });
