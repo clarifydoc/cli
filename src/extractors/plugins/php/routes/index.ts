@@ -1,7 +1,7 @@
 import type { Tree } from "web-tree-sitter";
 import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { RouteExtractor } from "../../../routes/base.js";
-import { codeigniterRouteExtractor } from "./codeigniter.js";
+import { LARAVEL_ROUTES_FACT, codeigniterRouteExtractor } from "./codeigniter.js";
 import { extractLaravelRoutes } from "./laravel.js";
 import { extractSymfonyAttributeRoutes } from "./symfony.js";
 import { SLIM_GATE, extractSlimRoutes } from "./slim.js";
@@ -25,6 +25,8 @@ export const phpRouteExtractor: RouteExtractor = {
       // is framework config, never written in the file.
       const isApiFile = /(^|[/\\])routes[/\\]api\.php$/i.test(filePath ?? "");
       extractLaravelRoutes(tree.rootNode, routes, isApiFile ? "api" : "");
+      // A project routed by the facade does not route by CodeIgniter's convention.
+      if (routes.length > 0) facts?.push({ kind: LARAVEL_ROUTES_FACT, line: routes[0]!.line, data: null });
     }
     if (/#\[\s*(?:[\w\\]+\\)?(Route|Get|Post|Put|Patch|Delete)\b/.test(sourceText)) {
       extractSymfonyAttributeRoutes(tree.rootNode, routes);

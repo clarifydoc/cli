@@ -109,7 +109,7 @@ function findRoutineEnd(lines: string[], startIdx: number): number {
 }
 
 /** Custom class extractor — handles CREATE TABLE / VIEW / INDEX / SEQUENCE / SCHEMA. */
-function extractSqlClasses(lines: string[], _fns: FunctionInfo[]): ClassInfo[] {
+export function extractSqlClasses(lines: string[], _fns: FunctionInfo[]): ClassInfo[] {
   const classes: ClassInfo[] = [];
 
   for (let i = 0; i < lines.length; i++) {

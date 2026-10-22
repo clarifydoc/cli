@@ -730,7 +730,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       // A query held in a constant of the file (`session.createSQLQuery(EXISTS)`), or written at the call.
       const constant = call.firstArg && /^(?:this\.)?\w+$/.test(call.firstArg.text)
         ? this.stringConsts.get(call.firstArg.text.replace(/^this\./, "")) ?? null
-        : call.firstArg ? stringArgText(call.firstArg) : null;
+        : call.firstArg ? stringArgText(call.firstArg, this.stringConsts) : null;
       const fromConstant = constant ? constantQueryTarget(constant) : null;
       const entity = jpaEntityArg(node)
         ?? fromConstant?.entity
@@ -1092,19 +1092,45 @@ function constructorJpqlEntity(node: Node): string | null {
   return null;
 }
 
-/** The literal text of a string argument, a concatenation of literals included. */
-function stringArgText(arg: Node): string | null {
+/**
+ * The literal text of a string argument, a concatenation of literals included;
+ * inside a concatenation, a name the file holds a string constant under
+ * (`"INSERT INTO " + TABLE + " (…)"`) reads as its value.
+ */
+function stringArgText(arg: Node, consts?: ReadonlyMap<string, string>): string | null {
   if (arg.type === "string_literal" || arg.type === "text_block") return arg.text.replace(/^"(?:"")?|(?:"")?"$/g, "");
-  if (arg.type === "parenthesized_expression") return concatText(arg.namedChildren);
-  if (arg.type === "binary_expression") return concatText(arg.namedChildren);
+  if (arg.type === "parenthesized_expression") return concatText(arg.namedChildren, consts);
+  if (arg.type === "binary_expression") return concatText(arg.namedChildren, consts);
   return null;
 }
 
 /** The parts' literal text joined, a non-literal part as a space; null when none is literal. */
-function concatText(parts: ReadonlyArray<Node | null>): string | null {
-  const texts = parts.map((part) => (part ? stringArgText(part) : null));
+function concatText(parts: ReadonlyArray<Node | null>, consts?: ReadonlyMap<string, string>): string | null {
+  const texts = parts.map((part) => (part ? stringArgText(part, consts) ?? constantText(part, consts) : null));
   if (texts.every((t) => t === null)) return null;
   return texts.map((t) => t ?? " ").join("");
+}
+
+/** `TABLE`, `this.TABLE`, `Owner.TABLE` — the file's string constant of that name. */
+function constantText(part: Node, consts?: ReadonlyMap<string, string>): string | null {
+  if (!consts) return null;
+  if (part.type === "identifier") return consts.get(part.text) ?? null;
+  if (part.type !== "field_access") return null;
+  // `this.TABLE` / `Owner.TABLE` — never `spec.table`, another object's field.
+  const owner = part.childForFieldName("object");
+  if (!owner || !(owner.type === "this" || /^[A-Z]/.test(owner.text))) return null;
+  return consts.get(part.childForFieldName("field")?.text ?? "") ?? null;
+}
+
+/** The texts a string expression can hold: both arms of a `cond ? a : b`. */
+function stringArmTexts(value: Node, consts?: ReadonlyMap<string, string>): string[] {
+  if (value.type === "ternary_expression") {
+    return [value.childForFieldName("consequence"), value.childForFieldName("alternative")]
+      .flatMap((arm) => (arm ? stringArmTexts(arm, consts) : []));
+  }
+  if (value.type === "parenthesized_expression" && value.namedChildren.length === 1) return stringArmTexts(value.namedChildren[0]!, consts);
+  const text = stringArgText(value, consts);
+  return text ? [text] : [];
 }
 
 /** The entity (JPQL) or table (SQL) a query constant reads or writes. */
@@ -1323,6 +1349,9 @@ function buildFilePrepass(root: Node): {
   const fieldTypes = new Map<string, string>();
   const stringConsts = new Map<string, string>();
   const ctorStrings = new Map<string, string[]>();
+  // Read once the whole file is walked, so a constant declared below its use still folds in.
+  const stringFields: Array<{ name: string; value: Node }> = [];
+  const ctorValues: Array<{ name: string; value: Node }> = [];
   const configFields = new Map<string, { key: string; fallback?: string }>();
   /** `@Value("${clubs.url:http://clubs}") String clubsUrl` — the configuration key a field or parameter holds. */
   const configOf = (decl: Node, name: string | null | undefined): void => {
@@ -1354,9 +1383,8 @@ function buildFilePrepass(root: Node): {
           if (c.type !== "variable_declarator") continue;
           putType(c.childForFieldName("name")?.text, rawType);
           const value = c.childForFieldName("value");
-          const text = value ? stringArgText(value) : null;
           const name = c.childForFieldName("name")?.text;
-          if (text && name && rawType === "String") stringConsts.set(name, text);
+          if (value && name && rawType === "String") stringFields.push({ name, value });
           configOf(n, name);
         }
       }
@@ -1365,8 +1393,7 @@ function buildFilePrepass(root: Node): {
       const left = n.childForFieldName("left");
       const name = left?.type === "field_access" && left.childForFieldName("object")?.type === "this" ? left.childForFieldName("field")?.text : left?.type === "identifier" ? left.text : null;
       const value = n.childForFieldName("right");
-      const text = value ? stringArgText(value) : null;
-      if (name && text && fieldTypes.get(name) === "String") (ctorStrings.get(name) ?? ctorStrings.set(name, []).get(name)!).push(text);
+      if (name && value) ctorValues.push({ name, value });
     } else if (n.type === "class_parameter") {
       // Kotlin primary-constructor `val x: Type`.
       const { name, type } = kotlinNameAndType(n);
@@ -1384,6 +1411,18 @@ function buildFilePrepass(root: Node): {
     for (const c of n.children) visit(c);
   };
   visit(root);
+  // Literal constants first, then those concatenated from them (`SELECT_ALL = "SELECT * FROM " + TABLE`).
+  for (const { name, value } of stringFields) {
+    if (value.type === "string_literal" || value.type === "text_block") stringConsts.set(name, stringArgText(value)!);
+  }
+  for (const { name, value } of stringFields) {
+    const text = stringConsts.has(name) ? null : stringArgText(value, stringConsts);
+    if (text) stringConsts.set(name, text);
+  }
+  for (const { name, value } of ctorValues) {
+    if (fieldTypes.get(name) !== "String") continue;
+    for (const text of stringArmTexts(value, stringConsts)) (ctorStrings.get(name) ?? ctorStrings.set(name, []).get(name)!).push(text);
+  }
   // A field the constructor sets from a string is as good as a constant — set per
   // database dialect in branches, as long as every query it can hold names one table.
   for (const [name, texts] of ctorStrings) {

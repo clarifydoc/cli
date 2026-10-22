@@ -163,7 +163,11 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     primary: FunctionInfo | null,
   ): void {
     for (const member of body.children) {
-      if (
+      // A Java enum's fields, constructor and methods follow its constants
+      // inside an `enum_body_declarations` node.
+      if (member.type === "enum_body_declarations") {
+        this.collectMembers(member, lang, methods, properties, primary);
+      } else if (
         member.type === "method_declaration" ||
         member.type === "function_declaration" ||
         member.type === "constructor_declaration" ||
@@ -172,7 +176,8 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
         methods.push(this.parseMethod(member, lang));
       } else if (
         member.type === "field_declaration" ||
-        member.type === "property_declaration"
+        member.type === "property_declaration" ||
+        member.type === "constant_declaration"
       ) {
         // Kotlin nests the name + type inside a `variable_declaration`
         // (`service: IAppService`); Java uses a `variable_declarator` + `type`
@@ -194,8 +199,9 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
           name: propName,
           type: typeNode?.text ?? null,
           visibility: this.getVisibility(member),
-          isStatic: member.text.includes("static ") || member.text.includes("companion"),
-          isReadonly: member.text.includes("final ") || member.text.startsWith("val "),
+          // An interface's fields are implicitly `static final`.
+          isStatic: member.type === "constant_declaration" || member.text.includes("static ") || member.text.includes("companion"),
+          isReadonly: member.type === "constant_declaration" || member.text.includes("final ") || member.text.startsWith("val "),
         };
         // `@JsonProperty("x")` / `@NotNull` — what the request schema reads.
         const attrs = this.extractAnnotations(member).map((a) => a.replace(/\s+/g, " "));

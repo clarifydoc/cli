@@ -505,6 +505,49 @@ describe("OpenAPI request schema through the core pass", () => {
   });
 });
 
+describe("OpenAPI allOf over several parents", () => {
+  const SPEC = `openapi: 3.0.3
+paths:
+  /fixtures:
+    get:
+      operationId: listFixtures
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FixturePage'
+components:
+  schemas:
+    PageLinks:
+      type: object
+      properties:
+        next: { type: string }
+    FixtureList:
+      type: object
+      properties:
+        items: { type: array, items: { type: string } }
+    FixturePage:
+      allOf:
+        - $ref: '#/components/schemas/PageLinks'
+        - $ref: '#/components/schemas/FixtureList'
+        - type: object
+          properties:
+            total: { type: integer }
+`;
+  it("keeps every parent and flattens all of them into the request schema", () => {
+    const lines = SPEC.split("\n");
+    const page = extractOpenApiEntities(lines).find((e) => e.name === "FixturePage")!;
+    expect([page.extends, page.implements]).toEqual(["PageLinks", ["FixtureList"]]);
+    const analysis = createEmptyAnalysis("openapi.yaml", "openapi");
+    analysis.projectId = "root";
+    analysis.classes = extractOpenApiEntities(lines);
+    const routes = extractOpenApiRoutes(lines).map((r) => ({ ...r, filePath: "openapi.yaml", projectId: "root" }));
+    attachRequestSchemas(routes, [analysis]);
+    const schema = (routes[0] as typeof routes[number] & { requestSchema?: { properties?: object } }).requestSchema;
+    expect(Object.keys(schema?.properties ?? {})).toEqual(["items", "next", "total"]);
+  });
+});
+
 describe("OpenAPI document sniff", () => {
   const filler = Array.from({ length: 300 }, (_, i) => `"Club${i}": { "type": "object", "properties": { "name": { "type": "string" } } }`).join(",\n");
   it("finds the version key of a sorted-key JSON document past the head", () => {

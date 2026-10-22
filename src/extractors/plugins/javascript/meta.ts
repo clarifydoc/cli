@@ -54,6 +54,7 @@ import { javascriptReachability } from "./reachability.js";
 import { CREDENTIAL_CONTEXT } from "../shared/security-context.js";
 import { javascriptTaint } from "./taint.js";
 import { reactRouterResolver } from "./routes/react-router-resolver.js";
+import { angularRouterResolver } from "./routes/angular-router-resolver.js";
 import { jsGrpcStub } from "../shared/grpc-stubs.js";
 
 const TS_BUILTINS: ReadonlySet<string> = new Set<string>([
@@ -245,7 +246,7 @@ const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
 const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new DomBindingResolver(), new JobEventResolver()];
-const routeResolvers = [reactRouterResolver, trpcRouterResolver, cdkRouteResolver, nestPrefixResolver];
+const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, cdkRouteResolver, nestPrefixResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {
   ...typescriptManifest,

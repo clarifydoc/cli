@@ -50,6 +50,8 @@ import { applyRouteMeta, type GuardAttr } from "../../../shared/route-metadata.j
  */
 
 export const CI_ROUTE_FACT = "ci:route";
+/** A file that declares `Route::` facade routes: its sub-project is Laravel's, whatever its folders are called. */
+export const LARAVEL_ROUTES_FACT = "laravel:routes";
 
 /** One `$route['from'] = 'to'` entry: both as written, `(:any)` / `(:num)` / `$1` kept. */
 export interface CiRouteAlias {

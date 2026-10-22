@@ -36,8 +36,9 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
     // definition (CXF/RESTEasy client), not a served resource — extracting it
     // as a route would invert the call direction.
     const isClientFile = !!filePath && /(^|\/)clients?\//i.test(filePath.replace(/\\/g, "/"));
-    if (!isClientFile && /@(Path|Controller)\b/.test(sourceText)) {
-      extractJaxrsMicronautRoutes(tree.rootNode, routes);
+    // A sub-resource may carry verb markers only (`@POST void report(…)`), mounted by a locator elsewhere.
+    if (!isClientFile && (/@(Path|Controller)\b/.test(sourceText) || (/\b(?:javax|jakarta)\.ws\.rs\b/.test(sourceText) && /@(?:GET|POST|PUT|DELETE|PATCH)\b/.test(sourceText)))) {
+      extractJaxrsMicronautRoutes(tree.rootNode, routes, facts);
     }
 
     // Halo extensions: CRUD routes generated from `@GVK` (see halo.ts).

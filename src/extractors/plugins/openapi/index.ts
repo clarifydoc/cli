@@ -525,14 +525,15 @@ export function extractOpenApiEntities(lines: string[]): ClassInfo[] {
       props.push(info);
     }
     // `allOf: [$ref: Base, {…}]` is schema inheritance: the base's properties
-    // are flattened by the request-schema pass through `extends`.
-    const base = itemsOf(schema.children.get("allOf"))
+    // are flattened by the request-schema pass through `extends`, those of a
+    // second and later parent through `implements`.
+    const parents = [...new Set(itemsOf(schema.children.get("allOf"))
       .map((p) => refName(p.children.get("$ref")?.value))
-      .find((r): r is string => !!r && r !== name);
+      .filter((r): r is string => !!r && r !== name))];
     out.push({
       name,
-      extends: base ?? null,
-      implements: [],
+      extends: parents[0] ?? null,
+      implements: parents.slice(1),
       decorators: ["entity", "openapi"],
       methods: [],
       properties: props,

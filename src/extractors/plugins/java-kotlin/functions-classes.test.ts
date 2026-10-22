@@ -284,6 +284,31 @@ public class Car {
     expect(classes.map((c) => `${c.name}[${c.methods.map((m) => m.name)}]`)).toEqual(["Car[]", "Builder[build]", "WhenEmpty[rejects]", "Status[]"]);
   });
 
+  it("reads a Java enum's fields, constructor and methods after its constants, and an interface's constants", async () => {
+    const classes = await classesOf(`
+package a;
+public enum Position {
+  KEEPER("GK", 1), STRIKER("ST", 9);
+  private final String code;
+  private final int shirt;
+  Position(String code, int shirt) { this.code = code; this.shirt = shirt; }
+  public String getCode() { return code; }
+  public static Position byCode(String code) { return KEEPER; }
+}
+interface LeagueTables {
+  String MATCH_TABLE = "league_match";
+  int MAX_CLUBS = 20;
+}`, "java");
+    const position = classes.find((c) => c.name === "Position")!;
+    expect(position.methods.map((m) => m.name)).toEqual(["Position", "getCode", "byCode"]);
+    expect(position.properties.map((p) => p.name)).toEqual(["code", "shirt", "KEEPER", "STRIKER"]);
+    const tables = classes.find((c) => c.name === "LeagueTables")!;
+    expect(tables.properties.map((p) => [p.name, p.type, p.isStatic, p.isReadonly])).toEqual([
+      ["MATCH_TABLE", "String", true, true],
+      ["MAX_CLUBS", "int", true, true],
+    ]);
+  });
+
   it("extracts Kotlin nested classes, keeps objects folded into their class, and reads a typealias as the class it names", async () => {
     const classes = await classesOf(`
 package a

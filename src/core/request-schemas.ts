@@ -420,19 +420,25 @@ class SchemaBuilder {
     }
   }
 
-  /** The class, then its bases (nearest first), up to `MAX_BASES` deep. */
+  /**
+   * The class, then its bases (nearest first), up to `MAX_BASES` of them —
+   * and, where the hooks say a class composes its `implements`, those after
+   * its `extends`.
+   */
   private inheritanceChain(start: ClassRef): ClassRef[] {
     const chain = [start];
     const visited = new Set([start.cls.name]);
-    let cur = start;
-    for (let i = 0; i < MAX_BASES; i++) {
-      const baseName = cur.cls.extends;
-      if (!baseName) break;
-      const base = this.resolve(baseName, cur.projectId);
-      if (!base || visited.has(base.cls.name)) break;
-      visited.add(base.cls.name);
-      chain.push(base);
-      cur = base;
+    for (let i = 0; i < chain.length && chain.length <= MAX_BASES; i++) {
+      const cur = chain[i]!;
+      const parents = [cur.cls.extends, ...(this.hooks.composesImplements ? cur.cls.implements ?? [] : [])];
+      for (const baseName of parents) {
+        if (!baseName) continue;
+        const base = this.resolve(baseName, cur.projectId);
+        if (!base || visited.has(base.cls.name)) continue;
+        if (chain.length > MAX_BASES) return chain;
+        visited.add(base.cls.name);
+        chain.push(base);
+      }
     }
     return chain;
   }

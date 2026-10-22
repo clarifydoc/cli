@@ -1371,6 +1371,11 @@ export interface RequestSchemaHooks {
   isSerialized(prop: import("./analysis.js").PropertyInfo): boolean;
   /** Whether a request must carry the property. */
   isRequired(prop: import("./analysis.js").PropertyInfo): boolean;
+  /**
+   * Whether a class's `implements` are parents whose properties it carries, as
+   * its `extends` is (OpenAPI `allOf` over several refs) — flattened after it.
+   */
+  composesImplements?: boolean;
 }
 
 /** What a `projectCommands` reader sees of one project root. */

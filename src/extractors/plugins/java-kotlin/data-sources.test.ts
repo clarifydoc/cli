@@ -130,6 +130,30 @@ describe("DAO / Repository receiver → entity (the dominant data path here)", (
     expect(s.map((d) => `${d.name} ${d.entity ?? "-"} ${d.access ?? "-"}`)).toEqual(["createSQLQuery fixtures read", "execute seasons write"]);
   });
 
+  it("folds a table constant into the SQL concatenated around it, in a call and in a constructor-set field", async () => {
+    const s = db(await sourcesOf(
+      `    em.createNativeQuery("INSERT INTO " + TABLE + " (club_id, scored_at) VALUES (?1, ?2)").executeUpdate();
+    jdbcTemplate.update(sqlInsert, id);
+    jdbcTemplate.queryForList(SELECT_ALL);`,
+      "java",
+      `class Outbox {
+  private static final String TABLE = "league_goal_log";
+  private static final String SELECT_ALL = "SELECT * FROM " + Outbox.OUTBOX;
+  private static final String OUTBOX = "league_outbox";
+  private final String sqlInsert;
+  private JdbcTemplate jdbcTemplate;
+  Outbox(String owner, boolean auto) {
+    sqlInsert = auto ? "INSERT INTO " + owner + OUTBOX + " (exchange) VALUES (?)" : "INSERT INTO " + owner + OUTBOX + " (id, exchange) VALUES (?, ?)";
+  }
+}`,
+    ));
+    expect(s.map((d) => `${d.name} ${d.entity ?? "-"} ${d.access ?? "-"}`)).toEqual([
+      "createNativeQuery league_goal_log write",
+      "update league_outbox write",
+      "queryForList league_outbox read",
+    ]);
+  });
+
   it("handles a `this.playerRepository.save()` receiver", async () => {
     const s = db(await sourcesOf(`    this.playerRepository.save(u)`, "kotlin"));
     expect(s.some((d) => d.entity === "player")).toBe(true);

@@ -218,7 +218,7 @@ function isNested(obj: Node): boolean {
   return !!pair && (pair.type === "pair" || pair.type === "property_assignment") && pair.childForFieldName("key")?.text === "children";
 }
 
-function joinChild(parent: string, child: string): string {
+export function joinChild(parent: string, child: string): string {
   if (child.startsWith("/") || isHelperHole(child)) return child;
   const head = parent.replace(/\/+$/, "");
   if (child === "") return parent;
@@ -227,6 +227,9 @@ function joinChild(parent: string, child: string): string {
   if (head === "") return parent === "/" ? `/${child}` : child;
   return `${head}/${child}`;
 }
+
+/** A route record's `loadChildren` module (`data`: the specifier), keyed by the record's line. */
+export const ANGULAR_LOAD_CHILDREN_FACT = "angular-load-children";
 
 /** Inspect a single node for a Vue Router route config object. */
 export function visitVueRouterRoute(node: Node, routes: RouteInfo[], facts?: RouteFact[]): void {
@@ -239,6 +242,8 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[], facts?: Rou
     let index = false;
     /** Where a redirect-only record sends the reader ("" when computed): Vue `redirect`, Angular `redirectTo`, `element: <Navigate>`. */
     let redirectTo: string | null = null;
+    /** Angular `loadChildren: () => import('./x.routes')`: the module whose routes sit under this one. */
+    let lazyChildren: string | null = null;
 
     for (const prop of node.children) {
       if (prop.type === "pair" || prop.type === "property_assignment") {
@@ -254,6 +259,7 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[], facts?: Rou
           // instead of a bare `component` identifier — same join target.
           handler = componentHandler(value);
           componentPath = componentSpecifier(value);
+          if (keyText === "loadChildren") lazyChildren = /import\(\s*['"]([^'"]+)['"]\s*\)/.exec(value.text)?.[1] ?? null;
         } else if ((keyText === "redirect" || keyText === "redirectTo") && value) {
           redirectTo = value.type === "string" ? stripQuotes(value.text) : "";
         } else if (keyText === "element" && value && isJsxValue(value) && redirectTargetOf(value) !== null) {
@@ -308,6 +314,7 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[], facts?: Rou
         middleware: [],
         line: node.startPosition.row + 1,
       });
+      if (facts && lazyChildren) facts.push({ kind: ANGULAR_LOAD_CHILDREN_FACT, line: node.startPosition.row + 1, data: lazyChildren });
     }
     // `children: appRoutes` / `children: [...appRoutes]`: an array declared
     // elsewhere (or above) whose routes sit under this one — composed by the

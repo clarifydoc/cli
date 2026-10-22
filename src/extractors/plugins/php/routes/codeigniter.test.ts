@@ -182,4 +182,24 @@ $route['nowhere'] = "missing/thing";
       ["/garage/service", ["/werkstatt"]],
     ]);
   });
+
+  it("drops the convention rows of a sub-project routed by Laravel's facade", async () => {
+    const { codeigniterRoutesResolver } = await import("./codeigniter-resolver.js");
+    const { phpRouteExtractor: all } = await import("./index.js");
+    const routesFile = `<?php\nRoute::get('v1/clubs', ['uses' => 'ShowController@index']);\n`;
+    const facts: import("../../../../types/analysis.js").RouteFact[] = [];
+    const routes = all.extractRoutes(await parseSource(routesFile, "php" as any, "routes/api.php"), routesFile, "routes/api.php", facts);
+    const ctlSrc = `<?php namespace League\\Api\\V1\\Controllers; class ShowController extends Controller { public function index() {} }`;
+    const ctl = await routesOf(ctlSrc, "app/Api/V1/Controllers/ShowController.php");
+    expect(ctl.map((r) => r.path)).toEqual(["/showcontroller"]);
+    const analyses = [
+      { filePath: "routes/api.php", projectId: "league", routes, routeFacts: facts },
+      { filePath: "app/Api/V1/Controllers/ShowController.php", projectId: "league", routes: ctl },
+      { filePath: "legacy/application/controllers/garage.php", projectId: "garage", routes: await routesOf(`<?php class Garage extends CI_Controller { function service() {} }`, "legacy/application/controllers/garage.php") },
+    ] as unknown as import("../../../../types/analysis.js").FileAnalysis[];
+    codeigniterRoutesResolver.resolve(analyses, {} as never);
+    expect(analyses.map((a) => a.routes.map((r) => `${r.httpMethod} ${r.path}`))).toEqual([
+      ["GET /api/v1/clubs"], [], ["null /garage/service"],
+    ]);
+  });
 });

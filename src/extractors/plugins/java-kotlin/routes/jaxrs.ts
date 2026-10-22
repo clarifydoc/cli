@@ -1,5 +1,5 @@
 import type { Node } from "web-tree-sitter";
-import type { RouteInfo } from "../../../../types/analysis.js";
+import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import { findChildByType, getNameFromNode } from "../../../shared/node-helpers.js";
 import { extractCalls } from "../../../shared/call-graph.js";
 import {
@@ -37,7 +37,15 @@ import { guardsOn, routeParamsOf } from "./meta-annotations.js";
  * argument (`@GET("users/{id}")`), so requiring a marker keeps client
  * interfaces from minting phantom inbound routes. MicroProfile REST-client
  * interfaces (`@RegisterRestClient`) are outbound too and skipped wholesale.
+ *
+ * A type with no `@Path` of its own is a sub-resource: its `@Path` methods are
+ * rows at their bare paths, and its verb-only methods (served at the mount
+ * point itself) are `jaxrs:unmounted` facts, never rows of their own — the
+ * sub-resource resolver (`jaxrs-resolver.ts`) serves both under every resource
+ * that mounts the type.
  */
+
+export const JAXRS_UNMOUNTED_FACT = "jaxrs:unmounted";
 
 const JAXRS_VERBS: ReadonlySet<string> = new Set([
   "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS",
@@ -67,8 +75,8 @@ function annotationPath(ann: Node): string | null {
 const CLASS_TYPES = new Set(["class_declaration", "class_definition", "interface_declaration"]);
 const METHOD_TYPES = new Set(["method_declaration", "function_declaration"]);
 
-export function extractJaxrsMicronautRoutes(root: Node, routes: RouteInfo[]): void {
-  walk(root, routes, "", "none", [], packageOf(root));
+export function extractJaxrsMicronautRoutes(root: Node, routes: RouteInfo[], facts?: RouteFact[]): void {
+  walk(root, routes, "", "none", [], packageOf(root), facts);
 }
 
 /** The file's package (`package com.acme.api;`, Kotlin `package com.acme.api`), "" for the default package. */
@@ -91,6 +99,7 @@ function walk(
   classGuards: readonly GuardAttr[],
   /** Qualified name of the enclosing type (the package, outside any type). */
   owner: string,
+  facts?: RouteFact[],
 ): void {
   if (CLASS_TYPES.has(node.type)) {
     // Outbound-client interfaces reuse the same annotations — never routes.
@@ -118,16 +127,16 @@ function walk(
     const guards = [...classGuards, ...guardsOn(node)];
     const name = node.childForFieldName("name")?.text ?? findChildByType(node, "type_identifier")?.text;
     const type = name ? (owner ? `${owner}.${name}` : name) : owner;
-    for (const child of node.children) walk(child, routes, prefix, childFlavor, guards, type);
+    for (const child of node.children) walk(child, routes, prefix, childFlavor, guards, type, facts);
     return;
   }
 
   if (METHOD_TYPES.has(node.type)) {
-    emitMethodRoutes(node, routes, classPrefix, flavor, classGuards, owner);
+    emitMethodRoutes(node, routes, classPrefix, flavor, classGuards, owner, facts);
     // Fall through: Kotlin nests local declarations inside function bodies.
   }
 
-  for (const child of node.children) walk(child, routes, classPrefix, flavor, classGuards, owner);
+  for (const child of node.children) walk(child, routes, classPrefix, flavor, classGuards, owner, facts);
 }
 
 function emitMethodRoutes(
@@ -137,6 +146,7 @@ function emitMethodRoutes(
   flavor: Flavor,
   classGuards: readonly GuardAttr[],
   owner: string,
+  facts?: RouteFact[],
 ): void {
   let verb: string | null = null;
   let subPath: string | null = null;
@@ -165,8 +175,10 @@ function emitMethodRoutes(
   }
 
   if (!verb) return;
-  // A JAX-RS verb outside any @Path context is not evidence of a resource.
-  if (flavor === "none" && !classPrefix && subPath === null) return;
+  // A JAX-RS verb outside any @Path context is not evidence of a resource —
+  // until a locator or a rooted subtype mounts its type.
+  const unmounted = flavor === "none" && !classPrefix && subPath === null;
+  if (unmounted && !facts) return;
 
   const lang = method.type === "function_declaration" ? ("kotlin" as const) : ("java" as const);
   const body =
@@ -194,5 +206,6 @@ function emitMethodRoutes(
     guards: guardsOn(method),
     params: routeParamsOf(method, path, flavor === "micronaut" ? "micronaut" : "jaxrs"),
   });
-  routes.push(route);
+  if (unmounted) facts!.push({ kind: JAXRS_UNMOUNTED_FACT, line: route.line, owner, data: route });
+  else routes.push(route);
 }

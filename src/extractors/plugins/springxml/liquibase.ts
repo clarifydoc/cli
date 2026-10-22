@@ -1,6 +1,8 @@
 import type { ClassInfo, FileAnalysis, ImportInfo, PropertyInfo, SchemaOp } from "../../../types/analysis.js";
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import { fkRelation, replaySchema } from "../shared/schema-replay.js";
+import { extractSqlClasses } from "../sql/index.js";
+import { schemaOpsOf } from "../sql/entities.js";
 
 /**
  * Liquibase XML changelogs: the schema a Java service's database has.
@@ -18,10 +20,11 @@ import { fkRelation, replaySchema } from "../shared/schema-replay.js";
  * `addColumn`, `dropColumn`, `renameColumn`, `dropTable`, `renameTable`,
  * `addForeignKeyConstraint` and a column's `references` / `referencedTableName`.
  * An `<include file>` / `<includeAll path>` is an import of the changelogs it
- * runs. Project-wide, each master changelog (one no other includes) is
- * replayed in the order its includes run, into the schema it ends with.
- * Inserts, updates, indexes and raw `<sql>` change no table's shape and are
- * not read.
+ * runs. A raw `<sql>` change is read as the SQL plugin reads a script: its
+ * CREATE TABLE a table, its ALTER / DROP / RENAME the same schema ops.
+ * Project-wide, each master changelog (one no other includes) is replayed in
+ * the order its includes run, into the schema it ends with. Inserts, updates
+ * and indexes change no table's shape and are not read.
  */
 
 export function isLiquibaseChangelog(source: string): boolean {
@@ -150,6 +153,35 @@ function parse(lines: string[]): { tables: ClassInfo[]; ops: SchemaOp[]; include
         break;
       }
     }
+  }
+  const sqlOps: SchemaOp[] = [];
+  for (const block of sqlBlocks(lines)) {
+    const at = (line: number): number => line + block.line - 1;
+    for (const c of extractSqlClasses(block.lines, [])) {
+      if (c.decorators.includes("table")) out.tables.push({ ...c, decorators: ["table", "liquibase"], line: at(c.line), endLine: at(c.endLine) });
+    }
+    for (const op of schemaOpsOf(block.lines)) sqlOps.push({ ...op, line: at(op.line) });
+  }
+  // The replay runs ops in the order the changelog states them.
+  if (sqlOps.length > 0) out.ops = [...out.ops, ...sqlOps].sort((a, b) => a.line - b.line);
+  return out;
+}
+
+const SQL_BLOCK_RE = /<sql\b(?:[^>"']|"[^"]*"|'[^']*')*>([\s\S]*?)<\/sql\s*>/g;
+const XML_ENTITIES: Record<string, string> = { lt: "<", gt: ">", amp: "&", quot: '"', apos: "'" };
+
+/** Each `<sql>` change's text (CDATA unwrapped, entities decoded) and the line it starts on. */
+function sqlBlocks(lines: string[]): Array<{ lines: string[]; line: number }> {
+  const source = lines.join("\n");
+  if (!source.includes("<sql")) return [];
+  const uncommented = source.replace(/<!--[\s\S]*?-->/g, (c) => c.replace(/[^\n]/g, " "));
+  const out: Array<{ lines: string[]; line: number }> = [];
+  for (const m of uncommented.matchAll(SQL_BLOCK_RE)) {
+    const line = uncommented.slice(0, m.index! + m[0].indexOf(">") + 1).split("\n").length;
+    const text = m[1]!
+      .replace(/<!\[CDATA\[|\]\]>/g, (c) => " ".repeat(c.length))
+      .replace(/&(lt|gt|amp|quot|apos);/g, (_, e: string) => XML_ENTITIES[e]!);
+    out.push({ lines: text.split("\n"), line });
   }
   return out;
 }

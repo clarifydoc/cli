@@ -48,26 +48,57 @@ Route::put('/players/{id}', function ($id) {
     for (const r of routes) expect(r.kind).toBe("api");
   });
 
-  it("expands Route::resource into the 7 CRUD routes, apiResource into 5", async () => {
+  it("expands Route::resource into the 7 CRUD actions, apiResource into 5, update on PUT and PATCH", async () => {
     const SRC = `<?php
 Route::resource('photos', PhotoController::class);
 Route::apiResource('tags', TagController::class);
 `;
     const routes = await routesOf(SRC);
     const photos = routes.filter((r) => r.path.startsWith("/photos"));
-    expect(photos).toHaveLength(7);
-    expect(photos.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(
-      expect.arrayContaining([
-        "GET /photos", "GET /photos/create", "POST /photos", "GET /photos/{id}",
-        "GET /photos/{id}/edit", "PUT /photos/{id}", "DELETE /photos/{id}",
-      ]),
-    );
-    expect(photos.find((r) => r.path === "/photos/{id}" && r.httpMethod === "GET")!.handler)
+    expect(photos.map((r) => `${r.httpMethod} ${r.path}`)).toEqual([
+      "GET /photos", "GET /photos/create", "POST /photos", "GET /photos/{photo}",
+      "GET /photos/{photo}/edit", "PUT /photos/{photo}", "PATCH /photos/{photo}", "DELETE /photos/{photo}",
+    ]);
+    expect(photos.find((r) => r.path === "/photos/{photo}" && r.httpMethod === "GET")!.handler)
       .toBe("PhotoController#show");
 
     const tags = routes.filter((r) => r.path.startsWith("/tags"));
-    expect(tags).toHaveLength(5); // no create/edit form endpoints
+    expect(tags).toHaveLength(6); // no create/edit form endpoints
     expect(tags.some((r) => r.path.includes("/create") || r.path.includes("/edit"))).toBe(false);
+  });
+
+  it("serves a nested resource under its parent's member, and honours only / except", async () => {
+    const SRC = `<?php
+Route::apiResource('clubs.players', ClubPlayerController::class)->only(['index', 'store']);
+Route::apiResource('match-reports', MatchReportController::class)->except('show');
+Route::resource('categories', CategoryController::class)->only('index');
+`;
+    const routes = await routesOf(SRC);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`)).toEqual([
+      "GET /clubs/{club}/players ClubPlayerController#index",
+      "POST /clubs/{club}/players ClubPlayerController#store",
+      "GET /match-reports MatchReportController#index",
+      "POST /match-reports MatchReportController#store",
+      "PUT /match-reports/{match_report} MatchReportController#update",
+      "PATCH /match-reports/{match_report} MatchReportController#update",
+      "DELETE /match-reports/{match_report} MatchReportController#destroy",
+      "GET /categories CategoryController#index",
+    ]);
+  });
+
+  it("reads an empty path as the group's own prefix", async () => {
+    const SRC = `<?php
+Route::group(['prefix' => 'v1/clubs'], function () {
+    Route::get('', ['uses' => 'ShowController@index', 'as' => 'index']);
+    Route::post('', ['uses' => 'StoreController@store', 'as' => 'store']);
+    Route::get('{club}', ['uses' => 'ShowController@show', 'as' => 'show']);
+});
+Route::get('', ['uses' => 'HomeController@index']);
+`;
+    const routes = await routesOf(SRC, "routes/api.php");
+    expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual([
+      "GET /api/v1/clubs", "POST /api/v1/clubs", "GET /api/v1/clubs/{club}", "GET /api",
+    ]);
   });
 
   it("composes group prefixes: array options, fluent ->prefix, and nesting", async () => {
@@ -113,7 +144,7 @@ Route::apiResource('cars', CarController::class);
 `;
     const api = await routesOf(SRC, "routes/api.php");
     expect(api.map((r) => r.path)).toContain("/api/parts");
-    expect(api.map((r) => r.path)).toContain("/api/cars/{id}");
+    expect(api.map((r) => r.path)).toContain("/api/cars/{car}");
 
     // web.php keeps its paths bare.
     const web = await routesOf(SRC, "routes/web.php");
@@ -192,7 +223,7 @@ Route::get('/verified', [ProfileController::class, 'show'])->middleware(['auth',
 
     // A string `'middleware' => 'auth.basic'` and a resource expansion inherit alike.
     const tags = routes.filter((r) => r.path.startsWith("/api/tags"));
-    expect(tags).toHaveLength(5);
+    expect(tags).toHaveLength(6);
     for (const t of tags) expect(t.auth).toMatchObject({ schemes: ["basic"], inherited: true });
 
     // `guest` waives auth; a bare route declares nothing at all.
@@ -238,5 +269,32 @@ Route::group(['namespace' => 'App\\Api', 'prefix' => 'v1'], static function (): 
     const routes = await routesOf(src);
     expect(routes.find((r) => r.path === "/me")!.handler).toBe("LoginController#__invoke");
     expect(routes.find((r) => r.path === "/v1/clubs")!.handler).toBe("ClubController#clubs");
+  });
+
+  it("drops a resource row for an action the controller does not declare, through its in-project bases and traits", async () => {
+    const { laravelResourceResolver } = await import("./laravel-resolver.js");
+    const routes = await routesOf(`<?php
+Route::apiResource('albums', AlbumController::class);
+Route::apiResource('kits', KitController::class);
+Route::apiResource('stadiums', StadiumController::class);
+`, "routes/api.php");
+    const cls = (name: string, methods: string[], ext: string | null = null, impls: string[] = []) => ({
+      name, extends: ext, implements: impls, decorators: [], properties: [], isExported: true, line: 1, endLine: 9,
+      methods: methods.map((m) => ({ name: m })),
+    });
+    const analyses = [
+      { filePath: "routes/api.php", language: "php", projectId: "league", routes, classes: [] },
+      { filePath: "app/Http/Controllers/AlbumController.php", language: "php", projectId: "league", routes: [], classes: [cls("AlbumController", ["index", "show"], "Controller", ["Updates"])] },
+      { filePath: "app/Http/Controllers/Updates.php", language: "php", projectId: "league", routes: [], classes: [cls("Updates", ["update"])] },
+      { filePath: "app/Http/Controllers/Controller.php", language: "php", projectId: "league", routes: [], classes: [cls("Controller", [], "BaseController", ["AuthorizesRequests"])] },
+      { filePath: "app/Http/Controllers/KitController.php", language: "php", projectId: "league", routes: [], classes: [cls("KitController", [], "CrudController")] },
+    ] as unknown as import("../../../../types/analysis.js").FileAnalysis[];
+    laravelResourceResolver.resolve(analyses, {} as never);
+    expect(analyses[0]!.routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual([
+      "GET /api/albums", "GET /api/albums/{album}", "PUT /api/albums/{album}", "PATCH /api/albums/{album}",
+      // A CRUD base outside the analysis may serve them; a controller not analysed at all is left alone.
+      "GET /api/kits", "POST /api/kits", "GET /api/kits/{kit}", "PUT /api/kits/{kit}", "PATCH /api/kits/{kit}", "DELETE /api/kits/{kit}",
+      "GET /api/stadiums", "POST /api/stadiums", "GET /api/stadiums/{stadium}", "PUT /api/stadiums/{stadium}", "PATCH /api/stadiums/{stadium}", "DELETE /api/stadiums/{stadium}",
+    ]);
   });
 });

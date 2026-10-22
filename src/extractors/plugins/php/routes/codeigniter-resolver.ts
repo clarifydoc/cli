@@ -1,6 +1,6 @@
 import type { FileAnalysis, RouteInfo } from "../../../../types/analysis.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
-import { CI_ROUTE_FACT, controllerBase, type CiRouteAlias } from "./codeigniter.js";
+import { CI_ROUTE_FACT, LARAVEL_ROUTES_FACT, controllerBase, type CiRouteAlias } from "./codeigniter.js";
 
 /**
  * `config/routes.php` aliases onto the convention routes they name:
@@ -13,6 +13,10 @@ import { CI_ROUTE_FACT, controllerBase, type CiRouteAlias } from "./codeigniter.
  * back-references are dropped; a bare controller is its `index`. Wildcards
  * and regex groups in the alias are runtime segments. An entry naming no
  * method of the sub-project's controllers aliases nothing.
+ *
+ * A sub-project that declares Laravel `Route::` routes routes by them alone:
+ * the convention rows of its `…/Controllers/` folders (`app/Api/V1/Controllers/`)
+ * are dropped.
  */
 export const codeigniterRoutesResolver: RouteResolver = {
   id: "codeigniter-routes",
@@ -20,11 +24,20 @@ export const codeigniterRoutesResolver: RouteResolver = {
   priority: 40,
   resolve(analyses: FileAnalysis[]): void {
     const aliases = new Map<string, CiRouteAlias[]>();
+    const laravel = new Set<string>();
     for (const a of analyses) {
       for (const f of a.routeFacts ?? []) {
+        if (f.kind === LARAVEL_ROUTES_FACT) laravel.add(a.projectId ?? "");
         if (f.kind !== CI_ROUTE_FACT) continue;
         const key = a.projectId ?? "";
         (aliases.get(key) ?? aliases.set(key, []).get(key)!).push(f.data as CiRouteAlias);
+      }
+    }
+    if (laravel.size > 0) {
+      for (const a of analyses) {
+        if (!laravel.has(a.projectId ?? "") || !controllerBase(a.filePath)) continue;
+        const kept = a.routes.filter((r) => r.httpMethod !== null || r.kind !== "api");
+        if (kept.length !== a.routes.length) a.routes = kept;
       }
     }
     if (aliases.size === 0) return;

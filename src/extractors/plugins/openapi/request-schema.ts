@@ -12,6 +12,9 @@ import type { RequestSchemaHooks, TypeShape } from "../../../types/language-plug
 const JSON_TYPES = new Set(["string", "integer", "number", "boolean"]);
 
 export const openapiRequestSchema: RequestSchemaHooks = {
+  // `allOf: [$ref: A, $ref: B]` — the first parent is `extends`, the rest `implements`.
+  composesImplements: true,
+
   unwrapNullable(type) {
     const t = type.trim();
     return t.endsWith("?") ? { type: t.slice(0, -1), nullable: true } : { type: t, nullable: false };

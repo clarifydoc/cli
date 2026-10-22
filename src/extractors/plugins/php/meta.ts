@@ -14,6 +14,7 @@ import { PhpMutationExtractor } from "./data-mutations.js";
 import { PhpEntityExtractor } from "./entities.js";
 import { phpRouteExtractor } from "./routes/index.js";
 import { codeigniterRoutesResolver } from "./routes/codeigniter-resolver.js";
+import { laravelResourceResolver } from "./routes/laravel-resolver.js";
 import { phpViewKey, readPhpView } from "./views.js";
 import { CodeIgniterViewResolver } from "./view-resolver.js";
 import { phpRequestSchema } from "./request-schema.js";
@@ -39,7 +40,7 @@ export const phpMeta: LanguagePluginMeta = {
   ...phpManifest,
   routes: phpRouteExtractor,
   // `config/routes.php` aliases onto the CodeIgniter convention routes they name.
-  routeResolvers: [codeigniterRoutesResolver],
+  routeResolvers: [codeigniterRoutesResolver, laravelResourceResolver],
   // A controller's `$this->load->view('x')` reaches that template.
   dispatchResolvers: [new CodeIgniterViewResolver()],
   // A plain-PHP view template (`views/**.php`, not Blade) is read for the page

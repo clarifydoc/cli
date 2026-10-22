@@ -43,15 +43,18 @@ const LARAVEL_VERBS: ReadonlySet<string> = new Set([
   "get", "post", "put", "patch", "delete", "options", "any",
 ]);
 
-/** `Route::resource` expansion — Laravel's fixed CRUD action table. */
-const RESOURCE_ACTIONS: ReadonlyArray<{ action: string; method: string; suffix: string }> = [
-  { action: "index", method: "GET", suffix: "" },
-  { action: "create", method: "GET", suffix: "/create" },
-  { action: "store", method: "POST", suffix: "" },
-  { action: "show", method: "GET", suffix: "/{id}" },
-  { action: "edit", method: "GET", suffix: "/{id}/edit" },
-  { action: "update", method: "PUT", suffix: "/{id}" },
-  { action: "destroy", method: "DELETE", suffix: "/{id}" },
+/**
+ * `Route::resource` expansion — Laravel's fixed CRUD action table; `{}` is
+ * the resource's own parameter (`{album}`), `update` answers PUT and PATCH.
+ */
+const RESOURCE_ACTIONS: ReadonlyArray<{ action: string; methods: readonly string[]; suffix: string }> = [
+  { action: "index", methods: ["GET"], suffix: "" },
+  { action: "create", methods: ["GET"], suffix: "/create" },
+  { action: "store", methods: ["POST"], suffix: "" },
+  { action: "show", methods: ["GET"], suffix: "/{}" },
+  { action: "edit", methods: ["GET"], suffix: "/{}/edit" },
+  { action: "update", methods: ["PUT", "PATCH"], suffix: "/{}" },
+  { action: "destroy", methods: ["DELETE"], suffix: "/{}" },
 ];
 /** `Route::apiResource` omits the HTML form endpoints. */
 const API_RESOURCE_SKIP = new Set(["create", "edit"]);
@@ -341,6 +344,43 @@ function joinPath(prefixes: string[], path: string): string {
 
 // ─── Route emission ─────────────────────────────────────────────────────────
 
+/**
+ * A resource name as the path Laravel serves it under, and the parameter it
+ * names a member by: `photos` → `photos` + `{photo}`; nested `albums.songs` →
+ * `albums/{album}/songs` + `{song}`; `playlist-folders` → `{playlist_folder}`.
+ */
+function resourcePathOf(base: string): { path: string; param: string } {
+  const segments = base.split(".");
+  const paramOf = (seg: string): string => singular(seg.split("/").pop()!).replace(/-/g, "_");
+  const path = segments.map((seg, i) => (i < segments.length - 1 ? `${seg}/{${paramOf(seg)}}` : seg)).join("/");
+  return { path, param: paramOf(segments[segments.length - 1]!) };
+}
+
+/** English singular of a plain resource name (`categories` → `category`, `matches` → `match`, `statuses` → `status`). */
+function singular(word: string): string {
+  if (/[^aeiou]ies$/.test(word)) return word.slice(0, -3) + "y";
+  if (/(?:ss|sh|ch|x|z|us)es$/.test(word)) return word.slice(0, -2);
+  if (/[^s]s$/.test(word)) return word.slice(0, -1);
+  return word;
+}
+
+/** `->only([...])` / `->except('show')` chained onto a resource registration. */
+function resourceFilters(call: Node): { only: Set<string> | null; except: Set<string> } {
+  let only: Set<string> | null = null;
+  const except = new Set<string>();
+  let cur: Node = call;
+  while (cur.parent && cur.parent.type === "member_call_expression" && cur.parent.childForFieldName("object")?.id === cur.id) {
+    cur = cur.parent;
+    const name = cur.childForFieldName("name")?.text;
+    if (name !== "only" && name !== "except") continue;
+    const arg = callArgs(cur)[0];
+    const actions = arg?.type === "array_creation_expression" ? arrayStrings(arg) : [stringValue(arg)].filter((v): v is string => !!v);
+    if (name === "only") only = new Set(actions);
+    else for (const a of actions) except.add(a);
+  }
+  return { only, except };
+}
+
 /** Chain root is the `Route` facade (`Route::middleware('a')->get(...)`). */
 function chainRootIsRoute(call: Node): boolean {
   let cur: Node | null = call;
@@ -370,8 +410,9 @@ function emitVerbRoute(
   if (verb === "match") {
     // Route::match(['get','post'], '/multi', handler)
     const verbs = arrayStrings(args[0]).map((v) => v.toUpperCase());
+    // `''` is the group prefix itself.
     const path = stringValue(args[1]);
-    if (!path) return;
+    if (path === null) return;
     const h = resolveHandler(args[2]);
     for (const m of verbs) {
       emit({ path: joinPath(prefixes, path), httpMethod: m, kind: "api", handler: h.name, calls: h.calls, middleware: [], line }, args[2]);
@@ -385,7 +426,7 @@ function emitVerbRoute(
     // dotted view name as a /-path, so the screen builder's suffix resolver
     // anchors it to resources/views/shop/catalog.blade.php.
     const path = stringValue(args[0]);
-    if (!path) return;
+    if (path === null) return;
     const view = stringValue(args[1]);
     emit({
       path: joinPath(prefixes, path),
@@ -405,24 +446,29 @@ function emitVerbRoute(
     if (!base) return;
     const ctlArg = args[1];
     const cls = ctlArg ? (classConstantName(ctlArg) ?? stringValue(ctlArg)?.split("\\").pop() ?? null) : null;
+    const { only, except } = resourceFilters(call);
+    const { path: resourcePath, param } = resourcePathOf(base);
     for (const a of RESOURCE_ACTIONS) {
       if (verb === "apiResource" && API_RESOURCE_SKIP.has(a.action)) continue;
-      emit({
-        path: joinPath(prefixes, base) + a.suffix,
-        httpMethod: a.method,
-        kind: "api",
-        handler: cls ? `${cls}#${a.action}` : a.action,
-        calls: [],
-        middleware: [],
-        line,
-      });
+      if ((only && !only.has(a.action)) || except.has(a.action)) continue;
+      for (const method of a.methods) {
+        emit({
+          path: joinPath(prefixes, resourcePath) + a.suffix.replace("{}", `{${param}}`),
+          httpMethod: method,
+          kind: "api",
+          handler: cls ? `${cls}#${a.action}` : a.action,
+          calls: [],
+          middleware: [],
+          line,
+        });
+      }
     }
     return;
   }
 
   // Plain verb: Route::get('/x', handler) — `any` dispatches all verbs (null).
   const path = stringValue(args[0]);
-  if (!path) return;
+  if (path === null) return;
   const h = resolveHandler(args[1]);
   emit({
     path: joinPath(prefixes, path),

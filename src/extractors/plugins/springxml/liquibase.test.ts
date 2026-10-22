@@ -47,6 +47,19 @@ const FILES: Record<string, string> = {
             <column name="event_id" type="uuid"/>
         </createTable>
     </changeSet>
+    <changeSet id="3" author="league">
+        <sql><![CDATA[
+            CREATE TABLE league_referee (
+                referee_id uuid PRIMARY KEY,
+                match_id uuid REFERENCES league_match(id)
+            );
+            ALTER TABLE league_outbox ADD COLUMN sent_at timestamp;
+        ]]></sql>
+        <sql>
+            CREATE INDEX "IDX_MATCH_KICKOFF" ON "LEAGUE_MATCH" ("KICK_OFF")
+        </sql>
+        <sql>UPDATE league_match SET kick_off = NULL WHERE id &lt; 0</sql>
+    </changeSet>
 </databaseChangeLog>
 `,
   "src/main/java/com/example/league/Club.java": `package com.example.league;
@@ -82,10 +95,11 @@ describe("Liquibase changelogs", () => {
     expect(nodes).toEqual([
       "Club jpa clubId",
       "league_match liquibase id,home_club,kick_off",
-      "league_outbox liquibase event_id",
+      "league_outbox liquibase event_id,sent_at",
+      "league_referee liquibase referee_id,match_id",
     ]);
-    const edges = (summary.entityGraph?.edges ?? []).map((e) => [e.source.split("::").pop(), e.target.split("::").pop()].sort().join(" - "));
-    expect(edges).toEqual(["Club - league_match"]);
+    const edges = (summary.entityGraph?.edges ?? []).map((e) => [e.source.split("::").pop(), e.target.split("::").pop()].sort().join(" - ")).sort();
+    expect(edges).toEqual(["Club - league_match", "league_match - league_referee"]);
   });
 
   it("are migrations", () => {
