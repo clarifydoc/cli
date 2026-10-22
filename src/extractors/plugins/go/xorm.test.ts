@@ -76,3 +76,23 @@ func Labels() (result []Label) {
     ]);
   });
 });
+
+describe("xorm in handlers, migrations and other session names", () => {
+  it("reads a generic FindAndCount in a handler, a migration's engine, sess*/eng receivers and .Table(\"x\") (real-repo FP)", () => {
+    expect(rows(`func Clubs(ctx *context.Context) {
+	clubs, total, err := db.FindAndCount[club_model.Club](ctx, opts)
+}`)).toEqual(["2 xorm: FindAndCount Club read"]);
+    expect(rows(`func AddMatchIndex(x base.EngineMigration) error {
+	count, err := x.Count(new(Match))
+	return err
+}`)).toEqual(["2 xorm: Count Match read"]);
+    expect(rows(`import "xorm.io/xorm"
+func search(ctx context.Context) {
+	sessCount := db.GetEngine(ctx).Where(cond)
+	count, err := sessCount.Count(new(Player))
+	ids := make([]int64, 0, 10)
+	err = db.GetEngine(ctx).Table("fixture").Cols("id").Where(cond).Find(&ids)
+	_, err = eng.Insert(&LeagueState{ID: id})
+}`)).toEqual(["4 xorm: Count Player read", "6 xorm: Find fixture read", "7 xorm: Insert LeagueState write"]);
+  });
+});

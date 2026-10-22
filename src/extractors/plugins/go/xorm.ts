@@ -36,10 +36,13 @@ interface OrmChainSpec {
 
 const XORM: OrmChainSpec = {
   label: "xorm",
-  file: /xorm\.io\/|\bdb\.GetEngine\(|\.NewSession\(\)|\bdb\.(?:Find|Get|GetByID|Count|Exist|Insert|DeleteByID|DeleteBeans)\b/,
+  // `db.FindAndCount[T](…)` in a handler; a migration's `x base.EngineMigration` / `*xorm.Engine` parameter.
+  file: /xorm\.io\/|\bdb\.GetEngine\(|\.NewSession\(\)|\bdb\.(?:Find|Get|GetByID|Count|Exist|Insert|DeleteByID|DeleteBeans|FindAndCount)\b|\bEngineMigration\b|\*xorm\.(?:Engine|Session)\b/,
   terminal: /(?:\.\s*|^\s*)(Find|FindAndCount|Get|Exist|Count|Iterate|Sum|SumInt|Sums|Insert|InsertOne|Update|Delete|Incr|Decr)\s*\(/g,
   builder: /\.\s*(?:Where|And|Or|ID|In|NotIn|Table|Cols|MustCols|AllCols|Select|OrderBy|Desc|Asc|Limit|Join|GroupBy|Having|Distinct|Omit|NoAutoCondition|Unscoped)\s*\(/,
-  root: /^(?:db\.GetEngine\(|(?:e|x|sess|session|engine|dbEngine|ss)(?:\.|$))/,
+  root: /^(?:db\.GetEngine\(|(?:e|x|sess\w*|session|engine|dbEngine|ss|eng)(?:\.|$))/,
+  // `.Table("issue")` names the table the chain reads.
+  model: /\.\s*Table\s*\(\s*("[\w.]+"|&?[A-Za-z_][\w.]*(?:\{\})?|new\(\s*[\w.]+\s*\))/,
   reads: new Set(["Find", "FindAndCount", "Get", "GetByID", "Exist", "Count", "Iterate", "Sum", "SumInt", "Sums"]),
   generic: /\bdb\.(Find|Get|GetByID|Count|Exist|DeleteByID|FindAndCount)\s*\[\s*(?:\*?[A-Za-z_]\w*\.)?\*?([A-Z]\w*)\s*\]\s*\(/g,
   helper: /\bdb\.(Insert|DeleteBeans|TruncateBeans)\s*\(\s*ctx\s*,\s*(&?[A-Za-z_][\w.]*(?:\{)?|new\(\s*[\w.]+\s*\))/g,
@@ -138,12 +141,16 @@ function chainBefore(lines: string[], i: number, col: number): string {
 
 /** The first argument's text: `&labels`, `issue`, `&Comment{`, `new(Issue)`. */
 function firstArg(rest: string): string | null {
-  const m = /^\s*(&?[A-Za-z_][\w.]*\s*\{?|new\(\s*[\w.]+\s*\))/.exec(rest);
+  // `new(Match)` before a bare name, which would stop at `new`.
+  const m = /^\s*(new\(\s*[\w.]+\s*\)|&?[A-Za-z_][\w.]*\s*\{?)/.exec(rest);
   return m ? m[1]!.trim() : null;
 }
 
 /** The entity an argument names, through its declaration in the enclosing function when it is a variable. */
 function entityOfArg(arg: string, lines: string[], i: number): string | null {
+  // A table named outright: `.Table("issue")`.
+  const table = /^"([\w.]+)"$/.exec(arg)?.[1];
+  if (table) return table.split(".").pop()!;
   const literal = /^&?(?:[a-z_]\w*\.)?([A-Z]\w*)\s*\{/.exec(arg) ?? /^new\(\s*(?:[a-z_]\w*\.)?([A-Z]\w*)\s*\)$/.exec(arg);
   if (literal) return literal[1]!;
   const name = /^&?([a-z_]\w*)$/.exec(arg)?.[1];
