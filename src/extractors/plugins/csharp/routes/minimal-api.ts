@@ -109,7 +109,12 @@ function readRoute(inv: Node, member: string, groups: Map<string, Group>): Route
   let handlerArg: Node | undefined;
   if (member === "MapMethods") {
     template = literal(args[0]);
-    verbs = (args[1]?.text.match(/"([A-Za-z]+)"/g) ?? []).map((v) => v.slice(1, -1).toUpperCase());
+    // `new[] { "GET", "HEAD" }`, `[HttpMethods.Options]`, `new[] { HttpMethod.Get.Method }`.
+    const written = args[1]?.text ?? "";
+    verbs = [
+      ...(written.match(/"([A-Za-z]+)"/g) ?? []).map((v) => v.slice(1, -1)),
+      ...[...written.matchAll(/\bHttpMethods?\.([A-Z][a-z]+)\b/g)].map((m) => m[1]!),
+    ].map((v) => v.toUpperCase());
     handlerArg = args[2];
   } else {
     template = literal(args[0]);

@@ -39,4 +39,17 @@ describe("ASP.NET Minimal APIs", () => {
     expect(out[3]!.calls.map((c) => c.name)).toContain("mediator.Send");
     expect(out[2]!.auth?.policies).toEqual(["Admin"]);
   });
+
+  it("reads MapMethods verbs written as strings or HttpMethods constants", async () => {
+    const out = await routes(`public static class GarageEndpoints
+{
+    public static IEndpointRouteBuilder MapGarage(this IEndpointRouteBuilder app)
+    {
+        app.MapMethods("/check", [HttpMethods.Options], (HttpContext ctx) => Results.Ok());
+        app.MapMethods("/cars", new[] { "HEAD" }, ListCars);
+        return app;
+    }
+}`);
+    expect(out.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["OPTIONS /check", "HEAD /cars"]);
+  });
 });
