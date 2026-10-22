@@ -26,7 +26,7 @@ import type { DispatchResolver } from "../../dispatch/base.js";
  */
 
 /** MediatR handler interfaces — capture the FIRST generic arg (the request/notification type). */
-const HANDLER_IFACE_RE = /\bI(?:Request|Notification|StreamRequest)Handler\s*<\s*([^,>]+)/;
+const HANDLER_IFACE_RE = /\bI(Request|Notification|StreamRequest)Handler\s*<\s*([^,>]+)/;
 /** Mediator dispatch method leaf names (ISender / IMediator / IPublisher). */
 const DISPATCH_METHODS = new Set(["Send", "SendAsync", "Publish", "PublishAsync"]);
 /** Handler entry-point method names. */
@@ -55,16 +55,20 @@ export class CSharpMediatrResolver implements DispatchResolver {
         classes.set(cls.name, list);
       }
     }
-    // 1) request type → handler's Handle method.
-    const handlers = new Map<string, HandlerDef>();
+    // 1) request type → handler's Handle method. A request has one handler (the
+    //    first definition wins); a notification reaches every handler of its type.
+    const handlers = new Map<string, HandlerDef[]>();
+    const notifications = new Set<string>();
     for (const a of analyses) {
       for (const cls of a.classes) {
-        const reqType = handledRequestType(cls, classes);
-        if (!reqType) continue;
+        const handled = handledRequestType(cls, classes);
+        if (!handled) continue;
         const handle = handleMethod(cls, a.filePath, classes);
         if (!handle) continue;
-        // MediatR allows one handler per request; first definition wins.
-        if (!handlers.has(reqType)) handlers.set(reqType, handle);
+        const list = handlers.get(handled.type) ?? [];
+        if (handled.notification) notifications.add(handled.type);
+        if (list.length === 0 || handled.notification) list.push(handle);
+        handlers.set(handled.type, list);
       }
     }
     if (handlers.size === 0) return [];
@@ -73,22 +77,22 @@ export class CSharpMediatrResolver implements DispatchResolver {
     const links: SymbolLink[] = [];
     const seen = new Set<string>();
     const emit = (sourceFile: string, sourceSymbol: string, sourceLine: number, reqType: string): void => {
-      const h = handlers.get(reqType);
-      if (!h) return;
-      if (h.file === sourceFile && h.symbol === sourceSymbol) return; // never self-link
-      const key = `${sourceFile}::${sourceSymbol}::${h.file}::${h.symbol}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      links.push({
-        sourceFile,
-        sourceSymbol,
-        sourceLine,
-        callName: `Send(${reqType})`,
-        targetFile: h.file,
-        targetSymbol: h.symbol,
-        targetLine: h.line,
-        confidence: "INFERRED",
-      });
+      for (const h of handlers.get(reqType) ?? []) {
+        if (h.file === sourceFile && h.symbol === sourceSymbol) continue; // never self-link
+        const key = `${sourceFile}::${sourceSymbol}::${h.file}::${h.symbol}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        links.push({
+          sourceFile,
+          sourceSymbol,
+          sourceLine,
+          callName: `${notifications.has(reqType) ? "Publish" : "Send"}(${reqType})`,
+          targetFile: h.file,
+          targetSymbol: h.symbol,
+          targetLine: h.line,
+          confidence: "INFERRED",
+        });
+      }
     };
 
     // A request built by a method that states its type
@@ -109,11 +113,11 @@ export class CSharpMediatrResolver implements DispatchResolver {
 
     for (const a of analyses) {
       for (const fn of a.functions) {
-        collectDispatch(a.filePath, fn.name, fn, handlers, returns, emit);
+        collectDispatch(a.filePath, fn.name, fn, handlers, notifications, returns, emit);
       }
       for (const cls of a.classes) {
         for (const m of cls.methods) {
-          collectDispatch(a.filePath, `${cls.name}.${m.name}`, m, handlers, returns, emit);
+          collectDispatch(a.filePath, `${cls.name}.${m.name}`, m, handlers, notifications, returns, emit);
         }
       }
     }
@@ -129,7 +133,7 @@ type ClassIndex = Map<string, Array<{ cls: ClassInfo; file: string }>>;
  * the class fills in (`class GetV2Handler : GetHandler<GetV2Query>` over
  * `abstract class GetHandler<T> : IRequestHandler<T, …>`).
  */
-function handledRequestType(cls: ClassInfo, classes: ClassIndex): string | null {
+function handledRequestType(cls: ClassInfo, classes: ClassIndex): { type: string; notification: boolean } | null {
   let current = cls;
   let subst = new Map<string, string>();
   for (let depth = 0; depth < 5; depth++) {
@@ -139,12 +143,12 @@ function handledRequestType(cls: ClassInfo, classes: ClassIndex): string | null 
     for (const b of bases) {
       const m = HANDLER_IFACE_RE.exec(b);
       if (!m) continue;
-      const written = m[1]!.trim();
+      const written = m[2]!.trim();
       // Still a type parameter (of the base, or passed through from the class
       // itself): a generic handler, which handles no one request type.
       if (!subst.has(written) && current.typeParameters?.includes(written)) return null;
       const t = bareType(subst.get(written) ?? written);
-      return cls.typeParameters?.includes(t) ? null : t;
+      return cls.typeParameters?.includes(t) ? null : { type: t, notification: m[1] === "Notification" };
     }
     const base = baseClass(current, classes);
     if (!base) return null;
@@ -215,10 +219,19 @@ function collectDispatch(
   file: string,
   symbol: string,
   fn: FunctionInfo,
-  handlers: Map<string, HandlerDef>,
+  handlers: Map<string, HandlerDef[]>,
+  notifications: ReadonlySet<string>,
   returns: Map<string, Set<string>>,
   emit: (f: string, s: string, line: number, reqType: string) => void,
 ): void {
+  // A notification built anywhere is raised for its handlers: a domain event an
+  // aggregate records (`AddDomainEvent(new MatchPlayedDomainEvent(…))`) is published
+  // later by a generic dispatcher (`mediator.Publish(domainEvent)`) that names no type.
+  for (const c of fn.calls) {
+    const m = /^new\s+([A-Za-z_][\w.]*)/.exec(c.name);
+    const t = m ? bareType(m[1]!) : null;
+    if (t && notifications.has(t)) emit(file, symbol, c.line || fn.line, t);
+  }
   let dispatchLine = 0;
   for (const c of fn.calls) {
     const parts = c.name.split(".");

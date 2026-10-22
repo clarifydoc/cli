@@ -163,3 +163,23 @@ describe("CSharpMediatrResolver", () => {
     expect(run([consumer, base, generic])).toHaveLength(0);
   });
 });
+
+describe("CSharpMediatrResolver — notifications", () => {
+  it("links a domain event raised in an aggregate to every handler of it, and nothing else built there", () => {
+    const match = file("Domain/Match.cs", [
+      cls("Match", {
+        methods: [method("Finish", 20, [call("AddDomainEvent", 22), call("new MatchFinishedDomainEvent", 22), call("new Score", 21)])],
+      }),
+    ]);
+    const handlers = file("App/MatchFinished.cs", [
+      cls("UpdateTableWhenMatchFinished", { implements: ["INotificationHandler<MatchFinishedDomainEvent>"], methods: [method("Handle", 8)] }),
+      cls("NotifyFansWhenMatchFinished", { implements: ["INotificationHandler<MatchFinishedDomainEvent>"], methods: [method("Handle", 18)] }),
+      cls("ScoreHandler", { implements: ["IRequestHandler<Score, int>"], methods: [method("Handle", 28)] }),
+    ]);
+    const links = run([match, handlers]);
+    expect(links.map((l) => `${l.sourceSymbol} ${l.callName} ${l.targetSymbol}`)).toEqual([
+      "Match.Finish Publish(MatchFinishedDomainEvent) UpdateTableWhenMatchFinished.Handle",
+      "Match.Finish Publish(MatchFinishedDomainEvent) NotifyFansWhenMatchFinished.Handle",
+    ]);
+  });
+});
