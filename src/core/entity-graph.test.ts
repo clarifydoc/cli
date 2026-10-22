@@ -297,3 +297,23 @@ describe("buildEntityGraph — an API contract split into several documents", ()
     expect(g.edges).toHaveLength(2);
   });
 });
+
+describe("buildEntityGraph — a schema table and the entity mapping it", () => {
+  const cls = (name: string, decorators: string[], props: string[], tableName?: string) =>
+    ({ name, decorators, properties: props.map((p) => ({ name: p, type: null })), line: 1, methods: [], implements: [], ...(tableName ? { tableName } : {}) });
+  const fileOf = (filePath: string, classes: unknown[], entityRelations: EntityRelation[] = []) =>
+    ({ filePath, language: filePath.endsWith(".sql") ? "sql" : "rust", projectId: "root", classes, entityRelations }) as unknown as FileAnalysis;
+
+  it("are one node, the entity's, and the script's foreign key joins it", () => {
+    // Real-repo FP: every table twice — once from the migrations, once as the Diesel model.
+    const g = buildEntityGraph([
+      fileOf("migrations/2019-09-12-100000_create/up.sql", [cls("clubs", ["table"], ["uuid", "name"]), cls("players", ["table"], ["uuid", "club_uuid"]), cls("transfer_log", ["table"], ["id"])], [
+        { fromEntity: "players", fromField: "club_uuid", toEntity: "clubs", cardinality: "many-to-one", foreignKey: "club_uuid", orm: "sql", confidence: "EXTRACTED" },
+      ]),
+      fileOf("src/db/models/club.rs", [cls("Club", ["entity", "diesel"], ["uuid", "name"], "clubs")]),
+      fileOf("src/db/models/player.rs", [cls("Player", ["entity", "diesel"], ["uuid", "club_uuid"])]),
+    ]);
+    expect(g.nodes.map((n) => n.id).sort()).toEqual(["migrations/2019-09-12-100000_create/up.sql::transfer_log", "src/db/models/club.rs::Club", "src/db/models/player.rs::Player"]);
+    expect(g.edges.map((e) => `${e.source} ${e.target}`)).toEqual(["src/db/models/club.rs::Club src/db/models/player.rs::Player"]);
+  });
+});

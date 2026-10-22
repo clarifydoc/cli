@@ -205,6 +205,9 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
   // group) repeats each schema in each: one node per name and shape in a sub-project.
   const contractSchemas = new Set<string>();
 
+  // Tables a schema script declares (CREATE TABLE), as opposed to ORM entities.
+  const ddlIds = new Set<string>();
+
   // ── Pass 1: nodes (entities / tables / enums) ──
   for (const a of analyses) {
     const contract = isApiContractLanguage(a.language);
@@ -222,6 +225,7 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
       const id = `${a.filePath}::${cls.name}`;
       if (nodes.has(id)) continue;
       projectOf.set(id, a.projectId ?? "root");
+      if (decs.includes("table") && !decs.includes("entity")) ddlIds.add(id);
 
       // The ORM tag is the decorator our entity extractor places immediately
       // after the lowercase `entity`/`table`/`enum` marker (e.g. ["Entity()",
@@ -282,6 +286,8 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
     if (local.length > 0) return pick(local);
     return pick(ids);
   }
+
+  foldMappedTables(nodes, nameToIds, ddlIds, projectOf);
 
   // ── Pass 2: edges (mirror pairs merged into one relationship) ──
   interface Merge {
@@ -499,6 +505,41 @@ export function linkEntityModels(entityGraph: EntityGraph, classGraph: ClassGrap
  * a real node instead of spawning a duplicate "inferred" one.
  */
 /** A node's match keys: its name's and, where the ORM names one, its physical table's. */
+/**
+ * A table a schema script declares and the ORM entity of its sub-project that
+ * maps it (`CREATE TABLE users` and `#[diesel(table_name = users)] struct User`)
+ * are one node: the entity's. The table's name then resolves to the entity, so
+ * a foreign key the script states joins the entity. An entity matches by the
+ * table it names, else — when it names none — by its own name's table keys;
+ * a table two entities map stays a table.
+ */
+function foldMappedTables(nodes: Map<string, EntityGraphNode>, nameToIds: Map<string, string[]>, ddlIds: Set<string>, projectOf: Map<string, string>): void {
+  if (ddlIds.size === 0 || ddlIds.size === nodes.size) return;
+  const entitiesByProject = new Map<string, EntityGraphNode[]>();
+  for (const n of nodes.values()) {
+    if (ddlIds.has(n.id) || n.kind !== "entity") continue;
+    const p = projectOf.get(n.id)!;
+    (entitiesByProject.get(p) ?? entitiesByProject.set(p, []).get(p)!).push(n);
+  }
+  for (const id of ddlIds) {
+    const table = nodes.get(id)!;
+    const name = table.name.split(".").pop()!.toLowerCase();
+    const keys = new Set(tableMatchKeys(table.name));
+    const maps = (entitiesByProject.get(projectOf.get(id)!) ?? []).filter((e) =>
+      e.table ? e.table.split(".").pop()!.toLowerCase() === name : tableMatchKeys(e.name).some((k) => keys.has(k)),
+    );
+    if (maps.length !== 1) continue;
+    nodes.delete(id);
+    for (const [key, ids] of nameToIds) {
+      const at = ids.indexOf(id);
+      if (at < 0) continue;
+      const next = ids.filter((x) => x !== id);
+      if (!next.includes(maps[0]!.id)) next.splice(at, 0, maps[0]!.id);
+      nameToIds.set(key, next);
+    }
+  }
+}
+
 export function nodeMatchKeys(node: { name: string; table?: string }): string[] {
   return node.table ? [...new Set([...tableMatchKeys(node.name), ...tableMatchKeys(node.table)])] : tableMatchKeys(node.name);
 }

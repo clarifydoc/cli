@@ -16,7 +16,9 @@ import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } 
  * down / undo scripts and Flyway repeatables never) into the schema it ends
  * with: an ALTER-added column joins its table, a FK added later is an edge,
  * a dropped table is gone, a table dropped and created again is one node —
- * declared where its current form was created.
+ * declared where its current form was created. Sibling chains for several
+ * databases (`migrations/postgresql/`, `migrations/sqlite/`) are one schema:
+ * the first dialect's tables stand for the rest.
  */
 export class SqlMigrationEntities extends EntityExtractor {
   readonly languages = ["sql" as const];
@@ -34,6 +36,14 @@ export class SqlMigrationEntities extends EntityExtractor {
     const alone: FileAnalysis[] = [];
     for (const a of analyses) {
       if (a.language !== "sql" || !a.schemaOps?.length) continue;
+      // A down / undo script restores the schema before its migration: none of its tables is the schema's.
+      if (isUndoScript(a.filePath)) {
+        a.classes = a.classes.filter((c) => !c.decorators.includes("table"));
+        const kept = (a.entityRelations ?? []).filter((r) => r.orm !== "sql");
+        if (kept.length) a.entityRelations = kept;
+        else delete a.entityRelations;
+        continue;
+      }
       const slot = migrationSlot(a.filePath);
       if (!slot) {
         alone.push(a);
@@ -45,11 +55,37 @@ export class SqlMigrationEntities extends EntityExtractor {
       chain.sort((x, y) => compareVersions(x.version, y.version) || (x.a.filePath < y.a.filePath ? -1 : 1));
       replaySchema(chain.map((c) => c.a));
     }
+    // One schema kept per database: `migrations/{postgresql,mysql,sqlite}/` are the
+    // same tables in three dialects — the first dialect's chain stands for them all.
+    const variants = new Map<string, string[]>();
+    for (const chain of byDir.keys()) {
+      const segs = chain.split("/");
+      const at = segs.findIndex((s) => DIALECT_RANK.has(s.toLowerCase()));
+      if (at < 0) continue;
+      const key = [...segs.slice(0, at), "*", ...segs.slice(at + 1)].join("/");
+      (variants.get(key) ?? variants.set(key, []).get(key)!).push(chain);
+    }
+    for (const chains of variants.values()) {
+      if (chains.length < 2) continue;
+      const rank = (c: string) => DIALECT_RANK.get(c.split("/").find((s) => DIALECT_RANK.has(s.toLowerCase()))!.toLowerCase())!;
+      chains.sort((x, y) => rank(x) - rank(y));
+      for (const other of chains.slice(1)) {
+        for (const { a } of byDir.get(other)!) {
+          a.classes = a.classes.filter((c) => !c.decorators.includes("table"));
+          const kept = (a.entityRelations ?? []).filter((r) => r.orm !== "sql");
+          if (kept.length) a.entityRelations = kept;
+          else delete a.entityRelations;
+        }
+      }
+    }
     // A script that alters what it creates (`schema.sql` with a trailing
     // ALTER TABLE … ADD COLUMN) ends with that schema too.
     for (const a of alone) replaySchema([a]);
   }
 }
+
+/** Dialect directories of one migration set, in the order one stands for the others. */
+const DIALECT_RANK = new Map(["postgresql", "postgres", "pg", "mysql", "mariadb", "sqlite", "sqlite3", "mssql", "sqlserver", "oracle", "h2"].map((d, i) => [d, i]));
 
 // ─── Per file: the schema changes a script states ───────────────────────────
 
@@ -204,6 +240,14 @@ function migrationSlot(filePath: string): { chain: string; version: bigint[] } |
   }
   const version = fileVersion(base);
   return version ? { chain: parts.slice(0, -1).join("/") + "/", version } : null;
+}
+
+/** `000002_x.down.sql`, Flyway `U2__x.sql`, Diesel `<version>_x/down.sql`. */
+function isUndoScript(filePath: string): boolean {
+  const parts = filePath.split("/");
+  const base = parts[parts.length - 1]!;
+  if (/\.down\.sql$|_down\.sql$|^U\d[\w.]*__/i.test(base)) return true;
+  return base.toLowerCase() === "down.sql" && parts.length >= 2 && /^\d[\d-]*_/.test(parts[parts.length - 2]!);
 }
 
 function fileVersion(base: string): bigint[] | null {
