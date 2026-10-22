@@ -35,15 +35,18 @@ export class SqlMigrationEntities extends EntityExtractor {
     const byDir = new Map<string, Array<{ a: FileAnalysis; version: bigint[] }>>();
     const alone: FileAnalysis[] = [];
     for (const a of analyses) {
-      if (a.language !== "sql" || !a.schemaOps?.length) continue;
+      if (a.language !== "sql") continue;
       // A down / undo script restores the schema before its migration: none of its tables is the schema's.
       if (isUndoScript(a.filePath)) {
-        a.classes = a.classes.filter((c) => !c.decorators.includes("table"));
+        a.classes = a.classes.filter((c) => !c.decorators.includes("table") && !c.decorators.includes("enum"));
+        // Nor is what it queries: the views and tables it puts back are the old schema's.
+        a.dataSources = a.dataSources.filter((d) => d.kind !== "database");
         const kept = (a.entityRelations ?? []).filter((r) => r.orm !== "sql");
         if (kept.length) a.entityRelations = kept;
         else delete a.entityRelations;
         continue;
       }
+      if (!a.schemaOps?.length) continue;
       const slot = migrationSlot(a.filePath);
       if (!slot) {
         alone.push(a);

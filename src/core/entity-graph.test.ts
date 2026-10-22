@@ -64,6 +64,18 @@ describe("synthesizeReferencedTableEntities", () => {
     expect(g.nodes.filter((n) => n.orm === "inferred").map((n) => n.name)).toEqual(["audit_log"]);
   });
 
+  it("adds no node for a table any schema script drops", () => {
+    // Real-repo FP: per-kind log tables merged into one and dropped by a later migration.
+    const g = graph([]);
+    const merge = analysis("migrations/2025-08-01-000025_combine_match_log/up.sql", ["red_card_log", "goal_log", "referees"]);
+    const drop = { ...analysis("migrations/2025-08-01-000026_drop_old_logs/up.sql", []), schemaOps: [
+      { op: "drop-table", table: "red_card_log", line: 1 },
+      { op: "drop-table", table: "goal_log", line: 2 },
+    ] } as FileAnalysis;
+    synthesizeReferencedTableEntities([merge, drop], g);
+    expect(g.nodes.map((n) => n.name)).toEqual(["referees"]);
+  });
+
   it("adds no node for a table the querying migration itself creates, renames or drops", () => {
     // Real-repo FP: a table rebuild (`CREATE garages_new`, copy, `DROP garages`, `RENAME garages_new TO garages`).
     const g = graph([]);

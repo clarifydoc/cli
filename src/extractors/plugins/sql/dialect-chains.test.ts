@@ -17,6 +17,8 @@ const FILES: Record<string, string> = {
   // A down script recreating what its migration replaced is no table of the schema.
   "migrations/postgresql/2022-03-02-210038_add_shirt/down.sql": "CREATE TABLE players_old (uuid VARCHAR(40) NOT NULL PRIMARY KEY);\n",
   "db/migrate/000003_bench.down.sql": "CREATE TABLE bench (id INTEGER PRIMARY KEY);\n",
+  // An undo script's enum and the old tables its view reads are no part of the schema either.
+  "migrations/postgresql/2023-01-01-000000_kit_colour/down.sql": "CREATE TYPE kit_colour_enum AS ENUM ('home', 'away');\nCREATE VIEW fixture_view AS SELECT * FROM old_fixtures;\n",
   "migrations/sqlite/2022-03-02-210038_add_shirt/up.sql": REBUILD,
   "migrations/mysql/2018-01-14-171611_create_tables/up.sql": CREATE("CHAR(36)"),
 };
