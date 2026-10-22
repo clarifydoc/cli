@@ -305,3 +305,29 @@ class SquadApiRepository extends ApiRepository {
     expect(calls.map((c) => `${c.contract?.type}#${c.contract?.method} @${c.line}`)).toEqual(["SquadsApi#createSquad @11"]);
   });
 });
+
+describe("Flutter auto_route navigation", () => {
+  it("navigates to the page a route class is generated for", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const src = `import 'package:auto_route/auto_route.dart';
+
+@RoutePage()
+class SquadPage extends HookConsumerWidget {
+  const SquadPage({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Scaffold(
+      body: TextButton(
+        onPressed: () => context.pushRoute(PlayerDetailRoute(playerId: id)),
+        child: const Text('Player'),
+      ),
+      floatingActionButton: FloatingActionButton(onPressed: () => context.replaceRoute(const LoginRoute())),
+      bottomNavigationBar: IconButton(onPressed: () => ref.read(appRouterProvider).navigate(const FixturesRoute())),
+    );
+  }
+}`;
+    const a = extractWithRegex(src, "mobile/lib/pages/squad.page.dart", "dart");
+    expect(a.screens.find((sc) => sc.name === "SquadPage")?.navigatesTo.sort()).toEqual(["FixturesPage", "LoginPage", "PlayerDetailPage"]);
+  });
+});

@@ -686,7 +686,16 @@ const FLUTTER_NAV_RE = [
   /\bcontext\.(?:push|go|replace|pushReplacement|pushNamed|goNamed)\s*\(\s*(?:['"]([^'"]+)['"]|([A-Z]\w*)\.(?:routeName|routePath|route|path|name)\b)/g,
   /\b(?:Navigator(?:\.of\(\w+\))?|context\.router|router|_router|appRouter)\.(?:push|pushReplacement|pushAndRemoveUntil|navigate|replace)\w*\s*\([^;]*?\b(?:=>\s*(?:const\s+)?|\(\s*)([A-Z]\w*)(?:Route|Page|Screen)?\s*\(/g,
   /\bshow(?:Dialog|ModalBottomSheet|CupertinoDialog|GeneralDialog|Menu)\s*(?:<[^>]*>)?\s*\([^;]*?=>\s*(?:const\s+)?([A-Z]\w*)\s*\(/g,
+  // auto_route: `context.pushRoute(AlbumRoute(id: x))`, `context.replaceRoute(const LoginRoute())`,
+  // `ref.read(appRouterProvider).navigate(const MainRoute())`, `AutoRouter.of(context).push(…)`.
+  /\b(?:context|\w*[rR]outer(?:Provider\))?|AutoRouter\.of\(\w+\))\.(?:pushRoute|replaceRoute|navigate|navigateTo|popAndPush|pushAndPopUntil|replaceAll|push|replace)\w*\s*\(\s*(?:const\s+)?(?:\[\s*(?:const\s+)?)?([A-Z]\w*Route)\s*\(/g,
 ];
+
+/**
+ * An auto_route route class names its page: `AlbumRoute` is generated for `AlbumPage`
+ * (`replaceInRouteName: 'Page|Screen,Route'`, the convention). Any other target is the screen itself.
+ */
+const screenOfTarget = (target: string): string => (/^[A-Z]\w+Route$/.test(target) ? target.replace(/Route$/, "Page") : target);
 
 /**
  * Flutter screens: a widget class that renders a `Scaffold` (or a Cupertino
@@ -716,7 +725,8 @@ function extractFlutterScreens(lines: string[], filePath: string, classes: Class
       re.lastIndex = 0;
       let m: RegExpExecArray | null;
       while ((m = re.exec(body)) !== null) {
-        const target = m[1] ?? m[2];
+        const raw = m[1] ?? m[2];
+        const target = raw ? screenOfTarget(raw) : undefined;
         if (target && target !== cls.name) navigatesTo.add(target);
       }
     }
