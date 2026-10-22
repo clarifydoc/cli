@@ -12,7 +12,17 @@ const DECORATOR_CARDINALITY: Record<string, EntityRelation["cardinality"]> = {
   OneToOne: "one-to-one",
   ManyToMany: "many-to-many",
   Collection: "one-to-many",
+  // sequelize-typescript associations.
+  BelongsTo: "many-to-one",
+  HasMany: "one-to-many",
+  HasOne: "one-to-one",
+  BelongsToMany: "many-to-many",
+  // A schema DSL's foreign-key column (`@ForeignKeyColumn(() => ClubTable, { onDelete })`): the field is the key.
+  ForeignKeyColumn: "many-to-one",
 };
+
+/** Relation decorators whose field is the foreign key column itself. */
+const KEY_COLUMN_RELATIONS = new Set(["ForeignKeyColumn"]);
 
 /** Sequelize association method → cardinality map. */
 const SEQUELIZE_CARDINALITY: Record<string, EntityRelation["cardinality"]> = {
@@ -24,7 +34,7 @@ const SEQUELIZE_CARDINALITY: Record<string, EntityRelation["cardinality"]> = {
 
 /** TypeORM/MikroORM column decorators that mark a persisted scalar/value field. */
 const COLUMN_DECORATORS =
-  /^@(Column|PrimaryGeneratedColumn|PrimaryColumn|ObjectIdColumn|CreateDateColumn|UpdateDateColumn|DeleteDateColumn|VersionColumn|Property|Enum|Embedded|RelationId)\b/;
+  /^@(Column|PrimaryGeneratedColumn|PrimaryColumn|ObjectIdColumn|CreateDateColumn|UpdateDateColumn|DeleteDateColumn|VersionColumn|Property|Enum|Embedded|RelationId|PrimaryKey|ForeignKey)\b/;
 
 /** Line-comment prefixes for the C-family languages this extractor handles. */
 const SLASH_COMMENT = ["//"] as const;
@@ -115,8 +125,9 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
           extends: cls.extends ?? null,
           line: cls.line,
           endLine: cls.endLine,
-          // TypeORM `@Entity("app_users")`, `@Entity({ name: "app_users" })`; MikroORM `{ tableName }`.
-          tableName: cls.decorators.map((d) => /^@?Entity\s*\(\s*(?:["'`]([^"'`]+)["'`]|\{[^}]*?\b(?:name|tableName)\s*:\s*["'`]([^"'`]+)["'`])/.exec(d)).map((m) => m?.[1] ?? m?.[2]).find(Boolean) ?? null,
+          // TypeORM `@Entity("app_users")`, `@Entity({ name: "app_users" })`; MikroORM `{ tableName }`;
+          // sequelize-typescript / a schema DSL `@Table({ tableName | name })`.
+          tableName: cls.decorators.map((d) => /^@?(?:Entity|Table)\s*\(\s*(?:["'`]([^"'`]+)["'`]|\{[^}]*?\b(?:name|tableName)\s*:\s*["'`]([^"'`]+)["'`])/.exec(d)).map((m) => m?.[1] ?? m?.[2]).find(Boolean) ?? null,
         }),
       );
     }
@@ -158,7 +169,7 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
         if (toEntity) {
           const inverseField = this.inverseField(relDecorator);
           // @JoinColumn → owning-side FK; @JoinTable → M2M join table name.
-          const foreignKey = this.joinColumnName(decorators);
+          const foreignKey = KEY_COLUMN_RELATIONS.has(relName) ? decl?.name ?? null : this.joinColumnName(decorators);
           const joinTable = this.joinTableName(decorators);
           const optional = decl ? this.isOptional(decl) : false;
           // EXTRACTED when the ORM names the target explicitly in the decorator;
@@ -179,6 +190,8 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
           targets.add(toEntity);
         }
       }
+      // A foreign-key column is a column too.
+      if (KEY_COLUMN_RELATIONS.has(relName) && decl) properties.push(this.column(decl.name, this.coreType(decl.type) ?? decl.type));
       return;
     }
 
@@ -416,6 +429,10 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
     // Match `@mikro-orm/core`, `@mikro-orm/postgresql`, etc. broadly.
     if (sources.some((s) => s.includes("mikro-orm"))) return "mikro-orm";
     if (sources.some((s) => s.includes("typeorm"))) return "typeorm";
+    if (sources.some((s) => s.includes("sequelize-typescript"))) return "sequelize";
+    // A schema DSL of its own (`@immich/sql-tools`-style): the package that supplies `@Table`.
+    const tablePkg = ctx.analysis.imports.find((imp) => imp.specifiers.includes("Table") && !imp.source.startsWith("."))?.source;
+    if (tablePkg) return tablePkg.replace(/^@/, "").split("/").pop()!;
     return "typeorm";
   }
 
@@ -430,6 +447,8 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
     if (cls.decorators.some((d) => /^(entity|embeddable)$/i.test(d.replace(/\(.*$/s, "").trim()))) {
       return true;
     }
+    // `@Table({ … })` (sequelize-typescript, a schema DSL) over a class whose members are columns.
+    if (cls.decorators.some((d) => /^@?Table\b/.test(d.trim())) && this.bodyInteriorOf(ctx, cls).some((l) => /@(?:Column|PrimaryGeneratedColumn|PrimaryKey|PrimaryColumn)\b/.test(l))) return true;
     // Some pipelines store decorators with the leading '@' or call args intact.
     if (cls.decorators.some((d) => /@?\s*(Entity|Embeddable)\b/.test(d))) return true;
 

@@ -47,3 +47,37 @@ export const games = pgTable("games", {
     expect((a.entityRelations ?? []).map((r) => `${r.fromEntity}.${r.fromField} -> ${r.toEntity} (${r.foreignKey})`)).toEqual(["games.scoutId -> players (scoutId)"]);
   });
 });
+
+describe("@Table schema classes (sequelize-typescript, a schema DSL)", () => {
+  it("reads the table, its columns and a foreign-key column as a relation (real-repo FP: 67 tables missing)", async () => {
+    const { parseSource } = await import("../../../parsers/parser-manager.js");
+    const { JavaScriptExtractor } = await import("./functions-classes.js");
+    const { JavaScriptEntityExtractor } = await import("./entities.js");
+    const src = `import { Column, CreateDateColumn, ForeignKeyColumn, PrimaryGeneratedColumn, Table } from '@league/sql-tools';
+import { StadiumTable } from './stadium.table';
+
+@Table({ name: 'club' })
+export class ClubTable {
+  @PrimaryGeneratedColumn()
+  id!: string;
+
+  @Column({ default: 'Unnamed Club' })
+  clubName!: string;
+
+  @ForeignKeyColumn(() => StadiumTable, { nullable: true, onDelete: 'SET NULL' })
+  homeStadiumId!: string | null;
+
+  @CreateDateColumn()
+  createdAt!: Date;
+}
+`;
+    const tree = await parseSource(src, "typescript" as never, "club.table.ts");
+    const x = new JavaScriptExtractor();
+    const analysis = { filePath: "club.table.ts", language: "typescript", classes: x.extractClasses(tree, src), functions: [], imports: [{ source: "@league/sql-tools", specifiers: ["Column", "CreateDateColumn", "ForeignKeyColumn", "PrimaryGeneratedColumn", "Table"], isDefault: false, isNamespace: false, isType: false, line: 1 }] } as never;
+    const res = new JavaScriptEntityExtractor().extract({ analysis, sourceText: src, lines: src.split("\n"), tree } as never);
+    const club = res.entities.find((e) => e.name === "ClubTable")!;
+    expect(club.tableName).toBe("club");
+    expect(club.properties.map((p) => p.name)).toEqual(["id", "clubName", "homeStadiumId", "createdAt"]);
+    expect(res.relations).toEqual([expect.objectContaining({ fromEntity: "ClubTable", toEntity: "StadiumTable", cardinality: "many-to-one", foreignKey: "homeStadiumId" })]);
+  });
+});
