@@ -87,7 +87,7 @@ describe("Kubb client calls", () => {
   it("a call of a per-operation module requests that operation, aliased or not", () => {
     expect(run([fileCalling("web/src/store/clubs.ts", [
       imp("web/src/api/clients/getClub", ["getClub"]),
-      imp("web/src/api/clients/deleteClub", ["removeClub", "deleteClub"]),
+      imp("web/src/api/clients/deleteClub", ["removeClub"], { aliases: { removeClub: "deleteClub" } }),
       imp("web/src/api/clients/getClub1", ["getClub1"]),
       imp("web/src/api/clients/createTransfer.ts", ["createTransfer"]),
     ], ["getClub", "removeClub", "getClub1", "createTransfer", "other"])])).toEqual([

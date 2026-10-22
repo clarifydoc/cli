@@ -189,12 +189,9 @@ export function resolveKubbClientCalls(calls: ProjectApiCall[], analyses: readon
       if (mod !== out.dir && !single) continue;
       const specs = imp.specifiers;
       for (let i = 0; i < specs.length; i++) {
-        const route = single && (imp.isDefault && i === 0) ? single : routeNamed(out.names, specs[i]!, single);
-        if (!route) continue;
-        bind(bound, own, specs[i]!, route);
-        // `{ getClub as fetchClub }` is stored as [fetchClub, getClub]: the alias precedes the name it binds.
-        const prev = i > 0 ? specs[i - 1]! : null;
-        if (prev && !(imp.isDefault && i === 1) && !routeNamed(out.names, prev, single)) bind(bound, own, prev, route);
+        // `{ getClub as fetchClub }`: the local name calls the operation the export is named for.
+        const route = single && (imp.isDefault && i === 0) ? single : routeNamed(out.names, imp.aliases?.[specs[i]!] ?? specs[i]!, single);
+        if (route) bind(bound, own, specs[i]!, route);
       }
     }
     if (bound.size === 0 && namespaces.size === 0) continue;

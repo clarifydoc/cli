@@ -1960,7 +1960,9 @@ function resolveCallToDefinition(
   // Same-file leaf matching for qualified calls causes false self-links.
   // Case folds only on a callable's own name — never on a receiver
   // (`handler.render` is not `Handler.render`).
-  let def = isQualified ? fileSymbols.get(call.name) : symbolIn(ctx, targetFile, call.name);
+  // `import { addPlayer as signPlayer }`: the call names the local alias, the module defines the export.
+  const exported = !isQualified && call.kind === "cross-file" ? analysis.imports.find((i) => i.aliases?.[call.name])?.aliases?.[call.name] : undefined;
+  let def = isQualified ? fileSymbols.get(call.name) : symbolIn(ctx, targetFile, exported ?? call.name);
   if (bareIsFunction && def?.name.includes(".")) def = undefined;
   // Which strategy found `def`. The default path at the bottom is reached from
   // two places — this plain lookup and Strategy 3's suffix match — and they were
@@ -1978,7 +1980,7 @@ function resolveCallToDefinition(
     const head = parts[0]!;
     // `import * as utils from "./utils"; utils.format()` — the member by its own name.
     const viaNamespace = isQualified && analysis.imports.some((i) => i.isNamespace && i.specifiers.includes(head));
-    const fwd = forwardedDefinition(ctx, targetFile, isQualified && !viaNamespace ? head : leafName, 0, new Set());
+    const fwd = forwardedDefinition(ctx, targetFile, isQualified && !viaNamespace ? head : exported ?? leafName, 0, new Set());
     const member = fwd && isQualified && !viaNamespace ? symbolIn(ctx, fwd.file, `${head}.${leafName}`) : undefined;
     if (fwd && (!isQualified || viaNamespace || member)) {
       // A forwarded CLASS called by name is constructed (Strategy 5's link).
@@ -3995,7 +3997,7 @@ function buildReverseReferenceLinks(
       if (!targetSymbols) continue;
 
       for (const spec of imp.specifiers) {
-        const def = targetSymbols.get(spec);
+        const def = targetSymbols.get(imp.aliases?.[spec] ?? spec);
         if (def) {
           // Reference reverse-link: an explicit import with matching named specifier.
           links.push({

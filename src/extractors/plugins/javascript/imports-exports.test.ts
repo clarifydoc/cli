@@ -88,3 +88,12 @@ describe("JS/TS export extraction", () => {
     expect(js.map(brief)).toEqual(["h function", "* re-export ./more.js"]);
   });
 });
+
+describe("JS/TS import aliases", () => {
+  it("lists the local name and maps it to the export it binds", async () => {
+    const src = `import { addPlayersToSquad as signPlayers, getSquad } from '@league/sdk';`;
+    const tree = await parseSource(src, "typescript" as any, "x.ts");
+    const [imp] = new JavaScriptImportExportExtractor().extractImports(tree, src);
+    expect(imp).toMatchObject({ specifiers: ["signPlayers", "getSquad"], aliases: { signPlayers: "addPlayersToSquad" } });
+  });
+});

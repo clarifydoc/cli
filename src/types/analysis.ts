@@ -601,6 +601,12 @@ export interface ImportInfo {
    */
   executes?: true;
   /**
+   * A named import bound under another local name (`import { addPlayer as signPlayer }`):
+   * local → exported. `specifiers` lists the local name only; the module defines
+   * the exported one.
+   */
+  aliases?: Record<string, string>;
+  /**
    * The names this import binds that nothing else in the file mentions, for a
    * language whose plugin can tell (JS/TS). Absent when every name is used,
    * or when the file holds markup (a Vue / Svelte template) the check cannot read.

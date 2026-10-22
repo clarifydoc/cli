@@ -645,6 +645,15 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   private resolveUrlArg(arg: Node): ResolvedUrl | null {
     if (arg.type === "string") return { url: stripQuotes(arg.text), confidence: "EXTRACTED" };
     if (arg.type === "parenthesized_expression" && arg.namedChild(0)) return this.resolveUrlArg(arg.namedChild(0)!);
+    // `fetch(new URL('predict', base))`: the path, under the base when it is relative.
+    if (arg.type === "new_expression" && arg.childForFieldName("constructor")?.text === "URL") {
+      const [pathArg, baseArg] = arg.childForFieldName("arguments")?.namedChildren ?? [];
+      const path = pathArg ? this.resolveUrlArg(pathArg) : null;
+      if (!path) return null;
+      if (!baseArg || /^(?:\/|[a-z][\w+.-]*:)/i.test(path.url)) return path;
+      const base = baseArg.type === "identifier" || baseArg.type === "member_expression" ? `\${${baseArg.text}}` : null;
+      return base ? { url: `${base}/${path.url.replace(/^\.\//, "")}`, confidence: "INFERRED" } : path;
+    }
     // `fetch(qs ? `${path}?${qs}` : path)`: each arm; arms that differ only by a query string are one path.
     if (arg.type === "ternary_expression") {
       const both = [arg.childForFieldName("consequence"), arg.childForFieldName("alternative")];

@@ -2928,7 +2928,9 @@ export function buildComponentGraph(
       // Works for Java (import com.example.api.service.UserService → specifier "UserService")
       // Works for Python (from app.services import UserService → specifier "UserService")
       // Works for C# (using MyApp.Services → specifier matching)
-      for (const spec of imp.specifiers) {
+      for (const local of imp.specifiers) {
+        // An aliased import names the module's own export.
+        const spec = imp.aliases?.[local] ?? local;
         if (!spec) continue;
         // A NAMESPACE import's specifier is a module/unit name, not a symbol
         // binding — matching it against exported SYMBOL names is a category

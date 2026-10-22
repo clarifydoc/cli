@@ -67,6 +67,17 @@ export async function squad(club: Club) {
   });
 });
 
+describe("JS fetch of a URL object built inline", () => {
+  it("reads new URL(path, base): an absolute path as itself, a relative one under the base", async () => {
+    const SRC = `class ScoutClient {
+  async check(url: string) { return fetch(new URL('ping', url)) }
+  async predict(url: string, form: FormData) { return fetch(new URL('predict', url), { method: 'POST', body: form }) }
+  async kits() { return fetch(new URL('/api/kits', window.location.origin)) }
+}`;
+    expect((await apiCallsOf(SRC)).map((c) => c.target)).toEqual(["${url}/ping", "${url}/predict", "/api/kits"]);
+  });
+});
+
 describe("JS api-call URL const resolution", () => {
   it("resolves a bare identifier fetch arg via an env-default const", async () => {
     const SRC = `const checkoutUrl = import.meta.env.VITE_CHECKOUT_URL ?? '/site/cui_checkout_json';

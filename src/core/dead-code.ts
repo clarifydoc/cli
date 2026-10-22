@@ -450,9 +450,8 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
             continue;
           }
           if (imp.isDefault) requests.push([t, "default"]);
-          // Local aliases ride along with original names; an extra name that
-          // matches nothing is harmless.
-          for (const s of imp.specifiers) requests.push([t, s]);
+          // An aliased import requests the name the module exports.
+          for (const s of imp.specifiers) requests.push([t, imp.aliases?.[s] ?? s]);
         }
       }
       for (const e of a.exports) {
