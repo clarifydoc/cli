@@ -330,6 +330,33 @@ class PolicyEndpoint {
     expect(routes[2]!.calls.map((c) => c.name)).toContain("attachmentService.upload");
   });
 
+  it("serves a path-less verb at its nest's path, and a method's routes under the nest that calls it (real-repo FP)", async () => {
+    const src = `package x;
+class MyClubsEndpoint {
+  public RouterFunction<ServerResponse> endpoint() {
+    return SpringdocRouteBuilder.route()
+        .nest(RequestPredicates.path("/managers/{username}"), managerScopedApis())
+        .nest(path("/clubs"), () -> route().GET(this::listMyClubs, builder -> builder.operationId("ListMyClubs"))
+            .POST(this::createMyClub, builder -> builder.operationId("CreateMyClub"))
+            .build(), builder -> builder.operationId("MyClubs"))
+        .build();
+  }
+  Supplier<RouterFunction<ServerResponse>> managerScopedApis() {
+    return () -> SpringdocRouteBuilder.route()
+        .GET("/fixtures", this::listFixtures, builder -> builder.operationId("ListFixtures"))
+        .build();
+  }
+}`;
+    const tree = await parseSource(src, "java" as any, "MyClubsEndpoint.java");
+    const routes: RouteInfo[] = [];
+    extractSpringRoutes(tree.rootNode, routes);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`).sort()).toEqual([
+      "GET /clubs -> listMyClubs",
+      "GET /managers/{username}/fixtures -> listFixtures",
+      "POST /clubs -> createMyClub",
+    ]);
+  });
+
   it("reads a path a constant of the file holds, its value on the next line (real-repo FP)", async () => {
     const src = `package x;
 class SubscriptionRouter {

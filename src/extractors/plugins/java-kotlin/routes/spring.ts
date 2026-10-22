@@ -354,14 +354,16 @@ function walkForJavaKotlinRoutes(
     // The verb is cheap and rare; the receiver text of a chain is the whole chain.
     if (FUNCTIONAL_VERBS.has(verb) && FUNCTIONAL_ROUTER_RE.test(node.childForFieldName("object")?.text ?? "")) {
       const args = node.childForFieldName("arguments")?.namedChildren ?? [];
-      const path = args[0] ? firstStringLiteral(args[0]) ?? (args[0].type === "identifier" ? fileStringConstant(node, args[0].text) : null) : null;
-      if (path !== null && args[0]!.type !== "lambda_expression") {
-        const handlerArg = args[1];
+      // `.GET(this::listClubs, ops)`: no path of its own — it serves the path it is nested under.
+      const pathless = args[0]?.type === "method_reference" || args[0]?.type === "lambda_expression";
+      const path = pathless ? "" : args[0] ? firstStringLiteral(args[0]) ?? (args[0].type === "identifier" ? fileStringConstant(node, args[0].text) : null) : null;
+      if (path !== null) {
+        const handlerArg = pathless ? args[0] : args[1];
         const ref = handlerArg?.type === "method_reference" ? handlerArg.text.split("::").pop() ?? null : null;
         const calls = handlerArg?.type === "lambda_expression" ? extractCalls(handlerArg, "java") : [];
         const unresolved = classPrefix ? null : functionalClassUnresolved(node);
         const route: RouteInfo = {
-          path: mergePrefix(classPrefix || functionalClassPrefix(node), functionalNestPrefix(node) + (path.startsWith("/") ? path : "/" + path)),
+          path: mergePrefix(classPrefix || functionalClassPrefix(node), functionalNestPrefix(node) + (path === "" ? "" : path.startsWith("/") ? path : "/" + path)),
           ...(unresolved ? { prefixUnresolved: unresolved } : {}),
           httpMethod: verb,
           kind: "api",
@@ -408,22 +410,45 @@ function functionalClassUnresolved(node: Node): string | null {
   return cur ? customEndpointUnresolvedPrefix(cur.text) : null;
 }
 
-/** Path prefix from enclosing `.nest(path("/api"), b -> …)` / `.path("/api", b -> …)` calls, outermost first. */
-function functionalNestPrefix(node: Node): string {
+/**
+ * Path prefix from enclosing `.nest(path("/api"), b -> …)` / `.path("/api", b -> …)` calls, outermost first —
+ * and, for routes a method builds, the nest that calls it: `.nest(path("/users/{name}"), userScopedApis())`.
+ */
+function functionalNestPrefix(node: Node, depth = 0): string {
   const parts: string[] = [];
+  let from: Node = node;
   let cur: Node | null = node.parent;
   while (cur) {
-    if (cur.type === "method_invocation") {
+    // Only a nest whose arguments hold the route: `.nest(a, …).nest(b, …)` — the first is the second's receiver.
+    if (cur.type === "method_invocation" && from.type === "argument_list") {
       const name = cur.childForFieldName("name")?.text;
       if (name === "nest" || name === "path") {
         const first = cur.childForFieldName("arguments")?.namedChildren[0];
         const prefix = first && first.type !== "lambda_expression" ? firstStringLiteral(first) : null;
         if (prefix) parts.unshift(prefix.startsWith("/") ? prefix : "/" + prefix);
       }
+    } else if (cur.type === "method_declaration" && depth < 3) {
+      const caller = nestCallerOf(cur);
+      if (caller) parts.unshift(functionalNestPrefix(caller, depth + 1));
+      break;
     }
+    from = cur;
     cur = cur.parent;
   }
   return parts.join("").replace(/\/+$/, "");
+}
+
+/** The one argument of a `.nest(…)`/`.path(…)` in the file that calls this method (`userScopedApis()`), as the node to climb from. */
+function nestCallerOf(method: Node): Node | null {
+  const name = method.childForFieldName("name")?.text;
+  if (!name) return null;
+  const calls = method.tree.rootNode.descendantsOfType("method_invocation").filter((c) => {
+    if (c?.childForFieldName("name")?.text !== name || c.childForFieldName("object")) return false;
+    const outer = c.parent?.type === "argument_list" ? c.parent.parent : null;
+    const outerName = outer?.type === "method_invocation" ? outer.childForFieldName("name")?.text : null;
+    return outerName === "nest" || outerName === "path";
+  });
+  return calls.length === 1 ? calls[0]! : null;
 }
 
 /**
