@@ -573,6 +573,9 @@ export function projectOfContext(context: string, subProjects: readonly SubProje
   return holding[0]?.id;
 }
 
+/** Directories that hold a project's container files rather than name it. */
+const CONTAINER_DIR_RE = /^(?:\.?docker|containers?|deploy|deployment|src|main|resources)$/i;
+
 /** Dockerfiles outside dependency, build and non-runtime (test, example, CI) directories. */
 async function standaloneDockerfiles(absRoot: string): Promise<string[]> {
   const found = await glob(["**/Dockerfile", "**/Dockerfile.*", "**/Dockerfile-*", "**/*Dockerfile", "**/*.dockerfile"], {
@@ -814,7 +817,18 @@ export async function detectDeployment(
     const facts = readDockerfile(absRoot, df);
     if (!facts?.command) continue;
     const context = posix.dirname(df) === "." ? "" : posix.dirname(df);
-    const name = (context ? context.split("/").pop()! : posix.basename(absRoot)).toLowerCase().replace(/[^a-z0-9_.-]+/g, "-");
+    // Named after what it packages: `src/main/docker/Dockerfile` is the project's, not a service called "docker".
+    const owner = context.split("/").filter(Boolean);
+    while (owner.length > 0 && CONTAINER_DIR_RE.test(owner[owner.length - 1]!)) owner.pop();
+    const name = (owner.length ? owner[owner.length - 1]! : posix.basename(absRoot)).toLowerCase().replace(/[^a-z0-9_.-]+/g, "-");
+    // The compose service that runs this image (`image: registry/league-api`) is the same container.
+    const runs = [...merged.values()].find((s) => !s.build && (s.name.toLowerCase() === name || imageTail(s.image)?.replace(/[}\s]+$/, "").toLowerCase() === name));
+    if (runs) {
+      runs.docker = facts;
+      if (!runs.entrypoint) runs.entrypoint = facts.command;
+      for (const [k, v] of Object.entries(facts.env)) if (!(k in runs.env)) runs.env[k] = v;
+      continue;
+    }
     if (merged.has(name)) continue;
     merged.set(name, { name, file: df, entrypoint: facts.command, env: { ...facts.env }, dependsOn: [], ports: [], build: { context }, docker: facts });
     declaredIn.set(name, new Set([df]));

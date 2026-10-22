@@ -341,3 +341,21 @@ describe("detectDeployment — a compose-only repository", () => {
     }
   });
 });
+
+describe("detectDeployment — a Dockerfile in the build's docker folder", () => {
+  it("is the compose service that runs its image, else a service named after the project (real-repo FP: a service called \"docker\")", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clarifydoc-dockerdir-"));
+    try {
+      await mkdir(join(root, "league-api", "src", "main", "docker"), { recursive: true });
+      await writeFile(join(root, "league-api", "src", "main", "docker", "Dockerfile"), ["FROM eclipse-temurin:21", "ENV SEASON=2024", 'CMD ["java", "-jar", "/app/league-api.jar"]', ""].join("\n"));
+      await mkdir(join(root, "garage", "src", "main", "docker"), { recursive: true });
+      await writeFile(join(root, "garage", "src", "main", "docker", "Dockerfile"), ["FROM nginx:1.27", 'CMD ["nginx", "-g", "daemon off;"]', ""].join("\n"));
+      await writeFile(join(root, "docker-compose.yml"), ["services:", "  league:", "    image: ${IMAGE_REPOSITORY:-registry.example.com/league/league-api}", ""].join("\n"));
+      const dep = await detectDeployment(root, { subProjects: [] });
+      expect(dep!.services.map((s) => s.name).sort()).toEqual(["garage", "league"]);
+      expect(dep!.services.find((s) => s.name === "league")).toMatchObject({ dockerfile: "league-api/src/main/docker/Dockerfile", envKeys: ["SEASON"] });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
