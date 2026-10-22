@@ -87,11 +87,35 @@ function dispatchKeyOf(node: Node): string | null {
     return prop ? (mappedActions(node).get(prop) ?? null) : null;
   }
   const leaf = fn?.type === "member_expression" ? fn.childForFieldName("property")?.text : fn?.type === "identifier" ? fn.text : null;
+  if (leaf === "queue" || leaf === "queueAll" || leaf === "emit") return jobOrEventKey(node, leaf);
   if (leaf !== "dispatch") return null;
   const first = node.childForFieldName("arguments")?.namedChildren[0];
   if (!first) return null;
   if (first.type === "string") return first.text.slice(1, -1) || null;
   if (first.type === "template_string" && !first.namedChildren.some((c) => c.type === "template_substitution")) return first.text.slice(1, -1) || null;
+  return null;
+}
+
+/**
+ * A job enqueued or an event emitted by name, for the job/event dispatch
+ * resolver (job-events.ts): `jobRepository.queue({ name: JobName.Thumbnail, data })`
+ * → `job:JobName.Thumbnail` (`queueAll([…])` by its first job), and
+ * `eventRepository.emit('AlbumUpdate', …)` → `event:AlbumUpdate`. A member
+ * receiver only — a bare `emit(…)` is a component's own.
+ */
+function jobOrEventKey(node: Node, leaf: string): string | null {
+  if (node.childForFieldName("function")?.type !== "member_expression") return null;
+  const first = node.childForFieldName("arguments")?.namedChildren[0];
+  if (!first) return null;
+  if (leaf === "emit") return first.type === "string" && first.text.length > 2 ? `event:${first.text.slice(1, -1)}` : null;
+  const job = leaf === "queueAll" ? (first.type === "array" ? first.namedChildren[0] : null) : first;
+  if (job?.type !== "object") return null;
+  for (const pair of job.namedChildren) {
+    if (pair.type !== "pair" || pair.childForFieldName("key")?.text !== "name") continue;
+    const value = pair.childForFieldName("value");
+    if (value?.type === "string") return `job:${value.text.slice(1, -1)}`;
+    if (value?.type === "member_expression" && /^[\w$]+\.[\w$]+$/.test(value.text)) return `job:${value.text}`;
+  }
   return null;
 }
 

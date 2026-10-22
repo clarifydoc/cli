@@ -28,6 +28,7 @@ import { extractKubbConfigs } from "./kubb.js";
 import { extractPathArgCalls } from "./path-arg-calls.js";
 import { extractDomBindings } from "./dom-bindings.js";
 import { DomBindingResolver } from "./dom-binding-resolver.js";
+import { JobEventResolver } from "./job-events.js";
 import { extractInstantiations } from "./instantiations.js";
 import { extractModuleValues } from "./module-values.js";
 import { vuePreprocess } from "./vue-hooks.js";
@@ -241,7 +242,7 @@ const importsExports = new JavaScriptImportExportExtractor();
 const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
-const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new DomBindingResolver()];
+const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new DomBindingResolver(), new JobEventResolver()];
 const routeResolvers = [reactRouterResolver, trpcRouterResolver, cdkRouteResolver, nestPrefixResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {
