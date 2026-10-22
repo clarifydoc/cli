@@ -94,8 +94,11 @@ function pageTitle(lines: string[]): string | null {
   return m ? m[1].trim().replace(/\s+/g, " ") || null : null;
 }
 
+/** A framework's document shell (SvelteKit `src/app.html`, `%sveltekit.body%`; Vite/CRA-style `%PUBLIC_URL%` aside): it wraps every page and is none. */
+const DOCUMENT_SHELL_RE = /%sveltekit\.(?:body|head)%/;
+
 function extractHtmlRoutes(lines: string[], filePath?: string): RouteInfo[] {
-  if (!filePath) return [];
+  if (!filePath || lines.some((l) => DOCUMENT_SHELL_RE.test(l))) return [];
   return [
     {
       path: pageRoutePath(filePath),

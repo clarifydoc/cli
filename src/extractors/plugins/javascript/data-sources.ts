@@ -1173,8 +1173,14 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           // openapi-generator's wrappers end `.then((request) => request(this.axios, this.basePath))`:
           // the first argument is the HTTP client itself, not a URL — the request
           // was already read where its creator builds `localVarPath`.
+          // supertest's `request(app).get('/clubs')`: `request` wraps the app; the chained verb is the request.
+          const supertest = fn.type === "identifier" && fnName === "request" && node.parent?.type === "member_expression" &&
+            HTTP_VERBS.has(node.parent.childForFieldName("property")?.text.toLowerCase() ?? "");
+          if (supertest) return;
           const clientArg = !!firstArg && /^(?:this\.)?(?:axios\w*|http(?:Client)?|client|instance)$/i.test(firstArg.text);
           const resolved = firstArg && !clientArg ? this.resolveUrlArg(firstArg) : null;
+          // `fetch("data:image/svg+xml;base64,…")`, `fetch(blobUrl)` of a `blob:` literal: no request leaves the page.
+          if (resolved && /^(?:data|blob):/i.test(resolved.url)) return;
           // A call-expression URL arg (a helper-built URL with no literal slash)
           // needs a STRICT HTTP signal — an exact client root (`fetch`/`axios`/…)
           // or a client member receiver (`axios.get`) — so a local data-fetcher

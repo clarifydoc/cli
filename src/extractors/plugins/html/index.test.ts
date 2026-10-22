@@ -38,6 +38,11 @@ describe("HTML page-route extraction (the page IS the screen)", () => {
   it("returns no route without a file path (path is derived from it)", () => {
     expect(htmlSpec.extractRoutes!(lines(`<title>x</title>`), [])).toEqual([]);
   });
+
+  it("returns no route for a SvelteKit document shell, which wraps every page", () => {
+    const shell = `<!doctype html>\n<html>\n<head>%sveltekit.head%</head>\n<body><div>%sveltekit.body%</div></body>\n</html>`;
+    expect(htmlSpec.extractRoutes!(lines(shell), [], "web/src/app.html")).toEqual([]);
+  });
 });
 
 describe("HTML local <script src> imports (page → JS call graph)", () => {

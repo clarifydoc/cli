@@ -67,6 +67,17 @@ export async function squad(club: Club) {
   });
 });
 
+describe("JS calls that are no request of their own", () => {
+  it("skips supertest's request(app) wrapper and a data: URL, keeping the chained verb", async () => {
+    const SRC = `import request from "supertest";
+it("lists clubs", async () => {
+  const { status } = await request(ctx.getHttpServer()).get("/clubs?season=invalid");
+  await fetch("data:image/svg+xml;base64,PHN2Zz4=");
+});`;
+    expect((await apiCallsOf(SRC)).map((c) => `${c.name} ${c.target}`)).toEqual(["get /clubs?season=invalid"]);
+  });
+});
+
 describe("JS fetch of a URL object built inline", () => {
   it("reads new URL(path, base): an absolute path as itself, a relative one under the base", async () => {
     const SRC = `class ScoutClient {
