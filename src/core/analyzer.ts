@@ -1158,6 +1158,23 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       .filter((ds) => ds.kind === "api-call")
       .map((ds) => ({ ...ds, filePath: a.filePath })),
   );
+  // A page link to a path the app's own client router serves (`<a href="/clubs/{{id}}">`
+  // in a single-page app) is navigation, not a request — unless a server route serves it too.
+  {
+    const frontendPaths = new Set(allRoutes.filter((r) => r.kind === "frontend").map((r) => `${r.projectId ?? ""}\0${normalizeRoutePath(r.path)}`));
+    const servedPaths = new Set(allRoutes.filter((r) => r.kind === "api" && (r.httpMethod ?? "GET") === "GET").map((r) => normalizeRoutePath(r.path)));
+    if (frontendPaths.size > 0) {
+      const project = (f: string) => analysisByPath.get(f)?.projectId ?? "root";
+      let w = 0;
+      for (const c of allApiCalls) {
+        const link = c.target !== null && c.name === `GET ${c.target}`;
+        const path = link ? normalizeRoutePath(c.target!) : "";
+        if (link && frontendPaths.has(`${project(c.filePath)}\0${path}`) && !servedPaths.has(path)) continue;
+        allApiCalls[w++] = c;
+      }
+      allApiCalls.length = w;
+    }
+  }
   // Calls through REST client proxies (`personRepository.getPerson(…)` on a
   // JAX-RS proxy a Spring bean builds): outbound calls named by the interface
   // operation they invoke, which the linker joins to the route declaring it.
