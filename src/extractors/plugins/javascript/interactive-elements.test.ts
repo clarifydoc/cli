@@ -51,6 +51,18 @@ describe("React Native controls", () => {
 });
 
 describe("Vue template events", () => {
+  it("reads a namespaced event's handler and a kebab-case component's v-model", () => {
+    const template = `
+  <score-input v-model="homeGoals" @update:model-value="saveScore"></score-input>
+  <SquadPicker v-on:update:selected="pickSquad" />`;
+    const src = `<template>${template}</template>`;
+    expect(extractVueInteractiveElements(template, src).map((e) => `${e.line} ${e.element} ${e.event} ${e.handler}`)).toEqual([
+      "2 custom @update:model-value saveScore",
+      "2 custom v-model null",
+      "3 custom @update:selected pickSquad",
+    ]);
+  });
+
   it("reads a binding past a `>` inside another attribute's quoted value", () => {
     const template = `
   <DropdownMenuItem

@@ -203,7 +203,8 @@ export function extractVueInteractiveElements(
 
     // Find @event bindings
     // A handler may be single-quoted when it holds a double quote: `@click='pick("striker")'`.
-    const eventRegex = /@([a-zA-Z][a-zA-Z0-9.-]*)(?:="([^"]*)"|='([^']*)')?/g;
+    // An event may be namespaced: `@update:model-value="setScore"`.
+    const eventRegex = /@([a-zA-Z][a-zA-Z0-9.:-]*)(?:="([^"]*)"|='([^']*)')?/g;
     let eventMatch: RegExpExecArray | null;
     while ((eventMatch = eventRegex.exec(attrs)) !== null) {
       const event = `@${eventMatch[1]}`;
@@ -219,7 +220,7 @@ export function extractVueInteractiveElements(
     }
 
     // Find v-on: bindings
-    const vonRegex = /v-on:([a-zA-Z]+)(?:="([^"]*)"|='([^']*)')?/g;
+    const vonRegex = /v-on:([a-zA-Z][a-zA-Z0-9.:-]*)(?:="([^"]*)"|='([^']*)')?/g;
     let vonMatch: RegExpExecArray | null;
     while ((vonMatch = vonRegex.exec(attrs)) !== null) {
       const vonElement = resolveVueElementType(tagName);
@@ -235,7 +236,8 @@ export function extractVueInteractiveElements(
     // Find v-model
     if (attrs.includes("v-model")) {
       const vmodelTag = tagName.toLowerCase();
-      if (vmodelTag === "input" || vmodelTag === "select" || vmodelTag === "textarea" || /^[A-Z]/.test(tagName)) {
+      // A component's v-model too, however its tag is written (`ScoreInput`, `score-input`, `scoreInput`).
+      if (vmodelTag === "input" || vmodelTag === "select" || vmodelTag === "textarea" || resolveVueElementType(tagName) === "custom") {
         elements.push({
           element: resolveVueElementType(tagName),
           event: "v-model",
