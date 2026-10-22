@@ -89,7 +89,7 @@ function fnBelow(lines: string[], attrLine: number): { name: string; line: numbe
 }
 
 /** Balanced `(...)` starting at `open`; the text inside, and where it ends (or the line end). */
-function balanced(line: string, open: number): { inner: string; end: number } {
+function balanced(line: string, open: number): { inner: string; end: number; closed: boolean } {
   let depth = 0;
   let quote: string | null = null;
   for (let i = open; i < line.length; i++) {
@@ -103,10 +103,10 @@ function balanced(line: string, open: number): { inner: string; end: number } {
     else if (ch === "(" || ch === "[" || ch === "{") depth++;
     else if (ch === ")" || ch === "]" || ch === "}") {
       depth--;
-      if (depth === 0) return { inner: line.slice(open + 1, i), end: i + 1 };
+      if (depth === 0) return { inner: line.slice(open + 1, i), end: i + 1, closed: true };
     }
   }
-  return { inner: line.slice(open + 1), end: line.length };
+  return { inner: line.slice(open + 1), end: line.length, closed: false };
 }
 
 /** A guard as declared, classified by what its text says. */
@@ -283,12 +283,24 @@ export function extractRustRoutes(lines: string[]): RouteInfo[] {
       chain.nested.push(nestedFn);
     }
 
-    const axum = line.match(AXUM_ROUTE_RE);
+    // `.route(` with its path on the next line (`.route(` / `"/c/{name}/followers",` / `web::get().to(h),`):
+    // the call read as one line. A path-less `.route(post().to(h))` under `web::resource("/x")` is the resource's own path.
+    let routeText = line;
+    const routeAt = line.search(/\.\s*route\s*\(/);
+    if (routeAt >= 0 && !balanced(line, line.indexOf("(", routeAt)).closed) {
+      for (let k = i + 1; k < Math.min(lines.length, i + 6); k++) {
+        routeText += " " + lines[k]!.trim();
+        if (balanced(routeText, routeText.indexOf("(", routeAt)).closed) break;
+      }
+    }
+    const axum = routeText.match(AXUM_ROUTE_RE) ?? (/\.\s*route\s*\(\s*(?:web::)?(?:get|post|put|patch|delete|head)\s*\(\s*\)\s*\.\s*to\s*\(/.test(routeText) && scopes.length > 0 ? (["", "", routeText.slice(routeText.search(/\.\s*route\s*\(/))] as unknown as RegExpMatchArray) : null);
     if (axum) {
       if (!chain) chain = { routes: [], nested: [] };
       const scope = scopes[scopes.length - 1];
       const inherited = scope ? scopes.flatMap((s) => s.guards) : [];
-      const prefix = scopes.map((s) => s.prefix).join("");
+      // A resource opened on this very line (`.service(web::resource("/x").route(get().to(h)))`) is not on the stack yet.
+      const sameLine = /(?:\w+::)*resource\s*\(\s*"([^"]*)"\s*\)[^]*\.\s*route\s*\(/.exec(line);
+      const prefix = scopes.map((s) => s.prefix).join("") + (axum[1] === "" && sameLine ? sameLine[1]! : "");
       const emit = (verb: string, handler: string | null): void => {
         routes.push({
           path: prefix ? joinPath(prefix, axum[1]!) : axum[1]!,
@@ -411,7 +423,8 @@ function scanActix(
       i += m[0].length - 1;
       continue;
     }
-    if ((m = rest.match(/^(?:\w+::)*scope\s*\(\s*"([^"]*)"\s*\)/))) {
+    // `web::resource("/post")` is a one-path scope its `.route(post().to(h))` calls are served at.
+    if ((m = rest.match(/^(?:\w+::)*(?:scope|resource)\s*\(\s*"([^"]*)"\s*\)/))) {
       // Each frame holds its OWN segment; every reader joins the stack. A
       // frame that pre-composed its parents doubled them at the join
       // (`scope("/api/v4") … scope("/site")` → `/api/v4/api/v4/site`).

@@ -301,3 +301,31 @@ let consumer = channel.basic_consume("cars-queue", "tag", opts, table).await?;
     expect(s.some((d) => d.kind === "queue-consume" && d.target === "cars-queue")).toBe(true);
   });
 });
+
+describe("Rust routes: actix resources and routes over several lines", () => {
+  it("serves a resource's path-less routes at its path, and reads .route( split across lines (real-repo FP: ~34 routes)", () => {
+    const routes = extractRustRoutes(lines(`
+pub fn config(cfg: &mut web::ServiceConfig) {
+    cfg.service(
+        web::scope("/api/v4")
+            .service(
+                web::resource("/club")
+                    .guard(guard::Post())
+                    .wrap(rate_limit.post())
+                    .route(post().to(create_club)),
+            )
+            .service(web::resource("/search").route(get().to(search)))
+            .route(
+                "/c/{name}/followers",
+                web::get().to(get_club_followers),
+            ),
+    );
+}
+`));
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`)).toEqual([
+      "POST /api/v4/club create_club",
+      "GET /api/v4/search search",
+      "GET /api/v4/c/{name}/followers get_club_followers",
+    ]);
+  });
+});
