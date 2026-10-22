@@ -246,9 +246,13 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
    */
   private efLocals = new Map<string, string>();
 
+  /** The file works with Entity Framework: an unknown method on `context.X` may be a project extension on a set. */
+  private efFile = false;
+
   override beginFile(tree: Tree, sourceText: string): void {
     this.dbSetNames = new Map();
     this.efLocals = new Map();
+    this.efFile = /\bMicrosoft\.EntityFrameworkCore\b|\bSystem\.Data\.Entity\b|\bDbContext\b|\bDbSet</.test(sourceText);
     if (sourceText.includes("DbSet<")) {
       const typeParams = new Set<string>();
       for (const tp of tree.rootNode.descendantsOfType("type_parameter")) {
@@ -653,6 +657,25 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     const receiver = parts.length > 1 ? parts[parts.length - 2]! : "";
     const root = parts[0]!;
 
+    // A set handed to a join reads that table too: `.Join(context.Chapters, …)`.
+    if ((method === "Join" || method === "GroupJoin") && parts.length >= 2) {
+      const set = contextSetOf(argumentNodes(node)[0]?.namedChildren[0] ?? null);
+      if (set && !FRAMEWORK_CONTEXT_TYPE.test(parameterType(node, set.root) ?? "")) {
+        sources.push(this.ds({ kind: "database", name: `EF: ${method}`, target: set.set, entity: set.set, joined: true, access: "read", line: node.startPosition.row + 1 }));
+      }
+    }
+
+    // A project's own extension on a set (`context.AppUsers.Includes(flags)`,
+    // `context.Fixtures.GetTopCounts(…)`) reads it: the receiver is the set itself.
+    if (this.efFile && !EF_READ_METHODS.has(method) && !EF_WRITE_METHODS.has(method) && parts.length === 3 && /^[A-Z]/.test(method)) {
+      const set = contextSetOf(fn.childForFieldName("expression") ?? null);
+      // A lambda's `context` (`(src, dest, context) => context.Mapper.Map(…)`) is the framework's, not a DbContext.
+      if (set && !FRAMEWORK_CONTEXT_TYPE.test(parameterType(node, set.root) ?? "") && !lambdaParameter(node, set.root) && !this.efCallFollows(node)) {
+        sources.push(this.ds({ kind: "database", name: `EF: ${method}`, target: set.set, entity: set.set, access: "read", line: node.startPosition.row + 1 }));
+        return;
+      }
+    }
+
     // EF Core / EF 6 — DbContext.Set<T>(), context.Entities.Where(), SaveChanges()
     if (EF_READ_METHODS.has(method) || EF_WRITE_METHODS.has(method)) {
       const row = this.efRow(node);
@@ -1046,6 +1069,34 @@ function cleanEntityName(raw: string | null): string | null {
   // `volumes.SelectMany(…).ToList()`: a LINQ operator on a local list is no entity set.
   if (!s || NON_DBSET_MEMBERS.has(s) || LINQ_OPERATORS.has(s) || EF_READ_METHODS.has(s) || EF_WRITE_METHODS.has(s)) return null;
   return s;
+}
+
+/** Members of a framework context (`HttpContext.Request`) and of a DbContext itself that are no entity set. */
+const CONTEXT_MEMBERS = new Set([
+  "Request", "Response", "User", "Items", "Session", "Connection", "Features", "RequestServices", "TraceIdentifier",
+  "RequestAborted", "WebSockets", "Authentication", "Database", "Model", "ChangeTracker", "Configuration",
+]);
+
+/** `name` is a parameter of a lambda the node sits in. */
+function lambdaParameter(node: Node, name: string): boolean {
+  for (let p: Node | null = node.parent; p; p = p.parent) {
+    if (p.type !== "lambda_expression") continue;
+    const params = p.childForFieldName("parameters") ?? p.namedChildren[0];
+    if (params && new RegExp(`(?:^|[\\s(,])${name}(?:[\\s),]|$)`).test(params.text)) return true;
+  }
+  return false;
+}
+
+/** `context.Chapters` / `_db.Clubs`: the context root and the set it names, or null. */
+function contextSetOf(expr: Node | null): { root: string; set: string } | null {
+  if (!expr || (expr.type !== "member_access_expression" && expr.type !== "member_expression")) return null;
+  const obj = expr.childForFieldName("expression");
+  const name = expr.childForFieldName("name")?.text ?? "";
+  if (!obj || (obj.type !== "identifier" && obj.type !== "identifier_name")) return null;
+  const root = obj.text;
+  const contextNamed = /^(?:_?(?:db)?[Cc]ontext|_?db|_?dbContext|DbContext|\w+DbContext|\w+Context)$/.test(root) && !/^(?:Http|Action|Filter)\w*Context$/i.test(root);
+  if (!contextNamed || !/^[A-Z]\w*$/.test(name) || CONTEXT_MEMBERS.has(name) || LINQ_OPERATORS.has(name)) return null;
+  return { root, set: name };
 }
 
 const LINQ_OPERATORS = new Set([

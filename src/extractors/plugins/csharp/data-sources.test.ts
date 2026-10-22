@@ -546,3 +546,26 @@ describe("LINQ over a local collection", () => {
     expect(entities.filter(Boolean)).toEqual(["Fixtures"]);
   });
 });
+
+describe("EF sets reached through a project extension or a join", () => {
+  it("reads the set an extension method or a Join is handed (real-repo FP: GET /api/users/names reached no table)", async () => {
+    const { parseSource } = await import("../../../parsers/parser-manager.js");
+    const { CSharpDataSourceExtractor } = await import("./data-sources.js");
+    const src = `using Microsoft.EntityFrameworkCore;
+class LeagueStats {
+  void Configure() { CreateMap<Club, ClubDto>().AfterMap((s, d, context) => context.Mapper.Map(s.Players, d.Players)); }
+  async Task Run(HttpContext http) {
+    var query = context.AppUsers.Includes(includeFlags);
+    var counts = await context.Fixtures.GetTopCounts(p => p.ClubId, take: 5);
+    var rows = await context.Transfers
+      .Join(context.Players, t => t.PlayerId, p => p.Id, (t, p) => new { t, p })
+      .ToListAsync();
+    http.Response.Headers.Add("x", "y");
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as never, "LeagueStats.cs");
+    const rows = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database").map((d) => `${d.name} ${d.entity}${d.joined ? " joined" : ""}`);
+    expect(rows).toEqual(expect.arrayContaining(["EF: Includes AppUsers", "EF: GetTopCounts Fixtures", "EF: Join Players joined", "EF: ToListAsync Transfers"]));
+    expect(rows.some((r) => /Response|Headers|Mapper/.test(r))).toBe(false);
+  });
+});
