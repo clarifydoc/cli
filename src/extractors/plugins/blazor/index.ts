@@ -143,13 +143,20 @@ export function extractCodeBlockFunctions(lines: string[], commentPrefixes: stri
       // The body: to the matching brace, or the expression to its `;`.
       let depth = 0;
       let opened = false;
+      // An expression body (`=> a ? b : c;`), its arrow on the signature's line or the next.
+      let arrow = false;
       let j = i;
       for (; j <= end; j++) {
         const text = lines[j] ?? "";
         depth += countChar(text, "{") - countChar(text, "}");
+        const at = text.indexOf("=>");
+        if (!opened && at >= 0 && !text.slice(0, at).includes("{")) arrow = true;
+        if (arrow) {
+          if (depth <= 0 && /;\s*(?:\/\/.*)?$/.test(text)) break;
+          continue;
+        }
         if (countChar(text, "{") > 0) opened = true;
         if (opened && depth <= 0) break;
-        if (!opened && /=>[^;]*;\s*$/.test(text)) break;
       }
       const params = m[2]!.split(",").map((p) => p.trim()).filter(Boolean).map((p) => {
         const parts = p.replace(/=.*$/, "").trim().split(/\s+/);
@@ -353,11 +360,14 @@ const NATIVE_INTERACTIVE: Record<string, InteractiveElementInfo["element"]> = {
 };
 
 const EVENT_RE = /@on([a-z]+)\s*=\s*"([^"]*)"/g;
+/** A component's callback parameter: `<EditForm OnValidSubmit="@SaveAsync">`, `<FluentButton OnClick="Save">`. */
+const CALLBACK_RE = /\s(On[A-Z]\w*)\s*=\s*"([^"]*)"/g;
 const BIND_RE = /@bind(?:-[A-Za-z]+)?\s*=\s*"([^"]*)"/g;
 const OPEN_TAG_RE = /<([A-Za-z][\w]*)\b/g;
 
 function elementForTag(tag: string | null): InteractiveElementInfo["element"] {
   if (!tag) return "custom";
+  if (tag === "EditForm") return "form";
   if (/^[A-Z]/.test(tag)) return "custom"; // a Blazor component
   return NATIVE_INTERACTIVE[tag.toLowerCase()] ?? "custom";
 }
@@ -392,6 +402,17 @@ function extractBlazorInteractiveElements(lines: string[]): InteractiveElementIn
         element: elementForTag(tagAt(ev.index!)),
         event: "on" + ev[1]!,
         handler: cleanHandler(ev[2]!),
+        line: ln,
+      });
+    }
+    for (const cb of line.matchAll(CALLBACK_RE)) {
+      // A callback is a component's parameter; on an HTML tag `OnClick` is no Blazor event.
+      const tag = tagAt(cb.index!);
+      if (!tag || !/^[A-Z]/.test(tag)) continue;
+      out.push({
+        element: elementForTag(tag),
+        event: cb[1]!.toLowerCase(),
+        handler: cleanHandler(cb[2]!),
         line: ln,
       });
     }

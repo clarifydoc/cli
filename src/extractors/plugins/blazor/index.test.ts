@@ -82,6 +82,18 @@ describe("Blazor interactive-element extraction", () => {
     expect(els[0]!.handler).toBe("Close");
     expect(els[1]!.handler).toBe(null);
   });
+
+  it("captures a component's callback parameter, never an HTML attribute of that name", () => {
+    const els = blazorSpec.extractInteractiveElements!(
+      lines(`<EditForm EditContext="@editContext" FormName="transfer" OnValidSubmit="@SubmitTransferAsync" Enhance>
+<FluentButton OnClick="Cancel">x</FluentButton>
+<div OnClick="Ignored"></div>`),
+    );
+    expect(els).toEqual([
+      { element: "form", event: "onvalidsubmit", handler: "SubmitTransferAsync", line: 1 },
+      { element: "custom", event: "onclick", handler: "Cancel", line: 2 },
+    ]);
+  });
 });
 
 describe("Blazor imports (@using)", () => {
@@ -187,12 +199,21 @@ describe("Blazor @code methods", () => {
     }
 
     private string Label(int n) => $"{n} items";
+
+    private int PendingCount(int playerId, int count)
+        => PendingId == playerId
+        ? PendingValue
+        : count;
+
+    private void Reset() { list.ForEach(x => x.Clear()); }
 }`;
     const a = extractWithRegex(src, "src/WebApp/Components/Pages/Item/ItemPage.razor", "blazor");
     expect(a.functions.map((f) => `${f.name}@${f.line}-${f.endLine}`)).toEqual([
       "OnInitializedAsync@13-16",
       "AddToGarageAsync@18-23",
       "Label@25-25",
+      "PendingCount@27-30",
+      "Reset@32-32",
     ]);
     const add = a.functions.find((f) => f.name === "AddToGarageAsync")!;
     expect(add.calls.map((c) => c.name)).toEqual(expect.arrayContaining(["Basket.AddAsync", "Nav.NavigateTo"]));
