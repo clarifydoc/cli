@@ -840,6 +840,12 @@ export interface PropertyInfo {
   isRequired?: boolean;
   /** The DI token/key the field is injected by — see `ParamInfo.qualifier`. */
   qualifier?: string;
+  /**
+   * A computed member's value as written, when its type is not stated (a
+   * Python `@property` returning `self.repos.foods`): the project pass types
+   * the member as that chain resolves.
+   */
+  from?: string;
 }
 
 export interface ClassInfo {

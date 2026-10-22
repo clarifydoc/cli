@@ -1439,9 +1439,11 @@ function buildInheritanceMap(
   for (const a of analyses) {
     for (const cls of a.classes) {
       if (cls.extends) {
-        const parentFile = classToFile.get(cls.extends);
+        // `Base<T>` / `Base[T]` names the class `Base`.
+        const parent = bareClassName(cls.extends);
+        const parentFile = classToFile.get(parent);
         if (parentFile) {
-          map.set(cls.name, { parentClass: cls.extends, parentFile });
+          map.set(cls.name, { parentClass: parent, parentFile });
         }
       }
     }
@@ -1579,6 +1581,33 @@ function buildMemberTypes(analyses: FileAnalysis[]): Map<string, Map<string, Inj
       if (members.size > 0) out.set(memberKey(a.filePath, cls.name), members);
     }
   }
+
+  // A computed member typed by the chain it returns (a Python `@property` returning
+  // `self.repos.ingredient_foods`): the chain walked over the members typed above,
+  // a few rounds so a chain through another computed member resolves too.
+  const computed = analyses.flatMap((a) => a.classes.flatMap((cls) => cls.properties
+    .filter((p) => p.from && !p.type)
+    .map((prop) => ({ a, cls, prop }))));
+  for (let round = 0; round < 3 && computed.length > 0; round++) {
+    let progressed = false;
+    for (const { a, cls, prop } of computed) {
+      const key = memberKey(a.filePath, cls.name);
+      const name = nameKey(a.language, prop.name);
+      if (out.get(key)?.has(name)) continue;
+      const segs = prop.from!.split(".");
+      if (!SELF_HEADS.has(segs[0]!)) continue;
+      let cur: InjectionPoint | null = { typeName: cls.name, typeFile: a.filePath, member: "", consumer: cls.name };
+      for (const seg of segs.slice(1)) {
+        if (!cur?.typeFile) break;
+        cur = out.get(memberKey(cur.typeFile, cur.typeName))?.get(nameKey(languageOfFile.get(cur.typeFile), seg)) ?? null;
+      }
+      if (!cur?.typeFile || !cur.typeName) continue;
+      if (!out.has(key)) out.set(key, new Map());
+      out.get(key)!.set(name, { typeName: cur.typeName, typeFile: cur.typeFile, member: prop.name, consumer: cls.name });
+      progressed = true;
+    }
+    if (!progressed) break;
+  }
   return out;
 }
 
@@ -1617,7 +1646,8 @@ function memberKey(file: string, className: string): string {
 
 /** A type as written → its bare class name: generics and namespace qualifiers dropped. */
 function bareClassName(t: string | null | undefined): string {
-  return (t ?? "").replace(/<.*$/, "").trim().split(".").pop() ?? "";
+  // `Base<T>`, and Python's `Base[T]` (`RepositoryGeneric[Schema, Model]`).
+  return (t ?? "").replace(/[<[].*$/, "").trim().split(".").pop() ?? "";
 }
 
 /**

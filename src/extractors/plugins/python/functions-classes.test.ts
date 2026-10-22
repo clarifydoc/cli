@@ -144,3 +144,37 @@ def not_a_fixture():
     expect(rt).toEqual({ player: "Player", db: "models.Database", mixed: null, typed: "Club", not_a_fixture: null });
   });
 });
+
+describe("Python properties as typed members", () => {
+  it("types a property by its annotation, the class it builds, the attribute it returns, or the chain it returns", async () => {
+    const { classes } = await extract(`
+class LeagueController(BaseController):
+    _repos: AllRepositories | None = None
+
+    @property
+    def repos(self):
+        if not self._repos:
+            self._repos = AllRepositories(self.session)
+        return self._repos
+
+    @cached_property
+    def repo(self):
+        return self.repos.players
+
+    @cached_property
+    def mixins(self):
+        return HttpRepo[SavePlayer, Player](self.repo, self.logger)
+
+    @property
+    def squad(self) -> SquadService:
+        return self.make_squad()
+`);
+    const props = Object.fromEntries(classes[0]!.properties.map((p) => [p.name, `${p.type ?? "-"} ${p.from ?? ""}`.trim()]));
+    expect(props).toMatchObject({
+      repos: "AllRepositories | None",
+      repo: "- self.repos.players",
+      mixins: "HttpRepo",
+      squad: "SquadService",
+    });
+  });
+});

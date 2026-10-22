@@ -20,6 +20,12 @@ describe("inferFileBasedRoute — each convention under its own framework only",
     // ...and a Nuxt project does not get Next.js routes for its .ts files.
     expect(path("pages/helpers.ts", ["nuxt", "vue"])).toBeNull();
   });
+
+  it("routes a Nuxt 4 app/pages/ tree, and a src/pages/ one", () => {
+    expect(path("app/pages/g/[clubSlug]/squad.vue", ["nuxt", "vue"])).toBe("/g/:clubSlug/squad");
+    expect(path("app/pages/login.vue", ["nuxt", "vue"])).toBe("/login");
+    expect(path("src/pages/fixtures/index.vue", ["nuxt", "vue"])).toBe("/fixtures");
+  });
 });
 
 describe("Next.js App Router paths", () => {

@@ -243,6 +243,7 @@ export class PythonExtractor extends FunctionClassExtractor {
           const sources: MethodSource[] = assigning.map((p) => ({ node: p.node, fn: p.fn, selfName: instanceParam(p) }));
           properties.push(...collectInstanceAttributes(sources, declared, assigning.some((p) => p.typeComments)));
         }
+        properties.push(...propertyMembers(parsed, properties));
       }
     }
 
@@ -274,6 +275,42 @@ export class PythonExtractor extends FunctionClassExtractor {
     }
     return cls;
   }
+}
+
+/** `@property`, `@cached_property`, `@functools.cached_property`. */
+const PROPERTY_DECORATOR = /^(?:functools\.)?(?:cached_)?property$/;
+
+/**
+ * A property is a member read like an attribute (`self.repo.page_all()`): typed by
+ * its return annotation, by the class it constructs (`return RepositoryFood(…)`,
+ * `HttpRepo[…](…)`), by the typed attribute it returns (`return self._repos`), or —
+ * when it returns a chain (`return self.repos.ingredient_foods`) — by that chain,
+ * left to the project pass (`PropertyInfo.from`).
+ */
+function propertyMembers(parsed: readonly ParsedFunction[], declared: readonly PropertyInfo[]): PropertyInfo[] {
+  const typed = new Map(declared.map((p) => [p.name, p.type]));
+  const out: PropertyInfo[] = [];
+  for (const p of parsed) {
+    if (!p.fn.decorators.some((d) => PROPERTY_DECORATOR.test(d.trim())) || typed.get(p.fn.name)) continue;
+    const returned = p.node.childForFieldName("body")?.descendantsOfType("return_statement").filter((r): r is Node => !!r).pop()?.namedChild(0) ?? null;
+    let type = p.fn.returnType;
+    let from: string | undefined;
+    if (!type && returned?.type === "call") {
+      const callee = returned.childForFieldName("function");
+      const name = (callee?.type === "subscript" ? callee.childForFieldName("value") : callee)?.text ?? "";
+      if (/^(?:[\w]+\.)*[A-Z]\w*$/.test(name)) type = name.split(".").pop()!;
+    }
+    if (!type && returned?.type === "attribute" && /^self\.\w+(?:\.\w+)*$/.test(returned.text)) {
+      const own = /^self\.(\w+)$/.exec(returned.text)?.[1];
+      type = own ? typed.get(own) ?? null : null;
+      if (!type) from = returned.text;
+    }
+    if (!type && !from) continue;
+    const prop: PropertyInfo = { name: p.fn.name, type: type ?? null, visibility: p.fn.name.startsWith("_") ? "private" : "public", isStatic: false, isReadonly: true };
+    if (from) prop.from = from;
+    out.push(prop);
+  }
+  return out;
 }
 
 /** The instance parameter of a method (`self`), or null for a static/class method. */

@@ -71,7 +71,8 @@ export function inferFileBasedRoute(relativePath: string, frameworkIds: string[]
   const normalized = relativePath.replace(/\\/g, "/");
 
   if (isNuxt) {
-    const page = normalized.match(/^pages\/(.+)\.vue$/);
+    // Nuxt 4 serves pages from `app/` (its default `srcDir`); a Nuxt 3 project often sets `srcDir: "src"`.
+    const page = normalized.match(/^(?:app\/|src\/)?pages\/(.+)\.vue$/);
     if (page) return route(routeFromSegments(page[1]!), "frontend");
   }
   if (!isNextjs) return null;

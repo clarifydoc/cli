@@ -40,9 +40,26 @@ function collectModuleStrings(root: Node): Map<string, string> {
 function stringKeyword(args: Node, name: string, consts: ReadonlyMap<string, string>): string | null | undefined {
   const value = keywordArg(args, name);
   if (!value) return undefined;
-  if (value.type === "string") return stripQuotes(value.text);
+  if (value.type === "string") return stringValue(value.text, consts);
   if (value.type === "identifier" && consts.has(value.text)) return consts.get(value.text)!;
   return null;
+}
+
+/**
+ * A string literal's value: `"/clubs"`, `r"/clubs"`, and an f-string over module
+ * constants (`f"{base_prefix}/kits"`); null when an interpolation is not one.
+ */
+function stringValue(text: string, consts: ReadonlyMap<string, string>): string | null {
+  const prefix = /^[rRbBuUfF]{0,2}/.exec(text)![0];
+  const body = stripQuotes(text.slice(prefix.length));
+  if (!/f/i.test(prefix)) return body;
+  let unknown = false;
+  const out = body.replace(/\{([^{}]*)\}/g, (_, name: string) => {
+    const v = consts.get(name.trim());
+    if (v === undefined) unknown = true;
+    return v ?? "";
+  });
+  return unknown ? null : out;
 }
 
 /**

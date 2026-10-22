@@ -322,3 +322,26 @@ def c(request):
     expect(routes[1]!.auth).toEqual({ policies: ["admin_required"], roles: ["editor", "admin"], schemes: [], anonymous: false, inherited: false });
   });
 });
+
+describe("FastAPI router prefixes as f-strings", () => {
+  it("folds module string constants into an f-string prefix, and leaves an unknown one unresolved", async () => {
+    const routes = await routesOf(`from fastapi import APIRouter
+base_prefix = "/organizers"
+kits_router = APIRouter(prefix=f"{base_prefix}/kits")
+crests_router = APIRouter(prefix=f"{settings.prefix}/crests")
+
+@kits_router.get("")
+def list_kits():
+    pass
+
+@kits_router.get("/{item_id}")
+def get_kit(item_id: str):
+    pass
+
+@crests_router.get("")
+def list_crests():
+    pass
+`);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /organizers/kits", "GET /organizers/kits/{item_id}", "GET "]);
+  });
+});
