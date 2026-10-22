@@ -75,6 +75,39 @@ func Labels() (result []Label) {
       "19 GORM: Find Label read", // the named result `(result []Label)`
     ]);
   });
+
+  it("reads a file that only chains on the project's Db() helper, and a builder kept in a local (real-repo FP)", () => {
+    expect(rows(`package search
+
+func Clubs(f form.SearchClubs) (results []ClubResult, err error) {
+	s := UnscopedDb().Table("clubs").
+		Select("clubs.*")
+
+	if f.League != "" {
+		s = s.Where("league_uid = ?", f.League)
+	}
+
+	err = s.Scan(&results).Error
+	return results, err
+}
+
+func Players() (results []PlayerResult) {
+	q := Db().Table("players")
+	q.Find(&results)
+	s := fmt.Sprintf("%d", 1)
+	s.Scan(&results)
+	return results
+}
+
+func Touch(uid string) error {
+	return Db().Model(&entity.Club{}).Where("club_uid = ?", uid).UpdateColumn("touched_at", now).Error
+}
+`)).toEqual([
+      "11 GORM: Scan clubs read",
+      "17 GORM: Find players read",
+      "24 GORM: UpdateColumn Club write",
+    ]);
+  });
 });
 
 describe("xorm in handlers, migrations and other session names", () => {

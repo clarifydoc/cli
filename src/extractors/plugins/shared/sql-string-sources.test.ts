@@ -40,6 +40,11 @@ void markTrackLocationsAsDeleted(const QSqlDatabase& database) {
     expect(s).toEqual([]);
   });
 
+  it("never reads SQL's own functions as a routine the statement calls", () => {
+    const s = sources(`db.Exec("SELECT club_id FROM COALESCE(NULL, 0)")`);
+    expect(s.filter((d) => d.routine)).toEqual([]);
+  });
+
   it("extracts SELECT with FROM on a later fragment", () => {
     const s = sources(`
     query.prepare("SELECT library.id, library.title "

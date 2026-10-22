@@ -222,8 +222,15 @@ function cteNames(stmt: string): Set<string> {
 }
 
 /** A routine name, or null when the name is a built-in or a stoplisted word. */
+/** SQL's own scalar and aggregate functions: never a routine of the schema. */
+const SQL_FUNCTIONS = new Set([
+  "COALESCE", "NULLIF", "IFNULL", "ISNULL", "NVL", "NVL2", "CAST", "CONVERT", "GREATEST", "LEAST",
+  "SUM", "COUNT", "MAX", "MIN", "AVG", "CONCAT", "LOWER", "UPPER", "SUBSTRING", "SUBSTR", "TRIM", "LENGTH", "ROUND", "ABS",
+  "NOW", "DATE", "EXTRACT", "IF", "IIF", "CASE", "EXISTS", "ANY", "ALL", "SOME",
+]);
+
 function routineName(name: string | undefined): string | null {
-  if (!name || notATable(name) || BUILTIN_SOURCES.has(name.toUpperCase())) return null;
+  if (!name || notATable(name) || BUILTIN_SOURCES.has(name.toUpperCase()) || SQL_FUNCTIONS.has(name.toUpperCase())) return null;
   return /^[A-Za-z_][\w.$]*$/.test(name) ? name : null;
 }
 

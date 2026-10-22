@@ -34,6 +34,8 @@ interface OrmChainSpec {
   helper?: RegExp;
   /** A receiver declared as the ORM's session or engine type (`s *xorm.Session`) is one, whatever it is called. */
   session?: RegExp;
+  /** A chain stored in a local and finished later (`s := Db().Table("clubs")…` … `s.Scan(&rows)`) is one chain. */
+  builderVars?: boolean;
 }
 
 const XORM: OrmChainSpec = {
@@ -59,12 +61,14 @@ const XORM: OrmChainSpec = {
  */
 const GORM: OrmChainSpec = {
   label: "GORM",
-  file: /gorm\.io\/gorm|jinzhu\/gorm|\*gorm\.DB\b/,
+  // Also a file that only chains on the project's own `Db()` / `UnscopedDb()` helper (no gorm import of its own).
+  file: /gorm\.io\/gorm|jinzhu\/gorm|\*gorm\.DB\b|\b(?:[a-z_]\w*\.)?(?:Unscoped)?D[bB]\(\)\s*\.\s*(?:Where|Model|Table|Select|Raw|Exec|Joins|Preload|Unscoped|First|Find|Create|Save|Delete|Order)\b/,
   terminal: /(?:\.\s*|^\s*)(Find|First|Take|Last|Create|Save|Update|Updates|UpdateColumn|UpdateColumns|Delete|Count|Pluck|Scan|FirstOrCreate|FirstOrInit)\s*\(/g,
   builder: /\.\s*(?:Where|Not|Or|Model|Table|Select|Omit|Order|Limit|Offset|Group|Having|Joins|Preload|Unscoped|Debug|Session|WithContext|Distinct|Clauses)\s*\(/,
   root: /^(?:[A-Za-z_]\w*\.)?\w*(?:db|Db|DB|tx|Tx|orm|conn)\w*(?:\(\))?(?:\.|$)/,
   reads: new Set(["Find", "First", "Take", "Last", "Count", "Pluck", "Scan"]),
-  model: /\.\s*Model\s*\(\s*(&?[A-Za-z_][\w.]*\s*\{?|new\(\s*[\w.]+\s*\))/,
+  model: /\.\s*(?:Model|Table)\s*\(\s*("[\w.]+"|&?[A-Za-z_][\w.]*\s*\{?|new\(\s*[\w.]+\s*\))/,
+  builderVars: true,
 };
 
 export function extractXormDataSources(lines: string[]): DataSourceInfo[] {
@@ -86,6 +90,8 @@ function extractOrmChains(lines: string[], spec: OrmChainSpec): DataSourceInfo[]
     calls: [],
     line: lineNo,
   });
+  // Locals holding a chain, with the model each assignment names (`s = s.Table("labels")` names it later).
+  const builders = spec.builderVars ? builderLocals(lines, spec) : null;
   for (let i = 0; i < lines.length; i++) {
     const line = stripComment(lines[i]!);
     if (!line.includes("(")) continue;
@@ -96,16 +102,61 @@ function extractOrmChains(lines: string[], spec: OrmChainSpec): DataSourceInfo[]
       const continued = !m[0].trimStart().startsWith(".");
       if (continued && !(i > 0 && stripComment(lines[i - 1]!).trimEnd().endsWith("."))) continue;
       const chain = chainBefore(lines, i, m.index! + (continued ? m[0].search(/\S/) : 0));
-      if (!spec.root.test(chain) && !spec.builder.test(chain) && !(spec.session && sessionTyped(chain, lines, i, spec.session))) continue;
+      const held = builders ? builderModel(builders, /^([a-z_]\w*)(?:\.|$)/.exec(chain)?.[1], i) : undefined;
+      if (held === undefined && !spec.root.test(chain) && !spec.builder.test(chain) && !(spec.session && sessionTyped(chain, lines, i, spec.session))) continue;
       // `db.Find[T](…)` above already took this one.
       if (spec === XORM && /^db$/.test(chain)) continue;
       const arg = firstArg(line.slice(m.index! + m[0].length));
-      const modelArg = spec.model?.exec(chain)?.[1];
+      const modelArg = spec.model?.exec(chain)?.[1] ?? held ?? undefined;
       const entity = (modelArg ? entityOfArg(modelArg.trim(), lines, i) : null) ?? (arg ? entityOfArg(arg, lines, i) : null);
       out.push(row(m[1]!, entity, i + 1, arg));
     }
   }
   return out;
+}
+
+/**
+ * The locals a function stores a chain in — `s := UnscopedDb().Table("albums").Select(…)`, then
+ * `s = s.Where(…)` / `s = s.Table("labels")` — with the model each assignment names (null when none),
+ * by the line it is made on. A local assigned anything else stops being one.
+ */
+type BuilderAssignment = { line: number; model: string | null; dead?: true };
+
+function builderLocals(lines: string[], spec: OrmChainSpec): Map<string, BuilderAssignment[]> {
+  const out = new Map<string, BuilderAssignment[]>();
+  for (let i = 0; i < lines.length; i++) {
+    // A function's locals are its own: every local dies where the next function starts.
+    if (/^func\b/.test(lines[i]!)) {
+      for (const list of out.values()) list.push({ line: i, model: null, dead: true });
+      continue;
+    }
+    const m = /^\s*([a-z_]\w*)\s*:?=\s*(.+)$/.exec(stripComment(lines[i]!));
+    if (!m) continue;
+    let rhs = m[2]!.trim();
+    for (let k = i + 1; k < lines.length && k < i + 12 && rhs.endsWith("."); k++) rhs += stripComment(lines[k]!).trim();
+    const own = out.get(m[1]!);
+    const chained = spec.root.test(rhs) || (own !== undefined && new RegExp(`^${m[1]}\\s*\\.`).test(rhs));
+    if (!chained) {
+      if (own) own.push({ line: i, model: null, dead: true });
+      continue;
+    }
+    // A chain finished in its own statement is no builder (`err := Db().Create(&x).Error`).
+    spec.terminal.lastIndex = 0;
+    if (spec.terminal.test(rhs.replace(/^[^.]*\./, "."))) { spec.terminal.lastIndex = 0; continue; }
+    spec.terminal.lastIndex = 0;
+    const model = spec.model?.exec(rhs)?.[1]?.trim() ?? null;
+    (own ?? out.set(m[1]!, []).get(m[1]!)!).push({ line: i, model });
+  }
+  return out;
+}
+
+/** The model a builder local holds at line `i` (the latest assignment above naming one), or undefined when it holds no chain. */
+function builderModel(builders: Map<string, BuilderAssignment[]>, name: string | undefined, i: number): string | null | undefined {
+  const list = name ? builders.get(name) : undefined;
+  const before = list?.filter((b) => b.line < i);
+  if (!before?.length || before[before.length - 1]!.dead) return undefined;
+  for (let k = before.length - 1; k >= 0 && !before[k]!.dead; k--) if (before[k]!.model) return before[k]!.model;
+  return null;
 }
 
 /** The chain's root variable is declared in the enclosing function as a type `session` matches. */
