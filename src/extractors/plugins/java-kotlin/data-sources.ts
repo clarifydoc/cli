@@ -88,7 +88,7 @@ const JDBC_RECEIVER_RE = /^(?:\w*jdbc\w*|\w*(?:hibernate|jpa|mongo|sqlsession|r2
 /** Sessions that are not a database's: an HTTP or WebSocket session, a messaging one. */
 const NON_DB_SESSION_RE = /^(?:http|web|ws|websocket|stomp|jms|mail|ssh|sftp|user|client|browser)\w*session$/i;
 /** A receiver NAMED like a service-layer object is not a data store, whatever it is declared as. */
-const SERVICE_LAYER_NAME_RE = /(?:Service|ServiceImpl|Controller|Facade|Handler|Resource|Client|Gateway|Helper|Component)$/;
+const SERVICE_LAYER_NAME_RE = /(?:Service|ServiceImpl|Controller|Facade|Handler|Resource|Client|Gateway|Helper|Component|Action)$/;
 
 /** The receiver's last segment with any call parentheses dropped: `a.getSession()` → `getSession`. */
 function receiverLeaf(receiver: string): string {
@@ -358,7 +358,7 @@ const DAO_RECEIVER_RE = /^(.+?)(DAO|Dao|Repository|Repo)$/;
  */
 const DAO_PREFIX_RE = /^(?:Repository|repository|DAO|Dao|dao)([A-Z]\w*)$/;
 /** Declared receiver type that is a service-layer collaborator, not a data store. */
-const SERVICE_LAYER_TYPE_RE = /(Service|ServiceImpl|Controller|Facade|Handler|Resource|Client|Api|Gateway|Manager|Helper|Component)$/;
+const SERVICE_LAYER_TYPE_RE = /(Service|ServiceImpl|Controller|Facade|Handler|Resource|Client|Api|Gateway|Manager|Helper|Component|Action)$/;
 const DAO_PREFIX_ROLE_VETO =
   /(Factory|Service|Manager|Provider|Helper|Registry|Impl|Client|Utils?|Url|Uri|Path|Name|Dir|Root|System|Session|Connection|Layout|Context|Config|Configuration|Builder|Listener|Exception)$/;
 
@@ -710,6 +710,9 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       // thirds of one real codebase's service methods.
       // A field inherited from a base class has no declaration here; its name still says service.
       if (!seg || (declared ? SERVICE_LAYER_TYPE_RE.test(declared) : SERVICE_LAYER_NAME_RE.test(seg))) return;
+      // A repository is a field or a local: `persons.stream()…count()`, `Projections.count(…)`
+      // and `cb.count(…)` are a stream, a static helper and a criteria builder.
+      if (SPRING_DATA_EXACT.has(method) && (!/^[a-z_$][\w$]*$/.test(seg) || /^(?:cb|criteriaBuilder|builder|stream)$/i.test(seg))) return;
       sources.push(this.ds({ kind: "database", name: method, target: declared, line, ...withAccess(access) }));
       return;
     }

@@ -1,3 +1,4 @@
+import { vendoredMinoritySet } from "./security-scanner.js";
 import { DEAD_CODE_ENTRY_LIMIT } from "../types/analysis.js";
 import type {
   DeadCodeReport,
@@ -105,11 +106,14 @@ export function vendoredRoots(filePaths: string[]): string[] {
  */
 export function dropVendoredFacts(analyses: FileAnalysis[]): Set<string> {
   const roots = vendoredRoots(analyses.map((a) => a.filePath));
+  // A library committed beside the code (`js/jquery/jquery-ui.js`, its banner or license
+  // header saying so) is vendored too, when such files are a small minority of the repo.
+  const licensed = vendoredMinoritySet(analyses);
   const vendored = new Set<string>();
-  if (roots.length === 0) return vendored;
+  if (roots.length === 0 && licensed.size === 0) return vendored;
   for (const a of analyses) {
     const p = a.filePath.replace(/\\/g, "/");
-    if (!roots.some((r) => p.startsWith(r + "/"))) continue;
+    if (!roots.some((r) => p.startsWith(r + "/")) && !licensed.has(a.filePath)) continue;
     vendored.add(a.filePath);
     a.routes = [];
     a.screens = [];

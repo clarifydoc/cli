@@ -60,6 +60,15 @@ describe("vendored roots", () => {
     expect([sample.routes, sample.dataSources, sample.functions.length]).toEqual([[], [], 1]);
     expect(page.dataSources).toHaveLength(1);
   });
+
+  it("include a library its banner marks, when such files are a small minority", () => {
+    const lib = createEmptyAnalysis("webapp/js/jquery/jquery-ui.js", "javascript");
+    lib.vendored = true;
+    lib.dataSources = [{ kind: "api-call", name: "ajax", target: "${url}", calls: [], line: 9000 }];
+    const own = Array.from({ length: 5 }, (_, i) => createEmptyAnalysis(`webapp/js/league/fixtures${i}.js`, "javascript"));
+    expect([...dropVendoredFacts([lib, ...own])]).toEqual(["webapp/js/jquery/jquery-ui.js"]);
+    expect(lib.dataSources).toEqual([]);
+  });
 });
 
 describe("analyzeUnusedCode — convention merge", () => {

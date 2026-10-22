@@ -141,6 +141,17 @@ describe("DAO / Repository receiver → entity (the dominant data path here)", (
   });
 });
 
+describe("count and save that are no repository's", () => {
+  it("skips a stream's count, a criteria count and an action's save; keeps a repository's", async () => {
+    const rows = db(await sourcesOf(`    long n = players.stream().filter(p -> p.isFit()).count();
+    cq.select(em.getCriteriaBuilder().count(root.get("id")));
+    crit.setProjection(Projections.count("p.id"));
+    signAction.save(requestContext);
+    long all = playerRepository.count();`, "java", "import org.springframework.data.jpa.repository.JpaRepository;"));
+    expect(rows.map((d) => `${d.name} @${d.line}`)).toEqual(["DAO: count @9"]);
+  });
+});
+
 describe("SQL assembled around a table hole", () => {
   it("names no table from the keyword after the hole, and still reads a JPQL entity", async () => {
     const holed = await sourcesOf(`    jdbcTemplate.queryForList("SELECT " + projection + " FROM " + spec.table + " WHERE " + spec.scopeWhere, params);`, "java");

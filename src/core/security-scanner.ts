@@ -202,8 +202,11 @@ const THIRD_PARTY_LICENSE_RE =
  *
  * @param sourceText - The whole file
  */
+/** A library build's banner: `/*! jQuery v1.11.1 | (c) … */`, `/*! jQuery UI - v1.11.1 - 2014-08-13`. */
+const LIBRARY_BANNER_RE = /^\s*\/\*!\s*[A-Za-z][\w.\- ]*?\s(?:-\s*)?v\d+\.\d+/;
+
 export function isVendoredSource(sourceText: string): boolean {
-  return THIRD_PARTY_LICENSE_RE.test(sourceText.slice(0, 4096));
+  return LIBRARY_BANNER_RE.test(sourceText.slice(0, 200)) || THIRD_PARTY_LICENSE_RE.test(sourceText.slice(0, 4096));
 }
 
 /**

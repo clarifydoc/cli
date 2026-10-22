@@ -200,6 +200,12 @@ function PopupWindow_getXYPosition() { document.all[x].innerHTML = y; }`;
     expect(isVendoredSource(jstree)).toBe(true);
   });
 
+  it("recognizes a library build's banner", () => {
+    expect(isVendoredSource(`/*! jQuery v1.11.1 | (c) 2005, 2014 jQuery Foundation, Inc. | jquery.org/license */\n!function(a,b){}`)).toBe(true);
+    expect(isVendoredSource(`/*! jQuery UI - v1.11.1 - 2014-08-13\n* http://jqueryui.com */\n(function(){})()`)).toBe(true);
+    expect(isVendoredSource(`/*! Fixture planner for the league */\nexport const plan = 1;`)).toBe(false);
+  });
+
   it("does not flag plain corporate copyright headers", () => {
     expect(isVendoredSource(`/*\n * Copyright (c) 2019 Acme Motors Ltd. All rights reserved.\n */\nclass X {}`)).toBe(false);
   });
