@@ -67,6 +67,70 @@ const DART_FUNCTION = new RegExp(
     String.raw`\s*(?:async\*?|sync\*?)?\s*(?:=>|\{)`, // async marker + body opener
 );
 
+/**
+ * The same definition with its parameter list running onto the next lines
+ * (`static Future<RowMetaPB> createRow({` … `}) async {`): `accept` finds the
+ * list's end and the body opener after it.
+ */
+const DART_FUNCTION_WRAPPED = new RegExp(
+  String.raw`^\s*(?:@[\w.]+(?:\([^)]*\))?\s*)*` +
+    String.raw`(?!(?:${STMT_KEYWORDS})\b)` +
+    String.raw`(?:(?:external|static|abstract|factory)\s+)*` +
+    String.raw`(?:${TYPE_TOKEN}\s+)` +
+    String.raw`([A-Za-z_$]\w*)` +
+    String.raw`\s*(?:<[^;{(]*>)?\s*\([^)]*$`,
+);
+
+/** A method whose return type sits alone on the line above (`static Future<UserProfile>` / `getProfile() async {`). */
+const DART_NAME_AFTER_TYPE_LINE = /^\s*([a-z_$][\w$]*)\s*(?:<[^;{(]*>)?\s*\(/;
+const TYPE_ONLY_LINE = new RegExp(String.raw`^\s*(?:@[\w.]+(?:\([^)]*\))?\s*)*(?:(?:external|static|abstract)\s+)*${TYPE_TOKEN}\s*$`);
+
+/**
+ * After the parameter list that opens on line `i` (strings skipped, brackets
+ * balanced over up to 40 lines): an `async`/`sync*` marker, then a body (`{`, `=>`),
+ * or — with `initializers` — a constructor's `: …` list ending in a body or `;`.
+ */
+/** `async` / `async*` after the parameter list that opens on line `i`. */
+function dartAsyncAfterParams(lines: readonly string[] | undefined, i: number | undefined, line: string): boolean {
+  if (!lines || i === undefined) return /\basync\b/.test(line);
+  const text = lines.slice(i, i + 40).join("\n");
+  let depth = 0;
+  for (let k = text.indexOf("("); k >= 0 && k < text.length; k++) {
+    const c = text[k]!;
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if ((c === ")" || c === "]" || c === "}") && --depth === 0) return /^\s*async\b/.test(text.slice(k + 1));
+  }
+  return false;
+}
+
+function dartBodyFollows(lines: readonly string[], i: number, initializers = false): boolean {
+  const text = lines.slice(i, i + 40).join("\n").replace(/'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"/g, "''");
+  const open = text.indexOf("(");
+  if (open < 0) return false;
+  let depth = 0;
+  for (let k = open; k < text.length; k++) {
+    const c = text[k]!;
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") {
+      if (--depth !== 0) continue;
+      const rest = text.slice(k + 1).replace(/^\s*(?:async\*?|sync\*)?\s*/, "");
+      if (rest.startsWith("{") || rest.startsWith("=>")) return true;
+      if (!initializers || !rest.startsWith(":")) return false;
+      // The initializer list runs to the body (`{`) or ends the declaration (`;`).
+      let d = 0;
+      for (let j = 1; j < rest.length; j++) {
+        const ch = rest[j]!;
+        if (ch === "(" || ch === "[") d++;
+        else if (ch === ")" || ch === "]") d--;
+        else if (d === 0 && ch === "{") return true;
+        else if (d === 0 && ch === ";") return true;
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
 /** Pull the declared return type from a definition line (null for `void`). */
 function parseDartReturnType(line: string): string | null {
   const m = line.match(
@@ -683,6 +747,18 @@ export const dartSpec: RegexLangSpec = {
       pattern: DART_FUNCTION,
       isExported: (_line, name) => !name.startsWith("_"),
       isAsync: (line) => /\basync\b/.test(line),
+    },
+    {
+      pattern: DART_FUNCTION_WRAPPED,
+      isExported: (_line, name) => !name.startsWith("_"),
+      isAsync: (line, lines, i) => dartAsyncAfterParams(lines, i, line),
+      accept: (lines, i) => dartBodyFollows(lines, i, false),
+    },
+    {
+      pattern: DART_NAME_AFTER_TYPE_LINE,
+      isExported: (_line, name) => !name.startsWith("_"),
+      isAsync: (line, lines, i) => dartAsyncAfterParams(lines, i, line),
+      accept: (lines, i) => i > 0 && TYPE_ONLY_LINE.test(lines[i - 1]!) && !/^\s*(?:return|await)\b/.test(lines[i - 1]!) && dartBodyFollows(lines, i, false),
     },
   ],
 

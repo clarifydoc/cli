@@ -104,7 +104,8 @@ function memberAt(
   const close = closeOf(text, open);
   if (close < 0) return null;
   const after = text.slice(close).trimStart();
-  const hasBody = /^(?:async\*?|sync\*?)?\s*(?:\{|=>)/.test(after);
+  // A constructor's initializer list may precede its body: `Bloc({…}) : super(State.initial()) {`.
+  const hasBody = /^(?:async\*?|sync\*?)?\s*(?:\{|=>)/.test(after) || (!!ctor && /^:[^;{]*\{/.test(after));
   // A parameter list that wraps onto later lines (`Future<Response> request(Verb verb,`
   // / `String url, {Body? body}) async {`): the function pattern reads one line.
   const wraps = hasBody && text.slice(open, close).includes("\n");

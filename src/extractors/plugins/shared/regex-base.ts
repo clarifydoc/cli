@@ -10,7 +10,8 @@ import { holdNoiseCall } from "../../shared/call-graph.js";
 export interface FnPattern {
   pattern: RegExp;
   isExported?: (line: string, name: string) => boolean;
-  isAsync?: (line: string) => boolean;
+  /** `lines`/`i` let a signature wrapped over several lines say so after its parameter list. */
+  isAsync?: (line: string, lines?: readonly string[], i?: number) => boolean;
   /**
    * A check on the surrounding lines a one-line pattern cannot make — a
    * signature wrapped over several lines is a definition only when a body,
@@ -328,7 +329,9 @@ export function findEndLine(
   let head = 0;
   for (let i = startIdx; i < lines.length; i++) {
     for (const ch of lines[i]) {
-      if (ch === "{") { depth++; started = true; }
+      // Braces inside the parameter list (Dart's `({required X x})`, a JS `f({ a } = {})`) are the head's.
+      if (!started && head > 0 && (ch === "{" || ch === "}")) head += ch === "{" ? 1 : -1;
+      else if (ch === "{") { depth++; started = true; }
       else if (ch === "}") depth--;
       else if (!started && (ch === "(" || ch === "[")) head++;
       else if (!started && (ch === ")" || ch === "]")) head--;
@@ -398,7 +401,7 @@ export function extractFunctionsWithSpec(lines: string[], spec: RegexLangSpec): 
           name: m[1],
           params: extractParamsFromDeclaration(lines, i, m[1], spec.parseParam),
           returnType: spec.parseReturnType?.(line) ?? null,
-          isAsync: asyncCheck?.(line) ?? false,
+          isAsync: asyncCheck?.(line, lines, i) ?? false,
           isExported: isExported?.(line, m[1]) ?? true,
           decorators: attributeLinesAbove(lines, i, spec),
           calls,
@@ -513,7 +516,7 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
                 name: fm[1],
                 params: extractParamsFromDeclaration(lines, methodStart, fm[1], spec.parseParam),
                 returnType: spec.parseReturnType?.(bodyLine) ?? null,
-                isAsync: asyncCheck?.(bodyLine) ?? false,
+                isAsync: asyncCheck?.(bodyLine, lines, methodStart) ?? false,
                 isExported: isExported?.(bodyLine, fm[1]) ?? true,
                 decorators: attributeLinesAbove(lines, methodStart, spec),
                 calls,
