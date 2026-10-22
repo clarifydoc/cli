@@ -31,3 +31,47 @@ COPY default.conf.template /etc/nginx/templates/`);
     ]);
   });
 });
+
+describe("readProjectConfig — Spring Boot", () => {
+  let dir = "";
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "revdoc-spring-config-"));
+    await mkdir(join(dir, "league", "src", "main", "resources"), { recursive: true });
+    await mkdir(join(dir, "league", "src", "main", "docker"), { recursive: true });
+    await writeFile(join(dir, "league", "src", "main", "resources", "application.yml"), `server:
+  port: 8080
+clubs:
+  service:
+    url: \${CLUBS_URL:http://clubs:8080/api}
+spring:
+  rabbitmq:
+    host: broker
+---
+spring:
+  config:
+    activate:
+      on-profile: test
+clubs:
+  service:
+    url: http://localhost:9999
+`);
+    await writeFile(join(dir, "league", "src", "main", "resources", "application-prod.properties"), "fixtures.base-url=https://fixtures.example.com/v2\nsecret.token=abc\n");
+    await writeFile(join(dir, "league", "src", "main", "docker", "application.yaml"), "stats:\n  url: http://stats:8081\n");
+  });
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("reads application.yml documents, profiles and properties, a placeholder's default as the value", async () => {
+    const { readProjectConfig } = await import("./config-values.js");
+    const { manifestFor } = await import("../extractors/registry.js");
+    const league = { id: "league", root: "league" } as unknown as SubProject;
+    const values = (await readProjectConfig(dir, [league], manifestFor("java")!.serviceConfig!.sources!)).get("league") ?? [];
+    expect(values.map((v) => `${v.key}=${v.value}${v.profile ? ` [${v.profile}${v.test ? ", test" : ""}]` : ""}`).sort()).toEqual([
+      "clubs.service.url=http://clubs:8080/api",
+      "clubs.service.url=http://localhost:9999 [test, test]",
+      "fixtures.base-url=https://fixtures.example.com/v2 [prod]",
+      "stats.url=http://stats:8081",
+    ]);
+  });
+});

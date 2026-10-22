@@ -164,6 +164,15 @@ function isJooqDeleteChain(node: Node, receiver: string): boolean {
 
 /** HTTP-client hints anywhere in the call text, plus Spring REST method names. */
 const HTTP_HINT_RE = /RestTemplate|WebClient|HttpClient|OkHttpClient|Retrofit/;
+/** RestTemplate methods whose first argument is the URL. */
+const REST_TEMPLATE_URL_FIRST = new Set(["exchange", "getForObject", "getForEntity", "postForObject", "postForEntity", "postForLocation", "put", "delete", "patchForObject"]);
+
+/** `exchange(url, HttpMethod.POST, …)`: the verb its second argument names. */
+function exchangeVerb(node: Node): string | null {
+  const second = callArguments(node)[1]?.text ?? "";
+  return /\bHttpMethod\.(GET|POST|PUT|DELETE|PATCH)\b/.exec(second)?.[1] ?? null;
+}
+
 const HTTP_METHODS = new Set([
   "exchange", "getForObject", "getForEntity",
   "postForObject", "postForEntity", "postForLocation",
@@ -179,6 +188,17 @@ const HTTP_SEND_METHODS = new Set(["execute", "enqueue", "send", "sendAsync", "g
  * (`"$baseUrl/api/cars"` → `${baseUrl}/api/cars`), so core splits an unknown
  * leading base off and an absolute host survives as another service.
  */
+/** The URL argument of the `URI.create(x)` / `new URL(x)` an `openConnection()` chain starts from. */
+function findUrlArg(node: Node): Node | null {
+  let cur: Node | null = node.childForFieldName("object");
+  for (let i = 0; cur && i < 4; i++) {
+    if (cur.type === "object_creation_expression" && /^(?:URL|URI)$/.test(simpleTypeName(cur.childForFieldName("type")?.text) ?? "")) return firstJavaArg(cur.childForFieldName("arguments"));
+    if (cur.type === "method_invocation" && cur.childForFieldName("name")?.text === "create" && cur.childForFieldName("object")?.text === "URI") return firstJavaArg(cur.childForFieldName("arguments"));
+    cur = cur.childForFieldName("object");
+  }
+  return null;
+}
+
 function builtRequestUrl(node: Node, call: CallParts): string | null {
   const { method, receiver } = call;
   const builds =
@@ -434,12 +454,24 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   /** The file uses the plain Kafka client (`KafkaConsumer`, `KafkaProducer`). */
   private isKafkaClientFile = false;
   private topicDefaults = new Map<string, string>();
+  /** Fields and parameters `@Value` fills: the configuration key each holds. */
+  private configFields = new Map<string, { key: string; fallback?: string }>();
+
+  /** A request whose URL starts with a field `@Value` fills is based on that configuration key. */
+  protected override ds(info: Parameters<DataSourceExtractor["ds"]>[0]): DataSourceInfo {
+    const out = super.ds(info);
+    const base = out.kind === "api-call" && !out.baseRef ? /^\$\{(?:this\.)?(\w+)\}/.exec(out.target ?? "")?.[1] : undefined;
+    const config = base ? this.configFields.get(base) : undefined;
+    if (config) out.baseRef = { kind: "config", key: config.key, ...(config.fallback && /^https?:\/\//.test(config.fallback) ? { fallback: config.fallback } : {}) };
+    return out;
+  }
 
   override beginFile(tree: Tree): void {
     const prepass = buildFilePrepass(tree.rootNode);
     this.tableAliases = prepass.tableAliases;
     this.stringConsts = prepass.stringConsts;
     this.fieldTypes = prepass.fieldTypes;
+    this.configFields = prepass.configFields;
     const text = tree.rootNode.text;
     this.isFeignFile = text.includes("@FeignClient");
     this.feignBasePath = this.isFeignFile
@@ -768,6 +800,14 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // 6) HTTP client calls. A request URL is read where the request is built
     // — OkHttp `Request.Builder().url("…")`, `HttpRequest.newBuilder(URI.create("…"))`
     // / `.uri(URI.create("…"))` — and its verb from the rest of the chain.
+    // `URI.create(url).toURL().openConnection()` / `new URL(url).openConnection()`: java.net's own client.
+    if (method === "openConnection" && /\.toURL\s*\(\s*\)$|^new\s+URL\s*\(/.test(receiver.trim())) {
+      const inner = /^(?:URI\.create|new\s+URL|new\s+URI)\s*\(([\s\S]*)\)(?:\.toURL\s*\(\s*\))?$/.exec(receiver.trim());
+      const argNode = inner ? findUrlArg(node) : null;
+      const url = argNode ? urlExpression(argNode, node, 0) : null;
+      sources.push(this.ds({ kind: "api-call", name: "GET", target: url && /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/.test(url) ? url : null, line }));
+      return;
+    }
     const built = builtRequestUrl(node, call);
     if (built) {
       sources.push(this.ds({ kind: "api-call", name: requestChainVerb(node, call.receiver), target: built, line }));
@@ -779,7 +819,11 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // sends only at the end of a request chain (`webClient.get().uri(…).exchange()`).
     const accessor = (method === "exchange" || method === "retrieve") && callArguments(node).length === 0 && !/\.uri\s*\(|\.(?:get|post|put|patch|delete|method)\s*\(/.test(receiver) && !HTTP_HINT_RE.test(receiver);
     if ((HTTP_METHODS.has(method) && !accessor) || (HTTP_SEND_METHODS.has(method) && HTTP_HINT_RE.test(receiver))) {
-      sources.push(this.ds({ kind: "api-call", name: method, target: null, line }));
+      // RestTemplate's URL is its first argument: `getForObject(clubsUrl + "/api/clubs/" + id, Club.class)`.
+      const url = REST_TEMPLATE_URL_FIRST.has(method) && call.firstArg ? urlExpression(call.firstArg, node, 0) : null;
+      const target = url && /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/.test(url) ? url : null;
+      const verb = /^(get|post|put|delete|patch)For/.exec(method)?.[1]?.toUpperCase() ?? (method === "exchange" ? exchangeVerb(node) : null);
+      sources.push(this.ds({ kind: "api-call", name: target && verb ? verb : method, target, line }));
       return;
     }
 
@@ -1225,11 +1269,19 @@ function buildFilePrepass(root: Node): {
   tableAliases: Map<string, string>;
   fieldTypes: Map<string, string>;
   stringConsts: Map<string, string>;
+  configFields: Map<string, { key: string; fallback?: string }>;
 } {
   const tableAliases = new Map<string, string>();
   const fieldTypes = new Map<string, string>();
   const stringConsts = new Map<string, string>();
   const ctorStrings = new Map<string, string[]>();
+  const configFields = new Map<string, { key: string; fallback?: string }>();
+  /** `@Value("${clubs.url:http://clubs}") String clubsUrl` — the configuration key a field or parameter holds. */
+  const configOf = (decl: Node, name: string | null | undefined): void => {
+    if (!name) return;
+    const m = /@(?:\w+:)?Value\s*\(\s*(?:value\s*=\s*)?"\\?\$\{([^}:]+)(?::([^}]*))?\}"/.exec(decl.text);
+    if (m && !configFields.has(name)) configFields.set(name, { key: m[1]!.trim(), ...(m[2] ? { fallback: m[2] } : {}) });
+  };
   const putType = (name: string | null | undefined, rawType: string | null | undefined): void => {
     const type = simpleTypeName(rawType);
     if (name && type && !fieldTypes.has(name)) fieldTypes.set(name, type);
@@ -1257,6 +1309,7 @@ function buildFilePrepass(root: Node): {
           const text = value ? stringArgText(value) : null;
           const name = c.childForFieldName("name")?.text;
           if (text && name && rawType === "String") stringConsts.set(name, text);
+          configOf(n, name);
         }
       }
     } else if (n.type === "assignment_expression" && n.parent?.type === "expression_statement" && insideConstructor(n)) {
@@ -1270,7 +1323,12 @@ function buildFilePrepass(root: Node): {
       // Kotlin primary-constructor `val x: Type`.
       const { name, type } = kotlinNameAndType(n);
       putType(name, type);
+      configOf(n, name);
+    } else if (n.type === "formal_parameter") {
+      // `X(@Value("${clubs.url}") String clubsUrl)`: assigned to the field of that name, as a rule.
+      configOf(n, n.childForFieldName("name")?.text);
     }
+    if (n.type === "property_declaration") configOf(n, kotlinNameAndType(n).name);
     if (nameNode && initNode) {
       const table = resolveTableExpr(initNode, tableAliases);
       if (table) tableAliases.set(nameNode.text, table);
@@ -1287,7 +1345,7 @@ function buildFilePrepass(root: Node): {
     if (tables.size === 1) stringConsts.set(name, read[0]!);
     else if (texts.length === 1) stringConsts.set(name, texts[0]!);
   }
-  return { tableAliases, fieldTypes, stringConsts };
+  return { tableAliases, fieldTypes, stringConsts, configFields };
 }
 
 /** The node sits in a Java constructor's body. */
