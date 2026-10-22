@@ -25,7 +25,7 @@ export function sveltePreprocess(
   return {
     // Full source with non-script blanked out, so extracted line/column numbers
     // are absolute to the .svelte file (not relative to a sliced-out script).
-    sourceText: blankExceptScripts(rawSource),
+    sourceText: withAwaitedExpressions(rawSource, blankExceptScripts(rawSource)),
     language: sfc.scriptLang,
     embedded: true,
     postExtract(analysis) {
@@ -57,4 +57,44 @@ export function sveltePreprocess(
       }
     },
   };
+}
+
+/**
+ * A template's `{#await getAlbum({ id })}` runs its expression when the
+ * component renders: kept in the parsed text at its own place, as a top-level
+ * statement (`getAlbum({ id });`), so its calls are the component's `<setup>`
+ * calls like those of its script. The block syntax around it is blanked.
+ */
+function withAwaitedExpressions(raw: string, blanked: string): string {
+  if (!raw.includes("{#await")) return blanked;
+  let out = blanked;
+  for (const m of raw.matchAll(/\{#await\s+/g)) {
+    const start = m.index!;
+    // Only in the template: the blanked text is blank there.
+    if (blanked[start] !== " " && blanked[start] !== "\n") continue;
+    const exprStart = start + m[0].length;
+    let depth = 0;
+    let end = -1;
+    for (let i = exprStart; i < raw.length; i++) {
+      const ch = raw[i]!;
+      if (ch === '"' || ch === "'" || ch === "`") {
+        for (i++; i < raw.length && raw[i] !== ch; i++) if (raw[i] === "\\") i++;
+        continue;
+      }
+      if (ch === "(" || ch === "[" || ch === "{") depth++;
+      else if (ch === ")" || ch === "]") depth--;
+      else if (ch === "}") {
+        if (depth === 0) { end = i; break; }
+        depth--;
+      }
+    }
+    if (end < 0) continue;
+    // `{#await promise then value}` / `{#await promise catch e}`: the promise only.
+    const tail = /\s(?:then|catch)\b[^]*$/.exec(raw.slice(exprStart, end));
+    const exprEnd = tail ? exprStart + tail.index : end;
+    const expr = raw.slice(exprStart, exprEnd);
+    if (!expr.trim() || expr.includes("\n\n")) continue;
+    out = out.slice(0, exprStart) + expr + ";" + out.slice(exprEnd + 1);
+  }
+  return out;
 }
