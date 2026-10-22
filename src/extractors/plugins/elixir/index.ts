@@ -52,10 +52,17 @@ export function extractElixirImports(lines: string[]): ImportInfo[] {
 // `Repo.`, and the project's other repos: `ClickhouseRepo.`, `Plausible.IngestRepo.`.
 const ECTO_REPO_RE = /\b(?:[A-Z]\w*\.)*\w*Repo\.(all|get|get!|get_by|get_by!|one|one!|exists\?|aggregate|delete_all|update_all|preload)\s*\(\s*([A-Z][\w.]*)/g;
 // `from(x in Schema, …)`, and a schemaless query over a table named as a string: `from(e in "events_v2", …)`.
-const ECTO_FROM_RE = /\bfrom\s*\(?\s*\w+\s+in\s+(?:([A-Z][\w.]*)|"([a-z_][\w]*)")/g;
+// A query built by a function (`from(e in Base.events_query(site))`) names the table it is handed, if any.
+const ECTO_FROM_RE = /\bfrom\s*\(?\s*\w+\s+in\s+(?:([A-Z][\w.]*)(\s*\(\s*"([a-z_]\w*)")?|"([a-z_][\w]*)")/g;
+/** A `from(` whose binding (`x in Schema`) is on the next line, as `mix format` wraps it. */
+const ECTO_FROM_OPEN_RE = /\bfrom\s*\(\s*$/;
 
-/** `Repo.insert(cs)`, `|> Repo.update!()`, `Repo.delete(%Site{…})`, `Repo.insert_all(Event, rows)`. */
-const ECTO_WRITE_RE = /\b\w*Repo\.(insert_all|insert_or_update!?|insert!?|update!?|delete!?)\s*\(\s*([^,)\n]*)/g;
+/** `Repo.insert(cs)`, `|> Repo.update!()`, `Repo.delete(%Site{…})`, `Repo.insert_all(Event, rows)`, a project's audited `Repo.insert_with_audit!(…)`. */
+const ECTO_WRITE_RE = /\b\w*Repo\.(insert_all|insert_or_update!?|(?:insert|update|delete)_with_audit!?|insert!?|update!?|delete!?)\s*\(\s*([^,)\n]*)/g;
+/** A schema piped into a read or a bulk write: `Club |> Repo.get!(id)`, `|> Repo.delete_all()`. */
+const ECTO_PIPED_RE = /\|>\s*(?:[A-Z]\w*\.)*\w*Repo\.(get!?|get_by!?|one!?|all|exists\?|aggregate|delete_all|update_all)\s*\(/;
+/** A bulk write whose query starts on the next line: `Repo.delete_all(\n from(…`. */
+const ECTO_BULK_OPEN_RE = /\b\w*Repo\.(delete_all|update_all)\s*\(\s*$/;
 /** A read handed a query variable: `Repo.all(query)`, `|> Repo.one()`. */
 // The first argument: a variable (`Repo.all(query)`), or nothing / options (`|> Repo.all(query: q)`).
 const ECTO_VAR_READ_RE = /\b\w*Repo\.(all|one!?|exists\?|aggregate|stream)\s*\(\s*(?:([a-z_]\w*)\s*[,)]|[a-z_]\w*:|\))/g;
@@ -77,12 +84,35 @@ function extractElixirDataSources(lines: string[]): DataSourceInfo[] {
     if (!trimmed || trimmed.startsWith("#")) continue;
     const ln = i + 1;
     for (const m of line.matchAll(ECTO_REPO_RE)) {
+      // `Repo.one(Sites.guests_query(site))`: a function building the query — a read of no named schema.
+      if (!/^[A-Z]/.test(lastSeg(m[2]))) {
+        out.push({ kind: "database", name: `Repo.${m[1]}`, target: null, calls: [], line: ln, access: "read" });
+        continue;
+      }
       const entity = lastSeg(m[2]);
       out.push({ kind: "database", name: `Repo.${m[1]}`, target: entity, calls: [], line: ln, entity, access: m[1]!.endsWith("_all") && m[1] !== "all" ? "write" : "read" });
     }
-    for (const m of line.matchAll(ECTO_FROM_RE)) {
-      const entity = m[1] ? lastSeg(m[1]) : m[2]!;
-      out.push({ kind: "database", name: `from(${m[1] ?? `"${m[2]}"`})`, target: entity, calls: [], line: ln, entity });
+    // A query a bulk write wraps from the next line on is that write's.
+    const bulk = i > 0 ? ECTO_BULK_OPEN_RE.exec(lines[i - 1] ?? "") ?? (i > 1 && ECTO_FROM_OPEN_RE.test(lines[i - 1] ?? "") ? ECTO_BULK_OPEN_RE.exec(lines[i - 2] ?? "") : null) : null;
+    const fromRow = (m: RegExpMatchArray, at: number) => {
+      // A schema is a module; `Base.events_query(…)` is a function building a query, over the table it is handed.
+      const call = m[1] && (!/^[A-Z]/.test(lastSeg(m[1])) || m[2] !== undefined);
+      const entity = call ? m[3] ?? null : m[1] ? lastSeg(m[1]) : m[4]!;
+      if (!entity) return;
+      out.push({ kind: "database", name: `from(${call ? `"${entity}"` : m[1] ?? `"${m[4]}"`})`, target: entity, calls: [], line: at, entity, ...(bulk ? { access: "write" as const } : {}) });
+    };
+    for (const m of line.matchAll(ECTO_FROM_RE)) fromRow(m, ln);
+    if (ECTO_FROM_OPEN_RE.test(line)) {
+      const next = (lines[i + 1] ?? "").replace(/^\s*/, "from(");
+      for (const m of next.matchAll(ECTO_FROM_RE)) fromRow(m, ln);
+    }
+    const piped = ECTO_PIPED_RE.exec(line);
+    if (piped) {
+      const subject = pipedSchema(lines, i);
+      if (subject) {
+        out.push({ kind: "database", name: `Repo.${piped[1]}`, target: subject, calls: [], line: ln, entity: subject, access: /_all$/.test(piped[1]!) ? "write" : "read" });
+        continue;
+      }
     }
     for (const m of line.matchAll(ECTO_WRITE_RE)) {
       const entity = writeEntity(m[1]!, m[2]!.trim(), lines, i);
@@ -96,6 +126,24 @@ function extractElixirDataSources(lines: string[]): DataSourceInfo[] {
     }
   }
   return out;
+}
+
+/** The module a pipeline starts from (`Club\n |> where(…)\n |> Repo.all()`, `Club |> Repo.get!(id)`), or null. */
+function pipedSchema(lines: string[], i: number): string | null {
+  const head = (text: string): string | null => {
+    const m = /^\s*(?:[a-z_]\w*\s*=\s*)?([A-Z][\w.]*)\s*(?:\|>|$)/.exec(text);
+    return m && /^[A-Z]/.test(lastSeg(m[1]!)) ? lastSeg(m[1]!) : null;
+  };
+  if (!/^\s*\|>/.test(lines[i] ?? "")) {
+    // `def by_name(n), do: Club |> Repo.get_by(name: n)`: the module the line's pipeline starts from.
+    const own = /(?:^|[\s(=,]|do:)\s*([A-Z][\w.]*)\s*\|>/.exec(lines[i] ?? "");
+    return own && /^[A-Z]/.test(lastSeg(own[1]!)) ? lastSeg(own[1]!) : null;
+  }
+  for (let j = i - 1; j >= 0 && i - j <= 8; j--) {
+    if (/^\s*\|>/.test(lines[j] ?? "")) continue;
+    return head(lines[j] ?? "");
+  }
+  return null;
 }
 
 /** The schema a write touches: `insert_all`'s module, a `%Schema{}` / `Schema.changeset(` in the statement or the pipeline feeding it. */
