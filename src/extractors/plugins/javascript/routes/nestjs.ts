@@ -231,13 +231,15 @@ function decoratorRun(dec: Node): { decorators: Node[]; method: Node | null } {
   let at = siblings.findIndex((s) => s.id === dec.id);
   if (at < 0) return { decorators: [dec], method: null };
   // Walk back to the start of the run, then forward to the method.
+  // A comment inside the run (between two decorators, or before the method) belongs to it.
   let start = at;
-  while (start > 0 && siblings[start - 1]!.type === "decorator") start--;
+  while (start > 0 && (siblings[start - 1]!.type === "decorator" || siblings[start - 1]!.type === "comment")) start--;
   const decorators: Node[] = [];
   let method: Node | null = null;
   for (let i = start; i < siblings.length; i++) {
     const s = siblings[i]!;
     if (s.type === "decorator") decorators.push(s);
+    else if (s.type === "comment") continue;
     else {
       if (s.type === "method_definition") method = s;
       break;

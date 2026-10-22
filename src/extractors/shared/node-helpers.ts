@@ -131,7 +131,8 @@ export function extractJsDecorators(node: Node): string[] {
     if (sibling.type === "decorator") {
       const expr = sibling.child(1);
       decorators.push(expr?.text ?? sibling.text.replace(/^@/, ""));
-    } else if (sibling.isNamed) {
+    } else if (sibling.isNamed && sibling.type !== "comment") {
+      // (A comment inside the run — `// legacy index` between two decorators — is part of it.)
       // A decorator run belongs to the member right after it; passing another
       // member (not a `;`/`,` token) starts a new run.
       decorators.length = 0;

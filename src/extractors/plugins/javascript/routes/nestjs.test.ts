@@ -139,3 +139,15 @@ describe("NestJS routes — params", () => {
     expect(routes[1]!.params).toEqual([{ name: "id", type: "string", binding: "route", inferred: true }]);
   });
 });
+
+describe("a comment inside a decorator run", () => {
+  it("still gives the route its handler (real-repo FP: a TODO before the method left handler null)", async () => {
+    const routes = await routesOf(`@Controller('libraries') export class LibraryController {
+  @Post(':id/validate')
+  @Authenticated({ admin: true })
+  // TODO: should be a GET
+  validate(@Param('id') id: string) {}
+}`);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`)).toEqual(["POST /libraries/:id/validate validate"]);
+  });
+});
