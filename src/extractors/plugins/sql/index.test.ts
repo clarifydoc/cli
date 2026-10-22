@@ -69,3 +69,10 @@ EXECUTE STATEMENT :sql;`);
     expect(out.map((r) => [r.name, r.target, r.routine])).toEqual([["EXEC", "TEAM_STANDINGS", true]]);
   });
 });
+
+describe("SQL CREATE TABLE", () => {
+  it("reads a table whose name stands on the line after CREATE TABLE (real-repo FP)", () => {
+    const classes = sqlSpec.extractClasses!("CREATE TABLE\nkit_colour (\n    id serial PRIMARY KEY,\n    name text\n);\n".split("\n"), []);
+    expect(classes.map((c) => `${c.name} ${c.properties.map((p) => p.name).join(",")}`)).toEqual(["kit_colour id,name"]);
+  });
+});

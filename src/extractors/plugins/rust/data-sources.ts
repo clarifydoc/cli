@@ -110,8 +110,8 @@ function dieselWrite(lines: string[], i: number, at: number): string | undefined
   while (j >= 0 && !lines[j]!.trim()) j--;
   return j >= 0 ? DIESEL_WRITE_RE.exec(lines[j]!)?.[1] : undefined;
 }
-/** reqwest: `client.get("url")` / `reqwest::get("url")`. */
-const REQWEST_RE = /\b(?:\w*client|reqwest)(?:::|\.)\s*(get|post|put|patch|delete|head)\s*\(\s*(?:"([^"]+)")?/i;
+/** reqwest: `client.get("url")` / `reqwest::get("url")` / `context.client().get(url)`. */
+const REQWEST_RE = /\b(?:\w*client(?:\s*\(\s*\))?|reqwest)(?:::|\.)\s*(get|post|put|patch|delete|head)\s*\(\s*(?:"([^"]+)")?/i;
 const ENV_RE = /\benv::var(?:_os)?\s*\(\s*"([^"]+)"/;
 /** lapin (AMQP): channel.basic_publish(exchange, routing_key, ...) / basic_consume(queue, ...). */
 const AMQP_PUB_RE = /\.\s*basic_publish\s*\(\s*(?:"([^"]*)")?/;
@@ -123,7 +123,7 @@ function chainedClientCall(lines: string[], i: number): RegExpMatchArray | null 
   if (!m) return null;
   let j = i - 1;
   while (j >= 0 && !lines[j]!.trim()) j--;
-  return j >= 0 && /\b\w*client\s*$/i.test(lines[j]!) ? m : null;
+  return j >= 0 && /\b\w*client(?:\s*\(\s*\))?\s*$/i.test(lines[j]!) ? m : null;
 }
 
 /**
@@ -211,7 +211,7 @@ export function extractRustDataSources(lines: string[]): DataSourceInfo[] {
 
     const req = line.match(REQWEST_RE) ?? chainedClientCall(lines, i);
     if (req) {
-      const target = req[2] ?? urlOfLocal(lines, i, /\(\s*([a-z_]\w*)\s*[),]/.exec(line.slice(req.index ?? 0))?.[1]);
+      const target = req[2] ?? urlOfLocal(lines, i, /\(\s*&?([a-z_]\w*)\s*[),]/.exec(line.slice(req.index ?? 0))?.[1]);
       sources.push({ kind: "api-call", name: req[1]!.toUpperCase(), target, calls: [], line: lineNo });
       continue;
     }

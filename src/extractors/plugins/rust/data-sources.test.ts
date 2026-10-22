@@ -26,6 +26,26 @@ describe("Rust HTTP calls", () => {
   });
 });
 
+describe("Rust HTTP calls through a client getter", () => {
+  it("read `ctx.client().get(url)` and a chain whose client getter ends the line above (real-repo FP)", () => {
+    const src = `async fn fetch_fixtures(context: &Context) -> Result<()> {
+    let fixtures_url = "https://league.example.com/fixtures";
+    let res = context.client().get(fixtures_url).send().await?;
+    let purge_url = format!("{}/purge", "https://garage.example.com");
+    context
+      .garage_client()
+      .post(&purge_url)
+      .send()
+      .await?;
+}`;
+    const calls = extractRustDataSources(src.split("\n")).filter((d) => d.kind === "api-call");
+    expect(calls.map((c) => `${c.name} ${c.target} @${c.line}`)).toEqual([
+      "GET https://league.example.com/fixtures @3",
+      "POST https://garage.example.com/purge @7",
+    ]);
+  });
+});
+
 describe("Rust Diesel tables", () => {
   it("read a table a dsl import names, and mark inserts, updates and deletes as writes (real-repo FP)", () => {
     const src = `use league_schema::{

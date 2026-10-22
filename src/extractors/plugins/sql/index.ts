@@ -118,7 +118,14 @@ function extractSqlClasses(lines: string[], _fns: FunctionInfo[]): ClassInfo[] {
     if (/^\s*(--|#)/.test(line)) continue;
 
     // CREATE [GLOBAL TEMPORARY|TEMP|UNLOGGED] TABLE [IF NOT EXISTS] schema.name (
-    const tableMatch = line.match(
+    // — the name may stand on the next line (`CREATE TABLE⏎clubs (`).
+    let head = line;
+    if (/^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:GLOBAL\s+TEMPORARY\s+|TEMPORARY\s+|TEMP\s+|UNLOGGED\s+)?TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s*$/i.test(line)) {
+      let k = i + 1;
+      while (k < lines.length && !lines[k]!.trim()) k++;
+      if (k < lines.length) head = line.trimEnd() + " " + lines[k]!.trim();
+    }
+    const tableMatch = head.match(
       /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:GLOBAL\s+TEMPORARY\s+|TEMPORARY\s+|TEMP\s+|UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))/i,
     );
     if (tableMatch) {
