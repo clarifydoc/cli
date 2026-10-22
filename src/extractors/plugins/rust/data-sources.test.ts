@@ -25,3 +25,46 @@ describe("Rust HTTP calls", () => {
     ]);
   });
 });
+
+describe("Rust Diesel tables", () => {
+  it("read a table a dsl import names, and mark inserts, updates and deletes as writes (real-repo FP)", () => {
+    const src = `use league_schema::{
+  schema::{
+    club::dsl::club,
+    club_badge::dsl::{club_id, club_badge},
+  },
+};
+
+impl Crud for Club {
+  async fn create(pool: &mut DbPool<'_>, form: &ClubForm) -> Result<Self> {
+    insert_into(club)
+      .values(form)
+      .get_result::<Self>(conn)
+  }
+  async fn update(pool: &mut DbPool<'_>, id: ClubId, form: &ClubForm) -> Result<Self> {
+    diesel::update(club.find(id)).set(form).get_result::<Self>(conn)
+  }
+  async fn drop_badges(pool: &mut DbPool<'_>, id: ClubId) -> Result<usize> {
+    diesel::delete(club_badge.filter(club_id.eq(id))).execute(conn)
+  }
+  async fn badges(pool: &mut DbPool<'_>, id: ClubId) -> Result<Vec<Badge>> {
+    let badges = club_badge.filter(club_id.eq(id)).load(conn);
+    badges
+  }
+  async fn release(pool: &mut DbPool<'_>, id: PlayerId) -> Result<usize> {
+    delete(
+      player::table.filter(player::id.eq(id)),
+    )
+    .execute(conn)
+  }
+}`;
+    const rows = extractRustDataSources(src.split("\n")).filter((d) => d.kind === "database");
+    expect(rows.map((r) => `${r.name} ${r.target} ${r.access} @${r.line}`)).toEqual([
+      "diesel: insert_into club write @10",
+      "diesel: update club write @15",
+      "diesel: delete club_badge write @18",
+      "diesel club_badge read @21",
+      "diesel: delete player write @26",
+    ]);
+  });
+});

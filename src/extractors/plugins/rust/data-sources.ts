@@ -22,6 +22,42 @@ export function normalizeRawStrings(text: string): string {
 
 /** Diesel: `users::table` — the module IS the table. */
 const DIESEL_TABLE_RE = /\b([a-z][a-z0-9_]*)::table\b/;
+/** `schema::users::dsl::users`, `…::dsl::{id, users}`, `…::dsl::*` inside a `use`. */
+const DIESEL_DSL_RE = /\b([a-z][a-z0-9_]*)::dsl::(\*|\{[^}]*\}|[a-z]\w*(?:\s+as\s+\w+)?)/g;
+/** A statement that writes the table its argument names. */
+const DIESEL_WRITE_RE = /\b(insert_into|replace_into|update|delete)\s*\(\s*$/;
+
+/**
+ * The names a file's `use` statements bind to a Diesel table through its `dsl`
+ * module: `use schema::match_report::dsl::{id, match_report}` binds
+ * `match_report`; `dsl::*` binds the table's own name. Columns are not tables.
+ */
+function dieselDslTables(lines: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const text = lines.join("\n");
+  for (const use of text.matchAll(/^\s*(?:pub(?:\([^)]*\))?\s+)?use\b[^;]*;/gm)) {
+    for (const m of use[0].matchAll(DIESEL_DSL_RE)) {
+      const table = m[1]!;
+      const items = m[2] === "*" ? [table] : m[2]!.replace(/[{}]/g, "").split(",");
+      for (const item of items) {
+        const [name, alias] = item.trim().split(/\s+as\s+/);
+        if (name === table) out.set(alias ?? name, table);
+      }
+    }
+  }
+  return out;
+}
+
+/** Whether the table named at `at` on line `i` is what an `insert_into(`/`update(`/`delete(` writes. */
+function dieselWrite(lines: string[], i: number, at: number): string | undefined {
+  const before = lines[i]!.slice(0, at);
+  const own = DIESEL_WRITE_RE.exec(before);
+  if (own) return own[1];
+  if (before.trim()) return undefined;
+  let j = i - 1;
+  while (j >= 0 && !lines[j]!.trim()) j--;
+  return j >= 0 ? DIESEL_WRITE_RE.exec(lines[j]!)?.[1] : undefined;
+}
 /** reqwest: `client.get("url")` / `reqwest::get("url")`. */
 const REQWEST_RE = /\b(?:\w*client|reqwest)(?:::|\.)\s*(get|post|put|patch|delete|head)\s*\(\s*(?:"([^"]+)")?/i;
 const ENV_RE = /\benv::var(?:_os)?\s*\(\s*"([^"]+)"/;
@@ -91,19 +127,30 @@ function splitTopLevel(text: string): string[] {
 export function extractRustDataSources(lines: string[]): DataSourceInfo[] {
   const normLines = normalizeRawStrings(lines.join("\n")).split("\n");
   const sources: DataSourceInfo[] = extractSqlStringDataSources(normLines);
+  const dslTables = dieselDslTables(lines);
+  const dslRe = dslTables.size
+    ? new RegExp(`(?<![\\w:.])(${[...dslTables.keys()].join("|")})\\b(?!\\s*(?:::|:[^:]|=[^=>]|!))`)
+    : null;
 
+  let inUse = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     if (/^\s*\/\//.test(line)) continue;
     const lineNo = i + 1;
+    const declaration = inUse || /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:use|fn|struct|mod)\b/.test(line);
+    if (/^\s*(?:pub(?:\([^)]*\))?\s+)?use\b/.test(line)) inUse = true;
+    if (inUse && line.includes(";")) inUse = false;
 
-    const diesel = line.match(DIESEL_TABLE_RE);
+    const diesel = line.match(DIESEL_TABLE_RE) ?? (declaration ? null : line.match(dslRe ?? /$^/));
     if (diesel) {
+      const table = dslTables.get(diesel[1]!) ?? diesel[1]!;
+      const write = dieselWrite(lines, i, diesel.index ?? 0);
       sources.push({
         kind: "database",
-        name: "diesel",
-        target: diesel[1]!,
-        entity: diesel[1]!,
+        name: write ? `diesel: ${write}` : "diesel",
+        target: table,
+        entity: table,
+        access: write ? "write" : "read",
         calls: [],
         line: lineNo,
       });
