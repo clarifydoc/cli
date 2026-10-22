@@ -1501,7 +1501,10 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         const kyselyArg = fnName && KYSELY_TABLE_VERBS.has(fnName) ? literalString(node.childForFieldName("arguments")?.namedChildren[0] ?? null) : null;
         const kyselyMatch = kyselyArg ? /^([A-Za-z_]\w*(?:\.\w+)*)(?:\s+as\s+\w+)?$/.exec(kyselyArg) : null;
         // A common table expression the query defines (`.with('today', (qb) => …).selectFrom('today')`) is no table.
-        const kysely = kyselyMatch && !(this.kyselyCtes ??= new Set([...this.sourceText.matchAll(/\.with(?:Recursive)?\s*\(\s*['"`](\w+)/g)].map((m) => m[1]!))).has(kyselyMatch[1]!) ? kyselyMatch : null;
+        // Only read: an insert, update or delete names a table even where a CTE shares its name
+        // (`.with('club', (db) => db.insertInto('club')…)`).
+        const cteRead = fnName === "selectFrom" && kyselyMatch && (this.kyselyCtes ??= new Set([...this.sourceText.matchAll(/\.with(?:Recursive)?\s*\(\s*['"`](\w+)/g)].map((m) => m[1]!))).has(kyselyMatch[1]!);
+        const kysely = kyselyMatch && !cteRead ? kyselyMatch : null;
         // Raw SQL to a driver: `pool.query("SELECT … FROM todos")`. The
         // statement names the table, whatever the receiver is called.
         const rawSql = !emittedApiCall && fnName && RAW_SQL_VERBS.has(fnName)
@@ -1567,6 +1570,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           ormChain &&
           isOrmCall(ormChain) &&
           !(fnName === "find" && firstArgIsFunction(node)) &&
+          // A later link of a Kysely chain (`.values(…)`, `.returningAll()`) is the clause verb's access, already read.
+          !/\.(?:selectFrom|insertInto|updateTable|deleteFrom|replaceInto|mergeInto)\s*\(/.test(ormChain) &&
           this.hasOrmEvidence(ormChain)
         ) {
           const access = fnName ? ormAccessKind(fnName) : undefined;

@@ -67,6 +67,24 @@ export async function squad(club: Club) {
   });
 });
 
+describe("Kysely common table expressions", () => {
+  it("an insert names its table even where a CTE shares the name; a later link of the chain adds nothing", async () => {
+    const rows = await dbOf(`import { Kysely, sql } from 'kysely';
+export class ClubRepository {
+  constructor(private db: Kysely<DB>) {}
+  async create(club: Insertable<ClubTable>) {
+    return this.db
+      .with('club', (db) => db.insertInto('club').values(club).returningAll())
+      .with('club_user', (db) => db.insertInto('club_user').expression((eb) => eb.selectFrom('club').select(({ ref }) => [ref('club.id').as('clubId')])).returningAll())
+      .selectFrom('club')
+      .selectAll()
+      .executeTakeFirstOrThrow();
+  }
+}`);
+    expect(rows.map((d) => `${d.target} ${d.access} @${d.line}`)).toEqual(["club write @6", "club_user write @7"]);
+  });
+});
+
 describe("JS calls that are no request of their own", () => {
   it("skips supertest's request(app) wrapper and a data: URL, keeping the chained verb", async () => {
     const SRC = `import request from "supertest";
