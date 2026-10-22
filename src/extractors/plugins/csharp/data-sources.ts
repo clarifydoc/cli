@@ -230,10 +230,11 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
    * Same-file methods that only return a path built from strings
    * (`string GetTrainingPath(Guid id) => $"{GetBasePath(id)}/trainings";`,
    * `{ return $"{_basePath}/{_v3}/institution/{id}"; }`): name → the returned
-   * expression. A client composes its URLs from them, so the call site names
-   * the helper, never the path.
+   * expression (the last `return` of a block body) with the parameters it is
+   * handed. A client composes its URLs from them, so the call site names the
+   * helper, never the path.
    */
-  private pathHelpers = new Map<string, string>();
+  private pathHelpers = new Map<string, PathHelper>();
 
   /**
    * Names declared as a `DbSet<T>` (field, property, parameter or local) →
@@ -298,9 +299,19 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       if (!this.constStrings.has(m[1]!)) this.constStrings.set(m[1]!, m[2]!);
     }
     this.pathHelpers = new Map();
-    for (const m of sourceText.matchAll(/\bstring\s+(\w+)\s*\([^()]*\)\s*(?:=>\s*((?:[^;{}]|\{[^{}]*\})+);|\{\s*return\s+((?:[^;{}]|\{[^{}]*\})+);\s*\})/g)) {
-      const expr = (m[2] ?? m[3] ?? "").trim();
-      if (expr.includes('"') && !this.pathHelpers.has(m[1]!)) this.pathHelpers.set(m[1]!, expr);
+    if (/\bstring\??\s+\w+\s*\(/.test(sourceText)) {
+      for (const m of tree.rootNode.descendantsOfType(["method_declaration", "local_function_statement"])) {
+        if (!m || !/^string\??$/.test((m.childForFieldName("returns") ?? m.childForFieldName("type"))?.text ?? "")) continue;
+        const name = m.childForFieldName("name")?.text;
+        const body = m.childForFieldName("body") ?? m.namedChildren.find((c) => c.type === "arrow_expression_clause");
+        const returned = body?.type === "arrow_expression_clause"
+          ? body.namedChildren[0]
+          : body?.type === "block" ? body.namedChildren.filter((c) => c.type === "return_statement").at(-1)?.namedChildren[0] : undefined;
+        if (!name || !returned?.text.includes('"') || this.pathHelpers.has(name)) continue;
+        const params = (m.childForFieldName("parameters")?.namedChildren ?? [])
+          .filter((p) => p.type === "parameter").map((p) => p.childForFieldName("name")?.text ?? "");
+        this.pathHelpers.set(name, { params, expr: returned.text, line: returned.startPosition.row + 1 });
+      }
     }
     this.stringLocals = [];
     // Each initializer as written (`$"api/v1/x"`, `GetPath(id) + "/x"`); `evalUri` reads it.
@@ -331,9 +342,9 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
    * Resolve an HttpClient call's URI argument: a string/interpolated literal
    * directly, or an identifier via the nearest preceding string local.
    */
-  private resolveHttpUri(node: Node): string | null {
+  private resolveHttpUri(node: Node, index = 0): string | null {
     const callLine = node.startPosition.row + 1;
-    const first = argumentNodes(node)[0]?.text.trim().replace(NAMED_ARG_RE, "").trim();
+    const first = argumentNodes(node)[index]?.text.trim().replace(NAMED_ARG_RE, "").trim();
     const evaluated = first ? this.evalUri(first, callLine, 0) : null;
     const direct = evaluated ? null : extractFirstStringArg(node);
     const uri = evaluated ?? (direct ? this.substituteConsts(direct) : null);
@@ -388,21 +399,25 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
    * or string local. A piece it cannot state becomes a `{hole}`; an expression
    * that is nothing but such a piece states no URI (null).
    */
-  private evalUri(expr: string, line: number, depth: number): string | null {
+  private evalUri(expr: string, line: number, depth: number, bound?: Map<string, string>): string | null {
     if (depth > 4) return null;
     const pieces = splitConcat(expr);
     if (!pieces) return null;
     let out = "";
     let stated = false;
     for (const raw of pieces) {
-      const p = raw.trim();
-      const lit = /^[@$]*"((?:[^"\\]|\\.)*)"$/.exec(p);
-      const helper = /^(\w+)\s*\([^()]*\)$/.exec(p);
-      if (lit) {
-        out += this.fillHoles(lit[1]!, line, depth);
+      // `$"…?{qs}".TrimEnd('&', '?')`: a trim or case change leaves the path as written.
+      const p = raw.trim().replace(/(?:\.(?:Trim(?:End|Start)?|ToLower(?:Invariant)?|ToUpper(?:Invariant)?)\([^()]*\))+$/, "");
+      const lit = stringLiteralBody(p);
+      const helper = /^(\w+)\s*\(([^()]*)\)$/.exec(p);
+      if (lit !== null) {
+        out += this.fillHoles(lit, line, depth, bound);
         stated = true;
+      } else if (/^\w+$/.test(p) && bound?.has(p)) {
+        out += bound.get(p)!;
+        stated ||= !bound.get(p)!.startsWith("{");
       } else if (helper && this.pathHelpers.has(helper[1]!)) {
-        const v = this.evalUri(this.pathHelpers.get(helper[1]!)!, line, depth + 1);
+        const v = this.callHelper(helper[1]!, helper[2]!, line, depth, bound);
         if (v === null) return null;
         out += v;
         stated = true;
@@ -422,16 +437,40 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   }
 
   /** Resolve the `{…}` holes of an interpolated template that name a const or a path helper. */
-  private fillHoles(template: string, line: number, depth: number): string {
-    return template.replace(/\{([^{}]+)\}/g, (whole, hole: string) => {
+  private fillHoles(template: string, line: number, depth: number, bound?: Map<string, string>): string {
+    return template.replace(/\{((?:[^{}"]|"[^"]*")+)\}/g, (whole, hole: string) => {
       const name = hole.split(":")[0]!.trim();
+      if (bound?.has(name)) return bound.get(name)!;
       if (this.constStrings.has(name)) return this.fillHoles(this.constStrings.get(name)!, line, depth + 1);
-      const helper = /^(\w+)\s*\([^()]*\)$/.exec(name);
+      const helper = /^(\w+)\s*\(([^()]*)\)$/.exec(name);
       if (helper && this.pathHelpers.has(helper[1]!) && depth < 4) {
-        return this.evalUri(this.pathHelpers.get(helper[1]!)!, line, depth + 1) ?? whole;
+        return this.callHelper(helper[1]!, helper[2]!, line, depth, bound) ?? whole;
+      }
+      // `$"{uri}&api-version=2.0"`: a string local that states a URI is that URI.
+      if (/^\w+$/.test(name) && !bound && depth < 4) {
+        const local = this.nearestLocal(name, line);
+        const v = local !== null ? this.evalUri(local, line, depth + 1) : null;
+        if (v !== null) return v;
       }
       return whole;
     });
+  }
+
+  /**
+   * A path helper's returned expression, each parameter bound to what the call
+   * site hands it (`GetItemsUri(baseUrl, page)` → `baseUrl`'s value, `{page}`);
+   * the helper's own locals are read where it returns.
+   */
+  private callHelper(name: string, argText: string, line: number, depth: number, bound?: Map<string, string>): string | null {
+    const helper = this.pathHelpers.get(name)!;
+    const args = argText.trim() ? argText.split(",").map((a) => a.trim()) : [];
+    const binding = new Map<string, string>();
+    helper.params.forEach((param, i) => {
+      const arg = args[i];
+      const v = arg === undefined ? null : /^\w+$/.test(arg) && bound?.has(arg) ? bound.get(arg)! : this.evalUri(arg, line, depth + 1, bound);
+      binding.set(param, v ?? `{${arg !== undefined && /^\w+$/.test(arg) ? arg : param}}`);
+    });
+    return this.evalUri(helper.expr, helper.line, depth + 1, binding);
   }
 
   /**
@@ -975,10 +1014,14 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         const client = csharpCallClient(node, root);
         const reads = /^(?:Get|Send)/.test(method) ? csharpResponseReads(node) : undefined;
         const body = /^(?:Post|Put|Patch)AsJsonAsync$/.test(method) ? csharpJsonBody(node) : null;
+        // `SendAsync(request)` sends what the request message was built with.
+        const request = method === "SendAsync" ? requestMessageOf(argumentNodes(node)[0] ?? null) : null;
+        const verb = request ? requestVerb(request) : null;
+        const target = request ? this.resolveHttpUri(request, 1) : this.resolveHttpUri(node);
         sources.push(this.ds({
           kind: "api-call",
-          name: method,
-          target: this.resolveHttpUri(node),
+          name: verb ? `${verb} ${target ?? method}` : method,
+          target,
           line: node.startPosition.row + 1,
           ...(client ? { baseRef: client } : {}),
           ...(reads ? { responseReads: reads } : {}),
@@ -1288,20 +1331,49 @@ function messageTypes(arg: Node | null): string[] {
     return [];
   };
   if (expr.type !== "identifier") return created(expr);
-  const member = enclosingMember(expr);
+  return [...new Set(assignedValues(expr).flatMap(created))];
+}
+
+/** What the enclosing member initializes or assigns a local to, each declaration and assignment. */
+function assignedValues(id: Node): Node[] {
+  const member = enclosingMember(id);
   if (!member) return [];
-  const out = new Set<string>();
+  const out: Node[] = [];
   for (const d of member.descendantsOfType(["variable_declarator", "assignment_expression"])) {
     if (!d) continue;
     if (d.type === "variable_declarator") {
-      if ((d.childForFieldName("name") ?? d.namedChildren[0])?.text !== expr.text) continue;
+      if ((d.childForFieldName("name") ?? d.namedChildren[0])?.text !== id.text) continue;
       const init = d.namedChildren[d.namedChildren.length - 1] ?? null;
-      for (const t of created(init?.type === "equals_value_clause" ? init.namedChildren[0] ?? null : init)) out.add(t);
-    } else if (d.childForFieldName("left")?.text === expr.text) {
-      for (const t of created(d.childForFieldName("right"))) out.add(t);
+      const value = init?.type === "equals_value_clause" ? init.namedChildren[0] ?? null : init;
+      if (value && value.id !== d.namedChildren[0]?.id) out.push(value);
+    } else if (d.childForFieldName("left")?.text === id.text) {
+      const right = d.childForFieldName("right");
+      if (right) out.push(right);
     }
   }
-  return [...out];
+  return out;
+}
+
+/**
+ * The `new HttpRequestMessage(HttpMethod.Post, url)` a `SendAsync` argument is,
+ * directly or through the one local it is built into.
+ */
+function requestMessageOf(arg: Node | null): Node | null {
+  const expr = arg?.namedChildren[arg.namedChildren.length - 1] ?? null;
+  const isRequest = (n: Node | null | undefined): boolean =>
+    n?.type === "object_creation_expression" && /(?:^|\.)HttpRequestMessage$/.test(n.childForFieldName("type")?.text ?? "");
+  if (!expr) return null;
+  if (isRequest(expr)) return expr;
+  if (expr.type !== "identifier") return null;
+  const built = assignedValues(expr).filter(isRequest);
+  return built.length === 1 ? built[0]! : null;
+}
+
+/** The verb a request message is built with: `HttpMethod.Post`, `new HttpMethod("PATCH")`. */
+function requestVerb(request: Node): string | null {
+  const first = argumentNodes(request)[0]?.text.trim() ?? "";
+  const m = /^(?:System\.Net\.Http\.)?HttpMethod\.(\w+)$/.exec(first) ?? /^new\s+HttpMethod\(\s*"(\w+)"\s*\)$/.exec(first);
+  return m ? m[1]!.toUpperCase() : null;
 }
 
 /**
@@ -1318,6 +1390,36 @@ function mqMessageEntity(args: Node[]): string | null {
     const rk = t.match(/^([A-Za-z_][\w.]*)\.RoutingKey$/);
     if (rk) return rk[1]!.split(".").pop()!;
     if (/^[@$]*"[\w.\-:*#]+"$/.test(t)) return t.replace(/^[@$]*"|"$/g, "");
+  }
+  return null;
+}
+
+/** A same-file method returning a URL (`pathHelpers`). */
+interface PathHelper {
+  params: string[];
+  expr: string;
+  line: number;
+}
+
+/**
+ * The body of a string literal as written — plain, verbatim, interpolated, its
+ * holes free to hold quoted strings (`$"x?ids={string.Join("&ids=", ids)}"`);
+ * null when the text is not exactly one literal.
+ */
+function stringLiteralBody(text: string): string | null {
+  const open = /^[@$]*"/.exec(text);
+  if (!open) return null;
+  let holes = 0;
+  for (let j = open[0].length; j < text.length; j++) {
+    const ch = text[j];
+    if (ch === "\\" && !open[0].includes("@")) j++;
+    else if (ch === "{") holes++;
+    else if (ch === "}") holes--;
+    else if (ch === '"' && holes > 0) {
+      const close = text.indexOf('"', j + 1);
+      if (close < 0) return null;
+      j = close;
+    } else if (ch === '"') return j === text.length - 1 ? text.slice(open[0].length, j) : null;
   }
   return null;
 }

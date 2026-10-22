@@ -148,6 +148,40 @@ public class PlanClient {
       null,
     ]);
   });
+
+  it("binds a helper's parameters, reads quoted holes, trims, a URL local in a hole and a built request message", async () => {
+    const src = `namespace X;
+public class ClubClient(HttpClient httpClient) {
+  private readonly string baseUrl = "api/league/";
+  public async Task M(int page, int[] ids, Guid requestId) {
+    var uri = GetClubsUri(baseUrl, page);
+    await httpClient.GetFromJsonAsync<ClubPage>(uri);
+    await httpClient.GetFromJsonAsync<ClubPage>($"{uri}&api-version=2.0");
+    var byIds = $"{baseUrl}clubs/by?ids={string.Join("&ids=", ids)}";
+    await httpClient.GetFromJsonAsync<Club[]>(byIds);
+    var facets = $"{baseUrl}clubs/facets?{filterQs}".TrimEnd('&', '?');
+    await httpClient.GetFromJsonAsync<Facets>(facets);
+    var request = new HttpRequestMessage(HttpMethod.Post, baseUrl + "transfers");
+    request.Headers.Add("x-requestid", requestId.ToString());
+    await httpClient.SendAsync(request);
+  }
+  private static string GetClubsUri(string root, int pageIndex)
+  {
+    string filterQs = string.Empty;
+    return $"{root}clubs?{filterQs}pageIndex={pageIndex}";
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as any, "ClubClient.cs");
+    const calls = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call");
+    expect(calls.map((c) => `${c.name} -> ${c.target}`)).toEqual([
+      // The helper's own query local is a runtime part; the linker drops the query.
+      "GetFromJsonAsync -> api/league/clubs?${this.filterQs}pageIndex={page}",
+      "GetFromJsonAsync -> api/league/clubs?${this.filterQs}pageIndex={page}&api-version=2.0",
+      'GetFromJsonAsync -> api/league/clubs/by?ids={string.Join("&ids=", ids)}',
+      "GetFromJsonAsync -> api/league/clubs/facets?${this.filterQs}",
+      "POST api/league/transfers -> api/league/transfers",
+    ]);
+  });
 });
 
 async function ioSourcesOf(body: string): Promise<DataSourceInfo[]> {
