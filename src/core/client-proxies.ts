@@ -1,6 +1,7 @@
 import type { ClassInfo, DataSourceInfo, FileAnalysis, FunctionInfo } from "../types/analysis.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { SELF_HEADS, isConstructor } from "./typed-receivers.js";
+import { resolveImportSource } from "./import-index.js";
 
 type ApiCall = DataSourceInfo & { filePath: string };
 
@@ -50,6 +51,30 @@ export function clientProxyCalls(
     const cands = bySimple.get(t.split(".").pop()!);
     return cands?.size === 1 ? [...cands][0]! : null;
   };
+  const moduleTypes = (f: FileAnalysis | undefined) => f?.functions.find((fn) => fn.name === "<setup>")?.localTypes ?? [];
+  const knownFiles = new Set(byPath.keys());
+  /**
+   * The module that holds what `file` exports as `name`, and its own name there — through
+   * `export { defaultLeagueClient as leagueClient }` and barrels (`export * from "./client"`).
+   * Two barrels leading to different modules decide nothing.
+   */
+  const holderOf = (file: string, name: string, depth: number, seen: Set<string>): { file: FileAnalysis; local: string } | null => {
+    const f = byPath.get(file);
+    if (!f || depth > 5 || seen.has(file)) return null;
+    seen.add(file);
+    const local = f.exports.find((e) => e.name === name && !e.source)?.sourceName ?? name;
+    if (moduleTypes(f).some((l) => l.name === local || l.name.startsWith(local + "."))) return { file: f, local };
+    let found: { file: FileAnalysis; local: string } | null = null;
+    for (const e of f.exports) {
+      if (e.kind !== "re-export" || !e.source || (e.name !== name && e.name !== "*")) continue;
+      const target = resolveImportSource(file, e.source, knownFiles);
+      const hit = target ? holderOf(target, e.name === "*" ? name : e.sourceName ?? name, depth + 1, seen) : null;
+      if (!hit) continue;
+      if (found && found.file !== hit.file) return null;
+      found = hit;
+    }
+    return found;
+  };
   const out: ApiCall[] = [];
   for (const a of analyses) {
     const imported = new Map<string, string>();
@@ -72,9 +97,10 @@ export function clientProxyCalls(
         const parts = call.name.split(".");
         if (parts.length < 2) continue;
         let receiver = parts.slice(0, -1);
-        if (receiver.length === 2 && SELF_HEADS.has(receiver[0]!)) receiver = receiver.slice(1);
-        if (receiver.length !== 1 || !/^[A-Za-z_$][\w$]*$/.test(receiver[0]!)) continue;
-        const type = scope.get(receiver[0]!);
+        if (receiver.length >= 2 && SELF_HEADS.has(receiver[0]!)) receiver = receiver.slice(1);
+        // `api.content.clubs.listClubs()`: a path into a module-level client object (`<setup>`'s `api.content.clubs`).
+        if (receiver.length > 4 || !receiver.every((r) => /^[A-Za-z_$][\w$]*$/.test(r))) continue;
+        const type = scope.get(receiver.join("."));
         if (!type) continue;
         const method = parts[parts.length - 1]!;
         if (!/^[A-Za-z_$][\w$]*$/.test(method)) continue;
@@ -122,7 +148,6 @@ export function clientProxyCalls(
     // a module it imports exports (`export const clubsApi = new ClubsApi(cfg)`) — are in
     // scope in every function of the file.
     const moduleScope = new Map<string, string>();
-    const moduleTypes = (f: FileAnalysis | undefined) => f?.functions.find((fn) => fn.name === "<setup>")?.localTypes ?? [];
     for (const l of moduleTypes(a)) {
       const t = proxyOf(l.type);
       if (t) moduleScope.set(l.name, t);
@@ -132,9 +157,13 @@ export function clientProxyCalls(
         for (const spec of imp.specifiers ?? []) {
           if (moduleScope.has(spec)) continue;
           const from = localFor(a.filePath, spec);
-          const l = from ? moduleTypes(byPath.get(from)).find((x) => x.name === spec) : undefined;
-          const t = l ? proxyOfIn(byPath.get(from!)!, l.type) : null;
-          if (t) moduleScope.set(spec, t);
+          const held = from ? holderOf(from, spec, 0, new Set()) : null;
+          if (!held) continue;
+          for (const l of moduleTypes(held.file)) {
+            if (l.name !== held.local && !l.name.startsWith(held.local + ".")) continue;
+            const t = proxyOfIn(held.file, l.type);
+            if (t) moduleScope.set(spec + l.name.slice(held.local.length), t);
+          }
         }
       }
     }

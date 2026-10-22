@@ -319,7 +319,74 @@ function declaredLocal(
  */
 export function topLevelLocalTypes(tree: Tree, sourceText: string): LocalType[] {
   const ctx: ScanContext = { jsdoc: JSDOC_TAG_RE.test(sourceText), tokenTypes: collectInjectionTokenTypes(tree.rootNode, sourceText), dispatchProps: new Map(), moduleStrings: new Map() };
-  return scanBody(tree.rootNode, new Set(), ctx).localTypes;
+  const locals = scanBody(tree.rootNode, new Set(), ctx).localTypes;
+  return sourceText.includes("new ") ? [...locals, ...objectPathTypes(tree.rootNode)] : locals;
+}
+
+/**
+ * The instances a module-level object holds, by their path — an API client
+ * grouped by area and returned by a factory in the same module:
+ *
+ *   function createLeagueClient(http) {
+ *     return { content: { clubs: new ClubsApi(undefined, base, http) } };
+ *   }
+ *   const leagueClient = createLeagueClient(axios);   // leagueClient.content.clubs: ClubsApi
+ *
+ * (also a plain `const leagueClient = { … }`), so a call on
+ * `leagueClient.content.clubs` states its receiver's type.
+ */
+function objectPathTypes(root: Node): LocalType[] {
+  const declOf = (st: Node): Node => (st.type === "export_statement" ? st.namedChildren.find((c) => c.type !== "comment") ?? st : st);
+  const objectOf = (n: Node | null): Node | null => {
+    if (!n) return null;
+    if (n.type === "object") return n;
+    if (n.type === "parenthesized_expression") return objectOf(n.namedChild(0));
+    if (n.type === "statement_block") {
+      const ret = n.namedChildren.filter((c) => c.type === "return_statement");
+      return ret.length === 1 ? objectOf(ret[0]!.namedChild(0)) : null;
+    }
+    return null;
+  };
+  const factories = new Map<string, Node>();
+  const values: Array<{ name: string; value: Node }> = [];
+  for (const st of root.namedChildren) {
+    const decl = declOf(st);
+    if (decl.type === "function_declaration") {
+      const name = decl.childForFieldName("name")?.text;
+      const obj = objectOf(decl.childForFieldName("body"));
+      if (name && obj) factories.set(name, obj);
+    } else if (decl.type === "lexical_declaration" || decl.type === "variable_declaration") {
+      for (const d of decl.namedChildren) {
+        if (d.type !== "variable_declarator") continue;
+        const name = d.childForFieldName("name");
+        const value = d.childForFieldName("value");
+        if (name?.type !== "identifier" || !value) continue;
+        if (value.type === "arrow_function" || value.type === "function_expression") {
+          const obj = objectOf(value.childForFieldName("body"));
+          if (obj) factories.set(name.text, obj);
+        } else values.push({ name: name.text, value });
+      }
+    }
+  }
+  const out: LocalType[] = [];
+  const collect = (prefix: string, obj: Node, depth: number): void => {
+    for (const pair of obj.namedChildren) {
+      if (pair.type !== "pair") continue;
+      const key = pair.childForFieldName("key")?.text.replace(/^['"]|['"]$/g, "");
+      const value = pair.childForFieldName("value");
+      if (!key || !/^[A-Za-z_$][\w$]*$/.test(key) || !value) continue;
+      if (value.type === "new_expression") {
+        const type = value.childForFieldName("constructor")?.text;
+        if (type && /^[A-Z][\w$]*(?:\.[A-Z][\w$]*)*$/.test(type)) out.push({ name: `${prefix}.${key}`, type });
+      } else if (value.type === "object" && depth < 4) collect(`${prefix}.${key}`, value, depth + 1);
+    }
+  };
+  for (const { name, value } of values) {
+    const call = value.type === "call_expression" ? value.childForFieldName("function") : null;
+    const obj = value.type === "object" ? value : call?.type === "identifier" ? factories.get(call.text) : undefined;
+    if (obj) collect(name, obj, 1);
+  }
+  return out;
 }
 
 /**

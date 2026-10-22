@@ -134,3 +134,27 @@ export default defineConfig({ resolve: { alias: aliases } });`);
   });
 });
 
+
+describe("tsconfig aliases into a workspace package's build output", () => {
+  let root: string;
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), "revdoc-tsconfig-dist-"));
+    await mkdir(join(root, "ui/packages/club-client/entry"), { recursive: true });
+    await writeFile(join(root, "ui/packages/club-client/package.json"), JSON.stringify({ name: "@league/club-client", main: "./dist/index.js" }));
+    await writeFile(join(root, "ui/packages/club-client/entry/index.ts"), "export const clubApiClient = {};");
+    // A `src/index` the generator writes, and the bundler's entry that also re-exports it: the entry is the package.
+    await mkdir(join(root, "ui/packages/club-client/src"), { recursive: true });
+    await writeFile(join(root, "ui/packages/club-client/src/index.ts"), "export * from './api';");
+    await writeFile(join(root, "ui/packages/club-client/vite.config.ts"), 'export default { pack: { entry: ["./entry/index.ts"], format: "esm" } };');
+    await writeFile(join(root, "ui/tsconfig.json"), JSON.stringify({ compilerOptions: { paths: { "@league/club-client": ["./packages/club-client/dist/index"] } } }));
+    clearTsconfigAliasCache();
+  });
+  afterAll(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("names the module the build starts from when the tree holds no dist/ (real-repo FP)", () => {
+    const aliases = loadTsconfigAliasesForDir(join(root, "ui"));
+    expect(applyAliases("@league/club-client", aliases, root)).toBe("ui/packages/club-client/entry/index");
+  });
+});

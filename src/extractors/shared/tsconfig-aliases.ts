@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from "fs";
-import { dirname, resolve, sep, posix } from "path";
+import { dirname, join, resolve, sep, posix } from "path";
 import { stripJsonc } from "../plugins/shared/jsonc.js";
 import { bundlerConfigsIn, readBundlerAliases } from "./bundler-aliases.js";
 
@@ -214,7 +214,7 @@ export function applyAliases(
     if (prefix === BASE_URL_KEY) continue;
     if (importSource === prefix || importSource.startsWith(prefix + "/")) {
       const rest = importSource.slice(prefix.length).replace(/^\/+/, "");
-      const abs = resolve(base, rest);
+      const abs = sourceOfBuilt(resolve(base, rest));
       const rel = posix.relative(toPosix(resolve(projectRoot)), toPosix(abs));
       // Don't escape the project root — if rel starts with .., leave the original.
       if (rel.startsWith("..")) return importSource;
@@ -232,6 +232,36 @@ export function applyAliases(
     }
   }
   return importSource;
+}
+
+/**
+ * An alias into a workspace package's build output (`packages/club-client/dist/index`), which the
+ * tree does not hold: the source module the build starts from — the same path under `src/` or
+ * `entry/`, or beside `package.json`. The path itself when it exists or no source is found.
+ */
+function sourceOfBuilt(abs: string): string {
+  const built = /^(.*)[\\/](?:dist|build|lib|out)[\\/](.+)$/.exec(abs);
+  if (!built || BASE_URL_EXTENSIONS.some((ext) => existsSync(abs + ext)) || !existsSync(join(built[1]!, "package.json"))) return abs;
+  const rest = built[2]!.replace(/\.(?:d\.ts|m?js|cjs)$/, "");
+  // The main bundle: the one entry the package's bundler config names (`entry: ["./entry/index.ts"]`).
+  if (rest === "index") {
+    for (const name of ["vite.config", "tsdown.config", "tsup.config"]) {
+      for (const ext of [".ts", ".mts", ".js", ".mjs"]) {
+        const config = join(built[1]!, name + ext);
+        if (!existsSync(config)) continue;
+        let text = "";
+        try { text = readFileSync(config, "utf-8"); } catch { /* unreadable config: no entry */ }
+        const entries = [...text.matchAll(/\bentry\s*:\s*\[?\s*["'`]([^"'`]+)["'`]\s*\]?/g)].map((m) => m[1]!);
+        const entry = entries.length > 0 && entries.every((e) => e === entries[0]) ? join(built[1]!, entries[0]!) : null;
+        if (entry && existsSync(entry)) return entry.replace(/\.(?:tsx?|m?jsx?)$/, "");
+      }
+    }
+  }
+  for (const dir of ["src", "entry", ""]) {
+    const cand = join(built[1]!, dir, rest);
+    if (BASE_URL_EXTENSIONS.some((ext) => existsSync(cand + ext))) return cand;
+  }
+  return abs;
 }
 
 /** The alias-map key carrying a tsconfig's `baseUrl` directory. */

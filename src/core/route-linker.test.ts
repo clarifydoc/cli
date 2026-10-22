@@ -867,6 +867,19 @@ describe("linkApiCallsToRoutes — a call through a client proxy", () => {
     const other = { ...declared, contract: { type: "com.other.PersonRepository", method: "getPerson" } };
     expect(linkApiCallsToRoutes([proxyCall()], [other])[0]?.matchedVia).not.toBe("contract");
   });
+
+  it("lands on the code route implementing the spec operation it joined (real-repo FP)", () => {
+    const isContract = (r: { filePath: string }) => r.filePath.endsWith(".json");
+    const spec = { ...route("api-docs/openapi.json", "GET", "/apis/league/v1/clubs/{name}", "getClub", 4702), contract: { type: "ClubV1Api", method: "getClub" } };
+    const code = route("app/ClubEndpoint.java", "GET", "/apis/league/v1/clubs/{name}", "getClub", 80);
+    const call = { ...apiCall("ui/ClubPage.vue", "ClubV1Api.getClub", null as unknown as string, 30), contract: { type: "ClubV1Api", method: "getClub" } };
+    const [link] = linkApiCallsToRoutes([call], [spec, code], { isContract, contractTwins: pairContractTwins([spec, code], [], isContract) });
+    expect(link).toMatchObject({ target: "app/ClubEndpoint.java", targetLine: 80, matchedVia: "contract", confidence: "EXTRACTED" });
+    // The generator's spelling of an operationId (`ListClubs`, `list_clubs` → `listClubs`) is the same operation.
+    const listed = { ...route("api-docs/openapi.json", "GET", "/apis/league/v1/clubs", "ListClubs", 4800), contract: { type: "ClubV1Api", method: "ListClubs" } };
+    const listCall = { ...call, contract: { type: "ClubV1Api", method: "listClubs" } };
+    expect(linkApiCallsToRoutes([listCall], [listed])[0]).toMatchObject({ routePath: "/apis/league/v1/clubs", matchedVia: "contract" });
+  });
 });
 
 describe("linkApiCallsToRoutes — a runtime segment where the route has a version", () => {
