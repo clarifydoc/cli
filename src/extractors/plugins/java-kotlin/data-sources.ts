@@ -682,9 +682,10 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       // `createNamedQuery` row inside the chain carries it, with its entity.
       if (/^(?:getResultList|getSingleResult|list|uniqueResult)$/.test(method) &&
         /\.create(?:Named|Native|SQL)?Query\s*\(|\.getNamedQuery\s*\(|\.createCriteria\s*\(/.test(receiver)) return;
-      // A query held in a constant of the file (`session.createSQLQuery(EXISTS)`).
+      // A query held in a constant of the file (`session.createSQLQuery(EXISTS)`), or written at the call.
       const constant = call.firstArg && /^(?:this\.)?\w+$/.test(call.firstArg.text)
-        ? this.stringConsts.get(call.firstArg.text.replace(/^this\./, "")) ?? null : null;
+        ? this.stringConsts.get(call.firstArg.text.replace(/^this\./, "")) ?? null
+        : call.firstArg ? stringArgText(call.firstArg) : null;
       const fromConstant = constant ? constantQueryTarget(constant) : null;
       const entity = jpaEntityArg(node)
         ?? fromConstant?.entity
@@ -723,6 +724,18 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     if (MQ_TEMPLATE_PUBLISH.has(method) && MQ_TEMPLATE_RECEIVER_RE.test(receiver)) {
       sources.push(this.ds({
         kind: "queue-publish",
+        name: `MQ: ${method}`,
+        target: destinationLabel(call.firstArg),
+        line,
+      }));
+      return;
+    }
+
+    // 5a) The plain RabbitMQ client: `channel.basicPublish(exchange, routingKey, props, body)`
+    // publishes to the exchange; `channel.basicConsume(queue, …, consumer)` consumes the queue.
+    if ((method === "basicPublish" || method === "basicConsume") && this.isAmqpChannel(node, receiver)) {
+      sources.push(this.ds({
+        kind: method === "basicPublish" ? "queue-publish" : "queue-consume",
         name: `MQ: ${method}`,
         target: destinationLabel(call.firstArg),
         line,
@@ -779,7 +792,17 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   }
 
   /** A JDBC/JPA handle by its last segment, unless it is named or declared as a service-layer object. */
+  /** A RabbitMQ `Channel`: declared as one, or named so. */
+  private isAmqpChannel(node: Node, receiver: string): boolean {
+    const leaf = receiverLeaf(receiver);
+    const declared = /^\w+$/.test(leaf) ? (localDeclaredType(node, leaf) ?? this.fieldTypes.get(leaf) ?? null) : null;
+    return declared ? /^(?:\w+\.)*Channel$/.test(declared) : /channel$/i.test(leaf);
+  }
+
   private isJdbcReceiver(node: Node, receiver: string): boolean {
+    // `new JdbcTemplate(dataSource).queryForObject(…)`: a handle built in place.
+    const built = /^new\s+([\w.]+)\s*[(<]/.exec(receiver.trim())?.[1]?.split(".").pop();
+    if (built) return JDBC_RECEIVER_RE.test(built) && !NON_DB_SESSION_RE.test(built);
     const leaf = receiverLeaf(receiver);
     const declared = /^\w+$/.test(leaf) ? (localDeclaredType(node, leaf) ?? this.fieldTypes.get(leaf) ?? null) : null;
     // A handle declared as one (`private JdbcTemplate template`) is one whatever it is called.
@@ -1206,6 +1229,7 @@ function buildFilePrepass(root: Node): {
   const tableAliases = new Map<string, string>();
   const fieldTypes = new Map<string, string>();
   const stringConsts = new Map<string, string>();
+  const ctorStrings = new Map<string, string[]>();
   const putType = (name: string | null | undefined, rawType: string | null | undefined): void => {
     const type = simpleTypeName(rawType);
     if (name && type && !fieldTypes.has(name)) fieldTypes.set(name, type);
@@ -1235,6 +1259,13 @@ function buildFilePrepass(root: Node): {
           if (text && name && rawType === "String") stringConsts.set(name, text);
         }
       }
+    } else if (n.type === "assignment_expression" && n.parent?.type === "expression_statement" && insideConstructor(n)) {
+      // `this.select = "SELECT … FROM outbox LIMIT " + batchSize;` in a constructor: the field's query.
+      const left = n.childForFieldName("left");
+      const name = left?.type === "field_access" && left.childForFieldName("object")?.type === "this" ? left.childForFieldName("field")?.text : left?.type === "identifier" ? left.text : null;
+      const value = n.childForFieldName("right");
+      const text = value ? stringArgText(value) : null;
+      if (name && text && fieldTypes.get(name) === "String") (ctorStrings.get(name) ?? ctorStrings.set(name, []).get(name)!).push(text);
     } else if (n.type === "class_parameter") {
       // Kotlin primary-constructor `val x: Type`.
       const { name, type } = kotlinNameAndType(n);
@@ -1247,7 +1278,25 @@ function buildFilePrepass(root: Node): {
     for (const c of n.children) visit(c);
   };
   visit(root);
+  // A field the constructor sets from a string is as good as a constant — set per
+  // database dialect in branches, as long as every query it can hold names one table.
+  for (const [name, texts] of ctorStrings) {
+    if (stringConsts.has(name)) continue;
+    const read = texts.filter((x) => constantQueryTarget(x));
+    const tables = new Set(read.map((x) => constantQueryTarget(x)!.entity.toLowerCase()));
+    if (tables.size === 1) stringConsts.set(name, read[0]!);
+    else if (texts.length === 1) stringConsts.set(name, texts[0]!);
+  }
   return { tableAliases, fieldTypes, stringConsts };
+}
+
+/** The node sits in a Java constructor's body. */
+function insideConstructor(n: Node): boolean {
+  for (let p = n.parent; p; p = p.parent) {
+    if (p.type === "constructor_declaration") return true;
+    if (p.type === "method_declaration" || p.type === "class_body" || p.type === "lambda_expression") return false;
+  }
+  return false;
 }
 
 /** The expression node following the `=` of a Kotlin `property_declaration`. */

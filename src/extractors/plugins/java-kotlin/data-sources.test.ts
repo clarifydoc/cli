@@ -521,3 +521,33 @@ describe("exchange() as an accessor", () => {
     expect(ds.filter((d) => d.kind === "api-call").map((d) => d.name)).toEqual(["exchange", "retrieve"]);
   });
 });
+
+describe("an outbox relay: SQL in constructor-set fields, a built JdbcTemplate, the plain RabbitMQ client", () => {
+  it("reads each access's table and the publish's exchange (real-repo FP: the service's input and output both missing)", async () => {
+    const src = `package x;
+class TransferOutbox {
+  private final NamedParameterJdbcTemplate deleteTemplate;
+  private final JdbcTemplate jdbcTemplate;
+  private final String select;
+  private final String delete;
+  private final Channel channel;
+
+  TransferOutbox(JdbcTemplate jdbcTemplate, int batchSize) {
+    this.jdbcTemplate = jdbcTemplate;
+    this.deleteTemplate = new NamedParameterJdbcTemplate(jdbcTemplate);
+    select = "SELECT id, exchange, body FROM transfer_outbox ORDER BY id ASC LIMIT " + batchSize;
+    this.delete = "DELETE FROM transfer_outbox WHERE id IN (:ids)";
+  }
+
+  List<Transfer> next() { return jdbcTemplate.query(select, mapper); }
+  void remove(List<Long> ids) { deleteTemplate.update(delete, Map.of("ids", ids)); }
+  long probe(DataSource ds) { return new JdbcTemplate(ds).queryForObject("SELECT count(*) FROM transfer_outbox WHERE id = 0", Long.class); }
+  void publish(Transfer t) throws IOException { channel.basicPublish("league.transfers", t.routingKey(), null, t.body()); }
+}`;
+    const tree = await parseSource(src, "java" as any, "TransferOutbox.java");
+    const ds = new JavaKotlinDataSourceExtractor().extract(tree, src);
+    const db = ds.filter((d) => d.kind === "database").map((d) => `${d.name} ${d.entity ?? d.target}`);
+    expect(db).toEqual(expect.arrayContaining(["query transfer_outbox", "update transfer_outbox", "queryForObject transfer_outbox"]));
+    expect(ds.filter((d) => d.kind === "queue-publish").map((d) => `${d.name} ${d.target}`)).toEqual(["MQ: basicPublish league.transfers"]);
+  });
+});
