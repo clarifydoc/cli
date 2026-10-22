@@ -258,7 +258,7 @@ end.`;
     const routes: RouteInfo[] = [];
     extractPascalRoutes(tree.rootNode, routes, code);
     expect(routes).toHaveLength(1);
-    expect(routes[0]).toMatchObject({ httpMethod: "PUT", path: "/All" });
+    expect(routes[0]).toMatchObject({ httpMethod: "POST", path: "/datasnap/rest/TServerMethods1/All" });
   });
 
   it("stays silent for plain VCL units (no phantom PUT /All per Update*)", async () => {

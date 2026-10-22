@@ -92,14 +92,14 @@ describe("pascal routes — RAD Server attributes", () => {
   it("builds the path from [ResourceName] + [ResourceSuffix] and the verb from the name prefix or [EndpointMethod]", async () => {
     const routes = await routesOf(UNIT);
     expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
-      "GET /GetLegacy -> TPlayerController.acceptGetLegacy",
       "GET /players -> TPlayerController.GetPlayers",
       "GET /players/{id} -> TPlayerController.GetPlayerByID",
       "POST /players -> TPlayerController.PostPlayer",
       "PUT /players/{id}/avatar -> TPlayerController.UploadAvatar",
     ]);
-    // `Helper` carries no attribute and no verb prefix: not an endpoint.
-    expect(routes.some((r) => r.handler?.endsWith("Helper"))).toBe(false);
+    // `Helper` carries no attribute and no verb prefix, and a RAD Server class is no DataSnap
+    // server class (`acceptGetLegacy`): neither is an endpoint.
+    expect(routes.some((r) => r.handler?.endsWith("Helper") || r.handler?.endsWith("acceptGetLegacy"))).toBe(false);
   });
 
   it("marks the injected context/request/response as services and reads the body's request access", async () => {
@@ -123,7 +123,7 @@ describe("pascal routes — RAD Server attributes", () => {
     ]);
   });
 
-  it("keeps the DataSnap accept/update/cancel convention for classes without attributes", async () => {
+  it("serves every DataSnap server method under /datasnap/rest/<Class>/, its verb by the accept/update/cancel prefix", async () => {
     const code = `unit ServerMethods;
 interface
 uses Datasnap.DSServer;
@@ -132,16 +132,32 @@ type
   public
     function UpdateAll(Value: string): string;
   end;
+{$METHODINFO ON}
+  TLeagueMethods = class(TComponent)
+  public
+    function EchoClub(Value: string): string;
+    procedure CancelFixture(const Id: Integer);
+  end;
+{$METHODINFO OFF}
 implementation
 function TServerMethods1.UpdateAll(Value: string): string;
 begin
   Result := Value;
 end;
+function TLeagueMethods.EchoClub(Value: string): string;
+begin
+  Result := Value;
+end;
+procedure TLeagueMethods.CancelFixture(const Id: Integer);
+begin
+end;
 end.`;
     const routes = await routesOf(code);
-    expect(routes).toHaveLength(1);
-    expect(routes[0]).toMatchObject({ httpMethod: "PUT", path: "/All", handler: "TServerMethods1.UpdateAll" });
-    expect(routes[0]!.params).toBeUndefined();
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
+      "POST /datasnap/rest/TServerMethods1/All -> TServerMethods1.UpdateAll",
+      "GET /datasnap/rest/TLeagueMethods/EchoClub/{Value} -> TLeagueMethods.EchoClub",
+      "DELETE /datasnap/rest/TLeagueMethods/Fixture/{Id} -> TLeagueMethods.CancelFixture",
+    ]);
     expect(routes[0]!.auth).toBeUndefined();
   });
 });

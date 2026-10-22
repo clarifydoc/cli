@@ -5,11 +5,34 @@ import { applyRouteMeta, pathParamNames } from "../../shared/route-metadata.js";
 import type { RouteExtractor } from "../../routes/base.js";
 
 /** Delphi DataSnap method prefixes that map to HTTP methods */
+/** DataSnap REST: a server method's verb by its name prefix (the rest are GET), the prefix dropped from the path. */
 const DELPHI_METHOD_PREFIXES: Record<string, string> = {
-  accept: "GET",
-  update: "PUT",
+  accept: "PUT",
+  update: "POST",
   cancel: "DELETE",
 };
+
+/**
+ * The DataSnap server-method classes a unit declares: under `{$METHODINFO ON}`, or
+ * deriving from `TDSServerModule`. Each public method is a REST endpoint.
+ */
+function dataSnapClasses(sourceText: string): Set<string> {
+  const out = new Set<string>();
+  for (const region of sourceText.matchAll(/\{\$METHODINFO\s+ON\}([\s\S]*?)(?:\{\$METHODINFO\s+OFF\}|\bimplementation\b)/gi)) {
+    for (const m of region[1]!.matchAll(/\b(\w+)\s*=\s*class\b/gi)) out.add(m[1]!);
+  }
+  for (const m of sourceText.matchAll(/\b(\w+)\s*=\s*class\s*\(\s*TDSServerModule\w*\s*\)/gi)) out.add(m[1]!);
+  return out;
+}
+
+/** The parameter names a routine declares (`(const Id: Integer; Name, Club: string)` → Id, Name, Club). */
+function routineParams(declText: string): string[] {
+  const list = /\(([^)]*)\)/.exec(declText)?.[1] ?? "";
+  return list.split(";").flatMap((group) => {
+    const names = group.split(":")[0]!.replace(/^\s*(?:const|var|out|constref)\s+/i, "");
+    return names.split(",").map((n) => n.trim()).filter((n) => /^\w+$/.test(n));
+  });
+}
 
 /** RAD Server (EMS) endpoint-method prefixes: `GetUsers`, `PostUser`, `PutItem`, `DeleteUser`. */
 const RAD_SERVER_PREFIXES: Record<string, string> = {
@@ -187,13 +210,14 @@ function radServerVerb(methodName: string, attrs: RadAttrs | undefined): string 
 export function extractPascalRoutes(root: Node, routes: RouteInfo[], sourceText?: string): void {
   if (sourceText !== undefined && !DATASNAP_EVIDENCE_RE.test(sourceText)) return;
   const radClasses = indexRadServerClasses(root);
-  walkForPascalRoutes(root, routes, radClasses);
+  const text = sourceText ?? root.text;
+  walkForPascalRoutes(root, routes, radClasses, dataSnapClasses(text), /\bDatasnap\./i.test(text));
 }
 
-function walkForPascalRoutes(node: Node, routes: RouteInfo[], radClasses: Map<string, RadClass>) {
+function walkForPascalRoutes(node: Node, routes: RouteInfo[], radClasses: Map<string, RadClass>, dataSnap: ReadonlySet<string>, dataSnapUnit: boolean) {
   if (node.type === "defProc") {
     const declProc = findChildByType(node, "declProc");
-    if (!declProc) { recurse(node, routes, radClasses); return; }
+    if (!declProc) { recurse(node, routes, radClasses, dataSnap, dataSnapUnit); return; }
 
     let className = "";
     let methodName = "";
@@ -229,33 +253,35 @@ function walkForPascalRoutes(node: Node, routes: RouteInfo[], radClasses: Map<st
         };
         applyRouteMeta(route, { params: radServerParams(declProc, node.text, path) });
         routes.push(route);
-      } else {
+      } else if ((dataSnap.has(className) || dataSnapUnit) && !/^(?:create|destroy)$/i.test(methodName)) {
+        // `/datasnap/rest/TServerMethods1/EchoString/{Value}`: the default REST root, the class, the
+        // method (its verb prefix dropped), and a GET's or DELETE's parameters as path segments.
+        // Outside a server-method class, only the DataSnap verb prefixes say a method is served.
         const lowerName = methodName.toLowerCase();
-        for (const [prefix, method] of Object.entries(DELPHI_METHOD_PREFIXES)) {
-          if (lowerName.startsWith(prefix) && lowerName.length > prefix.length) {
-            const path = "/" + methodName.slice(prefix.length);
-            routes.push({
-              path,
-              httpMethod: method,
-              kind: "api",
-              handler: `${className}.${methodName}`,
-              calls: [],
-              middleware: [],
-              line: node.startPosition.row + 1,
-            });
-            break;
-          }
-        }
+        const prefixed = Object.entries(DELPHI_METHOD_PREFIXES).find(([prefix]) => lowerName.startsWith(prefix) && lowerName.length > prefix.length);
+        if (!prefixed && !dataSnap.has(className)) { recurse(node, routes, radClasses, dataSnap, dataSnapUnit); return; }
+        const method = prefixed?.[1] ?? "GET";
+        const name = prefixed ? methodName.slice(prefixed[0].length) : methodName;
+        const params = method === "GET" || method === "DELETE" ? routineParams(declProc.text).map((p) => `/{${p}}`).join("") : "";
+        routes.push({
+          path: `/datasnap/rest/${className}/${name}${params}`,
+          httpMethod: method,
+          kind: "api",
+          handler: `${className}.${methodName}`,
+          calls: [],
+          middleware: [],
+          line: node.startPosition.row + 1,
+        });
       }
     }
   }
 
-  recurse(node, routes, radClasses);
+  recurse(node, routes, radClasses, dataSnap, dataSnapUnit);
 }
 
-function recurse(node: Node, routes: RouteInfo[], radClasses: Map<string, RadClass>) {
+function recurse(node: Node, routes: RouteInfo[], radClasses: Map<string, RadClass>, dataSnap: ReadonlySet<string>, dataSnapUnit: boolean) {
   for (const child of node.children) {
-    walkForPascalRoutes(child, routes, radClasses);
+    walkForPascalRoutes(child, routes, radClasses, dataSnap, dataSnapUnit);
   }
 }
 
