@@ -299,3 +299,24 @@ private typealias Handler<T> = (T) -> Unit
     expect([alias.extends, alias.decorators]).toEqual(["PlayerRepository", ["typealias"]]);
   });
 });
+
+describe("Java visibility from the declaration's own modifiers", () => {
+  it("keeps a public class with private members public (real-repo FP: half the public types unexported)", async () => {
+    const classes = await classesOf(`package x;
+@Entity
+public class Club {
+  private String name;
+  protected int founded;
+  public String getName() { String note = "private "; return name; }
+  private void rename() {}
+}
+class Garage {
+  public void park() {}
+}`, "java");
+    const club = classes.find((c) => c.name === "Club")!;
+    expect(club.isExported).toBe(true);
+    expect(method(club, "getName").isExported).toBe(true);
+    expect(method(club, "rename").isExported).toBe(false);
+    expect(method(classes.find((c) => c.name === "Garage"), "park").isExported).toBe(true);
+  });
+});

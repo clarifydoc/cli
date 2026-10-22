@@ -24,12 +24,13 @@ export function getVisibility(
       if (child.text === "protected") return "protected";
     }
   }
-  // JS/TS/Java/Kotlin: keyword in text
-  const text = node.text;
-  if (text.includes("private ")) return "private";
-  if (text.includes("protected ")) return "protected";
-  if (text.includes("public ")) return "public";
-  return null;
+  // JS/TS/Java/Kotlin: the keyword in the declaration's head — before its name
+  // or body, never in its members (a public class with a private field is public).
+  const end = node.childForFieldName("name") ?? node.childForFieldName("body");
+  const unannotated = (s: string) => s.replace(/@[\w.]+(?:\s*\((?:[^()]|\([^()]*\))*\))?/g, "");
+  const head = end ? unannotated(node.text.slice(0, end.startIndex - node.startIndex)) : unannotated(node.text).split(/[{(=;]/)[0]!;
+  const word = /\b(private|protected|public)\b/.exec(head)?.[1];
+  return (word as "public" | "private" | "protected" | undefined) ?? null;
 }
 
 /** Check whether a node has a direct child with type `modifier` and the given text. */
