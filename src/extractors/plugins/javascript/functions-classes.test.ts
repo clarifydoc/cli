@@ -437,3 +437,19 @@ export const useCarStore = defineStore('car')`);
     expect(functions.map((f) => f.name)).toEqual(["make"]);
   });
 });
+
+describe("a typed function value", () => {
+  it("reads `(async (…) => {…}) satisfies PageLoad` as the binding's function (real-repo FP: 67 SvelteKit loaders empty)", async () => {
+    const src = `import type { PageLoad } from './$types';
+export const load = (async ({ url }) => {
+  const fixtures = await getAllFixtures({ season: url.searchParams.get('season') });
+  return { fixtures };
+}) satisfies PageLoad;
+export enum MatchKind { League = 'league', Cup = 'cup', Friendly }`;
+    const tree = await parseSource(src, "typescript" as any, "+page.ts");
+    const x = new JavaScriptExtractor();
+    const load = x.extractFunctions(tree, src).find((f) => f.name === "load");
+    expect(load?.calls.map((c) => c.name)).toContain("getAllFixtures");
+    expect(x.extractClasses(tree, src).find((c) => c.name === "MatchKind")).toMatchObject({ kind: "enum", fieldValues: { League: "league", Cup: "cup" } });
+  });
+});

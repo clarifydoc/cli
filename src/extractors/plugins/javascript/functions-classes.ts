@@ -101,7 +101,14 @@ const IDENTITY_WRAPPERS: ReadonlySet<string> = new Set([
 const BODY_LAST_WRAPPERS: ReadonlySet<string> = new Set(["createAsyncThunk"]);
 
 /** The function an identity wrapper call is given as its first argument (or a body-last wrapper its last), if any. */
+/** Expressions that only parenthesize or type what they hold. */
+const TYPE_WRAPPERS = new Set(["parenthesized_expression", "satisfies_expression", "as_expression", "type_assertion", "non_null_expression"]);
+
 function wrappedFunction(value: Node): Node | null {
+  // `(async ({ url }) => { … }) satisfies PageLoad`, `(() => …) as Handler`: a typed function.
+  let inner: Node | null = value;
+  while (inner && TYPE_WRAPPERS.has(inner.type)) inner = inner.namedChildren[0] ?? null;
+  if (inner !== value && inner && FUNCTION_EXPRESSIONS.has(inner.type)) return inner;
   if (value.type !== "call_expression") return null;
   const callee = value.childForFieldName("function");
   const name = callee?.type === "identifier" ? callee.text : callee?.type === "member_expression" ? callee.childForFieldName("property")?.text : undefined;
@@ -1350,6 +1357,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       classes.push(this.parseJsClass(node, isExported));
     } else if (node.type === "interface_declaration") {
       classes.push(this.parseTsInterface(node, isExported));
+    } else if (node.type === "enum_declaration") {
+      classes.push(parseTsEnum(node, isExported));
     } else if (this.pinia && (node.type === "lexical_declaration" || node.type === "variable_declaration")) {
       for (const decl of node.namedChildren) {
         const store = decl.type === "variable_declarator" ? piniaStoreOf(decl) : null;
@@ -1736,6 +1745,38 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
   ): "public" | "private" | "protected" | null {
     return getVisibility(node);
   }
+}
+
+/**
+ * A TypeScript `enum`: its members are the properties, and a member a string
+ * or number initializes is a `fieldValues` entry (`Asset = 'assets'`) — what a
+ * project pass reads to resolve `@Controller(RouteKey.Asset)`.
+ */
+function parseTsEnum(node: Node, isExported: boolean): ClassInfo {
+  const properties: PropertyInfo[] = [];
+  const values: Record<string, string> = {};
+  for (const m of node.childForFieldName("body")?.namedChildren ?? []) {
+    const name = m.type === "enum_assignment" ? (m.childForFieldName("name") ?? m.namedChildren[0])?.text : m.type === "property_identifier" || m.type === "string" ? m.text : null;
+    if (!name) continue;
+    const key = stripQuotes(name);
+    properties.push({ name: key, type: null, visibility: "public", isStatic: true, isReadonly: true });
+    const value = m.type === "enum_assignment" ? (m.childForFieldName("value") ?? m.namedChildren[1] ?? null) : null;
+    if (value?.type === "string") values[key] = stripQuotes(value.text);
+    else if (value?.type === "number") values[key] = value.text;
+  }
+  return {
+    name: node.childForFieldName("name")?.text ?? "anonymous",
+    extends: null,
+    implements: [],
+    decorators: [],
+    methods: [],
+    properties,
+    ...(Object.keys(values).length > 0 ? { fieldValues: values } : {}),
+    isExported,
+    kind: "enum",
+    line: node.startPosition.row + 1,
+    endLine: node.endPosition.row + 1,
+  };
 }
 
 /** The field values that were stated once, for `ClassInfo.fieldValues`; nothing when there are none. */

@@ -77,6 +77,13 @@ export const javascriptFrameworkRules: readonly FrameworkRule[] = [
     detectedVia: "package.json dependency",
   },
   {
+    // The file router: `src/routes/(group)/albums/+page.svelte` is the page at `/albums`.
+    id: "sveltekit",
+    name: "SvelteKit",
+    check: (info) => hasDep(info, "@sveltejs/kit"),
+    detectedVia: "package.json dependency",
+  },
+  {
     id: "express",
     name: "Express",
     check: (info) => hasDep(info, "express"),
