@@ -1138,10 +1138,12 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Collapse the same endpoint declared twice (Rails: `routes.rb` expansion +
   // controller-action convention) into one richest entry, so the route map and
   // the cross-tier linker don't double-count or pick a code-less handler.
+  const languageByPath = new Map(allAnalyses.map((a) => [a.filePath, a.language]));
   const allRoutes = dedupeRoutes(
     allAnalyses.flatMap((a) =>
       a.routes.map((r) => ({ ...r, filePath: a.filePath, projectId: a.projectId ?? "root" })),
     ),
+    (r) => isApiContractLanguage(languageByPath.get(r.filePath) ?? ""),
   );
   const allInteractiveElements = allAnalyses.flatMap((a) =>
     a.interactiveElements.map((el) => ({ ...el, filePath: a.filePath })),

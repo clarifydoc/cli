@@ -265,6 +265,17 @@ describe("dedupeRoutes", () => {
     expect(dedupeRoutes([actionLevel, classOnly])[0]!.handler).toBe("DutiesController#create");
   });
 
+  it("keeps the code row over its API-contract twin, however many params the contract declares", () => {
+    const contract = {
+      ...route("specs/league-api.json", "GET", "/api/clubs", "listClubs", 40),
+      params: [{ name: "pageSize", binding: "query" }, { name: "pageIndex", binding: "query" }],
+    } as RouteInfo & { filePath: string };
+    const code = route("League.API/Apis/ClubApi.cs", "GET", "/api/clubs", "ClubApi.GetClubs", 12);
+    const isContract = (r: { filePath: string }) => r.filePath.endsWith(".json");
+    expect(dedupeRoutes([contract, code], isContract)[0]!.filePath).toBe("League.API/Apis/ClubApi.cs");
+    expect(dedupeRoutes([code, contract], isContract)[0]!.filePath).toBe("League.API/Apis/ClubApi.cs");
+  });
+
   it("keeps the entry carrying call edges (the controller action body)", () => {
     const fromRoutesRb = route("config/routes.rb", "POST", "/duties", "DutiesController#create", 3);
     const fromController = withCalls(
