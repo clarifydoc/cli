@@ -5,7 +5,7 @@ import type {
   DataSourceInfo,
   ParamInfo,
 } from "../../../types/analysis.js";
-import type { InteractiveElementInfo, PropertyInfo, RouteFact, ScreenInfo } from "../../../types/analysis.js";
+import type { HttpClientRegistration, InteractiveElementInfo, PropertyInfo, RouteFact, ScreenInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCallsFromBody, extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
 import { applyRouteMeta, type GuardAttr } from "../../shared/route-metadata.js";
@@ -734,6 +734,27 @@ function extractFlutterScreens(lines: string[], filePath: string, classes: Class
   return screens;
 }
 
+/**
+ * The API classes of an OpenAPI-generated Dart client (`package:openapi/api.dart`,
+ * often a gitignored path dependency): `final AlbumsApi _api;` makes `_api.createAlbum(…)`
+ * the spec's `createAlbum` operation of the `Albums` tag. Each `*Api` type the file
+ * names is registered as a proxy of itself, so the call carries that contract.
+ */
+function generatedApiClients(lines: string[]): HttpClientRegistration[] {
+  if (!lines.some((l) => /^\s*import\s+['"]package:openapi\//.test(l))) return [];
+  const out: HttpClientRegistration[] = [];
+  const seen = new Set<string>();
+  lines.forEach((l, i) => {
+    if (/^\s*import\b/.test(l)) return;
+    for (const m of l.matchAll(/\b([A-Z]\w*Api)\b(?=\s+[_a-z]\w*\s*[;=,)]|\s*\()/g)) {
+      if (seen.has(m[1]!)) continue;
+      seen.add(m[1]!);
+      out.push({ client: m[1]!, scope: "project", proxyOf: m[1]!, line: i + 1 });
+    }
+  });
+  return out;
+}
+
 export const dartSpec: RegexLangSpec = {
   language: "dart",
   extensions: [".dart"],
@@ -867,6 +888,7 @@ export const dartSpec: RegexLangSpec = {
   extractDataSources: (lines) => extractDartDataSources(lines),
   // Call sites of a project request wrapper (`ApiConnection().request(RequestType.GET, '/x')`).
   extractPathArgCalls: extractDartPathArgCalls,
+  extractHttpClientRegistrations: (lines) => generatedApiClients(lines),
   extractRoutes: (lines, _classes, _file, _functions, facts) => extractDartRoutes(lines, facts),
   extractInteractiveElements: (lines) => extractFlutterInteractiveElements(lines),
   // Inline closure handlers as functions of their own (see `flutterClosureFunctions`).

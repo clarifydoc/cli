@@ -914,6 +914,28 @@ describe("spec join to an implementing class method (generated interface absent)
   });
 });
 
+describe("spec join to the code route a spec generated from code names", () => {
+  it("joins an operation to the handler of the code route of the same verb and name, never to a client of that name", () => {
+    const spec = {
+      ...file("open-api/league-openapi-specs.json", [], { language: "openapi" }),
+      routes: [
+        { path: "/api/fixtures", httpMethod: "GET", kind: "api", handler: "getFixtures", calls: [], middleware: [], line: 5, contract: { type: "FixturesApi", method: "getFixtures" } },
+      ],
+    } as unknown as FileAnalysis;
+    const controller = {
+      ...file("server/src/controllers/fixture.controller.ts", [cls("FixtureController", { methods: [method("getFixtures", [], [], 22)] })], { language: "typescript" }),
+      routes: [{ path: "/fixtures", httpMethod: "GET", kind: "api", handler: "FixtureController.getFixtures", calls: [], middleware: [], line: 21 }],
+    } as unknown as FileAnalysis;
+    // The web's state holder of the same topic, and the generated SDK function of the same name.
+    const web = file("web/src/lib/managers/fixture-manager.ts", [cls("FixtureManager", { methods: [method("fixtures", [], [], 9)] })], { language: "typescript" });
+    const sdk = { ...file("packages/sdk/src/fetch-client.ts", [], { language: "typescript" }), functions: [method("getFixtures", [], [], 40)] } as unknown as FileAnalysis;
+    const links = buildSymbolLinks([spec, controller, web, sdk]).filter((l) => l.strategy === "spec-join");
+    expect(links.map((l) => `${l.sourceSymbol} -> ${l.targetFile}::${l.targetSymbol}`)).toEqual([
+      "route:GET /api/fixtures -> server/src/controllers/fixture.controller.ts::FixtureController.getFixtures",
+    ]);
+  });
+});
+
 describe("two same-named classes, told apart by the consumer's import", () => {
   it("types an injected member by the class its `use` names (PHP namespaces)", () => {
     const ctl = {

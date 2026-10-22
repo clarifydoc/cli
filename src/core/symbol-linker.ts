@@ -656,6 +656,18 @@ function specRouteHandlerLink(
     const def = ctx.symbolIndex.get(pick[0]!.file)?.get(pick[0]!.symbol);
     if (def) return link(cand, pick[0]!.file, def);
   }
+  // A spec generated from the code (NestJS, Swashbuckle and springdoc name an
+  // operation after its handler): the one code route of the same verb whose
+  // handler has the operation's name serves it.
+  if (opId && verb) {
+    const served = codeHandlerRoutes(ctx).get(`${verb} ${opId.toLowerCase()}`)?.filter((r) => !isExcluded(r.file)) ?? [];
+    if (served.length === 1) {
+      const r = served[0]!;
+      const def = ctx.symbolIndex.get(r.file)?.get(r.handler) ?? { name: r.handler, line: r.line, endLine: r.line };
+      return link(opId, r.file, def);
+    }
+    if (served.length > 1) return null;
+  }
   for (const cand of candidates) {
     // classNameIndex maps every dot-free symbol name to its defining files in
     // symbolIndex order — same uniqueness semantics as a full scan, O(hits).
@@ -666,6 +678,26 @@ function specRouteHandlerLink(
     return link(cand, files[0]!, def);
   }
   return null;
+}
+
+const codeHandlerCache = new WeakMap<object, Map<string, Array<{ file: string; handler: string; line: number }>>>();
+
+/** Code API routes (not a spec's) by `<verb> <handler's own name, lower-cased>`. */
+function codeHandlerRoutes(ctx: LinkContext): Map<string, Array<{ file: string; handler: string; line: number }>> {
+  let idx = codeHandlerCache.get(ctx.analyses);
+  if (idx) return idx;
+  idx = new Map();
+  for (const a of ctx.analyses) {
+    if (isApiContractLanguage(a.language)) continue;
+    for (const r of a.routes) {
+      if (r.kind !== "api" || !r.handler || !r.httpMethod) continue;
+      const leaf = r.handler.split(/[.#:]/).pop()!;
+      const key = `${r.httpMethod.toLowerCase()} ${leaf.toLowerCase()}`;
+      (idx.get(key) ?? idx.set(key, []).get(key)!).push({ file: a.filePath, handler: r.handler, line: r.line });
+    }
+  }
+  codeHandlerCache.set(ctx.analyses, idx);
+  return idx;
 }
 
 const codeContractCache = new WeakMap<object, Map<string, Array<{ file: string; symbol: string; line: number }>>>();

@@ -280,3 +280,28 @@ describe("dartSpec — request bodies", () => {
     ]);
   });
 });
+
+describe("Dart calls through a generated OpenAPI client", () => {
+  it("makes a call on a typed *Api field the spec operation it names", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const { clientProxyCalls } = await import("../../../core/client-proxies.js");
+    const src = `import 'package:league_mobile/repositories/api.repository.dart';
+// ignore: import_rule_openapi
+import 'package:openapi/api.dart' hide SquadRole;
+
+class SquadApiRepository extends ApiRepository {
+  final SquadsApi _api;
+
+  SquadApiRepository(this._api);
+
+  Future<Squad> create(String name) async {
+    final response = await checkNull(_api.createSquad(CreateSquadDto(name: name)));
+    return Squad.fromDto(response);
+  }
+}`;
+    const a = extractWithRegex(src, "mobile/lib/repositories/squad_api.repository.dart", "dart");
+    expect(a.httpClientRegistrations?.map((r) => r.proxyOf)).toEqual(["SquadsApi"]);
+    const calls = clientProxyCalls([a]);
+    expect(calls.map((c) => `${c.contract?.type}#${c.contract?.method} @${c.line}`)).toEqual(["SquadsApi#createSquad @11"]);
+  });
+});
