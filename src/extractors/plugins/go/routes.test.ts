@@ -206,6 +206,8 @@ ch.PublishWithContext(ctx, "cars", key, false, false, msg)
 msgs, _ := ch.Consume("cars-queue", "", true, false, false, false, nil)
 `));
     expect(s.some((d) => d.kind === "database" && d.entity === "Player")).toBe(true);
+    // A struct literal of another package names its type too.
+    expect(extractGoDataSources(lines(`db.Delete(&entity.Referee{})`)).map((d) => d.entity)).toEqual(["Referee"]);
     expect(s.some((d) => d.kind === "api-call" && d.name === "GET" && d.target === "https://api.example.com/items")).toBe(true);
     expect(s.some((d) => d.kind === "api-call" && d.name === "POST" && d.target === "/internal/cars")).toBe(true);
     expect(s.some((d) => d.kind === "env" && d.target === "API_TOKEN")).toBe(true);

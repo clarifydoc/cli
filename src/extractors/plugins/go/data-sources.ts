@@ -69,7 +69,8 @@ const GORM_ACCESS = dbVerbTable(
   ["Create", "Save", "Update", "Updates", "Delete"],
 );
 
-const STRUCT_ENTITY_RE = /&([A-Z]\w*)\s*\{/;
+/** Also package-qualified: `&entity.Password{}`. */
+const STRUCT_ENTITY_RE = /&(?:[a-z_]\w*\.)?([A-Z]\w*)\s*\{/;
 
 /** `http.Get("url")` / `http.PostForm(...)` — stdlib client helpers. */
 const HTTP_HELPER_RE = /\bhttp\.(Get|Post|PostForm|Head)\s*\(\s*(?:["'`]([^"'`]+)["'`])?/;
