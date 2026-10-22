@@ -1,7 +1,7 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import { attributeRepositoryAccesses, splitTypeArgs, type RepositoryAccessKnobs } from "../shared/repository-access.js";
 import { extensionFamily } from "../shared/path-utils.js";
-import type { ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
+import type { CallInfo, ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
 
 /**
  * Entity-Framework-Core (and lightly, NHibernate) entity extractor for C#.
@@ -170,6 +170,32 @@ export class CSharpEntityExtractor extends EntityExtractor {
       }
     }
 
+    // The fluent API configures entities too, and names their tables:
+    // `builder.Entity<T>(b => { b.ToTable("x"); })`, or `builder.ToTable("x")` in an
+    // `IEntityTypeConfiguration<T>`.
+    const fluentTables = new Map<string, string>();
+    for (const a of analyses) {
+      if (a.language !== "csharp") continue;
+      const scan = (calls: readonly CallInfo[], configured: string | null) => {
+        let current = configured;
+        for (const c of [...calls].sort((x, y) => x.line - y.line)) {
+          const head = /(?:^|\.)Entity<\s*([\w.]+)\s*>$/.exec(c.name);
+          if (head) {
+            current = bareType(head[1]);
+            if (current && !marrTables.has(current)) efEntityNames.add(current);
+            continue;
+          }
+          const table = /(?:^|\.)ToTable$/.test(c.name) ? /^"([^"]+)"$/.exec(c.args?.[0] ?? "")?.[1] : undefined;
+          if (current && table && !fluentTables.has(current)) fluentTables.set(current, table);
+        }
+      };
+      for (const fn of a.functions ?? []) scan(fn.calls, null);
+      for (const cls of a.classes ?? []) {
+        const configured = [cls.extends ?? "", ...(cls.implements ?? [])].map((d) => /IEntityTypeConfiguration\s*<\s*([^>]+?)\s*>/.exec(d)?.[1]).find(Boolean);
+        for (const m of cls.methods ?? []) scan(m.calls, configured ? bareType(configured) : null);
+      }
+    }
+
     attributeRepositoryAccesses(analyses, CSHARP_REPOSITORY_KNOBS);
     if (efEntityNames.size === 0 && marrTables.size === 0) return;
 
@@ -205,11 +231,14 @@ export class CSharpEntityExtractor extends EntityExtractor {
       }
     }
 
-    // (3) The set of all entity names (after tagging above).
+    // (3) The set of all entity names (after tagging above); a table the fluent API names is the entity's.
     const entityNames = new Set<string>();
     for (const a of analyses) {
       for (const cls of a.classes ?? []) {
-        if ((cls.decorators ?? []).includes("entity")) entityNames.add(cls.name);
+        if (!(cls.decorators ?? []).includes("entity")) continue;
+        entityNames.add(cls.name);
+        const table = a.language === "csharp" ? fluentTables.get(cls.name) : undefined;
+        if (table && !cls.tableName) cls.tableName = table;
       }
     }
 

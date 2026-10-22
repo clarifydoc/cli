@@ -301,6 +301,30 @@ describe("EF Core cross-file entity reconciliation", () => {
     expect(foo.decorators).toEqual(expect.arrayContaining(["entity", "ef-core"]));
   });
 
+  it("establishes entity-ness and the table from the fluent API alone (Entity<T>(b => b.ToTable(…)))", () => {
+    const call = (name: string, line: number, args?: string[]) => ({ name, kind: "internal", target: null, line, ...(args ? { args } : {}) });
+    const ext = cls("TransferLogExtensions");
+    ext.methods = [{ name: "UseTransferLog", line: 3, endLine: 12, params: [], calls: [
+      call("builder.Entity<TransferLogEntry>", 5), call("builder.ToTable", 7, ['"TransferLog"']), call("builder.HasKey", 8),
+      call("builder.Entity<Agent>", 9),
+    ] } as never];
+    const cfg = cls("KitConfiguration", { implements: ["IEntityTypeConfiguration<Kit>"] });
+    cfg.methods = [{ name: "Configure", line: 3, endLine: 6, params: [], calls: [call("builder.ToTable", 4, ['"club_kits"'])] } as never];
+    const csharp = (path: string, classes: ClassInfo[]) => ({ ...analysis(path, classes), language: "csharp" }) as FileAnalysis;
+    const entry = cls("TransferLogEntry", { properties: [{ name: "EventId", type: "Guid" }] });
+    const agent = cls("Agent", { properties: [{ name: "Name", type: "string" }] });
+    const kit = cls("Kit", { properties: [{ name: "Colour", type: "string" }] });
+    new CSharpEntityExtractor().reconcileProject([
+      csharp("Log/TransferLogExtensions.cs", [ext]), csharp("Config/KitConfiguration.cs", [cfg]),
+      csharp("Log/TransferLogEntry.cs", [entry]), csharp("Domain/Agent.cs", [agent]), csharp("Domain/Kit.cs", [kit]),
+    ]);
+    expect([entry, agent, kit].map((c) => `${c.name} ${c.decorators.includes("entity")} ${c.tableName ?? "-"}`)).toEqual([
+      "TransferLogEntry true TransferLog",
+      "Agent true -",
+      "Kit true club_kits",
+    ]);
+  });
+
   it("corrects a config relation guessed from a nav lambda NAME to the property's declared TYPE", () => {
     // `builder.HasOne(a => a.Player)` yields toEntity "Player", but Training.Player
     // is of type SquadSyncPlayer — the real entity node. (Gap 2)

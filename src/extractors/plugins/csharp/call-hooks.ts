@@ -44,7 +44,21 @@ export const csharpCallHooks: CallExtractionHooks = {
   // `sp.GetRequiredService<IPricing>().Quote(o)` → receiver typed IPricing.
   receiverTypeOf: csharpReceiverTypeOf,
   argCountOf: csharpArgCount,
+  argsOf: csharpTableArgs,
 };
+
+/**
+ * The table an EF fluent `ToTable("league_clubs")` names — the one call whose
+ * arguments a project pass reads (`reconcileProject` maps the entity the
+ * enclosing `Entity<T>(…)` or `IEntityTypeConfiguration<T>` configures to it).
+ */
+function csharpTableArgs(node: Node): string[] | null {
+  if (node.type !== "invocation_expression") return null;
+  const fn = node.childForFieldName("function");
+  if (fn?.type !== "member_access_expression" || fn.childForFieldName("name")?.text !== "ToTable") return null;
+  const first = node.childForFieldName("arguments")?.namedChildren.find((c) => c.type === "argument")?.namedChildren[0];
+  return first?.type === "string_literal" ? [first.text] : null;
+}
 
 /** A C# call's argument count: the `argument_list`'s arguments (named ones included). */
 function csharpArgCount(node: Node): number | null {
