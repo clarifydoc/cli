@@ -667,6 +667,13 @@ export interface CallExtractionHooks {
    * value bindings (which a `nestedScopeTypes` entry would cut off).
    */
   isFunctionDefinition?(node: Node): boolean;
+  /**
+   * A nested function the module-level walk that builds `<setup>` reads into:
+   * an anonymous callback that runs on the module's behalf (`computed(() => …)`,
+   * `useQuery({ queryFn: async () => … })`), unlike a function bound to a name
+   * or a handler registered on a router. Absent: the walk stops at every one.
+   */
+  runsAtTopLevel?(node: Node): boolean;
   /** Call node types whose arguments are scanned for callback identifiers (also unioned). */
   callbackArgNodeTypes?: readonly string[];
   /**

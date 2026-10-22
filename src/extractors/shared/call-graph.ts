@@ -323,13 +323,21 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
   const receiverTypeOf = hooks.receiverTypeOf;
   const keyOf = hooks.keyOf;
   const nested = NESTED_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
+  const anonymous = ANONYMOUS_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
 
   const results: CallInfo[] = [];
   const seen = new Set<string>();
 
-  function walk(node: Node) {
-    // Stop at function/class boundaries — those are handled by extractCalls
-    if (nested.has(node.type) || hooks!.isFunctionDefinition?.(node)) return;
+  function walk(node: Node, inCallback = false) {
+    // Stop at function/class boundaries — those are handled by extractCalls —
+    // unless the function is a callback the module runs (`onMounted(() => …)`);
+    // inside one, an inline callback runs on its behalf, as in a function body.
+    if (hooks!.isFunctionDefinition?.(node)) return;
+    if (nested.has(node.type)) {
+      if (inCallback && isAnonymousFnExpression(node, anonymous)) { /* read on */ }
+      else if (hooks!.runsAtTopLevel?.(node)) inCallback = true;
+      else return;
+    }
     // Also stop at named function declarations and class declarations
     if (
       node.type === "function_declaration" ||
@@ -369,7 +377,7 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
     }
 
     for (const child of node.children) {
-      walk(child);
+      walk(child, inCallback);
     }
   }
 

@@ -23,6 +23,7 @@ export const javascriptCallHooks: CallExtractionHooks = {
   // Inline handlers/callbacks are anonymous expressions — their calls belong
   // to the enclosing function (see CallExtractionHooks.anonymousScopeTypes).
   anonymousScopeTypes: ["arrow_function", "function_expression"],
+  runsAtTopLevel: moduleCallback,
   callbackArgNodeTypes: ["call_expression"],
   // A name the function binds itself is a value when passed as an argument,
   // not a callback reference (see CallExtractionHooks.bindingSites).
@@ -158,3 +159,28 @@ function mappedActions(node: Node): Map<string, string> {
   }
   return actions;
 }
+
+/**
+ * An anonymous callback a module's top level hands to a plain function call —
+ * `computed(() => …)`, `onMounted(() => …)`, `useQuery({ queryFn: async () => … })`
+ * — runs as part of the module (a component's setup), so its calls are the
+ * module's. A handler handed to a method (`app.get("/x", (req, res) => …)`) or
+ * to a test runner (`it("…", () => …)`) is registered for later, and a function
+ * bound to a name is its own.
+ */
+function moduleCallback(node: Node): boolean {
+  if (node.type !== "arrow_function" && node.type !== "function_expression") return false;
+  let at: Node | null = node.parent;
+  // `useQuery({ queryFn: … })`, `[{ action: … }]`: through the option object and its arrays.
+  while (at && (at.type === "pair" || at.type === "object" || at.type === "array")) at = at.parent;
+  if (at?.type !== "arguments") return false;
+  const call = at.parent?.type === "call_expression" ? at.parent : null;
+  const callee = call?.childForFieldName("function");
+  // `router.get("/x", asyncHandler(async (req, res) => …))`: a wrapper handed on is registered with it.
+  return callee?.type === "identifier" && !TEST_REGISTRATION.has(callee.text) && call!.parent?.type !== "arguments";
+}
+
+/** A test runner's registrations: their callbacks run when the runner says, each its own test. */
+const TEST_REGISTRATION: ReadonlySet<string> = new Set([
+  "describe", "it", "test", "suite", "context", "beforeEach", "afterEach", "beforeAll", "afterAll", "before", "after", "fdescribe", "xdescribe", "fit", "xit",
+]);
