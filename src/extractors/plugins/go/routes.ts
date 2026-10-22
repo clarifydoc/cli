@@ -74,7 +74,7 @@ const SUBROUTER_RE = /(\w+)\s*:?=\s*(\w+)\.\s*PathPrefix\s*\(\s*["'`]([^"'`]*)["
 /** `r.Route("/api", func(r chi.Router) {` / `r.Group(func(r chi.Router) {` — chi nested blocks. */
 const CHI_BLOCK_RE = /(\w+)\.\s*(Route|Group)\s*\(/;
 /** A parameter typed as a router: `router *gin.RouterGroup`, `e *echo.Echo`, `r chi.Router`, `app *fiber.App`. */
-const ROUTER_PARAM_RE = /(\w+)\s+\*?(?:gin\.(?:RouterGroup|Engine|IRoutes|IRouter)|echo\.(?:Echo|Group)|chi\.(?:Router|Mux)|mux\.Router|fiber\.(?:App|Router)|http\.ServeMux)\b/g;
+const ROUTER_PARAM_RE = /(\w+)\s+\*?(?:gin\.(?:RouterGroup|Engine|IRoutes|IRouter)|echo\.(?:Echo|Group)|chi\.(?:Router|Mux)|mux\.Router|fiber\.(?:App|Router)|http\.ServeMux|[a-z]\w*\.Router)\b/g;
 /** A router built here: `r := gin.Default()`, `e := echo.New()`, `r := chi.NewRouter()`. */
 const ENGINE_RE = /(\w+)\s*:?=\s*(?:gin\.(?:Default|New)|echo\.New|chi\.NewRouter|mux\.NewRouter|fiber\.New|http\.NewServeMux)\s*\(/;
 /** Router methods that are registrations, not calls handing a router on. */
@@ -98,9 +98,22 @@ const SCHEME_NAME_RE = /jwt|basic|bearer|oauth/i;
 const TRANSPARENT_WRAPPERS = new Set(["http.HandlerFunc", "HandlerFunc", "http.Handler", "gin.WrapH", "gin.WrapF", "echo.WrapHandler", "adaptor.HTTPHandler"]);
 
 function joinPrefix(prefix: string, path: string): string {
+  // A suffix (`m.Get(".rss", …)` under `/{username}`) extends the group's last segment.
+  if (/^\.\w/.test(path)) return joinPrefix(prefix, "") + path;
   const parts = (prefix + "/" + path).split("/").filter(Boolean);
   return "/" + parts.join("/");
 }
+
+/** A project's own router constructor: `m := web.NewRouter()`. */
+const PROJECT_ROUTER_RE = /(\w+)\s*:?=\s*(?:\w+\.)?New(?:Router|Mux)\s*\(\s*\)/;
+/** `r.Mount("/api/v1", apiv1.Routes())` — a router a function returns, mounted. */
+const MOUNT_CALL_RE = /(\w+)\.\s*Mount\s*\(\s*["'`]([^"'`]*)["'`]\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)\s*\(\s*\)\s*\)/;
+/** gitea's `m.Combo("/path", mw…).Get(h).Post(mw, h2)`: one path, a chain of verbs. */
+const COMBO_RE = /(\w+)\.\s*Combo\s*\(/;
+/** gitea's `m.Methods("GET, POST", "/path", h)`: the verbs first. */
+const VERBS_FIRST_RE = /(\w+)\.\s*Methods\s*\(\s*["'`]/;
+/** A verb in a chain: `.Get(`, `.Post(`, … `.Any(`. */
+const CHAIN_VERB_RE = /\.\s*(Get|Post|Put|Patch|Delete|Options|Head|Any)\s*\(/g;
 
 /** Net brace change on a line, ignoring braces inside string literals. */
 function braceDelta(line: string): number {
@@ -252,6 +265,8 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
   };
   /** The top-level function the current line is in (`func GetAlbum(router *gin.RouterGroup) {`). */
   let currentFn: string | null = null;
+  /** The current function returns the router it builds. */
+  let returnsRouter = false;
 
   const literal = (arg: string | undefined): string | null => {
     const m = arg?.match(STRING_RE) ?? arg?.match(BASE_PLUS_PATH_RE);
@@ -266,6 +281,8 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
     if (fnDecl) {
       currentFn = fnDecl[1]!;
       routerVars.clear();
+      // `func Routes() *web.Router {`: the router it builds is mounted wherever a caller mounts the result.
+      returnsRouter = /\)\s*\*?(?:\w+\.)?(?:Router|Mux|ServeMux|Engine|Echo|App|Handler)\s*\{\s*$/.test(line);
       const params = line.slice(fnDecl.index! + fnDecl[0].length - 1);
       for (const m of params.slice(0, params.indexOf(")") + 1 || undefined).matchAll(ROUTER_PARAM_RE)) {
         routerVars.set(m[1]!, true);
@@ -273,8 +290,15 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
         varGuards.delete(m[1]!);
       }
     }
-    const engine = line.match(ENGINE_RE);
-    if (engine) routerVars.set(engine[1]!, false);
+    const engine = line.match(ENGINE_RE) ?? line.match(PROJECT_ROUTER_RE);
+    if (engine) routerVars.set(engine[1]!, returnsRouter);
+
+    // `r.Mount("/api/v1", apiv1.Routes())`: the routes the callee's returned router holds, served under the prefix.
+    const mount = facts ? line.match(MOUNT_CALL_RE) : null;
+    if (mount && routerVars.has(mount[1]!)) {
+      const call: RouterCall = { callee: mount[3]!, prefix: joinPrefix(prefixOf(mount[1]!), mount[2]!), relative: routerVars.get(mount[1]!)!, guards: inheritedOf(mount[1]!) };
+      facts!.push({ kind: ROUTER_CALL, line: lineNo, ...(currentFn ? { owner: currentFn } : {}), data: call });
+    }
 
     const sub = line.match(SUBROUTER_RE);
     if (sub && routerVars.has(sub[2]!)) routerVars.set(sub[1]!, routerVars.get(sub[2]!)!);
@@ -306,12 +330,52 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
     const chiBlock = group ? null : line.match(CHI_BLOCK_RE);
     if (chiBlock) {
       const { args, closed } = parseArgs(line, chiBlock.index! + chiBlock[0].length - 1);
-      const prefix = chiBlock[2] === "Route" ? literal(args[0]) : "";
-      const body = args[chiBlock[2] === "Route" ? 1 : 0];
+      // chi's `Route("/p", func(r) {…})` and `Group(func(r) {…})`; gitea's `Group("/p", func() {…}, mw…)`.
+      const prefixed = chiBlock[2] === "Route" || (literal(args[0]) !== null && /^func\s*\(/.test(args[1] ?? ""));
+      const prefix = prefixed ? literal(args[0]) : "";
+      const body = args[prefixed ? 1 : 0];
       if (prefix !== null && body && /^func\s*\(/.test(body) && !closed) {
         // The block body sits one brace deeper than the current depth.
         routeStack.push({ depth: depth + braceDelta(line), prefix, guards: [] });
         depth += braceDelta(line);
+        continue;
+      }
+    }
+
+    // gitea: `m.Combo("/forks").Get(repo.ListForks).Post(mw, repo.CreateFork)`, possibly over several lines.
+    const combo = line.match(COMBO_RE);
+    if (combo) {
+      let text = line;
+      for (let k = i + 1; k < Math.min(lines.length, i + 12) && (/\.\s*$/.test(text) || /^\s*\./.test(lines[k]!)); k++) text += " " + lines[k]!.trim();
+      const { args, end } = parseArgs(text, combo.index! + combo[0].length - 1);
+      const path = literal(args[0]);
+      if (path !== null) {
+        const recv = combo[1]!;
+        const comboGuards = args.slice(1).filter((a) => !STRING_RE.test(a)).map(classifyGuard);
+        CHAIN_VERB_RE.lastIndex = end;
+        for (const v of text.matchAll(CHAIN_VERB_RE)) {
+          if (v.index! < end) continue;
+          const { args: vargs } = parseArgs(text, v.index! + v[0].length - 1);
+          const { handler, guards } = splitHandler(vargs);
+          const method = v[1] === "Any" ? null : HTTP_VERBS_TITLE[v[1]!]!;
+          push(joinPrefix(prefixOf(recv), path), method, handler, lineNo, inheritedOf(recv), [...comboGuards, ...guards], recv);
+        }
+        depth += braceDelta(line);
+        while (routeStack.length > 0 && depth < routeStack[routeStack.length - 1]!.depth) routeStack.pop();
+        continue;
+      }
+    }
+    const verbsFirst = line.match(VERBS_FIRST_RE);
+    if (verbsFirst) {
+      const recv = verbsFirst[1]!;
+      const { args } = parseArgs(line, verbsFirst.index! + verbsFirst[0].length - 2);
+      const verbs = (literal(args[0]) ?? "").split(",").map((v) => v.trim().toUpperCase()).filter((v) => VERBS.has(v));
+      const path = literal(args[1]);
+      if (verbs.length > 0 && path !== null && args.length >= 3) {
+        const { handler, guards } = splitHandler(args.slice(2));
+        for (const v of verbs) push(joinPrefix(prefixOf(recv), path), v, handler, lineNo, inheritedOf(recv), guards, recv);
+        depth += braceDelta(line);
+        while (routeStack.length > 0 && depth < routeStack[routeStack.length - 1]!.depth) routeStack.pop();
         continue;
       }
     }
@@ -336,8 +400,10 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
       const method = caps ? caps[2]! : HTTP_VERBS_TITLE[title![2]!]!;
       const { args } = parseArgs(line, verb.index! + verb[0].length - 1);
       const path = literal(args[0]);
-      // Title-case verbs must carry an absolute path — `s.Get("key")` is not a route.
-      if (args.length >= 2 && path !== null && (caps || path.startsWith("/"))) {
+      // Title-case verbs must carry an absolute path — `s.Get("key")` is not a route — except inside
+      // a router group's block, where `m.Get("", h)` is the group's own URL and `m.Get(".rss", h)` a suffix.
+      const inBlock = routeStack.length > 0 && (path === "" || /^\.\w+$/.test(path ?? "") || /^[A-Za-z][\w-]*$/.test(path ?? ""));
+      if (args.length >= 2 && path !== null && (caps || path.startsWith("/") || inBlock)) {
         const { handler, guards } = splitHandler(args.slice(1));
         push(joinPrefix(prefixOf(recv), path), method, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
       }

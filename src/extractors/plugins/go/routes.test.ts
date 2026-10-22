@@ -263,3 +263,36 @@ func GetAlbum(router *gin.RouterGroup) {
     ]);
   });
 });
+
+describe("a router built by groups of closures (gitea style)", () => {
+  it("composes Group prefixes and reads Combo chains, verb-first Methods, empty and suffix paths (real-repo FP: ~98 of ~1,420 routes right)", () => {
+    const src = `func registerWebRoutes(m *web.Router) {
+	m.Group("/league/settings", func() {
+		m.Get("", setting.Profile)
+		m.Post("/update_preferences", setting.UpdatePreferences)
+		m.Combo("/club").Get(setting.Club).
+			Post(web.Bind(forms.ClubForm{}), setting.ClubPost)
+		m.Group("/players", func() {
+			m.Get("", setting.Players)
+			m.Post("/{id}/transfer", setting.Transfer)
+		})
+	}, reqSignIn)
+	m.Group("/{clubname}", func() {
+		m.Get(".rss", feed.ClubRSS)
+	})
+	m.Methods("GET, POST", "/scout/userinfo", auth.ScoutInfo)
+}`;
+    const routes = extractGoRoutes(src.split("\n")).map((r) => `${r.httpMethod} ${r.path} ${r.handler}`);
+    expect(routes).toEqual([
+      "GET /league/settings setting.Profile",
+      "POST /league/settings/update_preferences setting.UpdatePreferences",
+      "GET /league/settings/club setting.Club",
+      "POST /league/settings/club setting.ClubPost",
+      "GET /league/settings/players setting.Players",
+      "POST /league/settings/players/{id}/transfer setting.Transfer",
+      "GET /{clubname}.rss feed.ClubRSS",
+      "GET /scout/userinfo auth.ScoutInfo",
+      "POST /scout/userinfo auth.ScoutInfo",
+    ]);
+  });
+});

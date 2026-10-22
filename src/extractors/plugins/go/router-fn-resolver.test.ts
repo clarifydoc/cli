@@ -104,3 +104,29 @@ func reports(r *gin.RouterGroup) {
     expect([a, b].flatMap((f) => f.routes).map((r) => r.path)).toEqual(["/a", "/b"]);
   });
 });
+
+describe("a router a function builds and returns, mounted by its caller", () => {
+  it("serves the function's routes under the mount's prefix (real-repo FP: 527 API routes at web paths)", () => {
+    const api = file("routers/api/v1/api.go", `package v1
+
+func Routes() *web.Router {
+\tm := web.NewRouter()
+\tm.Group("/clubs", func() {
+\t\tm.Get("", club.List)
+\t\tm.Get("/{id}", club.Get)
+\t})
+\treturn m
+}`);
+    const init = file("routers/init.go", `package routers
+
+func NormalRoutes() *web.Router {
+\tr := web.NewRouter()
+\tr.Mount("/api/v1", apiv1.Routes())
+\tr.Post("/-/fetch-redirect", common.FetchRedirect)
+\treturn r
+}`, [["apiv1", "example.com/league/routers/api/v1"]]);
+    goRouterFnResolver.resolve([api, init], {} as ProjectContext);
+    expect(api.routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /api/v1/clubs", "GET /api/v1/clubs/{id}"]);
+    expect(init.routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["POST /-/fetch-redirect"]);
+  });
+});

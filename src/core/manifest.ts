@@ -11,7 +11,7 @@ import { headCommit, listGitFiles } from "./source-revision.js";
  * stored in the manifest and this constant invalidates the whole cache so a
  * fixed extractor never leaves stale JSON behind.
  */
-export const EXTRACTOR_VERSION = "1.287.0";
+export const EXTRACTOR_VERSION = "1.288.0";
 
 /**
  * What the manifest remembers about one analyzed file, enough to tell
