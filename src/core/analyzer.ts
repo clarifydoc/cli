@@ -2239,6 +2239,8 @@ function buildScreensFromRoutes(
     }
     const viaImport = importIndex.localFor(configFile, spec);
     if (viaImport) return viaImport;
+    // A module path the alias pass made project-relative (`@/views/Home.vue` → `frontend/src/views/Home.vue`).
+    if (spec.includes("/")) return resolveImportSource(configFile, spec, knownFiles);
     if (!/^[A-Za-z_$][\w$]*$/.test(spec)) return null;
     const dirOf = (f: string) => (f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "");
     const declares = (a: FileAnalysis) => a.functions.some((f) => f.name === spec) || a.classes.some((c) => c.name === spec);

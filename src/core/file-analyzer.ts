@@ -190,6 +190,20 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     }
   };
 
+  /** A route's lazily imported component (`() => import('@/views/Home.vue')`), written as a module path: rewritten like an import. */
+  const applyAliasesToComponentPaths = (a: FileAnalysis): void => {
+    const lazy = a.routes.filter((r) => r.componentPath && r.componentPath.includes("/") && !/^[./]/.test(r.componentPath));
+    if (lazy.length === 0) return;
+    const nearest = loadTsconfigAliasesForDir(dirname(file.absolutePath));
+    const aliases = nearest.size > 0 ? nearest : tsconfigAliases;
+    for (const r of lazy) {
+      let spec = r.componentPath!;
+      if (aliases.size > 0) spec = applyAliases(spec, aliases, projectRoot);
+      if (extensionFamily(file.relativePath) === "script") spec = applySourceRoot(spec, file.absolutePath, projectRoot);
+      r.componentPath = spec;
+    }
+  };
+
   try {
     // Safety net for entry points that never ran the analyzer's bulk load
     // (worker threads see it via the analyzer-set activation; watch mode and
@@ -335,6 +349,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     const isTest = isTestFile(file.relativePath, language);
     const routeFacts: RouteFact[] = [];
     analysis.routes = isTest ? [] : extractRoutes(tree, sourceText, language, analysis.filePath, routeFacts);
+    applyAliasesToComponentPaths(analysis);
     if (routeFacts.length > 0) analysis.routeFacts = routeFacts;
     // Data sources + mutations share one tree walk (extractDataAccess);
     // mutations are assigned further down at their original position.

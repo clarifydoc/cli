@@ -78,7 +78,14 @@ export default { name: "PageClubs" };
 
 export default [
   { name: "clubs", path: "/clubs", component: Clubs },
+  { name: "players", path: "/players", component: () => import("@/page/players.vue") },
 ];
+`,
+  "jsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@/*": ["src/*"] } } }),
+  "src/page/players.vue": `<template><div>Players</div></template>
+<script>
+export default { name: "PagePlayers" };
+</script>
 `,
   "server/routes.go": `package server
 
@@ -133,5 +140,7 @@ describe("a base class's calls through a static resource each subclass overrides
 
   it("give a page imported by its source-root path, with its extension, the route that renders it", () => {
     expect(summary.screens.find((s) => s.filePath === "src/page/clubs.vue")?.routePath).toBe("/clubs");
+    // A lazily imported page behind the `@/` alias too.
+    expect(summary.screens.find((s) => s.filePath === "src/page/players.vue")?.routePath).toBe("/players");
   });
 });

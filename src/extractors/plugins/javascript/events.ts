@@ -22,8 +22,17 @@ export function extractEvents(
   // Strategy C: emit('name', ...) calls as fallback
   extractEmitCalls(sourceText, events, seen);
 
+  // A declared event sits where it is first emitted: the function around that line is what a parent's handler follows.
+  const emittedAt = new Map<string, number>();
+  for (const m of sourceText.matchAll(EMIT_CALL_RE)) if (!emittedAt.has(m[1]!)) emittedAt.set(m[1]!, lineAt(sourceText, m.index!));
+  for (const e of events) e.line = emittedAt.get(e.name) ?? e.line;
+
   return events;
 }
+
+/** An event name: `save`, `update:task`, `update:model-value`. */
+const EVENT_NAME = String.raw`([\w:-]+)`;
+const EMIT_CALL_RE = new RegExp(String.raw`\bemit\s*\(\s*['"]` + EVENT_NAME + `['"]`, "g");
 
 /**
  * Parse call-signature form:
@@ -46,7 +55,7 @@ function extractDefineEmitsCallSignatures(
     const blockStartOffset = blockMatch.index + blockMatch[0].indexOf(block);
 
     // Match each call signature: (e: 'eventName', param: type, ...): returnType
-    const sigRe = /\(\s*\w+\s*:\s*['"](\w+)['"](.*?)\)\s*:/g;
+    const sigRe = new RegExp(String.raw`\(\s*\w+\s*:\s*['"]` + EVENT_NAME + String.raw`['"](.*?)\)\s*:`, "g");
     let sigMatch: RegExpExecArray | null;
 
     while ((sigMatch = sigRe.exec(block)) !== null) {
@@ -75,7 +84,7 @@ function extractDefineEmitsArray(
 
   while ((arrMatch = arrRe.exec(source)) !== null) {
     const items = arrMatch[1];
-    const itemRe = /['"](\w+)['"]/g;
+    const itemRe = new RegExp(`['"]` + EVENT_NAME + `['"]`, "g");
     let itemMatch: RegExpExecArray | null;
 
     while ((itemMatch = itemRe.exec(items)) !== null) {
@@ -97,7 +106,7 @@ function extractEmitCalls(
   events: EventInfo[],
   seen: Set<string>,
 ): void {
-  const callRe = /\bemit\s*\(\s*['"](\w+)['"]/g;
+  const callRe = new RegExp(EMIT_CALL_RE.source, "g");
   let callMatch: RegExpExecArray | null;
 
   while ((callMatch = callRe.exec(source)) !== null) {
