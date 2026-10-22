@@ -1,4 +1,5 @@
 import type { FileAnalysis, InteractiveElementInfo, ScreenComponentInfo, ScreenInfo, SubComponentInfo } from "../../../types/analysis.js";
+import { inlineScriptRequests } from "../shared/inline-script-requests.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractHtmlInteractiveElements } from "../html/index.js";
 import { literalPath, handlerOf, materializeElementRequests } from "../shared/element-requests.js";
@@ -141,4 +142,6 @@ export const templateSpec = (dialect: TemplateDialect, extensions: string[]): Re
       getSpecifiers: () => [],
     },
   ],
+  // Requests the page's inline scripts make (`fetch("/clubs", { method: "POST" })`).
+  extractDataSources: (lines) => inlineScriptRequests(lines),
 });

@@ -1,4 +1,5 @@
 import type { RouteInfo, InteractiveElementInfo } from "../../../types/analysis.js";
+import { inlineScriptRequests } from "../shared/inline-script-requests.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { literalPath, handlerOf } from "../shared/element-requests.js";
 
@@ -433,6 +434,8 @@ export const htmlSpec: RegexLangSpec = {
   ],
 
   extractRoutes: (lines, _classes, filePath) => extractHtmlRoutes(lines, filePath),
+  // Requests the page's inline scripts make (`fetch("/signup/code", { method: "POST" })`).
+  extractDataSources: (lines) => inlineScriptRequests(lines),
   // A server-rendered page's forms and links request the app's routes (`materializeElementRequests`, in meta.ts).
   extractInteractiveElements: (lines) => extractHtmlInteractiveElements(lines, { requests: true }),
 };
