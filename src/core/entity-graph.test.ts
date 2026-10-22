@@ -336,3 +336,25 @@ describe("reconcileEntityInheritance", () => {
     expect(dto.decorators).toEqual([]);
   });
 });
+
+describe("buildEntityGraph — a schema table in a sub-project of its own", () => {
+  const cls = (name: string, decorators: string[], tableName?: string) =>
+    ({ name, decorators, properties: [{ name: "id", type: null }], line: 1, methods: [], implements: [], ...(tableName ? { tableName } : {}) });
+  const fileOf = (filePath: string, projectId: string, classes: unknown[]) =>
+    ({ filePath, language: filePath.endsWith(".sql") ? "sql" : "rust", projectId, classes, entityRelations: [] }) as unknown as FileAnalysis;
+
+  it("is the one entity anywhere that maps it by name", () => {
+    // Real-repo FP: migrations in a database crate, models in the crates that use it — every table twice.
+    const g = buildEntityGraph([
+      fileOf("db/migrations/2024-01-01_create/up.sql", "db", [cls("fixture_table", ["table"]), cls("referee_table", ["table"])]),
+      fileOf("league/src/fixtures.rs", "league", [cls("FixtureTable", ["entity", "diesel"], "fixture_table")]),
+      fileOf("cup/src/referees.rs", "cup", [cls("RefereeRow", ["entity", "diesel"], "referee_table"), cls("RefereeCopy", ["entity", "diesel"], "referee_table")]),
+    ]);
+    expect(g.nodes.map((n) => n.id).sort()).toEqual([
+      "cup/src/referees.rs::RefereeCopy",
+      "cup/src/referees.rs::RefereeRow",
+      "db/migrations/2024-01-01_create/up.sql::referee_table",
+      "league/src/fixtures.rs::FixtureTable",
+    ]);
+  });
+});

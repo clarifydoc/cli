@@ -534,9 +534,15 @@ function foldMappedTables(nodes: Map<string, EntityGraphNode>, nameToIds: Map<st
     const table = nodes.get(id)!;
     const name = table.name.split(".").pop()!.toLowerCase();
     const keys = new Set(tableMatchKeys(table.name));
-    const maps = (entitiesByProject.get(projectOf.get(id)!) ?? []).filter((e) =>
+    let maps = (entitiesByProject.get(projectOf.get(id)!) ?? []).filter((e) =>
       e.table ? e.table.split(".").pop()!.toLowerCase() === name : tableMatchKeys(e.name).some((k) => keys.has(k)),
     );
+    // Migrations kept in a crate or module of their own: the one entity anywhere that names the table outright.
+    if (maps.length === 0) {
+      maps = [...entitiesByProject.values()].flat().filter((e) =>
+        e.table ? e.table.split(".").pop()!.toLowerCase() === name : e.name.split(/::|\./).pop()!.toLowerCase() === name,
+      );
+    }
     if (maps.length !== 1) continue;
     nodes.delete(id);
     for (const [key, ids] of nameToIds) {

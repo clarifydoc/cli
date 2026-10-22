@@ -424,14 +424,45 @@ export function attributeLinesAbove(lines: string[], i: number, spec: RegexLangS
   if (!re) return [];
   const out: string[] = [];
   for (let j = i - 1; j >= 0; j--) {
-    const m = lines[j]!.match(re);
+    let m = lines[j]!.match(re);
+    let joinedLines = false;
+    // A trailing comment after the attribute (`)] // why`) is not part of it.
+    const uncommented = (l: string): string => l.replace(/\s+\/\/[^"]*$/, "").trim();
+    if (!m && /[\])]$/.test(uncommented(lines[j]!))) {
+      // An attribute over several lines (`#[cfg_attr(⏎ feature = "x",⏎ derive(Queryable)⏎)]`): its
+      // lines joined, when the first bracket it opens closes only at its end.
+      for (let k = j - 1; k >= Math.max(0, j - 10); k--) {
+        const joined = lines.slice(k, j + 1).map(uncommented).join(" ");
+        const hit = joined.match(re);
+        if (hit && closesAtEnd(joined)) { m = hit; j = k; joinedLines = true; break; }
+      }
+    }
     if (!m) {
-      if (lines[j]!.trim() === "") continue; // a blank line does not end a stack
+      const trimmed = lines[j]!.trim();
+      // A blank line or a doc comment (`/// A club.` between the attributes and the struct) does not end a stack.
+      if (trimmed === "" || spec.lineCommentPrefixes?.some((p) => trimmed.startsWith(p))) continue;
       break;
     }
-    out.unshift((m[1] ?? m[0]).trim());
+    const text = (m[1] ?? m[0]).trim();
+    out.unshift(joinedLines ? text.replace(/([([])\s+/g, "$1").replace(/,?\s+([)\]])/g, "$1") : text);
   }
   return out;
+}
+
+/** Whether the first bracket `text` opens closes at its last bracket, and none before. */
+function closesAtEnd(text: string): boolean {
+  let depth = 0;
+  let opened = false;
+  const last = text.trimEnd().length - 1;
+  for (let k = 0; k <= last; k++) {
+    const c = text[k]!;
+    if (c === "(" || c === "[" || c === "{") { depth++; opened = true; }
+    else if (c === ")" || c === "]" || c === "}") {
+      depth--;
+      if (depth === 0 && opened && k < last) return false;
+    }
+  }
+  return opened && depth === 0;
 }
 
 /**

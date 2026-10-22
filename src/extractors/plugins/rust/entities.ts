@@ -64,23 +64,39 @@ export class RustEntityExtractor extends EntityExtractor {
     for (const a of rust) {
       for (const c of a.classes) {
         if (c.decorators.some((d) => d.startsWith(DIESEL_TABLE_DECORATOR))) continue;
-        const table = c.decorators.map((d) => /^diesel\(\s*table_name\s*=\s*"?(\w+)"?\s*\)$|^table_name\s*=\s*"(\w+)"$/.exec(d)).find(Boolean);
+        // `diesel(table_name = clubs)`, also behind a feature: `cfg_attr(feature = "db", diesel(table_name = clubs))`.
+        const table = c.decorators.map((d) => /^(?:cfg_attr\(.*?,\s*)?diesel\(\s*table_name\s*=\s*"?(?:\w+::)*(\w+)"?\s*\)\)?$|^table_name\s*=\s*"(\w+)"$/.exec(d)).find(Boolean);
         const name = table?.[1] ?? table?.[2];
         if (name) (mapped.get(name) ?? mapped.set(name, []).get(name)!).push(c);
       }
     }
     if (mapped.size === 0) return;
+    /** The class a `table!` block made → the one model that replaces it, for the relations naming it. */
+    const renamed = new Map<string, string>();
     for (const a of rust) {
       a.classes = a.classes.filter((c) => {
         const table = c.decorators.find((d) => d.startsWith(DIESEL_TABLE_DECORATOR))?.slice(DIESEL_TABLE_DECORATOR.length);
         const models = table ? mapped.get(table) : undefined;
         if (!table || !models) return true;
-        for (const model of models) {
+        // A form struct (`#[derive(Insertable)]`, `#[derive(AsChangeset, Identifiable)]`) writes rows the
+        // model reads: when a struct the table is loaded into exists, it alone is the entity.
+        const read = models.filter((m) => m.decorators.some((d) => /^(?:cfg_attr\(.*?,\s*)?derive\(.*\b(?:Queryable|Selectable|QueryableByName)\b/.test(d)));
+        const chosen = read.length > 0 ? read : models;
+        for (const model of chosen) {
           if (!model.decorators.includes("entity")) model.decorators.push("entity", "diesel");
           if (table.toLowerCase() !== model.name.toLowerCase()) model.tableName = table;
         }
+        if (chosen.length === 1 && chosen[0]!.name !== c.name) renamed.set(c.name, chosen[0]!.name);
         return false;
       });
+    }
+    // `joinable!(match_events -> matches (match_id))` names the macro's classes; the models stand for them now.
+    if (renamed.size === 0) return;
+    for (const a of rust) {
+      for (const r of a.entityRelations ?? []) {
+        r.fromEntity = renamed.get(r.fromEntity) ?? r.fromEntity;
+        r.toEntity = renamed.get(r.toEntity) ?? r.toEntity;
+      }
     }
   }
 
@@ -287,9 +303,10 @@ export class RustEntityExtractor extends EntityExtractor {
 
   /**
    * Diesel declares implicit query compatibility (often, but not always, a
-   * many-to-many pairing) via this macro. We surface each *pair* as a low-
-   * confidence many-to-many so downstream analysis can see the association,
-   * marked INFERRED because the macro doesn't itself prove a relation.
+   * many-to-many pairing) via this macro. A hand-written pair is surfaced as
+   * a low-confidence many-to-many, marked INFERRED because the macro doesn't
+   * itself prove a relation. The list `diesel print-schema` writes names every
+   * table of the schema: its pairs say nothing and are not read.
    */
   private extractDieselAllowSameQuery(lines: string[], out: EntityRelation[]): void {
     const re = /\ballow_tables_to_appear_in_same_query!\s*\(([^)]*)\)/;
@@ -301,6 +318,7 @@ export class RustEntityExtractor extends EntityExtractor {
         .map((t) => t.trim())
         .filter(Boolean)
         .map((t) => this.entityName(t));
+      if (tables.length > 2) continue;
       // Emit each unordered pair once.
       for (let a = 0; a < tables.length; a++) {
         for (let b = a + 1; b < tables.length; b++) {

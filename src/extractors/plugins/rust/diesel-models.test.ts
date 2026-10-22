@@ -15,6 +15,27 @@ const FILES: Record<string, string> = {
         name -> Text,
     }
 }
+
+table! {
+    match_events (id) {
+        id -> Int4,
+        club_uuid -> Text,
+    }
+}
+
+joinable!(match_events -> clubs (club_uuid));
+
+allow_tables_to_appear_in_same_query!(clubs, match_events, referees);
+`,
+  "src/db/models/match_event.rs": `use crate::db::schema::match_events;
+
+#[derive(Queryable, Selectable)]
+#[diesel(belongs_to(Club))] // one club per event
+#[diesel(table_name = match_events)]
+pub struct MatchEventRow {
+    pub id: i32,
+    pub club_uuid: String,
+}
 `,
   "src/db/models/club.rs": `use crate::db::schema::clubs;
 
@@ -23,6 +44,17 @@ const FILES: Record<string, string> = {
 pub struct Club {
     pub uuid: String,
     pub name: String,
+}
+
+#[cfg_attr(
+  feature = "full",
+  derive(AsChangeset, Identifiable, Default)
+)] // edits only
+#[cfg_attr(feature = "full", diesel(table_name = clubs))]
+/// The fields an edit may change.
+pub struct ClubChangeset {
+    pub uuid: String,
+    pub name: Option<String>,
 }
 
 impl Club {
@@ -60,6 +92,13 @@ describe("Diesel tables and their model structs", () => {
   it("are one entity, the struct, so a call on a value of it links", () => {
     const clubs = (summary.entityGraph?.nodes ?? []).filter((n) => n.name === "Club").map((n) => `${n.filePath} ${n.table ?? ""}`);
     expect(clubs).toEqual(["src/db/models/club.rs clubs"]);
+    // The changeset writes the rows `Club` reads: a form, not a second entity.
+    expect((summary.entityGraph?.nodes ?? []).map((n) => n.name)).not.toContain("ClubChangeset");
+  });
+
+  it("keep the schema's joins between the models that replace its tables", () => {
+    const name = (id: string) => id.split("::").pop();
+    expect((summary.entityGraph?.edges ?? []).map((e) => `${name(e.source)} ${name(e.target)}`)).toEqual(["Club MatchEventRow"]);
     expect(summary.symbolLinks.filter((l) => l.sourceSymbol === "post_clubs").map((l) => l.targetSymbol)).toContain("Club.save");
   });
 });
