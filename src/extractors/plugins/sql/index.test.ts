@@ -74,5 +74,7 @@ describe("SQL CREATE TABLE", () => {
   it("reads a table whose name stands on the line after CREATE TABLE (real-repo FP)", () => {
     const classes = sqlSpec.extractClasses!("CREATE TABLE\nkit_colour (\n    id serial PRIMARY KEY,\n    name text\n);\n".split("\n"), []);
     expect(classes.map((c) => `${c.name} ${c.properties.map((p) => p.name).join(",")}`)).toEqual(["kit_colour id,name"]);
+    const split = sqlSpec.extractClasses!("CREATE\n  TABLE\n  IF NOT EXISTS fixtures(\n    id BIGINT PRIMARY KEY\n);\n".split("\n"), []);
+    expect(split.map((c) => c.name)).toEqual(["fixtures"]);
   });
 });

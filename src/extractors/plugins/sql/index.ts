@@ -118,12 +118,11 @@ function extractSqlClasses(lines: string[], _fns: FunctionInfo[]): ClassInfo[] {
     if (/^\s*(--|#)/.test(line)) continue;
 
     // CREATE [GLOBAL TEMPORARY|TEMP|UNLOGGED] TABLE [IF NOT EXISTS] schema.name (
-    // — the name may stand on the next line (`CREATE TABLE⏎clubs (`).
+    // — the statement's head may run over lines (`CREATE TABLE⏎clubs (`, `CREATE⏎TABLE⏎IF NOT EXISTS clubs(`).
     let head = line;
-    if (/^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:GLOBAL\s+TEMPORARY\s+|TEMPORARY\s+|TEMP\s+|UNLOGGED\s+)?TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s*$/i.test(line)) {
-      let k = i + 1;
-      while (k < lines.length && !lines[k]!.trim()) k++;
-      if (k < lines.length) head = line.trimEnd() + " " + lines[k]!.trim();
+    if (/^\s*CREATE\b[^(;]*$/i.test(line)) {
+      for (let k = i + 1; k < Math.min(lines.length, i + 4) && !/[(;]/.test(head); k++) head = head.trimEnd() + " " + lines[k]!.trim();
+      if (!/^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:GLOBAL\s+TEMPORARY\s+|TEMPORARY\s+|TEMP\s+|UNLOGGED\s+)?TABLE\b/i.test(head)) head = line;
     }
     const tableMatch = head.match(
       /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:GLOBAL\s+TEMPORARY\s+|TEMPORARY\s+|TEMP\s+|UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))/i,

@@ -118,7 +118,12 @@ export function extractHttpClientRegistrations(tree: Tree, sourceText: string): 
       if (pair.type !== "pair") continue;
       const key = pair.childForFieldName("key")?.text.replace(/^['"]|['"]$/g, "");
       if (!key || !BASE_KEYS.has(key)) continue;
-      const base = jsBaseRefOf(pair.childForFieldName("value")?.text ?? "");
+      const written = pair.childForFieldName("value");
+      // `baseURL: ICONS_BASE_URL` with `const ICONS_BASE_URL = "https://…"` in the file: the literal.
+      const constant = written?.type === "identifier"
+        ? new RegExp(`\\bconst\\s+${written.text}\\s*(?::[^=]+)?=\\s*(["'\`])([^"'\`$]*)\\1`).exec(sourceText)?.[2]
+        : undefined;
+      const base = jsBaseRefOf(constant !== undefined ? JSON.stringify(constant) : written?.text ?? "");
       if (base) out.push({ client: name.text, scope: "file", base, line: pair.startPosition.row + 1 });
     }
   }

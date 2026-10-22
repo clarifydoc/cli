@@ -52,6 +52,18 @@ const local = axios.create({ baseURL: "/api" });
       { client: "partner", scope: "file", base: { kind: "literal", key: "https://api.partner.com/v1" } },
     ]);
   });
+
+  it("reads a base a constant of the file holds (real-repo FP)", async () => {
+    await ensureLanguagesLoaded(["typescript"]);
+    const src = `
+const BADGES_BASE_URL = "https://badges.example.com";
+export const badges = axios.create({ baseURL: BADGES_BASE_URL });
+`;
+    const regs = extractHttpClientRegistrations(await parseSource(src, "typescript", "c.ts"), src);
+    expect(regs.map(({ line: _l, ...r }) => r)).toEqual([
+      { client: "badges", scope: "file", base: { kind: "literal", key: "https://badges.example.com" } },
+    ]);
+  });
 });
 
 describe("jsBaseRefOf", () => {

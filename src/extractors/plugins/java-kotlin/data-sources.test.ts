@@ -582,3 +582,32 @@ describe("java.net URLConnection", () => {
     expect(ds.filter((d) => d.kind === "api-call").map((d) => `${d.name} ${d.target}`)).toEqual(["GET http://stats.example.com/api/clubs", "GET null"]);
   });
 });
+
+describe("Spring application listeners", () => {
+  it("consume the event their ApplicationListener<X> names, in onApplicationEvent (real-repo FP)", async () => {
+    const java = `class StandingsRefresher implements StandingsSource, ApplicationListener<MatchFinishedEvent> {
+  @Override
+  public void onApplicationEvent(MatchFinishedEvent event) {
+    refresh(event.getLeague());
+  }
+}`;
+    const tree = await parseSource(java, "java", "StandingsRefresher.java");
+    const rows = new JavaKotlinDataSourceExtractor().extract(tree, java).filter((d) => d.kind === "queue-consume");
+    expect(rows.map((d) => `${d.name} ${d.target} @${d.line}`)).toEqual(["ApplicationListener MatchFinishedEvent @3"]);
+  });
+
+  it("publish the event a method of the file builds and returns", async () => {
+    const java = `class StandingsReconciler {
+  private final ApplicationEventPublisher eventPublisher;
+  void reconcile(Table table) {
+    eventPublisher.publishEvent(computeChangedEvent(table));
+  }
+  private StandingsChangedEvent computeChangedEvent(Table table) {
+    return new StandingsChangedEvent(this, table);
+  }
+}`;
+    const tree = await parseSource(java, "java", "StandingsReconciler.java");
+    const rows = new JavaKotlinDataSourceExtractor().extract(tree, java).filter((d) => d.kind === "queue-publish");
+    expect(rows.map((d) => `${d.target} @${d.line}`)).toEqual(["StandingsChangedEvent @4"]);
+  });
+});

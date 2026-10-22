@@ -354,7 +354,7 @@ function walkForJavaKotlinRoutes(
     // The verb is cheap and rare; the receiver text of a chain is the whole chain.
     if (FUNCTIONAL_VERBS.has(verb) && FUNCTIONAL_ROUTER_RE.test(node.childForFieldName("object")?.text ?? "")) {
       const args = node.childForFieldName("arguments")?.namedChildren ?? [];
-      const path = args[0] ? firstStringLiteral(args[0]) : null;
+      const path = args[0] ? firstStringLiteral(args[0]) ?? (args[0].type === "identifier" ? fileStringConstant(node, args[0].text) : null) : null;
       if (path !== null && args[0]!.type !== "lambda_expression") {
         const handlerArg = args[1];
         const ref = handlerArg?.type === "method_reference" ? handlerArg.text.split("::").pop() ?? null : null;
@@ -389,6 +389,12 @@ export const FUNCTIONAL_ROUTER_GATE_RE = /\broute\s*\(\s*\)|\bRouterFunctions\b|
 const FUNCTIONAL_ROUTER_RE = new RegExp(`${FUNCTIONAL_ROUTER_GATE_RE.source}|\\b(?:builder|b|r|router|routes)$`);
 
 /** A prefix the enclosing class serves its functional routes under (a Halo `CustomEndpoint`'s group/version), or "". */
+/** `static final String UNSUBSCRIBE = "/apis/…";` in the file, its value on the next line or not. */
+function fileStringConstant(node: Node, name: string): string | null {
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) return null;
+  return new RegExp(`\\bstatic\\s+final\\s+String\\s+${name}\\s*=\\s*"([^"]*)"\\s*;`).exec(node.tree.rootNode.text)?.[1] ?? null;
+}
+
 function functionalClassPrefix(node: Node): string {
   let cur: Node | null = node.parent;
   while (cur && cur.type !== "class_declaration") cur = cur.parent;

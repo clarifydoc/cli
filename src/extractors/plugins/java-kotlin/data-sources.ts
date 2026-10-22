@@ -502,6 +502,16 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       }
     }
 
+    // `class X implements ApplicationListener<MatchFinishedEvent>`: Spring hands it every such
+    // event — its `onApplicationEvent` is the consume side, as an `@EventListener` method is.
+    if (node.type === "class_declaration") {
+      const event = /\bApplicationListener\s*<\s*([\w.]+)/.exec(node.childForFieldName("interfaces")?.text ?? "")?.[1]?.split(".").pop();
+      const handler = event ? node.childForFieldName("body")?.namedChildren.find((m) => m.type === "method_declaration" && m.childForFieldName("name")?.text === "onApplicationEvent") : undefined;
+      if (event && handler) {
+        sources.push(this.ds({ kind: "queue-consume", name: "ApplicationListener", target: event, line: (handler.childForFieldName("name") ?? handler).startPosition.row + 1 }));
+      }
+    }
+
     // @Autowired / @Inject / @Value annotations indicate dependency injection.
     if (node.type === "annotation" || node.type === "marker_annotation") {
       const text = node.text;
@@ -904,6 +914,15 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       // constructor in sight the type is the only event-shaped evidence.
       if (/^[\w$]+$/.test(text)) {
         const t = localDeclaredType(call, text) ?? this.fieldTypes.get(text) ?? null;
+        if (t && EVENT_TYPE_RE.test(t)) return t;
+      }
+
+      // A method of this file builds it: `publishEvent(computeChangedEvent(old, now))` → its declared return type.
+      if (arg.type === "method_invocation" && !arg.childForFieldName("object")) {
+        const name = arg.childForFieldName("name")?.text;
+        const decls = call.tree.rootNode.descendantsOfType("method_declaration").filter((d) => d?.childForFieldName("name")?.text === name);
+        const types = new Set(decls.map((d) => simpleTypeName(d!.childForFieldName("type")?.text)));
+        const t = types.size === 1 ? [...types][0] : null;
         if (t && EVENT_TYPE_RE.test(t)) return t;
       }
     }

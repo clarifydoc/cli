@@ -7,6 +7,7 @@ import { extractJaxrsMicronautRoutes } from "./jaxrs.js";
 import { extractKtorRoutes } from "./ktor.js";
 import { extractJavalinSparkRoutes } from "./javalin-spark.js";
 import { GRAPHQL_GATE_RE, extractJvmGraphqlRoutes } from "./graphql.js";
+import { extractActuatorEndpoints } from "./actuator.js";
 import { extractHaloExtensionRoutes } from "./halo.js";
 import { collectSecurityRules } from "./security-dsl.js";
 import { collectServiceBeans } from "./service-beans.js";
@@ -41,6 +42,9 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
 
     // Halo extensions: CRUD routes generated from `@GVK` (see halo.ts).
     extractHaloExtensionRoutes(sourceText, routes, facts);
+
+    // Spring Boot actuator endpoints the project declares.
+    if (sourceText.includes("Endpoint(")) extractActuatorEndpoints(sourceText, routes);
 
     // Ktor verbs are maximally generic (`get`), so the DSL walk only runs in
     // files that actually import io.ktor.

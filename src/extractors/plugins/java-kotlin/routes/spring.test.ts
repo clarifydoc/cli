@@ -329,6 +329,26 @@ class PolicyEndpoint {
     ]);
     expect(routes[2]!.calls.map((c) => c.name)).toContain("attachmentService.upload");
   });
+
+  it("reads a path a constant of the file holds, its value on the next line (real-repo FP)", async () => {
+    const src = `package x;
+class SubscriptionRouter {
+    public static final String UNSUBSCRIBE_PATTERN =
+            "/apis/api.league.example.com/v1alpha1/subscriptions/{name}/unsubscribe";
+
+    RouterFunction<ServerResponse> router() {
+        return SpringdocRouteBuilder.route()
+            .GET(UNSUBSCRIBE_PATTERN, this::unsubscribe, builder -> builder.operationId("Unsubscribe"))
+            .build();
+    }
+}`;
+    const tree = await parseSource(src, "java" as any, "SubscriptionRouter.java");
+    const routes: RouteInfo[] = [];
+    extractSpringRoutes(tree.rootNode, routes);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
+      "GET /apis/api.league.example.com/v1alpha1/subscriptions/{name}/unsubscribe -> unsubscribe",
+    ]);
+  });
 });
 
 describe("Halo runtime routes", () => {
