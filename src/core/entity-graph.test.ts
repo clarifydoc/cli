@@ -296,6 +296,12 @@ describe("buildEntityGraph — an API contract split into several documents", ()
     ]);
     expect(g.edges).toHaveLength(2);
   });
+
+  it("leaves the schemas out where the code declares the tables (real-repo FP: 388 of 507 nodes)", () => {
+    const code = { filePath: "League.Database/Entities/Club.cs", language: "csharp", projectId: "league-database", classes: [{ name: "Club", decorators: ["entity", "ef-core"], properties: [], line: 1 }] } as unknown as FileAnalysis;
+    const g = buildEntityGraph([spec("openapi.json", ["id", "name"]), code]);
+    expect(g.nodes.map((n) => n.id)).toEqual(["League.Database/Entities/Club.cs::Club"]);
+  });
 });
 
 describe("buildEntityGraph — a schema table and the entity mapping it", () => {

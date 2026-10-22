@@ -208,9 +208,15 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
   // Tables a schema script declares (CREATE TABLE), as opposed to ORM entities.
   const ddlIds = new Set<string>();
 
+  // A repository whose code declares its data model: the API descriptions'
+  // schemas are request and response shapes, not more of the model (a spec-only
+  // repository keeps them — they are all the model it states).
+  const modelled = analyses.some((a) => !isApiContractLanguage(a.language) && (a.classes ?? []).some((c) => (c.decorators ?? []).includes("entity") || (c.decorators ?? []).includes("table")));
+
   // ── Pass 1: nodes (entities / tables / enums) ──
   for (const a of analyses) {
     const contract = isApiContractLanguage(a.language);
+    if (contract && modelled) continue;
     for (const cls of a.classes ?? []) {
       const decs = cls.decorators ?? [];
       const isEntity = decs.includes("entity") || decs.includes("table");
