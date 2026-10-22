@@ -24,6 +24,9 @@ describe("protoc stub naming", () => {
     expect(jvmGrpcStub("CarServiceGrpcKt.CarServiceCoroutineStub")).toEqual({ service: "CarService", certain: true });
     expect(csharpGrpcStub("Greeter.GreeterClient")).toEqual({ service: "Greeter", certain: true });
     expect(csharpGrpcStub("Api.HttpClient")).toBeNull();
+    const aliased = { imports: [{ source: "League.Grpc.Squad.SquadClient", specifiers: ["GrpcSquadClient"], isDefault: false, isNamespace: false, line: 1 }] } as unknown as FileAnalysis;
+    expect(csharpGrpcStub("GrpcSquadClient", aliased)).toEqual({ service: "Squad", certain: true });
+    expect(csharpGrpcStub("SquadClient", aliased)).toBeNull();
     expect(jsGrpcStub("CarService", file("typescript"))).toBeNull();
     expect(jsGrpcStub("CarService", file("typescript", { imports: [{ source: "@grpc/grpc-js" } as never] }))).toEqual({ service: "CarService", certain: false });
   });

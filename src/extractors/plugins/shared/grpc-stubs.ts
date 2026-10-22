@@ -36,9 +36,18 @@ export function jvmGrpcStub(spelling: string, file?: FileAnalysis): Stub {
   return nested ? { service: nested[1]!, certain: true } : null;
 }
 
-/** C#: the nested `Greeter.GreeterClient` protoc generates (or `new Greeter.GreeterClient(…)`). */
-export function csharpGrpcStub(spelling: string): Stub {
-  const m = /^(?:new\s+)?(?:[\w.]+\.)?(\w+)\.(\w+)Client(?:\(\))?$/.exec(spelling);
+/**
+ * C#: the nested `Greeter.GreeterClient` protoc generates (or `new Greeter.GreeterClient(…)`),
+ * also through a using alias (`using GrpcGreeter = League.Grpc.Greeter.GreeterClient;`).
+ */
+export function csharpGrpcStub(spelling: string, file?: FileAnalysis): Stub {
+  const read = (s: string) => /^(?:new\s+)?(?:[\w.]+\.)?(\w+)\.(\w+)Client(?:\(\))?$/.exec(s);
+  let m = read(spelling);
+  const bare = /^(?:new\s+)?(\w+)(?:\(\))?$/.exec(spelling)?.[1];
+  if (!m && bare && file) {
+    const alias = file.imports.find((i) => !i.isNamespace && i.specifiers.length === 1 && i.specifiers[0] === bare);
+    if (alias) m = read(alias.source);
+  }
   return m && m[1] === m[2] ? { service: m[1]!, certain: true } : null;
 }
 
