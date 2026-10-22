@@ -77,7 +77,7 @@ const ECTO_VAR_READ_RE = /\b\w*Repo\.(all|one!?|exists\?|aggregate|stream)\s*\(\
  * `from(…)` that built it has its own row).
  */
 function extractElixirDataSources(lines: string[]): DataSourceInfo[] {
-  const out: DataSourceInfo[] = [];
+  const out: DataSourceInfo[] = obanJobs(lines);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     const trimmed = line.trimStart();
@@ -124,6 +124,52 @@ function extractElixirDataSources(lines: string[]): DataSourceInfo[] {
       if (!m[2] && !/\|>\s*(?:[A-Z]\w*\.)*\w*Repo\./.test(line)) continue;
       out.push({ kind: "database", name: `Repo.${m[1]}`, target: null, calls: [], line: ln, access: "read" });
     }
+  }
+  return out;
+}
+
+const OBAN_WORKER_RE = /^\s*use\s+Oban\.(?:Pro\.)?Worker\b/;
+const OBAN_INSERT_RE = /\bOban\.insert(?:_all)?!?\s*\(/;
+const JOB_NEW_RE = /\b([A-Z][\w.]*)\.new\s*\(/;
+
+/**
+ * Oban jobs as a queue a worker module is the channel of: `use Oban.Worker`
+ * makes the module's `perform/1` consume it, and `Worker.new(args) |>
+ * Oban.insert()` (or `Oban.insert!(Worker.new(args))`) enqueues onto it. Both
+ * sides name the worker by its last segment, aliased or not.
+ */
+function obanJobs(lines: string[]): DataSourceInfo[] {
+  const text = lines.join("\n");
+  if (!text.includes("Oban")) return [];
+  const out: DataSourceInfo[] = [];
+  // A worker enqueuing itself (`%{id: id} |> new() |> Oban.insert()`, `__MODULE__.new(args)`).
+  let ownWorker: string | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (OBAN_WORKER_RE.test(line)) {
+      let mod: string | null = null;
+      for (let j = i; j >= 0 && !mod; j--) mod = /^\s*defmodule\s+([A-Z][\w.]*)/.exec(lines[j]!)?.[1] ?? null;
+      let perform = -1;
+      for (let j = i + 1; j < lines.length && perform < 0; j++) if (/^\s*def\s+perform\s*\(/.test(lines[j]!)) perform = j;
+      if (mod) {
+        const channel = lastSeg(mod);
+        ownWorker = channel;
+        out.push({ kind: "queue-consume", name: "Oban.Worker", target: channel, entity: channel, calls: [], line: (perform >= 0 ? perform : i) + 1 });
+      }
+      continue;
+    }
+    if (!OBAN_INSERT_RE.test(line)) continue;
+    // The job built in the same statement: on this line, in the call's arguments below, or up the pipeline feeding it.
+    let job = JOB_NEW_RE.exec(line)?.[1] ?? null;
+    const openCall = /\bOban\.insert(?:_all)?!?\s*\(\s*$/.test(line);
+    for (let j = i + 1; openCall && !job && j < lines.length && j - i <= 3 && !/^\s*\)/.test(lines[j]!); j++) job = JOB_NEW_RE.exec(lines[j]!)?.[1] ?? null;
+    for (let j = i - 1; !job && j >= 0 && i - j <= 8 && !/^\s*(?:def|defp)\b/.test(lines[j]!); j--) job = JOB_NEW_RE.exec(lines[j]!)?.[1] ?? null;
+    if (!job && ownWorker) {
+      for (let j = i; j >= 0 && i - j <= 8 && !job; j--) if (/(?:^|[\s(>])(?:__MODULE__\.)?new\s*\(/.test(lines[j]!)) job = ownWorker;
+    }
+    if (!job || job === "Map" || job === "MapSet" || job === "Date" || job === "DateTime") continue;
+    const channel = job === "__MODULE__" && ownWorker ? ownWorker : lastSeg(job);
+    out.push({ kind: "queue-publish", name: "Oban.insert", target: channel, entity: channel, calls: [], line: i + 1 });
   }
   return out;
 }

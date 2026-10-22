@@ -84,3 +84,47 @@ end`;
     ]);
   });
 });
+
+describe("Oban jobs", () => {
+  it("consumes on a worker's perform and enqueues where a job of it is inserted", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const worker = extractWithRegex(`defmodule League.Workers.SendFixtureReport do
+  use Oban.Worker,
+    queue: :fixture_reports
+
+  @impl Oban.Worker
+  def perform(%Oban.Job{args: args}) do
+    :ok
+  end
+
+  def enqueue(club_id) do
+    %{club_id: club_id}
+    |> new()
+    |> Oban.insert()
+  end
+end`, "lib/workers/send_fixture_report.ex", "elixir");
+    expect(worker.dataSources.map((d) => `${d.kind} ${d.target} @${d.line}`)).toEqual(["queue-consume SendFixtureReport @6", "queue-publish SendFixtureReport @13"]);
+    const scheduler = extractWithRegex(`defmodule League.Workers.ScheduleReports do
+  def schedule(club) do
+    SendFixtureReport.new(%{club_id: club.id},
+      scheduled_at: next_monday()
+    )
+    |> Oban.insert!()
+  end
+
+  def export(args), do: {:ok, Oban.insert!(League.Workers.ExportSquad.new(args))}
+
+  def import(club, opts) do
+    club
+    |> Map.new()
+    |> League.Workers.ImportSquad.new(opts)
+    |> Oban.insert()
+  end
+end`, "lib/workers/schedule_reports.ex", "elixir");
+    expect(scheduler.dataSources.filter((d) => d.kind.startsWith("queue")).map((d) => `${d.kind} ${d.target} @${d.line}`)).toEqual([
+      "queue-publish SendFixtureReport @6",
+      "queue-publish ExportSquad @9",
+      "queue-publish ImportSquad @15",
+    ]);
+  });
+});
