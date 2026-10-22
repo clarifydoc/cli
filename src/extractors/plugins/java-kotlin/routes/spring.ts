@@ -4,7 +4,7 @@ import { stripQuotes, findChildByType, getNameFromNode } from "../../../shared/n
 import { extractCalls } from "../../../shared/call-graph.js";
 import { applyRouteMeta, type GuardAttr } from "../../../shared/route-metadata.js";
 import { guardsOn, routeParamsOf } from "./meta-annotations.js";
-import { customEndpointPrefix } from "./halo.js";
+import { customEndpointPrefix, customEndpointUnresolvedPrefix } from "./halo.js";
 
 /** Spring Boot mapping annotations */
 const SPRING_MAPPING_ANNOTATIONS: Record<string, string | null> = {
@@ -359,8 +359,10 @@ function walkForJavaKotlinRoutes(
         const handlerArg = args[1];
         const ref = handlerArg?.type === "method_reference" ? handlerArg.text.split("::").pop() ?? null : null;
         const calls = handlerArg?.type === "lambda_expression" ? extractCalls(handlerArg, "java") : [];
+        const unresolved = classPrefix ? null : functionalClassUnresolved(node);
         const route: RouteInfo = {
           path: mergePrefix(classPrefix || functionalClassPrefix(node), functionalNestPrefix(node) + (path.startsWith("/") ? path : "/" + path)),
+          ...(unresolved ? { prefixUnresolved: unresolved } : {}),
           httpMethod: verb,
           kind: "api",
           handler: ref,
@@ -391,6 +393,13 @@ function functionalClassPrefix(node: Node): string {
   let cur: Node | null = node.parent;
   while (cur && cur.type !== "class_declaration") cur = cur.parent;
   return cur ? (customEndpointPrefix(cur.text) ?? "") : "";
+}
+
+/** The enclosing endpoint's computed group version, which a project pass resolves (see halo.ts). */
+function functionalClassUnresolved(node: Node): string | null {
+  let cur: Node | null = node.parent;
+  while (cur && cur.type !== "class_declaration") cur = cur.parent;
+  return cur ? customEndpointUnresolvedPrefix(cur.text) : null;
 }
 
 /** Path prefix from enclosing `.nest(path("/api"), b -> …)` / `.path("/api", b -> …)` calls, outermost first. */

@@ -25,6 +25,67 @@ public class Club extends AbstractExtension {
     public static final String KIND = "Club";
 }
 `,
+  "src/main/java/com/example/league/endpoint/ClubQueryEndpoint.java": `package com.example.league.endpoint;
+
+import com.example.league.content.Club;
+
+public class ClubQueryEndpoint implements CustomEndpoint {
+    @Override
+    public RouterFunction<ServerResponse> endpoint() {
+        return SpringdocRouteBuilder.route()
+            .GET("clubs", this::listClubs, builder -> builder.operationId("queryClubs"))
+            .build();
+    }
+
+    @Override
+    public GroupVersion groupVersion() {
+        return PublicApiUtils.groupVersion(new Club());
+    }
+}
+`,
+  "src/main/java/com/example/league/endpoint/StandingsEndpoint.java": `package com.example.league.endpoint;
+
+public class StandingsEndpoint implements CustomEndpoint {
+    private static final String API_VERSION = "api.league.example.com/v1alpha1";
+
+    @Override
+    public RouterFunction<ServerResponse> endpoint() {
+        return SpringdocRouteBuilder.route()
+            .GET("standings", this::standings, builder -> builder.operationId("standings"))
+            .build();
+    }
+
+    @Override
+    public GroupVersion groupVersion() {
+        return GroupVersion.parseAPIVersion(API_VERSION);
+    }
+}
+`,
+  // The same package in another module, beside a second class named `Constant`.
+  "api/src/main/java/com/example/league/endpoint/Constant.java": `package com.example.league.endpoint;
+
+public enum Constant {
+    ;
+    public static final String GROUP = "transfer.league.example.com";
+    public static final String VERSION = "v1alpha2";
+}
+`,
+  "src/main/java/com/example/league/endpoint/TransferEndpoint.java": `package com.example.league.endpoint;
+
+public class TransferEndpoint implements CustomEndpoint {
+    @Override
+    public RouterFunction<ServerResponse> endpoint() {
+        return SpringdocRouteBuilder.route()
+            .POST("transfers", this::transfer, builder -> builder.operationId("transfer"))
+            .build();
+    }
+
+    @Override
+    public GroupVersion groupVersion() {
+        return GroupVersion.parseAPIVersion("console.api." + Constant.GROUP + "/" + Constant.VERSION);
+    }
+}
+`,
 };
 
 describe("@GVK CRUD routes whose group is another class's constant", () => {
@@ -52,6 +113,15 @@ describe("@GVK CRUD routes whose group is another class's constant", () => {
       "PUT /apis/content.league.example.com/v1alpha1/clubs/{name}",
       "PATCH /apis/content.league.example.com/v1alpha1/clubs/{name}",
       "DELETE /apis/content.league.example.com/v1alpha1/clubs/{name}",
+    ]);
+  });
+
+  it("serve a custom endpoint at the group version its groupVersion() computes", () => {
+    const routes = summary.routeMap.filter((r) => r.filePath?.includes("/endpoint/")).map((r) => `${r.httpMethod} ${r.path}`).sort();
+    expect(routes).toEqual([
+      "GET /apis/api.content.league.example.com/v1alpha1/clubs",
+      "GET /apis/api.league.example.com/v1alpha1/standings",
+      "POST /apis/console.api.transfer.league.example.com/v1alpha2/transfers",
     ]);
   });
 });

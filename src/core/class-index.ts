@@ -1,6 +1,7 @@
 import type { FileAnalysis } from "../types/analysis.js";
 import type { ClassIndex, ClassRef, ImportIndex, SupertypeRef } from "../types/project.js";
 import { closestByDir } from "./symbol-linker.js";
+import { buildFilePathMap, resolveTarget } from "../extractors/shared/link-scoring.js";
 import { bareSupertypeName, declaredSupertypes, sameTypeSpace } from "./typed-receivers.js";
 
 /** How deep `ancestors` follows a chain before giving up — real hierarchies are far shallower. */
@@ -73,6 +74,7 @@ export function buildClassIndex(analyses: readonly FileAnalysis[], importIndex: 
     );
   }
   const typeFile = createTypeResolver(analyses);
+  let filePathMap: Map<string, string> | undefined;
   const classNamed = (file: string, name: string): ClassRef | null =>
     refsByFile.get(file)?.find((r) => r.cls.name === name) ?? null;
 
@@ -94,8 +96,15 @@ export function buildClassIndex(analyses: readonly FileAnalysis[], importIndex: 
     }
     const from = byFile.get(fromFile);
     if (!from) return null;
-    // A name the file imports from elsewhere (a package) is that package's.
-    if (importIndex.sourceFor(fromFile, name) && !importIndex.localFor(fromFile, name)) return null;
+    // A name the file imports from elsewhere (a package) is that package's — unless the import
+    // names a project file by its package path (`import com.example.league.Constant;`).
+    const imported = importIndex.sourceFor(fromFile, name);
+    if (imported && !importIndex.localFor(fromFile, name)) {
+      if (!/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$/.test(imported)) return null;
+      filePathMap ??= buildFilePathMap([...byFile.values()]);
+      const file = resolveTarget(imported, fromFile, filePathMap);
+      return file ? classNamed(file, name) : null;
+    }
     const file = typeFile(name, from);
     return file ? classNamed(file, name) : null;
   };
