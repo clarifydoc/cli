@@ -223,6 +223,16 @@ io.on("connection", (socket) => {
     expect(brief(s)).toEqual(["queue-consume Socket.IO: on chat message @4", "queue-publish Socket.IO: emit chat message @4"]);
   });
 
+  it("reads each listener of a chained .on() as a subscription on the socket", async () => {
+    const s = await jsSourcesOf(`import { io } from "socket.io-client";
+const websocket = io("", { path: "/api/socket.io" });
+websocket
+  .on("connect", () => {})
+  .on("on_kit_update", (kit) => refresh(kit))
+  .on("on_player_transfer", (p) => move(p));`);
+    expect(brief(s).sort()).toEqual(["queue-consume Socket.IO: on on_kit_update @5", "queue-consume Socket.IO: on on_player_transfer @6"]);
+  });
+
   it("needs the import: an EventEmitter's emit is not Socket.IO (it is an in-process channel)", async () => {
     const s = await jsSourcesOf(`const socket = new EventEmitter(); socket.emit("chat message", 1);`);
     expect(s.filter((d) => d.name.startsWith("Socket.IO"))).toEqual([]);

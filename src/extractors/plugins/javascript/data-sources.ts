@@ -1273,14 +1273,16 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           }
           // Socket.IO: socket.emit("event", …) publishes; socket.on("event", handler) consumes.
           if (fnName === "emit" || fnName === "on" || fnName === "once") {
-            const root = memberRoot(fn);
+            // `socket.on("a", f).on("b", g)`: each link of the chain listens on the same socket.
+            const root = memberRoot(fn) ?? onChainRoot(fn);
             const event = literalString(mqArgs[0] ?? null);
             if (root && event && SOCKET_RECEIVER_RE.test(root) && !SOCKET_IO_RESERVED.has(event) && (this.mq ??= mqEvidence(this.sourceText)).socketIo) {
               sources.push(this.ds({
                 kind: fnName === "emit" ? "queue-publish" : "queue-consume",
                 name: `Socket.IO: ${fnName}`,
                 target: event,
-                line,
+                // A link of a chain is on the line of its own `.on`.
+                line: (fn.childForFieldName("property")?.startPosition.row ?? line - 1) + 1,
               }));
               return;
             }
@@ -2100,6 +2102,17 @@ function isJQueryAjax(fn: Node | null): boolean {
 const HTTP_RECEIVER_RE = /^\$?(http|axios|ky|got|api|request|requests)(client|service)?$/i;
 
 /** Root identifier of a member chain: `apiClient.post` → "apiClient", `a.b.c` → "a". */
+/** The identifier a chain of `.on(…)` / `.once(…)` calls starts from (`socket.on(…).on(…)` → `socket`). */
+function onChainRoot(fn: Node): string | null {
+  let obj = fn.childForFieldName("object");
+  while (obj?.type === "call_expression") {
+    const inner = obj.childForFieldName("function");
+    if (inner?.type !== "member_expression" || !/^(?:on|once|off)$/.test(inner.childForFieldName("property")?.text ?? "")) return null;
+    obj = inner.childForFieldName("object");
+  }
+  return obj?.type === "identifier" ? obj.text : null;
+}
+
 function memberRoot(fn: Node): string | null {
   let obj = fn.childForFieldName("object");
   while (obj && obj.type === "member_expression") obj = obj.childForFieldName("object");
