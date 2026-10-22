@@ -90,6 +90,43 @@ public class P {
     expect(p!.entity).toBe("car.placed");
   });
 
+  it("publishes on an event bus by the type of message it builds, through a local or a branch", async () => {
+    const s = await csharpSourcesOf(`    var played = new MatchPlayedIntegrationEvent(id);
+    await eventBus.PublishAsync(played);
+    IntegrationEvent result;
+    if (won) { result = new MatchWonIntegrationEvent(id); } else { result = (IntegrationEvent)new MatchLostIntegrationEvent(id); }
+    await _eventBus.PublishAsync(result);`);
+    expect(publishes(s).map((p) => `${p.target} @${p.line}`)).toEqual([
+      "MatchPlayedIntegrationEvent @5",
+      "MatchWonIntegrationEvent @8",
+      "MatchLostIntegrationEvent @8",
+    ]);
+  });
+
+  it("publishes an integration event handed to an outbox service, never a parameter it relays", async () => {
+    const s = await csharpSourcesOf(`    var transfer = new PlayerTransferredIntegrationEvent(id);
+    await _leagueEventService.AddAndSaveEventAsync(transfer);
+    await _calendar.AddEventAsync(new TrainingSession(id));`);
+    expect(publishes(s).map((p) => p.target)).toEqual(["PlayerTransferredIntegrationEvent"]);
+    const relay = await csharpSourcesOf(`    await _eventBus.PublishAsync(evt);`);
+    expect(publishes(relay).map((p) => p.target)).toEqual([null]);
+  });
+
+  it("consumes the message type a handler class implements, on its Handle method", async () => {
+    const src = `namespace X;
+public class TransferHandler(LeagueContext db) : IIntegrationEventHandler<PlayerTransferredIntegrationEvent>
+{
+    public async Task Handle(PlayerTransferredIntegrationEvent @event) { await db.SaveChangesAsync(); }
+}
+public class KitConsumer : IConsumer<KitOrdered>, IConsumer<string, byte[]>
+{
+    public Task Consume(ConsumeContext<KitOrdered> context) => Task.CompletedTask;
+}`;
+    const tree = await parseSource(src, "csharp" as any, "T.cs");
+    const s = new CSharpDataSourceExtractor().extract(tree, src);
+    expect(consumes(s).map((c) => `${c.target} @${c.line}`)).toEqual(["PlayerTransferredIntegrationEvent @4", "KitOrdered @8"]);
+  });
+
   it("ignores MediatR's in-process _mediator.Publish", async () => {
     const s = await csharpSourcesOf(`    await _mediator.Publish(new Notification(), ct);`);
     expect(publishes(s)).toHaveLength(0);

@@ -139,8 +139,19 @@ const MQ_RAW_CONSUME = new Set(["BasicConsume", "BasicConsumeAsync"]);
  */
 const MQ_WRAPPER_PUBLISH_RE = /^(?:Publish|Produce)(?:Event|Message)?(?:Async)?$/;
 
-/** Receiver that reads like a broker publisher (`_eventPublisher`, `producer`, `_bus`). */
+/** Receiver that reads like a broker publisher (`_eventPublisher`, `producer`, `_bus`, `eventBus`). */
 const MQ_PUBLISHER_RECEIVER_RE = /publisher|producer|(?:^|_)bus$|broker/i;
+const MQ_CAMEL_BUS_RE = /[a-z]Bus$/;
+/**
+ * A class handling the one message type a bus routes by its type name: an
+ * integration-event bus, MassTransit, NServiceBus / Rebus. Kafka's two-argument
+ * `IConsumer<TKey, TValue>` is a client, not a handler.
+ */
+const MQ_HANDLER_IFACE_RE = /^(?:IIntegrationEventHandler|IConsumer|IHandleMessages)\s*<\s*([\w.]+)\s*>$/;
+const MQ_HANDLER_METHOD_RE = /^(?:Handle|Consume)(?:Async)?$/;
+/** A service method handed an integration event to store or publish (`AddAndSaveEventAsync(evt)`, an outbox). */
+const MQ_OUTBOX_METHOD_RE = /^(?:Add|Save|Publish|Enqueue|Store)\w*Event/;
+const INTEGRATION_EVENT_RE = /^\w+IntegrationEvent$/;
 /** A variable or message property that holds an AMQP routing key. */
 const ROUTING_KEY_RE = /^_?routing_?key$/i;
 /** In-process dispatchers that must never count as broker publishes. */
@@ -424,6 +435,32 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   }
 
   /**
+   * A handler of one message type (`class StockHandler : IIntegrationEventHandler<OrderPaidEvent>`,
+   * MassTransit `IConsumer<T>`, `IHandleMessages<T>`): its `Handle`/`Consume`
+   * method consumes the type, the channel a bus routing by type name delivers on.
+   */
+  private messageHandlers(node: Node, sources: DataSourceInfo[]): void {
+    const bases = node.namedChildren.find((c) => c.type === "base_list");
+    if (!bases) return;
+    const body = node.childForFieldName("body") ?? node.namedChildren.find((c) => c.type === "declaration_list");
+    const methods = (body?.namedChildren ?? []).filter((m) => m.type === "method_declaration" && MQ_HANDLER_METHOD_RE.test(m.childForFieldName("name")?.text ?? ""));
+    for (const base of bases.namedChildren) {
+      const m = MQ_HANDLER_IFACE_RE.exec(base.text.replace(/^global::/, ""));
+      if (!m) continue;
+      const type = m[1]!.slice(m[1]!.lastIndexOf(".") + 1);
+      // With several handled types, the method whose parameter names the type is its handler.
+      const handler = methods.find((h) => (h.childForFieldName("parameters")?.text ?? "").includes(type)) ?? methods[0];
+      sources.push(this.ds({
+        kind: "queue-consume",
+        name: `MQ: ${base.text.replace(/\s*<.*$/, "")}`,
+        target: type,
+        entity: type,
+        line: (handler ?? node).startPosition.row + 1,
+      }));
+    }
+  }
+
+  /**
    * A consumer dispatching on the routing key of a delivered message
    * (`switch (message.RoutingKey) { case PlanRouting.TrainingCreated: … }`):
    * each constant case is a destination it consumes, named as the publisher
@@ -622,6 +659,10 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
+    if (node.type === "class_declaration" || node.type === "record_declaration") {
+      this.messageHandlers(node, sources);
+      return;
+    }
     if (node.type === "switch_statement" || node.type === "switch_expression") {
       this.routingKeyCases(node, sources);
       return;
@@ -800,18 +841,28 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     // is the business-level publish site a screen→…→event trace terminates at.
     // Gated on a broker-shaped receiver so MediatR's in-process
     // `_mediator.Publish(...)` never counts.
+    const busReceiver = (r: string) => MQ_PUBLISHER_RECEIVER_RE.test(r) || MQ_CAMEL_BUS_RE.test(r);
     if (
       MQ_WRAPPER_PUBLISH_RE.test(method) &&
-      (MQ_PUBLISHER_RECEIVER_RE.test(root) || MQ_PUBLISHER_RECEIVER_RE.test(receiver)) &&
+      (busReceiver(root) || busReceiver(receiver)) &&
       !MQ_RECEIVER_DENY_RE.test(root) && !MQ_RECEIVER_DENY_RE.test(receiver)
     ) {
       const args = argumentNodes(node);
-      const entity = mqMessageEntity(args);
       // The routing key handed over (`MatchPlayedMessage.RoutingKey`) is the destination a
       // consumer filtering on the same key names; the exchange is bound inside the wrapper.
       const keyArg = args.map((a) => a.namedChildren[a.namedChildren.length - 1] ?? null)
         .find((e) => e?.type === "member_access_expression" && /^[A-Z]/.test(e.childForFieldName("expression")?.text ?? "") && ROUTING_KEY_RE.test(e.childForFieldName("name")?.text ?? ""));
       const key = keyArg ? this.routingKeyLabel(keyArg) : null;
+      // No key and no topic literal: a bus routing by message type delivers to the
+      // handlers of the type constructed here (`var e = new MatchPlayedEvent(…); bus.PublishAsync(e)`).
+      const types = key || args.some((a) => /^[@$]*"/.test(a.text.trim())) ? [] : messageTypes(args[0] ?? null);
+      if (types.length > 0) {
+        for (const type of types) {
+          sources.push(this.ds({ kind: "queue-publish", name: `MQ: ${method}`, target: type, entity: type, line: node.startPosition.row + 1 }));
+        }
+        return;
+      }
+      const entity = mqMessageEntity(args);
       sources.push(this.ds({
         kind: "queue-publish",
         name: `MQ: ${method}`,
@@ -820,6 +871,17 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         line: node.startPosition.row + 1,
       }));
       return;
+    }
+
+    // An integration event handed to a service that stores or publishes it
+    // (`_integrationEventService.AddAndSaveEventAsync(orderStartedEvent)`, an
+    // outbox a relay drains later): the business site of the publish.
+    if (MQ_OUTBOX_METHOD_RE.test(method) && !MQ_RECEIVER_DENY_RE.test(root) && !MQ_RECEIVER_DENY_RE.test(receiver)) {
+      const types = argumentNodes(node).flatMap((a) => messageTypes(a)).filter((t) => INTEGRATION_EVENT_RE.test(t));
+      for (const type of new Set(types)) {
+        sources.push(this.ds({ kind: "queue-publish", name: `MQ: ${method}`, target: type, entity: type, line: node.startPosition.row + 1 }));
+      }
+      if (types.length > 0) return;
     }
 
     // StackExchange.Redis: `db.HashGetAsync(key, field)`, `db.StringSetAsync(key, value)` on an
@@ -1204,6 +1266,42 @@ function mqArgLabel(args: Node[], name: string, index: number, literalOnly = fal
   if (literalOnly && !isLiteral) return null;
   const cleaned = (isLiteral ? text.replace(/^[@$]*"|"$/g, "") : text).replace(/\s+/g, " ");
   return cleaned && cleaned.length <= 64 ? cleaned : null;
+}
+
+/**
+ * The message types a publish argument is built from: `new T(…)` itself, or a
+ * local the enclosing member assigns `new T(…)` to (each branch of `c ? new A() : new B()`,
+ * each assignment). A parameter or a value read from elsewhere names none.
+ */
+function messageTypes(arg: Node | null): string[] {
+  const expr = arg?.namedChildren[arg.namedChildren.length - 1] ?? null;
+  if (!expr) return [];
+  const created = (n: Node | null): string[] => {
+    if (n?.type === "object_creation_expression") {
+      const t = n.childForFieldName("type")?.text.replace(/<.*$/, "") ?? "";
+      return t ? [t.slice(t.lastIndexOf(".") + 1)] : [];
+    }
+    if (n?.type === "conditional_expression") return [...created(n.childForFieldName("consequence")), ...created(n.childForFieldName("alternative"))];
+    if (n?.type === "parenthesized_expression") return created(n.namedChildren[0] ?? null);
+    // `(IntegrationEvent)new MatchWonEvent(…)`: the cast names the base, the value is the type.
+    if (n?.type === "cast_expression") return created(n.childForFieldName("value"));
+    return [];
+  };
+  if (expr.type !== "identifier") return created(expr);
+  const member = enclosingMember(expr);
+  if (!member) return [];
+  const out = new Set<string>();
+  for (const d of member.descendantsOfType(["variable_declarator", "assignment_expression"])) {
+    if (!d) continue;
+    if (d.type === "variable_declarator") {
+      if ((d.childForFieldName("name") ?? d.namedChildren[0])?.text !== expr.text) continue;
+      const init = d.namedChildren[d.namedChildren.length - 1] ?? null;
+      for (const t of created(init?.type === "equals_value_clause" ? init.namedChildren[0] ?? null : init)) out.add(t);
+    } else if (d.childForFieldName("left")?.text === expr.text) {
+      for (const t of created(d.childForFieldName("right"))) out.add(t);
+    }
+  }
+  return [...out];
 }
 
 /**
