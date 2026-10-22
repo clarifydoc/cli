@@ -665,7 +665,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       const literal = /^[A-Z]\w*(?:\.class|::class(?:\.java)?)$/.test(call.firstArg?.text ?? "") ? call.firstArg!.text.replace(/(?:\.class|::class(?:\.java)?)$/, "") : null;
       if ((declared && /ExtensionClient$/.test(declared)) || (literal && /client$/i.test(seg))) {
         const argName = call.firstArg?.type === "identifier" ? call.firstArg.text : null;
-        const entity = literal ?? (argName ? localDeclaredType(node, argName) : null);
+        const entity = literal ?? (argName ? localDeclaredType(node, argName) ?? lambdaParamClass(node, argName) : null);
         sources.push(this.ds({
           kind: "database",
           name: `${seg || "client"}.${method}`,
@@ -1136,6 +1136,28 @@ export function callArguments(call: Node): Node[] {
  * `local_variable_declaration` / Kotlin typed local `property_declaration`,
  * or a parameter of the enclosing method. Returns a simple type name.
  */
+/**
+ * The class an untyped lambda parameter holds when the chain the lambda is handed to starts from a
+ * call naming it: `client.fetch(Club.class, id).ifPresent(club -> …)`,
+ * `client.list(Club.class, opts).flatMap(club -> client.update(club))`.
+ */
+function lambdaParamClass(node: Node, name: string): string | null {
+  for (let at: Node | null = node.parent; at; at = at.parent) {
+    if (at.type !== "lambda_expression") continue;
+    const params = at.childForFieldName("parameters");
+    const names = params ? (params.type === "identifier" ? [params.text] : params.descendantsOfType("identifier").map((n) => n?.text)) : [];
+    if (!names.includes(name)) continue;
+    const call = at.parent?.type === "argument_list" ? at.parent.parent : null;
+    for (let link: Node | null | undefined = call?.type === "method_invocation" ? call.childForFieldName("object") : null; link?.type === "method_invocation"; link = link.childForFieldName("object")) {
+      const first = link.childForFieldName("arguments")?.namedChildren[0];
+      const m = first ? /^([A-Z]\w*)\.class$/.exec(first.text) : null;
+      if (m) return m[1]!;
+    }
+    return null;
+  }
+  return null;
+}
+
 function localDeclaredType(node: Node, name: string, raw = false): string | null {
   const simple = (t: string | null | undefined): string | null => (raw ? (t?.trim() || null) : simpleTypeName(t));
   let fn: Node | null = node.parent;

@@ -394,6 +394,28 @@ class GameServiceImpl {
       "client.delete - write",
     ]);
   });
+
+  it("types a lambda's parameter from the call its chain starts with (real-repo FP)", async () => {
+    const java = `import run.halo.app.extension.ExtensionClient;
+class FixtureCountUpdater {
+  private final ExtensionClient client;
+  void reconcile(String name) {
+    client.fetch(Fixture.class, name).ifPresent(fixture -> {
+      fixture.getSpec().setPlayed(true);
+      client.update(fixture);
+    });
+    client.list(Club.class, null, null).forEach(club -> client.update(club));
+  }
+}`;
+    const tree = await parseSource(java, "java", "FixtureCountUpdater.java");
+    const rows = new JavaKotlinDataSourceExtractor().extract(tree, java).filter((d) => d.kind === "database");
+    expect(rows.map((d) => `${d.name} ${d.entity ?? "-"} ${d.access}`)).toEqual([
+      "client.fetch Fixture read",
+      "client.update Fixture write",
+      "client.list Club read",
+      "client.update Club write",
+    ]);
+  });
 });
 
 describe("Java JPA / Hibernate rows name their entity", () => {
