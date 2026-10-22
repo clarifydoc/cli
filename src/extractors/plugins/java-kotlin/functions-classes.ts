@@ -138,6 +138,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       }
     }
 
+    const strings = body ? stringConstants(body) : null;
     return {
       name,
       kind: isInterface ? "interface" : isEnum ? "enum" : "class",
@@ -146,6 +147,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       decorators,
       methods,
       properties,
+      ...(strings ? { fieldValues: strings } : {}),
       isExported,
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
@@ -762,4 +764,35 @@ function typeAliasClass(node: Node): ClassInfo | null {
     line: node.startPosition.row + 1,
     endLine: node.endPosition.row + 1,
   };
+}
+
+/**
+ * The string constants a Java class body declares — `static final String GROUP = "league.example.com";`,
+ * an enum's after its constants too, an interface's implicitly — so another file's `Constant.GROUP`
+ * can be read.
+ */
+function stringConstants(body: Node): Record<string, string> | null {
+  const out: Record<string, string> = {};
+  const literal = (n: Node | null | undefined): string | null => {
+    if (!n || n.type !== "string_literal") return null;
+    const text = n.text;
+    return /^"[^"\\$]*"$/.test(text) ? text.slice(1, -1) : null;
+  };
+  const visit = (container: Node): void => {
+    for (const member of container.namedChildren) {
+      if (member.type === "enum_body_declarations") visit(member);
+      else if (member.type === "field_declaration" || member.type === "constant_declaration") {
+        const mods = member.namedChildren.find((c) => c.type === "modifiers")?.text ?? "";
+        if (member.type === "field_declaration" && !(/\bstatic\b/.test(mods) && /\bfinal\b/.test(mods))) continue;
+        for (const d of member.namedChildren) {
+          if (d.type !== "variable_declarator") continue;
+          const name = d.childForFieldName("name")?.text;
+          const value = literal(d.childForFieldName("value"));
+          if (name && value !== null) out[name] = value;
+        }
+      }
+    }
+  };
+  visit(body);
+  return Object.keys(out).length > 0 ? out : null;
 }

@@ -40,7 +40,7 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
     }
 
     // Halo extensions: CRUD routes generated from `@GVK` (see halo.ts).
-    extractHaloExtensionRoutes(sourceText, routes);
+    extractHaloExtensionRoutes(sourceText, routes, facts);
 
     // Ktor verbs are maximally generic (`get`), so the DSL walk only runs in
     // files that actually import io.ktor.
