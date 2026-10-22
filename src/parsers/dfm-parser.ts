@@ -202,6 +202,8 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
   const allObjects: DfmObject[] = [];
   let rootObject: DfmObject | null = null;
   let insideCollection = 0; // track depth of <...> collection blocks
+  /** The collection item being read (`item … end`), its properties by name. */
+  let collectionItem: { line: number; props: Map<string, string> } | null = null;
   /** Open multi-line string list (`SQL.Strings = (` … `'…')`). */
   let pendingList: {
     obj: DfmObject;
@@ -251,11 +253,20 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
       continue;
     }
     if (insideCollection > 0) {
+      // "item" / "end" inside collections are not real objects; a WebBroker action
+      // item (`PathInfo = '/json'`, `MethodType = mtGet`, `OnAction = …`) is a route.
+      if (trimmed === "item") collectionItem = { line: lineNum, props: new Map() };
+      else if (trimmed === "end" || trimmed === "end>") {
+        if (collectionItem) webActionRoute(collectionItem, rootObject?.type ?? null, analysis);
+        collectionItem = null;
+      } else if (collectionItem) {
+        const prop = /^(\w+)\s*=\s*(.+)$/.exec(trimmed);
+        if (prop) collectionItem.props.set(prop[1]!, prop[2]!.trim());
+      }
       // "end>" or standalone ">" closes a collection
       if (trimmed === "end>" || trimmed === ">") {
         insideCollection--;
       }
-      // "item" / "end" inside collections are not real objects
       continue;
     }
 
@@ -556,4 +567,28 @@ function buildScreenInfo(
     routePath: null,
     navigatesTo: [],
   };
+}
+
+const WEB_METHOD_TYPES: Readonly<Record<string, string>> = { mtget: "GET", mtpost: "POST", mtput: "PUT", mtdelete: "DELETE", mthead: "HEAD", mtpatch: "PATCH" };
+
+/**
+ * A WebBroker action of a web module (`TWebActionItem`: `PathInfo`, `MethodType`,
+ * `OnAction`) is the server's route; its handler is the `OnAction` method of the
+ * class the form declares (`TWebModule1.WebModule1getWebAction`). `mtAny` or no
+ * `MethodType` serves every verb.
+ */
+function webActionRoute(item: { line: number; props: Map<string, string> }, rootType: string | null, analysis: FileAnalysis): void {
+  const path = /^'([^']*)'$/.exec(item.props.get("PathInfo") ?? "")?.[1];
+  const action = item.props.get("OnAction");
+  if (path === undefined || !action || !/^\w+$/.test(action)) return;
+  const method = WEB_METHOD_TYPES[(item.props.get("MethodType") ?? "").toLowerCase()] ?? null;
+  analysis.routes.push({
+    path: path.startsWith("/") ? path : `/${path}`,
+    httpMethod: method,
+    kind: "api",
+    handler: rootType ? `${rootType}.${action}` : action,
+    calls: [],
+    middleware: [],
+    line: item.line,
+  });
 }

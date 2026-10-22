@@ -7,7 +7,7 @@ import { literalPath } from "./element-requests.js";
  * linker joins them as it joins a form. Scripts loaded by `src` are their own files (the JS plugin's).
  * Only a literal app path counts; its method is the options' `method`, else GET.
  */
-const CALL_RE = /\bfetch\s*\(\s*(["'`])([^"'`]*)\1|\baxios\.(get|post|put|patch|delete)\s*\(\s*(["'`])([^"'`]*)\4|\$\.(get|post|getJSON)\s*\(\s*(["'`])([^"'`]*)\7/g;
+const CALL_RE = /\bfetch\s*\(\s*(?:([A-Za-z_$][\w$]*)\s*\+\s*)?(["'`])([^"'`]*)\2|\baxios\.(get|post|put|patch|delete)\s*\(\s*(["'`])([^"'`]*)\5|\$\.(get|post|getJSON)\s*\(\s*(["'`])([^"'`]*)\8/g;
 
 export function inlineScriptRequests(lines: readonly string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
@@ -16,9 +16,14 @@ export function inlineScriptRequests(lines: readonly string[]): DataSourceInfo[]
   const flush = () => {
     const text = body!.join("\n");
     for (const m of text.matchAll(CALL_RE)) {
-      const target = literalPath((m[2] ?? m[5] ?? m[8])!.replace(/\$\{([^}]*)\}/g, "{{$1}}"));
+      const written = (m[3] ?? m[6] ?? m[9])!;
+      // A server the page is told about (`fetch(url + '/json')` with `url` read from a field) is an unknown base
+      // before the path; an absolute URL names its host, which the call-origin pass places.
+      const target = m[1] && written.startsWith("/") ? `\${${m[1]}}${written.replace(/[?#].*$/, "")}`
+        : /^https?:\/\/[^\s"'`]+$/i.test(written) ? written
+        : literalPath(written.replace(/\$\{([^}]*)\}/g, "{{$1}}"));
       if (!target) continue;
-      let method = m[3] ?? (m[6] ? (m[6] === "post" ? "post" : "get") : null);
+      let method = m[4] ?? (m[7] ? (m[7] === "post" ? "post" : "get") : null);
       if (!method) {
         // The options of this `fetch(…)`: up to the next request in the script.
         const after = text.slice(m.index! + m[0].length);

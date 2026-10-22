@@ -16,6 +16,8 @@ describe("inline script requests", () => {
     axios.delete("/fixtures/42");
     $.getJSON("/standings");
     fetch("https://cdn.example.com/badges.json");
+    url = document.getElementById('edtUrl').value;
+    fetch(url + '/standings/json', { method: 'GET' });
   }
 </script>
 <script src="/js/app.js"></script>
@@ -25,6 +27,8 @@ describe("inline script requests", () => {
       "GET /clubs/:param/players @10",
       "DELETE /fixtures/42 @11",
       "GET /standings @12",
+      "GET https://cdn.example.com/badges.json @13",
+      "GET ${url}/standings/json @15",
     ]);
   });
 });
