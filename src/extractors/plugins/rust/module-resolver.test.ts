@@ -8,7 +8,9 @@ import type { ProjectAnalysis } from "../../../types/analysis.js";
 
 /** Real-repo FP: 531 calls to functions imported by name, 5 linked. */
 const FILES: Record<string, string> = {
-  "Cargo.toml": `[workspace]\nmembers = ["league-api", "league-db"]\n`,
+  "Cargo.toml": `[workspace]\nmembers = ["league-api", "league-db", "crates/api_utils"]\n`,
+  "crates/api_utils/Cargo.toml": `[package]\nname = "league_api_utils"\nversion = "0.1.0"\n`,
+  "crates/api_utils/src/lib.rs": `pub fn check_squad_size(n: usize) -> bool {\n    n <= 25\n}\n`,
   "league-db/Cargo.toml": `[package]\nname = "league-db"\nversion = "0.1.0"\n`,
   "league-db/src/lib.rs": `pub mod persistence;\n`,
   "league-db/src/persistence/mod.rs": `mod club_sql;\npub use club_sql::*;\n`,
@@ -20,9 +22,11 @@ const FILES: Record<string, string> = {
   "league-api/src/handlers/fixtures.rs": `use crate::util::{is_derby};
 use league_db::persistence::{select_club};
 use super::super::util::is_derby as derby;
+use league_api_utils::{check_squad_size};
 
 pub fn fixture(conn: &mut Conn, home: &str, away: &str) -> bool {
     let club = select_club(conn, home);
+    check_squad_size(22);
     is_derby(home, away)
 }
 `,
@@ -50,6 +54,7 @@ describe("Rust functions imported by name", () => {
       .map((l) => `${l.callName} → ${l.targetFile}#${l.targetSymbol}`)
       .sort();
     expect(links).toEqual([
+      "check_squad_size → crates/api_utils/src/lib.rs#check_squad_size",
       "is_derby → league-api/src/util.rs#is_derby",
       "select_club → league-db/src/persistence/club_sql.rs#select_club",
     ]);

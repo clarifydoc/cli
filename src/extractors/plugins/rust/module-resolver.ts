@@ -85,7 +85,21 @@ function workspaceCrate(name: string, ctx: ImportResolveContext): string | null 
     }
     crateIndex.set(ctx.files, index);
   }
-  return index.get(name) ?? null;
+  if (index.has(name)) return index.get(name) ?? null;
+  // A package named with a prefix its directory drops (`lemmy_api_utils` in `crates/api/api_utils`):
+  // the crate whose directory name is the longest `_`-bounded tail of the name.
+  let best: string | null = null;
+  let bestLen = 0;
+  let tie = false;
+  for (const [key, src] of index) {
+    if (!src || !name.endsWith(`_${key}`)) continue;
+    if (key.length > bestLen) {
+      best = src;
+      bestLen = key.length;
+      tie = false;
+    } else if (key.length === bestLen) tie = true;
+  }
+  return tie ? null : best;
 }
 
 /** `a/b.rs` or `a/b/mod.rs` under `dir`; the directory's own `lib.rs`/`mod.rs` for an empty path. */
