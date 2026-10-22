@@ -283,6 +283,12 @@ paths:
     get:
       operationId: health
       security: []
+  /fixtures:
+    get:
+      operationId: listFixtures
+      security:
+        - bearerAuth: []
+        - {}
   /shared:
     post:
       operationId: shared
@@ -376,6 +382,10 @@ describe("OpenAPI route attribute layer", () => {
 
   it("reads `security: []` as anonymous", () => {
     expect(byOp("health").auth).toMatchObject({ anonymous: true, inherited: false, schemes: [] });
+  });
+
+  it("reads an empty requirement among the alternatives as optional auth", () => {
+    expect(byOp("listFixtures").auth).toMatchObject({ anonymous: true, schemes: ["bearerAuth"] });
   });
 
   it("stamps the spec version on every route and marks deprecated operations", () => {

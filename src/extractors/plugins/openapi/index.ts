@@ -387,6 +387,8 @@ function guardsOf(security: SpecNode | undefined): GuardAttr[] {
   if (items.length === 0) return [{ text: "security: []", anonymous: true }];
   const out: GuardAttr[] = [];
   for (const req of items) {
+    // `- {}` among the alternatives: the operation may also be called with no credentials.
+    if (req.children.size === 0 && (req.value === null || req.value.trim() === "{}")) out.push({ text: "{}", anonymous: true });
     for (const [scheme, scopesNode] of req.children) {
       const scopes = itemsOf(scopesNode).map((s) => s.value).filter((s): s is string => !!s);
       out.push({
