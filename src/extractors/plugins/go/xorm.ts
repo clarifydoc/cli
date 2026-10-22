@@ -32,6 +32,8 @@ interface OrmChainSpec {
   model?: RegExp;
   generic?: RegExp;
   helper?: RegExp;
+  /** A receiver declared as the ORM's session or engine type (`s *xorm.Session`) is one, whatever it is called. */
+  session?: RegExp;
 }
 
 const XORM: OrmChainSpec = {
@@ -46,6 +48,7 @@ const XORM: OrmChainSpec = {
   reads: new Set(["Find", "FindAndCount", "Get", "GetByID", "Exist", "Count", "Iterate", "Sum", "SumInt", "Sums"]),
   generic: /\bdb\.(Find|Get|GetByID|Count|Exist|DeleteByID|FindAndCount)\s*\[\s*(?:\*?[A-Za-z_]\w*\.)?\*?([A-Z]\w*)\s*\]\s*\(/g,
   helper: /\bdb\.(Insert|DeleteBeans|TruncateBeans)\s*\(\s*ctx\s*,\s*(&?[A-Za-z_][\w.]*(?:\{)?|new\(\s*[\w.]+\s*\))/g,
+  session: /\*?xorm\.(?:Session|Engine|EngineGroup|Interface)\b|\bdb\.Engine\b/,
 };
 
 /**
@@ -93,7 +96,7 @@ function extractOrmChains(lines: string[], spec: OrmChainSpec): DataSourceInfo[]
       const continued = !m[0].trimStart().startsWith(".");
       if (continued && !(i > 0 && stripComment(lines[i - 1]!).trimEnd().endsWith("."))) continue;
       const chain = chainBefore(lines, i, m.index! + (continued ? m[0].search(/\S/) : 0));
-      if (!spec.root.test(chain) && !spec.builder.test(chain)) continue;
+      if (!spec.root.test(chain) && !spec.builder.test(chain) && !(spec.session && sessionTyped(chain, lines, i, spec.session))) continue;
       // `db.Find[T](…)` above already took this one.
       if (spec === XORM && /^db$/.test(chain)) continue;
       const arg = firstArg(line.slice(m.index! + m[0].length));
@@ -103,6 +106,20 @@ function extractOrmChains(lines: string[], spec: OrmChainSpec): DataSourceInfo[]
     }
   }
   return out;
+}
+
+/** The chain's root variable is declared in the enclosing function as a type `session` matches. */
+function sessionTyped(chain: string, lines: string[], i: number, session: RegExp): boolean {
+  const root = /^([a-z_]\w*)(?:\.|$)/.exec(chain)?.[1];
+  if (!root) return false;
+  const decl = new RegExp(String.raw`(?:\(|,|\bvar)\s*${root}\s+(\*?[\w.]+)|\b${root}\s*:?=\s*(?:[\w.]+\.)?(?:NewSession|NewEngine)\(`);
+  for (let j = i; j >= 0 && i - j < 200; j--) {
+    const l = stripComment(lines[j]!);
+    const m = decl.exec(l);
+    if (m) return !m[1] || session.test(m[1]);
+    if (/^func\b/.test(l)) break;
+  }
+  return false;
 }
 
 function stripComment(line: string): string {
@@ -151,7 +168,8 @@ function entityOfArg(arg: string, lines: string[], i: number): string | null {
   // A table named outright: `.Table("issue")`.
   const table = /^"([\w.]+)"$/.exec(arg)?.[1];
   if (table) return table.split(".").pop()!;
-  const literal = /^&?(?:[a-z_]\w*\.)?([A-Z]\w*)\s*\{/.exec(arg) ?? /^new\(\s*(?:[a-z_]\w*\.)?([A-Z]\w*)\s*\)$/.exec(arg);
+  // A composite literal names its type, exported or not (a migration's own `&clubTokens20210711{…}`).
+  const literal = /^&?(?:[a-z_]\w*\.)?([A-Za-z_]\w*)\s*\{/.exec(arg) ?? /^new\(\s*(?:[a-z_]\w*\.)?([A-Za-z_]\w*)\s*\)$/.exec(arg);
   if (literal) return literal[1]!;
   const name = /^&?([a-z_]\w*)$/.exec(arg)?.[1];
   if (!name) return null;

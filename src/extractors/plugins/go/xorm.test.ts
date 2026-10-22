@@ -96,3 +96,18 @@ func search(ctx context.Context) {
 }`)).toEqual(["4 xorm: Count Player read", "6 xorm: Find fixture read", "7 xorm: Insert LeagueState write"]);
   });
 });
+
+describe("a receiver declared as an xorm session", () => {
+  it("reads its verbs whatever it is called (real-repo FP: 76 writes on `s *xorm.Session`)", () => {
+    expect(rows(`import "xorm.io/xorm"
+func (l *Label) Create(s *xorm.Session, a web.Auth) (err error) {
+	_, err = s.Insert(l)
+	exists, err := s.Get(&Label{ID: l.ID})
+	return
+}
+func migrate(tx *xorm.Engine) error {
+	_, err := tx.Insert(&clubTokens{})
+	return err
+}`)).toEqual(["3 xorm: Insert Label write", "4 xorm: Get Label read", "8 xorm: Insert clubTokens write"]);
+  });
+});
