@@ -108,8 +108,12 @@ const BUILTIN_SOURCES = new Set([
   "READ_CSV", "READ_CSV_AUTO", "READ_PARQUET", "READ_JSON", "PRAGMA_TABLE_INFO",
 ]);
 
-/** The engine's own catalogue — Firebird `RDB$`/`MON$`/`SEC$`, Oracle `V$`/`GV$` views. */
-const SYSTEM_RELATION_RE = /^(?:RDB|MON|SEC|G?V)\$/i;
+/**
+ * The engine's own catalogue — Firebird `RDB$`/`MON$`/`SEC$`, Oracle `V$`/`GV$`
+ * views, SQLite's `sqlite_master`, the standard `information_schema` and
+ * PostgreSQL's `pg_catalog`.
+ */
+const SYSTEM_RELATION_RE = /^(?:(?:RDB|MON|SEC|G?V)\$|sqlite_(?:master|schema|sequence|temp_master|stat\d)$|information_schema\.|pg_catalog\.)/i;
 
 /** SQL keywords that must never be read as a table name — macro-splice fallout,
  *  and backtracking artifacts (`CREATE TABLE IF NOT EXISTS " + tableName` leaves

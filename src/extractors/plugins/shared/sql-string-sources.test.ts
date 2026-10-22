@@ -179,6 +179,8 @@ describe("every table a statement reads", () => {
     expect(q("SELECT gen_id(TEAM_ID_GEN, 1) AS id FROM rdb$database")).toEqual([]);
     expect(q("SELECT SYSDATE FROM dual")).toEqual([]);
     expect(q("SELECT * FROM team$history")).toEqual([["SELECT", "team$history", false]]);
+    expect(q("SELECT 1 FROM sqlite_master WHERE type = 'table'")).toEqual([]);
+    expect(q("SELECT column_name FROM information_schema.columns WHERE table_name = 'clubs'")).toEqual([]);
   });
 
   it("skips a CTE's own name", () => {

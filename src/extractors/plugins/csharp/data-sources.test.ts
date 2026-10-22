@@ -528,3 +528,21 @@ public class FixtureConsumer {
   });
 });
 
+
+describe("LINQ over a local collection", () => {
+  it("does not take a LINQ operator for an entity set (real-repo FP: SelectMany, GroupBy, Select entities)", async () => {
+    const { parseSource } = await import("../../../parsers/parser-manager.js");
+    const { CSharpDataSourceExtractor } = await import("./data-sources.js");
+    const src = `class Stats {
+  async Task<List<FixtureDto>> Run() {
+    var fixtures = await unitOfWork.FixtureRepository.GetFixturesAsync(seasonId);
+    var goals = fixtures.SelectMany(f => f.Goals.Select(g => g.Minute)).ToList();
+    var byClub = items.GroupBy(a => a.ClubId).Select(x => x.First()).ToList();
+    return _context.Fixtures.Where(f => f.SeasonId == seasonId).ToList();
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as never, "Stats.cs");
+    const entities = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database").map((d) => d.entity ?? null);
+    expect(entities.filter(Boolean)).toEqual(["Fixtures"]);
+  });
+});

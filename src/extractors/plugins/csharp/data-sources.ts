@@ -1043,9 +1043,16 @@ function cleanEntityName(raw: string | null): string | null {
   s = s.replace(/<.*$/, "").trim();
   const dot = s.lastIndexOf(".");
   if (dot >= 0) s = s.slice(dot + 1);
-  if (!s || NON_DBSET_MEMBERS.has(s)) return null;
+  // `volumes.SelectMany(…).ToList()`: a LINQ operator on a local list is no entity set.
+  if (!s || NON_DBSET_MEMBERS.has(s) || LINQ_OPERATORS.has(s) || EF_READ_METHODS.has(s) || EF_WRITE_METHODS.has(s)) return null;
   return s;
 }
+
+const LINQ_OPERATORS = new Set([
+  "Select", "SelectMany", "Where", "GroupBy", "GroupJoin", "Join", "OrderBy", "OrderByDescending", "ThenBy", "ThenByDescending",
+  "Distinct", "DistinctBy", "Skip", "SkipWhile", "Take", "TakeWhile", "Concat", "Union", "UnionBy", "Intersect", "Except", "Zip",
+  "Aggregate", "Cast", "OfType", "DefaultIfEmpty", "Reverse", "Append", "Prepend", "Chunk", "AsEnumerable", "AsQueryable",
+]);
 
 /** Members whose bodies declare their own names (parameters, locals). */
 const MEMBER_SCOPES: ReadonlySet<string> = new Set([
