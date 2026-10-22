@@ -231,6 +231,8 @@ function routineName(name: string | undefined): string | null {
 function tableName(name: string | undefined, ctes: Set<string>): string | null {
   if (!name || notATable(name) || ctes.has(name.toUpperCase())) return null;
   if (SYSTEM_RELATION_RE.test(name)) return null;
+  // `FROM league.{table}`: the schema is written, the name is a hole.
+  if (name.endsWith(".")) return null;
   return name;
 }
 

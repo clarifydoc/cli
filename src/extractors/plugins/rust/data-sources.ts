@@ -12,16 +12,48 @@ import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
  * scanner's adjacent-literal concatenation picks the statement up whole.
  */
 
-/** Rewrite `r#"..."#` / `r"..."` raw strings into per-line `"..."` fragments. */
+/**
+ * Rewrite `r#"..."#` / `r"..."` raw strings, and ordinary `"..."` strings that
+ * run over several lines, into per-line `"..."` fragments
+ * (`"DELETE FROM x⏎ WHERE …"` → `"DELETE FROM x"⏎"WHERE …"`). Comments and
+ * char literals are stepped over, so a quote inside them opens nothing.
+ */
 export function normalizeRawStrings(text: string): string {
-  return text.replace(/r(#*)"([\s\S]*?)"\1/g, (_m, _hashes: string, body: string) => {
-    const escaped = body.replace(/[\\"]/g, "\\$&");
-    return '"' + escaped.replace(/\n/g, '"\n"') + '"';
-  });
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    const raw = c === "r" && !/[\w]/.test(text[i - 1] ?? "") || (c === "b" && text[i + 1] === "r" && !/[\w]/.test(text[i - 1] ?? ""))
+      ? /^b?r(#*)"/.exec(text.slice(i, i + 40))
+      : null;
+    if (raw) {
+      const close = '"' + raw[1]!;
+      const end = text.indexOf(close, i + raw[0].length);
+      const stop = end < 0 ? text.length : end;
+      const body = text.slice(i + raw[0].length, stop).replace(/[\\"]/g, "\\$&");
+      out += '"' + body.replace(/\n/g, '"\n"') + '"';
+      i = stop + close.length - 1;
+    } else if (c === "/" && text[i + 1] === "/") {
+      const end = text.indexOf("\n", i);
+      const stop = end < 0 ? text.length : end;
+      out += text.slice(i, stop);
+      i = stop - 1;
+    } else if (c === "'" && /^'(?:\\.|[^\\'\n])'/.test(text.slice(i, i + 4))) {
+      const lit = /^'(?:\\.|[^\\'\n])'/.exec(text.slice(i, i + 4))![0];
+      out += lit;
+      i += lit.length - 1;
+    } else if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
+      const body = text.slice(i + 1, j);
+      out += '"' + (body.includes("\n") ? body.replace(/\\?\n(\s*)/g, '"\n$1"') : body) + '"';
+      i = j;
+    } else out += c;
+  }
+  return out;
 }
 
 /** Diesel: `users::table` — the module IS the table. */
-const DIESEL_TABLE_RE = /\b([a-z][a-z0-9_]*)::table\b/;
+const DIESEL_TABLE_RE = /\b([a-z][a-z0-9_]*)::table\b(?!\s*!)/;
 /** `schema::users::dsl::users`, `…::dsl::{id, users}`, `…::dsl::*` inside a `use`. */
 const DIESEL_DSL_RE = /\b([a-z][a-z0-9_]*)::dsl::(\*|\{[^}]*\}|[a-z]\w*(?:\s+as\s+\w+)?)/g;
 /** A statement that writes the table its argument names. */

@@ -35,6 +35,11 @@ void markTrackLocationsAsDeleted(const QSqlDatabase& database) {
     expect(s).toEqual([]);
   });
 
+  it("names no table when only its schema is written before a hole (real-repo FP)", () => {
+    const s = sources(`sql_query(format!("SELECT * FROM league.{table_name}('{}')", period))`);
+    expect(s).toEqual([]);
+  });
+
   it("extracts SELECT with FROM on a later fragment", () => {
     const s = sources(`
     query.prepare("SELECT library.id, library.title "

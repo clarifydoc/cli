@@ -275,6 +275,28 @@ describe("Rust data sources", () => {
     expect(norm.split("\n")).toEqual(['sqlx::query("SELECT id"', '"FROM cars")']);
   });
 
+  it("reads SQL in an ordinary string that runs over lines, and never takes a table! macro for a table", () => {
+    const s = extractRustDataSources(lines(`
+diesel::table! {
+  garage (id) { id -> Text, }
+}
+let quote = '"';
+tx.execute(
+  "DELETE FROM car_parts
+           WHERE garage_id = ?1",
+  params![garage_id],
+)?;
+let insert = tx.prepare(
+  "INSERT INTO car_parts
+       (garage_id, part)
+     VALUES (?1, ?2)",
+)?;
+`));
+    const db = s.filter((d) => d.kind === "database");
+    expect(db.map((d) => d.entity)).not.toContain("diesel");
+    expect(db.filter((d) => d.entity === "car_parts").map((d) => d.line)).toEqual([7, 12]);
+  });
+
   it("extracts tables from sqlx raw SQL and diesel ::table refs", () => {
     const s = extractRustDataSources(lines(`
 let rows = sqlx::query_as::<_, Car>(r#"
