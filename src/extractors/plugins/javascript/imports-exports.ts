@@ -360,7 +360,10 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
       // the statement's text contains "default" whenever a name does
       // (`export const defaultOptions`), which used to make those "default".
       if (kids.some((k) => k.type === "default" || k.type === "=")) {
-        exports.push({ name: "default", kind: "default", line });
+        // The module's own name for it: `export default Club;`, `export default class Club …`.
+        const value = child.childForFieldName("value") ?? child.childForFieldName("declaration");
+        const local = value?.type === "identifier" ? value.text : value && /^(?:class|function_declaration|abstract_class_declaration|class_declaration)$/.test(value.type) ? value.childForFieldName("name")?.text : undefined;
+        exports.push({ name: "default", kind: "default", line, ...(local ? { sourceName: local } : {}) });
         continue;
       }
 

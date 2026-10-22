@@ -37,7 +37,7 @@ describe("JS/TS export extraction", () => {
     expect(out.map(brief)).toEqual([
       "defaultOptions variable",
       "setDefault function",
-      "default default",
+      "default default App",
     ]);
   });
 

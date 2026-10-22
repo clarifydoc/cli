@@ -497,7 +497,8 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
       }
       if (!helper?.urlTemplate) return null;
       const args = splitArgs(argsText);
-      let out = helper.urlTemplate;
+      // The base the extractor dropped from the template (`${this.constructor.getCollectionResource()}`), put back.
+      let out = (helper.urlTemplateBase ? `\${${helper.urlTemplateBase}}` : "") + helper.urlTemplate;
       helper.params.forEach((p, i) => {
         const a = args[i]?.trim();
         const lit = a ? /^(['"`])([^'"`]*)\1$/.exec(a)?.[2] : undefined;
@@ -555,7 +556,7 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
    */
   const perSubclass = (call: ApiCall, cls: ClassRef): Array<{ target: string; alternatives?: string[]; subclass: string }> => {
     const method = cls.cls.methods.find((m) => m.line <= call.line && call.line <= m.endLine);
-    if (!method || ![call.target!, ...(call.targetAlternatives ?? [])].some((t) => /\$\{this\.|\bthis\.[\w$]+\s*\(/.test(t))) return [];
+    if (!method || ![call.target!, ...(call.targetAlternatives ?? [])].some((t) => t.includes("${this.") || THIS_METHOD.test(t))) return [];
     const out: Array<{ target: string; alternatives?: string[]; subclass: string }> = [];
     const below = ctx.classes.descendants(cls);
     for (const d of [...below, ...[cls, ...below].flatMap(instancesOf)]) {
@@ -564,8 +565,8 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
       if (definer !== cls) continue;
       const t = collapseEmptySegments(resolveValue(call.target!, call.filePath, d, 0));
       // An abstract middle class (`CacheEnabledApiClient`) leaves a field its own
-      // subclasses state through `super(…)`: it requests nothing itself.
-      if (awaitsSubclass(t, d)) continue;
+      // subclasses state through `super(…)`, or a method they override: it requests nothing itself.
+      if (awaitsSubclass(t, d) || t.includes("${this.") || THIS_METHOD.test(t)) continue;
       const alternatives = call.targetAlternatives?.map((a) => collapseEmptySegments(resolveValue(a, call.filePath, d, 0)));
       if (t === call.target && !alternatives?.some((a, i) => a !== call.targetAlternatives![i])) continue;
       // One row per subclass even when two request the same URL: each is its
@@ -581,10 +582,11 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
   for (const call of calls) {
     // A field read as a helper's argument (`route(this.baseRoute, {…})`) is the
     // same hole as `${this.baseRoute}`.
-    if (call.kind === "api-call" && call.target && /\bthis\.[\w$]+(?![\w$(])/.test(call.target) && !call.target.includes("${this.")) {
-      call.target = call.target.replace(/(?<![{\w$.])this\.([\w$]+)(?![\w$(])/g, "${this.$1}");
+    // (`this.constructor.m()` is the class's static method, not a field.)
+    if (call.kind === "api-call" && call.target && /\bthis\.(?!constructor\.)[\w$]+(?![\w$(])/.test(call.target) && !call.target.includes("${this.")) {
+      call.target = call.target.replace(/(?<![{\w$.])this\.(?!constructor\.)([\w$]+)(?![\w$(])/g, "${this.$1}");
     }
-    if (call.kind !== "api-call" || !call.target || !(call.target.includes("${") || /\bthis\.[\w$]+\s*\(/.test(call.target))) continue;
+    if (call.kind !== "api-call" || !call.target || !(call.target.includes("${") || THIS_METHOD.test(call.target))) continue;
     const cls = classAt(call.filePath, call.line);
     const variants = cls ? perSubclass(call, cls) : [];
     if (variants.length > 0) {
@@ -628,7 +630,11 @@ function collapseEmptySegments(url: string): string {
 }
 
 /** `this.m(args)` in a URL, bare or as a whole `${…}` hole (args without nested parentheses). */
-const THIS_CALL = /\$\{\s*this\.([\w$]+)\s*\(([^()]*)\)\s*\}|\bthis\.([\w$]+)\s*\(([^()]*)\)/g;
+/** A call of a method `this` dispatches: `this.m(…)`, or the class's static one, `this.constructor.m(…)`. */
+const THIS_METHOD = /\bthis\.(?:constructor\.)?[\w$]+\s*\(/;
+
+/** `this.m(…)`, `${this.m(…)}` — and `this.constructor.m(…)`, an instance asking its class's static method. */
+const THIS_CALL = /\$\{\s*this\.(?:constructor\.)?([\w$]+)\s*\(([^()]*)\)\s*\}|\bthis\.(?:constructor\.)?([\w$]+)\s*\(([^()]*)\)/g;
 
 /** Top-level comma split of an argument list (brackets and quotes respected). */
 function splitArgs(text: string): string[] {

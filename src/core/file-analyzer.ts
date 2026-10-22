@@ -13,8 +13,9 @@ import { extractDataAccess } from "../extractors/data-access.js";
 import { extractEntities, mergeEntities } from "../extractors/entities/index.js";
 import { classifyCalls, extractTopLevelCalls } from "../extractors/shared/call-graph.js";
 import { dirname } from "path";
-import { applyAliases, loadTsconfigAliasesForDir } from "../extractors/shared/tsconfig-aliases.js";
+import { applyAliases, applySourceRoot, loadTsconfigAliasesForDir } from "../extractors/shared/tsconfig-aliases.js";
 import { applyWorkspacePackages, loadWorkspacePackages } from "../extractors/shared/workspace-packages.js";
+import { extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { pluginFor, astHooksFor, inferFileFrameworks, ensureLanguagesLoaded, regexSpecFor } from "../extractors/registry.js";
 import { computeComplexity } from "./complexity-analyzer.js";
 import { scanSecurity, isMinifiedSource, isVendoredSource } from "./security-scanner.js";
@@ -182,6 +183,10 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       if (packages.size > 0) {
         for (const imp of a.imports) imp.source = applyWorkspacePackages(imp.source, file.absolutePath, packages, projectRoot);
       }
+    }
+    // `import { Rest } from "model/rest"`: a module under the package's `src/` its bundler resolves.
+    if (extensionFamily(file.relativePath) === "script") {
+      for (const imp of a.imports) imp.source = applySourceRoot(imp.source, file.absolutePath, projectRoot);
     }
   };
 

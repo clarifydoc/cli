@@ -412,6 +412,17 @@ function objectPathTypes(root: Node): LocalType[] {
  * single template while a genuine role switch yields two. A one-hop local
  * (`const x = <url>; return x`) is followed; deeper flow is not.
  */
+/** A method named for the URL it gives (`getCollectionResource`, `apiPath`, `endpointUrl`). */
+const RESOURCE_METHOD = /(?:Resource|Url|Uri|Path|Endpoint|Route)$/i;
+
+/** The path segment a body only returns: `{ return "albums"; }` → `albums`. */
+function returnedSegment(body: Node | null): string | null {
+  const stmts = body?.type === "statement_block" ? body.namedChildren.filter((c) => c.type !== "comment") : [];
+  const value = stmts.length === 1 && stmts[0]!.type === "return_statement" ? stmts[0]!.namedChild(0) : null;
+  const text = value?.type === "string" ? value.text.slice(1, -1) : null;
+  return text && /^[a-z][\w-]*(?:\/[\w-]+)*$/.test(text) ? text : null;
+}
+
 export function extractUrlTemplates(
   body: Node | null,
   paramNames: ReadonlySet<string>,
@@ -1568,6 +1579,9 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           // (`configService.APIUrl(sub)`) as a free function.
           const stripped: { base?: string | null } = {};
           const templates = extractUrlTemplates(methodBody, paramNames, stripped);
+          // `static getCollectionResource() { return "albums"; }`: a resource method naming its path segment.
+          const segment = templates.length === 0 && params.length === 0 && RESOURCE_METHOD.test(methodName) ? returnedSegment(methodBody) : null;
+          if (segment) templates.push(segment);
           const { calls, localTypes } = finishBody(extractCalls(methodBody, "typescript"), methodBody, paramNames, this.ctx);
           methods.push({
             name: methodName,

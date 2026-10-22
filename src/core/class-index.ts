@@ -92,6 +92,11 @@ export function buildClassIndex(analyses: readonly FileAnalysis[], importIndex: 
       if (file) {
         const hit = classNamed(file, name);
         if (hit) return hit;
+        // `import RestModel from "model/rest"`: the class that module exports as its default.
+        const asDefault = byFile.get(fromFile)?.imports.some((i) => i.isDefault && i.specifiers[0] === binding);
+        const local = asDefault ? byFile.get(file)?.exports.find((e) => e.kind === "default")?.sourceName : undefined;
+        const viaDefault = local ? classNamed(file, local) : null;
+        if (viaDefault) return viaDefault;
       }
     }
     const from = byFile.get(fromFile);

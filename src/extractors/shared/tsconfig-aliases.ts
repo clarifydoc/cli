@@ -272,7 +272,48 @@ function toPosix(p: string): string {
   return p.split(sep).join("/");
 }
 
+/** A package directory's declared dependencies, by the directory of its `package.json` (null: none there). */
+const packageDepsCache = new Map<string, Set<string> | null>();
+function packageDepsAt(dir: string): Set<string> | null {
+  let hit = packageDepsCache.get(dir);
+  if (hit === undefined) {
+    hit = null;
+    try {
+      const pkg = JSON.parse(readFileSync(resolve(dir, "package.json"), "utf-8")) as Record<string, Record<string, string> | undefined>;
+      hit = new Set(["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"].flatMap((k) => Object.keys(pkg[k] ?? {})));
+    } catch {
+      /* no package.json here */
+    }
+    packageDepsCache.set(dir, hit);
+  }
+  return hit;
+}
+
+const SOURCE_ROOT_EXTENSIONS = [".js", ".ts", ".vue", ".jsx", ".tsx", ".mjs", ".svelte", "/index.js", "/index.ts"];
+
+/**
+ * A bare import that names a module under its package's `src/` (`import { Rest } from "model/rest"`),
+ * the root a bundler's resolver or `resolve.modules` adds without stating it as an alias: the file
+ * there, when one exists and the first segment is no dependency the package declares. Unchanged otherwise.
+ */
+export function applySourceRoot(source: string, importerAbs: string, projectRoot: string): string {
+  if (!/^[a-z][\w-]*\/[\w./-]+$/.test(source)) return source;
+  const root = resolve(projectRoot);
+  for (let dir = dirname(importerAbs); dir.startsWith(root); dir = dirname(dir)) {
+    const deps = packageDepsAt(dir);
+    if (deps) {
+      if (deps.has(source.split("/")[0]!)) return source;
+      const candidate = resolve(dir, "src", source);
+      if (!SOURCE_ROOT_EXTENSIONS.some((ext) => existsSync(candidate + ext)) && !existsSync(candidate)) return source;
+      return posix.relative(toPosix(root), toPosix(candidate));
+    }
+    if (dir === root) break;
+  }
+  return source;
+}
+
 /** Used by tests / fixture regeneration to reset the per-tsconfig cache. */
 export function clearTsconfigAliasCache(): void {
   tsconfigCache.clear();
+  packageDepsCache.clear();
 }
