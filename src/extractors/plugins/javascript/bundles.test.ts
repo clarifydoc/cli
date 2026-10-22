@@ -31,6 +31,14 @@ describe("built bundles", () => {
     expect(bundlerOf("/******/\n// a banner of stars\nexport const club = 'x';")).toBeNull();
   });
 
+  it("reads a minified build as one, and a generated docs table of contents as no source", () => {
+    const minified = '"use strict";(()=>{var ql=Object.defineProperty;' + "var x=1;".repeat(4000) + "})();";
+    expect(bundlerOf(minified)).toBe("minified");
+    expect(bundlerOf("export const club = 1;\n".repeat(2000))).toBeNull();
+    const toc = '\nwindow.DocInsight = window.DocInsight || {};\nwindow.DocInsight.toc["Squad"] = [ { "n": "TSquad" } ];';
+    expect(pluginFor("javascript")!.preprocess!(toc, "docs/toc/Squad.js")).toEqual({ skip: "generated documentation data, not source" });
+  });
+
   it("is skipped by the JavaScript plugin, not the TypeScript one", () => {
     const bundle = "/******/ (function(modules) { // webpackBootstrap" + filler;
     expect(pluginFor("javascript")!.preprocess!(bundle, "public/js/app.js")).toEqual({ skip: "built webpack bundle, not source" });

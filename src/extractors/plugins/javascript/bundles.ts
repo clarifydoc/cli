@@ -38,6 +38,8 @@ const ESBUILD_MODULE_COMMENT_RE = /^\/\/ [\w@.\-/]+\.(?:[cm]?[jt]sx?|vue|svelte|
  */
 export function bundlerOf(sourceText: string): string | null {
   const head = sourceText.slice(0, HEAD);
+  // A minified build: its whole head one line (esbuild's minified prelude, a terser output). An authored line is never that long.
+  if (sourceText.length > 20_000 && !head.slice(0, 3000).includes("\n") && head.length >= 3000) return "minified";
   if (WEBPACK_BOOTSTRAP_RE.test(head) || WEBPACK_RUNTIME_LINE_RE.test(head) || WEBPACK_CHUNK_RE.test(head)) return "webpack";
   if (PARCEL_RE.test(head)) return "Parcel";
   if (BROWSERIFY_RE.test(head.trimStart())) return "browserify";
@@ -49,7 +51,11 @@ export function bundlerOf(sourceText: string): string | null {
  * The JavaScript plugin's preprocess: a bundle is skipped, anything else is
  * analyzed as written.
  */
+/** A documentation generator's data file (DocInsight's `window.DocInsight.toc[…] = [ … ]`): generated beside the HTML it serves. */
+const GENERATED_DOCS_RE = /^\s*window\.DocInsight\s*=/m;
+
 export function bundlePreprocess(rawSource: string): { skip: string } | null {
+  if (GENERATED_DOCS_RE.test(rawSource.slice(0, 400))) return { skip: "generated documentation data, not source" };
   const bundler = bundlerOf(rawSource);
   return bundler ? { skip: `built ${bundler} bundle, not source` } : null;
 }
