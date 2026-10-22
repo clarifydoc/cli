@@ -321,6 +321,14 @@ describe("symbol-linker — Strategy 7 evidence gate (stdlib-name magnets)", () 
     expect(link!.confidence).toBe("AMBIGUOUS");
   });
 
+  it("never links production code into a test file by a unique name alone", () => {
+    const inTests = file("a/tests/DriverApiImpl.cs", "app", {
+      classes: [{ ...cls("DriverApiImpl"), methods: [fn("computeOverview", [])] }],
+    });
+    const links = buildSymbolLinks([caller([]), helper, inTests]);
+    expect(links.some((l) => l.targetFile === "a/tests/DriverApiImpl.cs")).toBe(false);
+  });
+
   it("never links a JDK/stdlib member name (builtin veto), even same-directory", () => {
     const sameDirToList = file("b/svc/Utils.cs", "app", {
       classes: [{ ...cls("Utils"), methods: [fn("toList", [])] }],

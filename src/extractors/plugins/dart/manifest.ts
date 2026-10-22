@@ -17,7 +17,8 @@ export const dartManifest: LanguagePluginManifest = {
   extensions: [".dart"],
   // One type spans files here: `part` files and `extension`s add to a type from other files.
   typesSpanFiles: true,
-  testFilePatterns: [/_test\.dart$/],
+  // Flutter: `integration_test/` and `test_driver/` beside `test/`.
+  testFilePatterns: [/_test\.dart$/, /(^|[\\/])(?:integration_test|test_driver)[\\/]/],
   // build_runner output: json_serializable, freezed, riverpod, injectable.
   generatedFilePatterns: [/\.g\.dart$/, /\.freezed\.dart$/, /\.gr\.dart$/, /\.config\.dart$/],
   externalNamespaceRoots: ["dart", "package"],

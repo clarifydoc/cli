@@ -20,6 +20,7 @@ import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js
 import { commonPrefixLength, extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { isTestFile } from "./test-file-detector.js";
+import { getLanguageForFile } from "../parsers/language-map.js";
 import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, isApiContractLanguage, packageEcosystemsFor, packageMatchingFor, pluginFor } from "../extractors/registry.js";
 import { SELF_HEADS, bareSupertypeName, declaredSupertypes, isConstructor, sameTypeSpace } from "./typed-receivers.js";
 
@@ -1042,7 +1043,9 @@ function isSafeHeuristicTarget(
     // the target is unambiguous, so cross-project resolution is safe to allow for
     // callers that opt in; same-name collisions (count > 1) stay blocked.
     (opts.allowCrossProject || entry.projectId === sourceProjectId) &&
-    !(TEST_FIXTURE_PATH_RE.test(entry.file) && !TEST_FIXTURE_PATH_RE.test(sourceFile))
+    !(TEST_FIXTURE_PATH_RE.test(entry.file) && !TEST_FIXTURE_PATH_RE.test(sourceFile)) &&
+    // Production code never reaches into a test by name alone (a Flutter `integration_test/` helper).
+    !(isTestFile(entry.file, getLanguageForFile(entry.file) ?? undefined) && !isTestFile(sourceFile, getLanguageForFile(sourceFile) ?? undefined))
   );
 }
 

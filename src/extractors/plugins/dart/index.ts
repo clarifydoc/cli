@@ -235,8 +235,11 @@ const SQFLITE_RE = new RegExp(
 /** Methods whose first string arg names a table (vs raw SQL we can't attribute). */
 const SQFLITE_TABLE_METHODS = new Set(["query", "insert", "update", "delete"]);
 
-/** Drift: `select(_db.userEntity)`, `update(db.remoteAlbumEntity)`, `into(_db.x)`, `delete(_db.x)` — the table getter names the table class. */
-const DRIFT_STATEMENT_RE = /(?<!\w)(?:\w+\.)?(select|selectOnly|update|delete|into)\(\s*(?:\w+\.)+(\w+)\s*\)/g;
+/**
+ * Drift: `select(_db.userEntity)`, `update(db.remoteAlbumEntity)`, `into(_db.x)`, `delete(_db.x)` — the table getter names the table class.
+ * Never a class's static (`MatchEvent.delete(widget.match)`, a Bloc event) or a cascade (`Delta()..delete(n)`).
+ */
+const DRIFT_STATEMENT_RE = /(?<![\w.])(?:[a-z_]\w*\.)?(select|selectOnly|update|delete|into)\(\s*(?!widget\.)(?:\w+\.)+(\w+)\s*\)/g;
 /** Drift: `_db.remoteAssetEntity.delete()`, `db.managers.localAssetEntity.filter(…)`. */
 const DRIFT_TABLE_CALL_RE =
   /(?<![\w.])(?:\w*[dD](?:b|atabase)|attachedDatabase|this)(?:\.managers)?\.(\w+)\.(delete|deleteWhere|deleteAll|insert|insertAll|insertOne|insertOnConflictUpdate|insertReturning|update|replace|select|selectOnly|get|getSingle|getSingleOrNull|watch|watchSingle|create|bulkCreate|bulkUpdate|bulkDelete|filter|count)\b/g;
@@ -262,21 +265,26 @@ function extractDartDataSources(lines: string[]): DataSourceInfo[] {
     if (!trimmed || trimmed.startsWith("//")) continue;
     const ln = i + 1;
 
-    // HTTP clients — http / dio / generic clients.
-    for (const m of line.matchAll(HTTP_CALL_RE)) {
-      const receiver = m[1]!;
-      const verb = m[2]!;
+    // HTTP clients — http / dio / generic clients; `await http` on one line, `.get(…)` on the next.
+    const split = new RegExp(String.raw`^(\s*)\.(${HTTP_VERBS})\s*\(`).exec(line);
+    let prev = i - 1;
+    while (prev >= 0 && !lines[prev]!.trim()) prev--;
+    const splitReceiver = split && prev >= 0 ? /(?<![\w.])(?:this\.)?([A-Za-z_$]\w*)\s*$/.exec(lines[prev]!)?.[1] : undefined;
+    const httpCalls = [...line.matchAll(HTTP_CALL_RE)].map((m) => ({ receiver: m[1]!, verb: m[2]!, index: m.index!, text: m[0]! }));
+    if (split && splitReceiver) httpCalls.unshift({ receiver: splitReceiver, verb: split[2]!, index: split[1]!.length, text: split[0]!.slice(split[1]!.length) });
+    for (const m of httpCalls) {
+      const { receiver, verb } = m;
       if (!isDartHttpReceiver(receiver)) continue;
       // `apiConnection.request(RequestType.GET, '/x')` is the project's own
       // wrapper, not a client: its call site is a `pathArgCalls` entry.
-      const after = line.slice(m.index! + m[0]!.length);
+      const after = line.slice(m.index + m.text.length);
       const firstArg = (after.trim() ? after : lines[i + 1] ?? "").split(",")[0] ?? "";
       if (dartVerbArg(firstArg.replace(/\).*$/, ""))) continue;
-      const body = /^(?:post|put|patch)$/i.test(verb) ? dartRequestBody(lines, i, m.index! + m[0]!.length) : null;
+      const body = /^(?:post|put|patch)$/i.test(verb) ? dartRequestBody(lines, i, m.index + m.text.length) : null;
       push({
         kind: "api-call",
         name: `${receiver}.${verb}`,
-        target: dartUrlArg(lines, i, m.index! + m[0]!.length),
+        target: dartUrlArg(lines, i, m.index + m.text.length),
         calls: [],
         line: ln,
         ...(body ? { requestBody: body } : {}),
@@ -673,9 +681,9 @@ const FLUTTER_EVENT_HINT = /\bon(?:Pressed|Tap|LongPress|DoubleTap|Changed|Submi
 /** Widget base classes whose subclasses can be screens. */
 const FLUTTER_WIDGET_BASE_RE =
   /^(?:StatelessWidget|StatefulWidget|ConsumerWidget|ConsumerStatefulWidget|HookWidget|HookConsumerWidget|StatelessHookWidget|StatefulHookWidget|StatelessHookConsumerWidget|StatefulHookConsumerWidget)$/;
-/** `Navigator.push(context, … (_) => SettingsPage())` / `context.push('/settings')` / `context.router.push(SettingsRoute())` / `showDialog(… SettingsDialog(`. */
+/** `Navigator.push(context, … (_) => SettingsPage())` / `context.push('/settings')` / `context.push(SettingsPage.routeName)` / `context.router.push(SettingsRoute())` / `showDialog(… SettingsDialog(`. */
 const FLUTTER_NAV_RE = [
-  /\bcontext\.(?:push|go|replace|pushReplacement|pushNamed|goNamed)\s*\(\s*['"]([^'"]+)['"]/g,
+  /\bcontext\.(?:push|go|replace|pushReplacement|pushNamed|goNamed)\s*\(\s*(?:['"]([^'"]+)['"]|([A-Z]\w*)\.(?:routeName|routePath|route|path|name)\b)/g,
   /\b(?:Navigator(?:\.of\(\w+\))?|context\.router|router|_router|appRouter)\.(?:push|pushReplacement|pushAndRemoveUntil|navigate|replace)\w*\s*\([^;]*?\b(?:=>\s*(?:const\s+)?|\(\s*)([A-Z]\w*)(?:Route|Page|Screen)?\s*\(/g,
   /\bshow(?:Dialog|ModalBottomSheet|CupertinoDialog|GeneralDialog|Menu)\s*(?:<[^>]*>)?\s*\([^;]*?=>\s*(?:const\s+)?([A-Z]\w*)\s*\(/g,
 ];
@@ -707,7 +715,10 @@ function extractFlutterScreens(lines: string[], filePath: string, classes: Class
     for (const re of FLUTTER_NAV_RE) {
       re.lastIndex = 0;
       let m: RegExpExecArray | null;
-      while ((m = re.exec(body)) !== null) if (m[1] && m[1] !== cls.name) navigatesTo.add(m[1]);
+      while ((m = re.exec(body)) !== null) {
+        const target = m[1] ?? m[2];
+        if (target && target !== cls.name) navigatesTo.add(target);
+      }
     }
     screens.push({
       name: cls.name,

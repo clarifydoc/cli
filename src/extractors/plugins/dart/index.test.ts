@@ -135,6 +135,20 @@ describe("dartSpec — imports", () => {
 });
 
 describe("dartSpec — data sources", () => {
+  it("reads a client call whose verb is on the next line, and no Drift statement from a Bloc event or a cascade (real-repo FP)", () => {
+    const ds = dataSources(`
+      final response = await http
+          .get(Uri.parse('https://api.example.com/fixtures'), headers: headers);
+      context.read<MatchBloc>().add(MatchEvent.delete(widget.match));
+      final delta = Delta()..delete(keyword.length);
+      final rows = await (select(db.clubEntity)).get();
+    `);
+    expect(ds.filter((d) => d.kind === "api-call").map((d) => `${d.name} ${d.target} @${d.line}`)).toEqual([
+      "http.get https://api.example.com/fixtures @3",
+    ]);
+    expect(ds.filter((d) => d.kind === "database").map((d) => d.entity)).toEqual(["ClubEntity"]);
+  });
+
   it("surfaces http/dio client calls as api-call with the URL target", () => {
     const ds = dataSources(`
       final res = await http.get(Uri.parse('https://api.example.com/players'));

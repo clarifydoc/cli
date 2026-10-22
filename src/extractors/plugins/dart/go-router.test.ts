@@ -15,7 +15,10 @@ const FILES: Record<string, string> = {
 class ClubScreen extends StatelessWidget {
   static const routeName = '/clubs';
   const ClubScreen({super.key});
-  Widget build(BuildContext context) => const Text('Clubs');
+  Widget build(BuildContext context) => TextButton(
+        onPressed: () => context.push(MatchScreen.routeName),
+        child: const Text('Matches'),
+      );
 }
 `,
   "lib/screens/match_screen.dart": `import 'package:flutter/material.dart';
@@ -83,5 +86,9 @@ describe("GoRouter routes through a screen's constant", () => {
       "lib/screens/club_screen.dart /clubs",
       "lib/screens/match_screen.dart /matches",
     ]);
+  });
+
+  it("let a screen navigate to another through the other's constant", () => {
+    expect(summary.screens.find((s) => s.name === "ClubScreen")?.navigatesTo).toEqual(["MatchScreen"]);
   });
 });
