@@ -77,7 +77,7 @@ const ECTO_VAR_READ_RE = /\b\w*Repo\.(all|one!?|exists\?|aggregate|stream)\s*\(\
  * `from(…)` that built it has its own row).
  */
 function extractElixirDataSources(lines: string[]): DataSourceInfo[] {
-  const out: DataSourceInfo[] = obanJobs(lines);
+  const out: DataSourceInfo[] = [...obanJobs(lines), ...httpCalls(lines)];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     const trimmed = line.trimStart();
@@ -124,6 +124,65 @@ function extractElixirDataSources(lines: string[]): DataSourceInfo[] {
       if (!m[2] && !/\|>\s*(?:[A-Z]\w*\.)*\w*Repo\./.test(line)) continue;
       out.push({ kind: "database", name: `Repo.${m[1]}`, target: null, calls: [], line: ln, access: "read" });
     }
+  }
+  return out;
+}
+
+// ─── Outgoing HTTP ───────────────────────────────────────────────────────────
+
+const HTTP_CALL_RE = /\b(Req|HTTPoison|HTTPotion|Tesla|Finch)\.(get|post|put|patch|delete|head|options|request|build)!?\s*\(\s*(.*)$/;
+const HTTP_VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
+
+/**
+ * Requests through Req, HTTPoison, Tesla and Finch: `Req.post("https://…/#{id}/purge", opts)`,
+ * `HTTPoison.get!(url)`, `Finch.build(:post, url, headers, body)`, `Req.request(url: url, method: :get)`.
+ * The URL is a literal (its `#{…}` holes kept as `{…}`), a local or module attribute bound to one,
+ * or unknown — a request all the same, which a trace reaches.
+ */
+function httpCalls(lines: string[]): DataSourceInfo[] {
+  if (!/\b(?:Req|HTTPoison|HTTPotion|Tesla|Finch)\./.test(lines.join("\n"))) return [];
+  const attrs = new Map<string, string>();
+  for (const l of lines) {
+    const m = /^\s*@(\w+)\s+"([^"]*)"\s*$/.exec(l);
+    if (m && !attrs.has(m[1]!)) attrs.set(m[1]!, m[2]!);
+  }
+  const literal = (text: string): string => text.replace(/#\{([^}]*)\}/g, (_, x: string) => `{${x.trim()}}`);
+  const urlOf = (expr: string, at: number): string | null => {
+    const e = expr.trim();
+    const str = /^"((?:[^"\\]|\\.)*)"/.exec(e);
+    if (str) return literal(str[1]!);
+    const attr = /^@(\w+)\b/.exec(e);
+    if (attr) return attrs.get(attr[1]!) ?? null;
+    const local = /^([a-z_]\w*)\b/.exec(e)?.[1];
+    if (!local) return null;
+    for (let j = at - 1; j >= 0 && at - j <= 25 && !/^\s*defp?\s/.test(lines[j + 1] ?? "x"); j--) {
+      const m = new RegExp(`^\\s*${local}\\s*=\\s*(?:"((?:[^"\\\\]|\\\\.)*)"|@(\\w+))\\s*$`).exec(lines[j]!);
+      if (m) return m[1] !== undefined ? literal(m[1]) : attrs.get(m[2]!) ?? null;
+      if (/^\s*defp?\s/.test(lines[j]!)) break;
+    }
+    return null;
+  };
+  const out: DataSourceInfo[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = HTTP_CALL_RE.exec(lines[i]!);
+    if (!m) continue;
+    const [, lib, fn, rest] = m;
+    let verb: string | null = HTTP_VERBS.has(fn!) ? fn!.toUpperCase() : null;
+    let urlExpr: string | null = rest!;
+    if (fn === "build") {
+      // `Finch.build(:post, url, headers, body)`; piped, the method is the subject.
+      const args = rest!.split(",");
+      const atom = /^\s*:(\w+)/.exec(args[0] ?? "");
+      if (atom && HTTP_VERBS.has(atom[1]!)) verb = atom[1]!.toUpperCase();
+      urlExpr = args.length > 1 ? args.slice(1).join(",") : null;
+    }
+    // Keyword options name the URL and method: `Req.post(url: url)`, `Req.request(url: u, method: :get)`.
+    const kwUrl = /\burl:\s*([^,)]+)/.exec(rest!);
+    if (kwUrl) urlExpr = kwUrl[1]!;
+    const kwMethod = /\bmethod:\s*:(\w+)/.exec(rest!);
+    if (kwMethod && HTTP_VERBS.has(kwMethod[1]!)) verb = kwMethod[1]!.toUpperCase();
+    const target = urlExpr ? urlOf(urlExpr, i) : null;
+    out.push({ kind: "api-call", name: verb && target ? `${verb} ${target}` : `${lib}.${fn}`, target, calls: [], line: i + 1 });
   }
   return out;
 }

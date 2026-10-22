@@ -128,3 +128,34 @@ end`, "lib/workers/schedule_reports.ex", "elixir");
     ]);
   });
 });
+
+describe("Elixir outgoing HTTP", () => {
+  it("reads Req, HTTPoison and Finch requests with their URL and verb", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const a = extractWithRegex(`defmodule League.Clients do
+  @scores_url "https://scores.example.com/api/live"
+
+  def purge(zone_id, options) do
+    case Req.post("https://cdn.example.com/zone/#{zone_id}/purge", options) do
+      {:ok, _} -> :ok
+    end
+  end
+
+  def download do
+    this_month_url = "https://geo.example.com/kits.mmdb"
+    HTTPoison.get!(this_month_url)
+  end
+
+  def live, do: Req.get!(@scores_url)
+  def raw(url, headers, body), do: Finch.build(:post, url, headers, body)
+  def check(url), do: Req.request(url: url, method: :head)
+end`, "lib/league/clients.ex", "elixir");
+    expect(a.dataSources.filter((d) => d.kind === "api-call").map((d) => `${d.name} -> ${d.target} @${d.line}`)).toEqual([
+      "POST https://cdn.example.com/zone/{zone_id}/purge -> https://cdn.example.com/zone/{zone_id}/purge @5",
+      "GET https://geo.example.com/kits.mmdb -> https://geo.example.com/kits.mmdb @12",
+      "GET https://scores.example.com/api/live -> https://scores.example.com/api/live @15",
+      "Finch.build -> null @16",
+      "Req.request -> null @17",
+    ]);
+  });
+});
