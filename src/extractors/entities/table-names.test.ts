@@ -101,6 +101,27 @@ public class EntityClub {
     expect(tables(a)).toEqual({ EntityClub: "clubs" });
   });
 
+  it("Java: a nested @UniqueConstraint's name is not the table's", async () => {
+    const a = await analyze(
+      `package com.acme;
+import jakarta.persistence.*;
+
+@Table(name = EntityFan.TABLE,
+       uniqueConstraints = {
+           @UniqueConstraint(columnNames = {"fan_email", "club_id"}, name = "UK_fan_email_club")
+       })
+@Entity
+public class EntityFan {
+  public static final String TABLE = "fans";
+  @Id private Long id;
+}
+`,
+      "src/main/java/com/acme/EntityFan.java",
+      "java",
+    );
+    expect(tables(a)).toEqual({ EntityFan: "fans" });
+  });
+
   it("TypeScript: TypeORM @Entity(\"…\") and @Entity({ name }), Sequelize tableName", async () => {
     const a = await analyze(
       `import { Entity, PrimaryGeneratedColumn, Column } from "typeorm";

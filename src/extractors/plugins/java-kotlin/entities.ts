@@ -1,5 +1,6 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import type { ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
+import { daoReceiverEntity } from "./data-sources.js";
 
 /**
  * Extracts JPA entities + their relations from Java and Kotlin source.
@@ -34,6 +35,7 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
    */
   override reconcileProject(analyses: FileAnalysis[]): void {
     const jvm = analyses.filter((a) => a.language === "java" || a.language === "kotlin");
+    statedRepositoryEntities(jvm);
     const byName = namedQueryEntities(analyses);
     if (byName.size === 0) return;
     for (const a of jvm) {
@@ -864,6 +866,13 @@ function jpaTableName(decorators: readonly string[], sourceText: string, classNa
   for (const d of decorators) {
     const m = /^@?(?:[\w.]+\.)?Table\s*\(([\s\S]*)\)\s*$/.exec(d.trim());
     if (!m) continue;
+    // The table's own attributes: a nested `@UniqueConstraint(name = "uk_x")` or `@Index(name = …)` names something else.
+    let own = m[1]!;
+    for (let prev = ""; prev !== own;) {
+      prev = own;
+      own = own.replace(/@[\w.]+\s*\([^()]*\)|\{[^{}]*\}|\[[^[\]]*\]/g, "");
+    }
+    m[1] = own;
     const named = /\b(?:name|value)\s*=\s*"([^"]+)"/.exec(m[1]!) ?? /^\s*"([^"]+)"/.exec(m[1]!);
     if (named) return named[1]!;
     // `@Table(name = EntityClub.TABLE)` with `public static final String TABLE = "clubs";`
@@ -875,6 +884,71 @@ function jpaTableName(decorators: readonly string[], sourceText: string, classNa
     }
   }
   return null;
+}
+
+/**
+ * A DAO row names the entity its receiver implies (`fanRepository.save` → `Fan`); a
+ * Spring Data repository states the one it works on (`interface RepositoryFan extends
+ * JpaRepository<EntityClubFan, Long>`). A row whose implied name is no entity takes the
+ * entity stated by the repository type of the file's member implying that name, when
+ * every such member agrees.
+ */
+function statedRepositoryEntities(jvm: readonly FileAnalysis[]): void {
+  const entities = new Set(jvm.flatMap((a) => (a.classes ?? []).filter((c) => c.decorators?.includes("entity")).map((c) => c.name)));
+  if (entities.size === 0) return;
+  const stated = new Map<string, string>();
+  for (const a of jvm) {
+    for (const cls of a.classes ?? []) {
+      if (cls.kind !== "interface") continue;
+      const entity = [cls.extends ?? "", ...(cls.implements ?? [])]
+        .flatMap((base) => typeArguments(base))
+        .map((arg) => arg.replace(/^.*\./, ""))
+        .find((arg) => entities.has(arg));
+      if (entity) stated.set(cls.name, entity);
+    }
+  }
+  if (stated.size === 0) return;
+  for (const a of jvm) {
+    const rows = (a.dataSources ?? []).filter((ds) => ds.kind === "database" && ds.name.startsWith("DAO: ") && ds.entity && !entities.has(ds.entity));
+    if (rows.length === 0) continue;
+    // What each repository-typed member implies, as the row's extractor read it.
+    const implied = new Map<string, Set<string>>();
+    for (const cls of a.classes ?? []) {
+      const members = [...cls.properties, ...cls.methods.flatMap((m) => m.params)];
+      for (const m of members) {
+        const type = m.type?.replace(/<.*$/, "").replace(/^.*\./, "");
+        const entity = type ? stated.get(type) : undefined;
+        const name = entity ? daoReceiverEntity(m.name, new Map([[m.name, type!]])) : null;
+        if (name) (implied.get(name) ?? implied.set(name, new Set()).get(name)!).add(entity!);
+      }
+    }
+    for (const ds of rows) {
+      const options = implied.get(ds.entity!);
+      if (options?.size !== 1) continue;
+      const [entity] = options;
+      if (ds.target === ds.entity) ds.target = entity!;
+      ds.entity = entity!;
+    }
+  }
+}
+
+/** `JpaRepository<EntityFan, Long>` → `["EntityFan", "Long"]`: the top-level type arguments. */
+function typeArguments(type: string): string[] {
+  const open = type.indexOf("<");
+  if (open < 0 || !type.trimEnd().endsWith(">")) return [];
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of type.slice(open + 1, type.trimEnd().length - 1)) {
+    if (ch === "<") depth++;
+    else if (ch === ">") depth--;
+    if (ch === "," && depth === 0) {
+      out.push(cur.trim());
+      cur = "";
+    } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out.map((t) => t.replace(/<.*$/, ""));
 }
 
 /**

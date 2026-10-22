@@ -969,6 +969,8 @@ const NOT_AN_ENTITY_LITERAL = new Set([
   "Map", "List", "Set", "Collection", "Tuple",
 ]);
 
+const JPQL_KEYWORDS = new Set(["WHERE", "JOIN", "LEFT", "INNER", "OUTER", "ORDER", "GROUP", "HAVING", "SET", "VALUES", "SELECT", "UNION", "LIMIT", "AND", "OR", "ON"]);
+
 function jpaEntityText(text: string): string | null {
   // The first class literal naming a type of the program: `any(Class.class)` (a mock matcher) and
   // `String.class` (a scalar result) name none.
@@ -976,7 +978,9 @@ function jpaEntityText(text: string): string | null {
     if (!NOT_AN_ENTITY_LITERAL.has(m[1]!)) return m[1]!;
   }
   const jpql = /["']\s*(?:select\b[^"']*?)?\bfrom\s+([A-Z]\w*)\b/i.exec(text);
-  return jpql && /^[A-Z]/.test(jpql[1]!) ? jpql[1]! : null;
+  // `"… FROM " + table + " WHERE …"` joined: the keyword after the hole names nothing
+  // (an entity is spelled as its class, `FROM Order o`, never in capitals).
+  return jpql && /^[A-Z]/.test(jpql[1]!) && !JPQL_KEYWORDS.has(jpql[1]!) ? jpql[1]! : null;
 }
 
 export function resolveCall(node: Node): CallParts | null {
@@ -1112,7 +1116,7 @@ function constantQueryTarget(text: string): { entity: string; access?: "read" | 
 /** What a DAO's name says when it is no entity's: it serves every entity. */
 const GENERIC_DAO_NAME = /^(?:common|generic|base|abstract|default|crud|shared|core|main|global|entity|data|persistence|hibernate|jpa|db|database|app|simple)$/i;
 
-function daoReceiverEntity(receiver: string, fieldTypes?: Map<string, string>): string | null {
+export function daoReceiverEntity(receiver: string, fieldTypes?: Map<string, string>): string | null {
   const seg = receiver.split(".").pop()?.trim() ?? "";
   const declared = fieldTypes?.get(seg);
   const src = declared && daoBase(declared) ? declared : seg;

@@ -141,6 +141,15 @@ describe("DAO / Repository receiver → entity (the dominant data path here)", (
   });
 });
 
+describe("SQL assembled around a table hole", () => {
+  it("names no table from the keyword after the hole, and still reads a JPQL entity", async () => {
+    const holed = await sourcesOf(`    jdbcTemplate.queryForList("SELECT " + projection + " FROM " + spec.table + " WHERE " + spec.scopeWhere, params);`, "java");
+    expect(db(holed).map((d) => d.entity ?? "-")).not.toContain("WHERE");
+    const jpql = await sourcesOf(`    em.createQuery("SELECT o FROM Order o WHERE o.club = :club").getResultList();`, "java");
+    expect(db(jpql).map((d) => d.entity)).toContain("Order");
+  });
+});
+
 describe("Java jOOQ + Spring Data", () => {
   it("captures jOOQ table on the Java AST too", async () => {
     const s = db(await jooqSourcesOf(`    var r = dsl.deleteFrom(REIMBURSEMENT).where(c).execute();`, "java"));

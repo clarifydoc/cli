@@ -506,11 +506,13 @@ function kotlinReceiverType(fn: Node): string | null {
 /**
  * Supertypes of a Java/Kotlin class-like declaration, one entry per type.
  *
- * `extends` is a NAME (type arguments stripped — consumers look classes up by
- * it); `implements` keeps each type as written (`Repository<Order>`), core
- * strips what it needs. An interface has no runtime base: its first
- * super-interface is `extends` (so inherited-method lookups walk to it) and
- * the rest ride along in `implements` — the TypeScript plugin's convention.
+ * A class's `extends` is a NAME (type arguments stripped — consumers look
+ * classes up by it); `implements` keeps each type as written
+ * (`Repository<Order>`), core strips what it needs. An interface has no
+ * runtime base: its first super-interface is `extends` (so inherited-method
+ * lookups walk to it), as written like `implements` — a Spring Data
+ * repository's `JpaRepository<Match, Long>` names its entity — and the rest
+ * ride along in `implements`: the TypeScript plugin's convention.
  *
  * Java: `superclass` / `interfaces` (`super_interfaces > type_list`) fields;
  * an interface's `extends_interfaces > type_list`. Kotlin: one
@@ -553,7 +555,7 @@ export function jvmSupertypes(node: Node): { extendsName: string | null; impleme
 
   const isInterface = node.type === "interface_declaration" || node.children.some((c) => c.type === "interface");
   if (isInterface && !extendsName && implementsList.length > 0) {
-    extendsName = stripTypeArgs(implementsList.shift()!);
+    extendsName = implementsList.shift()!;
   }
   return { extendsName, implementsList };
 }
