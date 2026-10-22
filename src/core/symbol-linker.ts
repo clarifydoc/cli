@@ -989,6 +989,10 @@ function pickDefinition(
 ): string | null {
   if (files.length === 0) return null;
   if (files.length === 1) return files[0]!;
+  // The referencing file's own directory before a subdirectory sharing its whole path.
+  const nearDir = nearFile.slice(0, nearFile.lastIndexOf("/") + 1);
+  const sameDir = files.filter((f) => f.slice(0, f.lastIndexOf("/") + 1) === nearDir);
+  if (sameDir.length > 0 && sameDir.length < files.length) return pickDefinition(name, sameDir, nearFile, declOf, languageOf);
   const src = nearFile.split("/").slice(0, -1);
   const score = (f: string): number => {
     const p = f.split("/").slice(0, -1);
@@ -3052,8 +3056,24 @@ function returnedPoint(
   }
   const typeName = receiverTypeName(written, (ctx.languageOf.get(declFile) ?? "") as Language);
   if (!typeName) return null;
-  const ref = typeRefFor(ctx, typeName, declFile, ctx.projectOf.get(declFile) ?? "root");
+  const ref = qualifiedTypeRef(ctx, written, typeName, declFile) ?? typeRefFor(ctx, typeName, declFile, ctx.projectOf.get(declFile) ?? "root");
   return ref ? { ...ref, member: "", consumer: receiver.consumer, container: false } : null;
+}
+
+/**
+ * A return type written with its package (`*entity.Album`, `entity.Label`) when the name alone is
+ * several classes (`Album` in `form`, `entity` and `search`): the one in a directory of that name
+ * the declaring file imports.
+ */
+function qualifiedTypeRef(ctx: LinkContext, written: string, typeName: string, declFile: string): { typeName: string; typeFile: string } | null {
+  const pkg = new RegExp(`(?:^|[^\\w.])([a-z_]\\w*)\\.${typeName}(?![\\w.])`).exec(written)?.[1];
+  if (!pkg) return null;
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  if (!ctx.analysisByFile.get(declFile)?.imports.some((i) => i.source === pkg || i.source.endsWith(`/${pkg}`))) return null;
+  const files = (ctx.classFiles.get(typeName) ?? []).filter((f) => f.slice(0, f.lastIndexOf("/")).split("/").pop() === pkg);
+  // One type over several files of the package (Go methods beside the struct): its richest declaration.
+  const pick = files.length > 0 ? pickDefinition(typeName, files, files[0]!, (f, n) => ctx.classAt.get(memberKey(f, n)), (f) => ctx.languageOf.get(f)) : null;
+  return pick ? { typeName, typeFile: pick } : null;
 }
 
 /**
