@@ -1090,6 +1090,9 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
             // The Fetch standard's default: `fetch(url)`, or an init literal that names no method
             // (and spreads nothing that could), is a GET.
             else if (/^fetch$/i.test(fnName) && fn.type === "identifier" && (positional.length === 1 || statesNoMethod(positional[1]))) callName = "get";
+            // A generated oazapfts SDK states every other verb (`oazapfts.json({ ...opts, method: "PUT" })`):
+            // its `fetchJson(url, { ...opts })` / `fetchBlob` / `fetchText` with none is a GET.
+            else if (recv === "oazapfts" && /^fetch(?:Json|Blob|Text)$/.test(fnName)) callName = "get";
           }
           // openapi-generator's wrappers end `.then((request) => request(this.axios, this.basePath))`:
           // the first argument is the HTTP client itself, not a URL — the request

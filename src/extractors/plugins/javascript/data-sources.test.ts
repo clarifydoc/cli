@@ -657,7 +657,8 @@ describe("JS fetch-style calls carry their verb in the options", () => {
       fetch('/api/cars');
       fetch('/api/x', { method: someVar });
       fetch('/api/y', { headers });
-      fetch('/api/z', { ...init });`);
+      fetch('/api/z', { ...init });
+      oazapfts.fetchJson(\`/albums/\${encodeURIComponent(id)}\`, { ...opts });`);
     // No init, or an init literal naming no method: the Fetch standard's GET. A method from a
     // variable or a spread is unknown.
     expect(calls.map((c) => [c.name, c.target])).toEqual([
@@ -667,6 +668,8 @@ describe("JS fetch-style calls carry their verb in the options", () => {
       ["fetch", "/api/x"],
       ["get", "/api/y"],
       ["fetch", "/api/z"],
+      // A generated oazapfts SDK names every verb but GET (real-repo FP: 27 GETs linked to DELETE handlers).
+      ["get", "/albums/${encodeURIComponent(id)}"],
     ]);
   });
 });
