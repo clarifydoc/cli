@@ -53,9 +53,10 @@ const ONE_LINE_IF = /^(?:if|unless)\s+(.+?)\s+then\s+(.+?)(?:\s*;)?\s*(?:end)?\s
 /** `stmt if cond` / `stmt unless cond` and the one-line `if cond then stmt end`. */
 const rubyInlineGuard: InlineGuard = (code) => {
   const oneLine = ONE_LINE_IF.exec(code);
-  if (oneLine) return { head: oneLine[1]!, tail: oneLine[2]! };
+  if (oneLine) return { head: oneLine[1]!, tail: oneLine[2]!, negated: code.startsWith("unless") };
   const modifier = MODIFIER_IF.exec(code);
-  return modifier ? { head: modifier[2]!, tail: modifier[1]! } : null;
+  if (!modifier) return null;
+  return { head: modifier[2]!, tail: modifier[1]!, negated: /^\s*unless\b/.test(code.slice(modifier[1]!.length)) };
 };
 
 export const RUBY_REGEX_CONTROL_FLOW: LanguageRegexControlFlowSpec = {
@@ -78,9 +79,12 @@ export const RUBY_REGEX_CONTROL_FLOW: LanguageRegexControlFlowSpec = {
     { match: /^(?:raise|fail)\b(.*)$/, type: "throw_statement" },
     { match: /^break\b/, type: "break_statement" },
     { match: /^(?:next|redo|retry)\b/, type: "continue_statement" },
-    { match: /^(?:if|unless)\s+(.+?)(?:\s+then)?\s*$/, type: "if_statement" },
-    { match: /^[\w@$.[\]:]+\s*(?:\|\|=|&&=|=)\s*(?:if|unless)\s+(.+?)(?:\s+then)?\s*$/, type: "if_statement" },
-    { match: /^(?:while|until)\s+(.+?)(?:\s+do)?\s*$/, type: "while_statement" },
+    { match: /^if\s+(.+?)(?:\s+then)?\s*$/, type: "if_statement" },
+    { match: /^unless\s+(.+?)(?:\s+then)?\s*$/, type: "if_statement", negated: true },
+    { match: /^[\w@$.[\]:]+\s*(?:\|\|=|&&=|=)\s*if\s+(.+?)(?:\s+then)?\s*$/, type: "if_statement" },
+    { match: /^[\w@$.[\]:]+\s*(?:\|\|=|&&=|=)\s*unless\s+(.+?)(?:\s+then)?\s*$/, type: "if_statement", negated: true },
+    { match: /^while\s+(.+?)(?:\s+do)?\s*$/, type: "while_statement" },
+    { match: /^until\s+(.+?)(?:\s+do)?\s*$/, type: "while_statement", negated: true },
     { match: /^for\s+(.+?)(?:\s+do)?\s*$/, type: "for_statement" },
     { match: /^case\b\s*(.*?)\s*$/, type: "switch_statement" },
     { match: /^[\w@$.[\]:]+\s*(?:\|\|=|=)\s*case\b\s*(.*?)\s*$/, type: "switch_statement" },

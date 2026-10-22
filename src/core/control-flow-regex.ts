@@ -152,8 +152,11 @@ class SynthNode implements FlowNode {
  * than deleting does both. This is also what stops `// if (x) {` and
  * `"}"` from moving the nesting — the single largest source of nonsense in a
  * scanner like this.
+ *
+ * With `keepStrings`, string and regex literals are skipped rather than
+ * blanked: comments go, and the text a label shows stays as written.
  */
-export function blankNonCode(source: string, spec: LanguageRegexControlFlowSpec): string {
+export function blankNonCode(source: string, spec: LanguageRegexControlFlowSpec, keepStrings = false): string {
   const out = source.split("");
   const lineComments = spec.lineComments ?? ["//"];
   const blockComment = spec.blockComment ?? ["/*", "*/"];
@@ -182,24 +185,25 @@ export function blankNonCode(source: string, spec: LanguageRegexControlFlowSpec)
     if (spec.regexLiterals && source[i] === "/" && expectsValue(source, i)) {
       const end = regexLiteralEnd(source, i);
       if (end > i) {
-        for (; i < end; i++) if (source[i] !== "\n") out[i] = " ";
+        for (; i < end; i++) if (source[i] !== "\n" && !keepStrings) out[i] = " ";
         continue;
       }
     }
 
     const quote = quotes.find((q) => source.startsWith(q, i));
     if (quote) {
-      out[i] = " ";
+      const blank = keepStrings ? () => {} : (at: number) => void (out[at] = " ");
+      blank(i);
       i += quote.length;
       while (i < source.length) {
         if (source[i] === "\\") {
-          out[i] = " ";
-          if (i + 1 < source.length && source[i + 1] !== "\n") out[i + 1] = " ";
+          blank(i);
+          if (i + 1 < source.length && source[i + 1] !== "\n") blank(i + 1);
           i += 2;
           continue;
         }
         if (source.startsWith(quote, i)) {
-          for (let k = 0; k < quote.length; k++) out[i + k] = " ";
+          for (let k = 0; k < quote.length; k++) blank(i + k);
           i += quote.length;
           break;
         }
@@ -207,7 +211,7 @@ export function blankNonCode(source: string, spec: LanguageRegexControlFlowSpec)
         // (an apostrophe in a comment, a lifetime tick in Rust). Stop there
         // rather than blanking the rest of the function.
         if (source[i] === "\n" && !spec.multilineStrings) break;
-        out[i] = " ";
+        blank(i);
         i++;
       }
       continue;
@@ -261,6 +265,8 @@ interface ScanLine {
   raw: string;
   /** Comment- and string-blanked text, for matching and counting. */
   code: string;
+  /** Comment-blanked text with its strings kept, for the labels a pattern captures. */
+  shown: string;
   /** Nesting depth before this line runs. */
   depth: number;
   /** Depth change this line causes. */
@@ -284,8 +290,9 @@ function scanLines(
   const blanked = blankNonCode(source, spec);
   const raws = source.split("\n");
   const codes = blanked.split("\n");
+  const shown = blankNonCode(source, spec, true).split("\n");
 
-  if (spec.blockDelta) return scanKeywordLines(raws, codes, firstRow, spec);
+  if (spec.blockDelta) return scanKeywordLines(raws, codes, shown, firstRow, spec);
 
   const openers = spec.blockOpen ?? /\{/g;
   const closers = spec.blockClose ?? /\}/g;
@@ -304,6 +311,7 @@ function scanLines(
       row: firstRow + i,
       raw: raws[i] ?? "",
       code,
+      shown: shown[i] ?? "",
       depth: depth - leadingCloses,
       delta: opens - closes,
     });
@@ -321,6 +329,7 @@ function scanLines(
 function scanKeywordLines(
   raws: readonly string[],
   codes: readonly string[],
+  shown: readonly string[],
   firstRow: number,
   spec: LanguageRegexControlFlowSpec,
 ): ScanLine[] {
@@ -338,7 +347,7 @@ function scanKeywordLines(
     const recorded = delta.middle && !asArm ? Math.max(0, depth - 1) : Math.max(0, depth - leadingClose);
     for (let k = 0; k < close && stack.length > 0; k++) stack.pop();
     for (const name of delta.open) if (stack.length < MAX_DEPTH * 2) stack.push(name);
-    lines.push({ row: firstRow + i, raw: raws[i] ?? "", code, depth: recorded, delta: stack.length - depth });
+    lines.push({ row: firstRow + i, raw: raws[i] ?? "", code, shown: shown[i] ?? "", depth: recorded, delta: stack.length - depth });
   }
   return lines;
 }
@@ -355,6 +364,8 @@ interface Matched {
   type: string;
   /** The controlling expression, when the pattern captured one. */
   head?: string;
+  /** The construct runs its body when `head` is false (`unless`, `until`). */
+  negated?: boolean;
 }
 
 const JUMPS: ReadonlySet<string> = new Set([
@@ -389,10 +400,57 @@ function bodyRange(
   return { from: i + 1, end: direct };
 }
 
-/** One statement written inline on `line` (`if x then return`, `when 1 then go`), classified in its own right. */
-function inlineStatement(text: string, line: ScanLine, spec: LanguageRegexControlFlowSpec): SynthNode {
-  const as = { ...line, code: text, raw: text, delta: 0 };
-  return node(classify(text, spec)?.type ?? "expression_statement", as, as);
+/** One statement written inline on `line` (`if x then return`, `when 1 then go`), classified by its blanked `code`, labelled by its `shown` text. */
+function inlineStatement(code: string, shown: string, line: ScanLine, spec: LanguageRegexControlFlowSpec): SynthNode {
+  const as = { ...line, code, raw: shown, shown, delta: 0 };
+  return node(classify(code, spec)?.type ?? "expression_statement", as, as);
+}
+
+/**
+ * The text a label shows for `length` characters at `start` of the trimmed blanked line.
+ *
+ * Patterns run on the blanked line, where a string is spaces: `if role == 'keeper'`
+ * captures `role ==`, and `msg += "x" unless y` captures `msg +=`. Blanking keeps
+ * every character in place, so the span is read from `shown` (strings kept) after
+ * widening it over the blanked run on either side — out to the next code, never
+ * past it.
+ */
+function shownSpan(code: string, shown: string, start: number, length: number): string {
+  const lead = code.length - code.trimStart().length;
+  let from = lead + start;
+  let to = from + length;
+  while (from > 0 && /\s/.test(code[from - 1]!)) from--;
+  while (to < code.length && /\s/.test(code[to]!)) to++;
+  return shown.slice(from, to).trim();
+}
+
+/** `shownSpan` for a capture `text` known only by its value: its first place in the trimmed blanked line. */
+function shownOf(code: string, shown: string, text: string): string {
+  const at = code.trim().indexOf(text);
+  return at === -1 ? text : shownSpan(code, shown, at, text.length);
+}
+
+/** Capture `group` of a `withIndices` hit on the trimmed blanked line, as `shown` reads it. */
+function shownCapture(hit: RegExpExecArray, group: number, code: string, shown: string): string | undefined {
+  const at = hit.indices?.[group];
+  if (!at) return hit[group]?.trim();
+  return shownSpan(code, shown, at[0], at[1] - at[0]);
+}
+
+const WITH_INDICES = new WeakMap<RegExp, RegExp>();
+/** `re` with the `d` flag, so a hit carries its captures' offsets; built once per pattern. */
+function withIndices(re: RegExp): RegExp {
+  let out = WITH_INDICES.get(re);
+  if (!out) {
+    out = new RegExp(re.source, `${re.flags.replace(/[gyd]/g, "")}d`);
+    WITH_INDICES.set(re, out);
+  }
+  return out;
+}
+
+/** A condition read the other way round: the body of `unless x` runs when `!x` holds. */
+function negation(head: string): string {
+  return /^[\w@$.:?!]+(?:\([^()]*\)|\[[^[\]]*\])*$/.test(head) ? `!${head}` : `!(${head})`;
 }
 
 /** Whether this construct leaves the enclosing statement sequence outright. */
@@ -413,7 +471,7 @@ function isJump(matched: Matched | null): boolean {
  * Balanced-paren scanning rather than a pattern, because a condition can
  * contain parentheses (`if (a(b) > 0) return;`) and no regex can match those.
  */
-function splitInline(code: string): { head: string; tail: string } | null {
+function splitInline(code: string): { head: string; tail: string; negated?: boolean } | null {
   const open = code.indexOf("(");
   if (open === -1) return null;
   let depth = 0;
@@ -436,12 +494,12 @@ function splitInline(code: string): { head: string; tail: string } | null {
  * Returns the canonical node type and the captured head (condition), or null
  * for a line no rule describes.
  */
-function classify(code: string, spec: LanguageRegexControlFlowSpec): Matched | null {
+function classify(code: string, spec: LanguageRegexControlFlowSpec, shown = code): Matched | null {
   const trimmed = code.trim();
   if (trimmed === "") return null;
   for (const rule of spec.statements) {
-    const hit = rule.match.exec(trimmed);
-    if (hit) return { type: rule.type, head: hit[1]?.trim() };
+    const hit = withIndices(rule.match).exec(trimmed);
+    if (hit) return { type: rule.type, head: shownCapture(hit, 1, code, shown), negated: rule.negated };
   }
   return null;
 }
@@ -473,7 +531,7 @@ function parseRange(
       continue;
     }
 
-    const matched = classify(line.code, spec);
+    const matched = classify(line.code, spec, line.shown);
     const range = bodyRange(lines, i, to, spec);
     const bodyEnd = range.end;
 
@@ -583,7 +641,8 @@ function emit(
   const inline = bodyEnd === i + 1 ? (spec.inlineGuard?.(line.code.trim()) ?? splitInline(line.code.trim())) : null;
 
   const withBody = (type: string, field: string): SynthNode => {
-    const head = inline?.head ?? matched.head;
+    const written = inline ? shownOf(line.code, line.shown, inline.head) : matched.head;
+    const head = written !== undefined && (inline ? inline.negated : matched.negated) ? negation(written) : written;
     const owner = node(type, line, last, head ?? line.raw.trim());
     if (head !== undefined) {
       owner.add(node("condition", line, line, head), "condition");
@@ -594,9 +653,14 @@ function emit(
       // `if (x) return null;` yields a branch AND the exit it guards — and
       // `if (x) { flag = false; continue; }`, which is two statements on one
       // line, does not quietly lose the `continue`.
+      let at = line.code.trim().indexOf(inline.tail);
       for (const part of inline.tail.split(";")) {
         const text = part.trim();
-        if (text !== "") block.add(inlineStatement(text, line, spec));
+        if (text !== "") {
+          const shown = at === -1 ? text : shownSpan(line.code, line.shown, at, part.length);
+          block.add(inlineStatement(text, shown, line, spec));
+        }
+        if (at !== -1) at += part.length + 1;
       }
     } else {
       parseRange(lines, range.from, bodyEnd, spec, depth + 1, block);
@@ -664,7 +728,7 @@ function chainElse(
   for (const index of [at - 1, at]) {
     if (index < 0 || index >= to) continue;
     const line = lines[index]!;
-    const elseIf = (spec.elseIf ?? /^\}?\s*(?:else\s+if|elif|elsif)\b\s*\(?([^){]*)/).exec(
+    const elseIf = withIndices(spec.elseIf ?? /^\}?\s*(?:else\s+if|elif|elsif)\b\s*\(?([^){]*)/).exec(
       line.code.trim(),
     );
     const plainElse = (spec.else ?? /^\}?\s*else\s*\{?\s*$/).test(line.code.trim());
@@ -673,8 +737,9 @@ function chainElse(
       const start = index;
       const { from, end } = bodyRange(lines, start, to, spec);
       if (end <= at && start < at) return at; // no progress: stop rather than loop
-      const inner = node("if_statement", line, lines[Math.max(start, end - 1)]!, elseIf[1]?.trim() ?? "");
-      inner.add(node("condition", line, line, elseIf[1]?.trim() ?? ""), "condition");
+      const head = shownCapture(elseIf, 1, line.code, line.shown) ?? "";
+      const inner = node("if_statement", line, lines[Math.max(start, end - 1)]!, head);
+      inner.add(node("condition", line, line, head), "condition");
       const block = node("statement_block", line, lines[Math.max(start, end - 1)]!, "");
       parseRange(lines, from, end, spec, depth + 1, block);
       inner.add(block, "consequence");
@@ -748,9 +813,9 @@ function switchBody(
     lines[Math.max(from, to - 1)] ?? lines[Math.max(0, from - 1)]!,
     "",
   );
-  const label = spec.case ?? /^(?:case\s+([^:]*)|default)\s*:?/;
+  const label = withIndices(spec.case ?? /^(?:case\s+([^:]*)|default)\s*:?/);
 
-  const starts: { index: number; text: string | undefined; inline?: string }[] = [];
+  const starts: { index: number; text: string | undefined; inline?: { code: string; shown: string } }[] = [];
   for (let i = from; i < to; i++) {
     const line = lines[i]!;
     if (line.depth > (lines[from]?.depth ?? 0)) continue;
@@ -758,9 +823,9 @@ function switchBody(
     if (!hit) continue;
     // A label that is only a string literal (`when 'Contact'`) was blanked to spaces: read it from the raw line.
     // A second capture is the arm's statement on the label's own line (`{:error, e} -> raise e`, `when 1 then x`).
-    let text = hit[1]?.trim();
-    if (text === "") text = label.exec(line.raw.trim())?.[1]?.trim() || line.raw.trim();
-    starts.push({ index: i, text, inline: hit[2]?.trim() || undefined });
+    const text = hit[1] === undefined ? undefined : shownCapture(hit, 1, line.code, line.shown) || line.raw.trim();
+    const inline = hit[2]?.trim() ? { code: hit[2].trim(), shown: shownCapture(hit, 2, line.code, line.shown)! } : undefined;
+    starts.push({ index: i, text, inline });
   }
 
   starts.forEach((start, n) => {
@@ -770,7 +835,7 @@ function switchBody(
     const isDefault = start.text === undefined;
     const arm = node(isDefault ? "switch_default" : "switch_case", line, lastLine, start.text ?? "default");
     if (!isDefault) arm.add(node("value", line, line, start.text!), "value");
-    if (start.inline) arm.add(inlineStatement(start.inline, line, spec));
+    if (start.inline) arm.add(inlineStatement(start.inline.code, start.inline.shown, line, spec));
     parseRange(lines, start.index + 1, end, spec, depth + 1, arm);
     body.add(arm);
   });
@@ -952,9 +1017,11 @@ function buildRegexBody(all: readonly string[], spec: ScanSpec, fn: FunctionRef)
     const open = code.indexOf("{");
     const close = code.lastIndexOf("}");
     const inner = close > open ? code.slice(open + 1, close) : "";
+    let at = open + 1 - (code.length - code.trimStart().length);
     for (const part of inner.split(";")) {
       const text = part.trim();
-      if (text !== "") root.add(inlineStatement(text, lines[0]!, spec));
+      if (text !== "") root.add(inlineStatement(text, shownSpan(code, lines[0]!.shown, at, part.length), lines[0]!, spec));
+      at += part.length + 1;
     }
     return root;
   }

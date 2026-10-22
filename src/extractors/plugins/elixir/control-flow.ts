@@ -26,7 +26,7 @@ const elixirBlockDelta: BlockDelta = (code) => {
 /** `if cond, do: expr` (with or without `else:`). */
 const elixirInlineGuard: InlineGuard = (code) => {
   const m = /^(?:if|unless)\s+(.+?),\s*do:\s*(.+?)(?:,\s*else:.*)?$/.exec(code);
-  return m ? { head: m[1]!, tail: m[2]! } : null;
+  return m ? { head: m[1]!, tail: m[2]!, negated: code.startsWith("unless") } : null;
 };
 
 export const ELIXIR_REGEX_CONTROL_FLOW: LanguageRegexControlFlowSpec = {
@@ -42,9 +42,11 @@ export const ELIXIR_REGEX_CONTROL_FLOW: LanguageRegexControlFlowSpec = {
   inlineGuard: elixirInlineGuard,
   nestedFunction: /\bfn\b/,
   statements: [
-    { match: /^(?:if|unless)\s+(.+?),\s*do:/, type: "if_statement" },
+    { match: /^if\s+(.+?),\s*do:/, type: "if_statement" },
+    { match: /^unless\s+(.+?),\s*do:/, type: "if_statement", negated: true },
     { match: /^(?:raise|reraise|throw|exit)\b(.*)$/, type: "throw_statement" },
-    { match: /^(?:if|unless)\s+(.+?)\s+do\s*$/, type: "if_statement" },
+    { match: /^if\s+(.+?)\s+do\s*$/, type: "if_statement" },
+    { match: /^unless\s+(.+?)\s+do\s*$/, type: "if_statement", negated: true },
     { match: /^(?:[\w@{}%,\s[\]]+=\s*)?(?:case\s+(.+?)|cond)\s+do\s*$/, type: "switch_statement" },
     { match: /^with\b\s*(.*?)(?:\s+do)?\s*$/, type: "switch_statement" },
     { match: /^for\b\s*(.*?)(?:\s+do)?\s*$/, type: "for_statement" },

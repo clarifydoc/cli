@@ -427,9 +427,11 @@ export interface LanguageRegexControlFlowSpec {
    * Statement patterns, tried in order against each trimmed line. The first
    * capture group, when there is one, is the controlling expression and
    * becomes the node's label. `type` must be a canonical type the shared role
-   * table names.
+   * table names. `negated` marks a construct whose body runs when the capture is
+   * false (`unless x`, `until x`); its condition is drawn as `!x`, so the graph's
+   * true/false edges read right.
    */
-  statements: readonly { match: RegExp; type: string }[];
+  statements: readonly { match: RegExp; type: string; negated?: boolean }[];
   /** Token(s) that open a nesting level. Default `{`. */
   blockOpen?: RegExp;
   /** Token(s) that close one. Default `}`. */
@@ -480,7 +482,8 @@ export interface LanguageRegexControlFlowSpec {
   armBlocks?: ReadonlySet<string>;
   /**
    * A guarded statement on one line that is not `if (cond) stmt`: Ruby's `stmt if
-   * cond`, VB's `If c Then s`. Returns the condition and the guarded statement.
+   * cond`, VB's `If c Then s`. Returns the condition and the guarded statement, and
+   * `negated` when the statement runs on a false condition (`stmt unless cond`).
    */
   inlineGuard?: InlineGuard;
 }
@@ -488,7 +491,7 @@ export interface LanguageRegexControlFlowSpec {
 /** See `LanguageRegexControlFlowSpec.blockDelta`. */
 export type BlockDelta = (code: string) => { open: readonly string[]; middle?: boolean };
 /** See `LanguageRegexControlFlowSpec.inlineGuard`. */
-export type InlineGuard = (code: string) => { head: string; tail: string } | null;
+export type InlineGuard = (code: string) => { head: string; tail: string; negated?: boolean } | null;
 
 /**
  * Optional AST/source-level extractor hooks for tree-sitter languages.

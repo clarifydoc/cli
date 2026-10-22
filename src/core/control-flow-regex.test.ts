@@ -265,6 +265,29 @@ rescue StandardError => e
 end`)).toMatchObject({ decisions: 6, returns: 1, throws: 1, catches: 1 });
   });
 
+  it("Ruby: labels keep their strings, and unless/until read negated", () => {
+    const source = `def f(player)
+  note += ", captain: #{player.name}" unless player.captain.blank?
+  if player.role == 'striker'
+    score
+  elsif player.role == "keeper"
+    save
+  end
+  until player.fit?
+    train
+  end
+end`;
+    const cfg = buildRegexControlFlow(source, "ruby", { name: "f", line: 1, endLine: 11 }, "x.rb")!;
+    const labels = cfg.nodes.map((node) => node.label);
+    expect(labels).toEqual(expect.arrayContaining([
+      "!player.captain.blank?",
+      'note += ", captain: #{player.name}"',
+      "player.role == 'striker'",
+      'player.role == "keeper"',
+      "!player.fit?",
+    ]));
+  });
+
   it("Lua: if/elseif chains, loops, one-line guards, repeat-until", () => {
     expect(draw("lua", `function M.f(t)
   if not t then return nil end
