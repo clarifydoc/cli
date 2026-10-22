@@ -56,9 +56,46 @@ export function extractHttpClientBases(tree: Tree, sourceText: string): Record<s
  * call-origin pass follows a call through its client to these, to find the
  * service it reaches. A base that is only a path names no service.
  */
-export function extractHttpClientRegistrations(tree: Tree, sourceText: string): HttpClientRegistration[] {
-  if (!CLIENT_FACTORY_RE.test(sourceText)) return [];
+/**
+ * A module an OpenAPI / jsight generator writes a client class into: a
+ * `generated` folder, or a published `*-typescript-axios` / `-fetch` package.
+ */
+const GENERATED_CLIENT_SOURCE = /(?:^|\/)(?:generated|gen|__generated__)(?:\/|$)|typescript-(?:axios|fetch|angular)|openapi-client|-api-client$/i;
+
+/**
+ * Generated API client classes this file constructs (`new PersonsApi(config)`,
+ * `new AbsenceWidgetInfoApi(url)`) from a generated module the tree usually
+ * does not hold (git-ignored build output, an npm package): each is a client
+ * proxy of the API class it is named for, so every call on an instance is a
+ * request to the operation of that name — joined by `contract` to the route
+ * the spec declares, here or in another repository.
+ */
+function generatedClientProxies(tree: Tree, sourceText: string): HttpClientRegistration[] {
+  if (!/\bnew\s+[A-Z]\w*Api\s*\(/.test(sourceText)) return [];
+  const generated = new Set<string>();
+  for (const imp of tree.rootNode.descendantsOfType("import_statement")) {
+    const source = imp?.childForFieldName("source")?.text.replace(/^['"]|['"]$/g, "") ?? "";
+    if (!GENERATED_CLIENT_SOURCE.test(source)) continue;
+    for (const spec of imp!.descendantsOfType("import_specifier")) {
+      const local = (spec?.childForFieldName("alias") ?? spec?.childForFieldName("name"))?.text;
+      if (local && /^[A-Z]\w*Api$/.test(local)) generated.add(local);
+    }
+  }
   const out: HttpClientRegistration[] = [];
+  const seen = new Set<string>();
+  for (const ne of tree.rootNode.descendantsOfType("new_expression")) {
+    const cls = ne?.childForFieldName("constructor")?.text;
+    if (!cls || !generated.has(cls) || seen.has(cls)) continue;
+    seen.add(cls);
+    out.push({ client: cls, scope: "project", proxyOf: cls, line: ne!.startPosition.row + 1 });
+  }
+  return out;
+}
+
+export function extractHttpClientRegistrations(tree: Tree, sourceText: string): HttpClientRegistration[] {
+  const proxies = generatedClientProxies(tree, sourceText);
+  if (!CLIENT_FACTORY_RE.test(sourceText)) return proxies;
+  const out: HttpClientRegistration[] = [...proxies];
   for (const decl of tree.rootNode.descendantsOfType("variable_declarator")) {
     const name = decl.childForFieldName("name");
     const value = decl.childForFieldName("value");

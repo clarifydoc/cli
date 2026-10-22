@@ -1178,7 +1178,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Calls through REST client proxies (`personRepository.getPerson(…)` on a
   // JAX-RS proxy a Spring bean builds): outbound calls named by the interface
   // operation they invoke, which the linker joins to the route declaring it.
-  const proxyCalls = clientProxyCalls(allAnalyses);
+  const proxyCalls = clientProxyCalls(allAnalyses, (f, n) => importIndex.localFor(f, n));
   allApiCalls.push(...proxyCalls);
   if (proxyCalls.length > 0) progress.detail(`  Calls through client proxies: ${proxyCalls.length}`);
   // Calls through gRPC stubs (`client.GetOrder(ctx, req)` on a `pb.NewOrderServiceClient(conn)`): the rpc they invoke.

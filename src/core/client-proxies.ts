@@ -25,7 +25,11 @@ type ApiCall = DataSourceInfo & { filePath: string };
  * (`import a.b.PersonApi` → `a.b.PersonApi`), or by being the one registered
  * type of that name.
  */
-export function clientProxyCalls(analyses: readonly FileAnalysis[]): ApiCall[] {
+export function clientProxyCalls(
+  analyses: readonly FileAnalysis[],
+  /** The project file an imported name comes from (`importIndex.localFor`): a client instance a module exports. */
+  localFor?: (file: string, name: string) => string | null,
+): ApiCall[] {
   const proxied = new Set<string>();
   const bySimple = new Map<string, Set<string>>();
   for (const a of analyses) {
@@ -38,6 +42,14 @@ export function clientProxyCalls(analyses: readonly FileAnalysis[]): ApiCall[] {
   }
   if (proxied.size === 0) return [];
 
+  const byPath = new Map(analyses.map((a) => [a.filePath, a]));
+  /** A type as another file names it: the proxied type, simple or qualified. */
+  const proxyOfIn = (_f: FileAnalysis, raw: string): string | null => {
+    const t = raw.trim();
+    if (proxied.has(t)) return t;
+    const cands = bySimple.get(t.split(".").pop()!);
+    return cands?.size === 1 ? [...cands][0]! : null;
+  };
   const out: ApiCall[] = [];
   for (const a of analyses) {
     const imported = new Map<string, string>();
@@ -106,10 +118,29 @@ export function clientProxyCalls(analyses: readonly FileAnalysis[]): ApiCall[] {
       return members;
     };
 
-    const none = new Map<string, string>();
-    for (const fn of a.functions) emit(fn, scopeOf(fn, none));
+    // Module-level instances — this file's own (`const api = new ClubsApi(cfg)`) and those
+    // a module it imports exports (`export const clubsApi = new ClubsApi(cfg)`) — are in
+    // scope in every function of the file.
+    const moduleScope = new Map<string, string>();
+    const moduleTypes = (f: FileAnalysis | undefined) => f?.functions.find((fn) => fn.name === "<setup>")?.localTypes ?? [];
+    for (const l of moduleTypes(a)) {
+      const t = proxyOf(l.type);
+      if (t) moduleScope.set(l.name, t);
+    }
+    if (localFor) {
+      for (const imp of a.imports) {
+        for (const spec of imp.specifiers ?? []) {
+          if (moduleScope.has(spec)) continue;
+          const from = localFor(a.filePath, spec);
+          const l = from ? moduleTypes(byPath.get(from)).find((x) => x.name === spec) : undefined;
+          const t = l ? proxyOfIn(byPath.get(from!)!, l.type) : null;
+          if (t) moduleScope.set(spec, t);
+        }
+      }
+    }
+    for (const fn of a.functions) emit(fn, scopeOf(fn, moduleScope));
     for (const cls of a.classes) {
-      const members = membersOf(cls);
+      const members = new Map([...moduleScope, ...membersOf(cls)]);
       for (const m of cls.methods) emit(m, scopeOf(m, members));
     }
   }
