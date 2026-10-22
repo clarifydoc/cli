@@ -3,6 +3,7 @@ import { extractClassesWithSpec } from "../shared/regex-base.js";
 import type { ClassInfo, DataSourceInfo, ImportInfo, ScreenInfo } from "../../../types/analysis.js";
 import { heexSigils, readHeex } from "./heex.js";
 import { attachEctoSchema, attachPatternKeys, extractEctoRelations, extractElixirRequestAccess, extractPhoenixRoutes } from "./phoenix.js";
+import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 
 /** Last dotted segment of an Elixir module alias (`MyApp.Accounts.User` → `User`). */
 function lastSeg(mod: string): string {
@@ -77,7 +78,7 @@ const ECTO_VAR_READ_RE = /\b\w*Repo\.(all|one!?|exists\?|aggregate|stream)\s*\(\
  * `from(…)` that built it has its own row).
  */
 function extractElixirDataSources(lines: string[]): DataSourceInfo[] {
-  const out: DataSourceInfo[] = [...obanJobs(lines), ...httpCalls(lines)];
+  const out: DataSourceInfo[] = [...obanJobs(lines), ...httpCalls(lines), ...sqlStrings(lines)];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     const trimmed = line.trimStart();
@@ -124,6 +125,45 @@ function extractElixirDataSources(lines: string[]): DataSourceInfo[] {
       if (!m[2] && !/\|>\s*(?:[A-Z]\w*\.)*\w*Repo\./.test(line)) continue;
       out.push({ kind: "database", name: `Repo.${m[1]}`, target: null, calls: [], line: ln, access: "read" });
     }
+  }
+  return out;
+}
+
+// ─── Raw SQL ─────────────────────────────────────────────────────────────────
+
+const SQL_VERB_RE = /^\s*(?:SELECT|INSERT|UPDATE|DELETE|WITH|ALTER|TRUNCATE)\b/i;
+
+/**
+ * SQL in strings and heredocs (`Repo.query!("SELECT … FROM sessions_v2")`, a
+ * migration's `execute """ UPDATE teams SET … """`), read by the shared SQL
+ * reader at the string's first line. Documentation (`@doc`, `@moduledoc`) and
+ * template sigils (`~H`, `~L`) are prose and markup, never statements.
+ */
+function sqlStrings(lines: string[]): DataSourceInfo[] {
+  if (!/\b(?:SELECT|INSERT|UPDATE|DELETE)\b/.test(lines.join("\n"))) return [];
+  const out: DataSourceInfo[] = [];
+  const read = (sql: string, line: number) => {
+    if (!SQL_VERB_RE.test(sql)) return;
+    const literal = `"${sql.replace(/#\{[^}]*\}/g, "{}").replace(/\s+/g, " ").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}";`;
+    for (const s of extractSqlStringDataSources([literal])) out.push({ ...s, line });
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (/^\s*@(?:moduledoc|doc|shortdoc)\b/.test(line)) {
+      // Skip the documentation heredoc it opens.
+      if (/"""\s*$/.test(line)) while (i + 1 < lines.length && !/^\s*"""/.test(lines[++i]!));
+      continue;
+    }
+    const heredoc = /(~[sS])?"""\s*$/.exec(line);
+    if (heredoc && !/~[A-RT-Za-rt-z]"""\s*$/.test(line)) {
+      const body: string[] = [];
+      let j = i + 1;
+      for (; j < lines.length && !/^\s*"""/.test(lines[j]!); j++) body.push(lines[j]!);
+      read(body.join(" "), i + 1);
+      i = j;
+      continue;
+    }
+    for (const m of line.matchAll(/(?<![~\w])"((?:[^"\\]|\\.)*)"/g)) read(m[1]!, i + 1);
   }
   return out;
 }

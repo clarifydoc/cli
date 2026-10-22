@@ -159,3 +159,27 @@ end`, "lib/league/clients.ex", "elixir");
     ]);
   });
 });
+
+describe("Elixir raw SQL", () => {
+  it("reads SQL in strings and heredocs, never in docs", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const a = extractWithRegex(`defmodule League.Maintenance do
+  @moduledoc """
+  Select the clubs from the table and update them.
+  """
+
+  def count, do: Repo.query!("SELECT count(*) AS count FROM fixtures_v2")
+  def purge(table), do: Repo.query!("DELETE FROM #{table} WHERE stale")
+
+  def rename do
+    execute """
+    UPDATE clubs SET name = 'Rovers' WHERE id = #{@id}
+    """
+  end
+end`, "lib/league/maintenance.ex", "elixir");
+    expect(a.dataSources.filter((d) => d.kind === "database" && d.entity).map((d) => `${d.entity} ${d.access ?? "-"} @${d.line}`)).toEqual([
+      "fixtures_v2 read @6",
+      "clubs write @10",
+    ]);
+  });
+});
