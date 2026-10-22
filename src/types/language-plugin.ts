@@ -773,8 +773,26 @@ export interface TestCommandContext {
   manifests: ReadonlySet<string>;
 }
 
+/** What a plugin's import resolver may ask of the project (`LanguagePluginManifest.resolveImport`). */
+export interface ImportResolveContext {
+  /** Every analyzed file, posix paths from the project root. */
+  files: ReadonlySet<string>;
+  /** The file declares a function, class or type of that name. */
+  declares(file: string, name: string): boolean;
+  /** The sources of the file's own wildcard imports (`pub use chat_sql::*`, `from x import *`). */
+  globImportsOf(file: string): readonly string[];
+}
+
 export interface LanguagePluginManifest {
   language: Language;
+  /**
+   * The project file an import names, for a language whose imports name
+   * modules by a path of its own (`crate::util`, `other_crate::persistence`):
+   * the import index asks this before its generic path rules. `specifier` is
+   * the name bound when the caller has one; null when the module is not the
+   * project's. Leaf code: it reads only `ctx`.
+   */
+  resolveImport?(importingFile: string, source: string, specifier: string | undefined, ctx: ImportResolveContext): string | null;
   /**
    * The command that runs these tests with the language's usual runner — by
    * test function where the runner can filter by name, else by file. Null

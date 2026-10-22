@@ -23,7 +23,7 @@ import { isGeneratedSource } from "./generated-file-detector.js";
 import { extractTypeReferences } from "./type-reference-extractor.js";
 import { enrichFileDataSources } from "./import-index.js";
 import type { VariableAliasBinding } from "../types/language-plugin.js";
-import type { FunctionInfo, RouteFact } from "../types/analysis.js";
+import type { CallInfo, FunctionInfo, RouteFact } from "../types/analysis.js";
 import { isTestFile } from "./test-file-detector.js";
 import {
   inferExpoRouterRoutes,
@@ -134,6 +134,32 @@ export function countLines(source: string): number {
  * Analyze a single file: read, parse, extract, write JSON.
  * Returns null on error (error is logged internally).
  */
+/**
+ * A bare call to a name the file imports (`use crate::util::{is_hidden}` …
+ * `is_hidden(p)`) is a call into the importing module — for a language whose
+ * plugin resolves its own import paths (`resolveImport`), so the linker can
+ * follow it. Names the file defines itself stay internal.
+ */
+function importedNameCalls(analysis: FileAnalysis): void {
+  if (!pluginFor(analysis.language)?.resolveImport) return;
+  const imported = new Map<string, string>();
+  for (const imp of analysis.imports) if (!imp.isType) for (const s of imp.specifiers) if (!imported.has(s)) imported.set(s, imp.source);
+  if (imported.size === 0) return;
+  const own = new Set([...analysis.functions.map((f) => f.name), ...analysis.classes.map((c) => c.name)]);
+  const promote = (calls: CallInfo[]) => {
+    for (const c of calls) {
+      const source = c.kind === "internal" && !own.has(c.name) ? imported.get(c.name) : undefined;
+      if (source) {
+        c.kind = "cross-file";
+        c.target = source;
+      }
+    }
+  };
+  for (const fn of analysis.functions) promote(fn.calls);
+  for (const cls of analysis.classes) for (const m of cls.methods) promote(m.calls);
+  for (const r of analysis.routes) promote(r.calls);
+}
+
 export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
   const { file, frameworkIds, projectId, outputOpts, verbose, projectRoot, tsconfigAliases } = task;
   const routeScope = task.routeScope ?? { relativePath: file.relativePath, frameworkIds };
@@ -204,6 +230,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       const analysis = extractWithRegex(regexSource, file.relativePath, pre?.language ?? file.language, regexLines);
       const caseInsensitive = pluginFor(analysis.language)?.caseInsensitiveNames === true;
       restoreTypedReceiverCalls(analysis, caseInsensitive);
+      importedNameCalls(analysis);
       pre?.postExtract?.(analysis, rawSource);
       analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
       analysis.projectId = projectId;

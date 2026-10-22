@@ -1,4 +1,5 @@
 import { rustProjectCommands } from "./project-commands.js";
+import { resolveRustImport } from "./module-resolver.js";
 import { rustTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { rustFrameworkRules } from "./frameworks.js";
@@ -11,6 +12,7 @@ import { cargoPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const rustManifest: LanguagePluginManifest = {
+  resolveImport: resolveRustImport,
   testCommand: rustTestCommand,
   projectCommands: rustProjectCommands,
   language: "rust",

@@ -14,6 +14,7 @@ import {
   type RouteInfo,
   type SubProject,
 } from "../types/analysis.js";
+import type { ImportResolveContext } from "../types/language-plugin.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
 import { commonPrefixLength, extensionFamily } from "../extractors/plugins/shared/path-utils.js";
@@ -1073,6 +1074,8 @@ interface LinkContext {
   directoryFiles?: Map<string, string[]>;
   /** Analyses by path, built on first use (re-export following). */
   analysisByFile?: Map<string, FileAnalysis>;
+  /** What a plugin's import resolver asks of the project, built on first use. */
+  importResolve?: ImportResolveContext;
   /** Free functions by language + namespace-qualified name (lowercased), built on first use. */
   namespacedFunctions?: Map<string, Array<{ file: string; def: SymbolDef }>>;
   symbolIndex: Map<string, Map<string, SymbolDef>>;
@@ -1919,8 +1922,9 @@ function resolveCallToDefinition(
   let targetFile: string | null;
 
   if (call.kind === "cross-file" && call.target) {
-    // Resolve import source to actual file path
-    targetFile = resolveTarget(call.target, sourceFile, filePathMap);
+    // Resolve import source to actual file path — by the language's own module rules when it has them (`crate::util`).
+    const ownResolver = pluginFor(analysis.language)?.resolveImport;
+    targetFile = ownResolver ? ownResolver(sourceFile, call.target, leafName, importResolveContext(ctx)) : resolveTarget(call.target, sourceFile, filePathMap);
     // An import naming a module by its DECLARED name rather than a path
     // (Elixir `alias MyApp.Accounts.User`): `User.get(…)` is that module's.
     if (!targetFile) {
@@ -3936,4 +3940,21 @@ function buildReverseReferenceLinks(
   }
 
   return links;
+}
+
+/** What a plugin's import resolver may ask, built once per linking run. */
+function importResolveContext(ctx: LinkContext): ImportResolveContext {
+  if (ctx.importResolve) return ctx.importResolve;
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const byFile = ctx.analysisByFile;
+  const files = new Set(byFile.keys());
+  ctx.importResolve = {
+    files,
+    declares: (file, name) => {
+      const a = byFile.get(file);
+      return !!a && (a.functions.some((f) => f.name === name) || a.classes.some((c) => c.name === name));
+    },
+    globImportsOf: (file) => (byFile.get(file)?.imports ?? []).filter((i) => (i.specifiers ?? []).length === 0 || i.specifiers.includes("*")).map((i) => i.source),
+  };
+  return ctx.importResolve;
 }

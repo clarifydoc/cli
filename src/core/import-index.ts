@@ -1,7 +1,8 @@
 import type { FileAnalysis } from "../types/analysis.js";
 import type { ImportIndex } from "../types/project.js";
 import { extensionFamily, relativeModulePath } from "../extractors/plugins/shared/path-utils.js";
-import { EXTENSION_TO_LANGUAGE, PARTIAL_PREFIX_BY_LANGUAGE, extensionsOfFamily } from "../extractors/registry.js";
+import { EXTENSION_TO_LANGUAGE, PARTIAL_PREFIX_BY_LANGUAGE, extensionsOfFamily, manifestFor } from "../extractors/registry.js";
+import type { ImportResolveContext } from "../types/language-plugin.js";
 
 /**
  * Project-wide import index, built once after per-file extraction. Works
@@ -349,6 +350,22 @@ export function buildImportIndex(analyses: FileAnalysis[]): ImportIndex {
   const local = new Map<string, Map<string, string>>();
   const source = new Map<string, Map<string, string>>();
   const namespaces = new Map<string, string[]>();
+  // A language whose imports name modules by a path of its own resolves them itself.
+  const byPath = new Map(analyses.map((a) => [a.filePath, a]));
+  const declared = new Map<string, Set<string>>();
+  const resolveCtx: ImportResolveContext = {
+    files: knownFiles,
+    declares: (file, name) => {
+      let names = declared.get(file);
+      if (!names) {
+        const a = byPath.get(file);
+        names = new Set([...(a?.functions ?? []).map((f) => f.name), ...(a?.classes ?? []).map((c) => c.name)]);
+        declared.set(file, names);
+      }
+      return names.has(name);
+    },
+    globImportsOf: (file) => (byPath.get(file)?.imports ?? []).filter((i) => (i.specifiers ?? []).length === 0 || i.specifiers.includes("*")).map((i) => i.source),
+  };
 
   for (const a of analyses) {
     const lm = new Map<string, string>();
@@ -368,9 +385,10 @@ export function buildImportIndex(analyses: FileAnalysis[]): ImportIndex {
       // Resolved per specifier, not once per import: `from app.api.routes
       // import authentication, comments` names two different FILES in one
       // statement, so a single resolution would map both to whichever one won.
+      const ownResolver = manifestFor(a.language)?.resolveImport;
       for (const spec of imp.specifiers) {
         if (lm.has(spec)) continue;
-        const resolved = resolveImportSource(a.filePath, imp.source, knownFiles, spec);
+        const resolved = ownResolver ? ownResolver(a.filePath, imp.source, spec, resolveCtx) : resolveImportSource(a.filePath, imp.source, knownFiles, spec);
         if (resolved) lm.set(spec, resolved);
       }
     }
