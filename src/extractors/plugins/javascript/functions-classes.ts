@@ -1013,8 +1013,25 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         const options = moduleLevel && value ? vueComponentOptions(value) : null;
         if (options) this.extractVueOptionsMembers(options, functions);
         else if (moduleLevel && value?.type === "object") this.extractObjectMembers(null, value, functions, true, 0);
+        // An Alpine-style component: `export default (id) => ({ open() {…}, close() {…} })` — the
+        // template calls each member by its key.
+        else if (moduleLevel && value) {
+          const built = returnedObject(value);
+          if (built) this.extractObjectMembers(null, built, functions, true, 0);
+        }
         this.extractJsFunctions(child, functions, true);
         continue;
+      }
+
+      // `Alpine.data("comboBox", (id) => ({ open() {…} }))`: the same component, registered by name.
+      if (moduleLevel && child.type === "expression_statement") {
+        const call = child.namedChild(0);
+        const fn = call?.type === "call_expression" ? call.childForFieldName("function") : null;
+        if (fn?.type === "member_expression" && fn.text === "Alpine.data") {
+          const factory = call!.childForFieldName("arguments")?.namedChildren[1];
+          const built = factory ? returnedObject(factory) : null;
+          if (built) this.extractObjectMembers(null, built, functions, false, 0);
+        }
       }
 
       // CommonJS `module.exports = { … }` — the same namespace object.
@@ -1962,4 +1979,12 @@ function addDispatchPropCalls(fn: FunctionInfo, props: ReadonlyMap<string, strin
     }
   }
   fn.calls.push(...extra);
+}
+
+/** The object literal an arrow function returns as its expression body (`(id) => ({ … })`), or null. */
+function returnedObject(fn: Node): Node | null {
+  if (fn.type !== "arrow_function") return null;
+  let body: Node | null = fn.childForFieldName("body");
+  while (body?.type === "parenthesized_expression") body = body.namedChild(0);
+  return body?.type === "object" ? body : null;
 }

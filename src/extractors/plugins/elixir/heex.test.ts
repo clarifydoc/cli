@@ -27,6 +27,23 @@ describe("HEEx markup", () => {
     expect(r.caption).toBe("Sites");
   });
 
+  it("reads the event a command chain pushes after other commands, over lines", () => {
+    const r = readHeex(`<.button
+  theme="ghost"
+  phx-click={
+    JS.hide(
+      transition: {"duration-500", "opacity-100", "opacity-0"},
+      to: "#club-card-#{hash_club(@club.slug)}",
+      time: 500
+    )
+    |> JS.push("favourite-toggle")
+  }
+  phx-value-club={@club.slug}
+>Favourite</.button>
+<button phx-click={JS.push("refresh")}>Refresh</button>`);
+    expect(r.elements.map((e) => `${e.event} ${e.handler}`)).toEqual(["phx-click favourite-toggle", "phx-click refresh"]);
+  });
+
   it("finds ~H sigils, names handle_event clauses by event, and makes a LiveView a screen", () => {
     const lines = `defmodule PlausibleWeb.Live.Sites do
   use PlausibleWeb, :live_view

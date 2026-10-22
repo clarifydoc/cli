@@ -453,3 +453,19 @@ export enum MatchKind { League = 'league', Cup = 'cup', Friendly }`;
     expect(x.extractClasses(tree, src).find((c) => c.name === "MatchKind")).toMatchObject({ kind: "enum", fieldValues: { League: "league", Cup: "cup" } });
   });
 });
+
+describe("Alpine components", () => {
+  it("declares the members of an object an exported arrow returns, or Alpine.data registers", async () => {
+    const names = async (src: string) => {
+      const tree = await parseSource(src, "javascript" as any, "kit-picker.js");
+      return new JavaScriptExtractor().extractFunctions(tree, src).map((f) => f.name);
+    };
+    expect(await names(`export default (id) => ({
+  selected: null,
+  setFocus(f) { this.focus = f },
+  open() { this.isOpen = true },
+  close: () => {},
+})`)).toEqual(expect.arrayContaining(["setFocus", "open", "close"]));
+    expect(await names(`Alpine.data('kitPicker', (id) => ({ choose(k) { this.kit = k } }))`)).toEqual(expect.arrayContaining(["choose"]));
+  });
+});

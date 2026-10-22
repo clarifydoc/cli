@@ -21,7 +21,31 @@ const PHOENIX_BUILTIN_COMPONENTS = new Set([
 ]);
 
 const TAG_RE = /<(\.?[A-Za-z][\w.:-]*)((?:\s|"[^"]*"|'[^']*'|\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}|[^>"'{\s])*?)\/?>/g;
-const PHX_EVENT_RE = /\bphx-(click|submit|change|blur|focus|keyup|keydown|window-keyup|window-keydown|click-away)\s*=\s*(?:"([^"]+)"|\{\s*(?:JS\.push\(\s*)?"([^"]+)"[^}]*\})/g;
+const PHX_EVENT_RE = /\bphx-(click|submit|change|blur|focus|keyup|keydown|window-keyup|window-keydown|click-away)\s*=\s*/g;
+
+/**
+ * The event a `phx-*` value pushes: `"save"`, `{"save"}`, `{JS.push("save")}`, or a
+ * command chain over lines whose push comes after other commands
+ * (`{JS.hide(to: "#x", transition: {…}) |> JS.push("pin")}`).
+ */
+function pushedEvent(attrs: string, at: number): string | null {
+  if (attrs[at] === '"') return /^"([^"]+)"/.exec(attrs.slice(at))?.[1] ?? null;
+  if (attrs[at] !== "{") return null;
+  let depth = 0;
+  let end = at;
+  for (let i = at; i < attrs.length; i++) {
+    const ch = attrs[i];
+    if (ch === '"') {
+      // A string, its `#{…}` interpolations included.
+      for (i++; i < attrs.length && attrs[i] !== '"'; i++) if (attrs[i] === "\\") i++;
+      continue;
+    }
+    if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) { end = i; break; }
+  }
+  const value = attrs.slice(at + 1, end);
+  return /JS\.push\(\s*"([^"]+)"/.exec(value)?.[1] ?? /^\s*"([^"]+)"/.exec(value)?.[1] ?? null;
+}
 
 export interface HeexRead {
   elements: InteractiveElementInfo[];
@@ -87,8 +111,8 @@ export function readHeex(text: string, firstLine = 1): HeexRead {
     PHX_EVENT_RE.lastIndex = 0;
     let e: RegExpExecArray | null;
     while ((e = PHX_EVENT_RE.exec(attrs)) !== null) {
-      const handler = e[2] ?? e[3]!;
-      if (!/^[\w-]+$/.test(handler)) continue;
+      const handler = pushedEvent(attrs, e.index + e[0].length);
+      if (!handler || !/^[\w-]+$/.test(handler)) continue;
       hadEvent = true;
       elements.push({ element: kind, event: `phx-${e[1]}`, handler, line, ...(kind === "custom" ? { component: tag.replace(/^\./, "") } : {}) });
       component(handler, tag, kind === "form" ? "container" : "action", line, [`phx-${e[1]}: ${handler}`]);
