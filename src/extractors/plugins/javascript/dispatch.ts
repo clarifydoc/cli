@@ -28,6 +28,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
     const filePathMap = buildFilePathMap(analyses);
     const byPath = new Map(analyses.map((a) => [a.filePath, a]));
     const links: SymbolLink[] = [];
+    const globals = globalComponentFiles(analyses, filePathMap);
 
     for (const parent of analyses) {
       const bindings = (parent.interactiveElements ?? []).filter(
@@ -35,10 +36,12 @@ export class JsComponentEmitResolver implements DispatchResolver {
       );
       if (bindings.length === 0) continue;
 
-      // Tag → child import source, tolerant of kebab-vs-Pascal (<my-button> / MyButton).
+      // Tag → child import source, tolerant of kebab-vs-Pascal (<my-button> / MyButton);
+      // a tag the file does not import is the component registered app-wide under that name.
       const subByKey = new Map<string, string>();
+      for (const [k, file] of globals) subByKey.set(k, file);
       for (const sub of parent.subComponents ?? []) {
-        if (sub.importSource) subByKey.set(tagKey(sub.name), sub.importSource);
+        if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
       }
       if (subByKey.size === 0) continue;
 
@@ -108,6 +111,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
   resolve(analyses: FileAnalysis[]): SymbolLink[] {
     const filePathMap = buildFilePathMap(analyses);
     const byPath = new Map(analyses.map((a) => [a.filePath, a]));
+    const globals = globalComponentFiles(analyses, filePathMap);
     // child file → prop → bindings in parents.
     const bindings = new Map<string, Map<string, Array<{ parent: FileAnalysis; handler: string }>>>();
     for (const parent of analyses) {
@@ -115,8 +119,8 @@ export class JsPropCallbackResolver implements DispatchResolver {
         (el) => el.element === "custom" && el.component && el.handler && PROP_CALLBACK.test(el.event),
       );
       if (els.length === 0) continue;
-      const subByKey = new Map<string, string>();
-      for (const sub of parent.subComponents ?? []) if (sub.importSource) subByKey.set(tagKey(sub.name), sub.importSource);
+      const subByKey = new Map<string, string>(globals);
+      for (const sub of parent.subComponents ?? []) if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
       for (const el of els) {
         const src = subByKey.get(tagKey(el.component!));
         const childFile = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
@@ -224,4 +228,22 @@ function innermostAt(spans: SymbolSpan[], line: number): SymbolSpan | null {
     }
   }
   return best;
+}
+
+/**
+ * Components registered app-wide (`app.component("ClubCard", ClubCard)`), by tag key → the component's
+ * file. A name two registrations give different files is left out.
+ */
+function globalComponentFiles(analyses: FileAnalysis[], filePathMap: Map<string, string>): Map<string, string> {
+  const out = new Map<string, string | null>();
+  for (const a of analyses) {
+    for (const sub of a.subComponents ?? []) {
+      if (!sub.global || !sub.importSource) continue;
+      const file = resolveTarget(sub.importSource, a.filePath, filePathMap);
+      if (!file) continue;
+      const key = tagKey(sub.name);
+      out.set(key, out.has(key) && out.get(key) !== file ? null : file);
+    }
+  }
+  return new Map([...out].filter((e): e is [string, string] => e[1] !== null));
 }

@@ -57,6 +57,26 @@ describe("JsComponentEmitResolver", () => {
     });
   });
 
+  it("finds a child registered app-wide, whose tag the parent does not import (real-repo FP)", () => {
+    const registry = fa("src/component/components.js", {
+      subComponents: [{ name: "PClubDeleteDialog", importSource: "src/component/club/delete/dialog.vue", props: [], line: 5, global: true }],
+      imports: [],
+    });
+    const dialog = fa("src/component/club/delete/dialog.vue", {
+      functions: [fn("confirm", 10, 15)],
+      events: [{ name: "confirm", params: [], line: 12 }],
+    });
+    const clipboard = fa("src/component/club/clipboard.vue", {
+      functions: [fn("batchDelete", 40, 50)],
+      interactiveElements: [{ element: "custom", event: "@confirm", handler: "batchDelete", line: 80, component: "PClubDeleteDialog" }],
+      subComponents: [{ name: "PClubDeleteDialog", importSource: null, props: ["confirm"], line: 80 }],
+    });
+    const links = new JsComponentEmitResolver().resolve([registry, dialog, clipboard]);
+    expect(links.map((l) => `${l.sourceFile}::${l.sourceSymbol} -> ${l.targetFile}::${l.targetSymbol}`)).toEqual([
+      "src/component/club/delete/dialog.vue::confirm -> src/component/club/clipboard.vue::batchDelete",
+    ]);
+  });
+
   it("matches kebab-case tags and event names to their camel forms", () => {
     const kebabParent = fa("src/pages/Cars.vue", {
       functions: [fn("onItemClick", 20, 30)],

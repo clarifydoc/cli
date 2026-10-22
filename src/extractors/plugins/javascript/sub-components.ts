@@ -22,7 +22,22 @@ export function extractSubComponents(
   const importMap = buildImportMap(imports);
 
   walkForJsx(tree.rootNode, components, seen, importMap);
+  if (/\.component\s*\(\s*["']/.test(sourceText)) components.push(...globalRegistrations(tree, importMap));
   return components;
+}
+
+/** `app.component("ClubCard", ClubCard)` / `Vue.component("club-card", ClubCard)`: an imported component registered for every template. */
+function globalRegistrations(tree: Tree, importMap: Map<string, string>): SubComponentInfo[] {
+  const out: SubComponentInfo[] = [];
+  for (const call of tree.rootNode.descendantsOfType("call_expression")) {
+    const fn = call?.childForFieldName("function");
+    if (fn?.type !== "member_expression" || fn.childForFieldName("property")?.text !== "component") continue;
+    const [nameArg, valueArg] = call!.childForFieldName("arguments")?.namedChildren ?? [];
+    const name = nameArg?.type === "string" ? nameArg.text.slice(1, -1) : null;
+    const source = valueArg?.type === "identifier" ? importMap.get(valueArg.text) : undefined;
+    if (name && source) out.push({ name, importSource: source, props: [], line: call!.startPosition.row + 1, global: true });
+  }
+  return out;
 }
 
 function walkForJsx(

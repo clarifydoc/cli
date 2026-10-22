@@ -1703,6 +1703,12 @@ export interface SubComponentInfo {
   importSource: string | null;
   props: string[];
   line: number;
+  /**
+   * Registered app-wide by this file rather than used in it — Vue's
+   * `app.component("ClubCard", ClubCard)`: a tag no file imports is that
+   * import source's component, wherever it is used.
+   */
+  global?: true;
 }
 
 /**
