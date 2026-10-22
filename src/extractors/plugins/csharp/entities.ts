@@ -131,6 +131,8 @@ export class CSharpEntityExtractor extends EntityExtractor {
   override reconcileProject(analyses: FileAnalysis[]): void {
     // (1) Names declared as EF entities by `DbSet<T>` or `IEntityTypeConfiguration<T>`.
     const efEntityNames = new Set<string>();
+    // A set's property name → the entity types declared under it.
+    const setTypes = new Map<string, Set<string>>();
     // The sub-projects whose DbContexts declare each set: of several classes of
     // one name (a domain DTO beside the infrastructure entity), those are the ones meant.
     const declaredIn = new Map<string, Set<string>>();
@@ -142,6 +144,7 @@ export class CSharpEntityExtractor extends EntityExtractor {
             const t = bareType(m[1]);
             if (!t) continue;
             efEntityNames.add(t);
+            (setTypes.get(p.name) ?? setTypes.set(p.name, new Set()).get(p.name)!).add(t);
             (declaredIn.get(t) ?? declaredIn.set(t, new Set()).get(t)!).add(a.projectId ?? "");
           }
         }
@@ -196,6 +199,20 @@ export class CSharpEntityExtractor extends EntityExtractor {
       }
     }
 
+    // A set read through a context another file declares (`context.Subscriptions…`) names
+    // its property; the entity is the one type declared under that name.
+    for (const a of analyses) {
+      if (a.language !== "csharp") continue;
+      for (const ds of a.dataSources ?? []) {
+        if (ds.kind !== "database" || !ds.name.startsWith("EF:") || !ds.entity || efEntityNames.has(ds.entity)) continue;
+        const types = setTypes.get(ds.entity);
+        if (types?.size !== 1) continue;
+        const [t] = types;
+        if (ds.target === ds.entity) ds.target = t!;
+        ds.entity = t!;
+      }
+    }
+
     attributeRepositoryAccesses(analyses, CSHARP_REPOSITORY_KNOBS);
     if (efEntityNames.size === 0 && marrTables.size === 0) return;
 
@@ -207,11 +224,36 @@ export class CSharpEntityExtractor extends EntityExtractor {
       if (a.language !== "csharp" || NON_ENTITY_PATH_RE.test(a.filePath)) continue;
       for (const cls of a.classes ?? []) (sameNamed.get(cls.name) ?? sameNamed.set(cls.name, []).get(cls.name)!).push(a);
     }
-    /** A class of a set's name outside the declaring DbContexts' sub-projects, while one inside exists, is another type. */
+    // The namespaces each sub-project imports (`using`, global usings included), as dotted lowercase text.
+    const importedBy = new Map<string, Set<string>>();
+    for (const a of analyses) {
+      if (a.language !== "csharp") continue;
+      const set = importedBy.get(a.projectId ?? "") ?? importedBy.set(a.projectId ?? "", new Set()).get(a.projectId ?? "")!;
+      for (const i of a.imports ?? []) set.add(i.source.toLowerCase());
+    }
+    /** The class's folder reads as a namespace a declaring DbContext's sub-project imports (its last two segments). */
+    const inImportedNamespace = (name: string, a: FileAnalysis): boolean => {
+      const dir = `.${a.filePath.toLowerCase().split("/").slice(0, -1).join(".")}`;
+      for (const project of declaredIn.get(name) ?? []) {
+        for (const ns of importedBy.get(project) ?? []) {
+          const tail = ns.split(".").slice(-2);
+          if (tail.length === 2 && dir.endsWith(`.${tail.join(".")}`)) return true;
+        }
+      }
+      return false;
+    };
+    /**
+     * A class of a set's name outside the declaring DbContexts' sub-projects, while one
+     * inside exists, is another type; so is one, of several, outside the namespaces
+     * those sub-projects import while another sits in one (a client DTO, a query's
+     * view model beside the domain entity).
+     */
     const elsewhere = (name: string, a: FileAnalysis): boolean => {
       const projects = declaredIn.get(name);
       if (!projects || projects.has(a.projectId ?? "")) return false;
-      return (sameNamed.get(name) ?? []).some((b) => projects.has(b.projectId ?? ""));
+      const rivals = sameNamed.get(name) ?? [];
+      if (rivals.some((b) => projects.has(b.projectId ?? ""))) return true;
+      return rivals.length > 1 && !inImportedNamespace(name, a) && rivals.some((b) => inImportedNamespace(name, b));
     };
     for (const a of analyses) {
       // A class in a clearly non-persistence folder (DTO / view model /

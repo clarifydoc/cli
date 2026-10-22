@@ -244,6 +244,25 @@ describe("EF through a member holding the context", () => {
     expect(rows.map((d) => `${d.name} ${d.entity ?? "-"}`)).toEqual(expect.arrayContaining(["EF: SingleOrDefaultAsync CatalogItems"]));
   });
 
+  it("never reads a framework context's own members as sets", async () => {
+    const src = `public static class TransferFilters {
+  public static RouteHandlerBuilder ValidateTransfer(this RouteHandlerBuilder builder)
+  {
+    return builder.AddEndpointFilter(async (context, next) =>
+    {
+      var request = context.Arguments.OfType<TransferRequest>().SingleOrDefault();
+      var obsolete = context.Description.ActionDescriptor.EndpointMetadata.OfType<ObsoleteAttribute>().Any();
+      var metadata = context.Description.ActionDescriptor.EndpointMetadata;
+      var secured = metadata.OfType<IAuthorizeData>().Any();
+      return await next(context);
+    });
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as never, "TransferFilters.cs");
+    const rows = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
+    expect(rows).toEqual([]);
+  });
+
   it("follows the set cast into a local IQueryable", async () => {
     const src = `public static class ClubApi {
   public static async Task<List<Club>> GetClubs([AsParameters] LeagueServices services, string name)

@@ -224,11 +224,11 @@ export function attributeDataAccessToSymbols(
     // function, but its calls are the route's own, line by line: an access on
     // one of those lines belongs to the route's `route:<METHOD> <path>`
     // symbol — the anchor the symbol linker mints and the reach pass starts from.
-    const inlineRouteAt = new Map<number, { symbol: string; line: number }>();
+    const inlineRouteAt = new Map<number, { symbol: string; line: number; named: boolean }>();
     for (const r of a.routes ?? []) {
       for (const c of r.calls ?? []) {
         if (typeof c.line === "number" && !inlineRouteAt.has(c.line)) {
-          inlineRouteAt.set(c.line, { symbol: `route:${r.httpMethod ?? "USE"} ${r.path}`, line: r.line });
+          inlineRouteAt.set(c.line, { symbol: `route:${r.httpMethod ?? "USE"} ${r.path}`, line: r.line, named: !!r.handler });
         }
       }
     }
@@ -258,7 +258,10 @@ export function attributeDataAccessToSymbols(
         const cls = (a.classes ?? []).filter((c) => c.endLine !== undefined && ds.line >= c.line && ds.line <= c.endLine).sort((x, y) => (x.endLine! - x.line) - (y.endLine! - y.line))[0];
         if (cls) best = { symbol: cls.name, line: cls.line };
       }
-      if (!best || best.symbol === "<setup>") best = inlineRouteAt.get(ds.line) ?? best;
+      // An inline route handler registered inside the function (`app.MapGet("/kits", async (db) => …)`
+      // in a `MapLeagueApi` method) is narrower than it: the access is that route's own.
+      const inline = inlineRouteAt.get(ds.line);
+      if (inline && (!best || best.symbol === "<setup>" || (!inline.named && inline.line >= best.line))) best = inline;
       // Module-level code (a `new Worker("q", async (job) => …)` at the top of
       // the file) is the file's `<setup>`, the symbol the call graph gives it.
       if (!best && setup) best = setup;

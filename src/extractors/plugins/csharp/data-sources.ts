@@ -629,6 +629,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     // A `context` declared as one of the framework's own contexts (an MVC
     // `ValueProviderFactoryContext`, an `HttpContext`) holds no entity sets.
     if (FRAMEWORK_CONTEXT_TYPE.test(parameterType(node, root) ?? "")) return null;
+    if (parts.slice(1, -1).some((seg) => FRAMEWORK_CONTEXT_MEMBERS.has(seg.replace(/\(.*$/, "")))) return null;
     const looksLikeEf = contextNamed(root) || parts.slice(1, -2).some((seg) => contextNamed(seg.replace(/\(.*$/, "")));
     if (looksLikeEf || method === "SaveChanges" || method === "SaveChangesAsync" ||
         method === "FromSqlRaw" || method === "FromSqlInterpolated" || method === "FromSql" ||
@@ -683,6 +684,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     if (local) return local;
     const segments = (this.fullCallName(fn) ?? "").split(".");
     const root = segments[0]!;
+    if (segments.slice(1, -1).some((seg) => FRAMEWORK_CONTEXT_MEMBERS.has(seg.replace(/\(.*$/, "")))) return null;
     // `services.Context.Clubs`: a set read off a context a holder carries.
     if (expr.type === "member_access_expression" && segments.length > 2 && /^(?:[Cc]ontext|\w+Context|Db)$/.test(segments[segments.length - 2]!)) {
       return cleanEntityName(segments[segments.length - 1]!);
@@ -1084,7 +1086,16 @@ const NON_ENTITY_EF_METHODS = new Set([
 ]);
 
 /** Context members that are not entity sets (raw-SQL / migration surfaces). */
-const NON_DBSET_MEMBERS = new Set(["Database", "Model", "ChangeTracker", "Entry"]);
+/**
+ * A framework context's own members (an endpoint filter's `context.Arguments`, an
+ * OpenAPI transformer's `context.Description`, an MVC filter's `context.ActionArguments`):
+ * a chain through one is no EF access.
+ */
+const FRAMEWORK_CONTEXT_MEMBERS = new Set([
+  "Arguments", "Description", "HttpContext", "ActionArguments", "ActionDescriptor", "RouteData", "ModelState",
+  "ApplicationServices", "RequestServices",
+]);
+const NON_DBSET_MEMBERS = new Set(["Database", "Model", "ChangeTracker", "Entry", ...FRAMEWORK_CONTEXT_MEMBERS]);
 
 /**
  * Resolve the `DbSet` an EF call ultimately operates on by walking the receiver

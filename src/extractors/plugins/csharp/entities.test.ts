@@ -301,6 +301,37 @@ describe("EF Core cross-file entity reconciliation", () => {
     expect(foo.decorators).toEqual(expect.arrayContaining(["entity", "ef-core"]));
   });
 
+  it("of same-named classes, tags the ones in a namespace the DbContext's sub-project imports", () => {
+    const using = (source: string) => ({ source, specifiers: [], isDefault: false, isNamespace: true, line: 1 });
+    const file = (path: string, projectId: string, classes: ClassInfo[], imports: ReturnType<typeof using>[] = []) =>
+      ({ ...analysis(path, classes), language: "csharp", projectId, imports }) as unknown as FileAnalysis;
+    const ctx = file("src/League.Infrastructure/LeagueContext.cs", "infra", [
+      cls("LeagueContext", { extends: "DbContext", properties: [{ name: "Fixtures", type: "DbSet<Fixture>" }] }),
+    ]);
+    const usings = file("src/League.Infrastructure/GlobalUsings.cs", "infra", [], [using("League.Domain.AggregatesModel.FixtureAggregate")]);
+    const domain = cls("Fixture", { properties: [{ name: "Kickoff", type: "DateTime" }] });
+    const viewModel = cls("Fixture", { properties: [{ name: "Kickoff", type: "DateTime" }] });
+    const clientDto = cls("Fixture", { properties: [{ name: "Kickoff", type: "DateTime" }] });
+    new CSharpEntityExtractor().reconcileProject([
+      ctx, usings,
+      file("src/League.Domain/AggregatesModel/FixtureAggregate/Fixture.cs", "domain", [domain]),
+      file("src/League.API/Application/Queries/FixtureViewModel.cs", "api", [viewModel]),
+      file("src/MobileApp/Models/Fixtures/Fixture.cs", "mobile", [clientDto]),
+    ]);
+    expect([domain, viewModel, clientDto].map((c) => c.decorators.includes("entity"))).toEqual([true, false, false]);
+  });
+
+  it("names the entity of a set read through a context another file declares", () => {
+    const ctx = analysis("Infrastructure/LeagueContext.cs", [
+      cls("LeagueContext", { extends: "DbContext", properties: [{ name: "Subscriptions", type: "DbSet<FanSubscription>" }] }),
+    ]);
+    const api = { ...analysis("Apis/FanApi.cs", []), language: "csharp", dataSources: [
+      { kind: "database", name: "EF: ToListAsync", target: "Subscriptions", entity: "Subscriptions", access: "read", calls: [], line: 16 },
+    ] } as unknown as FileAnalysis;
+    new CSharpEntityExtractor().reconcileProject([{ ...ctx, language: "csharp" } as FileAnalysis, api]);
+    expect(api.dataSources.map((d) => `${d.target} ${d.entity}`)).toEqual(["FanSubscription FanSubscription"]);
+  });
+
   it("establishes entity-ness and the table from the fluent API alone (Entity<T>(b => b.ToTable(…)))", () => {
     const call = (name: string, line: number, args?: string[]) => ({ name, kind: "internal", target: null, line, ...(args ? { args } : {}) });
     const ext = cls("TransferLogExtensions");
