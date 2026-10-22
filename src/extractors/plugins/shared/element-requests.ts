@@ -46,6 +46,9 @@ export function materializeElementRequests(analysis: FileAnalysis): void {
   }
 }
 
+/** An expression naming the application's base URL or path, as templates spell it. */
+const BASE_EXPRESSION = /(?:sub)?ur[li]|path|base|root|ctx\b|context|prefix|origin|site|domain|host|app/i;
+
 /**
  * The app path a form `action` / link `href` requests, its runtime prefix
  * (`${ctx}`, `{{base}}`, `${pageContext.request.contextPath}`) dropped and
@@ -53,7 +56,11 @@ export function materializeElementRequests(analysis: FileAnalysis): void {
  */
 export function literalPath(value: string | undefined): string | null {
   if (!value) return null;
-  const stripped = value.replace(/^(?:\{\{[^}]*\}\}|\$\{?[\w.]+\}?)+/, "").trim();
+  // A leading expression is dropped only when it names the app's own base (`{{AppSubUrl}}`,
+  // `{{urlpath}}`, `${ctx}`): `{{.Link}}/edit` is relative to a page of its own, no app path.
+  const lead = /^(?:\{\{[^}]*\}\}|\$\{?[\w.]+\}?)+/.exec(value)?.[0] ?? "";
+  if (lead && !BASE_EXPRESSION.test(lead)) return null;
+  const stripped = value.slice(lead.length).trim();
   // `{{url}}/#/login` is a route of the client app behind a fragment, not a request to the server.
   if (/^\/?#/.test(stripped)) return null;
   const v = stripped.replace(/[?#].*$/, "");
