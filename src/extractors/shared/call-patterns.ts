@@ -69,6 +69,9 @@ const DB_METHODS = new Set([
   "FromSqlRaw", "FromSql",
 ]);
 
+/** A receiver named for an in-memory collection, cache or bag of values. */
+const IN_MEMORY_RECEIVER = /(?:cache|caches|map|maps|claims|headers|params|props|properties|attributes|options|settings|dict|lookup|registry|collections|set|list|array)$/i;
+
 /**
  * Check if a call name matches an API/HTTP pattern for the given language.
  */
@@ -109,8 +112,13 @@ export function isDatabaseCall(name: string, language: Language, byMethodName = 
   // datastore: its name alone is no evidence.
   if (!byMethodName || !name.includes(".")) return false;
 
+  // A receiver named as an in-memory collection (`bundleCache.get`, `claims.get`,
+  // `includedCollections.get`) holds no data store: its method name is no evidence.
+  const parts = name.split(".");
+  if (parts.length >= 2 && IN_MEMORY_RECEIVER.test(parts[parts.length - 2]!)) return false;
+
   // Check if the method name matches DB patterns
-  const method = name.split(".").pop()!;
+  const method = parts[parts.length - 1]!;
   if (DB_METHODS.has(method)) return true;
 
   // Java-style Spring Data patterns: findBy*, deleteBy*, countBy*, existsBy*

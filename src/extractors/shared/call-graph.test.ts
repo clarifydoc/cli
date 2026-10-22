@@ -113,7 +113,7 @@ describe("classifyCalls — the file's own code is not a DB call by name", () =>
   });
 
   it("does not read a method on this/self as database evidence by its name alone", async () => {
-    expect(await classify(["this.exec", "self.repo.update", "cache.get"], "python"))
-      .toEqual(["this.exec:internal", "self.repo.update:internal", "cache.get:database"]);
+    expect(await classify(["this.exec", "self.repo.update", "clubs.get"], "python"))
+      .toEqual(["this.exec:internal", "self.repo.update:internal", "clubs.get:database"]);
   });
 });
