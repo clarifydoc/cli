@@ -1,6 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { DataSourceInfo, Language } from "../../../types/analysis.js";
-import { DataSourceExtractor } from "../../data-sources/base.js";
+import type { DataSourceInfo, FileAnalysis, Language } from "../../../types/analysis.js";
+import { DataSourceExtractor, type ProjectApiCall } from "../../data-sources/base.js";
+import { companionStem } from "./companion.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 
 /**
@@ -493,7 +494,36 @@ export function extractPascalDataSources(rawLines: string[]): DataSourceInfo[] {
   return sources;
 }
 
+/**
+ * `RESTRequest1.Execute` in a unit sends what its form configures the component
+ * with (`rest:RESTRequest1` → `GET https://…/search`, from the form's `BaseURL`,
+ * `Resource` and `Method`): the call takes that verb and URL.
+ */
+function joinUnitRestRequestsToForm(calls: ProjectApiCall[], analyses: FileAnalysis[]): number {
+  const byForm = new Map<string, Map<string, string>>();
+  for (const a of analyses) {
+    const rest = Object.entries(a.stringConstants ?? {}).filter(([k]) => k.startsWith("rest:"));
+    if (rest.length > 0) byForm.set(companionStem(a.filePath), new Map(rest.map(([k, v]) => [k.slice(5).toLowerCase(), v])));
+  }
+  if (byForm.size === 0) return 0;
+  let rewritten = 0;
+  for (const call of calls) {
+    if (call.target || !/\.(?:pas|pp|dpr)$/i.test(call.filePath)) continue;
+    const component = /^(\w+)\.Execute(?:Async)?$/i.exec(call.name)?.[1]?.toLowerCase();
+    const request = component ? byForm.get(companionStem(call.filePath))?.get(component) : undefined;
+    if (!request) continue;
+    call.name = request;
+    call.target = request.slice(request.indexOf(" ") + 1);
+    rewritten++;
+  }
+  return rewritten;
+}
+
 export class PascalDataSourceExtractor extends DataSourceExtractor {
+  resolveProject(calls: ProjectApiCall[], analyses: FileAnalysis[]): number {
+    return joinUnitRestRequestsToForm(calls, analyses);
+  }
+
   readonly languages: Language[] = ["pascal"];
 
   private fileSources: DataSourceInfo[] = [];

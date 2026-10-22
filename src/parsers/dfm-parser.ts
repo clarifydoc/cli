@@ -134,6 +134,29 @@ function dbSourcesFromObject(
   return out;
 }
 
+/** What a REST client component is configured with on its form. */
+const REST_PROPS = new Set(["BaseURL", "Client", "Resource", "Method"]);
+
+/**
+ * The request each `TRESTRequest` of the form makes — its client's `BaseURL` with its
+ * `Resource`, by its `Method` (`rmPOST` → POST, GET by default) — published as
+ * `rest:<component>` → `VERB url`: the companion unit's `RESTRequest1.Execute` is it.
+ */
+function restRequestConstants(objects: { name: string; type: string; propValues: Map<string, string> }[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const req of objects) {
+    if (!/^T(?:Custom)?RESTRequest$/i.test(req.type)) continue;
+    const client = objects.find((o) => o.name === req.propValues.get("Client"));
+    const base = stripQuotes(client?.propValues.get("BaseURL") ?? "");
+    if (!base) continue;
+    const resource = stripQuotes(req.propValues.get("Resource") ?? "");
+    const url = resource ? `${base.replace(/\/+$/, "")}/${resource.replace(/^\/+/, "")}` : base;
+    const verb = /^rm(\w+)$/i.exec(req.propValues.get("Method") ?? "")?.[1]?.toUpperCase() ?? "GET";
+    out[`rest:${req.name}`] = `${verb} ${url}`;
+  }
+  return out;
+}
+
 /**
  * `component name → table` for data components whose query/table resolved.
  * Published as `stringConstants` so the project-wide constants pass
@@ -359,8 +382,8 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
         current.props.push(propName);
       }
 
-      // Capture visual property values regardless of category above
-      if (VISUAL_PROPS.has(propName)) {
+      // Capture visual property values regardless of category above, and what a REST component is configured with.
+      if (VISUAL_PROPS.has(propName) || REST_PROPS.has(propName)) {
         current.propValues.set(propName, propValue);
       }
     }
@@ -472,7 +495,7 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
 
   // Component→table map for the project-wide constants pass (joins the
   // companion unit's `qrySales.Open` to the SQL declared on the form).
-  const tableConstants = componentTableConstants(allObjects);
+  const tableConstants = { ...componentTableConstants(allObjects), ...restRequestConstants(allObjects) };
   if (Object.keys(tableConstants).length > 0) {
     analysis.stringConstants = tableConstants;
   }

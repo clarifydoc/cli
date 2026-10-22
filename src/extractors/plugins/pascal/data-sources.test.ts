@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { parseDfm } from "../../../parsers/dfm-parser.js";
 import "../../registry.js"; // side effect: registers tree-sitter grammars
 import { parseSource } from "../../../parsers/parser-manager.js";
 import { extractPascalDataSources, PascalDataSourceExtractor, stripPascalComments } from "./data-sources.js";
@@ -300,5 +301,32 @@ end.`;
     // A second file must not inherit the first file's sources.
     const tree2 = await parseSource("unit V;\ninterface\nimplementation\nend.", "pascal" as any, "V.pas");
     expect(ext.extract(tree2, "unit V;\ninterface\nimplementation\nend.")).toHaveLength(0);
+  });
+});
+
+describe("REST components configured on the form", () => {
+  it("gives the unit's RESTRequest1.Execute the verb and URL its form states", () => {
+    const form = parseDfm(`object frmFixtures: TfrmFixtures
+  object RESTClient1: TRESTClient
+    BaseURL = 'https://data.example.com/api/records/1.0'
+    Params = <>
+  end
+  object RESTRequest1: TRESTRequest
+    Client = RESTClient1
+    Method = rmPOST
+    Params = <
+      item
+        Name = 'dataset'
+        Value = 'fixtures'
+      end>
+    Resource = 'search'
+  end
+end
+`, "src/fFixtures.fmx");
+    const calls = [{ kind: "api-call" as const, name: "RESTRequest1.Execute", target: null, calls: [], line: 104, filePath: "src/fFixtures.pas" }];
+    expect(new PascalDataSourceExtractor().resolveProject(calls, [form])).toBe(1);
+    expect(calls.map((d) => `${d.name} -> ${d.target}`)).toEqual([
+      "POST https://data.example.com/api/records/1.0/search -> https://data.example.com/api/records/1.0/search",
+    ]);
   });
 });
