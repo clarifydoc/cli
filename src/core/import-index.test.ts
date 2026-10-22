@@ -53,6 +53,15 @@ describe("resolveDataSourceStringConstants", () => {
     expect(pasB.dataSources[0]).toMatchObject({ target: "referee", entity: "referee" });
   });
 
+  it("never takes a same-named component's table from another sub-project", () => {
+    const form = { ...file("samples/rss/fMain.fmx", { constants: { FDQuery1: "rssfeed" } }), projectId: "rss" } as FileAnalysis;
+    const other = { ...file("samples/blobs/fBlobs.pas", { sources: [{ name: "FDQuery1.Open", target: "FDQuery1" }] }), projectId: "blobs" } as FileAnalysis;
+    const sameProject = { ...file("samples/rss/uFeed.pas", { sources: [{ name: "FDQuery1.Open", target: "FDQuery1" }] }), projectId: "rss" } as FileAnalysis;
+    resolveDataSourceStringConstants([form, other, sameProject]);
+    expect(other.dataSources[0]!.target).toBe("FDQuery1");
+    expect(sameProject.dataSources[0]!.target).toBe("rssfeed");
+  });
+
   it("backfills a missing entity when the target names a resolvable constant", () => {
     const pas = file("app/UReport.pas", { sources: [{ name: "qrySales.Open", target: "qrySales" }] });
     resolveDataSourceStringConstants([

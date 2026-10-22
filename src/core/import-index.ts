@@ -81,8 +81,15 @@ export function enrichDataSourcesWithImports(analyses: FileAnalysis[], index: Im
  */
 export function resolveDataSourceStringConstants(analyses: FileAnalysis[]): void {
   type Tier = Map<string, string | null>; // null = conflicting → skip
-  const global: Tier = new Map();
-  const globalCi: Tier = new Map();
+  // Beyond a file's own companion, a name resolves within its sub-project: two samples'
+  // `FDQuery1` components are different queries.
+  const byProject = new Map<string, { exact: Tier; ci: Tier }>();
+  const tierOf = (projectId: string | undefined) => {
+    const key = projectId ?? "";
+    let t = byProject.get(key);
+    if (!t) byProject.set(key, (t = { exact: new Map(), ci: new Map() }));
+    return t;
+  };
   const localByBase = new Map<string, { exact: Tier; ci: Tier }>();
 
   const put = (m: Tier, k: string, v: string) => {
@@ -102,22 +109,24 @@ export function resolveDataSourceStringConstants(analyses: FileAnalysis[]): void
       local = { exact: new Map(), ci: new Map() };
       localByBase.set(base, local);
     }
+    const project = tierOf(a.projectId);
     for (const [name, value] of entries) {
-      put(global, name, value);
-      put(globalCi, name.toLowerCase(), value);
+      put(project.exact, name, value);
+      put(project.ci, name.toLowerCase(), value);
       put(local.exact, name, value);
       put(local.ci, name.toLowerCase(), value);
     }
   }
-  if (global.size === 0) return;
+  if (byProject.size === 0) return;
 
   for (const a of analyses) {
     const local = localByBase.get(baseOf(a.filePath));
+    const project = byProject.get(a.projectId ?? "");
     const resolve = (name: string): string | null => {
       const lower = name.toLowerCase();
       return (
         local?.exact.get(name) ?? local?.ci.get(lower) ??
-        global.get(name) ?? globalCi.get(lower) ?? null
+        project?.exact.get(name) ?? project?.ci.get(lower) ?? null
       );
     };
     for (const ds of a.dataSources ?? []) {

@@ -86,6 +86,8 @@ export function reconcileEntityInheritance(analyses: FileAnalysis[]): void {
       const contract = isApiContractLanguage(a.language);
       for (const c of a.classes ?? []) {
         if (isEntity(c)) continue;
+        // A schema object ON a table (an index, a sequence) names the table, never a subclass of it.
+        if ((c.decorators ?? []).some((d) => d === "index" || d === "sequence" || d === "schema")) continue;
         const parentName = bareName(c.extends);
         if (!parentName) continue;
         const parent = (byBare.get(parentName) ?? []).find((p) => p.contract === contract && isEntity(p.c))?.c;

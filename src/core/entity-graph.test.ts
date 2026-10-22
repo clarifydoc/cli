@@ -347,6 +347,15 @@ describe("reconcileEntityInheritance", () => {
     reconcileEntityInheritance([schema, code]);
     expect(dto.decorators).toEqual([]);
   });
+
+  it("does not make an index an entity of the table it is on", () => {
+    const sql = { filePath: "db/league.sql", language: "sql", classes: [
+      { name: "players", decorators: ["entity", "dfm"], properties: [], line: 1 },
+      { name: "players_by_name", extends: "players", decorators: ["index"], properties: [], line: 9 },
+    ] } as unknown as FileAnalysis;
+    reconcileEntityInheritance([sql]);
+    expect(sql.classes[1]!.decorators).toEqual(["index"]);
+  });
 });
 
 describe("buildEntityGraph — a schema table in a sub-project of its own", () => {
