@@ -176,7 +176,9 @@ export class CSharpEntityExtractor extends EntityExtractor {
     // (2) Tag the matching domain POCO classes so they become ER nodes.
     const sameNamed = new Map<string, FileAnalysis[]>();
     for (const a of analyses) {
-      if (a.language !== "csharp") continue;
+      // Only a class that could be the entity competes for the name: a migration of
+      // the same name beside the DbContext must not push the model out.
+      if (a.language !== "csharp" || NON_ENTITY_PATH_RE.test(a.filePath)) continue;
       for (const cls of a.classes ?? []) (sameNamed.get(cls.name) ?? sameNamed.set(cls.name, []).get(cls.name)!).push(a);
     }
     /** A class of a set's name outside the declaring DbContexts' sub-projects, while one inside exists, is another type. */

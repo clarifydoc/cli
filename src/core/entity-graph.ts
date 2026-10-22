@@ -64,13 +64,15 @@ function bareName(name: string | null): string | null {
  */
 export function reconcileEntityInheritance(analyses: FileAnalysis[]): void {
   // Index every class by its bare name (superclass references are usually bare).
-  const byBare = new Map<string, ClassInfo[]>();
+  // An API description's schema of the same name is no base class of code: each side inherits within itself.
+  const byBare = new Map<string, Array<{ c: ClassInfo; contract: boolean }>>();
   for (const a of analyses) {
+    const contract = isApiContractLanguage(a.language);
     for (const c of a.classes ?? []) {
       const b = bareName(c.name);
       if (!b) continue;
       const arr = byBare.get(b) ?? [];
-      arr.push(c);
+      arr.push({ c, contract });
       byBare.set(b, arr);
     }
   }
@@ -81,11 +83,12 @@ export function reconcileEntityInheritance(analyses: FileAnalysis[]): void {
   while (changed && guard++ < 50) {
     changed = false;
     for (const a of analyses) {
+      const contract = isApiContractLanguage(a.language);
       for (const c of a.classes ?? []) {
         if (isEntity(c)) continue;
         const parentName = bareName(c.extends);
         if (!parentName) continue;
-        const parent = (byBare.get(parentName) ?? []).find((p) => isEntity(p));
+        const parent = (byBare.get(parentName) ?? []).find((p) => p.contract === contract && isEntity(p.c))?.c;
         if (!parent) continue;
         const orm = ormOf(parent.decorators ?? []) ?? "active-record";
         // jOOQ tables have no real STI — their subclasses are generated
@@ -570,6 +573,9 @@ export function tableMatchKeys(name: string): string[] {
   const base = name.split(/::|\./).pop()!.toLowerCase();
   const keys = [base];
   if (base.endsWith("s") && base.length > 1) keys.push(base.slice(0, -1));
+  // `AppUserProgresses` → appuserprogress, `Matches` → match, `Categories` → category.
+  if (/(?:ss|x|ch|sh|z)es$/.test(base)) keys.push(base.slice(0, -2));
+  if (base.endsWith("ies") && base.length > 3) keys.push(`${base.slice(0, -3)}y`);
   const affixStripped: string[] = [];
   if (base.endsWith("entity") && base.length > "entity".length) affixStripped.push(base.slice(0, -"entity".length));
   if (base.startsWith("entity") && base.length > "entity".length) affixStripped.push(base.slice("entity".length));

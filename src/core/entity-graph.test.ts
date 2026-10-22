@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { synthesizeReferencedTableEntities, propagateStiRelations, buildEntityGraph, tableMatchKeys } from "./entity-graph.js";
+import { synthesizeReferencedTableEntities, propagateStiRelations, buildEntityGraph, tableMatchKeys, reconcileEntityInheritance } from "./entity-graph.js";
 import type { EntityGraph, EntityRelation, FileAnalysis } from "../types/analysis.js";
 
 /**
@@ -271,6 +271,9 @@ describe("tableMatchKeys", () => {
     expect(tableMatchKeys("ClassEntity")).toContain("class");
     expect(tableMatchKeys("EntityRooms")).toContain("room");
     expect(tableMatchKeys("Entity")).toEqual(["entity"]);
+    expect(tableMatchKeys("PlayerProgresses")).toContain("playerprogress");
+    expect(tableMatchKeys("Matches")).toContain("match");
+    expect(tableMatchKeys("Categories")).toContain("category");
   });
 });
 
@@ -321,5 +324,15 @@ describe("buildEntityGraph — a schema table and the entity mapping it", () => 
     ]);
     expect(g.nodes.map((n) => n.id).sort()).toEqual(["migrations/2019-09-12-100000_create/up.sql::transfer_log", "src/db/models/club.rs::Club", "src/db/models/player.rs::Player"]);
     expect(g.edges.map((e) => `${e.source} ${e.target}`)).toEqual(["src/db/models/club.rs::Club src/db/models/player.rs::Player"]);
+  });
+});
+
+describe("reconcileEntityInheritance", () => {
+  it("does not make a code DTO an entity because an API schema shares its base's name (real-repo FP: 8 DTO nodes)", () => {
+    const schema = { filePath: "openapi.json", language: "openapi", classes: [{ name: "ClubPublicDto", decorators: ["entity", "openapi"], properties: [], line: 1 }] } as unknown as FileAnalysis;
+    const dto = { name: "ClubDto", extends: "ClubPublicDto", decorators: [] as string[], properties: [], line: 3 };
+    const code = { filePath: "League.Models/ClubDto.cs", language: "csharp", classes: [dto] } as unknown as FileAnalysis;
+    reconcileEntityInheritance([schema, code]);
+    expect(dto.decorators).toEqual([]);
   });
 });

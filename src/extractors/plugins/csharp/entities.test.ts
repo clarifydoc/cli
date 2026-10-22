@@ -283,8 +283,12 @@ describe("EF Core cross-file entity reconciliation", () => {
     ]);
     const migration = cls("FixtureTag", { extends: "Migration" });
     const migrationFile = analysis("League.Database/Migrations/20210519215934_FixtureTag.cs", [migration]);
-    new CSharpEntityExtractor().reconcileProject([ctx, migrationFile]);
+    const model = cls("FixtureTag", { properties: [{ name: "Title", type: "string" }] });
+    const modelFile = { ...analysis("League.Models/Entities/FixtureTag.cs", [model]), projectId: "models" } as FileAnalysis;
+    new CSharpEntityExtractor().reconcileProject([{ ...ctx, projectId: "database" } as FileAnalysis, { ...migrationFile, projectId: "database" } as FileAnalysis, modelFile]);
     expect(migration.decorators).not.toContain("entity");
+    // The model in its own project is still the entity: the migration beside the DbContext is no rival.
+    expect(model.decorators).toContain("entity");
   });
 
   it("establishes entity-ness from IEntityTypeConfiguration<T> alone (no DbSet)", () => {
