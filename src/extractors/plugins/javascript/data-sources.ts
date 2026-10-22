@@ -220,6 +220,42 @@ const ORM_WRITE_METHODS = new Set([
   "insert", "del",
 ]);
 
+/** What a loaded or constructed ORM document does to its own row (`club.save()`, `club.deleteOne()`). */
+const DOCUMENT_WRITES = new Set(["save", "remove", "deleteOne", "updateOne", "destroy"]);
+
+/** Model queries that hand back a document of that model. */
+const DOCUMENT_LOADS = /^(?:findById|findOne|findByPk|findOrCreate|create|findOneAndUpdate|findByIdAndUpdate|build)$/;
+
+/**
+ * The model a local holds, by its declaration in the enclosing function: `new Club({…})`,
+ * `await Club.findById(id)` / `Club.findOne({…})`. Null when the declaration says nothing.
+ */
+function localDocumentModel(node: Node, name: string): string | null {
+  let scope: Node | null = node.parent;
+  while (scope && !/^(?:function_declaration|function_expression|arrow_function|method_definition|program)$/.test(scope.type)) scope = scope.parent;
+  if (!scope) return null;
+  for (const decl of scope.descendantsOfType("variable_declarator")) {
+    if (decl?.childForFieldName("name")?.text !== name) continue;
+    let value = decl.childForFieldName("value");
+    if (value?.type === "await_expression") value = value.namedChild(0);
+    if (value?.type === "new_expression") {
+      const ctor = value.childForFieldName("constructor");
+      return ctor?.type === "identifier" && /^[A-Z]/.test(ctor.text) ? ctor.text : null;
+    }
+    const fn = value?.type === "call_expression" ? value.childForFieldName("function") : null;
+    // `Club.findById(id).populate("owner")`: the load is the chain's first call.
+    let call: Node | null | undefined = fn;
+    while (call?.type === "member_expression" && call.childForFieldName("object")?.type === "call_expression") call = call.childForFieldName("object")!.childForFieldName("function");
+    if (call?.type === "member_expression") {
+      const obj = call.childForFieldName("object");
+      const prop = call.childForFieldName("property")?.text ?? "";
+      if (obj?.type === "identifier" && /^[A-Z]/.test(obj.text) && DOCUMENT_LOADS.test(prop)) return obj.text;
+    }
+    return null;
+  }
+  return null;
+}
+
 /** Classify a DB op's leaf method as read/write when known; undefined otherwise. */
 function ormAccessKind(leaf: string): "read" | "write" | undefined {
   if (ORM_WRITE_METHODS.has(leaf)) return "write";
@@ -1468,6 +1504,10 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
             line: node.startPosition.row + 1,
             access: fnName === "selectFrom" ? "read" : "write",
           }));
+        } else if (!emittedApiCall && ormChain && fnName && DOCUMENT_WRITES.has(fnName) && /^[a-z_$][\w$]*\.\w+$/.test(ormChain) && localDocumentModel(node, ormChain.split(".")[0]!)) {
+          // `const club = await Club.findById(id); … await club.save()`: the document's model is written.
+          const model = localDocumentModel(node, ormChain.split(".")[0]!)!;
+          sources.push(this.ds({ kind: "database", name: ormChain, target: model, entity: model, line: node.startPosition.row + 1, access: "write" }));
         } else if (
           !emittedApiCall &&
           ormChain &&

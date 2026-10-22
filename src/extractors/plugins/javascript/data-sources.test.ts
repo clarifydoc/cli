@@ -231,6 +231,24 @@ describe("JS ORM detection rejects DOM/builtin noise", () => {
  * Array-colliding bare `find` (greencart: symbolDataAccess 9 → all controller
  * queries).
  */
+describe("JS ORM document writes", () => {
+  it("write the model a local document was loaded or built as (real-repo FP)", async () => {
+    const ds = await dbOf(`
+      import Club from "../models/Club.js";
+      import Fixture from "../models/Fixture.js";
+      export const approveClub = async (req, res) => {
+        const club = await Club.findById(req.params.id);
+        club.approved = true;
+        await club.save();
+        const fixture = new Fixture({ home: club._id });
+        await fixture.save();
+        const draft = { name: "x" };
+        await draft.save();
+      };`);
+    expect(ds.filter((d) => d.access === "write").map((d) => `${d.name} ${d.entity}`)).toEqual(["club.save Club", "fixture.save Fixture"]);
+  });
+});
+
 describe("JS ORM detection recognises Mongoose model statics", () => {
   it("treats Model.find on a PascalCase model receiver as a DB op", async () => {
     const db = await dbSourcesOf(`async function go() { return Part.find({}); }`);
