@@ -31,7 +31,8 @@ const NOT_A_FACTORY = new Set(["fetch", "axios", "get", "post", "put", "patch", 
  * callees with at least one path-shaped literal argument are recorded.
  */
 export function extractPathArgCalls(tree: Tree, sourceText: string): PathArgCall[] {
-  if (!PATH_ARGUMENT.test(sourceText) && !FORWARD_GATE.test(sourceText)) return [];
+  const urlObjects = moduleUrlObjects(tree.rootNode);
+  if (!PATH_ARGUMENT.test(sourceText) && !FORWARD_GATE.test(sourceText) && urlObjects.size === 0) return [];
   const out: PathArgCall[] = [];
   for (const call of tree.rootNode.descendantsOfType("call_expression")) {
     if (!call) continue;
@@ -47,8 +48,8 @@ export function extractPathArgCalls(tree: Tree, sourceText: string): PathArgCall
     // A URL parameter of the enclosing function handed on (`_fetch("POST", url)` inside
     // `_post(url)`) is a hole the wrapper's own call sites fill.
     const forwarded = urlParamsOf(call);
-    const args = argNodes.map((a) => literalArg(a) ?? (a.type === "identifier" && forwarded.has(a.text) ? `\${${a.text}}` : null));
-    if (!args.some((a) => a !== null && (PATH_SHAPED.test(a) || /^\$\{[\w$]+\}$/.test(a)))) continue;
+    const args = argNodes.map((a) => literalArg(a) ?? (a.type === "identifier" && forwarded.has(a.text) ? `\${${a.text}}` : urlMember(a, urlObjects)));
+    if (!args.some((a) => a !== null && (PATH_SHAPED.test(a) || /^\$\{[\w$]+(?:\.[\w$]+)?\}$/.test(a)))) continue;
     // `send(url, { method: "POST", … })`: the verb the site's options state — or a verb handed positionally (`_fetch("POST", url)`).
     const options = argNodes.find((a) => a.type === "object");
     const positional = args.find((a) => a !== null && VERB.test(a));
@@ -56,6 +57,38 @@ export function extractPathArgCalls(tree: Tree, sourceText: string): PathArgCall
     out.push({ callee, args, line: call.startPosition.row + 1, ...(method ? { method } : {}), ...(ownMethod ? { receiver: object!.text } : {}) });
   }
   return out;
+}
+
+/**
+ * Module objects of URLs (`const routes = { clubImport: `${prefix}/clubs/import` }`): object → the keys
+ * whose value is a path. A call handed `routes.clubImport` is handed that URL.
+ */
+function moduleUrlObjects(root: Node): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const st of root.namedChildren) {
+    const decl = st.type === "export_statement" ? st.namedChildren.find((c) => c.type === "lexical_declaration") : st;
+    if (decl?.type !== "lexical_declaration") continue;
+    for (const d of decl.namedChildren) {
+      const value = d.type === "variable_declarator" ? d.childForFieldName("value") : null;
+      const name = d.childForFieldName("name");
+      if (value?.type !== "object" || name?.type !== "identifier") continue;
+      const keys = new Set<string>();
+      for (const pair of value.namedChildren) {
+        const v = pair.type === "pair" ? pair.childForFieldName("value") : null;
+        if (v && (v.type === "string" || v.type === "template_string") && PATH_SHAPED.test(v.text.slice(1))) keys.add(pair.childForFieldName("key")!.text);
+      }
+      if (keys.size > 0) out.set(name.text, keys);
+    }
+  }
+  return out;
+}
+
+/** `routes.clubImport` of such an object, as the hole the pass reading module values resolves once a wrapper's row is expanded. */
+function urlMember(node: Node, objects: ReadonlyMap<string, ReadonlySet<string>>): string | null {
+  if (node.type !== "member_expression") return null;
+  const object = node.childForFieldName("object");
+  const key = node.childForFieldName("property")?.text;
+  return object?.type === "identifier" && key && objects.get(object.text)?.has(key) ? `\${${node.text}}` : null;
 }
 
 /** Some function hands a URL-named parameter on to another call. */

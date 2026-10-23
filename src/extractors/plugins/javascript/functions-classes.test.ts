@@ -469,3 +469,10 @@ describe("Alpine components", () => {
     expect(await names(`Alpine.data('kitPicker', (id) => ({ choose(k) { this.kit = k } }))`)).toEqual(expect.arrayContaining(["choose"]));
   });
 });
+
+describe("URL templates built by joining parts", () => {
+  it("keeps one hole per joined segment", async () => {
+    expect(await templateOf("const kitUrl = (sel) => `/kits/${[sel.club, sel.season, sel.colour].map(encodeURIComponent).join('/')}`;", "kitUrl")).toBe("/kits/${sel.club}/${sel.season}/${sel.colour}");
+    expect(await templateOf("function squadUrl(club, season) { return ['/api', 'clubs', club, 'squads', season].join('/'); }", "squadUrl")).toBe("/api/clubs/{club}/squads/{season}");
+  });
+});

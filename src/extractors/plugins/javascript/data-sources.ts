@@ -1051,6 +1051,23 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       }
       return;
     }
+    // A page that opens a stream or loads an API document requests it: `new EventSource(url)`,
+    // sse.js `new SSE(url, { payload, method })`, `Redoc.init(url, …)`, `SwaggerUIBundle({ url })`.
+    const loader = loaderRequest(node);
+    if (loader) {
+      const resolved = this.resolveUrlArg(loader.url);
+      if (resolved && !/^(?:data|blob):/i.test(resolved.url)) {
+        sources.push(this.ds({
+          kind: "api-call",
+          name: loader.verb,
+          target: resolved.url,
+          ...(resolved.alternatives?.length ? { targetAlternatives: resolved.alternatives } : {}),
+          line: node.startPosition.row + 1,
+        }));
+        return;
+      }
+    }
+
     // AWS SDK v3: `new SendMessageCommand({ QueueUrl, … })`, `new PublishCommand({ TopicArn })`, `new ReceiveMessageCommand(…)`.
     if (node.type === "new_expression") {
       const op = AWS_SEND_COMMANDS.get(node.childForFieldName("constructor")?.text ?? "");
@@ -1838,6 +1855,30 @@ function statesNoMethod(arg: Node | undefined): boolean {
 function hasProp(obj: Node, key: string): boolean {
   if (objectPropValue(obj, key)) return true;
   return obj.namedChildren.some((c) => c.type === "shorthand_property_identifier" && c.text === key);
+}
+
+/** The URL a stream or API-document loader requests, and the verb (see `visitNode`). */
+function loaderRequest(node: Node): { url: Node; verb: string } | null {
+  const args = node.childForFieldName("arguments")?.namedChildren.filter((a) => a.type !== "comment") ?? [];
+  if (node.type === "new_expression") {
+    const ctor = node.childForFieldName("constructor")?.text;
+    if (!args[0]) return null;
+    if (ctor === "EventSource") return { url: args[0], verb: "get" };
+    if (ctor === "SSE") {
+      const opts = args[1]?.type === "object" ? args[1] : null;
+      const method = opts ? literalString(objectPropValue(opts, "method")) : null;
+      return { url: args[0], verb: method ? method.toLowerCase() : opts && objectPropValue(opts, "payload") ? "post" : "get" };
+    }
+    return null;
+  }
+  if (node.type !== "call_expression") return null;
+  const fn = node.childForFieldName("function")?.text.replace(/\s+/g, "");
+  if (fn === "Redoc.init" && args[0]) return { url: args[0], verb: "get" };
+  if ((fn === "SwaggerUIBundle" || fn === "SwaggerUI") && args[0]?.type === "object") {
+    const url = objectPropValue(args[0], "url");
+    return url ? { url, verb: "get" } : null;
+  }
+  return null;
 }
 
 function objectPropValue(obj: Node, key: string): Node | null {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import "../../../registry.js"; // side effect: registers tree-sitter grammars
 import { parseSource } from "../../../../parsers/parser-manager.js";
-import { isRoutePath, extractExpressRoutes } from "./express.js";
+import { isRoutePath, extractExpressRoutes, regexRoutePaths } from "./express.js";
 import type { RouteInfo } from "../../../../types/analysis.js";
 
 /**
@@ -241,5 +241,24 @@ describe("Express routes — a client building a URL is no route", () => {
 const kit = () => api.get(\`/api/clubs/\${encodeURIComponent(club.slug)}/kits/\${kitMeta.id}\`, queryKey[1].state)
 router.get(\`/\${SEASON}/clubs\`, listClubs)`);
     expect(out).toEqual(["GET /${SEASON}/clubs"]);
+  });
+});
+
+describe("Express routes with a regex path", () => {
+  it.each([
+    ["^\\/clubs\\/([^/]+)\\/?$", ["/clubs/:param"]],
+    ["^\\/(clubs|leagues)(\\/|$)", ["/clubs/*", "/leagues/*"]],
+    ["^\\/api\\/([^/]+)\\/([^/]+)\\/?(squad)?$", ["/api/:param/:param/*"]],
+    ["^\\/kits\\.json$", ["/kits.json"]],
+    ["\\/clubs\\/\\d+", []],
+    ["^.*$", []],
+  ])("reads %s", (pattern, paths) => expect(regexRoutePaths(pattern)).toEqual(paths));
+
+  it("registers each path of a regex route", async () => {
+    const src = `app.get(/^\\/(clubs|leagues)(\\/|$)/, (req, res) => res.sendFile(indexHtml));\napp.use(/^\\/old/, legacy);`;
+    const tree = await parseSource(src, "javascript" as never, "server.js");
+    const routes: RouteInfo[] = [];
+    extractExpressRoutes(tree.rootNode, routes);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /clubs/*", "GET /leagues/*"]);
   });
 });

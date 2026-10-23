@@ -102,6 +102,20 @@ export function astToValueExpr(node: Node | null, opts: CaptureOptions = {}): Va
     }
     case "identifier":
       return { kind: "ref", name: node.text };
+    case "call_expression": {
+      // `[club, season].join("/")`, `[a, b].map(encodeURIComponent).join("/")`: the elements, joined —
+      // so a path built from parts keeps one hole per segment.
+      const joined = joinedArray(node);
+      if (joined) {
+        const parts: ValueExpr[] = [];
+        joined.items.forEach((item, i) => {
+          if (i > 0) parts.push({ kind: "lit", value: joined.separator });
+          parts.push(astToValueExpr(item, opts));
+        });
+        return { kind: "concat", parts };
+      }
+      return { kind: "opaque", text: node.text };
+    }
     case "member_expression":
     case "subscript_expression": {
       const en = envRead(node);
@@ -110,6 +124,26 @@ export function astToValueExpr(node: Node | null, opts: CaptureOptions = {}): Va
     default:
       return { kind: "opaque", text: node.text };
   }
+}
+
+/** An array literal joined by a literal separator, through any element-wise `.map(fn)`; null otherwise. */
+function joinedArray(call: Node): { items: Node[]; separator: string } | null {
+  const fn = call.childForFieldName("function");
+  if (fn?.type !== "member_expression" || fn.childForFieldName("property")?.text !== "join") return null;
+  const sep = call.childForFieldName("arguments")?.namedChildren;
+  if (sep?.length !== 1 || sep[0]!.type !== "string") return null;
+  let array = fn.childForFieldName("object");
+  // `.map(encodeURIComponent)`, `.map(String)`: one element in, one out.
+  while (array?.type === "call_expression") {
+    const inner = array.childForFieldName("function");
+    const mapper = array.childForFieldName("arguments")?.namedChildren;
+    if (inner?.type !== "member_expression" || inner.childForFieldName("property")?.text !== "map" || mapper?.length !== 1 ||
+      !/^(?:identifier|member_expression)$/.test(mapper[0]!.type)) return null;
+    array = inner.childForFieldName("object");
+  }
+  if (array?.type !== "array" || array.namedChildren.some((c) => c.type === "spread_element")) return null;
+  const items = array.namedChildren.filter((c) => c.type !== "comment");
+  return items.length > 0 && items.length <= 8 ? { items, separator: stripQuotes(sep[0]!.text) } : null;
 }
 
 function unparenthesized(node: Node | null): Node | null {

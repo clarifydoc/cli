@@ -258,7 +258,7 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
         const args = node.childForFieldName("arguments");
         if (args) {
           const firstArg = args.child(1); // skip '('
-          if (
+          const paths =
             firstArg &&
             (firstArg.type === "string" || firstArg.type === "template_string") &&
             isRoutePath(stripQuotes(firstArg.text)) &&
@@ -266,8 +266,10 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
             // computes a value (`${encodeURIComponent(club.slug)}`, `${ids[0]}`) is a
             // client building a request URL.
             !/\$\{[^}]*[(\[]/.test(firstArg.text)
-          ) {
-            const path = stripQuotes(firstArg.text);
+              ? [stripQuotes(firstArg.text)]
+              // `app.get(/^\/(clubs|leagues)\/([^/]+)$/, …)`: the paths the pattern describes.
+              : firstArg?.type === "regex" && method !== "use" ? regexRoutePaths(firstArg.childForFieldName("pattern")?.text ?? "") : [];
+          for (const path of paths) {
             // Everything after the path, with `[a, b]` middleware arrays flattened.
             const rest: Node[] = [];
             for (const arg of args.namedChildren.slice(1)) {
@@ -506,4 +508,41 @@ function joinPrefix(prefix: string, path: string): string {
   if (path === "/" || path === "") return head || "/";
   if (path === "*") return `${head}/*`;
   return `${head}/${path.replace(/^\/+/, "")}`;
+}
+
+/**
+ * The route paths an anchored regex path describes, segment by segment: a literal stays, a
+ * capture group (`([^/]+)`, `(\d+)`) is a parameter, a group of literal alternatives
+ * (`(clubs|leagues)`) gives one path each, and whatever the reading cannot follow — an optional
+ * group, a wildcard, a lookahead — ends the path in `*`. An unanchored pattern matches anywhere
+ * and describes no path.
+ */
+export function regexRoutePaths(pattern: string): string[] {
+  if (!pattern.startsWith("^\\/")) return [];
+  const literal = /^(?:[\w~-]|\\[.-])+/;
+  let paths = [""];
+  let rest = pattern.slice(1);
+  let open = false;
+  let segments = 0;
+  while (rest.startsWith("\\/") && rest[2] !== "?" && segments++ < 12) {
+    rest = rest.slice(2);
+    let segment: string[] | null = null;
+    const lit = literal.exec(rest);
+    const group = rest.startsWith("(") ? /^\(([^()]*)\)(?![?*+])/.exec(rest) : null;
+    if (lit) {
+      segment = [lit[0].replace(/\\/g, "")];
+      rest = rest.slice(lit[0].length);
+    } else if (group && !/\\\/|\$|^\?/.test(group[1]!)) {
+      const alternatives = group[1]!.split("|");
+      segment = alternatives.length > 1 && alternatives.every((a) => /^[\w-]+$/.test(a)) ? alternatives : [":param"];
+      rest = rest.slice(group[0].length);
+    }
+    if (!segment) { open = true; break; }
+    paths = paths.flatMap((p) => segment!.map((s) => `${p}/${s}`));
+    if (paths.length > 8) return [];
+  }
+  // Exactly these paths only when the pattern ends here (`$`, `\/?$`); without the anchor anything may follow.
+  if (!/^(?:\\\/\?)?\$$/.test(rest)) open = true;
+  if (paths[0] === "") return [];
+  return open ? paths.map((p) => `${p}/*`) : paths;
 }

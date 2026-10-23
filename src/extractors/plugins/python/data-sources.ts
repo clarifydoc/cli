@@ -638,8 +638,9 @@ function pyStringValue(node: Node, at: Node, depth = 0): string | null {
   if (node.type === "binary_operator" && node.childForFieldName("operator")?.text === "+") {
     const l = node.childForFieldName("left");
     const r = node.childForFieldName("right");
-    const lv = l ? pyStringValue(l, at, depth + 1) : null;
-    const rv = r ? pyStringValue(r, at, depth + 1) : null;
+    // A long chain nests to the left (`((base + "/a") + x) + "&b"`): only a hop through a name counts toward the depth.
+    const lv = l ? pyStringValue(l, at, depth) : null;
+    const rv = r ? pyStringValue(r, at, depth) : null;
     if (lv === null && rv === null) return null;
     return `${lv ?? "{}"}${rv ?? "{}"}`;
   }

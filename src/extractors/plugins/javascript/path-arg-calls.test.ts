@@ -32,3 +32,15 @@ await sendRequest(\`\${API_BASE_URL}/clubs/all\`);`)).toEqual([
     ]);
   });
 });
+
+describe("URLs a module object holds", () => {
+  it("records a member of an object of paths as a hole, and nothing else of it", async () => {
+    const sites = await sitesOf(`const prefix = "/api";
+const routes = { clubImport: \`\${prefix}/clubs/import/stream\`, pageSize: 20 };
+class ClubsApi {
+  importClub(payload) { return this.stream(routes.clubImport, payload); }
+  page() { return this.load(routes.pageSize, settings.theme); }
+}`);
+    expect(sites.map((s) => [s.callee, s.args])).toEqual([["stream", ["${routes.clubImport}", null]]]);
+  });
+});

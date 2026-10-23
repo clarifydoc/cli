@@ -34,6 +34,16 @@ describe("Python outbound HTTP calls", () => {
     expect(calls).toEqual([{ name: "get", target: "http://{BASE_URL}/api/standings", line: 5 }]);
   });
 
+  it("keeps every literal of a long concatenated URL (real-repo FP)", async () => {
+    const calls = await apiCallsOf([
+      "import requests",
+      "def page(base_url, limit, offset):",
+      '    url = base_url + "/league/v2/matches?query=season:*&_limit=" + str(limit) + "&_offset=" + str(offset) + "&withKits=true"',
+      "    return requests.get(url)",
+    ].join("\n"));
+    expect(calls).toEqual([{ name: "get", target: "{}/league/v2/matches?query=season:*&_limit={}&_offset={}&withKits=true", line: 4 }]);
+  });
+
   it("keeps a call whose URL is a variable, without inventing a URL from its name", async () => {
     expect(await apiCallsOf("requests.get(url)")).toEqual([{ name: "get", target: null, line: 1 }]);
   });

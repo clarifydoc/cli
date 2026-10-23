@@ -1204,3 +1204,21 @@ describe("Kysely", () => {
     expect(ds.filter((d) => d.kind === "database").map((d) => d.entity).sort()).toEqual(["fixture", "match_report"]);
   });
 });
+
+describe("streams and API documents a page loads", () => {
+  it("reads EventSource, sse.js, Redoc and Swagger UI requests", async () => {
+    const calls = await apiCallsOf(`
+const live = new EventSource("/api/matches/live");
+const sse = new SSE("/api/clubs/import/stream", { headers, payload: JSON.stringify(body) });
+const specUrl = "/specs/league.yaml";
+Redoc.init(specUrl, options, container);
+SwaggerUIBundle({ url: "/specs/kits.json", dom_id: "#ui" });
+const img = new EventSource(blobUrl);`);
+    expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual([
+      "get /api/matches/live",
+      "post /api/clubs/import/stream",
+      "get /specs/league.yaml",
+      "get /specs/kits.json",
+    ]);
+  });
+});
