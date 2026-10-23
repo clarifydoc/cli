@@ -361,14 +361,17 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
   // 2. Skip well-known external packages/standard libraries
   if (isExternalPackage(importSource)) return null;
 
-  // 2b. A file path with the importer's own extension, written without `./`
-  // (`include 'inc/header.php'`, `source lib/x.sh`): the language looks it up
-  // from where the program runs, then (PHP) beside the importer. The project
+  // 2b. A file path with an extension of the importer's own family, written without `./`
+  // (`include 'inc/header.php'`, `include 'lib/db.inc'`, `source lib/x.sh`): the language
+  // looks it up from where the program runs, then (PHP) beside the importer. The project
   // root stands in for the working directory, then beside the importer, then
   // wherever exactly one file's path ends so — a site rarely runs from the
   // repository root.
-  const ext = posix.extname(sourceFile);
-  if (ext && importSource.includes("/") && importSource.endsWith(ext)) {
+  const ownExt = posix.extname(sourceFile);
+  const importExt = posix.extname(importSource);
+  const family = extensionFamily(sourceFile);
+  const ext = ownExt && (importSource.endsWith(ownExt) || (importExt && family !== null && extensionFamily(importSource) === family)) ? importExt : "";
+  if (ext && importSource.includes("/")) {
     const fromRoot = filePathMap.get(posix.normalize(importSource));
     if (fromRoot) return fromRoot;
     const beside = filePathMap.get(posix.normalize(posix.join(posix.dirname(sourceFile), importSource)));

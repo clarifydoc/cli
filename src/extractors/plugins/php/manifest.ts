@@ -18,7 +18,8 @@ export const phpManifest: LanguagePluginManifest = {
   packageManagers: [composerPackageManager],
   packageEcosystems: ["composer"],
   parsing: "tree-sitter",
-  extensions: [".php"],
+  // `.inc`: the include files older PHP keeps its code in (`include "db.inc"`); one with no PHP in it is refused (meta.ts).
+  extensions: [".php", ".inc"],
   // A field is only reached through the instance (`this.x`); a bare name never is one.
   explicitSelfMembers: true,
   // `$this->writeUTF()` calls the declared `writeUtf`; `$Repo` is still not `$repo`.

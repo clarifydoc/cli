@@ -47,8 +47,11 @@ export const phpMeta: LanguagePluginMeta = {
   dispatchResolvers: [new CodeIgniterViewResolver(), new LaravelEventResolver(), new LaravelViewResolver()],
   // A plain-PHP view template (`views/**.php`, not Blade) is read for the page
   // around its code: forms, links, inline AJAX and the screen (views.ts).
+  // An `.inc` is PHP only when it holds a PHP tag: Delphi's `{$I x.inc}` compiler switches and
+  // fragments share the extension.
   preprocess: (rawSource, relativePath) =>
-    phpViewKey(relativePath) === null ? null : { sourceText: rawSource, language: "php", postExtract: (analysis, raw) => readPhpView(analysis, raw) },
+    /\.inc$/i.test(relativePath) && !/<\?(?:php\b|=)/i.test(rawSource) ? { skip: "an .inc with no PHP in it" }
+      : phpViewKey(relativePath) === null ? null : { sourceText: rawSource, language: "php", postExtract: (analysis, raw) => readPhpView(analysis, raw) },
   functionsClasses: new PhpExtractor(),
   importsExports: new PhpImportExportExtractor(),
   dataSources: new PhpDataSourceExtractor(),
