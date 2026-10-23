@@ -92,27 +92,12 @@ const ELOQUENT_STATIC_VERBS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Builder verbs that keep an Eloquent chain going. A call whose parent is a
- * member call with one of these names (or a terminal verb) is an inner link —
- * the chain's one data-source row is emitted at its outermost such call.
- * Project-specific scopes (`->onlyStandard()`) are not known here: a chain
- * `Model::query()->myScope()->get()` still emits at `get`, whose text carries
- * the `Model::query()` root for the project-level join.
- */
-const ELOQUENT_CHAIN_VERBS: ReadonlySet<string> = new Set([
-  ...PHP_INSTANCE_VERBS, ...ELOQUENT_STATIC_VERBS,
-  "orWhere", "whereNotIn", "orWhereIn", "whereBetween", "whereDate", "orWhereHas", "whereDoesntHave",
-  "whereRelation", "whereKey", "whereColumn", "orderByDesc", "limit", "take", "skip", "offset", "groupBy",
-  "having", "distinct", "leftJoin", "rightJoin", "lockForUpdate", "sharedLock", "when", "unless",
-  "inRandomOrder", "reorder", "forPage", "selectRaw", "whereRaw", "orderByRaw", "addSelect", "getQuery",
-  "toBase", "withoutGlobalScopes", "withoutGlobalScope",
-]);
-
-/**
- * True when a member call further up `node`'s fluent chain is an Eloquent/PDO
- * chain verb — that call emits the chain's row. Unknown links in between
+ * True when a member call further up `node`'s fluent chain emits the chain's
+ * row — an instance verb (`->get()`, `->first()`, `->update()`). Builder-only
+ * links (`->findMany(…)`, `->orderBy(…)`) and unknown ones
  * (`Model::query()->myScope()->get()`) are stepped over; a chain that ends in
- * no known verb (`Model::all()->map(…)`) leaves the row at `node`.
+ * no emitting verb (`Song::query()->findMany($ids)`, `Model::all()->map(…)`)
+ * leaves the row at `node`.
  */
 function continuesEloquentChain(node: Node): boolean {
   let cur: Node = node;
@@ -121,7 +106,7 @@ function continuesEloquentChain(node: Node): boolean {
     if (!parent || parent.type !== "member_call_expression") return false;
     if (parent.childForFieldName("object")?.id !== cur.id) return false;
     const method = parent.childForFieldName("name")?.text ?? "";
-    if (ELOQUENT_CHAIN_VERBS.has(method)) return true;
+    if (PHP_INSTANCE_VERBS.has(method)) return true;
     cur = parent;
   }
 }

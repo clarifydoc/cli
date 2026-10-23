@@ -31,7 +31,7 @@ const LANGUAGE_MARKERS: Partial<Record<Language, RegExp>> = {
   dart: /\bextends\s+Table\b|@[cC]ollection\b|@[eE]ntity\b|@HiveType\b|\bIsarLinks?</,
   rust: /\btable!\s*\{|\bdiesel\b|\bQueryable\b|\bInsertable\b|\bDeriveEntityModel\b|\bsea_orm\b/,
   php:
-    /\bextends\s+(?:Model|Authenticatable|Pivot)\b|@ORM\\|#\[\s*ORM\\|->\s*(?:hasMany|belongsTo|hasOne|belongsToMany|morph\w*|hasManyThrough|hasOneThrough)\s*\(|\b(?:hasMany|belongsTo|hasOne|belongsToMany)\s*\(|->\s*join\s*\(\s*['"]/,
+    /\bextends\s+(?:Model|Authenticatable|Pivot)\b|@ORM\\|#\[\s*ORM\\|->\s*(?:hasMany|belongsTo|hasOne|belongsToMany|morph\w*|hasManyThrough|hasOneThrough)\s*\(|\b(?:hasMany|belongsTo|hasOne|belongsToMany)\s*\(|->\s*join\s*\(\s*['"]|\bSchema::(?:create|table|drop|dropIfExists|rename)\s*\(/,
   sql: /\b(?:CREATE|ALTER|DROP|RENAME)\s+(?:(?:GLOBAL\s+)?(?:TEMPORARY|TEMP|UNLOGGED)\s+)?TABLE\b/i,
   swift: /@Model\b|\bNSManagedObject\b/,
   ruby:

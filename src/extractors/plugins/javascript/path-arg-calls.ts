@@ -10,6 +10,12 @@ const PATH_SHAPED = /^(?:\/[\w-]|[.]?[\w-]+\/|\$\{[\w$.]+\}\/[\w-])/;
 
 const VERB = /^(?:get|post|put|patch|delete|head|options)$/i;
 
+/** A client-named method a project object may declare for itself (`signedUrlService.fetch(url)`). */
+const OBJECT_METHOD = /^(?:fetch|request)$/i;
+
+/** A receiver that is the HTTP client itself (`axios`, `this.http`, `$`), whose verbs are requests. */
+const CLIENT_RECEIVER = /^(?:\$|jQuery|axios|https?|api|apiClient|client|request|ky|got|this|window|globalThis|self)$/i;
+
 /** Clients and verbs are api-calls themselves, not factories handed a URL. */
 const NOT_A_FACTORY = new Set(["fetch", "axios", "get", "post", "put", "patch", "delete", "del", "request", "ajax", "require", "import"]);
 
@@ -32,7 +38,11 @@ export function extractPathArgCalls(tree: Tree, sourceText: string): PathArgCall
     const fn = call.childForFieldName("function");
     const callee =
       fn?.type === "identifier" ? fn.text : fn?.type === "member_expression" ? fn.childForFieldName("property")?.text : null;
-    if (!callee || NOT_A_FACTORY.has(callee.toLowerCase())) continue;
+    // `fetch(…)`, `axios.get(…)`, `http.post(…)` are requests themselves; a service's own
+    // `signedUrlService.fetch(url)` is that object's method, handed a URL (never a verb: `router.post` routes).
+    const object = fn?.type === "member_expression" ? fn.childForFieldName("object") : null;
+    const ownMethod = !!callee && OBJECT_METHOD.test(callee) && object?.type === "identifier" && !CLIENT_RECEIVER.test(object.text);
+    if (!callee || (NOT_A_FACTORY.has(callee.toLowerCase()) && !ownMethod)) continue;
     const argNodes = call.childForFieldName("arguments")?.namedChildren.filter((a) => a.type !== "comment") ?? [];
     // A URL parameter of the enclosing function handed on (`_fetch("POST", url)` inside
     // `_post(url)`) is a hole the wrapper's own call sites fill.
@@ -43,7 +53,7 @@ export function extractPathArgCalls(tree: Tree, sourceText: string): PathArgCall
     const options = argNodes.find((a) => a.type === "object");
     const positional = args.find((a) => a !== null && VERB.test(a));
     const method = (options ? methodOf(options) : null) ?? (positional ? positional.toUpperCase() : null);
-    out.push({ callee, args, line: call.startPosition.row + 1, ...(method ? { method } : {}) });
+    out.push({ callee, args, line: call.startPosition.row + 1, ...(method ? { method } : {}), ...(ownMethod ? { receiver: object!.text } : {}) });
   }
   return out;
 }

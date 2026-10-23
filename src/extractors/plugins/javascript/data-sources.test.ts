@@ -536,6 +536,19 @@ describe("JS api-call trust: only a real client is believed without a URL", () =
   });
 });
 
+describe("an HTTP client configured through getters", () => {
+  it("reads http.silently.withRetries.put(…) as the client's request (real-repo FP)", async () => {
+    const calls = await apiCallsOf(`
+      import { http } from '@/services/http'
+      export const lineupStore = {
+        async save (players) { await http.silently.withRetries.put('lineup/state', { players }) },
+        async score (id) { await http.silently.withRetriesWhenUnprocessed.post<Goal>('goals/score', { id }) },
+        cached (k) { return cache.entries.get(k) },
+      }`);
+    expect(calls.map((c) => [c.name, c.target])).toEqual([["put", "lineup/state"], ["post", "goals/score"]]);
+  });
+});
+
 describe("jQuery Ajax shorthands", () => {
   it("reads `$.get` / `$.post` / `jQuery.getJSON` with a success callback as requests (real-repo FP)", async () => {
     const calls = await apiCallsOf(`

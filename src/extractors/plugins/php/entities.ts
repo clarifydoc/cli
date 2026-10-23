@@ -1,3 +1,4 @@
+import { isLaravelMigration, migrationRelations, readLaravelMigration, reconcileLaravelMigrations } from "./laravel-migrations.js";
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import { receiverTypeName } from "../../shared/type-parser.js";
 import { CI_DB_RECEIVER, RELATIVE_SCOPE_RE } from "./data-sources.js";
@@ -46,6 +47,11 @@ export class PhpEntityExtractor extends EntityExtractor {
   private static readonly ELOQUENT_BASES = new Set(["Model", "Authenticatable", "Pivot"]);
 
   extract(ctx: EntityExtractContext): EntityExtractResult {
+    // A Laravel migration: the tables and changes its `up()` makes (laravel-migrations.ts).
+    if (isLaravelMigration(ctx.analysis.filePath, ctx.sourceText)) {
+      const { tables, ops } = readLaravelMigration(ctx.sourceText);
+      if (tables.length > 0 || ops.length > 0) return { entities: tables, relations: migrationRelations(ops), ...(ops.length ? { schemaOps: ops } : {}) };
+    }
     const entities: ClassInfo[] = [];
     const relations: EntityRelation[] = [];
 
@@ -192,6 +198,7 @@ export class PhpEntityExtractor extends EntityExtractor {
    * they are: their table is the SQL text or the argument, not a model.
    */
   override reconcileProject(analyses: FileAnalysis[]): void {
+    reconcileLaravelMigrations(analyses);
     const php = analyses.filter((a) => a.language === "php");
     const models = new Set<string>();
     const relationTargets = new Map<string, Set<string>>();

@@ -1089,6 +1089,12 @@ export interface PathArgCall {
    */
   receiverType?: string;
   /**
+   * The object a member call is made on, as written (`signedUrlService` in
+   * `signedUrlService.fetch(url)`): the callee is that object's method — a
+   * function named `signedUrlService.fetch` in the module the name comes from.
+   */
+  receiver?: string;
+  /**
    * The HTTP verb an argument names (`RequestType.POST`, `Verb::DELETE`,
    * `'GET'`): a wrapper that dispatches on it requests with that method.
    */

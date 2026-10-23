@@ -88,6 +88,13 @@ export class PhpExtractor extends FunctionClassExtractor {
         for (const block of conditionalBlocks(child)) this.collectClasses(block, classes);
       }
     }
+    // `return new class extends Migration { … }`, `new class implements Signer { … }`: an
+    // anonymous class's methods are code like any other, named as PHP names the class.
+    if (node.type === "program") {
+      for (const anon of node.descendantsOfType("anonymous_class")) {
+        if (anon) classes.push({ ...this.parseClass(anon), name: "class@anonymous" });
+      }
+    }
   }
 
   private parseFunction(node: Node): FunctionInfo {

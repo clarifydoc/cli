@@ -264,6 +264,15 @@ export function expandRequestFactories(
         }
         continue;
       }
+      // `signedUrlService.fetch(url)`: the method of that object, in its own module or the one it is imported from.
+      const objectRows = site.receiver
+        ? factories.get(`${importIndex.localFor(a.filePath, site.receiver) ?? a.filePath}::${site.receiver}.${site.callee}`)
+        : undefined;
+      // A site naming its object joins that object's method only, never a same-named function elsewhere.
+      if (site.receiver) {
+        if (objectRows) added += expandSite(calls, a.filePath, site, objectRows, known);
+        continue;
+      }
       const source = importIndex.localFor(a.filePath, site.callee);
       let rows = factories.get(ownKey) ?? (source ? factories.get(`${source}::${site.callee}`) : undefined);
       // A bare call from inside a class, of a name no import brings in, is a

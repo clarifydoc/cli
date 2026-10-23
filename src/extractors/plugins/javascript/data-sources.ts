@@ -1116,7 +1116,12 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         // `request.params.get('page')` in a test predicate as a GET to "page".
         const recvRoot = fn && fn.type === "member_expression" ? memberRoot(fn) : null;
         const recv = fn && fn.type === "member_expression" ? directReceiver(fn) : null;
-        const trustedReceiver = !!jqueryVerb || (!!recv && (HTTP_RECEIVER_RE.test(recv) || /client$/i.test(recv)));
+        // `http.silently.withRetries.put(…)`: getters that configure the client keep it the client —
+        // a chain of plain property reads off an HTTP-client root is trusted like the root.
+        const chainText = fn?.text.replace(/\s+/g, "") ?? "";
+        const clientChain = !!recvRoot && CLIENT_ROOT_RE.test(recvRoot) && /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(chainText) &&
+          !chainText.split(".").slice(1, -1).some((seg) => REQUEST_DATA_SEGMENT.test(seg));
+        const trustedReceiver = !!jqueryVerb || clientChain || (!!recv && (HTTP_RECEIVER_RE.test(recv) || /client$/i.test(recv)));
         // `app.get("/x", handler)` / `router.post(...)` are inbound route
         // definitions (already captured as routes), not outbound calls — exclude.
         // So is a route decorator: NestJS `@Get('public/:id')` is a call too.
@@ -2116,6 +2121,10 @@ function isJQueryAjax(fn: Node | null): boolean {
 
 /** A receiver named like an HTTP client: `http`, `$http`, `httpClient`, `axios`, `$axios`, `api`, `apiService`, `requests`. */
 const HTTP_RECEIVER_RE = /^\$?(http|axios|ky|got|api|request|requests)(client|service)?$/i;
+/** A root that names an outbound client (never `request`, an incoming request as often as not). */
+const CLIENT_ROOT_RE = /^\$?(http|axios|ky|got|api)(client|service)?$/i;
+/** A property of a request's data, not a client setting: `http.params.get('x')` reads a parameter. */
+const REQUEST_DATA_SEGMENT = /^(?:params|query|headers|body|data|cookies|searchParams|form|files|session)$/i;
 
 /** Root identifier of a member chain: `apiClient.post` → "apiClient", `a.b.c` → "a". */
 /** The identifier a chain of `.on(…)` / `.once(…)` calls starts from (`socket.on(…).on(…)` → `socket`). */

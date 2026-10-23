@@ -125,6 +125,11 @@ describe("Eloquent chain rows", () => {
     expect(rows[1]!.target).toBe("Club");
   });
 
+  it("keeps the row at the static root when the chain ends in builder verbs only (real-repo FP)", async () => {
+    const rows = await eloquentRowsOf(`    $players = Player::query()->findMany($ids);\n    Club::query()->orderBy('name')->lazy()->each(fn ($c) => $c);`);
+    expect(rows.map((r) => [r.name, r.target])).toEqual([["Player::query", "Player"], ["Club::query", "Club"]]);
+  });
+
   it("reads a PDO query's table from its SQL, once per chain", async () => {
     const rows = await eloquentRowsOf(`    $rows = $pdo->query('SELECT * FROM cars')->fetchAll();`);
     expect(rows.map((r) => [r.name, r.target, r.entity, r.access])).toEqual([["$pdo->query", "cars", "cars", "read"]]);
