@@ -855,12 +855,13 @@ export interface LanguagePluginManifest {
    */
   typesSpanFiles?: boolean;
   /**
-   * A render call's template name as the path its template file ends with,
+   * A render call's template name as the paths its template file may end with,
    * for a framework that spells names its own way: Laravel `view('clubs.show')`
-   * → `views/clubs/show.blade.php`. The file it names is a template even in
-   * this language. Null leaves the name to the generic path-suffix match.
+   * → `views/clubs/show.blade.php`, CodeIgniter `view('clubs/edit')` →
+   * `views/clubs/edit.php`. The file they name is a template even in this
+   * language. None leaves the name to the generic path-suffix match.
    */
-  templatePath?(name: string): string | null;
+  templatePaths?(name: string): string[];
   /**
    * Identifiers are case-insensitive (VB, Pascal/Delphi): `_repo.save()`
    * calls the `Save` that `_Repo`'s class declares. The linker then matches

@@ -84,8 +84,14 @@ export const phpMeta: LanguagePluginMeta = {
     ["function_definition", "nested-function"],
     ["function_static_declaration", "nested-function"],
   ]),
-  // Laravel names a Blade view by dots under `resources/views`: `view('clubs.show')`, `View::make('clubs.show')`.
-  templatePath: (name) => (/^[\w-]+(?:\.[\w-]+)*$/.test(name) && !/\.php$/.test(name) ? `views/${name.replace(/\./g, "/")}.blade.php` : null),
+  // Laravel names a Blade view by dots under `resources/views` (`view('clubs.show')`), CodeIgniter a
+  // plain-PHP view by its path under `views/` (`$this->load->view('clubs/edit')`).
+  templatePaths: (name) => {
+    if (!/^[\w-]+(?:[./][\w-]+)*$/.test(name) || /\.php$/.test(name)) return [];
+    const out = name.includes("/") ? [`views/${name}.php`] : [`views/${name.replace(/\./g, "/")}.blade.php`];
+    if (!name.includes(".")) out.push(`views/${name}.php`);
+    return out;
+  },
   ast: {
     // Laravel and Symfony scheduled jobs: entry points a clock runs.
     entryPoints: (_tree, sourceText) => extractPhpScheduledJobs(sourceText),

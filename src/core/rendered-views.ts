@@ -84,8 +84,8 @@ export function linkRenderedViews(
     // The framework's own spelling of the name, when the handler's plugin has one: its file is a
     // template whatever its language. Else (or when it names none), a template is another
     // language's file — the handler's own sources are code.
-    const spelled = pluginFor(from.language)?.templatePath?.(view) ?? null;
-    let hits = spelled ? pages.filter((s) => suffixRe(spelled, true).test(s.filePath)) : [];
+    const spelled = (pluginFor(from.language)?.templatePaths?.(view) ?? []).map((p) => suffixRe(p, true));
+    let hits = pages.filter((s) => spelled.some((re) => re.test(s.filePath)));
     if (hits.length === 0) {
       const re = suffixRe(view.replace(/\\/g, "/").replace(/^\.?\/+/, ""), false);
       hits = pages.filter((s) => re.test(s.filePath) && byPath.get(s.filePath)!.language !== from.language);
