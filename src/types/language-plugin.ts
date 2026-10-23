@@ -855,6 +855,13 @@ export interface LanguagePluginManifest {
    */
   typesSpanFiles?: boolean;
   /**
+   * A render call's template name as the path its template file ends with,
+   * for a framework that spells names its own way: Laravel `view('clubs.show')`
+   * → `views/clubs/show.blade.php`. The file it names is a template even in
+   * this language. Null leaves the name to the generic path-suffix match.
+   */
+  templatePath?(name: string): string | null;
+  /**
    * Identifiers are case-insensitive (VB, Pascal/Delphi): `_repo.save()`
    * calls the `Save` that `_Repo`'s class declares. The linker then matches
    * member, local, parameter and method names without regard to case.

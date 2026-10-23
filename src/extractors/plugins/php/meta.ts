@@ -84,6 +84,8 @@ export const phpMeta: LanguagePluginMeta = {
     ["function_definition", "nested-function"],
     ["function_static_declaration", "nested-function"],
   ]),
+  // Laravel names a Blade view by dots under `resources/views`: `view('clubs.show')`, `View::make('clubs.show')`.
+  templatePath: (name) => (/^[\w-]+(?:\.[\w-]+)*$/.test(name) && !/\.php$/.test(name) ? `views/${name.replace(/\./g, "/")}.blade.php` : null),
   ast: {
     // Laravel and Symfony scheduled jobs: entry points a clock runs.
     entryPoints: (_tree, sourceText) => extractPhpScheduledJobs(sourceText),

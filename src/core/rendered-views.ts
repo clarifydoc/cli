@@ -1,4 +1,5 @@
 import type { FileAnalysis, RouteInfo, ScreenInfo, SymbolLink } from "../types/analysis.js";
+import { pluginFor } from "../extractors/registry.js";
 
 /**
  * Server-rendered pages: a route handler that renders a template by name
@@ -75,11 +76,19 @@ export function linkRenderedViews(
   const resolve = (view: string, from: FileAnalysis): ScreenInfo | null => {
     const key = `${view}\0${from.projectId ?? ""}\0${from.language}`;
     if (resolveCache.has(key)) return resolveCache.get(key)!;
-    const rel = view.replace(/\\/g, "/").replace(/^\.?\/+/, "");
-    const escaped = rel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const re = /\.\w+$/.test(rel) ? new RegExp(`(^|/)${escaped}$`) : new RegExp(`(^|/)${escaped}(\\.\\w+)+$`);
-    // A template is another language's file: the handler's own sources are code.
-    let hits = pages.filter((s) => re.test(s.filePath) && byPath.get(s.filePath)!.language !== from.language);
+    const suffixRe = (rel: string, exact: boolean): RegExp => {
+      const escaped = rel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return exact || /\.\w+$/.test(rel) ? new RegExp(`(^|/)${escaped}$`) : new RegExp(`(^|/)${escaped}(\\.\\w+)+$`);
+    };
+    // The framework's own spelling of the name, when the handler's plugin has one: its file is a
+    // template whatever its language. Else (or when it names none), a template is another
+    // language's file — the handler's own sources are code.
+    const spelled = pluginFor(from.language)?.templatePath?.(view) ?? null;
+    let hits = spelled ? pages.filter((s) => suffixRe(spelled, true).test(s.filePath)) : [];
+    if (hits.length === 0) {
+      const re = suffixRe(view.replace(/\\/g, "/").replace(/^\.?\/+/, ""), false);
+      hits = pages.filter((s) => re.test(s.filePath) && byPath.get(s.filePath)!.language !== from.language);
+    }
     if (hits.length > 1) {
       const same = hits.filter((s) => byPath.get(s.filePath)!.projectId === from.projectId);
       if (same.length > 0) hits = same;

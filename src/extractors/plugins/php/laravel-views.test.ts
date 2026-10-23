@@ -94,4 +94,9 @@ describe("Laravel named routes, qualified controllers and Blade requests", () =>
       "post_clubs_update -> app/Http/Controllers/Club/EditController.php::EditController.update",
     ]);
   });
+
+  it("gives a Blade screen the GET route whose action renders it by dotted name", () => {
+    const show = (summary.screens ?? []).find((sc) => sc.filePath === "resources/views/clubs/show.blade.php");
+    expect(show?.routePath).toBe("/clubs/show/{club}");
+  });
 });
