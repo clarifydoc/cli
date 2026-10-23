@@ -25,7 +25,7 @@ import { literalPath, handlerOf, materializeElementRequests } from "../shared/el
  */
 
 /** The dialects that are languages of their own (own extension, own plugin). */
-export type TemplateLanguage = "handlebars" | "liquid" | "velocity" | "razor" | "gotemplate";
+export type TemplateLanguage = "handlebars" | "liquid" | "velocity" | "razor" | "gotemplate" | "freemarker";
 /** Django's templates are `.html`, which the HTML plugin owns and hands here. */
 export type TemplateDialect = TemplateLanguage | "django";
 
@@ -36,6 +36,7 @@ const TAGS: Record<TemplateDialect, RegExp> = {
   razor: /@\*[\s\S]*?\*@|@\{[\s\S]*?\n\}|@\([^)\n]*\)|@[A-Za-z_][\w.]*(?:\([^)\n]*\))?/g,
   gotemplate: /\{\{[\s\S]*?\}\}/g,
   django: /\{#[\s\S]*?#\}|\{%[\s\S]*?%\}|\{\{[\s\S]*?\}\}/g,
+  freemarker: /<#--[\s\S]*?-->|<\/?[#@][^>]*>|\$\{[^}]*\}/g,
 };
 
 const PARTIALS: Record<TemplateDialect, RegExp> = {
@@ -45,6 +46,7 @@ const PARTIALS: Record<TemplateDialect, RegExp> = {
   razor: /<partial\s+name\s*=\s*["']([\w/.~-]+)["']|Html\.Partial(?:Async)?\(\s*"([\w/.~-]+)"|Html\.RenderPartial(?:Async)?\(\s*"([\w/.~-]+)"|Component\.InvokeAsync\(\s*"(\w+)"/g,
   gotemplate: /\{\{-?\s*template\s+"([\w/.-]+)"/g,
   django: /\{%-?\s*include\s+["']([\w/.-]+)["']/g,
+  freemarker: /<#(?:include|import)\s+["']([\w/.-]+)["']/g,
 };
 
 /**
@@ -147,7 +149,7 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
   const caption = /<title>([^<]+)<\/title>|<h1\b[^>]*>([^<]+)<\/h1>/i.exec(markup);
   const screen: ScreenInfo = {
     name,
-    formType: { handlebars: "HandlebarsTemplate", liquid: "LiquidTemplate", velocity: "VelocityTemplate", gotemplate: "GoTemplate", django: "DjangoTemplate", razor: /(?:^|\/)Pages\//.test(filePath) ? "RazorPage" : "RazorView" }[dialect],
+    formType: { handlebars: "HandlebarsTemplate", liquid: "LiquidTemplate", velocity: "VelocityTemplate", gotemplate: "GoTemplate", django: "DjangoTemplate", freemarker: "FreeMarkerTemplate", razor: /(?:^|\/)Pages\//.test(filePath) ? "RazorPage" : "RazorView" }[dialect],
     caption: (caption?.[1] ?? caption?.[2])?.trim() || null,
     dimensions: null,
     components: components.sort((a, b) => a.line - b.line),

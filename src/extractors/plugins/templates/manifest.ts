@@ -33,6 +33,15 @@ export const gotemplateManifest: LanguagePluginManifest = {
   importTarget: false,
 };
 
+/** FreeMarker templates (`.ftl`): `<#include "header.ftl">`, `${url.loginAction}` form actions. */
+export const freemarkerManifest: LanguagePluginManifest = {
+  language: "freemarker",
+  parsing: "regex",
+  extensions: [".ftl", ".ftlh"],
+  family: "jvm",
+  importTarget: false,
+};
+
 /** Razor views and pages (`.cshtml`); Blazor components (`.razor`) are the blazor plugin's. */
 export const razorManifest: LanguagePluginManifest = {
   language: "razor",

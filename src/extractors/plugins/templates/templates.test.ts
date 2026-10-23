@@ -22,6 +22,41 @@ describe("server templates", () => {
     expect(a.screens[0]).toMatchObject({ formType: "HandlebarsTemplate", caption: "Vaultwarden Admin" });
   });
 
+  it("reads a FreeMarker login page: includes, its controls, and a form posting to a model-supplied URL as no app path", () => {
+    const a = analysis("themes/league/login/kickoff-login.ftl", "freemarker");
+    readTemplate(a, `<#import "template.ftl" as layout>
+<#include "header.ftl">
+<@layout.registrationLayout displayInfo=true; section>
+  <#if section = "form">
+    <form id="kickoff-login" action="\${url.loginAction}" method="post">
+      <input type="text" name="username" value="\${(login.username!'')}">
+      <button type="submit" name="login">\${msg("doLogIn")}</button>
+    </form>
+    <a href="/clubs/register">Register a club</a>
+  </#if>
+</@layout.registrationLayout>`, "freemarker");
+    expect(a.subComponents.map((s) => s.name)).toEqual(["template", "header"]);
+    expect(a.interactiveElements.map((e) => `${e.element} ${e.request?.target ?? "-"}`)).toEqual(expect.arrayContaining(["link /clubs/register"]));
+    expect(a.interactiveElements.some((e) => e.request?.target.includes("loginAction"))).toBe(false);
+    expect(a.screens[0]).toMatchObject({ formType: "FreeMarkerTemplate" });
+  });
+
+  it("reads a Django template: {% url %} targets on forms, links and htmx, {% include %} partials", () => {
+    const a = analysis("clubs/templates/clubs/detail.html", "html");
+    readTemplate(a, `{% extends "base.html" %}
+{% include "clubs/_header.html" %}
+<form method="post" action="{% url 'clubs:edit' club.pk %}">{% csrf_token %}<button type="submit">Save</button></form>
+<a href="{% url 'clubs:list' %}?page=2">All clubs</a>
+<button hx-delete="{% url 'clubs:delete' club.pk %}">Delete</button>`, "django");
+    expect(a.subComponents.map((s) => s.name)).toEqual(["_header"]);
+    expect(a.interactiveElements.filter((e) => e.request).map((e) => `${e.handler} ${e.request!.method} ${e.request!.target}`)).toEqual([
+      "post_clubs_edit POST route:clubs:edit",
+      "clubs_list GET route:clubs:list",
+      "delete_clubs_delete DELETE route:clubs:delete",
+    ]);
+    expect(a.dataSources).toEqual([]);
+  });
+
   it("reads a Go html/template page: {{template}} partials, a form and links under {{AppSubUrl}}", () => {
     const a = analysis("templates/club/settings/profile.tmpl", "gotemplate");
     readTemplate(a, `{{template "base/head" .}}

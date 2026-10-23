@@ -16,7 +16,7 @@ export const LANGUAGE_NAMES: Record<Language, string> = {
   go: "Go", rust: "Rust", ruby: "Ruby", swift: "Swift", lua: "Lua", scala: "Scala, with Play routes", perl: "Perl",
   vb: "Visual Basic (VB.NET, VB6, VBScript)", sql: "SQL", c: "C", cpp: "C++ (and CUDA)", prisma: "Prisma", dart: "Dart/Flutter",
   elixir: "Elixir", erlang: "Erlang", objc: "Objective-C", haskell: "Haskell", clojure: "Clojure", blazor: "Blazor", html: "HTML",
-  erb: "ERB", heex: "HEEx/EEx", handlebars: "Handlebars", liquid: "Liquid", velocity: "Velocity", razor: "Razor", gotemplate: "Go templates", qml: "QML",
+  erb: "ERB", heex: "HEEx/EEx", handlebars: "Handlebars", liquid: "Liquid", velocity: "Velocity", razor: "Razor", gotemplate: "Go templates", freemarker: "FreeMarker", qml: "QML",
   qtui: "Qt Designer", xaml: "XAML", jsp: "JSP", springxml: "Spring XML / MyBatis mappers / Android navigation graphs", jsight: "JSight",
   storyboard: "Interface Builder storyboards", terraform: "Terraform", protobuf: "Protocol Buffers", openapi: "OpenAPI", graphql: "GraphQL",
   wsdl: "WSDL", groovy: "Groovy, with Jenkinsfiles", powershell: "PowerShell", batch: "Windows batch", coffeescript: "CoffeeScript",

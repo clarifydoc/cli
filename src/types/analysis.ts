@@ -3,7 +3,7 @@ export type Language =
   | "typescript" | "javascript" | "csharp" | "python" | "java" | "kotlin" | "pascal" | "dfm"
   | "go" | "rust" | "ruby" | "php" | "swift" | "lua" | "scala"
   | "perl" | "vb" | "sql" | "c" | "cpp" | "prisma" | "dart" | "elixir" | "erlang" | "objc"
-  | "haskell" | "clojure" | "blazor" | "html" | "erb" | "heex" | "handlebars" | "liquid" | "velocity" | "razor" | "gotemplate" | "qml" | "qtui" | "xaml" | "jsp" | "springxml" | "jsight"
+  | "haskell" | "clojure" | "blazor" | "html" | "erb" | "heex" | "handlebars" | "liquid" | "velocity" | "razor" | "gotemplate" | "freemarker" | "qml" | "qtui" | "xaml" | "jsp" | "springxml" | "jsight"
   | "openapi" | "graphql" | "wsdl" | "groovy" | "powershell" | "bash" | "batch" | "fsharp" | "coffeescript" | "r" | "julia" | "crystal" | "zig" | "ocaml" | "raku" | "racket" | "scheme" | "commonlisp"
   | "nim" | "dlang" | "vlang" | "fortran" | "haxe" | "mojo" | "serverless" | "coredata" | "storyboard" | "terraform" | "protobuf"
   | "scss" | "sass" | "less" | "autohotkey" | "autoit" | "applescript";
