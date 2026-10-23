@@ -57,7 +57,8 @@ export function linkRenderedViews(
       const m = a.classes.find((c) => c.name === symbol.slice(0, dot))?.methods.find((x) => x.name === symbol.slice(dot + 1));
       if (m) return m;
     }
-    return a.functions.find((f) => f.name === symbol) ?? null;
+    // A class the route is anchored on (a class-based view stating `template_name`): its body.
+    return a.functions.find((f) => f.name === symbol) ?? a.classes.find((c) => c.name === symbol) ?? null;
   };
 
   const viewsCache = new Map<string, string[]>();

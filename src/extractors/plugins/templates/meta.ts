@@ -1,10 +1,10 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
-import { readTemplate, templateSpec, type TemplateDialect } from "./index.js";
+import { readTemplate, templateSpec, type TemplateLanguage } from "./index.js";
 import { gotemplateManifest, handlebarsManifest, liquidManifest, razorManifest, velocityManifest } from "./manifest.js";
 import { RazorTargetResolver } from "./razor-target-resolver.js";
 
 /** Server templates: their screens, partials, forms and links (see index.ts). */
-const templateMeta = (manifest: typeof handlebarsManifest, dialect: TemplateDialect): LanguagePluginMeta => ({
+const templateMeta = (manifest: typeof handlebarsManifest, dialect: TemplateLanguage): LanguagePluginMeta => ({
   ...manifest,
   regexSpec: templateSpec(dialect, [...manifest.extensions]),
   preprocess: (rawSource) => ({ sourceText: rawSource, language: dialect, postExtract: (analysis, raw) => readTemplate(analysis, raw, dialect) }),

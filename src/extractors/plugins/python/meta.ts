@@ -1,3 +1,4 @@
+import { DjangoTemplateUrlResolver } from "./django/template-links.js";
 import { AiosqlQueryResolver } from "./aiosql.js";
 import { extractPythonEntryPoints, extractPythonScheduledJobs } from "./entry-points.js";
 import type { LanguagePluginMeta, SecurityRule } from "../../../types/language-plugin.js";
@@ -147,7 +148,7 @@ export const pythonMeta: LanguagePluginMeta = {
   routes: pythonRouteExtractor,
   routeResolvers: [djangoUrlconfResolver],
   // A test's parameter is the fixture of that name (module, then conftest.py).
-  dispatchResolvers: [new PytestFixtureResolver(), new AiosqlQueryResolver()],
+  dispatchResolvers: [new PytestFixtureResolver(), new AiosqlQueryResolver(), new DjangoTemplateUrlResolver()],
   functionsClasses: new PythonExtractor(),
   importsExports: new PythonImportExportExtractor(),
   dataSources: new PythonDataSourceExtractor(),

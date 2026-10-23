@@ -20,22 +20,28 @@ export const DRF_REGISTER = "drf:register";
 export const DJ_VIEW_CLASS = "dj:view-class";
 /** `REST_FRAMEWORK = {"DEFAULT_PERMISSION_CLASSES": [...]}` in settings: what a DRF view states nothing of. */
 export const DRF_SETTINGS = "drf:settings";
+/** `app_name = "clubs"` in a urlconf: the namespace its route names sit in (`clubs:detail`). */
+export const DJ_APP_NAME = "dj:app-name";
 
 /** A view a urlconf entry names, as written. */
 export type ViewRef =
   | { kind: "class"; name: string; actions?: Record<string, string> }
   | { kind: "func"; name: string };
 
-export type IncludeTarget =
+export type IncludeTarget = (
   | { kind: "module"; spec: string }
   | { kind: "list"; entries: UrlEntry[] }
   | { kind: "var"; name: string }
   | { kind: "router"; name: string }
-  | { kind: "external" };
+  | { kind: "external" }
+) & {
+  /** `include(…, namespace="x")`, or the app name of `include(([…], "x"))`. */
+  namespace?: string;
+};
 
 /** One urlconf entry. `route` is null when it is not a literal (`path(settings.BASE_PATH, …)`). */
 export type UrlEntry =
-  | { t: "view"; route: string | null; regex: boolean; line: number; view: ViewRef }
+  | { t: "view"; route: string | null; regex: boolean; line: number; view: ViewRef; name?: string }
   | { t: "include"; route: string | null; regex: boolean; line: number; target: IncludeTarget }
   | { t: "router"; name: string; line: number };
 
@@ -87,6 +93,10 @@ export function collectDjangoFacts(root: Node, facts: RouteFact[]): void {
       const right = expr.childForFieldName("right");
       if (left?.type !== "identifier" || !right) continue;
       const name = left.text;
+      if (name === "app_name" && right.type === "string") {
+        facts.push({ kind: DJ_APP_NAME, line, data: { name: pyString(right.text) } });
+        continue;
+      }
       if (name === "REST_FRAMEWORK" && right.type === "dictionary") {
         const perms = dictList(right, "DEFAULT_PERMISSION_CLASSES");
         if (perms) facts.push({ kind: DRF_SETTINGS, line, data: { permissionClasses: perms } satisfies DrfSettingsFact });
@@ -209,7 +219,9 @@ function urlEntry(node: Node): UrlEntry | null {
     return { t: "include", route, regex, line, target: router ? { kind: "router", name: router } : { kind: "external" } };
   }
   const view = viewRef(viewNode);
-  return view ? { t: "view", route, regex, line, view } : null;
+  const named = keyword(node, "name");
+  const routeName = named?.type === "string" ? pyString(named.text) : null;
+  return view ? { t: "view", route, regex, line, view, ...(routeName ? { name: routeName } : {}) } : null;
 }
 
 function includeTarget(node: Node): IncludeTarget | null {
@@ -217,14 +229,21 @@ function includeTarget(node: Node): IncludeTarget | null {
   const fn = node.childForFieldName("function");
   if (fn?.text !== "include" && !fn?.text?.endsWith(".include")) return null;
   let arg = positional(node)[0];
+  const nsArg = keyword(node, "namespace");
+  let namespace = nsArg?.type === "string" ? pyString(nsArg.text) : undefined;
   // `include(([...], "app_name"), namespace=…)` — the patterns are the tuple's first item.
-  if (arg?.type === "tuple") arg = arg.namedChildren[0];
+  if (arg?.type === "tuple") {
+    const app = arg.namedChildren[1];
+    if (!namespace && app?.type === "string") namespace = pyString(app.text);
+    arg = arg.namedChildren[0];
+  }
+  const ns = namespace ? { namespace } : {};
   if (!arg) return { kind: "external" };
-  if (arg.type === "string") return { kind: "module", spec: pyString(arg.text) };
-  if (arg.type === "list") return { kind: "list", entries: urlList(arg) ?? [] };
+  if (arg.type === "string") return { kind: "module", spec: pyString(arg.text), ...ns };
+  if (arg.type === "list") return { kind: "list", entries: urlList(arg) ?? [], ...ns };
   const router = routerUrls(arg);
-  if (router) return { kind: "router", name: router };
-  if (arg.type === "identifier") return { kind: "var", name: arg.text };
+  if (router) return { kind: "router", name: router, ...ns };
+  if (arg.type === "identifier") return { kind: "var", name: arg.text, ...ns };
   return { kind: "external" };
 }
 

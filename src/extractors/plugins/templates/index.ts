@@ -24,7 +24,10 @@ import { literalPath, handlerOf, materializeElementRequests } from "../shared/el
  * have none.
  */
 
-export type TemplateDialect = "handlebars" | "liquid" | "velocity" | "razor" | "gotemplate";
+/** The dialects that are languages of their own (own extension, own plugin). */
+export type TemplateLanguage = "handlebars" | "liquid" | "velocity" | "razor" | "gotemplate";
+/** Django's templates are `.html`, which the HTML plugin owns and hands here. */
+export type TemplateDialect = TemplateLanguage | "django";
 
 const TAGS: Record<TemplateDialect, RegExp> = {
   handlebars: /\{\{\{?[\s\S]*?\}?\}\}/g,
@@ -32,6 +35,7 @@ const TAGS: Record<TemplateDialect, RegExp> = {
   velocity: /#\*[\s\S]*?\*#|##[^\n]*|#\{?(?:if|else|elseif|end|foreach|set|parse|include|macro|define|break|stop)\}?(?:\([^)\n]*\))?|\$!?\{?[\w.]+(?:\([^)\n]*\))?\}?/g,
   razor: /@\*[\s\S]*?\*@|@\{[\s\S]*?\n\}|@\([^)\n]*\)|@[A-Za-z_][\w.]*(?:\([^)\n]*\))?/g,
   gotemplate: /\{\{[\s\S]*?\}\}/g,
+  django: /\{#[\s\S]*?#\}|\{%[\s\S]*?%\}|\{\{[\s\S]*?\}\}/g,
 };
 
 const PARTIALS: Record<TemplateDialect, RegExp> = {
@@ -40,7 +44,21 @@ const PARTIALS: Record<TemplateDialect, RegExp> = {
   velocity: /#(?:parse|include)\s*\(\s*["']([\w/.-]+)["']/g,
   razor: /<partial\s+name\s*=\s*["']([\w/.~-]+)["']|Html\.Partial(?:Async)?\(\s*"([\w/.~-]+)"|Html\.RenderPartial(?:Async)?\(\s*"([\w/.~-]+)"|Component\.InvokeAsync\(\s*"(\w+)"/g,
   gotemplate: /\{\{-?\s*template\s+"([\w/.-]+)"/g,
+  django: /\{%-?\s*include\s+["']([\w/.-]+)["']/g,
 };
+
+/**
+ * A URL a template builds from a route's name — Django `{% url 'clubs:detail' club.pk %}` —
+ * written as a marked path so the form/link reader keeps it; `namedTarget` reads it back as
+ * `route:clubs:detail`, which the plugin of the routes resolves.
+ */
+const NAMED_URL: Partial<Record<TemplateDialect, RegExp>> = {
+  django: /\{%-?\s*url\s+(['"])([\w.:-]+)\1[^%]*%\}/g,
+};
+const ROUTE_MARK = "/__route__/";
+const namedTarget = (target: string): string => (target.startsWith(ROUTE_MARK) ? `route:${target.slice(ROUTE_MARK.length).replace(/~/g, ":")}` : target);
+/** htmx requests an element sends: `hx-post="{% url 'clubs:add' %}"`, `hx-get="/clubs"`. */
+const HTMX_RE = /<([a-zA-Z][\w-]*)\b[^>]*?\bhx-(get|post|put|patch|delete)\s*=\s*["']([^"']*)["']/g;
 
 const lineAt = (text: string, index: number): number => {
   let line = 1;
@@ -73,12 +91,15 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
     component(name, "partial", "container", line, []);
   }
 
-  // Tag helpers and forms read on the raw text (their attributes are what blanking would erase).
+  // Tag helpers and forms read on the raw text (their attributes are what blanking would erase),
+  // a URL built from a route name marked first (one line for one line).
+  const named = NAMED_URL[dialect];
+  const marked = named ? source.replace(named, (_m, _q, name: string) => ROUTE_MARK + name.replace(/:/g, "~")) : source;
   const ctlOfView = dialect === "razor" ? viewController(filePath) : null;
-  for (const t of source.matchAll(/<(form|a|button)\b([^>]*)>/gi)) {
+  for (const t of marked.matchAll(/<(form|a|button)\b([^>]*)>/gi)) {
     const tag = t[1]!.toLowerCase();
     const attrs = t[2] ?? "";
-    const line = lineAt(source, t.index!);
+    const line = lineAt(marked, t.index!);
     const isForm = tag === "form";
     const method = ((attr(attrs, "method") ?? (isForm ? "post" : "get"))).toUpperCase();
     let target: string | null = null;
@@ -89,11 +110,22 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
       else if (action) target = `${attr(attrs, "asp-controller") ?? ctlOfView ?? "Home"}#${action}`;
     }
     target ??= literalPath(attr(attrs, isForm ? "action" : "href"));
+    if (target) target = namedTarget(target);
     if (!target || tag === "button") continue;
-    const handler = handlerOf(method, target);
+    const handler = handlerOf(method, target.replace(/^route:/, "/").replace(/:/g, "/"));
     elements.push({ element: isForm ? "form" : "link", event: isForm ? "submit" : "click", handler, line, request: { method, target } });
     component(target, tag, isForm ? "container" : "navigation", line, [`${isForm ? "submit" : "click"}: ${handler}`]);
     if (!isForm && method === "GET") navigatesTo.add(target);
+  }
+
+  if (dialect === "django") {
+    for (const h of marked.matchAll(HTMX_RE)) {
+      const target = literalPath(h[3]);
+      if (!target) continue;
+      const request = { method: h[2]!.toUpperCase(), target: namedTarget(target) };
+      const handler = handlerOf(request.method, request.target.replace(/^route:/, "/").replace(/:/g, "/"));
+      elements.push({ element: "button", event: "click", handler, line: lineAt(marked, h.index!), request });
+    }
   }
 
   const readAbove = new Set(elements.map((e) => e.line));
@@ -115,7 +147,7 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
   const caption = /<title>([^<]+)<\/title>|<h1\b[^>]*>([^<]+)<\/h1>/i.exec(markup);
   const screen: ScreenInfo = {
     name,
-    formType: { handlebars: "HandlebarsTemplate", liquid: "LiquidTemplate", velocity: "VelocityTemplate", gotemplate: "GoTemplate", razor: /(?:^|\/)Pages\//.test(filePath) ? "RazorPage" : "RazorView" }[dialect],
+    formType: { handlebars: "HandlebarsTemplate", liquid: "LiquidTemplate", velocity: "VelocityTemplate", gotemplate: "GoTemplate", django: "DjangoTemplate", razor: /(?:^|\/)Pages\//.test(filePath) ? "RazorPage" : "RazorView" }[dialect],
     caption: (caption?.[1] ?? caption?.[2])?.trim() || null,
     dimensions: null,
     components: components.sort((a, b) => a.line - b.line),
@@ -126,7 +158,7 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
   analysis.screens = [screen];
 }
 
-export const templateSpec = (dialect: TemplateDialect, extensions: string[]): RegexLangSpec => ({
+export const templateSpec = (dialect: TemplateLanguage, extensions: string[]): RegexLangSpec => ({
   language: dialect,
   extensions,
   blockStyle: "brace",

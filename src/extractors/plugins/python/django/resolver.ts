@@ -2,6 +2,7 @@ import type { FileAnalysis, FunctionInfo, RouteInfo } from "../../../../types/an
 import type { ClassRef, ProjectContext } from "../../../../types/project.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
 import {
+  DJ_APP_NAME,
   DJ_ROOT_URLCONF,
   DJ_URLPATTERNS,
   DJ_VIEW_CLASS,
@@ -89,11 +90,14 @@ export const djangoUrlconfResolver: RouteResolver = {
     const routers = new Map<string, Map<string, { router?: DrfRouterFact; registers: Array<DrfRegisterFact & { line: number }> }>>();
     const viewFacts = new Map<string, DjViewClassFact>(); // `${file}::${class}`
     const roots: string[] = [];
+    /** `app_name` per urlconf: the namespace an include of it puts its route names in. */
+    const appNames = new Map<string, string>();
     // DRF's DEFAULT_PERMISSION_CLASSES per sub-project — null where settings files disagree.
     const drfDefaults = new Map<string, string[] | null>();
     let any = false;
     for (const a of analyses) {
       for (const f of a.routeFacts ?? []) {
+        if (f.kind === DJ_APP_NAME) appNames.set(a.filePath, (f.data as { name: string }).name);
         if (f.kind === DJ_URLPATTERNS && f.owner) {
           any = true;
           const vars = urlconfs.get(a.filePath) ?? new Map<string, UrlEntry[]>();
@@ -210,11 +214,11 @@ export const djangoUrlconfResolver: RouteResolver = {
       return drfDefault(ctx.fileOf(file!)?.projectId ?? "");
     };
 
-    const emitView = (file: string, path: string, view: ViewRef, line: number, marker: string | undefined) => {
+    const emitView = (file: string, path: string, view: ViewRef, line: number, marker: string | undefined, name?: string) => {
       const urlconf = ctx.fileOf(file);
       if (!urlconf) return;
       const ref = view.kind === "class" ? ctx.classes.resolve(file, view.name) : null;
-      const extra = marker ? { prefixUnresolved: marker } : {};
+      const extra = { ...(marker ? { prefixUnresolved: marker } : {}), ...(name ? { name } : {}) };
       if (!ref) {
         // A function view, or a class we cannot see: a route at that path, any method.
         const auth = view.kind === "func" ? funcAuth(file, view.name) : {};
@@ -313,8 +317,10 @@ export const djangoUrlconfResolver: RouteResolver = {
       return imported && source ? { file: source, entry: imported } : null;
     };
 
-    const walk = (file: string, entries: UrlEntry[], prefix: string, marker: string | undefined, depth: number) => {
+    // `ns`: the namespaces the includes above put route names in (`dcim:device_add`).
+    const walk = (file: string, entries: UrlEntry[], prefix: string, marker: string | undefined, depth: number, ns: readonly string[] = []) => {
       if (depth > 12) return;
+      const own = depth === 0 && appNames.get(file) ? [appNames.get(file)!] : ns;
       for (const e of entries) {
         if (e.t === "router") {
           const r = routerIn(file, e.name);
@@ -325,23 +331,27 @@ export const djangoUrlconfResolver: RouteResolver = {
         const nextMarker = marker ?? (e.route === null ? "urlconf:dynamic-prefix" : undefined);
         const path = prefix + segment;
         if (e.t === "view") {
-          emitView(file, joinDjango(path), e.view, e.line, nextMarker);
+          emitView(file, joinDjango(path), e.view, e.line, nextMarker, e.name ? [...own, e.name].join(":") : undefined);
           continue;
         }
         const t = e.target;
-        if (t.kind === "list") walk(file, t.entries, path, nextMarker, depth + 1);
+        const under = (target: string | null): string[] => {
+          const n = t.namespace ?? (target ? appNames.get(target) : undefined);
+          return n ? [...own, n] : [...own];
+        };
+        if (t.kind === "list") walk(file, t.entries, path, nextMarker, depth + 1, under(null));
         else if (t.kind === "module") {
           const target = ctx.resolveModule(file, t.spec);
           const conf = target ? urlconfs.get(target)?.get("urlpatterns") : undefined;
           if (target && conf) {
             visited.add(target);
-            walk(target, conf, path, nextMarker, depth + 1);
+            walk(target, conf, path, nextMarker, depth + 1, under(target));
           }
         } else if (t.kind === "var") {
           const local = urlconfs.get(file)?.get(t.name);
           const source = local ? file : ctx.importIndex.localFor(file, t.name);
           const conf = local ?? (source ? urlconfs.get(source)?.get(t.name) : undefined);
-          if (conf && source) walk(source, conf, path, nextMarker, depth + 1);
+          if (conf && source) walk(source, conf, path, nextMarker, depth + 1, under(source === file ? null : source));
         } else if (t.kind === "router") {
           const r = routerIn(file, t.name);
           for (const reg of r?.entry.registers ?? []) expandRegistration(r!.file, path, reg, r!.entry.router?.trailingSlash ?? true, nextMarker);
