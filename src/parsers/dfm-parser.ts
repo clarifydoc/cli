@@ -589,6 +589,8 @@ function buildScreenInfo(
     filePath,
     routePath: null,
     navigatesTo: [],
+    // The form's unit holds its code — the routines that open and load it as much as its handlers.
+    codeFiles: [filePath.replace(/\.(?:dfm|fmx|lfm)$/i, ".pas")],
   };
 }
 

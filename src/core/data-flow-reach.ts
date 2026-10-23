@@ -336,7 +336,7 @@ export function computeDataFlows(
   reach: SymbolReachSummary[],
   routes: Array<RouteInfo & { filePath: string }>,
   analyses: FileAnalysis[],
-  screens: readonly Pick<ScreenInfo, "name" | "filePath" | "routePath" | "renderedBy">[] = [],
+  screens: readonly Pick<ScreenInfo, "name" | "filePath" | "routePath" | "renderedBy" | "codeFiles">[] = [],
   witness?: ReachWitness,
   /** MCP tools, editor and CLI commands (`ProjectAnalysis.entryPoints`): entries when they name their handler. */
   entryPoints: ReadonlyArray<EntryPointInfo & { filePath: string }> = [],
@@ -452,6 +452,8 @@ export function computeDataFlows(
   for (const screen of screens) {
     const keys = [
       ...[...spansFor(screen.filePath).map((s) => s.symbol), "<component>"].map((symbol) => keyOf(screen.filePath, symbol)),
+      // Its code-behind (a Delphi form's unit): every function there is the form's.
+      ...(screen.codeFiles ?? []).filter((f) => f !== screen.filePath).flatMap((f) => spansFor(f).map((s) => keyOf(f, s.symbol))),
       ...(screen.routePath ? (frontendKeys.get(screen.routePath) ?? []) : []),
       // A server-rendered template shows what the routes rendering it load.
       ...(screen.renderedBy ?? []).map((r) => keyOf(r.filePath, `route:${r.method ?? "USE"} ${r.path}`)),

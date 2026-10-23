@@ -237,6 +237,17 @@ describe("computeDataFlows", () => {
     ]);
   });
 
+  it("counts a form's code-behind unit as the screen's own code (a Delphi form loading itself in Execute)", () => {
+    const reach = computeSymbolReach({
+      ...chain,
+      symbolLinks: [...chain.symbolLinks, link("forms/Garage.pas", "TfrmGarage.Execute", "srv/service.ts", "save")],
+    });
+    const screens = [{ name: "frmGarage", filePath: "forms/Garage.dfm", routePath: null, codeFiles: ["forms/Garage.pas"] }];
+    const files = [fns("forms/Garage.pas", ["TfrmGarage.Execute", 10, 30]), fns("forms/Garage.dfm")];
+    expect(computeDataFlows(reach, [], files, screens).map((f) => `${f.entryLabel} ${f.resource}`)).toEqual(["frmGarage cars"]);
+    expect(computeDataFlows(reach, [], files, [{ ...screens[0]!, codeFiles: undefined }])).toEqual([]);
+  });
+
   it("names a routeless screen by name alone, and skips a screen that reaches nothing", () => {
     const reach = computeSymbolReach(chain);
     const flows = computeDataFlows(reach, [], [fns("web/Cars.vue", ["onSave", 5, 9]), fns("web/Empty.vue", ["x", 1, 2])], [

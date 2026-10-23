@@ -1900,6 +1900,12 @@ export interface ScreenInfo {
    * rendered-view pass (`core/rendered-views.ts`).
    */
   renderedBy?: Array<{ filePath: string; method: string | null; path: string; line: number }>;
+  /**
+   * Files whose code is the screen's own, beside its page file: a Delphi
+   * form's `.pas` unit, where `class procedure Execute` builds and loads it.
+   * The screen reaches what their functions reach, as it does its own.
+   */
+  codeFiles?: string[];
 }
 
 /**
