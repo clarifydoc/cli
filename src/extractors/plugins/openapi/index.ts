@@ -560,12 +560,28 @@ export function extractOpenApiRelations(lines: string[], classes: ClassInfo[]): 
   return [...schemas.children].flatMap(([name, schema]) => schemaRelations(name, schema, known));
 }
 
+/**
+ * The schema a node names: its own `$ref`, or the one ref of a single-member
+ * `allOf` / `oneOf` / `anyOf` (OpenAPI 3.0's way to put a description beside a `$ref`).
+ */
+function refOf(node: SpecNode | undefined): string | undefined {
+  if (!node) return undefined;
+  const own = node.children.get("$ref")?.value;
+  if (own) return own;
+  for (const key of ["allOf", "oneOf", "anyOf"]) {
+    const refs = itemsOf(node.children.get(key)).map((p) => p.children.get("$ref")?.value).filter((r): r is string => !!r);
+    if (refs.length === 1 && itemsOf(node.children.get(key)).length === 1) return refs[0];
+  }
+  return undefined;
+}
+
 /** A schema's properties that hold another schema: one of `known`, or a file of its own. */
 function schemaRelations(name: string, schema: SpecNode, known: ReadonlySet<string>): EntityRelation[] {
   const out: EntityRelation[] = [];
   for (const [field, prop] of propertyNodes(schema)) {
-    const directRef = prop.children.get("$ref")?.value;
-    const itemRef = prop.children.get("items")?.children.get("$ref")?.value;
+    const directRef = refOf(prop);
+    // An array's items, or a map's values (`additionalProperties: { $ref }`): many of them.
+    const itemRef = refOf(prop.children.get("items")) ?? refOf(prop.children.get("additionalProperties"));
     const direct = refName(directRef);
     const arrayItem = refName(itemRef);
     const to = direct ?? arrayItem;

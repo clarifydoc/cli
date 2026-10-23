@@ -505,6 +505,37 @@ describe("OpenAPI request schema through the core pass", () => {
   });
 });
 
+describe("OpenAPI relations through a wrapped reference", () => {
+  it("relates a property whose $ref sits in a one-element allOf, and a map of refs", () => {
+    const spec = `openapi: 3.0.3
+paths: {}
+components:
+  schemas:
+    Kit:
+      type: object
+      properties:
+        colour: { type: string }
+    Club:
+      type: object
+      properties:
+        home_kit:
+          description: The kit worn at home.
+          allOf:
+            - $ref: '#/components/schemas/Kit'
+        kits_by_season:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/Kit'
+`;
+    const lines = spec.split("\n");
+    const rels = extractOpenApiRelations(lines, extractOpenApiEntities(lines));
+    expect(rels.map((r) => `${r.fromEntity}.${r.fromField}->${r.toEntity} ${r.cardinality}`)).toEqual([
+      "Club.home_kit->Kit many-to-one",
+      "Club.kits_by_season->Kit one-to-many",
+    ]);
+  });
+});
+
 describe("OpenAPI allOf over several parents", () => {
   const SPEC = `openapi: 3.0.3
 paths:

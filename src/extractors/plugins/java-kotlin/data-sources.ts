@@ -729,12 +729,15 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       if (/^(?:getResultList|getSingleResult|list|uniqueResult)$/.test(method) &&
         /\.create(?:Named|Native|SQL)?Query\s*\(|\.getNamedQuery\s*\(|\.createCriteria\s*\(/.test(receiver)) return;
       // A query held in a constant of the file (`session.createSQLQuery(EXISTS)`), or written at the call.
+      // …or in a local of the method (`String sql = """ SELECT … """; em.createNativeQuery(sql)`).
       const constant = call.firstArg && /^(?:this\.)?\w+$/.test(call.firstArg.text)
-        ? this.stringConsts.get(call.firstArg.text.replace(/^this\./, "")) ?? null
+        ? this.stringConsts.get(call.firstArg.text.replace(/^this\./, "")) ?? localStringValue(node, call.firstArg.text, this.stringConsts)
         : call.firstArg ? stringArgText(call.firstArg, this.stringConsts) : null;
       const fromConstant = constant ? constantQueryTarget(constant) : null;
       const entity = jpaEntityArg(node)
         ?? fromConstant?.entity
+        // `TypedQuery<Player> q = em.createQuery(criteria)`: the declared result type names it.
+        ?? typedQueryEntity(node)
         // `em.merge(person)`, `session.saveOrUpdate(order)`: the instance's declared type.
         ?? (JPA_INSTANCE_METHODS.has(method) ? this.instanceArgType(node, call.firstArg) : null);
       // `createNamedQuery("match.byClub", Long.class)`: the query is declared on an entity elsewhere.
@@ -930,6 +933,31 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     }
     return [];
   }
+}
+
+/** A string a local of the enclosing method holds: `String sql = """ SELECT … """;` (its one assignment). */
+function localStringValue(at: Node, name: string, consts: ReadonlyMap<string, string>): string | null {
+  let method: Node | null = at.parent;
+  while (method && !/^(?:method_declaration|constructor_declaration|lambda_expression)$/.test(method.type)) method = method.parent;
+  if (!method) return null;
+  const values: string[] = [];
+  for (const decl of method.descendantsOfType("variable_declarator")) {
+    if (decl?.childForFieldName("name")?.text !== name || decl.startIndex > at.startIndex) continue;
+    const value = decl.childForFieldName("value");
+    const text = value ? stringArgText(value, consts) : null;
+    if (text) values.push(text);
+  }
+  return values.length === 1 ? values[0]! : null;
+}
+
+/** `TypedQuery<Player> q = em.createQuery(…)` / `Query<Player>` (Hibernate): the result type the declaration states. */
+function typedQueryEntity(call: Node): string | null {
+  let n: Node | null = call;
+  while (n && n.type !== "variable_declarator" && n.type !== "expression_statement" && n.type !== "block") n = n.parent;
+  const decl = n?.type === "variable_declarator" ? n.parent : null;
+  const type = decl?.type === "local_variable_declaration" || decl?.type === "field_declaration" ? decl.childForFieldName("type")?.text : null;
+  const m = type ? /^(?:TypedQuery|Query|NativeQuery|SelectionQuery)\s*<\s*([A-Z]\w*)\s*>$/.exec(type) : null;
+  return m && !NOT_AN_ENTITY_LITERAL.has(m[1]!) && !/^(?:Long|Integer|String|Object|Tuple|Boolean|Double)$/.test(m[1]!) ? m[1]! : null;
 }
 
 /** The type an argument builds: Java `new X(...)`, Kotlin `X(...)`, a builder chain rooted at it (`X.newBuilder()…`). */

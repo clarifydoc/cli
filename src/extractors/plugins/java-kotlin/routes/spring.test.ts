@@ -77,6 +77,20 @@ public class PlayerController {
   });
 });
 
+describe("Spring routes — a class prefix held in a constant", () => {
+  it("reads @RequestMapping(Class.PATH) and @RequestMapping(value = PATH) as the constant's value", async () => {
+    const routes = await routesOf(`package x;
+@RestController
+@RequestMapping(KitUploadApi.PATH)
+public class KitUploadApi {
+  public static final String PATH = "/ui/upload-api/v1";
+  @PutMapping("/{clubId}/documents/upload")
+  public void upload() {}
+}`, "java");
+    expect(routes).toEqual(["PUT /ui/upload-api/v1/{clubId}/documents/upload"]);
+  });
+});
+
 describe("Spring routes — regex fallback (misparsed source)", () => {
   // tree-sitter-kotlin misparses some files; the fallback scans raw source.
   const SRC = `@RestController("mobileAppController")

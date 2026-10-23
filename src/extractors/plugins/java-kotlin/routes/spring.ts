@@ -477,7 +477,27 @@ function extractRequestMappingPath(node: Node): string | null {
   if (!isAnnotationNode(node)) return null;
   if (annotationSimpleName(node) !== "RequestMapping") return null;
   const args = annotationArgsNode(node);
-  return args ? extractAnnotationPath(args) : null;
+  return args ? extractAnnotationPath(args) ?? constantPathArg(args) : null;
+}
+
+/**
+ * `@RequestMapping(KitUploadApi.PATH)` / `(PATH)` / `(value = PATH)`: the value of
+ * that `static final String` declared in this file.
+ */
+function constantPathArg(args: Node): string | null {
+  const ref = args.namedChildren.map((a) => (a.type === "element_value_pair" ? a.childForFieldName("value") : a))
+    .find((a) => a?.type === "identifier" || a?.type === "field_access");
+  const name = ref ? (ref.type === "field_access" ? ref.childForFieldName("field")?.text : ref.text) : null;
+  if (!name) return null;
+  for (const decl of args.tree.rootNode.descendantsOfType("field_declaration")) {
+    if (!decl || !/\bstatic\b/.test(decl.text) || !/\bfinal\b/.test(decl.text)) continue;
+    for (const d of decl.namedChildren) {
+      if (d.type !== "variable_declarator" || d.childForFieldName("name")?.text !== name) continue;
+      const value = d.childForFieldName("value");
+      if (value?.type === "string_literal" && /^"[^"\\]*"$/.test(value.text)) return value.text.slice(1, -1);
+    }
+  }
+  return null;
 }
 
 /** One RouteInfo per HTTP method the annotation declares (≥1 for a mapping annotation, else none). */

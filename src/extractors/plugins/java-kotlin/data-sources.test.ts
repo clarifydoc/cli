@@ -154,6 +154,18 @@ describe("DAO / Repository receiver → entity (the dominant data path here)", (
     ]);
   });
 
+  it("reads a query held in a local text block, and the entity a TypedQuery's type states", async () => {
+    const s = db(await sourcesOf(
+      `    String sql = """
+        SELECT group_id FROM club_group WHERE x = ?
+        """;
+    em.createNativeQuery(sql).getResultList();
+    TypedQuery<PlayerEntity> query = em.createQuery(criteria);`,
+      "java",
+    ));
+    expect(s.map((d) => `${d.name} ${d.entity ?? "-"}`)).toEqual(["createNativeQuery club_group", "createQuery PlayerEntity"]);
+  });
+
   it("handles a `this.playerRepository.save()` receiver", async () => {
     const s = db(await sourcesOf(`    this.playerRepository.save(u)`, "kotlin"));
     expect(s.some((d) => d.entity === "player")).toBe(true);
