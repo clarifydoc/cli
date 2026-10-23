@@ -203,7 +203,8 @@ function sourceScopes(sql: string): { inScope: (i: number) => boolean; depthAt: 
     } else if (ch === "'") {
       inQuote = true;
     } else if (ch === "(") {
-      stack.push(/^\(\s*(?:SELECT|WITH)\b/i.test(sql.slice(i, i + 16)));
+      // The subquery may open lines below its `(` (`VALUES ((⏎            SELECT id`).
+      stack.push(/^\(\s*(?:SELECT|WITH)\b/i.test(sql.slice(i, i + 80)));
     } else if (ch === ")") {
       stack.pop();
     }
@@ -259,6 +260,21 @@ function procedureCall(stmt: string): string | null {
   const rest = stmt.slice(exec.index! + exec[0].length);
   const spelled = exec[0].includes("[") || /[._$]/.test(name ?? "") || /^\s*[(@:?]/.test(rest);
   return spelled ? routineName(name) : null;
+}
+
+/**
+ * The stored routine a command runs: the statement's own `EXEC x` / `CALL x(…)`
+ * / `{call x(?)}`, or — when the caller says the command is a stored procedure
+ * (`CommandType.StoredProcedure`, `callproc`, `withProcedureName`) — its text
+ * when that is a bare name (`dbo.usp_SignPlayer`, `[dbo].[usp_SignPlayer]`).
+ * Null for anything else.
+ */
+export function routineCalled(text: string, storedProcedure = false): string | null {
+  if (storedProcedure) {
+    const bare = /^\s*((?:\[[^\]]+\]|"[^"]+"|\w+)(?:\.(?:\[[^\]]+\]|"[^"]+"|\w+))*)\s*;?\s*$/.exec(text);
+    if (bare) return routineName(bare[1]!.replace(/[[\]"]/g, ""));
+  }
+  return procedureCall(text);
 }
 
 /** True when `text` opens a statement the scanner reads. */

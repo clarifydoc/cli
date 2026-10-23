@@ -725,3 +725,22 @@ describe("C# typed repository query helpers", () => {
     ]);
   });
 });
+
+describe("C# stored procedures — the routine a command runs", () => {
+  it("names the procedure of an ADO.NET command, a Dapper call and an EF raw EXEC", async () => {
+    const rows = (await dbSourcesOf(`    using var cmd = new SqlCommand("dbo.usp_SignPlayer", conn);
+    cmd.CommandType = CommandType.StoredProcedure;
+    cmd.ExecuteNonQuery();
+    var agent = await connection.QueryFirstAsync<int>("EXEC usp_NotifyAgent @PlayerId", new { PlayerId = 7 });
+    var wage = await connection.ExecuteScalarAsync<decimal>("usp_Wage", new { PlayerId = 7 }, commandType: CommandType.StoredProcedure);
+    await _db.Database.ExecuteSqlRawAsync("EXEC dbo.usp_CloseWindow @p0", 7);
+    var plain = await connection.QueryAsync<Car>("usp_NotARoutine");`)).map((d) => `${d.name} ${d.target ?? "-"} ${d.routine ? "routine" : ""}`.trim());
+    expect(rows).toEqual([
+      "ADO.NET: ExecuteNonQuery dbo.usp_SignPlayer routine",
+      "Dapper: QueryFirstAsync usp_NotifyAgent routine",
+      "Dapper: ExecuteScalarAsync usp_Wage routine",
+      "EF: ExecuteSqlRawAsync dbo.usp_CloseWindow routine",
+      "Dapper: QueryAsync usp_NotARoutine",
+    ]);
+  });
+});

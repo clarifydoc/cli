@@ -784,3 +784,31 @@ describe("Spring application listeners", () => {
     expect(rows.map((d) => `${d.target} @${d.line}`)).toEqual(["StandingsChangedEvent @4"]);
   });
 });
+
+describe("JVM stored procedures", () => {
+  it("names the routine of a JDBC call, a SimpleJdbcCall and a JPA stored-procedure query", async () => {
+    const rows = await sourcesOf(`    CallableStatement cs = conn.prepareCall("{call usp_SignPlayer(?)}");
+    SimpleJdbcCall call = new SimpleJdbcCall(dataSource).withProcedureName("usp_NotifyAgent");
+    StoredProcedureQuery q = entityManager.createStoredProcedureQuery("league.close_window");
+    PreparedStatement ps = conn.prepareCall("SELECT id FROM players");`, "java");
+    expect(rows.filter((d) => d.routine).map((d) => `${d.name} ${d.target}`)).toEqual([
+      "prepareCall usp_SignPlayer",
+      "withProcedureName usp_NotifyAgent",
+      "createStoredProcedureQuery league.close_window",
+    ]);
+  });
+
+  it("reads a Spring Data @Procedure as the routine its method runs", async () => {
+    const src = `package x;
+public interface PlayerRepository extends CrudRepository<Player, Long> {
+    @Procedure(procedureName = "usp_SignPlayer")
+    void signPlayer(int playerId);
+
+    @Procedure("usp_NotifyAgent")
+    int notifyAgent(int playerId);
+}`;
+    const tree = await parseSource(src, "java", "PlayerRepository.java");
+    const rows = new JavaKotlinDataSourceExtractor().extract(tree, src).filter((d) => d.routine);
+    expect(rows.map((d) => `${d.target} @${d.line}`)).toEqual(["usp_SignPlayer @4", "usp_NotifyAgent @7"]);
+  });
+});

@@ -98,6 +98,9 @@ export const JS_PLATFORM_SUFFIXES = [".native", ".ios", ".android", ".web"] as c
  * body (meta.ts and everything it imports) is loaded lazily per language;
  * this module must stay a leaf: types, frameworks.ts, package-manifests.ts and service-config.ts only.
  */
+/** Files that make a sub-project's exports global without an import. */
+const JS_IMPORTS_BIND_NAMES = { autoImport: /(?:^|\/)(?:nuxt\.config\.[cm]?[jt]s|auto-imports\.d\.ts|\.nuxt\/imports\.d\.ts)$/ };
+
 export const typescriptManifest: LanguagePluginManifest = {
   blockingCalls: /^(?:(?:fs|child_process)\.)?(?:readFileSync|writeFileSync|appendFileSync|readdirSync|statSync|existsSync|mkdirSync|copyFileSync|execSync|execFileSync|spawnSync)$/,
   testCommand: jsTestCommand,
@@ -113,6 +116,8 @@ export const typescriptManifest: LanguagePluginManifest = {
   // A field is only reached through the instance (`this.x`); a bare name never is one.
   explicitSelfMembers: true,
   moduleLocalsInScope: true,
+  // `new Map()` in a module is the global unless `Map` is imported; Nuxt and unplugin-auto-import make exports global.
+  importsBindNames: JS_IMPORTS_BIND_NAMES,
   platformSuffixes: JS_PLATFORM_SUFFIXES,
   grammar: {
     variants: { typescript: { pkg: "tree-sitter-typescript", wasm: "tree-sitter-typescript.wasm" }, tsx: { pkg: "tree-sitter-typescript", wasm: "tree-sitter-tsx.wasm" } },
@@ -143,6 +148,8 @@ export const javascriptManifest: LanguagePluginManifest = {
   // A field is only reached through the instance (`this.x`); a bare name never is one.
   explicitSelfMembers: true,
   moduleLocalsInScope: true,
+  // `new Map()` in a module is the global unless `Map` is imported; Nuxt and unplugin-auto-import make exports global.
+  importsBindNames: JS_IMPORTS_BIND_NAMES,
   platformSuffixes: JS_PLATFORM_SUFFIXES,
   grammar: { variants: { javascript: { pkg: "tree-sitter-javascript", wasm: "tree-sitter-javascript.wasm" } } },
   testFilePatterns: JS_TEST_PATTERNS,

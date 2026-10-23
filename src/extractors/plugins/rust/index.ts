@@ -54,7 +54,8 @@ export const rustSpec: RegexLangSpec = {
   callPatterns: [
     {
       pattern: /\b([A-Z]\w*)::([a-zA-Z_]\w*)\s*\(/g,
-      buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2]! }),
+      // The path names the type, so a noise-named associated function (`Invoice::open`, `Club::new`) is still kept.
+      buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2]!, receiverType: m[1]! }),
     },
     {
       pattern: /\bSelf::([a-zA-Z_]\w*)\s*\(/g,

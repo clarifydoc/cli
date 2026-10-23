@@ -22,6 +22,8 @@ export const pythonManifest: LanguagePluginManifest = {
   extensions: [".py", ".pyw"],
   // A field is only reached through the instance (`this.x`); a bare name never is one.
   explicitSelfMembers: true,
+  // A name a module neither defines nor imports is a builtin, never another module's.
+  importsBindNames: {},
   // `class D(B, C)`: bases are classes, searched in C3 order.
   multipleInheritance: true,
   grammar: { variants: { python: { pkg: "tree-sitter-python", wasm: "tree-sitter-python.wasm" } } },

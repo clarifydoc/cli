@@ -379,3 +379,15 @@ describe("buildEntityGraph — a schema table in a sub-project of its own", () =
     ]);
   });
 });
+
+describe("schema-script tables answer their bare name", () => {
+  it("joins `REFERENCES Clubs(Id)` to `CREATE TABLE dbo.Clubs`, and two schemas' tables of one name to neither", () => {
+    const table = (name: string, line: number) => ({ name, line, endLine: line + 3, decorators: ["table"], properties: [{ name: "Id", type: "INT" }], methods: [], implements: [], extends: null, isExported: true });
+    const fk = (from: string, to: string): EntityRelation => ({ fromEntity: from, fromField: "ClubId", toEntity: to, cardinality: "many-to-one", foreignKey: "ClubId", orm: "sql", confidence: "EXTRACTED" });
+    const schema = (classes: unknown[], relations: EntityRelation[]) =>
+      ({ filePath: "db/schema.sql", language: "sql", projectId: "root", classes, entityRelations: relations, dataSources: [] }) as unknown as FileAnalysis;
+    const edges = (a: FileAnalysis) => buildEntityGraph([a]).edges.map((e) => `${e.source.split("::")[1]} > ${e.target.split("::")[1]}`);
+    expect(edges(schema([table("dbo.Clubs", 1), table("Coaches", 6)], [fk("Coaches", "Clubs")]))).toEqual(["Coaches > dbo.Clubs"]);
+    expect(edges(schema([table("dbo.Clubs", 1), table("sales.Clubs", 6), table("Coaches", 11)], [fk("Coaches", "Clubs")]))).toEqual([]);
+  });
+});

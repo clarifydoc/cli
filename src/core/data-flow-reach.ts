@@ -111,7 +111,8 @@ export interface SymbolReachInput {
   /** Outbound api-call effects, direct-attributed (from attributeApiCallsToSymbols). */
   apiCallAccess?: SymbolApiCallAccess[];
   /**
-   * `${file}::${line}` → read/write for DB access sites the plugins could
+   * `${file}::${line}::${entity}` (lowercased; a write wins), else
+   * `${file}::${line}`, → read/write for DB access sites the plugins could
    * classify (ORM verb) plus any `db-write` mutation line. Splits the coarse
    * `db` effect into `db-read`/`db-write`; a site absent from the map stays the
    * coarse `db` effect (honest "unclassified"). Built in the analyzer so core
@@ -193,7 +194,7 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
         // call site (a symbol that both reads and writes an entity seeds both).
         const kinds = new Set<DataEffectKind>();
         for (const site of row.sites) {
-          const acc = dbAccessByLine?.get(`${row.file}::${site.line}`);
+          const acc = dbAccessByLine?.get(`${row.file}::${site.line}::${resource.toLowerCase()}`) ?? dbAccessByLine?.get(`${row.file}::${site.line}`);
           kinds.add(acc === "write" ? "db-write" : acc === "read" ? "db-read" : "db");
         }
         if (kinds.size === 0) kinds.add("db");

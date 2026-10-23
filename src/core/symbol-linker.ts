@@ -1267,6 +1267,8 @@ interface LinkContext {
   namespaceSuffixIndex: Map<string, Array<{ file: string; name: string }>>;
   /** filePath → sub-project id, for project-scoped candidate selection. */
   projectOf: Map<string, string>;
+  /** Lazy: sub-projects whose exports are global without an import (`importsBindNames.autoImport`). */
+  autoImportProjects?: Set<string>;
   /** filePath → language, for type-space checks on formats without an extension family. */
   languageOf: Map<string, string>;
   /** Lazy per-file cache: files this file's imports resolve to (Strategy 4's
@@ -2149,6 +2151,10 @@ function resolveCallToDefinition(
 
   let targetFile: string | null;
 
+  // `function run(open) { open(); }` beside `import { startJournal as open }`: the
+  // parameter is what the body calls, never the import it shadows.
+  if (!isQualified && !reference && call.kind === "cross-file" && findEnclosingCallable(analysis, sourceSymbol)?.params.some((p) => p.name === call.name)) return null;
+
   if (call.kind === "cross-file" && call.target) {
     // Resolve import source to actual file path — by the language's own module rules when it has them (`crate::util`).
     const ownResolver = pluginFor(analysis.language)?.resolveImport;
@@ -2473,7 +2479,7 @@ function resolveCallToDefinition(
       // A constructor of a globally-unique type is unambiguous even across
       // sub-projects (`new GetRoleHoldersQuery()` in Api → its record in
       // Application), so allow cross-project resolution here.
-      if (entry && isSafeHeuristicTarget(entry, sourceFile, analysis.projectId, { allowCrossProject: true })) {
+      if (entry && isSafeHeuristicTarget(entry, sourceFile, analysis.projectId, { allowCrossProject: true }) && !unboundAcrossModules(ctx, analysis, className, entry.file)) {
         return mkLink(
           entry.file,
           entry.ctorSymbol ?? className,
@@ -2677,7 +2683,7 @@ function resolveCallToDefinition(
       // define the type (a Domain entity AND its EF-scaffold duplicate), the
       // correct binding depends on real type resolution / which `using` is in
       // scope — guessing produces false edges, so leave those to the LSP layer.
-      if (entry && isSafeHeuristicTarget(entry, sourceFile, analysis.projectId, { allowCrossProject: true })) {
+      if (entry && isSafeHeuristicTarget(entry, sourceFile, analysis.projectId, { allowCrossProject: true }) && !unboundAcrossModules(ctx, analysis, typeName, entry.file)) {
         return mkLink(entry.file, entry.ctorSymbol ?? typeName, entry.ctorLine ?? entry.classLine, "INFERRED", "type-argument");
       }
     }
@@ -3525,16 +3531,19 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
   // Not where one type spans files (partial classes): there the richest
   // declaration below stands for the type.
   if (declOf(sourceFile, typeName) && !typesSpanFiles(languageOf(sourceFile))) return sourceFile;
+  // A module reaches another module's class only through an import (`importsBindNames`).
+  const reachable = (f: string): boolean => !source || !unboundAcrossModules(ctx, source, typeName, f);
   const own = ctx.classByProject.get(`${projectId}\0${typeName}`);
   if (own) {
-    const pick = own.files.length === 1 ? own.file : pickDefinition(typeName, own.files, sourceFile, declOf, languageOf);
+    const ownFiles = own.files.filter(reachable);
+    const pick = ownFiles.length === 1 ? ownFiles[0]! : ownFiles.length > 1 ? pickDefinition(typeName, ownFiles, sourceFile, declOf, languageOf) : null;
     if (pick) return pick;
   }
   // Elsewhere in the type space: a unique definition — or one type split
   // across files of a single directory.
   const srcLang = ctx.languageOf.get(sourceFile) ?? "";
   const files = (ctx.classFiles.get(typeName) ?? []).filter((f) =>
-    sameTypeSpace(sourceFile, srcLang, f, ctx.languageOf.get(f) ?? ""),
+    sameTypeSpace(sourceFile, srcLang, f, ctx.languageOf.get(f) ?? "") && reachable(f),
   );
   if (files.length === 1) return files[0]!;
   if (files.length > 1 && new Set(files.map((f) => f.slice(0, f.lastIndexOf("/") + 1))).size === 1) {
@@ -3544,6 +3553,47 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
   // definition sits in where folders mirror namespaces: the one it names.
   const named = files.length > 1 && source ? files.filter((f) => importsDirectoryOf(source, f)) : [];
   return named.length === 1 ? named[0]! : null;
+}
+
+/** A file that imports or exports anything is a module: its top-level names are its own. */
+const isModuleFile = (a: FileAnalysis): boolean => a.imports.length > 0 || (a.exports?.length ?? 0) > 0;
+
+/**
+ * `importsBindNames`: whether `name`, written in `source`, could only reach
+ * `targetFile` by a global lookup no import supports — a module naming a
+ * class it neither declares nor imports, declared in another module. `new
+ * Map()` beside a project's own `export class Map`, a `Response` typed by the
+ * DOM. A script on either side, an ambient `.d.ts`, a namespace or wildcard
+ * import into the project and an auto-import sub-project all keep the lookup.
+ */
+function unboundAcrossModules(ctx: LinkContext, source: FileAnalysis, name: string, targetFile: string): boolean {
+  if (targetFile === source.filePath || !pluginFor(source.language)?.importsBindNames || !isModuleFile(source)) return false;
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const target = ctx.analysisByFile.get(targetFile);
+  if (!target || !isModuleFile(target) || /\.d\.[cm]?ts$/.test(targetFile)) return false;
+  for (const imp of source.imports) {
+    if (imp.specifiers.includes(name) || Object.values(imp.aliases ?? {}).includes(name)) return false;
+    const wildcard = imp.isNamespace || imp.specifiers.includes("*");
+    // The module itself, and each name it gives as a module of its own
+    // (`from league.pkgs import i18n` → `i18n.ProviderFactory`).
+    const sep = imp.source.includes("/") ? "/" : ".";
+    const modules = [imp.source, ...imp.specifiers.filter((s) => s !== "*").map((s) => `${imp.source}${imp.source.endsWith(sep) ? "" : sep}${s}`)];
+    for (const mod of modules) {
+      const f = resolveTarget(mod, source.filePath, ctx.filePathMap);
+      if (!f) continue;
+      if (f === targetFile || (wildcard && mod === imp.source)) return false;
+      // A package: the entry file of a directory named as the module, holding the class.
+      const dir = f.slice(0, f.lastIndexOf("/"));
+      if (dir.split("/").pop() === mod.split(/[./]/).pop() && targetFile.startsWith(`${dir}/`)) return false;
+    }
+  }
+  if (!ctx.autoImportProjects) {
+    ctx.autoImportProjects = new Set();
+    for (const a of ctx.analyses) {
+      if (pluginFor(a.language)?.importsBindNames?.autoImport?.test(a.filePath)) ctx.autoImportProjects.add(ctx.projectOf.get(a.filePath) ?? "root");
+    }
+  }
+  return !ctx.autoImportProjects.has(ctx.projectOf.get(source.filePath) ?? "root");
 }
 
 /** Whether a namespace the source imports is the file's directory, read with dots (`League.Clubs/Interfaces/X.cs`). */

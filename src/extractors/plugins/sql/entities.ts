@@ -1,6 +1,7 @@
 import type { FileAnalysis, SchemaOp } from "../../../types/analysis.js";
 import { fkRelation, replaySchema } from "../shared/schema-replay.js";
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
+import { GO_LINE } from "./index.js";
 
 /**
  * SQL migrations replayed into one schema.
@@ -119,6 +120,12 @@ function statements(lines: string[]): Array<{ text: string; line: number }> {
       inBlock = true;
     }
     l = l.replace(/--.*$/, "");
+    // A `GO` batch separator ends the statement as a `;` does.
+    if (GO_LINE.test(l)) {
+      if (buf.trim()) out.push({ text: buf.trim(), line: start });
+      buf = "";
+      return;
+    }
     if (!buf.trim()) start = i + 1;
     for (const ch of l) {
       if (ch === ";") {

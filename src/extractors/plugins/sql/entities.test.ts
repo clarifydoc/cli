@@ -48,3 +48,22 @@ DROP TABLE IF EXISTS x, y CASCADE;
     expect([v("db/U10__x.sql"), v("db/R__views.sql"), v("migrations/000002_add.down.sql"), v("db/schema.sql")]).toEqual([null, null, null, null]);
   });
 });
+
+describe("schema statements split by GO", () => {
+  it("reads each batch of a script without semicolons", () => {
+    const ops = schemaOpsOf(`CREATE TABLE [dbo].[Clubs] (
+  [Id] INT NOT NULL PRIMARY KEY
+)
+GO
+CREATE TABLE [dbo].[Players] (
+  [Id] INT NOT NULL PRIMARY KEY,
+  [ClubId] INT NOT NULL REFERENCES [dbo].[Clubs]([Id])
+)
+GO`.split("\n"));
+    expect(ops.map((o) => `${o.op} ${o.table}${o.to ? ` → ${o.to}` : ""} @${o.line}`)).toEqual([
+      "create-table dbo.Clubs @1",
+      "create-table dbo.Players @5",
+      "add-foreign-key dbo.Players → dbo.Clubs @5",
+    ]);
+  });
+});

@@ -264,7 +264,10 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
       // Index by full name AND bare last segment so a relation whose target is
       // written bare (`class_name: 'League::MatchReport'` → "MatchReport")
       // still resolves to a namespaced entity node.
-      for (const key of new Set([cls.name, cls.name.split("::").pop()!])) {
+      // A schema script's table answers its bare name too: `REFERENCES Clubs(Id)`
+      // reaches `CREATE TABLE dbo.Clubs` (the default schema is not written).
+      const ddlBare = ddlIds.has(id) ? [cls.name.split(".").pop()!] : [];
+      for (const key of new Set([cls.name, cls.name.split("::").pop()!, ...ddlBare])) {
         const arr = nameToIds.get(key) ?? [];
         if (!arr.includes(id)) arr.push(id);
         nameToIds.set(key, arr);
@@ -283,8 +286,14 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
   function resolveTarget(name: string, fromFile: string, fromProject: string, orm?: string | null): string | null {
     const ids = nameToIds.get(name);
     if (!ids || ids.length === 0) return null;
-    const sameFile = ids.find((id) => id.startsWith(`${fromFile}::`));
-    if (sameFile) return sameFile;
+    // In the same file, the one of that name — or, by a bare name, the one table it can be
+    // (`dbo.Clubs` and `sales.Clubs` in one script leave `Clubs` undecided).
+    const sameFile = ids.filter((id) => id.startsWith(`${fromFile}::`));
+    if (sameFile.length === 1) return sameFile[0]!;
+    if (sameFile.length > 1) {
+      const exact = sameFile.filter((id) => nodes.get(id)?.name === name);
+      return exact.length === 1 ? exact[0]! : null;
+    }
     const pick = (cands: string[]): string | null => {
       if (cands.length === 1) return cands[0]!;
       if (cands.length > 1 && orm) {

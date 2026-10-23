@@ -1,6 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import { dbAccessFor, dbVerbTable, sqlVerbAccess } from "../shared/db-access.js";
-import { tableFrom } from "../shared/sql-string-sources.js";
+import { routineCalled, tableFrom } from "../shared/sql-string-sources.js";
 import type { DataSourceInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { simpleTypeName } from "../../shared/type-parser.js";
@@ -127,6 +127,11 @@ const SPRING_DATA_ACCESS = dbVerbTable(
 );
 
 const JDBC_ACCESS = dbVerbTable(JDBC_READS, JDBC_WRITES);
+
+/** Calls whose first argument names a stored routine (or is a `{call x(?)}` statement). */
+const STORED_ROUTINE_METHODS = new Set([
+  "prepareCall", "withProcedureName", "withFunctionName", "createStoredProcedureQuery", "createStoredProcedureCall",
+]);
 
 /** CXF `WebClient` methods that send the request, and the verb each sends (`invoke`/`method` name theirs). */
 const CXF_VERB: Record<string, string> = { get: "GET", post: "POST", put: "PUT", delete: "DELETE", head: "HEAD", options: "OPTIONS", form: "POST" };
@@ -608,6 +613,14 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       // `@SqlUpdate`, MyBatis `@Select`/`@Insert`/…: the statement names the
       // table (JPQL names the entity, which is what the ER model calls it).
       // Room's SQL-less `@Insert fun add(user: User)` writes its parameter's.
+      // Spring Data `@Procedure("usp_Sign")` / `@Procedure(procedureName = "usp_Sign")`: the method runs that routine.
+      const proc = /^@Procedure\s*\(\s*(?:(?:procedureName|value)\s*=\s*)?"([^"]+)"/.exec(text);
+      const procHolder = proc ? (node.parent?.type === "modifiers" ? node.parent.parent : node.parent) : null;
+      if (proc && procHolder && /^(?:method_declaration|function_declaration)$/.test(procHolder.type)) {
+        const nameNode = procHolder.childForFieldName("name") ?? procHolder.children.find((c) => c.type === "simple_identifier") ?? procHolder;
+        sources.push(this.ds({ kind: "database", name: "@Procedure", target: proc[1]!, routine: true, line: nameNode.startPosition.row + 1 }));
+      }
+
       const sqlAnn = text.match(SQL_ANNOTATION_RE);
       if (sqlAnn) {
         const access = annotatedSqlAccess(node, text, sqlAnn[1]!, this.isRoomFile);
@@ -660,6 +673,19 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   private classifyCall(node: Node, call: CallParts, sources: DataSourceInfo[]): void {
     const { method, receiver } = call;
     const line = node.startPosition.row + 1;
+
+    // 0) A stored procedure called by name: JDBC `conn.prepareCall("{call usp_Sign(?)}")`, Spring's
+    // `new SimpleJdbcCall(ds).withProcedureName("usp_Sign")`, JPA `em.createStoredProcedureQuery("usp_Sign")`.
+    if (STORED_ROUTINE_METHODS.has(method) && call.firstArg) {
+      const text = /^(?:this\.)?\w+$/.test(call.firstArg.text)
+        ? this.stringConsts.get(call.firstArg.text.replace(/^this\./, "")) ?? localStringValue(node, call.firstArg.text, this.stringConsts)
+        : stringArgText(call.firstArg, this.stringConsts);
+      const routine = text ? routineCalled(text, method !== "prepareCall") : null;
+      if (routine) {
+        sources.push(this.ds({ kind: "database", name: method, target: routine, routine: true, line }));
+        return;
+      }
+    }
 
     // 1) jOOQ — table lives in the first argument. Only CONSUME the call when a
     // table is actually found; otherwise fall through, since a verb like

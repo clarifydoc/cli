@@ -303,3 +303,23 @@ describe("Python api-call — urllib", () => {
     expect(await rows('class Pitch:\n    def urlopen(self, x): pass\nPitch().urlopen("/x")')).toEqual([]);
   });
 });
+
+describe("Python stored procedures", () => {
+  it("names the routine of a DB-API callproc and of an EXEC / CALL statement", async () => {
+    const src = `def sign(conn, pid):
+    cur = conn.cursor()
+    cur.callproc("usp_SignPlayer", [pid])
+    cur.execute("EXEC dbo.usp_NotifyAgent %s", (pid,))
+    cur.execute("CALL league.close_window(%s)", (pid,))
+    cur.execute("SELECT id FROM players WHERE id = %s", (pid,))
+`;
+    const tree = await parseSource(src, "python" as never, "x.py");
+    const rows = new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
+    expect(rows.map((d) => `${d.target} ${d.routine ? "routine" : d.entity}`)).toEqual([
+      "usp_SignPlayer routine",
+      "dbo.usp_NotifyAgent routine",
+      "league.close_window routine",
+      "players players",
+    ]);
+  });
+});

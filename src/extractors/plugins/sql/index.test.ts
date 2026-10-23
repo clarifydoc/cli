@@ -28,7 +28,7 @@ SELECT * FROM generate_series(1, 3);`);
 });
 
 describe("SQL DML rows skip relations that are not tables", () => {
-  it("drops CTEs, transition tables, catalogs and a wrapped ON UPDATE CASCADE", () => {
+  it("drops CTEs, transition tables, catalogs and a wrapped ON UPDATE CASCADE — the table a CTE reads stays", () => {
     const out = rows(`WITH recent AS (SELECT id FROM game)
 SELECT * FROM recent;
 SELECT relname FROM pg_class;
@@ -38,7 +38,7 @@ SELECT * FROM information_schema.views;
 CREATE TRIGGER t AFTER DELETE ON ball REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION f();
 SELECT count(*) FROM
   old_rows;`);
-    expect(out.filter((r) => r.entity).map((r) => r.entity)).toEqual([]);
+    expect(out.filter((r) => r.entity).map((r) => r.entity)).toEqual(["game"]);
   });
 });
 
@@ -89,5 +89,88 @@ CREATE TABLE league.goal (
   match_id VARCHAR(36) REFERENCES league."match"(match_id)
 );`.split("\n"), []);
     expect(classes.map((c) => [c.name, c.implements])).toEqual([["league.match", []], ["league.goal", ["league.match"]]]);
+  });
+});
+
+describe("T-SQL routines and batches", () => {
+  const procs = `CREATE PROCEDURE [dbo].[usp_SignPlayer]
+  @PlayerId INT
+AS
+BEGIN
+  BEGIN TRANSACTION
+  SELECT CASE WHEN Fee > 0 THEN 1 ELSE 0 END AS Paid FROM dbo.Contracts WHERE PlayerId = @PlayerId
+  INSERT INTO dbo.Audit (PlayerId) VALUES (@PlayerId)
+  COMMIT
+END
+GO
+CREATE PROC dbo.usp_NotifyAgent @PlayerId INT AS
+  SELECT AgentId FROM dbo.Agents WHERE PlayerId = @PlayerId
+GO
+CREATE FUNCTION "league"."fn_Wage" (@PlayerId INT) RETURNS MONEY AS
+BEGIN
+  RETURN (SELECT Wage FROM dbo.Contracts WHERE PlayerId = @PlayerId)
+END
+GO`;
+
+  it("names a routine whole, quotes removed, and ends it at its END or its batch's GO", () => {
+    const lines = procs.split("\n");
+    const fns = sqlSpec.postProcessFunctions!(lines, [1, 11, 14].map((line) => ({ name: "x", params: [], returnType: null, isAsync: false, isExported: true, decorators: [], calls: [], line, endLine: line })));
+    expect(fns.map((f) => [f.name, f.line, f.endLine])).toEqual([
+      ["dbo.usp_SignPlayer", 1, 9],
+      ["dbo.usp_NotifyAgent", 11, 12],
+      ["league.fn_Wage", 14, 17],
+    ]);
+    // `INSERT INTO t (cols)` and `VALUES (…)` call nothing.
+    expect(fns[0]!.calls.map((c) => c.name)).toEqual([]);
+  });
+
+  it("reads CREATE PROC as a routine", () => {
+    expect(sqlSpec.functionPatterns!.some((p) => p.pattern.test("CREATE PROC dbo.usp_NotifyAgent @PlayerId INT AS"))).toBe(true);
+  });
+
+  it("reads every table a routine's statements touch: joins, subqueries, CTEs and an UPDATE's alias", () => {
+    const out = rows(`CREATE PROCEDURE dbo.usp_Squad @ClubId INT AS
+BEGIN
+  IF EXISTS (SELECT 1 FROM dbo.Suspensions WHERE ClubId = @ClubId)
+    RETURN
+  SELECT p.Name, c.Name
+  FROM dbo.Players p
+  JOIN [dbo].[Clubs] c ON c.Id = p.ClubId
+  WHERE p.Id IN (SELECT PlayerId FROM dbo.Squads WHERE ClubId = @ClubId)
+  UPDATE p SET Fit = 1 FROM dbo.Players p JOIN dbo.Medicals m ON m.PlayerId = p.Id
+  WITH recent AS (SELECT Id FROM dbo.Matches) SELECT Id FROM recent
+END
+GO`);
+    expect(out.map((r) => `${r.line} ${r.name} ${r.entity} ${r.access}${r.joined ? " joined" : ""}`)).toEqual([
+      "3 SELECT Suspensions read",
+      "5 SELECT Players read",
+      "7 SELECT Clubs read joined",
+      "8 SELECT Squads read joined",
+      "9 UPDATE Players write",
+      "9 SELECT Medicals read joined",
+      "10 SELECT Matches read",
+    ]);
+  });
+
+  it("names the routine an EXEC runs, bracketed or assigned", () => {
+    const out = rows(`EXEC [dbo].[usp_SignPlayer] @PlayerId = 7
+EXEC @rc = dbo.usp_NotifyAgent 7`);
+    expect(out.map((r) => [r.target, r.routine])).toEqual([["dbo.usp_SignPlayer", true], ["dbo.usp_NotifyAgent", true]]);
+  });
+});
+
+describe("subqueries a write's values read", () => {
+  it("reads the tables of a VALUES subquery that opens lines below its parenthesis (real-repo FP)", () => {
+    const out = rows(`-- name: sign-player-for-club!
+INSERT INTO players_to_clubs (player_id, club_id)
+VALUES ((
+            SELECT id
+            FROM players
+            WHERE name = :player), (SELECT id FROM clubs WHERE name = :club));`);
+    expect(out.map((r) => `${r.line} ${r.name} ${r.entity}${r.joined ? " joined" : ""}`)).toEqual([
+      "2 INSERT INTO players_to_clubs",
+      "5 SELECT players joined",
+      "6 SELECT clubs joined",
+    ]);
   });
 });

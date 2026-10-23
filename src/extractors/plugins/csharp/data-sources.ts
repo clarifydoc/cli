@@ -2,7 +2,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { DataSourceInfo, Language, PathArgCall } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
-import { tableFrom } from "../shared/sql-string-sources.js";
+import { routineCalled, tableFrom } from "../shared/sql-string-sources.js";
 import { csharpCallClient } from "./http-clients.js";
 import { csharpResponseReads } from "./response-reads.js";
 import { csharpJsonBody } from "./request-body.js";
@@ -646,6 +646,10 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       // never identify the Owners DbSet. The DbSet name is the touched
       // entity; `attributeDataAccessToSymbols` matches it (case-insensitive,
       // singular/plural) to the ER node, bridging the trace to the data model.
+      // `Database.ExecuteSqlRaw("EXEC usp_SignPlayer @p0", id)`, `Players.FromSqlRaw("EXEC usp_Squad")`.
+      const raw = /^(?:FromSql|ExecuteSql)/.test(method) ? extractFirstStringArg(node) : null;
+      const routine = raw !== null ? routineCalled(raw) : null;
+      if (routine) return this.ds({ kind: "database", name: `EF: ${method}`, target: routine, routine: true, line: node.startPosition.row + 1 });
       const dbSet = resolveEfDbSet(fn);
       const entity = dbSet && !NON_ENTITY_EF_METHODS.has(method) ? dbSet : undefined;
       return this.ds({
@@ -822,9 +826,15 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     // Dapper — IDbConnection.Query / Execute, on a connection-named receiver, or any receiver
     // handed a statement (`using var mapper = _database.OpenConnection(); mapper.Execute("DELETE FROM …")`).
     const dapperSql = DAPPER_METHODS.has(method) ? extractFirstStringArg(node) : null;
+    // `conn.Execute("usp_SignPlayer", args, commandType: CommandType.StoredProcedure)`, `Query("EXEC usp_X @a")`.
+    const dapperRoutine = dapperSql !== null ? routineCalled(dapperSql, /CommandType\.StoredProcedure\b/.test(node.text)) : null;
     if (DAPPER_METHODS.has(method) &&
         (root === "connection" || root === "_connection" || root === "conn" ||
-         /Connection$/.test(root) || (dapperSql !== null && tableFrom(dapperSql) !== null))) {
+         /Connection$/.test(root) || (dapperSql !== null && (tableFrom(dapperSql) !== null || dapperRoutine !== null)))) {
+      if (dapperRoutine) {
+        sources.push(this.ds({ kind: "database", name: `Dapper: ${method}`, target: dapperRoutine, routine: true, line: node.startPosition.row + 1 }));
+        return;
+      }
       const sql = dapperSql;
       const hit = sql ? tableFrom(sql) : null;
       sources.push(this.ds({
@@ -844,6 +854,11 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         (root === "cmd" || root === "command" || /Command$/.test(root) ||
          root === "connection" || /Connection$/.test(root) ||
          root === "adapter" || /Adapter$/.test(root) || isCommandLocal(node, root))) {
+      const routine = adoCommandRoutine(node, receiver);
+      if (routine) {
+        sources.push(this.ds({ kind: "database", name: `ADO.NET: ${method}`, target: routine, routine: true, line: node.startPosition.row + 1 }));
+        return;
+      }
       const hit = adoCommandTable(node, receiver);
       sources.push(this.ds({
         kind: "database",
@@ -1557,15 +1572,32 @@ function adoCommandTable(call: Node, command: string): { verb: string; table: st
     const table = mutation[2] ?? fileStringConstants(call).get(mutation[3]!);
     return table ? { verb: mutation[1] === "Delete" ? "DELETE" : mutation[1] === "Update" ? "UPDATE" : "INSERT", table } : null;
   }
+  const sql = adoCommandText(call, command, before);
+  return sql === null ? null : tableFrom(sql);
+}
+
+/** The SQL an ADO.NET command was given before `call` — `cmd.CommandText = "…"`, `new SqlCommand("…", conn)` — folded; null when built at runtime. */
+function adoCommandText(call: Node, command: string, before: string): string | null {
   const literal = String.raw`(\$?@?\$?"(?:[^"\\]|\\.|"")*")`;
   const set = [...before.matchAll(new RegExp(String.raw`\b${command}\.CommandText\s*=\s*(?:${literal}|(\w+)\s*;)`, "g"))].pop()
     ?? [...before.matchAll(new RegExp(String.raw`\b${command}\s*=\s*new\s+\w*Command\s*\(\s*(?:${literal}|(\w+)\s*[,)])`, "g"))].pop()
     ?? [...before.matchAll(new RegExp(String.raw`\b${command}\s*=\s*[\w.]+\.Create\w*Command\s*\(\s*(?:${literal}|(\w+)\s*[,)])`, "g"))].pop();
-  if (set) {
-    const sql = set[1] ?? (set[2] ? sqlLocal(before, set[2]) : null);
-    return sql === null ? null : tableFrom(foldConstants(sql, call));
-  }
-  return null;
+  if (!set) return null;
+  const sql = set[1] ?? (set[2] ? sqlLocal(before, set[2]) : null);
+  return sql === null ? null : foldConstants(sql, call);
+}
+
+/**
+ * The stored procedure an ADO.NET command runs: its text names one and the
+ * member sets `CommandType.StoredProcedure` (`cmd.CommandType = …`, or in the
+ * command's initializer), or its text is an `EXEC x` / `{call x}`.
+ */
+function adoCommandRoutine(call: Node, command: string): string | null {
+  if (!/^\w+$/.test(command)) return null;
+  const before = textBefore(call);
+  if (before === null) return null;
+  const sql = adoCommandText(call, command, before);
+  return sql === null ? null : routineCalled(sql, /CommandType\.StoredProcedure\b/.test(before));
 }
 
 /** The enclosing member's text up to the call (a lambda's command is usually made outside it); null outside one. */

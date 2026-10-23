@@ -1738,7 +1738,12 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     const dbAccessByLine = new Map<string, "read" | "write">();
     for (const a of allAnalyses) {
       for (const ds of a.dataSources ?? []) {
-        if (ds.kind === "database" && ds.access) dbAccessByLine.set(`${a.filePath}::${ds.line}`, ds.access);
+        if (ds.kind !== "database" || !ds.access) continue;
+        // Per table first: one line may write a table and read another (`INSERT INTO a … SELECT … FROM b`);
+        // a line that reads and writes one table (`X.objects.filter(…).delete()`) writes it.
+        const entityKey = ds.entity ? `${a.filePath}::${ds.line}::${ds.entity.toLowerCase()}` : null;
+        if (entityKey && dbAccessByLine.get(entityKey) !== "write") dbAccessByLine.set(entityKey, ds.access);
+        dbAccessByLine.set(`${a.filePath}::${ds.line}`, ds.access);
       }
       for (const m of a.dataMutations ?? []) {
         if (m.kind === "db-write") dbAccessByLine.set(`${a.filePath}::${m.line}`, "write");

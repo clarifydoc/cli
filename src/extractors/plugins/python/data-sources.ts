@@ -2,7 +2,7 @@ import type { Node } from "web-tree-sitter";
 import { dbAccessFor, dbVerbTable, sqlVerbAccess } from "../shared/db-access.js";
 import type { DataSourceInfo, JsonSchemaNode, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
-import { tableFrom } from "../shared/sql-string-sources.js";
+import { routineCalled, tableFrom } from "../shared/sql-string-sources.js";
 import { pythonResponseReads } from "./response-reads.js";
 
 export class PythonDataSourceExtractor extends DataSourceExtractor {
@@ -231,10 +231,16 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           // statement names the table and says whether it reads or writes —
           // read from a literal or a local assigned one.
           let table: string | null = null;
-          if (SQL_TEXT_LEAVES.has(leaf)) {
+          if (SQL_TEXT_LEAVES.has(leaf) || leaf === "callproc") {
             let arg = positional(node)[0];
             if (arg?.type === "call" && /(?:^|\.)text$/.test(arg.childForFieldName("function")?.text ?? "")) arg = positional(arg)[0];
             const sql = arg ? pyStringValue(arg, node) : null;
+            // A stored procedure: `cursor.callproc("usp_SignPlayer", [pid])`, `cursor.execute("EXEC usp_X %s", …)`.
+            const routine = sql !== null ? routineCalled(sql, leaf === "callproc") : null;
+            if (routine) {
+              sources.push(this.ds({ kind: "database", name: fnName, target: routine, routine: true, line: node.startPosition.row + 1 }));
+              return;
+            }
             const hit = sql ? tableFrom(sql.replace(/\{[^}]*\}/g, "x")) : null;
             if (hit) {
               table = hit.table;
@@ -265,7 +271,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
  * (`demoteProjectCallDataSources`).
  */
 const PY_DB_LEAVES = new Set([
-  "executemany", "find_one", "find_many", "filter_by", "get_or_create", "save",
+  "callproc", "executemany", "find_one", "find_many", "filter_by", "get_or_create", "save",
   "insert_one", "insert_many", "update_one", "update_many",
   "delete_one", "delete_many", "count_documents",
 ]);

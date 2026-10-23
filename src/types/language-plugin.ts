@@ -931,6 +931,18 @@ export interface LanguagePluginManifest {
    */
   explicitSelfMembers?: boolean;
   /**
+   * A module's top-level names reach another file only through an import
+   * naming them (JS/TS, Python): in a module, a class name the file neither
+   * declares nor imports is a global (`Map`, `Response`), never another
+   * module's class of that name. A file with no import and no export is a
+   * script, whose declarations are global, and is exempt on either side, as
+   * is any file a wildcard or namespace import could reach. `autoImport`
+   * names the files whose presence in a sub-project makes its exports global
+   * without any import (a Nuxt config, unplugin-auto-import's declarations):
+   * there the rule is off.
+   */
+  importsBindNames?: { autoImport?: RegExp };
+  /**
    * Every function in a file sees its module-scope bindings (`const api =
    * useUserApi()` at the top of a JS module or a Vue `<script setup>`): a name
    * a function's own scope does not bind is looked up among the `<setup>`

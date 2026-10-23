@@ -5,9 +5,26 @@ import type {
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCallsFromBody } from "../shared/regex-base.js";
 import { namedQueries } from "./named-queries.js";
+import { statementAccesses } from "../shared/sql-string-sources.js";
 
 /** A name as written, quotes of every dialect removed: `accounting."order"` → `accounting.order`. */
 const unquoteName = (s: string): string => s.replace(/[[\]"`]/g, "");
+
+/** A name, schema-qualified or not, each part bare or quoted in any dialect's quotes. */
+const QNAME = String.raw`(?:\[[^\]]+\]|"[^"]+"|` + "`[^`]+`" + String.raw`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|` + "`[^`]+`" + String.raw`|[\w$]+))*`;
+
+/**
+ * A `GO` batch separator (sqlcmd, SSMS): a client command on a line of its
+ * own, optionally with a repeat count. It ends the statement and the routine
+ * before it — T-SQL scripts often have no `;` at all.
+ */
+export const GO_LINE = /^\s*GO(?:\s+\d+)?\s*;?\s*(?:--.*)?$/i;
+
+/** A routine's header: `CREATE [OR ALTER] PROC[EDURE] | FUNCTION | TRIGGER name`, the name whole (`[dbo].[usp_Sign]`). */
+const ROUTINE_HEAD = new RegExp(
+  String.raw`^\s*(?:CREATE\s+(?:OR\s+(?:REPLACE|ALTER)\s+)?|RECREATE\s+)(?:PROC(?:EDURE)?|FUNCTION|TRIGGER)\s+(?:IF\s+NOT\s+EXISTS\s+)?(${QNAME})`,
+  "i",
+);
 
 /**
  * SQL plugin — covers DDL (CREATE/ALTER/DROP), DML (SELECT/INSERT/UPDATE/DELETE),
@@ -82,7 +99,13 @@ function findParenEnd(lines: string[], startIdx: number): number {
   return Math.min(startIdx + 50, lines.length);
 }
 
-/** Find the matching `END;` (with optional label) for a routine body. */
+/**
+ * Find the matching `END;` (with optional label) for a routine body. A block
+ * is `BEGIN` … `END`; `BEGIN TRAN` opens a transaction, not a block, and a
+ * `CASE` closes with its own `END`, while PL/SQL's `END IF` / `END LOOP` close
+ * statements that never counted as blocks. A `GO` ends the routine whatever
+ * the count says.
+ */
 function findRoutineEnd(lines: string[], startIdx: number): number {
   let depth = 0;
   let sawBegin = false;
@@ -90,6 +113,7 @@ function findRoutineEnd(lines: string[], startIdx: number): number {
 
   for (let i = startIdx; i < lines.length; i++) {
     const line = lines[i];
+    if (i > startIdx && GO_LINE.test(line)) return i;
     // PostgreSQL dollar-quoted body: $$ ... $$
     const dollars = (line.match(/\$\$/g) ?? []).length;
     if (dollars > 0) {
@@ -97,17 +121,26 @@ function findRoutineEnd(lines: string[], startIdx: number): number {
       sawBegin = true;
       if (dollarDepth % 2 === 0) return i + 1;
     }
-    if (/\bBEGIN\b/i.test(line) && !/\bEND\s+BEGIN\b/i.test(line)) {
-      depth++;
-      sawBegin = true;
-    }
-    if (/\bEND\b\s*;?/i.test(line) && sawBegin && dollarDepth === 0) {
-      depth--;
+    if (dollarDepth > 0) continue;
+    const code = line.replace(/--.*$/, "").replace(/'(?:[^']|'')*'/g, "''");
+    const begins = (code.match(/\bBEGIN\b(?!\s+(?:TRAN|TRANSACTION|DISTRIBUTED|DIALOG|CONVERSATION)\b)/gi) ?? []).length;
+    if (begins > 0) sawBegin = true;
+    if (!sawBegin) continue;
+    depth += begins + (code.match(/\bCASE\b/gi) ?? []).length;
+    const ends = (code.match(/\bEND\b(?!\s+(?:IF|LOOP|WHILE|REPEAT|FOR)\b)/gi) ?? []).length;
+    if (ends > 0) {
+      depth -= ends;
       if (depth <= 0) return i + 1;
     }
   }
-  // No BEGIN/END or $$ — fall back to a single-statement routine (ends at ;)
-  if (!sawBegin) return findStatementEnd(lines, startIdx);
+  // No BEGIN/END or $$ — a single-statement routine: up to the `GO` that ends
+  // its batch when one comes before the next CREATE, else to its `;`.
+  if (!sawBegin) {
+    for (let i = startIdx + 1; i < lines.length && !/^\s*CREATE\b/i.test(lines[i]!); i++) {
+      if (GO_LINE.test(lines[i]!)) return i;
+    }
+    return findStatementEnd(lines, startIdx);
+  }
   return Math.min(startIdx + 200, lines.length);
 }
 
@@ -305,9 +338,10 @@ function splitColumns(text: string): string[] {
   return parts;
 }
 
-/** Find the end of a statement terminated by `;` (single line or multi). */
+/** Find the end of a statement terminated by `;` or by the `GO` after it (single line or multi). */
 function findStatementEnd(lines: string[], startIdx: number): number {
   for (let i = startIdx; i < lines.length; i++) {
+    if (i > startIdx && GO_LINE.test(lines[i])) return i;
     if (/;\s*$/.test(lines[i].trim())) return i + 1;
   }
   return Math.min(startIdx + 30, lines.length);
@@ -363,10 +397,97 @@ function statementText(lines: string[], i: number): string {
   return lines.slice(i, findStatementEnd(lines, i)).map((l) => l.replace(/--.*$/, "")).join(" ");
 }
 
+/**
+ * A line that opens a statement of its own. Inside a T-SQL routine statements
+ * are seldom `;`-terminated, so the next one is told by its first word.
+ */
+const STATEMENT_START = /^\s*(?:SELECT|INSERT|UPDATE|DELETE|MERGE|WITH|IF|ELSE|SET|DECLARE|RETURN|EXEC(?:UTE)?|CALL|PERFORM|WHILE|BEGIN|END|CREATE|ALTER|DROP|GRANT|REVOKE|TRUNCATE|PRINT|RAISERROR|THROW|COMMIT|ROLLBACK|OPEN|FETCH|CLOSE|DEALLOCATE|USE|REPLACE|LOOP|FOR|GO)\b/i;
+
+/** The words a line ends with when the statement goes on below it (`UNION`, `AS (`, a trailing comma). */
+const CONTINUES = /(?:\bUNION|\bALL|\bEXCEPT|\bINTERSECT|\bMINUS|\bAS|[(,])\s*$/i;
+
+/** A line's code: comments dropped, string contents blanked. */
+const codeOf = (line: string): string => line.replace(/--.*$/, "").replace(/'(?:[^']|'')*'/g, "''");
+
+/**
+ * The line after the statement opening at `start` (exclusive): its `;`, the
+ * `GO` after it, or the next line opening a statement at paren depth 0. An
+ * `INSERT … SELECT` and a `UNION` go on through their SELECT.
+ */
+function statementSpanEnd(lines: string[], start: number): number {
+  let depth = 0;
+  let selectFeeds = /^\s*(?:INSERT|WITH)\b/i.test(lines[start]!) && !/\bVALUES\b/i.test(lines[start]!);
+  for (let i = start; i < lines.length && i < start + 80; i++) {
+    const code = codeOf(lines[i]!);
+    if (i > start) {
+      if (GO_LINE.test(code)) return i;
+      const prev = codeOf(lines[i - 1]!);
+      const feeds = selectFeeds && /^\s*SELECT\b/i.test(code);
+      if (depth <= 0 && STATEMENT_START.test(code) && !feeds && !CONTINUES.test(prev)) return i;
+      if (feeds) selectFeeds = false;
+    }
+    for (const ch of code) {
+      if (ch === "(") depth++;
+      else if (ch === ")") depth--;
+    }
+    if (/;\s*$/.test(code.trim())) return i + 1;
+  }
+  return Math.min(start + 80, lines.length);
+}
+
+/** `alias → table` from a statement's `FROM t a` / `JOIN t AS a`. */
+function aliasTables(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const m of text.matchAll(new RegExp(String.raw`\b(?:FROM|JOIN)\s+(${QNAME})\s+(?:AS\s+)?(\w+)`, "gi"))) {
+    if (!/^(?:WHERE|ON|JOIN|INNER|LEFT|RIGHT|FULL|CROSS|OUTER|SET|GROUP|ORDER|WITH|UNION|USING)$/i.test(m[2]!)) out.set(m[2]!.toLowerCase(), m[1]!);
+  }
+  return out;
+}
+
+/** The 1-based line of `lines[start, end)` that names `table` (its last part), else the statement's first. */
+function lineNaming(lines: string[], start: number, end: number, table: string): number {
+  const leaf = new RegExp(String.raw`(?<![\w$])${table.split(".").pop()!.replace(/[$]/g, "\\$&")}(?![\w$])`, "i");
+  for (let i = start; i < end; i++) if (leaf.test(lines[i]!)) return i + 1;
+  return start + 1;
+}
+
 /** Pull DML statement targets — used by extractDataSources below. */
 function extractDmlStatements(lines: string[]): DataSourceInfo[] {
   const sources: DataSourceInfo[] = [];
   const local = localRelations(lines.join("\n"));
+  // Lines a statement's own scan already read, subqueries and JOINs included.
+  const read = new Uint8Array(lines.length);
+
+  /** Every further table and routine of the statement spanning `[start, end)` beside its own `target`. */
+  const readsBeside = (start: number, end: number, own: string | null, firstIsOwn: boolean): void => {
+    const text = lines.slice(start, end).map(codeOf).join("\n");
+    const leaf = (t: string) => unquoteName(t).split(".").pop()!.toLowerCase();
+    let first = firstIsOwn;
+    for (const hit of statementAccesses(text)) {
+      // The statement's own write is the row the caller made.
+      if (!hit.routine && hit.verb !== "SELECT") continue;
+      const isOwn = first && !hit.routine;
+      first = false;
+      if (own && leaf(hit.table) === leaf(own)) continue;
+      const line = lineNaming(lines, start, end, hit.table);
+      if (hit.routine) {
+        sources.push({ kind: "database", name: "EXEC", target: hit.table, routine: true, joined: true, calls: [], line });
+        continue;
+      }
+      const entity = tableEntity(hit.table, "", local);
+      sources.push({
+        kind: "database",
+        name: "SELECT",
+        target: hit.table,
+        ...(entity ? { entity } : {}),
+        access: "read",
+        ...(isOwn ? {} : { joined: true as const }),
+        calls: [],
+        line,
+      });
+    }
+    read.fill(1, start, end);
+  };
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -374,9 +495,11 @@ function extractDmlStatements(lines: string[]): DataSourceInfo[] {
 
     // SELECT ... FROM t / DELETE FROM t — a SELECT's FROM may sit on a later line of the statement.
     const isSelect = /^\s*SELECT\b/i.test(line);
+    // A SELECT that feeds the INSERT above it, or a subquery's, was read with that statement.
+    if (isSelect && read[i]) continue;
     const selectText = isSelect && !/\bFROM\b/i.test(line) ? statementText(lines, i) : line;
     const selectMatch = (isSelect ? selectText.match(/^\s*SELECT\b[\s\S]*?\bFROM\s+((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)(?![\w.]|\s*\()/i) : null)
-      ?? line.match(/^\s*DELETE\s+FROM\s+((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i);
+      ?? line.match(/^\s*DELETE\s+(?:TOP\s*\([^)]*\)\s*)?FROM\s+((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i);
     if (selectMatch) {
       const target = unquoteName(selectMatch[1]!);
       const verb = /^\s*DELETE/i.test(line) ? "DELETE" : "SELECT";
@@ -390,17 +513,27 @@ function extractDmlStatements(lines: string[]): DataSourceInfo[] {
         calls: [],
         line: i + 1,
       });
+      readsBeside(i, statementSpanEnd(lines, i), target, false);
       continue;
     }
 
-    // INSERT INTO t / UPDATE t / MERGE INTO t / REPLACE INTO t / TRUNCATE TABLE t
+    // INSERT INTO t / UPDATE t / MERGE INTO t / REPLACE INTO t / TRUNCATE TABLE t — and
+    // T-SQL's `UPDATE TOP (n) t`, `INSERT t`, `DELETE a FROM t a`, `UPDATE a … FROM t a`.
     const writeMatch = line.match(
-      /^\s*(INSERT\s+INTO|UPDATE|MERGE\s+INTO|REPLACE\s+INTO|TRUNCATE\s+TABLE|TRUNCATE)\s+((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i,
+      /^\s*(INSERT\s+(?:OR\s+\w+\s+)?(?:INTO\s+)?|UPDATE\s+(?:TOP\s*\([^)]*\)\s*)?|DELETE\s+(?:TOP\s*\([^)]*\)\s*)?(?=\w+\s+FROM\b)|MERGE\s+(?:INTO\s+)?|REPLACE\s+INTO\s+|TRUNCATE\s+TABLE\s+|TRUNCATE\s+)((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i,
     );
-    if (writeMatch) {
-      const verb = writeMatch[1]!.toUpperCase().replace(/\s+/g, " ");
-      const target = unquoteName(writeMatch[2]!);
-      const entity = tableEntity(target, line.slice(writeMatch.index! + writeMatch[0].length), local);
+    if (writeMatch && !/^(?:INTO|TABLE|OR)$/i.test(writeMatch[2]!)) {
+      const verb = writeMatch[1]!.trim().toUpperCase().replace(/\s*TOP\s*\(.*$/, "").replace(/\s+/g, " ").replace(/^INSERT(?: OR \w+)?(?: INTO)?$/, "INSERT INTO").replace(/^MERGE(?: INTO)?$/, "MERGE INTO");
+      const end = statementSpanEnd(lines, i);
+      let target = unquoteName(writeMatch[2]!);
+      let rest = line.slice(writeMatch.index! + writeMatch[0].length);
+      // `UPDATE p SET … FROM dbo.Players p`: the alias names the table the FROM gives it.
+      const aliased = /^\w+$/.test(target) ? aliasTables(lines.slice(i, end).map(codeOf).join("\n")).get(target.toLowerCase()) : undefined;
+      if (aliased) {
+        target = unquoteName(aliased);
+        rest = aliased.slice(aliased.search(/\.|$/));
+      }
+      const entity = tableEntity(target, rest, local);
       sources.push({
         kind: "database",
         name: verb,
@@ -410,6 +543,7 @@ function extractDmlStatements(lines: string[]): DataSourceInfo[] {
         calls: [],
         line: i + 1,
       });
+      readsBeside(i, end, target, false);
       continue;
     }
 
@@ -417,12 +551,12 @@ function extractDmlStatements(lines: string[]): DataSourceInfo[] {
     // Skip the leading `FUNCTION`/`PROCEDURE` keyword (used by `CREATE TRIGGER ... EXECUTE FUNCTION foo()`)
     // so the actual routine name lands in the target.
     // Dynamic SQL (`EXECUTE STATEMENT`, `EXECUTE IMMEDIATE`, `EXECUTE BLOCK`) names no routine.
-    const execMatch = line.match(/^\s*(?:EXEC(?:UTE)?|CALL|PERFORM)\s+(?:FUNCTION\s+|PROCEDURE\s+)?([\w.$]+)/i);
+    const execMatch = line.match(new RegExp(String.raw`^\s*(?:EXEC(?:UTE)?|CALL|PERFORM)\s+(?:FUNCTION\s+|PROCEDURE\s+)?(?:@\w+\s*=\s*)?(${QNAME})`, "i"));
     if (execMatch && !/^(?:STATEMENT|IMMEDIATE|BLOCK|AS|sp_executesql)$/i.test(execMatch[1]!)) {
       sources.push({
         kind: "database",
         name: "EXEC",
-        target: execMatch[1],
+        target: unquoteName(execMatch[1]!),
         routine: true,
         calls: [],
         line: i + 1,
@@ -463,6 +597,13 @@ function extractDmlStatements(lines: string[]): DataSourceInfo[] {
         calls: [],
         line: i + 1,
       });
+      continue;
+    }
+
+    // A query no line opens — `IF EXISTS (SELECT 1 FROM x)`, `SET @n = (SELECT …)`,
+    // `RETURN (SELECT …)`, a CTE's body — reads its tables all the same.
+    if (!read[i] && (/^\s*WITH\b/i.test(line) || /\(\s*SELECT\b/i.test(codeOf(line)))) {
+      readsBeside(i, statementSpanEnd(lines, i), null, true);
     }
   }
 
@@ -482,7 +623,7 @@ export const sqlSpec: RegexLangSpec = {
     // Optional surrounding quotes/brackets are stripped non-capturingly so the
     // generic extractor (which reads m[1] for the name) gets a clean identifier.
     {
-      pattern: /^\s*(?:CREATE\s+(?:OR\s+(?:REPLACE|ALTER)\s+)?|RECREATE\s+)(?:PROCEDURE|FUNCTION|TRIGGER)\s+(?:IF\s+NOT\s+EXISTS\s+)?["`[]?([\w.]+)/i,
+      pattern: /^\s*(?:CREATE\s+(?:OR\s+(?:REPLACE|ALTER)\s+)?|RECREATE\s+)(?:PROC(?:EDURE)?|FUNCTION|TRIGGER)\s+(?:IF\s+NOT\s+EXISTS\s+)?["`[]?([\w.]+)/i,
       isExported: () => true,
     },
   ],
@@ -541,9 +682,25 @@ export function fixSqlFunctionEndLines(lines: string[], fns: FunctionInfo[]): Fu
     const idx = fn.line - 1;
     if (idx < 0 || idx >= lines.length) return fn;
     const endLine = findRoutineEnd(lines, idx);
-    const calls = extractCallsFromBody(lines, idx + 1, endLine, ["--", "#"]);
-    return { ...fn, endLine, calls };
+    const calls = extractCallsFromBody(lines, idx + 1, endLine, ["--", "#"]).filter((c) => isRoutineCall(c, lines));
+    // The shared pattern stops at the first quote: `[dbo].[usp_Sign]` is read whole here.
+    const head = ROUTINE_HEAD.exec(lines[idx]!);
+    const name = head ? unquoteName(head[1]!) : fn.name;
+    return { ...fn, name, endLine, calls };
   });
+}
+
+/**
+ * SQL keywords a `(` follows (`VALUES (`, `IN (`, `EXISTS (`), and the
+ * table of `INSERT INTO t (cols)` / `REFERENCES t(id)`, are no calls.
+ */
+const NOT_CALLED = new Set(["VALUES", "IN", "EXISTS", "AS", "OVER", "KEY", "UNIQUE", "CHECK", "ANY", "ALL", "SOME", "NOT", "AND", "OR", "WHEN", "THEN", "RETURNS", "RETURN", "TABLE", "IF", "WHILE", "ELSE", "USING", "WITH", "ON", "INTO", "FROM", "WHERE", "SELECT", "TOP"]);
+const TABLE_BEFORE = /\b(?:INTO|TABLE|REFERENCES|UPDATE|MERGE)\s+$/i;
+
+function isRoutineCall(call: CallInfo, lines: string[]): boolean {
+  if (NOT_CALLED.has(call.name.toUpperCase())) return false;
+  const line = lines[call.line - 1] ?? "";
+  return typeof call.column !== "number" || !TABLE_BEFORE.test(line.slice(0, call.column));
 }
 
 // Suppress unused-import warnings for types we re-export indirectly.
