@@ -31,4 +31,12 @@ describe("inline script requests", () => {
       "GET ${url}/standings/json @15",
     ]);
   });
+
+  it("reads a literal path a value is concatenated onto as that path with a parameter segment", () => {
+    const page = `<script>
+  const res = await fetch("{{ $.baseUrl }}/player-meta/" + id, { method: "GET" });
+  fetch("/clubs?season=" + season);
+</script>`;
+    expect(inlineScriptRequests(page.split("\n")).map((d) => d.name)).toEqual(["GET /player-meta/:param", "GET /clubs"]);
+  });
 });

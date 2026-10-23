@@ -16,10 +16,12 @@ export function inlineScriptRequests(lines: readonly string[]): DataSourceInfo[]
   const flush = () => {
     const text = body!.join("\n");
     for (const m of text.matchAll(CALL_RE)) {
-      const written = (m[3] ?? m[6] ?? m[9])!;
+      // `"/product-meta/" + id`: the concatenated value is the next segment.
+      const literal = (m[3] ?? m[6] ?? m[9])!;
+      const written = literal.endsWith("/") && /^\s*\+/.test(text.slice(m.index! + m[0].length)) ? `${literal}{{param}}` : literal;
       // A server the page is told about (`fetch(url + '/json')` with `url` read from a field) is an unknown base
       // before the path; an absolute URL names its host, which the call-origin pass places.
-      const target = m[1] && written.startsWith("/") ? `\${${m[1]}}${written.replace(/[?#].*$/, "")}`
+      const target = m[1] && written.startsWith("/") ? `\${${m[1]}}${written.replace(/[?#].*$/, "").replace("{{param}}", ":param")}`
         : /^https?:\/\/[^\s"'`]+$/i.test(written) ? written
         : literalPath(written.replace(/\$\{([^}]*)\}/g, "{{$1}}"));
       if (!target) continue;
