@@ -177,6 +177,20 @@ describe("DAO / Repository receiver → entity (the dominant data path here)", (
   });
 });
 
+describe("Keycloak SimpleHttp requests", () => {
+  it("reads the verb and URL of a static or created SimpleHttp request", async () => {
+    const rows = await sourcesOf(`    String url = leagueUrl + "/api/fixtures/" + id;
+    SimpleHttp.doGet(url, session).asJson();
+    SimpleHttp http = SimpleHttp.create(session);
+    http.doPost(baseUrl + path).json(body).asResponse();
+    cache.doGet(key);`, "java", "import org.keycloak.http.simple.SimpleHttp;");
+    expect(rows.filter((d) => d.kind === "api-call").map((d) => `${d.name} ${d.target}`)).toEqual([
+      "GET ${leagueUrl}/api/fixtures/${id}",
+      "POST ${baseUrl}${path}",
+    ]);
+  });
+});
+
 describe("CXF WebClient requests", () => {
   it("sends to the client's base and the paths set on it, never a database read", async () => {
     const rows = await sourcesOf(`    WebClient client = clientFactory.createWebClient(leagueUrl, context);

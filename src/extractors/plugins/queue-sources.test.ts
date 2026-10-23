@@ -417,6 +417,25 @@ def merge(docs):
     expect(brief(s)).toEqual(["queue-publish Celery: apply_async consume_file @5"]);
   });
 
+  it("a signature handed to a chord, group or link publishes to its task", async () => {
+    const s = await pyFileSourcesOf(`from celery import chord
+from .tasks import consume_match, archive_matches, notify_club
+
+def import_round(matches):
+    consume_task = consume_match.s(matches[0])
+    tasks = [consume_match.s(m) for m in matches]
+    chord(header=tasks, body=notify_club.si("league"))()
+    archive_matches.apply_async(link=[notify_club.si("archive")])
+`);
+    expect(brief(s)).toEqual([
+      "queue-publish Celery: s consume_match @5",
+      "queue-publish Celery: s consume_match @6",
+      "queue-publish Celery: si notify_club @7",
+      "queue-publish Celery: apply_async archive_matches @8",
+      "queue-publish Celery: si notify_club @8",
+    ]);
+  });
+
   it("a bare @task (Invoke, Prefect) in a file without Celery is not a task", async () => {
     const s = await pyFileSourcesOf(`from invoke import task
 

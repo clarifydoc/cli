@@ -14,6 +14,9 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
   private celery = false;
   /** Locals holding a Celery signature: `consume_task = consume_file.s(…)` → consume_task → consume_file. */
   private signatures = new Map<string, string>();
+  /** The file composes Celery work (`chord`, `group`, `chain`, a `link=`): its signatures run. */
+  private canvas = false;
+  private sourceText = "";
   /** The file uses boto3 (SQS/SNS clients) or redis-py (pub/sub). */
   private boto3 = false;
   private redis = false;
@@ -27,6 +30,8 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
     this.redis = /^\s*(?:import\s+(?:redis|aioredis)|from\s+(?:redis|aioredis)(?:\.\w+)*\s+import)\b/m.test(sourceText);
     this.urllib = /\burllib2?\b/.test(sourceText);
     this.signatures = new Map();
+    this.sourceText = sourceText;
+    this.canvas = this.celery || /\b(?:chord|group|chain)\s*\(|\blink(?:_error)?\s*=/.test(sourceText);
     if (sourceText.includes(".s(") || sourceText.includes(".si(") || sourceText.includes(".signature(")) {
       for (const m of sourceText.matchAll(/^[ \t]*([A-Za-z_]\w*)\s*=\s*(?:[A-Za-z_]\w*\.)*([A-Za-z_]\w*)\.(?:s|si|signature)\(/gm)) {
         // Two assignments of one name to different tasks: refuse to choose.
@@ -97,6 +102,17 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           // A signature kept in a local (`consume_task = consume_file.s(…)`) is the task it signs.
           const task = (fnName === `${held}.${leaf}` ? this.signatures.get(held) : undefined) ?? held;
           if (task !== "self" && task !== "cls") {
+            sources.push(this.ds({ kind: "queue-publish", name: `Celery: ${leaf}`, target: task, line: node.startPosition.row + 1 }));
+            return;
+          }
+        }
+        // A signature handed to a canvas (`chord(header=[consume_file.s(doc)], body=…)`, `link=[delete.si(ids)]`)
+        // runs its task. One kept in a local the file runs itself (`sig.delay()`) is published there instead.
+        if ((leaf === "s" || leaf === "si" || leaf === "signature") && this.canvas && /^(?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*\.(?:s|si|signature)$/.test(fnName)) {
+          const task = fnName.split(".").slice(-2, -1)[0]!;
+          const local = node.parent?.type === "assignment" && node.parent.childForFieldName("left")?.type === "identifier" ? node.parent.childForFieldName("left")!.text : null;
+          const runHere = local !== null && this.signatures.get(local) === task && new RegExp(`\\b${local}\\.(?:delay|apply_async)\\(`).test(this.sourceText);
+          if (task !== "self" && task !== "cls" && !runHere) {
             sources.push(this.ds({ kind: "queue-publish", name: `Celery: ${leaf}`, target: task, line: node.startPosition.row + 1 }));
             return;
           }

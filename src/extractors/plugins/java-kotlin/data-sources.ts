@@ -491,6 +491,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   private querydslPaths: Map<string, string> | null = null;
   /** The file imports Hibernate Search. */
   private isHibernateSearchFile = false;
+  /** The file imports Keycloak's `SimpleHttp`. */
+  private isKeycloakHttpFile = false;
   /** The file imports CXF's JAX-RS `WebClient`. */
   private isCxfWebClientFile = false;
 
@@ -518,6 +520,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     this.isRoomFile = /\bandroidx\.room\b/.test(text);
     this.isKafkaClientFile = /\borg\.apache\.kafka\.clients\b/.test(text);
     this.isHibernateSearchFile = /\borg\.hibernate\.search\b/.test(text);
+    this.isKeycloakHttpFile = /\borg\.keycloak\.[\w.]*\bSimpleHttp\b/.test(text);
     this.isCxfWebClientFile = /\borg\.apache\.cxf\.jaxrs\.client\.(?:WebClient|\*)/.test(text);
     this.querydslPaths = /\bcom\.querydsl\b/.test(text)
       ? new Map([...text.matchAll(/^\s*import\s+static\s+[\w.]*\.Q([A-Z]\w*)\.(\w+)\s*;?\s*$/gm)].map((m) => [m[2]!, m[1]!]))
@@ -701,6 +704,19 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       const entity = jpaEntityArg(node);
       if (entity) {
         sources.push(this.ds({ kind: "database", name: method, target: entity, entity, line, ...withAccess("read") }));
+        return;
+      }
+    }
+
+    // 1b'') Keycloak `SimpleHttp`: `SimpleHttp.doPost(url, session)`, `http.doGet(url).asJson()` on a
+    // `SimpleHttp.create(session)` — the URL is the first argument, the verb the method's.
+    if (this.isKeycloakHttpFile && /^do(?:Get|Post|Put|Delete|Patch|Head)$/.test(method)) {
+      const leaf = receiverLeaf(receiver);
+      const declared = /^[\w$]+$/.test(leaf) ? (localDeclaredType(node, leaf) ?? this.fieldTypes.get(leaf) ?? null) : null;
+      if (leaf === "SimpleHttp" || declared === "SimpleHttp" || /\bSimpleHttp\s*\.\s*create\s*\(/.test(receiver)) {
+        const arg = call.firstArg;
+        const url = arg ? urlExpression(arg, node, 0) ?? (concatParts(arg) ?? [arg]).map((p) => "${" + p.text.replace(/\s+/g, " ") + "}").join("") : null;
+        sources.push(this.ds({ kind: "api-call", name: method.slice(2).toUpperCase(), target: url, line }));
         return;
       }
     }

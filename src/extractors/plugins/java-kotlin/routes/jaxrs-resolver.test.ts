@@ -60,6 +60,14 @@ public class RefereeEndpoint {
   public String done() { return "ok"; }
 }
 `,
+  // A second framework-mounted endpoint with the same tail: another endpoint, not a duplicate.
+  [`${API}/LinesmanEndpoint.java`]: `package com.example.league.api;
+import javax.ws.rs.*;
+public class LinesmanEndpoint {
+  @GET @Path("/done")
+  public String done() { return "flag"; }
+}
+`,
 };
 
 describe("JAX-RS sub-resources", () => {
@@ -82,6 +90,7 @@ describe("JAX-RS sub-resources", () => {
     const rows = (summary.routeMap ?? []).filter((r) => r.kind === "api").map((r) => `${r.httpMethod} ${r.path}`).sort();
     expect(rows).toEqual([
       "GET /done",
+      "GET /done",
       "GET /v1/academies/{clubId}/players",
       "GET /v1/clubs/{clubId}/players",
       "GET /v1/clubs/{id}",
@@ -92,5 +101,7 @@ describe("JAX-RS sub-resources", () => {
       "PUT /v1/academies/{clubId}/players/{playerId}",
       "PUT /v1/clubs/{clubId}/players/{playerId}",
     ]);
+    const mounted = (summary.routeMap ?? []).filter((r) => r.path.startsWith("/v1/"));
+    expect(mounted.every((r) => !r.prefixUnresolved)).toBe(true);
   });
 });

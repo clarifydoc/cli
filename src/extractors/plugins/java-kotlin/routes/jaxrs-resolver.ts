@@ -1,6 +1,6 @@
 import type { ClassInfo, FileAnalysis, RouteInfo } from "../../../../types/analysis.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
-import { JAXRS_UNMOUNTED_FACT } from "./jaxrs.js";
+import { JAXRS_SUB_RESOURCE, JAXRS_UNMOUNTED_FACT } from "./jaxrs.js";
 import { mergePrefix } from "./spring.js";
 
 /**
@@ -99,7 +99,11 @@ export const jaxrsSubResourceResolver: RouteResolver = {
       const list = added.get(t.a) ?? added.set(t.a, []).get(t.a)!;
       for (const r of ownRows(t)) {
         const path = mergePrefix(base, r.path);
-        if (!list.some((x) => x.httpMethod === r.httpMethod && x.path === path && x.handler === r.handler)) list.push({ ...r, path });
+        if (list.some((x) => x.httpMethod === r.httpMethod && x.path === path && x.handler === r.handler)) continue;
+        // Mounted under a rooted resource: the prefix is known.
+        const row: RouteInfo = { ...r, path };
+        if (row.prefixUnresolved === JAXRS_SUB_RESOURCE) delete row.prefixUnresolved;
+        list.push(row);
       }
     };
     // The routes `t` serves under `base`: its own (unless it is the rooted type, whose rows are

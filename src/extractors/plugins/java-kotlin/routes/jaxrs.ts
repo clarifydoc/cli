@@ -46,6 +46,8 @@ import { guardsOn, routeParamsOf } from "./meta-annotations.js";
  */
 
 export const JAXRS_UNMOUNTED_FACT = "jaxrs:unmounted";
+/** `RouteInfo.prefixUnresolved` of a sub-resource's rows until a locator mounts them. */
+export const JAXRS_SUB_RESOURCE = "jaxrs:sub-resource";
 
 const JAXRS_VERBS: ReadonlySet<string> = new Set([
   "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS",
@@ -200,6 +202,9 @@ function emitMethodRoutes(
     calls: body ? extractCalls(body, lang) : [],
     middleware: [],
     line: micronautLine || method.startPosition.row + 1,
+    // No class `@Path`: a sub-resource, served under whatever mounts it — a locator the
+    // resolver finds, or the framework (`/realms/{realm}/broker/{alias}/endpoint`).
+    ...(flavor === "none" && !classPrefix ? { prefixUnresolved: JAXRS_SUB_RESOURCE } : {}),
   };
   applyRouteMeta(route, {
     inheritedGuards: classGuards,
