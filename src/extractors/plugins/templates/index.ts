@@ -55,7 +55,8 @@ const PARTIALS: Record<TemplateDialect, RegExp> = {
  * `route:clubs:detail`, which the plugin of the routes resolves.
  */
 const NAMED_URL: Partial<Record<TemplateDialect, RegExp>> = {
-  django: /\{%-?\s*url\s+(['"])([\w.:-]+)\1[^%]*%\}/g,
+  // Django `{% url 'clubs:detail' pk %}`, Jinja's `{{ url_for('clubs.detail', id=c.id) }}` (Flask, Starlette).
+  django: /\{%-?\s*url\s+(['"])([\w.:-]+)\1[^%]*%\}|\{\{-?\s*url_for\(\s*(['"])((?!static\3)[\w.:-]+)\3[^}]*\}\}/g,
 };
 const ROUTE_MARK = "/__route__/";
 const namedTarget = (target: string): string => (target.startsWith(ROUTE_MARK) ? `route:${target.slice(ROUTE_MARK.length).replace(/~/g, ":")}` : target);
@@ -96,7 +97,7 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
   // Tag helpers and forms read on the raw text (their attributes are what blanking would erase),
   // a URL built from a route name marked first (one line for one line).
   const named = NAMED_URL[dialect];
-  const marked = named ? source.replace(named, (_m, _q, name: string) => ROUTE_MARK + name.replace(/:/g, "~")) : source;
+  const marked = named ? source.replace(named, (_m, _q, name: string | undefined, _q2, name2: string | undefined) => ROUTE_MARK + (name ?? name2)!.replace(/:/g, "~")) : source;
   const ctlOfView = dialect === "razor" ? viewController(filePath) : null;
   for (const t of marked.matchAll(/<(form|a|button)\b([^>]*)>/gi)) {
     const tag = t[1]!.toLowerCase();

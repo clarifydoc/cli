@@ -194,6 +194,8 @@ interface RouterDecl {
   prefix: string;
   /** `APIRouter(dependencies=[Depends(x)])` — every route on the router inherits them. */
   guards: GuardAttr[];
+  /** The prefix `url_for` names its routes under: a Flask `Blueprint("clubs", …)`'s name, "" for an app. */
+  endpointPrefix: string;
 }
 
 const ROUTER_CTORS = new Set(["APIRouter", "Blueprint", "FastAPI", "Flask"]);
@@ -220,7 +222,10 @@ function collectRouterDecls(root: Node, consts: ReadonlyMap<string, string>): Ma
     const args = right.childForFieldName("arguments");
     const prefix = args ? (stringKeyword(args, "prefix", consts) ?? stringKeyword(args, "url_prefix", consts) ?? "") : "";
     const deps = args ? keywordArg(args, "dependencies") : null;
-    decls.set(left.text, { prefix, guards: deps ? guardsFromDependencies(deps) : [] });
+    // `Blueprint("clubs", __name__)`: its routes are `clubs.<function>` to `url_for`.
+    const first = ctorName === "Blueprint" && args ? args.namedChildren.find((a) => a.type !== "keyword_argument" && a.type !== "comment") : undefined;
+    const blueprint = first?.type === "string" ? first.text.replace(/^[a-z]*["']|["']$/gi, "") : null;
+    decls.set(left.text, { prefix, guards: deps ? guardsFromDependencies(deps) : [], endpointPrefix: blueprint ? `${blueprint}.` : "" });
   }
   return decls;
 }
@@ -301,6 +306,8 @@ interface RouteDecorator {
   /** `response_model=User`, `status_code=201` / `status.HTTP_201_CREATED`. */
   responseModel: string | null;
   statusCode: number | null;
+  /** Flask `endpoint="x"`: the name `url_for` builds the URL from, instead of the function's. */
+  endpoint: string | null;
 }
 
 /**
@@ -344,6 +351,7 @@ function routeDecorator(dec: Node): RouteDecorator | null {
     guards: deps ? guardsFromDependencies(deps) : [],
     responseModel: model && model.text !== "None" ? model.text : null,
     statusCode: Number.isFinite(statusCode) ? statusCode : null,
+    endpoint: (args ? stringKeyword(args, "endpoint", new Map()) : null) ?? null,
   };
 }
 
@@ -391,6 +399,8 @@ function walkForPythonRoutes(node: Node, routes: RouteInfo[], routers: Map<strin
             middleware: [],
             line: node.startPosition.row + 1,
             ...(responses ? { responses } : {}),
+            // The name `url_for` builds its URL from, where the router is declared here.
+            ...(router && (rd.endpoint ?? handler) ? { name: router.endpointPrefix + (rd.endpoint ?? handler) } : {}),
           };
           applyRouteMeta(route, {
             inheritedGuards: router?.guards,

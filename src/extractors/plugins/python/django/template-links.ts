@@ -2,8 +2,9 @@ import type { FileAnalysis, Language, SymbolLink } from "../../../../types/analy
 import type { DispatchResolver } from "../../../dispatch/base.js";
 
 /**
- * A Django template's form, link or htmx request to `{% url 'clubs:detail' %}`
- * (read as `route:clubs:detail`) reaches the route of that name: the link goes
+ * A Django / Jinja template's form, link or htmx request to a named route —
+ * `{% url 'clubs:detail' %}`, Flask's `{{ url_for('clubs.detail') }}` (read as
+ * `route:clubs:detail`, `route:clubs.detail`) — reaches the route of that name: the link goes
  * from the element's handler to the route's symbol, which the symbol linker
  * already anchors on its view, so a click traces into the view and on to the
  * models it touches. A form or a write request joins the name's write route, a
