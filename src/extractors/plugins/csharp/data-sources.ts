@@ -838,11 +838,12 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       return;
     }
 
-    // Raw ADO.NET — SqlCommand / SqlConnection
+    // Raw ADO.NET — SqlCommand / SqlConnection, or a local a data source made a command
+    // (`var cmdRead = dataSource.CreateCommand(sql)`, `CreateSelectCommand(…)`).
     if (ADO_METHODS.has(method) &&
         (root === "cmd" || root === "command" || /Command$/.test(root) ||
          root === "connection" || /Connection$/.test(root) ||
-         root === "adapter" || /Adapter$/.test(root))) {
+         root === "adapter" || /Adapter$/.test(root) || isCommandLocal(node, root))) {
       const hit = adoCommandTable(node, receiver);
       sources.push(this.ds({
         kind: "database",
@@ -1548,15 +1549,66 @@ function splitConcat(expr: string): string[] | null {
  */
 function adoCommandTable(call: Node, command: string): { verb: string; table: string } | null {
   if (!/^\w+$/.test(command)) return null;
+  const before = textBefore(call);
+  if (before === null) return null;
+  // Spanner's mutation commands name their table: `connection.CreateInsertOrUpdateCommand(TableName, …)`.
+  const mutation = [...before.matchAll(new RegExp(String.raw`\b${command}\s*=\s*[\w.]+\.Create(InsertOrUpdate|Insert|Update|Delete)Command\s*\(\s*(?:"(\w+)"|(\w+))\s*[,)]`, "g"))].pop();
+  if (mutation) {
+    const table = mutation[2] ?? fileStringConstants(call).get(mutation[3]!);
+    return table ? { verb: mutation[1] === "Delete" ? "DELETE" : mutation[1] === "Update" ? "UPDATE" : "INSERT", table } : null;
+  }
+  const literal = String.raw`(\$?@?\$?"(?:[^"\\]|\\.|"")*")`;
+  const set = [...before.matchAll(new RegExp(String.raw`\b${command}\.CommandText\s*=\s*(?:${literal}|(\w+)\s*;)`, "g"))].pop()
+    ?? [...before.matchAll(new RegExp(String.raw`\b${command}\s*=\s*new\s+\w*Command\s*\(\s*(?:${literal}|(\w+)\s*[,)])`, "g"))].pop()
+    ?? [...before.matchAll(new RegExp(String.raw`\b${command}\s*=\s*[\w.]+\.Create\w*Command\s*\(\s*(?:${literal}|(\w+)\s*[,)])`, "g"))].pop();
+  if (set) {
+    const sql = set[1] ?? (set[2] ? sqlLocal(before, set[2]) : null);
+    return sql === null ? null : tableFrom(foldConstants(sql, call));
+  }
+  return null;
+}
+
+/** The enclosing member's text up to the call (a lambda's command is usually made outside it); null outside one. */
+function textBefore(call: Node): string | null {
   let body: Node | null = call.parent;
-  while (body && !/^(?:method|constructor|local_function|accessor)_declaration$|^lambda_expression$/.test(body.type)) body = body.parent;
-  if (!body) return null;
-  const before = body.text.slice(0, call.startIndex - body.startIndex);
-  const literal = String.raw`(@?"(?:[^"\\]|\\.|"")*")`;
-  const set = [...before.matchAll(new RegExp(String.raw`\b${command}\.CommandText\s*=\s*${literal}`, "g"))].pop()
-    ?? [...before.matchAll(new RegExp(String.raw`\b${command}\s*=\s*new\s+\w*Command\s*\(\s*${literal}`, "g"))].pop();
-  if (!set) return null;
-  return tableFrom(set[1]!.replace(/^@?"|"$/g, "").replace(/""/g, '"'));
+  while (body && !/^(?:method|constructor|local_function|accessor)_declaration$/.test(body.type)) body = body.parent;
+  return body ? body.text.slice(0, call.startIndex - body.startIndex) : null;
+}
+
+/** A local the member made a command: `var cmd = dataSource.CreateCommand(sql)` / `= new NpgsqlCommand(…)`. */
+function isCommandLocal(call: Node, name: string): boolean {
+  if (!/^[a-z_]\w*$/.test(name)) return false;
+  const before = textBefore(call);
+  return before !== null && new RegExp(String.raw`\b${name}\s*=\s*(?:[\w.]+\.Create\w*Command\s*\(|new\s+\w+Command\s*\()`).test(before);
+}
+
+/** The SQL text a local holds: `var fetchCmd = $"SELECT … FROM {TableName} …";` (the last assignment before the use). */
+function sqlLocal(before: string, name: string): string | null {
+  const m = [...before.matchAll(new RegExp(String.raw`\b${name}\s*=\s*(\$?@?\$?"(?:[^"\\]|\\.|"")*")\s*;`, "g"))].pop();
+  return m ? m[1]! : null;
+}
+
+const FILE_CONSTANTS = new WeakMap<object, Map<string, string>>();
+
+/** The file's string constants: `const string TableName = "CartItems";`, `static readonly string TableName = "…";`. */
+function fileStringConstants(node: Node): Map<string, string> {
+  const cached = FILE_CONSTANTS.get(node.tree);
+  if (cached) return cached;
+  const out = new Map<string, string>();
+  for (const m of node.tree.rootNode.text.matchAll(/\b(?:const|static\s+readonly|readonly\s+static)\s+string\s+(\w+)\s*=\s*"([^"\\]*)"\s*;/g)) out.set(m[1]!, m[2]!);
+  FILE_CONSTANTS.set(node.tree, out);
+  return out;
+}
+
+/** A C# string literal's SQL, an interpolation hole naming a file constant read as its value, any other hole blank. */
+function foldConstants(literal: string, at: Node): string {
+  const interpolated = /^\$|^@\$/.test(literal);
+  let text = literal.replace(/^\$?@?\$?"|"$/g, "").replace(/""/g, '"');
+  if (interpolated) {
+    const consts = fileStringConstants(at);
+    text = text.replace(/\{([^{}]*)\}/g, (_m, hole: string) => consts.get(hole.trim()) ?? " ");
+  }
+  return text;
 }
 
 function extractFirstStringArg(node: Node): string | null {

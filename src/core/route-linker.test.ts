@@ -678,6 +678,21 @@ describe("linkApiCallsToRoutes — same sub-project breaks a tie", () => {
   });
 });
 
+describe("linkApiCallsToRoutes — the file's other calls break a tie between services (real-repo FP)", () => {
+  it("sends a load script's GET / to the service its other requests reach", () => {
+    const projectOf = (f: string) => f.split("/")[0];
+    const webRoot = { ...route("web/main.go", "GET", "/", "home"), projectId: "web" };
+    const webCart = { ...route("web/main.go", "POST", "/cart", "addToCart"), projectId: "web" };
+    const banner = { ...route("kits/Startup.cs", "GET", "/", null as never), projectId: "kits" };
+    const calls = [apiCall("loadgen/locustfile.py", "get", "/"), apiCall("loadgen/locustfile.py", "post", "/cart")];
+    const links = linkApiCallsToRoutes(calls, [banner, webRoot, webCart], { projectOf });
+    expect(links.map((l) => `${l.method} ${l.target} ${l.confidence}`)).toEqual(["GET web/main.go INFERRED", "POST web/main.go EXTRACTED"]);
+    // With nothing else to go by, it stays a named guess.
+    const alone = linkApiCallsToRoutes([apiCall("loadgen/locustfile.py", "get", "/")], [banner, webRoot], { projectOf });
+    expect(alone[0]!.confidence).toBe("AMBIGUOUS");
+  });
+});
+
 describe("linkApiCallsToRoutes — the call's own spelling breaks a tie first (real-repo FP)", () => {
   it("takes /getquote over the caller's own /get-quote", () => {
     const own = { ...route("shipping/server.rs", "POST", "/get-quote", "get_quote"), projectId: "shipping" };

@@ -91,6 +91,44 @@ ${body}
     .filter((d) => d.kind === "api-call");
 }
 
+describe("C# ADO.NET commands a data source creates", () => {
+  async function rowsOf(src: string): Promise<string[]> {
+    const tree = await parseSource(src, "csharp" as any, "KitStore.cs");
+    return new CSharpDataSourceExtractor().extract(tree, src)
+      .filter((d) => d.kind === "database")
+      .map((d) => `${d.line} ${d.name} ${d.entity ?? "-"} ${d.access ?? "-"}`);
+  }
+
+  it("reads a command local, the SQL local it was made from, and a table constant folded into the SQL", async () => {
+    const rows = await rowsOf(`namespace X;
+public class KitStore {
+  private static readonly string TableName = "KitItems";
+  private readonly string runtimeTable;
+  public async Task Load(string clubId) {
+    var fetchCmd = $"SELECT size FROM {TableName} WHERE clubId = '{clubId}'";
+    var cmdRead = dataSource.CreateCommand(fetchCmd);
+    await using (var reader = await cmdRead.ExecuteReaderAsync()) { }
+    var lookup = connection.CreateSelectCommand($"SELECT * FROM {TableName} WHERE clubId = @clubId");
+    using (var reader = await lookup.ExecuteReaderAsync()) { }
+    var unknown = dataSource.CreateCommand($"SELECT * FROM {runtimeTable}");
+    await unknown.ExecuteReaderAsync();
+    var upsert = connection.CreateInsertOrUpdateCommand(TableName, new SpannerParameterCollection());
+    await upsert.ExecuteNonQueryAsync();
+    await using (var cmdDelete = dataSource.CreateCommand($"DELETE FROM {TableName} WHERE clubId = '{clubId}'")) {
+      await Task.Run(() => { return cmdDelete.ExecuteNonQueryAsync(); });
+    }
+  }
+}`);
+    expect(rows).toEqual([
+      "8 ADO.NET: ExecuteReaderAsync KitItems read",
+      "10 ADO.NET: ExecuteReaderAsync KitItems read",
+      "12 ADO.NET: ExecuteReaderAsync - read",
+      "14 ADO.NET: ExecuteNonQueryAsync KitItems write",
+      "16 ADO.NET: ExecuteNonQueryAsync KitItems write",
+    ]);
+  });
+});
+
 describe("C# EF set methods handed over as delegates", () => {
   it("reads `_context.Set.RemoveRange` passed as an argument as a write on that set, never a framework member", async () => {
     const rows = await dbSourcesOf(`    await CleanData(() => LoadInjuries(ct), _db.Injuries.RemoveRange, ct);
