@@ -350,6 +350,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly
   }
 
   links.push(...ctx.extraLinks);
+  links.push(...parameterDispatchLinks(links, analyses, interfaceImplMap, ctx));
 
   // Fan-out: emit a link from each interface method to every implementation's
   // matching method so the trace tab can navigate from interface → impls. A
@@ -360,6 +361,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly
   for (const [, info] of interfaceImplMap) {
     if (info.impls.length < 1) continue;
     for (const ifaceMethod of info.methods) {
+      if (ifaceMethod.inherited) continue; // its own interface's fan-out links it
       const ifaceSymbol = `${info.interfaceName}.${ifaceMethod.name}`;
       for (const impl of info.impls) {
         // Where the method actually is: the class body, a sibling file of its
@@ -410,6 +412,84 @@ export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly
 
   pickOverloads(deduped, analyses);
   return deduped;
+}
+
+/**
+ * A generic handler dispatches on what its caller hands it: `DoCreate(ctx, obj
+ * CObject, a)` calls `obj.Create(s, a)`, and `projectUsersCreate` passes it a
+ * `models.ProjectUser` (named in its own parameter or local types). The call
+ * site, not the handler, knows the concrete type, so the caller gets a link to
+ * that implementation's `Create`. Only when the parameter's type is an
+ * interface with implementations, the handler calls a method on the parameter
+ * itself, and exactly one implementation is named in the caller's types.
+ */
+function parameterDispatchLinks(
+  links: readonly SymbolLink[],
+  analyses: readonly FileAnalysis[],
+  interfaceImplMap: Map<string, InterfaceImplInfo>,
+  ctx: LinkContext,
+): SymbolLink[] {
+  const ifaceByName = new Map<string, InterfaceImplInfo | null>();
+  for (const info of interfaceImplMap.values()) {
+    if (info.impls.length === 0) continue;
+    ifaceByName.set(info.interfaceName, ifaceByName.has(info.interfaceName) ? null : info);
+  }
+  if (ifaceByName.size === 0) return [];
+  const bare = (t: string | null | undefined): string => (t ?? "").replace(/^[*&\s]+|\[\]|<.*$/gs, "").split(/[.:\\]/).pop()!.trim();
+  type Dispatch = { param: string; iface: InterfaceImplInfo; methods: Array<{ name: string; line: number }> };
+  const dispatchOf = new Map<string, Dispatch[]>();
+  const fnAt = new Map<string, FunctionInfo>();
+  for (const a of analyses) {
+    const consider = (symbol: string, fn: FunctionInfo) => {
+      fnAt.set(`${a.filePath}\0${symbol}`, fn);
+      const out: Dispatch[] = [];
+      for (const p of fn.params) {
+        const iface = ifaceByName.get(bare(p.type));
+        if (!iface) continue;
+        const methods = fn.calls.filter((c) => c.name.startsWith(`${p.name}.`) && !c.name.slice(p.name.length + 1).includes("."))
+          .map((c) => ({ name: c.name.slice(p.name.length + 1), line: c.line }));
+        if (methods.length > 0) out.push({ param: p.name, iface, methods });
+      }
+      if (out.length > 0) dispatchOf.set(`${a.filePath}\0${symbol}`, out);
+    };
+    for (const fn of a.functions) consider(fn.name, fn);
+    for (const cls of a.classes) for (const m of cls.methods) consider(`${cls.name}.${m.name}`, m);
+  }
+  if (dispatchOf.size === 0) return [];
+
+  const out: SymbolLink[] = [];
+  const seen = new Set<string>();
+  for (const l of links) {
+    const dispatches = dispatchOf.get(`${l.targetFile}\0${l.targetSymbol}`);
+    const caller = dispatches ? fnAt.get(`${l.sourceFile}\0${l.sourceSymbol}`) : undefined;
+    if (!dispatches || !caller) continue;
+    const mentioned = [...caller.params.map((p) => p.type ?? ""), ...(caller.localTypes ?? []).map((t) => t.type ?? "")].join(" ");
+    for (const d of dispatches) {
+      const named = d.iface.impls.filter((impl) => new RegExp(String.raw`(?:^|[^\w])${impl.className}(?![\w])`).test(mentioned));
+      if (named.length !== 1) continue;
+      const impl = named[0]!;
+      for (const m of d.methods) {
+        const target = findMethodInClass(ctx, impl.className, impl.classFile, m.name);
+        if (!target) continue;
+        const key = `${l.sourceFile}\0${l.sourceSymbol}\0${target.file}\0${target.symbol}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+          sourceFile: l.sourceFile,
+          sourceSymbol: l.sourceSymbol,
+          sourceLine: l.sourceLine,
+          callName: `${d.param}.${m.name}`,
+          targetFile: target.file,
+          targetSymbol: target.symbol,
+          targetLine: target.line,
+          confidence: "INFERRED",
+          strategy: "interface-redirect",
+          relation: relationForStrategy("interface-redirect"),
+        });
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -1796,6 +1876,40 @@ export function buildInterfaceImplMap(
   const byName = interfacesNamed(map);
   const languageOf = new Map(analyses.map((a) => [a.filePath, a.language as string]));
 
+  // A structural interface built from others (Go `type CObject interface { web.CRUDable;
+  // web.Permissions }`, a Protocol over Protocols) has their methods too — when every one
+  // it names is a structural interface of the analysis; otherwise its method set is not
+  // all known, and matching part of it would accept types that do not satisfy it.
+  const embedsOf = new Map<InterfaceImplInfo, string[]>();
+  for (const a of analyses) {
+    for (const cls of a.classes) {
+      const entry = cls.kind === "interface" && cls.structural && cls.embeds?.length ? map.get(memberKey(a.filePath, cls.name)) : undefined;
+      if (entry) embedsOf.set(entry, cls.embeds!.map(bareSupertypeName));
+    }
+  }
+  const flattened = new Set<InterfaceImplInfo>();
+  const flatten = (entry: InterfaceImplInfo, stack: Set<InterfaceImplInfo>): boolean => {
+    const embeds = embedsOf.get(entry);
+    if (!embeds || flattened.has(entry)) return entry.structural === true;
+    if (stack.has(entry)) return false;
+    stack.add(entry);
+    const lang = languageOf.get(entry.interfaceFile) ?? "";
+    for (const name of embeds) {
+      const defs = (byName.get(name) ?? []).filter((d) => d !== entry && sameTypeSpace(entry.interfaceFile, lang, d.interfaceFile, languageOf.get(d.interfaceFile) ?? ""));
+      const def = defs.length === 1 ? defs[0]! : null;
+      if (!def || !def.structural || !flatten(def, stack)) {
+        delete entry.structural;
+        stack.delete(entry);
+        return false;
+      }
+      for (const m of def.methods) if (!entry.methods.some((x) => x.name === m.name)) entry.methods.push({ ...m, inherited: true });
+    }
+    stack.delete(entry);
+    flattened.add(entry);
+    return true;
+  };
+  for (const entry of embedsOf.keys()) flatten(entry, new Set());
+
   // The definition an implementing class means by a name: the only one, or
   // (same type space) the one closest to the implementing file. A tie attaches
   // it nowhere rather than to the wrong interface.
@@ -1861,6 +1975,34 @@ export function buildInterfaceImplMap(
         }
       }
     }
+    // Promoted methods: a struct embedding an interface or another struct has their
+    // methods too (`web.CRUDable` in `ProjectUser` gives it `ReadOne`), two levels deep.
+    const embedsAt = new Map<string, { file: string; embeds: string[] }>();
+    for (const a of analyses) {
+      const scope = typesSpanFiles(a.language) ? a.filePath.slice(0, a.filePath.lastIndexOf("/") + 1) : a.filePath;
+      for (const cls of a.classes) {
+        if (cls.kind !== "interface" && cls.embeds?.length) embedsAt.set(`${scope}\0${cls.name}`, { file: a.filePath, embeds: cls.embeds });
+      }
+    }
+    for (let round = 0; round < 2 && embedsAt.size > 0; round++) {
+      for (const [key, { file, embeds }] of embedsAt) {
+        const set = methodSets.get(key);
+        if (!set) continue;
+        const lang = languageOf.get(file) ?? "";
+        for (const name of embeds) {
+          const ifaces = (byName.get(name) ?? []).filter((d) => sameTypeSpace(file, lang, d.interfaceFile, languageOf.get(d.interfaceFile) ?? ""));
+          const structs = [...methodSets.entries()].filter(([k, s]) => s.name === name && k !== key && sameTypeSpace(file, lang, s.file, languageOf.get(s.file) ?? ""));
+          const promoted = ifaces.length === 1
+            ? ifaces[0]!.methods.map((m) => ({ name: m.name, line: m.line, arity: m.arity }))
+            : structs.length === 1 ? [...structs[0]![1].methods.values()].map((m) => ({ ...m, arity: structs[0]![1].arity.get(m.name) })) : [];
+          for (const m of promoted) {
+            if (set.methods.has(m.name)) continue;
+            set.methods.set(m.name, { name: m.name, line: m.line });
+            if (m.arity !== undefined) set.arity.set(m.name, m.arity);
+          }
+        }
+      }
+    }
     for (const entry of structuralIfaces) {
       const ifaceLang = languageOf.get(entry.interfaceFile) ?? "";
       for (const set of methodSets.values()) {
@@ -1895,8 +2037,11 @@ export interface InterfaceImplInfo {
   interfaceFile: string;
   /** Satisfied structurally (see `ClassInfo.structural`). */
   structural?: boolean;
-  /** `arity`: declared parameter count, which a structural implementation must match. */
-  methods: { name: string; line: number; arity?: number }[];
+  /**
+   * `arity`: declared parameter count, which a structural implementation must match;
+   * `inherited`: an embedded interface's method, declared there.
+   */
+  methods: { name: string; line: number; arity?: number; inherited?: true }[];
   impls: {
     className: string;
     classFile: string;

@@ -17,10 +17,11 @@ import { bracketDelta, goResultTextAt, goResultTypes, splitGoStatements, splitGo
  * - the receiver variable is a typed local of its method (`s` → `Svc`), so
  *   `s.validate()` reaches the type's own method;
  * - interfaces are `kind: "interface"`, `structural: true` (a Go type never
- *   names the interfaces it satisfies) with their method specs as methods —
- *   except one that embeds another interface or a type set: its method set is
- *   not all written here, and matching a partial set would accept types that
- *   do not satisfy it;
+ *   names the interfaces it satisfies) with their method specs as methods and
+ *   the interfaces they embed as `embeds` (`web.CRUDable` → `CRUDable`):
+ *   core flattens those into the method set, and leaves the interface
+ *   unmatched when one is not in the analysis. One with a type-set term
+ *   (`~int | ~float64`) is never structural: no method set says it;
  * - struct fields cover embedded fields (`UserRepo`, `*Base`, named after the
  *   type, marked `embedded`), grouped names (`a, b *T`), one-line struct
  *   bodies and trailing comments;
@@ -116,13 +117,17 @@ function scanTypeDeclarations(lines: string[], parseParam: ParamParser): ClassIn
     const segments = bodySegments(lines, i, open, endLine);
     if (m[2] === "struct") {
       for (const seg of segments) cls.properties.push(...parseGoFields(seg.text));
+      // Embedded fields promote their type's methods (the entity pass drops them as columns).
+      const embeds = cls.properties.filter((p) => p.decorators?.includes("embedded")).map((p) => p.name);
+      if (embeds.length > 0) cls.embeds = embeds;
     } else {
       cls.kind = "interface";
       let complete = true;
       for (const seg of segments) {
         const spec = /^([A-Za-z_]\w*)\s*\(/.exec(seg.text);
         if (spec) cls.methods.push(methodSpec(spec[1]!, seg, parseParam));
-        else complete = false; // embedded interface or type-set term
+        else if (/^[A-Za-z_][\w.]*$/.test(seg.text.trim())) (cls.embeds ??= []).push(seg.text.trim().split(".").pop()!); // embedded interface
+        else complete = false; // type-set term
       }
       if (complete) cls.structural = true;
     }

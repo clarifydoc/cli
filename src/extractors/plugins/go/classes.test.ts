@@ -116,7 +116,7 @@ type Closer interface{ Close() error }
     expect(classes["Closer"]!.methods.map((m) => m.name)).toEqual(["Close"]);
   });
 
-  it("is not matched structurally when part of its method set is embedded", () => {
+  it("names the interfaces it embeds, and is no structural interface with a type-set term", () => {
     const classes = byName(classesOf(`
 type ReadSaver interface {
 	io.Reader
@@ -127,8 +127,7 @@ type Number interface {
 	~int | ~float64
 }
 `));
-    expect(classes["ReadSaver"]!.kind).toBe("interface");
-    expect(classes["ReadSaver"]!.structural).toBeUndefined();
+    expect(classes["ReadSaver"]).toMatchObject({ kind: "interface", structural: true, embeds: ["Reader"] });
     expect(classes["ReadSaver"]!.methods.map((m) => m.name)).toEqual(["Save"]);
     expect(classes["Number"]!.structural).toBeUndefined();
   });

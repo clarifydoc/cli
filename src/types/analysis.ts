@@ -905,6 +905,14 @@ export interface ClassInfo {
    * interface's as one of its implementations.
    */
   structural?: boolean;
+  /**
+   * The types it embeds, whose methods are its own. On a structural interface
+   * (Go `type CObject interface { web.CRUDable; web.Permissions }` →
+   * `CRUDable`, `Permissions`): one the analysis lacks leaves its method set
+   * unknown, and it then matches nothing. On a Go struct: the embedded fields'
+   * types, whose methods are promoted.
+   */
+  embeds?: string[];
 }
 
 /** A non-auth filter on a route (`RouteInfo.filters`). */
