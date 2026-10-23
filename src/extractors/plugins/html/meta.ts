@@ -5,7 +5,7 @@ import { materializeElementRequests } from "../shared/element-requests.js";
 import { readTemplate } from "../templates/index.js";
 
 /** Django / Jinja template tags: a page with these is a server template, not a static page. */
-const DJANGO_TEMPLATE_RE = /\{%-?\s*(?:extends|block|load|url|include|csrf_token|endblock|trans|blocktrans)\b/;
+const DJANGO_TEMPLATE_RE = /\{%-?\s*(?:extends|block|load|url|include|csrf_token|endblock|trans|blocktrans|for|endfor|if|endif|set|macro)\b/;
 
 /**
  * Plain HTML pages (vanilla multi-page static sites). Each `.html` page becomes a

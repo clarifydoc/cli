@@ -58,6 +58,7 @@ class Club(models.Model):
   "clubs/templates/clubs/form.html": `{% extends "base.html" %}
 {% block content %}<form method="post">{% csrf_token %}{{ form }}<button type="submit">Save</button></form>{% endblock %}
 `,
+  "clubs/templates/emails/transfer.html": `<p>Transfers:</p><ul>{% for player in players %}<li>{{ player.name }}</li>{% endfor %}</ul>\n`,
   "templates/static-page.html": `<html><body><a href="/about">About</a></body></html>\n`,
 };
 
@@ -86,6 +87,7 @@ describe("Django templates and route names", () => {
   it("reads a Django template as a server template, not a page served at its path", () => {
     const frontend = (summary.routeMap ?? []).filter((r) => r.kind === "frontend").map((r) => r.path);
     expect(frontend).not.toContain("/clubs/templates/clubs/list.html");
+    expect(frontend).not.toContain("/clubs/templates/emails/transfer.html");
     expect(frontend).toContain("/templates/static-page.html");
   });
 
