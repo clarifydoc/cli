@@ -44,4 +44,21 @@ describe("clientProxyCalls", () => {
     const other = { ...caller, imports: [{ source: "com.other.PersonApi", specifiers: ["PersonApi"] }] } as unknown as FileAnalysis;
     expect(clientProxyCalls([registry, other])).toEqual([]);
   });
+
+  it("takes the receiver type a plugin states for a proxy built in the call chain", () => {
+    const chained = {
+      ...caller,
+      classes: [{
+        name: "Lookup",
+        properties: [],
+        methods: [{ name: "find", params: [], calls: [
+          { ...call("JAXRSClientFactory.fromClient(client, PersonApi.class, true).getPerson", 30), receiverType: "PersonApi" },
+          { ...call("ctx.getBean(Cache.class).get", 31), receiverType: "Cache" },
+        ] }],
+      }],
+    } as unknown as FileAnalysis;
+    expect(clientProxyCalls([registry, chained]).map((c) => [c.line, c.name, c.contract])).toEqual([
+      [30, "PersonApi.getPerson", { type: "com.acme.api.PersonApi", method: "getPerson" }],
+    ]);
+  });
 });

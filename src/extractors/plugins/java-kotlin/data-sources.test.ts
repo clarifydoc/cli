@@ -177,6 +177,45 @@ describe("DAO / Repository receiver → entity (the dominant data path here)", (
   });
 });
 
+describe("CXF WebClient requests", () => {
+  it("sends to the client's base and the paths set on it, never a database read", async () => {
+    const rows = await sourcesOf(`    WebClient client = clientFactory.createWebClient(leagueUrl, context);
+    client.path("clubs/" + clubId + "/squad/");
+    client.query("season", season);
+    Squad squad = client.get(Squad.class);
+    WebClient.create("http://fixtures:8080/api").path("matches").path(matchId).post(report);
+    client.replacePath("kits");
+    client.invoke("PATCH", kit);`, "java", "import org.apache.cxf.jaxrs.client.WebClient;");
+    expect(rows.filter((d) => d.kind === "api-call" || d.kind === "database").map((d) => `${d.kind} ${d.name} ${d.target}`)).toEqual([
+      "api-call GET ${leagueUrl}/clubs/${clubId}/squad",
+      "api-call POST http://fixtures:8080/api/matches/${matchId}",
+      "api-call PATCH ${leagueUrl}/kits",
+    ]);
+  });
+});
+
+describe("QueryDSL queries", () => {
+  it("reads the entity each generated Q path names, by static import, inline or declared type", async () => {
+    const rows = db(await sourcesOf(`    JPAQuery<PlayerEntity> query = queryFactory.selectFrom(playerEntity);
+    QClubEntity c = QClubEntity.clubEntity;
+    queryFactory.select(c.id.count(), playerEntity.id.count()).from(c).leftJoin(QKitEntity.kitEntity).fetch();
+    queryFactory.delete(playerEntity).where(playerEntity.retired.isTrue()).execute();
+    stream.from(source);`, "java", `import static com.example.league.QPlayerEntity.playerEntity;
+import com.querydsl.jpa.impl.JPAQuery;`));
+    expect(rows.map((d) => `${d.name} ${d.entity} ${d.access}`)).toEqual([
+      "QueryDSL: selectFrom PlayerEntity read",
+      "QueryDSL: leftJoin KitEntity read",
+      "QueryDSL: from ClubEntity read",
+      "QueryDSL: delete PlayerEntity write",
+    ]);
+  });
+
+  it("reads nothing in a file that does not use QueryDSL", async () => {
+    const rows = db(await sourcesOf(`    flux.from(QPlayer.player);`, "java"));
+    expect(rows).toEqual([]);
+  });
+});
+
 describe("count and save that are no repository's", () => {
   it("skips a stream's count, a criteria count and an action's save; keeps a repository's", async () => {
     const rows = db(await sourcesOf(`    long n = players.stream().filter(p -> p.isFit()).count();
@@ -451,6 +490,27 @@ public class LeagueEventPublisherImpl {
     const tree = await parseSource(src, "java" as any, "LeagueEventPublisherImpl.java");
     const s = q(new JavaKotlinDataSourceExtractor().extract(tree, src));
     expect(s.map((d) => `${d.kind} ${d.target} @${d.line}`)).toEqual(["queue-publish ClubCreatedEvent @11", "queue-publish ClubDeletedEvent @11"]);
+  });
+
+  it("reads past a generic `Message` payload parameter to the events its callers hold in locals", async () => {
+    const src = `package x;
+public class KitEventServiceImpl {
+  private EventPublisher eventPublisher;
+  public void kitCreated(KitEntity kit) {
+    KitCreatedEvent message = KitCreatedEvent.newBuilder().build();
+    sendKitMessage(kit, message);
+  }
+  public void kitRetired(KitEntity kit) {
+    KitRetiredEvent message = KitRetiredEvent.newBuilder().build();
+    sendKitMessage(kit, message);
+  }
+  protected void sendKitMessage(KitEntity kit, Message message) {
+    eventPublisher.send(audit(), metadata(kit), message);
+  }
+}`;
+    const tree = await parseSource(src, "java" as any, "KitEventServiceImpl.java");
+    const s = q(new JavaKotlinDataSourceExtractor().extract(tree, src));
+    expect(s.map((d) => `${d.kind} ${d.target}`)).toEqual(["queue-publish KitCreatedEvent", "queue-publish KitRetiredEvent"]);
   });
 
   it("strips an upper-case DB tech suffix from a repository type", async () => {

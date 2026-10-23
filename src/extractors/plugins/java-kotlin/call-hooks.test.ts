@@ -19,6 +19,24 @@ function receivers(calls: CallInfo[]): Record<string, string | undefined> {
   );
 }
 
+describe("JVM receiverTypeOf — client proxies built in the chain", () => {
+  it("types a JAX-RS, MicroProfile, Feign or Retrofit proxy by the interface it is built for", async () => {
+    const m = await methodOf(`class C {
+  void m() {
+    JAXRSClientFactory.fromClient(client, PlayerApi.class, true).getPlayer(id);
+    JAXRSClientFactory.create(url, com.example.league.ClubApi.class).listClubs();
+    RestClientBuilder.newBuilder().baseUri(uri).build(KitApi.class).listKits();
+    Feign.builder().decoder(d).target(FixtureApi.class, url).nextFixture();
+    retrofit.create(InjuryApi.class).latest();
+    factory.create(Player.class).getName();
+  }
+}`, "java", "m");
+    expect(m.calls.filter((c) => c.receiverType).map((c) => c.receiverType)).toEqual([
+      "PlayerApi", "com.example.league.ClubApi", "KitApi", "FixtureApi", "InjuryApi",
+    ]);
+  });
+});
+
 describe("JVM receiverTypeOf — container lookups chained into a call", () => {
   it("types Java getBean / getInstance / cast receivers, never a construction", async () => {
     const m = await methodOf(`class C {

@@ -94,6 +94,13 @@ export function clientProxyCalls(
 
     const emit = (fn: FunctionInfo, scope: ReadonlyMap<string, string>) => {
       for (const call of fn.calls) {
+        // `Factory.fromClient(client, PersonApi.class).getPerson(id)`: the plugin states the receiver's type.
+        const stated = call.receiverType ? proxyOf(call.receiverType) : null;
+        const statedMethod = stated ? /\.([A-Za-z_$][\w$]*)$/.exec(call.name)?.[1] : undefined;
+        if (stated && statedMethod) {
+          out.push(contractCall(stated, statedMethod, call.line, a.filePath));
+          continue;
+        }
         const parts = call.name.split(".");
         if (parts.length < 2) continue;
         let receiver = parts.slice(0, -1);
@@ -104,16 +111,7 @@ export function clientProxyCalls(
         if (!type) continue;
         const method = parts[parts.length - 1]!;
         if (!/^[A-Za-z_$][\w$]*$/.test(method)) continue;
-        out.push({
-          kind: "api-call",
-          name: `${type.split(".").pop()}.${method}`,
-          target: null,
-          line: call.line,
-          calls: [],
-          filePath: a.filePath,
-          contract: { type, method },
-          baseRef: { kind: "client", key: type },
-        });
+        out.push(contractCall(type, method, call.line, a.filePath));
       }
     };
     const scopeOf = (fn: FunctionInfo, members: ReadonlyMap<string, string>) => {
@@ -174,4 +172,17 @@ export function clientProxyCalls(
     }
   }
   return out;
+}
+
+function contractCall(type: string, method: string, line: number, filePath: string): ApiCall {
+  return {
+    kind: "api-call",
+    name: `${type.split(".").pop()}.${method}`,
+    target: null,
+    line,
+    calls: [],
+    filePath,
+    contract: { type, method },
+    baseRef: { kind: "client", key: type },
+  };
 }

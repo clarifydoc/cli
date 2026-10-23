@@ -56,7 +56,29 @@ function javaReceiverType(node: Node): { type: string; qualifier?: string } | nu
   const recv = node.children[0];
   if (!recv || (recv.type !== "method_invocation" && recv.type !== "parenthesized_expression")) return null;
   if (node.children[1]?.type !== ".") return null;
-  return lookupType(recv);
+  return lookupType(recv) ?? proxyFactoryType(recv);
+}
+
+/**
+ * The API interface a client-proxy factory chained straight into the call builds:
+ * `JAXRSClientFactory.fromClient(client, ClubApi.class).getClub(id)`,
+ * `RestClientBuilder.newBuilder()…build(ClubApi.class).getClub(id)`, Feign's `.target(ClubApi.class, url)`,
+ * Retrofit's `retrofit.create(ClubApi.class)`. Core turns the call into a contract call when the type is a
+ * registered proxy.
+ */
+function proxyFactoryType(recv: Node): { type: string } | null {
+  if (recv.type !== "method_invocation") return null;
+  const name = recv.childForFieldName("name")?.text ?? "";
+  const object = recv.childForFieldName("object")?.text ?? "";
+  const factory = (/^(?:create|fromClient)$/.test(name) && /(?:^|\.)JAXRSClientFactory$/.test(object))
+    || (name === "build" && /RestClientBuilder\b/.test(object))
+    || (name === "target" && /\bFeign\b/.test(object))
+    || (name === "create" && /retrofit$/i.test(object));
+  if (!factory) return null;
+  const literal = recv.childForFieldName("arguments")?.namedChildren
+    .map((a) => /^((?:[a-z_]\w*\.)*[A-Z]\w*)\.class$/.exec(a.text)?.[1])
+    .find((t): t is string => !!t);
+  return literal ? { type: literal } : null;
 }
 
 /** Kotlin: `ctx.getBean(Foo::class.java).m()`, `get<Foo>().m()`, `(ctx.getBean("n") as Foo).m()`. */

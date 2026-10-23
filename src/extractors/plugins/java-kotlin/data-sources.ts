@@ -128,6 +128,31 @@ const SPRING_DATA_ACCESS = dbVerbTable(
 
 const JDBC_ACCESS = dbVerbTable(JDBC_READS, JDBC_WRITES);
 
+/** CXF `WebClient` methods that send the request, and the verb each sends (`invoke`/`method` name theirs). */
+const CXF_VERB: Record<string, string> = { get: "GET", post: "POST", put: "PUT", delete: "DELETE", head: "HEAD", options: "OPTIONS", form: "POST" };
+const CXF_SEND_METHODS = new Set([...Object.keys(CXF_VERB), "invoke", "method"]);
+/** Calls that create a `WebClient` from its base address: `WebClient.create(base)`, a project factory's `createWebClient(base, …)`. */
+const CXF_CLIENT_FACTORIES = new Set(["create", "createWebClient"]);
+
+/** The `name.x(…)` calls in the method enclosing `at` that come before it, in source order. */
+function cxfCallsOn(at: Node, name: string): Node[] {
+  let fn: Node | null = at.parent;
+  while (fn && !/^(?:method_declaration|constructor_declaration|lambda_expression)$/.test(fn.type)) fn = fn.parent;
+  if (!fn) return [];
+  const out: Node[] = [];
+  const scan = (n: Node): void => {
+    if (n.startIndex >= at.startIndex) return;
+    if (n.type === "method_invocation" && n.childForFieldName("object")?.text.replace(/^this\./, "") === name) out.push(n);
+    for (const c of n.namedChildren) scan(c);
+  };
+  scan(fn);
+  return out;
+}
+
+/** QueryDSL query-factory and query methods that take the path of the entity they read or write. */
+const QUERYDSL_VERBS = new Set(["selectFrom", "from", "join", "innerJoin", "leftJoin", "rightJoin", "fullJoin", "update", "delete", "insert", "insertInto"]);
+const QUERYDSL_WRITES = new Set(["update", "delete", "insert", "insertInto"]);
+
 /** Leading verb of a derived query or DAO method. */
 const JVM_READ_VERB_RE = /^(find|read|get|fetch|load|list|search|select|query|stream|count|exists|all)/i;
 const JVM_WRITE_VERB_RE = /^(save|store|insert|create|add|update|merge|upsert|persist|delete|remove)/i;
@@ -400,6 +425,8 @@ const EVENT_PUBLISHER_RECEIVER_RE = /(publisher|eventbus|bus)$/i;
 // service sends on the bus and its reply (`PurgePersonRequest`, `…Response`) … The
 // suffix fence keeps `emailPublisher.send(new Attachment())` from reading as an event.
 const EVENT_TYPE_RE = /(Event|Message|Command|Notification|Request|Response|Reply)$/;
+/** Base payload types, which say nothing about the event: protobuf's `Message`, Spring's `ApplicationEvent`. */
+const GENERIC_EVENT_TYPE_RE = /^(?:Message|MessageLite|AbstractMessage|GeneratedMessage(?:V3)?|Event|ApplicationEvent|BaseEvent|DomainEvent|Command|Notification)$/;
 
 // ─── Outbound HTTP declared via annotations ──────────────────────────────────
 // Retrofit interface methods carry the outbound URL in the verb annotation
@@ -457,6 +484,13 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   private topicDefaults = new Map<string, string>();
   /** Fields and parameters `@Value` fills: the configuration key each holds. */
   private configFields = new Map<string, { key: string; fallback?: string }>();
+  /**
+   * QueryDSL's generated query types the file names by a static import
+   * (`import static ….QPlayer.player;` → `player` → Player); null when the file uses no QueryDSL.
+   */
+  private querydslPaths: Map<string, string> | null = null;
+  /** The file imports CXF's JAX-RS `WebClient`. */
+  private isCxfWebClientFile = false;
 
   /** A request whose URL starts with a field `@Value` fills is based on that configuration key. */
   protected override ds(info: Parameters<DataSourceExtractor["ds"]>[0]): DataSourceInfo {
@@ -481,6 +515,10 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     this.isJooqFile = /jooq/i.test(text);
     this.isRoomFile = /\bandroidx\.room\b/.test(text);
     this.isKafkaClientFile = /\borg\.apache\.kafka\.clients\b/.test(text);
+    this.isCxfWebClientFile = /\borg\.apache\.cxf\.jaxrs\.client\.(?:WebClient|\*)/.test(text);
+    this.querydslPaths = /\bcom\.querydsl\b/.test(text)
+      ? new Map([...text.matchAll(/^\s*import\s+static\s+[\w.]*\.Q([A-Z]\w*)\.(\w+)\s*;?\s*$/gm)].map((m) => [m[2]!, m[1]!]))
+      : null;
     // Topics a file names by a variable read from the environment with a default
     // (`val topic = System.getenv("TOPIC") ?: "orders"`): the default.
     this.topicDefaults = new Map([...text.matchAll(/\b(?:val|var|String)\s+(\w+)\s*(?::\s*String\??\s*)?=\s*[^\n;]*?(?:\?:|\?\s*\S+\s*:)\s*"([^"]+)"/g)].map((m) => [m[1]!, m[2]!]));
@@ -637,6 +675,29 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
           line,
           ...withAccess(dbAccessFor(method, JOOQ_ACCESS)),
         }));
+        return;
+      }
+    }
+
+    // 1b) QueryDSL — `queryFactory.selectFrom(player)`, `.from(QClub.club)`, `.delete(player)`: the
+    // generated `Q` type the argument is names the entity. Only in a file that imports QueryDSL, and
+    // only when the argument resolves to a `Q` type, so `stream.from(x)` and `cache.delete(k)` stay out.
+    if (this.querydslPaths && QUERYDSL_VERBS.has(method)) {
+      const entity = this.querydslEntity(node, call.firstArg);
+      if (entity) {
+        sources.push(this.ds({ kind: "database", name: `QueryDSL: ${method}`, target: entity, entity, line, ...withAccess(QUERYDSL_WRITES.has(method) ? "write" : "read") }));
+        return;
+      }
+    }
+    // `player.id.count()`, `QClub.club.id.max()`: an aggregate over a QueryDSL path, not a repository's count.
+    if (this.querydslPaths && this.querydslPathRoot(node, receiver)) return;
+
+    // 1c) CXF `WebClient`: `client.path("clubs/" + id); client.query("season", s); client.get(Club.class)`
+    // sends to the client's base and the paths set on it before the call — or chained into it.
+    if (this.isCxfWebClientFile && CXF_SEND_METHODS.has(method)) {
+      const request = this.cxfWebClientRequest(node, call);
+      if (request) {
+        sources.push(this.ds({ kind: "api-call", name: request.verb, target: request.target, line }));
         return;
       }
     }
@@ -854,6 +915,78 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     }
   }
 
+  /** The entity a QueryDSL path argument stands for: `QPlayer.player`, a static import of it, a `QPlayer` local or field. */
+  private querydslEntity(node: Node, arg: Node | null): string | null {
+    if (!arg) return null;
+    const text = arg.text.trim();
+    const inline = /^(?:[\w.]*\.)?Q([A-Z]\w*)\.\w+$/.exec(text) ?? /^new\s+(?:[\w.]*\.)?Q([A-Z]\w*)\s*\(/.exec(text);
+    if (inline) return inline[1]!;
+    if (!/^[a-z_$][\w$]*$/.test(text)) return null;
+    const declared = localDeclaredType(node, text) ?? this.fieldTypes.get(text) ?? null;
+    const fromType = declared ? /^Q([A-Z]\w*)$/.exec(declared)?.[1] : undefined;
+    return fromType ?? this.querydslPaths?.get(text) ?? null;
+  }
+
+  /** The receiver starts from a QueryDSL path (`player.id`, `QClub.club.name`). */
+  private querydslPathRoot(node: Node, receiver: string): boolean {
+    const inline = /^(?:[\w.]*\.)?Q[A-Z]\w*\.\w+(?:\.|$)/.test(receiver);
+    const root = /^([a-z_$][\w$]*)\./.exec(receiver)?.[1];
+    if (inline) return true;
+    if (!root) return false;
+    const declared = localDeclaredType(node, root) ?? this.fieldTypes.get(root) ?? null;
+    return (declared ? /^Q[A-Z]/.test(declared) : false) || this.querydslPaths!.has(root);
+  }
+
+  /**
+   * The request a CXF `WebClient` send makes: the base the client was created with (`WebClient.create(base)`,
+   * a factory's first argument), else an unknown base named for the client, then every `path(…)` set on it —
+   * chained into the send, chained into its initializer, or called on the variable earlier in the method.
+   * `replacePath(…)` starts over. Null when the receiver is no `WebClient`.
+   */
+  private cxfWebClientRequest(node: Node, call: CallParts): { verb: string; target: string } | null {
+    const segments: Node[] = [];
+    let base: Node | null = null;
+    let variable: string | null = null;
+    // Walks a chain down to its root, keeping the path segments in order: `WebClient.create(base).path("x")`.
+    const walk = (start: Node | null): boolean => {
+      for (let cur = start; cur; cur = cur.childForFieldName("object")) {
+        if (cur.type === "identifier" || cur.type === "field_access") { variable ??= cur.text.replace(/^this\./, ""); return true; }
+        if (cur.type !== "method_invocation") return false;
+        const name = cur.childForFieldName("name")?.text ?? "";
+        const arg = firstJavaArg(cur.childForFieldName("arguments"));
+        if ((name === "path" || name === "replacePath") && arg) segments.unshift(arg);
+        if (name === "replacePath") return false;
+        if (CXF_CLIENT_FACTORIES.has(name) && arg) { base = arg; return false; }
+      }
+      return false;
+    };
+    const toVariable = walk(node.childForFieldName("object"));
+    if (toVariable && variable) {
+      const name: string = variable;
+      if ((localDeclaredType(node, name) ?? this.fieldTypes.get(name) ?? null) !== "WebClient") return null;
+      // Earlier statements on the variable, latest first, back to a `replacePath`.
+      let reset = false;
+      for (const c of cxfCallsOn(node, name).reverse()) {
+        const cname = c.childForFieldName("name")?.text;
+        const arg = firstJavaArg(c.childForFieldName("arguments"));
+        if ((cname === "path" || cname === "replacePath") && arg) segments.unshift(arg);
+        if (cname === "replacePath") { reset = true; break; }
+      }
+      // The initializer gives the base; after a `replacePath` its paths no longer apply.
+      const init = localInitializer(node, name);
+      const set = segments.length;
+      if (init) walk(init);
+      if (reset) segments.splice(0, segments.length - set);
+    } else if (!base) return null;
+    const verb = CXF_VERB[call.method] ?? /^"(\w+)"$/.exec(call.firstArg?.text ?? "")?.[1]?.toUpperCase();
+    if (!verb) return null;
+    const render = (n: Node): string => urlExpression(n, node, 0) ?? "${" + n.text.replace(/\s+/g, " ") + "}";
+    const baseNode = base as Node | null;
+    const baseText = baseNode ? render(baseNode) : "${" + (variable ?? "client") + "}";
+    const path = segments.map((s) => render(s).replace(/^\/+|\/+$/g, "")).filter(Boolean).join("/");
+    return { verb, target: path ? `${baseText.replace(/\/+$/, "")}/${path}` : baseText };
+  }
+
   /** A JDBC/JPA handle by its last segment, unless it is named or declared as a service-layer object. */
   /** A RabbitMQ `Channel`: declared as one, or named so. */
   private isAmqpChannel(node: Node, receiver: string): boolean {
@@ -917,9 +1050,11 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       // constructor in sight the type is the only event-shaped evidence.
       if (/^[\w$]+$/.test(text)) {
         const t = localDeclaredType(call, text) ?? this.fieldTypes.get(text) ?? null;
-        if (t && EVENT_TYPE_RE.test(t)) return [t];
-        const handed = parameterArgTypes(call, text);
+        // A parameter of a generic payload type (`send(Metadata md, Message message)`) is whatever this file's
+        // callers hand the method; the type itself only when they say nothing more.
+        const handed = !t || !EVENT_TYPE_RE.test(t) || GENERIC_EVENT_TYPE_RE.test(t) ? parameterArgTypes(call, text) : [];
         if (handed.length > 0) return handed;
+        if (t && EVENT_TYPE_RE.test(t)) return [t];
       }
 
       // A method of this file builds it: `publishEvent(computeChangedEvent(old, now))` → its declared return type.
