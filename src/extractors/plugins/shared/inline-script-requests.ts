@@ -9,6 +9,9 @@ import { literalPath } from "./element-requests.js";
  */
 const CALL_RE = /\bfetch\s*\(\s*(?:([A-Za-z_$][\w$]*)\s*\+\s*)?(["'`])([^"'`]*)\2|\baxios\.(get|post|put|patch|delete)\s*\(\s*(["'`])([^"'`]*)\5|\$\.(get|post|getJSON)\s*\(\s*(["'`])([^"'`]*)\8/g;
 
+/** A file the page loads, not a request to the app (`fetch('img/crest.svg')`). */
+const STATIC_ASSET = /\.(?:png|jpe?g|gif|svg|webp|ico|css|js|mjs|map|woff2?|ttf|txt|md)(?:[?#].*)?$/i;
+
 export function inlineScriptRequests(lines: readonly string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
   let body: string[] | null = null;
@@ -23,7 +26,8 @@ export function inlineScriptRequests(lines: readonly string[]): DataSourceInfo[]
       // before the path; an absolute URL names its host, which the call-origin pass places.
       const target = m[1] && written.startsWith("/") ? `\${${m[1]}}${written.replace(/[?#].*$/, "").replace("{{param}}", ":param")}`
         : /^https?:\/\/[^\s"'`]+$/i.test(written) ? written
-        : literalPath(written.replace(/\$\{([^}]*)\}/g, "{{$1}}"));
+        // A path relative to the page (`axios.put('api/v1/preferences/x')`) is that app path.
+        : literalPath((/^(?:\.\/)?[\w-]+(?:\/[^\s"'`]*)+$/.test(written) && !STATIC_ASSET.test(written) ? "/" + written.replace(/^\.\//, "") : written).replace(/\$\{([^}]*)\}/g, "{{$1}}"));
       if (!target) continue;
       let method = m[4] ?? (m[7] ? (m[7] === "post" ? "post" : "get") : null);
       if (!method) {

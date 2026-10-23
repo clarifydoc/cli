@@ -564,6 +564,19 @@ describe("jQuery Ajax shorthands", () => {
     expect(calls[1]!.requestBody).toBeDefined();
   });
 
+  it("reads a URL relative to the page as that app path (real-repo FP)", async () => {
+    const calls = await apiCallsOf(`
+      $.post('budgets/reorder', arr);
+      $.get('rules/test-rule/' + ruleId).done(function (data) {});
+      $.getJSON('./json/trigger', { count: 2 });
+      $.get('standings');`);
+    expect(calls.map((c) => [c.name, c.target])).toEqual([
+      ["post", "/budgets/reorder"],
+      ["get", "/rules/test-rule/${ruleId}"],
+      ["get", "/json/trigger"],
+    ]);
+  });
+
   it("follows a URL held in a variable", async () => {
     const calls = await apiCallsOf(`
       var url = '/ajax/garage/cars';

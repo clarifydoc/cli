@@ -1178,7 +1178,12 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
             HTTP_VERBS.has(node.parent.childForFieldName("property")?.text.toLowerCase() ?? "");
           if (supertest) return;
           const clientArg = !!firstArg && /^(?:this\.)?(?:axios\w*|http(?:Client)?|client|instance)$/i.test(firstArg.text);
-          const resolved = firstArg && !clientArg ? this.resolveUrlArg(firstArg) : null;
+          let resolved = firstArg && !clientArg ? this.resolveUrlArg(firstArg) : null;
+          // jQuery resolves a relative URL against the page: `$.post('budgets/reorder', …)`,
+          // `$.get('rules/test/' + id)` request that app path. A bare word (`$.get('x')`) stays none.
+          if (jqueryVerb && resolved && /^\.?\/?[\w.-]+(?:\/[\w.{}:$-]*)+$/.test(resolved.url) && !resolved.url.startsWith("/")) {
+            resolved = { ...resolved, url: `/${resolved.url.replace(/^\.\//, "")}` };
+          }
           // `fetch("data:image/svg+xml;base64,…")`, `fetch(blobUrl)` of a `blob:` literal: no request leaves the page.
           if (resolved && /^(?:data|blob):/i.test(resolved.url)) return;
           // A call-expression URL arg (a helper-built URL with no literal slash)

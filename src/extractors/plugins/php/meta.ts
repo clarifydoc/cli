@@ -1,3 +1,4 @@
+import { inlineScriptRequests } from "../shared/inline-script-requests.js";
 import { extractPhpScheduledJobs } from "./scheduled-jobs.js";
 import { phpTaint } from "./taint.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
@@ -49,8 +50,11 @@ export const phpMeta: LanguagePluginMeta = {
   // around its code: forms, links, inline AJAX and the screen (views.ts).
   // An `.inc` is PHP only when it holds a PHP tag: Delphi's `{$I x.inc}` compiler switches and
   // fragments share the extension.
+  // A Blade template's inline `<script>` requests are the page's (`window.axios.put('api/v1/…')`).
   preprocess: (rawSource, relativePath) =>
     /\.inc$/i.test(relativePath) && !/<\?(?:php\b|=)/i.test(rawSource) ? { skip: "an .inc with no PHP in it" }
+      : /\.blade\.php$/i.test(relativePath) && /<script\b/i.test(rawSource)
+        ? { sourceText: rawSource, language: "php", postExtract: (analysis, raw) => { analysis.dataSources.push(...inlineScriptRequests(raw.split(/\r?\n/))); } }
       : phpViewKey(relativePath) === null ? null : { sourceText: rawSource, language: "php", postExtract: (analysis, raw) => readPhpView(analysis, raw) },
   functionsClasses: new PhpExtractor(),
   importsExports: new PhpImportExportExtractor(),

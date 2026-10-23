@@ -54,6 +54,11 @@ describe("normalizeRoutePath", () => {
     expect(normalizeRoutePath("/api/v2/clubs/#{id}#squad")).toBe(normalizeRoutePath("/api/v2/clubs/${id}"));
   });
 
+  it("drops a `.` segment (`./oauth/tokens` from a page at the root)", () => {
+    expect(normalizeRoutePath("/./oauth/personal-access-tokens")).toBe(normalizeRoutePath("/oauth/personal-access-tokens"));
+    expect(normalizeRoutePath("./api/v1/attachments/${id}/upload")).toBe(normalizeRoutePath("/api/v1/attachments/{id}/upload"));
+  });
+
   it("normalizes express :params and strips host/query", () => {
     expect(normalizeRoutePath("https://api.x.com/players/:id?q=1")).toBe("/players/{}");
     expect(normalizeRoutePath("/api/Players/{id}")).toBe("/api/players/{}");
@@ -675,6 +680,15 @@ describe("linkApiCallsToRoutes — same sub-project breaks a tie", () => {
     expect(links[0]).toMatchObject({ target: "svcA/routes.ts", confidence: "EXTRACTED" });
     const fromWeb = linkApiCallsToRoutes([apiCall("web/x.ts", "get", "/api/x")], [other, own], { projectOf });
     expect(fromWeb[0]!.confidence).toBe("AMBIGUOUS");
+  });
+});
+
+describe("linkApiCallsToRoutes — an optional trailing parameter (real-repo FP)", () => {
+  it("lets a route ending in {version?} or :version? answer the path without it", () => {
+    const notes = route("routes/api.php", "GET", "/api/v1/release-notes/{version?}", "ReleaseNotesController#show");
+    const kits = route("server/routes.js", "GET", "/api/kits/:season?", "listKits");
+    const links = linkApiCallsToRoutes([apiCall("web/notes.js", "get", "/api/v1/release-notes"), apiCall("web/kits.js", "get", "/api/kits")], [notes, kits]);
+    expect(links.map((l) => `${l.url} -> ${l.target}`)).toEqual(["/api/v1/release-notes -> routes/api.php", "/api/kits -> server/routes.js"]);
   });
 });
 

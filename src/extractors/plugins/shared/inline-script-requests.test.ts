@@ -39,4 +39,13 @@ describe("inline script requests", () => {
 </script>`;
     expect(inlineScriptRequests(page.split("\n")).map((d) => d.name)).toEqual(["GET /player-meta/:param", "GET /clubs"]);
   });
+
+  it("reads a path relative to the page as that app path, never a static file", () => {
+    const page = `<script>
+  window.axios.put('api/v1/preferences/darkMode', { data: theme });
+  fetch('img/crest.svg');
+  fetch('./clubs/standings');
+</script>`;
+    expect(inlineScriptRequests(page.split("\n")).map((d) => d.name)).toEqual(["PUT /api/v1/preferences/darkMode", "GET /clubs/standings"]);
+  });
 });
