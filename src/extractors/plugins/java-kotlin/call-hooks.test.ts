@@ -19,6 +19,22 @@ function receivers(calls: CallInfo[]): Record<string, string | undefined> {
   );
 }
 
+describe("JVM argsOf — what a CRUD call is handed", () => {
+  it("keeps the one variable handed to a write-named method on an object, nothing else", async () => {
+    const m = await methodOf(`class C {
+  void m(Club club) {
+    change.create(club);
+    change.saveOrUpdate(club);
+    clubs.add(club);
+    cache.get(key);
+    create(club);
+    change.update(club.getId());
+  }
+}`, "java", "m");
+    expect(m.calls.filter((c) => c.args).map((c) => `${c.name}(${c.args!.join(",")})`)).toEqual(["change.create(club)", "change.saveOrUpdate(club)"]);
+  });
+});
+
 describe("JVM receiverTypeOf — client proxies built in the chain", () => {
   it("types a JAX-RS, MicroProfile, Feign or Retrofit proxy by the interface it is built for", async () => {
     const m = await methodOf(`class C {

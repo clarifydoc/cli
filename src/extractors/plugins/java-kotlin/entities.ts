@@ -36,6 +36,7 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
   override reconcileProject(analyses: FileAnalysis[]): void {
     const jvm = analyses.filter((a) => a.language === "java" || a.language === "kotlin");
     statedRepositoryEntities(jvm);
+    handedEntityAccess(jvm);
     const byName = namedQueryEntities(analyses);
     if (byName.size === 0) return;
     for (const a of jvm) {
@@ -973,6 +974,53 @@ function addHelperQueryRuns(a: FileAnalysis, byName: ReadonlyMap<string, NamedQu
     a.dataSources ??= [];
     if (a.dataSources.some((d) => d.line === call.line && d.entity === query.entity)) continue;
     a.dataSources.push({ kind: "database", name: call.name, target: query.entity, entity: query.entity, namedQuery: name, access: query.access, calls: [], line: call.line });
+  }
+}
+
+/**
+ * A generic DAO method (`<T extends Tenanted> T create(T entity) { … em.merge(entity) … }`)
+ * writes whatever it is handed, so its own rows name no entity. Each call of it that hands
+ * one variable (`change.create(address)`, `Address address`) writes that variable's declared
+ * type: a row at the call. A generic method is one with a type-variable parameter and untyped
+ * `database` rows in its body; the call is matched by its receiver's declared class.
+ */
+function handedEntityAccess(jvm: readonly FileAnalysis[]): void {
+  const simple = (t: string | null | undefined): string | null => t?.replace(/<.*$/, "").replace(/^.*\./, "").trim() || null;
+  const typeVariable = (t: string | null | undefined): boolean => /^[A-Z][A-Z0-9]?$/.test(t?.trim() ?? "");
+  const generic = new Map<string, Map<string, "read" | "write">>();
+  for (const a of jvm) {
+    for (const cls of a.classes ?? []) {
+      for (const m of cls.methods) {
+        if (!m.params.some((p) => typeVariable(p.type))) continue;
+        const rows = (a.dataSources ?? []).filter((d) => d.kind === "database" && !d.entity && d.line >= m.line && d.line <= (m.endLine ?? m.line));
+        if (rows.length === 0) continue;
+        const access = rows.some((r) => r.access === "write") || rows.every((r) => !r.access) ? "write" : "read";
+        (generic.get(cls.name) ?? generic.set(cls.name, new Map()).get(cls.name)!).set(m.name, access);
+      }
+    }
+  }
+  if (generic.size === 0) return;
+  for (const a of jvm) {
+    for (const cls of a.classes ?? []) {
+      const members = new Map<string, string>();
+      for (const p of cls.properties) if (p.type) members.set(p.name, p.type);
+      for (const m of cls.methods) {
+        const scope = new Map(members);
+        for (const p of m.params) if (p.type) scope.set(p.name, p.type);
+        for (const l of m.localTypes ?? []) if (l.type) scope.set(l.name, l.type);
+        for (const call of m.calls) {
+          if (call.args?.length !== 1) continue;
+          const parts = /^(?:this\.)?([\w$]+)\.([\w$]+)$/.exec(call.name);
+          const owner = parts ? simple(call.receiverType ?? scope.get(parts[1]!)) : null;
+          const access = owner ? generic.get(owner)?.get(parts![2]!) : undefined;
+          const entity = access ? simple(scope.get(call.args[0]!)) : null;
+          if (!access || !entity || typeVariable(entity) || /^(?:Object|String|Long|Integer)$/.test(entity)) continue;
+          a.dataSources ??= [];
+          if (a.dataSources.some((d) => d.line === call.line && d.entity === entity)) continue;
+          a.dataSources.push({ kind: "database", name: `${owner}.${parts![2]}`, target: entity, entity, access, calls: [], line: call.line });
+        }
+      }
+    }
   }
 }
 

@@ -69,4 +69,25 @@ public interface RepositoryFan extends JpaRepository<EntityClubFan, Long> {
     new JavaKotlinEntityExtractor().reconcileProject([repo, generic, service]);
     expect(service.dataSources.map((d) => `${d.target} ${d.entity}`)).toEqual(["MatchSheetEntity MatchSheetEntity", "Base Base"]);
   });
+
+  it("types a generic DAO method's write by the variable each caller hands it", () => {
+    const dao = javaFile("src/main/java/league/dao/LeagueChange.java", {
+      classes: [{ name: "LeagueChange", kind: "class", extends: null, implements: [], decorators: [], properties: [], isExported: true, line: 1, endLine: 40,
+        methods: [{ name: "create", params: [{ name: "entity", type: "T", defaultValue: null }], calls: [], line: 10, endLine: 16, returnType: "T", isAsync: false, isExported: true, decorators: [] }] }],
+      dataSources: [{ kind: "database", name: "merge", target: null, access: "write", calls: [], line: 12 }],
+    });
+    const field = (name: string, type: string) => ({ name, type, visibility: "private" as const, isStatic: false, isReadonly: true });
+    const service = javaFile("src/main/java/league/ClubService.java", {
+      classes: [{ name: "ClubService", kind: "class", extends: null, implements: [], decorators: ["Service"], isExported: true, line: 1, endLine: 30,
+        properties: [field("change", "LeagueChange"), field("cache", "ClubCache")],
+        methods: [{ name: "register", params: [{ name: "club", type: "Club", defaultValue: null }, { name: "id", type: "String", defaultValue: null }], line: 5, endLine: 12, returnType: null, isAsync: false, isExported: true, decorators: [],
+          calls: [
+            { name: "change.create", kind: "cross-file", target: null, line: 7, args: ["club"] },
+            { name: "change.create", kind: "cross-file", target: null, line: 8, args: ["id"] },
+            { name: "cache.create", kind: "cross-file", target: null, line: 9, args: ["club"] },
+          ] }] }],
+    });
+    new JavaKotlinEntityExtractor().reconcileProject([dao, service]);
+    expect(service.dataSources.map((d) => `${d.line} ${d.name} ${d.entity} ${d.access}`)).toEqual(["7 LeagueChange.create Club write"]);
+  });
 });

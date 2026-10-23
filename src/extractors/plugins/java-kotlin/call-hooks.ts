@@ -175,15 +175,24 @@ export const kotlinCallHooks: CallExtractionHooks = {
 /** A string literal shaped like a query name (`"match.by.club"`, `"Club.findAll"`): dotted, no spaces. */
 const QUERY_NAME_LITERAL = /^"[A-Za-z][\w-]*(?:\.[\w-]+)+"$/;
 
+/** A write a generic DAO method may perform for whatever it is handed (`create(entity)`, `saveOrUpdate(entity)`). */
+const CRUD_METHOD = /^(?:create|update|delete|save|persist|merge|remove|insert|store|upsert)(?:[A-Z]\w*)?$/;
+
 /**
  * The arguments of a call handing over a named query's name — a DAO helper
  * (`list("match.by.club", club)`) that runs `createNamedQuery(name)` for it —
- * so the JVM entity pass can tell which query runs there. Other calls keep none.
+ * so the JVM entity pass can tell which query runs there; and of a CRUD-named
+ * call on an object handed one variable (`change.create(address)`), so the pass
+ * can type a generic DAO method (`<T> T create(T entity)`) by what its callers
+ * hand it. Other calls keep none.
  */
 function javaQueryNameArgs(node: Node): string[] | null {
   if (node.type !== "method_invocation") return null;
   const args = node.childForFieldName("arguments")?.namedChildren.filter((c): c is Node => !!c && !/comment$/.test(c.type)) ?? [];
-  if (!args.some((a) => a.type === "string_literal" && QUERY_NAME_LITERAL.test(a.text))) return null;
+  const named = args.some((a) => a.type === "string_literal" && QUERY_NAME_LITERAL.test(a.text));
+  const handed = args.length === 1 && args[0]!.type === "identifier" && !!node.childForFieldName("object") &&
+    CRUD_METHOD.test(node.childForFieldName("name")?.text ?? "");
+  if (!named && !handed) return null;
   return args.map((a) => a.text.replace(/\s+/g, " "));
 }
 
