@@ -92,8 +92,11 @@ const DIALECT_RANK = new Map(["postgresql", "postgres", "pg", "mysql", "mariadb"
 
 // ─── Per file: the schema changes a script states ───────────────────────────
 
-const IDENT = String.raw`(?:\[[^\]]+\]|"[^"]+"|` + "`[^`]+`" + String.raw`|[\w.$]+)`;
-const unquote = (s: string): string => s.replace(/^[[\]"`]|[[\]"`]$/g, "").replace(/^\[|\]$/g, "");
+/** One name part, bare or quoted in any dialect's quotes. */
+const IDENT_PART = String.raw`(?:\[[^\]]+\]|"[^"]+"|` + "`[^`]+`" + String.raw`|[\w$]+)`;
+/** A name, schema-qualified or not: `accounting."order"`, `[dbo].[Match]`, `league.club`. */
+const IDENT = String.raw`(?:${IDENT_PART}(?:\.${IDENT_PART})*)`;
+const unquote = (s: string): string => s.replace(/[[\]"`]/g, "");
 
 /** Statements with their first line: `;`-terminated, comments blanked. */
 function statements(lines: string[]): Array<{ text: string; line: number }> {

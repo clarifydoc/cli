@@ -78,3 +78,16 @@ describe("SQL CREATE TABLE", () => {
     expect(split.map((c) => c.name)).toEqual(["fixtures"]);
   });
 });
+
+describe("SQL tables named with a schema and a quoted part", () => {
+  it("keeps the whole name, quotes removed, in the table and its references", () => {
+    const classes = sqlSpec.extractClasses!(`CREATE TABLE league."match" (
+  match_id VARCHAR(36) PRIMARY KEY
+);
+CREATE TABLE league.goal (
+  goal_id VARCHAR(36) PRIMARY KEY,
+  match_id VARCHAR(36) REFERENCES league."match"(match_id)
+);`.split("\n"), []);
+    expect(classes.map((c) => [c.name, c.implements])).toEqual([["league.match", []], ["league.goal", ["league.match"]]]);
+  });
+});

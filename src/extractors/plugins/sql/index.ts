@@ -6,6 +6,9 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCallsFromBody } from "../shared/regex-base.js";
 import { namedQueries } from "./named-queries.js";
 
+/** A name as written, quotes of every dialect removed: `accounting."order"` → `accounting.order`. */
+const unquoteName = (s: string): string => s.replace(/[[\]"`]/g, "");
+
 /**
  * SQL plugin — covers DDL (CREATE/ALTER/DROP), DML (SELECT/INSERT/UPDATE/DELETE),
  * routines (PROCEDURE/FUNCTION/TRIGGER), and common dialect commands.
@@ -125,10 +128,10 @@ export function extractSqlClasses(lines: string[], _fns: FunctionInfo[]): ClassI
       if (!/^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:GLOBAL\s+TEMPORARY\s+|TEMPORARY\s+|TEMP\s+|UNLOGGED\s+)?TABLE\b/i.test(head)) head = line;
     }
     const tableMatch = head.match(
-      /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:GLOBAL\s+TEMPORARY\s+|TEMPORARY\s+|TEMP\s+|UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))/i,
+      /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:GLOBAL\s+TEMPORARY\s+|TEMPORARY\s+|TEMP\s+|UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i,
     );
     if (tableMatch) {
-      const fqName = tableMatch[1] ?? tableMatch[2] ?? tableMatch[3] ?? tableMatch[4]!;
+      const fqName = unquoteName(tableMatch[1]!);
       const endLine = findParenEnd(lines, i);
       const body = lines.slice(i, endLine).join("\n");
       const properties: PropertyInfo[] = [];
@@ -142,9 +145,9 @@ export function extractSqlClasses(lines: string[], _fns: FunctionInfo[]): ClassI
           const prop = parseColumnLine(colLine);
           if (prop) properties.push(prop);
           // FOREIGN KEY (col) REFERENCES other_table → record as "implements"
-          const fk = colLine.match(/REFERENCES\s+(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))/i);
+          const fk = colLine.match(/REFERENCES\s+((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i);
           if (fk) {
-            const target = fk[1] ?? fk[2] ?? fk[3] ?? fk[4]!;
+            const target = unquoteName(fk[1]!);
             if (!implementsList.includes(target)) implementsList.push(target);
           }
         }
@@ -170,10 +173,10 @@ export function extractSqlClasses(lines: string[], _fns: FunctionInfo[]): ClassI
 
     // CREATE VIEW
     const viewMatch = line.match(
-      /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:MATERIALIZED\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))/i,
+      /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:MATERIALIZED\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i,
     );
     if (viewMatch) {
-      const name = viewMatch[1] ?? viewMatch[2] ?? viewMatch[3] ?? viewMatch[4]!;
+      const name = unquoteName(viewMatch[1]!);
       const endLine = findStatementEnd(lines, i);
       classes.push({
         name,
@@ -191,11 +194,11 @@ export function extractSqlClasses(lines: string[], _fns: FunctionInfo[]): ClassI
 
     // CREATE INDEX
     const indexMatch = line.match(
-      /^\s*CREATE\s+(?:UNIQUE\s+)?(?:CLUSTERED\s+|NONCLUSTERED\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))\s+ON\s+(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))/i,
+      /^\s*CREATE\s+(?:UNIQUE\s+)?(?:CLUSTERED\s+|NONCLUSTERED\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)\s+ON\s+((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i,
     );
     if (indexMatch) {
-      const name = indexMatch[1] ?? indexMatch[2] ?? indexMatch[3] ?? indexMatch[4]!;
-      const onTable = indexMatch[5] ?? indexMatch[6] ?? indexMatch[7] ?? indexMatch[8]!;
+      const name = unquoteName(indexMatch[1]!);
+      const onTable = unquoteName(indexMatch[2]!);
       const endLine = findStatementEnd(lines, i);
       classes.push({
         name,
@@ -212,9 +215,9 @@ export function extractSqlClasses(lines: string[], _fns: FunctionInfo[]): ClassI
     }
 
     // CREATE SEQUENCE
-    const seqMatch = line.match(/^\s*CREATE\s+SEQUENCE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))/i);
+    const seqMatch = line.match(/^\s*CREATE\s+SEQUENCE\s+(?:IF\s+NOT\s+EXISTS\s+)?((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i);
     if (seqMatch) {
-      const name = seqMatch[1] ?? seqMatch[2] ?? seqMatch[3] ?? seqMatch[4]!;
+      const name = unquoteName(seqMatch[1]!);
       const endLine = findStatementEnd(lines, i);
       classes.push({
         name,
@@ -231,9 +234,9 @@ export function extractSqlClasses(lines: string[], _fns: FunctionInfo[]): ClassI
     }
 
     // CREATE SCHEMA
-    const schemaMatch = line.match(/^\s*CREATE\s+SCHEMA\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))/i);
+    const schemaMatch = line.match(/^\s*CREATE\s+SCHEMA\s+(?:IF\s+NOT\s+EXISTS\s+)?((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i);
     if (schemaMatch) {
-      const name = schemaMatch[1] ?? schemaMatch[2] ?? schemaMatch[3] ?? schemaMatch[4]!;
+      const name = unquoteName(schemaMatch[1]!);
       const endLine = findStatementEnd(lines, i);
       classes.push({
         name,
@@ -314,10 +317,10 @@ function findStatementEnd(lines: string[], startIdx: number): number {
 function extractViewTables(lines: string[], startIdx: number, endIdx: number): string[] {
   const tables = new Set<string>();
   const body = lines.slice(startIdx, endIdx).join(" ");
-  const re = /\b(?:FROM|JOIN)\s+(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))/gi;
+  const re = /\b(?:FROM|JOIN)\s+((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(body)) !== null) {
-    const name = m[1] ?? m[2] ?? m[3] ?? m[4]!;
+    const name = unquoteName(m[1]!);
     tables.add(name);
   }
   return [...tables];
@@ -372,10 +375,10 @@ function extractDmlStatements(lines: string[]): DataSourceInfo[] {
     // SELECT ... FROM t / DELETE FROM t — a SELECT's FROM may sit on a later line of the statement.
     const isSelect = /^\s*SELECT\b/i.test(line);
     const selectText = isSelect && !/\bFROM\b/i.test(line) ? statementText(lines, i) : line;
-    const selectMatch = (isSelect ? selectText.match(/^\s*SELECT\b[\s\S]*?\bFROM\s+(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))(?![\w.]|\s*\()/i) : null)
-      ?? line.match(/^\s*DELETE\s+FROM\s+(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))/i);
+    const selectMatch = (isSelect ? selectText.match(/^\s*SELECT\b[\s\S]*?\bFROM\s+((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)(?![\w.]|\s*\()/i) : null)
+      ?? line.match(/^\s*DELETE\s+FROM\s+((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i);
     if (selectMatch) {
-      const target = selectMatch[1] ?? selectMatch[2] ?? selectMatch[3] ?? selectMatch[4]!;
+      const target = unquoteName(selectMatch[1]!);
       const verb = /^\s*DELETE/i.test(line) ? "DELETE" : "SELECT";
       const entity = tableEntity(target, selectText.slice(selectMatch.index! + selectMatch[0].length), local);
       sources.push({
@@ -392,11 +395,11 @@ function extractDmlStatements(lines: string[]): DataSourceInfo[] {
 
     // INSERT INTO t / UPDATE t / MERGE INTO t / REPLACE INTO t / TRUNCATE TABLE t
     const writeMatch = line.match(
-      /^\s*(INSERT\s+INTO|UPDATE|MERGE\s+INTO|REPLACE\s+INTO|TRUNCATE\s+TABLE|TRUNCATE)\s+(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))/i,
+      /^\s*(INSERT\s+INTO|UPDATE|MERGE\s+INTO|REPLACE\s+INTO|TRUNCATE\s+TABLE|TRUNCATE)\s+((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i,
     );
     if (writeMatch) {
       const verb = writeMatch[1]!.toUpperCase().replace(/\s+/g, " ");
-      const target = writeMatch[2] ?? writeMatch[3] ?? writeMatch[4] ?? writeMatch[5]!;
+      const target = unquoteName(writeMatch[2]!);
       const entity = tableEntity(target, line.slice(writeMatch.index! + writeMatch[0].length), local);
       sources.push({
         kind: "database",
@@ -431,14 +434,14 @@ function extractDmlStatements(lines: string[]): DataSourceInfo[] {
     // the privilege (`GRANT SELECT ON players` named a table `SELECT`). A role
     // grant (`GRANT admin TO alice`) names no object and is no access.
     const grantMatch = line.match(
-      /^\s*(GRANT|REVOKE)\b.*?\bON\s+(?:TABLE\s+|PROCEDURE\s+|FUNCTION\s+|SEQUENCE\s+|VIEW\s+)?(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.$]+))/i,
+      /^\s*(GRANT|REVOKE)\b.*?\bON\s+(?:TABLE\s+|PROCEDURE\s+|FUNCTION\s+|SEQUENCE\s+|VIEW\s+)?((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i,
     );
     if (/^\s*(?:GRANT|REVOKE)\b/i.test(line)) {
       if (grantMatch) {
         sources.push({
           kind: "database",
           name: grantMatch[1]!.toUpperCase(),
-          target: grantMatch[2] ?? grantMatch[3] ?? grantMatch[4] ?? grantMatch[5]!,
+          target: unquoteName(grantMatch[2]!),
           calls: [],
           line: i + 1,
         });
@@ -448,11 +451,11 @@ function extractDmlStatements(lines: string[]): DataSourceInfo[] {
 
     // ALTER TABLE / DROP TABLE — DDL commands
     const ddlMatch = line.match(
-      /^\s*(ALTER\s+TABLE|DROP\s+TABLE|DROP\s+VIEW|DROP\s+INDEX|RENAME\s+TABLE)\s+(?:IF\s+EXISTS\s+)?(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\w.]+))/i,
+      /^\s*(ALTER\s+TABLE|DROP\s+TABLE|DROP\s+VIEW|DROP\s+INDEX|RENAME\s+TABLE)\s+(?:IF\s+EXISTS\s+)?((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i,
     );
     if (ddlMatch) {
       const verb = ddlMatch[1]!.toUpperCase().replace(/\s+/g, " ");
-      const target = ddlMatch[2] ?? ddlMatch[3] ?? ddlMatch[4] ?? ddlMatch[5]!;
+      const target = unquoteName(ddlMatch[2]!);
       sources.push({
         kind: "database",
         name: verb,
