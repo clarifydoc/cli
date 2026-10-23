@@ -61,4 +61,20 @@ describe("clientProxyCalls", () => {
       [30, "PersonApi.getPerson", { type: "com.acme.api.PersonApi", method: "getPerson" }],
     ]);
   });
+
+  it("follows a method of the class declared to return the proxy", () => {
+    const helper = {
+      ...caller,
+      classes: [{
+        name: "Lookup",
+        properties: [],
+        methods: [
+          { name: "find", params: [], calls: [call("personService(id).getPerson", 40), call("this.personService(id).getPerson(id).getName", 41), call("cache(id).get", 42)] },
+          { name: "personService", params: [{ name: "id", type: "String" }], returnType: "PersonApi", calls: [] },
+          { name: "cache", params: [], returnType: "Map<String, Person>", calls: [] },
+        ],
+      }],
+    } as unknown as FileAnalysis;
+    expect(clientProxyCalls([registry, helper]).map((c) => [c.line, c.name])).toEqual([[40, "PersonApi.getPerson"]]);
+  });
 });

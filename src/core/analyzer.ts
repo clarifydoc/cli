@@ -1576,20 +1576,20 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       return !!d && (d.includes("entity") || d.includes("table") || d.includes("enum"));
     }),
   );
-  if (hasEntities) {
-    // Resolve cross-file inheritance (custom base classes, STI chains) so models
-    // that subclass a project base in another file are recognized as entities.
-    reconcileEntityInheritance(allAnalyses);
-    // Language-specific cross-file entity reconciliation (e.g. Rails joining
-    // `db/schema.rb` columns onto its models). Each plugin's entity extractor
-    // contributes its own pass; core stays language-agnostic.
-    reconcileProjectEntities(allAnalyses);
-    // Single-table-inheritance subclasses share their base's associations, not
-    // just its columns — re-home the base's relations onto each subclass so STI
-    // children aren't disconnected islands in the Data Model view. Runs last so
-    // it also propagates any relations the plugin passes above derived.
-    propagateStiRelations(allAnalyses);
-  }
+  // Resolve cross-file inheritance (custom base classes, STI chains) so models
+  // that subclass a project base in another file are recognized as entities.
+  if (hasEntities) reconcileEntityInheritance(allAnalyses);
+  // Language-specific cross-file entity reconciliation (e.g. Rails joining
+  // `db/schema.rb` columns onto its models). Each plugin's entity extractor
+  // contributes its own pass; core stays language-agnostic. Not gated: a pass
+  // may name the entity of an access whose entity class the project does not
+  // declare (a repository typed by an entity from a dependency).
+  reconcileProjectEntities(allAnalyses);
+  // Single-table-inheritance subclasses share their base's associations, not
+  // just its columns — re-home the base's relations onto each subclass so STI
+  // children aren't disconnected islands in the Data Model view. Runs last so
+  // it also propagates any relations the plugin passes above derived.
+  if (hasEntities) propagateStiRelations(allAnalyses);
 
   // Class-level dependency graph for the Architecture tab's Data Models view.
   // AFTER the reconciliation above: that pass collapses the duplicate entities a

@@ -92,8 +92,15 @@ export function clientProxyCalls(
       return cands?.size === 1 ? [...cands][0]! : null;
     };
 
-    const emit = (fn: FunctionInfo, scope: ReadonlyMap<string, string>) => {
+    const emit = (fn: FunctionInfo, scope: ReadonlyMap<string, string>, returns?: ReadonlyMap<string, string>) => {
       for (const call of fn.calls) {
+        // `getClubService(id).getClub(id)`: a method of the same class declared to return the proxy.
+        const helper = returns?.size ? helperCall(call.name) : null;
+        const returned = helper ? returns!.get(helper.fn) : undefined;
+        if (helper && returned) {
+          out.push(contractCall(returned, helper.method, call.line, a.filePath));
+          continue;
+        }
         // `Factory.fromClient(client, PersonApi.class).getPerson(id)`: the plugin states the receiver's type.
         const stated = call.receiverType ? proxyOf(call.receiverType) : null;
         const statedMethod = stated ? /\.([A-Za-z_$][\w$]*)$/.exec(call.name)?.[1] : undefined;
@@ -168,7 +175,12 @@ export function clientProxyCalls(
     for (const fn of a.functions) emit(fn, scopeOf(fn, moduleScope));
     for (const cls of a.classes) {
       const members = new Map([...moduleScope, ...membersOf(cls)]);
-      for (const m of cls.methods) emit(m, scopeOf(m, members));
+      const returns = new Map<string, string>();
+      for (const m of cls.methods) {
+        const t = proxyOf(m.returnType);
+        if (t) returns.set(m.name, t);
+      }
+      for (const m of cls.methods) emit(m, scopeOf(m, members), returns);
     }
   }
   return out;
@@ -185,4 +197,19 @@ function contractCall(type: string, method: string, line: number, filePath: stri
     contract: { type, method },
     baseRef: { kind: "client", key: type },
   };
+}
+
+/** `helper(args).method` / `this.helper(args).method` → its parts; null for any other shape. */
+function helperCall(name: string): { fn: string; method: string } | null {
+  const head = /^(?:this\.)?([A-Za-z_$][\w$]*)\(/.exec(name);
+  if (!head) return null;
+  let depth = 0;
+  for (let i = head[0].length - 1; i < name.length; i++) {
+    if (name[i] === "(") depth++;
+    else if (name[i] === ")" && --depth === 0) {
+      const method = /^\.([A-Za-z_$][\w$]*)$/.exec(name.slice(i + 1))?.[1];
+      return method ? { fn: head[1]!, method } : null;
+    }
+  }
+  return null;
 }

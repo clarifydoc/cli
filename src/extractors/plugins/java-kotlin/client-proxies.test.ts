@@ -51,4 +51,21 @@ ApplicationFactory.create(Application.class, input);
 objectMapper.readValue(json, PersonApi.class);
 ProxyUtil.deproxy(owner, Application.class);`)).toEqual([]);
   });
+
+  it("registers the type handed to a helper of the file that forwards its Class parameter to a factory", async () => {
+    const src = `package com.example.league.client;
+import com.example.league.api.ClubApi;
+class ClubClientImpl {
+  public Club find(String id) { return createClient(ClubApi.class, context).getClub(id); }
+  public Kit kit(String id) { return this.lookup(KitMapper.class, id); }
+  private <T> T createClient(Class<T> type, Context context) {
+    WebClient client = WebClient.create(address);
+    T proxy = JAXRSClientFactory.fromClient(client, type, true);
+    return proxy;
+  }
+  private <T> T lookup(Class<T> type, String id) { return mapper.read(type, id); }
+}`;
+    const tree = await parseSource(src, "java" as any, "ClubClientImpl.java");
+    expect(extractJavaClientProxies(tree, src).map((r) => [r.proxyOf, r.line])).toEqual([["com.example.league.api.ClubApi", 4]]);
+  });
 });

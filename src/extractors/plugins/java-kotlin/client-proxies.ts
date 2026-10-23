@@ -18,7 +18,10 @@ import type { HttpClientRegistration } from "../../../types/analysis.js";
  * (`EosRestClientFactory.create(X.class, url)`) counts when it is named like a
  * REST client factory AND handed an address, as does a client builder
  * (`Framework.clientFor(PersonApi.class, url).build()`) handed one. Registered by the type's fully
- * qualified name, from the file's imports or package.
+ * qualified name, from the file's imports or package. A method of the file
+ * that hands its `Class<T>` parameter to one of those factories
+ * (`<T> T createClient(Class<T> type, Context c) { … JAXRSClientFactory.fromClient(client, type, true) … }`)
+ * is a factory too: a call to it with a type literal in that position registers the type.
  */
 const KNOWN_FACTORIES: ReadonlyArray<{ method: RegExp; receiver: RegExp }> = [
   { method: /^createClient$/, receiver: /RestClient|HttpServiceProxyFactory/ },
@@ -44,15 +47,39 @@ export function extractJavaClientProxies(tree: Tree, sourceText: string): HttpCl
     const imported = new RegExp(`^\\s*import\\s+([\\w.]+\\.${type})\\s*;`, "m").exec(sourceText)?.[1];
     return imported ?? (pkg ? `${pkg}.${type}` : null);
   };
+  const isKnown = (name: string, object: string) => KNOWN_FACTORIES.some((f) => f.method.test(name) && f.receiver.test(object));
+  // The file's own helpers forwarding a `Class<T>` parameter to a known factory: name → that parameter's index.
+  const helpers = new Map<string, number>();
+  walk(tree.rootNode, (m) => {
+    if (m.type !== "method_declaration") return;
+    const params = m.childForFieldName("parameters")?.namedChildren.filter((p): p is Node => p?.type === "formal_parameter") ?? [];
+    const index = params.findIndex((p) => /^Class\s*</.test(p.childForFieldName("type")?.text ?? ""));
+    const param = params[index]?.childForFieldName("name")?.text;
+    const name = m.childForFieldName("name")?.text;
+    if (!param || !name) return;
+    let forwards = false;
+    walk(m, (c) => {
+      if (forwards || c.type !== "method_invocation") return;
+      const args = c.childForFieldName("arguments")?.namedChildren ?? [];
+      forwards = isKnown(c.childForFieldName("name")?.text ?? "", c.childForFieldName("object")?.text ?? "") && args.some((a) => a?.text === param);
+    });
+    if (forwards) helpers.set(name, index);
+  });
   const out: HttpClientRegistration[] = [];
   walk(tree.rootNode, (n) => {
     if (n.type !== "method_invocation") return;
     const name = n.childForFieldName("name")?.text ?? "";
     const object = n.childForFieldName("object")?.text ?? "";
     const args = n.childForFieldName("arguments")?.namedChildren.filter((a): a is Node => !!a) ?? [];
+    const helper = helpers.get(name);
+    if (helper !== undefined && (!object || object === "this") && args[helper]?.type === "class_literal") {
+      const fqn = fqnOf(args[helper]!.text.replace(/\.class$/, "").trim());
+      if (fqn) out.push({ client: fqn, scope: "project", proxyOf: fqn, line: n.startPosition.row + 1 });
+      return;
+    }
     const literals = args.filter((a) => a.type === "class_literal");
     if (literals.length !== 1) return;
-    const known = KNOWN_FACTORIES.some((f) => f.method.test(name) && f.receiver.test(object));
+    const known = isKnown(name, object);
     const addressed = args.some((a) => a.type !== "class_literal" && ADDRESS_ARG.test(a.text));
     const wrapper = addressed && ((/^create\w*$/.test(name) && WRAPPER_RECEIVER.test(object)) || /^clientFor$/.test(name));
     if (!known && !wrapper) return;

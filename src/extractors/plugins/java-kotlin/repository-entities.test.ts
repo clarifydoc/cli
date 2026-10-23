@@ -49,4 +49,24 @@ public interface RepositoryFan extends JpaRepository<EntityClubFan, Long> {
       "Kit Kit",
     ]);
   });
+
+  it("takes the type argument when the entity comes from a dependency", () => {
+    const repo = javaFile("src/main/java/league/MatchRepository.java", {
+      classes: [{ name: "MatchRepository", kind: "interface", extends: "Repository<MatchSheetEntity, String>", implements: [], decorators: [], methods: [], properties: [], isExported: true, line: 1, endLine: 3 }],
+    });
+    const generic = javaFile("src/main/java/league/BaseRepository.java", {
+      classes: [{ name: "BaseRepository", kind: "interface", extends: "JpaRepository<T, Long>", implements: [], decorators: [], methods: [], properties: [], isExported: true, line: 1, endLine: 3 }],
+    });
+    const field = (name: string, type: string) => ({ name, type, visibility: "private" as const, isStatic: false, isReadonly: true });
+    const service = javaFile("src/main/java/league/MatchService.java", {
+      classes: [{ name: "MatchService", kind: "class", extends: null, implements: [], decorators: ["Service"], methods: [], isExported: true, line: 1, endLine: 30,
+        properties: [field("matchRepository", "MatchRepository"), field("baseRepository", "BaseRepository")] }],
+      dataSources: [
+        { kind: "database", name: "DAO: findByIdAndClubId", target: "Match", entity: "Match", access: "read", calls: [], line: 10 },
+        { kind: "database", name: "DAO: findAll", target: "Base", entity: "Base", access: "read", calls: [], line: 12 },
+      ],
+    });
+    new JavaKotlinEntityExtractor().reconcileProject([repo, generic, service]);
+    expect(service.dataSources.map((d) => `${d.target} ${d.entity}`)).toEqual(["MatchSheetEntity MatchSheetEntity", "Base Base"]);
+  });
 });

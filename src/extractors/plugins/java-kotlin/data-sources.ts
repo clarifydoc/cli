@@ -489,6 +489,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
    * (`import static ….QPlayer.player;` → `player` → Player); null when the file uses no QueryDSL.
    */
   private querydslPaths: Map<string, string> | null = null;
+  /** The file imports Hibernate Search. */
+  private isHibernateSearchFile = false;
   /** The file imports CXF's JAX-RS `WebClient`. */
   private isCxfWebClientFile = false;
 
@@ -515,6 +517,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     this.isJooqFile = /jooq/i.test(text);
     this.isRoomFile = /\bandroidx\.room\b/.test(text);
     this.isKafkaClientFile = /\borg\.apache\.kafka\.clients\b/.test(text);
+    this.isHibernateSearchFile = /\borg\.hibernate\.search\b/.test(text);
     this.isCxfWebClientFile = /\borg\.apache\.cxf\.jaxrs\.client\.(?:WebClient|\*)/.test(text);
     this.querydslPaths = /\bcom\.querydsl\b/.test(text)
       ? new Map([...text.matchAll(/^\s*import\s+static\s+[\w.]*\.Q([A-Z]\w*)\.(\w+)\s*;?\s*$/gm)].map((m) => [m[2]!, m[1]!]))
@@ -691,6 +694,16 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     }
     // `player.id.count()`, `QClub.club.id.max()`: an aggregate over a QueryDSL path, not a repository's count.
     if (this.querydslPaths && this.querydslPathRoot(node, receiver)) return;
+
+    // 1b') Hibernate Search: `fullTextEntityManager.createFullTextQuery(query, Match.class)`, and
+    // Hibernate Search 6's `searchSession.search(Match.class)` — a read of the indexed entity.
+    if (method === "createFullTextQuery" || (method === "search" && this.isHibernateSearchFile && /session$/i.test(receiverLeaf(receiver)))) {
+      const entity = jpaEntityArg(node);
+      if (entity) {
+        sources.push(this.ds({ kind: "database", name: method, target: entity, entity, line, ...withAccess("read") }));
+        return;
+      }
+    }
 
     // 1c) CXF `WebClient`: `client.path("clubs/" + id); client.query("season", s); client.get(Club.class)`
     // sends to the client's base and the paths set on it before the call — or chained into it.

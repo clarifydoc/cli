@@ -891,19 +891,24 @@ function jpaTableName(decorators: readonly string[], sourceText: string, classNa
  * Spring Data repository states the one it works on (`interface RepositoryFan extends
  * JpaRepository<EntityClubFan, Long>`). A row whose implied name is no entity takes the
  * entity stated by the repository type of the file's member implying that name, when
- * every such member agrees.
+ * every such member agrees. An entity declared in a dependency is the first type argument.
  */
 function statedRepositoryEntities(jvm: readonly FileAnalysis[]): void {
   const entities = new Set(jvm.flatMap((a) => (a.classes ?? []).filter((c) => c.decorators?.includes("entity")).map((c) => c.name)));
-  if (entities.size === 0) return;
   const stated = new Map<string, string>();
   for (const a of jvm) {
     for (const cls of a.classes ?? []) {
       if (cls.kind !== "interface") continue;
-      const entity = [cls.extends ?? "", ...(cls.implements ?? [])]
+      const bases = [cls.extends ?? "", ...(cls.implements ?? [])];
+      const entity = bases
         .flatMap((base) => typeArguments(base))
         .map((arg) => arg.replace(/^.*\./, ""))
-        .find((arg) => entities.has(arg));
+        .find((arg) => entities.has(arg))
+        // An entity the project does not declare (it comes from a dependency): the first type argument
+        // of a Spring Data base (`Repository<DocumentMeta, String>`), when it names a class.
+        ?? bases.filter((base) => /^(?:[\w.]*\.)?\w*Repository\s*</.test(base))
+          .map((base) => typeArguments(base)[0]?.replace(/^.*\./, ""))
+          .find((arg): arg is string => !!arg && /^[A-Z]\w*$/.test(arg) && !REPOSITORY_ID_TYPES.has(arg));
       if (entity) stated.set(cls.name, entity);
     }
   }
@@ -931,6 +936,9 @@ function statedRepositoryEntities(jvm: readonly FileAnalysis[]): void {
     }
   }
 }
+
+/** Id and value types, and the usual type variables: never the entity a repository's first type argument names. */
+const REPOSITORY_ID_TYPES = new Set(["Long", "Integer", "String", "UUID", "Object", "Short", "Byte", "Double", "Float", "Boolean", "Int", "T", "E", "ID", "K", "V"]);
 
 /** `JpaRepository<EntityFan, Long>` → `["EntityFan", "Long"]`: the top-level type arguments. */
 function typeArguments(type: string): string[] {

@@ -194,6 +194,15 @@ describe("CXF WebClient requests", () => {
   });
 });
 
+describe("Hibernate Search queries", () => {
+  it("reads the indexed entity a full-text query or a search session names", async () => {
+    const rows = db(await sourcesOf(`    var q = fullTextEntityManager.createFullTextQuery(luceneQuery, MatchReportEntity.class);
+    List<Player> hits = searchSession.search(Player.class).where(f -> f.match().field("name").matching(name)).fetchHits(20);
+    Optional<Player> p = Stream.of(x).search(Player.class);`, "java", "import org.hibernate.search.mapper.orm.session.SearchSession;"));
+    expect(rows.map((d) => `${d.name} ${d.entity} ${d.access}`)).toEqual(["createFullTextQuery MatchReportEntity read", "search Player read"]);
+  });
+});
+
 describe("QueryDSL queries", () => {
   it("reads the entity each generated Q path names, by static import, inline or declared type", async () => {
     const rows = db(await sourcesOf(`    JPAQuery<PlayerEntity> query = queryFactory.selectFrom(playerEntity);
