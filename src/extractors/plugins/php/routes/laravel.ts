@@ -134,6 +134,52 @@ function middlewareArgs(call: Node): string[] {
 interface Handler {
   name: string | null;
   calls: CallInfo[];
+  /** The controller class as the route writes it (`Account\\ShowController`, `ShowController::class`). */
+  controller?: { written: string; classConstant: boolean };
+}
+
+/** `ShowController::class` as written, for the route's qualified controller. */
+function classConstantController(node: Node): { controller: { written: string; classConstant: true } } | Record<string, never> {
+  const written = node.child(0)?.text;
+  return written ? { controller: { written, classConstant: true } } : {};
+}
+
+const USE_MAPS = new WeakMap<object, Map<string, string>>();
+
+/** The file's `use A\B\ShowController;` / `use A\B\Other as Alias;` imports: alias → qualified name. */
+function fileUses(node: Node): Map<string, string> {
+  const cached = USE_MAPS.get(node.tree);
+  if (cached) return cached;
+  const out = new Map<string, string>();
+  for (const decl of node.tree.rootNode.descendantsOfType("namespace_use_clause")) {
+    if (!decl) continue;
+    const name = decl.namedChildren.find((c) => c.type === "qualified_name" || c.type === "name")?.text;
+    if (!name) continue;
+    const alias = decl.childForFieldName("alias")?.text ?? decl.namedChildren.filter((c) => c.type === "name").pop()?.text;
+    out.set(alias && alias !== name ? alias : name.split("\\").pop()!, name.replace(/^\\/, ""));
+  }
+  USE_MAPS.set(node.tree, out);
+  return out;
+}
+
+/**
+ * The controller's fully qualified class: `X::class` through the file's `use`
+ * imports, a `uses` string under the enclosing groups' `namespace`. Null when
+ * neither says.
+ */
+function qualifiedController(call: Node, h: Handler, namespace: string | null): string | null {
+  if (!h.controller) return null;
+  // `'League\\Http\\…'` in a single-quoted string is one backslash per separator.
+  const written = h.controller.written.replace(/\\\\/g, "\\");
+  const { classConstant } = h.controller;
+  if (written.startsWith("\\")) return written.slice(1);
+  if (classConstant || !namespace) {
+    const [head, ...rest] = written.split("\\");
+    const used = fileUses(call).get(head!);
+    if (used) return [used, ...rest].join("\\");
+    return written.includes("\\") && classConstant ? written : null;
+  }
+  return `${namespace}\\${written}`;
 }
 
 /** Bare class name from `UserController::class` / `Some\Ns\UserController::class`. */
@@ -157,7 +203,7 @@ function resolveHandler(node: Node | undefined): Handler {
   // its `__invoke`.
   if (node.type === "class_constant_access_expression") {
     const cls = classConstantName(node);
-    return { name: cls ? `${cls}#__invoke` : null, calls: [] };
+    return { name: cls ? `${cls}#__invoke` : null, calls: [], ...classConstantController(node) };
   }
 
   if (node.type === "array_creation_expression") {
@@ -165,18 +211,22 @@ function resolveHandler(node: Node | undefined): Handler {
     const uses = arrayKeyValue(node, "uses");
     if (uses) {
       const m = uses.match(/^([\w\\]+)[@]([\w]+)$/) ?? uses.match(/^([\w\\]+)::([\w]+)$/);
-      return { name: m ? `${m[1]!.split("\\").pop()}#${m[2]}` : uses.split("\\").pop()!, calls: [] };
+      return { name: m ? `${m[1]!.split("\\").pop()}#${m[2]}` : uses.split("\\").pop()!, calls: [], ...(m ? { controller: { written: m[1]!, classConstant: false } } : {}) };
     }
     let cls: string | null = null;
+    let clsNode: Node | null = null;
     let method: string | null = null;
     for (const el of node.children) {
       if (el.type !== "array_element_initializer") continue;
       for (const c of el.children) {
-        if (c.type === "class_constant_access_expression") cls ??= classConstantName(c);
+        if (c.type === "class_constant_access_expression" && !cls) {
+          cls = classConstantName(c);
+          clsNode = c;
+        }
         if (c.type === "string" || c.type === "encapsed_string") method ??= stringValue(c);
       }
     }
-    if (cls) return { name: method ? `${cls}#${method}` : cls, calls: [] };
+    if (cls) return { name: method ? `${cls}#${method}` : cls, calls: [], ...(clsNode ? classConstantController(clsNode) : {}) };
     return { name: null, calls: [] };
   }
 
@@ -184,7 +234,7 @@ function resolveHandler(node: Node | undefined): Handler {
   if (str) {
     // Legacy `Controller@action` / `Controller::action` string handlers.
     const m = str.match(/^([\w\\]+)[@]([\w]+)$/) ?? str.match(/^([\w\\]+)::([\w]+)$/);
-    if (m) return { name: `${m[1]!.split("\\").pop()}#${m[2]}`, calls: [] };
+    if (m) return { name: `${m[1]!.split("\\").pop()}#${m[2]}`, calls: [], controller: { written: m[1]!, classConstant: false } };
     return { name: str, calls: [] };
   }
 
@@ -253,6 +303,10 @@ interface GroupScope {
   prefixes: string[];
   /** Middleware of the enclosing groups, outermost first. */
   middleware: string[];
+  /** Route-name prefixes of the enclosing groups (`'as' => 'clubs.'`, `->name('clubs.')`), outermost first. */
+  names: string[];
+  /** The controller namespace the groups state (`'namespace' => 'League\\Http\\Controllers'`), nested ones appended. */
+  namespace: string | null;
 }
 
 /**
@@ -264,6 +318,8 @@ interface GroupScope {
 function groupScopeOf(routeCall: Node): GroupScope {
   const prefixes: string[] = [];
   const middleware: string[] = [];
+  const names: string[] = [];
+  const namespaces: string[] = [];
   let cur: Node | null = routeCall.parent;
   while (cur) {
     if (cur.type === "anonymous_function" || cur.type === "anonymous_function_creation_expression" || cur.type === "arrow_function") {
@@ -278,6 +334,10 @@ function groupScopeOf(routeCall: Node): GroupScope {
           const options = callArgs(up).find((a) => a.type === "array_creation_expression");
           const p = arrayKeyValue(options, "prefix") ?? chainPrefix(up);
           if (p) prefixes.unshift(p);
+          const n = arrayKeyValue(options, "as") ?? chainValue(up, "name") ?? chainValue(up, "as");
+          if (n) names.unshift(n);
+          const ns = arrayKeyValue(options, "namespace") ?? chainValue(up, "namespace");
+          if (ns) namespaces.unshift(ns);
           // `['middleware' => …]` options and the `Route::middleware(…)->…->group(…)` chain both apply.
           middleware.unshift(...arrayKeyValues(options, "middleware"), ...chainMiddleware(up));
         }
@@ -287,7 +347,34 @@ function groupScopeOf(routeCall: Node): GroupScope {
     }
     cur = cur.parent;
   }
-  return { prefixes, middleware };
+  // A nested namespace is relative to its group's, unless rooted (`\\X`) or already under it.
+  let namespace: string | null = null;
+  for (const raw of namespaces) {
+    const ns = raw.replace(/\\\\/g, "\\");
+    const clean = ns.replace(/^\\/, "").replace(/\\$/, "");
+    namespace = !namespace || ns.startsWith("\\") || clean.startsWith(namespace) ? clean : `${namespace}\\${clean}`;
+  }
+  return { prefixes, middleware, names, namespace };
+}
+
+/** The string argument of a `->name('x')`-style call in the chain BELOW a call (`Route::name('clubs.')->prefix(…)->group(…)`). */
+function chainValue(call: Node, method: string): string | null {
+  let cur: Node | null = call.type === "member_call_expression" ? call.childForFieldName("object") : null;
+  while (cur && (cur.type === "member_call_expression" || cur.type === "scoped_call_expression")) {
+    if (cur.childForFieldName("name")?.text === method) return stringValue(callArgs(cur)[0]);
+    cur = cur.type === "member_call_expression" ? cur.childForFieldName("object") : null;
+  }
+  return null;
+}
+
+/** The name a route call is given: a trailing `->name('x')`, or `'as' => 'x'` in its action array. */
+function ownRouteName(call: Node, action: Node | undefined): string | null {
+  let cur: Node = call;
+  while (cur.parent && cur.parent.type === "member_call_expression" && cur.parent.childForFieldName("object")?.id === cur.id) {
+    cur = cur.parent;
+    if (cur.childForFieldName("name")?.text === "name") return stringValue(callArgs(cur)[0]);
+  }
+  return arrayKeyValue(action, "as");
 }
 
 // ─── Route metadata: middleware, auth, closure params ───────────────────────
@@ -401,6 +488,11 @@ function emitVerbRoute(
   const scope = groupScopeOf(call);
   const prefixes = basePrefix ? [basePrefix, ...scope.prefixes] : scope.prefixes;
   const own = [...chainMiddleware(call), ...trailingChainMiddleware(call)];
+  const named = (own: string | null): { name?: string } => (own ? { name: scope.names.join("") + own } : {});
+  const ownerOf = (h: Handler): { owner?: string } => {
+    const q = qualifiedController(call, h, scope.namespace);
+    return q ? { owner: q } : {};
+  };
   const emit = (r: RouteInfo, handlerArg?: Node): void => {
     applyMiddleware(r, scope.middleware, own);
     applyRouteMeta(r, { params: closureParams(handlerArg, r.path) });
@@ -414,8 +506,9 @@ function emitVerbRoute(
     const path = stringValue(args[1]);
     if (path === null) return;
     const h = resolveHandler(args[2]);
+    const name = named(ownRouteName(call, args[2]));
     for (const m of verbs) {
-      emit({ path: joinPath(prefixes, path), httpMethod: m, kind: "api", handler: h.name, calls: h.calls, middleware: [], line }, args[2]);
+      emit({ path: joinPath(prefixes, path), httpMethod: m, kind: "api", handler: h.name, calls: h.calls, middleware: [], line, ...name, ...ownerOf(h) }, args[2]);
     }
     return;
   }
@@ -437,6 +530,7 @@ function emitVerbRoute(
       calls: [],
       middleware: [],
       line,
+      ...named(ownRouteName(call, undefined)),
     });
     return;
   }
@@ -446,6 +540,11 @@ function emitVerbRoute(
     if (!base) return;
     const ctlArg = args[1];
     const cls = ctlArg ? (classConstantName(ctlArg) ?? stringValue(ctlArg)?.split("\\").pop() ?? null) : null;
+    const resourceOwner = ctlArg
+      ? ownerOf(ctlArg.type === "class_constant_access_expression"
+        ? { name: null, calls: [], ...classConstantController(ctlArg) }
+        : { name: null, calls: [], ...(stringValue(ctlArg) ? { controller: { written: stringValue(ctlArg)!, classConstant: false } } : {}) })
+      : {};
     const { only, except } = resourceFilters(call);
     const { path: resourcePath, param } = resourcePathOf(base);
     for (const a of RESOURCE_ACTIONS) {
@@ -460,6 +559,8 @@ function emitVerbRoute(
           calls: [],
           middleware: [],
           line,
+          ...named(`${base}.${a.action}`),
+          ...resourceOwner,
         });
       }
     }
@@ -478,6 +579,8 @@ function emitVerbRoute(
     calls: h.calls,
     middleware: [],
     line,
+    ...named(ownRouteName(call, args[1])),
+    ...ownerOf(h),
   }, args[1]);
 }
 

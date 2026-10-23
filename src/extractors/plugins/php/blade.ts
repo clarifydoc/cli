@@ -1,5 +1,6 @@
 import type { InteractiveElementInfo, ScreenInfo } from "../../../types/analysis.js";
 import { extractHtmlInteractiveElements } from "../html/index.js";
+import { handlerOf } from "../shared/element-requests.js";
 
 /**
  * Laravel Blade templates (`resources/views/**.blade.php`) as UI screens —
@@ -53,13 +54,28 @@ export function extractBladeScreens(sourceText: string, filePath: string): Scree
   ];
 }
 
+/** `{{ route('clubs.show', $club) }}` — the URL of a named route, as an attribute value. */
+const ROUTE_ECHO_RE = /\{\{\s*route\(\s*(['"])([\w.-]+)\1[^}]*\}\}|\{!!\s*route\(\s*(['"])([\w.-]+)\3[^!]*!!\}/g;
+/** What a route echo is rewritten to, so the html reader takes it for an app path. */
+const ROUTE_MARK = "/__route__/";
+
 export function extractBladeInteractiveElements(sourceText: string): InteractiveElementInfo[] {
   if (!BLADE_MARKER_RE.test(sourceText)) return [];
-  // Blank `{{ … }}` / `{!! … !!}` echo bodies first: they are runtime values,
-  // and a `$product->id` inside one carries a `>` that would terminate the
-  // html extractor's tag-attribute scan mid-attribute.
+  // A named route's URL stands in as a marked path the html reader keeps as the
+  // request; every other `{{ … }}` / `{!! … !!}` echo body is blanked: they are
+  // runtime values, and a `$product->id` inside one carries a `>` that would
+  // terminate the html extractor's tag-attribute scan mid-attribute.
   const lines = sourceText
     .split(/\r?\n/)
-    .map((l) => l.replace(/\{\{.*?\}\}|\{!!.*?!!\}/g, ""));
-  return extractHtmlInteractiveElements(lines);
+    // Dots spelled `~`: a marked `clubs.show` must not read as a file with an extension.
+    .map((l) => l.replace(ROUTE_ECHO_RE, (_m, _q, name: string | undefined, _q2, name2: string | undefined) => ROUTE_MARK + (name ?? name2)!.replace(/\./g, "~"))
+      .replace(/\{\{.*?\}\}|\{!!.*?!!\}/g, ""));
+  // A form or link to a named route requests `route:<name>`, which the Laravel view
+  // resolver maps to the route's controller action; literal paths are left to that resolver too.
+  return extractHtmlInteractiveElements(lines, { requests: true }).map((el) => {
+    if (!el.request) return el;
+    if (!el.request.target.startsWith(ROUTE_MARK)) return { ...el, handler: el.handler ?? handlerOf(el.request.method, el.request.target) };
+    const name = el.request.target.slice(ROUTE_MARK.length).replace(/~/g, ".");
+    return { ...el, handler: handlerOf(el.request.method, "/" + name.replace(/\./g, "/")), request: { method: el.request.method, target: `route:${name}` } };
+  });
 }

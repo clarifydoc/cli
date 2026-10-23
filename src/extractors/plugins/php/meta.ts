@@ -17,6 +17,8 @@ import { codeigniterRoutesResolver } from "./routes/codeigniter-resolver.js";
 import { laravelResourceResolver } from "./routes/laravel-resolver.js";
 import { phpViewKey, readPhpView } from "./views.js";
 import { CodeIgniterViewResolver } from "./view-resolver.js";
+import { LaravelEventResolver } from "./laravel-events.js";
+import { LaravelViewResolver } from "./laravel-view-resolver.js";
 import { phpRequestSchema } from "./request-schema.js";
 import { phpReachability } from "./reachability.js";
 import { phpDiBindings } from "./di.js";
@@ -42,7 +44,7 @@ export const phpMeta: LanguagePluginMeta = {
   // `config/routes.php` aliases onto the CodeIgniter convention routes they name.
   routeResolvers: [codeigniterRoutesResolver, laravelResourceResolver],
   // A controller's `$this->load->view('x')` reaches that template.
-  dispatchResolvers: [new CodeIgniterViewResolver()],
+  dispatchResolvers: [new CodeIgniterViewResolver(), new LaravelEventResolver(), new LaravelViewResolver()],
   // A plain-PHP view template (`views/**.php`, not Blade) is read for the page
   // around its code: forms, links, inline AJAX and the screen (views.ts).
   preprocess: (rawSource, relativePath) =>

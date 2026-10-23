@@ -32,6 +32,9 @@ const EF_READ_METHODS = new Set([
   "FromSqlRaw", "FromSqlInterpolated", "FromSql",
 ]);
 
+/** The write methods of a `DbSet<T>` itself. */
+const EF_SET_WRITES = new Set(["Add", "AddAsync", "AddRange", "AddRangeAsync", "Update", "UpdateRange", "Remove", "RemoveRange", "Attach", "AttachRange"]);
+
 const EF_WRITE_METHODS = new Set([
   "Add", "AddAsync", "AddRange", "AddRangeAsync",
   "Update", "UpdateRange",
@@ -736,6 +739,16 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       const source = inAt >= 0 ? node.children.slice(inAt + 1).find((c) => c.isNamed) : undefined;
       const entity = source ? this.efSetOf(source, node) : null;
       if (entity) sources.push(this.ds({ kind: "database", name: `EF: ${node.type === "join_clause" ? "join" : "from"}`, target: entity, entity, access: "read", line: node.startPosition.row + 1 }));
+      return;
+    }
+    // `CleanData(load, _context.Clubs.RemoveRange, ct)`: a set's write method handed
+    // over as a delegate runs on that set.
+    if (node.type === "argument") {
+      const value = node.namedChildren[node.namedChildren.length - 1];
+      const method = value?.type === "member_access_expression" ? value.childForFieldName("name")?.text ?? "" : "";
+      const set = EF_SET_WRITES.has(method) ? value!.childForFieldName("expression") : null;
+      const entity = set ? this.efSetOf(set, node) : null;
+      if (entity) sources.push(this.ds({ kind: "database", name: `EF: ${method}`, target: entity, entity, ...access(method, EF_ACCESS), line: node.startPosition.row + 1 }));
       return;
     }
     if (node.type !== "invocation_expression") return;

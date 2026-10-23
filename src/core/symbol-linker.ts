@@ -281,6 +281,12 @@ export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly
             let first: { filePath: string; def: { name: string; line: number } } | null = null;
             let candidates = 0;
             let exact = 0;
+            // A route that names its class fully (`owner`: `League\Http\Controllers\Squad\ShowController`)
+            // is that class's method, in the file declaring its namespace, among same-named classes.
+            const ownerParts = classPart && route.owner && /[\\.:]/.test(route.owner) ? route.owner.split(/\\|::|\./).filter(Boolean) : null;
+            const ownerNamespace = ownerParts && ownerParts[ownerParts.length - 1] === classPart ? ownerParts.slice(0, -1).join("\\").toLowerCase() : null;
+            let declared: { filePath: string; def: { name: string; line: number } } | null = null;
+            let declaredCount = 0;
             for (const [filePath, syms] of symbolIndex) {
               const def = syms.get(handlerName);
               if (!def) continue;
@@ -293,8 +299,15 @@ export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly
               }
               candidates++;
               first ??= { filePath, def };
+              const ns = ownerNamespace !== null ? (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(filePath)?.declaredNamespace : undefined;
+              if (ns !== undefined && ns.split(/\\|::|\./).filter(Boolean).join("\\").toLowerCase() === ownerNamespace && def.name === `${classPart}.${handlerName}`) {
+                declared ??= { filePath, def };
+                declaredCount++;
+              }
             }
-            if (first) {
+            if (declared && declaredCount === 1) {
+              pushRouteLink(declared.filePath, declared.def, "INFERRED", "route-scan");
+            } else if (first) {
               const stated = classPart !== null && candidates === 1 && exact === 1;
               pushRouteLink(first.filePath, first.def, stated ? "INFERRED" : "AMBIGUOUS", "route-scan");
             }

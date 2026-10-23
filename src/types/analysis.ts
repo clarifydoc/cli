@@ -1048,6 +1048,12 @@ export interface RouteInfo {
    * table maps onto it (`/clubs` → `club/list`). One endpoint, one row.
    */
   aliases?: string[];
+  /**
+   * The name the framework registers the route under, which templates build its
+   * URL from: Laravel `->name('clubs.show')` / `'as' => …` (group prefixes
+   * included, `clubs.index` for a resource action).
+   */
+  name?: string;
 }
 
 /** A construction with a string argument (see `FileAnalysis.instantiations`). */

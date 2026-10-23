@@ -35,6 +35,10 @@ describe("built bundles", () => {
     const minified = '"use strict";(()=>{var ql=Object.defineProperty;' + "var x=1;".repeat(4000) + "})();";
     expect(bundlerOf(minified)).toBe("minified");
     expect(bundlerOf("export const club = 1;\n".repeat(2000))).toBeNull();
+    // A library build opens with its license banner, then the minified code.
+    const banner = "/**\n *  League widgets\n * @league/widgets 1.4.2\n * License: MIT\n**/\n\n";
+    expect(bundlerOf(banner + minified)).toBe("minified");
+    expect(bundlerOf("/** Club helpers. */\n" + "export const club = 1;\n".repeat(2000))).toBeNull();
     const toc = '\nwindow.DocInsight = window.DocInsight || {};\nwindow.DocInsight.toc["Squad"] = [ { "n": "TSquad" } ];';
     expect(pluginFor("javascript")!.preprocess!(toc, "docs/toc/Squad.js")).toEqual({ skip: "generated documentation data, not source" });
   });

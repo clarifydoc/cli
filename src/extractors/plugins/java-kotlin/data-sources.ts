@@ -396,9 +396,10 @@ const EVENT_ANN_CLASS_RE = /\(\s*(?:value\s*=\s*)?(?:classes\s*=\s*)?[[{]?\s*([A
 // `publishEvent`, which is unambiguous on its own).
 const EVENT_PUBLISH_METHODS = new Set(["publishEvent", "publish", "send", "post", "emit"]);
 const EVENT_PUBLISHER_RECEIVER_RE = /(publisher|eventbus|bus)$/i;
-// An event payload type: `AccountCreatedEvent`, `LoginMessage`, … The suffix
-// fence keeps `emailPublisher.send(new Attachment())` from reading as an event.
-const EVENT_TYPE_RE = /(Event|Message|Command|Notification)$/;
+// An event payload type: `AccountCreatedEvent`, `LoginMessage`, a request a
+// service sends on the bus and its reply (`PurgePersonRequest`, `…Response`) … The
+// suffix fence keeps `emailPublisher.send(new Attachment())` from reading as an event.
+const EVENT_TYPE_RE = /(Event|Message|Command|Notification|Request|Response|Reply)$/;
 
 // ─── Outbound HTTP declared via annotations ──────────────────────────────────
 // Retrofit interface methods carry the outbound URL in the verb annotation
@@ -541,9 +542,9 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       }
 
       // Typed-event handlers: the subscribed event type is the destination —
-      // named in the annotation (`@EventListener(X.class)`) or, in the common
-      // `@MessageHandler void handle(XEvent event, Metadata md)` shape, the
-      // handler's first parameter type.
+      // named in the annotation (`@EventListener(X.class)`) or the handler's
+      // event-shaped parameter (`handle(XEvent event, Metadata md)`,
+      // `handle(Audit audit, XResponse response)`), else its first.
       const evtListener = text.match(EVENT_LISTENER_ANN_RE);
       if (evtListener && !listener) {
         const annClass = text.match(EVENT_ANN_CLASS_RE)?.[1]?.split(".").pop();
@@ -797,14 +798,16 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     if (EVENT_PUBLISH_METHODS.has(method)) {
       const recvLeaf = receiver.split(".").pop()?.trim() ?? "";
       if (method === "publishEvent" || EVENT_PUBLISHER_RECEIVER_RE.test(recvLeaf)) {
-        const evt = this.resolveEventArg(node, method === "publishEvent");
-        if (evt) {
-          sources.push(this.ds({
-            kind: "queue-publish",
-            name: `EVT: ${method}`,
-            target: evt,
-            line,
-          }));
+        const events = this.resolveEventArgs(node, method === "publishEvent");
+        if (events.length > 0) {
+          for (const evt of events) {
+            sources.push(this.ds({
+              kind: "queue-publish",
+              name: `EVT: ${method}`,
+              target: evt,
+              line,
+            }));
+          }
           return;
         }
       }
@@ -894,30 +897,26 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
    * `AccountUpdateMessage.newBuilder()…build()` → AccountUpdateMessage;
    * a bare identifier → its declared local/parameter/field type.
    * Non-`publishEvent` verbs require the EVENT_TYPE_RE suffix (`relaxed`
-   * lifts that for constructor args of the unambiguous `publishEvent`).
+   * lifts that for constructor args of the unambiguous `publishEvent`). A
+   * parameter declared loosely (`Object dwEvent`) takes the event types this
+   * file's calls of its method hand it — one per type.
    */
-  private resolveEventArg(call: Node, relaxed: boolean): string | null {
+  private resolveEventArgs(call: Node, relaxed: boolean): string[] {
     const args = callArguments(call);
     for (let i = args.length - 1; i >= 0; i--) {
       const arg = args[i]!;
-
-      // Constructed or builder-built payload: Java `new X(...)`, Kotlin
-      // `X(...)`, or a builder chain rooted at the type (`X.newBuilder()…`).
       const text = arg.text;
-      const ctorType =
-        arg.type === "object_creation_expression"
-          ? simpleTypeName(arg.childForFieldName("type")?.text)
-          : arg.type === "call_expression" && /^[A-Z]\w*\s*\(/.test(text)
-            ? simpleTypeName(text.slice(0, text.indexOf("(")))
-            : text.match(/^([A-Z]\w*)\s*\.\s*newBuilder\b/)?.[1] ?? null;
-      if (ctorType && (relaxed || EVENT_TYPE_RE.test(ctorType))) return ctorType;
+      const ctorType = constructedType(arg);
+      if (ctorType && (relaxed || EVENT_TYPE_RE.test(ctorType))) return [ctorType];
 
       // Identifier: resolve the declared type — enclosing-method local or
       // parameter first, then a class field. Always suffix-fenced: without a
       // constructor in sight the type is the only event-shaped evidence.
       if (/^[\w$]+$/.test(text)) {
         const t = localDeclaredType(call, text) ?? this.fieldTypes.get(text) ?? null;
-        if (t && EVENT_TYPE_RE.test(t)) return t;
+        if (t && EVENT_TYPE_RE.test(t)) return [t];
+        const handed = parameterArgTypes(call, text);
+        if (handed.length > 0) return handed;
       }
 
       // A method of this file builds it: `publishEvent(computeChangedEvent(old, now))` → its declared return type.
@@ -926,11 +925,46 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
         const decls = call.tree.rootNode.descendantsOfType("method_declaration").filter((d) => d?.childForFieldName("name")?.text === name);
         const types = new Set(decls.map((d) => simpleTypeName(d!.childForFieldName("type")?.text)));
         const t = types.size === 1 ? [...types][0] : null;
-        if (t && EVENT_TYPE_RE.test(t)) return t;
+        if (t && EVENT_TYPE_RE.test(t)) return [t];
       }
     }
-    return null;
+    return [];
   }
+}
+
+/** The type an argument builds: Java `new X(...)`, Kotlin `X(...)`, a builder chain rooted at it (`X.newBuilder()…`). */
+function constructedType(arg: Node): string | null {
+  const text = arg.text;
+  return arg.type === "object_creation_expression"
+    ? simpleTypeName(arg.childForFieldName("type")?.text)
+    : arg.type === "call_expression" && /^[A-Z]\w*\s*\(/.test(text)
+      ? simpleTypeName(text.slice(0, text.indexOf("(")))
+      : text.match(/^([A-Z]\w*)\s*\.\s*newBuilder\b/)?.[1] ?? null;
+}
+
+/**
+ * The event types the file's own calls of the enclosing method pass for its
+ * parameter `name` (`sendDWEvent(entity, audit, MatchPlayedEvent.newBuilder()…build())`
+ * into `void sendDWEvent(…, Object event)`), event-shaped ones only.
+ */
+function parameterArgTypes(at: Node, name: string): string[] {
+  let method: Node | null = at.parent;
+  while (method && method.type !== "method_declaration") method = method.parent;
+  const params = method?.childForFieldName("parameters")?.namedChildren.filter((p) => p.type === "formal_parameter") ?? [];
+  const index = params.findIndex((p) => p.childForFieldName("name")?.text === name);
+  const methodName = method?.childForFieldName("name")?.text;
+  if (index < 0 || !methodName) return [];
+  const out = new Set<string>();
+  for (const inv of at.tree.rootNode.descendantsOfType("method_invocation")) {
+    if (!inv || inv.childForFieldName("name")?.text !== methodName) continue;
+    const object = inv.childForFieldName("object");
+    if (object && object.type !== "this") continue;
+    const arg = callArguments(inv)[index];
+    if (!arg) continue;
+    const t = constructedType(arg) ?? (/^[\w$]+$/.test(arg.text) ? localDeclaredType(inv, arg.text) : null);
+    if (t && EVENT_TYPE_RE.test(t)) out.add(t);
+  }
+  return [...out];
 }
 
 /**
@@ -1316,7 +1350,9 @@ function handlerFirstParamType(ann: Node): string | null {
       if (t) types.push(t);
     }
   }
-  return types.find((t) => EVENT_TYPE_RE.test(t)) ?? types[0] ?? null;
+  // The payload, after the audit / metadata parameters a typed framework puts first
+  // (`handle(AuditInformation audit, PurgeResponse response)`); else the first parameter.
+  return [...types].reverse().find((t) => EVENT_TYPE_RE.test(t)) ?? types[0] ?? null;
 }
 
 /** Receiver node of a `recv.method(...)` call (Java `object` field / Kotlin navigation). */

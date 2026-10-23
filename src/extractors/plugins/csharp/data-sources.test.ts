@@ -91,6 +91,15 @@ ${body}
     .filter((d) => d.kind === "api-call");
 }
 
+describe("C# EF set methods handed over as delegates", () => {
+  it("reads `_context.Set.RemoveRange` passed as an argument as a write on that set, never a framework member", async () => {
+    const rows = await dbSourcesOf(`    await CleanData(() => LoadInjuries(ct), _db.Injuries.RemoveRange, ct);
+    await CleanData(() => LoadClubs(ct), _clubContext.Clubs.Remove, ct);
+    Register(handler.Handle, list.Add);`);
+    expect(rows.map((d) => `${d.name} ${d.entity} ${d.access}`)).toEqual(["EF: RemoveRange Injuries write", "EF: Remove Clubs write"]);
+  });
+});
+
 describe("C# HTTP-client detection — receiver gating", () => {
   it("treats an ambiguous verb as HTTP only on an HttpClient-shaped receiver", async () => {
     const yes = await apiCallsOf(`    var r = await _httpClient.GetAsync("/external/owners");`);

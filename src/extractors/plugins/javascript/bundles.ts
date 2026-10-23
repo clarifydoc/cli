@@ -31,6 +31,9 @@ const ESBUILD_HELPER_RE = /^var __(?:commonJS|esm|toESM|toCommonJS|require) = /m
 /** esbuild names each bundled module in a comment line: `// node_modules/axios/index.js`, `// src/api/clubs.ts`. */
 const ESBUILD_MODULE_COMMENT_RE = /^\/\/ [\w@.\-/]+\.(?:[cm]?[jt]sx?|vue|svelte|json)$/gm;
 
+/** Block and line comments (and blank lines) at the top of a file. */
+const LEADING_COMMENTS_RE = /^(?:\s+|\/\*[\s\S]*?\*\/|\/\/[^\n]*)*/;
+
 /**
  * Which bundler wrote this file, when its head says so; null for source.
  *
@@ -38,8 +41,13 @@ const ESBUILD_MODULE_COMMENT_RE = /^\/\/ [\w@.\-/]+\.(?:[cm]?[jt]sx?|vue|svelte|
  */
 export function bundlerOf(sourceText: string): string | null {
   const head = sourceText.slice(0, HEAD);
-  // A minified build: its whole head one line (esbuild's minified prelude, a terser output). An authored line is never that long.
-  if (sourceText.length > 20_000 && !head.slice(0, 3000).includes("\n") && head.length >= 3000) return "minified";
+  // A minified build: its whole head one line (esbuild's minified prelude, a terser output), after the
+  // license banner a library build opens with (`/** @scalar/api-reference 1.44 … **/`). An authored line is never that long.
+  if (sourceText.length > 20_000) {
+    const banner = LEADING_COMMENTS_RE.exec(sourceText.slice(0, HEAD))?.[0].length ?? 0;
+    const code = sourceText.slice(banner, banner + 3000);
+    if (code.length >= 3000 && !code.includes("\n")) return "minified";
+  }
   if (WEBPACK_BOOTSTRAP_RE.test(head) || WEBPACK_RUNTIME_LINE_RE.test(head) || WEBPACK_CHUNK_RE.test(head)) return "webpack";
   if (PARCEL_RE.test(head)) return "Parcel";
   if (BROWSERIFY_RE.test(head.trimStart())) return "browserify";

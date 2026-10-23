@@ -1,5 +1,6 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
-import { openapiSpec } from "./index.js";
+import { splitLines } from "../../shared/source-lines.js";
+import { extractSchemaFragment, openapiSpec } from "./index.js";
 import { openapiManifest } from "./manifest.js";
 import { openapiRequestSchema } from "./request-schema.js";
 
@@ -42,6 +43,22 @@ export function isOpenApiDocument(rawSource: string): boolean {
   return YAML_VERSION_RE.test(head) || (rawSource.length > head.length && YAML_TOP_LEVEL_RE.test(rawSource));
 }
 
+/**
+ * A JSON Schema kept in a YAML file of its own (no `openapi:` key): the root
+ * declares an object (`type: object` with `properties` or a composition) or an
+ * enum — keys no other YAML format puts at its top level together.
+ */
+const FRAGMENT_TYPE_RE = /^type\s*:\s*["']?(object|string|integer)["']?\s*$/m;
+const FRAGMENT_BODY_RE = /^(?:properties|allOf|oneOf|anyOf|enum)\s*:/m;
+
+export function isSchemaFragment(rawSource: string, relativePath: string): boolean {
+  if (!/\.ya?ml$/i.test(relativePath)) return false;
+  const type = FRAGMENT_TYPE_RE.exec(rawSource)?.[1];
+  const body = FRAGMENT_BODY_RE.exec(rawSource)?.[0];
+  if (!type || !body) return false;
+  return type === "object" ? !body.startsWith("enum") : body.startsWith("enum");
+}
+
 export const openapiMeta: LanguagePluginMeta = {
   ...openapiManifest,
   regexSpec: openapiSpec,
@@ -49,8 +66,18 @@ export const openapiMeta: LanguagePluginMeta = {
   // A declarative contract, not code — generic secret/injection regexes only
   // ever false-positive on it.
   skipSecurityScan: true,
-  preprocess(rawSource) {
-    if (!isOpenApiDocument(rawSource)) return { skip: "not an OpenAPI/Swagger document" };
-    return null;
+  preprocess(rawSource, relativePath) {
+    if (isOpenApiDocument(rawSource)) return null;
+    if (!isSchemaFragment(rawSource, relativePath)) return { skip: "not an OpenAPI/Swagger document" };
+    return {
+      sourceText: rawSource,
+      language: "openapi",
+      postExtract(analysis) {
+        const name = relativePath.split("/").pop()!.replace(/\.ya?ml$/i, "");
+        const { classes, relations } = extractSchemaFragment(splitLines(rawSource), name);
+        analysis.classes = classes;
+        if (relations.length > 0) analysis.entityRelations = relations;
+      },
+    };
   },
 };

@@ -273,9 +273,13 @@ function get(node: SpecNode | undefined, ...path: string[]): SpecNode | undefine
 /** `#/components/schemas/User` / `#/definitions/User` → `User`. */
 function refName(ref: string | null | undefined): string | null {
   if (!ref) return null;
-  const seg = ref.split("/").pop();
+  // `./school/School.yaml` — a schema kept in a file of its own is named after the file.
+  const seg = ref.split("/").pop()?.replace(/\.(?:ya?ml|json)$/i, "");
   return seg && /^[A-Za-z_]/.test(seg) ? seg : null;
 }
+
+/** A `$ref` to another file's whole document (`./school/School.yaml`), not to a fragment of this one. */
+const isFileRef = (ref: string | null | undefined): boolean => !!ref && !ref.includes("#") && /\.(?:ya?ml|json)$/i.test(ref);
 
 /**
  * The type text of a schema object, in the spelling `request-schema.ts` reads
@@ -510,63 +514,82 @@ export function extractOpenApiEntities(lines: string[]): ClassInfo[] {
   if (!schemas) return [];
   const out: ClassInfo[] = [];
   for (const [name, schema] of schemas.children) {
-    if (!/^[A-Za-z_]/.test(name)) continue;
-    const required = requiredNames(schema);
-    const props: PropertyInfo[] = [];
-    for (const [propName, prop] of propertyNodes(schema)) {
-      const info: PropertyInfo = {
-        name: propName,
-        type: schemaTypeText(prop),
-        visibility: "public",
-        isStatic: false,
-        isReadonly: prop.children.get("readOnly")?.value === "true",
-      };
-      if (required.has(propName)) info.isRequired = true;
-      props.push(info);
-    }
-    // `allOf: [$ref: Base, {…}]` is schema inheritance: the base's properties
-    // are flattened by the request-schema pass through `extends`, those of a
-    // second and later parent through `implements`.
-    const parents = [...new Set(itemsOf(schema.children.get("allOf"))
-      .map((p) => refName(p.children.get("$ref")?.value))
-      .filter((r): r is string => !!r && r !== name))];
-    out.push({
-      name,
-      extends: parents[0] ?? null,
-      implements: parents.slice(1),
-      decorators: ["entity", "openapi"],
-      methods: [],
-      properties: props,
-      isExported: true,
-      line: schema.line,
-      endLine: schema.line,
-    });
+    if (/^[A-Za-z_]/.test(name)) out.push(schemaClass(name, schema));
   }
   return out;
+}
+
+/** One schema as an entity: its properties (inline `allOf` members' too) and the schemas it composes. */
+function schemaClass(name: string, schema: SpecNode): ClassInfo {
+  const required = requiredNames(schema);
+  const props: PropertyInfo[] = [];
+  for (const [propName, prop] of propertyNodes(schema)) {
+    const info: PropertyInfo = {
+      name: propName,
+      type: schemaTypeText(prop),
+      visibility: "public",
+      isStatic: false,
+      isReadonly: prop.children.get("readOnly")?.value === "true",
+    };
+    if (required.has(propName)) info.isRequired = true;
+    props.push(info);
+  }
+  // `allOf: [$ref: Base, {…}]` is schema inheritance: the base's properties
+  // are flattened by the request-schema pass through `extends`, those of a
+  // second and later parent through `implements`.
+  const parents = [...new Set(itemsOf(schema.children.get("allOf"))
+    .map((p) => refName(p.children.get("$ref")?.value))
+    .filter((r): r is string => !!r && r !== name))];
+  return {
+    name,
+    extends: parents[0] ?? null,
+    implements: parents.slice(1),
+    decorators: ["entity", "openapi"],
+    methods: [],
+    properties: props,
+    isExported: true,
+    line: schema.line,
+    endLine: schema.line,
+  };
 }
 
 export function extractOpenApiRelations(lines: string[], classes: ClassInfo[]): EntityRelation[] {
   const schemas = schemasNode(parsedOf(lines));
   if (!schemas) return [];
   const known = new Set(classes.map((c) => c.name));
+  return [...schemas.children].flatMap(([name, schema]) => schemaRelations(name, schema, known));
+}
+
+/** A schema's properties that hold another schema: one of `known`, or a file of its own. */
+function schemaRelations(name: string, schema: SpecNode, known: ReadonlySet<string>): EntityRelation[] {
   const out: EntityRelation[] = [];
-  for (const [name, schema] of schemas.children) {
-    for (const [field, prop] of propertyNodes(schema)) {
-      const direct = refName(prop.children.get("$ref")?.value);
-      const arrayItem = refName(prop.children.get("items")?.children.get("$ref")?.value);
-      const to = direct ?? arrayItem;
-      if (!to || !known.has(to) || to === name) continue;
-      out.push({
-        fromEntity: name,
-        fromField: field,
-        toEntity: to,
-        cardinality: arrayItem ? "one-to-many" : "many-to-one",
-        orm: "openapi",
-        confidence: "EXTRACTED",
-      });
-    }
+  for (const [field, prop] of propertyNodes(schema)) {
+    const directRef = prop.children.get("$ref")?.value;
+    const itemRef = prop.children.get("items")?.children.get("$ref")?.value;
+    const direct = refName(directRef);
+    const arrayItem = refName(itemRef);
+    const to = direct ?? arrayItem;
+    if (!to || to === name || !(known.has(to) || isFileRef(direct ? directRef : itemRef))) continue;
+    out.push({
+      fromEntity: name,
+      fromField: field,
+      toEntity: to,
+      cardinality: arrayItem ? "one-to-many" : "many-to-one",
+      orm: "openapi",
+      confidence: "EXTRACTED",
+    });
   }
   return out;
+}
+
+/**
+ * A schema kept in a file of its own (`school/School.yaml`, which the spec
+ * names by `$ref: './school/School.yaml'`): its root is the schema, named
+ * after the file.
+ */
+export function extractSchemaFragment(lines: string[], name: string): { classes: ClassInfo[]; relations: EntityRelation[] } {
+  const root = parsedOf(lines);
+  return { classes: [schemaClass(name, root)], relations: schemaRelations(name, root, new Set()) };
 }
 
 export const openapiSpec: RegexLangSpec = {

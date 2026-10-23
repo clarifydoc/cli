@@ -95,7 +95,9 @@ export const reactRouterResolver: RouteResolver = {
       return depth >= 4 ? own : [...own, ...(array.spreads ?? []).flatMap((s) => arrayItems(target.filePath, s, depth + 1))];
     };
 
-    // Mapped arrays → one route per element, at the element.
+    // Mapped arrays → one route per element, at the element. An array two parents
+    // mount (`children: detailRoutes` under two records) serves under each.
+    const placed = new Set<RouteInfo>();
     for (const a of analyses) {
       for (const f of a.routeFacts ?? []) {
         if (f.kind !== "react-router-map") continue;
@@ -115,9 +117,17 @@ export const reactRouterResolver: RouteResolver = {
           if (at >= 0) {
             const was = target.routes[at]!;
             if (was.path === path && (!page || was.handler)) continue;
-            target.routes = target.routes.map((r, i) =>
-              i === at ? { ...was, path, ...(page && !was.handler ? { handler: page.name, componentPath: page.specifier } : {}) } : r,
-            );
+            if (placed.has(was)) {
+              if (!target.routes.some((r) => r.kind === "frontend" && r.line === item.line && r.path === path)) {
+                const copy = { ...was, path };
+                placed.add(copy);
+                target.routes = [...target.routes, copy];
+              }
+              continue;
+            }
+            const row = { ...was, path, ...(page && !was.handler ? { handler: page.name, componentPath: page.specifier } : {}) };
+            placed.add(row);
+            target.routes = target.routes.map((r, i) => (i === at ? row : r));
             continue;
           }
           target.routes = [

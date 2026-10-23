@@ -407,6 +407,40 @@ public class LoginEventHandler {
     expect(s.some((d) => d.kind === "queue-consume" && d.target === "LoginMessage")).toBe(true);
   });
 
+  it("reads a request or reply sent on the bus as the event, on both sides", async () => {
+    const src = `package x;
+public class TransferEvents {
+  private final EventPublisher publisher;
+  void requestTransfer(TransferPlayerRequest message) {
+    publisher.send(auditInformation(), metadata(message.getId()), message);
+  }
+  @MessageHandler
+  public void handle(AuditInformation auditInformation, TransferPlayerResponse response) {}
+}`;
+    const tree = await parseSource(src, "java" as any, "TransferEvents.java");
+    const s = q(new JavaKotlinDataSourceExtractor().extract(tree, src));
+    expect(s.map((d) => `${d.kind} ${d.target}`).sort()).toEqual(["queue-consume TransferPlayerResponse", "queue-publish TransferPlayerRequest"]);
+  });
+
+  it("types a loosely declared payload parameter by the events its callers in the file hand it", async () => {
+    const src = `package x;
+public class LeagueEventPublisherImpl {
+  private final EventPublisher eventPublisher;
+  public void created(Club club, AuditInformation audit) {
+    sendLeagueEvent(club, audit, ClubCreatedEvent.newBuilder().setClub(club.getId()).build());
+  }
+  public void deleted(Club club, AuditInformation audit) {
+    sendLeagueEvent(club, audit, new ClubDeletedEvent(club.getId()));
+  }
+  private void sendLeagueEvent(Club club, AuditInformation audit, Object leagueEvent) {
+    eventPublisher.send(audit, Metadata.newBuilder().setAffectedEntity(club.getId()).build(), leagueEvent);
+  }
+}`;
+    const tree = await parseSource(src, "java" as any, "LeagueEventPublisherImpl.java");
+    const s = q(new JavaKotlinDataSourceExtractor().extract(tree, src));
+    expect(s.map((d) => `${d.kind} ${d.target} @${d.line}`)).toEqual(["queue-publish ClubCreatedEvent @11", "queue-publish ClubDeletedEvent @11"]);
+  });
+
   it("strips an upper-case DB tech suffix from a repository type", async () => {
     const src = `package x;
 class DriverService {
