@@ -1,5 +1,5 @@
 import type { Node } from "web-tree-sitter";
-import type { RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../types/analysis.js";
+import type { CallInfo, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../types/analysis.js";
 import { stripQuotes } from "../../shared/node-helpers.js";
 import { applyRouteMeta, boundParam, inferredParam, type GuardAttr } from "../../shared/route-metadata.js";
 import { HTTP_METHODS } from "../../routes/base.js";
@@ -383,7 +383,7 @@ function walkForPythonRoutes(node: Node, routes: RouteInfo[], routers: Map<strin
       for (const rd of routeDecs) {
         const router = rd.receiver ? routers.get(rd.receiver) : undefined;
         const path = joinPrefix(router?.prefix ?? "", rd.path);
-        const signature = fnDef ? signatureParams(fnDef, path) : { params: [], guards: [] };
+        const signature = fnDef ? signatureParams(fnDef, path) : { params: [], guards: [], dependencies: [] };
         const params = [...signature.params, ...bodyAccessParams(fnDef, path, signature.params)];
         // FastAPI's response: `response_model=`, else the return annotation (not a Response object), and `status_code=`.
         const annotated = fnDef?.childForFieldName("return_type")?.text;
@@ -395,7 +395,7 @@ function walkForPythonRoutes(node: Node, routes: RouteInfo[], routers: Map<strin
             httpMethod: method,
             kind: "api",
             handler,
-            calls: [],
+            calls: signature.dependencies.map((c) => ({ ...c })),
             middleware: [],
             line: node.startPosition.row + 1,
             ...(responses ? { responses } : {}),
@@ -468,9 +468,10 @@ function markerName(node: Node | null): string | null {
  * scalar type (or none) → query, a model type → body — marked `inferred`.
  * `Depends(x)` on an auth-looking callable is also a guard on the action.
  */
-function signatureParams(fnDef: Node, path: string): { params: RouteParamInfo[]; guards: GuardAttr[] } {
+function signatureParams(fnDef: Node, path: string): { params: RouteParamInfo[]; guards: GuardAttr[]; dependencies: CallInfo[] } {
   const params: RouteParamInfo[] = [];
   const guards: GuardAttr[] = [];
+  const dependencies: CallInfo[] = [];
   const paramsNode = fnDef.childForFieldName("parameters");
   const converters = pathConverterTypes(path);
   for (const p of paramsNode?.namedChildren ?? []) {
@@ -505,6 +506,14 @@ function signatureParams(fnDef: Node, path: string): { params: RouteParamInfo[];
       if (mk === "Depends" || mk === "Security") {
         const guard = dependencyGuard(marker!);
         if (guard && (mk === "Security" || AUTH_DEPENDENCY.test(guard.policies![0]!))) guards.push(guard);
+        // The framework calls a dependency named as a callable before the
+        // handler runs (`Depends(get_club_from_path)`), so the route reaches
+        // what it reads. A factory call (`Depends(get_repo(Clubs))`) is not one.
+        const args = marker!.childForFieldName("arguments");
+        const dep = args ? firstPositionalArg(args) : null;
+        if (dep && (dep.type === "identifier" || dep.type === "attribute")) {
+          dependencies.push({ name: dep.text, kind: "internal", target: null, line: dep.startPosition.row + 1 });
+        }
       }
       continue;
     }
@@ -518,7 +527,7 @@ function signatureParams(fnDef: Node, path: string): { params: RouteParamInfo[];
       params.push(inferredParam(name, type, path, type === null || isSimpleType(type) ? "query" : "body"));
     }
   }
-  return { params, guards };
+  return { params, guards, dependencies };
 }
 
 /** Flask converters: `/x/<int:id>` → id: int. */

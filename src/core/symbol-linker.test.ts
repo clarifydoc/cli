@@ -624,3 +624,23 @@ describe("symbol-linker — overloads picked by argument count", () => {
     expect(at("CarService.unknown", "log")).toBe(indexed);
   });
 });
+
+describe("symbol-linker — a route declared inside a class", () => {
+  it("anchors on that class's method when several classes in the file define one of the same name", () => {
+    const route = (path: string, line: number) => ({ path, httpMethod: "GET", kind: "api", handler: "get_all", calls: [], middleware: [], line });
+    const controllers = {
+      ...file("routes/explore/organizers.py", "app", {
+        classes: [
+          { ...cls("PublicLeaguesController"), line: 10, endLine: 20, methods: [{ ...fn("get_all", []), line: 13, endLine: 19 }] },
+          { ...cls("PublicClubsController"), line: 22, endLine: 32, methods: [{ ...fn("get_all", []), line: 25, endLine: 31 }] },
+        ],
+      }),
+      language: "python",
+      routes: [route("/organizers/leagues", 12), route("/organizers/clubs", 24)],
+    } as unknown as FileAnalysis;
+    const links = buildSymbolLinks([controllers]);
+    const target = (path: string) => links.find((l) => l.sourceSymbol === `route:GET ${path}`)?.targetSymbol;
+    expect(target("/organizers/leagues")).toBe("PublicLeaguesController.get_all");
+    expect(target("/organizers/clubs")).toBe("PublicClubsController.get_all");
+  });
+});

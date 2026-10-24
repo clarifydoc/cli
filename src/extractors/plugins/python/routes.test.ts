@@ -345,3 +345,16 @@ def list_crests():
     expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /organizers/kits", "GET /organizers/kits/{item_id}", "GET "]);
   });
 });
+
+describe("FastAPI dependencies the route runs", () => {
+  it("calls a dependency named as a callable before the handler, never a dependency factory's result", async () => {
+    const routes = await routesOf(`
+router = APIRouter()
+
+@router.get("/{club_slug}")
+async def retrieve_club(club: Club = Depends(get_club_from_path), user: User = Depends(get_current_user_authorizer()), repo: Annotated[ClubsRepo, Depends(deps.get_clubs_repo)] = None):
+    return ClubInResponse(club=club)
+`);
+    expect(routes[0]!.calls.map((c) => c.name)).toEqual(["get_club_from_path", "deps.get_clubs_repo"]);
+  });
+});

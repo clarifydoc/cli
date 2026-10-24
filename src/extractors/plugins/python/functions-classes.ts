@@ -295,10 +295,21 @@ function propertyMembers(parsed: readonly ParsedFunction[], declared: readonly P
     const returned = p.node.childForFieldName("body")?.descendantsOfType("return_statement").filter((r): r is Node => !!r).pop()?.namedChild(0) ?? null;
     let type = p.fn.returnType;
     let from: string | undefined;
-    if (!type && returned?.type === "call") {
+    let constructedWith: string[] | undefined;
+    if (returned?.type === "call") {
       const callee = returned.childForFieldName("function");
       const name = (callee?.type === "subscript" ? callee.childForFieldName("value") : callee)?.text ?? "";
-      if (/^(?:[\w]+\.)*[A-Z]\w*$/.test(name)) type = name.split(".").pop()!;
+      if (/^(?:[\w]+\.)*[A-Z]\w*$/.test(name)) {
+        const ctor = name.split(".").pop()!;
+        type ??= ctor;
+        if (type === ctor) {
+          const args = returned.childForFieldName("arguments")?.namedChildren.filter((a) => a.type !== "comment") ?? [];
+          // Positional only: a keyword or a splat would shift every index after it.
+          const stop = args.findIndex((a) => a.type === "keyword_argument" || /splat/.test(a.type));
+          const positional = stop < 0 ? args : args.slice(0, stop);
+          if (positional.length > 0) constructedWith = positional.map((a) => a.text);
+        }
+      }
     }
     if (!type && returned?.type === "attribute" && /^self\.\w+(?:\.\w+)*$/.test(returned.text)) {
       const own = /^self\.(\w+)$/.exec(returned.text)?.[1];
@@ -308,6 +319,7 @@ function propertyMembers(parsed: readonly ParsedFunction[], declared: readonly P
     if (!type && !from) continue;
     const prop: PropertyInfo = { name: p.fn.name, type: type ?? null, visibility: p.fn.name.startsWith("_") ? "private" : "public", isStatic: false, isReadonly: true };
     if (from) prop.from = from;
+    if (constructedWith) prop.constructedWith = constructedWith;
     out.push(prop);
   }
   return out;

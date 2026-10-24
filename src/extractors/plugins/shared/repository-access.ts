@@ -71,7 +71,13 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
     if (depth <= 6) {
       const wanted = knobs.memberKey(member);
       for (const cls of classes.get(className) ?? []) {
-        found = written(cls.properties.find((p) => knobs.memberKey(p.name) === wanted)?.type);
+        const prop = cls.properties.find((p) => knobs.memberKey(p.name) === wanted);
+        found = written(prop?.type);
+        // A computed member typed by the chain it returns or is assigned (`return self.repos.tags`).
+        if (!found && prop?.from) {
+          const [head, ...rest] = prop.from.split(".");
+          if (knobs.selfHeads.has(head!) && rest.every((s) => /^[\w$]+$/.test(s))) found = resolveChain(rest, className, depth + 1);
+        }
         if (!found) {
           const method = cls.methods.find((m) => m.name === member);
           if (method) {
@@ -115,15 +121,15 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
     return found;
   };
 
-  const resolveChain = (segments: string[], startType: string | null): string | null => {
+  function resolveChain(segments: string[], startType: string | null, depth = 0): string | null {
     let type = startType;
     for (const seg of segments) {
       const owner = bare(type);
       if (!owner) return null;
-      type = typeOfMember(owner, seg);
+      type = typeOfMember(owner, seg, depth);
     }
     return type;
-  };
+  }
 
   const awaitedType = (type: string | null): string | null => {
     const m = type ? /^([\w.]+)\s*<(.+)>$/.exec(type.trim()) : null;
@@ -168,6 +174,51 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
     return written(awaited ? awaitedType(declared) : declared);
   };
 
+  /** The first declaration `pick` finds on `className`, through bases. */
+  const findOn = <T>(className: string | null, pick: (cls: ClassInfo) => T | undefined, depth = 0): T | null => {
+    if (!className || depth > 6) return null;
+    for (const cls of classes.get(className) ?? []) {
+      const found = pick(cls);
+      if (found !== undefined) return found;
+    }
+    for (const base of basesOf(className)) {
+      const found = findOn(bare(base), pick, depth + 1);
+      if (found !== null) return found;
+    }
+    return null;
+  };
+  /**
+   * A wrapper handed the repository when it is built (`return HttpRepo(self.repo,
+   * self.logger)`): its method `leaf` calls `self.repo.<verb>` on the field its
+   * constructor takes under that name, so the call reaches the entity of the
+   * argument the member was built with — resolved on `ownerType`, the instance
+   * that reads the member, where a subclass names its own repository.
+   */
+  const wrappedAccess = (ownerType: string | null, member: string, leaf: string): { entity: string; write: boolean } | null => {
+    const owner = bare(ownerType);
+    const wanted = knobs.memberKey(member);
+    const prop = findOn(owner, (cls) => cls.properties.find((p) => knobs.memberKey(p.name) === wanted && p.constructedWith?.length));
+    const wrapper = bare(prop?.type);
+    if (!prop || !wrapper || !owner) return null;
+    const method = findOn(wrapper, (cls) => cls.methods.find((m) => m.name === leaf));
+    const ctor = findOn(wrapper, (cls) => cls.methods.find((m) => knobs.isConstructor(m, cls)));
+    if (!method || !ctor) return null;
+    let entity: string | null = null;
+    let write = false;
+    for (const inner of method.calls ?? []) {
+      const segs = inner.name.split(".");
+      if (segs.length !== 3 || !knobs.selfHeads.has(segs[0]!) || !knobs.verbs.test(segs[2]!)) continue;
+      const at = ctor.params.findIndex((p) => knobs.memberKey(p.name) === knobs.memberKey(segs[1]!));
+      const arg = (at >= 0 ? prop.constructedWith![at] : undefined)?.split(".");
+      if (!arg || !knobs.selfHeads.has(arg[0]!) || arg.some((x) => !/^[\w$]+$/.test(x))) continue;
+      const found = repoEntity(resolveChain(arg.slice(1), owner));
+      if (!found || (entity && found !== entity)) return null;
+      entity = found;
+      if (knobs.writeVerbs.test(segs[2]!)) write = true;
+    }
+    return entity ? { entity, write } : null;
+  };
+
   for (const a of own) {
     let changed = false;
     const rows = [...(a.dataSources ?? [])];
@@ -182,7 +233,12 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
         // A typed parameter or local, else a member of the enclosing class named without `this`.
         const start = headType(parts[0]!, fn, owner);
         const type = start ? resolveChain(parts.slice(1, -1), start) : null;
-        const entity = repoEntity(type);
+        let entity = repoEntity(type);
+        let write = knobs.writeVerbs.test(leaf);
+        if (!entity && start && parts.length >= 3) {
+          const wrapped = wrappedAccess(resolveChain(parts.slice(1, -2), start), parts[parts.length - 2]!, leaf);
+          if (wrapped) ({ entity, write } = wrapped);
+        }
         if (!entity) continue;
         const key = `${call.line}\0${call.name}`;
         const row: DataSourceInfo = {
@@ -190,7 +246,7 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
           name: call.name,
           target: entity,
           entity,
-          access: knobs.writeVerbs.test(leaf) ? "write" : "read",
+          access: write ? "write" : "read",
           calls: [],
           line: call.line,
         };

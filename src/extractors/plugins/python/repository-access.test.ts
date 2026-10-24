@@ -42,4 +42,41 @@ describe("Python generic repository access", () => {
     ]);
     expect(fn.dataSources.map((d) => d.entity)).toEqual(["RecipeModel"]);
   });
+
+  it("types a computed member by the chain it returns, and follows a repository handed to a wrapper's constructor", () => {
+    const model = file("db/models/club.py", [cls("ClubModel", { extends: "SqlAlchemyBase", decorators: ["entity", "sqlalchemy"] })]);
+    const generic = file("repos/repository_generic.py", [cls("RepositoryGeneric"), cls("GroupRepositoryGeneric", { extends: "RepositoryGeneric[Schema, Model]" })]);
+    const clubs = file("repos/repository_clubs.py", [cls("RepositoryClubs", { extends: "GroupRepositoryGeneric[ClubOut, ClubModel]" })]);
+    const factory = file("repos/repository_factory.py", [cls("AllRepositories", { methods: [method("clubs", [], "RepositoryClubs")] })]);
+    const wrapper = file("routes/_base/mixins.py", [cls("HttpRepo", {
+      props: [["repo", "RepositoryGeneric"]],
+      methods: [
+        method("__init__", [], null, [{ name: "repo", type: "RepositoryGeneric", defaultValue: null }, { name: "logger", type: "Logger", defaultValue: null }]),
+        method("update_one", ["self.repo.get_one", "self.repo.update", "self.handle_exception"]),
+        method("get_one", ["self.repo.get_one"]),
+      ],
+    })]);
+    const controller = file("routes/clubs.py", [cls("ClubController", {
+      props: [["repos", "AllRepositories"]],
+      methods: [
+        method("update_one", ["self.mixins.update_one"]),
+        method("get_one", ["self.mixins.get_one"]),
+        method("delete_one", ["self.repo.delete"]),
+        method("audit", ["self.audits.get_one"]),
+      ],
+    })]);
+    const props = (controller.classes[0] as any).properties;
+    props.push({ name: "repo", type: null, visibility: "public", isStatic: false, isReadonly: true, from: "self.repos.clubs" });
+    props.push({ name: "mixins", type: "HttpRepo", visibility: "public", isStatic: false, isReadonly: true, constructedWith: ["self.repo", "self.logger"] });
+    // Built with something the pass cannot type: no entity is guessed.
+    props.push({ name: "audits", type: "HttpRepo", visibility: "public", isStatic: false, isReadonly: true, constructedWith: ["make_repo()"] });
+
+    new PythonEntityExtractor().reconcileProject([model, generic, clubs, factory, wrapper, controller]);
+
+    expect(controller.dataSources.map((d) => [d.name, d.entity, d.access])).toEqual([
+      ["self.mixins.update_one", "ClubModel", "write"],
+      ["self.mixins.get_one", "ClubModel", "read"],
+      ["self.repo.delete", "ClubModel", "write"],
+    ]);
+  });
 });

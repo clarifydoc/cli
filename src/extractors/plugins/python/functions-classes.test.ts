@@ -176,5 +176,7 @@ class LeagueController(BaseController):
       mixins: "HttpRepo",
       squad: "SquadService",
     });
+    // What the wrapper was built with, positional only: a project pass follows the repository into it.
+    expect(classes[0]!.properties.find((p) => p.name === "mixins")?.constructedWith).toEqual(["self.repo", "self.logger"]);
   });
 });

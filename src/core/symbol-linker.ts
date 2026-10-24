@@ -171,6 +171,16 @@ export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly
           handlerLink !== null && owner !== undefined && targetClass !== undefined &&
           (handlerLink.strategy === "unique-global" || handlerLink.strategy === "unique-global-blind") &&
           targetClass !== owner && !targetClass.endsWith("." + owner);
+        // A route declared on a method (a decorator, an annotation) inside a
+        // class is THAT class's method: three controllers in one file each
+        // define `get_all`, and the name alone found the first.
+        const declaredIn = handlerLink && handlerLink.targetFile === sourceFile && !/[.#]/.test(route.handler)
+          ? enclosingMethod(analysis, route.line, route.handler)
+          : null;
+        if (handlerLink && declaredIn) {
+          handlerLink.targetSymbol = declaredIn.symbol;
+          handlerLink.targetLine = declaredIn.line;
+        }
         if (nameOnlyElsewhere) {
           // No link: the route keeps its handler name, unresolved.
         } else if (handlerLink) {
@@ -1452,6 +1462,21 @@ function buildDottedClassSuffixIndex(analyses: FileAnalysis[]): Map<string, Arra
     }
   }
   return idx;
+}
+
+/**
+ * The method a route declared at `line` names, when the line lies inside a class
+ * that defines a method of that name (the innermost such class): `Class.method`.
+ */
+function enclosingMethod(analysis: FileAnalysis, line: number, name: string): { symbol: string; line: number } | null {
+  let best: { symbol: string; line: number; span: number } | null = null;
+  for (const cls of analysis.classes) {
+    if (line < cls.line || line > cls.endLine) continue;
+    const method = cls.methods.find((m) => m.name === name);
+    const span = cls.endLine - cls.line;
+    if (method && (!best || span < best.span)) best = { symbol: `${cls.name}.${method.name}`, line: method.line, span };
+  }
+  return best && { symbol: best.symbol, line: best.line };
 }
 
 /**

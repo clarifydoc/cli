@@ -846,6 +846,13 @@ export interface PropertyInfo {
    * the member as that chain resolves.
    */
   from?: string;
+  /**
+   * The arguments of the construction a computed member returns, as written
+   * (`return GarageRepo(self.repo, self.logger)` → `["self.repo", "self.logger"]`):
+   * what lets a project pass follow a repository handed to a wrapper's
+   * constructor into the wrapper's own calls on it. Keyword arguments omitted.
+   */
+  constructedWith?: string[];
 }
 
 export interface ClassInfo {
