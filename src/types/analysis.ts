@@ -1421,6 +1421,13 @@ export interface DataSourceInfo {
    */
   entity?: string;
   /**
+   * For `database`: the call is made on a variable holding one row
+   * (`self.club1.save()`, `match.delete()`) whose model the plugin could not
+   * tell, so the segment before the verb names no entity — `enrichFileDataSources`
+   * leaves `entity` empty instead of reading the variable's name as a table.
+   */
+  receiverIsInstance?: boolean;
+  /**
    * For `database`: the named query the call runs (`em.createNamedQuery("match.byClub")`),
    * declared elsewhere — a project pass fills `entity` from the query's declaration.
    */

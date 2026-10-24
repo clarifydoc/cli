@@ -314,12 +314,35 @@ describe("Python stored procedures", () => {
     cur.execute("SELECT id FROM players WHERE id = %s", (pid,))
 `;
     const tree = await parseSource(src, "python" as never, "x.py");
-    const rows = new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
+    const rows = new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database" && !d.name.includes(".objects."));
     expect(rows.map((d) => `${d.target} ${d.routine ? "routine" : d.entity}`)).toEqual([
       "usp_SignPlayer routine",
       "dbo.usp_NotifyAgent routine",
       "league.close_window routine",
       "players players",
+    ]);
+  });
+});
+
+describe("Python rows saved through the variable holding them", () => {
+  it("takes the model the variable was built from, and never names a table after the variable", async () => {
+    const src = [
+      "class ClubTests(TestCase):",
+      "    def setUp(self):",
+      "        self.club1 = Club.objects.create(name='Rovers')",
+      "        self.match1 = make_match()",
+      "    def test_rename(self):",
+      "        self.club1.save()",
+      "        self.match1.save()",
+      "        player = Player(name='Ann')",
+      "        player.save()",
+    ].join("\n");
+    const tree = await parseSource(src, "python" as never, "x.py");
+    const rows = new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database" && !d.name.includes(".objects."));
+    expect(rows.map((d) => [d.name, d.entity ?? null, d.receiverIsInstance ?? false])).toEqual([
+      ["self.club1.save", "Club", false],
+      ["self.match1.save", null, true],
+      ["player.save", "Player", false],
     ]);
   });
 });

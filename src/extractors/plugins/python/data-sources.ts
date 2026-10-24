@@ -250,12 +250,25 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           // A model's manager or query attribute (`Order.objects.filter`, `User.query.filter_by`)
           // names the model before it, not after: the segment ahead of the leaf is the manager.
           table ??= managerModel(fnName);
+          // A row saved or deleted through the variable holding it (`self.club1.save()`,
+          // `match.delete()`): its model is what the variable was built from, else
+          // unknown — never the variable's name.
+          let instance = false;
+          if (!table && INSTANCE_VERBS.has(leaf) && parts.length >= 2) {
+            const held = parts.slice(0, -1).join(".");
+            const name = parts[parts.length - 2]!;
+            if (/^(?:self\.)?[a-z_]\w*$/.test(held) && name !== "self" && name !== "objects" && !PY_DATASTORE_SEGMENT_RE.test(name)) {
+              table = heldModel(held, this.sourceText);
+              instance = !table;
+            }
+          }
           sources.push(this.ds({
             kind: "database",
             name: fnName,
             target: table,
             line: node.startPosition.row + 1,
             ...(table ? { entity: table } : {}),
+            ...(instance ? { receiverIsInstance: true } : {}),
             ...(access ? { access } : {}),
           }));
         }
@@ -275,6 +288,24 @@ const PY_DB_LEAVES = new Set([
   "insert_one", "insert_many", "update_one", "update_many",
   "delete_one", "delete_many", "count_documents",
 ]);
+
+/** Verbs a model INSTANCE answers (`club.save()`), as opposed to a manager or session. */
+const INSTANCE_VERBS = new Set(["save", "delete", "refresh_from_db"]);
+
+/**
+ * The model a variable holds, where the file builds it (`self.club1 = Club.objects.create(…)`,
+ * `match = Match(home=…)`, `club: Club = …`): unique-or-nothing over every assignment.
+ */
+function heldModel(held: string, sourceText: string): string | null {
+  const name = held.replace(/\./g, "\\.");
+  const models = new Set<string>();
+  for (const m of sourceText.matchAll(new RegExp(String.raw`(?:^|[^\w.])` + name + String.raw`\s*(?::\s*([A-Z]\w*)[^=\n]*)?=\s*(?!=)(?:await\s+)?(?:([A-Z]\w*)(?:\.objects\.\w+)?\s*\()?`, "gm"))) {
+    const model = m[1] ?? m[2];
+    if (!model) return null; // assigned something the file does not say is a model
+    models.add(model);
+  }
+  return models.size === 1 ? [...models][0]! : null;
+}
 
 /** A Django manager's writing verbs; every other manager call reads. */
 const DJANGO_WRITE_LEAVES = new Set([
