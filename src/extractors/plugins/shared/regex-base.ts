@@ -18,6 +18,11 @@ export interface FnPattern {
    * not a `;`, follows it. Absent: the line match decides.
    */
   accept?: (lines: readonly string[], i: number) => boolean;
+  /**
+   * The name may spell another language's control-flow keyword — Ruby's
+   * `def self.for(x)`, where the `def` already says it is a method.
+   */
+  keywordNames?: boolean;
 }
 
 export interface ClsPattern {
@@ -122,6 +127,22 @@ export interface RegexLangSpec {
   blockStyle?: BlockStyle;
   /** Required when `blockStyle === "keyword-end"`. */
   keywordEnd?: KeywordEndConfig;
+  /**
+   * Where the file's blocks end, read by the language itself: 0-based start
+   * line → 1-based line of the block's last line. For a language neither braces
+   * nor indentation delimit reliably — Ruby's method-level `rescue` sits at the
+   * `def`'s indentation, a heredoc body may start at column 0. A start it does
+   * not list falls back to `blockStyle`. Called once per declaration, so memoize.
+   */
+  blockEnds?: (lines: readonly string[]) => ReadonlyMap<number, number>;
+  /**
+   * The file's lines as the call scan should read them: the same lines, with
+   * text that is no code blanked — heredoc bodies, word-array literals, block
+   * comments, whose words would otherwise read as calls. Plain quoted strings
+   * may stay (the scan blanks them itself and hands patterns the raw text).
+   * Called once per declaration, so memoize.
+   */
+  callSourceLines?: (lines: readonly string[]) => readonly string[];
   lineCommentPrefixes: string[]; // e.g. ["//", "#", "--"]
   /**
    * Branch keywords and logical operators for the regex-path complexity count
@@ -377,6 +398,11 @@ function bodyFollows(lines: string[], from: number): boolean {
   return false;
 }
 
+/** Where the block declared on line `i` ends: the spec's own reading, else `findEndLine`. */
+export function blockEndLine(lines: string[], i: number, spec: RegexLangSpec): number {
+  return spec.blockEnds?.(lines).get(i) ?? findEndLine(lines, i, resolveBlockStyle(spec), spec.keywordEnd);
+}
+
 /** Resolve the block style for a spec, honoring the legacy `indentBased` flag. */
 export function resolveBlockStyle(spec: RegexLangSpec): BlockStyle {
   if (spec.blockStyle) return spec.blockStyle;
@@ -391,12 +417,13 @@ export function extractFunctionsWithSpec(lines: string[], spec: RegexLangSpec): 
     const line = lines[i];
     if (isCommentLine(line, spec.lineCommentPrefixes)) continue;
 
-    for (const { pattern, isExported, isAsync: asyncCheck, accept } of spec.functionPatterns) {
+    for (const { pattern, isExported, isAsync: asyncCheck, accept, keywordNames } of spec.functionPatterns) {
       const m = line.match(pattern);
-      if (m && m[1] && !isControlFlowKeyword(m[1]) && (!accept || accept(lines, i))) {
-        const endLine = findEndLine(lines, i, resolveBlockStyle(spec), spec.keywordEnd);
+      if (m && m[1] && (keywordNames || !isControlFlowKeyword(m[1])) && (!accept || accept(lines, i))) {
+        const endLine = blockEndLine(lines, i, spec);
         const inline = inlineBodyColumn(line, line.indexOf(m[1], m.index ?? 0) + m[1].length);
-        const calls = extractCallsFromBody(lines, i + 1, endLine, spec.lineCommentPrefixes, spec.callPatterns, inline >= 0 ? { line: i, column: inline } : undefined);
+        const callLines = (spec.callSourceLines?.(lines) ?? lines) as string[];
+        const calls = extractCallsFromBody(callLines, i + 1, endLine, spec.lineCommentPrefixes, spec.callPatterns, inline >= 0 ? { line: i, column: inline } : undefined);
         const fn: FunctionInfo = {
           name: m[1],
           params: extractParamsFromDeclaration(lines, i, m[1], spec.parseParam),
@@ -526,7 +553,7 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
     for (const { pattern, getExtends, getImplements, kind } of spec.classPatterns) {
       const m = lines[i].match(pattern);
       if (m && m[1]) {
-        const endLine = findEndLine(lines, i, resolveBlockStyle(spec), spec.keywordEnd);
+        const endLine = blockEndLine(lines, i, spec);
         const bodyLines = lines.slice(i + 1, endLine);
 
         // Extract methods from body
@@ -535,14 +562,15 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
           const bodyLine = bodyLines[j];
           if (isCommentLine(bodyLine, spec.lineCommentPrefixes)) continue;
 
-          for (const { pattern: fnPat, isExported, isAsync: asyncCheck, accept } of spec.functionPatterns) {
+          for (const { pattern: fnPat, isExported, isAsync: asyncCheck, accept, keywordNames } of spec.functionPatterns) {
             const fm = bodyLine.match(fnPat);
             if (fm && accept && !accept(lines, i + 1 + j)) continue;
-            if (fm && fm[1] && !isControlFlowKeyword(fm[1])) {
+            if (fm && fm[1] && (keywordNames || !isControlFlowKeyword(fm[1]))) {
               const methodStart = i + 1 + j;
-              const methodEnd = findEndLine(lines, methodStart, resolveBlockStyle(spec), spec.keywordEnd);
+              const methodEnd = blockEndLine(lines, methodStart, spec);
               const inline = inlineBodyColumn(bodyLine, bodyLine.indexOf(fm[1], fm.index ?? 0) + fm[1].length);
-              const calls = extractCallsFromBody(lines, methodStart + 1, methodEnd, spec.lineCommentPrefixes, spec.callPatterns, inline >= 0 ? { line: methodStart, column: inline } : undefined);
+              const callLines = (spec.callSourceLines?.(lines) ?? lines) as string[];
+              const calls = extractCallsFromBody(callLines, methodStart + 1, methodEnd, spec.lineCommentPrefixes, spec.callPatterns, inline >= 0 ? { line: methodStart, column: inline } : undefined);
               const method: FunctionInfo = {
                 name: fm[1],
                 params: extractParamsFromDeclaration(lines, methodStart, fm[1], spec.parseParam),
@@ -688,7 +716,15 @@ export function extractParamsFromDeclaration(
     const idx = first.search(new RegExp(`(?:^|[^\\w])\\[?${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\]?\\s*\\(`));
     if (idx >= 0) start = first.indexOf("(", idx + 1);
   }
-  if (start < 0) start = first.indexOf("(");
+  if (start < 0) {
+    start = first.indexOf("(");
+    // A call after the body began (`def apple = push(subs)`, `def total: Int = sum(xs)`,
+    // `def x; go(y); end`) holds no parameters — a `(` right after a name, past an `=` or `;`.
+    // A function literal's list right after the `=` stays (`getCars = (req, res) ->`).
+    const at = name ? first.indexOf(name) : -1;
+    const between = start >= 0 && at >= 0 && at < start ? first.slice(at + name!.length, start) : "";
+    if (/(?:(?<![=!<>])=(?![=>~])|;).*\w\s*$/.test(between)) start = -1;
+  }
   if (start < 0) return [];
 
   // Balanced scan, continuing onto later lines for a wrapped signature.

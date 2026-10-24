@@ -1,10 +1,11 @@
+import { rubyBlockEndsOf, rubyCodeLinesOf } from "./blocks.js";
 import { extractRubyScheduledJobs } from "./scheduled-jobs.js";
 import { addJobDispatchCalls, extractJobQueueSources } from "./active-job.js";
 import { addScopeMethods, extractModelSelfQueries } from "./model-scopes.js";
 import { RAILS_RENDER_CALL_PATTERNS } from "./render-patterns.js";
 import type { CallInfo, RouteInfo, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
-import { extractCallsFromBody, extractClassesWithSpec } from "../shared/regex-base.js";
+import { extractCallsFromBody, extractClassesWithSpec, inlineBodyColumn } from "../shared/regex-base.js";
 import type { GuardAttr } from "../../shared/route-metadata.js";
 import { applyRouteMeta } from "../../shared/route-metadata.js";
 import {
@@ -114,14 +115,57 @@ function railsControllerClass(controllerToken: string, modules: readonly string[
  * memoizer like `def agents; @agents ||= …`). The chain alone recorded only
  * `agents.find`, so the method — and what it loads — was never reached.
  */
-const IMPLICIT_RECEIVER_SKIP = new Set(["self", "params", "request", "response", "session", "cookies", "flash", "headers", "super", "nil", "true", "false", "logger", "render", "redirect_to", "head", "it", "yield"]);
-function addImplicitReceiverCalls(lines: string[], fn: FunctionInfo): void {
-  const bound = new Set(fn.params.map((p) => p.name));
-  for (let i = fn.line; i < Math.min(fn.endLine, lines.length); i++) {
-    const code = (lines[i] ?? "").replace(/#.*$/, "");
-    for (const m of code.matchAll(/(?:^|[^\w.@:])([a-z_]\w*)\s*(?:\|\|)?=(?![=~>])/g)) bound.add(m[1]!);
-    for (const m of code.matchAll(/\|([^|]*)\|/g)) for (const n of m[1]!.split(",")) bound.add(n.trim().replace(/^[*&]/, ""));
+/**
+ * A method's body as `[line index, text]` pairs: the lines between `def` and
+ * `end`, or — for a method on one line — the text after an endless method's
+ * `=` (`def range = window.current`) or after `def name;` (`def x; y; end`),
+ * the declaration blanked before it so columns still line up.
+ */
+function bodyLines(lines: readonly string[], fn: FunctionInfo): Array<[number, string]> {
+  if (fn.endLine > fn.line) {
+    const out: Array<[number, string]> = [];
+    for (let i = fn.line; i < Math.min(fn.endLine, lines.length); i++) out.push([i, lines[i] ?? ""]);
+    return out;
   }
+  const decl = lines[fn.line - 1] ?? "";
+  const def = decl.search(/\bdef\b/);
+  const name = fn.name.replace(/^self\./, "");
+  const at = def < 0 ? -1 : decl.indexOf(name, def + 3);
+  if (at < 0) return [];
+  let col = inlineBodyColumn(decl, at + name.length);
+  if (col < 0) {
+    const semi = decl.indexOf(";", at + name.length);
+    if (semi < 0) return [];
+    col = semi + 1;
+  }
+  return [[fn.line - 1, " ".repeat(col) + decl.slice(col)]];
+}
+
+/**
+ * The names a method binds as locals, wherever in its body: its parameters,
+ * `x =` / `x ||=`, `a, b = …` (multiple assignment), block parameters
+ * `|a, (b, c)|`, `rescue => e` and `for x in`. A bare name among them is the
+ * local, never a call of a same-named method.
+ */
+function boundLocals(lines: readonly string[], fn: FunctionInfo): Set<string> {
+  const bound = new Set(fn.params.map((p) => p.name));
+  for (const [, text] of bodyLines(lines, fn)) {
+    const code = text.replace(/#.*$/, "");
+    for (const m of code.matchAll(/(?:^|[^\w.@:])([a-z_]\w*)\s*(?:\|\|)?=(?![=~>])/g)) bound.add(m[1]!);
+    const multiple = /^\s*\(?\*?([a-z_]\w*(?:\s*\)?\s*,\s*\(?\*?[a-z_]\w*)+)\s*\)?\s*=(?![=~>])/.exec(code);
+    if (multiple) for (const n of multiple[1]!.split(",")) bound.add(n.replace(/[()*\s]/g, ""));
+    for (const m of code.matchAll(/\|([^|]*)\|/g)) for (const n of m[1]!.split(",")) bound.add(n.trim().replace(/^[*&(]+|[)]+$/g, "").replace(/\s*[=:].*$/, ""));
+    const rescued = /\brescue\b[^#]*=>\s*([a-z_]\w*)/.exec(code);
+    if (rescued) bound.add(rescued[1]!);
+    const loop = /^\s*for\s+([a-z_]\w*(?:\s*,\s*[a-z_]\w*)*)\s+in\b/.exec(code);
+    if (loop) for (const n of loop[1]!.split(",")) bound.add(n.trim());
+  }
+  return bound;
+}
+
+const IMPLICIT_RECEIVER_SKIP = new Set(["self", "params", "request", "response", "session", "cookies", "flash", "headers", "super", "nil", "true", "false", "logger", "render", "redirect_to", "head", "it", "yield"]);
+function addImplicitReceiverCalls(lines: readonly string[], fn: FunctionInfo): void {
+  const bound = boundLocals(lines, fn);
   const have = new Set(fn.calls.map((c) => c.name));
   const extra: CallInfo[] = [];
   for (const c of fn.calls) {
@@ -143,19 +187,14 @@ function addImplicitReceiverCalls(lines: string[], fn: FunctionInfo): void {
  * is that evidence. A name the method binds as a local or parameter is the
  * local, and a `:name` symbol, `name:` key or `.name` member is no own call.
  */
-function addOwnMethodCalls(lines: string[], cls: ClassInfo, fn: FunctionInfo): void {
+function addOwnMethodCalls(lines: readonly string[], cls: ClassInfo, fn: FunctionInfo): void {
   const own = new Set(cls.methods.map((m) => m.name).filter((n) => !/^self\./.test(n) && n !== "initialize"));
   if (own.size === 0) return;
-  const bound = new Set(fn.params.map((p) => p.name));
-  for (let i = fn.line; i < Math.min(fn.endLine, lines.length); i++) {
-    const code = (lines[i] ?? "").replace(/#.*$/, "");
-    for (const m of code.matchAll(/(?:^|[^\w.@:])([a-z_]\w*)\s*(?:\|\|)?=(?![=~>])/g)) bound.add(m[1]!);
-    for (const m of code.matchAll(/\|([^|]*)\|/g)) for (const n of m[1]!.split(",")) bound.add(n.trim().replace(/^[*&]/, ""));
-  }
+  const bound = boundLocals(lines, fn);
   const have = new Set(fn.calls.map((c) => `${c.name}@${c.line}`));
-  for (let i = fn.line; i < Math.min(fn.endLine, lines.length); i++) {
+  for (const [i, text] of bodyLines(lines, fn)) {
     // Strings and comments are no code.
-    const code = (lines[i] ?? "").replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""').replace(/#.*$/, "");
+    const code = text.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""').replace(/#.*$/, "");
     for (const m of code.matchAll(/(?<![\w.@$:])([a-z_]\w*[?!]?)(?![\w(:]|\s*(?:\|\|)?=[^=~>])/g)) {
       const name = m[1]!;
       if (!own.has(name) || bound.has(name) || /\bdef\s+$/.test(code.slice(0, m.index))) continue;
@@ -171,13 +210,13 @@ function addOwnMethodCalls(lines: string[], cls: ClassInfo, fn: FunctionInfo): v
  * a paren-less call the call patterns cannot tell from an attribute read, but
  * the local's stated type makes it a member of that class.
  */
-function addTypedLocalCalls(lines: string[], fn: FunctionInfo): void {
+function addTypedLocalCalls(lines: readonly string[], fn: FunctionInfo): void {
   const typed = (fn.localTypes ?? []).filter((l) => l.type);
   if (typed.length === 0) return;
   const have = new Set(fn.calls.map((c) => `${c.name}@${c.line}`));
   const re = new RegExp(`(?<![\\w.@$:])(${typed.map((l) => l.name).join("|")})\\.([a-z_]\\w*[?!]?)(?![\\w(]|\\s*=[^=~>])`, "g");
-  for (let i = fn.line; i < Math.min(fn.endLine, lines.length); i++) {
-    const code = (lines[i] ?? "").replace(/\s#.*$/, "");
+  for (const [i, text] of bodyLines(lines, fn)) {
+    const code = text.replace(/\s#.*$/, "");
     for (const m of code.matchAll(re)) {
       const name = `${m[1]}.${m[2]}`;
       if (have.has(`${name}@${i + 1}`)) continue;
@@ -612,6 +651,10 @@ export const rubySpec: RegexLangSpec = {
   language: "ruby",
   extensions: [".rb", ".rake", ".jbuilder"],
   indentBased: true,
+  // Blocks end at their `end`, read by keyword — not where the indentation drops (see blocks.ts).
+  blockEnds: rubyBlockEndsOf,
+  // Calls are read from code only: heredoc SQL / JS / prompts and `%w[]` words name no method.
+  callSourceLines: rubyCodeLinesOf,
   // A Rake file's tasks and a Jbuilder view's statements are the file's own:
   // their calls are its `<setup>`.
   topLevelCalls: /\.(?:rake|jbuilder)$/,
@@ -619,8 +662,13 @@ export const rubySpec: RegexLangSpec = {
 
   functionPatterns: [
     {
-      pattern: /^\s*def\s+(?:self\.)?([a-zA-Z_]\w*[?!]?)/,
+      // `def name`, `def self.name`, `def Const.name`, after a visibility call
+      // (`private def x`, `private_class_method def x`); a setter keeps its `=`
+      // (`def value=(v)` is not the reader `value`), an operator method its
+      // operator (`def <=>(other)`, `def [](key)`).
+      pattern: /^\s*(?:(?:private|protected|public|private_class_method|public_class_method|module_function)\s+)?def\s+(?:(?:self|[A-Z]\w*)\.)?([a-zA-Z_]\w*(?:[?!]|=(?=\s*\())?|<=>|===?|=~|!=|!~|\[\]=?|[-+]@|\*\*|<<|>>|<=|>=|[-+*\/%<>&|^~!])/,
       isExported: (_l, name) => !name.startsWith("_"),
+      keywordNames: true,
     },
   ],
 
@@ -662,6 +710,13 @@ export const rubySpec: RegexLangSpec = {
       buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2] }),
     },
     {
+      // A predicate or bang method called with parens and no receiver —
+      // `merge_contacts?(a, b)`, `update!(status: :won)`. The baseline `name(`
+      // matcher stops at the `?` / `!`, so these were never recorded.
+      pattern: /(?<![\w.@$:])(?!defined\?)([a-z_]\w*[?!])\(/,
+      buildName: (m) => ({ name: m[1]!, leafName: m[1]! }),
+    },
+    {
       // A whole statement that is just `receiver.method` — `user.save`,
       // `todo.destroy`. Reading an attribute and discarding it does nothing,
       // so a bare `x.y` in statement position is a call for its side effect.
@@ -674,14 +729,15 @@ export const rubySpec: RegexLangSpec = {
     {
       // Capture the FULL (possibly namespaced) class name — `League::MatchReport`,
       // not just the first segment `League` (which collided with a `League` concern).
-      pattern: /^\s*class\s+([A-Z]\w*(?:::[A-Z]\w*)*)/,
+      // A leading `::` (`class ::League::Report`) names the top level; the name is the same.
+      pattern: /^\s*class\s+(?:::)?([A-Z]\w*(?:::[A-Z]\w*)*)/,
       getExtends: (line) => {
-        // Superclass may be namespaced too (`< ActiveRecord::Base`, `< League::Base`).
-        const m = line.match(/<\s*([A-Z][\w:]*)/);
+        // Superclass may be namespaced too (`< ActiveRecord::Base`, `< League::Base`, `< ::Base`).
+        const m = line.match(/<\s*(?:::)?([A-Z][\w:]*)/);
         return m?.[1] ?? null;
       },
     },
-    { pattern: /^\s*module\s+([A-Z]\w*(?:::[A-Z]\w*)*)/, getExtends: () => null },
+    { pattern: /^\s*module\s+(?:::)?([A-Z]\w*(?:::[A-Z]\w*)*)/, getExtends: () => null },
   ],
 
   /**
@@ -709,11 +765,13 @@ export const rubySpec: RegexLangSpec = {
       for (const p of collectIvarProperties(lines, cls, classes)) if (!injected.has(p.name)) properties.push(p);
       cls.properties.push(...properties);
       // `agents.find(id)` with no local `agents` calls the method `agents` first.
+      // Read from code only: a word in a heredoc or `%w[]` is no call.
+      const code = rubyCodeLinesOf(lines);
       for (const m of cls.methods) {
-        addImplicitReceiverCalls(lines, m);
-        addTypedLocalCalls(lines, m);
+        addImplicitReceiverCalls(code, m);
+        addTypedLocalCalls(code, m);
         addJobDispatchCalls(lines, m);
-        addOwnMethodCalls(lines, cls, m);
+        addOwnMethodCalls(code, cls, m);
       }
       // A controller's filters, for the project pass that runs them before each action.
       if (/Controller$/.test(cls.name)) cls.decorators.push(...filterDecorators(lines, cls));

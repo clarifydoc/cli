@@ -15,12 +15,16 @@ interface RegexLangSpec {
   classPatterns: ClsPattern[];         // regex + extends extractor
   importPatterns: ImpPattern[];        // regex + source/specifier extractors
   indentBased?: boolean;               // Ruby/Lua use indent; brace languages don't
+  blockEnds?: (lines) => Map<number, number>;  // the language's own block ends (Ruby: by keyword), before the indent/brace guess
+  callSourceLines?: (lines) => string[];       // the lines the call scan reads (Ruby: heredocs, %w[], =begin blanked; #{} as code)
   lineCommentPrefixes: string[];       // ["//"], ["#"], ["--"]
   topLevelCalls?: boolean | RegExp;    // scripts: top-level statements → `<setup>` (VB: `.vbs` only)
   callPatterns?: CallPattern[];        // extra call shapes; `notAfter` skips continuation lines
   extractRoutes?: (lines, classes) => RouteInfo[];
 }
 ```
+
+A language whose blocks neither braces nor indentation delimit reliably supplies `blockEnds` (0-based start line → 1-based last line, memoized per `lines` array): Ruby's [ruby/blocks.ts](../ruby/blocks.ts) blanks non-code (heredocs, `%w[]`, `=begin`, `#{}`, regex literals) and closes `def`/`class`/`if`/`do` at their `end`, so a method-level `rescue` stays in its method and a heredoc at column 0 does not end the class. A start it does not list falls back to `findEndLine`. `FnPattern.keywordNames` lets a name spell another language's keyword (`def self.for`).
 
 A language whose call forms the patterns state completely sets `replacesBaseline` on one of them, and the baseline `name(` matcher is skipped (PowerShell: `Write-Output (Get-Date)` is no call of `Output`).
 

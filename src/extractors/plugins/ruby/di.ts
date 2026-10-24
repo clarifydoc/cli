@@ -1,6 +1,7 @@
 import type { CallInfo, ClassInfo, DiBinding, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { CallPattern } from "../shared/regex-base.js";
-import { blankStringLiterals, findEndLine, splitTopLevel } from "../shared/regex-base.js";
+import { blankStringLiterals, splitTopLevel } from "../shared/regex-base.js";
+import { rubyBodyEnd } from "./blocks.js";
 import { escapeRegex } from "../shared/path-utils.js";
 
 /**
@@ -420,7 +421,7 @@ export function isAutoInjectInclude(line: string): boolean {
 function singletonTest(lines: readonly string[], cls: ClassInfo): (m: FunctionInfo) => boolean {
   const eigen: Array<[number, number]> = [];
   for (let i = cls.line; i < Math.min(cls.endLine, lines.length); i++) {
-    if (/^\s*class\s*<<\s*self\b/.test(lines[i]!)) eigen.push([i, findEndLine(lines as string[], i, "indent")]);
+    if (/^\s*class\s*<<\s*self\b/.test(lines[i]!)) eigen.push([i, rubyBodyEnd(lines, i)]);
   }
   return (m) => /^\s*def\s+self\./.test(lines[m.line - 1] ?? "") || eigen.some(([a, b]) => m.line - 1 > a && m.line - 1 < b);
 }
@@ -575,7 +576,7 @@ export function extractRubyDiBindings(lines: readonly string[]): DiBinding[] {
     if (v) vars.add(v[1]!);
     const decl = /^\s*(?:class|module)\s+[A-Z][\w:]*(\s*<\s*Dry::(?:System::)?Container\b)?/.exec(line);
     if (!decl) continue;
-    const end = findEndLine(lines as string[], i, "indent");
+    const end = rubyBodyEnd(lines, i);
     const mixin = decl[1] || lines.slice(i + 1, end).some((l) => /^\s*(?:extend|include)\s+Dry::Container::Mixin\b/.test(l));
     if (mixin) bodies.push([i, end]);
   }
@@ -634,7 +635,7 @@ function registeredClass(lines: readonly string[], i: number, rest: string): str
   const block = open >= 0 ? balanced(rest, open) : null;
   if (block !== null) return singleConstruction(block.replace(/^\s*\|[^|]*\|/, ""));
   if (/\bdo\s*(?:\|[^|]*\|)?\s*$/.test(rest)) {
-    const end = findEndLine(lines as string[], i, "indent");
+    const end = rubyBodyEnd(lines, i);
     const body = lines.slice(i + 1, end).filter((l) => l.trim() && !l.trim().startsWith("#"));
     if (body.length === 0) return null;
     const first = body[0]!;
