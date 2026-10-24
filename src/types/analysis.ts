@@ -739,7 +739,10 @@ export interface CallInfo {
    * The call's arguments as written, when the plugin's `calls.argsOf` hook reports
    * them — Delphi does, for a call that passes a component by name
    * (`Fill(qryPupils)`), so a project pass can follow the dataset into the
-   * routine's parameter. Absent everywhere else.
+   * routine's parameter; JS/TS does for a function call handing on a member
+   * chain or its own parameter (`useStore("club", api.clubs)`), so the linker
+   * can follow a client into the factory that uses it (an argument it does not
+   * report is ""). Absent everywhere else.
    */
   args?: string[];
   /**

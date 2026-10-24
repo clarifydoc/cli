@@ -71,7 +71,50 @@ export const javascriptCallHooks: CallExtractionHooks = {
   // `container.get<IUserRepo>(TYPES.UserRepo).fetchUserById(1)`,
   // `(this.gadget as GadgetService).buffGadget()`) names its receiver's type.
   receiverTypeOf: receiverTypeOfCall,
+  argsOf: handedArgs,
 };
+
+/** Function-like nodes whose parameters an argument may name. */
+const FUNCTION_NODES = new Set(["function_declaration", "generator_function_declaration", "function_expression", "generator_function", "arrow_function", "method_definition"]);
+
+/**
+ * A function call handing something on (`useStore("club", store, api.clubs)`,
+ * `useStoreActions(key, api)` where `api` is the enclosing function's own
+ * parameter): its arguments, so a project pass can follow a client into the
+ * factory that calls it. Only a call of a bare function name, and only when an
+ * argument is a member chain off a local or an import, or a parameter of the
+ * enclosing function. Any other argument is reported as "" — its position is
+ * all that counts.
+ */
+function handedArgs(node: Node): string[] | null {
+  if (node.type !== "call_expression" || node.childForFieldName("function")?.type !== "identifier") return null;
+  const args = node.childForFieldName("arguments")?.namedChildren.filter((a): a is Node => !!a && a.type !== "comment") ?? [];
+  if (args.length === 0 || args.length > 8) return null;
+  let params: Set<string> | null = null;
+  const param = (name: string) => (params ??= enclosingParams(node)).has(name);
+  // A chain the function holds itself (`api.clubs` off a local): one rooted in
+  // its own parameter (`req.params.id`) is its caller's to say.
+  const chain = (a: Node) => a.type === "member_expression" && /^[\w$]+(?:\.[\w$]+)+$/.test(a.text) && !a.text.startsWith("this.") && !param(a.text.slice(0, a.text.indexOf(".")));
+  const isParam = (a: Node) => a.type === "identifier" && param(a.text);
+  if (!args.some((a) => chain(a) || isParam(a))) return null;
+  return args.map((a) => (chain(a) || isParam(a) ? a.text : ""));
+}
+
+/** Names the innermost enclosing function binds as parameters (`(key, api, { page })`). */
+function enclosingParams(node: Node): Set<string> {
+  const out = new Set<string>();
+  let fn: Node | null = node.parent;
+  while (fn && !FUNCTION_NODES.has(fn.type)) fn = fn.parent;
+  if (!fn) return out;
+  const single = fn.childForFieldName("parameter");
+  if (single?.type === "identifier") out.add(single.text);
+  for (const p of fn.childForFieldName("parameters")?.namedChildren ?? []) {
+    const pattern = p?.childForFieldName("pattern") ?? p;
+    const name = pattern?.type === "assignment_pattern" ? pattern.childForFieldName("left") : pattern;
+    if (name?.type === "identifier") out.add(name.text);
+  }
+  return out;
+}
 
 /**
  * `store.dispatch('contacts/get')`, `this.$store.dispatch("x")`, `dispatch('x')`:

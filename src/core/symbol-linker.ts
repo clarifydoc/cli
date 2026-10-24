@@ -361,6 +361,7 @@ export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly
 
   links.push(...ctx.extraLinks);
   links.push(...parameterDispatchLinks(links, analyses, interfaceImplMap, ctx));
+  links.push(...handedClientLinks(links, ctx));
 
   // Fan-out: emit a link from each interface method to every implementation's
   // matching method so the trace tab can navigate from interface → impls. A
@@ -497,6 +498,94 @@ function parameterDispatchLinks(
           relation: relationForStrategy("interface-redirect"),
         });
       }
+    }
+  }
+  return out;
+}
+
+/**
+ * A client handed to the factory that builds what the caller uses: the screen
+ * calls `clubStore.actions.updateOne(club)` on `const clubStore = useClubStore()`,
+ * `useClubStore` returns `useStore("club", store, api.clubs)`, `useStore` passes
+ * its `api` on to `useStoreActions(key, api)`, and the `updateOne` that factory
+ * returns calls `api.updateOne(…)`. The call site resolved only to the factory
+ * (`factory-via`); this follows the argument (`CallInfo.args`) through the
+ * parameters it is handed on as, to the members a function of the leaf's name
+ * nested in the receiving factory calls on it, and resolves each on the
+ * argument where the factory was given it (`api.clubs.updateOne` → the clubs
+ * client's own request). Unique per argument, three hand-offs deep.
+ */
+function handedClientLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolLink[] {
+  type Fn = { fn: FunctionInfo; file: string; symbol: string };
+  const fnAt = new Map<string, Fn>();
+  const fnsIn = new Map<string, Fn[]>();
+  let anyArgs = false;
+  for (const a of ctx.analyses) {
+    const list: Fn[] = [];
+    for (const fn of a.functions) {
+      const entry = { fn, file: a.filePath, symbol: fn.name };
+      fnAt.set(`${a.filePath}\0${fn.name}`, entry);
+      list.push(entry);
+      if (!anyArgs && fn.calls.some((c) => c.args)) anyArgs = true;
+    }
+    fnsIn.set(a.filePath, list);
+  }
+  if (!anyArgs) return [];
+  // What each call made in a function resolved to: `${file}\0${symbol}\0${line}\0${callName}`.
+  const resolved = new Map<string, SymbolLink>();
+  for (const l of links) {
+    if (l.relation === "reference") continue;
+    resolved.set(`${l.sourceFile}\0${l.sourceSymbol}\0${l.sourceLine}\0${l.callName}`, l);
+  }
+  const NAME = /^[\w$]+$/;
+  const CHAIN = /^[\w$]+(?:\.[\w$]+)+$/;
+  /** The members functions named `leaf` nested in `at` call on its parameter `index`, through the calls handing it on. */
+  const usesOf = (at: Fn, index: number, leaf: string, depth: number, seen: Set<string>): string[] => {
+    const param = at.fn.params[index]?.name;
+    const key = `${at.file}\0${at.symbol}\0${index}`;
+    if (!param || !NAME.test(param) || depth > 3 || seen.has(key)) return [];
+    seen.add(key);
+    const out = new Set<string>();
+    for (const inner of fnsIn.get(at.file) ?? []) {
+      if (inner === at || inner.symbol !== leaf || inner.fn.line < at.fn.line || inner.fn.endLine > at.fn.endLine) continue;
+      // The nested function's own parameter of that name shadows the factory's.
+      if (inner.fn.params.some((p) => p.name === param)) continue;
+      for (const c of inner.fn.calls) {
+        const parts = c.name.split(".");
+        if (parts.length === 2 && parts[0] === param && NAME.test(parts[1]!)) out.add(parts[1]!);
+      }
+    }
+    for (const c of at.fn.calls) {
+      const i = c.args?.indexOf(param) ?? -1;
+      if (i < 0) continue;
+      const hop = resolved.get(`${at.file}\0${at.symbol}\0${c.line}\0${c.name}`);
+      const next = hop ? fnAt.get(`${hop.targetFile}\0${hop.targetSymbol}`) : undefined;
+      if (next) for (const m of usesOf(next, i, leaf, depth + 1, seen)) out.add(m);
+    }
+    return [...out];
+  };
+
+  const out: SymbolLink[] = [];
+  for (const l of links) {
+    if (l.strategy !== "factory-via") continue;
+    const factory = fnAt.get(`${l.targetFile}\0${l.targetSymbol}`);
+    const leaf = l.callName.split(".").pop()!;
+    const analysis = ctx.analysisAt?.get(l.targetFile) ?? ctx.analyses.find((a) => a.filePath === l.targetFile);
+    if (!factory || !analysis || !l.callName.includes(".")) continue;
+    for (const c of factory.fn.calls) {
+      if (!c.args) continue;
+      const hop = resolved.get(`${factory.file}\0${factory.symbol}\0${c.line}\0${c.name}`);
+      const next = hop ? fnAt.get(`${hop.targetFile}\0${hop.targetSymbol}`) : undefined;
+      if (!next) continue;
+      c.args.forEach((arg, i) => {
+        // A chain the factory itself holds; its own parameter is its caller's to say.
+        if (!CHAIN.test(arg) || factory.fn.params.some((p) => p.name === arg.split(".")[0])) return;
+        for (const member of usesOf(next, i, leaf, 0, new Set())) {
+          const link = resolveCallToDefinition(factory.file, factory.symbol, { name: `${arg}.${member}`, kind: "internal", target: null, line: c.line }, analysis, ctx);
+          if (!link || link.strategy === "factory-via" || link.strategy?.startsWith("unique-global")) continue;
+          out.push({ ...link, sourceFile: l.sourceFile, sourceSymbol: l.sourceSymbol, sourceLine: l.sourceLine, callName: l.callName, confidence: "INFERRED" });
+        }
+      });
     }
   }
   return out;
@@ -2374,6 +2463,11 @@ function resolveCallToDefinition(
     !BUILTIN_MEMBERS_BY_LANGUAGE.get(analysis.language)?.has(leafName)
   ) {
     const viaDef = symbolIndex.get(targetFile)?.get(call.via);
+    // A barrel forwarding the factory (`export * from "./use-club-store"`,
+    // `export { useClubStore } from …`): the factory is where the re-export
+    // leads, not the barrel's line.
+    const fwd = !viaDef || viaDef.reexport ? forwardedDefinition(ctx, targetFile, call.via, 0, new Set()) : null;
+    if (fwd) return mkLink(fwd.file, fwd.def.name, fwd.def.line, "INFERRED", "factory-via");
     if (viaDef) {
       return mkLink(targetFile, viaDef.name, viaDef.line, "INFERRED", "factory-via");
     }
