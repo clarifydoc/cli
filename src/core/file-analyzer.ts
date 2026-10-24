@@ -499,6 +499,17 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
 
     // Merge container-format data back in (e.g. Vue template elements/components)
     postExtract?.(analysis, rawSource);
+    // What the markup's handlers call, in the component scope the template closes over.
+    const markupCalls = hooks?.markupCalls?.(analysis.interactiveElements, file.relativePath) ?? [];
+    if (markupCalls.length > 0) {
+      const classified = classifyCalls(markupCalls, analysis.imports, language, variableAliases, localSymbols);
+      let setup = analysis.functions.find((f) => f.name === "<setup>");
+      if (!setup) {
+        setup = { name: "<setup>", params: [], returnType: null, isAsync: false, isExported: false, decorators: [], calls: [], line: 1, endLine: 1 };
+        analysis.functions.unshift(setup);
+      }
+      setup.calls.push(...classified);
+    }
 
     // File-based routing (Next.js, Nuxt, SvelteKit, Expo Router): the route
     // comes from where the file sits. Skipped for test files, same as

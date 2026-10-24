@@ -29,6 +29,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
     const byPath = new Map(analyses.map((a) => [a.filePath, a]));
     const links: SymbolLink[] = [];
     const globals = globalComponentFiles(analyses, filePathMap);
+    const autoImported = autoImportedComponents(analyses);
 
     for (const parent of analyses) {
       const bindings = (parent.interactiveElements ?? []).filter(
@@ -37,8 +38,9 @@ export class JsComponentEmitResolver implements DispatchResolver {
       if (bindings.length === 0) continue;
 
       // Tag → child import source, tolerant of kebab-vs-Pascal (<my-button> / MyButton);
-      // a tag the file does not import is the component registered app-wide under that name.
-      const subByKey = new Map<string, string>();
+      // a tag the file does not import is the component registered app-wide under that name,
+      // else the one the framework imports by its file name (Nuxt's `components/`).
+      const subByKey = new Map<string, string>(autoImported.get(parent.projectId ?? "") ?? []);
       for (const [k, file] of globals) subByKey.set(k, file);
       for (const sub of parent.subComponents ?? []) {
         if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
@@ -58,7 +60,8 @@ export class JsComponentEmitResolver implements DispatchResolver {
         const child = childFile ? byPath.get(childFile) : undefined;
         if (!child) continue; // external/library component — nothing to wire
 
-        const declared = (child.events ?? []).find((e) => tagKey(e.name) === tagKey(eventName));
+        // Declared, or emitted straight from the child's markup (`@click="$emit('delete')"`).
+        const declared = (child.events ?? []).find((e) => tagKey(e.name) === tagKey(eventName)) ?? markupEmit(child, eventName);
         if (!declared) continue; // child never emits this event (native fallthrough)
 
         parentSpans ??= spansOf(parent);
@@ -112,6 +115,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
     const filePathMap = buildFilePathMap(analyses);
     const byPath = new Map(analyses.map((a) => [a.filePath, a]));
     const globals = globalComponentFiles(analyses, filePathMap);
+    const autoImported = autoImportedComponents(analyses);
     // child file → prop → bindings in parents.
     const bindings = new Map<string, Map<string, Array<{ parent: FileAnalysis; handler: string }>>>();
     for (const parent of analyses) {
@@ -119,7 +123,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
         (el) => el.element === "custom" && el.component && el.handler && PROP_CALLBACK.test(el.event),
       );
       if (els.length === 0) continue;
-      const subByKey = new Map<string, string>(globals);
+      const subByKey = new Map<string, string>([...(autoImported.get(parent.projectId ?? "") ?? []), ...globals]);
       for (const sub of parent.subComponents ?? []) if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
       for (const el of els) {
         const src = subByKey.get(tagKey(el.component!));
@@ -246,4 +250,45 @@ function globalComponentFiles(analyses: FileAnalysis[], filePathMap: Map<string,
     }
   }
   return new Map([...out].filter((e): e is [string, string] => e[1] !== null));
+}
+
+/** An event the child's markup emits itself (`@click="$emit('delete', club.id)"`), at that element's line. */
+function markupEmit(child: FileAnalysis, eventName: string): { line: number } | null {
+  for (const el of child.interactiveElements ?? []) {
+    for (const m of el.handler?.matchAll(/(?:^|[^\w$.])\$?emit\s*\(\s*['"]([\w:-]+)['"]/g) ?? []) {
+      if (tagKey(m[1]!) === tagKey(eventName)) return { line: el.line };
+    }
+  }
+  return null;
+}
+
+/** A Nuxt project's config file: its `components/` directories are imported by file name. */
+const NUXT_CONFIG = /(?:^|\/)nuxt\.config\.[cm]?[jt]s$/;
+
+/**
+ * Components a Nuxt project imports without an import line, by tag key per
+ * sub-project: each `.vue` file under a `components/` directory, by its file
+ * name (`pathPrefix: false`) and by its path-prefixed name
+ * (`components/club/ClubCard.vue` → `ClubCard`, `ClubClubCard` folded to
+ * `ClubCard` as Nuxt does). A name two files claim is left out.
+ */
+function autoImportedComponents(analyses: FileAnalysis[]): Map<string, Map<string, string>> {
+  const nuxt = new Set(analyses.filter((a) => NUXT_CONFIG.test(a.filePath)).map((a) => a.projectId ?? ""));
+  const out = new Map<string, Map<string, string | null>>();
+  if (nuxt.size === 0) return new Map();
+  for (const a of analyses) {
+    const project = a.projectId ?? "";
+    const m = /(?:^|\/)components\/(.+)\.vue$/.exec(a.filePath);
+    if (!m || !nuxt.has(project)) continue;
+    const segs = m[1]!.split("/");
+    const base = segs[segs.length - 1]!.replace(/^index$/, segs[segs.length - 2] ?? "index");
+    // Nuxt drops a file name's leading words its folders already said.
+    let prefixed = "";
+    for (const seg of segs.slice(0, -1)) prefixed += seg.replace(/^\w/, (c) => c.toUpperCase());
+    const own = tagKey(base);
+    const full = tagKey(prefixed).length && own.startsWith(tagKey(prefixed)) ? own : tagKey(prefixed) + own;
+    const keys = out.get(project) ?? out.set(project, new Map()).get(project)!;
+    for (const key of new Set([own, full])) keys.set(key, keys.has(key) && keys.get(key) !== a.filePath ? null : a.filePath);
+  }
+  return new Map([...out].map(([p, keys]) => [p, new Map([...keys].filter((e): e is [string, string] => e[1] !== null))]));
 }

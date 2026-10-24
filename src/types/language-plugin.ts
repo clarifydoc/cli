@@ -511,6 +511,14 @@ export interface AstExtractorHooks {
   /** Interactive UI elements (buttons, inputs with handlers) from the AST. */
   interactiveElements?(tree: Tree, sourceText: string): InteractiveElementInfo[];
   /**
+   * The calls a file's markup makes outside any script function — a Vue/Svelte
+   * template's `@click="markAllRead"`, `@save="store.actions.updateOne($event)"`.
+   * Core classifies them like the file's own calls and adds them to `<setup>`,
+   * the component's scope the template closes over. Null/empty when the file's
+   * handlers already sit inside functions (JSX).
+   */
+  markupCalls?(elements: readonly InteractiveElementInfo[], filePath: string): import("./analysis.js").CallInfo[];
+  /**
    * UI screens for tree-sitter languages with designer/markup code embedded in
    * source files (e.g. WinForms `*.Designer.cs`). Regex-path languages use
    * `RegexLangSpec.extractScreens` instead.

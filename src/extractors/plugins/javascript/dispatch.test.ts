@@ -153,3 +153,34 @@ describe("JsPropCallbackResolver — React callback props", () => {
     ]);
   });
 });
+
+describe("component-emit through a Nuxt project's auto-imported components", () => {
+  it("joins a tag the parent never imports to the component file of that name, and an emit made in the child's markup", () => {
+    const config = fa("web/nuxt.config.ts", { projectId: "web" } as Partial<FileAnalysis>);
+    const page = fa("web/app/pages/clubs.vue", {
+      projectId: "web",
+      functions: [fn("handleDelete", 20, 30)],
+      interactiveElements: [{ element: "custom", event: "@delete-one", handler: "handleDelete", line: 4, component: "ClubDataPage" }],
+      subComponents: [{ name: "ClubDataPage", importSource: null, props: [], line: 4 }],
+    } as Partial<FileAnalysis>);
+    const card = fa("web/app/components/Domain/Club/ClubDataPage.vue", {
+      projectId: "web",
+      // No defineEmits: the template emits it straight away.
+      interactiveElements: [{ element: "button", event: "@click", handler: "$emit('deleteOne', club.id)", line: 9 }],
+    } as Partial<FileAnalysis>);
+    const links = new JsComponentEmitResolver().resolve([config, page, card]);
+    expect(links.map((l) => `${l.sourceFile}:${l.callName} -> ${l.targetSymbol}`)).toEqual([
+      "web/app/components/Domain/Club/ClubDataPage.vue:emit:delete-one -> handleDelete",
+    ]);
+  });
+
+  it("does not guess a component outside a Nuxt project", () => {
+    const page = fa("web/app/pages/clubs.vue", {
+      functions: [fn("handleDelete", 20, 30)],
+      interactiveElements: [{ element: "custom", event: "@delete-one", handler: "handleDelete", line: 4, component: "ClubDataPage" }],
+      subComponents: [{ name: "ClubDataPage", importSource: null, props: [], line: 4 }],
+    });
+    const card = fa("web/app/components/ClubDataPage.vue", { events: [{ name: "delete-one", params: [], line: 3 }] });
+    expect(new JsComponentEmitResolver().resolve([page, card])).toEqual([]);
+  });
+});

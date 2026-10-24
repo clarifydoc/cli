@@ -54,19 +54,20 @@ function extractDefineEmitsCallSignatures(
     const block = blockMatch[1];
     const blockStartOffset = blockMatch.index + blockMatch[0].indexOf(block);
 
-    // Match each call signature: (e: 'eventName', param: type, ...): returnType
-    const sigRe = new RegExp(String.raw`\(\s*\w+\s*:\s*['"]` + EVENT_NAME + String.raw`['"](.*?)\)\s*:`, "g");
+    // Match each call signature: (e: 'eventName', param: type, ...): returnType —
+    // one signature may declare several events (`e: 'create-one' | 'edit-one'`).
+    const sigRe = new RegExp(String.raw`\(\s*\w+\s*:\s*((?:['"][\w:-]+['"]\s*\|\s*)*['"][\w:-]+['"])(.*?)\)\s*:`, "g");
     let sigMatch: RegExpExecArray | null;
 
     while ((sigMatch = sigRe.exec(block)) !== null) {
-      const name = sigMatch[1];
-      if (seen.has(name)) continue;
-      seen.add(name);
-
       const params = parseCallSignatureParams(sigMatch[2]);
       const line = lineAt(source, blockStartOffset + sigMatch.index);
-
-      events.push({ name, params, line });
+      for (const m of sigMatch[1].matchAll(new RegExp(`['"]` + EVENT_NAME + `['"]`, "g"))) {
+        const name = m[1]!;
+        if (seen.has(name)) continue;
+        seen.add(name);
+        events.push({ name, params, line });
+      }
     }
   }
 }

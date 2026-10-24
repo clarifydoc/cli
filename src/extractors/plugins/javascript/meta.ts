@@ -1,3 +1,4 @@
+import { markupCalls } from "./markup-calls.js";
 import { extractCdkResources } from "./cdk-resources.js";
 import { cdkRouteResolver } from "./routes/cdk.js";
 import { nestPrefixResolver } from "./routes/nestjs.js";
@@ -216,6 +217,7 @@ function astHooks(language: Language): AstExtractorHooks {
       return jsx.length > 0 ? jsx : extractAngularComponentTree(sourceText);
     },
     events: (sourceText) => extractEvents(sourceText, language),
+    markupCalls,
     externalTemplate: (sourceText) => extractAngularTemplateUrl(sourceText),
     customElements: (sourceText) => extractCustomElements(sourceText),
     globalMembers: (sourceText) => extractGlobalMembers(sourceText),

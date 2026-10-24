@@ -25,3 +25,17 @@ function createFixture(title: string) {
     ]);
   });
 });
+
+describe("Vue events one call signature declares together", () => {
+  it("reads every name of a union (`e: 'create-one' | 'edit-one'`)", () => {
+    const src = `const emit = defineEmits<{
+  (e: "deleteOne", id: string): void;
+  (e: "create-one" | "edit-one", data: Club): void;
+}>();`;
+    expect(extractEvents(src, "typescript").map((e) => [e.name, e.params.map((p) => p.name)])).toEqual([
+      ["deleteOne", ["id"]],
+      ["create-one", ["data"]],
+      ["edit-one", ["data"]],
+    ]);
+  });
+});
