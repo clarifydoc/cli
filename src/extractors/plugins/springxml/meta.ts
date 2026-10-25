@@ -24,7 +24,9 @@ export const springxmlMeta: LanguagePluginMeta = {
   entities: new LiquibaseChangelogEntities(),
   preprocess(rawSource) {
     const isFlow = rawSource.includes("springframework.org/schema/webflow") && /<flow[\s>]/.test(rawSource);
-    const isBeans = /<beans[\s>]/.test(rawSource) && (/<bean\b[^>]*\bclass\s*=/.test(rawSource) || /<jaxrs:client\b/.test(rawSource));
+    // Spring `<beans>` or an OSGi Blueprint `<blueprint>` container: bean classes, REST clients, CXF endpoints.
+    const isBeans = /<(?:beans|blueprint)[\s>]/.test(rawSource)
+      && (/<bean\b[^>]*\bclass\s*=/.test(rawSource) || /<(?:jaxrs:client|jaxrs:server|jaxws:endpoint|jaxws:server)\b/.test(rawSource));
     if (!isFlow && !isBeans && !isMapperXml(rawSource) && !isAndroidNavGraph(rawSource) && !isOrmMappingXml(rawSource) && !isLiquibaseChangelog(rawSource)) {
       return { skip: "not a Spring flow/bean definition, MyBatis mapper, JPA mapping file, Liquibase changelog or Android navigation graph" };
     }

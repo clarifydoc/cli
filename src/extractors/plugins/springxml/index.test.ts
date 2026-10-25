@@ -281,8 +281,12 @@ describe("CXF servers declared in Spring XML", () => {
 </beans>`;
     const facts: import("../../../types/analysis.js").RouteFact[] = [];
     springxmlSpec.extractRoutes!(xml.split("\n"), [], "src/main/resources/context.xml", [], facts);
-    expect(facts.map((f) => f.data)).toEqual([
+    expect(facts.filter((f) => f.kind === "cxf:service-beans").map((f) => f.data)).toEqual([
       { types: ["com.example.league.ws.ClubRestApiImpl", "com.example.league.ws.MatchRestApiImpl", "com.example.league.ws.SeasonRestApiImpl"] },
+    ]);
+    // The endpoint's address, with only what it serves (the provider bean is no service).
+    expect(facts.filter((f) => f.kind === "cxf:server-address").map((f) => f.data)).toEqual([
+      { path: "/league", types: ["com.example.league.ws.MatchRestApiImpl", "com.example.league.ws.SeasonRestApiImpl"] },
     ]);
   });
 });

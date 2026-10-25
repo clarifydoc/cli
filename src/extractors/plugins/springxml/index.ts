@@ -6,7 +6,7 @@ import { mapperDataSources, mapperFunctions } from "./mybatis.js";
 import { ormMappingFunctions } from "./orm-mappings.js";
 import { liquibaseClasses, liquibaseImports } from "./liquibase.js";
 import { androidNavGraphFacts } from "../shared/android-nav-graph.js";
-import { CXF_SERVICE_BEANS_FACT } from "../shared/cxf-service-beans.js";
+import { CXF_SERVER_ADDRESS_FACT, CXF_SERVICE_BEANS_FACT, cxfAddressPath, type ServerAddressFact } from "../shared/cxf-service-beans.js";
 
 /**
  * Spring XML definitions — the declarative wiring tier of classic Java web
@@ -337,8 +337,14 @@ function cxfServerBeans(lines: string[], facts: RouteFact[]): void {
       continue;
     }
     if (name === "ref" && serving > 0) {
-      const ref = attrOf(t.attrs, "bean");
+      const ref = attrOf(t.attrs, "bean") ?? attrOf(t.attrs, "component-id");
       if (ref) refs.push(ref);
+      line ||= t.line;
+    }
+    // OSGi Blueprint: `<reference interface="a.b.ClubApi"/>` serves the service registered for that interface.
+    if (name === "reference" && serving > 0) {
+      const iface = attrOf(t.attrs, "interface");
+      if (iface) inline.push(iface);
       line ||= t.line;
     }
     if (name !== "bean") continue;
@@ -356,6 +362,76 @@ function cxfServerBeans(lines: string[], facts: RouteFact[]): void {
   }
   const types = [...inline, ...refs.flatMap((r) => classOfBean.get(r) ?? [])].filter((c) => /^[\w$.]+$/.test(c));
   if (types.length > 0) facts.push({ kind: CXF_SERVICE_BEANS_FACT, line, data: { types: [...new Set(types)].sort() } });
+}
+
+/** Element names of the CXF endpoints whose `address` publishes what they serve. */
+const CXF_ENDPOINTS = new Set(["jaxrs:server", "jaxws:endpoint", "jaxws:server"]);
+
+/**
+ * Each CXF endpoint's `address` and the types it serves, one fact per endpoint:
+ * `<jaxrs:server address="/club-service">` with its `<jaxrs:serviceBeans>` (a
+ * `<ref bean>`/`<ref component-id>`, an inline `<bean class>`, a Blueprint
+ * `<reference interface>`), or `<jaxws:endpoint address="…" implementor="#bean">`
+ * (an implementor class, or a `#id` naming a bean). An address whose path is a
+ * placeholder states nothing and is left out.
+ */
+function cxfServerAddresses(lines: string[], facts: RouteFact[]): void {
+  const tags = parsedOf(lines).tags;
+  const qualified = (t: XmlTag): string => (t.attrs.startsWith(":") ? `${t.name}:${/^:([\w.-]+)/.exec(t.attrs)?.[1] ?? ""}` : t.name);
+  const attrsOf = (t: XmlTag): string => (t.attrs.startsWith(":") ? t.attrs.replace(/^:[\w.-]+/, "") : t.attrs);
+  const classOfBean = new Map<string, string>();
+  for (const t of tags) {
+    if (t.close || qualified(t) !== "bean") continue;
+    const id = attrOf(t.attrs, "id") ?? attrOf(t.attrs, "name");
+    const cls = attrOf(t.attrs, "class");
+    if (id && cls && attrOf(t.attrs, "factory-method") === null) classOfBean.set(id, cls);
+  }
+  let open: { path: string; line: number; types: string[]; refs: string[] } | null = null;
+  let serving = 0;
+  const flush = (): void => {
+    serving = 0;
+    if (!open) return;
+    const types = [...open.types, ...open.refs.flatMap((r) => classOfBean.get(r) ?? [])].filter((c) => /^[\w$.]+$/.test(c));
+    if (types.length > 0) facts.push({ kind: CXF_SERVER_ADDRESS_FACT, line: open.line, data: { path: open.path, types: [...new Set(types)].sort() } satisfies ServerAddressFact });
+    open = null;
+  };
+  for (const t of tags) {
+    const name = qualified(t);
+    if (CXF_ENDPOINTS.has(name)) {
+      if (t.close) { flush(); continue; }
+      flush();
+      const attrs = attrsOf(t);
+      const address = attrOf(attrs, "address");
+      const path = address === null ? null : cxfAddressPath(address);
+      if (path === null) continue;
+      open = { path, line: t.line, types: [], refs: [] };
+      const implementor = attrOf(attrs, "implementor") ?? attrOf(attrs, "serviceBean") ?? attrOf(attrs, "serviceClass");
+      if (implementor?.startsWith("#")) open.refs.push(implementor.slice(1));
+      else if (implementor) open.types.push(implementor);
+      if (t.selfClose) flush();
+      continue;
+    }
+    if (!open) continue;
+    const local = name.replace(/^[\w-]+:/, "");
+    // Only what the endpoint serves — its providers, interceptors and features are beans too.
+    if ((local === "serviceBeans" || local === "implementor") && !t.selfClose) {
+      serving += t.close ? -1 : 1;
+      continue;
+    }
+    if (t.close || serving <= 0) continue;
+    const attrs = attrsOf(t);
+    if (local === "ref") {
+      const ref = attrOf(attrs, "bean") ?? attrOf(attrs, "component-id");
+      if (ref) open.refs.push(ref);
+    } else if (local === "reference") {
+      const iface = attrOf(attrs, "interface");
+      if (iface) open.types.push(iface);
+    } else if (local === "bean") {
+      const cls = attrOf(attrs, "class");
+      if (cls) open.types.push(cls);
+    }
+  }
+  flush();
 }
 
 export const springxmlSpec: RegexLangSpec = {
@@ -376,6 +452,8 @@ export const springxmlSpec: RegexLangSpec = {
     if (facts) androidNavGraphFacts(lines, facts);
     // CXF servers: the classes they serve become contract rows in the Java/Kotlin resolver.
     if (facts) cxfServerBeans(lines, facts);
+    // …and the address each endpoint publishes them at.
+    if (facts) cxfServerAddresses(lines, facts);
     return extractFlowRoutes(lines, filePath);
   },
   extractStringConstants: extractBeanConstants,
