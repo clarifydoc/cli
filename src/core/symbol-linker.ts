@@ -2591,7 +2591,10 @@ function resolveCallToDefinition(
         const syms = symbolIndex.get(filePath)!;
         // A call on the class itself reaches its class-level method when the
         // language names one apart (Ruby `def self.call` → `X.self.call`).
-        const classDef = syms.get(`${declaredClass}.self.${methodName}`) ?? syms.get(`${declaredClass}.${methodName}`) ?? syms.get(methodName);
+        // Bare, only where the name IS a class of that file (a member it lists bare): a local
+        // that merely shares a name with some symbol there (`text.count`, `entry.get`) reaches nothing.
+        const classDef = syms.get(`${declaredClass}.self.${methodName}`) ?? syms.get(`${declaredClass}.${methodName}`) ??
+          (ctx.classAt.has(memberKey(filePath, declaredClass)) ? syms.get(methodName) : undefined);
         if (classDef) {
           return mkLink(filePath, classDef.name, classDef.line, "INFERRED", "class-name");
         }

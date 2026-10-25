@@ -3,7 +3,7 @@ import type { Node } from "web-tree-sitter";
 import "../registry.js"; // side effect: registers grammars and every plugin's call hooks
 import { ensureLanguagesLoaded } from "../registry.js";
 import { parseSource, type TreeSitterLanguage } from "../../parsers/parser-manager.js";
-import { extractCalls } from "./call-graph.js";
+import { classifyCalls, extractCalls } from "./call-graph.js";
 
 /** Calls extracted from the first node of `type` — the way a plugin passes a function body. */
 async function callsIn(src: string, language: TreeSitterLanguage, type: string, field = "body"): Promise<string[]> {
@@ -114,7 +114,12 @@ describe("classifyCalls — the file's own code is not a DB call by name", () =>
 
   it("does not read a method on this/self as database evidence by its name alone", async () => {
     expect(await classify(["this.exec", "self.repo.update", "clubs.get"], "python"))
-      .toEqual(["this.exec:internal", "self.repo.update:internal", "clubs.get:database"]);
+      .toEqual(["this.exec:internal", "self.repo.update:internal", "clubs.get:internal"]);
+  });
+
+  it("reads a generic method name as database only on a data handle or a model", async () => {
+    expect(await classify(["clubs.get", "scores.count", "clubRepo.get", "Club.objects.get", "Club.find", "session.query", "players.findMany"], "python"))
+      .toEqual(["clubs.get:internal", "scores.count:internal", "clubRepo.get:database", "Club.objects.get:database", "Club.find:database", "session.query:database", "players.findMany:database"]);
   });
 });
 
@@ -130,5 +135,16 @@ function load(api) {
 function load(api) {
   const Named = class { go() { return api.fetchClubs(); } };
 }`, "typescript", "function_declaration")).not.toContain("api.fetchClubs");
+  });
+});
+
+describe("classifyCalls — a parameter shadows a file-level factory alias", () => {
+  it("leaves `club.transfer` on a parameter alone while another function's `const club = useClub()` stays an alias", () => {
+    const aliases = new Map([["club", { source: "./useClub", factory: "useClub" }]]);
+    const call = () => [{ name: "club.transfer", kind: "internal" as const, target: null, line: 3 }];
+    const [own] = classifyCalls(call(), [], "typescript", aliases);
+    expect([own!.kind, own!.target, own!.via]).toEqual(["cross-file", "./useClub", "useClub"]);
+    const [param] = classifyCalls(call(), [], "typescript", aliases, undefined, new Set(["club"]));
+    expect([param!.kind, param!.target, param!.via]).toEqual(["internal", null, undefined]);
   });
 });

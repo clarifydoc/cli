@@ -69,6 +69,24 @@ const DB_METHODS = new Set([
   "FromSqlRaw", "FromSql",
 ]);
 
+/**
+ * Method names every collection, dictionary and helper object has too
+ * (`clubs.get(id)`, `scores.count()`, `queue.remove(x)`): on their own they
+ * are no database evidence. They count only on a receiver that names a data
+ * handle or a model.
+ */
+const GENERIC_DB_METHODS = new Set([
+  "get", "getOne", "getMany", "getAll", "find", "count", "sum", "avg", "sort", "limit", "skip",
+  "merge", "flush", "remove", "raw", "from", "select", "where", "populate", "lean", "paginate", "aggregate",
+]);
+
+/**
+ * A receiver that names a data handle: a repository, DAO, session, cursor,
+ * connection, query or model manager (`playerRepo`, `db`, `Club.objects`,
+ * `session`, `qs`, `trx`).
+ */
+const DATA_HANDLE_RECEIVER = /(?:repo|repos|repository|repositories|dao|db|database|model|models|table|objects|query|queryset|qs|session|em|entitymanager|manager|cursor|conn|connection|knex|prisma|orm|tx|trx|transaction|datasource|store)$/i;
+
 /** A receiver named for an in-memory collection, cache or bag of values. */
 const IN_MEMORY_RECEIVER = /(?:cache|caches|map|maps|claims|headers|params|props|properties|attributes|options|settings|dict|lookup|registry|collections|set|list|array)$/i;
 
@@ -119,6 +137,12 @@ export function isDatabaseCall(name: string, language: Language, byMethodName = 
 
   // Check if the method name matches DB patterns
   const method = parts[parts.length - 1]!;
+  if (GENERIC_DB_METHODS.has(method)) {
+    // A model class (`Club.find(…)`) or a data handle (`clubRepo.get(…)`, `Club.objects.get(…)`);
+    // an untyped `clubs.get(id)` is a dictionary as often as not.
+    const receiver = parts[parts.length - 2]!.replace(/\(.*$/s, "");
+    return /^[A-Z][A-Za-z0-9_]*$/.test(receiver) || DATA_HANDLE_RECEIVER.test(receiver);
+  }
   if (DB_METHODS.has(method)) return true;
 
   // Java-style Spring Data patterns: findBy*, deleteBy*, countBy*, existsBy*
