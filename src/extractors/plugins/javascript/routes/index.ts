@@ -13,6 +13,7 @@ import { extractInlineSdlRoutes } from "./graphql-sdl-inline.js";
 import { mayDeclareReactNavigation, visitReactNavigationScreen, visitStaticNavigator } from "./react-navigation.js";
 import { extractGrpcJsServices } from "./grpc-server.js";
 import { mayDeclareAzureFunctions, visitAzureFunction } from "./azure-functions.js";
+import { extractNodeHttpRoutes, mayDispatchByHand } from "./node-http.js";
 import { applyPrefixScopes, collectPluginPrefixes, mayDeclareRouteObjects, mayRegisterPlugins, visitRouteObjects } from "./fastify-hapi.js";
 
 /**
@@ -78,6 +79,9 @@ export const javascriptRouteExtractor: RouteExtractor = {
     if (mayDefineGraphqlCode(sourceText)) extractGraphqlCodeFirst(tree.rootNode, sourceText, graphql);
     // A schema written inline (Apollo `typeDefs = gql\`type Query …\``): the same routes a `.graphql` file gives.
     graphql.push(...extractInlineSdlRoutes(sourceText));
+
+    // A raw `http.createServer` listener dispatching by hand on the path.
+    if (mayDispatchByHand(sourceText)) extractNodeHttpRoutes(tree.rootNode, routeObjects);
 
     // grpc-js servers: the handlers `addService` registers per rpc.
     const grpc = extractGrpcJsServices(sourceText);
