@@ -1,4 +1,5 @@
 import { DjangoTemplateUrlResolver } from "./django/template-links.js";
+import { extractPythonTypeAliases } from "./type-aliases.js";
 import { AiosqlQueryResolver } from "./aiosql.js";
 import { extractPythonEntryPoints, extractPythonScheduledJobs } from "./entry-points.js";
 import type { LanguagePluginMeta, SecurityRule } from "../../../types/language-plugin.js";
@@ -201,6 +202,7 @@ export const pythonMeta: LanguagePluginMeta = {
     // Container registrations: FastAPI dependency functions, dependency-injector
     // providers, `injector` bindings (see di.ts).
     diBindings: (tree, sourceText) => extractPythonDiBindings(tree, sourceText),
+    typeAliases: (tree) => extractPythonTypeAliases(tree),
     entryPoints: (tree, sourceText) => [...extractPythonEntryPoints(tree, sourceText), ...extractPythonScheduledJobs(tree, sourceText)],
   },
   calls: pythonCallHooks,

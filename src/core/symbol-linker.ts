@@ -25,6 +25,7 @@ import { getLanguageForFile } from "../parsers/language-map.js";
 import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, isApiContractLanguage, packageEcosystemsFor, packageMatchingFor, pluginFor } from "../extractors/registry.js";
 import { SELF_HEADS, bareSupertypeName, declaredSupertypes, isConstructor, sameTypeSpace } from "./typed-receivers.js";
 import { byOrdinal, byOrdinalKey } from "./ordinal.js";
+import { buildTypeAliasIndex, followTypeAlias, type TypeAliasIndex } from "./type-aliases.js";
 
 interface SymbolDef {
   name: string;
@@ -57,9 +58,12 @@ export function buildSymbolLinks(input: FileAnalysis[], subProjects: readonly Su
   // Design files (a Delphi `.dfm`) name the class their code unit declares;
   // the type catalogs see only the declarations, or every form is ambiguous.
   const typeDecls = analyses.filter((a) => !isDesignFormat(a.language));
-  const memberTypes = buildMemberTypes(typeDecls);
+  const filePathMap = buildFilePathMap(analyses);
+  const typeAliases = buildTypeAliasIndex(analyses, filePathMap);
+  const memberTypes = buildMemberTypes(typeDecls, typeAliases);
   const ctx: LinkContext = {
-    filePathMap: buildFilePathMap(analyses),
+    filePathMap,
+    typeAliases,
     symbolIndex,
     memberTypes,
     injectionMap: buildInjectionMap(analyses, memberTypes),
@@ -1329,6 +1333,8 @@ interface LinkContext {
   /** Free functions by language + namespace-qualified name (lowercased), built on first use. */
   namespacedFunctions?: Map<string, Array<{ file: string; def: SymbolDef }>>;
   symbolIndex: Map<string, Map<string, SymbolDef>>;
+  /** Type aliases the files declare, followed for declared receiver types (null: none). */
+  typeAliases: TypeAliasIndex | null;
   /** Lazy: `${file}\0${class}` → its base class as located from that file (null: none in the project). */
   parentAt?: Map<string, { parentClass: string; parentFile: string } | null>;
   /** `${file}\0${class}` → member → declared type (own + inherited). */
@@ -1735,7 +1741,7 @@ interface InjectionPoint {
  * classes are pulled down (the CQRS base-handler pattern stores the injected
  * `_repository` on `BaseCommandHandler<T,R>`), never overwriting.
  */
-function buildMemberTypes(analyses: FileAnalysis[]): Map<string, Map<string, InjectionPoint>> {
+function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex | null = null): Map<string, Map<string, InjectionPoint>> {
   // Every definition of a class name (a name can recur across services/features).
   const classToFiles = new Map<string, string[]>();
   const declAt = new Map<string, FileAnalysis["classes"][number]>();
@@ -1800,7 +1806,8 @@ function buildMemberTypes(analyses: FileAnalysis[]): Map<string, Map<string, Inj
       const add = (rawName: string, type: string | null, qualifier: string | undefined, overwrite: boolean): void => {
         const name = nameKey(a.language, rawName);
         if (!overwrite && members.has(name)) return;
-        const typeName = aliasedType(a, receiverTypeName(type, a.language));
+        const written = aliasedType(a, receiverTypeName(type, a.language));
+        const typeName = written ? followTypeAlias(typeAliases, written, a.filePath, (n, near) => inSpace(classToFiles.get(n) ?? [], near).length > 0) : written;
         // A member injected by key alone (dry-auto_inject `Import["repo"]`,
         // Swift `@Injected(\.repo) var repo`) has no declared type — its
         // registration decides everything.
@@ -3213,6 +3220,7 @@ function resolveThroughDeclaredType(
   if (call.receiverType || call.receiverQualifier) {
     let typeName = receiverTypeName(call.receiverType, analysis.language);
     if (!typeName && !call.receiverQualifier) return null;
+    if (typeName) typeName = dealias(ctx, typeName, sourceFile);
     let typeFile = typeName ? typeFileFor(ctx, typeName, sourceFile, analysis.projectId) : null;
     // A language that names a class by its qualified path (`Billing::InvoiceService`)
     // declares it under that name, which the bare name does not find.
@@ -3657,10 +3665,20 @@ function scopedName(
  * called `UserApi` — else the file defining it.
  */
 function typeRefFor(ctx: LinkContext, typeName: string, sourceFile: string, projectId: string): { typeName: string; typeFile: string } | null {
+  typeName = dealias(ctx, typeName, sourceFile);
   const reexported = reexportedType(ctx, typeName, sourceFile);
   if (reexported) return reexported;
   const typeFile = typeFileFor(ctx, typeName, sourceFile, projectId);
   return typeFile ? { typeName, typeFile } : null;
+}
+
+/** What `typeName` stands for where it is an alias (`followTypeAlias`), else itself. */
+function dealias(ctx: LinkContext, typeName: string, sourceFile: string): string {
+  if (!ctx.typeAliases) return typeName;
+  return followTypeAlias(ctx.typeAliases, typeName, sourceFile, (name, near) => {
+    const lang = ctx.languageOf.get(near) ?? "";
+    return (ctx.classFiles.get(name) ?? []).some((f) => sameTypeSpace(near, lang, f, ctx.languageOf.get(f) ?? ""));
+  });
 }
 
 /** The class an import of `typeName` reaches through a barrel's re-exports; null when the import names a declaration directly, or none. */

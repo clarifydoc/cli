@@ -8,6 +8,7 @@ import { extractGoDataSources } from "./data-sources.js";
 import { extractGoRequestAccess } from "./request-access.js";
 import { extractGoClasses } from "./classes.js";
 import { extractGoDiBindings } from "./di-bindings.js";
+import { extractGoTypeAliases } from "./type-aliases.js";
 import { goResultTextAt, goResultTypes } from "./syntax.js";
 import { extractGoImports } from "./imports.js";
 import { extractGoResponses } from "./responses.js";
@@ -88,6 +89,7 @@ export const goSpec: RegexLangSpec = {
 
   // wire / fx / dig interface bindings (see di-bindings.ts).
   extractDiBindings: (lines) => extractGoDiBindings(lines),
+  extractTypeAliases: extractGoTypeAliases,
   // Scheduled jobs: entry points a clock runs.
   extractEntryPoints: (lines) => extractGoScheduledJobs(lines),
 

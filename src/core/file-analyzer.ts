@@ -479,6 +479,8 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     // linking joins them to injection points).
     const diBindings = hooks?.diBindings?.(tree, sourceText, file.relativePath);
     if (diBindings && diBindings.length > 0) analysis.diBindings = diBindings;
+    const typeAliases = hooks?.typeAliases?.(tree, sourceText);
+    if (typeAliases && typeAliases.length > 0) analysis.typeAliases = typeAliases;
     const declaredNamespace = hooks?.declaredNamespace?.(tree, sourceText);
     if (declaredNamespace) analysis.declaredNamespace = declaredNamespace;
 

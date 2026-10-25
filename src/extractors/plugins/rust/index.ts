@@ -9,6 +9,7 @@ import { extractRustClasses } from "./classes.js";
 import { extractEventRegistrations } from "./event-dispatch.js";
 import { extractRustImports } from "./imports.js";
 import { extractRustLocalTypes } from "./locals.js";
+import { extractRustTypeAliases } from "./type-aliases.js";
 
 function parseRustReturnType(line: string): string | null {
   const m = line.match(/->\s*([^{]+?)(?:\s+where\s|\s*\{|\s*;|\s*$)/);
@@ -20,6 +21,7 @@ export const rustSpec: RegexLangSpec = {
   // `mod x;` / `#[path]` / `include!` — the module tree dead-code analysis
   // walks (see reachability.ts).
   extractPathReferences: extractRustModuleRefs,
+  extractTypeAliases: extractRustTypeAliases,
   language: "rust",
   extensions: [".rs"],
   indentBased: false,

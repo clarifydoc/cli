@@ -462,6 +462,15 @@ export interface FileAnalysis {
    */
   diBindings?: DiBinding[];
   /**
+   * Type aliases the file declares (TypeScript `type Repo = ClubRepository`,
+   * Go `type Repo = store.ClubRepo`, C# `using Repo = League.ClubRepository;`,
+   * Rust `type Repo = Arc<dyn ClubStore>;`, Python `Repo = ClubRepository` /
+   * `Repo: TypeAlias = …`), the aliased type as written. The symbol linker
+   * follows them where a receiver's declared type names the alias. Omitted
+   * when the file declares none.
+   */
+  typeAliases?: TypeAliasInfo[];
+  /**
    * The namespace the file's free functions are declared in, as the language
    * writes it (PHP `namespace App\Support;` → `App\Support`). A call reaching
    * a function by its qualified name (`use function App\Support\money`,
@@ -662,6 +671,15 @@ export interface ExportInfo {
    * local binding a renamed local export stands for (`export { del as delete }` → "del").
    */
   sourceName?: string;
+}
+
+/** A type alias a file declares: `name` stands for `type`, as written. */
+export interface TypeAliasInfo {
+  name: string;
+  type: string;
+  line: number;
+  /** Means the name only inside its own file (a C# `using A = B;` that is not `global`). */
+  fileScoped?: boolean;
 }
 
 export interface ParamInfo {

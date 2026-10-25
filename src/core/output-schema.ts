@@ -56,6 +56,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   railsSchemaTables: "optional",
   schemaOps: "optional",
   diBindings: "optional",
+  typeAliases: "optional",
   declaredNamespace: "optional",
   httpClientBases: "optional",
   storeModules: "optional",

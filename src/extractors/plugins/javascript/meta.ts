@@ -1,4 +1,5 @@
 import { templateEscapePreprocess } from "./template-escapes.js";
+import { extractTsTypeAliases } from "./type-aliases.js";
 import { markupCalls } from "./markup-calls.js";
 import { extractCdkResources } from "./cdk-resources.js";
 import { cdkRouteResolver } from "./routes/cdk.js";
@@ -237,6 +238,7 @@ function astHooks(language: Language): AstExtractorHooks {
     pathReferences: (sourceText) => extractPathReferences(sourceText),
     variableAliases: extractJsVariableAliases,
     diBindings: extractJsDiBindings,
+    typeAliases: (tree) => extractTsTypeAliases(tree),
     topLevelLocalTypes: (tree, sourceText) => topLevelLocalTypes(tree, sourceText),
   };
 }

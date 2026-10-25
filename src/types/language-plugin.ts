@@ -640,6 +640,8 @@ export interface AstExtractorHooks {
    * this file registers.
    */
   diBindings?(tree: Tree, sourceText: string, filePath: string): import("./analysis.js").DiBinding[];
+  /** Type aliases the file declares → `FileAnalysis.typeAliases` (the aliased type as written; core follows them). */
+  typeAliases?(tree: Tree, sourceText: string): import("./analysis.js").TypeAliasInfo[];
   /** The namespace the file's free functions live in → `FileAnalysis.declaredNamespace` (PHP `namespace X;`). */
   declaredNamespace?(tree: Tree, sourceText: string): string | null;
   /**

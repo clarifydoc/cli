@@ -1,4 +1,4 @@
-import type { FunctionInfo, ClassInfo, CallInfo, RouteFact, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, RouteResponseInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo, DiBinding, EntryPointInfo, HttpClientRegistration, PathArgCall } from "../../../types/analysis.js";
+import type { FunctionInfo, ClassInfo, CallInfo, RouteFact, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, RouteResponseInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo, DiBinding, EntryPointInfo, HttpClientRegistration, PathArgCall, TypeAliasInfo } from "../../../types/analysis.js";
 
 import { holdNoiseCall } from "../../shared/call-graph.js";
 
@@ -237,6 +237,8 @@ export interface RegexLangSpec {
    * `FileAnalysis.diBindings`.
    */
   extractDiBindings?: (lines: string[], filePath: string) => DiBinding[];
+  /** Type aliases the file declares (Go `type A = B`, Rust `type A = B;`) → `FileAnalysis.typeAliases`. */
+  extractTypeAliases?: (lines: string[]) => TypeAliasInfo[];
   /** Entry points that are not routes (scheduled jobs, commands) → `FileAnalysis.entryPoints`. */
   extractEntryPoints?: (lines: string[], filePath: string) => EntryPointInfo[];
   /** HTTP clients and client proxies the file configures → `FileAnalysis.httpClientRegistrations`. */
