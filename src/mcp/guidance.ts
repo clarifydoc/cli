@@ -51,6 +51,11 @@ const REACH_FOR: ReachRule[] = [
     why: "it gives folder dependencies with instability, communities, hub files, import cycles and files that change together in history — what reading files one by one cannot show",
   },
   {
+    question: "Does a helper for this already exist, before I write one?",
+    tools: "clarifydoc_search",
+    why: "it ranks functions, classes, routes and files across every sub-project by name, and with `body=true` by what their bodies and doc comments say; no hit narrows the search, it does not prove absence",
+  },
+  {
     question: "What does this endpoint accept, and who may call it?",
     tools: "clarifydoc_contract",
     why: "it gives the request body's shape, the parameters' bindings and the auth policy as declared in code",
