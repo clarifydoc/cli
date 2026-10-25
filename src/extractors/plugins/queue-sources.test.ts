@@ -258,11 +258,27 @@ describe("Python pika extraction", () => {
     expect(p!.entity).toBe("car.created");
   });
 
-  it("treats pika's default '' exchange as unresolved", async () => {
+  it("reads pika's default '' exchange as the queue the routing key names", async () => {
     const s = await pySourcesOf(`    channel.basic_publish(exchange='', routing_key='tasks', body=msg)`);
     const [p] = publishes(s);
-    expect(p!.target).toBeNull();
+    expect(p!.target).toBe("tasks");
     expect(p!.entity).toBe("tasks");
+  });
+
+  it("reads a destination held in a module or class constant", async () => {
+    const src = `QUEUE = "transfers"
+
+class Queues:
+    INJURIES = "injuries"
+
+def go(channel, msg):
+    channel.basic_publish(exchange="", routing_key=Queues.INJURIES, body=msg)
+    channel.basic_consume(queue=QUEUE, on_message_callback=msg)
+`;
+    const tree = await parseSource(src, "python" as any, "x.py");
+    const s = new PythonDataSourceExtractor().extract(tree, src);
+    expect(publishes(s)[0]?.target).toBe("injuries");
+    expect(consumes(s)[0]?.target).toBe("transfers");
   });
 
   it("captures basic_consume queue kwarg", async () => {
@@ -294,6 +310,21 @@ describe("Java Spring AMQP / Kafka extraction", () => {
   it("captures kafkaTemplate.send topic", async () => {
     const s = await javaSourcesOf(`    kafkaTemplate.send("player-events", payload);`);
     expect(publishes(s)[0]?.target).toBe("player-events");
+  });
+
+  it("captures a send on a field declared as a template, whatever it is called", async () => {
+    const src = `package x;
+class TransferSvc {
+  private JmsTemplate jms;
+  private KafkaTemplate<String, String> events;
+  void m(String payload) {
+    jms.convertAndSend("transfers", payload);
+    events.send("player-events", payload);
+  }
+}`;
+    const tree = await parseSource(src, "java" as any, "TransferSvc.java");
+    const s = new JavaKotlinDataSourceExtractor().extract(tree, src);
+    expect(publishes(s).map((p) => p.target)).toEqual(["transfers", "player-events"]);
   });
 
   it("ignores send on a non-template receiver", async () => {

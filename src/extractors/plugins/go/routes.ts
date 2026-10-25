@@ -127,7 +127,7 @@ const CONST_IN_BLOCK_RE = /^\s*([A-Za-z_]\w*)(?:\s+string)?\s*=\s*"([^"\\]*)"\s*
 const CONST_PLUS_PATH_RE = /^([A-Za-z_]\w*)(?:\s*\+\s*["'`]([^"'`]*)["'`])?$/;
 
 /** The file's string constants by name; a name declared twice with different values is left out. */
-function stringConstants(lines: readonly string[]): Map<string, string> {
+export function stringConstants(lines: readonly string[]): Map<string, string> {
   const out = new Map<string, string>();
   const clash = new Set<string>();
   let inBlock = false;

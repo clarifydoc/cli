@@ -1,4 +1,6 @@
 import type { DataSourceInfo } from "../../../types/analysis.js";
+import { argValue, callArgs, consumeDestination, publishDestination } from "./mq-destinations.js";
+import { stringConstants } from "./routes.js";
 import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractXormDataSources } from "./xorm.js";
@@ -111,6 +113,7 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
   // Raw SQL first (multi-line aware), then per-line pattern scans.
   const normLines = normalizeRawStrings(lines.join("\n")).split("\n");
   const sources: DataSourceInfo[] = extractSqlStringDataSources(normLines);
+  let constants: Map<string, string> | undefined;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
@@ -172,10 +175,11 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
 
     const pub = line.match(MQ_PUBLISH_RE);
     if (pub && MQ_RECEIVER_RE.test(pub[1]!)) {
+      const stated = publishDestination(pub[2]!, callArgs(lines, i, pub.index! + pub[0].length - 1), (a) => argValue(a, constants ??= stringConstants(lines), lines, i));
       sources.push({
         kind: "queue-publish",
         name: `MQ: ${pub[2]}`,
-        target: line.slice(line.indexOf(pub[2]!)).match(FIRST_STRING_RE)?.[1] ?? null,
+        target: stated !== undefined ? stated : line.slice(line.indexOf(pub[2]!)).match(FIRST_STRING_RE)?.[1] ?? null,
         calls: [],
         line: lineNo,
       });
@@ -183,10 +187,11 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
     }
     const con = line.match(MQ_CONSUME_RE);
     if (con && MQ_RECEIVER_RE.test(con[1]!)) {
+      const stated = consumeDestination(con[2]!, callArgs(lines, i, con.index! + con[0].length - 1), (a) => argValue(a, constants ??= stringConstants(lines), lines, i));
       sources.push({
         kind: "queue-consume",
         name: `MQ: ${con[2]}`,
-        target: line.slice(line.indexOf(con[2]!)).match(FIRST_STRING_RE)?.[1] ?? null,
+        target: stated !== undefined ? stated : line.slice(line.indexOf(con[2]!)).match(FIRST_STRING_RE)?.[1] ?? null,
         calls: [],
         line: lineNo,
       });

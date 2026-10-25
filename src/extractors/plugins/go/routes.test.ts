@@ -243,6 +243,22 @@ msgs, _ := ch.Consume("cars-queue", "", true, false, false, false, nil)
     expect(s.some((d) => d.kind === "queue-consume" && d.target === "cars-queue")).toBe(true);
   });
 
+  it("names an AMQP destination by the default exchange's routing key, a constant or a declared queue", () => {
+    const s = extractGoDataSources(lines(`
+const transfersQueue = "transfers"
+
+func run(ch *amqp.Channel) {
+	q, err := ch.QueueDeclare(transfersQueue, true, false, false, false, nil)
+	ch.Publish("", "injuries", false, false, msg)
+	ch.PublishWithContext(ctx, "", q.Name, false, false, msg)
+	msgs, _ := ch.Consume(q.Name, "", true, false, false, false, nil)
+	nc.Publish(transfersQueue, data)
+}
+`));
+    expect(s.filter((d) => d.kind === "queue-publish").map((d) => d.target)).toEqual(["injuries", "transfers", "transfers"]);
+    expect(s.filter((d) => d.kind === "queue-consume").map((d) => d.target)).toEqual(["transfers"]);
+  });
+
   it("reads a request made with its context first (real-repo FP)", () => {
     const s = extractGoDataSources(lines(`
 req, _ := http.NewRequestWithContext(ctx, http.MethodPut, "https://garage.example.com/cars", body)

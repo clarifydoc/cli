@@ -521,6 +521,8 @@ const MQ_TEMPLATE_PUBLISH = new Set([
   "convertAndSend", "convertSendAndReceive", "send", "sendAndReceive",
 ]);
 const MQ_TEMPLATE_RECEIVER_RE = /rabbitTemplate|amqpTemplate|kafkaTemplate|jmsTemplate/i;
+/** The template types themselves (`JmsTemplate`, `KafkaTemplate<String, Match>`, `RabbitOperations`), qualified or not. */
+const MQ_TEMPLATE_TYPE_RE = /^(?:[\w.]+\.)?(?:RabbitTemplate|AmqpTemplate|RabbitOperations|AmqpOperations|RabbitMessagingTemplate|KafkaTemplate|KafkaOperations|ReactiveKafkaProducerTemplate|JmsTemplate|JmsOperations|JmsMessagingTemplate)(?:<.*>)?$/;
 
 // Consume side: listener annotations. Destination attribute per flavor:
 // @RabbitListener(queues = "q"), @KafkaListener(topics = {"t1","t2"}),
@@ -1067,7 +1069,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // payload) / kafkaTemplate.send(topic, msg). The first argument names the
     // destination; a string literal is unquoted, any other expression's source
     // text is kept as a join label.
-    if (MQ_TEMPLATE_PUBLISH.has(method) && MQ_TEMPLATE_RECEIVER_RE.test(receiver)) {
+    if (MQ_TEMPLATE_PUBLISH.has(method) && this.isMqTemplate(node, receiver)) {
       sources.push(this.ds({
         kind: "queue-publish",
         name: `MQ: ${method}`,
@@ -1282,6 +1284,13 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
 
   /** A JDBC/JPA handle by its last segment, unless it is named or declared as a service-layer object. */
   /** A RabbitMQ `Channel`: declared as one, or named so. */
+  /** A messaging template: declared as one (`private JmsTemplate jms`), else named like one (`rabbitTemplate`). */
+  private isMqTemplate(node: Node, receiver: string): boolean {
+    const leaf = receiverLeaf(receiver);
+    const declared = /^\w+$/.test(leaf) ? (localDeclaredType(node, leaf) ?? this.fieldTypes.get(leaf) ?? null) : null;
+    return (declared !== null && MQ_TEMPLATE_TYPE_RE.test(declared)) || MQ_TEMPLATE_RECEIVER_RE.test(receiver);
+  }
+
   private isAmqpChannel(node: Node, receiver: string): boolean {
     const leaf = receiverLeaf(receiver);
     const declared = /^\w+$/.test(leaf) ? (localDeclaredType(node, leaf) ?? this.fieldTypes.get(leaf) ?? null) : null;

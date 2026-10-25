@@ -23,7 +23,11 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
   /** The file names urllib: a bare `urlopen(…)` is `urllib.request.urlopen`. */
   private urllib = false;
 
-  override beginFile(_tree: unknown, sourceText: string): void {
+  /** String constants of the module and its classes: `QUEUE = "matches"`, `Queues.TRANSFERS` for `class Queues: TRANSFERS = "transfers"`. */
+  private constants = new Map<string, string>();
+
+  override beginFile(tree: unknown, sourceText: string): void {
+    this.constants = /^\s*[A-Za-z_]\w*\s*(?::[^=\n]+)?=\s*[rbu]*['"]/m.test(sourceText) ? stringConstants((tree as { rootNode: Node }).rootNode) : new Map();
     this.vectorClients = new Set();
     this.celery = /\bcelery\b|\bshared_task\b/i.test(sourceText);
     this.boto3 = /\b(?:boto3|aioboto3)\b/.test(sourceText);
@@ -46,6 +50,11 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
       if (/^(?:Client|HttpClient|PersistentClient)$/.test(m[0]!.match(/(\w+)\s*\($/)![1]!) && !/\bchromadb\b/.test(m[0]!) && !/from\s+chromadb\b/.test(sourceText)) continue;
       this.vectorClients.add(m[1]!);
     }
+  }
+
+  /** An argument as written, or the string a constant it names holds (`Queues.TRANSFERS`). */
+  private constantOr(text: string | null): string | null {
+    return text === null ? null : this.constants.get(text) ?? text;
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
@@ -87,11 +96,13 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
         // names are AMQP-specific, so any receiver is trusted.
         const leaf = fnName.split(".").pop()!;
         if (leaf === "basic_publish") {
-          const routingKey = pyArg(node, "routing_key", 1);
+          const routingKey = this.constantOr(pyArg(node, "routing_key", 1));
+          const exchange = this.constantOr(pyArg(node, "exchange", 0));
           sources.push(this.ds({
             kind: "queue-publish",
             name: "RabbitMQ: basic_publish",
-            target: pyArg(node, "exchange", 0),
+            // The default exchange (`exchange=""`) delivers to the queue the routing key names.
+            target: exchange ?? (exchangeIsDefault(node) ? routingKey : null),
             ...(routingKey ? { entity: routingKey } : {}),
             line: node.startPosition.row + 1,
           }));
@@ -150,7 +161,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           sources.push(this.ds({
             kind: "queue-consume",
             name: "RabbitMQ: basic_consume",
-            target: pyArg(node, "queue", 0),
+            target: this.constantOr(pyArg(node, "queue", 0)),
             line: node.startPosition.row + 1,
           }));
           return;
@@ -398,6 +409,43 @@ const PY_VECTOR_WRITES = /^(?:upsert|delete|create_collection|recreate_collectio
 
 /** `@app.task`, `@celery.task(bind=True)`, `@shared_task` — not a bare `@task` (Invoke, Prefect). */
 const CELERY_TASK_RE = /^@\s*(?:[A-Za-z_]\w*\.)+task\b|^@\s*shared_task\b/;
+
+/** `exchange=""` (or `''`) stated on a pika publish: the default exchange. */
+function exchangeIsDefault(call: Node): boolean {
+  const args = call.childForFieldName("arguments");
+  const kw = args?.namedChildren.find((a) => a.type === "keyword_argument" && a.childForFieldName("name")?.text === "exchange");
+  const value = kw ? kw.childForFieldName("value") : args?.namedChildren.find((a) => a.type !== "keyword_argument" && a.type !== "comment");
+  return !!value && value.type === "string" && /^[rbu]*(['"])\1$/i.test(value.text);
+}
+
+/** Module-level `NAME = "x"` and class-level `class Queues: NAME = "x"` (as `Queues.NAME`); a name bound twice is left out. */
+function stringConstants(root: Node): Map<string, string> {
+  const out = new Map<string, string>();
+  const clash = new Set<string>();
+  const read = (body: Node, prefix: string): void => {
+    for (const stmt of body.namedChildren) {
+      if (stmt.type === "class_definition" && !prefix) {
+        const name = stmt.childForFieldName("name")?.text;
+        const inner = stmt.childForFieldName("body");
+        if (name && inner) read(inner, `${name}.`);
+        continue;
+      }
+      if (stmt.type !== "expression_statement") continue;
+      const a = stmt.namedChild(0);
+      if (a?.type !== "assignment") continue;
+      const left = a.childForFieldName("left");
+      const right = a.childForFieldName("right");
+      if (left?.type !== "identifier" || right?.type !== "string" || right.namedChildren.some((c) => c.type === "interpolation")) continue;
+      const key = prefix + left.text;
+      const value = right.text.replace(/^[rbu]*['"]{1,3}|['"]{1,3}$/gi, "");
+      if (out.has(key) && out.get(key) !== value) clash.add(key);
+      out.set(key, value);
+    }
+  };
+  read(root, "");
+  for (const k of clash) out.delete(k);
+  return out;
+}
 
 function pyArg(call: Node, keyword: string, index: number): string | null {
   const args = call.childForFieldName("arguments");
