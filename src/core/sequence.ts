@@ -113,9 +113,12 @@ export function buildSequence(summary: ProjectAnalysis, seed: { file: string; sy
   const body: string[] = [];
   const say = (from: string, to: string, text: string, arrow = "->>") => body.push(`  ${from}${arrow}${to}: ${mermaidLabel(text)}`);
 
+  // A route declared with an empty path (a child route mounted at its parent's
+  // root) titles as nothing, and Mermaid rejects a bare `title` line.
+  const title = seed.title.trim() || "/";
   const client = lane("Client");
   const start = lane(laneOf(seed.file, seed.symbol));
-  say(client, start, seed.title);
+  say(client, start, title);
 
   const walk = (file: string, symbol: string, level: number, path: Set<string>): void => {
     const here = lane(laneOf(file, symbol));
@@ -173,7 +176,7 @@ export function buildSequence(summary: ProjectAnalysis, seed: { file: string; sy
   walk(seed.file, seed.symbol, 1, new Set([`${seed.file}::${seed.symbol}`]));
 
   say(start, client, "response", "-->>");
-  const header = ["sequenceDiagram", `  title ${mermaidLabel(seed.title)}`];
+  const header = ["sequenceDiagram", `  title ${mermaidLabel(title)}`];
   const participants = [...lanes].map(([name, pid]) => `  participant ${pid} as ${mermaidLabel(name)}`);
   return [...header, ...participants, ...body].join("\n") + "\n";
 }

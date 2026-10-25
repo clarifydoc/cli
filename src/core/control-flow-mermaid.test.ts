@@ -13,11 +13,11 @@ import { toMermaidFlowchart, toMarkdown } from "./control-flow-mermaid.js";
  * bug that reading the generator could not have caught, so the output is
  * checked by re-reading it rather than by eyeballing a snapshot.
  *
- * This validator is not Mermaid's parser — adding Mermaid (and a DOM for it)
- * as a dependency of the engine to test a few hundred lines of text generation
- * is not a trade worth making. What it does cover is the failure mode that
- * actually bites: a label or an id that carries syntax out into the document,
- * and an edge that names a node the diagram never declared.
+ * This validator is stricter than Mermaid's parser, which
+ * `export/mermaid-parse.test.ts` runs over the same output: it pins the exact
+ * shapes we emit, so a label or an id that carries syntax out into the
+ * document, or an edge that names a node the diagram never declared, fails
+ * here even where Mermaid would shrug and draw something else.
  */
 
 const NODE_LINE = /^ {2}([A-Za-z_][A-Za-z0-9_]*)(\(\[|\{\{|\(\(|\[\[|\[\/|\{|>|\[)"(.*)"(\]\)|\}\}|\)\)|\]\]|\/\]|\}|\]|\])$/;

@@ -55,6 +55,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
+    "mermaid": "12.1.0",
     "tree-sitter-cli": "^0.27.0",
     "tree-sitter-ruby": "^0.23.1",
     "tsdown": "^0.23.0",
